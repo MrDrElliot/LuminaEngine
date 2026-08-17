@@ -66,13 +66,7 @@ namespace Lumina
                     if (SelfBody != ~0u)       { Settings.AddIgnoredBody(SelfBody); }
                     if (InstigatorBody != ~0u) { Settings.AddIgnoredBody(InstigatorBody); }
 
-                    for (const SRayResult& Result : Scene->CastSphere(Settings))
-                    {
-                        if (!Hit.has_value() || Result.Fraction < Hit->Fraction)
-                        {
-                            Hit = Result;
-                        }
-                    }
+                    Hit = Scene->CastSphereClosest(Settings);
                 }
                 else
                 {

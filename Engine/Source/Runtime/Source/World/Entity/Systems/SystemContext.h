@@ -173,7 +173,11 @@ namespace Lumina
         RUNTIME_API void ApplyBuoyancyImpulse(entt::entity Entity, const FVector3& SurfacePosition, const FVector3& SurfaceNormal,
             float Buoyancy, float LinearDrag, float AngularDrag, const FVector3& FluidVelocity, float InDeltaTime) const;
 
-        RUNTIME_API TVector<SRayResult> CastSphere(const SSphereCastSettings& Settings) const;
+        /** Sweep hits near-to-far; OutHits is cleared first, so one reused buffer keeps the sweep alloc-free. */
+        RUNTIME_API void CastSphere(const SSphereCastSettings& Settings, TVector<SRayResult>& OutHits) const;
+
+        /** Nearest sweep hit only; cheaper than CastSphere because the backend stops at the blocking hit. */
+        RUNTIME_API TOptional<SRayResult> CastSphereClosest(const SSphereCastSettings& Settings) const;
 
         RUNTIME_API STransformComponent& GetEntityTransform(entt::entity Entity) const;
         

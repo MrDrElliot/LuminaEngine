@@ -28,6 +28,10 @@ namespace Lumina::RHI
         MinReduction,
         MaxReduction,
 
+        // Appended, not grouped: the slot index IS the value, and GlobalRHI.slang hardcodes it.
+        PointMirror,
+        AnisoMirror,
+
         Count
     };
 

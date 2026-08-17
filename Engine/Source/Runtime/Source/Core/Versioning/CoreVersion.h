@@ -51,6 +51,9 @@ enum class ELuminaEngineVersion : uint32
 	// CAnimationGraph serializes NumObjectRegisters, the register file its object dataflow uses.
 	ANIM_GRAPH_OBJECT_PARAMETERS,
 
+	// CTexture keeps its imported file's bytes (bulk region, editor-only), so cook settings stay absolute.
+	TEXTURE_SOURCE_FILE,
+
 	AUTOMATIC_VERSION_PLUS_ONE,
 	AUTOMATIC_VERSION = AUTOMATIC_VERSION_PLUS_ONE - 1
 };

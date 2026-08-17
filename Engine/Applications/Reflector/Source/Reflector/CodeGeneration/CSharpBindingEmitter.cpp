@@ -683,28 +683,16 @@ namespace Lumina::Reflection
             }
         }
 
-        // The C++ element type spelling to instantiate GetVectorOps<T> with, for a blittable array element.
-        eastl::string VectorElementCpp(const FBinding& Elem)
-        {
-            switch (Elem.Kind)
-            {
-                case EBind::Bool:        return "bool";
-                case EBind::Number:      return Elem.Cpp;        // "int32", "float", ...
-                case EBind::Enum:        return Elem.TargetCpp;  // qualified enum type
-                case EBind::StructValue: return Elem.TargetCpp;  // qualified struct type
-                default:                 return eastl::string();
-            }
-        }
-
-        // A writable blittable-element TVector<T> exposes its element-type ops table to C# (TVector<T>):
-        // one nullary export per writable array property returning the shared GetVectorOps<T>() pointer.
-        void EmitVectorOpsExport(FCodeWriter& Writer, FReflectedProperty& Prop, const FBinding& B,
-            const eastl::string& Friendly, const char* Api)
+        // A writable blittable-element array exposes its container's ops table to C# (Lumina.TVector<T>): one
+        // nullary export per writable array property. The container type comes from decltype(Owner::Member),
+        // since this export sits at global scope where an unqualified TVector<T> spelling would not resolve,
+        // and because a fixed container must be operated on as the type it actually is.
+        void EmitVectorOpsExport(FCodeWriter& Writer, FReflectedProperty& Prop,
+            const eastl::string& Friendly, const char* Qualified, const char* Api)
         {
             const eastl::string Thunk = "LuminaSharp_VecOps_" + Friendly + "_" + Prop.Name;
-            const eastl::string ElemCpp = VectorElementCpp(*B.Elem);
-            Writer.Linef("extern \"C\" %s const void* %s() { return ::Lumina::GetVectorOps<%s>(); }",
-                Api, Thunk.c_str(), ElemCpp.c_str());
+            Writer.Linef("extern \"C\" %s const void* %s() { return ::Lumina::GetVectorOpsFor<decltype(%s::%s)>(); }",
+                Api, Thunk.c_str(), Qualified, Prop.Name.c_str());
         }
 
         void EmitNativeArray(FCodeWriter& Writer, FReflectedProperty& Prop, const FBinding& B,
@@ -921,7 +909,7 @@ namespace Lumina::Reflection
             {
                 // Writable blittable element: the element-type ops table for TVector<T>. Read-only
                 // blittable arrays need no export (C# reads the header directly as a ReadOnlySpan).
-                EmitVectorOpsExport(Writer, Prop, B, Friendly, Api);
+                EmitVectorOpsExport(Writer, Prop, Friendly, Qualified, Api);
             }
         }
 

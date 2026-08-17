@@ -13,11 +13,90 @@
 #include "Tools/UI/ImGui/ImGuiFonts.h"
 #include "Tools/UI/ImGui/ImGuiRenderer.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
+#include "Core/Reflection/PropertyChangedEvent.h"
+#include "Log/Log.h"
 
 namespace Lumina
 {
     const char* TexturePreviewName           = "TexturePreview";
     const char* TexturePropertiesName        = "TextureProperties";
+
+    static const char* StockSamplerLabel(RHI::EStockSampler Sampler)
+    {
+        switch (Sampler)
+        {
+        case RHI::EStockSampler::LinearClamp:  return "Linear, Clamp";
+        case RHI::EStockSampler::LinearMirror: return "Linear, Mirror";
+        case RHI::EStockSampler::PointWrap:    return "Nearest, Wrap";
+        case RHI::EStockSampler::PointClamp:   return "Nearest, Clamp";
+        case RHI::EStockSampler::PointMirror:  return "Nearest, Mirror";
+        case RHI::EStockSampler::AnisoWrap:    return "Anisotropic, Wrap";
+        case RHI::EStockSampler::AnisoClamp:   return "Anisotropic, Clamp";
+        case RHI::EStockSampler::AnisoMirror:  return "Anisotropic, Mirror";
+        case RHI::EStockSampler::LinearWrap:
+        default:                               return "Linear, Wrap";
+        }
+    }
+
+    void FTextureEditorTool::OnPropertyEditFinished(const FPropertyChangedEvent& Event)
+    {
+        // Never Stream, Filter and Address Mode carry no RequiresRecook: no stored pixel depends on them.
+        if (Event.Property == nullptr || !Event.Property->HasMetadata("RequiresRecook"))
+        {
+            return;
+        }
+
+        CTexture* Texture = Cast<CTexture>(Asset.Get());
+        if (Texture == nullptr)
+        {
+            return;
+        }
+
+        if (RecookForPropertyChange(Texture))
+        {
+            ImGuiX::Notifications::NotifySuccess("Recooked '{0}' ({1})",
+                Texture->GetName().c_str(), Event.PropertyName.c_str());
+        }
+        else
+        {
+            ImGuiX::Notifications::NotifyError("Recook failed for '{0}' -- check log",
+                Texture->GetName().c_str());
+        }
+    }
+
+    bool FTextureEditorTool::RecookForPropertyChange(CTexture* Texture)
+    {
+        // Pristine bytes, on disk or stored on the asset, make an edit replace the last cook rather than layer on it.
+        if (!Texture->SourcePath.empty() || Texture->HasSourceFile())
+        {
+            return CTextureFactory::Recook(Texture);
+        }
+
+        if (!SourcelessBaseline.has_value())
+        {
+            Import::Textures::FTextureImportResult Recovered;
+            if (!CTextureFactory::RecoverSourceImage(Texture, Recovered))
+            {
+                LOG_ERROR("TextureEditor: '{0}' has no source file and its cooked format cannot be decoded; "
+                          "settings changes cannot be applied.", Texture->GetName().c_str());
+                return false;
+            }
+
+            // Only an asset imported before sources were stored lands here; a reimport fixes it for good.
+            SourcelessBaseline = Move(Recovered);
+        }
+
+        // Copied, not handed over: CookFromSource consumes what it is given and the baseline has to survive.
+        Import::Textures::FTextureImportResult Working = SourcelessBaseline.value();
+        return CTextureFactory::CookFromSource(Texture, Working);
+    }
+
+    void FTextureEditorTool::OnAssetDataChangedExternally()
+    {
+        // The baseline describes pixels that have just been replaced.
+        SourcelessBaseline.reset();
+        FAssetEditorTool::OnAssetDataChangedExternally();
+    }
 
     void FTextureEditorTool::OnInitialize()
     {
@@ -644,58 +723,83 @@ namespace Lumina
             }
 
             ImGuiX::Font::PushFont(ImGuiX::Font::EFont::Large);
-            ImGui::SeparatorText("Compression");
+            ImGui::SeparatorText("Settings");
             ImGuiX::Font::PopFont();
 
             ImGui::Spacing();
 
-            // Color-space combo + recook. ColorSpace alone doesn't re-encode (BC baked at import);
-            // Recook applies the new format. Stored format shown so staleness is visible.
+            // Reflected rather than hand-drawn, so the table stays complete as settings are added.
+            PropertyTable.DrawTree();
+
+            ImGui::Spacing();
+
+            // The settings above are recorded, not applied: the mip chain is whatever the last cook produced.
             {
-                static const char* ColorSpaceLabels[] =
+                const FTextureResource::FDescription& CookedDesc = Texture->TextureResource->ImageDescription;
+                const FTextureGroupPolicy Policy = Texture->GetResolvedPolicy();
+
+                const bool bMipsStale = Policy.bGenerateMips != (CookedDesc.NumMips > 1);
+                const bool bSizeStale = Policy.MaxDimension > 0
+                    && ImMax(CookedDesc.Extent.x, CookedDesc.Extent.y) > Policy.MaxDimension;
+
+                if (bMipsStale || bSizeStale)
                 {
-                    "Auto (re-classify on next recook)",
-                    "Linear (data, non-color)",
-                    "sRGB (color: albedo / emissive / UI)",
-                    "Normal Map (BC5, XY + reconstructed Z)",
-                    "Packed Data (ORM / MRA / etc.)",
-                    "HDR Environment (RGBA16F equirect, no compression)",
-                };
-                int CurrentIndex = (int)Texture->ColorSpace;
-                ImGui::TextUnformatted("Color Space");
-                ImGui::SameLine(150);
-                ImGui::SetNextItemWidth(-1);
-                if (ImGui::Combo("##ColorSpace", &CurrentIndex, ColorSpaceLabels, IM_ARRAYSIZE(ColorSpaceLabels)))
-                {
-                    Texture->ColorSpace = (ETextureColorSpace)CurrentIndex;
-                    Asset->GetPackage()->MarkDirty();
+                    ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1.0f),
+                        "Settings changed since the last cook. Recook to apply them.");
+                    ImGui::Spacing();
                 }
 
-                ImGui::Spacing();
+                if (ImGui::Button("Recook##Texture", ImVec2(-1, 0)))
+                {
+                    if (CTextureFactory::Recook(Texture))
+                    {
+                        ImGuiX::Notifications::NotifySuccess("Recooked '{0}'", Texture->GetName().c_str());
+                    }
+                    else
+                    {
+                        ImGuiX::Notifications::NotifyError("Recook failed for '{0}' -- check log",
+                            Texture->GetName().c_str());
+                    }
+                }
+
+                // A missing source is a quality note, not a blocker: the cooked mips decode back to an image.
                 if (Texture->SourcePath.empty())
                 {
-                    ImGui::BeginDisabled();
-                    ImGui::Button("Recook (no source path)##Texture", ImVec2(-1, 0));
-                    ImGui::EndDisabled();
-                    ImGuiX::TextTooltip("This asset wasn't imported from a standalone file (likely embedded in a mesh import), so there's nothing on disk to re-cook from.");
+                    ImGuiX::TextTooltip("Re-encodes the pixels already in this asset with the settings above. "
+                                        "It has no source file (mesh-embedded, or the file moved), so a "
+                                        "block-compressed texture takes a second compression generation and "
+                                        "tonal adjustments stack on the previous pass instead of replacing it.");
                 }
                 else
                 {
-                    if (ImGui::Button("Recook##Texture", ImVec2(-1, 0)))
-                    {
-                        if (CTextureFactory::Recook(Texture))
-                        {
-                            ImGuiX::Notifications::NotifySuccess("Recooked '{0}' as {1}",
-                                Texture->GetName().c_str(), ColorSpaceLabels[(int)Texture->ColorSpace]);
-                        }
-                        else
-                        {
-                            ImGuiX::Notifications::NotifyError("Recook failed for '{0}' -- check log",
-                                Texture->GetName().c_str());
-                        }
-                    }
-                    ImGuiX::TextTooltip("Re-run Basis Universal compression with the current Color Space, picking the right BC format and encoder mode. Source: %s", Texture->SourcePath.c_str());
+                    ImGuiX::TextTooltip("Re-reads the source file and re-encodes it with the settings above: color space, "
+                                        "compression quality, mip policy, size cap and every source adjustment. "
+                                        "Source: %s", Texture->SourcePath.c_str());
                 }
+
+                ImGui::Spacing();
+
+                // The live split, not the setting: bNeverStream only reaches the split on the next save.
+                ImGui::TextUnformatted("Streaming");
+                ImGui::SameLine(150);
+                if (Texture->IsStreamable())
+                {
+                    ImGui::TextColored(ImVec4(0.6f, 0.85f, 0.6f, 1.0f), "on (mips 0-%u stream)",
+                        (uint32)CookedDesc.FirstInlineMip - 1u);
+                }
+                else
+                {
+                    ImGui::TextDisabled("off (whole chain resident)");
+                }
+                ImGuiX::TextTooltip("Never Stream, a group that disables it, or a single-mip texture all turn "
+                                    "streaming off. The split is rebuilt when the package is saved.");
+
+                ImGui::TextUnformatted("Sampler");
+                ImGui::SameLine(150);
+                ImGui::TextUnformatted(StockSamplerLabel(Texture->GetStockSampler()));
+                ImGuiX::TextTooltip("What a material samples this texture through when its TextureSample node is "
+                                    "left at FromTexture. Materials bake it at compile time, so they need "
+                                    "recompiling after a change here.");
             }
 
             ImGui::Spacing();
@@ -706,67 +810,6 @@ namespace Lumina
             ImGuiX::Font::PopFont();
 
             ImGui::Spacing();
-            ImGui::TextDisabled("Transform Tools");
-            ImGui::Spacing();
-            
-            if (ImGui::Button("Flip Vertical##Texture", ImVec2(150, 0)))
-            {
-                for (FTextureResource::FMip& Mip : Texture->GetTextureResource().Mips)
-                {
-                    uint8* Pixels           = Mip.Pixels.data();
-                    uint32 Height           = Mip.Height;
-                    uint32 RowSize          = Mip.RowPitch;
-                    
-                    TVector<uint8> TempRow(RowSize);
-
-                    for (uint32 Y = 0; Y < Height / 2; Y++)
-                    {
-                        uint8* Top    = Pixels + Y * RowSize;
-                        uint8* Bottom = Pixels + (Height - 1 - Y) * RowSize;
-                    
-                        memcpy(TempRow.data(), Top, RowSize);
-                        memcpy(Top, Bottom, RowSize);
-                        memcpy(Bottom, TempRow.data(), RowSize);
-                    }
-                }
-                
-                Asset->PostLoad();
-                Asset->GetPackage()->MarkDirty();
-            }
-            ImGuiX::TextTooltip("Flip the texture along the vertical axis.");
-            
-            ImGui::SameLine();
-            
-            if (ImGui::Button("Flip Horizontal##Texture", ImVec2(150, 0)))
-            {
-                for (FTextureResource::FMip& Mip : Texture->GetTextureResource().Mips)
-                {
-                    uint8* Pixels        = Mip.Pixels.data();
-                    uint32 Width         = Mip.Width;
-                    uint32 Height        = Mip.Height;
-                    uint32 BytesPerPixel = Mip.RowPitch / Mip.Width;
-
-                    for (uint32 Y = 0; Y < Height; Y++)
-                    {
-                        for (uint32 X = 0; X < Width / 2; X++)
-                        {
-                            uint8* Left  = Pixels + (Y * Width + X) * BytesPerPixel;
-                            uint8* Right = Pixels + (Y * Width + (Width - 1 - X)) * BytesPerPixel;
-
-                            for (uint32 C = 0; C < BytesPerPixel; C++)
-                            {
-                                std::swap(Left[C], Right[C]);
-                            }
-                        }
-                    }
-                }
-                
-                Asset->PostLoad();
-                Asset->GetPackage()->MarkDirty();
-            }
-            
-            ImGuiX::TextTooltip("Flip the texture along the horizontal axis.");
-
             if (ImGui::Button("Export to File...", ImVec2(-1, 0)))
             {
                 // TODO: Implement export

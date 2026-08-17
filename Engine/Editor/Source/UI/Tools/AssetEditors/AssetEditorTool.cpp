@@ -64,9 +64,13 @@ namespace Lumina
         });
 
         // Finish (edit end): commit; the command captures its after-image and self-drops if nothing changed.
-        PropertyTable.SetFinishEditCallback([this](const FPropertyChangedEvent&)
+        PropertyTable.SetFinishEditCallback([this](const FPropertyChangedEvent& Event)
         {
             GetTransactionManager().CommitTransaction();
+
+            // After the commit, so anything the tool does in response is a separate transaction rather than
+            // landing inside the one that recorded the edit.
+            OnPropertyEditFinished(Event);
         });
     }
 

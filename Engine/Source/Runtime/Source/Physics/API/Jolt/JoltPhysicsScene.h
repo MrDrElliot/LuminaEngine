@@ -173,18 +173,19 @@ namespace Lumina::Physics
     	uint32 GetEntityBodyID(entt::entity Entity) override;
     	
     	TOptional<SRayResult> CastRay(const SRayCastSettings& Settings) override;
-		TVector<SRayResult> CastSphere(const SSphereCastSettings& Settings) override;
-		TVector<SRayResult> CastRayAll(const SRayCastSettings& Settings) override;
+		void CastSphere(const SSphereCastSettings& Settings, TVector<SRayResult>& OutHits) override;
+		TOptional<SRayResult> CastSphereClosest(const SSphereCastSettings& Settings) override;
+		void CastRayAll(const SRayCastSettings& Settings, TVector<SRayResult>& OutHits) override;
 
 		// Skeleton bone index behind a hit body: ragdoll per-bone bodies map through the entity's
 		// ragdoll handle; every other body returns INDEX_NONE.
 		int32 ResolveHitBoneIndex(entt::entity Entity, JPH::BodyID BodyID) const;
-		void CollidePoint(const FVector3& Point, const TVector<uint32>& IgnoreBodies, TVector<entt::entity>& OutEntities) override;
-		void OverlapSphere(const FVector3& Center, float Radius, const TVector<uint32>& IgnoreBodies, TVector<entt::entity>& OutEntities) override;
-		void OverlapBox(const FVector3& Center, const FVector3& HalfExtents, const FQuat& Rotation, const TVector<uint32>& IgnoreBodies, TVector<entt::entity>& OutEntities) override;
+		int32 CollidePoint(const FVector3& Point, TSpan<const uint32> IgnoreBodies, TSpan<entt::entity> OutEntities) override;
+		int32 OverlapSphere(const FVector3& Center, float Radius, TSpan<const uint32> IgnoreBodies, TSpan<entt::entity> OutEntities) override;
+		int32 OverlapBox(const FVector3& Center, const FVector3& HalfExtents, const FQuat& Rotation, TSpan<const uint32> IgnoreBodies, TSpan<entt::entity> OutEntities) override;
 
 		// Shared CollideShape overlap: gathers distinct entities into OutEntities. Shape is owned by the caller.
-		void OverlapShapeInternal(const JPH::Shape* Shape, const JPH::RMat44& Transform, const TVector<uint32>& IgnoreBodies, TVector<entt::entity>& OutEntities);
+		int32 OverlapShapeInternal(const JPH::Shape* Shape, const JPH::RMat44& Transform, TSpan<const uint32> IgnoreBodies, TSpan<entt::entity> OutEntities);
     	
     	// Lazily stands up the per-worker character-substep allocator pool on the first character;
     	// character-free worlds never allocate it.

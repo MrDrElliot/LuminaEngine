@@ -99,6 +99,7 @@
 #include "Tools/ContentBrowserEditorTool.h"
 #include "Tools/EditorAssetActions.h"
 #include "Tools/UI/ImGui/EditorColors.h"
+#include "Tools/UI/ImGui/ImGuiDragDrop.h"
 #include "Tools/EditorTool.h"
 #include "Tools/EditorToolRegistry.h"
 #include "Tools/ToolsMenuRegistry.h"
@@ -1897,11 +1898,48 @@ namespace Lumina
         return BottomDockID;
     }
 
+    void FEditorUI::DrawOrphanedDragPreview()
+    {
+        if (!bDrawerClosedByDrag)
+        {
+            return;
+        }
+
+        const DragDrop::FPayload* Payload = DragDrop::PeekPayload();
+        if (Payload == nullptr || !ImGui::IsMouseDown(ImGuiMouseButton_Left))
+        {
+            bDrawerClosedByDrag = false;
+            return;
+        }
+
+        const FStringView Path = Payload->Kind == DragDrop::EPayloadKind::Asset
+            ? FStringView(Payload->AssetPath.c_str(), Payload->AssetPath.size())
+            : FStringView(Payload->FilePath.c_str(), Payload->FilePath.size());
+        if (Path.empty())
+        {
+            return;
+        }
+
+        const size_t Slash = Path.find_last_of('/');
+        const FStringView Name = Slash == FStringView::npos ? Path : Path.substr(Slash + 1);
+
+        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceExtern))
+        {
+            ImGui::TextUnformatted(LE_ICON_FILE_MOVE);
+            ImGui::SameLine();
+            ImGui::TextUnformatted(Name.data(), Name.data() + Name.size());
+            ImGui::EndDragDropSource();
+        }
+    }
+
     void FEditorUI::DrawFooterDrawer(const FUpdateContext& UpdateContext)
     {
+        DrawOrphanedDragPreview();
+
         if (OpenDrawer == nullptr)
         {
             DrawerOpenAmount = 0.0f;
+            bDrawerDragSeen = false;
             ImGuiX::Notifications::SetBottomInset(0.0f);
             return;
         }
@@ -2054,6 +2092,24 @@ namespace Lumina
         {
             OpenDrawer = nullptr;
             DrawerOpenAmount = 0.0f;
+            return;
+        }
+
+        // Only drags that began inside: an outliner drag passing overhead must not dismiss the drawer.
+        if (DragDrop::PeekPayload() == nullptr)
+        {
+            bDrawerDragSeen = false;
+        }
+        else if (!bDrawerDragSeen)
+        {
+            bDrawerDragSeen = true;
+            bDrawerDragStartedInDrawer = bMouseInside;
+        }
+        else if (bDrawerDragStartedInDrawer && !bMouseInside)
+        {
+            OpenDrawer = nullptr;
+            DrawerOpenAmount = 0.0f;
+            bDrawerClosedByDrag = true;
         }
     }
 

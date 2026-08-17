@@ -8,7 +8,7 @@ namespace Lumina
     void FReflectedMapProperty::AppendDefinition(Reflection::FCodeWriter& Writer) const
     {
         // FMapPropertyParams carries a single GetOpsFn: the per-property forwarder that returns the shared
-        // GetMapOps<Key,Value> table (a static member so both template types resolve in scope).
+        // GetMapOpsFor<Container> table (a static member so the container type resolves in scope).
         const eastl::string CustomData = AccessorScope + Name + "MapOps_WrapperImpl";
         const eastl::string PropertyFlagStr = PropertyFlagsToString(PropertyFlags);
         AppendPropertyDef(Writer, PropertyFlagStr.c_str(), "Lumina::EPropertyTypeFlags::Map", CustomData);
@@ -36,8 +36,6 @@ namespace Lumina
         const eastl::string& Q = AccessorDefinitionScope;
         const char* N = Name.c_str();
         const char* Raw = RawTypeName.c_str();       // The container type, e.g. THashMap<K,V>.
-        const char* Key = KeyTypeName.c_str();       // The key type K.
-        const char* Val = ValueTypeName.c_str();     // The value type V.
 
         // Object is the container instance itself (&THashMap<K,V>); the caller resolves the member offset.
 
@@ -48,11 +46,12 @@ namespace Lumina
         Writer.EndBlock();
         Writer.Line();
 
-        // The whole operation set is the shared key/value ops table. Resolving it here (a member of the owning
-        // type) lets the unqualified key/value names compile, unlike the global-scope params initializer.
+        // The whole operation set is the container's ops table. Resolving it here (a member of the owning type)
+        // lets the unqualified container name compile, unlike the global-scope params initializer. It is keyed
+        // on the container, not the key/value pair: a fixed map must be grown as its own type.
         Writer.Linef("const ::Lumina::FMapOps* %s%sMapOps_WrapperImpl()", Q.c_str(), N);
         Writer.BeginBlock();
-        Writer.Linef("return ::Lumina::GetMapOps<%s, %s>();", Key, Val);
+        Writer.Linef("return ::Lumina::GetMapOpsFor<%s>();", Raw);
         Writer.EndBlock();
         Writer.Line();
 

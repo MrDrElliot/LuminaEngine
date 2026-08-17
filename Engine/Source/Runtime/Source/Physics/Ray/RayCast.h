@@ -3,12 +3,18 @@
 #include <entt/entt.hpp>
 
 #include "Platform/GenericPlatform.h"
+#include "Containers/Array.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Physics/PhysicsTypes.h"
 #include "RayCast.generated.h"
 
 namespace Lumina
 {
+    // Inline capacity for a query's ignore list; going past it spills to the heap, never drops bodies.
+    inline constexpr size_t MaxInlineIgnoreBodies = 8;
+
+    inline constexpr ECollisionProfiles AllCollisionProfiles = (ECollisionProfiles)0xFFFF;
+
     REFLECT()
     struct SRayResult
     {
@@ -72,11 +78,11 @@ namespace Lumina
         FVector3 DebugMissColor = FVector3(1.0f, 0.0f, 0.0f);
 
         PROPERTY(Script)
-        ECollisionProfiles LayerMask;
+        ECollisionProfiles LayerMask = AllCollisionProfiles;
 
         PROPERTY(Script)
-        TVector<uint32> IgnoreBodies;
-        
+        TFixedVector<uint32, MaxInlineIgnoreBodies> IgnoreBodies;
+
         FUNCTION(Script)
         void AddIgnoredBody(uint32 Body)
         {
@@ -113,11 +119,11 @@ namespace Lumina
         FVector3 DebugMissColor = FVector3(1.0f, 0.0f, 0.0f);
 
         PROPERTY(Script)
-        ECollisionProfiles LayerMask;
+        ECollisionProfiles LayerMask = AllCollisionProfiles;
 
         PROPERTY(Script)
-        TVector<uint32> IgnoreBodies;
-        
+        TFixedVector<uint32, MaxInlineIgnoreBodies> IgnoreBodies;
+
         FUNCTION(Script)
         void AddIgnoredBody(uint32 Body)
         {

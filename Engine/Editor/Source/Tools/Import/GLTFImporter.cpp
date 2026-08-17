@@ -8,6 +8,7 @@
 
 #include "Assets/AssetTypes/Mesh/Animation/Animation.h"
 #include "Core/Math/Math.h"
+#include "Core/Math/Transform.h"
 #include "Core/Progress/SlowTask.h"
 #include "Core/Threading/Atomic.h"
 #include "FileSystem/FileSystem.h"

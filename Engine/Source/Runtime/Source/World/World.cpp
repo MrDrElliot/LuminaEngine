@@ -1973,18 +1973,29 @@ namespace Lumina
         return Move(Result);
     }
     
-    TVector<SRayResult> CWorld::CastSphere(const SSphereCastSettings& Settings) const
+    void CWorld::CastSphere(const SSphereCastSettings& Settings, TVector<SRayResult>& OutHits) const
     {
         LUMINA_PROFILE_SCOPE();
 
         if (PhysicsScene == nullptr)
         {
-            return {};
+            OutHits.clear();
+            return;
         }
-        
-        return PhysicsScene->CastSphere(Settings);
-        
-        
+
+        PhysicsScene->CastSphere(Settings, OutHits);
+    }
+
+    TOptional<SRayResult> CWorld::CastSphereClosest(const SSphereCastSettings& Settings) const
+    {
+        LUMINA_PROFILE_SCOPE();
+
+        if (PhysicsScene == nullptr)
+        {
+            return eastl::nullopt;
+        }
+
+        return PhysicsScene->CastSphereClosest(Settings);
     }
 
     EUpdateStage CWorld::GetUpdateStage() const

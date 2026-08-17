@@ -180,11 +180,8 @@ namespace Lumina
                     Settings.IgnoreBodies.push_back(Context.GetEntityBodyID(Target));
                 }
 
-                float Nearest = 1.0f;
-                for (const SRayResult& Hit : Context.CastSphere(Settings))
-                {
-                    Nearest = Math::Min(Nearest, Hit.Fraction);
-                }
+                const TOptional<SRayResult> Hit = Context.CastSphereClosest(Settings);
+                const float Nearest = Hit.has_value() ? Math::Min(1.0f, Hit->Fraction) : 1.0f;
                 DesiredLength = Math::Max(0.0f, Arm.TargetArmLength * Nearest);
             }
 

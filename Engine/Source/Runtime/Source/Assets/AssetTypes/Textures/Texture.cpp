@@ -22,6 +22,9 @@ namespace Lumina
             TextureResource = MakeUnique<FTextureResource>();
         }
 
+        // The only window between Super::Serialize settling the property and operator<< recomputing the split.
+        TextureResource->ImageDescription.bNeverStream = !GetResolvedPolicy().bAllowStreaming;
+
         // Every write needs the pixels in hand: an archive with a bulk region copies them into it, and one
         // without has no choice but to write them inline. A streamed-out mip has neither. PreSave covers the
         // package saver, but it is a CObject hook and NOTHING else calls it -- so a texture reached through
@@ -33,6 +36,72 @@ namespace Lumina
         }
 
         Ar << *TextureResource.get();
+
+        if (Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::TEXTURE_SOURCE_FILE)
+        {
+            // Flagged first: a cooked package drops the payload and the reader cannot tell otherwise.
+            bool bHasSourceFile = Ar.IsWriting() ? (!Ar.IsCooking() && SourceFile.IsValid()) : false;
+            Ar << bHasSourceFile;
+
+            if (bHasSourceFile)
+            {
+                Ar << SourceFile;
+            }
+            else if (Ar.IsReading())
+            {
+                SourceFile.Reset();
+            }
+        }
+    }
+
+    bool CTexture::LoadSourceFileBytes()
+    {
+        if (SourceFile.IsResident())
+        {
+            return true;
+        }
+        if (!SourceFile.BulkRef.IsValid())
+        {
+            return false;
+        }
+
+        CPackage* Package = GetPackage();
+        if (Package == nullptr)
+        {
+            return false;
+        }
+
+        if (!Package->ReadBulkData(SourceFile.BulkRef, SourceFile.Bytes))
+        {
+            LOG_ERROR("CTexture: {} could not re-read its stored source bytes", GetName());
+            return false;
+        }
+        return true;
+    }
+
+    RHI::EStockSampler CTexture::GetStockSampler() const
+    {
+        const ETextureAddress Address = AddressMode;
+
+        switch (GetResolvedPolicy().Filter)
+        {
+        case ETextureFilter::Nearest:
+            return Address == ETextureAddress::Clamp  ? RHI::EStockSampler::PointClamp
+                 : Address == ETextureAddress::Mirror ? RHI::EStockSampler::PointMirror
+                 :                                      RHI::EStockSampler::PointWrap;
+
+        case ETextureFilter::Anisotropic:
+            return Address == ETextureAddress::Clamp  ? RHI::EStockSampler::AnisoClamp
+                 : Address == ETextureAddress::Mirror ? RHI::EStockSampler::AnisoMirror
+                 :                                      RHI::EStockSampler::AnisoWrap;
+
+        case ETextureFilter::FromGroup:
+        case ETextureFilter::Linear:
+        default:
+            return Address == ETextureAddress::Clamp  ? RHI::EStockSampler::LinearClamp
+                 : Address == ETextureAddress::Mirror ? RHI::EStockSampler::LinearMirror
+                 :                                      RHI::EStockSampler::LinearWrap;
+        }
     }
 
     void CTexture::PreLoad()
@@ -63,6 +132,19 @@ namespace Lumina
         }
 
         CPackage* Package = nullptr;
+
+        // Same trap as a mip: writing the source back while it is only a BulkRef replaces it with nothing.
+        if (SourceFile.BulkRef.IsValid() && !SourceFile.IsResident())
+        {
+            if (CPackage* Owner = GetPackage(); Owner != nullptr && !Owner->IsBulkPassthrough())
+            {
+                if (!Owner->ReadBulkData(SourceFile.BulkRef, SourceFile.Bytes))
+                {
+                    LOG_ERROR("CTexture: {} could not re-read its stored source; saving would drop it", GetName());
+                    Owner->FlagUnresolvedBulkData();
+                }
+            }
+        }
 
         for (FTextureResource::FMip& Mip : TextureResource->Mips)
         {

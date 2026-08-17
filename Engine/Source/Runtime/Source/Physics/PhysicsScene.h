@@ -100,21 +100,22 @@ namespace Lumina::Physics
         virtual uint32 GetEntityBodyID(entt::entity Entity) = 0;
         
         virtual TOptional<SRayResult> CastRay(const SRayCastSettings& Settings) = 0;
-        virtual TVector<SRayResult> CastSphere(const SSphereCastSettings& Settings) = 0;
 
-        // Every body the ray crosses, sorted near-to-far (penetrating bullets, all-targets line traces).
-        // Empty if nothing was hit. Default: no backend.
-        virtual TVector<SRayResult> CastRayAll(const SRayCastSettings& Settings) { return {}; }
+        // Sweep hits near-to-far; OutHits is CLEARED first, so reusing one buffer keeps the query alloc-free.
+        virtual void CastSphere(const SSphereCastSettings& Settings, TVector<SRayResult>& OutHits) = 0;
 
-        // Distinct entities whose bodies CONTAIN the world-space point (volume containment / "am I inside X",
-        // trigger tests without a sweep). Results appended to OutEntities, de-duplicated. Default: no backend.
-        virtual void CollidePoint(const FVector3& Point, const TVector<uint32>& IgnoreBodies, TVector<entt::entity>& OutEntities) {}
+        // Nearest sweep hit; lets the backend shrink the query instead of gathering every hit behind it.
+        virtual TOptional<SRayResult> CastSphereClosest(const SSphereCastSettings& Settings) { return {}; }
 
-        // Overlap queries: gather the DISTINCT entities whose bodies intersect the shape (AI perception,
-        // triggers, area-of-effect). Entities are de-duplicated; IgnoreBodies excludes specific bodies (e.g.
-        // the querier's own). Results are appended to OutEntities. Game thread only.
-        virtual void OverlapSphere(const FVector3& Center, float Radius, const TVector<uint32>& IgnoreBodies, TVector<entt::entity>& OutEntities) = 0;
-        virtual void OverlapBox(const FVector3& Center, const FVector3& HalfExtents, const FQuat& Rotation, const TVector<uint32>& IgnoreBodies, TVector<entt::entity>& OutEntities) = 0;
+        // Every body the ray crosses, near-to-far (penetrating bullets). OutHits is CLEARED first.
+        virtual void CastRayAll(const SRayCastSettings& Settings, TVector<SRayResult>& OutHits) { OutHits.clear(); }
+
+        // Distinct entities whose bodies CONTAIN the world point (volume containment, no sweep).
+        virtual int32 CollidePoint(const FVector3& Point, TSpan<const uint32> IgnoreBodies, TSpan<entt::entity> OutEntities) { return 0; }
+
+        // Distinct entities intersecting the shape; returns the count written, == size() means possibly more.
+        virtual int32 OverlapSphere(const FVector3& Center, float Radius, TSpan<const uint32> IgnoreBodies, TSpan<entt::entity> OutEntities) = 0;
+        virtual int32 OverlapBox(const FVector3& Center, const FVector3& HalfExtents, const FQuat& Rotation, TSpan<const uint32> IgnoreBodies, TSpan<entt::entity> OutEntities) = 0;
         
         virtual void OnImpulseEvent(const SImpulseEvent& Impulse) = 0;
         virtual void OnForceEvent(const SForceEvent& Force) = 0;

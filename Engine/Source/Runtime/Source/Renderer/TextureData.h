@@ -17,6 +17,45 @@ namespace Lumina
      */
     constexpr uint32 kInlineMipMaxDimension = 256;
 
+    /** Imported file bytes, so a re-cook starts pristine. Editor-only, bulk-held, NOT resident after load. */
+    struct FTextureSourceFile
+    {
+        TVector<uint8> Bytes;
+        FBulkDataRef   BulkRef;
+
+        bool IsValid() const     { return !Bytes.empty() || BulkRef.IsValid(); }
+        bool IsResident() const  { return !Bytes.empty(); }
+        uint64 SizeBytes() const { return BulkRef.IsValid() ? (uint64)BulkRef.Size : (uint64)Bytes.size(); }
+
+        void Reset()
+        {
+            Bytes.clear();
+            Bytes.shrink_to_fit();
+            BulkRef = FBulkDataRef{};
+        }
+
+        friend FArchive& operator << (FArchive& Ar, FTextureSourceFile& Data)
+        {
+            if (Ar.SupportsBulkData())
+            {
+                if (Ar.IsWriting() && !Ar.IsBulkPassthrough())
+                {
+                    if (!Ar.WriteBulkData(Data.BulkRef, Data.Bytes.data(), (int64)Data.Bytes.size()))
+                    {
+                        LOG_ERROR("FTextureSourceFile: failed to write {} source bytes", Data.Bytes.size());
+                        Data.BulkRef = FBulkDataRef{};
+                    }
+                }
+                Ar << Data.BulkRef;
+                return Ar;
+            }
+
+            // No bulk region (duplication, transient, network), so it goes inline.
+            Ar << Data.Bytes;
+            return Ar;
+        }
+    };
+
     struct FTextureResource
     {
         struct FMip
@@ -52,6 +91,9 @@ namespace Lumina
              *  every pre-PACKAGE_BULK_DATA asset, every texture array, and every texture small enough not to
              *  be worth splitting look like. */
             uint8        FirstInlineMip = 0;
+
+            // Set from CTexture::bNeverStream before a write; the split it produces is what persists.
+            bool         bNeverStream = false;
 
             friend FArchive& operator << (FArchive& Ar, FDescription& Data)
             {
@@ -183,6 +225,11 @@ namespace Lumina
          *  point: a 4K BC7 array of 3 layers is 64 MB fully resident and ~260 KB at its tail. */
         static uint8 ComputeFirstInlineMip(const FDescription& Desc)
         {
+            if (Desc.bNeverStream)
+            {
+                return 0;
+            }
+
             const uint32 NumMips = Desc.NumMips > 0 ? (uint32)Desc.NumMips : 1u;
             for (uint32 Mip = 0; Mip < NumMips; ++Mip)
             {

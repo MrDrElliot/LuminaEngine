@@ -14,7 +14,7 @@
 namespace Lumina::Import::Textures
 {
     
-    static void ResizeResult(FTextureImportResult& Source, FUIntVector2 TargetSize)
+    void ResizeImportResult(FTextureImportResult& Source, FUIntVector2 TargetSize)
     {
         LUMINA_MEMORY_SCOPE("Textures");
 
@@ -22,7 +22,12 @@ namespace Lumina::Import::Textures
         const uint32 SrcH = Source.Dimensions.y;
         const uint32 DstW = TargetSize.x;
         const uint32 DstH = TargetSize.y;
-        
+
+        if (SrcW == 0 || SrcH == 0 || DstW == 0 || DstH == 0 || (SrcW == DstW && SrcH == DstH))
+        {
+            return;
+        }
+
         stbir_pixel_layout Layout;
         stbir_datatype     DataType;
     
@@ -40,25 +45,103 @@ namespace Lumina::Import::Textures
             case EFormat::RGB32_FLOAT:    Layout = STBIR_RGB;      DataType = STBIR_TYPE_FLOAT;  break;
             case EFormat::RGBA32_FLOAT:   Layout = STBIR_RGBA;     DataType = STBIR_TYPE_FLOAT;  break;
             default:
-                LOG_WARN("ResizeResult: Unsupported format for resize");
+                LOG_WARN("ResizeImportResult: Unsupported format for resize");
                 return;
         }
     
-        uint32 BytesPerPixel = (uint32)Source.Pixels.size() / (SrcW * SrcH);
-        Source.Pixels.resize(static_cast<size_t>(DstW * DstH * BytesPerPixel));
-    
+        const uint32 BytesPerPixel = (uint32)Source.Pixels.size() / (SrcW * SrcH);
+
+        // A fresh buffer, not in place: stbir reads the source while it writes.
+        TVector<uint8> Resized(static_cast<size_t>(DstW) * DstH * BytesPerPixel);
+
         stbir_resize
         (
             Source.Pixels.data(), (int)SrcW, (int)SrcH, 0,
-            Source.Pixels.data(), (int)DstW, (int)DstH, 0,
+            Resized.data(), (int)DstW, (int)DstH, 0,
             Layout, DataType,
             STBIR_EDGE_CLAMP,
             STBIR_FILTER_MITCHELL
         );
     
+        Source.Pixels     = eastl::move(Resized);
         Source.Dimensions = TargetSize;
     }
-    
+
+    void FlipImportResultVertical(FTextureImportResult& Source)
+    {
+        const uint32 Width  = Source.Dimensions.x;
+        const uint32 Height = Source.Dimensions.y;
+        if (Width == 0 || Height < 2)
+        {
+            return;
+        }
+
+        const size_t RowBytes = Source.Pixels.size() / Height;
+        TVector<uint8> Scratch(RowBytes);
+
+        for (uint32 Row = 0; Row < Height / 2; ++Row)
+        {
+            uint8* Top    = Source.Pixels.data() + (size_t)Row * RowBytes;
+            uint8* Bottom = Source.Pixels.data() + (size_t)(Height - 1 - Row) * RowBytes;
+
+            Memory::Memcpy(Scratch.data(), Top, RowBytes);
+            Memory::Memcpy(Top, Bottom, RowBytes);
+            Memory::Memcpy(Bottom, Scratch.data(), RowBytes);
+        }
+    }
+
+    void FlipImportResultHorizontal(FTextureImportResult& Source)
+    {
+        const uint32 Width  = Source.Dimensions.x;
+        const uint32 Height = Source.Dimensions.y;
+        if (Width < 2 || Height == 0)
+        {
+            return;
+        }
+
+        const size_t RowBytes      = Source.Pixels.size() / Height;
+        const size_t BytesPerTexel = RowBytes / Width;
+        if (BytesPerTexel == 0)
+        {
+            return;
+        }
+
+        TVector<uint8> Scratch(BytesPerTexel);
+
+        for (uint32 Row = 0; Row < Height; ++Row)
+        {
+            uint8* RowStart = Source.Pixels.data() + (size_t)Row * RowBytes;
+            for (uint32 Column = 0; Column < Width / 2; ++Column)
+            {
+                uint8* Left  = RowStart + (size_t)Column * BytesPerTexel;
+                uint8* Right = RowStart + (size_t)(Width - 1 - Column) * BytesPerTexel;
+
+                Memory::Memcpy(Scratch.data(), Left, BytesPerTexel);
+                Memory::Memcpy(Left, Right, BytesPerTexel);
+                Memory::Memcpy(Right, Scratch.data(), BytesPerTexel);
+            }
+        }
+    }
+
+    FUIntVector2 ClampToMaxDimension(FUIntVector2 Size, uint32 MaxDimension)
+    {
+        if (MaxDimension == 0 || Size.x == 0 || Size.y == 0)
+        {
+            return Size;
+        }
+
+        const uint32 Longest = Math::Max(Size.x, Size.y);
+        if (Longest <= MaxDimension)
+        {
+            return Size;
+        }
+
+        const double Scale = (double)MaxDimension / (double)Longest;
+        return FUIntVector2(
+            Math::Max(1u, (uint32)std::lround(Size.x * Scale)),
+            Math::Max(1u, (uint32)std::lround(Size.y * Scale)));
+    }
+
     TOptional<FTextureImportResult> ImportTexture(FStringView RawFilePath, bool bFlipVertical, FUIntVector2 Size)
     {
         LUMINA_MEMORY_SCOPE("Textures");
@@ -191,7 +274,7 @@ namespace Lumina::Import::Textures
         
         if (Size.x > 0 && Size.y > 0)
         {
-            ResizeResult(Result, Size);
+            ResizeImportResult(Result, Size);
         }
         
         stbi_image_free(data);
@@ -331,7 +414,7 @@ namespace Lumina::Import::Textures
         
         if (Size.x > 0 && Size.y > 0)
         {
-            ResizeResult(Result, Size);
+            ResizeImportResult(Result, Size);
         }
         
         stbi_image_free(data);

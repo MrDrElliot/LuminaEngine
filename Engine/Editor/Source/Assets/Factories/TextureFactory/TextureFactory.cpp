@@ -7,6 +7,7 @@
 #include "Core/Object/Package/Thumbnail/PackageThumbnail.h"
 #include "encoder/basisu_comp.h"
 #include "encoder/basisu_enc.h"
+#include "encoder/basisu_gpu_texture.h"
 #include "Paths/Paths.h"
 #include "Platform/Filesystem/FileHelper.h"
 #include "Renderer/RenderManager.h"
@@ -24,6 +25,8 @@ namespace Lumina
         return NewObject<CTexture>(Package, Name);
     }
 
+    static bool HasPerTexelAdjustments(const CTexture* Texture);
+
     // Enforces the texture group's mip policy on an already-cooked resource.
     static void ApplyTextureGroupMipPolicy(CTexture* Texture)
     {
@@ -31,7 +34,7 @@ namespace Lumina
         {
             return;
         }
-        if (TextureGroupGeneratesMips(Texture->Group))
+        if (Texture->GetResolvedPolicy().bGenerateMips)
         {
             return;
         }
@@ -99,6 +102,13 @@ namespace Lumina
                 LOG_WARN("CookEnvironmentTexture: '{0}' isn't a float source; Environment color space requires .hdr",
                          Texture->GetName().c_str());
                 return false;
+        }
+
+        // The adjustment stack quantizes to 8 bits, which is the one thing this path exists to avoid.
+        if (HasPerTexelAdjustments(Texture))
+        {
+            LOG_WARN("TextureFactory: '{0}' is an HDR source; its per-texel adjustments are ignored because "
+                     "applying them would quantize the radiances to 8 bits.", Texture->GetName().c_str());
         }
 
         const float* SrcFloats = reinterpret_cast<const float*>(Source.Pixels.data());
@@ -266,7 +276,233 @@ namespace Lumina
         return true;
     }
     
-    static bool CookTexturePixels(CTexture* Texture, const TVector<uint8>& Pixels, FUIntVector2 Dimensions, ETextureColorSpace ColorSpace, uint32 EncodeThreads = 0, bool bCreateGPUResource = true)
+    // True when the texture asks for an edit that rewrites individual texels of an RGBA8 source.
+    static bool HasPerTexelAdjustments(const CTexture* Texture)
+    {
+        return Texture->bFlipGreenChannel
+            || Texture->bChromaKey
+            || Texture->bCompressWithoutAlpha
+            || Texture->AdjustBrightness      != 1.0f
+            || Texture->AdjustBrightnessCurve != 1.0f
+            || Texture->AdjustRGBCurve        != 1.0f
+            || Texture->AdjustSaturation      != 1.0f
+            || Texture->AdjustVibrance        != 0.0f
+            || Texture->AdjustHue             != 0.0f
+            || Texture->AdjustMinAlpha        != 0.0f
+            || Texture->AdjustMaxAlpha        != 1.0f;
+    }
+
+    // Every source edit, including the ones that apply to any pixel layout.
+    static bool HasSourceAdjustments(const CTexture* Texture)
+    {
+        return Texture->bFlipVertical || Texture->bFlipHorizontal || HasPerTexelAdjustments(Texture);
+    }
+
+    static void RGBToHSV(float R, float G, float B, float& H, float& S, float& V)
+    {
+        const float MaxC  = Math::Max(R, Math::Max(G, B));
+        const float MinC  = Math::Min(R, Math::Min(G, B));
+        const float Delta = MaxC - MinC;
+
+        V = MaxC;
+        S = (MaxC > 0.0f) ? (Delta / MaxC) : 0.0f;
+
+        if (Delta <= 0.0f)
+        {
+            H = 0.0f;
+            return;
+        }
+
+        if (MaxC == R)      { H = 60.0f * std::fmod((G - B) / Delta, 6.0f); }
+        else if (MaxC == G) { H = 60.0f * (((B - R) / Delta) + 2.0f); }
+        else                { H = 60.0f * (((R - G) / Delta) + 4.0f); }
+
+        if (H < 0.0f)
+        {
+            H += 360.0f;
+        }
+    }
+
+    static void HSVToRGB(float H, float S, float V, float& R, float& G, float& B)
+    {
+        H = std::fmod(H, 360.0f);
+        if (H < 0.0f)
+        {
+            H += 360.0f;
+        }
+
+        const float C = V * S;
+        const float X = C * (1.0f - std::fabs(std::fmod(H / 60.0f, 2.0f) - 1.0f));
+        const float M = V - C;
+
+        float Rp = 0.0f, Gp = 0.0f, Bp = 0.0f;
+        if      (H <  60.0f) { Rp = C; Gp = X; }
+        else if (H < 120.0f) { Rp = X; Gp = C; }
+        else if (H < 180.0f) { Gp = C; Bp = X; }
+        else if (H < 240.0f) { Gp = X; Bp = C; }
+        else if (H < 300.0f) { Rp = X; Bp = C; }
+        else                 { Rp = C; Bp = X; }
+
+        R = Rp + M;
+        G = Gp + M;
+        B = Bp + M;
+    }
+
+    // Per-texel source edits on an RGBA8 buffer, in place, before block compression.
+    static void ApplySourceAdjustments(const CTexture* Texture, TVector<uint8>& Pixels, uint64 PixelCount)
+    {
+        if (!HasPerTexelAdjustments(Texture))
+        {
+            return;
+        }
+
+        const bool bHue         = Texture->AdjustHue             != 0.0f;
+        const bool bSaturation  = Texture->AdjustSaturation      != 1.0f;
+        const bool bBrightness  = Texture->AdjustBrightness      != 1.0f;
+        const bool bBrightCurve = Texture->AdjustBrightnessCurve != 1.0f;
+        const bool bRGBCurve    = Texture->AdjustRGBCurve        != 1.0f;
+        const bool bVibrance    = Texture->AdjustVibrance        >  0.0f;
+        const bool bAlphaRange  = Texture->AdjustMinAlpha != 0.0f || Texture->AdjustMaxAlpha != 1.0f;
+        const bool bHSV         = bHue || bSaturation || bBrightness || bBrightCurve;
+
+        const FVector3 Key       = Texture->ChromaKeyColor;
+        const float    KeyThresh = Texture->ChromaKeyThreshold;
+
+        auto Quantize = [](float X)
+        {
+            return (uint8)Math::Clamp((int32)std::lround(Math::Clamp(X, 0.0f, 1.0f) * 255.0f), 0, 255);
+        };
+
+        for (uint64 i = 0; i < PixelCount; ++i)
+        {
+            uint8* Texel = &Pixels[i * 4];
+
+            float R = Texel[0] / 255.0f;
+            float G = Texel[1] / 255.0f;
+            float B = Texel[2] / 255.0f;
+            float A = Texel[3] / 255.0f;
+
+            if (Texture->bFlipGreenChannel)
+            {
+                G = 1.0f - G;
+            }
+
+            if (Texture->bChromaKey)
+            {
+                const float DR = R - Key.x;
+                const float DG = G - Key.y;
+                const float DB = B - Key.z;
+                if ((DR * DR + DG * DG + DB * DB) <= (KeyThresh * KeyThresh))
+                {
+                    Texel[0] = Texel[1] = Texel[2] = Texel[3] = 0;
+                    continue;
+                }
+            }
+
+            if (bHSV)
+            {
+                float H, S, V;
+                RGBToHSV(R, G, B, H, S, V);
+
+                H += Texture->AdjustHue;
+                S  = Math::Clamp(S * Texture->AdjustSaturation, 0.0f, 1.0f);
+                V  = Math::Clamp(V * Texture->AdjustBrightness, 0.0f, 1.0f);
+
+                if (bBrightCurve)
+                {
+                    V = std::pow(V, Texture->AdjustBrightnessCurve);
+                }
+
+                HSVToRGB(H, S, V, R, G, B);
+            }
+
+            if (bVibrance)
+            {
+                const float Luma = 0.2126f * R + 0.7152f * G + 0.0722f * B;
+                const float MaxC = Math::Max(R, Math::Max(G, B));
+                const float MinC = Math::Min(R, Math::Min(G, B));
+
+                // Weighted by how UNsaturated the texel already is: vivid colors are left alone.
+                const float Boost = Texture->AdjustVibrance * (1.0f - (MaxC - MinC));
+
+                R = Luma + (R - Luma) * (1.0f + Boost);
+                G = Luma + (G - Luma) * (1.0f + Boost);
+                B = Luma + (B - Luma) * (1.0f + Boost);
+            }
+
+            if (bRGBCurve)
+            {
+                R = std::pow(Math::Max(R, 0.0f), Texture->AdjustRGBCurve);
+                G = std::pow(Math::Max(G, 0.0f), Texture->AdjustRGBCurve);
+                B = std::pow(Math::Max(B, 0.0f), Texture->AdjustRGBCurve);
+            }
+
+            if (bAlphaRange)
+            {
+                A = Texture->AdjustMinAlpha + A * (Texture->AdjustMaxAlpha - Texture->AdjustMinAlpha);
+            }
+
+            if (Texture->bCompressWithoutAlpha)
+            {
+                A = 1.0f;
+            }
+
+            Texel[0] = Quantize(R);
+            Texel[1] = Quantize(G);
+            Texel[2] = Quantize(B);
+            Texel[3] = Quantize(A);
+        }
+    }
+
+    // Encoder effort. Higher settings cost cook time only; the stored format and size do not change.
+    static void ApplyCompressionQuality(ETextureCompressionQuality Quality, basisu::basis_compressor_params& Params)
+    {
+        switch (Quality)
+        {
+        case ETextureCompressionQuality::Fastest:
+            Params.m_quality_level            = 64;
+            Params.m_pack_uastc_ldr_4x4_flags = basisu::cPackUASTCLevelFastest;
+            break;
+        case ETextureCompressionQuality::High:
+            Params.m_quality_level            = 192;
+            Params.m_pack_uastc_ldr_4x4_flags = basisu::cPackUASTCLevelDefault;
+            break;
+        case ETextureCompressionQuality::Highest:
+            Params.m_quality_level            = 255;
+            Params.m_pack_uastc_ldr_4x4_flags = basisu::cPackUASTCLevelSlower;
+            break;
+        case ETextureCompressionQuality::Default:
+        default:
+            Params.m_quality_level            = 128;
+            Params.m_pack_uastc_ldr_4x4_flags = basisu::cPackUASTCLevelFastest;
+            break;
+        }
+    }
+
+    // Source edits that apply to every pixel layout, so they run ahead of the format branch.
+    static void PrepareSource(const CTexture* Texture, Import::Textures::FTextureImportResult& Result)
+    {
+        if (Texture->bFlipVertical)
+        {
+            Import::Textures::FlipImportResultVertical(Result);
+        }
+
+        if (Texture->bFlipHorizontal)
+        {
+            Import::Textures::FlipImportResultHorizontal(Result);
+        }
+
+        const uint32 MaxDimension = Texture->GetResolvedPolicy().MaxDimension;
+        const FUIntVector2 Target = Import::Textures::ClampToMaxDimension(Result.Dimensions, MaxDimension);
+        if (Target.x != Result.Dimensions.x || Target.y != Result.Dimensions.y)
+        {
+            LOG_INFO("TextureFactory: '{0}' capped from {1}x{2} to {3}x{4} by MaxTextureSize.",
+                     Texture->GetName().c_str(), Result.Dimensions.x, Result.Dimensions.y, Target.x, Target.y);
+            Import::Textures::ResizeImportResult(Result, Target);
+        }
+    }
+
+    static bool CookTexturePixels(CTexture* Texture, TVector<uint8>& Pixels, FUIntVector2 Dimensions, ETextureColorSpace ColorSpace, uint32 EncodeThreads = 0, bool bCreateGPUResource = true)
     {
         const uint64 RequiredBytes = (uint64)Dimensions.x * Dimensions.y * 4;
         if (RequiredBytes == 0 || Pixels.size() < RequiredBytes)
@@ -276,6 +512,8 @@ namespace Lumina
             return false;
         }
         
+        ApplySourceAdjustments(Texture, Pixels, (uint64)Dimensions.x * Dimensions.y);
+
         basisu::basisu_encoder_init();
 
         const bool bIsSRGB     = (ColorSpace == ETextureColorSpace::SRGB);
@@ -294,14 +532,14 @@ namespace Lumina
         Params.m_uastc                      = true;
         Params.m_print_stats                = false;
         Params.m_status_output              = false;   // silence per-slice "Slice: N, alpha: ..." spam during cook
-        Params.m_mip_gen                    = TextureGroupGeneratesMips(Texture->Group);
+        Params.m_mip_gen                    = Texture->GetResolvedPolicy().bGenerateMips;
         Params.m_mip_fast                   = true;
         Params.m_multithreading             = (TotalEncodeThreads > 1);
         Params.m_create_ktx2_file           = false;
-        Params.m_quality_level              = 128;
-        Params.m_pack_uastc_ldr_4x4_flags   = basisu::cPackUASTCLevelFastest;
         Params.m_perceptual                 = bIsSRGB;
         Params.m_mip_srgb                   = bIsSRGB;
+
+        ApplyCompressionQuality(Texture->CompressionQuality, Params);
 
         basisu::basis_compressor Compressor;
         if (!Compressor.init(Params))
@@ -728,6 +966,124 @@ namespace Lumina
     }
 #endif
 
+    bool CTextureFactory::RecoverSourceImage(CTexture* Texture, Import::Textures::FTextureImportResult& OutResult)
+    {
+        if (Texture->TextureResource == nullptr || Texture->TextureResource->Mips.empty())
+        {
+            return false;
+        }
+
+        // The top mip is the first thing the streamer evicts, and it is exactly the one needed here.
+        Texture->MakeStreamedMipsResident();
+
+        const FTextureResource::FMip& Mip = Texture->TextureResource->Mips[0];
+        const EFormat Format = Texture->TextureResource->ImageDescription.Format;
+
+        const uint32 Width  = Mip.Width;
+        const uint32 Height = Mip.Height;
+        if (Width == 0 || Height == 0 || Mip.Pixels.empty())
+        {
+            return false;
+        }
+
+        OutResult.Dimensions = FUIntVector2(Width, Height);
+
+        if (Format == EFormat::RGBA16_FLOAT)
+        {
+            const uint64 Texels = (uint64)Width * Height;
+            if (Mip.Pixels.size() < Texels * 8)
+            {
+                return false;
+            }
+
+            OutResult.Format = EFormat::RGBA32_FLOAT;
+            OutResult.Pixels.resize(Texels * 4 * sizeof(float));
+
+            const uint32* Halves = reinterpret_cast<const uint32*>(Mip.Pixels.data());
+            float* Floats = reinterpret_cast<float*>(OutResult.Pixels.data());
+            for (uint64 i = 0; i < Texels; ++i)
+            {
+                const FVector2 RG = Math::UnpackHalf2x16(Halves[i * 2 + 0]);
+                const FVector2 BA = Math::UnpackHalf2x16(Halves[i * 2 + 1]);
+                Floats[i * 4 + 0] = RG.x;
+                Floats[i * 4 + 1] = RG.y;
+                Floats[i * 4 + 2] = BA.x;
+                Floats[i * 4 + 3] = BA.y;
+            }
+            return true;
+        }
+
+        if (Format == EFormat::RGBA8_UNORM || Format == EFormat::SRGBA8_UNORM)
+        {
+            const uint64 Required = (uint64)Width * Height * 4;
+            if (Mip.Pixels.size() < Required)
+            {
+                return false;
+            }
+
+            OutResult.Format = EFormat::RGBA8_UNORM;
+            OutResult.Pixels.assign(Mip.Pixels.begin(), Mip.Pixels.begin() + (size_t)Required);
+            return true;
+        }
+
+        if (Format != EFormat::BC7_UNORM && Format != EFormat::BC7_UNORM_SRGB)
+        {
+            return false;
+        }
+
+        const uint32 BlocksX = (Width  + 3u) / 4u;
+        const uint32 BlocksY = (Height + 3u) / 4u;
+        constexpr uint32 BytesPerBlock = 16;
+
+        if (Mip.Pixels.size() < (uint64)BlocksX * BlocksY * BytesPerBlock)
+        {
+            return false;
+        }
+
+        OutResult.Format = EFormat::RGBA8_UNORM;
+        OutResult.Pixels.resize((size_t)Width * Height * 4);
+
+        for (uint32 By = 0; By < BlocksY; ++By)
+        {
+            for (uint32 Bx = 0; Bx < BlocksX; ++Bx)
+            {
+                basisu::color_rgba Block[16];
+                const uint8* Source = Mip.Pixels.data() + ((uint64)By * BlocksX + Bx) * BytesPerBlock;
+                if (!basisu::unpack_block(basisu::texture_format::cBC7, Source, Block, false))
+                {
+                    return false;
+                }
+
+                for (uint32 Ty = 0; Ty < 4; ++Ty)
+                {
+                    const uint32 Y = By * 4 + Ty;
+                    if (Y >= Height)
+                    {
+                        break;
+                    }
+
+                    for (uint32 Tx = 0; Tx < 4; ++Tx)
+                    {
+                        const uint32 X = Bx * 4 + Tx;
+                        if (X >= Width)
+                        {
+                            break;
+                        }
+
+                        const basisu::color_rgba& Texel = Block[Ty * 4 + Tx];
+                        uint8* Out = &OutResult.Pixels[((size_t)Y * Width + X) * 4];
+                        Out[0] = Texel.r;
+                        Out[1] = Texel.g;
+                        Out[2] = Texel.b;
+                        Out[3] = Texel.a;
+                    }
+                }
+            }
+        }
+
+        return true;
+    }
+
     bool CTextureFactory::CookIntoTexture(CTexture* Texture, const Import::Textures::FTextureCookRequest& Request)
     {
         if (Texture == nullptr)
@@ -777,6 +1133,13 @@ namespace Lumina
                     : ClassifyColorSpaceByFilename(SourcePath.c_str());
                 Texture->ColorSpace = Role;
 
+                // Editing finished BCn blocks means a decode/re-encode, so the edits are declined out loud.
+                if (HasSourceAdjustments(Texture) || Texture->GetResolvedPolicy().MaxDimension > 0)
+                {
+                    LOG_WARN("TextureFactory: '{0}' is a DDS passthrough; its source adjustments and size cap "
+                             "are ignored because the file is already block-compressed.", SourcePath.c_str());
+                }
+
                 if (!CookDDS(Texture, DDSBytes, Role, Request.bCreateGPUResource))
                 {
                     LOG_WARN("TextureFactory: unsupported DDS format for '{}'.", SourcePath.c_str());
@@ -791,14 +1154,30 @@ namespace Lumina
             }
         }
 
-        TOptional<Import::Textures::FTextureImportResult> MaybeResult = bEmbedded
-            ? Import::Textures::ImportTexture(Request.EmbeddedBytes, false)
-            : Import::Textures::ImportTexture(SourcePath, false);
+        // Read once and KEPT, not handed to stb as a path: these bytes become the asset's stored source.
+        TVector<uint8> SourceBytes;
+        if (bEmbedded)
+        {
+            SourceBytes.assign(Request.EmbeddedBytes.begin(), Request.EmbeddedBytes.end());
+        }
+        else if (!FileHelper::LoadFileToArray(SourceBytes, SourcePath.c_str()))
+        {
+            LOG_ERROR("TextureFactory: could not read '{0}'.", SourcePath.c_str());
+            return false;
+        }
+
+        TOptional<Import::Textures::FTextureImportResult> MaybeResult =
+            Import::Textures::ImportTexture(TSpan<const uint8>(SourceBytes.data(), SourceBytes.size()), false);
 
         if (!MaybeResult.has_value())
         {
             return false;
         }
+
+        Texture->SourceFile.Reset();
+        Texture->SourceFile.Bytes = Move(SourceBytes);
+
+        PrepareSource(Texture, MaybeResult.value());
 
         const Import::Textures::FTextureImportResult& Result = MaybeResult.value();
 
@@ -866,7 +1245,9 @@ namespace Lumina
         }
 
         Import::Textures::FTextureImportResult& Result = MaybeResult.value();
-        
+
+        PrepareSource(Scratch, Result);
+
         const bool bIsFloatSource =
             Result.Format == EFormat::R32_FLOAT    ||
             Result.Format == EFormat::RG32_FLOAT   ||
@@ -917,7 +1298,8 @@ namespace Lumina
             Pixels[i * 4 + 3] = A;
         }
 
-        if (!CookTexturePixels(Texture, Pixels, FUIntVector2(Dim, Dim), ColorSpace))
+        const FUIntVector2 Extent(Dim, Dim);
+        if (!CookTexturePixels(Texture, Pixels, Extent, ColorSpace))
         {
             Texture->ConditionalBeginDestroy();
             return nullptr;
@@ -933,35 +1315,79 @@ namespace Lumina
             return false;
         }
 
-        if (Texture->SourcePath.empty())
+        TOptional<Import::Textures::FTextureImportResult> MaybeResult;
+
+        // The file on disk wins when it is there: the user may have edited it since the import.
+        if (!Texture->SourcePath.empty())
         {
-            LOG_WARN("TextureFactory::Recook: '{0}' has no source path (likely mesh-embedded); cannot re-cook from disk.",
-                     Texture->GetName().c_str());
-            return false;
+            MaybeResult = Import::Textures::ImportTexture(Texture->SourcePath, false);
         }
 
-        TOptional<Import::Textures::FTextureImportResult> MaybeResult = Import::Textures::ImportTexture(Texture->SourcePath, false);
+        // Then the copy the import kept. Same pristine bytes, so settings stay absolute with the file gone.
+        if (!MaybeResult.has_value() && Texture->LoadSourceFileBytes())
+        {
+            MaybeResult = Import::Textures::ImportTexture(
+                TSpan<const uint8>(Texture->SourceFile.Bytes.data(), Texture->SourceFile.Bytes.size()), false);
+        }
+
+        // Last resort, for an asset imported before the source was kept. What it costs is logged below.
         if (!MaybeResult.has_value())
         {
-            LOG_WARN("TextureFactory::Recook: failed to load source file '{0}' for '{1}'.",
-                     Texture->SourcePath.c_str(), Texture->GetName().c_str());
+            Import::Textures::FTextureImportResult Recovered;
+            if (!RecoverSourceImage(Texture, Recovered))
+            {
+                const uint32 CookedFormat = Texture->TextureResource
+                    ? (uint32)Texture->TextureResource->ImageDescription.Format : 0u;
+                LOG_ERROR("TextureFactory::Recook: '{0}' has no readable source and its cooked format ({1}) "
+                          "cannot be decoded back to an image; nothing to re-cook from.",
+                          Texture->GetName().c_str(), CookedFormat);
+                return false;
+            }
+
+            // Block-compressed pixels have already lost information, so re-encoding them loses more.
+            if (Texture->TextureResource->ImageDescription.Format == EFormat::BC7_UNORM
+             || Texture->TextureResource->ImageDescription.Format == EFormat::BC7_UNORM_SRGB)
+            {
+                LOG_WARN("TextureFactory::Recook: '{0}' is re-cooking from its own BC7 blocks; this is a second "
+                         "compression generation. Reimport it to give the asset a stored source.",
+                         Texture->GetName().c_str());
+            }
+
+            // The recovered pixels already carry the last cook's adjustments, so a new pass compounds.
+            if (HasSourceAdjustments(Texture))
+            {
+                LOG_WARN("TextureFactory::Recook: '{0}' has source adjustments and no stored source; they apply on "
+                         "top of the already-cooked pixels rather than replacing the previous pass. Reimport it "
+                         "to make them absolute.", Texture->GetName().c_str());
+            }
+
+            MaybeResult = Move(Recovered);
+        }
+
+        return CookFromSource(Texture, MaybeResult.value());
+    }
+
+    bool CTextureFactory::CookFromSource(CTexture* Texture, Import::Textures::FTextureImportResult& Source)
+    {
+        if (Texture == nullptr)
+        {
             return false;
         }
 
-        const Import::Textures::FTextureImportResult& Result = MaybeResult.value();
+        PrepareSource(Texture, Source);
 
-        // Re-cook with Auto resolves like a fresh import.
+        // Auto resolves like a fresh import would.
         if (Texture->ColorSpace == ETextureColorSpace::Auto)
         {
             Texture->ColorSpace = ClassifyColorSpaceByFilename(Texture->SourcePath);
         }
 
-        // Float-source data must stay on the Environment path even if user changed ColorSpace.
+        // Float-source data must stay on the Environment path even if the user changed ColorSpace.
         const bool bIsFloatSource =
-            Result.Format == EFormat::R32_FLOAT    ||
-            Result.Format == EFormat::RG32_FLOAT   ||
-            Result.Format == EFormat::RGB32_FLOAT  ||
-            Result.Format == EFormat::RGBA32_FLOAT;
+            Source.Format == EFormat::R32_FLOAT    ||
+            Source.Format == EFormat::RG32_FLOAT   ||
+            Source.Format == EFormat::RGB32_FLOAT  ||
+            Source.Format == EFormat::RGBA32_FLOAT;
         if (bIsFloatSource)
         {
             Texture->ColorSpace = ETextureColorSpace::Environment;
@@ -970,17 +1396,17 @@ namespace Lumina
         bool bCooked = false;
         if (Texture->ColorSpace == ETextureColorSpace::Environment)
         {
-            bCooked = CookEnvironmentTexture(Texture, Result);
+            bCooked = CookEnvironmentTexture(Texture, Source);
         }
-        else if (Import::Textures::FTextureImportResult& Mutable = MaybeResult.value(); NormalizeToRGBA8(Mutable))
+        else if (NormalizeToRGBA8(Source))
         {
-            TVector<uint8> Pixels = Move(Mutable.Pixels);
-            bCooked = CookTexturePixels(Texture, Pixels, Mutable.Dimensions, Texture->ColorSpace);
+            TVector<uint8> Pixels = Move(Source.Pixels);
+            bCooked = CookTexturePixels(Texture, Pixels, Source.Dimensions, Texture->ColorSpace);
         }
         else
         {
-            LOG_ERROR("TextureFactory::Recook: '{0}' has an unsupported pixel layout for the Basis cook (format {1}, {2}x{3}).",
-                      Texture->GetName().c_str(), (uint32)Result.Format, Result.Dimensions.x, Result.Dimensions.y);
+            LOG_ERROR("TextureFactory::CookFromSource: '{0}' has an unsupported pixel layout for the Basis cook (format {1}, {2}x{3}).",
+                      Texture->GetName().c_str(), (uint32)Source.Format, Source.Dimensions.x, Source.Dimensions.y);
         }
 
         if (!bCooked)

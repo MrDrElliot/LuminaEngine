@@ -487,8 +487,16 @@ LUMINA_DOTNET_EXPORT(void, Physics_EndBodyBatch)(uint64 World)
 
 namespace
 {
+    // entt::entity is a uint32-backed enum, so a C# entity-id buffer IS the query's output buffer.
+    static_assert(sizeof(entt::entity) == sizeof(uint32), "Entity id buffers are aliased for overlap queries");
+    FORCEINLINE TSpan<entt::entity> AsEntitySpan(uint32* Entities, int32 Count)
+    {
+        return TSpan<entt::entity>(reinterpret_cast<entt::entity*>(Entities), (size_t)Count);
+    }
+
     // Resolve one entity to its body id and stage it as an ignore list (empty if it has no body).
-    FORCEINLINE void StageIgnore(Physics::IPhysicsScene* Scene, uint32 IgnoreEntity, TVector<uint32>& Out)
+    template<typename TContainer>
+    FORCEINLINE void StageIgnore(Physics::IPhysicsScene* Scene, uint32 IgnoreEntity, TContainer& Out)
     {
         if (Scene && IgnoreEntity != ToId(entt::null))
         {
@@ -507,16 +515,10 @@ LUMINA_DOTNET_EXPORT(int32, Physics_OverlapSphere)(uint64 World, FVector3 Center
     {
         return 0;
     }
-    TVector<uint32> Ignore;
+    TFixedVector<uint32, MaxInlineIgnoreBodies> Ignore;
     StageIgnore(S, IgnoreEntity, Ignore);
 
-    TVector<entt::entity> Found;
-    S->OverlapSphere(Center, Radius, Ignore, Found);
-
-    int32 Count = (int32)Found.size();
-    if (Count > Max) { Count = Max; }
-    for (int32 i = 0; i < Count; ++i) { OutEntities[i] = ToId(Found[i]); }
-    return Count;
+    return S->OverlapSphere(Center, Radius, Ignore, AsEntitySpan(OutEntities, Max));
 }
 
 LUMINA_DOTNET_EXPORT(int32, Physics_OverlapBox)(uint64 World, FVector3 Center, FVector3 HalfExtents, FQuat Rotation, uint32 IgnoreEntity, uint32* OutEntities, int32 Max)
@@ -526,16 +528,10 @@ LUMINA_DOTNET_EXPORT(int32, Physics_OverlapBox)(uint64 World, FVector3 Center, F
     {
         return 0;
     }
-    TVector<uint32> Ignore;
+    TFixedVector<uint32, MaxInlineIgnoreBodies> Ignore;
     StageIgnore(S, IgnoreEntity, Ignore);
 
-    TVector<entt::entity> Found;
-    S->OverlapBox(Center, HalfExtents, Rotation, Ignore, Found);
-
-    int32 Count = (int32)Found.size();
-    if (Count > Max) { Count = Max; }
-    for (int32 i = 0; i < Count; ++i) { OutEntities[i] = ToId(Found[i]); }
-    return Count;
+    return S->OverlapBox(Center, HalfExtents, Rotation, Ignore, AsEntitySpan(OutEntities, Max));
 }
 
 // Sphere sweep from Start to End; fills OutHits (blittable FLmRayHit) sorted near-to-far; returns the count
@@ -554,7 +550,8 @@ LUMINA_DOTNET_EXPORT(int32, Physics_SphereCast)(uint64 World, FVector3 Start, FV
     Settings.Radius = Radius;
     StageIgnore(W->GetPhysicsScene(), IgnoreEntity, Settings.IgnoreBodies);
 
-    TVector<SRayResult> Hits = W->CastSphere(Settings);
+    TVector<SRayResult> Hits;
+    W->CastSphere(Settings, Hits);
 
     int32 Count = (int32)Hits.size();
     if (Count > Max) { Count = Max; }
@@ -689,7 +686,8 @@ LUMINA_DOTNET_EXPORT(int32, Physics_RaycastAll)(uint64 World, FVector3 Start, FV
     Settings.End   = End;
     StageIgnore(S, IgnoreEntity, Settings.IgnoreBodies);
 
-    TVector<SRayResult> Hits = S->CastRayAll(Settings);
+    TVector<SRayResult> Hits;
+    S->CastRayAll(Settings, Hits);
 
     int32 Count = (int32)Hits.size();
     if (Count > Max) { Count = Max; }
@@ -756,7 +754,8 @@ LUMINA_DOTNET_EXPORT(int32, Physics_RaycastAllFiltered)(uint64 World, FVector3 S
     Settings.LayerMask = (Lumina::ECollisionProfiles)LayerMask;
     StageIgnore(S, IgnoreEntity, Settings.IgnoreBodies);
 
-    TVector<SRayResult> Hits = S->CastRayAll(Settings);
+    TVector<SRayResult> Hits;
+    S->CastRayAll(Settings, Hits);
 
     int32 Count = (int32)Hits.size();
     if (Count > Max) { Count = Max; }
@@ -784,16 +783,10 @@ LUMINA_DOTNET_EXPORT(int32, Physics_OverlapPoint)(uint64 World, FVector3 Point, 
     {
         return 0;
     }
-    TVector<uint32> Ignore;
+    TFixedVector<uint32, MaxInlineIgnoreBodies> Ignore;
     StageIgnore(S, IgnoreEntity, Ignore);
 
-    TVector<entt::entity> Found;
-    S->CollidePoint(Point, Ignore, Found);
-
-    int32 Count = (int32)Found.size();
-    if (Count > Max) { Count = Max; }
-    for (int32 i = 0; i < Count; ++i) { OutEntities[i] = ToId(Found[i]); }
-    return Count;
+    return S->CollidePoint(Point, Ignore, AsEntitySpan(OutEntities, Max));
 }
 
 //================================================================================================

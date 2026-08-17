@@ -54,6 +54,8 @@ static const uint SAMPLER_ANISO_CLAMP   = 6;
 static const uint SAMPLER_SHADOW        = 7;
 static const uint SAMPLER_MIN_REDUCTION = 8;
 static const uint SAMPLER_MAX_REDUCTION = 9;
+static const uint SAMPLER_POINT_MIRROR  = 10;
+static const uint SAMPLER_ANISO_MIRROR  = 11;
 
 // Heap access helpers.
 

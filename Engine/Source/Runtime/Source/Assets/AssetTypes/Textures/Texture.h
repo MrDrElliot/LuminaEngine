@@ -32,6 +32,56 @@ namespace Lumina
         Environment,
     };
 
+    // Filtering a texture asks for when a material samples it with the sampler left at FromTexture.
+    REFLECT()
+    enum class ETextureFilter : uint8
+    {
+        // Inherit the group's filter.
+        FromGroup,
+
+        // Nearest-neighbour; for pixel art, lookup tables, and anything whose texels must not blend.
+        Nearest,
+
+        // Bilinear + trilinear between mips. The engine-wide default.
+        Linear,
+
+        // Trilinear plus 16x anisotropy; for surfaces viewed at grazing angles (terrain, floors, foliage).
+        Anisotropic,
+    };
+
+    // How UVs outside [0,1] resolve. Applies to both axes; the stock sampler table has no per-axis entries.
+    REFLECT()
+    enum class ETextureAddress : uint8
+    {
+        Wrap,
+        Clamp,
+        Mirror,
+    };
+
+    // Whether a texture gets a mip chain at cook time.
+    REFLECT()
+    enum class ETextureMipGenSettings : uint8
+    {
+        // Inherit the group's policy.
+        FromGroup,
+
+        // Force a full chain even for a group that would skip it.
+        Generate,
+
+        // Force a single mip. Halves nothing on screen but drops ~33% of the asset and of GPU memory.
+        NoMipmaps,
+    };
+
+    // Encoder effort. Cook time scales with it; the runtime format and size do not change.
+    REFLECT()
+    enum class ETextureCompressionQuality : uint8
+    {
+        Fastest,
+        Default,
+        High,
+        Highest,
+    };
+
     /**
      * Coarse usage class, in the spirit of Unreal's TextureGroup/LODGroup. Drives cook-time policy
      * rather than runtime behavior, so the savings are in the asset AND in GPU memory: a texture
@@ -49,21 +99,77 @@ namespace Lumina
 
         // Same rationale as UI: sampled at a fixed on-screen size.
         EditorIcon,
+
+        Character,
+
+        Weapon,
+
+        Vehicle,
+
+        // Particle and decal sheets; small, and usually alpha-blended where aniso buys nothing.
+        Effects,
+
+        // Grazing-angle surfaces, so anisotropic by default.
+        Foliage,
+
+        // Grazing-angle surfaces, so anisotropic by default.
+        Terrain,
+
+        // Always sampled at a fixed distance and never minified far, so streaming it only causes pop.
+        Skybox,
+
+        // Held at full residency because a cutscene cannot afford the pop-in a stream-up would show.
+        Cinematic,
     };
 
-    // Whether a group's textures get a mip chain at cook time. Kept as a function rather than a field
-    // on the enum so adding per-group policy later (max size, compression) has an obvious home.
-    inline bool TextureGroupGeneratesMips(ETextureGroup Group)
+    // What a group contributes before the texture's own settings override it, field by field.
+    struct FTextureGroupPolicy
     {
+        bool           bGenerateMips   = true;
+        bool           bAllowStreaming = true;
+
+        // Longest-edge cap applied at cook time; 0 leaves the source size alone.
+        uint32         MaxDimension    = 0;
+
+        ETextureFilter Filter          = ETextureFilter::Linear;
+    };
+
+    inline FTextureGroupPolicy GetTextureGroupPolicy(ETextureGroup Group)
+    {
+        FTextureGroupPolicy Policy;
         switch (Group)
         {
         case ETextureGroup::UI:
         case ETextureGroup::EditorIcon:
-            return false;
+            Policy.bGenerateMips   = false;
+            Policy.bAllowStreaming = false;
+            break;
+
+        case ETextureGroup::Foliage:
+        case ETextureGroup::Terrain:
+        case ETextureGroup::Character:
+        case ETextureGroup::Weapon:
+        case ETextureGroup::Vehicle:
+            Policy.Filter = ETextureFilter::Anisotropic;
+            break;
+
+        case ETextureGroup::Skybox:
+        case ETextureGroup::Cinematic:
+            Policy.bAllowStreaming = false;
+            break;
+
+        case ETextureGroup::Effects:
         case ETextureGroup::World:
         default:
-            return true;
+            break;
         }
+        return Policy;
+    }
+
+    // Whether a group's textures get a mip chain at cook time.
+    inline bool TextureGroupGeneratesMips(ETextureGroup Group)
+    {
+        return GetTextureGroupPolicy(Group).bGenerateMips;
     }
 
     REFLECT()
@@ -135,11 +241,52 @@ namespace Lumina
          *  No-op (and no IO) when nothing has been streamed out. May block. */
         void MakeStreamedMipsResident();
 
+        /** Read the stored source file back off disk. False if there is none. May block. */
+        bool LoadSourceFileBytes();
+
+        /** True when this texture carries the bytes it was imported from, resident or not. */
+        bool HasSourceFile() const { return SourceFile.IsValid(); }
+
         /** First mip currently on the GPU; == GetFirstStreamedMipCount() when fully streamed out, 0 when
          *  fully resident. */
         uint32 GetResidentFirstMip() const { return TextureResource ? TextureResource->ResidentFirstMip : 0u; }
 
         bool IsStreamable() const { return TextureResource && TextureResource->IsStreamable(); }
+
+        bool IsSRGB() const { return ColorSpace == ETextureColorSpace::SRGB; }
+
+        // Group policy with this texture's own overrides folded in. The cook and the sampler both read it.
+        FTextureGroupPolicy GetResolvedPolicy() const
+        {
+            FTextureGroupPolicy Policy = GetTextureGroupPolicy(Group);
+
+            if (MipGenSettings != ETextureMipGenSettings::FromGroup)
+            {
+                Policy.bGenerateMips = (MipGenSettings == ETextureMipGenSettings::Generate);
+            }
+            if (Filter != ETextureFilter::FromGroup)
+            {
+                Policy.Filter = Filter;
+            }
+            if (MaxTextureSize > 0)
+            {
+                Policy.MaxDimension = MaxTextureSize;
+            }
+            if (bNeverStream)
+            {
+                Policy.bAllowStreaming = false;
+            }
+
+            // A single-mip texture has no chain to stream, so streaming it can only cost a bindless swap.
+            if (!Policy.bGenerateMips)
+            {
+                Policy.bAllowStreaming = false;
+            }
+            return Policy;
+        }
+
+        // Stock heap slot a material samples this texture through when its node is left at FromTexture.
+        RHI::EStockSampler GetStockSampler() const;
 
         // New-RHI global-heap ResourceID for sampling (gTextures2D[id]); -1 if not resident.
         int32 GetResourceID() const
@@ -148,16 +295,95 @@ namespace Lumina
                  ? (int32)TextureResource->NewTexture.ResourceID() : -1;
         }
 
-        PROPERTY(Editable)
+        PROPERTY(Editable, Category = "Compression", RequiresRecook)
         ETextureColorSpace ColorSpace = ETextureColorSpace::SRGB;
 
+        // Encoder effort. Higher settings cost cook time only; the stored format and size are unchanged.
+        PROPERTY(Editable, Category = "Compression", RequiresRecook)
+        ETextureCompressionQuality CompressionQuality = ETextureCompressionQuality::Default;
+
+        // Forces alpha to opaque before encoding, so the encoder spends its whole bit budget on RGB.
+        PROPERTY(Editable, Category = "Compression", RequiresRecook)
+        bool bCompressWithoutAlpha = false;
+
         /** Usage class driving cook policy (mip generation). Changing it requires a re-cook to take effect. */
-        PROPERTY(Editable)
+        PROPERTY(Editable, Category = "Level Of Detail", RequiresRecook)
         ETextureGroup Group = ETextureGroup::World;
+
+        PROPERTY(Editable, Category = "Level Of Detail", RequiresRecook)
+        ETextureMipGenSettings MipGenSettings = ETextureMipGenSettings::FromGroup;
+
+        // Longest-edge cap applied at cook time; 0 defers to the group, which usually means no cap.
+        PROPERTY(Editable, Category = "Level Of Detail", ClampMin = 0, RequiresRecook)
+        uint32 MaxTextureSize = 0;
+
+        // Keeps the whole chain resident and out of the streamer. Costs GPU memory, removes all pop-in.
+        PROPERTY(Editable, Category = "Level Of Detail")
+        bool bNeverStream = false;
+
+        // Applied when a material samples this texture with its sampler left at FromTexture.
+        PROPERTY(Editable, Category = "Sampling")
+        ETextureFilter Filter = ETextureFilter::FromGroup;
+
+        PROPERTY(Editable, Category = "Sampling")
+        ETextureAddress AddressMode = ETextureAddress::Wrap;
+
+        // Inverts G. Converts between OpenGL-style (+Y up) and DirectX-style (+Y down) normal maps.
+        PROPERTY(Editable, Category = "Adjustments", RequiresRecook)
+        bool bFlipGreenChannel = false;
+
+        // Flips the source image vertically at cook time, for sources whose rows are bottom-up.
+        PROPERTY(Editable, Category = "Adjustments", RequiresRecook)
+        bool bFlipVertical = false;
+
+        PROPERTY(Editable, Category = "Adjustments", RequiresRecook)
+        bool bFlipHorizontal = false;
+
+        PROPERTY(Editable, Category = "Adjustments", ClampMin = 0.0f, RequiresRecook)
+        float AdjustBrightness = 1.0f;
+
+        // Gamma-style curve on luminance; values above 1 darken midtones, below 1 lift them.
+        PROPERTY(Editable, Category = "Adjustments", ClampMin = 0.0f, RequiresRecook)
+        float AdjustBrightnessCurve = 1.0f;
+
+        // Per-channel gamma applied after brightness.
+        PROPERTY(Editable, Category = "Adjustments", ClampMin = 0.0f, RequiresRecook)
+        float AdjustRGBCurve = 1.0f;
+
+        // 0 is fully desaturated, 1 leaves the source alone, above 1 oversaturates.
+        PROPERTY(Editable, Category = "Adjustments", ClampMin = 0.0f, RequiresRecook)
+        float AdjustSaturation = 1.0f;
+
+        // Saturation weighted toward the least saturated texels, so already-vivid colors are left alone.
+        PROPERTY(Editable, Category = "Adjustments", ClampMin = 0.0f, ClampMax = 1.0f, RequiresRecook)
+        float AdjustVibrance = 0.0f;
+
+        PROPERTY(Editable, Category = "Adjustments", ClampMin = 0.0f, ClampMax = 360.0f, Units = "deg", RequiresRecook)
+        float AdjustHue = 0.0f;
+
+        // Remaps the alpha range; swapping min above max inverts alpha.
+        PROPERTY(Editable, Category = "Adjustments", ClampMin = 0.0f, ClampMax = 1.0f, RequiresRecook)
+        float AdjustMinAlpha = 0.0f;
+
+        PROPERTY(Editable, Category = "Adjustments", ClampMin = 0.0f, ClampMax = 1.0f, RequiresRecook)
+        float AdjustMaxAlpha = 1.0f;
+
+        // Punches texels near ChromaKeyColor out to transparent black before encoding.
+        PROPERTY(Editable, Category = "Adjustments", RequiresRecook)
+        bool bChromaKey = false;
+
+        PROPERTY(Editable, Color, Category = "Adjustments", RequiresRecook)
+        FVector3 ChromaKeyColor = FVector3(0.0f, 1.0f, 0.0f);
+
+        PROPERTY(Editable, Category = "Adjustments", ClampMin = 0.0f, ClampMax = 1.0f, RequiresRecook)
+        float ChromaKeyThreshold = 1.0f / 255.0f;
 
         /** Source path persisted so the editor can re-cook after ColorSpace changes; empty for embedded. */
         PROPERTY()
         FString SourcePath;
+
+        /** Bytes of the imported file, so every cook setting stays absolute even with the file gone. */
+        FTextureSourceFile SourceFile;
 
         TUniquePtr<FTextureResource> TextureResource;
 

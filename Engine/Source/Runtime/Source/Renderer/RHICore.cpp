@@ -151,6 +151,16 @@ namespace Lumina::RHI::Core
         Desc.Reduction = EReduction::Max;
         AddSampler(EStockSampler::MaxReduction, Desc);
 
+        Desc = Linear;
+        Desc.MinFilter = Desc.MagFilter = Desc.MipFilter = EFilter::Nearest;
+        Desc.AddressU = Desc.AddressV = Desc.AddressW = EAddressMode::MirroredRepeat;
+        AddSampler(EStockSampler::PointMirror, Desc);
+
+        Desc = Linear;
+        Desc.MaxAnisotropy = 16.0f;
+        Desc.AddressU = Desc.AddressV = Desc.AddressW = EAddressMode::MirroredRepeat;
+        AddSampler(EStockSampler::AnisoMirror, Desc);
+
         GCore.bInitialized = true;
 
         Textures::Initialize();

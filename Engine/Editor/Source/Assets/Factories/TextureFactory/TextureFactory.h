@@ -29,8 +29,14 @@ namespace Lumina
         /** Filename-suffix heuristic used to resolve ETextureColorSpace::Auto. */
         static EDITOR_API ETextureColorSpace ClassifyColorSpaceByFilename(FStringView Path);
 
-        /** Re-runs Basis compression on Texture->SourcePath; false if path is missing or asset is mesh-embedded. */
+        /** Re-cooks with the current settings, from SourcePath if it resolves and from RecoverSourceImage if not. */
         static EDITOR_API bool Recook(CTexture* Texture);
+
+        /** Decodes the cooked chain's mip 0 back into an editable image. False if its format has no decoder. */
+        static EDITOR_API bool RecoverSourceImage(CTexture* Texture, Import::Textures::FTextureImportResult& OutResult);
+
+        /** Runs the cook over an in-memory source. Source is consumed: it is prepared and moved from. */
+        static EDITOR_API bool CookFromSource(CTexture* Texture, Import::Textures::FTextureImportResult& Source);
 
         /**
          * Cooks one image file into Scratch->TextureResource's CPU mip chain and stops there -- no GPU

@@ -233,7 +233,10 @@ namespace Lumina
 
         TOptional<SRayResult> CastRay(const SRayCastSettings& Settings);
 
-        TVector<SRayResult> CastSphere(const SSphereCastSettings& Settings) const;
+        // OutHits is cleared and refilled near-to-far; reuse one buffer to keep repeated sweeps alloc-free.
+        void CastSphere(const SSphereCastSettings& Settings, TVector<SRayResult>& OutHits) const;
+
+        TOptional<SRayResult> CastSphereClosest(const SSphereCastSettings& Settings) const;
         
         EUpdateStage GetUpdateStage() const;
 

@@ -40,25 +40,36 @@ namespace Lumina
         const void* ContainerContext;
     };
 
-    template <typename T>
-    const FVectorOps* GetVectorOps()
+    // Ops for a specific vector-like CONTAINER type, not just its element type. TFixedVector<T, N> reflects as
+    // a TVector<T>, but it embeds its buffer and carries a fixed allocator, so the table must construct and
+    // grow the real type: operating on one through TVector<T>'s table would free the inline buffer as heap.
+    template <typename TContainer>
+    const FVectorOps* GetVectorOpsFor()
     {
+        using T = typename TContainer::value_type;
+
         static const FVectorOps Ops =
         {
-            [](const void* V) -> SIZE_T { return static_cast<const TVector<T>*>(V)->size(); },
-            [](void* V) -> void* { return static_cast<TVector<T>*>(V)->data(); },
-            [](void* V, const void* E) { TVector<T>* Vec = static_cast<TVector<T>*>(V); if (E) { Vec->push_back(*static_cast<const T*>(E)); } else { Vec->emplace_back(); } },
-            [](void* V, SIZE_T I) { TVector<T>* Vec = static_cast<TVector<T>*>(V); Vec->erase(Vec->begin() + I); },
-            [](void* V) { static_cast<TVector<T>*>(V)->clear(); },
-            [](void* V, SIZE_T N) { static_cast<TVector<T>*>(V)->resize(N); },
-            [](void* V, SIZE_T N) { static_cast<TVector<T>*>(V)->reserve(N); },
-            [](void* V, SIZE_T A, SIZE_T B) { TVector<T>* Vec = static_cast<TVector<T>*>(V); T Tmp = (*Vec)[A]; (*Vec)[A] = (*Vec)[B]; (*Vec)[B] = Tmp; },
+            [](const void* V) -> SIZE_T { return static_cast<const TContainer*>(V)->size(); },
+            [](void* V) -> void* { return static_cast<TContainer*>(V)->data(); },
+            [](void* V, const void* E) { TContainer* Vec = static_cast<TContainer*>(V); if (E) { Vec->push_back(*static_cast<const T*>(E)); } else { Vec->emplace_back(); } },
+            [](void* V, SIZE_T I) { TContainer* Vec = static_cast<TContainer*>(V); Vec->erase(Vec->begin() + I); },
+            [](void* V) { static_cast<TContainer*>(V)->clear(); },
+            [](void* V, SIZE_T N) { static_cast<TContainer*>(V)->resize(N); },
+            [](void* V, SIZE_T N) { static_cast<TContainer*>(V)->reserve(N); },
+            [](void* V, SIZE_T A, SIZE_T B) { TContainer* Vec = static_cast<TContainer*>(V); T Tmp = (*Vec)[A]; (*Vec)[A] = (*Vec)[B]; (*Vec)[B] = Tmp; },
             static_cast<uint32>(sizeof(T)),
-            [](void* V, const void*) { new (V) TVector<T>(); },
-            [](void* V, const void*) { static_cast<TVector<T>*>(V)->~TVector<T>(); },
+            [](void* V, const void*) { new (V) TContainer(); },
+            [](void* V, const void*) { static_cast<TContainer*>(V)->~TContainer(); },
             nullptr,
         };
         return &Ops;
+    }
+
+    template <typename T>
+    const FVectorOps* GetVectorOps()
+    {
+        return GetVectorOpsFor<TVector<T>>();
     }
 
     // Type-erased op table for a THashMap<K,V>, the associative analogue of FVectorOps; one static table per
@@ -91,10 +102,14 @@ namespace Lumina
         const void* ContainerContext;
     };
 
-    template <typename K, typename V>
-    const FMapOps* GetMapOps()
+    // The map counterpart of GetVectorOpsFor: keyed on the container type so a TFixedHashMap<K, V, N>, which
+    // reflects as a THashMap<K, V>, is still constructed and grown as the type it actually is.
+    template <typename TContainer>
+    const FMapOps* GetMapOpsFor()
     {
-        using MapT = THashMap<K, V>;
+        using MapT = TContainer;
+        using K = typename MapT::key_type;
+        using V = typename MapT::mapped_type;
         static const FMapOps Ops =
         {
             [](const void* M) -> SIZE_T { return static_cast<const MapT*>(M)->size(); },
@@ -152,5 +167,11 @@ namespace Lumina
             nullptr,
         };
         return &Ops;
+    }
+
+    template <typename K, typename V>
+    const FMapOps* GetMapOps()
+    {
+        return GetMapOpsFor<THashMap<K, V>>();
     }
 }

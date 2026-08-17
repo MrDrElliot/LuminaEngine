@@ -120,6 +120,18 @@ namespace Lumina::Import
             bool bCreateGPUResource = true;
         };
 
+        /** Resamples an imported image to TargetSize in place. No-op for an unsupported layout or a no-op size. */
+        RUNTIME_API void ResizeImportResult(FTextureImportResult& Source, FUIntVector2 TargetSize);
+
+        /** Reverses row order in place, for sources whose rows run bottom-up. */
+        RUNTIME_API void FlipImportResultVertical(FTextureImportResult& Source);
+
+        /** Reverses texel order within each row, in place. */
+        RUNTIME_API void FlipImportResultHorizontal(FTextureImportResult& Source);
+
+        /** Size with its longest edge capped at MaxDimension, aspect preserved. MaxDimension 0 means no cap. */
+        RUNTIME_API FUIntVector2 ClampToMaxDimension(FUIntVector2 Size, uint32 MaxDimension);
+
         /** Gets an image's raw pixel data */
         RUNTIME_API TOptional<FTextureImportResult> ImportTexture(FStringView RawFilePath, bool bFlipVertical = true, FUIntVector2 Size = {});
         RUNTIME_API TOptional<FTextureImportResult> ImportTexture(TSpan<const uint8> ImageData, bool bFlipVertical = true, FUIntVector2 Size = {});

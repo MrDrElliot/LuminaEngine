@@ -29,10 +29,7 @@ namespace Lumina
     REFLECT()
     enum class EBoneTransformSpace : uint8
     {
-        // The bone's local frame (relative to its parent). Cheap; no FK walk.
         LocalBone,
-        // The component (entity-root) space. The offset is applied to the bone's
-        // global transform after FK; the result is converted back into local space.
         ComponentSpace,
     };
 
@@ -41,10 +38,7 @@ namespace Lumina
     REFLECT()
     enum class EBoneTransformMode : uint8
     {
-        // Additive: T offsets translation, R post-multiplies rotation, S
-        // multiplies scale. Alpha scales how strongly the offset is applied.
         Add,
-        // Override: lerp the bone's transform toward (T, R, S) by alpha.
         Replace,
     };
 
@@ -111,20 +105,9 @@ namespace Lumina
 
     // AdvanceClock operand value for "not in a sync group".
     inline constexpr uint16 kAnimNoSyncGroup = 0xFFFFu;
-
-    // Stamped into CAnimationGraph by the compiler and checked by BuildTasks. Bump whenever an
-    // opcode's operand layout changes: a stale program would misparse operands into garbage poses,
-    // so the VM refuses it (bind pose + warning) until the graph is recompiled in the editor.
-    // 0 = compiled before versioning existed (pre-sync-group layout). 2 = AdvanceClock syncGroup operand.
-    // 3 = SampleBlendSpace opcode inserted after SampleAnim, which renumbers every opcode past it.
-    // 4 = GetCurve / SetCurve opcodes, and the curve tables the graph carries for them.
+    
     inline constexpr uint16 kAnimBytecodeVersion = 4;
-
-    // Clips in a sync group advance one shared normalized phase instead of independent clocks, so a
-    // walk->run blend samples both clips at the same stride phase (no foot slide). The phase speed
-    // uses the group's blended duration, refined from blend alphas one frame behind (weights change
-    // smoothly, so the latency is invisible). Requires member clips to be phase-aligned by authoring
-    // (all starting on the same foot plant); synced clips always loop.
+    
     struct FAnimSyncGroup
     {
         float Phase        = 0.0f; // shared normalized playhead, wraps 0..1
@@ -133,10 +116,7 @@ namespace Lumina
         float NextDuration = 0.0f; // accumulated from this update's blend provenance
         bool  bAdvanced    = false;
     };
-
-    // Per-instance mutable execution state. Persists across frames so playback
-    // clocks keep advancing; owned by SAnimationGraphComponent. Pose data no longer
-    // lives here -- poses come from the executor's per-thread buffer pool.
+    
     struct FAnimGraphVMState
     {
         TVector<float> ScalarRegisters;
@@ -159,10 +139,6 @@ namespace Lumina
         bool bInitialized = false;
     };
 
-    // Root-motion policy in, blended delta out. FromAsset extracts per-clip deltas (clips with
-    // bEnableRootMotion) and blends them through the graph like the pose; the root is pinned iff the
-    // branch reaching the output is root-motion driven. ForceLock pins without extraction;
-    // ForceUnlock leaves the root free in the pose.
     struct FAnimGraphRootMotion
     {
         ERootMotionLockMode Mode = ERootMotionLockMode::FromAsset;
@@ -172,9 +148,6 @@ namespace Lumina
         FRootMotionDelta Delta;
     };
 
-    // Stateless graph-update pass. Interprets the bytecode's logic (scalars, clocks, state-machine
-    // transitions) immediately and records every pose operation into an FAnimTaskList for deferred
-    // execution by Anim::ExecuteTaskList. Cheap: no pose math runs here.
     class RUNTIME_API FAnimationGraphVM
     {
     public:
@@ -182,10 +155,6 @@ namespace Lumina
         // Sizes register files / state slots / parameters from the graph; call when the graph asset changes.
         static void InitState(const CAnimationGraph* Graph, FAnimGraphVMState& State);
 
-        // Runs one frame's graph logic and records the frame's pose recipe. Always leaves a valid
-        // output task (bind pose when the graph produced none). Root-motion deltas and notify events
-        // flow alongside the pose registers: blends weight them, inactive state-machine branches drop
-        // them. OutEvents (optional) receives the surviving events, weighted by their branch's blend.
         static void BuildTasks(const CAnimationGraph* Graph,
                                FSkeletonResource* Skeleton,
                                float DeltaTime,

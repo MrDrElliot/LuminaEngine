@@ -75,6 +75,10 @@ namespace Lumina
          *
          *  Override to drop tool-specific caches too, and call the base. */
         virtual void OnAssetDataChangedExternally();
+
+        /** One COMPLETED property edit: a released drag or an atomic commit, never once per frame of a drag. */
+        virtual void OnPropertyEditFinished(const FPropertyChangedEvent& Event) {}
+
         void OnSave() override;
 
         bool IsAssetEditorTool() const override;
@@ -115,7 +119,7 @@ namespace Lumina
 
     private:
 
-        // Wires the PropertyTable start/finish edit callbacks to record a CObject snapshot transaction.
+        // Wires the PropertyTable start/finish edit callbacks: undo snapshots, then OnPropertyEditFinished.
         void SetupPropertyUndo();
 
         void SubscribeToAssetDataChanges();

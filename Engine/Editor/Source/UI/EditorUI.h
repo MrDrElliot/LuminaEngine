@@ -196,6 +196,9 @@ namespace Lumina
         // Renders the currently-open drawer as a slide-up overlay above the status bar.
         void DrawFooterDrawer(const FUpdateContext& UpdateContext);
 
+        // Stands in for a drag source whose drawer has closed, so ImGui does not fall back to its "..." tooltip.
+        void DrawOrphanedDragPreview();
+
         // Footer-button / shortcut action: focus when docked, else toggle the drawer.
         void ActivateDrawer(FFooterDrawer& Drawer);
 
@@ -276,6 +279,11 @@ namespace Lumina
         FEditorTool*                                    OpenDrawer = nullptr;   // tool whose drawer is open (nullptr = none)
         float                                           DrawerOpenAmount = 0.0f; // 0..1 slide animation
         bool                                            bDrawerActivatedThisFrame = false; // guards focus-loss auto-close
+
+        // A drag begun inside the drawer closes it once it leaves, uncovering the drop target underneath.
+        bool                                            bDrawerDragSeen = false;
+        bool                                            bDrawerDragStartedInDrawer = false;
+        bool                                            bDrawerClosedByDrag = false;
         ImGuiID                                         MainDockspaceID = 0;    // root editor dockspace, for "Dock in Layout"
 
         /**

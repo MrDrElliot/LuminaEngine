@@ -306,7 +306,11 @@ namespace Lumina::ClangUtils
             { "eastl::hash_map",     "Lumina::THashMap"   },
             { "eastl::optional",     "Lumina::TOptional"  },
             { "eastl::basic_string", "Lumina::FString"    },
-            { "eastl::fixed_string", "Lumina::FString"    },
+            // A fixed container differs from its growable counterpart only in where the storage lives, which
+            // reflection never sees, so it reflects AS that counterpart instead of as a type of its own.
+            { "eastl::fixed_string",   "Lumina::FString"  },
+            { "eastl::fixed_vector",   "Lumina::TVector"  },
+            { "eastl::fixed_hash_map", "Lumina::THashMap" },
             { "FString",             "Lumina::FString"    },
             { "FName",               "Lumina::FName"      },
             { "TObjectPtr",          "Lumina::TObjectPtr" },

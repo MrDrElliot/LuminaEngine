@@ -17,6 +17,24 @@ namespace Lumina
     static_assert((uint32)EMaterialSampler::PointClamp   == (uint32)RHI::EStockSampler::PointClamp);
     static_assert((uint32)EMaterialSampler::AnisoWrap    == (uint32)RHI::EStockSampler::AnisoWrap);
     static_assert((uint32)EMaterialSampler::AnisoClamp   == (uint32)RHI::EStockSampler::AnisoClamp);
+    static_assert((uint32)EMaterialSampler::PointMirror  == (uint32)RHI::EStockSampler::PointMirror);
+    static_assert((uint32)EMaterialSampler::AnisoMirror  == (uint32)RHI::EStockSampler::AnisoMirror);
+
+    EMaterialSampler ResolveMaterialSampler(EMaterialSampler Sampler, const CTexture* Texture)
+    {
+        if (Sampler != EMaterialSampler::FromTexture)
+        {
+            return Sampler;
+        }
+
+        // No texture to read: LinearWrap is what every node used before FromTexture existed.
+        if (Texture == nullptr)
+        {
+            return EMaterialSampler::LinearWrap;
+        }
+
+        return (EMaterialSampler)(uint32)Texture->GetStockSampler();
+    }
 
     FStringView MaterialSamplerToSlang(EMaterialSampler Sampler)
     {
@@ -28,6 +46,8 @@ namespace Lumina
         case EMaterialSampler::PointClamp:   return "SAMPLER_POINT_CLAMP";
         case EMaterialSampler::AnisoWrap:    return "SAMPLER_ANISO_WRAP";
         case EMaterialSampler::AnisoClamp:   return "SAMPLER_ANISO_CLAMP";
+        case EMaterialSampler::PointMirror:  return "SAMPLER_POINT_MIRROR";
+        case EMaterialSampler::AnisoMirror:  return "SAMPLER_ANISO_MIRROR";
         case EMaterialSampler::LinearWrap:
         default:                             return "SAMPLER_LINEAR_WRAP";
         }
@@ -90,13 +110,15 @@ namespace Lumina
             return;
         }
 
+        const EMaterialSampler Resolved = ResolveMaterialSampler(Sampler, Texture.Get());
+
         if (bDynamic && !ParameterName.IsNone())
         {
-            Compiler.TextureSampleParameter(FullName, ParameterName, Texture, UV, this, MaterialSamplerToSlang(Sampler));
+            Compiler.TextureSampleParameter(FullName, ParameterName, Texture, UV, this, MaterialSamplerToSlang(Resolved));
         }
         else
         {
-            Compiler.TextureSample(FullName, Texture, UV, this, MaterialSamplerToSlang(Sampler));
+            Compiler.TextureSample(FullName, Texture, UV, this, MaterialSamplerToSlang(Resolved));
         }
     }
 

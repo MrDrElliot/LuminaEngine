@@ -31,7 +31,11 @@ namespace Lumina
     {
         RHI::GPUPtr Draws;      // per-draw FUiDraw array (transient)
         RHI::GPUPtr Vertices;   // resident batch vertex buffer (vertex pulling)
+        RHI::GPUPtr Stops;      // gradient colour stops (transient)
     };
+
+    // RmlUi's own decorators cap out at 16; anything past that is dropped rather than overrunning.
+    static constexpr uint32 GMaxColorStops = 16;
 
     // Mirrors UIMaterialGlobals.slang::FUIMaterialArgs (scalar layout). ScreenSize must stay at offset
     // 16: the shader reads this block by device address, where relaxed block layout forbids a vector
@@ -64,7 +68,9 @@ namespace Lumina
         }
 
         static_assert(sizeof(FUiVertex) == 24, "FUiVertex must match RmlUiCommon.slang::FUiVertex (stride 24).");
-        static_assert(sizeof(FUiDraw) == 96,   "FUiDraw must match RmlUiCommon.slang::FUiDraw (std430).");
+        static_assert(sizeof(FUiDraw) == 128,  "FUiDraw must match RmlUiCommon.slang::FUiDraw (std430).");
+        static_assert(offsetof(FUiDraw, ShaderParams) == 96, "ShaderParams must not straddle a 16-byte boundary.");
+        static_assert(sizeof(FUiColorStop) == 32, "FUiColorStop must match RmlUiCommon.slang::FUiColorStop.");
 
         DepthState = RHI::CreateDepthStencil(RHI::FDepthStencilDesc{});
 
@@ -97,6 +103,7 @@ namespace Lumina
         DrawCalls.clear();
         PendingTextureUploads.clear();
         Geometries.clear();
+        Shaders.clear();
         for (auto& KV : Textures)
         {
             if (KV.second.AssetKeepalive != nullptr)
@@ -205,17 +212,22 @@ namespace Lumina
         return Pipeline;
     }
 
-    void FRmlUiRenderer::BeginFrame(RHI::FCmdListH CmdList, RHI::FTextureH Target, const FUIntVector2& ViewportSize, const FUIntVector2& LogicalSize)
+    void FRmlUiRenderer::BeginFrame(RHI::FCmdListH CmdList, RHI::FTextureH Target, const FUIntVector2& ViewportSize,
+                                    const FUIntVector2& LogicalSize, const FVector4* ClearColor)
     {
         CurrentCmdList   = CmdList;
         CurrentTarget    = Target;
         CurrentSize      = ViewportSize;
+        bClearTarget     = (ClearColor != nullptr);
+        CurrentClearColor = bClearTarget ? *ClearColor : FVector4(0.0f);
         bCachedFrameHashValid = false;
         ++FrameCounter;
 
         DrawCalls.clear();
+        EvictStaleBatches();
 
         const FUIntVector2 ProjSize = (LogicalSize.x > 0 && LogicalSize.y > 0) ? LogicalSize : ViewportSize;
+        CurrentLogicalSize = ProjSize;
 
         // pixel -> NDC ortho; no Y-flip since Vulkan viewport is +Y-down.
         const float W = ProjSize.x > 0 ? float(ProjSize.x) : 1.0f;
@@ -249,12 +261,15 @@ namespace Lumina
 
         const uint64 Count = DrawCalls.size();
         Mix(&Count, sizeof(Count));
+        Mix(&CurrentSize, sizeof(CurrentSize));
+        Mix(&CurrentLogicalSize, sizeof(CurrentLogicalSize));
 
         bool bHasBrush = false;
         for (const FDrawCall& Draw : DrawCalls)
         {
             Mix(&Draw.Geometry, sizeof(Draw.Geometry));
             Mix(&Draw.Texture, sizeof(Draw.Texture));
+            Mix(&Draw.Shader, sizeof(Draw.Shader));
             Mix(&Draw.Translation, sizeof(Draw.Translation));
             Mix(&Draw.MVP, sizeof(Draw.MVP));
             Mix(&Draw.bScissorEnabled, sizeof(Draw.bScissorEnabled));
@@ -307,6 +322,7 @@ namespace Lumina
         DrawCalls.clear();
         CurrentCmdList = {};
         CurrentTarget  = {};
+        bClearTarget   = false;
     }
 
     void FRmlUiRenderer::ReleaseTargetBatch(RHI::FTextureH Target)
@@ -327,6 +343,7 @@ namespace Lumina
         {
             return;
         }
+        It->second.LastUsedFrame = FrameCounter;
         if (bStable)
         {
             ++It->second.StableFrames;
@@ -337,10 +354,16 @@ namespace Lumina
         }
     }
 
-    uint32 FRmlUiRenderer::GetTargetStableFrames(RHI::FTextureH Target) const
+    uint32 FRmlUiRenderer::GetTargetStableFrames(RHI::FTextureH Target)
     {
         auto It = TargetBatches.find(Target.Handle);
-        return It != TargetBatches.end() ? It->second.StableFrames : 0;
+        if (It == TargetBatches.end())
+        {
+            return 0;
+        }
+        // A dormant widget stops rendering entirely, so this poll is the only thing keeping its batch alive.
+        It->second.LastUsedFrame = FrameCounter;
+        return It->second.StableFrames;
     }
 
     void FRmlUiRenderer::EnsureBatchBuffers(FTargetBatch& Batch, uint64 VertexBytes, uint64 IndexBytes)
@@ -362,6 +385,32 @@ namespace Lumina
         }
     }
 
+    void FRmlUiRenderer::EvictStaleBatches()
+    {
+        // A world/preview RT is destroyed on resize without telling us, and the RHI recycles the handle,
+        // so an unclaimed batch both leaks its buffers and can be matched against an unrelated target.
+        constexpr uint64 StaleFrames = 300;
+        if (FrameCounter < StaleFrames || FrameCounter - LastEvictFrame < StaleFrames)
+        {
+            return;
+        }
+        LastEvictFrame = FrameCounter;
+
+        for (auto It = TargetBatches.begin(); It != TargetBatches.end(); )
+        {
+            if (It->second.LastUsedFrame + StaleFrames < FrameCounter)
+            {
+                RHI::Core::Retire(It->second.VertexBuffer);
+                RHI::Core::Retire(It->second.IndexBuffer);
+                It = TargetBatches.erase(It);
+            }
+            else
+            {
+                ++It;
+            }
+        }
+    }
+
     void FRmlUiRenderer::EndFrame()
     {
         if (!RHI::IsValid(CurrentCmdList))
@@ -378,16 +427,40 @@ namespace Lumina
         // Also outside the UI render pass (each brush opens its own pass).
         RenderMaterialBrushes();
 
-        if (DrawCalls.empty() || !RHI::IsValid(CurrentTarget))
+        // The clear rides the pass load op, so a frame that bails before recording one still owes it.
+        auto Finish = [&]()
         {
+            if (bClearTarget && RHI::IsValid(CurrentTarget))
+            {
+                RHI::FRenderAttachment ClearOnly;
+                ClearOnly.Texture  = CurrentTarget;
+                ClearOnly.LoadOp   = RHI::ELoadOp::Clear;
+                ClearOnly.StoreOp  = RHI::EStoreOp::Store;
+                ClearOnly.Color[0] = CurrentClearColor.x;
+                ClearOnly.Color[1] = CurrentClearColor.y;
+                ClearOnly.Color[2] = CurrentClearColor.z;
+                ClearOnly.Color[3] = CurrentClearColor.w;
+
+                RHI::FRenderPassDesc ClearPass;
+                ClearPass.ColorAttachments = TSpan<const RHI::FRenderAttachment>(&ClearOnly, 1);
+                ClearPass.RenderArea       = CurrentSize;
+                RHI::CmdBeginRenderPass(CL, ClearPass);
+                RHI::CmdEndRenderPass(CL);
+            }
             RHI::CmdEndMarker(CL);
             ResetFrameState();
+        };
+
+        if (DrawCalls.empty() || !RHI::IsValid(CurrentTarget))
+        {
+            Finish();
             return;
         }
 
         LUMINA_PROFILE_SCOPE();
 
         FTargetBatch& Batch = TargetBatches[CurrentTarget.Handle];
+        Batch.LastUsedFrame = FrameCounter;
         const uint64 Hash   = bCachedFrameHashValid ? CachedFrameHash : ComputeDrawCallHash();
 
         const bool bRebuild = !Batch.bValid || Batch.LastHash != Hash
@@ -396,11 +469,17 @@ namespace Lumina
         const float FullW = float(CurrentSize.x);
         const float FullH = float(CurrentSize.y);
 
+        // RmlUi reports scissor rects in layout pixels, but the shader tests them against SV_Position,
+        // which is in render-target pixels. The two differ whenever the RT is not the layout size.
+        const float ClipScaleX = (CurrentLogicalSize.x > 0) ? FullW / float(CurrentLogicalSize.x) : 1.0f;
+        const float ClipScaleY = (CurrentLogicalSize.y > 0) ? FullH / float(CurrentLogicalSize.y) : 1.0f;
+
         if (bRebuild)
         {
             BatchVertices.clear();
             BatchIndices.clear();
             BatchDrawData.clear();
+            BatchStops.clear();
 
             for (const FDrawCall& Draw : DrawCalls)
             {
@@ -434,14 +513,38 @@ namespace Lumina
                 FUiDraw DD;
                 DD.MVP      = Draw.MVP;
                 DD.ClipRect = Draw.bScissorEnabled
-                    ? FVector4(float(Draw.Scissor.Position().x), float(Draw.Scissor.Position().y),
-                                float(Draw.Scissor.Position().x + Draw.Scissor.Width()),
-                                float(Draw.Scissor.Position().y + Draw.Scissor.Height()))
+                    ? FVector4(float(Draw.Scissor.Position().x) * ClipScaleX,
+                               float(Draw.Scissor.Position().y) * ClipScaleY,
+                               float(Draw.Scissor.Position().x + Draw.Scissor.Width())  * ClipScaleX,
+                               float(Draw.Scissor.Position().y + Draw.Scissor.Height()) * ClipScaleY)
                     : FVector4(0.0f, 0.0f, FullW, FullH);
                 DD.TextureID    = ResourceID;
                 DD.SamplerIndex = GRmlUiSamplerIndex;
-                DD.Pad0 = 0;
-                DD.Pad1 = 0;
+                DD.ShaderType   = 0;
+                DD.StopOffset   = 0;
+                DD.ShaderParams = FVector4(0.0f);
+                DD.StopCount    = 0;
+                DD.bRepeating   = 0;
+                DD.ShaderScale  = 1.0f;
+                DD.Pad0         = 0;
+
+                if (Draw.Shader != 0)
+                {
+                    auto ShaderIt = Shaders.find(Draw.Shader);
+                    if (ShaderIt == Shaders.end() || ShaderIt->second.Stops.empty())
+                    {
+                        continue;
+                    }
+                    const FShader& Sh = ShaderIt->second;
+                    DD.ShaderType   = Sh.Type;
+                    DD.ShaderParams = Sh.Params;
+                    DD.ShaderScale  = Sh.Scale;
+                    DD.bRepeating   = Sh.bRepeating ? 1u : 0u;
+                    DD.StopOffset   = uint32(BatchStops.size());
+                    DD.StopCount    = uint32(Sh.Stops.size());
+                    BatchStops.insert(BatchStops.end(), Sh.Stops.begin(), Sh.Stops.end());
+                }
+
                 BatchDrawData.push_back(DD);
 
                 const Rml::Vertex* SrcVerts = reinterpret_cast<const Rml::Vertex*>(Geom.VertexData.data());
@@ -479,8 +582,8 @@ namespace Lumina
                 Batch.bValid     = true;
                 Batch.LastHash   = Hash;
                 Batch.Draws.clear();
-                RHI::CmdEndMarker(CL);
-                ResetFrameState();
+                Batch.Stops.clear();
+                Finish();
                 return;
             }
 
@@ -501,6 +604,7 @@ namespace Lumina
             RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::AllCommands);
 
             Batch.Draws      = BatchDrawData;
+            Batch.Stops      = BatchStops;
             Batch.IndexCount = uint32(BatchIndices.size());
             Batch.LastHash   = Hash;
             Batch.bValid     = true;
@@ -508,16 +612,14 @@ namespace Lumina
 
         if (Batch.IndexCount == 0 || Batch.Draws.empty() || Batch.VertexBuffer == 0 || Batch.IndexBuffer == 0)
         {
-            RHI::CmdEndMarker(CL);
-            ResetFrameState();
+            Finish();
             return;
         }
 
         RHI::FPipelineH Pipeline = GetPipelineForFormat(RHI::GetTextureDesc(CurrentTarget).Format);
         if (!RHI::IsValid(Pipeline))
         {
-            RHI::CmdEndMarker(CL);
-            ResetFrameState();
+            Finish();
             return;
         }
 
@@ -525,13 +627,23 @@ namespace Lumina
         // vertex/index data lives in the resident buffers above.
         const RHI::GPUPtr DrawsPtr = RHI::Core::CopyTransientArray(Batch.Draws.data(), Batch.Draws.size());
 
-        const FRmlUiArgs Args { DrawsPtr, Batch.VertexBuffer };
+        // Always upload at least one stop so the args block never carries a null device address.
+        const FUiColorStop DummyStop {};
+        const RHI::GPUPtr StopsPtr = Batch.Stops.empty()
+            ? RHI::Core::CopyTransientArray(&DummyStop, 1)
+            : RHI::Core::CopyTransientArray(Batch.Stops.data(), Batch.Stops.size());
+
+        const FRmlUiArgs Args { DrawsPtr, Batch.VertexBuffer, StopsPtr };
         const RHI::GPUPtr ArgsPtr = RHI::Core::CopyTransient(Args);
 
         RHI::FRenderAttachment Color;
-        Color.Texture = CurrentTarget;
-        Color.LoadOp  = RHI::ELoadOp::Load;
-        Color.StoreOp = RHI::EStoreOp::Store;
+        Color.Texture  = CurrentTarget;
+        Color.LoadOp   = bClearTarget ? RHI::ELoadOp::Clear : RHI::ELoadOp::Load;
+        Color.StoreOp  = RHI::EStoreOp::Store;
+        Color.Color[0] = CurrentClearColor.x;
+        Color.Color[1] = CurrentClearColor.y;
+        Color.Color[2] = CurrentClearColor.z;
+        Color.Color[3] = CurrentClearColor.w;
 
         RHI::FRenderPassDesc Pass;
         Pass.ColorAttachments = TSpan<const RHI::FRenderAttachment>(&Color, 1);
@@ -829,6 +941,106 @@ namespace Lumina
         CachedMVP = ProjectionMatrix * UserTransform;
     }
 
+    Rml::CompiledShaderHandle FRmlUiRenderer::CompileShader(const Rml::String& Name, const Rml::Dictionary& Parameters)
+    {
+        auto Lookup = [&Parameters](const char* Key) -> const Rml::Variant*
+        {
+            const auto It = Parameters.find(Rml::String(Key));
+            return It != Parameters.end() ? &It->second : nullptr;
+        };
+        auto GetVec2 = [&](const char* Key)
+        {
+            const Rml::Variant* V = Lookup(Key);
+            return V != nullptr ? V->Get<Rml::Vector2f>() : Rml::Vector2f(0.0f, 0.0f);
+        };
+        auto GetFloat = [&](const char* Key)
+        {
+            const Rml::Variant* V = Lookup(Key);
+            return V != nullptr ? V->Get<float>() : 0.0f;
+        };
+
+        FShader Shader;
+        if (Name == "linear-gradient")
+        {
+            const Rml::Vector2f P0 = GetVec2("p0");
+            const Rml::Vector2f P1 = GetVec2("p1");
+            const float LengthSq = (P1.x - P0.x) * (P1.x - P0.x) + (P1.y - P0.y) * (P1.y - P0.y);
+            if (LengthSq <= 0.0f)
+            {
+                return 0;
+            }
+            Shader.Type   = 1;
+            Shader.Params = FVector4(P0.x, P0.y, P1.x, P1.y);
+            Shader.Scale  = 1.0f / LengthSq;
+        }
+        else if (Name == "radial-gradient")
+        {
+            const Rml::Vector2f Centre = GetVec2("center");
+            const Rml::Vector2f Radius = GetVec2("radius");
+            Shader.Type   = 2;
+            Shader.Params = FVector4(Centre.x, Centre.y, Radius.x, Radius.y);
+        }
+        else if (Name == "conic-gradient")
+        {
+            const Rml::Vector2f Centre = GetVec2("center");
+            const float Angle = GetFloat("angle");
+            // Angle zero points up and sweeps clockwise, the CSS convention RmlUi encodes.
+            Shader.Type   = 3;
+            Shader.Params = FVector4(Centre.x, Centre.y, Math::Sin(Angle), -Math::Cos(Angle));
+        }
+        else
+        {
+            return 0;
+        }
+
+        const Rml::Variant* StopsVar = Lookup("color_stop_list");
+        if (StopsVar == nullptr || StopsVar->GetType() != Rml::Variant::COLORSTOPLIST)
+        {
+            return 0;
+        }
+
+        const Rml::ColorStopList& List = StopsVar->GetReference<Rml::ColorStopList>();
+        if (List.empty())
+        {
+            return 0;
+        }
+
+        const size_t StopCount = Math::Min<size_t>(List.size(), GMaxColorStops);
+        Shader.Stops.reserve(StopCount);
+        for (size_t i = 0; i < StopCount; ++i)
+        {
+            const Rml::ColorStop& Stop = List[i];
+            FUiColorStop Out;
+            Out.Color    = FVector4(float(Stop.color.red)  / 255.0f, float(Stop.color.green) / 255.0f,
+                                    float(Stop.color.blue) / 255.0f, float(Stop.color.alpha) / 255.0f);
+            Out.Position = FVector4(Stop.position.number, 0.0f, 0.0f, 0.0f);
+            Shader.Stops.push_back(Out);
+        }
+
+        const Rml::Variant* RepeatVar = Lookup("repeating");
+        Shader.bRepeating = (RepeatVar != nullptr) && RepeatVar->Get<bool>();
+
+        const Rml::CompiledShaderHandle Handle = NextShaderHandle++;
+        Shaders.emplace(Handle, Move(Shader));
+        return Handle;
+    }
+
+    void FRmlUiRenderer::RenderShader(Rml::CompiledShaderHandle Shader, Rml::CompiledGeometryHandle Geometry,
+                                      Rml::Vector2f Translation, Rml::TextureHandle Texture)
+    {
+        if (Shaders.find(Shader) == Shaders.end())
+        {
+            return;
+        }
+        RenderGeometry(Geometry, Translation, Texture);
+        DrawCalls.back().Shader = Shader;
+    }
+
+    void FRmlUiRenderer::ReleaseShader(Rml::CompiledShaderHandle Shader)
+    {
+        Shaders.erase(Shader);
+    }
+
     void FRmlUiRenderer::RevalidateBrushes(RHI::FCmdListH CmdList)
     {
         // Mark each brush stale by whether its source path still resolves to the cached material (stays rooted,
@@ -853,7 +1065,8 @@ namespace Lumina
                 RHI::CmdBarrier(CmdList, RHI::EStageFlags::AllCommands, RHI::EStageFlags::Transfer);
                 RHI::CmdClearTexture(CmdList, Tex.Managed.Texture, Transparent);
                 RHI::CmdBarrier(CmdList, RHI::EStageFlags::Transfer, RHI::EStageFlags::AllCommands);
-                Tex.bBrushStale = true;
+                Tex.bBrushStale   = true;
+                Tex.bBrushCleared = true;
             }
             else if (bResolves && Tex.bBrushStale)
             {
@@ -891,6 +1104,30 @@ namespace Lumina
         // Only render brushes referenced this frame (brushes are shared across all
         // contexts; this scopes work to the drawing context). De-dup repeats.
         TVector<Rml::TextureHandle> Rendered;
+        bool bAnyWrites = false;
+
+        // A brush RT is created undefined, so a material that cannot draw yet would leave the UI
+        // sampling uninitialised memory. Give it transparent black once, then leave it alone.
+        auto ClearBrushOnce = [&](FTexture& Tex)
+        {
+            if (Tex.bBrushCleared)
+            {
+                return;
+            }
+            RHI::FRenderAttachment Color;
+            Color.Texture  = Tex.Managed.Texture;
+            Color.LoadOp   = RHI::ELoadOp::Clear;
+            Color.StoreOp  = RHI::EStoreOp::Store;
+            Color.Color[0] = 0.0f; Color.Color[1] = 0.0f; Color.Color[2] = 0.0f; Color.Color[3] = 0.0f;
+
+            RHI::FRenderPassDesc Pass;
+            Pass.ColorAttachments = TSpan<const RHI::FRenderAttachment>(&Color, 1);
+            Pass.RenderArea       = Tex.BrushSize;
+            RHI::CmdBeginRenderPass(CL, Pass);
+            RHI::CmdEndRenderPass(CL);
+            Tex.bBrushCleared = true;
+            bAnyWrites = true;
+        };
 
         for (const FDrawCall& Draw : DrawCalls)
         {
@@ -919,18 +1156,21 @@ namespace Lumina
             CMaterialInterface* Material = Tex.BrushMaterial;
             if (!Material->IsReadyForRender() || Material->GetMaterialType() != EMaterialType::UI)
             {
+                ClearBrushOnce(Tex);
                 continue;
             }
             const FShaderH VS = Material->GetVertexShader();
             const FShaderH PS = Material->GetPixelShader();
             if (VS == nullptr || PS == nullptr)
             {
+                ClearBrushOnce(Tex);
                 continue;
             }
 
             RHI::FPipelineH Pipeline = GetBrushPipeline(VS, PS);
             if (!RHI::IsValid(Pipeline))
             {
+                ClearBrushOnce(Tex);
                 continue;
             }
 
@@ -963,9 +1203,11 @@ namespace Lumina
             RHI::CmdDraw(CL, ArgsPtr, 3, 1, 0, 0);
 
             RHI::CmdEndRenderPass(CL);
+            Tex.bBrushCleared = true;
+            bAnyWrites = true;
         }
 
-        if (!Rendered.empty())
+        if (bAnyWrites)
         {
             // Brush RT writes visible to the UI pass sampling them.
             RHI::CmdBarrier(CL, RHI::EStageFlags::RasterColorOut, RHI::EStageFlags::PixelShader);

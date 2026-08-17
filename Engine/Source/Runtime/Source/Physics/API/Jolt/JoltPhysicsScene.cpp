@@ -186,6 +186,24 @@ namespace Lumina::Physics
         }
     };
     
+    // A query carries only channel bits, so a body passes when its collide-with mask includes any of them.
+    class FQueryLayerFilter : public JPH::ObjectLayerFilter
+    {
+    public:
+
+        explicit FQueryLayerFilter(ECollisionProfiles InQueryMask)
+            : QueryMask(InQueryMask)
+        {}
+
+        bool ShouldCollide(JPH::ObjectLayer InLayer) const override
+        {
+            const ECollisionProfiles BodyMask = (ECollisionProfiles)(uint16)(InLayer >> 16);
+            return (BodyMask & QueryMask) != (ECollisionProfiles)0;
+        }
+
+        ECollisionProfiles QueryMask;
+    };
+
     class FIgnoreFilter : public JPH::BodyFilter
     {
     public:
@@ -1813,64 +1831,42 @@ namespace Lumina::Physics
     {
         LUMINA_PROFILE_SCOPE();
 
-        JPH::Vec3 JPHStart  = JoltUtils::ToJPHVec3(Settings.Start);
-        JPH::Vec3 JPHEnd    = JoltUtils::ToJPHVec3(Settings.End);
-        JPH::Vec3 Direction = JPHEnd - JPHStart;
-        
-        if (Direction.Length() < LE_SMALL_NUMBER)
+        const JPH::Vec3 JPHStart  = JoltUtils::ToJPHVec3(Settings.Start);
+        const JPH::Vec3 JPHEnd    = JoltUtils::ToJPHVec3(Settings.End);
+        const JPH::Vec3 Direction = JPHEnd - JPHStart;
+
+        const float Length = Direction.Length();
+        if (Length < LE_SMALL_NUMBER)
         {
             return eastl::nullopt;
         }
-        
+
         JPH::RRayCast Ray;
         Ray.mOrigin = JPHStart;
         Ray.mDirection = Direction;
-        
-        class LayerMaskFilter : public JPH::ObjectLayerFilter
-        {
-        public:
-            LayerMaskFilter(uint32 InLayerMask) 
-                : LayerMask(InLayerMask) {}
 
-            bool ShouldCollide(JPH::ObjectLayer InLayer) const override
-            {
-                ECollisionProfiles LayerA = (ECollisionProfiles)(uint16)(LayerMask & 0xFFFF);
-                ECollisionProfiles MaskA  = (ECollisionProfiles)(uint16)(LayerMask >> 16);
-    
-                ECollisionProfiles LayerB = (ECollisionProfiles)(uint16)(InLayer & 0xFFFF);
-                ECollisionProfiles MaskB  = (ECollisionProfiles)(uint16)(InLayer >> 16);
-
-                return (MaskA & LayerB) != (ECollisionProfiles)0 || (MaskB & LayerA) != (ECollisionProfiles)0;
-            }
-
-            uint32 LayerMask;
-        };
-        
         FIgnoreFilter IgnoreFilter{Settings.IgnoreBodies};
-        
+
         JPH::RayCastResult Hit;
-        
-        LayerMaskFilter LayerFilter{(uint32)Settings.LayerMask};
+
+        FQueryLayerFilter LayerFilter{Settings.LayerMask};
 
         bool bHit = JoltSystem->GetNarrowPhaseQuery().CastRay(Ray, Hit, {}, LayerFilter, IgnoreFilter);
         if (!bHit)
         {
             return eastl::nullopt;
         }
-        
+
         const JPH::BodyLockInterfaceNoLock& LockInterface = JoltSystem->GetBodyLockInterfaceNoLock();
-        
+
         JPH::Body* Body = LockInterface.TryGetBody(Hit.mBodyID);
         if (!Body)
         {
             return eastl::nullopt;
         }
-        
+
         JPH::Vec3 SurfaceNormal = Body->GetWorldSpaceSurfaceNormal(Hit.mSubShapeID2, Ray.GetPointOnRay(Hit.mFraction));
-        
-        FVector3 Distance  = (Settings.Start - Settings.End);
-        float Length        = Math::Length(Distance);
-        
+
         SRayResult Result
         {
             .BodyID     = Hit.mBodyID.GetIndexAndSequenceNumber(),
@@ -1887,128 +1883,195 @@ namespace Lumina::Physics
         return Result;
     }
 
-    TVector<SRayResult> FJoltPhysicsScene::CastSphere(const SSphereCastSettings& Settings)
+    namespace
+    {
+        // False when the body died between the broad phase and this read-back.
+        bool BuildSweepResult(const FJoltPhysicsScene& Scene, const JPH::BodyLockInterfaceNoLock& Lock,
+            const SSphereCastSettings& Settings, float SweepLength, const JPH::ShapeCastResult& Hit, SRayResult& Out)
+        {
+            const JPH::Body* Body = Lock.TryGetBody(Hit.mBodyID2);
+            if (Body == nullptr)
+            {
+                return false;
+            }
+
+            Out.BodyID    = Hit.mBodyID2.GetIndexAndSequenceNumber();
+            Out.Entity    = (uint32)Body->GetUserData();
+            Out.Start     = Settings.Start;
+            Out.End       = Settings.End;
+            Out.Location  = JoltUtils::FromJPHVec3(Hit.mContactPointOn2);
+            Out.Normal    = JoltUtils::FromJPHVec3(Hit.mPenetrationAxis.Normalized());
+            Out.Fraction  = Hit.mFraction;
+            Out.Distance  = Hit.mFraction * SweepLength;
+            Out.BoneIndex = Scene.ResolveHitBoneIndex(static_cast<entt::entity>(Out.Entity), Hit.mBodyID2);
+            return true;
+        }
+
+        template<typename TCollector>
+        void RunSphereCast(JPH::PhysicsSystem& System, const SSphereCastSettings& Settings, TCollector& Collector)
+        {
+            const JPH::RVec3 Start = JoltUtils::ToJPHRVec3(Settings.Start);
+            const JPH::Vec3 Direction = JPH::Vec3(JoltUtils::ToJPHRVec3(Settings.End) - Start);
+
+            JPH::SphereShape QuerySphere(Settings.Radius);
+            const JPH::RShapeCast ShapeCast = JPH::RShapeCast::sFromWorldTransform(&QuerySphere,
+                JPH::Vec3::sReplicate(1.0f), JPH::RMat44::sTranslation(Start), Direction);
+
+            JPH::ShapeCastSettings ShapeSettings;
+            ShapeSettings.mBackFaceModeTriangles    = JPH::EBackFaceMode::CollideWithBackFaces;
+            ShapeSettings.mBackFaceModeConvex       = JPH::EBackFaceMode::CollideWithBackFaces;
+            ShapeSettings.mReturnDeepestPoint       = false;
+
+            FQueryLayerFilter LayerFilter{Settings.LayerMask};
+            FIgnoreFilter BodyFilter{Settings.IgnoreBodies};
+
+            System.GetNarrowPhaseQuery().CastShape(
+                ShapeCast,
+                ShapeSettings,
+                JPH::RVec3::sZero(),
+                Collector,
+                JPH::BroadPhaseLayerFilter(),
+                LayerFilter,
+                BodyFilter,
+                JPH::ShapeFilter());
+        }
+
+        void DrawSphereCastDebug([[maybe_unused]] CWorld* World, [[maybe_unused]] const SSphereCastSettings& Settings, [[maybe_unused]] bool bAnyHit)
+        {
+            #if JPH_DEBUG_RENDERER
+            if (!Settings.bDrawDebug)
+            {
+                return;
+            }
+
+            DEFER
+            {
+                FJoltPhysicsContext::GetDebugRenderer()->SetDrawDuration(0.0f);
+            };
+
+            FJoltPhysicsContext::GetDebugRenderer()->SetWorld(World);
+            FJoltPhysicsContext::GetDebugRenderer()->SetDrawDuration(Settings.DebugDuration);
+
+            const JPH::Color Color = bAnyHit ? JPH::Color(0, 255, 0, 255) : JPH::Color(255, 0, 0, 255);
+            JPH::SphereShape QuerySphere(Settings.Radius);
+            QuerySphere.Draw(FJoltPhysicsContext::GetDebugRenderer(),
+                JPH::RMat44::sTranslation(JoltUtils::ToJPHRVec3(Settings.Start)),
+                JPH::Vec3::sReplicate(1.0f),
+                Color,
+                false,
+                true);
+            #endif
+        }
+    }
+
+    void FJoltPhysicsScene::CastSphere(const SSphereCastSettings& Settings, TVector<SRayResult>& OutHits)
     {
         LUMINA_PROFILE_SCOPE();
-        
-        TVector<SRayResult> Results;
+
+        OutHits.clear();
         if (Math::IsNearlyZero(Settings.Radius))
         {
-            return Results;
+            return;
         }
-        
-        JPH::RVec3 JPHStart  = JoltUtils::ToJPHRVec3(Settings.Start);
-        JPH::RVec3 JPHEnd    = JoltUtils::ToJPHRVec3(Settings.End);
-        JPH::Vec3 Direction = (JPHEnd - JPHStart);
-        
-        class FMyCollector : public JPH::CastShapeCollector
+
+        const float SweepLength = Math::Length(Settings.End - Settings.Start);
+        const JPH::BodyLockInterfaceNoLock& Lock = JoltSystem->GetBodyLockInterfaceNoLock();
+
+        class FSphereCastCollector : public JPH::CastShapeCollector
         {
         public:
-            
-            FMyCollector(const FJoltPhysicsScene& InScene, TVector<SRayResult>& OutResults, const SSphereCastSettings& InSettings, const JPH::BodyLockInterfaceNoLock& NoLock)
+
+            FSphereCastCollector(const FJoltPhysicsScene& InScene, TVector<SRayResult>& OutResults, const SSphereCastSettings& InSettings, float InSweepLength, const JPH::BodyLockInterfaceNoLock& NoLock)
                 : Scene(InScene)
                 , Out(OutResults)
                 , Settings(InSettings)
+                , SweepLength(InSweepLength)
                 , Lock(NoLock)
             {}
 
             const FJoltPhysicsScene& Scene;
             TVector<SRayResult>& Out;
             const SSphereCastSettings& Settings;
+            float SweepLength;
             const JPH::BodyLockInterfaceNoLock& Lock;
 
             void AddHit(const JPH::ShapeCastResult& Hit) override
             {
-                const JPH::Body* Body = Lock.TryGetBody(Hit.mBodyID2);
-
                 SRayResult R;
-                R.BodyID   = Hit.mBodyID2.GetIndexAndSequenceNumber();
-                R.Entity   = (uint32)Body->GetUserData();
-                R.Start    = Settings.Start;
-                R.End      = Settings.End;
-                R.Location = JoltUtils::FromJPHVec3(Hit.mContactPointOn2);
-                R.Normal   = Math::Normalize(JoltUtils::FromJPHVec3(Hit.mPenetrationAxis.Normalized()));
-                R.Fraction = Hit.mFraction;
-                R.BoneIndex = Scene.ResolveHitBoneIndex(static_cast<entt::entity>(R.Entity), Hit.mBodyID2);
-
-                Out.emplace_back(Move(R));
+                if (BuildSweepResult(Scene, Lock, Settings, SweepLength, Hit, R))
+                {
+                    Out.push_back(R);
+                }
             }
         };
 
-        const JPH::BodyLockInterfaceNoLock& Lock = JoltSystem->GetBodyLockInterfaceNoLock();
+        FSphereCastCollector Collector(*this, OutHits, Settings, SweepLength, Lock);
+        RunSphereCast(*JoltSystem, Settings, Collector);
 
-
-        FMyCollector Collector(*this, Results, Settings, Lock);
-        FIgnoreFilter Filter{Settings.IgnoreBodies};
-        
-        JPH::SphereShape QuerySphere(Settings.Radius);
-        JPH::RShapeCast ShapeCast = JPH::RShapeCast::sFromWorldTransform(&QuerySphere, JPH::Vec3::sReplicate(1.0f), JPH::RMat44::sTranslation(JPHStart), Direction);
-        
-        JPH::ShapeCastSettings ShapeSettings;
-        ShapeSettings.mBackFaceModeTriangles    = JPH::EBackFaceMode::CollideWithBackFaces;
-        ShapeSettings.mBackFaceModeConvex       = JPH::EBackFaceMode::CollideWithBackFaces;
-        ShapeSettings.mReturnDeepestPoint       = false;
-        
-        
-        JoltSystem->GetNarrowPhaseQuery().CastShape(
-            ShapeCast,
-            ShapeSettings,
-            JPH::RVec3::sZero(),
-            Collector,
-            JPH::BroadPhaseLayerFilter(),
-            JPH::ObjectLayerFilter(),
-            Filter,
-            JPH::ShapeFilter()
-        );
-        
-        #if JPH_DEBUG_RENDERER
-        DEFER 
-        { 
-            FJoltPhysicsContext::GetDebugRenderer()->SetDrawDuration(0.0f); 
-        };
-        
-        FJoltPhysicsContext::GetDebugRenderer()->SetWorld(World);
-        FJoltPhysicsContext::GetDebugRenderer()->SetDrawDuration(Settings.DebugDuration);
-        
-        if (Settings.bDrawDebug)
-        {
-            QuerySphere.Draw(FJoltPhysicsContext::GetDebugRenderer(),
-                JPH::RMat44::sTranslation(JPHStart), 
-                JPH::Vec3::sReplicate(1.0f), 
-                JPH::Color(0, 255, 0, 255),
-                false, 
-                true);
-            
-            if (Results.empty())
-            {
-                QuerySphere.Draw(FJoltPhysicsContext::GetDebugRenderer(),
-                JPH::RMat44::sTranslation(JPHStart), 
-                JPH::Vec3::sReplicate(1.0f), 
-                JPH::Color(255, 0, 0, 255),
-                false, 
-                true);
-            
-                return Results;
-            }
-        }
-        #endif
-        
-        eastl::sort(Results.begin(), Results.end(), [](const SRayResult& A, const SRayResult& B)
+        eastl::sort(OutHits.begin(), OutHits.end(), [](const SRayResult& A, const SRayResult& B)
         {
             return A.Fraction < B.Fraction;
         });
-        
-        return Results;
+
+        DrawSphereCastDebug(World, Settings, !OutHits.empty());
+    }
+
+    TOptional<SRayResult> FJoltPhysicsScene::CastSphereClosest(const SSphereCastSettings& Settings)
+    {
+        LUMINA_PROFILE_SCOPE();
+
+        if (Math::IsNearlyZero(Settings.Radius))
+        {
+            return eastl::nullopt;
+        }
+
+        JPH::ClosestHitCollisionCollector<JPH::CastShapeCollector> Collector;
+        RunSphereCast(*JoltSystem, Settings, Collector);
+
+        DrawSphereCastDebug(World, Settings, Collector.HadHit());
+
+        if (!Collector.HadHit())
+        {
+            return eastl::nullopt;
+        }
+
+        SRayResult Result;
+        const float SweepLength = Math::Length(Settings.End - Settings.Start);
+        if (!BuildSweepResult(*this, JoltSystem->GetBodyLockInterfaceNoLock(), Settings, SweepLength, Collector.mHit, Result))
+        {
+            return eastl::nullopt;
+        }
+
+        return Result;
     }
 
     namespace
     {
-        // Collects the distinct entities of every body a CollideShape overlap touches. A single body can
-        // report multiple sub-shape hits, so de-dup on the entity (linear scan: overlap result sets are small).
+        // One body reports several sub-shape hits, so overlaps de-dup on the entity (linear scan: sets are small).
+        template<typename TCollector>
+        void AppendDistinctEntity(TSpan<entt::entity> Out, int32& Count, entt::entity Entity, TCollector& Collector)
+        {
+            for (int32 i = 0; i < Count; ++i)
+            {
+                if (Out[i] == Entity)
+                {
+                    return;
+                }
+            }
+
+            if (Count == (int32)Out.size())
+            {
+                Collector.ForceEarlyOut();
+                return;
+            }
+
+            Out[Count++] = Entity;
+        }
+
         class FOverlapCollector : public JPH::CollideShapeCollector
         {
         public:
-            FOverlapCollector(const JPH::BodyLockInterfaceNoLock& InLock, TVector<entt::entity>& InOut)
+            FOverlapCollector(const JPH::BodyLockInterfaceNoLock& InLock, TSpan<entt::entity> InOut)
                 : Lock(InLock)
                 , Out(InOut)
             {}
@@ -2020,37 +2083,35 @@ namespace Lumina::Physics
                 {
                     return;
                 }
-                const entt::entity E = static_cast<entt::entity>(static_cast<uint32>(Body->GetUserData()));
-                if (eastl::find(Out.begin(), Out.end(), E) == Out.end())
-                {
-                    Out.push_back(E);
-                }
+                AppendDistinctEntity(Out, Count, static_cast<entt::entity>(static_cast<uint32>(Body->GetUserData())), *this);
             }
 
             const JPH::BodyLockInterfaceNoLock& Lock;
-            TVector<entt::entity>&              Out;
+            TSpan<entt::entity>                 Out;
+            int32                               Count = 0;
         };
     }
 
-    TVector<SRayResult> FJoltPhysicsScene::CastRayAll(const SRayCastSettings& Settings)
+    void FJoltPhysicsScene::CastRayAll(const SRayCastSettings& Settings, TVector<SRayResult>& OutHits)
     {
         LUMINA_PROFILE_SCOPE();
 
-        TVector<SRayResult> Results;
+        OutHits.clear();
 
         const JPH::Vec3 JPHStart  = JoltUtils::ToJPHVec3(Settings.Start);
         const JPH::Vec3 JPHEnd    = JoltUtils::ToJPHVec3(Settings.End);
         const JPH::Vec3 Direction = JPHEnd - JPHStart;
-        if (Direction.Length() < LE_SMALL_NUMBER)
+
+        const float RayLength = Direction.Length();
+        if (RayLength < LE_SMALL_NUMBER)
         {
-            return Results;
+            return;
         }
 
         JPH::RRayCast Ray;
         Ray.mOrigin    = JPHStart;
         Ray.mDirection = Direction;
 
-        const float RayLength = Math::Length(Settings.End - Settings.Start);
         const JPH::BodyLockInterfaceNoLock& Lock = JoltSystem->GetBodyLockInterfaceNoLock();
 
         class FRayAllCollector : public JPH::CastRayCollector
@@ -2080,7 +2141,7 @@ namespace Lumina::Physics
                 R.Fraction = Hit.mFraction;
                 R.Distance = Hit.mFraction * Length;
                 R.BoneIndex = Scene.ResolveHitBoneIndex(static_cast<entt::entity>(R.Entity), Hit.mBodyID);
-                Out.emplace_back(Move(R));
+                Out.push_back(R);
             }
 
             const FJoltPhysicsScene&            Scene;
@@ -2091,18 +2152,17 @@ namespace Lumina::Physics
             const JPH::BodyLockInterfaceNoLock& Lock;
         };
 
-        FRayAllCollector Collector(*this, Results, Settings, Ray, RayLength, Lock);
+        FRayAllCollector Collector(*this, OutHits, Settings, Ray, RayLength, Lock);
         FIgnoreFilter Filter{Settings.IgnoreBodies};
 
         // Default layer filters = test every body along the ray (the "penetrate everything" use case);
         // IgnoreBodies still excludes specific bodies (e.g. the shooter's own).
         JoltSystem->GetNarrowPhaseQuery().CastRay(Ray, JPH::RayCastSettings(), Collector, {}, {}, Filter, {});
 
-        std::sort(Results.begin(), Results.end(), [](const SRayResult& A, const SRayResult& B) { return A.Fraction < B.Fraction; });
-        return Results;
+        eastl::sort(OutHits.begin(), OutHits.end(), [](const SRayResult& A, const SRayResult& B) { return A.Fraction < B.Fraction; });
     }
 
-    void FJoltPhysicsScene::CollidePoint(const FVector3& Point, const TVector<uint32>& IgnoreBodies, TVector<entt::entity>& OutEntities)
+    int32 FJoltPhysicsScene::CollidePoint(const FVector3& Point, TSpan<const uint32> IgnoreBodies, TSpan<entt::entity> OutEntities)
     {
         LUMINA_PROFILE_SCOPE();
 
@@ -2111,7 +2171,7 @@ namespace Lumina::Physics
         class FPointCollector : public JPH::CollidePointCollector
         {
         public:
-            FPointCollector(const JPH::BodyLockInterfaceNoLock& InLock, TVector<entt::entity>& InOut)
+            FPointCollector(const JPH::BodyLockInterfaceNoLock& InLock, TSpan<entt::entity> InOut)
                 : Lock(InLock), Out(InOut)
             {}
 
@@ -2122,24 +2182,23 @@ namespace Lumina::Physics
                 {
                     return;
                 }
-                const entt::entity E = static_cast<entt::entity>(static_cast<uint32>(Body->GetUserData()));
-                if (eastl::find(Out.begin(), Out.end(), E) == Out.end())
-                {
-                    Out.push_back(E);
-                }
+                AppendDistinctEntity(Out, Count, static_cast<entt::entity>(static_cast<uint32>(Body->GetUserData())), *this);
             }
 
             const JPH::BodyLockInterfaceNoLock& Lock;
-            TVector<entt::entity>&              Out;
+            TSpan<entt::entity>                 Out;
+            int32                               Count = 0;
         };
 
         FPointCollector Collector(Lock, OutEntities);
         FIgnoreFilter Filter{IgnoreBodies};
         JoltSystem->GetNarrowPhaseQuery().CollidePoint(
             JoltUtils::ToJPHRVec3(FDoubleVector3(Point)), Collector, {}, {}, Filter, {});
+
+        return Collector.Count;
     }
 
-    void FJoltPhysicsScene::OverlapShapeInternal(const JPH::Shape* Shape, const JPH::RMat44& Transform, const TVector<uint32>& IgnoreBodies, TVector<entt::entity>& OutEntities)
+    int32 FJoltPhysicsScene::OverlapShapeInternal(const JPH::Shape* Shape, const JPH::RMat44& Transform, TSpan<const uint32> IgnoreBodies, TSpan<entt::entity> OutEntities)
     {
         const JPH::BodyLockInterfaceNoLock& Lock = JoltSystem->GetBodyLockInterfaceNoLock();
         FOverlapCollector Collector(Lock, OutEntities);
@@ -2156,31 +2215,33 @@ namespace Lumina::Physics
             JPH::ObjectLayerFilter(),
             Filter,
             JPH::ShapeFilter());
+
+        return Collector.Count;
     }
 
-    void FJoltPhysicsScene::OverlapSphere(const FVector3& Center, float Radius, const TVector<uint32>& IgnoreBodies, TVector<entt::entity>& OutEntities)
+    int32 FJoltPhysicsScene::OverlapSphere(const FVector3& Center, float Radius, TSpan<const uint32> IgnoreBodies, TSpan<entt::entity> OutEntities)
     {
         LUMINA_PROFILE_SCOPE();
         if (Math::IsNearlyZero(Radius))
         {
-            return;
+            return 0;
         }
         JPH::SphereShape Shape(Radius);
-        OverlapShapeInternal(&Shape, JPH::RMat44::sTranslation(JoltUtils::ToJPHRVec3(Center)), IgnoreBodies, OutEntities);
+        return OverlapShapeInternal(&Shape, JPH::RMat44::sTranslation(JoltUtils::ToJPHRVec3(Center)), IgnoreBodies, OutEntities);
     }
 
-    void FJoltPhysicsScene::OverlapBox(const FVector3& Center, const FVector3& HalfExtents, const FQuat& Rotation, const TVector<uint32>& IgnoreBodies, TVector<entt::entity>& OutEntities)
+    int32 FJoltPhysicsScene::OverlapBox(const FVector3& Center, const FVector3& HalfExtents, const FQuat& Rotation, TSpan<const uint32> IgnoreBodies, TSpan<entt::entity> OutEntities)
     {
         LUMINA_PROFILE_SCOPE();
         if (HalfExtents.x <= 0.0f || HalfExtents.y <= 0.0f || HalfExtents.z <= 0.0f)
         {
-            return;
+            return 0;
         }
         // Jolt enforces a minimum box half-extent (convex radius); clamp so thin volumes don't assert.
         const JPH::Vec3 Half = JPH::Vec3(Math::Max(HalfExtents.x, 0.01f), Math::Max(HalfExtents.y, 0.01f), Math::Max(HalfExtents.z, 0.01f));
         JPH::BoxShape Shape(Half);
         const JPH::RMat44 Transform = JPH::RMat44::sRotationTranslation(JoltUtils::ToJPHQuat(Rotation), JoltUtils::ToJPHRVec3(Center));
-        OverlapShapeInternal(&Shape, Transform, IgnoreBodies, OutEntities);
+        return OverlapShapeInternal(&Shape, Transform, IgnoreBodies, OutEntities);
     }
 
     void FJoltPhysicsScene::EnsureCharacterAllocators()

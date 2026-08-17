@@ -24,7 +24,15 @@ namespace Lumina
         PointClamp   = 4,
         AnisoWrap    = 5,
         AnisoClamp   = 6,
+        PointMirror  = 10,
+        AnisoMirror  = 11,
+
+        // Resolved at compile time from the assigned texture's own Filter and AddressMode.
+        FromTexture  = 255,
     };
+
+    /** Stock sampler the node ends up using, with FromTexture resolved against Texture. */
+    EMaterialSampler ResolveMaterialSampler(EMaterialSampler Sampler, const CTexture* Texture);
 
     /** SAMPLER_* identifier for the emitted Slang. */
     FStringView MaterialSamplerToSlang(EMaterialSampler Sampler);
@@ -57,8 +65,9 @@ namespace Lumina
          * Filtering + address mode. Wrap tiles, Clamp holds the edge texel, Mirror reflects. Changing this
          * recompiles the material: the sampler index is a shader constant, not an instance parameter.
          */
+        // FromTexture reads the asset's Filter/AddressMode at COMPILE time; changing them needs a recompile.
         PROPERTY(Editable, Category = "Texture")
-        EMaterialSampler Sampler = EMaterialSampler::LinearWrap;
+        EMaterialSampler Sampler = EMaterialSampler::FromTexture;
 
         CMaterialInput* UV = nullptr;
     };

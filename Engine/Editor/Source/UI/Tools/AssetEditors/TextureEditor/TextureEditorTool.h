@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include "UI/Tools/AssetEditors/AssetEditorTool.h"
 #include "Core/Object/ObjectHandleTyped.h"
+#include "Tools/Import/ImportHelpers.h"
 
 namespace Lumina
 {
@@ -24,6 +25,8 @@ namespace Lumina
         void Update(const FUpdateContext& UpdateContext) override;
         void DrawToolMenu(const FUpdateContext& UpdateContext) override;
         void DrawHelpMenu() override;
+        void OnPropertyEditFinished(const FPropertyChangedEvent& Event) override;
+        void OnAssetDataChangedExternally() override;
         void InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const override;
 
 
@@ -31,6 +34,12 @@ namespace Lumina
 
         /** Take or release the streaming pin so it matches whether the preview is actually on screen. */
         void UpdateStreamingPin();
+
+        /** Re-cook now, from the session baseline when the asset has no source file on disk. */
+        bool RecookForPropertyChange(CTexture* Texture);
+
+        // Decoded mip 0 for a sourceless texture, so repeated edits re-cook from one fixed image.
+        TOptional<Import::Textures::FTextureImportResult> SourcelessBaseline;
 
         float ZoomFactor = 1.0f;
         ImVec2 PanOffset = ImVec2(0.0f, 0.0f);

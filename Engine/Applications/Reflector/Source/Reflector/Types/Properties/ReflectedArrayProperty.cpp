@@ -8,7 +8,7 @@ namespace Lumina
     void FReflectedArrayProperty::AppendDefinition(Reflection::FCodeWriter& Writer) const
     {
         // FArrayPropertyParams carries a single GetOpsFn: the per-property forwarder that returns the shared
-        // GetVectorOps<ElementType> table (defined as a static member so the element type resolves in scope).
+        // GetVectorOpsFor<Container> table (a static member so the container type resolves in scope).
         const eastl::string CustomData = AccessorScope + Name + "ArrayOps_WrapperImpl";
         const eastl::string PropertyFlagStr = PropertyFlagsToString(PropertyFlags);
         AppendPropertyDef(Writer, PropertyFlagStr.c_str(), "Lumina::EPropertyTypeFlags::Vector", CustomData);
@@ -35,8 +35,7 @@ namespace Lumina
 
         const eastl::string& Q = AccessorDefinitionScope;
         const char* N = Name.c_str();
-        const char* Raw = RawTypeName.c_str();      // The container type, e.g. TVector<T>.
-        const char* Elem = ElementTypeName.c_str(); // The element type T.
+        const char* Raw = RawTypeName.c_str();      // The container type, e.g. TVector<T> or TFixedVector<T, N>.
 
         // Object is the container instance itself (&TVector<T>), not the owning struct.
         // The caller resolves the member offset via GetValuePtr, so arrays compose.
@@ -48,11 +47,12 @@ namespace Lumina
         Writer.EndBlock();
         Writer.Line();
 
-        // The whole operation set is the shared element-type ops table. Resolving it here (a member of the
-        // owning type) lets the unqualified element name compile, unlike the global-scope params initializer.
+        // The whole operation set is the container's ops table. Resolving it here (a member of the owning
+        // type) lets the unqualified container name compile, unlike the global-scope params initializer. It is
+        // keyed on the container, not the element: a fixed container must be grown as its own type.
         Writer.Linef("const ::Lumina::FVectorOps* %s%sArrayOps_WrapperImpl()", Q.c_str(), N);
         Writer.BeginBlock();
-        Writer.Linef("return ::Lumina::GetVectorOps<%s>();", Elem);
+        Writer.Linef("return ::Lumina::GetVectorOpsFor<%s>();", Raw);
         Writer.EndBlock();
         Writer.Line();
 

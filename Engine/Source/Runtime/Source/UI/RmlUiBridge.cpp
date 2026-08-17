@@ -1187,7 +1187,10 @@ namespace Lumina::RmlUi
                 continue;
             }
 
-            State.Renderer->BeginFrame(CmdList, Job.Target, Job.Size);
+            // Transparent clear rides the UI pass load op; a standalone transfer clear would cost a
+            // full barrier pair per widget per frame.
+            const FVector4 Transparent(0.0f, 0.0f, 0.0f, 0.0f);
+            State.Renderer->BeginFrame(CmdList, Job.Target, Job.Size, FUIntVector2(0), &Transparent);
             Job.Context->Render();
             const uint64 Hash = State.Renderer->PeekFrameHash();
 
@@ -1205,11 +1208,11 @@ namespace Lumina::RmlUi
                 continue;
             }
 
-            // Renderer composites with LoadOp=Load, so clear the RT to transparent first.
-            const float Transparent[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-            RHI::Barriers::AllToTransfer(CmdList);
-            RHI::CmdClearTexture(CmdList, Job.Target, Transparent);
-            RHI::Barriers::TransferToAll(CmdList);
+            if (Rendered == 0)
+            {
+                // Order this frame's widget RT writes after the previous frame's sampling of them.
+                RHI::CmdBarrier(CmdList, RHI::EStageFlags::AllCommands, RHI::EStageFlags::RasterColorOut);
+            }
 
             State.Renderer->EndFrame();
             State.Renderer->NoteTargetStable(Job.Target, false);      // just changed -> reset
