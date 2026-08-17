@@ -30,8 +30,10 @@ namespace Lumina::Screenshot
         uint32      ResolutionY = 0;
     };
 
-    // Captures Scene's render target to disk; blocks on the GPU so the readback reflects the latest frame.
-    // OutputPath needs the extension (.png for FinalLDR, .hdr for SceneHDR); empty = timestamped path under <EngineDir>/Saved/Screenshots.
+    // <Project>/Saved/Screenshots, or <EngineDir>/Saved/Screenshots when no project is loaded.
+    EDITOR_API FString GetScreenshotDirectory();
+
+    // Blocks on the GPU so the readback reflects the latest frame; empty OutputPath means a timestamped default.
     EDITOR_API FCaptureResult Capture(IRenderScene* Scene, ECaptureSource Source, const FString& OutputPath = {});
 
     // Picks the best available world's render scene (Game > Editor) and captures it.

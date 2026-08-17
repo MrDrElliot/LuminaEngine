@@ -39,7 +39,6 @@ namespace Lumina::RHI::Core
         enum class EKind : uint8 { Buffer, Texture, SampledSlot, StorageSlot, Pipeline, Callback };
 
         EKind      Kind        = EKind::Buffer;
-        uint32     ExtraCycles = 0;
         GPUPtr     Memory      = 0;
         FTextureH  Texture     = {};
         uint32     Slot        = kInvalidHeapSlot;
@@ -61,7 +60,8 @@ namespace Lumina::RHI::Core
         FTextureHeapH       GlobalHeap;
 
         FSemaphoreH         QueueTimeline[kNumQueues];
-        uint64              QueueCounter[kNumQueues] = {};
+        // Written only under SubmitMutex; atomic so PushRetire can read it without taking that lock.
+        TAtomic<uint64>     QueueCounter[kNumQueues] = {};
         // This slot's high-water mark on each queue, waited independently in BeginFrame.
         uint64              SlotWaitValue[kFramesInFlight][kNumQueues] = {};
 
@@ -168,8 +168,7 @@ namespace Lumina::RHI::Core
         Upload::Shutdown();
         Textures::Shutdown();
 
-        // Device is idle, so every hold has expired by definition: destroy both slots outright, ignoring
-        // ExtraCycles. Runs before the heap is freed below, so slot retirements still resolve.
+        // Device is idle; runs before the heap is freed below, so slot retirements still resolve.
         {
             FScopeLock Lock(GCore.RetireMutex);
             for (TVector<FRetireItem>& Queue : GCore.RetireQueues)
@@ -242,19 +241,13 @@ namespace Lumina::RHI::Core
             return;
         }
 
+        for (uint32 QueueIndex = 0; QueueIndex < kNumQueues; ++QueueIndex)
         {
-            FScopeLock Lock(GCore.SubmitMutex);
-            for (uint32 QueueIndex = 0; QueueIndex < kNumQueues; ++QueueIndex)
-            {
-                // Everything already SUBMITTED is covered by the counter. What the counter cannot see is a
-                // command list that is open right now: it may already have recorded a reference to this
-                // resource and it will be submitted with one of the next N values. So reach that far.
-                // Zero open lists means zero unaccounted references, which is what stops an idle queue
-                // (async compute in a quiet stretch, transfer with no uploads) from pinning the item
-                // against a value nothing is ever going to signal.
-                Item.Fence[QueueIndex] = GCore.QueueCounter[QueueIndex]
-                                       + GetOpenCommandListCount((EQueueType)QueueIndex);
-            }
+            // Open lists first: a submit bumps the counter before dropping this, so the sum only over-reads.
+            const uint32 Open = GetOpenCommandListCount((EQueueType)QueueIndex);
+
+            // Reaches past what is submitted, to cover an open recording that may already name the resource.
+            Item.Fence[QueueIndex] = GCore.QueueCounter[QueueIndex].load(std::memory_order_acquire) + Open;
         }
 
         const uint32 Slot = GCore.CurrentSlot.load(std::memory_order_acquire);
@@ -281,7 +274,7 @@ namespace Lumina::RHI::Core
             FScopeLock Lock(GCore.SubmitMutex);
             for (uint32 QueueIndex = 0; QueueIndex < kNumQueues; ++QueueIndex)
             {
-                Submitted[QueueIndex] = GCore.QueueCounter[QueueIndex];
+                Submitted[QueueIndex] = GCore.QueueCounter[QueueIndex].load(std::memory_order_relaxed);
                 OpenNow[QueueIndex]   = GetOpenCommandListCount((EQueueType)QueueIndex);
             }
         }
@@ -328,12 +321,6 @@ namespace Lumina::RHI::Core
                     break;
                 }
 
-                if (Queue[i].ExtraCycles > 0)
-                {
-                    --Queue[i].ExtraCycles;
-                    ++i;
-                    continue;
-                }
                 // Not yet retired on some queue: leave it for the next drain of this slot.
                 if (!HasRetired(Queue[i]))
                 {
@@ -359,19 +346,18 @@ namespace Lumina::RHI::Core
         }
     }
 
-    void Retire(GPUPtr Memory, uint32 ExtraCycles)
+    void Retire(GPUPtr Memory)
     {
         if (Memory == 0)
         {
             return;
         }
-        
+
         Upload::CancelBuffer(Memory);
 
         FRetireItem Item;
-        Item.Kind        = FRetireItem::EKind::Buffer;
-        Item.Memory      = Memory;
-        Item.ExtraCycles = ExtraCycles;
+        Item.Kind   = FRetireItem::EKind::Buffer;
+        Item.Memory = Memory;
         PushRetire(Item);
     }
 
@@ -505,7 +491,7 @@ namespace Lumina::RHI::Core
                 const uint32 QueueIndex = (uint32)Queue;
 
                 FScopeLock Lock(GCore.SubmitMutex);
-                const uint64 Value = ++GCore.QueueCounter[QueueIndex];
+                const uint64 Value = GCore.QueueCounter[QueueIndex].fetch_add(1, std::memory_order_release) + 1;
                 const FSemaphoreInfo Signal { GCore.QueueTimeline[QueueIndex], Value, EStageFlags::AllCommands };
                 RHI::Submit(Queue, TSpan<const FCmdListH>{&CL, 1}, {}, TSpan<const FSemaphoreInfo>{&Signal, 1});
                 GCore.SlotWaitValue[Slot][QueueIndex] = Value;
@@ -594,7 +580,7 @@ namespace Lumina::RHI::Core
 
         FScopeLock Lock(GCore.SubmitMutex);
 
-        const uint64 Value = ++GCore.QueueCounter[QueueIndex];
+        const uint64 Value = GCore.QueueCounter[QueueIndex].fetch_add(1, std::memory_order_release) + 1;
 
         FSemaphoreInfo WaitStorage[8];
         TSpan<const FSemaphoreInfo> EffectiveWaits = Waits;
@@ -646,7 +632,7 @@ namespace Lumina::RHI::Core
         uint64 Value;
         {
             FScopeLock Lock(GCore.SubmitMutex);
-            Value = ++GCore.QueueCounter[GraphicsIndex];
+            Value = GCore.QueueCounter[GraphicsIndex].fetch_add(1, std::memory_order_release) + 1;
 
             const FSemaphoreInfo Signal { GCore.QueueTimeline[GraphicsIndex], Value, EStageFlags::AllCommands };
             RHI::Submit(EQueueType::Graphics, TSpan<const FCmdListH>{&CommandList, 1}, {}, TSpan<const FSemaphoreInfo>{&Signal, 1});
@@ -662,7 +648,7 @@ namespace Lumina::RHI::Core
 
         FScopeLock Lock(GCore.SubmitMutex);
 
-        const uint64 Value = ++GCore.QueueCounter[GraphicsIndex];
+        const uint64 Value = GCore.QueueCounter[GraphicsIndex].fetch_add(1, std::memory_order_release) + 1;
 
         // PresentSwapchain submits CommandList (wait acquire, signal present + this frame value), presents.
         const bool bOk = PresentSwapchain(Swapchain, CommandList, GCore.QueueTimeline[GraphicsIndex], Value);

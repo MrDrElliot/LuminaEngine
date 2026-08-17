@@ -3612,7 +3612,7 @@ namespace Lumina
             ImGui::Separator();
             if (ImGui::MenuItem(LE_ICON_FOLDER " Open Screenshots Folder"))
             {
-                FString Folder = Paths::GetEngineDirectory() + "/Saved/Screenshots";
+                FString Folder = Screenshot::GetScreenshotDirectory();
                 Paths::CreateDirectories(FStringView(Folder.c_str(), Folder.size()));
                 Platform::LaunchURL(UTF8_TO_TCHAR(Folder.c_str()));
             }

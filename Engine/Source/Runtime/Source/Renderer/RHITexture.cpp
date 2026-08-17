@@ -3,6 +3,7 @@
 #include "Core/Templates/LuminaTemplate.h"
 
 #include "Core/Math/Math.h"
+#include "Core/Threading/Atomic.h"
 #include "Core/Threading/Thread.h"
 #include "Log/Log.h"
 #include "Core/Profiler/Profile.h"
@@ -47,6 +48,8 @@ namespace Lumina::RHI::Textures
 
         TVector<FPendingSwap> PendingSwaps;
         FMutex                SwapMutex;
+        // Published under SwapMutex so the read-only queries can answer "none" without taking it.
+        TAtomic<uint32>       PendingSwapCount{0};
 
         FManagedTexture     Default;
         bool                bInitialized = false;
@@ -54,13 +57,20 @@ namespace Lumina::RHI::Textures
 
     static FState GState;
 
+    // Caller holds SwapMutex.
+    static void PublishSwapCountLocked()
+    {
+        GState.PendingSwapCount.store((uint32)GState.PendingSwaps.size(), std::memory_order_release);
+    }
+
     // Frames a staged swap may go with no upload landing against it before it is called abandoned.
     inline constexpr uint32 kMaxStagedIdleTicks = 60;
 
     // An upload queued against a staged image is proof the caller is still filling it.
     static void NoteStagedProgress(uint32 Slot)
     {
-        if (Slot == kInvalidHeapSlot)
+        // Steady state is no swaps at all, and this runs once per uploaded band on every streaming job.
+        if (Slot == kInvalidHeapSlot || GState.PendingSwapCount.load(std::memory_order_acquire) == 0)
         {
             return;
         }
@@ -149,6 +159,7 @@ namespace Lumina::RHI::Textures
                 FreeH(Pending.NewTexture);
             }
             GState.PendingSwaps.clear();
+            PublishSwapCountLocked();
         }
 
         // Anything already retired is drained by Core::Shutdown, which runs immediately after this.
@@ -293,6 +304,7 @@ namespace Lumina::RHI::Textures
                 Staged.NewTexture = NewTexture;
                 Staged.OldTexture = Previous;
                 CopySwapName(Staged.DebugName, Desc.DebugName);
+                PublishSwapCountLocked();
             }
         }
 
@@ -361,6 +373,7 @@ namespace Lumina::RHI::Textures
 
                 GState.PendingSwaps[i] = GState.PendingSwaps.back();
                 GState.PendingSwaps.pop_back();
+                PublishSwapCountLocked();
                 break;
             }
         }
@@ -402,7 +415,7 @@ namespace Lumina::RHI::Textures
 
     bool HasPendingSwap(const FManagedTexture& Tex)
     {
-        if (Tex.SampledSlot == kInvalidHeapSlot)
+        if (Tex.SampledSlot == kInvalidHeapSlot || GState.PendingSwapCount.load(std::memory_order_acquire) == 0)
         {
             return false;
         }
@@ -420,7 +433,7 @@ namespace Lumina::RHI::Textures
 
     void TickPendingSwaps()
     {
-        if (!GState.bInitialized)
+        if (!GState.bInitialized || GState.PendingSwapCount.load(std::memory_order_acquire) == 0)
         {
             return;
         }
@@ -464,6 +477,7 @@ namespace Lumina::RHI::Textures
 
                 GState.PendingSwaps[i] = GState.PendingSwaps.back();
                 GState.PendingSwaps.pop_back();
+                PublishSwapCountLocked();
             }
         }
 
@@ -544,6 +558,7 @@ namespace Lumina::RHI::Textures
                     StillBound = GState.PendingSwaps[i].OldTexture;
                     GState.PendingSwaps[i] = GState.PendingSwaps.back();
                     GState.PendingSwaps.pop_back();
+                    PublishSwapCountLocked();
                     break;
                 }
             }

@@ -70,7 +70,7 @@ namespace Lumina::RHI
             return Alloc.Gpu;
         }
         
-        RUNTIME_API void Retire(GPUPtr Memory, uint32 ExtraCycles = 0);
+        RUNTIME_API void Retire(GPUPtr Memory);
         RUNTIME_API void Retire(FTextureH Texture);
         RUNTIME_API void Retire(FPipelineH Pipeline);
         RUNTIME_API void RetireSampledSlot(uint32 HeapSlot);

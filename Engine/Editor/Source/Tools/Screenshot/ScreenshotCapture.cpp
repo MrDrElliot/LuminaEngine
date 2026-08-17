@@ -6,6 +6,7 @@
 
 #include "Tools/Image/ImageWrite.h"
 
+#include "Core/Engine/Engine.h"
 #include "Paths/Paths.h"
 #include "Renderer/Format.h"
 #include "Renderer/RHI.h"
@@ -23,7 +24,7 @@ namespace Lumina::Screenshot
     {
         FString GenerateDefaultPath(ECaptureSource Source)
         {
-            const FString Folder = Paths::GetEngineDirectory() + "/Saved/Screenshots";
+            const FString Folder = GetScreenshotDirectory();
             Paths::CreateDirectories(FStringView(Folder.c_str(), Folder.size()));
 
             const auto Now = std::chrono::system_clock::now();
@@ -177,6 +178,17 @@ namespace Lumina::Screenshot
             }
             return true;
         }
+    }
+
+    FString GetScreenshotDirectory()
+    {
+        if (GEngine != nullptr && GEngine->HasLoadedProject())
+        {
+            const FStringView ProjectPath = GEngine->GetProjectPath();
+            return FString(ProjectPath.data(), ProjectPath.size()) + "/Saved/Screenshots";
+        }
+
+        return Paths::GetEngineDirectory() + "/Saved/Screenshots";
     }
 
     FCaptureResult Capture(IRenderScene* Scene, ECaptureSource Source, const FString& OutputPath)

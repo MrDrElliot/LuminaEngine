@@ -621,17 +621,15 @@ namespace Lumina::RHI
         TSegmentMap<FSurface>           Surfaces;
 
         TArray<TVector<FCmdListH>, 3>   FreeCommandLists;
-
-        /// Command lists that are OPEN -- begun and not yet submitted or reset. The retire fence reads it
-        /// to answer "could a recording that already exists still name the resource I am freeing?", which
-        /// is the one thing a queue counter cannot tell you. See PushRetire in RHICore.cpp.
+        
         TAtomic<uint32>                 OpenCommandLists[3] = {};
 
         TVector<FTextureH>              UninitializedTextures;
+        // Published under InitMutex, so Submit can skip the lock when no image is waiting.
+        TAtomic<uint32>                 PendingImageInits{0};
 
         VkMemoryRequirements            MemoryRequirements;
 
-        // Shared: FindMemory lookups run on every recording thread; only Malloc/Free move the vector.
         FSharedMutex                    MemoryMutex;
         TArray<FMutex, 3>               QueueMutexes;
         TArray<uint32, 3>               QueueLockIndex;
@@ -645,6 +643,8 @@ namespace Lumina::RHI
     };
 
     static FDeviceImpl* GDevice;
+
+    static bool GLogCopies = false;
 
     // The mutex owning the VkQueue that Type resolves to. Aliased types share the owner's lock.
     static FMutex& QueueLockFor(EQueueType Type)
@@ -820,7 +820,6 @@ namespace Lumina::RHI
         Dialogs::ShowInternal(Dialogs::ESeverity::FatalError, Dialogs::EType::Ok, Title, Message);
     }
 
-    /// <summary>What asking a physical device whether it can run the renderer comes back with.</summary>
     struct FDeviceSuitability
     {
         bool    bSuitable = false;
@@ -1271,6 +1270,8 @@ namespace Lumina::RHI
         GDevice = new FDeviceImpl{};
         GDevice->CrashTracker = MakeUnique<FVulkanCrashTracker>();
         GDevice->bHeadless    = DeviceDesc.bHeadless;
+
+        GLogCopies = GCommandLine != nullptr && GCommandLine->Has("logcopies");
 
         // GLFW is only consulted for the window-system bits. A headless caller has no GLFW instance at
         // all, so asking it anything here would report failure on a perfectly good driver.
@@ -2961,6 +2962,7 @@ namespace Lumina::RHI
                         ++i;
                     }
                 }
+                GDevice->PendingImageInits.store((uint32)Pending.size(), std::memory_order_release);
             }
 
 #if USING(WITH_EDITOR)
@@ -3776,6 +3778,7 @@ namespace Lumina::RHI
         {
             FScopeLock Lock(GDevice->InitMutex);
             GDevice->UninitializedTextures.push_back(Handle);
+            GDevice->PendingImageInits.store((uint32)GDevice->UninitializedTextures.size(), std::memory_order_release);
         }
 
 #if USING(WITH_EDITOR)
@@ -4772,10 +4775,11 @@ namespace Lumina::RHI
 
         // Images are EXCLUSIVE; a layout transition is a write, so transfer must never claim them.
         TVector<FTextureH> UninitializedTextures;
-        if (Queue != EQueueType::Transfer)
+        if (Queue != EQueueType::Transfer && GDevice->PendingImageInits.load(std::memory_order_acquire) != 0)
         {
             FScopeLock Lock(GDevice->InitMutex);
             UninitializedTextures.swap(GDevice->UninitializedTextures);
+            GDevice->PendingImageInits.store(0, std::memory_order_release);
         }
 
         for (size_t i = 0; i < Signals.size(); ++i)
@@ -4941,11 +4945,32 @@ namespace Lumina::RHI
 
 #if !defined(LE_SHIPPING)
         {
-            static THashMap<uint64, uint64> HighestSignalled;
+            // Flat and fixed: a hash map here rehashes and allocates while the queue lock is held.
+            struct FSignalHighWater { uint64 Native; uint64 Value; };
+            static FSignalHighWater HighestSignalled[16] = {};
+
             for (const FSemaphoreInfo& Signal : Signals)
             {
                 const uint64 Native = (uint64)GDevice->Semaphores[Signal.Semaphore].Semaphore;
-                uint64& High = HighestSignalled[Native];
+
+                FSignalHighWater* Entry = nullptr;
+                for (FSignalHighWater& Candidate : HighestSignalled)
+                {
+                    if (Candidate.Native == Native || Candidate.Native == 0)
+                    {
+                        Candidate.Native = Native;
+                        Entry = &Candidate;
+                        break;
+                    }
+                }
+
+                // More distinct timelines than the table holds; the check lapses rather than allocating.
+                if (Entry == nullptr)
+                {
+                    continue;
+                }
+
+                uint64& High = Entry->Value;
                 if (Signal.Value <= High && High != 0)
                 {
                     LOG_ERROR("Timeline regression: native {:#x} signalled {} on queue {}, already at {}. "
@@ -5006,8 +5031,7 @@ namespace Lumina::RHI
 
         auto* VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
 
-        static const bool bLogCopies = GCommandLine != nullptr && GCommandLine->Has("logcopies");
-        if (bLogCopies)
+        if (GLogCopies)
         {
             LOG_TRACE("CmdMemcpy: dst=0x{:016X} off={} size={} (src=0x{:016X} off={})",
                 (uint64)DestBuffer, (uint64)DestOffset, (uint64)Size, (uint64)SourceBuffer, (uint64)SourceOffset);

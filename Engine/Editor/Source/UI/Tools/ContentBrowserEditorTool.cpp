@@ -1873,7 +1873,8 @@ namespace Lumina
         DrawHelpTextRow("Filter",
             "Filter menu hides asset classes you don't want to see. View Options changes tile size.");
         DrawHelpTextRow("Rename / Delete",
-            "F2 renames the tile in place; Delete removes. Renames update inbound references via redirectors.");
+            "F2 renames the tile in place; Delete removes. References follow a rename by asset GUID, "
+            "so inbound references stay intact without redirectors.");
     }
 
     FFixedString FContentBrowserEditorTool::MakeTypeLabel(const VFS::FFileInfo& FileInfo)

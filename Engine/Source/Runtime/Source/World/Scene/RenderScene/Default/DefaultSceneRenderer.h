@@ -644,17 +644,11 @@ namespace Lumina
         void DeferredLightingPass(RHI::FCmdListH CL);
         #if USING(WITH_EDITOR)
         void PickerResolvePass(RHI::FCmdListH CL);
+        // Edge-detects the Picker RT, so billboards, widgets and world text outline as well as meshes.
+        void SelectionOutlinePass(RHI::FCmdListH CL);
         #endif
         #if !defined(LE_SHIPPING)
         void SceneDebugViewPass(RHI::FCmdListH CL);
-
-        #if USING(WITH_EDITOR)
-        /** Silhouette outline around every selected entity, composited into the final LDR target after
-            tone mapping and SMAA so the colour is exact and nothing downstream blurs the line. Edge
-            detection runs over the Picker RT, which already carries a per-pixel entity id -- so this
-            covers billboards, widgets and world text as well as meshes, for free. */
-        void SelectionOutlinePass(RHI::FCmdListH CL);
-        #endif
         #endif
         bool BindShadowBatchPipeline(RHI::FCmdListH CL, const FMeshDrawCommand& Batch,
                                     FShaderH PixelShader);

@@ -4,6 +4,7 @@
 #include "Assets/AssetManager/AssetManager.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Core/Serialization/Archiver.h"
+#include "FileSystem/FileSystem.h"
 
 #include <mutex>
 
@@ -22,18 +23,34 @@ namespace Lumina
 
     bool FSoftObjectPath::TryResolve() const
     {
-        // Lock-free fast path: once any thread has populated CachedGUID,
-        // every subsequent caller observes it without touching the mutex.
+        FAssetRegistry& Registry = FAssetRegistry::Get();
+
         if (CachedGUID.IsValid())
         {
+            // A rename keeps the GUID and moves the file, so the registry is the only route back to a live path.
+            const FAssetData* Data = Registry.GetAssetByGUID(CachedGUID);
+            if (Data == nullptr)
+            {
+                // Transient objects and deleted assets have no registry entry; leave Path as authored.
+                return true;
+            }
+
+            const FStringView Current(Data->Path.c_str(), Data->Path.size());
+
+            std::scoped_lock Lock(ResolveMutex());
+            if (VFS::RemoveExtension(FStringView(Path.c_str(), Path.size())) != VFS::RemoveExtension(Current))
+            {
+                Path.assign(Current.data(), Current.size());
+            }
             return true;
         }
+
         if (Path.empty())
         {
             return false;
         }
 
-        FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(FStringView(Path.c_str(), Path.size()));
+        FAssetData* Data = Registry.GetAssetByPath(FStringView(Path.c_str(), Path.size()));
         if (Data == nullptr)
         {
             return false;

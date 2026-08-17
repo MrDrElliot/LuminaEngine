@@ -54,6 +54,14 @@ namespace Lumina::Dialogs
 
         ShowInternal(ESeverity::Error, EType::Ok, Title, Msg.c_str());
     }
+    
+    template <typename... TArgs>
+    void FatalError(const FString& Title, std::format_string<TArgs...> fmt, TArgs&&... Args)
+    {
+        std::string Msg = std::format(fmt, std::forward<TArgs>(Args)...);
+
+        ShowInternal(ESeverity::FatalError, EType::Ok, Title, Msg.c_str());
+    }
 
     template <typename... TArgs>
     bool Confirmation(const FString& Title, std::format_string<TArgs...> fmt, TArgs&&... Args)

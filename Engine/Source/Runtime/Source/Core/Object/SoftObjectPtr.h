@@ -11,8 +11,7 @@ namespace Lumina
     class CObject;
     class FArchive;
 
-    /** Serializable asset reference by path; resolves on demand, never force-loads. Identity is
-     *  always path-based (not GUID) so TryResolve can't move a hash bucket; CachedGUID write is atomic. */
+    // Serializable asset reference by path; resolves on demand, never force-loads.
     struct RUNTIME_API FSoftObjectPath
     {
         FSoftObjectPath() = default;
@@ -57,8 +56,7 @@ namespace Lumina
             CachedGUID = FGuid();
         }
 
-        /** Look up Path in FAssetRegistry to populate CachedGUID. No-op if
-         *  GUID already known. Returns true on success. Thread-safe. */
+        // Populates CachedGUID from Path, or repoints Path at the GUID's current location after a rename.
         bool TryResolve() const;
 
         /** Blocking load through FAssetManager; returns nullptr on miss. */
@@ -70,7 +68,7 @@ namespace Lumina
 
         bool operator==(const FSoftObjectPath& Other) const
         {
-            // Path-only, stable across resolve state. See class comment.
+            // Path-only, never GUID: an unresolved reference must still compare equal to a resolved one.
             return Path == Other.Path;
         }
         bool operator!=(const FSoftObjectPath& Other) const { return !(*this == Other); }
@@ -78,7 +76,8 @@ namespace Lumina
         friend RUNTIME_API FArchive& operator<<(FArchive& Ar, FSoftObjectPath& Self);
 
     private:
-        FString         Path;
+        // Mutable because TryResolve heals a stale path in place; see the hash specialization below.
+        mutable FString Path;
         mutable FGuid   CachedGUID;
     };
 
@@ -146,7 +145,7 @@ namespace eastl
     {
         size_t operator()(const Lumina::FSoftObjectPath& P) const noexcept
         {
-            // Hash by path only; GUID-hashing would rebucket once TryResolve ran.
+            // Never hash an instance across a TryResolve: healing a renamed path rebuckets it.
             const Lumina::FStringView V = P.GetPath();
             return eastl::hash<eastl::string_view>{}(eastl::string_view(V.data(), V.size()));
         }
