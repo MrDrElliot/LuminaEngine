@@ -73,6 +73,9 @@ namespace Lumina
 
         void SyncSampleTable();
 
+        // Forces the rebind SyncSampleTable's address compare would miss when the block is reused.
+        void RebindSampleTable();
+
         void BeginAssetTransaction(FName Name);
         void EndAssetTransaction();
 

@@ -128,10 +128,7 @@ namespace Lumina
     {
         FAssetEditorTool::OnPostUndoRedo();
 
-        // A restore rewrites Samples wholesale, so the details pointer into an element is stale and the
-        // selection may now be past the end.
-        SampleTarget = nullptr;
-
+        // A restore rewrites Samples wholesale, so the selection may now be past the end.
         CBlendSpace* BlendSpace = GetAsset<CBlendSpace>();
         if (SelectedSample >= (int32)BlendSpace->Samples.size())
         {
@@ -139,7 +136,7 @@ namespace Lumina
         }
 
         BlendSpace->RebuildTopology();
-        SyncSampleTable();
+        RebindSampleTable();
     }
 
     void FBlendSpaceEditorTool::Update(const FUpdateContext& UpdateContext)
@@ -342,6 +339,7 @@ namespace Lumina
         SelectedSample = (int32)BlendSpace->Samples.size() - 1;
 
         BlendSpace->RebuildTopology();
+        RebindSampleTable();
         NotifyAssetDataChanged();
         EndAssetTransaction();
     }
@@ -360,8 +358,16 @@ namespace Lumina
         SelectedSample = INDEX_NONE;
 
         BlendSpace->RebuildTopology();
+        RebindSampleTable();
         NotifyAssetDataChanged();
         EndAssetTransaction();
+    }
+
+    // Editing Samples frees the block the table points into, and Details draws later this same frame.
+    void FBlendSpaceEditorTool::RebindSampleTable()
+    {
+        SampleTarget = nullptr;
+        SyncSampleTable();
     }
 
     void FBlendSpaceEditorTool::SyncSampleTable()
