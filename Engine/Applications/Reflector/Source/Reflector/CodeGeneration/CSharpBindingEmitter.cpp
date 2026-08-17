@@ -1,4 +1,4 @@
-#include "CSharpBindingEmitter.h"
+﻿#include "CSharpBindingEmitter.h"
 
 #include <EASTL/algorithm.h>
 
@@ -21,15 +21,13 @@ namespace Lumina::Reflection
 {
     namespace
     {
-        // Excluded from the C# API: explicit opt-out (NoCSharp/) or a manually-registered stub
-        // (ManualStub, e.g. the math types) whose real layout the Reflector doesn't see, those are
-        // hand-written in LuminaSharp instead.
+        // No generated C# type: either an explicit opt-out or a mirror LuminaSharp already hand-writes.
         bool IsExcludedFromCSharp(const FReflectedType& Type)
         {
             return eastl::any_of(Type.Metadata.begin(), Type.Metadata.end(),
                 [](const FMetadataPair& Pair)
                 {
-                    return Pair.Key == "NoCSharp" || Pair.Key == "ManualStub";
+                    return Pair.Key == "NoCSharp" || Pair.Key == "CSharpValueMirror";
                 });
         }
 
@@ -327,7 +325,7 @@ namespace Lumina::Reflection
             const FReflectedStruct* S = static_cast<const FReflectedStruct*>(T);
             int Size = 0;
             int Align = 0;
-            if (HasMetadata(*S, "ManualStub"))
+            if (HasMetadata(*S, "CSharpValueMirror"))
             {
                 return false; // hand-written value type
             }
@@ -452,7 +450,7 @@ namespace Lumina::Reflection
                 const FReflectedStruct* S = static_cast<const FReflectedStruct*>(T);
                 int Size = 0;
                 int Align = 0;
-                if (HasMetadata(*S, "ManualStub") || IsBlittableValueStruct(*S, Db, Size, Align))
+                if (HasMetadata(*S, "CSharpValueMirror") || IsBlittableValueStruct(*S, Db, Size, Align))
                 {
                     B.Kind = EBind::StructValue;
                     B.CSharp = GlobalCSharp(Q);
@@ -507,7 +505,7 @@ namespace Lumina::Reflection
                     const FReflectedStruct* S = Db.GetReflectedType<FReflectedStruct>(FStringHash(Prop.TypeName));
                     int Size = 0;
                     int Align = 0;
-                    if (S == nullptr || !(HasMetadata(*S, "ManualStub") || IsBlittableValueStruct(*S, Db, Size, Align)))
+                    if (S == nullptr || !(HasMetadata(*S, "CSharpValueMirror") || IsBlittableValueStruct(*S, Db, Size, Align)))
                     {
                         return false; // skip non-blittable delegate payloads
                     }
@@ -575,7 +573,7 @@ namespace Lumina::Reflection
                 B.TargetCpp = Prop.TypeName;
                 int Size = 0;
                 int Align = 0;
-                const bool bValue = HasMetadata(*S, "ManualStub")   // hand-written blittable value type (math)
+                const bool bValue = HasMetadata(*S, "CSharpValueMirror")   // hand-written blittable value type (math)
                     || IsBlittableValueStruct(*S, Db, Size, Align);
                 if (bValue)
                 {
@@ -1131,7 +1129,7 @@ namespace Lumina::Reflection
                     }
                     int Size = 0;
                     int Align = 0;
-                    if (HasMetadata(*S, "ManualStub") || IsBlittableValueStruct(*S, Db, Size, Align))
+                    if (HasMetadata(*S, "CSharpValueMirror") || IsBlittableValueStruct(*S, Db, Size, Align))
                     {
                         B.Kind = EBind::StructValue; B.CSharp = GlobalCSharp(F.TypeName); B.TargetCpp = F.TypeName; return true;
                     }
@@ -2075,7 +2073,7 @@ namespace Lumina::Reflection
         }
 
         Writer.Linef("static_assert(sizeof(%s) == %d, \"LuminaSharp: blittable C# mirror of %s has a size mismatch (likely a non-reflected field).\");",
-            Struct.QualifiedName.c_str(), Size, Struct.DisplayName.c_str());
+            Struct.EmittedCppQualifiedName().c_str(), Size, Struct.DisplayName.c_str());
     }
 
     void CSharpBindingEmitter::EmitNativeThunks(FCodeWriter& Writer, const FReflectedStruct& Type, const FReflectionDatabase& Database)
@@ -2096,7 +2094,7 @@ namespace Lumina::Reflection
         }
 
         const eastl::string Friendly = Names::FriendlyFromQualified(Type.QualifiedName);
-        const char* Qualified = Type.QualifiedName.c_str();
+        const char* Qualified = Type.EmittedCppQualifiedName().c_str();
         // Interop thunks are resolved by name at runtime from whatever binary they land in (their module
         // DLL in modular builds, the exe in monolithic), so they use the always-dllexport LUMINA_SCRIPT_API
         // rather than the per-module API macro (empty under LUMINA_MONOLITHIC). See ModuleAPI.h.

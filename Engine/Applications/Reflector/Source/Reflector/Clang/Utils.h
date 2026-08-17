@@ -7,6 +7,7 @@
 #include <clang-c/Index.h>
 #include <EASTL/algorithm.h>
 #include <EASTL/string.h>
+#include <EASTL/vector.h>
 #include <filesystem>
 #include <system_error>
 #include "xxhash.h"
@@ -168,6 +169,131 @@ namespace Lumina::ClangUtils
         }
 
         return !QualifiedName.empty();
+    }
+
+    /// The trailing component of a qualified name: "Lumina::Foo" -> "Foo".
+    inline eastl::string UnqualifiedName(const eastl::string& Qualified)
+    {
+        const size_t Scope = Qualified.rfind("::");
+        return Scope == eastl::string::npos ? Qualified : Qualified.substr(Scope + 2);
+    }
+
+    /// Splits a template argument list at top-level commas, so nested `<...>` stays intact.
+    inline eastl::vector<eastl::string> SplitTemplateArguments(const eastl::string& Arguments)
+    {
+        eastl::vector<eastl::string> Result;
+        int32_t Depth = 0;
+        size_t Start = 0;
+
+        for (size_t i = 0; i <= Arguments.size(); ++i)
+        {
+            const char C = i < Arguments.size() ? Arguments[i] : ',';
+            if (C == '<' || C == '(')
+            {
+                ++Depth;
+            }
+            else if (C == '>' || C == ')')
+            {
+                --Depth;
+            }
+            else if (C == ',' && Depth == 0)
+            {
+                Result.push_back(Arguments.substr(Start, i - Start));
+                Start = i + 1;
+            }
+        }
+
+        return Result;
+    }
+
+    /// A C++ identifier built from a template argument: scopes dropped, punctuation folded to '_'.
+    inline eastl::string MangleTemplateArgument(eastl::string Argument)
+    {
+        while (!Argument.empty() && (Argument.front() == ' ' || Argument.front() == '\t'))
+        {
+            Argument.erase(0, 1);
+        }
+        while (!Argument.empty() && (Argument.back() == ' ' || Argument.back() == '\t'))
+        {
+            Argument.pop_back();
+        }
+
+        StripElaboratedPrefix(Argument);
+
+        eastl::string Result;
+        eastl::string Segment;
+
+        auto FlushSegment = [&]()
+        {
+            if (!Segment.empty())
+            {
+                if (!Result.empty())
+                {
+                    Result += '_';
+                }
+                Result += Segment;
+                Segment.clear();
+            }
+        };
+
+        for (size_t i = 0; i < Argument.size(); ++i)
+        {
+            const char C = Argument[i];
+            if ((C >= 'a' && C <= 'z') || (C >= 'A' && C <= 'Z') || (C >= '0' && C <= '9') || C == '_')
+            {
+                Segment += C;
+                continue;
+            }
+
+            // A scope resolution keeps only the trailing component, so Lumina::FVector3 mangles to FVector3.
+            if (C == ':' && i + 1 < Argument.size() && Argument[i + 1] == ':')
+            {
+                Segment.clear();
+                ++i;
+                continue;
+            }
+
+            FlushSegment();
+        }
+
+        FlushSegment();
+        return Result;
+    }
+
+    /// "Lumina::TVec<float, 3>" -> "TVec_float_3"; ResolveArgument renames an argument to its reflected name.
+    template<typename TResolveArgument>
+    inline eastl::string MangleTemplateSpelling(const eastl::string& Spelling, TResolveArgument&& ResolveArgument)
+    {
+        const size_t Open = Spelling.find('<');
+        const size_t Close = Spelling.rfind('>');
+        if (Open == eastl::string::npos || Close == eastl::string::npos || Close < Open)
+        {
+            return {};
+        }
+
+        eastl::string Result = UnqualifiedName(Spelling.substr(0, Open));
+
+        for (eastl::string Argument : SplitTemplateArguments(Spelling.substr(Open + 1, Close - Open - 1)))
+        {
+            while (!Argument.empty() && Argument.front() == ' ')
+            {
+                Argument.erase(0, 1);
+            }
+            while (!Argument.empty() && Argument.back() == ' ')
+            {
+                Argument.pop_back();
+            }
+
+            const eastl::string Resolved = ResolveArgument(Argument);
+            const eastl::string Mangled = MangleTemplateArgument(Resolved.empty() ? Argument : Resolved);
+            if (!Mangled.empty())
+            {
+                Result += '_';
+                Result += Mangled;
+            }
+        }
+
+        return Result;
     }
 
     /// Rewrites the engine's container and core-type aliases onto their reflected spellings.

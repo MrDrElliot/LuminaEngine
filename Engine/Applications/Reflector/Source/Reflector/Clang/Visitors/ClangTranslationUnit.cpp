@@ -94,6 +94,22 @@ namespace Lumina::Reflection
 			return Visitor::VisitStructure(Cursor, Parent, ParserContext);
 		}
 
+		case(CXCursor_TypeAliasDecl):
+		case(CXCursor_TypedefDecl):
+		{
+			return Visitor::VisitTypeAlias(Cursor, Parent, ParserContext);
+		}
+
+		case(CXCursor_ClassTemplate):
+		case(CXCursor_ClassTemplatePartialSpecialization):
+		{
+			ParserContext->PushNamespace(CursorName);
+			clang_visitChildren(Cursor, VisitTranslationUnit, ClientData);
+			ParserContext->PopNamespace();
+
+			return Visitor::VisitClassTemplate(Cursor, Parent, ParserContext);
+		}
+
 		case(CXCursor_EnumDecl):
 		{
 			return Visitor::VisitEnum(Cursor, Parent, ParserContext);

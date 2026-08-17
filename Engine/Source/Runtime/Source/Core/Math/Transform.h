@@ -1,9 +1,11 @@
-#pragma once
+﻿#pragma once
 
 #include <format>
 #include "Core/Math/Matrix/MatrixMath.h"
 #include "Core/Math/SIMD/VQuat1.h"
 #include "Core/Math/TransformFwd.h"
+#include "Core/Reflection/ReflectionMacros.h"
+#include "Transform.generated.h"
 
 // SIMD-backed transform.
 
@@ -11,12 +13,19 @@ namespace Lumina
 {
     class FArchive;
 
-    #ifndef REFLECTION_PARSER
-
+    // The reflected shape is 40 bytes and the real one 48, so Transform.cs mirrors the padding by hand.
+    REFLECT(ReflectedName = "FTransform", NoCSharp, CSharpValueMirror, MinimalAPI)
     struct alignas(16) VTransform
     {
+        GENERATED_BODY()
+
+        PROPERTY(Script, Editable, ReflectAs = "FVector3")
         SIMD::VFloat4 Location;   // x, y, z, 0
+
+        PROPERTY(Script, Editable, ReflectAs = "FQuat")
         SIMD::VFloat4 Rotation;   // x, y, z, w
+
+        PROPERTY(Script, Editable, ReflectAs = "FVector3")
         SIMD::VFloat4 Scale;      // x, y, z, 1  (pad lane 1 so Inverse's 1/Scale never divides by 0)
 
         RUNTIME_API VTransform()
@@ -152,39 +161,7 @@ namespace Lumina
         }
     };
 
-    #endif // !REFLECTION_PARSER
 }
-
-#ifdef REFLECTION_PARSER
-#ifndef REFLECT
-#define REFLECT(...)
-#define PROPERTY(...)
-#define FUNCTION(...)
-#define GENERATED_BODY(...)
-#endif
-namespace Lumina
-{
-    REFLECT(ManualStub, NoCSharp)
-    struct alignas(16) FTransform
-    {
-        PROPERTY(Script, Editable) 
-        FVector3 Location;  // @0
-        
-        float Pad0;          // @12
-        
-        PROPERTY(Script, Editable) 
-        FQuat    Rotation;  // @16
-        
-        PROPERTY(Script, Editable)
-        FVector3 Scale;     // @32
-        
-        float Pad1;                                    // @44
-    };
-}
-#endif
-
-// The reflection stub carries the layout, not the accessors this reads.
-#ifndef REFLECTION_PARSER
 
 template <>
 struct std::formatter<Lumina::FTransform>
@@ -202,5 +179,3 @@ struct std::formatter<Lumina::FTransform>
             L.x, L.y, L.z, R.w, R.x, R.y, R.z, S.x, S.y, S.z);
     }
 };
-
-#endif // !REFLECTION_PARSER

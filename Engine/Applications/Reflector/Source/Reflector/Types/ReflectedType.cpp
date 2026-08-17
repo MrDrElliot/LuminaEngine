@@ -84,6 +84,18 @@ namespace Lumina::Reflection
         }
     }
     
+    const eastl::string* FReflectedType::TryGetMetadata(const eastl::string& Key) const
+    {
+        for (const FMetadataPair& Pair : Metadata)
+        {
+            if (Pair.Key == Key)
+            {
+                return &Pair.Value;
+            }
+        }
+        return nullptr;
+    }
+
     bool FReflectedType::HasMetadata(const eastl::string& Meta) const
     {
         return eastl::any_of(Metadata.begin(), Metadata.end(),

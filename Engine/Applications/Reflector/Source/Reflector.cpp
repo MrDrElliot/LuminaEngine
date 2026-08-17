@@ -211,21 +211,21 @@ int main(int argc, char* argv[])
                 continue;
             }
 
-            // ManualStub-only headers can't include their .generated.h (forward-decl clashes with the `using` alias).
             // find() not operator[]: the latter inserts empty entries the codegen would emit empty files for.
             auto TypeIt = Parser.ParsingContext.ReflectionDatabase.ReflectedTypes.find(Header.get());
             if (TypeIt != Parser.ParsingContext.ReflectionDatabase.ReflectedTypes.end() && !TypeIt->second.empty())
             {
-                bool bAllManualStubs = true;
+                // An alias has no GENERATED_BODY to feed, so its header needs no companion include.
+                bool bAllAliases = true;
                 for (const auto& T : TypeIt->second)
                 {
-                    if (!T->HasMetadata("ManualStub"))
+                    if (!T->bIsAlias)
                     {
-                        bAllManualStubs = false;
+                        bAllAliases = false;
                         break;
                     }
                 }
-                if (bAllManualStubs)
+                if (bAllAliases)
                 {
                     continue;
                 }

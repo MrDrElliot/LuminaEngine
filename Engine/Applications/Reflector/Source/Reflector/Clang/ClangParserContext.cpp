@@ -24,7 +24,7 @@ namespace Lumina::Reflection
         Macros.push(eastl::move(Macro));
     }
 
-    bool FClangParserContext::TryFindMacroForCursor(const eastl::string& HeaderID, const CXCursor& Cursor, FReflectionMacro& Macro)
+    bool FClangParserContext::TryFindMacroForCursor(const eastl::string& HeaderID, const CXCursor& Cursor, FReflectionMacro& Macro, bool bConsume)
     {
         uint64_t Hash = ClangUtils::HashString(HeaderID);
 
@@ -93,7 +93,10 @@ namespace Lumina::Reflection
         if (Best != MacrosForHeader.end())
         {
             Macro = *Best;
-            MacrosForHeader.erase(Best);
+            if (bConsume)
+            {
+                MacrosForHeader.erase(Best);
+            }
             return true;
         }
 
@@ -102,8 +105,7 @@ namespace Lumina::Reflection
 
     bool FClangParserContext::TryFindGeneratedBodyMacro(const eastl::string& HeaderID, const CXCursor& Cursor, FReflectionMacro& Macro)
     {
-        // The missing-GENERATED_BODY case is handled by the struct visitor (ManualStub check);
-        // this function stays a pure lookup.
+        // A pure lookup: the struct visitor decides what a missing GENERATED_BODY means.
         uint64_t Hash = XXH64(HeaderID.c_str(), strlen(HeaderID.c_str()), 0);
         auto headerIter = GeneratedBodyMacros.find(Hash);
         if (headerIter == GeneratedBodyMacros.end())

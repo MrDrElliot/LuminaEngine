@@ -58,6 +58,12 @@ namespace Lumina
         eastl::string                   Namespace;
         eastl::string                   Name;
         eastl::string                   Outer;
+
+        // "Owner::" normally, a free-function symbol prefix when the owner has no body to declare them in.
+        eastl::string                   AccessorScope;
+
+        // The same prefix as spelled at the definition site, which sits inside the owner's namespace.
+        eastl::string                   AccessorDefinitionScope;
         eastl::string                   GetterFunc;
         eastl::string                   SetterFunc;
 

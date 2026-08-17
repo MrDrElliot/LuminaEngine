@@ -387,9 +387,4 @@ namespace Lumina
     {
         static RUNTIME_API CStruct* Get();
     };
-
-    template<> struct TBaseStructure<FTransform>
-    {
-        static RUNTIME_API CStruct* Get();
-    };
 }

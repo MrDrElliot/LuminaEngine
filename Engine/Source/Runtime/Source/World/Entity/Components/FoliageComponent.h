@@ -15,9 +15,7 @@ namespace Lumina
     class CCollisionShape;
     class CPhysicsMaterial;
 
-    // One painted foliage instance, in WORLD space. Rotation is a quaternion stored as (x, y, z, w) so it
-    // survives reflection (FQuat is a ManualStub the reflector can't walk). Kept deliberately small; the GPU
-    // transform is composed on the fly at draw time.
+    // One painted foliage instance in WORLD space, with Rotation a quaternion laid out as (x, y, z, w).
     REFLECT()
     struct RUNTIME_API SFoliageInstance
     {

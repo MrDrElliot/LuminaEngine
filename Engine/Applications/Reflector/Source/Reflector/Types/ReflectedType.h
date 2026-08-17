@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <EASTL/shared_ptr.h>
 #include <EASTL/string.h>
 #include <EASTL/vector.h>
@@ -44,7 +44,16 @@ namespace Lumina::Reflection
         virtual void DeclareImplementation(FCodeWriter& Writer) = 0;
         virtual void DeclareStaticRegistration(FCodeWriter& Writer) = 0;
 
+        /// The identifier emitted declarations must use; DisplayName unless ReflectedName aliased it.
+        const eastl::string& EmittedCppName() const { return CppName.empty() ? DisplayName : CppName; }
+
+        // Declaring or defining a member needs the real class name; a type expression may use the alias.
+        const eastl::string& EmittedCppQualifiedName() const { return CppQualifiedName.empty() ? QualifiedName : CppQualifiedName; }
+
         bool HasMetadata(const eastl::string& Meta) const;
+
+        /// Value for Key, or nullptr when absent.
+        const eastl::string* TryGetMetadata(const eastl::string& Key) const;
         void GenerateMetadata(const eastl::string& InMetadata);
 
         // Common helper that writes "<FileID>_<Line>_ACCESSORS" macro body when any
@@ -56,6 +65,12 @@ namespace Lumina::Reflection
         eastl::vector<FMetadataPair>                            Metadata;
         FReflectedHeader*                                       Header = nullptr;
         eastl::string                                           DisplayName;
+
+        /// The real C++ identifier, which differs from DisplayName when ReflectedName aliases the type.
+        eastl::string                                           CppName;
+        eastl::string                                           CppQualifiedName;
+
+        // The name the type is registered and looked up under: the ReflectedName alias when one is set.
         eastl::string                                           QualifiedName;
         eastl::string                                           Namespace;
         uint32_t                                                GeneratedBodyLineNumber = 0;
@@ -64,6 +79,9 @@ namespace Lumina::Reflection
         // the reflector, so the type's reflected layout is incomplete and it must NOT be mirrored by value in
         // C# (a flat by-value struct would be the wrong size). Set by the struct field visitor.
         bool                                                    bHasUnreflectedFields = false;
+
+        // Reflected through a REFLECT'd `using`, so nothing declares the name and it has no injected body.
+        bool                                                    bIsAlias = false;
         EType                                                   Type = EType::Structure;
     };
 
@@ -116,6 +134,9 @@ namespace Lumina::Reflection
         void DefineSecondaryHeader(FCodeWriter& Writer, const eastl::string& FileID) override;
         void DeclareImplementation(FCodeWriter& Writer) override;
         void DeclareStaticRegistration(FCodeWriter& Writer) override;
+
+        // The type offsetof is taken against, aliased when the real spelling carries template arguments.
+        eastl::string OffsetBaseTypeName() const;
 
         // Shared helpers consumed by FReflectedClass too.
         void EmitMetadataArrays(FCodeWriter& Writer) const;

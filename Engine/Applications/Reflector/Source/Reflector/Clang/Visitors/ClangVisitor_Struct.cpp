@@ -59,6 +59,124 @@ namespace Lumina::Reflection::Visitor
 		return Result;
 	}
 
+	// The name a type registers under, from REFLECT(ReflectedName = "X"), or empty when unset.
+	static eastl::string FindReflectedNameOverride(const eastl::string& MacroContents)
+	{
+		const size_t Key = MacroContents.find("ReflectedName");
+		if (Key == eastl::string::npos)
+		{
+			return {};
+		}
+
+		const size_t Open = MacroContents.find('"', Key);
+		if (Open == eastl::string::npos)
+		{
+			return {};
+		}
+
+		const size_t Close = MacroContents.find('"', Open + 1);
+		if (Close == eastl::string::npos)
+		{
+			return {};
+		}
+
+		return MacroContents.substr(Open + 1, Close - Open - 1);
+	}
+
+	// Reflects a member as a different type, so a SIMD or otherwise unreflectable representation can
+	// still present its logical shape. The offset stays the real member's, so no layout is hand-tracked.
+	static void ApplyReflectAsOverride(FClangParserContext* Context, FReflectedType* Type,
+	                                   FReflectedProperty* Property, const CXCursor& Cursor)
+	{
+		const eastl::string* Alias = nullptr;
+		for (const FMetadataPair& Pair : Property->Metadata)
+		{
+			if (Pair.Key == "ReflectAs")
+			{
+				Alias = &Pair.Value;
+				break;
+			}
+		}
+
+		if (Alias == nullptr || Alias->empty())
+		{
+			return;
+		}
+
+		if (eastl::string_view(Property->GetTypeName()) != eastl::string_view("Struct"))
+		{
+			LRT_ERROR(Cursor, Reflection::EDiagId::UnknownPropertyType,
+				"Property '%s' uses ReflectAs but its member is not a struct type; "
+				"ReflectAs only reinterprets one struct layout as another.",
+				Property->Name.c_str());
+			return;
+		}
+
+		Property->TypeName = Alias->find("::") == eastl::string::npos
+			? eastl::string("Lumina::") + *Alias
+			: *Alias;
+	}
+
+	static void EnsureTemplateInstantiationReflected(FClangParserContext* Context, const FReflectedTemplate& Template,
+	                                                 const CXType& Instantiation, const eastl::string& Spelling,
+	                                                 const eastl::string& ReflectedQualifiedName, const eastl::string& MangledName);
+
+	// Reflects the instantiation a property names, mangled because TRange<float> is not an identifier.
+	static bool TryResolveTemplateInstantiation(FClangParserContext* Context, const CXType& FieldType, eastl::string& OutTypeName)
+	{
+		const CXType Canonical = clang_getCanonicalType(FieldType);
+		if (Canonical.kind != CXType_Record)
+		{
+			return false;
+		}
+
+		const eastl::string Spelling = ClangUtils::GetString(clang_getTypeSpelling(Canonical));
+
+		// A substituted template parameter carries no alias sugar, so FVector3 arrives as TVec<float, 3>.
+		const auto Aliased = Context->AliasedInstantiations.find(FStringHash(Spelling));
+		if (Aliased != Context->AliasedInstantiations.end())
+		{
+			OutTypeName = Aliased->second.first;
+			return true;
+		}
+
+		const CXCursor TemplateCursor = clang_getSpecializedCursorTemplate(clang_getTypeDeclaration(Canonical));
+		if (clang_Cursor_isNull(TemplateCursor))
+		{
+			return false;
+		}
+
+		eastl::string TemplateName;
+		if (!ClangUtils::GetQualifiedNameFromDeclCursor(TemplateCursor, TemplateName))
+		{
+			return false;
+		}
+
+		const auto Found = Context->ReflectedTemplates.find(FStringHash(TemplateName));
+		if (Found == Context->ReflectedTemplates.end())
+		{
+			return false;
+		}
+
+		const eastl::string Mangled = ClangUtils::MangleTemplateSpelling(Spelling,
+			[Context](const eastl::string& Argument) -> eastl::string
+			{
+				const auto Match = Context->AliasedInstantiations.find(FStringHash(Argument));
+				return Match == Context->AliasedInstantiations.end() ? eastl::string() : Match->second.second;
+			});
+
+		if (Mangled.empty())
+		{
+			return false;
+		}
+
+		const FReflectedTemplate& Template = Found->second;
+		OutTypeName = Template.Namespace.empty() ? Mangled : Template.Namespace + "::" + Mangled;
+
+		EnsureTemplateInstantiationReflected(Context, Template, Canonical, Spelling, OutTypeName, Mangled);
+		return true;
+	}
+
 	static eastl::optional<FFieldInfo> CreateFieldInfo(FClangParserContext* Context, const CXCursor& Cursor)
 	{
 		eastl::string CursorName = ClangUtils::GetCursorDisplayName(Cursor);
@@ -89,6 +207,7 @@ namespace Lumina::Reflection::Visitor
 			else if (CanonicalKind == CXType_Record)
 			{
 				PropFlags = EPropertyTypeFlags::Struct;
+				TryResolveTemplateInstantiation(Context, FieldType, TypeSpelling);
 			}
 			else if (CanonicalKind == CXType_Pointer)
 			{
@@ -228,6 +347,7 @@ namespace Lumina::Reflection::Visitor
 			else if (CanonicalKind == CXType_Record)
 			{
 				PropFlags = EPropertyTypeFlags::Struct;
+				TryResolveTemplateInstantiation(Context, FieldType, FieldName);
 			}
 			else if (CanonicalKind == CXType_Pointer)
 			{
@@ -630,7 +750,7 @@ namespace Lumina::Reflection::Visitor
 			Struct->PushProperty(eastl::move(NewProperty));
 		}
 
-		return NewProperty != nullptr;
+		return OutProperty != nullptr;
 	}
 
 
@@ -684,6 +804,101 @@ namespace Lumina::Reflection::Visitor
 		return NewFunction != nullptr;
 	}
 
+	static void ReflectField(FClangParserContext* Context, FReflectedStruct* Struct, const CXCursor& Cursor,
+	                         const eastl::string& MacroHeader, bool bConsumeMacro)
+	{
+		FReflectionMacro Macro;
+		if (!Context->TryFindMacroForCursor(MacroHeader, Cursor, Macro, bConsumeMacro))
+		{
+			// Data the reflector cannot see, so the C# emitter must not mirror this type by value.
+			Struct->bHasUnreflectedFields |= !Context->bInAnonymousRecord;
+			return;
+		}
+
+		eastl::optional<FFieldInfo> FieldInfo = CreateFieldInfo(Context, Cursor);
+		if (!FieldInfo.has_value())
+		{
+			return;
+		}
+
+		FReflectedProperty* NewProperty;
+		if (!CreatePropertyForType(Context, Struct, NewProperty, FieldInfo.value()))
+		{
+			return;
+		}
+
+		NewProperty->GenerateMetadata(Macro.MacroContents);
+		ApplyReflectAsOverride(Context, Struct, NewProperty, Cursor);
+
+		if (eastl::string ConflictMessage; NewProperty->FindConflictingSpecifiers(ConflictMessage))
+		{
+			LRT_ERROR(Cursor, EDiagId::ConflictingSpecifiers, "%s", ConflictMessage.c_str());
+		}
+
+		eastl::string Comment = GetCursorComment(Cursor);
+		if (!Comment.empty())
+		{
+			NewProperty->Metadata.push_back({"ToolTip", eastl::move(Comment)});
+		}
+	}
+
+	// An implicitly instantiated specialization exposes no children, so its members come from the type.
+	static CXVisitorResult VisitAliasField(CXCursor Cursor, CXClientData pClientData)
+	{
+		FClangParserContext* Context = (FClangParserContext*)pClientData;
+		const CXType FieldType = clang_getCursorType(Cursor);
+
+		if (clang_Cursor_isAnonymousRecordDecl(clang_getTypeDeclaration(FieldType)) != 0)
+		{
+			const bool bWasInAnonymousRecord = Context->bInAnonymousRecord;
+			Context->bInAnonymousRecord = true;
+			clang_Type_visitFields(FieldType, VisitAliasField, pClientData);
+			Context->bInAnonymousRecord = bWasInAnonymousRecord;
+			return CXVisit_Continue;
+		}
+
+		ReflectField(Context, Context->GetParentReflectedType<FReflectedStruct>(), Cursor,
+			Context->AliasTargetMacroHeader, false);
+
+		return CXVisit_Continue;
+	}
+
+	static void EnsureTemplateInstantiationReflected(FClangParserContext* Context, const FReflectedTemplate& Template,
+	                                                 const CXType& Instantiation, const eastl::string& Spelling,
+	                                                 const eastl::string& ReflectedQualifiedName, const eastl::string& MangledName)
+	{
+		if (Context->ReflectionDatabase.GetReflectedType<FReflectedType>(FStringHash(ReflectedQualifiedName)) != nullptr)
+		{
+			return;
+		}
+
+		FReflectedStruct* ReflectedStruct = Context->ReflectionDatabase.GetOrCreateReflectedType<FReflectedStruct>(FStringHash(ReflectedQualifiedName));
+		ReflectedStruct->DisplayName = MangledName;
+		ReflectedStruct->CppQualifiedName = Spelling;
+		ReflectedStruct->Namespace = Template.Namespace;
+		ReflectedStruct->bIsAlias = true;
+		ReflectedStruct->GenerateMetadata(Template.MacroContents);
+		ReflectedStruct->Header = Template.Header;
+		ReflectedStruct->Type = FReflectedType::EType::Structure;
+
+		// Registered before its fields are walked, so an instantiation that reaches itself terminates.
+		Context->ReflectionDatabase.AddReflectedType(ReflectedStruct);
+
+		FReflectedType* PreviousType = Context->ParentReflectedType;
+		const eastl::string PreviousMacroHeader = Context->AliasTargetMacroHeader;
+		const bool bWasInAnonymousRecord = Context->bInAnonymousRecord;
+
+		Context->ParentReflectedType = ReflectedStruct;
+		Context->AliasTargetMacroHeader = Template.HeaderPath;
+		Context->bInAnonymousRecord = false;
+
+		clang_Type_visitFields(Instantiation, VisitAliasField, Context);
+
+		Context->bInAnonymousRecord = bWasInAnonymousRecord;
+		Context->AliasTargetMacroHeader = PreviousMacroHeader;
+		Context->ParentReflectedType = PreviousType;
+	}
+
 	template<typename TVisitType>
 	static CXChildVisitResult VisitContents(CXCursor Cursor, CXCursor Parent, CXClientData pClientData)
 	{
@@ -692,6 +907,11 @@ namespace Lumina::Reflection::Visitor
 		CXCursorKind Kind = clang_getCursorKind(Cursor);
 		TVisitType* Type = Context->GetParentReflectedType<TVisitType>();
 		
+		const bool bWalkingAliasTarget = !Context->AliasTargetMacroHeader.empty();
+		const eastl::string& MacroHeader = bWalkingAliasTarget
+			? Context->AliasTargetMacroHeader
+			: Context->ReflectedHeader->HeaderPath;
+
 		switch (Kind)
 		{
 		case(CXCursor_CXXBaseSpecifier):
@@ -702,43 +922,30 @@ namespace Lumina::Reflection::Visitor
 			}
 		}
 		break;
+		case(CXCursor_StructDecl):
+		case(CXCursor_UnionDecl):
+		{
+			// Only an anonymous record contributes its fields to the enclosing layout.
+			if (clang_Cursor_isAnonymousRecordDecl(Cursor) == 0)
+			{
+				break;
+			}
+
+			const bool bWasInAnonymousRecord = Context->bInAnonymousRecord;
+			Context->bInAnonymousRecord = true;
+			clang_visitChildren(Cursor, VisitContents<TVisitType>, Context);
+			Context->bInAnonymousRecord = bWasInAnonymousRecord;
+		}
+		break;
 		case(CXCursor_FieldDecl):
 		{
-			FReflectionMacro Macro;
-			if (!Context->TryFindMacroForCursor(Context->ReflectedHeader->HeaderPath, Cursor, Macro))
-			{
-				// A non-static data member with no PROPERTY() macro: hidden state the reflector can't see.
-				// Marks the type as not fully reflected, so the C# emitter won't mirror it by value.
-				Type->bHasUnreflectedFields = true;
-				return CXChildVisit_Continue;
-			}
-
-			eastl::optional<FFieldInfo> FieldInfo = CreateFieldInfo(Context, Cursor);
-			if (!FieldInfo.has_value())
-			{
-				return CXChildVisit_Continue;
-			}
-
-			FReflectedProperty* NewProperty;
-			CreatePropertyForType(Context, Type, NewProperty, FieldInfo.value());
-			NewProperty->GenerateMetadata(Macro.MacroContents);
-
-			if (eastl::string ConflictMessage; NewProperty->FindConflictingSpecifiers(ConflictMessage))
-			{
-				LRT_ERROR(Cursor, Reflection::EDiagId::ConflictingSpecifiers, "%s", ConflictMessage.c_str());
-			}
-
-			eastl::string Comment = GetCursorComment(Cursor);
-			if (!Comment.empty())
-			{
-				NewProperty->Metadata.push_back({"ToolTip", eastl::move(Comment)});
-			}
+			ReflectField(Context, Type, Cursor, MacroHeader, !bWalkingAliasTarget);
 		}
 		break;
 		case(CXCursor_CXXMethod):
 		{
 			FReflectionMacro Macro;
-			if (!Context->TryFindMacroForCursor(Context->ReflectedHeader->HeaderPath, Cursor, Macro))
+			if (!Context->TryFindMacroForCursor(MacroHeader, Cursor, Macro, !bWalkingAliasTarget))
 			{
 				return CXChildVisit_Continue;
 			}
@@ -764,11 +971,143 @@ namespace Lumina::Reflection::Visitor
 
 	}
 
-	// `ManualStub` opts the type out of GENERATED_BODY()/companion-.generated.h and skips T::StaticStruct()
-	// (no body member on the runtime alias); fields still link via the free Construct_CStruct_<Ns>_<T>().
-	static bool MacroHasManualStub(const FReflectionMacro& Macro)
+	CXChildVisitResult VisitClassTemplate(CXCursor Cursor, CXCursor Parent, FClangParserContext* Context)
 	{
-		return Macro.MacroContents.find("ManualStub") != eastl::string::npos;
+		FReflectionMacro Macro;
+		if (!Context->TryFindMacroForCursor(Context->ReflectedHeader->HeaderPath, Cursor, Macro))
+		{
+			return CXChildVisit_Continue;
+		}
+
+		if (Macro.Type != EReflectionMacro::Reflect)
+		{
+			Context->AddReflectedMacro(eastl::move(Macro));
+			return CXChildVisit_Continue;
+		}
+
+		eastl::string QualifiedName;
+		if (!ClangUtils::GetQualifiedNameFromDeclCursor(Cursor, QualifiedName))
+		{
+			LRT_ERROR(Cursor, EDiagId::MissingGeneratedBody,
+				"REFLECT'd class template '%s' has no usable qualified name.",
+				ClangUtils::GetCursorDisplayName(Cursor).c_str());
+			return CXChildVisit_Continue;
+		}
+
+		FReflectedTemplate Template;
+		Template.QualifiedName = QualifiedName;
+		Template.Namespace = Context->CurrentNamespace;
+		Template.MacroContents = Macro.MacroContents;
+		Template.HeaderPath = Context->ReflectedHeader->HeaderPath;
+		Template.Header = Context->ReflectedHeader;
+
+		Context->ReflectedTemplates.insert_or_assign(FStringHash(QualifiedName), eastl::move(Template));
+
+		return CXChildVisit_Continue;
+	}
+
+	// A REFLECT'd `using X = SomeRecord;`, which reflects the aliased record's real members under X.
+	CXChildVisitResult VisitTypeAlias(CXCursor Cursor, CXCursor Parent, FClangParserContext* Context)
+	{
+		// Checked before touching the macro pool: a member alias must not consume its owner's REFLECT.
+		const CXCursorKind ParentKind = clang_getCursorKind(clang_getCursorSemanticParent(Cursor));
+		if (ParentKind != CXCursor_Namespace && ParentKind != CXCursor_TranslationUnit)
+		{
+			return CXChildVisit_Continue;
+		}
+
+		FReflectionMacro Macro;
+		if (!Context->TryFindMacroForCursor(Context->ReflectedHeader->HeaderPath, Cursor, Macro))
+		{
+			return CXChildVisit_Continue;
+		}
+
+		if (Macro.Type != EReflectionMacro::Reflect)
+		{
+			// Somebody else's macro that happens to sit above this alias; hand it back to its owner.
+			Context->AddReflectedMacro(eastl::move(Macro));
+			return CXChildVisit_Continue;
+		}
+
+		const eastl::string AliasName = ClangUtils::GetCursorDisplayName(Cursor);
+
+		eastl::string QualifiedAliasName;
+		if (!ClangUtils::GetQualifiedNameForDeclCursor(Cursor, QualifiedAliasName))
+		{
+			LRT_ERROR(Cursor, EDiagId::MissingGeneratedBody,
+				"REFLECT'd alias '%s' has no usable qualified name. Declare it at namespace scope.",
+				AliasName.c_str());
+			return CXChildVisit_Continue;
+		}
+
+		const CXType Target = clang_getCanonicalType(clang_getTypedefDeclUnderlyingType(Cursor));
+		const CXCursor TargetCursor = clang_getTypeDeclaration(Target);
+		if (Target.kind != CXType_Record || clang_Cursor_isNull(TargetCursor))
+		{
+			LRT_ERROR(Cursor, EDiagId::UnknownPropertyType,
+				"REFLECT'd alias '%s' does not name a struct or class. Only record types can be reflected.",
+				AliasName.c_str());
+			return CXChildVisit_Continue;
+		}
+
+		const eastl::string TargetHeader = ClangUtils::GetHeaderPathForCursor(TargetCursor);
+		if (TargetHeader.empty())
+		{
+			LRT_ERROR(Cursor, EDiagId::UnknownPropertyType,
+				"REFLECT'd alias '%s' resolves to a type with no source location.", AliasName.c_str());
+			return CXChildVisit_Continue;
+		}
+
+		// An alias never requires its target to be complete, so an otherwise unused template is uninstantiated.
+		if (clang_Type_getSizeOf(Target) == CXTypeLayoutError_Incomplete)
+		{
+			LRT_ERROR(Cursor, EDiagId::MissingGeneratedBody,
+				"REFLECT'd alias '%s' names a type that is never instantiated, so the reflector cannot see "
+				"its members. Add `static_assert(sizeof(%s) > 0);` after the alias, or use the type somewhere "
+				"that requires it to be complete.",
+				AliasName.c_str(), AliasName.c_str());
+			return CXChildVisit_Continue;
+		}
+
+		Context->AliasedInstantiations.insert_or_assign(
+			FStringHash(ClangUtils::GetString(clang_getTypeSpelling(Target))),
+			eastl::make_pair(QualifiedAliasName, AliasName));
+
+		FReflectedStruct* ReflectedStruct = Context->ReflectionDatabase.GetOrCreateReflectedType<FReflectedStruct>(FStringHash(QualifiedAliasName));
+		ReflectedStruct->DisplayName = AliasName;
+		ReflectedStruct->bIsAlias = true;
+		ReflectedStruct->GenerateMetadata(Macro.MacroContents);
+		ReflectedStruct->Header = Context->ReflectedHeader;
+		ReflectedStruct->Type = FReflectedType::EType::Structure;
+		ReflectedStruct->LineNumber = ClangUtils::GetCursorLineNumber(Cursor);
+		ReflectedStruct->Namespace = Context->CurrentNamespace;
+
+		eastl::string AliasComment = GetCursorComment(Cursor);
+		if (!AliasComment.empty())
+		{
+			ReflectedStruct->Metadata.push_back({"ToolTip", eastl::move(AliasComment)});
+		}
+
+		FReflectedType* PreviousType = Context->ParentReflectedType;
+		Context->ParentReflectedType = ReflectedStruct;
+		Context->LastReflectedType = ReflectedStruct;
+		Context->AliasTargetMacroHeader = TargetHeader;
+
+		clang_Type_visitFields(Target, VisitAliasField, Context);
+
+		Context->AliasTargetMacroHeader.clear();
+		Context->ParentReflectedType = PreviousType;
+
+		if (ReflectedStruct->Props.empty())
+		{
+			LRT_ERROR(Cursor, EDiagId::MissingGeneratedBody,
+				"REFLECT'd alias '%s' reflected no members. The aliased type's fields need PROPERTY() macros.",
+				AliasName.c_str());
+		}
+
+		Context->ReflectionDatabase.AddReflectedType(ReflectedStruct);
+
+		return CXChildVisit_Continue;
 	}
 
 	CXChildVisitResult VisitStructure(CXCursor Cursor, CXCursor Parent, FClangParserContext* Context)
@@ -796,11 +1135,8 @@ namespace Lumina::Reflection::Visitor
 			return CXChildVisit_Continue;
 		}
 
-		const bool bManualStub = MacroHasManualStub(Macro);
-
 		FReflectionMacro GeneratedBody;
-		const bool bFoundBody = Context->TryFindGeneratedBodyMacro(Context->ReflectedHeader->HeaderPath, Cursor, GeneratedBody);
-		if (!bFoundBody && !bManualStub)
+		if (!Context->TryFindGeneratedBodyMacro(Context->ReflectedHeader->HeaderPath, Cursor, GeneratedBody))
 		{
 			LRT_ERROR(Cursor, EDiagId::MissingGeneratedBody,
 				"REFLECT'd struct '%s' is missing a GENERATED_BODY() macro inside its body. "
@@ -809,14 +1145,29 @@ namespace Lumina::Reflection::Visitor
 			return CXChildVisit_Continue;
 		}
 
+		// Keyed under the alias so a property naming FTransform resolves to the VTransform backing it,
+		// while CppName keeps the real identifier every emitted declaration has to use.
+		const eastl::string CppName = CursorName;
+		const eastl::string CppQualifiedName = FullyQualifiedCursorName;
+
+		if (const eastl::string Alias = FindReflectedNameOverride(Macro.MacroContents); !Alias.empty())
+		{
+			const size_t Scope = FullyQualifiedCursorName.rfind("::");
+			FullyQualifiedCursorName = Scope == eastl::string::npos
+				? Alias
+				: FullyQualifiedCursorName.substr(0, Scope + 2) + Alias;
+			CursorName = Alias;
+		}
+
 		FReflectedStruct* ReflectedStruct = Context->ReflectionDatabase.GetOrCreateReflectedType<FReflectedStruct>(FStringHash(FullyQualifiedCursorName));
 		ReflectedStruct->DisplayName = CursorName;
+		ReflectedStruct->CppName = CppName;
+		ReflectedStruct->CppQualifiedName = CppQualifiedName;
 		ReflectedStruct->GenerateMetadata(Macro.MacroContents);
 		ReflectedStruct->Header = Context->ReflectedHeader;
 		ReflectedStruct->Type = FReflectedType::EType::Structure;
 		ReflectedStruct->GeneratedBodyLineNumber = GeneratedBody.LineNumber;
 		ReflectedStruct->LineNumber = ClangUtils::GetCursorLineNumber(Cursor);
-		ReflectedStruct->GenerateMetadata(Macro.MacroContents);
 
 		if (!Context->CurrentNamespace.empty())
 		{

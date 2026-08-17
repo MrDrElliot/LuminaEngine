@@ -13,10 +13,7 @@
 
 namespace Lumina
 {
-    // The hand-written LuminaSharp math value types (Math.cs / Matrix.cs) are [StructLayout(Sequential)]
-    // mirrors of these. They're ManualStub, so the Reflector doesn't emit them or an auto size assert;
-    // these guards catch a native size drift at compile time. (Reflected blittable value mirrors, e.g.
-    // SPerceptionEvent / SCollisionEvent, get their size assert auto-emitted into the generated bindings.)
+    // CSharpValueMirror suppresses the auto-emitted size assert, so these guard Math.cs and Matrix.cs.
     static_assert(sizeof(FVector2) == 8,  "LuminaSharp FVector2 mirror size mismatch (update Math.cs).");
     static_assert(sizeof(FVector3) == 12, "LuminaSharp FVector3 mirror size mismatch (update Math.cs).");
     static_assert(sizeof(FVector4) == 16, "LuminaSharp FVector4 mirror size mismatch (update Math.cs).");

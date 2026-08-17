@@ -2,6 +2,7 @@
 
 #include "Core/Math/Vector/Vector.h"
 #include "Core/LuminaMacros.h"
+#include "Core/Reflection/ReflectionMacros.h"
 #include <cmath>
 
 // Lumina quaternion. Layout x,y,z,w but the 4-scalar ctor takes real FIRST: TQuat(w,x,y,z).
@@ -19,7 +20,18 @@ namespace Lumina
     {
         using ScalarType = T;
 
-        T x, y, z, w;
+        PROPERTY(Editable)
+        T x;
+
+        PROPERTY(Editable)
+        T y;
+
+        PROPERTY(Editable)
+        T z;
+
+        /** Real component. */
+        PROPERTY(Editable)
+        T w;
 
         // Trivial default ctor: uninitialized; keeps the type trivial
         // for unions / bulk serialization). Use TQuat::Identity() for identity.
@@ -108,50 +120,12 @@ namespace Lumina
         return !(A == B);
     }
 
-#ifndef REFLECTION_PARSER
-    // The real FQuat is a template-alias the reflector can't walk; the
-    // ManualStub shim below at parser-time gives reflection something to bite.
+    REFLECT(NoCSharp, CSharpValueMirror)
     using FQuat = TQuat<float>;
 
-    // The shim describes this type field by field and nothing makes that description follow the
-    // type, so drift is a compile error rather than a reflection that quietly lies. Note the
-    // declaration order: the shim lists x,y,z,w, which is the storage order, NOT the constructor
-    // order (TQuat takes w first).
-    static_assert(sizeof(FQuat) == 16, "FQuat no longer matches its REFLECT(ManualStub) shim: size changed.");
-    static_assert(std::is_same_v<FQuat::ScalarType, float>, "FQuat scalar type drifted from its shim.");
-    static_assert(offsetof(FQuat, x) == 0 && offsetof(FQuat, y) == 4
-        && offsetof(FQuat, z) == 8 && offsetof(FQuat, w) == 12,
-        "FQuat member order drifted from its REFLECT(ManualStub) shim.");
-#endif
     // Not reflected, always defined.
     using FDoubleQuat = TQuat<double>;
 }
-
-// Reflection-parser-only shim for FQuat; ManualStub tells codegen to skip StaticStruct().
-// REFLECT/PROPERTY defined locally (not via ObjectMacros.h) to avoid an include cycle.
-#ifdef REFLECTION_PARSER
-#ifndef REFLECT
-#define REFLECT(...)
-#define PROPERTY(...)
-#define FUNCTION(...)
-#define GENERATED_BODY(...)
-#endif
-namespace Lumina
-{
-    REFLECT(ManualStub)
-    struct FQuat
-    {
-        PROPERTY(Editable) float x;
-        PROPERTY(Editable) float y;
-        PROPERTY(Editable) float z;
-        /** Real component. */
-        PROPERTY(Editable) float w;
-
-        // Declared, never defined: callers in reflected headers only need it to name-resolve.
-        static FQuat Identity();
-    };
-}
-#endif
 
 namespace Lumina::Math
 {

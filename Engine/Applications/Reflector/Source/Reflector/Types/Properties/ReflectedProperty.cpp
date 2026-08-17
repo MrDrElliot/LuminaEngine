@@ -1,4 +1,4 @@
-#include "ReflectedProperty.h"
+﻿#include "ReflectedProperty.h"
 
 #include "Reflector/CodeGeneration/CodeWriter.h"
 #include "Reflector/Types/PropertyFlags.h"
@@ -9,8 +9,8 @@ namespace Lumina
 {
     void FReflectedProperty::AppendPropertyDef(Reflection::FCodeWriter& Writer, const char* PropertyFlagsStr, const char* TypeFlags, const eastl::string& CustomData) const
     {
-        const eastl::string GetterFunctionName = GetterFunc.empty() ? "nullptr" : (Outer + "::" + GetterFunc + "_WrapperImpl");
-        const eastl::string SetterFunctionName = SetterFunc.empty() ? "nullptr" : (Outer + "::" + SetterFunc + "_WrapperImpl");
+        const eastl::string GetterFunctionName = GetterFunc.empty() ? "nullptr" : (AccessorScope + GetterFunc + "_WrapperImpl");
+        const eastl::string SetterFunctionName = SetterFunc.empty() ? "nullptr" : (AccessorScope + SetterFunc + "_WrapperImpl");
         const eastl::string Offset = bInner ? eastl::string("0") : ("offsetof(" + Outer + ", " + Name + ")");
 
         Writer.Appendf("{ \"%s\", %s, %s, %s, %s, %s",
@@ -164,7 +164,7 @@ namespace Lumina
     {
         if (!GetterFunc.empty())
         {
-            Writer.Linef("void %s::%s_WrapperImpl(const void* Object, void* OutValue)", ReflectedType->QualifiedName.c_str(), GetterFunc.c_str());
+            Writer.Linef("void %s%s_WrapperImpl(const void* Object, void* OutValue)", AccessorDefinitionScope.c_str(), GetterFunc.c_str());
             Writer.BeginBlock();
             Writer.Linef("const %s* Obj = (const %s*)Object;", ReflectedType->DisplayName.c_str(), ReflectedType->DisplayName.c_str());
             Writer.Linef("%s& Result = *(%s*)OutValue;", RawTypeName.c_str(), RawTypeName.c_str());
@@ -175,7 +175,7 @@ namespace Lumina
 
         if (!SetterFunc.empty())
         {
-            Writer.Linef("void %s::%s_WrapperImpl(void* Object, const void* InValue)", ReflectedType->QualifiedName.c_str(), SetterFunc.c_str());
+            Writer.Linef("void %s%s_WrapperImpl(void* Object, const void* InValue)", AccessorDefinitionScope.c_str(), SetterFunc.c_str());
             Writer.BeginBlock();
             Writer.Linef("%s* Obj = (%s*)Object;", ReflectedType->QualifiedName.c_str(), ReflectedType->QualifiedName.c_str());
             Writer.Linef("const %s& Value = *(const %s*)InValue;", RawTypeName.c_str(), RawTypeName.c_str());

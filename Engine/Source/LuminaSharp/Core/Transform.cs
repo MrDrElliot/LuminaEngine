@@ -2,14 +2,7 @@ using System.Runtime.InteropServices;
 
 namespace Lumina;
 
-/// <summary>
-/// Hand-written blittable mirror of the engine's SIMD FTransform (VTransform). The native type stores three
-/// 16-byte VFloat4 (Location.xyz+pad, Rotation.xyzw, Scale.xyz+pad), so it's 48 bytes with a pad float after
-/// Location and after Scale. This mirror reproduces that exact byte layout (Location@0, Rotation@16, Scale@32)
-/// so it blits by value across the boundary; the pad fields are private. Validated by static_asserts in
-/// CSharpLayoutChecks.cpp. The native type is ManualStub + NoCSharp precisely so this hand-written mirror is
-/// used instead of an auto-generated one (C# can't express the 16-byte alignment / padding otherwise).
-/// </summary>
+// Native VTransform is NoCSharp: its three VFloat4 make 48 bytes, which the pad fields below reproduce.
 [StructLayout(LayoutKind.Sequential)]
 [LuminaSharp.NativeLayout("FTransform")]
 public struct FTransform

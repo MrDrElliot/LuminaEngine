@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Platform/GenericPlatform.h"
+#include "Core/Reflection/ReflectionMacros.h"
 #include <cstddef>
 #include <type_traits>
 
@@ -48,7 +49,14 @@ namespace Lumina
 
         union
         {
-            struct { T x, y; };
+            struct
+            {
+                PROPERTY(Editable)
+                T x;
+
+                PROPERTY(Editable)
+                T y;
+            };
             struct { T r, g; };
             struct { T s, t; };
             T Data[2];
@@ -88,7 +96,17 @@ namespace Lumina
 
         union
         {
-            struct { T x, y, z; };
+            struct
+            {
+                PROPERTY(Editable)
+                T x;
+
+                PROPERTY(Editable)
+                T y;
+
+                PROPERTY(Editable)
+                T z;
+            };
             struct { T r, g, b; };
             struct { T s, t, p; };
             T Data[3];
@@ -129,7 +147,20 @@ namespace Lumina
 
         union
         {
-            struct { T x, y, z, w; };
+            struct
+            {
+                PROPERTY(Editable)
+                T x;
+
+                PROPERTY(Editable)
+                T y;
+
+                PROPERTY(Editable)
+                T z;
+
+                PROPERTY(Editable)
+                T w;
+            };
             struct { T r, g, b, a; };
             struct { T s, t, p, q; };
             T Data[4];
@@ -220,17 +251,26 @@ namespace Lumina
         return !(A == B);
     }
 
-#ifndef REFLECTION_PARSER
+    REFLECT(NoCSharp, CSharpValueMirror)
     using FVector2 = TVec<float, 2>;
+
+    REFLECT(NoCSharp, CSharpValueMirror)
     using FVector3 = TVec<float, 3>;
+
+    REFLECT(NoCSharp, CSharpValueMirror)
     using FVector4 = TVec<float, 4>;
 
-    // Hidden from the parser; reflected via the stub structs below.
+    REFLECT(NoCSharp, CSharpValueMirror)
     using FIntVector2 = TVec<int32, 2>;
+
+    REFLECT(NoCSharp, CSharpValueMirror)
     using FIntVector3 = TVec<int32, 3>;
+
+    REFLECT(NoCSharp, CSharpValueMirror)
     using FUIntVector2 = TVec<uint32, 2>;
+
+    REFLECT(NoCSharp, CSharpValueMirror)
     using FUIntVector3 = TVec<uint32, 3>;
-#endif
 
     using FIntVector4 = TVec<int32, 4>;
 
@@ -248,103 +288,8 @@ namespace Lumina
     using FDoubleVector3 = TVec<double, 3>;
     using FDoubleVector4 = TVec<double, 4>;
 
-#ifndef REFLECTION_PARSER
-    // The REFLECT(ManualStub) shims at the bottom of this file describe these types to the
-    // reflector field by field, because it cannot see through an alias to a template. Nothing about
-    // that arrangement makes the description follow the type: TVec could gain a member or change
-    // its scalar and the shims would keep declaring the old shape, which reflection would then use
-    // to serialize and to drive the property editor. These assertions are what makes that drift a
-    // compile error instead. Edit a stub and its assertion together, or neither.
-    #define LUMINA_VERIFY_VECTOR_STUB(Type, Scalar, ExpectedSize)                                  \
-        static_assert(sizeof(Type) == (ExpectedSize), #Type " no longer matches its REFLECT(ManualStub) shim: size changed."); \
-        static_assert(std::is_same_v<Type::ScalarType, Scalar>, #Type " no longer matches its REFLECT(ManualStub) shim: scalar type changed."); \
-        static_assert(offsetof(Type, x) == 0, #Type "::x moved; the shim declares it first.")
-
-    LUMINA_VERIFY_VECTOR_STUB(FVector2, float, 8);
-    LUMINA_VERIFY_VECTOR_STUB(FVector3, float, 12);
-    LUMINA_VERIFY_VECTOR_STUB(FVector4, float, 16);
-    LUMINA_VERIFY_VECTOR_STUB(FIntVector2, int32, 8);
-    LUMINA_VERIFY_VECTOR_STUB(FIntVector3, int32, 12);
-    LUMINA_VERIFY_VECTOR_STUB(FUIntVector2, uint32, 8);
-    LUMINA_VERIFY_VECTOR_STUB(FUIntVector3, uint32, 12);
-
-    #undef LUMINA_VERIFY_VECTOR_STUB
-
-    // The shims declare y/z/w in order; a union member reordering would keep the sizes above but
-    // silently renumber the reflected properties.
-    static_assert(offsetof(FVector3, y) == 4 && offsetof(FVector3, z) == 8, "FVector3 member order drifted from its shim.");
-    static_assert(offsetof(FVector4, y) == 4 && offsetof(FVector4, z) == 8 && offsetof(FVector4, w) == 12,
-        "FVector4 member order drifted from its shim.");
-#endif
 }
 
 #if defined(_MSC_VER)
     #pragma warning(pop)
-#endif
-
-// Reflection-parser-only shims for FVector2/3/4; ManualStub tells codegen to skip StaticStruct().
-// REFLECT/PROPERTY defined locally (not via ObjectMacros.h) to avoid an include cycle through Math.
-#ifdef REFLECTION_PARSER
-#ifndef REFLECT
-#define REFLECT(...)
-#define PROPERTY(...)
-#define FUNCTION(...)
-#define GENERATED_BODY(...)
-#endif
-namespace Lumina
-{
-    REFLECT(ManualStub)
-    struct FVector2
-    {
-        PROPERTY(Editable) float x;
-        PROPERTY(Editable) float y;
-    };
-
-    REFLECT(ManualStub)
-    struct FVector3
-    {
-        PROPERTY(Editable) float x;
-        PROPERTY(Editable) float y;
-        PROPERTY(Editable) float z;
-    };
-
-    REFLECT(ManualStub)
-    struct FVector4
-    {
-        PROPERTY(Editable) float x;
-        PROPERTY(Editable) float y;
-        PROPERTY(Editable) float z;
-        PROPERTY(Editable) float w;
-    };
-
-    REFLECT(ManualStub)
-    struct FIntVector2
-    {
-        PROPERTY(Editable) int32 x;
-        PROPERTY(Editable) int32 y;
-    };
-
-    REFLECT(ManualStub)
-    struct FIntVector3
-    {
-        PROPERTY(Editable) int32 x;
-        PROPERTY(Editable) int32 y;
-        PROPERTY(Editable) int32 z;
-    };
-
-    REFLECT(ManualStub)
-    struct FUIntVector2
-    {
-        PROPERTY(Editable) uint32 x;
-        PROPERTY(Editable) uint32 y;
-    };
-
-    REFLECT(ManualStub)
-    struct FUIntVector3
-    {
-        PROPERTY(Editable) uint32 x;
-        PROPERTY(Editable) uint32 y;
-        PROPERTY(Editable) uint32 z;
-    };
-}
 #endif

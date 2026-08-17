@@ -1,4 +1,4 @@
-#include "ReflectedArrayProperty.h"
+﻿#include "ReflectedArrayProperty.h"
 
 #include "Reflector/CodeGeneration/CodeWriter.h"
 #include "Reflector/Types/ReflectedType.h"
@@ -9,7 +9,7 @@ namespace Lumina
     {
         // FArrayPropertyParams carries a single GetOpsFn: the per-property forwarder that returns the shared
         // GetVectorOps<ElementType> table (defined as a static member so the element type resolves in scope).
-        const eastl::string CustomData = Outer + "::" + Name + "ArrayOps_WrapperImpl";
+        const eastl::string CustomData = AccessorScope + Name + "ArrayOps_WrapperImpl";
         const eastl::string PropertyFlagStr = PropertyFlagsToString(PropertyFlags);
         AppendPropertyDef(Writer, PropertyFlagStr.c_str(), "Lumina::EPropertyTypeFlags::Vector", CustomData);
     }
@@ -33,7 +33,7 @@ namespace Lumina
     {
         FReflectedProperty::DefineAccessors(Writer, ReflectedType);
 
-        const eastl::string& Q = ReflectedType->QualifiedName;
+        const eastl::string& Q = AccessorDefinitionScope;
         const char* N = Name.c_str();
         const char* Raw = RawTypeName.c_str();      // The container type, e.g. TVector<T>.
         const char* Elem = ElementTypeName.c_str(); // The element type T.
@@ -42,7 +42,7 @@ namespace Lumina
         // The caller resolves the member offset via GetValuePtr, so arrays compose.
 
         // Getter (exposes the raw vector pointer for debug / inspection).
-        Writer.Linef("void %s::%sArrayGetter_WrapperImpl(const void* Object, void* OutValue)", Q.c_str(), N);
+        Writer.Linef("void %s%sArrayGetter_WrapperImpl(const void* Object, void* OutValue)", Q.c_str(), N);
         Writer.BeginBlock();
         Writer.Linef("*(const %s**)OutValue = (const %s*)Object;", Raw, Raw);
         Writer.EndBlock();
@@ -50,7 +50,7 @@ namespace Lumina
 
         // The whole operation set is the shared element-type ops table. Resolving it here (a member of the
         // owning type) lets the unqualified element name compile, unlike the global-scope params initializer.
-        Writer.Linef("const ::Lumina::FVectorOps* %s::%sArrayOps_WrapperImpl()", Q.c_str(), N);
+        Writer.Linef("const ::Lumina::FVectorOps* %s%sArrayOps_WrapperImpl()", Q.c_str(), N);
         Writer.BeginBlock();
         Writer.Linef("return ::Lumina::GetVectorOps<%s>();", Elem);
         Writer.EndBlock();

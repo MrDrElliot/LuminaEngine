@@ -1,4 +1,4 @@
-#include "ReflectedOptionalProperty.h"
+﻿#include "ReflectedOptionalProperty.h"
 
 #include "Reflector/CodeGeneration/CodeWriter.h"
 #include "Reflector/Types/ReflectedType.h"
@@ -27,7 +27,7 @@ namespace Lumina
             {
                 CustomData += ", ";
             }
-            CustomData += Outer + "::" + Name + kOptionalFatTailSuffixes[i];
+            CustomData += AccessorScope + Name + kOptionalFatTailSuffixes[i];
         }
 
         const eastl::string PropertyFlagStr = PropertyFlagsToString(PropertyFlags);
@@ -55,7 +55,7 @@ namespace Lumina
     {
         FReflectedProperty::DefineAccessors(Writer, ReflectedType);
 
-        const eastl::string& Q = ReflectedType->QualifiedName;
+        const eastl::string& Q = AccessorDefinitionScope;
         const char* N = Name.c_str();
         const char* Raw = RawTypeName.c_str();      // The wrapper type, e.g. TOptional<T>.
         const char* Elem = ElementTypeName.c_str(); // The payload type T.
@@ -64,14 +64,14 @@ namespace Lumina
         // The caller resolves the member offset via GetValuePtr, so optionals compose.
 
         // HasValue
-        Writer.Linef("bool %s::%sOptionalHasValue_WrapperImpl(const void* Object)", Q.c_str(), N);
+        Writer.Linef("bool %s%sOptionalHasValue_WrapperImpl(const void* Object)", Q.c_str(), N);
         Writer.BeginBlock();
         Writer.Linef("return ((const %s*)Object)->has_value();", Raw);
         Writer.EndBlock();
         Writer.Line();
 
         // GetValue (raw pointer to held T; only valid when HasValue is true).
-        Writer.Linef("void* %s::%sOptionalGetValue_WrapperImpl(void* Object)", Q.c_str(), N);
+        Writer.Linef("void* %s%sOptionalGetValue_WrapperImpl(void* Object)", Q.c_str(), N);
         Writer.BeginBlock();
         Writer.Linef("%s* Opt = (%s*)Object;", Raw, Raw);
         Writer.Line("return Opt->has_value() ? &Opt->value() : nullptr;");
@@ -79,7 +79,7 @@ namespace Lumina
         Writer.Line();
 
         // SetValue: copy-emplace when given a value, default-construct when null.
-        Writer.Linef("void %s::%sOptionalSetValue_WrapperImpl(void* Object, const void* InValue)", Q.c_str(), N);
+        Writer.Linef("void %s%sOptionalSetValue_WrapperImpl(void* Object, const void* InValue)", Q.c_str(), N);
         Writer.BeginBlock();
         Writer.Linef("%s* Opt = (%s*)Object;", Raw, Raw);
         Writer.Line("if (InValue)");
@@ -94,7 +94,7 @@ namespace Lumina
         Writer.Line();
 
         // Reset
-        Writer.Linef("void %s::%sOptionalReset_WrapperImpl(void* Object)", Q.c_str(), N);
+        Writer.Linef("void %s%sOptionalReset_WrapperImpl(void* Object)", Q.c_str(), N);
         Writer.BeginBlock();
         Writer.Linef("((%s*)Object)->reset();", Raw);
         Writer.EndBlock();
