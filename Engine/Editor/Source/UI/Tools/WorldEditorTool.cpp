@@ -3612,8 +3612,8 @@ namespace Lumina
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
         {
             ImGui::SetTooltip(bEjected
-                ? "Possess (hand the view and input back to the game camera)"
-                : "Eject (detach to a free-fly editor camera; the game keeps running)");
+                ? "Possess (F8): hand the view and input back to the game camera"
+                : "Eject (F8): detach to a free-fly editor camera; the game keeps running");
         }
 
         ImGui::SameLine();
