@@ -44,7 +44,6 @@
 #include "Assets/AssetTypes/Animation/AnimationGraph/AnimationGraph.h"
 #include "Assets/AssetTypes/Animation/Montage/AnimationMontage.h"
 #include "Assets/AssetTypes/Audio/AudioStream.h"
-#include "Assets/AssetTypes/Blackboard/Blackboard.h"
 #include "Assets/AssetTypes/Curve/CurveAsset.h"
 #include "Assets/AssetTypes/DataAsset/DataAsset.h"
 #include "Assets/AssetTypes/Font/Font.h"
@@ -127,7 +126,6 @@
 #include "Config/EngineSettings.h"
 #include "Tools/AssetEditors/Animation/AnimationEditorTool.h"
 #include "Tools/AssetEditors/AnimationGraph/AnimationGraphEditorTool.h"
-#include "Tools/AssetEditors/Blackboard/BlackboardEditorTool.h"
 #include "Tools/AssetEditors/CurveEditor/CurveAssetEditorTool.h"
 #include "Tools/AssetEditors/DataAsset/DataAssetEditorTool.h"
 #include "Assets/AssetTypes/DataTable/DataTable.h"
@@ -1445,7 +1443,6 @@ namespace Lumina
         Registry.RegisterAssetEditor<CMaterialInstance,   FMaterialInstanceEditorTool>(Owner);
         Registry.RegisterAssetEditor<CMaterialFunction,   FMaterialFunctionEditorTool>(Owner);
         Registry.RegisterAssetEditor<CAnimationGraph,     FAnimationGraphEditorTool>(Owner);
-        Registry.RegisterAssetEditor<CBlackboard,         FBlackboardEditorTool>(Owner);
         Registry.RegisterAssetEditor<CDataAsset,          FDataAssetEditorTool>(Owner);
         Registry.RegisterAssetEditor<CDataTable,          FDataTableEditorTool>(Owner);
         Registry.RegisterAssetEditor<CPhysicsMaterial,    FPhysicsMaterialEditorTool>(Owner);

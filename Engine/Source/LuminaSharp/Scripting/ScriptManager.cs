@@ -47,7 +47,7 @@ internal sealed class ScriptManager
     /// <summary>Hosts C# subclasses of REFLECT(Scriptable) native CObjects for the current generation.</summary>
     public ScriptableRuntime? Scriptables { get; private set; }
 
-    /// <summary>Types marked as engine data shapes ([BlackboardData], [DataTableRow], ...).</summary>
+    /// <summary>Types marked as engine data shapes ([DataTableRow], ...).</summary>
     public ScriptDataStructRuntime? DataStructs { get; private set; }
 
     /// <summary>Bumps on every successful (re)load; the native side rebinds entity scripts when it changes.</summary>

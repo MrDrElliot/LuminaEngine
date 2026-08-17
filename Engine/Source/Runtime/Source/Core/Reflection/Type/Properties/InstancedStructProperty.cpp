@@ -27,7 +27,7 @@ namespace Lumina
         {
             return nullptr;
         }
-        if (CStruct* Found = FindObject<CStruct>(Key))
+        if (CStruct* Found = FindObject<CStruct>(Key); IsInstancableStructType(Found))
         {
             return Found;
         }
@@ -36,7 +36,7 @@ namespace Lumina
             for (TObjectIterator<CStruct> It; It; ++It)
             {
                 CStruct* Candidate = *It;
-                if (Candidate == MetaBase || !Candidate->IsChildOf(MetaBase))
+                if (Candidate == MetaBase || !Candidate->IsChildOf(MetaBase) || !IsInstancableStructType(Candidate))
                 {
                     continue;
                 }
@@ -52,7 +52,8 @@ namespace Lumina
     FInstancedStructProperty::FInstancedStructProperty(const FFieldOwner& InOwner, const FInstancedStructPropertyParams* Params)
         : FProperty(InOwner, Params)
     {
-        MetaStruct = Params->StructFunc();
+        // Null for a bare FInstancedStruct, which constrains nothing and accepts any reflected struct.
+        MetaStruct = Params->StructFunc != nullptr ? Params->StructFunc() : nullptr;
         SetElementSize(sizeof(FInstancedStruct));
     }
 

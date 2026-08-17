@@ -315,6 +315,12 @@ int main(int argc, char* argv[])
                         continue;
                     }
 
+                    // Empty means deliberately unconstrained (a bare FInstancedStruct): no base to demand.
+                    if (Property->TypeName.empty())
+                    {
+                        continue;
+                    }
+
                     if (Parser.ParsingContext.ReflectionDatabase.GetReflectedType<FReflectedType>(
                             Lumina::FStringHash(Property->TypeName)) != nullptr)
                     {

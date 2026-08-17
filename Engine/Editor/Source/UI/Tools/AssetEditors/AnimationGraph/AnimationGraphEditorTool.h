@@ -55,8 +55,8 @@ namespace Lumina
         // Lists the compiled graph's parameters with editable live values, pushed into the
         // preview mesh so transition conditions and Get Parameter nodes can be exercised.
         void DrawParametersWindow();
-        void DrawBlackboardParameters(class CAnimationGraph* Graph);
-        void PushParameterOverrides();
+        void DrawParameters(class CAnimationGraph* Graph);
+        void DrawEnumParameter(const char* Name, class FEnumProperty* Property, void* Value);
 
         // Read-only live values of the curves the graph's clips carry, sampled off the debug target's
         // output pose. Curves are produced by evaluation, so unlike parameters they can't be driven here.
@@ -137,7 +137,6 @@ namespace Lumina
 
         // Editor-driven live parameter values, pushed into the preview mesh each frame; keyed
         // by name so they survive recompiles/reordering.
-        THashMap<FName, float>                  ParameterOverrides;
 
         // Lazily-built name -> reflected enum lookup for enum-key value combos.
         THashMap<FName, CEnum*>                 ReflectedEnumCache;

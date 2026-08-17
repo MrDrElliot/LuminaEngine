@@ -11,6 +11,7 @@ namespace Lumina
         Pose,       // a blended skeletal pose flowing between nodes
         Value,      // a scalar float (blend alphas, playback speeds, parameter outputs)
         StateFlow,  // a state-machine edge: connects State nodes on the state machine canvas
+        Object,     // an asset reference (animation, blend space) a sampler node can swap at runtime
     };
 
     // Typed pin for the animation node graph. The graph schema only permits

@@ -48,6 +48,9 @@ enum class ELuminaEngineVersion : uint32
 	// CAnimationGraph serializes SlotNames, the montage slot table its EvalSlot opcodes index.
 	ANIM_GRAPH_MONTAGE_SLOTS,
 
+	// CAnimationGraph serializes NumObjectRegisters, the register file its object dataflow uses.
+	ANIM_GRAPH_OBJECT_PARAMETERS,
+
 	AUTOMATIC_VERSION_PLUS_ONE,
 	AUTOMATIC_VERSION = AUTOMATIC_VERSION_PLUS_ONE - 1
 };

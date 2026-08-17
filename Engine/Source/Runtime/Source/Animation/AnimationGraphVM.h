@@ -6,6 +6,7 @@
 #include "Animation/TaskSystem/AnimTask.h"
 #include "Containers/Array.h"
 #include "Core/Object/ObjectMacros.h"
+#include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Serialization/Archiver.h"
 #include "Renderer/SkeletonResource.h"
 #include "AnimationGraphVM.generated.h"
@@ -68,6 +69,13 @@ namespace Lumina
         GetCurve,        // src:pReg, curveIdx:uint16, dst:sReg
         SetCurve,        // src:pReg, curveIdx:uint16, value:sReg, dst:pReg
         EvalSlot,        // slotIdx:uint16, src:pReg, dst:pReg
+
+        //~ Object dataflow. Appended, so every opcode above keeps its value and existing bytecode stays valid.
+        LoadObjectParam,        // paramIdx:uint16, dst:oReg
+        LoadObjectConst,        // constIdx:uint16, dst:oReg
+        SampleAnimDyn,          // clip:oReg, time:sReg, dst:pReg
+        AdvanceClockDyn,        // stateIdx:uint16, speed:sReg, clip:oReg, loopMode:sReg, dstClock:sReg, dstFinished:sReg, syncGroup:uint16
+        SampleBlendSpaceDyn,    // bs:oReg, x:sReg, y:sReg, speed:sReg, phase:uint16, dst:pReg
     };
 
     // Append-only: the enum value is baked into compiled bytecode.
@@ -133,7 +141,11 @@ namespace Lumina
     {
         TVector<float> ScalarRegisters;
         TVector<float> StateSlots;     // persistent playback clocks
-        TVector<float> Parameters;     // current parameter values (editor / Lua driven)
+        TVector<float> Parameters;
+
+        // Current object parameter values, refilled each update from the entity's blackboard.
+        TVector<TObjectPtr<CObject>> ObjectParameters;
+
         TVector<FAnimInertializer> Inertializers; // per state machine; transition smoothing state
         TVector<FAnimSyncGroup> SyncGroups;       // shared phase per sync group
 

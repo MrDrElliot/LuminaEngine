@@ -185,7 +185,31 @@ namespace Lumina
             return IsChildOf(T::StaticClass());
         }
 
-        RUNTIME_API bool IsChildOf(const CStruct* Base) const;
+        // O(1) via the flattened ancestor chain: one depth compare, one indexed load, one pointer
+        // compare. Falls back to the super walk for a type whose chain was never built.
+        bool IsChildOf(const CStruct* Base) const
+        {
+            if (Base == nullptr)
+            {
+                return false;
+            }
+            if (Base == this)
+            {
+                return true;
+            }
+
+            if (!BaseChain.empty() && !Base->BaseChain.empty())
+            {
+                const SIZE_T ParentIndex = Base->BaseChain.size() - 1;
+                const bool bResult = ParentIndex < BaseChain.size() && BaseChain[ParentIndex] == Base;
+
+                // A chain left stale by a re-mint answers wrongly in silence, so prove it in Debug.
+                DEBUG_ASSERT(bResult == IsChildOfByWalk(Base));
+                return bResult;
+            }
+
+            return IsChildOfByWalk(Base);
+        }
 
         /** Finalizes the property list. Must run after all AddProperty calls and before runtime use. */
         RUNTIME_API virtual void Link();
@@ -205,7 +229,15 @@ namespace Lumina
         RUNTIME_API FFixedString MakeDisplayName() const override;
 
     private:
-        
+
+        // Walks SuperStruct. Kept as the fallback and as the Debug cross-check for the chain.
+        RUNTIME_API bool IsChildOfByWalk(const CStruct* Base) const;
+
+        // Ancestors root-first with this last, so a type sits at index (its depth). Rebuilt by
+        // SetSuperStruct, which is the only writer of SuperStruct.
+        RUNTIME_API void RebuildBaseChain();
+
+        TVector<CStruct*> BaseChain;
         TUniquePtr<FStructOps> StructOps;
         CStruct* SuperStruct = nullptr;
         bool bLinked = false;

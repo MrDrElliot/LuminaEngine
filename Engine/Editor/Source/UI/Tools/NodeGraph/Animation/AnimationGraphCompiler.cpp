@@ -1,7 +1,7 @@
 #include "AnimationGraphCompiler.h"
 
 #include "Assets/AssetTypes/Animation/BlendSpace/BlendSpace.h"
-#include "Assets/AssetTypes/Blackboard/Blackboard.h"
+#include "Core/Reflection/Type/Properties/ObjectProperty.h"
 #include "Assets/AssetTypes/Mesh/Animation/Animation.h"
 #include "Renderer/MeshData.h"
 #include "Renderer/SkeletonResource.h"
@@ -139,11 +139,59 @@ namespace Lumina
         return Dst;
     }
 
-    uint16 FAnimationGraphCompiler::EmitAdvanceClock(uint16 StateSlot, uint16 SpeedReg, uint16 ClipIndex, uint16 LoopModeReg, uint16& OutFinishedReg, uint16 SyncGroup)
+    int32 FAnimationGraphCompiler::AddObjectParameter(const FName& Name, EAnimObjectParamType Type)
+    {
+        for (SIZE_T i = 0; i < ObjectParameters.size(); ++i)
+        {
+            if (ObjectParameters[i].Name == Name)
+            {
+                return (int32)i;
+            }
+        }
+
+        FAnimGraphObjectParameter Param;
+        Param.Name = Name;
+        Param.Type = Type;
+        ObjectParameters.push_back(Param);
+        return (int32)(ObjectParameters.size() - 1);
+    }
+
+    uint16 FAnimationGraphCompiler::AddObjectConstant(CObject* Value)
+    {
+        for (SIZE_T i = 0; i < ObjectConstants.size(); ++i)
+        {
+            if (ObjectConstants[i].Get() == Value)
+            {
+                return (uint16)i;
+            }
+        }
+        ObjectConstants.push_back(Value);
+        return (uint16)(ObjectConstants.size() - 1);
+    }
+
+    uint16 FAnimationGraphCompiler::EmitLoadObjectParam(uint16 ObjectParameterIndex)
+    {
+        const uint16 Dst = AllocObjectReg();
+        WriteOp(EAnimOp::LoadObjectParam);
+        Write(ObjectParameterIndex);
+        Write(Dst);
+        return Dst;
+    }
+
+    uint16 FAnimationGraphCompiler::EmitLoadObjectConst(uint16 ObjectConstantIndex)
+    {
+        const uint16 Dst = AllocObjectReg();
+        WriteOp(EAnimOp::LoadObjectConst);
+        Write(ObjectConstantIndex);
+        Write(Dst);
+        return Dst;
+    }
+
+    uint16 FAnimationGraphCompiler::EmitAdvanceClock(uint16 StateSlot, uint16 SpeedReg, uint16 ClipIndex, uint16 LoopModeReg, uint16& OutFinishedReg, uint16 SyncGroup, bool bDynamicClip)
     {
         const uint16 DstClock    = AllocScalarReg();
         const uint16 DstFinished = AllocScalarReg();
-        WriteOp(EAnimOp::AdvanceClock);
+        WriteOp(bDynamicClip ? EAnimOp::AdvanceClockDyn : EAnimOp::AdvanceClock);
         Write(StateSlot);
         Write(SpeedReg);
         Write(ClipIndex);
@@ -191,20 +239,21 @@ namespace Lumina
         return Dst;
     }
 
-    uint16 FAnimationGraphCompiler::EmitSampleAnim(uint16 ClipIndex, uint16 TimeReg)
+    uint16 FAnimationGraphCompiler::EmitSampleAnim(uint16 ClipIndex, uint16 TimeReg, bool bDynamicClip)
     {
         const uint16 Dst = AllocPoseReg();
-        WriteOp(EAnimOp::SampleAnim);
+        WriteOp(bDynamicClip ? EAnimOp::SampleAnimDyn : EAnimOp::SampleAnim);
         Write(ClipIndex);
         Write(TimeReg);
         Write(Dst);
         return Dst;
     }
 
-    uint16 FAnimationGraphCompiler::EmitSampleBlendSpace(uint16 BlendSpaceIndex, uint16 XReg, uint16 YReg, uint16 SpeedReg, uint16 PhaseSlot)
+    uint16 FAnimationGraphCompiler::EmitSampleBlendSpace(uint16 BlendSpaceIndex, uint16 XReg, uint16 YReg, uint16 SpeedReg, uint16 PhaseSlot,
+                                                         bool bDynamicBlendSpace)
     {
         const uint16 Dst = AllocPoseReg();
-        WriteOp(EAnimOp::SampleBlendSpace);
+        WriteOp(bDynamicBlendSpace ? EAnimOp::SampleBlendSpaceDyn : EAnimOp::SampleBlendSpace);
         Write(BlendSpaceIndex);
         Write(XReg);
         Write(YReg);
@@ -267,30 +316,86 @@ namespace Lumina
 
     void FAnimationGraphCompiler::ValidateParameterKey(const FName& Name, CEdGraphNode* Node)
     {
-        // No blackboard assigned, or no key referenced -> nothing to validate.
-        if (Blackboard == nullptr || Name.IsNone())
+        if (DataStruct == nullptr || Name.IsNone())
         {
             return;
         }
 
-        const FBlackboardKey* Key = Blackboard->FindKey(Name);
-        if (Key == nullptr)
+        FProperty* Property = DataStruct->GetProperty(Name);
+        if (Property == nullptr)
         {
             EdNodeGraph::FError Warning;
-            Warning.Name        = "Unknown Blackboard Key";
-            Warning.Description = FString("References blackboard key '") + Name.ToString() +
-                "' which doesn't exist on the assigned blackboard (renamed or removed?). It will read the default value.";
+            Warning.Name        = "Unknown Parameter";
+            Warning.Description = FString("'") + Name.ToString() + "' is not a field on " +
+                DataStruct->GetName().c_str() + " (renamed or removed?). It will read the default value.";
             Warning.Node        = Node;
             AddWarning(Warning);
             return;
         }
 
-        if (!IsScalarBlackboardKey(Key->Type))
+        if (Property->HasSetterOrGetter())
         {
             EdNodeGraph::FError Warning;
-            Warning.Name        = "Blackboard Key Type";
-            Warning.Description = FString("Blackboard key '") + Name.ToString() +
-                "' is not a scalar (Float/Int/Bool/Enum) type, so it can't drive a value parameter; it will read 0.";
+            Warning.Name        = "Parameter Has Accessor";
+            Warning.Description = FString("'") + Name.ToString() +
+                "' is behind a getter or setter, so it cannot be read directly. It will read the default value.";
+            Warning.Node        = Node;
+            AddWarning(Warning);
+            return;
+        }
+
+        const EAnimParamValueType Type = AnimParamValueTypeFromProperty(Property);
+        if (Type == EAnimParamValueType::Unresolved || Type == EAnimParamValueType::Object)
+        {
+            EdNodeGraph::FError Warning;
+            Warning.Name        = "Parameter Type";
+            Warning.Description = FString("'") + Name.ToString() +
+                "' is not a numeric, bool, or enum field, so it can't drive a value parameter; it will read 0.";
+            Warning.Node        = Node;
+            AddWarning(Warning);
+        }
+    }
+
+    void FAnimationGraphCompiler::ValidateObjectParameterKey(const FName& Name, EAnimObjectParamType Expected, CEdGraphNode* Node)
+    {
+        if (DataStruct == nullptr || Name.IsNone())
+        {
+            return;
+        }
+
+        const char* ExpectedClassName = Expected == EAnimObjectParamType::BlendSpace ? "CBlendSpace" : "CAnimation";
+
+        FProperty* Property = DataStruct->GetProperty(Name);
+        if (Property == nullptr)
+        {
+            EdNodeGraph::FError Warning;
+            Warning.Name        = "Unknown Parameter";
+            Warning.Description = FString("'") + Name.ToString() + "' is not a field on " +
+                DataStruct->GetName().c_str() + ". It will read the default asset.";
+            Warning.Node        = Node;
+            AddWarning(Warning);
+            return;
+        }
+
+        if (AnimParamValueTypeFromProperty(Property) != EAnimParamValueType::Object)
+        {
+            EdNodeGraph::FError Warning;
+            Warning.Name        = "Parameter Type";
+            Warning.Description = FString("'") + Name.ToString() +
+                "' is not an object field, so it cannot supply an asset.";
+            Warning.Node        = Node;
+            AddWarning(Warning);
+            return;
+        }
+
+        CClass* Required = FindObject<CClass>(FName(ExpectedClassName));
+        CClass* Declared = static_cast<FObjectProperty*>(Property)->GetPropertyClass();
+        if (Declared != nullptr && Required != nullptr && !Declared->IsChildOf(Required))
+        {
+            EdNodeGraph::FError Warning;
+            Warning.Name        = "Parameter Class";
+            Warning.Description = FString("'") + Name.ToString() + "' holds a " + Declared->GetName().c_str() +
+                ", which is not a " + ExpectedClassName + ". This node would fall back to the bind pose.";
             Warning.Node        = Node;
             AddWarning(Warning);
         }
@@ -510,6 +615,9 @@ namespace Lumina
         OutGraph->ClipCurveMaps       = ClipCurveMaps;
         OutGraph->BlendSpaceCurveMaps = BlendSpaceCurveMaps;
         OutGraph->Parameters          = Parameters;
+        OutGraph->ObjectParameters    = ObjectParameters;
+        OutGraph->ObjectConstants     = ObjectConstants;
+        OutGraph->NumObjectRegisters  = NextObjectReg;
         OutGraph->BoneMasks           = BoneMasks;
         OutGraph->StateMachines       = StateMachines;
         OutGraph->NumScalarRegisters  = NextScalarReg;
@@ -520,5 +628,8 @@ namespace Lumina
         OutGraph->BytecodeVersion     = kAnimBytecodeVersion;
 
         OutGraph->ResolveTransitionParameters();
+
+        // Compiling changes the parameter list, so the offsets resolved at load no longer line up.
+        OutGraph->LinkParameters();
     }
 }

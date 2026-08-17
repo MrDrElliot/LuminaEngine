@@ -3,7 +3,6 @@
 #include "ParameterPickerContext.h"
 #include "SocketPickerContext.h"
 #include "Assets/AssetTypes/Animation/AnimationGraph/AnimationGraph.h"
-#include "Assets/AssetTypes/Blackboard/Blackboard.h"
 #include "Input/InputActionMap.h"
 #include "Renderer/MeshData.h"
 #include "UI/Tools/AssetEditors/TextureEditor/TextureEditorTool.h"
@@ -205,7 +204,8 @@ namespace Lumina
         }
 
         const bool bBonePicker = Property->Property->HasMetadata("BonePicker");
-        const bool bParamPicker = Property->Property->HasMetadata("ParameterPicker");
+        const bool bObjectParamPicker = Property->Property->HasMetadata("ObjectParameterPicker");
+        const bool bParamPicker = bObjectParamPicker || Property->Property->HasMetadata("ParameterPicker");
         const bool bCurvePicker = Property->Property->HasMetadata("CurvePicker");
         const bool bSocketPicker = Property->Property->HasMetadata("SocketPicker");
         const FSkeletonResource* Skeleton = bBonePicker ? BonePickerContext::GetActiveSkeleton() : nullptr;
@@ -255,44 +255,46 @@ namespace Lumina
                     Result = EPropertyChangeOp::Updated;
                     ImGui::CloseCurrentPopup();
                 }
-                CBlackboard* Blackboard = (PickerGraph != nullptr) ? PickerGraph->Blackboard.Get() : nullptr;
-                if (Blackboard == nullptr)
+                CStruct* Struct = (PickerGraph != nullptr) ? PickerGraph->GetParameterStruct() : nullptr;
+                if (Struct == nullptr)
                 {
                     ImGui::Separator();
-                    ImGui::TextDisabled("No blackboard assigned.");
+                    ImGui::TextDisabled("No parameter struct assigned.");
                     ImGui::TextDisabled("Set one on the graph asset.");
-                }
-                else if (Blackboard->Keys.empty())
-                {
-                    ImGui::Separator();
-                    ImGui::TextDisabled("Blackboard has no keys.");
-                    ImGui::TextDisabled("Add keys in the Blackboard editor.");
                 }
                 else
                 {
                     ImGui::Separator();
-                    for (const FBlackboardKey& Key : Blackboard->Keys)
+                    int32 Shown = 0;
+                    Struct->ForEachProperty<FProperty>([&](FProperty* Property)
                     {
-                        if (Key.Name.IsNone() || EnumHasAnyFlags(Key.Flags, EBlackboardKeyFlags::Hidden))
+                        const EAnimParamValueType Type = AnimParamValueTypeFromProperty(Property);
+                        const bool bIsObject = Type == EAnimParamValueType::Object;
+
+                        // Wrong-typed fields list disabled, so a mismatch reads as "wrong type", not "gone".
+                        if (Type == EAnimParamValueType::Unresolved || Property->HasSetterOrGetter())
                         {
-                            continue;
+                            return;
                         }
 
-                        // Only scalar keys can drive a value parameter; list the rest disabled so a
-                        // missing key reads as "wrong type" rather than "gone".
-                        if (!IsScalarBlackboardKey(Key.Type))
+                        ++Shown;
+                        if (bIsObject != bObjectParamPicker)
                         {
-                            ImGui::TextDisabled("%s (%s)", Key.Name.c_str(), BlackboardKeyTypeLabel(Key.Type));
-                            continue;
+                            ImGui::TextDisabled("%s (%s)", Property->Name.c_str(), Property->TypeName.c_str());
+                            return;
                         }
 
-                        const bool bSelected = (Key.Name == DisplayValue);
-                        if (ImGui::Selectable(Key.Name.c_str(), bSelected))
+                        if (ImGui::Selectable(Property->Name.c_str(), Property->Name == DisplayValue))
                         {
-                            DisplayValue = Key.Name;
+                            DisplayValue = Property->Name;
                             Result = EPropertyChangeOp::Updated;
                             ImGui::CloseCurrentPopup();
                         }
+                    });
+
+                    if (Shown == 0)
+                    {
+                        ImGui::TextDisabled("Struct declares no readable fields.");
                     }
                 }
                 ImGui::EndPopup();
@@ -339,6 +341,8 @@ namespace Lumina
                 ImGui::EndPopup();
             }
         }
+
+
 
         if (bBonePicker)
         {

@@ -73,6 +73,22 @@ namespace Lumina
     void CStruct::SetSuperStruct(CStruct* InSuper)
     {
         SuperStruct = InSuper;
+        RebuildBaseChain();
+    }
+
+    void CStruct::RebuildBaseChain()
+    {
+        // Relies on a type always being registered after the type it derives from.
+        const SIZE_T SuperDepth = SuperStruct != nullptr ? SuperStruct->BaseChain.size() : 0;
+
+        BaseChain.clear();
+        BaseChain.reserve(SuperDepth + 1);
+
+        if (SuperStruct != nullptr)
+        {
+            BaseChain.insert(BaseChain.end(), SuperStruct->BaseChain.begin(), SuperStruct->BaseChain.end());
+        }
+        BaseChain.push_back(this);
     }
 
     void CStruct::RegisterDependencies()
@@ -83,24 +99,16 @@ namespace Lumina
         }
     }
 
-    bool CStruct::IsChildOf(const CStruct* Base) const
+    bool CStruct::IsChildOfByWalk(const CStruct* Base) const
     {
-        if (Base == nullptr)
-        {
-            return false;
-        }
-
-        bool bOldResult = false;
         for (const CStruct* Temp = this; Temp; Temp = Temp->GetSuperStruct())
         {
             if (Temp == Base)
             {
-                bOldResult = true;
-                break;
+                return true;
             }
         }
-
-        return bOldResult;
+        return false;
     }
 
     void CStruct::Link()

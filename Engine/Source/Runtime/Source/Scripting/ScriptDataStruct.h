@@ -12,7 +12,7 @@ namespace Lumina
 
     /**
      * The C# data types published to the engine, minted as CScriptStructs whose super is the native
-     * struct their marker named ([BlackboardData] -> SBlackboardDataBase, and so on).
+     * struct their marker named ([DataTableRow] -> FTableRowBase, and so on).
      *
      * One registry serves every feature that accepts a native base, because they all need the same three
      * things: discovery that does not depend on anything referencing the type, a real inheritance edge so

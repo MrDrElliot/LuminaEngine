@@ -2,13 +2,14 @@
 
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectHandleTyped.h"
+#include "Core/Object/InstancedStruct.h"
 #include "AnimationGraph.generated.h"
 
 namespace Lumina
 {
     class CSkeleton;
     class CAnimation;
-    class CBlackboard;
+    class CStruct;
     class CBlendSpace;
 
     REFLECT()
@@ -30,6 +31,62 @@ namespace Lumina
         NotEqual,
     };
 
+    // How the bytes at a resolved offset decode. Filled at link from the property's TypeFlags.
+    enum class EAnimParamValueType : uint8
+    {
+        Unresolved,
+        Float,
+        Double,
+        Bool,
+        Int8,
+        Int16,
+        Int32,
+        Int64,
+        UInt8,
+        UInt16,
+        UInt32,
+        UInt64,
+        Object,
+    };
+
+    // A parameter name resolved to a byte offset in the entity's blackboard struct. Transient.
+    struct FAnimGraphParamBinding
+    {
+        uint32 Offset = 0;
+        EAnimParamValueType Type = EAnimParamValueType::Unresolved;
+
+        bool IsResolved() const { return Type != EAnimParamValueType::Unresolved; }
+    };
+
+    /** Unresolved for anything a parameter cannot read: containers, structs, strings, delegates. */
+    RUNTIME_API EAnimParamValueType AnimParamValueTypeFromProperty(const FProperty* Property);
+
+    FORCEINLINE float ReadAnimParamScalar(const uint8* Base, const FAnimGraphParamBinding& Binding)
+    {
+        const uint8* At = Base + Binding.Offset;
+        switch (Binding.Type)
+        {
+        case EAnimParamValueType::Float:  return *reinterpret_cast<const float*>(At);
+        case EAnimParamValueType::Double: return (float)*reinterpret_cast<const double*>(At);
+        case EAnimParamValueType::Bool:   return *reinterpret_cast<const bool*>(At) ? 1.0f : 0.0f;
+        case EAnimParamValueType::Int8:   return (float)*reinterpret_cast<const int8*>(At);
+        case EAnimParamValueType::Int16:  return (float)*reinterpret_cast<const int16*>(At);
+        case EAnimParamValueType::Int32:  return (float)*reinterpret_cast<const int32*>(At);
+        case EAnimParamValueType::Int64:  return (float)*reinterpret_cast<const int64*>(At);
+        case EAnimParamValueType::UInt8:  return (float)*reinterpret_cast<const uint8*>(At);
+        case EAnimParamValueType::UInt16: return (float)*reinterpret_cast<const uint16*>(At);
+        case EAnimParamValueType::UInt32: return (float)*reinterpret_cast<const uint32*>(At);
+        case EAnimParamValueType::UInt64: return (float)*reinterpret_cast<const uint64*>(At);
+        default:                          return 0.0f;
+        }
+    }
+
+    // TObjectPtr<T> holds exactly one T*, so an object property reads as a plain pointer at its offset.
+    FORCEINLINE CObject* ReadAnimParamObject(const uint8* Base, const FAnimGraphParamBinding& Binding)
+    {
+        return *reinterpret_cast<CObject* const*>(Base + Binding.Offset);
+    }
+
     // A named value editor/Lua tweak at runtime to drive blend weights, playback speeds, etc.
     struct FAnimGraphParameter
     {
@@ -44,6 +101,29 @@ namespace Lumina
             Ar << Data.DefaultValue;
             return Ar;
         }
+    };
+
+    // What a node expects an object parameter to hold, so the picker and compiler can reject a mismatch.
+    REFLECT()
+    enum class EAnimObjectParamType : uint8
+    {
+        Animation,
+        BlendSpace,
+    };
+
+    // A named object-valued input, letting the graph swap which asset a node samples at runtime.
+    REFLECT()
+    struct FAnimGraphObjectParameter
+    {
+        GENERATED_BODY()
+
+        /** Field on the graph's parameter struct this asset reference is read from. */
+        PROPERTY()
+        FName Name;
+
+        /** Asset kind the consuming node expects. */
+        PROPERTY()
+        EAnimObjectParamType Type = EAnimObjectParamType::Animation;
     };
 
     // One compiled state-machine edge; the VM cross-fades FromState->ToState over BlendDuration
@@ -200,10 +280,21 @@ namespace Lumina
 
         int32 FindParameterIndex(const FName& Name) const;
 
+        int32 FindObjectParameterIndex(const FName& Name) const;
+
         int32 FindCurveIndex(const FName& Name) const;
 
         // Fills every transition's CachedParamIndex; call after Parameters/StateMachines change.
         void ResolveTransitionParameters();
+
+        // Swapping the parameter struct moves every offset, so re-link rather than trust the old ones.
+        void PostPropertyChange(FProperty* ChangedProperty) override { LinkParameters(); }
+
+        /** The parameter block's type, or null when none is assigned. */
+        CStruct* GetParameterStruct() const { return ParameterStruct.GetScriptStruct(); }
+
+        // Resolves every parameter name to an offset in the parameter struct; call after either changes.
+        void LinkParameters();
 
         bool IsCompiled() const { return !Bytecode.empty(); }
 
@@ -211,9 +302,9 @@ namespace Lumina
         PROPERTY(Editable, Category = "Animation")
         TObjectPtr<CSkeleton> Skeleton;
 
-        /** Blackboard schema graph parameters are picked from; runtime values come from SBlackboardComponent. */
+        /** Parameter block this graph reads. The instance's values are the authored defaults. */
         PROPERTY(Editable, Category = "Animation")
-        TObjectPtr<CBlackboard> Blackboard;
+        FInstancedStruct ParameterStruct;
 
         /** Animation clips referenced by SampleAnim opcodes, indexed by clip index. */
         PROPERTY()
@@ -225,6 +316,22 @@ namespace Lumina
 
         /** Lua- and editor-tweakable parameters that drive the graph. */
         TVector<FAnimGraphParameter> Parameters;
+
+        /** Object-valued inputs; the runtime fills these so nodes can swap which asset they sample. */
+        PROPERTY()
+        TVector<FAnimGraphObjectParameter> ObjectParameters;
+
+        /** Assets referenced by LoadObjectConst, so a static pin still flows through an object register. */
+        PROPERTY()
+        TVector<TObjectPtr<CObject>> ObjectConstants;
+
+        /** Offsets into the blackboard struct, parallel to Parameters / ObjectParameters. Transient. */
+        TVector<FAnimGraphParamBinding> ParamBindings;
+        TVector<FAnimGraphParamBinding> ObjectParamBindings;
+
+        /** Curve slots to register even when no node reads them, so a runtime-chosen clip can drive them. */
+        PROPERTY(Editable, Category = "Animation")
+        TVector<FName> DeclaredCurves;
 
         /** Editor-authored bone mask definitions; resolved into BoneMasks at compile. */
         PROPERTY(Editable, Category = "Bone Masks")
@@ -248,6 +355,7 @@ namespace Lumina
         TVector<uint8> Bytecode;
 
         /** Register-file and persistent-state sizing produced by the compiler. */
+        uint16 NumObjectRegisters = 0;
         uint16 NumScalarRegisters = 0;
         uint16 NumPoseRegisters = 0;
         uint16 NumStateSlots = 0;

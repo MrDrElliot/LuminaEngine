@@ -20,6 +20,7 @@
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "UI/Properties/Customizations/BonePickerContext.h"
 #include "UI/Properties/Customizations/ParameterPickerContext.h"
+#include "Core/Reflection/Type/Properties/EnumProperty.h"
 #include "UI/Tools/NodeGraph/EdNodeGraphPin.h"
 #include "UI/Tools/NodeGraph/Animation/AnimGraphPin.h"
 #include "UI/Tools/NodeGraph/Animation/AnimationGraphCompiler.h"
@@ -27,13 +28,11 @@
 #include "UI/Tools/NodeGraph/Animation/AnimStateMachineGraph.h"
 #include "UI/Tools/NodeGraph/Animation/AnimStateTransition.h"
 #include "UI/Tools/NodeGraph/Animation/Nodes/AnimGraphNode_State.h"
-#include "Assets/AssetTypes/Blackboard/Blackboard.h"
 #include "World/WorldManager.h"
 #include "World/Entity/Components/EnvironmentComponent.h"
 #include "World/Entity/Components/SkyLightComponent.h"
 #include "World/Entity/Components/LightComponent.h"
 #include "World/Entity/Components/AnimationGraphComponent.h"
-#include "World/Entity/Components/BlackboardComponent.h"
 #include "World/Entity/Components/NameComponent.h"
 #include "World/Entity/Components/SkeletalMeshComponent.h"
 #include "Renderer/SkeletonResource.h"
@@ -445,9 +444,6 @@ namespace Lumina
             MeshEntity = World->ConstructEntity("Preview Mesh");
             World->EmplaceComponent<SSkeletalMeshComponent>(MeshEntity).SetSkeletalMesh(PreviewMesh);
             World->EmplaceComponent<SAnimationGraphComponent>(MeshEntity).Graph = Graph;
-            // Drive parameter values through a blackboard instance, exactly like
-            // a real entity would; the Parameters panel writes into it.
-            World->EmplaceComponent<SBlackboardComponent>(MeshEntity).Blackboard = Graph->Blackboard;
 
             STransformComponent& MeshTransform   = World->GetComponent<STransformComponent>(MeshEntity);
             STransformComponent& EditorTransform = World->GetComponent<STransformComponent>(EditorEntity);
@@ -471,12 +467,6 @@ namespace Lumina
             GraphComp.Graph = Graph;
         }
 
-        // Keep the preview blackboard instance pointed at the graph's schema.
-        SBlackboardComponent& BlackboardComp = World->GetOrEmplaceComponent<SBlackboardComponent>(MeshEntity);
-        if (BlackboardComp.Blackboard.Get() != Graph->Blackboard.Get())
-        {
-            BlackboardComp.Blackboard = Graph->Blackboard;
-        }
     }
 
     void FAnimationGraphEditorTool::Update(const FUpdateContext& UpdateContext)
@@ -494,35 +484,6 @@ namespace Lumina
             Compile(false);
         }
 
-        // Drive the preview mesh's parameters from the Parameters panel so
-        // transition conditions and Get Parameter nodes actually do something.
-        PushParameterOverrides();
-    }
-
-    void FAnimationGraphEditorTool::PushParameterOverrides()
-    {
-        if (!World.IsValid() || MeshEntity == entt::null)
-        {
-            return;
-        }
-
-        if (!World->IsValidEntity(MeshEntity))
-        {
-            return;
-        }
-
-        SBlackboardComponent* BlackboardComp = World->TryGetComponent<SBlackboardComponent>(MeshEntity);
-        if (BlackboardComp == nullptr)
-        {
-            return;
-        }
-
-        // Push live panel values into the preview entity's blackboard; the anim system
-        // resolves them into the VM each frame as for gameplay. Unknown keys are created.
-        for (const auto& [Name, Value] : ParameterOverrides)
-        {
-            BlackboardComp->SetFloat(Name, Value);
-        }
     }
 
     void FAnimationGraphEditorTool::DrawToolMenu(const FUpdateContext& /*UpdateContext*/)
@@ -808,7 +769,7 @@ namespace Lumina
             return;
         }
 
-        DrawBlackboardParameters(Graph);
+        DrawParameters(Graph);
         DrawLiveCurveValues(Graph);
     }
 
@@ -852,124 +813,110 @@ namespace Lumina
         }
     }
 
-    void FAnimationGraphEditorTool::DrawBlackboardParameters(CAnimationGraph* Graph)
+    void FAnimationGraphEditorTool::DrawParameters(CAnimationGraph* Graph)
     {
-        ImGui::TextWrapped("Live values for the assigned Blackboard's keys. Set them here to test the "
-            "graph in the preview viewport; at runtime an entity's Blackboard Component supplies these.");
+        ImGui::TextWrapped("Live fields of the preview entity's parameter block. At runtime gameplay code "
+            "writes these directly on the Animation Graph Component.");
         ImGui::Separator();
 
-        CBlackboard* Blackboard = Graph->Blackboard.Get();
-        if (Blackboard == nullptr)
+        CStruct* Struct = Graph->GetParameterStruct();
+        if (Struct == nullptr)
         {
             ImGui::TextColored(ImVec4(0.95f, 0.65f, 0.35f, 1.0f),
-                "No Blackboard assigned. Set one on the graph asset");
+                "No parameter struct assigned. Set one on the");
             ImGui::TextColored(ImVec4(0.95f, 0.65f, 0.35f, 1.0f),
-                "(Graph Properties) to declare parameters.");
+                "graph asset (Graph Properties) to declare parameters.");
             return;
         }
 
-        if (Blackboard->Keys.empty())
+        SAnimationGraphComponent* Comp = (World.IsValid() && MeshEntity != entt::null && World->IsValidEntity(MeshEntity))
+            ? World->TryGetComponent<SAnimationGraphComponent>(MeshEntity)
+            : nullptr;
+
+        uint8* Base = Comp != nullptr ? static_cast<uint8*>(Comp->GetParameterMemory()) : nullptr;
+        if (Base == nullptr)
         {
-            ImGui::TextColored(ImVec4(0.95f, 0.65f, 0.35f, 1.0f),
-                "Blackboard has no keys. Open it and add some.");
+            ImGui::TextDisabled("Preview entity has no instance yet.");
             return;
         }
 
-        for (const FBlackboardKey& Key : Blackboard->Keys)
+        int32 Shown = 0;
+        Struct->ForEachProperty<FProperty>([&](FProperty* Property)
         {
-            if (Key.Name.IsNone())
+            if (Property->HasSetterOrGetter())
             {
-                continue;
+                return;
             }
 
-            // Numeric keys (Float / Int / Bool / Enum) drive the animation VM and are live-editable
-            // here. Vector / Object / Entity carry no scalar and exist for the AI system.
-            if (!IsScalarBlackboardKey(Key.Type))
-            {
-                ImGui::TextDisabled("%s (%s)", Key.Name.c_str(), BlackboardKeyTypeLabel(Key.Type));
-                continue;
-            }
-
-            // Seed the live value from the key's default the first time we see it.
-            auto It = ParameterOverrides.find(Key.Name);
-            if (It == ParameterOverrides.end())
-            {
-                float Seed = Key.DefaultFloat;
-                switch (Key.Type)
-                {
-                case EBlackboardKeyType::Int:
-                case EBlackboardKeyType::Enum: Seed = (float)Key.DefaultInt;             break;
-                case EBlackboardKeyType::Bool: Seed = Key.DefaultBool ? 1.0f : 0.0f;     break;
-                default: break;
-                }
-                It = ParameterOverrides.emplace(Key.Name, Seed).first;
-            }
-
-            float& Value = It->second;
-            const char* Name = Key.Name.c_str();
-
-            const bool bReadOnly = EnumHasAnyFlags(Key.Flags, EBlackboardKeyFlags::ReadOnly);
+            const char* Name = Property->Name.c_str();
+            void* Value = Base + Property->Offset;
+            ++Shown;
 
             ImGui::PushID(Name);
-            ImGui::BeginDisabled(bReadOnly);
             ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-            switch (Key.Type)
-            {
-            case EBlackboardKeyType::Bool:
-            {
-                bool bValue = Value != 0.0f;
-                if (ImGui::Checkbox(Name, &bValue)) Value = bValue ? 1.0f : 0.0f;
-                break;
-            }
-            case EBlackboardKeyType::Int:
-            {
-                int IntValue = (int)Math::Round(Value);
-                if (ImGui::DragInt(Name, &IntValue)) Value = (float)IntValue;
-                break;
-            }
-            case EBlackboardKeyType::Enum:
-            {
-                CEnum* Enum = ResolveReflectedEnum(Key.EnumType);
-                if (Enum != nullptr)
-                {
-                    const int Current = (int)Math::Round(Value);
 
-                    int32 CurrentIndex = INDEX_NONE;
-                    for (int64 e = 0; e < (int64)Enum->Names.size(); ++e)
-                    {
-                        if ((int)Enum->GetValueAtIndex(e) == Current)
-                        {
-                            CurrentIndex = (int32)e;
-                            break;
-                        }
-                    }
-
-                    const FFixedString Preview = Enum->GetNameAtValue((uint64)Current).c_str();
-                    const int32 Picked = ImGuiX::SearchableCombo(Name, Preview.c_str(), (int32)Enum->Names.size(), CurrentIndex,
-                        [Enum](int32 Index) { return FFixedString(Enum->GetNameAtIndex(Index).c_str()); }, LE_ICON_RHOMBUS_OUTLINE);
-
-                    if (Picked != INDEX_NONE)
-                    {
-                        Value = (float)(int)Enum->GetValueAtIndex(Picked);
-                    }
-                }
-                else
-                {
-                    int IntValue = (int)Math::Round(Value);
-                    if (ImGui::DragInt(Name, &IntValue)) Value = (float)IntValue;
-                }
+            switch (Property->TypeFlags)
+            {
+            case EPropertyTypeFlags::Bool:
+                ImGui::Checkbox(Name, static_cast<bool*>(Value));
                 break;
-            }
+
+            case EPropertyTypeFlags::Float:
+                ImGui::DragFloat(Name, static_cast<float*>(Value), 0.01f);
+                break;
+
+            case EPropertyTypeFlags::Int32:
+                ImGui::DragInt(Name, static_cast<int32*>(Value));
+                break;
+
+            case EPropertyTypeFlags::Enum:
+                DrawEnumParameter(Name, static_cast<FEnumProperty*>(Property), Value);
+                break;
+
             default:
-                ImGui::DragFloat(Name, &Value, 0.01f);
+                ImGui::TextDisabled("%s (%s)", Name, Property->TypeName.c_str());
                 break;
             }
-            ImGui::EndDisabled();
-            if (bReadOnly && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort | ImGuiHoveredFlags_AllowWhenDisabled))
-            {
-                ImGuiX::TextTooltip_Internal("Read-only key");
-            }
+
             ImGui::PopID();
+        });
+
+        if (Shown == 0)
+        {
+            ImGui::TextColored(ImVec4(0.95f, 0.65f, 0.35f, 1.0f),
+                "Struct declares no readable fields.");
+        }
+    }
+
+    void FAnimationGraphEditorTool::DrawEnumParameter(const char* Name, FEnumProperty* Property, void* Value)
+    {
+        FNumericProperty* Inner = Property->GetInnerProperty();
+        CEnum* Enum = Property->GetEnum();
+        if (Inner == nullptr || Enum == nullptr)
+        {
+            ImGui::TextDisabled("%s (enum)", Name);
+            return;
+        }
+
+        const int64 Current = Inner->GetSignedIntPropertyValue(Value);
+
+        int32 CurrentIndex = INDEX_NONE;
+        for (int64 e = 0; e < (int64)Enum->Names.size(); ++e)
+        {
+            if ((int64)Enum->GetValueAtIndex(e) == Current)
+            {
+                CurrentIndex = (int32)e;
+                break;
+            }
+        }
+
+        const FFixedString Preview = Enum->GetNameAtValue((uint64)Current).c_str();
+        const int32 Picked = ImGuiX::SearchableCombo(Name, Preview.c_str(), (int32)Enum->Names.size(), CurrentIndex,
+            [Enum](int32 Index) { return FFixedString(Enum->GetNameAtIndex(Index).c_str()); }, LE_ICON_RHOMBUS_OUTLINE);
+
+        if (Picked != INDEX_NONE)
+        {
+            Inner->SetIntPropertyValue(Value, (int64)Enum->GetValueAtIndex(Picked));
         }
     }
 
@@ -1000,9 +947,14 @@ namespace Lumina
             Compiler.AddParameter(Param.Name, Param.Type, Param.DefaultValue);
         }
 
-        // Give the compiler the blackboard schema so it can warn when a node
-        // references a key that's been renamed / removed / retyped.
-        Compiler.SetBlackboard(Graph->Blackboard.Get());
+        // Registered before the node walk so a runtime-chosen clip has slots to write into.
+        for (const FName& CurveName : Graph->DeclaredCurves)
+        {
+            Compiler.AddCurve(CurveName);
+        }
+
+        // Give the compiler the parameter struct so it can warn about renamed or retyped fields.
+        Compiler.SetDataStruct(Graph->GetParameterStruct());
 
         NodeGraph->CompileGraph(Compiler);
 

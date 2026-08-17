@@ -133,7 +133,7 @@ namespace Lumina::DotNet
     // Reports every prior->current script class name pair, so the host can record where a renamed class went.
     RUNTIME_API void GatherScriptableAliases(TVector<FScriptableAlias>& Out);
 
-    //~ Script data structs: a C# type marked [BlackboardData] / [DataTableRow] / any ScriptStructBase marker.
+    //~ Script data structs: a C# type marked [DataTableRow] or any other ScriptStructBase marker.
     //  Discovered on its own pass whether or not anything references it, and minted as a CScriptStruct whose
     //  super is the named native struct, so it is accepted anywhere that base is.
 

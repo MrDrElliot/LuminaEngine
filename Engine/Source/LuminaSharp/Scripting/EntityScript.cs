@@ -90,9 +90,6 @@ public abstract class EntityScript : Lumina.CEntityScript
     /// <summary>This entity's transform, resolved once and cached (avoids a per-frame Get crossing + alloc).</summary>
     public Lumina.STransformComponent Transform => CachedTransform ??= Registry.Get<Lumina.STransformComponent>(Entity);
 
-    /// <summary>This entity's blackboard (its named value store), or null when it has no Blackboard
-    /// Component. Resolved per access: the component can be added or removed at any time.</summary>
-    public Lumina.SBlackboardComponent? Blackboard => Registry.TryGet<Lumina.SBlackboardComponent>(Entity);
 
     /// <summary>Get the script of type T on another entity (or this one), or null.</summary>
     protected T? GetScript<T>(Entity Target) where T : EntityScript

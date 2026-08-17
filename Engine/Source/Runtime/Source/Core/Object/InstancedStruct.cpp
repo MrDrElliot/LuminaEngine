@@ -47,11 +47,17 @@ namespace Lumina
         return *this;
     }
 
+    bool IsInstancableStructType(const CStruct* Type)
+    {
+        return Type != nullptr && !Type->IsA<CClass>();
+    }
+
     void FInstancedStruct::InitializeAs(CStruct* InStruct)
     {
         Reset();
 
-        if (InStruct == nullptr)
+        // A CClass describes a CObject, which has identity and is referenced, never stored by value.
+        if (!IsInstancableStructType(InStruct))
         {
             return;
         }

@@ -8,7 +8,12 @@ namespace Lumina
     void FReflectedInstancedStructProperty::AppendDefinition(Reflection::FCodeWriter& Writer) const
     {
         const eastl::string PropertyFlagStr = PropertyFlagsToString(PropertyFlags);
-        const eastl::string CustomData = "Construct_CStruct_" + ClangUtils::MakeCodeFriendlyNamespace(TypeName);
+
+        // No type name means a bare FInstancedStruct: there is no base symbol to bind, so emit null.
+        const eastl::string CustomData = TypeName.empty()
+            ? eastl::string("nullptr")
+            : ("Construct_CStruct_" + ClangUtils::MakeCodeFriendlyNamespace(TypeName));
+
         AppendPropertyDef(Writer, PropertyFlagStr.c_str(), "Lumina::EPropertyTypeFlags::InstancedStruct", CustomData);
     }
 

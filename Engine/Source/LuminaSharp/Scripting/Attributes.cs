@@ -40,19 +40,6 @@ public abstract class ScriptStructBaseAttribute : Attribute
 }
 
 /// <summary>
-/// Publishes this type as a blackboard schema. Its [Property] members become the keys of any
-/// blackboard asset that selects it as its backing struct.
-/// </summary>
-[AttributeUsage(AttributeTargets.Struct | AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
-public sealed class BlackboardDataAttribute : ScriptStructBaseAttribute
-{
-    public BlackboardDataAttribute()
-        : base("SBlackboardDataBase")
-    {
-    }
-}
-
-/// <summary>
 /// Publishes this type as a data table row shape. Its [Property] members become the columns of any
 /// data table asset that selects it as its row struct.
 /// </summary>

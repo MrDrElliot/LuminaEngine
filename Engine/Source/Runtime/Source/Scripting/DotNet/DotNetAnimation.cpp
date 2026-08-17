@@ -4,15 +4,17 @@
 #include "World/World.h"
 #include "World/Entity/Components/SimpleAnimationComponent.h"
 #include "World/Entity/Components/AnimationGraphComponent.h"
-#include "World/Entity/Components/BlackboardComponent.h"
 #include "Assets/AssetTypes/Animation/Montage/AnimationMontage.h"
 #include "Scripting/DotNet/DotNetExport.h"
+#include "Assets/AssetTypes/Animation/AnimationGraph/AnimationGraph.h"
+#include "Core/Object/Class.h"
+#include "Core/Reflection/Type/LuminaTypes.h"
 
 //================================================================================================
 // World.Animation: drive an entity's animation from script (LuminaSharp.Animation). Two backends share one
 // facade: SSimpleAnimationComponent (single-clip play/pause/stop/scrub) and SAnimationGraphComponent
-// (named float/bool parameters that gate the graph's state machine, stored on the entity's
-// SBlackboardComponent when it has one). Play auto-adds the simple component;
+// (named float/bool parameters that gate the graph state machine, living in its own parameter struct).
+// Play auto-adds the simple component;
 // every other call is a safe no-op when the relevant component is absent. The clip is a CAnimation* passed
 // as a uint64 (the loaded asset handle). Game thread only.
 //================================================================================================
@@ -22,19 +24,51 @@ using namespace Lumina::DotNet;
 
 namespace
 {
-    // Where a graph parameter really lives. When the entity has a blackboard, SAnimationSystem refills the
-    // VM's parameter registers from it every evaluation, so writing the graph component directly would be
-    // overwritten before the next tick - the blackboard is the source of truth. Without one the graph
-    // component's own parameter table is authoritative. Returns null when the parameter isn't the graph's
-    // (keeping the documented "setting an undeclared parameter is a no-op" behavior).
-    SBlackboardComponent* ResolveParameterStore(CWorld* World, entt::entity Entity, const FName& Name)
+    // Parameters live in the graph component's own struct instance; a name resolves to a field on it.
+    void* ResolveParameterField(CWorld* World, entt::entity Entity, const FName& Name, EAnimParamValueType& OutType)
     {
-        const SAnimationGraphComponent* Graph = World->TryGetComponent<SAnimationGraphComponent>(Entity);
-        if (Graph == nullptr || !Graph->HasParameter(Name))
+        OutType = EAnimParamValueType::Unresolved;
+
+        SAnimationGraphComponent* Comp = World->TryGetComponent<SAnimationGraphComponent>(Entity);
+        if (Comp == nullptr || !Comp->Graph.IsValid())
         {
             return nullptr;
         }
-        return World->TryGetComponent<SBlackboardComponent>(Entity);
+
+        CStruct* Struct = Comp->Graph->GetParameterStruct();
+        uint8* Base = static_cast<uint8*>(Comp->GetParameterMemory());
+        if (Struct == nullptr || Base == nullptr)
+        {
+            return nullptr;
+        }
+
+        FProperty* Property = Struct->GetProperty(Name);
+        if (Property == nullptr || Property->HasSetterOrGetter())
+        {
+            return nullptr;
+        }
+
+        OutType = AnimParamValueTypeFromProperty(Property);
+        return OutType == EAnimParamValueType::Unresolved ? nullptr : Base + Property->Offset;
+    }
+
+    void WriteParameterScalar(void* Field, EAnimParamValueType Type, float Value)
+    {
+        switch (Type)
+        {
+        case EAnimParamValueType::Float:  *static_cast<float*>(Field)  = Value; break;
+        case EAnimParamValueType::Double: *static_cast<double*>(Field) = (double)Value; break;
+        case EAnimParamValueType::Bool:   *static_cast<bool*>(Field)   = Value != 0.0f; break;
+        case EAnimParamValueType::Int32:  *static_cast<int32*>(Field)  = (int32)Value; break;
+        case EAnimParamValueType::UInt32: *static_cast<uint32*>(Field) = (uint32)Value; break;
+        case EAnimParamValueType::Int64:  *static_cast<int64*>(Field)  = (int64)Value; break;
+        case EAnimParamValueType::UInt64: *static_cast<uint64*>(Field) = (uint64)Value; break;
+        case EAnimParamValueType::Int16:  *static_cast<int16*>(Field)  = (int16)Value; break;
+        case EAnimParamValueType::UInt16: *static_cast<uint16*>(Field) = (uint16)Value; break;
+        case EAnimParamValueType::Int8:   *static_cast<int8*>(Field)   = (int8)Value; break;
+        case EAnimParamValueType::UInt8:  *static_cast<uint8*>(Field)  = (uint8)Value; break;
+        default: break;
+        }
     }
 }
 
@@ -158,15 +192,10 @@ LUMINA_DOTNET_EXPORT(void, Animation_SetFloat)(uint64 World, uint32 Entity, cons
     {
         return;
     }
-    const FName Key(FStringView(Name, (size_t)Length));
-    if (SBlackboardComponent* Blackboard = ResolveParameterStore(W, AsEntity(Entity), Key))
+    EAnimParamValueType Type;
+    if (void* Field = ResolveParameterField(W, AsEntity(Entity), FName(FStringView(Name, (size_t)Length)), Type))
     {
-        Blackboard->SetFloat(Key, Value);
-        return;
-    }
-    if (SAnimationGraphComponent* Comp = W->TryGetComponent<SAnimationGraphComponent>(AsEntity(Entity)))
-    {
-        Comp->SetFloat(Key, Value);
+        WriteParameterScalar(Field, Type, Value);
     }
 }
 
@@ -177,52 +206,27 @@ LUMINA_DOTNET_EXPORT(float, Animation_GetFloat)(uint64 World, uint32 Entity, con
     {
         return Default;
     }
-    const FName Key(FStringView(Name, (size_t)Length));
-    if (const SBlackboardComponent* Blackboard = ResolveParameterStore(W, AsEntity(Entity), Key))
+    EAnimParamValueType Type;
+    void* Field = ResolveParameterField(W, AsEntity(Entity), FName(FStringView(Name, (size_t)Length)), Type);
+    if (Field == nullptr)
     {
-        return Blackboard->GetFloat(Key, Default);
+        return Default;
     }
-    const SAnimationGraphComponent* Comp = W->TryGetComponent<SAnimationGraphComponent>(AsEntity(Entity));
-    return Comp != nullptr ? Comp->GetFloat(Key, Default) : Default;
+
+    FAnimGraphParamBinding Binding;
+    Binding.Offset = 0;
+    Binding.Type   = Type;
+    return ReadAnimParamScalar(static_cast<const uint8*>(Field), Binding);
 }
 
 LUMINA_DOTNET_EXPORT(void, Animation_SetBool)(uint64 World, uint32 Entity, const char* Name, int32 Length, int32 bValue)
 {
-    CWorld* W = AsWorld(World);
-    if (W == nullptr || Name == nullptr)
-    {
-        return;
-    }
-    const FName Key(FStringView(Name, (size_t)Length));
-    if (SBlackboardComponent* Blackboard = ResolveParameterStore(W, AsEntity(Entity), Key))
-    {
-        Blackboard->SetBool(Key, bValue != 0);
-        return;
-    }
-    if (SAnimationGraphComponent* Comp = W->TryGetComponent<SAnimationGraphComponent>(AsEntity(Entity)))
-    {
-        Comp->SetBool(Key, bValue != 0);
-    }
+    LuminaSharp_Animation_SetFloat(World, Entity, Name, Length, bValue != 0 ? 1.0f : 0.0f);
 }
 
 LUMINA_DOTNET_EXPORT(int32, Animation_GetBool)(uint64 World, uint32 Entity, const char* Name, int32 Length, int32 bDefault)
 {
-    CWorld* W = AsWorld(World);
-    if (W == nullptr || Name == nullptr)
-    {
-        return bDefault;
-    }
-    const FName Key(FStringView(Name, (size_t)Length));
-    if (const SBlackboardComponent* Blackboard = ResolveParameterStore(W, AsEntity(Entity), Key))
-    {
-        return Blackboard->GetBool(Key, bDefault != 0) ? 1 : 0;
-    }
-    const SAnimationGraphComponent* Comp = W->TryGetComponent<SAnimationGraphComponent>(AsEntity(Entity));
-    if (Comp == nullptr)
-    {
-        return bDefault;
-    }
-    return Comp->GetBool(Key, bDefault != 0) ? 1 : 0;
+    return LuminaSharp_Animation_GetFloat(World, Entity, Name, Length, bDefault != 0 ? 1.0f : 0.0f) != 0.0f ? 1 : 0;
 }
 
 LUMINA_DOTNET_EXPORT(int32, Animation_HasParameter)(uint64 World, uint32 Entity, const char* Name, int32 Length)
@@ -391,4 +395,23 @@ LUMINA_DOTNET_EXPORT(int32, Animation_GetMontageSection)(uint64 World, uint32 En
         }
     }
     return Len;
+}
+
+// Raw parameter-block memory for typed C# access, or null when the graph's struct is not TypeName.
+// Name-checked rather than trusted: the offsets C# reads at come from its own mirror of that type.
+LUMINA_DOTNET_EXPORT(void*, AnimGraph_GetParameterMemory)(void* Component, const char* TypeName, int32 Length)
+{
+    auto* Comp = static_cast<SAnimationGraphComponent*>(Component);
+    if (Comp == nullptr || TypeName == nullptr || !Comp->Graph.IsValid())
+    {
+        return nullptr;
+    }
+
+    CStruct* Struct = Comp->Graph->GetParameterStruct();
+    if (Struct == nullptr || Struct->GetName() != FName(FStringView(TypeName, (size_t)Length)))
+    {
+        return nullptr;
+    }
+
+    return Comp->GetParameterMemory();
 }

@@ -11,7 +11,7 @@ namespace Lumina
 {
     class CAnimation;
     class CAnimationGraph;
-    class CBlackboard;
+    class CStruct;
     class CBlendSpace;
     class CEdGraphNode;
     struct FSkeletonResource;
@@ -47,8 +47,15 @@ namespace Lumina
         // A name collision with a different type reports an error and returns the existing index.
         int32 AddParameter(const FName& Name, EAnimGraphParamType Type, float DefaultValue);
 
+        // Registers an object-valued input and returns its index; dedups by name.
+        int32 AddObjectParameter(const FName& Name, EAnimObjectParamType Type);
+
+        // Registers an asset a static object pin resolves to, and returns its index; dedups by pointer.
+        uint16 AddObjectConstant(CObject* Value);
+
         uint16 AllocScalarReg() { return NextScalarReg++; }
         uint16 AllocPoseReg()   { return NextPoseReg++; }
+        uint16 AllocObjectReg() { return NextObjectReg++; }
         uint16 AllocStateSlot() { return NextStateSlot++; }
 
         // Value-producing emitters return the destination register they allocated; callers thread that
@@ -57,11 +64,13 @@ namespace Lumina
         uint16 EmitLoadParam(uint16 ParameterIndex);
         uint16 EmitScalarOp(EAnimScalarOp Op, uint16 RegA, uint16 RegB);
 
-        // Advances a persistent playback clock; returns the clock and writes a "finished" flag to
-        // OutFinishedReg (stays 0 in Loop mode; PlayOnce sets it once the clip's duration is reached).
-        // SyncGroup (kAnimNoSyncGroup = none) makes the clip sample at its group's shared phase.
+        // Object-register producers; both return the object register they allocated.
+        uint16 EmitLoadObjectParam(uint16 ObjectParameterIndex);
+        uint16 EmitLoadObjectConst(uint16 ObjectConstantIndex);
+
+        // bDynamicClip reads ClipIndex as an OBJECT REGISTER rather than a clip-table index.
         uint16 EmitAdvanceClock(uint16 StateSlot, uint16 SpeedReg, uint16 ClipIndex, uint16 LoopModeReg, uint16& OutFinishedReg,
-                                uint16 SyncGroup = kAnimNoSyncGroup);
+                                uint16 SyncGroup = kAnimNoSyncGroup, bool bDynamicClip = false);
 
         // Registers a named sync group and returns its index; dedups by name.
         uint16 AddSyncGroup(const FName& Name);
@@ -72,11 +81,12 @@ namespace Lumina
         // Layers whatever montages are playing on the slot over the incoming pose.
         uint16 EmitEvalSlot(uint16 SrcPoseReg, uint16 SlotIndex);
 
-        uint16 EmitSampleAnim(uint16 ClipIndex, uint16 TimeReg);
+        uint16 EmitSampleAnim(uint16 ClipIndex, uint16 TimeReg, bool bDynamicClip = false);
 
         // Samples a blend space at (X, Y). The op owns its playback phase in PhaseSlot and advances it
         // against the weighted-blend duration, so the contributing clips stay stride-aligned.
-        uint16 EmitSampleBlendSpace(uint16 BlendSpaceIndex, uint16 XReg, uint16 YReg, uint16 SpeedReg, uint16 PhaseSlot);
+        uint16 EmitSampleBlendSpace(uint16 BlendSpaceIndex, uint16 XReg, uint16 YReg, uint16 SpeedReg, uint16 PhaseSlot,
+                                    bool bDynamicBlendSpace = false);
         uint16 EmitRefPose();
         uint16 EmitBlend(uint16 PoseRegA, uint16 PoseRegB, uint16 AlphaReg);
         uint16 EmitBlendMasked(uint16 PoseRegA, uint16 PoseRegB, uint16 AlphaReg, uint16 MaskIndex);
@@ -131,14 +141,15 @@ namespace Lumina
         void SetSkeleton(const FSkeletonResource* InSkeleton) { Skeleton = InSkeleton; }
         const FSkeletonResource* GetSkeleton() const { return Skeleton; }
 
-        // Tool sets the blackboard schema before compiling so nodes can verify referenced keys
-        // still exist and are scalar-typed.
-        void SetBlackboard(const CBlackboard* InBlackboard) { Blackboard = InBlackboard; }
-        const CBlackboard* GetBlackboard() const { return Blackboard; }
+        // Tool sets the parameter struct before compiling so nodes can verify the names they reference.
+        void SetDataStruct(CStruct* InStruct) { DataStruct = InStruct; }
+        CStruct* GetDataStruct() const { return DataStruct; }
 
-        // Warns if Name is missing on the assigned blackboard or isn't a scalar (Float/Int/Bool/Enum).
-        // No-op when no blackboard is assigned or Name is None.
+        // Warns when Name is not a readable scalar field on the parameter struct.
         void ValidateParameterKey(const FName& Name, CEdGraphNode* Node);
+
+        // Warns when Name is not an object field, or its class cannot supply the expected asset.
+        void ValidateObjectParameterKey(const FName& Name, EAnimObjectParamType Expected, CEdGraphNode* Node);
 
         int32 ResolveBoneIndex(const FName& BoneName) const;
 
@@ -186,6 +197,8 @@ namespace Lumina
         TVector<FAnimGraphClipCurveMap>         ClipCurveMaps;
         TVector<FAnimGraphBlendSpaceCurveMap>   BlendSpaceCurveMaps;
         TVector<FAnimGraphParameter>            Parameters;
+        TVector<FAnimGraphObjectParameter>      ObjectParameters;
+        TVector<TObjectPtr<CObject>>            ObjectConstants;
         TVector<FAnimGraphBoneMask>             BoneMasks;
         THashMap<FName, int32>                  BoneMaskNameToIndex;
         TVector<FAnimGraphStateMachine>         StateMachines;
@@ -194,10 +207,11 @@ namespace Lumina
         THashMap<const CEdNodeGraphPin*, uint16> PinRegisters;
         TVector<FAnimGraphDebugStateNode>       DebugStateNodes;
         const FSkeletonResource*                Skeleton = nullptr;
-        const CBlackboard*                      Blackboard = nullptr;
+        CStruct*                                DataStruct = nullptr;
 
         uint16 NextScalarReg = 0;
         uint16 NextPoseReg   = 0;
+        uint16 NextObjectReg = 0;
         uint16 NextStateSlot = 0;
 
         bool bEmittedOutput = false;

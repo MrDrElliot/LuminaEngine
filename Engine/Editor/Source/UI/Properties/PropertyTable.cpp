@@ -1406,7 +1406,7 @@ namespace Lumina
         for (TObjectIterator<CStruct> It; It; ++It)
         {
             CStruct* Candidate = *It;
-            if (Candidate->Metadata.HasMetadata("ScriptInstanceBase"))
+            if (Candidate->Metadata.HasMetadata("ScriptInstanceBase") || !IsInstancableStructType(Candidate))
             {
                 continue;
             }

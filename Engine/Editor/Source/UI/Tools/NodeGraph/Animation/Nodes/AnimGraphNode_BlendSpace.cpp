@@ -6,6 +6,7 @@ namespace Lumina
 {
     void CAnimGraphNode_BlendSpace::BuildNode()
     {
+        BlendSpacePin = CreateAnimPin("Blend Space", ENodePinDirection::Input, EAnimPinType::Object);
         XPin     = CreateAnimPin("X", ENodePinDirection::Input, EAnimPinType::Value, 0.0f);
         YPin     = CreateAnimPin("Y", ENodePinDirection::Input, EAnimPinType::Value, 0.0f);
         SpeedPin = CreateAnimPin("Speed", ENodePinDirection::Input, EAnimPinType::Value, 1.0f);
@@ -18,15 +19,19 @@ namespace Lumina
 
     void CAnimGraphNode_BlendSpace::GenerateBytecode(FAnimationGraphCompiler& Compiler)
     {
-        if (!BlendSpace.IsValid())
+        // A wired Blend Space pin supplies the asset at runtime, so a missing static asset is fine there.
+        const int32 BlendSpaceObjectReg = ResolveObjectInput(BlendSpacePin, Compiler);
+        const bool bDynamicBlendSpace = BlendSpaceObjectReg != INDEX_NONE;
+
+        if (!bDynamicBlendSpace && !BlendSpace.IsValid())
         {
             EdNodeGraph::FError NodeError;
             NodeError.Name        = "Missing Blend Space";
-            NodeError.Description = "Blend Space node has no asset assigned; it will evaluate to the bind pose.";
+            NodeError.Description = "Blend Space node has no asset assigned and no Blend Space input; it will evaluate to the bind pose.";
             NodeError.Node        = this;
             Compiler.AddError(NodeError);
         }
-        else if (BlendSpace->Samples.empty())
+        else if (!bDynamicBlendSpace && BlendSpace.IsValid() && BlendSpace->Samples.empty())
         {
             EdNodeGraph::FError Warning;
             Warning.Name        = "Empty Blend Space";
@@ -35,7 +40,8 @@ namespace Lumina
             Compiler.AddWarning(Warning);
         }
 
-        const uint16 BlendSpaceIndex = Compiler.AddBlendSpace(BlendSpace.Get());
+        const uint16 BlendSpaceIndex = bDynamicBlendSpace ? (uint16)BlendSpaceObjectReg
+                                                          : Compiler.AddBlendSpace(BlendSpace.Get());
         const uint16 PhaseSlot       = Compiler.AllocStateSlot();
 
         const uint16 XReg     = ResolveValueInput(XPin, Compiler);
@@ -46,7 +52,7 @@ namespace Lumina
             ? ResolveValueInput(YPin, Compiler)
             : Compiler.EmitLoadConst(0.0f);
 
-        const uint16 PoseReg = Compiler.EmitSampleBlendSpace(BlendSpaceIndex, XReg, YReg, SpeedReg, PhaseSlot);
+        const uint16 PoseReg = Compiler.EmitSampleBlendSpace(BlendSpaceIndex, XReg, YReg, SpeedReg, PhaseSlot, bDynamicBlendSpace);
 
         Compiler.SetPinRegister(PosePin, PoseReg);
     }

@@ -57,7 +57,7 @@ public readonly unsafe partial struct Animation
 
     public float GetTime(Entity Target) => GetTimeRaw(Target.Id);
 
-    //~ Graph parameters (SAnimationGraphComponent). No-op when the entity has no graph component or no such parameter.
+    //~ Graph parameters. These resolve to fields on the graph component's own parameter struct.
 
     public void SetFloat(Entity Target, string Name, float Value) => SetFloatRaw(Target.Id, Name, Value);
     public float GetFloat(Entity Target, string Name, float Default = 0.0f) => GetFloatRaw(Target.Id, Name, Default);

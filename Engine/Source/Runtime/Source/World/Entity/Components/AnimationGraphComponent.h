@@ -5,6 +5,7 @@
 #include "Animation/AnimMontage.h"
 #include "Animation/RootMotion.h"
 #include "Animation/RootMotionTypes.h"
+#include "Core/Object/InstancedStruct.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "AnimationGraphComponent.generated.h"
@@ -23,6 +24,31 @@ namespace Lumina
         /** Compiled animation graph asset evaluated each frame for this entity. */
         PROPERTY(Script, Editable, Replicated, Category = "Animation")
         TObjectPtr<CAnimationGraph> Graph;
+
+        /** Live parameter block, an instance of the graph's ParameterStruct. Write its fields directly. */
+        PROPERTY(Editable, Category = "Animation")
+        FInstancedStruct Parameters;
+
+        /** Typed access to the parameter block; null when it isn't an instance of T. */
+        template<InstancableStruct T>
+        T* GetParameters()
+        {
+            EnsureParametersInitialized();
+            return Parameters.GetMutablePtr<T>();
+        }
+
+        template<InstancableStruct T>
+        const T* GetParameters() const
+        {
+            EnsureParametersInitialized();
+            return Parameters.GetPtr<T>();
+        }
+
+        /** Raw parameter memory, for the anim system's offset reads. Null when no struct is assigned. */
+        RUNTIME_API void* GetParameterMemory() const;
+
+        // Brings Parameters up as an instance of the graph's struct, copying the graph's authored values.
+        RUNTIME_API void EnsureParametersInitialized() const;
 
         /**
          * Root-motion policy for the graph's final pose. FromAsset extracts motion from clips with
@@ -137,30 +163,13 @@ namespace Lumina
             });
         }
 
-        // Parameter access below writes the VM's own register table. When the entity also has an
-        // SBlackboardComponent, SAnimationSystem refills those registers from the blackboard before every
-        // evaluation, so the blackboard - not this - is the value that survives. Write through the
-        // blackboard (or World.Animation, which routes there automatically) on such entities.
-
-        /** Sets a named float parameter. No-op if the graph has no such parameter. */
-        FUNCTION(Script)
-        void SetFloat(const FName& ParameterName, float Value);
-
-        /** Returns a named float parameter, or Default if the graph has no such parameter. */
-        FUNCTION(Script)
-        float GetFloat(const FName& ParameterName, float Default = 0.0f) const;
-
-        /** Sets a named bool parameter (stored as 0/1). No-op if the graph has no such parameter. */
-        FUNCTION(Script)
-        void SetBool(const FName& ParameterName, bool bValue);
-
-        /** Returns a named bool parameter, or Default if the graph has no such parameter. */
-        FUNCTION(Script)
-        bool GetBool(const FName& ParameterName, bool Default = false) const;
-
         /** True if the graph declares a parameter with the given name. */
         FUNCTION(Script)
         bool HasParameter(const FName& ParameterName) const;
+
+        /** Value the VM last evaluated this parameter at. Read-only; write the parameter struct instead. */
+        FUNCTION(Script)
+        float GetEvaluatedParameter(const FName& ParameterName, float Default = 0.0f) const;
 
         // Curve values are produced by the graph's own evaluation (clips carry the keys, blends weight
         // them), so they are read-only here: the last evaluated frame's value of the output pose.

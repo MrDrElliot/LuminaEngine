@@ -79,6 +79,29 @@ public static unsafe class NativeBindings
         }
     }
 
+    // Parameter-block memory for an animation graph component, name-checked against the graph's struct.
+    public static IntPtr AnimGraphParameterMemory(IntPtr Component, string TypeName)
+    {
+        if (AnimGraphParameterMemoryExport == null || Component == IntPtr.Zero)
+        {
+            return IntPtr.Zero;
+        }
+
+        Span<byte> Scratch = stackalloc byte[256];
+        Interop.FInteropString Utf8 = new(TypeName, Scratch);
+        try
+        {
+            return AnimGraphParameterMemoryExport((void*)Component, Utf8.Pointer, Utf8.Length);
+        }
+        finally
+        {
+            Utf8.Free();
+        }
+    }
+
+    private static readonly delegate* unmanaged[Cdecl]<void*, byte*, int, IntPtr> AnimGraphParameterMemoryExport =
+        (delegate* unmanaged[Cdecl]<void*, byte*, int, IntPtr>)Resolve(Host.NativeLibrary, "LuminaSharp_AnimGraph_GetParameterMemory");
+
     private static readonly delegate* unmanaged[Cdecl]<byte*, int, byte*, int, int> PropertyOffsetByName =
         (delegate* unmanaged[Cdecl]<byte*, int, byte*, int, int>)Resolve(Host.NativeLibrary, "LuminaSharp_PropertyOffsetByName");
 

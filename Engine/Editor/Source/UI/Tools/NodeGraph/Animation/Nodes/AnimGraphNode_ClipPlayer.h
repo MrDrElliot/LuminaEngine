@@ -41,6 +41,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Animation")
         FName SyncGroup;
 
+        CAnimGraphPin* AnimationPin = nullptr;
         CAnimGraphPin* SpeedPin = nullptr;
         CAnimGraphPin* LoopModePin = nullptr;
         CAnimGraphPin* PosePin = nullptr;

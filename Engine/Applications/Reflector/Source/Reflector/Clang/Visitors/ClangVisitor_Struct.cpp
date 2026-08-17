@@ -430,8 +430,7 @@ namespace Lumina::Reflection::Visitor
 		break;
 		case EPropertyTypeFlags::InstancedStruct:
 		{
-			// Reflect against the base T for Construct_CStruct_<T>(). A reflected base is required
-			// (bare FInstancedStruct has no symbol to bind).
+			// A bare FInstancedStruct constrains nothing, so it emits a null base and takes any struct.
 			const CXType ArgType = clang_Type_getTemplateArgumentAsType(FieldInfo.Type, 0);
 			eastl::optional<FFieldInfo> ParamFieldInfo;
 			if (ArgType.kind != CXType_Invalid)
@@ -440,7 +439,8 @@ namespace Lumina::Reflection::Visitor
 			}
 			if (!ParamFieldInfo.has_value())
 			{
-				return false;
+				ParamFieldInfo = FieldInfo;
+				ParamFieldInfo->TypeName.clear();
 			}
 
 			ParamFieldInfo->Name = FieldInfo.Name;

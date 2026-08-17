@@ -75,5 +75,8 @@ namespace Lumina
         // Resolves the scalar register feeding InputPin, or emits a LoadConst of
         // the pin's DefaultValue when the pin is unconnected.
         static uint16 ResolveValueInput(CEdNodeGraphPin* InputPin, FAnimationGraphCompiler& Compiler);
+
+        // Object register feeding InputPin, or INDEX_NONE when the pin is unconnected.
+        static int32 ResolveObjectInput(CEdNodeGraphPin* InputPin, FAnimationGraphCompiler& Compiler);
     };
 }

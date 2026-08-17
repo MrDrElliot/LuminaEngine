@@ -1,4 +1,5 @@
 ﻿#include "RuntimePCH.h"
+#include "Core/Object/Cast.h"
 #include "AnimationGraphVM.h"
 
 #include "Animation/AnimMontage.h"
@@ -146,6 +147,9 @@ namespace Lumina
         State.SyncGroups.assign(Graph->NumSyncGroups, FAnimSyncGroup());
         State.CurveValues.assign(Graph->CurveNames.size(), 0.0f);
 
+        // Defaults live on the graph's parameter struct, which the update pull reads every frame.
+        State.ObjectParameters.assign(Graph->ObjectParameters.size(), nullptr);
+
         State.SourceGraph  = Graph;
         State.bInitialized = true;
     }
@@ -219,6 +223,18 @@ namespace Lumina
         // pose, reading one wires a dependency. Transient per call.
         thread_local TVector<int16> PoseTasks;
         PoseTasks.assign(NumPose, FAnimTask::NoTask);
+
+        // Object registers are pure dataflow within one call, so they are scratch, not per-instance state.
+        const SIZE_T NumObjectRegs = Graph->NumObjectRegisters;
+        const SIZE_T NumObjectParams = State.ObjectParameters.size();
+
+        thread_local TVector<CObject*> ObjectRegs;
+        ObjectRegs.assign(NumObjectRegs, nullptr);
+
+        const auto ReadObjectReg = [&](uint16 Reg) -> CObject*
+        {
+            return Reg < NumObjectRegs ? ObjectRegs[Reg] : nullptr;
+        };
 
         // Root-motion deltas and notify-event ranges flow alongside the registers: AdvanceClock tags
         // its clock scalar, SampleAnim adopts the tag onto its pose register, blends combine, the
@@ -363,6 +379,52 @@ namespace Lumina
         const auto ClipCurveMapFor = [&](uint16 ClipIdx) -> const FAnimGraphClipCurveMap*
         {
             return ClipIdx < Graph->ClipCurveMaps.size() ? &Graph->ClipCurveMaps[ClipIdx] : nullptr;
+        };
+
+        // Keyed on the graph as well as the clip: slot layout is per graph, so one clip maps differently in each.
+        struct FDynamicCurveMap
+        {
+            const CAnimationGraph* Graph = nullptr;
+            const CAnimation* Clip = nullptr;
+            FAnimGraphClipCurveMap Map;
+        };
+
+        // Fixed capacity so entries never move; a returned pointer stays valid until its slot recycles.
+        static constexpr SIZE_T kMaxDynamicCurveMaps = 32;
+        thread_local FDynamicCurveMap DynamicCurveMaps[kMaxDynamicCurveMaps];
+        thread_local SIZE_T NextDynamicCurveMap = 0;
+
+        const auto DynamicClipCurveMapFor = [&](const CAnimation* Clip) -> const FAnimGraphClipCurveMap*
+        {
+            if (Clip == nullptr || NumCurves == 0)
+            {
+                return nullptr;
+            }
+
+            for (const FDynamicCurveMap& Entry : DynamicCurveMaps)
+            {
+                if (Entry.Graph == Graph && Entry.Clip == Clip)
+                {
+                    return &Entry.Map;
+                }
+            }
+
+            FDynamicCurveMap& Entry = DynamicCurveMaps[NextDynamicCurveMap];
+            NextDynamicCurveMap = (NextDynamicCurveMap + 1) % kMaxDynamicCurveMaps;
+
+            Entry.Graph = Graph;
+            Entry.Clip  = Clip;
+            Entry.Map.Slots.clear();
+
+            // Only slots the graph already declares can be driven; the bytecode addresses them by index.
+            const TVector<FAnimationCurve>& Curves = Clip->GetCurves();
+            Entry.Map.Slots.reserve(Curves.size());
+            for (const FAnimationCurve& Curve : Curves)
+            {
+                Entry.Map.Slots.push_back(Graph->FindCurveIndex(Curve.Name));
+            }
+
+            return &Entry.Map;
         };
 
         const auto ZeroCurves = [&](uint16 Dst)
@@ -523,6 +585,30 @@ namespace Lumina
                 break;
             }
 
+            case EAnimOp::LoadObjectParam:
+            {
+                const uint16 ParamIdx = Reader.Read<uint16>();
+                const uint16 Dst      = Reader.Read<uint16>();
+                if (Dst < NumObjectRegs)
+                {
+                    ObjectRegs[Dst] = ParamIdx < NumObjectParams ? State.ObjectParameters[ParamIdx].Get() : nullptr;
+                }
+                break;
+            }
+
+            case EAnimOp::LoadObjectConst:
+            {
+                const uint16 ConstIdx = Reader.Read<uint16>();
+                const uint16 Dst      = Reader.Read<uint16>();
+                if (Dst < NumObjectRegs)
+                {
+                    ObjectRegs[Dst] = ConstIdx < (uint16)Graph->ObjectConstants.size()
+                        ? Graph->ObjectConstants[ConstIdx].Get()
+                        : nullptr;
+                }
+                break;
+            }
+
             case EAnimOp::ScalarOp:
             {
                 const EAnimScalarOp SubOp = (EAnimScalarOp)Reader.Read<uint8>();
@@ -536,8 +622,11 @@ namespace Lumina
                 break;
             }
 
+            // Identical operand layout; only how the clip is addressed differs.
             case EAnimOp::AdvanceClock:
+            case EAnimOp::AdvanceClockDyn:
             {
+                const bool bDynamicClip   = Op == EAnimOp::AdvanceClockDyn;
                 const uint16 StateIdx     = Reader.Read<uint16>();
                 const uint16 SpeedReg     = Reader.Read<uint16>();
                 const uint16 ClipIdx      = Reader.Read<uint16>();
@@ -550,9 +639,9 @@ namespace Lumina
 
                 if (StateIdx < NumState)
                 {
-                    CAnimation* Clip = (ClipIdx < NumClips && Graph->Clips[ClipIdx].IsValid())
-                        ? Graph->Clips[ClipIdx].Get()
-                        : nullptr;
+                    CAnimation* Clip = bDynamicClip
+                        ? Cast<CAnimation>(ReadObjectReg(ClipIdx))
+                        : ((ClipIdx < NumClips && Graph->Clips[ClipIdx].IsValid()) ? Graph->Clips[ClipIdx].Get() : nullptr);
 
                     const float PrevClock = State.StateSlots[StateIdx];
                     const float Speed = ReadScalar(SpeedReg, 1.0f);
@@ -660,16 +749,22 @@ namespace Lumina
             }
 
             case EAnimOp::SampleAnim:
+            case EAnimOp::SampleAnimDyn:
             {
+                const bool bDynamicClip = Op == EAnimOp::SampleAnimDyn;
                 const uint16 ClipIdx = Reader.Read<uint16>();
                 const uint16 TimeReg = Reader.Read<uint16>();
                 const uint16 Dst     = Reader.Read<uint16>();
 
+                CAnimation* Clip = bDynamicClip
+                    ? Cast<CAnimation>(ReadObjectReg(ClipIdx))
+                    : ((ClipIdx < NumClips && Graph->Clips[ClipIdx].IsValid()) ? Graph->Clips[ClipIdx].Get() : nullptr);
+
                 FAnimTask Task;
-                if (ClipIdx < NumClips && Graph->Clips[ClipIdx].IsValid())
+                if (Clip != nullptr)
                 {
                     Task.Type = EAnimTaskType::SampleClip;
-                    Task.Clip = Graph->Clips[ClipIdx].Get();
+                    Task.Clip = Clip;
                     Task.Time = ReadScalar(TimeReg, 0.0f);
                 }
                 else
@@ -678,7 +773,9 @@ namespace Lumina
                 }
                 SetPoseTask(Dst, OutTasks.Add(Task));
 
-                SampleClipCurvesInto(CurvesOf(Dst), Task.Clip, ClipCurveMapFor(ClipIdx), Task.Time);
+                SampleClipCurvesInto(CurvesOf(Dst), Task.Clip,
+                                     bDynamicClip ? DynamicClipCurveMapFor(Task.Clip) : ClipCurveMapFor(ClipIdx),
+                                     Task.Time);
 
                 // Adopt the clock's root-motion / event / sync tags onto the sampled pose.
                 SetPoseTags(Dst,
@@ -689,7 +786,9 @@ namespace Lumina
             }
 
             case EAnimOp::SampleBlendSpace:
+            case EAnimOp::SampleBlendSpaceDyn:
             {
+                const bool bDynamicBlendSpace = Op == EAnimOp::SampleBlendSpaceDyn;
                 const uint16 BlendSpaceIdx = Reader.Read<uint16>();
                 const uint16 XReg          = Reader.Read<uint16>();
                 const uint16 YReg          = Reader.Read<uint16>();
@@ -697,8 +796,9 @@ namespace Lumina
                 const uint16 PhaseSlot     = Reader.Read<uint16>();
                 const uint16 Dst           = Reader.Read<uint16>();
 
-                const CBlendSpace* BlendSpace = (BlendSpaceIdx < (uint16)Graph->BlendSpaces.size())
-                    ? Graph->BlendSpaces[BlendSpaceIdx].Get() : nullptr;
+                const CBlendSpace* BlendSpace = bDynamicBlendSpace
+                    ? Cast<CBlendSpace>(ReadObjectReg(BlendSpaceIdx))
+                    : ((BlendSpaceIdx < (uint16)Graph->BlendSpaces.size()) ? Graph->BlendSpaces[BlendSpaceIdx].Get() : nullptr);
 
                 FBlendSpaceWeights Weights;
                 if (BlendSpace != nullptr)
@@ -715,7 +815,8 @@ namespace Lumina
                     break;
                 }
 
-                const FAnimGraphBlendSpaceCurveMap* BlendSpaceCurves = BlendSpaceIdx < Graph->BlendSpaceCurveMaps.size()
+                const FAnimGraphBlendSpaceCurveMap* BlendSpaceCurves =
+                    (!bDynamicBlendSpace && BlendSpaceIdx < Graph->BlendSpaceCurveMaps.size())
                     ? &Graph->BlendSpaceCurveMaps[BlendSpaceIdx] : nullptr;
                 float* DstCurves = CurvesOf(Dst);
 
@@ -792,9 +893,10 @@ namespace Lumina
                     }
 
                     const int32 SampleIndex = Weights.SampleIndices[i];
-                    const FAnimGraphClipCurveMap* SampleCurveMap =
-                        (BlendSpaceCurves != nullptr && SampleIndex >= 0 && SampleIndex < (int32)BlendSpaceCurves->SampleMaps.size())
-                        ? &BlendSpaceCurves->SampleMaps[SampleIndex] : nullptr;
+                    const FAnimGraphClipCurveMap* SampleCurveMap = bDynamicBlendSpace
+                        ? DynamicClipCurveMapFor(SampleClip)
+                        : ((BlendSpaceCurves != nullptr && SampleIndex >= 0 && SampleIndex < (int32)BlendSpaceCurves->SampleMaps.size())
+                           ? &BlendSpaceCurves->SampleMaps[SampleIndex] : nullptr);
 
                     if (Accumulated == FAnimTask::NoTask)
                     {

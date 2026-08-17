@@ -17,27 +17,32 @@ namespace Lumina
         }
     }
 
-    void SAnimationGraphComponent::SetFloat(const FName& ParameterName, float Value)
+    void SAnimationGraphComponent::EnsureParametersInitialized() const
     {
-        if (!Graph.IsValid())
+        CStruct* Wanted = Graph.IsValid() ? Graph->GetParameterStruct() : nullptr;
+        if (Parameters.GetScriptStruct() == Wanted)
         {
             return;
         }
 
-        const int32 Index = Graph->FindParameterIndex(ParameterName);
-        if (Index == INDEX_NONE)
+        FInstancedStruct& Mutable = const_cast<FInstancedStruct&>(Parameters);
+        if (Wanted == nullptr)
         {
+            Mutable.Reset();
             return;
         }
 
-        EnsureStateInitialized();
-        if (Index < (int32)VMState.Parameters.size())
-        {
-            VMState.Parameters[Index] = Value;
-        }
+        // Seeded from the graph's own instance, so its authored values are this entity's starting point.
+        Mutable = Graph->ParameterStruct;
     }
 
-    float SAnimationGraphComponent::GetFloat(const FName& ParameterName, float Default) const
+    void* SAnimationGraphComponent::GetParameterMemory() const
+    {
+        EnsureParametersInitialized();
+        return Parameters.GetMutableMemory();
+    }
+
+    float SAnimationGraphComponent::GetEvaluatedParameter(const FName& ParameterName, float Default) const
     {
         if (!Graph.IsValid())
         {
@@ -51,16 +56,6 @@ namespace Lumina
         }
 
         return VMState.Parameters[Index];
-    }
-
-    void SAnimationGraphComponent::SetBool(const FName& ParameterName, bool bValue)
-    {
-        SetFloat(ParameterName, bValue ? 1.0f : 0.0f);
-    }
-
-    bool SAnimationGraphComponent::GetBool(const FName& ParameterName, bool Default) const
-    {
-        return GetFloat(ParameterName, Default ? 1.0f : 0.0f) != 0.0f;
     }
 
     bool SAnimationGraphComponent::HasParameter(const FName& ParameterName) const

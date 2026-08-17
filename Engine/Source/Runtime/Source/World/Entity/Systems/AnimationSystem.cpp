@@ -15,7 +15,6 @@
 #include "TaskSystem/TaskGraph.h"
 #include "World/Entity/Components/EntityTags.h"
 #include "World/Entity/Components/AnimationGraphComponent.h"
-#include "World/Entity/Components/BlackboardComponent.h"
 #include "World/Entity/Components/SimpleAnimationComponent.h"
 #include "World/Entity/Components/SkeletalMeshComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
@@ -25,10 +24,9 @@
 
 namespace Lumina
 {
-    // Mutates the simple-anim / graph / blackboard state (time advance, VM state, lazy init), so they are
-    // WRITES, not reads, the system is their sole writer but the declaration must be honest for scheduling.
+    // Time advance, VM state and lazy init all mutate these, so they are declared Write, not Read.
     FSystemAccess SAnimationSystem::Access = FSystemAccess{}
-        .Write<SSkeletalMeshComponent, STransformComponent, SSimpleAnimationComponent, SAnimationGraphComponent, SBlackboardComponent>();
+        .Write<SSkeletalMeshComponent, STransformComponent, SSimpleAnimationComponent, SAnimationGraphComponent>();
 
     // Skeletons not rendered within this window are treated as off-screen (a few frames of slack so brief
     // occlusion / culling flicker doesn't stutter the pose).
@@ -323,6 +321,38 @@ namespace Lumina
             Anim.bDirty = false;
         }
 
+        // Reads the graph's parameters straight out of the component's own parameter block.
+        void ApplyParameters(SAnimationGraphComponent& AnimGraph, const CAnimationGraph* Graph)
+        {
+            const uint8* Base = static_cast<const uint8*>(AnimGraph.GetParameterMemory());
+            if (Base == nullptr)
+            {
+                return;
+            }
+
+            FAnimGraphVMState& VMState = AnimGraph.VMState;
+
+            const SIZE_T NumParams = Math::Min(Graph->ParamBindings.size(), VMState.Parameters.size());
+            for (SIZE_T i = 0; i < NumParams; ++i)
+            {
+                const FAnimGraphParamBinding& Binding = Graph->ParamBindings[i];
+                if (Binding.IsResolved())
+                {
+                    VMState.Parameters[i] = ReadAnimParamScalar(Base, Binding);
+                }
+            }
+
+            const SIZE_T NumObjects = Math::Min(Graph->ObjectParamBindings.size(), VMState.ObjectParameters.size());
+            for (SIZE_T i = 0; i < NumObjects; ++i)
+            {
+                const FAnimGraphParamBinding& Binding = Graph->ObjectParamBindings[i];
+                if (Binding.IsResolved())
+                {
+                    VMState.ObjectParameters[i] = ReadAnimParamObject(Base, Binding);
+                }
+            }
+        }
+
         // One entity's animation-graph update (parallel-safe: touches only this entity's components).
         // Runs graph logic and records the pose recipe; pose math happens in the execute phase.
         void UpdateGraph(const FSystemContext& SystemContext, entt::entity Entity,
@@ -367,18 +397,8 @@ namespace Lumina
             Mesh.PendingAnimTime = 0.0f;
 
             // Init VM state first so BuildTasks won't re-init and wipe the written values.
-            if (SBlackboardComponent* Blackboard = SystemContext.TryGet<SBlackboardComponent>(Entity))
-            {
-                Blackboard->EnsureInitialized();
-                AnimGraph.EnsureStateInitialized();
-
-                const int32 NumParams = (int32)Graph->Parameters.size();
-                for (int32 i = 0; i < NumParams && i < (int32)AnimGraph.VMState.Parameters.size(); ++i)
-                {
-                    const FAnimGraphParameter& Param = Graph->Parameters[i];
-                    AnimGraph.VMState.Parameters[i] = Blackboard->GetFloat(Param.Name, Param.DefaultValue);
-                }
-            }
+            AnimGraph.EnsureStateInitialized();
+            ApplyParameters(AnimGraph, Graph);
 
             FAnimGraphRootMotion GraphRootMotion;
             GraphRootMotion.Mode          = AnimGraph.RootMotionLock;

@@ -26,6 +26,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Animation")
         TObjectPtr<CBlendSpace> BlendSpace;
 
+        CAnimGraphPin* BlendSpacePin = nullptr;
         CAnimGraphPin* XPin = nullptr;
         CAnimGraphPin* YPin = nullptr;
         CAnimGraphPin* SpeedPin = nullptr;

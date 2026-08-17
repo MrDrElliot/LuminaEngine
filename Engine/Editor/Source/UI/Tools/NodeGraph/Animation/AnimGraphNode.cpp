@@ -158,6 +158,22 @@ namespace Lumina
         return Compiler.EmitRefPose();
     }
 
+    int32 CAnimGraphNode::ResolveObjectInput(CEdNodeGraphPin* InputPin, FAnimationGraphCompiler& Compiler)
+    {
+        if (InputPin != nullptr && InputPin->HasConnection())
+        {
+            CEdNodeGraphPin* Source = InputPin->GetConnection(0);
+            uint16 Register;
+            if (Compiler.TryGetPinRegister(Source, Register))
+            {
+                return (int32)Register;
+            }
+        }
+
+        // Unconnected means the node keeps its own statically assigned asset.
+        return INDEX_NONE;
+    }
+
     uint16 CAnimGraphNode::ResolveValueInput(CEdNodeGraphPin* InputPin, FAnimationGraphCompiler& Compiler)
     {
         if (InputPin != nullptr && InputPin->HasConnection())
