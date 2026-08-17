@@ -36,7 +36,7 @@ namespace Lumina
         Mutable = Graph->ParameterStruct;
     }
 
-    void* SAnimationGraphComponent::GetParameterMemory() const
+    void* SAnimationGraphComponent::GetParameterMemory()
     {
         EnsureParametersInitialized();
         return Parameters.GetMutableMemory();

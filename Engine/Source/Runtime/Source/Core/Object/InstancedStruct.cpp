@@ -1,6 +1,9 @@
 ﻿#include "RuntimePCH.h"
 #include "InstancedStruct.h"
 
+#include "Core/Reflection/Type/LuminaTypes.h"
+#include "Scripting/ScriptDataStruct.h"
+
 #include "Class.h"
 #include "Memory/Memory.h"
 
@@ -16,10 +19,21 @@ namespace Lumina
         CopyFrom(Other);
     }
 
+    // Inline storage cannot be stolen, so a move relocates the value and clears the source.
     FInstancedStruct::FInstancedStruct(FInstancedStruct&& Other) noexcept
-        : ScriptStruct(Other.ScriptStruct)
-        , InstanceMemory(Other.InstanceMemory)
     {
+        if (Other.bInline)
+        {
+            CopyFrom(Other);
+            Other.Reset();
+            return;
+        }
+
+        ScriptStruct      = Other.ScriptStruct;
+        InstanceMemory    = Other.InstanceMemory;
+        TypeIdentity      = Other.TypeIdentity;
+        SeededGeneration  = Other.SeededGeneration;
+
         Other.ScriptStruct = nullptr;
         Other.InstanceMemory = nullptr;
     }
@@ -39,8 +53,19 @@ namespace Lumina
         if (this != &Other)
         {
             Reset();
-            ScriptStruct = Other.ScriptStruct;
-            InstanceMemory = Other.InstanceMemory;
+
+            if (Other.bInline)
+            {
+                CopyFrom(Other);
+                Other.Reset();
+                return *this;
+            }
+
+            ScriptStruct      = Other.ScriptStruct;
+            InstanceMemory    = Other.InstanceMemory;
+            TypeIdentity      = Other.TypeIdentity;
+            SeededGeneration  = Other.SeededGeneration;
+
             Other.ScriptStruct = nullptr;
             Other.InstanceMemory = nullptr;
         }
@@ -63,25 +88,47 @@ namespace Lumina
         }
 
         ScriptStruct = InStruct;
-        InstanceMemory = static_cast<uint8*>(Memory::Malloc(InStruct->GetAlignedSize(), InStruct->GetAlignment()));
+        TypeIdentity = DataStructIdentity(InStruct);
+        SeededGeneration = FScriptDataStructRegistry::Get().GetGeneration();
+        AllocateFor(InStruct);
         InStruct->InitializeStruct(InstanceMemory);
+    }
+
+    void FInstancedStruct::AllocateFor(const CStruct* Type) const
+    {
+        const SIZE_T Size  = Type->GetAlignedSize();
+        const SIZE_T Align = Type->GetAlignment();
+
+        bInline = Size <= kInlineSize && Align <= kInlineAlign;
+        InstanceMemory = bInline ? InlineStorage : static_cast<uint8*>(Memory::Malloc(Size, Align));
+    }
+
+    void FInstancedStruct::ReleaseStorage(CStruct* Type, uint8* Memory, bool bWasInline)
+    {
+        if (Memory == nullptr)
+        {
+            return;
+        }
+
+        if (Type != nullptr)
+        {
+            Type->DestroyStruct(Memory);
+        }
+
+        if (!bWasInline)
+        {
+            void* ToFree = Memory;
+            Lumina::Memory::Free(ToFree);
+        }
     }
 
     void FInstancedStruct::Reset()
     {
-        if (InstanceMemory != nullptr)
-        {
-            if (ScriptStruct != nullptr)
-            {
-                ScriptStruct->DestroyStruct(InstanceMemory);
-            }
-
-            void* ToFree = InstanceMemory;
-            Memory::Free(ToFree);
-        }
+        ReleaseStorage(ScriptStruct, InstanceMemory, bInline);
 
         ScriptStruct = nullptr;
         InstanceMemory = nullptr;
+        bInline = false;
     }
 
     void FInstancedStruct::CopyFrom(const FInstancedStruct& Other)
@@ -106,5 +153,69 @@ namespace Lumina
             return true;
         }
         return ScriptStruct->CompareStruct(InstanceMemory, Other.InstanceMemory);
+    }
+
+    void FInstancedStruct::EnsureCurrentType() const
+    {
+        if (ScriptStruct == nullptr)
+        {
+            return;
+        }
+
+        const uint64 Now = FScriptDataStructRegistry::Get().GetGeneration();
+        if (Now == SeededGeneration)
+        {
+            return;
+        }
+        SeededGeneration = Now;
+
+        // A native type is the same object every run, so this only ever moves for a script type.
+        CStruct* Fresh = TypeIdentity.IsNone() ? ScriptStruct : ResolveDataStructByName(TypeIdentity);
+        if (Fresh == ScriptStruct)
+        {
+            return;
+        }
+
+        CStruct* Stale = ScriptStruct;
+        const bool bStaleInline = bInline;
+
+        // Inline bytes are about to be overwritten, so the old value has to be moved out first.
+        uint8* StaleMemory = InstanceMemory;
+        uint8 StaleCopy[kInlineSize];
+        if (bStaleInline && StaleMemory != nullptr)
+        {
+            Memory::Memcpy(StaleCopy, StaleMemory, kInlineSize);
+            StaleMemory = StaleCopy;
+        }
+
+        ScriptStruct = Fresh;
+        InstanceMemory = nullptr;
+        bInline = false;
+
+        if (Fresh != nullptr)
+        {
+            AllocateFor(Fresh);
+            Fresh->InitializeStruct(InstanceMemory);
+
+            // By name, never memcpy: a reload can reorder or retype fields, so the old blob has no layout.
+            if (StaleMemory != nullptr)
+            {
+                Fresh->ForEachProperty<FProperty>([&](FProperty* NewProp)
+                {
+                    FProperty* OldProp = Stale != nullptr ? Stale->GetProperty(NewProp->Name) : nullptr;
+                    if (OldProp != nullptr && OldProp->TypeFlags == NewProp->TypeFlags)
+                    {
+                        NewProp->CopyCompleteValue_InContainer(InstanceMemory, StaleMemory);
+                    }
+                });
+            }
+        }
+
+        // The stale type object may already be gone, so free the bytes without destructing through it.
+        if (StaleMemory != nullptr && !bStaleInline)
+        {
+            void* Raw = StaleMemory;
+            Memory::Free(Raw);
+        }
     }
 }

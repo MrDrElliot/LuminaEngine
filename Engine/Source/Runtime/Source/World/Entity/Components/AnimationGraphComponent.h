@@ -45,7 +45,7 @@ namespace Lumina
         }
 
         /** Raw parameter memory, for the anim system's offset reads. Null when no struct is assigned. */
-        RUNTIME_API void* GetParameterMemory() const;
+        RUNTIME_API void* GetParameterMemory();
 
         // Brings Parameters up as an instance of the graph's struct, copying the graph's authored values.
         RUNTIME_API void EnsureParametersInitialized() const;

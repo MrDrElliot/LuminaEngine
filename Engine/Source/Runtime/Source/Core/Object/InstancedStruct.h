@@ -14,6 +14,10 @@ namespace Lumina
     // Owns a heap instance of a reflected CStruct chosen at runtime.
     struct FInstancedStruct
     {
+        // An instance this small lives inline, so a small block costs no allocation and no extra chase.
+        static constexpr SIZE_T kInlineSize  = 32;
+        static constexpr SIZE_T kInlineAlign = 16;
+
         FInstancedStruct() = default;
         explicit FInstancedStruct(CStruct* InStruct) { InitializeAs(InStruct); }
 
@@ -29,10 +33,13 @@ namespace Lumina
         // Destroys the instance and frees its memory.
         RUNTIME_API void Reset();
 
-        CStruct* GetScriptStruct() const { return ScriptStruct; }
-        void* GetMutableMemory() const { return InstanceMemory; }
-        const void* GetMemory() const { return InstanceMemory; }
-        bool IsValid() const { return ScriptStruct != nullptr && InstanceMemory != nullptr; }
+        CStruct* GetScriptStruct() const { EnsureCurrentType(); return ScriptStruct; }
+        void* GetMutableMemory() { EnsureCurrentType(); return InstanceMemory; }
+        const void* GetMemory() const { EnsureCurrentType(); return InstanceMemory; }
+        bool IsValid() const { EnsureCurrentType(); return ScriptStruct != nullptr && InstanceMemory != nullptr; }
+
+        // Re-mints and migrates by field name when a script reload replaced the stored type.
+        RUNTIME_API void EnsureCurrentType() const;
 
         RUNTIME_API bool Identical(const FInstancedStruct& Other) const;
 
@@ -40,12 +47,14 @@ namespace Lumina
         template<InstancableStruct T>
         T* GetMutablePtr()
         {
+            EnsureCurrentType();
             return (ScriptStruct && ScriptStruct->IsChildOf(T::StaticStruct())) ? static_cast<T*>(reinterpret_cast<void*>(InstanceMemory)) : nullptr;
         }
 
         template<InstancableStruct T>
         const T* GetPtr() const
         {
+            EnsureCurrentType();
             return (ScriptStruct && ScriptStruct->IsChildOf(T::StaticStruct())) ? static_cast<const T*>(reinterpret_cast<const void*>(InstanceMemory)) : nullptr;
         }
 
@@ -61,8 +70,22 @@ namespace Lumina
 
         void CopyFrom(const FInstancedStruct& Other);
 
-        CStruct* ScriptStruct = nullptr;
-        uint8* InstanceMemory = nullptr;
+        // Brings up storage for Type without constructing it; sets bInline and InstanceMemory.
+        void AllocateFor(const CStruct* Type) const;
+
+        // Destroys through Type when non-null, then releases the bytes iff they were heap.
+        static void ReleaseStorage(CStruct* Type, uint8* Memory, bool bWasInline);
+
+        // Mutable so a const read can re-mint a type a script reload replaced underneath it.
+        mutable CStruct* ScriptStruct = nullptr;
+        mutable uint8* InstanceMemory = nullptr;
+
+        // Stable identity of the stored type, so it survives the re-mint its pointer does not.
+        FName TypeIdentity;
+        mutable uint64 SeededGeneration = 0;
+
+        mutable bool bInline = false;
+        alignas(kInlineAlign) mutable uint8 InlineStorage[kInlineSize] = {};
     };
 
     // An FInstancedStruct constrained to T or a struct derived from T.
