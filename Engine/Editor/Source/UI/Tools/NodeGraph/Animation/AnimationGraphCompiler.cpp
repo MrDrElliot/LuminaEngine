@@ -316,8 +316,19 @@ namespace Lumina
 
     void FAnimationGraphCompiler::ValidateParameterKey(const FName& Name, CEdGraphNode* Node)
     {
-        if (DataStruct == nullptr || Name.IsNone())
+        if (Name.IsNone())
         {
+            return;
+        }
+
+        if (DataStruct == nullptr)
+        {
+            EdNodeGraph::FError Warning;
+            Warning.Name        = "No Parameter Struct";
+            Warning.Description = FString("'") + Name.ToString() + "' cannot be read: this graph has no Parameter "
+                "Struct assigned, so nothing written on the component reaches it and every parameter holds its default.";
+            Warning.Node        = Node;
+            AddWarning(Warning);
             return;
         }
 
@@ -358,8 +369,19 @@ namespace Lumina
 
     void FAnimationGraphCompiler::ValidateObjectParameterKey(const FName& Name, EAnimObjectParamType Expected, CEdGraphNode* Node)
     {
-        if (DataStruct == nullptr || Name.IsNone())
+        if (Name.IsNone())
         {
+            return;
+        }
+
+        if (DataStruct == nullptr)
+        {
+            EdNodeGraph::FError Warning;
+            Warning.Name        = "No Parameter Struct";
+            Warning.Description = FString("'") + Name.ToString() + "' cannot supply an asset: this graph has no "
+                "Parameter Struct assigned, so the node falls back to its statically assigned asset.";
+            Warning.Node        = Node;
+            AddWarning(Warning);
             return;
         }
 

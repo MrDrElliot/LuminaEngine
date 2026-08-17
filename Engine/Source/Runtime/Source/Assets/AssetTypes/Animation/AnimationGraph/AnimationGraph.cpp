@@ -122,6 +122,11 @@ namespace Lumina
         CStruct* Struct = GetParameterStruct();
         if (Struct == nullptr)
         {
+            if (!Parameters.empty() || !ObjectParameters.empty())
+            {
+                LOG_WARN("Anim graph '{}' reads {} parameter(s) but has no ParameterStruct assigned; none of them will ever receive a value.",
+                         GetName().c_str(), (int32)(Parameters.size() + ObjectParameters.size()));
+            }
             return;
         }
 
@@ -153,14 +158,31 @@ namespace Lumina
             return Binding;
         };
 
+        const auto WarnUnresolved = [this, Struct](const FName& Name)
+        {
+            if (!Name.IsNone())
+            {
+                LOG_WARN("Anim graph '{}': parameter '{}' does not resolve to a readable field on '{}'; it will hold its default.",
+                         GetName().c_str(), Name.ToString().c_str(), Struct->GetName().c_str());
+            }
+        };
+
         for (SIZE_T i = 0; i < Parameters.size(); ++i)
         {
             ParamBindings[i] = Bind(Parameters[i].Name, false);
+            if (!ParamBindings[i].IsResolved())
+            {
+                WarnUnresolved(Parameters[i].Name);
+            }
         }
 
         for (SIZE_T i = 0; i < ObjectParameters.size(); ++i)
         {
             ObjectParamBindings[i] = Bind(ObjectParameters[i].Name, true);
+            if (!ObjectParamBindings[i].IsResolved())
+            {
+                WarnUnresolved(ObjectParameters[i].Name);
+            }
         }
     }
 
