@@ -137,9 +137,10 @@ namespace Lumina
                 {
                     TVector<FAssetData*> Assets = FAssetRegistry::Get().FindByPredicate([&](const FAssetData& Data)
                     {
+                        // Null when the asset's class is not registered, e.g. it belongs to an unloaded plugin.
                         CClass* DataClass = FindObject<CClass>(Data.AssetClass);
                         CClass* PropertyClass = ObjectProperty->GetPropertyClass();
-                        return DataClass->IsChildOf(PropertyClass);
+                        return DataClass != nullptr && DataClass->IsChildOf(PropertyClass);
                     });
                     
                     ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(4, 4));
