@@ -107,6 +107,8 @@ namespace std
         }
     };
 
+    // EASTL's Debug string_view does not convert here, and nothing reflects a formatter.
+#ifndef REFLECTION_PARSER
     template <>
     struct formatter<eastl::string_view>
     {
@@ -114,13 +116,14 @@ namespace std
         {
             return ctx.begin();
         }
-        
+
         template <typename FormatContext>
         auto format(const eastl::string_view& str, FormatContext& ctx) const
         {
-            return std::format_to(ctx.out(), "{}", std::string_view(str.data(), str.length()));
+            return std::format_to(ctx.out(), "{}", std::string_view(str.data(), static_cast<size_t>(str.length())));
         }
     };
+#endif
 }
 
 

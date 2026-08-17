@@ -3,6 +3,7 @@
 #include "Components/RelationshipComponent.h"
 #include "Containers/Array.h"
 #include "Containers/Name.h"
+#include "Core/Math/TransformFwd.h"
 #include "Core/Serialization/Archiver.h"
 #include "Registry/EntityRegistry.h"
 #include "TaskSystem/TaskSystem.h"
@@ -11,8 +12,6 @@
 namespace Lumina
 {
 	class CStruct;
-	struct VTransform;
-	using FTransform = VTransform;
 }
 
 namespace Lumina::ECS::Utils

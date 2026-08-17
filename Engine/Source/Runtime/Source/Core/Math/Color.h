@@ -12,8 +12,8 @@ namespace Lumina
         constexpr FColor() : R(0.0f), G(0.0f), B(0.0f), A(1.0f) {}
         constexpr FColor(float init) : R(init), G(init), B(init), A(init) {}
         constexpr FColor(float r, float g, float b, float a = 1.0f) : R(r), G(g), B(b), A(a) {}
-        constexpr FColor(const FVector3& Vec) : R(Vec.r), G(Vec.g), B(Vec.b), A(1.0f) {}
-        constexpr FColor(const FVector4& Vec) :R(Vec.r), G(Vec.g), B(Vec.b), A(Vec.a) {}
+        constexpr FColor(const FVector3& Vec) : R(Vec.x), G(Vec.y), B(Vec.z), A(1.0f) {}
+        constexpr FColor(const FVector4& Vec) : R(Vec.x), G(Vec.y), B(Vec.z), A(Vec.w) {}
 
 
         operator FVector4() const

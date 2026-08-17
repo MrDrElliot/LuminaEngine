@@ -146,6 +146,9 @@ namespace Lumina
         PROPERTY(Editable) float z;
         /** Real component. */
         PROPERTY(Editable) float w;
+
+        // Declared, never defined: callers in reflected headers only need it to name-resolve.
+        static FQuat Identity();
     };
 }
 #endif

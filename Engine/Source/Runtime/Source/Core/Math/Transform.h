@@ -3,6 +3,7 @@
 #include <format>
 #include "Core/Math/Matrix/MatrixMath.h"
 #include "Core/Math/SIMD/VQuat1.h"
+#include "Core/Math/TransformFwd.h"
 
 // SIMD-backed transform.
 
@@ -151,8 +152,6 @@ namespace Lumina
         }
     };
 
-    using FTransform = VTransform;
-
     #endif // !REFLECTION_PARSER
 }
 
@@ -184,6 +183,9 @@ namespace Lumina
 }
 #endif
 
+// The reflection stub carries the layout, not the accessors this reads.
+#ifndef REFLECTION_PARSER
+
 template <>
 struct std::formatter<Lumina::FTransform>
 {
@@ -200,3 +202,5 @@ struct std::formatter<Lumina::FTransform>
             L.x, L.y, L.z, R.w, R.x, R.y, R.z, S.x, S.y, S.z);
     }
 };
+
+#endif // !REFLECTION_PARSER

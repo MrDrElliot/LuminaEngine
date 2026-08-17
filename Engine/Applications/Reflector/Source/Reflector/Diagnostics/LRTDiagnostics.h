@@ -32,6 +32,7 @@ namespace Lumina::Reflection
         DriverAmalgamationCreate    = 9002,  // couldn't create the amalgamation .gen.h.
         DriverClangParseFailure     = 9003,  // libclang returned a non-success CXErrorCode.
         DriverTranslationUnitWalk   = 9004,  // clang_visitChildren reported a problem.
+        DriverClangDiagnostic       = 9005,  // clang reported an error/fatal in the parsed headers.
     };
 
     struct FDiagLocation

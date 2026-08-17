@@ -4,6 +4,7 @@
 #include "Object.h"
 #include "Class/StructTraits.h"
 #include "Containers/Function.h"
+#include "Core/Math/TransformFwd.h"
 #include "Core/Reflection/Type/Metadata/PropertyMetadata.h"
 #include "Core/Templates/Align.h"
 #include "Initializer/ObjectInitializer.h"
@@ -15,8 +16,6 @@ namespace Lumina
 {
     class FProperty;
     class FNetArchive;
-    struct VTransform;
-    using FTransform = VTransform;
 }
 
 namespace Lumina

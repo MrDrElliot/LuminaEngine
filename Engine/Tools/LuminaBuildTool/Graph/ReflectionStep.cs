@@ -15,6 +15,12 @@ public sealed class ReflectionProjectEntry
 
     public List<string> IncludeDirs { get; set; } = new();
 
+    /// <summary>The module's real compile definitions, so the Reflector sees the same code the compiler does.</summary>
+    public List<string> Definitions { get; set; } = new();
+
+    /// <summary>Headers the compiler force-includes ahead of every source file in this module.</summary>
+    public List<string> ForceIncludes { get; set; } = new();
+
     public List<string> Files { get; set; } = new();
 
     public string CSharpBindingsDir { get; set; } = string.Empty;
@@ -98,7 +104,9 @@ public static class ReflectionStep
                 Name = Module.Name,
                 Path = Module.Rules.ModuleDirectory,
                 IncludeDirs = Module.AllIncludePaths.ToList(),
-                Files = Module.Sources.HeaderFiles.Select(H => H.Location).ToList(),
+                Definitions = Module.CompileDefinitions.ToList(),
+                ForceIncludes = Module.ForceIncludeFiles.ToList(),
+                Files = Module.Sources.HeaderFiles.Where(IsParseableHeader).Select(H => H.Location).ToList(),
                 CSharpBindingsDir = Module.Rules.CSharpBindingsDirectory,
                 GeneratedDir = Module.GeneratedCodeDirectory,
                 PrecompiledHeader = Module.Rules.PrecompiledHeader?.Header ?? string.Empty,
@@ -140,7 +148,8 @@ public static class ReflectionStep
         {
             StatusText = $"{Reflected.Count} modules",
             ToolPath = ReflectorPath,
-            Arguments = PathUtils.Quote(InputFile),
+            // A clang error in a reflected header silently generates wrong data, so it fails the build.
+            Arguments = PathUtils.Quote(InputFile) + " -strict-parse",
             WorkingDirectory = Target.Directories.OutputRoot,
 
             // The generator holds every header in memory at once; running one is already
@@ -178,6 +187,15 @@ public static class ReflectionStep
         }
 
         return new ReflectionActions { Generate = Action, Inputs = InputActions };
+    }
+
+    /// <summary>An .inl/.ipp is an include fragment, so parsing it as its own file misreads X-macro bodies.</summary>
+    private static bool IsParseableHeader(FileItem Header)
+    {
+        string Extension = Path.GetExtension(Header.Location);
+
+        return !Extension.Equals(".inl", StringComparison.OrdinalIgnoreCase)
+            && !Extension.Equals(".ipp", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string Serialize<T>(T Value)
@@ -220,6 +238,8 @@ public static class ReflectionStep
                 Name = P.Name,
                 Path = P.Path,
                 IncludeDirs = P.IncludeDirs,
+                Definitions = P.Definitions,
+                ForceIncludes = P.ForceIncludes,
                 Files = P.Files,
 
                 // A downstream build never emits the engine's bindings.

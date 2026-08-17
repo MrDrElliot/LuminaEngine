@@ -3,6 +3,8 @@
 #include <fstream>
 #include <clang-c/Index.h>
 #include "EASTL/fixed_vector.h"
+#include "EASTL/hash_set.h"
+#include "Reflector/Clang/Utils.h"
 #include "Reflector/Diagnostics/LRTDiagnostics.h"
 #include "Reflector/ProjectSolution.h"
 #include "Reflector/ReflectionCore/ReflectedProject.h"
@@ -12,6 +14,111 @@
 
 namespace Lumina::Reflection
 {
+    namespace
+    {
+        FDiagLocation MakeLocationFromDiagnostic(CXDiagnostic Diagnostic)
+        {
+            FDiagLocation Result;
+
+            CXFile   File   = nullptr;
+            uint32_t Line   = 0;
+            uint32_t Column = 0;
+            clang_getExpansionLocation(clang_getDiagnosticLocation(Diagnostic), &File, &Line, &Column, nullptr);
+
+            if (File != nullptr)
+            {
+                CXString Name = clang_getFileName(File);
+                if (const char* Raw = clang_getCString(Name))
+                {
+                    Result.File = Raw;
+                    eastl::replace(Result.File.begin(), Result.File.end(), '\\', '/');
+                }
+                clang_disposeString(Name);
+            }
+
+            Result.Line   = Line;
+            Result.Column = Column;
+            return Result;
+        }
+
+        // The parse runs before this tool writes them, so on a cold target they are legitimately absent.
+        bool IsMissingGeneratedHeader(const eastl::string& Text)
+        {
+            return Text.find(".generated.h") != eastl::string::npos
+                && Text.find("file not found") != eastl::string::npos;
+        }
+
+        // Toolchain headers parse loosely on purpose, so only a header we emit reflection for can corrupt output.
+        bool IsReflectedHeader(const FClangParserContext& Context, const FDiagLocation& Loc)
+        {
+            return !Loc.File.empty()
+                && Context.AllHeaders.find(FStringHash(ClangUtils::NormalizeHeaderPath(Loc.File))) != Context.AllHeaders.end();
+        }
+
+        // CXError_Success only means an AST came back, so a bad header still reflects as garbage without this.
+        bool ReportClangDiagnostics(CXTranslationUnit TranslationUnit, const FClangParserContext& Context, bool bStrict)
+        {
+            constexpr uint32_t MaxReported = 25;
+
+            const uint32_t NumDiagnostics = clang_getNumDiagnostics(TranslationUnit);
+            uint32_t NumSevere = 0;
+
+            for (uint32_t i = 0; i < NumDiagnostics; ++i)
+            {
+                CXDiagnostic Diagnostic = clang_getDiagnostic(TranslationUnit, i);
+                const CXDiagnosticSeverity Severity = clang_getDiagnosticSeverity(Diagnostic);
+
+                const FDiagLocation Loc = MakeLocationFromDiagnostic(Diagnostic);
+                const bool bSevere = Severity == CXDiagnostic_Error || Severity == CXDiagnostic_Fatal;
+
+                if (bSevere && IsReflectedHeader(Context, Loc))
+                {
+                    CXString Spelling = clang_getDiagnosticSpelling(Diagnostic);
+                    const char* Raw = clang_getCString(Spelling);
+                    const eastl::string Text = Raw != nullptr ? Raw : "";
+                    clang_disposeString(Spelling);
+
+                    if (IsMissingGeneratedHeader(Text))
+                    {
+                        clang_disposeDiagnostic(Diagnostic);
+                        continue;
+                    }
+
+                    ++NumSevere;
+                    if (NumSevere <= MaxReported)
+                    {
+                        const char* Message = Text.empty() ? "clang reported an error with no message" : Text.c_str();
+                        const char* Advice = bStrict
+                            ? "Reflection generated from this header would be wrong, so the parse is rejected."
+                            : "Reflection generated from this header may be wrong. Run with -strict-parse to make this fatal.";
+
+                        if (bStrict)
+                        {
+                            FDiagnostics::Get().Errorf(Loc, EDiagId::DriverClangDiagnostic, "%s. %s",
+                                Message, Advice);
+                        }
+                        else
+                        {
+                            FDiagnostics::Get().Warningf(Loc, EDiagId::DriverClangDiagnostic, "%s. %s",
+                                Message, Advice);
+                        }
+                    }
+                }
+
+                clang_disposeDiagnostic(Diagnostic);
+            }
+
+            if (NumSevere > MaxReported)
+            {
+                FDiagLocation Loc;
+                FDiagnostics::Get().Warningf(Loc, EDiagId::DriverClangDiagnostic,
+                    "%u further clang error(s) in reflected headers not listed.", NumSevere - MaxReported);
+            }
+
+            return NumSevere == 0 || !bStrict;
+        }
+    }
+
     bool FClangParser::Parse(FReflectedWorkspace* Workspace)
     {
         CXTranslationUnit TranslationUnit = nullptr;
@@ -44,15 +151,36 @@ namespace Lumina::Reflection
             ClangArgStorage.emplace_back(eastl::move(Arg));
         };
 
+        // Only link-visibility macros differ per module, and those are blanked after this loop.
+        eastl::hash_set<eastl::string> SeenDefinitions;
+        eastl::hash_set<eastl::string> SeenIncludeDirs;
+        eastl::hash_set<eastl::string> SeenForceIncludes;
+
         for (const auto& Project : Workspace->ReflectedProjects)
         {
-            eastl::string APIDecl = "-D" + Project->Name + "_API=";
-            APIDecl.make_upper();
+            for (const eastl::string& Definition : Project->Definitions)
+            {
+                if (SeenDefinitions.insert(Definition).second)
+                {
+                    AppendArg("-D" + Definition);
+                }
+            }
 
-            AppendArg(eastl::move(APIDecl));
+            for (const eastl::string& ForceInclude : Project->ForceIncludes)
+            {
+                if (SeenForceIncludes.insert(ForceInclude).second)
+                {
+                    AppendArg("-include");
+                    AppendArg(ForceInclude);
+                }
+            }
 
             for (const eastl::string& IncludeDir : Project->IncludeDirs)
             {
+                if (!SeenIncludeDirs.insert(IncludeDir).second)
+                {
+                    continue;
+                }
                 AppendArg("-I" + IncludeDir);
             }
 
@@ -66,12 +194,27 @@ namespace Lumina::Reflection
 
         AmalgamationFile.close();
 
+        // Last -D wins, so this neutralizes the dllimport/dllexport the build system just supplied.
+        for (const eastl::string& Definition : SeenDefinitions)
+        {
+            const size_t Equals = Definition.find('=');
+            const eastl::string Macro = Equals == eastl::string::npos ? Definition : Definition.substr(0, Equals);
+
+            if (Macro.size() > 4 && Macro.compare(Macro.size() - 4, 4, "_API") == 0)
+            {
+                AppendArg("-D" + Macro + "=");
+            }
+        }
+
         AppendArg("-x");
         AppendArg("c++");
         AppendArg("-std=c++23");
         AppendArg("-O0");
         AppendArg("-DREFLECTION_PARSER");
-        AppendArg("-DNDEBUG");
+        // libclang trails the MSVC STL's supported-compiler floor, and its version assert poisons <type_traits>.
+        AppendArg("-D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH");
+        // MSVC's offsetof is a reinterpret_cast that is never constexpr; this selects __builtin_offsetof.
+        AppendArg("-D_CRT_USE_BUILTIN_OFFSETOF");
         AppendArg("-fms-extensions");
         AppendArg("-fms-compatibility");
         AppendArg("-Wfatal-errors=0");
@@ -111,6 +254,14 @@ namespace Lumina::Reflection
             ClangOptions,
             &TranslationUnit);
         
+        // Walking a broken AST would emit confident, wrong reflection data, so stop before it.
+        if (!ReportClangDiagnostics(TranslationUnit, ParsingContext, bStrictParse))
+        {
+            std::filesystem::remove(AmalgamationPath.c_str());
+            clang_disposeIndex(ClangIndex);
+            return false;
+        }
+
         CXCursor Cursor = clang_getTranslationUnitCursor(TranslationUnit);
 
         // A non-zero return means a visitor asked to stop, which abandons every cursor after it

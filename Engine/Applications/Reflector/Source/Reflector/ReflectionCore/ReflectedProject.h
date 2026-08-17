@@ -49,5 +49,9 @@ namespace Lumina::Reflection
         FReflectedWorkspace*                                                Workspace;
         eastl::hash_map<FStringHash, eastl::unique_ptr<FReflectedHeader>>   Headers;
         eastl::vector<eastl::string>                                        IncludeDirs;
+
+        /// Real compile environment from the build system, so the parse matches what the compiler sees.
+        eastl::vector<eastl::string>                                        Definitions;
+        eastl::vector<eastl::string>                                        ForceIncludes;
     };
 }

@@ -110,7 +110,7 @@ namespace Lumina
 
         /** RGB color of the directional light. Multiplied by the temperature tint when bUseTemperature is set. */
         PROPERTY(Editable, Color, Category = "Light")
-        FVector3 Color = FVector4(1.0f);
+        FVector3 Color = FVector3(1.0f);
 
         /** Normalized world-space direction pointing FROM the surface TOWARD the sun (the to-light vector). The default (0, 0.3, 0.8) places the sun above the horizon. */
         PROPERTY(Editable, Category = "Light")

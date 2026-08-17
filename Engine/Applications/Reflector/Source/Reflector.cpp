@@ -105,6 +105,24 @@ int main(int argc, char* argv[])
             ReflectedProject->IncludeDirs.push_back(eastl::move(IncludeDir));
         }
         
+        if (Project.contains("Definitions"))
+        {
+            for (const auto& DefinitionJson : Project["Definitions"])
+            {
+                ReflectedProject->Definitions.push_back(DefinitionJson.get<std::string>().c_str());
+            }
+        }
+
+        if (Project.contains("ForceIncludes"))
+        {
+            for (const auto& ForceIncludeJson : Project["ForceIncludes"])
+            {
+                eastl::string ForceInclude = ForceIncludeJson.get<std::string>().c_str();
+                ForceInclude = Lumina::ClangUtils::NormalizeHeaderPath(eastl::move(ForceInclude));
+                ReflectedProject->ForceIncludes.push_back(eastl::move(ForceInclude));
+            }
+        }
+
         for (const auto& ProjectFileJson : Project["Files"])
         {
             eastl::string ProjectFile = ProjectFileJson.get<std::string>().c_str();
@@ -161,6 +179,12 @@ int main(int argc, char* argv[])
     }
 
     FClangParser Parser;
+
+    for (int i = 2; i < argc; ++i)
+    {
+        Parser.bStrictParse |= eastl::string(argv[i]) == "-strict-parse";
+    }
+
     bool bParseResult = Parser.Parse(&Workspace);
 
     if (!bParseResult)
