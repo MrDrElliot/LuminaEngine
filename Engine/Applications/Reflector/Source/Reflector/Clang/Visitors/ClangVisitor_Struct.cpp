@@ -988,7 +988,7 @@ namespace Lumina::Reflection::Visitor
 		eastl::string QualifiedName;
 		if (!ClangUtils::GetQualifiedNameFromDeclCursor(Cursor, QualifiedName))
 		{
-			LRT_ERROR(Cursor, EDiagId::MissingGeneratedBody,
+			LRT_ERROR(Cursor, EDiagId::ReflectedAliasInvalid,
 				"REFLECT'd class template '%s' has no usable qualified name.",
 				ClangUtils::GetCursorDisplayName(Cursor).c_str());
 			return CXChildVisit_Continue;
@@ -1034,7 +1034,7 @@ namespace Lumina::Reflection::Visitor
 		eastl::string QualifiedAliasName;
 		if (!ClangUtils::GetQualifiedNameForDeclCursor(Cursor, QualifiedAliasName))
 		{
-			LRT_ERROR(Cursor, EDiagId::MissingGeneratedBody,
+			LRT_ERROR(Cursor, EDiagId::ReflectedAliasInvalid,
 				"REFLECT'd alias '%s' has no usable qualified name. Declare it at namespace scope.",
 				AliasName.c_str());
 			return CXChildVisit_Continue;
@@ -1044,7 +1044,7 @@ namespace Lumina::Reflection::Visitor
 		const CXCursor TargetCursor = clang_getTypeDeclaration(Target);
 		if (Target.kind != CXType_Record || clang_Cursor_isNull(TargetCursor))
 		{
-			LRT_ERROR(Cursor, EDiagId::UnknownPropertyType,
+			LRT_ERROR(Cursor, EDiagId::ReflectedAliasInvalid,
 				"REFLECT'd alias '%s' does not name a struct or class. Only record types can be reflected.",
 				AliasName.c_str());
 			return CXChildVisit_Continue;
@@ -1053,7 +1053,7 @@ namespace Lumina::Reflection::Visitor
 		const eastl::string TargetHeader = ClangUtils::GetHeaderPathForCursor(TargetCursor);
 		if (TargetHeader.empty())
 		{
-			LRT_ERROR(Cursor, EDiagId::UnknownPropertyType,
+			LRT_ERROR(Cursor, EDiagId::ReflectedAliasInvalid,
 				"REFLECT'd alias '%s' resolves to a type with no source location.", AliasName.c_str());
 			return CXChildVisit_Continue;
 		}
@@ -1061,7 +1061,7 @@ namespace Lumina::Reflection::Visitor
 		// An alias never requires its target to be complete, so an otherwise unused template is uninstantiated.
 		if (clang_Type_getSizeOf(Target) == CXTypeLayoutError_Incomplete)
 		{
-			LRT_ERROR(Cursor, EDiagId::MissingGeneratedBody,
+			LRT_ERROR(Cursor, EDiagId::AliasNotInstantiated,
 				"REFLECT'd alias '%s' names a type that is never instantiated, so the reflector cannot see "
 				"its members. Add `static_assert(sizeof(%s) > 0);` after the alias, or use the type somewhere "
 				"that requires it to be complete.",
@@ -1100,7 +1100,7 @@ namespace Lumina::Reflection::Visitor
 
 		if (ReflectedStruct->Props.empty())
 		{
-			LRT_ERROR(Cursor, EDiagId::MissingGeneratedBody,
+			LRT_ERROR(Cursor, EDiagId::ReflectedNoMembers,
 				"REFLECT'd alias '%s' reflected no members. The aliased type's fields need PROPERTY() macros.",
 				AliasName.c_str());
 		}

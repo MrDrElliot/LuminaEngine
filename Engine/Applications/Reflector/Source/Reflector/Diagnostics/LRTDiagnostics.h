@@ -26,6 +26,9 @@ namespace Lumina::Reflection
         MissingGeneratedBody   = 2002,  // class/struct uses REFLECT() but lacks a GENERATED_BODY() inside its body.
         WrongGeneratedHeader   = 2003,  // header includes a different file's .generated.h (copy-paste mistake).
         BadTypePrefix          = 2004,  // reflected class/struct/enum lacks the C-/S-/E- naming prefix.
+        ReflectedAliasInvalid  = 2005,  // REFLECT'd alias or class template does not name a usable record.
+        AliasNotInstantiated   = 2006,  // REFLECT'd alias names a template that is never instantiated.
+        ReflectedNoMembers     = 2007,  // REFLECT'd alias resolved a record with no PROPERTY() members.
 
         DriverMissingInput          = 9000,  // no JSON path on the command line.
         DriverInputUnreadable       = 9001,  // failed to open the JSON input file.
