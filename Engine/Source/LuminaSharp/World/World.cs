@@ -16,6 +16,7 @@ public unsafe partial class CWorld
     public DebugDraw Draw => new(WorldHandle);
     public Net Net => new(WorldHandle);
     public UI UI => new(WorldHandle);
+    public Input Input => new(WorldHandle);
     public Navigation Navigation => new(WorldHandle);
     public Perception Perception => new(WorldHandle);
     public GameplayMessageBus Messages => new(WorldHandle);

@@ -650,7 +650,7 @@ internal sealed class TypeDescription
     public IReadOnlyList<ScriptProperty> Properties { get; private set; } = Array.Empty<ScriptProperty>();
     public IReadOnlyList<ScriptButton> Buttons { get; private set; } = Array.Empty<ScriptButton>();
     private IReadOnlyList<ScriptProperty> InputBindings = Array.Empty<ScriptProperty>();
-    public int CallbackFlags { get; private set; }
+    public bool HasInputBindings { get; private set; }
     public string ProfileLabel { get; }
     public string FixedProfileLabel { get; }
     private IReadOnlyList<RequiredComponent> RequiredComponents = Array.Empty<RequiredComponent>();
@@ -667,10 +667,7 @@ internal sealed class TypeDescription
         Properties = Library.BuildMembers(Type, 0, new HashSet<Type>());
         Buttons = ComputeButtons(Type);
         InputBindings = ComputeInputBindings(Properties);
-        // Bit 5 = "declares input bindings", so native only crosses for scripts that have one. Derived from
-        // the members rather than from an override, hence set here and not in ComputeCallbackFlags. The bit
-        // index must match the native SCSharpScriptSystem.
-        CallbackFlags = ComputeCallbackFlags(Type) | (InputBindings.Count > 0 ? 1 << 5 : 0);
+        HasInputBindings = InputBindings.Count > 0;
         RequiredComponents = ComputeRequiredComponents(Type);
     }
 
@@ -857,49 +854,6 @@ internal sealed class TypeDescription
         }
     }
 
-    private static int ComputeCallbackFlags(Type Type)
-    {
-        // Bit indices must match the native CSharpScriptSystem.
-        int Flags = 0;
-
-        // OnInput (bit 4).
-        MethodInfo? Input = Type.GetMethod("OnInput",
-            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
-            null, new[] { typeof(Lumina.InputEvent) }, null);
-        if (Input != null && Input.DeclaringType != typeof(EntityScript))
-        {
-            Flags |= 1 << 4;
-        }
-
-        // OnFixedUpdate (bit 9): runs at the fixed physics timestep. Only overriding scripts are dispatched.
-        MethodInfo? Fixed = Type.GetMethod("OnFixedUpdate",
-            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
-            null, new[] { typeof(float) }, null);
-        if (Fixed != null && Fixed.DeclaringType != typeof(EntityScript))
-        {
-            Flags |= 1 << 9;
-        }
-
-        // OnUpdate (bit 10).
-        MethodInfo? Update = Type.GetMethod("OnUpdate",
-            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
-            null, new[] { typeof(float) }, null);
-        if (Update != null && Update.DeclaringType != typeof(EntityScript))
-        {
-            Flags |= 1 << 10;
-        }
-
-        // Update phase (bit 16): a [UpdatePhase(EScriptPhase.PostPhysics)] script runs its OnUpdate in the
-        // PostPhysics group instead of the default PrePhysics group. This bit index must match the native
-        // SCSharpScriptSystem (PostPhysicsPhaseBit). Folded into the callback flags so it rides the existing
-        // GetScriptCallbackFlags path onto the native component with no extra crossing or ABI change.
-        if (Type.GetCustomAttribute<UpdatePhaseAttribute>() is { Phase: EScriptPhase.PostPhysics })
-        {
-            Flags |= 1 << 16;
-        }
-
-        return Flags;
-    }
 }
 
 /// <summary>One precomputed [RequireComponent] member: ops token, wrapper factory, and the setter.</summary>

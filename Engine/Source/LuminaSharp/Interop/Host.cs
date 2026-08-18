@@ -134,6 +134,23 @@ public static unsafe partial class Host
     }
 
     /// Current script generation; native rebinds entity scripts when it changes (hot reload).
+    // Feeds one script's InputAction / InputAxis bindings this frame's evaluated action states so they can
+    // raise Pressed / Released / Held / Changed. States points into the owning FInputContext and is only
+    // valid for the duration of this call.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static void PollScriptInputBindings(IntPtr Handle, Lumina.FInputActionState* States, int Count, uint Serial, float DeltaTime)
+    {
+        try
+        {
+            Scripts?.EntityScripts?.PollInput(Handle, States, Count, Serial, DeltaTime);
+        }
+        catch (Exception Exception)
+        {
+            Native.Log(ELogLevel.Error, $"PollScriptInputBindings threw: {Exception}");
+        }
+    }
+
     [ManagedExport]
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
     public static int GetGeneration()

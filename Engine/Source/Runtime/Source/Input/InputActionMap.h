@@ -27,6 +27,9 @@ namespace Lumina
 
         RUNTIME_API const SInputAction* FindAction(FName Name) const;
 
+        // Authored mapping layer by name, or null. Rebuilt alongside the actions.
+        RUNTIME_API const SInputMappingContext* FindMappingContext(FName Name) const;
+
         // Index into GetAllActions() / the context's state array, or INDEX_NONE.
         RUNTIME_API int32 FindActionIndex(FName Name) const;
 
@@ -35,6 +38,9 @@ namespace Lumina
         RUNTIME_API void UpdateContext(FInputContext& Context, float DeltaSeconds) const;
 
         RUNTIME_API const FInputActionState& GetActionState(FName Name, const FInputContext& Context) const;
+
+        // Handle overload: resolves the name only when the action table has been rebuilt since last time, so a steady-state query is an array read.
+        RUNTIME_API const FInputActionState& GetActionState(const FInputActionHandle& Handle, const FInputContext& Context) const;
 
         RUNTIME_API bool  IsActionDown    (FName Name, const FInputContext& Context) const;
         RUNTIME_API bool  IsActionPressed (FName Name, const FInputContext& Context) const;
@@ -56,7 +62,8 @@ namespace Lumina
 
     private:
 
-        bool PassesUIGate(const SInputAction& Action, const FInputContext& Context) const;
+        // Whether the context's pushed mapping layers (and, failing those, its input mode) let this action fire.
+        bool PassesGate(const SInputAction& Action, const FInputContext& Context) const;
 
         // Sum this action's bindings into per-channel raw values, then shape them (invert, sensitivity,
         // dead zone). bOutAnyKeyDown reports whether a digital binding is held, which is what a Digital
@@ -65,6 +72,7 @@ namespace Lumina
             float& OutX, float& OutY, bool& bOutAnyKeyDown) const;
 
         TVector<SInputAction>  Actions;
+        TVector<SInputMappingContext> MappingContexts;
         THashMap<FName, int32> Lookup;
         uint32                 Serial = 0;
     };

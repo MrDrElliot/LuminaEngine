@@ -6,6 +6,7 @@
 #include "World/World.h"
 #include "World/WorldManager.h"
 #include "ScriptableObject.h"
+#include "DotNet/DotNetHost.h"
 #include "ScriptStruct.h"
 #include "Core/Serialization/MemoryArchiver.h"
 #include "Core/Serialization/ObjectArchiver.h"
@@ -377,6 +378,22 @@ namespace Lumina
                 if (IsStillAttached(Registry, Entity, Script))
                 {
                     Script->OnInput(Event);
+                }
+            }
+        }
+
+        void PollInputBindings(FEntityRegistry& Registry, entt::entity Entity, const FInputActionState* States,
+            int32 Count, uint32 Serial, float DeltaTime)
+        {
+            FScriptSnapshot Scripts;
+            SnapshotScripts(Registry, Entity, Scripts);
+
+            for (TObjectPtr<CEntityScript>& Held : Scripts)
+            {
+                CEntityScript* Script = Held.Get();
+                if (IsStillAttached(Registry, Entity, Script))
+                {
+                    DotNet::PollScriptInput(Script, States, Count, Serial, DeltaTime);
                 }
             }
         }

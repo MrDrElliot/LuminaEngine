@@ -1376,6 +1376,34 @@ namespace Lumina::DotNet
         return GCachedGeneration; // native mirror; refreshed on (re)load, see ReloadScripts
     }
 
+    void PollScriptInput(CObject* Script, const FInputActionState* States, int32 Count, uint32 Serial,
+        float DeltaTime)
+    {
+        if (!bInitialized || Script == nullptr || States == nullptr)
+        {
+            return;
+        }
+
+        // Find, never create: a C++ script has no managed instance and minting one per frame for every
+        // script on an input entity is exactly the cost this lookup exists to avoid.
+        void* Handle = ManagedInstances::Find(Script);
+        if (Handle == nullptr)
+        {
+            return;
+        }
+
+        // An engine export lives in the non-collectible LuminaSharp.dll, so its pointer outlives hot
+        // reloads and is safe to cache, matching what the generated ScriptEvent shims do.
+        using FThunk = void (CORECLR_DELEGATE_CALLTYPE*)(void*, const FInputActionState*, int32, uint32, float);
+        static FThunk Thunk = (FThunk)ResolveManagedExport("PollScriptInputBindings");
+        if (Thunk == nullptr)
+        {
+            return;
+        }
+
+        Thunk(Handle, States, Count, Serial, DeltaTime);
+    }
+
     void* ResolveManagedExport(FStringView Name)
     {
         if (!bInitialized || GResolveManagedExport == nullptr)

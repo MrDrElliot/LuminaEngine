@@ -92,6 +92,17 @@ namespace Lumina
         const TVector<FInputActionState>& GetActionStates() const { return ActionStates; }
         TVector<FInputActionState>&       GetMutableActionStates() { return ActionStates; }
 
+        // Pushed mapping layers, innermost last. Names rather than resolved pointers, so re-authoring the
+        // settings cannot leave the stack pointing at freed entries.
+        const TVector<FName>& GetInputLayers() const { return InputLayers; }
+
+        // Re-pushing a layer already on the stack moves it to the top rather than duplicating it, so a
+        // double push followed by one pop cannot leave it stuck on.
+        RUNTIME_API void PushInputLayer(FName Name);
+        RUNTIME_API bool PopInputLayer(FName Name);
+        RUNTIME_API bool HasInputLayer(FName Name) const;
+        RUNTIME_API void ClearInputLayers();
+
         // The action-table serial these states were sized against; a mismatch means the settings changed.
         uint32 GetActionsSerial() const { return ActionsSerial; }
         void   SetActionsSerial(uint32 InSerial) { ActionsSerial = InSerial; }
@@ -133,6 +144,7 @@ namespace Lumina
         TArray<Input::EKeyState, (uint32)EKey::Num>         KeyStates = {};
         TArray<Input::EMouseState, (uint32)EMouseKey::Num>  MouseStates = {};
 
+        TVector<FName>                 InputLayers;
         TVector<FInputActionState>     ActionStates;
         uint32                         ActionsSerial = 0;
         TVector<SInputEvent>           FrameEvents;

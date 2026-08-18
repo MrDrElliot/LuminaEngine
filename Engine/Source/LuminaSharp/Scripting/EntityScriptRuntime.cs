@@ -275,31 +275,12 @@ internal sealed class EntityScriptRuntime
         Handle.Free();
     }
 
-    /// <summary>Delivers one discrete input event to a script's OnInput (event-driven input listening).</summary>
-    public void DispatchInput(IntPtr Handle, in Lumina.InputEvent Event)
-    {
-        if (Resolve(Handle) is not EntityScript Script)
-        {
-            return;
-        }
-
-        try
-        {
-            using var Scope = Game.Push(Script.World, Script.Entity, Script);
-            Script.OnInput(Event);
-        }
-        catch (Exception Exception)
-        {
-            Native.Log(ELogLevel.Error, $"EntityScript.OnInput threw: {Exception}");
-        }
-    }
-
     /// <summary>Applies this frame's action states to a script's input bindings, raising their events. One
     /// crossing per script per frame, and only for scripts that declare a binding (callback flag) whose
     /// entity is receiving input.</summary>
     public unsafe void PollInput(IntPtr Handle, Lumina.FInputActionState* States, int Count, uint Serial, float DeltaTime)
     {
-        if (Resolve(Handle) is not EntityScript Script)
+        if (Resolve(Handle) is not EntityScript Script || !Script.Description.HasInputBindings)
         {
             return;
         }
@@ -313,15 +294,6 @@ internal sealed class EntityScriptRuntime
         {
             Native.Log(ELogLevel.Error, $"EntityScript input binding threw: {Exception}");
         }
-    }
-
-    public int CallbackFlags(IntPtr Handle)
-    {
-        if (Resolve(Handle) is not EntityScript Script)
-        {
-            return 0;
-        }
-        return Script.Description.CallbackFlags;
     }
 
 

@@ -126,13 +126,6 @@ public abstract class EntityScript : Lumina.CEntityScript
     // class's ScriptOverrides mask, so the native shim only crosses the boundary for callbacks a script
     // actually implements.
 
-    /// <summary>Called per discrete input event while the entity is receiving input (needs <see cref="EnableInput"/>).
-    /// NOT YET DISPATCHED on the unified path -- input routing moves onto CEntityScript in a later step, and
-    /// until it does an override here will not fire.</summary>
-    public virtual void OnInput(Lumina.InputEvent Event)
-    {
-    }
-
     /// <summary>Add (idempotent) and return this entity's SInputComponent so it can receive input. Call in OnReady.</summary>
     protected Lumina.SInputComponent EnableInput()
     {

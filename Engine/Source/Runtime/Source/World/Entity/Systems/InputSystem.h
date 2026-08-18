@@ -4,20 +4,20 @@
 
 namespace Lumina
 {
-    // Samples each world's OWN input context once per frame and writes a per-entity snapshot onto every
-    // SInputComponent. Runs at Highest priority (before scripts/gameplay) so queries read stable data, not
-    // live globals -- killing the active-vs-per-world routing inconsistency and the cross-world mouse leak.
-    // Because it resolves the world's own viewport, it behaves identically in editor and shipping, and the
-    // snapshot is the per-entity input command we can later serialize for networked play.
+    // Delivers input to the scripts on every entity tagged with an SInputComponent: discrete events through
+    // OnInput, and declarative bindings through the per-frame action states. Runs at Highest priority so it
+    // is ahead of gameplay. It stores nothing: the state lives once per viewport in FInputContext and is read
+    // through Input:: (Input/InputQuery.h).
     REFLECT(System)
     struct SInputSystem
     {
         GENERATED_BODY()
-        ENTITY_SYSTEM(  RequiresUpdate(EUpdateStage::FrameStart, EUpdatePriority::Highest),
-                        RequiresUpdate(EUpdateStage::PrePhysics, EUpdatePriority::Highest))
+        // FrameStart only. FInputContext::FrameEvents is not cleared until EndFrame, so a second stage
+        // re-delivered every event to every script and rebuilt the snapshot a second time.
+        ENTITY_SYSTEM(RequiresUpdate(EUpdateStage::FrameStart, EUpdatePriority::Highest))
 
-        // Writes only the per-entity input snapshot; the viewport registry it reads is a process global
-        // accessed read-only. Disjoint from gameplay/physics → overlaps them. Defined in the .cpp.
+        // Reads the routing tag only; the viewport registry it consults is a process global accessed
+        // read-only. Disjoint from gameplay and physics, so it overlaps them. Defined in the .cpp.
         static FSystemAccess Access;
 
         static void Update(const FSystemContext& Context) noexcept;

@@ -250,6 +250,7 @@ namespace Lumina
     void FInputActionMap::RebuildFromSettings()
     {
         Actions = GetDefault<CInputSettings>()->Actions;
+        MappingContexts = GetDefault<CInputSettings>()->MappingContexts;
         Lookup.clear();
         for (int32 i = 0; i < int32(Actions.size()); ++i)
         {
@@ -266,7 +267,7 @@ namespace Lumina
         // Invalidates every cached action index and every context's state array (they re-size on their
         // next update, which also clears state carried over from a removed action).
         ++Serial;
-        LOG_INFO("[InputActions] Loaded {} actions.", Actions.size());
+        LOG_INFO("[InputActions] Loaded {} actions, {} mapping contexts.", Actions.size(), MappingContexts.size());
     }
 
     const SInputAction* FInputActionMap::FindAction(FName Name) const
@@ -281,8 +282,47 @@ namespace Lumina
         return It != Lookup.end() ? It->second : INDEX_NONE;
     }
 
-    bool FInputActionMap::PassesUIGate(const SInputAction& Action, const FInputContext& Context) const
+    const SInputMappingContext* FInputActionMap::FindMappingContext(FName Name) const
     {
+        for (const SInputMappingContext& Layer : MappingContexts)
+        {
+            if (Layer.Name == Name)
+            {
+                return &Layer;
+            }
+        }
+        return nullptr;
+    }
+
+    bool FInputActionMap::PassesGate(const SInputAction& Action, const FInputContext& Context) const
+    {
+        // Top of the stack down: the first layer listing the action allows it, and a blocking layer that
+        // does not list it swallows it before any layer underneath is consulted.
+        const TVector<FName>& Stack = Context.GetInputLayers();
+        for (size_t i = Stack.size(); i > 0; --i)
+        {
+            const SInputMappingContext* Layer = FindMappingContext(Stack[i - 1]);
+            if (Layer == nullptr)
+            {
+                continue;
+            }
+
+            for (const FName& Allowed : Layer->Actions)
+            {
+                if (Allowed == Action.Name)
+                {
+                    return true;
+                }
+            }
+
+            if (Layer->bBlockLower)
+            {
+                return false;
+            }
+        }
+
+        // No layer decided. bRunsInUI predates mapping layers and stays the escape hatch for a project
+        // that has not authored any: UI mode behaves as a blocking layer over the actions that opt in.
         return Action.bRunsInUI || Context.GetInputMode() != EInputMode::UI;
     }
 
@@ -383,7 +423,7 @@ namespace Lumina
             float X = 0.0f;
             float Y = 0.0f;
             bool bAnyKeyDown = false;
-            if (PassesUIGate(Action, Context))
+            if (PassesGate(Action, Context))
             {
                 EvaluateRaw(Action, Context, X, Y, bAnyKeyDown);
             }
@@ -429,6 +469,29 @@ namespace Lumina
             return Empty;
         }
         return States[Index];
+    }
+
+    const FInputActionState& FInputActionMap::GetActionState(const FInputActionHandle& Handle, const FInputContext& Context) const
+    {
+        static const FInputActionState Empty;
+
+        if (Handle.CachedSerial != Serial)
+        {
+            Handle.CachedIndex  = FindActionIndex(Handle.Name);
+            Handle.CachedSerial = Serial;
+        }
+
+        if (Handle.CachedIndex == INDEX_NONE)
+        {
+            return Empty;
+        }
+
+        const TVector<FInputActionState>& States = Context.GetActionStates();
+        if (Context.GetActionsSerial() != Serial || Handle.CachedIndex >= int32(States.size()))
+        {
+            return Empty;
+        }
+        return States[Handle.CachedIndex];
     }
 
     bool FInputActionMap::IsActionDown(FName Name, const FInputContext& Context) const

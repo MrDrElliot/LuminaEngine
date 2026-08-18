@@ -121,6 +121,57 @@ namespace Lumina
         bool IsAxis() const { return Type != EInputActionType::Digital; }
     };
 
+    // A named layer of actions, pushed onto a world's input stack to change what input means right now:
+    // open the pause menu and only the menu's actions should fire. Authored on CInputSettings next to the
+    // actions themselves, so what a layer contains is data rather than code.
+    REFLECT()
+    struct RUNTIME_API SInputMappingContext
+    {
+        GENERATED_BODY()
+
+        PROPERTY(Editable)
+        FName Name;
+
+        /** The actions this layer allows. An action listed here fires while the layer is on the stack. */
+        PROPERTY(Editable)
+        TVector<FName> Actions;
+
+        // The point of a menu layer: an action NOT listed here stops at this layer instead of reaching
+        // gameplay underneath. Leave it false for a layer that only adds actions.
+        PROPERTY(Editable)
+        bool bBlockLower = true;
+    };
+
+    // A reference to an authored action, resolved once instead of hashed per query. The NAME is what it
+    // really holds: a settings rebuild moves indices, and re-resolving from the name means gameplay code
+    // survives a rebind without knowing one happened. Serial 0 means never resolved (the map's first
+    // rebuild sets it to 1).
+    struct FInputActionHandle
+    {
+        FInputActionHandle() = default;
+        explicit FInputActionHandle(FName InName) : Name(InName) {}
+
+        FName GetName() const { return Name; }
+
+        // Cleared by assigning a new name, so a rebound handle cannot keep answering for the old action.
+        void SetName(FName InName)
+        {
+            Name = InName;
+            CachedIndex = INDEX_NONE;
+            CachedSerial = 0;
+        }
+
+        bool IsSet() const { return !Name.IsNone(); }
+
+    private:
+
+        friend class FInputActionMap;
+
+        FName          Name;
+        mutable int32  CachedIndex = INDEX_NONE;
+        mutable uint32 CachedSerial = 0;
+    };
+
     // Per-frame evaluated state of one action within one input context. Plain data, mirrored byte for byte by
     // LuminaSharp.InputActionState: the script layer reads the whole array through a pointer instead of
     // crossing into native per action.

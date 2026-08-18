@@ -14,6 +14,8 @@
 
 namespace Lumina
 {
+    struct FInputActionState;
+
     class CWorld;
 
     /**
@@ -217,6 +219,9 @@ namespace Lumina
 
         /** Delivers one input event to every script on Entity. */
         RUNTIME_API void DispatchInput(FEntityRegistry& Registry, entt::entity Entity, const SInputEvent& Event);
+
+        // Hands every script on Entity this frame's action states so C# InputAction / InputAxis bindings raise their events. Native scripts have no bindings and cost one null check.
+        RUNTIME_API void PollInputBindings(FEntityRegistry& Registry, entt::entity Entity, const FInputActionState* States, int32 Count, uint32 Serial, float DeltaTime);
 
         /** Delivers a perception event to every script on the PERCEIVER entity. bSensed picks
          *  OnTargetPerceived vs OnTargetLost. */

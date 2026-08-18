@@ -23,6 +23,7 @@
 #include "Scripting/DotNet/DotNetHost.h"
 #include "UI/RmlUiBridge.h"
 #include "Input/InputActionMap.h"
+#include "Input/InputQuery.h"
 #include "Input/InputViewport.h"
 #include "Input/InputContext.h"
 #include "Input/InputMode.h"
@@ -1436,4 +1437,100 @@ LUMINA_DOTNET_EXPORT(int32, Input_FindActionIndex)(const char* Name, int32 Len)
         return INDEX_NONE;
     }
     return FInputActionMap::Get().FindActionIndex(FName(FStringView(Name, (size_t)Len)));
+}
+
+// The World.Input facade: the escape hatch for code that wants to poll by name rather than declare an
+// SInputAction binding. Every one of these returns the neutral value when the world is not receiving
+// input, so a caller never has to test first.
+LUMINA_DOTNET_EXPORT(FInputActionState, Input_GetActionState)(uint64 World, const char* Name, int32 Len)
+{
+    if (Name == nullptr || Len <= 0)
+    {
+        return FInputActionState{};
+    }
+    const FInputActionHandle Handle{ FName(FStringView(Name, (size_t)Len)) };
+    return Input::GetActionState(AsWorld(World), Handle);
+}
+
+// Mapping layers. Push a layer authored in the Input settings to change what input means right now; a
+// blocking layer stops any action it does not list from reaching gameplay underneath.
+LUMINA_DOTNET_EXPORT(void, Input_PushLayer)(uint64 World, const char* Name, int32 Len)
+{
+    if (Name != nullptr && Len > 0)
+    {
+        Input::PushLayer(AsWorld(World), FName(FStringView(Name, (size_t)Len)));
+    }
+}
+
+LUMINA_DOTNET_EXPORT(int32, Input_PopLayer)(uint64 World, const char* Name, int32 Len)
+{
+    if (Name == nullptr || Len <= 0)
+    {
+        return 0;
+    }
+    return Input::PopLayer(AsWorld(World), FName(FStringView(Name, (size_t)Len))) ? 1 : 0;
+}
+
+LUMINA_DOTNET_EXPORT(int32, Input_HasLayer)(uint64 World, const char* Name, int32 Len)
+{
+    if (Name == nullptr || Len <= 0)
+    {
+        return 0;
+    }
+    return Input::HasLayer(AsWorld(World), FName(FStringView(Name, (size_t)Len))) ? 1 : 0;
+}
+
+LUMINA_DOTNET_EXPORT(void, Input_ClearLayers)(uint64 World)
+{
+    Input::ClearLayers(AsWorld(World));
+}
+
+LUMINA_DOTNET_EXPORT(int32, Input_IsReceivingInput)(uint64 World)
+{
+    return Input::GetReceivingContext(AsWorld(World)) != nullptr ? 1 : 0;
+}
+
+LUMINA_DOTNET_EXPORT(int32, Input_IsKeyDown)(uint64 World, int32 Key)
+{
+    return Input::IsKeyDown(AsWorld(World), (Lumina::EKey)Key) ? 1 : 0;
+}
+
+LUMINA_DOTNET_EXPORT(int32, Input_IsKeyPressed)(uint64 World, int32 Key)
+{
+    return Input::IsKeyPressed(AsWorld(World), (Lumina::EKey)Key) ? 1 : 0;
+}
+
+LUMINA_DOTNET_EXPORT(int32, Input_IsKeyReleased)(uint64 World, int32 Key)
+{
+    return Input::IsKeyReleased(AsWorld(World), (Lumina::EKey)Key) ? 1 : 0;
+}
+
+LUMINA_DOTNET_EXPORT(int32, Input_IsMouseButtonDown)(uint64 World, int32 Button)
+{
+    return Input::IsMouseButtonDown(AsWorld(World), (Lumina::EMouseKey)Button) ? 1 : 0;
+}
+
+LUMINA_DOTNET_EXPORT(int32, Input_IsMouseButtonPressed)(uint64 World, int32 Button)
+{
+    return Input::IsMouseButtonPressed(AsWorld(World), (Lumina::EMouseKey)Button) ? 1 : 0;
+}
+
+LUMINA_DOTNET_EXPORT(int32, Input_IsMouseButtonReleased)(uint64 World, int32 Button)
+{
+    return Input::IsMouseButtonReleased(AsWorld(World), (Lumina::EMouseKey)Button) ? 1 : 0;
+}
+
+LUMINA_DOTNET_EXPORT(FVector2, Input_GetMousePosition)(uint64 World)
+{
+    return Input::GetMousePosition(AsWorld(World));
+}
+
+LUMINA_DOTNET_EXPORT(FVector2, Input_GetMouseDelta)(uint64 World)
+{
+    return Input::GetMouseDelta(AsWorld(World));
+}
+
+LUMINA_DOTNET_EXPORT(float, Input_GetMouseWheel)(uint64 World)
+{
+    return Input::GetMouseWheel(AsWorld(World));
 }

@@ -53,6 +53,7 @@
 #include "Entity/Components/InputComponent.h"
 #include "Input/InputContext.h"
 #include "Input/InputViewport.h"
+#include "Input/InputQuery.h"
 #include "Entity/Components/SingletonEntityComponent.h"
 #include "Entity/Systems/SystemSingletons.h"
 #include "Entity/Systems/CameraSystem.h"
@@ -388,7 +389,6 @@ namespace Lumina
         EntityRegistry.on_construct <FRelationshipComponent>()      .connect<&ThisClass::OnRelationshipComponentConstruct>(this);
         EntityRegistry.on_destroy   <SEntityScriptComponent>()      .connect<&ThisClass::OnCSharpScriptComponentDestroyed>(this);
         EntityRegistry.on_destroy   <SWidgetComponent>()            .connect<&ThisClass::OnWidgetComponentDestroyed>(this);
-        EntityRegistry.on_construct <SInputComponent>()             .connect<&ThisClass::OnInputComponentConstruct>(this);
         SystemContext.EventSink     <FSwitchActiveCameraEvent>()    .connect<&ThisClass::OnChangeCameraEvent>(this);
 
         // on_construct catches spawns/prefabs/loads; on_update catches registry.patch<T> edits;
@@ -424,14 +424,6 @@ namespace Lumina
             TransformComponent.DirtyState = DirtyState;
         });
 
-        // Bind loaded input components to this world so their queries resolve to this world's viewport
-        // (hooks connect after the load swap, so pre-existing components miss on_construct).
-        auto InputView = EntityRegistry.view<SInputComponent>();
-        InputView.each([&](SInputComponent& InputComponent)
-        {
-            InputComponent.World = this;
-        });
-        
         if (WorldType == EWorldType::Game || WorldType == EWorldType::Simulation)
         {
             const auto AnyCameraView = EntityRegistry.view<SCameraComponent>();
@@ -478,6 +470,10 @@ namespace Lumina
 
         RmlUi::DestroyWorldUI(this);
         UIContext.reset();
+
+        // The viewport outlives the world in the editor, so a layer this world pushed and never popped
+        // would still be gating input in the next PIE session.
+        Input::ClearLayers(this);
 
         Audio::Context().StopAllSounds();
 
@@ -1536,11 +1532,6 @@ namespace Lumina
     void CWorld::OnWidgetComponentDestroyed(entt::registry& Registry, entt::entity Entity)
     {
         RmlUi::ReleaseWidget(this, Registry.get<SWidgetComponent>(Entity));
-    }
-
-    void CWorld::OnInputComponentConstruct(entt::registry& Registry, entt::entity Entity)
-    {
-        Registry.get<SInputComponent>(Entity).World = this;
     }
 
     void CWorld::OnCSharpScriptComponentDestroyed(entt::registry& Registry, entt::entity Entity)

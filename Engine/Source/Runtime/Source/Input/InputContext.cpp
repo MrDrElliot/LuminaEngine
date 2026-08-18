@@ -103,7 +103,7 @@ namespace Lumina
 
             SInputEvent Ev;
             Ev.Type   = EInputEventType::MouseDown;
-            Ev.Key    = MouseKeyWithMods(MouseButtonEvent.GetButton());
+            Ev.SetKey(MouseKeyWithMods(MouseButtonEvent.GetButton()));
             Ev.MouseX = MouseX;
             Ev.MouseY = MouseY;
             FrameEvents.push_back(Ev);
@@ -117,7 +117,7 @@ namespace Lumina
 
             SInputEvent Ev;
             Ev.Type   = EInputEventType::MouseUp;
-            Ev.Key    = MouseKeyWithMods(MouseButtonEvent.GetButton());
+            Ev.SetKey(MouseKeyWithMods(MouseButtonEvent.GetButton()));
             Ev.MouseX = MouseX;
             Ev.MouseY = MouseY;
             FrameEvents.push_back(Ev);
@@ -131,12 +131,13 @@ namespace Lumina
                 : Input::EKeyState::Pressed;
 
             SInputEvent Ev;
-            Ev.Type    = EInputEventType::KeyDown;
-            Ev.bRepeat = KeyEvent.IsRepeat();
-            Ev.Key.SetKey(KeyEvent.GetKeyCode());
-            Ev.Key.bCtrl  = KeyEvent.IsCtrlDown();
-            Ev.Key.bShift = KeyEvent.IsShiftDown();
-            Ev.Key.bAlt   = KeyEvent.IsAltDown();
+            Ev.Type   = EInputEventType::KeyDown;
+            Ev.Device = EKeyDevice::Keyboard;
+            Ev.Key    = KeyEvent.GetKeyCode();
+            if (KeyEvent.IsRepeat())    { Ev.AddFlag(EInputEventFlags::Repeat); }
+            if (KeyEvent.IsCtrlDown())  { Ev.AddFlag(EInputEventFlags::Ctrl); }
+            if (KeyEvent.IsShiftDown()) { Ev.AddFlag(EInputEventFlags::Shift); }
+            if (KeyEvent.IsAltDown())   { Ev.AddFlag(EInputEventFlags::Alt); }
             FrameEvents.push_back(Ev);
         }
         else if (Event.IsA<FKeyReleasedEvent>())
@@ -147,10 +148,11 @@ namespace Lumina
 
             SInputEvent Ev;
             Ev.Type = EInputEventType::KeyUp;
-            Ev.Key.SetKey(KeyEvent.GetKeyCode());
-            Ev.Key.bCtrl  = KeyEvent.IsCtrlDown();
-            Ev.Key.bShift = KeyEvent.IsShiftDown();
-            Ev.Key.bAlt   = KeyEvent.IsAltDown();
+            Ev.Device = EKeyDevice::Keyboard;
+            Ev.Key    = KeyEvent.GetKeyCode();
+            if (KeyEvent.IsCtrlDown())  { Ev.AddFlag(EInputEventFlags::Ctrl); }
+            if (KeyEvent.IsShiftDown()) { Ev.AddFlag(EInputEventFlags::Shift); }
+            if (KeyEvent.IsAltDown())   { Ev.AddFlag(EInputEventFlags::Alt); }
             FrameEvents.push_back(Ev);
         }
         else if (Event.IsA<FMouseScrolledEvent>())
@@ -171,6 +173,46 @@ namespace Lumina
         }
 
         return false;
+    }
+
+    void FInputContext::PushInputLayer(FName Name)
+    {
+        if (Name.IsNone())
+        {
+            return;
+        }
+        PopInputLayer(Name);
+        InputLayers.push_back(Name);
+    }
+
+    bool FInputContext::PopInputLayer(FName Name)
+    {
+        for (size_t i = InputLayers.size(); i > 0; --i)
+        {
+            if (InputLayers[i - 1] == Name)
+            {
+                InputLayers.erase(InputLayers.begin() + (i - 1));
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool FInputContext::HasInputLayer(FName Name) const
+    {
+        for (const FName& Layer : InputLayers)
+        {
+            if (Layer == Name)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void FInputContext::ClearInputLayers()
+    {
+        InputLayers.clear();
     }
 
     void FInputContext::EndFrame(double DeltaSeconds)

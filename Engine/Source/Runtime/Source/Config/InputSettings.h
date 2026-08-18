@@ -20,6 +20,10 @@ namespace Lumina
         PROPERTY(Editable, Category = "Action Mappings")
         TVector<SInputAction> Actions;
 
+        /** Named layers a world can push to change what input means, e.g. a Menu layer that blocks gameplay. */
+        PROPERTY(Editable, Category = "Mapping Contexts")
+        TVector<SInputMappingContext> MappingContexts;
+
         // Push the loaded actions into the live FInputActionMap.
         virtual void PostInitSettings() override;
     };

@@ -420,7 +420,6 @@ namespace Lumina
         void OnTransformComponentConstruct(entt::registry& Registry, entt::entity Entity);
         void OnCSharpScriptComponentDestroyed(entt::registry& Registry, entt::entity Entity);
         void OnWidgetComponentDestroyed(entt::registry& Registry, entt::entity Entity);
-        void OnInputComponentConstruct(entt::registry& Registry, entt::entity Entity);
 
         // Attaches a script of the given class to an entity (emplacing SEntityScriptComponent if needed) and
         // binds it immediately. Returns the managed instance handle, or null on failure.

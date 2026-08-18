@@ -9,6 +9,7 @@ namespace Lumina
 {
     struct FSystemContext;
     struct FInputActionState;
+    class CObject;
     class CScriptStruct;
     enum class EUpdateStage : uint8;
     namespace Scripting { struct FScriptExportSchema; struct FScriptPropertyEntry; struct FScriptButton; }
@@ -92,18 +93,9 @@ namespace Lumina::DotNet
     
     RUNTIME_API int32 GetScriptGeneration();
     
-    RUNTIME_API void* CreateEntityScript(FStringView TypeName, uint64 World, uint32 Entity);
+    // Entity-script lifecycle and ticking are NOT here: a C# script is a CEntityScript CObject dispatched
+    // through the Reflector's ScriptEvent virtuals, so the managed side no longer owns any of it.
 
-    RUNTIME_API void OnReadyScript(void* Instance);
-    
-    RUNTIME_API void UpdateScripts(void* const* Instances, int32 Count, float DeltaSeconds);
-
-    // Dispatches OnFixedUpdate to a batch of scripts at the fixed physics step (called 0..N times per frame by
-    // the SEntityScriptSystem accumulator). No-op if the managed export is absent (old generation).
-    RUNTIME_API void FixedUpdateScripts(void* const* Instances, int32 Count, float FixedDeltaSeconds);
-
-    RUNTIME_API void DestroyEntityScript(void* Instance);
-    
     RUNTIME_API void GatherEntityScriptTypes(TVector<FString>& OutTypeNames);
 
     //~ Scriptable CObjects: a C# subclass of a REFLECT(Scriptable) native CObject. The Reflector mints a CClass
@@ -204,15 +196,9 @@ namespace Lumina::DotNet
 
     RUNTIME_API void ManagedRenderSceneGetExtent(void* Handle, uint32* OutWidth, uint32* OutHeight);
 
-    // Bitmask of the frame callbacks a script overrides; 0 if none. Lets the caller skip the managed crossing.
-    RUNTIME_API int32 GetScriptCallbackFlags(void* Instance);
-    
-    RUNTIME_API void DispatchScriptInput(void* Instance, int32 Type, int32 KeyCode, int32 bMouse, int32 Mods,
-int32 bRepeat, double MouseX, double MouseY, double DeltaX, double DeltaY, double Scroll);
-
-    // Hands a script this frame's evaluated input action states so its InputAction / InputAxis bindings can
-    // raise their events. States points into the owning FInputContext and is only valid during the call.
-    RUNTIME_API void PollScriptInput(void* Instance, const FInputActionState* States, int32 Count, uint32 Serial,
+    // Feeds a script's InputAction / InputAxis bindings this frame's evaluated action states. No-op for a
+    // C++ script, which has no managed instance. States points into the owning FInputContext.
+    RUNTIME_API void PollScriptInput(CObject* Script, const FInputActionState* States, int32 Count, uint32 Serial,
         float DeltaTime);
 
     //~ Exported [Property] schema bridge (editor inspector + serialization). Game thread only.

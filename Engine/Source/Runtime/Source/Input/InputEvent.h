@@ -1,19 +1,32 @@
 #pragma once
 
+#include "Core/Object/ObjectMacros.h"
 #include "Input/Key.h"
+#include "InputEvent.generated.h"
 
 namespace Lumina
 {
-    // The kind of discrete input that occurred. Mirrors the raw event stream, collapsed to the
-    // categories a gameplay script cares about.
+    // The kind of discrete input that occurred, collapsed to the categories a gameplay script cares about.
+    REFLECT()
     enum class EInputEventType : uint8
     {
-        KeyDown,      // a keyboard key went down (bRepeat set for OS auto-repeat)
+        KeyDown,      // a keyboard key went down (Repeat flag set for OS auto-repeat)
         KeyUp,        // a keyboard key was released
         MouseDown,    // a mouse button went down
         MouseUp,      // a mouse button was released
         MouseMove,    // the cursor moved (DeltaX/DeltaY carry the motion)
         MouseScroll,  // the wheel turned (Scroll carries the signed delta)
+    };
+
+    // Bit flags rather than bools, because a C# bool is not blittable and a ScriptEvent parameter must be.
+    REFLECT()
+    enum class EInputEventFlags : uint8
+    {
+        None   = 0,
+        Shift  = 1 << 0,
+        Ctrl   = 1 << 1,
+        Alt    = 1 << 2,
+        Repeat = 1 << 3,
     };
 
     inline const char* InputEventTypeToString(EInputEventType Type)
@@ -30,19 +43,82 @@ namespace Lumina
         return "Unknown";
     }
 
-    // A single discrete input event delivered to scripts via OnInput(event), so gameplay can react
-    // to input as it happens instead of polling SInputComponent each frame. One of these is queued
-    // per raw key/mouse event for the frame; Key carries the key/button plus modifier chord for the
-    // Key*/Mouse* button types and is unbound for move/scroll.
+    // Flattened instead of carrying an SKey: SKey holds bools, and one non-blittable member makes the whole struct illegal as a ScriptEvent parameter, which is what kept OnInput dead for C# scripts.
+    REFLECT(Event)
     struct SInputEvent
     {
+        GENERATED_BODY()
+
+        PROPERTY(Script)
         EInputEventType Type = EInputEventType::KeyDown;
-        SKey   Key;
-        bool   bRepeat = false;
-        double MouseX  = 0.0;
-        double MouseY  = 0.0;
-        double DeltaX  = 0.0;
-        double DeltaY  = 0.0;
-        double Scroll  = 0.0;
+
+        /** Which device Key/Button refers to. None for MouseMove and MouseScroll. */
+        PROPERTY(Script)
+        EKeyDevice Device = EKeyDevice::None;
+
+        /** The keyboard key, valid when Device is Keyboard. */
+        PROPERTY(Script)
+        EKey Key = EKey::Num;
+
+        /** The mouse button, valid when Device is Mouse. */
+        PROPERTY(Script)
+        EMouseKey Button = EMouseKey::Num;
+
+        PROPERTY(Script)
+        EInputEventFlags Flags = EInputEventFlags::None;
+
+        PROPERTY(Script)
+        double MouseX = 0.0;
+
+        PROPERTY(Script)
+        double MouseY = 0.0;
+
+        PROPERTY(Script)
+        double DeltaX = 0.0;
+
+        PROPERTY(Script)
+        double DeltaY = 0.0;
+
+        PROPERTY(Script)
+        double Scroll = 0.0;
+
+        bool HasFlag(EInputEventFlags Flag) const
+        {
+            return ((uint8)Flags & (uint8)Flag) != 0;
+        }
+
+        void AddFlag(EInputEventFlags Flag)
+        {
+            Flags = (EInputEventFlags)((uint8)Flags | (uint8)Flag);
+        }
+
+        bool IsShiftDown() const { return HasFlag(EInputEventFlags::Shift); }
+        bool IsCtrlDown()  const { return HasFlag(EInputEventFlags::Ctrl); }
+        bool IsAltDown()   const { return HasFlag(EInputEventFlags::Alt); }
+        bool IsRepeat()    const { return HasFlag(EInputEventFlags::Repeat); }
+        bool IsKeyboard()  const { return Device == EKeyDevice::Keyboard; }
+        bool IsMouse()     const { return Device == EKeyDevice::Mouse; }
+
+        /** Rebuild the equivalent SKey, so chord matching against a bound SKey still works. */
+        SKey ToKey() const
+        {
+            SKey Out;
+            if (Device == EKeyDevice::Keyboard) { Out.SetKey(Key); }
+            else if (Device == EKeyDevice::Mouse) { Out.SetMouseButton(Button); }
+            Out.bShift = IsShiftDown();
+            Out.bCtrl  = IsCtrlDown();
+            Out.bAlt   = IsAltDown();
+            return Out;
+        }
+
+        void SetKey(const SKey& InKey)
+        {
+            Device = InKey.Device;
+            Key    = InKey.Key;
+            Button = InKey.MouseButton;
+            if (InKey.bShift) { AddFlag(EInputEventFlags::Shift); }
+            if (InKey.bCtrl)  { AddFlag(EInputEventFlags::Ctrl); }
+            if (InKey.bAlt)   { AddFlag(EInputEventFlags::Alt); }
+        }
     };
 }
