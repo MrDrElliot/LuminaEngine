@@ -3,6 +3,7 @@
 
 #include "Input/InputActionMap.h"
 #include "Input/InputContext.h"
+#include "Input/InputProcessor.h"
 #include "Input/InputViewport.h"
 
 namespace Lumina::Input
@@ -24,6 +25,11 @@ namespace Lumina::Input
             return nullptr;
         }
         return &Viewport->GetContext();
+    }
+
+    bool IsReceivingInput(const CWorld* World)
+    {
+        return GetReceivingContext(World) != nullptr;
     }
 
     const FInputActionState& GetActionState(const CWorld* World, const FInputActionHandle& Action)
@@ -136,6 +142,42 @@ namespace Lumina::Input
     {
         const FInputContext* Context = GetReceivingContext(World);
         return Context != nullptr ? (float)Context->GetMouseZ() : 0.0f;
+    }
+
+    TSpan<const SInputEvent> GetFrameEvents(const CWorld* World)
+    {
+        const FInputContext* Context = GetReceivingContext(World);
+        if (Context == nullptr)
+        {
+            return TSpan<const SInputEvent>();
+        }
+        const TVector<SInputEvent>& Events = Context->GetFrameEvents();
+        return TSpan<const SInputEvent>(Events.data(), Events.size());
+    }
+
+    void SetMouseMode(const CWorld* World, EMouseMode Mode)
+    {
+        FInputProcessor::Get().SetMouseMode(Mode, World);
+    }
+
+    EMouseMode GetMouseMode(const CWorld* World)
+    {
+        const FInputContext* Context = FindOwnContext(World);
+        return Context != nullptr ? Context->GetMouseMode() : EMouseMode::Normal;
+    }
+
+    void SetInputMode(const CWorld* World, EInputMode Mode)
+    {
+        if (FInputContext* Context = FindOwnContext(World))
+        {
+            Context->SetInputMode(Mode);
+        }
+    }
+
+    EInputMode GetInputMode(const CWorld* World)
+    {
+        const FInputContext* Context = FindOwnContext(World);
+        return Context != nullptr ? Context->GetInputMode() : EInputMode::Game;
     }
 
     float GetAxisPair(const CWorld* World, const FInputActionHandle& Positive, const FInputActionHandle& Negative)

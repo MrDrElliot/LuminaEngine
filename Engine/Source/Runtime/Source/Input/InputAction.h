@@ -142,24 +142,21 @@ namespace Lumina
         bool bBlockLower = true;
     };
 
-    // A reference to an authored action, resolved once instead of hashed per query. The NAME is what it
-    // really holds: a settings rebuild moves indices, and re-resolving from the name means gameplay code
-    // survives a rebind without knowing one happened. Serial 0 means never resolved (the map's first
-    // rebuild sets it to 1).
-    struct FInputActionHandle
+    // A reference to an authored action, resolved once per settings change instead of hashed per query.
+    REFLECT()
+    struct RUNTIME_API FInputActionHandle
     {
+        GENERATED_BODY()
+
         FInputActionHandle() = default;
         explicit FInputActionHandle(FName InName) : Name(InName) {}
 
-        FName GetName() const { return Name; }
+        // Public so the property system can write it; the resolve re-checks it against CachedName.
+        PROPERTY(Editable)
+        FName Name;
 
-        // Cleared by assigning a new name, so a rebound handle cannot keep answering for the old action.
-        void SetName(FName InName)
-        {
-            Name = InName;
-            CachedIndex = INDEX_NONE;
-            CachedSerial = 0;
-        }
+        FName GetName() const { return Name; }
+        void  SetName(FName InName) { Name = InName; }
 
         bool IsSet() const { return !Name.IsNone(); }
 
@@ -167,9 +164,9 @@ namespace Lumina
 
         friend class FInputActionMap;
 
-        FName          Name;
         mutable int32  CachedIndex = INDEX_NONE;
         mutable uint32 CachedSerial = 0;
+        mutable FName  CachedName;
     };
 
     // Per-frame evaluated state of one action within one input context. Plain data, mirrored byte for byte by

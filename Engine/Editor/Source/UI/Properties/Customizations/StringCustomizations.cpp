@@ -3,7 +3,7 @@
 #include "ParameterPickerContext.h"
 #include "SocketPickerContext.h"
 #include "Assets/AssetTypes/Animation/AnimationGraph/AnimationGraph.h"
-#include "Input/InputActionMap.h"
+#include "InputActionCustomization.h"
 #include "Renderer/MeshData.h"
 #include "UI/Tools/AssetEditors/TextureEditor/TextureEditorTool.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
@@ -71,121 +71,6 @@ namespace Lumina
         // chains past the popup's edge.
         constexpr float kBonePickerIndent = 12.0f;
 
-        // "W, S, Mouse X" -- what actually triggers an action, shown as the picker row's tooltip so the
-        // author doesn't have to open the Input settings to remember what a name is bound to.
-        FString DescribeActionBindings(const SInputAction& Action)
-        {
-            FString Result;
-            for (const SInputActionBinding& Binding : Action.Bindings)
-            {
-                FString Token;
-                switch (Binding.Source)
-                {
-                case EInputAxisSource::MouseX:     Token = "Mouse X"; break;
-                case EInputAxisSource::MouseY:     Token = "Mouse Y"; break;
-                case EInputAxisSource::MouseWheel: Token = "Mouse Wheel"; break;
-                default:
-                    if (Binding.Key.IsMouse())
-                    {
-                        Token = "Mouse " + FInputActionMap::MouseButtonToString(Binding.Key.MouseButton);
-                    }
-                    else if (Binding.Key.IsKeyboard())
-                    {
-                        if (Binding.Key.bCtrl)  { Token += "Ctrl+"; }
-                        if (Binding.Key.bShift) { Token += "Shift+"; }
-                        if (Binding.Key.bAlt)   { Token += "Alt+"; }
-                        Token += FInputActionMap::KeyToString(Binding.Key.Key);
-                    }
-                    break;
-                }
-
-                if (Token.empty())
-                {
-                    continue;
-                }
-                if (!Result.empty())
-                {
-                    Result += ", ";
-                }
-                Result += Token;
-            }
-            return Result.empty() ? FString("Unbound") : Result;
-        }
-
-        const char* ActionTypeLabel(EInputActionType Type)
-        {
-            switch (Type)
-            {
-            case EInputActionType::Axis1D: return "Axis";
-            case EInputActionType::Axis2D: return "Axis 2D";
-            default:                       return "Digital";
-            }
-        }
-
-        // A searchable dropdown of the project's authored input actions (Settings > Engine > Input). Used
-        // by any Name or String property tagged InputAction, which is what a C# InputAction / InputAxis
-        // field mints as. Returns true when the user picked a value, writing it into Value.
-        bool DrawInputActionCombo(const char* Id, FString& Value, ImGuiTextFilter& Filter)
-        {
-            bool bPicked = false;
-            const TVector<SInputAction>& Actions = FInputActionMap::Get().GetAllActions();
-
-            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-            if (!ImGui::BeginCombo(Id, Value.empty() ? "(none)" : Value.c_str()))
-            {
-                return false;
-            }
-
-            if (ImGui::IsWindowAppearing())
-            {
-                Filter.Clear();
-                ImGui::SetKeyboardFocusHere();
-            }
-            Filter.Draw("##ActionFilter", 220.0f * ImGuiX::GetUIScale());
-            ImGui::Separator();
-
-            if (ImGui::Selectable("(none)", Value.empty()))
-            {
-                Value.clear();
-                bPicked = true;
-            }
-
-            int32 Shown = 0;
-            for (const SInputAction& Action : Actions)
-            {
-                if (Action.Name.IsNone())
-                {
-                    continue;
-                }
-                const FString ActionName(Action.Name.c_str());
-                if (!ImGuiX::PassSearchFilter(Filter, ActionName.c_str()))
-                {
-                    continue;
-                }
-
-                ++Shown;
-                if (ImGui::Selectable(ActionName.c_str(), Value == ActionName))
-                {
-                    Value = ActionName;
-                    bPicked = true;
-                }
-                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
-                {
-                    ImGuiX::TextTooltip_Internal((FString(ActionTypeLabel(Action.Type)) + ":  "
-                        + DescribeActionBindings(Action)).c_str());
-                }
-            }
-
-            if (Shown == 0)
-            {
-                ImGui::TextDisabled(Actions.empty()
-                    ? "No input actions. Add them in Settings > Engine > Input."
-                    : "No matching actions.");
-            }
-
-            ImGui::EndCombo();
-            return bPicked;
-        }
     }
 
     EPropertyChangeOp FNamePropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property)
@@ -195,7 +80,7 @@ namespace Lumina
         if (Property->Property->HasMetadata("InputAction"))
         {
             FString Picked = DisplayValue.IsNone() ? FString() : FString(DisplayValue.c_str());
-            if (DrawInputActionCombo("##InputAction", Picked, SearchFilter))
+            if (InputActionPicker::DrawCombo("##InputAction", Picked, SearchFilter))
             {
                 DisplayValue = Picked.empty() ? FName() : FName(Picked.c_str());
                 return EPropertyChangeOp::Updated;
@@ -543,7 +428,7 @@ namespace Lumina
         // The string form of the action picker: what a C# InputAction / InputAxis [Property] field mints as.
         if (Property->Property->HasMetadata("InputAction"))
         {
-            if (DrawInputActionCombo("##InputAction", DisplayValue, SearchFilter))
+            if (InputActionPicker::DrawCombo("##InputAction", DisplayValue, SearchFilter))
             {
                 return EPropertyChangeOp::Updated;
             }

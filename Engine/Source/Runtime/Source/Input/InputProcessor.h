@@ -44,7 +44,7 @@ namespace Lumina
         // CallerWorld targets that world's viewport (per-window capture); null = the global active viewport.
         // Routing per-caller is essential with multiple game-preview windows: a non-active player releasing
         // its own capture must not clobber the active viewport's mode.
-        RUNTIME_API void       SetMouseMode(EMouseMode Mode, CWorld* CallerWorld = nullptr);
+        RUNTIME_API void       SetMouseMode(EMouseMode Mode, const CWorld* CallerWorld = nullptr);
         RUNTIME_API void       SetInputMode(EInputMode Mode);
         RUNTIME_API EInputMode GetInputMode() const;
 

@@ -1,6 +1,7 @@
 ﻿#include "RuntimePCH.h"
 #include "FoliageTerrainSystem.h"
 #include "SystemContext.h"
+#include "TaskSystem/TaskSystem.h"
 #include "World/Entity/Components/FoliageComponent.h"
 #include "World/Entity/Components/TerrainComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
@@ -82,17 +83,20 @@ namespace Lumina
                     return;
                 }
 
-                bool bMovedAny = false;
-                for (SFoliageInstance& Inst : Foliage.Instances)
+                // Each instance reads the shared terrains and writes only its own Position.y.
+                std::atomic<bool> bMovedAny{ false };
+
+                const auto Reproject = [&](uint32 Index)
                 {
+                    SFoliageInstance& Inst = Foliage.Instances[Index];
                     if (!Foliage.IsValidType(Inst.TypeIndex))
                     {
-                        continue;
+                        return;
                     }
                     const SFoliageType& Type = Foliage.Types[Inst.TypeIndex];
                     if (!Type.bFollowTerrain)
                     {
-                        continue;
+                        return;
                     }
 
                     for (int32 t = 0; t < NumTerrains; ++t)
@@ -115,15 +119,30 @@ namespace Lumina
                             if (NewY != Inst.Position.y)
                             {
                                 Inst.Position.y = NewY;
-                                bMovedAny = true;
+                                bMovedAny.store(true, std::memory_order_relaxed);
                             }
                             break;
                         }
                     }
+                };
+
+                const uint32 NumInstances = (uint32)Foliage.Instances.size();
+
+                constexpr uint32 kParallelThreshold = 2048;
+                if (NumInstances < kParallelThreshold || GTaskSystem == nullptr)
+                {
+                    for (uint32 i = 0; i < NumInstances; ++i)
+                    {
+                        Reproject(i);
+                    }
+                }
+                else
+                {
+                    Task::ParallelFor(NumInstances, Reproject, 256);
                 }
 
                 Foliage.LastTerrainVersion = CombinedVersion;
-                if (bMovedAny)
+                if (bMovedAny.load(std::memory_order_relaxed))
                 {
                     // Invalidate the render cache so the moved instances rebake (transform/bounds changed).
                     Foliage.MarkInstancesChanged();

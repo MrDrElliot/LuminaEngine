@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "TerrainMeshletBuilder.h"
+#include "TaskSystem/TaskSystem.h"
 #include "World/Entity/Components/TerrainComponent.h"
 
 namespace Lumina::TerrainMeshletBuilder
@@ -146,6 +147,35 @@ namespace Lumina::TerrainMeshletBuilder
             Chunk.BoundsMin = FVector3(ChunkXMin, L.WorldOriginY + ChunkHeightMin - L.DilateY, ChunkZMin);
             Chunk.BoundsMax = FVector3(ChunkXMax, L.WorldOriginY + ChunkHeightMax + L.DilateY, ChunkZMax);
         }
+
+        // Safe to fan out: a chunk writes only its own Chunks entry and its own MeshletsPerChunk slice.
+        void RebuildChunkRect(FTerrainCPUState& State, int32 CxMin, int32 CxMax, int32 CyMin, int32 CyMax,
+                              const TVector<float>& Heightmap, const FLayout& L)
+        {
+            const int32 Width = CxMax - CxMin + 1;
+            const int32 Count = Width * (CyMax - CyMin + 1);
+            if (Width <= 0 || Count <= 0)
+            {
+                return;
+            }
+
+            // A chunk is thousands of heightmap samples, so the dispatch pays for itself at a handful.
+            constexpr int32 kParallelThreshold = 4;
+            if (Count < kParallelThreshold || GTaskSystem == nullptr)
+            {
+                for (int32 i = 0; i < Count; ++i)
+                {
+                    RebuildChunk(State, CxMin + (i % Width), CyMin + (i / Width), Heightmap, L);
+                }
+                return;
+            }
+
+            Task::ParallelFor((uint32)Count, [&](uint32 Index)
+            {
+                const int32 i = (int32)Index;
+                RebuildChunk(State, CxMin + (i % Width), CyMin + (i / Width), Heightmap, L);
+            }, 1);
+        }
     }
 
     void Build(STerrainComponent& Terrain, const FVector3& WorldOrigin)
@@ -164,13 +194,7 @@ namespace Lumina::TerrainMeshletBuilder
         State.Chunks.resize(L.NumChunks);
         State.Meshlets.resize(L.NumMeshlets);
 
-        for (int32 cy = 0; cy < L.ChunksPerSide; ++cy)
-        {
-            for (int32 cx = 0; cx < L.ChunksPerSide; ++cx)
-            {
-                RebuildChunk(State, cx, cy, Terrain.Heightmap, L);
-            }
-        }
+        RebuildChunkRect(State, 0, L.ChunksPerSide - 1, 0, L.ChunksPerSide - 1, Terrain.Heightmap, L);
     }
 
     void UpdateRegion(STerrainComponent& Terrain, const FVector3& WorldOrigin, const FIntVector2& SampleMin, const FIntVector2& SampleMax)
@@ -196,12 +220,6 @@ namespace Lumina::TerrainMeshletBuilder
         const int32 CyMin = Math::Clamp(SampleMin.y / L.QuadsPerChunk, 0, L.ChunksPerSide - 1);
         const int32 CyMax = Math::Clamp(SampleMax.y / L.QuadsPerChunk, 0, L.ChunksPerSide - 1);
 
-        for (int32 cy = CyMin; cy <= CyMax; ++cy)
-        {
-            for (int32 cx = CxMin; cx <= CxMax; ++cx)
-            {
-                RebuildChunk(State, cx, cy, Terrain.Heightmap, L);
-            }
-        }
+        RebuildChunkRect(State, CxMin, CxMax, CyMin, CyMax, Terrain.Heightmap, L);
     }
 }

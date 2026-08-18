@@ -1487,7 +1487,7 @@ LUMINA_DOTNET_EXPORT(void, Input_ClearLayers)(uint64 World)
 
 LUMINA_DOTNET_EXPORT(int32, Input_IsReceivingInput)(uint64 World)
 {
-    return Input::GetReceivingContext(AsWorld(World)) != nullptr ? 1 : 0;
+    return Input::IsReceivingInput(AsWorld(World)) ? 1 : 0;
 }
 
 LUMINA_DOTNET_EXPORT(int32, Input_IsKeyDown)(uint64 World, int32 Key)

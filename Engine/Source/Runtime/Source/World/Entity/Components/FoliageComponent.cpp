@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "FoliageComponent.h"
+#include "TaskSystem/TaskSystem.h"
 #include "World/Scene/RenderScene/ScenePrimitiveSet.h"
 #include "World/World.h"
 
@@ -48,43 +49,101 @@ namespace Lumina
             return; // cache already valid for the current instance set
         }
 
-        BakedInstances.clear();
-        BakedInstances.reserve(Instances.size());
-        bBakeIncomplete = false;
+        // Both rejections are properties of the TYPE, so they resolve once per type instead of per instance.
+        const uint32 NumTypes = (uint32)Types.size();
+        TVector<uint8> TypeReady;
+        TVector<FAABB> TypeBounds;
+        TypeReady.assign(NumTypes, 0u);
+        TypeBounds.resize(NumTypes);
 
-        for (const SFoliageInstance& Inst : Instances)
+        for (uint32 t = 0; t < NumTypes; ++t)
         {
-            if (!IsValidType(Inst.TypeIndex))
-            {
-                continue;
-            }
-            const SFoliageType& Type = Types[Inst.TypeIndex];
+            const SFoliageType& Type = Types[t];
             if (!Type.Mesh.IsValid())
             {
-                bBakeIncomplete = true; // the type has no mesh assigned yet (or it's still loading)
                 continue;
             }
 
             const FAABB& LocalBounds = Type.Mesh->GetAABB();
             if (LocalBounds.Max.x < LocalBounds.Min.x)
             {
-                // Mesh geometry not resident yet; skip and rebake once it loads.
-                bBakeIncomplete = true;
                 continue;
             }
 
-            const FMatrix4 Transform = Inst.GetMatrix();
-            const FAABB    WorldBox  = LocalBounds.ToWorld(Transform);
-            const FVector3 Center    = (WorldBox.Min + WorldBox.Max) * 0.5f;
-            const float    Radius    = Math::Length(WorldBox.Max - Center);
-
-            FFoliageBakedInstance& Baked = BakedInstances.emplace_back();
-            Baked.Transform    = Transform;
-            Baked.SphereBounds = FVector4(Center, Radius);
-            Baked.TypeIndex    = Inst.TypeIndex;
+            TypeBounds[t] = LocalBounds;
+            TypeReady[t]  = 1u;
         }
 
-        BakedVersion = InstancesVersion;
+        const uint32 NumInstances = (uint32)Instances.size();
+
+        // Written by index rather than appended, so the per-instance transform and bounds math can fan out.
+        BakedInstances.resize(NumInstances);
+
+        std::atomic<uint32> SkippedCount{ 0 };
+        std::atomic<bool>   bIncomplete{ false };
+
+        const auto BakeOne = [&](uint32 Index)
+        {
+            const SFoliageInstance& Inst = Instances[Index];
+            if (!IsValidType(Inst.TypeIndex))
+            {
+                SkippedCount.fetch_add(1, std::memory_order_relaxed);
+                return;
+            }
+
+            if (TypeReady[Inst.TypeIndex] == 0u)
+            {
+                // Mesh unassigned or geometry not resident yet; rebake once it loads.
+                SkippedCount.fetch_add(1, std::memory_order_relaxed);
+                bIncomplete.store(true, std::memory_order_relaxed);
+                return;
+            }
+
+            const FMatrix4 Transform = Inst.GetMatrix();
+            const FAABB    WorldBox  = TypeBounds[Inst.TypeIndex].ToWorld(Transform);
+            const FVector3 Center    = (WorldBox.Min + WorldBox.Max) * 0.5f;
+
+            FFoliageBakedInstance& Baked = BakedInstances[Index];
+            Baked.Transform    = Transform;
+            Baked.SphereBounds = FVector4(Center, Math::Length(WorldBox.Max - Center));
+            Baked.TypeIndex    = Inst.TypeIndex;
+        };
+
+        constexpr uint32 kParallelThreshold = 2048;
+        if (NumInstances < kParallelThreshold || GTaskSystem == nullptr)
+        {
+            for (uint32 i = 0; i < NumInstances; ++i)
+            {
+                BakeOne(i);
+            }
+        }
+        else
+        {
+            Task::ParallelFor(NumInstances, BakeOne, 256);
+        }
+
+        // A rejected instance leaves a hole, and only the rejecting case pays for closing them.
+        if (SkippedCount.load(std::memory_order_relaxed) != 0)
+        {
+            uint32 Write = 0;
+            for (uint32 Read = 0; Read < NumInstances; ++Read)
+            {
+                const int32 TypeIndex = Instances[Read].TypeIndex;
+                if (!IsValidType(TypeIndex) || TypeReady[TypeIndex] == 0u)
+                {
+                    continue;
+                }
+                if (Write != Read)
+                {
+                    BakedInstances[Write] = BakedInstances[Read];
+                }
+                ++Write;
+            }
+            BakedInstances.resize(Write);
+        }
+
+        bBakeIncomplete = bIncomplete.load(std::memory_order_relaxed);
+        BakedVersion    = InstancesVersion;
     }
 
     void MarkFoliageChanged(CWorld& World, entt::entity Entity, SFoliageComponent& Foliage)

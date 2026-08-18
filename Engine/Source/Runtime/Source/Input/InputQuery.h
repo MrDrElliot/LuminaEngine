@@ -1,9 +1,12 @@
 #pragma once
 
+#include "Containers/Array.h"
 #include "Core/Math/Vector/VectorTypes.h"
 #include "Events/KeyCodes.h"
 #include "Events/MouseCodes.h"
 #include "Input/InputAction.h"
+#include "Input/InputEvent.h"
+#include "Input/InputMode.h"
 
 namespace Lumina
 {
@@ -20,6 +23,9 @@ namespace Lumina::Input
     // viewport, not the active one, or the editor is holding input focus. The single definition of that
     // gate, so the action queries and the raw key snapshot cannot drift apart again.
     RUNTIME_API const FInputContext* GetReceivingContext(const CWorld* World);
+
+    // Whether this world's gameplay may read input at all, for code gating on it rather than querying.
+    RUNTIME_API bool IsReceivingInput(const CWorld* World);
 
     // Zeroed state when the world is not receiving input or the handle names no authored action, so a
     // caller never has to null-check before reading.
@@ -63,4 +69,16 @@ namespace Lumina::Input
     RUNTIME_API FVector2 GetMousePosition(const CWorld* World);
     RUNTIME_API FVector2 GetMouseDelta(const CWorld* World);
     RUNTIME_API float    GetMouseWheel(const CWorld* World);
+
+    // This frame's discrete events, empty when not receiving input; the context clears them in EndFrame.
+    RUNTIME_API TSpan<const SInputEvent> GetFrameEvents(const CWorld* World);
+
+    //~ Cursor and routing, acting on the world's OWN viewport rather than the receiving one, as layers do.
+
+    // Routes through FInputProcessor: setting the mode on the context alone never applies the cursor.
+    RUNTIME_API void       SetMouseMode(const CWorld* World, EMouseMode Mode);
+    RUNTIME_API EMouseMode GetMouseMode(const CWorld* World);
+
+    RUNTIME_API void       SetInputMode(const CWorld* World, EInputMode Mode);
+    RUNTIME_API EInputMode GetInputMode(const CWorld* World);
 }

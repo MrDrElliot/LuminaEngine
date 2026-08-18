@@ -475,10 +475,12 @@ namespace Lumina
     {
         static const FInputActionState Empty;
 
-        if (Handle.CachedSerial != Serial)
+        // Name too: a details-panel edit does not bump the serial, so a serial-only check answers stale.
+        if (Handle.CachedSerial != Serial || Handle.CachedName != Handle.Name)
         {
             Handle.CachedIndex  = FindActionIndex(Handle.Name);
             Handle.CachedSerial = Serial;
+            Handle.CachedName   = Handle.Name;
         }
 
         if (Handle.CachedIndex == INDEX_NONE)

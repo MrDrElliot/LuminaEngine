@@ -48,6 +48,15 @@ internal static class ScriptPropertyClassifier
         {
             return FScriptPropertyClassification.Of(EScriptAccess.Object);
         }
+
+        // Stays a managed field: it owns the script's subscriptions and polled state, which native cannot hold.
+        if (DerivesFromInputBinding(Type))
+        {
+            return Type.IsAbstract
+                ? FScriptPropertyClassification.Reject(
+                    "SInputBinding is abstract. Declare SInputAction for a button or SInputAxis for an axis.")
+                : FScriptPropertyClassification.Of(EScriptAccess.InputBinding);
+        }
         // The explicit mirror of Lumina::FString. Stored exactly as a C# `string` member is -- one native
         // FString -- so it classifies the same; the difference is only which spelling the author wrote.
         if (Type.ToDisplayString() == ScriptPropertyTypeNames.FString)
@@ -180,6 +189,9 @@ internal static class ScriptPropertyClassifier
             EScriptAccess.AssetPath =>
                 Prefix + "an asset reference is stored as a path, not as bytes.",
 
+            EScriptAccess.InputBinding =>
+                Prefix + "an input binding is a managed object; native stores only its action name.",
+
             EScriptAccess.ListView or EScriptAccess.MapView =>
                 Prefix + "it is itself a container, and the native property system has no nested-container "
                        + "property. Give the elements a struct type that holds what you need instead.",
@@ -224,6 +236,18 @@ internal static class ScriptPropertyClassifier
         return Type.AllInterfaces.Any(Interface => Interface.ToDisplayString() == ScriptPropertyTypeNames.AssetRef);
     }
 
+    public static bool DerivesFromInputBinding(ITypeSymbol Type)
+    {
+        for (ITypeSymbol? Current = Type; Current != null; Current = Current.BaseType)
+        {
+            if (Current.ToDisplayString() == ScriptPropertyTypeNames.InputBinding)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public static bool DerivesFromNativeObject(ITypeSymbol Type)
     {
         for (INamedTypeSymbol? Base = Type.BaseType; Base != null; Base = Base.BaseType)
@@ -257,6 +281,7 @@ internal enum EScriptAccess
     ObjectPtr,
     ListView,
     MapView,
+    InputBinding,
 }
 
 /// <summary>The result of <see cref="ScriptPropertyClassifier.Classify"/>: the access shape plus whatever type
@@ -303,6 +328,9 @@ internal readonly struct FScriptPropertyClassification
 
     /// <summary>A container property: a view over storage native owns, so it has no setter and no default.</summary>
     public bool IsView => ScriptPropertyTypeNames.IsViewAccess(Access);
+
+    // Left a plain field by the rewriter; native mints the property and the serializer syncs it.
+    public bool KeepsManagedField => Access == EScriptAccess.InputBinding;
 }
 
 /// <summary>
@@ -318,6 +346,7 @@ internal static class ScriptPropertyTypeNames
 {
     public const string NativeObject = "LuminaSharp.NativeObject";
     public const string AssetRef = "LuminaSharp.IAssetRef";
+    public const string InputBinding = "LuminaSharp.SInputBinding";
 
     public const string FString = "Lumina.FString";
     public const string TVector = "Lumina.TVector<T>";

@@ -5,9 +5,7 @@
 
 namespace Lumina
 {
-    // A tag, not a data store: it says this entity's scripts receive input. The input itself lives once per
-    // world in FInputContext and is read through Input:: (Input/InputQuery.h). What reaches the entity is
-    // shaped by the world's pushed mapping layers, not by anything stored here.
+    // Script-only: enables OnInput and binding events. Systems read Input:: (Input/InputQuery.h) directly.
     REFLECT(Component, Category = "Gameplay")
     struct RUNTIME_API SInputComponent
     {

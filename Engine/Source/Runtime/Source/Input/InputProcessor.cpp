@@ -51,7 +51,7 @@ namespace Lumina
     bool FInputProcessor::IsMouseButtonReleased(EMouseKey M) const { auto* C = GetActiveContext(); return C ? C->IsMouseButtonReleased(M) : false; }
     float FInputProcessor::GetMouseButtonHeldTime(EMouseKey M) const { auto* C = GetActiveContext(); return C ? C->GetMouseButtonHeldTime(M) : -1.0f; }
 
-    void FInputProcessor::SetMouseMode(EMouseMode Mode, CWorld* CallerWorld)
+    void FInputProcessor::SetMouseMode(EMouseMode Mode, const CWorld* CallerWorld)
     {
         FInputViewportRegistry& Reg = FInputViewportRegistry::Get();
 

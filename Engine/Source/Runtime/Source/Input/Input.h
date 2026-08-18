@@ -21,13 +21,6 @@ namespace Lumina::Input
         Released = 3, // Just released this frame
     };
 
-    enum class EInputMode : uint8
-    {
-        Normal = 0,
-        Hidden,
-        Disabled
-    };
-
     enum class EInputDevice : uint8
     {
         Keyboard = 0,

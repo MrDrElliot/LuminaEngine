@@ -85,6 +85,7 @@
 #include "Properties/Customizations/AssetRefPropertyCustomization.h"
 #include "Properties/Customizations/GameplayTagPropertyCustomization.h"
 #include "Properties/Customizations/DataTableRowHandleCustomization.h"
+#include "Properties/Customizations/InputActionCustomization.h"
 #include "GameplayTags/GameplayTag.h"
 #include "Scripting/EntityScript.h"
 #include "Scripting/DotNet/DotNetHost.h"
@@ -540,6 +541,11 @@ namespace Lumina
         PropertyCustomizationRegistry->RegisterPropertyCustomization(SKey::StaticStruct()->GetName(), []
         {
            return FKeyPropertyCustomization::MakeInstance();
+        });
+
+        PropertyCustomizationRegistry->RegisterPropertyCustomization(FInputActionHandle::StaticStruct()->GetName(), []
+        {
+           return FInputActionHandlePropertyCustomization::MakeInstance();
         });
 
         PropertyCustomizationRegistry->RegisterPropertyCustomization(FGameplayTag::StaticStruct()->GetName(), []
