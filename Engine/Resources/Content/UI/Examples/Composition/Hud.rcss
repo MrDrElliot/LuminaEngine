@@ -1,40 +1,47 @@
+/* Slot layout for the HUD. Only the slots live here; the widgets that fill them bring their own styling. */
+
 div { display: block; box-sizing: border-box; }
 
-body
-{
-	width: 100%;
-	height: 100%;
-}
+body { width: 100%; height: 100%; }
 
-/* Slots are absolutely positioned with EXPLICIT width+height so the right/bottom anchors resolve
-   (RmlUi falls back to the left/top edge when the opposing size is auto). Edge-anchored so the HUD
-   stays on-screen at any canvas size. */
-#topbar
+/* Every slot is absolutely positioned with an EXPLICIT width and height. */
+/* RmlUi falls back to the left/top edge when the opposing size is auto, so right/bottom would not resolve. */
+
+#topleft
 {
 	position: absolute;
-	top: 24dp;
+	left: 26dp;
+	top: 26dp;
+	width: 240dp;
+	height: 70dp;
+}
+
+#topright
+{
+	position: absolute;
+	right: 26dp;
+	top: 26dp;
+	width: 150dp;
+	height: 150dp;
+}
+
+#center
+{
+	position: absolute;
 	left: 0dp;
+	bottom: 130dp;
 	width: 100%;
-	height: 48dp;
+	height: 44dp;
 	display: flex;
 	justify-content: center;
 	align-items: center;
 }
 
-#hp
+#bottomright
 {
 	position: absolute;
-	left: 24dp;
-	bottom: 24dp;
-	width: 220dp;
-	height: 78dp;
-}
-
-#minimap
-{
-	position: absolute;
-	right: 24dp;
-	top: 24dp;
-	width: 150dp;
-	height: 150dp;
+	right: 26dp;
+	bottom: 26dp;
+	width: 128dp;
+	height: 128dp;
 }

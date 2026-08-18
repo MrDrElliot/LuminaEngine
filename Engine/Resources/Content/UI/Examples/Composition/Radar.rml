@@ -1,0 +1,26 @@
+<template name="radar" content="radar-body">
+<!-- Range rings from a repeating radial gradient, sweep from a conic one, both evaluated in the UI shader. -->
+<head>
+    <style>
+        div { display: block; box-sizing: border-box; }
+        .radar { width: 150dp; height: 150dp; border-radius: 75dp; position: relative;
+                 border-width: 1dp; border-color: #45475a;
+                 decorator: repeating-radial-gradient(circle closest-side at 50% 50%, #181825 0%, #181825 22%, #1e2030 22%, #1e2030 24%); }
+        .radar .sweep { position: absolute; left: 0dp; top: 0dp; width: 150dp; height: 150dp; border-radius: 75dp;
+                        decorator: conic-gradient(from 0deg at 50% 50%, #a6e3a100 0deg, #a6e3a100 300deg, #a6e3a166 355deg, #a6e3a1aa 360deg); }
+        .radar .blip { position: absolute; width: 9dp; height: 9dp; margin: -5dp 0dp 0dp -5dp;
+                       background-color: #a6e3a1; border-radius: 5dp; }
+        .radar .self { position: absolute; left: 50%; top: 50%; width: 7dp; height: 7dp; margin: -4dp 0dp 0dp -4dp;
+                       background-color: #89b4fa; border-radius: 4dp; }
+    </style>
+</head>
+<body>
+    <!-- SweepAngle spins the cone; BlipX / BlipY are percentages of the dish, both from the composing model. -->
+    <div class="radar">
+        <div class="sweep" data-style-transform="'rotate(' + SweepAngle + 'deg)'"/>
+        <div class="blip" data-style-left="BlipX + '%'" data-style-top="BlipY + '%'"/>
+        <div class="self"/>
+        <div id="radar-body"/>
+    </div>
+</body>
+</template>

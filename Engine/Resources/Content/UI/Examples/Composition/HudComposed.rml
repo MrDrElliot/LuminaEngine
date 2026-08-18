@@ -1,24 +1,28 @@
 <rml>
-<!-- The composed form of Hud.rml: each slot has a widget assigned. This is exactly what the editor's
-     Composition panel writes when you drag widgets onto the slots - a <link> per widget + an inline
-     <template src> inside each slot. Open Hud.rml to build this yourself, or open this to see the result. -->
+<!-- The composed form of Hud.rml, and exactly what the editor's Composition panel writes when you drag -->
+<!-- widgets onto the slots: one <link> per widget, plus an inline <template src> inside each slot. -->
 <head>
     <title>HUD (composed)</title>
     <link type="text/rcss" href="Hud.rcss"/>
-    <link type="text/template" href="Clock.rml"/>
-    <link type="text/template" href="HealthBar.rml"/>
-    <link type="text/template" href="Minimap.rml"/>
+    <link type="text/template" href="StatBar.rml"/>
+    <link type="text/template" href="Radar.rml"/>
+    <link type="text/template" href="Objective.rml"/>
+    <link type="text/template" href="Gauge.rml"/>
 </head>
-<!-- data-model="hud" binds the whole HUD (and every composed widget) to the HudModel from HudExample.cs. -->
+
+<!-- One model drives all four widgets; none of them carries a script of its own. -->
 <body data-model="hud">
-    <div id="topbar">
-        <template src="clock"/>
+    <div id="topleft">
+        <template src="statbar"/>
     </div>
-    <div id="hp">
-        <template src="healthbar"/>
+    <div id="topright">
+        <template src="radar"/>
     </div>
-    <div id="minimap">
-        <template src="minimap"/>
+    <div id="center">
+        <template src="objective"/>
+    </div>
+    <div id="bottomright">
+        <template src="gauge"/>
     </div>
 </body>
 </rml>

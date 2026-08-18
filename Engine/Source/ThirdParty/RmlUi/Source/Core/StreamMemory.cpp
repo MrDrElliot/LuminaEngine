@@ -30,6 +30,11 @@
 #include <stdio.h>
 #include <string.h>
 
+// Named explicitly, not left to Memory.cpp's malloc/free macros: those carry no realloc, so under a
+// unity build this buffer was grown by the CRT and freed by rpmalloc.
+extern "C" void* LmThirdPartyRealloc(void* Ptr, size_t Size, const char* Category);
+extern "C" void  LmThirdPartyFree(void* Ptr);
+
 namespace Rml {
 
 const int DEFAULT_BUFFER_SIZE = 256;
@@ -67,7 +72,7 @@ StreamMemory::StreamMemory(const byte* _buffer, size_t _buffer_size)
 StreamMemory::~StreamMemory()
 {
 	if (owns_buffer)
-		free(buffer);
+		LmThirdPartyFree(buffer);
 }
 
 void StreamMemory::Close()
@@ -209,7 +214,7 @@ bool StreamMemory::Reallocate(size_t size)
 	if (!owns_buffer)
 		return false;
 
-	byte* new_buffer = (byte*)realloc(buffer, buffer_size + size);
+	byte* new_buffer = (byte*)LmThirdPartyRealloc(buffer, buffer_size + size, "RmlUi");
 	if (new_buffer == nullptr)
 		return false;
 

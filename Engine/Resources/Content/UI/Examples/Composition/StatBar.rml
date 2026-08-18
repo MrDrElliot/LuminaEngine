@@ -1,0 +1,33 @@
+<template name="statbar" content="statbar-body">
+<!-- A labelled bar built on the stock progress element, so the fill sizing is RmlUi's job, not ours. -->
+<head>
+    <style>
+        div { display: block; box-sizing: border-box; }
+        .statbar { width: 240dp; padding: 12dp 14dp; background-color: #181825cc;
+                   border-width: 1dp; border-color: #313244; border-radius: 10dp; }
+        .statbar .head { display: flex; justify-content: space-between; align-items: center;
+                         margin-bottom: 8dp; font-size: 13dp; }
+        .statbar .name { color: #a6adc8; letter-spacing: 1dp; text-transform: uppercase; }
+        .statbar .num { color: #cdd6f4; font-family: JetBrains Mono; font-weight: bold; }
+        .statbar progress { width: 100%; height: 12dp; background-color: #11111b; border-radius: 6dp; }
+        .statbar progress fill { height: 12dp; border-radius: 6dp;
+                                 decorator: linear-gradient(to right, #f38ba8, #fab387); }
+        /* Under a quarter left, the bar recolours and starts pulsing. Pure RCSS, driven by a bound class. */
+        .statbar.low progress fill { decorator: linear-gradient(to right, #f38ba8, #f9e2af); }
+        .statbar.low { animation: 0.9s sine-in-out infinite alternate statbar-pulse; }
+        /* Defined here, not in Theme.rcss, so the widget still animates when previewed on its own. */
+        @keyframes statbar-pulse { from { opacity: 0.55; } to { opacity: 1.0; } }
+    </style>
+</head>
+<body>
+    <!-- Health is 0..100 on the composing document's model; the progress max matches. -->
+    <div class="statbar" data-class-low="Health &lt; 25">
+        <div class="head">
+            <span class="name">Health</span>
+            <span class="num">{{ Health }} / 100</span>
+        </div>
+        <progress data-attr-value="Health" max="100"/>
+        <div id="statbar-body"/>
+    </div>
+</body>
+</template>

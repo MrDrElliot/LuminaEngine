@@ -1,0 +1,23 @@
+<template name="objective" content="objective-body">
+<!-- A centre banner that restyles itself from one bound bool, with no script touching any element. -->
+<head>
+    <style>
+        div { display: block; box-sizing: border-box; }
+        .objective { padding: 8dp 22dp; border-radius: 999dp; text-align: center; font-size: 15dp;
+                     color: #cdd6f4; background-color: #181825cc;
+                     border-width: 1dp; border-color: #313244;
+                     transition: border-color color 0.25s cubic-out; }
+        .objective .label { letter-spacing: 2dp; font-size: 10dp; color: #7f849c; text-transform: uppercase; }
+        .objective.urgent { border-color: #f38ba8; color: #f38ba8;
+                            animation: 0.7s sine-in-out infinite alternate objective-flash; }
+        @keyframes objective-flash { from { opacity: 0.6; } to { opacity: 1.0; } }
+    </style>
+</head>
+<body>
+    <div class="objective" data-class-urgent="Urgent">
+        <div class="label">Objective</div>
+        <div>{{ Objective }}</div>
+        <div id="objective-body"/>
+    </div>
+</body>
+</template>

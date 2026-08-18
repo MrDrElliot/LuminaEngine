@@ -4,92 +4,122 @@ using Lumina;
 
 namespace Lumina.Examples;
 
-/// <summary>
-/// The smallest complete World.UI example: a screen-space menu driven by MVVM data binding.
-///
-/// The RML declares WHAT to show (<c>{{ Status }}</c>, <c>data-event-click="Play()"</c>,
-/// <c>data-class-light="!Dark"</c>); this script only changes view-model properties and the view follows.
-/// There are no element lookups and no listener wiring.
-///
-/// To run it: add a C# Script component to any entity in a game world, point it at
-/// <c>Lumina.Examples.MenuExample</c>, and press Play. See Menu.rml / Menu.rcss beside this file under
-/// Engine/Resources/Content/UI/Examples/.
-/// </summary>
+// Drives UI/Examples/Menu.rml plus the Settings dialog it opens, both bound to one model.
 public sealed class MenuExample : EntityScript
 {
-    [Property(Tooltip = "RML document shown on screen.")]
-    public string Document = "/Engine/Resources/Content/UI/Examples/Menu.rml";
+    [Property(Tooltip = "Main menu document.")]
+    public string MenuDocument = "/Engine/Resources/Content/UI/Examples/Menu.rml";
 
-    /// <summary>The view-model behind Menu.rml. Bound properties flow to the view; commands flow back from it.</summary>
+    [Property(Tooltip = "Settings dialog, composed inside Window.rml's chrome.")]
+    public string SettingsDocument = "/Engine/Resources/Content/UI/Examples/Composition/Settings.rml";
+
     private sealed class MenuModel : ViewModel
     {
-        private string _Status = "Click Play to begin.";
+        private string _Tagline = "Press Continue, or wander the settings.";
+        private string _Profile = "commander.lumina";
+        private bool _Online = true;
         private bool _Dark = true;
+        private bool _Confirming;
         private int _PlayCount;
 
-        /// <summary>Status line text, shown via <c>{{ Status }}</c>.</summary>
-        [Bind] public string Status { get => _Status; set => Set(ref _Status, value); }
+        private string _Title = "Settings";
+        private int _Volume = 70;
+        private bool _Fullscreen = true;
+        private string _Quality = "high";
 
-        /// <summary>Dark theme on/off; drives <c>data-class-light="!Dark"</c> on the panel.</summary>
-        [Bind] public bool Dark { get => _Dark; set => Set(ref _Dark, value); }
+        [Bind] public string Tagline { get => _Tagline; set => Set(ref _Tagline, value); }
+        [Bind] public string Profile { get => _Profile; set => Set(ref _Profile, value); }
+        [Bind] public bool Online { get => _Online; set => Set(ref _Online, value); }
 
-        /// <summary>The toggle button's label = the NEXT action. Computed, so it has no setter and is
-        /// display-only; it must be re-pushed by hand when <see cref="Dark"/> flips.</summary>
+        // Read by the modal's data-if, which drops the overlay out of the tree entirely when false.
+        [Bind] public bool Confirming { get => _Confirming; set => Set(ref _Confirming, value); }
+
+        // The button label is the NEXT action, so it is computed and must be pushed by hand.
         [Bind] public string ThemeLabel => _Dark ? "Light theme" : "Dark theme";
 
-        // Commands invoked from RML via data-event-click. No element lookups, no listener wiring.
+        // Window.rml reads this through the composing document's model, so its chrome needs no script.
+        [Bind] public string Title => _Title;
+
+        [Bind] public int Volume { get => _Volume; set { Set(ref _Volume, value); Debug.Log($"[Menu] Volume -> {value}"); } }
+        [Bind] public bool Fullscreen { get => _Fullscreen; set { Set(ref _Fullscreen, value); Debug.Log($"[Menu] Fullscreen -> {value}"); } }
+        [Bind] public string Quality { get => _Quality; set { Set(ref _Quality, value); Debug.Log($"[Menu] Quality -> {value}"); } }
+
+        public Action? OnOpenSettings;
+        public Action? OnCloseSettings;
+        public Action? OnQuit;
+
         [BindCommand]
         public void Play()
         {
             _PlayCount++;
-            Status = _PlayCount >= 3 ? "Starting..." : $"Play clicked {_PlayCount}x";
+            Tagline = _PlayCount >= 3 ? "Loading..." : $"Play pressed {_PlayCount}x";
         }
 
         [BindCommand]
         public void ToggleTheme()
         {
-            Dark = !_Dark;                       // pushes Dark -> the panel restyles via data-class-light
-            NotifyChanged(nameof(ThemeLabel));   // computed label depends on Dark, so push it too
-            Status = _Dark ? "Dark theme" : "Light theme";
+            _Dark = !_Dark;
+            NotifyChanged(nameof(ThemeLabel));
+            Tagline = _Dark ? "Dark theme" : "Light theme";
+        }
+
+        [BindCommand] public void OpenSettings() => OnOpenSettings?.Invoke();
+        [BindCommand] public void CloseSettings() => OnCloseSettings?.Invoke();
+        [BindCommand] public void Confirm() => Confirming = true;
+        [BindCommand] public void Cancel() => Confirming = false;
+        [BindCommand] public void Quit() { Confirming = false; OnQuit?.Invoke(); }
+
+        [BindCommand]
+        public void ApplyPreset(string Preset)
+        {
+            Quality = Preset;
+            Volume = Preset == "low" ? 30 : 90;
         }
     }
 
     private MenuModel _Model = null!;
     private UIDataModel? _Binding;
     private UIDocument _Menu;
+    private UIDocument _Settings;
 
     public override void OnReady()
     {
         _Model = new MenuModel();
 
-        // Register the data model BEFORE loading the document: RmlUi resolves data bindings at load time,
-        // so a document loaded first binds to nothing and never recovers.
+        // Must precede LoadDocument: RmlUi resolves data bindings while parsing, and never retries.
         _Binding = World.UI.AddModel("menu", _Model);
         if (!_Binding.IsValid)
         {
-            Debug.LogError("MenuExample: failed to register the 'menu' data model (is the name already taken?).");
+            Debug.LogError("MenuExample: failed to register the 'menu' data model.");
             return;
         }
 
-        _Menu = World.UI.LoadDocument(Document);
+        _Menu = World.UI.LoadDocument(MenuDocument);
         if (!_Menu.IsValid)
         {
-            Debug.LogError($"MenuExample: failed to load UI document '{Document}'.");
+            Debug.LogError($"MenuExample: failed to load '{MenuDocument}'.");
             return;
         }
-
-        // Documents load hidden.
         _Menu.Show();
 
-        // Free the cursor so the buttons are clickable; gameplay still receives the rest of the input.
-        World.UI.EnableCursor();
+        // Both documents live in the same context, so both resolve the same "menu" model.
+        _Settings = World.UI.LoadDocument(SettingsDocument);
+        if (!_Settings.IsValid)
+        {
+            Debug.LogError($"MenuExample: failed to load '{SettingsDocument}'.");
+        }
 
-        Debug.Log("MenuExample: menu shown. Click 'Play' or the theme button.");
+        _Model.OnOpenSettings = () => { _Settings.Show(); _Settings.BringToFront(); };
+        _Model.OnCloseSettings = () => _Settings.Hide();
+        _Model.OnQuit = () => Debug.Log("MenuExample: Quit confirmed.");
+
+        World.UI.EnableCursor();
+        Debug.Log("MenuExample: menu shown. Arrow keys navigate; Quit opens a data-if modal.");
     }
 
     public override void OnDetach()
     {
-        // Tear down in reverse: close the document, then drop the model (frees the managed callback).
+        _Settings.Close();
         _Menu.Close();
         _Binding?.Dispose();
         World.UI.DisableCursor();

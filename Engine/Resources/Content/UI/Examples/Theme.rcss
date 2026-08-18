@@ -1,0 +1,206 @@
+/* Shared look for every sample here. Pull it in with <link type="text/rcss" href="Theme.rcss"/>. */
+/* RCSS has no @import and no var(); a <link> per stylesheet and classes in place of variables. */
+
+/* RmlUi ships no user-agent stylesheet, so EVERY element starts as display:inline. */
+/* Skip this and panels collapse into a smashed inline box that ignores width, padding and margin. */
+div { display: block; box-sizing: border-box; }
+span, img, input, select, textarea { box-sizing: border-box; }
+
+body
+{
+	width: 100%;
+	height: 100%;
+	color: #cdd6f4;
+	font-size: 16dp;
+}
+
+/* No font-family anywhere in these samples: the bridge stamps the engine face on each context root. */
+/* Mono is the exception, and it is loaded at bold/extra-bold only, so the weight is not optional. */
+.mono { font-family: JetBrains Mono; font-weight: bold; }
+
+.h1 { font-size: 34dp; color: #cdd6f4; margin-bottom: 6dp; }
+.h2 { font-size: 20dp; color: #cdd6f4; margin-bottom: 10dp; }
+.muted { color: #7f849c; font-size: 13dp; }
+.tag { color: #a6adc8; font-size: 12dp; letter-spacing: 1dp; text-transform: uppercase; }
+
+/* Named gradients, so a palette change is one edit instead of twenty. */
+@decorator brand-sheen : linear-gradient
+{
+	direction: 120deg;
+	color-stops: #89b4fa 0%, #cba6f7 55%, #f5c2e7 100%;
+}
+
+@decorator night-fade : linear-gradient
+{
+	direction: to bottom;
+	color-stops: #1e1e2e 0%, #11111b 100%;
+}
+
+.panel
+{
+	padding: 20dp;
+	background-color: #1e1e2e;
+	border-width: 1dp;
+	border-color: #45475a;
+	border-radius: 12dp;
+}
+
+.card
+{
+	padding: 16dp;
+	background-color: #181825;
+	border-width: 1dp;
+	border-color: #313244;
+	border-radius: 10dp;
+}
+
+.divider { height: 1dp; background-color: #313244; margin: 14dp 0dp; }
+
+.chip { display: inline-block; padding: 4dp 10dp; background-color: #313244; border-radius: 999dp; font-size: 12dp; }
+.chip.on { background-color: #a6e3a1; color: #11111b; }
+
+.row { display: flex; flex-direction: row; align-items: center; gap: 12dp; }
+.col { display: flex; flex-direction: column; gap: 12dp; }
+.wrap { flex-wrap: wrap; }
+.grow { flex-grow: 1; }
+.between { justify-content: space-between; }
+
+.btn
+{
+	padding: 10dp 18dp;
+	background-color: #313244;
+	color: #cdd6f4;
+	border-radius: 8dp;
+	text-align: center;
+	/* Transitions are pure CPU interpolation, so they cost nothing on the render side. */
+	transition: background-color color transform 0.14s cubic-out;
+}
+
+.btn:hover { background-color: #45475a; }
+.btn:active { background-color: #585b70; transform: scale(0.97); }
+
+.btn.primary { decorator: brand-sheen; color: #11111b; }
+.btn.primary:hover { decorator: linear-gradient(120deg, #a6c8ff, #d9baff, #ffd4f2); }
+
+.btn.danger { background-color: #f38ba8; color: #11111b; }
+.btn.danger:hover { background-color: #f7a3bb; }
+
+.btn.ghost { background-color: transparent; border-width: 1dp; border-color: #45475a; }
+.btn.ghost:hover { background-color: #313244; }
+
+.btn.block { width: 100%; }
+
+/* Focus ring, so keyboard navigation through nav-up/nav-down is visible. */
+.btn:focus { border-width: 1dp; border-color: #89b4fa; }
+
+/* Text and password fields. */
+input.field, textarea.field
+{
+	padding: 8dp 10dp;
+	background-color: #11111b;
+	color: #cdd6f4;
+	caret-color: #89b4fa;
+	border-width: 1dp;
+	border-color: #313244;
+	border-radius: 6dp;
+	transition: border-color 0.14s cubic-out;
+}
+
+input.field:focus, textarea.field:focus { border-color: #89b4fa; }
+textarea.field { height: 84dp; }
+
+/* Checkbox and radio are plain boxes; :checked is the only state that needs styling. */
+input[type="checkbox"], input[type="radio"]
+{
+	width: 22dp;
+	height: 22dp;
+	background-color: #11111b;
+	border-width: 1dp;
+	border-color: #45475a;
+	transition: background-color border-color 0.12s cubic-out;
+}
+
+input[type="checkbox"] { border-radius: 6dp; }
+input[type="radio"] { border-radius: 11dp; }
+input[type="checkbox"]:checked, input[type="radio"]:checked { background-color: #a6e3a1; border-color: #a6e3a1; }
+
+/* A range input builds slidertrack + sliderbar children; both need explicit sizes. */
+input[type="range"] { width: 180dp; height: 22dp; }
+input[type="range"] slidertrack { height: 6dp; margin-top: 8dp; background-color: #313244; border-radius: 3dp; }
+input[type="range"] sliderbar { width: 18dp; height: 18dp; margin-top: 2dp; background-color: #89b4fa; border-radius: 9dp; }
+input[type="range"] sliderbar:hover { background-color: #a6c8ff; }
+input[type="range"] sliderarrowdec, input[type="range"] sliderarrowinc { width: 0dp; height: 0dp; }
+
+/* A select builds selectvalue + selectarrow + selectbox(option). */
+select
+{
+	width: 180dp;
+	height: 36dp;
+	background-color: #11111b;
+	border-width: 1dp;
+	border-color: #313244;
+	border-radius: 6dp;
+}
+
+select selectvalue { width: 148dp; height: 34dp; padding: 8dp 10dp; color: #cdd6f4; }
+select selectarrow { width: 30dp; height: 34dp; decorator: linear-gradient(to bottom, #313244, #1e1e2e); border-radius: 6dp; }
+select selectbox { background-color: #181825; border-width: 1dp; border-color: #45475a; border-radius: 6dp; }
+select option { padding: 8dp 10dp; color: #cdd6f4; }
+select option:checked { background-color: #313244; }
+select option:hover { background-color: #45475a; }
+
+/* A progress element builds one 'fill' child sized to value/max. */
+progress { width: 100%; height: 14dp; background-color: #11111b; border-radius: 7dp; }
+progress fill { height: 14dp; decorator: linear-gradient(to right, #a6e3a1, #94e2d5); border-radius: 7dp; }
+progress.warn fill { decorator: linear-gradient(to right, #fab387, #f38ba8); }
+
+/* Tabs. RmlUi routes <tab>/<panel> into the tabset's own tabs/panels containers. */
+tabset { display: block; }
+tabs { display: flex; flex-direction: row; gap: 6dp; margin-bottom: 16dp; }
+tab
+{
+	display: block;
+	padding: 8dp 16dp;
+	color: #7f849c;
+	background-color: #181825;
+	border-radius: 8dp;
+	transition: background-color color 0.14s cubic-out;
+}
+tab:hover { color: #cdd6f4; background-color: #313244; }
+tab:selected { color: #11111b; decorator: brand-sheen; }
+panels { display: block; }
+panel { display: block; }
+
+/* Scrollbars are real elements: an orientation container wrapping a track and a bar. */
+scrollbarvertical { width: 10dp; }
+scrollbarvertical slidertrack { background-color: #181825; border-radius: 5dp; }
+scrollbarvertical sliderbar { width: 10dp; min-height: 32dp; background-color: #45475a; border-radius: 5dp; }
+scrollbarvertical sliderbar:hover { background-color: #585b70; }
+scrollbarvertical sliderarrowdec, scrollbarvertical sliderarrowinc { height: 0dp; }
+scrollbarhorizontal { height: 10dp; }
+scrollbarhorizontal slidertrack { background-color: #181825; border-radius: 5dp; }
+scrollbarhorizontal sliderbar { height: 10dp; min-width: 32dp; background-color: #45475a; border-radius: 5dp; }
+scrollbarhorizontal sliderarrowdec, scrollbarhorizontal sliderarrowinc { width: 0dp; }
+
+/* Keyframes drive the animation property; both run entirely on the layout side. */
+@keyframes rise
+{
+	from { opacity: 0; transform: translateY(14dp); }
+	to   { opacity: 1; transform: translateY(0dp); }
+}
+
+@keyframes breathe
+{
+	from { opacity: 0.45; }
+	to   { opacity: 1.0; }
+}
+
+@keyframes spin
+{
+	from { transform: rotate(0deg); }
+	to   { transform: rotate(360deg); }
+}
+
+.anim-rise { animation: 0.35s cubic-out 1 rise; }
+.anim-breathe { animation: 1.6s sine-in-out infinite alternate breathe; }
+.anim-spin { animation: 6s linear-in infinite spin; }

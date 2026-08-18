@@ -1,17 +1,64 @@
 <rml>
 <head>
     <title>Lumina Menu</title>
-    <link type="text/rcss" href="Menu.rcss"/>
+    <link type="text/rcss" href="Theme.rcss"/>
+    <style>
+        /* One full-screen gradient decorator stands in for a background image: no texture, no extra pass. */
+        body { display: flex; align-items: center; justify-content: center;
+               decorator: radial-gradient(ellipse farthest-corner at 30% 20%, #302d41, #11111b); }
+
+        .menu { width: 380dp; padding: 34dp 30dp; }
+        /* A decorator paints the element background, so the gradient goes on a bar under the wordmark. */
+        .brand { font-size: 54dp; text-align: center; letter-spacing: 4dp; color: #cdd6f4;
+                 font-effect: glow(2dp 10dp #cba6f7); }
+        .rule { height: 4dp; width: 96dp; margin: 6dp auto 0dp auto; border-radius: 2dp; decorator: brand-sheen; }
+        .sub { text-align: center; margin-bottom: 26dp; }
+
+        /* tab-index plus nav-up/nav-down make the menu playable on arrow keys alone. */
+        .item { margin-bottom: 10dp; tab-index: auto; nav-up: auto; nav-down: auto; }
+
+        .profile { display: flex; justify-content: space-between; align-items: center;
+                   margin-top: 22dp; padding-top: 16dp; border-top-width: 1dp; border-top-color: #313244; }
+
+        /* Modal overlay: absolute over the whole canvas, lifted above the menu with z-index. */
+        .veil { position: absolute; left: 0dp; top: 0dp; width: 100%; height: 100%; z-index: 10;
+                display: flex; align-items: center; justify-content: center; background-color: #11111bcc; }
+        .dialog { width: 340dp; text-align: center; }
+    </style>
 </head>
-<!-- data-model="menu" binds this subtree to the MenuModel registered by MenuExample.cs (World.UI.AddModel).
-     {{ Prop }} interpolates a bound property; data-event-click calls a [BindCommand]; data-class-light adds
-     the "light" class while the expression is true. No ids, no element lookups -- the view-model drives it. -->
+
+<!-- Bound to the MenuModel that MenuExample.cs registers as "menu". -->
 <body data-model="menu">
-    <div class="panel" data-class-light="!Dark">
-        <div class="title">LUMINA</div>
-        <div class="button" data-event-click="Play()">Play</div>
-        <div class="button secondary" data-event-click="ToggleTheme()">{{ ThemeLabel }}</div>
-        <div class="status">{{ Status }}</div>
+
+    <div class="menu panel anim-rise">
+        <div class="brand">LUMINA</div>
+        <div class="rule"/>
+        <div class="sub muted">{{ Tagline }}</div>
+
+        <div class="btn primary block item" data-event-click="Play()">Continue</div>
+        <div class="btn block item" data-event-click="Play()">New game</div>
+        <div class="btn block item" data-event-click="OpenSettings()">Settings</div>
+        <div class="btn ghost block item" data-event-click="ToggleTheme()">{{ ThemeLabel }}</div>
+        <div class="btn ghost block item" data-event-click="Confirm()">Quit</div>
+
+        <div class="profile">
+            <span class="muted">{{ Profile }}</span>
+            <!-- A ternary inside the interpolation, and data-class turning a bool straight into styling. -->
+            <span class="chip" data-class-on="Online">{{ Online ? 'online' : 'offline' }}</span>
+        </div>
     </div>
+
+    <!-- data-if keeps the overlay out of the element tree entirely until it is wanted. -->
+    <div class="veil" data-if="Confirming">
+        <div class="dialog panel anim-rise">
+            <div class="h2">Quit to desktop?</div>
+            <div class="muted">Nothing past the last checkpoint is saved.</div>
+            <div class="row" style="margin-top: 20dp; justify-content: center;">
+                <div class="btn danger" data-event-click="Quit()">Quit</div>
+                <div class="btn ghost" data-event-click="Cancel()">Stay</div>
+            </div>
+        </div>
+    </div>
+
 </body>
 </rml>

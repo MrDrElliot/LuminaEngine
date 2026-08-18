@@ -102,3 +102,8 @@ namespace Detail {
 } // namespace Detail
 
 } // namespace Rml
+
+// Unity builds put later files in this same translation unit, where the macros above would rebind
+// their free() to rpmalloc while leaving realloc() on the CRT.
+#undef malloc
+#undef free

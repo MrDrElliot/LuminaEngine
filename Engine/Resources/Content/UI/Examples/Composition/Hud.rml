@@ -1,19 +1,21 @@
 <rml>
 <head>
-    <title>HUD Composition</title>
+    <title>HUD (empty slots)</title>
     <link type="text/rcss" href="Hud.rcss"/>
-    <link type="text/template" href="Clock.rml"/>
-    <link type="text/template" href="HealthBar.rml"/>
-    <link type="text/template" href="Minimap.rml"/>
+    <link type="text/template" href="StatBar.rml"/>
+    <link type="text/template" href="Radar.rml"/>
+    <link type="text/template" href="Objective.rml"/>
+    <link type="text/template" href="Gauge.rml"/>
 </head>
-<!-- data-model="hud" binds the whole HUD (and every composed widget) to the HudModel from HudExample.cs. -->
+
+<!-- data-model="hud" binds the HUD and every widget slotted into it to the HudModel from HudExample.cs. -->
 <body data-model="hud">
-    <!-- Each id'd div is an empty slot, positioned by Hud.rcss. Drag a widget from the Palette's Widgets
-         list onto one (or select a slot and double-click a widget) to fill it in; Ctrl+drag in the preview
-         canvas to nudge it (writes transform:translate, so it stays responsive). HudComposed.rml is what
-         this looks like once all three are filled. -->
-    <div id="topbar"></div>
-    <div id="hp"></div>
-    <div id="minimap"></div>
+    <!-- Each id'd div is an empty slot positioned by Hud.rcss, and stays empty on purpose. -->
+    <!-- Open this in the editor, then drag a widget from the Palette onto a slot to fill it in. -->
+    <!-- HudComposed.rml is the same document once all four slots are filled. -->
+    <div id="topleft"></div>
+    <div id="topright"></div>
+    <div id="center"></div>
+    <div id="bottomright"></div>
 </body>
 </rml>

@@ -1,18 +1,25 @@
 <template name="window" content="window-content">
-<!-- Reusable window chrome. A document can wrap its whole body in this with <body template="window">,
-     or slot it inline with <template src="window">. Children land in #window-content. -->
+<!-- Reusable chrome. Wrap a whole document with <body template="window">, or slot it in with <template src="window">. -->
 <head>
     <style>
         div { display: block; box-sizing: border-box; }
-        .window { width: 440dp; background-color: #1e1e2e; border-width: 1dp; border-color: #45475a; border-radius: 10dp; }
-        .window .titlebar { padding: 12dp 18dp; background-color: #313244; color: #cdd6f4; font-size: 18dp; border-top-left-radius: 10dp; border-top-right-radius: 10dp; }
+        .window { width: 460dp; background-color: #1e1e2e; border-width: 1dp; border-color: #45475a;
+                  border-radius: 12dp; }
+        .window .titlebar { display: flex; justify-content: space-between; align-items: center;
+                            padding: 12dp 18dp; color: #11111b; font-size: 17dp;
+                            border-top-left-radius: 12dp; border-top-right-radius: 12dp;
+                            decorator: linear-gradient(110deg, #89b4fa, #cba6f7); }
+        .window .dot { width: 10dp; height: 10dp; border-radius: 5dp; background-color: #11111b66; }
         .window .content { padding: 18dp; color: #bac2de; }
     </style>
 </head>
 <body>
-    <!-- {{ Title }} binds to the composing document's model (Settings sets it to "Settings"). -->
+    <!-- Title binds to the composing document's model, so the chrome carries no script of its own. -->
     <div class="window">
-        <div class="titlebar">{{ Title }}</div>
+        <div class="titlebar">
+            <span>{{ Title }}</span>
+            <span class="dot"/>
+        </div>
         <div id="window-content" class="content"/>
     </div>
 </body>

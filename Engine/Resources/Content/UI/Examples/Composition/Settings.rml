@@ -1,49 +1,49 @@
 <rml>
-<!-- Whole-document composition (<body template="window">) framed by the window chrome, now MVVM: the rows
-     are TWO-WAY bound to a SettingsModel. Editing a control writes straight back into the C# view-model
-     (data-value on the text inputs, data-checked on the checkboxes); the {{ }} readouts refresh live. -->
+<!-- Whole-document composition: <body template="window"> wraps this entire body in Window.rml's chrome, -->
+<!-- and everything below lands in that template's #window-content slot. -->
 <head>
     <title>Settings</title>
+    <link type="text/rcss" href="/Engine/Resources/Content/UI/Examples/Theme.rcss"/>
     <link type="text/template" href="Window.rml"/>
     <style>
-        div { display: block; box-sizing: border-box; }
-        body { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
-        .row { display: flex; justify-content: space-between; align-items: center; padding: 8dp 0dp; font-size: 16dp; }
-        .row .val { color: #a6e3a1; }
-        .ctrl { display: flex; align-items: center; }
-        /* Text input: two-way via data-value. */
-        .num { width: 64dp; height: 24dp; margin-right: 8dp; padding: 0dp 6dp; background-color: #313244; color: #cdd6f4; border-radius: 4dp; }
-        /* Checkbox: two-way via data-checked; :checked makes the bound bool visible. */
-        .check { width: 20dp; height: 20dp; background-color: #313244; border-radius: 4dp; }
-        .check:checked { background-color: #a6e3a1; }
-        /* Preset buttons pass an argument to a command: data-event-click="ApplyPreset('low')". */
-        .preset { padding: 4dp 12dp; margin-left: 8dp; background-color: #585b70; color: #ffffff; border-radius: 4dp; }
-        .preset:hover { background-color: #6c7086; }
+        body { display: flex; align-items: center; justify-content: center;
+               background-color: #11111baa; }
+        .kv { display: flex; justify-content: space-between; align-items: center; padding: 9dp 0dp; }
+        .kv .val { color: #a6e3a1; font-family: JetBrains Mono; font-weight: bold; }
     </style>
 </head>
-<body template="window" data-model="settings">
-    <div class="row">
-        <span>Master Volume</span>
-        <span class="ctrl"><input type="text" class="num" data-value="MasterVolume"/><span class="val">{{ MasterVolume }}%</span></span>
-    </div>
-    <div class="row">
-        <span>Fullscreen</span>
-        <input type="checkbox" class="check" data-checked="Fullscreen"/>
-    </div>
-    <div class="row">
-        <span>VSync</span>
-        <input type="checkbox" class="check" data-checked="VSync"/>
-    </div>
-    <div class="row">
-        <span>Field of View</span>
-        <span class="ctrl"><input type="text" class="num" data-value="FieldOfView"/><span class="val">{{ FieldOfView }}</span></span>
-    </div>
-    <div class="row">
-        <span>Quality preset</span>
-        <span class="ctrl">
-            <div class="preset" data-event-click="ApplyPreset('low')">Low</div>
-            <div class="preset" data-event-click="ApplyPreset('high')">High</div>
+
+<!-- Same model as Menu.rml: data models belong to the context, so any document in it can bind to one. -->
+<body template="window" data-model="menu">
+
+    <div class="kv">
+        <span>Master volume</span>
+        <span class="row">
+            <input type="range" min="0" max="100" step="5" data-value="Volume"/>
+            <span class="val">{{ Volume }}</span>
         </span>
     </div>
+
+    <div class="kv">
+        <span>Fullscreen</span>
+        <input type="checkbox" data-checked="Fullscreen"/>
+    </div>
+
+    <div class="kv">
+        <span>Quality</span>
+        <select data-value="Quality">
+            <option value="low">Low</option>
+            <option value="high">High</option>
+            <option value="ultra">Ultra</option>
+        </select>
+    </div>
+
+    <div class="divider"/>
+
+    <div class="row" style="justify-content: flex-end;">
+        <div class="btn ghost" data-event-click="ApplyPreset('low')">Low preset</div>
+        <div class="btn primary" data-event-click="CloseSettings()">Done</div>
+    </div>
+
 </body>
 </rml>

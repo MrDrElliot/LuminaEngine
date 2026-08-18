@@ -1,0 +1,341 @@
+<rml>
+<head>
+    <title>Lumina UI Showcase</title>
+    <link type="text/rcss" href="Theme.rcss"/>
+    <style>
+        body { display: flex; flex-direction: column; align-items: center; justify-content: center; decorator: night-fade; }
+        .shell { width: 900dp; height: 620dp; display: flex; flex-direction: column; }
+        panel { height: 430dp; overflow-y: auto; padding-right: 8dp; }
+        .swatch { width: 132dp; height: 84dp; border-radius: 10dp; }
+        .swatch-label { margin-top: 6dp; text-align: center; }
+        .box { width: 64dp; height: 64dp; border-radius: 8dp; background-color: #89b4fa; }
+        .scroller { height: 140dp; overflow-y: auto; background-color: #11111b; border-radius: 8dp; padding: 12dp; }
+        .stage { height: 140dp; position: relative; background-color: #11111b; border-radius: 8dp; }
+        .kv { display: flex; justify-content: space-between; align-items: center; padding: 7dp 0dp; }
+        .kv .val { color: #a6e3a1; }
+        .chip { padding: 4dp 10dp; background-color: #313244; border-radius: 999dp; font-size: 12dp; }
+        .chip.on { background-color: #a6e3a1; color: #11111b; }
+        .member { width: 190dp; }
+    </style>
+</head>
+
+<!-- Everything here binds to the ShowcaseModel that UIShowcaseExample.cs registers as "showcase". -->
+<!-- AddModel MUST run before LoadDocument: RmlUi resolves data bindings once, while parsing. -->
+<body data-model="showcase">
+<div class="shell panel anim-rise">
+
+    <div class="row between">
+        <div>
+            <div class="h1">{{ Title }}</div>
+            <div class="muted">Every feature on these tabs runs on the stock renderer, with no imported assets.</div>
+        </div>
+        <div>
+            <div class="mono" style="font-size: 26dp; text-align: right;">{{ Clock }}</div>
+            <div class="tag" style="text-align: right;">uptime</div>
+        </div>
+    </div>
+
+    <div class="divider"/>
+
+    <tabset>
+        <tab>Decorators</tab>
+        <panel>
+            <div class="h2">Gradients</div>
+            <div class="muted">All six gradient decorators evaluate in the UI pixel shader, inside the same batched draw as the rest of the document.</div>
+            <div class="row wrap" style="margin-top: 14dp;">
+                <div>
+                    <div class="swatch" style="decorator: linear-gradient(120deg, #89b4fa, #cba6f7);"/>
+                    <div class="swatch-label muted">linear</div>
+                </div>
+                <div>
+                    <div class="swatch" style="decorator: repeating-linear-gradient(45deg, #45475a 0%, #45475a 12%, #313244 12%, #313244 24%);"/>
+                    <div class="swatch-label muted">repeating-linear</div>
+                </div>
+                <div>
+                    <div class="swatch" style="decorator: radial-gradient(circle farthest-side at 32% 30%, #f9e2af, #f38ba8, #1e1e2e);"/>
+                    <div class="swatch-label muted">radial</div>
+                </div>
+                <div>
+                    <div class="swatch" style="decorator: repeating-radial-gradient(circle closest-side at 50% 50%, #94e2d5 0%, #11111b 22%);"/>
+                    <div class="swatch-label muted">repeating-radial</div>
+                </div>
+                <div>
+                    <div class="swatch" style="decorator: conic-gradient(from 0deg at 50% 50%, #f38ba8, #f9e2af, #a6e3a1, #89b4fa, #cba6f7, #f38ba8);"/>
+                    <div class="swatch-label muted">conic</div>
+                </div>
+                <div>
+                    <div class="swatch" style="decorator: repeating-conic-gradient(from 20deg at 50% 50%, #313244 0deg, #313244 22deg, #45475a 22deg, #45475a 44deg);"/>
+                    <div class="swatch-label muted">repeating-conic</div>
+                </div>
+                <div>
+                    <div class="swatch" style="decorator: vertical-gradient(#89dceb #1e1e2e);"/>
+                    <div class="swatch-label muted">vertical, space-separated</div>
+                </div>
+                <div>
+                    <div class="swatch" style="decorator: brand-sheen;"/>
+                    <div class="swatch-label muted">@decorator alias</div>
+                </div>
+            </div>
+
+            <div class="divider"/>
+
+            <div class="h2">Borders, radii, opacity</div>
+            <div class="row wrap" style="margin-top: 8dp;">
+                <div class="box" style="border-radius: 0dp;"/>
+                <div class="box" style="border-radius: 32dp;"/>
+                <div class="box" style="border-top-left-radius: 30dp; border-bottom-right-radius: 30dp;"/>
+                <div class="box" style="background-color: transparent; border-width: 4dp; border-color: #cba6f7;"/>
+                <div class="box" style="border-width: 2dp 6dp 2dp 6dp; border-color: #a6e3a1 #f9e2af #a6e3a1 #f9e2af;"/>
+                <div class="box" style="opacity: 0.35;"/>
+            </div>
+
+            <div class="divider"/>
+
+            <div class="h2">Font effects</div>
+            <div class="muted">Baked into the glyph atlas on the CPU, so they cost nothing per frame.</div>
+            <div class="row wrap" style="margin-top: 10dp; font-size: 30dp;">
+                <span style="font-effect: glow(2dp 6dp #89b4fa);">glow</span>
+                <span style="font-effect: outline(2dp #11111b);">outline</span>
+                <span style="font-effect: shadow(2dp 2dp #11111b);">shadow</span>
+                <span style="font-effect: blur(3dp #cba6f7);">blur</span>
+                <span class="mono" style="letter-spacing: 2dp;">mono</span>
+            </div>
+        </panel>
+
+        <tab>Layout</tab>
+        <panel>
+            <div class="h2">Flexbox</div>
+            <div class="muted">RCSS implements flexbox: gap, wrap, grow and the align/justify keywords all behave as they do on the web.</div>
+
+            <div class="row between" style="margin-top: 12dp; align-items: flex-start;">
+                <div class="card" style="width: 265dp;">
+                    <div class="tag">justify-content</div>
+                    <div style="display: flex; justify-content: space-between; margin-top: 10dp;">
+                        <div class="chip">a</div><div class="chip">b</div><div class="chip">c</div>
+                    </div>
+                    <div style="display: flex; justify-content: center; gap: 6dp; margin-top: 8dp;">
+                        <div class="chip">a</div><div class="chip">b</div><div class="chip">c</div>
+                    </div>
+                </div>
+
+                <div class="card" style="width: 265dp;">
+                    <div class="tag">align-items</div>
+                    <div style="display: flex; align-items: flex-end; gap: 6dp; height: 64dp; margin-top: 10dp;">
+                        <div class="chip" style="height: 22dp;">low</div>
+                        <div class="chip" style="height: 42dp;">mid</div>
+                        <div class="chip" style="height: 62dp;">tall</div>
+                    </div>
+                </div>
+
+                <div class="card" style="width: 265dp;">
+                    <div class="tag">flex-grow</div>
+                    <div style="display: flex; gap: 6dp; margin-top: 10dp;">
+                        <div class="chip">1</div>
+                        <div class="chip grow" style="text-align: center;">grow</div>
+                        <div class="chip">1</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="divider"/>
+
+            <div class="h2">Overflow and absolute positioning</div>
+            <div class="row" style="margin-top: 10dp; align-items: flex-start;">
+                <div class="scroller grow">
+                    <!-- overflow-y:auto builds a real scrollbar element tree, styled in Theme.rcss. -->
+                    <div>Scroll me. The bar is a scrollbarvertical element wrapping a slidertrack and a sliderbar.</div>
+                    <div style="margin-top: 10dp;">Both are ordinary elements, so they take the same properties as anything else here.</div>
+                    <div style="margin-top: 10dp;">Clipping runs as a scissor test in the pixel shader, in render-target pixels.</div>
+                    <div style="margin-top: 10dp;">Which is why this text stops exactly at the box edge, at any viewport size.</div>
+                    <div style="margin-top: 10dp;">Resize the panel and the cut stays on the border, rather than drifting inward.</div>
+                </div>
+                <div class="stage" style="width: 300dp;">
+                    <!-- Percentage offsets resolve against the nearest positioned ancestor. -->
+                    <div class="chip" style="position: absolute; left: 10dp; top: 10dp;">top left</div>
+                    <div class="chip" style="position: absolute; right: 10dp; top: 10dp;">top right</div>
+                    <div class="chip" style="position: absolute; left: 50%; top: 50%; margin: -12dp 0dp 0dp -28dp;">center</div>
+                    <div class="chip" style="position: absolute; left: 10dp; bottom: 10dp;">bottom left</div>
+                    <div class="chip" style="position: absolute; right: 10dp; bottom: 10dp;">bottom right</div>
+                </div>
+            </div>
+        </panel>
+
+        <tab>Motion</tab>
+        <panel>
+            <div class="h2">Transitions</div>
+            <div class="muted">Hover any of these. A transition interpolates the computed value, so it survives a restyle.</div>
+            <div class="row wrap" style="margin-top: 12dp;">
+                <div class="btn">background</div>
+                <div class="btn primary">gradient</div>
+                <div class="btn ghost">border</div>
+                <div class="btn" style="transition: transform 0.35s elastic-out;">elastic</div>
+            </div>
+
+            <div class="divider"/>
+
+            <div class="h2">Keyframe animations</div>
+            <div class="row wrap" style="margin-top: 12dp; align-items: center; gap: 22dp;">
+                <div class="card anim-breathe" style="width: 150dp; text-align: center;">breathe</div>
+                <div class="box anim-spin" style="decorator: conic-gradient(#89b4fa, #cba6f7, #f5c2e7, #89b4fa);"/>
+                <div class="card anim-rise" style="width: 150dp; text-align: center;">rise</div>
+            </div>
+
+            <div class="divider"/>
+
+            <div class="h2">Transforms</div>
+            <div class="muted">2D and 3D. Perspective belongs on the parent; the child supplies the rotation.</div>
+            <div class="row wrap" style="margin-top: 18dp; align-items: center; gap: 28dp;">
+                <div class="box" style="transform: rotate(20deg);"/>
+                <div class="box" style="transform: scale(1.25);"/>
+                <div class="box" style="transform: skewX(18deg);"/>
+                <div class="box" style="transform: translateY(-10dp) rotate(-12deg);"/>
+                <div style="perspective: 340dp;">
+                    <div class="box" style="transform: rotateY(48deg); decorator: brand-sheen;"/>
+                </div>
+            </div>
+        </panel>
+
+        <tab>Data</tab>
+        <panel>
+            <div class="h2">One-way views</div>
+            <div class="row" style="align-items: flex-start; gap: 20dp; margin-top: 10dp;">
+                <div class="card grow">
+                    <div class="tag">interpolation and data-text</div>
+                    <div class="kv"><span>Score</span><span class="val">{{ Score }}</span></div>
+                    <div class="kv"><span>Ratio, formatted</span><span class="val">{{ Ratio | format(2) }}</span></div>
+                    <div class="kv"><span>Status, upper-cased</span><span class="val">{{ Status | to_upper }}</span></div>
+                    <!-- data-text replaces the element's whole text content; a lone {{ }} is the same thing. -->
+                    <div class="kv"><span>data-text</span><span class="val" data-text="Status"/></div>
+                </div>
+
+                <div class="card grow">
+                    <div class="tag">data-style, data-attr, data-class</div>
+                    <div class="kv"><span>Health</span><span class="val">{{ Health }}%</span></div>
+                    <!-- data-style-<property> writes one inline property from the expression result. -->
+                    <div style="height: 12dp; background-color: #11111b; border-radius: 6dp; margin-bottom: 14dp;">
+                        <div style="height: 12dp; border-radius: 6dp; decorator: linear-gradient(to right, #a6e3a1, #f9e2af, #f38ba8);"
+                             data-style-width="Health + '%'"/>
+                    </div>
+                    <!-- data-attr-value drives the progress element's own value attribute. -->
+                    <progress data-attr-value="Ratio" max="1"/>
+                    <!-- data-class-<name> adds and removes that one class as the expression flips. -->
+                    <div class="chip" data-class-on="Alerted" style="margin-top: 14dp;">data-class-on</div>
+                </div>
+            </div>
+
+            <div class="divider"/>
+
+            <div class="h2">Conditionals</div>
+            <div class="row" style="margin-top: 10dp; align-items: flex-start; gap: 20dp;">
+                <!-- data-if removes the element from the tree; data-visible only hides it, keeping its box. -->
+                <div class="card grow" data-if="Alerted">
+                    <div class="tag">data-if</div>
+                    <div style="margin-top: 8dp;">In the tree only while Alerted is true.</div>
+                </div>
+                <div class="card grow" data-visible="!Alerted">
+                    <div class="tag">data-visible</div>
+                    <div style="margin-top: 8dp;">Invisible but still laid out while Alerted is true.</div>
+                </div>
+                <div style="width: 200dp;">
+                    <div class="btn danger block" data-event-click="Damage('25')">Damage 25</div>
+                    <div class="btn ghost block" style="margin-top: 10dp;" data-event-click="Heal()">Heal</div>
+                </div>
+            </div>
+
+            <div class="divider"/>
+
+            <div class="h2">Lists</div>
+            <div class="muted">data-for repeats its element once per item. A list crosses as a one-way snapshot, so mutate it in C# and re-push.</div>
+            <div class="row wrap" style="margin-top: 12dp;">
+                <div class="card member" data-for="member : Members">
+                    <div class="row between">
+                        <span>{{ member.Name }}</span>
+                        <span class="muted">{{ member.Role }}</span>
+                    </div>
+                    <progress data-attr-value="member.Health" max="100" style="margin-top: 12dp;"/>
+                </div>
+            </div>
+            <div class="row" style="margin-top: 14dp;">
+                <div class="btn" data-event-click="AddMember()">Add</div>
+                <div class="btn ghost" data-event-click="RemoveMember()">Remove</div>
+                <span class="muted">{{ MemberCount }} in the party</span>
+            </div>
+        </panel>
+
+        <tab>Controls</tab>
+        <panel>
+            <div class="h2">Two-way binding</div>
+            <div class="muted">Editing any control runs the C# property setter, and the readouts beside them re-render from the model.</div>
+
+            <div class="row" style="align-items: flex-start; gap: 20dp; margin-top: 14dp;">
+                <div class="card grow">
+                    <div class="kv">
+                        <span>Player name</span>
+                        <input type="text" class="field" style="width: 170dp;" data-value="PlayerName"/>
+                    </div>
+                    <div class="kv">
+                        <span>Passphrase</span>
+                        <input type="password" class="field" style="width: 170dp;" data-value="Passphrase"/>
+                    </div>
+                    <div class="kv">
+                        <span>Master volume</span>
+                        <span class="row">
+                            <input type="range" min="0" max="100" step="1" data-value="Volume"/>
+                            <span class="val mono">{{ Volume }}</span>
+                        </span>
+                    </div>
+                    <div class="kv">
+                        <span>Quality</span>
+                        <select data-value="Quality">
+                            <option value="low">Low</option>
+                            <option value="medium">Medium</option>
+                            <option value="high">High</option>
+                            <option value="ultra">Ultra</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="card grow">
+                    <div class="kv">
+                        <span>Fullscreen</span>
+                        <input type="checkbox" data-checked="Fullscreen"/>
+                    </div>
+                    <div class="kv">
+                        <span>VSync</span>
+                        <input type="checkbox" data-checked="VSync"/>
+                    </div>
+                    <div class="kv">
+                        <span>Difficulty</span>
+                        <!-- A checked radio writes its own value attribute into the bound property. -->
+                        <span class="row">
+                            <input type="radio" name="difficulty" value="story" data-checked="Difficulty"/><span class="muted">story</span>
+                            <input type="radio" name="difficulty" value="normal" data-checked="Difficulty"/><span class="muted">normal</span>
+                            <input type="radio" name="difficulty" value="brutal" data-checked="Difficulty"/><span class="muted">brutal</span>
+                        </span>
+                    </div>
+                    <div class="kv"><span>Reads back as</span><span class="val mono">{{ Difficulty }}</span></div>
+                </div>
+            </div>
+
+            <div class="divider"/>
+
+            <div class="h2">Commands</div>
+            <div class="muted">data-event-click calls a [BindCommand]. Arguments cross as strings and convert to the parameter type.</div>
+            <div class="row wrap" style="margin-top: 12dp;">
+                <div class="btn" data-event-click="ApplyPreset('low')">Preset: low</div>
+                <div class="btn" data-event-click="ApplyPreset('high')">Preset: high</div>
+                <div class="btn primary" data-event-click="ApplyPreset('ultra')">Preset: ultra</div>
+                <div class="btn ghost" data-event-click="Reset()">Reset all</div>
+            </div>
+
+            <div class="divider"/>
+
+            <div class="h2">Multi-line text</div>
+            <textarea class="field" style="width: 100%;" data-value="Notes"/>
+            <div class="muted" style="margin-top: 8dp;">Echoed back from the model: {{ Notes }}</div>
+        </panel>
+    </tabset>
+
+</div>
+</body>
+</rml>

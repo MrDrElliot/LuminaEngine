@@ -1,0 +1,30 @@
+<template name="gauge" content="gauge-body">
+<!-- A conic gradient makes a dial with no texture and no mesh: the sweep IS the decorator. -->
+<head>
+    <style>
+        div { display: block; box-sizing: border-box; }
+        .gauge { width: 128dp; height: 128dp; border-radius: 64dp; position: relative;
+                 decorator: conic-gradient(from 180deg at 50% 50%, #a6e3a1 0deg, #f9e2af 120deg, #f38ba8 240deg, #a6e3a1 360deg); }
+        /* The inner disc punches the ring out of the sweep, so no mask decorator is needed. */
+        .gauge .hub { position: absolute; left: 16dp; top: 16dp; width: 96dp; height: 96dp; border-radius: 48dp;
+                      background-color: #181825; display: flex; flex-direction: column;
+                      align-items: center; justify-content: center; }
+        .gauge .value { font-size: 30dp; color: #cdd6f4; }
+        .gauge .unit { font-size: 11dp; color: #7f849c; letter-spacing: 2dp; }
+        /* A needle is one thin box; data-style-transform rotates it from the model. */
+        .gauge .needle { position: absolute; left: 63dp; top: 14dp; width: 2dp; height: 50dp;
+                         background-color: #cdd6f4; transform-origin-x: 1dp; transform-origin-y: 50dp; }
+    </style>
+</head>
+<body>
+    <!-- Speed and SpeedAngle come from whichever document composes this widget. -->
+    <div class="gauge">
+        <div class="needle" data-style-transform="'rotate(' + SpeedAngle + 'deg)'"/>
+        <div class="hub">
+            <div class="value">{{ Speed }}</div>
+            <div class="unit">KM/H</div>
+        </div>
+        <div id="gauge-body"/>
+    </div>
+</body>
+</template>
