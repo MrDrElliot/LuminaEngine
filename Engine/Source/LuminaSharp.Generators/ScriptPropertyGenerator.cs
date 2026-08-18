@@ -1,6 +1,7 @@
 using System.Linq;
 using LuminaSharp.ScriptProperties;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace LuminaSharp.Generators;
@@ -78,6 +79,11 @@ public sealed class ScriptPropertyGenerator : IIncrementalGenerator
         // there either), so without this it would fail only at script reload, with CS9248 and no explanation.
         if (Symbol is IPropertySymbol Property)
         {
+            // The rewriter re-emits [Property] onto the property it generates, and this runs over that.
+            if (!IsPartial(Property))
+            {
+                return null;
+            }
             return Diagnostic.Create(PartialProperty, Symbol.Locations.FirstOrDefault() ?? Location,
                 Property.Name, Property.Type.ToDisplayString());
         }
@@ -102,6 +108,19 @@ public sealed class ScriptPropertyGenerator : IIncrementalGenerator
         }
 
         return null;
+    }
+
+    private static bool IsPartial(IPropertySymbol Property)
+    {
+        foreach (SyntaxReference Reference in Property.DeclaringSyntaxReferences)
+        {
+            if (Reference.GetSyntax() is PropertyDeclarationSyntax Declaration
+                && Declaration.Modifiers.Any(SyntaxKind.PartialKeyword))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     /// <summary>The declarator for a field, which is where an initializer lives -- an <see cref="IFieldSymbol"/>
