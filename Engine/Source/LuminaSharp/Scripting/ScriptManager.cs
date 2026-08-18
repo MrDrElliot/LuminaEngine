@@ -150,7 +150,7 @@ internal sealed class ScriptManager
         EntityScripts = new EntityScriptRuntime(Library);
         EntitySystems = new EntitySystemRuntime(Library);
         RenderScenes = new RenderSceneRuntime(Library);
-        Scriptables = new ScriptableRuntime(Library);
+        Scriptables = new ScriptableRuntime(Library, EntityScripts);
         DataStructs = new ScriptDataStructRuntime(Library);
 
         Native.Log(ELogLevel.Info,

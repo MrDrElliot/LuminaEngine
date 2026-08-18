@@ -19,12 +19,16 @@ internal sealed class ScriptableRuntime
 {
     private readonly TypeLibrary Library;
 
+    // EntityScripts are created here but resolved and destroyed through EntityScriptRuntime's handle set.
+    private readonly EntityScriptRuntime EntityScripts;
+
     // Cached per user-type override bitmask (which ScriptEvents the subclass overrides); keyed by the user type.
     private readonly Dictionary<Type, int> OverrideFlagsByType = new();
 
-    public ScriptableRuntime(TypeLibrary Library)
+    public ScriptableRuntime(TypeLibrary Library, EntityScriptRuntime EntityScripts)
     {
         this.Library = Library;
+        this.EntityScripts = EntityScripts;
     }
 
     public IReadOnlyCollection<string> TypeNames => Library.ScriptableTypeNames;
@@ -124,12 +128,15 @@ internal sealed class ScriptableRuntime
 
         Instance.BindNativeHandle(new IntPtr(unchecked((long)NativePtr)));
 
+        GCHandle Allocated = GCHandle.Alloc(Instance);
+
         // The one point every script instance passes through, and it runs before the dispatch that created it.
         if (Instance is EntityScript Script)
         {
             PrepareEntityScript(Script, TypeName, Type);
+            EntityScripts.Adopt(Allocated, Script);
         }
-        return GCHandle.ToIntPtr(GCHandle.Alloc(Instance));
+        return GCHandle.ToIntPtr(Allocated);
     }
 
     // Description must be set before any dispatch: PollInput and the profiler labels both read it.

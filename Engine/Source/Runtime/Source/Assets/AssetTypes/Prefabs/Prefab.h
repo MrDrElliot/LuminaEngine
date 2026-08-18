@@ -3,6 +3,7 @@
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Math/Transform.h"
+#include "World/Entity/EntityHandle.h"
 #include "Assets/AssetTypes/Prefabs/PrefabComponents.h"
 #include "Prefab.generated.h"
 

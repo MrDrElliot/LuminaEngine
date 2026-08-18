@@ -67,6 +67,14 @@ internal sealed class EntityScriptRuntime
         Scripts.Add(Script);
     }
 
+    /// <summary>Registers an instance created by ScriptableRuntime. LiveHandles is the liveness test every
+    /// dispatch resolves through, and Destroy's free path claims membership before running OnDetach.</summary>
+    internal void Adopt(GCHandle Handle, EntityScript Script)
+    {
+        LiveHandles.Add(Handle);
+        IndexAdd((ulong)(long)Script.World.Handle, Script.Entity.Id, Script);
+    }
+
     private void IndexRemove(EntityScript Script)
     {
         // The world comes from the native object now; a script whose native side is gone has no index entry
