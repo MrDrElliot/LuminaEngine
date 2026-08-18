@@ -1,4 +1,5 @@
 ﻿#include "EditorPCH.h"
+#include "Core/CoreEditorDelegates.h"
 #include "Factory.h"
 
 #include "Assets/AssetRegistry/AssetRegistry.h"
@@ -92,6 +93,7 @@ namespace Lumina
                 if (CPackage::SavePackage(Package, OwnedPath))
                 {
                     FAssetRegistry::Get().AssetCreated(NewAsset);
+                    FCoreEditorDelegates::OnAssetCreated.Broadcast(NewAsset);
                 }
                 else
                 {

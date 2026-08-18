@@ -1,4 +1,5 @@
 #include "AssetEditorTool.h"
+#include "Core/CoreEditorDelegates.h"
 #include "Assets/AssetEvents.h"
 #include "Core/Object/Package/Package.h"
 #include "GUID/GUID.h"
@@ -141,9 +142,12 @@ namespace Lumina
             }
         }
 
+        FCoreEditorDelegates::OnAssetPreSave.Broadcast(Asset);
+
         if (CPackage::SavePackage(Asset->GetPackage(), Asset->GetPackage()->GetPackagePath()))
         {
             FAssetRegistry::Get().AssetSaved(Asset);
+            FCoreEditorDelegates::OnAssetSaved.Broadcast(Asset);
             ImGuiX::Notifications::NotifySuccess("Successfully saved package: \"{0}\"", Asset->GetName().c_str());
         }
         else

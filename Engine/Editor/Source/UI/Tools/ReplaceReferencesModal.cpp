@@ -1,4 +1,5 @@
 #include "ReplaceReferencesModal.h"
+#include "Core/CoreEditorDelegates.h"
 
 #include "EditorToolContext.h"
 #include "Assets/AssetRegistry/AssetData.h"
@@ -295,9 +296,12 @@ namespace Lumina::ReplaceReferences
                     continue;
                 }
 
+                FCoreEditorDelegates::OnAssetPreSave.Broadcast(Referencer);
+
                 if (CPackage::SavePackage(Package, Package->GetPackagePath()))
                 {
                     FAssetRegistry::Get().AssetSaved(Referencer);
+                    FCoreEditorDelegates::OnAssetSaved.Broadcast(Referencer);
                     ++State.Rewritten;
                 }
                 else

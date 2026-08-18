@@ -1,4 +1,5 @@
 ﻿#include "ContentBrowserEditorTool.h"
+#include "Core/CoreEditorDelegates.h"
 
 #include "EditorAssetActions.h"
 #include "EditorToolContext.h"
@@ -1690,6 +1691,7 @@ namespace Lumina
                 for (const FFixedString& Tp : TextPaths)
                 {
                     FAssetRegistry::Get().TextAssetDeleted(FStringView(Tp.c_str(), Tp.size()));
+                    FCoreEditorDelegates::OnAssetDeleted.Broadcast(FStringView(Tp.c_str(), Tp.size()));
                 }
 
                 ImGuiX::Notifications::NotifySuccess("Deleted Directory {0}", Destroy.PendingDestroy);
@@ -1730,6 +1732,7 @@ namespace Lumina
 
                 if (CPackage::DestroyPackage(Destroy.PendingDestroy))
                 {
+                    FCoreEditorDelegates::OnAssetDeleted.Broadcast(Destroy.PendingDestroy);
                     ImGuiX::Notifications::NotifySuccess("Deleted Asset {0}", Destroy.PendingDestroy);
                     bWroteSomething = true;
                 }
@@ -1743,6 +1746,7 @@ namespace Lumina
                 if (TextAsset::IsTextAssetPath(Destroy.PendingDestroy))
                 {
                     FAssetRegistry::Get().TextAssetDeleted(Destroy.PendingDestroy);
+                    FCoreEditorDelegates::OnAssetDeleted.Broadcast(Destroy.PendingDestroy);
                 }
                 ImGuiX::Notifications::NotifySuccess("Deleted {0}", Destroy.PendingDestroy);
                 bWroteSomething = true;
@@ -1767,6 +1771,7 @@ namespace Lumina
                 }
 
                 FAssetRegistry::Get().AssetRenamed(Rename.OldName, Rename.NewName);
+                FCoreEditorDelegates::OnAssetRenamed.Broadcast(Rename.OldName, Rename.NewName);
                 ImGuiX::Notifications::NotifySuccess("Rename Success");
                 bWroteSomething = true;
             }
@@ -1813,6 +1818,7 @@ namespace Lumina
                 {
                     CPackage::OnPackageMovedExternally(Entry.OldPath, Entry.NewPath);
                     FAssetRegistry::Get().AssetRenamed(Entry.OldPath, Entry.NewPath);
+                    FCoreEditorDelegates::OnAssetRenamed.Broadcast(Entry.OldPath, Entry.NewPath);
                 }
 
                 // Relocate the identities (and sidecars) of every contained text asset.
@@ -1833,6 +1839,7 @@ namespace Lumina
                 if (TextAsset::IsTextAssetPath(Rename.OldName) || TextAsset::IsTextAssetPath(Rename.NewName))
                 {
                     FAssetRegistry::Get().TextAssetRenamed(Rename.OldName, Rename.NewName);
+                    FCoreEditorDelegates::OnAssetRenamed.Broadcast(Rename.OldName, Rename.NewName);
                 }
                 ImGuiX::Notifications::NotifySuccess("Rename Success");
                 bWroteSomething = true;
@@ -3244,6 +3251,7 @@ namespace Lumina
                             // The asset already existed, so this is a save notification and not a creation:
                             // the registry entry keeps its GUID and path, only the on-disk state moved.
                             FAssetRegistry::Get().AssetSaved(SavedAsset);
+                            FCoreEditorDelegates::OnAssetSaved.Broadcast(SavedAsset);
 
                             // Nothing about the reference changed, so no open tool would otherwise notice
                             // that what it is showing is a different mesh/texture than the one it cached.

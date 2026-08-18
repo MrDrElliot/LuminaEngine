@@ -1,4 +1,5 @@
 #include "AssetRegistryEditorTool.h"
+#include "Core/CoreEditorDelegates.h"
 
 #include <EASTL/sort.h>
 
@@ -814,9 +815,12 @@ namespace Lumina
             }
             ResavedPackages.insert(Package);
 
+            FCoreEditorDelegates::OnAssetPreSave.Broadcast(Asset);
+
             if (CPackage::SavePackage(Package, Package->GetPackagePath()))
             {
                 FAssetRegistry::Get().AssetSaved(Asset);
+                FCoreEditorDelegates::OnAssetSaved.Broadcast(Asset);
                 ++ResaveSaved;
             }
             else

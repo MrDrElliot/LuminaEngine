@@ -1,4 +1,5 @@
 ﻿#include "EditorUI.h"
+#include "Core/CoreEditorDelegates.h"
 #include <cfloat>
 #include <cstdlib>
 #include <filesystem>
@@ -4234,6 +4235,8 @@ namespace Lumina
 
     void FEditorUI::OnProjectLoaded()
     {
+        FCoreEditorDelegates::OnProjectLoaded.Broadcast();
+
         // Armed here, not at startup: the tab list lives in the project's own /Config, so it isn't
         // readable until the project is mounted. Consumed on the next update.
         bSessionRestorePending = true;

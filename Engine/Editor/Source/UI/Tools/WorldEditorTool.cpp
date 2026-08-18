@@ -1,4 +1,5 @@
 #include "WorldEditorTool.h"
+#include "Core/CoreEditorDelegates.h"
 #include "Core/Math/Math.h"
 #include "EditorToolContext.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
@@ -725,6 +726,8 @@ namespace Lumina
 
         if (bGamePreviewRunning)
         {
+            // Closing the tool mid-play ends PIE too, so subscribers must not be left holding the world.
+            FCoreEditorDelegates::OnPIEEnd.Broadcast(World);
             OnGamePreviewStopRequested.Broadcast();
         }
         
@@ -2863,9 +2866,12 @@ namespace Lumina
             GenerateThumbnail(World->GetPackage());
         }
 
+        FCoreEditorDelegates::OnAssetPreSave.Broadcast(World);
+
         if (CPackage::SavePackage(World->GetPackage(), World->GetPackage()->GetPackagePath()))
         {
             FAssetRegistry::Get().AssetSaved(World);
+            FCoreEditorDelegates::OnAssetSaved.Broadcast(World);
             ImGuiX::Notifications::NotifySuccess("Successfully saved world: \"{0}\"", World->GetName().c_str());
         }
         else
@@ -4132,9 +4138,13 @@ namespace Lumina
 
             // Players 2..N: FEditorUI spawns their PIE worlds + Game Preview pop-ups (deferred tool create).
             OnGamePreviewStartRequested.Broadcast();
+            FCoreEditorDelegates::OnPIEBegin.Broadcast(PIEWorld);
         }
         else
         {
+            // Broadcast while the PIE world is still live; the teardown below invalidates it.
+            FCoreEditorDelegates::OnPIEEnd.Broadcast(World);
+
             // Tear down extra player preview worlds (FEditorUI) before the primary teardown below.
             OnGamePreviewStopRequested.Broadcast();
 
