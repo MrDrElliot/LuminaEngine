@@ -123,7 +123,35 @@ internal sealed class ScriptableRuntime
         }
 
         Instance.BindNativeHandle(new IntPtr(unchecked((long)NativePtr)));
+
+        // The one point every script instance passes through, and it runs before the dispatch that created it.
+        if (Instance is EntityScript Script)
+        {
+            PrepareEntityScript(Script, TypeName, Type);
+        }
         return GCHandle.ToIntPtr(GCHandle.Alloc(Instance));
+    }
+
+    // Description must be set before any dispatch: PollInput and the profiler labels both read it.
+    private void PrepareEntityScript(EntityScript Script, string TypeName, Type Type)
+    {
+        Script.Description = Library.GetEntityScript(TypeName) ?? Library.Describe(Type);
+
+        // Defensive: the driver always SetOwner's before the first dispatch that creates this instance.
+        if (Script.Entity.IsNull)
+        {
+            return;
+        }
+
+        try
+        {
+            Script.Description.InjectRequiredComponents(Script);
+            Script.Description.EnsureInputComponent(Script);
+        }
+        catch (Exception Exception)
+        {
+            Native.Log(ELogLevel.Error, $"EntityScript component injection threw: {Exception}");
+        }
     }
 
     /// <summary>
