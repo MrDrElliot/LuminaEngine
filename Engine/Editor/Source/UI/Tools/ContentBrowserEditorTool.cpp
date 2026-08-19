@@ -394,13 +394,25 @@ namespace Lumina
             return false;
         }
 
+        // Reflector-emitted C# bindings, rewritten by every build and never authored by hand.
+        bool IsGeneratedBindingsDirectory(FStringView VirtualPath)
+        {
+            static constexpr const char* kSuffix = "/Scripts/Generated";
+            const size_t Length = FStringView(kSuffix).size();
+            return VirtualPath.size() > Length
+                && IEquals(VirtualPath.substr(VirtualPath.size() - Length), kSuffix);
+        }
+
         bool ShouldHideDirectory(const VFS::FFileInfo& Info)
         {
             if (Info.IsHidden()) { return true; }
             const FStringView Name(Info.Name.c_str(), Info.Name.size());
             if (!Name.empty() && Name.front() == '.') { return true; }
             if (IsHiddenBrowserDirectory(Name)) { return true; }
-            
+
+            const FStringView VirtualPath(Info.VirtualPath.c_str(), Info.VirtualPath.size());
+            if (IsGeneratedBindingsDirectory(VirtualPath)) { return true; }
+
             const FStringView Parent = VFS::Parent(FStringView(Info.VirtualPath.c_str(), Info.VirtualPath.size()), true);
             if (IEquals(Parent, "/Engine/Resources") && !IEquals(Name, "Content") && !IEquals(Name, "Scripts"))
             {
