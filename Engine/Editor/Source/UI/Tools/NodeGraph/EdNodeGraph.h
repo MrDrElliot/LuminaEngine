@@ -53,7 +53,6 @@ namespace Lumina
 
         virtual void Initialize();
         virtual void Shutdown();
-        using Super::Serialize;
         void Serialize(FArchive& Ar) override;
         void PostLoad() override;
 

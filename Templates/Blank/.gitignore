@@ -30,6 +30,7 @@ Thumbs.db
 obj/
 bin/
 *.Scripts.csproj
+**/Scripts/Generated/
 
 # Editor scratch
 imgui.ini

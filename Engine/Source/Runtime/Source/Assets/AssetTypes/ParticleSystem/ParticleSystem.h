@@ -472,7 +472,6 @@ namespace Lumina
 
         CParticleSystem() = default;
 
-        using Super::Serialize;
         void Serialize(FArchive& Ar) override;
         bool IsAsset() const override { return true; }
         void PostLoad() override;

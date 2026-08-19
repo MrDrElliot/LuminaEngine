@@ -378,6 +378,14 @@ public sealed class TargetAssembler
                     Module.Rules.CSharpBindingsDirectory = Path.Combine(Plugin.RootDirectory, "Scripts", "Generated");
                 }
             }
+
+            // Same for a game module: without this its bindings land under Intermediates, which nothing compiles.
+            if (!Module.bIsPlugin
+                && Module.Rules.CSharpBindingsDirectory.Length == 0
+                && !Directories.IsEngineOwned(Module.Rules.ModuleDirectory))
+            {
+                Module.Rules.CSharpBindingsDirectory = Path.Combine(Directories.ProjectRoot!, "Game", "Scripts", "Generated");
+            }
         }
 
         // What the toolchain compiles, before any unity merge. UnityBuildStep rewrites this on the

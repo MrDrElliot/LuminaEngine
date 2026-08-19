@@ -104,13 +104,19 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
             }
         }
 
+        // C# script projects join the same solution, so scripts are edited beside the C++ with real IntelliSense.
+        BuildPlatform Platform = Targets[0].PrimaryVariant.Info.Platform;
+        IReadOnlyList<ScriptProject> ScriptProjects = ScriptProjectGenerator.Discover(Directories, Targets, Platform);
+
+        Changed += ScriptProjectGenerator.EnsureProjectFiles(Directories, ScriptProjects, Platform);
+
         string SolutionName = Directories.ProjectRoot is null
             ? "Lumina"
             : Path.GetFileName(Directories.ProjectRoot);
 
         string SolutionPath = Path.Combine(Directories.OutputRoot, SolutionName + ".sln");
 
-        if (PathUtils.WriteFileIfChanged(SolutionPath, BuildSolution(Projects, Configurations, SolutionPath, RulesProjectPath)))
+        if (PathUtils.WriteFileIfChanged(SolutionPath, BuildSolution(Projects, ScriptProjects, Configurations, SolutionPath, RulesProjectPath)))
         {
             Changed++;
         }
@@ -542,6 +548,7 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
 
     private static string BuildSolution(
         IEnumerable<GeneratedProject> Projects,
+        IReadOnlyList<ScriptProject> ScriptProjects,
         IReadOnlyList<ProjectConfiguration> Configurations,
         string SolutionPath,
         string RulesProjectPath)
@@ -573,6 +580,17 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
             }
         }
 
+        foreach (ScriptProject Project in ScriptProjects)
+        {
+            string Accumulated = string.Empty;
+
+            foreach (string Segment in Project.SolutionFolder.Split('/', StringSplitOptions.RemoveEmptyEntries))
+            {
+                Accumulated = Accumulated.Length == 0 ? Segment : Accumulated + "/" + Segment;
+                FolderGuids.TryAdd(Accumulated, MakeDeterministicGuid("Folder:" + Accumulated));
+            }
+        }
+
         StringBuilder Solution = new();
         Solution.AppendLine();
         Solution.AppendLine("Microsoft Visual Studio Solution File, Format Version 12.00");
@@ -589,6 +607,14 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
         {
             string Relative = PathUtils.MakeRelativeTo(Project.FilePath, SolutionDirectory);
             Solution.AppendLine($"Project(\"{{{VcxProjTypeGuid}}}\") = \"{Project.ProjectName}\", \"{Relative}\", \"{{{Project.Guid.ToString().ToUpperInvariant()}}}\"");
+            Solution.AppendLine("EndProject");
+        }
+
+        foreach (ScriptProject Project in ScriptProjects)
+        {
+            string Relative = PathUtils.MakeRelativeTo(Project.ProjectPath, SolutionDirectory);
+            string Identifier = ScriptProjectGuid(Project).ToString().ToUpperInvariant();
+            Solution.AppendLine($"Project(\"{{{CSharpProjTypeGuid}}}\") = \"{Project.Name}.Scripts\", \"{Relative}\", \"{{{Identifier}}}\"");
             Solution.AppendLine("EndProject");
         }
 
@@ -630,6 +656,18 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
             }
         }
 
+        // Left out of the build: the engine compiles scripts at run time, and an IDE build would race its emit.
+        foreach (ScriptProject Project in ScriptProjects)
+        {
+            string Identifier = "{" + ScriptProjectGuid(Project).ToString().ToUpperInvariant() + "}";
+
+            foreach (ProjectConfiguration Configuration in Configurations)
+            {
+                Solution.AppendLine(
+                    $"\t\t{Identifier}.{Configuration.DisplayName}|{PlatformName}.ActiveCfg = Debug|Any CPU");
+            }
+        }
+
         if (RulesProjectPath.Length > 0)
         {
             // Left out of the build: the build system compiles these rules files itself.
@@ -666,10 +704,24 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
             }
         }
 
+        foreach (ScriptProject Project in ScriptProjects)
+        {
+            if (FolderGuids.TryGetValue(Project.SolutionFolder, out Guid FolderGuid))
+            {
+                Solution.AppendLine(
+                    $"\t\t{{{ScriptProjectGuid(Project).ToString().ToUpperInvariant()}}} = {{{FolderGuid.ToString().ToUpperInvariant()}}}");
+            }
+        }
+
         Solution.AppendLine("\tEndGlobalSection");
         Solution.AppendLine("EndGlobal");
 
         return Solution.ToString();
+    }
+
+    private static Guid ScriptProjectGuid(ScriptProject Project)
+    {
+        return MakeDeterministicGuid("Scripts:" + Project.Name);
     }
 
     /// <summary>Command that reinvokes this tool.</summary>

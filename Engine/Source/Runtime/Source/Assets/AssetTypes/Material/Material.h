@@ -51,7 +51,6 @@ namespace Lumina
 
         CMaterial();
 
-        using Super::Serialize;
         void Serialize(FArchive& Ar) override;
         bool IsAsset() const override { return true; }
         void PostCreateCDO() override;

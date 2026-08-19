@@ -77,6 +77,9 @@ bin/
 # own managed projects are hand-authored source now that LuminaBuildTool replaced premake.
 *.Scripts.csproj
 
+# Reflector-emitted C# bindings, written into the owning unit's script tree so they compile with it.
+**/Scripts/Generated/
+
 # Local assistant notes
 /.claude/
 CLAUDE.md

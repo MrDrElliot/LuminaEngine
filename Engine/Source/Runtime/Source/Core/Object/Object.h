@@ -42,7 +42,7 @@ namespace Lumina
         RUNTIME_API virtual void Serialize(FArchive& Ar);
 
         /** Structured-archive serialize (packaging, network). */
-        RUNTIME_API virtual void Serialize(IStructuredArchive::FRecord& Record);
+        RUNTIME_API virtual void SerializeStructured(IStructuredArchive::FRecord& Record);
 
         /** Called after constructor + property init. */
         RUNTIME_API virtual void PostInitProperties();
