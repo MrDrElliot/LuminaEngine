@@ -1,4 +1,6 @@
-#include "AnimationMontageEditorTool.h"
+﻿#include "AnimationMontageEditorTool.h"
+#include "UI/Properties/PropertyTable.h"
+#include "Animation/AnimNotify.h"
 
 #include <imgui_internal.h>
 
@@ -17,7 +19,7 @@
 
 namespace Lumina
 {
-    static const char* MontageDetailsName  = "MontageDetails";
+    static const char* MontageDetailsName  = "Details";
     static const char* MontageTimelineName = "MontageTimeline";
 
     namespace
@@ -45,11 +47,21 @@ namespace Lumina
     {
         CreateToolWindow(MontageDetailsName, [&](bool bFocused)
         {
+            CAnimationMontage* Montage = GetAsset<CAnimationMontage>();
+            const bool bHasSelection = Montage != nullptr && SelectedKind != ESelectionKind::None;
+
             ImGuiX::Font::PushFont(ImGuiX::Font::EFont::Large);
-            ImGui::SeparatorText("Asset Details");
+            ImGui::SeparatorText(bHasSelection ? "Selection Details" : "Asset Details");
             ImGuiX::Font::PopFont();
 
             ImGui::Spacing();
+
+            if (bHasSelection)
+            {
+                DrawInspector(Montage, Math::Max(Montage->GetDuration(), 1.0f));
+                return;
+            }
+
             PropertyTable.DrawTree();
         });
 
@@ -339,7 +351,6 @@ namespace Lumina
         ImGui::Separator();
 
         DrawSlotTracks(Montage, Duration);
-        DrawInspector(Montage, Duration);
     }
 
     void FAnimationMontageEditorTool::DrawTransport(float Duration)
@@ -742,6 +753,12 @@ namespace Lumina
             DragMode = EDragMode::Playhead;
         }
 
+        // Every item and the ruler set a DragMode, so an unclaimed press landed on empty canvas.
+        if (DragMode == EDragMode::None && bCanvasHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+        {
+            ClearSelection();
+        }
+
         if (DragMode != EDragMode::None)
         {
             if (ImGui::IsMouseDown(ImGuiMouseButton_Left))
@@ -829,11 +846,27 @@ namespace Lumina
             [](const SAnimMontageSection& A, const SAnimMontageSection& B) { return A.StartTime < B.StartTime; });
     }
 
+    void FAnimationMontageEditorTool::NotifyTrackCombo(CAnimationMontage* Montage, FName& Track, const char* StrId)
+    {
+        ImGui::SetNextItemWidth(Math::Max(ImGui::GetContentRegionAvail().x - 90.0f, 120.0f));
+        if (ImGui::BeginCombo(StrId, Track.c_str()))
+        {
+            for (const FName& Lane : Montage->NotifyTracks)
+            {
+                if (ImGui::Selectable(Lane.c_str(), Lane == Track))
+                {
+                    Track = Lane;
+                    MarkMontageDirty();
+                }
+            }
+            ImGui::EndCombo();
+        }
+    }
+
     void FAnimationMontageEditorTool::DrawInspector(CAnimationMontage* Montage, float Duration)
     {
-        ImGui::Separator();
-
         char NameBuf[128];
+        const float FieldWidth = Math::Max(ImGui::GetContentRegionAvail().x - 90.0f, 120.0f);
 
         switch (SelectedKind)
         {
@@ -854,21 +887,17 @@ namespace Lumina
 
             const float ClipDuration = Segment.Animation.IsValid() ? Segment.Animation->GetDuration() : 0.0f;
 
-            ImGui::SetNextItemWidth(120);
+            ImGui::SetNextItemWidth(FieldWidth);
             if (ImGui::DragFloat("Start", &Segment.StartTime, 0.01f, 0.0f, 1000.0f, "%.3fs")) { MarkMontageDirty(); }
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(120);
+            ImGui::SetNextItemWidth(FieldWidth);
             if (ImGui::DragFloat("Clip Start", &Segment.ClipStartTime, 0.01f, 0.0f, ClipDuration, "%.3fs")) { MarkMontageDirty(); }
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(120);
+            ImGui::SetNextItemWidth(FieldWidth);
             if (ImGui::DragFloat("Clip End", &Segment.ClipEndTime, 0.01f, 0.0f, ClipDuration, "%.3fs")) { MarkMontageDirty(); }
 
-            ImGui::SetNextItemWidth(120);
+            ImGui::SetNextItemWidth(FieldWidth);
             if (ImGui::DragFloat("Rate", &Segment.PlayRate, 0.01f, 0.05f, 20.0f, "%.2fx")) { MarkMontageDirty(); }
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(120);
+            ImGui::SetNextItemWidth(FieldWidth);
             if (ImGui::DragInt("Loops", &Segment.LoopCount, 0.1f, 1, 64)) { MarkMontageDirty(); }
-            ImGui::SameLine();
             ImGui::TextDisabled("occupies %.3fs", Segment.GetTimelineLength());
             break;
         }
@@ -881,18 +910,15 @@ namespace Lumina
 
             SAnimMontageSection& Section = Montage->Sections[SelectedIndex];
             ImGui::TextDisabled(LE_ICON_BOOKMARK " Section");
-            ImGui::SameLine();
 
             snprintf(NameBuf, sizeof(NameBuf), "%s", Section.Name.c_str());
-            ImGui::SetNextItemWidth(160);
+            ImGui::SetNextItemWidth(FieldWidth);
             if (ImGui::InputText("Name", NameBuf, sizeof(NameBuf))) { Section.Name = FName(NameBuf); MarkMontageDirty(); }
 
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(120);
+            ImGui::SetNextItemWidth(FieldWidth);
             if (ImGui::DragFloat("Start##Sec", &Section.StartTime, 0.01f, 0.0f, Duration, "%.3fs")) { MarkMontageDirty(); }
 
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(160);
+            ImGui::SetNextItemWidth(FieldWidth);
             if (ImGui::BeginCombo("Next", Section.NextSection.IsNone() ? "<end montage>" : Section.NextSection.c_str()))
             {
                 if (ImGui::Selectable("<end montage>", Section.NextSection.IsNone()))
@@ -921,17 +947,16 @@ namespace Lumina
 
             SAnimMontageNotify& Notify = Montage->Notifies[SelectedIndex];
             ImGui::TextDisabled(LE_ICON_BELL " Notify");
-            ImGui::SameLine();
 
             snprintf(NameBuf, sizeof(NameBuf), "%s", Notify.Name.c_str());
-            ImGui::SetNextItemWidth(180);
+            ImGui::SetNextItemWidth(FieldWidth);
             if (ImGui::InputText("Name##N", NameBuf, sizeof(NameBuf))) { Notify.Name = FName(NameBuf); MarkMontageDirty(); }
 
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(120);
+            ImGui::SetNextItemWidth(FieldWidth);
             if (ImGui::DragFloat("Time##N", &Notify.Time, 0.01f, 0.0f, Duration, "%.3fs")) { MarkMontageDirty(); }
 
-            ImGui::SameLine();
+            NotifyTrackCombo(Montage, Notify.Track, "Track##N");
+
             if (ImGui::Button(LE_ICON_PLUS " Make Ranged"))
             {
                 SAnimMontageNotifyState& State = Montage->NotifyStates.emplace_back();
@@ -942,6 +967,14 @@ namespace Lumina
                 Montage->Notifies.erase(Montage->Notifies.begin() + SelectedIndex);
                 SelectedKind  = ESelectionKind::NotifyState;
                 SelectedIndex = (int32)Montage->NotifyStates.size() - 1;
+                MarkMontageDirty();
+                break;
+            }
+
+            ImGui::Spacing();
+            ImGui::SeparatorText("Notify Type");
+            if (DrawInstancedStructEditor("Type##N", Notify.Notify, SAnimNotify::StaticStruct(), NotifyDetails))
+            {
                 MarkMontageDirty();
             }
             break;
@@ -955,18 +988,24 @@ namespace Lumina
 
             SAnimMontageNotifyState& State = Montage->NotifyStates[SelectedIndex];
             ImGui::TextDisabled(LE_ICON_BELL_OUTLINE " Notify State");
-            ImGui::SameLine();
 
             snprintf(NameBuf, sizeof(NameBuf), "%s", State.Name.c_str());
-            ImGui::SetNextItemWidth(180);
+            ImGui::SetNextItemWidth(FieldWidth);
             if (ImGui::InputText("Name##NS", NameBuf, sizeof(NameBuf))) { State.Name = FName(NameBuf); MarkMontageDirty(); }
 
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(110);
+            ImGui::SetNextItemWidth(FieldWidth);
             if (ImGui::DragFloat("Start##NS", &State.StartTime, 0.01f, 0.0f, Duration, "%.3fs")) { MarkMontageDirty(); }
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(110);
+            ImGui::SetNextItemWidth(FieldWidth);
             if (ImGui::DragFloat("End##NS", &State.EndTime, 0.01f, 0.0f, Duration, "%.3fs")) { MarkMontageDirty(); }
+
+            NotifyTrackCombo(Montage, State.Track, "Track##NS");
+
+            ImGui::Spacing();
+            ImGui::SeparatorText("Notify Type");
+            if (DrawInstancedStructEditor("Type##NS", State.Notify, SAnimNotifyState::StaticStruct(), NotifyDetails))
+            {
+                MarkMontageDirty();
+            }
             break;
         }
         default:
@@ -978,7 +1017,7 @@ namespace Lumina
 
         if (SelectedKind != ESelectionKind::None)
         {
-            ImGui::SameLine();
+            ImGui::Spacing();
             if (ImGui::Button(LE_ICON_DELETE " Delete"))
             {
                 DeleteSelected(Montage);

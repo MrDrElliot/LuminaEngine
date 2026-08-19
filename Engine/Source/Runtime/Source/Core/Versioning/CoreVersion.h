@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "Platform/GenericPlatform.h"
 
 #define PACKAGE_FILE_TAG			0x9E2A83C1
@@ -56,6 +56,9 @@ enum class ELuminaEngineVersion : uint32
 
 	// FMeshletData serializes per-meshlet bone palettes; a skinned vertex's JointIndices address one.
 	MESHLET_BONE_PALETTES,
+
+	// FAnimationNotify/FAnimationNotifyState carry an instanced notify, so one can run its own code.
+	ANIM_NOTIFY_OBJECTS,
 
 	AUTOMATIC_VERSION_PLUS_ONE,
 	AUTOMATIC_VERSION = AUTOMATIC_VERSION_PLUS_ONE - 1

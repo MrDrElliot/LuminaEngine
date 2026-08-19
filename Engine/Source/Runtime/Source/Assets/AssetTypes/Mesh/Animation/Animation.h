@@ -1,7 +1,9 @@
 #pragma once
 
+#include "Animation/AnimNotify.h"
 #include "Assets/AssetTypes/Curve/CurveAsset.h"
 #include "Core/Math/AABB.h"
+#include "Core/Object/InstancedStruct.h"
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Threading/Thread.h"
@@ -53,17 +55,25 @@ namespace Lumina
         float Time;
         FName NotifyTrack;
         FVector4 Color;
-    
+
+        // Optional typed notify that runs its own code; empty leaves the entry name-only.
+        TInstancedStruct<SAnimNotify> Notify;
+
         friend FArchive& operator << (FArchive& Ar, FAnimationNotify& Data)
         {
             Ar << Data.NotifyName;
             Ar << Data.Time;
             Ar << Data.NotifyTrack;
             Ar << Data.Color;
+
+            if (Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::ANIM_NOTIFY_OBJECTS)
+            {
+                Ar << Data.Notify;
+            }
             return Ar;
         }
     };
-    
+
     struct FAnimationNotifyState
     {
         FName NotifyName;
@@ -71,7 +81,10 @@ namespace Lumina
         float EndTime;
         FName NotifyTrack;
         FVector4 Color;
-    
+
+        // Optional typed notify that runs its own code; empty leaves the entry name-only.
+        TInstancedStruct<SAnimNotifyState> Notify;
+
         friend FArchive& operator << (FArchive& Ar, FAnimationNotifyState& Data)
         {
             Ar << Data.NotifyName;
@@ -79,6 +92,11 @@ namespace Lumina
             Ar << Data.EndTime;
             Ar << Data.NotifyTrack;
             Ar << Data.Color;
+
+            if (Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::ANIM_NOTIFY_OBJECTS)
+            {
+                Ar << Data.Notify;
+            }
             return Ar;
         }
     };

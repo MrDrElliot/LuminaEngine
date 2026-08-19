@@ -2,10 +2,13 @@
 
 #include "Containers/Array.h"
 #include "Containers/Name.h"
+#include "World/Entity/Registry/EntityRegistry.h"
 
 namespace Lumina
 {
     class CAnimation;
+    struct SAnimNotify;
+    struct SAnimNotifyState;
 
     enum class EAnimNotifyEventType : uint8
     {
@@ -27,6 +30,16 @@ namespace Lumina
         // Blend weight of the branch that sampled the event (1 for direct clip playback). Graph
         // blends scale this; events from inactive state-machine branches never fire.
         float Weight = 1.0f;
+
+        // Position inside a notify-state window, 0..1, for Tick.
+        float Alpha = 0.0f;
+
+        // The clip the notify was authored on.
+        const CAnimation* Animation = nullptr;
+
+        // Authored instance, null when the entry is name-only; points into asset data, valid this frame only.
+        const SAnimNotify* Notify = nullptr;
+        const SAnimNotifyState* State = nullptr;
     };
 
     namespace AnimEvents
@@ -35,5 +48,8 @@ namespace Lumina
         // single loop wrap when CurTime landed behind PrevTime. Equal times append nothing.
         RUNTIME_API void CollectTriggeredNotifies(const CAnimation* Clip, float PrevTime, float CurTime,
                                                   bool bLooping, float Weight, TVector<FAnimNotifyEvent>& Out);
+
+        // Runs the typed notify on every event that carries one. Serial pass only: these call user code.
+        RUNTIME_API void DispatchTypedNotifies(const TVector<FAnimNotifyEvent>& Events, FEntityRegistry& Registry, entt::entity Entity);
     }
 }

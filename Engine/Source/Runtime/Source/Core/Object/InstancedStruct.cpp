@@ -224,4 +224,68 @@ namespace Lumina
             Memory::Free(Raw);
         }
     }
+
+    FName InstancedStructKey(CStruct* Type)
+    {
+        if (const FString* ScriptName = Type->Metadata.TryGetMetadata("ScriptTypeName"))
+        {
+            return FName(ScriptName->c_str());
+        }
+        return Type->GetName();
+    }
+
+    CStruct* ResolveInstancedStructType(CStruct* MetaBase, const FName& Key)
+    {
+        if (Key.IsNone())
+        {
+            return nullptr;
+        }
+        if (CStruct* Found = FindObject<CStruct>(Key); IsInstancableStructType(Found))
+        {
+            return Found;
+        }
+        if (MetaBase != nullptr)
+        {
+            for (TObjectIterator<CStruct> It; It; ++It)
+            {
+                CStruct* Candidate = *It;
+                if (Candidate == MetaBase || !Candidate->IsChildOf(MetaBase) || !IsInstancableStructType(Candidate))
+                {
+                    continue;
+                }
+                if (const FString* Name = Candidate->Metadata.TryGetMetadata("ScriptTypeName"); Name && FName(Name->c_str()) == Key)
+                {
+                    return Candidate;
+                }
+            }
+        }
+        return nullptr;
+    }
+
+    void SerializeInstancedStruct(FArchive& Ar, FInstancedStruct& Value, CStruct* MetaBase)
+    {
+        if (Ar.IsReading())
+        {
+            FName StructKey;
+            Ar << StructKey;
+
+            CStruct* Type = ResolveInstancedStructType(MetaBase, StructKey);
+            Value.InitializeAs(Type);
+
+            if (Type != nullptr)
+            {
+                Type->SerializeTaggedProperties(Ar, Value.GetMutableMemory());
+            }
+            return;
+        }
+
+        CStruct* Type = Value.GetScriptStruct();
+        FName StructKey = Type ? InstancedStructKey(Type) : NAME_None;
+        Ar << StructKey;
+
+        if (Type != nullptr)
+        {
+            Type->SerializeTaggedProperties(Ar, Value.GetMutableMemory());
+        }
+    }
 }

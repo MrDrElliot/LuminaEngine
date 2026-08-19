@@ -1,4 +1,4 @@
-#include "PropertyTable.h"
+﻿#include "PropertyTable.h"
 
 #include <EASTL/algorithm.h>
 
@@ -2106,5 +2106,31 @@ namespace Lumina
             It = CategoryMap.emplace(CategoryName, Move(NewRow)).first;
         }
         return It->second.get();
+    }
+
+    bool DrawInstancedStructEditor(const char* StrId, FInstancedStruct& Value, CStruct* BaseStruct, FPropertyTable& Table)
+    {
+        CStruct* Chosen = Value.GetScriptStruct();
+        bool bChanged = false;
+
+        if (ImGuiX::StructCombo(StrId, BaseStruct, Chosen))
+        {
+            Value.InitializeAs(Chosen);
+            bChanged = true;
+        }
+
+        if (CStruct* Current = Value.GetScriptStruct())
+        {
+            // SetObject rebuilds the row tree, so doing it every frame would discard any edit in progress.
+            void* Memory = Value.GetMutableMemory();
+            if (Table.GetObject() != Memory || Table.GetType() != Current)
+            {
+                Table.SetObject(Memory, Current);
+            }
+
+            Table.SetShowSearchBar(false);
+            Table.DrawTree();
+        }
+        return bChanged;
     }
 }

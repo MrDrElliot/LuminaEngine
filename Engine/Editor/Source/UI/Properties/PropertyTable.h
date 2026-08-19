@@ -11,6 +11,7 @@ namespace Lumina
     class FPropertyTable;
     class FStructProperty;
     class CStruct;
+    struct FInstancedStruct;
     class FPropertyHandle;
     class FArrayProperty;
     class FMapProperty;
@@ -456,4 +457,7 @@ namespace Lumina
         THashMap<FName, TUniquePtr<FCategoryPropertyRow>>   CategoryMap;
         
     };
+
+    // Type picker plus the instance's properties inline, for an FInstancedStruct edited outside a property row.
+    bool DrawInstancedStructEditor(const char* StrId, FInstancedStruct& Value, CStruct* BaseStruct, FPropertyTable& Table);
 }

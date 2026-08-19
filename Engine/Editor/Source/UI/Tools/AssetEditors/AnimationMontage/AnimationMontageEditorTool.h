@@ -1,8 +1,9 @@
-#pragma once
+﻿#pragma once
 
 #define USE_IMGUI_API
 #include <imgui.h>
 
+#include "UI/Properties/PropertyTable.h"
 #include "UI/Tools/AssetEditors/AssetEditorTool.h"
 
 namespace Lumina
@@ -45,6 +46,10 @@ namespace Lumina
         /** Keeps Sections in timeline order, which every section lookup assumes. */
         void SortSections(CAnimationMontage* Montage);
         void DrawInspector(CAnimationMontage* Montage, float Duration);
+        void NotifyTrackCombo(CAnimationMontage* Montage, FName& Track, const char* StrId);
+
+        // Inline editor for the selected notify's instanced type.
+        FPropertyTable NotifyDetails;
 
         void SyncPreviewToPlayhead(CAnimationMontage* Montage);
         SSimpleAnimationComponent* GetPreviewComponent() const;

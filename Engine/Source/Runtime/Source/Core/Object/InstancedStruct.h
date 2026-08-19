@@ -107,4 +107,20 @@ namespace Lumina
         // The compile-time base struct every assignable value must derive from.
         static CStruct* StaticBaseStruct() { return T::StaticStruct(); }
     };
+
+    // Registered name, or ScriptTypeName for a script candidate whose object name changes every load.
+    RUNTIME_API FName InstancedStructKey(CStruct* Type);
+
+    // The struct a serialized key names, or null. MetaBase scopes the script-candidate search.
+    RUNTIME_API CStruct* ResolveInstancedStructType(CStruct* MetaBase, const FName& Key);
+
+    // Type key followed by the instance's tagged properties, so a hand-written operator<< can hold one.
+    RUNTIME_API void SerializeInstancedStruct(FArchive& Ar, FInstancedStruct& Value, CStruct* MetaBase);
+
+    template<InstancableStruct T>
+    FArchive& operator<<(FArchive& Ar, TInstancedStruct<T>& Value)
+    {
+        SerializeInstancedStruct(Ar, Value, T::StaticStruct());
+        return Ar;
+    }
 }

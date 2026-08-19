@@ -4,51 +4,9 @@
 #include "Core/Object/Class.h"
 #include "Core/Object/InstancedStruct.h"
 #include "Core/Object/ObjectCore.h"
-#include "Core/Object/ObjectIterator.h"
 
 namespace Lumina
 {
-    // Stable serialized key for a stored type. Native structs use their registered name; script
-    // candidates use the C# type name in ScriptTypeName metadata (their object name changes every load).
-    static FName InstancedStructKey(CStruct* Type)
-    {
-        if (const FString* ScriptName = Type->Metadata.TryGetMetadata("ScriptTypeName"))
-        {
-            return FName(ScriptName->c_str());
-        }
-        return Type->GetName();
-    }
-
-    // Resolves a serialized key back to its struct. Native via FindObject; a script candidate by
-    // matching ScriptTypeName among MetaStruct-derived structs.
-    static CStruct* ResolveInstancedStructType(CStruct* MetaBase, const FName& Key)
-    {
-        if (Key.IsNone())
-        {
-            return nullptr;
-        }
-        if (CStruct* Found = FindObject<CStruct>(Key); IsInstancableStructType(Found))
-        {
-            return Found;
-        }
-        if (MetaBase != nullptr)
-        {
-            for (TObjectIterator<CStruct> It; It; ++It)
-            {
-                CStruct* Candidate = *It;
-                if (Candidate == MetaBase || !Candidate->IsChildOf(MetaBase) || !IsInstancableStructType(Candidate))
-                {
-                    continue;
-                }
-                if (const FString* Name = Candidate->Metadata.TryGetMetadata("ScriptTypeName"); Name && FName(Name->c_str()) == Key)
-                {
-                    return Candidate;
-                }
-            }
-        }
-        return nullptr;
-    }
-
     FInstancedStructProperty::FInstancedStructProperty(const FFieldOwner& InOwner, const FInstancedStructPropertyParams* Params)
         : FProperty(InOwner, Params)
     {

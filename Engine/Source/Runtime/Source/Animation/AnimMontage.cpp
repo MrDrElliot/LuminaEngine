@@ -1,4 +1,4 @@
-#include "RuntimePCH.h"
+﻿#include "RuntimePCH.h"
 #include "AnimMontage.h"
 
 #include "Assets/AssetTypes/Mesh/Animation/Animation.h"
@@ -352,6 +352,7 @@ namespace Lumina
                     Event.Track  = Notify.Track;
                     Event.Type   = EAnimNotifyEventType::Trigger;
                     Event.Weight = Instance.Weight;
+                    Event.Notify = Notify.Notify.Get();
                 }
             }
         }
@@ -374,11 +375,15 @@ namespace Lumina
         const auto Emit = [&](int32 Index, EAnimNotifyEventType Type)
         {
             const SAnimMontageNotifyState& State = Montage->NotifyStates[Index];
+            const float Span = State.EndTime - State.StartTime;
+
             FAnimNotifyEvent& Event = OutEvents->emplace_back();
             Event.Name   = State.Name;
             Event.Track  = State.Track;
             Event.Type   = Type;
             Event.Weight = Instance.Weight;
+            Event.State  = State.Notify.Get();
+            Event.Alpha  = Span > 0.0f ? Math::Clamp((Cur - State.StartTime) / Span, 0.0f, 1.0f) : 0.0f;
         };
 
         for (int32 Index : NowActive)
@@ -414,6 +419,8 @@ namespace Lumina
                     Event.Track  = State.Track;
                     Event.Type   = EAnimNotifyEventType::End;
                     Event.Weight = Instance.Weight;
+                    Event.State  = State.Notify.Get();
+                    Event.Alpha  = 1.0f;
                 }
             }
         }

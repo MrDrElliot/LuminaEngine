@@ -1,10 +1,13 @@
-#include "AnimationEditorTool.h"
+﻿#include "AnimationEditorTool.h"
 
 #include "Core/Math/Math.h"
 #include <imgui_internal.h>
 
 #include "ImGuiDrawUtils.h"
 #include "implot.h"
+#include "Animation/AnimNotify.h"
+#include "Core/Object/InstancedStruct.h"
+#include "Core/Object/ObjectIterator.h"
 #include "Assets/AssetTypes/Mesh/Animation/Animation.h"
 #include "Assets/AssetTypes/Mesh/Skeleton/Skeleton.h"
 #include "Tools/UI/ImGui/ImGuiFonts.h"
@@ -19,7 +22,7 @@
 
 namespace Lumina
 {
-    static const char* MeshPropertiesName       = "MeshProperties";
+    static const char* DetailsName              = "Details";
     static const char* SequencerName            = "Sequencer";
 
     namespace
@@ -58,13 +61,23 @@ namespace Lumina
 
     void FAnimationEditorTool::OnInitialize()
     {
-        CreateToolWindow(MeshPropertiesName, [&](bool bFocused)
+        CreateToolWindow(DetailsName, [&](bool bFocused)
         {
+            CAnimation* Animation = GetAsset<CAnimation>();
+            const bool bNotifySelected = Animation != nullptr && SelectedKind != ENotifyKind::None;
+
             ImGuiX::Font::PushFont(ImGuiX::Font::EFont::Large);
-            ImGui::SeparatorText("Asset Details");
+            ImGui::SeparatorText(bNotifySelected ? "Notify Details" : "Asset Details");
             ImGuiX::Font::PopFont();
 
             ImGui::Spacing();
+
+            if (bNotifySelected)
+            {
+                DrawNotifyInspector(Animation);
+                return;
+            }
+
             PropertyTable.DrawTree();
         });
 
@@ -303,7 +316,7 @@ namespace Lumina
         ImGui::DockBuilderSplitNode(leftDockID, ImGuiDir_Down, 0.38f, &bottomDockID, &leftDockID);
 
         ImGui::DockBuilderDockWindow(GetToolWindowName(ViewportWindowName).c_str(), leftDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(MeshPropertiesName).c_str(), rightDockID);
+        ImGui::DockBuilderDockWindow(GetToolWindowName(DetailsName).c_str(), rightDockID);
         ImGui::DockBuilderDockWindow(GetToolWindowName(SequencerName).c_str(), bottomDockID);
     }
 
@@ -342,7 +355,6 @@ namespace Lumina
             if (ImGui::BeginTabItem(LE_ICON_BELL " Notifies"))
             {
                 DrawNotifyTimeline(Animation, AnimComp, Duration);
-                DrawNotifyInspector(Animation);
                 ImGui::EndTabItem();
             }
 
@@ -742,6 +754,12 @@ namespace Lumina
             DragMode = EDragMode::Playhead;
         }
 
+        // Every item and the ruler set a DragMode, so an unclaimed press landed on empty canvas.
+        if (DragMode == EDragMode::None && bCanvasHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+        {
+            ClearSelection();
+        }
+
         if (DragMode != EDragMode::None)
         {
             if (ImGui::IsMouseDown(ImGuiMouseButton_Left))
@@ -815,18 +833,18 @@ namespace Lumina
         const float Duration = Math::Max(Animation->GetDuration(), 0.0001f);
 
         char NameBuf[128];
+        const float FieldWidth = Math::Max(ImGui::GetContentRegionAvail().x - 90.0f, 120.0f);
 
         auto TrackCombo = [&](FName& Track)
         {
-            ImGui::SetNextItemWidth(150);
+            ImGui::SetNextItemWidth(FieldWidth);
             if (ImGui::BeginCombo("Track", Track.c_str()))
             {
-                for (int t = 0; t < (int)Resource->NotifyTracks.size(); ++t)
+                for (const FName& Lane : Resource->NotifyTracks)
                 {
-                    const bool bSel = (Resource->NotifyTracks[t] == Track);
-                    if (ImGui::Selectable(Resource->NotifyTracks[t].c_str(), bSel))
+                    if (ImGui::Selectable(Lane.c_str(), Lane == Track))
                     {
-                        Track = Resource->NotifyTracks[t];
+                        Track = Lane;
                         MarkAnimationDirty();
                     }
                 }
@@ -834,61 +852,83 @@ namespace Lumina
             }
         };
 
-        ImGui::Separator();
+        auto NameField = [&](FName& Name, const char* StrId)
+        {
+            snprintf(NameBuf, sizeof(NameBuf), "%s", Name.c_str());
+            ImGui::SetNextItemWidth(FieldWidth);
+            if (ImGui::InputText(StrId, NameBuf, sizeof(NameBuf)))
+            {
+                Name = FName(NameBuf);
+                MarkAnimationDirty();
+            }
+        };
+
+        auto ColorField = [&](FVector4& Color)
+        {
+            ImVec4 Col(Color.x, Color.y, Color.z, Color.w);
+            if (ImGui::ColorEdit4("Color", &Col.x, ImGuiColorEditFlags_NoInputs))
+            {
+                Color = FVector4(Col.x, Col.y, Col.z, Col.w);
+                MarkAnimationDirty();
+            }
+        };
 
         if (SelectedKind == ENotifyKind::Point && SelectedIndex >= 0 && SelectedIndex < (int)Resource->Notifies.size())
         {
             FAnimationNotify& N = Resource->Notifies[SelectedIndex];
+
             ImGui::TextDisabled(LE_ICON_BELL " Notify");
-            ImGui::SameLine();
+            ImGui::Spacing();
 
-            snprintf(NameBuf, sizeof(NameBuf), "%s", N.NotifyName.c_str());
-            ImGui::SetNextItemWidth(180);
-            if (ImGui::InputText("Name", NameBuf, sizeof(NameBuf))) { N.NotifyName = FName(NameBuf); MarkAnimationDirty(); }
+            NameField(N.NotifyName, "Name");
+            TrackCombo(N.NotifyTrack);
 
-            ImGui::SameLine(); TrackCombo(N.NotifyTrack);
-
-            ImGui::SameLine(); ImGui::SetNextItemWidth(120);
+            ImGui::SetNextItemWidth(FieldWidth);
             if (ImGui::DragFloat("Time", &N.Time, 0.005f, 0.0f, Duration, "%.3fs")) { MarkAnimationDirty(); }
 
-            ImVec4 Col(N.Color.x, N.Color.y, N.Color.z, N.Color.w);
-            ImGui::SameLine();
-            if (ImGui::ColorEdit4("##c", &Col.x, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel))
+            ColorField(N.Color);
+
+            ImGui::Spacing();
+            ImGui::SeparatorText("Notify Type");
+            if (DrawInstancedStructEditor("Type", N.Notify, SAnimNotify::StaticStruct(), NotifyDetails))
             {
-                N.Color = FVector4(Col.x, Col.y, Col.z, Col.w); MarkAnimationDirty();
+                MarkAnimationDirty();
             }
-            ImGui::SameLine();
+
+            ImGui::Spacing();
             if (ImGui::Button(LE_ICON_DELETE " Delete")) { DeleteSelected(Resource); }
         }
         else if (SelectedKind == ENotifyKind::State && SelectedIndex >= 0 && SelectedIndex < (int)Resource->NotifyStates.size())
         {
             FAnimationNotifyState& S = Resource->NotifyStates[SelectedIndex];
-            ImGui::TextDisabled(LE_ICON_BELL_OUTLINE " State");
-            ImGui::SameLine();
 
-            snprintf(NameBuf, sizeof(NameBuf), "%s", S.NotifyName.c_str());
-            ImGui::SetNextItemWidth(180);
-            if (ImGui::InputText("Name", NameBuf, sizeof(NameBuf))) { S.NotifyName = FName(NameBuf); MarkAnimationDirty(); }
+            ImGui::TextDisabled(LE_ICON_BELL_OUTLINE " Notify State");
+            ImGui::Spacing();
 
-            ImGui::SameLine(); TrackCombo(S.NotifyTrack);
+            NameField(S.NotifyName, "Name");
+            TrackCombo(S.NotifyTrack);
 
-            ImGui::SameLine(); ImGui::SetNextItemWidth(100);
-            if (ImGui::DragFloat("Start", &S.StartTime, 0.005f, 0.0f, S.EndTime - 0.001f, "%.3f")) { MarkAnimationDirty(); }
-            ImGui::SameLine(); ImGui::SetNextItemWidth(100);
-            if (ImGui::DragFloat("End", &S.EndTime, 0.005f, S.StartTime + 0.001f, Duration, "%.3f")) { MarkAnimationDirty(); }
+            ImGui::SetNextItemWidth(FieldWidth);
+            if (ImGui::DragFloat("Start", &S.StartTime, 0.005f, 0.0f, S.EndTime - 0.001f, "%.3fs")) { MarkAnimationDirty(); }
+            ImGui::SetNextItemWidth(FieldWidth);
+            if (ImGui::DragFloat("End", &S.EndTime, 0.005f, S.StartTime + 0.001f, Duration, "%.3fs")) { MarkAnimationDirty(); }
 
-            ImVec4 Col(S.Color.x, S.Color.y, S.Color.z, S.Color.w);
-            ImGui::SameLine();
-            if (ImGui::ColorEdit4("##c", &Col.x, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel))
+            ColorField(S.Color);
+
+            ImGui::Spacing();
+            ImGui::SeparatorText("Notify Type");
+            if (DrawInstancedStructEditor("Type", S.Notify, SAnimNotifyState::StaticStruct(), NotifyDetails))
             {
-                S.Color = FVector4(Col.x, Col.y, Col.z, Col.w); MarkAnimationDirty();
+                MarkAnimationDirty();
             }
-            ImGui::SameLine();
+
+            ImGui::Spacing();
             if (ImGui::Button(LE_ICON_DELETE " Delete")) { DeleteSelected(Resource); }
         }
         else
         {
-            ImGui::TextDisabled("Select a notify to edit its properties, or right-click a lane to add one.");
+            // The selection outlived the notify it named (deleted, or the clip reloaded).
+            ClearSelection();
         }
     }
 

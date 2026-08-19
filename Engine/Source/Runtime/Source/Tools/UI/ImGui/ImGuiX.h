@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <filesystem>
 #include <format>
@@ -19,6 +19,7 @@ struct ImGuiWindow;
 namespace Lumina
 {
     class CClass;
+    class CStruct;
 }
 
 namespace Lumina::ImGuiX
@@ -164,6 +165,9 @@ namespace Lumina::ImGuiX
     // the pick into InOutClass and returns true when it changes. bAllowNone adds a leading "None" entry
     // that clears the selection; without it the combo always holds a class once one is set.
     RUNTIME_API bool ClassCombo(const char* StrId, CClass* BaseClass, CClass*& InOutClass, bool bAllowNone = true, const char* ItemIcon = nullptr);
+
+    // Same, over structs that is-a BaseStruct. BaseStruct itself is excluded, being never a concrete pick.
+    RUNTIME_API bool StructCombo(const char* StrId, CStruct* BaseStruct, CStruct*& InOutStruct, bool bAllowNone = true, const char* ItemIcon = nullptr);
     
     RUNTIME_API ImTextureRef ToImTextureRef(FStringView Path);
     // Direct new-heap ResourceID (scene display targets sample the global heap). ~0u -> placeholder.

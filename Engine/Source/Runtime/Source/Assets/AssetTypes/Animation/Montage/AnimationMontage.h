@@ -1,4 +1,7 @@
-#pragma once
+﻿#pragma once
+
+#include "Animation/AnimNotify.h"
+#include "Core/Object/InstancedStruct.h"
 
 #include "Containers/Array.h"
 #include "Containers/Name.h"
@@ -103,6 +106,10 @@ namespace Lumina
         /** Display lane in the montage editor, carried through to the fired event. */
         PROPERTY(Editable, Category = "Notify")
         FName Track = "Notifies";
+
+        /** Pick a notify type to run its own code; leave empty for a name-only event. */
+        PROPERTY(Editable, Category = "Notify")
+        TInstancedStruct<SAnimNotify> Notify;
     };
 
     // Windowed event: Begin on entry, Tick while inside, End on exit or when the montage stops.
@@ -122,6 +129,10 @@ namespace Lumina
 
         PROPERTY(Editable, Category = "Notify")
         FName Track = "Notifies";
+
+        /** Pick a notify type to run its own code; leave empty for a name-only event. */
+        PROPERTY(Editable, Category = "Notify")
+        TInstancedStruct<SAnimNotifyState> Notify;
     };
 
     // Which clip a slot samples at a given montage position, and how far into it.

@@ -1,4 +1,4 @@
-#include "RuntimePCH.h"
+﻿#include "RuntimePCH.h"
 #include "AnimationSystem.h"
 
 #include "Core/Console/ConsoleVariable.h"
@@ -250,10 +250,16 @@ namespace Lumina
 
                 const auto EmitState = [&](int32 StateIdx, EAnimNotifyEventType Type)
                 {
+                    const FAnimationNotifyState& Authored = States[StateIdx];
+                    const float Span = Authored.EndTime - Authored.StartTime;
+
                     FAnimNotifyEvent& Event = Anim.NotifyEvents.emplace_back();
-                    Event.Name  = States[StateIdx].NotifyName;
-                    Event.Track = States[StateIdx].NotifyTrack;
-                    Event.Type  = Type;
+                    Event.Name      = Authored.NotifyName;
+                    Event.Track     = Authored.NotifyTrack;
+                    Event.Type      = Type;
+                    Event.Animation = Asset;
+                    Event.State     = Authored.Notify.Get();
+                    Event.Alpha     = Span > 0.0f ? Math::Clamp((Anim.CurrentTime - Authored.StartTime) / Span, 0.0f, 1.0f) : 0.0f;
                 };
 
                 for (int32 Idx : NowActive)
@@ -644,6 +650,31 @@ namespace Lumina
 
         TaskGraph.Dispatch();
         TaskGraph.Wait();
+
+        // Serial: a typed notify runs user code, which the parallel passes above must never do.
+        {
+            FEntityRegistry& Registry = SystemContext.GetRegistry();
+            if (bHasSimple)
+            {
+                for (auto&& [Entity, Anim] : SystemContext.GetStorage<SSimpleAnimationComponent>().each())
+                {
+                    if (!Anim.NotifyEvents.empty())
+                    {
+                        AnimEvents::DispatchTypedNotifies(Anim.NotifyEvents, Registry, Entity);
+                    }
+                }
+            }
+            if (bHasGraph)
+            {
+                for (auto&& [Entity, AnimGraph] : SystemContext.GetStorage<SAnimationGraphComponent>().each())
+                {
+                    if (!AnimGraph.NotifyEvents.empty())
+                    {
+                        AnimEvents::DispatchTypedNotifies(AnimGraph.NotifyEvents, Registry, Entity);
+                    }
+                }
+            }
+        }
 
         // Nothing moved: everything below is dead work. This is the common case for a crowd -- root motion
         // is opt-in per clip -- and skipping it is what makes the system scale, because the sweep below is

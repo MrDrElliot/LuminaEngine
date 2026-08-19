@@ -1,5 +1,7 @@
 ﻿#include "RuntimePCH.h"
 #include "ImGuiX.h"
+
+#include "Core/Object/InstancedStruct.h"
 #include <filesystem>
 #include "ImGuiDesignIcons.h"
 #include "ImGuiRenderer.h"
@@ -776,6 +778,57 @@ namespace Lumina::ImGuiX
         if (Picked != INDEX_NONE && Picked != CurrentIndex)
         {
             InOutClass = (Picked < Offset) ? nullptr : Candidates[Picked - Offset];
+            return true;
+        }
+        return false;
+    }
+
+    bool StructCombo(const char* StrId, CStruct* BaseStruct, CStruct*& InOutStruct, bool bAllowNone, const char* ItemIcon)
+    {
+        TVector<CStruct*> Candidates;
+        for (TObjectIterator<CStruct> It; It; ++It)
+        {
+            CStruct* Candidate = *It;
+            if (Candidate == BaseStruct || !IsInstancableStructType(Candidate))
+            {
+                continue;
+            }
+            if (BaseStruct == nullptr || Candidate->IsChildOf(BaseStruct))
+            {
+                Candidates.push_back(Candidate);
+            }
+        }
+
+        eastl::sort(Candidates.begin(), Candidates.end(), [](CStruct* A, CStruct* B)
+        {
+            return strcmp(A->GetName().c_str(), B->GetName().c_str()) < 0;
+        });
+
+        const int32 Offset = bAllowNone ? 1 : 0;
+
+        int32 CurrentIndex = bAllowNone ? 0 : INDEX_NONE;
+        for (int32 i = 0; i < (int32)Candidates.size(); ++i)
+        {
+            if (Candidates[i] == InOutStruct)
+            {
+                CurrentIndex = i + Offset;
+                break;
+            }
+        }
+
+        // Copied for the same reason ClassCombo copies: FName::c_str() reuses a thread-local buffer.
+        const FFixedString Preview = InOutStruct ? FFixedString(InOutStruct->GetName().c_str())
+                                                 : FFixedString(bAllowNone ? "None" : "Select a type...");
+
+        const int32 Picked = SearchableCombo(StrId, Preview.c_str(), (int32)Candidates.size() + Offset, CurrentIndex,
+            [&Candidates, Offset](int32 Index) -> FFixedString
+            {
+                return (Index < Offset) ? FFixedString("None") : FFixedString(Candidates[Index - Offset]->GetName().c_str());
+            }, ItemIcon);
+
+        if (Picked != INDEX_NONE && Picked != CurrentIndex)
+        {
+            InOutStruct = (Picked < Offset) ? nullptr : Candidates[Picked - Offset];
             return true;
         }
         return false;

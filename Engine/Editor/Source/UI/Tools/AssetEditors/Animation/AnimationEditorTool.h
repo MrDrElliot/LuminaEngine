@@ -1,10 +1,11 @@
-#pragma once
+﻿#pragma once
 
 #define USE_IMGUI_API
 #include <imgui.h>
 
 #include "ImGuizmo.h"
 #include "UI/CurveEditor/CurveEditorWidget.h"
+#include "UI/Properties/PropertyTable.h"
 #include "UI/Tools/AssetEditors/AssetEditorTool.h"
 
 namespace Lumina
@@ -101,6 +102,9 @@ namespace Lumina
         // Edits the selected authored curve. Rebound every frame: adding or removing a curve can move
         // the array the bound pointer points into.
         FCurveEditorWidget CurveWidget;
+
+        // Inline editor for the selected notify's instanced type.
+        FPropertyTable NotifyDetails;
 
         ImGuizmo::OPERATION GuizmoOp = ImGuizmo::TRANSLATE;
         entt::entity DirectionalLightEntity = entt::null;
