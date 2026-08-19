@@ -61,30 +61,6 @@ public abstract class EntityScript : Lumina.CEntityScript
         }
     }
 
-    // Delegate bindings this script made; auto-detached when the script is destroyed.
-    private System.Collections.Generic.List<DelegateBinding>? TrackedBindings;
-
-    internal void TrackBinding(DelegateBinding Binding)
-    {
-        if (Binding.IsValid)
-        {
-            (TrackedBindings ??= new System.Collections.Generic.List<DelegateBinding>()).Add(Binding);
-        }
-    }
-
-    internal void UnbindAllDelegates()
-    {
-        if (TrackedBindings == null)
-        {
-            return;
-        }
-        foreach (DelegateBinding Binding in TrackedBindings)
-        {
-            Binding.Unbind();
-        }
-        TrackedBindings.Clear();
-    }
-
     private Lumina.STransformComponent? CachedTransform;
 
     /// <summary>This entity's transform, resolved once and cached (avoids a per-frame Get crossing + alloc).</summary>

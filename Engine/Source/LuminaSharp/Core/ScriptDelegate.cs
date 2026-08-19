@@ -2,7 +2,7 @@ using System;
 
 namespace LuminaSharp;
 
-// Live subscription to a script delegate; dispose to detach the handler.
+// Live subscription to a script delegate, owned by whoever called Bind: as in C++, nothing detaches it for you, so Unbind (or Dispose) it before the handler's script goes away.
 public struct DelegateBinding : IDisposable
 {
     private ulong Id;
@@ -45,10 +45,9 @@ public readonly unsafe struct ScriptDelegate
             return default;
         }
 
+        // Owner is carried so the handler runs with this script's Game context, NOT to auto-unbind it.
         EntityScript? Owner = Game.ActiveScript;
-        DelegateBinding Binding = DelegateBindings.Bind(Address, new VoidInvoker { Handler = Handler, Owner = Owner });
-        Owner?.TrackBinding(Binding);
-        return Binding;
+        return DelegateBindings.Bind(Address, new VoidInvoker { Handler = Handler, Owner = Owner });
     }
 }
 
@@ -72,8 +71,6 @@ public readonly unsafe struct ScriptDelegate<T> where T : unmanaged
         }
 
         EntityScript? Owner = Game.ActiveScript;
-        DelegateBinding Binding = DelegateBindings.Bind(Address, new PayloadInvoker<T> { Handler = Handler, Owner = Owner });
-        Owner?.TrackBinding(Binding);
-        return Binding;
+        return DelegateBindings.Bind(Address, new PayloadInvoker<T> { Handler = Handler, Owner = Owner });
     }
 }
