@@ -17,8 +17,8 @@ namespace Lumina::RenderUtils
         uint32 Levels = 1;
         while (Width > 1 || Height > 1)
         {
-            Width = std::max(Width >> 1, 1u);
-            Height = std::max(Height >> 1, 1u);
+            Width = Math::Max(Width >> 1, 1u);
+            Height = Math::Max(Height >> 1, 1u);
             ++Levels;
         }
         return Levels;
@@ -31,7 +31,7 @@ namespace Lumina::RenderUtils
 
     inline uint32 GetMipDim(uint32 BaseWidth, uint32 Level)
     {
-        return std::max(1u, BaseWidth >> Level);
+        return Math::Max(1u, BaseWidth >> Level);
     }
 
     inline uint32 GetGroupCount(uint32 ThreadCount, uint32 LocalSize)
@@ -42,7 +42,7 @@ namespace Lumina::RenderUtils
     // The shader must undo this with the same MAX_DISPATCH_AXIS, or Y rows repeat and the tail is lost.
     inline FUIntVector2 FoldGroupCount(uint32 GroupCount)
     {
-        return FUIntVector2(std::min(GroupCount, (uint32)MAX_DISPATCH_AXIS),
+        return FUIntVector2(Math::Min(GroupCount, (uint32)MAX_DISPATCH_AXIS),
                             GetGroupCount(GroupCount, (uint32)MAX_DISPATCH_AXIS));
     }
 

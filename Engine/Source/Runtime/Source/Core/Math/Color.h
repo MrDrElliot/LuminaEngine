@@ -53,10 +53,10 @@ namespace Lumina
     
         void Clamp()
         {
-            R = std::clamp(R, 0.0f, 1.0f);
-            G = std::clamp(G, 0.0f, 1.0f);
-            B = std::clamp(B, 0.0f, 1.0f);
-            A = std::clamp(A, 0.0f, 1.0f);
+            R = Math::Clamp(R, 0.0f, 1.0f);
+            G = Math::Clamp(G, 0.0f, 1.0f);
+            B = Math::Clamp(B, 0.0f, 1.0f);
+            A = Math::Clamp(A, 0.0f, 1.0f);
         }
     
         FColor operator+(const FColor& other) const
@@ -128,8 +128,8 @@ namespace Lumina
             float g = color.G;
             float b = color.B;
     
-            float max = std::max({r, g, b});
-            float min = std::min({r, g, b});
+            float max = Math::Max(r, Math::Max(g, b));
+            float min = Math::Min(r, Math::Min(g, b));
             float delta = max - min;
     
             h = 0.0f;

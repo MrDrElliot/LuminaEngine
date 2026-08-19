@@ -184,7 +184,7 @@ namespace Lumina::NetGraph
         Grid.Origin   = FVector3(-Half, 0.0f, -Half);
         Grid.CellSize = Cell;
         Grid.DimX     = static_cast<int32>(std::ceil((2.0f * Half) / Cell));
-        Grid.DimX = std::max(Grid.DimX, 1);
+        Grid.DimX = Math::Max(Grid.DimX, 1);
         Grid.DimZ     = Grid.DimX;
 
         const int32  NumCells = Grid.NumCells();

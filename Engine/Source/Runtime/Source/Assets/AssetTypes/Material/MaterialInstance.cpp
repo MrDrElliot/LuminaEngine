@@ -539,7 +539,7 @@ namespace Lumina
 
     void CMaterialInstance::RemoveOverride(const FName& Name)
     {
-        auto NewEnd = std::remove_if(Overrides.begin(), Overrides.end(), [Name](const FMaterialParameterOverride& O)
+        auto NewEnd = Algo::RemoveIf(Overrides.begin(), Overrides.end(), [Name](const FMaterialParameterOverride& O)
         {
             return O.ParameterName == Name;
         });

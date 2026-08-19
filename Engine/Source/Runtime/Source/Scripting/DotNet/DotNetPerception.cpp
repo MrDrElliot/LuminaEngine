@@ -53,7 +53,7 @@ LUMINA_DOTNET_EXPORT(int32, Perception_GetPerceivedTargets)(uint64 World, uint32
         return 0;
     }
     int32 Count = C->PerceivedCount;
-    Count = std::min(Count, Max);
+    Count = Math::Min(Count, Max);
     for (int32 i = 0; i < Count; ++i)
     {
         OutEntities[i] = ToId(C->PerceivedTargets[i].Target);

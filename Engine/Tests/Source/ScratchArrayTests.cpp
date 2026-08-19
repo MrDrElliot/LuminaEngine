@@ -1,11 +1,11 @@
 #include <gtest/gtest.h>
+#include "Platform/Time/PlatformTime.h"
 #include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "Core/Math/Vector/VectorTypes.h"
 #include "Memory/Allocators/ScratchArray.h"
 #include "TaskSystem/TaskSystem.h"
 #include <atomic>
-#include <chrono>
 #include <cstdio>
 #include <vector>
 
@@ -256,10 +256,10 @@ TEST(ScratchArray, DISABLED_BenchAgainstVector)
     constexpr SIZE_T Count = 64 * 64 * 64;
     constexpr int32  Runs  = 200;
 
-    const auto Now = [] { return std::chrono::steady_clock::now(); };
+    const auto Now = [] { return Lumina::PlatformTime::Cycles(); };
     const auto Ms  = [](auto Start, auto End)
     {
-        return std::chrono::duration<double, std::milli>(End - Start).count();
+        return Lumina::PlatformTime::ToMilliseconds(End - Start);
     };
 
     double Sink = 0.0;

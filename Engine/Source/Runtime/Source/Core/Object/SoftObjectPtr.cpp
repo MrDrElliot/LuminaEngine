@@ -1,4 +1,5 @@
-﻿#include "RuntimePCH.h"
+﻿#include "Core/Threading/Thread.h"
+#include "RuntimePCH.h"
 #include "SoftObjectPtr.h"
 
 #include "Assets/AssetManager/AssetManager.h"
@@ -6,7 +7,6 @@
 #include "Core/Serialization/Archiver.h"
 #include "FileSystem/FileSystem.h"
 
-#include <mutex>
 
 
 namespace Lumina
@@ -14,9 +14,9 @@ namespace Lumina
     namespace
     {
         // Single global mutex for the rare first-resolve GUID write; hot reads skip it.
-        std::mutex& ResolveMutex()
+        FMutex& ResolveMutex()
         {
-            static std::mutex M;
+            static FMutex M;
             return M;
         }
     }
@@ -37,7 +37,7 @@ namespace Lumina
 
             const FStringView Current(Data->Path.c_str(), Data->Path.size());
 
-            std::scoped_lock Lock(ResolveMutex());
+            FScopeLock Lock(ResolveMutex());
             if (VFS::RemoveExtension(FStringView(Path.c_str(), Path.size())) != VFS::RemoveExtension(Current))
             {
                 Path.assign(Current.data(), Current.size());
@@ -57,7 +57,7 @@ namespace Lumina
         }
 
         // Serialize the GUID write so concurrent first-resolvers can't tear the 16-byte FGuid.
-        std::scoped_lock Lock(ResolveMutex());
+        FScopeLock Lock(ResolveMutex());
         if (!CachedGUID.IsValid())
         {
             CachedGUID = Data->AssetGUID;

@@ -27,10 +27,10 @@ namespace Lumina
             int MinY = int(std::floor((LocalZ - Radius) / Stride));
             int MaxY = int(std::ceil ((LocalZ + Radius) / Stride));
 
-            MinX = std::max(MinX, 0);
-            MinY = std::max(MinY, 0);
-            MaxX = std::min(MaxX, Terrain.Resolution - 1);
-            MaxY = std::min(MaxY, Terrain.Resolution - 1);
+            MinX = Math::Max(MinX, 0);
+            MinY = Math::Max(MinY, 0);
+            MaxX = Math::Min(MaxX, Terrain.Resolution - 1);
+            MaxY = Math::Min(MaxY, Terrain.Resolution - 1);
 
             if (MaxX < MinX || MaxY < MinY)
             {
@@ -81,7 +81,7 @@ namespace Lumina
         }
 
         const int X0 = int(Lx), Z0 = int(Lz);
-        const int X1 = std::min(X0 + 1, Res - 1), Z1 = std::min(Z0 + 1, Res - 1);
+        const int X1 = Math::Min(X0 + 1, Res - 1), Z1 = Math::Min(Z0 + 1, Res - 1);
         const float Tx = Lx - float(X0), Tz = Lz - float(Z0);
         const float H00 = Terrain.Heightmap[size_t(Z0) * Res + X0];
         const float H10 = Terrain.Heightmap[size_t(Z0) * Res + X1];
@@ -95,8 +95,8 @@ namespace Lumina
 
     FVector3 FTerrainSculptSystem::SampleNormal(const STerrainComponent& Terrain, const FVector3& TerrainOrigin, float WorldX, float WorldZ)
     {
-        const float Stride = Terrain.TileWorldSize / float(std::max(Terrain.Resolution - 1, 1));
-        const float Eps    = std::max(Stride, 0.5f);
+        const float Stride = Terrain.TileWorldSize / float(Math::Max(Terrain.Resolution - 1, 1));
+        const float Eps    = Math::Max(Stride, 0.5f);
 
         float HxL, HxR, HzL, HzR;
         if (!SampleHeight(Terrain, TerrainOrigin, WorldX - Eps, WorldZ, HxL)) { return FVector3(0.0f, 1.0f, 0.0f); }
@@ -113,7 +113,7 @@ namespace Lumina
     {
         const int32 Res     = Terrain.Resolution;
         const float MaxDist = Terrain.TileWorldSize * 4.0f;
-        const float Step    = std::max(0.5f, Terrain.TileWorldSize / float(Res) * 0.5f);
+        const float Step    = Math::Max(0.5f, Terrain.TileWorldSize / float(Res) * 0.5f);
 
         const FVector2 OriginXZ = TerrainOriginXZ(Terrain, TerrainOrigin);
         const float BaseY  = TerrainOrigin.y;
@@ -133,7 +133,7 @@ namespace Lumina
             const float Fx = Math::Clamp((Wx - OriginXZ.x) / Stride, 0.0f, float(Res - 1));
             const float Fz = Math::Clamp((Wz - OriginXZ.y) / Stride, 0.0f, float(Res - 1));
             const int X0 = int(Fx), Z0 = int(Fz);
-            const int X1 = std::min(X0 + 1, Res - 1), Z1 = std::min(Z0 + 1, Res - 1);
+            const int X1 = Math::Min(X0 + 1, Res - 1), Z1 = Math::Min(Z0 + 1, Res - 1);
             const float Tx = Fx - float(X0), Tz = Fz - float(Z0);
             const float H00 = Terrain.Heightmap[size_t(Z0) * Res + X0];
             const float H10 = Terrain.Heightmap[size_t(Z0) * Res + X1];
@@ -195,7 +195,7 @@ namespace Lumina
             }
             if (V1 && V2)
             {
-                Rect = FIntVector4(std::min(R1.x, R2.x), std::min(R1.y, R2.y), std::max(R1.z, R2.z), std::max(R1.w, R2.w));
+                Rect = FIntVector4(Math::Min(R1.x, R2.x), Math::Min(R1.y, R2.y), Math::Max(R1.z, R2.z), Math::Max(R1.w, R2.w));
             }
             else
             {
@@ -314,10 +314,10 @@ namespace Lumina
         const float Radius = Dab.Radius;
         const FVector2 OriginXZ = TerrainOriginXZ(Terrain, Dab.TerrainOrigin);
 
-        const int32 SnapMinX = std::max(Rect.x - 1, 0);
-        const int32 SnapMinY = std::max(Rect.y - 1, 0);
-        const int32 SnapMaxX = std::min(Rect.z + 1, Res - 1);
-        const int32 SnapMaxY = std::min(Rect.w + 1, Res - 1);
+        const int32 SnapMinX = Math::Max(Rect.x - 1, 0);
+        const int32 SnapMinY = Math::Max(Rect.y - 1, 0);
+        const int32 SnapMaxX = Math::Min(Rect.z + 1, Res - 1);
+        const int32 SnapMaxY = Math::Min(Rect.w + 1, Res - 1);
         const int32 SnapW    = SnapMaxX - SnapMinX + 1;
         const int32 SnapH    = SnapMaxY - SnapMinY + 1;
 
@@ -352,9 +352,9 @@ namespace Lumina
 
                     float Sum = 0.0f;
                     int Count = 0;
-                    for (int YY = std::max(Y - 1, 0); YY <= std::min(Y + 1, Res - 1); ++YY)
+                    for (int YY = Math::Max(Y - 1, 0); YY <= Math::Min(Y + 1, Res - 1); ++YY)
                     {
-                        for (int XX = std::max(X - 1, 0); XX <= std::min(X + 1, Res - 1); ++XX)
+                        for (int XX = Math::Max(X - 1, 0); XX <= Math::Min(X + 1, Res - 1); ++XX)
                         {
                             Sum += Snapshot[size_t(YY - SnapMinY) * size_t(SnapW) + size_t(XX - SnapMinX)];
                             ++Count;
@@ -419,7 +419,7 @@ namespace Lumina
         const float Stride = Terrain.TileWorldSize / float(Res - 1);
         const float Radius = Dab.Radius;
         const float DeltaPerSecond = (Dab.Strength * Dab.DeltaSeconds * float(Dab.SculptSign)) / Terrain.MaxHeight;
-        const float Freq = std::max(Dab.NoiseFrequency, 1e-6f);
+        const float Freq = Math::Max(Dab.NoiseFrequency, 1e-6f);
         const int   Octaves = Math::Clamp(Dab.NoiseOctaves, 1, 8);
         const FVector2 OriginXZ = TerrainOriginXZ(Terrain, Dab.TerrainOrigin);
 
@@ -467,7 +467,7 @@ namespace Lumina
 
         // Endpoint heights are relative to the terrain origin (as sampled everywhere else); absolute
         // world Y would break ramps once the terrain entity moves off Y=0.
-        const float MaxH = std::max(Terrain.MaxHeight, 1e-3f);
+        const float MaxH = Math::Max(Terrain.MaxHeight, 1e-3f);
         const float StartN = Dab.RampUseExplicitHeights
             ? Math::Clamp(Dab.RampStartHeight / MaxH, 0.0f, 1.0f)
             : Math::Clamp((Dab.RampStart.y - Dab.TerrainOrigin.y) / MaxH, 0.0f, 1.0f);
@@ -475,7 +475,7 @@ namespace Lumina
             ? Math::Clamp(Dab.RampEndHeight / MaxH, 0.0f, 1.0f)
             : Math::Clamp((Dab.RampEnd.y - Dab.TerrainOrigin.y) / MaxH, 0.0f, 1.0f);
 
-        const float HalfWidth = std::max(Dab.RampHalfWidth, Stride);
+        const float HalfWidth = Math::Max(Dab.RampHalfWidth, Stride);
         const float InvLen    = 1.0f / std::sqrt(ABLen2);
         const float Feather   = Math::Clamp(Dab.Falloff, 0.0f, 1.0f);
 

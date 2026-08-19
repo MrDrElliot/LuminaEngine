@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-#include <format>
+#include "Containers/Format.h"
 #include "Core/Math/Matrix/MatrixMath.h"
 #include "Core/Math/SIMD/VQuat1.h"
 #include "Core/Math/TransformFwd.h"
@@ -163,19 +163,7 @@ namespace Lumina
 
 }
 
-template <>
-struct std::formatter<Lumina::FTransform>
+namespace Lumina
 {
-    constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-
-    template <typename FormatContext>
-    auto format(const Lumina::FTransform& T, FormatContext& ctx) const
-    {
-        const Lumina::FVector3 L = T.GetLocation();
-        const Lumina::FQuat    R = T.GetRotation();
-        const Lumina::FVector3 S = T.GetScale();
-        return std::format_to(ctx.out(),
-            "Location: ({:.2f}, {:.2f}, {:.2f}) | Rotation: ({:.2f}, {:.2f}, {:.2f}, {:.2f}) | Scale: ({:.2f}, {:.2f}, {:.2f})",
-            L.x, L.y, L.z, R.w, R.x, R.y, R.z, S.x, S.y, S.z);
-    }
-};
+    RUNTIME_API void FormatArgument(Fmt::FFormatBuffer& Out, const FTransform& Transform, const Fmt::FFormatSpec& Spec);
+}

@@ -2591,7 +2591,7 @@ namespace Lumina::RHI
         const VkResult AllocResult = vmaCreateBufferWithAlignment(GDevice->Allocator, &SampleInfo, &Info, Alignment, &VulkanBuffer, &Allocation, &AllocationInfo);
         if (AllocResult != VK_SUCCESS || VulkanBuffer == VK_NULL_HANDLE || Allocation == nullptr)
         {
-            PanicOutOfGPUMemory(std::format("a {} KiB {} buffer", Size / 1024, MemoryTypeToString(Type)).c_str(), AllocResult);
+            PanicOutOfGPUMemory(::Lumina::Format("a {} KiB {} buffer", Size / 1024, MemoryTypeToString(Type)).c_str(), AllocResult);
         }
         
         // GPU-read memory that fell out of the BAR means every shader/transfer read crosses PCIe.
@@ -2759,8 +2759,8 @@ namespace Lumina::RHI
 
         // try_lock, not a lock: this runs from the device-lost path, and another thread stuck mid-Malloc
         // would otherwise turn a crash report into a hang. A missed report is the better failure.
-        FReadScopeLock Lock(GDevice->MemoryMutex, std::try_to_lock);
-        if (!Lock.owns_lock())
+        FReadScopeLock Lock(GDevice->MemoryMutex, TryToLock);
+        if (!Lock.OwnsLock())
         {
             return "allocation ledger was locked by another thread; no attribution";
         }
@@ -2830,7 +2830,7 @@ namespace Lumina::RHI
         {
             if (Overlaps(Block.Device, Block.Size))
             {
-                return FString(std::format("LIVE \"{}\" [{:#x} +{:#x}], fault {:#x} into it",
+                return FString(::Lumina::Format("LIVE \"{}\" [{:#x} +{:#x}], fault {:#x} into it",
                                            NameOf(Block.Name), Block.Device, Block.Size,
                                            AddressLow - Block.Device).c_str());
             }
@@ -2842,7 +2842,7 @@ namespace Lumina::RHI
         {
             if (Overlaps(Entry.Device, Entry.Size))
             {
-                return FString(std::format("FREED \"{}\" [{:#x} +{:#x}], fault {:#x} into it, freed {} submit(s) before the loss",
+                return FString(::Lumina::Format("FREED \"{}\" [{:#x} +{:#x}], fault {:#x} into it, freed {} submit(s) before the loss",
                                            NameOf(Entry.Name), Entry.Device, Entry.Size,
                                            AddressLow - Entry.Device,
                                            CurrentSubmit - Entry.SubmitOrdinal).c_str());
@@ -2853,7 +2853,7 @@ namespace Lumina::RHI
 
         if (!Nearest.bValid)
         {
-            return FString(std::format("no live or freed allocation within {} MiB",
+            return FString(::Lumina::Format("no live or freed allocation within {} MiB",
                                        kNeighborWindow / (1024ull * 1024ull)).c_str());
         }
 
@@ -2861,12 +2861,12 @@ namespace Lumina::RHI
 
         if (Nearest.bFreed)
         {
-            return FString(std::format("{:#x} {} FREED \"{}\" [{:#x} +{:#x}], freed {} submit(s) before the loss",
+            return FString(::Lumina::Format("{:#x} {} FREED \"{}\" [{:#x} +{:#x}], freed {} submit(s) before the loss",
                                        Nearest.Distance, Relation, NameOf(Nearest.Name), Nearest.Base, Nearest.Size,
                                        CurrentSubmit - Nearest.Submit).c_str());
         }
 
-        return FString(std::format("{:#x} {} LIVE \"{}\" [{:#x} +{:#x}]",
+        return FString(::Lumina::Format("{:#x} {} LIVE \"{}\" [{:#x} +{:#x}]",
                                    Nearest.Distance, Relation, NameOf(Nearest.Name),
                                    Nearest.Base, Nearest.Size).c_str());
         #else
@@ -3746,7 +3746,7 @@ namespace Lumina::RHI
         }
         if (ImageResult != VK_SUCCESS || Image == VK_NULL_HANDLE || Allocation == nullptr)
         {
-            PanicOutOfGPUMemory(std::format("a {}x{}x{} texture, {} mips, {} layers, format {}",
+            PanicOutOfGPUMemory(::Lumina::Format("a {}x{}x{} texture, {} mips, {} layers, format {}",
                 Desc.Dimension.x, Desc.Dimension.y, Depth, Info.mipLevels, Info.arrayLayers, (uint32)Format).c_str(), ImageResult);
         }
 

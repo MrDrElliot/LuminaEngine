@@ -33,7 +33,7 @@ namespace Lumina
                 }
             }
 
-            std::sort(Candidates.begin(), Candidates.end(), [](TType* A, TType* B)
+            Algo::Sort(Candidates.begin(), Candidates.end(), [](TType* A, TType* B)
             {
                 return strcmp(A->GetName().c_str(), B->GetName().c_str()) < 0;
             });

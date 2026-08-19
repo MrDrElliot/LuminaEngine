@@ -10,12 +10,6 @@
 namespace Lumina::Meta
 {
     class CStruct;
-
-    template<typename TEvent>
-    CStruct* GetStructType()
-    {
-        return TEvent::StaticStruct();
-    }
     
     template<typename TEvent>
     void RegisterECSEvent()

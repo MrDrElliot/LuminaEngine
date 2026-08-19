@@ -1,4 +1,5 @@
-﻿#include "RuntimePCH.h"
+﻿#include "Core/Threading/Thread.h"
+#include "RuntimePCH.h"
 #include "FontManager.h"
 
 #include "Assets/AssetTypes/Font/Font.h"
@@ -46,8 +47,8 @@ namespace Lumina
 
     CFontManager& CFontManager::Get()
     {
-        static std::once_flag Flag;
-        std::call_once(Flag, []()
+        static FOnceFlag Flag;
+        CallOnce(Flag, []()
         {
             FontManagerSingleton = NewObject<CFontManager>();
             FontManagerSingleton->Initialize();

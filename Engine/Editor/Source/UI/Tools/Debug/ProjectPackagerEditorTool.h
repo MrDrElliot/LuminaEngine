@@ -1,9 +1,8 @@
 ﻿#pragma once
+#include "Core/Threading/Thread.h"
 #include "UI/Tools/EditorTool.h"
 
 #include <atomic>
-#include <mutex>
-#include <thread>
 
 #include "Memory/SmartPtr.h"
 
@@ -49,7 +48,7 @@ namespace Lumina
         {
             std::atomic<bool>           bDone{false};
             std::atomic<bool>           bSuccess{false};
-            std::mutex                  PendingMutex;
+            FMutex                  PendingMutex;
             TVector<FString>            PendingLines;       // worker -> UI
             FString                     OutputDirectory;    // populated on completion
             FString                     PakPath;
@@ -95,7 +94,7 @@ namespace Lumina
 
         // Async pipeline state.
         TSharedPtr<FBuildSession>   Session;
-        std::thread                 Worker;
+        FThread                 Worker;
 
         static constexpr int32 MaxLogLines = 2000;
     };

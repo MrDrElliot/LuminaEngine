@@ -1,8 +1,8 @@
 #pragma once
 
+#include "Core/Threading/Thread.h"
 #include "Renderer/ShaderHandle.h"
 #include <atomic>
-#include <mutex>
 #include "Containers/HashTable.h"
 #include "Containers/Vector.h"
 #include "Core/Math/AABB.h"
@@ -170,7 +170,7 @@ namespace Lumina
         static std::atomic<uint32>  PendingGeneration;
 
         // Guards PendingInvalidations only. Contended only by asset loads, which are rare next to frames.
-        static std::mutex           PendingMutex;
+        static FMutex           PendingMutex;
         static TVector<const void*> PendingInvalidations;
     };
 }

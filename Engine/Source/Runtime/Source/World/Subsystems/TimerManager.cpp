@@ -217,7 +217,7 @@ namespace Lumina
 
     entt::entity FTimerManager::CreateTimer(float Rate, bool bLoop, float FirstDelay, entt::entity Owner, FTimerCallback NativeCallback)
     {
-        Rate = std::max(Rate, 0.0f);
+        Rate = Math::Max(Rate, 0.0f);
 
         if (!static_cast<bool>(NativeCallback))
         {

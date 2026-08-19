@@ -1,6 +1,6 @@
 #pragma once
 
-#include <format>
+#include "Format.h"
 #include <iterator>
 #include <string_view>
 
@@ -72,9 +72,11 @@ namespace Lumina
                 Size /= 1024.0;
                 ++Suffix;
             }
-            FString Value;
-            std::format_to(std::back_inserter(Value), "{:.2f} {}", Size, Suffixes[Suffix]);
-            return Value;
+            Fmt::TInlineFormatBuffer<64> Buffer;
+            Fmt::WriteFloat(Buffer, Size, Fmt::FFormatSpec{ -1, 2, ' ', 'f' });
+            Buffer.Push(' ');
+            Buffer.Append(Suffixes[Suffix], Suffix == 0 ? 1 : 2);
+            return FString(Buffer.Data(), Buffer.Size());
         }
 
     }

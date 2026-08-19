@@ -45,7 +45,7 @@ namespace Lumina::DotNet
         DestroyManagedRenderScene(Handle);
         Handle = nullptr;
 
-        auto It = std::find(GLiveScenes.begin(), GLiveScenes.end(), this);
+        auto It = Algo::Find(GLiveScenes.begin(), GLiveScenes.end(), this);
         if (It != GLiveScenes.end())
         {
             GLiveScenes.erase(It);

@@ -113,7 +113,7 @@ namespace Lumina
         {
             constexpr float ReferenceHeight = 2160.0f;  // 4K, where the UI looks right
             constexpr float MinFactor = 0.9f;           // gentle low-res reduction (~0.95 at 1080p)
-            const float T = std::max(0.0f, std::min(1.0f, ScreenHeight / ReferenceHeight));
+            const float T = Math::Max(0.0f, Math::Min(1.0f, ScreenHeight / ReferenceHeight));
             return MinFactor + (1.0f - MinFactor) * T;
         }
 
@@ -137,7 +137,7 @@ namespace Lumina
         	
         	GetMutableDefault<CEditorSettings>()->UIScale = Scale;
         	
-            return std::max(Scale, 0.5f);
+            return Math::Max(Scale, 0.5f);
         }
 
         void ApplyUIScale()

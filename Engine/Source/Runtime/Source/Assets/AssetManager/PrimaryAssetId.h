@@ -46,14 +46,10 @@ namespace Lumina
 
 // LoadSynchronous/LoadAsync impls live in AssetManager.h (need full FAssetManager; avoids circular include).
 
-namespace std
+namespace Lumina
 {
-    template<>
-    struct hash<Lumina::FPrimaryAssetId>
+    NODISCARD FORCEINLINE uint64 GetTypeHash(const FPrimaryAssetId& Id) noexcept
     {
-        size_t operator()(const Lumina::FPrimaryAssetId& P) const noexcept
-        {
-            return Lumina::Containers::FDefaultHash{}(P.GetName());
-        }
-    };
+        return GetTypeHash(Id.GetName());
+    }
 }

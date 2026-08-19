@@ -40,7 +40,7 @@ namespace Lumina
         void ForgetClipboardNode(CEdGraphNode* Node)
         {
             TVector<CEdGraphNode*>& Clipboard = GetNodeClipboard();
-            Clipboard.erase(std::remove(Clipboard.begin(), Clipboard.end(), Node), Clipboard.end());
+            Clipboard.erase(Algo::Remove(Clipboard.begin(), Clipboard.end(), Node), Clipboard.end());
         }
     }
 
@@ -499,7 +499,7 @@ namespace Lumina
                 return;   // two nodes are already evenly spaced; nothing to solve
             }
 
-            std::sort(Entries.begin(), Entries.end(), [bDistributeX](const FEntry& A, const FEntry& B)
+            Algo::Sort(Entries.begin(), Entries.end(), [bDistributeX](const FEntry& A, const FEntry& B)
             {
                 return bDistributeX ? (A.Pos.x < B.Pos.x) : (A.Pos.y < B.Pos.y);
             });
@@ -677,7 +677,7 @@ namespace Lumina
         {
             TVector<CEdGraphNode*>& Column = Columns[D];
 
-            std::stable_sort(Column.begin(), Column.end(), [&](CEdGraphNode* A, CEdGraphNode* B)
+            Algo::StableSort(Column.begin(), Column.end(), [&](CEdGraphNode* A, CEdGraphNode* B)
             {
                 auto Barycenter = [&](CEdGraphNode* Node)
                 {
@@ -1102,7 +1102,7 @@ namespace Lumina
             // unreachable.
             if (ImGui::BeginPopup("Node Context Menu"))
             {
-                auto NodeItr = std::find_if(Nodes.begin(), Nodes.end(), [this](const TObjectPtr<CEdGraphNode>& A)
+                auto NodeItr = Algo::FindIf(Nodes.begin(), Nodes.end(), [this](const TObjectPtr<CEdGraphNode>& A)
                 {
                     return A.IsValid() && std::cmp_equal(A->GetNodeID(), ContextMenuNodeID);
                 });
@@ -1193,7 +1193,7 @@ namespace Lumina
                     for (int i = 0; i < Num; ++i)
                     {
                         NodeEditor::NodeId Selection = Selections[i];
-                        auto NodeItr = std::find_if(Nodes.begin(), Nodes.end(), [&] (const TObjectPtr<CEdGraphNode>& A)
+                        auto NodeItr = Algo::FindIf(Nodes.begin(), Nodes.end(), [&] (const TObjectPtr<CEdGraphNode>& A)
                         {
                             return std::cmp_equal(A->GetNodeID(), Selection.Get()) && A->IsDeletable();
                         });
@@ -1208,11 +1208,11 @@ namespace Lumina
                         ImVec2 Pos = NodeEditor::GetNodePosition(Selection);
                         ImVec2 Size = NodeEditor::GetNodeSize(Selection);
 
-                        Min.x = std::min(Min.x, Pos.x);
-                        Min.y = std::min(Min.y, Pos.y);
+                        Min.x = Math::Min(Min.x, Pos.x);
+                        Min.y = Math::Min(Min.y, Pos.y);
 
-                        Max.x = std::max(Max.x, Pos.x + Size.x);
-                        Max.y = std::max(Max.y, Pos.y + Size.y);
+                        Max.x = Math::Max(Max.x, Pos.x + Size.x);
+                        Max.y = Math::Max(Max.y, Pos.y + Size.y);
                     }
                 
                     GClipboardPivot = (Min + Max) * 0.5f;
@@ -1270,7 +1270,7 @@ namespace Lumina
                     for (int i = 0; i < Num; ++i)
                     {
                         NodeEditor::NodeId Selection = Selections[i];
-                        auto NodeItr = std::find_if(Nodes.begin(), Nodes.end(), [&] (const TObjectPtr<CEdGraphNode>& A)
+                        auto NodeItr = Algo::FindIf(Nodes.begin(), Nodes.end(), [&] (const TObjectPtr<CEdGraphNode>& A)
                         {
                             return A->GetNodeID() == static_cast<int64>(Selection.Get()) && A->IsDeletable();
                         });
@@ -1285,11 +1285,11 @@ namespace Lumina
                         ImVec2 Pos = NodeEditor::GetNodePosition(Selection);
                         ImVec2 Size = NodeEditor::GetNodeSize(Selection);
 
-                        Min.x = std::min(Min.x, Pos.x);
-                        Min.y = std::min(Min.y, Pos.y);
+                        Min.x = Math::Min(Min.x, Pos.x);
+                        Min.y = Math::Min(Min.y, Pos.y);
 
-                        Max.x = std::max(Max.x, Pos.x + Size.x);
-                        Max.y = std::max(Max.y, Pos.y + Size.y);
+                        Max.x = Math::Max(Max.x, Pos.x + Size.x);
+                        Max.y = Math::Max(Max.y, Pos.y + Size.y);
                     }
                 
                     // Local pivot: duplicate never leaves this graph, so it must not disturb the shared
@@ -1519,7 +1519,7 @@ namespace Lumina
             while (NodeEditor::QueryDeletedNode(&NodeId))
             {
                 // O(n^2) scan mirrors the approach from the imgui-node-editor examples; acceptable for typical graph sizes.
-                auto NodeItr = std::find_if(Nodes.begin(), Nodes.end(), [NodeId] (const TObjectPtr<CEdGraphNode>& A)
+                auto NodeItr = Algo::FindIf(Nodes.begin(), Nodes.end(), [NodeId] (const TObjectPtr<CEdGraphNode>& A)
                 {
                     return std::cmp_equal(A->GetNodeID(), NodeId.Get()) && A->IsDeletable();
                 });

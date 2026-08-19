@@ -1,4 +1,5 @@
 ﻿#include "RuntimePCH.h"
+#include <string>
 #include "JsonStructuredArchive.h"
 
 #include "Core/Object/Class.h"

@@ -27,7 +27,6 @@
 #include <string.h>
 #include <cstdarg>
 #include "Platform/Filesystem/PlatformFilesystem.h"
-#include <format>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -1357,7 +1356,7 @@ namespace Lumina
                 SortedPaths.push_back(FBrowseEntry{ FileInfo, Move(TypeLabel) });
             });
             
-            std::sort(SortedPaths.begin(), SortedPaths.end(), [&](const FBrowseEntry& LHS, const FBrowseEntry& RHS)
+            Algo::Sort(SortedPaths.begin(), SortedPaths.end(), [&](const FBrowseEntry& LHS, const FBrowseEntry& RHS)
             {
                 if (LHS.Info.IsDirectory() != RHS.Info.IsDirectory())
                 {
@@ -2046,7 +2045,7 @@ namespace Lumina
             {
                 Names.push_back(Name);
             }
-            std::sort(Names.begin(), Names.end(), [](const FName& A, const FName& B)
+            Algo::Sort(Names.begin(), Names.end(), [](const FName& A, const FName& B)
             {
                 return strcmp(A.c_str(), B.c_str()) < 0;
             });
@@ -3821,7 +3820,7 @@ namespace Lumina
                 }
             }
 
-            std::sort(Categories.begin(), Categories.end());
+            Algo::Sort(Categories.begin(), Categories.end());
 
             for (const FString& Category : Categories)
             {
@@ -3838,7 +3837,7 @@ namespace Lumina
                         InCategory.push_back(Factory);
                     }
                 }
-                std::sort(InCategory.begin(), InCategory.end(), [](CFactory* A, CFactory* B)
+                Algo::Sort(InCategory.begin(), InCategory.end(), [](CFactory* A, CFactory* B)
                 {
                     return A->GetAssetName() < B->GetAssetName();
                 });

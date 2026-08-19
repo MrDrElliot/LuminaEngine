@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include <memory>
 #include "Containers/Span.h"
 
 namespace Lumina

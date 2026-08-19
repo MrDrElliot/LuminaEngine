@@ -409,7 +409,7 @@ namespace Lumina
                 {
                     continue;
                 }
-                Width = std::max(Width, Child->ComputeRequiredHeaderWidth(Offset + ChildIndentStep));
+                Width = Math::Max(Width, Child->ComputeRequiredHeaderWidth(Offset + ChildIndentStep));
             }
         }
         return Width;
@@ -1129,7 +1129,7 @@ namespace Lumina
             return;
         }
         
-        const int DisplayCount = bShowAllElements ? ChildCount : std::min(ChildCount, ComplexArrayDisplayLimit);
+        const int DisplayCount = bShowAllElements ? ChildCount : Math::Min(ChildCount, ComplexArrayDisplayLimit);
         for (int i = 0; i < DisplayCount; ++i)
         {
             Children[i]->DrawRow(ChildOffset, bReadOnly);
@@ -1697,7 +1697,7 @@ namespace Lumina
             }
         }
 
-        std::sort(Candidates.begin(), Candidates.end(), [](CStruct* A, CStruct* B)
+        Algo::Sort(Candidates.begin(), Candidates.end(), [](CStruct* A, CStruct* B)
         {
             return strcmp(InstancedStructLabel(A), InstancedStructLabel(B)) < 0;
         });
@@ -2207,7 +2207,7 @@ namespace Lumina
             {
                 continue;
             }
-            HeaderColumnWidth = std::max(HeaderColumnWidth, Row->ComputeRequiredHeaderWidth(0.0f));
+            HeaderColumnWidth = Math::Max(HeaderColumnWidth, Row->ComputeRequiredHeaderWidth(0.0f));
         }
         HeaderColumnWidth += 18.0f;
 

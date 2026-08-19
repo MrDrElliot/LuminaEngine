@@ -320,7 +320,7 @@ namespace Lumina
             Rows.push_back(&Row);
         }
 
-        std::sort(Rows.begin(), Rows.end(),
+        Algo::Sort(Rows.begin(), Rows.end(),
             [](const FTextureStreamingManager::FTextureSnapshot* A, const FTextureStreamingManager::FTextureSnapshot* B)
             {
                 return A->ResidentBytes > B->ResidentBytes;

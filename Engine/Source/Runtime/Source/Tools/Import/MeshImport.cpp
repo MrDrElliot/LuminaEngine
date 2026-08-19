@@ -863,7 +863,7 @@ namespace Lumina::Import::Mesh
             // Drop every level that did not make the cut so the pack pass cannot fold one back in.
             for (uint32 lod = 0; lod < LODCount; ++lod)
             {
-                if (std::find(Accepted.begin(), Accepted.end(), lod) == Accepted.end())
+                if (Algo::Find(Accepted.begin(), Accepted.end(), lod) == Accepted.end())
                 {
                     Results[lod * NumSurfaces + SurfaceIdx] = FSurfaceMeshletResult{};
                 }

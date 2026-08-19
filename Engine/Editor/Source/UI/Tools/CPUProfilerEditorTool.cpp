@@ -236,7 +236,7 @@ namespace Lumina
             ImPlot::SetupAxes(nullptr, "ms",
                 ImPlotAxisFlags_NoLabel | ImPlotAxisFlags_NoTickLabels | ImPlotAxisFlags_NoMenus,
                 ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_RangeFit);
-            ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, std::max(MaxValue * 1.1f, 1.0f), ImGuiCond_Always);
+            ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, Math::Max(MaxValue * 1.1f, 1.0f), ImGuiCond_Always);
             ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, (double)History.size(), ImGuiCond_Always);
 
             ImPlot::SetNextLineStyle(ImVec4(0.95f, 0.70f, 0.25f, 1.0f), 1.5f);
@@ -257,7 +257,7 @@ namespace Lumina
             return;
         }
 
-        const float TableTotal = std::max((float)Frame.TotalTimeMs, 0.0001f);
+        const float TableTotal = Math::Max((float)Frame.TotalTimeMs, 0.0001f);
 
         if (!ImGui::BeginTable("##CPUScopes", 4,
                 ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_Resizable |
@@ -291,7 +291,7 @@ namespace Lumina
 
         auto SortByTimeDesc = [&](TVector<int32>& Indices)
         {
-            std::sort(Indices.begin(), Indices.end(), [&](int32 A, int32 B)
+            Algo::Sort(Indices.begin(), Indices.end(), [&](int32 A, int32 B)
             {
                 return Frame.Scopes[A].DurationMs() > Frame.Scopes[B].DurationMs();
             });
@@ -358,7 +358,7 @@ namespace Lumina
                     ImGui::Text("%5.1f%%", Pct);
 
                     ImGui::TableSetColumnIndex(3);
-                    const float Frac = std::min(std::max(Duration / TableTotal, 0.0f), 1.0f);
+                    const float Frac = Math::Min(Math::Max(Duration / TableTotal, 0.0f), 1.0f);
                     ImGui::PushStyleColor(ImGuiCol_PlotHistogram, NameColor);
                     ImGui::ProgressBar(Frac, ImVec2(-FLT_MIN, 0.0f), "");
                     ImGui::PopStyleColor();

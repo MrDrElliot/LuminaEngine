@@ -1,7 +1,8 @@
+#include "Core/Threading/Thread.h"
+#include <string>
 #include "LuminaEditor.h"
 #include "Platform/Filesystem/PlatformFilesystem.h"
 #include <fstream>
-#include <thread>
 #include <Core/Engine/Engine.h>
 #include <Core/Engine/EngineMetaContext.h>
 #include <Core/Plugin/PluginManager.h>
@@ -307,7 +308,7 @@ namespace Lumina
         FProjectTemplateContext Ctx;
         Ctx.Name.assign(NewProjectName.data(), NewProjectName.size());
         Ctx.NameUpper = Ctx.Name;
-        std::transform(
+        Algo::Transform(
             Ctx.NameUpper.begin(),
             Ctx.NameUpper.end(),
             Ctx.NameUpper.begin(),
@@ -318,9 +319,9 @@ namespace Lumina
         Ctx.Guid = FGuid::New().ToString(true, true);
         Ctx.Description = "A Lumina game project";
         Ctx.LuminaDir = EngineDir;
-        std::replace(Ctx.LuminaDir.begin(), Ctx.LuminaDir.end(), '\\', '/');
+        Algo::Replace(Ctx.LuminaDir.begin(), Ctx.LuminaDir.end(), '\\', '/');
         Ctx.LuminaDirBackslash = Ctx.LuminaDir;
-        std::replace(Ctx.LuminaDirBackslash.begin(), Ctx.LuminaDirBackslash.end(), '/', '\\');
+        Algo::Replace(Ctx.LuminaDirBackslash.begin(), Ctx.LuminaDirBackslash.end(), '/', '\\');
 
         if (!CopyTemplateTree(BlankProjectPath, Combined,
             [&Ctx](FString& Text) { ReplaceProjectTokens(Text, Ctx); },
@@ -388,7 +389,7 @@ namespace Lumina
 
         auto ToUpper = [](FString& S)
         {
-            std::transform(S.begin(), S.end(), S.begin(),
+            Algo::Transform(S.begin(), S.end(), S.begin(),
                 [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
         };
 
@@ -442,7 +443,7 @@ namespace Lumina
         const std::string ScriptPathStr(ScriptPath.c_str(), ScriptPath.size());
         const std::string WorkingDirStr(ProjectDirectory.data(), ProjectDirectory.size());
 
-        std::thread([ScriptPathStr, WorkingDirStr]()
+        FThread([ScriptPathStr, WorkingDirStr]()
         {
             FScopedSlowTask Task(1.0f, "Generating project files", "Running LuminaBuildTool GenerateProjectFiles...");
 

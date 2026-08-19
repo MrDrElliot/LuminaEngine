@@ -1,7 +1,7 @@
-﻿#include "RuntimePCH.h"
+﻿#include "Platform/Time/PlatformTime.h"
+#include "RuntimePCH.h"
 #include "MemoryFileSystem.h"
 
-#include <chrono>
 
 #include "FileInfo.h"
 #include "Paths/Paths.h"
@@ -13,8 +13,7 @@ namespace Lumina::VFS
     {
         int64 NowAsNanos()
         {
-            auto Now = std::chrono::system_clock::now();
-            return std::chrono::duration_cast<std::chrono::nanoseconds>(Now.time_since_epoch()).count();
+            return PlatformTime::UtcNanoseconds();
         }
 
     }

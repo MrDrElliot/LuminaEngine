@@ -1,7 +1,7 @@
 #pragma once
 
-#include <mutex>
 
+#include "Core/Threading/Thread.h"
 #include "Platform/GenericPlatform.h"
 #include "Containers/String.h"
 #include "Containers/HashTable.h"
@@ -27,20 +27,20 @@ namespace Lumina
             {
                 return 0;
             }
-            std::lock_guard<std::mutex> Lock(Mutex);
+            FScopeLock Lock(Mutex);
             return InternLocked(Name);
         }
 
         // The immediate parent id ("Ability.Fire" -> "Ability"), or 0 at the root / for an invalid id.
         uint32 GetParent(uint32 Id) const
         {
-            std::lock_guard<std::mutex> Lock(Mutex);
+            FScopeLock Lock(Mutex);
             return (Id != 0 && Id < Nodes.size()) ? Nodes[Id].ParentId : 0;
         }
 
         bool IsValid(uint32 Id) const
         {
-            std::lock_guard<std::mutex> Lock(Mutex);
+            FScopeLock Lock(Mutex);
             return Id != 0 && Id < Nodes.size();
         }
 
@@ -51,7 +51,7 @@ namespace Lumina
             {
                 return false;
             }
-            std::lock_guard<std::mutex> Lock(Mutex);
+            FScopeLock Lock(Mutex);
             for (uint32 Cur = A; Cur != 0 && Cur < Nodes.size(); Cur = Nodes[Cur].ParentId)
             {
                 if (Cur == B)
@@ -69,14 +69,14 @@ namespace Lumina
 
         FString GetName(uint32 Id) const
         {
-            std::lock_guard<std::mutex> Lock(Mutex);
+            FScopeLock Lock(Mutex);
             return (Id != 0 && Id < Nodes.size()) ? Nodes[Id].Name : FString();
         }
 
         // Every registered tag name (skips the index-0 sentinel). For the editor tag picker.
         void GetAllTags(TVector<FString>& Out) const
         {
-            std::lock_guard<std::mutex> Lock(Mutex);
+            FScopeLock Lock(Mutex);
             Out.reserve(Out.size() + Nodes.size());
             for (size_t i = 1; i < Nodes.size(); ++i)
             {
@@ -126,7 +126,7 @@ namespace Lumina
             return Id;
         }
 
-        mutable std::mutex          Mutex;
+        mutable FMutex          Mutex;
         TVector<FNode>              Nodes = { FNode{} };   // index 0 is the invalid / None sentinel.
         THashMap<uint64, uint32>    HashToId;
     };

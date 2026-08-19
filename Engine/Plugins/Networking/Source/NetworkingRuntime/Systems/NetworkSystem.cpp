@@ -62,7 +62,7 @@ namespace Lumina
                 Networked.push_back(Entity);
             }
 
-            std::sort(Networked.begin(), Networked.end(), [](entt::entity A, entt::entity B)
+            Algo::Sort(Networked.begin(), Networked.end(), [](entt::entity A, entt::entity B)
             {
                 return entt::to_integral(A) < entt::to_integral(B);
             });
@@ -277,7 +277,7 @@ namespace Lumina
                 uint32 MaxBacklog = 0;
                 for (uint32 ConnId : State.ConnectedClientIds)
                 {
-                    MaxBacklog = std::max(MaxBacklog, State.Transport->GetReliableBacklogBytes(FConnectionHandle{ ConnId }));
+                    MaxBacklog = Math::Max(MaxBacklog, State.Transport->GetReliableBacklogBytes(FConnectionHandle{ ConnId }));
                 }
                 if (MaxBacklog >= static_cast<uint32>(PauseBytes))
                 {
@@ -306,7 +306,7 @@ namespace Lumina
 
             // Oldest-replicated first (GUID tie-break for determinism) so the per-tick byte budget below can
             // spread a backlog across ticks without ever starving a single entity.
-            std::sort(Dirty.begin(), Dirty.end(), [](const FDirtyEntry& A, const FDirtyEntry& B)
+            Algo::Sort(Dirty.begin(), Dirty.end(), [](const FDirtyEntry& A, const FDirtyEntry& B)
             {
                 return (A.LastTime != B.LastTime) ? (A.LastTime < B.LastTime) : (A.Guid < B.Guid);
             });
@@ -793,7 +793,7 @@ namespace Lumina
 
                 CV.bForceBaseline = false;
                 RelevantSum += static_cast<uint32>(CV.Relevant.size());
-                RelevantMax  = std::max(RelevantMax, static_cast<uint32>(CV.Relevant.size()));
+                RelevantMax  = Math::Max(RelevantMax, static_cast<uint32>(CV.Relevant.size()));
             }
 
             LUMINA_PROFILE_VALUE("Net/RelevantMax", static_cast<int64>(RelevantMax));
@@ -853,7 +853,7 @@ namespace Lumina
                 TVector<uint8> Unreliable;
                 for (size_t Begin = 0; Begin < Records.size(); Begin += MaxRecordsPerFrame)
                 {
-                    const size_t End = std::min(Records.size(), Begin + MaxRecordsPerFrame);
+                    const size_t End = Math::Min(Records.size(), Begin + MaxRecordsPerFrame);
                     TVector<uint8> Buffer;
                     FNetArchive Writer(Buffer);
                     uint8  Type  = static_cast<uint8>(ENetMessage::TransformSnapshot);
@@ -863,7 +863,7 @@ namespace Lumina
                     Writer << Count;
                     for (size_t i = Begin; i < End; ++i) { WriteTransformRecord(Writer, Records[i]); }
                     const uint32 FrameBytes = static_cast<uint32>(Buffer.size());
-                    LargestFrame = std::max(LargestFrame, FrameBytes);
+                    LargestFrame = Math::Max(LargestFrame, FrameBytes);
                     TotalBytes  += FrameBytes;
                     ++Chunks;
                     Net::AppendFramedMessage(Unreliable, Buffer.data(), static_cast<SIZE_T>(Buffer.size()));
@@ -876,7 +876,7 @@ namespace Lumina
             State.Stats.MovementTotalBytes     = TotalBytes;
             State.Stats.UnreliableBatchBytes   = TotalBytes;
             State.Stats.MovementChunks         = static_cast<uint16>(Chunks > 0xFFFF ? 0xFFFF : Chunks);
-            State.Stats.PeakMovementFrameBytes = std::max(State.Stats.PeakMovementFrameBytes, LargestFrame);
+            State.Stats.PeakMovementFrameBytes = Math::Max(State.Stats.PeakMovementFrameBytes, LargestFrame);
             State.Stats.SpawnsSent             = static_cast<uint16>(SpawnsSum > 0xFFFF ? 0xFFFF : SpawnsSum);
             State.Stats.DespawnsSent           = static_cast<uint16>(DespawnsSum > 0xFFFF ? 0xFFFF : DespawnsSum);
             State.Stats.RelevantAvg            = NumClients ? (RelevantSum / NumClients) : 0;
@@ -1022,7 +1022,7 @@ namespace Lumina
             Reader << Count;
 
             const double SampleTime = static_cast<double>(ServerTime);
-            State.LatestServerTime = std::max(SampleTime, State.LatestServerTime);
+            State.LatestServerTime = Math::Max(SampleTime, State.LatestServerTime);
 
             for (uint16 Index = 0; Index < Count; ++Index)
             {
@@ -1042,7 +1042,7 @@ namespace Lumina
             Reader << Type;
             Reader << Count;
 
-            State.LatestServerTime = std::max(ServerNow, State.LatestServerTime);
+            State.LatestServerTime = Math::Max(ServerNow, State.LatestServerTime);
 
             for (uint16 i = 0; i < Count; ++i)
             {
@@ -1213,7 +1213,7 @@ namespace Lumina
                 {
                     State->ConnectedClients = (State->ConnectedClients > 0) ? State->ConnectedClients - 1 : 0;
                     auto& Ids = State->ConnectedClientIds;
-                    Ids.erase(std::remove(Ids.begin(), Ids.end(), Event.Connection.Value), Ids.end());
+                    Ids.erase(Algo::Remove(Ids.begin(), Ids.end(), Event.Connection.Value), Ids.end());
                     State->ClientViews.erase(Event.Connection.Value); // drop its per-client relevancy state
 
                     // Release anything this connection owned so it doesn't stay stuck as an orphan proxy.

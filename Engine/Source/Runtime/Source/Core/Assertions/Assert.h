@@ -1,5 +1,5 @@
 ﻿#pragma once
-#include <format>
+#include "Containers/StringFormat.h"
 #include <source_location>
 #include "Containers/String.h"
 #include "Platform/GenericPlatform.h"
@@ -78,7 +78,7 @@ namespace Lumina::Assert
         using namespace Lumina::Assert; \
         LUMINA_HANDLE_ASSERTION_HEADER \
         { \
-            __VA_OPT__(.Message = std::format(__VA_ARGS__).c_str(),) \
+            __VA_OPT__(.Message = ::Lumina::Format(__VA_ARGS__).c_str(),) \
             .Location = std::source_location::current(), \
             .Expression = #Expr, \
             .Type = EAssertionType::AssertType \
@@ -105,7 +105,7 @@ namespace Lumina::Assert
             using namespace Lumina::Assert; \
             LUMINA_HANDLE_ASSERTION_HEADER \
             { \
-                __VA_OPT__(.Message = std::format(__VA_ARGS__).c_str(),) \
+                __VA_OPT__(.Message = ::Lumina::Format(__VA_ARGS__).c_str(),) \
                 .Location = std::source_location::current(), \
                 .Expression = #Expr, \
                 .Type = EAssertionType::Alert \
@@ -128,7 +128,7 @@ namespace Lumina::Assert
             using namespace Lumina::Assert; \
             LUMINA_HANDLE_ASSERTION_HEADER \
             { \
-                __VA_OPT__(.Message = std::format(__VA_ARGS__).c_str(),) \
+                __VA_OPT__(.Message = ::Lumina::Format(__VA_ARGS__).c_str(),) \
                 .Location = std::source_location::current(), \
                 .Expression = #Expr, \
                 .Type = EAssertionType::Alert \

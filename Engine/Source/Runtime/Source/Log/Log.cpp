@@ -1,14 +1,14 @@
-﻿#include "RuntimePCH.h"
+﻿#include "Platform/Time/PlatformTime.h"
+#include "RuntimePCH.h"
+#include <iterator>
+#include <string_view>
 #include "Log.h"
 
-#include <chrono>
-#include <condition_variable>
 #include <cstdio>
 #include <ctime>
-#include <mutex>
-#include <thread>
 
 #include "LogFormat.h"
+#include "Containers/StringFormat.h"
 #include "LogSink.h"
 #include "Sinks/FileSink.h"
 #include "Sinks/MemorySink.h"
@@ -62,18 +62,18 @@ namespace Lumina::Logging
 		std::atomic<bool>   GBackendSleeping{ false };
 		std::atomic<uint64> GDroppedMessages{ 0 };
 
-		std::thread             GBackendThread;
-		std::mutex              GWakeMutex;
-		std::condition_variable GWakeCv;
+		FThread             GBackendThread;
+		FMutex              GWakeMutex;
+		FConditionVariable GWakeCv;
 
 		// Flush handshake: a caller publishes the position it needs drained; the backend bumps the
 		// generation once it is past that and every sink has reached the OS.
 		std::atomic<uint64>     GFlushTarget{ 0 };
 		std::atomic<uint64>     GFlushGeneration{ 0 };
-		std::mutex              GFlushMutex;
-		std::condition_variable GFlushCv;
+		FMutex              GFlushMutex;
+		FConditionVariable GFlushCv;
 
-		std::mutex                      GSinkMutex;
+		FMutex                      GSinkMutex;
 		TVector<TUniquePtr<ILogSink>>   GSinks;
 
 		// Owned by GSinks; kept for SetLogFileDirectory. Only touched under GSinkMutex.
@@ -82,15 +82,15 @@ namespace Lumina::Logging
 		constexpr const char* GLogFileName = "Lumina.log";
 
 		// Guards the direct-to-stdout path used before Init() and after Shutdown().
-		std::mutex GFallbackMutex;
+		FMutex GFallbackMutex;
 
 
 		FORCEINLINE void WakeBackend()
 		{
 			if (GBackendSleeping.load(std::memory_order_acquire))
 			{
-				std::lock_guard Lock(GWakeMutex);
-				GWakeCv.notify_one();
+				FScopeLock Lock(GWakeMutex);
+				GWakeCv.NotifyOne();
 			}
 		}
 
@@ -109,8 +109,7 @@ namespace Lumina::Logging
 				{
 					if (GEnqueuePos.compare_exchange_weak(Pos, Pos + 1, std::memory_order_relaxed))
 					{
-						Slot.TimeNs   = std::chrono::duration_cast<std::chrono::nanoseconds>(
-											std::chrono::system_clock::now().time_since_epoch()).count();
+						Slot.TimeNs   = PlatformTime::UtcNanoseconds();
 						Slot.ThreadId = static_cast<uint32>(Threading::GetThreadID());
 						Slot.Level    = Level;
 						Slot.Length   = Length;
@@ -195,29 +194,22 @@ namespace Lumina::Logging
 
 			void Rebuild(int64 Seconds)
 			{
-				const std::time_t Raw = static_cast<std::time_t>(Seconds);
-				std::tm Local{};
+				const PlatformTime::FDateTime Local = PlatformTime::LocalTime(Seconds * 1000000000ll);
 
-			#if defined(_WIN32)
-				localtime_s(&Local, &Raw);
-			#else
-				localtime_r(&Raw, &Local);
-			#endif
-
-				const uint32 Year = static_cast<uint32>(Local.tm_year) + 1900;
+				const uint32 Year = static_cast<uint32>(Local.Year);
 				WriteTwo(Stamp.Date + 0, Year / 100);
 				WriteTwo(Stamp.Date + 2, Year % 100);
 				Stamp.Date[4] = '-';
-				WriteTwo(Stamp.Date + 5, static_cast<uint32>(Local.tm_mon) + 1);
+				WriteTwo(Stamp.Date + 5, static_cast<uint32>(Local.Month));
 				Stamp.Date[7] = '-';
-				WriteTwo(Stamp.Date + 8, static_cast<uint32>(Local.tm_mday));
+				WriteTwo(Stamp.Date + 8, static_cast<uint32>(Local.Day));
 				Stamp.Date[10] = '\0';
 
-				WriteTwo(Stamp.Clock + 0, static_cast<uint32>(Local.tm_hour));
+				WriteTwo(Stamp.Clock + 0, static_cast<uint32>(Local.Hour));
 				Stamp.Clock[2] = ':';
-				WriteTwo(Stamp.Clock + 3, static_cast<uint32>(Local.tm_min));
+				WriteTwo(Stamp.Clock + 3, static_cast<uint32>(Local.Minute));
 				Stamp.Clock[5] = ':';
-				WriteTwo(Stamp.Clock + 6, static_cast<uint32>(Local.tm_sec));
+				WriteTwo(Stamp.Clock + 6, static_cast<uint32>(Local.Second));
 				Stamp.Clock[8] = '\0';
 			}
 
@@ -235,7 +227,7 @@ namespace Lumina::Logging
 		{
 			const FLevelDescriptor& Descriptor = GetLevelDescriptor(Level);
 
-			std::lock_guard Lock(GFallbackMutex);
+			FScopeLock Lock(GFallbackMutex);
 			std::fwrite("[", 1, 1, stdout);
 			std::fwrite(Descriptor.Name.data(), 1, Descriptor.Name.size(), stdout);
 			std::fwrite("] ", 1, 2, stdout);
@@ -247,7 +239,7 @@ namespace Lumina::Logging
 
 		void FlushSinks()
 		{
-			std::scoped_lock Lock(GSinkMutex);
+			FScopeLock Lock(GSinkMutex);
 			for (TUniquePtr<ILogSink>& Sink : GSinks)
 			{
 				Sink->Flush();
@@ -258,19 +250,17 @@ namespace Lumina::Logging
 		// Returns how many messages it moved.
 		uint32 DrainBatch(FTimestampCache& Timestamps)
 		{
-			std::scoped_lock Lock(GSinkMutex);
+			FScopeLock Lock(GSinkMutex);
 
 			uint32 Drained = 0;
 
 			// Reported inline so a stall is visible rather than silently swallowing messages.
 			if (const uint64 Dropped = GDroppedMessages.exchange(0, std::memory_order_relaxed); Dropped > 0)
 			{
-				FFixedString Notice;
-				std::format_to(std::back_inserter(Notice),
+				const FFixedString Notice = FormatAs<FFixedString>(
 					"Log queue overflowed; {} low-severity message(s) were dropped.", Dropped);
 
-				const int64 Now = std::chrono::duration_cast<std::chrono::nanoseconds>(
-									std::chrono::system_clock::now().time_since_epoch()).count();
+				const int64 Now = PlatformTime::UtcNanoseconds();
 
 				const FLogRecord Record
 				{
@@ -338,10 +328,10 @@ namespace Lumina::Logging
 			GFlushTarget.store(0, std::memory_order_release);
 
 			{
-				std::scoped_lock Lock(GFlushMutex);
+				FScopeLock Lock(GFlushMutex);
 				GFlushGeneration.fetch_add(1, std::memory_order_release);
 			}
-			GFlushCv.notify_all();
+			GFlushCv.NotifyAll();
 		}
 
 
@@ -374,14 +364,14 @@ namespace Lumina::Logging
 				}
 
 				// Timeout is a backstop; WakeBackend covers the common case.
-				std::unique_lock Lock(GWakeMutex);
+				FUniqueLock Lock(GWakeMutex);
 				GBackendSleeping.store(true, std::memory_order_release);
 
 				if (IsQueueEmpty()
 					&& !GStopRequested.load(std::memory_order_acquire)
 					&& GFlushTarget.load(std::memory_order_acquire) == 0)
 				{
-					GWakeCv.wait_for(Lock, std::chrono::milliseconds(50));
+					GWakeCv.WaitFor(Lock, 0.05);
 				}
 
 				GBackendSleeping.store(false, std::memory_order_release);
@@ -392,9 +382,9 @@ namespace Lumina::Logging
 
 
 		// Reused for the process lifetime, so a log call allocates nothing once it reaches high water.
-		TFixedString<1024>& GetFormatBuffer()
+		Fmt::TInlineFormatBuffer<1024>& GetFormatBuffer()
 		{
-			thread_local TFixedString<1024> Buffer;
+			thread_local Fmt::TInlineFormatBuffer<1024> Buffer;
 			return Buffer;
 		}
 	}
@@ -419,7 +409,7 @@ namespace Lumina::Logging
 			return;
 		}
 
-		std::scoped_lock Lock(GSinkMutex);
+		FScopeLock Lock(GSinkMutex);
 		GSinks.push_back(Move(Sink));
 	}
 
@@ -459,7 +449,7 @@ namespace Lumina::Logging
 
 			if (FileSink->IsOpen())
 			{
-				std::scoped_lock Lock(GSinkMutex);
+				FScopeLock Lock(GSinkMutex);
 				GFileSink = FileSink.get();
 				GSinks.push_back(Move(FileSink));
 			}
@@ -474,7 +464,7 @@ namespace Lumina::Logging
 
 		GStopRequested.store(false, std::memory_order_relaxed);
 		GBackendRunning.store(true, std::memory_order_release);
-		GBackendThread = std::thread(&BackendMain);
+		GBackendThread = FThread(&BackendMain);
 
 		LOG_TRACE("------- Log Initialized -------");
 	}
@@ -491,8 +481,8 @@ namespace Lumina::Logging
 
 		GStopRequested.store(true, std::memory_order_release);
 		{
-			std::scoped_lock Lock(GWakeMutex);
-			GWakeCv.notify_all();
+			FScopeLock Lock(GWakeMutex);
+			GWakeCv.NotifyAll();
 		}
 
 		if (GBackendThread.joinable())
@@ -510,7 +500,7 @@ namespace Lumina::Logging
 		FlushSinks();
 
 		{
-			std::scoped_lock Lock(GSinkMutex);
+			FScopeLock Lock(GSinkMutex);
 			GFileSink = nullptr;
 			GSinks.clear();
 		}
@@ -519,7 +509,7 @@ namespace Lumina::Logging
 
 	FString GetLogFilePath()
 	{
-		std::scoped_lock Lock(GSinkMutex);
+		FScopeLock Lock(GSinkMutex);
 		return GFileSink != nullptr ? GFileSink->GetBasePath() : FString();
 	}
 
@@ -531,7 +521,7 @@ namespace Lumina::Logging
 			return;
 		}
 
-		std::scoped_lock Lock(GSinkMutex);
+		FScopeLock Lock(GSinkMutex);
 		if (GFileSink == nullptr)
 		{
 			return;
@@ -574,10 +564,10 @@ namespace Lumina::Logging
 
 		WakeBackend();
 
-		std::unique_lock Lock(GFlushMutex);
-		GFlushCv.wait_for(Lock, std::chrono::seconds(2), [Generation] 
+		FUniqueLock Lock(GFlushMutex);
+		GFlushCv.WaitFor(Lock, 2.0, [Generation]
 		{
-			return GFlushGeneration.load(std::memory_order_acquire) > Generation; 
+			return GFlushGeneration.load(std::memory_order_acquire) > Generation;
 		});
 	}
 
@@ -585,7 +575,7 @@ namespace Lumina::Logging
 	// The backend thread pushes into this queue under GSinkMutex, so any resize or clear takes it too.
 	void ClearLogQueue()
 	{
-		std::scoped_lock Lock(GSinkMutex);
+		FScopeLock Lock(GSinkMutex);
 		GetConsoleLogQueue().clear();
 	}
 
@@ -599,14 +589,14 @@ namespace Lumina::Logging
 
 	void SetConsoleLogQueueCapacity(uint32 Capacity)
 	{
-		std::scoped_lock Lock(GSinkMutex);
+		FScopeLock Lock(GSinkMutex);
 		GetConsoleLogQueue().set_capacity(Capacity == 0 ? 1u : Capacity);
 	}
 
 
 	uint32 GetConsoleLogQueueCapacity()
 	{
-		std::scoped_lock Lock(GSinkMutex);
+		FScopeLock Lock(GSinkMutex);
 		return (uint32)GetConsoleLogQueue().capacity();
 	}
 
@@ -649,28 +639,17 @@ namespace Lumina::Logging
 	}
 
 
-	void DispatchFormatted(ELogLevel Level, std::string_view Fmt, std::format_args Args) noexcept
+	void DispatchFormatted(ELogLevel Level, FStringView Format, Fmt::FFormatArgs Args) noexcept
 	{
 		if (!ShouldLog(Level))
 		{
 			return;
 		}
 
-		TFixedString<1024>& Buffer = GetFormatBuffer();
-		Buffer.clear();
+		Fmt::TInlineFormatBuffer<1024>& Buffer = GetFormatBuffer();
+		Buffer.Clear();
+		Fmt::VFormatTo(Buffer, Format, Args);
 
-		try
-		{
-			std::vformat_to(std::back_inserter(Buffer), Fmt, Args);
-		}
-		catch (const std::exception& Error)
-		{
-			Buffer.clear();
-			Buffer += "<log format error: ";
-			Buffer += Error.what();
-			Buffer += ">";
-		}
-
-		Dispatch(Level, Buffer.data(), static_cast<uint32>(Buffer.size()));
+		Dispatch(Level, Buffer.Data(), static_cast<uint32>(Buffer.Size()));
 	}
 }

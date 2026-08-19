@@ -271,10 +271,10 @@ namespace Lumina
                         continue;
                     }
 
-                    float MinX = std::max((Cmd.ClipRect.x - ClipOff.x) * ClipScale.x, 0.0f);
-                    float MinY = std::max((Cmd.ClipRect.y - ClipOff.y) * ClipScale.y, 0.0f);
-                    float MaxX = std::min((Cmd.ClipRect.z - ClipOff.x) * ClipScale.x, FBW);
-                    float MaxY = std::min((Cmd.ClipRect.w - ClipOff.y) * ClipScale.y, FBH);
+                    float MinX = Math::Max((Cmd.ClipRect.x - ClipOff.x) * ClipScale.x, 0.0f);
+                    float MinY = Math::Max((Cmd.ClipRect.y - ClipOff.y) * ClipScale.y, 0.0f);
+                    float MaxX = Math::Min((Cmd.ClipRect.z - ClipOff.x) * ClipScale.x, FBW);
+                    float MaxY = Math::Min((Cmd.ClipRect.w - ClipOff.y) * ClipScale.y, FBH);
                     if (MaxX <= MinX || MaxY <= MinY)
                     {
                         continue;

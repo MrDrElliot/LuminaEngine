@@ -1,7 +1,7 @@
 #pragma once
 
+#include "Core/Threading/Thread.h"
 #include <atomic>
-#include <mutex>
 
 #include "Platform/GenericPlatform.h"
 #include "Containers/String.h"
@@ -61,7 +61,7 @@ namespace Lumina
     private:
 
         std::atomic<bool>                       bEnabled { false };
-        std::mutex                              Mutex;            // guards Current/IndexOf/Latest/histories
+        FMutex                              Mutex;            // guards Current/IndexOf/Latest/histories
         THashMap<uint64, int32>                 IndexOf;          // hash -> index into Current.Entries
         FGameplayProfileFrame                   Current;
         FGameplayProfileFrame                   Latest;

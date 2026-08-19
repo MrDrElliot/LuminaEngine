@@ -1,4 +1,5 @@
 ﻿#include "RuntimePCH.h"
+#include <string>
 #include "Assert.h"
 #include "Core/Threading/Thread.h"
 #include "Log/Log.h"

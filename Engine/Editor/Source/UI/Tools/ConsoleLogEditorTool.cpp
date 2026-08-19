@@ -699,7 +699,7 @@ namespace Lumina
             }
         }
 
-        std::sort(AutoCompleteCandidates.begin(), AutoCompleteCandidates.end(), [](const FAutoCompleteCandidate& A, const FAutoCompleteCandidate& B)
+        Algo::Sort(AutoCompleteCandidates.begin(), AutoCompleteCandidates.end(), [](const FAutoCompleteCandidate& A, const FAutoCompleteCandidate& B)
         {
             return A.MatchScore > B.MatchScore;
         });

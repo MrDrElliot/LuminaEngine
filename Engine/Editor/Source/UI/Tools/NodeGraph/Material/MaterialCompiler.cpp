@@ -1,3 +1,4 @@
+#include <iterator>
 #include "MaterialCompiler.h"
 
 #include "Assets/AssetTypes/Curve/CurveAsset.h"
@@ -1115,7 +1116,7 @@ namespace Lumina
 
 	int32 FMaterialCompiler::BindTexture(CTexture* Texture)
 	{
-		auto It = std::find(BoundImages.begin(), BoundImages.end(), Texture);
+		auto It = Algo::Find(BoundImages.begin(), BoundImages.end(), Texture);
 		if (It != BoundImages.end())
 		{
 			return (int32)std::distance(BoundImages.begin(), It);

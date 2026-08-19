@@ -1,5 +1,6 @@
 #pragma once
 
+#include <iterator>
 #include "TaskTypes.h"
 #include "Scheduler/JobScheduler.h"
 #include "Core/Profiler/Profile.h"

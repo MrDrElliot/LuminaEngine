@@ -178,7 +178,7 @@ namespace Lumina
 
         if (!FileHelper::LoadFileToArray(SourceBlob, FStringView(SourcePath.c_str(), SourcePath.size())))
         {
-            OutError = FString(std::format("Failed to read '{0}'.", SourcePath.c_str()).c_str());
+            OutError = FString(Format("Failed to read '{0}'.", SourcePath.c_str()).c_str());
             return false;
         }
 
@@ -235,7 +235,7 @@ namespace Lumina
         Scene = ufbx_load_memory(SourceBlob.data(), SourceBlob.size(), &LoadOptions, &LoadError);
         if (Scene == nullptr)
         {
-            OutError = FString(std::format("Failed to parse '{0}': {1}",
+            OutError = FString(Format("Failed to parse '{0}': {1}",
                 SourcePath.c_str(), FormatUfbxError(LoadError).c_str()).c_str());
             SourceBlob.clear();
             SourceBlob.shrink_to_fit();

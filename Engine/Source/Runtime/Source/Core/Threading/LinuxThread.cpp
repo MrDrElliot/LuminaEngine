@@ -17,6 +17,12 @@ namespace Lumina::Threading
         constexpr size_t kMaxThreadNameLength = 15;
     }
 
+    uint32 GetNumThreads()
+    {
+        const long Count = ::sysconf(_SC_NPROCESSORS_ONLN);
+        return Count > 0 ? static_cast<uint32>(Count) : 1u;
+    }
+
     uint64 GetThreadID()
     {
         static thread_local const uint64 CachedID = []
@@ -59,6 +65,77 @@ namespace Lumina::Threading
     bool SetThreadPerformanceHint()
     {
         return false;
+    }
+}
+
+
+namespace Lumina
+{
+    namespace
+    {
+        void* ThreadEntry(void* Parameter)
+        {
+            TMoveOnlyFunction<void()>* Body = static_cast<TMoveOnlyFunction<void()>*>(Parameter);
+            (*Body)();
+            delete Body;
+            return nullptr;
+        }
+    }
+
+    void FThread::Start(TMoveOnlyFunction<void()>* Body)
+    {
+        pthread_t Thread{};
+        if (pthread_create(&Thread, nullptr, &ThreadEntry, Body) != 0)
+        {
+            delete Body;
+            return;
+        }
+
+        Handle = reinterpret_cast<void*>(Thread);
+        Id = static_cast<uint64>(Thread);
+    }
+
+    void FThread::Join() noexcept
+    {
+        if (Handle == nullptr)
+        {
+            return;
+        }
+
+        pthread_join(reinterpret_cast<pthread_t>(Handle), nullptr);
+        Handle = nullptr;
+        Id = 0;
+    }
+
+    void FThread::Detach() noexcept
+    {
+        if (Handle == nullptr)
+        {
+            return;
+        }
+
+        pthread_detach(reinterpret_cast<pthread_t>(Handle));
+        Handle = nullptr;
+        Id = 0;
+    }
+
+    FThread& FThread::operator=(FThread&& Other) noexcept
+    {
+        if (this != &Other)
+        {
+            Detach();
+            Handle = Other.Handle;
+            Id = Other.Id;
+            Other.Handle = nullptr;
+            Other.Id = 0;
+        }
+
+        return *this;
+    }
+
+    FThread::~FThread()
+    {
+        Detach();
     }
 }
 

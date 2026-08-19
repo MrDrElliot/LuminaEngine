@@ -1,4 +1,6 @@
-﻿#include "RuntimePCH.h"
+﻿#include "Core/Threading/Thread.h"
+#include "Platform/Time/PlatformTime.h"
+#include "RuntimePCH.h"
 #include "GameplayProfiler.h"
 
 #include "Platform/Process/PlatformProcess.h"
@@ -9,7 +11,7 @@ namespace Lumina
     {
         double GameplayProfilerNowMs()
         {
-            return Platform::GetTime() * 1000.0;
+            return PlatformTime::Seconds() * 1000.0;
         }
 
         uint64 HashName(FStringView S)
@@ -49,7 +51,7 @@ namespace Lumina
         if (bInEnabled && !bWas)
         {
             // Fresh start so a stale partial frame can't leak in.
-            std::lock_guard<std::mutex> Lock(Mutex);
+            FScopeLock Lock(Mutex);
             GOpenStack.clear();
             IndexOf.clear();
             Current = FGameplayProfileFrame{};
@@ -62,7 +64,7 @@ namespace Lumina
         {
             return;
         }
-        std::lock_guard<std::mutex> Lock(Mutex);
+        FScopeLock Lock(Mutex);
         Current.Entries.clear();
         IndexOf.clear();
         GOpenStack.clear();
@@ -77,7 +79,7 @@ namespace Lumina
             return;
         }
 
-        std::lock_guard<std::mutex> Lock(Mutex);
+        FScopeLock Lock(Mutex);
         double Total = 0.0;
         for (const FGameplayProfileEntry& E : Current.Entries)
         {
@@ -145,7 +147,7 @@ namespace Lumina
 
         // Aggregate into the shared per-frame table (parallel systems may close scopes concurrently).
         {
-            std::lock_guard<std::mutex> Lock(Mutex);
+            FScopeLock Lock(Mutex);
 
             int32 Index;
             const auto It = IndexOf.find(Open.Hash);

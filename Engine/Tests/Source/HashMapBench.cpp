@@ -1,6 +1,5 @@
 #include <gtest/gtest.h>
 
-#include <chrono>
 #include <cstdio>
 #include <algorithm>
 #include <vector>
@@ -8,6 +7,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "Platform/Time/PlatformTime.h"
 #include "Containers/HashTable.h"
 #include "Containers/Name.h"
 #include "Containers/String.h"
@@ -27,10 +27,25 @@ namespace LuminaHashMapBench
     template <typename T>
     using TLuminaSet = Lumina::Containers::THashSet<T>;
 
-    template <typename K, typename V>
-    using TBaselineMap = std::unordered_map<K, V>;
+    // Engine key types no longer specialize std::hash, so the baseline borrows GetTypeHash for those.
+    struct FBaselineHash
+    {
+        template <typename T>
+        size_t operator()(const T& Key) const noexcept
+        {
+            if constexpr (requires { std::hash<T>{}(Key); })
+            {
+                return std::hash<T>{}(Key);
+            }
+            else
+            {
+                return static_cast<size_t>(GetTypeHash(Key));
+            }
+        }
+    };
 
-    using FBenchClock = std::chrono::steady_clock;
+    template <typename K, typename V>
+    using TBaselineMap = std::unordered_map<K, V, FBaselineHash>;
 
     volatile uint64 GBenchSink = 0;
 
@@ -61,11 +76,11 @@ namespace LuminaHashMapBench
         double Best = 1e30;
         for (int Attempt = 0; Attempt < Repeats; ++Attempt)
         {
-            const FBenchClock::time_point Start = FBenchClock::now();
+            const Lumina::uint64 Start = Lumina::PlatformTime::Cycles();
             Body();
-            const FBenchClock::time_point Stop = FBenchClock::now();
+            const Lumina::uint64 Stop = Lumina::PlatformTime::Cycles();
 
-            const double Millis = std::chrono::duration<double, std::milli>(Stop - Start).count();
+            const double Millis = Lumina::PlatformTime::ToMilliseconds(Stop - Start);
             Best = Millis < Best ? Millis : Best;
         }
         return Best;

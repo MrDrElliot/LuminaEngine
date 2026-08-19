@@ -1,4 +1,5 @@
 ﻿#include "RuntimePCH.h"
+#include <string>
 #include "CommandLine.h"
 
 namespace Lumina

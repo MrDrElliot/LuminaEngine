@@ -1,3 +1,4 @@
+#include <string>
 #include "CoreTypeCustomization.h"
 #include "imgui.h"
 #include "Core/Object/ObjectCore.h"

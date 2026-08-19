@@ -151,7 +151,7 @@ namespace Lumina
 
             if (CVarNavDebugCenters.GetValue())
             {
-                const float R = std::max(0.02f, CVarNavDebugVertSize.GetValue() * 0.5f);
+                const float R = Math::Max(0.02f, CVarNavDebugVertSize.GetValue() * 0.5f);
                 Mesh.ParallelForEachTriangle([&Context, R, &Lift, bColorByArea](const FVector3& A, const FVector3& B, const FVector3& C, uint8 Area)
                 {
                     const FVector3 C0 = (A + B + C) * (1.0f / 3.0f) + Lift;
@@ -440,8 +440,8 @@ namespace Lumina
             const float Half   = T.TileWorldSize * 0.5f;
 
             // One nav cell per quad is the finest worth emitting; also cap the grid so huge terrains stay bounded.
-            int32 Step = std::max(1, (int32)std::floor(std::max(CellSize, 0.01f) / std::max(Stride, 1e-4f)));
-            Step = std::max(Step, (int32)std::ceil((float)(Res - 1) / 256.0f));
+            int32 Step = Math::Max(1, (int32)std::floor(Math::Max(CellSize, 0.01f) / Math::Max(Stride, 1e-4f)));
+            Step = Math::Max(Step, (int32)std::ceil((float)(Res - 1) / 256.0f));
 
             auto Height = [&](int32 Col, int32 Row) -> float
             {
@@ -455,10 +455,10 @@ namespace Lumina
 
             for (int32 Row = 0; Row < Res - 1; Row += Step)
             {
-                const int32 RowN = std::min(Row + Step, Res - 1);
+                const int32 RowN = Math::Min(Row + Step, Res - 1);
                 for (int32 Col = 0; Col < Res - 1; Col += Step)
                 {
-                    const int32 ColN = std::min(Col + Step, Res - 1);
+                    const int32 ColN = Math::Min(Col + Step, Res - 1);
                     const FVector3 A = Pos(Col,  Row);
                     const FVector3 B = Pos(ColN, Row);
                     const FVector3 C = Pos(ColN, RowN);
@@ -538,7 +538,7 @@ namespace Lumina
                 const float Sx = Math::Length(FVector3(W[0]));
                 const float Sy = Math::Length(FVector3(W[1]));
                 const float Sz = Math::Length(FVector3(W[2]));
-                return Radius * std::max(Sx, std::max(Sy, Sz));
+                return Radius * Math::Max(Sx, Math::Max(Sy, Sz));
             };
 
             auto BoxView = Context.CreateView<SBoxColliderComponent, STransformComponent>();
@@ -819,10 +819,10 @@ namespace Lumina
         FORCEINLINE void TilesForAABB(const FVector3& AABBMin, const FVector3& AABBMax, const FVector3& Origin, float TileWorldSize, int32 TilesX, int32 TilesY,
                                       int32& OutTX0, int32& OutTY0, int32& OutTX1, int32& OutTY1)
         {
-            OutTX0 = std::clamp((int32)std::floor((AABBMin.x - Origin.x) / TileWorldSize), 0, TilesX - 1);
-            OutTY0 = std::clamp((int32)std::floor((AABBMin.z - Origin.z) / TileWorldSize), 0, TilesY - 1);
-            OutTX1 = std::clamp((int32)std::floor((AABBMax.x - Origin.x) / TileWorldSize), 0, TilesX - 1);
-            OutTY1 = std::clamp((int32)std::floor((AABBMax.z - Origin.z) / TileWorldSize), 0, TilesY - 1);
+            OutTX0 = Math::Clamp((int32)std::floor((AABBMin.x - Origin.x) / TileWorldSize), 0, TilesX - 1);
+            OutTY0 = Math::Clamp((int32)std::floor((AABBMin.z - Origin.z) / TileWorldSize), 0, TilesY - 1);
+            OutTX1 = Math::Clamp((int32)std::floor((AABBMax.x - Origin.x) / TileWorldSize), 0, TilesX - 1);
+            OutTY1 = Math::Clamp((int32)std::floor((AABBMax.z - Origin.z) / TileWorldSize), 0, TilesY - 1);
         }
 
         FORCEINLINE uint64 PackTileKey(int32 TX, int32 TY) { return ((uint64)(uint32)TY << 32) | (uint32)TX; }
@@ -995,8 +995,8 @@ namespace Lumina
             {
                 const FVector3 BakeMin = Comp.Center - Comp.GetWorldExtents();
                 const FVector3 BakeMax = Comp.Center + Comp.GetWorldExtents();
-                Comp.Runtime.TilesX = std::max(1, (int32)std::ceil((BakeMax.x - BakeMin.x) / Comp.TileWorldSize));
-                Comp.Runtime.TilesY = std::max(1, (int32)std::ceil((BakeMax.z - BakeMin.z) / Comp.TileWorldSize));
+                Comp.Runtime.TilesX = Math::Max(1, (int32)std::ceil((BakeMax.x - BakeMin.x) / Comp.TileWorldSize));
+                Comp.Runtime.TilesY = Math::Max(1, (int32)std::ceil((BakeMax.z - BakeMin.z) / Comp.TileWorldSize));
                 Comp.Runtime.LiveLayout.Origin          = Comp.Origin;
                 Comp.Runtime.LiveLayout.TileWorldSize   = Comp.TileWorldSize;
                 Comp.Runtime.LiveLayout.MaxTiles        = (int32)Comp.Tiles.size();
@@ -1074,7 +1074,7 @@ namespace Lumina
             }
             
             Comp.Runtime.PendingRebakes.erase(
-                std::remove_if(Comp.Runtime.PendingRebakes.begin(), Comp.Runtime.PendingRebakes.end(),
+                Algo::RemoveIf(Comp.Runtime.PendingRebakes.begin(), Comp.Runtime.PendingRebakes.end(),
                     [](const TSharedPtr<FNavTileRebake>& J) { return !J || J->bConsumed.load(std::memory_order_acquire); }),
                 Comp.Runtime.PendingRebakes.end());
 

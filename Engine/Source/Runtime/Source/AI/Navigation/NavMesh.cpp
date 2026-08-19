@@ -1,4 +1,5 @@
-﻿#include "RuntimePCH.h"
+﻿#include "Platform/Time/PlatformTime.h"
+#include "RuntimePCH.h"
 #include "NavMesh.h"
 
 #include "TaskSystem/TaskSystem.h"
@@ -190,7 +191,7 @@ namespace Lumina
                     return FAcquiredQuery{ &QueryPool[i] };
                 }
             }
-            std::this_thread::yield();
+            PlatformTime::YieldThread();
         }
         return {};
     }

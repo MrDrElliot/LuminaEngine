@@ -1,10 +1,10 @@
 #include <gtest/gtest.h>
 
-#include <chrono>
 #include <cstdio>
 #include <string>
 #include <vector>
 
+#include "Platform/Time/PlatformTime.h"
 #include "Containers/Vector.h"
 
 // Namespaced because the unity build merges this file with others that do "using namespace Lumina".
@@ -12,8 +12,6 @@ namespace LuminaVectorBench
 {
     template <typename T, size_t InlineCapacity = 0>
     using TVector = Lumina::Containers::TVector<T, InlineCapacity>;
-
-    using FBenchClock = std::chrono::steady_clock;
 
     volatile uint64 GBenchSink = 0;
 
@@ -53,11 +51,11 @@ namespace LuminaVectorBench
         double Best = 1e30;
         for (int Attempt = 0; Attempt < Repeats; ++Attempt)
         {
-            const FBenchClock::time_point Start = FBenchClock::now();
+            const Lumina::uint64 Start = Lumina::PlatformTime::Cycles();
             Body();
-            const FBenchClock::time_point Stop = FBenchClock::now();
+            const Lumina::uint64 Stop = Lumina::PlatformTime::Cycles();
 
-            const double Millis = std::chrono::duration<double, std::milli>(Stop - Start).count();
+            const double Millis = Lumina::PlatformTime::ToMilliseconds(Stop - Start);
             Best = Millis < Best ? Millis : Best;
         }
         return Best;

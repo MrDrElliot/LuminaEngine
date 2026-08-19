@@ -1,4 +1,5 @@
 ﻿
+#include "Containers/StringFormat.h"
 #include "EditorTool.h"
 
 #include <Tools/PrimitiveManager/PrimitiveManager.h>
@@ -120,7 +121,7 @@ namespace Lumina
 
     void FEditorTool::Initialize()
     {
-        ToolName = std::format("{0} {1}", GetTitlebarIcon(), GetToolName().c_str()).c_str();
+        ToolName = Format("{0} {1}", GetTitlebarIcon(), GetToolName().c_str()).c_str();
 
         if (HasWorld())
         {
@@ -774,7 +775,7 @@ namespace Lumina
         }
 
         const ImVec2 ContentRegion = ImGui::GetContentRegionAvail();
-        const ImVec2 ViewportSize(std::max(ContentRegion.x, 64.0f), std::max(ContentRegion.y, 64.0f));
+        const ImVec2 ViewportSize(Math::Max(ContentRegion.x, 64.0f), Math::Max(ContentRegion.y, 64.0f));
         const ImVec2 CursorScreenPos = ImGui::GetCursorScreenPos();
 
         const float AspectRatio = (ViewportSize.x / ViewportSize.y);
@@ -826,8 +827,8 @@ namespace Lumina
         ViewportScreenMin  = CursorScreenPos;
         ViewportScreenSize = ViewportSize;
 
-        uint32 RTW = uint32(std::max(ViewportSize.x, 1.0f));
-        uint32 RTH = uint32(std::max(ViewportSize.y, 1.0f));
+        uint32 RTW = uint32(Math::Max(ViewportSize.x, 1.0f));
+        uint32 RTH = uint32(Math::Max(ViewportSize.y, 1.0f));
         if (World != nullptr)
         {
             if (IRenderScene* Scene = World->GetRenderer())
@@ -844,7 +845,7 @@ namespace Lumina
 
         if (World != nullptr)
         {
-            RmlUi::SetWorldDisplaySize(World, FUIntVector2(uint32(std::max(ViewportSize.x, 1.0f)), uint32(std::max(ViewportSize.y, 1.0f))));
+            RmlUi::SetWorldDisplaySize(World, FUIntVector2(uint32(Math::Max(ViewportSize.x, 1.0f)), uint32(Math::Max(ViewportSize.y, 1.0f))));
         }
 
         InputViewport->SetHovered(bViewportHovered);
@@ -886,7 +887,7 @@ namespace Lumina
     bool FEditorTool::DrawViewport(const FUpdateContext& UpdateContext, ImTextureRef ViewportTexture)
     {
         const ImVec2 ContentRegion = ImGui::GetContentRegionAvail();
-        const ImVec2 ViewportSize(std::max(ContentRegion.x, 64.0f), std::max(ContentRegion.y, 64.0f));
+        const ImVec2 ViewportSize(Math::Max(ContentRegion.x, 64.0f), Math::Max(ContentRegion.y, 64.0f));
         const ImVec2 WindowPosition = ImGui::GetCursorScreenPos();
         const ImVec2 WindowBottomRight = { WindowPosition.x + ViewportSize.x, WindowPosition.y + ViewportSize.y };
 
@@ -2048,7 +2049,7 @@ namespace Lumina
 
     FEditorTool::FToolWindow* FEditorTool::CreateToolWindow(FName InName, const TFunction<void(bool)>& DrawFunction, const ImVec2& WindowPadding, bool DisableScrolling)
     {
-        DEBUG_ASSERT(std::none_of(ToolWindows.begin(), ToolWindows.end(), [&](const TUniquePtr<FToolWindow>& W)
+        DEBUG_ASSERT(Algo::NoneOf(ToolWindows.begin(), ToolWindows.end(), [&](const TUniquePtr<FToolWindow>& W)
         {
             return W->Name == InName;
         }));

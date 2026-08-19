@@ -1,4 +1,6 @@
-﻿#include "RuntimePCH.h"
+﻿#include "Platform/Time/PlatformTime.h"
+#include "RuntimePCH.h"
+#include <string>
 #include "Engine.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Core/Diagnostics/HangWatchdog.h"
@@ -195,7 +197,7 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        Platform::EnableHighResolutionTiming();
+        PlatformTime::EnableHighResolutionTiming();
 
         // Must run before renderer/Lua so Earliest/Core-phase plugins can wedge in ahead.
         FPluginManager::Get().DiscoverEnginePlugins();
@@ -392,7 +394,7 @@ namespace Lumina
         FPluginManager::Get().ShutdownAllPlugins();
         FModuleManager::Get().UnloadAllModules();
 
-        Platform::DisableHighResolutionTiming();
+        PlatformTime::DisableHighResolutionTiming();
 
         return false;
     }
@@ -404,7 +406,7 @@ namespace Lumina
         bEngineReadyToClose = true;
         bCloseRequested = bApplicationWantsExit;
 
-        UpdateContext.MarkFrameStart(Platform::GetTime());
+        UpdateContext.MarkFrameStart(PlatformTime::Seconds());
 
         // Prove the main thread is alive this frame; the hang watchdog dumps every thread's stack if
         // this stops advancing (catches the intermittent asset-open deadlock).
@@ -570,7 +572,7 @@ namespace Lumina
         FJobProfiler::Get().EndFrame();
 #endif
 
-        UpdateContext.MarkFrameEnd(Platform::GetTime());
+        UpdateContext.MarkFrameEnd(PlatformTime::Seconds());
 
         int32 MaxFrameRate = CVarMaxFrameRate.GetValue();
         
@@ -595,15 +597,15 @@ namespace Lumina
 
             // Sleep the bulk, leaving margin for OS scheduler overshoot, then spin for precision.
             constexpr double SpinMargin = 0.001;
-            double Remaining = TargetEndTime - Platform::GetTime();
+            double Remaining = TargetEndTime - PlatformTime::Seconds();
             if (Remaining > SpinMargin)
             {
-                std::this_thread::sleep_for(std::chrono::duration<double>(Remaining - SpinMargin));
+                PlatformTime::Sleep(Remaining - SpinMargin);
             }
 
-            while (Platform::GetTime() < TargetEndTime)
+            while (PlatformTime::Seconds() < TargetEndTime)
             {
-                std::this_thread::yield();
+                PlatformTime::YieldThread();
             }
         }
         
@@ -1225,7 +1227,7 @@ namespace Lumina
 
             PakPaths.emplace_back(Entry.FullPath.data(), Entry.FullPath.size());
         });
-        std::sort(PakPaths.begin(), PakPaths.end());
+        Algo::Sort(PakPaths.begin(), PakPaths.end());
 
         if (PakPaths.empty())
         {

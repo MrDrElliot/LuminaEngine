@@ -93,3 +93,10 @@ namespace Lumina::Containers
         return MixHash64(Bits == 0x8000000000000000ull ? 0ull : Bits);
     }
 }
+
+namespace Lumina
+{
+    // Hoisted so an unqualified GetTypeHash inside Lumina reaches the scalar overloads; ADL cannot,
+    // because a pointer to a Lumina type does not associate Lumina::Containers.
+    using Containers::GetTypeHash;
+}

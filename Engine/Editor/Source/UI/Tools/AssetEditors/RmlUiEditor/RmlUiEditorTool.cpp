@@ -1,5 +1,8 @@
 ﻿#include "RmlUiEditorTool.h"
 
+#include <string>
+#include <string_view>
+#include <vector>
 #include "Config/Config.h"
 #include "Core/Delegates/CoreDelegates.h"
 #include "Core/Object/ObjectCore.h"
@@ -438,7 +441,7 @@ namespace Lumina
             if (TabSize < 1) TabSize = 4;
             int Line = 0;
             size_t LineStart = 0;
-            const size_t Clamp = std::min(Offset, Text.size());
+            const size_t Clamp = Math::Min(Offset, Text.size());
             for (size_t i = 0; i < Clamp; ++i)
             {
                 if (Text[i] == '\n') { ++Line; LineStart = i + 1; }
@@ -473,8 +476,8 @@ namespace Lumina
             }
             std::string H(Haystack.c_str(), Haystack.size());
             std::string N(Needle);
-            std::transform(H.begin(), H.end(), H.begin(), [](unsigned char C){ return (char)std::tolower(C); });
-            std::transform(N.begin(), N.end(), N.begin(), [](unsigned char C){ return (char)std::tolower(C); });
+            Algo::Transform(H.begin(), H.end(), H.begin(), [](unsigned char C){ return (char)std::tolower(C); });
+            Algo::Transform(N.begin(), N.end(), N.begin(), [](unsigned char C){ return (char)std::tolower(C); });
             return H.find(N) != std::string::npos;
         }
 
@@ -552,7 +555,7 @@ namespace Lumina
 
         std::string FormatHexColor(const ImVec4& C)
         {
-            auto B = [](float V) { return (int)(std::clamp(V, 0.0f, 1.0f) * 255.0f + 0.5f); };
+            auto B = [](float V) { return (int)(Math::Clamp(V, 0.0f, 1.0f) * 255.0f + 0.5f); };
             char Buf[16];
             if (C.w >= 0.999f) std::snprintf(Buf, sizeof(Buf), "#%02X%02X%02X", B(C.x), B(C.y), B(C.z));
             else               std::snprintf(Buf, sizeof(Buf), "#%02X%02X%02X%02X", B(C.x), B(C.y), B(C.z), B(C.w));
@@ -1108,7 +1111,7 @@ namespace Lumina
         // straight from the CDO in ApplyEditorSettings, so they aren't mirrored into members here.)
         const CRmlUiEditorSettings* Settings = GetDefault<CRmlUiEditorSettings>();
         EditorFontScale         = Settings->FontScale;
-        EditorTabSize           = std::max(1, std::min(8, Settings->TabSize));
+        EditorTabSize           = Math::Max(1, Math::Min(8, Settings->TabSize));
         EditorLineSpacing       = Settings->LineSpacing;
         bEditorShowWhitespace   = Settings->bShowWhitespace;
         bEditorShowLineNumbers  = Settings->bShowLineNumbers;
@@ -1195,7 +1198,7 @@ namespace Lumina
 
             const ImVec2 Avail = ImGui::GetContentRegionAvail();
             const float StatusBarHeight = ImGui::GetTextLineHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
-            const ImVec2 EditorSize(Avail.x, std::max(32.0f, Avail.y - StatusBarHeight));
+            const ImVec2 EditorSize(Avail.x, Math::Max(32.0f, Avail.y - StatusBarHeight));
 
             // Ctrl+wheel over the editor adjusts font scale. Steal the wheel
             // so TextEditor doesn't also use it for vertical scroll.
@@ -1204,7 +1207,7 @@ namespace Lumina
             ImGuiIO& Io = ImGui::GetIO();
             if (Io.KeyCtrl && Io.MouseWheel != 0.0f && ImGui::IsMouseHoveringRect(EditorMin, EditorMax))
             {
-                EditorFontScale = std::clamp(EditorFontScale * (1.0f + Io.MouseWheel * 0.1f), 0.5f, 4.0f);
+                EditorFontScale = Math::Clamp(EditorFontScale * (1.0f + Io.MouseWheel * 0.1f), 0.5f, 4.0f);
                 Io.MouseWheel = 0.0f;
             }
 
@@ -1428,7 +1431,7 @@ namespace Lumina
 
     void FRmlUiEditorTool::ApplyEditorSettings()
     {
-        CodeEditor.SetTabSize(std::max(1, std::min(8, EditorTabSize)));
+        CodeEditor.SetTabSize(Math::Max(1, Math::Min(8, EditorTabSize)));
         CodeEditor.SetInsertSpacesOnTabs(bInsertSpacesOnTabs);
         CodeEditor.SetLineSpacing(EditorLineSpacing);
         CodeEditor.SetShowWhitespacesEnabled(bEditorShowWhitespace);
@@ -1448,7 +1451,7 @@ namespace Lumina
         const CRmlUiEditorSettings* Colors = GetDefault<CRmlUiEditorSettings>();
         auto Set = [&Pal](TextEditor::Color Slot, const FVector3& C)
         {
-            const auto B = [](float V) { return (int)(std::clamp(V, 0.0f, 1.0f) * 255.0f + 0.5f); };
+            const auto B = [](float V) { return (int)(Math::Clamp(V, 0.0f, 1.0f) * 255.0f + 0.5f); };
             Pal[(size_t)Slot] = IM_COL32(B(C.x), B(C.y), B(C.z), 255);
         };
         Set(TextEditor::Color::keyword,         Colors->TagColor);
@@ -1774,7 +1777,7 @@ namespace Lumina
 
         if (bSubmit || bGo)
         {
-            const int Target = std::max(1, std::min(CodeEditor.GetLineCount(), GotoLineBuffer)) - 1;
+            const int Target = Math::Max(1, Math::Min(CodeEditor.GetLineCount(), GotoLineBuffer)) - 1;
             CodeEditor.SetCursor(Target, 0);
             CodeEditor.ScrollToLine(Target, TextEditor::Scroll::alignMiddle);
             ImGui::CloseCurrentPopup();
@@ -1989,10 +1992,10 @@ namespace Lumina
             ImGui::SameLine();
             int W = (int)CanvasWidth, H = (int)CanvasHeight;
             ImGui::SetNextItemWidth(70.0f);
-            if (ImGui::DragInt("##rml_w", &W, 4.0f, 16, 7680, "W %d")) CanvasWidth  = (uint32)std::max(16, W);
+            if (ImGui::DragInt("##rml_w", &W, 4.0f, 16, 7680, "W %d")) CanvasWidth  = (uint32)Math::Max(16, W);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(70.0f);
-            if (ImGui::DragInt("##rml_h", &H, 4.0f, 16, 4320, "H %d")) CanvasHeight = (uint32)std::max(16, H);
+            if (ImGui::DragInt("##rml_h", &H, 4.0f, 16, 4320, "H %d")) CanvasHeight = (uint32)Math::Max(16, H);
         }
 
         // Swap dimensions, handy for portrait/landscape testing without
@@ -2120,7 +2123,7 @@ namespace Lumina
             if (Io.KeyCtrl && Io.MouseWheel != 0.0f)
             {
                 const float Old = ViewZoom;
-                ViewZoom = std::clamp(ViewZoom * (1.0f + Io.MouseWheel * 0.1f), 0.1f, 8.0f);
+                ViewZoom = Math::Clamp(ViewZoom * (1.0f + Io.MouseWheel * 0.1f), 0.1f, 8.0f);
                 // Pan-correct so zoom is centered on the mouse cursor.
                 const ImVec2 Mouse = Io.MousePos;
                 const ImVec2 Center(PaneMin.x + PaneSize.x * 0.5f, PaneMin.y + PaneSize.y * 0.5f);
@@ -2142,12 +2145,12 @@ namespace Lumina
 
         // The canvas ASPECT comes from the selected resolution; 0,0 means "fit to pane", which just
         // adopts the pane's own aspect so the canvas fills it with no letterboxing.
-        const uint32 EffW = (CanvasWidth  != 0 && CanvasHeight != 0) ? CanvasWidth  : (uint32)std::max(16.0f, PaneSize.x);
-        const uint32 EffH = (CanvasWidth  != 0 && CanvasHeight != 0) ? CanvasHeight : (uint32)std::max(16.0f, PaneSize.y);
+        const uint32 EffW = (CanvasWidth  != 0 && CanvasHeight != 0) ? CanvasWidth  : (uint32)Math::Max(16.0f, PaneSize.x);
+        const uint32 EffH = (CanvasWidth  != 0 && CanvasHeight != 0) ? CanvasHeight : (uint32)Math::Max(16.0f, PaneSize.y);
 
         // Fit the canvas inside the pane at View=1.0, then scale by ViewZoom.
         const float CanvasAspect = float(EffW) / float(EffH);
-        const float PaneAspect   = PaneSize.x / std::max(1.0f, PaneSize.y);
+        const float PaneAspect   = PaneSize.x / Math::Max(1.0f, PaneSize.y);
         ImVec2 FitSize;
         if (CanvasAspect > PaneAspect)
         {
@@ -2173,20 +2176,20 @@ namespace Lumina
         // carries the selected resolution's scale (see below), so layout still matches the target
         // resolution -- a 1080p preview shown in a 300px pane lays out with the same proportions, just
         // rasterized at 300px instead of rasterized at 1080 and crushed down to 300.
-        const float WantW = std::max(16.0f, std::floor(FitSize.x * ViewZoom));
-        const float WantH = std::max(16.0f, std::floor(FitSize.y * ViewZoom));
+        const float WantW = Math::Max(16.0f, std::floor(FitSize.x * ViewZoom));
+        const float WantH = Math::Max(16.0f, std::floor(FitSize.y * ViewZoom));
 
         // Cap the raster so zoom cannot balloon the target: at 8x on a large pane the honest size would
         // be a nine-figure pixel count. Two device pixels per screen pixel is more than the pane can
         // resolve anyway, and past the cap the image simply scales up the way it always did, which costs
         // sharpness rather than hundreds of megabytes. Applied as ONE factor so the aspect is preserved;
         // clamping the axes independently would stretch the blit.
-        const float MaxRasterW = std::min(4096.0f, std::max(PaneSize.x * 2.0f, 512.0f));
-        const float MaxRasterH = std::min(4096.0f, std::max(PaneSize.y * 2.0f, 512.0f));
-        const float Shrink     = std::min({ 1.0f, MaxRasterW / WantW, MaxRasterH / WantH });
+        const float MaxRasterW = Math::Min(4096.0f, Math::Max(PaneSize.x * 2.0f, 512.0f));
+        const float MaxRasterH = Math::Min(4096.0f, Math::Max(PaneSize.y * 2.0f, 512.0f));
+        const float Shrink     = Math::Min(1.0f, Math::Min(MaxRasterW / WantW, MaxRasterH / WantH));
 
-        const int CanvasPxW = (int)std::max(16.0f, std::floor(WantW * Shrink));
-        const int CanvasPxH = (int)std::max(16.0f, std::floor(WantH * Shrink));
+        const int CanvasPxW = (int)Math::Max(16.0f, std::floor(WantW * Shrink));
+        const int CanvasPxH = (int)Math::Max(16.0f, std::floor(WantH * Shrink));
 
         EnsurePreviewTarget((uint32)CanvasPxW, (uint32)CanvasPxH);
 
@@ -2196,7 +2199,7 @@ namespace Lumina
         // canvas it would on a real 1080p screen.
         if (bAutoDpi && PreviewHeight > 0)
         {
-            const float AutoDpi = std::clamp(float(PreviewHeight) / 1080.0f, 0.25f, 4.0f);
+            const float AutoDpi = Math::Clamp(float(PreviewHeight) / 1080.0f, 0.25f, 4.0f);
             if (std::abs(AutoDpi - PreviewDpiScale) > 0.001f)
             {
                 PreviewDpiScale = AutoDpi;
@@ -2266,15 +2269,15 @@ namespace Lumina
         // so a resize drag reuses one allocation, and the padding is never part of the document.
         const ImTextureID Tex = (ImTextureID)(uint64)PreviewTarget.SampledSlot;
         const ImVec2 Uv1(
-            float(PreviewWidth)  / float(std::max(1u, PreviewRTWidth)),
-            float(PreviewHeight) / float(std::max(1u, PreviewRTHeight)));
+            float(PreviewWidth)  / float(Math::Max(1u, PreviewRTWidth)),
+            float(PreviewHeight) / float(Math::Max(1u, PreviewRTHeight)));
         DL->AddImage(Tex, CanvasMin, CanvasMax, ImVec2(0.0f, 0.0f), Uv1);
         DL->AddRect(CanvasMin, CanvasMax, IM_COL32(80, 80, 95, 255), 0.0f, 0, 1.0f);
 
         // Convert canvas-space px to pane-space px. The context is sized to the displayed rect, so this
         // is 1.0 by construction; it stays a computed ratio so the overlay math below still holds if the
         // two ever diverge (a clamped target, a mid-resize frame).
-        const float ScalePx = CanvasSize.x / float(std::max(1u, PreviewWidth));
+        const float ScalePx = CanvasSize.x / float(Math::Max(1u, PreviewWidth));
 
         if (bShowGrid && GridSize > 0.0f)
         {
@@ -2699,7 +2702,7 @@ namespace Lumina
             if (!Tf.empty())
             {
                 const ImVec2 TDp = ParseTranslateDp(Tf);
-                const float Dpi = std::max(0.01f, PreviewDpiScale);
+                const float Dpi = Math::Max(0.01f, PreviewDpiScale);
                 Slot.OffsetPx.x += TDp.x * Dpi;
                 Slot.OffsetPx.y += TDp.y * Dpi;
             }
@@ -2753,7 +2756,7 @@ namespace Lumina
                 CompWidgets.push_back(std::move(Widget));
             });
 
-        std::sort(CompWidgets.begin(), CompWidgets.end(),
+        Algo::Sort(CompWidgets.begin(), CompWidgets.end(),
             [](const FCompWidget& A, const FCompWidget& B) { return A.DisplayName < B.DisplayName; });
     }
 
@@ -3091,7 +3094,7 @@ namespace Lumina
             TrueMax = ImVec2(TrueMin.x + Slot.SizePx.x * ScalePx, TrueMin.y + Slot.SizePx.y * ScalePx);
             const float MinHit = 16.0f;
             HitMin = TrueMin;
-            HitMax = ImVec2(std::max(TrueMax.x, TrueMin.x + MinHit), std::max(TrueMax.y, TrueMin.y + MinHit));
+            HitMax = ImVec2(Math::Max(TrueMax.x, TrueMin.x + MinHit), Math::Max(TrueMax.y, TrueMin.y + MinHit));
         };
 
         // Hovered slot = smallest-area hit rect under the cursor (innermost wins). Suspended mid-drag.
@@ -3364,7 +3367,7 @@ namespace Lumina
         }
 
         // Apply highest-offset-first so earlier coordinates stay valid across edits.
-        std::sort(Edits.begin(), Edits.end(), [](const FEdit& A, const FEdit& B) { return A.Start > B.Start; });
+        Algo::Sort(Edits.begin(), Edits.end(), [](const FEdit& A, const FEdit& B) { return A.Start > B.Start; });
         const int TabSize = CodeEditor.GetTabSize();
         for (const FEdit& E : Edits)
         {
@@ -3870,7 +3873,7 @@ namespace Lumina
             return;
         }
 
-        const float Dpi = std::max(0.01f, PreviewDpiScale);
+        const float Dpi = Math::Max(0.01f, PreviewDpiScale);
 
         if (bSnapToGrid && GridSize > 0.0f)
         {
@@ -3975,7 +3978,7 @@ namespace Lumina
             }
         }
 
-        const float Dpi = std::max(0.01f, PreviewDpiScale);
+        const float Dpi = Math::Max(0.01f, PreviewDpiScale);
         const float CurX = std::round(Slot->OffsetPx.x / Dpi);
         const float CurY = std::round(Slot->OffsetPx.y / Dpi);
         const float CurW = std::round(Slot->SizePx.x / Dpi);

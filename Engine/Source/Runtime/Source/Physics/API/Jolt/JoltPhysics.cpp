@@ -172,7 +172,7 @@ namespace Lumina::Physics
         JPH::RegisterTypes();
         
         int NumJoltThreads = (int)Threading::GetNumThreads() - 3;
-        NumJoltThreads = std::max(NumJoltThreads, 1);
+        NumJoltThreads = Math::Max(NumJoltThreads, 1);
 
         if (CVarJoltUseEngineJobSystem.GetValue())
         {
@@ -230,7 +230,7 @@ namespace Lumina::Physics
 
         // No immediate sink: a one-off query draw that wants a lifetime (SetDrawDuration), so it goes
         // through the timed batcher.
-        const float DrawDuration = (float)std::max(World->GetWorldDeltaTime(), Duration);
+        const float DrawDuration = (float)Math::Max(World->GetWorldDeltaTime(), Duration);
         World->DrawLine(JoltUtils::FromJPHVec3(inFrom), JoltUtils::FromJPHVec3(inTo),
                         FVector4(inColor.r / 255.0f, inColor.g / 255.0f, inColor.b / 255.0f, inColor.a / 255.0f),
                         1.0f, true, DrawDuration);

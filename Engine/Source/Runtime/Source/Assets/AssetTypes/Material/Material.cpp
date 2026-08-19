@@ -889,7 +889,7 @@ namespace Lumina
             
             constexpr uint64 Seed = (uint64)FShaderCache::SHADER_CACHE_VERSION;
 
-            std::sort(Files.begin(), Files.end(), [](const FEntry& A, const FEntry& B)
+            Algo::Sort(Files.begin(), Files.end(), [](const FEntry& A, const FEntry& B)
             {
                 return A.Path < B.Path;
             });

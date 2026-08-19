@@ -355,7 +355,7 @@ namespace Lumina
                 };
                 
                 // Base classes before derived.
-                std::sort(NewClasses.begin(), NewClasses.end(), [&](const CClass* A, const CClass* B)
+                Algo::Sort(NewClasses.begin(), NewClasses.end(), [&](const CClass* A, const CClass* B)
                 {
                     return GetClassDepth(A) < GetClassDepth(B);
                 });

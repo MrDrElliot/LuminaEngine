@@ -283,7 +283,7 @@ namespace Lumina
     void FInputViewportRegistry::Register(FInputViewport* Viewport)
     {
         if (Viewport == nullptr) return;
-        if (std::find(Viewports.begin(), Viewports.end(), Viewport) != Viewports.end()) return;
+        if (Algo::Find(Viewports.begin(), Viewports.end(), Viewport) != Viewports.end()) return;
         Viewports.push_back(Viewport);
 
         if (ActiveViewport == nullptr)
@@ -296,7 +296,7 @@ namespace Lumina
     {
         if (Viewport == nullptr) return;
 
-        auto It = std::find(Viewports.begin(), Viewports.end(), Viewport);
+        auto It = Algo::Find(Viewports.begin(), Viewports.end(), Viewport);
         if (It != Viewports.end())
         {
             Viewports.erase(It);

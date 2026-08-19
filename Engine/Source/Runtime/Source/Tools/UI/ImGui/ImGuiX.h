@@ -1,6 +1,7 @@
 ﻿#pragma once
 
-#include <format>
+#include "Containers/StringFormat.h"
+#include <iterator>
 #include "imgui.h"
 #include "ImGuizmo.h"
 #include "imgui_internal.h"
@@ -41,10 +42,10 @@ namespace Lumina::ImGuiX
     RUNTIME_API void TextColoredUnformatted(const ImVec4& Color, const FFixedString& String);
 
     template<typename... TArgs>
-    void TextTooltip(std::format_string<TArgs...> Fmt, TArgs&&... Args)
+    void TextTooltip(Fmt::TFormatString<std::decay_t<TArgs>...> Fmt, TArgs&&... Args)
     {
         FFixedString Buffer;
-        std::format_to(std::back_inserter(Buffer), Fmt, std::forward<TArgs>(Args)...);
+        AppendFormat(Buffer, Fmt, std::forward<TArgs>(Args)...);
         TextTooltip_Internal(Buffer);
     }
 
@@ -52,10 +53,10 @@ namespace Lumina::ImGuiX
     RUNTIME_API void WrappedTooltip_Internal(FStringView String);
 
     template<typename... TArgs>
-    void WrappedTooltip(std::format_string<TArgs...> Fmt, TArgs&&... Args)
+    void WrappedTooltip(Fmt::TFormatString<std::decay_t<TArgs>...> Fmt, TArgs&&... Args)
     {
         FFixedString Buffer;
-        std::format_to(std::back_inserter(Buffer), Fmt, std::forward<TArgs>(Args)...);
+        AppendFormat(Buffer, Fmt, std::forward<TArgs>(Args)...);
         WrappedTooltip_Internal(Buffer);
     }
 
@@ -66,25 +67,25 @@ namespace Lumina::ImGuiX
     RUNTIME_API void HelpMarkerIcon(const char* Icon, FStringView Help);
 
     template <typename... TArgs>
-    void Text(std::format_string<TArgs...> Fmt, TArgs&&... Args)
+    void Text(Fmt::TFormatString<std::decay_t<TArgs>...> Fmt, TArgs&&... Args)
     {
         FFixedString Buffer;
-        std::format_to(std::back_inserter(Buffer), Fmt, std::forward<TArgs>(Args)...);
+        AppendFormat(Buffer, Fmt, std::forward<TArgs>(Args)...);
         ImGui::TextUnformatted(Buffer.c_str());
     }
     
     RUNTIME_API void TextUnformatted(FStringView String);
     
     template <typename... TArgs>
-    void TextColored(const ImVec4& Color, std::format_string<TArgs...> fmt, TArgs&&... Args)
+    void TextColored(const ImVec4& Color, Fmt::TFormatString<std::decay_t<TArgs>...> fmt, TArgs&&... Args)
     {
         ImGui::PushStyleColor(ImGuiCol_Text, Color);
-        ImGui::TextUnformatted(std::format(fmt, std::forward<TArgs>(Args)...).c_str());
+        ImGui::TextUnformatted(Format(fmt, std::forward<TArgs>(Args)...).c_str());
         ImGui::PopStyleColor();
     }
     
     template <typename... TArgs>
-    void TextWrapped(std::format_string<TArgs...> fmt, TArgs&&... Args)
+    void TextWrapped(Fmt::TFormatString<std::decay_t<TArgs>...> fmt, TArgs&&... Args)
     {
         ImGuiContext& g = *GImGui;
         const bool bNeedBackup = (g.CurrentWindow->DC.TextWrapPos < 0.0f);
@@ -250,34 +251,34 @@ namespace Lumina::ImGuiX
         RUNTIME_API void SetBottomInset(float Pixels);
 
         template <typename... TArgs>
-        void NotifyInfo(std::format_string<TArgs...> fmt, TArgs&&... Args)
+        void NotifyInfo(Fmt::TFormatString<std::decay_t<TArgs>...> fmt, TArgs&&... Args)
         {
             FFixedString MessageStr;
-            std::format_to(std::back_inserter(MessageStr), fmt, Forward<TArgs>(Args)...);
+            AppendFormat(MessageStr, fmt, Forward<TArgs>(Args)...);
             NotifyInternal(EType::Info, MessageStr);
         }
 
         template <typename... TArgs>
-        void NotifySuccess(std::format_string<TArgs...> fmt, TArgs&&... Args)
+        void NotifySuccess(Fmt::TFormatString<std::decay_t<TArgs>...> fmt, TArgs&&... Args)
         {
             FFixedString MessageStr;
-            std::format_to(std::back_inserter(MessageStr), fmt, Forward<TArgs>(Args)...);
+            AppendFormat(MessageStr, fmt, Forward<TArgs>(Args)...);
             NotifyInternal(EType::Success, MessageStr);
         }
 
         template <typename... TArgs>
-        void NotifyWarning(std::format_string<TArgs...> fmt, TArgs&&... Args)
+        void NotifyWarning(Fmt::TFormatString<std::decay_t<TArgs>...> fmt, TArgs&&... Args)
         {
             FFixedString MessageStr;
-            std::format_to(std::back_inserter(MessageStr), fmt, Forward<TArgs>(Args)...);
+            AppendFormat(MessageStr, fmt, Forward<TArgs>(Args)...);
             NotifyInternal(EType::Warning, MessageStr);
         }
 
         template <typename... TArgs>
-        void NotifyError(std::format_string<TArgs...> fmt, TArgs&&... Args)
+        void NotifyError(Fmt::TFormatString<std::decay_t<TArgs>...> fmt, TArgs&&... Args)
         {
             FFixedString MessageStr;
-            std::format_to(std::back_inserter(MessageStr), fmt, Forward<TArgs>(Args)...);
+            AppendFormat(MessageStr, fmt, Forward<TArgs>(Args)...);
             NotifyInternal(EType::Error, MessageStr);
         }
     }

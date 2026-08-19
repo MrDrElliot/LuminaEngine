@@ -1,4 +1,5 @@
-﻿#include "RuntimePCH.h"
+﻿#include "Core/Threading/Thread.h"
+#include "RuntimePCH.h"
 #include "Memory.h"
 #include "MemoryTracking.h"
 #include "Allocators/Allocator.h"
@@ -6,7 +7,6 @@
 #include "Core/Assertions/Assert.h"
 #include "Core/Profiler/Profile.h"
 #include "Core/Templates/Align.h"
-#include <mutex>
 
 namespace Lumina
 {
@@ -175,7 +175,7 @@ namespace Lumina
             FFrameArenaNode*       Next  = nullptr;
         };
 
-        std::mutex       GFrameArenaMutex;
+        FMutex       GFrameArenaMutex;
         FFrameArenaNode* GFrameArenaHead = nullptr;
 
         // thread_local owner: constructs the arena, links it into the registry, unlinks on thread exit.
@@ -191,14 +191,14 @@ namespace Lumina
             FThreadFrameArena()
             {
                 Node.Arena = &Allocator;
-                std::lock_guard<std::mutex> Lock(GFrameArenaMutex);
+                FScopeLock Lock(GFrameArenaMutex);
                 Node.Next       = GFrameArenaHead;
                 GFrameArenaHead = &Node;
             }
 
             ~FThreadFrameArena()
             {
-                std::lock_guard<std::mutex> Lock(GFrameArenaMutex);
+                FScopeLock Lock(GFrameArenaMutex);
                 FFrameArenaNode** Link = &GFrameArenaHead;
                 while (*Link && *Link != &Node)
                 {
@@ -220,7 +220,7 @@ namespace Lumina
 
     void ResetThreadFrameAllocators()
     {
-        std::lock_guard Lock(GFrameArenaMutex);
+        FScopeLock Lock(GFrameArenaMutex);
         for (FFrameArenaNode* N = GFrameArenaHead; N != nullptr; N = N->Next)
         {
             N->Arena->Reset();

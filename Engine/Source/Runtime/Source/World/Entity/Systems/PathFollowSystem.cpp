@@ -181,7 +181,7 @@ namespace Lumina
             }
             
             // Active segment from the agent to the next pending corner.
-            const int32 Cur = std::min(Comp.CurrentCorner, Comp.CornerCount - 1);
+            const int32 Cur = Math::Min(Comp.CurrentCorner, Comp.CornerCount - 1);
             Context.DrawDebugLine(AgentPos, Comp.PathCorners[Cur] + Lift, ActiveSegmentColor, 2.0f, -1.0f);
 
             // Remaining corner-to-corner segments.
@@ -190,7 +190,7 @@ namespace Lumina
                 Context.DrawDebugLine(Comp.PathCorners[i] + Lift, Comp.PathCorners[i + 1] + Lift, PathColor, 1.5f, -1.0f);
             }
 
-            const float CrossSize = std::max(Comp.AcceptanceRadius, 0.25f);
+            const float CrossSize = Math::Max(Comp.AcceptanceRadius, 0.25f);
             Context.DrawDebugLine(Goal - FVector3(CrossSize, 0, 0), Goal + FVector3(CrossSize, 0, 0), GoalColor, 1.5f, -1.0f);
             Context.DrawDebugLine(Goal - FVector3(0, 0, CrossSize), Goal + FVector3(0, 0, CrossSize), GoalColor, 1.5f, -1.0f);
         });

@@ -4,36 +4,30 @@
 #include "Core/Math/Matrix/Matrix.h"
 
 
-namespace std
+namespace Lumina
 {
     template<typename T, int N>
-    struct hash<Lumina::TVec<T, N>>
+    NODISCARD inline uint64 GetTypeHash(const TVec<T, N>& V) noexcept
     {
-        size_t operator()(const Lumina::TVec<T, N>& v) const noexcept
+        size_t Seed = 0;
+        for (int i = 0; i < N; ++i)
         {
-            size_t h = 0;
-            for (int i = 0; i < N; ++i)
-            {
-                Lumina::Hash::HashCombine(h, v[i]);
-            }
-            return h;
+            Hash::HashCombine(Seed, V[i]);
         }
-    };
+        return static_cast<uint64>(Seed);
+    }
 
     template<typename T, int C, int R>
-    struct hash<Lumina::TMat<T, C, R>>
+    NODISCARD inline uint64 GetTypeHash(const TMat<T, C, R>& M) noexcept
     {
-        size_t operator()(const Lumina::TMat<T, C, R>& m) const noexcept
+        size_t Seed = 0;
+        for (int c = 0; c < C; ++c)
         {
-            size_t h = 0;
-            for (int c = 0; c < C; c++)
+            for (int r = 0; r < R; ++r)
             {
-                for (int r = 0; r < R; r++)
-                {
-                    Lumina::Hash::HashCombine(h, m[c][r]);
-                }
+                Hash::HashCombine(Seed, M[c][r]);
             }
-            return h;
         }
-    };
+        return static_cast<uint64>(Seed);
+    }
 }

@@ -92,7 +92,7 @@ namespace Lumina
             SortedOrder.push_back(i);
         }
 
-        std::sort(SortedOrder.begin(), SortedOrder.end(), [this](int32 A, int32 B)
+        Algo::Sort(SortedOrder.begin(), SortedOrder.end(), [this](int32 A, int32 B)
         {
             return Samples[A].Position.x < Samples[B].Position.x;
         });

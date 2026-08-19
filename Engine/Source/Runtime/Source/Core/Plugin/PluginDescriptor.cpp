@@ -1,4 +1,5 @@
 ﻿#include "RuntimePCH.h"
+#include <string>
 #include "PluginDescriptor.h"
 #include "FileSystem/FileSystem.h"
 #include "Log/Log.h"

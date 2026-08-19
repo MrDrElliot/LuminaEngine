@@ -1,5 +1,7 @@
 ﻿#pragma once
 
+#include <string>
+#include <vector>
 #include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "Core/Threading/Atomic.h"

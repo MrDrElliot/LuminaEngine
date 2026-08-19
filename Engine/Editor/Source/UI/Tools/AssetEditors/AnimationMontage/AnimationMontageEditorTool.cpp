@@ -1,4 +1,6 @@
-﻿#include "AnimationMontageEditorTool.h"
+﻿#include "Containers/StringFormat.h"
+#include "AnimationMontageEditorTool.h"
+#include <string>
 #include "UI/Properties/PropertyTable.h"
 #include "Animation/AnimNotify.h"
 
@@ -187,7 +189,7 @@ namespace Lumina
         }
 
         SAnimMontageSlotTrack& Track = Montage->SlotTracks[TrackIndex];
-        std::stable_sort(Track.Segments.begin(), Track.Segments.end(),
+        Algo::StableSort(Track.Segments.begin(), Track.Segments.end(),
             [](const SAnimMontageSegment& A, const SAnimMontageSegment& B) { return A.StartTime < B.StartTime; });
 
         float Cursor = 0.0f;
@@ -411,7 +413,7 @@ namespace Lumina
 
         const int Frame      = (int)roundf(Playhead * (float)FrameRate);
         const int TotalFrame = (int)roundf(Duration * (float)FrameRate);
-        std::string Readout = std::format("{:.3f}s / {:.3f}s   (frame {}/{})", Playhead, Duration, Frame, TotalFrame);
+        const FString Readout = Format("{:.3f}s / {:.3f}s   (frame {}/{})", Playhead, Duration, Frame, TotalFrame);
         const float TextW = ImGui::CalcTextSize(Readout.c_str()).x;
         ImGui::SameLine();
         ImGui::SetCursorPosX(Math::Max(ImGui::GetCursorPosX(), ImGui::GetWindowWidth() - TextW - 16.0f));
@@ -423,14 +425,14 @@ namespace Lumina
         if (ImGui::Button(LE_ICON_PLUS " Slot"))
         {
             SAnimMontageSlotTrack& Track = Montage->SlotTracks.emplace_back();
-            Track.SlotName = FName(std::format("Slot {}", (int)Montage->SlotTracks.size()).c_str());
+            Track.SlotName = FName(Format("Slot {}", (int)Montage->SlotTracks.size()).c_str());
             MarkMontageDirty();
         }
         ImGui::SameLine();
         if (ImGui::Button(LE_ICON_PLUS " Section"))
         {
             SAnimMontageSection& Section = Montage->Sections.emplace_back();
-            Section.Name = FName(std::format("Section{}", (int)Montage->Sections.size()).c_str());
+            Section.Name = FName(Format("Section{}", (int)Montage->Sections.size()).c_str());
             Section.StartTime = SnapTime(Playhead, Duration);
             MarkMontageDirty();
         }
@@ -512,7 +514,7 @@ namespace Lumina
                 const float X = TimeToX(T);
                 DrawList->AddLine(ImVec2(X, RulerY0 + kMontageRulerHeight - 7.0f), ImVec2(X, CanvasY1), IM_COL32(255, 255, 255, 16));
                 DrawList->AddLine(ImVec2(X, RulerY0 + kMontageRulerHeight - 7.0f), ImVec2(X, RulerY0 + kMontageRulerHeight), IM_COL32(200, 200, 210, 120));
-                FString Label = std::format("{:.2f}", T).c_str();
+                FString Label = Format("{:.2f}", T).c_str();
                 DrawList->AddText(ImVec2(X + 3.0f, RulerY0 + 3.0f), IM_COL32(180, 182, 190, 200), Label.c_str());
             }
         }
@@ -842,7 +844,7 @@ namespace Lumina
             return;
         }
 
-        std::stable_sort(Montage->Sections.begin(), Montage->Sections.end(),
+        Algo::StableSort(Montage->Sections.begin(), Montage->Sections.end(),
             [](const SAnimMontageSection& A, const SAnimMontageSection& B) { return A.StartTime < B.StartTime; });
     }
 

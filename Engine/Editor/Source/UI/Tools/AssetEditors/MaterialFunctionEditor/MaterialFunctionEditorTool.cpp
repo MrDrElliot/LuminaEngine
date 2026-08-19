@@ -182,11 +182,11 @@ namespace Lumina
 
         // Stable sort by SortPriority keeps a predictable pin order while leaving equal-priority nodes
         // in graph order.
-        std::stable_sort(InputNodes.begin(), InputNodes.end(), [](CMaterialExpression_FunctionInput* A, CMaterialExpression_FunctionInput* B)
+        Algo::StableSort(InputNodes.begin(), InputNodes.end(), [](CMaterialExpression_FunctionInput* A, CMaterialExpression_FunctionInput* B)
         {
             return A->SortPriority < B->SortPriority;
         });
-        std::stable_sort(OutputNodes.begin(), OutputNodes.end(), [](CMaterialFunctionOutput* A, CMaterialFunctionOutput* B)
+        Algo::StableSort(OutputNodes.begin(), OutputNodes.end(), [](CMaterialFunctionOutput* A, CMaterialFunctionOutput* B)
         {
             return A->SortPriority < B->SortPriority;
         });

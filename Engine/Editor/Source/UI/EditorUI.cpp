@@ -1,4 +1,5 @@
 ﻿#include "EditorUI.h"
+#include <string>
 #include "Core/CoreEditorDelegates.h"
 #include <cfloat>
 #include <cstdlib>
@@ -228,7 +229,7 @@ namespace Lumina
             ImGui::SetCursorScreenPos(P0);
             const bool bRowClicked = ImGui::InvisibleButton(
                 "##row",
-                ImVec2(std::max(Avail - CloseW, 1.0f), Height));   // floor: InvisibleButton asserts on zero width
+                ImVec2(Math::Max(Avail - CloseW, 1.0f), Height));   // floor: InvisibleButton asserts on zero width
             const bool bHovered    = ImGui::IsItemHovered();
             const bool bActive     = ImGui::IsItemActive();
 
@@ -1056,7 +1057,7 @@ namespace Lumina
 
     void FEditorUI::DestroyTool(const FUpdateContext& UpdateContext, FEditorTool* Tool)
     {
-        auto Itr = std::find(EditorTools.begin(), EditorTools.end(), Tool);
+        auto Itr = Algo::Find(EditorTools.begin(), EditorTools.end(), Tool);
         ASSERT(Itr != EditorTools.end());
 
         EditorTools.erase(Itr);
@@ -1234,7 +1235,7 @@ namespace Lumina
         {
             FString NativeFile = File;
         #if defined(LE_PLATFORM_WINDOWS)
-            std::replace(NativeFile.begin(), NativeFile.end(), '/', '\\');
+            Algo::Replace(NativeFile.begin(), NativeFile.end(), '/', '\\');
         #endif
 
             // /Edit reuses a running Visual Studio instance instead of spawning a new one.
@@ -1294,7 +1295,7 @@ namespace Lumina
 
         // Already listed means this open is the restore replaying the list -- appending would duplicate
         // it, and saving would rewrite the file mid-read.
-        if (std::find(Settings->OpenTabs.begin(), Settings->OpenTabs.end(), Key) != Settings->OpenTabs.end())
+        if (Algo::Find(Settings->OpenTabs.begin(), Settings->OpenTabs.end(), Key) != Settings->OpenTabs.end())
         {
             return;
         }
@@ -1327,7 +1328,7 @@ namespace Lumina
             return;
         }
 
-        auto TabItr = std::find(Settings->OpenTabs.begin(), Settings->OpenTabs.end(), Key);
+        auto TabItr = Algo::Find(Settings->OpenTabs.begin(), Settings->OpenTabs.end(), Key);
         if (TabItr == Settings->OpenTabs.end())
         {
             return;
@@ -1951,7 +1952,7 @@ namespace Lumina
         }
 
         // Ease the slide toward fully open.
-        DrawerOpenAmount = std::min(1.0f, DrawerOpenAmount + static_cast<float>(UpdateContext.GetDeltaTime()) * 8.0f);
+        DrawerOpenAmount = Math::Min(1.0f, DrawerOpenAmount + static_cast<float>(UpdateContext.GetDeltaTime()) * 8.0f);
         const float Eased = DrawerOpenAmount * DrawerOpenAmount * (3.0f - 2.0f * DrawerOpenAmount); // smoothstep
 
         const float Scale = ImGuiX::GetUIScale();
@@ -1993,7 +1994,7 @@ namespace Lumina
         {
             const float HandleH = 5.0f * Scale;
             ImGui::SetCursorPos(ImVec2(0.0f, 0.0f));
-            ImGui::InvisibleButton("##DrawerResize", ImVec2(std::max(ImGui::GetWindowWidth(), 1.0f), HandleH));
+            ImGui::InvisibleButton("##DrawerResize", ImVec2(Math::Max(ImGui::GetWindowWidth(), 1.0f), HandleH));
             const bool bHandleHovered = ImGui::IsItemHovered();
             const bool bHandleActive  = ImGui::IsItemActive();
             if (bHandleHovered || bHandleActive)
@@ -2002,8 +2003,8 @@ namespace Lumina
             }
             if (bHandleActive)
             {
-                const float DeltaFrac = -ImGui::GetIO().MouseDelta.y / std::max(1.0f, Viewport->WorkSize.y);
-                Drawer->HeightFrac = std::clamp(Drawer->HeightFrac + DeltaFrac, 0.15f, 0.85f);
+                const float DeltaFrac = -ImGui::GetIO().MouseDelta.y / Math::Max(1.0f, Viewport->WorkSize.y);
+                Drawer->HeightFrac = Math::Clamp(Drawer->HeightFrac + DeltaFrac, 0.15f, 0.85f);
             }
 
             const ImVec2 WinMin = ImGui::GetWindowPos();
@@ -2020,7 +2021,7 @@ namespace Lumina
         const float CloseWidth   = ImGui::CalcTextSize(LE_ICON_CLOSE).x + Style.FramePadding.x * 2.0f;
         const float ButtonsWidth = DockWidth + CloseWidth + Style.ItemSpacing.x * 3.0f;
 
-        const float ToolbarWidth = std::max(ImGui::GetContentRegionAvail().x - ButtonsWidth, 1.0f);
+        const float ToolbarWidth = Math::Max(ImGui::GetContentRegionAvail().x - ButtonsWidth, 1.0f);
         if (ImGui::BeginChild("##DrawerToolbar", ImVec2(ToolbarWidth, ToolbarHeight), false, ImGuiWindowFlags_MenuBar))
         {
             if (ImGui::BeginMenuBar())
@@ -2319,7 +2320,7 @@ namespace Lumina
 
         auto AnyClosableIn = [this, &Order, Count](int32 First, int32 Last, int32 Skip) -> bool
         {
-            for (int32 i = std::max(0, First); i <= Last && i < Count; ++i)
+            for (int32 i = Math::Max(0, First); i <= Last && i < Count; ++i)
             {
                 if (i != Skip && CanCloseTool(Order[i]))
                 {
@@ -2331,7 +2332,7 @@ namespace Lumina
 
         auto CloseRange = [this, &Order, Count](int32 First, int32 Last, int32 Skip)
         {
-            for (int32 i = std::max(0, First); i <= Last && i < Count; ++i)
+            for (int32 i = Math::Max(0, First); i <= Last && i < Count; ++i)
             {
                 if (i != Skip)
                 {
@@ -2436,8 +2437,8 @@ namespace Lumina
         else if (ImGui::DockBuilderGetNode(Tool->GetCurrentDockspaceID()) == nullptr)
         {
             ImVec2 dockspaceSize = ImGui::GetContentRegionAvail();
-            dockspaceSize.x = std::max(dockspaceSize.x, 1.0f);
-            dockspaceSize.y = std::max(dockspaceSize.y, 1.0f);
+            dockspaceSize.x = Math::Max(dockspaceSize.x, 1.0f);
+            dockspaceSize.y = Math::Max(dockspaceSize.y, 1.0f);
 
             ImGui::DockBuilderAddNode(Tool->GetCurrentDockspaceID(), ImGuiDockNodeFlags_DockSpace);
             ImGui::DockBuilderSetNodeSize(Tool->GetCurrentDockspaceID(), dockspaceSize);
@@ -2600,8 +2601,8 @@ namespace Lumina
                             // region is already the right unit. Floor matches DrawViewport's.
                             const ImVec2 ViewportAvail = ImGui::GetContentRegionAvail();
                             SceneRenderer->SetPrimaryViewSize(FUIntVector2(
-                                (uint32)std::max(ViewportAvail.x, 64.0f),
-                                (uint32)std::max(ViewportAvail.y, 64.0f)));
+                                (uint32)Math::Max(ViewportAvail.x, 64.0f),
+                                (uint32)Math::Max(ViewportAvail.y, 64.0f)));
 
                             ImTextureRef ViewportTexture = ImGuiX::ToImTextureRef(SceneRenderer->GetDisplayResourceID());
 
@@ -2630,8 +2631,8 @@ namespace Lumina
                             // region is already the right unit. Floor matches DrawViewport's.
                             const ImVec2 ViewportAvail = ImGui::GetContentRegionAvail();
                             SceneRenderer->SetPrimaryViewSize(FUIntVector2(
-                                (uint32)std::max(ViewportAvail.x, 64.0f),
-                                (uint32)std::max(ViewportAvail.y, 64.0f)));
+                                (uint32)Math::Max(ViewportAvail.x, 64.0f),
+                                (uint32)Math::Max(ViewportAvail.y, 64.0f)));
 
                             ImTextureRef ViewportTexture = ImGuiX::ToImTextureRef(SceneRenderer->GetDisplayResourceID());
 
@@ -2755,7 +2756,7 @@ namespace Lumina
             return;
         }
 
-        std::sort(Entries.begin(), Entries.end(), [](const FEntry& A, const FEntry& B)
+        Algo::Sort(Entries.begin(), Entries.end(), [](const FEntry& A, const FEntry& B)
         {
             return strcmp(A.Name.c_str(), B.Name.c_str()) < 0;
         });
@@ -3128,7 +3129,7 @@ namespace Lumina
                     // Hover-only background; click anywhere on the row
                     // toggles the checkbox.
                     ImGui::SetCursorScreenPos(P0);
-                    const bool bRowClicked = ImGui::InvisibleButton("##row", ImVec2(std::max(Avail, 1.0f), Height));
+                    const bool bRowClicked = ImGui::InvisibleButton("##row", ImVec2(Math::Max(Avail, 1.0f), Height));
                     const bool bHovered    = ImGui::IsItemHovered();
                     if (bRowClicked && States[i] == ESaveState::Idle)
                     {
@@ -3953,7 +3954,7 @@ namespace Lumina
                 FFixedString File;
                 if (Platform::OpenFileDialogue(File, "Select project location"))
                 {
-                    const size_t Count = std::min(File.size(), sizeof(NewProjectPath) - 1);
+                    const size_t Count = Math::Min(File.size(), sizeof(NewProjectPath) - 1);
                     memcpy(NewProjectPath, File.c_str(), Count);
                     NewProjectPath[Count] = '\0';
                 }

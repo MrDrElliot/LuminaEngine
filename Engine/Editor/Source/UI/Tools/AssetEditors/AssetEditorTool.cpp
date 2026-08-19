@@ -1,3 +1,4 @@
+#include "Containers/StringFormat.h"
 #include "AssetEditorTool.h"
 #include "Core/CoreEditorDelegates.h"
 #include "Assets/AssetEvents.h"
@@ -7,7 +8,6 @@
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "UI/Tools/Transactions/ObjectSnapshotCommand.h"
 
-#include <format>
 
 namespace Lumina
 {
@@ -101,7 +101,7 @@ namespace Lumina
             if (CachedWindowNameSource != Name)
             {
                 CachedWindowNameSource = Name;
-                CachedWindowName = std::format("{0} {1}###{2}",
+                CachedWindowName = Format("{0} {1}###{2}",
                     GetTitlebarIcon(), Name.c_str(), Asset->GetGUID().ToShortString().c_str()).c_str();
             }
             return CachedWindowName;

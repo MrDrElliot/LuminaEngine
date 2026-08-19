@@ -1,4 +1,5 @@
-﻿#include "RuntimePCH.h"
+﻿#include "Platform/Time/PlatformTime.h"
+#include "RuntimePCH.h"
 #include "JobScheduler.h"
 
 #include "Core/Threading/Thread.h"
@@ -908,8 +909,7 @@ namespace Lumina::Jobs
         // workers logging every few ms, contending with the very threads that had to clear the stall.
         bool ShouldReportWedge()
         {
-            const int64 NowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now().time_since_epoch()).count();
+            const int64 NowMs = static_cast<int64>(PlatformTime::Seconds() * 1000.0);
 
             int64 Next = G->NextWedgeReportMs.load(std::memory_order_relaxed);
             if (NowMs < Next)
@@ -1697,8 +1697,8 @@ namespace Lumina::Jobs
 
         // Assist rather than idle: the queued work drained here is exactly what the parked fibers wait on, so
         // a pure spin waits on a cycle it could break itself. Shutdown calls this, and a hung one says nothing.
-        const auto Start = std::chrono::steady_clock::now();
-        auto NextReport  = Start + std::chrono::seconds(5);
+        const double Start = PlatformTime::Seconds();
+        double NextReport  = Start + 5.0;
 
         // This is a quiescence barrier, not a latency-sensitive frame wait, so it drains EVERY band:
         const uint32 Slot = GetWorkerIndex();
@@ -1713,13 +1713,13 @@ namespace Lumina::Jobs
             }
             Threading::ThreadYield();
 
-            const auto Now = std::chrono::steady_clock::now();
+            const double Now = PlatformTime::Seconds();
             if (Now >= NextReport)
             {
-                NextReport = Now + std::chrono::seconds(5);
+                NextReport = Now + 5.0;
                 LOG_WARN("Job system: WaitForAll has been waiting {}s on {} in-flight job(s). "
                          "Something is blocked and not completing.",
-                    std::chrono::duration_cast<std::chrono::seconds>(Now - Start).count(),
+                    static_cast<int64>(Now - Start),
                     G->InFlight.load(std::memory_order_relaxed));
             }
         }

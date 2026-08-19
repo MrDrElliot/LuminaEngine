@@ -468,7 +468,7 @@ namespace Lumina
                     ImGuiTableFlags_RowBg | 
                     ImGuiTableFlags_ScrollY |
                     ImGuiTableFlags_SizingFixedFit,
-                    ImVec2(0.0f, std::min(300.0f, ImGui::GetContentRegionAvail().y * 0.5f))))
+                    ImVec2(0.0f, Math::Min(300.0f, ImGui::GetContentRegionAvail().y * 0.5f))))
                 {
                     ImGui::TableSetupScrollFreeze(0, 1);
                     ImGui::TableSetupColumn("Level", ImGuiTableColumnFlags_WidthFixed, 50.0f);

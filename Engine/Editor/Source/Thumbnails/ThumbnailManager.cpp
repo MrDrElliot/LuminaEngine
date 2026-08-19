@@ -1,3 +1,4 @@
+#include "Core/Threading/Thread.h"
 #include "ThumbnailManager.h"
 #include "Memory/MemoryTracking.h"
 #include "ThumbnailCache.h"
@@ -203,8 +204,8 @@ namespace Lumina
 
     CThumbnailManager& CThumbnailManager::Get()
     {
-        static std::once_flag Flag;
-        std::call_once(Flag, []()
+        static FOnceFlag Flag;
+        CallOnce(Flag, []()
         {
             ThumbnailManagerSingleton = NewObject<CThumbnailManager>();
             ThumbnailManagerSingleton->Initialize();

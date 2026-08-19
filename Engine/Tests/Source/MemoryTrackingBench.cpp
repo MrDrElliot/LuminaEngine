@@ -1,15 +1,13 @@
 #include <gtest/gtest.h>
+#include "Platform/Time/PlatformTime.h"
 #include "Memory/Memory.h"
 #include "Memory/MemoryTracking.h"
-#include <chrono>
 #include <cstdio>
 
 using namespace Lumina;
 
 namespace
 {
-    using FClock = std::chrono::steady_clock;
-
     constexpr size_t kOps = 200000;
 
     // Sizes spread across rpmalloc's small/medium classes so the measurement is not one hot bucket.
@@ -18,7 +16,7 @@ namespace
     double RunAllocFreePass()
     {
         void* Ptrs[64];
-        const FClock::time_point Start = FClock::now();
+        const Lumina::uint64 Start = Lumina::PlatformTime::Cycles();
 
         for (size_t Op = 0; Op < kOps; Op += 64)
         {
@@ -32,8 +30,8 @@ namespace
             }
         }
 
-        const FClock::time_point End = FClock::now();
-        const double Total = std::chrono::duration<double, std::nano>(End - Start).count();
+        const Lumina::uint64 End = Lumina::PlatformTime::Cycles();
+        const double Total = (Lumina::PlatformTime::ToSeconds(End - Start) * 1e9);
         return Total / (double)kOps;
     }
 

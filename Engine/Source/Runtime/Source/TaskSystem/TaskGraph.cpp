@@ -206,7 +206,7 @@ namespace Lumina
             Node->InvokeParallel    = Invoke;
             Node->Destroy           = Destroy;
             Node->SetSize           = Count;
-            Node->MinRange          = std::max(1u, MinRange);
+            Node->MinRange          = Math::Max(1u, MinRange);
         }
 
         FNodeHandle Handle{ static_cast<uint32>(Nodes.size()) };

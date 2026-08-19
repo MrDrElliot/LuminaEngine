@@ -1,4 +1,5 @@
-﻿#include "RuntimePCH.h"
+﻿#include "Platform/Time/PlatformTime.h"
+#include "RuntimePCH.h"
 #include "ShaderCompiler.h"
 #include "ShaderCache.h"
 #include "ShaderLibrary.h"
@@ -653,7 +654,7 @@ namespace Lumina
 
         LOG_INFO("Starting Shader Task Swarm - Num: {}", NumShaders);
 
-        const uint32 TargetChunks = std::min(NumShaders, std::max(1u, Threading::GetNumThreads() / 2));
+        const uint32 TargetChunks = Math::Min(NumShaders, Math::Max(1u, Threading::GetNumThreads() / 2));
         const uint32 Grain        = (NumShaders + TargetChunks - 1) / TargetChunks;
 
         Task::AsyncTask(NumShaders, Grain, [this,
@@ -690,7 +691,7 @@ namespace Lumina
                 // It used to `return`, which abandoned every later shader in the chunk while the pending
                 // count was still decremented for all of them, so Flush() reported success and the
                 // dropped shaders simply did not exist until something demanded one.
-                const auto CompileStart = std::chrono::high_resolution_clock::now();
+                const uint64 CompileStart = PlatformTime::Cycles();
 
                 const FString&    Path     = Paths[i];
                 const FStringView FileName = VFS::FileName(Path);
@@ -727,10 +728,9 @@ namespace Lumina
                     continue;
                 }
 
-                const auto CompileEnd = std::chrono::high_resolution_clock::now();
-                const std::chrono::duration<double, std::milli> DurationMs = CompileEnd - CompileStart;
+                const double DurationMs = PlatformTime::ToMilliseconds(PlatformTime::Cycles() - CompileStart);
 
-                LOG_TRACE("Compiled {0} in {1:.2f} ms (Thread {2})", Path, DurationMs.count(), Thread);
+                LOG_TRACE("Compiled {0} in {1:.2f} ms (Thread {2})", Path, DurationMs, Thread);
 
                 RHI::GetCrashTracker().RegisterShader(Shader.Binaries, Shader.DebugName);
 
@@ -824,7 +824,7 @@ namespace Lumina
             Slang::ComPtr<slang::IGlobalSession> GlobalSession = GSlangSessionPool.Acquire();
             DEFER { GSlangSessionPool.Release(Move(GlobalSession)); };
 
-            const auto CompileStart = std::chrono::high_resolution_clock::now();
+            const uint64 CompileStart = PlatformTime::Cycles();
 
             // Same search roots as the path compile. This used to hardcode the engine tree alone, so a
             // material graph could not #include anything a plugin shipped under its /Shaders.
@@ -863,10 +863,9 @@ namespace Lumina
                 return;
             }
 
-            const auto CompileEnd = std::chrono::high_resolution_clock::now();
-            const std::chrono::duration<double, std::milli> DurationMs = CompileEnd - CompileStart;
+            const double DurationMs = PlatformTime::ToMilliseconds(PlatformTime::Cycles() - CompileStart);
 
-            LOG_TRACE("Compiled raw shader '{0}' in {1:.2f} ms (Thread {2})", RawName, DurationMs.count(), Thread);
+            LOG_TRACE("Compiled raw shader '{0}' in {1:.2f} ms (Thread {2})", RawName, DurationMs, Thread);
 
             RHI::GetCrashTracker().RegisterShader(Shader.Binaries, Shader.DebugName);
 

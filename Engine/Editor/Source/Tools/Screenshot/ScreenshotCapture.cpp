@@ -1,7 +1,8 @@
-﻿#include "EditorPCH.h"
+﻿#include "Containers/StringFormat.h"
+#include "Platform/Time/PlatformTime.h"
+#include "EditorPCH.h"
 #include "ScreenshotCapture.h"
 
-#include <chrono>
 #include <ctime>
 
 #include "Tools/Image/ImageWrite.h"
@@ -27,17 +28,10 @@ namespace Lumina::Screenshot
             const FString Folder = GetScreenshotDirectory();
             Paths::CreateDirectories(FStringView(Folder.c_str(), Folder.size()));
 
-            const auto Now = std::chrono::system_clock::now();
-            const std::time_t T = std::chrono::system_clock::to_time_t(Now);
-            std::tm Tm{};
-        #if defined(_WIN32)
-            localtime_s(&Tm, &T);
-        #else
-            localtime_r(&T, &Tm);
-        #endif
+            const PlatformTime::FDateTime Now = PlatformTime::LocalNow();
 
-            char Stamp[64];
-            std::strftime(Stamp, sizeof(Stamp), "%Y%m%d_%H%M%S", &Tm);
+            const FString Stamp = Lumina::Format("{:04}{:02}{:02}_{:02}{:02}{:02}",
+                Now.Year, Now.Month, Now.Day, Now.Hour, Now.Minute, Now.Second);
 
             const char* Ext = (Source == ECaptureSource::SceneHDR) ? ".hdr" : ".png";
             return Folder + "/Screenshot_" + Stamp + Ext;

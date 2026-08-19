@@ -24,8 +24,8 @@ namespace Lumina
     {
         void BuildRayFromScreen(const SCameraComponent& Camera, ImVec2 PixelWithinViewport, ImVec2 ViewportSize, FVector3& OutOrigin, FVector3& OutDir)
         {
-            const float W = std::max(ViewportSize.x, 1.0f);
-            const float H = std::max(ViewportSize.y, 1.0f);
+            const float W = Math::Max(ViewportSize.x, 1.0f);
+            const float H = Math::Max(ViewportSize.y, 1.0f);
 
             const float Sx = (PixelWithinViewport.x / W) * 2.0f - 1.0f;
             // ImGui Y=0 is top of viewport; negate so the ray tilts up in world space (camera-basis fix in 5827d9d9).
@@ -165,7 +165,7 @@ namespace Lumina
             {
                 case EKind::U8:  return (float)Base[Sample] / 255.0f;
                 case EKind::U16: return (float)reinterpret_cast<const uint16*>(Base)[Sample] / 65535.0f;
-                case EKind::F32: return std::clamp(reinterpret_cast<const float*>(Base)[Sample], 0.0f, 1.0f);
+                case EKind::F32: return Math::Clamp(reinterpret_cast<const float*>(Base)[Sample], 0.0f, 1.0f);
             }
             return 0.0f;
         };
@@ -187,7 +187,7 @@ namespace Lumina
             const float V  = (float)ty / (float)(Res - 1);
             const float Fy = V * (float)(H - 1);
             const int32 Y0 = (int32)Fy;
-            const int32 Y1 = std::min(Y0 + 1, H - 1);
+            const int32 Y1 = Math::Min(Y0 + 1, H - 1);
             const float Dy = Fy - (float)Y0;
 
             for (int32 tx = 0; tx < Res; ++tx)
@@ -195,7 +195,7 @@ namespace Lumina
                 const float U  = (float)tx / (float)(Res - 1);
                 const float Fx = U * (float)(W - 1);
                 const int32 X0 = (int32)Fx;
-                const int32 X1 = std::min(X0 + 1, W - 1);
+                const int32 X1 = Math::Min(X0 + 1, W - 1);
                 const float Dx = Fx - (float)X0;
 
                 const float H00 = ReadHeight(X0, Y0);
@@ -204,7 +204,7 @@ namespace Lumina
                 const float H11 = ReadHeight(X1, Y1);
                 const float Height = Math::Mix(Math::Mix(H00, H10, Dx), Math::Mix(H01, H11, Dx), Dy);
 
-                Terrain.Heightmap[(size_t)ty * (size_t)Res + (size_t)tx] = std::clamp(Height, 0.0f, 1.0f);
+                Terrain.Heightmap[(size_t)ty * (size_t)Res + (size_t)tx] = Math::Clamp(Height, 0.0f, 1.0f);
             }
         }
 
@@ -354,7 +354,7 @@ namespace Lumina
             ImGui::SetNextItemWidth(140.0f);
             if (ImGui::SliderFloat("Freq (per 1km)", &FreqDisplay, 0.1f, 100.0f, "%.2f"))
             {
-                NoiseFrequency = std::max(FreqDisplay * 0.001f, 1e-6f);
+                NoiseFrequency = Math::Max(FreqDisplay * 0.001f, 1e-6f);
             }
             ImGui::SetNextItemWidth(140.0f);
             ImGui::SliderInt("Octaves", &NoiseOctaves, 1, 8);
@@ -460,7 +460,7 @@ namespace Lumina
             ImGui::TextDisabled("(max %d)", GTerrainMaxLayers);
         }
 
-        ActiveLayer = std::clamp(ActiveLayer, 0, std::max(LayerCount - 1, 0));
+        ActiveLayer = Math::Clamp(ActiveLayer, 0, Math::Max(LayerCount - 1, 0));
 
         // Per-layer settings for the selected swatch (rename, UV tiling, reorder). Reorder
         // also mutates LayerWeights so weights follow the layer rather than swapping under it.
@@ -506,7 +506,7 @@ namespace Lumina
             if (ImGui::Button("Remove"))
             {
                 RemoveLayer(Terrain, ActiveLayer);
-                ActiveLayer = std::min(ActiveLayer, (int32)Terrain.Layers.size() - 1);
+                ActiveLayer = Math::Min(ActiveLayer, (int32)Terrain.Layers.size() - 1);
             }
             ImGui::EndDisabled();
         }
@@ -604,11 +604,11 @@ namespace Lumina
         // to ImGui's repeat so holding the key still scrubs the size.
         if (ImGui::IsKeyPressed(ImGuiKey_LeftBracket, true))
         {
-            Radius = std::max(8.0f, Radius / 1.1f);
+            Radius = Math::Max(8.0f, Radius / 1.1f);
         }
         if (ImGui::IsKeyPressed(ImGuiKey_RightBracket, true))
         {
-            Radius = std::min(8192.0f, Radius * 1.1f);
+            Radius = Math::Min(8192.0f, Radius * 1.1f);
         }
 
         if (!bViewportHovered)
@@ -666,7 +666,7 @@ namespace Lumina
 
         // Use wall-clock delta so brushes integrate even when paused; the passed-in
         // DeltaSeconds is the simulated tick (zero in edit mode, every dab a no-op).
-        const float RealDelta = std::max(ImGui::GetIO().DeltaTime, 0.0f);
+        const float RealDelta = Math::Max(ImGui::GetIO().DeltaTime, 0.0f);
 
         // Continuous brushes integrate by frame time, so apply every frame while held
         // (including with a stationary cursor, that's how you dig deeper in place).
@@ -702,7 +702,7 @@ namespace Lumina
         Dab.NoiseOctaves   = NoiseOctaves;
         Dab.RampStart      = RampStart;
         Dab.RampEnd        = RampEnd;
-        Dab.RampHalfWidth  = std::max(RampHalfWidth, 1.0f);
+        Dab.RampHalfWidth  = Math::Max(RampHalfWidth, 1.0f);
         Dab.RampUseExplicitHeights = bRampExplicitHeights;
         Dab.RampStartHeight        = RampStartHeight;
         Dab.RampEndHeight          = RampEndHeight;
@@ -725,7 +725,7 @@ namespace Lumina
         {
             const FVector3 Delta = Hit - LastStrokeHit;
             const float Dist    = Math::Length(FVector2(Delta.x, Delta.z));
-            const float Spacing = std::max(Radius * 0.25f, 1.0f);
+            const float Spacing = Math::Max(Radius * 0.25f, 1.0f);
             const int   Steps   = Math::Clamp((int)std::ceil(Dist / Spacing), 1, 32);
             const float StepDt  = RealDelta / float(Steps);
             for (int i = 1; i <= Steps; ++i)
@@ -793,7 +793,7 @@ namespace Lumina
         };
 
         AddWorldRing(Radius, IM_COL32(255, 220,  80, 220), 2.0f);
-        AddWorldRing(Radius * std::max(0.0f, 1.0f - Falloff * 0.5f),  IM_COL32(255, 220,  80, 120), 1.0f);
+        AddWorldRing(Radius * Math::Max(0.0f, 1.0f - Falloff * 0.5f),  IM_COL32(255, 220,  80, 120), 1.0f);
         Draw->AddCircleFilled(Center, 3.0f, IM_COL32(255, 255, 255, 220));
 
         // Ramp preview: anchor + live cursor + a thin perpendicular pair showing

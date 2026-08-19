@@ -644,30 +644,6 @@ namespace Lumina::Platform
     }
 
 
-    void EnableHighResolutionTiming()
-    {
-    }
-
-    void DisableHighResolutionTiming()
-    {
-    }
-
-    double GetTime()
-    {
-        static const timespec Start = []
-        {
-            timespec Value;
-            ::clock_gettime(CLOCK_MONOTONIC, &Value);
-            return Value;
-        }();
-
-        timespec Now;
-        ::clock_gettime(CLOCK_MONOTONIC, &Now);
-
-        return static_cast<double>(Now.tv_sec - Start.tv_sec)
-            + static_cast<double>(Now.tv_nsec - Start.tv_nsec) * 1e-9;
-    }
-
 
     int LaunchProcess(const TCHAR* URL, const TCHAR* Params, bool bLaunchDetached)
     {
@@ -964,7 +940,7 @@ namespace Lumina::Platform
                 Cursor += Patterns.size() + 1;
 
                 FString Translated = Patterns;
-                std::replace(Translated.begin(), Translated.end(), ';', ' ');
+                Algo::Replace(Translated.begin(), Translated.end(), ';', ' ');
 
                 Arguments.push_back(FString("--file-filter=") + Description + " | " + Translated);
             }

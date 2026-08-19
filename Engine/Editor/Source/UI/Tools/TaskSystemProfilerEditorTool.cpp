@@ -64,7 +64,7 @@ namespace Lumina
         {
             if (H.empty()) { ImGui::Dummy(ImVec2(-1, 50)); return; }
             float MaxV = 1.0f;
-            for (float V : H) MaxV = std::max(MaxV, V);
+            for (float V : H) MaxV = Math::Max(MaxV, V);
             if (ImPlot::BeginPlot(Id, ImVec2(-1, 60), ImPlotFlags_NoTitle | ImPlotFlags_NoMouseText | ImPlotFlags_NoLegend))
             {
                 ImPlot::SetupAxes(nullptr, nullptr,
@@ -182,7 +182,7 @@ namespace Lumina
         Jobs::FJobLiveStats LS;
         Jobs::GetLiveStats(LS);
 
-        const uint32 Workers    = std::max(1u, LS.NumWorkers);
+        const uint32 Workers    = Math::Max(1u, LS.NumWorkers);
         const uint32 TotalJobs  = F.WorkerJobs + F.ExternalJobs;
         const float  WorkerFrac = TotalJobs ? (float)F.WorkerJobs / TotalJobs : 0.0f;
         const float  MigRate    = F.Resumes ? (float)F.Migrations / F.Resumes : 0.0f;
@@ -201,7 +201,7 @@ namespace Lumina
         // rate against tiny samples (1/1 resumes is 100% but means nothing).
         constexpr uint32 kMinAffinityOpps = 16;
 
-        const bool Contended = F.AvgPoppers >= std::max(2.0f, 0.5f * Workers);
+        const bool Contended = F.AvgPoppers >= Math::Max(2.0f, 0.5f * Workers);
         const bool ForkJoin  = TotalJobs > 0 && WorkerFrac >= 0.5f;
         const bool Migrating = F.AffinityOpps >= kMinAffinityOpps && AffRate >= 0.25f;
 
@@ -411,7 +411,7 @@ namespace Lumina
         const float Cell  = 30.0f;
         const float Pad   = 4.0f;
         const float Avail = ImGui::GetContentRegionAvail().x;
-        const int   Cols  = std::max(1, (int)(Avail / (Cell + Pad)));
+        const int   Cols  = Math::Max(1, (int)(Avail / (Cell + Pad)));
         ImDrawList* DL     = ImGui::GetWindowDrawList();
         const ImVec2 Origin = ImGui::GetCursorScreenPos();
 
@@ -485,7 +485,7 @@ namespace Lumina
         const float Cell = 13.0f;
         const float Pad  = 2.0f;
         const float Avail = ImGui::GetContentRegionAvail().x;
-        const int   Cols  = std::max(1, (int)(Avail / (Cell + Pad)));
+        const int   Cols  = Math::Max(1, (int)(Avail / (Cell + Pad)));
 
         ImDrawList* DL = ImGui::GetWindowDrawList();
         const ImVec2 Origin = ImGui::GetCursorScreenPos();
@@ -566,7 +566,7 @@ namespace Lumina
 
         const float LabelW = 52.0f;
         const float Height = RowCount * RowHeight + 8.0f;
-        ImGui::BeginChild("##timeline", ImVec2(0, std::min(Height + 4.0f, 360.0f)), true, ImGuiWindowFlags_HorizontalScrollbar);
+        ImGui::BeginChild("##timeline", ImVec2(0, Math::Min(Height + 4.0f, 360.0f)), true, ImGuiWindowFlags_HorizontalScrollbar);
 
         ImDrawList* DL = ImGui::GetWindowDrawList();
         const ImVec2 Origin = ImGui::GetCursorScreenPos();
@@ -599,10 +599,10 @@ namespace Lumina
             const double A = (S.StartMs - ViewT0) / ViewDur;
             const double B = (S.EndMs   - ViewT0) / ViewDur;
             if (B < 0.0 || A > 1.0) continue;
-            const float X0 = PlotX + (float)std::max(0.0, A) * Width;
-            const float X1 = PlotX + (float)std::min(1.0, B) * Width;
+            const float X0 = PlotX + (float)Math::Max(0.0, A) * Width;
+            const float X1 = PlotX + (float)Math::Min(1.0, B) * Width;
             const float Y  = Origin.y + Row * RowHeight;
-            const ImVec2 Min(X0, Y + 1), Max(std::max(X1, X0 + 1.0f), Y + RowHeight - 2);
+            const ImVec2 Min(X0, Y + 1), Max(Math::Max(X1, X0 + 1.0f), Y + RowHeight - 2);
 
             ImU32 Col;
             if (S.Kind == (uint8)EJobSpanKind::Idle)       Col = IM_COL32(48, 50, 54, 160);

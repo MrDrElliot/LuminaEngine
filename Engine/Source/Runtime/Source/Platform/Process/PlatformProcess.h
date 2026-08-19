@@ -49,14 +49,6 @@ namespace Lumina::Platform
     // only on an actual change. No-op returning false where there's no user-environment store.
     RUNTIME_API bool PersistUserEnvVariable(const FString& Name, const FString& Value);
 
-    // Request the OS use its highest-resolution scheduler tick so std::this_thread::sleep_for
-    // honors sub-millisecond durations. Paired calls; Disable must follow Enable.
-    RUNTIME_API void EnableHighResolutionTiming();
-    RUNTIME_API void DisableHighResolutionTiming();
-
-    // Monotonic high-resolution time in seconds since first call; for frame timing and deltas.
-    RUNTIME_API double GetTime();
-
 	RUNTIME_API int LaunchProcess(const TCHAR* URL, const TCHAR* Params = nullptr, bool bLaunchDetached = true);
     RUNTIME_API void LaunchURL(const TCHAR* URL);
 

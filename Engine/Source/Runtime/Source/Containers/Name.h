@@ -1,6 +1,7 @@
 #pragma once
 
-#include <format>
+#include "Containers/Format.h"
+#include <string_view>
 
 #include "String.h"
 #include "Core/DisableAllWarnings.h"
@@ -115,31 +116,10 @@ namespace Lumina
     
 }
 
-namespace std
+namespace Lumina
 {
-    template <typename T> struct hash;
-
-    template <>
-    struct hash<Lumina::FName>
+    FORCEINLINE void FormatArgument(Fmt::FFormatBuffer& Out, const FName& Name, const Fmt::FFormatSpec& Spec)
     {
-        size_t operator()(const Lumina::FName& Name) const
-        {
-            return Name.Hash();
-        }
-    };
+        Fmt::WriteAligned(Out, FStringView(Name.c_str()), Spec);
+    }
 }
-
-template <>
-struct std::formatter<Lumina::FName>
-{
-    constexpr auto parse(format_parse_context& ctx)
-    {
-        return ctx.begin();
-    }
-
-    template <typename FormatContext>
-    auto format(const Lumina::FName& str, FormatContext& ctx) const
-    {
-        return std::format_to(ctx.out(), "{}", std::string_view(str.c_str()));
-    }
-};

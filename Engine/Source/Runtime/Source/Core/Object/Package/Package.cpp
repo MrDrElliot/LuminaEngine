@@ -1,4 +1,5 @@
-﻿#include "RuntimePCH.h"
+﻿#include "Platform/Time/PlatformTime.h"
+#include "RuntimePCH.h"
 #include "Package.h"
 #include <utility>
 #include "Assets/AssetRegistry/AssetRegistry.h"
@@ -842,7 +843,7 @@ namespace Lumina
         
         
         bool bSuccess = false;
-        auto Start = std::chrono::high_resolution_clock::now();
+        const uint64 Start = PlatformTime::Cycles();
 
         TVector<uint8> FileBinary;
         FBulkRegion    LoadedBulkRegion;
@@ -902,11 +903,10 @@ namespace Lumina
                 }
 #endif
 
-                auto End = std::chrono::high_resolution_clock::now();
-                auto Duration = std::chrono::duration_cast<std::chrono::milliseconds>(End - Start);
+                const double DurationMs = PlatformTime::ToMilliseconds(PlatformTime::Cycles() - Start);
                 
                 bSuccess = true;
-                LOG_INFO("Loaded Package: \"{}\" - ( [{}] Exports | [{}] Imports | [{}] Bytes | [{}] ms | Thread: [{}])", Package->GetName(), Package->ExportTable.size(), Package->ImportTable.size(), Package->Loader->TotalSize(), Duration, Threading::GetThreadID());
+                LOG_INFO("Loaded Package: \"{}\" - ( [{}] Exports | [{}] Imports | [{}] Bytes | [{}] ms | Thread: [{}])", Package->GetName(), Package->ExportTable.size(), Package->ImportTable.size(), Package->Loader->TotalSize(), DurationMs, Threading::GetThreadID());
             }
         }
         

@@ -1,4 +1,5 @@
 ﻿#include "RuntimePCH.h"
+#include <limits>
 #include "TerrainMeshletBuilder.h"
 #include "TaskSystem/TaskSystem.h"
 #include "World/Entity/Components/TerrainComponent.h"
@@ -55,7 +56,7 @@ namespace Lumina::TerrainMeshletBuilder
 
             Out.Resolution           = Resolution;
             Out.QuadsPerChunk        = ChunkRes - 1;
-            Out.ChunksPerSide        = std::max(1, (Resolution - 1) / Out.QuadsPerChunk);
+            Out.ChunksPerSide        = Math::Max(1, (Resolution - 1) / Out.QuadsPerChunk);
             Out.MeshletQuadSide      = GTerrainMeshletQuads;
             Out.MeshletsPerChunkSide = (Out.QuadsPerChunk + Out.MeshletQuadSide - 1) / Out.MeshletQuadSide;
             Out.MeshletsPerChunk     = Out.MeshletsPerChunkSide * Out.MeshletsPerChunkSide;
@@ -69,7 +70,7 @@ namespace Lumina::TerrainMeshletBuilder
             Out.MaxHeight    = Terrain.MaxHeight;
             Out.DilateXZ     = Out.Stride * 0.5f;
             // Y dilation: matrix rounding can produce Y values microscopically outside the CPU range -> silhouette culling.
-            Out.DilateY      = std::max(0.05f, Out.MaxHeight * 0.01f);
+            Out.DilateY      = Math::Max(0.05f, Out.MaxHeight * 0.01f);
             return true;
         }
 
@@ -88,8 +89,8 @@ namespace Lumina::TerrainMeshletBuilder
                 for (int32 vx = 0; vx < NVertsX; ++vx)
                 {
                     const float H = SampleWorldHeight(Heightmap, SampleX0 + vx, SampleY0 + vy, L.Resolution, L.MaxHeight);
-                    MinH = std::min(MinH, H);
-                    MaxH = std::max(MaxH, H);
+                    MinH = Math::Min(MinH, H);
+                    MaxH = Math::Max(MaxH, H);
                 }
             }
 
@@ -130,12 +131,12 @@ namespace Lumina::TerrainMeshletBuilder
                     const int32 RemainingX = L.QuadsPerChunk - Meshlet.ChunkLocalQuadOrigin.x;
                     const int32 RemainingY = L.QuadsPerChunk - Meshlet.ChunkLocalQuadOrigin.y;
                     Meshlet.QuadExtent = FIntVector2(
-                        std::min(L.MeshletQuadSide, RemainingX),
-                        std::min(L.MeshletQuadSide, RemainingY));
+                        Math::Min(L.MeshletQuadSide, RemainingX),
+                        Math::Min(L.MeshletQuadSide, RemainingY));
 
                     const FVector2 HRange = ComputeMeshletBounds(Meshlet, Chunk, Heightmap, L);
-                    ChunkHeightMin = std::min(ChunkHeightMin, HRange.x);
-                    ChunkHeightMax = std::max(ChunkHeightMax, HRange.y);
+                    ChunkHeightMin = Math::Min(ChunkHeightMin, HRange.x);
+                    ChunkHeightMax = Math::Max(ChunkHeightMax, HRange.y);
                 }
             }
 

@@ -90,7 +90,7 @@ namespace Lumina::DistanceField
             }
 
             const uint32 Mid = Begin + Count / 2u;
-            std::nth_element(
+            Algo::NthElement(
                 BVH.Triangles.begin() + Begin,
                 BVH.Triangles.begin() + Mid,
                 BVH.Triangles.begin() + End,

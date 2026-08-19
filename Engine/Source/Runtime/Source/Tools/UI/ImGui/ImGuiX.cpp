@@ -1,4 +1,6 @@
-﻿#include "RuntimePCH.h"
+﻿#include "Containers/StringFormat.h"
+#include "RuntimePCH.h"
+#include <iterator>
 #include "ImGuiX.h"
 
 #include "Core/Object/InstancedStruct.h"
@@ -226,8 +228,8 @@ namespace Lumina::ImGuiX
             float const spacing = ( iconSize.x > 0 && labelSize.x > 0 ) ? style.ItemSpacing.x : 0.0f;
             float const buttonWidth = labelSize.x + iconSize.x + spacing;
             float const buttonWidthWithFramePadding = buttonWidth + ( style.FramePadding.x * 2.0f );
-            float const textHeightMax = std::max( iconSize.y, labelSize.y );
-            float const buttonHeight = std::max( ImGui::GetFrameHeight(), textHeightMax );
+            float const textHeightMax = Math::Max( iconSize.y, labelSize.y );
+            float const buttonHeight = Math::Max( ImGui::GetFrameHeight(), textHeightMax );
 
             ImVec2 const pos = pWindow->DC.CursorPos;
             ImVec2 const finalButtonSize = ImGui::CalcItemSize( size, buttonWidthWithFramePadding, buttonHeight );
@@ -705,7 +707,7 @@ namespace Lumina::ImGuiX
             return DataClass != nullptr && DataClass->IsChildOf(FilterClass);
         });
 
-        std::sort(Assets.begin(), Assets.end(), [](const FAssetData* A, const FAssetData* B)
+        Algo::Sort(Assets.begin(), Assets.end(), [](const FAssetData* A, const FAssetData* B)
         {
             return A->AssetName.ToString() < B->AssetName.ToString();
         });
@@ -745,7 +747,7 @@ namespace Lumina::ImGuiX
             }
         }
 
-        std::sort(Candidates.begin(), Candidates.end(), [](CClass* A, CClass* B)
+        Algo::Sort(Candidates.begin(), Candidates.end(), [](CClass* A, CClass* B)
         {
             return strcmp(A->GetName().c_str(), B->GetName().c_str()) < 0;
         });
@@ -798,7 +800,7 @@ namespace Lumina::ImGuiX
             }
         }
 
-        std::sort(Candidates.begin(), Candidates.end(), [](CStruct* A, CStruct* B)
+        Algo::Sort(Candidates.begin(), Candidates.end(), [](CStruct* A, CStruct* B)
         {
             return strcmp(A->GetName().c_str(), B->GetName().c_str()) < 0;
         });
@@ -868,7 +870,7 @@ namespace Lumina::ImGuiX
             ++Suffix;
         }
     	FString Value;
-    	std::format_to(std::back_inserter(Value), "{:.2f} {}", Size, Suffixes[Suffix]);
+    	AppendFormat(Value, "{:.2f} {}", Size, Suffixes[Suffix]);
         return Value;
     }
 
@@ -1289,7 +1291,7 @@ namespace Lumina::ImGuiX
             const ImGuiStyle& Style = ImGui::GetStyle();
             if (bMenuBar)
             {
-                const float PaddingY = std::max(Style.FramePadding.y, (Size.y - ImGui::GetFontSize()) * 0.5f);
+                const float PaddingY = Math::Max(Style.FramePadding.y, (Size.y - ImGui::GetFontSize()) * 0.5f);
                 ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(Style.FramePadding.x, PaddingY));
             }
 
@@ -1410,14 +1412,14 @@ namespace Lumina::ImGuiX
         // Laid out right to left: the window controls pin to the far edge, the info section sits inside
         // them at its measured width, and the menu section takes everything that is left. Nothing is sized
         // from a constant, so a long project name is bounded by the window instead of being clipped.
-        const float ControlsX = std::max(0.0f, BarSize.x - ControlsWidth);
+        const float ControlsX = Math::Max(0.0f, BarSize.x - ControlsWidth);
 
-        const float MaxInfoWidth = std::max(0.0f, ControlsX - Padding * 2.0f);
-        const float InfoWidth    = std::min(InfoSectionWidth, MaxInfoWidth);
+        const float MaxInfoWidth = Math::Max(0.0f, ControlsX - Padding * 2.0f);
+        const float InfoWidth    = Math::Min(InfoSectionWidth, MaxInfoWidth);
         const float InfoX        = ControlsX - Padding - InfoWidth;
 
         const float MenuX     = Padding;
-        const float MenuWidth = std::max(0.0f, InfoX - Padding - MenuX);
+        const float MenuWidth = Math::Max(0.0f, InfoX - Padding - MenuX);
 
         // The row every section draws on, centered in the bar. Applied relative to wherever the section
         // starts, NOT as an absolute Y: a child with a menu bar reports its content origin BELOW the menu

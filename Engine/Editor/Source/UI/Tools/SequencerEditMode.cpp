@@ -1114,8 +1114,8 @@ namespace Lumina
             }
         }
 
-        std::sort(OutTimes.begin(), OutTimes.end());
-        OutTimes.erase(std::unique(OutTimes.begin(), OutTimes.end()), OutTimes.end());
+        Algo::Sort(OutTimes.begin(), OutTimes.end());
+        OutTimes.erase(Algo::Unique(OutTimes.begin(), OutTimes.end()), OutTimes.end());
     }
 
     void FSequencerEditMode::StepToAdjacentKey(CWorld* World, int32 Direction)

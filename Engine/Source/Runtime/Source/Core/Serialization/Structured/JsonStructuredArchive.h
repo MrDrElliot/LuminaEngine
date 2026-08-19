@@ -1,4 +1,5 @@
 #pragma once
+#include <string>
 #include "StructuredArchive.h"
 #include "nlohmann/json.hpp"
 

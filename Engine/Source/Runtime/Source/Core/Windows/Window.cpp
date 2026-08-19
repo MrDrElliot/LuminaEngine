@@ -198,8 +198,8 @@ namespace Lumina
 				int monitorX, monitorY, monitorWidth, monitorHeight;
 				glfwGetMonitorWorkarea(monitors[i], &monitorX, &monitorY, &monitorWidth, &monitorHeight);
 
-				int overlapX = std::max(0, std::min(windowX + windowWidth, monitorX + monitorWidth) - std::max(windowX, monitorX));
-				int overlapY = std::max(0, std::min(windowY + windowHeight, monitorY + monitorHeight) - std::max(windowY, monitorY));
+				int overlapX = Math::Max(0, Math::Min(windowX + windowWidth, monitorX + monitorWidth) - Math::Max(windowX, monitorX));
+				int overlapY = Math::Max(0, Math::Min(windowY + windowHeight, monitorY + monitorHeight) - Math::Max(windowY, monitorY));
 				int overlapArea = overlapX * overlapY;
 
 				if (overlapArea > maxOverlap)
@@ -314,7 +314,7 @@ namespace Lumina
 		float XScale = 1.0f;
 		float YScale = 1.0f;
 		glfwGetWindowContentScale(Impl->Window, &XScale, &YScale);
-		return std::max(XScale, YScale);
+		return Math::Max(XScale, YScale);
 	}
 
 	FUIntVector2 FWindow::GetMonitorResolution() const

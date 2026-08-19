@@ -1,4 +1,5 @@
-﻿#include "EditorPCH.h"
+﻿#include "Core/Threading/Thread.h"
+#include "EditorPCH.h"
 #include "Core/CoreEditorDelegates.h"
 #include "Factory.h"
 
@@ -18,8 +19,8 @@ namespace Lumina
     
     CFactoryRegistry& CFactoryRegistry::Get()
     {
-        static std::once_flag Flag;
-        std::call_once(Flag, []()
+        static FOnceFlag Flag;
+        CallOnce(Flag, []()
         {
             FactoryRegistry = NewObject<CFactoryRegistry>();
             FactoryRegistry->AddToRoot();

@@ -2,47 +2,59 @@
 #include "Containers/String.h"
 #include "Core/LuminaMacros.h"
 #include "Log/Log.h"
+#include "Platform/Time/PlatformTime.h"
 
 
 namespace Lumina
 {
-    template<typename T>
+    enum class ETimeUnit : uint8
+    {
+        Nanoseconds,
+        Microseconds,
+        Milliseconds,
+        Seconds,
+    };
+
+    /** Logs how long its scope took, at the unit you ask for. */
+    template<ETimeUnit Unit = ETimeUnit::Milliseconds>
     class TTimedEvent
     {
     public:
-        
-        LE_NO_COPYMOVE(TTimedEvent<T>);
-        
+
+        LE_NO_COPYMOVE(TTimedEvent<Unit>);
+
         TTimedEvent(FStringView InName)
-            :Name(InName)
+            : Name(InName)
         {
-            Start = std::chrono::high_resolution_clock::now();
         }
-        
+
         ~TTimedEvent()
         {
-            auto End = std::chrono::high_resolution_clock::now();
-            auto Duration = std::chrono::duration_cast<T>(End - Start).count();
-            LOG_INFO("Timed Event {} - Took {}{}", Name, Duration, GetUnitSuffix<T>());
+            LOG_INFO("Timed Event {} - Took {:.3f}{}", Name, Elapsed(), GetUnitSuffix());
         }
-    
+
     private:
-        
-        
-        template<typename Dur>
-        static constexpr const char* GetUnitSuffix()
+
+        NODISCARD double Elapsed() const
         {
-            if constexpr (std::is_same_v<Dur, std::chrono::nanoseconds>) return "ns";
-            else if constexpr (std::is_same_v<Dur, std::chrono::microseconds>) return "µs";
-            else if constexpr (std::is_same_v<Dur, std::chrono::milliseconds>) return "ms";
-            else if constexpr (std::is_same_v<Dur, std::chrono::seconds>) return "s";
-            else if constexpr (std::is_same_v<Dur, std::chrono::minutes>) return "min";
-            else if constexpr (std::is_same_v<Dur, std::chrono::hours>) return "h";
-            else return "";
+            const uint64 Cycles = Timer.ElapsedCycles();
+
+            if constexpr (Unit == ETimeUnit::Nanoseconds)  { return PlatformTime::ToSeconds(Cycles) * 1e9; }
+            else if constexpr (Unit == ETimeUnit::Microseconds) { return PlatformTime::ToMicroseconds(Cycles); }
+            else if constexpr (Unit == ETimeUnit::Milliseconds) { return PlatformTime::ToMilliseconds(Cycles); }
+            else { return PlatformTime::ToSeconds(Cycles); }
         }
-        
-        FStringView                                         Name;
-        std::chrono::time_point<std::chrono::steady_clock>  Start;
+
+        NODISCARD static constexpr const char* GetUnitSuffix()
+        {
+            if constexpr (Unit == ETimeUnit::Nanoseconds)  { return "ns"; }
+            else if constexpr (Unit == ETimeUnit::Microseconds) { return "us"; }
+            else if constexpr (Unit == ETimeUnit::Milliseconds) { return "ms"; }
+            else { return "s"; }
+        }
+
+        FStringView              Name;
+        PlatformTime::FStopwatch Timer;
     };
-    
+
 }

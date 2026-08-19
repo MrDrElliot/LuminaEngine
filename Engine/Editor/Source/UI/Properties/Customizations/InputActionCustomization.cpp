@@ -1,3 +1,5 @@
+#include "Containers/StringFormat.h"
+#include <iterator>
 #include "InputActionCustomization.h"
 
 #include "imgui.h"
@@ -110,11 +112,11 @@ namespace Lumina
             }
             else if (bDangling)
             {
-                std::format_to(std::back_inserter(Preview), "{}  {}", LE_ICON_ALERT_CIRCLE_OUTLINE, Value.c_str());
+                AppendFormat(Preview, "{}  {}", LE_ICON_ALERT_CIRCLE_OUTLINE, Value.c_str());
             }
             else
             {
-                std::format_to(std::back_inserter(Preview), "{}  {}", TypeIcon(Current->Type), Value.c_str());
+                AppendFormat(Preview, "{}  {}", TypeIcon(Current->Type), Value.c_str());
             }
 
             if (bDangling)
@@ -169,7 +171,7 @@ namespace Lumina
                 ++Shown;
 
                 FFixedString Row;
-                std::format_to(std::back_inserter(Row), "{}  {}", TypeIcon(Action.Type), ActionName.c_str());
+                AppendFormat(Row, "{}  {}", TypeIcon(Action.Type), ActionName.c_str());
                 if (ImGui::Selectable(Row.c_str(), Value == ActionName))
                 {
                     Value = ActionName;

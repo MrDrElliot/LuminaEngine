@@ -1848,7 +1848,7 @@ namespace Lumina
                 }
             }
 
-            std::sort(RetryScratch.begin(), RetryScratch.end());
+            Algo::Sort(RetryScratch.begin(), RetryScratch.end());
             {
                 size_t Unique = 0;
                 for (size_t i = 0; i < RetryScratch.size(); ++i)

@@ -38,7 +38,7 @@ namespace Lumina
 
         // Sorted so Finalize's diff is a binary search rather than a nested scan. Handles only -- no
         // component data is touched here, which is the whole point.
-        std::sort(Out.begin(), Out.end());
+        Algo::Sort(Out.begin(), Out.end());
     }
 
     void FEntityCreationCommand::Finalize()
@@ -60,7 +60,7 @@ namespace Lumina
 
         for (entt::entity E : LiveAfter)
         {
-            if (!std::binary_search(LiveBefore.begin(), LiveBefore.end(), E))
+            if (!Algo::BinarySearch(LiveBefore.begin(), LiveBefore.end(), E))
             {
                 Created.push_back(E);
             }
@@ -99,7 +99,7 @@ namespace Lumina
             if (const FRelationshipComponent* Rel = Registry.try_get<FRelationshipComponent>(E))
             {
                 if (Rel->Parent != entt::null
-                    && !std::binary_search(Created.begin(), Created.end(), Rel->Parent))
+                    && !Algo::BinarySearch(Created.begin(), Created.end(), Rel->Parent))
                 {
                     ExternalParents.push_back({ E, Rel->Parent });
                 }

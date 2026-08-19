@@ -38,7 +38,7 @@ namespace Lumina
             (*WriteBytes)[ByteIndex] &= static_cast<uint8>(~(1u << BitIndex));
         }
         ++BitCursor;
-        TotalBits = std::max(BitCursor, TotalBits);
+        TotalBits = Math::Max(BitCursor, TotalBits);
     }
 
     uint32 FNetArchive::ReadBit()
@@ -78,7 +78,7 @@ namespace Lumina
                 }
                 Memory::Memcpy(WriteBytes->data() + ByteIndex, Bytes, static_cast<size_t>(ByteCount));
                 BitCursor += NumBits;
-                TotalBits = std::max(BitCursor, TotalBits);
+                TotalBits = Math::Max(BitCursor, TotalBits);
             }
             else
             {

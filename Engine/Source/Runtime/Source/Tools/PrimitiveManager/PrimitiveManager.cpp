@@ -1,4 +1,5 @@
-﻿#include "RuntimePCH.h"
+﻿#include "Core/Threading/Thread.h"
+#include "RuntimePCH.h"
 #include "PrimitiveManager.h"
 
 #include "Core/Object/Package/Package.h"
@@ -57,8 +58,8 @@ namespace Lumina
 
     CPrimitiveManager& CPrimitiveManager::Get()
     {
-        static std::once_flag Flag;
-        std::call_once(Flag, []()
+        static FOnceFlag Flag;
+        CallOnce(Flag, []()
         {
             PrimitiveManagerSingleton = NewObject<CPrimitiveManager>();
             PrimitiveManagerSingleton->Initialize();

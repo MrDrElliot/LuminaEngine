@@ -1,3 +1,4 @@
+#include <string>
 #include "PluginBrowserEditorTool.h"
 
 #include "Core/Application/Application.h"
@@ -112,7 +113,7 @@ namespace Lumina
             }
             Visible.push_back(const_cast<FPlugin*>(P));
         }
-        std::sort(Visible.begin(), Visible.end(),
+        Algo::Sort(Visible.begin(), Visible.end(),
             [](const FPlugin* A, const FPlugin* B)
             {
                 if (A->IsEnginePlugin() != B->IsEnginePlugin())

@@ -15,30 +15,16 @@
 #endif
 
 
-// Standard library: only headers that are small and ubiquitous.
-#include <memory>
-#include <string>
+// Standard library: language support and the few C headers everything reaches for. The containers,
+// algorithms and function objects are ours now, so their std counterparts are deliberately absent.
 #include <utility>
+#include <type_traits>
+#include <initializer_list>
+#include <new>
 #include <cstdint>
 #include <cstddef>
-#include <iterator>
-#include <tuple>
-#include <vector>
-#include <array>
-#include <map>
-#include <unordered_map>
-#include <set>
-#include <unordered_set>
-#include <algorithm>
-#include <functional>
 #include <cmath>
-#include <numeric>
-#include <chrono>
 #include <atomic>
-#include <type_traits>
-#include <optional>
-#include <limits>
-#include <cassert>
 
 // entt is reached directly by 48+ files; keeping it here parses it once instead of per-TU.
 #include <entt/entt.hpp>
@@ -57,6 +43,7 @@
 
 #include "Memory/Memory.h"
 #include "Core/Assertions/Assert.h"
+#include "Containers/Algorithm.h"
 #include "Containers/Vector.h"
 #include "Containers/VectorOps.h"
 #include "Containers/HashTable.h"

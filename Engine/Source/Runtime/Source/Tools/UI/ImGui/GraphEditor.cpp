@@ -633,7 +633,7 @@ static bool DrawNode(ImDrawList* drawList,
 
     ImVec2 imgPos = nodeRectangleMin + ImVec2(14, 25);
     ImVec2 imgSize = nodeRectangleMax + ImVec2(-5, -5) - imgPos;
-    float imgSizeComp = std::min(imgSize.x, imgSize.y);
+    float imgSizeComp = Lumina::Math::Min(imgSize.x, imgSize.y);
 
     drawList->AddRectFilled(nodeRectangleMin, nodeRectangleMax, node_bg_color, options.mRounding);
     /*float progress = delegate->NodeProgress(nodeIndex);

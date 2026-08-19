@@ -1,5 +1,7 @@
+#include "Core/Threading/Thread.h"
 #include <gtest/gtest.h>
 
+#include "Platform/Time/PlatformTime.h"
 #include "TaskSystem/TaskSystem.h"
 #include "TaskSystem/TaskGraph.h"
 #include "TaskSystem/Task.h"
@@ -11,8 +13,6 @@
 
 #include <algorithm>
 #include <atomic>
-#include <chrono>
-#include <thread>
 #include <vector>
 
 using namespace Lumina;
@@ -276,8 +276,6 @@ TEST(TaskSystem, ManyConcurrentParallelFors_Stress)
 TEST(TaskSystem, Perf_EmptyParallelForSchedulingOverhead)
 {
     const uint32 Chunks = GTaskSystem->GetNumWorkers() * 4u;
-    using Clock = std::chrono::steady_clock;
-
     auto Empty = [](uint32) {};
 
     for (int i = 0; i < 2000; ++i)
@@ -286,14 +284,14 @@ TEST(TaskSystem, Perf_EmptyParallelForSchedulingOverhead)
     }
 
     constexpr int Iters = 20000;
-    auto T0 = Clock::now();
+    auto T0 = Lumina::PlatformTime::Cycles();
     for (int i = 0; i < Iters; ++i)
     {
         Task::ParallelFor(Chunks, Empty, 1);
     }
-    auto T1 = Clock::now();
+    auto T1 = Lumina::PlatformTime::Cycles();
 
-    const double NsPerCall = std::chrono::duration<double, std::nano>(T1 - T0).count() / Iters;
+    const double NsPerCall = (Lumina::PlatformTime::ToSeconds(T1 - T0) * 1e9) / Iters;
     LOG_DISPLAY("[JobBench] Empty ParallelFor ({} chunks): {:.0f} ns/call", Chunks, NsPerCall);
 
     // Generous bound so CI noise doesn't flake; real numbers are far lower.
@@ -315,32 +313,30 @@ TEST(TaskSystem, Perf_ParallelForScalesWithWork)
         return a;
     };
 
-    using Clock = std::chrono::steady_clock;
-
     // Serial baseline.
     volatile float SerialSink = 0.0f;
-    auto S0 = Clock::now();
+    auto S0 = Lumina::PlatformTime::Cycles();
     {
         float acc = 0.0f;
         for (uint32 i = 0; i < N; ++i) acc += Heavy(Data[i]);
         SerialSink = acc;
     }
-    auto S1 = Clock::now();
-    const double SerialMs = std::chrono::duration<double, std::milli>(S1 - S0).count();
+    auto S1 = Lumina::PlatformTime::Cycles();
+    const double SerialMs = Lumina::PlatformTime::ToMilliseconds(S1 - S0);
 
     // Parallel: per-worker partials avoid contention.
     TVector<double> Partials;
     Partials.resize(GTaskSystem->GetNumTaskThreads(), 0.0);
 
-    auto P0 = Clock::now();
+    auto P0 = Lumina::PlatformTime::Cycles();
     Task::ParallelFor(N, [&](const Task::FParallelRange& R)
     {
         float acc = 0.0f;
         for (uint32 i = R.Start; i < R.End; ++i) acc += Heavy(Data[i]);
         Partials[R.Thread] += acc;
     }, 8192);
-    auto P1 = Clock::now();
-    const double ParallelMs = std::chrono::duration<double, std::milli>(P1 - P0).count();
+    auto P1 = Lumina::PlatformTime::Cycles();
+    const double ParallelMs = Lumina::PlatformTime::ToMilliseconds(P1 - P0);
 
     double Combined = 0.0;
     for (double p : Partials) Combined += p;
@@ -829,7 +825,7 @@ namespace
 {
     struct FAssistProbe
     {
-        std::thread::id     WaitingThread;
+        Lumina::uint64  WaitingThread = 0;
         std::atomic<uint32> RanOnWaitingThread{0};
         std::atomic<uint32> RanTotal{0};
     };
@@ -840,12 +836,12 @@ namespace
     {
         FAssistProbe& P = *static_cast<FAssistProbe*>(Arg);
 
-        const auto End = std::chrono::steady_clock::now() + std::chrono::microseconds(100);
-        while (std::chrono::steady_clock::now() < End)
+        const double End = Lumina::PlatformTime::Seconds() + 0.0001;
+        while (Lumina::PlatformTime::Seconds() < End)
         {
         }
 
-        if (std::this_thread::get_id() == P.WaitingThread)
+        if (Threading::GetThreadID() == P.WaitingThread)
         {
             P.RanOnWaitingThread.fetch_add(1, std::memory_order_relaxed);
         }
@@ -858,7 +854,7 @@ namespace
 TEST(TaskSystem, AssistWaitNeverRunsBackgroundWork)
 {
     FAssistProbe Probe;
-    Probe.WaitingThread = std::this_thread::get_id();
+    Probe.WaitingThread = Threading::GetThreadID();
 
     Jobs::FCounter* ProbeCounter = Jobs::AllocCounter(0);
     for (uint32 i = 0; i < kAssistProbeCount; ++i)
@@ -872,9 +868,9 @@ TEST(TaskSystem, AssistWaitNeverRunsBackgroundWork)
     // entirely on worker wake-ups. That is a fine thing to warn about and a terrible thing to build a
     // test on -- an earlier version did, and intermittently hung the suite.
     Jobs::FCounter* Gate = Jobs::AllocCounter(1);
-    std::thread Releaser([Gate]
+    FThread Releaser([Gate]
     {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        Lumina::PlatformTime::SleepMilliseconds(50);
         Jobs::DecrementCounter(Gate, 1);
     });
 
@@ -889,11 +885,11 @@ TEST(TaskSystem, AssistWaitNeverRunsBackgroundWork)
 
     // Drained by polling rather than by waiting on the counter, for the same reason. Bounded, so a
     // stalled pool fails the assertion instead of hanging the suite.
-    const auto Deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    const double Deadline = Lumina::PlatformTime::Seconds() + 10.0;
     while (Probe.RanTotal.load(std::memory_order_relaxed) < kAssistProbeCount
-        && std::chrono::steady_clock::now() < Deadline)
+        && Lumina::PlatformTime::Seconds() < Deadline)
     {
-        std::this_thread::yield();
+        Lumina::PlatformTime::YieldThread();
     }
 
     // Proves the assertion above did not pass vacuously: the work really was there to be stolen.
@@ -915,7 +911,7 @@ TEST(TaskSystem, AssistWaitStillRunsNonBackgroundWork)
     // busy workers; if this regresses, every ParallelFor issued from the main thread gets slower and
     // WaitForCounter can stall for as long as the pool stays saturated.
     FAssistProbe Probe;
-    Probe.WaitingThread = std::this_thread::get_id();
+    Probe.WaitingThread = Threading::GetThreadID();
 
     Jobs::FCounter* Counter = Jobs::AllocCounter(0);
     for (uint32 i = 0; i < kAssistProbeCount; ++i)
@@ -965,16 +961,16 @@ namespace
     // Poll a predicate up to a deadline. Never assists, so a wedged pool shows up as a failed
     // expectation instead of being rescued by the waiting thread (or hanging the suite).
     template<typename FPred>
-    bool PollUntil(FPred&& Pred, std::chrono::milliseconds Timeout)
+    bool PollUntil(FPred&& Pred, double TimeoutSeconds)
     {
-        const auto Deadline = std::chrono::steady_clock::now() + Timeout;
+        const double Deadline = Lumina::PlatformTime::Seconds() + TimeoutSeconds;
         while (!Pred())
         {
-            if (std::chrono::steady_clock::now() >= Deadline)
+            if (Lumina::PlatformTime::Seconds() >= Deadline)
             {
                 return false;
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            Lumina::PlatformTime::SleepMilliseconds(1);
         }
         return true;
     }
@@ -1007,14 +1003,14 @@ TEST(TaskSystem, FiberPoolSaturation_MoreBlockedJobsThanFibers)
     // with. Before on-demand growth this stalled at NumWorkFibers forever, with every worker pinned at
     // 100% in the starvation spin.
     const bool AllEntered = PollUntil([&] { return Probe.Entered.load() == Blockers; },
-        std::chrono::seconds(10));
+        10.0);
     EXPECT_TRUE(AllEntered) << "only " << Probe.Entered.load() << " of " << Blockers
         << " blocking jobs ever started; the fiber pool wedged instead of growing";
 
     Jobs::DecrementCounter(Probe.Gate, 1);
 
     const bool AllFinished = PollUntil([&] { return Probe.Finished.load() == Blockers; },
-        std::chrono::seconds(10));
+        10.0);
     EXPECT_TRUE(AllFinished) << "only " << Probe.Finished.load() << " of " << Blockers
         << " parked fibers resumed after the gate opened";
 
@@ -1069,13 +1065,13 @@ TEST(TaskSystem, ManyBlockingAsyncTasks_AllComplete)
     }
 
     const bool AllEntered = PollUntil([&] { return Probe.Entered.load() == Outer; },
-        std::chrono::seconds(10));
+        10.0);
     EXPECT_TRUE(AllEntered) << "only " << Probe.Entered.load() << " of " << Outer
         << " async tasks ever started; the fiber pool wedged instead of growing";
 
     Jobs::DecrementCounter(Probe.Gate, 1);
 
-    const bool AllDone = PollUntil([&] { return Probe.Done.load() == Outer; }, std::chrono::seconds(20));
+    const bool AllDone = PollUntil([&] { return Probe.Done.load() == Outer; }, 20.0);
     EXPECT_TRUE(AllDone) << "only " << Probe.Done.load() << " of " << Outer
         << " blocking async tasks completed";
     EXPECT_EQ(Probe.Sum.load(), (uint64)Outer * Inner);
@@ -1101,7 +1097,7 @@ TEST(TaskSystem, ExternalThreadSlotsAreRecycled)
     // sizes and indexes every per-thread array in the engine.
     for (uint32 Round = 0; Round < Slots * 4; ++Round)
     {
-        std::thread T([&]
+        FThread T([&]
         {
             const uint32 Index = Jobs::RegisterExternalThread();
             EXPECT_GE(Index, Workers);
@@ -1115,7 +1111,7 @@ TEST(TaskSystem, ExternalThreadSlotsAreRecycled)
     // thread holds one of its own, so it is Slots - 1 that are actually available.
     const uint32 Concurrent = Slots - 1;
     std::vector<uint32>      Indices(Concurrent, ~0u);
-    std::vector<std::thread> Threads;
+    std::vector<FThread> Threads;
     std::atomic<uint32>      Arrived{0};
 
     Threads.reserve(Concurrent);
@@ -1128,12 +1124,12 @@ TEST(TaskSystem, ExternalThreadSlotsAreRecycled)
             Arrived.fetch_add(1, std::memory_order_acq_rel);
             while (Arrived.load(std::memory_order_acquire) < Concurrent)
             {
-                std::this_thread::yield();
+                Lumina::PlatformTime::YieldThread();
             }
             Jobs::UnregisterExternalThread();
         });
     }
-    for (std::thread& T : Threads)
+    for (FThread& T : Threads)
     {
         T.join();
     }
@@ -1216,14 +1212,14 @@ namespace
 
         // Nobody opens the gate from outside; recovery must come from workers running queued jobs inline.
         const bool Recovered = PollUntil([&] { return Probe.Finished.load() == Blockers; },
-            std::chrono::seconds(15));
+            15.0);
         EXPECT_TRUE(Recovered) << "only " << Probe.Finished.load() << " of " << Blockers
             << " blocked jobs completed; the wedged pool never ran the queued release job inline";
 
         if (!Recovered)
         {
             Jobs::DecrementCounter(Probe.Gate, 1);
-            PollUntil([&] { return Probe.Finished.load() == Blockers; }, std::chrono::seconds(10));
+            PollUntil([&] { return Probe.Finished.load() == Blockers; }, 10.0);
         }
         Jobs::WaitForAll();
         Jobs::FreeCounter(Probe.Gate);

@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "Thread.h"
+#include "Platform/Time/PlatformTime.h"
 #include "rpmalloc.h"
 #include "Core/Assertions/Assert.h"
 
@@ -8,38 +9,33 @@ namespace Lumina
 {
     namespace Threading
     {
-        static std::thread::id GMainThreadID = {};
+        static uint64 GMainThreadID = 0;
 
         void ThreadYield()
         {
-            std::this_thread::yield();
+            PlatformTime::YieldThread();
         }
 
 
         bool IsMainThread()
         {
-            return GMainThreadID == std::this_thread::get_id();
-        }
-
-        uint32 GetNumThreads()
-        {
-            return std::thread::hardware_concurrency();
+            return GMainThreadID != 0 && GMainThreadID == GetThreadID();
         }
 
         void Sleep(uint64 Milliseconds)
         {
-            std::this_thread::sleep_for(std::chrono::milliseconds(Milliseconds));
+            PlatformTime::SleepMilliseconds(static_cast<uint32>(Milliseconds));
         }
 
         void Initialize(const char* MainThreadName)
         {
-            GMainThreadID = std::this_thread::get_id();
+            GMainThreadID = GetThreadID();
             SetThreadName(MainThreadName, ThreadGroup_Main);
         }
 
         void Shutdown()
         {
-            GMainThreadID = {};
+            GMainThreadID = 0;
         }
 
         void InitializeThreadHeap()

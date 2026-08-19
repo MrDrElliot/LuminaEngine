@@ -1,6 +1,6 @@
 #pragma once
-#include <format>
 
+#include "Containers/Format.h"
 #include "Containers/StaticArray.h"
 #include "Core/Serialization/Archiver.h"
 #include "Core/Templates/Optional.h"
@@ -73,30 +73,19 @@ namespace Lumina
 }
 
 
-namespace std
+namespace Lumina
 {
-    template <>
-    struct RUNTIME_API hash<Lumina::FGuid>
+    NODISCARD FORCEINLINE uint64 GetTypeHash(const FGuid& Guid) noexcept
     {
-        std::size_t operator()(const Lumina::FGuid& Guid) const noexcept
-        {
-            return Guid.Hash();
-        }
-    };
+        return static_cast<uint64>(Guid.Hash());
+    }
 }
 
 
-template <>
-struct RUNTIME_API std::formatter<Lumina::FGuid>
+namespace Lumina
 {
-    constexpr auto parse(std::format_parse_context& ctx)
+    FORCEINLINE void FormatArgument(Fmt::FFormatBuffer& Out, const FGuid& Guid, const Fmt::FFormatSpec& Spec)
     {
-        return ctx.begin();
+        Fmt::WriteAligned(Out, Guid.ToString(), Spec);
     }
-
-    template <typename FormatContext>
-    auto format(const Lumina::FGuid& guid, FormatContext& ctx) const
-    {
-        return std::format_to(ctx.out(), "{}", guid.ToString());
-    }
-};
+}

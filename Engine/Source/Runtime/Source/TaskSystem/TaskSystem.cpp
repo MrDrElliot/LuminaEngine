@@ -25,8 +25,8 @@ namespace Lumina
         {
             MaxChunks = 1;
         }
-        MaxChunks = std::min(MaxChunks, Task::kMaxChunks);
-        NumChunks = std::min(NumChunks, MaxChunks);
+        MaxChunks = Math::Min(MaxChunks, Task::kMaxChunks);
+        NumChunks = Math::Min(NumChunks, MaxChunks);
 
         if (NumChunks == 0)
         {
@@ -186,7 +186,7 @@ namespace Lumina
         // One job per worker at most, minus the grab the participating caller takes itself.
         const uint32 Grabs = (Num + Grain - 1) / Grain;
         uint32 K = Grabs - 1;
-        K = std::min({ K, Jobs::GetNumWorkers(), Task::kMaxChunks });
+        K = Math::Min(K, Math::Min(Jobs::GetNumWorkers(), Task::kMaxChunks));
 
         Jobs::FJobDecl Decls[kMaxChunks];
         for (uint32 i = 0; i < K; ++i)

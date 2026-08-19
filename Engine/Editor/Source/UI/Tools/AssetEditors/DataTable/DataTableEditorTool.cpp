@@ -180,7 +180,7 @@ namespace Lumina
         const bool bNumeric = SortProperty != nullptr && IsNumericProperty(SortProperty);
         const bool bAscending = bSortAscending;
 
-        std::stable_sort(DisplayOrder.begin(), DisplayOrder.end(),
+        Algo::StableSort(DisplayOrder.begin(), DisplayOrder.end(),
             [Table, SortProperty, bNumeric, bAscending](int32 A, int32 B)
             {
                 const SDataTableRow& RowA = Table->Rows[A];

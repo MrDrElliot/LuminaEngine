@@ -1,7 +1,7 @@
-﻿#include "RuntimePCH.h"
+﻿#include "Platform/Time/PlatformTime.h"
+#include "RuntimePCH.h"
 #include "CPUProfiler.h"
 
-#include <chrono>
 
 #include "Core/Console/ConsoleVariable.h"
 #include "World/World.h"
@@ -17,9 +17,7 @@ namespace Lumina
 
     static double CpuProfilerNowMs()
     {
-        using namespace std::chrono;
-        static const auto Origin = steady_clock::now();
-        return duration<double, std::milli>(steady_clock::now() - Origin).count();
+        return PlatformTime::Seconds() * 1000.0;
     }
 
     void FCPUProfileFrame::Reset()

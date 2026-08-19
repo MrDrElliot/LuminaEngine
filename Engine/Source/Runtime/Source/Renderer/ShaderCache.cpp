@@ -58,7 +58,7 @@ namespace Lumina::FShaderCache
         FString JoinSortedDefines(const TVector<FString>& Defines)
         {
             TVector<FString> Sorted(Defines.begin(), Defines.end());
-            std::sort(Sorted.begin(), Sorted.end());
+            Algo::Sort(Sorted.begin(), Sorted.end());
             FString Joined;
             for (const FString& D : Sorted)
             {

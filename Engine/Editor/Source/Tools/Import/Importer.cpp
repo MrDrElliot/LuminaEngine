@@ -1,3 +1,4 @@
+#include "Core/Threading/Thread.h"
 #include "EditorPCH.h"
 #include "Importer.h"
 
@@ -54,8 +55,8 @@ namespace Lumina
 
     CImporterRegistry& CImporterRegistry::Get()
     {
-        static std::once_flag Flag;
-        std::call_once(Flag, []()
+        static FOnceFlag Flag;
+        CallOnce(Flag, []()
         {
             GImporterRegistry = NewObject<CImporterRegistry>();
             GImporterRegistry->AddToRoot();

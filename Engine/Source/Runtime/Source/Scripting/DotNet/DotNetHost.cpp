@@ -774,7 +774,7 @@ namespace Lumina::DotNet
         {
             FString Result(P.data(), P.size());
         #if defined(_WIN32)
-            std::replace(Result.begin(), Result.end(), '/', '\\');
+            Algo::Replace(Result.begin(), Result.end(), '/', '\\');
         #endif
             return Result;
         }

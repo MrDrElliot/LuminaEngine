@@ -349,7 +349,7 @@ namespace Lumina
             Order.push_back(Index);
         }
 
-        std::stable_sort(Order.begin(), Order.end(), [this](int32 A, int32 B)
+        Algo::StableSort(Order.begin(), Order.end(), [this](int32 A, int32 B)
         {
             return Curve->Keys[A].Time < Curve->Keys[B].Time;
         });
@@ -413,7 +413,7 @@ namespace Lumina
         }
 
         TVector<int32> Sorted = Selection;
-        std::sort(Sorted.begin(), Sorted.end());
+        Algo::Sort(Sorted.begin(), Sorted.end());
 
         for (int32 Index = (int32)Sorted.size() - 1; Index >= 0; --Index)
         {

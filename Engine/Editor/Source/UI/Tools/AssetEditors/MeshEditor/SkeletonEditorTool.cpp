@@ -66,7 +66,7 @@ namespace Lumina
                     CurrentIndex = SkeletonResource->Bones[CurrentIndex].ParentIndex;
                     Depth++;
                 }
-                MaxDepth = std::max(MaxDepth, Depth);
+                MaxDepth = Math::Max(MaxDepth, Depth);
                 TotalDepth += Depth;
             }
             

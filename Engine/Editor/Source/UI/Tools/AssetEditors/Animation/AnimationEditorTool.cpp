@@ -1,5 +1,7 @@
-﻿#include "AnimationEditorTool.h"
+﻿#include "Containers/StringFormat.h"
+#include "AnimationEditorTool.h"
 
+#include <string>
 #include "Core/Math/Math.h"
 #include <imgui_internal.h>
 
@@ -443,7 +445,7 @@ namespace Lumina
         // Time / frame readout, right-aligned.
         const int Frame      = (int)roundf(AnimComp->CurrentTime * (float)FrameRate);
         const int TotalFrame = (int)roundf(Duration * (float)FrameRate);
-        std::string Readout = std::format("{:.3f}s / {:.3f}s   (frame {}/{})", AnimComp->CurrentTime, Duration, Frame, TotalFrame);
+        const FString Readout = Format("{:.3f}s / {:.3f}s   (frame {}/{})", AnimComp->CurrentTime, Duration, Frame, TotalFrame);
         const float TextW = ImGui::CalcTextSize(Readout.c_str()).x;
         ImGui::SameLine();
         ImGui::SetCursorPosX(Math::Max(ImGui::GetCursorPosX(), ImGui::GetWindowWidth() - TextW - 16.0f));
@@ -457,7 +459,7 @@ namespace Lumina
         // Track header column toolbar.
         if (ImGui::Button(LE_ICON_PLUS " Track"))
         {
-            Resource->NotifyTracks.push_back(FName(std::format("Track {}", (int)Resource->NotifyTracks.size()).c_str()));
+            Resource->NotifyTracks.push_back(FName(Format("Track {}", (int)Resource->NotifyTracks.size()).c_str()));
             MarkAnimationDirty();
         }
         ImGui::SameLine();
@@ -527,7 +529,7 @@ namespace Lumina
                 const float X = TimeToX(T);
                 DrawList->AddLine(ImVec2(X, RulerY0 + kRulerHeight - 7.0f), ImVec2(X, CanvasPos.y + CanvasSize.y), IM_COL32(255, 255, 255, 16));
                 DrawList->AddLine(ImVec2(X, RulerY0 + kRulerHeight - 7.0f), ImVec2(X, RulerY0 + kRulerHeight), IM_COL32(200, 200, 210, 120));
-                FString Label = std::format("{:.2f}", T).c_str();
+                FString Label = Format("{:.2f}", T).c_str();
                 DrawList->AddText(ImVec2(X + 3.0f, RulerY0 + 3.0f), IM_COL32(180, 182, 190, 200), Label.c_str());
             }
         }
@@ -935,7 +937,7 @@ namespace Lumina
     void FAnimationEditorTool::AddCurve(FAnimationResource* Resource)
     {
         FAnimationCurve Curve;
-        Curve.Name  = FName(std::format("Curve {}", (int)Resource->Curves.size()).c_str());
+        Curve.Name  = FName(Format("Curve {}", (int)Resource->Curves.size()).c_str());
         Curve.Color = PaletteColor((int32)Resource->Curves.size());
         Resource->Curves.push_back(Curve);
 
@@ -993,7 +995,7 @@ namespace Lumina
             ImGui::PushID(i);
 
             const ImVec2 RowPos = ImGui::GetCursorScreenPos();
-            if (ImGui::Selectable(std::format("      {}", Curve.Name.c_str()).c_str(), SelectedCurve == i))
+            if (ImGui::Selectable(Format("      {}", Curve.Name.c_str()).c_str(), SelectedCurve == i))
             {
                 SelectedCurve = i;
             }

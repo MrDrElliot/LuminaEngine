@@ -168,7 +168,7 @@ namespace Lumina
         // turns it on, and the resulting file is unreadable without the Draco library (not vendored).
         const bool bDraco = Unsupported.find("KHR_draco_mesh_compression") != FFixedString::npos;
 
-        OutError = FString(std::format(
+        OutError = FString(Format(
             "This glTF requires extension(s) the importer does not support: {}.{}",
             Unsupported.c_str(),
             bDraco ? " Re-export from Blender with Compression turned OFF (Draco is not supported)." : "").c_str());
@@ -191,7 +191,7 @@ namespace Lumina
             const cgltf_meshopt_compression& MC = View.meshopt_compression;
             if (MC.buffer == nullptr || MC.buffer->data == nullptr)
             {
-                OutError = FString(std::format("Buffer view {} is meshopt-compressed but its source buffer never loaded.", (uint32)i).c_str());
+                OutError = FString(Format("Buffer view {} is meshopt-compressed but its source buffer never loaded.", (uint32)i).c_str());
                 return false;
             }
 
@@ -217,13 +217,13 @@ namespace Lumina
                 break;
 
             default:
-                OutError = FString(std::format("Buffer view {} uses an unknown meshopt compression mode.", (uint32)i).c_str());
+                OutError = FString(Format("Buffer view {} uses an unknown meshopt compression mode.", (uint32)i).c_str());
                 return false;
             }
 
             if (DecodeResult != 0)
             {
-                OutError = FString(std::format("Failed to decode meshopt buffer view {} (error {}).", (uint32)i, DecodeResult).c_str());
+                OutError = FString(Format("Failed to decode meshopt buffer view {} (error {}).", (uint32)i, DecodeResult).c_str());
                 return false;
             }
 
@@ -282,7 +282,7 @@ namespace Lumina
         cgltf_result Result = cgltf_parse_file(&ParseOptions, SourcePath.c_str(), &ParsedData);
         if (Result != cgltf_result_success)
         {
-            OutError = FString(std::format("Failed to parse '{0}': {1}.",
+            OutError = FString(Format("Failed to parse '{0}': {1}.",
                 SourcePath.c_str(), ResultToString(Result).data()).c_str());
             return false;
         }
@@ -299,7 +299,7 @@ namespace Lumina
         Result = cgltf_load_buffers(&ParseOptions, ParsedData, SourcePath.c_str());
         if (Result != cgltf_result_success)
         {
-            OutError = FString(std::format("Failed to load buffers for '{0}': {1}.",
+            OutError = FString(Format("Failed to load buffers for '{0}': {1}.",
                 SourcePath.c_str(), ResultToString(Result).data()).c_str());
             cgltf_free(ParsedData);
             ParsedData = nullptr;
@@ -321,7 +321,7 @@ namespace Lumina
         Result = cgltf_validate(ParsedData);
         if (Result == cgltf_result_data_too_short)
         {
-            OutError = FString(std::format(
+            OutError = FString(Format(
                 "'{0}' is malformed: an accessor reads past the end of its buffer.", SourcePath.c_str()).c_str());
             cgltf_free(ParsedData);
             ParsedData = nullptr;

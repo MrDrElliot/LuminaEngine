@@ -2,8 +2,9 @@
 
 #include <format>
 #include <string>
-#include <unordered_set>
 
+#include "Containers/StringFormat.h"
+#include "Containers/HashTable.h"
 #include "Containers/String.h"
 
 // Namespaced because the unity build merges this file with others that do "using namespace Lumina".
@@ -134,10 +135,10 @@ namespace LuminaStringViewTests
 
     TEST(StringViewInterop, FormatterAndHash)
     {
-        EXPECT_EQ(std::format("[{}]", FView("view")), "[view]");
-        EXPECT_EQ(std::format("{:>6}", FView("ab")), "    ab");
+        EXPECT_EQ(Lumina::Format("[{}]", FView("view")), "[view]");
+        EXPECT_EQ(Lumina::Format("{:>6}", FView("ab")), "    ab");
 
-        std::unordered_set<FView> Set;
+        Lumina::THashSet<FView> Set;
         Set.insert(FView("one"));
         Set.insert(FView("one"));
         Set.insert(FView("two"));
@@ -188,9 +189,9 @@ namespace LuminaStringViewTests
 
     TEST(CStringViewInterop, FormatterAndHash)
     {
-        EXPECT_EQ(std::format("[{}]", FCView("cstr")), "[cstr]");
+        EXPECT_EQ(Lumina::Format("[{}]", FCView("cstr")), "[cstr]");
 
-        std::unordered_set<FCView> Set;
+        Lumina::THashSet<FCView> Set;
         Set.insert(FCView("one"));
         Set.insert(FCView("one"));
         EXPECT_EQ(Set.size(), 1u);

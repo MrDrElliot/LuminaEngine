@@ -76,7 +76,7 @@ namespace Lumina::Net
                         T.ByIndex.push_back({ HashStructName(St->GetName()), Type, St });
                     }
                 }
-                std::sort(T.ByIndex.begin(), T.ByIndex.end(),[](const FReplType& A, const FReplType& B)
+                Algo::Sort(T.ByIndex.begin(), T.ByIndex.end(),[](const FReplType& A, const FReplType& B)
                 {
                     return A.Hash < B.Hash;
                 });

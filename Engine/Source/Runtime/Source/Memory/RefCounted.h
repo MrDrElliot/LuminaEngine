@@ -279,16 +279,13 @@ namespace Lumina
 	};
 }
 
-namespace std
+namespace Lumina
 {
-	template <typename T>
-	struct hash<Lumina::TRefCountPtr<T>>
-	{
-		std::size_t operator()(const Lumina::TRefCountPtr<T>& handle) const noexcept
-		{
-			return Lumina::Containers::FDefaultHash()(handle.GetReference());
-		}
-	};
+    template <typename T>
+    NODISCARD FORCEINLINE uint64 GetTypeHash(const TRefCountPtr<T>& Ptr) noexcept
+    {
+        return GetTypeHash(Ptr.GetReference());
+    }
 }
 
 template<typename T, typename... TArgs>

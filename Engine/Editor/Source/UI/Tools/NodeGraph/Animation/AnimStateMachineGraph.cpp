@@ -201,7 +201,7 @@ namespace Lumina
             }
         }
 
-        std::stable_sort(Out.begin(), Out.end(), [](const CAnimStateTransition* A, const CAnimStateTransition* B)
+        Algo::StableSort(Out.begin(), Out.end(), [](const CAnimStateTransition* A, const CAnimStateTransition* B)
         {
             return A->Priority < B->Priority;
         });

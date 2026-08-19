@@ -13,7 +13,7 @@ namespace Lumina
 
     int64 FMemoryReader::TotalSize()
     {
-        return std::min((int64)Bytes.size(), LimitSize);   
+        return Math::Min((int64)Bytes.size(), LimitSize);   
     }
 
 

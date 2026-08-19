@@ -1,3 +1,5 @@
+#include <string>
+#include <string_view>
 #include "MaterialEditorTool.h"
 #include "imgui-node-editor/imgui_node_editor.h"
 #include "Assets/AssetTypes/Material/Material.h"
@@ -273,7 +275,7 @@ namespace Lumina
     bool FMaterialEditorTool::DrawViewport(const FUpdateContext& UpdateContext, ImTextureRef ViewportTexture)
     {
         const ImVec2 ContentRegion = ImGui::GetContentRegionAvail();
-        const ImVec2 ViewportSize(std::max(ContentRegion.x, 64.0f), std::max(ContentRegion.y, 64.0f));
+        const ImVec2 ViewportSize(Math::Max(ContentRegion.x, 64.0f), Math::Max(ContentRegion.y, 64.0f));
         const ImVec2 CursorScreenPos = ImGui::GetCursorScreenPos();
         const ImVec2 WindowBottomRight = { CursorScreenPos.x + ViewportSize.x, CursorScreenPos.y + ViewportSize.y };
 

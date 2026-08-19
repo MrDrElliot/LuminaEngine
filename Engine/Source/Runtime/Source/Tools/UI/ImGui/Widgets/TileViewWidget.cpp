@@ -1,4 +1,5 @@
 ﻿#include "RuntimePCH.h"
+#include <iterator>
 #include "TileViewWidget.h"
 
 #include "Tools/UI/ImGui/ImGuiFonts.h"
@@ -44,7 +45,7 @@ namespace Lumina
 
         const float PaneWidth   = ImGui::GetContentRegionAvail().x;
         const float CellWidth   = TileSize + GColumnBudget + GTileSpacing;
-        const int   ItemsPerRow = std::max(1, (int)((PaneWidth + GTileSpacing) / CellWidth));
+        const int   ItemsPerRow = Math::Max(1, (int)((PaneWidth + GTileSpacing) / CellWidth));
         const int   RowCount    = (ItemCount + ItemsPerRow - 1) / ItemsPerRow;
 
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(GTileSpacing, GTileSpacing));
@@ -68,7 +69,7 @@ namespace Lumina
             for (int Row = Clipper.DisplayStart; Row < Clipper.DisplayEnd; ++Row)
             {
                 const int RowBegin = Row * ItemsPerRow;
-                const int RowEnd   = std::min(RowBegin + ItemsPerRow, ItemCount);
+                const int RowEnd   = Math::Min(RowBegin + ItemsPerRow, ItemCount);
 
                 for (int Index = RowBegin; Index < RowEnd; ++Index)
                 {
@@ -138,7 +139,7 @@ namespace Lumina
             // reproducing its line breaks by hand is what gets this subtly wrong. Only names that
             // actually overflow pay for the handful of extra measurements.
             size_t Low  = 0;
-            size_t High = std::min(Name.size(), sizeof(Truncated) - EllipsisLen - 1);
+            size_t High = Math::Min(Name.size(), sizeof(Truncated) - EllipsisLen - 1);
             while (Low < High)
             {
                 const size_t Mid = (Low + High + 1) / 2;
@@ -174,7 +175,7 @@ namespace Lumina
         ImGui::Dummy(ImVec2(0.0f, GLabelGap));
 
         const ImVec2 LabelPos = ImGui::GetCursorScreenPos();
-        const float  TextX    = LabelPos.x + (TileSize - std::min(TextSize.x, TileSize)) * 0.5f;
+        const float  TextX    = LabelPos.x + (TileSize - Math::Min(TextSize.x, TileSize)) * 0.5f;
         const ImVec4 ClipRect(LabelPos.x, LabelPos.y, LabelPos.x + TileSize, LabelPos.y + GLabelHeight);
 
         ImGui::GetWindowDrawList()->AddText(LabelFont, FontSize, ImVec2(TextX, LabelPos.y),
@@ -202,7 +203,7 @@ namespace Lumina
                 const char* TypeEnd   = TypeLabel.data() + TypeLabel.size();
                 const ImVec2 TypeSize = ImGui::CalcTextSize(TypeBegin, TypeEnd, false, TileSize);
 
-                const ImVec2 TypePos(LabelPos.x + (TileSize - std::min(TypeSize.x, TileSize)) * 0.5f,
+                const ImVec2 TypePos(LabelPos.x + (TileSize - Math::Min(TypeSize.x, TileSize)) * 0.5f,
                                      LabelPos.y + GLabelHeight);
                 const ImVec4 TypeClip(LabelPos.x, TypePos.y, LabelPos.x + TileSize, TypePos.y + TypeBandHeight);
 
@@ -228,7 +229,7 @@ namespace Lumina
                                 && MarqueeMin.y <= CellMax.y && MarqueeMax.y >= CellMin.y;
 
             const bool bInBase = bMarqueeAdditive
-                && std::find(MarqueeBaseSelection.begin(), MarqueeBaseSelection.end(), Item) != MarqueeBaseSelection.end();
+                && Algo::Find(MarqueeBaseSelection.begin(), MarqueeBaseSelection.end(), Item) != MarqueeBaseSelection.end();
 
             const bool bShouldSelect = bOverlaps || bInBase;
             if (bShouldSelect != Item->IsSelected())
@@ -263,7 +264,7 @@ namespace Lumina
 
         // Match the fixed label band exactly: the field, one item spacing, then filler.
         const float Spacing = ImGui::GetStyle().ItemSpacing.y;
-        const float Filler  = std::max(1.0f, GLabelHeight - Spacing - FrameHeight);
+        const float Filler  = Math::Max(1.0f, GLabelHeight - Spacing - FrameHeight);
         ImGui::Dummy(ImVec2(TileSize, Filler));
 
         if (bActive)
@@ -311,7 +312,7 @@ namespace Lumina
         if (Item != nullptr)
         {
             const FStringView Name = Item->GetCachedDisplayName();
-            const size_t Length = std::min(Name.size(), sizeof(RenameBuffer) - 1);
+            const size_t Length = Math::Min(Name.size(), sizeof(RenameBuffer) - 1);
             memcpy(RenameBuffer, Name.data(), Length);
             RenameBuffer[Length] = 0;
         }
@@ -586,8 +587,8 @@ namespace Lumina
         const ImVec2 Anchor(ContentOrigin.x + MarqueeAnchorContent.x, ContentOrigin.y + MarqueeAnchorContent.y);
         const ImVec2 Cursor = ImGui::GetIO().MousePos;
 
-        OutMin = ImVec2(std::min(Anchor.x, Cursor.x), std::min(Anchor.y, Cursor.y));
-        OutMax = ImVec2(std::max(Anchor.x, Cursor.x), std::max(Anchor.y, Cursor.y));
+        OutMin = ImVec2(Math::Min(Anchor.x, Cursor.x), Math::Min(Anchor.y, Cursor.y));
+        OutMax = ImVec2(Math::Max(Anchor.x, Cursor.x), Math::Max(Anchor.y, Cursor.y));
         return true;
     }
 
@@ -654,14 +655,14 @@ namespace Lumina
         
         if (!bWasSelected)
         {
-            DEBUG_ASSERT(std::find(Selections.begin(), Selections.end(), Item) == Selections.end());
+            DEBUG_ASSERT(Algo::Find(Selections.begin(), Selections.end(), Item) == Selections.end());
             Selections.push_back(Item);
             Context.ItemSelectedFunction(Item);
             Item->bSelected = true;
         }
         else
         {
-            auto It = std::remove(Selections.begin(), Selections.end(), Item);
+            auto It = Algo::Remove(Selections.begin(), Selections.end(), Item);
             Selections.erase(It);
             Item->bSelected = false;
         }
@@ -671,13 +672,13 @@ namespace Lumina
 
     void FTileViewWidget::SetSelectionAnchor(const FTileViewItem* Item)
     {
-        const auto Found = std::find(ListItems.begin(), ListItems.end(), Item);
+        const auto Found = Algo::Find(ListItems.begin(), ListItems.end(), Item);
         SelectionAnchorIndex = Found == ListItems.end() ? -1 : (int32)std::distance(ListItems.begin(), Found);
     }
 
     void FTileViewWidget::SelectRangeTo(FTileViewItem* Item, const FTileViewContext& Context)
     {
-        const auto Found = std::find(ListItems.begin(), ListItems.end(), Item);
+        const auto Found = Algo::Find(ListItems.begin(), ListItems.end(), Item);
         if (Found == ListItems.end())
         {
             return;

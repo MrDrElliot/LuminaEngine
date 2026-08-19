@@ -171,38 +171,13 @@ namespace Lumina::Hash
 	};
 
 	template<typename T>
-	concept HashStdHasher = requires(const T & Value)
-	{
-		{ std::hash<T>()(Value) } -> std::convertible_to<size_t>;
-	};
-
-	/**
-	 * Strictly ordered fallbacks: GetTypeHash, then std::hash, then an enum's underlying type.
-	 */
-	template<typename T>
-	requires HasHasher<T>
 	size_t GetHash(const T& Value) noexcept
 	{
+		static_assert(HasHasher<T>, "No GetTypeHash for this type. Declare one beside it so ADL finds it.");
 		return GetTypeHash(Value);
 	}
 
-	template <typename T>
-	requires (!HasHasher<T> && HashStdHasher<T>)
-	size_t GetHash(const T& value) noexcept
-	{
-		return std::hash<T>()(value);
-	}
-
-	template <typename T>
-	requires std::is_enum_v<T> && (!HasHasher<T>) && (!HashStdHasher<T>)
-	size_t GetHash(const T& value) noexcept
-	{
-		using UnderlyingType = std::underlying_type_t<T>;
-		return std::hash<UnderlyingType>()(static_cast<UnderlyingType>(value));
-	}
-
-	// All three overloads funnel through the one HashCombine(size_t&, size_t) above, so they share its
-	// mixing and cannot drift from each other.
+	// Funnels through the one HashCombine(size_t&, size_t) above, so the two cannot drift apart.
 	template <class T>
 	void HashCombine(size_t& Seed, const T& V) noexcept
 	{

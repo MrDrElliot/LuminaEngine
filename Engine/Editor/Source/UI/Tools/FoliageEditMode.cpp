@@ -22,8 +22,8 @@ namespace Lumina
     {
         void BuildRayFromScreen(const SCameraComponent& Camera, ImVec2 PixelWithinViewport, ImVec2 ViewportSize, FVector3& OutOrigin, FVector3& OutDir)
         {
-            const float W = std::max(ViewportSize.x, 1.0f);
-            const float H = std::max(ViewportSize.y, 1.0f);
+            const float W = Math::Max(ViewportSize.x, 1.0f);
+            const float H = Math::Max(ViewportSize.y, 1.0f);
 
             const float Sx = (PixelWithinViewport.x / W) * 2.0f - 1.0f;
             const float Sy = 1.0f - (PixelWithinViewport.y / H) * 2.0f;
@@ -195,7 +195,7 @@ namespace Lumina
         PaintAccumulator += TargetPerSec * DeltaSeconds;
 
         int32 Attempts = (int32)PaintAccumulator;
-        Attempts = std::min(Attempts, 256);
+        Attempts = Math::Min(Attempts, 256);
         PaintAccumulator -= (float)Attempts;
         if (Attempts <= 0)
         {
@@ -462,7 +462,7 @@ namespace Lumina
         if (ImGui::Button("Remove"))
         {
             Foliage.Instances.erase(
-                std::remove_if(Foliage.Instances.begin(), Foliage.Instances.end(),
+                Algo::RemoveIf(Foliage.Instances.begin(), Foliage.Instances.end(),
                     [this](const SFoliageInstance& Inst) { return Inst.TypeIndex == ActiveType; }),
                 Foliage.Instances.end());
             // Re-index instances that pointed past the removed type.
@@ -474,14 +474,14 @@ namespace Lumina
                 }
             }
             Foliage.Types.erase(Foliage.Types.begin() + ActiveType);
-            ActiveType = std::min(ActiveType, (int32)Foliage.Types.size() - 1);
+            ActiveType = Math::Min(ActiveType, (int32)Foliage.Types.size() - 1);
             // Instances were removed and the rest re-indexed; without this the render cache keeps drawing
             // the deleted type's instances until some other edit happens to bump the version.
             MarkFoliageDirty(World, Foliage);
         }
         ImGui::EndDisabled();
 
-        ActiveType = std::clamp(ActiveType, 0, std::max((int32)Foliage.Types.size() - 1, 0));
+        ActiveType = Math::Clamp(ActiveType, 0, Math::Max((int32)Foliage.Types.size() - 1, 0));
         RebindTypeSettings(World, Foliage);
 
         if (!Foliage.IsValidType(ActiveType))
@@ -515,8 +515,8 @@ namespace Lumina
         }
 
         // Bracket keys resize the brush.
-        if (ImGui::IsKeyPressed(ImGuiKey_LeftBracket, true))  { Radius = std::max(16.0f, Radius / 1.1f); }
-        if (ImGui::IsKeyPressed(ImGuiKey_RightBracket, true)) { Radius = std::min(8192.0f, Radius * 1.1f); }
+        if (ImGui::IsKeyPressed(ImGuiKey_LeftBracket, true))  { Radius = Math::Max(16.0f, Radius / 1.1f); }
+        if (ImGui::IsKeyPressed(ImGuiKey_RightBracket, true)) { Radius = Math::Min(8192.0f, Radius * 1.1f); }
 
         const ImVec2 MousePos = ImGui::GetMousePos();
         const ImVec2 Local    = ImVec2(MousePos.x - ViewportScreenOrigin.x, MousePos.y - ViewportScreenOrigin.y);
@@ -569,7 +569,7 @@ namespace Lumina
             bTransactionOpen = true;
         }
 
-        const float RealDelta = std::max(ImGui::GetIO().DeltaTime, 1.0f / 240.0f);
+        const float RealDelta = Math::Max(ImGui::GetIO().DeltaTime, 1.0f / 240.0f);
 
         const uint32 VersionBefore = Foliage->InstancesVersion;
 

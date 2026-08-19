@@ -1,3 +1,5 @@
+#include "Containers/StringFormat.h"
+#include <iterator>
 #include "CoreTypeCustomization.h"
 
 #include "imgui.h"
@@ -58,7 +60,7 @@ namespace Lumina
         const float FieldW = Avail > 1.0f ? Avail : 1.0f;
 
         FFixedString Label;
-        std::format_to(std::back_inserter(Label), "{}##skey",
+        AppendFormat(Label, "{}##skey",
             bCapturing ? "Press a key..." : KeyBindingText(DisplayValue).c_str());
 
         if (ImGui::Button(Label.c_str(), ImVec2(FieldW, Height)) && !bCapturing)

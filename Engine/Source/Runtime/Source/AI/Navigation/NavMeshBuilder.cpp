@@ -52,10 +52,10 @@ namespace Lumina::NavMeshBuilder
             const int32 BorderVoxels = (int32)std::ceil(In.Settings.AgentRadius / In.Settings.CellSize) + 3;
             Grid.BorderSize = (float)BorderVoxels * In.Settings.CellSize;
             const FVector3 Span = In.BoundsMax - In.BoundsMin;
-            Grid.TilesX = (int32)std::ceil(std::max(Span.x, 0.0f) / Grid.TileWorldSize);
-            Grid.TilesY = (int32)std::ceil(std::max(Span.z, 0.0f) / Grid.TileWorldSize);
-            Grid.TilesX = std::max(Grid.TilesX, 1);
-            Grid.TilesY = std::max(Grid.TilesY, 1);
+            Grid.TilesX = (int32)std::ceil(Math::Max(Span.x, 0.0f) / Grid.TileWorldSize);
+            Grid.TilesY = (int32)std::ceil(Math::Max(Span.z, 0.0f) / Grid.TileWorldSize);
+            Grid.TilesX = Math::Max(Grid.TilesX, 1);
+            Grid.TilesY = Math::Max(Grid.TilesY, 1);
             return Grid;
         }
 
@@ -74,14 +74,14 @@ namespace Lumina::NavMeshBuilder
             const FVector3& A = In.Vertices[In.Indices[Tri * 3 + 0]];
             const FVector3& B = In.Vertices[In.Indices[Tri * 3 + 1]];
             const FVector3& C = In.Vertices[In.Indices[Tri * 3 + 2]];
-            const float MinX = std::min(A.x, std::min(B.x, C.x)) - Grid.BorderSize;
-            const float MaxX = std::max(A.x, std::max(B.x, C.x)) + Grid.BorderSize;
-            const float MinZ = std::min(A.z, std::min(B.z, C.z)) - Grid.BorderSize;
-            const float MaxZ = std::max(A.z, std::max(B.z, C.z)) + Grid.BorderSize;
-            TX0 = std::clamp((int32)std::floor((MinX - Grid.Origin.x) / Grid.TileWorldSize), 0, Grid.TilesX - 1);
-            TX1 = std::clamp((int32)std::floor((MaxX - Grid.Origin.x) / Grid.TileWorldSize), 0, Grid.TilesX - 1);
-            TY0 = std::clamp((int32)std::floor((MinZ - Grid.Origin.z) / Grid.TileWorldSize), 0, Grid.TilesY - 1);
-            TY1 = std::clamp((int32)std::floor((MaxZ - Grid.Origin.z) / Grid.TileWorldSize), 0, Grid.TilesY - 1);
+            const float MinX = Math::Min(A.x, Math::Min(B.x, C.x)) - Grid.BorderSize;
+            const float MaxX = Math::Max(A.x, Math::Max(B.x, C.x)) + Grid.BorderSize;
+            const float MinZ = Math::Min(A.z, Math::Min(B.z, C.z)) - Grid.BorderSize;
+            const float MaxZ = Math::Max(A.z, Math::Max(B.z, C.z)) + Grid.BorderSize;
+            TX0 = Math::Clamp((int32)std::floor((MinX - Grid.Origin.x) / Grid.TileWorldSize), 0, Grid.TilesX - 1);
+            TX1 = Math::Clamp((int32)std::floor((MaxX - Grid.Origin.x) / Grid.TileWorldSize), 0, Grid.TilesX - 1);
+            TY0 = Math::Clamp((int32)std::floor((MinZ - Grid.Origin.z) / Grid.TileWorldSize), 0, Grid.TilesY - 1);
+            TY1 = Math::Clamp((int32)std::floor((MaxZ - Grid.Origin.z) / Grid.TileWorldSize), 0, Grid.TilesY - 1);
         }
 
         void BuildTileBins(const FNavBuildInput& In, const FTileGrid& Grid, FTileBins& Out)
@@ -462,8 +462,8 @@ namespace Lumina::NavMeshBuilder
         Grid.TileWorldSize = BaseLayout.TileWorldSize;
         const int32 BorderVoxels = (int32)std::ceil(Input.Settings.AgentRadius / Input.Settings.CellSize) + 3;
         Grid.BorderSize = (float)BorderVoxels * Input.Settings.CellSize;
-        Grid.TilesX = std::max(1, (int32)std::ceil((Input.BoundsMax.x - Input.BoundsMin.x) / Grid.TileWorldSize));
-        Grid.TilesY = std::max(1, (int32)std::ceil((Input.BoundsMax.z - Input.BoundsMin.z) / Grid.TileWorldSize));
+        Grid.TilesX = Math::Max(1, (int32)std::ceil((Input.BoundsMax.x - Input.BoundsMin.x) / Grid.TileWorldSize));
+        Grid.TilesY = Math::Max(1, (int32)std::ceil((Input.BoundsMax.z - Input.BoundsMin.z) / Grid.TileWorldSize));
 
         // Single tile: cull the input to just this tile's overlapping triangles.
         const int32 NumTris = (int32)(Input.Indices.size() / 3);

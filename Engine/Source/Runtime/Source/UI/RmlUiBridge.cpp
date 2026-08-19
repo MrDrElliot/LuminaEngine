@@ -1,4 +1,5 @@
-﻿#include "RuntimePCH.h"
+﻿#include "Platform/Time/PlatformTime.h"
+#include "RuntimePCH.h"
 #include "RmlUiBridge.h"
 
 #include "RmlUiFileInterface.h"
@@ -108,8 +109,7 @@ namespace Lumina::RmlUi
             static FMutex Mutex;
             static THashMap<FString, double> LastShown;
 
-            const double Now = std::chrono::duration<double>(
-                std::chrono::steady_clock::now().time_since_epoch()).count();
+            const double Now = PlatformTime::Seconds();
 
             const FString Key(Message.c_str(), Message.size());
             {
@@ -144,12 +144,11 @@ namespace Lumina::RmlUi
         class FLuminaSystemInterface final : public Rml::SystemInterface
         {
         public:
-            FLuminaSystemInterface() : StartTime(std::chrono::steady_clock::now()) {}
+            FLuminaSystemInterface() : StartTime(PlatformTime::Seconds()) {}
 
             double GetElapsedTime() override
             {
-                using namespace std::chrono;
-                return duration<double>(steady_clock::now() - StartTime).count();
+                return PlatformTime::Seconds() - StartTime;
             }
 
             bool LogMessage(Rml::Log::Type Type, const Rml::String& Message) override
@@ -232,7 +231,7 @@ namespace Lumina::RmlUi
             }
 
         private:
-            std::chrono::steady_clock::time_point StartTime;
+            double StartTime = 0.0;
         };
 
         // Editor preview context not bound to any world; tool owns the target image.
@@ -1021,7 +1020,7 @@ namespace Lumina::RmlUi
             constexpr float NominalHeight = 1080.0f;
             UI->Context->SetDimensions(Rml::Vector2i(int(LayoutSize.x), int(LayoutSize.y)));
 
-            const float DpRatio = std::max(1.0f, float(LayoutSize.y) / NominalHeight);
+            const float DpRatio = Math::Max(1.0f, float(LayoutSize.y) / NominalHeight);
             UI->Context->SetDensityIndependentPixelRatio(DpRatio);
         }
         UI->Context->Update();
@@ -1138,7 +1137,7 @@ namespace Lumina::RmlUi
             }
 
             R.Context->SetDimensions(Rml::Vector2i(int(Width), int(Height)));
-            R.Context->SetDensityIndependentPixelRatio(std::max(0.1f, float(Height) / 1080.0f));
+            R.Context->SetDensityIndependentPixelRatio(Math::Max(0.1f, float(Height) / 1080.0f));
             R.Context->Update();
 
             // RmlUi sets the next-update timeout to infinity at the start of Update and lowers it when
@@ -1265,7 +1264,7 @@ namespace Lumina::RmlUi
             {
                 E->Context->SetDimensions(Rml::Vector2i(int(E->Size.x), int(E->Size.y)));
                 // Editor contexts use caller-supplied DPI; the world heuristic is too small for previews <1080px.
-                E->Context->SetDensityIndependentPixelRatio(std::max(0.1f, E->DpiScale));
+                E->Context->SetDensityIndependentPixelRatio(Math::Max(0.1f, E->DpiScale));
             }
             E->Context->Update();
         }

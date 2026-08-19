@@ -1,11 +1,11 @@
 #include <gtest/gtest.h>
 #include <algorithm>
-#include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <string>
 #include <vector>
+#include "Platform/Time/PlatformTime.h"
 #include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "Platform/Filesystem/PlatformFilesystem.h"
@@ -14,11 +14,9 @@ using namespace Lumina;
 
 namespace
 {
-    using FClock = std::chrono::steady_clock;
-
-    double Millis(FClock::time_point Start, FClock::time_point End)
+    double Millis(Lumina::uint64 Start, Lumina::uint64 End)
     {
-        return std::chrono::duration<double, std::milli>(End - Start).count();
+        return Lumina::PlatformTime::ToMilliseconds(End - Start);
     }
 
     struct FWalkResult
@@ -122,19 +120,19 @@ TEST(FilesystemBench, RecursiveWalkMatchesStdFilesystemAndIsFaster)
 
     constexpr int32 kIterations = 5;
 
-    const FClock::time_point StdStart = FClock::now();
+    const Lumina::uint64 StdStart = Lumina::PlatformTime::Cycles();
     for (int32 Index = 0; Index < kIterations; ++Index)
     {
         WalkWithStdFilesystem(Root);
     }
-    const double StdMillis = Millis(StdStart, FClock::now()) / kIterations;
+    const double StdMillis = Millis(StdStart, Lumina::PlatformTime::Cycles()) / kIterations;
 
-    const FClock::time_point OurStart = FClock::now();
+    const Lumina::uint64 OurStart = Lumina::PlatformTime::Cycles();
     for (int32 Index = 0; Index < kIterations; ++Index)
     {
         WalkWithLumina(Root);
     }
-    const double OurMillis = Millis(OurStart, FClock::now()) / kIterations;
+    const double OurMillis = Millis(OurStart, Lumina::PlatformTime::Cycles()) / kIterations;
 
     std::printf("[ WALK     ] %zu entries under %s\n", Reference.Paths.size(), Root.c_str());
     std::printf("[ WALK     ] std::filesystem %8.3f ms\n", StdMillis);
@@ -165,7 +163,7 @@ TEST(FilesystemBench, SmallFileReadsBeatIfstream)
     }
 
     uint64 StreamBytes = 0;
-    const FClock::time_point StreamStart = FClock::now();
+    const Lumina::uint64 StreamStart = Lumina::PlatformTime::Cycles();
     for (const std::string& Path : Files)
     {
         std::ifstream File(Path, std::ios::binary | std::ios::ate);
@@ -181,10 +179,10 @@ TEST(FilesystemBench, SmallFileReadsBeatIfstream)
         File.read(Data.data(), Size);
         StreamBytes += static_cast<uint64>(Size);
     }
-    const double StreamMillis = Millis(StreamStart, FClock::now());
+    const double StreamMillis = Millis(StreamStart, Lumina::PlatformTime::Cycles());
 
     uint64 NativeBytes = 0;
-    const FClock::time_point NativeStart = FClock::now();
+    const Lumina::uint64 NativeStart = Lumina::PlatformTime::Cycles();
     for (const std::string& Path : Files)
     {
         TVector<uint8> Data;
@@ -193,7 +191,7 @@ TEST(FilesystemBench, SmallFileReadsBeatIfstream)
             NativeBytes += Data.size();
         }
     }
-    const double NativeMillis = Millis(NativeStart, FClock::now());
+    const double NativeMillis = Millis(NativeStart, Lumina::PlatformTime::Cycles());
 
     EXPECT_EQ(NativeBytes, StreamBytes);
 
@@ -226,7 +224,7 @@ TEST(FilesystemBench, StatBeatsIndividualFilesystemQueries)
     }
 
     uint64 StdTotal = 0;
-    const FClock::time_point StdStart = FClock::now();
+    const Lumina::uint64 StdStart = Lumina::PlatformTime::Cycles();
     for (const std::string& Path : Files)
     {
         std::error_code EC;
@@ -235,10 +233,10 @@ TEST(FilesystemBench, StatBeatsIndividualFilesystemQueries)
             StdTotal += std::filesystem::file_size(Path, EC);
         }
     }
-    const double StdMillis = Millis(StdStart, FClock::now());
+    const double StdMillis = Millis(StdStart, Lumina::PlatformTime::Cycles());
 
     uint64 OurTotal = 0;
-    const FClock::time_point OurStart = FClock::now();
+    const Lumina::uint64 OurStart = Lumina::PlatformTime::Cycles();
     for (const std::string& Path : Files)
     {
         const Filesystem::FFileStat Info = Filesystem::Stat(FStringView(Path.data(), Path.size()));
@@ -247,7 +245,7 @@ TEST(FilesystemBench, StatBeatsIndividualFilesystemQueries)
             OurTotal += Info.Size;
         }
     }
-    const double OurMillis = Millis(OurStart, FClock::now());
+    const double OurMillis = Millis(OurStart, Lumina::PlatformTime::Cycles());
 
     EXPECT_EQ(OurTotal, StdTotal);
 
@@ -260,9 +258,9 @@ TEST(FilesystemBench, StatBeatsIndividualFilesystemQueries)
 
 namespace
 {
-    double NanosPerOp(FClock::time_point Start, FClock::time_point End, size_t Ops)
+    double NanosPerOp(Lumina::uint64 Start, Lumina::uint64 End, size_t Ops)
     {
-        return std::chrono::duration<double, std::nano>(End - Start).count() / (double)Ops;
+        return (Lumina::PlatformTime::ToSeconds(End - Start) * 1e9) / (double)Ops;
     }
 }
 
@@ -282,19 +280,19 @@ TEST(FilesystemBench, ResolveVirtualPathCost)
     constexpr size_t kIterations = 1000000;
     size_t Sink = 0;
 
-    const FClock::time_point ShortStart = FClock::now();
+    const Lumina::uint64 ShortStart = Lumina::PlatformTime::Cycles();
     for (size_t Index = 0; Index < kIterations; ++Index)
     {
         Sink += Mount.ResolveVirtualPath(FStringView(Short.data(), Short.size())).size();
     }
-    const double ShortNanos = NanosPerOp(ShortStart, FClock::now(), kIterations);
+    const double ShortNanos = NanosPerOp(ShortStart, Lumina::PlatformTime::Cycles(), kIterations);
 
-    const FClock::time_point LongStart = FClock::now();
+    const Lumina::uint64 LongStart = Lumina::PlatformTime::Cycles();
     for (size_t Index = 0; Index < kIterations; ++Index)
     {
         Sink += Mount.ResolveVirtualPath(FStringView(Long.data(), Long.size())).size();
     }
-    const double LongNanos = NanosPerOp(LongStart, FClock::now(), kIterations);
+    const double LongNanos = NanosPerOp(LongStart, Lumina::PlatformTime::Cycles(), kIterations);
 
     EXPECT_GT(Sink, 0u);
 

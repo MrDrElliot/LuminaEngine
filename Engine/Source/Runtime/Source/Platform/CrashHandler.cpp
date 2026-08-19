@@ -1,9 +1,9 @@
+#include "Core/Threading/Thread.h"
 #include "RuntimePCH.h"
 #include "Platform/CrashHandler.h"
 
 #include <atomic>
 #include <cstring>
-#include <mutex>
 
 #include "Paths/Paths.h"
 #include "Platform/Process/PlatformProcess.h"
@@ -21,7 +21,7 @@ namespace Lumina::CrashHandler
         std::atomic<uint32> GActive{ 0 };
         std::atomic<uint32> GLengths[2] = {};
 
-        std::mutex GPublishMutex;
+        FMutex GPublishMutex;
 
         void Publish(const char* Chars, uint32 Length)
         {
@@ -30,7 +30,7 @@ namespace Lumina::CrashHandler
                 Length = GMaxDirectoryChars - 1;
             }
 
-            std::scoped_lock Lock(GPublishMutex);
+            FScopeLock Lock(GPublishMutex);
 
             const uint32 Next = 1 - GActive.load(std::memory_order_relaxed);
             std::memcpy(GDirectories[Next], Chars, Length);
@@ -43,8 +43,8 @@ namespace Lumina::CrashHandler
         // Install() warms this so the crash path is never the first caller, which would allocate.
         void EnsureDefault()
         {
-            static std::once_flag Once;
-            std::call_once(Once, []
+            static FOnceFlag Once;
+            CallOnce(Once, []
             {
                 FString ExePath = Platform::GetCurrentProcessPath();
                 Paths::Normalize(ExePath);

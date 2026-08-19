@@ -1,20 +1,67 @@
 ﻿#pragma once
-#include <mutex>
-#include <shared_mutex>
-#include <thread>
+#include <type_traits>
+#include <utility>
+
+#include "Containers/Function.h"
+#include "Core/Threading/Sync.h"
 #include "Platform/GenericPlatform.h"
 
 
 namespace Lumina
 {
-    using FThread               = std::thread;
-    using FSharedMutex          = std::shared_mutex;
-    using FMutex                = std::mutex;
-    using FRecursiveMutex       = std::recursive_mutex;
-    using FScopeLock            = std::scoped_lock<FMutex>;
-    using FReadScopeLock        = std::shared_lock<FSharedMutex>;
-    using FWriteScopeLock       = std::unique_lock<FSharedMutex>;
-    using FRecursiveScopeLock   = std::scoped_lock<FRecursiveMutex>;
+    using FScopeLock            = TScopeLock<FMutex>;
+    using FWriteScopeLock       = TScopeLock<FSharedMutex>;
+    using FRecursiveScopeLock   = TScopeLock<FRecursiveMutex>;
+
+    /** An OS thread that owns its callable; join or detach it before the handle goes away. */
+    class RUNTIME_API FThread
+    {
+    public:
+
+        FThread() noexcept = default;
+
+        template <typename TCallable, typename... TArgs>
+        requires (!std::is_same_v<std::decay_t<TCallable>, FThread>)
+        explicit FThread(TCallable&& Body, TArgs&&... Args)
+        {
+            Start(new TMoveOnlyFunction<void()>(
+                [Callable = std::decay_t<TCallable>(std::forward<TCallable>(Body)),
+                 ...Arguments = std::decay_t<TArgs>(std::forward<TArgs>(Args))]() mutable
+                {
+                    Invoke(Callable, Arguments...);
+                }));
+        }
+
+        FThread(FThread&& Other) noexcept : Handle(Other.Handle), Id(Other.Id)
+        {
+            Other.Handle = nullptr;
+            Other.Id = 0;
+        }
+
+        FThread& operator=(FThread&& Other) noexcept;
+
+        FThread(const FThread&) = delete;
+        FThread& operator=(const FThread&) = delete;
+
+        ~FThread();
+
+        NODISCARD bool Joinable() const noexcept { return Handle != nullptr; }
+        NODISCARD uint64 GetId() const noexcept { return Id; }
+
+        void Join() noexcept;
+        void Detach() noexcept;
+
+        FORCEINLINE bool joinable() const noexcept { return Joinable(); }
+        FORCEINLINE void join() noexcept { Join(); }
+        FORCEINLINE void detach() noexcept { Detach(); }
+
+    private:
+
+        void Start(TMoveOnlyFunction<void()>* Body);
+
+        void*  Handle = nullptr;
+        uint64 Id = 0;
+    };
 
     namespace Threading
     {

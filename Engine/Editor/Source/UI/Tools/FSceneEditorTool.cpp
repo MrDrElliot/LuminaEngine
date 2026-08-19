@@ -1,4 +1,5 @@
 ﻿#include "FSceneEditorTool.h"
+#include <algorithm>
 #include "Scripting/DotNet/DotNetHost.h"
 
 #include <execution>
@@ -720,7 +721,7 @@ namespace Lumina
                 Pending.push_back({ Component, Struct, Struct, Struct->MakeDisplayName().c_str(), Move(Others) });
             });
 
-            std::sort(Pending.begin(), Pending.end(), [&](const FPendingRow& LHS, const FPendingRow& RHS)
+            Algo::Sort(Pending.begin(), Pending.end(), [&](const FPendingRow& LHS, const FPendingRow& RHS)
             {
                 // Name first, Transform second, everything else alphabetical.
                 auto Priority = [](const FPendingRow& Row) -> uint32
@@ -1214,7 +1215,7 @@ namespace Lumina
         }
 
         RemoveEntityFromOutliner(Entity);
-        PendingOutlinerAdds.erase(std::remove(PendingOutlinerAdds.begin(), PendingOutlinerAdds.end(), Entity), PendingOutlinerAdds.end());
+        PendingOutlinerAdds.erase(Algo::Remove(PendingOutlinerAdds.begin(), PendingOutlinerAdds.end(), Entity), PendingOutlinerAdds.end());
 
         // Skipped during a restore, which recreates every entity and reloads the table from the snapshot.
         if (!bRestoringTransaction)
@@ -1395,7 +1396,7 @@ namespace Lumina
             Ordered.push_back(&Folder);
         }
 
-        std::sort(Ordered.begin(), Ordered.end(), [Folders](const FSceneFolder* LHS, const FSceneFolder* RHS)
+        Algo::Sort(Ordered.begin(), Ordered.end(), [Folders](const FSceneFolder* LHS, const FSceneFolder* RHS)
         {
             const int32 LHSDepth = GetFolderDepth(*Folders, LHS->ID);
             const int32 RHSDepth = GetFolderDepth(*Folders, RHS->ID);
@@ -2209,7 +2210,7 @@ namespace Lumina
             FindOrAddCategory(CategoryName).Entries.push_back(NewEntry);
         }
 
-        std::sort(Categories.begin(), Categories.end(), [](const FComponentCategory& LHS, const FComponentCategory& RHS)
+        Algo::Sort(Categories.begin(), Categories.end(), [](const FComponentCategory& LHS, const FComponentCategory& RHS)
         {
             // Push "General" to the bottom so categorized buckets surface first.
             const bool bLhsGeneral = (LHS.Name == DefaultCategoryName);
@@ -2233,7 +2234,7 @@ namespace Lumina
             {
                 return E.Struct->GetName().ToString();
             };
-            std::sort(Category.Entries.begin(), Category.Entries.end(), [&](const FComponentEntry& LHS, const FComponentEntry& RHS)
+            Algo::Sort(Category.Entries.begin(), Category.Entries.end(), [&](const FComponentEntry& LHS, const FComponentEntry& RHS)
             {
                 return EntryName(LHS) < EntryName(RHS);
             });
@@ -3232,7 +3233,7 @@ namespace Lumina
                         ImGui::TableNextRow();
                         ImGui::TableNextColumn();
 
-                        auto It = std::find(EntityFilterState.ComponentFilters.begin(),
+                        auto It = Algo::Find(EntityFilterState.ComponentFilters.begin(),
                             EntityFilterState.ComponentFilters.end(), StructType->GetName());
 
                         bool bIsFiltered = (It != EntityFilterState.ComponentFilters.end());
@@ -3450,7 +3451,7 @@ namespace Lumina
                             }
                         }
 
-                        std::sort(FilteredPrefabs.begin(), FilteredPrefabs.end(), [](FAssetData* LHS, FAssetData* RHS)
+                        Algo::Sort(FilteredPrefabs.begin(), FilteredPrefabs.end(), [](FAssetData* LHS, FAssetData* RHS)
                         {
                             return LHS->AssetName.ToString() < RHS->AssetName.ToString();
                         });

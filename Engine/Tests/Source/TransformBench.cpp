@@ -1,22 +1,20 @@
 #include <gtest/gtest.h>
 #include <entt/entt.hpp>
+#include "Platform/Time/PlatformTime.h"
 #include "TaskSystem/TaskSystem.h"
 #include "World/Entity/EntityUtils.h"
 #include "World/Entity/Components/DirtyComponent.h"
 #include "World/Entity/Components/RelationshipComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
-#include <chrono>
 #include <cstdio>
 
 using namespace Lumina;
 
 namespace
 {
-    using FClock = std::chrono::steady_clock;
-
-    double Nanos(FClock::time_point Start, FClock::time_point End, size_t Ops)
+    double Nanos(Lumina::uint64 Start, Lumina::uint64 End, size_t Ops)
     {
-        const double Total = std::chrono::duration<double, std::nano>(End - Start).count();
+        const double Total = (Lumina::PlatformTime::ToSeconds(End - Start) * 1e9);
         return Ops > 0 ? Total / (double)Ops : 0.0;
     }
 
@@ -65,18 +63,18 @@ namespace
 
         for (int32 Frame = 0; Frame < Frames; ++Frame)
         {
-            const auto SetStart = FClock::now();
+            const auto SetStart = Lumina::PlatformTime::Cycles();
             for (entt::entity E : Entities)
             {
                 Storage.get(E).SetLocalLocation(FVector3((float)Frame, 0.0f, 0.0f));
             }
-            const auto SetEnd = FClock::now();
+            const auto SetEnd = Lumina::PlatformTime::Cycles();
 
             ECS::Utils::ResolveAllDirtyTransforms(Registry);
-            const auto ResolveEnd = FClock::now();
+            const auto ResolveEnd = Lumina::PlatformTime::Cycles();
 
-            SetTotal     += std::chrono::duration<double, std::nano>(SetEnd - SetStart).count();
-            ResolveTotal += std::chrono::duration<double, std::nano>(ResolveEnd - SetEnd).count();
+            SetTotal     += (Lumina::PlatformTime::ToSeconds(SetEnd - SetStart) * 1e9);
+            ResolveTotal += (Lumina::PlatformTime::ToSeconds(ResolveEnd - SetEnd) * 1e9);
         }
 
         FPhaseTiming Timing;
@@ -138,23 +136,23 @@ TEST(TransformBench, DISABLED_HierarchicalWithPublishMoved)
 
     for (int32 Frame = 0; Frame < Frames; ++Frame)
     {
-        const auto SetStart = FClock::now();
+        const auto SetStart = Lumina::PlatformTime::Cycles();
         for (entt::entity E : Entities)
         {
             Storage.get(E).SetLocalLocation(FVector3((float)Frame, 0.0f, 0.0f));
         }
-        const auto SetEnd = FClock::now();
+        const auto SetEnd = Lumina::PlatformTime::Cycles();
 
         ECS::Utils::ResolveAllDirtyTransforms(Registry);
-        const auto ResolveEnd = FClock::now();
+        const auto ResolveEnd = Lumina::PlatformTime::Cycles();
 
         Drained.clear();
         ECS::Utils::DrainMovedTransforms(Registry, Drained);
-        const auto DrainEnd = FClock::now();
+        const auto DrainEnd = Lumina::PlatformTime::Cycles();
 
-        SetTotal     += std::chrono::duration<double, std::nano>(SetEnd - SetStart).count();
-        ResolveTotal += std::chrono::duration<double, std::nano>(ResolveEnd - SetEnd).count();
-        DrainTotal   += std::chrono::duration<double, std::nano>(DrainEnd - ResolveEnd).count();
+        SetTotal     += (Lumina::PlatformTime::ToSeconds(SetEnd - SetStart) * 1e9);
+        ResolveTotal += (Lumina::PlatformTime::ToSeconds(ResolveEnd - SetEnd) * 1e9);
+        DrainTotal   += (Lumina::PlatformTime::ToSeconds(DrainEnd - ResolveEnd) * 1e9);
     }
 
     const double Ops = (double)(Frames * (int32)Count);
@@ -177,15 +175,15 @@ TEST(TransformBench, DISABLED_ParallelFlatSetters)
     double Total = 0.0;
     for (int32 Frame = 0; Frame < Frames; ++Frame)
     {
-        const auto Start = FClock::now();
+        const auto Start = Lumina::PlatformTime::Cycles();
         Task::ParallelFor(Count, [&](uint32 Index)
         {
             Storage.get(Entities[Index]).SetLocalLocation(FVector3((float)Frame, 0.0f, 0.0f));
         }, 2048);
-        const auto End = FClock::now();
+        const auto End = Lumina::PlatformTime::Cycles();
 
         ECS::Utils::ResolveAllDirtyTransforms(Registry);
-        Total += std::chrono::duration<double, std::nano>(End - Start).count();
+        Total += (Lumina::PlatformTime::ToSeconds(End - Start) * 1e9);
     }
 
     std::printf("\n  parallel flat %u x %d:  set %6.2f ns/op\n",
@@ -208,23 +206,23 @@ TEST(TransformBench, DISABLED_FlatWorldCopyCost)
     double LocalOnly = 0.0;
     for (int32 Frame = 0; Frame < Frames; ++Frame)
     {
-        const auto Start = FClock::now();
+        const auto Start = Lumina::PlatformTime::Cycles();
         for (entt::entity E : Entities)
         {
             Storage.get(E).LocalTransform.SetLocation(FVector3((float)Frame, 0.0f, 0.0f));
         }
-        LocalOnly += std::chrono::duration<double, std::nano>(FClock::now() - Start).count();
+        LocalOnly += (Lumina::PlatformTime::ToSeconds(Lumina::PlatformTime::Cycles() - Start) * 1e9);
     }
 
     double FullSetter = 0.0;
     for (int32 Frame = 0; Frame < Frames; ++Frame)
     {
-        const auto Start = FClock::now();
+        const auto Start = Lumina::PlatformTime::Cycles();
         for (entt::entity E : Entities)
         {
             Storage.get(E).SetLocalLocation(FVector3((float)Frame, 0.0f, 0.0f));
         }
-        FullSetter += std::chrono::duration<double, std::nano>(FClock::now() - Start).count();
+        FullSetter += (Lumina::PlatformTime::ToSeconds(Lumina::PlatformTime::Cycles() - Start) * 1e9);
         ECS::Utils::ResolveAllDirtyTransforms(Registry);
     }
 

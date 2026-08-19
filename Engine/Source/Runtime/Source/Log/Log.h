@@ -1,7 +1,8 @@
 #pragma once
 
 #include <atomic>
-#include <format>
+
+#include "Containers/Format.h"
 
 #include "Containers/RingBuffer.h"
 #include "LogLevel.h"
@@ -50,7 +51,7 @@ namespace Lumina::Logging
 	}
 
 	RUNTIME_API void Dispatch(ELogLevel Level, const char* Text, uint32 Length) noexcept;
-	RUNTIME_API void DispatchFormatted(ELogLevel Level, std::string_view Fmt, std::format_args Args) noexcept;
+	RUNTIME_API void DispatchFormatted(ELogLevel Level, FStringView Fmt, Fmt::FFormatArgs Args) noexcept;
 
 	// Verbatim: no format string is parsed, so braces in the text are harmless.
 	FORCEINLINE void Log(ELogLevel Level, FStringView Text) noexcept
@@ -61,13 +62,14 @@ namespace Lumina::Logging
 		}
 	}
 
-	// Type-erased so <format> is instantiated once in Log.cpp instead of at every call site.
+	// Type-erased so the parser is instantiated once in Format.cpp instead of at every call site.
 	template<typename... TArgs> requires (sizeof...(TArgs) > 0)
-	FORCEINLINE void Log(ELogLevel Level, std::format_string<TArgs...> Fmt, TArgs&&... Args)
+	FORCEINLINE void Log(ELogLevel Level, Fmt::TFormatString<std::decay_t<TArgs>...> Format, TArgs&&... Args)
 	{
 		if (ShouldLog(Level))
 		{
-			DispatchFormatted(Level, Fmt.get(), std::make_format_args(Args...));
+			const Fmt::TFormatArgStore<std::decay_t<TArgs>...> Store(Args...);
+			DispatchFormatted(Level, Format.Get(), Store.View());
 		}
 	}
 
@@ -77,7 +79,8 @@ namespace Lumina::Logging
 	{
 		if (ShouldLog(Level))
 		{
-			DispatchFormatted(Level, "{}", std::make_format_args(Value));
+			const Fmt::TFormatArgStore<std::decay_t<T>> Store(Value);
+			DispatchFormatted(Level, "{}", Store.View());
 		}
 	}
 }

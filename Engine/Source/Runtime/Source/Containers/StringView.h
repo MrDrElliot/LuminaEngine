@@ -2,7 +2,6 @@
 
 #include <compare>
 #include <cstring>
-#include <format>
 #include <iterator>
 #include <string_view>
 
@@ -525,43 +524,8 @@ namespace Lumina::Containers
     }
 }
 
-namespace std
+namespace Lumina
 {
-    template <typename TChar>
-    struct formatter<Lumina::Containers::TStringView<TChar>, TChar> : formatter<basic_string_view<TChar>, TChar>
-    {
-        template <typename TContext>
-        auto format(Lumina::Containers::TStringView<TChar> Value, TContext& Context) const
-        {
-            return formatter<basic_string_view<TChar>, TChar>::format(basic_string_view<TChar>(Value.data(), Value.size()), Context);
-        }
-    };
-
-    template <typename TChar>
-    struct formatter<Lumina::Containers::TCStringView<TChar>, TChar> : formatter<basic_string_view<TChar>, TChar>
-    {
-        template <typename TContext>
-        auto format(Lumina::Containers::TCStringView<TChar> Value, TContext& Context) const
-        {
-            return formatter<basic_string_view<TChar>, TChar>::format(basic_string_view<TChar>(Value.data(), Value.size()), Context);
-        }
-    };
-
-    template <typename TChar>
-    struct hash<Lumina::Containers::TStringView<TChar>>
-    {
-        size_t operator()(Lumina::Containers::TStringView<TChar> Value) const noexcept
-        {
-            return hash<basic_string_view<TChar>>{}(basic_string_view<TChar>(Value.data(), Value.size()));
-        }
-    };
-
-    template <typename TChar>
-    struct hash<Lumina::Containers::TCStringView<TChar>>
-    {
-        size_t operator()(Lumina::Containers::TCStringView<TChar> Value) const noexcept
-        {
-            return hash<basic_string_view<TChar>>{}(basic_string_view<TChar>(Value.data(), Value.size()));
-        }
-    };
+    using FStringView  = Containers::TStringView<char>;
+    using FCStringView = Containers::TCStringView<char>;
 }

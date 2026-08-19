@@ -1,4 +1,5 @@
 ﻿#include "RuntimePCH.h"
+#include <limits>
 #include "ArrayProperty.h"
 #include "Core/Serialization/NetArchive.h"
 #include "Log/Log.h"

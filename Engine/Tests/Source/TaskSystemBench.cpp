@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include "Platform/Time/PlatformTime.h"
 #include "TaskSystem/TaskSystem.h"
 #include "TaskSystem/TaskGraph.h"
 #include "TaskSystem/Task.h"
@@ -10,7 +11,6 @@
 
 #include <algorithm>
 #include <atomic>
-#include <chrono>
 #include <cmath>
 #include <cstdio>
 
@@ -34,11 +34,9 @@ using namespace Lumina;
 
 namespace
 {
-    using Clock = std::chrono::steady_clock;
-
-    double MsSince(Clock::time_point T0)
+    double MsSince(Lumina::uint64 T0)
     {
-        return std::chrono::duration<double, std::milli>(Clock::now() - T0).count();
+        return Lumina::PlatformTime::ToMilliseconds(Lumina::PlatformTime::Cycles() - T0);
     }
 
     // Pure compute, no memory traffic, isolates scheduling + core parallelism from memory bandwidth so
@@ -95,9 +93,9 @@ TEST(TaskBench, EmptyDispatchOverhead)
     for (int i = 0; i < 2000; ++i) Task::ParallelFor(Chunks, Empty, 1); // warm
 
     constexpr int Iters = 50000;
-    const auto T0 = Clock::now();
+    const auto T0 = Lumina::PlatformTime::Cycles();
     for (int i = 0; i < Iters; ++i) Task::ParallelFor(Chunks, Empty, 1);
-    const double NsPerCall = std::chrono::duration<double, std::nano>(Clock::now() - T0).count() / Iters;
+    const double NsPerCall = (Lumina::PlatformTime::ToSeconds(Lumina::PlatformTime::Cycles() - T0) * 1e9) / Iters;
 
     std::printf("[TaskBench] %-40s  %8.0f ns  (%u chunks / %u workers)\n",
         "empty ParallelFor (ns/dispatch)", NsPerCall, Chunks, Workers);
@@ -120,14 +118,14 @@ TEST(TaskBench, StrongScaling_HeavyCompute)
 
     // Serial baseline: same total work. Per-call seed (c) blocks memoization; sink keeps the loop alive.
     volatile double SerialSink = 0.0;
-    const auto S0 = Clock::now();
+    const auto S0 = Lumina::PlatformTime::Cycles();
     double SerialAcc = 0.0;
     for (uint32 c = 0; c < Chunks; ++c) SerialAcc += BusySpin(PerChunk, (double)c);
     SerialSink = SerialAcc;
     const double SerialMs = MsSince(S0);
 
     for (double& P : Partials) P = 0.0;
-    const auto P0 = Clock::now();
+    const auto P0 = Lumina::PlatformTime::Cycles();
     Task::ParallelFor(Chunks, [&](const Task::FParallelRange& R)
     {
         double Acc = 0.0;
@@ -162,7 +160,7 @@ TEST(TaskBench, OverlapEfficiency_BalancedFanout)
 
     // Calibrate ideal: one chunk's serial cost.
     volatile double Sink = 0.0;
-    const auto C0 = Clock::now();
+    const auto C0 = Lumina::PlatformTime::Cycles();
     Sink = BusySpin(PerChunk, 1.0);
     const double OneChunkMs = MsSince(C0);
     const double IdealMs    = OneChunkMs * std::ceil((double)Chunks / (double)Executors);
@@ -178,7 +176,7 @@ TEST(TaskBench, OverlapEfficiency_BalancedFanout)
     for (int r = 0; r < Runs; ++r)
     {
         std::atomic<int> Done{0};
-        const auto T0 = Clock::now();
+        const auto T0 = Lumina::PlatformTime::Cycles();
         Task::ParallelFor(Chunks, [&](uint32 Idx)
         {
             volatile double S = BusySpin(PerChunk, (double)(Idx + r));
@@ -219,7 +217,7 @@ TEST(TaskBench, ColdWakeCadence_PerFramePattern)
     {
         // Idle gap so workers drain and park (simulates the rest of a frame).
         Threading::Sleep(2);
-        const auto T0 = Clock::now();
+        const auto T0 = Lumina::PlatformTime::Cycles();
         Task::ParallelFor(Chunks, [&](uint32 Idx){ Sink = BusySpin(PerChunk, (double)(Idx + f)); }, 1);
         Samples.push_back(MsSince(T0));
     }
@@ -251,7 +249,7 @@ TEST(TaskBench, IterationThroughput)
     for (int i = 0; i < 10; ++i) Task::ParallelFor(4'000'000u, Body, 2048);
     for (uint64& P : Partials) P = 0;
 
-    const auto T0 = Clock::now();
+    const auto T0 = Lumina::PlatformTime::Cycles();
     Task::ParallelFor(N, Body, 4096);
     const double Ms = MsSince(T0);
 
@@ -293,7 +291,7 @@ TEST(TaskBench, GraphFanOutMerge_DrawCommandsShape)
         Graph.AddDependency(Merge, B);
         Graph.AddDependency(Merge, C);
 
-        const auto T0 = Clock::now();
+        const auto T0 = Lumina::PlatformTime::Cycles();
         Graph.Dispatch();
         Graph.Wait();
         return MsSince(T0);
@@ -323,7 +321,7 @@ TEST(TaskBench, NestedParallelThroughput)
     }
     Total.store(0);
 
-    const auto T0 = Clock::now();
+    const auto T0 = Lumina::PlatformTime::Cycles();
     Task::ParallelFor(Outer, [&](uint32)
     {
         Task::ParallelFor(Inner, [&](uint32) { Total.fetch_add(1, std::memory_order_relaxed); }, 16);
@@ -367,7 +365,7 @@ TEST(TaskBench, CoroFanOutMerge_DrawCommandsShape)
 
     auto Run = [&]() -> double
     {
-        const auto T0 = Clock::now();
+        const auto T0 = Lumina::PlatformTime::Cycles();
         Sink = SyncWait(CoBenchFanOutMerge(Workers, PerChunk, &Sink));
         return MsSince(T0);
     };
@@ -415,7 +413,7 @@ TEST(TaskBench, CoroManyInFlightWaiters)
         // Release the gate shortly after the waiters have all suspended.
         Task::Async([P = Move(GateP)]() mutable { Threading::Sleep(2); P.SetValue(); });
 
-        const auto T0 = Clock::now();
+        const auto T0 = Lumina::PlatformTime::Cycles();
         const int Done = SyncWait(CoBenchManyWaiters(N, Move(Gate)));
         const double Ms = MsSince(T0);
         (void)Done;
@@ -464,7 +462,7 @@ TEST(TaskBench, NarrowColdSubmit_WakeFanout)
         TVector<double> One;
         for (int i = 0; i < 32; ++i)
         {
-            const auto T0 = Clock::now();
+            const auto T0 = Lumina::PlatformTime::Cycles();
             OneSink = BusySpin(kNarrowJobIters, (double)i);
             One.push_back(MsSince(T0));
         }
@@ -475,7 +473,7 @@ TEST(TaskBench, NarrowColdSubmit_WakeFanout)
     auto RunOnce = [&]() -> double
     {
         S.Done.store(0, std::memory_order_relaxed);
-        const auto T0 = Clock::now();
+        const auto T0 = Lumina::PlatformTime::Cycles();
         for (uint32 i = 0; i < K; ++i)
         {
             Jobs::RunJob(&NarrowJob, &S, Jobs::EJobPriority::Normal, nullptr, "NarrowColdSubmit");
@@ -544,7 +542,7 @@ TEST(TaskBench, ResumeStorm_ParkedFiberWake)
         while (S.Parked.load(std::memory_order_acquire) < N) { Threading::ThreadYield(); }
         Threading::Sleep(1); // let the last few actually park and the pool settle
 
-        const auto T0 = Clock::now();
+        const auto T0 = Lumina::PlatformTime::Cycles();
         Jobs::DecrementCounter(S.Gate, 1);         // releases all N at once
         Jobs::WaitForCounter(Done, 0);
         const double Ms = MsSince(T0);

@@ -24,10 +24,10 @@ namespace Lumina
         bool bChanged = false;
 
         const float TotalWidth = ImGui::GetContentRegionAvail().x;
-        const float NameWidth  = std::max(120.0f, TotalWidth * 0.30f);
+        const float NameWidth  = Math::Max(120.0f, TotalWidth * 0.30f);
         const float TypeWidth  = 80.0f;
         const float Spacing    = ImGui::GetStyle().ItemSpacing.x;
-        const float ValueWidth = std::max(80.0f, TotalWidth - NameWidth - TypeWidth - Spacing * 2.0f);
+        const float ValueWidth = Math::Max(80.0f, TotalWidth - NameWidth - TypeWidth - Spacing * 2.0f);
 
         ImGui::PushItemWidth(NameWidth);
         if (ImGui::InputText("##Name", NameBuffer, sizeof(NameBuffer), ImGuiInputTextFlags_EnterReturnsTrue))

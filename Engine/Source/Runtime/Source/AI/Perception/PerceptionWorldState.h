@@ -1,6 +1,6 @@
 #pragma once
 
-#include <mutex>
+#include "Core/Threading/Thread.h"
 #include "Core/Math/Math.h"
 #include "Containers/Vector.h"
 #include "AI/Perception/PerceptionTypes.h"
@@ -126,12 +126,12 @@ namespace Lumina
     };
 
     // Per-world perception scratch, stored in the entt registry context. Holds the per-tick source grid and
-    // the queue of event-driven hearing/damage reports. Stored out-of-line by entt (std::mutex is non-movable).
+    // the queue of event-driven hearing/damage reports. Stored out-of-line by entt (FMutex is non-movable).
     struct FPerceptionWorldState
     {
         FPerceptionGrid             SourceGrid;
         TVector<FAIStimulusEvent>   PendingStimuli;   // drained (swap-and-clear) by SPerceptionSystem each tick.
-        std::mutex                  StimuliMutex;     // guards PendingStimuli across the (rare) cross-thread push.
+        FMutex                  StimuliMutex;     // guards PendingStimuli across the (rare) cross-thread push.
     };
 
     namespace Perception
@@ -150,7 +150,7 @@ namespace Lumina
         // Thread-safe enqueue of a hearing/damage report.
         inline void EnqueueStimulus(FPerceptionWorldState& State, const FAIStimulusEvent& Event)
         {
-            std::lock_guard<std::mutex> Lock(State.StimuliMutex);
+            FScopeLock Lock(State.StimuliMutex);
             State.PendingStimuli.push_back(Event);
         }
     }

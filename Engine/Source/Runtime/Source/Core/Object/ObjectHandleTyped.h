@@ -318,26 +318,17 @@ namespace Lumina
     };
 }
 
-namespace std
+namespace Lumina
 {
     template <typename T>
-    struct hash<Lumina::TObjectPtr<T>>
+    NODISCARD FORCEINLINE uint64 GetTypeHash(const TObjectPtr<T>& Object) noexcept
     {
-        size_t operator()(const Lumina::TObjectPtr<T>& Object) const noexcept
-        {
-            return Lumina::Containers::FDefaultHash{}(Object.Get());
-        }
-    };
-}
+        return GetTypeHash(Object.Get());
+    }
 
-namespace std
-{
     template <typename T>
-    struct hash<Lumina::TWeakObjectPtr<T>>
+    NODISCARD FORCEINLINE uint64 GetTypeHash(const TWeakObjectPtr<T>& Object) noexcept
     {
-        size_t operator()(const Lumina::TWeakObjectPtr<T>& Object) const noexcept
-        {
-            return Lumina::Containers::FDefaultHash{}(Object.GetHandle());
-        }
-    };
+        return GetTypeHash(Object.GetHandle());
+    }
 }

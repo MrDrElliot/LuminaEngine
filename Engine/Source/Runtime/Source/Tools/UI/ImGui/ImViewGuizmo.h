@@ -236,7 +236,7 @@ namespace ImViewGuizmo
         if (ctx.isAnimating)
         {
             float elapsedTime = static_cast<float>(ImGui::GetTime()) - ctx.animationStartTime;
-            float t = std::min(1.0f, elapsedTime / style.snapAnimationDuration);
+            float t = Lumina::Math::Min(1.0f, elapsedTime / style.snapAnimationDuration);
             t = 1.0f - (1.0f - t) * (1.0f - t); // ease-out quad
 
             vec3_t currentDir = GizmoMath::normalize(GizmoMath::mix(ctx.animStartDir, ctx.animTargetDir, t));
@@ -280,7 +280,7 @@ namespace ImViewGuizmo
         axes[4] = {4, 2, camBack.z, axisVectors[2]};
         axes[5] = {5, 2, -camBack.z, GizmoMath::multiply_vf(axisVectors[2], -1.0f)};
 
-        std::sort(axes.begin(), axes.end(), [](const GizmoAxis& a, const GizmoAxis& b)
+        Lumina::Algo::Sort(axes.begin(), axes.end(), [](const GizmoAxis& a, const GizmoAxis& b)
         {
             return a.depth < b.depth;
         });
@@ -383,7 +383,7 @@ namespace ImViewGuizmo
 
             if (isPrimary || ctx.hoveredAxisID == axis.id)
             {
-                float textFactor = std::max(0.0f, std::min(1.0f, 1.0f + axis.depth * 2.5f));
+                float textFactor = Lumina::Math::Max(0.0f, Lumina::Math::Min(1.0f, 1.0f + axis.depth * 2.5f));
                 if (textFactor > 0.01f)
                 {
                     ImVec4 textColor = ImGui::ColorConvertU32ToFloat4(style.labelColor);

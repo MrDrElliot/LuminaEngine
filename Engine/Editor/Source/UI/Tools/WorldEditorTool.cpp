@@ -1,3 +1,4 @@
+#include <string>
 #include "WorldEditorTool.h"
 #include "Core/CoreEditorDelegates.h"
 #include "Core/Math/Math.h"
@@ -1469,7 +1470,7 @@ namespace Lumina
             // Fixed "###WorldEditor" rather than anything derived from the world: ImGui identifies
             // the window by what follows it, so opening another level renames this tab where it sits
             // instead of leaving the layout behind and docking a new window somewhere else.
-            CachedWindowName = std::format("{0} {1}###WorldEditor",
+            CachedWindowName = Format("{0} {1}###WorldEditor",
                 GetTitlebarIcon(), Name.c_str()).c_str();
         }
 
@@ -2573,7 +2574,7 @@ namespace Lumina
             char Preview[64];
             ImFormatString(Preview, sizeof(Preview), "%s  %s", Active->GetIcon(), Active->GetDisplayName());
 
-            const float PadY = std::max(ImGui::GetStyle().FramePadding.y, (ButtonSize - ImGui::GetTextLineHeight()) * 0.5f);
+            const float PadY = Math::Max(ImGui::GetStyle().FramePadding.y, (ButtonSize - ImGui::GetTextLineHeight()) * 0.5f);
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, PadY));
 
             const float ComboWidth = ImGui::CalcTextSize(Preview).x + ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x * 2.0f + 8.0f;
@@ -4721,7 +4722,7 @@ namespace Lumina
 
         TVector<CWorld::FSystemInfo> Systems;
         World->GetAllSystems(Systems);
-        std::sort(Systems.begin(), Systems.end(), [](const CWorld::FSystemInfo& A, const CWorld::FSystemInfo& B)
+        Algo::Sort(Systems.begin(), Systems.end(), [](const CWorld::FSystemInfo& A, const CWorld::FSystemInfo& B)
         {
             return strcmp(A.Name.c_str(), B.Name.c_str()) < 0;
         });
@@ -5501,7 +5502,7 @@ namespace Lumina
         }
 
         // Front-to-back so closer labels claim space first.
-        std::sort(Candidates.begin(), Candidates.end(), [](const FCandidate& A, const FCandidate& B)
+        Algo::Sort(Candidates.begin(), Candidates.end(), [](const FCandidate& A, const FCandidate& B)
         {
             return A.DepthSq < B.DepthSq;
         });

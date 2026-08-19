@@ -5,7 +5,6 @@
 #include <initializer_list>
 #include <iterator>
 #include <new>
-#include <functional>
 #include <tuple>
 #include <type_traits>
 #include <utility>
@@ -29,19 +28,13 @@ namespace Lumina::Containers
     {
         using is_transparent = void;
 
-        // GetTypeHash is the extension point, std::hash the fallback. Neither is re-mixed here: a
-        // heterogeneous lookup only finds a key when both spellings hash identically.
+        // Never re-mixed: a heterogeneous lookup only finds a key when both spellings hash identically.
         template <typename T>
         NODISCARD FORCEINLINE uint64 operator()(const T& Key) const noexcept
         {
-            if constexpr (requires { GetTypeHash(Key); })
-            {
-                return GetTypeHash(Key);
-            }
-            else
-            {
-                return static_cast<uint64>(std::hash<T>{}(Key));
-            }
+            static_assert(requires { GetTypeHash(Key); },
+                "No GetTypeHash for this key type. Declare one beside the type so ADL finds it.");
+            return GetTypeHash(Key);
         }
     };
 

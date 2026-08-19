@@ -475,7 +475,7 @@ namespace Lumina
         }
 
         const uint64 FrameNow = FrameCounter;
-        std::sort(Order.begin(), Order.end(), [this, FrameNow](uint32 A, uint32 B)
+        Algo::Sort(Order.begin(), Order.end(), [this, FrameNow](uint32 A, uint32 B)
         {
             return RetentionPriority(Textures[A], FrameNow) < RetentionPriority(Textures[B], FrameNow);
         });
@@ -656,7 +656,7 @@ namespace Lumina
             }
         }
 
-        std::sort(Candidates.begin(), Candidates.end(), [this](uint32 A, uint32 B)
+        Algo::Sort(Candidates.begin(), Candidates.end(), [this](uint32 A, uint32 B)
         {
             auto Score = [this](uint32 Index)
             {

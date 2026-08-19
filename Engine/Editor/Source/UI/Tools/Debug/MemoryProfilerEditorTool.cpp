@@ -1,4 +1,5 @@
-﻿#include "MemoryProfilerEditorTool.h"
+﻿#include "Platform/Time/PlatformTime.h"
+#include "MemoryProfilerEditorTool.h"
 
 #include <cctype>
 #include <cstring>
@@ -573,10 +574,10 @@ namespace Lumina
             }
         }
 
-        std::sort(GPUPurposes.begin(), GPUPurposes.end(),
+        Algo::Sort(GPUPurposes.begin(), GPUPurposes.end(),
             [](const FGPUPurposeRow& A, const FGPUPurposeRow& B) { return A.Total() > B.Total(); });
 
-        std::sort(GPUAllocations.begin(), GPUAllocations.end(),
+        Algo::Sort(GPUAllocations.begin(), GPUAllocations.end(),
             [](const RHI::FGPUAllocation& A, const RHI::FGPUAllocation& B) { return A.Size > B.Size; });
     }
 
@@ -885,10 +886,10 @@ namespace Lumina
 
     void FMemoryProfilerEditorTool::RunAddressSpaceScan()
     {
-        const double Start = Platform::GetTime();
+        const double Start = PlatformTime::Seconds();
         Platform::GetAddressSpaceStats(AddressSpace, bScanHeaps);
-        LastScanCostMs = (Platform::GetTime() - Start) * 1000.0;
-        LastScanTime = Platform::GetTime();
+        LastScanCostMs = (PlatformTime::Seconds() - Start) * 1000.0;
+        LastScanTime = PlatformTime::Seconds();
         bAddressSpaceValid = true;
     }
 
@@ -926,7 +927,7 @@ namespace Lumina
 
         ImGui::SameLine();
         ImGui::TextDisabled("| %u regions, %.1f ms, %.0fs ago",
-            AddressSpace.RegionCount, LastScanCostMs, Platform::GetTime() - LastScanTime);
+            AddressSpace.RegionCount, LastScanCostMs, PlatformTime::Seconds() - LastScanTime);
 
         auto Row = [](const char* Label, uint64 Bytes, const ImVec4& Color, const char* Note)
         {
@@ -1176,7 +1177,7 @@ namespace Lumina
             Rows.push_back(Row);
         }
 
-        std::sort(Rows.begin(), Rows.end(), [this](const FCategoryRow& A, const FCategoryRow& B)
+        Algo::Sort(Rows.begin(), Rows.end(), [this](const FCategoryRow& A, const FCategoryRow& B)
         {
             if (bHasBaseline) { return A.DeltaBytes > B.DeltaBytes; }
             return A.S->LiveBytes > B.S->LiveBytes;
@@ -1726,7 +1727,7 @@ namespace Lumina
                     B ? (int64)S.LiveBytes - (int64)B->LiveBytes : 0,
                     B ? (int64)S.LiveCount - (int64)B->LiveCount : 0 });
             }
-            std::sort(Rows.begin(), Rows.end(), [](const FRow& A, const FRow& B) { return A.S->LiveBytes > B.S->LiveBytes; });
+            Algo::Sort(Rows.begin(), Rows.end(), [](const FRow& A, const FRow& B) { return A.S->LiveBytes > B.S->LiveBytes; });
 
             R += "## CPU memory by category (sorted by live bytes)\n";
             AppendFormat(R, "Baseline set: {}\n\n", bHasBaseline ? "yes (Delta = growth since baseline)" : "no");

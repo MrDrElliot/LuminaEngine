@@ -1,4 +1,5 @@
-﻿#include "RuntimePCH.h"
+﻿#include "Platform/Time/PlatformTime.h"
+#include "RuntimePCH.h"
 #include "RmlUiRenderer.h"
 
 #include "Core/Engine/Engine.h"
@@ -22,7 +23,6 @@
 #include "Renderer/RenderManager.h"
 #include "Renderer/MaterialManager.h"
 
-#include <chrono>
 
 namespace Lumina
 {
@@ -1098,8 +1098,7 @@ namespace Lumina
         }
 
         // Monotonic wall clock drives animated UI materials (GetTime() in-shader).
-        static const auto StartTime = std::chrono::steady_clock::now();
-        const float Time = std::chrono::duration<float>(std::chrono::steady_clock::now() - StartTime).count();
+        const float Time = static_cast<float>(PlatformTime::Seconds());
 
         // Only render brushes referenced this frame (brushes are shared across all
         // contexts; this scopes work to the drawing context). De-dup repeats.

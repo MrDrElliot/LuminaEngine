@@ -49,7 +49,7 @@ namespace Lumina::DataTableUI
             return nullptr;
         }
 
-        std::sort(Candidates.begin(), Candidates.end(), [](CStruct* A, CStruct* B)
+        Algo::Sort(Candidates.begin(), Candidates.end(), [](CStruct* A, CStruct* B)
         {
             return strcmp(A->GetName().c_str(), B->GetName().c_str()) < 0;
         });

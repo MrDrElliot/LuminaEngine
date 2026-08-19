@@ -1,9 +1,9 @@
-﻿#include "RuntimePCH.h"
+﻿#include "Platform/Time/PlatformTime.h"
+#include "RuntimePCH.h"
 #include "JoltJobSystemBridge.h"
 #include "TaskSystem/Scheduler/JobScheduler.h"
 
 #include <thread>
-#include <chrono>
 
 namespace Lumina::Physics
 {
@@ -33,7 +33,7 @@ namespace Lumina::Physics
                 break;
             }
             JPH_ASSERT(false, "No jobs available!");
-            std::this_thread::sleep_for(std::chrono::microseconds(100));
+            PlatformTime::SleepMicroseconds(100);
         }
 
         Job* TheJob = &JobPool.Get(Index);

@@ -1,3 +1,4 @@
+#include "Core/Threading/Thread.h"
 #include "RuntimePCH.h"
 #include "ScratchArray.h"
 
@@ -5,7 +6,6 @@
 
 #include <atomic>
 #include <cstring>
-#include <mutex>
 
 namespace Lumina::ScratchPool
 {
@@ -21,7 +21,7 @@ namespace Lumina::ScratchPool
 
         struct FSizeClass
         {
-            std::mutex Lock;
+            FMutex Lock;
             void*      Head           = nullptr;
             SIZE_T     RetainedBlocks = 0;
         };
@@ -94,7 +94,7 @@ namespace Lumina::ScratchPool
         OutCapacity = CapacityForClass(ClassIndex);
 
         {
-            std::lock_guard<std::mutex> Guard(Class.Lock);
+            FScopeLock Guard(Class.Lock);
             if (Class.Head != nullptr)
             {
                 void* Block = Class.Head;
@@ -128,7 +128,7 @@ namespace Lumina::ScratchPool
         {
             FSizeClass& Class = GClasses[ClassIndex];
 
-            std::lock_guard<std::mutex> Guard(Class.Lock);
+            FScopeLock Guard(Class.Lock);
             if (Class.RetainedBlocks < RetainLimitFor(ClassIndex))
             {
                 std::memcpy(Block, &Class.Head, sizeof(void*));
@@ -149,7 +149,7 @@ namespace Lumina::ScratchPool
 
             void* Head = nullptr;
             {
-                std::lock_guard<std::mutex> Guard(Class.Lock);
+                FScopeLock Guard(Class.Lock);
                 Head = Class.Head;
                 Class.Head = nullptr;
                 Class.RetainedBlocks = 0;
@@ -173,7 +173,7 @@ namespace Lumina::ScratchPool
         {
             FSizeClass& Class = GClasses[Index];
 
-            std::lock_guard<std::mutex> Guard(Class.Lock);
+            FScopeLock Guard(Class.Lock);
             Stats.RetainedBlocks += Class.RetainedBlocks;
             Stats.RetainedBytes  += Class.RetainedBlocks * CapacityForClass(Index);
         }

@@ -1,16 +1,14 @@
 #include <gtest/gtest.h>
-#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <vector>
+#include "Platform/Time/PlatformTime.h"
 #include "Memory/Memcpy.h"
 
 using namespace Lumina;
 
 namespace
 {
-    using FBenchClock = std::chrono::steady_clock;
-
     volatile uint64 GBenchSink = 0;
 
     // Every iteration copies a different slice to a different address, so none of it folds away.
@@ -43,9 +41,9 @@ namespace
         size_t             SlotCount = 0;
     };
 
-    double NanosPer(FBenchClock::time_point Start, FBenchClock::time_point End, size_t Ops)
+    double NanosPer(Lumina::uint64 Start, Lumina::uint64 End, size_t Ops)
     {
-        return std::chrono::duration<double, std::nano>(End - Start).count() / static_cast<double>(Ops);
+        return (Lumina::PlatformTime::ToSeconds(End - Start) * 1e9) / static_cast<double>(Ops);
     }
 
     template <typename TCopy>
@@ -57,7 +55,7 @@ namespace
         uint64 Checksum = 0;
         size_t Slot = 0;
 
-        const FBenchClock::time_point Start = FBenchClock::now();
+        const Lumina::uint64 Start = Lumina::PlatformTime::Cycles();
         for (size_t Index = 0; Index < Iterations; ++Index)
         {
             const size_t Byte = Slot * Region.Stride;
@@ -70,7 +68,7 @@ namespace
                 Slot = 0;
             }
         }
-        const double Nanos = NanosPer(Start, FBenchClock::now(), Iterations);
+        const double Nanos = NanosPer(Start, Lumina::PlatformTime::Cycles(), Iterations);
 
         GBenchSink += Checksum;
         return Nanos;

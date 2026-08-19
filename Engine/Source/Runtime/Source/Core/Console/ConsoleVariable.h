@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include <limits>
 #include "Containers/HashTable.h"
 #include "Containers/Name.h"
 #include "Containers/String.h"

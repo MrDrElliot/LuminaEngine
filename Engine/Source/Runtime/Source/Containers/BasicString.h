@@ -2,7 +2,6 @@
 
 #include <compare>
 #include <cstring>
-#include <format>
 #include <iterator>
 #include <string>
 #include <string_view>
@@ -751,25 +750,3 @@ namespace Lumina::Containers
     }
 }
 
-namespace std
-{
-    template <typename TChar, size_t N, typename TAllocator>
-    struct formatter<Lumina::Containers::TBasicString<TChar, N, TAllocator>, TChar>
-        : formatter<basic_string_view<TChar>, TChar>
-    {
-        template <typename TContext>
-        auto format(const Lumina::Containers::TBasicString<TChar, N, TAllocator>& Value, TContext& Context) const
-        {
-            return formatter<basic_string_view<TChar>, TChar>::format(Value.View(), Context);
-        }
-    };
-
-    template <typename TChar, size_t N, typename TAllocator>
-    struct hash<Lumina::Containers::TBasicString<TChar, N, TAllocator>>
-    {
-        size_t operator()(const Lumina::Containers::TBasicString<TChar, N, TAllocator>& Value) const noexcept
-        {
-            return hash<basic_string_view<TChar>>{}(Value.View());
-        }
-    };
-}

@@ -109,6 +109,9 @@ public enum CompilerWarning
     // Windows DLL boundary noise, meaningless elsewhere.
     DllInterface,
     DllInterfaceBase,
+
+    // A definition whose declaration carried another module's import macro. Windows-only, and a bug.
+    InconsistentDllLinkage,
 }
 
 /// <summary>One warning's spelling on each toolchain, plus whether promoting it also enables it.</summary>
@@ -225,6 +228,7 @@ public static class CompilerWarnings
 
             new() { Warning = CompilerWarning.DllInterface,          MsvcCode = "4251" },
             new() { Warning = CompilerWarning.DllInterfaceBase,      MsvcCode = "4275" },
+            new() { Warning = CompilerWarning.InconsistentDllLinkage, MsvcCode = "4273" },
         };
 
         return Entries.ToDictionary(Entry => Entry.Warning);

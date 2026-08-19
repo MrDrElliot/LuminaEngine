@@ -759,7 +759,7 @@ namespace Lumina
             Sorted.push_back(Entry);
         });
 
-        std::stable_sort(Sorted.begin(), Sorted.end(), [](const FProbeSortEntry& A, const FProbeSortEntry& B)
+        Algo::StableSort(Sorted.begin(), Sorted.end(), [](const FProbeSortEntry& A, const FProbeSortEntry& B)
         {
             return A.Priority > B.Priority;
         });
@@ -1804,8 +1804,8 @@ namespace Lumina
                         OutList.push_back(DirtySlot);
                     }
                 }
-                std::sort(OutList.begin(), OutList.end());
-                OutList.erase(std::unique(OutList.begin(), OutList.end()), OutList.end());
+                Algo::Sort(OutList.begin(), OutList.end());
+                OutList.erase(Algo::Unique(OutList.begin(), OutList.end()), OutList.end());
             };
 
             Collect(ScenePrimitives.GetDirtyInstanceSlots(), Out.DirtySlots);
@@ -2298,7 +2298,7 @@ namespace Lumina
                     ThreadLocal.emplace_back();
                 }
             }
-            CurrentReservePerThread = (uint32)((EstimatedProxies + NumThreads - 1) / std::max(1u, NumThreads));
+            CurrentReservePerThread = (uint32)((EstimatedProxies + NumThreads - 1) / Math::Max(1u, NumThreads));
             
             for (uint32 t = 0; t < NumThreads; ++t)
             {
@@ -2844,7 +2844,7 @@ namespace Lumina
                         DecalGroupMinSort[E.ShaderOwner] = E.SortOrder;
                     }
                 }
-                std::stable_sort(DecalSortScratch.begin(), DecalSortScratch.end(), [&](const FDecalSortEntry& A, const FDecalSortEntry& B)
+                Algo::StableSort(DecalSortScratch.begin(), DecalSortScratch.end(), [&](const FDecalSortEntry& A, const FDecalSortEntry& B)
                 {
                     const int32 GA = DecalGroupMinSort[A.ShaderOwner];
                     const int32 GB = DecalGroupMinSort[B.ShaderOwner];
@@ -3352,7 +3352,7 @@ namespace Lumina
             return;
         }
 
-        std::sort(Ranges.begin(), Ranges.end(),
+        Algo::Sort(Ranges.begin(), Ranges.end(),
                     [](const FUIntVector2& A, const FUIntVector2& B) { return A.x < B.x; });
 
         const uint32 ArenaCount = (uint32)Mirror.size();
@@ -3441,7 +3441,7 @@ namespace Lumina
             Ranges.push_back(FUIntVector2{ Slot, 1u });
         }
 
-        std::sort(Ranges.begin(), Ranges.end(),
+        Algo::Sort(Ranges.begin(), Ranges.end(),
                     [](const FUIntVector2& A, const FUIntVector2& B) { return A.x < B.x; });
 
         const uint32 Count = (uint32)Data.size();
@@ -4443,7 +4443,7 @@ namespace Lumina
                 {
                     Order[i] = i;
                 }
-                std::stable_sort(Order.begin(), Order.end(),
+                Algo::StableSort(Order.begin(), Order.end(),
                     [&](uint32 A, uint32 B)
                     {
                         return ShadowRequests[A].DistanceToCamera > ShadowRequests[B].DistanceToCamera;
@@ -4545,7 +4545,7 @@ namespace Lumina
         {
             SortedIndices[i] = i;
         }
-        std::sort(SortedIndices.begin(), SortedIndices.end(),
+        Algo::Sort(SortedIndices.begin(), SortedIndices.end(),
             [&](uint32 A, uint32 B) { return Sizes[A] > Sizes[B]; });
 
         for (uint32 SortedI = 0; SortedI < NumRequests; ++SortedI)
@@ -5610,12 +5610,12 @@ namespace Lumina
             const float  CenterX = Op.CenterUV.x * (float)W;
             const float  CenterY = Op.CenterUV.y * (float)H;
             // Radius is relative to the longer side so the brush stays circular in pixels.
-            const float  RadiusPx = std::max(Op.RadiusUV * (float)std::max(W, H), 1.0f);
+            const float  RadiusPx = Math::Max(Op.RadiusUV * (float)Math::Max(W, H), 1.0f);
 
-            const int32 MinX = std::clamp((int32)std::floor(CenterX - RadiusPx), 0, (int32)W);
-            const int32 MinY = std::clamp((int32)std::floor(CenterY - RadiusPx), 0, (int32)H);
-            const int32 MaxX = std::clamp((int32)std::ceil (CenterX + RadiusPx), 0, (int32)W);
-            const int32 MaxY = std::clamp((int32)std::ceil (CenterY + RadiusPx), 0, (int32)H);
+            const int32 MinX = Math::Clamp((int32)std::floor(CenterX - RadiusPx), 0, (int32)W);
+            const int32 MinY = Math::Clamp((int32)std::floor(CenterY - RadiusPx), 0, (int32)H);
+            const int32 MaxX = Math::Clamp((int32)std::ceil (CenterX + RadiusPx), 0, (int32)W);
+            const int32 MaxY = Math::Clamp((int32)std::ceil (CenterY + RadiusPx), 0, (int32)H);
             if (MaxX <= MinX || MaxY <= MinY)
             {
                 continue;
@@ -5791,7 +5791,7 @@ namespace Lumina
         const uint32 MipCount = Pyramid.GetNumMips();
 
         constexpr uint32 SpdMaxMips = 12;
-        const uint32 NumMips = std::min(MipCount, SpdMaxMips);
+        const uint32 NumMips = Math::Min(MipCount, SpdMaxMips);
 
         RHI::CmdMemset(CL, SpdCounter.Ptr, SpdCounter.Size, 0u);
         RHI::CmdBarrier(CL,
@@ -6941,7 +6941,7 @@ namespace Lumina
             const TVector<entt::entity>& Live = Frame.Extracts.LiveParticleEntities;
             auto IsLive = [&](entt::entity E)
             {
-                return std::find(Live.begin(), Live.end(), E) != Live.end();
+                return Algo::Find(Live.begin(), Live.end(), E) != Live.end();
             };
 
             for (auto It = ParticleGPUStates.begin(); It != ParticleGPUStates.end();)
@@ -7076,14 +7076,14 @@ namespace Lumina
                 State.bBurstPending = false;
             }
 
-            SpawnCount = std::min(SpawnCount, MaxParticles);
+            SpawnCount = Math::Min(SpawnCount, MaxParticles);
 
-            const float MaxLifetime = std::max(Resolved.LifetimeRange.y, 0.0f);
+            const float MaxLifetime = Math::Max(Resolved.LifetimeRange.y, 0.0f);
             if (SpawnCount > 0)
             {
-                State.AliveTimeRemaining = std::max(State.AliveTimeRemaining, MaxLifetime);
+                State.AliveTimeRemaining = Math::Max(State.AliveTimeRemaining, MaxLifetime);
             }
-            State.AliveTimeRemaining = std::max(State.AliveTimeRemaining - ScaledDelta, 0.0f);
+            State.AliveTimeRemaining = Math::Max(State.AliveTimeRemaining - ScaledDelta, 0.0f);
 
             if (SpawnCount == 0 && State.AliveTimeRemaining <= 0.0f)
             {
@@ -7358,13 +7358,13 @@ namespace Lumina
             {
                 const float Fy = (NewRes > 1) ? float(Y) / float(NewRes - 1) * float(OldRes - 1) : 0.0f;
                 const int32 Y0 = int(Fy);
-                const int32 Y1 = std::min(Y0 + 1, OldRes - 1);
+                const int32 Y1 = Math::Min(Y0 + 1, OldRes - 1);
                 const float Ty = Fy - float(Y0);
                 for (int32 X = 0; X < NewRes; ++X)
                 {
                     const float Fx = (NewRes > 1) ? float(X) / float(NewRes - 1) * float(OldRes - 1) : 0.0f;
                     const int32 X0 = int(Fx);
-                    const int32 X1 = std::min(X0 + 1, OldRes - 1);
+                    const int32 X1 = Math::Min(X0 + 1, OldRes - 1);
                     const float Tx = Fx - float(X0);
                     const float V00 = float(Src[size_t(Y0) * OldRes + X0]);
                     const float V10 = float(Src[size_t(Y0) * OldRes + X1]);
@@ -7457,7 +7457,7 @@ namespace Lumina
                 {
                     Out.Shaders.VertexShader = TerrainMaterial->GetVertexShader();
                     Out.Shaders.PixelShader  = TerrainMaterial->GetPixelShader();
-                    Out.MaterialIndex        = (uint32)std::max(TerrainMaterial->GetMaterialIndex(), 0);
+                    Out.MaterialIndex        = (uint32)Math::Max(TerrainMaterial->GetMaterialIndex(), 0);
                 }
             }
 
@@ -7623,7 +7623,7 @@ namespace Lumina
             const TVector<entt::entity>& Live = Frame.Extracts.LiveTerrainEntities;
             auto IsLive = [&](entt::entity E)
             {
-                return std::find(Live.begin(), Live.end(), E) != Live.end();
+                return Algo::Find(Live.begin(), Live.end(), E) != Live.end();
             };
 
             for (auto It = TerrainGPUStates.begin(); It != TerrainGPUStates.end();)
@@ -7658,7 +7658,7 @@ namespace Lumina
 
             FTerrainGPUState& State = TerrainGPUStates[TerrainItem.Entity];
             const uint32 Res        = (uint32)TerrainItem.Resolution;
-            const uint32 LayerCount = (uint32)std::max(TerrainItem.LayerCount, 1);
+            const uint32 LayerCount = (uint32)Math::Max(TerrainItem.LayerCount, 1);
             const size_t SlicePixels = size_t(Res) * size_t(Res);
 
             const bool bRealloc = State.AllocatedResolution != Res || State.AllocatedLayerCount != LayerCount;
@@ -7670,7 +7670,7 @@ namespace Lumina
 
                 State.HeightmapTexture   = CreateTerrainImage(Res, 1u,          EFormat::R32_FLOAT, false, false, "Terrain.Heightmap");
                 State.NormalTexture      = CreateTerrainImage(Res, 1u,          EFormat::RGBA8_UNORM, true, false, "Terrain.Normal");
-                State.LayerWeightTexture = CreateTerrainImage(Res, (uint16)std::max(LayerCount, 1u), EFormat::R8_UNORM, false, true, "Terrain.LayerWeight");
+                State.LayerWeightTexture = CreateTerrainImage(Res, (uint16)Math::Max(LayerCount, 1u), EFormat::R8_UNORM, false, true, "Terrain.LayerWeight");
                 State.AllocatedResolution = Res;
                 State.AllocatedLayerCount = LayerCount;
 
@@ -7740,10 +7740,10 @@ namespace Lumina
                 // Heightmap upload must land before the normal recompute samples it.
                 Barriers::TransferToAll(CL);
 
-                const int32 NMinX = std::max(RectMin.x - 1, 0);
-                const int32 NMinY = std::max(RectMin.y - 1, 0);
-                const int32 NMaxX = std::min(RectMax.x + 1, ResI - 1);
-                const int32 NMaxY = std::min(RectMax.y + 1, ResI - 1);
+                const int32 NMinX = Math::Max(RectMin.x - 1, 0);
+                const int32 NMinY = Math::Max(RectMin.y - 1, 0);
+                const int32 NMaxX = Math::Min(RectMax.x + 1, ResI - 1);
+                const int32 NMaxY = Math::Min(RectMax.y + 1, ResI - 1);
                 const int32 NW    = NMaxX - NMinX + 1;
                 const int32 NH    = NMaxY - NMinY + 1;
 
@@ -7938,8 +7938,8 @@ namespace Lumina
             const FVector3 WorldOrigin = FVector3(WorldMat[3]);
             const float HalfSize        = TerrainItem.TileWorldSize * 0.5f;
 
-            const int32 QuadsPerChunk        = std::max(1, TerrainItem.ChunkResolution - 1);
-            const int32 ChunksPerSide        = std::max(1, ((int32)Res - 1) / QuadsPerChunk);
+            const int32 QuadsPerChunk        = Math::Max(1, TerrainItem.ChunkResolution - 1);
+            const int32 ChunksPerSide        = Math::Max(1, ((int32)Res - 1) / QuadsPerChunk);
             const int32 MeshletsPerChunkSide = (QuadsPerChunk + GTerrainMeshletQuads - 1) / GTerrainMeshletQuads;
 
             FTerrainRenderParams RenderParams{};
@@ -8062,8 +8062,8 @@ namespace Lumina
             const FVector3 WorldOrigin = FVector3(WorldMat[3]);
             const float HalfSize = TerrainItem.TileWorldSize * 0.5f;
 
-            const int32 QuadsPerChunk        = std::max(1, TerrainItem.ChunkResolution - 1);
-            const int32 ChunksPerSide        = std::max(1, ((int32)Res - 1) / QuadsPerChunk);
+            const int32 QuadsPerChunk        = Math::Max(1, TerrainItem.ChunkResolution - 1);
+            const int32 ChunksPerSide        = Math::Max(1, ((int32)Res - 1) / QuadsPerChunk);
             const int32 MeshletsPerChunkSide = (QuadsPerChunk + GTerrainMeshletQuads - 1) / GTerrainMeshletQuads;
 
             FTerrainRenderParams RenderParams{};
@@ -10047,13 +10047,13 @@ namespace Lumina
             PC.BloomIntensity     = Settings->BloomIntensity;
             PC.ColorFilter        = FVector4(Settings->ColorFilter, Settings->ColorFilterIntensity);
             PC.Shadows            = FVector4(Settings->Shadows,    Settings->FilmGrainIntensity);
-            PC.Midtones           = FVector4(Settings->Midtones,   std::max(Settings->FilmGrainSize, 0.0001f));
+            PC.Midtones           = FVector4(Settings->Midtones,   Math::Max(Settings->FilmGrainSize, 0.0001f));
             PC.Highlights         = FVector4(Settings->Highlights, Settings->FilmGrainResponse);
             PC.VignetteColor      = FVector4(Settings->VignetteColor, 0.0f);
             PC.BloomTint          = FVector4(Settings->BloomTint, Settings->ChromaticAberration);
             PC.AutoExposureKey    = Settings->bAutoExposure ? 0.18f : 0.0f;
             PC.AutoExposureMinMul = std::exp2(Settings->AutoExposureMinEV);
-            PC.AutoExposureMaxMul = std::exp2(std::max(Settings->AutoExposureMaxEV, Settings->AutoExposureMinEV));
+            PC.AutoExposureMaxMul = std::exp2(Math::Max(Settings->AutoExposureMaxEV, Settings->AutoExposureMinEV));
             return PC;
         }
     }
@@ -10130,7 +10130,7 @@ namespace Lumina
         const uint32 Mip0W    = std::max<uint32>(HDRWidth >> 1u, 1u);
         const uint32 Mip0H    = std::max<uint32>(HDRHght  >> 1u, 1u);
 
-        const uint32 MinDim  = std::min(Mip0W, Mip0H);
+        const uint32 MinDim  = Math::Min(Mip0W, Mip0H);
         const uint32 Octaves = MinDim >= 8u ? (uint32)Math::Log2((float)MinDim) - 2u : 1u;
         const uint32 NumMips = Math::Clamp(Octaves, 1u, Math::Max(Bloom.GetNumMips(), 1u));
 
@@ -10167,7 +10167,7 @@ namespace Lumina
             PC.Exposure           = std::exp2(ActivePostProcess->ExposureCompensation);
             PC.AutoExposureKey    = ActivePostProcess->bAutoExposure ? 0.18f : 0.0f;
             PC.AutoExposureMinMul = std::exp2(ActivePostProcess->AutoExposureMinEV);
-            PC.AutoExposureMaxMul = std::exp2(std::max(ActivePostProcess->AutoExposureMaxEV, ActivePostProcess->AutoExposureMinEV));
+            PC.AutoExposureMaxMul = std::exp2(Math::Max(ActivePostProcess->AutoExposureMaxEV, ActivePostProcess->AutoExposureMinEV));
 
             RHI::CmdDispatch(CL, MakeArgs(PC),
                              RenderUtils::GetGroupCount(DstW, BloomTileSize),

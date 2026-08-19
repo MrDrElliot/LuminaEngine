@@ -44,17 +44,13 @@ namespace Lumina
     };
 }
 
-namespace std
+namespace Lumina
 {
-    template<>
-    struct hash<Lumina::FObjectHandle>
+    NODISCARD FORCEINLINE uint64 GetTypeHash(const FObjectHandle& Object) noexcept
     {
-        size_t operator()(const Lumina::FObjectHandle& Object) const noexcept
-        {
-            size_t Seed = 0;
-            Lumina::Hash::HashCombine(Seed, Object.Index);
-            Lumina::Hash::HashCombine(Seed, Object.Generation);
-            return Seed;
-        }
-    };
+        size_t Seed = 0;
+        Hash::HashCombine(Seed, Object.Index);
+        Hash::HashCombine(Seed, Object.Generation);
+        return static_cast<uint64>(Seed);
+    }
 }

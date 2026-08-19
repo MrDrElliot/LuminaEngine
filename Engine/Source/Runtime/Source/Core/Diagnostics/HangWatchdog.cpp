@@ -1,4 +1,5 @@
-﻿#include "RuntimePCH.h"
+﻿#include "Platform/Time/PlatformTime.h"
+#include "RuntimePCH.h"
 #include "Core/Diagnostics/HangWatchdog.h"
 
 #if defined(LE_PLATFORM_WINDOWS) && !defined(LE_SHIPPING)
@@ -7,7 +8,6 @@
 #include "Log/Log.h"
 
 #include <atomic>
-#include <chrono>
 #include <cstring>
 #include <thread>
 
@@ -264,15 +264,15 @@ namespace Lumina::HangWatchdog
             GWatchdogThreadId = GetCurrentThreadId();
 
             uint64 LastBeat   = GHeartbeat.load(std::memory_order_relaxed);
-            auto   LastChange = std::chrono::steady_clock::now();
+            double LastChange = PlatformTime::Seconds();
             bool   bDumped    = false;
 
             while (GRunning.load(std::memory_order_relaxed))
             {
-                std::this_thread::sleep_for(std::chrono::milliseconds(250));
+                PlatformTime::SleepMilliseconds(250);
 
                 const uint64 Beat = GHeartbeat.load(std::memory_order_relaxed);
-                const auto   Now  = std::chrono::steady_clock::now();
+                const double Now  = PlatformTime::Seconds();
 
                 if (Beat != LastBeat)
                 {
@@ -294,7 +294,7 @@ namespace Lumina::HangWatchdog
                 // there and the watchdog stayed silent by construction.
                 const float Timeout = (Beat == 0) ? GTimeoutSeconds * kBootTimeoutScale : GTimeoutSeconds;
 
-                const float Elapsed = std::chrono::duration<float>(Now - LastChange).count();
+                const float Elapsed = static_cast<float>(Now - LastChange);
                 if (Elapsed >= Timeout)
                 {
                     if (Beat == 0)

@@ -1,4 +1,5 @@
-﻿#include "RuntimePCH.h"
+﻿#include "Platform/Time/PlatformTime.h"
+#include "RuntimePCH.h"
 #include "JobProfiler.h"
 
 #if USING(WITH_EDITOR)
@@ -6,7 +7,6 @@
 #include "JobScheduler.h"
 #include "Core/Console/ConsoleVariable.h"
 
-#include <chrono>
 
 namespace Lumina
 {
@@ -17,8 +17,7 @@ namespace Lumina
 
         double SteadyNowMs()
         {
-            static const std::chrono::steady_clock::time_point Origin = std::chrono::steady_clock::now();
-            return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - Origin).count();
+            return PlatformTime::Seconds() * 1000.0;
         }
     }
 

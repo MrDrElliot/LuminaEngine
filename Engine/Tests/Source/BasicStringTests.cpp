@@ -1,8 +1,9 @@
 #include <gtest/gtest.h>
 
 #include <format>
-#include <unordered_set>
 
+#include "Containers/StringFormat.h"
+#include "Containers/HashTable.h"
 #include "Containers/String.h"
 
 // Namespaced because the unity build merges this file with others that do "using namespace Lumina".
@@ -339,10 +340,10 @@ namespace LuminaBasicStringTests
     TEST(BasicStringInterop, FormatterAndHash)
     {
         const FStr Text("formatted");
-        EXPECT_EQ(std::format("[{}]", Text), "[formatted]");
-        EXPECT_EQ(std::format("{:>12}", Text), "   formatted");
+        EXPECT_EQ(Lumina::Format("[{}]", Text), "[formatted]");
+        EXPECT_EQ(Lumina::Format("{:>12}", Text), "   formatted");
 
-        std::unordered_set<FStr> Seen;
+        Lumina::THashSet<FStr> Seen;
         Seen.insert(FStr("one"));
         Seen.insert(FStr("two"));
         Seen.insert(FStr("one"));

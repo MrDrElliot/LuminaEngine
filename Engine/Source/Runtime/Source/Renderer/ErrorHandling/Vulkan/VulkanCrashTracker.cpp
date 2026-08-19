@@ -1,4 +1,5 @@
-﻿#include "RuntimePCH.h"
+﻿#include "Platform/Time/PlatformTime.h"
+#include "RuntimePCH.h"
 #include "VulkanCrashTracker.h"
 #include "Platform/Filesystem/PlatformFilesystem.h"
 #include <fstream>
@@ -107,9 +108,7 @@ namespace Lumina::RHI
     template<typename T>
     static FString ToHexString(T n)
     {
-        std::stringstream stream;
-        stream << std::setfill('0') << std::setw(2 * sizeof(T)) << std::hex << n;
-        return stream.str().c_str();
+        return Lumina::Format("{:0{}x}", static_cast<uint64>(n), 2 * sizeof(T));
     }
 
     static FString ToString(const GFSDK_Aftermath_ShaderDebugInfoIdentifier Identifier)
@@ -350,7 +349,7 @@ namespace Lumina::RHI
 
         if (Counts.vendorBinarySize > 0)
         {
-            const auto Time = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+            const int64 Time = PlatformTime::UtcSeconds();
             const FString BinaryPath = GetCrashDumpDirectory() + "/GPUFault_"
                 + Lumina::Format("{}", static_cast<uint64>(Time)) + ".bin";
 
@@ -449,19 +448,19 @@ namespace Lumina::RHI
 
         bool bStatusValid = PollStatus();
 
-        auto TerminationTimeout = std::chrono::seconds(3);
-        auto tStart = std::chrono::steady_clock::now();
-        auto tElapsed = std::chrono::milliseconds::zero();
+        constexpr double TerminationTimeout = 3.0;
+        const double tStart = PlatformTime::Seconds();
+        double tElapsed = 0.0;
 
         while (bStatusValid
             && Status != GFSDK_Aftermath_CrashDump_Status_CollectingDataFailed
             && Status != GFSDK_Aftermath_CrashDump_Status_Finished
             && tElapsed < TerminationTimeout)
         {
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            PlatformTime::SleepMilliseconds(50);
             bStatusValid = PollStatus();
 
-            tElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - tStart);
+            tElapsed = PlatformTime::Seconds() - tStart;
         }
 
         switch (bStatusValid ? Status : GFSDK_Aftermath_CrashDump_Status_Unknown)
@@ -512,8 +511,7 @@ namespace Lumina::RHI
         #if WITH_AFTERMATH
         LOG_ERROR("Aftermath: GPU crash dump received ({} bytes) - decoding...", CrashDumpSize);
 
-        auto Now  = std::chrono::system_clock::now();
-        auto Time = std::chrono::system_clock::to_time_t(Now);
+        const int64 Time = PlatformTime::UtcSeconds();
 
         FString DumpPath = GetCrashDumpDirectory() + "/GPUCrash_" + Lumina::Format("{}", static_cast<uint64>(Time)) + ".nv-gpudmp";
         FString JsonPath = GetCrashDumpDirectory() + "/GPUCrash_" + Lumina::Format("{}", static_cast<uint64>(Time)) + ".json";

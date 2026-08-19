@@ -1,4 +1,5 @@
-﻿#include "ProjectPackagerEditorTool.h"
+﻿#include "Core/Threading/Thread.h"
+#include "ProjectPackagerEditorTool.h"
 
 #include "Platform/Filesystem/PlatformFilesystem.h"
 
@@ -115,7 +116,7 @@ namespace Lumina
         // pending vector with an empty one to minimize lock hold time.
         TVector<FString> Drained;
         {
-            std::lock_guard<std::mutex> Lock(Session->PendingMutex);
+            FScopeLock Lock(Session->PendingMutex);
             Drained.swap(Session->PendingLines);
         }
         for (FString& Line : Drained)
@@ -300,13 +301,13 @@ namespace Lumina
 
         TSharedPtr<FBuildSession> WorkerSession = Session;
 
-        Worker = std::thread([WorkerSession, Opts, ProjectName, PakPath]()
+        Worker = FThread([WorkerSession, Opts, ProjectName, PakPath]()
         {
             // Log callback runs on this thread; push lines into the mutex-protected
             // pending buffer, drained each frame by the UI thread in DrainSession().
             auto LogFunc = [WorkerSession](FStringView Line)
             {
-                std::lock_guard<std::mutex> Lock(WorkerSession->PendingMutex);
+                FScopeLock Lock(WorkerSession->PendingMutex);
                 WorkerSession->PendingLines.emplace_back(Line.data(), Line.size());
             };
 

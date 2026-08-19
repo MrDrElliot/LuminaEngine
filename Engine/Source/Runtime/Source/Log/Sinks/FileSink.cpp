@@ -1,4 +1,7 @@
-﻿#include "RuntimePCH.h"
+﻿#include "Containers/StringFormat.h"
+#include "RuntimePCH.h"
+#include <algorithm>
+#include <iterator>
 #include "FileSink.h"
 
 #include <cstdio>
@@ -22,7 +25,7 @@ namespace Lumina
 
             FString Result = Stem;
             Result += '.';
-            std::format_to(std::back_inserter(Result), "{}", Index);
+            AppendFormat(Result, "{}", Index);
             Result += Extension;
             return Result;
         }

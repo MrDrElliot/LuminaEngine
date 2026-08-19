@@ -105,7 +105,7 @@ namespace Lumina
                 if (Surface.MaterialIndex >= 0)
                 {
                     bAnyExplicit = true;
-                    SlotCount = std::max(SlotCount, (size_t)Surface.MaterialIndex + 1);
+                    SlotCount = Math::Max(SlotCount, (size_t)Surface.MaterialIndex + 1);
                 }
             }
             return bAnyExplicit ? SlotCount : Resource.GeometrySurfaces.size();
@@ -198,7 +198,7 @@ namespace Lumina
                     continue;
                 }
 
-                const size_t VertexCount = std::min(Resource->JointIndices.size(), Resource->JointWeights.size());
+                const size_t VertexCount = Math::Min(Resource->JointIndices.size(), Resource->JointWeights.size());
                 for (size_t v = 0; v < VertexCount; ++v)
                 {
                     FU16Vector4& Indices = Resource->JointIndices[v];
@@ -370,7 +370,7 @@ namespace Lumina
             constexpr size_t MaxMergedVerts = (size_t)0xFFFFFFFFu;
             if (TotalStaticVerts > MaxMergedVerts || TotalSkinnedVerts > MaxMergedVerts)
             {
-                OutError = FString(std::format(
+                OutError = FString(Format(
                     "Merging would flatten every instance into {0} static / {1} skinned vertices, past the {2} "
                     "vertex limit of the 32-bit index stream. Import with 'Merge Meshes' off to get one asset "
                     "per unique mesh instead.",

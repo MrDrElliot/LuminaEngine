@@ -242,7 +242,7 @@ namespace Lumina::RHI
             return {};
         }
 
-        std::sort(Outstanding.begin(), Outstanding.end(),
+        Algo::Sort(Outstanding.begin(), Outstanding.end(),
             [](const FEntry* A, const FEntry* B)
             {
                 return A->MarkerId < B->MarkerId;

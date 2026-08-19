@@ -1,4 +1,5 @@
-﻿#include "RuntimePCH.h"
+﻿#include "Core/Threading/Thread.h"
+#include "RuntimePCH.h"
 #include "PerceptionSystem.h"
 
 #include <algorithm>
@@ -279,13 +280,13 @@ namespace Lumina
         {
             PerceiverBodies[i] = Context.GetEntityBodyID(Perceivers[i]);
             const SPerceptionComponent& C = View.get<SPerceptionComponent>(Perceivers[i]);
-            MaxSightRange = std::max(C.LoseSightRadius, MaxSightRange);
+            MaxSightRange = Math::Max(C.LoseSightRadius, MaxSightRange);
         }
         State.SourceGrid.Build(MaxSightRange);
 
         TVector<FAIStimulusEvent> Stimuli;
         {
-            std::lock_guard Lock(State.StimuliMutex);
+            FScopeLock Lock(State.StimuliMutex);
             Stimuli.swap(State.PendingStimuli);
         }
 

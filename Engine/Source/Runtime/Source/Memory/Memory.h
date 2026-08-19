@@ -180,8 +180,8 @@ namespace Lumina::Memory
     template<typename T>
     FORCEINLINE void DeleteArray(T* Array)
     {
-        const size_t RequiredAlignment = std::max(alignof(T), static_cast<size_t>(16));
-        const size_t RequiredExtraMemory = std::max(RequiredAlignment, static_cast<size_t>(4));
+        const size_t RequiredAlignment = Math::Max(alignof(T), static_cast<size_t>(16));
+        const size_t RequiredExtraMemory = Math::Max(RequiredAlignment, static_cast<size_t>(4));
 
         const uint32 NumElements = *(reinterpret_cast<uint32*>(Array) - 1);
         

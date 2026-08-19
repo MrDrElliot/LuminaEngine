@@ -149,6 +149,11 @@ public abstract class LuminaTargetRules : TargetRules
                 CompilerWarning.DllInterfaceBase,
                 CompilerWarning.ConversionLoss,
                 CompilerWarning.ConversionSizeT);
+
+            // A symbol defined here but declared with another module's export macro, so callers
+            // outside this DLL would link against an import that nothing exports.
+            Warnings.Set(WarningSeverity.Fatal,
+                CompilerWarning.InconsistentDllLinkage);
         }
         else
         {

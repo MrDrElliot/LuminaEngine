@@ -1,4 +1,5 @@
-﻿#include "RuntimePCH.h"
+﻿#include "Core/Threading/Thread.h"
+#include "RuntimePCH.h"
 #include "MeshResolveCache.h"
 
 #include "Assets/AssetTypes/Material/Material.h"
@@ -10,7 +11,7 @@ namespace Lumina
 {
     std::atomic<uint32> FMeshResolveCache::Epoch{1};
     std::atomic<uint32> FMeshResolveCache::PendingGeneration{1};
-    std::mutex           FMeshResolveCache::PendingMutex;
+    FMutex           FMeshResolveCache::PendingMutex;
     TVector<const void*> FMeshResolveCache::PendingInvalidations;
 
     FMeshResolveCache& FMeshResolveCache::Get()

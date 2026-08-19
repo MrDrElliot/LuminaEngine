@@ -1,3 +1,5 @@
+#include <string>
+#include <vector>
 #include "EditorPCH.h"
 #include "OBJImporter.h"
 

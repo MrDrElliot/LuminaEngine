@@ -44,7 +44,7 @@ namespace Lumina
                         }
                         if (!Occupied[i])
                         {
-                            FreeList.erase(std::remove(FreeList.begin(), FreeList.end(), i), FreeList.end());
+                            FreeList.erase(Algo::Remove(FreeList.begin(), FreeList.end(), i), FreeList.end());
                             new (&Data[i]) T(*reinterpret_cast<const T*>(&other.Data[i]));
                             Occupied[i] = true;
                         }

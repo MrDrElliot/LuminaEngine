@@ -1000,14 +1000,14 @@ namespace Lumina::Physics
             JoltSystem->SetPhysicsSettings(JoltSettings);
         }
 
-        const float PhysicsRateHz  = std::max(10.0f, WorldSettings.PhysicsHz);
+        const float PhysicsRateHz  = Math::Max(10.0f, WorldSettings.PhysicsHz);
         const float FixedTimestep  = 1.0f / PhysicsRateHz;
         const float MaxAccumulation = (float)WorldSettings.MaxPhysicsSteps * FixedTimestep;
 
         Accumulator += static_cast<float>(DeltaTime);
 
         // Clamp to prevent spiral-of-death on heavy frames.
-        Accumulator = std::min(Accumulator, MaxAccumulation);
+        Accumulator = Math::Min(Accumulator, MaxAccumulation);
 
         if (Accumulator >= FixedTimestep)
         {
@@ -1370,10 +1370,10 @@ namespace Lumina::Physics
                             reinterpret_cast<const float*>(InterpStaging.CurrPos.data()),
                             int(Total) * 3, Alpha);
 
-            std::copy(InterpStaging.CurrQx.begin(), InterpStaging.CurrQx.end(), InterpStaging.LerpQx.begin());
-            std::copy(InterpStaging.CurrQy.begin(), InterpStaging.CurrQy.end(), InterpStaging.LerpQy.begin());
-            std::copy(InterpStaging.CurrQz.begin(), InterpStaging.CurrQz.end(), InterpStaging.LerpQz.begin());
-            std::copy(InterpStaging.CurrQw.begin(), InterpStaging.CurrQw.end(), InterpStaging.LerpQw.begin());
+            Algo::Copy(InterpStaging.CurrQx.begin(), InterpStaging.CurrQx.end(), InterpStaging.LerpQx.begin());
+            Algo::Copy(InterpStaging.CurrQy.begin(), InterpStaging.CurrQy.end(), InterpStaging.LerpQy.begin());
+            Algo::Copy(InterpStaging.CurrQz.begin(), InterpStaging.CurrQz.end(), InterpStaging.LerpQz.begin());
+            Algo::Copy(InterpStaging.CurrQw.begin(), InterpStaging.CurrQw.end(), InterpStaging.LerpQw.begin());
 
             NlerpQuatsSoA(InterpStaging.LerpQx.data(), InterpStaging.LerpQy.data(),
                           InterpStaging.LerpQz.data(), InterpStaging.LerpQw.data(),
@@ -2009,7 +2009,7 @@ namespace Lumina::Physics
         FSphereCastCollector Collector(*this, OutHits, Settings, SweepLength, Lock);
         RunSphereCast(*JoltSystem, Settings, Collector);
 
-        std::sort(OutHits.begin(), OutHits.end(), [](const SRayResult& A, const SRayResult& B)
+        Algo::Sort(OutHits.begin(), OutHits.end(), [](const SRayResult& A, const SRayResult& B)
         {
             return A.Fraction < B.Fraction;
         });
@@ -2160,7 +2160,7 @@ namespace Lumina::Physics
         // IgnoreBodies still excludes specific bodies (e.g. the shooter's own).
         JoltSystem->GetNarrowPhaseQuery().CastRay(Ray, JPH::RayCastSettings(), Collector, {}, {}, Filter, {});
 
-        std::sort(OutHits.begin(), OutHits.end(), [](const SRayResult& A, const SRayResult& B) { return A.Fraction < B.Fraction; });
+        Algo::Sort(OutHits.begin(), OutHits.end(), [](const SRayResult& A, const SRayResult& B) { return A.Fraction < B.Fraction; });
     }
 
     int32 FJoltPhysicsScene::CollidePoint(const FVector3& Point, TSpan<const uint32> IgnoreBodies, TSpan<entt::entity> OutEntities)
@@ -3335,7 +3335,7 @@ namespace Lumina::Physics
                     Order.push_back(i);
                 }
             }
-            std::sort(Order.begin(), Order.end(), [&](int32 A, int32 B)
+            Algo::Sort(Order.begin(), Order.end(), [&](int32 A, int32 B)
             {
                 return Skeleton->FindBoneIndex(Desc.Asset->Bodies[A].BoneName) < Skeleton->FindBoneIndex(Desc.Asset->Bodies[B].BoneName);
             });
@@ -4687,7 +4687,7 @@ namespace Lumina::Physics
             return 0;
         }
 
-        std::sort(Keys.begin(), Keys.end());
+        Algo::Sort(Keys.begin(), Keys.end());
 
         TVector<JPH::BodyID> BodyIDs;
 

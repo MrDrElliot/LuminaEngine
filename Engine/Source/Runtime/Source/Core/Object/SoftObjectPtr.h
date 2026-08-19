@@ -138,25 +138,17 @@ namespace Lumina
         "TSoftObjectPtr<T> must be layout-identical to FSoftObjectPath");
 }
 
-namespace std
+namespace Lumina
 {
-    template<>
-    struct hash<Lumina::FSoftObjectPath>
+    // Never hash an instance across a TryResolve: healing a renamed path rebuckets it.
+    NODISCARD FORCEINLINE uint64 GetTypeHash(const FSoftObjectPath& Path) noexcept
     {
-        size_t operator()(const Lumina::FSoftObjectPath& P) const noexcept
-        {
-            // Never hash an instance across a TryResolve: healing a renamed path rebuckets it.
-            const Lumina::FStringView V = P.GetPath();
-            return Lumina::Containers::FDefaultHash{}(V);
-        }
-    };
+        return GetTypeHash(Path.GetPath());
+    }
 
     template<typename T>
-    struct hash<Lumina::TSoftObjectPtr<T>>
+    NODISCARD FORCEINLINE uint64 GetTypeHash(const TSoftObjectPtr<T>& Ptr) noexcept
     {
-        size_t operator()(const Lumina::TSoftObjectPtr<T>& P) const noexcept
-        {
-            return Lumina::Containers::FDefaultHash{}(P.GetSoftPath());
-        }
-    };
+        return GetTypeHash(Ptr.GetSoftPath());
+    }
 }

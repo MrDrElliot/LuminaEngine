@@ -1,3 +1,4 @@
+#include "Core/Threading/Thread.h"
 #include "RuntimePCH.h"
 #ifdef LE_PLATFORM_WINDOWS
 
@@ -10,7 +11,6 @@
 
 #include <atomic>
 #include "Platform/Filesystem/PlatformFilesystem.h"
-#include <mutex>
 
 #if WITH_BUGSPLAT
 #ifndef WIN32_LEAN_AND_MEAN
@@ -65,7 +65,7 @@ namespace Lumina::CrashReporting
         // The C API has RemoveAttachment but no ClearAttachments, so the paths handed to it are
         // tracked here to be removed one by one. Touched only when a project loads, never from the
         // crash path.
-        std::mutex          GAttachmentMutex;
+        FMutex          GAttachmentMutex;
         TVector<FWString>   GAttachments;
 
         // Short commit hash of the tree this binary was built from, or empty.
@@ -332,7 +332,7 @@ namespace Lumina::CrashReporting
             return;
         }
 
-        std::scoped_lock Lock(GAttachmentMutex);
+        FScopeLock Lock(GAttachmentMutex);
 
         // The SDK holds the path and reads the file when a report is built, so the file only has to
         // exist at crash time, not now.
@@ -354,7 +354,7 @@ namespace Lumina::CrashReporting
             return;
         }
 
-        std::scoped_lock Lock(GAttachmentMutex);
+        FScopeLock Lock(GAttachmentMutex);
 
         // One at a time: the C API exposes RemoveAttachment but not ClearAttachments.
         for (const FWString& Attachment : GAttachments)

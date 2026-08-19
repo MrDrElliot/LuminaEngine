@@ -1,4 +1,5 @@
 #pragma once
+#include <string>
 #include "imgui.h"
 #include "Core/Math/Transform.h"
 #include "Core/Object/ObjectHandleTyped.h"

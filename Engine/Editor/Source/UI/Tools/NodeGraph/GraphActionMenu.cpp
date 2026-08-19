@@ -291,7 +291,7 @@ namespace Lumina
 
         if (bHasQuery)
         {
-            std::sort(VisibleIndices.begin(), VisibleIndices.end(), [this](int32 A, int32 B)
+            Algo::Sort(VisibleIndices.begin(), VisibleIndices.end(), [this](int32 A, int32 B)
             {
                 const FGraphAction& LHS = Actions[A];
                 const FGraphAction& RHS = Actions[B];
@@ -304,7 +304,7 @@ namespace Lumina
         }
         else
         {
-            std::sort(VisibleIndices.begin(), VisibleIndices.end(), [this](int32 A, int32 B)
+            Algo::Sort(VisibleIndices.begin(), VisibleIndices.end(), [this](int32 A, int32 B)
             {
                 const FGraphAction& LHS = Actions[A];
                 const FGraphAction& RHS = Actions[B];

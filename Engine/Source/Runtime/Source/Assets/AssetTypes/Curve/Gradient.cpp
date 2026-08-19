@@ -85,7 +85,7 @@ namespace Lumina
 
     void SGradient::SortKeys()
     {
-        std::stable_sort(Keys.begin(), Keys.end(), [](const SGradientKey& A, const SGradientKey& B)
+        Algo::StableSort(Keys.begin(), Keys.end(), [](const SGradientKey& A, const SGradientKey& B)
         {
             return A.Time < B.Time;
         });
