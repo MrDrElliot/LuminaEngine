@@ -21,27 +21,27 @@ namespace Lumina
         static CPrimitiveManager& Get();
 
         /** Unit cube mesh. */
-        PROPERTY(NotSerialized)
+        PROPERTY(NoSerialize)
         TObjectPtr<CStaticMesh> CubeMesh;
 
         /** Unit sphere mesh. */
-        PROPERTY(NotSerialized)
+        PROPERTY(NoSerialize)
         TObjectPtr<CStaticMesh> SphereMesh;
 
         /** Unit plane mesh. */
-        PROPERTY(NotSerialized)
+        PROPERTY(NoSerialize)
         TObjectPtr<CStaticMesh> PlaneMesh;
 
         /** Unit cylinder mesh. */
-        PROPERTY(NotSerialized)
+        PROPERTY(NoSerialize)
         TObjectPtr<CStaticMesh> CylinderMesh;
 
         /** Unit cone mesh. */
-        PROPERTY(NotSerialized)
+        PROPERTY(NoSerialize)
         TObjectPtr<CStaticMesh> ConeMesh;
 
         /** Unit capsule mesh. */
-        PROPERTY(NotSerialized)
+        PROPERTY(NoSerialize)
         TObjectPtr<CStaticMesh> CapsuleMesh;
     };
 }

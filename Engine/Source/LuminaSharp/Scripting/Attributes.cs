@@ -127,7 +127,7 @@ public sealed class ScriptableTypeAttribute : Attribute
 {
 }
 
-/// <summary>Marks a generated wrapper method as a native <c>FUNCTION(ScriptEvent)</c> that a C# subclass of a
+/// <summary>Marks a generated wrapper method as a native reflected virtual that a C# subclass of a
 /// <c>REFLECT(Scriptable)</c> class may override. Emitted by the Reflector, never hand-written. <see cref="Index"/>
 /// is the override-flag bit, aligned by construction with the native forwarding shim's per-method bit, so the
 /// runtime can tell native which events the subclass actually overrides.</summary>

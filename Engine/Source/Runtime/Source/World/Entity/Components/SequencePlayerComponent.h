@@ -23,30 +23,30 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        PROPERTY(Script, Editable, Category = "Sequence")
+        PROPERTY(Editable, Category = "Sequence")
         TObjectPtr<CSequence> Sequence;
 
         /** Begins playing as soon as the component exists, for cutscenes triggered by level load. */
-        PROPERTY(Script, Editable, Category = "Sequence")
+        PROPERTY(Editable, Category = "Sequence")
         bool bAutoPlay = false;
 
         /** Set true to play, false to stop. The system watches the transition and does the binding, the
          *  spawning, and the teardown, so nothing else has to be called. */
-        PROPERTY(Script, Editable, Category = "Sequence")
+        PROPERTY(Editable, Category = "Sequence")
         bool bPlaying = false;
 
-        PROPERTY(Script, Editable, Category = "Sequence")
+        PROPERTY(Editable, Category = "Sequence")
         bool bLoop = false;
 
-        PROPERTY(Script, Editable, ClampMin = 0.0f, Category = "Sequence")
+        PROPERTY(Editable, ClampMin = 0.0f, Category = "Sequence")
         float PlayRate = 1.0f;
 
         /** What happens to the driven entities when playback stops or reaches the end. */
-        PROPERTY(Script, Editable, Category = "Sequence")
+        PROPERTY(Editable, Category = "Sequence")
         ESequenceFinishAction FinishAction = ESequenceFinishAction::Restore;
 
         /** Current playhead in seconds. Writable so script can scrub or restart. */
-        PROPERTY(Script, Editable, Category = "Sequence")
+        PROPERTY(Editable, Category = "Sequence")
         float Time = 0.0f;
 
         /** Live bindings, spawned entities and the restore snapshot. Rebuilt on play; never serialized. */

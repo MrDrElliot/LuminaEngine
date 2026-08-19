@@ -45,16 +45,16 @@ namespace Lumina
         CMaterialInstance* CreateDynamicMaterialInstance(uint32 Slot);
 
         /** World-local bounds of the committed mesh (empty until the first Commit). */
-        FUNCTION(Script)
+        FUNCTION()
         FAABB GetAABB() const;
 
         /** Declare a sub-range of the index buffer that draws with one material slot. Optional: with no
          *  sections, Commit() makes a single section covering every index on slot 0. */
-        FUNCTION(Script)
+        FUNCTION()
         void AddSection(int32 MaterialSlot, int32 StartIndex, int32 IndexCount);
 
         /** Drop all staged data and the built mesh, returning the component to an empty state. */
-        FUNCTION(Script)
+        FUNCTION()
         void ClearMesh();
 
         /** Finalize the staged data: generate meshlets/LODs and upload the GPU buffers. Returns false if
@@ -68,19 +68,19 @@ namespace Lumina
          *  A single component is still owned by ONE thread at a time: the stream setters, AddSection and
          *  ClearMesh are unsynchronized, so staging and committing the same component from two threads is
          *  a data race. What IS synchronized is the handoff to the renderer -- see PublishRenderData. */
-        FUNCTION(Script)
+        FUNCTION()
         bool Commit();
 
         /** True once Commit() has produced a renderable mesh. */
-        FUNCTION(Script)
+        FUNCTION()
         bool IsBuilt() const;
 
         /** Number of vertices in the staged (pre-Commit) or committed mesh. */
-        FUNCTION(Script)
+        FUNCTION()
         int32 GetVertexCount() const;
 
         /** Number of triangles in the staged (pre-Commit) or committed mesh. */
-        FUNCTION(Script)
+        FUNCTION()
         int32 GetTriangleCount() const;
 
         // Bulk stream setters (called by the C# span exports in DotNetDynamicMesh.cpp; not script-bound

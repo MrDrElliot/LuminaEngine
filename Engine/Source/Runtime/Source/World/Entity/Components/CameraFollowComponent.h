@@ -40,7 +40,7 @@ namespace Lumina
         FVector3 LookAtOffset = FVector3(0.0f, 1.0f, 0.0f);
 
         /** Set the followed entity and re-seat the camera on the next tick (no lag for the first frame). */
-        FUNCTION(Script)
+        FUNCTION()
         void SetTarget(entt::entity Entity)
         {
             Target = static_cast<uint32>(entt::to_integral(Entity));
@@ -48,7 +48,7 @@ namespace Lumina
         }
 
         /** Clear the target; the camera holds its last pose. */
-        FUNCTION(Script)
+        FUNCTION()
         void ClearTarget()
         {
             Target = static_cast<uint32>(entt::to_integral(static_cast<entt::entity>(entt::null)));

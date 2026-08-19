@@ -28,7 +28,7 @@ namespace Lumina
         // a generated call would pass too few args.
         bool                            bHasOmittedArgs = false;
 
-        // True for a C++ virtual method. A FUNCTION(ScriptEvent) must be virtual: the Scriptable codegen
+        // True for a C++ virtual method. Only a virtual is overridable from C#: the Scriptable codegen
         // generates a native shim override + a reverse-dispatch managed thunk so a C# subclass can override it.
         bool                            bIsVirtual = false;
 

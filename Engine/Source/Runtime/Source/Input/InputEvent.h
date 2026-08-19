@@ -49,37 +49,37 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        PROPERTY(Script)
+        PROPERTY()
         EInputEventType Type = EInputEventType::KeyDown;
 
         /** Which device Key/Button refers to. None for MouseMove and MouseScroll. */
-        PROPERTY(Script)
+        PROPERTY()
         EKeyDevice Device = EKeyDevice::None;
 
         /** The keyboard key, valid when Device is Keyboard. */
-        PROPERTY(Script)
+        PROPERTY()
         EKey Key = EKey::Num;
 
         /** The mouse button, valid when Device is Mouse. */
-        PROPERTY(Script)
+        PROPERTY()
         EMouseKey Button = EMouseKey::Num;
 
-        PROPERTY(Script)
+        PROPERTY()
         EInputEventFlags Flags = EInputEventFlags::None;
 
-        PROPERTY(Script)
+        PROPERTY()
         double MouseX = 0.0;
 
-        PROPERTY(Script)
+        PROPERTY()
         double MouseY = 0.0;
 
-        PROPERTY(Script)
+        PROPERTY()
         double DeltaX = 0.0;
 
-        PROPERTY(Script)
+        PROPERTY()
         double DeltaY = 0.0;
 
-        PROPERTY(Script)
+        PROPERTY()
         double Scroll = 0.0;
 
         bool HasFlag(EInputEventFlags Flag) const

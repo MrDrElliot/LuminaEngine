@@ -3308,7 +3308,8 @@ namespace Lumina
                 bFilterActive ? EditorColors::Lighten(EditorColors::Accent(), 0.12f) : EditorColors::Lighten(EditorColors::Button(), 0.1f));
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
 
-            if (ImGui::Button(LE_ICON_FILTER_SETTINGS "##ComponentFilter", ImVec2(ButtonWidth, ButtonWidth)))
+            // A plain square Button insets its text by FramePadding.x, too narrow for a glyph, so it left-aligns.
+            if (ImGuiX::IconButton(LE_ICON_FILTER_SETTINGS, "##ComponentFilter", ImGui::GetColorU32(ImGuiCol_Text), ImVec2(ButtonWidth, ButtonWidth)))
             {
                 ImGui::OpenPopup("FilterPopup");
             }

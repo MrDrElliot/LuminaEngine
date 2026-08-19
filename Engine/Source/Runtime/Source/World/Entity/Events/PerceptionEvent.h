@@ -18,23 +18,23 @@ namespace Lumina
         GENERATED_BODY()
 
         /** This perceiving entity. */
-        PROPERTY(Script)
+        PROPERTY()
         FEntity Perceiver = entt::null;
 
         /** The perceived (or lost) entity. */
-        PROPERTY(Script)
+        PROPERTY()
         FEntity Target = entt::null;
 
         /** Last known / stimulus world location of the target. */
-        PROPERTY(Script)
+        PROPERTY()
         FVector3 Location = FVector3(0.0f);
 
         /** The EAISenseChannel bit(s) that triggered this event. */
-        PROPERTY(Script)
+        PROPERTY()
         EAISenseChannel Sense = EAISenseChannel::Sight;
 
         /** Damage amount / noise loudness for hearing+damage; 0 for sight. */
-        PROPERTY(Script)
+        PROPERTY()
         float Strength = 0.0f;
     };
 }

@@ -1354,7 +1354,7 @@ namespace Lumina::Reflection
             }
         }
 
-        // ---- Scriptable: C# subclassing of REFLECT(Scriptable) CObjects via per-method FUNCTION(ScriptEvent) ----
+        // ---- Scriptable: C# subclassing of REFLECT(Scriptable) CObjects via their reflected virtuals ----
         //
         // A ScriptEvent is a native virtual a C# subclass may override. The Reflector emits: a C# `virtual`
         // whose default body calls a native base thunk (runs the C++ impl); a reverse [UnmanagedCallersOnly]
@@ -1366,7 +1366,6 @@ namespace Lumina::Reflection
         // CLASS, and does not have to predict which methods someone will want to override. Gated on virtual
         // because the shim emits `override`, and on Scriptable because only those classes get a shim at all --
         // without that second gate a virtual on an ordinary class would be skipped here and emitted nowhere.
-        // The legacy FUNCTION(ScriptEvent) marker is now redundant (harmless where it remains).
         bool IsScriptEvent(const FReflectedFunction& Fn, const FReflectedStruct& Type)
         {
             return Fn.bIsVirtual && Type.HasMetadata("Scriptable");

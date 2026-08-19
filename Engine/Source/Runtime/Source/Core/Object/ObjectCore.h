@@ -137,7 +137,6 @@ namespace Lumina
         Protected           = BIT(5),
         SubField            = BIT(6),
         Trivial             = BIT(7),
-        Script              = BIT(8),
         Builtin             = BIT(9),
         BulkSerialize       = BIT(10),
         // Property exists only for editor tooling. Stripped from cooked

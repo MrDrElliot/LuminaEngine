@@ -20,33 +20,33 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        PROPERTY(Script)
+        PROPERTY()
         int64 BodyID;
 
-        PROPERTY(Script)
+        PROPERTY()
         uint32 Entity = entt::null;
 
-        PROPERTY(Script)
+        PROPERTY()
         FVector3 Start;
 
-        PROPERTY(Script)
+        PROPERTY()
         FVector3 End;
 
-        PROPERTY(Script)
+        PROPERTY()
         FVector3 Location;
 
-        PROPERTY(Script)
+        PROPERTY()
         FVector3 Normal;
 
         /** Normalized distance along ray (0 = start, 1 = end). */
-        PROPERTY(Script)
+        PROPERTY()
         float Fraction;
 
-        PROPERTY(Script)
+        PROPERTY()
         float Distance;
 
         /** Skeleton bone the hit body belongs to (ragdoll per-bone bodies); INDEX_NONE otherwise. */
-        PROPERTY(Script)
+        PROPERTY()
         int32 BoneIndex = INDEX_NONE;
     };
 
@@ -55,35 +55,35 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        PROPERTY(Script)
+        PROPERTY()
         FVector3 Start = FVector3(0.0f);
 
-        PROPERTY(Script)
+        PROPERTY()
         FVector3 End = FVector3(0.0f);
 
-        PROPERTY(Script)
+        PROPERTY()
         bool bDrawDebug = false;
 
         /** Seconds; 0 = one frame. */
-        PROPERTY(Script)
+        PROPERTY()
         float DebugDuration = 0.0f;
         
-        PROPERTY(Script)
+        PROPERTY()
         bool bIgnoreSelf = false;
 
-        PROPERTY(Script)
+        PROPERTY()
         FVector3 DebugHitColor = FVector3(0.0, 1.0f, 0.0f);
 
-        PROPERTY(Script)
+        PROPERTY()
         FVector3 DebugMissColor = FVector3(1.0f, 0.0f, 0.0f);
 
-        PROPERTY(Script)
+        PROPERTY()
         ECollisionProfiles LayerMask = AllCollisionProfiles;
 
-        PROPERTY(Script)
+        PROPERTY()
         TFixedVector<uint32, MaxInlineIgnoreBodies> IgnoreBodies;
 
-        FUNCTION(Script)
+        FUNCTION()
         void AddIgnoredBody(uint32 Body)
         {
             IgnoreBodies.push_back(Body);
@@ -95,36 +95,36 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        PROPERTY(Script)
+        PROPERTY()
         FVector3 Start = FVector3(0.0f);
 
-        PROPERTY(Script)
+        PROPERTY()
         FVector3 End = FVector3(0.0f);
 
         /** Sphere radius (meters). */
-        PROPERTY(Script)
+        PROPERTY()
         float Radius = 0.0f;
 
-        PROPERTY(Script)
+        PROPERTY()
         bool bDrawDebug = false;
 
         /** Seconds; 0 = one frame. */
-        PROPERTY(Script)
+        PROPERTY()
         float DebugDuration = 0.0f;
 
-        PROPERTY(Script)
+        PROPERTY()
         FVector3 DebugHitColor = FVector3(0.0, 1.0f, 0.0f);
 
-        PROPERTY(Script)
+        PROPERTY()
         FVector3 DebugMissColor = FVector3(1.0f, 0.0f, 0.0f);
 
-        PROPERTY(Script)
+        PROPERTY()
         ECollisionProfiles LayerMask = AllCollisionProfiles;
 
-        PROPERTY(Script)
+        PROPERTY()
         TFixedVector<uint32, MaxInlineIgnoreBodies> IgnoreBodies;
 
-        FUNCTION(Script)
+        FUNCTION()
         void AddIgnoredBody(uint32 Body)
         {
             IgnoreBodies.push_back(Body);

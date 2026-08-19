@@ -18,27 +18,27 @@ namespace Lumina
         GENERATED_BODY()
 
         /** The animation asset to play on the skeletal mesh. */
-        PROPERTY(Script, Editable, Replicated, Category = "Animation")
+        PROPERTY(Editable, Replicated, Category = "Animation")
         TObjectPtr<CAnimation> Animation;
 
         /** Current playback position within the animation (seconds). */
-        PROPERTY(Script, Editable, Category = "Animation")
+        PROPERTY(Editable, Category = "Animation")
         float CurrentTime = 0.0f;
 
         /** Playback rate multiplier (1.0 = normal speed, 2.0 = double speed). */
-        PROPERTY(Script, Editable, Replicated, Category = "Animation")
+        PROPERTY(Editable, Replicated, Category = "Animation")
         float PlaybackSpeed = 1.0f;
 
         /** When true, the animation restarts automatically upon completion. */
-        PROPERTY(Script, Editable, Replicated, Category = "Animation")
+        PROPERTY(Editable, Replicated, Category = "Animation")
         bool bLooping = true;
 
         /** When true, the animation is currently advancing. */
-        PROPERTY(Script, Editable, Replicated, Category = "Animation")
+        PROPERTY(Editable, Replicated, Category = "Animation")
         bool bPlaying = true;
 
         /** Overrides the active animation asset's root-motion lock for this entity (see ERootMotionLockMode). */
-        PROPERTY(Script, Editable, Category = "Animation")
+        PROPERTY(Editable, Category = "Animation")
         ERootMotionLockMode RootMotionLock = ERootMotionLockMode::FromAsset;
 
         // Root-motion delta extracted this frame in the parallel pass; applied to the entity transform
@@ -50,7 +50,7 @@ namespace Lumina
          * completes. Stays true until the next PlayAnimation() call. Lets game
          * code react to "the punch finished" without manually polling time.
          */
-        PROPERTY(Script, Category = "Animation")
+        PROPERTY(Category = "Animation")
         bool bFinished = false;
 
         // Forces a fresh pose sample even when not playing (e.g. just-called PlayAnimation or rewound
@@ -73,7 +73,7 @@ namespace Lumina
         TVector<FAnimNotifyEvent> NotifyEvents;
 
         /** True if the named point notify fired this frame. */
-        FUNCTION(Script)
+        FUNCTION()
         bool WasNotifyTriggered(const FName& NotifyName) const
         {
             for (const FAnimNotifyEvent& Event : NotifyEvents)
@@ -87,11 +87,11 @@ namespace Lumina
         }
 
         /** True while the playhead is inside the named notify-state window. */
-        FUNCTION(Script)
+        FUNCTION()
         bool IsNotifyStateActive(const FName& NotifyName) const;
 
         /** Value of the active clip's named curve at the current playhead, or Default if it has none. */
-        FUNCTION(Script)
+        FUNCTION()
         float GetCurveValue(const FName& CurveName, float Default = 0.0f) const;
 
         /**
@@ -102,7 +102,7 @@ namespace Lumina
          * Calling this with the same clip restarts it from the beginning;
          * passing nullptr stops playback and clears the active clip.
          */
-        FUNCTION(Script)
+        FUNCTION()
         void PlayAnimation(CAnimation* InAnimation, bool bLoop = false, float Speed = 1.0f)
         {
             Animation       = InAnimation;
@@ -117,14 +117,14 @@ namespace Lumina
         }
 
         /** Stop playback and freeze the pose at the current time. */
-        FUNCTION(Script)
+        FUNCTION()
         void Pause()
         {
             bPlaying = false;
         }
 
         /** Resume playback from the current time without resetting it. */
-        FUNCTION(Script)
+        FUNCTION()
         void Resume()
         {
             if (Animation.IsValid())
@@ -138,7 +138,7 @@ namespace Lumina
          * Stop playback and snap back to time 0. Leaves the pose in its bind
          * pose on the next sample so the mesh visibly returns to rest.
          */
-        FUNCTION(Script)
+        FUNCTION()
         void Stop()
         {
             bPlaying    = false;
@@ -148,11 +148,11 @@ namespace Lumina
         }
 
         /** True while a non-looping clip has run to completion. */
-        FUNCTION(Script)
+        FUNCTION()
         bool IsFinished() const { return bFinished; }
 
         /** True while the component is actively advancing the animation. */
-        FUNCTION(Script)
+        FUNCTION()
         bool IsPlaying() const { return bPlaying; }
     };
 }

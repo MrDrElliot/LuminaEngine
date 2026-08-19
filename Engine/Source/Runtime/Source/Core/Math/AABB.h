@@ -16,10 +16,10 @@ namespace Lumina
     {
         GENERATED_BODY()
         
-        PROPERTY(Script, Editable)
+        PROPERTY(Editable)
         FVector3 Min;
 
-        PROPERTY(Script, Editable)
+        PROPERTY(Editable)
         FVector3 Max;
         
         FAABB()
@@ -33,13 +33,13 @@ namespace Lumina
         // False for both a default-constructed box and the inverted min/max a failed build leaves behind.
         FORCEINLINE bool IsValid() const { return Max.x > Min.x || Max.y > Min.y || Max.z > Min.z; }
 
-        FUNCTION(Script)
+        FUNCTION()
         FORCEINLINE float MaxScale() const { return Math::Max(GetSize().x, Math::Max(GetSize().y, GetSize().z)); }
         
-        FUNCTION(Script)
+        FUNCTION()
         FORCEINLINE FVector3 GetSize() const { return Max - Min; }
         
-        FUNCTION(Script)
+        FUNCTION()
         FORCEINLINE FVector3 GetCenter() const { return Min + GetSize() * 0.5f; }
         
         NODISCARD FAABB ToWorld(const FMatrix4& World) const

@@ -19,13 +19,13 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        PROPERTY(Script, Editable, ReflectAs = "FVector3")
+        PROPERTY(Editable, ReflectAs = "FVector3")
         SIMD::VFloat4 Location;   // x, y, z, 0
 
-        PROPERTY(Script, Editable, ReflectAs = "FQuat")
+        PROPERTY(Editable, ReflectAs = "FQuat")
         SIMD::VFloat4 Rotation;   // x, y, z, w
 
-        PROPERTY(Script, Editable, ReflectAs = "FVector3")
+        PROPERTY(Editable, ReflectAs = "FVector3")
         SIMD::VFloat4 Scale;      // x, y, z, 1  (pad lane 1 so Inverse's 1/Scale never divides by 0)
 
         RUNTIME_API VTransform()

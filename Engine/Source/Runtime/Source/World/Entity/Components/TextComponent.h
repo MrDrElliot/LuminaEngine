@@ -91,16 +91,16 @@ namespace Lumina
         //~ Script setters (reflected fields aren't directly assignable from Lua). Font is optional -- a null
         //  font falls back to the engine default world-text font (CFontManager).
 
-        FUNCTION(Script)
+        FUNCTION()
         void SetText(const FString& InText) { Text = InText; }
 
-        FUNCTION(Script)
+        FUNCTION()
         void SetWorldSize(float InSize) { WorldSize = InSize; }
 
-        FUNCTION(Script)
+        FUNCTION()
         void SetColor(const FVector4& InColor) { Color = InColor; }
 
-        FUNCTION(Script)
+        FUNCTION()
         void SetBillboard(bool bInBillboard) { bBillboard = bInBillboard; }
 
         // Render-thread shaped-glyph cache; not serialized, not edited. Rebuilt by the text extractor when

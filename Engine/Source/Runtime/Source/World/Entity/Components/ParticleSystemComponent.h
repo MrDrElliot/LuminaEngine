@@ -83,7 +83,7 @@ namespace Lumina
         bool bForceReset = false;
 
         // Turn the emitter on. bReset clears live particles on the next tick and re-fires the burst.
-        FUNCTION(Script)
+        FUNCTION()
         void Activate(bool bReset = false)
         {
             bEmit       = true;
@@ -95,65 +95,65 @@ namespace Lumina
         }
 
         // Stop emitting; existing particles keep simulating until they expire, so trails fade instead of popping.
-        FUNCTION(Script)
+        FUNCTION()
         void Deactivate() { bEmit = false; }
 
         /** True while the emitter is spawning new particles. */
-        FUNCTION(Script)
+        FUNCTION()
         bool IsActive() const { return bEmit; }
 
         //~ Begin User Parameters
         /** True if this component or its asset declares a parameter with the given name. */
-        FUNCTION(Script)
+        FUNCTION()
         bool HasParameter(FName Name) const
         {
             return FindParameter(Name) != nullptr;
         }
 
-        FUNCTION(Script) 
+        FUNCTION() 
         float GetFloat(const FName& Name, float Default = 0.0f) const;
         
-        FUNCTION(Script) 
+        FUNCTION() 
         int32 GetInt(const FName& Name, int32 Default = 0) const;
         
-        FUNCTION(Script) 
+        FUNCTION() 
         bool GetBool(const FName& Name, bool Default = false) const;
         
-        FUNCTION(Script) 
+        FUNCTION() 
         FVector2 GetVec2(const FName& Name) const;
         
-        FUNCTION(Script) 
+        FUNCTION() 
         FVector3 GetVec3(const FName& Name) const;
         
-        FUNCTION(Script)
+        FUNCTION()
         FVector4 GetVec4(const FName& Name) const;
         
-        FUNCTION(Script)
+        FUNCTION()
         FVector4 GetColor(const FName& Name) const;
 
-        FUNCTION(Script) 
+        FUNCTION() 
         void SetFloat(const FName& Name, float Value);
         
-        FUNCTION(Script) 
+        FUNCTION() 
         void SetInt(const FName& Name, int32 Value);
         
-        FUNCTION(Script)
+        FUNCTION()
         void SetBool(const FName& Name, bool Value);
         
-        FUNCTION(Script) 
+        FUNCTION() 
         void SetVec2(const FName& Name, FVector2 Value);
         
-        FUNCTION(Script) 
+        FUNCTION() 
         void SetVec3(const FName& Name, FVector3 Value);
         
-        FUNCTION(Script) 
+        FUNCTION() 
         void SetVec4(const FName& Name, FVector4 Value);
         
-        FUNCTION(Script) 
+        FUNCTION() 
         void SetColor(const FName& Name, FVector4 Value);
 
         /** Drop the override for this parameter, reverting to the asset default. */
-        FUNCTION(Script)
+        FUNCTION()
         void ResetParameter(const FName& Name);
 
         /** Resolve a parameter by name, preferring component overrides over the asset's default. Public

@@ -18,13 +18,13 @@ namespace Lumina
         /** Installs a transient instance over this slot so its parameters diverge for THIS component only. */
         CMaterialInstance* CreateDynamicMaterialInstance(uint32 Slot);
 
-        FUNCTION(Script)
+        FUNCTION()
         FAABB GetAABB() const;
         
-        FUNCTION(Script)
+        FUNCTION()
         void SetStaticMesh(CStaticMesh* InMesh) { StaticMesh = InMesh; InvalidateRenderResolve(); }
         
-        FUNCTION(Script)
+        FUNCTION()
         CStaticMesh* GetStaticMesh() const { return StaticMesh; }
         
         /** The static mesh asset to render for this component. */

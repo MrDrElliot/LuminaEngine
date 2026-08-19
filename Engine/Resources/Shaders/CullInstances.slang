@@ -218,10 +218,11 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
 
     // End of the last LOD: the bound on every mesh-global meshlet index the cull emits, and the value
     // BuildMeshletBlocks clamps its own range against.
-    const uint MeshletTotal = bSkinned ? Skin.MeshletTotalCount
-                            : (bHasGeometry && NumLODs > 0u
-                                ? Desc.LODMeshletOffset[NumLODs - 1u] + Desc.LODMeshletCount[NumLODs - 1u]
-                                : 0u);
+    const uint LODMeshletTotal = bSkinned ? Skin.MeshletTotalCount
+                               : (bHasGeometry && NumLODs > 0u
+                                   ? Desc.LODMeshletOffset[NumLODs - 1u] + Desc.LODMeshletCount[NumLODs - 1u]
+                                   : 0u);
+
 
     // Does ANY view see it? Breaks on the first hit, so a visible instance pays one or two iterations.
     // Needed before the compacted slot is claimed, because that slot is what indexes the range slab.
@@ -249,6 +250,16 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
         Pass().OutOverflowFlag[0] = 1u;
         return;
     }
+
+    // REACHED, not copied: passing Static.MeshletHeader to ClaimPreSkinSlice below makes Slang materialize
+    // the struct into a Function OpVariable, and SPIR-V requires one holding a PhysicalStorageBuffer
+    // pointer to carry Aliased or Restrict -- which Slang emits with neither. Invalid module, accepted by
+    // every driver, device-lost frames later. Field access auto-derefs, so every use below is unchanged.
+    // Survivors only, which is why the header count it feeds is resolved here rather than beside the LOD one.
+    FInstanceStatic* Static = Pass().RetainedStatic + SlotIdx;
+
+    // Bounded by the header's own count like every consumer: a run no mesh can back becomes BuildMeshletBlocks' loop trip count, which hangs the GPU rather than drawing something wrong.
+    const uint MeshletTotal = min(LODMeshletTotal, Static.MeshletHeader.MeshletCount);
 
     // THE per-(instance, view) decision, made once. BuildMeshletBlocks reads what this writes instead of
     // re-deriving it, so the reservation and the append cannot disagree -- a mismatch used to hand one
@@ -313,12 +324,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
         Pass().OutInstanceViewRanges[OutSlot * Pass().NumViews + v] = uint2(Range.x, Emitted);
     }
 
-    // Only survivors get here: 112 bytes a rejected slot never touches. REACHED, not copied: passing
-    // Static.MeshletHeader to ClaimPreSkinSlice below makes Slang materialize the struct into a Function
-    // OpVariable, and SPIR-V requires one holding a PhysicalStorageBuffer pointer to carry Aliased or
-    // Restrict -- which Slang emits with neither. Invalid module, accepted by every driver, device-lost
-    // frames later. Field access auto-derefs, so every use below is unchanged.
-    FInstanceStatic* Static = Pass().RetainedStatic + SlotIdx;
+    // Only survivors get here: 112 bytes a rejected slot never touches.
 
     // Pre-skin slices, claimed from the SAME resolved ranges the emit above used. A block's vertex span is
     // the span of its meshlets, so it is read straight off the header rather than precomputed on the CPU.

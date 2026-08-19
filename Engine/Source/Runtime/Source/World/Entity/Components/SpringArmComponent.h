@@ -57,7 +57,7 @@ namespace Lumina
         float LengthLagSpeed = 15.0f;
 
         /** Set the pivot entity and re-seat the camera on the next tick. */
-        FUNCTION(Script)
+        FUNCTION()
         void SetTarget(entt::entity Entity)
         {
             Target = entt::to_integral(Entity);

@@ -74,7 +74,7 @@ namespace Lumina
         
         virtual bool IsSkinned() const { return false; }
         
-        FUNCTION(Script)
+        FUNCTION()
         FORCEINLINE const FAABB& GetAABB() const { return BoundingBox; }
         
         template<typename TCallable>
@@ -86,7 +86,7 @@ namespace Lumina
         PROPERTY(Editable, NoResize, NoReorder, Category = "Materials")
         TVector<TObjectPtr<CMaterialInterface>> Materials;
 
-        PROPERTY(Script, Category = "AABB")
+        PROPERTY(Category = "AABB")
         FAABB BoundingBox;
 
         /** Build inputs for this mesh's signed distance field. Edited here rather than only at import so

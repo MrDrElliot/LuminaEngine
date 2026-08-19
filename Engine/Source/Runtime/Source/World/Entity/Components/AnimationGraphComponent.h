@@ -22,7 +22,7 @@ namespace Lumina
         GENERATED_BODY()
 
         /** Compiled animation graph asset evaluated each frame for this entity. */
-        PROPERTY(Script, Editable, Replicated, Category = "Animation")
+        PROPERTY(Editable, Replicated, Category = "Animation")
         TObjectPtr<CAnimationGraph> Graph;
 
         /** Live parameter block, an instance of the graph's ParameterStruct. Write its fields directly. */
@@ -55,7 +55,7 @@ namespace Lumina
          * root motion enabled, blends it through the graph, and drives the entity transform with it.
          * ForceLock pins the root without extraction; ForceUnlock leaves the root free in the pose.
          */
-        PROPERTY(Script, Editable, Category = "Animation")
+        PROPERTY(Editable, Category = "Animation")
         ERootMotionLockMode RootMotionLock = ERootMotionLockMode::FromAsset;
 
         // Per-instance VM state (registers, playback clocks, parameter values). Sized lazily from Graph; not serialized.
@@ -73,88 +73,88 @@ namespace Lumina
         FAnimMontagePlayer Montages;
 
         /** Plays a montage on the slots its tracks name, blending out anything already on them. */
-        FUNCTION(Script)
+        FUNCTION()
         void PlayMontage(CAnimationMontage* Montage, float PlayRate = 1.0f)
         {
             Montages.Play(Montage, PlayRate, FName());
         }
 
         /** Plays a montage starting at a named section. */
-        FUNCTION(Script)
+        FUNCTION()
         void PlayMontageFromSection(CAnimationMontage* Montage, const FName& SectionName, float PlayRate = 1.0f)
         {
             Montages.Play(Montage, PlayRate, SectionName);
         }
 
         /** Blends a montage out. A negative BlendOutTime uses the montage's own blend out time. */
-        FUNCTION(Script)
+        FUNCTION()
         void StopMontage(CAnimationMontage* Montage, float BlendOutTime = -1.0f)
         {
             Montages.Stop(Montage, BlendOutTime);
         }
 
-        FUNCTION(Script)
+        FUNCTION()
         void StopAllMontages(float BlendOutTime = -1.0f)
         {
             Montages.StopAll(BlendOutTime);
         }
 
         /** Moves a playing montage's playhead to a named section. False if it is not playing. */
-        FUNCTION(Script)
+        FUNCTION()
         bool JumpToMontageSection(CAnimationMontage* Montage, const FName& SectionName)
         {
             return Montages.JumpToSection(Montage, SectionName);
         }
 
         /** Overrides which section follows the one playing now, which is how combos chain. */
-        FUNCTION(Script)
+        FUNCTION()
         bool SetNextMontageSection(CAnimationMontage* Montage, const FName& SectionName)
         {
             return Montages.SetNextSection(Montage, SectionName);
         }
 
         /** True while the montage is playing and not already blending out. */
-        FUNCTION(Script)
+        FUNCTION()
         bool IsMontagePlaying(CAnimationMontage* Montage) const
         {
             return Montages.IsPlaying(Montage);
         }
 
         /** True while any montage is contributing to this entity's pose. */
-        FUNCTION(Script)
+        FUNCTION()
         bool IsAnyMontagePlaying() const
         {
             return Montages.HasActive();
         }
 
-        FUNCTION(Script)
+        FUNCTION()
         FName GetMontageSection(CAnimationMontage* Montage) const
         {
             return Montages.GetCurrentSection(Montage);
         }
 
         /** Playhead position on the montage timeline, in seconds. */
-        FUNCTION(Script)
+        FUNCTION()
         float GetMontagePosition(CAnimationMontage* Montage) const
         {
             return Montages.GetPosition(Montage);
         }
 
         /** How strongly the montage is currently blended over the graph pose. */
-        FUNCTION(Script)
+        FUNCTION()
         float GetMontageWeight(CAnimationMontage* Montage) const
         {
             return Montages.GetWeight(Montage);
         }
 
-        FUNCTION(Script)
+        FUNCTION()
         void SetMontagePlayRate(CAnimationMontage* Montage, float PlayRate)
         {
             Montages.SetPlayRate(Montage, PlayRate);
         }
 
         /** True if the named point notify fired this frame (any weight). */
-        FUNCTION(Script)
+        FUNCTION()
         bool WasNotifyTriggered(const FName& NotifyName) const
         {
             return std::ranges::any_of(NotifyEvents, [&NotifyName](const FAnimNotifyEvent& Event)
@@ -164,22 +164,22 @@ namespace Lumina
         }
 
         /** True if the graph declares a parameter with the given name. */
-        FUNCTION(Script)
+        FUNCTION()
         bool HasParameter(const FName& ParameterName) const;
 
         /** Value the VM last evaluated this parameter at. Read-only; write the parameter struct instead. */
-        FUNCTION(Script)
+        FUNCTION()
         float GetEvaluatedParameter(const FName& ParameterName, float Default = 0.0f) const;
 
         // Curve values are produced by the graph's own evaluation (clips carry the keys, blends weight
         // them), so they are read-only here: the last evaluated frame's value of the output pose.
 
         /** Value the named animation curve carried into the output pose this frame. */
-        FUNCTION(Script)
+        FUNCTION()
         float GetCurveValue(const FName& CurveName, float Default = 0.0f) const;
 
         /** True if the graph carries a curve slot with the given name. */
-        FUNCTION(Script)
+        FUNCTION()
         bool HasCurve(const FName& CurveName) const;
 
         // Sizes VMState from the current graph if it has not been initialized

@@ -27,11 +27,11 @@ namespace Lumina
 
         // Called for every Game world (packaged boot, runtime travel, and editor PIE play) right BEFORE it is
         // initialized.
-        FUNCTION(ScriptEvent)
+        FUNCTION()
         virtual void PreWorldLoad(CWorld* World) {}
 
         // Called for the same worlds right AFTER InitializeWorld.
-        FUNCTION(ScriptEvent)
+        FUNCTION()
         virtual void PostWorldLoad(CWorld* World) {}
     };
 }

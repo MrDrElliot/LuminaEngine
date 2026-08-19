@@ -21,7 +21,7 @@ namespace Lumina
      * editor's terrain edit mode is active. It carries the live brush cursor
      * state consumed by the async sculpt task each tick.
      */
-    REFLECT(Component, Transient, Category = "Terrain")
+    REFLECT(Component, Category = "Terrain")
     struct RUNTIME_API STerrainBrushComponent
     {
         GENERATED_BODY()

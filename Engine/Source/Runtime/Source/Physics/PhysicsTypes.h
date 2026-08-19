@@ -35,11 +35,11 @@ namespace Lumina
         GENERATED_BODY()
         
         /** Collision layer this body belongs to, determines which layers can see it. */
-        PROPERTY(Script, Editable)
+        PROPERTY(Editable)
         ECollisionProfiles Layer    = ECollisionProfiles::Dynamic;
 
         /** Bitmask of layers this body collides against. */
-        PROPERTY(Script, Editable)
+        PROPERTY(Editable)
         ECollisionProfiles Mask     = ECollisionProfiles::Static | ECollisionProfiles::Dynamic;
         
         NODISCARD FORCEINLINE bool ShouldCollide(const FCollisionProfile& Other) const

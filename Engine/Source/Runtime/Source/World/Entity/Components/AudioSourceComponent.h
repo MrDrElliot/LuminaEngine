@@ -15,55 +15,55 @@ namespace Lumina
 		GENERATED_BODY()
 
 		/** Audio asset to play. */
-		PROPERTY(Script, Editable)
+		PROPERTY(Editable)
 		TObjectPtr<CAudioStream> Sound;
 
 		/** Mix group this source routes through. */
-		PROPERTY(Script, Editable)
+		PROPERTY(Editable)
 		EAudioBus Bus = EAudioBus::SFX;
 
 		/** Playback volume multiplier (1.0 = full volume). */
-		PROPERTY(Script, Editable, ClampMin = 0.0f, ClampMax = 4.0f)
+		PROPERTY(Editable, ClampMin = 0.0f, ClampMax = 4.0f)
 		float Volume = 1.0f;
 
 		/** Playback pitch multiplier (1.0 = original pitch). */
-		PROPERTY(Script, Editable, ClampMin = 0.01f, ClampMax = 4.0f)
+		PROPERTY(Editable, ClampMin = 0.01f, ClampMax = 4.0f)
 		float Pitch = 1.0f;
 
 		/** When false the source plays as a flat 2D sound, ignoring its transform. */
-		PROPERTY(Script, Editable)
+		PROPERTY(Editable)
 		bool bSpatialized = true;
 
 		/** Distance falloff, cone and doppler behavior. */
-		PROPERTY(Script, Editable)
+		PROPERTY(Editable)
 		SAudioAttenuation Attenuation;
 
 		/** Muffling applied when level geometry blocks the line to the listener. */
-		PROPERTY(Script, Editable)
+		PROPERTY(Editable)
 		SAudioOcclusion Occlusion;
 
 		/** Voices with a lower priority are evicted first when the voice cap is reached. */
-		PROPERTY(Script, Editable, ClampMin = 0, ClampMax = 255)
+		PROPERTY(Editable, ClampMin = 0, ClampMax = 255)
 		int32 Priority = 128;
 
 		/** Seconds to ramp up from silence when playback starts. */
-		PROPERTY(Script, Editable, ClampMin = 0.0f)
+		PROPERTY(Editable, ClampMin = 0.0f)
 		float FadeInTime = 0.0f;
 
 		/** Seconds to ramp down to silence when Stop() is asked to fade. */
-		PROPERTY(Script, Editable, ClampMin = 0.0f)
+		PROPERTY(Editable, ClampMin = 0.0f)
 		float FadeOutTime = 0.5f;
 
 		/** When true, the sound restarts automatically upon completion. */
-		PROPERTY(Script, Editable)
+		PROPERTY(Editable)
 		bool bLooping = false;
 
 		/** When true, playback starts automatically once the component is initialized. */
-		PROPERTY(Script, Editable)
+		PROPERTY(Editable)
 		bool bPlayOnReady = false;
 
 		/** Skips starting the voice when the listener is beyond MaxDistance, freeing it for audible sounds. */
-		PROPERTY(Script, Editable)
+		PROPERTY(Editable)
 		bool bCullBeyondMaxDistance = true;
 
 		// Handle to the currently playing sound instance.
@@ -92,28 +92,28 @@ namespace Lumina
 		FVector3 LastPosition = FVector3(0.0f);
 		bool bHasLastPosition = false;
 
-		FUNCTION(Script)
+		FUNCTION()
 		void Play();
 
-		FUNCTION(Script)
+		FUNCTION()
 		void Stop();
 
 		/** Stops over FadeOutTime rather than cutting the voice instantly. */
-		FUNCTION(Script)
+		FUNCTION()
 		void FadeOut();
 
-		FUNCTION(Script)
+		FUNCTION()
 		void SetPaused(bool bInPaused);
 
 		/** True while the mixer still holds a voice for this source. */
-		FUNCTION(Script)
+		FUNCTION()
 		bool IsPlaying() const;
 
 		/** Current playback position in seconds, 0 when not playing. */
-		FUNCTION(Script)
+		FUNCTION()
 		float GetPlaybackTime() const;
 
-		FUNCTION(Script)
+		FUNCTION()
 		void SeekToTime(float Seconds);
 
 		void StopWithMode(EAudioStopMode Mode);
@@ -125,11 +125,11 @@ namespace Lumina
 		GENERATED_BODY()
 
 		/** Engine listener slot this component drives. Split screen uses one component per slot. */
-		PROPERTY(Script, Editable, ClampMin = 0, ClampMax = 3)
+		PROPERTY(Editable, ClampMin = 0, ClampMax = 3)
 		int32 ListenerIndex = 0;
 
 		/** Feeds the listener's velocity to the doppler calculation. */
-		PROPERTY(Script, Editable)
+		PROPERTY(Editable)
 		bool bApplyDoppler = true;
 
 		FVector3 LastPosition = FVector3(0.0f);

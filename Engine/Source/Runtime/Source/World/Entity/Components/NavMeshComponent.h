@@ -154,15 +154,15 @@ namespace Lumina
 
         /** Request an async rebuild of this volume; consumed next tick by SNavMeshSystem. Script entry point
          *  for rebuilding navigation after spawning/moving geometry at runtime. */
-        FUNCTION(Script)
+        FUNCTION()
         void RequestRebuild() { bBakeRequested = true; }
 
         /** True once a baked navmesh has finished hydrating and can answer queries. */
-        FUNCTION(Script)
+        FUNCTION()
         bool IsNavMeshReady() const { return Runtime.Mesh != nullptr && Runtime.Mesh->IsReady(); }
 
         /** True if baked tile data is present (independent of runtime hydration). */
-        FUNCTION(Script)
+        FUNCTION()
         bool HasNavData() const { return HasBakedData(); }
 
         bool HasBakedData() const { return !Tiles.empty() && TileWorldSize > 0.0f; }

@@ -20,7 +20,7 @@ namespace Lumina
          * Instantiates the prefab at Transform. Returns false if no prefab is assigned, it fails to
          * load.
          */
-        FUNCTION(Script)
+        FUNCTION()
         bool Spawn(CWorld* World, const FTransform& Transform = FTransform{}) const;
 
         PROPERTY(Editable, Category = "Prefab")

@@ -175,8 +175,13 @@ namespace Lumina
 
         bool bAnyRowExpansionChanged = false;
 
+        // Rows sit flush: the height cell padding used to add moves into the node's own frame padding.
+        const ImGuiStyle& DrawStyle = ImGui::GetStyle();
+        const ImVec2 RowFramePadding(DrawStyle.FramePadding.x, DrawStyle.FramePadding.y + 2.0f);
+
         ImGui::PushID(this);
-        ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(2, 2));
+        ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(2, 0));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, RowFramePadding);
         if (ImGui::BeginTable("TreeViewTable", 1, TableFlags))
         {
             ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthStretch);
@@ -239,7 +244,7 @@ namespace Lumina
             ClearSelections(Context);
         }
 
-        ImGui::PopStyleVar();
+        ImGui::PopStyleVar(2);
         ImGui::PopID();
 
         if (bAnyRowExpansionChanged)
@@ -399,7 +404,13 @@ namespace Lumina
         }
 
         ImGui::PushStyleColor(ImGuiCol_Text, TextColor);
-        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.22f, 0.52f, 0.22f, 0.40f));
+
+        // Selection paints the table ROW, not the node's frame, so it covers the row's full height and width.
+        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+        if (State.bSelected)
+        {
+            ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg1, ImGui::GetColorU32(ImVec4(0.22f, 0.52f, 0.22f, 0.40f)));
+        }
 
         // Closes exactly what this row still has open, for the early return taken when a callback
         // restructures the tree. Mirrors the tail of this function.
@@ -430,8 +441,8 @@ namespace Lumina
             const ImGuiStyle& LineStyle = ImGui::GetStyle();
             const ImVec2 ItemMin = ImGui::GetItemRectMin();
             const ImVec2 ItemMax = ImGui::GetItemRectMax();
-            // Half the inter-row gap from each side so adjacent rows' verticals meet flush (no break, no overlap).
-            const float RowBridge = LineStyle.CellPadding.y + LineStyle.ItemSpacing.y * 0.5f;
+            // Rows are flush, so a line drawn to the item's own edges already meets the next row's.
+            const float RowBridge = LineStyle.CellPadding.y;
             const float LineTop = ItemMin.y - RowBridge;
             const float LineBot = ItemMax.y + RowBridge;
             const float MidY    = (ItemMin.y + ItemMax.y) * 0.5f;

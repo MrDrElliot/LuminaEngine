@@ -165,11 +165,11 @@ namespace Lumina
          * @param Transform Optional Transform.
          * @return a newly created entity.
          */
-        FUNCTION(Script)
+        FUNCTION()
         entt::entity ConstructEntity(FName Name, const FTransform& Transform = FTransform());
 
 
-        FUNCTION(Script)
+        FUNCTION()
         entt::entity SpawnPrefab(const FAssetRef& Prefab);
 
         /** Like SpawnPrefab(Path), but positions the spawned root at SpawnTransform and
@@ -186,7 +186,7 @@ namespace Lumina
          *  the hit event; the entity auto-despawns after Lifetime seconds (0 = never); Instigator is
          *  ignored by the sweep so the shooter is never hit. Returns the new entity. Bind its hit with
          *  GetEntityRegistry().get<SProjectileComponent>(e).OnHit, or set more fields on that component. */
-        FUNCTION(Script)
+        FUNCTION()
         entt::entity SpawnProjectile(FVector3 Position, FVector3 Velocity, float Damage, float Lifetime, entt::entity Instigator);
 
         // C++ convenience with defaults.
@@ -203,19 +203,19 @@ namespace Lumina
         
         STransformComponent& GetEntityTransform(entt::entity Entity);
 
-        FUNCTION(Script)
+        FUNCTION()
         FVector3 GetEntityLocation(entt::entity Entity);
 
-        FUNCTION(Script)
+        FUNCTION()
         void SetEntityLocation(entt::entity Entity, FVector3 Location);
 
-        FUNCTION(Script)
+        FUNCTION()
         void SetEntityRotation(entt::entity Entity, FQuat Rotation);
 
-        FUNCTION(Script)
+        FUNCTION()
         FVector3 TranslateEntity(entt::entity Entity, FVector3 Translation);
 
-        FUNCTION(Script)
+        FUNCTION()
         uint32 GetNumEntities() const;
         
         SDefaultWorldSettings& GetDefaultWorldSettings();
@@ -227,16 +227,16 @@ namespace Lumina
         SSceneFolderComponent* FindSceneFolders();
         const SSceneFolderComponent* FindSceneFolders() const;
         
-        FUNCTION(Script)
+        FUNCTION()
         bool EntityHasTag(entt::entity Entity, const FName& Tag);
 
-        FUNCTION(Script)
+        FUNCTION()
         entt::entity GetEntityByTag(const FName& Tag);
 
-        FUNCTION(Script)
+        FUNCTION()
         entt::entity GetEntityByName(const FName& Name);
 
-        FUNCTION(Script)
+        FUNCTION()
         FName GetEntityName(entt::entity Entity);
 
         TOptional<SRayResult> CastRay(const SRayCastSettings& Settings);
@@ -273,21 +273,21 @@ namespace Lumina
         void DuplicateEntity(entt::entity& To, entt::entity From, const TFunctionRef<bool(entt::type_info)>& Callback);
 
         // Deep-copy Source and its children (components copy-constructed, transient handles rebuilt); returns the new root.
-        FUNCTION(Script)
+        FUNCTION()
         entt::entity DuplicateEntity(entt::entity Source);
 
         // Reparent Child under Parent (Parent = null detaches to the world root), preserving world transform.
-        FUNCTION(Script)
+        FUNCTION()
         void SetParent(entt::entity Child, entt::entity Parent);
 
         // Detach from the current parent, preserving world transform.
-        FUNCTION(Script)
+        FUNCTION()
         void DetachFromParent(entt::entity Entity);
 
-        FUNCTION(Script)
+        FUNCTION()
         entt::entity GetParent(entt::entity Entity);
 
-        FUNCTION(Script)
+        FUNCTION()
         entt::entity GetRootEntity(entt::entity Entity);
 
         // --- Mesh sockets / bones. SocketOrBone accepts a socket name authored on the skeleton or
@@ -295,36 +295,36 @@ namespace Lumina
 
         // Parent Child under Parent and keep it glued to the named socket/bone each frame
         // (adds an SSocketAttachmentComponent; the socket attachment system drives the transform).
-        FUNCTION(Script)
+        FUNCTION()
         void AttachEntityToSocket(entt::entity Child, entt::entity Parent, const FName& SocketOrBone);
 
         // Stop following the socket and detach to the world root, preserving world transform.
-        FUNCTION(Script)
+        FUNCTION()
         void DetachEntityFromSocket(entt::entity Entity);
 
-        FUNCTION(Script)
+        FUNCTION()
         bool HasSocket(entt::entity Entity, const FName& SocketOrBone);
 
         /** World-space socket/bone location on the entity's skeletal mesh; zero when it doesn't resolve. */
-        FUNCTION(Script)
+        FUNCTION()
         FVector3 GetSocketLocation(entt::entity Entity, const FName& SocketOrBone);
 
         /** World-space socket/bone rotation on the entity's skeletal mesh; identity when it doesn't resolve. */
-        FUNCTION(Script)
+        FUNCTION()
         FQuat GetSocketRotation(entt::entity Entity, const FName& SocketOrBone);
 
         /** Bone name for a skeleton bone index (e.g. a hit result's BoneIndex); NAME_None when out of range. */
-        FUNCTION(Script)
+        FUNCTION()
         FName GetBoneName(entt::entity Entity, int32 BoneIndex);
 
-        FUNCTION(Script)
+        FUNCTION()
         int32 GetBoneIndex(entt::entity Entity, const FName& BoneName);
 
         /** Bone origin nearest WorldLocation; approximates the hit bone on single-body skeletal meshes. */
-        FUNCTION(Script)
+        FUNCTION()
         FName FindClosestBone(entt::entity Entity, FVector3 WorldLocation);
 
-        FUNCTION(Script)
+        FUNCTION()
         void DestroyEntity(entt::entity Entity);
         
         void SetActiveCamera(entt::entity InEntity) const;
@@ -332,33 +332,33 @@ namespace Lumina
         /** Switch the active camera, easing from the current view over BlendTime seconds (0 = snap). */
         void SetActiveCamera(entt::entity InEntity, float BlendTime, ECameraBlendFunction Function = ECameraBlendFunction::EaseInOut) const;
 
-        FUNCTION(Script)
+        FUNCTION()
         SCameraComponent* GetActiveCamera() const;
 
         entt::entity GetActiveCameraEntity() const;
         
         void OnChangeCameraEvent(const FSwitchActiveCameraEvent& Event);
         
-        FUNCTION(Script)
+        FUNCTION()
         double GetWorldDeltaTime() const { return DeltaTime; }
 
-        FUNCTION(Script)
+        FUNCTION()
         double GetTimeSinceWorldCreation() const { return TimeSinceCreation; }
         
 
         /** Pauses gameplay (systems + physics). UI keeps updating (ticked from Extract), so a script-driven
          *  pause menu can still unpause; systems registered for EUpdateStage::Paused keep running too. */
-        FUNCTION(Script)
+        FUNCTION()
         void SetPaused(bool bNewPause) { bPaused = bNewPause; }
 
-        FUNCTION(Script)
+        FUNCTION()
         bool IsPaused() const { return bPaused; }
 
         /** World time scale (slow motion / speed up). Scales DeltaTime for systems, scripts, and physics. */
-        FUNCTION(Script)
+        FUNCTION()
         void SetTimeDilation(float Dilation);
 
-        FUNCTION(Script)
+        FUNCTION()
         float GetTimeDilation();
 
         void SetActive(bool bNewActive);

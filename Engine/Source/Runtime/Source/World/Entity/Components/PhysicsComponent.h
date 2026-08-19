@@ -23,93 +23,93 @@ namespace Lumina
         FQuat LastBodyRotation;
         
         /** Internal Jolt body ID, read-only, assigned by the physics system. */
-        PROPERTY(Script, ReadOnly, Category = "Physics")
+        PROPERTY(ReadOnly, Category = "Physics")
         uint32 BodyID = 0xFFFFFFFF;
 
         /** Mass of the rigid body in kg. */
-        PROPERTY(Script, Editable, Category = "Physics")
+        PROPERTY(Editable, Category = "Physics")
         float Mass = 1.0f;
 
         /** When true, Mass overrides the value Jolt would compute from shape density. */
-        PROPERTY(Script, Editable, Category = "Physics")
+        PROPERTY(Editable, Category = "Physics")
         bool bOverrideMass = false;
 
         /** When true, InertiaTensor replaces Jolt's shape-derived inertia (top-heavy vehicles, hand-tuned
             spin resistance). Uses Mass for the body's mass. Dynamic bodies only. */
-        PROPERTY(Script, Editable, Category = "Physics")
+        PROPERTY(Editable, Category = "Physics")
         bool bOverrideInertia = false;
 
         /** Diagonal inertia tensor (Ixx, Iyy, Izz in kg·m²) when bOverrideInertia is set. Larger on an axis
             = harder to spin about it. */
-        PROPERTY(Script, Editable, Category = "Physics")
+        PROPERTY(Editable, Category = "Physics")
         FVector3 InertiaTensor = FVector3(1.0f);
 
         /** Local-space offset applied to the body's center of mass. Lower the Y for car-like weight bias. */
-        PROPERTY(Script, Editable, Category = "Physics")
+        PROPERTY(Editable, Category = "Physics")
         FVector3 CenterOfMassOffset = FVector3(0.0f);
 
         /** Layer and mask controlling which bodies this one collides with. */
-        PROPERTY(Script, Editable, Category = "Physics")
+        PROPERTY(Editable, Category = "Physics")
         FCollisionProfile CollisionProfile;
 
         /** Per-body override for global velocity solver iterations (0 = use world setting). */
-        PROPERTY(Script, Editable, Category = "Physics")
+        PROPERTY(Editable, Category = "Physics")
         uint32 NumVelocityStepsOverride = 0;
 
         /** Per-body override for global position solver iterations (0 = use world setting). */
-        PROPERTY(Script, Editable, Category = "Physics")
+        PROPERTY(Editable, Category = "Physics")
         uint32 NumPositionStepsOverride = 0;
 
         /** Maximum linear speed (m/s) this body can reach. */
-        PROPERTY(Script, Editable, ClampMin = 0.001f, Category = "Physics")
+        PROPERTY(Editable, ClampMin = 0.001f, Category = "Physics")
         float MaxLinearVelocity = 500.0f;
 
         /** Maximum angular speed (rad/s) this body can reach. */
-        PROPERTY(Script, Editable, ClampMin = 0.001f, Category = "Physics")
+        PROPERTY(Editable, ClampMin = 0.001f, Category = "Physics")
         float MaxAngularVelocity = 0.25f * LE_PI_F * 60.0f;
 
         /** Bounciness override for this body (0 = no bounce, 1 = perfectly elastic). */
-        PROPERTY(Script, Editable, ClampMin = 0.001f, ClampMax = 1.0f, Category = "Physics")
+        PROPERTY(Editable, ClampMin = 0.001f, ClampMax = 1.0f, Category = "Physics")
         float RestitutionOverride = 0.5f;
 
         /** Surface friction coefficient override for this body. */
-        PROPERTY(Script, Editable, ClampMin = 0.001f, ClampMax = 1.0f, Category = "Physics")
+        PROPERTY(Editable, ClampMin = 0.001f, ClampMax = 1.0f, Category = "Physics")
         float FrictionOverride = 0.3f;
 
         /** Damping applied to linear velocity each step. */
-        PROPERTY(Script, Editable, ClampMin = 0.001f, ClampMax = 1.0f, Category = "Physics")
+        PROPERTY(Editable, ClampMin = 0.001f, ClampMax = 1.0f, Category = "Physics")
         float LinearDamping = 0.0f;
 
         /** Damping applied to angular velocity each step. */
-        PROPERTY(Script, Editable, ClampMin = 0.001f, ClampMax = 1.0f, Category = "Physics")
+        PROPERTY(Editable, ClampMin = 0.001f, ClampMax = 1.0f, Category = "Physics")
         float AngularDamping = 0.05f;
 
         /** Motion quality level: 0 = Discrete, 1 = LinearCast. Higher is more expensive but prevents tunneling. */
-        PROPERTY(Script, Editable, Category = "Physics")
+        PROPERTY(Editable, Category = "Physics")
         uint8 MotionQualityLevel = 0;
 
         /** Whether the body is Static, Kinematic, or Dynamic. */
-        PROPERTY(Script, Editable, Category = "Physics")
+        PROPERTY(Editable, Category = "Physics")
         EBodyType BodyType = EBodyType::Dynamic;
 
         /** When true, the body detects overlaps but does not produce contact responses. */
-        PROPERTY(Script, Editable, Category = "Physics")
+        PROPERTY(Editable, Category = "Physics")
         bool bIsSensor = false;
 
         /** Merge similar contact manifolds to reduce solver work for this body. */
-        PROPERTY(Script, Editable, Category = "Physics")
+        PROPERTY(Editable, Category = "Physics")
         bool bUseManifoldReduction = true;
 
         /** Apply gyroscopic torque to spinning bodies for more realistic angular motion. */
-        PROPERTY(Script, Editable, Category = "Physics")
+        PROPERTY(Editable, Category = "Physics")
         bool bApplyGyroscopicForce = false;
 
         /** Allow this body to enter sleep state when it comes to rest. */
-        PROPERTY(Script, Editable, Category = "Physics")
+        PROPERTY(Editable, Category = "Physics")
         bool bAllowSleeping = true;
 
         /** Apply global gravity to this body. Disable for projectiles or floating objects. */
-        PROPERTY(Script, Editable, Category = "Physics")
+        PROPERTY(Editable, Category = "Physics")
         bool bUseGravity = true;
 
         // Per-axis degree-of-freedom locks (world space). Locking lets you build 2D/planar mechanics or
@@ -117,46 +117,46 @@ namespace Lumina
         // invalid (use a Static body instead) and is ignored.
 
         /** Prevent the body from translating along the world X axis. */
-        PROPERTY(Script, Editable, Category = "Physics|Constraints")
+        PROPERTY(Editable, Category = "Physics|Constraints")
         bool bLockTranslationX = false;
 
         /** Prevent the body from translating along the world Y axis. */
-        PROPERTY(Script, Editable, Category = "Physics|Constraints")
+        PROPERTY(Editable, Category = "Physics|Constraints")
         bool bLockTranslationY = false;
 
         /** Prevent the body from translating along the world Z axis. */
-        PROPERTY(Script, Editable, Category = "Physics|Constraints")
+        PROPERTY(Editable, Category = "Physics|Constraints")
         bool bLockTranslationZ = false;
 
         /** Prevent the body from rotating about the world X axis. */
-        PROPERTY(Script, Editable, Category = "Physics|Constraints")
+        PROPERTY(Editable, Category = "Physics|Constraints")
         bool bLockRotationX = false;
 
         /** Prevent the body from rotating about the world Y axis. */
-        PROPERTY(Script, Editable, Category = "Physics|Constraints")
+        PROPERTY(Editable, Category = "Physics|Constraints")
         bool bLockRotationY = false;
 
         /** Prevent the body from rotating about the world Z axis. */
-        PROPERTY(Script, Editable, Category = "Physics|Constraints")
+        PROPERTY(Editable, Category = "Physics|Constraints")
         bool bLockRotationZ = false;
 
-        PROPERTY(Script)
+        PROPERTY()
         TScriptDelegate<SCollisionEvent> OnContactBegin;
 
         // Velocities are zero in this payload.
-        PROPERTY(Script)
+        PROPERTY()
         TScriptDelegate<SCollisionEvent> OnContactEnd;
 
-        PROPERTY(Script)
+        PROPERTY()
         TScriptDelegate<SCollisionEvent> OnOverlapBegin;
 
-        PROPERTY(Script)
+        PROPERTY()
         TScriptDelegate<SCollisionEvent> OnOverlapEnd;
 
-        PROPERTY(Script)
+        PROPERTY()
         FScriptDelegate OnWake;
 
-        PROPERTY(Script)
+        PROPERTY()
         FScriptDelegate OnSleep;
 
     };
@@ -414,24 +414,24 @@ namespace Lumina
 
         /** Build a convex hull (allows dynamic bodies). False builds a concave triangle mesh: static/kinematic only,
             which is what terrain wants. */
-        PROPERTY(Script, Editable)
+        PROPERTY(Editable)
         bool bConvex = false;
 
         /** Physics material driving friction/restitution. Null falls back to the rigid body's *Override fields. */
-        PROPERTY(Script, Editable)
+        PROPERTY(Editable)
         TObjectPtr<CPhysicsMaterial> PhysicsMaterial;
 
         /** When true, the body produces overlap events but no contact response (trigger volume). */
-        PROPERTY(Script, Editable)
+        PROPERTY(Editable)
         bool bIsTrigger = false;
 
         /** When true, this collider contributes its shape to NavMesh bakes. */
-        PROPERTY(Script, Editable, Category = "Navigation")
+        PROPERTY(Editable, Category = "Navigation")
         bool bAffectsNavigation = true;
 
         /** Bumped by SDynamicMeshComponent::Commit so the physics scene knows the geometry changed and
             rebuilds the body. Not authored. */
-        PROPERTY(Script, ReadOnly)
+        PROPERTY(ReadOnly)
         uint32 GeometryVersion = 0;
     };
 
@@ -531,11 +531,11 @@ namespace Lumina
         GENERATED_BODY()
 
         /** World-space linear surface velocity (m/s). Objects on the surface are dragged this way. */
-        PROPERTY(Script, Editable, Category = "Conveyor")
+        PROPERTY(Editable, Category = "Conveyor")
         FVector3 SurfaceVelocity = FVector3(0.0f);
 
         /** World-space angular surface velocity (rad/s) about the body center -- spinning turntables. */
-        PROPERTY(Script, Editable, Category = "Conveyor")
+        PROPERTY(Editable, Category = "Conveyor")
         FVector3 AngularSurfaceVelocity = FVector3(0.0f);
     };
 
@@ -548,47 +548,47 @@ namespace Lumina
         GENERATED_BODY()
 
         /** Joint type. */
-        PROPERTY(Script, Editable, Category = "Constraint")
+        PROPERTY(Editable, Category = "Constraint")
         EPhysicsConstraintType Type = EPhysicsConstraintType::Point;
 
         /** The body this entity is jointed to. Leave as the null entity to anchor to the world. */
-        PROPERTY(Script, Editable, Entity, Category = "Constraint")
+        PROPERTY(Editable, Entity, Category = "Constraint")
         uint32 TargetBody = 0xFFFFFFFF;
 
         /** Pivot in this entity's local space (Point/Hinge/Slider/Cone). The world anchor tracks the body. */
-        PROPERTY(Script, Editable, Category = "Constraint")
+        PROPERTY(Editable, Category = "Constraint")
         FVector3 PivotOffset = FVector3(0.0f);
 
         /** Hinge/Cone axis or Slider direction, in this entity's local space. */
-        PROPERTY(Script, Editable, Category = "Constraint")
+        PROPERTY(Editable, Category = "Constraint")
         FVector3 Axis = FVector3(0.0f, 1.0f, 0.0f);
 
         /** Enable the limits below (Hinge swing / Slider travel / Distance range). */
-        PROPERTY(Script, Editable, Category = "Limits")
+        PROPERTY(Editable, Category = "Limits")
         bool bLimited = false;
 
         /** Lower limit: Hinge angle (degrees), Slider position (m), Distance min (m). */
-        PROPERTY(Script, Editable, Category = "Limits")
+        PROPERTY(Editable, Category = "Limits")
         float LowerLimit = 0.0f;
 
         /** Upper limit: Hinge angle (degrees), Slider position (m), Distance max (m). */
-        PROPERTY(Script, Editable, Category = "Limits")
+        PROPERTY(Editable, Category = "Limits")
         float UpperLimit = 0.0f;
 
         /** Cone half-angle in degrees (Cone type only). */
-        PROPERTY(Script, Editable, Category = "Limits", ClampMin = 0.0f, ClampMax = 180.0f)
+        PROPERTY(Editable, Category = "Limits", ClampMin = 0.0f, ClampMax = 180.0f)
         float ConeHalfAngle = 45.0f;
 
         /** Passive friction resisting the free axis: torque (Hinge, N m) or force (Slider, N). */
-        PROPERTY(Script, Editable, Category = "Constraint", ClampMin = 0.0f)
+        PROPERTY(Editable, Category = "Constraint", ClampMin = 0.0f)
         float Friction = 0.0f;
 
         /** Force/torque (N) that snaps the joint, after which it is disabled. 0 = unbreakable. */
-        PROPERTY(Script, Editable, Category = "Constraint", ClampMin = 0.0f)
+        PROPERTY(Editable, Category = "Constraint", ClampMin = 0.0f)
         float BreakForce = 0.0f;
 
         /** Live constraint handle assigned by the physics system; 0 until created. Read-only. */
-        PROPERTY(Script, ReadOnly, Category = "Constraint")
+        PROPERTY(ReadOnly, Category = "Constraint")
         uint32 ConstraintID = 0;
     };
 

@@ -36,7 +36,7 @@ namespace Lumina
         /** Installs a transient instance over this slot so its parameters diverge for THIS component only. */
         CMaterialInstance* CreateDynamicMaterialInstance(uint32 Slot);
 
-        FUNCTION(Script)
+        FUNCTION()
         FAABB GetAABB() const;
 
         /** How the animation pose updates relative to visibility (see EAnimUpdateMode). */
@@ -71,10 +71,10 @@ namespace Lumina
         /** Mirrors SStaticMeshComponent::SetStaticMesh. Assigning the field directly skips
          *  InvalidateRenderResolve, and the retained render scene only re-reads primitives that report a
          *  change -- so a direct write is simply never picked up. */
-        FUNCTION(Script)
+        FUNCTION()
         void SetSkeletalMesh(CSkeletalMesh* InMesh) { SkeletalMesh = InMesh; InvalidateRenderResolve(); }
 
-        FUNCTION(Script)
+        FUNCTION()
         CSkeletalMesh* GetSkeletalMesh() const { return SkeletalMesh; }
 
         /** The skeletal mesh asset to render and animate for this component. */

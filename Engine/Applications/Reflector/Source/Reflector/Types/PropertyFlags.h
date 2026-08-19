@@ -95,7 +95,6 @@ void EnumRemoveFlags(Enum& Flags, Enum FlagsToRemove)
         Protected       = BIT(5),
         SubField        = BIT(6),
         Trivial         = BIT(7),
-        Script          = BIT(8),
         Builtin         = BIT(9),
         BulkSerialize   = BIT(10),
         // Property exists only for editor tooling. Stripped from cooked
@@ -140,7 +139,6 @@ void EnumRemoveFlags(Enum& Flags, Enum FlagsToRemove)
         AppendFlag(EPropertyFlags::Protected, "Lumina::EPropertyFlags::Protected");
         AppendFlag(EPropertyFlags::SubField, "Lumina::EPropertyFlags::SubField");
         AppendFlag(EPropertyFlags::Trivial, "Lumina::EPropertyFlags::Trivial");
-        AppendFlag(EPropertyFlags::Script, "Lumina::EPropertyFlags::Script");
         AppendFlag(EPropertyFlags::Builtin, "Lumina::EPropertyFlags::Builtin");
         AppendFlag(EPropertyFlags::BulkSerialize, "Lumina::EPropertyFlags::BulkSerialize");
         AppendFlag(EPropertyFlags::EditorOnly, "Lumina::EPropertyFlags::EditorOnly");

@@ -36,12 +36,12 @@ namespace Lumina
         TObjectPtr<CPhysicsAsset> PhysicsAsset;
 
         /** Flip to Simulated to collapse into physics; the system creates/destroys bodies to match. */
-        PROPERTY(Script, Editable, Category = "Ragdoll")
+        PROPERTY(Editable, Category = "Ragdoll")
         ERagdollState State = ERagdollState::Inactive;
 
         /** While simulating, move the entity transform to follow the ragdoll's root body each frame. Keep
          *  on so the mesh's culling bounds track the ragdoll; off leaves the entity at its spawn transform. */
-        PROPERTY(Script, Editable, Category = "Ragdoll")
+        PROPERTY(Editable, Category = "Ragdoll")
         bool bDriveEntityFromRoot = true;
 
         /** Live Jolt ragdoll, created on demand by the ragdoll system. */

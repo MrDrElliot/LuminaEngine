@@ -100,13 +100,22 @@ void EnsureMeshletCone(FGPUInstance* Inst, float4x4 Model, inout FMeshletBoundsC
 {
     if (!C.bConeReady)
     {
-        const FMeshletCone Cone = Inst.MeshletHeader.Cones[C.MeshletIdx];
+        // Same reasoning as the sphere gate: a header without cones is treated as a meshlet without one.
+        if (Inst.MeshletHeader.Cones == nullptr)
+        {
+            C.bHasCone   = false;
+            C.bConeReady = true;
+        }
+        else
+        {
+            const FMeshletCone Cone = Inst.MeshletHeader.Cones[C.MeshletIdx];
 
-        C.WorldApex   = mul(Model, float4(Cone.Apex, 1.0)).xyz;
-        C.WorldAxis   = normalize(mul((float3x3)Model, Cone.Axis));
-        C.ConeCutoff  = Cone.Cutoff;
-        C.bHasCone    = Cone.Cutoff < 1.0;
-        C.bConeReady  = true;
+            C.WorldApex   = mul(Model, float4(Cone.Apex, 1.0)).xyz;
+            C.WorldAxis   = normalize(mul((float3x3)Model, Cone.Axis));
+            C.ConeCutoff  = Cone.Cutoff;
+            C.bHasCone    = Cone.Cutoff < 1.0;
+            C.bConeReady  = true;
+        }
     }
 }
 
@@ -126,7 +135,8 @@ bool TestMeshletAgainstView(FMeshletCullContext Ctx, FGPUInstance* Inst, FCullVi
         // LOD table while Spheres/Cones come from the header, and only the header knows how long they are.
         // A mesh that has died leaves the instance naming the null header, whose count is 0, so this is
         // also what stops a stale instance from indexing geometry that is no longer there.
-        bKeep = MeshletIdx < Inst.MeshletHeader.MeshletCount;
+        // The count is the documented bound, but a GPU dump caught a count over a null Spheres, and the pointer is in the cache line the count came from.
+        bKeep = MeshletIdx < Inst.MeshletHeader.MeshletCount && Inst.MeshletHeader.Spheres != nullptr;
 
         if (bKeep)
         {

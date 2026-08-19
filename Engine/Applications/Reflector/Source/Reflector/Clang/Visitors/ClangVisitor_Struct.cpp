@@ -10,6 +10,7 @@
 #include "Reflector/Clang/Utils.h"
 #include "Reflector/Diagnostics/LRTDiagnostics.h"
 #include "Reflector/ReflectionCore/ReflectionMacro.h"
+#include "Reflector/ReflectionSpecifiers.h"
 #include "Reflector/Types/Functions/ReflectedFunction.h"
 #include "Reflector/Types/Properties/ReflectedArrayProperty.h"
 #include "Reflector/Types/Properties/ReflectedMapProperty.h"
@@ -828,6 +829,7 @@ namespace Lumina::Reflection::Visitor
 		}
 
 		NewProperty->GenerateMetadata(Macro.MacroContents);
+		ValidateSpecifiers(Cursor, ESpecifierTarget::Property, NewProperty->Metadata);
 		ApplyReflectAsOverride(Context, Struct, NewProperty, Cursor);
 
 		if (eastl::string ConflictMessage; NewProperty->FindConflictingSpecifiers(ConflictMessage))
@@ -953,6 +955,7 @@ namespace Lumina::Reflection::Visitor
 			FReflectedFunction* NewFunction;
 			CreateFunctionForType(Cursor, Context, Type, NewFunction);
 			NewFunction->GenerateMetadata(Macro.MacroContents);
+			ValidateSpecifiers(Cursor, ESpecifierTarget::Function, NewFunction->Metadata);
 
 			eastl::string Comment = GetCursorComment(Cursor);
 			if (!Comment.empty())
@@ -998,6 +1001,7 @@ namespace Lumina::Reflection::Visitor
 		Template.QualifiedName = QualifiedName;
 		Template.Namespace = Context->CurrentNamespace;
 		Template.MacroContents = Macro.MacroContents;
+		ValidateSpecifiers(Cursor, ESpecifierTarget::Reflect, FMetadataParser(Macro.MacroContents).Metadata);
 		Template.HeaderPath = Context->ReflectedHeader->HeaderPath;
 		Template.Header = Context->ReflectedHeader;
 
@@ -1077,6 +1081,7 @@ namespace Lumina::Reflection::Visitor
 		ReflectedStruct->DisplayName = AliasName;
 		ReflectedStruct->bIsAlias = true;
 		ReflectedStruct->GenerateMetadata(Macro.MacroContents);
+		ValidateSpecifiers(Cursor, ESpecifierTarget::Reflect, ReflectedStruct->Metadata);
 		ReflectedStruct->Header = Context->ReflectedHeader;
 		ReflectedStruct->Type = FReflectedType::EType::Structure;
 		ReflectedStruct->LineNumber = ClangUtils::GetCursorLineNumber(Cursor);
@@ -1164,6 +1169,7 @@ namespace Lumina::Reflection::Visitor
 		ReflectedStruct->CppName = CppName;
 		ReflectedStruct->CppQualifiedName = CppQualifiedName;
 		ReflectedStruct->GenerateMetadata(Macro.MacroContents);
+		ValidateSpecifiers(Cursor, ESpecifierTarget::Reflect, ReflectedStruct->Metadata);
 		ReflectedStruct->Header = Context->ReflectedHeader;
 		ReflectedStruct->Type = FReflectedType::EType::Structure;
 		ReflectedStruct->GeneratedBodyLineNumber = GeneratedBody.LineNumber;
@@ -1225,6 +1231,7 @@ namespace Lumina::Reflection::Visitor
 		NewFunction->QualifiedName = Qualified;
 
 		NewFunction->GenerateMetadata(Macro.MacroContents);
+		ValidateSpecifiers(Cursor, ESpecifierTarget::ScriptExport, NewFunction->Metadata);
 		for (const FMetadataPair& Meta : NewFunction->Metadata)
 		{
 			if (Meta.Key == "Class")
@@ -1310,6 +1317,7 @@ namespace Lumina::Reflection::Visitor
 		ReflectedClass->GeneratedBodyLineNumber = GeneratedBody.LineNumber;
 		ReflectedClass->LineNumber = ClangUtils::GetCursorLineNumber(Cursor);
 		ReflectedClass->GenerateMetadata(Macro.MacroContents);
+		ValidateSpecifiers(Cursor, ESpecifierTarget::Reflect, ReflectedClass->Metadata);
 
 		if (!Context->CurrentNamespace.empty())
 		{

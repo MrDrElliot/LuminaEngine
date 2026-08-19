@@ -58,10 +58,6 @@ namespace Lumina
             {
                 PropertyFlags |= EPropertyFlags::Editable;
             }
-            else if (MetadataPair.Key == "Script")
-            {
-                PropertyFlags |= EPropertyFlags::Script;
-            }
             else if (MetadataPair.Key == "EditorOnly")
             {
                 PropertyFlags |= EPropertyFlags::EditorOnly;

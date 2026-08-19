@@ -56,7 +56,7 @@ LE_REGISTER_LAYOUT("RaycastHitWire", FLmRayHit);
 
 //================================================================================================
 // World (FName-keyed spawn/find + ECS::Utils rotation/scale. The entity transform/time/destroy/count
-// methods are GENERATED from CWorld's FUNCTION(Script) declarations now that the Reflector marshals
+// methods are GENERATED from CWorld's FUNCTION() declarations now that the Reflector marshals
 // entt::entity - see World.generated.{cpp,cs}. Only the not-yet-reflectable surface lives here.)
 //================================================================================================
 

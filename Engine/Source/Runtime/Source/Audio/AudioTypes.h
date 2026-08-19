@@ -63,52 +63,52 @@ namespace Lumina
 	{
 		GENERATED_BODY()
 
-		PROPERTY(Script, Editable, Category = "Attenuation")
+		PROPERTY(Editable, Category = "Attenuation")
 		EAudioAttenuationModel Model = EAudioAttenuationModel::Inverse;
 
 		/** Distance (meters) the voice stays at full gain within. */
-		PROPERTY(Script, Editable, Category = "Attenuation", ClampMin = 0.0f)
+		PROPERTY(Editable, Category = "Attenuation", ClampMin = 0.0f)
 		float MinDistance = 1.0f;
 
 		/** Distance (meters) the falloff curve reaches its minimum gain at. */
-		PROPERTY(Script, Editable, Category = "Attenuation", ClampMin = 0.0f)
+		PROPERTY(Editable, Category = "Attenuation", ClampMin = 0.0f)
 		float MaxDistance = 50.0f;
 
 		/** Falloff steepness past MinDistance. Higher = quieter sooner. */
-		PROPERTY(Script, Editable, Category = "Attenuation", ClampMin = 0.0f)
+		PROPERTY(Editable, Category = "Attenuation", ClampMin = 0.0f)
 		float Rolloff = 1.0f;
 
 		/** Gain floor; keeps distant voices audible when > 0. */
-		PROPERTY(Script, Editable, Category = "Attenuation", ClampMin = 0.0f, ClampMax = 1.0f)
+		PROPERTY(Editable, Category = "Attenuation", ClampMin = 0.0f, ClampMax = 1.0f)
 		float MinGain = 0.0f;
 
-		PROPERTY(Script, Editable, Category = "Attenuation", ClampMin = 0.0f, ClampMax = 1.0f)
+		PROPERTY(Editable, Category = "Attenuation", ClampMin = 0.0f, ClampMax = 1.0f)
 		float MaxGain = 1.0f;
 
 		/** Degrees. The voice plays at full gain inside this cone around its forward axis. */
-		PROPERTY(Script, Editable, Category = "Cone", ClampMin = 0.0f, ClampMax = 360.0f)
+		PROPERTY(Editable, Category = "Cone", ClampMin = 0.0f, ClampMax = 360.0f)
 		float ConeInnerAngle = 360.0f;
 
 		/** Degrees. Gain ramps from full to ConeOuterGain between the inner and outer angle. */
-		PROPERTY(Script, Editable, Category = "Cone", ClampMin = 0.0f, ClampMax = 360.0f)
+		PROPERTY(Editable, Category = "Cone", ClampMin = 0.0f, ClampMax = 360.0f)
 		float ConeOuterAngle = 360.0f;
 
-		PROPERTY(Script, Editable, Category = "Cone", ClampMin = 0.0f, ClampMax = 1.0f)
+		PROPERTY(Editable, Category = "Cone", ClampMin = 0.0f, ClampMax = 1.0f)
 		float ConeOuterGain = 0.0f;
 
 		/** Pitch shift from relative listener/emitter motion. 0 disables doppler. */
-		PROPERTY(Script, Editable, Category = "Attenuation", ClampMin = 0.0f, ClampMax = 10.0f)
+		PROPERTY(Editable, Category = "Attenuation", ClampMin = 0.0f, ClampMax = 10.0f)
 		float DopplerFactor = 1.0f;
 
 		/** How much the listener's facing attenuates the voice. 0 = ignore facing. */
-		PROPERTY(Script, Editable, Category = "Attenuation", ClampMin = 0.0f, ClampMax = 1.0f)
+		PROPERTY(Editable, Category = "Attenuation", ClampMin = 0.0f, ClampMax = 1.0f)
 		float DirectionalFactor = 0.0f;
 
 		/** Stereo pan applied after spatialization. -1 = hard left, +1 = hard right. */
-		PROPERTY(Script, Editable, Category = "Attenuation", ClampMin = -1.0f, ClampMax = 1.0f)
+		PROPERTY(Editable, Category = "Attenuation", ClampMin = -1.0f, ClampMax = 1.0f)
 		float Pan = 0.0f;
 
-		PROPERTY(Script, Editable, Category = "Attenuation")
+		PROPERTY(Editable, Category = "Attenuation")
 		EAudioPositioning Positioning = EAudioPositioning::Absolute;
 	};
 
@@ -119,23 +119,23 @@ namespace Lumina
 		GENERATED_BODY()
 
 		/** Trace from the listener to this voice every OcclusionInterval and muffle it when blocked. */
-		PROPERTY(Script, Editable, Category = "Occlusion")
+		PROPERTY(Editable, Category = "Occlusion")
 		bool bEnabled = false;
 
 		/** Low-pass cutoff (Hz) at full occlusion. Lower = more muffled. */
-		PROPERTY(Script, Editable, Category = "Occlusion", ClampMin = 80.0f, ClampMax = 22000.0f)
+		PROPERTY(Editable, Category = "Occlusion", ClampMin = 80.0f, ClampMax = 22000.0f)
 		float LowPassFrequency = 700.0f;
 
 		/** Gain multiplier at full occlusion. */
-		PROPERTY(Script, Editable, Category = "Occlusion", ClampMin = 0.0f, ClampMax = 1.0f)
+		PROPERTY(Editable, Category = "Occlusion", ClampMin = 0.0f, ClampMax = 1.0f)
 		float VolumeAttenuation = 0.5f;
 
 		/** Seconds to blend fully between occluded and unoccluded. Keeps the filter from popping. */
-		PROPERTY(Script, Editable, Category = "Occlusion", ClampMin = 0.0f)
+		PROPERTY(Editable, Category = "Occlusion", ClampMin = 0.0f)
 		float InterpTime = 0.35f;
 
 		/** Seconds between occlusion traces. Traces are staggered across voices. */
-		PROPERTY(Script, Editable, Category = "Occlusion", ClampMin = 0.0f)
+		PROPERTY(Editable, Category = "Occlusion", ClampMin = 0.0f)
 		float TraceInterval = 0.2f;
 	};
 

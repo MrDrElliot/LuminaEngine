@@ -106,7 +106,7 @@ namespace Lumina
         // OUTSIDE the cache has no entry to mark, so it compares this itself. 0 never matches a live epoch.
         uint32  CachedResolveEpoch = 0;
 
-        FUNCTION(Script)
+        FUNCTION()
         void SetMaterialAtSlot(CMaterialInterface* Material, uint32 Slot)
         {
             // Grow to cover Slot, then assign. The previous form tested `size() < Slot` and otherwise
@@ -135,7 +135,7 @@ namespace Lumina
          *  Editor property edits route here through PostEditChange, so this is only needed from gameplay
          *  code (C++ or C#).
          */
-        FUNCTION(Script)
+        FUNCTION()
         void MarkRenderStateDirty() { InvalidateRenderResolve(); }
 
         void InvalidateRenderResolve();

@@ -49,7 +49,7 @@ namespace Lumina
             ViewVolume.SetView(Position, ViewDirection, UpDirection);
         }
 
-        FUNCTION(Script)
+        FUNCTION()
         void SetFOV(float NewFOV)
         {
             FOV = NewFOV;
@@ -80,7 +80,7 @@ namespace Lumina
             ViewVolume.SetViewPosition(NewPosition);
         }
 
-        FUNCTION(Script)
+        FUNCTION()
         float GetFOV() const { return ViewVolume.GetFOV(); }
         float GetAspectRatio() const { return ViewVolume.GetAspectRatio(); }
         const FMatrix4& GetViewMatrix() const { return ViewVolume.GetViewMatrix(); }
@@ -88,13 +88,13 @@ namespace Lumina
         const FMatrix4& GetViewProjectionMatrix() const { return ViewVolume.GetViewProjectionMatrix(); }
         const FViewVolume& GetViewVolume() const { return ViewVolume; }
         
-        FUNCTION(Script)
+        FUNCTION()
         FVector3 GetPosition() const { return ViewVolume.GetViewPosition(); }
         
-        FUNCTION(Script)
+        FUNCTION()
         FVector3 GetForwardVector() const { return ViewVolume.GetForwardVector(); }
         
-        FUNCTION(Script)
+        FUNCTION()
         FVector3 GetRightVector() const { return ViewVolume.GetRightVector(); }
 
         /** Vertical field of view in degrees. */

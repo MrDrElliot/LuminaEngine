@@ -16,6 +16,8 @@
 #define CONCAT_WITH_UNDERSCORE(a, b) CONCAT3(a, _, b)
 #define FRIEND_STRUCT_NAME(ns, cls) CONCAT3(Construct_CClass_, CONCAT_WITH_UNDERSCORE(ns, cls), _Statics)
 
+// The specifiers these accept are listed in Applications/Reflector/Source/Reflector/ReflectionSpecifiers.h.
+
 // libclang variadic macro expansion is unreliable during reflection parsing; stub these out then.
 #if defined(REFLECTION_PARSER)
 

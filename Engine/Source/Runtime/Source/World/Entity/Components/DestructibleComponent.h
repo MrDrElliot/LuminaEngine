@@ -26,23 +26,23 @@ namespace Lumina
         TObjectPtr<CStaticMesh> FragmentMesh;
 
         /** Approximate number of fragments to break into. Rounded up to the nearest cubic grid. */
-        PROPERTY(Script, Editable, ClampMin = 2, ClampMax = 512, Category = "Destruction")
+        PROPERTY(Editable, ClampMin = 2, ClampMax = 512, Category = "Destruction")
         int32 FragmentCount = 8;
 
         /** Default outward launch speed (m/s) for fragments when no explicit strength is passed to Fracture. */
-        PROPERTY(Script, Editable, ClampMin = 0.0f, Category = "Destruction")
+        PROPERTY(Editable, ClampMin = 0.0f, Category = "Destruction")
         float ExplosionStrength = 6.0f;
 
         /** Seconds each fragment survives before it is automatically cleaned up (0 = never). */
-        PROPERTY(Script, Editable, ClampMin = 0.0f, Category = "Destruction")
+        PROPERTY(Editable, ClampMin = 0.0f, Category = "Destruction")
         float FragmentLifetime = 8.0f;
 
         /** Maximum random spin (rad/s) imparted to fragments for a more chaotic break. */
-        PROPERTY(Script, Editable, ClampMin = 0.0f, Category = "Destruction")
+        PROPERTY(Editable, ClampMin = 0.0f, Category = "Destruction")
         float SpinStrength = 6.0f;
 
         /** When true, the original entity is removed once it fractures. */
-        PROPERTY(Script, Editable, Category = "Destruction")
+        PROPERTY(Editable, Category = "Destruction")
         bool bDestroyOriginal = true;
 
         /** Set once the entity has fractured so repeated Fracture calls are ignored. Not serialized. */

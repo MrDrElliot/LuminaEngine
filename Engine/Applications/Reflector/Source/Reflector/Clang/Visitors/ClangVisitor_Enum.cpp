@@ -2,6 +2,7 @@
 #include "Reflector/Clang/ClangParserContext.h"
 #include "Reflector/Clang/Utils.h"
 #include "Reflector/Diagnostics/LRTDiagnostics.h"
+#include "Reflector/ReflectionSpecifiers.h"
 #include "Reflector/Types/ReflectedType.h"
 
 namespace Lumina::Reflection::Visitor
@@ -104,6 +105,7 @@ namespace Lumina::Reflection::Visitor
         ReflectedEnum->Type = FReflectedType::EType::Enum;
         ReflectedEnum->LineNumber = ClangUtils::GetCursorLineNumber(Cursor);
         ReflectedEnum->GenerateMetadata(Macro.MacroContents);
+        ValidateSpecifiers(Cursor, ESpecifierTarget::Reflect, ReflectedEnum->Metadata);
 
         // Record the underlying integer size + signedness so the C# emitter can give the generated enum a
         // matching explicit backing type, letting it mirror by value inside a blittable struct at any width.

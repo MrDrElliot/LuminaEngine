@@ -18,6 +18,9 @@ namespace Lumina::RHI
      */
     static constexpr uint32 kMaxMaterialSlots = 65535;
 
+    /** Slots kept in hand when a grow is staged, so the swap can land before the table is really full. */
+    static constexpr uint32 kGrowSlack = 64;
+
     FMaterialManager::FMaterialManager()
     {
         GrowLocked(kInitialMaterialSlots);
@@ -26,7 +29,9 @@ namespace Lumina::RHI
     FMaterialManager::~FMaterialManager()
     {
         Core::Retire(MaterialBuffer);
+        Core::Retire(PendingBuffer);
         MaterialBuffer = 0;
+        PendingBuffer  = 0;
     }
 
     GPUPtr FMaterialManager::GetMaterialBuffer() const
@@ -90,8 +95,61 @@ namespace Lumina::RHI
         return Count;
     }
 
+    void FMaterialManager::PublishPendingLocked()
+    {
+        if (PendingBuffer == 0 || !Upload::IsBatchComplete(PendingBatch))
+        {
+            return;
+        }
+
+        // Plain fence lifetime: the old address only lives in scene roots, which are rebuilt every frame.
+        Core::Retire(MaterialBuffer);
+
+        MaterialBuffer  = PendingBuffer;
+        Capacity        = PendingCapacity;
+        PendingBuffer   = 0;
+        PendingCapacity = 0;
+        PendingBatch    = 0;
+    }
+
+    void FMaterialManager::StageGrowLocked()
+    {
+        if (PendingBuffer != 0 || Capacity >= kMaxMaterialSlots)
+        {
+            return;
+        }
+
+        const uint32 NewCapacity = Math::Min(Math::Max(Capacity * 2, kInitialMaterialSlots), kMaxMaterialSlots);
+        if (NewCapacity <= Capacity)
+        {
+            return;
+        }
+
+        const GPUPtr NewBuffer = Malloc(sizeof(FMaterialUniforms) * NewCapacity, kDefaultAlign, EMemoryType::GPUOnly);
+        if (NewBuffer == 0)
+        {
+            LOG_ERROR("MaterialManager: failed to allocate a {} slot material table ({} KiB).",
+                NewCapacity, (sizeof(FMaterialUniforms) * NewCapacity) / 1024);
+            return;
+        }
+
+        // Sized with the staged table so a published slot always has a mirror entry; WriteSlotLocked
+        // still bounds itself by the PUBLISHED capacity, so the tail stays untouched until the swap.
+        Mirror.resize(NewCapacity);
+
+        // The whole mirror in one upload, so every live slot survives the move at its existing index.
+        UploadBuffer(NewBuffer, Mirror.data(), sizeof(FMaterialUniforms) * NewCapacity);
+
+        PendingBuffer   = NewBuffer;
+        PendingCapacity = NewCapacity;
+        // Read AFTER the upload is queued, so it names that upload's batch or a later one.
+        PendingBatch    = Upload::BatchForQueuedOps();
+    }
+
     bool FMaterialManager::GrowLocked(uint32 MinSlots)
     {
+        PublishPendingLocked();
+
         if (MinSlots <= Capacity)
         {
             return true;
@@ -102,31 +160,25 @@ namespace Lumina::RHI
             return false;
         }
 
-        const uint32 NewCapacity = Math::Min(Math::Max(MinSlots, Capacity * 2), kMaxMaterialSlots);
-        if (NewCapacity < MinSlots)
+        if (PendingCapacity < MinSlots)
         {
-            return false;
-        }
-        
-        Mirror.resize(NewCapacity);
-
-        const GPUPtr NewBuffer = Malloc(sizeof(FMaterialUniforms) * NewCapacity, kDefaultAlign, EMemoryType::GPUOnly);
-        if (NewBuffer == 0)
-        {
-            LOG_ERROR("MaterialManager: failed to allocate a {} slot material table ({} KiB).",
-                NewCapacity, (sizeof(FMaterialUniforms) * NewCapacity) / 1024);
-            return false;
+            Core::Retire(PendingBuffer);
+            PendingBuffer   = 0;
+            PendingCapacity = 0;
+            PendingBatch    = 0;
         }
 
-        // The whole mirror in one upload, so every live slot survives the move at its existing index.
-        UploadBuffer(NewBuffer, Mirror.data(), sizeof(FMaterialUniforms) * NewCapacity);
-        
-        Core::Retire(MaterialBuffer);
+        StageGrowLocked();
 
-        MaterialBuffer = NewBuffer;
-        Capacity = NewCapacity;
+        // The slots are needed NOW and one past the published capacity would be written outside the
+        // allocation, so this is the one path that waits. AddMaterial stages early to keep it rare.
+        if (PendingBuffer != 0)
+        {
+            FlushUploadsAndWait();
+            PublishPendingLocked();
+        }
 
-        return true;
+        return MinSlots <= Capacity;
     }
 
     void FMaterialManager::AddMaterial(CMaterialInterface* Material)
@@ -153,6 +205,13 @@ namespace Lumina::RHI
             }
 
             FreeIndex = HighWater++;
+        }
+
+        // Staged before the wall, so the copy has frames to land in and the grow above rarely waits.
+        if (HighWater + kGrowSlack >= Capacity)
+        {
+            PublishPendingLocked();
+            StageGrowLocked();
         }
 
         ++NumMaterials;
@@ -221,6 +280,12 @@ namespace Lumina::RHI
         Memory::Memcpy(Slot, Data, ByteSize);
 
         UploadBuffer(MaterialBuffer + Index * sizeof(FMaterialUniforms) + ByteOffset, Data, ByteSize);
+
+        // The staged table's mirror copy was queued before this write, so it has to be repeated there.
+        if (PendingBuffer != 0 && Index < PendingCapacity)
+        {
+            UploadBuffer(PendingBuffer + Index * sizeof(FMaterialUniforms) + ByteOffset, Data, ByteSize);
+        }
     }
 
     void FMaterialManager::WriteSlotLocked(const FMaterialUniforms* InUniforms, uint32 Index)
@@ -245,5 +310,11 @@ namespace Lumina::RHI
         Mirror[Index] = Copy;
 
         UploadBuffer(MaterialBuffer + Index * sizeof(FMaterialUniforms), &Copy, sizeof(FMaterialUniforms));
+
+        // The staged table's mirror copy was queued before this write, so it has to be repeated there.
+        if (PendingBuffer != 0 && Index < PendingCapacity)
+        {
+            UploadBuffer(PendingBuffer + Index * sizeof(FMaterialUniforms), &Copy, sizeof(FMaterialUniforms));
+        }
     }
 }

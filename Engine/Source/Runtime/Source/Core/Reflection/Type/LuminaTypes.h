@@ -140,7 +140,6 @@ namespace Lumina
         NODISCARD bool IsInner()        const       { return EnumHasAnyFlags(Flags, EPropertyFlags::SubField); }
         NODISCARD bool IsProtected()    const       { return EnumHasAnyFlags(Flags, EPropertyFlags::Protected); }
         NODISCARD bool IsPrivate()      const       { return EnumHasAnyFlags(Flags, EPropertyFlags::Private); }
-        NODISCARD bool IsScript()       const       { return EnumHasAnyFlags(Flags, EPropertyFlags::Script); }
         NODISCARD bool IsScriptReadOnly() const     { return EnumHasAnyFlags(Flags, EPropertyFlags::ScriptReadOnly); }
         NODISCARD bool IsScriptWritable() const     { return EnumHasAnyFlags(Flags, EPropertyFlags::ScriptWritable); }
         NODISCARD bool IsScriptHidden() const       { return EnumHasAnyFlags(Flags, EPropertyFlags::ScriptHidden); }

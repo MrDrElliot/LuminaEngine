@@ -56,9 +56,16 @@ namespace Lumina::RHI
 
     private:
 
-        /** Copies the mirror into a buffer of at least MinSlots, retires the old one and publishes the
-            new address. Returns false only at the slot ceiling. Caller holds the write lock. */
+        /** Ensures the PUBLISHED table holds at least MinSlots, waiting on the staged one if it has to.
+            Returns false only at the slot ceiling. Caller holds the write lock. */
         bool GrowLocked(uint32 MinSlots);
+
+        /** Allocates the next size up and queues the mirror into it, publishing nothing. Caller holds
+            the write lock. */
+        void StageGrowLocked();
+
+        /** Swaps the staged table in once its mirror copy has actually run. Caller holds the write lock. */
+        void PublishPendingLocked();
 
         /** Writes one slot to the mirror and uploads it. Null uniforms zero the slot. Caller holds
             either lock -- distinct slots are written independently, and only a grow (write lock)
@@ -76,6 +83,15 @@ namespace Lumina::RHI
 
         GPUPtr                                  MaterialBuffer = 0;
         uint32                                  Capacity = 0;
+
+        /** A grown table whose mirror copy is still queued. Malloc returns the previous tenant's bytes
+            and uploads only flush at BeginFrame, so publishing the address on allocation would let a
+            frame recorded in between read recycled memory as material uniforms -- bindless texture IDs
+            included. The address moves only once the copy has run, as a streamed texture's bindless slot
+            does. Slot writes go to both while one is outstanding. */
+        GPUPtr                                  PendingBuffer = 0;
+        uint32                                  PendingCapacity = 0;
+        uint64                                  PendingBatch = 0;
 
         /** Highest slot ever handed out, +1. Slots below it are either live or in FreeList. */
         uint32                                  HighWater = 0;

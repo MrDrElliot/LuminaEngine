@@ -65,7 +65,7 @@ namespace Lumina
     {
         GENERATED_BODY()
         
-        PROPERTY(Script, Editable)
+        PROPERTY(Editable)
         ECustomPrimitiveDataType Type = ECustomPrimitiveDataType::Float;
 
         ECustomPrimitiveDataUnion Data;
@@ -86,40 +86,40 @@ namespace Lumina
             return true;
         }
         
-        FUNCTION(Script)
+        FUNCTION()
         float AsFloat() const { return Data.Float; }
         
-        FUNCTION(Script)
+        FUNCTION()
         int32 AsInt() const { return Data.Int; }
         
-        FUNCTION(Script)
+        FUNCTION()
         bool AsBool() const { return Data.Bool; }
         
-        FUNCTION(Script)
+        FUNCTION()
         FVector4 AsColor() const { return FVector4(Data.Bytes) / 255.0f; }
         
-        FUNCTION(Script)
+        FUNCTION()
         void SetAsFloat(float X)
         {
             Type = ECustomPrimitiveDataType::Float;
             Data.Float = X;
         }
         
-        FUNCTION(Script)
+        FUNCTION()
         void SetAsInt(int32 X)
         {
             Type = ECustomPrimitiveDataType::Int;
             Data.Int = X;
         }
         
-        FUNCTION(Script)
+        FUNCTION()
         void SetAsBool(bool X)
         {
             Type = ECustomPrimitiveDataType::Bool;
             Data.Bool = X;
         }
         
-        FUNCTION(Script)
+        FUNCTION()
         void SetAsColor(FVector4 Color)
         {
             Type = ECustomPrimitiveDataType::Color;

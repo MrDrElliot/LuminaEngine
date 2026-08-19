@@ -28,7 +28,7 @@ namespace Lumina
         //  three lines: SetTargetLocation, IsFollowing, IsAtDestination.
 
         /** Set a static world-space goal. Triggers a fresh path request next tick. */
-        FUNCTION(Script)
+        FUNCTION()
         void SetTargetLocation(const FVector3& World)
         {
             TargetLocation = World;
@@ -40,7 +40,7 @@ namespace Lumina
         }
 
         /** Track an entity. The system re-projects the entity's current location each tick. */
-        FUNCTION(Script)
+        FUNCTION()
         void SetTargetEntity(entt::entity Entity)
         {
             TargetEntity = Entity;
@@ -51,7 +51,7 @@ namespace Lumina
         }
 
         /** Clear the goal and any cached path. */
-        FUNCTION(Script)
+        FUNCTION()
         void Stop()
         {
             bHasTarget = false;
@@ -63,22 +63,22 @@ namespace Lumina
             ConsecutiveFailures = 0;
         }
 
-        FUNCTION(Script)
+        FUNCTION()
         bool IsFollowing() const { return bHasTarget && CornerCount > 0; }
 
-        FUNCTION(Script)
+        FUNCTION()
         bool IsAtDestination() const { return bHasTarget && CornerCount > 0 && CurrentCorner >= CornerCount; }
 
         /** True if the most recent path query failed. Stays true until a subsequent query succeeds or the target is cleared. */
-        FUNCTION(Script)
+        FUNCTION()
         bool DidPathFindingFail() const { return Status == EPathFollowStatus::Failed; }
 
         /** Number of consecutive failed queries since the last success. Useful for script-side give-up logic. */
-        FUNCTION(Script)
+        FUNCTION()
         int32 GetConsecutivePathFailures() const { return ConsecutiveFailures; }
 
         /** Closest queued path corner, or the target if no path is cached. */
-        FUNCTION(Script)
+        FUNCTION()
         FVector3 GetNextCorner() const
         {
             if (CornerCount == 0 || CurrentCorner >= CornerCount) return TargetLocation;

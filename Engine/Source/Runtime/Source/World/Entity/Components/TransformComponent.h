@@ -56,22 +56,22 @@ namespace Lumina
             , WorldTransform(InTransform)
         {}
     
-        FUNCTION(Script)
+        FUNCTION()
         FVector3 GetLocalLocation() const { return LocalTransform.GetLocation(); }
 
-        FUNCTION(Script)
+        FUNCTION()
         FQuat GetLocalRotation() const { return LocalTransform.GetRotation(); }
 
-        FUNCTION(Script)
+        FUNCTION()
         FVector3 GetLocalScale()    const { return LocalTransform.GetScale(); }
 
-        FUNCTION(Script)
+        FUNCTION()
         FVector3 GetLocalRotationAsEuler() const
         {
             return Math::Degrees(Math::EulerAngles(LocalTransform.GetRotation()));
         }
 
-        FUNCTION(Script)
+        FUNCTION()
         FVector3 SetLocalLocation(const FVector3& InLocation)
         {
             LocalTransform.SetLocation(InLocation);
@@ -79,7 +79,7 @@ namespace Lumina
             return InLocation;
         }
 
-        FUNCTION(Script)
+        FUNCTION()
         FVector3 Translate(const FVector3& Delta)
         {
             LocalTransform.Translate(Delta);
@@ -87,7 +87,7 @@ namespace Lumina
             return LocalTransform.GetLocation();
         }
 
-        FUNCTION(Script)
+        FUNCTION()
         FQuat SetLocalRotation(const FQuat& InRotation)
         {
             LocalTransform.SetRotation(InRotation);
@@ -95,7 +95,7 @@ namespace Lumina
             return InRotation;
         }
 
-        FUNCTION(Script)
+        FUNCTION()
         FVector3 SetLocalRotationFromEuler(const FVector3& EulerDegrees)
         {
             LocalTransform.SetRotationFromEuler(EulerDegrees);
@@ -103,7 +103,7 @@ namespace Lumina
             return GetLocalRotationAsEuler();
         }
 
-        FUNCTION(Script)
+        FUNCTION()
         FVector3 AddLocalRotationFromEuler(const FVector3& EulerDegrees)
         {
             LocalTransform.Rotate(EulerDegrees);
@@ -111,28 +111,28 @@ namespace Lumina
             return GetLocalRotationAsEuler();
         }
 
-        FUNCTION(Script)
+        FUNCTION()
         void AddYaw(float Degrees)
         {
             LocalTransform.AddYawRadians(Math::Radians(Degrees));
             MarkDirty();
         }
 
-        FUNCTION(Script)
+        FUNCTION()
         void AddPitch(float Degrees, float ClampMin = -89.9f, float ClampMax = 89.9f)
         {
             LocalTransform.AddPitchRadians(Math::Radians(Math::Clamp(Degrees, ClampMin, ClampMax)));
             MarkDirty();
         }
 
-        FUNCTION(Script)
+        FUNCTION()
         void AddRoll(float Degrees)
         {
             LocalTransform.AddRollRadians(Math::Radians(Degrees));
             MarkDirty();
         }
 
-        FUNCTION(Script)
+        FUNCTION()
         FVector3 SetLocalScale(const FVector3& InScale)
         {
             LocalTransform.SetScale(InScale);
@@ -147,28 +147,28 @@ namespace Lumina
         }
 
         // World getters opt out of SuppressGCTransition: a dirty-chain resolve can exceed the ~1us budget.
-        FUNCTION(Script, NoSuppressGCTransition)
+        FUNCTION(NoSuppressGCTransition)
         FVector3 GetWorldLocation() const
         {
             ResolveIfDirty();
             return GetWorldTransformCached().GetLocation();
         }
 
-        FUNCTION(Script, NoSuppressGCTransition)
+        FUNCTION(NoSuppressGCTransition)
         FQuat GetWorldRotation() const
         {
             ResolveIfDirty();
             return GetWorldTransformCached().GetRotation();
         }
 
-        FUNCTION(Script, NoSuppressGCTransition)
+        FUNCTION(NoSuppressGCTransition)
         FVector3 GetWorldScale() const
         {
             ResolveIfDirty();
             return GetWorldTransformCached().GetScale();
         }
 
-        FUNCTION(Script, NoSuppressGCTransition)
+        FUNCTION(NoSuppressGCTransition)
         FVector3 GetWorldRotationAsEuler() const
         {
             ResolveIfDirty();
@@ -178,14 +178,14 @@ namespace Lumina
         // Composed on demand rather than cached: the matrix is ~20 SIMD instructions out of a
         // WorldTransform that is already in cache here, where storing it cost 64 bytes -- a third of the
         // component -- on every entity, paid by every pass that strides this pool for anything else.
-        FUNCTION(Script, NoSuppressGCTransition)
+        FUNCTION(NoSuppressGCTransition)
         FMatrix4 GetWorldMatrix() const
         {
             ResolveIfDirty();
             return GetWorldTransformCached().GetMatrix();
         }
 
-        FUNCTION(Script, NoSuppressGCTransition)
+        FUNCTION(NoSuppressGCTransition)
         const FTransform& GetWorldTransform() const
         {
             ResolveIfDirty();
@@ -199,7 +199,7 @@ namespace Lumina
         FVector3 GetWorldScaleCached()    const { return GetWorldTransformCached().GetScale(); }
         FMatrix4 GetWorldMatrixCached()   const { return GetWorldTransformCached().GetMatrix(); }
 
-        FUNCTION(Script, NoSuppressGCTransition)
+        FUNCTION(NoSuppressGCTransition)
         void SetWorldTransform(const FTransform& InTransform)
         {
             if (Registry)
@@ -208,69 +208,69 @@ namespace Lumina
             }
         }
         
-        FUNCTION(Script)
+        FUNCTION()
         void SetLocalTransform(const FTransform& InTransform)
         {
             LocalTransform = InTransform;
             MarkDirty();
         }
     
-        FUNCTION(Script, NoSuppressGCTransition)
+        FUNCTION(NoSuppressGCTransition)
         FVector3 GetForward() const
         {
             ResolveIfDirty();
             return LocalTransform.GetForward();
         }
 
-        FUNCTION(Script, NoSuppressGCTransition)
+        FUNCTION(NoSuppressGCTransition)
         FVector3 GetRight()   const
         {
             ResolveIfDirty();
             return LocalTransform.GetRight();
         }
 
-        FUNCTION(Script, NoSuppressGCTransition)
+        FUNCTION(NoSuppressGCTransition)
         FVector3 GetUp()      const
         {
             ResolveIfDirty();
             return LocalTransform.GetUp();
         }
     
-        FUNCTION(Script)
+        FUNCTION()
         float MaxScale() const
         {
             const FVector3 S = LocalTransform.GetScale();
             return Math::Max(S.x, Math::Max(S.y, S.z));
         }
     
-        FUNCTION(Script)
+        FUNCTION()
         FVector3 GetLocation() const { return GetLocalLocation(); }
     
-        FUNCTION(Script)
+        FUNCTION()
         FVector3 GetPosition() const { return GetLocalLocation(); }
     
-        FUNCTION(Script)
+        FUNCTION()
         FQuat GetRotation() const { return GetLocalRotation(); }
     
-        FUNCTION(Script)
+        FUNCTION()
         FVector3 GetScale()    const { return GetLocalScale(); }
     
-        FUNCTION(Script)
+        FUNCTION()
         FVector3 SetLocation(const FVector3& L)    { return SetLocalLocation(L); }
     
-        FUNCTION(Script)
+        FUNCTION()
         FQuat SetRotation(const FQuat& R)    { return SetLocalRotation(R); }
     
-        FUNCTION(Script)
+        FUNCTION()
         FVector3 SetScale(const FVector3& S)       { return SetLocalScale(S); }
     
-        FUNCTION(Script)
+        FUNCTION()
         FVector3 SetRotationFromEuler(const FVector3& E)  { return SetLocalRotationFromEuler(E); }
     
-        FUNCTION(Script)
+        FUNCTION()
         FVector3 AddRotationFromEuler(const FVector3& E)  { return AddLocalRotationFromEuler(E); }
     
-        FUNCTION(Script)
+        FUNCTION()
         FVector3 GetRotationAsEuler() const { return GetLocalRotationAsEuler(); }
 
         // Bind this component to its owning entity. Called after duplication or post-load to rewire the

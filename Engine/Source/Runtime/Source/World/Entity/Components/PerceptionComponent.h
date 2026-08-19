@@ -21,7 +21,7 @@ namespace Lumina
 
         //~ Begin script-facing query API (read perceived state without a registry crossing).
 
-        FUNCTION(Script)
+        FUNCTION()
         int32 GetPerceivedTargetCount() const { return PerceivedCount; }
 
         /** Perceived entity at Index in [0, GetPerceivedTargetCount), or null. (C++; use World.Perception in C#.) */
@@ -31,7 +31,7 @@ namespace Lumina
             return PerceivedTargets[Index].Target;
         }
 
-        FUNCTION(Script)
+        FUNCTION()
         bool HasPerceivedTarget(entt::entity Target) const
         {
             return Find(Target) >= 0;
@@ -45,7 +45,7 @@ namespace Lumina
         }
 
         /** Last sensed world location of Target (held during the forget window), or origin if unknown. */
-        FUNCTION(Script)
+        FUNCTION()
         FVector3 GetLastKnownLocation(entt::entity Target) const
         {
             const int32 Index = Find(Target);
@@ -74,63 +74,63 @@ namespace Lumina
         //~ End script-facing query API.
 
         /** Only sources whose AffiliationTags match any of these are sensed. Empty = sense everyone. */
-        PROPERTY(Script, Editable, Category = "AI|Perception")
+        PROPERTY(Editable, Category = "AI|Perception")
         FGameplayTagContainer DetectableTags;
 
         //~ Sight
-        PROPERTY(Script, Editable, Category = "AI|Perception|Sight")
+        PROPERTY(Editable, Category = "AI|Perception|Sight")
         bool bSightEnabled = true;
 
         /** Distance at which a target is first seen (meters). */
-        PROPERTY(Script, Editable, Category = "AI|Perception|Sight", ClampMin = 0.0f)
+        PROPERTY(Editable, Category = "AI|Perception|Sight", ClampMin = 0.0f)
         float SightRadius = 20.0f;
 
         /** Distance at which an already-seen target is dropped (>= SightRadius for hysteresis; meters). */
-        PROPERTY(Script, Editable, Category = "AI|Perception|Sight", ClampMin = 0.0f)
+        PROPERTY(Editable, Category = "AI|Perception|Sight", ClampMin = 0.0f)
         float LoseSightRadius = 25.0f;
 
         /** Full vision cone angle (degrees). */
-        PROPERTY(Script, Editable, Category = "AI|Perception|Sight", ClampMin = 0.0f, ClampMax = 360.0f)
+        PROPERTY(Editable, Category = "AI|Perception|Sight", ClampMin = 0.0f, ClampMax = 360.0f)
         float SightFOVDegrees = 90.0f;
 
         /** Eye offset (along entity up) used as the sight ray origin. */
-        PROPERTY(Script, Editable, Category = "AI|Perception|Sight")
+        PROPERTY(Editable, Category = "AI|Perception|Sight")
         FVector3 EyeOffset = FVector3(0.0f, 1.6f, 0.0f);
 
         /** What blocks line of sight: a body blocks the ray when its collision Mask intersects this. */
-        PROPERTY(Script, Editable, Category = "AI|Perception|Sight")
+        PROPERTY(Editable, Category = "AI|Perception|Sight")
         ECollisionProfiles SightBlockingMask = ECollisionProfiles::Static | ECollisionProfiles::Dynamic;
 
         //~ Hearing
-        PROPERTY(Script, Editable, Category = "AI|Perception|Hearing")
+        PROPERTY(Editable, Category = "AI|Perception|Hearing")
         bool bHearingEnabled = true;
 
         /** Radius within which reported noise is heard (meters; scaled by noise loudness). */
-        PROPERTY(Script, Editable, Category = "AI|Perception|Hearing", ClampMin = 0.0f)
+        PROPERTY(Editable, Category = "AI|Perception|Hearing", ClampMin = 0.0f)
         float HearingRadius = 15.0f;
 
         //~ Damage
-        PROPERTY(Script, Editable, Category = "AI|Perception|Damage")
+        PROPERTY(Editable, Category = "AI|Perception|Damage")
         bool bDamageEnabled = true;
 
         //~ Memory / throttling
         /** Seconds a lost target is remembered (LastKnownLocation held) before OnTargetLost fires. */
-        PROPERTY(Script, Editable, Category = "AI|Perception", ClampMin = 0.0f)
+        PROPERTY(Editable, Category = "AI|Perception", ClampMin = 0.0f)
         float ForgetTime = 5.0f;
 
         /** Minimum seconds between sight scans for this perceiver (load is spread across frames). */
-        PROPERTY(Script, Editable, Category = "AI|Perception", ClampMin = 0.0f)
+        PROPERTY(Editable, Category = "AI|Perception", ClampMin = 0.0f)
         float UpdateInterval = 0.1f;
 
         /** Draw this perceiver's sight cone / ranges / target lines (also gated by the ai.Perception.Debug CVar). */
-        PROPERTY(Script, Editable, Category = "AI|Perception|Debug")
+        PROPERTY(Editable, Category = "AI|Perception|Debug")
         bool bDrawDebug = false;
 
-        PROPERTY(Script)
+        PROPERTY()
         TScriptDelegate<SPerceptionEvent> OnTargetPerceived;
 
         // Location is the last known position.
-        PROPERTY(Script)
+        PROPERTY()
         TScriptDelegate<SPerceptionEvent> OnTargetLost;
 
         //~ Runtime state (NOT reflected): recomputed every tick, never serialized, must stay trivially copyable.
