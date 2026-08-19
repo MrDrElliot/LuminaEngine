@@ -120,6 +120,12 @@ public sealed class TargetAssembler
                 continue;
             }
 
+            // The engine's own build reuses a project-scanned rules assembly, whose plugins would generate here.
+            if (Directories.ProjectRoot is null && !PathUtils.IsUnder(Plugin.RootDirectory, Directories.EngineRoot))
+            {
+                continue;
+            }
+
             bool bEnabled = Plugin.EnabledByDefault
                 || TargetRules.EnabledPlugins.Contains(Plugin.Name, StringComparer.OrdinalIgnoreCase);
 

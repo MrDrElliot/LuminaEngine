@@ -14,8 +14,7 @@ namespace Lumina
 {
     class CAnimationGraph;
 
-    // Drives a skeletal mesh from a compiled animation graph; SAnimationSystem runs the bytecode each
-    // frame into SSkeletalMeshComponent. Graph parameters exposed to Lua via the Set/Get functions below.
+    /** Drives a skeletal mesh from a compiled animation graph. */
     REFLECT(Component, Category = "Animation")
     struct SAnimationGraphComponent
     {
