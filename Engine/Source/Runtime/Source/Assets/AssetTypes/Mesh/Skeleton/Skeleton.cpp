@@ -20,7 +20,7 @@ namespace Lumina
 
     void CSkeleton::SetSkeletonResource(TUniquePtr<FSkeletonResource>&& NewResource)
     {
-        SkeletonResource = eastl::move(NewResource);
+        SkeletonResource = std::move(NewResource);
 
         // Derived caches key on (skeleton, generation), so one that arrived without a cache reads empty.
         if (SkeletonResource && !SkeletonResource->HasBindPoseCache())

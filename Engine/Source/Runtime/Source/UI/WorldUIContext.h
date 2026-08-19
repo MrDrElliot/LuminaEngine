@@ -1,7 +1,8 @@
 #pragma once
 
 #include "Core/Math/Math.h"
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "Renderer/RHI.h"
 

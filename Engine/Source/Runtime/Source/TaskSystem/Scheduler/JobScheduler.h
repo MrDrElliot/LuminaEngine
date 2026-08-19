@@ -1,7 +1,7 @@
 ﻿#pragma once
 
 #include "Platform/GenericPlatform.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 
 // Fiber scheduler with counter-based dependencies. A job that waits does NOT block its worker: the
 // fiber parks and resumes later, possibly on another worker. External threads assist-wait instead.

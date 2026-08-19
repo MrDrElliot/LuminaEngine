@@ -18,3 +18,10 @@ namespace Lumina::Memory
         }
     };
 }
+
+namespace Lumina
+{
+    // Lives here rather than under Containers so its filename cannot shadow the vendored concurrentqueue.h.
+    template <typename T, typename Traits = Memory::FTrackedConcurrentQueueTraits>
+    using TConcurrentQueue = moodycamel::ConcurrentQueue<T, Traits>;
+}

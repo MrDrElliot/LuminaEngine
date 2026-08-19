@@ -1,3 +1,4 @@
+#include "Containers/Queue.h"
 #include "MaterialNodeGraph.h"
 #include "MaterialCompiler.h"
 #include "MaterialGraphSchema.h"
@@ -436,7 +437,7 @@ namespace Lumina
         Compiler.NewLine();
 
         // Falls back to the global topological order if the depth-first walk did not reach the whole set.
-        // The fallback is the previous behaviour: still correct, just with the longer live ranges.
+        // The fallback is the previous behavior: still correct, just with the longer live ranges.
         auto BuildEmitOrder = [&SortedNodes](const THashSet<CEdGraphNode*>& StageSet,
                                              const TVector<CEdNodeGraphPin*>& RootPins) -> TVector<CEdGraphNode*>
         {

@@ -3,6 +3,7 @@
 #include "ParticleSystem.h"
 #include "Renderer/ShaderLibrary.h"
 #include "World/Entity/Components/ParticleSystemComponent.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -81,7 +82,7 @@ namespace Lumina
         FString Candidate;
         for (int32 Suffix = (int32)Emitters.size(); ; ++Suffix)
         {
-            Candidate = FString("Emitter ") + eastl::to_string(Suffix).c_str();
+            Candidate = FString("Emitter ") + Format("{}", Suffix).c_str();
             bool bTaken = false;
             for (const TObjectPtr<CParticleEmitter>& Existing : Emitters)
             {

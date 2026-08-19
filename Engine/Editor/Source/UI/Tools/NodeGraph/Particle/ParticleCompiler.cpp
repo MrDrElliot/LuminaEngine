@@ -3,6 +3,7 @@
 #include "Core/Object/Cast.h"
 #include "Paths/Paths.h"
 #include "Platform/Filesystem/FileHelper.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -40,11 +41,11 @@ namespace Lumina
         FString AttrDefaults;
         for (int32 i = 0; i < (int32)Attributes.size(); ++i)
         {
-            AttrDefaults += FString("\tPAttr()[Index * PARTICLE_ATTR_FLOATS + ") + eastl::to_string(i).c_str()
+            AttrDefaults += FString("\tPAttr()[Index * PARTICLE_ATTR_FLOATS + ") + Format("{}", i).c_str()
                           + "u] = " + Attributes[i].DefaultExpr + ";\n";
         }
 
-        ReplaceAll(Source, AttrCountToken,    eastl::to_string(GetAttributeFloatCount()).c_str());
+        ReplaceAll(Source, AttrCountToken,    Format("{}", GetAttributeFloatCount()).c_str());
         ReplaceAll(Source, AttrDefaultsToken, AttrDefaults);
         ReplaceAll(Source, SpawnToken,        SpawnChunks);
         ReplaceAll(Source, UpdateToken,       UpdateChunks);
@@ -57,7 +58,7 @@ namespace Lumina
         const uint32 Slot = (uint32)ParamValues.size();
         ParamValues.push_back(Value);
 
-        FString Expr = "MP(" + eastl::to_string(Slot) + ")";
+        FString Expr = "MP(" + Format("{}", Slot) + ")";
         switch (Components)
         {
         case 1:  Expr += ".x";    break;
@@ -100,7 +101,7 @@ namespace Lumina
         // ParticleSimulateTemplate.slang must take the particle index under exactly that name. Update
         // originally took no index at all and Spawn called it SpawnIndex, which compiled fine until the
         // first module actually declared an attribute.
-        return FString("PAttr()[Index * PARTICLE_ATTR_FLOATS + ") + eastl::to_string(Index).c_str() + "u]";
+        return FString("PAttr()[Index * PARTICLE_ATTR_FLOATS + ") + Format("{}", Index).c_str() + "u]";
     }
 
     int32 FParticleCompiler::FindAttributeSlot(const char* Name) const
@@ -124,8 +125,8 @@ namespace Lumina
     uint64 FParticleCompiler::GetGeneratedCodeHash() const
     {
         uint64 Hash = 0;
-        Hash::HashCombine(Hash, eastl::string_view(SpawnChunks.data(), SpawnChunks.size()));
-        Hash::HashCombine(Hash, eastl::string_view(UpdateChunks.data(), UpdateChunks.size()));
+        Hash::HashCombine(Hash, FStringView(SpawnChunks.data(), SpawnChunks.size()));
+        Hash::HashCombine(Hash, FStringView(UpdateChunks.data(), UpdateChunks.size()));
         return Hash;
     }
 
@@ -211,7 +212,7 @@ namespace Lumina
         }
 
         (void)DebugName;
-        return eastl::to_string(BaseSlot).c_str();
+        return Format("{}", BaseSlot).c_str();
     }
 
     FString FParticleCompiler::ParamGradient(const char* DebugName, const SGradient& Value)
@@ -225,7 +226,7 @@ namespace Lumina
 
         const uint32 BaseSlot = (uint32)ParamValues.size();
 
-        // One slot per sample: a colour already fills a float4.
+        // One slot per sample: a color already fills a float4.
         for (int32 i = 0; i < kParticleLUTSamples; ++i)
         {
             const float Alpha = (float)i / (float)(kParticleLUTSamples - 1);
@@ -233,7 +234,7 @@ namespace Lumina
         }
 
         (void)DebugName;
-        return eastl::to_string(BaseSlot).c_str();
+        return Format("{}", BaseSlot).c_str();
     }
 
     void FParticleCompiler::EnsureEmitted(CParticleGraphNode* Node, EParticleContext Context)
@@ -283,21 +284,21 @@ namespace Lumina
             case EParticlePinType::Float:
             {
                 const float V = Pin->GetDefaultFloat();
-                Result.Value = FString(eastl::to_string(V));
+                Result.Value = FString(Format("{}", V));
                 Result.Type  = EParticlePinType::Float;
                 break;
             }
             case EParticlePinType::Float3:
             {
                 const FVector3& V = Pin->GetDefaultFloat3();
-                Result.Value = "float3(" + FString(eastl::to_string(V.x)) + ", " + FString(eastl::to_string(V.y)) + ", " + FString(eastl::to_string(V.z)) + ")";
+                Result.Value = "float3(" + FString(Format("{}", V.x)) + ", " + FString(Format("{}", V.y)) + ", " + FString(Format("{}", V.z)) + ")";
                 Result.Type  = EParticlePinType::Float3;
                 break;
             }
             case EParticlePinType::Float4:
             {
                 const FVector4& V = Pin->GetDefaultFloat4();
-                Result.Value = "float4(" + FString(eastl::to_string(V.x)) + ", " + FString(eastl::to_string(V.y)) + ", " + FString(eastl::to_string(V.z)) + ", " + FString(eastl::to_string(V.w)) + ")";
+                Result.Value = "float4(" + FString(Format("{}", V.x)) + ", " + FString(Format("{}", V.y)) + ", " + FString(Format("{}", V.z)) + ", " + FString(Format("{}", V.w)) + ")";
                 Result.Type  = EParticlePinType::Float4;
                 break;
             }
@@ -312,7 +313,7 @@ namespace Lumina
         FParticleInputValue V = GetInputValue(Pin);
         if (V.Value.empty())
         {
-            V.Value = FString(eastl::to_string(Default));
+            V.Value = FString(Format("{}", Default));
             V.Type  = EParticlePinType::Float;
         }
         return V;
@@ -323,7 +324,7 @@ namespace Lumina
         FParticleInputValue V = GetInputValue(Pin);
         if (V.Value.empty())
         {
-            V.Value = "float3(" + FString(eastl::to_string(Default.x)) + ", " + FString(eastl::to_string(Default.y)) + ", " + FString(eastl::to_string(Default.z)) + ")";
+            V.Value = "float3(" + FString(Format("{}", Default.x)) + ", " + FString(Format("{}", Default.y)) + ", " + FString(Format("{}", Default.z)) + ")";
             V.Type  = EParticlePinType::Float3;
         }
         return V;
@@ -334,7 +335,7 @@ namespace Lumina
         FParticleInputValue V = GetInputValue(Pin);
         if (V.Value.empty())
         {
-            V.Value = "float4(" + FString(eastl::to_string(Default.x)) + ", " + FString(eastl::to_string(Default.y)) + ", " + FString(eastl::to_string(Default.z)) + ", " + FString(eastl::to_string(Default.w)) + ")";
+            V.Value = "float4(" + FString(Format("{}", Default.x)) + ", " + FString(Format("{}", Default.y)) + ", " + FString(Format("{}", Default.z)) + ", " + FString(Format("{}", Default.w)) + ")";
             V.Type  = EParticlePinType::Float4;
         }
         return V;

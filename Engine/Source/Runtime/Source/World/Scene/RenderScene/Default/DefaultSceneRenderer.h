@@ -92,22 +92,19 @@ namespace Lumina
             TVector<uint8>                      BatchSkinFlags;
             TVector<uint32>                     TouchedSlots;
 
-            FFrameArenaAllocator                Arena;
             FSceneRenderStats                   Stats = {};
             bool                                bTouched = false;
 
             FThreadLocalDrawData() = default;
-            explicit FThreadLocalDrawData(FFrameArenaAllocator A)
-                : Items(A), EntityRecords(A), Arena(A) {}
+            FThreadLocalDrawData(const FThreadLocalDrawData&) = delete;
 
             FThreadLocalDrawData(FThreadLocalDrawData&&) = default;
             FThreadLocalDrawData& operator=(FThreadLocalDrawData&&) noexcept = default;
 
-            void ResetForFrame(FFrameArenaAllocator A)
+            void ResetForFrame()
             {
-                new (&Items)              TFrameVector<FProcessedDrawItem>(A);
-                new (&EntityRecords)      TFrameVector<FEntityRecord>(A);
-                Arena = A;
+                Items.clear();
+                EntityRecords.clear();
                 Stats = {};
                 bTouched = false;
             }
@@ -134,7 +131,7 @@ namespace Lumina
 
             ~FThreadLocalDrawData()
             {
-                ResetForFrame(FFrameArenaAllocator());
+                ResetForFrame();
             }
         };
 

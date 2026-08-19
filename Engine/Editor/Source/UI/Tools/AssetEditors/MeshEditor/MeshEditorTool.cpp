@@ -11,6 +11,7 @@
 #include "World/Entity/Components/LightComponent.h"
 #include "World/Entity/Components/StaticMeshComponent.h"
 #include "World/Scene/RenderScene/SceneRenderTypes.h"
+#include "Containers/StringFormat.h"
 
 
 namespace Lumina
@@ -83,9 +84,9 @@ namespace Lumina
                     }
                 };
     
-                PropertyRow("Vertices", eastl::to_string(Resource.GetNumVertices()));
-                PropertyRow("Meshlets", eastl::to_string(Resource.MeshletData.Meshlets.size()));
-                PropertyRow("Surfaces", eastl::to_string(Resource.GetNumSurfaces()));
+                PropertyRow("Vertices", Format("{}", Resource.GetNumVertices()));
+                PropertyRow("Meshlets", Format("{}", Resource.MeshletData.Meshlets.size()));
+                PropertyRow("Surfaces", Format("{}", Resource.GetNumSurfaces()));
 
                 // Maximum LOD count across surfaces.
                 uint32 MaxLODsAcrossSurfaces = 0;
@@ -93,7 +94,7 @@ namespace Lumina
                 {
                     MaxLODsAcrossSurfaces = Math::Max(MaxLODsAcrossSurfaces, Surface.NumLODs);
                 }
-                PropertyRow("LOD Levels", eastl::to_string(MaxLODsAcrossSurfaces));
+                PropertyRow("LOD Levels", Format("{}", MaxLODsAcrossSurfaces));
                 
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
@@ -107,11 +108,11 @@ namespace Lumina
                                               + Resource.MeshletData.MeshletTriangles.size() * sizeof(uint32)) / 1024.0f;
                 const float totalSizeKB      = vertexSizeKB + meshletSizeKB;
 
-                PropertyRow("Vertex Buffer", eastl::to_string(static_cast<int>(vertexSizeKB)) + " KB");
-                PropertyRow("Meshlet Data",  eastl::to_string(static_cast<int>(meshletSizeKB)) + " KB");
+                PropertyRow("Vertex Buffer", Format("{}", static_cast<int>(vertexSizeKB)) + " KB");
+                PropertyRow("Meshlet Data",  Format("{}", static_cast<int>(meshletSizeKB)) + " KB");
 
                 ImVec4 totalColor = totalSizeKB > 1024 ? ImVec4(1.0f, 0.7f, 0.3f, 1.0f) : ImVec4(0.7f, 1.0f, 0.7f, 1.0f);
-                PropertyRow("Total Memory", eastl::to_string(static_cast<int>(totalSizeKB)) + " KB", &totalColor);
+                PropertyRow("Total Memory", Format("{}", static_cast<int>(totalSizeKB)) + " KB", &totalColor);
                 
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
@@ -421,10 +422,10 @@ namespace Lumina
 
                     const bool   bSelected     = ((int32)i == SelectedSurfaceIndex);
                     const uint32 LOD0Meshlets  = Surface.LODMeshletCount[0];
-                    FString      Label         = "Surface " + eastl::to_string(i)
+                    FString      Label         = "Surface " + Format("{}", i)
                                                + "  |  " + MaterialName
-                                               + "  |  " + eastl::to_string(Surface.IndexCount / 3) + " tris, "
-                                               + eastl::to_string(LOD0Meshlets) + " meshlets";
+                                               + "  |  " + Format("{}", Surface.IndexCount / 3) + " tris, "
+                                               + Format("{}", LOD0Meshlets) + " meshlets";
 
                     if (ImGui::Selectable(Label.c_str(), bSelected, ImGuiSelectableFlags_SpanAllColumns))
                     {
@@ -452,13 +453,13 @@ namespace Lumina
                             const uint32 LOD0Cnt = Surface.LODMeshletCount[0];
 
                             DetailRow("Material:",       MaterialName);
-                            DetailRow("Material Index:", eastl::to_string(Surface.MaterialIndex));
-                            DetailRow("Start Index:",    eastl::to_string(Surface.StartIndex));
-                            DetailRow("Index Count:",    eastl::to_string(Surface.IndexCount));
-                            DetailRow("Triangles:",      eastl::to_string(Surface.IndexCount / 3));
-                            DetailRow("LOD 0 Range:",    eastl::to_string(LOD0Off) + " .. " + eastl::to_string(LOD0Off + LOD0Cnt));
-                            DetailRow("LOD 0 Meshlets:", eastl::to_string(LOD0Cnt));
-                            DetailRow("LOD Levels:",     eastl::to_string(Surface.NumLODs));
+                            DetailRow("Material Index:", Format("{}", Surface.MaterialIndex));
+                            DetailRow("Start Index:",    Format("{}", Surface.StartIndex));
+                            DetailRow("Index Count:",    Format("{}", Surface.IndexCount));
+                            DetailRow("Triangles:",      Format("{}", Surface.IndexCount / 3));
+                            DetailRow("LOD 0 Range:",    Format("{}", LOD0Off) + " .. " + Format("{}", LOD0Off + LOD0Cnt));
+                            DetailRow("LOD 0 Meshlets:", Format("{}", LOD0Cnt));
+                            DetailRow("LOD Levels:",     Format("{}", Surface.NumLODs));
 
                             ImGui::EndTable();
                         }
@@ -807,7 +808,7 @@ namespace Lumina
                 {
                     FString Numbered = Base;
                     Numbered += "_";
-                    Numbered += eastl::to_string(Suffix++).c_str();
+                    Numbered += Format("{}", Suffix++).c_str();
                     SocketName = FName(Numbered.c_str());
                 }
 

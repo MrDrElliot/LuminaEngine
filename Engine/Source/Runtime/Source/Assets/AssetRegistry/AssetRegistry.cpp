@@ -152,7 +152,7 @@ namespace Lumina
         // whose files no longer exist under a walked root.
         LastDiscoveryWalkedRoots  = WalkedRoots;
         LastDiscoveryVisitedPaths = PackagePaths;
-        eastl::sort(LastDiscoveryVisitedPaths.begin(), LastDiscoveryVisitedPaths.end());
+        std::sort(LastDiscoveryVisitedPaths.begin(), LastDiscoveryVisitedPaths.end());
         
         RunTextAssetDiscovery();
 
@@ -322,7 +322,7 @@ namespace Lumina
         {
             FWriteScopeLock Lock(AssetsMutex);
 
-            auto It = eastl::find_if(Assets.begin(), Assets.end(), [&OldPath](const TUniquePtr<FAssetData>& Asset)
+            auto It = std::find_if(Assets.begin(), Assets.end(), [&OldPath](const TUniquePtr<FAssetData>& Asset)
             {
                 return Asset->Path == OldPath;
             });
@@ -335,7 +335,7 @@ namespace Lumina
 
             // Drop any stale entry already at NewPath (different GUID), else GetAssetByPath is non-deterministic.
             const FGuid RenamedGuid = (*It)->AssetGUID;
-            auto Colliding = eastl::find_if(Assets.begin(), Assets.end(), [&](const TUniquePtr<FAssetData>& Asset)
+            auto Colliding = std::find_if(Assets.begin(), Assets.end(), [&](const TUniquePtr<FAssetData>& Asset)
             {
                 return Asset->AssetGUID != RenamedGuid && Asset->Path == NewPath;
             });
@@ -344,7 +344,7 @@ namespace Lumina
                 LOG_WARN("AssetRegistry::AssetRenamed: dropping stale entry at {} colliding with rename {} -> {}", NewPath, OldPath, NewPath);
                 Assets.erase(Colliding);
                 // hash_set::erase can invalidate other iterators; re-find.
-                It = eastl::find_if(Assets.begin(), Assets.end(), [&OldPath](const TUniquePtr<FAssetData>& Asset)
+                It = std::find_if(Assets.begin(), Assets.end(), [&OldPath](const TUniquePtr<FAssetData>& Asset)
                 {
                     return Asset->Path == OldPath;
                 });
@@ -352,7 +352,7 @@ namespace Lumina
             }
 
             const TUniquePtr<FAssetData>& Data = *It;
-            Data->Path.assign_convert(NewPath);
+            Data->Path.assign(NewPath);
             Data->AssetName    = VFS::FileName(NewPath, true);
             Data->OwningPlugin = ExtractOwningPlugin(NewPath);
         }
@@ -379,7 +379,7 @@ namespace Lumina
     {
         FReadScopeLock Lock(AssetsMutex);
 
-        auto It = eastl::find_if(Assets.begin(), Assets.end(), [&](const auto& Data)
+        auto It = std::find_if(Assets.begin(), Assets.end(), [&](const auto& Data)
         {
             return Data->AssetGUID == GUID;
         });
@@ -392,7 +392,7 @@ namespace Lumina
         FReadScopeLock Lock(AssetsMutex);
 
         FStringView PathNoExt = VFS::RemoveExtension(Path);
-        auto It = eastl::find_if(Assets.begin(), Assets.end(), [&](const TUniquePtr<FAssetData>& Data)
+        auto It = std::find_if(Assets.begin(), Assets.end(), [&](const TUniquePtr<FAssetData>& Data)
         {
             return VFS::RemoveExtension(Data->Path) == PathNoExt;
         });
@@ -450,7 +450,7 @@ namespace Lumina
 
             auto Data = MakeUnique<FTextAssetData>();
             Data->Guid          = Guid;
-            Data->Path          .assign_convert(Vp);
+            Data->Path          .assign(Vp);
             Data->Name          = VFS::FileName(Vp, true);
             Data->Kind          = Kind;
             Data->OwningPlugin  = ExtractOwningPlugin(Vp);
@@ -494,7 +494,7 @@ namespace Lumina
 
         auto Data = MakeUnique<FTextAssetData>();
         Data->Guid          = Guid;
-        Data->Path          .assign_convert(Path);
+        Data->Path          .assign(Path);
         Data->Name          = VFS::FileName(Path, true);
         Data->Kind          = Kind;
         Data->OwningPlugin  = ExtractOwningPlugin(Path);
@@ -519,7 +519,7 @@ namespace Lumina
     {
         FReadScopeLock Lock(TextAssetsMutex);
         const FStringView PathNoExt = VFS::RemoveExtension(Path);
-        auto It = eastl::find_if(TextAssets.begin(), TextAssets.end(), [&](const TUniquePtr<FTextAssetData>& Data)
+        auto It = std::find_if(TextAssets.begin(), TextAssets.end(), [&](const TUniquePtr<FTextAssetData>& Data)
         {
             return VFS::RemoveExtension(FStringView(Data->Path.c_str(), Data->Path.size())) == PathNoExt;
         });
@@ -555,7 +555,7 @@ namespace Lumina
         {
             FWriteScopeLock Lock(TextAssetsMutex);
 
-            auto It = eastl::find_if(TextAssets.begin(), TextAssets.end(), [&](const TUniquePtr<FTextAssetData>& Data)
+            auto It = std::find_if(TextAssets.begin(), TextAssets.end(), [&](const TUniquePtr<FTextAssetData>& Data)
             {
                 return FStringView(Data->Path.c_str(), Data->Path.size()) == OldPath;
             });
@@ -566,14 +566,14 @@ namespace Lumina
 
             // Drop a stale entry already sitting at NewPath with a different GUID.
             const FGuid RenamedGuid = (*It)->Guid;
-            auto Colliding = eastl::find_if(TextAssets.begin(), TextAssets.end(), [&](const TUniquePtr<FTextAssetData>& Data)
+            auto Colliding = std::find_if(TextAssets.begin(), TextAssets.end(), [&](const TUniquePtr<FTextAssetData>& Data)
             {
                 return Data->Guid != RenamedGuid && FStringView(Data->Path.c_str(), Data->Path.size()) == NewPath;
             });
             if (Colliding != TextAssets.end())
             {
                 TextAssets.erase(Colliding);
-                It = eastl::find_if(TextAssets.begin(), TextAssets.end(), [&](const TUniquePtr<FTextAssetData>& Data)
+                It = std::find_if(TextAssets.begin(), TextAssets.end(), [&](const TUniquePtr<FTextAssetData>& Data)
                 {
                     return FStringView(Data->Path.c_str(), Data->Path.size()) == OldPath;
                 });
@@ -581,7 +581,7 @@ namespace Lumina
             }
 
             const TUniquePtr<FTextAssetData>& Data = *It;
-            Data->Path.assign_convert(NewPath);
+            Data->Path.assign(NewPath);
             Data->Name         = VFS::FileName(NewPath, true);
             Data->Kind         = TextAsset::KindFromPath(NewPath);
             Data->OwningPlugin = ExtractOwningPlugin(NewPath);
@@ -602,7 +602,7 @@ namespace Lumina
 
         {
             FWriteScopeLock Lock(TextAssetsMutex);
-            auto It = eastl::find_if(TextAssets.begin(), TextAssets.end(), [&](const TUniquePtr<FTextAssetData>& Data)
+            auto It = std::find_if(TextAssets.begin(), TextAssets.end(), [&](const TUniquePtr<FTextAssetData>& Data)
             {
                 return FStringView(Data->Path.c_str(), Data->Path.size()) == Path;
             });
@@ -673,7 +673,7 @@ namespace Lumina
                 continue;
             }
 
-            const bool bVisited = eastl::binary_search(
+            const bool bVisited = std::binary_search(
                 LastDiscoveryVisitedPaths.begin(),
                 LastDiscoveryVisitedPaths.end(),
                 Path);
@@ -820,7 +820,7 @@ namespace Lumina
         TVector<FObjectExport> Exports;
         Reader << Exports;
 
-        FObjectExport* Export = eastl::find_if(Exports.begin(), Exports.end(), [&](const FObjectExport& E)
+        FObjectExport* Export = std::find_if(Exports.begin(), Exports.end(), [&](const FObjectExport& E)
         {
             return E.ObjectName == PackageFileName;
         });
@@ -855,7 +855,7 @@ namespace Lumina
         AssetData->AssetClass     = Export->ClassName;
         AssetData->AssetGUID      = Export->ObjectGUID;
         AssetData->AssetName      = Export->ObjectName;
-        AssetData->Path           .assign_convert(Path);
+        AssetData->Path           .assign(Path);
         AssetData->ContentHash    = Hash;
         AssetData->SourceMTimeNs  = MTime;
         AssetData->Dependencies   = Move(Dependencies);
@@ -871,7 +871,7 @@ namespace Lumina
         }
         // Then drop any stale entry at this path with a different GUID (rare:
         // user dropped a .lasset with a fresh GUID over an old one).
-        auto ExistingByPath = eastl::find_if(Assets.begin(), Assets.end(), [&](const TUniquePtr<FAssetData>& D)
+        auto ExistingByPath = std::find_if(Assets.begin(), Assets.end(), [&](const TUniquePtr<FAssetData>& D)
         {
             return D->Path == AssetData->Path;
         });
@@ -1076,7 +1076,7 @@ namespace Lumina
             {
                 FString S;
                 Slot.Serialize(S);
-                Path.assign_convert(FStringView(S.c_str(), S.size()));
+                Path.assign(FStringView(S.c_str(), S.size()));
             }
             else
             {

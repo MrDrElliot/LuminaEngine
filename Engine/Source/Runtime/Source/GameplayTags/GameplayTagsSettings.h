@@ -2,7 +2,7 @@
 
 #include "Config/DeveloperSettings.h"
 #include "Containers/String.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "GameplayTagsSettings.generated.h"
 
 namespace Lumina

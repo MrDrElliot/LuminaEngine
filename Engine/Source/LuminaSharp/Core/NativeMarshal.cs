@@ -4,13 +4,13 @@ using System.Text;
 
 namespace LuminaSharp;
 
-// Zero-crossing readers over native EASTL FString / TVector laid out in place (little-endian; layout guarded
-// by VerifyEASTLInteropLayout). Returned views alias native storage: read synchronously, never retain.
+// Zero-crossing readers over a native FString / TVector laid out in place (little-endian; layout guarded
+// by VerifyContainerInteropLayout). Returned views alias native storage: read synchronously, never retain.
 public static unsafe class NativeMarshal
 {
-    // eastl::basic_string<char>: 24-byte SSO/heap union, last byte = flag (top bit set => heap, ptr@0 size@8).
-    private const int FStringFlagOffset = 23;
-    private const int FStringSSOCapacity = 23;
+    // Lumina::FString: 16-byte SSO/heap union, last byte = mode (top bit set => heap, ptr@0 size@8 as uint32).
+    private const int FStringFlagOffset = 15;
+    private const int FStringSSOCapacity = 15;
 
     // Longer than this => treated as a corrupt read, not a multi-gigabyte allocation.
     private const long MaxNativeStringBytes = 64 * 1024 * 1024;
@@ -29,13 +29,13 @@ public static unsafe class NativeMarshal
         long Length;
         if ((Flag & 0x80) != 0)
         {
-            Data = *(byte**)Base;                   // heap.mpBegin
-            Length = (long)*(ulong*)(Base + 8);     // heap.mnSize
+            Data = *(byte**)Base;                   // heap.Data
+            Length = *(uint*)(Base + 8);            // heap.Size (uint32)
         }
         else
         {
-            Data = Base;                            // sso.mData (stored in place)
-            Length = FStringSSOCapacity - Flag;     // SSO_CAPACITY - remainingSize
+            Data = Base;                            // the inline buffer starts at offset zero
+            Length = FStringSSOCapacity - Flag;     // the mode byte counts the slack, not the length
         }
 
         if (Data == null || Length <= 0 || Length >= MaxNativeStringBytes)
@@ -52,7 +52,7 @@ public static unsafe class NativeMarshal
         return DecodeVector<T>((byte*)Container + Offset);
     }
 
-    // The single source of truth for the EASTL vector layout (mpBegin@0, mpEnd@8); shared by ReadVector and TVector.
+    // The single source of truth for the TVector layout (Data@0, Count@8 as uint32); shared by ReadVector and TVector.
     internal static Span<T> DecodeVector<T>(byte* Header) where T : unmanaged
     {
         DecodeVectorRaw(Header, Unsafe.SizeOf<T>(), out byte* Data, out int Count);
@@ -76,12 +76,12 @@ public static unsafe class NativeMarshal
             return;
         }
         byte* Begin = *(byte**)Header;
-        byte* End = *(byte**)(Header + sizeof(void*));
-        if (Begin == null || End <= Begin)
+        uint Length = *(uint*)(Header + sizeof(void*));
+        if (Begin == null || Length == 0)
         {
             return;
         }
         Data = Begin;
-        Count = (int)((End - Begin) / ElementSize);
+        Count = (int)Length;
     }
 }

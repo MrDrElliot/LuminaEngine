@@ -1,7 +1,6 @@
 #pragma once
 
 #include <concepts>
-#include <EASTL/type_traits.h>
 #include "Core/LuminaMacros.h"
 #include "Platform/GenericPlatform.h"
 
@@ -100,7 +99,7 @@ namespace Lumina
                 Max = Temp;
             }
             
-            using UnsignedT = eastl::make_unsigned_t<T>;
+            using UnsignedT = std::make_unsigned_t<T>;
             const uint64 Span = uint64(UnsignedT(UnsignedT(Max) - UnsignedT(Min)));
 
             if (Span >= 0xFFFFFFFFull)

@@ -54,7 +54,7 @@ namespace Lumina
     };
 
     /** Draws an SGradient row as the ramp itself, opening a stop editor in a popup: click a stop to select,
-     *  drag to move it, double-click the bar to insert, and edit the selected colour with the standard
+     *  drag to move it, double-click the bar to insert, and edit the selected color with the standard
      *  picker. Stops stay time-sorted, which SGradient::Evaluate relies on. */
     class FGradientPropertyCustomization : public IPropertyTypeCustomization
     {

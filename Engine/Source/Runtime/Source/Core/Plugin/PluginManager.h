@@ -2,7 +2,8 @@
 
 #include "Plugin.h"
 #include "PluginLoadingPhase.h"
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Vector.h"
 #include "Containers/Name.h"
 #include "Containers/String.h"
 #include "Memory/SmartPtr.h"
@@ -80,7 +81,7 @@ namespace Lumina
 
     private:
         // Vector owns; map is O(1) name lookup. TUniquePtr can't be a map value
-        // (EASTL hash_map eagerly instantiates the value copy ctor).
+        // (the hash map eagerly instantiates the value copy ctor).
         TVector<TUniquePtr<FPlugin>> OwnedPlugins;
         THashMap<FName, FPlugin*>    PluginLookup;
 

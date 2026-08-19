@@ -1,7 +1,8 @@
 #pragma once
 
 #include "FilesystemTypes.h"
-#include "Containers/Array.h"
+#include "Containers/Span.h"
+#include "Containers/Vector.h"
 #include "Containers/String.h"
 
 namespace Lumina::Filesystem

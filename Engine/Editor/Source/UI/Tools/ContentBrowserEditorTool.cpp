@@ -14,7 +14,6 @@
 #include "Core/Progress/SlowTask.h"
 #include "Tools/Import/Importer.h"
 #include "UI/Properties/PropertyTable.h"
-#include "EASTL/sort.h"
 #include "FileSystem/FileSystem.h"
 #include "Paths/Paths.h"
 #include "Platform/Process/PlatformProcess.h"
@@ -33,7 +32,7 @@
 #include <iterator>
 #include <string>
 #include <Assets/AssetRegistry/AssetData.h>
-#include <Containers/Array.h>
+#include "Containers/Vector.h"
 #include <Containers/Function.h>
 #include <Containers/String.h>
 #include <Core/LuminaCommonTypes.h>
@@ -68,6 +67,7 @@
 #include "Core/Object/ObjectCore.h"
 #include "Settings/EditorSettings.h"
 #include "Tools/Import/ImportHelpers.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -1357,7 +1357,7 @@ namespace Lumina
                 SortedPaths.push_back(FBrowseEntry{ FileInfo, Move(TypeLabel) });
             });
             
-            eastl::sort(SortedPaths.begin(), SortedPaths.end(), [&](const FBrowseEntry& LHS, const FBrowseEntry& RHS)
+            std::sort(SortedPaths.begin(), SortedPaths.end(), [&](const FBrowseEntry& LHS, const FBrowseEntry& RHS)
             {
                 if (LHS.Info.IsDirectory() != RHS.Info.IsDirectory())
                 {
@@ -1467,7 +1467,7 @@ namespace Lumina
 
             FStringView PathNoExt = VFS::RemoveExtension(ContentItem->GetVirtualPath());
             FFixedString TestPath = Paths::Combine(VFS::Parent(PathNoExt), NewName);
-            TestPath.append_convert(ContentItem->GetExtension());
+            TestPath.append(ContentItem->GetExtension());
 
             if (VFS::Exists(TestPath))
             {
@@ -1996,8 +1996,9 @@ namespace Lumina
             HiddenTypes += State ? 0u : 1u;
         }
 
-        FFixedString FilterLabel(FFixedString::CtorSprintf(),
-            HiddenTypes > 0 ? LE_ICON_FILTER " Filter (%u hidden)###Filter" : LE_ICON_FILTER " Filter###Filter", HiddenTypes);
+        const FFixedString FilterLabel = HiddenTypes > 0
+            ? FormatAs<FFixedString>(LE_ICON_FILTER " Filter ({} hidden)###Filter", HiddenTypes)
+            : FFixedString(LE_ICON_FILTER " Filter###Filter");
 
         if (HiddenTypes > 0)
         {
@@ -2045,7 +2046,7 @@ namespace Lumina
             {
                 Names.push_back(Name);
             }
-            eastl::sort(Names.begin(), Names.end(), [](const FName& A, const FName& B)
+            std::sort(Names.begin(), Names.end(), [](const FName& A, const FName& B)
             {
                 return strcmp(A.c_str(), B.c_str()) < 0;
             });
@@ -2252,7 +2253,7 @@ namespace Lumina
             }
 
             FContentWatcher Entry;
-            Entry.VirtualPrefix.assign_convert(VirtualPrefix.data(), VirtualPrefix.size());
+            Entry.VirtualPrefix.assign(VirtualPrefix.data(), VirtualPrefix.size());
             Entry.WatchRootLen = DiskRoot.size();
             Entry.Watcher      = MakeUnique<FDirectoryWatcher>();
 
@@ -2264,15 +2265,15 @@ namespace Lumina
             auto MakeVirtualPath = [Prefix, RootLen](FStringView AbsPath) -> FFixedString
             {
                 FFixedString Out;
-                Out.append_convert(Prefix.c_str(), Prefix.size());
+                Out.append(Prefix.c_str(), Prefix.size());
                 if (AbsPath.size() > RootLen)
                 {
                     FStringView Tail = AbsPath.substr(RootLen);
                     if (!Tail.empty() && Tail.front() != '/')
                     {
-                        Out.append_convert("/");
+                        Out.append("/");
                     }
-                    Out.append_convert(Tail.data(), Tail.size());
+                    Out.append(Tail.data(), Tail.size());
                 }
                 return Out;
             };
@@ -2515,7 +2516,7 @@ namespace Lumina
         for (uint32 N = 1; N < 10000; ++N)
         {
             FFixedString Candidate = Base;
-            Candidate.append("_").append_convert(eastl::to_string(N).c_str());
+            Candidate.append("_").append(Format("{}", N).c_str());
 
             if (IsFree(Candidate))
             {
@@ -2532,7 +2533,7 @@ namespace Lumina
         Task::AsyncTask(1, 1, [this, Importer, Request](uint32, uint32, uint32)
         {
             const FStringView SourceName = VFS::FileName(Request.SourcePath, true);
-            FFixedString Title(FFixedString::CtorSprintf(), "Importing %.*s", (int)SourceName.length(), SourceName.data());
+            const FFixedString Title = FormatAs<FFixedString>("Importing {}", FStringView(SourceName.data(), SourceName.length()));
             FScopedSlowTask SlowTask(1.0f, Title, "Processing...");
 
             FImportResult Result;
@@ -2653,7 +2654,7 @@ namespace Lumina
         Task::AsyncTask(1, 1, [this, Importer, Request](uint32, uint32, uint32)
         {
             const FStringView SourceName = VFS::FileName(Request.SourcePath, true);
-            FFixedString Title(FFixedString::CtorSprintf(), "Reading %.*s", (int)SourceName.length(), SourceName.data());
+            const FFixedString Title = FormatAs<FFixedString>("Reading {}", FStringView(SourceName.data(), SourceName.length()));
             FScopedSlowTask SlowTask(1.0f, Title, "Parsing source file...");
 
             FString Error;
@@ -2711,7 +2712,7 @@ namespace Lumina
                         {
                             ImportSettingsTable.reset();
 
-                            // Cancelled: StartImport never ran, so nothing else releases the name or the
+                            // Canceled: StartImport never ran, so nothing else releases the name or the
                             // importer.
                             if (!SharedState->bStarted)
                             {
@@ -2719,7 +2720,7 @@ namespace Lumina
                                 ReservedImportPaths.erase(Request.DestinationPath);
                             }
 
-                            // Advancing from here rather than from the confirm branch, so cancelling one
+                            // Advancing from here rather than from the confirm branch, so canceling one
                             // file skips it and moves on instead of abandoning the rest of the batch.
                             bImportWindowOpen = false;
                             MainThread::Enqueue([this]() { ProcessNextImport(); });
@@ -3056,7 +3057,7 @@ namespace Lumina
                 {
                     Patterns.append(";");
                 }
-                Patterns.append("*").append_convert(Ext.data(), Ext.length());
+                Patterns.append("*").append(Ext.data(), Ext.length());
             }
 
             FFixedString Filter;
@@ -3111,7 +3112,7 @@ namespace Lumina
         Task::AsyncTask(1, 1, [this, AssetGUID, Importer, Request](uint32, uint32, uint32)
         {
             const FStringView SourceName = VFS::FileName(Request.SourcePath, true);
-            FFixedString Title(FFixedString::CtorSprintf(), "Reading %.*s", (int)SourceName.length(), SourceName.data());
+            const FFixedString Title = FormatAs<FFixedString>("Reading {}", FStringView(SourceName.data(), SourceName.length()));
             FScopedSlowTask SlowTask(1.0f, Title, "Parsing source file...");
 
             FString Error;
@@ -3185,7 +3186,7 @@ namespace Lumina
         Task::AsyncTask(1, 1, [this, AssetGUID, Importer, SourceFile](uint32, uint32, uint32)
         {
             const FStringView SourceName = VFS::FileName(SourceFile, true);
-            FFixedString Title(FFixedString::CtorSprintf(), "Reimporting %.*s", (int)SourceName.length(), SourceName.data());
+            const FFixedString Title = FormatAs<FFixedString>("Reimporting {}", FStringView(SourceName.data(), SourceName.length()));
             FScopedSlowTask SlowTask(1.0f, Title, "Processing...");
 
             CObject* Asset = LoadObject<CObject>(AssetGUID);
@@ -3601,7 +3602,7 @@ namespace Lumina
         }
 
         FFixedString Title;
-        Title.append_convert(eastl::to_string(Items.size()).c_str()).append(" items selected");
+        Title.append(Format("{}", Items.size()).c_str()).append(" items selected");
 
         FFixedString Subtitle;
         auto AppendPart = [&Subtitle](int32 Count, const char* Label)
@@ -3614,7 +3615,7 @@ namespace Lumina
             {
                 Subtitle.append(", ");
             }
-            Subtitle.append_convert(eastl::to_string(Count).c_str()).append(" ").append(Label);
+            Subtitle.append(Format("{}", Count).c_str()).append(" ").append(Label);
         };
         AppendPart(FolderCount, "folder(s)");
         AppendPart(AssetCount,  "asset(s)");
@@ -3636,7 +3637,7 @@ namespace Lumina
                 {
                     Clipboard.append("\n");
                 }
-                Clipboard.append_convert(ContentItem->GetVirtualPath().data(), ContentItem->GetVirtualPath().size());
+                Clipboard.append(ContentItem->GetVirtualPath().data(), ContentItem->GetVirtualPath().size());
             }
 
             ImGui::SetClipboardText(Clipboard.c_str());
@@ -3820,7 +3821,7 @@ namespace Lumina
                 }
             }
 
-            eastl::sort(Categories.begin(), Categories.end());
+            std::sort(Categories.begin(), Categories.end());
 
             for (const FString& Category : Categories)
             {
@@ -3837,7 +3838,7 @@ namespace Lumina
                         InCategory.push_back(Factory);
                     }
                 }
-                eastl::sort(InCategory.begin(), InCategory.end(), [](CFactory* A, CFactory* B)
+                std::sort(InCategory.begin(), InCategory.end(), [](CFactory* A, CFactory* B)
                 {
                     return A->GetAssetName() < B->GetAssetName();
                 });

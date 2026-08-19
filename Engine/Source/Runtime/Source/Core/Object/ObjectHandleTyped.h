@@ -318,26 +318,26 @@ namespace Lumina
     };
 }
 
-namespace eastl
+namespace std
 {
     template <typename T>
     struct hash<Lumina::TObjectPtr<T>>
     {
         size_t operator()(const Lumina::TObjectPtr<T>& Object) const noexcept
         {
-            return eastl::hash<T*>{}(Object.Get());
+            return Lumina::Containers::FDefaultHash{}(Object.Get());
         }
     };
 }
 
-namespace eastl
+namespace std
 {
     template <typename T>
     struct hash<Lumina::TWeakObjectPtr<T>>
     {
         size_t operator()(const Lumina::TWeakObjectPtr<T>& Object) const noexcept
         {
-            return eastl::hash<Lumina::FObjectHandle>{}(Object.GetHandle());
+            return Lumina::Containers::FDefaultHash{}(Object.GetHandle());
         }
     };
 }

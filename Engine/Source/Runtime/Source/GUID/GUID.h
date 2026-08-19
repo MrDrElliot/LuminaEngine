@@ -1,7 +1,7 @@
 #pragma once
 #include <format>
 
-#include "Containers/Array.h"
+#include "Containers/StaticArray.h"
 #include "Core/Serialization/Archiver.h"
 #include "Core/Templates/Optional.h"
 
@@ -73,7 +73,7 @@ namespace Lumina
 }
 
 
-namespace eastl
+namespace std
 {
     template <>
     struct RUNTIME_API hash<Lumina::FGuid>

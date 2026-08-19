@@ -1,7 +1,5 @@
 ﻿#pragma once
 
-#include "EASTL/shared_ptr.h"
-#include "EASTL/unique_ptr.h"
 #include "Memory/Memory.h"
 
 
@@ -16,7 +14,7 @@ namespace Lumina
         constexpr smart_ptr_deleter() noexcept = default;
         
         template<typename U>
-        requires eastl::is_convertible_v<U*, S*>
+        requires std::is_convertible_v<U*, S*>
         smart_ptr_deleter(const smart_ptr_deleter<U>&) noexcept {}
 
         void operator()(S* p) const
@@ -25,16 +23,16 @@ namespace Lumina
         }
     };
 
-    template<typename S> using TSharedPtr                                           = eastl::shared_ptr<S>;
-    template<typename S, typename D = smart_ptr_deleter<S>> using TUniquePtr        = eastl::unique_ptr<S, D>;
-    template<typename S> using TWeakPtr                                             = eastl::weak_ptr<S>;
-    template<typename S> using TSharedFromThis                                      = eastl::enable_shared_from_this<S>;
+    template<typename S> using TSharedPtr                                           = std::shared_ptr<S>;
+    template<typename S, typename D = smart_ptr_deleter<S>> using TUniquePtr        = std::unique_ptr<S, D>;
+    template<typename S> using TWeakPtr                                             = std::weak_ptr<S>;
+    template<typename S> using TSharedFromThis                                      = std::enable_shared_from_this<S>;
 
     template<typename T, typename... TArgs>
     requires (std::is_constructible_v<T, TArgs...>)
     TSharedPtr<T> MakeShared(TArgs&&... Args)
     {
-        return eastl::make_shared<T>(std::forward<TArgs>(Args)...);
+        return std::make_shared<T>(std::forward<TArgs>(Args)...);
     }
 
     template<typename T, typename... TArgs>

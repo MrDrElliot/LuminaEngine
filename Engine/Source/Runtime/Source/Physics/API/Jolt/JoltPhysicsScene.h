@@ -2,12 +2,16 @@
 
 // Jolt/Jolt.h must come first -- it sets up the JPH_* macros every other
 // Jolt header expects, and was previously force-included via pch.h.
+#include "Containers/Queue.h"
 #include <Jolt/Jolt.h>
 #include "Jolt/Physics/PhysicsSystem.h"
 #include "Jolt/Physics/Body/BodyCreationSettings.h"
 #include "Jolt/Physics/Collision/Shape/Shape.h"
 #include "Jolt/Physics/Constraints/TwoBodyConstraint.h"
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Span.h"
+#include "Containers/Vector.h"
+#include "Memory/MemoryConcurrentQueue.h"
 #include <cstring>
 #include "Core/Threading/Thread.h"
 #include "Core/Threading/Atomic.h"

@@ -37,7 +37,7 @@ namespace Lumina
         }
 
         // Embedded image payloads are views into the parsed buffers, so the parse outlives ParseMeshSource
-        // and is only released once the import is committed or cancelled.
+        // and is only released once the import is committed or canceled.
         void ReleaseSourceData() override;
 
     protected:
@@ -51,7 +51,7 @@ namespace Lumina
     private:
 
         /**
-         * Rejects a source whose extensionsRequired names anything the importer cannot honour.
+         * Rejects a source whose extensionsRequired names anything the importer cannot honor.
          *
          * cgltf parses such a file "successfully" -- it validates the metadata of compression extensions
          * but never decodes them -- so without this the accessors read compressed bytes as floats and the

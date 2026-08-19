@@ -11,10 +11,10 @@ namespace Lumina
     public: \
         void AppendDefinition(Reflection::FCodeWriter& Writer) const override \
         { \
-            const eastl::string PropertyFlagStr = PropertyFlagsToString(PropertyFlags); \
+            const std::string PropertyFlagStr = PropertyFlagsToString(PropertyFlags); \
             AppendPropertyDef(Writer, PropertyFlagStr.c_str(), #TypeFlag); \
         } \
-        eastl::string_view GetLuaType() override { return LuaType; } \
+        std::string_view GetLuaType() override { return LuaType; } \
         const char* GetTypeName() override { return TypeNameStr; } \
         const char* GetPropertyParamType() const override { return "FNumericPropertyParams"; } \
     };

@@ -10,6 +10,7 @@
 #include "Renderer/MeshData.h"
 #include "Renderer/Vertex.h"
 #include "Log/Log.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -167,7 +168,7 @@ namespace Lumina
                 if (FacesByMaterial.size() > 1)
                 {
                     FFixedString SurfaceID;
-                    SurfaceID.append_convert(Shape.name).append("_Mat").append_convert(eastl::to_string(MaterialID));
+                    SurfaceID.append(FStringView(Shape.name.data(), Shape.name.size())).append("_Mat").append(Format("{}", MaterialID));
                     Surface.ID = SurfaceID;
                 }
                 else
@@ -233,7 +234,7 @@ namespace Lumina
             if (Progress)
             {
                 ++ShapesDone;
-                FFixedString Message(FFixedString::CtorSprintf(), "Reading geometry (%u/%u shapes)...", ShapesDone, (uint32)Shapes.size());
+                const FFixedString Message = FormatAs<FFixedString>("Reading geometry ({}/{} shapes)...", ShapesDone, (uint32)Shapes.size());
                 Progress->EnterProgressFrame(ShapeStep, Message);
             }
         }

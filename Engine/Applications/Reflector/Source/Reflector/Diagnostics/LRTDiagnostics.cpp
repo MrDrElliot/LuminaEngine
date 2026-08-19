@@ -3,7 +3,7 @@
 #include <clang-c/CXSourceLocation.h>
 #include <clang-c/CXString.h>
 #include <cstdio>
-#include <EASTL/algorithm.h>
+#include <algorithm>
 
 namespace Lumina::Reflection
 {
@@ -24,7 +24,7 @@ namespace Lumina::Reflection
             if (Raw != nullptr)
             {
                 Result.File = Raw;
-                eastl::replace(Result.File.begin(), Result.File.end(), '\\', '/');
+                std::replace(Result.File.begin(), Result.File.end(), '\\', '/');
             }
             clang_disposeString(Name);
         }
@@ -60,7 +60,7 @@ namespace Lumina::Reflection
 
     namespace
     {
-        eastl::string FormatV(const char* Fmt, va_list Args)
+        std::string FormatV(const char* Fmt, va_list Args)
         {
             va_list Copy;
             va_copy(Copy, Args);
@@ -72,7 +72,7 @@ namespace Lumina::Reflection
                 return {};
             }
 
-            eastl::string Result;
+            std::string Result;
             Result.resize(static_cast<size_t>(Needed));
             std::vsnprintf(Result.data(), static_cast<size_t>(Needed) + 1, Fmt, Args);
             return Result;
@@ -83,7 +83,7 @@ namespace Lumina::Reflection
     {
         va_list Args;
         va_start(Args, Fmt);
-        const eastl::string Msg = FormatV(Fmt, Args);
+        const std::string Msg = FormatV(Fmt, Args);
         va_end(Args);
 
         ++ErrorCount;
@@ -94,7 +94,7 @@ namespace Lumina::Reflection
     {
         va_list Args;
         va_start(Args, Fmt);
-        const eastl::string Msg = FormatV(Fmt, Args);
+        const std::string Msg = FormatV(Fmt, Args);
         va_end(Args);
 
         ++WarningCount;

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Core/Math/AABB.h"
 #include "Core/Math/Matrix/MatrixMath.h"
 #include "Core/Serialization/Archiver.h"

@@ -2,7 +2,7 @@
 
 #include <algorithm>
 #include "RHITexture.h"
-#include "Containers/Array.h"
+#include "Containers/Span.h"
 #include "Core/Functional/FunctionRef.h"
 #include "Platform/GenericPlatform.h"
 #include "Shared/SharedConstants.h"

@@ -1,5 +1,5 @@
 #pragma once
-#include "Array.h"
+#include "Vector.h"
 #include "Tuple.h"
 
 namespace Lumina
@@ -12,13 +12,13 @@ namespace Lumina
         template<typename T, typename... TArgs>
         void Emplace(TArgs&&... Args)
         {
-            eastl::get<TVector<std::decay_t<T>>>(Tuple).emplace(std::forward<TArgs>(Args)...);
+            std::get<TVector<std::decay_t<T>>>(Tuple).emplace(std::forward<TArgs>(Args)...);
         }
 
         template<typename T>
         void PushBack(T&& Val)
         {
-            eastl::get<TVector<std::decay_t<T>>>(Tuple).push_back(std::forward<T>(Val));
+            std::get<TVector<std::decay_t<T>>>(Tuple).push_back(std::forward<T>(Val));
         }
 
         template<typename TLambda>
@@ -32,7 +32,7 @@ namespace Lumina
         template<typename TLambda, typename T>
         void Internal_ForEach(TLambda Lambda)
         {
-            TVector<T>& Vector = eastl::get<TVector<T>>(Tuple);
+            TVector<T>& Vector = std::get<TVector<T>>(Tuple);
             for (auto It = Vector.begin(); It != Vector.end(); ++It)
             {
                 Lambda(*It);

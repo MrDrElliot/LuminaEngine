@@ -2,7 +2,7 @@
 
 #include "PluginDescriptor.h"
 #include "PluginLoadingPhase.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "Memory/SmartPtr.h"
 

@@ -20,6 +20,7 @@
 #include "Log/Log.h"
 #include "Pak/PakWriter.h"
 #include "World/World.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -46,15 +47,15 @@ namespace Lumina
             TVector<uint8> Bytes;
             if (!VFS::ReadFile(Bytes, VirtualPath))
             {
-                LogCooker(LogFunc, FString().sprintf("  [skip] missing: %.*s", (int)VirtualPath.size(), VirtualPath.data()).c_str());
+                LogCooker(LogFunc, Format("  [skip] missing: {}", VirtualPath).c_str());
                 return false;
             }
 
             const TSpan<const uint8> Span(Bytes.data(), Bytes.size());
             Writer.AddEntry(VirtualPath, Span);
 
-            LogCooker(LogFunc, FString().sprintf("  + %.*s (%zu bytes)",
-                (int)VirtualPath.size(), VirtualPath.data(),
+            LogCooker(LogFunc, Format("  + {} ({} bytes)",
+                VirtualPath,
                 Bytes.size()).c_str());
             return true;
         }
@@ -71,8 +72,8 @@ namespace Lumina
             if (FCookDDC::TryGet(Key, CookedBytes))
             {
                 Writer.AddEntry(VirtualPath, TSpan<const uint8>(CookedBytes.data(), CookedBytes.size()));
-                LogCooker(LogFunc, FString().sprintf("  + %.*s (ddc, %zu bytes)",
-                    (int)VirtualPath.size(), VirtualPath.data(),
+                LogCooker(LogFunc, Format("  + {} (ddc, {} bytes)",
+                    VirtualPath,
                     CookedBytes.size()).c_str());
                 return true;
             }
@@ -80,15 +81,15 @@ namespace Lumina
             CPackage* Package = CPackage::LoadPackage(VirtualPath);
             if (Package == nullptr)
             {
-                LogCooker(LogFunc, FString().sprintf("  [warn] failed to load for cook, falling back to verbatim: %.*s",
-                    (int)VirtualPath.size(), VirtualPath.data()).c_str());
+                LogCooker(LogFunc, Format("  [warn] failed to load for cook, falling back to verbatim: {}",
+                    VirtualPath).c_str());
                 return BundleVfsFile(Writer, VirtualPath, LogFunc);
             }
 
             if (!CPackage::SavePackageForCook(Package, CookedBytes))
             {
-                LogCooker(LogFunc, FString().sprintf("  [warn] cook-save failed, falling back to verbatim: %.*s",
-                    (int)VirtualPath.size(), VirtualPath.data()).c_str());
+                LogCooker(LogFunc, Format("  [warn] cook-save failed, falling back to verbatim: {}",
+                    VirtualPath).c_str());
                 return BundleVfsFile(Writer, VirtualPath, LogFunc);
             }
 
@@ -97,8 +98,8 @@ namespace Lumina
             FCookDDC::Put(Key, CookedBytes);
 
             Writer.AddEntry(VirtualPath, TSpan<const uint8>(CookedBytes.data(), CookedBytes.size()));
-            LogCooker(LogFunc, FString().sprintf("  + %.*s (cooked, %zu bytes)",
-                (int)VirtualPath.size(), VirtualPath.data(),
+            LogCooker(LogFunc, Format("  + {} (cooked, {} bytes)",
+                VirtualPath,
                 CookedBytes.size()).c_str());
             return true;
         }
@@ -161,13 +162,13 @@ namespace Lumina
             TVector<uint8> Bytes;
             if (!Filesystem::ReadFile(Bytes, DiskPath))
             {
-                LogCooker(LogFunc, FString().sprintf("  [skip] unreadable extra: %.*s",
-                    (int)DiskPath.size(), DiskPath.data()).c_str());
+                LogCooker(LogFunc, Format("  [skip] unreadable extra: {}",
+                    DiskPath).c_str());
                 return false;
             }
             Writer.AddEntry(VirtualPath, TSpan<const uint8>(Bytes.data(), Bytes.size()));
-            LogCooker(LogFunc, FString().sprintf("  + %.*s (%zu bytes, extra)",
-                (int)VirtualPath.size(), VirtualPath.data(), Bytes.size()).c_str());
+            LogCooker(LogFunc, Format("  + {} ({} bytes, extra)",
+                VirtualPath, Bytes.size()).c_str());
             return true;
         }
 
@@ -179,7 +180,7 @@ namespace Lumina
             {
                 if (!Filesystem::IsFile(File))
                 {
-                    LogCooker(LogFunc, FString().sprintf("  [skip] extra file not found: %s", File.c_str()).c_str());
+                    LogCooker(LogFunc, Format("  [skip] extra file not found: {}", File.c_str()).c_str());
                     continue;
                 }
 
@@ -198,7 +199,7 @@ namespace Lumina
             {
                 if (!Filesystem::IsDirectory(Dir))
                 {
-                    LogCooker(LogFunc, FString().sprintf("  [skip] extra dir not found: %s", Dir.c_str()).c_str());
+                    LogCooker(LogFunc, Format("  [skip] extra dir not found: {}", Dir.c_str()).c_str());
                     continue;
                 }
 
@@ -254,7 +255,7 @@ namespace Lumina
 
             const std::string Out = Doc.dump(4);
             Writer.AddEntry("/Config/GameSettings.json", FStringView(Out.c_str(), Out.size()));
-            LogCooker(LogFunc, FString().sprintf("  + /Config/GameSettings.json (cooked, %zu bytes)", Out.size()).c_str());
+            LogCooker(LogFunc, Format("  + /Config/GameSettings.json (cooked, {} bytes)", Out.size()).c_str());
             return true;
         }
 
@@ -342,7 +343,7 @@ namespace Lumina
             return Result;
         }
 
-        LogCooker(LogFunc, FString().sprintf("Building cook graph from %zu root(s)...", Roots.size()).c_str());
+        LogCooker(LogFunc, Format("Building cook graph from {} root(s)...", Roots.size()).c_str());
 
         FCookGraph Graph(FAssetRegistry::Get());
         Graph.AddRoots(Roots);
@@ -352,11 +353,11 @@ namespace Lumina
         {
             TVector<FAssetData*> Primaries = FAssetRegistry::Get().FindByPredicate(
                 [](const FAssetData& D) { return HasFlag(D.Flags, EAssetFlags::Primary); });
-            eastl::sort(Primaries.begin(), Primaries.end(),
+            std::sort(Primaries.begin(), Primaries.end(),
                 [](const FAssetData* A, const FAssetData* B) { return A->AssetGUID < B->AssetGUID; });
             if (!Primaries.empty())
             {
-                LogCooker(LogFunc, FString().sprintf("  Primary assets: %zu -> implicit cook roots", Primaries.size()).c_str());
+                LogCooker(LogFunc, Format("  Primary assets: {} -> implicit cook roots", Primaries.size()).c_str());
             }
             for (const FAssetData* Data : Primaries)
             {
@@ -384,11 +385,10 @@ namespace Lumina
         {
             FRmlUiAssetScan::FResult UiScan = FRmlUiAssetScan::ScanRoots(
                 ContentRoots, FAssetRegistry::Get(), LogFunc);
-            eastl::sort(UiScan.AssetPaths.begin(), UiScan.AssetPaths.end());
+            std::sort(UiScan.AssetPaths.begin(), UiScan.AssetPaths.end());
             if (UiScan.FilesScanned > 0)
             {
-                LogCooker(LogFunc, FString().sprintf(
-                    "  UI scan: %zu file(s), %zu candidate ref(s), %zu resolved -> implicit cook roots",
+                LogCooker(LogFunc, Format("  UI scan: {} file(s), {} candidate ref(s), {} resolved -> implicit cook roots",
                     UiScan.FilesScanned, UiScan.RawCandidates, UiScan.ResolvedRefs).c_str());
             }
             for (const FString& Path : UiScan.AssetPaths)
@@ -404,12 +404,12 @@ namespace Lumina
 
         for (const FCookGraphIssue& Issue : Graph.GetIssues())
         {
-            LogCooker(LogFunc, FString().sprintf("  [warn] %s: %s",
+            LogCooker(LogFunc, Format("  [warn] {}: {}",
                 Issue.Source.c_str(), Issue.Detail.c_str()).c_str());
         }
 
         const auto Reachable = Graph.GetReachableNodesSorted();
-        LogCooker(LogFunc, FString().sprintf("Reachable assets: %zu", Reachable.size()).c_str());
+        LogCooker(LogFunc, Format("Reachable assets: {}", Reachable.size()).c_str());
 
         // Bucket reachable assets by chunk. Sorted-by-GUID input order is
         // preserved per chunk so PAK entry order is deterministic.
@@ -430,7 +430,7 @@ namespace Lumina
             ByChunk[kMainChunk] = {};      // ensure a Main PAK exists for shared content
             ChunkOrder.push_back(kMainChunk);
         }
-        eastl::sort(ChunkOrder.begin(), ChunkOrder.end(),
+        std::sort(ChunkOrder.begin(), ChunkOrder.end(),
             [&](const FName& A, const FName& B)
             {
                 if (A == kMainChunk) return true;
@@ -482,12 +482,12 @@ namespace Lumina
                 LogCooker(LogFunc, "Bundling engine resources...");
                 const size_t NumEngine = BundleEngineResources(Writer, LogFunc);
                 ChunkExtras += NumEngine;
-                LogCooker(LogFunc, FString().sprintf("  bundled %zu engine files", NumEngine).c_str());
+                LogCooker(LogFunc, Format("  bundled {} engine files", NumEngine).c_str());
 
                 LogCooker(LogFunc, "Bundling shader cache...");
                 const size_t NumShaders = BundleShaderCache(Writer, LogFunc);
                 ChunkExtras += NumShaders;
-                LogCooker(LogFunc, FString().sprintf("  bundled %zu cached shaders", NumShaders).c_str());
+                LogCooker(LogFunc, Format("  bundled {} cached shaders", NumShaders).c_str());
 
                 if (!Options.bExtractScriptsAsLooseFiles)
                 {
@@ -515,15 +515,13 @@ namespace Lumina
                         TSpan<const uint8>(Bytes.data(), Bytes.size())))
                     {
                         ++ChunkExtras;
-                        LogCooker(LogFunc, FString().sprintf(
-                            "  + /Engine/AssetRegistry.bin (cooked, %zu bytes, %zu live entries)",
+                        LogCooker(LogFunc, Format("  + /Engine/AssetRegistry.bin (cooked, {} bytes, {} live entries)",
                             Bytes.size(), LiveCount).c_str());
                     }
                     // Only warn at zero (fresh projects have few assets); zero means discovery never ran or wiped the registry, fix by deleting the .json cache + restart.
                     if (LiveCount == 0)
                     {
-                        LogCooker(LogFunc, FString().sprintf(
-                            "  [warn] live registry has 0 entries, Shipping runtime will not find anything. "
+                        LogCooker(LogFunc, Format("  [warn] live registry has 0 entries, Shipping runtime will not find anything. "
                             "Delete <EngineInstall>/Intermediates/AssetRegistry.json and restart the editor "
                             "to force a fresh discovery, then re-cook.").c_str());
                     }
@@ -549,12 +547,12 @@ namespace Lumina
             Result.NumExtraFiles += ChunkExtras;
             Result.TotalBytes    += ChunkBytes;
 
-            LogCooker(LogFunc, FString().sprintf("Wrote chunk '%s' -> %s (%zu entries, %zu bytes)",
+            LogCooker(LogFunc, Format("Wrote chunk '{}' -> {} ({} entries, {} bytes)",
                 Chunk.ToString().c_str(), OutPath.c_str(),
                 Writer.NumEntries(), ChunkBytes).c_str());
         }
 
-        LogCooker(LogFunc, FString().sprintf("DDC: %zu hits, %zu misses (%zu bytes written this cook)",
+        LogCooker(LogFunc, Format("DDC: {} hits, {} misses ({} bytes written this cook)",
             FCookDDC::Hits(), FCookDDC::Misses(), FCookDDC::WrittenBytes()).c_str());
 
         Result.bSuccess = true;

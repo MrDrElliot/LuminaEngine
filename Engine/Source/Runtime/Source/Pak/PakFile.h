@@ -1,6 +1,5 @@
 #pragma once
 
-#include "Containers/Array.h"
 #include "Containers/String.h"
 
 namespace Lumina

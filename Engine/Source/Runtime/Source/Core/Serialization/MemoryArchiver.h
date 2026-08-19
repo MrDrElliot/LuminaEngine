@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Archiver.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Core/Assertions/Assert.h"
 #include "Memory/Memcpy.h"
 #include "Memory/Memory.h"

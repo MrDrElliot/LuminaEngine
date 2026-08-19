@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/Name.h"
 #include "Containers/String.h"
 #include "Core/Object/ObjectFlags.h"

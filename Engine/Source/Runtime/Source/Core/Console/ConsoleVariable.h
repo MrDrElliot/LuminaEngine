@@ -1,5 +1,5 @@
 ﻿#pragma once
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
 #include "Containers/Name.h"
 #include "Containers/String.h"
 #include "Core/Templates/LuminaTemplate.h"
@@ -15,7 +15,7 @@ namespace Lumina
     struct IsVariantMember;
     
     template<typename T, typename... Types>
-    struct IsVariantMember<T, TVariant<Types...>>  : eastl::disjunction<eastl::is_same<T, Types>...> {};
+    struct IsVariantMember<T, TVariant<Types...>>  : std::disjunction<std::is_same<T, Types>...> {};
     
     template<typename T>
     concept ValidConsoleVarType = IsVariantMember<T, CVarValueType>::value;
@@ -23,20 +23,20 @@ namespace Lumina
     namespace ConsoleHelpers
     {
         template<typename T>
-        requires(eastl::is_same_v<T, int32>)
+        requires(std::is_same_v<T, int32>)
         TOptional<T> ParseValue(FStringView Str)
         {
             char* End = nullptr;
             long long Value = std::strtoll(Str.data(), &End, 10);
-            if (End != Str.data() && Value >= eastl::numeric_limits<T>::min() && Value <= eastl::numeric_limits<T>::max())
+            if (End != Str.data() && Value >= std::numeric_limits<T>::min() && Value <= std::numeric_limits<T>::max())
             {
                 return static_cast<T>(Value);
             }
-            return eastl::nullopt;
+            return NullOpt;
         }
 
         template<typename T>
-        requires(eastl::is_floating_point_v<T>)
+        requires(std::is_floating_point_v<T>)
         TOptional<T> ParseValue(FStringView Str)
         {
             char* End = nullptr;
@@ -45,11 +45,11 @@ namespace Lumina
             {
                 return Value;
             }
-            return eastl::nullopt;
+            return NullOpt;
         }
 
         template<typename T>
-        requires(eastl::is_same_v<T, bool>)
+        requires(std::is_same_v<T, bool>)
         TOptional<T> ParseValue(FStringView Str)
         {
             if (Str == "true" || Str == "1" || Str == "True" || Str == "TRUE")
@@ -60,11 +60,11 @@ namespace Lumina
             {
                 return false;
             }
-            return eastl::nullopt;
+            return NullOpt;
         }
 
         template<typename T>
-        requires(eastl::is_same_v<T, FStringView> || eastl::is_convertible_v<T, FStringView>)
+        requires(std::is_same_v<T, FStringView> || std::is_convertible_v<T, FStringView>)
         TOptional<T> ParseValue(FStringView Str)
         {
             return Str;
@@ -121,13 +121,13 @@ namespace Lumina
         template<ValidConsoleVarType T>
         const T& GetAs(FStringView Name)
         {
-			return eastl::get<T>(*Find(Name)->ValuePtr);
+			return Containers::Get<T>(*Find(Name)->ValuePtr);
         }
         
         template<ValidConsoleVarType T>
         const T* TryGetAs(FStringView Name)
         {
-			return eastl::get_if<T>(Find(Name)->ValuePtr);
+			return Containers::GetIf<T>(Find(Name)->ValuePtr);
         }
         
         template<ValidConsoleVarType T>
@@ -173,12 +173,12 @@ namespace Lumina
 
         T GetValue() const
         {
-            return eastl::get<T>(Storage);
+            return Containers::Get<T>(Storage);
         }
 
         T* GetValuePtr() const
         {
-            return eastl::get_if<T>(&Storage);
+            return Containers::GetIf<T>(&Storage);
         }
 
         explicit operator bool() const

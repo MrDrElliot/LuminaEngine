@@ -21,6 +21,7 @@
 #include "Renderer/ViewVolume.h"
 #include "TaskSystem/TaskSystem.h"
 #include "Log/Log.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -116,7 +117,7 @@ namespace Lumina
 
     bool CGLTFImporter::ValidateRequiredExtensions(cgltf_data& Data, FString& OutError) const
     {
-        // Everything the importer can honour. An extension that only ADDS optional data can be ignored
+        // Everything the importer can honor. An extension that only ADDS optional data can be ignored
         // safely, but a REQUIRED one the file cannot be read without has to stop the import.
         static constexpr const char* kSupported[] =
         {
@@ -286,7 +287,7 @@ namespace Lumina
             return false;
         }
 
-        // Before anything reads a buffer: a required extension we cannot honour makes every subsequent
+        // Before anything reads a buffer: a required extension we cannot honor makes every subsequent
         // accessor read meaningless, and cgltf will not have complained.
         if (!ValidateRequiredExtensions(*ParsedData, OutError))
         {
@@ -361,8 +362,8 @@ namespace Lumina
                 {
                     Source.Key = (Image.name != nullptr && Image.name[0] != '\0')
                         ? SanitizedSourceName(Image.name)
-                        : FFixedString(FFixedString::CtorSprintf(), "%.*s_Image_%u",
-                                       (int)SourceName.length(), SourceName.data(), (uint32)i);
+                        : FormatAs<FFixedString>("{}_Image_{}",
+                                                 FStringView(SourceName.data(), SourceName.length()), (uint32)i);
 
                     if (Image.buffer_view != nullptr)
                     {
@@ -494,8 +495,7 @@ namespace Lumina
                 FMeshImportMaterial Material;
                 Material.Name = (Source.name != nullptr && Source.name[0] != '\0')
                     ? FString(Source.name)
-                    : FString(FFixedString(FFixedString::CtorSprintf(), "%.*s_Mat%u",
-                              (int)SourceName.length(), SourceName.data(), (uint32)i).c_str());
+                    : Format("{}_Mat{}", FStringView(SourceName.data(), SourceName.length()), (uint32)i);
 
                 if (Source.has_pbr_metallic_roughness)
                 {
@@ -1022,7 +1022,7 @@ namespace Lumina
                 FFixedString SurfaceName(MeshName.data(), MeshName.size());
                 if (Mesh.primitives_count > 1 || MergedMaterialRemap != nullptr)
                 {
-                    SurfaceName.append("_").append_convert(eastl::to_string(Resource.GetNumSurfaces()));
+                    SurfaceName.append("_").append(Format("{}", Resource.GetNumSurfaces()));
                 }
                 Surface.ID = SurfaceName;
 
@@ -1219,15 +1219,15 @@ namespace Lumina
 
                     FFixedString Name = (Mesh.name != nullptr && Mesh.name[0] != '\0')
                         ? SanitizedSourceName(Mesh.name)
-                        : FFixedString(FFixedString::CtorSprintf(), "%.*s_%u",
-                                       (int)SourceName.length(), SourceName.data(), (uint32)UniqueMeshes[Slot]);
+                        : FormatAs<FFixedString>("{}_{}",
+                                                 FStringView(SourceName.data(), SourceName.length()), (uint32)UniqueMeshes[Slot]);
 
                     // glTF does not require unique mesh names, and two DIFFERENT meshes sharing one would
                     // collide as asset names. Suffix only genuine collisions so the common case stays clean.
                     uint32& Count = NameCounts[Name];
                     if (Count > 0)
                     {
-                        Name.append("_").append_convert(eastl::to_string(Count));
+                        Name.append("_").append(Format("{}", Count));
                     }
                     ++Count;
 
@@ -1281,8 +1281,8 @@ namespace Lumina
                 if (Progress)
                 {
                     const uint32 Done = Completed.fetch_add(1) + 1;
-                    FFixedString Message(FFixedString::CtorSprintf(), "Processing geometry (%u/%u meshes)...",
-                                         Done, (uint32)UniqueMeshes.size());
+                    const FFixedString Message = FormatAs<FFixedString>("Processing geometry ({}/{} meshes)...",
+                                                                        Done, (uint32)UniqueMeshes.size());
                     Progress->EnterProgressFrame(GeometryStep, Message);
                 }
             });
@@ -1318,7 +1318,7 @@ namespace Lumina
                 TUniquePtr<FSkeletonResource> Skeleton = MakeUnique<FSkeletonResource>();
                 Skeleton->Name = (Skin.name != nullptr && Skin.name[0] != '\0')
                     ? FName(Skin.name)
-                    : FName("Skeleton_" + eastl::to_string(OutData.Skeletons.size()));
+                    : FName("Skeleton_" + Format("{}", OutData.Skeletons.size()));
 
                 Skeleton->Bones.reserve(Skin.joints_count);
 
@@ -1345,7 +1345,7 @@ namespace Lumina
                     FSkeletonResource::FBoneInfo Bone;
                     Bone.Name = (JointNode.name != nullptr && JointNode.name[0] != '\0')
                         ? FName(JointNode.name)
-                        : FName("Bone_" + eastl::to_string(cgltf_node_index(&Data, &JointNode)));
+                        : FName("Bone_" + Format("{}", cgltf_node_index(&Data, &JointNode)));
 
                     Bone.ParentIndex = INDEX_NONE;
                     if (JointNode.parent != nullptr)
@@ -1391,7 +1391,7 @@ namespace Lumina
                     FAnimationChannel Channel;
                     Channel.TargetBone = (Source.target_node->name != nullptr && Source.target_node->name[0] != '\0')
                         ? FName(Source.target_node->name)
-                        : FName("Bone_" + eastl::to_string(cgltf_node_index(&Data, Source.target_node)));
+                        : FName("Bone_" + Format("{}", cgltf_node_index(&Data, Source.target_node)));
 
                     switch (Source.target_path)
                     {

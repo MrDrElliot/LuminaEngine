@@ -2,7 +2,7 @@
 
 #include "TaskTypes.h"
 #include "Scheduler/JobScheduler.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/Function.h"
 #include "Core/Threading/Atomic.h"
 #include "Core/Threading/Thread.h"

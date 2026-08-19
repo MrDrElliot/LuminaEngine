@@ -1,6 +1,7 @@
 ﻿#pragma once
 
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Vector.h"
 #include "Containers/Name.h"
 #include "Core/Templates/LuminaTemplate.h"
 #include "Core/Templates/Optional.h"

@@ -1,7 +1,6 @@
 #include "AssetRegistryEditorTool.h"
 #include "Core/CoreEditorDelegates.h"
 
-#include <EASTL/sort.h>
 
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Assets/AssetTypes/Material/Material.h"
@@ -18,6 +17,7 @@
 #include "UI/Tools/EditorToolContext.h"
 #include "Tools/UI/ImGui/EditorColors.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -211,7 +211,7 @@ namespace Lumina
             }
         });
 
-        eastl::sort(Referencers.begin(), Referencers.end(), [](const FReferencer& A, const FReferencer& B)
+        std::sort(Referencers.begin(), Referencers.end(), [](const FReferencer& A, const FReferencer& B)
         {
             return A.Name.ToString() < B.Name.ToString();
         });
@@ -280,14 +280,14 @@ namespace Lumina
             {
                 Order.push_back(Pair.first);
             }
-            eastl::sort(Order.begin(), Order.end());
+            std::sort(Order.begin(), Order.end());
 
             // Flattened in the exact order the groups are drawn, so a VisibleRows index means the same
             // thing to shift-range as it does on screen.
             for (const FString& Category : Order)
             {
                 TVector<const FAssetRow*>& Bucket = Buckets[Category];
-                eastl::sort(Bucket.begin(), Bucket.end(), ByName);
+                std::sort(Bucket.begin(), Bucket.end(), ByName);
 
                 FRowGroup Group;
                 Group.Category = Category;
@@ -307,7 +307,7 @@ namespace Lumina
                     VisibleRows.push_back(&Row);
                 }
             }
-            eastl::sort(VisibleRows.begin(), VisibleRows.end(), ByName);
+            std::sort(VisibleRows.begin(), VisibleRows.end(), ByName);
         }
     }
 
@@ -489,11 +489,11 @@ namespace Lumina
             };
 
             ImGui::Columns(5, nullptr, false);
-            Stat("TOTAL ASSETS",  ImVec4(0.7f, 0.8f, 1.0f, 1.0f), eastl::to_string(Total));
+            Stat("TOTAL ASSETS",  ImVec4(0.7f, 0.8f, 1.0f, 1.0f), Format("{}", Total));
             ImGui::NextColumn();
-            Stat("LOADED",        ImVec4(0.45f, 0.85f, 0.5f, 1.0f), eastl::to_string(Loaded));
+            Stat("LOADED",        ImVec4(0.45f, 0.85f, 0.5f, 1.0f), Format("{}", Loaded));
             ImGui::NextColumn();
-            Stat("UNLOADED",      ImVec4(0.65f, 0.65f, 0.68f, 1.0f), eastl::to_string(Total - Loaded));
+            Stat("UNLOADED",      ImVec4(0.65f, 0.65f, 0.68f, 1.0f), Format("{}", Total - Loaded));
             ImGui::NextColumn();
             Stat("CPU MEMORY",    ImVec4(1.0f, 0.75f, 0.4f, 1.0f), ImGuiX::FormatSize(TotalCpu));
             ImGui::NextColumn();
@@ -511,12 +511,12 @@ namespace Lumina
         TVector<FName> Types;
         for (const TUniquePtr<FAssetData>& Data : FAssetRegistry::Get().GetAssets())
         {
-            if (eastl::find(Types.begin(), Types.end(), Data->AssetClass) == Types.end())
+            if (std::find(Types.begin(), Types.end(), Data->AssetClass) == Types.end())
             {
                 Types.push_back(Data->AssetClass);
             }
         }
-        eastl::sort(Types.begin(), Types.end(), [](const FName& A, const FName& B)
+        std::sort(Types.begin(), Types.end(), [](const FName& A, const FName& B)
         {
             return A.ToString() < B.ToString();
         });
@@ -575,7 +575,7 @@ namespace Lumina
         FFixedString TypeLabel;
         if (Hidden > 0)
         {
-            TypeLabel.sprintf(LE_ICON_FILTER " Types (%u hidden)", Hidden);
+            FormatTo(TypeLabel, LE_ICON_FILTER " Types ({} hidden)", Hidden);
         }
         else
         {
@@ -617,7 +617,7 @@ namespace Lumina
         ImGui::BeginDisabled(TargetCount == 0);
 
         FFixedString ResaveLabel;
-        ResaveLabel.sprintf(LE_ICON_CONTENT_SAVE_ALL " Resave (%u)", TargetCount);
+        FormatTo(ResaveLabel, LE_ICON_CONTENT_SAVE_ALL " Resave ({})", TargetCount);
         if (ImGui::Button(ResaveLabel.c_str()))
         {
             OpenResaveModal();
@@ -877,7 +877,7 @@ namespace Lumina
 
                     {
                         FFixedString ResaveLabel;
-                        ResaveLabel.sprintf(LE_ICON_CONTENT_SAVE_ALL " Resave %u Selected", (uint32)SelectedGUIDs.size());
+                        FormatTo(ResaveLabel, LE_ICON_CONTENT_SAVE_ALL " Resave {} Selected", (uint32)SelectedGUIDs.size());
                         if (ImGui::MenuItem(ResaveLabel.c_str()))
                         {
                             OpenResaveModal();
@@ -986,8 +986,8 @@ namespace Lumina
                 }
 
                 ImGui::PushStyleColor(ImGuiCol_Text, CategoryColor(FName(Group.Category)));
-                FString Header = Group.Category + "  (" + eastl::to_string(LoadedInCat) + "/" +
-                    eastl::to_string(Bucket.size()) + " loaded, " + FString(ImGuiX::FormatSize(CpuInCat).c_str()) + ")";
+                FString Header = Group.Category + "  (" + Format("{}", LoadedInCat) + "/" +
+                    Format("{}", Bucket.size()) + " loaded, " + FString(ImGuiX::FormatSize(CpuInCat).c_str()) + ")";
                 const bool bOpen = ImGui::CollapsingHeader(Header.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
                 ImGui::PopStyleColor();
 
@@ -1060,7 +1060,7 @@ namespace Lumina
         if (bLoaded)
         {
             Field("CPU Memory", ImGuiX::FormatSize(Selected->CpuBytes).c_str(), ImVec4(1.0f, 0.75f, 0.4f, 1.0f));
-            Field("Ref Count", eastl::to_string(Selected->RefCount),
+            Field("Ref Count", Format("{}", Selected->RefCount),
                 Selected->RefCount > 0 ? ImVec4(0.85f, 0.85f, 0.85f, 1.0f) : ImVec4(0.9f, 0.6f, 0.3f, 1.0f));
 
             ImGui::Spacing();

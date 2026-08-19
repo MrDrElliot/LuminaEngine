@@ -7,7 +7,6 @@
 #include "Containers/String.h"
 #include "Core/Object/ObjectCore.h"
 #include "Log/Log.h"
-#include "EASTL/string.h"
 #include "Core/Math/AABB.h"
 #include "World/Entity/EntityUtils.h"
 #include "Tools/PrimitiveManager/PrimitiveManager.h"
@@ -29,6 +28,7 @@
 #include "Core/Math/Math.h"
 #include "Tools/FontManager/FontManager.h"
 #include <cfloat>
+#include "Containers/StringFormat.h"
 
 namespace Lumina::EditorEntityUtils
 {
@@ -116,7 +116,7 @@ namespace Lumina::EditorEntityUtils
         FFixedString Out;
         Out.append(Icon).append(" ");
         Out.append(Name ? Name->Name.c_str() : "<unnamed>");
-        Out.append_convert(FString(" - (" + eastl::to_string(entt::to_integral(Entity)) + ")"));
+        Out.append(FString(" - (" + Format("{}", entt::to_integral(Entity)) + ")"));
         return Out;
     }
 
@@ -328,7 +328,7 @@ namespace Lumina::EditorEntityUtils
         constexpr float kSphereStartY = 4.0f;
 
         // Text sits behind the sphere so the drop happens in front of it rather than through it.
-        // Level with the top of the resting sphere (radius 1 centred at y = 1), so the separation is
+        // Level with the top of the resting sphere (radius 1 centered at y = 1), so the separation is
         // depth rather than height -- the Z offset is what keeps them from overlapping.
         constexpr float kTextY = 2.0f;
         constexpr float kTextZ = -3.0f;
@@ -337,9 +337,9 @@ namespace Lumina::EditorEntityUtils
         // strips it from both sides before comparing.
         constexpr const char* kPreviewMaterialPath = "/Engine/Resources/Content/M_EditorPreview";
 
-        // Coloured accent lights ringing the sphere, 120 degrees apart on a 2m circle so no two sit
+        // Colored accent lights ringing the sphere, 120 degrees apart on a 2m circle so no two sit
         // on the same side and each gets its own arc of the surface. Placed at the sphere's resting
-        // centre height rather than on the floor, so they wrap the sphere instead of uplighting it.
+        // center height rather than on the floor, so they wrap the sphere instead of uplighting it.
         constexpr float kAccentLightRadius = 2.0f;
         constexpr float kAccentLightY      = kSphereRadius;
 
@@ -374,7 +374,7 @@ namespace Lumina::EditorEntityUtils
         }
 
         // Cool sky fill opposing the warm key. The warm/cool split is what stops the shadow side
-        // from going flat grey, and it costs nothing.
+        // from going flat gray, and it costs nothing.
         Entity = World->ConstructEntity("SkyLight");
         {
             SSkyLightComponent& SkyLight = World->EmplaceComponent<SSkyLightComponent>(Entity);
@@ -437,7 +437,7 @@ namespace Lumina::EditorEntityUtils
         World->EmplaceComponent<SSphereColliderComponent>(Entity).Radius = kSphereRadius;
         World->EmplaceComponent<SRigidBodyComponent>(Entity).BodyType = EBodyType::Dynamic;
 
-        // Volumetric on so the fog above picks the colours up as visible shafts; everything else is
+        // Volumetric on so the fog above picks the colors up as visible shafts; everything else is
         // left at component defaults.
         {
             struct FAccentLight
@@ -484,7 +484,7 @@ namespace Lumina::EditorEntityUtils
             Text.Text            = "Welcome to Lumina!";
             Text.WorldSize       = 0.85f;
 
-            // Above 1 on purpose. The colour feeds the same HDR buffer the bloom threshold reads, so
+            // Above 1 on purpose. The color feeds the same HDR buffer the bloom threshold reads, so
             // pushing it over white is what makes the text bloom rather than just look bright.
             Text.Color           = FVector4(1.35f, 1.5f, 1.9f, 1.0f);
             Text.HorizontalAlign = ETextHorizontalAlign::Center;
@@ -523,7 +523,7 @@ namespace Lumina::EditorEntityUtils
             Settings.BloomScatter   = 0.82f;
             Settings.BloomTint      = FVector3(0.85f, 0.92f, 1.0f);
 
-            // Draws the eye to the centre of frame where the sphere and text sit.
+            // Draws the eye to the center of frame where the sphere and text sit.
             Settings.VignetteIntensity  = 0.28f;
             Settings.VignetteSmoothness = 0.55f;
         }

@@ -4,7 +4,7 @@
 #include "Core/Math/Matrix/Matrix.h"
 
 
-namespace eastl
+namespace std
 {
     template<typename T, int N>
     struct hash<Lumina::TVec<T, N>>

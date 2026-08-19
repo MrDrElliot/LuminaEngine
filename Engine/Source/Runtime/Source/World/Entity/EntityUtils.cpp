@@ -28,7 +28,6 @@
 #include "World/World.h"
 #include "World/WorldContext.h"
 #include <atomic>
-#include <EASTL/hash_map.h>
 #include "Log/Log.h"
 
 namespace Lumina
@@ -43,7 +42,7 @@ namespace Lumina
 
         uint32 ComponentOpsKey(FStringView Name)
         {
-            const eastl::string Terminated(Name.data(), Name.size());
+            const FString Terminated(Name.data(), Name.size());
             return entt::hashed_string(Terminated.c_str());
         }
     }
@@ -59,7 +58,7 @@ namespace Lumina
 
     void RegisterAccessTypeName(uint32 Id, FStringView Name)
     {
-        AccessTypeNameMap()[Id] = eastl::string(Name.data(), Name.size());
+        AccessTypeNameMap()[Id] = FString(Name.data(), Name.size());
     }
 
     const char* GetAccessTypeName(uint32 Id)

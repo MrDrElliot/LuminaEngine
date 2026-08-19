@@ -1,6 +1,7 @@
 #pragma once
 
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Vector.h"
 
 namespace Lumina
 {
@@ -9,7 +10,7 @@ namespace Lumina
     // table per element type, produced by GetVectorOps<T>(). This is the single source of truth for "how to
     // operate on a reflected vector," shared by:
     //   - FArrayProperty (Core reflection): serialization / net / copy / editor property table.
-    //   - Lumina.TVector<T> (C#): reads decode the EASTL header in place; mutators call these fn-ptrs.
+    //   - Lumina.TVector<T> (C#): reads decode the vector header in place; mutators call these fn-ptrs.
     //
     // It is deliberately decoupled from reflection: any TVector<T> -- a reflected member, a function return, a
     // plain local -- is operated on the same way. The field order/layout MUST match LuminaSharp.VectorOps

@@ -22,7 +22,7 @@ namespace Lumina
 
         // Fired after FEngine::Travel swaps worlds; OldWorld is torn down (identity-compare
         // only). Subscribers must drop cached entity handles/property tables on OldWorld.
-        RUNTIME_API static TMulticastDelegate<void, CWorld*, CWorld*> OnWorldTravelled;
+        RUNTIME_API static TMulticastDelegate<void, CWorld*, CWorld*> OnWorldTraveled;
 
         // Fired by editor file watchers on content change (arg = VFS path); subscribers
         // filter by extension. Editor-only in practice.

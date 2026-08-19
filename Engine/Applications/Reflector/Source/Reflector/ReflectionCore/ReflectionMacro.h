@@ -12,14 +12,14 @@ namespace Lumina::Reflection
     public:
 
         FReflectionMacro() = default;
-        FReflectionMacro(const eastl::string& HeaderPath, const CXCursor& Cursor, const CXSourceRange& Range, EReflectionMacro InType);
+        FReflectionMacro(const std::string& HeaderPath, const CXCursor& Cursor, const CXSourceRange& Range, EReflectionMacro InType);
 
 
         EReflectionMacro        Type;
-        eastl::string           HeaderID;
+        std::string           HeaderID;
         uint32_t                LineNumber = 0;
         int32_t                 Position = -1;
 
-        eastl::string           MacroContents;
+        std::string           MacroContents;
     };
 }

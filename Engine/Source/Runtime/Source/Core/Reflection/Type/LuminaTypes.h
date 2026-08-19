@@ -6,6 +6,7 @@
 #include "Metadata/PropertyMetadata.h"
 #include "Platform/GenericPlatform.h"
 #include "Log/Log.h"
+#include "Containers/StringFormat.h"
 
 
 namespace Lumina
@@ -58,14 +59,14 @@ namespace Lumina
 
         /** UB if ValueType doesn't match the property type. */
         template<typename ValueType>
-        requires (!eastl::is_pointer_v<ValueType>)
+        requires (!std::is_pointer_v<ValueType>)
         ValueType* GetValuePtr(void* ContainerPtr, int64 ArrayIndex = 0) const
         {
             return static_cast<ValueType*>(GetValuePtrInternal(ContainerPtr, ArrayIndex));
         }
 
         template<typename ValueType>
-        requires (!eastl::is_pointer_v<ValueType>)
+        requires (!std::is_pointer_v<ValueType>)
         const ValueType* GetValuePtr(const void* ContainerPtr, int64 ArrayIndex = 0) const
         {
             return static_cast<ValueType*>(GetValuePtrInternal(const_cast<void*>(ContainerPtr), ArrayIndex));
@@ -314,7 +315,7 @@ namespace Lumina
 
 
     template<typename TCPPType>
-    requires eastl::is_arithmetic_v<TCPPType>
+    requires std::is_arithmetic_v<TCPPType>
     class TProperty_Numeric : public TProperty<FNumericProperty, TCPPType>
     {
     public:
@@ -340,43 +341,43 @@ namespace Lumina
         
     };
     
-    template <typename TCPPType> requires eastl::is_arithmetic_v<TCPPType>
+    template <typename TCPPType> requires std::is_arithmetic_v<TCPPType>
     FString TProperty_Numeric<TCPPType>::ToString(const void* Data) const
     {
-        return eastl::to_string(TTypeInfo::GetPropertyValue(Data));
+        return Format("{}", TTypeInfo::GetPropertyValue(Data));
     }
 
-    template <typename TCPPType> requires eastl::is_arithmetic_v<TCPPType>
+    template <typename TCPPType> requires std::is_arithmetic_v<TCPPType>
     void TProperty_Numeric<TCPPType>::SetIntPropertyValue(void* Data, uint64 Value) const
     {
         TTypeInfo::SetPropertyValue(Data, static_cast<TCPPType>(Value)); 
     }
 
-    template <typename TCPPType> requires eastl::is_arithmetic_v<TCPPType>
+    template <typename TCPPType> requires std::is_arithmetic_v<TCPPType>
     void TProperty_Numeric<TCPPType>::SetIntPropertyValue(void* Data, int64 Value) const
     {
         TTypeInfo::SetPropertyValue(Data, static_cast<TCPPType>(Value)); 
     }
 
-    template <typename TCPPType> requires eastl::is_arithmetic_v<TCPPType>
+    template <typename TCPPType> requires std::is_arithmetic_v<TCPPType>
     int64 TProperty_Numeric<TCPPType>::GetSignedIntPropertyValue(void const* Data) const
     {
         return static_cast<int64>(TTypeInfo::GetPropertyValue(Data));
     }
 
-    template <typename TCPPType> requires eastl::is_arithmetic_v<TCPPType>
+    template <typename TCPPType> requires std::is_arithmetic_v<TCPPType>
     int64 TProperty_Numeric<TCPPType>::GetSignedIntPropertyValue_InContainer(void const* Container) const
     {
         return static_cast<int64>(TTypeInfo::GetPropertyValue(Container));
     }
 
-    template <typename TCPPType> requires eastl::is_arithmetic_v<TCPPType>
+    template <typename TCPPType> requires std::is_arithmetic_v<TCPPType>
     uint64 TProperty_Numeric<TCPPType>::GetUnsignedIntPropertyValue(void const* Data) const
     {
         return static_cast<uint64>(TTypeInfo::GetPropertyValue(Data));
     }
 
-    template <typename TCPPType> requires eastl::is_arithmetic_v<TCPPType>
+    template <typename TCPPType> requires std::is_arithmetic_v<TCPPType>
     uint64 TProperty_Numeric<TCPPType>::GetUnsignedIntPropertyValue_InContainer(void const* Container) const
     {
         return static_cast<uint64>(TTypeInfo::GetPropertyValue(Container));

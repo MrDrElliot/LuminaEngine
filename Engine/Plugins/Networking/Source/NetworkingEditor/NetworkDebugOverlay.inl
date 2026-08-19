@@ -62,7 +62,7 @@
             DrawCircleXZ(VP, Settings.AOILeaveRadius, FVector4(1.0f, 0.9f, 0.2f, 1.0f));
         }
 
-        // 3) Relevant entities per client, marked + coloured by LOD tier (near red / mid yellow / far green).
+        // 3) Relevant entities per client, marked + colored by LOD tier (near red / mid yellow / far green).
         static const FVector4 TierCol[4] = {
             FVector4(1.0f, 0.25f, 0.25f, 1.0f), // Near
             FVector4(1.0f, 0.85f, 0.20f, 1.0f), // Mid

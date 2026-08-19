@@ -1,6 +1,7 @@
 #pragma once
 
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "Assets/AssetTypes/Curve/CurveAsset.h"
 #include "Assets/AssetTypes/Curve/Gradient.h"

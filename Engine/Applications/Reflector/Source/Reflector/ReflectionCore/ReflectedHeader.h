@@ -1,8 +1,8 @@
 ﻿#pragma once
 #include <filesystem>
 
-#include "EASTL/string.h"
-#include "EASTL/vector.h"
+#include <string>
+#include <vector>
 
 
 namespace Lumina::Reflection
@@ -13,8 +13,8 @@ namespace Lumina::Reflection
     // enforce that a reflection-bearing header ends its include block with `<stem>.generated.h`.
     struct FIncludeRef
     {
-        eastl::string Spelling;     // The literal text inside the angle/quote brackets.
-        eastl::string Basename;     // Lowercased filename component, used for matching.
+        std::string Spelling;     // The literal text inside the angle/quote brackets.
+        std::string Basename;     // Lowercased filename component, used for matching.
         uint32_t      LineNumber = 0;
     };
 
@@ -22,15 +22,15 @@ namespace Lumina::Reflection
     {
     public:
 
-        FReflectedHeader(FReflectedProject* InProject, const eastl::string& Path);
+        FReflectedHeader(FReflectedProject* InProject, const std::string& Path);
 
         std::filesystem::file_time_type StartingFileTime;
-        eastl::string                   FileName;
-        eastl::string                   HeaderPath;
+        std::string                   FileName;
+        std::string                   HeaderPath;
         FReflectedProject*              Project;
 
         // Captured via CXCursor_InclusionDirective, ordered by source line (the GeneratedHeaderNotLast check relies on it).
-        eastl::vector<FIncludeRef>      Includes;
+        std::vector<FIncludeRef>      Includes;
 
         // True when the macro visitor saw REFLECT/GENERATED_BODY/PROPERTY/FUNCTION; gates reflection-dependent validation.
         bool                            bHasReflectionMacros = false;

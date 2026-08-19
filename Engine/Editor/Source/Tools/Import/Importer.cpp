@@ -181,7 +181,7 @@ namespace Lumina
             {
                 Patterns.append(";");
             }
-            Patterns.append("*").append_convert(Ext.data(), Ext.length());
+            Patterns.append("*").append(Ext.data(), Ext.length());
         }
 
         // Win32 filters are a double-null-terminated run of null-separated pairs.

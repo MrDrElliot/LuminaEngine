@@ -1,11 +1,13 @@
 ﻿#pragma once
 
 #include "Format.h"
-#include "Containers/Array.h"
+#include "Containers/Span.h"
+#include "Containers/Vector.h"
 #include "Containers/SegmentArray.h"
 #include "Containers/String.h"
 #include "Containers/Tuple.h"
 #include "Core/LuminaMacros.h"
+#include "Core/Math/Math.h"
 #include "Platform/GenericPlatform.h"
 
 namespace Lumina::RHI

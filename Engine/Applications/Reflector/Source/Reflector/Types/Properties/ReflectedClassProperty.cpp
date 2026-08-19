@@ -7,17 +7,17 @@ namespace Lumina
 {
     void FReflectedClassProperty::AppendDefinition(Reflection::FCodeWriter& Writer) const
     {
-        const eastl::string PropertyFlagStr = PropertyFlagsToString(PropertyFlags);
-        const eastl::string CustomData = "Construct_CClass_" + ClangUtils::MakeCodeFriendlyNamespace(TypeName);
+        const std::string PropertyFlagStr = PropertyFlagsToString(PropertyFlags);
+        const std::string CustomData = "Construct_CClass_" + ClangUtils::MakeCodeFriendlyNamespace(TypeName);
         AppendPropertyDef(Writer, PropertyFlagStr.c_str(), "Lumina::EPropertyTypeFlags::Class", CustomData);
     }
 
-    eastl::string_view FReflectedClassProperty::GetLuaType()
+    std::string_view FReflectedClassProperty::GetLuaType()
     {
         const size_t Pos = TypeName.find_last_of(':');
-        if (Pos != eastl::string::npos)
+        if (Pos != std::string::npos)
         {
-            return eastl::string_view(TypeName).substr(Pos + 1);
+            return std::string_view(TypeName).substr(Pos + 1);
         }
         return TypeName;
     }

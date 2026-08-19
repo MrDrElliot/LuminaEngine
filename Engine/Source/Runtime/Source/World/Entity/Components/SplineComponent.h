@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Core/Math/Math.h"
 #include "Core/Object/ObjectMacros.h"
 #include "SplineComponent.generated.h"
@@ -11,10 +11,10 @@ namespace Lumina
     REFLECT()
     enum class ESplineTangentMode : uint8
     {
-        /** Catmull-Rom: tangents derived from the neighbouring points, giving a smooth curve. */
+        /** Catmull-Rom: tangents derived from the neighboring points, giving a smooth curve. */
         Auto,
 
-        /** Straight segments: tangents point at the neighbours with no overshoot. */
+        /** Straight segments: tangents point at the neighbors with no overshoot. */
         Linear,
 
         /** ArriveTangent / LeaveTangent are authored by hand and never recomputed. */
@@ -55,7 +55,7 @@ namespace Lumina
     /**
      * An editable cubic-Hermite curve through a list of control points.
      *
-     * The curve is parameterised by a "key" in [0, NumSegments]: the integer part selects the segment and
+     * The curve is parameterized by a "key" in [0, NumSegments]: the integer part selects the segment and
      * the fraction is the position within it. Key space is NOT arc length -- a constant key rate moves at a
      * varying speed. For constant-speed / distance-along queries use the arc-length table
      * (BuildSamples / SampleAtDistance), which is also what gets uploaded when bSendToGPU is set.
@@ -115,7 +115,7 @@ namespace Lumina
         /** Position on the curve at the given key (clamped to key space, or wrapped when looped). */
         FVector3 EvaluatePosition(float Key) const;
 
-        /** Unnormalised derivative at the given key. */
+        /** Unnormalized derivative at the given key. */
         FVector3 EvaluateTangent(float Key) const;
 
         /** Interpolated per-point scale at the given key. */
@@ -124,7 +124,7 @@ namespace Lumina
         /** Interpolated roll, in degrees, at the given key. */
         float EvaluateRoll(float Key) const;
 
-        /** Up vector at the given key: DefaultUpVector orthogonalised against the tangent, then rolled. */
+        /** Up vector at the given key: DefaultUpVector orthogonalized against the tangent, then rolled. */
         FVector3 EvaluateUpVector(float Key) const;
     };
 
@@ -133,7 +133,7 @@ namespace Lumina
     {
         FVector3 Position       = FVector3(0.0f);
         float    DistanceAlong  = 0.0f;
-        FVector3 Tangent        = FVector3(0.0f);   // normalised
+        FVector3 Tangent        = FVector3(0.0f);   // normalized
         float    Key            = 0.0f;             // curve key this sample landed on
         FVector3 Up             = FVector3(0.0f, 1.0f, 0.0f);
         float    Roll           = 0.0f;             // degrees

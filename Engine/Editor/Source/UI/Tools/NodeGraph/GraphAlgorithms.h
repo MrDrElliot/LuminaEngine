@@ -1,8 +1,10 @@
 #pragma once
 
+#include "Containers/Queue.h"
 #include "EdGraphNode.h"
 #include "EdNodeGraphPin.h"
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Vector.h"
 
 namespace Lumina::GraphAlgorithms
 {

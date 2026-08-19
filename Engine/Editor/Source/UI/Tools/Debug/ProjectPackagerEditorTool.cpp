@@ -10,6 +10,7 @@
 #include "Core/Plugin/Plugin.h"
 #include "Core/Plugin/PluginManager.h"
 #include "Platform/Process/PlatformProcess.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -193,14 +194,14 @@ namespace Lumina
                 AppendLog("Extracting loose scripts...");
                 const size_t Extracted = FProjectPackager::ExtractLooseScripts(PakDir,
                     [this](FStringView Line) { AppendLog(Line); });
-                AppendLog(FString().sprintf("Extracted %zu loose script files.", Extracted).c_str());
+                AppendLog(Format("Extracted {} loose script files.", Extracted).c_str());
             }
 
             bLastSuccess = true;
             LastPakPath = PakPath;
             LastOutputDir = PakDir;
             CaptureChunksFromResult(Result, LastChunks);
-            AppendLog(FString().sprintf("DONE: %zu assets across %zu chunk(s), %zu bytes total -> %s",
+            AppendLog(Format("DONE: {} assets across {} chunk(s), {} bytes total -> {}",
                 Result.NumAssetsCooked, Result.Chunks.size(), Result.TotalBytes, PakDir.c_str()).c_str());
         }
         else
@@ -266,7 +267,7 @@ namespace Lumina
         }
 
         CaptureChunksFromResult(Cook, LastChunks);
-        AppendLog(FString().sprintf("Cook OK: %zu assets across %zu chunk(s), %zu bytes total",
+        AppendLog(Format("Cook OK: {} assets across {} chunk(s), {} bytes total",
             Cook.NumAssetsCooked, Cook.Chunks.size(), Cook.TotalBytes).c_str());
 
         // 1.5) Loose-script extraction must run on the main thread (uses VFS).
@@ -275,7 +276,7 @@ namespace Lumina
             AppendLog("Extracting loose scripts...");
             const size_t Extracted = FProjectPackager::ExtractLooseScripts(PakDir,
                 [this](FStringView Line) { AppendLog(Line); });
-            AppendLog(FString().sprintf("Extracted %zu loose script files.", Extracted).c_str());
+            AppendLog(Format("Extracted {} loose script files.", Extracted).c_str());
         }
 
         // 2) Build + Copy on a worker thread. Captures everything by value so

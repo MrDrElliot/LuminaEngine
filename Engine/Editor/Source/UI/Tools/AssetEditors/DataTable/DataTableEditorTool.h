@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Assets/AssetTypes/DataTable/DataTableCSV.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/Name.h"
 #include "Containers/String.h"
 #include "Memory/SmartPtr.h"

@@ -1,6 +1,6 @@
 ﻿#pragma once
 #include "imgui.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/Function.h"
 #include "Memory/Memory.h"
 #include "Memory/Allocators/Allocator.h"
@@ -130,7 +130,7 @@ namespace Lumina
         FORCEINLINE bool IsDirty() const { return bDirty; }
         
         template<typename T, typename... Args>
-        requires (eastl::is_base_of_v<FTileViewItem, T> && eastl::is_constructible_v<T, Args...>)
+        requires (std::is_base_of_v<FTileViewItem, T> && std::is_constructible_v<T, Args...>)
         T* AddItemToTree(Args&&... args);
 
         void ClearSelections();
@@ -240,10 +240,10 @@ namespace Lumina
 
     
     template <typename T, typename ... Args>
-    requires (eastl::is_base_of_v<FTileViewItem, T> && eastl::is_constructible_v<T, Args...>)
+    requires (std::is_base_of_v<FTileViewItem, T> && std::is_constructible_v<T, Args...>)
     T* FTileViewWidget::AddItemToTree(Args&&... args)
     {
-        T* New = Allocator.TAlloc<T>(eastl::forward<Args>(args)...);
+        T* New = Allocator.TAlloc<T>(std::forward<Args>(args)...);
         ListItems.push_back(New);
         return New;
     }

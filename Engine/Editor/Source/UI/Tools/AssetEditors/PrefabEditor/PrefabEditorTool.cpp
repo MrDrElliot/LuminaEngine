@@ -13,7 +13,6 @@
 #include "UI/Tools/EditorEntityUtils.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/Package/Package.h"
-#include "EASTL/sort.h"
 #include "GUID/GUID.h"
 #include "Core/Math/Math.h"
 #include "Tools/ComponentVisualizers/ComponentVisualizer.h"
@@ -37,6 +36,7 @@
 #include "World/Entity/Traits.h"
 #include "World/Scene/RenderScene/RenderScene.h"
 #include "World/World.h"
+#include "Containers/StringFormat.h"
 
 
 namespace Lumina
@@ -138,7 +138,7 @@ namespace Lumina
 
             if (ImGui::MenuItem("Copy Entity ID"))
             {
-                ImGui::SetClipboardText(eastl::to_string(entt::to_integral(Data.Entity)).c_str());
+                ImGui::SetClipboardText(Format("{}", entt::to_integral(Data.Entity)).c_str());
             }
 
             if (!bIsRoot && ECS::Utils::IsChild(Registry, Data.Entity))

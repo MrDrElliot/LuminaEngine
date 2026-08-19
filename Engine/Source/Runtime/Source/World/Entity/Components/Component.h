@@ -61,10 +61,10 @@ namespace Lumina
     namespace Meta
     {
         template<typename T>
-        concept EmptyComponent = eastl::is_empty_v<T>;
+        concept EmptyComponent = std::is_empty_v<T>;
         
         template<typename T>
-        concept NonEmptyComponent = !eastl::is_empty_v<T>;
+        concept NonEmptyComponent = !std::is_empty_v<T>;
         
         template<typename TComponent>
         bool HasComponent(entt::registry& Registry, entt::entity Entity)
@@ -135,13 +135,13 @@ namespace Lumina
             static const FComponentOps Ops = {
                 +[](entt::registry& R, entt::entity E) -> void*
                 {
-                    if constexpr (eastl::is_empty_v<TComponent>) { return nullptr; }
+                    if constexpr (std::is_empty_v<TComponent>) { return nullptr; }
                     else { return R.try_get<TComponent>(E); }
                 },
                 +[](entt::registry& R, entt::entity E) -> int32 { return R.any_of<TComponent>(E) ? 1 : 0; },
                 +[](entt::registry& R, entt::entity E) -> void*
                 {
-                    if constexpr (eastl::is_empty_v<TComponent>)
+                    if constexpr (std::is_empty_v<TComponent>)
                     {
                         if (!R.any_of<TComponent>(E)) { R.emplace<TComponent>(E); }
                         return nullptr;
@@ -164,7 +164,7 @@ namespace Lumina
                 {
                     // emplace_or_replace from a configured instance: on the ADD path this constructs the
                     // component from *Src and THEN fires on_construct, so hooks see the configured value.
-                    if constexpr (eastl::is_empty_v<TComponent>)
+                    if constexpr (std::is_empty_v<TComponent>)
                     {
                         if (!R.any_of<TComponent>(E)) { R.emplace<TComponent>(E); }
                         return nullptr;
@@ -192,7 +192,7 @@ namespace Lumina
                 +[](entt::registry& R, entt::entity E)
                 {
                     // patch fires on_update<T>; meaningful only for data components (tags carry no value).
-                    if constexpr (!eastl::is_empty_v<TComponent>)
+                    if constexpr (!std::is_empty_v<TComponent>)
                     {
                         if (R.any_of<TComponent>(E)) { R.patch<TComponent>(E); }
                     }
@@ -219,7 +219,7 @@ namespace Lumina
             // Direct-call op table for the C# bridge (bypasses the meta trampoline above on the hot path).
             RegisterComponentOps(TComponent::StaticStruct()->GetName().c_str(), &GetComponentOps<TComponent>());
             
-            if constexpr (!eastl::is_empty_v<TComponent>)
+            if constexpr (!std::is_empty_v<TComponent>)
             {
                 Meta.template func<&GetComponent<TComponent>>("get"_hs);
                 Meta.template func<&PatchComponent<TComponent>>("patch"_hs);

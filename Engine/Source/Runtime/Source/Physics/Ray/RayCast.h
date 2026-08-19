@@ -3,7 +3,7 @@
 #include <entt/entt.hpp>
 
 #include "Platform/GenericPlatform.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Physics/PhysicsTypes.h"
 #include "RayCast.generated.h"

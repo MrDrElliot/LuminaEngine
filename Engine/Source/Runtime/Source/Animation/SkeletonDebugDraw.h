@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/Name.h"
 #include "Core/Math/Math.h"
 #include "Renderer/SkeletonResource.h"
@@ -32,7 +32,7 @@ namespace Lumina
             FVector4 JointColor   = { 1.00f, 0.82f, 0.40f, 1.0f }; // bright gold
         };
 
-        // A bone's name paired with its world-space origin, for screen-space labelling.
+        // A bone's name paired with its world-space origin, for screen-space labeling.
         struct FBoneLabel
         {
             FName     Name;

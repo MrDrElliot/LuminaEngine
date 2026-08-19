@@ -1,7 +1,8 @@
 ﻿#pragma once
 
 #include <meshoptimizer.h>
-#include "Containers/Array.h"
+#include "Containers/Span.h"
+#include "Containers/Vector.h"
 #include "Containers/Name.h"
 #include "Containers/String.h"
 #include "Core/Templates/Optional.h"
@@ -87,7 +88,7 @@ namespace Lumina::Import
         virtual ~FImportSettings() = default;
         
         template<typename T>
-        requires(eastl::is_base_of_v<FImportSettings, T> && !eastl::is_pointer_v<T>)
+        requires(std::is_base_of_v<FImportSettings, T> && !std::is_pointer_v<T>)
         const T& As() const
         {
             return *static_cast<const T*>(this);
@@ -162,7 +163,7 @@ namespace Lumina::Import
             bool bSkipFinalization  = false;
 
             /** Seeds CMesh::DistanceFieldSettings on every mesh the import creates, and drives the
-             *  voxelisation pass in FinalizeMeshImportData. Off by default: the build is the single most
+             *  voxelization pass in FinalizeMeshImportData. Off by default: the build is the single most
              *  expensive step of a mesh import, and most meshes never need a field. */
             SDistanceFieldBuildSettings DistanceField;
         };
@@ -350,7 +351,7 @@ namespace Lumina::Import
             Relative,
         };
 
-        /** Source light parameters. Angles are radians from the cone axis, ranges are metres. */
+        /** Source light parameters. Angles are radians from the cone axis, ranges are meters. */
         struct FSourceLight
         {
             FVector3          Color          = FVector3(1.0f);
@@ -365,7 +366,7 @@ namespace Lumina::Import
             ESourceLightUnits Units          = ESourceLightUnits::Photometric;
         };
 
-        /** Source camera parameters, in glTF units (radians, metres). */
+        /** Source camera parameters, in glTF units (radians, meters). */
         struct FSourceCamera
         {
             bool  bOrthographic = false;
@@ -444,11 +445,11 @@ namespace Lumina::Import
             uint32                                      SourceNodeCount = 0;
 
             /**
-             * True when at least one primitive in the source carried a vertex-colour attribute.
+             * True when at least one primitive in the source carried a vertex-color attribute.
              *
-             * Drives whether generated materials sample vertex colour at all. It has to be an ALL-OR-NOTHING
+             * Drives whether generated materials sample vertex color at all. It has to be an ALL-OR-NOTHING
              * property of the import rather than of a material, because a material is shared across meshes
-             * and cannot know which of them are coloured -- but every importer fills opaque white where the
+             * and cannot know which of them are colored -- but every importer fills opaque white where the
              * source has no attribute, so the multiply is a no-op on the meshes that lack one.
              *
              * Left false by sources that cannot carry the attribute, which keeps their masters node-for-node

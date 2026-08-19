@@ -4,7 +4,7 @@
 #include <cmath>
 #include <imgui.h>
 
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "Core/Progress/SlowTask.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
@@ -75,7 +75,7 @@ namespace Lumina::SlowTaskModal
             ImGui::Spacing();
 
             // Progress bar: accent fill on a faint accent track, rounded.
-            FFixedString Overlay(FFixedString::CtorSprintf(), "%.0f%%", Task.Fraction * 100.0f);
+            const FFixedString Overlay = FormatAs<FFixedString>("{:.0f}%", Task.Fraction * 100.0f);
 
             // ProgressBar draws the overlay percentage INSIDE the bar, clipped to it, so the bar has to be
             // at least a line of text plus padding tall or the digits lose their top and bottom. 14 keeps

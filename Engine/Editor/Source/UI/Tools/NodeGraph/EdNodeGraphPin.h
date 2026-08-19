@@ -1,7 +1,7 @@
 ﻿#pragma once
 
 #include "imgui.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "Core/Math/Color.h"
 #include "Core/Object/Object.h"
@@ -60,7 +60,7 @@ namespace Lumina
         bool ShouldDrawEditor() const { return bDrawPinEditor; }
         void SetShouldDrawEditor(bool bNew) { bDrawPinEditor = bNew; }
 
-        // Disabled pins draw faded and reject new connections (e.g. the material output node greys out
+        // Disabled pins draw faded and reject new connections (e.g. the material output node grays out
         // attributes that don't apply to the current domain). Existing connections are preserved.
         bool IsDisabled() const { return bDisabled; }
         void SetDisabled(bool bNew) { bDisabled = bNew; }
@@ -73,7 +73,7 @@ namespace Lumina
         }
 
         template<typename T>
-        requires(eastl::is_base_of_v<CEdNodeGraphPin, T>)
+        requires(std::is_base_of_v<CEdNodeGraphPin, T>)
         T* GetConnection(size_t Index)
         {
             return static_cast<T*>(Connections[Index]);

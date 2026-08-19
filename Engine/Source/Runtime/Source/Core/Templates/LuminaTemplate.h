@@ -1,7 +1,6 @@
 #pragma once
 #include <type_traits>
 #include "Core/Utils/NonCopyable.h"
-#include "EASTL/internal/atomic/atomic.h"
 #include "Platform/Platform.h"
 
 
@@ -34,10 +33,10 @@ namespace Lumina
 
 	/** Forces an atomic value to return to its original value when this goes out of scope */
 	template <typename AtomicType>
-	requires(eastl::atomic<AtomicType>::is_always_lock_free)
+	requires(std::atomic<AtomicType>::is_always_lock_free)
 	struct TGuardAtomicValue : private INonCopyable
 	{
-	    NODISCARD TGuardAtomicValue(eastl::atomic<AtomicType>& InAtomic, AtomicType NewValue)
+	    NODISCARD TGuardAtomicValue(std::atomic<AtomicType>& InAtomic, AtomicType NewValue)
 	        : AtomicRef(InAtomic)
 	        , OriginalValue(InAtomic.load(std::memory_order_relaxed))
 	    {
@@ -55,18 +54,18 @@ namespace Lumina
 	    }
 	
 	private:
-	    eastl::atomic<AtomicType>& AtomicRef;
+	    std::atomic<AtomicType>& AtomicRef;
 	    AtomicType OriginalValue;
 	};
 
 	template<typename T>
-	requires(eastl::is_integral_v<T> && eastl::atomic<T>::is_always_lock_free)
+	requires(std::is_integral_v<T> && std::atomic<T>::is_always_lock_free)
 	struct TAtomicScopeGuard : private INonCopyable
 	{
-	    eastl::atomic<T>& Ref;
+	    std::atomic<T>& Ref;
 	    T Delta;
 	
-	    explicit TAtomicScopeGuard(eastl::atomic<T>& InRef, T InDelta)
+	    explicit TAtomicScopeGuard(std::atomic<T>& InRef, T InDelta)
 	        : Ref(InRef), Delta(InDelta)
 	    {
 	        Ref.fetch_add(Delta, std::memory_order_relaxed);
@@ -87,23 +86,23 @@ namespace Lumina
     }
 
     template <typename T>
-    requires(eastl::is_lvalue_reference_v<T> && !eastl::is_const_v<T>)
-    FORCEINLINE constexpr eastl::remove_reference<T>::type&& Move(T&& x) noexcept
+    requires(std::is_lvalue_reference_v<T> && !std::is_const_v<T>)
+    FORCEINLINE constexpr std::remove_reference<T>::type&& Move(T&& x) noexcept
     {
-        return static_cast<eastl::remove_reference<T>::type&&>(eastl::forward<T>(x));
+        return static_cast<std::remove_reference<T>::type&&>(std::forward<T>(x));
     }
 
     
     template <typename T>
-    FORCEINLINE constexpr T&& Forward(eastl::remove_reference_t<T>& x) noexcept
+    FORCEINLINE constexpr T&& Forward(std::remove_reference_t<T>& x) noexcept
     {
         return static_cast<T&&>(x);
     }
 
 
     template <typename T>
-    requires(!eastl::is_lvalue_reference_v<T>)
-    FORCEINLINE constexpr T&& Forward(eastl::remove_reference_t<T>&& x) noexcept
+    requires(!std::is_lvalue_reference_v<T>)
+    FORCEINLINE constexpr T&& Forward(std::remove_reference_t<T>&& x) noexcept
     {
         return static_cast<T&&>(x);
     }

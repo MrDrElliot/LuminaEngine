@@ -10,6 +10,7 @@
 #include "UI/Tools/NodeGraph/Material/MaterialFunctionGraph.h"
 #include "UI/Tools/NodeGraph/Material/MaterialInput.h"
 #include "UI/Tools/NodeGraph/Material/MaterialOutput.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -28,10 +29,10 @@ namespace Lumina
     {
         switch (Type)
         {
-            case EMaterialValueType::Float:  return eastl::to_string(V.x);
-            case EMaterialValueType::Float2: return "float2(" + eastl::to_string(V.x) + ", " + eastl::to_string(V.y) + ")";
-            case EMaterialValueType::Float3: return "float3(" + eastl::to_string(V.x) + ", " + eastl::to_string(V.y) + ", " + eastl::to_string(V.z) + ")";
-            case EMaterialValueType::Float4: return "float4(" + eastl::to_string(V.x) + ", " + eastl::to_string(V.y) + ", " + eastl::to_string(V.z) + ", " + eastl::to_string(V.w) + ")";
+            case EMaterialValueType::Float:  return Format("{}", V.x);
+            case EMaterialValueType::Float2: return "float2(" + Format("{}", V.x) + ", " + Format("{}", V.y) + ")";
+            case EMaterialValueType::Float3: return "float3(" + Format("{}", V.x) + ", " + Format("{}", V.y) + ", " + Format("{}", V.z) + ")";
+            case EMaterialValueType::Float4: return "float4(" + Format("{}", V.x) + ", " + Format("{}", V.y) + ", " + Format("{}", V.z) + ", " + Format("{}", V.w) + ")";
             // A bindless index has no meaningful default -- FVector4 cannot express one, and slot 0 is an
             // arbitrary texture rather than a null. An unconnected handle input samples whatever is there.
             case EMaterialValueType::TextureHandle: return "0u";
@@ -244,12 +245,12 @@ namespace Lumina
         // On any failure, give each output pin a zero local so the host shader still compiles.
         auto EmitNeutralOutputs = [&]()
         {
-            const FString Prefix = Compiler.GetCurrentInlinePrefix() + "MF" + eastl::to_string(GetNodeID()) + "_";
+            const FString Prefix = Compiler.GetCurrentInlinePrefix() + "MF" + Format("{}", GetNodeID()) + "_";
             for (size_t j = 0; j < FunctionOutputPins.size(); ++j)
             {
                 CMaterialOutput* OutPin = FunctionOutputPins[j];
                 const EMaterialInputType T = OutPin->InputType;
-                const FString Var = Prefix + "bad_" + eastl::to_string(j);
+                const FString Var = Prefix + "bad_" + Format("{}", j);
                 Compiler.AddRaw(FMaterialCompiler::GetHLSLTypeName(T) + " " + Var + " = " + ZeroLiteral(T) + ";\n");
                 OutPin->ResolvedVar = Var;
             }
@@ -280,7 +281,7 @@ namespace Lumina
         }
 
         // Per-call variable prefix, composed with any enclosing call's prefix so nesting never collides.
-        const FString CallPrefix = Compiler.GetCurrentInlinePrefix() + "MF" + eastl::to_string(GetNodeID()) + "_";
+        const FString CallPrefix = Compiler.GetCurrentInlinePrefix() + "MF" + Format("{}", GetNodeID()) + "_";
         Compiler.PushInlinePrefix(CallPrefix);
 
         // Gather the function's I/O nodes.
@@ -313,7 +314,7 @@ namespace Lumina
             CMaterialInput* ArgPin = FunctionInputPins[i];
 
             FMaterialCompiler::FInputValue Arg = Compiler.GetTypedInputValue(ArgPin, VecLiteral(Decl.Type, Decl.DefaultValue));
-            const FString ArgVar = CallPrefix + "in_" + eastl::to_string(i);
+            const FString ArgVar = CallPrefix + "in_" + Format("{}", i);
             Compiler.AddRaw(FMaterialCompiler::GetHLSLTypeName(Arg.Type) + " " + ArgVar + " = " + Arg.Value + GetSwizzleForMask(Arg.Mask) + ";\n");
 
             for (CMaterialExpression_FunctionInput* InNode : InputNodes)
@@ -384,7 +385,7 @@ namespace Lumina
         {
             const FMaterialFunctionOutput& Decl = Fn->GetOutputs()[j];
             CMaterialOutput* OutPin = FunctionOutputPins[j];
-            const FString OutVar = CallPrefix + "out_" + eastl::to_string(j);
+            const FString OutVar = CallPrefix + "out_" + Format("{}", j);
             const EMaterialInputType DeclType = ToMaterialInputType(Decl.Type);
 
             CMaterialFunctionOutput* MatchNode = nullptr;

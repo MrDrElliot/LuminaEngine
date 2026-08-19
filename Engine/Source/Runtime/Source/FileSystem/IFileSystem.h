@@ -1,6 +1,7 @@
 #pragma once
 
-#include "Containers/Array.h"
+#include "Containers/Span.h"
+#include "Containers/Vector.h"
 #include "Containers/Function.h"
 #include "Containers/Name.h"
 #include "Containers/String.h"

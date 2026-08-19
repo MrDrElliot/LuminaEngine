@@ -32,12 +32,12 @@ namespace Lumina
         template<typename Dur>
         static constexpr const char* GetUnitSuffix()
         {
-            if constexpr (eastl::is_same_v<Dur, std::chrono::nanoseconds>) return "ns";
-            else if constexpr (eastl::is_same_v<Dur, std::chrono::microseconds>) return "µs";
-            else if constexpr (eastl::is_same_v<Dur, std::chrono::milliseconds>) return "ms";
-            else if constexpr (eastl::is_same_v<Dur, std::chrono::seconds>) return "s";
-            else if constexpr (eastl::is_same_v<Dur, std::chrono::minutes>) return "min";
-            else if constexpr (eastl::is_same_v<Dur, std::chrono::hours>) return "h";
+            if constexpr (std::is_same_v<Dur, std::chrono::nanoseconds>) return "ns";
+            else if constexpr (std::is_same_v<Dur, std::chrono::microseconds>) return "µs";
+            else if constexpr (std::is_same_v<Dur, std::chrono::milliseconds>) return "ms";
+            else if constexpr (std::is_same_v<Dur, std::chrono::seconds>) return "s";
+            else if constexpr (std::is_same_v<Dur, std::chrono::minutes>) return "min";
+            else if constexpr (std::is_same_v<Dur, std::chrono::hours>) return "h";
             else return "";
         }
         

@@ -31,7 +31,7 @@ namespace Lumina
     {
         RHI::GPUPtr Draws;      // per-draw FUiDraw array (transient)
         RHI::GPUPtr Vertices;   // resident batch vertex buffer (vertex pulling)
-        RHI::GPUPtr Stops;      // gradient colour stops (transient)
+        RHI::GPUPtr Stops;      // gradient color stops (transient)
     };
 
     // RmlUi's own decorators cap out at 16; anything past that is dropped rather than overrunning.
@@ -54,7 +54,7 @@ namespace Lumina
     // RmlUi wants bilinear + clamp; stock sampler heap slot 1.
     static constexpr uint32 GRmlUiSamplerIndex = (uint32)RHI::EStockSampler::LinearClamp;
 
-    // Vertex layout: pos(8) colour(4) uv(8).
+    // Vertex layout: pos(8) color(4) uv(8).
     static_assert(sizeof(Rml::Vertex) == 20, "Rml::Vertex layout drifted; renderer vertex conversion must be updated.");
 
     FRmlUiRenderer::FRmlUiRenderer() = default;
@@ -561,7 +561,7 @@ namespace Lumina
                     FUiVertex V;
                     V.Position[0] = Src.position.x + Draw.Translation.x;
                     V.Position[1] = Src.position.y + Draw.Translation.y;
-                    Memory::Memcpy(&V.Colour, &Src.colour, sizeof(uint32));
+                    Memory::Memcpy(&V.Color, &Src.colour, sizeof(uint32));
                     V.UV[0]     = Src.tex_coord.x;
                     V.UV[1]     = Src.tex_coord.y;
                     V.DrawIndex = DrawIndex;
@@ -975,18 +975,18 @@ namespace Lumina
         }
         else if (Name == "radial-gradient")
         {
-            const Rml::Vector2f Centre = GetVec2("center");
+            const Rml::Vector2f Center = GetVec2("center");
             const Rml::Vector2f Radius = GetVec2("radius");
             Shader.Type   = 2;
-            Shader.Params = FVector4(Centre.x, Centre.y, Radius.x, Radius.y);
+            Shader.Params = FVector4(Center.x, Center.y, Radius.x, Radius.y);
         }
         else if (Name == "conic-gradient")
         {
-            const Rml::Vector2f Centre = GetVec2("center");
+            const Rml::Vector2f Center = GetVec2("center");
             const float Angle = GetFloat("angle");
             // Angle zero points up and sweeps clockwise, the CSS convention RmlUi encodes.
             Shader.Type   = 3;
-            Shader.Params = FVector4(Centre.x, Centre.y, Math::Sin(Angle), -Math::Cos(Angle));
+            Shader.Params = FVector4(Center.x, Center.y, Math::Sin(Angle), -Math::Cos(Angle));
         }
         else
         {
@@ -1107,7 +1107,7 @@ namespace Lumina
         bool bAnyWrites = false;
 
         // A brush RT is created undefined, so a material that cannot draw yet would leave the UI
-        // sampling uninitialised memory. Give it transparent black once, then leave it alone.
+        // sampling uninitialized memory. Give it transparent black once, then leave it alone.
         auto ClearBrushOnce = [&](FTexture& Tex)
         {
             if (Tex.bBrushCleared)

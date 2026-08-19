@@ -22,7 +22,6 @@ public class NsightPerfEditor : LuminaModuleRules
         {
             "ImGui",
             "RPMalloc",
-            "EA",
             "Volk",
             "Entt",
             "NsightPerf",

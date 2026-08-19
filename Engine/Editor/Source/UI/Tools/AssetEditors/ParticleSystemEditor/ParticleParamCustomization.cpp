@@ -2,12 +2,13 @@
 
 #include <imgui.h>
 #include <string>
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Core/Math/Math.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Reflection/Type/Properties/StructProperty.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -70,8 +71,8 @@ namespace Lumina
             return ParamWidth == 1 || ParamWidth == ParticleParamComponents(InputType);
         }
 
-        // The Color tag on the module's property is what distinguishes a colour from any other float4, the
-        // same way it does for a plain FVector4 input. Honoured here so a module declares a colour exactly
+        // The Color tag on the module's property is what distinguishes a color from any other float4, the
+        // same way it does for a plain FVector4 input. Honored here so a module declares a color exactly
         // as it always has -- PROPERTY(Editable, Color) -- rather than through a second, parallel mechanism.
         EParticleParameterType ResolveInputType(const SParticleParam& Value, const FProperty* Property)
         {
@@ -93,7 +94,7 @@ namespace Lumina
             int32 Suffix = 1;
             while (System.FindUserParameter(Candidate) != nullptr)
             {
-                Candidate = FName((BaseStr + "_" + eastl::to_string(Suffix).c_str()).c_str());
+                Candidate = FName((BaseStr + "_" + Format("{}", Suffix).c_str()).c_str());
                 ++Suffix;
             }
             return Candidate;
@@ -128,7 +129,7 @@ namespace Lumina
 
         if (Value.IsBound())
         {
-            // The value editor is replaced rather than disabled: a greyed-out number still reads as the
+            // The value editor is replaced rather than disabled: a grayed-out number still reads as the
             // value in effect, and it is not.
             ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_FrameBg));
             if (ImGui::Button((FString(LE_ICON_LINK " ") + Value.ParameterName.c_str()).c_str(), ImVec2(ValueWidth, 0)))

@@ -668,7 +668,7 @@ namespace Lumina
         const float Step = ChooseRulerStep(ViewSeconds, TrackWidth);
         const float SubStep = Step * 0.25f;
 
-        // Subdivisions first so labelled ticks draw over them.
+        // Subdivisions first so labeled ticks draw over them.
         for (float T = Math::Floor(TimelineScroll / SubStep) * SubStep; T <= TimelineScroll + ViewSeconds; T += SubStep)
         {
             const float X = VisibleTimeToX(T);
@@ -1114,8 +1114,8 @@ namespace Lumina
             }
         }
 
-        eastl::sort(OutTimes.begin(), OutTimes.end());
-        OutTimes.erase(eastl::unique(OutTimes.begin(), OutTimes.end()), OutTimes.end());
+        std::sort(OutTimes.begin(), OutTimes.end());
+        OutTimes.erase(std::unique(OutTimes.begin(), OutTimes.end()), OutTimes.end());
     }
 
     void FSequencerEditMode::StepToAdjacentKey(CWorld* World, int32 Direction)
@@ -1249,13 +1249,13 @@ namespace Lumina
                     KeptCuts.push_back(Cut);
                 }
 
-                Cuts->Cuts = eastl::move(KeptCuts);
+                Cuts->Cuts = std::move(KeptCuts);
             }
 
             Kept.push_back(Track);
         }
 
-        Sequence->Tracks = eastl::move(Kept);
+        Sequence->Tracks = std::move(Kept);
         Sequence->Bindings.erase(Sequence->Bindings.begin() + BindingIndex);
         Sequence->GetPackage()->MarkDirty();
 

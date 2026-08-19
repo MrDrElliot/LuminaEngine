@@ -24,7 +24,6 @@ public abstract class LuminaGameModuleRules : LuminaModuleRules
         {
             "ImGui",
             "RPMalloc",
-            "EA",
             "Entt",
             "Tracy",
         });

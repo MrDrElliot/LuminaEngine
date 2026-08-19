@@ -322,7 +322,7 @@ TEST(EntityScriptUnification, ScriptsSurviveAClassLayoutRebuild)
         Speed.Name = FName("Speed");
         Speed.Type = MakeShared<Scripting::FScriptExportType>();
         Speed.Type->Kind = EPropertyTypeFlags::Float;
-        Before.Fields.push_back(eastl::move(Speed));
+        Before.Fields.push_back(std::move(Speed));
     }
 
     CClass* Minted = FScriptableRegistry::Mint("EvacTest_Script", "CEntityScript", 0);
@@ -346,13 +346,13 @@ TEST(EntityScriptUnification, ScriptsSurviveAClassLayoutRebuild)
         Kept.Name = FName("Speed");
         Kept.Type = MakeShared<Scripting::FScriptExportType>();
         Kept.Type->Kind = EPropertyTypeFlags::Float;
-        After.Fields.push_back(eastl::move(Kept));
+        After.Fields.push_back(std::move(Kept));
 
         Scripting::FScriptExportField Added;
         Added.Name = FName("Health");
         Added.Type = MakeShared<Scripting::FScriptExportType>();
         Added.Type->Kind = EPropertyTypeFlags::Int32;
-        After.Fields.push_back(eastl::move(Added));
+        After.Fields.push_back(std::move(Added));
     }
     EXPECT_FALSE(Scripting::MigrateMintedClassLayout(Minted, After));
 
@@ -614,7 +614,7 @@ TEST(EntityScriptUnification, SkipHotReloadFieldsResetOnRestore)
     {
         Scripting::FScriptExportField Scratch = MakeReloadField("Scratch", EPropertyTypeFlags::Float);
         Scratch.Meta.Set(FName("SkipHotReload"), FString());
-        Schema.Fields.push_back(eastl::move(Scratch));
+        Schema.Fields.push_back(std::move(Scratch));
     }
 
     CClass* Minted = FScriptableRegistry::Mint("SkipHotReload_Script", "CEntityScript", 0);

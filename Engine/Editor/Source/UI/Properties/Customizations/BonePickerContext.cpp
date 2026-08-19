@@ -1,6 +1,6 @@
 #include "BonePickerContext.h"
 
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Renderer/MeshData.h"
 #include "Renderer/SkeletonResource.h"
 

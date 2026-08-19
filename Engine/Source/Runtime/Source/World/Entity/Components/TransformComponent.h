@@ -417,7 +417,7 @@ namespace Lumina
     };
 
     // CACHE_ALIGN is load-bearing, not decoration: the parallel resolve writes WorldTransform and the
-    // dirty flag for arbitrary entities across worker threads, and neighbours in the dense pool land on
+    // dirty flag for arbitrary entities across worker threads, and neighbors in the dense pool land on
     // different threads, so anything that lets two components share a line false-shares.
     //
     // The corollary is that this size is QUANTIZED to 64. Shaving a few bytes off the tail buys nothing --

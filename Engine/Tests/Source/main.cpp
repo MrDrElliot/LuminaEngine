@@ -1,7 +1,6 @@
 ﻿#include "gtest/gtest.h"
 #include "Containers/Name.h"
 #include "Core/Object/ObjectBase.h"
-#include "EASTL/allocator.h"
 #include "Log/Log.h"
 #include "Memory/Memory.h"
 #include "TaskSystem/TaskSystem.h"
@@ -48,6 +47,4 @@ int main(int Argc, char** Argv)
     return RUN_ALL_TESTS();
 }
 
-// The eastl::allocator binding is provided by the canonical Memory/EASTLImpl.cpp, and the global
-// new/delete overrides by Memory/GlobalAllocatorOverrides.cpp. The build tool auto-adds both to
-// every image, this one included. (Both were duplicated here before they were centralized.)
+// The global new/delete overrides come from Memory/GlobalAllocatorOverrides.cpp. The build tool auto-adds it to every image, this one included.

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Containers/Array.h"
+#include "Containers/Span.h"
 #include "Core/Assertions/Assert.h"
 #include "Memory/Memory.h"
 #include "Platform/GenericPlatform.h"

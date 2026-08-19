@@ -80,7 +80,7 @@ namespace Lumina::Scripting
                 FScriptPropertyEntry Entry;
                 Entry.Name = Property->GetPropertyName();
                 Entry.Value = ReadValue(Property, static_cast<const uint8*>(Buffer) + Property->Offset);
-                Out.push_back(eastl::move(Entry));
+                Out.push_back(std::move(Entry));
             }
         }
 

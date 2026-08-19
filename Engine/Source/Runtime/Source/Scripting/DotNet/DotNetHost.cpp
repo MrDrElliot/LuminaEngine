@@ -9,7 +9,8 @@
 #include <cstring>
 #include <cstdio>
 
-#include "Containers/Array.h"
+#include "Containers/Span.h"
+#include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "Core/Console/ConsoleVariable.h"
 #include "Core/Delegates/ScriptDelegate.h"
@@ -58,9 +59,9 @@
 
 namespace Lumina
 {
-    // Defined in CSharpLayoutChecks.cpp: validates the EASTL FString/TVector byte layout that
+    // Defined in CSharpLayoutChecks.cpp: validates the FString/TVector byte layout that
     // LuminaSharp.NativeMarshal reads in place (Dev/Debug self-test; a no-op in Shipping).
-    void VerifyEASTLInteropLayout();
+    void VerifyContainerInteropLayout();
 }
 
 namespace Lumina::DotNet
@@ -282,7 +283,7 @@ namespace Lumina::DotNet
             FScriptableAlias Alias;
             Alias.OldName = FString(Old, static_cast<size_t>(OldLen));
             Alias.NewName = FString(New, static_cast<size_t>(NewLen));
-            Out->emplace_back(eastl::move(Alias));
+            Out->emplace_back(std::move(Alias));
         }
 
         // Sink the managed EnumerateScriptables calls once per Scriptable C# type; Ctx is the out desc vector.
@@ -300,7 +301,7 @@ namespace Lumina::DotNet
                 Desc.NativeBaseName = FString(Base, static_cast<size_t>(BaseLen));
             }
             Desc.OverrideFlags = OverrideFlags;
-            Out->emplace_back(eastl::move(Desc));
+            Out->emplace_back(std::move(Desc));
         }
 
         // Sink the managed EnumerateScriptStructs calls once per marked C# data type; Ctx is the out desc vector.
@@ -317,7 +318,7 @@ namespace Lumina::DotNet
             {
                 Desc.NativeBaseName = FString(Base, static_cast<size_t>(BaseLen));
             }
-            Out->emplace_back(eastl::move(Desc));
+            Out->emplace_back(std::move(Desc));
         }
 
         // Single-name sink for ResolveEntityScriptName; Ctx is the out FString.
@@ -362,7 +363,7 @@ namespace Lumina::DotNet
                 Desc.Priority = Priority;
                 LmCollectAccessIds(WriteTokens, NWrite, Desc.Writes);
                 LmCollectAccessIds(ReadTokens, NRead, Desc.Reads);
-                Out->push_back(eastl::move(Desc));
+                Out->push_back(std::move(Desc));
             }
         }
 
@@ -409,7 +410,7 @@ namespace Lumina::DotNet
                 }
 
                 Src.Path.assign(P.data(), P.size());
-                Out.push_back(eastl::move(Src));
+                Out.push_back(std::move(Src));
             });
         }
         
@@ -457,7 +458,7 @@ namespace Lumina::DotNet
                 }
 
                 PluginNames.push_back(Unit.Name);
-                Units.push_back(eastl::move(Unit));
+                Units.push_back(std::move(Unit));
             }
 
             {
@@ -478,7 +479,7 @@ namespace Lumina::DotNet
                     }
                 }
                 Game.Deps = PluginNames;
-                Units.push_back(eastl::move(Game));
+                Units.push_back(std::move(Game));
             }
 
             {
@@ -490,7 +491,7 @@ namespace Lumina::DotNet
                 Engine.BinaryDir       = NativePath(Join(ExeDir, "DotNet"));
                 Engine.IntermediateDir = NativePath(Join(ExeDir, "DotNet/obj/Engine"));
                 Engine.AssemblyPath    = Engine.BinaryDir + "/Engine.dll";
-                Units.push_back(eastl::move(Engine));
+                Units.push_back(std::move(Engine));
             }
 
             return Units;
@@ -559,7 +560,7 @@ namespace Lumina::DotNet
                         }
                     }
                 }
-                Units.push_back(eastl::move(Unit));
+                Units.push_back(std::move(Unit));
             }
             return Units;
         }
@@ -773,7 +774,7 @@ namespace Lumina::DotNet
         {
             FString Result(P.data(), P.size());
         #if defined(_WIN32)
-            eastl::replace(Result.begin(), Result.end(), '/', '\\');
+            std::replace(Result.begin(), Result.end(), '/', '\\');
         #endif
             return Result;
         }
@@ -1013,9 +1014,9 @@ namespace Lumina::DotNet
             return;
         }
 
-        // C# now reads reflected FString/TVector properties in place by hard-coding the EASTL layout
+        // C# now reads reflected FString/TVector properties in place by hard-coding the container layout
         // (LuminaSharp.NativeMarshal). Validate that layout against the real accessors once (Dev/Debug).
-        VerifyEASTLInteropLayout();
+        VerifyContainerInteropLayout();
 
         // Resolve the managed export resolver by name (like Bootstrap itself), then fill the engine entry cache
         // through it. There is no hand-mirrored table: each field is resolved by its own name, and a missing
@@ -1184,7 +1185,7 @@ namespace Lumina::DotNet
                 Bucket.Deps += Unit.Deps[Index];
             }
 
-            Buckets.push_back(eastl::move(Bucket));
+            Buckets.push_back(std::move(Bucket));
         }
 
         // Marshal. Each bucket's FSourceFile array must outlive the call, so keep one per bucket alive here.
@@ -1346,7 +1347,7 @@ namespace Lumina::DotNet
             Packaged.Name          = Unit.Name;
             Packaged.DllSourcePath = Unit.AssemblyPath;
             Packaged.Deps          = Unit.Deps;
-            Out.push_back(eastl::move(Packaged));
+            Out.push_back(std::move(Packaged));
         }
     }
 
@@ -1663,7 +1664,7 @@ namespace Lumina::DotNet
             }
         }
 
-        // The editor display block a [Property] carries: category, tooltip, units, clamps, colour flag.
+        // The editor display block a [Property] carries: category, tooltip, units, clamps, color flag.
         // Shared by the top-level schema and by every nested / instanced-candidate field so the two can
         // never drift -- they read the identical bytes WriteMeta wrote.
         void ReadMetaInto(FBlobReader& R, Scripting::FScriptExportMeta& Meta)
@@ -1760,7 +1761,7 @@ namespace Lumina::DotNet
                             ReadValue(R, F.Default);
                             Candidate.Fields.push_back(F);
                         }
-                        Type->Candidates.push_back(eastl::move(Candidate));
+                        Type->Candidates.push_back(std::move(Candidate));
                     }
                     break;
                 }
@@ -1802,10 +1803,10 @@ namespace Lumina::DotNet
                     {
                         Scripting::FScriptPropertyValue K;
                         ReadValue(R, K);
-                        Out.Items.push_back(eastl::move(K));
+                        Out.Items.push_back(std::move(K));
                         Scripting::FScriptPropertyValue Val;
                         ReadValue(R, Val);
-                        Out.Items.push_back(eastl::move(Val));
+                        Out.Items.push_back(std::move(Val));
                     }
                     break;
                 }
@@ -2034,7 +2035,7 @@ namespace Lumina::DotNet
             Button.Method = R.Str();
             Button.Label = R.Str();
             Button.Tooltip = R.Str();
-            OutButtons.push_back(eastl::move(Button));
+            OutButtons.push_back(std::move(Button));
         }
     }
 

@@ -23,7 +23,7 @@ namespace Lumina
 
     void FProperty::Init()
     {
-        eastl::visit([this](auto& Value)
+        visit([this](auto& Value)
         {
             Value->AddProperty(this);
         }, Owner);
@@ -72,7 +72,7 @@ namespace Lumina
 
         if (!Display.empty())
         {
-            Display[0] = eastl::CharToUpper(Display[0]);
+            Display[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(Display[0])));
         }
 
         return Display;

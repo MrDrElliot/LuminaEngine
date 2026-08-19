@@ -24,7 +24,6 @@
 #include "Core/Object/ObjectIterator.h"
 #include "Core/Serialization/MemoryArchiver.h"
 #include "Core/Serialization/ObjectArchiver.h"
-#include "EASTL/sort.h"
 #include "Animation/Pose.h"
 #include "Animation/SkeletalMeshUtils.h"
 #include "Assets/AssetTypes/Mesh/SkeletalMesh/SkeletalMesh.h"
@@ -1049,7 +1048,7 @@ namespace Lumina
                 NewBody.BodyID = 0xFFFFFFFF;
 
                 EntityRegistry.remove<SRigidBodyComponent>(NewEntity);
-                EntityRegistry.emplace<SRigidBodyComponent>(NewEntity, eastl::move(NewBody));
+                EntityRegistry.emplace<SRigidBodyComponent>(NewEntity, std::move(NewBody));
             }
 
             if (NewParent != entt::null)
@@ -1730,7 +1729,7 @@ namespace Lumina
         // Lower value = higher priority (Highest=0 .. Low=192), so ascending runs Highest first.
         for (uint8 i = 0; i < (uint8)EUpdateStage::Max; ++i)
         {
-            eastl::sort(SystemUpdateList[i].begin(), SystemUpdateList[i].end(),
+            std::sort(SystemUpdateList[i].begin(), SystemUpdateList[i].end(),
                 [](const FStageSlot& A, const FStageSlot& B) { return A.StagePriority < B.StagePriority; });
         }
 
@@ -1972,7 +1971,7 @@ namespace Lumina
         
         if (PhysicsScene == nullptr)
         {
-            return eastl::nullopt;
+            return NullOpt;
         }
         
         TOptional<SRayResult> Result = PhysicsScene->CastRay(Settings);
@@ -2019,7 +2018,7 @@ namespace Lumina
 
         if (PhysicsScene == nullptr)
         {
-            return eastl::nullopt;
+            return NullOpt;
         }
 
         return PhysicsScene->CastSphereClosest(Settings);

@@ -68,7 +68,7 @@ namespace
         Resource.GeometrySurfaces.push_back(Surface);
     }
 
-    /** Axis-aligned box centred on the origin, outward-facing (CCW seen from outside). */
+    /** Axis-aligned box centered on the origin, outward-facing (CCW seen from outside). */
     void BuildBox(FMeshResource& Resource, FVector3 HalfExtent)
     {
         const float X = HalfExtent.x;
@@ -93,7 +93,7 @@ namespace
     }
 
     /** Trilinear read of the built volume at a local-space point, decoded back to local units. Mirrors
-     *  SampleDistanceFieldLocal in Includes/DistanceField.slang, including the texel-centre convention,
+     *  SampleDistanceFieldLocal in Includes/DistanceField.slang, including the texel-center convention,
      *  so a disagreement between the two shows up here rather than on screen. */
     float SampleVolume(const FDistanceFieldVolume& Volume, FVector3 LocalPosition)
     {
@@ -133,7 +133,7 @@ namespace
         return Lerp(Lerp(C00, C10, Fy), Lerp(C01, C11, Fy), Fz);
     }
 
-    /** Exact signed distance to an origin-centred box; the analytic reference (Quilez). */
+    /** Exact signed distance to an origin-centered box; the analytic reference (Quilez). */
     float ExactBoxDistance(FVector3 P, FVector3 HalfExtent)
     {
         const FVector3 Q = Math::Abs(P) - HalfExtent;
@@ -252,7 +252,7 @@ TEST(DistanceField, MatchesAnalyticBoxDistanceInsideTheBand)
     };
 
     // Tolerance is one voxel: a 64^3 grid over a 2.8-unit span puts a voxel at ~0.044, and both the
-    // trilinear reconstruction and the 8-bit quantisation are bounded well inside that.
+    // trilinear reconstruction and the 8-bit quantization are bounded well inside that.
     const float VoxelSize = Volume.VolumeSize.x / (float)Volume.Dimensions.x;
 
     for (const FVector3& P : Samples)

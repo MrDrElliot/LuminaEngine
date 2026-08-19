@@ -1,6 +1,6 @@
 #pragma once
 #include "imgui.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/Name.h"
 #include "Containers/Function.h"
 #include "Core/Threading/Atomic.h"
@@ -159,11 +159,11 @@ namespace Lumina
         T& Get(FTreeNodeID Handle)
         {
             FNode& Node = Nodes[Handle.Index];
-            if constexpr (eastl::is_same_v<T, FTreeNodeState>)
+            if constexpr (std::is_same_v<T, FTreeNodeState>)
             {
                 return Node.State;
             }
-            else if constexpr (eastl::is_same_v<T, FTreeNodeDisplay>)
+            else if constexpr (std::is_same_v<T, FTreeNodeDisplay>)
             {
                 return Node.Display;
             }
@@ -181,7 +181,7 @@ namespace Lumina
             {
                 Node.UserDataDeleter(Node.UserData);
             }
-            T* NewData = new T(eastl::forward<TArgs>(Args)...);
+            T* NewData = new T(std::forward<TArgs>(Args)...);
             Node.UserData = NewData;
             Node.UserDataDeleter = [](void* Ptr) { delete static_cast<T*>(Ptr); };
             return *NewData;

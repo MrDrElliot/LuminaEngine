@@ -29,6 +29,7 @@
 #include "tracy/TracyVulkan.hpp"
 #include "Log/Log.h"
 #include "Core/Profiler/Profile.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -149,7 +150,7 @@ namespace Lumina::Vulkan
         Body += "\n\nLocation: ";
         Body += File;
         Body += ":";
-        Body += eastl::to_string(Line).c_str();
+        Body += Lumina::Format("{}", Line).c_str();
         Body += "\n\n";
         Body += ResultString;
         Dialogs::ShowInternal(Dialogs::ESeverity::FatalError, Dialogs::EType::Ok, "Vulkan Error", Body);
@@ -603,7 +604,7 @@ namespace Lumina::RHI
         // read once, by the device-lost report, and a linear scan of 4096 entries is free there.
         TVector<FFreedBlock>            FreedBlocks;
         uint32                          FreedBlockCursor = 0;
-        // Bumped per submit, stamped into FreedBlocks. Relaxed: it is a coarse age, not a synchroniser.
+        // Bumped per submit, stamped into FreedBlocks. Relaxed: it is a coarse age, not a synchronizer.
         TAtomic<uint64>                 SubmitOrdinal{0};
 
         // Live textures, for the memory tool's per-purpose breakdown. Its own lock rather than
@@ -931,8 +932,8 @@ namespace Lumina::RHI
             if (Limit.Actual < Limit.Required)
             {
                 Result.Reason = FString("reports ") + Limit.Name + " = "
-                    + eastl::to_string(Limit.Actual).c_str() + ", the geometry path needs at least "
-                    + eastl::to_string(Limit.Required).c_str();
+                    + Lumina::Format("{}", Limit.Actual).c_str() + ", the geometry path needs at least "
+                    + Lumina::Format("{}", Limit.Required).c_str();
                 return Result;
             }
         }
@@ -950,11 +951,11 @@ namespace Lumina::RHI
             else
             {
                 Result.Reason = FString("may run a mesh subgroup as narrow as ")
-                    + eastl::to_string(SubgroupProps.minSubgroupSize).c_str() + " and cannot be pinned to "
-                    + eastl::to_string(kMeshWorkGroupSize).c_str() + " (subgroupSizeControl: "
+                    + Lumina::Format("{}", SubgroupProps.minSubgroupSize).c_str() + " and cannot be pinned to "
+                    + Lumina::Format("{}", kMeshWorkGroupSize).c_str() + " (subgroupSizeControl: "
                     + (Supported13.subgroupSizeControl ? "yes" : "no") + ", mesh stage pinnable: "
                     + (bMeshStagePinnable ? "yes" : "no") + ", maxSubgroupSize: "
-                    + eastl::to_string(SubgroupProps.maxSubgroupSize).c_str() + ")";
+                    + Lumina::Format("{}", SubgroupProps.maxSubgroupSize).c_str() + ")";
                 return Result;
             }
         }
@@ -1169,11 +1170,11 @@ namespace Lumina::RHI
         Info.VendorID  = Props.vendorID;
         Info.bDiscrete = Props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
         Info.APIName   = "Vulkan ";
-        Info.APIName += eastl::to_string(VK_API_VERSION_MAJOR(Props.apiVersion)).c_str();
+        Info.APIName += Lumina::Format("{}", VK_API_VERSION_MAJOR(Props.apiVersion)).c_str();
         Info.APIName += ".";
-        Info.APIName += eastl::to_string(VK_API_VERSION_MINOR(Props.apiVersion)).c_str();
+        Info.APIName += Lumina::Format("{}", VK_API_VERSION_MINOR(Props.apiVersion)).c_str();
         Info.APIName += ".";
-        Info.APIName += eastl::to_string(VK_API_VERSION_PATCH(Props.apiVersion)).c_str();
+        Info.APIName += Lumina::Format("{}", VK_API_VERSION_PATCH(Props.apiVersion)).c_str();
         return Info;
     }
 
@@ -1623,9 +1624,9 @@ namespace Lumina::RHI
                 }
 
                 FString Message = "No GPU supporting Vulkan 1.4 was found.\n\nDetected Vulkan instance API version: ";
-                Message += eastl::to_string(VK_API_VERSION_MAJOR(InstanceVersion)).c_str();
+                Message += Lumina::Format("{}", VK_API_VERSION_MAJOR(InstanceVersion)).c_str();
                 Message += ".";
-                Message += eastl::to_string(VK_API_VERSION_MINOR(InstanceVersion)).c_str();
+                Message += Lumina::Format("{}", VK_API_VERSION_MINOR(InstanceVersion)).c_str();
                 Message += "\n\nLumina requires Vulkan 1.4 with dynamic rendering, synchronization2, descriptor indexing, "
                     "buffer device address, and timeline semaphores.";
                 ShowVulkanInitFailure("Vulkan Device Selection Failed", Message);
@@ -2754,7 +2755,7 @@ namespace Lumina::RHI
 
         // Past this, the "nearest" allocation is just whichever one happened to be closest in a 40-bit
         // address space, which reads as evidence and is not.
-        constexpr uint64 kNeighbourWindow = 64ull * 1024 * 1024;
+        constexpr uint64 kNeighborWindow = 64ull * 1024 * 1024;
 
         // try_lock, not a lock: this runs from the device-lost path, and another thread stuck mid-Malloc
         // would otherwise turn a crash report into a hang. A missed report is the better failure.
@@ -2777,7 +2778,7 @@ namespace Lumina::RHI
 
         // Nearest allocation that does NOT contain the address, either side. An overrun lands past the end
         // of a buffer and inside nobody, which is the case a containment-only lookup reports as "unknown".
-        struct FNeighbour
+        struct FNeighbor
         {
             bool        bValid   = false;
             bool        bFreed   = false;
@@ -2789,9 +2790,9 @@ namespace Lumina::RHI
             const char* Name     = nullptr;
         };
 
-        FNeighbour Nearest;
+        FNeighbor Nearest;
 
-        const auto ConsiderNeighbour = [&](GPUPtr Base, uint64 Size, const char* Name, bool bFreed, uint64 Submit)
+        const auto ConsiderNeighbor = [&](GPUPtr Base, uint64 Size, const char* Name, bool bFreed, uint64 Submit)
         {
             if (Size == 0ull)
             {
@@ -2815,12 +2816,12 @@ namespace Lumina::RHI
                 return;   // overlapping; containment is reported instead
             }
 
-            if (Distance > kNeighbourWindow || (Nearest.bValid && Distance >= Nearest.Distance))
+            if (Distance > kNeighborWindow || (Nearest.bValid && Distance >= Nearest.Distance))
             {
                 return;
             }
 
-            Nearest = FNeighbour{ true, bFreed, bPastEnd, Distance, Base, Size, Submit, Name };
+            Nearest = FNeighbor{ true, bFreed, bPastEnd, Distance, Base, Size, Submit, Name };
         };
 
         // Linear over both tables. This runs exactly once, on a dying device: clarity beats a clever
@@ -2834,7 +2835,7 @@ namespace Lumina::RHI
                                            AddressLow - Block.Device).c_str());
             }
 
-            ConsiderNeighbour(Block.Device, Block.Size, Block.Name, /*bFreed*/ false, 0ull);
+            ConsiderNeighbor(Block.Device, Block.Size, Block.Name, /*bFreed*/ false, 0ull);
         }
 
         for (const FFreedBlock& Entry : GDevice->FreedBlocks)
@@ -2847,13 +2848,13 @@ namespace Lumina::RHI
                                            CurrentSubmit - Entry.SubmitOrdinal).c_str());
             }
 
-            ConsiderNeighbour(Entry.Device, Entry.Size, Entry.Name, /*bFreed*/ true, Entry.SubmitOrdinal);
+            ConsiderNeighbor(Entry.Device, Entry.Size, Entry.Name, /*bFreed*/ true, Entry.SubmitOrdinal);
         }
 
         if (!Nearest.bValid)
         {
             return FString(std::format("no live or freed allocation within {} MiB",
-                                       kNeighbourWindow / (1024ull * 1024ull)).c_str());
+                                       kNeighborWindow / (1024ull * 1024ull)).c_str());
         }
 
         const char* Relation = Nearest.bPastEnd ? "past the end of" : "before the start of";
@@ -2921,7 +2922,7 @@ namespace Lumina::RHI
 
         if (GDevice != nullptr)
         {
-            // Tripwire, and the last line of defence for the whole bindless design. A ResourceID is a bare
+            // Tripwire, and the last line of defense for the whole bindless design. A ResourceID is a bare
             // uint32: nothing in the descriptor heap keeps a texture alive, and PARTIALLY_BOUND +
             // UPDATE_AFTER_BIND suppress every layer check, so a slot left naming a destroyed image is
             // silent until the GPU page-faults inside a SampleGrad with "failed to translate". Every
@@ -4449,7 +4450,7 @@ namespace Lumina::RHI
             ShowVulkanInitFailure("Headless Device Cannot Present",
                 "CreateSurface was called on a device created with FDeviceDesc::bHeadless. That device "
                 "requested neither the window-system instance extensions nor VK_KHR_swapchain, so it can "
-                "never present. Check for a POSITIONAL FDeviceDesc initialiser -- bHeadless is the third "
+                "never present. Check for a POSITIONAL FDeviceDesc initializer -- bHeadless is the third "
                 "field, and a stray third argument sets it.");
             std::abort();
         }
@@ -4957,14 +4958,14 @@ namespace Lumina::RHI
         {
             // Flat and fixed: a hash map here rehashes and allocates while the queue lock is held.
             struct FSignalHighWater { uint64 Native; uint64 Value; };
-            static FSignalHighWater HighestSignalled[16] = {};
+            static FSignalHighWater HighestSignaled[16] = {};
 
             for (const FSemaphoreInfo& Signal : Signals)
             {
                 const uint64 Native = (uint64)GDevice->Semaphores[Signal.Semaphore].Semaphore;
 
                 FSignalHighWater* Entry = nullptr;
-                for (FSignalHighWater& Candidate : HighestSignalled)
+                for (FSignalHighWater& Candidate : HighestSignaled)
                 {
                     if (Candidate.Native == Native || Candidate.Native == 0)
                     {
@@ -4983,7 +4984,7 @@ namespace Lumina::RHI
                 uint64& High = Entry->Value;
                 if (Signal.Value <= High && High != 0)
                 {
-                    LOG_ERROR("Timeline regression: native {:#x} signalled {} on queue {}, already at {}. "
+                    LOG_ERROR("Timeline regression: native {:#x} signaled {} on queue {}, already at {}. "
                               "{} command list(s), {} wait(s).",
                         Native, Signal.Value, (uint32)Queue, High, CommandLists.size(), Waits.size());
                 }

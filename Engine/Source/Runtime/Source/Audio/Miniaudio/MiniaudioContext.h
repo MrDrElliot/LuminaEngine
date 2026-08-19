@@ -3,7 +3,8 @@
 #include "Audio/AudioContext.h"
 #include "Audio/AudioReverb.h"
 #include "Audio/ProceduralAudioStream.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
+#include "Memory/MemoryConcurrentQueue.h"
 #include "Containers/String.h"
 #include "Core/Threading/Thread.h"
 #include "Core/Threading/Atomic.h"
@@ -190,7 +191,7 @@ namespace Lumina
 		TAtomic<uint64> SlotFrame[MaxVoiceSlots];
 
 		// Set by StopSound so a voice stopped before the pump ever started it doesn't leak through.
-		TAtomic<bool>   SlotCancelled[MaxVoiceSlots];
+		TAtomic<bool>   SlotCanceled[MaxVoiceSlots];
 		TConcurrentQueue<uint32> FreeSlots;
 		FMutex SlotLock;
 

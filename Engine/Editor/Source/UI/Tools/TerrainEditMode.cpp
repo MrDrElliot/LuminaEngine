@@ -16,6 +16,7 @@
 #include "World/Scene/RenderScene/TerrainRenderTypes.h"
 #include "World/Subsystems/TerrainSculptSystem.h"
 #include "World/World.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -447,7 +448,7 @@ namespace Lumina
             if (ImGui::Button("+", SwatchSize))
             {
                 STerrainLayer& L = Terrain.Layers.emplace_back();
-                L.Name.sprintf("Layer%d", LayerCount);
+                L.Name = Format("Layer{}", LayerCount);
                 L.UVScale = 1.0f / 16.0f;
                 EnsureLayerWeightStorage(Terrain);
                 Terrain.CPUState.bFullWeightsDirty = true;

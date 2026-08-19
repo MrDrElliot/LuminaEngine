@@ -14,7 +14,7 @@ namespace Lumina
     using TCopyQualifiersFromTo_T = TCopyQualifiersFromTo<From, To>::Type;
 
     template<typename To, typename From>
-    requires eastl::is_base_of_v<From, To> && (sizeof(From) > 0 && sizeof(To) > 0)
+    requires std::is_base_of_v<From, To> && (sizeof(From) > 0 && sizeof(To) > 0)
     TCopyQualifiersFromTo_T<From, To>* Cast(From* Src)
     {
         if (Src)
@@ -29,7 +29,7 @@ namespace Lumina
     }
 
     template<typename To, typename From>
-    requires eastl::is_base_of_v<From, To> && (sizeof(From) > 0 && sizeof(To) > 0)
+    requires std::is_base_of_v<From, To> && (sizeof(From) > 0 && sizeof(To) > 0)
     TCopyQualifiersFromTo_T<From, To>* CastAsserted(From* Src)
     {
 #if LE_DEBUG

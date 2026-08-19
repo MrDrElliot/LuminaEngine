@@ -242,7 +242,7 @@ namespace Lumina::RHI
             return {};
         }
 
-        eastl::sort(Outstanding.begin(), Outstanding.end(),
+        std::sort(Outstanding.begin(), Outstanding.end(),
             [](const FEntry* A, const FEntry* B)
             {
                 return A->MarkerId < B->MarkerId;

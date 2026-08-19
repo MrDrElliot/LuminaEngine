@@ -16,7 +16,7 @@ namespace Lumina::Reflection::Visitor
         
         if (kind == CXCursor_EnumConstantDecl)
         {
-            eastl::string DisplayName = ClangUtils::GetCursorDisplayName(Cursor);
+            std::string DisplayName = ClangUtils::GetCursorDisplayName(Cursor);
 
             // Read with the enum's own signedness. Reading an unsigned constant as signed
             // sign-extends it, so a flag like `All = 0xFFFF` on a uint16 enum would come back as
@@ -29,7 +29,7 @@ namespace Lumina::Reflection::Visitor
 
             FReflectedEnum::FConstant Constant;
             Constant.Label = DisplayName;
-            Constant.ID = eastl::string(DisplayName);
+            Constant.ID = std::string(DisplayName);
             Constant.Value = Value;
             
             const CXString CommentString = clang_Cursor_getBriefCommentText(Cursor);
@@ -47,7 +47,7 @@ namespace Lumina::Reflection::Visitor
     
     CXChildVisitResult VisitEnum(CXCursor Cursor, CXCursor, FClangParserContext* Context)
     {
-        eastl::string CursorName = ClangUtils::GetCursorDisplayName(Cursor);
+        std::string CursorName = ClangUtils::GetCursorDisplayName(Cursor);
 
         void* Data = clang_getCursorType(Cursor).data[0];
         if(Data == nullptr)
@@ -62,7 +62,7 @@ namespace Lumina::Reflection::Visitor
         }
 
         
-        eastl::string FullyQualifiedName;
+        std::string FullyQualifiedName;
         if (!ClangUtils::GetQualifiedNameForDeclCursor(Cursor, FullyQualifiedName))
         {
             LRT_ERROR(Cursor, EDiagId::BadTypePrefix,

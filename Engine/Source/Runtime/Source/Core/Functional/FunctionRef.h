@@ -1,6 +1,5 @@
 ﻿#pragma once
 
-#include <EASTL/utility.h>
 
 
 namespace Lumina
@@ -18,16 +17,16 @@ namespace Lumina
         template<typename TCallable>
         static TRet CallbackFn(intptr_t callable, TArgs... Args)
         {
-            return (*reinterpret_cast<TCallable*>(callable))(eastl::forward<TArgs>(Args)...);
+            return (*reinterpret_cast<TCallable*>(callable))(std::forward<TArgs>(Args)...);
         }
 
         template<typename TCallable>
         struct IsValidCallable
         {
             static constexpr bool value =
-                !eastl::is_same_v<eastl::decay_t<TCallable>, TFunctionRef> &&
-                !eastl::is_same_v<eastl::decay_t<TCallable>, std::nullptr_t> &&
-                eastl::is_invocable_r_v<TRet, TCallable&, TArgs...>;
+                !std::is_same_v<std::decay_t<TCallable>, TFunctionRef> &&
+                !std::is_same_v<std::decay_t<TCallable>, std::nullptr_t> &&
+                std::is_invocable_r_v<TRet, TCallable&, TArgs...>;
         };
 
     public:
@@ -40,8 +39,8 @@ namespace Lumina
         template <typename TCallable>
         TFunctionRef(TCallable&& InCallable) noexcept
         requires (IsValidCallable<TCallable>::value)
-        : Callback(CallbackFn<eastl::remove_reference_t<TCallable>>)
-        , Callable(reinterpret_cast<intptr_t>(eastl::addressof(InCallable)))
+        : Callback(CallbackFn<std::remove_reference_t<TCallable>>)
+        , Callable(reinterpret_cast<intptr_t>(std::addressof(InCallable)))
         {}
 
         TFunctionRef(const TFunctionRef&) = default;
@@ -54,7 +53,7 @@ namespace Lumina
 
         TRet operator()(TArgs... Args) const 
         {
-            return Callback(Callable, eastl::forward<TArgs>(Args)...);
+            return Callback(Callable, std::forward<TArgs>(Args)...);
         }
 
         explicit operator bool() const noexcept { return Callback != nullptr; }

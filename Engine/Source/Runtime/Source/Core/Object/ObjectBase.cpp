@@ -8,7 +8,6 @@
 #include "ObjectArray.h"
 #include "ObjectHash.h"
 #include "Core/Console/ConsoleVariable.h"
-#include "EASTL/sort.h"
 #include "Log/Log.h"
 #include "Memory/Memory.h"
 #include "Package/Package.h"
@@ -356,7 +355,7 @@ namespace Lumina
                 };
                 
                 // Base classes before derived.
-                eastl::sort(NewClasses.begin(), NewClasses.end(), [&](const CClass* A, const CClass* B)
+                std::sort(NewClasses.begin(), NewClasses.end(), [&](const CClass* A, const CClass* B)
                 {
                     return GetClassDepth(A) < GetClassDepth(B);
                 });

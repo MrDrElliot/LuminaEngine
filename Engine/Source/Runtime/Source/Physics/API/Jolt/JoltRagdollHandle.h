@@ -3,7 +3,7 @@
 #include <Jolt/Jolt.h>
 #include <Jolt/Physics/Ragdoll/Ragdoll.h>
 #include "Platform/GenericPlatform.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Core/Math/Matrix/MatrixMath.h"
 
 namespace Lumina

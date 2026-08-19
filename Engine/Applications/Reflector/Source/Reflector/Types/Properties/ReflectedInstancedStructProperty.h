@@ -14,15 +14,15 @@ namespace Lumina
 
         const char* GetTypeName() override { return "InstancedStruct"; }
         const char* GetPropertyParamType() const override { return "FInstancedStructPropertyParams"; }
-        eastl::string_view GetLuaType() override;
+        std::string_view GetLuaType() override;
 
         void AppendDefinition(Reflection::FCodeWriter& Writer) const override;
 
         bool CanDeclareCrossModuleReferences() const override { return true; }
-        void DeclareCrossModuleReference(const eastl::string& API, Reflection::FCodeWriter& Writer) override
+        void DeclareCrossModuleReference(const std::string& API, Reflection::FCodeWriter& Writer) override
         {
-            const eastl::string Friendly = ClangUtils::MakeCodeFriendlyNamespace(TypeName);
-            const eastl::string FnName = "Construct_CStruct_" + Friendly;
+            const std::string Friendly = ClangUtils::MakeCodeFriendlyNamespace(TypeName);
+            const std::string FnName = "Construct_CStruct_" + Friendly;
             Reflection::Names::EmitGuardedCrossModuleDecl(Writer, API, "CStruct", FnName);
         }
     };

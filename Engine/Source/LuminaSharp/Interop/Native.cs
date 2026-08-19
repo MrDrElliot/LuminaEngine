@@ -147,7 +147,7 @@ public static unsafe partial class Native
     [NativeCall] public static partial IntPtr PropMapOps(IntPtr Prop);
 
     // Assigns an FString at a raw address; the write half of a string container element (reads decode the
-    // eastl string in place with no crossing). See ElementMarshal (EElementKind.String).
+    // native string in place with no crossing). See ElementMarshal (EElementKind.String).
     [NativeCall] public static partial void StringAssign(IntPtr String, string Value);
 
     // Assigns a TObjectPtr at a raw address, releasing the old reference and adding one to the new. The write

@@ -172,7 +172,7 @@ namespace Lumina::Memory
             {
                 return false;
             }
-            // Value-init rather than memset: FEntry has member initialisers, so it is not trivially
+            // Value-init rather than memset: FEntry has member initializers, so it is not trivially
             // default-constructible. Same zeroed bytes, without the UB.
             for (uint32 i = 0; i < NewCap; ++i)
             {

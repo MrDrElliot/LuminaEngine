@@ -22,7 +22,6 @@ public class RHITests : LuminaModuleRules
         {
             "Runtime",
             "RPMalloc",
-            "EA",
         });
     }
 }

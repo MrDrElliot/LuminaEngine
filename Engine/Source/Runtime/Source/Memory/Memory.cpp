@@ -114,6 +114,24 @@ namespace Lumina
         return pMemory;
     }
 
+    size_t Memory::GetAllocationSize(void* Memory)
+    {
+        return (Memory != nullptr) ? rpmalloc_usable_size(Memory) : 0;
+    }
+
+    bool Memory::TryExpandInPlace(void* Memory, size_t NewSize)
+    {
+        if (Memory == nullptr || rpmalloc_usable_size(Memory) < NewSize)
+        {
+            return false;
+        }
+
+    #if LUMINA_MEMORY_TRACKING
+        ::Lumina::Memory::Hooks::OnRealloc(Memory, Memory, NewSize);
+    #endif
+        return true;
+    }
+
     void Memory::Free(void*& Memory)
     {
         LUMINA_PROFILE_FREE(Memory);
@@ -131,6 +149,19 @@ namespace Lumina
         static constexpr SIZE_T ScratchBlockSize = 256 * 1024;
         thread_local FBlockLinearAllocator GScratch(ScratchBlockSize);
         return GScratch;
+    }
+
+    namespace Memory
+    {
+        void* ScratchAllocate(size_t Size, size_t Alignment)
+        {
+            return GetThreadScratchAllocator().Allocate(Size, Alignment);
+        }
+
+        void* FrameAllocate(size_t Size, size_t Alignment)
+        {
+            return GetThreadFrameAllocator().Allocate(Size, Alignment);
+        }
     }
 
     namespace

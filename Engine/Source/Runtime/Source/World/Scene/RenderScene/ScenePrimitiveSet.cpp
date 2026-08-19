@@ -331,7 +331,7 @@ namespace Lumina
 
         if (Index != Last)
         {
-            Primitives[Index]  = eastl::move(Primitives[Last]);
+            Primitives[Index]  = std::move(Primitives[Last]);
             Bounds[Index]      = Bounds[Last];
             CullData[Index]    = CullData[Last];
             Keys[Index]        = Keys[Last];
@@ -1848,7 +1848,7 @@ namespace Lumina
                 }
             }
 
-            eastl::sort(RetryScratch.begin(), RetryScratch.end());
+            std::sort(RetryScratch.begin(), RetryScratch.end());
             {
                 size_t Unique = 0;
                 for (size_t i = 0; i < RetryScratch.size(); ++i)

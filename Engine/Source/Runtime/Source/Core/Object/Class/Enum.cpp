@@ -1,6 +1,7 @@
 ﻿#include "RuntimePCH.h"
 
 #include "Core/Object/Class.h"
+#include "Containers/StringFormat.h"
 
 IMPLEMENT_INTRINSIC_CLASS(CEnum, CField, RUNTIME_API)
 namespace Lumina
@@ -40,7 +41,7 @@ namespace Lumina
             int64 NextValue = 1ll << Math::CountTrailingZeros64(Value);
             Value = Value & ~NextValue;
             
-            BitfieldString.append_sprintf("%s%s", bWroteFirstFlag ? " | " : "", GetNameAtValue(NextValue).c_str());
+            AppendFormat(BitfieldString, "{}{}", bWroteFirstFlag ? " | " : "", GetNameAtValue(NextValue).c_str());
             bWroteFirstFlag = true;
         }
         
@@ -56,11 +57,11 @@ namespace Lumina
         {
             DelimPos--;
             FString ShortName = FullString.substr(DelimPos + 2);
-            Names.push_back(eastl::make_pair(ShortName, Value));
+            Names.push_back(Lumina::Containers::MakePair(ShortName, Value));
         }
         else
         {
-            Names.push_back(eastl::make_pair(FullName, Value));
+            Names.push_back(Lumina::Containers::MakePair(FullName, Value));
         }
     }
 

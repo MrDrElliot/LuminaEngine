@@ -15,6 +15,7 @@
 #include "Config/NetworkSettings.h"
 #include "Core/Object/ObjectCore.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -65,7 +66,7 @@ namespace Lumina
             return "?";
         }
 
-        // Severity palette for the warnings panel / threshold colouring.
+        // Severity palette for the warnings panel / threshold coloring.
         const ImVec4 ColGood (0.40f, 0.85f, 0.45f, 1.0f);
         const ImVec4 ColWarn (0.95f, 0.80f, 0.25f, 1.0f);
         const ImVec4 ColBad  (0.95f, 0.35f, 0.30f, 1.0f);
@@ -317,8 +318,8 @@ namespace Lumina
                 };
                 Row("Sent",            FormatBytesNice((double)Stats.TotalSentBytes));
                 Row("Received",        FormatBytesNice((double)Stats.TotalReceivedBytes));
-                Row("Packets Sent",    FString(eastl::to_string(Stats.TotalSentPackets).c_str()));
-                Row("Packets Recv",    FString(eastl::to_string(Stats.TotalReceivedPackets).c_str()));
+                Row("Packets Sent",    FString(Format("{}", Stats.TotalSentPackets).c_str()));
+                Row("Packets Recv",    FString(Format("{}", Stats.TotalReceivedPackets).c_str()));
                 ImGui::EndTable();
             }
 
@@ -351,7 +352,7 @@ namespace Lumina
                 }
             }
 
-            // Transform snapshot size vs the 64 KB frame cap, coloured by how close we are (red once dropped).
+            // Transform snapshot size vs the 64 KB frame cap, colored by how close we are (red once dropped).
             // Use the smoothed snapshot bytes so the bar reads as a steady level instead of flickering with the
             // per-tick subset of due entities.
             FNetHistory& H = Histories[SelectedWorld];

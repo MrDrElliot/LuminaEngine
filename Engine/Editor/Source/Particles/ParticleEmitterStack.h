@@ -1,7 +1,7 @@
 #pragma once
 
 #include "ParticleModule.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "ParticleEmitterStack.generated.h"

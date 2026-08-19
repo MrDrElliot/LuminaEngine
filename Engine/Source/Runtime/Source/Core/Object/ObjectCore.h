@@ -2,7 +2,7 @@
 
 #include "ConstructObjectParams.h"
 #include "ObjectFlags.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/Function.h"
 #include "Core/LuminaMacros.h"
 #include "Platform/GenericPlatform.h"
@@ -26,7 +26,7 @@ namespace Lumina
     namespace Concept
     {
         template<typename T>
-        concept IsACObject = eastl::is_base_of_v<CObject, T>;
+        concept IsACObject = std::is_base_of_v<CObject, T>;
     }
     
     RUNTIME_API CObject* StaticAllocateObject(const FConstructCObjectParams& Params);

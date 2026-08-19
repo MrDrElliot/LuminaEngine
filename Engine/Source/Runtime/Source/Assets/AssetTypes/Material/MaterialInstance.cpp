@@ -539,7 +539,7 @@ namespace Lumina
 
     void CMaterialInstance::RemoveOverride(const FName& Name)
     {
-        auto NewEnd = eastl::remove_if(Overrides.begin(), Overrides.end(), [Name](const FMaterialParameterOverride& O)
+        auto NewEnd = std::remove_if(Overrides.begin(), Overrides.end(), [Name](const FMaterialParameterOverride& O)
         {
             return O.ParameterName == Name;
         });
@@ -771,7 +771,7 @@ namespace Lumina
 
     bool CMaterialInstance::IsUnlit()
     {
-        // Through GetShadingModel so an override is honoured here too; querying the parent directly
+        // Through GetShadingModel so an override is honored here too; querying the parent directly
         // would let the two disagree about the same instance.
         return GetShadingModel() == EMaterialShadingModel::Unlit;
     }

@@ -3,7 +3,7 @@
 #include "Scripting/ScriptStruct.h"
 
 #include "Assets/AssetTypes/DataTable/DataTable.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectIterator.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
@@ -49,7 +49,7 @@ namespace Lumina::DataTableUI
             return nullptr;
         }
 
-        eastl::sort(Candidates.begin(), Candidates.end(), [](CStruct* A, CStruct* B)
+        std::sort(Candidates.begin(), Candidates.end(), [](CStruct* A, CStruct* B)
         {
             return strcmp(A->GetName().c_str(), B->GetName().c_str()) < 0;
         });

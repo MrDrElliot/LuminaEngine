@@ -3,7 +3,8 @@
 #include "UI/Tools/NodeGraph/EdGraphNode.h"
 #include "Animation/AnimationGraphVM.h"
 #include "Assets/AssetTypes/Animation/AnimationGraph/AnimationGraph.h"
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Vector.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Renderer/SkeletonResource.h"
 

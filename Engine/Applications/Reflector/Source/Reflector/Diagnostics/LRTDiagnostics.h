@@ -1,7 +1,7 @@
 #pragma once
 
 #include <clang-c/Index.h>
-#include <EASTL/string.h>
+#include <string>
 #include <cstdarg>
 #include <cstdint>
 
@@ -41,7 +41,7 @@ namespace Lumina::Reflection
 
     struct FDiagLocation
     {
-        eastl::string File;     // absolute path with forward slashes
+        std::string File;     // absolute path with forward slashes
         uint32_t      Line   = 0;
         uint32_t      Column = 0;
     };

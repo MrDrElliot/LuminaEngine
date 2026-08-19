@@ -1,5 +1,6 @@
 #pragma once
-#include "Containers/Array.h"
+#include "Containers/Span.h"
+#include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "Tools/Import/ImportHelpers.h"
 
@@ -53,8 +54,8 @@ namespace Lumina
         // and tear down alongside the rest of the import.
         //
         // bSourceHasVertexColors (FMeshImportData::bHasVertexColors) adds the COLOR_0 multiply to every
-        // master's base-colour chain. It is per IMPORT rather than per material because a material is shared
-        // across meshes and cannot know which of them are coloured; the importers fill opaque white where a
+        // master's base-color chain. It is per IMPORT rather than per material because a material is shared
+        // across meshes and cannot know which of them are colored; the importers fill opaque white where a
         // mesh has no attribute, so the multiply is a no-op there.
         EDITOR_API TVector<CMaterialInstance*> GenerateMaterials(
             TSpan<const Import::Mesh::FMeshImportMaterial>  SourceMaterials,

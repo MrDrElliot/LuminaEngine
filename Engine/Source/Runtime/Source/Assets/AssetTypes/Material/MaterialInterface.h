@@ -1,7 +1,7 @@
 ﻿#pragma once
 
 #include "Renderer/ShaderHandle.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Object/Object.h"
 #include "Core/Threading/Thread.h"

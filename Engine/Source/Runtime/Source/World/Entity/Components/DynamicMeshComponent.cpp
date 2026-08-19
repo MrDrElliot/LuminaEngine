@@ -15,6 +15,7 @@
 #include <atomic>
 
 #include "Memory/MemoryTracking.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -176,7 +177,7 @@ namespace Lumina
 
     TSharedPtr<FDynamicMeshRenderData> SDynamicMeshComponent::LoadRenderData() const
     {
-        return eastl::atomic_load(&RenderData);
+        return std::atomic_load(&RenderData);
     }
 
     uint32 SDynamicMeshComponent::LoadRenderDataVersion() const
@@ -187,7 +188,7 @@ namespace Lumina
 
     void SDynamicMeshComponent::PublishRenderData(TSharedPtr<FDynamicMeshRenderData> NewData)
     {
-        eastl::atomic_store(&RenderData, eastl::move(NewData));
+        std::atomic_store(&RenderData, std::move(NewData));
         (void)std::atomic_ref<uint32>(RenderDataVersion).fetch_add(1u, std::memory_order_release);
     }
 
@@ -400,8 +401,8 @@ namespace Lumina
 
         Resource->UVs1 = Resource->UVs;
 
-        Resource->Positions = eastl::move(BD.Positions);
-        Resource->Indices   = eastl::move(BD.Indices);
+        Resource->Positions = std::move(BD.Positions);
+        Resource->Indices   = std::move(BD.Indices);
 
         int32 MaterialSlotCount = 1;
         if (BD.Sections.empty())
@@ -418,7 +419,7 @@ namespace Lumina
             for (const FDynamicMeshSection& Section : BD.Sections)
             {
                 FGeometrySurface& Surface = Resource->GeometrySurfaces.emplace_back();
-                Surface.ID            = FName(eastl::string("Section") + eastl::to_string(SurfaceIndex++));
+                Surface.ID            = FName(Format("Section{}", SurfaceIndex++));
                 Surface.StartIndex    = (uint32)Section.StartIndex;
                 Surface.IndexCount    = (uint32)Section.IndexCount;
                 Surface.MaterialIndex = (int16)Section.MaterialSlot;
@@ -446,7 +447,7 @@ namespace Lumina
         NewData->LocalRadius = Math::Length(Max - NewData->LocalCenter);
 
         Import::Mesh::GenerateMeshlets(*Resource);
-        NewData->Resource = eastl::move(*Resource);
+        NewData->Resource = std::move(*Resource);
         MeshBuffers::CreateForResource(NewData->Resource);
         NewData->MeshletHeaderSlot = NewData->Resource.MeshBuffers.MeshletHeaderSlot;
 
@@ -480,7 +481,7 @@ namespace Lumina
         }
 
         // Single publish point. The extract later this tick already reads the new addresses
-        PublishRenderData(eastl::move(NewData));
+        PublishRenderData(std::move(NewData));
 
         // Staging is consumed; the next edit re-stages from scratch.
         BuildData.reset();

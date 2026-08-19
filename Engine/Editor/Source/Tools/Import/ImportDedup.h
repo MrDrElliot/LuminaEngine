@@ -3,7 +3,8 @@
 #include <cstring>
 
 #include "Lumina.h"
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "Core/Templates/LuminaTemplate.h"
 

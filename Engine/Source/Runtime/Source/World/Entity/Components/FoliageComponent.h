@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Core/Math/Math.h"
 #include "Core/Math/Transform.h"
 #include "Core/Object/ObjectHandleTyped.h"

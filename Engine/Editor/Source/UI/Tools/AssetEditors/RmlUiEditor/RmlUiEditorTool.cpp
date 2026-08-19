@@ -25,6 +25,7 @@
 #include <climits>
 #include <cmath>
 #include <random>
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -2461,7 +2462,7 @@ namespace Lumina
         // away", when all that happened was that it had been reported once already and had not changed
         // since. What the user asked for is the state of the thing they just acted on.
         FString Signature;
-        Signature.sprintf("%d|%d|%d|%s", bLoaded ? 1 : 0, ErrorCount, WarningCount, Headline.c_str());
+        Signature = Format("{}|{}|{}|{}", bLoaded ? 1 : 0, ErrorCount, WarningCount, Headline.c_str());
 
         const bool bUnchanged = (Signature == LastReloadDiagnosticSignature);
         if (bUnchanged && !bAlwaysReport)
@@ -2499,7 +2500,7 @@ namespace Lumina
         FString Suffix;
         if (Diagnostics.size() > 1)
         {
-            Suffix.sprintf(" (+%d more)", (int32)Diagnostics.size() - 1);
+            Suffix = Format(" (+{} more)", (int32)Diagnostics.size() - 1);
         }
 
         if (ErrorCount > 0)
@@ -2888,7 +2889,7 @@ namespace Lumina
             FTreeNodeDisplay& Display = Tree.Get<FTreeNodeDisplay>(Handle);
 
             // Tints the whole row, which is the readable way to show assignment now that the icon is
-            // part of the text and no longer has a colour of its own.
+            // part of the text and no longer has a color of its own.
             if (bAssigned)
             {
                 Display.DisplayColor = ImVec4(0.45f, 0.75f, 1.0f, 1.0f);
@@ -3127,7 +3128,7 @@ namespace Lumina
             const bool bTiny = (TMax.x - TMin.x) < 6.0f || (TMax.y - TMin.y) < 6.0f;
 
             // Selection and hover always draw in full; everything else is filtered by the detail mode, and
-            // context slots degrade to a thin unlabelled outline so a real document stays readable.
+            // context slots degrade to a thin unlabeled outline so a real document stays readable.
             const bool bFocus = bSel || bHov;
             if (!bFocus)
             {

@@ -85,7 +85,7 @@ namespace Lumina
         // because SetTabSize only takes effect while the document is still empty.
         void ConfigureCodeEditor();
 
-        // Rebuilds the Slang language used by the code editor so THIS node's declared pin names colour as
+        // Rebuilds the Slang language used by the code editor so THIS node's declared pin names color as
         // known identifiers. The static base is shared; only the per-node names differ, which is why the
         // tool owns a copy rather than pointing at the shared definition.
         void RebuildCodeEditorLanguage(const CMaterialExpression_CustomSlang* Node);

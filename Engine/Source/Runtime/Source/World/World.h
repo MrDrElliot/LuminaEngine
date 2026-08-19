@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Memory/MemoryConcurrentQueue.h"
 #include "Core/Object/Object.h"
 #include "Core/UpdateContext.h"
 #include "Core/Delegates/Delegate.h"
@@ -219,7 +220,7 @@ namespace Lumina
         
         SDefaultWorldSettings& GetDefaultWorldSettings();
 
-        /** Outliner folder table for this world, created on first use. Editor-only organisation. */
+        /** Outliner folder table for this world, created on first use. Editor-only organization. */
         SSceneFolderComponent& GetSceneFolders();
 
         /** The folder table without creating one, null when this world has never had one. */

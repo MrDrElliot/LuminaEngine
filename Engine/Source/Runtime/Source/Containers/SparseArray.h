@@ -2,7 +2,7 @@
 
 #include <algorithm>
 #include <stdexcept>
-#include "Array.h"
+#include "Vector.h"
 
 
 namespace Lumina
@@ -393,7 +393,7 @@ namespace Lumina
         };
     
         TVector<FSparseArrayStorage> Data;
-        FBitVector Occupied;
+        Containers::TVector<bool> Occupied;
         TVector<Index> FreeList;
     };
 }

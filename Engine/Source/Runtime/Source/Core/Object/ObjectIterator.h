@@ -1,7 +1,7 @@
 ﻿#pragma once
 #include "ObjectArray.h"
 #include "ObjectBase.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 
 namespace Lumina
 {

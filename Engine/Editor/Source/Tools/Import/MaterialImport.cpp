@@ -22,6 +22,7 @@
 #include "UI/Tools/NodeGraph/Material/Nodes/MaterialNode_TextureSample.h"
 #include "UI/Tools/NodeGraph/Material/Nodes/MaterialOutputNode.h"
 #include "Log/Log.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -150,7 +151,7 @@ namespace Lumina
             MFB_OcclusionStrength = BIT(1),
             MFB_Specular         = BIT(2),
             MFB_Clearcoat        = BIT(3),
-            /** Set for every material of an import whose geometry carries a colour attribute. */
+            /** Set for every material of an import whose geometry carries a color attribute. */
             MFB_VertexColor      = BIT(4),
             /** Metalness and roughness arrive as two single-channel maps rather than one packed ORM. */
             MFB_SplitMetalRough  = BIT(5),
@@ -273,8 +274,8 @@ namespace Lumina
             }
             else
             {
-                // glTF COLOR_0 multiplies base colour. A scene can carry most of its look here -- 285 meshes
-                // sharing 7 white-factored materials is a vertex-coloured scene, and dropping the attribute
+                // glTF COLOR_0 multiplies base color. A scene can carry most of its look here -- 285 meshes
+                // sharing 7 white-factored materials is a vertex-colored scene, and dropping the attribute
                 // renders the whole thing white -- so it belongs in the chain, not in a note.
                 auto* VertColor = AddNode<CMaterialExpression_VertexColor>(Graph, ColTex, 250.0f * VS);
 
@@ -357,8 +358,8 @@ namespace Lumina
             {
                 // glTF: normal = normalize((rgb*2-1) * vec3(scale, scale, 1)). The output node reconstructs z, so
                 // scaling all three channels about 0.5 in ENCODED space is exactly equivalent and costs three nodes.
-                auto* Centre = AddNode<CMaterialExpression_ConstantFloat>(Graph, ColTex - 320.0f, 730.0f * VS);
-                Centre->Value = FVector4(0.5f, 0.0f, 0.0f, 0.0f);
+                auto* Center = AddNode<CMaterialExpression_ConstantFloat>(Graph, ColTex - 320.0f, 730.0f * VS);
+                Center->Value = FVector4(0.5f, 0.0f, 0.0f, 0.0f);
 
                 auto* ScaleParam = AddNode<CMaterialExpression_ConstantFloat>(Graph, ColTex - 320.0f, 790.0f * VS);
                 ScaleParam->bDynamic      = true;
@@ -367,7 +368,7 @@ namespace Lumina
 
                 auto* Sub = AddNode<CMaterialExpression_Subtraction>(Graph, ColMul - 320.0f, 730.0f * VS);
                 Connect(TexNormal->GetOutputPins()[0].Get(), Sub->A);
-                Connect(Centre->GetOutputPins()[0].Get(), Sub->B);
+                Connect(Center->GetOutputPins()[0].Get(), Sub->B);
 
                 auto* Mul = AddNode<CMaterialExpression_Multiplication>(Graph, ColMul - 160.0f, 730.0f * VS);
                 Connect(Sub->Output, Mul->A);
@@ -375,7 +376,7 @@ namespace Lumina
 
                 auto* Add = AddNode<CMaterialExpression_Addition>(Graph, ColMul, 730.0f * VS);
                 Connect(Mul->Output, Add->A);
-                Connect(Centre->GetOutputPins()[0].Get(), Add->B);
+                Connect(Center->GetOutputPins()[0].Get(), Add->B);
                 Connect(Add->Output, Output->NormalPin);
             }
 
@@ -486,7 +487,7 @@ namespace Lumina
             {
                 FFixedString Candidate = Path;
                 Candidate.append("_");
-                Candidate.append_convert(eastl::to_string(N));
+                Candidate.append(Format("{}", N));
                 if (FindObject<CPackage>(Candidate) == nullptr)
                 {
                     return Candidate;
@@ -520,7 +521,7 @@ namespace Lumina
             {
                 FFixedString Path = MaterialsDir;
                 Path.append(Import::MakeAssetName(Prefix, BaseName.c_str()).c_str());
-                Path.append_convert(Variant.data(), Variant.length());
+                Path.append(Variant.data(), Variant.length());
                 return Path;
             };
 
@@ -601,17 +602,17 @@ namespace Lumina
                 if (UVSignature != 0)
                 {
                     Variant.append("_UV");
-                    Variant.append_convert(eastl::to_string(UVSignature));
+                    Variant.append(Format("{}", UVSignature));
                 }
                 if (SamplerSignature != 0)
                 {
                     Variant.append("_S");
-                    Variant.append_convert(eastl::to_string(SamplerSignature));
+                    Variant.append(Format("{}", SamplerSignature));
                 }
                 if (FeatureSignature != 0)
                 {
                     Variant.append("_F");
-                    Variant.append_convert(eastl::to_string(FeatureSignature));
+                    Variant.append(Format("{}", FeatureSignature));
                 }
 
                 CMaterial* Master = CFactory::CreateNewOf<CMaterial>(EnsureUniquePath(MakeAssetPath("M_", Variant)));

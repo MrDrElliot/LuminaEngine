@@ -8,8 +8,8 @@ namespace Lumina::Reflection
     {
     }
 
-    void FReflectedWorkspace::AddReflectedProject(eastl::unique_ptr<FReflectedProject>&& Project)
+    void FReflectedWorkspace::AddReflectedProject(std::unique_ptr<FReflectedProject>&& Project)
     {
-        ReflectedProjects.push_back(eastl::move(Project));
+        ReflectedProjects.push_back(std::move(Project));
     }
 }

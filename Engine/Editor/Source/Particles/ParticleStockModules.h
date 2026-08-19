@@ -265,7 +265,7 @@ namespace Lumina
 
         CParticleModule_ColorOverLife();
 
-        /** Full colour ramp across the particle's life, not just a start/end pair -- the two-stop lerp
+        /** Full color ramp across the particle's life, not just a start/end pair -- the two-stop lerp
          *  this replaced could not express a flash, a mid-life peak, or a hold-then-fade. */
         PROPERTY(Editable, Category = "Color")
         SGradient Gradient;
@@ -292,7 +292,7 @@ namespace Lumina
         SCurve Curve;
     };
 
-    /** Records a lagging previous position so the renderer can draw a streak along the path travelled. */
+    /** Records a lagging previous position so the renderer can draw a streak along the path traveled. */
     REFLECT()
     class CParticleModule_Trail : public CParticleModule
     {
@@ -301,7 +301,7 @@ namespace Lumina
         EParticleModuleStage GetStage() const override { return EParticleModuleStage::Update; }
         FString GetDisplayName() const override { return "Trail"; }
         FString GetCategory() const override { return "Render"; }
-        FString GetTooltip() const override { return "Stretch each particle into a streak along the path it actually travelled. Overrides the emitter's Facing Mode."; }
+        FString GetTooltip() const override { return "Stretch each particle into a streak along the path it actually traveled. Overrides the emitter's Facing Mode."; }
         uint32 GetAccentColor() const override { return IM_COL32(150, 90, 180, 255); }
         void Generate(FParticleCompiler& Compiler, int32 ModuleIndex) override;
 

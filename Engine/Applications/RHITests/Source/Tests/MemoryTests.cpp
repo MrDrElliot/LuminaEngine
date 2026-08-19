@@ -58,7 +58,7 @@ namespace Lumina::RHITests
         RHI_CHECK(Ptr != 0);
     }
 
-    RHI_TEST(Memory, AlignmentIsHonoured)
+    RHI_TEST(Memory, AlignmentIsHonored)
     {
         const RHI::GPUPtr Ptr = RHI::Malloc(4096, 256, RHI::EMemoryType::GPUOnly);
         RHI_REQUIRE(Ptr != 0);

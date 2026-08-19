@@ -30,7 +30,6 @@ public abstract class LuminaTargetRules : TargetRules
 
         GlobalDefinitions.AddRange(new[]
         {
-            "EASTL_USER_DEFINED_ALLOCATOR=1",
             "_SILENCE_CXX23_ALIGNED_UNION_DEPRECATION_WARNING",
             "_SILENCE_CXX23_ALIGNED_STORAGE_DEPRECATION_WARNING",
             "IMGUI_DEFINE_MATH_OPERATORS",
@@ -123,7 +122,7 @@ public abstract class LuminaTargetRules : TargetRules
             CompilerWarning.InterferenceSize,
 
             // Third-party headers arrive through -isystem, which silences their front-end diagnostics
-            // but not the ones GCC raises after inlining. eastl::swap over basic_string's union layout
+            // but not the ones GCC raises after inlining. swap over the string's union layout
             // trips these in every unit that moves a string, with nothing to fix on our side.
             CompilerWarning.MaybeUninitialized,
             CompilerWarning.DanglingPointer);
@@ -139,7 +138,7 @@ public abstract class LuminaTargetRules : TargetRules
             CompilerWarning.UseAfterFree,           // a pointer read after the block was released
             CompilerWarning.FreeNonheapObject,      // free or delete applied to something never allocated
             CompilerWarning.DanglingReference,      // a reference bound to a temporary that has already gone
-            CompilerWarning.Uninitialized,          // eastl's union layouts trip this after inlining
+            CompilerWarning.Uninitialized,          // union layouts trip this after inlining
             CompilerWarning.DeprecatedDeclarations); // a compiler or SDK bump must not break the build
 
         if (Target.Platform == BuildPlatform.Windows64)
@@ -221,10 +220,6 @@ public abstract class LuminaModuleRules : ModuleRules
         {
             PrivateLinkerOptions.Add("/NODEFAULTLIB:LIBCMT");
         }
-
-        // EASTL resolves its allocator per image, so each image needs exactly one compiled copy.
-        PerImageSourceFiles.Add(
-            Path.Combine(Target.EngineSourceDirectory, "Runtime", "Source", "Memory", "EASTLImpl.cpp"));
 
         // Replacing global new/delete is a per-binary link decision; an image without its own definition
         // binds to the CRT, and one image out of step hands rpmalloc a CRT block.

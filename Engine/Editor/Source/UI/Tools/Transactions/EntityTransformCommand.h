@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Core/Math/Transform.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "EditorTransaction.h"

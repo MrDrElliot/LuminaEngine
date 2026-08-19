@@ -1,3 +1,4 @@
+#include "Containers/Queue.h"
 #include "RuntimePCH.h"
 #include "JoltPhysicsScene.h"
 #include "JoltCharacterHandle.h"
@@ -999,7 +1000,7 @@ namespace Lumina::Physics
             JoltSystem->SetPhysicsSettings(JoltSettings);
         }
 
-        const float PhysicsRateHz  = eastl::max(10.0f, WorldSettings.PhysicsHz);
+        const float PhysicsRateHz  = std::max(10.0f, WorldSettings.PhysicsHz);
         const float FixedTimestep  = 1.0f / PhysicsRateHz;
         const float MaxAccumulation = (float)WorldSettings.MaxPhysicsSteps * FixedTimestep;
 
@@ -1369,10 +1370,10 @@ namespace Lumina::Physics
                             reinterpret_cast<const float*>(InterpStaging.CurrPos.data()),
                             int(Total) * 3, Alpha);
 
-            eastl::copy(InterpStaging.CurrQx.begin(), InterpStaging.CurrQx.end(), InterpStaging.LerpQx.begin());
-            eastl::copy(InterpStaging.CurrQy.begin(), InterpStaging.CurrQy.end(), InterpStaging.LerpQy.begin());
-            eastl::copy(InterpStaging.CurrQz.begin(), InterpStaging.CurrQz.end(), InterpStaging.LerpQz.begin());
-            eastl::copy(InterpStaging.CurrQw.begin(), InterpStaging.CurrQw.end(), InterpStaging.LerpQw.begin());
+            std::copy(InterpStaging.CurrQx.begin(), InterpStaging.CurrQx.end(), InterpStaging.LerpQx.begin());
+            std::copy(InterpStaging.CurrQy.begin(), InterpStaging.CurrQy.end(), InterpStaging.LerpQy.begin());
+            std::copy(InterpStaging.CurrQz.begin(), InterpStaging.CurrQz.end(), InterpStaging.LerpQz.begin());
+            std::copy(InterpStaging.CurrQw.begin(), InterpStaging.CurrQw.end(), InterpStaging.LerpQw.begin());
 
             NlerpQuatsSoA(InterpStaging.LerpQx.data(), InterpStaging.LerpQy.data(),
                           InterpStaging.LerpQz.data(), InterpStaging.LerpQw.data(),
@@ -1838,7 +1839,7 @@ namespace Lumina::Physics
         const float Length = Direction.Length();
         if (Length < LE_SMALL_NUMBER)
         {
-            return eastl::nullopt;
+            return NullOpt;
         }
 
         JPH::RRayCast Ray;
@@ -1854,7 +1855,7 @@ namespace Lumina::Physics
         bool bHit = JoltSystem->GetNarrowPhaseQuery().CastRay(Ray, Hit, {}, LayerFilter, IgnoreFilter);
         if (!bHit)
         {
-            return eastl::nullopt;
+            return NullOpt;
         }
 
         const JPH::BodyLockInterfaceNoLock& LockInterface = JoltSystem->GetBodyLockInterfaceNoLock();
@@ -1862,7 +1863,7 @@ namespace Lumina::Physics
         JPH::Body* Body = LockInterface.TryGetBody(Hit.mBodyID);
         if (!Body)
         {
-            return eastl::nullopt;
+            return NullOpt;
         }
 
         JPH::Vec3 SurfaceNormal = Body->GetWorldSpaceSurfaceNormal(Hit.mSubShapeID2, Ray.GetPointOnRay(Hit.mFraction));
@@ -2008,7 +2009,7 @@ namespace Lumina::Physics
         FSphereCastCollector Collector(*this, OutHits, Settings, SweepLength, Lock);
         RunSphereCast(*JoltSystem, Settings, Collector);
 
-        eastl::sort(OutHits.begin(), OutHits.end(), [](const SRayResult& A, const SRayResult& B)
+        std::sort(OutHits.begin(), OutHits.end(), [](const SRayResult& A, const SRayResult& B)
         {
             return A.Fraction < B.Fraction;
         });
@@ -2022,7 +2023,7 @@ namespace Lumina::Physics
 
         if (Math::IsNearlyZero(Settings.Radius))
         {
-            return eastl::nullopt;
+            return NullOpt;
         }
 
         JPH::ClosestHitCollisionCollector<JPH::CastShapeCollector> Collector;
@@ -2032,14 +2033,14 @@ namespace Lumina::Physics
 
         if (!Collector.HadHit())
         {
-            return eastl::nullopt;
+            return NullOpt;
         }
 
         SRayResult Result;
         const float SweepLength = Math::Length(Settings.End - Settings.Start);
         if (!BuildSweepResult(*this, JoltSystem->GetBodyLockInterfaceNoLock(), Settings, SweepLength, Collector.mHit, Result))
         {
-            return eastl::nullopt;
+            return NullOpt;
         }
 
         return Result;
@@ -2159,7 +2160,7 @@ namespace Lumina::Physics
         // IgnoreBodies still excludes specific bodies (e.g. the shooter's own).
         JoltSystem->GetNarrowPhaseQuery().CastRay(Ray, JPH::RayCastSettings(), Collector, {}, {}, Filter, {});
 
-        eastl::sort(OutHits.begin(), OutHits.end(), [](const SRayResult& A, const SRayResult& B) { return A.Fraction < B.Fraction; });
+        std::sort(OutHits.begin(), OutHits.end(), [](const SRayResult& A, const SRayResult& B) { return A.Fraction < B.Fraction; });
     }
 
     int32 FJoltPhysicsScene::CollidePoint(const FVector3& Point, TSpan<const uint32> IgnoreBodies, TSpan<entt::entity> OutEntities)
@@ -2475,7 +2476,7 @@ namespace Lumina::Physics
                 uint32 B = FaceIndices[(i + 1) % NumFaceVertices];
                 if (A > B)
                 {
-                    eastl::swap(A, B);
+                    std::swap(A, B);
                 }
 
                 // Adjacent faces share every edge, so without the dedup each one is drawn twice.
@@ -4686,7 +4687,7 @@ namespace Lumina::Physics
             return 0;
         }
 
-        eastl::sort(Keys.begin(), Keys.end());
+        std::sort(Keys.begin(), Keys.end());
 
         TVector<JPH::BodyID> BodyIDs;
 
@@ -4698,7 +4699,7 @@ namespace Lumina::Physics
                 ++End;
             }
 
-            // Sub-shapes are body-local, so anchoring at the bucket's centre keeps their offsets small.
+            // Sub-shapes are body-local, so anchoring at the bucket's center keeps their offsets small.
             FVector3 Min = Instances[Keys[Start].Index].Position;
             FVector3 Max = Min;
             for (SIZE_T i = Start + 1; i < End; ++i)

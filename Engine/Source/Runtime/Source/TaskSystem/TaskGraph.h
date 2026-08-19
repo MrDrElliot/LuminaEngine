@@ -2,7 +2,8 @@
 
 #include "TaskSystem.h"
 #include "TaskTypes.h"
-#include "Containers/Array.h"
+#include "Containers/Pair.h"
+#include "Containers/Vector.h"
 #include "Containers/Function.h"
 #include "Memory/SmartPtr.h"
 #include "Memory/Allocators/Allocator.h"
@@ -100,7 +101,7 @@ namespace Lumina
         // rather than reallocated every frame; grows if a graph ever needs more.
         FBlockLinearAllocator                   Allocator;
         TVector<FNode*>                         Nodes;
-        TVector<eastl::pair<uint32, uint32>>    Edges;
+        TVector<TPair<uint32, uint32>>    Edges;
         Jobs::FCounter*                         GraphCounter = nullptr;
         // Root set captured before any scheduling, so workers concurrently driving a dependent's
         // in-degree to zero can't race the dispatch loop into double-scheduling it.

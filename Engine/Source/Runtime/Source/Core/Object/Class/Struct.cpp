@@ -480,7 +480,7 @@ namespace Lumina
             Tmp.NetIndexToName     = HookSource.NetIndexToName;
 
             Current->NetSerialize(Tmp, Current->GetValuePtr<void>(Data));
-            OutPerField.push_back(eastl::move(FieldBytes));
+            OutPerField.push_back(std::move(FieldBytes));
         }
     }
 

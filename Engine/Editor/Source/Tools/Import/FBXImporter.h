@@ -32,7 +32,7 @@ namespace Lumina
         }
 
         // Embedded image payloads are views into the loaded ufbx scene, so the parse outlives
-        // ParseMeshSource and is only released once the import is committed or cancelled.
+        // ParseMeshSource and is only released once the import is committed or canceled.
         void ReleaseSourceData() override;
 
     protected:

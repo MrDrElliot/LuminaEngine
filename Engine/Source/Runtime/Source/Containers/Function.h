@@ -1,15 +1,12 @@
-﻿#pragma once
+#pragma once
 
-#include "Any.h"
-#include "Array.h"
-#include "Name.h"
-#include "EASTL/internal/function.h"
 #include <functional>
 
+#include "Any.h"
+#include "Name.h"
 
 namespace Lumina
 {
-    template<typename T> using TFunction            = eastl::function<T>;
+    template<typename T> using TFunction            = std::function<T>;
     template<typename T> using TMoveOnlyFunction    = std::move_only_function<T>;
-    
 }

@@ -23,7 +23,6 @@
 #include "FileSystem/FileSystem.h"
 #include "Paths/Paths.h"
 #include "Core/Serialization/ObjectArchiver.h"
-#include "EASTL/sort.h"
 #include "Input/InputContext.h"
 #include "Input/InputProcessor.h"
 #include "UI/RmlUiBridge.h"
@@ -67,6 +66,7 @@
 #include "World/Subsystems/WorldSettings.h"
 #include "Log/Log.h"
 #include "Renderer/MeshQuantization.h"
+#include "Containers/StringFormat.h"
 
 
 namespace Lumina
@@ -201,7 +201,7 @@ namespace Lumina
             }
             float T1 = (Box.Min[Axis] - Origin[Axis]) / Dir[Axis];
             float T2 = (Box.Max[Axis] - Origin[Axis]) / Dir[Axis];
-            if (T1 > T2) { eastl::swap(T1, T2); }
+            if (T1 > T2) { std::swap(T1, T2); }
             TMin = Math::Max(TMin, T1);
             TMax = Math::Min(TMax, T2);
             if (TMin > TMax)
@@ -450,7 +450,7 @@ namespace Lumina
 
             if (ImGui::MenuItem(LE_ICON_IDENTIFIER " Copy Entity ID"))
             {
-                ImGui::SetClipboardText(eastl::to_string(entt::to_integral(Data.Entity)).c_str());
+                ImGui::SetClipboardText(Format("{}", entt::to_integral(Data.Entity)).c_str());
             }
             ImGuiX::TextTooltip("{}", "Copy entity identifier to platform clipboard");
 
@@ -674,7 +674,7 @@ namespace Lumina
             if (Data.FolderID != 0)
             {
                 FFixedString FolderLabel;
-                FolderLabel.append(LE_ICON_FOLDER).append(" ").append_convert(NewName.begin(), NewName.length());
+                FolderLabel.append(LE_ICON_FOLDER).append(" ").append(NewName);
 
                 FTreeNodeDisplay& FolderDisplay = Tree.Get<FTreeNodeDisplay>(Item);
                 FolderDisplay.DisplayName = FolderLabel;
@@ -686,7 +686,7 @@ namespace Lumina
 
             FFixedString Name;
             Name.append(LE_ICON_CUBE).append(" ")
-                .append_convert(NewName.begin(), NewName.length()).append_convert(FString(" - (" + eastl::to_string(entt::to_integral(Data.Entity)) + ")"));
+                .append(NewName).append(Format(" - ({})", entt::to_integral(Data.Entity)));
 
 			Tree.Get<FTreeNodeDisplay>(Item).DisplayName = Name;
 
@@ -788,14 +788,14 @@ namespace Lumina
 
         RebindRegistryObservers();
 
-        WorldTravelledHandle = FCoreDelegates::OnWorldTravelled.AddMember(this, &FWorldEditorTool::OnWorldTravelled);
+        WorldTraveledHandle = FCoreDelegates::OnWorldTraveled.AddMember(this, &FWorldEditorTool::OnWorldTraveled);
         GameQuitHandle = FCoreDelegates::OnGameQuitRequested.AddMember(this, &FWorldEditorTool::OnGameQuitRequested);
     }
 
     void FWorldEditorTool::OnDeinitialize(const FUpdateContext& UpdateContext)
     {
-        FCoreDelegates::OnWorldTravelled.Remove(WorldTravelledHandle);
-        WorldTravelledHandle = FDelegateHandle{};
+        FCoreDelegates::OnWorldTraveled.Remove(WorldTraveledHandle);
+        WorldTraveledHandle = FDelegateHandle{};
         FCoreDelegates::OnGameQuitRequested.Remove(GameQuitHandle);
         GameQuitHandle = FDelegateHandle{};
 
@@ -905,7 +905,7 @@ namespace Lumina
         }
 
         // Ctrl means both "command modifier" and "vertex snap". Once it has served as a chord it must not
-        // also mean snap, or duplicating next to the gizmo yanks the entity onto a neighbouring vertex.
+        // also mean snap, or duplicating next to the gizmo yanks the entity onto a neighboring vertex.
         if (!ImGui::GetIO().KeyCtrl)
         {
             bCtrlConsumedByChord = false;
@@ -2793,7 +2793,7 @@ namespace Lumina
                 entt::meta_type PickedMetaType;
                 CStruct*        PickedStruct = nullptr;
 
-                // Resolved before the list is drawn so it can grey out what these targets already have.
+                // Resolved before the list is drawn so it can gray out what these targets already have.
                 TVector<entt::entity> Targets = GetComponentEditTargets(Entity);
 
                 if (DrawAddableComponentList(*Filter, Targets, PickedMetaType, PickedStruct))
@@ -3098,7 +3098,7 @@ namespace Lumina
         FCreatePrefabRequest BuildCreatePrefabRequest(entt::registry& Registry, TVector<entt::entity> InitialRoots)
         {
             FCreatePrefabRequest Out;
-            Out.Roots = eastl::move(InitialRoots);
+            Out.Roots = std::move(InitialRoots);
             Out.Pivot = FVector3(0.0f);
             Out.TotalEntityCount = 0;
 
@@ -3178,10 +3178,10 @@ namespace Lumina
             }
         }
 
-        FCreatePrefabRequest Req = BuildCreatePrefabRequest(Registry, eastl::move(Roots));
+        FCreatePrefabRequest Req = BuildCreatePrefabRequest(Registry, std::move(Roots));
 
         ToolContext->PushModal("Create Prefab From Selection", ImVec2(560.0f, 290.0f),
-            [this, Req = eastl::move(Req)]() -> bool
+            [this, Req = std::move(Req)]() -> bool
         {
             static FFixedString NameBuffer;
             static FFixedString DirBuffer;
@@ -4093,7 +4093,7 @@ namespace Lumina
         ImGui::Spacing();
     }
 
-    void FWorldEditorTool::OnWorldTravelled(CWorld* OldWorld, CWorld* NewWorld)
+    void FWorldEditorTool::OnWorldTraveled(CWorld* OldWorld, CWorld* NewWorld)
     {
         // Only react if Travel swapped the world this tool is displaying.
         if (OldWorld != World.Get() || NewWorld == nullptr)
@@ -4604,7 +4604,7 @@ namespace Lumina
         }
         if (Stages.size() > 3)
         {
-            return FString(eastl::to_string(Stages.size()).c_str()) + " stages";
+            return FString(Format("{}", Stages.size()).c_str()) + " stages";
         }
         FString Out;
         for (size_t i = 0; i < Stages.size(); ++i)
@@ -4721,7 +4721,7 @@ namespace Lumina
 
         TVector<CWorld::FSystemInfo> Systems;
         World->GetAllSystems(Systems);
-        eastl::sort(Systems.begin(), Systems.end(), [](const CWorld::FSystemInfo& A, const CWorld::FSystemInfo& B)
+        std::sort(Systems.begin(), Systems.end(), [](const CWorld::FSystemInfo& A, const CWorld::FSystemInfo& B)
         {
             return strcmp(A.Name.c_str(), B.Name.c_str()) < 0;
         });
@@ -4777,7 +4777,7 @@ namespace Lumina
         {
             //~ Native systems ---------------------------------------------------------------------------
             SectionHeader(LE_ICON_CHIP, "NATIVE",
-                FString(eastl::to_string(EnabledCount).c_str()) + " / " + eastl::to_string(Systems.size()).c_str() + " enabled",
+                FString(Format("{}", EnabledCount).c_str()) + " / " + Format("{}", Systems.size()).c_str() + " enabled",
                 "Engine C++ systems for this world. Click a row to enable/disable it (a disabled system stops ticking "
                 "here -- write your own to replace it). Changes apply next frame and save with the world.");
 
@@ -5501,7 +5501,7 @@ namespace Lumina
         }
 
         // Front-to-back so closer labels claim space first.
-        eastl::sort(Candidates.begin(), Candidates.end(), [](const FCandidate& A, const FCandidate& B)
+        std::sort(Candidates.begin(), Candidates.end(), [](const FCandidate& A, const FCandidate& B)
         {
             return A.DepthSq < B.DepthSq;
         });

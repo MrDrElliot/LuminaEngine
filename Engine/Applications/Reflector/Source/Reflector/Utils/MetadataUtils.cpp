@@ -1,14 +1,15 @@
-﻿#include "MetadataUtils.h"
+﻿#include "Reflector/Utils/StringOps.h"
+#include "MetadataUtils.h"
 
-static inline void SanitizeKeyValueString(eastl::string& OutString)
+static inline void SanitizeKeyValueString(std::string& OutString)
 {
     if (OutString.empty())
     {
         return;
     }
 
-    OutString.ltrim();
-    OutString.rtrim();
+    Lumina::StringOps::TrimStart(OutString);
+    Lumina::StringOps::TrimEnd(OutString);
 
     // Strip pairs of quotes
     auto StripQuotes = [&OutString] ( char quote )
@@ -23,13 +24,13 @@ static inline void SanitizeKeyValueString(eastl::string& OutString)
     StripQuotes('\'');
     StripQuotes('`');
 
-    OutString.ltrim();
-    OutString.rtrim();
+    Lumina::StringOps::TrimStart(OutString);
+    Lumina::StringOps::TrimEnd(OutString);
 }
 
-void FMetadataParser::Parse(const eastl::string& Raw)
+void FMetadataParser::Parse(const std::string& Raw)
 {
-    eastl::string RawCopy = Raw;
+    std::string RawCopy = Raw;
     
     auto IsEven = [] (uint32_t Value) -> bool
     {
@@ -39,16 +40,16 @@ void FMetadataParser::Parse(const eastl::string& Raw)
     Metadata.clear();
 
     // Fancier split since we might have delimiter characters inside a string block
-    eastl::vector<eastl::string> results;
+    std::vector<std::string> results;
 
-    eastl::string currentToken;
+    std::string currentToken;
     int32_t quoteCount = 0;
     int32_t length = (int32_t) RawCopy.length();
     for (int32_t i = 0; i < length; i++)
     {
         if (RawCopy[i] == ',' && IsEven(quoteCount))
         {
-            currentToken.rtrim();
+            Lumina::StringOps::TrimEnd(currentToken);
             results.emplace_back( currentToken );
             currentToken.clear();
             quoteCount = 0;
@@ -69,14 +70,14 @@ void FMetadataParser::Parse(const eastl::string& Raw)
 
     if (!currentToken.empty())
     {
-        currentToken.rtrim();
+        Lumina::StringOps::TrimEnd(currentToken);
         results.emplace_back(currentToken);
         currentToken.clear();
         quoteCount = 0;
     }
 
     // Split results using the '=' char
-    for (eastl::string& part : results)
+    for (std::string& part : results)
     {
         int32_t separatorIdx = -1;
         length = (int32_t) part.length();

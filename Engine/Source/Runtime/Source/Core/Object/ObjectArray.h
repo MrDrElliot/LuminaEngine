@@ -2,7 +2,7 @@
 
 #include "ObjectBase.h"
 #include "ObjectHandle.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Core/Threading/Atomic.h"
 #include "Core/Threading/Thread.h"
 #include "Platform/GenericPlatform.h"
@@ -229,7 +229,7 @@ namespace Lumina
         FORCEINLINE bool IsShuttingDown() const { return bShuttingDown; }
     
         template<typename Func>
-        requires(eastl::is_invocable_v<Func, CObjectBase*, int32>)
+        requires(std::is_invocable_v<Func, CObjectBase*, int32>)
         void ForEachObject(Func&& Function) const
         {
             const int32 MaxElements = ChunkedArray.GetNumElements();
@@ -239,7 +239,7 @@ namespace Lumina
                 const FCObjectEntry* Item = ChunkedArray.GetItem(i);
                 if (Item && Item->GetObj())
                 {
-                    eastl::invoke(Function, Item->GetObj(), i);
+                    std::invoke(Function, Item->GetObj(), i);
                 }
             }
         }

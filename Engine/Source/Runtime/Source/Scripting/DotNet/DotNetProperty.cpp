@@ -219,7 +219,7 @@ LUMINA_DOTNET_EXPORT(const void*, PropVectorOps)(const void* Prop)
 // PropSetString addresses a string BY property on an object, which cannot reach a string inside a container:
 // a script list of strings holds FStrings packed in the array's own buffer, and the element address comes
 // from the ops table, not from an FProperty. Reading needs no export at all (NativeMarshal.ReadString decodes
-// the eastl string in place), so this is the write half only.
+// the native string in place), so this is the write half only.
 LUMINA_DOTNET_EXPORT(void, StringAssign)(void* StringPtr, const char* Utf8, int Len)
 {
     if (StringPtr == nullptr)

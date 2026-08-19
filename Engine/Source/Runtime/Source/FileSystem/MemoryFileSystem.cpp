@@ -153,7 +153,7 @@ namespace Lumina::VFS
             return false;
         }
 
-        TVector<uint8> Bytes(Data.begin(), Data.end());
+        TVector<uint8> Bytes(Data.data(), Data.data() + Data.size());
         AddFile(Path, Move(Bytes));
         return true;
     }

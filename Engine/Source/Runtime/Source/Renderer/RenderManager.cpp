@@ -46,7 +46,7 @@ namespace Lumina
 
     static TConsoleVar CVarVSync("Core.VSync", true, "Toggles v-sync", [](const CVarValueType& Value)
     {
-        const bool bEnabled = eastl::get<bool>(Value);
+        const bool bEnabled = Containers::Get<bool>(Value);
         RHI::SetVSync(bEnabled);
         if (FRenderManager* Manager = TryRender())
         {

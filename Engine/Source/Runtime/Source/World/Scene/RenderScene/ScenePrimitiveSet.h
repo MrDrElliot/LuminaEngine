@@ -1,7 +1,8 @@
 #pragma once
 
 #include "Renderer/ShaderHandle.h"
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Vector.h"
 #include "Core/LuminaMacros.h"
 #include "Core/Math/Math.h"
 #include "Memory/Memory.h"
@@ -162,7 +163,7 @@ namespace Lumina
         // Mesh-local world size of one UV tile; 0 = unknown. Read by the texture-streaming gather to turn
         // a distance into a required texture resolution. See FGeometrySurface::TexelFactor.
         //
-        // Initialised, unlike its neighbours, because this struct is also built field-by-field as a memo
+        // Initialized, unlike its neighbors, because this struct is also built field-by-field as a memo
         // proto -- a field missed there reads as garbage rather than zero, and a junk float here becomes a
         // junk mip request (or a NaN that poisons the max downstream).
         float           TexelFactor = 0.0f;

@@ -85,7 +85,7 @@ namespace Lumina
         std::coroutine_handle<promise_type> Handle;
     };
 
-    // The coroutine frame GCC synthesises here holds the co_awaited lambda, a type with no linkage.
+    // The coroutine frame GCC synthesizes here holds the co_awaited lambda, a type with no linkage.
     // The frame is compiler-generated, so there is nothing at source level to give linkage to.
     #if defined(__GNUC__) && !defined(__clang__)
         #pragma GCC diagnostic push
@@ -173,7 +173,6 @@ namespace Lumina
     FTaskGraph::FNodeHandle FTaskGraph::AddOneShotNode(void* Callable, FInvokeOneShot Invoke, FDestroyCallable Destroy, ETaskPriority Priority)
     {
         auto* Node              = Allocator.TAlloc<FNode>();
-        Node->Dependents.set_allocator(FFrameArenaAllocator(&Allocator, "TaskGraphDeps"));
         Node->Callable          = Callable;
         Node->InvokeOneShot     = Invoke;
         Node->Destroy           = Destroy;
@@ -191,7 +190,6 @@ namespace Lumina
     FTaskGraph::FNodeHandle FTaskGraph::AddParallelForNode(uint32 Count, uint32 MinRange, void* Callable, FInvokeParallel Invoke, FDestroyCallable Destroy, ETaskPriority Priority)
     {
         auto* Node              = Allocator.TAlloc<FNode>();
-        Node->Dependents.set_allocator(FFrameArenaAllocator(&Allocator, "TaskGraphDeps"));
         Node->bIsParallelFor    = true;
         Node->Priority          = Priority;
         Node->Arena             = &Allocator;

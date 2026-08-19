@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
 #include "Core/Object/Class.h"
 
 namespace Lumina

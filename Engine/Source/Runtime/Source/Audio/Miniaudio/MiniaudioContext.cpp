@@ -66,7 +66,7 @@ namespace Lumina
 			SlotGeneration[i].store(0, Atomic::MemoryOrderRelaxed);
 			SlotPriority[i].store(0, Atomic::MemoryOrderRelaxed);
 			SlotFrame[i].store(0, Atomic::MemoryOrderRelaxed);
-			SlotCancelled[i].store(false, Atomic::MemoryOrderRelaxed);
+			SlotCanceled[i].store(false, Atomic::MemoryOrderRelaxed);
 			FreeSlots.enqueue(i);
 		}
 
@@ -356,7 +356,7 @@ namespace Lumina
 			Generation = NextGeneration.fetch_add(1, Atomic::MemoryOrderRelaxed);
 		}
 
-		SlotCancelled[Slot].store(false, Atomic::MemoryOrderRelaxed);
+		SlotCanceled[Slot].store(false, Atomic::MemoryOrderRelaxed);
 		SlotPriority[Slot].store(Priority, Atomic::MemoryOrderRelaxed);
 		SlotFrame[Slot].store(0, Atomic::MemoryOrderRelaxed);
 		SlotGeneration[Slot].store(Generation, Atomic::MemoryOrderRelaxed);
@@ -403,7 +403,7 @@ namespace Lumina
 			SlotGeneration[Slot].store(0, Atomic::MemoryOrderRelaxed);
 			SlotPriority[Slot].store(0, Atomic::MemoryOrderRelaxed);
 			SlotFrame[Slot].store(0, Atomic::MemoryOrderRelaxed);
-			SlotCancelled[Slot].store(false, Atomic::MemoryOrderRelaxed);
+			SlotCanceled[Slot].store(false, Atomic::MemoryOrderRelaxed);
 			FreeSlots.enqueue(Slot);
 		}
 
@@ -440,7 +440,7 @@ namespace Lumina
 		Play.Data      = Data;
 		Play.StopEpoch = StopEpoch.load(Atomic::MemoryOrderRelaxed);
 
-		PendingPlays.enqueue(eastl::move(Play));
+		PendingPlays.enqueue(std::move(Play));
 		return Handle;
 	}
 
@@ -463,7 +463,7 @@ namespace Lumina
 		Play.Path      = FString(File);
 		Play.StopEpoch = StopEpoch.load(Atomic::MemoryOrderRelaxed);
 
-		PendingPlays.enqueue(eastl::move(Play));
+		PendingPlays.enqueue(std::move(Play));
 		return Handle;
 	}
 
@@ -483,10 +483,10 @@ namespace Lumina
 		FPendingPlay Play;
 		Play.Handle    = Handle;
 		Play.Params    = Params;
-		Play.Stream    = eastl::move(Stream);
+		Play.Stream    = std::move(Stream);
 		Play.StopEpoch = StopEpoch.load(Atomic::MemoryOrderRelaxed);
 
-		PendingPlays.enqueue(eastl::move(Play));
+		PendingPlays.enqueue(std::move(Play));
 		return Handle;
 	}
 
@@ -495,7 +495,7 @@ namespace Lumina
 		const uint32 Slot = Play.Handle.Index;
 
 		// The voice was stopped or flushed before the pump ever saw it.
-		if (Play.StopEpoch != StopEpoch.load(Atomic::MemoryOrderRelaxed) || SlotCancelled[Slot].load(Atomic::MemoryOrderRelaxed))
+		if (Play.StopEpoch != StopEpoch.load(Atomic::MemoryOrderRelaxed) || SlotCanceled[Slot].load(Atomic::MemoryOrderRelaxed))
 		{
 			ReleaseVoiceSlot(Slot, Play.Handle.Generation);
 			return;
@@ -619,7 +619,7 @@ namespace Lumina
 			ma_sound_start(&NewSound->Sound);
 		}
 
-		Voices[Slot] = eastl::move(NewSound);
+		Voices[Slot] = std::move(NewSound);
 	}
 
 	void FMiniaudioContext::ProcessCommand(const FAudioCommand& Cmd)
@@ -966,7 +966,7 @@ namespace Lumina
 			SlotGeneration[Handle.Index].load(Atomic::MemoryOrderRelaxed) == Handle.Generation)
 		{
 			// Catches a stop issued before the pump has started the voice.
-			SlotCancelled[Handle.Index].store(true, Atomic::MemoryOrderRelaxed);
+			SlotCanceled[Handle.Index].store(true, Atomic::MemoryOrderRelaxed);
 		}
 		CommandQueue.enqueue(FAudioCommand::MakeStop(Handle, Mode, FadeSeconds));
 	}

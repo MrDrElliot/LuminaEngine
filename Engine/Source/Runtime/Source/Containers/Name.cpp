@@ -4,6 +4,7 @@
 #include "Core/Threading/Thread.h"
 #include "Memory/Memory.h"
 #include "Memory/MemoryTracking.h"
+#include "Containers/StringFormat.h"
 
 
 namespace Lumina
@@ -61,7 +62,7 @@ namespace Lumina
     private:
         
         FMutex Mutex;
-        eastl::hash_map<uint64, const char*> HashToString;
+        THashMap<uint64, const char*> HashToString;
         FStringPool Pool;
         
         static constexpr size_t INITIAL_CAPACITY = 16384;
@@ -295,7 +296,7 @@ namespace Lumina
         if (Number != FName::kNoNumber)
         {
             Out.push_back('_');
-            Out.append(eastl::to_string(Number - 1));
+            Out.append(Format("{}", Number - 1));
         }
     }
 

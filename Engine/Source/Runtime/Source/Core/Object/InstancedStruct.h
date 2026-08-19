@@ -14,7 +14,7 @@ namespace Lumina
     concept InstancableStruct = true;
 #else
     template<typename T>
-    concept InstancableStruct = !eastl::is_base_of_v<CObject, T> && requires { T::StaticStruct(); };
+    concept InstancableStruct = !std::is_base_of_v<CObject, T> && requires { T::StaticStruct(); };
 #endif
 
     // Owns a heap instance of a reflected CStruct chosen at runtime.

@@ -12,7 +12,7 @@ namespace Lumina
     {
         const uint32 Handle = NextHandle++;
         Entry.Handle = Handle;
-        Entries.push_back(eastl::move(Entry));
+        Entries.push_back(std::move(Entry));
         return Handle;
     }
 

@@ -141,7 +141,7 @@ namespace Lumina
         void DrawEntityDebugOverlay(ImVec2 ViewportOrigin, ImVec2 ViewportSize, const SCameraComponent& Camera);
         void DrawOffscreenSelectionIndicators(ImVec2 ViewportOrigin, ImVec2 ViewportSize, const SCameraComponent& Camera);
         // Net interest-management overlay: the spatial grid (occupied cells), per-client AOI circles, and
-        // relevant entities coloured by LOD tier. Draws into the world if it has a live FNetWorldState.
+        // relevant entities colored by LOD tier. Draws into the world if it has a live FNetWorldState.
         
         bool HasSimulatingWorld() const { return bSimulatingWorld || bGamePreviewRunning; }
 
@@ -191,7 +191,7 @@ namespace Lumina
         void DrawOutlinerWorldSelector() override;
 
         /** Engine-driven world travel: drop everything tied to OldWorld and re-bind to NewWorld. ProxyWorld is preserved. */
-        void OnWorldTravelled(CWorld* OldWorld, CWorld* NewWorld);
+        void OnWorldTraveled(CWorld* OldWorld, CWorld* NewWorld);
 
         /** Gameplay quit (Game.Quit): raised mid-world-tick, so only flag it; Update ends PIE at FrameStart. */
         void OnGameQuitRequested() { bGameQuitRequested = true; }
@@ -341,7 +341,7 @@ namespace Lumina
         bool                                    bSavedDrawBillboards = true;
         bool                                    bSavedDrawAABB = true;
 
-        FDelegateHandle                         WorldTravelledHandle;
+        FDelegateHandle                         WorldTraveledHandle;
         FDelegateHandle                         GameQuitHandle;
         bool                                    bGameQuitRequested = false;
         

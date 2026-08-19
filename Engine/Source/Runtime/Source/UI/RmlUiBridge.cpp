@@ -732,7 +732,7 @@ namespace Lumina::RmlUi
 
         if (!State.Renderer->Initialize())
         {
-            LOG_ERROR("[RmlUi] FRmlUiRenderer initialisation failed; tearing down.");
+            LOG_ERROR("[RmlUi] FRmlUiRenderer initialization failed; tearing down.");
             Rml::Shutdown();
             Rml::SetRenderInterface(nullptr);
             Rml::SetFileInterface(nullptr);
@@ -1310,7 +1310,7 @@ namespace Lumina::RmlUi
         }
     }
 
-    // Renderer pointer is set once in Initialise() and only cleared in Shutdown() -- safe to read unlocked.
+    // Renderer pointer is set once in Initialize() and only cleared in Shutdown() -- safe to read unlocked.
     FRmlUiRenderer* GetRenderer()      { return S().Renderer.get(); }
 
     Rml::Context* GetContextForWorld(CWorld* World)
@@ -1479,7 +1479,7 @@ namespace Lumina::RmlUi
             const size_t Last = State.EditorContexts.size() - 1;
             if (i != Last)
             {
-                eastl::swap(State.EditorContexts[i], State.EditorContexts[Last]);
+                std::swap(State.EditorContexts[i], State.EditorContexts[Last]);
             }
             State.EditorContexts.pop_back();
             return;

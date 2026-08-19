@@ -3,6 +3,7 @@
 #include "Core/Object/Package/Package.h"
 #include "UI/Tools/NodeGraph/Animation/AnimationGraphNodeGraph.h"
 #include "UI/Tools/NodeGraph/Animation/AnimStateMachineGraph.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -30,7 +31,7 @@ namespace Lumina
     {
         if (!BlendTree.IsValid())
         {
-            const FString GraphName = FString("StateBlendTree_") + eastl::to_string(GetNodeID());
+            const FString GraphName = FString("StateBlendTree_") + Format("{}", GetNodeID());
             BlendTree = NewObject<CAnimationGraphNodeGraph>(GetPackage(), GraphName);
         }
 

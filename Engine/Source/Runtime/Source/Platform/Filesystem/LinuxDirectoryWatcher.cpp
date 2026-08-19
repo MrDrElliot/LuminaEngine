@@ -10,7 +10,8 @@
 #include <sys/inotify.h>
 #include <unistd.h>
 
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Vector.h"
 #include "Core/Templates/LuminaTemplate.h"
 #include "Log/Log.h"
 #include "Paths/Paths.h"

@@ -1,7 +1,6 @@
 #pragma once
 #include <cstring>
 #include <cwchar>
-#include <EASTL/type_traits.h>
 #include "GenericPlatform.h"
 #include "Platform.h"
 

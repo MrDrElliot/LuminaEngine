@@ -15,7 +15,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "Log/Log.h"
 #include "Paths/Paths.h"
@@ -964,7 +964,7 @@ namespace Lumina::Platform
                 Cursor += Patterns.size() + 1;
 
                 FString Translated = Patterns;
-                eastl::replace(Translated.begin(), Translated.end(), ';', ' ');
+                std::replace(Translated.begin(), Translated.end(), ';', ' ');
 
                 Arguments.push_back(FString("--file-filter=") + Description + " | " + Translated);
             }
@@ -1044,7 +1044,7 @@ namespace Lumina::Platform
                 return false;
             }
 
-            OutPaths = eastl::move(Selected);
+            OutPaths = std::move(Selected);
 
             return true;
         }
@@ -1073,7 +1073,7 @@ namespace Lumina::Platform
             return false;
         }
 
-        OutFiles = eastl::move(Selected);
+        OutFiles = std::move(Selected);
 
         return true;
     }

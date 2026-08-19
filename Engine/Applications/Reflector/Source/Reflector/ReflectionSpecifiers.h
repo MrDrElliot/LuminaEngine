@@ -2,8 +2,8 @@
 
 #include <clang-c/Index.h>
 #include <cstdint>
-#include "EASTL/string.h"
-#include "EASTL/vector.h"
+#include <string>
+#include <vector>
 #include "Reflector/Utils/MetadataUtils.h"
 
 namespace Lumina::Reflection
@@ -127,11 +127,11 @@ namespace Lumina::Reflection
     // The specifier table for one macro, with its length in OutCount.
     const FSpecifierInfo* GetSpecifiers(ESpecifierTarget Target, uint32_t& OutCount);
 
-    const FSpecifierInfo* FindSpecifier(ESpecifierTarget Target, const eastl::string& Key);
+    const FSpecifierInfo* FindSpecifier(ESpecifierTarget Target, const std::string& Key);
 
     // Nearest known specifier within a small edit distance, or nullptr. Turns a typo into a suggestion.
-    const FSpecifierInfo* SuggestSpecifier(ESpecifierTarget Target, const eastl::string& Key);
+    const FSpecifierInfo* SuggestSpecifier(ESpecifierTarget Target, const std::string& Key);
 
     // Warns LRT1009 for each specifier missing from the target's table, naming the nearest known one.
-    void ValidateSpecifiers(const CXCursor& Cursor, ESpecifierTarget Target, const eastl::vector<FMetadataPair>& Metadata);
+    void ValidateSpecifiers(const CXCursor& Cursor, ESpecifierTarget Target, const std::vector<FMetadataPair>& Metadata);
 }

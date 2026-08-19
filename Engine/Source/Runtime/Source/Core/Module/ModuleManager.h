@@ -1,7 +1,9 @@
 ﻿#pragma once
 
 #include "ModuleInterface.h"
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Pair.h"
+#include "Containers/Vector.h"
 #include "Containers/Name.h"
 #include "Containers/String.h"
 #include "Memory/Memory.h"

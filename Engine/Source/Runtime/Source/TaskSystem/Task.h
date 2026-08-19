@@ -4,7 +4,7 @@
 #include "TaskSystem.h"
 #include "Future.h"
 #include "Scheduler/JobScheduler.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Core/Assertions/Assert.h"
 #include "Core/Templates/LuminaTemplate.h"
 #include "Memory/Memory.h"
@@ -335,7 +335,7 @@ namespace Lumina
                         const uint32 End = Self->Num - Start < Self->Grain ? Self->Num : Start + Self->Grain;
                         // Re-read the slot per range: the body may wait, and a resumed fiber can migrate.
                         const uint32 Worker = Jobs::GetWorkerIndex();
-                        if constexpr (eastl::is_invocable_v<TFn, const ::Lumina::Task::FParallelRange&>)
+                        if constexpr (std::is_invocable_v<TFn, const ::Lumina::Task::FParallelRange&>)
                         {
                             Self->Func(::Lumina::Task::FParallelRange{ Start, End, Worker });
                         }
@@ -343,7 +343,7 @@ namespace Lumina
                         {
                             for (uint32 i = Start; i < End; ++i)
                             {
-                                if constexpr (eastl::is_invocable_v<TFn, uint32, uint32>) { Self->Func(i, Worker); }
+                                if constexpr (std::is_invocable_v<TFn, uint32, uint32>) { Self->Func(i, Worker); }
                                 else                                                      { Self->Func(i); }
                             }
                         }

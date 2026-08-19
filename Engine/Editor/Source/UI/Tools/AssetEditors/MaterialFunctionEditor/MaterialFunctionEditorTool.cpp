@@ -1,6 +1,5 @@
 #include "MaterialFunctionEditorTool.h"
 
-#include "EASTL/sort.h"
 #include "imgui.h"
 #include "Assets/AssetTypes/MaterialFunction/MaterialFunction.h"
 #include "Core/Object/Cast.h"
@@ -183,11 +182,11 @@ namespace Lumina
 
         // Stable sort by SortPriority keeps a predictable pin order while leaving equal-priority nodes
         // in graph order.
-        eastl::stable_sort(InputNodes.begin(), InputNodes.end(), [](CMaterialExpression_FunctionInput* A, CMaterialExpression_FunctionInput* B)
+        std::stable_sort(InputNodes.begin(), InputNodes.end(), [](CMaterialExpression_FunctionInput* A, CMaterialExpression_FunctionInput* B)
         {
             return A->SortPriority < B->SortPriority;
         });
-        eastl::stable_sort(OutputNodes.begin(), OutputNodes.end(), [](CMaterialFunctionOutput* A, CMaterialFunctionOutput* B)
+        std::stable_sort(OutputNodes.begin(), OutputNodes.end(), [](CMaterialFunctionOutput* A, CMaterialFunctionOutput* B)
         {
             return A->SortPriority < B->SortPriority;
         });

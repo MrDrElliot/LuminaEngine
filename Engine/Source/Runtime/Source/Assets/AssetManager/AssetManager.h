@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
 #include "Containers/String.h"
 #include "GUID/GUID.h"
 #include "PrimaryAssetId.h"

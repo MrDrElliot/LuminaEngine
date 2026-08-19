@@ -12,10 +12,10 @@
 #include "Core/Object/Cast.h"
 #include "Core/Object/Package/Package.h"
 #include "Core/Profiler/Profile.h"
-#include "EASTL/sort.h"
 #include "imgui-node-editor/imgui_node_editor_internal.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -34,13 +34,13 @@ namespace Lumina
             return Clipboard;
         }
 
-        // Canvas-space centre of the copied set, so a paste lands relative to the cursor.
+        // Canvas-space center of the copied set, so a paste lands relative to the cursor.
         ImVec2 GClipboardPivot(0.0f, 0.0f);
 
         void ForgetClipboardNode(CEdGraphNode* Node)
         {
             TVector<CEdGraphNode*>& Clipboard = GetNodeClipboard();
-            Clipboard.erase(eastl::remove(Clipboard.begin(), Clipboard.end(), Node), Clipboard.end());
+            Clipboard.erase(std::remove(Clipboard.begin(), Clipboard.end(), Node), Clipboard.end());
         }
     }
 
@@ -252,7 +252,7 @@ namespace Lumina
         const ImVec2 OutputRectMax(CursorStart.x + DotSize.x + HitHalfX, InputRectMax.y);
 
         // Input pin: hit-tests against the LEFT half of the (enlarged) dot. Both pins share the
-        // same pivot point at the centre so wires visually meet at a single dot.
+        // same pivot point at the center so wires visually meet at a single dot.
         if (CEdNodeGraphPin* InputPin = Node->GetInputPins().empty() ? nullptr : Node->GetInputPins()[0].Get())
         {
             NodeEditor::PushStyleVar(NodeEditor::StyleVar_PivotAlignment, ImVec2(0.5f, 0.5f));
@@ -413,7 +413,7 @@ namespace Lumina
                     }
 
                     // Only when the far end was copied too. A link to a node outside the set would
-                    // otherwise hang the clone off the original's neighbour, quietly editing a part of
+                    // otherwise hang the clone off the original's neighbor, quietly editing a part of
                     // the graph the user never selected.
                     const auto UpstreamItr = Clones.find(Upstream->GetOwningNode());
                     if (UpstreamItr == Clones.end())
@@ -499,7 +499,7 @@ namespace Lumina
                 return;   // two nodes are already evenly spaced; nothing to solve
             }
 
-            eastl::sort(Entries.begin(), Entries.end(), [bDistributeX](const FEntry& A, const FEntry& B)
+            std::sort(Entries.begin(), Entries.end(), [bDistributeX](const FEntry& A, const FEntry& B)
             {
                 return bDistributeX ? (A.Pos.x < B.Pos.x) : (A.Pos.y < B.Pos.y);
             });
@@ -677,7 +677,7 @@ namespace Lumina
         {
             TVector<CEdGraphNode*>& Column = Columns[D];
 
-            eastl::stable_sort(Column.begin(), Column.end(), [&](CEdGraphNode* A, CEdGraphNode* B)
+            std::stable_sort(Column.begin(), Column.end(), [&](CEdGraphNode* A, CEdGraphNode* B)
             {
                 auto Barycenter = [&](CEdGraphNode* Node)
                 {
@@ -759,7 +759,7 @@ namespace Lumina
             { ENodeAlignment::DistributeY, "Distribute Y",    nullptr   },
         };
 
-        // Alignment needs two nodes to mean anything; grey the whole set out rather than offering
+        // Alignment needs two nodes to mean anything; gray the whole set out rather than offering
         // items that silently do nothing.
         const bool bEnabled = ax::NodeEditor::GetSelectedObjectCount() >= 2;
 
@@ -1102,7 +1102,7 @@ namespace Lumina
             // unreachable.
             if (ImGui::BeginPopup("Node Context Menu"))
             {
-                auto NodeItr = eastl::find_if(Nodes.begin(), Nodes.end(), [this](const TObjectPtr<CEdGraphNode>& A)
+                auto NodeItr = std::find_if(Nodes.begin(), Nodes.end(), [this](const TObjectPtr<CEdGraphNode>& A)
                 {
                     return A.IsValid() && std::cmp_equal(A->GetNodeID(), ContextMenuNodeID);
                 });
@@ -1193,7 +1193,7 @@ namespace Lumina
                     for (int i = 0; i < Num; ++i)
                     {
                         NodeEditor::NodeId Selection = Selections[i];
-                        auto NodeItr = eastl::find_if(Nodes.begin(), Nodes.end(), [&] (const TObjectPtr<CEdGraphNode>& A)
+                        auto NodeItr = std::find_if(Nodes.begin(), Nodes.end(), [&] (const TObjectPtr<CEdGraphNode>& A)
                         {
                             return std::cmp_equal(A->GetNodeID(), Selection.Get()) && A->IsDeletable();
                         });
@@ -1208,11 +1208,11 @@ namespace Lumina
                         ImVec2 Pos = NodeEditor::GetNodePosition(Selection);
                         ImVec2 Size = NodeEditor::GetNodeSize(Selection);
 
-                        Min.x = eastl::min(Min.x, Pos.x);
-                        Min.y = eastl::min(Min.y, Pos.y);
+                        Min.x = std::min(Min.x, Pos.x);
+                        Min.y = std::min(Min.y, Pos.y);
 
-                        Max.x = eastl::max(Max.x, Pos.x + Size.x);
-                        Max.y = eastl::max(Max.y, Pos.y + Size.y);
+                        Max.x = std::max(Max.x, Pos.x + Size.x);
+                        Max.y = std::max(Max.y, Pos.y + Size.y);
                     }
                 
                     GClipboardPivot = (Min + Max) * 0.5f;
@@ -1270,7 +1270,7 @@ namespace Lumina
                     for (int i = 0; i < Num; ++i)
                     {
                         NodeEditor::NodeId Selection = Selections[i];
-                        auto NodeItr = eastl::find_if(Nodes.begin(), Nodes.end(), [&] (const TObjectPtr<CEdGraphNode>& A)
+                        auto NodeItr = std::find_if(Nodes.begin(), Nodes.end(), [&] (const TObjectPtr<CEdGraphNode>& A)
                         {
                             return A->GetNodeID() == static_cast<int64>(Selection.Get()) && A->IsDeletable();
                         });
@@ -1285,11 +1285,11 @@ namespace Lumina
                         ImVec2 Pos = NodeEditor::GetNodePosition(Selection);
                         ImVec2 Size = NodeEditor::GetNodeSize(Selection);
 
-                        Min.x = eastl::min(Min.x, Pos.x);
-                        Min.y = eastl::min(Min.y, Pos.y);
+                        Min.x = std::min(Min.x, Pos.x);
+                        Min.y = std::min(Min.y, Pos.y);
 
-                        Max.x = eastl::max(Max.x, Pos.x + Size.x);
-                        Max.y = eastl::max(Max.y, Pos.y + Size.y);
+                        Max.x = std::max(Max.x, Pos.x + Size.x);
+                        Max.y = std::max(Max.y, Pos.y + Size.y);
                     }
                 
                     // Local pivot: duplicate never leaves this graph, so it must not disturb the shared
@@ -1455,7 +1455,7 @@ namespace Lumina
                     // User dragged input -> output: swap so StartPin is always the output side.
                     if (StartPin && EndPin && StartPin->bInputPin && !EndPin->bInputPin)
                     {
-                        eastl::swap(StartPin, EndPin);
+                        std::swap(StartPin, EndPin);
                     }
 
                     const FEdGraphSchema& Schema = GetSchema();
@@ -1519,7 +1519,7 @@ namespace Lumina
             while (NodeEditor::QueryDeletedNode(&NodeId))
             {
                 // O(n^2) scan mirrors the approach from the imgui-node-editor examples; acceptable for typical graph sizes.
-                auto NodeItr = eastl::find_if(Nodes.begin(), Nodes.end(), [NodeId] (const TObjectPtr<CEdGraphNode>& A)
+                auto NodeItr = std::find_if(Nodes.begin(), Nodes.end(), [NodeId] (const TObjectPtr<CEdGraphNode>& A)
                 {
                     return std::cmp_equal(A->GetNodeID(), NodeId.Get()) && A->IsDeletable();
                 });
@@ -1657,7 +1657,7 @@ namespace Lumina
         ImGui::BeginDisabled(Dead.empty());
         if (ImGui::MenuItem(Dead.empty()
                 ? LE_ICON_SELECTION_OFF " No Unused Nodes"
-                : FFixedString(FFixedString::CtorSprintf(), LE_ICON_SELECTION " Select %d Unused Node%s",
+                : FormatAs<FFixedString>(LE_ICON_SELECTION " Select {} Unused Node{}",
                     (int32)Dead.size(), Dead.size() == 1 ? "" : "s").c_str()))
         {
             SelectDeadNodes();
@@ -1829,7 +1829,7 @@ namespace Lumina
                      InNode->GetNodeDisplayName(), InNode->NodeID, NodeID);
         }
 
-        InNode->PinHashName = FString(InNode->GetNodeDisplayName()) + "_" + eastl::to_string(NodeID);
+        InNode->PinHashName = FString(InNode->GetNodeDisplayName()) + "_" + Format("{}", NodeID);
         InNode->FullName = SanitizeNodeIdentifier(InNode->PinHashName);
         InNode->NodeID = NodeID;
         InNode->OwningGraph = this;

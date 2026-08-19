@@ -9,7 +9,7 @@
 #define LUMINA_VERSION_NUM 0010
 
 
-// Declares a zero-initialised function-local static and enters the block only on first use.
+// Declares a zero-initialized function-local static and enters the block only on first use.
 #define LUMINA_STATIC_HELPER(InType)                                          \
 static InType StaticValue = {};                                               \
 if (!StaticValue)

@@ -1,8 +1,8 @@
 #include "ConsoleVariableEditorTool.h"
 
-#include <EASTL/sort.h>
 
 #include "Core/Console/ConsoleVariable.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -10,26 +10,26 @@ namespace Lumina
     {
         const char* TypeLabel(const CVarValueType& Value)
         {
-            return eastl::visit([]<typename T0>(T0&&) -> const char*
+            return visit([]<typename T0>(T0&&) -> const char*
             {
-                using T = eastl::decay_t<T0>;
-                if constexpr (eastl::is_same_v<T, bool>)         return "bool";
-                else if constexpr (eastl::is_same_v<T, int32>)   return "int";
-                else if constexpr (eastl::is_same_v<T, float>)   return "float";
-                else if constexpr (eastl::is_same_v<T, FStringView>) return "string";
+                using T = std::decay_t<T0>;
+                if constexpr (std::is_same_v<T, bool>)         return "bool";
+                else if constexpr (std::is_same_v<T, int32>)   return "int";
+                else if constexpr (std::is_same_v<T, float>)   return "float";
+                else if constexpr (std::is_same_v<T, FStringView>) return "string";
                 else                                             return "?";
             }, Value);
         }
 
         ImVec4 TypeColor(const CVarValueType& Value)
         {
-            return eastl::visit([]<typename T0>(T0&&) -> ImVec4
+            return visit([]<typename T0>(T0&&) -> ImVec4
             {
-                using T = eastl::decay_t<T0>;
-                if constexpr (eastl::is_same_v<T, bool>)         return ImVec4(0.55f, 0.85f, 0.55f, 1.0f);
-                else if constexpr (eastl::is_same_v<T, int32>)   return ImVec4(0.55f, 0.75f, 1.00f, 1.0f);
-                else if constexpr (eastl::is_same_v<T, float>)   return ImVec4(1.00f, 0.80f, 0.45f, 1.0f);
-                else if constexpr (eastl::is_same_v<T, FStringView>) return ImVec4(0.90f, 0.65f, 0.95f, 1.0f);
+                using T = std::decay_t<T0>;
+                if constexpr (std::is_same_v<T, bool>)         return ImVec4(0.55f, 0.85f, 0.55f, 1.0f);
+                else if constexpr (std::is_same_v<T, int32>)   return ImVec4(0.55f, 0.75f, 1.00f, 1.0f);
+                else if constexpr (std::is_same_v<T, float>)   return ImVec4(1.00f, 0.80f, 0.45f, 1.0f);
+                else if constexpr (std::is_same_v<T, FStringView>) return ImVec4(0.90f, 0.65f, 0.95f, 1.0f);
                 else                                             return ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
             }, Value);
         }
@@ -132,7 +132,7 @@ namespace Lumina
             }
         }
 
-        eastl::sort(Visible.begin(), Visible.end(), [](const FConsoleVariable* A, const FConsoleVariable* B)
+        std::sort(Visible.begin(), Visible.end(), [](const FConsoleVariable* A, const FConsoleVariable* B)
         {
             return A->Name < B->Name;
         });
@@ -171,11 +171,11 @@ namespace Lumina
             ImGui::TableSetColumnIndex(2);
             ImGui::SetNextItemWidth(-1);
 
-            eastl::visit([&]<typename T0>(T0& Value)
+            visit([&]<typename T0>(T0& Value)
             {
-                using T = eastl::decay_t<T0>;
+                using T = std::decay_t<T0>;
 
-                if constexpr (eastl::is_same_v<T, bool>)
+                if constexpr (std::is_same_v<T, bool>)
                 {
                     bool Edit = Value;
                     if (ImGui::Checkbox("##Val", &Edit))
@@ -183,23 +183,23 @@ namespace Lumina
                         Registry.SetValueFromString(Var->Name, Edit ? "true" : "false");
                     }
                 }
-                else if constexpr (eastl::is_same_v<T, int32>)
+                else if constexpr (std::is_same_v<T, int32>)
                 {
                     int32 Edit = Value;
                     if (ImGui::DragInt("##Val", &Edit))
                     {
-                        Registry.SetValueFromString(Var->Name, eastl::to_string(Edit).c_str());
+                        Registry.SetValueFromString(Var->Name, Format("{}", Edit).c_str());
                     }
                 }
-                else if constexpr (eastl::is_same_v<T, float>)
+                else if constexpr (std::is_same_v<T, float>)
                 {
                     float Edit = Value;
                     if (ImGui::DragFloat("##Val", &Edit, 0.1f, 0.0f, 0.0f, "%.3f"))
                     {
-                        Registry.SetValueFromString(Var->Name, eastl::to_string(Edit).c_str());
+                        Registry.SetValueFromString(Var->Name, Format("{}", Edit).c_str());
                     }
                 }
-                else if constexpr (eastl::is_same_v<T, FStringView>)
+                else if constexpr (std::is_same_v<T, FStringView>)
                 {
                     FString Key(Var->Name.data(), Var->Name.size());
                     FString& Buffer = StringEditBuffers[Key];
@@ -209,7 +209,7 @@ namespace Lumina
                     }
 
                     char Tmp[512];
-                    size_t Copy = eastl::min<size_t>(sizeof(Tmp) - 1, Buffer.size());
+                    size_t Copy = std::min<size_t>(sizeof(Tmp) - 1, Buffer.size());
                     std::memcpy(Tmp, Buffer.data(), Copy);
                     Tmp[Copy] = '\0';
 
@@ -228,19 +228,19 @@ namespace Lumina
             ImGui::TableSetColumnIndex(3);
             if (ImGui::SmallButton("Reset"))
             {
-                eastl::visit([&]<typename T0>(const T0& DefaultValue)
+                visit([&]<typename T0>(const T0& DefaultValue)
                 {
-                    using T = eastl::decay_t<T0>;
+                    using T = std::decay_t<T0>;
 
-                    if constexpr (eastl::is_same_v<T, bool>)
+                    if constexpr (std::is_same_v<T, bool>)
                     {
                         Registry.SetValueFromString(Var->Name, DefaultValue ? "true" : "false");
                     }
-                    else if constexpr (eastl::is_same_v<T, int32> || eastl::is_same_v<T, float>)
+                    else if constexpr (std::is_same_v<T, int32> || std::is_same_v<T, float>)
                     {
-                        Registry.SetValueFromString(Var->Name, eastl::to_string(DefaultValue).c_str());
+                        Registry.SetValueFromString(Var->Name, Format("{}", DefaultValue).c_str());
                     }
-                    else if constexpr (eastl::is_same_v<T, FStringView>)
+                    else if constexpr (std::is_same_v<T, FStringView>)
                     {
                         Registry.SetValueFromString(Var->Name, DefaultValue);
                     }
@@ -271,7 +271,7 @@ namespace Lumina
             }
         }
 
-        eastl::sort(Visible.begin(), Visible.end(), [](const FConsoleCommand* A, const FConsoleCommand* B)
+        std::sort(Visible.begin(), Visible.end(), [](const FConsoleCommand* A, const FConsoleCommand* B)
         {
             return A->Name < B->Name;
         });

@@ -1,5 +1,5 @@
 #include <gtest/gtest.h>
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "Core/Math/Vector/VectorTypes.h"
 #include "Memory/Allocators/ScratchArray.h"

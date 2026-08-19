@@ -1,7 +1,8 @@
 #pragma once
 
 #include "EditorTool.h"
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Vector.h"
 #include "Containers/Name.h"
 #include "Containers/String.h"
 

@@ -5,6 +5,7 @@
 #include "Core/Math/Math.h"
 #include "Tools/UI/ImGui/ImGuiFonts.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -334,11 +335,11 @@ namespace Lumina
             }
 
             PropertyRow("Duration", DurationStr);
-            PropertyRow("Sample Rate", eastl::to_string(Stream->SampleRate) + " Hz");
+            PropertyRow("Sample Rate", Format("{}", Stream->SampleRate) + " Hz");
             PropertyRow("Channels", Stream->NumChannels == 1 ? "1 (Mono)"
                                   : Stream->NumChannels == 2 ? "2 (Stereo)"
-                                  : eastl::to_string(Stream->NumChannels));
-            PropertyRow("Frames", eastl::to_string(Stream->NumFrames));
+                                  : Format("{}", Stream->NumChannels));
+            PropertyRow("Frames", Format("{}", Stream->NumFrames));
 
             const size_t SizeBytes = Stream->IsValid() ? Stream->AudioData->Bytes.size() : 0;
             char SizeStr[64];

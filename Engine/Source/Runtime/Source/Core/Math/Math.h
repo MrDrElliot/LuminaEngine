@@ -3,9 +3,7 @@
 #include <bit>
 #include <random>
 #include "Core/Assertions/Assert.h"
-#include <EASTL/type_traits.h>
 #include "Core/LuminaMacros.h"
-#include "EASTL/utility.h"
 #include "Platform/GenericPlatform.h"
 
 // The Lumina math hub. Pulls in the in-house vector/quat/matrix library and adds

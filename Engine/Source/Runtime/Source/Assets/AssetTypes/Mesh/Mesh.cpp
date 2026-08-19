@@ -82,7 +82,7 @@ namespace Lumina
 
     void CMesh::SetMeshResource(TUniquePtr<FMeshResource>&& NewResource)
     {
-        MeshResources = eastl::move(NewResource);
+        MeshResources = std::move(NewResource);
         GenerateBoundingBox();
 
         // ThumbnailManager's primitive meshes arrive without baked meshlets.

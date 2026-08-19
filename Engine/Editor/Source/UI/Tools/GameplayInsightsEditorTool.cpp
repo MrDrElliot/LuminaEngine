@@ -3,7 +3,6 @@
 #include <cfloat>
 #include <cstdio>
 #include <cstring>
-#include <EASTL/algorithm.h>
 
 #include "imgui.h"
 #include "Core/Math/Math.h"
@@ -825,7 +824,7 @@ namespace Lumina
             }
 
             auto Avg = [](const FGameplayProfileEntry* E) { return E->Calls ? E->InclusiveMs / E->Calls : 0.0; };
-            eastl::sort(Rows.begin(), Rows.end(), [&](const FGameplayProfileEntry* A, const FGameplayProfileEntry* B)
+            std::sort(Rows.begin(), Rows.end(), [&](const FGameplayProfileEntry* A, const FGameplayProfileEntry* B)
             {
                 double Cmp;
                 switch (SortCol)

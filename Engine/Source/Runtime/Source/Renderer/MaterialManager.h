@@ -2,7 +2,7 @@
 
 #include "MaterialTypes.h"
 #include "RHI.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 
 namespace Lumina
 {

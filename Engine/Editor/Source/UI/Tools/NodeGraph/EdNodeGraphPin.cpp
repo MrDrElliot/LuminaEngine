@@ -15,13 +15,13 @@ namespace Lumina
             return;
         }
 
-        auto it = eastl::find(Connections.begin(), Connections.end(), OtherPin);
+        auto it = std::find(Connections.begin(), Connections.end(), OtherPin);
         if (it != Connections.end())
         {
             Connections.erase(it);
         }
 
-        auto itOther = eastl::find(OtherPin->Connections.begin(), OtherPin->Connections.end(), this);
+        auto itOther = std::find(OtherPin->Connections.begin(), OtherPin->Connections.end(), this);
         if (itOther != OtherPin->Connections.end())
         {
             OtherPin->Connections.erase(itOther);
@@ -32,7 +32,7 @@ namespace Lumina
     {
         for (CEdNodeGraphPin* ConnectedPin : Connections)
         {
-            auto it = eastl::find(ConnectedPin->Connections.begin(), ConnectedPin->Connections.end(), this);
+            auto it = std::find(ConnectedPin->Connections.begin(), ConnectedPin->Connections.end(), this);
             if (it != ConnectedPin->Connections.end())
             {
                 ConnectedPin->Connections.erase(it);

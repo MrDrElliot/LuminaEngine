@@ -1,9 +1,9 @@
 ﻿#include <clang/AST/Type.h>
 #include <clang-c/CXString.h>
 #include <clang-c/Index.h>
-#include <EASTL/optional.h>
-#include <EASTL/string.h>
-#include <EASTL/vector.h>
+#include <optional>
+#include <string>
+#include <vector>
 #include <string>
 #include <Reflector/Types/ReflectedType.h>
 #include "Reflector/Clang/ClangParserContext.h"
@@ -30,10 +30,10 @@ namespace Lumina::Reflection::Visitor
 {
 	// Extract the brief doc comment above a cursor, escaping characters that would
 	// break a C string literal in the generated output (\, ").
-	static eastl::string GetCursorComment(const CXCursor& Cursor)
+	static std::string GetCursorComment(const CXCursor& Cursor)
 	{
 		const CXString CommentString = clang_Cursor_getBriefCommentText(Cursor);
-		eastl::string Result;
+		std::string Result;
 		if (CommentString.data != nullptr)
 		{
 			const char* Raw = clang_getCString(CommentString);
@@ -61,22 +61,22 @@ namespace Lumina::Reflection::Visitor
 	}
 
 	// The name a type registers under, from REFLECT(ReflectedName = "X"), or empty when unset.
-	static eastl::string FindReflectedNameOverride(const eastl::string& MacroContents)
+	static std::string FindReflectedNameOverride(const std::string& MacroContents)
 	{
 		const size_t Key = MacroContents.find("ReflectedName");
-		if (Key == eastl::string::npos)
+		if (Key == std::string::npos)
 		{
 			return {};
 		}
 
 		const size_t Open = MacroContents.find('"', Key);
-		if (Open == eastl::string::npos)
+		if (Open == std::string::npos)
 		{
 			return {};
 		}
 
 		const size_t Close = MacroContents.find('"', Open + 1);
-		if (Close == eastl::string::npos)
+		if (Close == std::string::npos)
 		{
 			return {};
 		}
@@ -89,7 +89,7 @@ namespace Lumina::Reflection::Visitor
 	static void ApplyReflectAsOverride(FClangParserContext* Context, FReflectedType* Type,
 	                                   FReflectedProperty* Property, const CXCursor& Cursor)
 	{
-		const eastl::string* Alias = nullptr;
+		const std::string* Alias = nullptr;
 		for (const FMetadataPair& Pair : Property->Metadata)
 		{
 			if (Pair.Key == "ReflectAs")
@@ -104,7 +104,7 @@ namespace Lumina::Reflection::Visitor
 			return;
 		}
 
-		if (eastl::string_view(Property->GetTypeName()) != eastl::string_view("Struct"))
+		if (std::string_view(Property->GetTypeName()) != std::string_view("Struct"))
 		{
 			LRT_ERROR(Cursor, Reflection::EDiagId::UnknownPropertyType,
 				"Property '%s' uses ReflectAs but its member is not a struct type; "
@@ -113,17 +113,17 @@ namespace Lumina::Reflection::Visitor
 			return;
 		}
 
-		Property->TypeName = Alias->find("::") == eastl::string::npos
-			? eastl::string("Lumina::") + *Alias
+		Property->TypeName = Alias->find("::") == std::string::npos
+			? std::string("Lumina::") + *Alias
 			: *Alias;
 	}
 
 	static void EnsureTemplateInstantiationReflected(FClangParserContext* Context, const FReflectedTemplate& Template,
-	                                                 const CXType& Instantiation, const eastl::string& Spelling,
-	                                                 const eastl::string& ReflectedQualifiedName, const eastl::string& MangledName);
+	                                                 const CXType& Instantiation, const std::string& Spelling,
+	                                                 const std::string& ReflectedQualifiedName, const std::string& MangledName);
 
 	// Reflects the instantiation a property names, mangled because TRange<float> is not an identifier.
-	static bool TryResolveTemplateInstantiation(FClangParserContext* Context, const CXType& FieldType, eastl::string& OutTypeName)
+	static bool TryResolveTemplateInstantiation(FClangParserContext* Context, const CXType& FieldType, std::string& OutTypeName)
 	{
 		const CXType Canonical = clang_getCanonicalType(FieldType);
 		if (Canonical.kind != CXType_Record)
@@ -131,7 +131,7 @@ namespace Lumina::Reflection::Visitor
 			return false;
 		}
 
-		const eastl::string Spelling = ClangUtils::GetString(clang_getTypeSpelling(Canonical));
+		const std::string Spelling = ClangUtils::GetString(clang_getTypeSpelling(Canonical));
 
 		// A substituted template parameter carries no alias sugar, so FVector3 arrives as TVec<float, 3>.
 		const auto Aliased = Context->AliasedInstantiations.find(FStringHash(Spelling));
@@ -147,7 +147,7 @@ namespace Lumina::Reflection::Visitor
 			return false;
 		}
 
-		eastl::string TemplateName;
+		std::string TemplateName;
 		if (!ClangUtils::GetQualifiedNameFromDeclCursor(TemplateCursor, TemplateName))
 		{
 			return false;
@@ -159,11 +159,11 @@ namespace Lumina::Reflection::Visitor
 			return false;
 		}
 
-		const eastl::string Mangled = ClangUtils::MangleTemplateSpelling(Spelling,
-			[Context](const eastl::string& Argument) -> eastl::string
+		const std::string Mangled = ClangUtils::MangleTemplateSpelling(Spelling,
+			[Context](const std::string& Argument) -> std::string
 			{
 				const auto Match = Context->AliasedInstantiations.find(FStringHash(Argument));
-				return Match == Context->AliasedInstantiations.end() ? eastl::string() : Match->second.second;
+				return Match == Context->AliasedInstantiations.end() ? std::string() : Match->second.second;
 			});
 
 		if (Mangled.empty())
@@ -178,20 +178,20 @@ namespace Lumina::Reflection::Visitor
 		return true;
 	}
 
-	static eastl::optional<FFieldInfo> CreateFieldInfo(FClangParserContext* Context, const CXCursor& Cursor)
+	static std::optional<FFieldInfo> CreateFieldInfo(FClangParserContext* Context, const CXCursor& Cursor)
 	{
-		eastl::string CursorName = ClangUtils::GetCursorDisplayName(Cursor);
+		std::string CursorName = ClangUtils::GetCursorDisplayName(Cursor);
 
 		CXType FieldType = clang_getCursorType(Cursor);
 
-		eastl::string TypeSpelling;
+		std::string TypeSpelling;
 		if (!ClangUtils::GetQualifiedNameForCXType(FieldType, TypeSpelling))
 		{
 			LRT_ERROR(Cursor, Reflection::EDiagId::FieldQualifyFailed,
 				"Failed to qualify the type of property '%s' in '%s'.",
 				CursorName.c_str(),
 				Context->ParentReflectedType->GetTypeName().c_str());
-			return eastl::nullopt;
+			return std::nullopt;
 		}
 
 		EPropertyTypeFlags PropFlags = GetCoreTypeFromName(TypeSpelling.c_str());
@@ -215,7 +215,7 @@ namespace Lumina::Reflection::Visitor
 				LRT_ERROR(Cursor, Reflection::EDiagId::RawObjectPointer,
 					"Property '%s' is a raw pointer ('%s'). Raw pointers to CObject are not reflectable; use TObjectPtr<T> instead.",
 					CursorName.c_str(), TypeSpelling.c_str());
-				return eastl::nullopt;
+				return std::nullopt;
 			}
 		}
 		
@@ -253,12 +253,12 @@ namespace Lumina::Reflection::Visitor
 		return Info;
 	}
 
-	static eastl::optional<FFieldInfo> CreateFuncField(FClangParserContext* Context, const CXType& FieldType)
+	static std::optional<FFieldInfo> CreateFuncField(FClangParserContext* Context, const CXType& FieldType)
 	{
-		eastl::string TypeSpelling;
+		std::string TypeSpelling;
 		if (!ClangUtils::GetQualifiedNameForCXType(FieldType, TypeSpelling))
 		{
-			return eastl::nullopt;
+			return std::nullopt;
 		}
 
 		EPropertyTypeFlags PropFlags = GetCoreTypeFromName(TypeSpelling.c_str());
@@ -322,16 +322,16 @@ namespace Lumina::Reflection::Visitor
 		return Info;
 	}
 
-	static eastl::optional<FFieldInfo> CreateSubFieldInfo(FClangParserContext* Context, const CXType& FieldType, const FFieldInfo& ParentField)
+	static std::optional<FFieldInfo> CreateSubFieldInfo(FClangParserContext* Context, const CXType& FieldType, const FFieldInfo& ParentField)
 	{
-		eastl::string FieldName;
+		std::string FieldName;
 		if (!ClangUtils::GetQualifiedNameForCXType(FieldType, FieldName))
 		{
 			LRT_ERROR(ParentField.OwningCursor, Reflection::EDiagId::FieldQualifyFailed,
 				"Failed to qualify the inner type of property '%s' in '%s'.",
 				ParentField.Name.c_str(),
 				Context->ParentReflectedType->GetTypeName().c_str());
-			return eastl::nullopt;
+			return std::nullopt;
 		}
 
 		EPropertyTypeFlags PropFlags = GetCoreTypeFromName(FieldName.c_str());
@@ -355,7 +355,7 @@ namespace Lumina::Reflection::Visitor
 				LRT_ERROR(ParentField.OwningCursor, Reflection::EDiagId::RawObjectPointer,
 					"Inner element of property '%s' is a raw pointer ('%s'). Use TObjectPtr<T> instead.",
 					ParentField.Name.c_str(), FieldName.c_str());
-				return eastl::nullopt;
+				return std::nullopt;
 			}
 		}
 
@@ -385,9 +385,9 @@ namespace Lumina::Reflection::Visitor
 	}
 
 	template<std::derived_from<FReflectedProperty> T>
-	static eastl::unique_ptr<T> CreateProperty(const FFieldInfo& Info)
+	static std::unique_ptr<T> CreateProperty(const FFieldInfo& Info)
 	{
-		eastl::unique_ptr<T> New = eastl::make_unique<T>();
+		std::unique_ptr<T> New = std::make_unique<T>();
 		New->Name			= Info.Name;
 		New->TypeName		= Info.TypeName;
 		New->RawTypeName	= Info.RawFieldType;
@@ -399,7 +399,7 @@ namespace Lumina::Reflection::Visitor
 	{
 		OutProperty = nullptr;
 		
-		eastl::unique_ptr<FReflectedProperty> NewProperty;
+		std::unique_ptr<FReflectedProperty> NewProperty;
 		switch (FieldInfo.Flags)
 		{
 		case EPropertyTypeFlags::UInt8:
@@ -480,7 +480,7 @@ namespace Lumina::Reflection::Visitor
 			if (clang_getCursorKind(EnumCursor) == CXCursor_EnumDecl)
 			{
 				CXType UnderlyingType = clang_getEnumDeclIntegerType(EnumCursor);
-				eastl::optional<FFieldInfo> SubType = CreateSubFieldInfo(Context, UnderlyingType, FieldInfo);
+				std::optional<FFieldInfo> SubType = CreateSubFieldInfo(Context, UnderlyingType, FieldInfo);
 				if (!SubType.has_value())
 				{
 					return false;
@@ -498,7 +498,7 @@ namespace Lumina::Reflection::Visitor
 		case EPropertyTypeFlags::Object:
 		{
 			const CXType ArgType = clang_Type_getTemplateArgumentAsType(FieldInfo.Type, 0);
-			eastl::optional<FFieldInfo> ParamFieldInfo = CreateSubFieldInfo(Context, ArgType, FieldInfo);
+			std::optional<FFieldInfo> ParamFieldInfo = CreateSubFieldInfo(Context, ArgType, FieldInfo);
 			if (!ParamFieldInfo.has_value())
 			{
 				return false;
@@ -514,7 +514,7 @@ namespace Lumina::Reflection::Visitor
 			// TSubclassOf<T>: T is the base-class filter. Reflect against it so the emitted
 			// Construct_CClass_<T>() symbol resolves.
 			const CXType ArgType = clang_Type_getTemplateArgumentAsType(FieldInfo.Type, 0);
-			eastl::optional<FFieldInfo> ParamFieldInfo;
+			std::optional<FFieldInfo> ParamFieldInfo;
 			if (ArgType.kind != CXType_Invalid)
 			{
 				ParamFieldInfo = CreateSubFieldInfo(Context, ArgType, FieldInfo);
@@ -534,7 +534,7 @@ namespace Lumina::Reflection::Visitor
 		{
 			// TSubStructOf<T>: T is the base-struct filter; reflect against it for Construct_CStruct_<T>().
 			const CXType ArgType = clang_Type_getTemplateArgumentAsType(FieldInfo.Type, 0);
-			eastl::optional<FFieldInfo> ParamFieldInfo;
+			std::optional<FFieldInfo> ParamFieldInfo;
 			if (ArgType.kind != CXType_Invalid)
 			{
 				ParamFieldInfo = CreateSubFieldInfo(Context, ArgType, FieldInfo);
@@ -553,7 +553,7 @@ namespace Lumina::Reflection::Visitor
 		{
 			// A bare FInstancedStruct constrains nothing, so it emits a null base and takes any struct.
 			const CXType ArgType = clang_Type_getTemplateArgumentAsType(FieldInfo.Type, 0);
-			eastl::optional<FFieldInfo> ParamFieldInfo;
+			std::optional<FFieldInfo> ParamFieldInfo;
 			if (ArgType.kind != CXType_Invalid)
 			{
 				ParamFieldInfo = CreateSubFieldInfo(Context, ArgType, FieldInfo);
@@ -577,7 +577,7 @@ namespace Lumina::Reflection::Visitor
 			// FSoftObjectPath has no template arg (target defaults to CObject, accepts any asset);
 			// TSoftObjectPtr<T> exposes T as the target class.
 			const CXType ArgType = clang_Type_getTemplateArgumentAsType(FieldInfo.Type, 0);
-			eastl::optional<FFieldInfo> ParamFieldInfo;
+			std::optional<FFieldInfo> ParamFieldInfo;
 			if (ArgType.kind != CXType_Invalid)
 			{
 				ParamFieldInfo = CreateSubFieldInfo(Context, ArgType, FieldInfo);
@@ -600,7 +600,7 @@ namespace Lumina::Reflection::Visitor
 			auto ArrayProperty = CreateProperty<FReflectedArrayProperty>(FieldInfo);
 
 			const CXType ArgType = clang_Type_getTemplateArgumentAsType(FieldInfo.Type, 0);
-			eastl::optional<FFieldInfo> ParamFieldInfo = CreateSubFieldInfo(Context, ArgType, FieldInfo);
+			std::optional<FFieldInfo> ParamFieldInfo = CreateSubFieldInfo(Context, ArgType, FieldInfo);
 			if (!ParamFieldInfo.has_value())
 			{
 				return false;
@@ -620,7 +620,7 @@ namespace Lumina::Reflection::Visitor
 			}
 
 			ArrayProperty->ElementTypeName = ClangUtils::GetSafeTypeAsString(ArgType);
-			NewProperty = eastl::move(ArrayProperty);
+			NewProperty = std::move(ArrayProperty);
 
 			FieldProperty->bInner = true; // This property "belongs" to the array.
 		}
@@ -640,8 +640,8 @@ namespace Lumina::Reflection::Visitor
 			const CXType KeyType   = clang_Type_getTemplateArgumentAsType(FieldInfo.Type, 0);
 			const CXType ValueType = clang_Type_getTemplateArgumentAsType(FieldInfo.Type, 1);
 
-			eastl::optional<FFieldInfo> KeyInfo   = CreateSubFieldInfo(Context, KeyType, FieldInfo);
-			eastl::optional<FFieldInfo> ValueInfo = CreateSubFieldInfo(Context, ValueType, FieldInfo);
+			std::optional<FFieldInfo> KeyInfo   = CreateSubFieldInfo(Context, KeyType, FieldInfo);
+			std::optional<FFieldInfo> ValueInfo = CreateSubFieldInfo(Context, ValueType, FieldInfo);
 			if (!KeyInfo.has_value() || !ValueInfo.has_value())
 			{
 				return false;
@@ -669,7 +669,7 @@ namespace Lumina::Reflection::Visitor
 
 			MapProperty->KeyTypeName   = ClangUtils::GetSafeTypeAsString(KeyType);
 			MapProperty->ValueTypeName = ClangUtils::GetSafeTypeAsString(ValueType);
-			NewProperty = eastl::move(MapProperty);
+			NewProperty = std::move(MapProperty);
 
 			KeyProperty->bInner = true;   // Key "belongs" to the map.
 			ValueProperty->bInner = true; // Value "belongs" to the map.
@@ -682,7 +682,7 @@ namespace Lumina::Reflection::Visitor
 			// TOptional<T> exposes T as the first template argument, same shape
 			// as TVector<T>. Fail loudly when the payload type isn't reflectable.
 			const CXType ArgType = clang_Type_getTemplateArgumentAsType(FieldInfo.Type, 0);
-			eastl::optional<FFieldInfo> ParamFieldInfo = CreateSubFieldInfo(Context, ArgType, FieldInfo);
+			std::optional<FFieldInfo> ParamFieldInfo = CreateSubFieldInfo(Context, ArgType, FieldInfo);
 			if (!ParamFieldInfo.has_value())
 			{
 				return false;
@@ -702,7 +702,7 @@ namespace Lumina::Reflection::Visitor
 			}
 
 			OptionalProperty->ElementTypeName = ClangUtils::GetSafeTypeAsString(ArgType);
-			NewProperty = eastl::move(OptionalProperty);
+			NewProperty = std::move(OptionalProperty);
 
 			FieldProperty->bInner = true; // Inner T is owned by the optional.
 		}
@@ -712,7 +712,7 @@ namespace Lumina::Reflection::Visitor
 			const CXType ArgType = clang_Type_getTemplateArgumentAsType(FieldInfo.Type, 0);
 			if (ArgType.kind != CXType_Invalid && ArgType.kind != CXType_Void)
 			{
-				eastl::optional<FFieldInfo> ParamFieldInfo = CreateSubFieldInfo(Context, ArgType, FieldInfo);
+				std::optional<FFieldInfo> ParamFieldInfo = CreateSubFieldInfo(Context, ArgType, FieldInfo);
 				if (!ParamFieldInfo.has_value())
 				{
 					return false;
@@ -722,13 +722,13 @@ namespace Lumina::Reflection::Visitor
 
 				auto DelegateProperty = CreateProperty<FReflectedDelegateProperty>(ParamFieldInfo.value());
 				DelegateProperty->bHasPayload = true;
-				NewProperty = eastl::move(DelegateProperty);
+				NewProperty = std::move(DelegateProperty);
 			}
 			else
 			{
 				auto DelegateProperty = CreateProperty<FReflectedDelegateProperty>(FieldInfo);
 				DelegateProperty->bHasPayload = false;
-				NewProperty = eastl::move(DelegateProperty);
+				NewProperty = std::move(DelegateProperty);
 			}
 		}
 		break;
@@ -748,7 +748,7 @@ namespace Lumina::Reflection::Visitor
 		if (NewProperty != nullptr)
 		{
 			OutProperty = NewProperty.get();
-			Struct->PushProperty(eastl::move(NewProperty));
+			Struct->PushProperty(std::move(NewProperty));
 		}
 
 		return OutProperty != nullptr;
@@ -759,7 +759,7 @@ namespace Lumina::Reflection::Visitor
 	{
 		OutFunction = nullptr;
 		
-		auto NewFunction = eastl::make_unique<FReflectedFunction>();
+		auto NewFunction = std::make_unique<FReflectedFunction>();
 		NewFunction->Outer = Struct->DisplayName;
 		NewFunction->Name = ClangUtils::GetCursorSpelling(Cursor);
 		NewFunction->bIsVirtual = clang_CXXMethod_isVirtual(Cursor) != 0;
@@ -769,14 +769,14 @@ namespace Lumina::Reflection::Visitor
 		for (int i = 0; i < NumArgs; ++i)
 		{
 			CXCursor ArgCursor = clang_Cursor_getArgument(Cursor, i);
-			eastl::string ArgName = ClangUtils::GetCursorSpelling(ArgCursor);
+			std::string ArgName = ClangUtils::GetCursorSpelling(ArgCursor);
 			CXType FieldType = clang_getCursorType(ArgCursor);
 			auto Field = CreateFuncField(Context, FieldType);
 			if (Field.has_value() && Field->Flags != EPropertyTypeFlags::None)
 			{
 				Field->OwningCursor = ArgCursor;
-				Field->Name			= eastl::move(ArgName);
-				NewFunction->AddArgument(eastl::move(Field.value()));
+				Field->Name			= std::move(ArgName);
+				NewFunction->AddArgument(std::move(Field.value()));
 			}
 			else
 			{
@@ -800,13 +800,13 @@ namespace Lumina::Reflection::Visitor
 		}
 		
 		OutFunction = NewFunction.get();
-		Struct->PushFunction(eastl::move(NewFunction));
+		Struct->PushFunction(std::move(NewFunction));
 
 		return NewFunction != nullptr;
 	}
 
 	static void ReflectField(FClangParserContext* Context, FReflectedStruct* Struct, const CXCursor& Cursor,
-	                         const eastl::string& MacroHeader, bool bConsumeMacro)
+	                         const std::string& MacroHeader, bool bConsumeMacro)
 	{
 		FReflectionMacro Macro;
 		if (!Context->TryFindMacroForCursor(MacroHeader, Cursor, Macro, bConsumeMacro))
@@ -816,7 +816,7 @@ namespace Lumina::Reflection::Visitor
 			return;
 		}
 
-		eastl::optional<FFieldInfo> FieldInfo = CreateFieldInfo(Context, Cursor);
+		std::optional<FFieldInfo> FieldInfo = CreateFieldInfo(Context, Cursor);
 		if (!FieldInfo.has_value())
 		{
 			return;
@@ -832,15 +832,15 @@ namespace Lumina::Reflection::Visitor
 		ValidateSpecifiers(Cursor, ESpecifierTarget::Property, NewProperty->Metadata);
 		ApplyReflectAsOverride(Context, Struct, NewProperty, Cursor);
 
-		if (eastl::string ConflictMessage; NewProperty->FindConflictingSpecifiers(ConflictMessage))
+		if (std::string ConflictMessage; NewProperty->FindConflictingSpecifiers(ConflictMessage))
 		{
 			LRT_ERROR(Cursor, EDiagId::ConflictingSpecifiers, "%s", ConflictMessage.c_str());
 		}
 
-		eastl::string Comment = GetCursorComment(Cursor);
+		std::string Comment = GetCursorComment(Cursor);
 		if (!Comment.empty())
 		{
-			NewProperty->Metadata.push_back({"ToolTip", eastl::move(Comment)});
+			NewProperty->Metadata.push_back({"ToolTip", std::move(Comment)});
 		}
 	}
 
@@ -866,8 +866,8 @@ namespace Lumina::Reflection::Visitor
 	}
 
 	static void EnsureTemplateInstantiationReflected(FClangParserContext* Context, const FReflectedTemplate& Template,
-	                                                 const CXType& Instantiation, const eastl::string& Spelling,
-	                                                 const eastl::string& ReflectedQualifiedName, const eastl::string& MangledName)
+	                                                 const CXType& Instantiation, const std::string& Spelling,
+	                                                 const std::string& ReflectedQualifiedName, const std::string& MangledName)
 	{
 		if (Context->ReflectionDatabase.GetReflectedType<FReflectedType>(FStringHash(ReflectedQualifiedName)) != nullptr)
 		{
@@ -887,7 +887,7 @@ namespace Lumina::Reflection::Visitor
 		Context->ReflectionDatabase.AddReflectedType(ReflectedStruct);
 
 		FReflectedType* PreviousType = Context->ParentReflectedType;
-		const eastl::string PreviousMacroHeader = Context->AliasTargetMacroHeader;
+		const std::string PreviousMacroHeader = Context->AliasTargetMacroHeader;
 		const bool bWasInAnonymousRecord = Context->bInAnonymousRecord;
 
 		Context->ParentReflectedType = ReflectedStruct;
@@ -905,12 +905,12 @@ namespace Lumina::Reflection::Visitor
 	static CXChildVisitResult VisitContents(CXCursor Cursor, CXCursor Parent, CXClientData pClientData)
 	{
 		FClangParserContext* Context = (FClangParserContext*)pClientData;
-		eastl::string CursorName = ClangUtils::GetCursorDisplayName(Cursor);
+		std::string CursorName = ClangUtils::GetCursorDisplayName(Cursor);
 		CXCursorKind Kind = clang_getCursorKind(Cursor);
 		TVisitType* Type = Context->GetParentReflectedType<TVisitType>();
 		
 		const bool bWalkingAliasTarget = !Context->AliasTargetMacroHeader.empty();
-		const eastl::string& MacroHeader = bWalkingAliasTarget
+		const std::string& MacroHeader = bWalkingAliasTarget
 			? Context->AliasTargetMacroHeader
 			: Context->ReflectedHeader->HeaderPath;
 
@@ -957,10 +957,10 @@ namespace Lumina::Reflection::Visitor
 			NewFunction->GenerateMetadata(Macro.MacroContents);
 			ValidateSpecifiers(Cursor, ESpecifierTarget::Function, NewFunction->Metadata);
 
-			eastl::string Comment = GetCursorComment(Cursor);
+			std::string Comment = GetCursorComment(Cursor);
 			if (!Comment.empty())
 			{
-				NewFunction->Metadata.push_back({"ToolTip", eastl::move(Comment)});
+				NewFunction->Metadata.push_back({"ToolTip", std::move(Comment)});
 			}
 		}
 		break;
@@ -984,11 +984,11 @@ namespace Lumina::Reflection::Visitor
 
 		if (Macro.Type != EReflectionMacro::Reflect)
 		{
-			Context->AddReflectedMacro(eastl::move(Macro));
+			Context->AddReflectedMacro(std::move(Macro));
 			return CXChildVisit_Continue;
 		}
 
-		eastl::string QualifiedName;
+		std::string QualifiedName;
 		if (!ClangUtils::GetQualifiedNameFromDeclCursor(Cursor, QualifiedName))
 		{
 			LRT_ERROR(Cursor, EDiagId::ReflectedAliasInvalid,
@@ -1005,7 +1005,7 @@ namespace Lumina::Reflection::Visitor
 		Template.HeaderPath = Context->ReflectedHeader->HeaderPath;
 		Template.Header = Context->ReflectedHeader;
 
-		Context->ReflectedTemplates.insert_or_assign(FStringHash(QualifiedName), eastl::move(Template));
+		Context->ReflectedTemplates.insert_or_assign(FStringHash(QualifiedName), std::move(Template));
 
 		return CXChildVisit_Continue;
 	}
@@ -1029,13 +1029,13 @@ namespace Lumina::Reflection::Visitor
 		if (Macro.Type != EReflectionMacro::Reflect)
 		{
 			// Somebody else's macro that happens to sit above this alias; hand it back to its owner.
-			Context->AddReflectedMacro(eastl::move(Macro));
+			Context->AddReflectedMacro(std::move(Macro));
 			return CXChildVisit_Continue;
 		}
 
-		const eastl::string AliasName = ClangUtils::GetCursorDisplayName(Cursor);
+		const std::string AliasName = ClangUtils::GetCursorDisplayName(Cursor);
 
-		eastl::string QualifiedAliasName;
+		std::string QualifiedAliasName;
 		if (!ClangUtils::GetQualifiedNameForDeclCursor(Cursor, QualifiedAliasName))
 		{
 			LRT_ERROR(Cursor, EDiagId::ReflectedAliasInvalid,
@@ -1054,7 +1054,7 @@ namespace Lumina::Reflection::Visitor
 			return CXChildVisit_Continue;
 		}
 
-		const eastl::string TargetHeader = ClangUtils::GetHeaderPathForCursor(TargetCursor);
+		const std::string TargetHeader = ClangUtils::GetHeaderPathForCursor(TargetCursor);
 		if (TargetHeader.empty())
 		{
 			LRT_ERROR(Cursor, EDiagId::ReflectedAliasInvalid,
@@ -1075,7 +1075,7 @@ namespace Lumina::Reflection::Visitor
 
 		Context->AliasedInstantiations.insert_or_assign(
 			FStringHash(ClangUtils::GetString(clang_getTypeSpelling(Target))),
-			eastl::make_pair(QualifiedAliasName, AliasName));
+			std::make_pair(QualifiedAliasName, AliasName));
 
 		FReflectedStruct* ReflectedStruct = Context->ReflectionDatabase.GetOrCreateReflectedType<FReflectedStruct>(FStringHash(QualifiedAliasName));
 		ReflectedStruct->DisplayName = AliasName;
@@ -1087,10 +1087,10 @@ namespace Lumina::Reflection::Visitor
 		ReflectedStruct->LineNumber = ClangUtils::GetCursorLineNumber(Cursor);
 		ReflectedStruct->Namespace = Context->CurrentNamespace;
 
-		eastl::string AliasComment = GetCursorComment(Cursor);
+		std::string AliasComment = GetCursorComment(Cursor);
 		if (!AliasComment.empty())
 		{
-			ReflectedStruct->Metadata.push_back({"ToolTip", eastl::move(AliasComment)});
+			ReflectedStruct->Metadata.push_back({"ToolTip", std::move(AliasComment)});
 		}
 
 		FReflectedType* PreviousType = Context->ParentReflectedType;
@@ -1117,7 +1117,7 @@ namespace Lumina::Reflection::Visitor
 
 	CXChildVisitResult VisitStructure(CXCursor Cursor, CXCursor Parent, FClangParserContext* Context)
 	{
-		eastl::string CursorName = ClangUtils::GetCursorDisplayName(Cursor);
+		std::string CursorName = ClangUtils::GetCursorDisplayName(Cursor);
 
 		// Whether this struct is reflected at all is decided first. Every header carries ordinary
 		// helper structs, anonymous structs and unions that we are not being asked to reflect, and
@@ -1128,7 +1128,7 @@ namespace Lumina::Reflection::Visitor
 			return CXChildVisit_Continue;
 		}
 
-		eastl::string FullyQualifiedCursorName;
+		std::string FullyQualifiedCursorName;
 		if (!ClangUtils::GetQualifiedNameForDeclCursor(Cursor, FullyQualifiedCursorName))
 		{
 			// Now that we know it was REFLECT'd, an unnameable type is a real error worth
@@ -1152,13 +1152,13 @@ namespace Lumina::Reflection::Visitor
 
 		// Keyed under the alias so a property naming FTransform resolves to the VTransform backing it,
 		// while CppName keeps the real identifier every emitted declaration has to use.
-		const eastl::string CppName = CursorName;
-		const eastl::string CppQualifiedName = FullyQualifiedCursorName;
+		const std::string CppName = CursorName;
+		const std::string CppQualifiedName = FullyQualifiedCursorName;
 
-		if (const eastl::string Alias = FindReflectedNameOverride(Macro.MacroContents); !Alias.empty())
+		if (const std::string Alias = FindReflectedNameOverride(Macro.MacroContents); !Alias.empty())
 		{
 			const size_t Scope = FullyQualifiedCursorName.rfind("::");
-			FullyQualifiedCursorName = Scope == eastl::string::npos
+			FullyQualifiedCursorName = Scope == std::string::npos
 				? Alias
 				: FullyQualifiedCursorName.substr(0, Scope + 2) + Alias;
 			CursorName = Alias;
@@ -1180,10 +1180,10 @@ namespace Lumina::Reflection::Visitor
 			ReflectedStruct->Namespace = Context->CurrentNamespace;
 		}
 
-		eastl::string StructComment = GetCursorComment(Cursor);
+		std::string StructComment = GetCursorComment(Cursor);
 		if (!StructComment.empty())
 		{
-			ReflectedStruct->Metadata.push_back({"ToolTip", eastl::move(StructComment)});
+			ReflectedStruct->Metadata.push_back({"ToolTip", std::move(StructComment)});
 		}
 
 		FReflectedType* PreviousType = Context->ParentReflectedType;
@@ -1211,17 +1211,17 @@ namespace Lumina::Reflection::Visitor
 		if (Macro.Type != EReflectionMacro::ScriptExport)
 		{
 			// Not ours (a stray REFLECT/FUNCTION above an unrelated free function); put it back for its owner.
-			Context->AddReflectedMacro(eastl::move(Macro));
+			Context->AddReflectedMacro(std::move(Macro));
 			return CXChildVisit_Continue;
 		}
 
-		auto NewFunction = eastl::make_unique<FReflectedFunction>();
+		auto NewFunction = std::make_unique<FReflectedFunction>();
 		NewFunction->bFreeFunction = true;
 		NewFunction->Name = ClangUtils::GetCursorSpelling(Cursor);
 
 		// Fully-qualified C++ name by walking the semantic namespace parents (CurrentNamespace has no
 		// separators, so it can't be used to form a :: path).
-		eastl::string Qualified = NewFunction->Name;
+		std::string Qualified = NewFunction->Name;
 		for (CXCursor P = clang_getCursorSemanticParent(Cursor);
 			 !clang_Cursor_isNull(P) && clang_getCursorKind(P) == CXCursor_Namespace;
 			 P = clang_getCursorSemanticParent(P))
@@ -1236,12 +1236,12 @@ namespace Lumina::Reflection::Visitor
 		{
 			if (Meta.Key == "Class")
 			{
-				eastl::string Value = Meta.Value;
+				std::string Value = Meta.Value;
 				if (Value.size() >= 2 && Value.front() == '"' && Value.back() == '"')
 				{
 					Value = Value.substr(1, Value.size() - 2);
 				}
-				NewFunction->CSharpTarget = eastl::move(Value);
+				NewFunction->CSharpTarget = std::move(Value);
 				break;
 			}
 		}
@@ -1250,14 +1250,14 @@ namespace Lumina::Reflection::Visitor
 		for (int i = 0; i < NumArgs; ++i)
 		{
 			CXCursor ArgCursor = clang_Cursor_getArgument(Cursor, i);
-			eastl::string ArgName = ClangUtils::GetCursorSpelling(ArgCursor);
+			std::string ArgName = ClangUtils::GetCursorSpelling(ArgCursor);
 			CXType FieldType = clang_getCursorType(ArgCursor);
 			auto Field = CreateFuncField(Context, FieldType);
 			if (Field.has_value() && Field->Flags != EPropertyTypeFlags::None)
 			{
 				Field->OwningCursor = ArgCursor;
-				Field->Name = eastl::move(ArgName);
-				NewFunction->AddArgument(eastl::move(Field.value()));
+				Field->Name = std::move(ArgName);
+				NewFunction->AddArgument(std::move(Field.value()));
 			}
 			else
 			{
@@ -1280,7 +1280,7 @@ namespace Lumina::Reflection::Visitor
 
 	CXChildVisitResult VisitClass(CXCursor Cursor, CXCursor Parent, FClangParserContext* Context)
 	{
-		eastl::string CursorName = ClangUtils::GetCursorDisplayName(Cursor);
+		std::string CursorName = ClangUtils::GetCursorDisplayName(Cursor);
 
 		// Reflected or not comes first, for the same reason as structs: an ordinary helper class
 		// must never be able to influence the pass.
@@ -1290,7 +1290,7 @@ namespace Lumina::Reflection::Visitor
 			return CXChildVisit_Continue;
 		}
 
-		eastl::string FullyQualifiedCursorName;
+		std::string FullyQualifiedCursorName;
 		if (!ClangUtils::GetQualifiedNameForDeclCursor(Cursor, FullyQualifiedCursorName))
 		{
 			LRT_ERROR(Cursor, EDiagId::MissingGeneratedBody,
@@ -1324,10 +1324,10 @@ namespace Lumina::Reflection::Visitor
 			ReflectedClass->Namespace = Context->CurrentNamespace;
 		}
 
-		eastl::string ClassComment = GetCursorComment(Cursor);
+		std::string ClassComment = GetCursorComment(Cursor);
 		if (!ClassComment.empty())
 		{
-			ReflectedClass->Metadata.push_back({"ToolTip", eastl::move(ClassComment)});
+			ReflectedClass->Metadata.push_back({"ToolTip", std::move(ClassComment)});
 		}
 
 		FReflectedType* PreviousType = Context->ParentReflectedType;

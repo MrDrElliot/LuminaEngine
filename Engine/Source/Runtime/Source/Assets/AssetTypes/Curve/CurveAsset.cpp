@@ -259,8 +259,8 @@ namespace Lumina
         // fall back to an auto key that ComputeAutoTangents will fill in.
         if (!Keys.empty())
         {
-            const ECurveInterpMode Neighbour = Keys[Math::Max(Index - 1, 0)].InterpMode;
-            NewKey.InterpMode = Neighbour == ECurveInterpMode::CubicUser ? ECurveInterpMode::Cubic : Neighbour;
+            const ECurveInterpMode Neighbor = Keys[Math::Max(Index - 1, 0)].InterpMode;
+            NewKey.InterpMode = Neighbor == ECurveInterpMode::CubicUser ? ECurveInterpMode::Cubic : Neighbor;
         }
 
         Keys.insert(Keys.begin() + Index, NewKey);
@@ -307,7 +307,7 @@ namespace Lumina
 
     void SKeyedCurve::SortKeys()
     {
-        eastl::stable_sort(Keys.begin(), Keys.end(), [](const SCurveKey& A, const SCurveKey& B)
+        std::stable_sort(Keys.begin(), Keys.end(), [](const SCurveKey& A, const SCurveKey& B)
         {
             return A.Time < B.Time;
         });

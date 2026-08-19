@@ -7,22 +7,22 @@ namespace Lumina
 {
     void FReflectedInstancedStructProperty::AppendDefinition(Reflection::FCodeWriter& Writer) const
     {
-        const eastl::string PropertyFlagStr = PropertyFlagsToString(PropertyFlags);
+        const std::string PropertyFlagStr = PropertyFlagsToString(PropertyFlags);
 
         // No type name means a bare FInstancedStruct: there is no base symbol to bind, so emit null.
-        const eastl::string CustomData = TypeName.empty()
-            ? eastl::string("nullptr")
+        const std::string CustomData = TypeName.empty()
+            ? std::string("nullptr")
             : ("Construct_CStruct_" + ClangUtils::MakeCodeFriendlyNamespace(TypeName));
 
         AppendPropertyDef(Writer, PropertyFlagStr.c_str(), "Lumina::EPropertyTypeFlags::InstancedStruct", CustomData);
     }
 
-    eastl::string_view FReflectedInstancedStructProperty::GetLuaType()
+    std::string_view FReflectedInstancedStructProperty::GetLuaType()
     {
         const size_t Pos = TypeName.find_last_of(':');
-        if (Pos != eastl::string::npos)
+        if (Pos != std::string::npos)
         {
-            return eastl::string_view(TypeName).substr(Pos + 1);
+            return std::string_view(TypeName).substr(Pos + 1);
         }
         return TypeName;
     }

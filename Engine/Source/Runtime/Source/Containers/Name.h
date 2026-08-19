@@ -11,7 +11,6 @@
 #include "Core/Threading/Thread.h"
 
 PRAGMA_DISABLE_ALL_WARNINGS
-#include "EASTL/hash_map.h"
 PRAGMA_ENABLE_ALL_WARNINGS
 
 #include "Platform/GenericPlatform.h"
@@ -106,11 +105,17 @@ namespace Lumina
     inline constexpr FName NAME_None{};
 
     template<>
-    struct TCanBulkSerialize<FName> : eastl::false_type {};
+    struct TCanBulkSerialize<FName> : std::false_type {};
+
+    // Mixed rather than used raw: the table takes its control byte from the low 7 bits.
+    NODISCARD FORCEINLINE uint64 GetTypeHash(const FName& Name) noexcept
+    {
+        return Containers::MixHash64(Name.Hash());
+    }
     
 }
 
-namespace eastl
+namespace std
 {
     template <typename T> struct hash;
 

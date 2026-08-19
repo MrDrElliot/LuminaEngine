@@ -11,7 +11,7 @@
 #include "UI/Properties/Customizations/AssetPickerFilter.h"
 #include <Assets/AssetRegistry/AssetData.h>
 #include <Assets/AssetRegistry/AssetRegistry.h>
-#include <Containers/Array.h>
+#include "Containers/Vector.h"
 #include <Containers/String.h>
 #include <Core/Object/Object.h>
 #include <Core/Object/ObjectCore.h>
@@ -207,7 +207,7 @@ namespace Lumina
 
             // "Use the asset selected in the Content Browser". Outside the disabled block below on
             // purpose: this is most useful when the slot is EMPTY, which is exactly when everything
-            // else here is greyed out. Enabled only for a selection this property could actually hold.
+            // else here is grayed out. Enabled only for a selection this property could actually hold.
             const FAssetData* BrowserSelection = EditorUI != nullptr ? EditorUI->GetContentBrowserSelectedAsset() : nullptr;
             bool bSelectionFits = false;
             if (BrowserSelection != nullptr)

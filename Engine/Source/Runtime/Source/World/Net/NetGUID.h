@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Platform/GenericPlatform.h"
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
 #include "Core/Object/ObjectMacros.h"
 #include "World/Entity/EntityHandle.h"
 #include "NetGUID.generated.h"

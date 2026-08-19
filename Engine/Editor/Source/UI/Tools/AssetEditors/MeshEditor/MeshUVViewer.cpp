@@ -2,7 +2,7 @@
 
 #include <imgui_internal.h>
 
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
 #include "Containers/String.h"
 #include "Core/Math/Math.h"
 #include "Core/Math/Packing.h"
@@ -11,6 +11,7 @@
 #include "Tools/UI/ImGui/EditorColors.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -203,13 +204,13 @@ namespace Lumina
 
         ImGui::SetNextItemWidth(90.0f * Scale);
         FFixedString LODLabel;
-        LODLabel.sprintf("LOD %i", LODIndex);
+        FormatTo(LODLabel, "LOD {}", LODIndex);
         if (ImGui::BeginCombo("##UVLOD", LODLabel.c_str()))
         {
             for (uint32 i = 0; i < MaxLODs; ++i)
             {
                 FFixedString Entry;
-                Entry.sprintf("LOD %u", i);
+                FormatTo(Entry, "LOD {}", i);
                 if (ImGui::Selectable(Entry.c_str(), (uint32)LODIndex == i))
                 {
                     LODIndex = (int32)i;
@@ -249,7 +250,7 @@ namespace Lumina
 
         ImGui::SameLine();
         ImGui::Checkbox("Tiles", &bShowTiles);
-        ImGuiX::TextTooltip("{}", "Draw the neighbouring 0..1 tiles, so wrapped UVs read as repeats rather than as stray geometry.");
+        ImGuiX::TextTooltip("{}", "Draw the neighboring 0..1 tiles, so wrapped UVs read as repeats rather than as stray geometry.");
 
         ImGui::SameLine();
         ImGui::Checkbox("Points", &bShowVertices);
@@ -312,7 +313,7 @@ namespace Lumina
         DrawList->PushClipRect(CanvasRect.Min, CanvasRect.Max, true);
         DrawList->AddRectFilled(CanvasRect.Min, CanvasRect.Max, IM_COL32(18, 18, 22, 255));
 
-        // Neighbouring tiles first, dimmest, so wrapped shells sit in a readable frame of reference.
+        // Neighboring tiles first, dimmest, so wrapped shells sit in a readable frame of reference.
         if (bShowTiles)
         {
             for (int32 TileY = -1; TileY <= 1; ++TileY)
@@ -387,7 +388,7 @@ namespace Lumina
         {
             const ImVec2 CursorUV = ToUV(ImGui::GetIO().MousePos);
             FFixedString Readout;
-            Readout.sprintf("U %.4f   V %.4f", CursorUV.x, CursorUV.y);
+            FormatTo(Readout, "U {:.4f}   V {:.4f}", CursorUV.x, CursorUV.y);
 
             const ImVec2 TextSize = ImGui::CalcTextSize(Readout.c_str());
             const ImVec2 TextPos(CanvasRect.Min.x + 8.0f, CanvasRect.Max.y - TextSize.y - 8.0f);
@@ -428,7 +429,7 @@ namespace Lumina
         }
 
         FFixedString Status;
-        Status.sprintf("%u tris  |  %u edges  |  %u outside 0..1 (%.1f%%)",
+        FormatTo(Status, "{} tris  |  {} edges  |  {} outside 0..1 ({:.1f}%)",
             TriangleCount,
             (uint32)Edges.size(),
             OutsideTriangleCount,

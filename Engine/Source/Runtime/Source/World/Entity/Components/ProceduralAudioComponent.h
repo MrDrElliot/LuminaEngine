@@ -2,7 +2,7 @@
 
 #include "Assets/AssetTypes/Audio/SoundAttenuation.h"
 #include "Audio/AudioTypes.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Memory/SmartPtr.h"
 #include "ProceduralAudioComponent.generated.h"

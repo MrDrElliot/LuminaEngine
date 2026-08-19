@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/Name.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Input/Key.h"
@@ -101,7 +101,7 @@ namespace Lumina
         bool bInvert = false;
 
         // Seconds the action must stay down before it counts as held. 0 means "held from the first frame
-        // it is down", which is the every-frame-while-pressed behaviour.
+        // it is down", which is the every-frame-while-pressed behavior.
         PROPERTY(Editable, ClampMin = 0.0f)
         float HoldTime = 0.0f;
 

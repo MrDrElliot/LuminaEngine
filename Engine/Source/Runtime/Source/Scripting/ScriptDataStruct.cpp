@@ -144,7 +144,7 @@ namespace Lumina
             Minted->Metadata.AddValue("ScriptTypeName", Desc.ScriptTypeName.c_str());
             Minted->SetFlag(OF_Transient);
 
-            Types[ScriptTypeName] = eastl::move(Minted);
+            Types[ScriptTypeName] = std::move(Minted);
         }
 
         if (!Types.empty())

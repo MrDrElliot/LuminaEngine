@@ -187,7 +187,7 @@ namespace Lumina
         }
 
         SAnimMontageSlotTrack& Track = Montage->SlotTracks[TrackIndex];
-        eastl::stable_sort(Track.Segments.begin(), Track.Segments.end(),
+        std::stable_sort(Track.Segments.begin(), Track.Segments.end(),
             [](const SAnimMontageSegment& A, const SAnimMontageSegment& B) { return A.StartTime < B.StartTime; });
 
         float Cursor = 0.0f;
@@ -842,7 +842,7 @@ namespace Lumina
             return;
         }
 
-        eastl::stable_sort(Montage->Sections.begin(), Montage->Sections.end(),
+        std::stable_sort(Montage->Sections.begin(), Montage->Sections.end(),
             [](const SAnimMontageSection& A, const SAnimMontageSection& B) { return A.StartTime < B.StartTime; });
     }
 

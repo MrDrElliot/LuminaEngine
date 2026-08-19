@@ -111,7 +111,7 @@ namespace Lumina
             float TFar  = ( ExtentAxis[Axis] - OriginAxis[Axis]) / DirectionAxis[Axis];
             if (TNear > TFar)
             {
-                eastl::swap(TNear, TFar);
+                std::swap(TNear, TFar);
             }
 
             TMin = Math::Max(TMin, TNear);

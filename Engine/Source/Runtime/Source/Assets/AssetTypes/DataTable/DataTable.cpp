@@ -3,6 +3,7 @@
 
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectCore.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -74,9 +75,9 @@ namespace Lumina
             return;
         }
 
-        SDataTableRow Moved = eastl::move(Rows[From]);
+        SDataTableRow Moved = std::move(Rows[From]);
         Rows.erase(Rows.begin() + From);
-        Rows.insert(Rows.begin() + To, eastl::move(Moved));
+        Rows.insert(Rows.begin() + To, std::move(Moved));
     }
 
     void CDataTable::ClearRows()
@@ -104,7 +105,7 @@ namespace Lumina
         const FString BaseText = Base.ToString();
         for (int32 Suffix = 1; Suffix < 100000; ++Suffix)
         {
-            const FName Candidate(BaseText + "_" + eastl::to_string(Suffix).c_str());
+            const FName Candidate(BaseText + "_" + Format("{}", Suffix).c_str());
             if (FindRowIndex(Candidate) == INDEX_NONE)
             {
                 return Candidate;

@@ -9,7 +9,7 @@
 //
 //   1. Round-trip error stays inside half a quantum. A meshlet is a ~124-triangle patch, so the quantum
 //      is tiny relative to the mesh -- but only if the exponent is chosen from BOTH the extent and the
-//      anchor range. Sizing it from extent alone passes for a mesh centred on its origin and silently
+//      anchor range. Sizing it from extent alone passes for a mesh centered on its origin and silently
 //      teleports one that is not, which is why FarFromOrigin exists.
 //
 //   2. Decode is a pure function of (meshlet, vertex) with no accumulated state, so independent passes
@@ -53,7 +53,7 @@ namespace
         return Result;
     }
 
-    // A meshlet-sized patch: 64 vertices spread over a box of the given extent, centred on Origin.
+    // A meshlet-sized patch: 64 vertices spread over a box of the given extent, centered on Origin.
     TVector<FVector3> MakePatch(FVector3 Origin, float Extent)
     {
         TVector<FVector3> Out;

@@ -3,7 +3,6 @@
 #include "GeometryCollection.h"
 #include <cfloat>
 #include <cmath>
-#include "EASTL/sort.h"
 #include "Assets/AssetTypes/Mesh/Mesh.h"
 #include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
 #include "Assets/AssetTypes/Material/MaterialInterface.h"
@@ -70,7 +69,7 @@ namespace Lumina
             const FVector3 U = Math::Normalize(Math::Cross(N, Ref));
             const FVector3 V = Math::Cross(N, U);
 
-            eastl::sort(Unique.begin(), Unique.end(), [&](const FVector3& A, const FVector3& B)
+            std::sort(Unique.begin(), Unique.end(), [&](const FVector3& A, const FVector3& B)
             {
                 const float AngleA = std::atan2(Math::Dot(A - Center, V), Math::Dot(A - Center, U));
                 const float AngleB = std::atan2(Math::Dot(B - Center, V), Math::Dot(B - Center, U));
@@ -189,7 +188,7 @@ namespace Lumina
                 FVector3 Normal = Newell;
                 if (Math::Dot(Newell, FaceCenter - Centroid) < 0.0f)
                 {
-                    eastl::reverse(Face.begin(), Face.end());
+                    std::reverse(Face.begin(), Face.end());
                     Normal = -Newell;
                 }
 

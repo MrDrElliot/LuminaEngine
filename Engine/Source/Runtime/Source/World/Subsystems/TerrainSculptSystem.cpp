@@ -323,7 +323,7 @@ namespace Lumina
 
         // Scratch-backed so a held smooth stroke doesn't churn the heap every frame.
         FMemMark Mark;
-        TScratchVector<float> Snapshot(Mark.Eastl());
+        TScratchVector<float> Snapshot;
         Snapshot.resize(size_t(SnapW) * size_t(SnapH));
         for (int32 Y = 0; Y < SnapH; ++Y)
         {

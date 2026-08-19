@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Animation/Pose.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/Name.h"
 #include "Renderer/SkeletonResource.h"
 

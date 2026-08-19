@@ -1,3 +1,4 @@
+#include "Reflector/Utils/StringOps.h"
 #include <fstream>
 #include "StringHash.h"
 #include "nlohmann/json.hpp"
@@ -24,7 +25,7 @@ int main(int argc, char* argv[])
     
 #if 0
     
-    eastl::string InputFile = "H:/LuminaEngine/Reflection_Files.json";
+    std::string InputFile = "H:/LuminaEngine/Reflection_Files.json";
     
 #else
     if (argc < 2)
@@ -35,7 +36,7 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    eastl::string InputFile = argv[1];
+    std::string InputFile = argv[1];
 #endif
 
     std::ifstream File(InputFile.c_str());
@@ -54,21 +55,21 @@ int main(int argc, char* argv[])
     
     json Data = json::parse(File);
     
-    eastl::string WorkspaceName     = Data["WorkspaceName"].get<std::string>().c_str();
-    eastl::string WorkspacePath     = Data["WorkspacePath"].get<std::string>().c_str();
+    std::string WorkspaceName     = Data["WorkspaceName"].get<std::string>().c_str();
+    std::string WorkspacePath     = Data["WorkspacePath"].get<std::string>().c_str();
     
     FReflectedWorkspace Workspace(WorkspacePath.c_str());
     
     for (const auto& Project : Data["Projects"])
     {
-        eastl::string ProjectName = Project["Name"].get<std::string>().c_str();
-        eastl::string ProjectPath = Project["Path"].get<std::string>().c_str();
+        std::string ProjectName = Project["Name"].get<std::string>().c_str();
+        std::string ProjectPath = Project["Path"].get<std::string>().c_str();
         
-        auto ReflectedProject = eastl::make_unique<FReflectedProject>(&Workspace);
-        ReflectedProject->Name = eastl::move(ProjectName);
+        auto ReflectedProject = std::make_unique<FReflectedProject>(&Workspace);
+        ReflectedProject->Name = std::move(ProjectName);
         // Normalize so prefix-matching against Header->HeaderPath (also normalized)
         // works without per-call slash/case fixups.
-        ReflectedProject->Path = Lumina::ClangUtils::NormalizeHeaderPath(eastl::move(ProjectPath));
+        ReflectedProject->Path = Lumina::ClangUtils::NormalizeHeaderPath(std::move(ProjectPath));
 
         // A reference-only project (the engine's modules, pulled into a game or plugin workspace) is
         // parsed so its types are known, but never generated for.
@@ -80,8 +81,8 @@ int main(int argc, char* argv[])
         // Optional: the build system pins where this project's generated C++ lands.
         if (Project.contains("GeneratedDir") && !Project["GeneratedDir"].get<std::string>().empty())
         {
-            eastl::string GeneratedDir = Project["GeneratedDir"].get<std::string>().c_str();
-            ReflectedProject->GeneratedDir = Lumina::ClangUtils::NormalizeHeaderPath(eastl::move(GeneratedDir));
+            std::string GeneratedDir = Project["GeneratedDir"].get<std::string>().c_str();
+            ReflectedProject->GeneratedDir = Lumina::ClangUtils::NormalizeHeaderPath(std::move(GeneratedDir));
         }
 
         // Optional: the precompiled header generated sources must open with. Absent or empty means
@@ -94,8 +95,8 @@ int main(int argc, char* argv[])
         // Optional: a plugin/game module routes its C# bindings into its own Scripts/Generated dir.
         if (Project.contains("CSharpBindingsDir") && !Project["CSharpBindingsDir"].get<std::string>().empty())
         {
-            eastl::string CSharpDir = Project["CSharpBindingsDir"].get<std::string>().c_str();
-            ReflectedProject->CSharpBindingsDir = Lumina::ClangUtils::NormalizeHeaderPath(eastl::move(CSharpDir));
+            std::string CSharpDir = Project["CSharpBindingsDir"].get<std::string>().c_str();
+            ReflectedProject->CSharpBindingsDir = Lumina::ClangUtils::NormalizeHeaderPath(std::move(CSharpDir));
         }
 
         if (Project.contains("RouteTypeBindings"))
@@ -105,9 +106,9 @@ int main(int argc, char* argv[])
 
         for (const auto& IncludeDirJson : Project["IncludeDirs"])
         {
-            eastl::string IncludeDir = IncludeDirJson.get<std::string>().c_str();
-            IncludeDir = Lumina::ClangUtils::NormalizeHeaderPath(eastl::move(IncludeDir));
-            ReflectedProject->IncludeDirs.push_back(eastl::move(IncludeDir));
+            std::string IncludeDir = IncludeDirJson.get<std::string>().c_str();
+            IncludeDir = Lumina::ClangUtils::NormalizeHeaderPath(std::move(IncludeDir));
+            ReflectedProject->IncludeDirs.push_back(std::move(IncludeDir));
         }
         
         if (Project.contains("Definitions"))
@@ -122,24 +123,24 @@ int main(int argc, char* argv[])
         {
             for (const auto& ForceIncludeJson : Project["ForceIncludes"])
             {
-                eastl::string ForceInclude = ForceIncludeJson.get<std::string>().c_str();
-                ForceInclude = Lumina::ClangUtils::NormalizeHeaderPath(eastl::move(ForceInclude));
-                ReflectedProject->ForceIncludes.push_back(eastl::move(ForceInclude));
+                std::string ForceInclude = ForceIncludeJson.get<std::string>().c_str();
+                ForceInclude = Lumina::ClangUtils::NormalizeHeaderPath(std::move(ForceInclude));
+                ReflectedProject->ForceIncludes.push_back(std::move(ForceInclude));
             }
         }
 
         for (const auto& ProjectFileJson : Project["Files"])
         {
-            eastl::string ProjectFile = ProjectFileJson.get<std::string>().c_str();
-            ProjectFile = Lumina::ClangUtils::NormalizeHeaderPath(eastl::move(ProjectFile));
+            std::string ProjectFile = ProjectFileJson.get<std::string>().c_str();
+            ProjectFile = Lumina::ClangUtils::NormalizeHeaderPath(std::move(ProjectFile));
 
-            auto ReflectedHeader = eastl::make_unique<FReflectedHeader>(ReflectedProject.get(), ProjectFile);
+            auto ReflectedHeader = std::make_unique<FReflectedHeader>(ReflectedProject.get(), ProjectFile);
 
             Lumina::FStringHash HeaderHash(ProjectFile);
-            ReflectedProject->Headers.emplace(HeaderHash, eastl::move(ReflectedHeader));
+            ReflectedProject->Headers.emplace(HeaderHash, std::move(ReflectedHeader));
         }
         
-        Workspace.AddReflectedProject(eastl::move(ReflectedProject));
+        Workspace.AddReflectedProject(std::move(ReflectedProject));
     }
 
     // Static include-graph pass before libclang: cycles otherwise produce confusing
@@ -152,7 +153,7 @@ int main(int argc, char* argv[])
         for (const FHeaderCycle& Cycle : Cycles)
         {
             // Build a "A.h -> B.h -> A.h" arrow chain for the message body.
-            eastl::string Arrow;
+            std::string Arrow;
             for (size_t i = 0; i < Cycle.size(); ++i)
             {
                 if (i > 0)
@@ -187,7 +188,7 @@ int main(int argc, char* argv[])
 
     for (int i = 2; i < argc; ++i)
     {
-        Parser.bStrictParse |= eastl::string(argv[i]) == "-strict-parse";
+        Parser.bStrictParse |= std::string(argv[i]) == "-strict-parse";
     }
 
     bool bParseResult = Parser.Parse(&Workspace);
@@ -236,8 +237,8 @@ int main(int argc, char* argv[])
                 }
             }
 
-            eastl::string ExpectedGenerated = Header->FileName + ".generated.h";
-            ExpectedGenerated.make_lower();
+            std::string ExpectedGenerated = Header->FileName + ".generated.h";
+            Lumina::StringOps::ToLower(ExpectedGenerated);
 
             const FIncludeRef* GeneratedInclude = nullptr;
             const FIncludeRef* WrongGenerated   = nullptr;

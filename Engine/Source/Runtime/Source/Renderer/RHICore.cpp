@@ -289,22 +289,22 @@ namespace Lumina::RHI::Core
             }
         }
 
-        uint64 Signalled[kNumQueues];
+        uint64 Signaled[kNumQueues];
         for (uint32 QueueIndex = 0; QueueIndex < kNumQueues; ++QueueIndex)
         {
-            Signalled[QueueIndex] = GetSemaphoreValue(GCore.QueueTimeline[QueueIndex]);
+            Signaled[QueueIndex] = GetSemaphoreValue(GCore.QueueTimeline[QueueIndex]);
         }
 
         auto HasRetired = [&](const FRetireItem& Item)
         {
             for (uint32 QueueIndex = 0; QueueIndex < kNumQueues; ++QueueIndex)
             {
-                if (Signalled[QueueIndex] >= Item.Fence[QueueIndex])
+                if (Signaled[QueueIndex] >= Item.Fence[QueueIndex])
                 {
                     continue;
                 }
                 
-                if (OpenNow[QueueIndex] == 0 && Signalled[QueueIndex] >= Submitted[QueueIndex])
+                if (OpenNow[QueueIndex] == 0 && Signaled[QueueIndex] >= Submitted[QueueIndex])
                 {
                     continue;
                 }
@@ -393,8 +393,8 @@ namespace Lumina::RHI::Core
 
         FRetireItem Item;
         Item.Kind     = FRetireItem::EKind::Callback;
-        Item.Callback = eastl::move(Callback);
-        PushRetire(eastl::move(Item));
+        Item.Callback = std::move(Callback);
+        PushRetire(std::move(Item));
     }
 
     void Retire(FTextureH Texture)

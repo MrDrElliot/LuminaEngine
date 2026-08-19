@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "Core/Threading/Atomic.h"
 #include "Platform/Filesystem/DirectoryWatcher.h"
@@ -153,7 +153,7 @@ namespace Lumina
         void CommitSlotVisual(const FString& SlotId, ImVec2 TargetVisualPx, bool bSnapToGrid);
         void SetSlotInlineStyle(const FString& SlotId, const std::vector<std::pair<std::string, std::string>>& Sets);
 
-        // Canvas overlay density. Drawing a filled, labelled box for every slot buries a real document in
+        // Canvas overlay density. Drawing a filled, labeled box for every slot buries a real document in
         // overlapping rectangles, so the default keeps context slots as thin outlines.
         enum class EOverlayDetail : uint8 { All, Assigned, SelectionOnly };
 

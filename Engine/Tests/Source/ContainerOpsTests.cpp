@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Vector.h"
 #include "Containers/ContainerOps.h"
 #include "Containers/String.h"
 

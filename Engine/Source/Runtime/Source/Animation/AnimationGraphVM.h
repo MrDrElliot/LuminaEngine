@@ -4,7 +4,7 @@
 #include "Animation/RootMotion.h"
 #include "Animation/RootMotionTypes.h"
 #include "Animation/TaskSystem/AnimTask.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Serialization/Archiver.h"

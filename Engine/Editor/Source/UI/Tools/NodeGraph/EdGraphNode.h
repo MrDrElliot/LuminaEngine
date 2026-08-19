@@ -2,7 +2,8 @@
 
 #include "EdNodeGraphPin.h"
 #include <imgui.h>
-#include "Containers/Array.h"
+#include "Containers/StaticArray.h"
+#include "Containers/Vector.h"
 #include "Containers/Name.h"
 #include "Core/Math/Math.h"
 #include "Core/Object/Object.h"
@@ -125,7 +126,7 @@ namespace Lumina
         void SetError(const EdNodeGraph::FError& InError) { Error = InError; }
         const EdNodeGraph::FError& GetError() const { return Error.value(); }
         bool HasError() const { return Error.has_value(); }
-        void ClearError() { Error = eastl::nullopt; }
+        void ClearError() { Error = NullOpt; }
         
         CEdNodeGraphPin* GetPin(uint32 ID, ENodePinDirection Direction);
         CEdNodeGraphPin* GetPinByIndex(uint32 Index, ENodePinDirection Direction);

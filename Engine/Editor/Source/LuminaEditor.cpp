@@ -307,7 +307,7 @@ namespace Lumina
         FProjectTemplateContext Ctx;
         Ctx.Name.assign(NewProjectName.data(), NewProjectName.size());
         Ctx.NameUpper = Ctx.Name;
-        eastl::transform(
+        std::transform(
             Ctx.NameUpper.begin(),
             Ctx.NameUpper.end(),
             Ctx.NameUpper.begin(),
@@ -318,9 +318,9 @@ namespace Lumina
         Ctx.Guid = FGuid::New().ToString(true, true);
         Ctx.Description = "A Lumina game project";
         Ctx.LuminaDir = EngineDir;
-        eastl::replace(Ctx.LuminaDir.begin(), Ctx.LuminaDir.end(), '\\', '/');
+        std::replace(Ctx.LuminaDir.begin(), Ctx.LuminaDir.end(), '\\', '/');
         Ctx.LuminaDirBackslash = Ctx.LuminaDir;
-        eastl::replace(Ctx.LuminaDirBackslash.begin(), Ctx.LuminaDirBackslash.end(), '/', '\\');
+        std::replace(Ctx.LuminaDirBackslash.begin(), Ctx.LuminaDirBackslash.end(), '/', '\\');
 
         if (!CopyTemplateTree(BlankProjectPath, Combined,
             [&Ctx](FString& Text) { ReplaceProjectTokens(Text, Ctx); },
@@ -388,7 +388,7 @@ namespace Lumina
 
         auto ToUpper = [](FString& S)
         {
-            eastl::transform(S.begin(), S.end(), S.begin(),
+            std::transform(S.begin(), S.end(), S.begin(),
                 [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
         };
 
@@ -438,7 +438,7 @@ namespace Lumina
         // Detached worker thread runs the build tool, captures stdout+stderr, and
         // streams each line into the editor log under a [BuildTool] tag so the
         // user sees what's happening without a separate console window. The
-        // FScopedSlowTask drives a centred progress modal for the duration.
+        // FScopedSlowTask drives a centered progress modal for the duration.
         const std::string ScriptPathStr(ScriptPath.c_str(), ScriptPath.size());
         const std::string WorkingDirStr(ProjectDirectory.data(), ProjectDirectory.size());
 

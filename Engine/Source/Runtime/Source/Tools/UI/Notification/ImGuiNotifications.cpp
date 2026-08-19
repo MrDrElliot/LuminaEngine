@@ -1,7 +1,7 @@
 ﻿#include "RuntimePCH.h"
 #include "ImGuiNotifications.h"
 #include "imgui.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "Core/Templates/LuminaTemplate.h"
@@ -248,7 +248,7 @@ namespace Lumina::ImGuiX::Notifications
             const float Opacity     = Notification.GetFadePercentage();
             const ImVec4 TextColor  = Notification.GetColor(Opacity);
 
-            FFixedString WindowName(FFixedString::CtorSprintf(), "##Notification%d", (int)i);
+            const FFixedString WindowName = FormatAs<FFixedString>("##Notification{}", (int)i);
             
             ImGuiWindowFlags Flags = 
                 ImGuiWindowFlags_AlwaysAutoResize |
@@ -287,7 +287,7 @@ namespace Lumina::ImGuiX::Notifications
                     }
                     else
                     {
-                        ImGui::TextUnformatted(Title.begin(), Title.end());
+                        ImGui::TextUnformatted(Title.data(), Title.data() + Title.size());
                     }
 
                     DrawSeparator = true;
@@ -305,7 +305,7 @@ namespace Lumina::ImGuiX::Notifications
                         ImGui::Separator();
                     }
 
-                    ImGui::TextUnformatted(Message.begin(), Message.end());
+                    ImGui::TextUnformatted(Message.data(), Message.data() + Message.size());
                 }
 
                 ImGui::PopTextWrapPos();

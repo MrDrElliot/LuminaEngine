@@ -1,7 +1,7 @@
 #pragma once
 
 #include "EditorTransaction.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Core/Object/ObjectHandleTyped.h"
 
 namespace Lumina

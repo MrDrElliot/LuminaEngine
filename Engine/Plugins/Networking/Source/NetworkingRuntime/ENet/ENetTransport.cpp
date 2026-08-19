@@ -2,7 +2,8 @@
 // enet pulls <winsock2.h>; include it before anything that could drag in <windows.h>/<winsock.h>.
 #include <enet/enet.h>
 #include "ENetTransport.h"
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Vector.h"
 #include "Core/Console/ConsoleVariable.h"
 #include "Log/Log.h"
 

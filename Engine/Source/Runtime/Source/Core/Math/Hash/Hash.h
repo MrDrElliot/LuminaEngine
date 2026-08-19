@@ -1,6 +1,8 @@
 ﻿#pragma once
 
-#include "Containers/Array.h"
+#include "Containers/HashPrimitives.h"
+#include "Containers/Vector.h"
+#include "Containers/VectorOps.h"
 #include "Containers/String.h"
 #include "Core/Profiler/Profile.h"
 #include "Platform/GenericPlatform.h"
@@ -12,28 +14,23 @@ namespace Lumina::Hash
 {
 	// XXHash: default hashing algorithm for the engine.
 
-	/** Golden-ratio odd constant, 64-bit. Steps the seed so a run of equal values still separates. */
-	constexpr uint64 GGoldenRatio64 = 0x9e3779b97f4a7c15ull;
+	// The primitives live in Containers/HashPrimitives.h because StringView and BasicString need them and
+	// this header includes Containers/String.h; defining them here instead would close an include cycle.
+	using Containers::HashBytes;
+	using Containers::GetTypeHash;
 
-	/**
-	 * splitmix64's finalizer: two multiply-xorshift rounds that avalanche every input bit across all 64.
-	 */
+	inline constexpr uint64 GGoldenRatio64 = Containers::GHashGoldenRatio64;
+
+	/** splitmix64's finalizer: two multiply-xorshift rounds that avalanche every input bit across all 64. */
 	FORCEINLINE constexpr uint64 Mix64(uint64 Value) noexcept
 	{
-		Value ^= Value >> 30;
-		Value *= 0xbf58476d1ce4e5b9ull;
-		Value ^= Value >> 27;
-		Value *= 0x94d049bb133111ebull;
-		Value ^= Value >> 31;
-		return Value;
+		return Containers::MixHash64(Value);
 	}
 
-	/**
-	 * Mixes Value into Seed.
-	 */
+	/** Mixes Value into Seed. */
 	FORCEINLINE void HashCombine(size_t& Seed, size_t Value) noexcept
 	{
-		Seed = (size_t)Mix64((uint64)Seed + GGoldenRatio64 + Mix64((uint64)Value));
+		Seed = static_cast<size_t>(Containers::CombineHash(Seed, Value));
 	}
 
 	namespace XXHash
@@ -55,7 +52,7 @@ namespace Lumina::Hash
 			return GetHash32(&Value, sizeof(float), Seed);
 		}
 
-		inline uint32 GetHash32(const Blob& data, uint32 Seed = 0)
+		inline uint32 GetHash32(const TVector<uint8>& data, uint32 Seed = 0)
 		{
 			return GetHash32(data.data(), data.size(), Seed);
 		}
@@ -73,7 +70,7 @@ namespace Lumina::Hash
 			return GetHash64(String, strlen(String));
 		}
 
-		inline uint64 GetHash64(const Blob& data, uint64 Seed = 0)
+		inline uint64 GetHash64(const TVector<uint8>& data, uint64 Seed = 0)
 		{
 			return GetHash64(data.data(), data.size(), Seed);
 		}
@@ -126,7 +123,7 @@ namespace Lumina::Hash
 		return XXHash::GetHash32(Data, size, Seed);
 	}
 
-	FORCEINLINE uint32 GetHash32(const Blob& data, uint32 Seed = 0)
+	FORCEINLINE uint32 GetHash32(const TVector<uint8>& data, uint32 Seed = 0)
 	{
 		return XXHash::GetHash32(data.data(), data.size(), Seed);
 	}
@@ -152,7 +149,7 @@ namespace Lumina::Hash
 		return XXHash::GetHash64(Data, size, Seed);
 	}
 
-	FORCEINLINE uint64 GetHash64(const Blob& Data, uint64 Seed = 0)
+	FORCEINLINE uint64 GetHash64(const TVector<uint8>& Data, uint64 Seed = 0)
 	{
 		return XXHash::GetHash64(Data.data(), Data.size(), Seed);
 	}
@@ -160,7 +157,7 @@ namespace Lumina::Hash
 	template<ContiguousContainer T>
 	FORCEINLINE uint64 GetHash64(const T& Array)
 	{
-		static_assert(eastl::is_trivially_copyable_v<typename T::value_type>,
+		static_assert(std::is_trivially_copyable_v<typename T::value_type>,
 			"GetHash64(container) hashes raw element bytes; the element type must be trivially copyable. "
 			"For anything else, loop and HashCombine each element.");
 
@@ -174,13 +171,13 @@ namespace Lumina::Hash
 	};
 
 	template<typename T>
-	concept HashEASTLHasher = requires(const T & Value)
+	concept HashStdHasher = requires(const T & Value)
 	{
-		{ eastl::hash<T>()(Value) } -> std::convertible_to<size_t>;
+		{ std::hash<T>()(Value) } -> std::convertible_to<size_t>;
 	};
 
 	/**
-	 * Strictly ordered fallbacks: GetTypeHash, then eastl::hash, then an enum's underlying type.
+	 * Strictly ordered fallbacks: GetTypeHash, then std::hash, then an enum's underlying type.
 	 */
 	template<typename T>
 	requires HasHasher<T>
@@ -190,18 +187,18 @@ namespace Lumina::Hash
 	}
 
 	template <typename T>
-	requires (!HasHasher<T> && HashEASTLHasher<T>)
+	requires (!HasHasher<T> && HashStdHasher<T>)
 	size_t GetHash(const T& value) noexcept
 	{
-		return eastl::hash<T>()(value);
+		return std::hash<T>()(value);
 	}
 
 	template <typename T>
-	requires eastl::is_enum_v<T> && (!HasHasher<T>) && (!HashEASTLHasher<T>)
+	requires std::is_enum_v<T> && (!HasHasher<T>) && (!HashStdHasher<T>)
 	size_t GetHash(const T& value) noexcept
 	{
-		using UnderlyingType = eastl::underlying_type_t<T>;
-		return eastl::hash<UnderlyingType>()(static_cast<UnderlyingType>(value));
+		using UnderlyingType = std::underlying_type_t<T>;
+		return std::hash<UnderlyingType>()(static_cast<UnderlyingType>(value));
 	}
 
 	// All three overloads funnel through the one HashCombine(size_t&, size_t) above, so they share its
@@ -225,13 +222,3 @@ namespace Lumina::Hash
 	}
 
 }
-
-template<typename T>
-requires (Lumina::Hash::HasHasher<T>)
-struct eastl::hash<T>
-{
-	size_t operator()(const T& Value) const
-	{
-		return GetTypeHash(Value);
-	}
-};

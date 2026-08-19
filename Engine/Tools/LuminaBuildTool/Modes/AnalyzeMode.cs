@@ -273,7 +273,7 @@ public static class AnalyzeMode
             Report.AppendLine("  dependency makes the reliance explicit and survives the day that re-export is");
             Report.AppendLine("  tidied away.");
             Report.AppendLine();
-            Report.AppendLine("  One caveat on attribution: a per-image source such as EASTLImpl.cpp is compiled");
+            Report.AppendLine("  One caveat on attribution: a per-image source such as GlobalAllocatorOverrides.cpp is compiled");
             Report.AppendLine("  into every module, and its include closure is charged to whichever module");
             Report.AppendLine("  compiled it. An entry with no re-exporting module named is usually that, rather");
             Report.AppendLine("  than the module's own code reaching somewhere it should not.");

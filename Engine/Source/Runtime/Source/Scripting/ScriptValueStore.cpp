@@ -52,9 +52,9 @@ namespace Lumina
     }
 
     SScriptValueStore::SScriptValueStore(SScriptValueStore&& Other) noexcept
-        : Layout(eastl::move(Other.Layout))
+        : Layout(std::move(Other.Layout))
         , Buffer(Other.Buffer)
-        , Serialized(eastl::move(Other.Serialized))
+        , Serialized(std::move(Other.Serialized))
     {
         Other.Buffer = nullptr;
     }
@@ -64,9 +64,9 @@ namespace Lumina
         if (this != &Other)
         {
             Reset();
-            Layout = eastl::move(Other.Layout);
+            Layout = std::move(Other.Layout);
             Buffer = Other.Buffer;
-            Serialized = eastl::move(Other.Serialized);
+            Serialized = std::move(Other.Serialized);
             Other.Buffer = nullptr;
         }
         return *this;

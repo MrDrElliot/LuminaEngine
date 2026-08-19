@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/Name.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
@@ -57,7 +57,7 @@ namespace
     {
         Scripting::FScriptExportField Field;
         Field.Name = FName(Name);
-        Field.Type = eastl::move(Type);
+        Field.Type = std::move(Type);
         return Field;
     }
 

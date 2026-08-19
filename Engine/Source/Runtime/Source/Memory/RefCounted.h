@@ -92,7 +92,7 @@ namespace Lumina
 		}
 
 		template<typename CopyReferencedType>
-		requires eastl::is_base_of_v<ReferencedType, CopyReferencedType>
+		requires std::is_base_of_v<ReferencedType, CopyReferencedType>
 		TRefCountPtr(const TRefCountPtr<CopyReferencedType>& Copy)
 		{
 			Reference = static_cast<ReferencedType*>(Copy.GetReference());
@@ -109,7 +109,7 @@ namespace Lumina
 		}
 
 		template<typename MoveReferencedType>
-		requires eastl::is_base_of_v<ReferencedType, MoveReferencedType>
+		requires std::is_base_of_v<ReferencedType, MoveReferencedType>
 		TRefCountPtr(TRefCountPtr<MoveReferencedType>&& Move)
 		{
 			Reference = static_cast<ReferencedType*>(Move.GetReference());
@@ -152,14 +152,14 @@ namespace Lumina
 		}
 		
 		template<typename T>
-		requires eastl::is_base_of_v<ReferencedType, T>
+		requires std::is_base_of_v<ReferencedType, T>
 		TRefCountPtr<T> As()
 		{
 			return TRefCountPtr<T>(static_cast<T*>(Reference));
 		}
 
 		template<typename T>
-		requires eastl::is_base_of_v<ReferencedType, T>
+		requires std::is_base_of_v<ReferencedType, T>
 		TRefCountPtr<T> As() const
 		{
 			return TRefCountPtr<T>(static_cast<T*>(Reference));
@@ -279,20 +279,20 @@ namespace Lumina
 	};
 }
 
-namespace eastl
+namespace std
 {
 	template <typename T>
 	struct hash<Lumina::TRefCountPtr<T>>
 	{
 		std::size_t operator()(const Lumina::TRefCountPtr<T>& handle) const noexcept
 		{
-			return eastl::hash<T*>()(handle.GetReference());
+			return Lumina::Containers::FDefaultHash()(handle.GetReference());
 		}
 	};
 }
 
 template<typename T, typename... TArgs>
-requires std::is_constructible_v<T, TArgs...> && (!eastl::is_array_v<T>) && (!eastl::is_abstract_v<T>)
+requires std::is_constructible_v<T, TArgs...> && (!std::is_array_v<T>) && (!std::is_abstract_v<T>)
 Lumina::TRefCountPtr<T> MakeRefCount(TArgs&&... Args)
 {
 	return Lumina::TRefCountPtr<T>(Lumina::Memory::New<T>(std::forward<TArgs>(Args)...));

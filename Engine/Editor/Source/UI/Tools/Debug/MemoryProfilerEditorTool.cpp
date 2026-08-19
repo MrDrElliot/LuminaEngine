@@ -3,7 +3,6 @@
 #include <cctype>
 #include <cstring>
 #include <cstdio>
-#include <EASTL/sort.h>
 #include "implot.h"
 #include "Core/Engine/Engine.h"
 #include "Memory/Memory.h"
@@ -13,6 +12,7 @@
 #include "Renderer/RenderResource.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "Tools/UI/ImGui/ImGuiFonts.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -57,7 +57,7 @@ namespace Lumina
         bool IsPlumbingFrame(const char* Fn)
         {
             static const char* const kPrefixes[] = {
-                "eastl::", "std::", "moodycamel::", "ImVector", "ImGui::MemAlloc",
+                "std::", "moodycamel::", "ImVector", "ImGui::MemAlloc",
                 "Lumina::Memory::", "Lumina::ImGuiX::ImGuiMemAlloc", "operator new", "malloc", "_malloc",
             };
             for (const char* P : kPrefixes)
@@ -68,7 +68,7 @@ namespace Lumina
         }
 
         // Template arguments are most of the length of a name like
-        // eastl::hashtable<__int64,eastl::pair<...>,...>::insert and none of the meaning at a glance.
+        // Containers::TRawHashTable<__int64,TPair<...>,...>::insert and none of the meaning at a glance.
         // Collapsed to <...> for the row; the tooltip still carries the full text.
         FString CollapseTemplateArgs(const FString& In)
         {
@@ -179,25 +179,25 @@ namespace Lumina
             FString Out;
             if (Desc.Type == RHI::ETextureType::Tex3D)
             {
-                Out.sprintf("%ux%ux%u %s", Desc.Dimension.x, Desc.Dimension.y, Desc.Dimension.z, TextureTypeName(Desc.Type));
+                Out = Format("{}x{}x{} {}", Desc.Dimension.x, Desc.Dimension.y, Desc.Dimension.z, TextureTypeName(Desc.Type));
             }
             else
             {
-                Out.sprintf("%ux%u %s", Desc.Dimension.x, Desc.Dimension.y, TextureTypeName(Desc.Type));
+                Out = Format("{}x{} {}", Desc.Dimension.x, Desc.Dimension.y, TextureTypeName(Desc.Type));
             }
             if (Desc.LayerCount > 1)
             {
-                Out += FString().sprintf(" x%u", Desc.LayerCount);
+                AppendFormat(Out, " x{}", Desc.LayerCount);
             }
             if (Desc.MipCount > 1)
             {
-                Out += FString().sprintf(", %u mips", Desc.MipCount);
+                AppendFormat(Out, ", {} mips", Desc.MipCount);
             }
             if (Desc.SampleCount > 1)
             {
-                Out += FString().sprintf(", %ux MSAA", Desc.SampleCount);
+                AppendFormat(Out, ", {}x MSAA", Desc.SampleCount);
             }
-            Out += FString().sprintf(", %s", RHI::Format::Info(Desc.Format).Name);
+            AppendFormat(Out, ", {}", RHI::Format::Info(Desc.Format).Name);
             return Out;
         }
 
@@ -205,7 +205,7 @@ namespace Lumina
         // gestalt and a parseable number.
         FString SizeBoth(uint64 Bytes)
         {
-            return FString().sprintf("%s (%llu bytes)", ImGuiX::FormatSize((size_t)Bytes).c_str(), (unsigned long long)Bytes);
+            return Format("{} ({} bytes)", ImGuiX::FormatSize((size_t)Bytes).c_str(), (unsigned long long)Bytes);
         }
 
         void PushHistory(TVector<float>& History, float Value)
@@ -510,7 +510,7 @@ namespace Lumina
                 const float Frac = (Heap.BudgetBytes > 0)
                     ? (float)((double)Heap.UsageBytes / (double)Heap.BudgetBytes) : 0.0f;
                 ImGui::PushStyleColor(ImGuiCol_PlotHistogram, UsageColor(Frac));
-                ImGui::ProgressBar(Frac, ImVec2(-1, 0), FString().sprintf("%.1f%%", Frac * 100.0f).c_str());
+                ImGui::ProgressBar(Frac, ImVec2(-1, 0), Format("{:.1f}%", Frac * 100.0f).c_str());
                 ImGui::PopStyleColor();
 
                 ImGui::TableSetColumnIndex(2);
@@ -573,10 +573,10 @@ namespace Lumina
             }
         }
 
-        eastl::sort(GPUPurposes.begin(), GPUPurposes.end(),
+        std::sort(GPUPurposes.begin(), GPUPurposes.end(),
             [](const FGPUPurposeRow& A, const FGPUPurposeRow& B) { return A.Total() > B.Total(); });
 
-        eastl::sort(GPUAllocations.begin(), GPUAllocations.end(),
+        std::sort(GPUAllocations.begin(), GPUAllocations.end(),
             [](const RHI::FGPUAllocation& A, const RHI::FGPUAllocation& B) { return A.Size > B.Size; });
     }
 
@@ -634,7 +634,7 @@ namespace Lumina
                 const float Frac = Largest > 0 ? (float)((double)Row.Total() / (double)Largest) : 0.0f;
                 const float Share = Attributed > 0 ? (float)((double)Row.Total() / (double)Attributed) : 0.0f;
                 ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.45f, 0.62f, 0.85f, 1.0f));
-                ImGui::ProgressBar(Frac, ImVec2(-1, 0), FString().sprintf("%.1f%%", Share * 100.0f).c_str());
+                ImGui::ProgressBar(Frac, ImVec2(-1, 0), Format("{:.1f}%", Share * 100.0f).c_str());
                 ImGui::PopStyleColor();
 
                 ImGui::TableSetColumnIndex(2);
@@ -1176,7 +1176,7 @@ namespace Lumina
             Rows.push_back(Row);
         }
 
-        eastl::sort(Rows.begin(), Rows.end(), [this](const FCategoryRow& A, const FCategoryRow& B)
+        std::sort(Rows.begin(), Rows.end(), [this](const FCategoryRow& A, const FCategoryRow& B)
         {
             if (bHasBaseline) { return A.DeltaBytes > B.DeltaBytes; }
             return A.S->LiveBytes > B.S->LiveBytes;
@@ -1420,7 +1420,7 @@ namespace Lumina
 
             // The headline is the first frame that names engine code rather than the container that
             // happened to do the allocating -- "STerrainControllerSystem::CollectChunkCandidates",
-            // not "eastl::hashtable<...>::insert". The plumbing frame is still there when expanded.
+            // not "Containers::TRawHashTable<...>::insert". The plumbing frame is still there when expanded.
             uint32 HeadlineFrame = 0;
             for (uint32 f = 0; f < Site.FrameCount; ++f)
             {
@@ -1579,8 +1579,8 @@ namespace Lumina
         R += "## System\n";
         if (bDeviceInfoValid)
         {
-            R += FString().sprintf("- GPU: %s (%s)\n", DeviceInfo.Name.c_str(), DeviceInfo.bDiscrete ? "Discrete" : "Integrated");
-            R += FString().sprintf("- API: %s\n", DeviceInfo.APIName.c_str());
+            AppendFormat(R, "- GPU: {} ({})\n", DeviceInfo.Name.c_str(), DeviceInfo.bDiscrete ? "Discrete" : "Integrated");
+            AppendFormat(R, "- API: {}\n", DeviceInfo.APIName.c_str());
         }
         else
         {
@@ -1590,13 +1590,13 @@ namespace Lumina
 
         // CPU
         R += "## CPU memory\n";
-        R += FString().sprintf("- Process RSS:     %s\n", SizeBoth(Process).c_str());
-        R += FString().sprintf("- rpmalloc mapped: %s (allocator's OS footprint)\n", SizeBoth(Mapped).c_str());
-        R += FString().sprintf("- Tracked:         %s (category ledger, live)\n", SizeBoth(Tracked).c_str());
-        R += FString().sprintf("- Retained:        %s (mapped - tracked: rpmalloc caches + fragmentation, freed but not returned to OS)\n", SizeBoth(Retained).c_str());
-        R += FString().sprintf("- ...cached:       %s (rpmalloc global span cache)\n", SizeBoth(Cached).c_str());
-        R += FString().sprintf("- External:        %s (RSS - mapped: GPU driver host memory, CRT malloc, code + stacks)\n", SizeBoth(External).c_str());
-        R += FString().sprintf("- Untracked:       %s (RSS - tracked; = retained + external)\n\n", SizeBoth(Untracked).c_str());
+        AppendFormat(R, "- Process RSS:     {}\n", SizeBoth(Process).c_str());
+        AppendFormat(R, "- rpmalloc mapped: {} (allocator's OS footprint)\n", SizeBoth(Mapped).c_str());
+        AppendFormat(R, "- Tracked:         {} (category ledger, live)\n", SizeBoth(Tracked).c_str());
+        AppendFormat(R, "- Retained:        {} (mapped - tracked: rpmalloc caches + fragmentation, freed but not returned to OS)\n", SizeBoth(Retained).c_str());
+        AppendFormat(R, "- ...cached:       {} (rpmalloc global span cache)\n", SizeBoth(Cached).c_str());
+        AppendFormat(R, "- External:        {} (RSS - mapped: GPU driver host memory, CRT malloc, code + stacks)\n", SizeBoth(External).c_str());
+        AppendFormat(R, "- Untracked:       {} (RSS - tracked; = retained + external)\n\n", SizeBoth(Untracked).c_str());
 
         // Address space -- the OS-level view, which is the only one that covers allocators the
         // engine never sees. Omitted rather than faked when the user hasn't run a scan.
@@ -1612,34 +1612,34 @@ namespace Lumina
             const uint64 Unattributed = AddressSpace.PrivateCommitted > Accounted
                                       ? AddressSpace.PrivateCommitted - Accounted : 0;
 
-            R += FString().sprintf("- Private commit:  %s (this process only)\n", SizeBoth(AddressSpace.PrivateCommitted).c_str());
-            R += FString().sprintf("- Image commit:    %s (code + data of loaded modules)\n", SizeBoth(AddressSpace.ImageCommitted).c_str());
-            R += FString().sprintf("- Mapped commit:   %s (file mappings, shared sections)\n", SizeBoth(AddressSpace.MappedCommitted).c_str());
-            R += FString().sprintf("- Reserved:        %s (address space only, no RAM)\n", SizeBoth(AddressSpace.Reserved).c_str());
+            AppendFormat(R, "- Private commit:  {} (this process only)\n", SizeBoth(AddressSpace.PrivateCommitted).c_str());
+            AppendFormat(R, "- Image commit:    {} (code + data of loaded modules)\n", SizeBoth(AddressSpace.ImageCommitted).c_str());
+            AppendFormat(R, "- Mapped commit:   {} (file mappings, shared sections)\n", SizeBoth(AddressSpace.MappedCommitted).c_str());
+            AppendFormat(R, "- Reserved:        {} (address space only, no RAM)\n", SizeBoth(AddressSpace.Reserved).c_str());
             R += "\n  Private commit by owner:\n";
-            R += FString().sprintf("  - rpmalloc:      %s (engine allocator; see category table)\n", SizeBoth(Mapped).c_str());
+            AppendFormat(R, "  - rpmalloc:      {} (engine allocator; see category table)\n", SizeBoth(Mapped).c_str());
             if (AddressSpace.bHeapWalkValid)
             {
-                R += FString().sprintf("  - NT/CRT heap:   %s committed, %s live in %u heaps (foreign DLLs: Slang, GPU driver, basisu, ucrtbase)\n",
+                AppendFormat(R, "  - NT/CRT heap:   {} committed, {} live in {} heaps (foreign DLLs: Slang, GPU driver, basisu, ucrtbase)\n",
                     SizeBoth(AddressSpace.HeapCommitted).c_str(), SizeBoth(AddressSpace.HeapAllocated).c_str(), AddressSpace.HeapCount);
             }
             else
             {
                 R += "  - NT/CRT heap:   not measured (heap walk off or failed; folded into unattributed)\n";
             }
-            R += FString().sprintf("  - Unattributed:  %s (raw VirtualAlloc: GPU driver, thread + fiber stacks)\n\n", SizeBoth(Unattributed).c_str());
+            AppendFormat(R, "  - Unattributed:  {} (raw VirtualAlloc: GPU driver, thread + fiber stacks)\n\n", SizeBoth(Unattributed).c_str());
         }
 
         // GPU summary
         const float VRAMFrac = (GPUStats.TotalBudget > 0)
             ? (float)((double)GPUStats.TotalUsage / (double)GPUStats.TotalBudget) : 0.0f;
         R += "## GPU summary\n";
-        R += FString().sprintf("- VRAM usage: %s of %s (%.1f%%)\n",
+        AppendFormat(R, "- VRAM usage: {} of {} ({:.1f}%)\n",
             SizeBoth(GPUStats.TotalUsage).c_str(), SizeBoth(GPUStats.TotalBudget).c_str(), VRAMFrac * 100.0f);
-        R += FString().sprintf("- Allocator allocated: %s\n", SizeBoth(GPUStats.TotalAllocated).c_str());
-        R += FString().sprintf("- Allocator blocks:    %s in %u blocks\n",
+        AppendFormat(R, "- Allocator allocated: {}\n", SizeBoth(GPUStats.TotalAllocated).c_str());
+        AppendFormat(R, "- Allocator blocks:    {} in {} blocks\n",
             SizeBoth(GPUStats.TotalBlockBytes).c_str(), GPUStats.TotalBlocks);
-        R += FString().sprintf("- Live allocations:    %u\n\n", GPUStats.TotalAllocations);
+        AppendFormat(R, "- Live allocations:    {}\n\n", GPUStats.TotalAllocations);
 
         // GPU heaps
         R += "## GPU heaps\n";
@@ -1648,7 +1648,7 @@ namespace Lumina
         for (const RHI::FGPUMemoryHeapStats& H : GPUStats.Heaps)
         {
             const float Frac = (H.BudgetBytes > 0) ? (float)((double)H.UsageBytes / (double)H.BudgetBytes) : 0.0f;
-            R += FString().sprintf("| %u | %s | %s | %s | %.1f%% | %s | %u | %u |\n",
+            AppendFormat(R, "| {} | {} | {} | {} | {:.1f}% | {} | {} | {} |\n",
                 H.HeapIndex, H.bReBAR ? "Device (ReBAR)" : H.bDeviceLocal ? (H.bHostVisible ? "Device (BAR)" : "Device") : "Host",
                 SizeBoth(H.UsageBytes).c_str(), SizeBoth(H.BudgetBytes).c_str(), Frac * 100.0f,
                 SizeBoth(H.AllocatedBytes).c_str(), H.BlockCount, H.AllocationCount);
@@ -1663,18 +1663,18 @@ namespace Lumina
                                       ? GPUStats.TotalAllocated - Attributed : 0;
 
             R += "## GPU memory by purpose (sorted by total)\n";
-            R += FString().sprintf("- Textures:   %s\n", SizeBoth(GPUTextureBytes).c_str());
-            R += FString().sprintf("- Buffers:    %s\n", SizeBoth(GPUBufferBytes).c_str());
-            R += FString().sprintf("- Attributed: %s of %s the allocator holds\n",
+            AppendFormat(R, "- Textures:   {}\n", SizeBoth(GPUTextureBytes).c_str());
+            AppendFormat(R, "- Buffers:    {}\n", SizeBoth(GPUBufferBytes).c_str());
+            AppendFormat(R, "- Attributed: {} of {} the allocator holds\n",
                 SizeBoth(Attributed).c_str(), SizeBoth(GPUStats.TotalAllocated).c_str());
-            R += FString().sprintf("- Remainder:  %s (driver allocations, descriptor pools, swapchain images, allocator fragmentation -- not engine-owned)\n\n",
+            AppendFormat(R, "- Remainder:  {} (driver allocations, descriptor pools, swapchain images, allocator fragmentation -- not engine-owned)\n\n",
                 SizeBoth(Unattributed).c_str());
 
             R += "| Purpose | Total | Textures | Texture count | Buffers | Buffer count |\n";
             R += "|---------|-------|----------|---------------|---------|--------------|\n";
             for (const FGPUPurposeRow& Row : GPUPurposes)
             {
-                R += FString().sprintf("| %s | %s | %s | %u | %s | %u |\n",
+                AppendFormat(R, "| {} | {} | {} | {} | {} | {} |\n",
                     Row.Name.c_str(), SizeBoth(Row.Total()).c_str(),
                     SizeBoth(Row.TextureBytes).c_str(), Row.TextureCount,
                     SizeBoth(Row.BufferBytes).c_str(), Row.BufferCount);
@@ -1685,14 +1685,14 @@ namespace Lumina
             static constexpr size_t kMaxAllocationRows = 64;
             const size_t Shown = Math::Min(GPUAllocations.size(), kMaxAllocationRows);
 
-            R += FString().sprintf("## Largest GPU allocations (top %zu of %zu live)\n",
+            AppendFormat(R, "## Largest GPU allocations (top {} of {} live)\n",
                 Shown, GPUAllocations.size());
             R += "| Name | Kind | Size | Detail |\n";
             R += "|------|------|------|--------|\n";
             for (size_t i = 0; i < Shown; ++i)
             {
                 const RHI::FGPUAllocation& Alloc = GPUAllocations[i];
-                R += FString().sprintf("| %s | %s | %s | %s |\n",
+                AppendFormat(R, "| {} | {} | {} | {} |\n",
                     Alloc.Name[0] ? Alloc.Name : "(unnamed)",
                     Alloc.Kind == RHI::EGPUAllocationKind::Texture ? "Texture" : "Buffer",
                     SizeBoth(Alloc.Size).c_str(), DescribeAllocation(Alloc).c_str());
@@ -1726,16 +1726,16 @@ namespace Lumina
                     B ? (int64)S.LiveBytes - (int64)B->LiveBytes : 0,
                     B ? (int64)S.LiveCount - (int64)B->LiveCount : 0 });
             }
-            eastl::sort(Rows.begin(), Rows.end(), [](const FRow& A, const FRow& B) { return A.S->LiveBytes > B.S->LiveBytes; });
+            std::sort(Rows.begin(), Rows.end(), [](const FRow& A, const FRow& B) { return A.S->LiveBytes > B.S->LiveBytes; });
 
             R += "## CPU memory by category (sorted by live bytes)\n";
-            R += FString().sprintf("Baseline set: %s\n\n", bHasBaseline ? "yes (Delta = growth since baseline)" : "no");
+            AppendFormat(R, "Baseline set: {}\n\n", bHasBaseline ? "yes (Delta = growth since baseline)" : "no");
             R += "| Category | Live | Count | Peak | Total allocs | Total frees | Delta bytes | Delta count |\n";
             R += "|----------|------|-------|------|--------------|-------------|-------------|-------------|\n";
             for (const FRow& Row : Rows)
             {
                 const Memory::FMemoryCategoryStats& S = *Row.S;
-                R += FString().sprintf("| %s | %s | %llu | %s | %llu | %llu | %s%lld | %lld |\n",
+                AppendFormat(R, "| {} | {} | {} | {} | {} | {} | {}{} | {} |\n",
                     S.Name[0] ? S.Name : "Default",
                     SizeBoth(S.LiveBytes).c_str(), (unsigned long long)S.LiveCount,
                     SizeBoth(S.PeakBytes).c_str(),
@@ -1764,11 +1764,11 @@ namespace Lumina
                 Memory::FCallSiteStat Sites[kMaxSites];
                 const uint32 NumSites = Memory::GetTopCallSites(Sites, kMaxSites, Sorts[s]);
 
-                R += FString().sprintf("### Ranked by %s\n", SortNames[s]);
+                AppendFormat(R, "### Ranked by {}\n", SortNames[s]);
                 for (uint32 i = 0; i < NumSites; ++i)
                 {
                     const Memory::FCallSiteStat& Site = Sites[i];
-                    R += FString().sprintf("\n[%u] live %s | %llu live allocs | %llu total allocs | category [%s]\n",
+                    AppendFormat(R, "\n[{}] live {} | {} live allocs | {} total allocs | category [{}]\n",
                         i + 1, SizeBoth(Site.LiveBytes).c_str(),
                         (unsigned long long)Site.LiveCount, (unsigned long long)Site.TotalAllocs,
                         Site.CatName[0] ? Site.CatName : "Default");

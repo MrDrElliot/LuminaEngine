@@ -17,6 +17,7 @@
 #include "Platform/CrashReporter.h"
 #include "Platform/Filesystem/FileHelper.h"
 #include "Platform/Process/PlatformProcess.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina::RHI
 {
@@ -28,7 +29,7 @@ namespace Lumina::RHI
         case GFSDK_Aftermath_Result_FAIL_DriverVersionNotSupported:
             return "Unsupported driver version - requires an NVIDIA R495 display driver or newer.";
         default:
-            return "Aftermath Error 0x" + eastl::to_string(Result);
+            return Lumina::Format("Aftermath Error 0x{:X}", static_cast<uint32>(Result));
         }
     }
 
@@ -351,7 +352,7 @@ namespace Lumina::RHI
         {
             const auto Time = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
             const FString BinaryPath = GetCrashDumpDirectory() + "/GPUFault_"
-                + eastl::to_string(static_cast<uint64>(Time)) + ".bin";
+                + Lumina::Format("{}", static_cast<uint64>(Time)) + ".bin";
 
             std::ofstream File(BinaryPath.c_str(), std::ios::binary);
             if (File.is_open())
@@ -514,8 +515,8 @@ namespace Lumina::RHI
         auto Now  = std::chrono::system_clock::now();
         auto Time = std::chrono::system_clock::to_time_t(Now);
 
-        FString DumpPath = GetCrashDumpDirectory() + "/GPUCrash_" + eastl::to_string(static_cast<uint64>(Time)) + ".nv-gpudmp";
-        FString JsonPath = GetCrashDumpDirectory() + "/GPUCrash_" + eastl::to_string(static_cast<uint64>(Time)) + ".json";
+        FString DumpPath = GetCrashDumpDirectory() + "/GPUCrash_" + Lumina::Format("{}", static_cast<uint64>(Time)) + ".nv-gpudmp";
+        FString JsonPath = GetCrashDumpDirectory() + "/GPUCrash_" + Lumina::Format("{}", static_cast<uint64>(Time)) + ".json";
 
         {
             std::ofstream DumpFile(DumpPath.c_str(), std::ios::binary);

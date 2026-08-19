@@ -3,7 +3,8 @@
 
 #include "EntityScript.h"
 
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Vector.h"
 #include "DotNet/DotNetHost.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/InstancedStruct.h"

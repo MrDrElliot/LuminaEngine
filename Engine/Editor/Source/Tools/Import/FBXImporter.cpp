@@ -18,6 +18,7 @@
 #include "Renderer/Vertex.h"
 #include "TaskSystem/TaskSystem.h"
 #include "Log/Log.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -203,7 +204,7 @@ namespace Lumina
         LoadOptions.handedness_conversion_axis = UFBX_MIRROR_AXIS_X;
         LoadOptions.space_conversion           = UFBX_SPACE_CONVERSION_ADJUST_TRANSFORMS;
 
-        // Engine world units are metres. The user's Scale is deliberately NOT applied here: the shared
+        // Engine world units are meters. The user's Scale is deliberately NOT applied here: the shared
         // FinalizeMeshImportData pass applies it to vertices, skeletons and animation translations, and
         // applying it twice is exactly the bug the old importer had.
         LoadOptions.target_unit_meters = 1.0f;
@@ -256,7 +257,7 @@ namespace Lumina
         {
             // Every place a texture's path might actually live, in decreasing order of authority. ufbx's
             // `filename` is the authored path already resolved against the FBX, which is right whenever the
-            // asset travelled with its textures; the rest recover the common cases where it did not -- an
+            // asset traveled with its textures; the rest recover the common cases where it did not -- an
             // absolute path from the authoring machine, a flattened texture folder, or the "<name>.fbm"
             // sidecar the FBX SDK unpacks embedded media into.
             auto ResolveOnDisk = [&](const ufbx_texture_file& File, FFixedString& OutTried) -> FFixedString
@@ -305,13 +306,13 @@ namespace Lumina
                 FSourceImage Image;
 
                 // The key names the image for the asset it becomes and drives the cook's filename-based
-                // colour-space heuristic, so it wants to look like a filename even for embedded content.
+                // color-space heuristic, so it wants to look like a filename even for embedded content.
                 Image.Key = PathLeaf(!ToView(File.relative_filename).empty() ? ToView(File.relative_filename)
                                                                             : ToView(File.filename));
                 if (Image.Key.empty())
                 {
-                    Image.Key = FFixedString(FFixedString::CtorSprintf(), "%.*s_Image_%u",
-                                             (int)SourceName.length(), SourceName.data(), (uint32)i);
+                    Image.Key = FormatAs<FFixedString>("{}_Image_{}",
+                                                       FStringView(SourceName.data(), SourceName.length()), (uint32)i);
                 }
 
                 if (File.content.size > 0 && File.content.data != nullptr)
@@ -384,7 +385,7 @@ namespace Lumina
         auto ResolveImage = [&](const ufbx_material_map& Map) -> int32
         {
             // texture_enabled is deliberately not consulted: exporters set it inconsistently, and a false
-            // there is the difference between a textured import and a flat grey one.
+            // there is the difference between a textured import and a flat gray one.
             const ufbx_texture* File = FindFileTexture(Map.texture);
             if (File == nullptr || !File->has_file || File->file_index == UFBX_NO_INDEX)
             {
@@ -441,7 +442,7 @@ namespace Lumina
             }
         };
 
-        // FBX has no masked flag and no way to point the engine's clip at anything but base-colour alpha,
+        // FBX has no masked flag and no way to point the engine's clip at anything but base-color alpha,
         // so alpha-tested foliage would otherwise import Opaque. Flagged heuristically by name; the user
         // can override the blend mode per material afterwards.
         auto IsFoliageName = [&](const FString& MaterialName, int32 BaseColorImage) -> bool
@@ -488,10 +489,9 @@ namespace Lumina
                 FMeshImportMaterial Material;
                 Material.Name = !ToView(Source.name).empty()
                     ? FString(Source.name.data, Source.name.length)
-                    : FString(FFixedString(FFixedString::CtorSprintf(), "%.*s_Mat%u",
-                              (int)SourceName.length(), SourceName.data(), (uint32)i).c_str());
+                    : Format("{}_Mat{}", FStringView(SourceName.data(), SourceName.length()), (uint32)i);
 
-                // ufbx normalises every shading model it knows -- Phong, Arnold, 3ds Max Physical,
+                // ufbx normalizes every shading model it knows -- Phong, Arnold, 3ds Max Physical,
                 // Substance, Blender's Phong-encoded PBR -- onto this one set of maps.
                 Material.BaseColorImage = ResolveImage(PBR.base_color);
                 Material.NormalImage    = ResolveImage(PBR.normal_map);
@@ -560,7 +560,7 @@ namespace Lumina
                 const float EmissionFactor = MapReal(PBR.emission_factor, 1.0f);
                 if (Material.EmissiveImage != INDEX_NONE)
                 {
-                    // The map supplies the colour; only the weight stays a constant.
+                    // The map supplies the color; only the weight stays a constant.
                     Material.EmissiveColor = FVector3(EmissionFactor);
                 }
                 else
@@ -581,8 +581,8 @@ namespace Lumina
                 Material.bTwoSided = Feat.double_sided.enabled;
                 Material.bUnlit    = Feat.unlit.enabled;
 
-                // Alpha. The engine clips and blends on base-colour alpha only, so an opacity map that is
-                // NOT the base-colour image cannot be honoured -- say so rather than importing it opaque.
+                // Alpha. The engine clips and blends on base-color alpha only, so an opacity map that is
+                // NOT the base-color image cannot be honored -- say so rather than importing it opaque.
                 if (OpacityImage != INDEX_NONE)
                 {
                     Material.AlphaMode   = EImportAlphaMode::Mask;
@@ -591,8 +591,8 @@ namespace Lumina
                     if (OpacityImage != Material.BaseColorImage)
                     {
                         LOG_WARN("[FBX] Material '{}' uses a separate opacity map, which the engine samples "
-                                 "from base-colour alpha instead. Imported as alpha-tested against the base "
-                                 "colour; if that alpha is opaque the mask has no effect.", Material.Name);
+                                 "from base-color alpha instead. Imported as alpha-tested against the base "
+                                 "color; if that alpha is opaque the mask has no effect.", Material.Name);
                     }
                 }
                 else if (Opacity < 0.999f)
@@ -1072,14 +1072,14 @@ namespace Lumina
                 FFixedString Name = SanitizedSourceName(Mesh.name.data, Mesh.name.length);
                 if (Name.empty())
                 {
-                    Name = FFixedString(FFixedString::CtorSprintf(), "%.*s_%u",
-                                        (int)SourceName.length(), SourceName.data(), (uint32)UniqueMeshes[Slot]);
+                    Name = FormatAs<FFixedString>("{}_{}",
+                                                  FStringView(SourceName.data(), SourceName.length()), (uint32)UniqueMeshes[Slot]);
                 }
 
                 uint32& Count = NameCounts[Name];
                 if (Count > 0)
                 {
-                    Name.append("_").append_convert(eastl::to_string(Count));
+                    Name.append("_").append(Format("{}", Count));
                 }
                 ++Count;
 
@@ -1270,7 +1270,7 @@ namespace Lumina
                                                           &IndexAllocator, &IndexError);
             if (UniqueVertices == 0 && CornerCursor > 0)
             {
-                // Welding is an optimisation; a failure must not lose the mesh.
+                // Welding is an optimization; a failure must not lose the mesh.
                 LOG_WARN("[FBX] Mesh '{}': index generation failed ({}), keeping unwelded vertices.",
                          MeshName, FormatUfbxError(IndexError));
                 UniqueVertices = CornerCursor;
@@ -1308,7 +1308,7 @@ namespace Lumina
                 FFixedString SurfaceName = MeshName;
                 if (PendingSurfaces.size() > 1)
                 {
-                    SurfaceName.append("_").append_convert(eastl::to_string(i));
+                    SurfaceName.append("_").append(Format("{}", i));
                 }
                 Surface.ID            = SurfaceName;
                 Surface.StartIndex    = Pending.Start;
@@ -1331,8 +1331,8 @@ namespace Lumina
             if (Progress)
             {
                 const uint32 Done = Completed.fetch_add(1) + 1;
-                FFixedString Message(FFixedString::CtorSprintf(), "Processing geometry (%u/%u meshes)...",
-                                     Done, (uint32)UniqueMeshes.size());
+                const FFixedString Message = FormatAs<FFixedString>("Processing geometry ({}/{} meshes)...",
+                                                                    Done, (uint32)UniqueMeshes.size());
                 Progress->EnterProgressFrame(GeometryStep, Message);
             }
         });

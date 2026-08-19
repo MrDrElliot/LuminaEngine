@@ -14,20 +14,20 @@ namespace Lumina
 
         const char* GetTypeName() override { return "Enum"; }
         const char* GetPropertyParamType() const override { return "FEnumPropertyParams"; }
-        eastl::string_view GetLuaType() override { return "number"; }
+        std::string_view GetLuaType() override { return "number"; }
 
         void AppendDefinition(Reflection::FCodeWriter& Writer) const override
         {
-            const eastl::string PropertyFlagStr = PropertyFlagsToString(PropertyFlags);
-            const eastl::string CustomData = "Construct_CEnum_" + ClangUtils::MakeCodeFriendlyNamespace(TypeName);
+            const std::string PropertyFlagStr = PropertyFlagsToString(PropertyFlags);
+            const std::string CustomData = "Construct_CEnum_" + ClangUtils::MakeCodeFriendlyNamespace(TypeName);
             AppendPropertyDef(Writer, PropertyFlagStr.c_str(), "Lumina::EPropertyTypeFlags::Enum", CustomData);
         }
 
         bool CanDeclareCrossModuleReferences() const override { return true; }
-        void DeclareCrossModuleReference(const eastl::string& API, Reflection::FCodeWriter& Writer) override
+        void DeclareCrossModuleReference(const std::string& API, Reflection::FCodeWriter& Writer) override
         {
-            const eastl::string Friendly = ClangUtils::MakeCodeFriendlyNamespace(TypeName);
-            const eastl::string FnName = "Construct_CEnum_" + Friendly;
+            const std::string Friendly = ClangUtils::MakeCodeFriendlyNamespace(TypeName);
+            const std::string FnName = "Construct_CEnum_" + Friendly;
             Reflection::Names::EmitGuardedCrossModuleDecl(Writer, API, "CEnum", FnName);
         }
     };

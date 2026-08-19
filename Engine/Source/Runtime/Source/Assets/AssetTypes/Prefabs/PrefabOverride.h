@@ -1,7 +1,8 @@
 #pragma once
 
 #include "ModuleAPI.h"
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Vector.h"
 #include "Containers/Name.h"
 
 namespace Lumina

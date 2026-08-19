@@ -1,10 +1,11 @@
-﻿#include "ClangTranslationUnit.h"
+﻿#include "Reflector/Utils/StringOps.h"
+#include "ClangTranslationUnit.h"
 #include "ClangVisitor.h"
 #include "Reflector/Clang/ClangParserContext.h"
 #include "Reflector/Clang/Utils.h"
 #include "Reflector/Diagnostics/LRTDiagnostics.h"
-#include <EASTL/algorithm.h>
-#include <EASTL/string.h>
+#include <algorithm>
+#include <string>
 #include <StringHash.h>
 #include <clang-c/CXSourceLocation.h>
 #include <cstdint>
@@ -26,7 +27,7 @@ namespace Lumina::Reflection
 
 		FClangParserContext* ParserContext = (FClangParserContext*)ClientData;
 
-		eastl::string FilePath = ClangUtils::GetHeaderPathForCursor(Cursor);
+		std::string FilePath = ClangUtils::GetHeaderPathForCursor(Cursor);
 		if (FilePath.empty())
 		{
 			return CXChildVisit_Continue;
@@ -44,7 +45,7 @@ namespace Lumina::Reflection
 		ParserContext->ReflectedHeader = Itr->second;
 
 		CXCursorKind CursorKind = clang_getCursorKind(Cursor);
-		eastl::string CursorName = ClangUtils::GetCursorDisplayName(Cursor);
+		std::string CursorName = ClangUtils::GetCursorDisplayName(Cursor);
 
 		switch (CursorKind)
 		{
@@ -60,19 +61,19 @@ namespace Lumina::Reflection
 			FIncludeRef IncludeRef;
 			IncludeRef.Spelling = CursorName;
 			IncludeRef.Basename = CursorName;
-			eastl::replace(IncludeRef.Basename.begin(), IncludeRef.Basename.end(), '\\', '/');
+			std::replace(IncludeRef.Basename.begin(), IncludeRef.Basename.end(), '\\', '/');
 			const size_t SlashIdx = IncludeRef.Basename.find_last_of('/');
-			if (SlashIdx != eastl::string::npos)
+			if (SlashIdx != std::string::npos)
 			{
 				IncludeRef.Basename.erase(0, SlashIdx + 1);
 			}
-			IncludeRef.Basename.make_lower();
+			Lumina::StringOps::ToLower(IncludeRef.Basename);
 
 			uint32_t Line = 0;
 			clang_getExpansionLocation(Loc, nullptr, &Line, nullptr, nullptr);
 			IncludeRef.LineNumber = Line;
 
-			ParserContext->ReflectedHeader->Includes.push_back(eastl::move(IncludeRef));
+			ParserContext->ReflectedHeader->Includes.push_back(std::move(IncludeRef));
 			return CXChildVisit_Continue;
 		}
 

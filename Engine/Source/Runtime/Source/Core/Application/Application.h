@@ -42,7 +42,7 @@ namespace Lumina
 		static void RequestExit();
 
 		// Abort a pending exit; clears bExitRequested AND the window close flag
-		// so an X-button-triggered exit can be cancelled too.
+		// so an X-button-triggered exit can be canceled too.
 		static void CancelExit();
 
 		FEventProcessor& GetEventProcessor()	{ return EventProcessor; }

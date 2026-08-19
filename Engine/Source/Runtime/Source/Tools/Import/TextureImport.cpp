@@ -63,7 +63,7 @@ namespace Lumina::Import::Textures
             STBIR_FILTER_MITCHELL
         );
     
-        Source.Pixels     = eastl::move(Resized);
+        Source.Pixels     = std::move(Resized);
         Source.Dimensions = TargetSize;
     }
 
@@ -158,7 +158,7 @@ namespace Lumina::Import::Textures
             if (data == nullptr)
             {
                 LOG_WARN("Failed to load HDR image: {0}", RawFilePath);
-                return eastl::nullopt;
+                return NullOpt;
             }
             
             switch (channels)
@@ -187,7 +187,7 @@ namespace Lumina::Import::Textures
             if (data == nullptr)
             {
                 LOG_WARN("Failed to load 16-bit image: {0}", RawFilePath);
-                return eastl::nullopt;
+                return NullOpt;
             }
             
             switch (channels)
@@ -214,7 +214,7 @@ namespace Lumina::Import::Textures
                 default:
                     stbi_image_free(data);
                     LOG_WARN("Unsupported channel count for 16-bit: {0}", channels);
-                    return eastl::nullopt;
+                    return NullOpt;
             }
             
             if (channels != 3) // If we didn't do the RGB->RGBA conversion above
@@ -233,7 +233,7 @@ namespace Lumina::Import::Textures
         if (data == nullptr)
         {
             LOG_WARN("Failed to load 8-bit image: {0}", RawFilePath);
-            return eastl::nullopt;
+            return NullOpt;
         }
         
         bool bIsSRGB = false;
@@ -256,13 +256,13 @@ namespace Lumina::Import::Textures
                         rgba8Data[i * 4 + 2] = data[i * 3 + 2];
                         rgba8Data[i * 4 + 3] = 0xFF;
                     }
-                    Result.Pixels = eastl::move(rgba8Data);
+                    Result.Pixels = std::move(rgba8Data);
                 }
                 break;
             default:
                 stbi_image_free(data);
                 LOG_WARN("Unsupported channel count: {0}", channels);
-                return eastl::nullopt;
+                return NullOpt;
         }
         
         if (channels != 3) // If we didn't do the RGB -> RGBA conversion above
@@ -298,7 +298,7 @@ namespace Lumina::Import::Textures
             if (Data == nullptr)
             {
                 LOG_WARN("Failed to load HDR image");
-                return eastl::nullopt;
+                return NullOpt;
             }
             
             switch (channels)
@@ -327,7 +327,7 @@ namespace Lumina::Import::Textures
             if (Data == nullptr)
             {
                 LOG_WARN("Failed to load 16-bit image");
-                return eastl::nullopt;
+                return NullOpt;
             }
             
             switch (channels)
@@ -354,7 +354,7 @@ namespace Lumina::Import::Textures
                 default:
                     stbi_image_free(Data);
                     LOG_WARN("Unsupported channel count for 16-bit: {0}", channels);
-                    return eastl::nullopt;
+                    return NullOpt;
             }
             
             if (channels != 3) // If we didn't do the RGB->RGBA conversion above
@@ -373,7 +373,7 @@ namespace Lumina::Import::Textures
         if (data == nullptr)
         {
             LOG_WARN("Failed to load 8-bit image");
-            return eastl::nullopt;
+            return NullOpt;
         }
         
         bool bIsSRGB = false;
@@ -396,13 +396,13 @@ namespace Lumina::Import::Textures
                         rgba8Data[i * 4 + 2] = data[i * 3 + 2];
                         rgba8Data[i * 4 + 3] = 0xFF;
                     }
-                    Result.Pixels = eastl::move(rgba8Data);
+                    Result.Pixels = std::move(rgba8Data);
                 }
                 break;
             default:
                 stbi_image_free(data);
                 LOG_WARN("Unsupported channel count: {0}", channels);
-                return eastl::nullopt;
+                return NullOpt;
         }
         
         if (channels != 3) // If we didn't do the RGB -> RGBA conversion above

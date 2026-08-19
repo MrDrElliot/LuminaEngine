@@ -1,7 +1,8 @@
 #pragma once
 #include "PhysicsTypes.h"
 #include "Core/Templates/Optional.h"
-#include "Containers/Array.h"
+#include "Containers/Span.h"
+#include "Containers/Vector.h"
 #include "Memory/SmartPtr.h"
 #include "Core/Math/Matrix/MatrixMath.h"
 #include "Ray/RayCast.h"
@@ -144,7 +145,7 @@ namespace Lumina::Physics
         virtual FVector3 GetCenterOfMass(uint32 BodyID)= 0;
 
         /** Body mass in kg, or 0 for a body that cannot move (static/kinematic have infinite mass). Default
-         *  1 so non-Jolt backends compile; callers scaling a force by it get sane behaviour either way. */
+         *  1 so non-Jolt backends compile; callers scaling a force by it get sane behavior either way. */
         virtual float GetBodyMass(uint32 BodyID) { return 1.0f; }
 
         // Actual current body pose, NOT the interpolated render transform (STransformComponent is lagged).

@@ -9,6 +9,7 @@
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Reflection/Type/Properties/EnumProperty.h"
 #include "Core/Reflection/Type/Properties/ObjectProperty.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina::Reflection
 {
@@ -114,21 +115,21 @@ namespace Lumina::Reflection
 
         switch (Prop->GetType())
         {
-        case EPropertyTypeFlags::Int8:    return eastl::to_string((int32)*static_cast<int8*>(Value)).c_str();
-        case EPropertyTypeFlags::Int16:   return eastl::to_string((int32)*static_cast<int16*>(Value)).c_str();
-        case EPropertyTypeFlags::Int32:   return eastl::to_string(*static_cast<int32*>(Value)).c_str();
-        case EPropertyTypeFlags::Int64:   return eastl::to_string(*static_cast<int64*>(Value)).c_str();
-        case EPropertyTypeFlags::UInt8:   return eastl::to_string((uint32)*static_cast<uint8*>(Value)).c_str();
-        case EPropertyTypeFlags::UInt16:  return eastl::to_string((uint32)*static_cast<uint16*>(Value)).c_str();
-        case EPropertyTypeFlags::UInt32:  return eastl::to_string(*static_cast<uint32*>(Value)).c_str();
-        case EPropertyTypeFlags::UInt64:  return eastl::to_string(*static_cast<uint64*>(Value)).c_str();
+        case EPropertyTypeFlags::Int8:    return Format("{}", (int32)*static_cast<int8*>(Value)).c_str();
+        case EPropertyTypeFlags::Int16:   return Format("{}", (int32)*static_cast<int16*>(Value)).c_str();
+        case EPropertyTypeFlags::Int32:   return Format("{}", *static_cast<int32*>(Value)).c_str();
+        case EPropertyTypeFlags::Int64:   return Format("{}", *static_cast<int64*>(Value)).c_str();
+        case EPropertyTypeFlags::UInt8:   return Format("{}", (uint32)*static_cast<uint8*>(Value)).c_str();
+        case EPropertyTypeFlags::UInt16:  return Format("{}", (uint32)*static_cast<uint16*>(Value)).c_str();
+        case EPropertyTypeFlags::UInt32:  return Format("{}", *static_cast<uint32*>(Value)).c_str();
+        case EPropertyTypeFlags::UInt64:  return Format("{}", *static_cast<uint64*>(Value)).c_str();
 
         // %g, not to_string: to_string on a float emits six trailing zeroes for every whole number,
         // which makes a table of integers-stored-as-floats unreadable.
         case EPropertyTypeFlags::Float:
-            return FString(FString::CtorSprintf(), "%g", (double)*static_cast<float*>(Value));
+            return Format("{:g}", (double)*static_cast<float*>(Value));
         case EPropertyTypeFlags::Double:
-            return FString(FString::CtorSprintf(), "%g", *static_cast<double*>(Value));
+            return Format("{:g}", *static_cast<double*>(Value));
 
         case EPropertyTypeFlags::Bool:    return *static_cast<bool*>(Value) ? "true" : "false";
         case EPropertyTypeFlags::Name:    return static_cast<FName*>(Value)->ToString();

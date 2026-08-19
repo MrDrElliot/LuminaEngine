@@ -2,28 +2,34 @@
 
 #include <format>
 #include <iterator>
+#include <string_view>
 
+#include "BasicString.h"
 #include "Core/DisableAllWarnings.h"
 #include "Platform/PlatformString.h"
 
 PRAGMA_DISABLE_ALL_WARNINGS
-#include "EASTL/fixed_string.h"
-#include "EASTL/string.h"
 #include <ostream>
 PRAGMA_ENABLE_ALL_WARNINGS
 
 
 namespace Lumina
 {
-    using FString                                   = eastl::basic_string<char>;
-    using FStringView                               = eastl::string_view;
-    using FFixedString                              = eastl::fixed_string<char, 255>;
+    using FString                                   = Containers::TBasicString<char>;
+    using FStringView                               = Containers::TStringView<char>;
+    using FCStringView                              = Containers::TCStringView<char>;
+    using FFixedString                              = Containers::TBasicString<char, 255>;
 
-    using FPathString                               = eastl::fixed_string<char, 512>;
-    template<eastl_size_t S> using TFixedString     = eastl::fixed_string<char, S>;
-    
-    using FWString                                  = eastl::basic_string<wchar_t>;
-    using FFixedWString                             = eastl::fixed_string<wchar_t, 255>;
+    using FPathString                               = Containers::TBasicString<char, 512>;
+    template<size_t S> using TFixedString           = Containers::TBasicString<char, S>;
+
+    using Containers::CompareIgnoreCase;
+    using Containers::EqualsIgnoreCase;
+
+    using FWString                                  = Containers::TBasicString<wchar_t>;
+    using FFixedWString                             = Containers::TBasicString<wchar_t, 255>;
+    using FWStringView                              = Containers::TStringView<wchar_t>;
+    using FCWStringView                             = Containers::TCStringView<wchar_t>;
 
     template<typename T>
     concept StringLike = requires(T s)
@@ -31,7 +37,7 @@ namespace Lumina
         { s.length() } -> std::convertible_to<size_t>;
         { s.data() }   -> std::convertible_to<const char*>;
     };
-    
+
     namespace StringUtils
     {
         inline FWString ToWideString(FStringView str)
@@ -54,7 +60,7 @@ namespace Lumina
             const auto Conv = StringCast<ANSICHAR>(Str);
             return FString(Conv.Get(), Conv.Length());
         }
-        
+
         inline FString FormatSize(size_t Bytes)
         {
             const char* Suffixes[] = { "B", "KB", "MB", "GB" };
@@ -77,72 +83,12 @@ namespace Lumina
 #define TCHAR_TO_UTF8(X) (::Lumina::StringCast<ANSICHAR>(X).Get())
 #define UTF8_TO_TCHAR(X) (::Lumina::StringCast<TCHAR>(X).Get())
 
-namespace std
+namespace Lumina::Containers
 {
-    template <>
-    struct formatter<Lumina::FString>
+    template <size_t N, typename TAllocator>
+    inline std::ostream& operator<<(std::ostream& Out, const TBasicString<char, N, TAllocator>& Str)
     {
-        constexpr auto parse(std::format_parse_context& ctx)
-        {
-            return ctx.begin();
-        }
-
-        template <typename FormatContext>
-        auto format(const Lumina::FString& str, FormatContext& ctx) const
-        {
-            return std::format_to(ctx.out(), "{}", str.c_str());
-        }
-    };
-    
-    template <>
-    struct formatter<Lumina::FFixedString>
-    {
-        constexpr auto parse(std::format_parse_context& ctx)
-        {
-            return ctx.begin();
-        }
-
-        template <typename FormatContext>
-        auto format(const Lumina::FFixedString& str, FormatContext& ctx) const
-        {
-            return std::format_to(ctx.out(), "{}", str.c_str());
-        }
-    };
-
-    // EASTL's Debug string_view does not convert here, and nothing reflects a formatter.
-#ifndef REFLECTION_PARSER
-    template <>
-    struct formatter<eastl::string_view>
-    {
-        constexpr auto parse(format_parse_context& ctx)
-        {
-            return ctx.begin();
-        }
-
-        template <typename FormatContext>
-        auto format(const eastl::string_view& str, FormatContext& ctx) const
-        {
-            return std::format_to(ctx.out(), "{}", std::string_view(str.data(), static_cast<size_t>(str.length())));
-        }
-    };
-#endif
-}
-
-
-template <eastl_size_t S>
-struct eastl::hash<eastl::fixed_string<char, S, true>>
-{
-    size_t operator()(const eastl::fixed_string<char, S, true>& str) const noexcept
-    {
-        return eastl::hash<eastl::string_view>{}(eastl::string_view(str.c_str(), str.length()));
-    }
-};
-
-namespace eastl
-{
-    inline std::ostream& operator<<(std::ostream& os, const Lumina::FString& str)
-    {
-        os.write(str.c_str(), str.size());
-        return os;
+        Out.write(Str.data(), static_cast<std::streamsize>(Str.size()));
+        return Out;
     }
 }

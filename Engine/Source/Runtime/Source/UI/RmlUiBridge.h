@@ -4,7 +4,7 @@
 // the per-world Rml::Context lives on CWorld via FWorldUIContext.
 
 #include "Core/Math/Math.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "Memory/SmartPtr.h"
 #include "Renderer/RHI.h"

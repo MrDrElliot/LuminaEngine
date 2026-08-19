@@ -13,6 +13,14 @@
 #define HAS_STD_STACKTRACE 0
 #endif
 
+#if defined(_MSC_VER)
+    extern "C" __declspec(dllimport) int __stdcall IsDebuggerPresent();
+    // Breaks only under a debugger, so a failing assertion still reaches its handler in a normal run.
+    #define LUMINA_DEBUG_BREAK() do { if (::IsDebuggerPresent()) { __debugbreak(); } } while (false)
+#else
+    #define LUMINA_DEBUG_BREAK() ((void)0)
+#endif
+
 namespace Lumina::Assert
 {
     enum class EAssertionType : uint8
@@ -66,7 +74,7 @@ namespace Lumina::Assert
 #define LUMINA_ASSERTION_BODY(Expr, AssertType, ...) \
     if(!(Expr)) [[unlikely]] \
     { \
-        EASTL_DEBUG_BREAK(); \
+        LUMINA_DEBUG_BREAK(); \
         using namespace Lumina::Assert; \
         LUMINA_HANDLE_ASSERTION_HEADER \
         { \
@@ -93,7 +101,7 @@ namespace Lumina::Assert
         auto _LuminaAlertResult_ = (Expr); \
         if (!_LuminaAlertResult_) [[unlikely]] \
         { \
-            EASTL_DEBUG_BREAK(); \
+            LUMINA_DEBUG_BREAK(); \
             using namespace Lumina::Assert; \
             LUMINA_HANDLE_ASSERTION_HEADER \
             { \
@@ -116,7 +124,7 @@ namespace Lumina::Assert
         auto _LuminaAlertResult_ = (Expr); \
         if (_LuminaAlertResult_) [[unlikely]] \
         { \
-            EASTL_DEBUG_BREAK(); \
+            LUMINA_DEBUG_BREAK(); \
             using namespace Lumina::Assert; \
             LUMINA_HANDLE_ASSERTION_HEADER \
             { \

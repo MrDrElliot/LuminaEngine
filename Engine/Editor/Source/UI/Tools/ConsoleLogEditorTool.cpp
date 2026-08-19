@@ -3,7 +3,6 @@
 #include <utility>
 
 #include "Core/Console/ConsoleVariable.h"
-#include "EASTL/sort.h"
 #include "Log/LogMessage.h"
 #include "Log/Log.h"
 
@@ -700,7 +699,7 @@ namespace Lumina
             }
         }
 
-        eastl::sort(AutoCompleteCandidates.begin(), AutoCompleteCandidates.end(), [](const FAutoCompleteCandidate& A, const FAutoCompleteCandidate& B)
+        std::sort(AutoCompleteCandidates.begin(), AutoCompleteCandidates.end(), [](const FAutoCompleteCandidate& A, const FAutoCompleteCandidate& B)
         {
             return A.MatchScore > B.MatchScore;
         });

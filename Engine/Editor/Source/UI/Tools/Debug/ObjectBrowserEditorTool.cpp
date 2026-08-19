@@ -1,6 +1,5 @@
 #include "ObjectBrowserEditorTool.h"
 
-#include <EASTL/sort.h>
 
 #include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
@@ -180,7 +179,7 @@ namespace Lumina
         const bool  bAscending = bSortAscending;
         const TVector<FObjectBrowserRow>& Source = Rows;
 
-        eastl::stable_sort(VisibleRows.begin(), VisibleRows.end(), [&Source, Column, bAscending](int32 A, int32 B)
+        std::stable_sort(VisibleRows.begin(), VisibleRows.end(), [&Source, Column, bAscending](int32 A, int32 B)
         {
             const FObjectBrowserRow& RowA = Source[A];
             const FObjectBrowserRow& RowB = Source[B];

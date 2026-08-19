@@ -376,7 +376,7 @@ namespace Lumina::MeshletHeaderSlab
             return;
         }
 
-        // Bumped BEFORE the upload so any Reset already queued against the old contents recognises that
+        // Bumped BEFORE the upload so any Reset already queued against the old contents recognizes that
         // what sits here now is not what it was asked to clear.
         ++GSlotVersion[Slot];
 

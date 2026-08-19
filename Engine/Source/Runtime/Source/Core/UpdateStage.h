@@ -76,11 +76,11 @@ namespace Lumina
         }
 
         template<typename... Args>
-        requires (sizeof...(Args) > 0) && (eastl::is_constructible_v<FUpdateStagePriority, Args> && ...)
+        requires (sizeof...(Args) > 0) && (std::is_constructible_v<FUpdateStagePriority, Args> && ...)
         FUpdatePriorityList(Args&&... args)
         {
             Reset();
-            ((*this << eastl::forward<Args>(args)), ...);
+            ((*this << std::forward<Args>(args)), ...);
         }
 
         void Reset()

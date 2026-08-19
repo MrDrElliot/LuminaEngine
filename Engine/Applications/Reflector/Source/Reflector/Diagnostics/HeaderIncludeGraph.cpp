@@ -1,6 +1,6 @@
 #include "HeaderIncludeGraph.h"
 
-#include <EASTL/algorithm.h>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <regex>
@@ -16,7 +16,7 @@ namespace Lumina::Reflection
     {
         // Forward slashes + absolute, case preserved; mirrors NormalizeHeaderPath
         // so these strings compare equal to AllHeaders entries on every filesystem.
-        eastl::string Normalise(const std::filesystem::path& InPath)
+        std::string Normalize(const std::filesystem::path& InPath)
         {
             std::error_code Ec;
             std::filesystem::path Abs = std::filesystem::weakly_canonical(InPath, Ec);
@@ -25,12 +25,12 @@ namespace Lumina::Reflection
                 Abs = std::filesystem::absolute(InPath, Ec);
             }
 
-            eastl::string Result = Abs.string().c_str();
-            eastl::replace(Result.begin(), Result.end(), '\\', '/');
+            std::string Result = Abs.string().c_str();
+            std::replace(Result.begin(), Result.end(), '\\', '/');
             return Result;
         }
 
-        bool StartsWith(const eastl::string& Haystack, const eastl::string& Needle)
+        bool StartsWith(const std::string& Haystack, const std::string& Needle)
         {
             if (Needle.size() > Haystack.size())
             {
@@ -39,9 +39,9 @@ namespace Lumina::Reflection
             return std::memcmp(Haystack.data(), Needle.data(), Needle.size()) == 0;
         }
 
-        // Extract the parent directory of `Path`, normalised. Empty if the path
+        // Extract the parent directory of `Path`, normalized. Empty if the path
         // has no parent.
-        eastl::string ParentDir(const eastl::string& Path)
+        std::string ParentDir(const std::string& Path)
         {
             std::filesystem::path P(Path.c_str());
             std::filesystem::path Parent = P.parent_path();
@@ -49,23 +49,23 @@ namespace Lumina::Reflection
             {
                 return {};
             }
-            return Normalise(Parent);
+            return Normalize(Parent);
         }
 
         // Paths the cycle detector ignores even when they resolve: the `.inl` idiom
         // (X.h includes X.inl includes X.h) is a deliberate pattern, not a cycle.
-        bool IsExtensionIgnored(const eastl::string& Path)
+        bool IsExtensionIgnored(const std::string& Path)
         {
             const size_t Dot = Path.find_last_of('.');
-            if (Dot == eastl::string::npos)
+            if (Dot == std::string::npos)
             {
                 return false;
             }
-            return Path.compare(Dot, eastl::string::npos, ".inl") == 0;
+            return Path.compare(Dot, std::string::npos, ".inl") == 0;
         }
     }
 
-    bool FHeaderIncludeGraph::ScanHeader(const eastl::string& AbsPath, eastl::vector<eastl::pair<eastl::string, uint32_t>>& OutIncludes) const
+    bool FHeaderIncludeGraph::ScanHeader(const std::string& AbsPath, std::vector<std::pair<std::string, uint32_t>>& OutIncludes) const
     {
         std::ifstream File(AbsPath.c_str());
         if (!File.is_open())
@@ -86,17 +86,17 @@ namespace Lumina::Reflection
             std::smatch Match;
             if (std::regex_search(LineBuf, Match, IncludeRegex))
             {
-                OutIncludes.emplace_back(eastl::pair<eastl::string, uint32_t>{ Match[1].str().c_str(), Line });
+                OutIncludes.emplace_back(std::pair<std::string, uint32_t>{ Match[1].str().c_str(), Line });
             }
         }
 
         return true;
     }
 
-    eastl::string FHeaderIncludeGraph::ResolveInclude(
-        const eastl::string& IncludeText,
-        const eastl::string& IncluderDir,
-        const eastl::vector<eastl::string>& IncludeDirs) const
+    std::string FHeaderIncludeGraph::ResolveInclude(
+        const std::string& IncludeText,
+        const std::string& IncluderDir,
+        const std::vector<std::string>& IncludeDirs) const
     {
         // 1) Try relative to the includer (matches `#include "Sibling.h"`).
         if (!IncluderDir.empty())
@@ -105,27 +105,27 @@ namespace Lumina::Reflection
             std::error_code Ec;
             if (std::filesystem::exists(Candidate, Ec) && !Ec)
             {
-                return Normalise(Candidate);
+                return Normalize(Candidate);
             }
         }
 
         // 2) Walk the include search dirs in order, same as clang would.
-        for (const eastl::string& Dir : IncludeDirs)
+        for (const std::string& Dir : IncludeDirs)
         {
             std::filesystem::path Candidate = std::filesystem::path(Dir.c_str()) / IncludeText.c_str();
             std::error_code Ec;
             if (std::filesystem::exists(Candidate, Ec) && !Ec)
             {
-                return Normalise(Candidate);
+                return Normalize(Candidate);
             }
         }
 
         return {};
     }
 
-    bool FHeaderIncludeGraph::IsInsideProjectRoots(const eastl::string& AbsPath) const
+    bool FHeaderIncludeGraph::IsInsideProjectRoots(const std::string& AbsPath) const
     {
-        for (const eastl::string& Root : ProjectRoots)
+        for (const std::string& Root : ProjectRoots)
         {
             if (StartsWith(AbsPath, Root))
             {
@@ -148,20 +148,20 @@ namespace Lumina::Reflection
 
         // Aggregate roots + the union of include dirs once. Resolution then has
         // a single search list to walk for any header in the graph.
-        eastl::vector<eastl::string> Seeds;
+        std::vector<std::string> Seeds;
         for (const auto& Project : Workspace->ReflectedProjects)
         {
-            const eastl::string ProjectRoot = Normalise(std::filesystem::path(Project->Path.c_str()));
+            const std::string ProjectRoot = Normalize(std::filesystem::path(Project->Path.c_str()));
             // Trailing '/' guarantees prefix-match doesn't false-positive on
             // sibling dirs that share a prefix (e.g. "Runtime" vs "RuntimeX").
             ProjectRoots.push_back(ProjectRoot + "/");
 
-            for (const eastl::string& Dir : Project->IncludeDirs)
+            for (const std::string& Dir : Project->IncludeDirs)
             {
-                eastl::string Norm = Normalise(std::filesystem::path(Dir.c_str()));
-                if (eastl::find(AllIncludeDirs.begin(), AllIncludeDirs.end(), Norm) == AllIncludeDirs.end())
+                std::string Norm = Normalize(std::filesystem::path(Dir.c_str()));
+                if (std::find(AllIncludeDirs.begin(), AllIncludeDirs.end(), Norm) == AllIncludeDirs.end())
                 {
-                    AllIncludeDirs.push_back(eastl::move(Norm));
+                    AllIncludeDirs.push_back(std::move(Norm));
                 }
             }
 
@@ -173,10 +173,10 @@ namespace Lumina::Reflection
 
         // BFS-ish crawl from every reflected header, queuing files inside a project root.
         // Stops at non-project paths so third-party cycles aren't reported to the user.
-        eastl::vector<eastl::string> Frontier = Seeds;
+        std::vector<std::string> Frontier = Seeds;
         while (!Frontier.empty())
         {
-            const eastl::string Path = Frontier.back();
+            const std::string Path = Frontier.back();
             Frontier.pop_back();
 
             if (Nodes.find(Path) != Nodes.end())
@@ -187,19 +187,19 @@ namespace Lumina::Reflection
             FNode Node;
             Node.Path = Path;
 
-            eastl::vector<eastl::pair<eastl::string, uint32_t>> RawIncludes;
+            std::vector<std::pair<std::string, uint32_t>> RawIncludes;
             const bool bRead = ScanHeader(Path, RawIncludes);
             if (!bRead)
             {
-                Nodes.emplace(Path, eastl::move(Node));
+                Nodes.emplace(Path, std::move(Node));
                 continue;
             }
 
-            const eastl::string IncluderDir = ParentDir(Path);
+            const std::string IncluderDir = ParentDir(Path);
 
             for (const auto& [IncludeText, IncludeLine] : RawIncludes)
             {
-                eastl::string Resolved = ResolveInclude(IncludeText, IncluderDir, AllIncludeDirs);
+                std::string Resolved = ResolveInclude(IncludeText, IncluderDir, AllIncludeDirs);
                 if (Resolved.empty())
                 {
                     continue;
@@ -223,11 +223,11 @@ namespace Lumina::Reflection
                 }
             }
 
-            Nodes.emplace(Path, eastl::move(Node));
+            Nodes.emplace(Path, std::move(Node));
         }
     }
 
-    uint32_t FHeaderIncludeGraph::GetIncludeLine(const eastl::string& IncluderPath, const eastl::string& IncludeePath) const
+    uint32_t FHeaderIncludeGraph::GetIncludeLine(const std::string& IncluderPath, const std::string& IncludeePath) const
     {
         const auto It = Nodes.find(IncluderPath);
         if (It == Nodes.end())
@@ -244,22 +244,22 @@ namespace Lumina::Reflection
         return 0;
     }
 
-    eastl::vector<FHeaderCycle> FHeaderIncludeGraph::DetectCycles() const
+    std::vector<FHeaderCycle> FHeaderIncludeGraph::DetectCycles() const
     {
-        // Standard three-color DFS (White=unvisited, Grey=on stack, Black=done);
-        // hitting a Grey node means the active stack holds a cycle's members.
-        enum class EColor : uint8_t { White, Grey, Black };
+        // Standard three-color DFS (White=unvisited, Gray=on stack, Black=done);
+        // hitting a Gray node means the active stack holds a cycle's members.
+        enum class EColor : uint8_t { White, Gray, Black };
 
-        eastl::hash_map<eastl::string, EColor> Colour;
-        Colour.reserve(Nodes.size());
+        std::unordered_map<std::string, EColor> Color;
+        Color.reserve(Nodes.size());
         for (const auto& [Path, _] : Nodes)
         {
-            Colour.emplace(Path, EColor::White);
+            Color.emplace(Path, EColor::White);
         }
 
-        eastl::vector<eastl::string> Stack;
-        eastl::vector<FHeaderCycle> Cycles;
-        eastl::hash_map<eastl::string, bool> Reported; // dedup key
+        std::vector<std::string> Stack;
+        std::vector<FHeaderCycle> Cycles;
+        std::unordered_map<std::string, bool> Reported; // dedup key
 
         // Iterative DFS to avoid blowing the C++ stack on giant graphs.
         struct FFrame
@@ -270,7 +270,7 @@ namespace Lumina::Reflection
 
         for (const auto& [StartPath, _] : Nodes)
         {
-            if (Colour[StartPath] != EColor::White)
+            if (Color[StartPath] != EColor::White)
             {
                 continue;
             }
@@ -281,9 +281,9 @@ namespace Lumina::Reflection
                 continue;
             }
 
-            eastl::vector<FFrame> Frames;
+            std::vector<FFrame> Frames;
             Frames.push_back({ &StartIt->second, 0 });
-            Colour[StartPath] = EColor::Grey;
+            Color[StartPath] = EColor::Gray;
             Stack.push_back(StartPath);
 
             while (!Frames.empty())
@@ -291,30 +291,30 @@ namespace Lumina::Reflection
                 FFrame& Top = Frames.back();
                 if (Top.NextEdge >= Top.Node->Includes.size())
                 {
-                    Colour[Top.Node->Path] = EColor::Black;
+                    Color[Top.Node->Path] = EColor::Black;
                     Stack.pop_back();
                     Frames.pop_back();
                     continue;
                 }
 
-                const eastl::string& Target = Top.Node->Includes[Top.NextEdge++].Path;
+                const std::string& Target = Top.Node->Includes[Top.NextEdge++].Path;
 
-                auto ColourIt = Colour.find(Target);
-                if (ColourIt == Colour.end())
+                auto ColorIt = Color.find(Target);
+                if (ColorIt == Color.end())
                 {
                     continue;
                 }
 
-                if (ColourIt->second == EColor::Black)
+                if (ColorIt->second == EColor::Black)
                 {
                     continue;
                 }
 
-                if (ColourIt->second == EColor::Grey)
+                if (ColorIt->second == EColor::Gray)
                 {
                     // Walk the active stack back to find where Target first
                     // appeared -- that index marks the start of the cycle.
-                    auto StackIt = eastl::find(Stack.begin(), Stack.end(), Target);
+                    auto StackIt = std::find(Stack.begin(), Stack.end(), Target);
                     if (StackIt == Stack.end())
                     {
                         continue;
@@ -325,15 +325,15 @@ namespace Lumina::Reflection
 
                     // Canonicalize: rotate so the smallest path is first, giving
                     // identical keys for any start node that walked the same loop.
-                    auto MinIt = eastl::min_element(Cycle.begin(), Cycle.end() - 1);
-                    eastl::vector<eastl::string> Canonical;
+                    auto MinIt = std::min_element(Cycle.begin(), Cycle.end() - 1);
+                    std::vector<std::string> Canonical;
                     Canonical.reserve(Cycle.size());
                     Canonical.insert(Canonical.end(), MinIt, Cycle.end() - 1);
                     Canonical.insert(Canonical.end(), Cycle.begin(), MinIt);
                     Canonical.push_back(*MinIt);
 
-                    eastl::string Key;
-                    for (const eastl::string& Step : Canonical)
+                    std::string Key;
+                    for (const std::string& Step : Canonical)
                     {
                         Key += Step;
                         Key += '|';
@@ -342,7 +342,7 @@ namespace Lumina::Reflection
                     if (Reported.find(Key) == Reported.end())
                     {
                         Reported.emplace(Key, true);
-                        Cycles.push_back(eastl::move(Canonical));
+                        Cycles.push_back(std::move(Canonical));
                     }
                     continue;
                 }
@@ -354,7 +354,7 @@ namespace Lumina::Reflection
                     continue;
                 }
 
-                Colour[Target] = EColor::Grey;
+                Color[Target] = EColor::Gray;
                 Stack.push_back(Target);
                 Frames.push_back({ &TargetNodeIt->second, 0 });
             }

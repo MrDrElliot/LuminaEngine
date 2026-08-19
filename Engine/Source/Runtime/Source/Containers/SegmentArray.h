@@ -3,7 +3,6 @@
 
 #include "Core/Assertions/Assert.h"
 #include "Core/Threading/Thread.h"
-#include "EASTL/utility.h"
 #include "Memory/Memory.h"
 
 
@@ -64,7 +63,7 @@ namespace Lumina
             Head = Entry->Next;
             Entry->Next = kNotInFreeList;
 
-            ::new(&Entry->Data) T(eastl::forward<TArgs>(Value)...);
+            ::new(&Entry->Data) T(std::forward<TArgs>(Value)...);
 
             return ToHandle(Index, ++Entry->Gen);
         }

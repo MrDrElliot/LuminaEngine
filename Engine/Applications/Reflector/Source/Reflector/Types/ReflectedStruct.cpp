@@ -11,15 +11,15 @@ namespace Lumina::Reflection
     FReflectedStruct::~FReflectedStruct() = default;
 
     // A template argument list carries commas, which the offsetof macro would read as extra arguments.
-    eastl::string FReflectedStruct::OffsetBaseTypeName() const
+    std::string FReflectedStruct::OffsetBaseTypeName() const
     {
-        const eastl::string& Cpp = EmittedCppQualifiedName();
-        return Cpp.find('<') == eastl::string::npos
+        const std::string& Cpp = EmittedCppQualifiedName();
+        return Cpp.find('<') == std::string::npos
             ? Cpp
             : ("LRT_Owner_" + Names::FriendlyFromParts(Namespace, DisplayName));
     }
 
-    void FReflectedStruct::PushProperty(eastl::unique_ptr<FReflectedProperty>&& NewProperty)
+    void FReflectedStruct::PushProperty(std::unique_ptr<FReflectedProperty>&& NewProperty)
     {
         NewProperty->Outer = OffsetBaseTypeName();
 
@@ -36,13 +36,13 @@ namespace Lumina::Reflection
             NewProperty->AccessorDefinitionScope = NewProperty->AccessorScope;
         }
 
-        Props.push_back(eastl::move(NewProperty));
+        Props.push_back(std::move(NewProperty));
     }
 
-    void FReflectedStruct::PushFunction(eastl::unique_ptr<FReflectedFunction>&& NewFunction)
+    void FReflectedStruct::PushFunction(std::unique_ptr<FReflectedFunction>&& NewFunction)
     {
         NewFunction->Outer = Namespace.empty() ? DisplayName : (Namespace + "::" + DisplayName);
-        Functions.push_back(eastl::move(NewFunction));
+        Functions.push_back(std::move(NewFunction));
     }
 
     void FReflectedStruct::EmitMetadataArrays(FCodeWriter& Writer) const
@@ -65,7 +65,7 @@ namespace Lumina::Reflection
         }
     }
 
-    void FReflectedStruct::EmitPropertyDefinitions(FCodeWriter& Writer, eastl::string_view StaticsName)
+    void FReflectedStruct::EmitPropertyDefinitions(FCodeWriter& Writer, std::string_view StaticsName)
     {
         // Free-function wrappers go in the owner's namespace, where its members' type names resolve.
         const bool bWrapInNamespace = bIsAlias && !Namespace.empty();
@@ -91,29 +91,29 @@ namespace Lumina::Reflection
         for (const auto& Prop : Props)
         {
             Writer.Appendf("const Lumina::%s %s::%s = ",
-                Prop->GetPropertyParamType(), eastl::string(StaticsName).c_str(), Prop->Name.c_str());
+                Prop->GetPropertyParamType(), std::string(StaticsName).c_str(), Prop->Name.c_str());
             Prop->AppendDefinition(Writer);
         }
     }
 
-    void FReflectedStruct::EmitPropertyPointerTable(FCodeWriter& Writer, eastl::string_view StaticsName) const
+    void FReflectedStruct::EmitPropertyPointerTable(FCodeWriter& Writer, std::string_view StaticsName) const
     {
         Writer.Line();
         Writer.Linef("const Lumina::FPropertyParams* const %s::PropPointers[] = {",
-            eastl::string(StaticsName).c_str());
+            std::string(StaticsName).c_str());
         for (const auto& Prop : Props)
         {
             Writer.Linef("\t(const Lumina::FPropertyParams*)&%s::%s,",
-                eastl::string(StaticsName).c_str(), Prop->Name.c_str());
+                std::string(StaticsName).c_str(), Prop->Name.c_str());
         }
         Writer.Line("};");
         Writer.Line();
     }
 
-    void FReflectedStruct::DefineInitialHeader(FCodeWriter& Writer, const eastl::string& /*FileID*/)
+    void FReflectedStruct::DefineInitialHeader(FCodeWriter& Writer, const std::string& /*FileID*/)
     {
-        const eastl::string Api = Names::ProjectApiMacro(Header->Project->Name);
-        const eastl::string ConstructFn = Names::ConstructFunction("CStruct", Namespace, DisplayName);
+        const std::string Api = Names::ProjectApiMacro(Header->Project->Name);
+        const std::string ConstructFn = Names::ConstructFunction("CStruct", Namespace, DisplayName);
 
         // An alias name belongs to the `using`, so forward declaring it as a struct would redeclare it.
         if (!bIsAlias)
@@ -131,7 +131,7 @@ namespace Lumina::Reflection
         Writer.Linef("%s Lumina::CStruct* %s();", Api.c_str(), ConstructFn.c_str());
     }
 
-    void FReflectedStruct::DefineSecondaryHeader(FCodeWriter& Writer, const eastl::string& FileID)
+    void FReflectedStruct::DefineSecondaryHeader(FCodeWriter& Writer, const std::string& FileID)
     {
         // An alias has no struct body to inject GENERATED_BODY into.
         if (bIsAlias)
@@ -151,7 +151,7 @@ namespace Lumina::Reflection
         // across module boundaries without force-exporting every member.
         if (HasMetadata("MinimalAPI"))
         {
-            const eastl::string Api = Names::ProjectApiMacro(Header->Project->Name);
+            const std::string Api = Names::ProjectApiMacro(Header->Project->Name);
             Writer.Macrof("static %s class Lumina::CStruct* StaticStruct();", Api.c_str());
         }
         else
@@ -196,12 +196,12 @@ namespace Lumina::Reflection
             }
         }
 
-        void EmitStructParams(FCodeWriter& Writer, const FReflectedStruct& Struct, eastl::string_view StaticsName)
+        void EmitStructParams(FCodeWriter& Writer, const FReflectedStruct& Struct, std::string_view StaticsName)
         {
-            const eastl::string MetadataSymbol = Names::FriendlyFromQualified(Struct.QualifiedName);
+            const std::string MetadataSymbol = Names::FriendlyFromQualified(Struct.QualifiedName);
 
             Writer.Linef("const Lumina::FStructParams %s::StructParams = {",
-                eastl::string(StaticsName).c_str());
+                std::string(StaticsName).c_str());
 
             if (Struct.Parent.empty())
             {
@@ -247,11 +247,11 @@ namespace Lumina::Reflection
 
     void FReflectedStruct::DeclareImplementation(FCodeWriter& Writer)
     {
-        const eastl::string RegInfo = Names::RegistrationInfo("CStruct", Namespace, DisplayName);
-        const eastl::string ConstructFn = Names::ConstructFunction("CStruct", Namespace, DisplayName);
-        const eastl::string Statics = Names::StaticsStruct("CStruct", Namespace, DisplayName);
+        const std::string RegInfo = Names::RegistrationInfo("CStruct", Namespace, DisplayName);
+        const std::string ConstructFn = Names::ConstructFunction("CStruct", Namespace, DisplayName);
+        const std::string Statics = Names::StaticsStruct("CStruct", Namespace, DisplayName);
 
-        const eastl::string OffsetBase = OffsetBaseTypeName();
+        const std::string OffsetBase = OffsetBaseTypeName();
         if (OffsetBase != EmittedCppQualifiedName())
         {
             Writer.Line();
@@ -334,7 +334,7 @@ namespace Lumina::Reflection
 
     void FReflectedStruct::DeclareStaticRegistration(FCodeWriter& Writer)
     {
-        const eastl::string ConstructFn = Names::ConstructFunction("CStruct", Namespace, DisplayName);
+        const std::string ConstructFn = Names::ConstructFunction("CStruct", Namespace, DisplayName);
         Writer.Linef("\t{ %s, TEXT(\"%s\") },", ConstructFn.c_str(), DisplayName.c_str());
     }
 }

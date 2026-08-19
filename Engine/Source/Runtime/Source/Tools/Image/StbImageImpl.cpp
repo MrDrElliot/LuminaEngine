@@ -54,7 +54,7 @@ namespace Lumina::ImageWrite
             return false;
         }
 
-        Out = eastl::move(Encoded);
+        Out = std::move(Encoded);
         return true;
     }
 

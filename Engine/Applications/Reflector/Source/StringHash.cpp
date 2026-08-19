@@ -1,14 +1,13 @@
 ﻿#include "StringHash.h"
 
-#include "EASTL/fixed_hash_map.h"
+#include <unordered_map>
 #include "Reflector/Clang/Utils.h"
 
 
 namespace Lumina
 {
-    class FNameHashMap : public eastl::fixed_hash_map<uint64_t, eastl::string, 64>
+    class FNameHashMap : public std::unordered_map<uint64_t, std::string>
     {
-        eastl::hash_node<value_type, false> const* const* GetBuckets() const { return mpBucketArray; }
     };
 
     FNameHashMap* gNameCache = nullptr;
@@ -34,18 +33,18 @@ namespace Lumina
             auto Itr = gNameCache->find(ID);
             if (Itr == gNameCache->end())
             {
-                (*gNameCache)[ID] = eastl::string(Char);
+                (*gNameCache)[ID] = std::string(Char);
             }
         }
     }
     
 
-    FStringHash::FStringHash(const eastl::string& Str)
+    FStringHash::FStringHash(const std::string& Str)
         :FStringHash(Str.c_str())
     {
     }
 
-    FStringHash::FStringHash(const eastl::string_view& Str)
+    FStringHash::FStringHash(const std::string_view& Str)
         :FStringHash(Str.data())
     {
     }
@@ -56,9 +55,9 @@ namespace Lumina
         return Itr == gNameCache->end();
     }
 
-    eastl::string FStringHash::ToString() const
+    std::string FStringHash::ToString() const
     {
-        return eastl::string(c_str());
+        return std::string(c_str());
     }
 
     const char* FStringHash::c_str() const

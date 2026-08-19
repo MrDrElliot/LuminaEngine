@@ -107,7 +107,7 @@ namespace Lumina::Paths
             return false;
         }
 
-        if (FString::comparei(Directory.data(), Directory.data() + ParentDirectory.length(), ParentDirectory.data(), ParentDirectory.data() + ParentDirectory.length()) != 0)
+        if (!EqualsIgnoreCase(FStringView(Directory.data(), ParentDirectory.length()), FStringView(ParentDirectory.data(), ParentDirectory.length())))
         {
             return false;
         }
@@ -129,8 +129,8 @@ namespace Lumina::Paths
         FString NormalizedPath = Path;
         FString NormalizedBase = BasePath;
     
-        eastl::replace(NormalizedPath.begin(), NormalizedPath.end(), '\\', '/');
-        eastl::replace(NormalizedBase.begin(), NormalizedBase.end(), '\\', '/');
+        std::replace(NormalizedPath.begin(), NormalizedPath.end(), '\\', '/');
+        std::replace(NormalizedBase.begin(), NormalizedBase.end(), '\\', '/');
     
         if (!NormalizedBase.empty() && NormalizedBase.back() != '/')
         {

@@ -2,7 +2,6 @@
 #include "Gradient.h"
 
 #include "Core/Math/Math.h"
-#include "EASTL/sort.h"
 
 namespace Lumina
 {
@@ -17,7 +16,7 @@ namespace Lumina
             return Keys[0].Color;
         }
 
-        // Clamp outside the keyed range. Extrapolating colour has no useful meaning (it leaves gamut
+        // Clamp outside the keyed range. Extrapolating color has no useful meaning (it leaves gamut
         // almost immediately), so unlike SKeyedCurve there is no per-side extrapolation mode.
         if (InTime <= Keys.front().Time)
         {
@@ -38,7 +37,7 @@ namespace Lumina
 
             const SGradientKey& Lo = Keys[i - 1];
             const float Span = Hi.Time - Lo.Time;
-            // Coincident stops are a legal way to author a hard edge; take the later colour rather than
+            // Coincident stops are a legal way to author a hard edge; take the later color rather than
             // dividing by zero.
             if (Span <= 1e-6f)
             {
@@ -46,7 +45,7 @@ namespace Lumina
             }
 
             // Component-wise rather than Math::Lerp: the vector overloads are ambiguous for FVector4, and
-            // spelling it out keeps alpha interpolating linearly with the colour rather than picking up
+            // spelling it out keeps alpha interpolating linearly with the color rather than picking up
             // whatever a vector specialization does.
             const float Alpha = (InTime - Lo.Time) / Span;
             return FVector4(
@@ -86,7 +85,7 @@ namespace Lumina
 
     void SGradient::SortKeys()
     {
-        eastl::stable_sort(Keys.begin(), Keys.end(), [](const SGradientKey& A, const SGradientKey& B)
+        std::stable_sort(Keys.begin(), Keys.end(), [](const SGradientKey& A, const SGradientKey& B)
         {
             return A.Time < B.Time;
         });

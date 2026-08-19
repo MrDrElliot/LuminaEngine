@@ -1,7 +1,7 @@
 ﻿#pragma once
 
 #include "StringHash.h"
-#include "EASTL/hash_map.h"
+#include <unordered_map>
 #include "Reflector/Types/ReflectedType.h"
 
 namespace Lumina::Reflection
@@ -24,26 +24,26 @@ namespace Lumina::Reflection
         bool IsCoreType(const FStringHash& Hash) const;
         
         template<typename T>
-        requires(eastl::is_base_of_v<FReflectedType, T>)
+        requires(std::is_base_of_v<FReflectedType, T>)
         T* GetOrCreateReflectedType(const FStringHash& TypeName);
 
         template<typename T>
-        requires(eastl::is_base_of_v<FReflectedType, T>)
+        requires(std::is_base_of_v<FReflectedType, T>)
         T* GetReflectedTypeChecked(const FStringHash& TypeName) const;
 
         template<typename T>
         T* GetReflectedType(const FStringHash& TypeName) const;
 
         
-        eastl::hash_map<FReflectedHeader*, eastl::vector<eastl::unique_ptr<FReflectedType>>>     ReflectedTypes;
-        eastl::hash_map<FStringHash, FReflectedType*>                                            TypeHashMap;
-        eastl::hash_map<FReflectedHeader*, eastl::vector<eastl::unique_ptr<FReflectedFunction>>> FreeFunctions;
+        std::unordered_map<FReflectedHeader*, std::vector<std::unique_ptr<FReflectedType>>>     ReflectedTypes;
+        std::unordered_map<FStringHash, FReflectedType*>                                            TypeHashMap;
+        std::unordered_map<FReflectedHeader*, std::vector<std::unique_ptr<FReflectedFunction>>> FreeFunctions;
 
     };
 
 
     template <typename T>
-    requires(eastl::is_base_of_v<FReflectedType, T>)
+    requires(std::is_base_of_v<FReflectedType, T>)
     T* FReflectionDatabase::GetOrCreateReflectedType(const FStringHash& TypeName)
     {
         T* ReturnValue;
@@ -60,7 +60,7 @@ namespace Lumina::Reflection
         return ReturnValue;
     }
 
-    template <typename T> requires (eastl::is_base_of_v<FReflectedType, T>)
+    template <typename T> requires (std::is_base_of_v<FReflectedType, T>)
     T* FReflectionDatabase::GetReflectedTypeChecked(const FStringHash& TypeName) const
     {
         if (!IsTypeRegistered(TypeName))

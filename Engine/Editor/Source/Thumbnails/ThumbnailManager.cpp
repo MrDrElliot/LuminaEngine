@@ -525,7 +525,7 @@ namespace Lumina
         }
 
         // Collect the capture submitted on an earlier frame. This is the whole point of the async path: the
-        // game thread submits, returns, and picks the bytes up once the GPU has signalled -- instead of
+        // game thread submits, returns, and picks the bytes up once the GPU has signaled -- instead of
         // blocking on a readback per thumbnail. Nothing else may start while one is in flight, because the
         // scene (and therefore the render target the pending copy reads) is shared.
         if (bHasPendingRequest)
@@ -697,7 +697,7 @@ namespace Lumina
                 }
             }
 
-            It = bDrop ? Thumbnails.erase(It) : eastl::next(It);
+            It = bDrop ? Thumbnails.erase(It) : std::next(It);
         }
     }
 

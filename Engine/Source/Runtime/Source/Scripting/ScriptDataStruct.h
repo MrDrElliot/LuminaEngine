@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
 #include "Containers/Name.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Platform/GenericPlatform.h"

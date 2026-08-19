@@ -1,7 +1,7 @@
 #pragma once
 
 #include "ModuleAPI.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "RHI.h"
 
 namespace Lumina::RHI::Native

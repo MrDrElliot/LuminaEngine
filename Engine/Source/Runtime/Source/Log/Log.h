@@ -3,7 +3,7 @@
 #include <atomic>
 #include <format>
 
-#include "Containers/Array.h"
+#include "Containers/RingBuffer.h"
 #include "LogLevel.h"
 #include "LogMessage.h"
 

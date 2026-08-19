@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Array.h"
+#include "Vector.h"
 #include "Core/Math/Math.h"
 
 namespace Lumina

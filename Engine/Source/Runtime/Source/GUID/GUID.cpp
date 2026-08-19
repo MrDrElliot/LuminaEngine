@@ -273,7 +273,7 @@ namespace Lumina
         {
             return FGuid(bytes);
         }
-        return eastl::nullopt;
+        return NullOpt;
     }
     
     bool FGuid::operator==(const FGuid& other) const noexcept

@@ -13,7 +13,7 @@
 #include "Sinks/FileSink.h"
 #include "Sinks/MemorySink.h"
 #include "Sinks/StdoutSink.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Core/Templates/LuminaTemplate.h"
 #include "Core/Threading/Thread.h"
 #include "Platform/Process/PlatformProcess.h"

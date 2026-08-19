@@ -7,11 +7,11 @@
 
 namespace Lumina
 {
-    void FReflectedProperty::AppendPropertyDef(Reflection::FCodeWriter& Writer, const char* PropertyFlagsStr, const char* TypeFlags, const eastl::string& CustomData) const
+    void FReflectedProperty::AppendPropertyDef(Reflection::FCodeWriter& Writer, const char* PropertyFlagsStr, const char* TypeFlags, const std::string& CustomData) const
     {
-        const eastl::string GetterFunctionName = GetterFunc.empty() ? "nullptr" : (AccessorScope + GetterFunc + "_WrapperImpl");
-        const eastl::string SetterFunctionName = SetterFunc.empty() ? "nullptr" : (AccessorScope + SetterFunc + "_WrapperImpl");
-        const eastl::string Offset = bInner ? eastl::string("0") : ("offsetof(" + Outer + ", " + Name + ")");
+        const std::string GetterFunctionName = GetterFunc.empty() ? "nullptr" : (AccessorScope + GetterFunc + "_WrapperImpl");
+        const std::string SetterFunctionName = SetterFunc.empty() ? "nullptr" : (AccessorScope + SetterFunc + "_WrapperImpl");
+        const std::string Offset = bInner ? std::string("0") : ("offsetof(" + Outer + ", " + Name + ")");
 
         Writer.Appendf("{ \"%s\", %s, %s, %s, %s, %s",
             Name.c_str(),
@@ -34,7 +34,7 @@ namespace Lumina
         Writer.Line(" };");
     }
 
-    void FReflectedProperty::GenerateMetadata(const eastl::string& InMetadata)
+    void FReflectedProperty::GenerateMetadata(const std::string& InMetadata)
     {
         if (InMetadata.empty())
         {
@@ -42,7 +42,7 @@ namespace Lumina
         }
 
         FMetadataParser Parser(InMetadata);
-        Metadata = eastl::move(Parser.Metadata);
+        Metadata = std::move(Parser.Metadata);
 
         for (const FMetadataPair& MetadataPair : Metadata)
         {
@@ -89,7 +89,7 @@ namespace Lumina
         }
     }
 
-    bool FReflectedProperty::FindConflictingSpecifiers(eastl::string& OutMessage) const
+    bool FReflectedProperty::FindConflictingSpecifiers(std::string& OutMessage) const
     {
         struct FConflict
         {
@@ -121,7 +121,7 @@ namespace Lumina
         {
             if (EnumHasAllFlags(PropertyFlags, Conflict.A | Conflict.B))
             {
-                OutMessage = eastl::string("PROPERTY '") + Name + "' declares both '" + Conflict.NameA
+                OutMessage = std::string("PROPERTY '") + Name + "' declares both '" + Conflict.NameA
                            + "' and '" + Conflict.NameB + "', which conflict. " + Conflict.Resolution;
                 return true;
             }
@@ -141,7 +141,7 @@ namespace Lumina
         return !GetterFunc.empty() || !SetterFunc.empty();
     }
 
-    bool FReflectedProperty::DeclareAccessors(Reflection::FCodeWriter& Writer, const eastl::string& FileID)
+    bool FReflectedProperty::DeclareAccessors(Reflection::FCodeWriter& Writer, const std::string& FileID)
     {
         if (!GetterFunc.empty())
         {

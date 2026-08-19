@@ -465,7 +465,7 @@ namespace Lumina
                     
                     Component->Scripts.clear();
 
-                    Out.push_back(eastl::move(Saved));
+                    Out.push_back(std::move(Saved));
                     ++Evacuated;
                 }
             });

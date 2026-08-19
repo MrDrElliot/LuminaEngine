@@ -1,6 +1,6 @@
 #pragma once
 #include <clang-c/Index.h>
-#include "EASTL/string.h"
+#include <string>
 #include "Reflector/Types/PropertyFlags.h"
 
 
@@ -14,8 +14,8 @@ namespace Lumina
         CXCursor                            OwningCursor = clang_getNullCursor();
         EPropertyTypeFlags                  Flags;
         EPropertyFlags                      PropertyFlags = EPropertyFlags::None;
-        eastl::string                       Name;
-        eastl::string                       TypeName;
-        eastl::string                       RawFieldType;
+        std::string                       Name;
+        std::string                       TypeName;
+        std::string                       RawFieldType;
     };
 }

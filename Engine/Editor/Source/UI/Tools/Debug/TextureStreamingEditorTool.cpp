@@ -15,7 +15,7 @@ namespace Lumina
             return Row.FullBytes > 0 ? (float)((double)Row.ResidentBytes / (double)Row.FullBytes) : 1.0f;
         }
 
-        // Green fully resident, amber partially, red at the tail. The point of the colour is that a screen
+        // Green fully resident, amber partially, red at the tail. The point of the color is that a screen
         // full of red while the camera is close to those surfaces means feedback is not arriving.
         ImVec4 ResidencyColor(const FTextureStreamingManager::FTextureSnapshot& Row)
         {
@@ -78,7 +78,7 @@ namespace Lumina
         DrawHelpTextRow("Settings",
             "File > Settings > Rendering > Texture Streaming. Pool Size MB sets the budget, Resolution "
             "Bias trades sharpness for memory, Max Loads In Flight bounds the IO, and unticking Enabled "
-            "promotes everything and stops trimming (the pre-streaming behaviour) if you need to rule the "
+            "promotes everything and stops trimming (the pre-streaming behavior) if you need to rule the "
             "streamer out of a bug. Edits apply on the next frame and persist to the project's "
             "/Config/GameSettings.json.");
     }
@@ -143,9 +143,9 @@ namespace Lumina
                 ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.85f, 0.35f, 0.3f, 1.0f));
             }
             ImGui::ProgressBar(Fraction > 1.0f ? 1.0f : Fraction, ImVec2(260.0f, 0.0f),
-                FString(FString::CtorSprintf(), "%s / %s",
-                    ImGuiX::FormatSize(Stats.ResidentBytes).c_str(),
-                    ImGuiX::FormatSize(Stats.BudgetBytes).c_str()).c_str());
+                Format("{} / {}",
+                    ImGuiX::FormatSize(Stats.ResidentBytes),
+                    ImGuiX::FormatSize(Stats.BudgetBytes)).c_str());
             if (bOver)
             {
                 ImGui::PopStyleColor();
@@ -320,7 +320,7 @@ namespace Lumina
             Rows.push_back(&Row);
         }
 
-        eastl::sort(Rows.begin(), Rows.end(),
+        std::sort(Rows.begin(), Rows.end(),
             [](const FTextureStreamingManager::FTextureSnapshot* A, const FTextureStreamingManager::FTextureSnapshot* B)
             {
                 return A->ResidentBytes > B->ResidentBytes;

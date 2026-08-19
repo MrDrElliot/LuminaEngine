@@ -1,9 +1,8 @@
 #include "CoreTypeCustomization.h"
 
-#include <EASTL/algorithm.h>
 
 #include "imgui.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectIterator.h"
@@ -34,7 +33,7 @@ namespace Lumina
                 }
             }
 
-            eastl::sort(Candidates.begin(), Candidates.end(), [](TType* A, TType* B)
+            std::sort(Candidates.begin(), Candidates.end(), [](TType* A, TType* B)
             {
                 return strcmp(A->GetName().c_str(), B->GetName().c_str()) < 0;
             });

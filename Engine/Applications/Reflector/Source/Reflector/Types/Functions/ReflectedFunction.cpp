@@ -2,7 +2,7 @@
 
 namespace Lumina
 {
-    void FReflectedFunction::GenerateMetadata(const eastl::string& InMetadata)
+    void FReflectedFunction::GenerateMetadata(const std::string& InMetadata)
     {
         if (InMetadata.empty())
         {
@@ -10,6 +10,6 @@ namespace Lumina
         }
 
         FMetadataParser Parser(InMetadata);
-        Metadata = eastl::move(Parser.Metadata);
+        Metadata = std::move(Parser.Metadata);
     }
 }

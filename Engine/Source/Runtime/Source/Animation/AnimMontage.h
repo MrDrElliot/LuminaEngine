@@ -2,7 +2,7 @@
 
 #include "Animation/AnimEvents.h"
 #include "Assets/AssetTypes/Animation/Montage/AnimationMontage.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/Name.h"
 #include "Core/Object/ObjectHandleTyped.h"
 

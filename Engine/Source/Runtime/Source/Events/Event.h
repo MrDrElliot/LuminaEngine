@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "KeyCodes.h"
 #include "MouseCodes.h"
@@ -58,11 +58,11 @@ namespace Lumina
         void SetHandled(bool bInHandled) { bHandled = bInHandled; }
         
         template<typename T>
-        requires(eastl::is_base_of_v<FEvent, T>)
+        requires(std::is_base_of_v<FEvent, T>)
         bool IsA() const { return GetEventType() == T::GetStaticType(); }
 
         template<typename T>
-        requires(eastl::is_base_of_v<FEvent, T>)
+        requires(std::is_base_of_v<FEvent, T>)
         T& As()
         {
             return static_cast<T&>(*this);

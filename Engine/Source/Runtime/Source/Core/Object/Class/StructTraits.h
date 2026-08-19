@@ -59,7 +59,7 @@ namespace Lumina
     {
         FStructOps* Ops = Memory::New<FStructOps>();
 
-        if constexpr (eastl::is_default_constructible_v<T>)
+        if constexpr (std::is_default_constructible_v<T>)
         {
             Ops->Construct = +[](void* Mem)
             {
@@ -67,7 +67,7 @@ namespace Lumina
             };
         }
 
-        if constexpr (eastl::is_destructible_v<T>)
+        if constexpr (std::is_destructible_v<T>)
         {
             Ops->Destruct = +[](void* Mem)
             {
@@ -98,7 +98,7 @@ namespace Lumina
                 static_cast<T*>(Dst)->CopyFrom(*static_cast<const T*>(Src));
             };
         }
-        else if constexpr (eastl::is_copy_assignable_v<T>)
+        else if constexpr (std::is_copy_assignable_v<T>)
         {
             Ops->Copy = +[](void* Dst, const void* Src)
             {

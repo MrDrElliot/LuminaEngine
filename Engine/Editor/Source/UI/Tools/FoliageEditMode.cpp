@@ -14,6 +14,7 @@
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/Subsystems/TerrainSculptSystem.h"
 #include "World/World.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -424,7 +425,7 @@ namespace Lumina
             ImGui::PopStyleColor();
 
             // Right-aligned instance count.
-            const FString CountText = eastl::to_string(Counts[(size_t)i]).c_str();
+            const FString CountText = Format("{}", Counts[(size_t)i]).c_str();
             const float   CountW    = ImGui::CalcTextSize(CountText.c_str()).x;
             ImGui::SameLine(ImGui::GetContentRegionAvail().x - CountW);
             ImGui::TextDisabled("%s", CountText.c_str());
@@ -437,7 +438,7 @@ namespace Lumina
         if (ImGui::Button("Add"))
         {
             SFoliageType& NewType = Foliage.Types.emplace_back();
-            NewType.Name.sprintf("Type%d", TypeCount);
+            NewType.Name = Format("Type{}", TypeCount);
             ActiveType = (int32)Foliage.Types.size() - 1;
             MarkFoliageDirty(World, Foliage);
         }

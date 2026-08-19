@@ -23,6 +23,7 @@
 #include "Memory/Memory.h"
 #include "Scripting/DotNet/DotNetHost.h"
 #include "Scripting/ScriptValueBridge.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -570,7 +571,7 @@ namespace Lumina
         if (Name.empty() || FindObject<CEnum>(FName(Name.c_str())) != nullptr)
         {
             Name = "ScriptEnum_";
-            Name += eastl::to_string(Serial.fetch_add(1)).c_str();
+            Name += Format("{}", Serial.fetch_add(1)).c_str();
         }
 
         FConstructCObjectParams Params(CEnum::StaticClass());
@@ -586,7 +587,7 @@ namespace Lumina
             Enum->AddEnum(Entry.Name, (uint64)Entry.Value);
         }
         CEnum* Raw = Enum.Get();
-        MintedEnums.push_back(eastl::move(Enum));
+        MintedEnums.push_back(std::move(Enum));
         return Raw;
     }
 
@@ -613,7 +614,7 @@ namespace Lumina
     {
         static TAtomic<uint64> Serial{ 0 };
         FString Name = "ScriptSubStruct_";
-        Name += eastl::to_string(Serial.fetch_add(1)).c_str();
+        Name += Format("{}", Serial.fetch_add(1)).c_str();
 
         FConstructCObjectParams Params(CScriptStruct::StaticClass());
         Params.Name    = FName(Name);
@@ -632,7 +633,7 @@ namespace Lumina
             return nullptr;
         }
         CScriptStruct* Raw = Sub.Get();
-        SubStructs.push_back(eastl::move(Sub));
+        SubStructs.push_back(std::move(Sub));
         return Raw;
     }
 
@@ -640,7 +641,7 @@ namespace Lumina
     {
         static TAtomic<uint64> Serial{ 0 };
         FString Name = "ScriptInstanceBase_";
-        Name += eastl::to_string(Serial.fetch_add(1)).c_str();
+        Name += Format("{}", Serial.fetch_add(1)).c_str();
 
         FConstructCObjectParams Params(CScriptStruct::StaticClass());
         Params.Name    = FName(Name);
@@ -661,7 +662,7 @@ namespace Lumina
         }
 
         CScriptStruct* Raw = Base.Get();
-        SubStructs.push_back(eastl::move(Base));
+        SubStructs.push_back(std::move(Base));
         return Raw;
     }
 
@@ -669,7 +670,7 @@ namespace Lumina
     {
         static TAtomic<uint64> Serial{ 0 };
         FString Name = "ScriptInstance_";
-        Name += eastl::to_string(Serial.fetch_add(1)).c_str();
+        Name += Format("{}", Serial.fetch_add(1)).c_str();
 
         FConstructCObjectParams Params(CScriptStruct::StaticClass());
         Params.Name    = FName(Name);
@@ -694,7 +695,7 @@ namespace Lumina
         Sub->Metadata.AddValue("ScriptTypeName", Candidate.TypeName.c_str());
 
         CScriptStruct* Raw = Sub.Get();
-        SubStructs.push_back(eastl::move(Sub));
+        SubStructs.push_back(std::move(Sub));
         return Raw;
     }
 
@@ -1246,7 +1247,7 @@ namespace Lumina::Scripting
 
         static TAtomic<uint64> Serial{ 0 };
         FString Name = "Script_";
-        Name += eastl::to_string(Serial.fetch_add(1)).c_str();
+        Name += Format("{}", Serial.fetch_add(1)).c_str();
 
         FConstructCObjectParams Params(CScriptStruct::StaticClass());
         Params.Name    = FName(Name);
@@ -1261,7 +1262,7 @@ namespace Lumina::Scripting
             return nullptr;
         }
 
-        auto Inserted = Entries.insert(eastl::make_pair(Key, eastl::move(Struct)));
+        auto Inserted = Entries.insert(Lumina::Containers::MakePair(Key, std::move(Struct)));
         return Inserted.first->second.Get();
     }
 
@@ -1348,7 +1349,7 @@ namespace Lumina::Scripting
         Target->Size      = Align(Layout.EndOffset, Math::Max(Layout.Alignment, Target->GetAlignment()));
         Target->Alignment = Math::Max(Layout.Alignment, Target->GetAlignment());
 
-        GClassLayouts()[Target] = FScriptClassLayout{ eastl::move(Record), ShimSize, ShimAlign,
+        GClassLayouts()[Target] = FScriptClassLayout{ std::move(Record), ShimSize, ShimAlign,
                                                       DescribeScriptSchemaLayout(Schema) };
         return (uint32)Layout.Properties.size();
     }
@@ -1375,7 +1376,7 @@ namespace Lumina::Scripting
                 Out += "?";
                 return;
             }
-            Out += eastl::to_string((int32)Type->Kind).c_str();
+            Out += Format("{}", (int32)Type->Kind).c_str();
             if (Type->bEntity)      { Out += "e"; }
             if (Type->bInputAction) { Out += "a"; }
             if (!Type->EnumName.IsNone())    { Out += "#"; Out += Type->EnumName.ToString(); }
@@ -1496,7 +1497,7 @@ namespace Lumina::Scripting
         // Retire, do not free. The emitted FPropertys are not freed either, and they point into this
         // record's element descriptions; keeping the pair alive together means a pointer cached anywhere is
         // stale rather than dangling. See GRetiredLayouts.
-        GRetiredLayouts().push_back(eastl::move(It->second.Record));
+        GRetiredLayouts().push_back(std::move(It->second.Record));
         GClassLayouts().erase(Target);
 
         // The CDO is the old size and carries the old property set, so it cannot survive the rebuild.

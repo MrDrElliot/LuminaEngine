@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/Function.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Memory/SmartPtr.h"

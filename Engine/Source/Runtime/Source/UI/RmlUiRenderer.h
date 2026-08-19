@@ -5,7 +5,8 @@
 // Rml::RenderInterface on the new RHI. Frame: BeginFrame -> Context::Render (defers draws) -> EndFrame (uploads + replay).
 // Draws are deferred so texture uploads can run outside the render pass.
 
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "Core/Delegates/Delegate.h"
 #include "Renderer/RHI.h"
@@ -113,7 +114,7 @@ namespace Lumina
         {
             float  Position[2];
             float  UV[2];
-            uint32 Colour;        // premultiplied RGBA8
+            uint32 Color;        // premultiplied RGBA8
             uint32 DrawIndex;
         };
 

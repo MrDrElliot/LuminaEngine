@@ -1,14 +1,13 @@
 ﻿#pragma once
 
-#include "EASTL/string.h"
-#include "EASTL/hash_map.h"
-#include "EASTL/hash_set.h"
-#include "EASTL/string.h"
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <string>
 
 namespace Lumina
 {
     class FNameHashMap;
-    using FNameHashNode = eastl::hash_node<eastl::pair<const uint64_t, eastl::string>, false>;
 
     extern FNameHashMap* gNameCache;
 
@@ -27,14 +26,14 @@ namespace Lumina
         FStringHash() = default;
         FStringHash(const char* Char);
         explicit FStringHash(uint64_t InID) :ID(InID) {}
-        explicit FStringHash(const eastl::string& Str);
-        explicit FStringHash(const eastl::string_view& Str);
+        explicit FStringHash(const std::string& Str);
+        explicit FStringHash(const std::string_view& Str);
 
         bool IsValid() const { return ID != 0; }
         bool IsNone() const;
         uint64_t GetID() const { return ID; }
         operator uint64_t() const { return ID; }
-        eastl::string ToString() const;
+        std::string ToString() const;
         
         void Clear() { ID = 0; }
         const char* c_str() const;
@@ -50,7 +49,7 @@ namespace Lumina
     
 }
 
-namespace eastl
+namespace std
 {
     template <typename T> struct hash;
 

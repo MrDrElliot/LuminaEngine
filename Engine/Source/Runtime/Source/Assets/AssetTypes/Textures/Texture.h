@@ -39,7 +39,7 @@ namespace Lumina
         // Inherit the group's filter.
         FromGroup,
 
-        // Nearest-neighbour; for pixel art, lookup tables, and anything whose texels must not blend.
+        // Nearest-neighbor; for pixel art, lookup tables, and anything whose texels must not blend.
         Nearest,
 
         // Bilinear + trilinear between mips. The engine-wide default.

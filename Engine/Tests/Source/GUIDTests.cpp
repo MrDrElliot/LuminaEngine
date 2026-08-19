@@ -3,7 +3,7 @@
 
 using namespace Lumina;
 
-// Same seed must produce the same GUID. Regression for the eastl::hash +
+// Same seed must produce the same GUID. Regression for the hash +
 // shift-past-type-width UB that made Debug and Development emit different bytes.
 TEST(GUIDTests, NewDeterministic_SameSeedSameGuid)
 {

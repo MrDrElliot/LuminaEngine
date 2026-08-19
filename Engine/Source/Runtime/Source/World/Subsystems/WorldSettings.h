@@ -1,7 +1,7 @@
 #pragma once
 #include "Core/Object/ObjectMacros.h"
 #include "Containers/Name.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "WorldSettings.generated.h"
 

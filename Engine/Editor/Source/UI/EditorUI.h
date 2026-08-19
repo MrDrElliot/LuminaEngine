@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Containers/Queue.h"
 #include <imgui/imgui.h>
 #include "Events/EventProcessor.h"
 #include "nlohmann/json.hpp"
@@ -69,29 +70,29 @@ namespace Lumina
 
 
         template<typename T, typename... Args>
-        requires eastl::is_base_of_v<FEditorTool, T> && eastl::is_constructible_v<T, Args...>
+        requires std::is_base_of_v<FEditorTool, T> && std::is_constructible_v<T, Args...>
         T* CreateTool(Args&&... args);
 
         // Find an active tool by its singleton-style unique type id, or nullptr if not present.
         template<typename T>
-        requires eastl::is_base_of_v<FEditorTool, T>
+        requires std::is_base_of_v<FEditorTool, T>
         T* FindTool() const;
 
         // Returns true if a tool of type T is currently alive (not pending destroy).
         template<typename T>
-        requires eastl::is_base_of_v<FEditorTool, T>
+        requires std::is_base_of_v<FEditorTool, T>
         bool IsToolActive() const { return FindTool<T>() != nullptr; }
 
         // Toggle a singleton-style debug tool. Creates one with the given args
         // if none exists; otherwise schedules the live one for destruction.
         template<typename T, typename... Args>
-        requires eastl::is_base_of_v<FEditorTool, T> && eastl::is_constructible_v<T, Args...>
+        requires std::is_base_of_v<FEditorTool, T> && std::is_constructible_v<T, Args...>
         void ToggleTool(Args&&... args);
 
         // Convenience for the Tools menu, draws a MenuItem whose check state
         // mirrors the tool's existence and whose click toggles it.
         template<typename T, typename... Args>
-        requires eastl::is_base_of_v<FEditorTool, T> && eastl::is_constructible_v<T, Args...>
+        requires std::is_base_of_v<FEditorTool, T> && std::is_constructible_v<T, Args...>
         void DrawToolMenuItem(const char* Label, Args&&... args);
 
         void VerifyDirtyPackages();
@@ -299,7 +300,7 @@ namespace Lumina
 
         // Splits the bottom strip off the dockspace, or returns the live one. HeightFrac seeds the split
         // ratio so a docked drawer keeps the height it had as an overlay. Returns MainDockspaceID when the
-        // dockspace has no node yet, which is the pre-existing behaviour and simply tabs into the root.
+        // dockspace has no node yet, which is the pre-existing behavior and simply tabs into the root.
         ImGuiID GetOrCreateBottomDockID(float HeightFrac);
 
         FEditorTool*                                    LastActiveTool = nullptr;
@@ -355,21 +356,21 @@ namespace Lumina
     };
 
     template <typename T, typename ... Args>
-    requires eastl::is_base_of_v<FEditorTool, T> && eastl::is_constructible_v<T, Args...>
+    requires std::is_base_of_v<FEditorTool, T> && std::is_constructible_v<T, Args...>
     T* FEditorUI::CreateTool(Args&&... args)
     {
         return static_cast<T*>(FinalizeNewTool(Memory::New<T>(std::forward<Args>(args)...)));
     }
 
     template <typename T>
-    requires eastl::is_base_of_v<FEditorTool, T>
+    requires std::is_base_of_v<FEditorTool, T>
     T* FEditorUI::FindTool() const
     {
         return static_cast<T*>(FindToolByTypeID(T::s_toolTypeID));
     }
 
     template <typename T, typename... Args>
-    requires eastl::is_base_of_v<FEditorTool, T> && eastl::is_constructible_v<T, Args...>
+    requires std::is_base_of_v<FEditorTool, T> && std::is_constructible_v<T, Args...>
     void FEditorUI::ToggleTool(Args&&... args)
     {
         if (FEditorTool* Existing = FindToolByTypeID(T::s_toolTypeID))
@@ -381,7 +382,7 @@ namespace Lumina
     }
 
     template <typename T, typename... Args>
-    requires eastl::is_base_of_v<FEditorTool, T> && eastl::is_constructible_v<T, Args...>
+    requires std::is_base_of_v<FEditorTool, T> && std::is_constructible_v<T, Args...>
     void FEditorUI::DrawToolMenuItem(const char* Label, Args&&... args)
     {
         const bool bActive = IsToolActive<T>();

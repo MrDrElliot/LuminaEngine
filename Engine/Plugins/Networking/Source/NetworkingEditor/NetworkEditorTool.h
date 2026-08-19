@@ -1,6 +1,6 @@
 #pragma once
 #include "UI/Tools/EditorTool.h"
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
 
 namespace Lumina
 {

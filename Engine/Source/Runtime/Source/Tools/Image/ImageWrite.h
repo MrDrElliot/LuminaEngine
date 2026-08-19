@@ -1,5 +1,5 @@
 #pragma once
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Platform/GenericPlatform.h"
 
 // Image encoding for the whole engine. stb_image_write is a header-only library whose

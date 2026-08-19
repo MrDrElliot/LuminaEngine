@@ -6,7 +6,6 @@
 #include "imgui_internal.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
-#include "EASTL/sort.h"
 #include "imgui-node-editor/imgui_node_editor.h"
 
 namespace Lumina
@@ -292,7 +291,7 @@ namespace Lumina
 
         if (bHasQuery)
         {
-            eastl::sort(VisibleIndices.begin(), VisibleIndices.end(), [this](int32 A, int32 B)
+            std::sort(VisibleIndices.begin(), VisibleIndices.end(), [this](int32 A, int32 B)
             {
                 const FGraphAction& LHS = Actions[A];
                 const FGraphAction& RHS = Actions[B];
@@ -305,7 +304,7 @@ namespace Lumina
         }
         else
         {
-            eastl::sort(VisibleIndices.begin(), VisibleIndices.end(), [this](int32 A, int32 B)
+            std::sort(VisibleIndices.begin(), VisibleIndices.end(), [this](int32 A, int32 B)
             {
                 const FGraphAction& LHS = Actions[A];
                 const FGraphAction& RHS = Actions[B];

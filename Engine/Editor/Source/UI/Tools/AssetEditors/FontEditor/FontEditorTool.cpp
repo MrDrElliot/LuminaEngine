@@ -4,6 +4,7 @@
 #include "Core/Object/Cast.h"
 #include "Tools/UI/ImGui/ImGuiFonts.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -91,14 +92,14 @@ namespace Lumina
 
                 Row("Family", FontAsset->FamilyName.empty() ? "Unknown" : FontAsset->FamilyName);
                 Row("Style", FontAsset->StyleName.empty() ? "Unknown" : FontAsset->StyleName);
-                Row("Glyphs", eastl::to_string(FontAsset->NumGlyphs));
+                Row("Glyphs", Format("{}", FontAsset->NumGlyphs));
                 Row("Scalable", FontAsset->bIsScalable ? "Yes" : "No");
                 Row("Kerning", FontAsset->bHasKerning ? "Yes" : "No");
 
                 const size_t Bytes = FontAsset->GetFontData().size();
                 FString SizeStr = Bytes >= 1024 * 1024
-                    ? eastl::to_string(Bytes / (1024 * 1024)) + " MB"
-                    : eastl::to_string(Bytes / 1024) + " KB";
+                    ? Format("{}", Bytes / (1024 * 1024)) + " MB"
+                    : Format("{}", Bytes / 1024) + " KB";
                 Row("File Size", SizeStr);
 
                 if (!FontAsset->SourcePath.empty())

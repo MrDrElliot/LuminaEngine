@@ -1,6 +1,6 @@
 ﻿#pragma once
-#include "EASTL/hash_map.h"
-#include "EASTL/queue.h"
+#include <unordered_map>
+#include <queue>
 #include "Reflector/ReflectionCore/ReflectionDatabase.h"
 #include "Reflector/ReflectionCore/ReflectionMacro.h"
 
@@ -11,10 +11,10 @@ namespace Lumina::Reflection
     // A REFLECT'd class template. Its instantiations become reflected structs when a property names one.
     struct FReflectedTemplate
     {
-        eastl::string       QualifiedName;
-        eastl::string       Namespace;
-        eastl::string       MacroContents;
-        eastl::string       HeaderPath;
+        std::string       QualifiedName;
+        std::string       Namespace;
+        std::string       MacroContents;
+        std::string       HeaderPath;
         FReflectedHeader*   Header = nullptr;
     };
 
@@ -37,13 +37,13 @@ namespace Lumina::Reflection
         void AddGeneratedBodyMacro(FReflectionMacro&& Macro);
         
         // bConsume=false leaves the macro in the pool: several aliases can reflect one shared template.
-        bool TryFindMacroForCursor(const eastl::string& HeaderID, const CXCursor& Cursor, FReflectionMacro& Macro, bool bConsume = true);
+        bool TryFindMacroForCursor(const std::string& HeaderID, const CXCursor& Cursor, FReflectionMacro& Macro, bool bConsume = true);
 
-        bool TryFindGeneratedBodyMacro(const eastl::string& HeaderID, const CXCursor& Cursor, FReflectionMacro& Macro);
+        bool TryFindGeneratedBodyMacro(const std::string& HeaderID, const CXCursor& Cursor, FReflectionMacro& Macro);
 
 
 
-        void PushNamespace(const eastl::string& Namespace);
+        void PushNamespace(const std::string& Namespace);
         void PopNamespace();
 
     private:
@@ -64,19 +64,19 @@ namespace Lumina::Reflection
         FReflectedWorkspace*                                        Workspace = nullptr;
         FReflectedHeader*                                           ReflectedHeader = nullptr;
         
-        eastl::hash_map<FStringHash, FReflectedHeader*>                 AllHeaders;
-        eastl::hash_map<FStringHash, FReflectedTemplate>                ReflectedTemplates;
+        std::unordered_map<FStringHash, FReflectedHeader*>                 AllHeaders;
+        std::unordered_map<FStringHash, FReflectedTemplate>                ReflectedTemplates;
 
         // Canonical spelling of an instantiation a REFLECT'd alias named, to { qualified, display }.
-        eastl::hash_map<FStringHash, eastl::pair<eastl::string, eastl::string>> AliasedInstantiations;
-        eastl::hash_map<uint64_t, eastl::vector<FReflectionMacro>>      ReflectionMacros;
-        eastl::hash_map<uint64_t, eastl::queue<FReflectionMacro>>       GeneratedBodyMacros;
+        std::unordered_map<FStringHash, std::pair<std::string, std::string>> AliasedInstantiations;
+        std::unordered_map<uint64_t, std::vector<FReflectionMacro>>      ReflectionMacros;
+        std::unordered_map<uint64_t, std::queue<FReflectionMacro>>       GeneratedBodyMacros;
         
-        eastl::vector<eastl::string>                                NamespaceStack;
-        eastl::string                                               CurrentNamespace;
+        std::vector<std::string>                                NamespaceStack;
+        std::string                                               CurrentNamespace;
 
         // Header the walked alias target's PROPERTY macros were recorded under; empty when not walking one.
-        eastl::string                                               AliasTargetMacroHeader;
+        std::string                                               AliasTargetMacroHeader;
 
         // Anonymous union members overlap rather than hide state, so they leave the type fully reflected.
         bool                                                        bInAnonymousRecord = false;

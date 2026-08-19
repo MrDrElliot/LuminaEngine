@@ -1,23 +1,23 @@
 ﻿#pragma once
-#include "EASTL/string.h"
-#include "EASTL/vector.h"
+#include <string>
+#include <vector>
 
 struct FMetadataPair
 {
-    eastl::string Key;
-    eastl::string Value;
+    std::string Key;
+    std::string Value;
 };
 
 class FMetadataParser
 {
 public:
 
-    FMetadataParser(const eastl::string& Raw)
+    FMetadataParser(const std::string& Raw)
     {
         Parse(Raw);
     }
 
-    void Parse(const eastl::string& Raw);
+    void Parse(const std::string& Raw);
 
     auto begin() { return Metadata.begin(); }
     auto end() { return Metadata.end(); }
@@ -25,6 +25,6 @@ public:
     auto begin() const { return Metadata.begin(); }
     auto end() const { return Metadata.end(); }
     
-    eastl::vector<FMetadataPair> Metadata;
+    std::vector<FMetadataPair> Metadata;
     
 };

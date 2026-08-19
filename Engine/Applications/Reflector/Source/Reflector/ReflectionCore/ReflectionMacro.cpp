@@ -5,7 +5,7 @@
 
 namespace Lumina::Reflection
 {
-    FReflectionMacro::FReflectionMacro(const eastl::string& HeaderPath, const CXCursor& Cursor, const CXSourceRange& Range, EReflectionMacro InType)
+    FReflectionMacro::FReflectionMacro(const std::string& HeaderPath, const CXCursor& Cursor, const CXSourceRange& Range, EReflectionMacro InType)
         : Type(InType)
         , HeaderID(HeaderPath)
         , Position(Range.begin_int_data)
@@ -25,7 +25,7 @@ namespace Lumina::Reflection
 
         const size_t StartIdx = MacroContents.find_first_of("(");
         const size_t EndIdx = MacroContents.find_last_of(')');
-        if (StartIdx != eastl::string::npos && EndIdx != eastl::string::npos && EndIdx > StartIdx)
+        if (StartIdx != std::string::npos && EndIdx != std::string::npos && EndIdx > StartIdx)
         {
             MacroContents = MacroContents.substr(StartIdx + 1, EndIdx - StartIdx - 1);
         }

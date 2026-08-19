@@ -1,5 +1,6 @@
 #pragma once
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Vector.h"
 #include "Containers/Function.h"
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectMacros.h"

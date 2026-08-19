@@ -30,7 +30,7 @@ namespace Lumina::Reflection
         bool WriteCSharpContent(FCodeWriter& Writer, FReflectedHeader* Header);
 
         // Distributes the project's .generated.cpp names over the fixed set of unity shards.
-        void WriteUnityBuildFiles(FReflectedProject* Project, const eastl::vector<eastl::string>& SourceNames);
+        void WriteUnityBuildFiles(FReflectedProject* Project, const std::vector<std::string>& SourceNames);
 
     private:
 

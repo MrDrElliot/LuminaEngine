@@ -5,6 +5,7 @@
 #include "Core/Templates/LuminaTemplate.h"
 #include "Paths/Paths.h"
 #include "Platform/Filesystem/PlatformFilesystem.h"
+#include "Containers/StringFormat.h"
 
 
 namespace Lumina::VFS
@@ -60,10 +61,10 @@ namespace Lumina::VFS
         }
 
         template<typename TFunc>
-        static auto VisitFileSystems(FStringView Path, TFunc&& Func) -> decltype(Func(eastl::declval<IFileSystem&>()))
+        static auto VisitFileSystems(FStringView Path, TFunc&& Func) -> decltype(Func(std::declval<IFileSystem&>()))
         {
-            using TResult = decltype(Func(eastl::declval<IFileSystem&>()));
-            constexpr bool bIsVoid = eastl::is_same_v<TResult, void>;
+            using TResult = decltype(Func(std::declval<IFileSystem&>()));
+            constexpr bool bIsVoid = std::is_same_v<TResult, void>;
 
             FMountList* List = FindMountList(Path);
             if (!List)
@@ -438,7 +439,7 @@ namespace Lumina::VFS
             ReturnPath.clear();
             ReturnPath.append(NoExtensionPath.begin(), NoExtensionPath.end());
             ReturnPath.append("_");
-            ReturnPath.append_convert(eastl::to_string(Counter));
+            ReturnPath.append(Format("{}", Counter));
 
             if (!Ext.empty())
             {

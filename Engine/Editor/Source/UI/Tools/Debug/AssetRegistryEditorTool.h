@@ -1,6 +1,7 @@
 #pragma once
 #include "UI/Tools/EditorTool.h"
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "GUID/GUID.h"
 

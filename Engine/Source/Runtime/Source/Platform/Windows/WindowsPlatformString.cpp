@@ -176,7 +176,7 @@ namespace Lumina::Platform
         int32 Count = 0;
         for (int32 i = 0; i < SrcLen; ++i)
         {
-            uint32 CP = static_cast<uint32>(static_cast<typename eastl::make_unsigned<WIDECHAR>::type>(Src[i]));
+            uint32 CP = static_cast<uint32>(static_cast<typename std::make_unsigned<WIDECHAR>::type>(Src[i]));
             if (sizeof(WIDECHAR) < 4 && CP >= 0xD800 && CP <= 0xDBFF && i + 1 < SrcLen)
             {
                 const uint32 Low = static_cast<uint32>(static_cast<uint16>(Src[i + 1]));
@@ -196,7 +196,7 @@ namespace Lumina::Platform
         int32 Out = 0;
         for (int32 i = 0; i < SrcLen; ++i)
         {
-            uint32 CP = static_cast<uint32>(static_cast<typename eastl::make_unsigned<WIDECHAR>::type>(Src[i]));
+            uint32 CP = static_cast<uint32>(static_cast<typename std::make_unsigned<WIDECHAR>::type>(Src[i]));
             if (sizeof(WIDECHAR) < 4 && CP >= 0xD800 && CP <= 0xDBFF && i + 1 < SrcLen)
             {
                 const uint32 Low = static_cast<uint32>(static_cast<uint16>(Src[i + 1]));

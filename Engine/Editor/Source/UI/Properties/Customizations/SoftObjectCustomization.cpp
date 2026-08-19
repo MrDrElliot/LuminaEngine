@@ -8,7 +8,7 @@
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include <Assets/AssetRegistry/AssetData.h>
 #include <Assets/AssetRegistry/AssetRegistry.h>
-#include <Containers/Array.h>
+#include "Containers/Vector.h"
 #include <Containers/String.h>
 #include <Core/Object/Object.h>
 #include <Core/Object/ObjectCore.h>

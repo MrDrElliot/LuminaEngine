@@ -1,7 +1,7 @@
 ﻿#include "RuntimePCH.h"
 #ifdef _WIN32
 
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "Paths/Paths.h"
 #include "Platform/Process/PlatformProcess.h"
@@ -313,7 +313,7 @@ namespace Lumina::Platform
         }
 
         FWString URLString(URL);
-        eastl::replace(URLString.begin(), URLString.end(), '/', '\\');
+        std::replace(URLString.begin(), URLString.end(), '/', '\\');
         
         STARTUPINFOW si{};
         PROCESS_INFORMATION pi{};
@@ -813,7 +813,7 @@ namespace Lumina::Platform
                     FWString wPath = pszPath;
 
                     OutFile = TCHAR_TO_UTF8(wPath.c_str());
-                    eastl::replace(OutFile.begin(), OutFile.end(), '\\', '/');
+                    std::replace(OutFile.begin(), OutFile.end(), '\\', '/');
 
                     CoTaskMemFree(pszPath);
                     bResult = true;
@@ -904,7 +904,7 @@ namespace Lumina::Platform
                     if (SUCCEEDED(Item->GetDisplayName(SIGDN_FILESYSPATH, &Raw)))
                     {
                         FFixedString Path = TCHAR_TO_UTF8(FWString(Raw).c_str());
-                        eastl::replace(Path.begin(), Path.end(), '\\', '/');
+                        std::replace(Path.begin(), Path.end(), '\\', '/');
                         OutFiles.push_back(Path);
                         CoTaskMemFree(Raw);
                     }
@@ -931,7 +931,7 @@ namespace Lumina::Platform
 
         // Normalize to backslashes and quote, explorer is picky about both.
         FWString Normalized(Path);
-        eastl::replace(Normalized.begin(), Normalized.end(), L'/', L'\\');
+        std::replace(Normalized.begin(), Normalized.end(), L'/', L'\\');
 
         FWString Args = L"/select,\"";
         Args += Normalized;
@@ -948,7 +948,7 @@ namespace Lumina::Platform
         }
 
         FWString Normalized(Directory);
-        eastl::replace(Normalized.begin(), Normalized.end(), L'/', L'\\');
+        std::replace(Normalized.begin(), Normalized.end(), L'/', L'\\');
 
         ShellExecuteW(nullptr, L"open", Normalized.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     }
@@ -961,7 +961,7 @@ namespace Lumina::Platform
         }
 
         FWString Normalized(Directory);
-        eastl::replace(Normalized.begin(), Normalized.end(), L'/', L'\\');
+        std::replace(Normalized.begin(), Normalized.end(), L'/', L'\\');
 
         // Prefer Windows Terminal when present; the -d flag sets the starting
         // directory and the new tab gets the user's default profile.

@@ -1,7 +1,7 @@
 #pragma once
 #include "RenderResource.h"   // RHI::Format::BytesPerBlock
 #include "RHITexture.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Core/Serialization/Archiver.h"
 
 namespace Lumina

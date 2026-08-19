@@ -2,7 +2,7 @@
 #include "Animation/AnimEvents.h"
 #include "Animation/RootMotion.h"
 #include "Animation/RootMotionTypes.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/Name.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Object/ObjectHandleTyped.h"

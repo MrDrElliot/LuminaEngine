@@ -2,7 +2,8 @@
 
 #include "Core/Math/Math.h"
 #include "Core/Serialization/NetQuantize.h"
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Vector.h"
 #include "World/Entity/EntityHandle.h"
 
 namespace Lumina

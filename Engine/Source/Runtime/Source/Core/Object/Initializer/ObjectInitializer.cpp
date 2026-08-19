@@ -1,7 +1,7 @@
 ﻿#include "RuntimePCH.h"
 #include "ObjectInitializer.h"
 
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Core/Threading/Thread.h"
 
 namespace Lumina

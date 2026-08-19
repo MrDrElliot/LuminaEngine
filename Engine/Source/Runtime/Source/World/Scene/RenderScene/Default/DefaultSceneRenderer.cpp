@@ -759,7 +759,7 @@ namespace Lumina
             Sorted.push_back(Entry);
         });
 
-        eastl::stable_sort(Sorted.begin(), Sorted.end(), [](const FProbeSortEntry& A, const FProbeSortEntry& B)
+        std::stable_sort(Sorted.begin(), Sorted.end(), [](const FProbeSortEntry& A, const FProbeSortEntry& B)
         {
             return A.Priority > B.Priority;
         });
@@ -1335,7 +1335,7 @@ namespace Lumina
                 }
 
                 #if USING(WITH_EDITOR)
-                // After SMAA: the outline is a fixed-width UI affordance, and letting the neighbourhood
+                // After SMAA: the outline is a fixed-width UI affordance, and letting the neighborhood
                 // blend chew on a 2px line softens it into a smear. Before Widgets so UI still draws over it.
                 {
                     SCENE_GPU_SCOPE(CL, "Selection Outline");
@@ -1545,7 +1545,7 @@ namespace Lumina
                     PC.NumSamples     = GPrefilterSampleCount;
                     PC.DstLayerOffset = (uint32)Bake.BakingProbe * 6u;
 
-                    const uint32 MipFaceSize = eastl::max<uint32>(BaseFaceSize >> Mip, 1u);
+                    const uint32 MipFaceSize = std::max<uint32>(BaseFaceSize >> Mip, 1u);
                     const uint32 GroupsXY    = RenderUtils::GetGroupCount(MipFaceSize, PrefilterTile);
                     RHI::CmdDispatch(CL, MakeArgs(PC), GroupsXY, GroupsXY, 6u);
                 }
@@ -1740,9 +1740,9 @@ namespace Lumina
     {
         FThreadLocalDrawData& Local = ThreadLocalStorage[Slot];
 
-        if (Local.Arena.GetArena() == nullptr)
+        if (!Local.bTouched)
         {
-            Local.ResetForFrame(FFrameArenaAllocator(&GetThreadFrameAllocator(), "RenderGather"));
+            Local.ResetForFrame();
             Local.Items.reserve(CurrentReservePerThread);
 
             Local.PrepareCounters(ScenePrimitives.GetBatches().Num());
@@ -2302,7 +2302,7 @@ namespace Lumina
             
             for (uint32 t = 0; t < NumThreads; ++t)
             {
-                ThreadLocal[t].ResetForFrame(FFrameArenaAllocator());
+                ThreadLocal[t].ResetForFrame();
             }
             
             if (CFont* DefaultFont = CFontManager::Get().GetDefaultFont())
@@ -2844,7 +2844,7 @@ namespace Lumina
                         DecalGroupMinSort[E.ShaderOwner] = E.SortOrder;
                     }
                 }
-                eastl::stable_sort(DecalSortScratch.begin(), DecalSortScratch.end(), [&](const FDecalSortEntry& A, const FDecalSortEntry& B)
+                std::stable_sort(DecalSortScratch.begin(), DecalSortScratch.end(), [&](const FDecalSortEntry& A, const FDecalSortEntry& B)
                 {
                     const int32 GA = DecalGroupMinSort[A.ShaderOwner];
                     const int32 GB = DecalGroupMinSort[B.ShaderOwner];
@@ -3352,7 +3352,7 @@ namespace Lumina
             return;
         }
 
-        eastl::sort(Ranges.begin(), Ranges.end(),
+        std::sort(Ranges.begin(), Ranges.end(),
                     [](const FUIntVector2& A, const FUIntVector2& B) { return A.x < B.x; });
 
         const uint32 ArenaCount = (uint32)Mirror.size();
@@ -3441,7 +3441,7 @@ namespace Lumina
             Ranges.push_back(FUIntVector2{ Slot, 1u });
         }
 
-        eastl::sort(Ranges.begin(), Ranges.end(),
+        std::sort(Ranges.begin(), Ranges.end(),
                     [](const FUIntVector2& A, const FUIntVector2& B) { return A.x < B.x; });
 
         const uint32 Count = (uint32)Data.size();
@@ -4443,7 +4443,7 @@ namespace Lumina
                 {
                     Order[i] = i;
                 }
-                eastl::stable_sort(Order.begin(), Order.end(),
+                std::stable_sort(Order.begin(), Order.end(),
                     [&](uint32 A, uint32 B)
                     {
                         return ShadowRequests[A].DistanceToCamera > ShadowRequests[B].DistanceToCamera;
@@ -4545,7 +4545,7 @@ namespace Lumina
         {
             SortedIndices[i] = i;
         }
-        eastl::sort(SortedIndices.begin(), SortedIndices.end(),
+        std::sort(SortedIndices.begin(), SortedIndices.end(),
             [&](uint32 A, uint32 B) { return Sizes[A] > Sizes[B]; });
 
         for (uint32 SortedI = 0; SortedI < NumRequests; ++SortedI)
@@ -5433,7 +5433,7 @@ namespace Lumina
         Frame.Geometry.OpaqueDrawList.clear();
         Frame.Geometry.TranslucentDrawList.clear();
         // BonesData is NOT cleared: it is arena-indexed, so clearing it would only force resize() to
-        // value-initialise the whole arena again every frame. Slices nobody gathered are never uploaded,
+        // value-initialize the whole arena again every frame. Slices nobody gathered are never uploaded,
         // so their contents are don't-care rather than stale.
         Frame.Geometry.BoneUploadRanges.clear();
         Frame.Views.NumDrawsPerView   = 0;
@@ -7076,14 +7076,14 @@ namespace Lumina
                 State.bBurstPending = false;
             }
 
-            SpawnCount = eastl::min(SpawnCount, MaxParticles);
+            SpawnCount = std::min(SpawnCount, MaxParticles);
 
-            const float MaxLifetime = eastl::max(Resolved.LifetimeRange.y, 0.0f);
+            const float MaxLifetime = std::max(Resolved.LifetimeRange.y, 0.0f);
             if (SpawnCount > 0)
             {
-                State.AliveTimeRemaining = eastl::max(State.AliveTimeRemaining, MaxLifetime);
+                State.AliveTimeRemaining = std::max(State.AliveTimeRemaining, MaxLifetime);
             }
-            State.AliveTimeRemaining = eastl::max(State.AliveTimeRemaining - ScaledDelta, 0.0f);
+            State.AliveTimeRemaining = std::max(State.AliveTimeRemaining - ScaledDelta, 0.0f);
 
             if (SpawnCount == 0 && State.AliveTimeRemaining <= 0.0f)
             {
@@ -8792,7 +8792,7 @@ namespace Lumina
             },
             [&](const FMeshDrawCommand& Batch)
             {
-                // Honour the material's two-sided flag exactly as VisBufferPass does. Rasterizing both faces
+                // Honor the material's two-sided flag exactly as VisBufferPass does. Rasterizing both faces
                 // unconditionally doubles the fragments, and these passes are ROP-bound on fp32 moments.
                 RHI::CmdSetCullMode(CL, Batch.bTwoSided ? RHI::ECullMode::None : RHI::ECullMode::Back);
             });
@@ -9621,7 +9621,7 @@ namespace Lumina
                                             : (float)Mip / (float)(NumMips - 1u);
             PC.NumSamples = GPrefilterSampleCount;
 
-            const uint32 MipFaceSize = eastl::max<uint32>(BaseFaceSize >> Mip, 1u);
+            const uint32 MipFaceSize = std::max<uint32>(BaseFaceSize >> Mip, 1u);
             const uint32 GroupsXY    = RenderUtils::GetGroupCount(MipFaceSize, PrefilterTile);
             RHI::CmdDispatch(CL, MakeArgs(PC), GroupsXY, GroupsXY, 6u);
         }
@@ -9989,7 +9989,7 @@ namespace Lumina
             // .rgb = bloom tint, .a = chromatic aberration intensity.
             FVector4 BloomTint;
 
-            float    AutoExposureKey;    // middle-grey key; <= 0 disables auto-exposure.
+            float    AutoExposureKey;    // middle-gray key; <= 0 disables auto-exposure.
             float    AutoExposureMinMul; // 2^MinEV clamp on the adapted multiplier.
             float    AutoExposureMaxMul; // 2^MaxEV clamp on the adapted multiplier.
             float    _PadAE;
@@ -10127,10 +10127,10 @@ namespace Lumina
         const FSceneImage& Bloom = CurrentView->BloomChainImage;
         const uint32 HDRWidth = HDR.GetSizeX();
         const uint32 HDRHght  = HDR.GetSizeY();
-        const uint32 Mip0W    = eastl::max<uint32>(HDRWidth >> 1u, 1u);
-        const uint32 Mip0H    = eastl::max<uint32>(HDRHght  >> 1u, 1u);
+        const uint32 Mip0W    = std::max<uint32>(HDRWidth >> 1u, 1u);
+        const uint32 Mip0H    = std::max<uint32>(HDRHght  >> 1u, 1u);
 
-        const uint32 MinDim  = eastl::min(Mip0W, Mip0H);
+        const uint32 MinDim  = std::min(Mip0W, Mip0H);
         const uint32 Octaves = MinDim >= 8u ? (uint32)Math::Log2((float)MinDim) - 2u : 1u;
         const uint32 NumMips = Math::Clamp(Octaves, 1u, Math::Max(Bloom.GetNumMips(), 1u));
 
@@ -10143,10 +10143,10 @@ namespace Lumina
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(DownCS));
         for (uint32 Mip = 0; Mip < NumMips; ++Mip)
         {
-            const uint32 DstW = eastl::max<uint32>(Mip0W >> Mip, 1u);
-            const uint32 DstH = eastl::max<uint32>(Mip0H >> Mip, 1u);
-            const uint32 SrcW = (Mip == 0) ? HDRWidth : eastl::max<uint32>(Mip0W >> (Mip - 1u), 1u);
-            const uint32 SrcH = (Mip == 0) ? HDRHght  : eastl::max<uint32>(Mip0H >> (Mip - 1u), 1u);
+            const uint32 DstW = std::max<uint32>(Mip0W >> Mip, 1u);
+            const uint32 DstH = std::max<uint32>(Mip0H >> Mip, 1u);
+            const uint32 SrcW = (Mip == 0) ? HDRWidth : std::max<uint32>(Mip0W >> (Mip - 1u), 1u);
+            const uint32 SrcH = (Mip == 0) ? HDRHght  : std::max<uint32>(Mip0H >> (Mip - 1u), 1u);
 
             if (Mip > 0)
             {
@@ -10180,10 +10180,10 @@ namespace Lumina
         {
             const uint32 SrcMip = i;
             const uint32 DstMip = i - 1;
-            const uint32 SrcW   = eastl::max<uint32>(Mip0W >> SrcMip, 1u);
-            const uint32 SrcH   = eastl::max<uint32>(Mip0H >> SrcMip, 1u);
-            const uint32 DstW   = eastl::max<uint32>(Mip0W >> DstMip, 1u);
-            const uint32 DstH   = eastl::max<uint32>(Mip0H >> DstMip, 1u);
+            const uint32 SrcW   = std::max<uint32>(Mip0W >> SrcMip, 1u);
+            const uint32 SrcH   = std::max<uint32>(Mip0H >> SrcMip, 1u);
+            const uint32 DstW   = std::max<uint32>(Mip0W >> DstMip, 1u);
+            const uint32 DstH   = std::max<uint32>(Mip0H >> DstMip, 1u);
 
             // Order against the previous mip's writes (down chain, then each up step).
             RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute);
@@ -10498,7 +10498,7 @@ namespace Lumina
             return;
         }
 
-        // The trace reads neighbouring pixels while the composite writes this one, so it needs a snapshot.
+        // The trace reads neighboring pixels while the composite writes this one, so it needs a snapshot.
         Barriers::AllToTransfer(CL);
         RHI::CmdCopyTexture(CL, HDR.Texture, RHI::FTextureSlice{}, SceneColor.Texture, RHI::FTextureSlice{});
         Barriers::TransferToAll(CL);
@@ -10551,7 +10551,7 @@ namespace Lumina
         RHI::CmdDispatchIndirect(CL, MakeArgs(PC), Classify.Ptr,
             (uint32)offsetof(FMaterialClassifyBlock, LightArgs));
 
-        // HDR is a UAV write here and a colour attachment for every pass after it.
+        // HDR is a UAV write here and a color attachment for every pass after it.
         RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::AllCommands);
     }
 
@@ -10842,7 +10842,7 @@ namespace Lumina
             RHI::CmdEndRenderPass(CL);
             Barriers::RasterToRead(CL);
 
-            eastl::swap(Source, Dest);
+            std::swap(Source, Dest);
         }
 
         const FSceneImage& LDR = GetNamedImage(ENamedImage::LDR);
@@ -11660,7 +11660,7 @@ namespace Lumina
         Want(ENamedImage::Accum,           bTranslucency);
         Want(ENamedImage::MomentZeroth,    bTranslucency);
         Want(ENamedImage::Moments,         bTranslucency);
-        // SSR needs the same scene-colour snapshot the water pass refracts through.
+        // SSR needs the same scene-color snapshot the water pass refracts through.
         const CRendererSettings* RendererSettings = GetDefault<CRendererSettings>();
         const bool bSSR = RendererSettings != nullptr && RendererSettings->bScreenSpaceReflections;
         Want(ENamedImage::WaterRefraction, bWater || bSSR);
@@ -11850,16 +11850,16 @@ namespace Lumina
 
             RHI::FTextureDesc ScatterDesc;
             ScatterDesc.Type      = RHI::ETextureType::Tex2D;
-            ScatterDesc.Dimension = FUIntVector3(eastl::max<uint32>(Extent.x / 2u, 1u),
-                                                 eastl::max<uint32>(Extent.y / 2u, 1u), 1);
+            ScatterDesc.Dimension = FUIntVector3(std::max<uint32>(Extent.x / 2u, 1u),
+                                                 std::max<uint32>(Extent.y / 2u, 1u), 1);
             ScatterDesc.Format    = EFormat::RGBA16_FLOAT;
             ScatterDesc.Usage     = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
             View.Images[(int)ENamedImage::CloudScatter] = CreateSceneImage(ScatterDesc, true, true);
         }
 
         {
-            const uint32 BloomW = eastl::max<uint32>(Extent.x / 2u, 1u);
-            const uint32 BloomH = eastl::max<uint32>(Extent.y / 2u, 1u);
+            const uint32 BloomW = std::max<uint32>(Extent.x / 2u, 1u);
+            const uint32 BloomH = std::max<uint32>(Extent.y / 2u, 1u);
 
             RHI::FTextureDesc BloomDesc;
             BloomDesc.Type      = RHI::ETextureType::Tex2D;

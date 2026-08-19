@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Assets/AssetTypes/Curve/CurveAsset.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/Name.h"
 #include "Core/Math/Math.h"
 #include "Core/Object/Object.h"
@@ -79,7 +79,7 @@ namespace Lumina
         /** Row label in the sequencer. */
         virtual FStringView GetTrackDisplayName() const { return "Track"; }
 
-        /** Colour of the track's row, so kinds are distinguishable at a glance. */
+        /** Color of the track's row, so kinds are distinguishable at a glance. */
         virtual FVector4 GetTrackColor() const { return FVector4(0.45f, 0.55f, 0.70f, 1.0f); }
 
         /** Writes this track's contribution for Context.Time. Called every evaluated frame. */

@@ -12,7 +12,7 @@
 #include <UI/Tools/AssetEditors/AssetEditorTool.h>
 #include <UI/Tools/EditorTool.h>
 #include <Lumina.h>
-#include <Containers/Array.h>
+#include "Containers/Vector.h"
 #include <Containers/String.h>
 #include <Core/Math/AABB.h>
 #include <Core/Math/Color.h>
@@ -27,12 +27,12 @@
 #include <Tools/UI/ImGui/ImGuiDesignIcons.h>
 #include <World/Entity/Components/TransformComponent.h>
 #include <World/World.h>
-#include <EASTL/string.h>
 #include <imgui.h>
 #include <ImGuizmo.h>
 #include <imgui_internal.h>
 #include "Renderer/ImmediateLineRenderer.h"
 #include "Renderer/SkeletonResource.h"
+#include "Containers/StringFormat.h"
 
 
 namespace Lumina
@@ -579,11 +579,11 @@ namespace Lumina
                     LOD0Triangles += SumSkinnedTrianglesInRange(MD.Meshlets, Surface.LODMeshletOffset[0], Surface.LODMeshletCount[0]);
                 }
 
-                PropertyRow("Meshlet Vertices", eastl::to_string(MD.MeshletSkinnedVertices.size()));
-                PropertyRow("Triangles (LOD 0)", eastl::to_string(LOD0Triangles));
-                PropertyRow("Meshlets", eastl::to_string(MD.Meshlets.size()));
-                PropertyRow("Surfaces", eastl::to_string(Resource.GetNumSurfaces()));
-                PropertyRow("LOD Levels", eastl::to_string(MaxLODsAcrossSurfaces));
+                PropertyRow("Meshlet Vertices", Format("{}", MD.MeshletSkinnedVertices.size()));
+                PropertyRow("Triangles (LOD 0)", Format("{}", LOD0Triangles));
+                PropertyRow("Meshlets", Format("{}", MD.Meshlets.size()));
+                PropertyRow("Surfaces", Format("{}", Resource.GetNumSurfaces()));
+                PropertyRow("LOD Levels", Format("{}", MaxLODsAcrossSurfaces));
 
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
@@ -596,11 +596,11 @@ namespace Lumina
                                            + MD.MeshletTriangles.size() * sizeof(uint32)) / 1024.0f;
                 const float totalSizeKB   = vertexSizeKB + meshletSizeKB;
 
-                PropertyRow("Vertex Buffer", eastl::to_string(static_cast<int>(vertexSizeKB)) + " KB");
-                PropertyRow("Meshlet Data",  eastl::to_string(static_cast<int>(meshletSizeKB)) + " KB");
+                PropertyRow("Vertex Buffer", Format("{}", static_cast<int>(vertexSizeKB)) + " KB");
+                PropertyRow("Meshlet Data",  Format("{}", static_cast<int>(meshletSizeKB)) + " KB");
 
                 ImVec4 totalColor = totalSizeKB > 1024 ? ImVec4(1.0f, 0.7f, 0.3f, 1.0f) : ImVec4(0.7f, 1.0f, 0.7f, 1.0f);
-                PropertyRow("Total Memory", eastl::to_string(static_cast<int>(totalSizeKB)) + " KB", &totalColor);
+                PropertyRow("Total Memory", Format("{}", static_cast<int>(totalSizeKB)) + " KB", &totalColor);
 
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
@@ -740,7 +740,7 @@ namespace Lumina
 
                     const bool bSelected = ((int32)i == SelectedSurfaceIndex);
 
-                    FString headerLabel = "Surface " + eastl::to_string(i) + ": " + Surface.ID.ToString();
+                    FString headerLabel = "Surface " + Format("{}", i) + ": " + Surface.ID.ToString();
                     const bool bOpen = ImGui::CollapsingHeader(headerLabel.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
 
                     if (ImGui::IsItemClicked(ImGuiMouseButton_Right))
@@ -770,10 +770,10 @@ namespace Lumina
                             const uint32 SurfaceTris = SumSkinnedTrianglesInRange(MD.Meshlets, Surface.LODMeshletOffset[0],
                                                                           Surface.LODMeshletCount[0]);
 
-                            DetailRow("Material Index:", eastl::to_string(Surface.MaterialIndex));
-                            DetailRow("LOD Levels:", eastl::to_string(Surface.NumLODs));
-                            DetailRow("Meshlets (LOD 0):", eastl::to_string(Surface.LODMeshletCount[0]));
-                            DetailRow("Triangles (LOD 0):", eastl::to_string(SurfaceTris));
+                            DetailRow("Material Index:", Format("{}", Surface.MaterialIndex));
+                            DetailRow("LOD Levels:", Format("{}", Surface.NumLODs));
+                            DetailRow("Meshlets (LOD 0):", Format("{}", Surface.LODMeshletCount[0]));
+                            DetailRow("Triangles (LOD 0):", Format("{}", SurfaceTris));
 
                             if (CMaterialInterface* Material = SkeletalMesh->GetMaterialAtSlot(Surface.MaterialIndex))
                             {

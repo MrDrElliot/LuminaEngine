@@ -70,7 +70,7 @@ namespace Lumina::RHI
         };
 
         // A flush's completion gate. One entry per flush that has been swept out of the queue, retired once
-        // every queue it was submitted on has signalled past it.
+        // every queue it was submitted on has signaled past it.
         struct FBatchGate
         {
             uint64      Batch = 0;
@@ -699,7 +699,7 @@ namespace Lumina::RHI
             }
 
             // A flush can straddle two queues (buffers on transfer, images on graphics); the gate closes
-            // only when BOTH have signalled, which is why this accumulates rather than overwrites.
+            // only when BOTH have signaled, which is why this accumulates rather than overwrites.
             FScopeLock Lock(GUpload.BatchMutex);
             for (FBatchGate& Gate : GUpload.InFlightBatches)
             {

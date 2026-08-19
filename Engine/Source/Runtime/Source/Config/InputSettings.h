@@ -2,7 +2,7 @@
 
 #include "Core/Object/ObjectMacros.h"
 #include "Config/DeveloperSettings.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Input/InputAction.h"
 #include "InputSettings.generated.h"
 

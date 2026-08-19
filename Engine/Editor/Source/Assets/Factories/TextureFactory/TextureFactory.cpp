@@ -845,7 +845,7 @@ namespace Lumina
     // Filename suffix heuristic for Auto; falls back to SRGB. Editable in the inspector for misclassifications.
     ETextureColorSpace CTextureFactory::ClassifyColorSpaceByFilename(FStringView Path)
     {
-        eastl::string Stem(Path.data(), Path.size());
+        FString Stem(Path.data(), Path.size());
 
         // Lowercase first so .HDR/.hdr both match.
         for (char& C : Stem)
@@ -861,7 +861,7 @@ namespace Lumina
 
         // Strip extension before suffix match.
         const size_t DotPos = Stem.find_last_of('.');
-        if (DotPos != eastl::string::npos)
+        if (DotPos != FString::npos)
         {
             Stem.resize(DotPos);
         }

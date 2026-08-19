@@ -236,7 +236,7 @@ namespace Lumina
             float TFar  = ( ExtentAxis[Axis] - OriginAxis[Axis]) / DirectionAxis[Axis];
             if (TNear > TFar)
             {
-                eastl::swap(TNear, TFar);
+                std::swap(TNear, TFar);
             }
 
             TMin = Math::Max(TMin, TNear);
@@ -1839,7 +1839,7 @@ namespace Lumina
                 ImGui::TableNextColumn();
                 const bool bSelected = (SelectionMode == EPhysicsAssetSelection::Constraint && i == SelectedConstraintIndex);
 
-                // Empty label + AllowOverlap: a labelled row-spanning selectable draws its text across the
+                // Empty label + AllowOverlap: a labeled row-spanning selectable draws its text across the
                 // other columns and swallows the delete button's clicks.
                 if (ImGui::Selectable("##Row", bSelected, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap))
                 {

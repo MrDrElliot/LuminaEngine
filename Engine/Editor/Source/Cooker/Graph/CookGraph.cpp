@@ -141,7 +141,7 @@ namespace Lumina
         {
             Out.push_back(&Pair.second);
         }
-        eastl::sort(Out.begin(), Out.end(), [](const FCookNode* A, const FCookNode* B)
+        std::sort(Out.begin(), Out.end(), [](const FCookNode* A, const FCookNode* B)
         {
             return A->AssetGUID < B->AssetGUID;
         });

@@ -1,9 +1,9 @@
 ﻿#pragma once
 
 #include <filesystem>
-#include "EASTL/shared_ptr.h"
-#include "EASTL/string.h"
-#include "EASTL/vector.h"
+#include <memory>
+#include <string>
+#include <vector>
 
 namespace Lumina::Reflection
 {
@@ -15,13 +15,13 @@ namespace Lumina::Reflection
 
         FReflectedWorkspace(const std::filesystem::path& ReflectionPath);
         
-        const eastl::string& GetPath() const { return Path; }
+        const std::string& GetPath() const { return Path; }
 
-        void AddReflectedProject(eastl::unique_ptr<FReflectedProject>&& Project);
+        void AddReflectedProject(std::unique_ptr<FReflectedProject>&& Project);
         bool HasProjects() const { return !ReflectedProjects.empty(); }
         
-        eastl::string Path;
-        eastl::vector<eastl::unique_ptr<FReflectedProject>> ReflectedProjects;
+        std::string Path;
+        std::vector<std::unique_ptr<FReflectedProject>> ReflectedProjects;
         
     };
 }

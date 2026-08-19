@@ -1,12 +1,13 @@
 #include "ParticleStockModules.h"
 #include "Containers/String.h"
 #include "UI/Tools/NodeGraph/Particle/ParticleCompiler.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
     static FString ShapeId(EParticleEmitterShape Shape)
     {
-        return FString(eastl::to_string((uint32)Shape)) + "u";
+        return FString(Format("{}", (uint32)Shape)) + "u";
     }
 
     // Spawn modules

@@ -65,7 +65,7 @@ namespace Lumina
         const FStringView Base   = VFS::FileName(NoExt, true);
 
         FFixedString Name(Base.data(), Base.size());
-        Name.append_convert(Suffix);
+        Name.append(Suffix);
 
         FFixedString Path = Paths::Combine(Parent, Name);
         CPackage::AddPackageExt(Path);
@@ -346,7 +346,7 @@ namespace Lumina
 
         // No CanExecute: answering "does this have a parent?" means loading the instance, and the menu
         // is drawn every frame it is open. Enabled always, with a notification when there is nothing to
-        // navigate to -- cheaper than loading every listed asset to decide whether to grey one entry.
+        // navigate to -- cheaper than loading every listed asset to decide whether to gray one entry.
         Registry.RegisterAction(CMaterialInstance::StaticClass(), FAssetAction
         {
             .Label   = LE_ICON_ARROW_UP_BOLD_BOX " Browse to Parent Material",

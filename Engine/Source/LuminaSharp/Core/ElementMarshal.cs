@@ -10,7 +10,7 @@ internal enum EElementKind
     /// <summary>The managed value IS the native bytes. Read and written in place; the fast path.</summary>
     Blittable,
 
-    /// <summary>An <c>eastl::basic_string</c>. Read by decoding in place, written through eastl assignment.</summary>
+    /// <summary>A native <c>FString</c>. Read by decoding in place, written through native assignment.</summary>
     String,
 
     /// <summary>A refcounted object slot. Read as a raw pointer, written through the native assignment so the

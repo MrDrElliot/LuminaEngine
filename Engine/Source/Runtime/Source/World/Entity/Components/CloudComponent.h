@@ -63,7 +63,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Clouds|Lighting", ClampMin = 0.0f)
         float SunIntensity = 8.0f;
 
-        /** Skylight fill inside shadowed cloud, so undersides read blue-grey rather than black. */
+        /** Skylight fill inside shadowed cloud, so undersides read blue-gray rather than black. */
         PROPERTY(Editable, Category = "Clouds|Lighting", ClampMin = 0.0f)
         float AmbientIntensity = 1.0f;
 

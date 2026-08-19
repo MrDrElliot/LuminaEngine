@@ -278,7 +278,7 @@ namespace Lumina
                 size_t Last = Contexts.size() - 1;
                 if (i != Last)
                 {
-                    eastl::swap(Contexts[i], Contexts[Last]);
+                    std::swap(Contexts[i], Contexts[Last]);
                 }
                 Contexts.pop_back();
                 return;

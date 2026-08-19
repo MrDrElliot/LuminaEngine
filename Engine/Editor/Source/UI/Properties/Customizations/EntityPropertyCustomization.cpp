@@ -1,7 +1,7 @@
 #include "EntityPropertyCustomization.h"
 
 #include "imgui.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "Core/Reflection/PropertyCustomization/PropertyCustomization.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
@@ -13,6 +13,7 @@
 #include "World/Entity/Components/EditorComponent.h"
 #include "World/Entity/Components/NameComponent.h"
 #include "World/Entity/Registry/EntityRegistry.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -32,7 +33,7 @@ namespace Lumina
             {
                 Label.append("Entity");
             }
-            Label.append_sprintf(" (%u)", static_cast<uint32>(entt::to_integral(Entity)));
+            AppendFormat(Label, " ({})", static_cast<uint32>(entt::to_integral(Entity)));
             return Label;
         }
     }

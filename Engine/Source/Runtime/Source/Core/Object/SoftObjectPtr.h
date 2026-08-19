@@ -107,13 +107,13 @@ namespace Lumina
         {
             CObject* Obj = Inner.LoadSynchronous();
             // Runtime type validation against ObjectClass happens in FSoftObjectProperty.
-            static_assert(eastl::is_base_of_v<CObject, T>, "TSoftObjectPtr<T>: T must derive from CObject");
+            static_assert(std::is_base_of_v<CObject, T>, "TSoftObjectPtr<T>: T must derive from CObject");
             return TObjectPtr<T>(static_cast<T*>(Obj));
         }
 
         void LoadAsync(const TFunction<void(T*)>& Callback) const
         {
-            static_assert(eastl::is_base_of_v<CObject, T>, "TSoftObjectPtr<T>: T must derive from CObject");
+            static_assert(std::is_base_of_v<CObject, T>, "TSoftObjectPtr<T>: T must derive from CObject");
             Inner.LoadAsync([Callback](CObject* Obj)
             {
                 if (Callback)
@@ -138,7 +138,7 @@ namespace Lumina
         "TSoftObjectPtr<T> must be layout-identical to FSoftObjectPath");
 }
 
-namespace eastl
+namespace std
 {
     template<>
     struct hash<Lumina::FSoftObjectPath>
@@ -147,7 +147,7 @@ namespace eastl
         {
             // Never hash an instance across a TryResolve: healing a renamed path rebuckets it.
             const Lumina::FStringView V = P.GetPath();
-            return eastl::hash<eastl::string_view>{}(eastl::string_view(V.data(), V.size()));
+            return Lumina::Containers::FDefaultHash{}(V);
         }
     };
 
@@ -156,7 +156,7 @@ namespace eastl
     {
         size_t operator()(const Lumina::TSoftObjectPtr<T>& P) const noexcept
         {
-            return eastl::hash<Lumina::FSoftObjectPath>{}(P.GetSoftPath());
+            return Lumina::Containers::FDefaultHash{}(P.GetSoftPath());
         }
     };
 }

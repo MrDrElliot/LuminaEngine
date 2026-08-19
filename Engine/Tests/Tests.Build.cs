@@ -18,7 +18,6 @@ public class Tests : LuminaModuleRules
             "GoogleTest",
             "ImGui",
             "RPMalloc",
-            "EA",
             "Entt",
         });
 

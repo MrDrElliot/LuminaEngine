@@ -19,7 +19,7 @@ namespace Lumina
 
     void FReflectedOptionalProperty::AppendDefinition(Reflection::FCodeWriter& Writer) const
     {
-        eastl::string CustomData;
+        std::string CustomData;
         constexpr size_t kNumSuffixes = std::size(kOptionalFatTailSuffixes);
         for (size_t i = 0; i < kNumSuffixes; ++i)
         {
@@ -30,7 +30,7 @@ namespace Lumina
             CustomData += AccessorScope + Name + kOptionalFatTailSuffixes[i];
         }
 
-        const eastl::string PropertyFlagStr = PropertyFlagsToString(PropertyFlags);
+        const std::string PropertyFlagStr = PropertyFlagsToString(PropertyFlags);
         AppendPropertyDef(Writer, PropertyFlagStr.c_str(), "Lumina::EPropertyTypeFlags::Optional", CustomData);
     }
 
@@ -39,7 +39,7 @@ namespace Lumina
         return true;
     }
 
-    bool FReflectedOptionalProperty::DeclareAccessors(Reflection::FCodeWriter& Writer, const eastl::string& FileID)
+    bool FReflectedOptionalProperty::DeclareAccessors(Reflection::FCodeWriter& Writer, const std::string& FileID)
     {
         FReflectedProperty::DeclareAccessors(Writer, FileID);
 
@@ -55,7 +55,7 @@ namespace Lumina
     {
         FReflectedProperty::DefineAccessors(Writer, ReflectedType);
 
-        const eastl::string& Q = AccessorDefinitionScope;
+        const std::string& Q = AccessorDefinitionScope;
         const char* N = Name.c_str();
         const char* Raw = RawTypeName.c_str();      // The wrapper type, e.g. TOptional<T>.
         const char* Elem = ElementTypeName.c_str(); // The payload type T.

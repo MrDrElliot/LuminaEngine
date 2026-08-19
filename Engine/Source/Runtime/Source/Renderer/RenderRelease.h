@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Core/Threading/Thread.h"
 #include "RHITexture.h"
 

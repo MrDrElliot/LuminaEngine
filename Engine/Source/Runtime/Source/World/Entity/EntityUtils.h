@@ -1,7 +1,8 @@
 #pragma once
 #include <atomic>
 #include "Components/RelationshipComponent.h"
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Vector.h"
 #include "Containers/Name.h"
 #include "Core/Math/TransformFwd.h"
 #include "Core/Serialization/Archiver.h"
@@ -189,7 +190,7 @@ namespace Lumina::ECS::Utils
 			return entt::meta_any{};
 		}
 
-		return F.invoke({}, eastl::forward<TArgs>(Args)...);
+		return F.invoke({}, std::forward<TArgs>(Args)...);
 	}
 
 	template<typename ... TArgs>
@@ -199,7 +200,7 @@ namespace Lumina::ECS::Utils
 	}
 
 	template<typename TFunc>
-	requires(eastl::is_invocable_v<TFunc, void*, entt::basic_sparse_set<>&, entt::meta_type>)
+	requires(std::is_invocable_v<TFunc, void*, entt::basic_sparse_set<>&, entt::meta_type>)
 	void ForEachComponent(FEntityRegistry& Registry, entt::entity Entity, TFunc&& Func)
 	{
 		for (auto&& [ID, Storage] : Registry.storage())
@@ -208,7 +209,7 @@ namespace Lumina::ECS::Utils
 			{
 				if (entt::meta_type MetaType = entt::resolve(Storage.info()))
 				{
-					eastl::invoke(Func, Storage.value(Entity), Storage, MetaType);
+					std::invoke(Func, Storage.value(Entity), Storage, MetaType);
 				}
 			}
 		}
@@ -232,7 +233,7 @@ namespace Lumina::ECS::Utils
 				Next = CurrentRelationship->Next;
 			}
 
-			eastl::invoke(Func, Current);
+			std::invoke(Func, Current);
 
 			Current = Next;
 		}
@@ -243,7 +244,7 @@ namespace Lumina::ECS::Utils
 	{
 		ForEachChild(Registry, Parent, [&](entt::entity Child)
 		{
-			eastl::invoke(Func, Child);
+			std::invoke(Func, Child);
 			ForEachDescendant(Registry, Child, Func);
 		});
 	}

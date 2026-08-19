@@ -622,7 +622,7 @@ namespace Lumina
         ImViewGuizmo::Style& Style = ImViewGuizmo::GetStyle();
         Style.scale = 0.55f * UIScale;
 
-        // Upstream's near-transparent light grey vanishes against a bright viewport.
+        // Upstream's near-transparent light gray vanishes against a bright viewport.
         Style.toolButtonColor        = IM_COL32(18, 20, 24, 150);
         Style.toolButtonHoveredColor = IM_COL32(45, 50, 58, 195);
 
@@ -774,7 +774,7 @@ namespace Lumina
         }
 
         const ImVec2 ContentRegion = ImGui::GetContentRegionAvail();
-        const ImVec2 ViewportSize(eastl::max(ContentRegion.x, 64.0f), eastl::max(ContentRegion.y, 64.0f));
+        const ImVec2 ViewportSize(std::max(ContentRegion.x, 64.0f), std::max(ContentRegion.y, 64.0f));
         const ImVec2 CursorScreenPos = ImGui::GetCursorScreenPos();
 
         const float AspectRatio = (ViewportSize.x / ViewportSize.y);
@@ -826,8 +826,8 @@ namespace Lumina
         ViewportScreenMin  = CursorScreenPos;
         ViewportScreenSize = ViewportSize;
 
-        uint32 RTW = uint32(eastl::max(ViewportSize.x, 1.0f));
-        uint32 RTH = uint32(eastl::max(ViewportSize.y, 1.0f));
+        uint32 RTW = uint32(std::max(ViewportSize.x, 1.0f));
+        uint32 RTH = uint32(std::max(ViewportSize.y, 1.0f));
         if (World != nullptr)
         {
             if (IRenderScene* Scene = World->GetRenderer())
@@ -844,7 +844,7 @@ namespace Lumina
 
         if (World != nullptr)
         {
-            RmlUi::SetWorldDisplaySize(World, FUIntVector2(uint32(eastl::max(ViewportSize.x, 1.0f)), uint32(eastl::max(ViewportSize.y, 1.0f))));
+            RmlUi::SetWorldDisplaySize(World, FUIntVector2(uint32(std::max(ViewportSize.x, 1.0f)), uint32(std::max(ViewportSize.y, 1.0f))));
         }
 
         InputViewport->SetHovered(bViewportHovered);
@@ -886,7 +886,7 @@ namespace Lumina
     bool FEditorTool::DrawViewport(const FUpdateContext& UpdateContext, ImTextureRef ViewportTexture)
     {
         const ImVec2 ContentRegion = ImGui::GetContentRegionAvail();
-        const ImVec2 ViewportSize(eastl::max(ContentRegion.x, 64.0f), eastl::max(ContentRegion.y, 64.0f));
+        const ImVec2 ViewportSize(std::max(ContentRegion.x, 64.0f), std::max(ContentRegion.y, 64.0f));
         const ImVec2 WindowPosition = ImGui::GetCursorScreenPos();
         const ImVec2 WindowBottomRight = { WindowPosition.x + ViewportSize.x, WindowPosition.y + ViewportSize.y };
 
@@ -2048,7 +2048,7 @@ namespace Lumina
 
     FEditorTool::FToolWindow* FEditorTool::CreateToolWindow(FName InName, const TFunction<void(bool)>& DrawFunction, const ImVec2& WindowPadding, bool DisableScrolling)
     {
-        DEBUG_ASSERT(eastl::none_of(ToolWindows.begin(), ToolWindows.end(), [&](const TUniquePtr<FToolWindow>& W)
+        DEBUG_ASSERT(std::none_of(ToolWindows.begin(), ToolWindows.end(), [&](const TUniquePtr<FToolWindow>& W)
         {
             return W->Name == InName;
         }));
@@ -2282,7 +2282,7 @@ namespace Lumina
         }
 
         // Same construction the terrain sculpt cursor uses, including the ImGui Y-flip; anything else and
-        // the result lands mirrored vertically about the viewport centre.
+        // the result lands mirrored vertically about the viewport center.
         const ImVec2 Size = ImVec2(Math::Max(ViewportScreenSize.x, 1.0f), Math::Max(ViewportScreenSize.y, 1.0f));
         const float  Sx   = ((ScreenPos.x - ViewportScreenMin.x) / Size.x) * 2.0f - 1.0f;
         const float  Sy   = 1.0f - ((ScreenPos.y - ViewportScreenMin.y) / Size.y) * 2.0f;
@@ -2444,7 +2444,7 @@ namespace Lumina
             }
         }
 
-        // 4. Nothing to hit: keep the old behaviour, but along the CURSOR ray rather than straight
+        // 4. Nothing to hit: keep the old behavior, but along the CURSOR ray rather than straight
         //    ahead, so the asset still lands where the user pointed.
         OutLocation = RayOrigin + RayDir * FallbackDistance;
         return true;

@@ -6,7 +6,7 @@
 #include "TaskSystem/Future.h"
 #include "TaskSystem/Scheduler/JobScheduler.h"
 #include "Core/Threading/Thread.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 
 #include <algorithm>
 #include <atomic>

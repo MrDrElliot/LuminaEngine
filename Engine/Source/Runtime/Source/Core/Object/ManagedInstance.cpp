@@ -1,7 +1,7 @@
 #include "RuntimePCH.h"
 #include "ManagedInstance.h"
 
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Lumina.h"
 #include "ObjectBase.h"
 

@@ -2,8 +2,8 @@
 #include <filesystem>
 #include <fstream>
 #include <clang-c/Index.h>
-#include "EASTL/fixed_vector.h"
-#include "EASTL/hash_set.h"
+#include <vector>
+#include <unordered_set>
 #include "Reflector/Clang/Utils.h"
 #include "Reflector/Diagnostics/LRTDiagnostics.h"
 #include "Reflector/ProjectSolution.h"
@@ -31,7 +31,7 @@ namespace Lumina::Reflection
                 if (const char* Raw = clang_getCString(Name))
                 {
                     Result.File = Raw;
-                    eastl::replace(Result.File.begin(), Result.File.end(), '\\', '/');
+                    std::replace(Result.File.begin(), Result.File.end(), '\\', '/');
                 }
                 clang_disposeString(Name);
             }
@@ -42,10 +42,10 @@ namespace Lumina::Reflection
         }
 
         // The parse runs before this tool writes them, so on a cold target they are legitimately absent.
-        bool IsMissingGeneratedHeader(const eastl::string& Text)
+        bool IsMissingGeneratedHeader(const std::string& Text)
         {
-            return Text.find(".generated.h") != eastl::string::npos
-                && Text.find("file not found") != eastl::string::npos;
+            return Text.find(".generated.h") != std::string::npos
+                && Text.find("file not found") != std::string::npos;
         }
 
         // Toolchain headers parse loosely on purpose, so only a header we emit reflection for can corrupt output.
@@ -75,7 +75,7 @@ namespace Lumina::Reflection
                 {
                     CXString Spelling = clang_getDiagnosticSpelling(Diagnostic);
                     const char* Raw = clang_getCString(Spelling);
-                    const eastl::string Text = Raw != nullptr ? Raw : "";
+                    const std::string Text = Raw != nullptr ? Raw : "";
                     clang_disposeString(Spelling);
 
                     if (IsMissingGeneratedHeader(Text))
@@ -126,7 +126,7 @@ namespace Lumina::Reflection
     
         ParsingContext.Workspace = Workspace;
         
-        const eastl::string AmalgamationPath = std::filesystem::absolute("ReflectHeaders.gen.h").string().c_str();
+        const std::string AmalgamationPath = std::filesystem::absolute("ReflectHeaders.gen.h").string().c_str();
 
         std::ofstream AmalgamationFile(AmalgamationPath.c_str());
         if (!AmalgamationFile.is_open())
@@ -143,22 +143,22 @@ namespace Lumina::Reflection
         // Needed to keep dynamic args alive. The pointer array is built only once every argument
         // is in place: taking c_str() as we go dangles the moment the storage reallocates, and a
         // fixed cap here silently mis-parsed the whole workspace once the include dirs outgrew it.
-        eastl::vector<eastl::string> ClangArgStorage;
-        eastl::vector<const char*>   ClangArgs;
+        std::vector<std::string> ClangArgStorage;
+        std::vector<const char*>   ClangArgs;
 
-        auto AppendArg = [&](eastl::string Arg)
+        auto AppendArg = [&](std::string Arg)
         {
-            ClangArgStorage.emplace_back(eastl::move(Arg));
+            ClangArgStorage.emplace_back(std::move(Arg));
         };
 
         // Only link-visibility macros differ per module, and those are blanked after this loop.
-        eastl::hash_set<eastl::string> SeenDefinitions;
-        eastl::hash_set<eastl::string> SeenIncludeDirs;
-        eastl::hash_set<eastl::string> SeenForceIncludes;
+        std::unordered_set<std::string> SeenDefinitions;
+        std::unordered_set<std::string> SeenIncludeDirs;
+        std::unordered_set<std::string> SeenForceIncludes;
 
         for (const auto& Project : Workspace->ReflectedProjects)
         {
-            for (const eastl::string& Definition : Project->Definitions)
+            for (const std::string& Definition : Project->Definitions)
             {
                 if (SeenDefinitions.insert(Definition).second)
                 {
@@ -166,7 +166,7 @@ namespace Lumina::Reflection
                 }
             }
 
-            for (const eastl::string& ForceInclude : Project->ForceIncludes)
+            for (const std::string& ForceInclude : Project->ForceIncludes)
             {
                 if (SeenForceIncludes.insert(ForceInclude).second)
                 {
@@ -175,7 +175,7 @@ namespace Lumina::Reflection
                 }
             }
 
-            for (const eastl::string& IncludeDir : Project->IncludeDirs)
+            for (const std::string& IncludeDir : Project->IncludeDirs)
             {
                 if (!SeenIncludeDirs.insert(IncludeDir).second)
                 {
@@ -195,10 +195,10 @@ namespace Lumina::Reflection
         AmalgamationFile.close();
 
         // Last -D wins, so this neutralizes the dllimport/dllexport the build system just supplied.
-        for (const eastl::string& Definition : SeenDefinitions)
+        for (const std::string& Definition : SeenDefinitions)
         {
             const size_t Equals = Definition.find('=');
-            const eastl::string Macro = Equals == eastl::string::npos ? Definition : Definition.substr(0, Equals);
+            const std::string Macro = Equals == std::string::npos ? Definition : Definition.substr(0, Equals);
 
             if (Macro.size() > 4 && Macro.compare(Macro.size() - 4, 4, "_API") == 0)
             {
@@ -230,7 +230,7 @@ namespace Lumina::Reflection
         AppendArg("-fno-delayed-template-parsing");
 
         ClangArgs.reserve(ClangArgStorage.size());
-        for (const eastl::string& Arg : ClangArgStorage)
+        for (const std::string& Arg : ClangArgStorage)
         {
             ClangArgs.emplace_back(Arg.c_str());
         }

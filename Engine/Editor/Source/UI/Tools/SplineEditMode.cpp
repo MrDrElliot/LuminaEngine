@@ -339,7 +339,7 @@ namespace Lumina
             const FVector3 NewWorld(HandleMatrix[3][0], HandleMatrix[3][1], HandleMatrix[3][2]);
             ApplyHandleWorldPosition(*Spline, WorldToLocal, SelectedPoint, SelectedHandle, NewWorld);
 
-            // Auto/Linear neighbours re-derive from the moved point, so the curve updates live rather than
+            // Auto/Linear neighbors re-derive from the moved point, so the curve updates live rather than
             // snapping into shape on release.
             Spline->UpdateTangents();
         }

@@ -18,7 +18,7 @@ namespace Lumina
         template<typename U>
         requires (!std::same_as<std::remove_cvref_t<U>, TNotNull> && std::convertible_to<U, T>)
         constexpr TNotNull(U&& Inst)
-            : Ptr(eastl::forward<U>(Inst))
+            : Ptr(std::forward<U>(Inst))
         {
             ASSERT(Ptr != nullptr);
         }

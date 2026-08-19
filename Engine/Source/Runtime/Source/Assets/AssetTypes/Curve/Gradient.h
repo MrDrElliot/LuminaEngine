@@ -1,13 +1,13 @@
 #pragma once
 
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Core/Math/Vector/VectorTypes.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Gradient.generated.h"
 
 namespace Lumina
 {
-    /** One colour stop. Time is the ramp position, conventionally 0..1 but not clamped, so a gradient can
+    /** One color stop. Time is the ramp position, conventionally 0..1 but not clamped, so a gradient can
      *  be authored over any domain (particle age in seconds, a distance, a temperature). */
     REFLECT()
     struct RUNTIME_API SGradientKey
@@ -21,7 +21,7 @@ namespace Lumina
         FVector4 Color = FVector4(1.0f, 1.0f, 1.0f, 1.0f);
     };
 
-    /** An authorable colour ramp. Sibling to SCurve: same role for colour that SCurve fills for scalars,
+    /** An authorable color ramp. Sibling to SCurve: same role for color that SCurve fills for scalars,
      *  and deliberately the same shape so both read the same way at a use site.
      *
      *  Inline only for now -- there is no CGradientAsset, because unlike curves there is no existing
@@ -34,7 +34,7 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** Colour at InTime. Interpolates linearly in RGBA between the bracketing stops and clamps to the
+        /** Color at InTime. Interpolates linearly in RGBA between the bracketing stops and clamps to the
          *  end stops outside the keyed range. An empty gradient evaluates to opaque white, which is the
          *  identity for the multiply most consumers do with it. */
         FVector4 Evaluate(float InTime) const;

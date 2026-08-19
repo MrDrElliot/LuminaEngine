@@ -8,7 +8,6 @@
 #include "Core/Object/Cast.h"
 #include "Memory/MemoryTracking.h"
 #include "Paths/Paths.h"
-#include "EASTL/sort.h"
 #include "Renderer/RenderManager.h"
 #include "Renderer/RHITexture.h"
 #include "Renderer/ShaderCache.h"
@@ -890,7 +889,7 @@ namespace Lumina
             
             constexpr uint64 Seed = (uint64)FShaderCache::SHADER_CACHE_VERSION;
 
-            eastl::sort(Files.begin(), Files.end(), [](const FEntry& A, const FEntry& B)
+            std::sort(Files.begin(), Files.end(), [](const FEntry& A, const FEntry& B)
             {
                 return A.Path < B.Path;
             });

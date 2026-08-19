@@ -4,11 +4,11 @@
 #include <filesystem>
 #include <fstream>
 
-#include <EASTL/hash_map.h>
-#include <EASTL/hash_set.h>
-#include <EASTL/sort.h>
-#include <EASTL/string.h>
-#include <EASTL/vector.h>
+#include <unordered_map>
+#include <unordered_set>
+#include <algorithm>
+#include <string>
+#include <vector>
 
 #include "CodeWriter.h"
 #include "CSharpBindingEmitter.h"
@@ -28,12 +28,12 @@ namespace Lumina::Reflection
 
         // Express the header relative to a project -I dir (longest match) or the project root.
         // A relative form lets the generated artifact survive being moved or rebuilt elsewhere.
-        eastl::string ComputeSourceHeaderInclude(const FReflectedHeader& Header)
+        std::string ComputeSourceHeaderInclude(const FReflectedHeader& Header)
         {
-            const eastl::string& Path = Header.HeaderPath;
+            const std::string& Path = Header.HeaderPath;
             const FReflectedProject& Proj = *Header.Project;
 
-            auto TryStrip = [&](const eastl::string& Prefix) -> eastl::string
+            auto TryStrip = [&](const std::string& Prefix) -> std::string
             {
                 if (Prefix.empty() || Prefix.size() >= Path.size())
                 {
@@ -55,15 +55,15 @@ namespace Lumina::Reflection
                 return Path.substr(Pos);
             };
 
-            const eastl::string* BestPrefix = nullptr;
-            eastl::string BestRel;
-            for (const eastl::string& Dir : Proj.IncludeDirs)
+            const std::string* BestPrefix = nullptr;
+            std::string BestRel;
+            for (const std::string& Dir : Proj.IncludeDirs)
             {
-                eastl::string Rel = TryStrip(Dir);
+                std::string Rel = TryStrip(Dir);
                 if (!Rel.empty() && (BestPrefix == nullptr || Dir.size() > BestPrefix->size()))
                 {
                     BestPrefix = &Dir;
-                    BestRel = eastl::move(Rel);
+                    BestRel = std::move(Rel);
                 }
             }
             if (BestPrefix != nullptr)
@@ -71,7 +71,7 @@ namespace Lumina::Reflection
                 return BestRel;
             }
 
-            if (eastl::string Rel = TryStrip(Proj.Path); !Rel.empty())
+            if (std::string Rel = TryStrip(Proj.Path); !Rel.empty())
             {
                 return Rel;
             }
@@ -94,7 +94,7 @@ namespace Lumina::Reflection
         // Where a project's generated C++ lives. The build system pins this per target, because
         // two targets that share a module would otherwise write the same files and each would
         // see the other's output as its own having changed.
-        eastl::string ProjectGeneratedDir(const eastl::string& WorkspacePath, const FReflectedProject& Project)
+        std::string ProjectGeneratedDir(const std::string& WorkspacePath, const FReflectedProject& Project)
         {
             if (!Project.GeneratedDir.empty())
             {
@@ -104,18 +104,18 @@ namespace Lumina::Reflection
             return WorkspacePath + "/Intermediates/Reflection/" + Project.Name;
         }
 
-        eastl::string MakeGeneratedHeaderPath(const eastl::string& WorkspacePath, const FReflectedHeader& Header)
+        std::string MakeGeneratedHeaderPath(const std::string& WorkspacePath, const FReflectedHeader& Header)
         {
             return ProjectGeneratedDir(WorkspacePath, *Header.Project) + "/" + Header.FileName + ".generated.h";
         }
 
-        eastl::string MakeGeneratedSourcePath(const eastl::string& WorkspacePath, const FReflectedHeader& Header)
+        std::string MakeGeneratedSourcePath(const std::string& WorkspacePath, const FReflectedHeader& Header)
         {
             return ProjectGeneratedDir(WorkspacePath, *Header.Project) + "/" + Header.FileName + ".generated.cpp";
         }
 
         // bRoutable sends a binding to the owner's Scripts/Generated, to compile into that unit's own assembly.
-        eastl::string MakeGeneratedCSharpPath(const eastl::string& WorkspacePath, const FReflectedHeader& Header, bool bRoutable)
+        std::string MakeGeneratedCSharpPath(const std::string& WorkspacePath, const FReflectedHeader& Header, bool bRoutable)
         {
             if (bRoutable && !Header.Project->CSharpBindingsDir.empty())
             {
@@ -153,18 +153,18 @@ namespace Lumina::Reflection
             return static_cast<int>(Wanted < kUnityShardCount ? Wanted : kUnityShardCount);
         }
 
-        eastl::string MakeUnityPath(const eastl::string& WorkspacePath, const FReflectedProject& Project, int Shard)
+        std::string MakeUnityPath(const std::string& WorkspacePath, const FReflectedProject& Project, int Shard)
         {
             return ProjectGeneratedDir(WorkspacePath, Project)
-                 + "/ReflectionUnity_" + eastl::to_string(Shard) + ".gen.cpp";
+                 + "/ReflectionUnity_" + std::to_string(Shard) + ".gen.cpp";
         }
 
-        eastl::string MakeProjectIntermediateDir(const eastl::string& WorkspacePath, const FReflectedProject& Project)
+        std::string MakeProjectIntermediateDir(const std::string& WorkspacePath, const FReflectedProject& Project)
         {
             return ProjectGeneratedDir(WorkspacePath, Project);
         }
 
-        eastl::string MakeProjectCSharpDir(const eastl::string& WorkspacePath, const FReflectedProject& Project)
+        std::string MakeProjectCSharpDir(const std::string& WorkspacePath, const FReflectedProject& Project)
         {
             return WorkspacePath + R"(\Intermediates\CSharpBindings\)" + Project.Name;
         }
@@ -179,26 +179,26 @@ namespace Lumina::Reflection
         /// must open with their own module's PCH: naming another module's only compiles while that
         /// module happens to sit on the include path, and MSVC rejects a translation unit built with
         /// /Yu whose first content is anything else.
-        eastl::string PchInclude(const FReflectedProject& Project)
+        std::string PchInclude(const FReflectedProject& Project)
         {
             if (Project.PrecompiledHeader.empty())
             {
                 return {};
             }
 
-            return eastl::string("#include \"") + Project.PrecompiledHeader + "\"\n";
+            return std::string("#include \"") + Project.PrecompiledHeader + "\"\n";
         }
 
         // The reflected types for a header, or a shared empty list when the header has none (e.g. a header
         // whose only reflection is SCRIPT_EXPORT free functions). Avoids ReflectedTypes.at() throwing.
-        const eastl::vector<eastl::unique_ptr<FReflectedType>>& TypesFor(const FReflectionDatabase& Db, FReflectedHeader* Header)
+        const std::vector<std::unique_ptr<FReflectedType>>& TypesFor(const FReflectionDatabase& Db, FReflectedHeader* Header)
         {
-            static const eastl::vector<eastl::unique_ptr<FReflectedType>> Empty;
+            static const std::vector<std::unique_ptr<FReflectedType>> Empty;
             const auto It = Db.ReflectedTypes.find(Header);
             return It != Db.ReflectedTypes.end() ? It->second : Empty;
         }
 
-        void WriteTextFile(const eastl::string& PathUtf8, const eastl::string& Contents)
+        void WriteTextFile(const std::string& PathUtf8, const std::string& Contents)
         {
             std::filesystem::path OutputPath(PathUtf8.c_str());
             std::filesystem::create_directories(OutputPath.parent_path());
@@ -216,7 +216,7 @@ namespace Lumina::Reflection
         // Skips the write when the contents already match. A generated header that keeps its
         // timestamp costs nothing; rewriting one recompiles every translation unit that includes it,
         // so a change in any module would otherwise drag the whole build along.
-        void WriteTextFileIfChanged(const eastl::string& PathUtf8, const eastl::string& Contents)
+        void WriteTextFileIfChanged(const std::string& PathUtf8, const std::string& Contents)
         {
             std::filesystem::path OutputPath(PathUtf8.c_str());
 
@@ -252,11 +252,11 @@ namespace Lumina::Reflection
         // distributed over the unity shards at write time, so shard contents stay deterministic
         // (ReflectedTypes is a hash_map; its iteration order is not stable across runs, and an
         // unstable order would rewrite the unity files and dirty the build for no reason).
-        eastl::hash_map<FReflectedProject*, eastl::vector<eastl::string>>   UnityPerProject;
-        eastl::hash_set<FReflectedProject*>                                 DirtyProjects;
-        eastl::hash_map<FReflectedProject*, eastl::hash_set<eastl::string>> ExpectedArtifacts;
+        std::unordered_map<FReflectedProject*, std::vector<std::string>>   UnityPerProject;
+        std::unordered_set<FReflectedProject*>                                 DirtyProjects;
+        std::unordered_map<FReflectedProject*, std::unordered_set<std::string>> ExpectedArtifacts;
         // Routed .generated.cs keyed by DIR, not project: plugin modules share one, and a per-project whitelist would have each sweep away the others'.
-        eastl::hash_map<eastl::string, eastl::hash_set<eastl::string>> RoutedArtifacts;
+        std::unordered_map<std::string, std::unordered_set<std::string>> RoutedArtifacts;
 
         for (const auto& [Header, _] : ReflectionDatabase->ReflectedTypes)
         {
@@ -334,8 +334,8 @@ namespace Lumina::Reflection
         // Orphan sweep: a deleted header leaves stale generated files the dirty-loop above never visits.
         // Reflection\<Project> holds .generated.{h,cpp}; CSharpBindings\<Project> holds .generated.cs.
         // Remove any whose backing header is gone (not in ExpectedArtifacts) and mark the project dirty.
-        auto SweepOrphanDir = [&](FReflectedProject* Project, const eastl::string& DirPath,
-            const eastl::hash_set<eastl::string>* Expected, const char* SuffixA, const char* SuffixB)
+        auto SweepOrphanDir = [&](FReflectedProject* Project, const std::string& DirPath,
+            const std::unordered_set<std::string>* Expected, const char* SuffixA, const char* SuffixB)
         {
             std::error_code Ec;
             const std::filesystem::path Dir(DirPath.c_str());
@@ -352,11 +352,11 @@ namespace Lumina::Reflection
                 }
 
                 const std::string FilenameStd = Entry.path().filename().string();
-                const eastl::string Filename(FilenameStd.c_str());
+                const std::string Filename(FilenameStd.c_str());
 
                 const bool bIsGenerated =
-                    Filename.find(SuffixA) != eastl::string::npos ||
-                    (SuffixB != nullptr && Filename.find(SuffixB) != eastl::string::npos);
+                    Filename.find(SuffixA) != std::string::npos ||
+                    (SuffixB != nullptr && Filename.find(SuffixB) != std::string::npos);
                 if (!bIsGenerated)
                 {
                     continue;
@@ -372,7 +372,7 @@ namespace Lumina::Reflection
             }
         };
 
-        eastl::hash_set<eastl::string> SweptRoutedDirs;
+        std::unordered_set<std::string> SweptRoutedDirs;
 
         for (auto& Project : Workspace->ReflectedProjects)
         {
@@ -381,7 +381,7 @@ namespace Lumina::Reflection
                 continue;
             }
 
-            const auto* Expected = [&]() -> const eastl::hash_set<eastl::string>*
+            const auto* Expected = [&]() -> const std::unordered_set<std::string>*
             {
                 auto It = ExpectedArtifacts.find(Project.get());
                 return It != ExpectedArtifacts.end() ? &It->second : nullptr;
@@ -406,7 +406,7 @@ namespace Lumina::Reflection
             // A project that lost its last reflected type has no UnityPerProject entry;
             // WriteUnityBuildFiles then stubs out every shard so the vcxproj still compiles cleanly.
             auto It = UnityPerProject.find(DirtyProject);
-            static const eastl::vector<eastl::string> Empty;
+            static const std::vector<std::string> Empty;
             WriteUnityBuildFiles(DirtyProject, It != UnityPerProject.end() ? It->second : Empty);
         }
 
@@ -423,7 +423,7 @@ namespace Lumina::Reflection
             bool bAnyMissing = false;
             for (int Shard = 0; Shard < kUnityShardCount && !bAnyMissing; ++Shard)
             {
-                const eastl::string Path = MakeUnityPath(Workspace->GetPath(), *Project, Shard);
+                const std::string Path = MakeUnityPath(Workspace->GetPath(), *Project, Shard);
                 bAnyMissing = !std::filesystem::exists(std::filesystem::path(Path.c_str()));
             }
 
@@ -433,7 +433,7 @@ namespace Lumina::Reflection
             }
 
             auto It = UnityPerProject.find(Project.get());
-            static const eastl::vector<eastl::string> Empty;
+            static const std::vector<std::string> Empty;
             WriteUnityBuildFiles(Project.get(), It != UnityPerProject.end() ? It->second : Empty);
         }
     }
@@ -455,7 +455,7 @@ namespace Lumina::Reflection
     void FCodeGenerator::GenerateCSharpFile(FReflectedHeader* Header, bool bRoutable)
     {
         FCodeWriter Writer(kStreamInitialCapacity);
-        const eastl::string Path = MakeGeneratedCSharpPath(Workspace->GetPath(), *Header, bRoutable);
+        const std::string Path = MakeGeneratedCSharpPath(Workspace->GetPath(), *Header, bRoutable);
 
         if (WriteCSharpContent(Writer, Header))
         {
@@ -506,7 +506,7 @@ namespace Lumina::Reflection
     void FCodeGenerator::WriteHeaderContent(FCodeWriter& Writer, FReflectedHeader* Header)
     {
         const auto& Types = TypesFor(*ReflectionDatabase, Header);
-        const eastl::string FileID = Names::MakeFileIDForHeaderPath(Header->HeaderPath);
+        const std::string FileID = Names::MakeFileIDForHeaderPath(Header->HeaderPath);
 
         Writer.Line("#pragma once");
         Writer.Line();
@@ -548,16 +548,16 @@ namespace Lumina::Reflection
         // Cross-module references for every reflected type in this TU, plus one per
         // struct/class property that points at a type in another module.
         void EmitCrossModuleReferences(FCodeWriter& Writer, const FReflectionDatabase& Db,
-            FReflectedHeader* Header, const eastl::vector<eastl::unique_ptr<FReflectedType>>& Types)
+            FReflectedHeader* Header, const std::vector<std::unique_ptr<FReflectedType>>& Types)
         {
-            const eastl::string OwningApi = Names::ProjectApiMacro(Header->Project->Name);
+            const std::string OwningApi = Names::ProjectApiMacro(Header->Project->Name);
 
             Writer.Line("// Begin Cross-Module References");
 
             for (const auto& Type : Types)
             {
-                const eastl::string Kind = Type->GetTypeName();
-                const eastl::string ConstructFn = Names::ConstructFunction(Kind, Type->Namespace, Type->DisplayName);
+                const std::string Kind = Type->GetTypeName();
+                const std::string ConstructFn = Names::ConstructFunction(Kind, Type->Namespace, Type->DisplayName);
                 Names::EmitGuardedCrossModuleDecl(Writer, OwningApi, Kind, ConstructFn);
 
                 if (auto* Struct = dynamic_cast<FReflectedStruct*>(Type.get()))
@@ -566,7 +566,7 @@ namespace Lumina::Reflection
                     {
                         if (const auto* PropType = Db.GetReflectedType<FReflectedType>(FStringHash(Property->TypeName)))
                         {
-                            const eastl::string PropApi = Names::ProjectApiMacro(PropType->Header->Project->Name);
+                            const std::string PropApi = Names::ProjectApiMacro(PropType->Header->Project->Name);
                             Property->DeclareCrossModuleReference(PropApi, Writer);
                         }
                     }
@@ -578,8 +578,8 @@ namespace Lumina::Reflection
         }
 
         // The per-file Register_Static_Initializer struct + trampoline.
-        void EmitStaticRegistration(FCodeWriter& Writer, const eastl::string& FileID,
-            const eastl::vector<eastl::unique_ptr<FReflectedType>>& Types)
+        void EmitStaticRegistration(FCodeWriter& Writer, const std::string& FileID,
+            const std::vector<std::unique_ptr<FReflectedType>>& Types)
         {
             bool bHasEnum = false;
             bool bHasClass = false;
@@ -666,13 +666,13 @@ namespace Lumina::Reflection
         Writer.Clear();
 
         const auto& Types = TypesFor(*ReflectionDatabase, Header);
-        const eastl::string FileID = Names::MakeFileIDForHeaderPath(Header->HeaderPath);
+        const std::string FileID = Names::MakeFileIDForHeaderPath(Header->HeaderPath);
 
         EmitFileBanner(Writer);
 
-        if (const eastl::string Pch = PchInclude(*Header->Project); !Pch.empty())
+        if (const std::string Pch = PchInclude(*Header->Project); !Pch.empty())
         {
-            Writer.Line(eastl::string(Pch.begin(), Pch.end() - 1).c_str());
+            Writer.Line(std::string(Pch.begin(), Pch.end() - 1).c_str());
         }
 
         Writer.Linef("#include \"%s\"", ComputeSourceHeaderInclude(*Header).c_str());
@@ -707,7 +707,7 @@ namespace Lumina::Reflection
                 {
                     for (const FFieldInfo& Arg : Fn->Arguments)
                     {
-                        if (Arg.RawFieldType.find("FAssetRef") != eastl::string::npos)
+                        if (Arg.RawFieldType.find("FAssetRef") != std::string::npos)
                         {
                             Writer.Line("#include \"Assets/AssetRef.h\"");
                             return;
@@ -770,17 +770,17 @@ namespace Lumina::Reflection
         Writer.Line("#endif");
     }
 
-    void FCodeGenerator::WriteUnityBuildFiles(FReflectedProject* Project, const eastl::vector<eastl::string>& SourceNames)
+    void FCodeGenerator::WriteUnityBuildFiles(FReflectedProject* Project, const std::vector<std::string>& SourceNames)
     {
         // Sort first: the caller collected these by walking hash containers, so the order varies
         // run to run. Sorted input keeps each shard's contents byte-stable, which is what lets the
         // "unchanged file" case avoid dirtying the build.
-        eastl::vector<eastl::string> Sorted = SourceNames;
-        eastl::sort(Sorted.begin(), Sorted.end());
+        std::vector<std::string> Sorted = SourceNames;
+        std::sort(Sorted.begin(), Sorted.end());
 
         const int ActiveShards = ShardCountFor(Sorted.size());
 
-        eastl::vector<eastl::string> Shards(kUnityShardCount);
+        std::vector<std::string> Shards(kUnityShardCount);
         for (size_t Index = 0; Index < Sorted.size(); ++Index)
         {
             // Round-robin rather than contiguous chunks: adjacent generated files tend to come from
@@ -790,10 +790,10 @@ namespace Lumina::Reflection
 
         for (int Shard = 0; Shard < kUnityShardCount; ++Shard)
         {
-            const eastl::string Path = MakeUnityPath(Workspace->GetPath(), *Project, Shard);
+            const std::string Path = MakeUnityPath(Workspace->GetPath(), *Project, Shard);
             if (Shards[Shard].empty())
             {
-                WriteTextFileIfChanged(Path, eastl::string(kUnityStubContents));
+                WriteTextFileIfChanged(Path, std::string(kUnityStubContents));
                 continue;
             }
 

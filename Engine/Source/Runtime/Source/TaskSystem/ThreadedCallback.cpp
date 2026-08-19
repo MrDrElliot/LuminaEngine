@@ -1,6 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "ThreadedCallback.h"
-#include "Containers/Array.h"
+#include "Memory/MemoryConcurrentQueue.h"
 #include "Core/Templates/LuminaTemplate.h"
 
 namespace Lumina::MainThread

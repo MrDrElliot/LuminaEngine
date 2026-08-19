@@ -39,7 +39,7 @@ namespace Lumina
         const size_t CurrentInnerElementSize = Inner->GetElementSize();
 
         // Checked before anything derived from the count is trusted, including the skip below.
-        if (ElementCount > eastl::numeric_limits<uint32>::max())
+        if (ElementCount > std::numeric_limits<uint32>::max())
         {
             // The count is the only record of how much payload follows, so a garbage one leaves no way to
             // step over it. Returning here used to leave the archive misaligned and every later property

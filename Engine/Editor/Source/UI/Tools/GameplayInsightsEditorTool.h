@@ -1,7 +1,7 @@
 #pragma once
 
 #include "EditorTool.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Core/Profiler/GameplayProfiler.h"
 #include "World/World.h"
 

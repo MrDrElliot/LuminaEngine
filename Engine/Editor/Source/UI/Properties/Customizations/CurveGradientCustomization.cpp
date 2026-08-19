@@ -20,7 +20,7 @@ namespace Lumina
             return ImGui::ColorConvertFloat4ToU32(ImVec4(C.x, C.y, C.z, C.w));
         }
 
-        // Alpha has to read as transparency, not as a dark colour, or a fade-to-zero gradient looks
+        // Alpha has to read as transparency, not as a dark color, or a fade-to-zero gradient looks
         // identical to a fade-to-black one.
         void DrawCheckerboard(ImDrawList* DrawList, const ImVec2& Min, const ImVec2& Max)
         {
@@ -351,7 +351,7 @@ namespace Lumina
             DrawRamp(PopupRampMin, PopupRampMax);
             ImGui::InvisibleButton("##PopupRamp", ImVec2(EditorWidth, 28.0f));
 
-            // Double-click inserts a stop at the clicked position, seeded with the colour already there so
+            // Double-click inserts a stop at the clicked position, seeded with the color already there so
             // the ramp does not visibly jump when you add a control point.
             if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
             {

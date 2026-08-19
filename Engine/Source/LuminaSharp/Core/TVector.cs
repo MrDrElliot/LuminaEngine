@@ -102,7 +102,7 @@ public readonly unsafe struct TVector<T> : IList<T>
     /// <summary>Reads an element. Works for every element type.</summary>
     public T Get(int index) => ElementMarshal.Read<T>(ElementAt(index));
 
-    /// <summary>Overwrites an element, doing whatever its type requires -- an eastl assignment for a string,
+    /// <summary>Overwrites an element, doing whatever its type requires -- a native assignment for a string,
     /// a refcounted assignment for an object reference, a byte write for a plain value.</summary>
     public void Set(int index, T value) => ElementMarshal.Write(ElementAt(index), value);
 

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Core/Reflection/PropertyCustomization/PropertyCustomization.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/Function.h"
 #include "Memory/SmartPtr.h"
 

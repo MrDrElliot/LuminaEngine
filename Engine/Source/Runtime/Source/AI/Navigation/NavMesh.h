@@ -85,6 +85,24 @@ namespace Lumina
         {
             dtNavMeshQuery*     Query = nullptr;
             std::atomic<bool>   Busy{ false };
+
+            FQuerySlot() = default;
+
+            // Relocating a pool slot has to carry the flag by hand, because an atomic is not movable.
+            FQuerySlot(FQuerySlot&& Other) noexcept
+                : Query(Other.Query)
+                , Busy(Other.Busy.load(std::memory_order_relaxed))
+            {
+                Other.Query = nullptr;
+            }
+
+            FQuerySlot& operator=(FQuerySlot&& Other) noexcept
+            {
+                Query = Other.Query;
+                Busy.store(Other.Busy.load(std::memory_order_relaxed), std::memory_order_relaxed);
+                Other.Query = nullptr;
+                return *this;
+            }
         };
 
         struct FAcquiredQuery

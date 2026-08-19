@@ -2,7 +2,7 @@
 
 #include <concepts>
 #include <initializer_list>
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
 #include "Containers/Function.h"
 #include "Containers/Name.h"
 #include "Containers/String.h"
@@ -129,7 +129,7 @@ namespace Lumina
 
     private:
 
-        // Copyable aggregate, not anything owning: it is held by value in a hash map, and EASTL
+        // Copyable aggregate, not anything owning: it is held by value in a hash map, and the table
         // instantiates the value's copy constructor whether or not it is used.
         template<typename TFactory>
         struct TRegistration

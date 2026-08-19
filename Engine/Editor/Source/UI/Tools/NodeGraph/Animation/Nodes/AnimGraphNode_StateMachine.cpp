@@ -2,14 +2,16 @@
 #include "AnimGraphNode_State.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/Package/Package.h"
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Pair.h"
+#include "Containers/Vector.h"
 #include "UI/Tools/NodeGraph/EdNodeGraphPin.h"
 #include "UI/Tools/NodeGraph/Animation/AnimStateMachineGraph.h"
 #include "UI/Tools/NodeGraph/Animation/AnimStateTransition.h"
 #include "UI/Tools/NodeGraph/Animation/AnimationGraphCompiler.h"
 #include "UI/Tools/NodeGraph/Animation/AnimationGraphNodeGraph.h"
 
-#include <EASTL/algorithm.h>
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -22,7 +24,7 @@ namespace Lumina
     {
         if (!StateMachineGraph.IsValid())
         {
-            const FString GraphName = FString("StateMachine_") + eastl::to_string(GetNodeID());
+            const FString GraphName = FString("StateMachine_") + Format("{}", GetNodeID());
             StateMachineGraph = NewObject<CAnimStateMachineGraph>(GetPackage(), GraphName);
         }
 
@@ -147,7 +149,7 @@ namespace Lumina
                 SortedTransitions.push_back(Transition.Get());
             }
         }
-        eastl::stable_sort(SortedTransitions.begin(), SortedTransitions.end(),
+        std::stable_sort(SortedTransitions.begin(), SortedTransitions.end(),
             [](const CAnimStateTransition* A, const CAnimStateTransition* B)
         {
             if (A->Priority != B->Priority)

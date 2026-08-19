@@ -1,7 +1,7 @@
 #pragma once
 
-#include <EASTL/string.h>
-#include "EASTL/vector.h"
+#include <string>
+#include <vector>
 #include "Reflector/Types/PropertyFlags.h"
 #include "Reflector/Types/StructReflectItem.h"
 #include "Reflector/Utils/MetadataUtils.h"
@@ -26,46 +26,46 @@ namespace Lumina
 
         virtual const char* GetPropertyParamType() const { return "FPropertyParams"; }
         virtual const char* GetTypeName() = 0;
-        virtual eastl::string_view GetLuaType() = 0;
+        virtual std::string_view GetLuaType() = 0;
 
         virtual void AppendDefinition(Reflection::FCodeWriter& Writer) const = 0;
 
         virtual bool CanDeclareCrossModuleReferences() const { return false; }
-        virtual void DeclareCrossModuleReference(const eastl::string& API, Reflection::FCodeWriter& Writer) { }
+        virtual void DeclareCrossModuleReference(const std::string& API, Reflection::FCodeWriter& Writer) { }
 
         virtual bool HasAccessors();
-        virtual bool DeclareAccessors(Reflection::FCodeWriter& Writer, const eastl::string& FileID);
+        virtual bool DeclareAccessors(Reflection::FCodeWriter& Writer, const std::string& FileID);
         virtual bool DefineAccessors(Reflection::FCodeWriter& Writer, Reflection::FReflectedType* ReflectedType);
 
         bool GenerateLuaBinding(Reflection::FCodeWriter& Writer) override;
-        void GenerateMetadata(const eastl::string& InMetadata) override;
+        void GenerateMetadata(const std::string& InMetadata) override;
 
         // True when two of this property's specifiers contradict each other, with a message naming both
         // and which one to remove. Call after GenerateMetadata, from somewhere holding the cursor, so the
         // diagnostic points at the declaration rather than the file.
-        bool FindConflictingSpecifiers(eastl::string& OutMessage) const;
+        bool FindConflictingSpecifiers(std::string& OutMessage) const;
 
-        eastl::string GetDisplayName() const { return Name; }
+        std::string GetDisplayName() const { return Name; }
 
         // Emits the trailing `{ "Name", Flags, TypeFlags, Setter, Getter, Offset[, CustomData][, METADATA_PARAMS] };`
         // shared by every property kind.
-        void AppendPropertyDef(Reflection::FCodeWriter& Writer, const char* PropertyFlagsStr, const char* TypeFlags, const eastl::string& CustomData = "") const;
+        void AppendPropertyDef(Reflection::FCodeWriter& Writer, const char* PropertyFlagsStr, const char* TypeFlags, const std::string& CustomData = "") const;
 
-        eastl::vector<FMetadataPair>    Metadata;
+        std::vector<FMetadataPair>    Metadata;
         EPropertyFlags                  PropertyFlags;
-        eastl::string                   RawTypeName;
-        eastl::string                   TypeName;
-        eastl::string                   Namespace;
-        eastl::string                   Name;
-        eastl::string                   Outer;
+        std::string                   RawTypeName;
+        std::string                   TypeName;
+        std::string                   Namespace;
+        std::string                   Name;
+        std::string                   Outer;
 
         // "Owner::" normally, a free-function symbol prefix when the owner has no body to declare them in.
-        eastl::string                   AccessorScope;
+        std::string                   AccessorScope;
 
         // The same prefix as spelled at the definition site, which sits inside the owner's namespace.
-        eastl::string                   AccessorDefinitionScope;
-        eastl::string                   GetterFunc;
-        eastl::string                   SetterFunc;
+        std::string                   AccessorDefinitionScope;
+        std::string                   GetterFunc;
+        std::string                   SetterFunc;
 
         bool                            bInner = false;
     };

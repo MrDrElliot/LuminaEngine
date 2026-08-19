@@ -246,7 +246,7 @@ namespace Lumina
         for (const auto& [Key, Entry] : Entries)
         {
             FString Alias = TopLevelOf(FStringView(Key.data(), Key.size()));
-            if (!Alias.empty() && eastl::find(Out.begin(), Out.end(), Alias) == Out.end())
+            if (!Alias.empty() && std::find(Out.begin(), Out.end(), Alias) == Out.end())
             {
                 Out.push_back(Move(Alias));
             }

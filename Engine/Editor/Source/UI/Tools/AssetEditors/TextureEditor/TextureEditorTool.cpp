@@ -15,6 +15,7 @@
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "Core/Reflection/PropertyChangedEvent.h"
 #include "Log/Log.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -390,7 +391,7 @@ namespace Lumina
             
                 ImVec4 dimensionColor(0.5f, 0.9f, 0.5f, 1.0f);
                 PropertyRow("Type", "2D Texture", &dimensionColor);
-                PropertyRow("Resolution", eastl::to_string(ImageDesc.Extent.x) + " x " + eastl::to_string(ImageDesc.Extent.y));
+                PropertyRow("Resolution", Format("{}", ImageDesc.Extent.x) + " x " + Format("{}", ImageDesc.Extent.y));
 
                 // Format
                 const FFormatInfo& FormatInfo = RHI::Format::Info(ImageDesc.Format);
@@ -406,13 +407,13 @@ namespace Lumina
                 
                 if (MemorySizeMB > 0)
                 {
-                    memoryStr = eastl::to_string(MemorySizeMB) + " MB";
+                    memoryStr = Format("{}", MemorySizeMB) + " MB";
                     if (MemorySizeMB > 10)  memoryColor = ImVec4(1.0f, 0.7f, 0.3f, 1.0f);
                     if (MemorySizeMB > 50)  memoryColor = ImVec4(1.0f, 0.4f, 0.4f, 1.0f);
                 }
                 else
                 {
-                    memoryStr = eastl::to_string(MemorySizeKB) + " KB";
+                    memoryStr = Format("{}", MemorySizeKB) + " KB";
                 }
                 
                 PropertyRow("Memory Size", memoryStr, &memoryColor);
@@ -467,7 +468,7 @@ namespace Lumina
                     ImGuiTableFlags_RowBg | 
                     ImGuiTableFlags_ScrollY |
                     ImGuiTableFlags_SizingFixedFit,
-                    ImVec2(0.0f, eastl::min(300.0f, ImGui::GetContentRegionAvail().y * 0.5f))))
+                    ImVec2(0.0f, std::min(300.0f, ImGui::GetContentRegionAvail().y * 0.5f))))
                 {
                     ImGui::TableSetupScrollFreeze(0, 1);
                     ImGui::TableSetupColumn("Level", ImGuiTableColumnFlags_WidthFixed, 50.0f);
@@ -481,8 +482,8 @@ namespace Lumina
                     {
                         ImGui::TableNextRow();
                         
-                        uint32 mipWidth = eastl::max<uint32>(1u, ImageDesc.Extent.x >> i);
-                        uint32 mipHeight = eastl::max<uint32>(1u, ImageDesc.Extent.y >> i);
+                        uint32 mipWidth = std::max<uint32>(1u, ImageDesc.Extent.x >> i);
+                        uint32 mipHeight = std::max<uint32>(1u, ImageDesc.Extent.y >> i);
                         uint32 mipTexels = mipWidth * mipHeight;
                         
                         // Calculate expected memory size
@@ -593,18 +594,18 @@ namespace Lumina
                 snprintf(aspectStr, sizeof(aspectStr), "%.3f:1", aspectRatio);
                 StatRow("Aspect Ratio:", aspectStr);
                 
-                StatRow("Base Mip Texels:", eastl::to_string(baseTexels));
+                StatRow("Base Mip Texels:", Format("{}", baseTexels));
                 
                 if (ImageDesc.NumMips > 1)
                 {
                     uint64 mipChainTexels = 0;
                     for (uint32 i = 0; i < ImageDesc.NumMips; ++i)
                     {
-                        uint32 mipWidth = eastl::max<uint32>(1u, ImageDesc.Extent.x >> i);
-                        uint32 mipHeight = eastl::max<uint32>(1u, ImageDesc.Extent.y >> i);
+                        uint32 mipWidth = std::max<uint32>(1u, ImageDesc.Extent.x >> i);
+                        uint32 mipHeight = std::max<uint32>(1u, ImageDesc.Extent.y >> i);
                         mipChainTexels += mipWidth * mipHeight;
                     }
-                    StatRow("Total Mip Texels:", eastl::to_string(mipChainTexels));
+                    StatRow("Total Mip Texels:", Format("{}", mipChainTexels));
                     
                     float texelIncrease = ((float)mipChainTexels / (float)baseTexels - 1.0f) * 100.0f;
                     char texelIncStr[32];
@@ -663,7 +664,7 @@ namespace Lumina
 
                 if (MoveFrom >= 0)
                 {
-                    eastl::swap(Array->SourceTextures[MoveFrom], Array->SourceTextures[MoveTo]);
+                    std::swap(Array->SourceTextures[MoveFrom], Array->SourceTextures[MoveTo]);
                     Asset->GetPackage()->MarkDirty();
                 }
                 if (RemoveIndex >= 0)
@@ -858,7 +859,7 @@ namespace Lumina
         if (Streaming == nullptr)
         {
             // No streamer means no pin counts to balance (it is gone, or never existed). Forget ours rather
-            // than trying to release it against a manager that cannot honour it.
+            // than trying to release it against a manager that cannot honor it.
             PinnedTexture.Reset();
             return;
         }

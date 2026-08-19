@@ -166,13 +166,13 @@ namespace Lumina
         }
 
         template<typename PropertyType, typename TFunc>
-        requires (eastl::is_base_of_v<FProperty, PropertyType> && eastl::is_invocable_v<TFunc, PropertyType*>)
+        requires (std::is_base_of_v<FProperty, PropertyType> && std::is_invocable_v<TFunc, PropertyType*>)
         void ForEachProperty(TFunc&& Func)
         {
             PropertyType* Current = static_cast<PropertyType*>(LinkedProperty);
             while (Current != nullptr)
             {
-                eastl::invoke(Func, Current);
+                std::invoke(Func, Current);
                 Current = static_cast<PropertyType*>(Current->Next);
             }
         }

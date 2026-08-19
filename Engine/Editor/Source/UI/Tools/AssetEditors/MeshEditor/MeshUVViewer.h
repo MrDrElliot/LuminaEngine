@@ -3,7 +3,7 @@
 #define USE_IMGUI_API
 #include <imgui.h>
 
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Platform/GenericPlatform.h"
 
 namespace Lumina

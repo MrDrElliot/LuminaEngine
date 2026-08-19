@@ -16,7 +16,6 @@ public class GameplayExtrasRuntime : LuminaModuleRules
         {
             "ImGui",
             "RPMalloc",
-            "EA",
             "Entt",
         });
     }

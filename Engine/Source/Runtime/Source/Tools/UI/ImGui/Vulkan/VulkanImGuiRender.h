@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Memory/SmartPtr.h"
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
 #include "Core/Threading/Thread.h"
 #include "Renderer/RHI.h"
 #include "Renderer/RHITexture.h"

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Events/Event.h"
 
 namespace Lumina
@@ -31,10 +31,10 @@ namespace Lumina
         RUNTIME_API void Clear();
 
         template<typename TEvent, typename... Args>
-        requires(eastl::is_base_of_v<FEvent, TEvent> && eastl::is_constructible_v<TEvent, Args&&...>)
+        requires(std::is_base_of_v<FEvent, TEvent> && std::is_constructible_v<TEvent, Args&&...>)
         void Dispatch(Args&&... InArgs)
         {
-            TEvent Event(eastl::forward<Args>(InArgs)...);
+            TEvent Event(std::forward<Args>(InArgs)...);
             DispatchEvent(Event);
         }
 

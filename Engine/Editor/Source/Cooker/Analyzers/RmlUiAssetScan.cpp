@@ -2,7 +2,8 @@
 
 #include "Assets/AssetRegistry/AssetData.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Vector.h"
 #include "FileSystem/FileSystem.h"
 #include "Log/Log.h"
 

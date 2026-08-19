@@ -1,5 +1,5 @@
 #include "DotNetExport.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Memory/Memory.h"
 #include "World/World.h"
 #include "World/Entity/Registry/EntityRegistry.h"

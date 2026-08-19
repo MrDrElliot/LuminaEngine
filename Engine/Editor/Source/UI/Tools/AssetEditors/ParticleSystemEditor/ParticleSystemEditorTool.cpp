@@ -19,6 +19,7 @@
 #include "World/Entity/Components/LightComponent.h"
 #include "World/Entity/Components/ParticleSystemComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -162,7 +163,7 @@ namespace Lumina
             // re-points a stack. Derived from the index only on first use.
             if (Emitter->AuthoringStackName.empty())
             {
-                Emitter->AuthoringStackName = FString("ParticleStack_") + eastl::to_string(i).c_str();
+                Emitter->AuthoringStackName = FString("ParticleStack_") + Format("{}", i).c_str();
             }
 
             CParticleEmitterStack* Stack = Cast<CParticleEmitterStack>(
@@ -613,7 +614,7 @@ namespace Lumina
                 Entries.push_back(Entry);
             }
 
-            eastl::sort(Entries.begin(), Entries.end(), [](const FPaletteEntry& A, const FPaletteEntry& B)
+            std::sort(Entries.begin(), Entries.end(), [](const FPaletteEntry& A, const FPaletteEntry& B)
             {
                 const int32 Cat = strcmp(A.Category.c_str(), B.Category.c_str());
                 return (Cat != 0) ? (Cat < 0) : (strcmp(A.Name.c_str(), B.Name.c_str()) < 0);
@@ -749,10 +750,10 @@ namespace Lumina
         if (Emitter->RenderAttributeSlots[ParticleRenderAttribute::PrevPosX] >= 0)
         {
             CompilationResult.CompilationLog += Prefix + "Trail active - previous position in attribute slots "
-                + eastl::to_string(Emitter->RenderAttributeSlots[ParticleRenderAttribute::PrevPosX]).c_str()
-                + "/" + eastl::to_string(Emitter->RenderAttributeSlots[ParticleRenderAttribute::PrevPosY]).c_str()
-                + "/" + eastl::to_string(Emitter->RenderAttributeSlots[ParticleRenderAttribute::PrevPosZ]).c_str()
-                + " of " + eastl::to_string(Emitter->AttributeFloatCount).c_str() + " floats per particle.\n";
+                + Format("{}", Emitter->RenderAttributeSlots[ParticleRenderAttribute::PrevPosX]).c_str()
+                + "/" + Format("{}", Emitter->RenderAttributeSlots[ParticleRenderAttribute::PrevPosY]).c_str()
+                + "/" + Format("{}", Emitter->RenderAttributeSlots[ParticleRenderAttribute::PrevPosZ]).c_str()
+                + " of " + Format("{}", Emitter->AttributeFloatCount).c_str() + " floats per particle.\n";
         }
 
         // Route the renderer to the generated module-stack shader.

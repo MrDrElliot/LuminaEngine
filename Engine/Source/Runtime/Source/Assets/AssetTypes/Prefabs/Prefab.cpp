@@ -455,7 +455,7 @@ namespace Lumina
 
         for (entt::entity E : ToDestroy)
         {
-            const auto It = eastl::find_if(InstanceByStableID.begin(), InstanceByStableID.end(),
+            const auto It = std::find_if(InstanceByStableID.begin(), InstanceByStableID.end(),
                 [&](const auto& Pair) { return Pair.second == E; });
             if (It != InstanceByStableID.end())
             {
@@ -1076,7 +1076,7 @@ namespace Lumina
             return;
         }
 
-        if (eastl::find(VisitStack.begin(), VisitStack.end(), this) != VisitStack.end())
+        if (std::find(VisitStack.begin(), VisitStack.end(), this) != VisitStack.end())
         {
             LOG_ERROR("Prefab '{}' is in a variant cycle; leaving it unresolved.", GetName().c_str());
             return;
@@ -1124,7 +1124,7 @@ namespace Lumina
             ECS::Utils::ForEachDescendant(Registry, Dead, [&](entt::entity Desc)
             {
                 const FName DescID = StableIDOf(Registry, Desc);
-                if (DescID.IsNone() || eastl::find(VariantRemovedEntities.begin(), VariantRemovedEntities.end(), DescID) == VariantRemovedEntities.end())
+                if (DescID.IsNone() || std::find(VariantRemovedEntities.begin(), VariantRemovedEntities.end(), DescID) == VariantRemovedEntities.end())
                 {
                     Survivors.push_back(Desc);
                 }
@@ -1415,7 +1415,7 @@ namespace Lumina
         VariantDelta.view<SPrefabComponent>().each([&](entt::entity DeltaE, const SPrefabComponent& Comp)
         {
             auto KeepIt = KeepComponentsByNode.find(Comp.StableID);
-            const bool bAddedNode = eastl::find_if(VariantStructuralNodes.begin(), VariantStructuralNodes.end(),
+            const bool bAddedNode = std::find_if(VariantStructuralNodes.begin(), VariantStructuralNodes.end(),
                 [&](const SPrefabVariantNode& N) { return N.bAdded && N.StableID == Comp.StableID; }) != VariantStructuralNodes.end();
 
             if (bAddedNode)
@@ -1604,7 +1604,7 @@ namespace Lumina
 
         // Replace this (node, component) pair's records with the freshly computed set.
         auto& Recs = Ledger.PropertyOverrides;
-        Recs.erase(eastl::remove_if(Recs.begin(), Recs.end(), [&](const SPrefabPropertyOverride& O)
+        Recs.erase(std::remove_if(Recs.begin(), Recs.end(), [&](const SPrefabPropertyOverride& O)
         {
             return O.EntityStableID == NodeID && O.ComponentType == CompName;
         }), Recs.end());
@@ -1652,12 +1652,12 @@ namespace Lumina
         // Adding an inherited component back un-removes it (inherits again); a genuinely new component
         // is recorded as instance-added so refresh never prunes it.
         auto& Removed = Ledger.RemovedComponents;
-        Removed.erase(eastl::remove_if(Removed.begin(), Removed.end(), MatchesPair), Removed.end());
+        Removed.erase(std::remove_if(Removed.begin(), Removed.end(), MatchesPair), Removed.end());
 
         if (!bPrefabHas)
         {
             auto& Added = Ledger.AddedComponents;
-            if (eastl::find_if(Added.begin(), Added.end(), MatchesPair) == Added.end())
+            if (std::find_if(Added.begin(), Added.end(), MatchesPair) == Added.end())
             {
                 SPrefabComponentRef Rec;
                 Rec.EntityStableID = NodeID;
@@ -1699,13 +1699,13 @@ namespace Lumina
 
         // Any property overrides for the gone component are meaningless now.
         auto& Props = Ledger.PropertyOverrides;
-        Props.erase(eastl::remove_if(Props.begin(), Props.end(), MatchesPair), Props.end());
+        Props.erase(std::remove_if(Props.begin(), Props.end(), MatchesPair), Props.end());
 
         auto& Added = Ledger.AddedComponents;
-        Added.erase(eastl::remove_if(Added.begin(), Added.end(), MatchesPair), Added.end());
+        Added.erase(std::remove_if(Added.begin(), Added.end(), MatchesPair), Added.end());
 
         auto& Removed = Ledger.RemovedComponents;
-        Removed.erase(eastl::remove_if(Removed.begin(), Removed.end(), MatchesPair), Removed.end());
+        Removed.erase(std::remove_if(Removed.begin(), Removed.end(), MatchesPair), Removed.end());
 
         // An inherited component the user deleted must be recorded so refresh won't re-add it.
         if (bPrefabHas)

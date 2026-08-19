@@ -1,7 +1,8 @@
 #pragma once
 
 #include "Animation/TaskSystem/AnimTask.h"
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Vector.h"
 #include "Containers/Name.h"
 #include "Containers/String.h"
 #include "Core/Object/ObjectHandleTyped.h"

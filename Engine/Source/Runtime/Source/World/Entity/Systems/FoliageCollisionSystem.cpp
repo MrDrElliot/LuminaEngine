@@ -31,7 +31,7 @@ namespace Lumina
 
             // Scratch-stack backed and consumed inside this call; no heap traffic per rebake.
             FMemMark Mark;
-            TScratchVector<Physics::FStaticInstanceDesc> Descs(Mark.Eastl());
+            TScratchVector<Physics::FStaticInstanceDesc> Descs;
             Descs.reserve(Foliage.Instances.size());
             bool bSourcesReady = true;
 

@@ -1162,8 +1162,8 @@ namespace Lumina
 
                     const int32 Id = b * NumTrackKinds + Kind;
                     ImGui::PushID(Id);
-                    const FFixedString Label(FFixedString::CtorSprintf(), "%s %s",
-                                             PathIcons[Kind], Compressed.Bones[b].BoneName.c_str());
+                    const FFixedString Label = FormatAs<FFixedString>("{} {}",
+                                                                      PathIcons[Kind], Compressed.Bones[b].BoneName.c_str());
                     if (ImGui::Selectable(Label.c_str(), SelectedChannel == Id))
                     {
                         SelectedChannel = Id;
@@ -1243,11 +1243,11 @@ namespace Lumina
                 }
 
                 const char* Suffix = SelectedKind == 1 ? " (deg)" : "";
-                ImPlot::PlotLine((FFixedString(FFixedString::CtorSprintf(), "X%s", Suffix)).c_str(),
+                ImPlot::PlotLine(FormatAs<FFixedString>("X{}", Suffix).c_str(),
                                  Times.data(), XVals.data(), (int)NumFrames);
-                ImPlot::PlotLine((FFixedString(FFixedString::CtorSprintf(), "Y%s", Suffix)).c_str(),
+                ImPlot::PlotLine(FormatAs<FFixedString>("Y{}", Suffix).c_str(),
                                  Times.data(), YVals.data(), (int)NumFrames);
-                ImPlot::PlotLine((FFixedString(FFixedString::CtorSprintf(), "Z%s", Suffix)).c_str(),
+                ImPlot::PlotLine(FormatAs<FFixedString>("Z{}", Suffix).c_str(),
                                  Times.data(), ZVals.data(), (int)NumFrames);
 
                 ImPlot::EndPlot();

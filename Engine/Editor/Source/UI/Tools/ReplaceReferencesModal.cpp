@@ -4,7 +4,8 @@
 #include "EditorToolContext.h"
 #include "Assets/AssetRegistry/AssetData.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Vector.h"
 #include "Core/Object/Archive/ObjectReferenceReplacerArchive.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/Object.h"
@@ -15,6 +16,7 @@
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include <imgui.h>
+#include "Containers/StringFormat.h"
 
 namespace Lumina::ReplaceReferences
 {
@@ -370,19 +372,19 @@ namespace Lumina::ReplaceReferences
             ImGui::Separator();
             ImGui::Spacing();
 
-            const bool bCancelled = ImGui::Button("Cancel", ImVec2(140.0f, 0.0f));
+            const bool bCanceled = ImGui::Button("Cancel", ImVec2(140.0f, 0.0f));
 
             ImGui::SameLine();
 
             FFixedString ConfirmLabel;
             if (bDeleting)
             {
-                ConfirmLabel.sprintf(LE_ICON_TRASH_CAN " Delete %u Item(s)", State.TargetCount);
+                FormatTo(ConfirmLabel, LE_ICON_TRASH_CAN " Delete {} Item(s)", State.TargetCount);
                 ImGui::PushStyleColor(ImGuiCol_Text, kDangerColor);
             }
             else
             {
-                ConfirmLabel.sprintf(LE_ICON_LINK " Update %u Reference(s)", ReferencerCount);
+                FormatTo(ConfirmLabel, LE_ICON_LINK " Update {} Reference(s)", ReferencerCount);
                 ImGui::PushStyleColor(ImGuiCol_Text, kWarningColor);
             }
 
@@ -392,7 +394,7 @@ namespace Lumina::ReplaceReferences
             ImGui::SameLine();
             ImGui::TextColored(kDimColor, "%u replace, %u clear", ReplacedCount, (uint32)State.Entries.size() - ReplacedCount);
 
-            if (bCancelled)
+            if (bCanceled)
             {
                 if (State.OnResolved)
                 {

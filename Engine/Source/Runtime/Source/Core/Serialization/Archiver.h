@@ -1,5 +1,8 @@
 #pragma once
 
+#include "Containers/HashTable.h"
+#include "Containers/Pair.h"
+#include "Containers/Vector.h"
 #include "Containers/Name.h"
 #include "Containers/String.h"
 #include "Core/Object/ObjectHandle.h"
@@ -8,7 +11,6 @@
 #include "Core/Versioning/CoreVersion.h"
 #include "Core/Math/Math.h"
 
-#include "EASTL/bit.h"
 #include "Log/Log.h"
 #include "Types/BitFlags.h"
 
@@ -432,9 +434,9 @@ namespace Lumina
         
         template<typename EnumType>
         FORCEINLINE FArchive& operator<<(EnumType& Value)
-        requires (eastl::is_enum_v<EnumType>)
+        requires (std::is_enum_v<EnumType>)
         {
-            using Underlying = eastl::underlying_type_t<EnumType>;
+            using Underlying = std::underlying_type_t<EnumType>;
             return *this << reinterpret_cast<Underlying&>(Value);
         }
 

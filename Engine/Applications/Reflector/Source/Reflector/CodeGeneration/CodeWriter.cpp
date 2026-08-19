@@ -55,13 +55,13 @@ namespace Lumina::Reflection
         }
 
         const size_t Size = static_cast<size_t>(Needed) + 1;
-        eastl::string Scratch;
+        std::string Scratch;
         Scratch.resize(Size);
         std::vsnprintf(Scratch.data(), Size, Fmt, Args);
         Buffer.append(Scratch.data(), Scratch.data() + Needed);
     }
 
-    FCodeWriter& FCodeWriter::Append(eastl::string_view Text)
+    FCodeWriter& FCodeWriter::Append(std::string_view Text)
     {
         Buffer.append(Text.data(), Text.data() + Text.size());
         return *this;
@@ -76,7 +76,7 @@ namespace Lumina::Reflection
         return *this;
     }
 
-    FCodeWriter& FCodeWriter::Append(const eastl::string& Text)
+    FCodeWriter& FCodeWriter::Append(const std::string& Text)
     {
         Buffer.append(Text);
         return *this;
@@ -97,7 +97,7 @@ namespace Lumina::Reflection
         return *this;
     }
 
-    FCodeWriter& FCodeWriter::Line(eastl::string_view Text)
+    FCodeWriter& FCodeWriter::Line(std::string_view Text)
     {
         WriteIndent();
         Buffer.append(Text.data(), Text.data() + Text.size());
@@ -107,12 +107,12 @@ namespace Lumina::Reflection
 
     FCodeWriter& FCodeWriter::Line(const char* Text)
     {
-        return Line(eastl::string_view(Text != nullptr ? Text : ""));
+        return Line(std::string_view(Text != nullptr ? Text : ""));
     }
 
-    FCodeWriter& FCodeWriter::Line(const eastl::string& Text)
+    FCodeWriter& FCodeWriter::Line(const std::string& Text)
     {
-        return Line(eastl::string_view(Text.data(), Text.size()));
+        return Line(std::string_view(Text.data(), Text.size()));
     }
 
     FCodeWriter& FCodeWriter::Linef(const char* Fmt, ...)
@@ -135,7 +135,7 @@ namespace Lumina::Reflection
         return *this;
     }
 
-    FCodeWriter& FCodeWriter::Macro(eastl::string_view Text)
+    FCodeWriter& FCodeWriter::Macro(std::string_view Text)
     {
         WriteIndent();
         Buffer.append(Text.data(), Text.data() + Text.size());
@@ -145,7 +145,7 @@ namespace Lumina::Reflection
 
     FCodeWriter& FCodeWriter::Macro(const char* Text)
     {
-        return Macro(eastl::string_view(Text != nullptr ? Text : ""));
+        return Macro(std::string_view(Text != nullptr ? Text : ""));
     }
 
     FCodeWriter& FCodeWriter::Macrof(const char* Fmt, ...)

@@ -28,10 +28,10 @@ namespace Lumina::Reflection
         }
     }
 
-    void FReflectedEnum::DefineInitialHeader(FCodeWriter& Writer, const eastl::string& /*FileID*/)
+    void FReflectedEnum::DefineInitialHeader(FCodeWriter& Writer, const std::string& /*FileID*/)
     {
-        const eastl::string Api = Names::ProjectApiMacro(Header->Project->Name);
-        const eastl::string ConstructFn = Names::ConstructFunction("CEnum", Namespace, DisplayName);
+        const std::string Api = Names::ProjectApiMacro(Header->Project->Name);
+        const std::string ConstructFn = Names::ConstructFunction("CEnum", Namespace, DisplayName);
 
         // Wrapped in its namespace, matching FReflectedStruct. Emitting the forward declaration at
         // global scope creates a second, distinct ::EWorldType alongside the real Lumina::EWorldType,
@@ -58,7 +58,7 @@ namespace Lumina::Reflection
         Writer.Line();
     }
 
-    void FReflectedEnum::DefineSecondaryHeader(FCodeWriter& /*Writer*/, const eastl::string& /*FileID*/)
+    void FReflectedEnum::DefineSecondaryHeader(FCodeWriter& /*Writer*/, const std::string& /*FileID*/)
     {
         // Enums don't have a GENERATED_BODY expansion - StaticEnum is a template
         // specialization declared in the initial header.
@@ -66,10 +66,10 @@ namespace Lumina::Reflection
 
     void FReflectedEnum::DeclareImplementation(FCodeWriter& Writer)
     {
-        const eastl::string RegInfo = Names::RegistrationInfo("CEnum", Namespace, DisplayName);
-        const eastl::string ConstructFn = Names::ConstructFunction("CEnum", Namespace, DisplayName);
-        const eastl::string Statics = Names::StaticsStruct("CEnum", Namespace, DisplayName);
-        const eastl::string MetadataSymbol = Names::FriendlyFromQualified(QualifiedName);
+        const std::string RegInfo = Names::RegistrationInfo("CEnum", Namespace, DisplayName);
+        const std::string ConstructFn = Names::ConstructFunction("CEnum", Namespace, DisplayName);
+        const std::string Statics = Names::StaticsStruct("CEnum", Namespace, DisplayName);
+        const std::string MetadataSymbol = Names::FriendlyFromQualified(QualifiedName);
 
         // Translation-unit-local singleton holder.
         Writer.Linef("static Lumina::FEnumRegistrationInfo %s;", RegInfo.c_str());
@@ -141,7 +141,7 @@ namespace Lumina::Reflection
 
     void FReflectedEnum::DeclareStaticRegistration(FCodeWriter& Writer)
     {
-        const eastl::string ConstructFn = Names::ConstructFunction("CEnum", Namespace, DisplayName);
+        const std::string ConstructFn = Names::ConstructFunction("CEnum", Namespace, DisplayName);
         Writer.Linef("\t{ %s, TEXT(\"%s\") },", ConstructFn.c_str(), DisplayName.c_str());
     }
 }

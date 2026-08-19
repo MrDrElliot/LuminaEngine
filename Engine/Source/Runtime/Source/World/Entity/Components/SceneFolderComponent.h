@@ -2,7 +2,7 @@
 
 #include <entt/entt.hpp>
 
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/Name.h"
 #include "Core/Object/ObjectMacros.h"
 #include "SceneFolderComponent.generated.h"

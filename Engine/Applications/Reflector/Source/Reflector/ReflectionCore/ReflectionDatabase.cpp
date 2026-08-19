@@ -18,9 +18,9 @@ namespace Lumina::Reflection
         
         auto& TypeVector = ReflectedTypes[Type->Header];
         
-        eastl::unique_ptr<FReflectedType> UniquePtr(Type);
+        std::unique_ptr<FReflectedType> UniquePtr(Type);
         
-        TypeVector.push_back(eastl::move(UniquePtr));
+        TypeVector.push_back(std::move(UniquePtr));
         
         TypeHashMap.insert_or_assign(NameHash, Type);
     }
@@ -31,7 +31,7 @@ namespace Lumina::Reflection
         {
             return;
         }
-        FreeFunctions[Header].push_back(eastl::unique_ptr<FReflectedFunction>(Fn));
+        FreeFunctions[Header].push_back(std::unique_ptr<FReflectedFunction>(Fn));
     }
 
     bool FReflectionDatabase::IsTypeRegistered(const FStringHash& Str) const

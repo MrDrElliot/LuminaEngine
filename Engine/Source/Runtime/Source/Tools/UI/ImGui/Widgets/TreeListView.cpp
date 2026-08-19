@@ -902,11 +902,11 @@ namespace Lumina
         if (ParentIdx >= 0)
         {
             auto& Children = Nodes[ParentIdx].Children;
-            Children.erase(eastl::remove(Children.begin(), Children.end(), Idx), Children.end());
+            Children.erase(std::remove(Children.begin(), Children.end(), Idx), Children.end());
         }
         else
         {
-            Roots.erase(eastl::remove(Roots.begin(), Roots.end(), Idx), Roots.end());
+            Roots.erase(std::remove(Roots.begin(), Roots.end(), Idx), Roots.end());
         }
     }
 

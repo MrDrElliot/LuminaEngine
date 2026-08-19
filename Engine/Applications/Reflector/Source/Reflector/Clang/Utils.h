@@ -5,9 +5,9 @@
 #include <clang-c/CXSourceLocation.h>
 #include <clang-c/CXString.h>
 #include <clang-c/Index.h>
-#include <EASTL/algorithm.h>
-#include <EASTL/string.h>
-#include <EASTL/vector.h>
+#include <algorithm>
+#include <string>
+#include <vector>
 #include <filesystem>
 #include <system_error>
 #include "xxhash.h"
@@ -17,7 +17,7 @@ namespace Lumina::ClangUtils
 {
     // Canonicalize a path for the AllHeaders hash key (forward slashes, case preserved): the JSON
     // registration and parse-time cursor sides must agree byte-for-byte or types fail to register.
-    inline eastl::string NormalizeHeaderPath(eastl::string Input)
+    inline std::string NormalizeHeaderPath(std::string Input)
     {
         if (Input.empty())
         {
@@ -32,14 +32,14 @@ namespace Lumina::ClangUtils
             Canonical = Path.lexically_normal();
         }
 
-        eastl::string Result(Canonical.generic_string().c_str());
-        eastl::replace(Result.begin(), Result.end(), '\\', '/');
+        std::string Result(Canonical.generic_string().c_str());
+        std::replace(Result.begin(), Result.end(), '\\', '/');
         return Result;
     }
 
-    inline eastl::string GetString(const CXString& string)
+    inline std::string GetString(const CXString& string)
     {
-        eastl::string str = clang_getCString(string);
+        std::string str = clang_getCString(string);
         clang_disposeString(string);
         return str;
     }
@@ -56,23 +56,23 @@ namespace Lumina::ClangUtils
         return Line;
     }
 
-    inline eastl::string StripNamespace(const eastl::string& Input)
+    inline std::string StripNamespace(const std::string& Input)
     {
         size_t Pos = Input.rfind("::");
-        if (Pos != eastl::string::npos)
+        if (Pos != std::string::npos)
         {
             return Input.substr(Pos + 2); // skip past the last "::"
         }
         return Input; // return unchanged if no "::" found
     }
 
-    inline eastl::string MakeCodeFriendlyNamespace(eastl::string Input)
+    inline std::string MakeCodeFriendlyNamespace(std::string Input)
     {
-        const eastl::string From = "::";
-        const eastl::string To = "_";
+        const std::string From = "::";
+        const std::string To = "_";
 
         size_t StartPos = 0;
-        while ((StartPos = Input.find(From, StartPos)) != eastl::string::npos)
+        while ((StartPos = Input.find(From, StartPos)) != std::string::npos)
         {
             Input.replace(StartPos, From.length(), To);
             StartPos += To.length();
@@ -82,36 +82,36 @@ namespace Lumina::ClangUtils
     }
 
     
-    inline eastl::string GetCursorDisplayName(const CXCursor& cr)
+    inline std::string GetCursorDisplayName(const CXCursor& cr)
     {
         CXString displayName = clang_getCursorDisplayName(cr);
-        eastl::string str = clang_getCString(displayName);
+        std::string str = clang_getCString(displayName);
         clang_disposeString(displayName);
         return str;
     }
 
-    inline eastl::string GetCursorSpelling(const CXCursor& Cr)
+    inline std::string GetCursorSpelling(const CXCursor& Cr)
     {
         CXString Spelling = clang_getCursorSpelling(Cr);
-        eastl::string Result = clang_getCString(Spelling);
+        std::string Result = clang_getCString(Spelling);
         clang_disposeString(Spelling);
         return Result;
     }
 
-    inline eastl::string GetHeaderPathForCursor(const CXCursor& Cursor)
+    inline std::string GetHeaderPathForCursor(const CXCursor& Cursor)
     {
         CXFile File = nullptr;
         const CXSourceRange CursorRange = clang_getCursorExtent(Cursor);
         clang_getExpansionLocation(clang_getRangeStart(CursorRange), &File, nullptr, nullptr, nullptr);
 
-        eastl::string HeaderFilePath;
+        std::string HeaderFilePath;
         if (File != nullptr)
         {
             CXString ClangFilePath = clang_getFileName(File);
-            HeaderFilePath = eastl::string(clang_getCString(ClangFilePath));
+            HeaderFilePath = std::string(clang_getCString(ClangFilePath));
             clang_disposeString(ClangFilePath);
 
-            HeaderFilePath = NormalizeHeaderPath(eastl::move(HeaderFilePath));
+            HeaderFilePath = NormalizeHeaderPath(std::move(HeaderFilePath));
         }
 
         return HeaderFilePath;
@@ -128,15 +128,15 @@ namespace Lumina::ClangUtils
 
     // True when libclang fell back to its location-derived placeholder (e.g. "(unnamed struct at ...)"),
     // which would leak the build path into generated identifiers and break consumers.
-    inline bool IsLibclangPlaceholderName(const eastl::string& Name)
+    inline bool IsLibclangPlaceholderName(const std::string& Name)
     {
-        return Name.find("(unnamed ") != eastl::string::npos
-            || Name.find("(anonymous ") != eastl::string::npos;
+        return Name.find("(unnamed ") != std::string::npos
+            || Name.find("(anonymous ") != std::string::npos;
     }
 
     /// Strips an elaborated type specifier that libclang sometimes spells, leaving the bare
     /// qualified name the reflection database keys on.
-    inline void StripElaboratedPrefix(eastl::string& Name)
+    inline void StripElaboratedPrefix(std::string& Name)
     {
         for (const char* Prefix : { "struct ", "class ", "enum ", "union " })
         {
@@ -152,7 +152,7 @@ namespace Lumina::ClangUtils
     /// Qualified name of a type as libclang spells it.
     ///
     /// libclang's spelling is the authoritative answer and needs no AST internals to obtain.
-    inline bool GetSpelledTypeName(CXType Type, eastl::string& QualifiedName)
+    inline bool GetSpelledTypeName(CXType Type, std::string& QualifiedName)
     {
         CXString Spelling = clang_getTypeSpelling(Type);
         const char* Text = clang_getCString(Spelling);
@@ -172,16 +172,16 @@ namespace Lumina::ClangUtils
     }
 
     /// The trailing component of a qualified name: "Lumina::Foo" -> "Foo".
-    inline eastl::string UnqualifiedName(const eastl::string& Qualified)
+    inline std::string UnqualifiedName(const std::string& Qualified)
     {
         const size_t Scope = Qualified.rfind("::");
-        return Scope == eastl::string::npos ? Qualified : Qualified.substr(Scope + 2);
+        return Scope == std::string::npos ? Qualified : Qualified.substr(Scope + 2);
     }
 
     /// Splits a template argument list at top-level commas, so nested `<...>` stays intact.
-    inline eastl::vector<eastl::string> SplitTemplateArguments(const eastl::string& Arguments)
+    inline std::vector<std::string> SplitTemplateArguments(const std::string& Arguments)
     {
-        eastl::vector<eastl::string> Result;
+        std::vector<std::string> Result;
         int32_t Depth = 0;
         size_t Start = 0;
 
@@ -207,7 +207,7 @@ namespace Lumina::ClangUtils
     }
 
     /// A C++ identifier built from a template argument: scopes dropped, punctuation folded to '_'.
-    inline eastl::string MangleTemplateArgument(eastl::string Argument)
+    inline std::string MangleTemplateArgument(std::string Argument)
     {
         while (!Argument.empty() && (Argument.front() == ' ' || Argument.front() == '\t'))
         {
@@ -220,8 +220,8 @@ namespace Lumina::ClangUtils
 
         StripElaboratedPrefix(Argument);
 
-        eastl::string Result;
-        eastl::string Segment;
+        std::string Result;
+        std::string Segment;
 
         auto FlushSegment = [&]()
         {
@@ -262,18 +262,18 @@ namespace Lumina::ClangUtils
 
     /// "Lumina::TVec<float, 3>" -> "TVec_float_3"; ResolveArgument renames an argument to its reflected name.
     template<typename TResolveArgument>
-    inline eastl::string MangleTemplateSpelling(const eastl::string& Spelling, TResolveArgument&& ResolveArgument)
+    inline std::string MangleTemplateSpelling(const std::string& Spelling, TResolveArgument&& ResolveArgument)
     {
         const size_t Open = Spelling.find('<');
         const size_t Close = Spelling.rfind('>');
-        if (Open == eastl::string::npos || Close == eastl::string::npos || Close < Open)
+        if (Open == std::string::npos || Close == std::string::npos || Close < Open)
         {
             return {};
         }
 
-        eastl::string Result = UnqualifiedName(Spelling.substr(0, Open));
+        std::string Result = UnqualifiedName(Spelling.substr(0, Open));
 
-        for (eastl::string Argument : SplitTemplateArguments(Spelling.substr(Open + 1, Close - Open - 1)))
+        for (std::string Argument : SplitTemplateArguments(Spelling.substr(Open + 1, Close - Open - 1)))
         {
             while (!Argument.empty() && Argument.front() == ' ')
             {
@@ -284,8 +284,8 @@ namespace Lumina::ClangUtils
                 Argument.pop_back();
             }
 
-            const eastl::string Resolved = ResolveArgument(Argument);
-            const eastl::string Mangled = MangleTemplateArgument(Resolved.empty() ? Argument : Resolved);
+            const std::string Resolved = ResolveArgument(Argument);
+            const std::string Mangled = MangleTemplateArgument(Resolved.empty() ? Argument : Resolved);
             if (!Mangled.empty())
             {
                 Result += '_';
@@ -297,20 +297,22 @@ namespace Lumina::ClangUtils
     }
 
     /// Rewrites the engine's container and core-type aliases onto their reflected spellings.
-    inline void NormalizeEngineTypeName(eastl::string& Name)
+    inline void NormalizeEngineTypeName(std::string& Name)
     {
         struct FAlias { const char* From; const char* To; };
         static const FAlias Aliases[] =
         {
-            { "eastl::vector",       "Lumina::TVector"    },
-            { "eastl::hash_map",     "Lumina::THashMap"   },
-            { "eastl::optional",     "Lumina::TOptional"  },
-            { "eastl::basic_string", "Lumina::FString"    },
-            // A fixed container differs from its growable counterpart only in where the storage lives, which
-            // reflection never sees, so it reflects AS that counterpart instead of as a type of its own.
-            { "eastl::fixed_string",   "Lumina::FString"  },
-            { "eastl::fixed_vector",   "Lumina::TVector"  },
-            { "eastl::fixed_hash_map", "Lumina::THashMap" },
+            // An alias template desugars to its underlying name, so each container needs its own row here.
+            { "Lumina::Containers::TVector",        "Lumina::TVector"    },
+            { "Lumina::Containers::TBasicString",   "Lumina::FString"    },
+            { "Lumina::Containers::TStringView",    "Lumina::FStringView" },
+            { "Lumina::Containers::TCStringView",   "Lumina::FStringView" },
+            { "Lumina::Containers::TBasicHashMap",  "Lumina::THashMap"   },
+            { "Lumina::Containers::TBasicHashSet",  "Lumina::THashSet"   },
+            { "Lumina::Containers::TPair",          "Lumina::TPair"      },
+            { "Lumina::Containers::TSpan",          "Lumina::TSpan"      },
+            { "Lumina::Containers::TOptional",      "Lumina::TOptional"  },
+            { "Lumina::Containers::TVariant",       "Lumina::TVariant"   },
             { "FString",             "Lumina::FString"    },
             { "FName",               "Lumina::FName"      },
             { "TObjectPtr",          "Lumina::TObjectPtr" },
@@ -330,9 +332,9 @@ namespace Lumina::ClangUtils
 
     /// Qualified name of a declaration, assembled from its semantic parents.
     ///
-    /// Uses only libclang's C API, so it yields the bare qualified name ("eastl::vector") without
+    /// Uses only libclang's C API, so it yields the bare qualified name ("std::vector") without
     /// template arguments, which is what the alias normalization and the reflection database key on.
-    inline bool GetQualifiedNameFromDeclCursor(CXCursor Decl, eastl::string& QualifiedName)
+    inline bool GetQualifiedNameFromDeclCursor(CXCursor Decl, std::string& QualifiedName)
     {
         if (clang_Cursor_isNull(Decl) || clang_isInvalid(clang_getCursorKind(Decl)))
         {
@@ -362,7 +364,7 @@ namespace Lumina::ClangUtils
 
             CXString ParentString = clang_getCursorSpelling(Parent);
             const char* ParentText = clang_getCString(ParentString);
-            const eastl::string ParentName = ParentText != nullptr ? ParentText : "";
+            const std::string ParentName = ParentText != nullptr ? ParentText : "";
             clang_disposeString(ParentString);
 
             // An inline or anonymous namespace contributes no qualification.
@@ -389,7 +391,7 @@ namespace Lumina::ClangUtils
     /// Where they do not, the reinterpreted pointer is neither null nor valid: naming silently
     /// yields nothing and dereferencing it faults. Everything here goes through the stable API
     /// instead, so no result depends on clang's internal layout.
-    inline bool GetQualifiedNameForCXType(CXType Type, eastl::string& QualifiedName)
+    inline bool GetQualifiedNameForCXType(CXType Type, std::string& QualifiedName)
     {
         QualifiedName.clear();
 
@@ -468,7 +470,7 @@ namespace Lumina::ClangUtils
     }
 
     /// Qualified name of the type a declaration cursor declares, as libclang spells it.
-    inline bool GetQualifiedNameForDeclCursor(CXCursor Cursor, eastl::string& QualifiedName)
+    inline bool GetQualifiedNameForDeclCursor(CXCursor Cursor, std::string& QualifiedName)
     {
         CXString Spelling = clang_getTypeSpelling(clang_getCursorType(Cursor));
         const char* Text = clang_getCString(Spelling);
@@ -513,9 +515,9 @@ namespace Lumina::ClangUtils
 
     /// Printable C++ type expression for casts in generated code, falling back to the semantic
     /// qualified name when libclang's printer would emit an "(unnamed ...)" placeholder.
-    inline eastl::string GetSafeTypeAsString(CXType Type)
+    inline std::string GetSafeTypeAsString(CXType Type)
     {
-        eastl::string Result;
+        std::string Result;
         CXString Spelling = clang_getTypeSpelling(Type);
         const char* Text = clang_getCString(Spelling);
         Result = Text != nullptr ? Text : "";
@@ -526,7 +528,7 @@ namespace Lumina::ClangUtils
             return Result;
         }
 
-        eastl::string SemanticName;
+        std::string SemanticName;
         if (GetQualifiedNameForCXType(Type, SemanticName))
         {
             return SemanticName;
@@ -536,7 +538,7 @@ namespace Lumina::ClangUtils
     }
 
 
-    inline uint64_t HashString(const eastl::string& str)
+    inline uint64_t HashString(const std::string& str)
     {
         return XXH64(str.data(), strlen(str.c_str()), 0);
     }

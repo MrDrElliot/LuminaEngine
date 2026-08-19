@@ -2,6 +2,7 @@
 
 #include "Core/Object/Cast.h"
 #include "UI/Tools/NodeGraph/Particle/ParticleCompiler.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -21,7 +22,7 @@ namespace Lumina
 
     void CParticleExpression_ConstantFloat::GenerateDefinition(FParticleCompiler& Compiler)
     {
-        Compiler.EmitCurrent("float " + GetNodeFullName() + " = " + FString(eastl::to_string(Value)) + ";");
+        Compiler.EmitCurrent("float " + GetNodeFullName() + " = " + FString(Format("{}", Value)) + ";");
     }
 
     void CParticleExpression_ConstantFloat3::BuildNode()
@@ -32,7 +33,7 @@ namespace Lumina
 
     void CParticleExpression_ConstantFloat3::GenerateDefinition(FParticleCompiler& Compiler)
     {
-        FString Val = "float3(" + FString(eastl::to_string(Value.x)) + ", " + FString(eastl::to_string(Value.y)) + ", " + FString(eastl::to_string(Value.z)) + ")";
+        FString Val = "float3(" + FString(Format("{}", Value.x)) + ", " + FString(Format("{}", Value.y)) + ", " + FString(Format("{}", Value.z)) + ")";
         Compiler.EmitCurrent("float3 " + GetNodeFullName() + " = " + Val + ";");
     }
 
@@ -44,7 +45,7 @@ namespace Lumina
 
     void CParticleExpression_ConstantFloat4::GenerateDefinition(FParticleCompiler& Compiler)
     {
-        FString Val = "float4(" + FString(eastl::to_string(Value.x)) + ", " + FString(eastl::to_string(Value.y)) + ", " + FString(eastl::to_string(Value.z)) + ", " + FString(eastl::to_string(Value.w)) + ")";
+        FString Val = "float4(" + FString(Format("{}", Value.x)) + ", " + FString(Format("{}", Value.y)) + ", " + FString(Format("{}", Value.z)) + ", " + FString(Format("{}", Value.w)) + ")";
         Compiler.EmitCurrent("float4 " + GetNodeFullName() + " = " + Val + ";");
     }
 

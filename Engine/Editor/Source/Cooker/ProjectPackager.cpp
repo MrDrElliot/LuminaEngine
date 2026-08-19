@@ -11,6 +11,7 @@
 #include "Scripting/DotNet/DotNetHost.h"
 
 #include <fstream>
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -127,8 +128,8 @@ namespace Lumina
                     ++Count;
                     if (LogFunc)
                     {
-                        LogFunc(FString().sprintf("  + %s/%.*s",
-                            Root.Top, (int)Relative.size(), Relative.data()).c_str());
+                        LogFunc(Format("  + {}/{}",
+                            Root.Top, Relative).c_str());
                     }
                 });
             }
@@ -261,19 +262,19 @@ namespace Lumina
                 if (CopyFileTo(Entry.FullPath, Join(DestDir, DstName)))
                 {
                     ++Copied;
-                    LogPackager(LogFunc, FString().sprintf("  + %.*s -> %s",
-                        (int)FileName.size(), FileName.data(), DstName.c_str()).c_str());
+                    LogPackager(LogFunc, Format("  + {} -> {}",
+                        FileName, DstName.c_str()).c_str());
                 }
                 else
                 {
-                    LogPackager(LogFunc, FString().sprintf("  [warn] failed to copy %.*s",
-                        (int)FileName.size(), FileName.data()).c_str());
+                    LogPackager(LogFunc, Format("  [warn] failed to copy {}",
+                        FileName).c_str());
                 }
             });
 
             if (Skipped > 0)
             {
-                LogPackager(LogFunc, FString().sprintf("  (skipped %zu wrong-config / editor-only / stale files)", Skipped).c_str());
+                LogPackager(LogFunc, Format("  (skipped {} wrong-config / editor-only / stale files)", Skipped).c_str());
             }
             return Copied;
         }
@@ -301,11 +302,11 @@ namespace Lumina
             if (Filesystem::Exists(ManagedSrc))
             {
                 const size_t N = CopyDirectoryRecursive(ManagedSrc, Join(DestDir, "DotNet/Managed"));
-                LogPackager(LogFunc, FString().sprintf("DotNet: staged managed bootstrap (%zu file(s)).", N).c_str());
+                LogPackager(LogFunc, Format("DotNet: staged managed bootstrap ({} file(s)).", N).c_str());
             }
             else
             {
-                LogPackager(LogFunc, FString().sprintf("DotNet: [warn] managed bootstrap not found at %s; C# disabled in package.", ManagedSrc.c_str()).c_str());
+                LogPackager(LogFunc, Format("DotNet: [warn] managed bootstrap not found at {}; C# disabled in package.", ManagedSrc.c_str()).c_str());
             }
 
             // 2. Bundled .NET runtime (whole tree so whatever <rid> the host resolves is present).
@@ -314,11 +315,11 @@ namespace Lumina
             {
                 LogPackager(LogFunc, "DotNet: copying bundled .NET runtime (this can take a moment)...");
                 const size_t N = CopyDirectoryRecursive(RuntimeSrc, Join(DestDir, "External/DotNet/runtime"));
-                LogPackager(LogFunc, FString().sprintf("DotNet: staged .NET runtime (%zu file(s)).", N).c_str());
+                LogPackager(LogFunc, Format("DotNet: staged .NET runtime ({} file(s)).", N).c_str());
             }
             else
             {
-                LogPackager(LogFunc, FString().sprintf("DotNet: [warn] bundled runtime not found at %s; C# disabled in package.", RuntimeSrc.c_str()).c_str());
+                LogPackager(LogFunc, Format("DotNet: [warn] bundled runtime not found at {}; C# disabled in package.", RuntimeSrc.c_str()).c_str());
             }
 
             // 3. Prebuilt script assemblies + the manifest the cooked loader reads.
@@ -337,7 +338,7 @@ namespace Lumina
                 const FString DllName = Unit.Name + ".dll";
                 if (!CopyFileTo(Unit.DllSourcePath, Join(ScriptsDst, DllName)))
                 {
-                    LogPackager(LogFunc, FString().sprintf("DotNet: [warn] failed to stage script DLL %s", DllName.c_str()).c_str());
+                    LogPackager(LogFunc, Format("DotNet: [warn] failed to stage script DLL {}", DllName.c_str()).c_str());
                     continue;
                 }
 
@@ -345,11 +346,11 @@ namespace Lumina
                 {
                     Manifest += ",\n";
                 }
-                Manifest += FString().sprintf("    { \"Name\": \"%s\", \"Dll\": \"%s\", \"Deps\": [",
+                AppendFormat(Manifest, "    {{ \"Name\": \"{}\", \"Dll\": \"{}\", \"Deps\": [",
                     Unit.Name.c_str(), DllName.c_str());
                 for (size_t i = 0; i < Unit.Deps.size(); ++i)
                 {
-                    Manifest += FString().sprintf("%s\"%s\"", (i == 0 ? "" : ", "), Unit.Deps[i].c_str());
+                    AppendFormat(Manifest, "{}\"{}\"", (i == 0 ? "" : ", "), Unit.Deps[i].c_str());
                 }
                 Manifest += "] }";
                 ++Staged;
@@ -360,7 +361,7 @@ namespace Lumina
             {
                 const TSpan<const uint8> ManifestBytes(reinterpret_cast<const uint8*>(Manifest.data()), Manifest.size());
                 Filesystem::WriteFile(Join(ScriptsDst, "scripts.manifest.json"), ManifestBytes);
-                LogPackager(LogFunc, FString().sprintf("DotNet: staged %zu prebuilt script assembly(ies) + manifest.", Staged).c_str());
+                LogPackager(LogFunc, Format("DotNet: staged {} prebuilt script assembly(ies) + manifest.", Staged).c_str());
             }
             else
             {
@@ -397,7 +398,7 @@ namespace Lumina
             Args += " -Project=\"" + ProjectDir + "\"";
         }
 
-        LogPackager(LogFunc, FString().sprintf("Building with LuminaBuildTool: Build %s", Args.c_str()).c_str());
+        LogPackager(LogFunc, Format("Building with LuminaBuildTool: Build {}", Args.c_str()).c_str());
 
         Args = FString("Build ") + Args;
 
@@ -415,16 +416,15 @@ namespace Lumina
 
         if (ExitCode != 0)
         {
-            Result.ErrorMessage = FString().sprintf(
-                "Build failed (exit code %d). See log above for the build error. Cooked PAK is still at %.*s.",
-                ExitCode, (int)PakPath.size(), PakPath.data());
+            Result.ErrorMessage = Format("Build failed (exit code {}). See log above for the build error. Cooked PAK is still at {}.",
+                ExitCode, PakPath);
             return Result;
         }
 
         const FString BinariesDir = Join(Paths::GetEngineInstallDirectory(), "Binaries/Windows64");
         const FString& DestDir    = Options.OutputDirectory;
 
-        LogPackager(LogFunc, FString().sprintf("Copying %s binaries from %s",
+        LogPackager(LogFunc, Format("Copying {} binaries from {}",
             Config.c_str(), BinariesDir.c_str()).c_str());
 
         size_t Copied = CopyRuntimePayload(BinariesDir, DestDir, Config, ProjectName, LogFunc);
@@ -437,7 +437,7 @@ namespace Lumina
 
             if (Filesystem::Exists(ProjectBinaries))
             {
-                LogPackager(LogFunc, FString().sprintf("Copying project binaries from %s",
+                LogPackager(LogFunc, Format("Copying project binaries from {}",
                     ProjectBinaries.c_str()).c_str());
 
                 Copied += CopyRuntimePayload(ProjectBinaries, DestDir, Config, ProjectName, LogFunc);
@@ -449,7 +449,7 @@ namespace Lumina
             Result.ErrorMessage = "The build succeeded but no matching binaries were found to copy. Check the build output.";
             return Result;
         }
-        LogPackager(LogFunc, FString().sprintf("Copied %zu runtime files.", Copied).c_str());
+        LogPackager(LogFunc, Format("Copied {} runtime files.", Copied).c_str());
 
         // Stage the C# scripting payload (managed bootstrap, bundled .NET runtime, prebuilt script DLLs +
         // manifest) so the cooked game can boot CoreCLR and load its scripts without the editor/dev tree.
@@ -489,10 +489,10 @@ namespace Lumina
         }
         Result.OutputDirectory = OutDir;
 
-        LogPackager(LogFunc, FString().sprintf("Output directory: %s", OutDir.c_str()).c_str());
+        LogPackager(LogFunc, Format("Output directory: {}", OutDir.c_str()).c_str());
 
         const FString PakPath = OutDir + "/" + ProjectName + ".pak";
-        LogPackager(LogFunc, FString().sprintf("Cooking PAK: %s", PakPath.c_str()).c_str());
+        LogPackager(LogFunc, Format("Cooking PAK: {}", PakPath.c_str()).c_str());
 
         FCookOptions CookOpts;
         CookOpts.bExtractScriptsAsLooseFiles = Options.bExtractScriptsAsLooseFiles;
@@ -507,13 +507,13 @@ namespace Lumina
         }
         
         Result.PakPath = PakPath;
-        LogPackager(LogFunc, FString().sprintf("Cook OK: %zu assets, %zu extras, %zu bytes", Cook.NumAssetsCooked, Cook.NumExtraFiles, Cook.TotalBytes).c_str());
+        LogPackager(LogFunc, Format("Cook OK: {} assets, {} extras, {} bytes", Cook.NumAssetsCooked, Cook.NumExtraFiles, Cook.TotalBytes).c_str());
 
         if (Options.bExtractScriptsAsLooseFiles)
         {
             LogPackager(LogFunc, "Extracting loose /Game files...");
             const size_t Extracted = CopyLooseScripts(OutDir, LogFunc);
-            LogPackager(LogFunc, FString().sprintf("Extracted %zu loose script files.", Extracted).c_str());
+            LogPackager(LogFunc, Format("Extracted {} loose script files.", Extracted).c_str());
         }
 
         if (Options.bBuildExecutable)

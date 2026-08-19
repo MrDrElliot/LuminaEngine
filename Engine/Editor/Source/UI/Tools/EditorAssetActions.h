@@ -1,6 +1,7 @@
 #pragma once
 
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Vector.h"
 #include "Containers/Function.h"
 #include "Containers/String.h"
 
@@ -29,7 +30,7 @@ namespace Lumina
         // Menu text. Include the icon in the string, as the rest of the content browser's menu does.
         FString Label;
 
-        // Optional grey-out test. Null means always enabled.
+        // Optional gray-out test. Null means always enabled.
         TFunction<bool(const FAssetActionContext&)> CanExecute;
 
         TFunction<void(const FAssetActionContext&)> Execute;

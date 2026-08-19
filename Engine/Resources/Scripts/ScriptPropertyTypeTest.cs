@@ -434,7 +434,7 @@ public class ScriptPropertyTypeTest : EntityScript
         Check("THashMap remove", WeightByIndex.Count == 1 && !WeightByIndex.ContainsKey(2), WeightByIndex.Count.ToString());
 
         // A list of FStrings. One TVector like every other -- the element is Lumina.FString, the explicit
-        // mirror of the native string, and the view reads and writes each slot through eastl rather than by
+        // mirror of the native string, and the view reads and writes each slot through the native container rather than by
         // bytes. Get/Set rather than the indexer: a ref into the slot would let a plain assignment copy the
         // string's heap pointer, which is exactly the aliasing the marshal exists to prevent.
         TVector<FString> Strings = Names;

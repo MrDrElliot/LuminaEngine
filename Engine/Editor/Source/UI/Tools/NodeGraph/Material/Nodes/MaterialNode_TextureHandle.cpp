@@ -5,6 +5,7 @@
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "UI/Tools/NodeGraph/Material/MaterialCompiler.h"
 #include "UI/Tools/NodeGraph/Material/MaterialOutput.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -46,8 +47,8 @@ namespace Lumina
                           : Compiler.BindTexture(Texture);
 
         // The slot index is the compile-time constant; the descriptor ID it holds is read at runtime,
-        // which is what lets a parameterised handle be re-pointed per instance without a recompile.
-        Compiler.AddRaw("uint " + FullName + " = GetMaterialTexture(MaterialIndex, " + eastl::to_string(Index) + ");\n");
+        // which is what lets a parameterized handle be re-pointed per instance without a recompile.
+        Compiler.AddRaw("uint " + FullName + " = GetMaterialTexture(MaterialIndex, " + Format("{}", Index) + ");\n");
 
         // Uniform across the surface, hence a zero screen-space derivative. Nothing consumes this today
         // (a uint cannot reach a UV pin), but recording it keeps the handle out of the Unknown bucket.

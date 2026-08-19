@@ -25,7 +25,6 @@ public class Editor : LuminaModuleRules
         {
             "ImGui",
             "RPMalloc",
-            "EA",
             "FreeType",
 
             // Model format parsers: MeshOptimizer for the glTF importer, BasicUniversal for the

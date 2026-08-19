@@ -15,7 +15,6 @@
 #include "RenderManager.h"
 #include "TaskSystem/TaskSystem.h"
 
-#include "EASTL/sort.h"
 
 namespace Lumina
 {
@@ -142,7 +141,7 @@ namespace Lumina
         TextureToIndex.erase(Texture);
 
         // Any in-flight load for this texture is left to complete and be discarded: its weak pointer will
-        // have gone null, and cancelling mid-read would mean synchronising with the worker.
+        // have gone null, and canceling mid-read would mean synchronizing with the worker.
     }
 
     FTextureStreamingManager::FStreamingTexture* FTextureStreamingManager::Find(CTexture* Texture)
@@ -476,7 +475,7 @@ namespace Lumina
         }
 
         const uint64 FrameNow = FrameCounter;
-        eastl::sort(Order.begin(), Order.end(), [this, FrameNow](uint32 A, uint32 B)
+        std::sort(Order.begin(), Order.end(), [this, FrameNow](uint32 A, uint32 B)
         {
             return RetentionPriority(Textures[A], FrameNow) < RetentionPriority(Textures[B], FrameNow);
         });
@@ -657,7 +656,7 @@ namespace Lumina
             }
         }
 
-        eastl::sort(Candidates.begin(), Candidates.end(), [this](uint32 A, uint32 B)
+        std::sort(Candidates.begin(), Candidates.end(), [this](uint32 A, uint32 B)
         {
             auto Score = [this](uint32 Index)
             {

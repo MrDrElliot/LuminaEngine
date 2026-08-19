@@ -9,8 +9,8 @@ namespace Lumina
     {
         // FMapPropertyParams carries a single GetOpsFn: the per-property forwarder that returns the shared
         // GetMapOpsFor<Container> table (a static member so the container type resolves in scope).
-        const eastl::string CustomData = AccessorScope + Name + "MapOps_WrapperImpl";
-        const eastl::string PropertyFlagStr = PropertyFlagsToString(PropertyFlags);
+        const std::string CustomData = AccessorScope + Name + "MapOps_WrapperImpl";
+        const std::string PropertyFlagStr = PropertyFlagsToString(PropertyFlags);
         AppendPropertyDef(Writer, PropertyFlagStr.c_str(), "Lumina::EPropertyTypeFlags::Map", CustomData);
     }
 
@@ -19,7 +19,7 @@ namespace Lumina
         return true;
     }
 
-    bool FReflectedMapProperty::DeclareAccessors(Reflection::FCodeWriter& Writer, const eastl::string& FileID)
+    bool FReflectedMapProperty::DeclareAccessors(Reflection::FCodeWriter& Writer, const std::string& FileID)
     {
         FReflectedProperty::DeclareAccessors(Writer, FileID);
 
@@ -33,7 +33,7 @@ namespace Lumina
     {
         FReflectedProperty::DefineAccessors(Writer, ReflectedType);
 
-        const eastl::string& Q = AccessorDefinitionScope;
+        const std::string& Q = AccessorDefinitionScope;
         const char* N = Name.c_str();
         const char* Raw = RawTypeName.c_str();       // The container type, e.g. THashMap<K,V>.
 

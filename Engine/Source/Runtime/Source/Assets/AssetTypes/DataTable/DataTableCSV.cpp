@@ -215,7 +215,7 @@ namespace Lumina::DataTableCSV
         ColumnProperties.reserve(Header.size());
         ColumnProperties.push_back(nullptr);
 
-        TSet<FName> MatchedProperties;
+        THashSet<FName> MatchedProperties;
         for (size_t Col = 1; Col < Header.size(); ++Col)
         {
             const FString ColumnName = Trim(Header[Col]);
@@ -257,7 +257,7 @@ namespace Lumina::DataTableCSV
         // half of one file and half of another.
         TVector<SDataTableRow> NewRows;
         NewRows.reserve(Records.size() - 1);
-        TSet<FName> SeenNames;
+        THashSet<FName> SeenNames;
 
         for (size_t RecordIndex = 1; RecordIndex < Records.size(); ++RecordIndex)
         {
@@ -269,8 +269,7 @@ namespace Lumina::DataTableCSV
                 ++Result.RowsSkipped;
                 if ((int32)Result.Errors.size() < GMaxReportedErrors)
                 {
-                    Result.Errors.push_back(FString(FString::CtorSprintf(),
-                        "Line %d: the row name is empty.", (int32)RecordIndex + 1));
+                    Result.Errors.push_back(Format("Line {}: the row name is empty.", (int32)RecordIndex + 1));
                 }
                 continue;
             }
@@ -283,8 +282,7 @@ namespace Lumina::DataTableCSV
                 ++Result.RowsSkipped;
                 if ((int32)Result.Errors.size() < GMaxReportedErrors)
                 {
-                    Result.Errors.push_back(FString(FString::CtorSprintf(),
-                        "Line %d: duplicate row name '%s'.", (int32)RecordIndex + 1, RawName.c_str()));
+                    Result.Errors.push_back(Format("Line {}: duplicate row name '{}'.", (int32)RecordIndex + 1, RawName));
                 }
                 continue;
             }
@@ -311,11 +309,10 @@ namespace Lumina::DataTableCSV
                 {
                     if ((int32)Result.Errors.size() < GMaxReportedErrors)
                     {
-                        Result.Errors.push_back(FString(FString::CtorSprintf(),
-                            "Line %d, column '%s': cannot read '%s'.",
+                        Result.Errors.push_back(Format("Line {}, column '{}': cannot read '{}'.",
                             (int32)RecordIndex + 1,
-                            Property->GetPropertyName().ToString().c_str(),
-                            Cell.c_str()));
+                            Property->GetPropertyName().ToString(),
+                            Cell));
                     }
                 }
             }
@@ -329,7 +326,7 @@ namespace Lumina::DataTableCSV
             return Result;
         }
 
-        Table->Rows = eastl::move(NewRows);
+        Table->Rows = std::move(NewRows);
         Result.bSucceeded = true;
         return Result;
     }

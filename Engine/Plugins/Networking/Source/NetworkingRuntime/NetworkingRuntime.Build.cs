@@ -19,7 +19,6 @@ public class NetworkingRuntime : LuminaModuleRules
         {
             "ImGui",
             "RPMalloc",
-            "EA",
             "Entt",
             "Tracy",
         });

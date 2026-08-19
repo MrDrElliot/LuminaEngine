@@ -2,7 +2,6 @@
 
 #include "imgui.h"
 #include "ImGuiX.h"
-#include "Containers/Array.h"
 #include "Renderer/RHI.h"
 
 struct ImPlotContext;

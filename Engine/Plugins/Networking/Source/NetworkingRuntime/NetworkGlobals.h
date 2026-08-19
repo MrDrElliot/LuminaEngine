@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Networking/NetworkTypes.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 
 // Nothing outside this plugin names any of these: the engine reaches netcode only through
 // INetworkRuntime, so none of it is exported.

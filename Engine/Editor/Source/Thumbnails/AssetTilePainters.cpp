@@ -24,7 +24,7 @@ namespace Lumina
         {
             return;
         }
-        Painters.insert_or_assign(AssetClass, eastl::move(Painter));
+        Painters.insert_or_assign(AssetClass, std::move(Painter));
     }
 
     FAssetTilePainterFn* FAssetTilePainterRegistry::Find(CClass* AssetClass)

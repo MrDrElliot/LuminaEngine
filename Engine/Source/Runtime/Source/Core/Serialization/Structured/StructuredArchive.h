@@ -1,5 +1,6 @@
 ﻿#pragma once
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Vector.h"
 #include "Core/Serialization/Archiver.h"
 
 namespace Lumina

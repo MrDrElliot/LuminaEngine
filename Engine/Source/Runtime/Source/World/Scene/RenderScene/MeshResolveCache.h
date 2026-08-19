@@ -3,7 +3,8 @@
 #include "Renderer/ShaderHandle.h"
 #include <atomic>
 #include <mutex>
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Vector.h"
 #include "Core/Math/AABB.h"
 #include "Memory/SmartPtr.h"
 #include "Platform/GenericPlatform.h"

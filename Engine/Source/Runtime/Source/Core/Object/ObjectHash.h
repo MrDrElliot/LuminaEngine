@@ -1,5 +1,5 @@
 #pragma once
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
 #include "Containers/Name.h"
 #include "Core/Singleton/Singleton.h"
 #include "Core/Threading/Thread.h"

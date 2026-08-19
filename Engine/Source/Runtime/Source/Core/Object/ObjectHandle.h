@@ -44,7 +44,7 @@ namespace Lumina
     };
 }
 
-namespace eastl
+namespace std
 {
     template<>
     struct hash<Lumina::FObjectHandle>

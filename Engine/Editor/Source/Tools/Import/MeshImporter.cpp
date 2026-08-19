@@ -38,6 +38,7 @@
 #include "Tools/UI/ImGui/EditorColors.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "Log/Log.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -75,7 +76,7 @@ namespace Lumina
                 for (uint32 N = 1; N < 10000; ++N)
                 {
                     FFixedString Candidate = Desired;
-                    Candidate.append("_").append_convert(eastl::to_string(N));
+                    Candidate.append("_").append(Format("{}", N));
                     if (IsFree(Candidate))
                     {
                         Claimed.insert(Candidate);
@@ -104,7 +105,7 @@ namespace Lumina
                 if (Surface.MaterialIndex >= 0)
                 {
                     bAnyExplicit = true;
-                    SlotCount = eastl::max(SlotCount, (size_t)Surface.MaterialIndex + 1);
+                    SlotCount = std::max(SlotCount, (size_t)Surface.MaterialIndex + 1);
                 }
             }
             return bAnyExplicit ? SlotCount : Resource.GeometrySurfaces.size();
@@ -197,7 +198,7 @@ namespace Lumina
                     continue;
                 }
 
-                const size_t VertexCount = eastl::min(Resource->JointIndices.size(), Resource->JointWeights.size());
+                const size_t VertexCount = std::min(Resource->JointIndices.size(), Resource->JointWeights.size());
                 for (size_t v = 0; v < VertexCount; ++v)
                 {
                     FU16Vector4& Indices = Resource->JointIndices[v];
@@ -1114,7 +1115,7 @@ namespace Lumina
             if (!Suffix.empty())
             {
                 Path.append("_");
-                Path.append_convert(Suffix.data(), Suffix.length());
+                Path.append(Suffix.data(), Suffix.length());
             }
             return Paths.Claim(Path);
         };
@@ -1528,7 +1529,7 @@ namespace Lumina
             Progress->UpdateMessage("Saving packages...");
         }
 
-        const float SaveStep = kSaveBudget / (float)eastl::max<size_t>((size_t)1, CreatedObjects.size());
+        const float SaveStep = kSaveBudget / (float)std::max<size_t>((size_t)1, CreatedObjects.size());
         for (CObject* Object : CreatedObjects)
         {
             CPackage* Package = Object->GetPackage();
@@ -1708,7 +1709,7 @@ namespace Lumina
                 return;
             }
 
-            FFixedString Header(FFixedString::CtorSprintf(), "Meshes (%zu)###MeshStats", SourceData.Resources.size());
+            const FFixedString Header = FormatAs<FFixedString>("Meshes ({})###MeshStats", SourceData.Resources.size());
             if (!ImGui::CollapsingHeader(Header.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
             {
                 return;
@@ -1726,7 +1727,7 @@ namespace Lumina
                 ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInner |
                 ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY;
 
-            const float Height = eastl::min<float>(180.0f, (SourceData.Resources.size() + 1) * ImGui::GetTextLineHeightWithSpacing() + 8.0f);
+            const float Height = std::min<float>(180.0f, (SourceData.Resources.size() + 1) * ImGui::GetTextLineHeightWithSpacing() + 8.0f);
             if (ImGui::BeginTable("MeshStatsTable", 4, Flags, ImVec2(0, Height)))
             {
                 ImGui::TableSetupScrollFreeze(0, 1);
@@ -1771,8 +1772,8 @@ namespace Lumina
             }
 
             const uint32 Lights = Points + Spots + Directionals;
-            FFixedString Header(FFixedString::CtorSprintf(), "Scene (%zu nodes, %u lights)###SceneGraph",
-                                SourceData.SceneNodes.size(), Lights);
+            const FFixedString Header = FormatAs<FFixedString>("Scene ({} nodes, {} lights)###SceneGraph",
+                                                               SourceData.SceneNodes.size(), Lights);
             if (!ImGui::CollapsingHeader(Header.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
             {
                 return;
@@ -1806,7 +1807,7 @@ namespace Lumina
                 return;
             }
 
-            FFixedString Header(FFixedString::CtorSprintf(), "Textures (%zu)###Textures", SourceData.Images.size());
+            const FFixedString Header = FormatAs<FFixedString>("Textures ({})###Textures", SourceData.Images.size());
             if (!ImGui::CollapsingHeader(Header.c_str()))
             {
                 return;
@@ -1848,7 +1849,7 @@ namespace Lumina
                 return;
             }
 
-            FFixedString Header(FFixedString::CtorSprintf(), "Skeletons (%zu)###Skeletons", SourceData.Skeletons.size());
+            const FFixedString Header = FormatAs<FFixedString>("Skeletons ({})###Skeletons", SourceData.Skeletons.size());
             if (!ImGui::CollapsingHeader(Header.c_str()))
             {
                 return;
@@ -1934,7 +1935,7 @@ namespace Lumina
                 return;
             }
 
-            FFixedString Header(FFixedString::CtorSprintf(), "Animations (%zu)###Animations", SourceData.Animations.size());
+            const FFixedString Header = FormatAs<FFixedString>("Animations ({})###Animations", SourceData.Animations.size());
             if (!ImGui::CollapsingHeader(Header.c_str()))
             {
                 return;

@@ -110,16 +110,16 @@ void EnumRemoveFlags(Enum& Flags, Enum FlagsToRemove)
 
     ENUM_CLASS_FLAGS(EPropertyFlags);
 
-    inline eastl::string PropertyFlagsToString(EPropertyFlags Flags)
+    inline std::string PropertyFlagsToString(EPropertyFlags Flags)
     {
         if (Flags == EPropertyFlags::None)
         {
             return "Lumina::EPropertyFlags::None";
         }
 
-        eastl::string Result;
+        std::string Result;
 
-        auto AppendFlag = [&](EPropertyFlags Flag, eastl::string_view Name)
+        auto AppendFlag = [&](EPropertyFlags Flag, std::string_view Name)
             {
                 if ((Flags & Flag) != EPropertyFlags::None)
                 {
@@ -127,7 +127,7 @@ void EnumRemoveFlags(Enum& Flags, Enum FlagsToRemove)
                     {
                         Result += " | ";
                     }
-                    Result.append_convert(Name.begin(), Name.length());
+                    Result.append(Name.data(), Name.length());
                 }
             };
 

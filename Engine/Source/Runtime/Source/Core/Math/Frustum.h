@@ -4,7 +4,7 @@
 #include "Core/Math/Matrix/Matrix.h"
 
 #include "AABB.h"
-#include "Containers/Array.h"
+#include "Containers/StaticArray.h"
 #include "Core/Profiler/Profile.h"
 #include "Platform/Platform.h"
 

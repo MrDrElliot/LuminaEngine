@@ -7,6 +7,7 @@
 
 #include <cstdarg>
 #include <cstdio>
+#include "Containers/StringFormat.h"
 
 namespace Lumina::RHITests
 {
@@ -317,7 +318,7 @@ namespace Lumina::RHITests
 
         LOG_INFO("");
         LOG_INFO("[==========] {} passed, {} failed{}", Passed, Failed,
-                 Skipped > 0 ? FString(" (" + eastl::to_string(Skipped) + " filtered out)") : FString());
+                 Skipped > 0 ? FString(" (" + Format("{}", Skipped) + " filtered out)") : FString());
 
         return Failed;
     }

@@ -35,7 +35,7 @@ namespace Lumina
             return A + (B - A) * Alpha;
         }
 
-        // Rotate V about the (normalised) axis A by Radians. Rodrigues.
+        // Rotate V about the (normalized) axis A by Radians. Rodrigues.
         FVector3 RotateAboutAxis(const FVector3& V, const FVector3& A, float Radians)
         {
             const float C = Math::Cos(Radians);
@@ -72,7 +72,7 @@ namespace Lumina
                 continue;
             }
 
-            // On an open spline the ends have no neighbour on one side, so they fall back to the single
+            // On an open spline the ends have no neighbor on one side, so they fall back to the single
             // segment they do touch -- which also stops the curve flicking out past the last point.
             const bool bHasPrev = bClosedLoop || (i > 0);
             const bool bHasNext = bClosedLoop || (i < NumPoints - 1);
@@ -201,7 +201,7 @@ namespace Lumina
         Reference = Math::Normalize(Reference);
 
         // Gram-Schmidt the reference against the tangent. When the curve runs straight along the reference
-        // the projection vanishes, so fall back to a different axis instead of normalising a zero vector.
+        // the projection vanishes, so fall back to a different axis instead of normalizing a zero vector.
         FVector3 Up = Reference - Tangent * Math::Dot(Reference, Tangent);
         if (Math::LengthSquared(Up) <= 1.0e-6f)
         {

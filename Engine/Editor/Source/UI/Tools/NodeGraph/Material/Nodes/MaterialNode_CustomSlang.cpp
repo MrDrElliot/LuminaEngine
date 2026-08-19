@@ -8,6 +8,7 @@
 #include "UI/Tools/NodeGraph/Material/MaterialCompiler.h"
 #include "UI/Tools/NodeGraph/Material/MaterialInput.h"
 #include "UI/Tools/NodeGraph/Material/MaterialOutput.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -426,7 +427,7 @@ namespace Lumina
     void CMaterialExpression_CustomSlang::GenerateDefinition(FMaterialCompiler& Compiler)
     {
         // Compose with any enclosing material-function inline prefix so nested use never collides.
-        const FString Prefix = Compiler.GetCurrentInlinePrefix() + "CS" + eastl::to_string(GetNodeID()) + "_";
+        const FString Prefix = Compiler.GetCurrentInlinePrefix() + "CS" + Format("{}", GetNodeID()) + "_";
 
         auto EmitError = [&](const FString& Description)
         {
@@ -445,7 +446,7 @@ namespace Lumina
         {
             CMaterialOutput* Pin = CustomOutputPins[i];
             const EMaterialInputType T = Pin->InputType;
-            const FString Var = Prefix + "out" + eastl::to_string(i);
+            const FString Var = Prefix + "out" + Format("{}", i);
 
             Compiler.AddRaw(FMaterialCompiler::GetHLSLTypeName(T) + " " + Var + " = " + ZeroLiteral(T) + ";\n");
             Pin->ResolvedVar = Var;

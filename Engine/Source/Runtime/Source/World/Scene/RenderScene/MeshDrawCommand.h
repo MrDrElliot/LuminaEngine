@@ -1,7 +1,6 @@
 #pragma once
 
 #include "Renderer/ShaderHandle.h"
-#include "Containers/Array.h"
 #include "Platform/GenericPlatform.h"
 #include <Core/Math/Hash/Hash.h>
 #include <Renderer/RHIFwd.h>

@@ -1,7 +1,8 @@
 #include "RuntimePCH.h"
 #include "FileHelper.h"
 
-#include "Containers/Array.h"
+#include "Containers/Span.h"
+#include "Containers/Vector.h"
 #include "Log/Log.h"
 #include "PlatformFilesystem.h"
 

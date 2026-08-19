@@ -1,5 +1,5 @@
 #pragma once
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Object/ObjectMacros.h"
 #include "PostProcessSettings.h"

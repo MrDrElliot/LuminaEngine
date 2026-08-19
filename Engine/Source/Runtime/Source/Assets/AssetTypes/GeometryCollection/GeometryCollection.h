@@ -3,7 +3,7 @@
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Math/AABB.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Renderer/Vertex.h"
 #include "GeometryCollection.generated.h"
 

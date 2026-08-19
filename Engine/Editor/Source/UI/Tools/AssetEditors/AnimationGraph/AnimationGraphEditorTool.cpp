@@ -2,7 +2,6 @@
 
 #include <cfloat>
 #include <cstdio>
-#include <EASTL/algorithm.h>
 #include "Animation/TaskSystem/AnimTaskExecutor.h"
 #include "Assets/AssetRegistry/AssetData.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
@@ -679,7 +678,7 @@ namespace Lumina
         // Drop cached property tables whose backing transition was removed.
         for (auto It = TransitionTables.begin(); It != TransitionTables.end(); )
         {
-            const bool bAlive = eastl::find(Outgoing.begin(), Outgoing.end(), It->first) != Outgoing.end();
+            const bool bAlive = std::find(Outgoing.begin(), Outgoing.end(), It->first) != Outgoing.end();
             if (!bAlive)
             {
                 It = TransitionTables.erase(It);
@@ -1239,7 +1238,7 @@ namespace Lumina
                 ClipEntries.push_back(Move(Entry));
             }
 
-            eastl::sort(ClipEntries.begin(), ClipEntries.end(),
+            std::sort(ClipEntries.begin(), ClipEntries.end(),
                         [](const FClipEntry& A, const FClipEntry& B) { return A.DisplayName < B.DisplayName; });
         }
 

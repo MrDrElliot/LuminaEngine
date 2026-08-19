@@ -623,7 +623,7 @@ namespace Lumina
             PDI->DrawSphere(World, MarkerRadius, PointColor, 10, 2.0f, false, 0.0f);
 
             // Tangent handles are drawn at a third of their length: a Hermite tangent is three times the
-            // chord it produces, so drawing it raw puts the handle well past the neighbouring point.
+            // chord it produces, so drawing it raw puts the handle well past the neighboring point.
             if (Point.TangentMode == ESplineTangentMode::User)
             {
                 const FVector3 Arrive = ToWorld(Point.Location - Point.ArriveTangent / 3.0f);

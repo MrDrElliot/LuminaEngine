@@ -1,5 +1,5 @@
 #pragma once
-#include "EASTL/string.h"
+#include <string>
 
 
 namespace Lumina::Reflection
@@ -17,7 +17,7 @@ namespace Lumina
 
     private:
 
-        virtual void GenerateMetadata(const eastl::string& InMetadata) = 0;
+        virtual void GenerateMetadata(const std::string& InMetadata) = 0;
         virtual bool GenerateLuaBinding(Reflection::FCodeWriter& Writer) { return false; }
     };
 }

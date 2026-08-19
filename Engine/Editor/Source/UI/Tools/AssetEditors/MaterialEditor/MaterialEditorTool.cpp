@@ -31,6 +31,7 @@
 #include "World/Entity/Components/LightComponent.h"
 #include "World/Entity/Components/StaticMeshComponent.h"
 #include "Log/Log.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -272,7 +273,7 @@ namespace Lumina
     bool FMaterialEditorTool::DrawViewport(const FUpdateContext& UpdateContext, ImTextureRef ViewportTexture)
     {
         const ImVec2 ContentRegion = ImGui::GetContentRegionAvail();
-        const ImVec2 ViewportSize(eastl::max(ContentRegion.x, 64.0f), eastl::max(ContentRegion.y, 64.0f));
+        const ImVec2 ViewportSize(std::max(ContentRegion.x, 64.0f), std::max(ContentRegion.y, 64.0f));
         const ImVec2 CursorScreenPos = ImGui::GetCursorScreenPos();
         const ImVec2 WindowBottomRight = { CursorScreenPos.x + ViewportSize.x, CursorScreenPos.y + ViewportSize.y };
 
@@ -429,7 +430,7 @@ namespace Lumina
         // from here. Only the additions below are ours.
         //
         // The split between `keywords` and `identifiers` is the reason this is worth doing at all: keywords
-        // colour as language syntax, identifiers as knownIdentifier. Putting the intrinsics and the node's
+        // color as language syntax, identifiers as knownIdentifier. Putting the intrinsics and the node's
         // own pin names in the second bucket is what makes "this is a thing the engine gave me" visually
         // distinct from "this is Slang", which a plain HLSL definition cannot express.
         const TextEditor::Language& GetSlangLanguageBase()
@@ -504,7 +505,7 @@ namespace Lumina
 
         // Change detector for the highlight only, so it deliberately covers pin NAMES and nothing else --
         // the node's own signature hash is private, and it also folds in pin types, which would rebuild
-        // the language on edits that cannot change a single colour.
+        // the language on edits that cannot change a single color.
         uint64 HashPinNames(const CMaterialExpression_CustomSlang* Node)
         {
             uint64 Hash = 1469598103934665603ull;   // FNV-1a
@@ -528,7 +529,7 @@ namespace Lumina
 
     void FMaterialEditorTool::ConfigureCodeEditor()
     {
-        // SetTabSize is only honoured while the document is empty and has no transactions, so this has to
+        // SetTabSize is only honored while the document is empty and has no transactions, so this has to
         // run before the first SetText -- hence OnInitialize rather than the first draw.
         CodeEditor.SetTabSize(4);
         CodeEditor.SetInsertSpacesOnTabs(true);
@@ -594,7 +595,7 @@ namespace Lumina
         else if (const uint64 Signature = HashPinNames(Node); Signature != CodeEditorPinSignature)
         {
             // Pins are edited in the details panel while this tab stays bound, so the highlight has to
-            // follow them -- otherwise a freshly renamed output keeps colouring under its old name.
+            // follow them -- otherwise a freshly renamed output keeps coloring under its old name.
             CodeEditorPinSignature = Signature;
             RebuildCodeEditorLanguage(Node);
         }
@@ -672,7 +673,7 @@ namespace Lumina
         // highlight includes THIS node's pin names, so it is not a generic Slang mode.
         const TextEditor::CursorPosition Cursor = CodeEditor.GetCursorPosition(0);
         FFixedString Status;
-        Status.sprintf("%s  |  Ln %d, Col %d  |  %d lines",
+        FormatTo(Status, "{}  |  Ln {}, Col {}  |  {} lines",
             CodeEditor.GetLanguageName().c_str(), Cursor.line + 1, Cursor.column + 1, CodeEditor.GetLineCount());
 
         const float StatusWidth = ImGui::CalcTextSize(Status.c_str()).x;
@@ -794,7 +795,7 @@ namespace Lumina
             FString Lower = Name;
             for (char& C : Lower)
             {
-                C = (char)eastl::CharToLower(C);
+                C = (char)Lumina::Containers::FoldAscii(C);
             }
             return Lower.find("register") != FString::npos;
         }

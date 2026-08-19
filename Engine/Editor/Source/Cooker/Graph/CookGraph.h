@@ -1,7 +1,8 @@
 #pragma once
 
 #include "Assets/AssetRegistry/AssetData.h"
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Vector.h"
 #include "Containers/Name.h"
 #include "GUID/GUID.h"
 

@@ -3,7 +3,7 @@
 #include <entt/entt.hpp>
 
 #include "ModuleAPI.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "SystemResources.h"
 

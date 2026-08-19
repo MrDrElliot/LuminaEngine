@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Assets/AssetTypes/Curve/CurveAsset.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/Function.h"
 #include "imgui.h"
 

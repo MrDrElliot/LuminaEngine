@@ -692,7 +692,7 @@ namespace Lumina
             return;
         }
 
-        ProjectPath                     .assign_convert(VFS::Parent(Paths::Normalize(Path)));
+        ProjectPath                     .assign(VFS::Parent(Paths::Normalize(Path)));
         ProjectName                     = Data["Name"].get<std::string>().c_str();
 
         FFixedString ConfigDir          = Paths::Combine(ProjectPath, "Config");
@@ -1045,7 +1045,7 @@ namespace Lumina
 
             bPendingHostOverride  = false;
             bPendingHostDedicated = false;
-            FCoreDelegates::OnWorldTravelled.Broadcast(nullptr, ColdWorld);
+            FCoreDelegates::OnWorldTraveled.Broadcast(nullptr, ColdWorld);
             return;
         }
 
@@ -1109,7 +1109,7 @@ namespace Lumina
         }
 
         // OldWorld memory still alive (only TeardownWorld has run); safe to compare identity, do not inspect state.
-        FCoreDelegates::OnWorldTravelled.Broadcast(OldWorld, NewWorld);
+        FCoreDelegates::OnWorldTraveled.Broadcast(OldWorld, NewWorld);
     }
 
     void FEngine::OpenLevel(const FURL& URL)
@@ -1225,7 +1225,7 @@ namespace Lumina
 
             PakPaths.emplace_back(Entry.FullPath.data(), Entry.FullPath.size());
         });
-        eastl::sort(PakPaths.begin(), PakPaths.end());
+        std::sort(PakPaths.begin(), PakPaths.end());
 
         if (PakPaths.empty())
         {

@@ -2,7 +2,7 @@
 
 #include <mutex>
 #include "Core/Math/Math.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "AI/Perception/PerceptionTypes.h"
 #include "GameplayTags/GameplayTag.h"
 #include "World/Entity/EntityHandle.h"

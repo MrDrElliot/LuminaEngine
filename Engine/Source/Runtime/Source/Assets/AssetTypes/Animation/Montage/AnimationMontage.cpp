@@ -213,7 +213,7 @@ namespace Lumina
         for (const SAnimMontageSlotTrack& Track : SlotTracks)
         {
             if (!Track.SlotName.IsNone() &&
-                eastl::find(OutNames.begin(), OutNames.end(), Track.SlotName) == OutNames.end())
+                std::find(OutNames.begin(), OutNames.end(), Track.SlotName) == OutNames.end())
             {
                 OutNames.push_back(Track.SlotName);
             }
@@ -224,7 +224,7 @@ namespace Lumina
     {
         const auto AddTrack = [this](const FName& Track)
         {
-            if (!Track.IsNone() && eastl::find(NotifyTracks.begin(), NotifyTracks.end(), Track) == NotifyTracks.end())
+            if (!Track.IsNone() && std::find(NotifyTracks.begin(), NotifyTracks.end(), Track) == NotifyTracks.end())
             {
                 NotifyTracks.push_back(Track);
             }

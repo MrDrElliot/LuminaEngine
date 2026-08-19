@@ -228,7 +228,7 @@ namespace Lumina
                                 && MarqueeMin.y <= CellMax.y && MarqueeMax.y >= CellMin.y;
 
             const bool bInBase = bMarqueeAdditive
-                && eastl::find(MarqueeBaseSelection.begin(), MarqueeBaseSelection.end(), Item) != MarqueeBaseSelection.end();
+                && std::find(MarqueeBaseSelection.begin(), MarqueeBaseSelection.end(), Item) != MarqueeBaseSelection.end();
 
             const bool bShouldSelect = bOverlaps || bInBase;
             if (bShouldSelect != Item->IsSelected())
@@ -654,14 +654,14 @@ namespace Lumina
         
         if (!bWasSelected)
         {
-            DEBUG_ASSERT(eastl::find(Selections.begin(), Selections.end(), Item) == Selections.end());
+            DEBUG_ASSERT(std::find(Selections.begin(), Selections.end(), Item) == Selections.end());
             Selections.push_back(Item);
             Context.ItemSelectedFunction(Item);
             Item->bSelected = true;
         }
         else
         {
-            auto It = eastl::remove(Selections.begin(), Selections.end(), Item);
+            auto It = std::remove(Selections.begin(), Selections.end(), Item);
             Selections.erase(It);
             Item->bSelected = false;
         }
@@ -671,19 +671,19 @@ namespace Lumina
 
     void FTileViewWidget::SetSelectionAnchor(const FTileViewItem* Item)
     {
-        const auto Found = eastl::find(ListItems.begin(), ListItems.end(), Item);
-        SelectionAnchorIndex = Found == ListItems.end() ? -1 : (int32)eastl::distance(ListItems.begin(), Found);
+        const auto Found = std::find(ListItems.begin(), ListItems.end(), Item);
+        SelectionAnchorIndex = Found == ListItems.end() ? -1 : (int32)std::distance(ListItems.begin(), Found);
     }
 
     void FTileViewWidget::SelectRangeTo(FTileViewItem* Item, const FTileViewContext& Context)
     {
-        const auto Found = eastl::find(ListItems.begin(), ListItems.end(), Item);
+        const auto Found = std::find(ListItems.begin(), ListItems.end(), Item);
         if (Found == ListItems.end())
         {
             return;
         }
 
-        const int32 To = (int32)eastl::distance(ListItems.begin(), Found);
+        const int32 To = (int32)std::distance(ListItems.begin(), Found);
 
         // No anchor yet (first click in a fresh folder): shift-click behaves as a plain click and
         // becomes the anchor, so the next one has a range to span.

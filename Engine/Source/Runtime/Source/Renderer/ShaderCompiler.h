@@ -1,7 +1,8 @@
 ﻿#pragma once
 
 #include "Shader.h"
-#include "Containers/Array.h"
+#include "Containers/Span.h"
+#include "Containers/Vector.h"
 #include "Containers/Function.h"
 #include "Containers/String.h"
 #include "Core/Threading/Atomic.h"

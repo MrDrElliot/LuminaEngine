@@ -20,6 +20,15 @@
     #define LUMINA_MEMCPY_VECTOR_WIDTH 0
 #endif
 
+// 256-bit integer compare is AVX2, unlike the 256-bit load/store the copy path uses.
+#if LUMINA_MEMCPY_X86 && defined(__AVX2__)
+    #define LUMINA_MEMCMP_VECTOR_WIDTH 32
+#elif LUMINA_MEMCPY_X86
+    #define LUMINA_MEMCMP_VECTOR_WIDTH 16
+#else
+    #define LUMINA_MEMCMP_VECTOR_WIDTH 0
+#endif
+
 #if defined(__GNUC__) || defined(__clang__)
     #define LUMINA_IS_CONSTANT(X) __builtin_constant_p(X)
 #else
@@ -36,6 +45,8 @@ namespace Lumina::Memory
         // Measured crossovers: rep-movsb absorbs misalignment in microcode, so unaligned gives up sooner.
         inline constexpr size_t kAlignedVectorLimit = 4096;
         inline constexpr size_t kGenericVectorLimit = 1024;
+        inline constexpr size_t kSetVectorLimit     = 4096;
+        inline constexpr size_t kCompareVectorLimit = 4096;
 
         inline constexpr uintptr_t kAlignmentMask = LUMINA_MEMCPY_VECTOR_WIDTH - 1;
 
@@ -252,6 +263,229 @@ namespace Lumina::Memory
 
             std::memcpy(Dest, Src, Size);
         }
+
+        FORCEINLINE uint32 FirstSetBitIndex(uint32 Mask)
+        {
+        #if defined(_MSC_VER)
+            unsigned long Index = 0;
+            _BitScanForward(&Index, Mask);
+            return static_cast<uint32>(Index);
+        #else
+            return static_cast<uint32>(__builtin_ctz(Mask));
+        #endif
+        }
+
+        FORCEINLINE void Set15OrLess(uint8* RESTRICT Dest, uint64 Pattern, size_t Size)
+        {
+            if (Size & 8)
+            {
+                std::memcpy(Dest, &Pattern, 8);
+                Dest += 8;
+            }
+            if (Size & 4)
+            {
+                std::memcpy(Dest, &Pattern, 4);
+                Dest += 4;
+            }
+            if (Size & 2)
+            {
+                std::memcpy(Dest, &Pattern, 2);
+                Dest += 2;
+            }
+            if (Size & 1)
+            {
+                *Dest = static_cast<uint8>(Pattern);
+            }
+        }
+
+        FORCEINLINE void Set16(uint8* RESTRICT Dest, __m128i Block)
+        {
+            _mm_storeu_si128(reinterpret_cast<__m128i*>(Dest), Block);
+        }
+
+        FORCEINLINE void SetBlocks128(uint8* RESTRICT Dest, __m128i Block, size_t Size)
+        {
+            while (Size >= 128)
+            {
+                Set16(Dest + 0 * 16, Block);
+                Set16(Dest + 1 * 16, Block);
+                Set16(Dest + 2 * 16, Block);
+                Set16(Dest + 3 * 16, Block);
+                Set16(Dest + 4 * 16, Block);
+                Set16(Dest + 5 * 16, Block);
+                Set16(Dest + 6 * 16, Block);
+                Set16(Dest + 7 * 16, Block);
+
+                Dest += 128;
+                Size -= 128;
+            }
+        }
+
+        FORCEINLINE void SetDispatch(void* RESTRICT Destination, int32 Value, size_t Size)
+        {
+            uint8* RESTRICT Dest = static_cast<uint8*>(Destination);
+
+            const uint8  Byte    = static_cast<uint8>(Value);
+            const uint64 Pattern = 0x0101010101010101ull * Byte;
+
+            if (Size < 16)
+            {
+                Set15OrLess(Dest, Pattern, Size);
+                return;
+            }
+
+            const __m128i Block = _mm_set1_epi8(static_cast<char>(Byte));
+
+            if (Size <= 32)
+            {
+                Set16(Dest, Block);
+                Set16(Dest + Size - 16, Block);
+                return;
+            }
+
+            if (Size <= 64)
+            {
+                Set16(Dest + 0 * 16, Block);
+                Set16(Dest + 1 * 16, Block);
+                Set16(Dest + Size - 32, Block);
+                Set16(Dest + Size - 16, Block);
+                return;
+            }
+
+            if (Size > kSetVectorLimit)
+            {
+                std::memset(Dest, Value, Size);
+                return;
+            }
+
+            // Store alignment is worth more than the duplicated head bytes once the block loop runs.
+            const size_t Misaligned = reinterpret_cast<uintptr_t>(Dest) & 15u;
+            uint8* Cursor = Dest;
+            size_t Left   = Size;
+
+            if (Misaligned != 0)
+            {
+                const size_t Head = 16 - Misaligned;
+                Set16(Cursor, Block);
+                Cursor += Head;
+                Left   -= Head;
+            }
+
+            SetBlocks128(Cursor, Block, Left);
+
+            const size_t Bulk = Left & ~static_cast<size_t>(127);
+            Cursor += Bulk;
+            Left   -= Bulk;
+
+            while (Left >= 16)
+            {
+                Set16(Cursor, Block);
+                Cursor += 16;
+                Left   -= 16;
+            }
+
+            if (Left != 0)
+            {
+                Set16(Cursor + Left - 16, Block);
+            }
+        }
+
+        FORCEINLINE int32 ByteDifference(const uint8* A, const uint8* B, uint32 Index)
+        {
+            return static_cast<int32>(A[Index]) - static_cast<int32>(B[Index]);
+        }
+
+        // Index of the first differing byte in the 16-byte window, or -1 when the window matches.
+        FORCEINLINE int32 FirstDifference16(const uint8* A, const uint8* B)
+        {
+            const __m128i Left  = _mm_loadu_si128(reinterpret_cast<const __m128i*>(A));
+            const __m128i Right = _mm_loadu_si128(reinterpret_cast<const __m128i*>(B));
+            const uint32 Equal  = static_cast<uint32>(_mm_movemask_epi8(_mm_cmpeq_epi8(Left, Right)));
+
+            const uint32 Differs = (~Equal) & 0xFFFFu;
+            return Differs == 0 ? -1 : static_cast<int32>(FirstSetBitIndex(Differs));
+        }
+
+    #if LUMINA_MEMCMP_VECTOR_WIDTH == 32
+        FORCEINLINE int32 FirstDifference32(const uint8* A, const uint8* B)
+        {
+            const __m256i Left  = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(A));
+            const __m256i Right = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(B));
+            const uint32 Equal  = static_cast<uint32>(_mm256_movemask_epi8(_mm256_cmpeq_epi8(Left, Right)));
+
+            return Equal == 0xFFFFFFFFu ? -1 : static_cast<int32>(FirstSetBitIndex(~Equal));
+        }
+    #endif
+
+        FORCEINLINE int32 CompareDispatch(const void* A, const void* B, size_t Size)
+        {
+            const uint8* Left  = static_cast<const uint8*>(A);
+            const uint8* Right = static_cast<const uint8*>(B);
+
+            if (Size < 16)
+            {
+                for (size_t Index = 0; Index < Size; ++Index)
+                {
+                    if (Left[Index] != Right[Index])
+                    {
+                        return ByteDifference(Left, Right, static_cast<uint32>(Index));
+                    }
+                }
+                return 0;
+            }
+
+            if (Size <= 32)
+            {
+                const int32 Head = FirstDifference16(Left, Right);
+                if (Head >= 0)
+                {
+                    return ByteDifference(Left, Right, static_cast<uint32>(Head));
+                }
+
+                const size_t Tail = Size - 16;
+                const int32 Late  = FirstDifference16(Left + Tail, Right + Tail);
+                return Late < 0 ? 0 : ByteDifference(Left + Tail, Right + Tail, static_cast<uint32>(Late));
+            }
+
+            if (Size > kCompareVectorLimit)
+            {
+                return std::memcmp(A, B, Size);
+            }
+
+            size_t Offset = 0;
+
+        #if LUMINA_MEMCMP_VECTOR_WIDTH == 32
+            for (; Offset + 32 <= Size; Offset += 32)
+            {
+                const int32 Found = FirstDifference32(Left + Offset, Right + Offset);
+                if (Found >= 0)
+                {
+                    return ByteDifference(Left + Offset, Right + Offset, static_cast<uint32>(Found));
+                }
+            }
+        #endif
+
+            for (; Offset + 16 <= Size; Offset += 16)
+            {
+                const int32 Found = FirstDifference16(Left + Offset, Right + Offset);
+                if (Found >= 0)
+                {
+                    return ByteDifference(Left + Offset, Right + Offset, static_cast<uint32>(Found));
+                }
+            }
+
+            if (Offset < Size)
+            {
+                const size_t Tail = Size - 16;
+                const int32 Found = FirstDifference16(Left + Tail, Right + Tail);
+                if (Found >= 0)
+                {
+                    return ByteDifference(Left + Tail, Right + Tail, static_cast<uint32>(Found));
+                }
+            }
+
+            return 0;
+        }
     }
 
     FORCEINLINE void Memcpy(void* RESTRICT Destination, const void* RESTRICT Source, size_t SrcSize)
@@ -262,6 +496,11 @@ namespace Lumina::Memory
     FORCEINLINE void Memcpy(void* RESTRICT Destination, void* RESTRICT Source, size_t SrcSize)
     {
         Detail::CopyDispatch(Destination, Source, SrcSize);
+    }
+
+    NODISCARD FORCEINLINE int32 Memcmp(const void* A, const void* B, size_t Size)
+    {
+        return Detail::CompareDispatch(A, B, Size);
     }
 
 #else
@@ -274,6 +513,11 @@ namespace Lumina::Memory
     FORCEINLINE void Memcpy(void* RESTRICT Destination, void* RESTRICT Source, size_t SrcSize)
     {
         std::memcpy(Destination, Source, SrcSize);
+    }
+
+    NODISCARD FORCEINLINE int32 Memcmp(const void* A, const void* B, size_t Size)
+    {
+        return std::memcmp(A, B, Size);
     }
 
 #endif

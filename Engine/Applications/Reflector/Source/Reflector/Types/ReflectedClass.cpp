@@ -7,11 +7,11 @@
 
 namespace Lumina::Reflection
 {
-    void FReflectedClass::DefineInitialHeader(FCodeWriter& Writer, const eastl::string& FileID)
+    void FReflectedClass::DefineInitialHeader(FCodeWriter& Writer, const std::string& FileID)
     {
-        const eastl::string Api = Names::ProjectApiMacro(Header->Project->Name);
-        const eastl::string Package = Names::ScriptPackage(Header->Project->Name);
-        const eastl::string ConstructFn = Names::ConstructFunction("CClass", Namespace, DisplayName);
+        const std::string Api = Names::ProjectApiMacro(Header->Project->Name);
+        const std::string Package = Names::ScriptPackage(Header->Project->Name);
+        const std::string ConstructFn = Names::ConstructFunction("CClass", Namespace, DisplayName);
 
         if (!Namespace.empty())
         {
@@ -40,7 +40,7 @@ namespace Lumina::Reflection
         Writer.BlankLines(2);
     }
 
-    void FReflectedClass::DefineSecondaryHeader(FCodeWriter& Writer, const eastl::string& FileID)
+    void FReflectedClass::DefineSecondaryHeader(FCodeWriter& Writer, const std::string& FileID)
     {
         const bool bHasAccessors = DeclareAccessors(Writer, FileID);
 
@@ -58,9 +58,9 @@ namespace Lumina::Reflection
     
     namespace
     {
-        void EmitClassParams(FCodeWriter& Writer, const FReflectedClass& Class, eastl::string_view StaticsName)
+        void EmitClassParams(FCodeWriter& Writer, const FReflectedClass& Class, std::string_view StaticsName)
         {
-            const eastl::string MetadataSymbol = Names::FriendlyFromQualified(Class.QualifiedName);
+            const std::string MetadataSymbol = Names::FriendlyFromQualified(Class.QualifiedName);
 
             Writer.Linef("const Lumina::FClassParams %s::ClassParams = {", StaticsName.data());
             Writer.Linef("\t&%s::%s::StaticClass,", Class.Namespace.c_str(), Class.DisplayName.c_str());
@@ -94,9 +94,9 @@ namespace Lumina::Reflection
 
     void FReflectedClass::DeclareImplementation(FCodeWriter& Writer)
     {
-        const eastl::string ConstructFn = Names::ConstructFunction("CClass", Namespace, DisplayName);
-        const eastl::string Statics = Names::StaticsStruct("CClass", Namespace, DisplayName);
-        const eastl::string RegInfo = Names::RegistrationInfo("CClass", Namespace, DisplayName);
+        const std::string ConstructFn = Names::ConstructFunction("CClass", Namespace, DisplayName);
+        const std::string Statics = Names::StaticsStruct("CClass", Namespace, DisplayName);
+        const std::string RegInfo = Names::RegistrationInfo("CClass", Namespace, DisplayName);
 
         Writer.Linef("// Begin %s", DisplayName.c_str());
         Writer.Linef("IMPLEMENT_CLASS(%s, %s)", Namespace.c_str(), DisplayName.c_str());
@@ -150,7 +150,7 @@ namespace Lumina::Reflection
 
     void FReflectedClass::DeclareStaticRegistration(FCodeWriter& Writer)
     {
-        const eastl::string ConstructFn = Names::ConstructFunction("CClass", Namespace, DisplayName);
+        const std::string ConstructFn = Names::ConstructFunction("CClass", Namespace, DisplayName);
         Writer.Linef("\t{ %s, TEXT(\"/Script\"), TEXT(\"%s\") },",
             ConstructFn.c_str(), DisplayName.c_str());
     }

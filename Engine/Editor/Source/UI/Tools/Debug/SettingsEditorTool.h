@@ -1,7 +1,7 @@
 #pragma once
 #include "UI/Tools/EditorTool.h"
 #include "UI/Properties/PropertyTable.h"
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
 
 namespace Lumina
 {

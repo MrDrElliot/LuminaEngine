@@ -125,9 +125,9 @@ namespace Lumina
         ImGui::SameLine();
         ImGui::SetNextItemWidth(220.0f);
         ImGui::ProgressBar(Fraction, ImVec2(220.0f, 0.0f),
-            FString(FString::CtorSprintf(), "%s / %s",
-                ImGuiX::FormatSize(Stats.ResidentBytes).c_str(),
-                ImGuiX::FormatSize(Stats.BudgetBytes).c_str()).c_str());
+            Format("{} / {}",
+                ImGuiX::FormatSize(Stats.ResidentBytes),
+                ImGuiX::FormatSize(Stats.BudgetBytes)).c_str());
 
         ImGui::SameLine();
         ImGui::TextDisabled("|");

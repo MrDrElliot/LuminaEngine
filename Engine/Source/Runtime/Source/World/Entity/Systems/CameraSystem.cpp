@@ -174,7 +174,7 @@ namespace Lumina
             }
         }
 
-        eastl::sort(Contributions.begin(), Contributions.end(), [](const FVolumeContribution& A, const FVolumeContribution& B)
+        std::sort(Contributions.begin(), Contributions.end(), [](const FVolumeContribution& A, const FVolumeContribution& B)
         {
             return A.Priority < B.Priority;
         });
@@ -217,7 +217,7 @@ namespace Lumina
             MaterialVolumes.push_back({VolEntity, Volume.Priority});
         }
         
-        eastl::sort(MaterialVolumes.begin(), MaterialVolumes.end(), [](const FMaterialVolumeRef& A, const FMaterialVolumeRef& B)
+        std::sort(MaterialVolumes.begin(), MaterialVolumes.end(), [](const FMaterialVolumeRef& A, const FMaterialVolumeRef& B)
         {
             return A.Priority < B.Priority;
         });

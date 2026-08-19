@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Core/Delegates/Delegate.h"
 #include "Core/LuminaMacros.h"
 #include "Platform/GenericPlatform.h"
@@ -69,13 +69,13 @@ namespace Lumina
         using FNativeDelegate = TMulticastDelegate<void, const TPayload&>;
 
         template<typename TFunc>
-        FDelegateHandle AddStatic(TFunc&& Func) { return Native.AddStatic(eastl::forward<TFunc>(Func)); }
+        FDelegateHandle AddStatic(TFunc&& Func) { return Native.AddStatic(std::forward<TFunc>(Func)); }
 
         template<typename TObject, typename TMemFunc>
         FDelegateHandle AddMember(TObject* Object, TMemFunc Method) { return Native.AddMember(Object, Method); }
 
         template<typename TLambda>
-        FDelegateHandle AddLambda(TLambda&& Lambda) { return Native.AddLambda(eastl::forward<TLambda>(Lambda)); }
+        FDelegateHandle AddLambda(TLambda&& Lambda) { return Native.AddLambda(std::forward<TLambda>(Lambda)); }
 
         bool Remove(FDelegateHandle Handle) { return Native.Remove(Handle); }
 
@@ -102,13 +102,13 @@ namespace Lumina
         using FNativeDelegate = TMulticastDelegate<void>;
 
         template<typename TFunc>
-        FDelegateHandle AddStatic(TFunc&& Func) { return Native.AddStatic(eastl::forward<TFunc>(Func)); }
+        FDelegateHandle AddStatic(TFunc&& Func) { return Native.AddStatic(std::forward<TFunc>(Func)); }
 
         template<typename TObject, typename TMemFunc>
         FDelegateHandle AddMember(TObject* Object, TMemFunc Method) { return Native.AddMember(Object, Method); }
 
         template<typename TLambda>
-        FDelegateHandle AddLambda(TLambda&& Lambda) { return Native.AddLambda(eastl::forward<TLambda>(Lambda)); }
+        FDelegateHandle AddLambda(TLambda&& Lambda) { return Native.AddLambda(std::forward<TLambda>(Lambda)); }
 
         bool Remove(FDelegateHandle Handle) { return Native.Remove(Handle); }
 

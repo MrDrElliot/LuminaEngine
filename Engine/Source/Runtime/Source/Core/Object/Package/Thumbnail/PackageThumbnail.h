@@ -1,7 +1,7 @@
 #pragma once
 #include "Core/Templates/LuminaTemplate.h"
 #include "Core/Threading/Atomic.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Core/Serialization/Archiver.h"
 #include "Platform/GenericPlatform.h"
 #include "Renderer/RHITexture.h"

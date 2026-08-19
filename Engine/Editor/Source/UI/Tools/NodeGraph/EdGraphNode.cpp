@@ -8,13 +8,14 @@
 #include "Material/MaterialGraphTypes.h"
 #include "imgui-node-editor/imgui_node_editor.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
 
     static uint32 HashPinID(const FString& NodeName, const FString& PinName, ENodePinDirection Direction)
     {
-        FString Composite = NodeName + "_" + PinName + "_" + eastl::to_string((uint8)Direction);
+        FString Composite = NodeName + "_" + PinName + "_" + Format("{}", (uint8)Direction);
         return Hash::GetHash32(Composite);
     }
     
@@ -134,7 +135,7 @@ namespace Lumina
         uint32 ID = HashPinID(PinHashName, Name, Direction);
         for (uint32 Salt = 1; IsPinIDTaken(ID); ++Salt)
         {
-            ID = HashPinID(PinHashName, Name + "#" + eastl::to_string(Salt), Direction);
+            ID = HashPinID(PinHashName, Name + "#" + Format("{}", Salt), Direction);
         }
         NewPin->PinID = ID;
         NewPin->bInputPin = (Direction == ENodePinDirection::Input);

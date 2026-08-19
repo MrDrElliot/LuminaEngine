@@ -4,7 +4,9 @@
 #include "Nodes/AnimGraphNode_State.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Pair.h"
+#include "Containers/Vector.h"
 #include "Core/Math/Math.h"
 #include "Tools/UI/ImGui/EditorColors.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
@@ -12,7 +14,6 @@
 
 #include <cfloat>
 #include <cstdio>
-#include <EASTL/algorithm.h>
 
 namespace Lumina
 {
@@ -200,7 +201,7 @@ namespace Lumina
             }
         }
 
-        eastl::stable_sort(Out.begin(), Out.end(), [](const CAnimStateTransition* A, const CAnimStateTransition* B)
+        std::stable_sort(Out.begin(), Out.end(), [](const CAnimStateTransition* A, const CAnimStateTransition* B)
         {
             return A->Priority < B->Priority;
         });

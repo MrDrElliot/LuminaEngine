@@ -8,6 +8,7 @@
 #include "UI/Tools/NodeGraph/EdGraphNode.h"
 #include "UI/Tools/NodeGraph/EdNode_Reroute.h"
 #include "Log/Log.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -230,7 +231,7 @@ namespace Lumina
 			case EMaterialInputType::Float3:	return "float3";
 			case EMaterialInputType::Float4:	return "float4";
 			case EMaterialInputType::Texture: return "float4";
-			// A bindless index, not a sampled colour -- the one non-float type the graph can carry.
+			// A bindless index, not a sampled color -- the one non-float type the graph can carry.
 			case EMaterialInputType::TextureHandle: return "uint";
 			default: return "float";
 		}
@@ -338,7 +339,7 @@ namespace Lumina
 
 	FMaterialCompiler::FInputValue FMaterialCompiler::GetTypedInputValue(CMaterialInput* Input, float DefaultValue)
 	{
-		return GetTypedInputValue(Input, eastl::to_string(DefaultValue));
+		return GetTypedInputValue(Input, Format("{}", DefaultValue));
 	}
 
 	CMaterialOutput* FMaterialCompiler::ResolveThroughReroutes(CMaterialOutput* OutputPin)
@@ -739,7 +740,7 @@ namespace Lumina
 			ScalarParameters[ParamID].Value = Value;
 		}
 
-		FString IndexString = eastl::to_string(ScalarParameters[ParamID].Index);
+		FString IndexString = Format("{}", ScalarParameters[ParamID].Index);
 		EmitDedupedParamFetch("float", NodeID, "GetMaterialScalar(MaterialIndex, " + IndexString + ")");
 	}
 
@@ -751,7 +752,7 @@ namespace Lumina
 			VectorParameters[ParamID].Value = FVector4(Value[0], Value[1], 0.0f, 1.0f);
 		}
 
-		FString IndexString = eastl::to_string(VectorParameters[ParamID].Index);
+		FString IndexString = Format("{}", VectorParameters[ParamID].Index);
 		EmitDedupedParamFetch("float2", NodeID, "GetMaterialVec4(MaterialIndex, " + IndexString + ").xy");
 	}
 
@@ -763,7 +764,7 @@ namespace Lumina
 			VectorParameters[ParamID].Value = FVector4(Value[0], Value[1], Value[2], 1.0f);
 		}
 
-		FString IndexString = eastl::to_string(VectorParameters[ParamID].Index);
+		FString IndexString = Format("{}", VectorParameters[ParamID].Index);
 		EmitDedupedParamFetch("float3", NodeID, "GetMaterialVec4(MaterialIndex, " + IndexString + ").xyz");
 	}
 
@@ -775,37 +776,37 @@ namespace Lumina
 			VectorParameters[ParamID].Value = FVector4(Value[0], Value[1], Value[2], Value[3]);
 		}
 
-		FString IndexString = eastl::to_string(VectorParameters[ParamID].Index);
+		FString IndexString = Format("{}", VectorParameters[ParamID].Index);
 		EmitDedupedParamFetch("float4", NodeID, "GetMaterialVec4(MaterialIndex, " + IndexString + ")");
 	}
 
 	void FMaterialCompiler::DefineConstantFloat(const FString& ID, float Value)
 	{
-		FString ValueString = eastl::to_string(Value);
+		FString ValueString = Format("{}", Value);
 		GetActiveChunk().append("float " + ID + " = " + ValueString + ";\n");
 	}
 
 	void FMaterialCompiler::DefineConstantFloat2(const FString& ID, float Value[2])
 	{
-		FString ValueStringX = eastl::to_string(Value[0]);
-		FString ValueStringY = eastl::to_string(Value[1]);
+		FString ValueStringX = Format("{}", Value[0]);
+		FString ValueStringY = Format("{}", Value[1]);
 		GetActiveChunk().append("float2 " + ID + " = float2(" + ValueStringX + ", " + ValueStringY + ");\n");
 	}
 
 	void FMaterialCompiler::DefineConstantFloat3(const FString& ID, float Value[3])
 	{
-		FString ValueStringX = eastl::to_string(Value[0]);
-		FString ValueStringY = eastl::to_string(Value[1]);
-		FString ValueStringZ = eastl::to_string(Value[2]);
+		FString ValueStringX = Format("{}", Value[0]);
+		FString ValueStringY = Format("{}", Value[1]);
+		FString ValueStringZ = Format("{}", Value[2]);
 		GetActiveChunk().append("float3 " + ID + " = float3(" + ValueStringX + ", " + ValueStringY + ", " + ValueStringZ + ");\n");
 	}
 
 	void FMaterialCompiler::DefineConstantFloat4(const FString& ID, float Value[4])
 	{
-		FString ValueStringX = eastl::to_string(Value[0]);
-		FString ValueStringY = eastl::to_string(Value[1]);
-		FString ValueStringZ = eastl::to_string(Value[2]);
-		FString ValueStringW = eastl::to_string(Value[3]);
+		FString ValueStringX = Format("{}", Value[0]);
+		FString ValueStringY = Format("{}", Value[1]);
+		FString ValueStringZ = Format("{}", Value[2]);
+		FString ValueStringW = Format("{}", Value[3]);
 		GetActiveChunk().append("float4 " + ID + " = float4(" + ValueStringX + ", " + ValueStringY + ", " + ValueStringZ + ", " + ValueStringW + ");\n");
 	}
 
@@ -896,7 +897,7 @@ namespace Lumina
 			EdNodeGraph::FError Error;
 			Error.Node = R->GetOwningNode<CMaterialGraphNode>();
 			Error.Name = "Type Mismatch";
-			Error.Description.sprintf("MakeFloat2 requires two Float inputs, got %s and %s",
+			Error.Description = Format("MakeFloat2 requires two Float inputs, got {} and {}",
 				GetVectorType(ValueR.Type).c_str(),
 				GetVectorType(ValueG.Type).c_str());
 
@@ -925,7 +926,7 @@ namespace Lumina
 			EdNodeGraph::FError Error;
 			Error.Node = R->GetOwningNode<CMaterialGraphNode>();
 			Error.Name = "Type Mismatch";
-			Error.Description.sprintf("MakeFloat3 requires three Float inputs, got %s, %s and %s",
+			Error.Description = Format("MakeFloat3 requires three Float inputs, got {}, {} and {}",
 				GetVectorType(ValueR.Type).c_str(),
 				GetVectorType(ValueG.Type).c_str(),
 				GetVectorType(ValueB.Type).c_str());
@@ -957,7 +958,7 @@ namespace Lumina
 			EdNodeGraph::FError Error;
 			Error.Node = R->GetOwningNode<CMaterialGraphNode>();
 			Error.Name = "Type Mismatch";
-			Error.Description.sprintf("MakeFloat4 requires four Float inputs, got %s, %s, %s and %s",
+			Error.Description = Format("MakeFloat4 requires four Float inputs, got {}, {}, {} and {}",
 				GetVectorType(ValueR.Type).c_str(),
 				GetVectorType(ValueG.Type).c_str(),
 				GetVectorType(ValueB.Type).c_str(),
@@ -1067,8 +1068,7 @@ namespace Lumina
 			EdNodeGraph::FError Error;
 			Error.Node = A->GetOwningNode<CMaterialGraphNode>();
 			Error.Name = "Type Mismatch";
-			Error.Description.sprintf(
-				"ComponentMask selects channel(s) '%s' that its input does not have; the input is a %s.",
+			Error.Description = Format("ComponentMask selects channel(s) '{}' that its input does not have; the input is a {}.",
 				Missing.c_str(), GetVectorType(Available).c_str());
 
 			AddError(Error);
@@ -1115,10 +1115,10 @@ namespace Lumina
 
 	int32 FMaterialCompiler::BindTexture(CTexture* Texture)
 	{
-		auto It = eastl::find(BoundImages.begin(), BoundImages.end(), Texture);
+		auto It = std::find(BoundImages.begin(), BoundImages.end(), Texture);
 		if (It != BoundImages.end())
 		{
-			return (int32)eastl::distance(BoundImages.begin(), It);
+			return (int32)std::distance(BoundImages.begin(), It);
 		}
 
 		const int32 Index = (int32)BoundImages.size();
@@ -1188,7 +1188,7 @@ namespace Lumina
 		if (!LaneSamplesWithGradients())
 		{
 			GetActiveChunk().append("float4 " + ID + " = SampleTexture2DLevel(GetMaterialTexture(MaterialIndex, "
-				+ eastl::to_string(Index) + "), " + SamplerStr + ", " + UVStr + ", 0.0);\n");
+				+ Format("{}", Index) + "), " + SamplerStr + ", " + UVStr + ", 0.0);\n");
 			return;
 		}
 
@@ -1197,7 +1197,7 @@ namespace Lumina
 		FString Ddx, Ddy;
 		GetUVGradients(UVValue, Ddx, Ddy);
 
-		// Names the variable that broke the chain, so a captured shader dump localises the unruled node
+		// Names the variable that broke the chain, so a captured shader dump localizes the unruled node
 		// without a rebuild. The same condition is raised to the editor, where an author can act on it.
 		if (UVValue.Deriv != EDerivState::Valid)
 		{
@@ -1206,7 +1206,7 @@ namespace Lumina
 		}
 		WarnUVGradientFallback(UVValue, Node);
 
-		GetActiveChunk().append("float4 " + ID + " = SampleTexture2DAuto(GetMaterialTexture(MaterialIndex, " + eastl::to_string(Index) + "), " + SamplerStr + ", " + UVStr + ", " + Ddx + ", " + Ddy + ");\n");
+		GetActiveChunk().append("float4 " + ID + " = SampleTexture2DAuto(GetMaterialTexture(MaterialIndex, " + Format("{}", Index) + "), " + SamplerStr + ", " + UVStr + ", " + Ddx + ", " + Ddy + ");\n");
 	}
 
 	void FMaterialCompiler::TextureSampleParameter(const FString& ID, const FName& ParamID, CTexture* Texture, CMaterialInput* Input, CEdGraphNode* Node, FStringView SamplerName)
@@ -1229,7 +1229,7 @@ namespace Lumina
 		if (!LaneSamplesWithGradients())
 		{
 			GetActiveChunk().append("float4 " + ID + " = SampleTexture2DLevel(GetMaterialTexture(MaterialIndex, "
-				+ eastl::to_string(Index) + "), " + SamplerStr + ", " + UVStr + ", 0.0);\n");
+				+ Format("{}", Index) + "), " + SamplerStr + ", " + UVStr + ", 0.0);\n");
 			return;
 		}
 
@@ -1238,7 +1238,7 @@ namespace Lumina
 		FString Ddx, Ddy;
 		GetUVGradients(UVValue, Ddx, Ddy);
 
-		// Names the variable that broke the chain, so a captured shader dump localises the unruled node
+		// Names the variable that broke the chain, so a captured shader dump localizes the unruled node
 		// without a rebuild. The same condition is raised to the editor, where an author can act on it.
 		if (UVValue.Deriv != EDerivState::Valid)
 		{
@@ -1247,7 +1247,7 @@ namespace Lumina
 		}
 		WarnUVGradientFallback(UVValue, Node);
 
-		GetActiveChunk().append("float4 " + ID + " = SampleTexture2DAuto(GetMaterialTexture(MaterialIndex, " + eastl::to_string(Index) + "), " + SamplerStr + ", " + UVStr + ", " + Ddx + ", " + Ddy + ");\n");
+		GetActiveChunk().append("float4 " + ID + " = SampleTexture2DAuto(GetMaterialTexture(MaterialIndex, " + Format("{}", Index) + "), " + SamplerStr + ", " + UVStr + ", " + Ddx + ", " + Ddy + ");\n");
 	}
 
 	void FMaterialCompiler::TextureSampleArray(CMaterialGraphNode* Node, int32 TextureIndex, uint32 NumLayers,
@@ -1280,11 +1280,11 @@ namespace Lumina
 
 		// Rounded, not truncated: arithmetic lands on 2.999... as readily as 3.0 and truncating drops a
 		// layer. Clamped because an out-of-range array index is undefined on the GPU, not a wrap.
-		const FString MaxLayer = eastl::to_string(NumLayers > 0 ? NumLayers - 1u : 0u);
+		const FString MaxLayer = Format("{}", NumLayers > 0 ? NumLayers - 1u : 0u);
 		AddRaw("uint " + OwningNode + "_Slice = (uint)clamp(round(" + SliceValue.Value + "), 0.0, "
 			+ MaxLayer + ".0);\n");
 
-		const FString TexStr = "GetMaterialTexture(MaterialIndex, " + eastl::to_string(TextureIndex) + ")";
+		const FString TexStr = "GetMaterialTexture(MaterialIndex, " + Format("{}", TextureIndex) + ")";
 
 		if (!LaneSamplesWithGradients())
 		{
@@ -1312,7 +1312,7 @@ namespace Lumina
 		// Curve constants are emitted as plain literals; matches the formatting the other emitters use.
 		FString CurveFloat(float Value)
 		{
-			return eastl::to_string(Value);
+			return Format("{}", Value);
 		}
 	}
 
@@ -1422,8 +1422,8 @@ namespace Lumina
 		EmitExtrapolation(Curve.PostExtrapolation, false);
 
 		const int32 NumSegments = (int32)Segments.size();
-		FString Coefficients = "float4 " + ID + "_K[" + eastl::to_string(NumSegments) + "] = { ";
-		FString Ranges       = "float2 " + ID + "_R[" + eastl::to_string(NumSegments) + "] = { ";
+		FString Coefficients = "float4 " + ID + "_K[" + Format("{}", NumSegments) + "] = { ";
+		FString Ranges       = "float2 " + ID + "_R[" + Format("{}", NumSegments) + "] = { ";
 
 		for (int32 Index = 0; Index < NumSegments; ++Index)
 		{
@@ -1448,7 +1448,7 @@ namespace Lumina
 		// _L is clamped into the range, so the last segment whose start is behind it is the right one.
 		const FString Loop = ID + "_i";
 		Chunk.append("float " + ID + "_V = " + CurveFloat(FirstValue) + ";\n");
-		Chunk.append("for (int " + Loop + " = 0; " + Loop + " < " + eastl::to_string(NumSegments) + "; ++" + Loop + ")\n");
+		Chunk.append("for (int " + Loop + " = 0; " + Loop + " < " + Format("{}", NumSegments) + "; ++" + Loop + ")\n");
 		Chunk.append("{\n");
 		Chunk.append("\tfloat " + ID + "_U = saturate((" + ID + "_L - " + ID + "_R[" + Loop + "].x) * " + ID + "_R[" + Loop + "].y);\n");
 		Chunk.append("\tfloat " + ID + "_E = " + ID + "_K[" + Loop + "].x + " + ID + "_U * (" + ID + "_K[" + Loop + "].y + " + ID + "_U * (" + ID + "_K[" + Loop + "].z + " + ID + "_U * " + ID + "_K[" + Loop + "].w));\n");
@@ -1700,7 +1700,7 @@ namespace Lumina
 	                                  CMaterialInput* Rotation, float RotationDegrees)
 	{
 		// Connected Tiling pin overrides the inline UTiling/VTiling defaults.
-		FInputValue TilingValue = GetTypedInputValue(Tiling, "float2(" + eastl::to_string(UTiling) + ", " + eastl::to_string(VTiling) + ")");
+		FInputValue TilingValue = GetTypedInputValue(Tiling, "float2(" + Format("{}", UTiling) + ", " + Format("{}", VTiling) + ")");
 
 		FString Scale = TilingValue.Value;
 
@@ -1731,7 +1731,7 @@ namespace Lumina
 		// Rotation is applied AFTER tiling and about the UV origin, matching glTF KHR_texture_transform's
 		// translation * rotation * scale order (the offset is a separate node downstream).
 		const bool bRotationConnected = (Rotation != nullptr && Rotation->HasConnection());
-		FInputValue RotationValue = GetTypedInputValue(Rotation, eastl::to_string(Math::Radians(RotationDegrees)));
+		FInputValue RotationValue = GetTypedInputValue(Rotation, Format("{}", Math::Radians(RotationDegrees)));
 		const bool  bHasRotation  = bRotationConnected || RotationDegrees != 0.0f;
 
 		if (!bHasRotation)
@@ -1803,7 +1803,7 @@ namespace Lumina
 
 		FInputValue UVValue = GetTypedInputValue(UV, "float2(UV0)");
 		FInputValue TimeValue = GetTypedInputValue(Time, "GetTime()");
-		FInputValue SpeedValue = GetTypedInputValue(Speed, "float2(" + eastl::to_string(PannerNode->SpeedX) + ", " + eastl::to_string(PannerNode->SpeedY) + ")");
+		FInputValue SpeedValue = GetTypedInputValue(Speed, "float2(" + Format("{}", PannerNode->SpeedX) + ", " + Format("{}", PannerNode->SpeedY) + ")");
 		const FString OwningNode = UV->GetOwningNode()->GetNodeFullName();
 
 		GetActiveChunk().append("float2 " + OwningNode + " = " + UVValue.Value + " + " + SpeedValue.Value + " * " + TimeValue.Value + ";\n");
@@ -1843,7 +1843,7 @@ namespace Lumina
 			+ OwningNode + "_C.x * " + OwningNode + "_K - " + OwningNode + "_C.y * " + OwningNode + "_S, "
 			+ OwningNode + "_C.x * " + OwningNode + "_S + " + OwningNode + "_C.y * " + OwningNode + "_K) + " + CenterValue.Value + ";\n");
 
-		// A rotation is linear: d(R*(UV - C) + C) = R*dUV, provided the angle and centre are uniform.
+		// A rotation is linear: d(R*(UV - C) + C) = R*dUV, provided the angle and center are uniform.
 		// Reuses the _S/_K sin/cos locals emitted just above.
 		if (UVValue.Deriv == EDerivState::Valid
 		 && RotValue.Deriv == EDerivState::Zero
@@ -1980,7 +1980,7 @@ namespace Lumina
 		FInputValue ShadowSamples  = GetTypedInputValue(Inputs.ShadowSamples, 0.0f);
 		FInputValue ShadowSoftness = GetTypedInputValue(Inputs.ShadowSoftness, 1.0f);
 
-		const FString TexStr = "GetMaterialTexture(MaterialIndex, " + eastl::to_string(HeightTextureIndex) + ")";
+		const FString TexStr = "GetMaterialTexture(MaterialIndex, " + Format("{}", HeightTextureIndex) + ")";
 
 		AddRaw("FParallaxResult " + Prefix + "_R = ParallaxOcclusion(" + TexStr + ", SAMPLER_LINEAR_WRAP, "
 			+ UVStr + ", normalize(GetCameraPosition() - WorldPosition), WorldNormal, WorldTangent, "
@@ -2145,7 +2145,7 @@ namespace Lumina
 		AddRaw("\tfloat3 " + Prefix + "_Start = " + Prefix + "_LP + " + Prefix + "_LN * (" + Prefix + "_Vol.MaxDistance * 0.05);\n");
 
 		AddRaw("\tfloat " + Prefix + "_Vis = DistanceFieldConeOcclusion(" + Prefix + "_Vol, " + Prefix + "_Start, "
-			+ Prefix + "_LN, " + Prefix + "_R, max(" + ConeValue.Value + ", 0.01), " + eastl::to_string(StepCount) + ");\n");
+			+ Prefix + "_LN, " + Prefix + "_R, max(" + ConeValue.Value + ", 0.01), " + Format("{}", StepCount) + ");\n");
 		AddRaw("\t" + OcclusionVar + " = saturate(lerp(1.0, " + Prefix + "_Vis, saturate(" + IntensityValue.Value + ")));\n");
 		AddRaw("}\n");
 	}
@@ -2192,7 +2192,7 @@ namespace Lumina
 			"max(max(" + Prefix + "_Vol.VolumeSize.x, " + Prefix + "_Vol.VolumeSize.y), " + Prefix + "_Vol.VolumeSize.z);\n");
 
 		AddRaw("\t" + ThicknessVar + " = DistanceFieldThickness(" + Prefix + "_Vol, " + Prefix + "_LP, "
-			+ Prefix + "_LN, " + Prefix + "_Max, " + Prefix + "_Scale, " + eastl::to_string(StepCount) + ");\n");
+			+ Prefix + "_LN, " + Prefix + "_Max, " + Prefix + "_Scale, " + Format("{}", StepCount) + ");\n");
 
 		// Normalized against the march distance in WORLD units, so the 0..1 output is directly usable as a
 		// subsurface/transmission mask without the material having to know the mesh's size.
@@ -2263,7 +2263,7 @@ namespace Lumina
 
 		AddRaw("FWindResult " + Prefix + "_W = ComputeWind(" + Prefix + "_P, " + DirectionStr + ", "
 			+ "(" + StrengthValue.Value + "), (" + SpeedValue.Value + "), (" + FrequencyValue.Value + "), "
-			+ "(" + LacunarityValue.Value + "), (" + GainValue.Value + "), " + eastl::to_string(Octaves) + ", "
+			+ "(" + LacunarityValue.Value + "), (" + GainValue.Value + "), " + Format("{}", Octaves) + ", "
 			+ "(" + MaskValue.Value + "), (" + PhaseValue.Value + "), (" + GustinessValue.Value + "), "
 			+ LODWeightStr + ");\n");
 
@@ -2506,7 +2506,7 @@ namespace Lumina
 
 	void FMaterialCompiler::NumericConstant(const FString& ID, float Value)
 	{
-		GetActiveChunk().append("float " + ID + " = " + eastl::to_string(Value) + ";\n");
+		GetActiveChunk().append("float " + ID + " = " + Format("{}", Value) + ";\n");
 	}
 
 	void FMaterialCompiler::CustomPrimitiveData(CMaterialExpression_CustomPrimitiveData* Node, ECustomPrimitiveDataType Type)
@@ -3113,7 +3113,7 @@ namespace Lumina
 		FString TypeStr = GetVectorType(ResultType);
 
 		GetActiveChunk().append("float " + N + "_Diff = (" + XV.Value + ") - (" + YV.Value + ");\n");
-		GetActiveChunk().append(TypeStr + " " + N + " = (abs(" + N + "_Diff) < " + eastl::to_string(Threshold) + ") ? (" + EV.Value + ") : ((" + N + "_Diff > 0.0) ? (" + GV.Value + ") : (" + LV.Value + "));\n");
+		GetActiveChunk().append(TypeStr + " " + N + " = (abs(" + N + "_Diff) < " + Format("{}", Threshold) + ") ? (" + EV.Value + ") : ((" + N + "_Diff > 0.0) ? (" + GV.Value + ") : (" + LV.Value + "));\n");
 		SetOwningOutputType(X, ResultType);
 	}
 

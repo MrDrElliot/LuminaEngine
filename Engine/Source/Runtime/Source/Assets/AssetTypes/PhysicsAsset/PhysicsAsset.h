@@ -3,7 +3,7 @@
 #include "Core/LuminaMacros.h"
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectHandleTyped.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/Name.h"
 #include "Core/Math/Math.h"
 #include "Physics/PhysicsTypes.h"

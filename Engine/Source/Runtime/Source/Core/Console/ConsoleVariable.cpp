@@ -4,6 +4,7 @@
 #include "Core/Assertions/Assert.h"
 #include "Paths/Paths.h"
 #include "Platform/Filesystem/FileHelper.h"
+#include "Containers/StringFormat.h"
 
 
 namespace Lumina
@@ -68,9 +69,9 @@ namespace Lumina
             return false;
         }
 
-        bool bSuccess = eastl::visit([&]<typename T0>(T0&&) -> bool
+        bool bSuccess = visit([&]<typename T0>(T0&&) -> bool
         {
-            using T = eastl::decay_t<T0>;
+            using T = std::decay_t<T0>;
             
             TOptional<T> ParsedValue = ConsoleHelpers::ParseValue<T>(StrValue);
             if (ParsedValue.has_value())
@@ -96,32 +97,32 @@ namespace Lumina
         FConsoleVariable* ConsoleVar = Find(VariableName);
         if (ConsoleVar == nullptr)
         {
-            return eastl::nullopt;
+            return NullOpt;
         }
 
         FString Result;
 
-        bool bSuccess = eastl::visit([&]<typename T0>(T0&& Value) -> bool
+        bool bSuccess = visit([&]<typename T0>(T0&& Value) -> bool
         {
-            using T = eastl::decay_t<T0>;
+            using T = std::decay_t<T0>;
 
-            if constexpr (eastl::is_same_v<T, int>)
+            if constexpr (std::is_same_v<T, int>)
             {
-                Result = FString(eastl::to_string(Value));
+                Result = FString(Format("{}", Value));
             }
-            else if constexpr (eastl::is_same_v<T, float>)
+            else if constexpr (std::is_same_v<T, float>)
             {
-                Result = FString(eastl::to_string(Value));
+                Result = FString(Format("{}", Value));
             }
-            else if constexpr (eastl::is_same_v<T, double>)
+            else if constexpr (std::is_same_v<T, double>)
             {
-                Result = FString(eastl::to_string(Value));
+                Result = FString(Format("{}", Value));
             }
-            else if constexpr (eastl::is_same_v<T, bool>)
+            else if constexpr (std::is_same_v<T, bool>)
             {
                 Result = Value ? "true" : "false";
             }
-            else if constexpr (eastl::is_same_v<T, FString>)
+            else if constexpr (std::is_same_v<T, FString>)
             {
                 Result = Value;
             }
@@ -136,7 +137,7 @@ namespace Lumina
 
         if (!bSuccess)
         {
-            return eastl::nullopt;
+            return NullOpt;
         }
 
         return Result;

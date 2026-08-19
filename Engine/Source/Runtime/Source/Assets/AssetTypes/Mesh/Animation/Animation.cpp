@@ -101,7 +101,7 @@ namespace Lumina
         }
 
         const FResolvedSkeleton* Result = NewSet.get();
-        ResolvedSkeletons.push_back(eastl::move(NewSet));
+        ResolvedSkeletons.push_back(std::move(NewSet));
         ActiveResolvedSkeleton.store(Result, std::memory_order_release);
         return Result;
     }

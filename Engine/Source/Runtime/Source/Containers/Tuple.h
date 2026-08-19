@@ -1,6 +1,6 @@
 #pragma once
 
-#include "EASTL/tuple.h"
+#include <tuple>
 
 template<typename... Ts>
-using TTuple = eastl::tuple<Ts...>;
+using TTuple = std::tuple<Ts...>;

@@ -1,7 +1,7 @@
 #include "ReflectionSpecifiers.h"
 
-#include "EASTL/algorithm.h"
-#include "EASTL/vector.h"
+#include <algorithm>
+#include <vector>
 #include "Reflector/Diagnostics/LRTDiagnostics.h"
 
 namespace Lumina::Reflection
@@ -18,9 +18,9 @@ namespace Lumina::Reflection
 
 #undef LUMINA_SPECIFIER_ROW
 
-        uint32_t EditDistance(const eastl::string& A, const eastl::string& B)
+        uint32_t EditDistance(const std::string& A, const std::string& B)
         {
-            eastl::vector<uint32_t> Row(B.length() + 1);
+            std::vector<uint32_t> Row(B.length() + 1);
             for (uint32_t J = 0; J <= B.length(); ++J)
             {
                 Row[J] = J;
@@ -35,7 +35,7 @@ namespace Lumina::Reflection
                 {
                     const uint32_t Previous = Row[J];
                     const uint32_t Cost = (A[I - 1] == B[J - 1]) ? 0u : 1u;
-                    Row[J] = eastl::min(eastl::min(Row[J] + 1, Row[J - 1] + 1), Diagonal + Cost);
+                    Row[J] = std::min(std::min(Row[J] + 1, Row[J - 1] + 1), Diagonal + Cost);
                     Diagonal = Previous;
                 }
             }
@@ -61,19 +61,19 @@ namespace Lumina::Reflection
         switch (Target)
         {
             case ESpecifierTarget::Reflect:
-                OutCount = (uint32_t)eastl::size(GReflectSpecifiers);
+                OutCount = (uint32_t)std::size(GReflectSpecifiers);
                 return GReflectSpecifiers;
 
             case ESpecifierTarget::Property:
-                OutCount = (uint32_t)eastl::size(GPropertySpecifiers);
+                OutCount = (uint32_t)std::size(GPropertySpecifiers);
                 return GPropertySpecifiers;
 
             case ESpecifierTarget::Function:
-                OutCount = (uint32_t)eastl::size(GFunctionSpecifiers);
+                OutCount = (uint32_t)std::size(GFunctionSpecifiers);
                 return GFunctionSpecifiers;
 
             case ESpecifierTarget::ScriptExport:
-                OutCount = (uint32_t)eastl::size(GScriptExportSpecifiers);
+                OutCount = (uint32_t)std::size(GScriptExportSpecifiers);
                 return GScriptExportSpecifiers;
 
             default:
@@ -82,7 +82,7 @@ namespace Lumina::Reflection
         }
     }
 
-    const FSpecifierInfo* FindSpecifier(ESpecifierTarget Target, const eastl::string& Key)
+    const FSpecifierInfo* FindSpecifier(ESpecifierTarget Target, const std::string& Key)
     {
         uint32_t Count = 0;
         const FSpecifierInfo* Table = GetSpecifiers(Target, Count);
@@ -98,7 +98,7 @@ namespace Lumina::Reflection
         return nullptr;
     }
 
-    const FSpecifierInfo* SuggestSpecifier(ESpecifierTarget Target, const eastl::string& Key)
+    const FSpecifierInfo* SuggestSpecifier(ESpecifierTarget Target, const std::string& Key)
     {
         uint32_t Count = 0;
         const FSpecifierInfo* Table = GetSpecifiers(Target, Count);
@@ -111,7 +111,7 @@ namespace Lumina::Reflection
 
         for (uint32_t Index = 0; Index < Count; ++Index)
         {
-            const uint32_t Distance = EditDistance(Key, eastl::string(Table[Index].Name));
+            const uint32_t Distance = EditDistance(Key, std::string(Table[Index].Name));
             if (Distance < BestDistance)
             {
                 BestDistance = Distance;
@@ -122,7 +122,7 @@ namespace Lumina::Reflection
         return BestDistance <= MaxDistance ? Best : nullptr;
     }
 
-    void ValidateSpecifiers(const CXCursor& Cursor, ESpecifierTarget Target, const eastl::vector<FMetadataPair>& Metadata)
+    void ValidateSpecifiers(const CXCursor& Cursor, ESpecifierTarget Target, const std::vector<FMetadataPair>& Metadata)
     {
         const char* MacroName = SpecifierTargetToString(Target);
 

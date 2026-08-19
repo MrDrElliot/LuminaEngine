@@ -13,18 +13,18 @@ namespace Lumina
 
         const char* GetTypeName() override { return "Delegate"; }
         const char* GetPropertyParamType() const override { return "FDelegatePropertyParams"; }
-        eastl::string_view GetLuaType() override { return "function"; }
+        std::string_view GetLuaType() override { return "function"; }
 
         void AppendDefinition(Reflection::FCodeWriter& Writer) const override;
 
         bool CanDeclareCrossModuleReferences() const override { return bHasPayload; }
-        void DeclareCrossModuleReference(const eastl::string& API, Reflection::FCodeWriter& Writer) override
+        void DeclareCrossModuleReference(const std::string& API, Reflection::FCodeWriter& Writer) override
         {
             if (!bHasPayload)
             {
                 return;
             }
-            const eastl::string Friendly = ClangUtils::MakeCodeFriendlyNamespace(TypeName);
+            const std::string Friendly = ClangUtils::MakeCodeFriendlyNamespace(TypeName);
             Reflection::Names::EmitGuardedCrossModuleDecl(Writer, API, "CStruct", "Construct_CStruct_" + Friendly);
         }
 

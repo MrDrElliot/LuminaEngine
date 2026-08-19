@@ -7,10 +7,11 @@
 #include "Memory/Memory.h"
 #include "Memory/MemoryConcurrentQueue.h"
 #include "Platform/Process/PlatformProcess.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/BoundedMPMCQueue.h"
 #include "Core/Diagnostics/HangWatchdog.h"
 #include "Core/LuminaMacros.h"
+#include "Core/Math/Math.h"
 #include "Core/Profiler/Profile.h"
 #include "Log/Log.h"
 

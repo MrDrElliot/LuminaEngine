@@ -1,9 +1,9 @@
 #include "GameplayTagPropertyCustomization.h"
 
-#include <EASTL/algorithm.h>
 
 #include "imgui.h"
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "Config/Config.h"
 #include "Core/Math/Hash/Hash.h"
@@ -132,7 +132,7 @@ namespace Lumina
                 FGameplayTagRegistry::Get().RequestTag(FStringView(NewTag.c_str(), NewTag.size()));
 
                 CGameplayTagsSettings* Settings = GetMutableDefault<CGameplayTagsSettings>();
-                if (Settings != nullptr && eastl::find(Settings->Tags.begin(), Settings->Tags.end(), NewTag) == Settings->Tags.end())
+                if (Settings != nullptr && std::find(Settings->Tags.begin(), Settings->Tags.end(), NewTag) == Settings->Tags.end())
                 {
                     Settings->Tags.push_back(NewTag);
                     if (GConfig != nullptr)
@@ -158,7 +158,7 @@ namespace Lumina
 
         TVector<FString> Tags;
         FGameplayTagRegistry::Get().GetAllTags(Tags);
-        eastl::sort(Tags.begin(), Tags.end());
+        std::sort(Tags.begin(), Tags.end());
 
         // A path that is the ancestor of another tag is a "category" (folder); the rest are leaves.
         THashSet<FString> CategoryPaths;

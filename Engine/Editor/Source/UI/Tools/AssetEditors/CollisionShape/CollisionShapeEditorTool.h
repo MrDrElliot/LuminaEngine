@@ -5,7 +5,7 @@
 #include "ImGuizmo.h"
 
 #include "Assets/AssetTypes/Physics/CollisionShape.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Core/Math/Math.h"
 #include "Memory/SmartPtr.h"
 #include "UI/Tools/AssetEditors/AssetEditorTool.h"

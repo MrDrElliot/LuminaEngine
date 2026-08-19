@@ -4,7 +4,6 @@
 #include <imgui.h>
 
 #include "Assets/AssetTypes/Animation/BlendSpace/BlendSpace.h"
-#include "Containers/Array.h"
 #include "Core/Math/Math.h"
 #include "Memory/SmartPtr.h"
 #include "UI/Tools/AssetEditors/AssetEditorTool.h"

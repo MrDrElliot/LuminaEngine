@@ -3,7 +3,9 @@
 #include "Renderer/ShaderHandle.h"
 
 #include "MaterialInterface.h"
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Span.h"
+#include "Containers/Vector.h"
 #include "Core/Threading/Thread.h"
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectHandleTyped.h"

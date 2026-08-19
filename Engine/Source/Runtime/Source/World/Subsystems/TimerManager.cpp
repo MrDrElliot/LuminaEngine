@@ -16,14 +16,14 @@ namespace Lumina
     FTimerHandle FTimerManager::SetTimer(float Rate, FTimerCallback Callback, bool bLoop, float FirstDelay)
     {
         FTimerHandle Out;
-        Out.Handle = CreateTimer(Rate, bLoop, FirstDelay, entt::null, eastl::move(Callback));
+        Out.Handle = CreateTimer(Rate, bLoop, FirstDelay, entt::null, std::move(Callback));
         return Out;
     }
 
     FTimerHandle FTimerManager::SetTimerForEntity(entt::entity Owner, float Rate, FTimerCallback Callback, bool bLoop, float FirstDelay)
     {
         FTimerHandle Out;
-        Out.Handle = CreateTimer(Rate, bLoop, FirstDelay, Owner, eastl::move(Callback));
+        Out.Handle = CreateTimer(Rate, bLoop, FirstDelay, Owner, std::move(Callback));
         return Out;
     }
 
@@ -174,7 +174,7 @@ namespace Lumina
             }
 
             // Swap-out callbacks so re-entrant SetTimer/ClearTimer from within the callback is well-defined.
-            FTimerCallback NativeCallback = eastl::move(Timer.NativeCallback);
+            FTimerCallback NativeCallback = std::move(Timer.NativeCallback);
             const bool     bLoop          = Timer.bLoop;
             const float    Rate           = Timer.Rate;
 
@@ -193,7 +193,7 @@ namespace Lumina
                 FTimer& Live = Registry.get<FTimer>(Entity);
                 if (!Live.bPendingDestroy)
                 {
-                    Live.NativeCallback = eastl::move(NativeCallback);
+                    Live.NativeCallback = std::move(NativeCallback);
                     Live.Remaining     += Rate;
                     if (Live.Remaining <= 0.0f)
                     {
@@ -231,7 +231,7 @@ namespace Lumina
         Timer.Remaining      = (FirstDelay >= 0.0f) ? FirstDelay : Rate;
         Timer.bLoop          = bLoop;
         Timer.Owner          = Owner;
-        Timer.NativeCallback = eastl::move(NativeCallback);
+        Timer.NativeCallback = std::move(NativeCallback);
         return Entity;
     }
 }

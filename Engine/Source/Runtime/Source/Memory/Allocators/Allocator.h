@@ -2,7 +2,8 @@
 
 #include "Core/Assertions/Assert.h"
 #include "Memory/Memory.h"
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Vector.h"
 
 namespace Lumina
 {
@@ -137,7 +138,7 @@ namespace Lumina
 
         void* allocate(size_t n, int flags = 0)
         {
-            return Allocate(n, EASTL_ALLOCATOR_MIN_ALIGNMENT);
+            return Allocate(n, DEFAULT_ALIGNMENT);
         }
         
         void* allocate(size_t n, size_t alignment, size_t offset, int flags = 0)
@@ -301,49 +302,12 @@ namespace Lumina
     };
 
 
-    /** EASTL adapter; copyable handle to an external FBlockLinearAllocator. Containers must not outlive the arena. */
-    class FFrameArenaAllocator
-    {
-    public:
-        FFrameArenaAllocator(const char* InName = "frame") noexcept
-            : Arena(nullptr), Name(InName) {}
-
-        explicit FFrameArenaAllocator(FBlockLinearAllocator* InArena, const char* InName = "frame") noexcept
-            : Arena(InArena), Name(InName) {}
-
-        void* allocate(size_t n, int /*flags*/ = 0)
-        {
-            ASSERT(Arena != nullptr);
-            return Arena->Allocate(n, 16);
-        }
-
-        void* allocate(size_t n, size_t alignment, size_t /*offset*/, int /*flags*/ = 0)
-        {
-            ASSERT(Arena != nullptr);
-            return Arena->Allocate(n, alignment);
-        }
-
-        void deallocate(void* /*p*/, size_t /*n*/) noexcept {}
-
-        const char* get_name() const           { return Name; }
-        void        set_name(const char* InN)  { Name = InN; }
-
-        FBlockLinearAllocator* GetArena() const { return Arena; }
-
-        bool operator==(const FFrameArenaAllocator& Other) const { return Arena == Other.Arena; }
-        bool operator!=(const FFrameArenaAllocator& Other) const { return Arena != Other.Arena; }
-
-    private:
-        FBlockLinearAllocator* Arena;
-        const char*            Name;
-    };
-
     // Frame-arena-backed containers. Arena must outlive the container and is bulk-reset (no per-item free).
     template <typename T>
-    using TFrameVector = TVector<T, FFrameArenaAllocator>;
+    using TFrameVector = Containers::TVector<T, 0, FFrameAllocator>;
 
     template <typename K, typename V>
-    using TFrameHashMap = THashMap<K, V, eastl::hash<K>, eastl::equal_to<K>, FFrameArenaAllocator>;
+    using TFrameHashMap = Containers::THashMap<K, V, Lumina::Containers::FDefaultHash, Containers::FDefaultEqual, FFrameAllocator>;
 
 
     // Per-thread scratch stack; reclaimed only by FMemMark scopes (or thread exit), never per-allocation.
@@ -412,7 +376,6 @@ namespace Lumina
         }
         
         FBlockLinearAllocator& GetAllocator() const { return Arena; }
-        FFrameArenaAllocator   Eastl(const char* Name = "scratch") const { return FFrameArenaAllocator(&Arena, Name); }
 
     private:
 
@@ -420,10 +383,10 @@ namespace Lumina
         FBlockLinearAllocator::FMark Mark;
     };
 
-    // Containers backed by the active FMemMark scope. Construct with Mark.Eastl().
+    // Containers backed by the calling thread's scratch arena, reclaimed by the enclosing FMemMark.
     template <typename T>
-    using TScratchVector = TVector<T, FFrameArenaAllocator>;
+    using TScratchVector = Containers::TVector<T, 0, FScratchAllocator>;
 
     template <typename K, typename V>
-    using TScratchHashMap = THashMap<K, V, eastl::hash<K>, eastl::equal_to<K>, FFrameArenaAllocator>;
+    using TScratchHashMap = Containers::THashMap<K, V, Lumina::Containers::FDefaultHash, Containers::FDefaultEqual, FScratchAllocator>;
 }

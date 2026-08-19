@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Assets/AssetRegistry/CookRoot.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/Function.h"
 #include "Containers/String.h"
 

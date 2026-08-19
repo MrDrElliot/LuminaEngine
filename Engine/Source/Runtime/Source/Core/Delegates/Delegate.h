@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/Function.h"
 #include "Core/Assertions/Assert.h"
 #include "Core/Threading/Atomic.h"
@@ -28,11 +28,11 @@ namespace Lumina
         TBaseDelegate() = default;
         
         template<typename TFunc>
-        requires(eastl::is_invocable_r_v<R, TFunc, TArgs...>)
+        requires(std::is_invocable_r_v<R, TFunc, TArgs...>)
         static TBaseDelegate CreateStatic(TFunc&& Func)
         {
             TBaseDelegate Delegate;
-            Delegate.Func = eastl::forward<TFunc>(Func);
+            Delegate.Func = std::forward<TFunc>(Func);
             return Delegate;
         }
 
@@ -42,17 +42,17 @@ namespace Lumina
             TBaseDelegate Delegate;
             Delegate.Func = [Object, Method](TArgs... args) -> R
             {
-                return (Object->*Method)(eastl::forward<TArgs>(args)...);
+                return (Object->*Method)(std::forward<TArgs>(args)...);
             };
             return Delegate;
         }
 
         template<typename TLambda>
-        requires(eastl::is_invocable_r_v<R, TLambda, TArgs...>)
+        requires(std::is_invocable_r_v<R, TLambda, TArgs...>)
         static TBaseDelegate CreateLambda(TLambda&& Lambda)
         {
             TBaseDelegate Delegate;
-            Delegate.Func = eastl::forward<TLambda>(Lambda);
+            Delegate.Func = std::forward<TLambda>(Lambda);
             return Delegate;
         }
 
@@ -63,26 +63,26 @@ namespace Lumina
         {
             ASSERT(Func);
 
-            if constexpr (eastl::is_void_v<R>)
+            if constexpr (std::is_void_v<R>)
             {
-                Func(eastl::forward<TCallArgs>(Args)...);
+                Func(std::forward<TCallArgs>(Args)...);
                 return;
             }
             else
             {
-                return Func(eastl::forward<TCallArgs>(Args)...);
+                return Func(std::forward<TCallArgs>(Args)...);
             }
         }
 
         // Calls the bound function if any. Only valid for void-returning delegates.
         template<typename... TCallArgs>
-        bool ExecuteIfBound(TCallArgs&&... Args) const requires(eastl::is_void_v<R>)
+        bool ExecuteIfBound(TCallArgs&&... Args) const requires(std::is_void_v<R>)
         {
             if (!Func)
             {
                 return false;
             }
-            Func(eastl::forward<TCallArgs>(Args)...);
+            Func(std::forward<TCallArgs>(Args)...);
             return true;
         }
 
@@ -103,7 +103,7 @@ namespace Lumina
         template<typename TFunc>
         NODISCARD FDelegateHandle AddStatic(TFunc&& Func)
         {
-            return Add(FBase::CreateStatic(eastl::forward<TFunc>(Func)));
+            return Add(FBase::CreateStatic(std::forward<TFunc>(Func)));
         }
 
         template<typename TObject, typename TMemFunc>
@@ -115,7 +115,7 @@ namespace Lumina
         template<typename TLambda>
         NODISCARD FDelegateHandle AddLambda(TLambda&& Lambda)
         {
-            return Add(FBase::CreateLambda(eastl::forward<TLambda>(Lambda)));
+            return Add(FBase::CreateLambda(std::forward<TLambda>(Lambda)));
         }
 
         bool Remove(FDelegateHandle Handle)
@@ -185,7 +185,7 @@ namespace Lumina
         template<typename... CallArgs>
         void BroadcastAndClear(CallArgs&&... args)
         {
-            Broadcast(eastl::forward<CallArgs>(args)...);
+            Broadcast(std::forward<CallArgs>(args)...);
             Clear();
         }
 
@@ -213,7 +213,7 @@ namespace Lumina
         FDelegateHandle Add(FBase&& Delegate)
         {
             const FDelegateHandle Handle = GenerateHandle();
-            InvocationList.push_back({Handle, eastl::move(Delegate)});
+            InvocationList.push_back({Handle, std::move(Delegate)});
             return Handle;
         }
 
@@ -239,7 +239,7 @@ namespace Lumina
                     {
                         if (Write != Read)
                         {
-                            InvocationList[Write] = eastl::move(InvocationList[Read]);
+                            InvocationList[Write] = std::move(InvocationList[Read]);
                         }
                         ++Write;
                     }

@@ -2,7 +2,7 @@
 
 #include "Assets/AssetRegistry/AssetData.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectCore.h"
 #include "Scripting/ScriptDataStruct.h"
@@ -36,7 +36,7 @@ namespace Lumina
                 return DataClass != nullptr && DataClass->IsChildOf(CDataTable::StaticClass());
             });
 
-            eastl::sort(Assets.begin(), Assets.end(), [](const FAssetData* A, const FAssetData* B)
+            std::sort(Assets.begin(), Assets.end(), [](const FAssetData* A, const FAssetData* B)
             {
                 return strcmp(A->AssetName.c_str(), B->AssetName.c_str()) < 0;
             });

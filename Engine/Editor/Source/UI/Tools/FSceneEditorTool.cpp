@@ -14,7 +14,6 @@
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/Package/Package.h"
-#include "EASTL/sort.h"
 #include "Input/InputViewport.h"
 #include "Renderer/ViewVolume.h"
 #include "World/Entity/Components/CameraComponent.h"
@@ -45,6 +44,7 @@
 #include "World/Entity/EntityUtils.h"
 #include "World/World.h"
 #include "World/Entity/Components/LightComponent.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -720,7 +720,7 @@ namespace Lumina
                 Pending.push_back({ Component, Struct, Struct, Struct->MakeDisplayName().c_str(), Move(Others) });
             });
 
-            eastl::sort(Pending.begin(), Pending.end(), [&](const FPendingRow& LHS, const FPendingRow& RHS)
+            std::sort(Pending.begin(), Pending.end(), [&](const FPendingRow& LHS, const FPendingRow& RHS)
             {
                 // Name first, Transform second, everything else alphabetical.
                 auto Priority = [](const FPendingRow& Row) -> uint32
@@ -928,7 +928,7 @@ namespace Lumina
         {
             Name.append(LE_ICON_CUBE).append(" ");
         }
-        Name.append(NameComponent.Name.c_str()).append(" (").append_convert(eastl::to_string(entt::to_integral(Entity)) + ")");
+        Name.append(NameComponent.Name.c_str()).append(" (").append(Format("{}", entt::to_integral(Entity)) + ")");
 
         FTreeNodeID ItemEntity = OutlinerListView.CreateNode(ParentNode, FStringView(Name.data(), Name.length()));
         EntityToTreeNode[Entity] = ItemEntity;
@@ -1009,15 +1009,15 @@ namespace Lumina
 
         if (bIsLockedPrefabChild)
         {
-            Display.TooltipSubtitle = FString("Prefab child #" + eastl::to_string(entt::to_integral(Entity)) + ", hierarchy locked");
+            Display.TooltipSubtitle = FString("Prefab child #" + Format("{}", entt::to_integral(Entity)) + ", hierarchy locked");
         }
         else if (bIsPrefabInstanceRoot)
         {
-            Display.TooltipSubtitle = FString("Prefab instance #" + eastl::to_string(entt::to_integral(Entity)));
+            Display.TooltipSubtitle = FString("Prefab instance #" + Format("{}", entt::to_integral(Entity)));
         }
         else
         {
-            Display.TooltipSubtitle = FString("Entity #" + eastl::to_string(entt::to_integral(Entity)));
+            Display.TooltipSubtitle = FString("Entity #" + Format("{}", entt::to_integral(Entity)));
         }
 
         Display.TooltipChipHeader = "COMPONENTS";
@@ -1031,12 +1031,12 @@ namespace Lumina
                 if (CStruct* StructType = Resolved.cast<CStruct*>())
                 {
                     Chip += StructType->MakeDisplayName().c_str();
-                    Display.TooltipChips.emplace_back(eastl::move(Chip));
+                    Display.TooltipChips.emplace_back(std::move(Chip));
                     return;
                 }
             }
             Chip += Meta.name();
-            Display.TooltipChips.emplace_back(eastl::move(Chip));
+            Display.TooltipChips.emplace_back(std::move(Chip));
         });
         if (Display.TooltipChips.empty())
         {
@@ -1214,7 +1214,7 @@ namespace Lumina
         }
 
         RemoveEntityFromOutliner(Entity);
-        PendingOutlinerAdds.erase(eastl::remove(PendingOutlinerAdds.begin(), PendingOutlinerAdds.end(), Entity), PendingOutlinerAdds.end());
+        PendingOutlinerAdds.erase(std::remove(PendingOutlinerAdds.begin(), PendingOutlinerAdds.end(), Entity), PendingOutlinerAdds.end());
 
         // Skipped during a restore, which recreates every entity and reloads the table from the snapshot.
         if (!bRestoringTransaction)
@@ -1336,7 +1336,7 @@ namespace Lumina
             if (Suffix > 1)
             {
                 Candidate += " ";
-                Candidate += eastl::to_string(Suffix).c_str();
+                Candidate += Format("{}", Suffix).c_str();
             }
 
             const FName CandidateName(Candidate.c_str());
@@ -1395,7 +1395,7 @@ namespace Lumina
             Ordered.push_back(&Folder);
         }
 
-        eastl::sort(Ordered.begin(), Ordered.end(), [Folders](const FSceneFolder* LHS, const FSceneFolder* RHS)
+        std::sort(Ordered.begin(), Ordered.end(), [Folders](const FSceneFolder* LHS, const FSceneFolder* RHS)
         {
             const int32 LHSDepth = GetFolderDepth(*Folders, LHS->ID);
             const int32 RHSDepth = GetFolderDepth(*Folders, RHS->ID);
@@ -1430,7 +1430,7 @@ namespace Lumina
             Display.bAllowRenaming = true;
             Display.bShowDisabledIcon = true;
             Display.TooltipTitle = FString(LE_ICON_FOLDER " ") + Folder->Name.c_str();
-            Display.TooltipSubtitle = "Outliner folder, organisation only";
+            Display.TooltipSubtitle = "Outliner folder, organization only";
             Display.bTooltipBuilt = true;
 
             for (uint32 Handle : Folder->Entities)
@@ -2108,7 +2108,7 @@ namespace Lumina
             Header.append("  ");
             Header.append(Label);
             Header.append("  (");
-            Header.append(eastl::to_string(Count).c_str());
+            Header.append(Format("{}", Count).c_str());
             Header.append(")");
 
             ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::SectionHeader());
@@ -2209,7 +2209,7 @@ namespace Lumina
             FindOrAddCategory(CategoryName).Entries.push_back(NewEntry);
         }
 
-        eastl::sort(Categories.begin(), Categories.end(), [](const FComponentCategory& LHS, const FComponentCategory& RHS)
+        std::sort(Categories.begin(), Categories.end(), [](const FComponentCategory& LHS, const FComponentCategory& RHS)
         {
             // Push "General" to the bottom so categorized buckets surface first.
             const bool bLhsGeneral = (LHS.Name == DefaultCategoryName);
@@ -2233,7 +2233,7 @@ namespace Lumina
             {
                 return E.Struct->GetName().ToString();
             };
-            eastl::sort(Category.Entries.begin(), Category.Entries.end(), [&](const FComponentEntry& LHS, const FComponentEntry& RHS)
+            std::sort(Category.Entries.begin(), Category.Entries.end(), [&](const FComponentEntry& LHS, const FComponentEntry& RHS)
             {
                 return EntryName(LHS) < EntryName(RHS);
             });
@@ -2802,7 +2802,7 @@ namespace Lumina
         FEntityRegistry& Registry = GetSceneRegistry();
 
         // Resolve which component storages actually have a visualizer ONCE per frame.
-        TFixedVector<eastl::pair<entt::sparse_set*, CComponentVisualizer*>, 16> VisualizerStorages;
+        TFixedVector<TPair<entt::sparse_set*, CComponentVisualizer*>, 16> VisualizerStorages;
         for (auto&& [ID, Storage] : Registry.storage())
         {
             if (entt::meta_type MetaType = entt::resolve(Storage.info()))
@@ -2882,7 +2882,7 @@ namespace Lumina
         // its data and its layout. Nothing broadcasts that, so the generation is compared here rather
         // than trusting an invalidation that no one sends.
         // A prefab refresh is the same hazard: it removes and re-emplaces components (entt's swap-and-pop
-        // relocates a pool's last element into the freed slot, so even an untouched neighbour's row can end
+        // relocates a pool's last element into the freed slot, so even an untouched neighbor's row can end
         // up aliasing someone else's component) and a re-capture replaces the whole prefab registry the
         // reset-to-prefab baselines point into.
         const int32  ScriptGeneration = DotNet::GetScriptGeneration();
@@ -2972,7 +2972,7 @@ namespace Lumina
                     FFixedString Label;
                     Label.append(LE_ICON_CUBE).append(" ")
                         .append(NameComponent.Name.c_str())
-                        .append_convert(FString(" - (" + eastl::to_string(entt::to_integral(Entity)) + ")"));
+                        .append(FString(" - (" + Format("{}", entt::to_integral(Entity)) + ")"));
                     OutlinerListView.Get<FTreeNodeDisplay>(It->second).DisplayName.assign(Label.data(), Label.length());
                 }
                 return true;
@@ -2994,7 +2994,7 @@ namespace Lumina
         const bool bMultiSelect = SelectedEntities.size() > 1 && IsEntitySelected(Entity);
 
         SNameComponent* NameComponent = GetSceneRegistry().try_get<SNameComponent>(Entity);
-        FName EntityName = NameComponent ? NameComponent->Name : eastl::to_string((uint32)Entity);
+        FName EntityName = NameComponent ? NameComponent->Name : Format("{}", (uint32)Entity);
 
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 4.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f, 6.0f));
@@ -3232,7 +3232,7 @@ namespace Lumina
                         ImGui::TableNextRow();
                         ImGui::TableNextColumn();
 
-                        auto It = eastl::find(EntityFilterState.ComponentFilters.begin(),
+                        auto It = std::find(EntityFilterState.ComponentFilters.begin(),
                             EntityFilterState.ComponentFilters.end(), StructType->GetName());
 
                         bool bIsFiltered = (It != EntityFilterState.ComponentFilters.end());
@@ -3450,7 +3450,7 @@ namespace Lumina
                             }
                         }
 
-                        eastl::sort(FilteredPrefabs.begin(), FilteredPrefabs.end(), [](FAssetData* LHS, FAssetData* RHS)
+                        std::sort(FilteredPrefabs.begin(), FilteredPrefabs.end(), [](FAssetData* LHS, FAssetData* RHS)
                         {
                             return LHS->AssetName.ToString() < RHS->AssetName.ToString();
                         });
@@ -3558,7 +3558,7 @@ namespace Lumina
                 entt::meta_type       PickedMetaType;
                 CStruct*              PickedStruct = nullptr;
 
-                // Resolved before the list is drawn so it can grey out what these targets already have.
+                // Resolved before the list is drawn so it can gray out what these targets already have.
                 TVector<entt::entity> Targets = GetComponentEditTargets(Entity);
 
                 if (DrawAddableComponentList(AddEntityComponentFilter, Targets, PickedMetaType, PickedStruct))

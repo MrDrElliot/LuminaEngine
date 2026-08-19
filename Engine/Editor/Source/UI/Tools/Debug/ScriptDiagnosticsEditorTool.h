@@ -1,7 +1,7 @@
 #pragma once
 
 #include "UI/Tools/EditorTool.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Scripting/DotNet/DotNetHost.h"
 
 namespace Lumina

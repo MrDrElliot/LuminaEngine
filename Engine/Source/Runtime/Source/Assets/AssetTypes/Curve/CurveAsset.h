@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Object/ObjectMacros.h"
@@ -9,7 +9,7 @@
 namespace Lumina
 {
     /** How the segment leaving a key is interpolated. Cubic recomputes its tangents from the
-     *  neighbours (Catmull-Rom); CubicUser keeps whatever the curve editor authored. */
+     *  neighbors (Catmull-Rom); CubicUser keeps whatever the curve editor authored. */
     REFLECT()
     enum class ECurveInterpMode : uint8
     {

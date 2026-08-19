@@ -11,7 +11,7 @@ namespace Lumina
         static FFixedString Normalize(FStringView Raw)
         {
             FFixedString String(Raw.begin(), Raw.end());
-            String.make_lower();
+            String.ToLower();
             return Move(String);
         }
     }
@@ -81,13 +81,13 @@ namespace Lumina
     TOptional<FFixedString> FCommandLine::Get(const FString& Name) const
     {
         auto it = Args.find(Detail::Normalize(Name));
-        return it != Args.end() ? TOptional(it->second) : eastl::nullopt;
+        return it != Args.end() ? TOptional(it->second) : NullOpt;
     }
 
     TOptional<int> FCommandLine::GetInt(const FString& name) const
     {
         auto it = Args.find(Detail::Normalize(name));
-        return it != Args.end() ? TOptional(std::stoi(it->second.c_str())) : eastl::nullopt;
+        return it != Args.end() ? TOptional(std::stoi(it->second.c_str())) : NullOpt;
     }
 
     TOptional<bool> FCommandLine::GetBool(const FString& name) const
@@ -95,7 +95,7 @@ namespace Lumina
         auto it = Args.find(Detail::Normalize(name));
         if (it == Args.end())
         {
-            return eastl::nullopt;
+            return NullOpt;
         }
     
         const FFixedString& Val = it->second;

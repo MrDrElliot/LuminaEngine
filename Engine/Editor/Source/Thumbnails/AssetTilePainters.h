@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Containers/Function.h"
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
 #include "imgui.h"
 
 namespace Lumina
@@ -11,7 +11,7 @@ namespace Lumina
 
     /** Paints an asset's own content directly into a content-browser tile.
      *
-     *  For assets whose value IS a shape or a swatch rather than a 3D view -- a curve, a gradient, a colour
+     *  For assets whose value IS a shape or a swatch rather than a 3D view -- a curve, a gradient, a color
      *  -- a rendered world thumbnail is the wrong tool. It costs a scene capture, a GPU readback and a cache
      *  entry to produce a blurry 512px bitmap of something a handful of draw-list calls draw sharper, at
      *  whatever size the tile happens to be, and always in sync with the asset (no cache to invalidate when

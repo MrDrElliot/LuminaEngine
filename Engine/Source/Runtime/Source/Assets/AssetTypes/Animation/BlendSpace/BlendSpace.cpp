@@ -92,7 +92,7 @@ namespace Lumina
             SortedOrder.push_back(i);
         }
 
-        eastl::sort(SortedOrder.begin(), SortedOrder.end(), [this](int32 A, int32 B)
+        std::sort(SortedOrder.begin(), SortedOrder.end(), [this](int32 A, int32 B)
         {
             return Samples[A].Position.x < Samples[B].Position.x;
         });
@@ -121,7 +121,7 @@ namespace Lumina
         Working.push_back({ Super0, Super0 + 1, Super0 + 2 });
 
         TVector<FBlendSpaceTriangle> Bad;
-        TVector<eastl::pair<int32, int32>> Edges;
+        TVector<TPair<int32, int32>> Edges;
 
         for (int32 PointIndex = 0; PointIndex < NumSamples; ++PointIndex)
         {
@@ -142,14 +142,14 @@ namespace Lumina
             Edges.clear();
             for (const FBlendSpaceTriangle& Tri : Bad)
             {
-                const eastl::pair<int32, int32> TriEdges[3] =
+                const TPair<int32, int32> TriEdges[3] =
                 {
                     { Math::Min(Tri.A, Tri.B), Math::Max(Tri.A, Tri.B) },
                     { Math::Min(Tri.B, Tri.C), Math::Max(Tri.B, Tri.C) },
                     { Math::Min(Tri.C, Tri.A), Math::Max(Tri.C, Tri.A) },
                 };
 
-                for (const eastl::pair<int32, int32>& Edge : TriEdges)
+                for (const TPair<int32, int32>& Edge : TriEdges)
                 {
                     bool bShared = false;
                     for (int32 e = (int32)Edges.size() - 1; e >= 0; --e)
@@ -169,7 +169,7 @@ namespace Lumina
                 }
             }
 
-            for (const eastl::pair<int32, int32>& Edge : Edges)
+            for (const TPair<int32, int32>& Edge : Edges)
             {
                 Working.push_back({ Edge.first, Edge.second, PointIndex });
             }

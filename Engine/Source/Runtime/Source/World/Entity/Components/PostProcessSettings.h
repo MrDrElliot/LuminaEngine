@@ -68,11 +68,11 @@ namespace Lumina
         PROPERTY(Editable, Category = "Post Process|White Balance", ClampMin = -1.0f, ClampMax = 1.0f)
         float Tint = 0.0f;
 
-        /** Contrast around mid-grey (0.18); 1.0 = no change. */
+        /** Contrast around mid-gray (0.18); 1.0 = no change. */
         PROPERTY(Editable, Category = "Post Process|Tone", ClampMin = 0.0f, ClampMax = 2.0f)
         float Contrast = 1.0f;
 
-        /** 0 = greyscale, 1 = unchanged. Rec.709 luma. */
+        /** 0 = grayscale, 1 = unchanged. Rec.709 luma. */
         PROPERTY(Editable, Category = "Post Process|Tone", ClampMin = 0.0f, ClampMax = 4.0f)
         float Saturation = 1.0f;
 

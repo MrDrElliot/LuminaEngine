@@ -9,7 +9,7 @@ namespace Lumina
     /**
      * Binds a texture to a material slot and hands out its BINDLESS INDEX instead of sampling it.
      *
-     * TextureSample answers "what colour is this texture at this UV"; this node answers "which texture",
+     * TextureSample answers "what color is this texture at this UV"; this node answers "which texture",
      * and leaves the sampling to you. The output is a uint you feed to the GlobalRHI.slang helpers from a
      * Custom Slang node:
      *

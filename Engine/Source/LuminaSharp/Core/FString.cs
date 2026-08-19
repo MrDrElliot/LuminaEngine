@@ -4,15 +4,15 @@ using LuminaSharp;
 namespace Lumina;
 
 /// <summary>
-/// C# mirror of <c>Lumina::FString</c> (<c>eastl::basic_string&lt;char&gt;</c>), as a HANDLE to one rather than
+/// C# mirror of <c>Lumina::FString</c>, as a HANDLE to one rather than
 /// a copy of one.
 ///
-/// Why a handle and not a 24-byte layout mirror. An eastl string owns a heap buffer, so a struct that mirrored
+/// Why a handle and not a layout mirror. A native string owns a heap buffer, so a struct that mirrored
 /// its bytes would copy the POINTER on every managed assignment -- two live strings aliasing one buffer, which
 /// is the exact hazard that used to force a bespoke view type for lists of strings. A handle cannot do that:
 /// it names a slot, and every read and write goes through the native accessors that know the layout
 /// (<see cref="NativeMarshal.ReadString"/> decodes the SSO/heap union in place, <c>Native.StringAssign</c>
-/// assigns through eastl).
+/// assigns through the native accessor).
 ///
 /// Two shapes, and the difference is only where the characters are:
 /// <list type="bullet">

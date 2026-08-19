@@ -2,7 +2,7 @@
 
 #include "Core/Math/Math.h"
 
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Core/LuminaMacros.h"
 #include "Core/Math/Color.h"
 #include "Core/Threading/Thread.h"
@@ -522,7 +522,7 @@ namespace Lumina
     };
 
     static_assert(sizeof(FLight) == 64, "FLight hot struct must fit a cache line");
-    static_assert(eastl::is_trivially_copyable_v<FLight>);
+    static_assert(std::is_trivially_copyable_v<FLight>);
 
     VERIFY_SSBO_ALIGNMENT(FLight);
 

@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-#include "Containers/Array.h"
+#include "Containers/Span.h"
 
 namespace Lumina
 {
@@ -13,10 +13,10 @@ namespace Lumina
     }
     
     template<typename T>
-    requires(!eastl::is_pointer_v<T> && eastl::is_trivially_copyable_v<T>)
+    requires(!std::is_pointer_v<T> && std::is_trivially_copyable_v<T>)
     TSpan<const Byte> AsBytes(const T& Value)
     {
-        return TSpan<const Byte>(reinterpret_cast<const Byte*>(eastl::addressof(Value)), sizeof(T));
+        return TSpan<const Byte>(reinterpret_cast<const Byte*>(std::addressof(Value)), sizeof(T));
     }
     
 }

@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
-#include "Containers/Array.h"
+#include "Containers/Span.h"
+#include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "Platform/Filesystem/PlatformFilesystem.h"
 
@@ -369,7 +370,7 @@ TEST_F(FilesystemTest, VisitorCanStopIteration)
     for (int32 Index = 0; Index < 8; ++Index)
     {
         FString Name = "Stop/File";
-        Name.append(eastl::to_string(Index));
+        Name.append(Format("{}", Index));
         ASSERT_TRUE(WriteFile(Under(Name), Bytes("x")));
     }
 
@@ -506,6 +507,7 @@ TEST_F(FilesystemTest, RemoveFileClearsAReadOnlyFlagFirst)
 }
 
 #include "FileSystem/NativeFileSystem.h"
+#include "Containers/StringFormat.h"
 
 TEST(NativeFileSystemTest, ResolveVirtualPathMapsUnderTheAlias)
 {

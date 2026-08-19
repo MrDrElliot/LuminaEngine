@@ -498,7 +498,7 @@ namespace Lumina
                 if (Inert != nullptr)
                 {
                     LUMINA_PROFILE_SECTION("Anim SM History");
-                    eastl::swap(Inert->PrevPrevOutput, Inert->PrevOutput);
+                    std::swap(Inert->PrevPrevOutput, Inert->PrevOutput);
                     Inert->PrevOutput   = Pool.Get(Dst);
                     Inert->HistoryCount = Math::Min(Inert->HistoryCount + 1, 2);
                 }

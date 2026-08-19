@@ -5,7 +5,6 @@
 #include "Core/Threading/Thread.h"
 #include "Memory/Memory.h"
 #include "Platform/GenericPlatform.h"
-#include <EASTL/type_traits.h>
 #include <type_traits>
 #include <utility>
 
@@ -76,7 +75,7 @@ namespace Lumina
             auto Thunk = +[](void* Ctx, uint32 Start, uint32 End, uint32 Thread)
             {
                 TDecayed& F = *static_cast<TDecayed*>(Ctx);
-                if constexpr (eastl::is_invocable_v<TDecayed, const Task::FParallelRange&>)
+                if constexpr (std::is_invocable_v<TDecayed, const Task::FParallelRange&>)
                 {
                     F(Task::FParallelRange{ Start, End, Thread });
                 }
@@ -84,11 +83,11 @@ namespace Lumina
                 {
                     for (uint32 i = Start; i < End; ++i)
                     {
-                        if constexpr (eastl::is_invocable_v<TDecayed, uint32, uint32>)
+                        if constexpr (std::is_invocable_v<TDecayed, uint32, uint32>)
                         {
                             F(i, Thread);
                         }
-                        else if constexpr (eastl::is_invocable_v<TDecayed, uint32>)
+                        else if constexpr (std::is_invocable_v<TDecayed, uint32>)
                         {
                             F(i);
                         }
@@ -121,12 +120,12 @@ namespace Lumina
             auto Thunk = +[](void* Raw, uint32 Start, uint32 End_, uint32 Thread)
             {
                 FCtx& X = *static_cast<FCtx*>(Raw);
-                if constexpr (eastl::is_invocable_v<TDecayed, TIterator, TIterator, uint32>)
+                if constexpr (std::is_invocable_v<TDecayed, TIterator, TIterator, uint32>)
                 {
                     X.Func(X.Begin + Start, X.Begin + End_, Thread);
                     return;
                 }
-                else if constexpr (eastl::is_invocable_v<TDecayed, TIterator, TIterator>)
+                else if constexpr (std::is_invocable_v<TDecayed, TIterator, TIterator>)
                 {
                     X.Func(X.Begin + Start, X.Begin + End_);
                     return;
@@ -136,19 +135,19 @@ namespace Lumina
                     for (uint32 i = Start; i < End_; ++i)
                     {
                         TIterator It = X.Begin + i;
-                        if constexpr (eastl::is_invocable_v<TDecayed, decltype(*It)&, uint32>)
+                        if constexpr (std::is_invocable_v<TDecayed, decltype(*It)&, uint32>)
                         {
                             X.Func(*It, Thread);
                         }
-                        else if constexpr (eastl::is_invocable_v<TDecayed, decltype(*It)&>)
+                        else if constexpr (std::is_invocable_v<TDecayed, decltype(*It)&>)
                         {
                             X.Func(*It);
                         }
-                        else if constexpr (eastl::is_invocable_v<TDecayed, TIterator, uint32>)
+                        else if constexpr (std::is_invocable_v<TDecayed, TIterator, uint32>)
                         {
                             X.Func(It, Thread);
                         }
-                        else if constexpr (eastl::is_invocable_v<TDecayed, TIterator>)
+                        else if constexpr (std::is_invocable_v<TDecayed, TIterator>)
                         {
                             X.Func(It);
                         }
@@ -182,7 +181,7 @@ namespace Lumina
         }
 
         template<typename TIterator, typename TFunc>
-        requires(eastl::is_same_v<typename eastl::iterator_traits<TIterator>::iterator_category, eastl::random_access_iterator_tag> ||
+        requires(std::is_same_v<typename std::iterator_traits<TIterator>::iterator_category, std::random_access_iterator_tag> ||
             std::is_same_v<typename std::iterator_traits<TIterator>::iterator_category, std::random_access_iterator_tag>)
         void ParallelForEach(TIterator Begin, TIterator End, TFunc&& Func, ETaskPriority Priority = ETaskPriority::Medium)
         {

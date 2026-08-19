@@ -7,6 +7,7 @@
 #include "Scripting/DotNet/DotNetHost.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -163,7 +164,6 @@ namespace Lumina
                 ImGui::TextUnformatted(Value.c_str());
             };
             auto Size = [](int64 Bytes) { return ImGuiX::FormatSize((size_t)(Bytes < 0 ? 0 : Bytes)); };
-            auto Num  = [](const char* Fmt, auto V) { return FString().sprintf(Fmt, V); };
 
             ImGui::TableNextRow();
             Cell("Managed heap",      Size(Snapshot.ManagedHeapBytes));
@@ -175,16 +175,16 @@ namespace Lumina
 
             ImGui::TableNextRow();
             Cell("Working set",       Size(Snapshot.WorkingSetBytes));
-            Cell("Alloc churn",       Num("%.1f MB/s", AllocRateMBs));
+            Cell("Alloc churn",       Format("{:.1f} MB/s", AllocRateMBs));
 
             ImGui::TableNextRow();
             Cell("Total allocated",   Size(Snapshot.TotalAllocatedBytes));
-            Cell("Pinned objects",    Num("%d", Snapshot.PinnedObjects));
+            Cell("Pinned objects",    Format("{}", Snapshot.PinnedObjects));
 
             ImGui::TableNextRow();
-            Cell("GC gen0 / gen1 / gen2", Num("%s", FString().sprintf("%d / %d / %d",
-                Snapshot.Gen0Collections, Snapshot.Gen1Collections, Snapshot.Gen2Collections).c_str()));
-            Cell("GC pause",          Num("%.2f%%", Snapshot.PauseTimePercentage));
+            Cell("GC gen0 / gen1 / gen2", Format("{} / {} / {}",
+                Snapshot.Gen0Collections, Snapshot.Gen1Collections, Snapshot.Gen2Collections));
+            Cell("GC pause",          Format("{:.2f}%", Snapshot.PauseTimePercentage));
 
             ImGui::EndTable();
         }

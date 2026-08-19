@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Assets/AssetTypes/Sequence/Sequence.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/Function.h"
 #include "Core/Math/Math.h"
 #include "Core/Object/ObjectHandleTyped.h"

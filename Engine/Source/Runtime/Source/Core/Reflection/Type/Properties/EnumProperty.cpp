@@ -26,7 +26,7 @@ namespace Lumina
                 size_t Start = 0;
                 size_t End = 0;
 
-                while ((End = Str.find(Delimiter, Start)) != eastl::string::npos)
+                while ((End = Str.find(Delimiter, Start)) != FString::npos)
                 {
                     FName Token(Str.substr(Start, End - Start).c_str());
                     EnumValue |= (int64)Enum->GetEnumValueByName(Token);
@@ -86,7 +86,7 @@ namespace Lumina
                 FString Delimiter(" | ");
                 size_t Start = 0;
                 size_t End = 0;
-                while ((End = Str.find(Delimiter, Start)) != eastl::string::npos)
+                while ((End = Str.find(Delimiter, Start)) != FString::npos)
                 {
                     FName Token(Str.substr(Start, End - Start).c_str());
                     EnumValue |= (int64)Enum->GetEnumValueByName(Token);

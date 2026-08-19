@@ -6,7 +6,7 @@
 // Hooks live in JobScheduler.cpp; the editor tool reads GetLatest()/history.
 #if USING(WITH_EDITOR)
 
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Core/Threading/Thread.h"
 #include "Core/Threading/Atomic.h"
 #include "Memory/SmartPtr.h"

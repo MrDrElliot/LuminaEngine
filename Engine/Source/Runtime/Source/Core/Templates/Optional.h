@@ -1,7 +1,10 @@
 #pragma once
-#include "EASTL/optional.h"
+#include "Containers/Optional.h"
 
 namespace Lumina
 {
-    template<typename T> using TOptional = eastl::optional<T>;
+    template<typename T> using TOptional = Containers::TOptional<T>;
+
+    using Containers::NullOpt;
+    using Containers::MakeOptional;
 }

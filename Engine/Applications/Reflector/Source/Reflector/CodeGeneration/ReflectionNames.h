@@ -1,6 +1,7 @@
 #pragma once
-#include <EASTL/string.h>
-#include <EASTL/string_view.h>
+#include "Reflector/Utils/StringOps.h"
+#include <string>
+#include <string_view>
 
 #include "Reflector/Clang/Utils.h"
 #include "Reflector/CodeGeneration/CodeWriter.h"
@@ -16,9 +17,9 @@ namespace Lumina::Reflection
     namespace Names
     {
         // "Lumina::CObject" -> "Lumina_CObject".
-        inline eastl::string FriendlyFromQualified(eastl::string_view QualifiedName)
+        inline std::string FriendlyFromQualified(std::string_view QualifiedName)
         {
-            return ClangUtils::MakeCodeFriendlyNamespace(eastl::string(QualifiedName));
+            return ClangUtils::MakeCodeFriendlyNamespace(std::string(QualifiedName));
         }
 
         // "Lumina" + "FName" -> "Lumina_FName"; no namespace -> "_FName".
@@ -27,21 +28,21 @@ namespace Lumina::Reflection
         // builds the same symbol through CONCAT4(Registration_Info_CClass_, TNamespace, _, TClass).
         // An empty namespace argument still contributes its separator there, so dropping ours made
         // the two disagree by one underscore and a class outside any namespace failed to link.
-        inline eastl::string FriendlyFromParts(eastl::string_view Namespace, eastl::string_view DisplayName)
+        inline std::string FriendlyFromParts(std::string_view Namespace, std::string_view DisplayName)
         {
             // Sanitized, because a nested namespace arrives as "MyStudio::Deep" and this result is
             // spliced into identifiers. Left raw, the "::" made the compiler read the symbol as a
             // scope resolution and the surrounding macro name as ill-formed.
-            eastl::string Out = ClangUtils::MakeCodeFriendlyNamespace(eastl::string(Namespace));
+            std::string Out = ClangUtils::MakeCodeFriendlyNamespace(std::string(Namespace));
             Out.push_back('_');
             Out.append(DisplayName.data(), DisplayName.data() + DisplayName.size());
             return Out;
         }
 
         // "CStruct" / "Lumina" / "FAABB" -> "Construct_CStruct_Lumina_FAABB".
-        inline eastl::string ConstructFunction(eastl::string_view TypeKind, eastl::string_view Namespace, eastl::string_view DisplayName)
+        inline std::string ConstructFunction(std::string_view TypeKind, std::string_view Namespace, std::string_view DisplayName)
         {
-            eastl::string Out = "Construct_";
+            std::string Out = "Construct_";
             Out.append(TypeKind.data(), TypeKind.data() + TypeKind.size());
             Out.push_back('_');
             Out += FriendlyFromParts(Namespace, DisplayName);
@@ -49,15 +50,15 @@ namespace Lumina::Reflection
         }
 
         // The Statics struct holding every compile-time metadata / property param array.
-        inline eastl::string StaticsStruct(eastl::string_view TypeKind, eastl::string_view Namespace, eastl::string_view DisplayName)
+        inline std::string StaticsStruct(std::string_view TypeKind, std::string_view Namespace, std::string_view DisplayName)
         {
             return ConstructFunction(TypeKind, Namespace, DisplayName) + "_Statics";
         }
 
         // The translation-unit-local singleton holder.
-        inline eastl::string RegistrationInfo(eastl::string_view TypeKind, eastl::string_view Namespace, eastl::string_view DisplayName)
+        inline std::string RegistrationInfo(std::string_view TypeKind, std::string_view Namespace, std::string_view DisplayName)
         {
-            eastl::string Out = "Registration_Info_";
+            std::string Out = "Registration_Info_";
             Out.append(TypeKind.data(), TypeKind.data() + TypeKind.size());
             Out.push_back('_');
             Out += FriendlyFromParts(Namespace, DisplayName);
@@ -68,11 +69,11 @@ namespace Lumina::Reflection
         // The unity build concatenates many standalone .generated.cpp files; the unique fn name is the guard token.
         inline void EmitGuardedCrossModuleDecl(
             FCodeWriter& Writer,
-            eastl::string_view API,
-            eastl::string_view Kind,        // "CStruct", "CClass", "CEnum"
-            eastl::string_view FnName)      // "Construct_CStruct_Lumina_FVector3"
+            std::string_view API,
+            std::string_view Kind,        // "CStruct", "CClass", "CEnum"
+            std::string_view FnName)      // "Construct_CStruct_Lumina_FVector3"
         {
-            const eastl::string FnNameStr(FnName.data(), FnName.size());
+            const std::string FnNameStr(FnName.data(), FnName.size());
             Writer.Linef("#ifndef LRT_XREF_%s", FnNameStr.c_str());
             Writer.Linef("#define LRT_XREF_%s", FnNameStr.c_str());
             Writer.Linef("%.*s Lumina::%.*s* %s();",
@@ -83,22 +84,22 @@ namespace Lumina::Reflection
         }
 
         // "Runtime" -> "RUNTIME_API".
-        inline eastl::string ProjectApiMacro(eastl::string_view ProjectName)
+        inline std::string ProjectApiMacro(std::string_view ProjectName)
         {
-            eastl::string Out;
+            std::string Out;
             Out.append(ProjectName.data(), ProjectName.data() + ProjectName.size());
             Out += "_api";
-            Out.make_upper();
+            Lumina::StringOps::ToUpper(Out);
             return Out;
         }
 
         // "Runtime" -> "Engine" (special-cased), otherwise the project name.
-        inline eastl::string ScriptPackage(eastl::string_view ProjectName)
+        inline std::string ScriptPackage(std::string_view ProjectName)
         {
-            eastl::string Lower(ProjectName.data(), ProjectName.data() + ProjectName.size());
-            Lower.make_lower();
+            std::string Lower(ProjectName.data(), ProjectName.data() + ProjectName.size());
+            Lumina::StringOps::ToLower(Lower);
 
-            eastl::string Out = "/Script/";
+            std::string Out = "/Script/";
             if (Lower == "runtime")
             {
                 Out += "Engine";
@@ -112,7 +113,7 @@ namespace Lumina::Reflection
 
         // A normalized identifier for a header file, suitable for use as a macro guard
         // or symbol prefix. Replaces separators with underscores.
-        inline void SanitizeFileID(eastl::string& FileID)
+        inline void SanitizeFileID(std::string& FileID)
         {
             for (auto& Ch : FileID)
             {
@@ -124,10 +125,10 @@ namespace Lumina::Reflection
         }
 
         // Given a full header path, derive the FileID used by generated macros.
-        inline eastl::string MakeFileIDForHeaderPath(eastl::string HeaderPath)
+        inline std::string MakeFileIDForHeaderPath(std::string HeaderPath)
         {
             const size_t SlashPos = HeaderPath.find_first_of("/\\");
-            if (SlashPos != eastl::string::npos)
+            if (SlashPos != std::string::npos)
             {
                 HeaderPath = HeaderPath.substr(SlashPos + 1);
             }
@@ -137,15 +138,15 @@ namespace Lumina::Reflection
         }
 
         // The metadata array symbol for a type or property: "<Friendly>_Metadata".
-        inline eastl::string MetadataArrayForType(eastl::string_view QualifiedName)
+        inline std::string MetadataArrayForType(std::string_view QualifiedName)
         {
             return FriendlyFromQualified(QualifiedName) + "_Metadata";
         }
 
         // Per-property metadata array inside a Statics struct: "<PropName>_Metadata".
-        inline eastl::string MetadataArrayForProperty(eastl::string_view PropertyName)
+        inline std::string MetadataArrayForProperty(std::string_view PropertyName)
         {
-            eastl::string Out(PropertyName.data(), PropertyName.data() + PropertyName.size());
+            std::string Out(PropertyName.data(), PropertyName.data() + PropertyName.size());
             Out += "_Metadata";
             return Out;
         }

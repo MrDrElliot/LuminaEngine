@@ -11,6 +11,7 @@
 #include "World/Entity/Components/SkeletalMeshComponent.h"
 #include "World/Entity/Components/StaticMeshComponent.h"
 #include "Renderer/SkeletonResource.h"
+#include "Containers/StringFormat.h"
 
 
 namespace Lumina
@@ -65,7 +66,7 @@ namespace Lumina
                     CurrentIndex = SkeletonResource->Bones[CurrentIndex].ParentIndex;
                     Depth++;
                 }
-                MaxDepth = eastl::max(MaxDepth, Depth);
+                MaxDepth = std::max(MaxDepth, Depth);
                 TotalDepth += Depth;
             }
             
@@ -112,7 +113,7 @@ namespace Lumina
                 {
                     FString Numbered = Base;
                     Numbered += "_";
-                    Numbered += eastl::to_string(Suffix++).c_str();
+                    Numbered += Format("{}", Suffix++).c_str();
                     SocketName = FName(Numbered.c_str());
                 }
 

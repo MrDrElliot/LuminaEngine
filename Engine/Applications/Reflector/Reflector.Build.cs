@@ -22,7 +22,6 @@ public class Reflector : ModuleRules
 
         PrivateDependencyModuleNames.AddRange(new[]
         {
-            "EA",
             "XXHash",
             "NlohmannJson",
         });

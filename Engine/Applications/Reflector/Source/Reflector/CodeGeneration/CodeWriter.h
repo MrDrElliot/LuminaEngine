@@ -1,7 +1,7 @@
 #pragma once
 #include <cstdarg>
-#include <EASTL/string.h>
-#include <EASTL/string_view.h>
+#include <string>
+#include <string_view>
 
 namespace Lumina::Reflection
 {
@@ -27,23 +27,23 @@ namespace Lumina::Reflection
         explicit FCodeWriter(size_t InitialCapacity);
 
         // Raw output (no indent, no newline)
-        FCodeWriter& Append(eastl::string_view Text);
+        FCodeWriter& Append(std::string_view Text);
         FCodeWriter& Append(const char* Text);
-        FCodeWriter& Append(const eastl::string& Text);
+        FCodeWriter& Append(const std::string& Text);
         FCodeWriter& Appendf(const char* Fmt, ...);
 
         // Line output (indent + text + "\n")
         FCodeWriter& Line();
-        FCodeWriter& Line(eastl::string_view Text);
+        FCodeWriter& Line(std::string_view Text);
         FCodeWriter& Line(const char* Text);
-        FCodeWriter& Line(const eastl::string& Text);
+        FCodeWriter& Line(const std::string& Text);
         FCodeWriter& Linef(const char* Fmt, ...);
 
         // Emit several blank lines.
         FCodeWriter& BlankLines(int Count);
 
         // Macro continuation line (indent + text + " \\\n")
-        FCodeWriter& Macro(eastl::string_view Text);
+        FCodeWriter& Macro(std::string_view Text);
         FCodeWriter& Macro(const char* Text);
         FCodeWriter& Macrof(const char* Fmt, ...);
 
@@ -62,9 +62,9 @@ namespace Lumina::Reflection
         FCodeWriter& EndBlockSemi();
 
         // Buffer access
-        const eastl::string& String() const { return Buffer; }
-        eastl::string& MutableString() { return Buffer; }
-        eastl::string Release() { eastl::string Out = eastl::move(Buffer); Clear(); return Out; }
+        const std::string& String() const { return Buffer; }
+        std::string& MutableString() { return Buffer; }
+        std::string Release() { std::string Out = std::move(Buffer); Clear(); return Out; }
 
         bool IsEmpty() const { return Buffer.empty(); }
         size_t Size() const { return Buffer.size(); }
@@ -77,7 +77,7 @@ namespace Lumina::Reflection
         void WriteIndent();
         void AppendVaList(const char* Fmt, va_list Args);
 
-        eastl::string Buffer;
+        std::string Buffer;
         int IndentLevel = 0;
     };
 

@@ -31,7 +31,7 @@ namespace Lumina
         }
 
         template<typename T>
-        requires(eastl::is_enum_v<T>)
+        requires(std::is_enum_v<T>)
         constexpr bool IsFlagSet(T EnumValue) const
         {
             return IsFlagSet((uint8) EnumValue);
@@ -43,7 +43,7 @@ namespace Lumina
         }
 
         template<typename T>
-        requires(eastl::is_enum_v<T>)
+        requires(std::is_enum_v<T>)
         constexpr void SetFlag(T EnumValue)
         {
             SetFlag((uint8)EnumValue);
@@ -56,7 +56,7 @@ namespace Lumina
         }
 
         template<typename T>
-        requires(eastl::is_enum_v<T>)
+        requires(std::is_enum_v<T>)
         constexpr void SetFlag(T EnumValue, bool bValue)
         {
             SetFlag((uint8)EnumValue, bValue);
@@ -74,7 +74,7 @@ namespace Lumina
         }
 
         template<typename T>
-        requires(eastl::is_enum_v<T>)
+        requires(std::is_enum_v<T>)
         constexpr bool IsFlagCleared(T EnumValue)
         {
             return IsFlagCleared((uint8)EnumValue);
@@ -137,7 +137,7 @@ namespace Lumina
 namespace Lumina
 {
     template<typename T>
-    requires(eastl::is_enum_v<T> && sizeof(T) <= sizeof(uint32))
+    requires(std::is_enum_v<T> && sizeof(T) <= sizeof(uint32))
     class TBitFlags : public FBitFlags
     {
     public:
@@ -159,7 +159,7 @@ namespace Lumina
         {}
 
         template<typename... Args>
-        requires(... && eastl::is_convertible_v<Args, T>)
+        requires(... && std::is_convertible_v<Args, T>)
         constexpr TBitFlags(Args&&... args)
         {
             ((Flags |= 1u << (uint8)std::forward<Args>(args)), ...);
@@ -177,14 +177,14 @@ namespace Lumina
         template<typename... TArgs>
         constexpr void SetMultipleFlags(TArgs&&... Args)
         {
-            ((Flags |= 1u << (uint8)eastl::forward<TArgs>(Args)), ...);
+            ((Flags |= 1u << (uint8)std::forward<TArgs>(Args)), ...);
         }
 
         template<typename... TArgs>
         constexpr bool AreAnyFlagsSet(TArgs&&... Args) const
         {
             uint32 Mask = 0;
-            ((Mask |= 1u << (uint8)eastl::forward<Args>(Args)), ...);
+            ((Mask |= 1u << (uint8)std::forward<Args>(Args)), ...);
             return (Flags & Mask) != 0;
         }
 

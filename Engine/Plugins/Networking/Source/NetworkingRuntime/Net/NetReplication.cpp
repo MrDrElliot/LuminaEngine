@@ -8,7 +8,8 @@
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectCore.h"
 #include "Core/Math/Hash/Hash.h"
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Vector.h"
 #include "Assets/AssetRef.h"
 #include "World/Entity/EntityUtils.h"
 #include "World/Entity/Components/RelationshipComponent.h"
@@ -16,7 +17,6 @@
 #include "Networking/INetworkTransport.h"
 #include "Log/Log.h"
 #include "entt/entt.hpp"
-#include "EASTL/sort.h"
 
 namespace Lumina::Net
 {
@@ -76,7 +76,7 @@ namespace Lumina::Net
                         T.ByIndex.push_back({ HashStructName(St->GetName()), Type, St });
                     }
                 }
-                eastl::sort(T.ByIndex.begin(), T.ByIndex.end(),[](const FReplType& A, const FReplType& B)
+                std::sort(T.ByIndex.begin(), T.ByIndex.end(),[](const FReplType& A, const FReplType& B)
                 {
                     return A.Hash < B.Hash;
                 });
@@ -285,7 +285,7 @@ namespace Lumina::Net
                     C.Block.insert(C.Block.end(), Cur[i].begin(), Cur[i].end());
                 }
             }
-            Out.push_back(eastl::move(C));
+            Out.push_back(std::move(C));
         }
 
         return Out;

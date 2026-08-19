@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Texture.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "TextureArray.generated.h"
 

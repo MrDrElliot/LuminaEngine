@@ -1,8 +1,8 @@
 ﻿#include "CSharpBindingEmitter.h"
 
-#include <EASTL/algorithm.h>
+#include <algorithm>
 
-#include <EASTL/unique_ptr.h>
+#include <memory>
 
 #include "CodeWriter.h"
 #include "Reflector/CodeGeneration/ReflectionNames.h"
@@ -24,7 +24,7 @@ namespace Lumina::Reflection
         // No generated C# type: either an explicit opt-out or a mirror LuminaSharp already hand-writes.
         bool IsExcludedFromCSharp(const FReflectedType& Type)
         {
-            return eastl::any_of(Type.Metadata.begin(), Type.Metadata.end(),
+            return std::any_of(Type.Metadata.begin(), Type.Metadata.end(),
                 [](const FMetadataPair& Pair)
                 {
                     return Pair.Key == "NoCSharp" || Pair.Key == "CSharpValueMirror";
@@ -33,7 +33,7 @@ namespace Lumina::Reflection
 
         bool HasMetadata(const FReflectedType& Type, const char* Key)
         {
-            return eastl::any_of(Type.Metadata.begin(), Type.Metadata.end(),
+            return std::any_of(Type.Metadata.begin(), Type.Metadata.end(),
                 [Key](const FMetadataPair& Pair) { return Pair.Key == Key; });
         }
 
@@ -55,7 +55,7 @@ namespace Lumina::Reflection
         // The module a type is defined in ("Runtime", "Editor", "Sandbox", ...). Drives both the
         // native thunk's export macro (RUNTIME_API/EDITOR_API/...) and the C# P/Invoke library key,
         // so any module's reflected types can carry C# bindings, not just Runtime.
-        eastl::string ModuleOf(const FReflectedType& Type)
+        std::string ModuleOf(const FReflectedType& Type)
         {
             if (Type.Header != nullptr && Type.Header->Project != nullptr)
             {
@@ -65,16 +65,16 @@ namespace Lumina::Reflection
         }
 
         // C++ "Lumina::FVector3" -> C# "Lumina.FVector3".
-        eastl::string ToCSharpName(eastl::string Name)
+        std::string ToCSharpName(std::string Name)
         {
-            for (size_t Pos = Name.find("::"); Pos != eastl::string::npos; Pos = Name.find("::"))
+            for (size_t Pos = Name.find("::"); Pos != std::string::npos; Pos = Name.find("::"))
             {
                 Name.replace(Pos, 2, ".");
             }
             return Name;
         }
 
-        bool IsCSharpKeyword(const eastl::string& Word)
+        bool IsCSharpKeyword(const std::string& Word)
         {
             static const char* Keywords[] = {
                 "abstract","as","base","bool","break","byte","case","catch","char","checked","class",
@@ -96,14 +96,14 @@ namespace Lumina::Reflection
             return false;
         }
 
-        eastl::string SafeIdentifier(const eastl::string& Name)
+        std::string SafeIdentifier(const std::string& Name)
         {
             return IsCSharpKeyword(Name) ? ("@" + Name) : Name;
         }
 
         // Maps a property kind (FReflectedProperty::GetTypeName) to a C# primitive. Returns true with
         // the size/alignment for blittable primitives; false for non-primitive kinds.
-        bool PrimitiveCSharp(const eastl::string& Kind, eastl::string& OutCSharp, int& OutSize, int& OutAlign)
+        bool PrimitiveCSharp(const std::string& Kind, std::string& OutCSharp, int& OutSize, int& OutAlign)
         {
             struct FEntry { const char* Kind; const char* CSharp; int Size; int Align; };
             static const FEntry Table[] = {
@@ -153,10 +153,10 @@ namespace Lumina::Reflection
                 {
                     return false; // Array / Optional report a null kind -> not blittable
                 }
-                const eastl::string Kind = KindPtr;
+                const std::string Kind = KindPtr;
                 int Size = 0;
                 int Align = 0;
-                eastl::string Unused;
+                std::string Unused;
 
                 if (PrimitiveCSharp(Kind, Unused, Size, Align))
                 {
@@ -224,21 +224,21 @@ namespace Lumina::Reflection
         // blittable mirror field) surfaces as the C# Entity handle, same mapping the function path uses.
         bool IsEntityField(const FReflectedProperty& Prop)
         {
-            return Prop.RawTypeName.find("entt::entity") != eastl::string::npos
-                || Prop.TypeName.find("entt::entity")    != eastl::string::npos
-                || Prop.RawTypeName.find("FEntity")      != eastl::string::npos
-                || Prop.TypeName.find("FEntity")         != eastl::string::npos;
+            return Prop.RawTypeName.find("entt::entity") != std::string::npos
+                || Prop.TypeName.find("entt::entity")    != std::string::npos
+                || Prop.RawTypeName.find("FEntity")      != std::string::npos
+                || Prop.TypeName.find("FEntity")         != std::string::npos;
         }
 
         // The C# field type for a blittable struct member.
-        eastl::string CSharpFieldType(FReflectedProperty& Prop)
+        std::string CSharpFieldType(FReflectedProperty& Prop)
         {
             if (IsEntityField(Prop))
             {
                 return "global::LuminaSharp.Entity";
             }
-            const eastl::string Kind = Prop.GetTypeName();
-            eastl::string CSharp;
+            const std::string Kind = Prop.GetTypeName();
+            std::string CSharp;
             int Size = 0;
             int Align = 0;
             if (PrimitiveCSharp(Kind, CSharp, Size, Align))
@@ -252,9 +252,9 @@ namespace Lumina::Reflection
             return "int"; // unreachable for blittable structs
         }
 
-        void OpenNamespace(FCodeWriter& Writer, const eastl::string& CppNamespace, bool& bOpened)
+        void OpenNamespace(FCodeWriter& Writer, const std::string& CppNamespace, bool& bOpened)
         {
-            const eastl::string Ns = ToCSharpName(CppNamespace);
+            const std::string Ns = ToCSharpName(CppNamespace);
             bOpened = !Ns.empty();
             if (bOpened)
             {
@@ -286,24 +286,24 @@ namespace Lumina::Reflection
             return EnumHasAnyFlags(Prop.PropertyFlags, EPropertyFlags::ScriptHidden);
         }
         
-        void EmitThunkField(FCodeWriter& Writer, const eastl::string& Module, const eastl::string& EntryPoint,
-            const eastl::string& Fn, const eastl::string& ParamTypesCsv, const eastl::string& RetType)
+        void EmitThunkField(FCodeWriter& Writer, const std::string& Module, const std::string& EntryPoint,
+            const std::string& Fn, const std::string& ParamTypesCsv, const std::string& RetType)
         {
-            const eastl::string Sig = ParamTypesCsv.empty() ? RetType : (ParamTypesCsv + ", " + RetType);
+            const std::string Sig = ParamTypesCsv.empty() ? RetType : (ParamTypesCsv + ", " + RetType);
             Writer.Linef("private static readonly delegate* unmanaged[Cdecl]<%s> %s =", Sig.c_str(), Fn.c_str());
             Writer.Linef("    (delegate* unmanaged[Cdecl]<%s>)global::LuminaSharp.NativeBindings.Resolve(\"%s\", \"%s\");",
                 Sig.c_str(), Module.c_str(), EntryPoint.c_str());
         }
 
         // A reflected type that exists in the database and is allowed in the C# API.
-        bool IsExposed(const FReflectionDatabase& Db, const eastl::string& Qualified)
+        bool IsExposed(const FReflectionDatabase& Db, const std::string& Qualified)
         {
             const FReflectedType* T = Db.GetReflectedType<FReflectedType>(FStringHash(Qualified));
             return T != nullptr && !IsExcludedFromCSharp(*T);
         }
 
         // "global::" + C# form of a qualified C++ name ("Lumina::CStaticMesh" -> "global::Lumina.CStaticMesh").
-        eastl::string GlobalCSharp(const eastl::string& Qualified)
+        std::string GlobalCSharp(const std::string& Qualified)
         {
             return "global::" + ToCSharpName(Qualified);
         }
@@ -311,7 +311,7 @@ namespace Lumina::Reflection
         // A reflected type that becomes an opaque handle wrapper (a C# class deriving NativeObject/
         // NativeStruct), i.e. a class, or a struct that is NOT a blittable value mirror. Such a type
         // is a valid C# *base class* for another wrapper.
-        bool IsOpaqueWrapperType(const FReflectionDatabase& Db, const eastl::string& Qualified)
+        bool IsOpaqueWrapperType(const FReflectionDatabase& Db, const std::string& Qualified)
         {
             const FReflectedType* T = Db.GetReflectedType<FReflectedType>(FStringHash(Qualified));
             if (T == nullptr || IsExcludedFromCSharp(*T) || T->Type == FReflectedType::EType::Enum)
@@ -338,7 +338,7 @@ namespace Lumina::Reflection
 
         // The CObject root, which is declared by hand (DECLARE_CLASS) rather than REFLECT'd, so it has no
         // database entry and no generated wrapper - C# models it as LuminaSharp.NativeObject.
-        bool IsObjectRootType(const eastl::string& Qualified)
+        bool IsObjectRootType(const std::string& Qualified)
         {
             return Qualified == "Lumina::CObject" || Qualified == "CObject";
         }
@@ -346,13 +346,13 @@ namespace Lumina::Reflection
         // The C# base for an opaque wrapper: the reflected parent's wrapper when it's an opaque type,
         // otherwise the given Native* root. Mirrors the C++ single-inheritance chain so e.g. a
         // CStaticMesh wrapper derives the CObject wrapper and inherits its bound members.
-        eastl::string CSharpBase(const FReflectedStruct& Type, const FReflectionDatabase& Db, const char* Root)
+        std::string CSharpBase(const FReflectedStruct& Type, const FReflectionDatabase& Db, const char* Root)
         {
-            const eastl::string& Parent = Type.Parent;
+            const std::string& Parent = Type.Parent;
             if (!Parent.empty())
             {
-                const bool bQualified = Parent.find("::") != eastl::string::npos;
-                const eastl::string Qualified = (bQualified || Type.Namespace.empty())
+                const bool bQualified = Parent.find("::") != std::string::npos;
+                const std::string Qualified = (bQualified || Type.Namespace.empty())
                     ? Parent
                     : (Type.Namespace + "::" + Parent);
                 if (IsOpaqueWrapperType(Db, Qualified))
@@ -370,9 +370,9 @@ namespace Lumina::Reflection
         struct FBinding
         {
             EBind         Kind = EBind::None;
-            eastl::string CSharp;     // C# property type (for Array: the element's C# type)
-            eastl::string Cpp;        // by-value thunk C++ type for Number ("int32", "double", ...)
-            eastl::string TargetCpp;  // qualified C++ type for Enum/Object/StructValue ("Lumina::CStaticMesh")
+            std::string CSharp;     // C# property type (for Array: the element's C# type)
+            std::string Cpp;        // by-value thunk C++ type for Number ("int32", "double", ...)
+            std::string TargetCpp;  // qualified C++ type for Enum/Object/StructValue ("Lumina::CStaticMesh")
             bool          bIsName = false;   // Str: FName (vs FString)
             bool          bReadOnly = false;
             // Object: true for a CObject-derived wrapper, false for an opaque STRUCT wrapper (components).
@@ -380,10 +380,10 @@ namespace Lumina::Reflection
             // instance slot -- routing a component pointer through Wrapper<T>.ForObject would reinterpret
             // component memory as a CObjectBase. Gates the ForObject call in EmitProperties.
             bool          bCObject = false;
-            eastl::unique_ptr<FBinding> Elem; // Array: the element binding (one of the scalar kinds above)
+            std::unique_ptr<FBinding> Elem; // Array: the element binding (one of the scalar kinds above)
         };
 
-        bool NumericCpp(const eastl::string& Kind, eastl::string& OutCSharp, eastl::string& OutCpp)
+        bool NumericCpp(const std::string& Kind, std::string& OutCSharp, std::string& OutCpp)
         {
             struct FEntry { const char* Kind; const char* CSharp; const char* Cpp; };
             static const FEntry Table[] = {
@@ -402,9 +402,9 @@ namespace Lumina::Reflection
         // Covers the same scalar kinds as Classify minus object elements (can't tell TObjectPtr<T> from a
         // by-value T from the name alone, and a wrong guess would not compile). Unknowns return false so
         // the whole array is skipped, never a broken binding.
-        bool ClassifyElement(const eastl::string& RawElem, const eastl::string& Ns, const FReflectionDatabase& Db, FBinding& B)
+        bool ClassifyElement(const std::string& RawElem, const std::string& Ns, const FReflectionDatabase& Db, FBinding& B)
         {
-            eastl::string Bare = RawElem;
+            std::string Bare = RawElem;
             if (Bare.find("Lumina::") == 0)
             {
                 Bare = Bare.substr(8);
@@ -423,9 +423,9 @@ namespace Lumina::Reflection
             if (Bare == "bool") { B.Kind = EBind::Bool; B.CSharp = "bool"; return true; }
             if (Bare == "FString" || Bare == "FName") { B.Kind = EBind::Str; B.CSharp = "string"; B.bIsName = (Bare == "FName"); return true; }
 
-            eastl::string Q = RawElem;
+            std::string Q = RawElem;
             const FReflectedType* T = Db.GetReflectedType<FReflectedType>(FStringHash(Q));
-            if (T == nullptr && Q.find("::") == eastl::string::npos && !Ns.empty())
+            if (T == nullptr && Q.find("::") == std::string::npos && !Ns.empty())
             {
                 Q = Ns + "::" + RawElem;
                 T = Db.GetReflectedType<FReflectedType>(FStringHash(Q));
@@ -470,7 +470,7 @@ namespace Lumina::Reflection
 
         // Classifies a single (non-inner) property into its C# binding. Returns false for kinds with no
         // binding (custom-accessor props, soft-objects, optionals here, unexposed targets).
-        bool Classify(FReflectedProperty& Prop, const eastl::string& OwnerNs, const FReflectionDatabase& Db, FBinding& B)
+        bool Classify(FReflectedProperty& Prop, const std::string& OwnerNs, const FReflectionDatabase& Db, FBinding& B)
         {
             if (EnumHasAnyFlags(Prop.PropertyFlags, EPropertyFlags::Private) ||
                 EnumHasAnyFlags(Prop.PropertyFlags, EPropertyFlags::Protected))
@@ -484,7 +484,7 @@ namespace Lumina::Reflection
 
             if (auto* Arr = dynamic_cast<FReflectedArrayProperty*>(&Prop))
             {
-                auto Elem = eastl::make_unique<FBinding>();
+                auto Elem = std::make_unique<FBinding>();
                 if (!ClassifyElement(Arr->ElementTypeName, OwnerNs, Db, *Elem))
                 {
                     return false; // element kind we don't bind -> skip the whole array
@@ -492,7 +492,7 @@ namespace Lumina::Reflection
                 B.Kind = EBind::Array;
                 B.CSharp = Elem->CSharp;  // element C# type; the property type is TSpan<this>
                 B.bReadOnly = true;       // read-only view this pass (no add/remove/set)
-                B.Elem = eastl::move(Elem);
+                B.Elem = std::move(Elem);
                 return true;
             }
 
@@ -520,7 +520,7 @@ namespace Lumina::Reflection
             {
                 return false; // Optional (null kind) -> not bound yet
             }
-            const eastl::string Kind = KindPtr;
+            const std::string Kind = KindPtr;
             B.bReadOnly = IsReadOnlyProp(Prop);
 
             if (NumericCpp(Kind, B.CSharp, B.Cpp))
@@ -606,14 +606,14 @@ namespace Lumina::Reflection
         // an opaque struct element) it falls back to TSpan<element> backed by count + per-index
         // thunks.
         void EmitCSharpArray(FCodeWriter& Writer, FReflectedProperty& Prop, const FBinding& B,
-            const eastl::string& Friendly, const eastl::string& Module, const eastl::string& TypeName)
+            const std::string& Friendly, const std::string& Module, const std::string& TypeName)
         {
-            const eastl::string& Member = Prop.Name;
-            const eastl::string PropName = SafeIdentifier(Member);
+            const std::string& Member = Prop.Name;
+            const std::string PropName = SafeIdentifier(Member);
 
             if (IsBlittableElementKind(B.Elem->Kind))
             {
-                const eastl::string OffName = "__off_" + Member;
+                const std::string OffName = "__off_" + Member;
                 Writer.Linef("private static readonly nint %s = (nint)global::LuminaSharp.NativeBindings.PropertyOffset(\"%s\", \"%s\");",
                     OffName.c_str(), TypeName.c_str(), Member.c_str());
 
@@ -627,9 +627,9 @@ namespace Lumina::Reflection
                 {
                     // Writable: a TVector<T> view = (vector pointer, element-type ops table). Reads decode
                     // the header in place (zero crossing); Add/Remove/Clear call the ops fn-ptrs.
-                    const eastl::string OpsFn = "__vecopsfn_" + Member;
-                    const eastl::string OpsField = "__ops_" + Member;
-                    const eastl::string OpsThunk = "LuminaSharp_VecOps_" + Friendly + "_" + Member;
+                    const std::string OpsFn = "__vecopsfn_" + Member;
+                    const std::string OpsField = "__ops_" + Member;
+                    const std::string OpsThunk = "LuminaSharp_VecOps_" + Friendly + "_" + Member;
                     Writer.Linef("public global::Lumina.TVector<%s> %s =>", B.Elem->CSharp.c_str(), PropName.c_str());
                     Writer.Linef("    new global::Lumina.TVector<%s>((nint)Handle + %s, %s);", B.Elem->CSharp.c_str(), OffName.c_str(), OpsField.c_str());
                     Writer.Linef("private static readonly delegate* unmanaged[Cdecl]<nint> %s =", OpsFn.c_str());
@@ -640,17 +640,17 @@ namespace Lumina::Reflection
                 return;
             }
 
-            const eastl::string CountFn = "__count_" + Member;
-            const eastl::string GetAtFn = "__getat_" + Member;
-            const eastl::string ProjFn = "__proj_" + Member;
-            const eastl::string CountThunk = "LuminaSharp_Count_" + Friendly + "_" + Member;
-            const eastl::string GetAtThunk = "LuminaSharp_GetAt_" + Friendly + "_" + Member;
-            const eastl::string& ECS = B.Elem->CSharp;
+            const std::string CountFn = "__count_" + Member;
+            const std::string GetAtFn = "__getat_" + Member;
+            const std::string ProjFn = "__proj_" + Member;
+            const std::string CountThunk = "LuminaSharp_Count_" + Friendly + "_" + Member;
+            const std::string GetAtThunk = "LuminaSharp_GetAt_" + Friendly + "_" + Member;
+            const std::string& ECS = B.Elem->CSharp;
 
             // Only non-blittable elements reach here (blittable returned above): an opaque-struct element wraps the
             // element pointer, an FString/FName element decodes via the two-pass buffer thunk. The projector is a
             // static method (managed function pointer) so the property read allocates no closure.
-            eastl::string ProjBody;
+            std::string ProjBody;
             bool bStr = false;
             if (B.Elem->Kind == EBind::StructOpaque)
             {
@@ -688,20 +688,20 @@ namespace Lumina::Reflection
         // since this export sits at global scope where an unqualified TVector<T> spelling would not resolve,
         // and because a fixed container must be operated on as the type it actually is.
         void EmitVectorOpsExport(FCodeWriter& Writer, FReflectedProperty& Prop,
-            const eastl::string& Friendly, const char* Qualified, const char* Api)
+            const std::string& Friendly, const char* Qualified, const char* Api)
         {
-            const eastl::string Thunk = "LuminaSharp_VecOps_" + Friendly + "_" + Prop.Name;
+            const std::string Thunk = "LuminaSharp_VecOps_" + Friendly + "_" + Prop.Name;
             Writer.Linef("extern \"C\" %s const void* %s() { return ::Lumina::GetVectorOpsFor<decltype(%s::%s)>(); }",
                 Api, Thunk.c_str(), Qualified, Prop.Name.c_str());
         }
 
         void EmitNativeArray(FCodeWriter& Writer, FReflectedProperty& Prop, const FBinding& B,
-            const eastl::string& Friendly, const char* Qualified, const char* Api)
+            const std::string& Friendly, const char* Qualified, const char* Api)
         {
-            const eastl::string& Member = Prop.Name;
+            const std::string& Member = Prop.Name;
             const char* M = Member.c_str();
-            const eastl::string CountThunk = "LuminaSharp_Count_" + Friendly + "_" + Member;
-            const eastl::string GetAtThunk = "LuminaSharp_GetAt_" + Friendly + "_" + Member;
+            const std::string CountThunk = "LuminaSharp_Count_" + Friendly + "_" + Member;
+            const std::string GetAtThunk = "LuminaSharp_GetAt_" + Friendly + "_" + Member;
             const char* G = GetAtThunk.c_str();
 
             Writer.Linef("extern \"C\" %s int %s(%s* Self) { return (int)Self->%s.size(); }",
@@ -743,7 +743,7 @@ namespace Lumina::Reflection
 
         // The blittable-field offset static: resolved ONCE per property from live reflection (no native
         // export per property). C# then reads/writes native memory directly at (Handle + offset).
-        void EmitOffsetField(FCodeWriter& Writer, const eastl::string& OffName, const eastl::string& TypeName, const eastl::string& Member)
+        void EmitOffsetField(FCodeWriter& Writer, const std::string& OffName, const std::string& TypeName, const std::string& Member)
         {
             Writer.Linef("private static readonly nint %s = (nint)global::LuminaSharp.NativeBindings.PropertyOffset(\"%s\", \"%s\");",
                 OffName.c_str(), TypeName.c_str(), Member.c_str());
@@ -751,7 +751,7 @@ namespace Lumina::Reflection
 
         // The non-blittable-field token static: the FProperty* resolved ONCE per property, reused by the
         // generic per-type exporters (PropGet/SetString/Name/Object).
-        void EmitTokenField(FCodeWriter& Writer, const eastl::string& PropFieldName, const eastl::string& TypeName, const eastl::string& Member)
+        void EmitTokenField(FCodeWriter& Writer, const std::string& PropFieldName, const std::string& TypeName, const std::string& Member)
         {
             Writer.Linef("private static readonly System.IntPtr %s = global::LuminaSharp.NativeBindings.FindProperty(\"%s\", \"%s\");",
                 PropFieldName.c_str(), TypeName.c_str(), Member.c_str());
@@ -764,12 +764,12 @@ namespace Lumina::Reflection
         // uses per-property thunks (the follow-up). TypeName is the reflected type's simple name, which the
         // native FindProperty/PropertyOffset resolve via FindObject (mirrors the component-ops lookup).
         void EmitCSharpMember(FCodeWriter& Writer, FReflectedProperty& Prop, const FBinding& B,
-            const eastl::string& Friendly, const eastl::string& Module, const eastl::string& TypeName)
+            const std::string& Friendly, const std::string& Module, const std::string& TypeName)
         {
-            const eastl::string& Member = Prop.Name;
-            const eastl::string PropName = SafeIdentifier(Member);
-            const eastl::string OffName = "__off_" + Member;
-            const eastl::string PropFieldName = "__prop_" + Member;
+            const std::string& Member = Prop.Name;
+            const std::string PropName = SafeIdentifier(Member);
+            const std::string OffName = "__off_" + Member;
+            const std::string PropFieldName = "__prop_" + Member;
             const bool bRO = B.bReadOnly;
             const char* CS = B.CSharp.c_str();
 
@@ -802,7 +802,7 @@ namespace Lumina::Reflection
                     Writer.BeginBlock();
                     if (B.bIsName)
                     {
-                        // FName is an interned id, not an eastl::string, so resolving it to text still goes
+                        // FName is an interned id, not an std::string, so resolving it to text still goes
                         // through the name table on the native side (one crossing each way).
                         Writer.Linef("get => global::LuminaSharp.Native.PropGetName(Handle, %s);", PropFieldName.c_str());
                         if (!bRO)
@@ -814,7 +814,7 @@ namespace Lumina::Reflection
                     }
                     else
                     {
-                        // FString: read the eastl::basic_string in place (no crossing). The set still assigns
+                        // FString: read the std::basic_string in place (no crossing). The set still assigns
                         // through the native allocator via the generic exporter.
                         Writer.Linef("get => global::LuminaSharp.NativeMarshal.ReadString((nint)Handle + %s);", OffName.c_str());
                         if (!bRO)
@@ -894,7 +894,7 @@ namespace Lumina::Reflection
         // kinds (Str/Object) route through the fixed generic per-type exporters in DotNetProperty.cpp. So the
         // per-property native-export count is now O(non-blittable-element array properties), not O(properties).
         void EmitNativeThunk(FCodeWriter& Writer, FReflectedProperty& Prop, const FBinding& B,
-            const eastl::string& Friendly, const char* Qualified, const char* Api)
+            const std::string& Friendly, const char* Qualified, const char* Api)
         {
             if (B.Kind != EBind::Array)
             {
@@ -916,8 +916,8 @@ namespace Lumina::Reflection
         // Emits the managed members for every bindable property on an opaque wrapper.
         void EmitProperties(FCodeWriter& Writer, const FReflectedStruct& Type, const FReflectionDatabase& Db)
         {
-            const eastl::string Friendly = Names::FriendlyFromQualified(Type.QualifiedName);
-            const eastl::string Module = ModuleOf(Type);
+            const std::string Friendly = Names::FriendlyFromQualified(Type.QualifiedName);
+            const std::string Module = ModuleOf(Type);
             for (const auto& Prop : Type.Props)
             {
                 if (Prop->bInner || IsScriptHidden(*Prop))
@@ -933,9 +933,9 @@ namespace Lumina::Reflection
         }
 
         // "a" / 3 -> "a3". Used to name generated function parameters.
-        eastl::string ArgIndexName(char Prefix, size_t I)
+        std::string ArgIndexName(char Prefix, size_t I)
         {
-            eastl::string Out;
+            std::string Out;
             Out += Prefix;
             char Buf[12];
             int P = 11;
@@ -958,9 +958,9 @@ namespace Lumina::Reflection
         struct FArg
         {
             EBind         Kind = EBind::None;
-            eastl::string CSharp;
-            eastl::string Cpp;
-            eastl::string TargetCpp;
+            std::string CSharp;
+            std::string Cpp;
+            std::string TargetCpp;
             bool          bEntity = false; // entt::entity: ABI-marshalled as uint32, surfaced as C# Entity.
             // Object: true for a CObject-derived wrapper, false for an opaque STRUCT wrapper (components).
             // Same distinction as FBinding::bCObject -- only a CObject has a managed-instance slot, so only a
@@ -970,12 +970,12 @@ namespace Lumina::Reflection
             bool          bAssetRef = false; // EBind::Str arg: FAssetRef built from the marshalled path string.
             // EBind::Span: a (T* ptr, int32 count) C++ pair -> one C# Span<T>/ReadOnlySpan<T>. SpanElemCpp is the
             // C++ element ("uint32"); CSharp is the full "System.Span<uint>"; bReadOnlySpan = const T*.
-            eastl::string SpanElemCpp;
+            std::string SpanElemCpp;
             bool          bReadOnlySpan = false;
         };
 
         // Maps a bare C++ numeric spelling ("uint32") to its C# type ("uint"); false if not a numeric.
-        bool NumericCSharp(const eastl::string& Bare, eastl::string& OutCSharp)
+        bool NumericCSharp(const std::string& Bare, std::string& OutCSharp)
         {
             struct FE { const char* Cpp; const char* CSharp; };
             static const FE Table[] = {
@@ -991,9 +991,9 @@ namespace Lumina::Reflection
         }
 
         // Type spelling with const / & / * / whitespace removed: "const FName &" -> "FName".
-        eastl::string StripQualifiers(const eastl::string& T)
+        std::string StripQualifiers(const std::string& T)
         {
-            eastl::string Out;
+            std::string Out;
             for (char C : T)
             {
                 if (C != ' ' && C != '\t' && C != '&' && C != '*')
@@ -1001,7 +1001,7 @@ namespace Lumina::Reflection
                     Out += C;
                 }
             }
-            for (size_t P; (P = Out.find("const")) != eastl::string::npos; )
+            for (size_t P; (P = Out.find("const")) != std::string::npos; )
             {
                 Out.erase(P, 5);
             }
@@ -1020,7 +1020,7 @@ namespace Lumina::Reflection
             // handle: void* at the thunk, the NativeObject/NativeStruct wrapper in C# (the generator wraps a
             // returned handle / passes an arg's Handle). Handled before the generic pointer rejection since
             // the pointer spelling IS the marshaling here. A blittable value struct by pointer is rejected.
-            if (F.RawFieldType.find('*') != eastl::string::npos)
+            if (F.RawFieldType.find('*') != std::string::npos)
             {
                 if ((F.Flags == EPropertyTypeFlags::Object || F.Flags == EPropertyTypeFlags::Struct)
                     && IsOpaqueWrapperType(Db, F.TypeName))
@@ -1044,13 +1044,13 @@ namespace Lumina::Reflection
                 }
                 return false; // any other pointer in/out -> ambiguous marshaling
             }
-            if (bIsArg && F.RawFieldType.find('&') != eastl::string::npos
-                && F.RawFieldType.find("const") == eastl::string::npos)
+            if (bIsArg && F.RawFieldType.find('&') != std::string::npos
+                && F.RawFieldType.find("const") == std::string::npos)
             {
                 return false; // mutable-reference arg can't take a by-value
             }
 
-            const eastl::string Bare = StripQualifiers(F.RawFieldType);
+            const std::string Bare = StripQualifiers(F.RawFieldType);
 
             // entt::entity (a scoped enum over uint32) marshals as the C# Entity handle. Checked before the
             // numeric/enum classification below, where it would otherwise be skipped (it classifies as an
@@ -1139,7 +1139,7 @@ namespace Lumina::Reflection
         {
             bool                bVoid = true;
             FArg                Ret;
-            eastl::vector<FArg> Args;
+            std::vector<FArg> Args;
         };
 
         // Binds a reflected function only when the name is unique in the type (no overloads -> no C#
@@ -1184,19 +1184,19 @@ namespace Lumina::Reflection
         }
         
         void EmitCSharpFunction(FCodeWriter& Writer, const FReflectedFunction& Fn, const FFnBinding& FB,
-            const eastl::string& Friendly, const eastl::string& Module, bool bSuppressGCTransition)
+            const std::string& Friendly, const std::string& Module, bool bSuppressGCTransition)
         {
-            const eastl::string& Name = Fn.Name;
-            const eastl::string CallThunk = "LuminaSharp_Call_" + Friendly + "_" + Name;
+            const std::string& Name = Fn.Name;
+            const std::string CallThunk = "LuminaSharp_Call_" + Friendly + "_" + Name;
 
-            eastl::string SigParams;
+            std::string SigParams;
             for (size_t i = 0; i < FB.Args.size(); ++i)
             {
                 if (i != 0) { SigParams += ", "; }
                 SigParams += FB.Args[i].CSharp + " " + ArgIndexName('a', i);
             }
 
-            const eastl::string RetCS = FB.bVoid ? eastl::string("void") : FB.Ret.CSharp;
+            const std::string RetCS = FB.bVoid ? std::string("void") : FB.Ret.CSharp;
             
             if (bSuppressGCTransition)
             {
@@ -1213,17 +1213,17 @@ namespace Lumina::Reflection
 
         // The native `extern "C"` thunk that performs the instance call.
         void EmitNativeFunction(FCodeWriter& Writer, const FReflectedFunction& Fn, const FFnBinding& FB,
-            const eastl::string& Friendly, const char* Qualified, const char* Api)
+            const std::string& Friendly, const char* Qualified, const char* Api)
         {
-            const eastl::string& Name = Fn.Name;
-            const eastl::string CallThunk = "LuminaSharp_Call_" + Friendly + "_" + Name;
+            const std::string& Name = Fn.Name;
+            const std::string CallThunk = "LuminaSharp_Call_" + Friendly + "_" + Name;
 
-            eastl::string Params;
-            eastl::string CallArgs;
+            std::string Params;
+            std::string CallArgs;
             for (size_t i = 0; i < FB.Args.size(); ++i)
             {
                 const FArg& A = FB.Args[i];
-                const eastl::string An = ArgIndexName('A', i);
+                const std::string An = ArgIndexName('A', i);
                 if (i != 0)
                 {
                     Params += ", "; CallArgs += ", ";
@@ -1244,7 +1244,7 @@ namespace Lumina::Reflection
                     }
                     else
                     {
-                        const eastl::string Ctor = A.bIsName ? eastl::string("Lumina::FName") : eastl::string("Lumina::FString");
+                        const std::string Ctor = A.bIsName ? std::string("Lumina::FName") : std::string("Lumina::FString");
                         CallArgs += "((" + An + "Len > 0) ? " + Ctor + "(" + An + ", (size_t)" + An + "Len) : " + Ctor + "())";
                     }
                 }
@@ -1262,9 +1262,9 @@ namespace Lumina::Reflection
                 }
             }
 
-            const eastl::string CallExpr = "Self->" + Name + "(" + CallArgs + ")";
-            eastl::string RetCpp = "void";
-            eastl::string Body = CallExpr + ";";
+            const std::string CallExpr = "Self->" + Name + "(" + CallArgs + ")";
+            std::string RetCpp = "void";
+            std::string Body = CallExpr + ";";
             bool bStringReturn = false;
             if (!FB.bVoid)
             {
@@ -1301,7 +1301,7 @@ namespace Lumina::Reflection
                 Params += Params.empty() ? "char* Buffer, int Capacity" : ", char* Buffer, int Capacity";
             }
 
-            const eastl::string ParamSig = Params.empty() ? eastl::string() : (", " + Params);
+            const std::string ParamSig = Params.empty() ? std::string() : (", " + Params);
             Writer.Linef("extern \"C\" %s %s %s(%s* Self%s) { %s }",
                 Api, RetCpp.c_str(), CallThunk.c_str(), Qualified, ParamSig.c_str(), Body.c_str());
         }
@@ -1322,8 +1322,8 @@ namespace Lumina::Reflection
 
         void EmitFunctions(FCodeWriter& Writer, const FReflectedStruct& Type, const FReflectionDatabase& Db)
         {
-            const eastl::string Friendly = Names::FriendlyFromQualified(Type.QualifiedName);
-            const eastl::string Module = ModuleOf(Type);
+            const std::string Friendly = Names::FriendlyFromQualified(Type.QualifiedName);
+            const std::string Module = ModuleOf(Type);
             const bool bStructFastCalls = Type.HasMetadata("ScriptFastCalls");
             for (const auto& Fn : Type.Functions)
             {
@@ -1342,7 +1342,7 @@ namespace Lumina::Reflection
 
         void EmitNativeFunctions(FCodeWriter& Writer, const FReflectedStruct& Type, const char* Qualified, const char* Api, const FReflectionDatabase& Db)
         {
-            const eastl::string Friendly = Names::FriendlyFromQualified(Type.QualifiedName);
+            const std::string Friendly = Names::FriendlyFromQualified(Type.QualifiedName);
             for (const auto& Fn : Type.Functions)
             {
                 if (IsScriptEvent(*Fn, Type)) { continue; } // ScriptEvent base/dispatch thunks come from EmitScriptableNative
@@ -1399,25 +1399,25 @@ namespace Lumina::Reflection
 
         // The classifiable ScriptEvents of a type, each tagged with its stable bit index (the index counts EVERY
         // ScriptEvent in declaration order, so the native shim and C# [ScriptEvent(index)] tags align by construction).
-        void CollectScriptEvents(const FReflectedStruct& Type, const FReflectionDatabase& Db, eastl::vector<FScriptEvent>& Out)
+        void CollectScriptEvents(const FReflectedStruct& Type, const FReflectionDatabase& Db, std::vector<FScriptEvent>& Out)
         {
             int Index = 0;
             for (const auto& Fn : Type.Functions)
             {
                 if (!IsScriptEvent(*Fn, Type)) { continue; }
                 FFnBinding FB;
-                if (ClassifyScriptEvent(*Fn, Type, Db, FB)) { Out.push_back({ Fn.get(), eastl::move(FB), Index }); }
+                if (ClassifyScriptEvent(*Fn, Type, Db, FB)) { Out.push_back({ Fn.get(), std::move(FB), Index }); }
                 ++Index;
             }
         }
 
         //~ C# reverse-dispatcher ABI mapping (native ABI <-> C# call value).
-        eastl::string SeArgAbiCS(const FArg& A)
+        std::string SeArgAbiCS(const FArg& A)
         {
             if (A.bEntity) { return "uint"; }
             switch (A.Kind) { case EBind::Bool: return "byte"; case EBind::Enum: return "int"; case EBind::Object: return "global::System.IntPtr"; default: return A.CSharp; }
         }
-        eastl::string SeArgFromAbiCS(const FArg& A, const eastl::string& N)
+        std::string SeArgFromAbiCS(const FArg& A, const std::string& N)
         {
             if (A.bEntity) { return "new global::LuminaSharp.Entity(" + N + ")"; }
             switch (A.Kind)
@@ -1433,13 +1433,13 @@ namespace Lumina::Reflection
             default:            return N;
             }
         }
-        eastl::string SeRetAbiCS(const FFnBinding& FB)
+        std::string SeRetAbiCS(const FFnBinding& FB)
         {
             if (FB.bVoid) { return "void"; }
             if (FB.Ret.bEntity) { return "uint"; }
             switch (FB.Ret.Kind) { case EBind::Bool: return "byte"; case EBind::Enum: return "int"; case EBind::Object: return "global::System.IntPtr"; default: return FB.Ret.CSharp; }
         }
-        eastl::string SeRetToAbiCS(const FFnBinding& FB, const eastl::string& Expr)
+        std::string SeRetToAbiCS(const FFnBinding& FB, const std::string& Expr)
         {
             if (FB.Ret.bEntity) { return "(" + Expr + ").Id"; }
             switch (FB.Ret.Kind)
@@ -1452,34 +1452,34 @@ namespace Lumina::Reflection
         }
 
         //~ Native shim ABI mapping (real C++ type <-> reverse-thunk ABI type).
-        eastl::string SeArgCppParam(const FArg& A)
+        std::string SeArgCppParam(const FArg& A)
         {
             if (A.bEntity) { return "entt::entity"; }
             switch (A.Kind) { case EBind::Bool: return "bool"; case EBind::Enum: return A.TargetCpp; case EBind::StructValue: return A.TargetCpp; case EBind::Object: return A.TargetCpp + "*"; default: return A.Cpp; }
         }
-        eastl::string SeArgAbiCpp(const FArg& A)
+        std::string SeArgAbiCpp(const FArg& A)
         {
             if (A.bEntity) { return "uint32"; }
             switch (A.Kind) { case EBind::Bool: return "unsigned char"; case EBind::Enum: return "int"; case EBind::StructValue: return A.TargetCpp; case EBind::Object: return "void*"; default: return A.Cpp; }
         }
-        eastl::string SeArgCppToAbi(const FArg& A, const eastl::string& N)
+        std::string SeArgCppToAbi(const FArg& A, const std::string& N)
         {
             if (A.bEntity) { return "(uint32)" + N; }
             switch (A.Kind) { case EBind::Bool: return "(unsigned char)(" + N + " ? 1 : 0)"; case EBind::Enum: return "(int)" + N; case EBind::Object: return "(void*)" + N; default: return N; }
         }
-        eastl::string SeRetCpp(const FFnBinding& FB)
+        std::string SeRetCpp(const FFnBinding& FB)
         {
             if (FB.bVoid) { return "void"; }
             if (FB.Ret.bEntity) { return "entt::entity"; }
             switch (FB.Ret.Kind) { case EBind::Bool: return "bool"; case EBind::Enum: return FB.Ret.TargetCpp; case EBind::StructValue: return FB.Ret.TargetCpp; case EBind::Object: return FB.Ret.TargetCpp + "*"; default: return FB.Ret.Cpp; }
         }
-        eastl::string SeRetAbiCpp(const FFnBinding& FB)
+        std::string SeRetAbiCpp(const FFnBinding& FB)
         {
             if (FB.bVoid) { return "void"; }
             if (FB.Ret.bEntity) { return "uint32"; }
             switch (FB.Ret.Kind) { case EBind::Bool: return "unsigned char"; case EBind::Enum: return "int"; case EBind::StructValue: return FB.Ret.TargetCpp; case EBind::Object: return "void*"; default: return FB.Ret.Cpp; }
         }
-        eastl::string SeRetAbiToCpp(const FFnBinding& FB, const eastl::string& Expr)
+        std::string SeRetAbiToCpp(const FFnBinding& FB, const std::string& Expr)
         {
             if (FB.Ret.bEntity) { return "static_cast<entt::entity>(" + Expr + ")"; }
             switch (FB.Ret.Kind) { case EBind::Bool: return "(" + Expr + " != 0)"; case EBind::Enum: return "(" + FB.Ret.TargetCpp + ")(" + Expr + ")"; case EBind::Object: return "static_cast<" + FB.Ret.TargetCpp + "*>(" + Expr + ")"; default: return Expr; }
@@ -1487,22 +1487,22 @@ namespace Lumina::Reflection
 
         // Emits the C# side of one ScriptEvent into the wrapper class: a private [NativeCall] base partial (runs
         // the C++ default), the overridable `virtual` (default body calls it), and the reverse dispatcher.
-        void EmitScriptEventCSharp(FCodeWriter& Writer, const FScriptEvent& E, const eastl::string& Friendly,
-            const eastl::string& Module, const eastl::string& ClassName)
+        void EmitScriptEventCSharp(FCodeWriter& Writer, const FScriptEvent& E, const std::string& Friendly,
+            const std::string& Module, const std::string& ClassName)
         {
-            const eastl::string& Name = E.Fn->Name;
+            const std::string& Name = E.Fn->Name;
             const FFnBinding& FB = E.FB;
-            const eastl::string BaseThunk = "LuminaSharp_Base_" + Friendly + "_" + Name;
-            const eastl::string Dispatch  = "__ScriptEvent_" + Friendly + "_" + Name;
+            const std::string BaseThunk = "LuminaSharp_Base_" + Friendly + "_" + Name;
+            const std::string Dispatch  = "__ScriptEvent_" + Friendly + "_" + Name;
 
-            eastl::string SigParams, ArgNames;
+            std::string SigParams, ArgNames;
             for (size_t i = 0; i < FB.Args.size(); ++i)
             {
                 if (i) { SigParams += ", "; ArgNames += ", "; }
                 SigParams += FB.Args[i].CSharp + " " + ArgIndexName('a', i);
                 ArgNames  += ArgIndexName('a', i);
             }
-            const eastl::string RetCS = FB.bVoid ? eastl::string("void") : FB.Ret.CSharp;
+            const std::string RetCS = FB.bVoid ? std::string("void") : FB.Ret.CSharp;
 
             Writer.Linef("[global::LuminaSharp.NativeCall(Module = \"%s\", EntryPoint = \"%s\")]", Module.c_str(), BaseThunk.c_str());
             Writer.Linef("private partial %s __base_%s(%s);", RetCS.c_str(), Name.c_str(), SigParams.c_str());
@@ -1513,7 +1513,7 @@ namespace Lumina::Reflection
             Writer.Linef("%s__base_%s(%s);", FB.bVoid ? "" : "return ", Name.c_str(), ArgNames.c_str());
             Writer.EndBlock();
 
-            eastl::string AbiParams, CallArgs;
+            std::string AbiParams, CallArgs;
             for (size_t i = 0; i < FB.Args.size(); ++i)
             {
                 AbiParams += ", " + SeArgAbiCS(FB.Args[i]) + " " + ArgIndexName('a', i);
@@ -1549,32 +1549,32 @@ namespace Lumina::Reflection
         // static registration so the host can mint a CClass(super = this class) using the shim.
         void EmitScriptableNative(FCodeWriter& Writer, const FReflectedStruct& Type, const FReflectionDatabase& Db, const char* Qualified, const char* Api)
         {
-            const eastl::string Friendly = Names::FriendlyFromQualified(Type.QualifiedName);
-            const eastl::string Shim = Friendly + "__Script";
+            const std::string Friendly = Names::FriendlyFromQualified(Type.QualifiedName);
+            const std::string Shim = Friendly + "__Script";
 
-            eastl::vector<FScriptEvent> Events;
+            std::vector<FScriptEvent> Events;
             CollectScriptEvents(Type, Db, Events);
 
             // Base-call thunks (qualified, non-virtual) backing each event's C# default body.
             for (const FScriptEvent& E : Events)
             {
                 const FFnBinding& FB = E.FB;
-                eastl::string Params, CallArgs;
+                std::string Params, CallArgs;
                 for (size_t i = 0; i < FB.Args.size(); ++i)
                 {
                     if (i) { Params += ", "; CallArgs += ", "; }
                     Params += SeArgAbiCpp(FB.Args[i]) + " " + ArgIndexName('A', i);
                     // ABI param -> the C++ base call argument (inverse of SeArgCppToAbi).
                     const FArg& A = FB.Args[i];
-                    const eastl::string An = ArgIndexName('A', i);
+                    const std::string An = ArgIndexName('A', i);
                     if (A.bEntity)                   { CallArgs += "static_cast<entt::entity>(" + An + ")"; }
                     else if (A.Kind == EBind::Bool)  { CallArgs += "(" + An + " != 0)"; }
                     else if (A.Kind == EBind::Enum)  { CallArgs += "(" + A.TargetCpp + ")" + An; }
                     else if (A.Kind == EBind::Object){ CallArgs += "static_cast<" + A.TargetCpp + "*>(" + An + ")"; }
                     else                             { CallArgs += An; }
                 }
-                const eastl::string Call = eastl::string("Self->") + Qualified + "::" + E.Fn->Name + "(" + CallArgs + ")";
-                const eastl::string ParamSig = Params.empty() ? eastl::string() : (", " + Params);
+                const std::string Call = std::string("Self->") + Qualified + "::" + E.Fn->Name + "(" + CallArgs + ")";
+                const std::string ParamSig = Params.empty() ? std::string() : (", " + Params);
                 if (FB.bVoid)
                 {
                     Writer.Linef("extern \"C\" %s void LuminaSharp_Base_%s_%s(%s* Self%s) { %s; }",
@@ -1583,7 +1583,7 @@ namespace Lumina::Reflection
                 else
                 {
                     // Return the ABI form (inverse of SeRetAbiToCpp): bool->0/1, enum->int, entity->uint32, else by value.
-                    eastl::string RetExpr;
+                    std::string RetExpr;
                     if (FB.Ret.bEntity)                    { RetExpr = "return (uint32)(" + Call + ");"; }
                     else if (FB.Ret.Kind == EBind::Bool)   { RetExpr = "return (" + Call + ") ? 1 : 0;"; }
                     else if (FB.Ret.Kind == EBind::Enum)   { RetExpr = "return (int)(" + Call + ");"; }
@@ -1606,18 +1606,18 @@ namespace Lumina::Reflection
             for (const FScriptEvent& E : Events)
             {
                 const FFnBinding& FB = E.FB;
-                const eastl::string& Name = E.Fn->Name;
-                eastl::string CppParams, BaseArgs, AbiTypes, AbiArgs;
+                const std::string& Name = E.Fn->Name;
+                std::string CppParams, BaseArgs, AbiTypes, AbiArgs;
                 for (size_t i = 0; i < FB.Args.size(); ++i)
                 {
-                    const eastl::string An = ArgIndexName('A', i);
+                    const std::string An = ArgIndexName('A', i);
                     if (i) { CppParams += ", "; BaseArgs += ", "; }
                     CppParams += SeArgCppParam(FB.Args[i]) + " " + An;
                     BaseArgs  += An;
                     AbiTypes  += ", " + SeArgAbiCpp(FB.Args[i]);
                     AbiArgs   += ", " + SeArgCppToAbi(FB.Args[i], An);
                 }
-                const eastl::string BaseCall = eastl::string(Qualified) + "::" + Name + "(" + BaseArgs + ")";
+                const std::string BaseCall = std::string(Qualified) + "::" + Name + "(" + BaseArgs + ")";
                 Writer.Linef("        virtual %s %s(%s) override", SeRetCpp(FB).c_str(), Name.c_str(), CppParams.c_str());
                 Writer.Line("        {");
                 // Class-level test first: for a type that does not override this event it is one load of a
@@ -1634,7 +1634,7 @@ namespace Lumina::Reflection
                 }
                 else
                 {
-                    const eastl::string ThunkCall = eastl::string("__t(__h") + AbiArgs + ")";
+                    const std::string ThunkCall = std::string("__t(__h") + AbiArgs + ")";
                     Writer.Linef("                if (__h && __t) { return %s; }", SeRetAbiToCpp(FB, ThunkCall).c_str());
                 }
                 Writer.Line("            }");
@@ -1662,11 +1662,11 @@ namespace Lumina::Reflection
 
         // Splits a C# target "Lumina.Native" into namespace "Lumina" + class "Native". An empty target
         // defaults to namespace "Lumina", class "ScriptExports".
-        void SplitTarget(const eastl::string& Target, eastl::string& OutNs, eastl::string& OutClass)
+        void SplitTarget(const std::string& Target, std::string& OutNs, std::string& OutClass)
         {
-            const eastl::string T = Target.empty() ? eastl::string("Lumina.ScriptExports") : Target;
+            const std::string T = Target.empty() ? std::string("Lumina.ScriptExports") : Target;
             const size_t Dot = T.find_last_of('.');
-            if (Dot == eastl::string::npos)
+            if (Dot == std::string::npos)
             {
                 OutNs.clear();
                 OutClass = T;
@@ -1679,7 +1679,7 @@ namespace Lumina::Reflection
         }
 
         // The exported symbol name for a free-function thunk: unique across the module via the qualified name.
-        eastl::string FreeThunkName(const FReflectedFunction& Fn)
+        std::string FreeThunkName(const FReflectedFunction& Fn)
         {
             return "LuminaSharp_Export_" + Names::FriendlyFromQualified(Fn.QualifiedName);
         }
@@ -1706,19 +1706,19 @@ namespace Lumina::Reflection
                 // Span<T>: a primitive pointer (T*) immediately followed by an int32 count maps to ONE C#
                 // Span<T> / ReadOnlySpan<T>. The C# generator marshals it to (T* pinned, int Length); the
                 // native thunk passes that pair straight to the C++ function (which already takes T*, int).
-                if (Arg.RawFieldType.find('*') != eastl::string::npos && (i + 1) < Fn.Arguments.size())
+                if (Arg.RawFieldType.find('*') != std::string::npos && (i + 1) < Fn.Arguments.size())
                 {
-                    const eastl::string Elem = StripQualifiers(Arg.RawFieldType);
-                    const eastl::string NextBare = StripQualifiers(Fn.Arguments[i + 1].RawFieldType);
-                    eastl::string ElemCS;
+                    const std::string Elem = StripQualifiers(Arg.RawFieldType);
+                    const std::string NextBare = StripQualifiers(Fn.Arguments[i + 1].RawFieldType);
+                    std::string ElemCS;
                     if ((NextBare == "int32" || NextBare == "int") && NumericCSharp(Elem, ElemCS))
                     {
                         FArg A;
                         A.Kind = EBind::Span;
                         A.SpanElemCpp = Elem;
-                        A.bReadOnlySpan = Arg.RawFieldType.find("const") != eastl::string::npos;
-                        A.CSharp = (A.bReadOnlySpan ? eastl::string("global::System.ReadOnlySpan<")
-                                                    : eastl::string("global::System.Span<")) + ElemCS + ">";
+                        A.bReadOnlySpan = Arg.RawFieldType.find("const") != std::string::npos;
+                        A.CSharp = (A.bReadOnlySpan ? std::string("global::System.ReadOnlySpan<")
+                                                    : std::string("global::System.Span<")) + ElemCS + ">";
                         Out.Args.push_back(A);
                         ++i; // consume the count parameter
                         continue;
@@ -1736,16 +1736,16 @@ namespace Lumina::Reflection
         }
 
         void EmitCSharpFreeFunction(FCodeWriter& Writer, const FReflectedFunction& Fn, const FFnBinding& FB,
-            const eastl::string& Module, bool bSuppressGCTransition)
+            const std::string& Module, bool bSuppressGCTransition)
         {
-            const eastl::string Thunk = FreeThunkName(Fn);
-            eastl::string SigParams;
+            const std::string Thunk = FreeThunkName(Fn);
+            std::string SigParams;
             for (size_t i = 0; i < FB.Args.size(); ++i)
             {
                 if (i != 0) { SigParams += ", "; }
                 SigParams += FB.Args[i].CSharp + " " + ArgIndexName('a', i);
             }
-            const eastl::string RetCS = FB.bVoid ? eastl::string("void") : FB.Ret.CSharp;
+            const std::string RetCS = FB.bVoid ? std::string("void") : FB.Ret.CSharp;
             if (bSuppressGCTransition)
             {
                 Writer.Linef("[global::LuminaSharp.NativeCall(Module = \"%s\", EntryPoint = \"%s\", SuppressGCTransition = true)]",
@@ -1762,13 +1762,13 @@ namespace Lumina::Reflection
         // The native extern "C" thunk that calls the free function by its qualified name (no instance).
         void EmitNativeFreeFunction(FCodeWriter& Writer, const FReflectedFunction& Fn, const FFnBinding& FB, const char* Api)
         {
-            const eastl::string Thunk = FreeThunkName(Fn);
-            eastl::string Params;
-            eastl::string CallArgs;
+            const std::string Thunk = FreeThunkName(Fn);
+            std::string Params;
+            std::string CallArgs;
             for (size_t i = 0; i < FB.Args.size(); ++i)
             {
                 const FArg& A = FB.Args[i];
-                const eastl::string An = ArgIndexName('A', i);
+                const std::string An = ArgIndexName('A', i);
                 if (i != 0)
                 {
                     Params += ", "; CallArgs += ", ";
@@ -1781,13 +1781,13 @@ namespace Lumina::Reflection
                 else if (A.Kind == EBind::Str)
                 {
                     Params += "const char* " + An + ", int " + An + "Len";
-                    const eastl::string Ctor = A.bIsName ? eastl::string("Lumina::FName") : eastl::string("Lumina::FString");
+                    const std::string Ctor = A.bIsName ? std::string("Lumina::FName") : std::string("Lumina::FString");
                     CallArgs += "((" + An + "Len > 0) ? " + Ctor + "(" + An + ", (size_t)" + An + "Len) : " + Ctor + "())";
                 }
                 else if (A.Kind == EBind::Span)
                 {
                     // C# Span<T> -> (T* pinned, int Length); pass the pair straight to the C++ (T*, int).
-                    const eastl::string Ptr = A.bReadOnlySpan ? ("const " + A.SpanElemCpp + "* ") : (A.SpanElemCpp + "* ");
+                    const std::string Ptr = A.bReadOnlySpan ? ("const " + A.SpanElemCpp + "* ") : (A.SpanElemCpp + "* ");
                     Params += Ptr + An + ", int " + An + "Count";
                     CallArgs += An + ", " + An + "Count";
                 }
@@ -1805,9 +1805,9 @@ namespace Lumina::Reflection
                 }
             }
 
-            const eastl::string CallExpr = Fn.QualifiedName + "(" + CallArgs + ")";
-            eastl::string RetCpp = "void";
-            eastl::string Body = CallExpr + ";";
+            const std::string CallExpr = Fn.QualifiedName + "(" + CallArgs + ")";
+            std::string RetCpp = "void";
+            std::string Body = CallExpr + ";";
             bool bStringReturn = false;
             if (!FB.bVoid)
             {
@@ -1878,7 +1878,7 @@ namespace Lumina::Reflection
             return false;
         }
 
-        const eastl::string Module = (Header->Project != nullptr) ? Header->Project->Name : eastl::string("Runtime");
+        const std::string Module = (Header->Project != nullptr) ? Header->Project->Name : std::string("Runtime");
 
         // One static partial-class block per function; C# merges partials targeting the same class.
         bool bEmittedAny = false;
@@ -1890,8 +1890,8 @@ namespace Lumina::Reflection
                 continue;
             }
 
-            eastl::string Ns;
-            eastl::string Cls;
+            std::string Ns;
+            std::string Cls;
             SplitTarget(Fn->CSharpTarget, Ns, Cls);
 
             if (!Ns.empty())
@@ -1977,7 +1977,7 @@ namespace Lumina::Reflection
         else
         {
             // Non-blittable (FString/containers/smart-ptrs): an opaque handle, not a value mirror.
-            const eastl::string Base = CSharpBase(Struct, Database, "global::LuminaSharp.NativeStruct");
+            const std::string Base = CSharpBase(Struct, Database, "global::LuminaSharp.NativeStruct");
             Writer.Linef("[global::LuminaSharp.NativeType(\"%s\")]", Struct.DisplayName.c_str());
             Writer.Linef("public unsafe partial class %s : %s", Struct.DisplayName.c_str(), Base.c_str());
             Writer.BeginBlock();
@@ -2007,7 +2007,7 @@ namespace Lumina::Reflection
 
         // Opaque handle wrapper: derives its reflected base's wrapper (inheriting its members) and
         // adds its own bound properties.
-        const eastl::string Base = CSharpBase(Class, Database, "global::LuminaSharp.NativeObject");
+        const std::string Base = CSharpBase(Class, Database, "global::LuminaSharp.NativeObject");
         const bool bScriptable = Class.HasMetadata("Scriptable");
         if (bScriptable)
         {
@@ -2023,9 +2023,9 @@ namespace Lumina::Reflection
         Writer.Linef("protected %s() : base() { }", Class.DisplayName.c_str());
         if (bScriptable)
         {
-            const eastl::string Module = ModuleOf(Class);
-            const eastl::string Friendly = Names::FriendlyFromQualified(Class.QualifiedName);
-            eastl::vector<FScriptEvent> Events;
+            const std::string Module = ModuleOf(Class);
+            const std::string Friendly = Names::FriendlyFromQualified(Class.QualifiedName);
+            std::vector<FScriptEvent> Events;
             CollectScriptEvents(Class, Database, Events);
             for (const FScriptEvent& E : Events)
             {
@@ -2079,7 +2079,7 @@ namespace Lumina::Reflection
             }
         }
 
-        const eastl::string Friendly = Names::FriendlyFromQualified(Type.QualifiedName);
+        const std::string Friendly = Names::FriendlyFromQualified(Type.QualifiedName);
         const char* Qualified = Type.EmittedCppQualifiedName().c_str();
         // Interop thunks are resolved by name at runtime from whatever binary they land in (their module
         // DLL in modular builds, the exe in monolithic), so they use the always-dllexport LUMINA_SCRIPT_API

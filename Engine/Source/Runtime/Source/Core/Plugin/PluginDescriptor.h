@@ -2,7 +2,7 @@
 
 #include "PluginLoadingPhase.h"
 #include "Assets/AssetRegistry/CookRoot.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "Platform/GenericPlatform.h"
 

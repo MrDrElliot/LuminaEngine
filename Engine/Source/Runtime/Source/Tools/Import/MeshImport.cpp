@@ -136,7 +136,7 @@ namespace Lumina::Import::Mesh
         {
             auto RemapStream = [&](auto& Stream)
             {
-                using TElem = typename eastl::remove_reference_t<decltype(Stream)>::value_type;
+                using TElem = typename std::remove_reference_t<decltype(Stream)>::value_type;
                 TVector<TElem> Out(NewCount);
                 meshopt_remapVertexBuffer(Out.data(), Stream.data(), OldCount, sizeof(TElem), Remap);
                 Stream = Move(Out);
@@ -585,7 +585,7 @@ namespace Lumina::Import::Mesh
                     continue;
                 }
 
-                // Doubles: a large mesh in centimetres can sum world areas past float precision long
+                // Doubles: a large mesh in centimeters can sum world areas past float precision long
                 // before it runs out of triangles, and the ratio is what we ultimately want.
                 double WorldArea = 0.0;
                 double UVArea    = 0.0;
@@ -863,7 +863,7 @@ namespace Lumina::Import::Mesh
             // Drop every level that did not make the cut so the pack pass cannot fold one back in.
             for (uint32 lod = 0; lod < LODCount; ++lod)
             {
-                if (eastl::find(Accepted.begin(), Accepted.end(), lod) == Accepted.end())
+                if (std::find(Accepted.begin(), Accepted.end(), lod) == Accepted.end())
                 {
                     Results[lod * NumSurfaces + SurfaceIdx] = FSurfaceMeshletResult{};
                 }
@@ -1391,13 +1391,13 @@ namespace Lumina::Import::Mesh
             TVector<TUniquePtr<FMeshResource>> NewResources;
             if (MergedStatic->GetNumVertices() > 0)
             {
-                NewResources.push_back(eastl::move(MergedStatic));
+                NewResources.push_back(std::move(MergedStatic));
             }
             if (MergedSkinned->GetNumVertices() > 0)
             {
-                NewResources.push_back(eastl::move(MergedSkinned));
+                NewResources.push_back(std::move(MergedSkinned));
             }
-            Data.Resources = eastl::move(NewResources);
+            Data.Resources = std::move(NewResources);
         }
 
         // Heavy CPU finalize. Stats run serially afterwards so the parallel
@@ -1427,7 +1427,7 @@ namespace Lumina::Import::Mesh
                 TotalSurfaces += MeshPtr->GeometrySurfaces.size();
             }
         }
-        const float StepPerSurface = ProgressBudget / (float)eastl::max<size_t>((size_t)1, TotalSurfaces);
+        const float StepPerSurface = ProgressBudget / (float)std::max<size_t>((size_t)1, TotalSurfaces);
 
         if (Progress)
         {
@@ -1463,8 +1463,8 @@ namespace Lumina::Import::Mesh
             AnalyzeMeshStatistics(*MeshPtr, Data.MeshStatistics);
         }
 
-        // Serially over resources: the builder parallelises over its own Z slices, so nesting it in the
-        // per-resource ParallelFor would nest two. Must follow GenerateMeshlets -- it voxelises the bake.
+        // Serially over resources: the builder parallelizes over its own Z slices, so nesting it in the
+        // per-resource ParallelFor would nest two. Must follow GenerateMeshlets -- it voxelizes the bake.
         if (Options.DistanceField.bEnabled)
         {
             if (Progress)

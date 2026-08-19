@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectMacros.h"
@@ -68,7 +68,7 @@ namespace Lumina
         /** Drawn under the reflected property table in the import dialogue. */
         virtual void DrawSourcePreview() { }
 
-        /** Drops the parsed source data; called once the import is committed or cancelled. */
+        /** Drops the parsed source data; called once the import is committed or canceled. */
         virtual void ReleaseSourceData() { }
 
         //~ Reimport replaces the DATA of an existing asset: same CObject, same GUID, same package path, so

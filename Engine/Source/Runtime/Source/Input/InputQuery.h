@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Containers/Array.h"
+#include "Containers/Span.h"
 #include "Core/Math/Vector/VectorTypes.h"
 #include "Events/KeyCodes.h"
 #include "Events/MouseCodes.h"

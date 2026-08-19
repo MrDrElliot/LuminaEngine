@@ -4,7 +4,7 @@
 
 #include "Utils.h"
 #include "xxhash.h"
-#include "EASTL/queue.h"
+#include <queue>
 
 namespace Lumina::Reflection
 {
@@ -12,19 +12,19 @@ namespace Lumina::Reflection
     {
         uint64_t Hash = XXH64(Macro.HeaderID.c_str(), strlen(Macro.HeaderID.c_str()), 0);
 
-        eastl::vector<FReflectionMacro>& Macros = ReflectionMacros[Hash];
-        Macros.push_back(eastl::move(Macro));
+        std::vector<FReflectionMacro>& Macros = ReflectionMacros[Hash];
+        Macros.push_back(std::move(Macro));
     }
 
     void FClangParserContext::AddGeneratedBodyMacro(FReflectionMacro&& Macro)
     {
         uint64_t Hash = ClangUtils::HashString(Macro.HeaderID);
         
-        eastl::queue<FReflectionMacro>& Macros = GeneratedBodyMacros[Hash];
-        Macros.push(eastl::move(Macro));
+        std::queue<FReflectionMacro>& Macros = GeneratedBodyMacros[Hash];
+        Macros.push(std::move(Macro));
     }
 
-    bool FClangParserContext::TryFindMacroForCursor(const eastl::string& HeaderID, const CXCursor& Cursor, FReflectionMacro& Macro, bool bConsume)
+    bool FClangParserContext::TryFindMacroForCursor(const std::string& HeaderID, const CXCursor& Cursor, FReflectionMacro& Macro, bool bConsume)
     {
         uint64_t Hash = ClangUtils::HashString(HeaderID);
 
@@ -52,19 +52,19 @@ namespace Lumina::Reflection
             return false;
         }
 
-        eastl::string FileNameChar = clang_getCString(FileName);
+        std::string FileNameChar = clang_getCString(FileName);
         clang_disposeString(FileName);
 
         // Normalize the cursor's raw clang file name the same way HeaderID was,
         // so case-sensitive filesystems don't drop legitimate hits.
-        FileNameChar = ClangUtils::NormalizeHeaderPath(eastl::move(FileNameChar));
+        FileNameChar = ClangUtils::NormalizeHeaderPath(std::move(FileNameChar));
 
         if (FileNameChar != HeaderID)
         {
             return false;
         }
 
-        eastl::vector<FReflectionMacro>& MacrosForHeader = HeaderIter->second;
+        std::vector<FReflectionMacro>& MacrosForHeader = HeaderIter->second;
 
         // Prefer the closest macro preceding the cursor: same-line-before, then one line above.
         // Without the same-line case, inline-form macros mis-bind to the cursor below them.
@@ -103,7 +103,7 @@ namespace Lumina::Reflection
         return false;
     }
 
-    bool FClangParserContext::TryFindGeneratedBodyMacro(const eastl::string& HeaderID, const CXCursor& Cursor, FReflectionMacro& Macro)
+    bool FClangParserContext::TryFindGeneratedBodyMacro(const std::string& HeaderID, const CXCursor& Cursor, FReflectionMacro& Macro)
     {
         // A pure lookup: the struct visitor decides what a missing GENERATED_BODY means.
         uint64_t Hash = XXH64(HeaderID.c_str(), strlen(HeaderID.c_str()), 0);
@@ -115,7 +115,7 @@ namespace Lumina::Reflection
         }
 
         
-        eastl::queue<FReflectionMacro>& MacrosForHeader = headerIter->second;
+        std::queue<FReflectionMacro>& MacrosForHeader = headerIter->second;
 
         if (MacrosForHeader.empty())
         {
@@ -137,7 +137,7 @@ namespace Lumina::Reflection
     {
         CurrentNamespace.clear();
 
-        for (const eastl::string& Segment : NamespaceStack)
+        for (const std::string& Segment : NamespaceStack)
         {
             if (!CurrentNamespace.empty())
             {
@@ -148,7 +148,7 @@ namespace Lumina::Reflection
         }
     }
 
-    void FClangParserContext::PushNamespace(const eastl::string& Namespace)
+    void FClangParserContext::PushNamespace(const std::string& Namespace)
     {
         NamespaceStack.push_back(Namespace);
 

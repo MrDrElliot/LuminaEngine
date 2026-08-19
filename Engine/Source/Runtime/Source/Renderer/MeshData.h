@@ -4,7 +4,7 @@
 #include "RHI.h"
 #include "RHICore.h"
 #include "RHITexture.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Lumina.h"
 #include "Core/Serialization/Archiver.h"
 #include "Core/Utils/NonCopyable.h"

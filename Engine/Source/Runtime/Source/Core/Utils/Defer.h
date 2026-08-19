@@ -1,6 +1,5 @@
 ﻿#pragma once
 
-#include <EASTL/utility.h>
 
 namespace Lumina
 {
@@ -9,7 +8,7 @@ namespace Lumina
     {
     public:
 
-        explicit TDefer(TFunc&& InFunc): Func(eastl::forward<TFunc>(InFunc)) {}
+        explicit TDefer(TFunc&& InFunc): Func(std::forward<TFunc>(InFunc)) {}
         ~TDefer() { Func(); }
 
         TDefer(const TDefer&) = delete;
@@ -28,7 +27,7 @@ namespace Lumina
         template<typename F>
         TDefer<F> operator+(F&& f)
         {
-            return TDefer<F>(eastl::forward<F>(f));
+            return TDefer<F>(std::forward<F>(f));
         }
     };
 

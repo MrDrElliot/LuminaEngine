@@ -1,7 +1,6 @@
 #pragma once
 
 #include "Core/Math/Math.h"
-#include "Containers/Array.h"
 #include "Platform/GenericPlatform.h"
 #include "World/Entity/Components/TerrainBrushComponent.h"
 

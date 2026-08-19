@@ -4,7 +4,7 @@
 #include "Core/Math/AABB.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Renderer/CustomPrimitiveData.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "World/Scene/RenderScene/SceneRenderTypes.h"
 #include "MeshComponent.generated.h"
 

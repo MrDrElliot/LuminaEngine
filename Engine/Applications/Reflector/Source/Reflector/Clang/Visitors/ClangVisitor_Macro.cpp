@@ -1,17 +1,17 @@
 ﻿#include <utility>
 #include <clang-c/CXSourceLocation.h>
 #include <clang-c/Index.h>
-#include <EASTL/string.h>
+#include <string>
 #include <Reflector/ReflectionConfig.h>
 #include <Reflector/ReflectionCore/ReflectionMacro.h>
-#include "EASTL/fixed_hash_map.h"
+#include <unordered_map>
 #include "Reflector/Clang/ClangParserContext.h"
 #include "Reflector/Clang/Utils.h"
 
 namespace Lumina::Reflection::Visitor
 {
 
-    static const eastl::fixed_hash_map<eastl::string, EReflectionMacro, 8> MacroMap =
+    static const std::unordered_map<std::string, EReflectionMacro> MacroMap =
     {
         { ReflectionEnumToString(EReflectionMacro::Property),      EReflectionMacro::Property },
         { ReflectionEnumToString(EReflectionMacro::Function),      EReflectionMacro::Function },
@@ -22,7 +22,7 @@ namespace Lumina::Reflection::Visitor
     
     CXChildVisitResult VisitMacro(const CXCursor& Cursor, CXCursor, FClangParserContext* Context)
     {
-        eastl::string CursorName = ClangUtils::GetCursorDisplayName(Cursor);
+        std::string CursorName = ClangUtils::GetCursorDisplayName(Cursor);
         CXSourceRange Range = clang_getCursorExtent(Cursor);
 
         auto It = MacroMap.find(CursorName);

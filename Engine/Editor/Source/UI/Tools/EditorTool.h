@@ -5,7 +5,7 @@
 #include "EditorAction.h"
 #include "ToolFlags.h"
 #include "Transactions/EditorTransaction.h"
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/Function.h"
 #include "Containers/String.h"
 #include "Events/EventProcessor.h"
@@ -386,7 +386,7 @@ namespace Lumina
         static FFixedString GetToolWindowName(char const* ToolWindowName, ImGuiID InDockspaceID)
         {
             DEBUG_ASSERT(ToolWindowName != nullptr);
-            return { FFixedString::CtorSprintf(), "%s##%08X", ToolWindowName, InDockspaceID };
+            return FormatAs<FFixedString>("{}##{:08X}", ToolWindowName, InDockspaceID);
         }
 
     public:
@@ -475,7 +475,7 @@ namespace Lumina
     public:
 
         /** Register a keybind-driven command; call from OnInitialize. Surfaces in Help > Keyboard Shortcuts. */
-        void RegisterAction(FEditorAction Action) { EditorActions.push_back(eastl::move(Action)); }
+        void RegisterAction(FEditorAction Action) { EditorActions.push_back(std::move(Action)); }
 
         const TVector<FEditorAction>& GetRegisteredActions() const { return EditorActions; }
 

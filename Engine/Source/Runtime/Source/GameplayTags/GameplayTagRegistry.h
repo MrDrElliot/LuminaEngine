@@ -4,7 +4,8 @@
 
 #include "Platform/GenericPlatform.h"
 #include "Containers/String.h"
-#include "Containers/Array.h"
+#include "Containers/HashTable.h"
+#include "Containers/Vector.h"
 
 namespace Lumina
 {

@@ -1,7 +1,6 @@
 ﻿#include "PropertyTable.h"
 
 #include <cstdlib>
-#include <EASTL/algorithm.h>
 
 #include "Core/Engine/Engine.h"
 #include "Core/Object/Class.h"
@@ -310,7 +309,7 @@ namespace Lumina
                 return;
             }
 
-            CStruct** Owner = eastl::get_if<CStruct*>(&Source->Owner);
+            CStruct** Owner = Containers::GetIf<CStruct*>(&Source->Owner);
             Term.Property = (Owner && *Owner) ? (*Owner)->GetProperty(FName(NameView)) : nullptr;
             if (Term.Property == nullptr || Term.Property == Source)
             {
@@ -318,7 +317,7 @@ namespace Lumina
                 return;
             }
 
-            Terms.push_back(eastl::move(Term));
+            Terms.push_back(std::move(Term));
         }
 
         bHides = Source->HasMetadata("EditConditionHides");
@@ -902,7 +901,7 @@ namespace Lumina
 
     FStringView FPropertyPropertyRow::GetFilterLabel() const
     {
-        // Array elements are labelled by index, which nobody searches for; they still survive on a
+        // Array elements are labeled by index, which nobody searches for; they still survive on a
         // descendant match through ApplyFilter.
         if (IsArrayElementProperty() || PropertyHandle == nullptr || PropertyHandle->Property == nullptr)
         {
@@ -1698,7 +1697,7 @@ namespace Lumina
             }
         }
 
-        eastl::sort(Candidates.begin(), Candidates.end(), [](CStruct* A, CStruct* B)
+        std::sort(Candidates.begin(), Candidates.end(), [](CStruct* A, CStruct* B)
         {
             return strcmp(InstancedStructLabel(A), InstancedStructLabel(B)) < 0;
         });

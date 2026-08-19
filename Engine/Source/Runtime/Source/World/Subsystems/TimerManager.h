@@ -1,6 +1,5 @@
 #pragma once
 
-#include "Containers/Array.h"
 #include "Containers/Function.h"
 #include "Core/LuminaMacros.h"
 #include "entt/entt.hpp"

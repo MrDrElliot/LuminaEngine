@@ -2,6 +2,7 @@
 #include <algorithm>
 #include "Core/Serialization/Archiver.h"
 #include "Core/Math/Vector/Vector.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -90,8 +91,7 @@ namespace Lumina
 
         FString ToString() const
         {
-            return "R: " + eastl::to_string(R) + " G: " + eastl::to_string(G) + 
-                   " B: " + eastl::to_string(B) + " A: " + eastl::to_string(A);
+            return Format("R: {} G: {} B: {} A: {}", R, G, B, A);
         }
 
         bool operator == (const FColor& Other) const

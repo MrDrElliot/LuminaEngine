@@ -27,7 +27,6 @@
 #include "Core/Serialization/NetArchive.h"
 #include "Core/Serialization/NetQuantize.h"
 #include "Log/Log.h"
-#include "EASTL/sort.h"
 
 namespace Lumina
 {
@@ -63,7 +62,7 @@ namespace Lumina
                 Networked.push_back(Entity);
             }
 
-            eastl::sort(Networked.begin(), Networked.end(), [](entt::entity A, entt::entity B)
+            std::sort(Networked.begin(), Networked.end(), [](entt::entity A, entt::entity B)
             {
                 return entt::to_integral(A) < entt::to_integral(B);
             });
@@ -307,7 +306,7 @@ namespace Lumina
 
             // Oldest-replicated first (GUID tie-break for determinism) so the per-tick byte budget below can
             // spread a backlog across ticks without ever starving a single entity.
-            eastl::sort(Dirty.begin(), Dirty.end(), [](const FDirtyEntry& A, const FDirtyEntry& B)
+            std::sort(Dirty.begin(), Dirty.end(), [](const FDirtyEntry& A, const FDirtyEntry& B)
             {
                 return (A.LastTime != B.LastTime) ? (A.LastTime < B.LastTime) : (A.Guid < B.Guid);
             });
@@ -1214,7 +1213,7 @@ namespace Lumina
                 {
                     State->ConnectedClients = (State->ConnectedClients > 0) ? State->ConnectedClients - 1 : 0;
                     auto& Ids = State->ConnectedClientIds;
-                    Ids.erase(eastl::remove(Ids.begin(), Ids.end(), Event.Connection.Value), Ids.end());
+                    Ids.erase(std::remove(Ids.begin(), Ids.end(), Event.Connection.Value), Ids.end());
                     State->ClientViews.erase(Event.Connection.Value); // drop its per-client relevancy state
 
                     // Release anything this connection owned so it doesn't stay stuck as an orphan proxy.

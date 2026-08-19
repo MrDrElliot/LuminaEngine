@@ -74,7 +74,7 @@ do {                                                                            
         {                                                                               \
             Lumina::Vulkan::ShowVulkanCheckFailureDialog(                               \
                 #x, __FILE__, __LINE__, Vulkan::VkResultToString(result));              \
-            EASTL_DEBUG_BREAK();                                                        \
+            LUMINA_DEBUG_BREAK();                                                        \
         }                                                                               \
     }                                                                                   \
 } while (0)

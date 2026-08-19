@@ -6,10 +6,10 @@
 #include <rpmalloc.h>
 #include <utility>
 #include <xmmintrin.h>
-#include <EASTL/type_traits.h>
+#include <cstring>
 
 #include "Core/LuminaMacros.h"
-#include "Core/Math/Math.h"
+#include "Core/Math/Scalar.h"
 #include "Platform/GenericPlatform.h"
 #include "Platform/Platform.h"
 #include "tracy/TracyC.h"
@@ -40,7 +40,7 @@ namespace Lumina::Memory
     {
         std::memset(Ptr, 0, Size);
     }
-    
+
     template <typename T>
     void Memzero(T* Ptr)
     {
@@ -109,17 +109,29 @@ namespace Lumina::Memory
     RUNTIME_API NODISCARD size_t GetTotalUnmappedMemory();
     
     RUNTIME_API NODISCARD void* Malloc(size_t Size, size_t Alignment = DEFAULT_ALIGNMENT);
-    
+
     RUNTIME_API NODISCARD void* Realloc(void* Memory, size_t NewSize, size_t OriginalAlignment = DEFAULT_ALIGNMENT);
+
+    // Bytes the allocator actually reserved, which is the requested size rounded up to a size class.
+    RUNTIME_API NODISCARD size_t GetAllocationSize(void* Memory);
+
+    // Claims the slack GetAllocationSize reports, so a growing buffer can skip the copy when it fits.
+    RUNTIME_API NODISCARD bool TryExpandInPlace(void* Memory, size_t NewSize);
 
     RUNTIME_API void Free(void*& Memory);
 
+    // The calling thread's scratch arena, reachable without Allocator.h, which the containers cannot include.
+    RUNTIME_API NODISCARD void* ScratchAllocate(size_t Size, size_t Alignment);
+
+    // The calling thread's frame arena, reset once per frame rather than per FMemMark scope.
+    RUNTIME_API NODISCARD void* FrameAllocate(size_t Size, size_t Alignment);
+
     template<typename T, typename ... ConstructorParams>
-    requires eastl::is_constructible_v<T, ConstructorParams...> && (!eastl::is_array_v<T>)
+    requires std::is_constructible_v<T, ConstructorParams...> && (!std::is_array_v<T>)
     NODISCARD FORCEINLINE T* New(ConstructorParams&&... Params)  // NOLINT(cppcoreguidelines-missing-std-forward)
     {
         void* Memory = Malloc(sizeof(T), alignof(T));
-        return new(Memory) T(eastl::forward<ConstructorParams>(Params)...);
+        return new(Memory) T(std::forward<ConstructorParams>(Params)...);
     }
 
     
@@ -173,7 +185,7 @@ namespace Lumina::Memory
 
         const uint32 NumElements = *(reinterpret_cast<uint32*>(Array) - 1);
         
-        if (!eastl::is_trivially_destructible_v<T>)
+        if (!std::is_trivially_destructible_v<T>)
         {
             for (uint32 i = 0; i < NumElements; i++)
             {
@@ -188,7 +200,7 @@ namespace Lumina::Memory
     template<typename T>
     void Delete(T* Type)
     {
-        if constexpr (!eastl::is_trivially_destructible_v<T>)
+        if constexpr (!std::is_trivially_destructible_v<T>)
         {
             Type->~T();
         }

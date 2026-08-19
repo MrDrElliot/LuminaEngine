@@ -1,13 +1,13 @@
 ﻿#include "ReflectedType.h"
 
-#include <EASTL/algorithm.h>
+#include <algorithm>
 
 #include "Reflector/CodeGeneration/CodeWriter.h"
 #include "Reflector/Types/Properties/ReflectedProperty.h"
 
 namespace Lumina::Reflection
 {
-    void EmitMetadataArray(FCodeWriter& Writer, eastl::string_view SymbolBase, const eastl::vector<FMetadataPair>& Metadata)
+    void EmitMetadataArray(FCodeWriter& Writer, std::string_view SymbolBase, const std::vector<FMetadataPair>& Metadata)
     {
         if (Metadata.empty())
         {
@@ -15,7 +15,7 @@ namespace Lumina::Reflection
         }
 
         Writer.Linef("static constexpr Lumina::FMetaDataPairParam %s_Metadata[] = {",
-            eastl::string(SymbolBase).c_str());
+            std::string(SymbolBase).c_str());
 
         for (const FMetadataPair& Pair : Metadata)
         {
@@ -84,7 +84,7 @@ namespace Lumina::Reflection
         }
     }
     
-    const eastl::string* FReflectedType::TryGetMetadata(const eastl::string& Key) const
+    const std::string* FReflectedType::TryGetMetadata(const std::string& Key) const
     {
         for (const FMetadataPair& Pair : Metadata)
         {
@@ -96,21 +96,21 @@ namespace Lumina::Reflection
         return nullptr;
     }
 
-    bool FReflectedType::HasMetadata(const eastl::string& Meta) const
+    bool FReflectedType::HasMetadata(const std::string& Meta) const
     {
-        return eastl::any_of(Metadata.begin(), Metadata.end(),
+        return std::any_of(Metadata.begin(), Metadata.end(),
             [&](const FMetadataPair& Pair) { return Pair.Key == Meta; });
     }
 
-    void FReflectedType::GenerateMetadata(const eastl::string& InMetadata)
+    void FReflectedType::GenerateMetadata(const std::string& InMetadata)
     {
         FMetadataParser Parser(InMetadata);
-        Metadata = eastl::move(Parser.Metadata);
+        Metadata = std::move(Parser.Metadata);
     }
 
-    bool FReflectedType::DeclareAccessors(FCodeWriter& Writer, const eastl::string& FileID)
+    bool FReflectedType::DeclareAccessors(FCodeWriter& Writer, const std::string& FileID)
     {
-        const bool bHasAnyAccessor = eastl::any_of(Props.begin(), Props.end(),
+        const bool bHasAnyAccessor = std::any_of(Props.begin(), Props.end(),
             [](const auto& Prop) { return Prop->HasAccessors(); });
 
         if (!bHasAnyAccessor)

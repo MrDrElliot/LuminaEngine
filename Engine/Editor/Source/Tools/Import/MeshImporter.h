@@ -127,7 +127,7 @@ namespace Lumina
         /**
          * The world background the source was authored against, which glTF cannot express. Drives both the
          * flat sky color and the skylight ambient when Create Scene Environment is on. The default is
-         * Blender's own default world grey.
+         * Blender's own default world gray.
          */
         PROPERTY(Editable, Color, Category = "Scene")
         FVector3 WorldColor = FVector3(0.05f, 0.05f, 0.05f);
@@ -137,7 +137,7 @@ namespace Lumina
         ELightImportUnits LightUnits = ELightImportUnits::Photometric;
 
         /**
-         * Engine directional intensity produced by one watt per square metre of authored sun strength.
+         * Engine directional intensity produced by one watt per square meter of authored sun strength.
          *
          * Photometric conversion runs in two steps. The first is exact: glTF directional intensity is lux,
          * and dividing by 683 lm/W (luminous efficacy at 555nm, the constant DCC exporters use going the

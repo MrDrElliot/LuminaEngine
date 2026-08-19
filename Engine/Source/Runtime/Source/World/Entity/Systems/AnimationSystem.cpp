@@ -21,6 +21,7 @@
 #include "World/Entity/Systems/SystemResources.h"
 #include "Log/Log.h"
 #include "Renderer/SkeletonResource.h"
+#include "Containers/StringFormat.h"
 
 namespace Lumina
 {
@@ -264,7 +265,7 @@ namespace Lumina
 
                 for (int32 Idx : NowActive)
                 {
-                    if (eastl::find(Anim.ActiveNotifyStates.begin(), Anim.ActiveNotifyStates.end(), Idx) ==
+                    if (std::find(Anim.ActiveNotifyStates.begin(), Anim.ActiveNotifyStates.end(), Idx) ==
                         Anim.ActiveNotifyStates.end())
                     {
                         EmitState(Idx, EAnimNotifyEventType::Begin);
@@ -274,7 +275,7 @@ namespace Lumina
                 for (int32 Idx : Anim.ActiveNotifyStates)
                 {
                     if (Idx >= 0 && Idx < (int32)States.size() &&
-                        eastl::find(NowActive.begin(), NowActive.end(), Idx) == NowActive.end())
+                        std::find(NowActive.begin(), NowActive.end(), Idx) == NowActive.end())
                     {
                         EmitState(Idx, EAnimNotifyEventType::End);
                     }
@@ -425,17 +426,17 @@ namespace Lumina
                 };
 
                 FString Dump;
-                Dump.append_sprintf("[AnimTasks] entity %u output=%d",
+                AppendFormat(Dump, "[AnimTasks] entity {} output={}",
                                     (uint32)entt::to_integral(Entity), (int32)Mesh.AnimTasks.OutputTask);
                 for (SIZE_T t = 0; t < Mesh.AnimTasks.Tasks.size(); ++t)
                 {
                     const FAnimTask& Task = Mesh.AnimTasks.Tasks[t];
-                    Dump.append_sprintf("\n  [%u] %-13s depA=%-3d depB=%-3d alpha=%.3f",
+                    AppendFormat(Dump, "\n  [{}] {:<13} depA={:<3} depB={:<3} alpha={:.3f}",
                                         (uint32)t, TaskTypeNames[(int32)Task.Type],
                                         (int32)Task.DepA, (int32)Task.DepB, Task.Alpha);
                     if (Task.Type == EAnimTaskType::SampleClip)
                     {
-                        Dump.append_sprintf(" clip=%s time=%.4f",
+                        AppendFormat(Dump, " clip={} time={:.4f}",
                                             Task.Clip != nullptr ? Task.Clip->GetName().c_str() : "<null>",
                                             Task.Time);
                     }
@@ -446,7 +447,7 @@ namespace Lumina
                         {
                             NumWeighted += Weight > 0.5f ? 1 : 0;
                         }
-                        Dump.append_sprintf(" mask=%d/%d bones", NumWeighted, (int32)Task.MaskWeights->size());
+                        AppendFormat(Dump, " mask={}/{} bones", NumWeighted, (int32)Task.MaskWeights->size());
                     }
                 }
                 LOG_INFO("{}", Dump.c_str());

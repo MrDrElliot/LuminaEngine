@@ -1,5 +1,5 @@
 // Global operator new/delete replacement, auto-added to every linked image (one definition per
-// DLL/EXE, same mechanism as EASTLImpl.cpp -- see PerImageSourceFiles in Lumina.BuildRules.cs).
+// DLL/EXE, see PerImageSourceFiles in Lumina.BuildRules.cs).
 //
 // This has to be per IMAGE, not per module, because replacing the global operators is a link-time
 // decision made once per binary: a DLL without a definition of its own silently binds to the CRT's.

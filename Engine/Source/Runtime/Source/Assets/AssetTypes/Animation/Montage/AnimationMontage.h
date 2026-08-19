@@ -3,7 +3,7 @@
 #include "Animation/AnimNotify.h"
 #include "Core/Object/InstancedStruct.h"
 
-#include "Containers/Array.h"
+#include "Containers/Vector.h"
 #include "Containers/Name.h"
 #include "Core/Math/Math.h"
 #include "Core/Object/Object.h"
@@ -211,7 +211,7 @@ namespace Lumina
         /** Every slot name this montage carries a track for. */
         void GetSlotNames(TVector<FName>& OutNames) const;
 
-        /** Blend-out start for a section, honouring BlendOutTriggerTime. */
+        /** Blend-out start for a section, honoring BlendOutTriggerTime. */
         float GetBlendOutStartTime(int32 SectionIndex) const;
 
         /** Adds any notify lane referenced by a notify but missing from NotifyTracks. */

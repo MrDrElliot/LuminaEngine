@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-#include <EASTL/utility.h>
+#include <utility>
 #include "Core/Variant/Variant.h"
 #include "Platform/Platform.h"
 
@@ -26,9 +26,9 @@ namespace Lumina
         constexpr TUnexpected(TUnexpected&&) = default;
 
         template<typename Err = TError>
-            requires(!eastl::is_same_v<eastl::remove_cvref_t<Err>, TUnexpected>)
+            requires(!std::is_same_v<std::remove_cvref_t<Err>, TUnexpected>)
         constexpr explicit TUnexpected(Err&& InError)
-            : Error(eastl::forward<Err>(InError))
+            : Error(std::forward<Err>(InError))
         {} 
 
         constexpr TUnexpected& operator=(const TUnexpected&) = default;
@@ -36,8 +36,8 @@ namespace Lumina
 
         constexpr const TError& Value() const& noexcept { return Error; }
         constexpr TError& Value() & noexcept { return Error; }
-        constexpr const TError&& Value() const&& noexcept { return eastl::move(Error); }
-        constexpr TError&& Value() && noexcept { return eastl::move(Error); }
+        constexpr const TError&& Value() const&& noexcept { return std::move(Error); }
+        constexpr TError&& Value() && noexcept { return std::move(Error); }
 
     private:
         TError Error;
@@ -54,86 +54,86 @@ namespace Lumina
         using ErrorType = E;
         using UnexpectedType = TUnexpected<E>;
 
-        constexpr TExpected() noexcept(eastl::is_nothrow_default_constructible_v<T>)
-            requires eastl::is_default_constructible_v<T>
-            : Storage(eastl::in_place<0>)
+        constexpr TExpected() noexcept(std::is_nothrow_default_constructible_v<T>)
+            requires std::is_default_constructible_v<T>
+            : Storage(std::in_place_index<0>)
         {
         }
 
         constexpr TExpected(const TExpected&)
-            requires(eastl::is_copy_constructible_v<T> && eastl::is_copy_constructible_v<E>)
+            requires(std::is_copy_constructible_v<T> && std::is_copy_constructible_v<E>)
         = default;
 
         constexpr TExpected(TExpected&&)
-            noexcept(eastl::is_nothrow_move_constructible_v<T> && eastl::is_nothrow_move_constructible_v<E>)
-            requires(eastl::is_move_constructible_v<T> && eastl::is_move_constructible_v<E>)
+            noexcept(std::is_nothrow_move_constructible_v<T> && std::is_nothrow_move_constructible_v<E>)
+            requires(std::is_move_constructible_v<T> && std::is_move_constructible_v<E>)
         = default;
 
         template<typename U = T>
-        constexpr explicit(!eastl::is_convertible_v<U, T>) TExpected(U&& InValue)
-            noexcept(eastl::is_nothrow_constructible_v<T, U>)
-            requires(!eastl::is_same_v<eastl::remove_cvref_t<U>, TExpected> &&
-                     !eastl::is_same_v<eastl::remove_cvref_t<U>, InPlaceT> &&
-                     !eastl::is_same_v<eastl::remove_cvref_t<U>, TUnexpected<E>> &&
-                     eastl::is_constructible_v<T, U>)
-            : Storage(eastl::in_place<0>, eastl::forward<U>(InValue))
+        constexpr explicit(!std::is_convertible_v<U, T>) TExpected(U&& InValue)
+            noexcept(std::is_nothrow_constructible_v<T, U>)
+            requires(!std::is_same_v<std::remove_cvref_t<U>, TExpected> &&
+                     !std::is_same_v<std::remove_cvref_t<U>, InPlaceT> &&
+                     !std::is_same_v<std::remove_cvref_t<U>, TUnexpected<E>> &&
+                     std::is_constructible_v<T, U>)
+            : Storage(std::in_place_index<0>, std::forward<U>(InValue))
         {
         }
 
         template<typename G>
-        constexpr explicit(!eastl::is_convertible_v<const G&, E>) TExpected(const TUnexpected<G>& Unex)
-            noexcept(eastl::is_nothrow_constructible_v<E, const G&>)
-            requires eastl::is_constructible_v<E, const G&>
-            : Storage(eastl::in_place<1>, Unex.Value())
+        constexpr explicit(!std::is_convertible_v<const G&, E>) TExpected(const TUnexpected<G>& Unex)
+            noexcept(std::is_nothrow_constructible_v<E, const G&>)
+            requires std::is_constructible_v<E, const G&>
+            : Storage(std::in_place_index<1>, Unex.Value())
         {
         }
 
         template<typename G>
-        constexpr explicit(!eastl::is_convertible_v<G, E>) TExpected(TUnexpected<G>&& Unex)
-            noexcept(eastl::is_nothrow_constructible_v<E, G>)
-            requires eastl::is_constructible_v<E, G>
-            : Storage(eastl::in_place<1>, eastl::move(Unex.Value()))
+        constexpr explicit(!std::is_convertible_v<G, E>) TExpected(TUnexpected<G>&& Unex)
+            noexcept(std::is_nothrow_constructible_v<E, G>)
+            requires std::is_constructible_v<E, G>
+            : Storage(std::in_place_index<1>, std::move(Unex.Value()))
         {
         }
 
         template<typename... Args>
         constexpr explicit TExpected(InPlaceT, Args&&... InArgs)
-            noexcept(eastl::is_nothrow_constructible_v<T, Args...>)
-            requires eastl::is_constructible_v<T, Args...>
-            : Storage(eastl::in_place<0>, eastl::forward<Args>(InArgs)...)
+            noexcept(std::is_nothrow_constructible_v<T, Args...>)
+            requires std::is_constructible_v<T, Args...>
+            : Storage(std::in_place_index<0>, std::forward<Args>(InArgs)...)
         {
         }
 
         template<typename... Args>
         constexpr explicit TExpected(UnexpectT, Args&&... InArgs)
-            noexcept(eastl::is_nothrow_constructible_v<E, Args...>)
-            requires eastl::is_constructible_v<E, Args...>
-            : Storage(eastl::in_place<1>, eastl::forward<Args>(InArgs)...)
+            noexcept(std::is_nothrow_constructible_v<E, Args...>)
+            requires std::is_constructible_v<E, Args...>
+            : Storage(std::in_place_index<1>, std::forward<Args>(InArgs)...)
         {
         }
 
         ~TExpected() = default;
 
         constexpr TExpected& operator=(const TExpected&)
-            requires(eastl::is_copy_constructible_v<T> && eastl::is_copy_assignable_v<T> &&
-                     eastl::is_copy_constructible_v<E> && eastl::is_copy_assignable_v<E>)
+            requires(std::is_copy_constructible_v<T> && std::is_copy_assignable_v<T> &&
+                     std::is_copy_constructible_v<E> && std::is_copy_assignable_v<E>)
         = default;
 
         constexpr TExpected& operator=(TExpected&&)
-            noexcept(eastl::is_nothrow_move_constructible_v<T> && eastl::is_nothrow_move_assignable_v<T> &&
-                     eastl::is_nothrow_move_constructible_v<E> && eastl::is_nothrow_move_assignable_v<E>)
-            requires(eastl::is_move_constructible_v<T> && eastl::is_move_assignable_v<T> &&
-                     eastl::is_move_constructible_v<E> && eastl::is_move_assignable_v<E>)
+            noexcept(std::is_nothrow_move_constructible_v<T> && std::is_nothrow_move_assignable_v<T> &&
+                     std::is_nothrow_move_constructible_v<E> && std::is_nothrow_move_assignable_v<E>)
+            requires(std::is_move_constructible_v<T> && std::is_move_assignable_v<T> &&
+                     std::is_move_constructible_v<E> && std::is_move_assignable_v<E>)
         = default;
 
         template<typename U = T>
         constexpr TExpected& operator=(U&& InValue)
-            requires(!eastl::is_same_v<eastl::remove_cvref_t<U>, TExpected> &&
-                     !eastl::is_same_v<eastl::remove_cvref_t<U>, TUnexpected<E>> &&
-                     eastl::is_constructible_v<T, U> &&
-                     eastl::is_assignable_v<T&, U>)
+            requires(!std::is_same_v<std::remove_cvref_t<U>, TExpected> &&
+                     !std::is_same_v<std::remove_cvref_t<U>, TUnexpected<E>> &&
+                     std::is_constructible_v<T, U> &&
+                     std::is_assignable_v<T&, U>)
         {
-            Storage.template emplace<0>(eastl::forward<U>(InValue));
+            Storage.template emplace<0>(std::forward<U>(InValue));
             return *this;
         }
 
@@ -147,38 +147,38 @@ namespace Lumina
         template<typename G>
         constexpr TExpected& operator=(TUnexpected<G>&& Unex)
         {
-            Storage.template emplace<1>(eastl::move(Unex.Value()));
+            Storage.template emplace<1>(std::move(Unex.Value()));
             return *this;
         }
 
         NODISCARD constexpr const T* operator->() const noexcept 
         { 
-            return &eastl::get<0>(Storage); 
+            return &Containers::Get<0>(Storage); 
         }
         
         NODISCARD constexpr T* operator->() noexcept 
         { 
-            return &eastl::get<0>(Storage); 
+            return &Containers::Get<0>(Storage); 
         }
 
         NODISCARD constexpr const T& operator*() const& noexcept 
         { 
-            return eastl::get<0>(Storage); 
+            return Containers::Get<0>(Storage); 
         }
         
         NODISCARD constexpr T& operator*() & noexcept 
         { 
-            return eastl::get<0>(Storage); 
+            return Containers::Get<0>(Storage); 
         }
         
         NODISCARD constexpr const T&& operator*() const&& noexcept 
         { 
-            return eastl::move(eastl::get<0>(Storage)); 
+            return std::move(Containers::Get<0>(Storage)); 
         }
         
         NODISCARD constexpr T&& operator*() && noexcept 
         { 
-            return eastl::move(eastl::get<0>(Storage)); 
+            return std::move(Containers::Get<0>(Storage)); 
         }
 
         constexpr explicit operator bool() const noexcept 
@@ -193,22 +193,22 @@ namespace Lumina
 
         NODISCARD constexpr const T& Value() const& 
         { 
-            return eastl::get<0>(Storage); 
+            return Containers::Get<0>(Storage); 
         }
         
         NODISCARD constexpr T& Value() & 
         { 
-            return eastl::get<0>(Storage); 
+            return Containers::Get<0>(Storage); 
         }
         
         NODISCARD constexpr const T&& Value() const&& 
         { 
-            return eastl::move(eastl::get<0>(Storage)); 
+            return std::move(Containers::Get<0>(Storage)); 
         }
         
         NODISCARD constexpr T&& Value() && 
         { 
-            return eastl::move(eastl::get<0>(Storage)); 
+            return std::move(Containers::Get<0>(Storage)); 
         }
         
         NODISCARD constexpr bool IsError() const noexcept
@@ -218,42 +218,42 @@ namespace Lumina
 
         NODISCARD constexpr const E& Error() const& 
         { 
-            return eastl::get<1>(Storage); 
+            return Containers::Get<1>(Storage); 
         }
         
         NODISCARD constexpr E& Error() & 
         { 
-            return eastl::get<1>(Storage); 
+            return Containers::Get<1>(Storage); 
         }
         
         NODISCARD constexpr const E&& Error() const&& 
         { 
-            return eastl::move(eastl::get<1>(Storage)); 
+            return std::move(Containers::Get<1>(Storage)); 
         }
         
         NODISCARD constexpr E&& Error() && 
         { 
-            return eastl::move(eastl::get<1>(Storage)); 
+            return std::move(Containers::Get<1>(Storage)); 
         }
 
         template<typename U>
         NODISCARD constexpr T ValueOr(U&& DefaultValue) const&
         {
-            return HasValue() ? **this : static_cast<T>(eastl::forward<U>(DefaultValue));
+            return HasValue() ? **this : static_cast<T>(std::forward<U>(DefaultValue));
         }
 
         template<typename U>
         NODISCARD constexpr T ValueOr(U&& DefaultValue) &&
         {
-            return HasValue() ? eastl::move(**this) : static_cast<T>(eastl::forward<U>(DefaultValue));
+            return HasValue() ? std::move(**this) : static_cast<T>(std::forward<U>(DefaultValue));
         }
 
         // Emplace
         template<typename... Args>
         NODISCARD constexpr T& Emplace(Args&&... InArgs)
-            noexcept(eastl::is_nothrow_constructible_v<T, Args...>)
+            noexcept(std::is_nothrow_constructible_v<T, Args...>)
         {
-            return Storage.template emplace<0>(eastl::forward<Args>(InArgs)...);
+            return Storage.template emplace<0>(std::forward<Args>(InArgs)...);
         }
 
     private:
