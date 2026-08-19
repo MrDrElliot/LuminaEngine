@@ -7,7 +7,7 @@ namespace Lumina
 
     // Draw-scoped world for PROPERTY(Entity) pickers, so they can enumerate/select
     // entities. Null outside such a scope (e.g. asset editors): picker falls back to a read-only id.
-    CWorld* GetEntityPropertyContextWorld();
+    RUNTIME_API CWorld* GetEntityPropertyContextWorld();
 
     // RAII: makes World the active entity-property context for the scope's lifetime and
     // restores the previous one on exit. Single-threaded editor UI use only.
