@@ -5,12 +5,11 @@
 #include "Core/Engine/EngineMetaContext.h"
 #include "World/Entity/Traits.h"
 #include "World/Entity/Registry/EntityRegistry.h"
+#include "World/Entity/Components/Component.h"
 
 
 namespace Lumina::Meta
 {
-    class CStruct;
-    
     template<typename TEvent>
     void RegisterECSEvent()
     {
