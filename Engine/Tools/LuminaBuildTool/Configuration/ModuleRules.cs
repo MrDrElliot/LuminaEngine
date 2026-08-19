@@ -186,6 +186,9 @@ public abstract class ModuleRules
     /// <summary>Where the generator writes this module's C# bindings.</summary>
     public string CSharpBindingsDirectory { get; set; } = string.Empty;
 
+    // Send reflected-type bindings to CSharpBindingsDirectory too, not just SCRIPT_EXPORT free functions.
+    public bool bRouteCSharpTypeBindings { get; set; }
+
     /// <summary>Compile this module's sources as C rather than C++.</summary>
     public bool bCompileAsC { get; set; }
 

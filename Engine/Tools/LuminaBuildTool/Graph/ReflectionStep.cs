@@ -25,6 +25,9 @@ public sealed class ReflectionProjectEntry
 
     public string CSharpBindingsDir { get; set; } = string.Empty;
 
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool RouteTypeBindings { get; set; }
+
     /// <summary>Where the generator writes this module's generated C++.</summary>
     public string GeneratedDir { get; set; } = string.Empty;
 
@@ -108,6 +111,7 @@ public static class ReflectionStep
                 ForceIncludes = Module.ForceIncludeFiles.ToList(),
                 Files = Module.Sources.HeaderFiles.Where(IsParseableHeader).Select(H => H.Location).ToList(),
                 CSharpBindingsDir = Module.Rules.CSharpBindingsDirectory,
+                RouteTypeBindings = Module.Rules.bRouteCSharpTypeBindings,
                 GeneratedDir = Module.GeneratedCodeDirectory,
                 PrecompiledHeader = Module.Rules.PrecompiledHeader?.Header ?? string.Empty,
             });

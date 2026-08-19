@@ -98,6 +98,11 @@ int main(int argc, char* argv[])
             ReflectedProject->CSharpBindingsDir = Lumina::ClangUtils::NormalizeHeaderPath(eastl::move(CSharpDir));
         }
 
+        if (Project.contains("RouteTypeBindings"))
+        {
+            ReflectedProject->bRouteTypeBindings = Project["RouteTypeBindings"].get<bool>();
+        }
+
         for (const auto& IncludeDirJson : Project["IncludeDirs"])
         {
             eastl::string IncludeDir = IncludeDirJson.get<std::string>().c_str();

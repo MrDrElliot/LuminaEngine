@@ -379,12 +379,15 @@ public sealed class TargetAssembler
                 }
             }
 
-            // Same for a game module: without this its bindings land under Intermediates, which nothing compiles.
-            if (!Module.bIsPlugin
-                && Module.Rules.CSharpBindingsDirectory.Length == 0
-                && !Directories.IsEngineOwned(Module.Rules.ModuleDirectory))
+            // LuminaSharp compiles only the engine tree's bindings, so a project module's travel with its scripts.
+            if (!Directories.IsEngineOwned(Module.Rules.ModuleDirectory))
             {
-                Module.Rules.CSharpBindingsDirectory = Path.Combine(Directories.ProjectRoot!, "Game", "Scripts", "Generated");
+                if (Module.Rules.CSharpBindingsDirectory.Length == 0)
+                {
+                    Module.Rules.CSharpBindingsDirectory = Path.Combine(Directories.ProjectRoot!, "Game", "Scripts", "Generated");
+                }
+
+                Module.Rules.bRouteCSharpTypeBindings = true;
             }
         }
 

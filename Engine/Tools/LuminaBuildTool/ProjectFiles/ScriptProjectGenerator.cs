@@ -151,6 +151,7 @@ public static class ScriptProjectGenerator
         Xml.AppendLine("    <Nullable>enable</Nullable>");
         Xml.AppendLine("    <ImplicitUsings>disable</ImplicitUsings>");
         Xml.AppendLine("    <EnableDefaultItems>true</EnableDefaultItems>");
+        Xml.AppendLine("    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>");
         Xml.AppendLine($"    <AssemblyName>{Escape(Project.Name)}</AssemblyName>");
         Xml.AppendLine("    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>");
         Xml.AppendLine($"    <OutputPath>{Escape(Project.OutputPath)}</OutputPath>");
@@ -161,6 +162,10 @@ public static class ScriptProjectGenerator
         Xml.AppendLine("""    <Reference Include="LuminaSharp">""");
         Xml.AppendLine($"      <HintPath>{Escape(LuminaSharp)}</HintPath>");
         Xml.AppendLine("    </Reference>");
+
+        // The generator the runtime compile loads; without it partial NativeCall bodies are missing.
+        string Generators = PathUtils.Combine(Path.GetDirectoryName(LuminaSharp)!, "LuminaSharp.Generators.dll");
+        Xml.AppendLine($"""    <Analyzer Include="{Escape(Generators)}" />""");
         Xml.AppendLine("  </ItemGroup>");
 
         List<ScriptProject> References = Project.Dependencies

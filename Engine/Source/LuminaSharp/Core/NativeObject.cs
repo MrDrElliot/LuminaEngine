@@ -12,7 +12,7 @@ public class NativeObject
     private int ObjectIndex = -1;        // GObjectArray slot, or -1 if the object isn't array-tracked
     private int ObjectGeneration;        // slot generation at capture; a free/reuse bumps it -> stale
 
-    internal NativeObject(IntPtr Handle)
+    protected internal NativeObject(IntPtr Handle)
     {
         BindNativeHandle(Handle);
     }
@@ -104,7 +104,7 @@ public class NativeStruct
     private uint BoundEntity;
     private IntPtr BoundToken;
 
-    internal NativeStruct(IntPtr Handle)
+    protected internal NativeStruct(IntPtr Handle)
     {
         RawHandle = Handle;
     }
@@ -113,7 +113,7 @@ public class NativeStruct
     /// wrapper re-resolves it per access (throwing if the component was removed); an unbound view returns
     /// the pointer it was created with. The setter feeds the view-reuse path (one wrapper, reassigned per
     /// iteration).</summary>
-    internal IntPtr Handle
+    protected internal IntPtr Handle
     {
         get
         {

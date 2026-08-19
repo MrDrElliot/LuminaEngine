@@ -841,7 +841,7 @@ namespace Lumina::Reflection
                     {
                         // Canonical wrapper: reading the same object property twice returns the SAME managed
                         // instance (identity holds, no per-read allocation). CObject only -- see FBinding::bCObject.
-                        Writer.Linef("return global::LuminaSharp.Wrapper<%s>.ForObject(__h);", CS);
+                        Writer.Linef("return global::LuminaSharp.NativeObjectMarshal.FromHandle<%s>(__h);", CS);
                     }
                     else
                     {
@@ -850,7 +850,7 @@ namespace Lumina::Reflection
                     Writer.EndBlock();
                     if (!bRO)
                     {
-                        Writer.Linef("set => global::LuminaSharp.Native.PropSetObject(Handle, %s, value is null ? System.IntPtr.Zero : value.Handle);",
+                        Writer.Linef("set => global::LuminaSharp.Native.PropSetObject(Handle, %s, global::LuminaSharp.NativeObjectMarshal.ToHandle(value));",
                             PropFieldName.c_str());
                     }
                     Writer.EndBlock();
@@ -1428,7 +1428,7 @@ namespace Lumina::Reflection
             // the override receives is the same one the rest of C# already holds for that object. Component
             // (opaque struct) wrappers must not -- they have no managed-instance slot. See FArg::bCObject.
             case EBind::Object: return A.bCObject
-                ? "global::LuminaSharp.Wrapper<" + A.CSharp + ">.ForObject(" + N + ")"
+                ? "global::LuminaSharp.NativeObjectMarshal.FromHandle<" + A.CSharp + ">(" + N + ")"
                 : "(" + N + " == global::System.IntPtr.Zero ? null : new " + A.CSharp + "(" + N + "))";
             default:            return N;
             }
@@ -1446,7 +1446,7 @@ namespace Lumina::Reflection
             {
             case EBind::Bool:   return "(byte)((" + Expr + ") ? 1 : 0)";
             case EBind::Enum:   return "(int)(" + Expr + ")";
-            case EBind::Object: return "((" + Expr + ") is null ? global::System.IntPtr.Zero : (" + Expr + ").Handle)";
+            case EBind::Object: return "global::LuminaSharp.NativeObjectMarshal.ToHandle(" + Expr + ")";
             default:            return Expr;
             }
         }
@@ -1534,8 +1534,7 @@ namespace Lumina::Reflection
             }
             else
             {
-                // Store the result first: the object-return conversion references it twice (null-check + .Handle),
-                // and we must not invoke the override twice.
+                // Stored first so a conversion that names the expression more than once cannot call twice.
                 Writer.Linef("var __r = __o.%s(%s);", Name.c_str(), CallArgs.c_str());
                 Writer.Linef("return %s;", SeRetToAbiCS(FB, "__r").c_str());
             }
@@ -1982,7 +1981,7 @@ namespace Lumina::Reflection
             Writer.Linef("[global::LuminaSharp.NativeType(\"%s\")]", Struct.DisplayName.c_str());
             Writer.Linef("public unsafe partial class %s : %s", Struct.DisplayName.c_str(), Base.c_str());
             Writer.BeginBlock();
-            Writer.Linef("internal %s(System.IntPtr handle) : base(handle) { }", Struct.DisplayName.c_str());
+            Writer.Linef("public %s(System.IntPtr handle) : base(handle) { }", Struct.DisplayName.c_str());
             EmitProperties(Writer, Struct, Database);
             EmitFunctions(Writer, Struct, Database);
             Writer.EndBlock();
@@ -2018,7 +2017,7 @@ namespace Lumina::Reflection
         Writer.Linef("[global::LuminaSharp.NativeType(\"%s\")]", Class.DisplayName.c_str());
         Writer.Linef("public unsafe partial class %s : %s", Class.DisplayName.c_str(), Base.c_str());
         Writer.BeginBlock();
-        Writer.Linef("internal %s(System.IntPtr handle) : base(handle) { }", Class.DisplayName.c_str());
+        Writer.Linef("public %s(System.IntPtr handle) : base(handle) { }", Class.DisplayName.c_str());
         // Managed-first ctor: a user subclass (or the Scriptable host) Activator-creates the instance, then the
         // native object is bound via BindNativeHandle. Chains to the base's parameterless ctor up to NativeObject().
         Writer.Linef("protected %s() : base() { }", Class.DisplayName.c_str());

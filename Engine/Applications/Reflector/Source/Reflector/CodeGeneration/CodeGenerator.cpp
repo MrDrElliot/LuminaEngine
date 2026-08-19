@@ -114,10 +114,7 @@ namespace Lumina::Reflection
             return ProjectGeneratedDir(WorkspacePath, *Header.Project) + "/" + Header.FileName + ".generated.cpp";
         }
 
-        // bRoutable = the header has no reflected TYPES (it's a SCRIPT_EXPORT free-function facade). Only those
-        // route into a plugin/game's own Scripts/Generated (and compile into its assembly). Reflected-type
-        // wrappers stay in LuminaSharp.dll because they access engine internals (NativeStruct.Handle, the base
-        // ctor) that aren't accessible from another assembly.
+        // bRoutable sends a binding to the owner's Scripts/Generated; type wrappers need InternalsVisibleTo there.
         eastl::string MakeGeneratedCSharpPath(const eastl::string& WorkspacePath, const FReflectedHeader& Header, bool bRoutable)
         {
             if (bRoutable && !Header.Project->CSharpBindingsDir.empty())
@@ -276,14 +273,31 @@ namespace Lumina::Reflection
             auto& Expected = ExpectedArtifacts[Header->Project];
             Expected.insert(Header->FileName + ".generated.cpp");
             Expected.insert(Header->FileName + ".generated.h");
-            Expected.insert(Header->FileName + ".generated.cs");
+
+            const bool bRouteTypes =
+                Header->Project->bRouteTypeBindings && !Header->Project->CSharpBindingsDir.empty();
+
+            if (bRouteTypes)
+            {
+                RoutedArtifacts[Header->Project].insert(Header->FileName + ".generated.cs");
+            }
+            else
+            {
+                Expected.insert(Header->FileName + ".generated.cs");
+            }
 
             if (Header->bDirty)
             {
                 DirtyProjects.insert(Header->Project);
                 GenerateHeaderFile(Header);
                 GenerateSourceFile(Header);
-                GenerateCSharpFile(Header, /*bRoutable*/ false); // has reflected types -> stays in LuminaSharp.dll
+                GenerateCSharpFile(Header, bRouteTypes);
+            }
+            else if (bRouteTypes
+                && !std::filesystem::exists(MakeGeneratedCSharpPath(Workspace->GetPath(), *Header, true).c_str()))
+            {
+                // Routing changed under an unchanged header: the old copy is about to be swept, so re-emit.
+                GenerateCSharpFile(Header, true);
             }
         }
 

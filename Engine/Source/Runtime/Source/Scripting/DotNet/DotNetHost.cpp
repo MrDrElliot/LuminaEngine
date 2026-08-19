@@ -630,6 +630,8 @@ namespace Lumina::DotNet
             Xml += "    <Nullable>enable</Nullable>\n";
             Xml += "    <ImplicitUsings>disable</ImplicitUsings>\n";
             Xml += "    <EnableDefaultItems>true</EnableDefaultItems>\n";
+            // Generated reflected-type bindings read properties through raw pointers.
+            Xml += "    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>\n";
             Xml += "    <AssemblyName>" + std::string(Unit.Name.c_str()) + "</AssemblyName>\n";
             // Build output goes to this unit's OWN Binaries/Intermediates (matching the engine's runtime emit
             // location), so an IDE build produces the same artifact and nothing lands in LuminaSharp.
@@ -647,6 +649,10 @@ namespace Lumina::DotNet
             Xml += "    <Reference Include=\"LuminaSharp\">\n";
             Xml += "      <HintPath>" + std::string(LuminaSharpDll.c_str()) + "</HintPath>\n";
             Xml += "    </Reference>\n";
+            // The generator the runtime compile loads; without it partial NativeCall bodies are missing.
+            Xml += "    <Analyzer Include=\""
+                + NativePath(fs::path(LuminaSharpDll.c_str()).parent_path() / "LuminaSharp.Generators.dll").string()
+                + "\" />\n";
             Xml += "  </ItemGroup>\n";
 
             std::string Refs;

@@ -51,14 +51,14 @@ namespace Lumina
 
         // Typed access; returns null when the stored type isn't T or derived from T.
         template<InstancableStruct T>
-        T* GetMutablePtr()
+        NODISCARD T* GetMutablePtr()
         {
             EnsureCurrentType();
             return (ScriptStruct && ScriptStruct->IsChildOf(T::StaticStruct())) ? static_cast<T*>(reinterpret_cast<void*>(InstanceMemory)) : nullptr;
         }
 
         template<InstancableStruct T>
-        const T* GetPtr() const
+        NODISCARD const T* GetPtr() const
         {
             EnsureCurrentType();
             return (ScriptStruct && ScriptStruct->IsChildOf(T::StaticStruct())) ? static_cast<const T*>(reinterpret_cast<const void*>(InstanceMemory)) : nullptr;
@@ -66,7 +66,7 @@ namespace Lumina
 
         // Replaces the value with a fresh default-constructed T and returns it.
         template<InstancableStruct T>
-        T& InitializeAs()
+        NODISCARD T& InitializeAs()
         {
             InitializeAs(T::StaticStruct());
             return *static_cast<T*>(reinterpret_cast<void*>(InstanceMemory));
