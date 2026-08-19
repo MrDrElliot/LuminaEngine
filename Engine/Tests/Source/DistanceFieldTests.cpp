@@ -338,14 +338,35 @@ TEST(DistanceField, SerializationRoundTrips)
 
 // The GPU mirror in Includes/Common.slang is hand-written, so nothing but this catches a member added
 // on one side only. Slang reads the header through a pointer under scalar layout, where the total is
-// exactly the sum of the declared members.
+// exactly the sum of the declared members, so every offset below is the running sum of the ones above.
+// These numbers are a transcription of FMeshletHeader in Common.slang: if one moves, check that file.
 TEST(DistanceField, MeshletHeaderMatchesGPUMirrorSize)
 {
-    EXPECT_EQ(sizeof(FMeshletHeaderGPU), 80u);
+    EXPECT_EQ(sizeof(FMeshletHeaderGPU), 96u);
+
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, MeshletsAddress), 0u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, SpheresAddress), 8u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, VerticesAddress), 16u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, TrianglesAddress), 24u);
     EXPECT_EQ(offsetof(FMeshletHeaderGPU, ConesAddress), 32u);
-    EXPECT_EQ(offsetof(FMeshletHeaderGPU, DistanceFieldIndex), 40u);
-    EXPECT_EQ(offsetof(FMeshletHeaderGPU, DistanceFieldFlags), 44u);
-    EXPECT_EQ(offsetof(FMeshletHeaderGPU, DistanceFieldMinX), 48u);
-    EXPECT_EQ(offsetof(FMeshletHeaderGPU, DistanceFieldSizeX), 60u);
-    EXPECT_EQ(offsetof(FMeshletHeaderGPU, DistanceFieldMaxDistance), 72u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, BonePalettesAddress), 40u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, BoneIndicesAddress), 48u);
+
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, DistanceFieldIndex), 56u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, DistanceFieldFlags), 60u);
+
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, DistanceFieldMinX), 64u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, DistanceFieldMinY), 68u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, DistanceFieldMinZ), 72u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, DistanceFieldSizeX), 76u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, DistanceFieldSizeY), 80u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, DistanceFieldSizeZ), 84u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, DistanceFieldMaxDistance), 88u);
+
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, MeshletCount), 92u);
+
+    // Every member is accounted for above, so a new one on the C++ side lands past the end and shows up
+    // here as a size mismatch rather than as silently misread bytes on the GPU.
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, MeshletCount) + sizeof(FMeshletHeaderGPU::MeshletCount),
+              sizeof(FMeshletHeaderGPU));
 }
