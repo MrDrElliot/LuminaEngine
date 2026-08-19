@@ -633,9 +633,6 @@ namespace Lumina::Logging
 		}
 
 		WakeBackend();
-
-		// No flush handshake even for Critical: every batch already reaches the OS, and the crash and
-		// assert paths call Flush() once after their whole burst.
 	}
 
 

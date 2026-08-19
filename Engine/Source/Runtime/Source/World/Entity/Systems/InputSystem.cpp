@@ -8,8 +8,8 @@
 
 namespace Lumina
 {
-    FSystemAccess SInputSystem::Access = FSystemAccess{}
-        .Read<SInputComponent>();
+    // Exclusive like STimerSystem/SPerceptionSystem: dispatch runs user script code and calls into managed.
+    FSystemAccess SInputSystem::Access = FSystemAccess::Exclusive();
 
     void SInputSystem::Update(const FSystemContext& Context) noexcept
     {
@@ -27,22 +27,39 @@ namespace Lumina
         }
 
         const TVector<FInputActionState>& States = Ctx->GetActionStates();
+        const TVector<SInputEvent>& Events = Ctx->GetFrameEvents();
         const uint32 Serial = Ctx->GetActionsSerial();
         const float DeltaSeconds = (float)Context.GetDeltaTime();
 
-        Registry.view<SInputComponent>().each([&](entt::entity Entity, const SInputComponent& InputComp)
+        // Snapshot first: a callback spawning or destroying an entity mutates the storage a live view walks.
+        TVector<entt::entity> Entities;
+        auto View = Registry.view<SInputComponent>();
+        Entities.reserve(View.size_hint());
+        for (entt::entity Entity : View)
         {
-            if (!InputComp.bEnabled)
+            Entities.push_back(Entity);
+        }
+
+        for (entt::entity Entity : Entities)
+        {
+            if (!Registry.valid(Entity))
             {
-                return;
+                continue;
             }
-            
-            for (const SInputEvent& Event : Ctx->GetFrameEvents())
+
+            // Re-resolved per entity: an earlier callback may have removed the component or disabled it.
+            const SInputComponent* InputComp = Registry.try_get<SInputComponent>(Entity);
+            if (InputComp == nullptr || !InputComp->bEnabled)
+            {
+                continue;
+            }
+
+            for (const SInputEvent& Event : Events)
             {
                 EntityScripts::DispatchInput(Registry, Entity, Event);
             }
-            
+
             EntityScripts::PollInputBindings(Registry, Entity, States.data(), (int32)States.size(), Serial, DeltaSeconds);
-        });
+        }
     }
 }
