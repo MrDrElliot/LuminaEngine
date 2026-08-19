@@ -24,9 +24,6 @@ namespace Lumina::SkeletalMeshMerge
 
         // Union every input skeleton's sockets onto the merged one, first definition winning.
         bool bMergeSockets = true;
-
-        // Roots the results so GC cannot take them before the caller stores them; RemoveFromRoot to release.
-        bool bAddToRoot = true;
     };
 
     struct FResult

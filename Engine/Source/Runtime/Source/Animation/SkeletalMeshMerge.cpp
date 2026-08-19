@@ -453,12 +453,6 @@ namespace Lumina::SkeletalMeshMerge
         // Last, because it uploads the geometry and derives the bounding box from what it was given.
         OutMesh->SetMeshResource(Move(Merged));
 
-        if (Settings.bAddToRoot)
-        {
-            OutSkeleton->AddToRoot();
-            OutMesh->AddToRoot();
-        }
-
         Result.Mesh     = OutMesh;
         Result.Skeleton = OutSkeleton;
         return Result;
