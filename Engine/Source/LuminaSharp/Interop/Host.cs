@@ -127,12 +127,6 @@ public static unsafe partial class Host
         }
     }
 
-    /// Resolves a type from the loaded script generation by full name, or null if not found.
-    internal static Type? ResolveScriptType(string Name)
-    {
-        return Scripts?.EntityScripts?.FindType(Name);
-    }
-
     /// Current script generation; native rebinds entity scripts when it changes (hot reload).
     // Feeds one script's InputAction / InputAxis bindings this frame's evaluated action states so they can
     // raise Pressed / Released / Held / Changed. States points into the owning FInputContext and is only

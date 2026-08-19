@@ -5,18 +5,7 @@ using System.Runtime.InteropServices;
 
 namespace LuminaSharp;
 
-/// <summary>
-/// Managed entry points the native side calls that are not tied to a particular subsystem.
-///
-/// This used to be the inbound half of a Coral-style reflective interop layer: resolve a type by name,
-/// construct it, and invoke methods / get / set fields by name, marshalling every value through a
-/// self-describing blob codec. Almost none of it was reachable -- native-to-managed dispatch goes through
-/// generated <c>[ManagedExport]</c> entries, and C# subclasses of native types go through the Scriptable
-/// bridge. Its one real consumer was the inspector's <c>[Button]</c>, which only ever needed "call this
-/// parameterless method on this instance". That is now <see cref="InvokeScriptButton"/> directly, and the
-/// generic machinery (ClassFind / ObjectNew / Invoke / FieldGet / FieldSet, the value-blob codec, and the
-/// C++ FManagedClass / FManagedObject RAII wrappers) is gone.
-/// </summary>
+// Managed entry points native calls that belong to no particular subsystem; everything else reaches managed through a generated [ManagedExport] or the Scriptable bridge.
 public static unsafe class ManagedCalls
 {
     /// <summary>Releases a GCHandle held by native code. Used by the per-CObject managed-instance cache

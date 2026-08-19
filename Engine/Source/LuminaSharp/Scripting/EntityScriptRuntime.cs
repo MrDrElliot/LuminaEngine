@@ -23,13 +23,6 @@ internal sealed class EntityScriptRuntime
 
     public IReadOnlyCollection<string> TypeNames => Library.EntityScriptTypeNames;
 
-    /// <summary>Resolves an EntityScript type from this generation by full name (for the native dynamic
-    /// invoker). Engine types resolve from LuminaSharp.dll directly; only script types come through here.</summary>
-    public Type? FindType(string Name)
-    {
-        return Library.GetEntityScript(Name)?.Type;
-    }
-
     /// <summary>The canonical current full name for a script reference, or null if it resolves to no live type.</summary>
     public string? ResolveName(string Name)
     {

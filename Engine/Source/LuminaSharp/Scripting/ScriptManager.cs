@@ -241,8 +241,7 @@ internal sealed class ScriptManager
         }
     }
 
-    // Global per-frame pump. Per-world ticking is driven by the native ECS system (UpdateScripts), so
-    // nothing happens here today; kept as the single managed frame hook for future global work.
+    // Global per-frame pump, empty because SEntityScriptSystem drives per-world ticking natively.
     public void Tick()
     {
     }
