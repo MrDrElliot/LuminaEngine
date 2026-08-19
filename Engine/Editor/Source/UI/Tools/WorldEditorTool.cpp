@@ -36,6 +36,7 @@
 #include "Tools/PrimitiveManager/PrimitiveManager.h"
 #include "Tools/Dialogs/Dialogs.h"
 #include "Tools/UI/ImGui/ImGuiDragDrop.h"
+#include "World/Entity/Components/SceneFolderComponent.h"
 #include "Tools/UI/ImGui/ImGuiFonts.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "TerrainEditMode.h"
@@ -363,15 +364,29 @@ namespace Lumina
 
         WorldSettingsPropertyTable = MakeUnique<FPropertyTable>(&World->GetDefaultWorldSettings(), SDefaultWorldSettings::StaticStruct());
         
+        OutlinerContext.bAllowRangeSelect = true;
+
         OutlinerContext.SetDragDropFunction = [this] (FTreeListView& Tree, FTreeNodeID Item)
         {
             FEntityListViewItemData& Data = Tree.Get<FEntityListViewItemData>(Item);
+            if (Data.FolderID != 0)
+            {
+                DragDrop::SetSceneFolderPayload(World, Data.FolderID);
+                return;
+            }
+
             DragDrop::SetEntityPayload(World, Data.Entity);
         };
 
         OutlinerContext.ItemContextMenuFunction = [this](FTreeListView& Tree, FTreeNodeID Item)
         {
             FEntityListViewItemData& Data = Tree.Get<FEntityListViewItemData>(Item);
+            if (Data.FolderID != 0)
+            {
+                DrawFolderContextMenu(Data.FolderID);
+                return;
+            }
+
             FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
             const bool bLocked = IsLockedPrefabChild(Registry, Data.Entity);
 
@@ -508,6 +523,22 @@ namespace Lumina
 
             if (!bLocked)
             {
+                DrawMoveToFolderMenuItems(GetComponentEditTargets(Data.Entity));
+
+                if (ImGui::MenuItem(LE_ICON_FOLDER_PLUS " New Folder from Selection"))
+                {
+                    const TVector<entt::entity> Targets = GetComponentEditTargets(Data.Entity);
+                    const uint32 NewFolder = CreateSceneFolder(MakeUniqueFolderName(0), 0);
+                    MoveEntitiesToFolder(Targets, NewFolder);
+                    PendingFolderRename = NewFolder;
+                }
+                ImGuiX::TextTooltip("{}", "Groups the selection in the outliner. Folders never affect transforms.");
+
+                ImGui::Separator();
+            }
+
+            if (!bLocked)
+            {
                 const bool bIsSelectionRoot = Registry.all_of<FSelectionRoot>(Data.Entity);
                 const char* RootLabel = bIsSelectionRoot
                     ? LE_ICON_TARGET " Unmark Selection Root"
@@ -568,7 +599,13 @@ namespace Lumina
         {
             FEntityListViewItemData& Data = Tree.Get<FEntityListViewItemData>(Item);
             FTreeNodeState& State = Tree.Get<FTreeNodeState>(Item);
-            
+
+            if (Data.FolderID != 0)
+            {
+                SetFolderContentsHidden(Data.FolderID, State.bDisabled);
+                return;
+            }
+
             if (State.bDisabled)
             {
                 ECS::GetWorldRegistry(*World).emplace<SDisabledTag>(Data.Entity);
@@ -583,6 +620,10 @@ namespace Lumina
         {
             FEntityListViewItemData& Data = Tree.Get<FEntityListViewItemData>(Item);
             const FTreeNodeState& State = Tree.Get<FTreeNodeState>(Item);
+            if (Data.Entity == entt::null)
+            {
+                return;
+            }
 
             // bSecondaryToggled == script suppressed. Tag presence stops the script ticking
             // (ScriptSystem excludes it) while leaving the entity itself active.
@@ -630,6 +671,19 @@ namespace Lumina
         {
             FEntityListViewItemData& Data = Tree.Get<FEntityListViewItemData>(Item);
 
+            if (Data.FolderID != 0)
+            {
+                FFixedString FolderLabel;
+                FolderLabel.append(LE_ICON_FOLDER).append(" ").append_convert(NewName.begin(), NewName.length());
+
+                FTreeNodeDisplay& FolderDisplay = Tree.Get<FTreeNodeDisplay>(Item);
+                FolderDisplay.DisplayName = FolderLabel;
+                FolderDisplay.TooltipTitle = FString(LE_ICON_FOLDER " ") + FString(NewName.data(), NewName.size());
+
+                RenameSceneFolder(Data.FolderID, NewName);
+                return;
+            }
+
             FFixedString Name;
             Name.append(LE_ICON_CUBE).append(" ")
                 .append_convert(NewName.begin(), NewName.length()).append_convert(FString(" - (" + eastl::to_string(entt::to_integral(Data.Entity)) + ")"));
@@ -655,6 +709,16 @@ namespace Lumina
 
             FEntityListViewItemData& Data = Tree.Get<FEntityListViewItemData>(Item);
 
+            // A folder is not an entity, so clicking one drops the entity selection rather than keeping it.
+            if (Data.FolderID != 0)
+            {
+                if (bShouldClear)
+                {
+                    ClearSelectedEntities();
+                }
+                return;
+            }
+
             if (bShouldClear)
             {
                 SetSingleSelectedEntity(Data.Entity);
@@ -668,6 +732,11 @@ namespace Lumina
         OutlinerContext.DragDropFunction = [this](FTreeListView& Tree, FTreeNodeID Item)
         {
             FEntityListViewItemData& Data = Tree.Get<FEntityListViewItemData>(Item);
+            if (Data.FolderID != 0)
+            {
+                HandleFolderDragDrop(Data.FolderID);
+                return;
+            }
 
             HandleEntityEditorDragDrop(Tree, Data.Entity);
         };
@@ -675,6 +744,11 @@ namespace Lumina
         OutlinerContext.ItemDoubleClickedFunction = [this](FTreeListView& Tree, FTreeNodeID Item)
         {
             FEntityListViewItemData& Data = Tree.Get<FEntityListViewItemData>(Item);
+            if (Data.FolderID != 0)
+            {
+                return;
+            }
+
             FocusViewportToEntity(Data.Entity);
         };
 
@@ -685,6 +759,12 @@ namespace Lumina
             const FTreeNodeDisplay& Display = Tree.Get<FTreeNodeDisplay>(Item);
             
             bool bPasses = ImGuiX::PassSearchFilter(EntityFilterState.FilterName, Display.DisplayName.c_str());
+
+            // A folder carries no components, so any component filter necessarily excludes it.
+            if (Tree.Get<FEntityListViewItemData>(Item).FolderID != 0)
+            {
+                return bPasses && EntityFilterState.ComponentFilters.empty();
+            }
 
             for (const FName& ComponentFilter : EntityFilterState.ComponentFilters)
             {
@@ -4410,6 +4490,14 @@ namespace Lumina
 
                 BeginTransaction();
                 ECS::Utils::ReparentEntity(Registry, SourceEntity, DropItem);
+
+                // An attached entity is shown under its parent, so its folder would be a hidden second home.
+                if (SSceneFolderComponent* Folders = GetEditableSceneFolders())
+                {
+                    Folders->RemoveEntity(SourceEntity);
+                }
+                EntityFolderCache.erase(SourceEntity);
+
                 EndTransaction("Reparent");
 
                 ReparentEntityInOutliner(SourceEntity);
@@ -4418,6 +4506,42 @@ namespace Lumina
         }
 
         AcceptContentBrowserPrefabPayload(DropItem, /*bAttachToTarget*/ true);
+    }
+
+    void FWorldEditorTool::HandleFolderDragDrop(uint32 FolderID)
+    {
+        const DragDrop::FPayload* Peek = DragDrop::PeekPayload();
+        if (Peek == nullptr)
+        {
+            return;
+        }
+
+        if (Peek->Kind == DragDrop::EPayloadKind::Entity)
+        {
+            CWorld* OutWorld = nullptr;
+            entt::entity SourceEntity = entt::null;
+            if (DragDrop::AcceptEntity(&OutWorld, &SourceEntity) && OutWorld == World)
+            {
+                // Dragging one of several selected entities moves the whole selection.
+                MoveEntitiesToFolder(GetComponentEditTargets(SourceEntity), FolderID);
+            }
+            return;
+        }
+
+        if (Peek->Kind == DragDrop::EPayloadKind::SceneFolder)
+        {
+            CWorld* OutWorld = nullptr;
+            uint32 SourceFolder = 0;
+            if (DragDrop::AcceptSceneFolder(&OutWorld, &SourceFolder) && OutWorld == World)
+            {
+                MoveFolderIntoFolder(SourceFolder, FolderID);
+            }
+            return;
+        }
+
+        PendingAssetDropFolder = FolderID;
+        AcceptContentBrowserPrefabPayload(entt::null, /*bAttachToTarget*/ false);
+        PendingAssetDropFolder = 0;
     }
 
     void FWorldEditorTool::AcceptContentBrowserPrefabPayload(entt::entity DropTarget, bool bAttachToTarget)
@@ -4437,10 +4561,23 @@ namespace Lumina
     void FWorldEditorTool::HandlePrefabContentDrop(FStringView VirtualPath, entt::entity DropTarget, bool bAttachToTarget)
     {
         // Dispatches every asset class via the editor drop registry. Spawn transform comes from the camera.
+        const uint32 DropFolder = PendingAssetDropFolder;
+        PendingAssetDropFolder = 0;
+
         BeginTransaction();
         entt::entity Spawned = HandleContentBrowserAssetDrop(VirtualPath, DropTarget, bAttachToTarget);
         if (Spawned != entt::null)
         {
+            // Filed inside the same transaction so the drop is one undo step, not two.
+            if (DropFolder != 0)
+            {
+                if (SSceneFolderComponent* Folders = GetEditableSceneFolders())
+                {
+                    Folders->AssignEntity(Spawned, DropFolder);
+                    EntityFolderCache[Spawned] = DropFolder;
+                }
+            }
+
             EndTransaction("Drop Asset");
             SetSingleSelectedEntity(Spawned);
             OutlinerListView.MarkTreeDirty();
@@ -4678,6 +4815,31 @@ namespace Lumina
 
     void FWorldEditorTool::HandleOutlinerEmptyAreaDrop()
     {
+        const DragDrop::FPayload* Peek = DragDrop::PeekPayload();
+
+        // Empty space is the root: an entity dropped here leaves both its folder and its entity parent.
+        if (Peek != nullptr && Peek->Kind == DragDrop::EPayloadKind::Entity)
+        {
+            CWorld* OutWorld = nullptr;
+            entt::entity SourceEntity = entt::null;
+            if (DragDrop::AcceptEntity(&OutWorld, &SourceEntity) && OutWorld == World)
+            {
+                MoveEntitiesToFolder(GetComponentEditTargets(SourceEntity), 0);
+            }
+            return;
+        }
+
+        if (Peek != nullptr && Peek->Kind == DragDrop::EPayloadKind::SceneFolder)
+        {
+            CWorld* OutWorld = nullptr;
+            uint32 SourceFolder = 0;
+            if (DragDrop::AcceptSceneFolder(&OutWorld, &SourceFolder) && OutWorld == World)
+            {
+                MoveFolderIntoFolder(SourceFolder, 0);
+            }
+            return;
+        }
+
         AcceptContentBrowserPrefabPayload(entt::null, /*bAttachToTarget*/ false);
     }
 

@@ -45,6 +45,9 @@
 #define MESHLET_ANCHOR_SIGN             0x00800000u
 #define MESHLET_EXPONENT_SHIFT          24u
 
+// Bone palette entries staged into groupshared memory (48 B each); a wider palette reads the arena direct.
+#define SKIN_GROUP_PALETTE_BONES        64
+
 // FGPUInstance::SurfaceDescIndex when the instance's LOD is fixed and no view may re-select it.
 #define NO_SURFACE_DESC_INDEX           0xFFFFFFFFu
 

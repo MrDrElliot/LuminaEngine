@@ -200,7 +200,7 @@ namespace Lumina
                 const size_t VertexCount = eastl::min(Resource->JointIndices.size(), Resource->JointWeights.size());
                 for (size_t v = 0; v < VertexCount; ++v)
                 {
-                    FU8Vector4& Indices = Resource->JointIndices[v];
+                    FU16Vector4& Indices = Resource->JointIndices[v];
                     FU8Vector4& Weights = Resource->JointWeights[v];
 
                     uint32 Surviving = 0;
@@ -223,19 +223,19 @@ namespace Lumina
                             continue;
                         }
 
-                        if (New > 255)
+                        if (New > kMaxJointIndex)
                         {
                             ++Result.ClampedInfluences;
                         }
 
-                        Indices[w] = (uint8)Math::Min(New, 255);
+                        Indices[w] = (uint16)Math::Min(New, kMaxJointIndex);
                         Surviving += Weights[w];
                     }
 
                     // Matches PackSkinWeights: the quartet sums to 255, and an empty one goes rigid to bone 0.
                     if (Surviving == 0)
                     {
-                        Indices = FU8Vector4(0, 0, 0, 0);
+                        Indices = FU16Vector4(0, 0, 0, 0);
                         Weights = FU8Vector4(255, 0, 0, 0);
                         continue;
                     }
@@ -1050,9 +1050,8 @@ namespace Lumina
 
         if (Remap.ClampedInfluences > 0)
         {
-            LOG_ERROR("[Import] '{}' indexes bones past 255 and joint indices are 8-bit, so {} influence(s) "
-                      "clamped and will skin to the wrong bone. Reorder the rig so skinned bones come first.",
-                      TargetSkeleton->GetName(), Remap.ClampedInfluences);
+            LOG_ERROR("[Import] '{}' indexes bones past {}, so {} influence(s) clamped and will skin to "
+                      "the wrong bone.", TargetSkeleton->GetName(), kMaxJointIndex, Remap.ClampedInfluences);
         }
 
         return true;
@@ -1613,9 +1612,8 @@ namespace Lumina
 
         if (Remap.ClampedInfluences > 0)
         {
-            LOG_ERROR("Reimport: '{}' indexes bones past 255 and joint indices are 8-bit, so {} influence(s) "
-                      "clamped and will skin to the wrong bone.",
-                      SkeletalMesh->Skeleton->GetName(), Remap.ClampedInfluences);
+            LOG_ERROR("Reimport: '{}' indexes bones past {}, so {} influence(s) clamped and will skin to "
+                      "the wrong bone.", SkeletalMesh->Skeleton->GetName(), kMaxJointIndex, Remap.ClampedInfluences);
         }
     }
 

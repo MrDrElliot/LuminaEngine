@@ -378,6 +378,13 @@ struct FMeshletCone
 
 // Mirror of Lumina::FMeshletHeaderGPU. The distance-field block is loose floats, not a float3: scalar
 // layout aligns float3 to 4 bytes while the C++ side may over-align FVector3 to 16.
+// Mirror of Lumina::FMeshletBonePalette. One meshlet's slice of FMeshletHeader::BoneIndices.
+struct FMeshletBonePalette
+{
+    uint Offset;
+    uint Count;
+};
+
 struct FMeshletHeader
 {
     FMeshlet*       Meshlets;
@@ -385,6 +392,10 @@ struct FMeshletHeader
     uint*           Vertices;
     uint*           Triangles;
     FMeshletCone*   Cones;
+
+    // Null unless the mesh is skinned. A skinned vertex's JointIndices address BonePalettes[meshlet].
+    FMeshletBonePalette* BonePalettes;
+    uint*                BoneIndices;
 
     uint            DistanceFieldIndex;     // gTextures3D[] slot, or kInvalidDistanceField
     uint            DistanceFieldFlags;     // bit0 = two-sided (unsigned) encoding
@@ -394,7 +405,7 @@ struct FMeshletHeader
     float           DistanceFieldMaxDistance;
 
     // Entries in Meshlets/Spheres/Cones. The AUTHORITATIVE bound for every array above, because it ships
-    // in the same 80 bytes as the pointers. Everything that indexes them bounds against THIS rather than
+    // in the same 96 bytes as the pointers. Everything that indexes them bounds against THIS rather than
     // against a count carried on the instance: the two come from different sources, and a stale instance
     // paired with a live header is exactly how an in-bounds-looking index walks off a buffer.
     //

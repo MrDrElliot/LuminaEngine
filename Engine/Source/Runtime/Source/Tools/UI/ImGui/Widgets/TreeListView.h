@@ -94,6 +94,9 @@ namespace Lumina
         // Must be idempotent (skip already-added children); explicit CreateNode doesn't mark built.
         TFunction<void(FTreeListView&, FTreeNodeID)>                    BuildChildrenFunction;
 
+        // Shift-click selects the whole run of rows from the last plainly-clicked one to the clicked one.
+        bool                                                            bAllowRangeSelect = false;
+
         // Horizontal shift per tree depth. Deep hierarchies in narrow hosts (picker popups over
         // 20+-level skeletons) want a tighter value than the outliner default.
         float                                                           IndentPerDepth = 21.0f;
@@ -212,6 +215,8 @@ namespace Lumina
         void DrawSingleRow(int32 NodeIdx, const FTreeListViewContext& Context, bool& bAnyRowExpansionChanged);
         void EnsureChildrenBuilt(int32 NodeIdx, const FTreeListViewContext& Context);
         void SetSelection(FTreeNodeID Item, const FTreeListViewContext& Context, bool bShouldClear);
+        // Shift-click: selects the displayed rows between two nodes inclusive, anchor order independent.
+        void SelectRange(int32 AnchorIdx, int32 TargetIdx, const FTreeListViewContext& Context, bool bShouldClear);
         bool HandleKeyPressed(const FTreeListViewContext& Context, FTreeNodeID Item, ImGuiKey Key);
         void ClearSelections(const FTreeListViewContext& Context);
 
@@ -227,6 +232,12 @@ namespace Lumina
         TVector<int32>      Roots;
 
         TVector<int32>      VisibleList;     // depth-first list of currently visible row indices
+
+        // The row list Draw is iterating; only valid inside Draw, where range selection happens.
+        const TVector<int32>* CurrentRows = nullptr;
+
+        // Row a shift-click ranges from: the last one clicked without shift. -1 when there is none.
+        int32               SelectionAnchor = -1;
 
         // VisibleList with the context's filter applied, rebuilt every frame a filter is set. Separate
         // from VisibleList because that one is cached behind bVisibleListDirty and the widget has no way

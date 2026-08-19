@@ -152,6 +152,8 @@ namespace Lumina
             Rows = &FilteredList;
         }
 
+        CurrentRows = Rows;
+
         // Resolve a pending reveal to a row index now the row list is final. Consumed either
         // way: if the node ended up filtered or collapsed out, the request simply lapses.
         int32 ScrollToRow = -1;
@@ -259,6 +261,8 @@ namespace Lumina
         FreeList.clear();
         Roots.clear();
         VisibleList.clear();
+        CurrentRows = nullptr;
+        SelectionAnchor = -1;
         AliveCount = 0;
         bVisibleListDirty = true;
         ++StructureVersion;
@@ -734,8 +738,23 @@ namespace Lumina
         {
             const bool bShift = ImGui::GetIO().KeyShift;
             const bool bCtrl  = ImGui::GetIO().KeyCtrl;
-            (void)bShift;
-            SetSelection(FTreeNodeID{NodeIdx}, Context, !bCtrl);
+
+            const bool bCanRange = bShift
+                && Context.bAllowRangeSelect
+                && SelectionAnchor >= 0
+                && SelectionAnchor != NodeIdx
+                && IsValid(FTreeNodeID{SelectionAnchor});
+
+            if (bCanRange)
+            {
+                // The anchor stays put, so dragging the shift-click around grows and shrinks one run.
+                SelectRange(SelectionAnchor, NodeIdx, Context, !bCtrl);
+            }
+            else
+            {
+                SetSelection(FTreeNodeID{NodeIdx}, Context, !bCtrl);
+                SelectionAnchor = NodeIdx;
+            }
 		}
 
         if (bTreeNodeDoubleClicked && !bMouseOverTrailingButton && Context.ItemDoubleClickedFunction)
@@ -1027,6 +1046,78 @@ namespace Lumina
         if (Context.ItemSelectedFunction)
         {
             Context.ItemSelectedFunction(*this, Item, bShouldClear);
+        }
+    }
+
+    void FTreeListView::SelectRange(int32 AnchorIdx, int32 TargetIdx, const FTreeListViewContext& Context, bool bShouldClear)
+    {
+        if (CurrentRows == nullptr)
+        {
+            return;
+        }
+
+        const TVector<int32>& Rows = *CurrentRows;
+
+        int32 AnchorRow = -1;
+        int32 TargetRow = -1;
+        for (int32 i = 0; i < (int32)Rows.size(); ++i)
+        {
+            if (Rows[i] == AnchorIdx)
+            {
+                AnchorRow = i;
+            }
+            if (Rows[i] == TargetIdx)
+            {
+                TargetRow = i;
+            }
+        }
+
+        // The anchor can be filtered out or collapsed away since it was clicked; then there is no run.
+        if (AnchorRow < 0 || TargetRow < 0)
+        {
+            SetSelection(FTreeNodeID{TargetIdx}, Context, bShouldClear);
+            SelectionAnchor = TargetIdx;
+            return;
+        }
+
+        if (AnchorRow > TargetRow)
+        {
+            const int32 Swap = AnchorRow;
+            AnchorRow = TargetRow;
+            TargetRow = Swap;
+        }
+
+        if (bShouldClear)
+        {
+            for (FNode& Node : Nodes)
+            {
+                if (Node.bAlive)
+                {
+                    Node.State.bSelected = false;
+                }
+            }
+        }
+
+        // Reported through ItemSelectedFunction: the first row replaces the selection, the rest extend it.
+        bool bFirst = bShouldClear;
+        for (int32 i = AnchorRow; i <= TargetRow; ++i)
+        {
+            const int32 NodeIdx = Rows[i];
+            if (!Nodes[NodeIdx].bAlive)
+            {
+                continue;
+            }
+
+            // Extending must not re-report an already-selected row: the consumer would toggle it back off.
+            const bool bWasSelected = Nodes[NodeIdx].State.bSelected;
+            Nodes[NodeIdx].State.bSelected = true;
+
+            if (Context.ItemSelectedFunction && (bFirst || !bWasSelected))
+            {
+                Context.ItemSelectedFunction(*this, FTreeNodeID{NodeIdx}, bFirst);
+            }
+
+            bFirst = false;
         }
     }
 

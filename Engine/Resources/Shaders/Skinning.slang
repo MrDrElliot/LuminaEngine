@@ -27,6 +27,9 @@ struct FPushConstants
 
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
+// Staged once per meshlet, so a vertex's four influences are LDS reads, not scattered 48 B gathers.
+groupshared FBoneTransform GroupBones[SKIN_GROUP_PALETTE_BONES];
+
 // Flat workgroup -> owning (slot, block) pair. WorkBase is a running prefix, so this inverts it the same way
 // MeshletCull's FindBucketForWork inverts CullWorkBase. Empty pairs repeat the previous base, so the search
 // lands on the LAST pair with that base -- which is the one that actually owns the range.
@@ -110,6 +113,20 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
         return;   // this block lost the pre-skin budget; the draw path skins it inline instead
     }
 
+    // Every reject above is workgroup-UNIFORM, which is what lets the barrier below sit after them.
+    const FMeshletBonePalette Palette = GetBonePalette(Header, MeshletIndex);
+    const bool bCanSkin = CanSkinMeshlet(Palette);
+    const bool bStaged  = bCanSkin && (Palette.Count <= (uint)SKIN_GROUP_PALETTE_BONES);
+
+    if (bStaged)
+    {
+        for (uint i = Lane; i < Palette.Count; i += 64u)
+        {
+            GroupBones[i] = Bones()[ResolvePaletteBone(Header, Palette, i, Static.BoneOffset)];
+        }
+    }
+    GroupMemoryBarrierWithGroupSync();
+
     // SkinnedVertexBase folds in the span start so the write lands in the compacted slice
     // (same index the draw VS reads). 64 lanes per meshlet.
     FMeshlet M = Header.Meshlets[MeshletIndex];
@@ -121,7 +138,26 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
         // sizing bug into a missing mesh instead of a device-lost page fault.
         if (OutIndex < Pass().VertexCapacity)
         {
-            PreSkinnedVertices()[OutIndex] = SkinVertex(Header, M, Lane, Static.BoneOffset);
+            const FSkinSource S = LoadSkinSource(Header, M, Lane);
+
+            FSkinRows Rows = IdentitySkinRows();
+            if (bStaged)
+            {
+                const uint4 PaletteSlot = min(S.Slots, uint4(Palette.Count - 1u));
+                Rows = BlendSkinRows(GroupBones[PaletteSlot.x], GroupBones[PaletteSlot.y],
+                                     GroupBones[PaletteSlot.z], GroupBones[PaletteSlot.w], S.Weights);
+            }
+            else if (bCanSkin)
+            {
+                Rows = BlendSkinRows(
+                    Bones()[ResolvePaletteBone(Header, Palette, S.Slots.x, Static.BoneOffset)],
+                    Bones()[ResolvePaletteBone(Header, Palette, S.Slots.y, Static.BoneOffset)],
+                    Bones()[ResolvePaletteBone(Header, Palette, S.Slots.z, Static.BoneOffset)],
+                    Bones()[ResolvePaletteBone(Header, Palette, S.Slots.w, Static.BoneOffset)],
+                    S.Weights);
+            }
+
+            PreSkinnedVertices()[OutIndex] = SkinWithRows(S, Rows);
         }
     }
 }

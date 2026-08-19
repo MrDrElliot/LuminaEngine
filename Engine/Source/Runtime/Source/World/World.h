@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "Core/Object/Object.h"
 #include "Core/UpdateContext.h"
@@ -25,6 +25,7 @@ namespace Lumina
 {
     struct FAssetRef;
     struct SDefaultWorldSettings;
+    struct SSceneFolderComponent;
     struct FLineBatcherComponent;
     struct FTriangleBatcherComponent;
     struct FSimpleElementVertex;
@@ -218,6 +219,13 @@ namespace Lumina
         uint32 GetNumEntities() const;
         
         SDefaultWorldSettings& GetDefaultWorldSettings();
+
+        /** Outliner folder table for this world, created on first use. Editor-only organisation. */
+        SSceneFolderComponent& GetSceneFolders();
+
+        /** The folder table without creating one, null when this world has never had one. */
+        SSceneFolderComponent* FindSceneFolders();
+        const SSceneFolderComponent* FindSceneFolders() const;
         
         FUNCTION(Script)
         bool EntityHasTag(entt::entity Entity, const FName& Tag);

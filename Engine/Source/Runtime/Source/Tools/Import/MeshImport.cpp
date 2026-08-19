@@ -124,7 +124,7 @@ namespace Lumina::Import::Mesh
             OutStreams[Count++] = { M.Colors.data(),    sizeof(uint32),      sizeof(uint32) };
             if (M.bSkinnedMesh)
             {
-                OutStreams[Count++] = { M.JointIndices.data(), sizeof(FU8Vector4), sizeof(FU8Vector4) };
+                OutStreams[Count++] = { M.JointIndices.data(), sizeof(FU16Vector4), sizeof(FU16Vector4) };
                 OutStreams[Count++] = { M.JointWeights.data(), sizeof(FU8Vector4), sizeof(FU8Vector4) };
             }
             LUMINA_ASSERT(Count <= kMaxVertexStreams, "BuildVertexStreams overflowed the caller's array");
@@ -902,6 +902,8 @@ namespace Lumina::Import::Mesh
         if (MeshResource.bSkinnedMesh)
         {
             MeshResource.MeshletData.MeshletSkinnedVertices.reserve(TotalVertices);
+            MeshResource.MeshletData.MeshletBonePalettes.reserve(TotalMeshlets);
+            MeshResource.MeshletData.MeshletBoneIndices.reserve(TotalMeshlets * 16);
         }
         else
         {
@@ -951,6 +953,8 @@ namespace Lumina::Import::Mesh
                 TVector<FVector3> QuantScratch;
                 QuantScratch.reserve(MESHLET_MAX_VERTICES);
 
+                FMeshletPaletteScratch Palette;
+
                 for (size_t MeshletIdx = 0; MeshletIdx < Result.OutMeshlets.size(); ++MeshletIdx)
                 {
                     FMeshlet Out = Result.OutMeshlets[MeshletIdx];
@@ -975,6 +979,8 @@ namespace Lumina::Import::Mesh
 
                     if (MeshResource.bSkinnedMesh)
                     {
+                        Palette.clear();
+
                         for (uint32 i = 0; i < Out.VertexCount; ++i)
                         {
                             const uint32 GlobalIdx = Result.Vertices[Out.VertexOffset + i];
@@ -989,10 +995,29 @@ namespace Lumina::Import::Mesh
                             Packed.UV       = MeshResource.UVs[GlobalIdx];
                             Packed.UV1      = MeshResource.UVs1[GlobalIdx];
                             Packed.Color    = MeshResource.Colors[GlobalIdx];
-                            memcpy(&Packed.JointIndices, &MeshResource.JointIndices[GlobalIdx], sizeof(uint32));
+
+                            // The source index is 16-bit and the packed one is 8-bit, so it can only be a
+                            // palette slot. That indirection is what lifts the 256-bone ceiling.
+                            const FU16Vector4& SourceJoints  = MeshResource.JointIndices[GlobalIdx];
+                            const FU8Vector4&  SourceWeights = MeshResource.JointWeights[GlobalIdx];
+
+                            uint32 LocalJoints = 0;
+                            for (uint32 b = 0; b < 4u; ++b)
+                            {
+                                // A zero-weight influence contributes nothing, so it costs no palette entry.
+                                const uint32 PaletteSlot = (SourceWeights[b] != 0)
+                                    ? FindOrAddPaletteBone(Palette, SourceJoints[b])
+                                    : 0u;
+                                LocalJoints |= PaletteSlot << (b * 8u);
+                            }
+
+                            Packed.JointIndices = LocalJoints;
                             memcpy(&Packed.JointWeights, &MeshResource.JointWeights[GlobalIdx], sizeof(uint32));
                             MeshResource.MeshletData.MeshletSkinnedVertices.push_back(Packed);
                         }
+
+                        // Indexed in lockstep with Meshlets, which Out is pushed into at the end of this body.
+                        AppendMeshletBonePalette(MeshResource.MeshletData, Palette);
                     }
                     else
                     {

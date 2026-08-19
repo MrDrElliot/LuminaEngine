@@ -27,6 +27,8 @@ namespace Lumina
 
         FSkeletonResource* GetSkeletonResource() const { return SkeletonResource.get(); }
 
+        void SetSkeletonResource(TUniquePtr<FSkeletonResource>&& NewResource);
+
         void ComputeBindPoseSkinningMatrices(TVector<FMatrix4>& OutMatrices) const;
 
         const FMeshSocket* FindSocket(const FName& SocketName) const { return FindSocketByName(Sockets, SocketName); }

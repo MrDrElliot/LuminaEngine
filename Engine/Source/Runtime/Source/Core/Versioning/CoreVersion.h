@@ -54,6 +54,9 @@ enum class ELuminaEngineVersion : uint32
 	// CTexture keeps its imported file's bytes (bulk region, editor-only), so cook settings stay absolute.
 	TEXTURE_SOURCE_FILE,
 
+	// FMeshletData serializes per-meshlet bone palettes; a skinned vertex's JointIndices address one.
+	MESHLET_BONE_PALETTES,
+
 	AUTOMATIC_VERSION_PLUS_ONE,
 	AUTOMATIC_VERSION = AUTOMATIC_VERSION_PLUS_ONE - 1
 };

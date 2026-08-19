@@ -231,65 +231,109 @@ float3 LoadSkinnedPosition(FMeshletHeader* Header, FMeshlet M, uint VertexLocalI
     return float3(S.Px, S.Py, S.Pz);
 }
 
-// Performs the bone blend for one source vertex; used only by Skinning.slang to fill
-// the pre-skinned buffer. Output is object-space (the draw VS still applies ModelMatrix).
-FPreSkinnedVertex SkinVertex(FMeshletHeader* Header, FMeshlet M, uint VertexLocalIdx, uint BoneOffset)
+// The blended affine rows of one vertex's skinning matrix, stored as the same 3x4 as FBoneTransform.
+struct FSkinRows
 {
-    FMeshletSkinnedVertex V = reinterpret<FMeshletSkinnedVertex*>(Header.Vertices)[M.VertexOffset + VertexLocalIdx];
-
-    // The SOURCE stream is still quantized in its meshlet anchor box; the blended OUTPUT is not, which is
-    // why FPreSkinnedVertex keeps full-precision floats.
-    float3 LocalPos     = DecodeMeshletPosition(M, V.PositionX, V.PositionY, V.PositionZ);
-    float3 LocalNormal  = UnpackNormalSNorm16(V.NormalX, V.NormalY, V.NormalZ);
-    float4 LocalTangent = UnpackTangent(V.Tangent);
-
-    uint4  JointIndices = UnpackUIntToUVec4(V.JointIndices);
-    float4 Weights      = unpack_u8u32(V.JointWeights) / float4(255.0);
-
-    // RENORMALIZE. Importers quantize weights to u8 and keep only four influences, so an unnormalized set
-    // scales the blended affine matrix and drags the vertex toward the MODEL ORIGIN by (1 - sum).
-    const float WeightSum = dot(Weights, float4(1.0, 1.0, 1.0, 1.0));
-
     float4 R0;
     float4 R1;
     float4 R2;
+};
 
-    // A joint index is vertex data and nothing bounds it, so a mesh skinned against the wrong skeleton
-    // walks off the bone array -- an unmapped read costs the device. Clamping keeps it visibly wrong.
-    const uint BoneCount   = Scene().CullData.BoneNum;
-    const bool bBonesValid = (Bones() != nullptr) && (BoneCount != 0u);
+// Leaves a vertex in BIND POSE, which is the correct answer whenever no usable influence exists.
+FSkinRows IdentitySkinRows()
+{
+    FSkinRows Rows;
+    Rows.R0 = float4(1.0, 0.0, 0.0, 0.0);
+    Rows.R1 = float4(0.0, 1.0, 0.0, 0.0);
+    Rows.R2 = float4(0.0, 0.0, 1.0, 0.0);
+    return Rows;
+}
 
-    if (bBonesValid && WeightSum > 1e-5f)
+// RENORMALIZES: an unnormalized set drags the vertex toward the MODEL ORIGIN by (1 - sum).
+FSkinRows BlendSkinRows(FBoneTransform B0, FBoneTransform B1, FBoneTransform B2, FBoneTransform B3,
+                        float4 Weights)
+{
+    const float WeightSum = dot(Weights, float4(1.0, 1.0, 1.0, 1.0));
+    if (WeightSum <= 1e-5f)
     {
-        Weights /= WeightSum;
-
-        const uint LastBone = BoneCount - 1u;
-        const uint4 Joint   = min(BoneOffset + JointIndices, uint4(LastBone, LastBone, LastBone, LastBone));
-
-        FBoneTransform B0 = Bones()[Joint.x];
-        FBoneTransform B1 = Bones()[Joint.y];
-        FBoneTransform B2 = Bones()[Joint.z];
-        FBoneTransform B3 = Bones()[Joint.w];
-
-        // Linear blend of the row-stored skinning matrices, then transform by explicit row dots.
-        // Rigid per bone, so the same 3x3 rows rotate Tangent and its handedness sign is preserved.
-        R0 = B0.Row0 * Weights.x + B1.Row0 * Weights.y + B2.Row0 * Weights.z + B3.Row0 * Weights.w;
-        R1 = B0.Row1 * Weights.x + B1.Row1 * Weights.y + B2.Row1 * Weights.z + B3.Row1 * Weights.w;
-        R2 = B0.Row2 * Weights.x + B1.Row2 * Weights.y + B2.Row2 * Weights.z + B3.Row2 * Weights.w;
-    }
-    else
-    {
-        // No usable influence at all. Identity rows leave the vertex in BIND POSE, which makes every
-        // expression below correct with no special-casing and cannot produce a zero vector to normalize.
-        R0 = float4(1.0, 0.0, 0.0, 0.0);
-        R1 = float4(0.0, 1.0, 0.0, 0.0);
-        R2 = float4(0.0, 0.0, 1.0, 0.0);
+        return IdentitySkinRows();
     }
 
-    float4 P = float4(LocalPos, 1.0);
-    float3 SkinnedPos     = float3(dot(R0, P), dot(R1, P), dot(R2, P));
-    float3 SkinnedNormal  = normalize(float3(dot(R0.xyz, LocalNormal),      dot(R1.xyz, LocalNormal),      dot(R2.xyz, LocalNormal)));
-    float3 SkinnedTangent = normalize(float3(dot(R0.xyz, LocalTangent.xyz), dot(R1.xyz, LocalTangent.xyz), dot(R2.xyz, LocalTangent.xyz)));
+    const float4 W = Weights / WeightSum;
+
+    // Rigid per bone, so these same rows rotate Tangent and its handedness sign is preserved.
+    FSkinRows Rows;
+    Rows.R0 = B0.Row0 * W.x + B1.Row0 * W.y + B2.Row0 * W.z + B3.Row0 * W.w;
+    Rows.R1 = B0.Row1 * W.x + B1.Row1 * W.y + B2.Row1 * W.z + B3.Row1 * W.w;
+    Rows.R2 = B0.Row2 * W.x + B1.Row2 * W.y + B2.Row2 * W.z + B3.Row2 * W.w;
+    return Rows;
+}
+
+// One source vertex, decoded. Slots address the OWNING MESHLET's bone palette, not the skeleton.
+struct FSkinSource
+{
+    float3 Position;
+    float3 Normal;
+    float4 Tangent;
+    uint4  Slots;
+    float4 Weights;
+    uint   UV;
+    uint   UV1;
+    uint   Color;
+};
+
+FSkinSource LoadSkinSource(FMeshletHeader* Header, FMeshlet M, uint VertexLocalIdx)
+{
+    FMeshletSkinnedVertex V = reinterpret<FMeshletSkinnedVertex*>(Header.Vertices)[M.VertexOffset + VertexLocalIdx];
+
+    FSkinSource S;
+
+    // The SOURCE is quantized in its meshlet anchor box; the blended OUTPUT is not, hence full floats out.
+    S.Position = DecodeMeshletPosition(M, V.PositionX, V.PositionY, V.PositionZ);
+    S.Normal   = UnpackNormalSNorm16(V.NormalX, V.NormalY, V.NormalZ);
+    S.Tangent  = UnpackTangent(V.Tangent);
+    S.Slots    = UnpackUIntToUVec4(V.JointIndices);
+    S.Weights  = unpack_u8u32(V.JointWeights) / float4(255.0);
+    S.UV       = V.UV;
+    S.UV1      = V.UV1;
+    S.Color    = V.Color;
+    return S;
+}
+
+// Count 0 means the mesh carries no palette, and every caller reads that as "skin to bind pose".
+FMeshletBonePalette GetBonePalette(FMeshletHeader* Header, uint MeshletIndex)
+{
+    FMeshletBonePalette Palette;
+    Palette.Offset = 0u;
+    Palette.Count  = 0u;
+
+    if (Header.BonePalettes != nullptr && Header.BoneIndices != nullptr && MeshletIndex < Header.MeshletCount)
+    {
+        Palette = Header.BonePalettes[MeshletIndex];
+    }
+    return Palette;
+}
+
+// Both clamps matter: slot and bone index are unbounded imported data. Requires Palette.Count > 0.
+uint ResolvePaletteBone(FMeshletHeader* Header, FMeshletBonePalette Palette, uint Slot, uint BoneOffset)
+{
+    const uint Local  = min(Slot, Palette.Count - 1u);
+    const uint Global = BoneOffset + Header.BoneIndices[Palette.Offset + Local];
+    return min(Global, Scene().CullData.BoneNum - 1u);
+}
+
+// True when the bone arena and this meshlet's palette can both actually be read.
+bool CanSkinMeshlet(FMeshletBonePalette Palette)
+{
+    return (Bones() != nullptr) && (Scene().CullData.BoneNum != 0u) && (Palette.Count != 0u);
+}
+
+FPreSkinnedVertex SkinWithRows(FSkinSource S, FSkinRows Rows)
+{
+    float4 P = float4(S.Position, 1.0);
+    float3 SkinnedPos     = float3(dot(Rows.R0, P), dot(Rows.R1, P), dot(Rows.R2, P));
+    float3 SkinnedNormal  = normalize(float3(dot(Rows.R0.xyz, S.Normal),      dot(Rows.R1.xyz, S.Normal),      dot(Rows.R2.xyz, S.Normal)));
+    float3 SkinnedTangent = normalize(float3(dot(Rows.R0.xyz, S.Tangent.xyz), dot(Rows.R1.xyz, S.Tangent.xyz), dot(Rows.R2.xyz, S.Tangent.xyz)));
 
     FPreSkinnedVertex Out;
     Out.Px      = SkinnedPos.x;
@@ -298,11 +342,32 @@ FPreSkinnedVertex SkinVertex(FMeshletHeader* Header, FMeshlet M, uint VertexLoca
     Out.NormalX = FloatToSNorm16(SkinnedNormal.x);
     Out.NormalY = FloatToSNorm16(SkinnedNormal.y);
     Out.NormalZ = FloatToSNorm16(SkinnedNormal.z);
-    Out.Tangent = PackTangent(float4(SkinnedTangent, LocalTangent.w));
-    Out.UV      = V.UV;     // skin-invariant; carried so the draw VS never reads the source
-    Out.UV1     = V.UV1;
-    Out.Color   = V.Color;
+    Out.Tangent = PackTangent(float4(SkinnedTangent, S.Tangent.w));
+    Out.UV      = S.UV;     // skin-invariant; carried so the draw VS never reads the source
+    Out.UV1     = S.UV1;
+    Out.Color   = S.Color;
     return Out;
+}
+
+// The per-pass overflow path, where there is no workgroup to share a staged palette across.
+FPreSkinnedVertex SkinVertex(FMeshletHeader* Header, FMeshlet M, uint MeshletIndex, uint VertexLocalIdx,
+                             uint BoneOffset)
+{
+    const FSkinSource S = LoadSkinSource(Header, M, VertexLocalIdx);
+    const FMeshletBonePalette Palette = GetBonePalette(Header, MeshletIndex);
+
+    FSkinRows Rows = IdentitySkinRows();
+    if (CanSkinMeshlet(Palette))
+    {
+        Rows = BlendSkinRows(
+            Bones()[ResolvePaletteBone(Header, Palette, S.Slots.x, BoneOffset)],
+            Bones()[ResolvePaletteBone(Header, Palette, S.Slots.y, BoneOffset)],
+            Bones()[ResolvePaletteBone(Header, Palette, S.Slots.z, BoneOffset)],
+            Bones()[ResolvePaletteBone(Header, Palette, S.Slots.w, BoneOffset)],
+            S.Weights);
+    }
+
+    return SkinWithRows(S, Rows);
 }
 
 float  GetMaterialScalar (uint MatIndex, uint Index) { return Materials()[MatIndex].Scalars[Index];  }

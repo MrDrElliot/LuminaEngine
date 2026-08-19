@@ -45,6 +45,11 @@ namespace Lumina
 
         TVector<FBoneInfluenceStats> PerBone;
         uint32 UnusedBones = 0;
+
+        // Distinct bones per meshlet. Overflows read the bone arena directly instead of groupshared memory.
+        uint32 MaxPaletteBones   = 0;
+        uint32 PaletteOverflows  = 0;
+        float  AvgPaletteBones   = 0.0f;
     };
 
     class FSkeletalMeshEditorTool : public FAssetEditorTool

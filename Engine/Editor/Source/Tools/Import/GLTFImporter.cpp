@@ -1138,9 +1138,9 @@ namespace Lumina
                     for (size_t i = 0; i < VertexCount; ++i)
                     {
                         const float* J = RawJoints + i * 4;
-                        Resource.JointIndices[BaseVertex + i] = FU8Vector4(
-                            (uint8)Math::Clamp((int32)J[0], 0, 255), (uint8)Math::Clamp((int32)J[1], 0, 255),
-                            (uint8)Math::Clamp((int32)J[2], 0, 255), (uint8)Math::Clamp((int32)J[3], 0, 255));
+                        Resource.JointIndices[BaseVertex + i] = FU16Vector4(
+                            (uint16)Math::Clamp((int32)J[0], 0, kMaxJointIndex), (uint16)Math::Clamp((int32)J[1], 0, kMaxJointIndex),
+                            (uint16)Math::Clamp((int32)J[2], 0, kMaxJointIndex), (uint16)Math::Clamp((int32)J[3], 0, kMaxJointIndex));
                     }
 
                     // glTF only guarantees WEIGHTS_0 is normalized ACROSS ALL sets, so a mesh using WEIGHTS_1 leaves the

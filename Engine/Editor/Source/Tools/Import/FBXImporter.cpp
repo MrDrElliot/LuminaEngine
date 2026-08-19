@@ -1203,7 +1203,7 @@ namespace Lumina
                         {
                             const uint32 VertexIndex = Mesh.vertex_indices.data[Corner];
 
-                            FU8Vector4 JointIndices{};
+                            FU16Vector4 JointIndices{};
                             FVector4   JointWeights(0.0f);
 
                             if (VertexIndex < Skin->vertices.count)
@@ -1221,7 +1221,7 @@ namespace Lumina
                                     {
                                         continue;
                                     }
-                                    JointIndices[w] = (uint8)Math::Clamp(Bone, 0, 255);
+                                    JointIndices[w] = (uint16)Math::Clamp(Bone, 0, kMaxJointIndex);
                                     JointWeights[w] = (float)Weight.weight;
                                 }
                             }

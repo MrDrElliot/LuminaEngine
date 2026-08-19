@@ -205,6 +205,12 @@ namespace Lumina
         void HandleOutlinerEmptyAreaDrop() override;
 
         void HandleEntityEditorDragDrop(FTreeListView& Tree, entt::entity DropItem);
+
+        /** Outliner folders are a world-editor feature; the prefab editor's rows stay pure entities. */
+        NODISCARD bool SupportsSceneFolders() const override { return true; }
+
+        /** Drop onto a folder row: file entities, reparent a folder, or spawn a dropped asset into it. */
+        void HandleFolderDragDrop(uint32 FolderID);
         void HandlePrefabContentDrop(FStringView VirtualPath, entt::entity DropTarget, bool bAttachToTarget) override;
 
         void DrawWorldSettings(bool bFocused);
@@ -291,6 +297,9 @@ namespace Lumina
 
         TVector<TUniquePtr<IWorldEditorMode>>   EditorModes;
         int32                                   ActiveModeIndex = 0;
+
+        // Folder a content-browser drop files its spawned entity into (0 = none), set for one drop.
+        uint32                                  PendingAssetDropFolder = 0;
 
         FTransform                              CopiedTransform;
         bool                                    bHasCopiedTransform = false;

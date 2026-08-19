@@ -159,7 +159,7 @@ FVertexData LoadMeshletVertexData(FMeshletRef Ref, uint LocalVertIdx)
         // Overflow path: entities the pre-skin budget could not cover blend per pass instead of once.
         if (Ref.SkinnedVertexBase == kNoPreSkinBase)
         {
-            return DecodePreSkinnedVertex(SkinVertex(Ref.Inst.MeshletHeader, Ref.M, LocalVertIdx, Ref.Inst.BoneOffset));
+            return DecodePreSkinnedVertex(SkinVertex(Ref.Inst.MeshletHeader, Ref.M, Ref.GlobalMeshletIdx, LocalVertIdx, Ref.Inst.BoneOffset));
         }
         return LoadSkinnedVertex(Ref.M, LocalVertIdx, Ref.SkinnedVertexBase);
     }

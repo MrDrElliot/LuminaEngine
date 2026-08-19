@@ -151,7 +151,7 @@ namespace Lumina
             Bytes += MR.Tangents.capacity()   * sizeof(uint32);
             Bytes += MR.UVs.capacity()        * sizeof(uint32);
             Bytes += MR.Colors.capacity()     * sizeof(uint32);
-            Bytes += MR.JointIndices.capacity() * sizeof(FU8Vector4);
+            Bytes += MR.JointIndices.capacity() * sizeof(FU16Vector4);
             Bytes += MR.JointWeights.capacity() * sizeof(FU8Vector4);
             Bytes += MR.Indices.capacity()    * sizeof(uint32);
             Bytes += MR.GeometrySurfaces.capacity() * sizeof(FGeometrySurface);

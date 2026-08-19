@@ -1,9 +1,13 @@
 #pragma once
 
 #include "Core/Serialization/Archiver.h"
+#include "Core/Templates/NumericLimits.h"
 
 namespace Lumina
 {
+    // Highest bone a skinned vertex can name, fixed by the width of FSourceSkinnedVertex::JointIndices.
+    constexpr int32 kMaxJointIndex = (int32)TNumericLimits<uint16>::Max();
+
     inline uint32 PackColor(FVector4 color)
     {
         uint8 r = (uint8)(Math::Clamp(color.r, 0.0f, 1.0f) * 255.0f);
@@ -175,7 +179,7 @@ namespace Lumina
 
     struct FSourceSkinnedVertex : FSourceVertex
     {
-        FU8Vector4     JointIndices;
+        FU16Vector4    JointIndices;
         FU8Vector4     JointWeights;
 
         friend FArchive& operator<<(FArchive& Ar, FSourceSkinnedVertex& Data)
@@ -236,7 +240,7 @@ namespace Lumina
     // FMeshlet* are the GPU formats and Common.slang declares structs of the SAME NAME that must stay
     // identical -- re-verify the Slang ArrayStride when a field moves. FSource* are CPU-only and free.
     static_assert(sizeof(FSourceVertex) == 32);
-    static_assert(sizeof(FSourceSkinnedVertex) == 40);
+    static_assert(sizeof(FSourceSkinnedVertex) == 44);
     static_assert(sizeof(FMeshletVertex) == 28);
     static_assert(sizeof(FMeshletSkinnedVertex) == 36);
     static_assert(offsetof(FSourceVertex, Position) == 0);

@@ -13,6 +13,7 @@ namespace Lumina
     class CStaticMesh;
     class CPackage;
     class IRenderScene;
+    struct SSceneFolderComponent;
     struct FPropertyChangedEvent;
 
     class EDITOR_API FSceneEditorTool : public FAssetEditorTool
@@ -102,6 +103,8 @@ namespace Lumina
         struct FEntityListViewItemData
         {
             entt::entity Entity = entt::null;
+            // Non-zero on a folder row, in which case Entity is null.
+            uint32       FolderID = 0;
         };
 
         // Repopulate roots (children fill lazily on expand). Wire as the tree's RebuildTreeFunction.
@@ -126,6 +129,47 @@ namespace Lumina
         void OnOutlinerEntityDestroyed(entt::registry& Registry, entt::entity Entity);
 
     protected:
+
+        // Outliner folders. The table lives on the world's singleton entity, which the outliner hides.
+
+        // Hook: does this tool offer folders? Only the world editor does; the prefab editor's rows stay entities.
+        NODISCARD virtual bool SupportsSceneFolders() const { return false; }
+
+        // The observed world's folder table for reading; null when there is none (or folders are unsupported).
+        NODISCARD const SSceneFolderComponent* GetSceneFolders() const;
+        // Same table for writing. Null while inspecting a foreign world, or before the first folder exists.
+        NODISCARD SSceneFolderComponent* GetEditableSceneFolders() const;
+
+        NODISCARD uint32 GetEntityFolderID(entt::entity Entity) const;
+        NODISCARD FTreeNodeID FindFolderNode(uint32 FolderID) const;
+        // "Lighting/Sky" style path, for menu labels.
+        NODISCARD FString GetFolderPath(uint32 FolderID) const;
+        NODISCARD FName MakeUniqueFolderName(uint32 ParentID) const;
+
+        // Materialize every folder row and refresh the entity->folder cache. Runs before the entity rows.
+        void BuildFolderNodes(FTreeListView& Tree);
+        // Entities filed under a folder, optionally including its subfolders'.
+        void CollectFolderEntities(uint32 FolderID, TVector<entt::entity>& OutEntities, bool bRecursive) const;
+
+        uint32 CreateSceneFolder(const FName& Name, uint32 ParentID);
+        void RenameSceneFolder(uint32 FolderID, FStringView NewName);
+        void DeleteSceneFolder(uint32 FolderID, bool bDeleteContents);
+        void MoveFolderIntoFolder(uint32 FolderID, uint32 NewParentID);
+        // Files entities under FolderID (0 unfiles them), detaching any that are parented to another entity.
+        void MoveEntitiesToFolder(const TVector<entt::entity>& Entities, uint32 FolderID);
+        void SelectFolderContents(uint32 FolderID);
+        void SetFolderContentsHidden(uint32 FolderID, bool bHidden);
+
+        // Context-menu bodies, shared by both outliner menus.
+        void DrawFolderContextMenu(uint32 FolderID);
+        void DrawMoveToFolderMenuItems(const TVector<entt::entity>& Entities);
+        // "New Folder" toolbar button next to the Scene Graph "+".
+        void DrawNewFolderButton(float ButtonSize);
+
+        THashMap<uint32, FTreeNodeID>  FolderToTreeNode;
+        THashMap<entt::entity, uint32> EntityFolderCache;
+        // Folder whose row should enter inline rename on the next draw (a freshly created one).
+        uint32                         PendingFolderRename = 0;
 
         // Hook: which entities appear in the outliner. Base = named + not FHideInSceneOutliner;
         // the prefab editor also requires SPrefabComponent so preview fixtures stay hidden.

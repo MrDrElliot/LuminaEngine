@@ -51,7 +51,23 @@ namespace Lumina
 
     static FORCEINLINE uint32 JointAt(uint32 Packed, uint32 Slot) { return (Packed >> (Slot * 8u)) & 0xFFu; }
 
-    // Walks each surface's LOD 0 meshlet range and hands every vertex to Visit(Meshlet, Vertex).
+    // JointIndices address the owning meshlet's bone palette, so every reader has to come back through it.
+    static uint32 ResolveGlobalJoint(const FMeshletData& MD, uint32 MeshletIndex, uint32 PaletteSlot)
+    {
+        if (MeshletIndex >= MD.MeshletBonePalettes.size())
+        {
+            return PaletteSlot;
+        }
+
+        const FMeshletBonePalette& Palette = MD.MeshletBonePalettes[MeshletIndex];
+        if (PaletteSlot >= Palette.Count || (SIZE_T)Palette.Offset + PaletteSlot >= MD.MeshletBoneIndices.size())
+        {
+            return PaletteSlot;
+        }
+        return MD.MeshletBoneIndices[Palette.Offset + PaletteSlot];
+    }
+
+    // Walks each surface's LOD 0 meshlet range and hands every vertex to Visit(Meshlet, Index, Vertex).
     template <typename TVisitor>
     static void ForEachLOD0SkinnedVertex(const FMeshResource& Resource, TVisitor&& Visit)
     {
@@ -70,7 +86,7 @@ namespace Lumina
 
                 for (uint32 v = Meshlet.VertexOffset; v < VertEnd; ++v)
                 {
-                    Visit(Meshlet, MD.MeshletSkinnedVertices[v]);
+                    Visit(Meshlet, m, MD.MeshletSkinnedVertices[v]);
                 }
             }
         }
@@ -112,18 +128,23 @@ namespace Lumina
         Skinning.PerBone.resize(BoneCount);
 
         // Every LOD: a coarse level can weight to a bone the base mesh never touches, and the GPU fetches it.
-        for (const FMeshletSkinnedVertex& V : Resource.MeshletData.MeshletSkinnedVertices)
+        const FMeshletData& MD = Resource.MeshletData;
+        for (uint32 GlobalBone : MD.MeshletBoneIndices)
         {
-            for (uint32 b = 0; b < 4u; ++b)
-            {
-                if (JointAt(V.JointWeights, b) != 0u)
-                {
-                    Skinning.RequiredBones = Math::Max(Skinning.RequiredBones, JointAt(V.JointIndices, b) + 1u);
-                }
-            }
+            Skinning.RequiredBones = Math::Max(Skinning.RequiredBones, GlobalBone + 1u);
         }
 
-        ForEachLOD0SkinnedVertex(Resource, [&](const FMeshlet&, const FMeshletSkinnedVertex& V)
+        for (const FMeshletBonePalette& Palette : MD.MeshletBonePalettes)
+        {
+            Skinning.MaxPaletteBones    = Math::Max(Skinning.MaxPaletteBones, Palette.Count);
+            Skinning.PaletteOverflows  += (Palette.Count > (uint32)SKIN_GROUP_PALETTE_BONES) ? 1u : 0u;
+        }
+        if (!MD.MeshletBonePalettes.empty())
+        {
+            Skinning.AvgPaletteBones = (float)MD.MeshletBoneIndices.size() / (float)MD.MeshletBonePalettes.size();
+        }
+
+        ForEachLOD0SkinnedVertex(Resource, [&](const FMeshlet&, uint32 MeshletIndex, const FMeshletSkinnedVertex& V)
         {
             ++Skinning.LOD0Vertices;
 
@@ -142,7 +163,7 @@ namespace Lumina
                 ++Influences;
                 WeightTotal += Weight;
 
-                const uint32 Joint = JointAt(V.JointIndices, b);
+                const uint32 Joint = ResolveGlobalJoint(MD, MeshletIndex, JointAt(V.JointIndices, b));
                 if (Joint >= BoneCount)
                 {
                     bOutOfRange = true;
@@ -161,7 +182,8 @@ namespace Lumina
             Skinning.UnnormalizedVertices += (WeightTotal != 255u && Influences > 0u) ? 1u : 0u;
 
             // Exactly what PackSkinWeights collapses an empty weight set to, so it reads as "no weights".
-            if (Influences == 1u && JointAt(V.JointWeights, 0) == 255u && JointAt(V.JointIndices, 0) == 0u)
+            if (Influences == 1u && JointAt(V.JointWeights, 0) == 255u
+                && ResolveGlobalJoint(MD, MeshletIndex, JointAt(V.JointIndices, 0)) == 0u)
             {
                 ++Skinning.RigidToRootVertices;
             }
@@ -194,12 +216,15 @@ namespace Lumina
 
         const uint32 Bone = (uint32)SelectedBoneIndex;
 
+        const FMeshletData& MD = SkeletalMesh->GetMeshResource().MeshletData;
+
         ForEachLOD0SkinnedVertex(SkeletalMesh->GetMeshResource(),
-            [&](const FMeshlet& Meshlet, const FMeshletSkinnedVertex& V)
+            [&](const FMeshlet& Meshlet, uint32 MeshletIndex, const FMeshletSkinnedVertex& V)
         {
             for (uint32 b = 0; b < 4u; ++b)
             {
-                if (JointAt(V.JointWeights, b) == 0u || JointAt(V.JointIndices, b) != Bone)
+                if (JointAt(V.JointWeights, b) == 0u
+                    || ResolveGlobalJoint(MD, MeshletIndex, JointAt(V.JointIndices, b)) != Bone)
                 {
                     continue;
                 }
@@ -290,6 +315,17 @@ namespace Lumina
         ImGui::Text("Skeleton: %s", Skeleton->GetName().c_str());
         ImGui::Text("Bones: %u", BoneCount);
         ImGui::Text("Bones this mesh needs: %u", Skinning.RequiredBones);
+        ImGui::Text("Bones per meshlet: %.1f average, %u peak", Skinning.AvgPaletteBones, Skinning.MaxPaletteBones);
+        ImGuiX::TextTooltip("{}", "The skinning dispatch stages one meshlet's bones into groupshared memory and "
+                                  "blends every vertex out of that, so this is what the pass actually reads per "
+                                  "workgroup rather than the skeleton's whole bone count.");
+
+        if (Skinning.PaletteOverflows > 0)
+        {
+            ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f),
+                LE_ICON_ALERT_CIRCLE_OUTLINE " %u meshlets exceed %u bones and skin from the bone arena directly.",
+                Skinning.PaletteOverflows, (uint32)SKIN_GROUP_PALETTE_BONES);
+        }
 
         ImGui::Spacing();
 

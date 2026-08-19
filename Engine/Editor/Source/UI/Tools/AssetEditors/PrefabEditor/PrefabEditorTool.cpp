@@ -87,6 +87,8 @@ namespace Lumina
             return ImGuiX::PassSearchFilter(EntityFilterState.FilterName, Display.DisplayName.c_str());
         };
 
+        OutlinerContext.bAllowRangeSelect = true;
+
         OutlinerContext.ItemSelectedFunction = [this](FTreeListView& Tree, FTreeNodeID Item, bool bShouldClear)
         {
             // Plain click replaces; Ctrl-click toggles. Mirrors WorldEditor.

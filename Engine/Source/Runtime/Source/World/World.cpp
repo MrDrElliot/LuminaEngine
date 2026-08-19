@@ -55,6 +55,7 @@
 #include "Input/InputViewport.h"
 #include "Input/InputQuery.h"
 #include "Entity/Components/SingletonEntityComponent.h"
+#include "Entity/Components/SceneFolderComponent.h"
 #include "Entity/Systems/SystemSingletons.h"
 #include "Entity/Systems/CameraSystem.h"
 #include "Entity/Components/TagComponent.h"
@@ -1300,6 +1301,37 @@ namespace Lumina
         }
 
         return EntityRegistry.get_or_emplace<SDefaultWorldSettings>(SingletonEntity);
+    }
+
+    SSceneFolderComponent& CWorld::GetSceneFolders()
+    {
+        if (!EntityRegistry.valid(SingletonEntity))
+        {
+            static SSceneFolderComponent Empty{};
+            return Empty;
+        }
+
+        return EntityRegistry.get_or_emplace<SSceneFolderComponent>(SingletonEntity);
+    }
+
+    SSceneFolderComponent* CWorld::FindSceneFolders()
+    {
+        if (!EntityRegistry.valid(SingletonEntity))
+        {
+            return nullptr;
+        }
+
+        return EntityRegistry.try_get<SSceneFolderComponent>(SingletonEntity);
+    }
+
+    const SSceneFolderComponent* CWorld::FindSceneFolders() const
+    {
+        if (!EntityRegistry.valid(SingletonEntity))
+        {
+            return nullptr;
+        }
+
+        return EntityRegistry.try_get<SSceneFolderComponent>(SingletonEntity);
     }
 
     bool CWorld::EntityHasTag(entt::entity Entity, const FName& Tag)

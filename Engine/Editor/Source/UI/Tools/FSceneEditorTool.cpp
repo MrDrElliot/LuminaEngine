@@ -38,6 +38,7 @@
 #include "World/Entity/Components/EntityTags.h"
 #include "World/Entity/Components/NameComponent.h"
 #include "World/Entity/Components/RelationshipComponent.h"
+#include "World/Entity/Components/SceneFolderComponent.h"
 #include "Scripting/EntityScript.h"
 #include "World/Entity/Components/TagComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
@@ -825,6 +826,8 @@ namespace Lumina
         PendingOutlinerAdds.clear();
         PendingExpanderRefresh.clear();
 
+        BuildFolderNodes(Tree);
+
         FEntityRegistry& Registry = GetSceneRegistry();
         auto View = Registry.view<SNameComponent>(entt::exclude<FHideInSceneOutliner>);
         
@@ -882,10 +885,13 @@ namespace Lumina
 
         // Attach under parent if it's already in the tree.
         FTreeNodeID ParentNode = InvalidTreeNode;
+        bool bHasEntityParent = false;
         if (FRelationshipComponent* Rel = Registry.try_get<FRelationshipComponent>(Entity))
         {
             if (Rel->Parent != entt::null)
             {
+                bHasEntityParent = true;
+
                 auto ParentIt = EntityToTreeNode.find(Rel->Parent);
                 if (ParentIt != EntityToTreeNode.end())
                 {
@@ -896,6 +902,12 @@ namespace Lumina
                     return InvalidTreeNode;
                 }
             }
+        }
+
+        // Only unparented entities are filed in folders; an attached one lives under its parent's row.
+        if (!bHasEntityParent)
+        {
+            ParentNode = FindFolderNode(GetEntityFolderID(Entity));
         }
 
         SNameComponent& NameComponent = Registry.get<SNameComponent>(Entity);
@@ -1204,6 +1216,16 @@ namespace Lumina
         RemoveEntityFromOutliner(Entity);
         PendingOutlinerAdds.erase(eastl::remove(PendingOutlinerAdds.begin(), PendingOutlinerAdds.end(), Entity), PendingOutlinerAdds.end());
 
+        // Skipped during a restore, which recreates every entity and reloads the table from the snapshot.
+        if (!bRestoringTransaction)
+        {
+            if (SSceneFolderComponent* Folders = GetEditableSceneFolders())
+            {
+                Folders->RemoveEntity(Entity);
+            }
+            EntityFolderCache.erase(Entity);
+        }
+
         if (ParentEntity != entt::null)
         {
             PendingExpanderRefresh.push_back(ParentEntity);
@@ -1227,6 +1249,637 @@ namespace Lumina
             RefreshOutlinerExpander(Parent);
         }
         PendingExpanderRefresh.clear();
+    }
+
+    namespace
+    {
+        FString MakeFolderPath(const SSceneFolderComponent& Folders, uint32 FolderID)
+        {
+            FString Path;
+            uint32 Cursor = FolderID;
+            for (uint32 Guard = 0; Cursor != SSceneFolderComponent::NoFolder && Guard < 64; ++Guard)
+            {
+                const FSceneFolder* Folder = Folders.Find(Cursor);
+                if (Folder == nullptr)
+                {
+                    break;
+                }
+
+                Path = Path.empty() ? FString(Folder->Name.c_str()) : FString(Folder->Name.c_str()) + "/" + Path;
+                Cursor = Folder->ParentID;
+            }
+            return Path;
+        }
+
+        int32 GetFolderDepth(const SSceneFolderComponent& Folders, uint32 FolderID)
+        {
+            int32 Depth = 0;
+            const FSceneFolder* Folder = Folders.Find(FolderID);
+            while (Folder != nullptr && Folder->ParentID != SSceneFolderComponent::NoFolder && Depth < 64)
+            {
+                Folder = Folders.Find(Folder->ParentID);
+                ++Depth;
+            }
+            return Depth;
+        }
+    }
+
+    const SSceneFolderComponent* FSceneEditorTool::GetSceneFolders() const
+    {
+        if (!SupportsSceneFolders() || GetObservedWorld() == nullptr)
+        {
+            return nullptr;
+        }
+
+        return GetObservedWorld()->FindSceneFolders();
+    }
+
+    SSceneFolderComponent* FSceneEditorTool::GetEditableSceneFolders() const
+    {
+        if (!SupportsSceneFolders() || IsInspectingForeignWorld() || World == nullptr)
+        {
+            return nullptr;
+        }
+
+        return World->FindSceneFolders();
+    }
+
+    uint32 FSceneEditorTool::GetEntityFolderID(entt::entity Entity) const
+    {
+        auto It = EntityFolderCache.find(Entity);
+        return It != EntityFolderCache.end() ? It->second : SSceneFolderComponent::NoFolder;
+    }
+
+    FTreeNodeID FSceneEditorTool::FindFolderNode(uint32 FolderID) const
+    {
+        auto It = FolderToTreeNode.find(FolderID);
+        return It != FolderToTreeNode.end() ? It->second : InvalidTreeNode;
+    }
+
+    FString FSceneEditorTool::GetFolderPath(uint32 FolderID) const
+    {
+        const SSceneFolderComponent* Folders = GetSceneFolders();
+        return Folders != nullptr ? MakeFolderPath(*Folders, FolderID) : FString();
+    }
+
+    FName FSceneEditorTool::MakeUniqueFolderName(uint32 ParentID) const
+    {
+        const SSceneFolderComponent* Folders = GetSceneFolders();
+        if (Folders == nullptr)
+        {
+            return FName("New Folder");
+        }
+
+        for (int32 Suffix = 1; Suffix < 1000; ++Suffix)
+        {
+            FString Candidate = "New Folder";
+            if (Suffix > 1)
+            {
+                Candidate += " ";
+                Candidate += eastl::to_string(Suffix).c_str();
+            }
+
+            const FName CandidateName(Candidate.c_str());
+            bool bTaken = false;
+            for (const FSceneFolder& Folder : Folders->Folders)
+            {
+                if (Folder.ParentID == ParentID && Folder.Name == CandidateName)
+                {
+                    bTaken = true;
+                    break;
+                }
+            }
+
+            if (!bTaken)
+            {
+                return CandidateName;
+            }
+        }
+
+        return FName("New Folder");
+    }
+
+    void FSceneEditorTool::BuildFolderNodes(FTreeListView& Tree)
+    {
+        FolderToTreeNode.clear();
+        EntityFolderCache.clear();
+
+        const SSceneFolderComponent* Folders = GetSceneFolders();
+        if (Folders == nullptr || Folders->IsEmpty())
+        {
+            return;
+        }
+
+        FEntityRegistry& Registry = GetSceneRegistry();
+
+        // Dead handles are dropped here rather than on every read; a foreign world is only inspected.
+        if (SSceneFolderComponent* Editable = GetEditableSceneFolders())
+        {
+            for (FSceneFolder& Folder : Editable->Folders)
+            {
+                for (int32 i = (int32)Folder.Entities.size() - 1; i >= 0; --i)
+                {
+                    if (!Registry.valid(static_cast<entt::entity>(Folder.Entities[i])))
+                    {
+                        Folder.Entities.erase(Folder.Entities.begin() + i);
+                    }
+                }
+            }
+        }
+
+        // Shallowest first, so a folder's parent row always exists by the time the folder is created.
+        TVector<const FSceneFolder*> Ordered;
+        Ordered.reserve(Folders->Folders.size());
+        for (const FSceneFolder& Folder : Folders->Folders)
+        {
+            Ordered.push_back(&Folder);
+        }
+
+        eastl::sort(Ordered.begin(), Ordered.end(), [Folders](const FSceneFolder* LHS, const FSceneFolder* RHS)
+        {
+            const int32 LHSDepth = GetFolderDepth(*Folders, LHS->ID);
+            const int32 RHSDepth = GetFolderDepth(*Folders, RHS->ID);
+            if (LHSDepth != RHSDepth)
+            {
+                return LHSDepth < RHSDepth;
+            }
+            if (LHS->Name != RHS->Name)
+            {
+                return LHS->Name < RHS->Name;
+            }
+            return LHS->ID < RHS->ID;
+        });
+
+        for (const FSceneFolder* Folder : Ordered)
+        {
+            FFixedString Label;
+            Label.append(LE_ICON_FOLDER).append(" ").append(Folder->Name.c_str());
+
+            // Hashed by id so a rebuild restores the folder's expansion state (entity rows carry no hash).
+            constexpr uint64 FolderNodeHashSalt = 0xF01DE4ull << 32;
+
+            const FTreeNodeID ParentNode = FindFolderNode(Folder->ParentID);
+            const FTreeNodeID Node = Tree.CreateNode(ParentNode, FStringView(Label.data(), Label.length()), FolderNodeHashSalt | Folder->ID);
+            FolderToTreeNode[Folder->ID] = Node;
+
+            Tree.EmplaceUserData<FEntityListViewItemData>(Node).FolderID = Folder->ID;
+
+            FTreeNodeDisplay& Display = Tree.Get<FTreeNodeDisplay>(Node);
+            Display.IconText = LE_ICON_FOLDER;
+            Display.IconColor = EditorColors::AccentAlt();
+            Display.bAllowRenaming = true;
+            Display.bShowDisabledIcon = true;
+            Display.TooltipTitle = FString(LE_ICON_FOLDER " ") + Folder->Name.c_str();
+            Display.TooltipSubtitle = "Outliner folder, organisation only";
+            Display.bTooltipBuilt = true;
+
+            for (uint32 Handle : Folder->Entities)
+            {
+                const entt::entity Member = static_cast<entt::entity>(Handle);
+                if (Registry.valid(Member))
+                {
+                    EntityFolderCache[Member] = Folder->ID;
+                }
+            }
+        }
+
+        // A folder reads as hidden only when everything inside it is.
+        for (const FSceneFolder* Folder : Ordered)
+        {
+            TVector<entt::entity> Contents;
+            CollectFolderEntities(Folder->ID, Contents, true);
+            if (Contents.empty())
+            {
+                continue;
+            }
+
+            bool bAllHidden = true;
+            for (entt::entity Member : Contents)
+            {
+                if (!Registry.any_of<SDisabledTag>(Member))
+                {
+                    bAllHidden = false;
+                    break;
+                }
+            }
+
+            Tree.Get<FTreeNodeState>(FindFolderNode(Folder->ID)).bDisabled = bAllHidden;
+        }
+    }
+
+    void FSceneEditorTool::CollectFolderEntities(uint32 FolderID, TVector<entt::entity>& OutEntities, bool bRecursive) const
+    {
+        const SSceneFolderComponent* Folders = GetSceneFolders();
+        if (Folders == nullptr)
+        {
+            return;
+        }
+
+        TVector<uint32> FolderIDs;
+        FolderIDs.push_back(FolderID);
+        if (bRecursive)
+        {
+            Folders->CollectDescendants(FolderID, FolderIDs);
+        }
+
+        FEntityRegistry& Registry = GetSceneRegistry();
+        for (uint32 ID : FolderIDs)
+        {
+            const FSceneFolder* Folder = Folders->Find(ID);
+            if (Folder == nullptr)
+            {
+                continue;
+            }
+
+            for (uint32 Handle : Folder->Entities)
+            {
+                const entt::entity Member = static_cast<entt::entity>(Handle);
+                if (Registry.valid(Member))
+                {
+                    OutEntities.push_back(Member);
+                }
+            }
+        }
+    }
+
+    uint32 FSceneEditorTool::CreateSceneFolder(const FName& Name, uint32 ParentID)
+    {
+        if (!SupportsSceneFolders() || IsInspectingForeignWorld() || World == nullptr)
+        {
+            return SSceneFolderComponent::NoFolder;
+        }
+
+        BeginTransaction();
+        const uint32 NewFolder = World->GetSceneFolders().CreateFolder(Name, ParentID);
+        EndTransaction("Create Folder");
+
+        OutlinerListView.MarkTreeDirty();
+        MarkSceneDirty();
+        return NewFolder;
+    }
+
+    void FSceneEditorTool::RenameSceneFolder(uint32 FolderID, FStringView NewName)
+    {
+        SSceneFolderComponent* Folders = GetEditableSceneFolders();
+        if (Folders == nullptr || Folders->Find(FolderID) == nullptr || NewName.empty())
+        {
+            return;
+        }
+
+        BeginTransaction();
+        Folders->RenameFolder(FolderID, FName(FString(NewName.data(), NewName.size()).c_str()));
+        EndTransaction("Rename Folder");
+
+        MarkSceneDirty();
+    }
+
+    void FSceneEditorTool::DeleteSceneFolder(uint32 FolderID, bool bDeleteContents)
+    {
+        SSceneFolderComponent* Folders = GetEditableSceneFolders();
+        if (Folders == nullptr || Folders->Find(FolderID) == nullptr)
+        {
+            return;
+        }
+
+        if (bDeleteContents)
+        {
+            TVector<entt::entity> Contents;
+            CollectFolderEntities(FolderID, Contents, true);
+            for (entt::entity Entity : Contents)
+            {
+                EntityDestroyRequests.push(Entity);
+            }
+        }
+
+        TVector<uint32> Doomed;
+        Doomed.push_back(FolderID);
+        Folders->CollectDescendants(FolderID, Doomed);
+
+        BeginTransaction();
+        // Deepest first, so each folder's survivors land in a parent that is still there.
+        for (int32 i = (int32)Doomed.size() - 1; i >= 0; --i)
+        {
+            Folders->RemoveFolder(Doomed[i]);
+        }
+        EndTransaction("Delete Folder");
+
+        OutlinerListView.MarkTreeDirty();
+        MarkSceneDirty();
+    }
+
+    void FSceneEditorTool::MoveFolderIntoFolder(uint32 FolderID, uint32 NewParentID)
+    {
+        SSceneFolderComponent* Folders = GetEditableSceneFolders();
+        if (Folders == nullptr)
+        {
+            return;
+        }
+
+        BeginTransaction();
+        if (!Folders->SetFolderParent(FolderID, NewParentID))
+        {
+            AbortTransaction();
+            return;
+        }
+        EndTransaction("Move Folder");
+
+        OutlinerListView.MarkTreeDirty();
+        MarkSceneDirty();
+    }
+
+    void FSceneEditorTool::MoveEntitiesToFolder(const TVector<entt::entity>& Entities, uint32 FolderID)
+    {
+        if (!SupportsSceneFolders() || IsInspectingForeignWorld())
+        {
+            return;
+        }
+
+        // A null table is fine when unfiling: the move still detaches entities from their entity parent.
+        SSceneFolderComponent* Folders = GetEditableSceneFolders();
+        if (FolderID != SSceneFolderComponent::NoFolder && (Folders == nullptr || Folders->Find(FolderID) == nullptr))
+        {
+            return;
+        }
+
+        FEntityRegistry& Registry = GetSceneRegistry();
+
+        TVector<entt::entity> Moved;
+        Moved.reserve(Entities.size());
+
+        BeginTransaction();
+        for (entt::entity Entity : Entities)
+        {
+            if (!IsOutlinerEntityVisible(Entity))
+            {
+                continue;
+            }
+
+            const SPrefabInstanceComponent* PrefabInstance = Registry.try_get<SPrefabInstanceComponent>(Entity);
+            if (PrefabInstance != nullptr && !PrefabInstance->bIsRoot)
+            {
+                continue;
+            }
+
+            // Folders only hold unparented entities, so filing one detaches it from its entity parent.
+            if (ECS::Utils::IsChild(Registry, Entity))
+            {
+                ECS::Utils::RemoveFromParent(Registry, Entity);
+            }
+
+            if (Folders != nullptr)
+            {
+                Folders->AssignEntity(Entity, FolderID);
+            }
+
+            if (FolderID == SSceneFolderComponent::NoFolder)
+            {
+                EntityFolderCache.erase(Entity);
+            }
+            else
+            {
+                EntityFolderCache[Entity] = FolderID;
+            }
+
+            Moved.push_back(Entity);
+        }
+
+        if (Moved.empty())
+        {
+            AbortTransaction();
+            return;
+        }
+        EndTransaction("Move To Folder");
+
+        for (entt::entity Entity : Moved)
+        {
+            ReparentEntityInOutliner(Entity);
+        }
+
+        MarkSceneDirty();
+    }
+
+    void FSceneEditorTool::SelectFolderContents(uint32 FolderID)
+    {
+        TVector<entt::entity> Contents;
+        CollectFolderEntities(FolderID, Contents, true);
+
+        ClearSelectedEntities();
+        for (entt::entity Entity : Contents)
+        {
+            AddSelectedEntity(Entity);
+        }
+    }
+
+    void FSceneEditorTool::SetFolderContentsHidden(uint32 FolderID, bool bHidden)
+    {
+        TVector<entt::entity> Contents;
+        CollectFolderEntities(FolderID, Contents, true);
+        if (Contents.empty())
+        {
+            return;
+        }
+
+        // A pending rebuild re-derives every row's state from the registry, so stale ids are left alone.
+        const bool bRowsCurrent = !OutlinerListView.IsDirty();
+
+        FEntityRegistry& Registry = GetSceneRegistry();
+        for (entt::entity Entity : Contents)
+        {
+            if (bHidden)
+            {
+                Registry.emplace_or_replace<SDisabledTag>(Entity);
+            }
+            else
+            {
+                Registry.remove<SDisabledTag>(Entity);
+            }
+
+            auto It = EntityToTreeNode.find(Entity);
+            if (bRowsCurrent && It != EntityToTreeNode.end() && OutlinerListView.IsValid(It->second))
+            {
+                OutlinerListView.Get<FTreeNodeState>(It->second).bDisabled = bHidden;
+            }
+        }
+
+        if (const SSceneFolderComponent* Folders = GetSceneFolders(); Folders != nullptr && bRowsCurrent)
+        {
+            TVector<uint32> Subfolders;
+            Folders->CollectDescendants(FolderID, Subfolders);
+            for (uint32 Subfolder : Subfolders)
+            {
+                const FTreeNodeID Node = FindFolderNode(Subfolder);
+                if (OutlinerListView.IsValid(Node))
+                {
+                    OutlinerListView.Get<FTreeNodeState>(Node).bDisabled = bHidden;
+                }
+            }
+        }
+
+        MarkSceneDirty();
+    }
+
+    void FSceneEditorTool::DrawFolderContextMenu(uint32 FolderID)
+    {
+        const SSceneFolderComponent* Folders = GetSceneFolders();
+        const FSceneFolder* Folder = Folders != nullptr ? Folders->Find(FolderID) : nullptr;
+        if (Folder == nullptr)
+        {
+            return;
+        }
+
+        TVector<entt::entity> Contents;
+        CollectFolderEntities(FolderID, Contents, true);
+
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,   ImVec2(8, 4));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,  ImVec2(8, 4));
+
+        ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::AccentAlt());
+        ImGui::TextUnformatted(LE_ICON_FOLDER_OPEN);
+        ImGui::PopStyleColor();
+        ImGui::SameLine();
+        ImGui::TextUnformatted(Folder->Name.c_str());
+        ImGui::SameLine();
+        ImGui::TextDisabled("(%zu)", (size_t)Contents.size());
+
+        ImGui::Separator();
+
+        if (ImGui::MenuItem(LE_ICON_FOLDER_PLUS " New Subfolder"))
+        {
+            PendingFolderRename = CreateSceneFolder(MakeUniqueFolderName(FolderID), FolderID);
+        }
+
+        if (ImGui::MenuItem(LE_ICON_PENCIL " Rename", "F2"))
+        {
+            PendingFolderRename = FolderID;
+        }
+
+        ImGui::Separator();
+
+        if (ImGui::MenuItem(LE_ICON_SELECT_GROUP " Select Contents", nullptr, false, !Contents.empty()))
+        {
+            SelectFolderContents(FolderID);
+        }
+
+        if (ImGui::MenuItem(LE_ICON_EYE_OFF " Hide Contents", nullptr, false, !Contents.empty()))
+        {
+            SetFolderContentsHidden(FolderID, true);
+        }
+
+        if (ImGui::MenuItem(LE_ICON_EYE " Show Contents", nullptr, false, !Contents.empty()))
+        {
+            SetFolderContentsHidden(FolderID, false);
+        }
+
+        if (ImGui::BeginMenu(LE_ICON_FOLDER_MOVE " Move Folder Into"))
+        {
+            if (ImGui::MenuItem(LE_ICON_HOME " Root", nullptr, false, Folder->ParentID != SSceneFolderComponent::NoFolder))
+            {
+                MoveFolderIntoFolder(FolderID, SSceneFolderComponent::NoFolder);
+            }
+
+            ImGui::Separator();
+
+            for (const FSceneFolder& Candidate : Folders->Folders)
+            {
+                if (Candidate.ID == FolderID || Folders->IsDescendantOf(Candidate.ID, FolderID))
+                {
+                    continue;
+                }
+
+                const FString Label = FString(LE_ICON_FOLDER " ") + MakeFolderPath(*Folders, Candidate.ID);
+                if (ImGui::MenuItem(Label.c_str(), nullptr, false, Candidate.ID != Folder->ParentID))
+                {
+                    MoveFolderIntoFolder(FolderID, Candidate.ID);
+                }
+            }
+
+            ImGui::EndMenu();
+        }
+
+        ImGui::Separator();
+
+        if (ImGui::MenuItem(LE_ICON_FOLDER_REMOVE " Delete Folder"))
+        {
+            DeleteSceneFolder(FolderID, false);
+        }
+        ImGuiX::TextTooltip("{}", "Removes the folder. Its contents move up to the parent folder.");
+
+        ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::Danger());
+        if (ImGui::MenuItem(LE_ICON_TRASH_CAN " Delete Folder and Contents"))
+        {
+            DeleteSceneFolder(FolderID, true);
+        }
+        ImGui::PopStyleColor();
+        ImGuiX::TextTooltip("{}", "Deletes the folder and every entity inside it.");
+
+        ImGui::PopStyleVar(3);
+    }
+
+    void FSceneEditorTool::DrawMoveToFolderMenuItems(const TVector<entt::entity>& Entities)
+    {
+        if (!SupportsSceneFolders() || IsInspectingForeignWorld() || Entities.empty())
+        {
+            return;
+        }
+
+        if (!ImGui::BeginMenu(LE_ICON_FOLDER_MOVE " Move to Folder"))
+        {
+            return;
+        }
+
+        if (ImGui::MenuItem(LE_ICON_HOME " Root"))
+        {
+            MoveEntitiesToFolder(Entities, SSceneFolderComponent::NoFolder);
+        }
+
+        if (const SSceneFolderComponent* Folders = GetSceneFolders())
+        {
+            if (!Folders->IsEmpty())
+            {
+                ImGui::Separator();
+            }
+
+            for (const FSceneFolder& Folder : Folders->Folders)
+            {
+                const FString Label = FString(LE_ICON_FOLDER " ") + MakeFolderPath(*Folders, Folder.ID);
+                if (ImGui::MenuItem(Label.c_str()))
+                {
+                    MoveEntitiesToFolder(Entities, Folder.ID);
+                }
+            }
+        }
+
+        ImGui::Separator();
+
+        if (ImGui::MenuItem(LE_ICON_FOLDER_PLUS " New Folder..."))
+        {
+            const uint32 NewFolder = CreateSceneFolder(MakeUniqueFolderName(SSceneFolderComponent::NoFolder), SSceneFolderComponent::NoFolder);
+            MoveEntitiesToFolder(Entities, NewFolder);
+            PendingFolderRename = NewFolder;
+        }
+
+        ImGui::EndMenu();
+    }
+
+    void FSceneEditorTool::DrawNewFolderButton(float ButtonSize)
+    {
+        if (!SupportsSceneFolders())
+        {
+            return;
+        }
+
+        ImGui::SameLine();
+        ImGui::BeginDisabled(IsInspectingForeignWorld());
+        if (ImGuiX::IconButton(LE_ICON_FOLDER_PLUS, "##NewSceneFolder", EditorColors::U32(EditorColors::AccentAlt()), ImVec2(ButtonSize, ButtonSize)))
+        {
+            PendingFolderRename = CreateSceneFolder(MakeUniqueFolderName(SSceneFolderComponent::NoFolder), SSceneFolderComponent::NoFolder);
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        {
+            ImGui::SetTooltip("New folder. Folders group entities in the outliner only.");
+        }
+        ImGui::EndDisabled();
     }
 
     FTransform FSceneEditorTool::GetNewEntitySpawnTransform() const
@@ -2629,6 +3282,8 @@ namespace Lumina
             DrawAddToEntityOrWorldPopup();
             ImGui::EndDisabled();
 
+            DrawNewFolderButton(ButtonWidth);
+
             ImGui::SameLine();
             ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - ButtonWidth - Style.FramePadding.x);
             EntityFilterState.FilterName.Draw("##Search");
@@ -2699,6 +3354,18 @@ namespace Lumina
                 LUMINA_PROFILE_SECTION("Draw Entity List");
                 FlushOutlinerPending();
                 OutlinerListView.Draw(OutlinerContext);
+
+                // A folder created this frame only gets its row on the rebuild the Draw above schedules.
+                if (PendingFolderRename != SSceneFolderComponent::NoFolder && !OutlinerListView.IsDirty())
+                {
+                    const FTreeNodeID Node = FindFolderNode(PendingFolderRename);
+                    if (Node.IsValid())
+                    {
+                        OutlinerListView.Get<FTreeNodeState>(Node).bEditingText = true;
+                        OutlinerListView.RequestScrollToNode(Node);
+                    }
+                    PendingFolderRename = SSceneFolderComponent::NoFolder;
+                }
 
                 if (ImGui::BeginDragDropTargetCustom(ImGui::GetCurrentWindow()->Rect(), ImGui::GetCurrentWindow()->ID))
                 {

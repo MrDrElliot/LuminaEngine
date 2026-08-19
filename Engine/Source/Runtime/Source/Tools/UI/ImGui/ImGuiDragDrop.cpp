@@ -91,6 +91,15 @@ namespace Lumina::DragDrop
         ImGui::SetDragDropPayload(GImGuiPayloadType, &GSentinel, 1, ImGuiCond_Once);
     }
 
+    void SetSceneFolderPayload(CWorld* World, uint32 FolderID)
+    {
+        Reset();
+        GPayload.Kind = EPayloadKind::SceneFolder;
+        GPayload.World = World;
+        GPayload.SceneFolderID = FolderID;
+        ImGui::SetDragDropPayload(GImGuiPayloadType, &GSentinel, 1, ImGuiCond_Once);
+    }
+
     void SetFilePayload(FStringView VirtualPath)
     {
         Reset();
@@ -174,6 +183,32 @@ namespace Lumina::DragDrop
         if (OutEntity)
         {
             *OutEntity = GPayload.Entity;
+        }
+        return true;
+    }
+
+    bool AcceptSceneFolder(CWorld** OutWorld, uint32* OutFolderID)
+    {
+        const ImGuiPayload* P = ImGui::AcceptDragDropPayload(GImGuiPayloadType, ImGuiDragDropFlags_AcceptBeforeDelivery);
+        if (!P)
+        {
+            return false;
+        }
+        if (GPayload.Kind != EPayloadKind::SceneFolder)
+        {
+            return false;
+        }
+        if (!P->IsDelivery())
+        {
+            return false;
+        }
+        if (OutWorld)
+        {
+            *OutWorld = GPayload.World;
+        }
+        if (OutFolderID)
+        {
+            *OutFolderID = GPayload.SceneFolderID;
         }
         return true;
     }

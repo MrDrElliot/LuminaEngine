@@ -85,6 +85,21 @@ namespace Lumina
     };
     static_assert(sizeof(FMeshletCone) == 28, "FMeshletCone must match the GPU mirror");
 
+    // A skinned vertex's 8-bit JointIndices address its OWNING MESHLET's slice of MeshletBoneIndices.
+    struct FMeshletBonePalette
+    {
+        uint32 Offset;
+        uint32 Count;
+
+        friend FArchive& operator<<(FArchive& Ar, FMeshletBonePalette& Data)
+        {
+            Ar << Data.Offset;
+            Ar << Data.Count;
+            return Ar;
+        }
+    };
+    static_assert(sizeof(FMeshletBonePalette) == 8, "FMeshletBonePalette must match the GPU mirror (Common.slang)");
+
     struct FMeshletData
     {
         TVector<FMeshlet>              Meshlets;
@@ -93,6 +108,10 @@ namespace Lumina
         TVector<uint32>                MeshletTriangles;
         TVector<FMeshletSphere>        MeshletSpheres;
         TVector<FMeshletCone>          MeshletCones;
+
+        // Skinned meshes only, one palette per meshlet indexing a flat list of skeleton-global bone indices.
+        TVector<FMeshletBonePalette>   MeshletBonePalettes;
+        TVector<uint32>                MeshletBoneIndices;
 
         FORCEINLINE bool IsEmpty() const { return Meshlets.empty(); }
 
@@ -104,6 +123,8 @@ namespace Lumina
             MeshletTriangles.clear();
             MeshletSpheres.clear();
             MeshletCones.clear();
+            MeshletBonePalettes.clear();
+            MeshletBoneIndices.clear();
         }
 
         FORCEINLINE void ClearAndShrink()
@@ -115,6 +136,8 @@ namespace Lumina
             Drop(MeshletTriangles);
             Drop(MeshletSpheres);
             Drop(MeshletCones);
+            Drop(MeshletBonePalettes);
+            Drop(MeshletBoneIndices);
         }
 
         friend FArchive& operator<<(FArchive& Ar, FMeshletData& Data)
@@ -125,9 +148,55 @@ namespace Lumina
             Ar << Data.MeshletTriangles;
             Ar << Data.MeshletSpheres;
             Ar << Data.MeshletCones;
+
+            if (Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::MESHLET_BONE_PALETTES)
+            {
+                Ar << Data.MeshletBonePalettes;
+                Ar << Data.MeshletBoneIndices;
+            }
             return Ar;
         }
     };
+
+    // 64 vertices x 4 influences is the hard bound on one meshlet's distinct bones.
+    constexpr uint32 kMeshletPaletteCapacity = 256;
+
+    using FMeshletPaletteScratch = TFixedVector<uint32, kMeshletPaletteCapacity>;
+
+    // Slot for GlobalBone, appending it when absent. A full palette folds onto slot 0 rather than growing.
+    inline uint32 FindOrAddPaletteBone(FMeshletPaletteScratch& Palette, uint32 GlobalBone)
+    {
+        for (uint32 i = 0; i < (uint32)Palette.size(); ++i)
+        {
+            if (Palette[i] == GlobalBone)
+            {
+                return i;
+            }
+        }
+
+        if (Palette.size() >= kMeshletPaletteCapacity)
+        {
+            return 0u;
+        }
+
+        Palette.push_back(GlobalBone);
+        return (uint32)Palette.size() - 1u;
+    }
+
+    // Appends Palette as the next meshlet's slice; call once per meshlet, in meshlet order.
+    inline void AppendMeshletBonePalette(FMeshletData& Data, FMeshletPaletteScratch& Palette)
+    {
+        // Slot 0 is where every zero-weight influence lands, so a palette is never empty.
+        if (Palette.empty())
+        {
+            Palette.push_back(0u);
+        }
+
+        FMeshletBonePalette& Out = Data.MeshletBonePalettes.emplace_back();
+        Out.Offset = (uint32)Data.MeshletBoneIndices.size();
+        Out.Count  = (uint32)Palette.size();
+        Data.MeshletBoneIndices.insert(Data.MeshletBoneIndices.end(), Palette.begin(), Palette.end());
+    }
 
     /** FMeshletHeaderGPU::DistanceFieldFlags bits. Mirrored in Includes/DistanceField.slang. */
     enum class EDistanceFieldFlags : uint32
@@ -143,6 +212,8 @@ namespace Lumina
         uint64 VerticesAddress;                     // uint32*
         uint64 TrianglesAddress;                    // uint32*
         uint64 ConesAddress;                        // FMeshletCone*
+        uint64 BonePalettesAddress;                 // FMeshletBonePalette*, null when not skinned
+        uint64 BoneIndicesAddress;                  // uint32*, null when not skinned
 
         uint32 DistanceFieldIndex;
         uint32 DistanceFieldFlags;                  // EDistanceFieldFlags
@@ -153,13 +224,13 @@ namespace Lumina
         float  DistanceFieldMaxDistance;
 
         // Entries in Meshlets/Spheres/Cones -- the AUTHORITATIVE bound for every array this header points
-        // at, because it ships in the same 80 bytes as the pointers themselves. Everything that indexes
+        // at, because it ships in the same 96 bytes as the pointers themselves. Everything that indexes
         // them bounds against this rather than against a meshlet count carried on the instance: the two
         // come from different sources and a stale instance paired with a live header is exactly how an
         // in-bounds-looking index walks off the end of a buffer.
         uint32 MeshletCount;
     };
-    static_assert(sizeof(FMeshletHeaderGPU) == 80, "FMeshletHeaderGPU must match FMeshletHeader in Common.slang");
+    static_assert(sizeof(FMeshletHeaderGPU) == 96, "FMeshletHeaderGPU must match FMeshletHeader in Common.slang");
 
     namespace MeshletHeaderSlab
     {
@@ -231,6 +302,8 @@ namespace Lumina
             RHI::GPUPtr MeshletConeBuffer     = 0;
             RHI::GPUPtr MeshletVertexBuffer   = 0;
             RHI::GPUPtr MeshletTriangleBuffer = 0;
+            RHI::GPUPtr MeshletBonePaletteBuffer = 0;
+            RHI::GPUPtr MeshletBoneIndexBuffer   = 0;
             uint32      MeshletHeaderSlot     = 0;
             uint32      MeshletCount          = 0;
 
@@ -277,6 +350,8 @@ namespace Lumina
                 MeshletConeBuffer     = 0;
                 MeshletVertexBuffer   = 0;
                 MeshletTriangleBuffer = 0;
+                MeshletBonePaletteBuffer = 0;
+                MeshletBoneIndexBuffer   = 0;
                 MeshletCount          = 0;
             }
 
@@ -301,6 +376,8 @@ namespace Lumina
                 MeshletConeBuffer     = Other.MeshletConeBuffer;
                 MeshletVertexBuffer   = Other.MeshletVertexBuffer;
                 MeshletTriangleBuffer = Other.MeshletTriangleBuffer;
+                MeshletBonePaletteBuffer = Other.MeshletBonePaletteBuffer;
+                MeshletBoneIndexBuffer   = Other.MeshletBoneIndexBuffer;
                 MeshletHeaderSlot     = Other.MeshletHeaderSlot;
                 MeshletCount          = Other.MeshletCount;
                 DistanceFieldTexture  = Other.DistanceFieldTexture;
@@ -311,6 +388,8 @@ namespace Lumina
                 Other.MeshletConeBuffer     = 0;
                 Other.MeshletVertexBuffer   = 0;
                 Other.MeshletTriangleBuffer = 0;
+                Other.MeshletBonePaletteBuffer = 0;
+                Other.MeshletBoneIndexBuffer   = 0;
                 Other.MeshletHeaderSlot     = 0;
                 Other.MeshletCount          = 0;
                 Other.DistanceFieldTexture  = RHI::FManagedTexture{};
@@ -325,7 +404,7 @@ namespace Lumina
         TVector<uint32>           UVs;         // packHalf2x16, TEXCOORD_0
         TVector<uint32>           UVs1;        // packHalf2x16, TEXCOORD_1 (mirrors UVs for single-set sources)
         TVector<uint32>           Colors;      // RGBA8 (PackColor)
-        TVector<FU8Vector4>       JointIndices;
+        TVector<FU16Vector4>      JointIndices;
         TVector<FU8Vector4>       JointWeights;
         TVector<uint32>           Indices;
 

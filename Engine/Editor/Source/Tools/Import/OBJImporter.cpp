@@ -195,7 +195,7 @@ namespace Lumina
                         Vertex.Tangent      = 0;   // Filled by MikkTSpace in GenerateMeshlets.
                         Vertex.UV           = 0;
                         Vertex.Color        = 0xFFFFFFFF;
-                        Vertex.JointIndices = FU8Vector4(0);
+                        Vertex.JointIndices = FU16Vector4(0);
                         Vertex.JointWeights = FU8Vector4(0);
                         Vertex.Position.x   = Attribute.vertices[3 * Index.vertex_index + 0];
                         Vertex.Position.y   = Attribute.vertices[3 * Index.vertex_index + 1];

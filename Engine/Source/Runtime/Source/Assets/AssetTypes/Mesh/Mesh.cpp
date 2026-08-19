@@ -219,6 +219,58 @@ namespace Lumina
             RHI::Textures::Upload(Texture, 0, Volume.Distances.data(), Volume.Distances.size());
         }
 
+        // Legacy upgrade only: an older package stores skeleton-global 8-bit indices and no palette.
+        // Meshes built by the importer already carry palettes and are left alone.
+        void BuildBonePalettes(FMeshletData& MData)
+        {
+            if (MData.MeshletBonePalettes.size() == MData.Meshlets.size())
+            {
+                return;
+            }
+
+            LUMINA_PROFILE_SCOPE();
+
+            MData.MeshletBonePalettes.clear();
+            MData.MeshletBonePalettes.reserve(MData.Meshlets.size());
+            MData.MeshletBoneIndices.clear();
+            MData.MeshletBoneIndices.reserve(MData.Meshlets.size() * 16);
+
+            const uint32 VertexTotal = (uint32)MData.MeshletSkinnedVertices.size();
+
+            FMeshletPaletteScratch Palette;
+
+            for (const FMeshlet& Meshlet : MData.Meshlets)
+            {
+                // Vertices past MESHLET_MAX_VERTICES are skipped because no shader path reads them.
+                const uint32 Begin = Meshlet.VertexOffset;
+                const uint32 End   = Math::Min(Begin + Math::Min(Meshlet.VertexCount, (uint32)MESHLET_MAX_VERTICES),
+                                               VertexTotal);
+
+                Palette.clear();
+
+                for (uint32 v = Begin; v < End; ++v)
+                {
+                    FMeshletSkinnedVertex& Vertex = MData.MeshletSkinnedVertices[v];
+
+                    uint32 Local = 0;
+                    for (uint32 b = 0; b < 4u; ++b)
+                    {
+                        const uint32 Shift  = b * 8u;
+                        const uint32 Weight = (Vertex.JointWeights >> Shift) & 0xFFu;
+
+                        // A zero-weight influence contributes nothing, so it costs no palette entry.
+                        const uint32 Slot = (Weight != 0u)
+                            ? FindOrAddPaletteBone(Palette, (Vertex.JointIndices >> Shift) & 0xFFu)
+                            : 0u;
+                        Local |= Slot << Shift;
+                    }
+                    Vertex.JointIndices = Local;
+                }
+
+                AppendMeshletBonePalette(MData, Palette);
+            }
+        }
+
         // Fills the header from the buffer set and volume currently on Resource. Split out so the
         // distance-field refresh path can rewrite the header in place without rebuilding anything else.
         FMeshletHeaderGPU MakeMeshletHeader(const FMeshResource& Resource)
@@ -244,6 +296,8 @@ namespace Lumina
             Header.DistanceFieldSizeZ       = Volume.VolumeSize.z;
             Header.DistanceFieldMaxDistance = Volume.MaxDistance;
             Header.ConesAddress             = MB.MeshletConeBuffer;
+            Header.BonePalettesAddress      = MB.MeshletBonePaletteBuffer;
+            Header.BoneIndicesAddress       = MB.MeshletBoneIndexBuffer;
             Header.MeshletCount             = MB.MeshletCount;
             return Header;
         }
@@ -278,8 +332,13 @@ namespace Lumina
         
         LUMINA_PROFILE_SCOPE();
 
+        const bool bSkinned = Resource.bSkinnedMesh;
+        if (bSkinned)
+        {
+            BuildBonePalettes(Resource.MeshletData);
+        }
+
         const FMeshletData& MData = Resource.MeshletData;
-        const bool bSkinned       = Resource.bSkinnedMesh;
         FMeshResource::FMeshBuffers& MB = Resource.MeshBuffers;
 
         // Checked at resolve against the skeleton's bone count: the GPU bone fetch is unbounded, so a
@@ -287,18 +346,9 @@ namespace Lumina
         if (bSkinned)
         {
             uint32 MaxJoint = 0;
-            for (const FMeshletSkinnedVertex& V : MData.MeshletSkinnedVertices)
+            for (uint32 GlobalBone : MData.MeshletBoneIndices)
             {
-                const uint32 Packed = V.JointIndices;
-                for (uint32 b = 0; b < 4u; ++b)
-                {
-                    // Only influences with a non-zero weight can actually be fetched.
-                    const uint32 Weight = (V.JointWeights >> (b * 8u)) & 0xFFu;
-                    if (Weight != 0u)
-                    {
-                        MaxJoint = Math::Max(MaxJoint, ((Packed >> (b * 8u)) & 0xFFu) + 1u);
-                    }
-                }
+                MaxJoint = Math::Max(MaxJoint, GlobalBone + 1u);
             }
             Resource.RequiredBoneCount = MaxJoint;
         }
@@ -312,6 +362,8 @@ namespace Lumina
         const uint64 ConeBytes     = sizeof(FMeshletCone)   * MData.MeshletCones.size();
         const uint64 VertexBytes   = VertCount              * VertStride;
         const uint64 TriangleBytes = sizeof(uint32)         * MData.MeshletTriangles.size();
+        const uint64 PaletteBytes  = sizeof(FMeshletBonePalette) * MData.MeshletBonePalettes.size();
+        const uint64 BoneIdxBytes  = sizeof(uint32)         * MData.MeshletBoneIndices.size();
         
         if (MeshletBytes == 0 || SphereBytes == 0 || ConeBytes == 0 || VertexBytes == 0 || TriangleBytes == 0)
         {
@@ -334,6 +386,8 @@ namespace Lumina
         const uint64 ConeOffset     = Reserve(ConeBytes);
         const uint64 VertexOffset   = Reserve(VertexBytes);
         const uint64 TriangleOffset = Reserve(TriangleBytes);
+        const uint64 PaletteOffset  = Reserve(PaletteBytes);
+        const uint64 BoneIdxOffset  = Reserve(BoneIdxBytes);
         
         const RHI::GPUPtr Block = RHI::Malloc(Cursor, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
         
@@ -351,6 +405,12 @@ namespace Lumina
         RHI::UploadBuffer(Block + ConeOffset,     MData.MeshletCones.data(),     ConeBytes);
         RHI::UploadBuffer(Block + VertexOffset,   VertSrc,                       VertexBytes);
         RHI::UploadBuffer(Block + TriangleOffset, MData.MeshletTriangles.data(), TriangleBytes);
+
+        if (PaletteBytes != 0 && BoneIdxBytes != 0)
+        {
+            RHI::UploadBuffer(Block + PaletteOffset, MData.MeshletBonePalettes.data(), PaletteBytes);
+            RHI::UploadBuffer(Block + BoneIdxOffset, MData.MeshletBoneIndices.data(),  BoneIdxBytes);
+        }
         
         MB.ReleaseGeometryBuffers();
 
@@ -360,6 +420,10 @@ namespace Lumina
         MB.MeshletConeBuffer     = Block + ConeOffset;
         MB.MeshletVertexBuffer   = Block + VertexOffset;
         MB.MeshletTriangleBuffer = Block + TriangleOffset;
+
+        // Null for a static mesh; SkinVertex reads that as bind pose rather than misreading the indices.
+        MB.MeshletBonePaletteBuffer = (PaletteBytes != 0 && BoneIdxBytes != 0) ? Block + PaletteOffset : 0;
+        MB.MeshletBoneIndexBuffer   = (PaletteBytes != 0 && BoneIdxBytes != 0) ? Block + BoneIdxOffset : 0;
         MB.MeshletCount          = (uint32)MData.Meshlets.size();
 
         // Volume upload before the header, because the header publishes its heap slot. A field that

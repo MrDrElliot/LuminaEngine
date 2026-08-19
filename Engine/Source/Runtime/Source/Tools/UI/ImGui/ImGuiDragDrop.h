@@ -23,6 +23,7 @@ namespace Lumina::DragDrop
         None = 0,
         Asset,
         Entity,
+        SceneFolder,
         File,
     };
 
@@ -36,6 +37,7 @@ namespace Lumina::DragDrop
 
         CWorld*         World = nullptr;
         entt::entity    Entity = entt::null;
+        uint32          SceneFolderID = 0;
 
         FFixedString    FilePath;
         FFixedString    FileExtension;
@@ -48,6 +50,7 @@ namespace Lumina::DragDrop
     RUNTIME_API void SetAssetPayload(const FAssetData& Asset);
     RUNTIME_API void SetAssetPayload(CObject* Asset);
     RUNTIME_API void SetEntityPayload(CWorld* World, entt::entity Entity);
+    RUNTIME_API void SetSceneFolderPayload(CWorld* World, uint32 FolderID);
     RUNTIME_API void SetFilePayload(FStringView VirtualPath);
 
     // Target helpers
@@ -70,6 +73,9 @@ namespace Lumina::DragDrop
 
     // Entity drop. On delivery, writes outputs and returns true.
     RUNTIME_API bool AcceptEntity(CWorld** OutWorld, entt::entity* OutEntity);
+
+    // Outliner folder drop. On delivery, writes outputs and returns true.
+    RUNTIME_API bool AcceptSceneFolder(CWorld** OutWorld, uint32* OutFolderID);
 
     // Plain file drop. ExtensionFilter is empty for "any file", or e.g. "luau",
     // "rml" (lowercase, no dot) to gate by extension.

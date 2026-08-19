@@ -16,6 +16,17 @@ namespace Lumina
         Ar << *SkeletonResource;
     }
 
+    void CSkeleton::SetSkeletonResource(TUniquePtr<FSkeletonResource>&& NewResource)
+    {
+        SkeletonResource = eastl::move(NewResource);
+
+        // Derived caches key on (skeleton, generation), so one that arrived without a cache reads empty.
+        if (SkeletonResource && !SkeletonResource->HasBindPoseCache())
+        {
+            SkeletonResource->BuildBindPoseCache();
+        }
+    }
+
     int32 CSkeleton::FindSocketBoneIndex(const FName& SocketName) const
     {
         const FMeshSocket* Socket = FindSocket(SocketName);
