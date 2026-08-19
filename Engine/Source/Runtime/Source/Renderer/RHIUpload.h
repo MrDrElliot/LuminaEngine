@@ -4,7 +4,8 @@
 
 namespace Lumina::RHI
 {
-    RUNTIME_API void UploadBuffer(GPUPtr Dest, const void* Data, uint64 Size);
+    // False means the copy was NOT queued (staging exhausted), so no batch will ever name it.
+    RUNTIME_API bool UploadBuffer(GPUPtr Dest, const void* Data, uint64 Size);
 
     // Width/Height are the mip's own dimensions, REQUIRED past mip 0 and whenever OffsetY is set. OffsetY
     // stages a horizontal band. False = the upload was DROPPED, so a banded caller must not advance.

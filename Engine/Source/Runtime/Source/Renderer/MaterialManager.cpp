@@ -18,7 +18,7 @@ namespace Lumina::RHI
      */
     static constexpr uint32 kMaxMaterialSlots = 65535;
 
-    /** Slots kept in hand when a grow is staged, so the swap can land before the table is really full. */
+    // Slots kept in hand when a grow is staged, so the swap can land before the table is really full.
     static constexpr uint32 kGrowSlack = 64;
 
     FMaterialManager::FMaterialManager()
@@ -34,9 +34,11 @@ namespace Lumina::RHI
         PendingBuffer  = 0;
     }
 
-    GPUPtr FMaterialManager::GetMaterialBuffer() const
+    GPUPtr FMaterialManager::GetMaterialBuffer()
     {
-        FReadScopeLock Lock(Mutex);
+        // Once per frame per view, which is the only place a staged table can be noticed to have landed.
+        FWriteScopeLock Lock(Mutex);
+        PublishPendingLocked();
         return MaterialBuffer;
     }
 
@@ -112,14 +114,15 @@ namespace Lumina::RHI
         PendingBatch    = 0;
     }
 
-    void FMaterialManager::StageGrowLocked()
+    void FMaterialManager::StageGrowLocked(uint32 MinSlots)
     {
         if (PendingBuffer != 0 || Capacity >= kMaxMaterialSlots)
         {
             return;
         }
 
-        const uint32 NewCapacity = Math::Min(Math::Max(Capacity * 2, kInitialMaterialSlots), kMaxMaterialSlots);
+        const uint32 Target = Math::Max(Math::Max(Capacity * 2, kInitialMaterialSlots), MinSlots);
+        const uint32 NewCapacity = Math::Min(Target, kMaxMaterialSlots);
         if (NewCapacity <= Capacity)
         {
             return;
@@ -133,12 +136,17 @@ namespace Lumina::RHI
             return;
         }
 
-        // Sized with the staged table so a published slot always has a mirror entry; WriteSlotLocked
-        // still bounds itself by the PUBLISHED capacity, so the tail stays untouched until the swap.
+        // Sized with the staged table so a published slot always has a mirror entry; WriteSlotLocked still bounds itself by the PUBLISHED capacity.
         Mirror.resize(NewCapacity);
 
         // The whole mirror in one upload, so every live slot survives the move at its existing index.
-        UploadBuffer(NewBuffer, Mirror.data(), sizeof(FMaterialUniforms) * NewCapacity);
+        if (!UploadBuffer(NewBuffer, Mirror.data(), sizeof(FMaterialUniforms) * NewCapacity))
+        {
+            // Nothing was queued, so no batch names this copy and publishing would swap in raw Malloc bytes.
+            LOG_ERROR("MaterialManager: the mirror copy into a {} slot table was dropped; the grow is abandoned.", NewCapacity);
+            Core::Retire(NewBuffer);
+            return;
+        }
 
         PendingBuffer   = NewBuffer;
         PendingCapacity = NewCapacity;
@@ -168,10 +176,9 @@ namespace Lumina::RHI
             PendingBatch    = 0;
         }
 
-        StageGrowLocked();
+        StageGrowLocked(MinSlots);
 
-        // The slots are needed NOW and one past the published capacity would be written outside the
-        // allocation, so this is the one path that waits. AddMaterial stages early to keep it rare.
+        // The slots are needed NOW, so this is the one path that waits. AddMaterial stages early to keep it rare.
         if (PendingBuffer != 0)
         {
             FlushUploadsAndWait();
@@ -208,10 +215,10 @@ namespace Lumina::RHI
         }
 
         // Staged before the wall, so the copy has frames to land in and the grow above rarely waits.
+        PublishPendingLocked();
         if (HighWater + kGrowSlack >= Capacity)
         {
-            PublishPendingLocked();
-            StageGrowLocked();
+            StageGrowLocked(HighWater + kGrowSlack + 1u);
         }
 
         ++NumMaterials;
@@ -262,8 +269,7 @@ namespace Lumina::RHI
             return;
         }
 
-        // Read lock for the same reason WriteSlotLocked takes one: distinct slots are independent, and
-        // only a grow moves the mirror's storage or the buffer address.
+        // Read lock for the same reason WriteSlotLocked takes one: only a grow moves the mirror's storage.
         FReadScopeLock Lock(Mutex);
 
         if (Index >= Capacity)

@@ -114,7 +114,7 @@ namespace Lumina::Reflection
             return ProjectGeneratedDir(WorkspacePath, *Header.Project) + "/" + Header.FileName + ".generated.cpp";
         }
 
-        // bRoutable sends a binding to the owner's Scripts/Generated; type wrappers need InternalsVisibleTo there.
+        // bRoutable sends a binding to the owner's Scripts/Generated, to compile into that unit's own assembly.
         eastl::string MakeGeneratedCSharpPath(const eastl::string& WorkspacePath, const FReflectedHeader& Header, bool bRoutable)
         {
             if (bRoutable && !Header.Project->CSharpBindingsDir.empty())
@@ -255,9 +255,8 @@ namespace Lumina::Reflection
         eastl::hash_map<FReflectedProject*, eastl::vector<eastl::string>>   UnityPerProject;
         eastl::hash_set<FReflectedProject*>                                 DirtyProjects;
         eastl::hash_map<FReflectedProject*, eastl::hash_set<eastl::string>> ExpectedArtifacts;
-        // .generated.cs routed into a project's Scripts/Generated (free-function-only headers); used to sweep
-        // that dir without removing the live ones.
-        eastl::hash_map<FReflectedProject*, eastl::hash_set<eastl::string>> RoutedArtifacts;
+        // Routed .generated.cs keyed by DIR, not project: plugin modules share one, and a per-project whitelist would have each sweep away the others'.
+        eastl::hash_map<eastl::string, eastl::hash_set<eastl::string>> RoutedArtifacts;
 
         for (const auto& [Header, _] : ReflectionDatabase->ReflectedTypes)
         {
@@ -279,7 +278,7 @@ namespace Lumina::Reflection
 
             if (bRouteTypes)
             {
-                RoutedArtifacts[Header->Project].insert(Header->FileName + ".generated.cs");
+                RoutedArtifacts[Header->Project->CSharpBindingsDir].insert(Header->FileName + ".generated.cs");
             }
             else
             {
@@ -293,11 +292,11 @@ namespace Lumina::Reflection
                 GenerateSourceFile(Header);
                 GenerateCSharpFile(Header, bRouteTypes);
             }
-            else if (bRouteTypes
-                && !std::filesystem::exists(MakeGeneratedCSharpPath(Workspace->GetPath(), *Header, true).c_str()))
+            else if (!std::filesystem::exists(
+                MakeGeneratedCSharpPath(Workspace->GetPath(), *Header, bRouteTypes).c_str()))
             {
-                // Routing changed under an unchanged header: the old copy is about to be swept, so re-emit.
-                GenerateCSharpFile(Header, true);
+                // Routing changed under an unchanged header, either way: the old copy is swept, so re-emit.
+                GenerateCSharpFile(Header, bRouteTypes);
             }
         }
 
@@ -322,7 +321,7 @@ namespace Lumina::Reflection
             auto& Expected = ExpectedArtifacts[Header->Project];
             Expected.insert(Header->FileName + ".generated.cpp");
             // The .cs is routed to the plugin/game dir (not the default), tracked separately for its sweep.
-            RoutedArtifacts[Header->Project].insert(Header->FileName + ".generated.cs");
+            RoutedArtifacts[Header->Project->CSharpBindingsDir].insert(Header->FileName + ".generated.cs");
 
             if (Header->bDirty)
             {
@@ -373,6 +372,8 @@ namespace Lumina::Reflection
             }
         };
 
+        eastl::hash_set<eastl::string> SweptRoutedDirs;
+
         for (auto& Project : Workspace->ReflectedProjects)
         {
             if (Project->bReferenceOnly)
@@ -391,12 +392,10 @@ namespace Lumina::Reflection
             SweepOrphanDir(Project.get(), MakeProjectCSharpDir(Workspace->GetPath(), *Project),
                 Expected, ".generated.cs", nullptr);
 
-            // A routed project (plugin/game) also has a Scripts/Generated dir holding its free-function
-            // (SCRIPT_EXPORT) bindings; sweep it too so a binding that's removed, or a type-header binding
-            // that was wrongly routed before this scoping, gets cleaned out of the plugin's assembly input.
-            if (!Project->CSharpBindingsDir.empty())
+            // Sweep the routed dir ONCE, against every project that routes there, since siblings share one.
+            if (!Project->CSharpBindingsDir.empty() && SweptRoutedDirs.insert(Project->CSharpBindingsDir).second)
             {
-                const auto RIt = RoutedArtifacts.find(Project.get());
+                const auto RIt = RoutedArtifacts.find(Project->CSharpBindingsDir);
                 const auto* Routed = RIt != RoutedArtifacts.end() ? &RIt->second : nullptr;
                 SweepOrphanDir(Project.get(), Project->CSharpBindingsDir, Routed, ".generated.cs", nullptr);
             }

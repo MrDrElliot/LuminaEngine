@@ -27,8 +27,7 @@ namespace Lumina::Reflection
         // plugin's OWN assembly, not LuminaSharp.dll.
         eastl::string                                                       CSharpBindingsDir;
 
-        // Routes reflected-TYPE bindings into CSharpBindingsDir too, not just SCRIPT_EXPORT free functions.
-        // Set for a game module, whose bindings no assembly would otherwise compile.
+        // Routes reflected-TYPE bindings into CSharpBindingsDir too, for a unit that compiles its own assembly.
         bool                                                                bRouteTypeBindings = false;
 
         /// Where this project's generated C++ goes. Empty uses the workspace default under

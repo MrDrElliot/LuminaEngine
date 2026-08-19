@@ -25,4 +25,10 @@ public static class NativeObjectMarshal
     {
         return Value is null ? IntPtr.Zero : Value.Handle;
     }
+
+    // The same for an opaque struct wrapper, which is a NativeStruct rather than a NativeObject.
+    public static IntPtr ToHandle(NativeStruct? Value)
+    {
+        return Value is null ? IntPtr.Zero : Value.Handle;
+    }
 }

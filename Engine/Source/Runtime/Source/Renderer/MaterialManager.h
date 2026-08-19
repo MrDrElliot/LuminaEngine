@@ -40,7 +40,8 @@ namespace Lumina::RHI
             pushing the whole block would stage 37x the bytes to land one float. */
         RUNTIME_API void UpdateMaterialUniformRange(uint32 Index, uint32 ByteOffset, const void* Data, uint32 ByteSize);
 
-        RUNTIME_API GPUPtr GetMaterialBuffer() const;
+        // Also the per-frame publish point for a staged table, which is why it is not const.
+        RUNTIME_API GPUPtr GetMaterialBuffer();
 
         /** Slots the table can currently hold; grows by doubling. */
         RUNTIME_API uint32 GetCapacity() const;
@@ -56,20 +57,16 @@ namespace Lumina::RHI
 
     private:
 
-        /** Ensures the PUBLISHED table holds at least MinSlots, waiting on the staged one if it has to.
-            Returns false only at the slot ceiling. Caller holds the write lock. */
+        // Ensures the PUBLISHED table holds at least MinSlots. Caller holds the write lock.
         bool GrowLocked(uint32 MinSlots);
 
-        /** Allocates the next size up and queues the mirror into it, publishing nothing. Caller holds
-            the write lock. */
-        void StageGrowLocked();
+        // Queues the mirror into a table of at least MinSlots, publishing nothing. Write lock held.
+        void StageGrowLocked(uint32 MinSlots);
 
-        /** Swaps the staged table in once its mirror copy has actually run. Caller holds the write lock. */
+        // Swaps the staged table in once its mirror copy has actually run. Caller holds the write lock.
         void PublishPendingLocked();
 
-        /** Writes one slot to the mirror and uploads it. Null uniforms zero the slot. Caller holds
-            either lock -- distinct slots are written independently, and only a grow (write lock)
-            invalidates the mirror's storage or the buffer address. */
+        // Writes one slot to the mirror and uploads it. Null uniforms zero the slot. Either lock: only a grow moves the mirror's storage.
         void WriteSlotLocked(const FMaterialUniforms* InUniforms, uint32 Index);
 
         mutable FSharedMutex                    Mutex;
@@ -84,11 +81,7 @@ namespace Lumina::RHI
         GPUPtr                                  MaterialBuffer = 0;
         uint32                                  Capacity = 0;
 
-        /** A grown table whose mirror copy is still queued. Malloc returns the previous tenant's bytes
-            and uploads only flush at BeginFrame, so publishing the address on allocation would let a
-            frame recorded in between read recycled memory as material uniforms -- bindless texture IDs
-            included. The address moves only once the copy has run, as a streamed texture's bindless slot
-            does. Slot writes go to both while one is outstanding. */
+        // A grown table whose mirror copy is still queued; publishing before it runs would read recycled VRAM as uniforms.
         GPUPtr                                  PendingBuffer = 0;
         uint32                                  PendingCapacity = 0;
         uint64                                  PendingBatch = 0;

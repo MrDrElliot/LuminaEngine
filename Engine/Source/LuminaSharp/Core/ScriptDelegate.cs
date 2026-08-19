@@ -31,7 +31,7 @@ public readonly unsafe struct ScriptDelegate
 {
     private readonly void* Address;
 
-    internal ScriptDelegate(void* Address)
+    public ScriptDelegate(void* Address)
     {
         this.Address = Address;
     }
@@ -57,7 +57,7 @@ public readonly unsafe struct ScriptDelegate<T> where T : unmanaged
 {
     private readonly void* Address;
 
-    internal ScriptDelegate(void* Address)
+    public ScriptDelegate(void* Address)
     {
         this.Address = Address;
     }

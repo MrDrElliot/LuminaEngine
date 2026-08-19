@@ -138,18 +138,18 @@ namespace Lumina::RHI
         }
     }
 
-    void UploadBuffer(GPUPtr Dest, const void* Data, uint64 Size)
+    bool UploadBuffer(GPUPtr Dest, const void* Data, uint64 Size)
     {
         if (Dest == 0 || Data == nullptr || Size == 0)
         {
-            return;
+            return false;
         }
 
         // Host-visible destination: write through the mapping, nothing to stage.
         if (void* Mapped = ToHost(Dest))
         {
             Memory::Memcpy(Mapped, Data, Size);
-            return;
+            return true;
         }
 
         FStaging S;
@@ -161,7 +161,7 @@ namespace Lumina::RHI
         if (S.Cpu == nullptr)
         {
             LOG_ERROR("RHI: dropped a {} KiB buffer upload, staging allocation failed.", Size / 1024);
-            return;
+            return false;
         }
 
         Memory::MemcpyToWriteCombined(S.Cpu, Data, Size);
@@ -181,6 +181,7 @@ namespace Lumina::RHI
         }
 
         EndWrite(S);
+        return true;
     }
 
     bool UploadTexture(FTextureH Dest, uint32 Layer, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels, uint32 Width, uint32 Height, uint32 OffsetY)

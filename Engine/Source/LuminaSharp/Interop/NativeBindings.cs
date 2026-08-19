@@ -6,6 +6,12 @@ namespace LuminaSharp;
 /// <summary>Resolves native engine exports into raw function pointers for the generated bindings.</summary>
 public static unsafe class NativeBindings
 {
+    // The boundary logger generated bindings call. Public because a routed binding compiles into the owning unit's own assembly, which cannot reach Interop.
+    public static void LogException(Exception Exception)
+    {
+        Interop.LogException(Exception);
+    }
+
     /// <summary>Resolves an export from a module (by name) to a function pointer; null on miss.</summary>
     public static void* Resolve(string Module, string EntryPoint)
     {

@@ -210,10 +210,6 @@ public static class ScriptProjectGenerator
 
     private static string Escape(string Value)
     {
-        return Value
-            .Replace("&", "&amp;")
-            .Replace("<", "&lt;")
-            .Replace(">", "&gt;")
-            .Replace("\"", "&quot;");
+        return XmlUtils.Escape(Value);
     }
 }

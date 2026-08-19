@@ -1540,7 +1540,7 @@ namespace Lumina::Reflection
             }
             Writer.EndBlock();
             Writer.EndBlock();
-            Writer.Line("catch (global::System.Exception __ex) { global::LuminaSharp.Interop.LogException(__ex); }");
+            Writer.Line("catch (global::System.Exception __ex) { global::LuminaSharp.NativeBindings.LogException(__ex); }");
             if (!FB.bVoid) { Writer.Line("return default;"); }
             Writer.EndBlock();
         }

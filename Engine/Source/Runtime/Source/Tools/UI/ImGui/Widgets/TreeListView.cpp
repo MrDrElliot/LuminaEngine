@@ -406,7 +406,6 @@ namespace Lumina
         ImGui::PushStyleColor(ImGuiCol_Text, TextColor);
 
         // Selection paints the table ROW, not the node's frame, so it covers the row's full height and width.
-        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
         if (State.bSelected)
         {
             ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg1, ImGui::GetColorU32(ImVec4(0.22f, 0.52f, 0.22f, 0.40f)));
@@ -416,7 +415,6 @@ namespace Lumina
         // restructures the tree. Mirrors the tail of this function.
         auto UnwindRow = [&]()
         {
-            ImGui::PopStyleColor(); // header color
             if (RowDepth > 0)
             {
                 ImGui::Unindent(RowDepth * kIndentPerDepth);
@@ -425,7 +423,11 @@ namespace Lumina
         };
 
         const ImVec2 RowCursorScreenPos = ImGui::GetCursorScreenPos();
+
+        // Scoped to the node: left pushed it also blanks selected rows in the row's context menu and tooltip.
+        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
         const bool bNowExpanded = ImGui::TreeNodeEx("##TreeNode", Flags, "%s", Display.DisplayName.c_str());
+        ImGui::PopStyleColor();
 
         if (!Display.IconText.empty() && !State.bEditingText)
         {
@@ -441,10 +443,9 @@ namespace Lumina
             const ImGuiStyle& LineStyle = ImGui::GetStyle();
             const ImVec2 ItemMin = ImGui::GetItemRectMin();
             const ImVec2 ItemMax = ImGui::GetItemRectMax();
-            // Rows are flush, so a line drawn to the item's own edges already meets the next row's.
-            const float RowBridge = LineStyle.CellPadding.y;
-            const float LineTop = ItemMin.y - RowBridge;
-            const float LineBot = ItemMax.y + RowBridge;
+            // Rows are flush (CellPadding.y is forced to 0 above), so the item's own edges already meet the next row's.
+            const float LineTop = ItemMin.y;
+            const float LineBot = ItemMax.y;
             const float MidY    = (ItemMin.y + ItemMax.y) * 0.5f;
             const float BaseX   = RowCursorScreenPos.x - Node.Depth * kIndentPerDepth;
             const float Gutter  = ImGui::GetFontSize() * 0.5f + LineStyle.FramePadding.x;

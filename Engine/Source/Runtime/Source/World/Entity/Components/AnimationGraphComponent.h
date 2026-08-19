@@ -14,7 +14,7 @@ namespace Lumina
 {
     class CAnimationGraph;
 
-    /** Drives a skeletal mesh from a compiled animation graph. */
+    // Drives a skeletal mesh from a compiled animation graph.
     REFLECT(Component, Category = "Animation")
     struct SAnimationGraphComponent
     {
