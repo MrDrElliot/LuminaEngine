@@ -1,14 +1,17 @@
 ﻿#include "PropertyTable.h"
 
+#include <cstdlib>
 #include <EASTL/algorithm.h>
 
 #include "Core/Engine/Engine.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/InstancedStruct.h"
+#include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Object/ObjectIterator.h"
 #include "Core/Reflection/PropertyCustomization/PropertyCustomization.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Reflection/Type/Properties/ArrayProperty.h"
+#include "Core/Reflection/Type/Properties/EnumProperty.h"
 #include "Core/Reflection/Type/Properties/MapProperty.h"
 #include "Memory/Memory.h"
 #include "Core/Reflection/Type/Properties/InstancedStructProperty.h"
@@ -103,11 +106,278 @@ namespace Lumina
         }
     }
 
+    static FStringView TrimWhitespace(FStringView In)
+    {
+        while (!In.empty() && (In.front() == ' ' || In.front() == '\t'))
+        {
+            In.remove_prefix(1);
+        }
+        while (!In.empty() && (In.back() == ' ' || In.back() == '\t'))
+        {
+            In.remove_suffix(1);
+        }
+        return In;
+    }
+
+    static bool IsIntegerPropertyType(EPropertyTypeFlags Type)
+    {
+        switch (Type)
+        {
+        case EPropertyTypeFlags::Int8:
+        case EPropertyTypeFlags::Int16:
+        case EPropertyTypeFlags::Int32:
+        case EPropertyTypeFlags::Int64:
+        case EPropertyTypeFlags::UInt8:
+        case EPropertyTypeFlags::UInt16:
+        case EPropertyTypeFlags::UInt32:
+        case EPropertyTypeFlags::UInt64:
+        case EPropertyTypeFlags::Bool:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    static bool TryReadConditionInteger(FProperty* Property, void* ContainerPtr, int64& OutValue)
+    {
+        void* ValuePtr = Property->GetValuePtr<uint8>(ContainerPtr);
+        if (ValuePtr == nullptr)
+        {
+            return false;
+        }
+
+        const EPropertyTypeFlags Type = Property->GetType();
+        if (Type == EPropertyTypeFlags::Enum)
+        {
+            FNumericProperty* Inner = static_cast<FEnumProperty*>(Property)->GetInnerProperty();
+            if (Inner == nullptr)
+            {
+                return false;
+            }
+            OutValue = Inner->GetSignedIntPropertyValue(ValuePtr);
+            return true;
+        }
+
+        if (IsIntegerPropertyType(Type))
+        {
+            OutValue = static_cast<FNumericProperty*>(Property)->GetSignedIntPropertyValue(ValuePtr);
+            return true;
+        }
+
+        return false;
+    }
+
+    // The literal side of an == / != term, as an integer. Enum terms accept a bare or qualified enumerator.
+    static bool TryResolveConditionLiteral(FProperty* Property, const FString& Literal, int64& OutValue)
+    {
+        if (Property->GetType() == EPropertyTypeFlags::Enum)
+        {
+            CEnum* Enum = static_cast<FEnumProperty*>(Property)->GetEnum();
+            if (Enum == nullptr)
+            {
+                return false;
+            }
+
+            for (const TPair<FName, uint64>& Entry : Enum->Names)
+            {
+                const FString Name = Entry.first.ToString();
+                const size_t Scope = Name.rfind("::");
+                const bool bMatches = Name == Literal
+                    || (Scope != FString::npos && Name.compare(Scope + 2, FString::npos, Literal) == 0);
+                if (bMatches)
+                {
+                    OutValue = static_cast<int64>(Entry.second);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        if (Literal == "true")
+        {
+            OutValue = 1;
+            return true;
+        }
+        if (Literal == "false")
+        {
+            OutValue = 0;
+            return true;
+        }
+
+        char* End = nullptr;
+        const long long Parsed = strtoll(Literal.c_str(), &End, 10);
+        if (End == Literal.c_str())
+        {
+            return false;
+        }
+        OutValue = static_cast<int64>(Parsed);
+        return true;
+    }
+
+    static bool EvaluateConditionTerm(const FPropertyEditCondition::FTerm& Term, void* ContainerPtr)
+    {
+        bool bResult = false;
+
+        if (Term.Operator == FPropertyEditCondition::EOperator::Truthy)
+        {
+            if (Term.Property->GetType() == EPropertyTypeFlags::Object)
+            {
+                TObjectPtr<CObject> Value;
+                Term.Property->GetValue(ContainerPtr, &Value);
+                bResult = Value != nullptr;
+            }
+            else
+            {
+                int64 Value = 0;
+                bResult = TryReadConditionInteger(Term.Property, ContainerPtr, Value) && Value != 0;
+            }
+        }
+        else
+        {
+            int64 Value = 0;
+            int64 Expected = 0;
+            if (TryReadConditionInteger(Term.Property, ContainerPtr, Value)
+                && TryResolveConditionLiteral(Term.Property, Term.Literal, Expected))
+            {
+                bResult = Term.Operator == FPropertyEditCondition::EOperator::Equals ? Value == Expected : Value != Expected;
+            }
+        }
+
+        return Term.bNegated ? !bResult : bResult;
+    }
+
+    void FPropertyEditCondition::Parse(FProperty* Source)
+    {
+        Terms.clear();
+        bRequireAll = true;
+        bHides = false;
+
+        const FString* Expression = Source->TryGetMetadata("EditCondition");
+        if (Expression == nullptr || Expression->empty())
+        {
+            return;
+        }
+
+        const FStringView Full(Expression->c_str(), Expression->size());
+        TVector<FStringView> TermViews;
+        size_t Start = 0;
+        while (Start <= Full.size())
+        {
+            const size_t And = Full.find("&&", Start);
+            const size_t Or  = Full.find("||", Start);
+            const size_t Sep = And < Or ? And : Or;
+            if (Sep == FStringView::npos)
+            {
+                TermViews.push_back(Full.substr(Start));
+                break;
+            }
+            bRequireAll &= (Sep == And);
+            TermViews.push_back(Full.substr(Start, Sep - Start));
+            Start = Sep + 2;
+        }
+
+        for (FStringView TermView : TermViews)
+        {
+            FTerm Term;
+            FStringView Text = TrimWhitespace(TermView);
+            if (!Text.empty() && Text.front() == '!' && (Text.size() < 2 || Text[1] != '='))
+            {
+                Term.bNegated = true;
+                Text.remove_prefix(1);
+            }
+
+            FStringView NameView = Text;
+            const size_t Equals    = Text.find("==");
+            const size_t NotEquals = Text.find("!=");
+            if (Equals != FStringView::npos || NotEquals != FStringView::npos)
+            {
+                const size_t Sep = Equals < NotEquals ? Equals : NotEquals;
+                Term.Operator = Sep == Equals ? EOperator::Equals : EOperator::NotEquals;
+                NameView = Text.substr(0, Sep);
+
+                FStringView LiteralView = TrimWhitespace(Text.substr(Sep + 2));
+                if (LiteralView.size() >= 2 && LiteralView.front() == '"' && LiteralView.back() == '"')
+                {
+                    LiteralView = LiteralView.substr(1, LiteralView.size() - 2);
+                }
+                Term.Literal.assign(LiteralView.data(), LiteralView.size());
+            }
+
+            NameView = TrimWhitespace(NameView);
+            if (NameView.empty())
+            {
+                Terms.clear();
+                return;
+            }
+
+            CStruct** Owner = eastl::get_if<CStruct*>(&Source->Owner);
+            Term.Property = (Owner && *Owner) ? (*Owner)->GetProperty(FName(NameView)) : nullptr;
+            if (Term.Property == nullptr || Term.Property == Source)
+            {
+                Terms.clear();
+                return;
+            }
+
+            Terms.push_back(eastl::move(Term));
+        }
+
+        bHides = Source->HasMetadata("EditConditionHides");
+    }
+
+    bool FPropertyEditCondition::Evaluate(void* ContainerPtr) const
+    {
+        if (Terms.empty() || ContainerPtr == nullptr)
+        {
+            return true;
+        }
+
+        for (const FTerm& Term : Terms)
+        {
+            const bool bTermResult = EvaluateConditionTerm(Term, ContainerPtr);
+            if (bRequireAll && !bTermResult)
+            {
+                return false;
+            }
+            if (!bRequireAll && bTermResult)
+            {
+                return true;
+            }
+        }
+
+        return bRequireAll;
+    }
+
     FPropertyRow::FPropertyRow(const TSharedPtr<FPropertyHandle>& InPropHandle, FPropertyRow* InParentRow, const FPropertyChangedEventCallbacks& InCallbacks)
         : Callbacks(InCallbacks)
         , PropertyHandle(InPropHandle)
         , ParentRow(InParentRow)
     {
+        if (GetEditConditionContainer() != nullptr)
+        {
+            EditCondition.Parse(PropertyHandle->Property);
+        }
+    }
+
+    void* FPropertyRow::GetEditConditionContainer() const
+    {
+        if (PropertyHandle == nullptr || PropertyHandle->Property == nullptr)
+        {
+            return nullptr;
+        }
+        if (PropertyHandle->OwnerArray != nullptr || PropertyHandle->OwnerMap != nullptr)
+        {
+            return nullptr;
+        }
+        return PropertyHandle->ContainerPtr;
+    }
+
+    bool FPropertyRow::IsVisible() const
+    {
+        if (!EditCondition.IsBound() || !EditCondition.ShouldHide())
+        {
+            return true;
+        }
+        return EditCondition.Evaluate(GetEditConditionContainer());
     }
 
     void FPropertyRow::DestroyChildren()
@@ -136,6 +406,10 @@ namespace Lumina
         {
             for (const TUniquePtr<FPropertyRow>& Child : Children)
             {
+                if (!Child->IsVisible())
+                {
+                    continue;
+                }
                 Width = std::max(Width, Child->ComputeRequiredHeaderWidth(Offset + ChildIndentStep));
             }
         }
@@ -500,7 +774,7 @@ namespace Lumina
     {
         for (const TUniquePtr<FPropertyRow>& Row : Children)
         {
-            if (!Row->PassesFilter())
+            if (!Row->PassesFilter() || !Row->IsVisible())
             {
                 continue;
             }
@@ -553,7 +827,15 @@ namespace Lumina
 
     bool FPropertyRow::IsReadOnly() const
     {
-        return PropertyHandle == nullptr ? false : PropertyHandle->Property->IsReadOnly();
+        if (PropertyHandle == nullptr)
+        {
+            return false;
+        }
+        if (EditCondition.IsBound() && !EditCondition.Evaluate(GetEditConditionContainer()))
+        {
+            return true;
+        }
+        return PropertyHandle->Property->IsReadOnly();
     }
 
     static void DrawPropertyTooltip(const FProperty* Property)

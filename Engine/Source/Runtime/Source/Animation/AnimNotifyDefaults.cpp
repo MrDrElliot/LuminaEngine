@@ -56,11 +56,11 @@ namespace Lumina
             return;
         }
 
-        FAudioPlayParams Params;
+        FAudioPlayParams Params{};
         Params.Volume      = Volume;
         Params.Pitch       = Pitch;
         Params.Bus         = Bus;
-        Params.Attenuation = Attenuation;
+        Params.Attenuation = Attenuation.Resolve();
         Params.bSpatialized = bSpatialized;
 
         if (bSpatialized && !ResolveNotifyWorldPoint(Registry, Entity, Socket, Offset, Params.Position))

@@ -676,9 +676,7 @@ namespace Lumina
             }
         }
 
-        // Nothing moved: everything below is dead work. This is the common case for a crowd -- root motion
-        // is opt-in per clip -- and skipping it is what makes the system scale, because the sweep below is
-        // the only O(entities) SERIAL work in the frame while every other phase fans out across the workers.
+        // Nothing moved: everything below is dead work.
         if (!bAnyRootMotion.load(std::memory_order_relaxed))
         {
             return;
@@ -710,16 +708,7 @@ namespace Lumina
             DeltaTransform.SetScale(FVector3(1.0f));
             Transform.SetLocalTransform(Transform.LocalTransform * DeltaTransform);
         };
-
-        // Walked DENSELY over the component storage rather than through the view. The view form cost a
-        // sparse-set probe for contains() plus another for get() on every entity, every frame -- two
-        // dependent random accesses each, which at crowd scale is a serial wall of cache misses. The dense
-        // scan is one sequential pass the prefetcher handles, and the bHasMotion test rejects almost
-        // everything before any sparse lookup happens.
-        //
-        // A disabled entity is not filtered here (that check is itself a sparse probe). It cannot have
-        // produced a delta this frame -- the update passes skip it -- so at worst it applies one delta
-        // extracted before it was disabled, which ApplyRootMotion then clears for good.
+        
         if (bHasSimple)
         {
             for (auto&& [Entity, Anim] : SystemContext.GetStorage<SSimpleAnimationComponent>().each())

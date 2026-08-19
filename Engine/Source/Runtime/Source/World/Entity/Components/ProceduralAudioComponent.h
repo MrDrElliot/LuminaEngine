@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Assets/AssetTypes/Audio/SoundAttenuation.h"
 #include "Audio/AudioTypes.h"
 #include "Containers/Array.h"
 #include "Core/Object/ObjectMacros.h"
@@ -41,7 +42,7 @@ namespace Lumina
 
 		/** Distance falloff, cone and doppler behavior. */
 		PROPERTY(Editable)
-		SAudioAttenuation Attenuation;
+		SAudioAttenuationSettings Attenuation;
 
 		/** When true, the sound is positioned in 3D space using the entity's transform. */
 		PROPERTY(Editable)

@@ -48,6 +48,7 @@
 #include "Assets/AssetTypes/Curve/CurveAsset.h"
 #include "Assets/AssetTypes/DataAsset/DataAsset.h"
 #include "Assets/AssetTypes/Font/Font.h"
+#include "Assets/AssetTypes/Audio/SoundAttenuation.h"
 #include "Assets/AssetTypes/PhysicsMaterial/PhysicsMaterial.h"
 #include "Assets/AssetTypes/GeometryCollection/GeometryCollection.h"
 #include "Assets/AssetEvents.h"
@@ -140,6 +141,7 @@
 #include "Tools/AssetEditors/BlendSpace/BlendSpaceEditorTool.h"
 #include "Tools/AssetEditors/CollisionShape/CollisionShapeEditorTool.h"
 #include "Tools/AssetEditors/PhysicsAsset/PhysicsAssetEditorTool.h"
+#include "Tools/AssetEditors/SoundAttenuation/SoundAttenuationEditorTool.h"
 #include "Tools/AssetEditors/PhysicsMaterial/PhysicsMaterialEditorTool.h"
 #include "Tools/AssetEditors/GeometryCollection/GeometryCollectionEditorTool.h"
 #include "Tools/AssetEditors/MaterialEditor/MaterialEditorTool.h"
@@ -1466,6 +1468,7 @@ namespace Lumina
         Registry.RegisterAssetEditor<CCollisionShape,     FCollisionShapeEditorTool>(Owner);
         Registry.RegisterAssetEditor<CCurveAsset,         FCurveAssetEditorTool>(Owner);
         Registry.RegisterAssetEditor<CAudioStream,        FAudioStreamEditorTool>(Owner);
+        Registry.RegisterAssetEditor<CSoundAttenuation,   FSoundAttenuationEditorTool>(Owner);
         Registry.RegisterAssetEditor<CGeometryCollection, FGeometryCollectionEditorTool>(Owner);
         Registry.RegisterAssetEditor<CTexture,            FTextureEditorTool>(Owner);
         Registry.RegisterAssetEditor<CFont,               FFontEditorTool>(Owner);

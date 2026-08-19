@@ -1,5 +1,7 @@
 ﻿#pragma once
+#include "Containers/Array.h"
 #include "Containers/Function.h"
+#include "Containers/String.h"
 #include "Core/Reflection/PropertyChangedEvent.h"
 #include "Core/Reflection/PropertyCustomization/PropertyCustomization.h"
 #include "Memory/SmartPtr.h"
@@ -51,6 +53,38 @@ namespace Lumina
         TFunction<bool(FProperty*)> IsMultiValueFn;
     };
     
+    // Parsed PROPERTY(EditCondition = "Prop", "!Prop", "Prop == V" or "Prop != V", joined by && or ||).
+    struct FPropertyEditCondition
+    {
+        enum class EOperator : uint8
+        {
+            Truthy,
+            Equals,
+            NotEquals,
+        };
+
+        struct FTerm
+        {
+            FProperty*  Property = nullptr;
+            FString     Literal;
+            EOperator   Operator = EOperator::Truthy;
+            bool        bNegated = false;
+        };
+
+        // An unresolvable term leaves the condition unbound, so a typo shows the property rather than hiding it.
+        void Parse(FProperty* Source);
+
+        bool IsBound() const { return !Terms.empty(); }
+        bool ShouldHide() const { return bHides; }
+        bool Evaluate(void* ContainerPtr) const;
+
+    private:
+
+        TVector<FTerm>  Terms;
+        bool            bRequireAll = true;
+        bool            bHides = false;
+    };
+
     class FPropertyRow
     {
     public:
@@ -89,6 +123,9 @@ namespace Lumina
         virtual void OnValueResetToDefault() { }
         bool IsReadOnly() const;
 
+        // False while an unmet EditCondition tagged EditConditionHides keeps this row out of the table.
+        bool IsVisible() const;
+
         void SetIsArrayElement(bool bTrue) { bArrayElement = bTrue; }
         bool IsArrayElementProperty() const { return bArrayElement; }
 
@@ -124,8 +161,12 @@ namespace Lumina
         void CopyPropertyValue();
         void PastePropertyValue();
 
-        
+        // Null for a category row, an array element or a map entry, none of which can carry an EditCondition.
+        void* GetEditConditionContainer() const;
+
+
         FPropertyChangedEventCallbacks          Callbacks;
+        FPropertyEditCondition                  EditCondition;
         
         TSharedPtr<IPropertyTypeCustomization>  Customization;
         TSharedPtr<FPropertyHandle>             PropertyHandle;

@@ -30,7 +30,7 @@ namespace Lumina
 		Params.bSpatialized      = bSpatialized;
 		Params.Position          = LastPosition;
 		Params.Bus               = Bus;
-		Params.Attenuation       = Attenuation;
+		Params.Attenuation       = Attenuation.Resolve();
 		Params.Priority          = (uint8)Math::Clamp(Priority, 0, 255);
 		Params.FadeInSeconds     = FadeInTime;
 		Params.bUseOcclusion     = Occlusion.bEnabled;

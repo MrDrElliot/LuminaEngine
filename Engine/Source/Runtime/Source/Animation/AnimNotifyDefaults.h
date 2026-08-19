@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AnimNotify.h"
+#include "Assets/AssetTypes/Audio/SoundAttenuation.h"
 #include "Audio/AudioTypes.h"
 #include "Containers/String.h"
 #include "Core/Math/Math.h"
@@ -44,7 +45,7 @@ namespace Lumina
         bool bSpatialized = true;
 
         PROPERTY(Editable, Category = "Sound")
-        SAudioAttenuation Attenuation;
+        SAudioAttenuationSettings Attenuation;
 
         void Notify(FEntityRegistry& Registry, FEntity Entity) const override;
     };

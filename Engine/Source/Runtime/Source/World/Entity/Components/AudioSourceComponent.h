@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Assets/AssetTypes/Audio/SoundAttenuation.h"
 #include "Audio/AudioTypes.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Object/ObjectHandleTyped.h"
@@ -36,7 +37,7 @@ namespace Lumina
 
 		/** Distance falloff, cone and doppler behavior. */
 		PROPERTY(Editable)
-		SAudioAttenuation Attenuation;
+		SAudioAttenuationSettings Attenuation;
 
 		/** Muffling applied when level geometry blocks the line to the listener. */
 		PROPERTY(Editable)

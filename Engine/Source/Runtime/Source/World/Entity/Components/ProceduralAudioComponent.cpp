@@ -32,7 +32,7 @@ namespace Lumina
 		Params.Pitch        = Pitch;
 		Params.bSpatialized = bSpatialized;
 		Params.Bus          = Bus;
-		Params.Attenuation  = Attenuation;
+		Params.Attenuation  = Attenuation.Resolve();
 
 		ActiveHandle = Audio::Context().PlayProceduralStream(Stream, Params);
 

@@ -147,7 +147,7 @@ namespace Lumina
 				}
 
 				const bool bInRange = !Audio.bSpatialized || !Audio.bCullBeyondMaxDistance || !bHasListener ||
-					Math::Distance(Position, ListenerPosition) <= Audio.Attenuation.MaxDistance;
+					Math::Distance(Position, ListenerPosition) <= Audio.Attenuation.Resolve().MaxDistance;
 
 				if (!Audio.bReady)
 				{
@@ -171,7 +171,7 @@ namespace Lumina
 						Audio.Play();
 					}
 					else if (Audio.bPlaying && Audio.bSpatialized && Audio.bCullBeyondMaxDistance && bHasListener &&
-						Math::Distance(Position, ListenerPosition) > Audio.Attenuation.MaxDistance * 1.1f)
+						Math::Distance(Position, ListenerPosition) > Audio.Attenuation.Resolve().MaxDistance * 1.1f)
 					{
 						Audio.StopWithMode(EAudioStopMode::Immediate);
 					}
@@ -189,7 +189,7 @@ namespace Lumina
 				{
 					Audio::Context().SetPosition(Audio.ActiveHandle, Position);
 
-					if (Audio.Attenuation.DopplerFactor > 0.0f)
+					if (Audio.Attenuation.Resolve().DopplerFactor > 0.0f)
 					{
 						Audio::Context().SetVelocity(Audio.ActiveHandle, Velocity);
 					}
@@ -215,7 +215,7 @@ namespace Lumina
 
 				if (Audio.bAttenuationDirty)
 				{
-					Audio::Context().SetAttenuation(Audio.ActiveHandle, Audio.Attenuation);
+					Audio::Context().SetAttenuation(Audio.ActiveHandle, Audio.Attenuation.Resolve());
 					Audio.bAttenuationDirty = false;
 				}
 
