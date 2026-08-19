@@ -1,4 +1,5 @@
 #pragma once
+#include "Containers/Invoke.h"
 #include <atomic>
 #include "Components/RelationshipComponent.h"
 #include "Containers/HashTable.h"
@@ -209,7 +210,7 @@ namespace Lumina::ECS::Utils
 			{
 				if (entt::meta_type MetaType = entt::resolve(Storage.info()))
 				{
-					std::invoke(Func, Storage.value(Entity), Storage, MetaType);
+					Invoke(Func, Storage.value(Entity), Storage, MetaType);
 				}
 			}
 		}
@@ -233,7 +234,7 @@ namespace Lumina::ECS::Utils
 				Next = CurrentRelationship->Next;
 			}
 
-			std::invoke(Func, Current);
+			Invoke(Func, Current);
 
 			Current = Next;
 		}
@@ -244,7 +245,7 @@ namespace Lumina::ECS::Utils
 	{
 		ForEachChild(Registry, Parent, [&](entt::entity Child)
 		{
-			std::invoke(Func, Child);
+			Invoke(Func, Child);
 			ForEachDescendant(Registry, Child, Func);
 		});
 	}

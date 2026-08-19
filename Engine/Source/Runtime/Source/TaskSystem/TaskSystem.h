@@ -2,6 +2,7 @@
 
 #include "TaskTypes.h"
 #include "Scheduler/JobScheduler.h"
+#include "Core/Profiler/Profile.h"
 #include "Core/Threading/Thread.h"
 #include "Memory/Memory.h"
 #include "Platform/GenericPlatform.h"

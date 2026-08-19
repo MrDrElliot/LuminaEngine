@@ -1,6 +1,6 @@
 #pragma once
 
-#include <functional>
+#include "Containers/Invoke.h"
 #include <type_traits>
 #include <utility>
 
@@ -76,7 +76,7 @@ namespace Lumina::PrivateAccess
                    && std::is_invocable_v<Tag::TPtr, TArgs...>)                              \
         constexpr decltype(auto) MemberName(TArgs&&... Args)                                 \
         {                                                                                    \
-            return std::invoke(GetMemberPtr(Tag{}), std::forward<TArgs>(Args)...);           \
+            return ::Lumina::Invoke(GetMemberPtr(Tag{}), std::forward<TArgs>(Args)...);           \
         }                                                                                    \
     }
 
@@ -104,7 +104,7 @@ namespace Lumina::PrivateAccess
         constexpr decltype(auto) MemberName(TArgs&&... Args)                                 \
         {                                                                                    \
             if constexpr (std::is_function_v<std::remove_pointer_t<Tag::TPtr>>)              \
-                return std::invoke(GetMemberPtr(Tag{}), std::forward<TArgs>(Args)...);       \
+                return ::Lumina::Invoke(GetMemberPtr(Tag{}), std::forward<TArgs>(Args)...);       \
             else                                                                             \
                 return (*GetMemberPtr(Tag{}));                                               \
         }                                                                                    \
@@ -130,7 +130,7 @@ namespace Lumina::PrivateAccess
                    && std::is_invocable_v<Tag::TPtr, TArgs...>)                              \
         constexpr decltype(auto) MemberName(TArgs&&... Args)                                 \
         {                                                                                    \
-            return std::invoke(GetMemberPtr(Tag{}), std::forward<TArgs>(Args)...);           \
+            return ::Lumina::Invoke(GetMemberPtr(Tag{}), std::forward<TArgs>(Args)...);           \
         }                                                                                    \
     }
 
@@ -154,6 +154,6 @@ namespace Lumina::PrivateAccess
                    && std::is_invocable_v<Tag::TPtr, TArgs...>)                              \
         constexpr decltype(auto) MemberName(TArgs&&... Args)                                 \
         {                                                                                    \
-            return std::invoke(GetMemberPtr(Tag{}), std::forward<TArgs>(Args)...);           \
+            return ::Lumina::Invoke(GetMemberPtr(Tag{}), std::forward<TArgs>(Args)...);           \
         }                                                                                    \
     }

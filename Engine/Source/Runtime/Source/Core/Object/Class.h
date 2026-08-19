@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "Containers/Invoke.h"
 #include "Lumina.h"
 #include "Object.h"
 #include "Class/StructTraits.h"
@@ -172,7 +173,7 @@ namespace Lumina
             PropertyType* Current = static_cast<PropertyType*>(LinkedProperty);
             while (Current != nullptr)
             {
-                std::invoke(Func, Current);
+                Invoke(Func, Current);
                 Current = static_cast<PropertyType*>(Current->Next);
             }
         }

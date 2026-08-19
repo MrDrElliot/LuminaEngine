@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "Containers/Invoke.h"
 #include "ObjectBase.h"
 #include "ObjectHandle.h"
 #include "Containers/Vector.h"
@@ -239,7 +240,7 @@ namespace Lumina
                 const FCObjectEntry* Item = ChunkedArray.GetItem(i);
                 if (Item && Item->GetObj())
                 {
-                    std::invoke(Function, Item->GetObj(), i);
+                    Invoke(Function, Item->GetObj(), i);
                 }
             }
         }
