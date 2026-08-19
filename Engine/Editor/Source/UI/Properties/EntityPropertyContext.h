@@ -4,13 +4,9 @@
 namespace Lumina
 {
     class CWorld;
-
-    // Draw-scoped world for PROPERTY(Entity) pickers, so they can enumerate/select
-    // entities. Null outside such a scope (e.g. asset editors): picker falls back to a read-only id.
-    RUNTIME_API CWorld* GetEntityPropertyContextWorld();
-
-    // RAII: makes World the active entity-property context for the scope's lifetime and
-    // restores the previous one on exit. Single-threaded editor UI use only.
+    
+    EDITOR_API CWorld* GetEntityPropertyContextWorld();
+    
     class FScopedEntityPropertyContext
     {
     public:
@@ -23,9 +19,6 @@ namespace Lumina
     private:
         CWorld* Previous = nullptr;
     };
-
-    // Eyedropper: bridges an entity-ref property picker and the viewport. One pick
-    // active at a time; picker polls ConsumeEntityPickResult and writes the chosen id.
 
     // Begin a pick for the picker identified by Token (replaces any in-flight request).
     void RequestEntityPick(uint64 Token);
