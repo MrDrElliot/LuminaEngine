@@ -2,7 +2,7 @@
 #include "Core/CoreEditorDelegates.h"
 #include <cfloat>
 #include <cstdlib>
-#include <filesystem>
+#include "Platform/Filesystem/PlatformFilesystem.h"
 #include <imgui.h>
 #include <ImGuizmo.h>
 #include <imgui_internal.h>
@@ -365,8 +365,7 @@ namespace Lumina
                 {
                     return true;
                 }
-                std::error_code Ec;
-                return !std::filesystem::exists(Entry.c_str(), Ec);
+                return !Filesystem::Exists(Entry);
             });
 
             if (Recents.size() != Before)
@@ -381,8 +380,12 @@ namespace Lumina
         // (basename without extension). Cheap; no filesystem access.
         FString DisplayNameFromLprojPath(const FString& LprojPath)
         {
-            std::filesystem::path P(LprojPath.c_str());
-            return FString(P.stem().string().c_str());
+            const size_t Slash = LprojPath.find_last_of("/\\");
+            const size_t Start  = Slash == FString::npos ? 0 : Slash + 1;
+            const size_t Dot    = LprojPath.find_last_of('.');
+
+            const size_t End = (Dot != FString::npos && Dot > Start) ? Dot : LprojPath.size();
+            return LprojPath.substr(Start, End - Start);
         }
     }
 
@@ -599,8 +602,7 @@ namespace Lumina
             const std::string StartupPath = GetDefault<CEditorSettings>()->StartupProject.c_str();
             if (!StartupPath.empty() && StartupPath != "NULL")
             {
-                std::error_code Ec;
-                if (std::filesystem::exists(StartupPath, Ec))
+                if (Filesystem::Exists(FStringView(StartupPath.c_str(), StartupPath.size())))
                 {
                     GEditorEngine->LoadProject(FStringView(StartupPath.c_str(), StartupPath.size()));
                     OnProjectLoaded();
@@ -1127,8 +1129,7 @@ namespace Lumina
 
             for (const char* Candidate : VsWhereCandidates)
             {
-                std::error_code Ec;
-                if (!std::filesystem::exists(Candidate, Ec))
+                if (!Filesystem::Exists(Candidate))
                 {
                     continue;
                 }
@@ -1167,8 +1168,7 @@ namespace Lumina
 
             for (const FString& Candidate : Candidates)
             {
-                std::error_code Ec;
-                if (std::filesystem::exists(Candidate.c_str(), Ec))
+                if (Filesystem::Exists(Candidate))
                 {
                     return Candidate;
                 }
@@ -1182,29 +1182,28 @@ namespace Lumina
             if (const char* LocalAppData = std::getenv("LOCALAPPDATA"))
             {
                 FString Toolbox = FString(LocalAppData) + R"(\Programs\Rider\bin\rider64.exe)";
-                std::error_code Ec;
-                if (std::filesystem::exists(Toolbox.c_str(), Ec))
+                if (Filesystem::Exists(Toolbox))
                 {
                     return Toolbox;
                 }
             }
 
             FString Best;
-            std::error_code Ec;
-            for (const auto& Entry : std::filesystem::directory_iterator(R"(C:\Program Files\JetBrains)", Ec))
+            Filesystem::IterateDirectory(R"(C:\Program Files\JetBrains)", [&Best](const Filesystem::FDirectoryEntry& Entry)
             {
-                const std::string Folder = Entry.path().filename().string();
-                if (Folder.rfind("JetBrains Rider", 0) != 0)
+                if (!Entry.IsDirectory() || !Entry.Name.starts_with("JetBrains Rider"))
                 {
-                    continue;
+                    return;
                 }
-                const std::string Exe = (Entry.path() / "bin" / "rider64.exe").string();
-                std::error_code ExeEc;
-                if (std::filesystem::exists(Exe, ExeEc) && (Best.empty() || Best.comparei(Exe.c_str()) < 0))
+
+                FString Exe(Entry.FullPath.data(), Entry.FullPath.size());
+                Exe.append("/bin/rider64.exe");
+
+                if (Filesystem::Exists(Exe) && (Best.empty() || Best.comparei(Exe.c_str()) < 0))
                 {
-                    Best = Exe.c_str();
+                    Best = Move(Exe);
                 }
-            }
+            });
             return Best;
         }
     }
@@ -1233,8 +1232,7 @@ namespace Lumina
             }
         }
 
-        std::error_code Ec;
-        if (!Exe.empty() && std::filesystem::exists(Exe.c_str(), Ec))
+        if (!Exe.empty() && Filesystem::Exists(Exe))
         {
             FString NativeFile = File;
         #if defined(LE_PLATFORM_WINDOWS)
@@ -2925,8 +2923,7 @@ namespace Lumina
 
         // Checked before launching so a missing tool names the path it looked at. ShellExecute on a
         // non-existent exe reports nothing useful, which is how this managed to look like it worked.
-        std::error_code Ec;
-        if (!std::filesystem::exists(FullPath.c_str(), Ec))
+        if (!Filesystem::Exists(FullPath))
         {
             LOG_ERROR("Tracy profiler not found at '{}'.", FullPath.c_str());
             ImGuiX::Notifications::NotifyError("Tracy not found at {0}", FullPath);
@@ -4065,8 +4062,7 @@ namespace Lumina
         ModalManager.CreateDialogue("Project Created", ImVec2(640, 400), [this, ProjectFileCopy, SlnPath] () -> bool
         {
             // Polled each frame; cheap (stat call on local disk).
-            std::error_code Ec;
-            const bool bSlnReady = std::filesystem::exists(SlnPath.c_str(), Ec);
+            const bool bSlnReady = Filesystem::Exists(SlnPath);
 
             ImGuiX::Font::PushFont(ImGuiX::Font::EFont::MediumBold);
             ImGui::PushStyleColor(ImGuiCol_Text, kProjDialogTextPrimary);

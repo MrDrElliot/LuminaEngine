@@ -200,6 +200,9 @@ namespace Lumina
             uint8                    SourceFirstMip = 0;
             uint32                   LayerCount     = 1;
 
+            // Charged at issue and stored, because applying the load moves MipBytes out and empties them.
+            uint64                   StagingBytes   = 0;
+
             uint32 MipSpan() const { return (uint32)(SourceFirstMip - TargetFirstMip); }
             uint32 SliceIndex(uint32 Layer, uint32 Mip) const { return Layer * MipSpan() + (Mip - TargetFirstMip); }
 
@@ -246,6 +249,9 @@ namespace Lumina
         THashMap<uint32, uint32>                SlotToEntry;
 
         TVector<TUniquePtr<FPendingLoad>>       PendingLoads;
+
+        // Sum of StagingBytes over PendingLoads; charged at issue, refunded when the load is retired.
+        uint64                                  PendingLoadBytes = 0;
 
         /** Host-upload bytes left this frame, reset at the top of Update and drawn down by BOTH the staged
          *  fills and the newly applied loads. Shared deliberately: two stages each spending "the budget"

@@ -3,6 +3,7 @@
 
 #include "ObjectBase.h"
 #include "Memory/Memory.h"
+#include "Memory/MemoryTracking.h"
 
 namespace Lumina
 {
@@ -20,6 +21,7 @@ namespace Lumina
 
     void* FCObjectAllocator::AllocateCObject(uint32 Size, uint32 Alignment)
     {
+        LUMINA_MEMORY_SCOPE("CObject");
         return Memory::Malloc(Size, Alignment);
     }
 

@@ -1,4 +1,5 @@
 #include "RuntimePCH.h"
+#include "Memory/MemoryTracking.h"
 #include "BlendSpace.h"
 
 #include "Assets/AssetTypes/Mesh/Animation/Animation.h"
@@ -69,6 +70,7 @@ namespace Lumina
 
     void CBlendSpace::PostLoad()
     {
+        LUMINA_MEMORY_SCOPE("Animation");
         CObject::PostLoad();
         RebuildTopology();
     }

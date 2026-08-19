@@ -1,6 +1,6 @@
 ﻿#include "ProjectPackagerEditorTool.h"
 
-#include <filesystem>
+#include "Platform/Filesystem/PlatformFilesystem.h"
 
 #include "Assets/AssetRegistry/CookRoot.h"
 #include "Config/Config.h"
@@ -170,7 +170,7 @@ namespace Lumina
             ? FString(GEngine->GetProjectPath().data(), GEngine->GetProjectPath().size()) + "/Build/" + ProjectName
             : OutputDir;
 
-        std::filesystem::create_directories(PakDir.c_str());
+        Filesystem::MakeDirectoryTree(PakDir);
 
         const FString PakPath = PakDir + "/" + ProjectName + ".pak";
 
@@ -242,7 +242,7 @@ namespace Lumina
             ? FString(GEngine->GetProjectPath().data(), GEngine->GetProjectPath().size()) + "/Build/" + ProjectName
             : OutputDir;
 
-        std::filesystem::create_directories(PakDir.c_str());
+        Filesystem::MakeDirectoryTree(PakDir);
 
         const FString PakPath = PakDir + "/" + ProjectName + ".pak";
 

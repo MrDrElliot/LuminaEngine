@@ -9,7 +9,7 @@
 #include "Platform/Process/PlatformProcess.h"
 
 #include <atomic>
-#include <filesystem>
+#include "Platform/Filesystem/PlatformFilesystem.h"
 #include <mutex>
 
 #if WITH_BUGSPLAT
@@ -76,24 +76,21 @@ namespace Lumina::CrashReporting
         // the compile, which would otherwise rebuild the world on every commit.
         FString ReadGitCommit()
         {
-            namespace fs = std::filesystem;
+            auto ParentOf = [](FStringView Path) -> FString
+            {
+                const size_t Slash = Path.find_last_of("/\\");
+                return Slash == FStringView::npos ? FString() : FString(Path.data(), Slash);
+            };
 
             // Exe lives at <root>/Binaries/<Platform>/, matching Paths' own exe-relative fallback.
             // Paths is not initialized this early, so the walk is repeated here rather than shared.
-            std::error_code Ec;
-            fs::path Root = fs::path(Platform::GetCurrentProcessPath().c_str())
-                                .parent_path().parent_path().parent_path();
-
-            const fs::path HeadPath = Root / ".git" / "HEAD";
-            if (!fs::exists(HeadPath, Ec))
-            {
-                // A packaged build with no working tree. Symbols match properly for those anyway.
-                return {};
-            }
+            const FString Root = ParentOf(ParentOf(ParentOf(Platform::GetCurrentProcessPath())));
+            const FString GitDir = Root + "/.git";
 
             FString Head;
-            if (!FileHelper::LoadFileIntoString(Head, FStringView(HeadPath.string().c_str())))
+            if (!Filesystem::ReadFile(Head, GitDir + "/HEAD"))
             {
+                // A packaged build with no working tree. Symbols match properly for those anyway.
                 return {};
             }
 
@@ -109,15 +106,13 @@ namespace Lumina::CrashReporting
                 const FString RefName = Head.substr(RefPrefix.size());
 
                 FString Resolved;
-                if (!FileHelper::LoadFileIntoString(Resolved,
-                        FStringView((Root / ".git" / RefName.c_str()).string().c_str())))
+                if (!Filesystem::ReadFile(Resolved, GitDir + "/" + RefName))
                 {
                     // No loose ref. git packs refs during gc and a fresh clone may never write one,
                     // so this is the normal state on a user's machine rather than an edge case --
                     // without the fallback every report from them loses its commit.
                     FString Packed;
-                    if (!FileHelper::LoadFileIntoString(Packed,
-                            FStringView((Root / ".git" / "packed-refs").string().c_str())))
+                    if (!Filesystem::ReadFile(Packed, GitDir + "/packed-refs"))
                     {
                         return {};
                     }

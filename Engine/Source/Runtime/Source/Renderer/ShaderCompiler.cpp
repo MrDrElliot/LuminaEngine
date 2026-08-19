@@ -13,6 +13,7 @@
 #include "Core/Utils/Defer.h"
 #include "ErrorHandling/CrashTracker.h"
 #include "FileSystem/FileSystem.h"
+#include "Memory/MemoryTracking.h"
 #include "Memory/Memory.h"
 #include "Paths/Paths.h"
 #include "Platform/Process/PlatformProcess.h"
@@ -113,7 +114,7 @@ namespace Lumina
         }
         DEFER { VFS::Remove(VirtualPath); };
 
-        const FFixedString RealPath = VFS::ResolvePath(VirtualPath);
+        const FPathString RealPath = VFS::ResolvePath(VirtualPath);
         const FString Params = FString("--target-env ") + kSpirvValTargetEnv + " \"" + RealPath.c_str() + "\"";
 
         FString Diagnostic;
@@ -597,6 +598,7 @@ namespace Lumina
     bool FSpirVShaderCompiler::CompileShaderPaths(TSpan<FString> ShaderPaths, TSpan<FShaderCompileOptions> CompileOptions, CompletedFunc OnCompleted)
     {
         LUMINA_PROFILE_SCOPE();
+        LUMINA_MEMORY_SCOPE("Shaders");
 
         ASSERT(ShaderPaths.size() == CompileOptions.size());
 
@@ -660,6 +662,7 @@ namespace Lumina
             SourceHashes = Move(SourceHashes),
             Callback = Move(OnCompleted)] (uint32 Start, uint32 End, uint32 Thread) mutable
         {
+            LUMINA_MEMORY_SCOPE("Shaders");
 
             uint32 Num = End - Start;
 

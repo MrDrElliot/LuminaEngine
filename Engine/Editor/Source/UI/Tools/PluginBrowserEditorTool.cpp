@@ -9,7 +9,7 @@
 #include "Paths/Paths.h"
 #include "Platform/Filesystem/FileHelper.h"
 
-#include <filesystem>
+#include "Paths/Paths.h"
 #include "LuminaEditor.h"
 #include "Tools/UI/ImGui/ImGuiAllocator.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
@@ -432,12 +432,11 @@ namespace Lumina
         const FStringView PathView = GEngine->GetProjectPath();
         const FStringView NameView = GEngine->GetProjectName();
 
-        std::filesystem::path Composed(std::string(PathView.data(), PathView.size()));
-        Composed /= std::string(NameView.data(), NameView.size()) + ".lproject";
-        Composed = Composed.lexically_normal();
+        FFixedString Composed = Paths::Combine(PathView, NameView);
+        Composed.append(".lproject");
+        Paths::Normalize(Composed);
 
-        const std::string LprojStd = Composed.generic_string();
-        FString LprojPath(LprojStd.c_str(), LprojStd.size());
+        const FString LprojPath(Composed.data(), Composed.size());
 
         FString Json;
         if (!FileHelper::LoadFileIntoString(Json, LprojPath))

@@ -1,6 +1,5 @@
 ﻿#pragma once
 
-#include <filesystem>
 #include <format>
 #include "imgui.h"
 #include "ImGuizmo.h"

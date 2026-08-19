@@ -1,6 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "Paths.h"
-#include <filesystem>
+#include "Platform/Filesystem/PlatformFilesystem.h"
 #include "Core/Assertions/Assert.h"
 #include "Platform/Process/PlatformProcess.h"
 #include "Log/Log.h"
@@ -29,13 +29,13 @@ namespace Lumina::Paths
 
         // Fall back to exe-relative root when LUMINA_DIR is unset; exe lives at <root>/Binaries/Windows64,
         // so root is two dirs up. Without this every resource path is malformed and font loading crashes.
-        if (LuminaDir.empty() || !std::filesystem::exists((LuminaDir + "/Engine/Resources").c_str()))
+        if (LuminaDir.empty() || !Filesystem::Exists(LuminaDir + "/Engine/Resources"))
         {
             FString ExePath = Platform::GetCurrentProcessPath();
             Normalize(ExePath);
 
             FString Candidate = Parent(Parent(Parent(ExePath, true), true), true);
-            if (!Candidate.empty() && std::filesystem::exists((Candidate + "/Engine/Resources").c_str()))
+            if (!Candidate.empty() && Filesystem::Exists(Candidate + "/Engine/Resources"))
             {
                 LOG_DISPLAY("LUMINA_DIR unset or invalid; using executable-relative engine root: {}", Candidate.c_str());
                 LuminaDir = Candidate;
@@ -76,12 +76,12 @@ namespace Lumina::Paths
 
     bool IsDirectory(const FString& Path)
     {
-        return std::filesystem::is_directory(Path.c_str());
+        return Filesystem::IsDirectory(Path);
     }
 
     bool Exists(FStringView Filename)
     {
-        return std::filesystem::exists(Filename.data());
+        return Filesystem::Exists(Filename);
     }
 
     FString GetVirtualPathPrefix(const FString& VirtualPath)
@@ -97,7 +97,7 @@ namespace Lumina::Paths
 
     bool CreateDirectories(FStringView Path)
     {
-        return std::filesystem::create_directories(Path.data());
+        return Filesystem::MakeDirectoryTree(Path);
     }
 
     bool IsUnderDirectory(const FString& ParentDirectory, const FString& Directory)

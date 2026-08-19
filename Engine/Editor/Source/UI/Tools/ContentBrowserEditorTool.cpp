@@ -27,7 +27,7 @@
 #include "World/WorldManager.h"
 #include <string.h>
 #include <cstdarg>
-#include <filesystem>
+#include "Platform/Filesystem/PlatformFilesystem.h"
 #include <format>
 #include <fstream>
 #include <iterator>
@@ -704,10 +704,7 @@ namespace Lumina
 
         void UpdateScriptHoverCache(FStringView VirtualPath, FStringView DiskPath)
         {
-            int64 MTime = 0;
-            std::error_code Ec;
-            const std::filesystem::file_time_type Time = std::filesystem::last_write_time(std::filesystem::path(DiskPath.data(), DiskPath.data() + DiskPath.size()), Ec);
-            if (!Ec) { MTime = (int64)Time.time_since_epoch().count(); }
+            const int64 MTime = Filesystem::LastWriteTime(DiskPath);
 
             const bool bSamePath = GScriptHoverCache.Path.size() == VirtualPath.size()
                 && memcmp(GScriptHoverCache.Path.data(), VirtualPath.data(), VirtualPath.size()) == 0;
@@ -784,9 +781,9 @@ namespace Lumina
         // File size line (from the on-disk source) shared by the non-script tooltip kinds.
         void DrawItemSizeLine(const VFS::FFileInfo& Info)
         {
-            std::error_code Ec;
-            const std::uintmax_t Bytes = std::filesystem::file_size(std::filesystem::path(Info.PathSource.c_str()), Ec);
-            if (Ec) { return; }
+            const Filesystem::FFileStat Stat = Filesystem::Stat(Info.PathSource);
+            if (!Stat.IsFile()) { return; }
+            const uint64 Bytes = Stat.Size;
             const double B = (double)Bytes;
             if (Bytes < 1024ull)                    { ImGui::TextColored(kMenuTextDim, "Size: %llu B", (unsigned long long)Bytes); }
             else if (Bytes < 1024ull * 1024)        { ImGui::TextColored(kMenuTextDim, "Size: %.1f KB", B / 1024.0); }
@@ -3977,7 +3974,7 @@ namespace Lumina
 
         if (ImGui::MenuItem(LE_ICON_MICROSOFT_WINDOWS " Show in Explorer"))
         {
-            FFixedString Resolved = VFS::ResolvePath(FStringView(SelectedPath.c_str(), SelectedPath.size()));
+            FPathString Resolved = VFS::ResolvePath(FStringView(SelectedPath.c_str(), SelectedPath.size()));
             const char* Target = Resolved.empty() ? SelectedPath.c_str() : Resolved.c_str();
             Platform::LaunchURL(UTF8_TO_TCHAR(Target));
         }

@@ -1,6 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "VulkanCrashTracker.h"
-#include <filesystem>
+#include "Platform/Filesystem/PlatformFilesystem.h"
 #include <fstream>
 #include <volk/volk.h>
 #if WITH_AFTERMATH
@@ -134,8 +134,7 @@ namespace Lumina::RHI
     {
         FString Directory = CrashHandler::GetCrashDumpDirectory();
 
-        std::error_code Ec;
-        std::filesystem::create_directories(Directory.c_str(), Ec);
+        Filesystem::MakeDirectoryTree(Directory);
 
         return Directory;
     }

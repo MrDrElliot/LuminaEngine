@@ -1,4 +1,5 @@
 #include "ThumbnailManager.h"
+#include "Memory/MemoryTracking.h"
 #include "ThumbnailCache.h"
 #include "ThumbnailScene.h"
 #include "ThumbnailUtils.h"
@@ -248,6 +249,7 @@ namespace Lumina
 
     void CThumbnailManager::ResolveThumbnailAsync(FName Package)
     {
+        LUMINA_MEMORY_SCOPE("Thumbnails");
         Task::AsyncTask(1, 1, [this, Package](uint32, uint32, uint32)
         {
             // Snapshot the identity out of the registry immediately; the returned pointer is only valid
@@ -328,6 +330,7 @@ namespace Lumina
 
     void CThumbnailManager::UploadAndStore(const FName& Package, const FPackageThumbnail& Source)
     {
+        LUMINA_MEMORY_SCOPE("Thumbnails");
         const uint32 Width  = Source.ImageWidth;
         const uint32 Height = Source.ImageHeight;
         if (Width == 0 || Height == 0 || Source.ImageData.size() < (size_t)Width * Height * 4u)
@@ -419,6 +422,7 @@ namespace Lumina
 
     bool CThumbnailManager::RenderThumbnail(CObject* Asset, FPackageThumbnail& Out)
     {
+        LUMINA_MEMORY_SCOPE("Thumbnails");
         if (Asset == nullptr)
         {
             return false;
@@ -514,6 +518,7 @@ namespace Lumina
 
     void CThumbnailManager::ProcessRenderQueue(uint32 Budget)
     {
+        LUMINA_MEMORY_SCOPE("Thumbnails");
         if (bRegistryDirty.exchange(false, std::memory_order_acquire))
         {
             SweepInvalidatedRecords();

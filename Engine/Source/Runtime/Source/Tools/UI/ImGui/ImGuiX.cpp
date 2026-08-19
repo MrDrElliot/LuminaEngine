@@ -2,7 +2,6 @@
 #include "ImGuiX.h"
 
 #include "Core/Object/InstancedStruct.h"
-#include <filesystem>
 #include "ImGuiDesignIcons.h"
 #include "ImGuiRenderer.h"
 #include "imgui_internal.h"

@@ -1,4 +1,4 @@
-#include "EditorPCH.h"
+﻿#include "EditorPCH.h"
 #include "MeshImporter.h"
 
 #include "Assets/AssetRegistry/AssetRegistry.h"
@@ -1240,6 +1240,8 @@ namespace Lumina
             {
                 continue;
             }
+
+            AnimCompression::Build(*Clip);
 
             const FFixedString AnimPath = bMultipleAnims ? BuildPath(Clip->Name.ToString()) : BuildPath("Animation");
 

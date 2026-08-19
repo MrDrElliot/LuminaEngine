@@ -51,20 +51,22 @@ namespace Lumina
         PROPERTY(Editable, Category = "Budget")
         int32 PoolSizeMB = 1024;
 
-        /** Off promotes every registered texture to fully resident and stops all trimming -- the
-         *  pre-streaming behaviour. Useful for deciding whether a visual bug is the streamer's fault. */
+        // Off keeps every texture fully resident and stops trimming; their mips are still read from disk.
         PROPERTY(Editable, Category = "Budget")
-        bool bEnabled = true;
+        bool bTextureStreaming = true;
 
         /** Multiplier on the requested resident resolution. Above 1 keeps sharper mips than screen
          *  coverage implies; below 1 trades sharpness for memory. */
         PROPERTY(Editable, Category = "Quality")
         float ResolutionBias = 1.0f;
 
-        /** Cap on concurrent mip loads. Bounds both IO queue depth and the transient staging memory held
-         *  by in-flight reads. */
+        // Cap on concurrent mip loads. Bounds IO queue depth; MaxLoadStagingMB bounds their memory.
         PROPERTY(Editable, Category = "Performance")
         int32 MaxLoadsInFlight = 8;
+
+        // Ceiling on host bytes held by in-flight reads; one load is always admitted regardless.
+        PROPERTY(Editable, Category = "Performance")
+        int32 MaxLoadStagingMB = 128;
 
         // Host bytes staged per frame, enforced at band granularity. Loads that do not fit wait a frame.
         PROPERTY(Editable, Category = "Performance")

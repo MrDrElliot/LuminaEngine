@@ -6,6 +6,7 @@
 #include "Core/Object/ObjectIterator.h"
 #include "Core/Object/Archive/ObjectReferenceReplacerArchive.h"
 #include "Core/Profiler/Profile.h"
+#include "Memory/MemoryTracking.h"
 #include "Core/Serialization/Package/PackageLoader.h"
 #include "Core/Serialization/Package/PackageSaver.h"
 #include "FileSystem/FileSystem.h"
@@ -801,6 +802,7 @@ namespace Lumina
     CPackage* CPackage::LoadPackage(FStringView Path)
     {
         LUMINA_PROFILE_SCOPE();
+        LUMINA_MEMORY_SCOPE("Package Load");
         
         FFixedString ObjectName = SanitizeObjectName(Path);
         
@@ -1019,6 +1021,7 @@ namespace Lumina
     bool CPackage::SavePackage(CPackage* Package, FStringView Path)
     {
         LUMINA_PROFILE_SCOPE();
+        LUMINA_MEMORY_SCOPE("Package Save");
 
         ASSERT(Package != nullptr);
 
@@ -1161,6 +1164,7 @@ namespace Lumina
     bool CPackage::SavePackageForCook(CPackage* Package, TVector<uint8>& OutCompressed)
     {
         LUMINA_PROFILE_SCOPE();
+        LUMINA_MEMORY_SCOPE("Package Save");
 
         ASSERT(Package != nullptr);
 

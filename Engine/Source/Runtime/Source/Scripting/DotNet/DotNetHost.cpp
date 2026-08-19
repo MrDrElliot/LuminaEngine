@@ -2,7 +2,7 @@
 #include "DotNetHost.h"
 #include "ManagedRenderScene.h"
 
-#include <filesystem>
+#include "Platform/Filesystem/PlatformFilesystem.h"
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -81,10 +81,50 @@ namespace Lumina::DotNet
         constexpr const char* kSharedPrefix = "lib";
     #endif
 
-        namespace fs = std::filesystem;
-
         // Defined further down; the project-generation helpers above it normalize paths through it.
-        fs::path NativePath(fs::path P);
+        FString NativePath(FStringView P);
+
+        FString Join(FStringView Left, FStringView Right)
+        {
+            FString Result(Left.data(), Left.size());
+            if (!Result.empty() && Result.back() != '/' && Result.back() != '\\')
+            {
+                Result.push_back('/');
+            }
+            Result.append(Right.data(), Right.size());
+            return Result;
+        }
+
+        FString ParentOf(FStringView Path)
+        {
+            const size_t Slash = Path.find_last_of("/\\");
+            return Slash == FStringView::npos ? FString() : FString(Path.data(), Slash);
+        }
+
+        // hostfxr takes wchar_t paths on Windows and char elsewhere, so they cross the boundary here.
+        class FHostString
+        {
+        public:
+
+            explicit FHostString(FStringView Utf8)
+            {
+            #if defined(_WIN32)
+                Storage = StringUtils::ToWideString(Utf8);
+            #else
+                Storage.assign(Utf8.data(), Utf8.size());
+            #endif
+            }
+
+            const char_t* Get() const { return Storage.c_str(); }
+
+        private:
+
+            #if defined(_WIN32)
+                FWString Storage;
+            #else
+                FString Storage;
+            #endif
+        };
 
         // Native<->managed boundary. The managed Host mirrors this layout exactly;
         // any change here bumps GAbiVersion and the matching managed constant.
@@ -344,45 +384,33 @@ namespace Lumina::DotNet
                 return;
             }
 
-            std::error_code Ec;
-            const fs::path Root = NativePath(fs::path(DiskDir.c_str()));
-            if (!fs::exists(Root, Ec) || !fs::is_directory(Root, Ec))
+            if (!Filesystem::IsDirectory(DiskDir))
             {
                 return;
             }
 
-            for (fs::recursive_directory_iterator It(Root, fs::directory_options::skip_permission_denied, Ec), End;
-                 It != End && !Ec; It.increment(Ec))
+            Filesystem::IterateDirectoryRecursive(DiskDir, [&Out](const Filesystem::FDirectoryEntry& Entry)
             {
-                std::error_code FileEc;
-                if (!It->is_regular_file(FileEc) || FileEc)
+                if (Entry.IsDirectory() || Entry.GetExtension() != FStringView(".cs"))
                 {
-                    continue;
-                }
-                const fs::path& P = It->path();
-                if (P.extension() != ".cs")
-                {
-                    continue;
-                }
-                const std::string PathStr = P.string();
-                if (PathStr.find("\\obj\\") != std::string::npos || PathStr.find("/obj/") != std::string::npos
-                    || PathStr.find("\\bin\\") != std::string::npos || PathStr.find("/bin/") != std::string::npos)
-                {
-                    continue;
+                    return;
                 }
 
-                std::ifstream In(P, std::ios::binary);
-                if (!In)
+                const FStringView P = Entry.FullPath;
+                if (P.find("/obj/") != FStringView::npos || P.find("/bin/") != FStringView::npos)
                 {
-                    continue;
+                    return;
                 }
-                const std::string Text((std::istreambuf_iterator<char>(In)), std::istreambuf_iterator<char>());
 
                 FGatheredSource Src;
-                Src.Path = FString(PathStr.c_str());
-                Src.Text = FString(Text.data(), Text.size());
+                if (!Filesystem::ReadFile(Src.Text, P))
+                {
+                    return;
+                }
+
+                Src.Path.assign(P.data(), P.size());
                 Out.push_back(eastl::move(Src));
-            }
+            });
         }
         
         // One compilation unit of a script generation: the game, an enabled plugin, or the engine library.
@@ -458,9 +486,9 @@ namespace Lumina::DotNet
                 Engine.Name = "Engine";
                 Engine.DiskDir = Paths::GetEngineResourceDirectory() + "/Scripts";
                 // Engine example scripts live next to the engine binaries (a sibling of DotNet/Managed, not in it).
-                const fs::path ExeDir = NativePath(fs::path(Platform::GetCurrentProcessPath().c_str())).parent_path();
-                Engine.BinaryDir       = FString((ExeDir / "DotNet").string().c_str());
-                Engine.IntermediateDir = FString((ExeDir / "DotNet" / "obj" / "Engine").string().c_str());
+                const FString ExeDir = ParentOf(Platform::GetCurrentProcessPath());
+                Engine.BinaryDir       = NativePath(Join(ExeDir, "DotNet"));
+                Engine.IntermediateDir = NativePath(Join(ExeDir, "DotNet/obj/Engine"));
                 Engine.AssemblyPath    = Engine.BinaryDir + "/Engine.dll";
                 Units.push_back(eastl::move(Engine));
             }
@@ -477,31 +505,24 @@ namespace Lumina::DotNet
         {
             TVector<FScriptUnit> Units;
 
-            const fs::path ExeDir      = NativePath(fs::path(Platform::GetCurrentProcessPath().c_str())).parent_path();
-            const fs::path ScriptsDir  = ExeDir / "DotNet" / "Scripts";
-            const fs::path ManifestPath = ScriptsDir / "scripts.manifest.json";
+            const FString ExeDir       = ParentOf(Platform::GetCurrentProcessPath());
+            const FString ScriptsDir   = Join(ExeDir, "DotNet/Scripts");
+            const FString ManifestPath = Join(ScriptsDir, "scripts.manifest.json");
 
-            std::error_code Ec;
-            if (!fs::exists(ManifestPath, Ec))
+            FString Text;
+            if (!Filesystem::ReadFile(Text, ManifestPath))
             {
                 return Units;
             }
-
-            std::ifstream In(ManifestPath, std::ios::binary);
-            if (!In)
-            {
-                return Units;
-            }
-            const std::string Text((std::istreambuf_iterator<char>(In)), std::istreambuf_iterator<char>());
 
             nlohmann::json J;
             try
             {
-                J = nlohmann::json::parse(Text);
+                J = nlohmann::json::parse(Text.c_str());
             }
             catch (const std::exception& Err)
             {
-                LOG_ERROR("C#: failed to parse cooked script manifest '{}': {}", ManifestPath.string().c_str(), Err.what());
+                LOG_ERROR("C#: failed to parse cooked script manifest '{}': {}", ManifestPath, Err.what());
                 return Units;
             }
 
@@ -526,7 +547,7 @@ namespace Lumina::DotNet
                 FScriptUnit Unit;
                 Unit.Name = FString(Name.c_str());
                 const std::string Dll = Entry.value("Dll", Name + ".dll");
-                Unit.AssemblyPath = FString((ScriptsDir / Dll).string().c_str());
+                Unit.AssemblyPath = Join(ScriptsDir, FStringView(Dll.c_str(), Dll.size()));
 
                 if (Entry.contains("Deps") && Entry["Deps"].is_array())
                 {
@@ -545,37 +566,29 @@ namespace Lumina::DotNet
 
         // Writes Content to Path only when it differs from what is on disk (so frequent reloads don't churn
         // the files and the IDE doesn't reload projects on every hot-reload). Creates parent dirs as needed.
-        void WriteTextIfChanged(const fs::path& Path, const std::string& Content)
+        void WriteTextIfChanged(FStringView Path, const std::string& Content)
         {
-            std::error_code Ec;
-            fs::create_directories(Path.parent_path(), Ec);
-
+            FString Existing;
+            if (Filesystem::ReadFile(Existing, Path)
+                && Existing.size() == Content.size()
+                && ::memcmp(Existing.data(), Content.data(), Content.size()) == 0)
             {
-                std::ifstream In(Path, std::ios::binary);
-                if (In)
-                {
-                    std::string Existing((std::istreambuf_iterator<char>(In)), std::istreambuf_iterator<char>());
-                    if (Existing == Content)
-                    {
-                        return;
-                    }
-                }
+                return;
             }
 
-            std::ofstream Out(Path, std::ios::binary | std::ios::trunc);
-            if (Out)
+            const TSpan<const uint8> Bytes(reinterpret_cast<const uint8*>(Content.data()), Content.size());
+            if (Filesystem::WriteFile(Path, Bytes))
             {
-                Out.write(Content.data(), static_cast<std::streamsize>(Content.size()));
-                LOG_DISPLAY("Generated C# script project: {}", Path.string().c_str());
+                LOG_DISPLAY("Generated C# script project: {}", Path);
             }
         }
 
         // Sidecar stamped next to a unit's DLL when WE compiled it from sources. It is what tells a stale
         // emitted artifact (sources since deleted -> delete the DLL, never load it) apart from an authored
         // prebuilt assembly at the same canonical path (a code-only plugin -> load it).
-        fs::path CompiledMarkerPath(const FString& DllPath)
+        FString CompiledMarkerPath(const FString& DllPath)
         {
-            return NativePath(fs::path((DllPath + ".compiled").c_str()));
+            return DllPath + ".compiled";
         }
 
         // Deterministic GUID from a seed string (FNV-1a x2 -> 16 bytes), so a unit's .sln project GUID is
@@ -610,9 +623,9 @@ namespace Lumina::DotNet
         }
 
         // The absolute path of the generated IDE project for a unit ("<DiskDir>/<Name>.Scripts.csproj").
-        fs::path UnitProjectPath(const FScriptUnit& Unit)
+        FString UnitProjectPath(const FScriptUnit& Unit)
         {
-            return NativePath(fs::path(Unit.DiskDir.c_str()) / (std::string(Unit.Name.c_str()) + ".Scripts.csproj"));
+            return NativePath(Join(Unit.DiskDir, Unit.Name + ".Scripts.csproj"));
         }
 
         // The SDK-style .csproj XML for a unit: references the engine LuminaSharp.dll and ProjectReferences
@@ -651,7 +664,7 @@ namespace Lumina::DotNet
             Xml += "    </Reference>\n";
             // The generator the runtime compile loads; without it partial NativeCall bodies are missing.
             Xml += "    <Analyzer Include=\""
-                + NativePath(fs::path(LuminaSharpDll.c_str()).parent_path() / "LuminaSharp.Generators.dll").string()
+                + std::string(NativePath(Join(ParentOf(LuminaSharpDll), "LuminaSharp.Generators.dll")).c_str())
                 + "\" />\n";
             Xml += "  </ItemGroup>\n";
 
@@ -667,12 +680,11 @@ namespace Lumina::DotNet
                         break;
                     }
                 }
-                std::error_code Ec;
-                if (Dep == nullptr || Dep->DiskDir.empty() || !fs::exists(NativePath(fs::path(Dep->DiskDir.c_str())), Ec))
+                if (Dep == nullptr || Dep->DiskDir.empty() || !Filesystem::Exists(Dep->DiskDir))
                 {
                     continue; // the dependency ships no scripts on disk; nothing to reference
                 }
-                Refs += "    <ProjectReference Include=\"" + UnitProjectPath(*Dep).string() + "\" />\n";
+                Refs += "    <ProjectReference Include=\"" + std::string(UnitProjectPath(*Dep).c_str()) + "\" />\n";
             }
             if (!Refs.empty())
             {
@@ -700,12 +712,11 @@ namespace Lumina::DotNet
                 {
                     continue;
                 }
-                std::error_code Ec;
-                if (!fs::exists(NativePath(fs::path(Unit.DiskDir.c_str())), Ec))
+                if (!Filesystem::Exists(Unit.DiskDir))
                 {
                     continue;
                 }
-                Entries.push_back({ std::string(Unit.Name.c_str()) + ".Scripts", UnitProjectPath(Unit).string(), MakeStableGuid(Unit.Name) });
+                Entries.push_back({ std::string(Unit.Name.c_str()) + ".Scripts", std::string(UnitProjectPath(Unit).c_str()), MakeStableGuid(Unit.Name) });
             }
             if (Entries.empty())
             {
@@ -741,8 +752,7 @@ namespace Lumina::DotNet
             {
                 ProjectName = "Game";
             }
-            const fs::path SlnPath = NativePath(fs::path(FString(GEngine->GetProjectPath().data(), GEngine->GetProjectPath().size()).c_str())
-                / (std::string(ProjectName.c_str()) + ".GameScripts.sln"));
+            const FString SlnPath = NativePath(Join(GEngine->GetProjectPath(), ProjectName + ".GameScripts.sln"));
             WriteTextIfChanged(SlnPath, Sln);
         }
 
@@ -759,10 +769,13 @@ namespace Lumina::DotNet
             }
         }
         
-        fs::path NativePath(fs::path P)
+        FString NativePath(FStringView P)
         {
-            P.make_preferred();
-            return P;
+            FString Result(P.data(), P.size());
+        #if defined(_WIN32)
+            eastl::replace(Result.begin(), Result.end(), '/', '\\');
+        #endif
+            return Result;
         }
 
         const char* RuntimeRid()
@@ -776,12 +789,13 @@ namespace Lumina::DotNet
         #endif
         }
 
-        void* LoadShared(const fs::path& Path)
+        void* LoadShared(FStringView Path)
         {
+            const FHostString Native(Path);
         #if defined(_WIN32)
-            return (void*)::LoadLibraryW(Path.c_str());
+            return (void*)::LoadLibraryW(Native.Get());
         #else
-            return ::dlopen(Path.c_str(), RTLD_LAZY | RTLD_LOCAL);
+            return ::dlopen(Native.Get(), RTLD_LAZY | RTLD_LOCAL);
         #endif
         }
 
@@ -817,32 +831,9 @@ namespace Lumina::DotNet
 
         // Best-effort recursive copy (overwriting). Returns false if any file failed to copy (e.g. a
         // destination locked by another process). Used to shadow the managed dir so the build output stays free.
-        bool CopyTreeBestEffort(const fs::path& Src, const fs::path& Dst)
+        bool CopyTreeBestEffort(FStringView Src, FStringView Dst)
         {
-            std::error_code Ec;
-            fs::create_directories(Dst, Ec);
-            bool bAllOk = true;
-            for (fs::recursive_directory_iterator It(Src, fs::directory_options::skip_permission_denied, Ec), End;
-                 It != End && !Ec; It.increment(Ec))
-            {
-                std::error_code FileEc;
-                const fs::path Rel    = fs::relative(It->path(), Src, FileEc);
-                const fs::path Target = Dst / Rel;
-                if (It->is_directory(FileEc))
-                {
-                    fs::create_directories(Target, FileEc);
-                }
-                else if (It->is_regular_file(FileEc))
-                {
-                    fs::create_directories(Target.parent_path(), FileEc);
-                    fs::copy_file(It->path(), Target, fs::copy_options::overwrite_existing, FileEc);
-                    if (FileEc)
-                    {
-                        bAllOk = false;
-                    }
-                }
-            }
-            return bAllOk;
+            return Filesystem::CopyTree(Src, Dst);
         }
 
         // Frees one cached-wrapper GC handle on Core's behalf. Core owns the per-CObject managed-instance
@@ -867,41 +858,55 @@ namespace Lumina::DotNet
         // A packaged game ships the runtime next to the exe (<exeDir>/External/DotNet/runtime/<rid>) and has
         // no LUMINA_DIR / on-disk Engine/Resources, so GetEngineInstallDirectory() is empty there. Probe the
         // exe-relative layout first, then fall back to the engine install dir for the in-tree dev build.
-        const fs::path ExeDir = NativePath(fs::path(Platform::GetCurrentProcessPath().c_str())).parent_path();
-        fs::path Bundled = NativePath(ExeDir / "External" / "DotNet" / "runtime" / RuntimeRid());
-        if (!fs::exists(Bundled))
+        const FString ExeDir = ParentOf(Platform::GetCurrentProcessPath());
+
+        FString RuntimeSubPath = "External/DotNet/runtime/";
+        RuntimeSubPath.append(RuntimeRid());
+
+        FString Bundled = Join(ExeDir, RuntimeSubPath);
+        if (!Filesystem::Exists(Bundled))
         {
-            const fs::path Install = fs::path(Paths::GetEngineInstallDirectory().c_str());
-            Bundled = NativePath(Install / "External" / "DotNet" / "runtime" / RuntimeRid());
+            Bundled = Join(Paths::GetEngineInstallDirectory(), RuntimeSubPath);
         }
-        if (!fs::exists(Bundled))
+        if (!Filesystem::Exists(Bundled))
         {
-            LOG_ERROR("C# scripting disabled: bundled .NET runtime not found next to the exe or under the engine install ('{}'). Run Setup.bat to extract External.", Bundled.string().c_str());
+            LOG_ERROR("C# scripting disabled: bundled .NET runtime not found next to the exe or under the engine install ('{}'). Run Setup.bat to extract External.", Bundled);
             return;
         }
+        Bundled = NativePath(Bundled);
 
         // Locate host/fxr/<version>/hostfxr.<ext> under the bundled root.
-        fs::path HostfxrPath;
-        std::error_code Ec;
-        for (const auto& Entry : fs::directory_iterator(Bundled / "host" / "fxr", Ec))
+        const FString FxrRoot  = Join(Bundled, "host/fxr");
+        const FString FxrName  = FString(kSharedPrefix) + "hostfxr" + kSharedExt;
+
+        FString HostfxrPath;
+        Filesystem::IterateDirectory(FxrRoot, [&HostfxrPath, &FxrName](const Filesystem::FDirectoryEntry& Entry) -> Filesystem::EVisit
         {
-            const fs::path Candidate = Entry.path() / (FString(kSharedPrefix) + "hostfxr" + kSharedExt).c_str();
-            if (fs::exists(Candidate))
+            if (!Entry.IsDirectory())
             {
-                HostfxrPath = NativePath(Candidate);
-                break;
+                return Filesystem::EVisit::Continue;
             }
-        }
+
+            FString Candidate = Join(Entry.FullPath, FxrName);
+            if (!Filesystem::Exists(Candidate))
+            {
+                return Filesystem::EVisit::Continue;
+            }
+
+            HostfxrPath = NativePath(Candidate);
+            return Filesystem::EVisit::Stop;
+        });
+
         if (HostfxrPath.empty())
         {
-            LOG_ERROR("C# scripting disabled: hostfxr not found under '{}'.", (Bundled / "host" / "fxr").string().c_str());
+            LOG_ERROR("C# scripting disabled: hostfxr not found under '{}'.", FxrRoot);
             return;
         }
 
         void* Lib = LoadShared(HostfxrPath);
         if (!Lib)
         {
-            LOG_ERROR("C# scripting disabled: failed to load hostfxr at '{}'.", HostfxrPath.string().c_str());
+            LOG_ERROR("C# scripting disabled: failed to load hostfxr at '{}'.", HostfxrPath);
             return;
         }
 
@@ -915,8 +920,8 @@ namespace Lumina::DotNet
         }
 
         // Managed bootstrap, built next to the binaries by the LuminaSharp project.
-        const fs::path ExePath      = NativePath(fs::path(Platform::GetCurrentProcessPath().c_str()));
-        const fs::path ManagedDir   = ExePath.parent_path() / "DotNet" / "Managed";
+        const FString ExePath    = NativePath(Platform::GetCurrentProcessPath());
+        const FString ManagedDir = Join(ExeDir, "DotNet/Managed");
 
         // In the editor, CoreCLR keeps LuminaSharp.dll (and the Roslyn assemblies the script compiler pulls
         // from the same folder) open for the whole session. That locks the build output, so a packaging
@@ -924,13 +929,13 @@ namespace Lumina::DotNet
         // the canonical DotNet/Managed output free to rebuild. A cooked game has no build step (and may sit in
         // a read-only dir), so it loads in place. Multi-instance: if the shadow is locked by another editor,
         // the copy fails and we fall back to loading in place.
-        fs::path LoadDir = ManagedDir;
+        FString LoadDir = ManagedDir;
     #if WITH_EDITOR
         {
-            const fs::path ShadowDir = ExePath.parent_path() / "DotNet" / "ManagedShadow";
+            const FString ShadowDir = Join(ExeDir, "DotNet/ManagedShadow");
             if (CopyTreeBestEffort(ManagedDir, ShadowDir)
-                && fs::exists(ShadowDir / "LuminaSharp.dll")
-                && fs::exists(ShadowDir / "LuminaSharp.runtimeconfig.json"))
+                && Filesystem::Exists(Join(ShadowDir, "LuminaSharp.dll"))
+                && Filesystem::Exists(Join(ShadowDir, "LuminaSharp.runtimeconfig.json")))
             {
                 LoadDir = ShadowDir;
             }
@@ -941,21 +946,25 @@ namespace Lumina::DotNet
         }
     #endif
 
-        const fs::path BootstrapDll = NativePath(LoadDir / "LuminaSharp.dll");
-        const fs::path BootstrapCfg = NativePath(LoadDir / "LuminaSharp.runtimeconfig.json");
-        if (!fs::exists(BootstrapDll) || !fs::exists(BootstrapCfg))
+        const FString BootstrapDll = NativePath(Join(LoadDir, "LuminaSharp.dll"));
+        const FString BootstrapCfg = NativePath(Join(LoadDir, "LuminaSharp.runtimeconfig.json"));
+        if (!Filesystem::Exists(BootstrapDll) || !Filesystem::Exists(BootstrapCfg))
         {
-            LOG_ERROR("C# scripting disabled: managed bootstrap missing under '{}'. Did LuminaSharp build?", LoadDir.string().c_str());
+            LOG_ERROR("C# scripting disabled: managed bootstrap missing under '{}'. Did LuminaSharp build?", LoadDir);
             return;
         }
 
+        const FHostString HostExePath(ExePath);
+        const FHostString HostDotNetRoot(Bundled);
+        const FHostString HostBootstrapCfg(BootstrapCfg);
+
         hostfxr_initialize_parameters Params{};
         Params.size = sizeof(Params);
-        Params.host_path = ExePath.c_str();
-        Params.dotnet_root = Bundled.c_str();
+        Params.host_path = HostExePath.Get();
+        Params.dotnet_root = HostDotNetRoot.Get();
 
         hostfxr_handle Ctx = nullptr;
-        int rc = Init(BootstrapCfg.c_str(), &Params, &Ctx);
+        int rc = Init(HostBootstrapCfg.Get(), &Params, &Ctx);
         if (rc != 0 || Ctx == nullptr)
         {
             LOG_ERROR("C# scripting disabled: hostfxr_initialize_for_runtime_config failed (0x{:x}).", (uint32)rc);
@@ -978,9 +987,10 @@ namespace Lumina::DotNet
         auto LoadAssembly = (load_assembly_and_get_function_pointer_fn)LoadAsmFn;
 
         const auto* HostType = LSTR("LuminaSharp.Host, LuminaSharp");
+        const FHostString HostBootstrapDll(BootstrapDll);
 
         BootstrapFn Bootstrap = nullptr;
-        rc = LoadAssembly(BootstrapDll.c_str(), HostType, LSTR("Bootstrap"), UNMANAGEDCALLERSONLY_METHOD, nullptr, (void**)&Bootstrap);
+        rc = LoadAssembly(HostBootstrapDll.Get(), HostType, LSTR("Bootstrap"), UNMANAGEDCALLERSONLY_METHOD, nullptr, (void**)&Bootstrap);
         if (rc != 0 || Bootstrap == nullptr)
         {
             LOG_ERROR("C# scripting disabled: failed to resolve managed Bootstrap entry (0x{:x}).", (uint32)rc);
@@ -1010,7 +1020,7 @@ namespace Lumina::DotNet
         // Resolve the managed export resolver by name (like Bootstrap itself), then fill the engine entry cache
         // through it. There is no hand-mirrored table: each field is resolved by its own name, and a missing
         // entry simply leaves that field null (the mandatory ones are checked below).
-        rc = LoadAssembly(BootstrapDll.c_str(), HostType, LSTR("ResolveManagedExport"), UNMANAGEDCALLERSONLY_METHOD, nullptr, (void**)&GResolveManagedExport);
+        rc = LoadAssembly(HostBootstrapDll.Get(), HostType, LSTR("ResolveManagedExport"), UNMANAGEDCALLERSONLY_METHOD, nullptr, (void**)&GResolveManagedExport);
         if (rc != 0 || GResolveManagedExport == nullptr)
         {
             LOG_ERROR("C# scripting disabled: failed to resolve managed ResolveManagedExport entry (0x{:x}).", (uint32)rc);
@@ -1069,7 +1079,7 @@ namespace Lumina::DotNet
         // free function now that the managed side can service one.
         Lumina::ManagedInstances::SetFreeHandleFn(&FreeManagedInstanceHandle);
 
-        LOG_DISPLAY(".NET host initialized (bundled runtime: {}).", Bundled.string().c_str());
+        LOG_DISPLAY(".NET host initialized (bundled runtime: {}).", Bundled);
     }
 
     void Shutdown()
@@ -1146,11 +1156,11 @@ namespace Lumina::DotNet
             if (Bucket.Sources.empty() && !Unit.DiskDir.empty() && !Unit.AssemblyPath.empty())
             {
                 std::error_code Ec;
-                const fs::path Marker = CompiledMarkerPath(Unit.AssemblyPath);
-                if (fs::exists(Marker, Ec))
+                const FString Marker = CompiledMarkerPath(Unit.AssemblyPath);
+                if (Filesystem::Exists(Marker))
                 {
-                    fs::remove(NativePath(fs::path(Unit.AssemblyPath.c_str())), Ec);
-                    fs::remove(Marker, Ec);
+                    Filesystem::RemoveFile(Unit.AssemblyPath);
+                    Filesystem::RemoveFile(Marker);
                     LOG_DISPLAY("C#: unit '{}' no longer has sources; deleted its stale compiled assembly.", Unit.Name.c_str());
                     continue;
                 }
@@ -1159,7 +1169,7 @@ namespace Lumina::DotNet
             // With no .cs, the unit can still load a prebuilt managed DLL sitting at its canonical path (a
             // code-only plugin that ships a compiled assembly). With neither, there is nothing to do.
             const bool bHasPrebuilt = Bucket.Sources.empty() && !Unit.AssemblyPath.empty()
-                && fs::exists(NativePath(fs::path(Unit.AssemblyPath.c_str())));
+                && Filesystem::Exists(Unit.AssemblyPath);
             if (Bucket.Sources.empty() && !bHasPrebuilt)
             {
                 continue;
@@ -1244,18 +1254,12 @@ namespace Lumina::DotNet
             {
                 if (!Bucket.Sources.empty() && !Bucket.DllPath.empty())
                 {
-                    const fs::path Marker = CompiledMarkerPath(Bucket.DllPath);
-                    std::error_code Ec;
-                    if (!fs::exists(Marker, Ec))
+                    const FString Marker = CompiledMarkerPath(Bucket.DllPath);
+                    if (!Filesystem::Exists(Marker))
                     {
-                        fs::create_directories(Marker.parent_path(), Ec);
-                        std::ofstream Out(Marker, std::ios::binary | std::ios::trunc);
-                        if (Out)
-                        {
-                            static constexpr const char Text[] =
-                                "Compiled from this unit's C# sources by the engine. Both this marker and the DLL are deleted when the sources are removed.\n";
-                            Out.write(Text, sizeof(Text) - 1);
-                        }
+                        static constexpr const char Text[] =
+                            "Compiled from this unit's C# sources by the engine. Both this marker and the DLL are deleted when the sources are removed.\n";
+                        Filesystem::WriteFile(Marker, TSpan<const uint8>(reinterpret_cast<const uint8*>(Text), sizeof(Text) - 1));
                     }
                 }
             }
@@ -1353,8 +1357,8 @@ namespace Lumina::DotNet
             return;
         }
 
-        const fs::path ExePath = NativePath(fs::path(Platform::GetCurrentProcessPath().c_str()));
-        const FString Dll((ExePath.parent_path() / "DotNet" / "Managed" / "LuminaSharp.dll").string().c_str());
+        const FString ExePath = NativePath(Platform::GetCurrentProcessPath());
+        const FString Dll = NativePath(Join(ParentOf(ExePath), "DotNet/Managed/LuminaSharp.dll"));
 
         // One SDK-style project per unit (game, each enabled plugin, engine library), each ProjectReferencing
         // its dependencies, plus a solution tying them together. Same unit graph the runtime compiles, so the
@@ -1367,7 +1371,7 @@ namespace Lumina::DotNet
                 continue;
             }
             std::error_code Ec;
-            if (!fs::exists(NativePath(fs::path(Unit.DiskDir.c_str())), Ec))
+            if (!Filesystem::Exists(Unit.DiskDir))
             {
                 continue;
             }

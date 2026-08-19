@@ -2,7 +2,7 @@
 #include "FileSink.h"
 
 #include <cstdio>
-#include <filesystem>
+#include "Platform/Filesystem/PlatformFilesystem.h"
 
 namespace Lumina
 {
@@ -67,12 +67,7 @@ namespace Lumina
     void FFileSink::OpenCurrent(const char* Mode)
     {
         // The Logs folder is ours to make; fopen won't create the directory.
-        const std::filesystem::path Parent = std::filesystem::path(BasePath.c_str()).parent_path();
-        if (!Parent.empty())
-        {
-            std::error_code Ec;
-            std::filesystem::create_directories(Parent, Ec);
-        }
+        Filesystem::MakeParentDirectoryTree(BasePath);
 
         Handle = std::fopen(BasePath.c_str(), Mode);
         if (Handle != nullptr)
@@ -114,23 +109,14 @@ namespace Lumina
         BasePath = NewBasePath;
 
         // Whatever sits at the destination is a previous run: age it out before this one lands on it.
-        {
-            const std::filesystem::path Parent = std::filesystem::path(BasePath.c_str()).parent_path();
-            if (!Parent.empty())
-            {
-                std::error_code Ec;
-                std::filesystem::create_directories(Parent, Ec);
-            }
-        }
+        Filesystem::MakeParentDirectoryTree(BasePath);
         RotateExisting();
 
         // Carry the boot lines across. rename fails across volumes, so fall back to a copy.
         if (std::rename(OldPath.c_str(), BasePath.c_str()) != 0)
         {
-            std::error_code Ec;
-            std::filesystem::copy_file(OldPath.c_str(), BasePath.c_str(),
-                std::filesystem::copy_options::overwrite_existing, Ec);
-            std::remove(OldPath.c_str());
+            Filesystem::Copy(OldPath, BasePath, true);
+            Filesystem::RemoveFile(OldPath);
         }
 
         // Append: the moved file already holds everything written so far.

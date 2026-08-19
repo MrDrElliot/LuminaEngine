@@ -33,7 +33,7 @@
 #include "Renderer/Format.h"
 #include "Renderer/RHI.h"
 #include "Renderer/RHITexture.h"
-#include <filesystem>
+#include "Platform/Filesystem/PlatformFilesystem.h"
 #include "World/World.h"
 #include "World/Scene/RenderScene/RenderScene.h"
 #include "World/Entity/Components/WidgetComponent.h"
@@ -514,14 +514,12 @@ namespace Lumina::RmlUi
             {
                 return 0;
             }
-            const FFixedString Physical = VFS::ResolvePath(VirtualPath);
+            const FPathString Physical = VFS::ResolvePath(VirtualPath);
             if (Physical.empty())
             {
                 return 0;
             }
-            std::error_code Ec;
-            const auto Time = std::filesystem::last_write_time(Physical.c_str(), Ec);
-            return Ec ? 0 : (int64)Time.time_since_epoch().count();
+            return Filesystem::LastWriteTime(Physical);
         }
 
         // Establish the engine default font on a freshly created context: set GDefaultUIFontFamily on the

@@ -3,6 +3,7 @@
 
 #include "Class.h"          // CField, for the shutdown type-object ordering below
 #include "Memory/Memory.h"
+#include "Memory/MemoryTracking.h"
 
 
 namespace Lumina
@@ -98,6 +99,7 @@ namespace Lumina
 
     void FCObjectArray::AllocateObjectPool(int32 InMaxCObjects)
     {
+        LUMINA_MEMORY_SCOPE("CObject");
         DEBUG_ASSERT(!bInitialized && "Object pool already allocated!");
 
         const int32 MaxObjects = Math::Max(1000, InMaxCObjects);

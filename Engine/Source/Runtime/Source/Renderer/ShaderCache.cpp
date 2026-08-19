@@ -4,6 +4,7 @@
 #include "Core/Math/Hash/Hash.h"
 #include "Core/Serialization/MemoryArchiver.h"
 #include "FileSystem/FileSystem.h"
+#include "Memory/MemoryTracking.h"
 #include "Log/Log.h"
 
 namespace Lumina::FShaderCache
@@ -253,6 +254,7 @@ namespace Lumina::FShaderCache
 
     bool TryLoadByCachePath(FStringView CacheVirtualPath, uint64 SourceHash, FShaderHeader& OutHeader)
     {
+        LUMINA_MEMORY_SCOPE("Shaders");
         TVector<uint8> Bytes;
         if (!VFS::ReadFile(Bytes, CacheVirtualPath))
         {
@@ -293,6 +295,7 @@ namespace Lumina::FShaderCache
 
     bool Save(FStringView ShaderVirtualPath, const TVector<FString>& Defines, uint64 SourceHash, const FShaderHeader& Header)
     {
+        LUMINA_MEMORY_SCOPE("Shaders");
         if (SourceHash == 0)
         {
             return false;

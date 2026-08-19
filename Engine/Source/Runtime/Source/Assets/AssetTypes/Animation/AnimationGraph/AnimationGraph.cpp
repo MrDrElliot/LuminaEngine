@@ -1,4 +1,5 @@
 ﻿#include "RuntimePCH.h"
+#include "Memory/MemoryTracking.h"
 #include "AnimationGraph.h"
 
 #include "Core/Object/Class.h"
@@ -41,6 +42,7 @@ namespace Lumina
 
     void CAnimationGraph::Serialize(FArchive& Ar)
     {
+        LUMINA_MEMORY_SCOPE("Animation");
         CObject::Serialize(Ar);
 
         Ar << Parameters;

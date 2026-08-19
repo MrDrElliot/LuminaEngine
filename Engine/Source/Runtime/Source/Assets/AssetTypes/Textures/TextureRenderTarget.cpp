@@ -8,6 +8,7 @@ namespace Lumina
 {
     void CTextureRenderTarget::Serialize(FArchive& Ar)
     {
+        LUMINA_MEMORY_SCOPE("Textures");
         // Skip CTexture's pixel-mip blob; only the reflected properties persist (CObject::Serialize
         // walks them). The GPU image is rebuilt in PostLoad.
         CObject::Serialize(Ar);

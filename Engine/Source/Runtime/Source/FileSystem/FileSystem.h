@@ -44,7 +44,7 @@ namespace Lumina::VFS
     RUNTIME_API bool Remove(FStringView Path);
     RUNTIME_API size_t Size(FStringView Path);
     RUNTIME_API bool RemoveAll(FStringView Path);
-    RUNTIME_API FFixedString ResolvePath(FStringView Path);
+    RUNTIME_API FPathString ResolvePath(FStringView Path);
     RUNTIME_API bool DoesAliasExists(const FName& Alias);
     RUNTIME_API bool CreateDir(FStringView Path);
     RUNTIME_API bool IsUnderDirectory(FStringView Parent, FStringView Path);

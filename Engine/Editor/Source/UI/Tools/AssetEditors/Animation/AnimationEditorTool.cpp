@@ -1123,48 +1123,73 @@ namespace Lumina
 
     void FAnimationEditorTool::DrawBoneChannels(CAnimation* Animation, SSimpleAnimationComponent* AnimComp, float Duration)
     {
-        FAnimationResource* Resource = Animation->GetAnimationResource();
+        const FCompressedAnimData& Compressed = Animation->GetAnimationResource()->Compressed;
+
+        static const char* PathNames[NumTrackKinds] = { "Translation", "Rotation", "Scale" };
+        static const char* PathIcons[NumTrackKinds] =
+        {
+            LE_ICON_AXIS_ARROW, LE_ICON_ROTATE_360, LE_ICON_ARROW_TOP_RIGHT_BOTTOM_LEFT
+        };
+
+        auto TrackFor = [&Compressed](int32 Bone, int32 Kind) -> const FCompressedAnimTrack*
+        {
+            if (Bone < 0 || Bone >= (int32)Compressed.Bones.size())
+            {
+                return nullptr;
+            }
+
+            switch (Kind)
+            {
+            case 0: return &Compressed.Bones[Bone].Translation;
+            case 1: return &Compressed.Bones[Bone].Rotation;
+            case 2: return &Compressed.Bones[Bone].Scale;
+            default: return nullptr;
+            }
+        };
 
         ImGui::BeginChild("CurveChannels", ImVec2(240, 0), true);
         if (ImGui::CollapsingHeader("Channels", ImGuiTreeNodeFlags_DefaultOpen))
         {
-            for (int i = 0; i < (int)Resource->Channels.size(); ++i)
+            for (int32 b = 0; b < (int32)Compressed.Bones.size(); ++b)
             {
-                const FAnimationChannel& Channel = Resource->Channels[i];
-                const char* PathIcon = "";
-                switch (Channel.TargetPath)
+                for (int32 Kind = 0; Kind < NumTrackKinds; ++Kind)
                 {
-                    case FAnimationChannel::ETargetPath::Translation: PathIcon = LE_ICON_AXIS_ARROW; break;
-                    case FAnimationChannel::ETargetPath::Rotation:    PathIcon = LE_ICON_ROTATE_360; break;
-                    case FAnimationChannel::ETargetPath::Scale:       PathIcon = LE_ICON_ARROW_TOP_RIGHT_BOTTOM_LEFT; break;
-                    case FAnimationChannel::ETargetPath::Weights:     PathIcon = LE_ICON_WEIGHT; break;
-                }
+                    const FCompressedAnimTrack* Track = TrackFor(b, Kind);
+                    if (Track->Format == EAnimTrackFormat::None)
+                    {
+                        continue;
+                    }
 
-                ImGui::PushID(i);
-                if (ImGui::Selectable(std::format("{} {}", PathIcon, Channel.TargetBone.c_str()).c_str(), SelectedChannel == i))
-                {
-                    SelectedChannel = i;
+                    const int32 Id = b * NumTrackKinds + Kind;
+                    ImGui::PushID(Id);
+                    const FFixedString Label(FFixedString::CtorSprintf(), "%s %s",
+                                             PathIcons[Kind], Compressed.Bones[b].BoneName.c_str());
+                    if (ImGui::Selectable(Label.c_str(), SelectedChannel == Id))
+                    {
+                        SelectedChannel = Id;
+                    }
+
+                    if (Track->Format == EAnimTrackFormat::Constant)
+                    {
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("(const)");
+                    }
+                    ImGui::PopID();
                 }
-                ImGui::PopID();
             }
         }
         ImGui::EndChild();
         ImGui::SameLine();
 
         ImGui::BeginChild("CurvePlot", ImVec2(0, 0), true);
-        if (SelectedChannel >= 0 && SelectedChannel < (int)Resource->Channels.size())
-        {
-            FAnimationChannel& Channel = Resource->Channels[SelectedChannel];
 
-            const char* PathName = "";
-            switch (Channel.TargetPath)
-            {
-                case FAnimationChannel::ETargetPath::Translation: PathName = "Translation"; break;
-                case FAnimationChannel::ETargetPath::Rotation:    PathName = "Rotation"; break;
-                case FAnimationChannel::ETargetPath::Scale:       PathName = "Scale"; break;
-                case FAnimationChannel::ETargetPath::Weights:     PathName = "Weights"; break;
-            }
-            ImGui::Text("Channel: %s - (%s)", Channel.TargetBone.c_str(), PathName);
+        const int32 SelectedBone = SelectedChannel / NumTrackKinds;
+        const int32 SelectedKind = SelectedChannel % NumTrackKinds;
+        const FCompressedAnimTrack* Track = SelectedChannel >= 0 ? TrackFor(SelectedBone, SelectedKind) : nullptr;
+
+        if (Track != nullptr && Track->Format != EAnimTrackFormat::None)
+        {
+            ImGui::Text("Channel: %s - (%s)", Compressed.Bones[SelectedBone].BoneName.c_str(), PathNames[SelectedKind]);
 
             if (ImPlot::BeginPlot("##AnimCurves", ImVec2(-1, -1)))
             {
@@ -1185,41 +1210,45 @@ namespace Lumina
                     AnimComp->bDirty = true;
                 }
 
-                switch (Channel.TargetPath)
+                const uint32 NumFrames = Math::Max(1u, Compressed.NumFrames);
+                const float FrameStep = NumFrames > 1 ? Duration / (float)(NumFrames - 1) : 0.0f;
+
+                TVector<float> Times, XVals, YVals, ZVals;
+                Times.reserve(NumFrames);
+                XVals.reserve(NumFrames);
+                YVals.reserve(NumFrames);
+                ZVals.reserve(NumFrames);
+
+                for (uint32 Frame = 0; Frame < NumFrames; ++Frame)
                 {
-                    case FAnimationChannel::ETargetPath::Translation:
-                    case FAnimationChannel::ETargetPath::Scale:
+                    Times.push_back((float)Frame * FrameStep);
+
+                    FVector3 Value;
+                    if (SelectedKind == 1)
                     {
-                        TVector<FVector3>& Data = (Channel.TargetPath == FAnimationChannel::ETargetPath::Translation)
-                            ? Channel.Translations : Channel.Scales;
-                        if (!Data.empty())
-                        {
-                            TVector<float> XVals, YVals, ZVals;
-                            for (const auto& V : Data) { XVals.push_back(V.x); YVals.push_back(V.y); ZVals.push_back(V.z); }
-                            ImPlot::PlotLine("X", Channel.Timestamps.data(), XVals.data(), (int)Data.size());
-                            ImPlot::PlotLine("Y", Channel.Timestamps.data(), YVals.data(), (int)Data.size());
-                            ImPlot::PlotLine("Z", Channel.Timestamps.data(), ZVals.data(), (int)Data.size());
-                        }
-                        break;
+                        Value = Math::Degrees(Math::EulerAngles(Compressed.DecodeRotation(*Track, Frame, Frame, 0.0f)));
                     }
-                    case FAnimationChannel::ETargetPath::Rotation:
+                    else if (SelectedKind == 0)
                     {
-                        if (!Channel.Rotations.empty())
-                        {
-                            TVector<float> XVals, YVals, ZVals;
-                            for (const auto& Q : Channel.Rotations)
-                            {
-                                FVector3 Euler = Math::Degrees(Math::EulerAngles(Q));
-                                XVals.push_back(Euler.x); YVals.push_back(Euler.y); ZVals.push_back(Euler.z);
-                            }
-                            ImPlot::PlotLine("X (deg)", Channel.Timestamps.data(), XVals.data(), (int)Channel.Rotations.size());
-                            ImPlot::PlotLine("Y (deg)", Channel.Timestamps.data(), YVals.data(), (int)Channel.Rotations.size());
-                            ImPlot::PlotLine("Z (deg)", Channel.Timestamps.data(), ZVals.data(), (int)Channel.Rotations.size());
-                        }
-                        break;
+                        Value = Compressed.DecodeTranslation(*Track, Frame, Frame, 0.0f);
                     }
-                    default: break;
+                    else
+                    {
+                        Value = Compressed.DecodeScale(*Track, Frame, Frame, 0.0f);
+                    }
+
+                    XVals.push_back(Value.x);
+                    YVals.push_back(Value.y);
+                    ZVals.push_back(Value.z);
                 }
+
+                const char* Suffix = SelectedKind == 1 ? " (deg)" : "";
+                ImPlot::PlotLine((FFixedString(FFixedString::CtorSprintf(), "X%s", Suffix)).c_str(),
+                                 Times.data(), XVals.data(), (int)NumFrames);
+                ImPlot::PlotLine((FFixedString(FFixedString::CtorSprintf(), "Y%s", Suffix)).c_str(),
+                                 Times.data(), YVals.data(), (int)NumFrames);
+                ImPlot::PlotLine((FFixedString(FFixedString::CtorSprintf(), "Z%s", Suffix)).c_str(),
+                                 Times.data(), ZVals.data(), (int)NumFrames);
 
                 ImPlot::EndPlot();
             }

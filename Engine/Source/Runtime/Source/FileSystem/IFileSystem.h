@@ -55,6 +55,9 @@ namespace Lumina::VFS
         virtual void DirectoryIterator(FStringView Path, const TFunction<void(const FFileInfo&)>& Callback) const = 0;
         virtual void RecursiveDirectoryIterator(FStringView Path, const TFunction<void(const FFileInfo&)>& Callback) const = 0;
 
+        // Disk path this mount would serve Path from, or empty for backends with no on-disk file.
+        virtual FPathString ResolveToDiskPath(FStringView Path) const { return {}; }
+
         virtual FStringView GetAliasPath() const = 0;
         virtual FStringView GetBasePath() const = 0;
 

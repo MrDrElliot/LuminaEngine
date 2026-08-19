@@ -4,7 +4,7 @@
 #if defined(LE_PLATFORM_WINDOWS)
 #include "DirectoryWatcher.h"
 #include <windows.h>
-#include <filesystem>
+#include "PlatformFilesystem.h"
 #include "Core/Templates/LuminaTemplate.h"
 #include "Paths/Paths.h"
 
@@ -46,8 +46,7 @@ namespace Lumina
         Callback = Move(InCallback);
         bWatchRecursive = bRecursive;
         
-        std::filesystem::path FSPath(Path.c_str());
-        if (!std::filesystem::exists(FSPath) || !std::filesystem::is_directory(FSPath))
+        if (!Filesystem::IsDirectory(Path))
         {
             return false;
         }
@@ -130,8 +129,9 @@ namespace Lumina
                 FWString FileName(Info->FileName, Info->FileNameLength / sizeof(WCHAR));
                 FString FileNameUtf8 = WideToUtf8(FileName);
                 
-                std::filesystem::path FullPath = std::filesystem::path(Path.c_str()) / FileNameUtf8.c_str();
-                FString FullPathStr = FullPath.string().c_str();
+                FString FullPathStr(Path.c_str(), Path.size());
+                FullPathStr.push_back('/');
+                FullPathStr.append(FileNameUtf8);
                 Paths::Normalize(FullPathStr);
                 FFileEvent Event;
                 Event.Path = FullPathStr;

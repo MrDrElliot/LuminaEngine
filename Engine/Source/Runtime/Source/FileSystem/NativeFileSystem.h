@@ -8,7 +8,9 @@ namespace Lumina::VFS
     public:
         FNativeFileSystem(const FFixedString& InAliasPath, FStringView InBasePath);
 
-        FFixedString ResolveVirtualPath(FStringView Path) const;
+        FPathString ResolveVirtualPath(FStringView Path) const;
+
+        FPathString ResolveToDiskPath(FStringView Path) const override { return ResolveVirtualPath(Path); }
 
         bool ReadFile(TVector<uint8>& Result, FStringView Path) override;
         bool ReadFile(FString& OutString, FStringView Path) override;
@@ -40,6 +42,8 @@ namespace Lumina::VFS
         FStringView GetBasePath() const override { return BasePath; }
 
     private:
+
+        void Iterate(FStringView Path, bool bRecursive, const TFunction<void(const FFileInfo&)>& Callback) const;
 
         FFixedString AliasPath;
         FFixedString BasePath;

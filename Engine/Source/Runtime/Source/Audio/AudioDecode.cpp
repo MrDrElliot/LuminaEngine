@@ -1,4 +1,5 @@
 ﻿#include "RuntimePCH.h"
+#include "Memory/MemoryTracking.h"
 #include "AudioDecode.h"
 
 #include "MiniAudio/miniaudio.h"
@@ -36,6 +37,7 @@ namespace Lumina::Audio
 
 	bool DecodePCM(const void* Data, size_t Size, FAudioInfo& OutInfo, TVector<float>& OutSamples)
 	{
+		LUMINA_MEMORY_SCOPE("Audio");
 		ma_decoder_config Config = ma_decoder_config_init(ma_format_f32, 0, 0);
 		ma_decoder Decoder;
 		if (ma_decoder_init_memory(Data, Size, &Config, &Decoder) != MA_SUCCESS)

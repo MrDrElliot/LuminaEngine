@@ -1,5 +1,5 @@
 ﻿#include "AssetCooker.h"
-#include <filesystem>
+#include "Platform/Filesystem/PlatformFilesystem.h"
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include "Assets/AssetRegistry/AssetRegistry.h"
@@ -150,20 +150,19 @@ namespace Lumina
             return Count;
         }
 
-        bool BundleDiskFile(FPakWriter& Writer, const std::filesystem::path& DiskPath, FStringView VirtualPath, const TFunction<void(FStringView)>& LogFunc)
+        FStringView LeafName(FStringView Path)
         {
-            std::ifstream In(DiskPath, std::ios::binary | std::ios::ate);
-            if (!In)
+            const size_t Slash = Path.find_last_of("/\\");
+            return Slash == FStringView::npos ? Path : Path.substr(Slash + 1);
+        }
+
+        bool BundleDiskFile(FPakWriter& Writer, FStringView DiskPath, FStringView VirtualPath, const TFunction<void(FStringView)>& LogFunc)
+        {
+            TVector<uint8> Bytes;
+            if (!Filesystem::ReadFile(Bytes, DiskPath))
             {
-                LogCooker(LogFunc, FString().sprintf("  [skip] missing extra: %s", DiskPath.string().c_str()).c_str());
-                return false;
-            }
-            const std::streamsize Size = In.tellg();
-            In.seekg(0, std::ios::beg);
-            TVector<uint8> Bytes((size_t)Size);
-            if (Size > 0 && !In.read(reinterpret_cast<char*>(Bytes.data()), Size))
-            {
-                LogCooker(LogFunc, FString().sprintf("  [skip] read failed: %s", DiskPath.string().c_str()).c_str());
+                LogCooker(LogFunc, FString().sprintf("  [skip] unreadable extra: %.*s",
+                    (int)DiskPath.size(), DiskPath.data()).c_str());
                 return false;
             }
             Writer.AddEntry(VirtualPath, TSpan<const uint8>(Bytes.data(), Bytes.size()));
@@ -175,18 +174,21 @@ namespace Lumina
         size_t BundleExtras(FPakWriter& Writer, const FCookOptions& Options, const TFunction<void(FStringView)>& LogFunc)
         {
             size_t Count = 0;
-            std::error_code Ec;
 
             for (const FString& File : Options.ExtraFiles)
             {
-                std::filesystem::path P(File.c_str());
-                if (!std::filesystem::exists(P, Ec) || !std::filesystem::is_regular_file(P, Ec))
+                if (!Filesystem::IsFile(File))
                 {
                     LogCooker(LogFunc, FString().sprintf("  [skip] extra file not found: %s", File.c_str()).c_str());
                     continue;
                 }
-                FString Vp = FString("/Extras/") + P.filename().string().c_str();
-                if (BundleDiskFile(Writer, P, FStringView(Vp.c_str(), Vp.size()), LogFunc))
+
+                const FStringView Leaf = LeafName(File);
+
+                FString Vp = "/Extras/";
+                Vp.append(Leaf.data(), Leaf.size());
+
+                if (BundleDiskFile(Writer, File, FStringView(Vp.c_str(), Vp.size()), LogFunc))
                 {
                     ++Count;
                 }
@@ -194,31 +196,33 @@ namespace Lumina
 
             for (const FString& Dir : Options.ExtraDirectories)
             {
-                std::filesystem::path Root(Dir.c_str());
-                if (!std::filesystem::exists(Root, Ec) || !std::filesystem::is_directory(Root, Ec))
+                if (!Filesystem::IsDirectory(Dir))
                 {
                     LogCooker(LogFunc, FString().sprintf("  [skip] extra dir not found: %s", Dir.c_str()).c_str());
                     continue;
                 }
-                const std::string RootName = Root.filename().string();
-                for (const auto& Entry : std::filesystem::recursive_directory_iterator(Root, Ec))
+
+                const FStringView RootName = LeafName(Dir);
+                const size_t RootLength = Dir.size();
+
+                Filesystem::IterateDirectoryRecursive(Dir, [&](const Filesystem::FDirectoryEntry& Entry)
                 {
-                    if (Ec || !Entry.is_regular_file())
+                    if (Entry.IsDirectory())
                     {
-                        continue;
+                        return;
                     }
-                    std::filesystem::path Rel = std::filesystem::relative(Entry.path(), Root, Ec);
-                    if (Ec)
-                    {
-                        continue;
-                    }
-                    std::string RelStr = Rel.generic_string();
-                    FString Vp = FString("/Extras/") + RootName.c_str() + "/" + RelStr.c_str();
-                    if (BundleDiskFile(Writer, Entry.path(), FStringView(Vp.c_str(), Vp.size()), LogFunc))
+
+                    const FStringView Relative = Entry.FullPath.substr(RootLength);
+
+                    FString Vp = "/Extras/";
+                    Vp.append(RootName.data(), RootName.size());
+                    Vp.append(Relative.data(), Relative.size());
+
+                    if (BundleDiskFile(Writer, Entry.FullPath, FStringView(Vp.c_str(), Vp.size()), LogFunc))
                     {
                         ++Count;
                     }
-                }
+                });
             }
             return Count;
         }

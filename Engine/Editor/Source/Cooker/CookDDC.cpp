@@ -8,7 +8,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstring>
-#include <filesystem>
+#include "Platform/Filesystem/PlatformFilesystem.h"
 
 
 namespace Lumina
@@ -84,8 +84,7 @@ namespace Lumina
             return false;
         }
 
-        std::error_code Ec;
-        if (!std::filesystem::exists(Path.c_str(), Ec) || Ec)
+        if (!Filesystem::Exists(Path))
         {
             GMisses.fetch_add(1, std::memory_order_relaxed);
             return false;
@@ -103,8 +102,7 @@ namespace Lumina
         auto DropCorrupt = [&](const char* Why)
         {
             LOG_WARN("[CookDDC] Discarding corrupt entry {}: {}", Path, Why);
-            std::error_code RmEc;
-            std::filesystem::remove(Path.c_str(), RmEc);
+            Filesystem::RemoveFile(Path);
             GMisses.fetch_add(1, std::memory_order_relaxed);
         };
 
@@ -158,12 +156,9 @@ namespace Lumina
             return false;
         }
 
-        std::error_code Ec;
-        std::filesystem::create_directories(
-            std::filesystem::path(Path.c_str()).parent_path(), Ec);
-        if (Ec)
+        if (!Filesystem::MakeParentDirectoryTree(Path))
         {
-            LOG_WARN("[CookDDC] create_directories({}) failed: {}", Path, Ec.message().c_str());
+            LOG_WARN("[CookDDC] could not create the parent directory of {}", Path);
             return false;
         }
 
@@ -178,33 +173,11 @@ namespace Lumina
         std::memcpy(Framed.data(), &Header, sizeof(Header));
         Framed.insert(Framed.end(), Bytes.begin(), Bytes.end());
 
-        // Atomic publish via temp + rename: a kill mid-write would otherwise leave a short file TryGet accepts as truth.
-        // Concurrent producers on the same key see one complete file, never a half-written one.
-        FString TempPath = Path;
-        TempPath += ".tmp";
-
-        if (!FileHelper::SaveArrayToFile(Framed, TempPath))
+        // A kill mid-write would otherwise leave a short file that TryGet accepts as truth.
+        if (!Filesystem::AtomicWriteFile(Path, TSpan<const uint8>(Framed.data(), Framed.size())))
         {
-            LOG_WARN("[CookDDC] Put: failed to write temp file {}", TempPath);
+            LOG_WARN("[CookDDC] Put: failed to publish {}", Path);
             return false;
-        }
-
-        std::error_code RenameEc;
-        std::filesystem::rename(TempPath.c_str(), Path.c_str(), RenameEc);
-        if (RenameEc)
-        {
-            // Windows can fail rename-over-existing in rare races; remove the target first, then retry (temp cleaned up to avoid .tmp pileup).
-            std::error_code RmEc;
-            std::filesystem::remove(Path.c_str(), RmEc);
-            std::filesystem::rename(TempPath.c_str(), Path.c_str(), RenameEc);
-            if (RenameEc)
-            {
-                LOG_WARN("[CookDDC] Put: rename({} -> {}) failed: {}",
-                    TempPath, Path, RenameEc.message().c_str());
-                std::error_code TmpEc;
-                std::filesystem::remove(TempPath.c_str(), TmpEc);
-                return false;
-            }
         }
 
         GWrittenBytes.fetch_add(Bytes.size(), std::memory_order_relaxed);

@@ -39,6 +39,7 @@
 #include "Paths/Paths.h"
 #include "Physics/Physics.h"
 #include "Platform/Filesystem/FileHelper.h"
+#include "Platform/Filesystem/PlatformFilesystem.h"
 #include "Renderer/RenderManager.h"
 #include "Renderer/ShaderPaths.h"
 #include "Renderer/TextureStreamingManager.h"
@@ -80,8 +81,7 @@ namespace Lumina
         // first settings save and is deliberately untracked, so "not there" is what every clean
         // clone looks like. LoadFileIntoString logs a missing file as an error, which put a red
         // line in the very first thing a new user sees and described nothing wrong.
-        std::error_code PrefsEc;
-        if (!std::filesystem::exists(PrefsPath.c_str(), PrefsEc))
+        if (!Filesystem::Exists(PrefsPath))
         {
             return {};
         }
@@ -129,8 +129,7 @@ namespace Lumina
             LOG_INFO("[PluginManager] No startup project; project plugin overrides not applied.");
             return;
         }
-        std::error_code EC;
-        if (!std::filesystem::exists(std::filesystem::path(LprojPath.data(), LprojPath.data() + LprojPath.size()), EC))
+        if (!Filesystem::Exists(LprojPath))
         {
             LOG_WARN("[PluginManager] Startup project '{}' does not exist; plugin overrides not applied.", LprojPath);
             return;
@@ -220,15 +219,15 @@ namespace Lumina
         FPluginManager::Get().LoadModulesForPhase(EPluginLoadingPhase::Earliest);
 
         const FString& EngineDir = Paths::GetEngineDirectory();
-        if (!EngineDir.empty() && std::filesystem::exists(EngineDir.c_str()))
+        if (!EngineDir.empty() && Filesystem::Exists(EngineDir))
         {
             VFS::Mount<VFS::FNativeFileSystem>("/Engine", EngineDir);
         }
         const FString& InstallDir = Paths::GetEngineInstallDirectory();
-        if (!InstallDir.empty() && std::filesystem::exists(InstallDir.c_str()))
+        if (!InstallDir.empty() && Filesystem::Exists(InstallDir))
         {
             const FString IntermediatesDir = InstallDir + "/Intermediates";
-            std::filesystem::create_directories(IntermediatesDir.c_str());
+            Filesystem::MakeDirectoryTree(IntermediatesDir);
             VFS::Mount<VFS::FNativeFileSystem>("/Intermediates", IntermediatesDir);
         }
         
@@ -703,18 +702,17 @@ namespace Lumina
         FFixedString GameShadersDir     = Paths::Combine(GameRootDir, "Shaders");
         FFixedString BinariesDirectory  = Paths::Combine(ProjectPath, "Binaries");
 
-        std::error_code GameDirEc;
-        std::filesystem::create_directories(GameContentDir.c_str(), GameDirEc);
-        std::filesystem::create_directories(GameScriptsDir.c_str(), GameDirEc);
+        Filesystem::MakeDirectoryTree(GameContentDir);
+        Filesystem::MakeDirectoryTree(GameScriptsDir);
         // Assets in Content/, C# in Scripts/, Slang in Shaders/ -- all three under the one /Game mount.
-        std::filesystem::create_directories(GameShadersDir.c_str(), GameDirEc);
+        Filesystem::MakeDirectoryTree(GameShadersDir);
         
         const FFixedString LogsDir = Paths::Combine(ProjectPath, "Logs");
-        std::filesystem::create_directories(LogsDir.c_str(), GameDirEc);
+        Filesystem::MakeDirectoryTree(LogsDir);
         Logging::SetLogFileDirectory(LogsDir);
 
         const FFixedString CrashDumpsDir = Paths::Combine(ProjectPath, "CrashDumps");
-        std::filesystem::create_directories(CrashDumpsDir.c_str(), GameDirEc);
+        Filesystem::MakeDirectoryTree(CrashDumpsDir);
         CrashHandler::SetCrashDumpDirectory(CrashDumpsDir);
         
         CrashReporting::SetAttribute("Project", ProjectName);
@@ -1218,20 +1216,15 @@ namespace Lumina
 
         // Collect every .pak next to the exe (one per chunk); sorted for deterministic mount order.
         TVector<FFixedString> PakPaths;
-        for (const auto& Entry : std::filesystem::directory_iterator(ExeDir.c_str()))
+        Filesystem::IterateDirectory(ExeDir, [&PakPaths](const Filesystem::FDirectoryEntry& Entry)
         {
-            if (!Entry.is_regular_file())
+            if (Entry.IsDirectory() || Entry.GetExtension() != FStringView(".pak"))
             {
-                continue;
+                return;
             }
-            if (Entry.path().extension() != ".pak")
-            {
-                continue;
-            }
-            FFixedString P;
-            P.assign_convert(Entry.path().generic_string().c_str());
-            PakPaths.push_back(Move(P));
-        }
+
+            PakPaths.emplace_back(Entry.FullPath.data(), Entry.FullPath.size());
+        });
         eastl::sort(PakPaths.begin(), PakPaths.end());
 
         if (PakPaths.empty())
@@ -1267,7 +1260,7 @@ namespace Lumina
         }
         
         const FString LooseGameDir = ExeDir + "/Game";
-        if (std::filesystem::exists(LooseGameDir.c_str()))
+        if (Filesystem::Exists(LooseGameDir))
         {
             VFS::Mount<VFS::FNativeFileSystem>("/Game", LooseGameDir);
             LOG_INFO("FEngine::LoadCookedRuntime: mounted loose overlay at '/Game' -> {}", LooseGameDir.c_str());

@@ -1,4 +1,5 @@
 #include "RuntimePCH.h"
+#include "Memory/MemoryTracking.h"
 #include "AnimationMontage.h"
 
 #include "Assets/AssetTypes/Mesh/Animation/Animation.h"
@@ -87,6 +88,7 @@ namespace Lumina
 
     void CAnimationMontage::PostLoad()
     {
+        LUMINA_MEMORY_SCOPE("Animation");
         Super::PostLoad();
         EnsureNotifyTracks();
     }

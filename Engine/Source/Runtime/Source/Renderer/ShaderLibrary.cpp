@@ -4,6 +4,7 @@
 #include "ShaderPaths.h"
 #include "FileSystem/FileSystem.h"
 #include "Memory/Memory.h"
+#include "Memory/MemoryTracking.h"
 
 namespace Lumina
 {
@@ -209,6 +210,7 @@ namespace Lumina
 
     FShaderH FShaderLibrary::Get(const FName& NameOrPath, TSpan<const FString> Defines)
     {
+        LUMINA_MEMORY_SCOPE("Shaders");
         FShaderLibrary* Library = GShaderLibrary;
 
         // Entries are keyed on the shader's virtual path, so the startup batch, a lookup by bare name and
@@ -398,6 +400,7 @@ namespace Lumina
 
     FShaderH FShaderLibrary::Commit(const FName& Key, ERHIShaderType Type, TSpan<const uint32> Spirv)
     {
+        LUMINA_MEMORY_SCOPE("Shaders");
         FShaderLibrary* Library = GShaderLibrary;
         FScopeLock Lock(Library->Mutex);
 
@@ -445,6 +448,7 @@ namespace Lumina
 
     void FShaderLibrary::Commit(const FShaderHeader& Header)
     {
+        LUMINA_MEMORY_SCOPE("Shaders");
         FShaderLibrary* Library = GShaderLibrary;
         FScopeLock Lock(Library->Mutex);
 

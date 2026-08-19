@@ -1,13 +1,10 @@
 ﻿#pragma once
 
-#include <filesystem>
 #include <thread>
 #include "Containers/Function.h"
 #include "Containers/String.h"
 #include "Core/Threading/Atomic.h"
 #include "Core/Threading/Thread.h"
-
-namespace fs = std::filesystem;
 
 namespace Lumina
 {

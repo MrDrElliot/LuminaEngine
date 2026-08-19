@@ -1,4 +1,5 @@
 ﻿#include "RuntimePCH.h"
+#include "Memory/MemoryTracking.h"
 #include "Animation.h"
 
 #include "Animation/BindPose.h"
@@ -13,130 +14,103 @@ namespace Lumina
 {
     namespace Detail
     {
-        static FVector3 SampleVec3(const TVector<float>& Times, const TVector<FVector3>& Values, float Time)
-        {
-            const size_t N = Times.size();
-            if (N == 0 || Values.empty())
-            {
-                return FVector3(0.0f);
-            }
-            if (N == 1 || Time <= Times[0])
-            {
-                return Values[0];
-            }
-            if (Time >= Times[N - 1])
-            {
-                return Values[N - 1];
-            }
-
-            // Binary search keyframe interval; clips routinely have hundreds of keys.
-            size_t Lo = 0;
-            size_t Hi = N - 1;
-            while (Lo + 1 < Hi)
-            {
-                const size_t Mid = (Lo + Hi) >> 1;
-                (Time < Times[Mid] ? Hi : Lo) = Mid;
-            }
-
-            const float Dt = Times[Lo + 1] - Times[Lo];
-            const float t  = Dt > 0.0f ? (Time - Times[Lo]) / Dt : 0.0f;
-            return Math::Mix(Values[Lo], Values[Lo + 1], t);
-        }
-
-        static FQuat SampleQuat(const TVector<float>& Times, const TVector<FQuat>& Values, float Time)
-        {
-            const size_t N = Times.size();
-            if (N == 0 || Values.empty())
-            {
-                return FQuat(1.0f, 0.0f, 0.0f, 0.0f);
-            }
-            if (N == 1 || Time <= Times[0])
-            {
-                return Values[0];
-            }
-            if (Time >= Times[N - 1])
-            {
-                return Values[N - 1];
-            }
-
-            size_t Lo = 0;
-            size_t Hi = N - 1;
-            while (Lo + 1 < Hi)
-            {
-                const size_t Mid = (Lo + Hi) >> 1;
-                (Time < Times[Mid] ? Hi : Lo) = Mid;
-            }
-
-            const float Dt = Times[Lo + 1] - Times[Lo];
-            const float t  = Dt > 0.0f ? (Time - Times[Lo]) / Dt : 0.0f;
-
-            FQuat Q0 = Values[Lo];
-            FQuat Q1 = Values[Lo + 1];
-            if (Math::Dot(Q0, Q1) < 0.0f)
-            {
-                Q1 = -Q1;
-            }
-            // nlerp, NOT slerp: adjacent keyframes are dense, so a normalized lerp is visually identical while
-            // avoiding acos + 3x sin per channel. Q0/Q1 are hemisphere-aligned above.
-            return Math::Normalize(Q0 * (1.0f - t) + Q1 * t);
-        }
-
         static constexpr uint8 TouchedT = 1u << 0;
         static constexpr uint8 TouchedR = 1u << 1;
         static constexpr uint8 TouchedS = 1u << 2;
         static constexpr uint8 TouchedAll = TouchedT | TouchedR | TouchedS;
+
+        struct FDecodedBone
+        {
+            FVector3 T;
+            FQuat R;
+            FVector3 S;
+            uint8 Touched;
+        };
+
+        static FDecodedBone DecodeBone(const FCompressedAnimData& Data, const FCompressedAnimBone& Bone,
+                                       uint32 Frame0, uint32 Frame1, float Alpha)
+        {
+            FDecodedBone Out;
+            Out.Touched = 0;
+
+            if (Bone.Translation.Format != EAnimTrackFormat::None)
+            {
+                Out.T = Data.DecodeTranslation(Bone.Translation, Frame0, Frame1, Alpha);
+                Out.Touched |= TouchedT;
+            }
+            if (Bone.Rotation.Format != EAnimTrackFormat::None)
+            {
+                Out.R = Data.DecodeRotation(Bone.Rotation, Frame0, Frame1, Alpha);
+                Out.Touched |= TouchedR;
+            }
+            if (Bone.Scale.Format != EAnimTrackFormat::None)
+            {
+                Out.S = Data.DecodeScale(Bone.Scale, Frame0, Frame1, Alpha);
+                Out.Touched |= TouchedS;
+            }
+
+            return Out;
+        }
     }
 
-    const FAnimationResource::FResolvedChannelSet* FAnimationResource::GetResolvedChannelSet(const FSkeletonResource* Skeleton)
+    const FAnimationResource::FResolvedSkeleton* FAnimationResource::GetResolvedSkeleton(const FSkeletonResource* Skeleton)
     {
-        const FResolvedChannelSet* Active = ActiveChannelSet.load(std::memory_order_acquire);
+        const FResolvedSkeleton* Active = ActiveResolvedSkeleton.load(std::memory_order_acquire);
         if (Active && Active->Skeleton == Skeleton && Active->Generation == Skeleton->BindPoseGeneration)
         {
             return Active;
         }
 
-        FScopeLock Lock(ChannelSetMutex);
+        FScopeLock Lock(ResolveMutex);
 
-        for (const TUniquePtr<FResolvedChannelSet>& Set : ChannelSets)
+        for (const TUniquePtr<FResolvedSkeleton>& Resolved : ResolvedSkeletons)
         {
-            if (Set->Skeleton == Skeleton && Set->Generation == Skeleton->BindPoseGeneration)
+            if (Resolved->Skeleton == Skeleton && Resolved->Generation == Skeleton->BindPoseGeneration)
             {
-                ActiveChannelSet.store(Set.get(), std::memory_order_release);
-                return Set.get();
+                ActiveResolvedSkeleton.store(Resolved.get(), std::memory_order_release);
+                return Resolved.get();
             }
         }
 
-        TUniquePtr<FResolvedChannelSet> NewSet = MakeUnique<FResolvedChannelSet>();
+        TUniquePtr<FResolvedSkeleton> NewSet = MakeUnique<FResolvedSkeleton>();
         NewSet->Skeleton   = Skeleton;
         NewSet->Generation = Skeleton->BindPoseGeneration;
-        NewSet->BoneIndices.reserve(Channels.size());
+
+        const int32 NumBones = Skeleton->GetNumBones();
+        NewSet->SkeletonToCompressed.assign(NumBones, INDEX_NONE);
+        NewSet->CompressedBones.reserve(Compressed.Bones.size());
+
         int32 NumUnmatched = 0;
-        for (const FAnimationChannel& Channel : Channels)
+        for (int32 i = 0; i < (int32)Compressed.Bones.size(); ++i)
         {
-            const int32 BoneIndex = Skeleton->FindBoneIndex(Channel.TargetBone);
+            const int32 BoneIndex = Skeleton->FindBoneIndex(Compressed.Bones[i].BoneName);
             NumUnmatched += BoneIndex < 0 ? 1 : 0;
-            NewSet->BoneIndices.push_back(BoneIndex);
+            NewSet->CompressedBones.push_back(BoneIndex);
+
+            if (BoneIndex >= 0 && BoneIndex < NumBones)
+            {
+                NewSet->SkeletonToCompressed[BoneIndex] = i;
+            }
         }
 
-        // Unmatched channels silently freeze their bones at bind pose -- the telltale of an animation
-        // sampled against the wrong skeleton. Once per (clip, skeleton) pairing, since sets are cached.
+        // Unmatched bones silently freeze at bind pose, the telltale of the wrong skeleton.
         if (NumUnmatched > 0)
         {
-            LOG_WARN("Animation '{}': {}/{} channels target bones missing from the skeleton (name mismatch or wrong skeleton)",
-                     Name.c_str(), NumUnmatched, (int32)Channels.size());
+            LOG_WARN("Animation '{}': {}/{} bones are missing from the skeleton (name mismatch or wrong skeleton)",
+                     Name.c_str(), NumUnmatched, (int32)Compressed.Bones.size());
         }
 
-        const FResolvedChannelSet* Result = NewSet.get();
-        ChannelSets.push_back(eastl::move(NewSet));
-        ActiveChannelSet.store(Result, std::memory_order_release);
+        const FResolvedSkeleton* Result = NewSet.get();
+        ResolvedSkeletons.push_back(eastl::move(NewSet));
+        ActiveResolvedSkeleton.store(Result, std::memory_order_release);
         return Result;
     }
 
-    void FAnimationResource::InvalidateResolvedChannelSets()
+    void FAnimationResource::InvalidateResolvedSkeletons()
     {
-        FScopeLock Lock(ChannelSetMutex);
-        ActiveChannelSet.store(nullptr, std::memory_order_release);
-        ChannelSets.clear();
+        FScopeLock Lock(ResolveMutex);
+        ActiveResolvedSkeleton.store(nullptr, std::memory_order_release);
+        ResolvedSkeletons.clear();
     }
 
     CAnimation::CAnimation()
@@ -146,6 +120,7 @@ namespace Lumina
 
     void CAnimation::Serialize(FArchive& Ar)
     {
+        LUMINA_MEMORY_SCOPE("Animation");
         CObject::Serialize(Ar);
 
         if (!AnimationResource)
@@ -154,6 +129,19 @@ namespace Lumina
         }
 
         Ar << *AnimationResource;
+
+        if (Ar.IsReading())
+        {
+            // Clips saved before the cutover still carry channels; compressing here spares a re-import.
+            if (!AnimationResource->Compressed.IsValid() && !AnimationResource->Channels.empty())
+            {
+                AnimCompression::Build(*AnimationResource);
+            }
+
+            AnimationResource->Channels.clear();
+            AnimationResource->Channels.shrink_to_fit();
+            AnimationResource->InvalidateResolvedSkeletons();
+        }
     }
 
     int32 CAnimation::FindCurveIndex(const FName& CurveName) const
@@ -203,36 +191,27 @@ namespace Lumina
 
         Memory::Memset(ScratchTouched.data(), 0, (size_t)NumBones * sizeof(uint8));
 
-        // Pass 1: gather per-bone TRS overrides; one sample per channel, bone indices pre-resolved.
-        const FAnimationResource::FResolvedChannelSet* Resolved = AnimationResource->GetResolvedChannelSet(InSkeleton);
-        const TVector<FAnimationChannel>& Channels = AnimationResource->Channels;
+        // Pass 1: gather per-bone TRS overrides, bone indices pre-resolved.
+        const FAnimationResource::FResolvedSkeleton* Resolved = AnimationResource->GetResolvedSkeleton(InSkeleton);
+        const FCompressedAnimData& Compressed = AnimationResource->Compressed;
 
-        for (SIZE_T c = 0; c < Channels.size(); ++c)
+        uint32 Frame0, Frame1;
+        float Alpha;
+        Compressed.GetFrameBlend(Time, AnimationResource->Duration, Frame0, Frame1, Alpha);
+
+        for (SIZE_T b = 0; b < Compressed.Bones.size(); ++b)
         {
-            const int32 BoneIdx = Resolved->BoneIndices[c];
+            const int32 BoneIdx = Resolved->CompressedBones[b];
             if (BoneIdx < 0 || BoneIdx >= NumBones)
             {
                 continue;
             }
 
-            const FAnimationChannel& Channel = Channels[c];
-            switch (Channel.TargetPath)
-            {
-            case FAnimationChannel::ETargetPath::Translation:
-                ScratchT[BoneIdx]       = Detail::SampleVec3(Channel.Timestamps, Channel.Translations, Time);
-                ScratchTouched[BoneIdx] |= Detail::TouchedT;
-                break;
-            case FAnimationChannel::ETargetPath::Rotation:
-                ScratchR[BoneIdx]       = Detail::SampleQuat(Channel.Timestamps, Channel.Rotations, Time);
-                ScratchTouched[BoneIdx] |= Detail::TouchedR;
-                break;
-            case FAnimationChannel::ETargetPath::Scale:
-                ScratchS[BoneIdx]       = Detail::SampleVec3(Channel.Timestamps, Channel.Scales, Time);
-                ScratchTouched[BoneIdx] |= Detail::TouchedS;
-                break;
-            default:
-                break;
-            }
+            const Detail::FDecodedBone Decoded = Detail::DecodeBone(Compressed, Compressed.Bones[b], Frame0, Frame1, Alpha);
+            ScratchT[BoneIdx]       = Decoded.T;
+            ScratchR[BoneIdx]       = Decoded.R;
+            ScratchS[BoneIdx]       = Decoded.S;
+            ScratchTouched[BoneIdx] = Decoded.Touched;
         }
 
         // Pass 2: local matrices fused with FK; Bones[] is parents-before-children so a single linear pass works.
@@ -294,32 +273,25 @@ namespace Lumina
         // of a per-bone decompose. Bones past the LOD cut keep their bind-pose locals.
         OutPose.ResetToBindPose(InSkeleton);
 
-        const FAnimationResource::FResolvedChannelSet* Resolved = AnimationResource->GetResolvedChannelSet(InSkeleton);
-        const TVector<FAnimationChannel>& Channels = AnimationResource->Channels;
+        const FAnimationResource::FResolvedSkeleton* Resolved = AnimationResource->GetResolvedSkeleton(InSkeleton);
+        const FCompressedAnimData& Compressed = AnimationResource->Compressed;
 
-        for (SIZE_T c = 0; c < Channels.size(); ++c)
+        uint32 Frame0, Frame1;
+        float Alpha;
+        Compressed.GetFrameBlend(Time, AnimationResource->Duration, Frame0, Frame1, Alpha);
+
+        for (SIZE_T b = 0; b < Compressed.Bones.size(); ++b)
         {
-            const int32 BoneIdx = Resolved->BoneIndices[c];
+            const int32 BoneIdx = Resolved->CompressedBones[b];
             if (BoneIdx < 0 || BoneIdx >= ActiveBones)
             {
                 continue;
             }
 
-            const FAnimationChannel& Channel = Channels[c];
-            switch (Channel.TargetPath)
-            {
-            case FAnimationChannel::ETargetPath::Translation:
-                OutPose.Translations[BoneIdx] = Detail::SampleVec3(Channel.Timestamps, Channel.Translations, Time);
-                break;
-            case FAnimationChannel::ETargetPath::Rotation:
-                OutPose.Rotations[BoneIdx] = Detail::SampleQuat(Channel.Timestamps, Channel.Rotations, Time);
-                break;
-            case FAnimationChannel::ETargetPath::Scale:
-                OutPose.Scales[BoneIdx] = Detail::SampleVec3(Channel.Timestamps, Channel.Scales, Time);
-                break;
-            default:
-                break;
-            }
+            const Detail::FDecodedBone Decoded = Detail::DecodeBone(Compressed, Compressed.Bones[b], Frame0, Frame1, Alpha);
+            if (Decoded.Touched & Detail::TouchedT) OutPose.Translations[BoneIdx] = Decoded.T;
+            if (Decoded.Touched & Detail::TouchedR) OutPose.Rotations[BoneIdx]    = Decoded.R;
+            if (Decoded.Touched & Detail::TouchedS) OutPose.Scales[BoneIdx]       = Decoded.S;
         }
     }
 
@@ -328,31 +300,27 @@ namespace Lumina
     {
         AnimPose::GetBindLocalTRS(InSkeleton, BoneIndex, OutT, OutR, OutS);
 
-        const FAnimationResource::FResolvedChannelSet* Resolved = AnimationResource->GetResolvedChannelSet(InSkeleton);
-        const TVector<FAnimationChannel>& Channels = AnimationResource->Channels;
+        const FAnimationResource::FResolvedSkeleton* Resolved = AnimationResource->GetResolvedSkeleton(InSkeleton);
+        const FCompressedAnimData& Compressed = AnimationResource->Compressed;
 
-        for (SIZE_T c = 0; c < Channels.size(); ++c)
+        if (BoneIndex < 0 || BoneIndex >= (int32)Resolved->SkeletonToCompressed.size())
         {
-            if (Resolved->BoneIndices[c] != BoneIndex)
-            {
-                continue;
-            }
-
-            const FAnimationChannel& Channel = Channels[c];
-            switch (Channel.TargetPath)
-            {
-            case FAnimationChannel::ETargetPath::Translation:
-                OutT = Detail::SampleVec3(Channel.Timestamps, Channel.Translations, Time);
-                break;
-            case FAnimationChannel::ETargetPath::Rotation:
-                OutR = Detail::SampleQuat(Channel.Timestamps, Channel.Rotations, Time);
-                break;
-            case FAnimationChannel::ETargetPath::Scale:
-                OutS = Detail::SampleVec3(Channel.Timestamps, Channel.Scales, Time);
-                break;
-            default:
-                break;
-            }
+            return;
         }
+
+        const int32 CompressedIndex = Resolved->SkeletonToCompressed[BoneIndex];
+        if (CompressedIndex == INDEX_NONE)
+        {
+            return;
+        }
+
+        uint32 Frame0, Frame1;
+        float Alpha;
+        Compressed.GetFrameBlend(Time, AnimationResource->Duration, Frame0, Frame1, Alpha);
+
+        const Detail::FDecodedBone Decoded = Detail::DecodeBone(Compressed, Compressed.Bones[CompressedIndex], Frame0, Frame1, Alpha);
+        if (Decoded.Touched & Detail::TouchedT) OutT = Decoded.T;
+        if (Decoded.Touched & Detail::TouchedR) OutR = Decoded.R;
+        if (Decoded.Touched & Detail::TouchedS) OutS = Decoded.S;
     }
 }

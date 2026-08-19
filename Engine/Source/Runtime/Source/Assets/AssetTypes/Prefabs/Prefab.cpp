@@ -1,4 +1,5 @@
 ﻿#include "RuntimePCH.h"
+#include "Memory/MemoryTracking.h"
 #include "Prefab.h"
 #include "PrefabComponents.h"
 #include "PrefabOverride.h"
@@ -112,6 +113,7 @@ namespace Lumina
 
     void CPrefab::Serialize(FArchive& Ar)
     {
+        LUMINA_MEMORY_SCOPE("Prefabs");
         CObject::Serialize(Ar);
 
         // A variant stores its DELTA here, never resolved data: resolved data would go stale the moment
@@ -131,6 +133,7 @@ namespace Lumina
 
     void CPrefab::PostLoad()
     {
+        LUMINA_MEMORY_SCOPE("Prefabs");
         CObject::PostLoad();
 
         // Not in Serialize: resolving reads the parent's registry, and a dependency's DATA is not loaded

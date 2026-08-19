@@ -3,6 +3,7 @@
 
 #include "Core/Threading/Thread.h"
 #include "Memory/Memory.h"
+#include "Memory/MemoryTracking.h"
 
 
 namespace Lumina
@@ -138,6 +139,7 @@ namespace Lumina
 
     FStringPool::Chunk* FStringPool::AllocateChunk(size_t Capacity)
     {
+        LUMINA_MEMORY_SCOPE("FName");
         const size_t BlockSize = sizeof(Chunk) + Capacity;
         Chunk* NewChunk = static_cast<Chunk*>(Memory::Malloc(BlockSize, alignof(Chunk)));
 

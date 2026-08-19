@@ -1,4 +1,5 @@
 ﻿#include "RuntimePCH.h"
+#include "Memory/MemoryTracking.h"
 #include "GeometryCollection.h"
 #include <cfloat>
 #include <cmath>
@@ -459,12 +460,14 @@ namespace Lumina
 
     void CGeometryCollection::Serialize(FArchive& Ar)
     {
+        LUMINA_MEMORY_SCOPE("Geometry Collection");
         Super::Serialize(Ar);
         Ar << Data;
     }
 
     void CGeometryCollection::PostLoad()
     {
+        LUMINA_MEMORY_SCOPE("Geometry Collection");
         Super::PostLoad();
         BuildPieceMeshes();
     }

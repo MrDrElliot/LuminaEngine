@@ -59,6 +59,9 @@ namespace Lumina
         void DrawCategoryTable(float Height);
         void DrawCallSites();
 
+        // Walks the live-allocation ledger for the selected category; independent of stack capture.
+        void CopyLedgerAnalysisToClipboard();
+
         // GPU snapshot (backend-agnostic). Refreshed on a timer; always available.
         RHI::FGPUMemoryStats    GPUStats;
         RHI::FGPUDeviceInfo     DeviceInfo;
@@ -116,15 +119,27 @@ namespace Lumina
         // Top Call Sites ranking: false = live bytes (leaks), true = total allocs (churn).
         bool  bSortCallSitesByAllocs = false;
 
+        // Category row picked in the table; empty means rank call sites across every category.
+        FString CallSiteCategory;
+
+        // Whether -memcallstacks put the process in capture mode; closing the window must not undo that.
+        bool  bCaptureAtStartup = false;
+
         // Drops the frames every stack ends in (CRT entry, thread start thunks) and the container /
         // allocator plumbing at the top, leaving the frames that name actual engine code.
         bool  bHideNoiseFrames = true;
+
+        // Row text derives purely from Function, so it is built once per symbol, not per row per frame.
+        static constexpr size_t kRowLabelMaxLen   = 96;
+        static constexpr size_t kFrameLabelMaxLen = 110;
 
         // One resolved frame, split into what you read and where it lives.
         struct FResolvedFrame
         {
             FString Function;       // demangled name, or "Module.dll+0x..." when there is no PDB
             FString Location;       // "File.cpp:1234", empty when the frame has no line info
+            FString RowLabel;       // Function shortened to kRowLabelMaxLen for the headline row
+            FString FrameLabel;     // Function shortened to kFrameLabelMaxLen for the expanded stack
             bool    bPlumbing = false;   // container/allocator internals: HOW it allocated, not WHO asked
             bool    bNoise    = false;   // CRT/OS entry frames, identical on every stack
         };
@@ -133,6 +148,16 @@ namespace Lumina
         // worth of frames every UI frame is far too slow to do live. Addresses are stable for the
         // process, so each one is resolved exactly once.
         THashMap<void*, FResolvedFrame> SymbolCache;
+
+        // One row per category, rebuilt every frame; held as a member so the buffer is reused.
+        struct FCategoryRow
+        {
+            const Memory::FMemoryCategoryStats* S;
+            int64                               DeltaBytes;
+            int64                               DeltaCount;
+        };
+
+        TVector<FCategoryRow> CategoryRows;
 
         const FResolvedFrame& ResolveCached(void* Address);
 #endif

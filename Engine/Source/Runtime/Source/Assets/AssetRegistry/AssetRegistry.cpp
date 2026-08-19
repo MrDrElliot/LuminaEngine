@@ -9,6 +9,7 @@
 #include "Core/Plugin/PluginManager.h"
 #include "Core/Serialization/Archiver.h"
 #include "FileSystem/FileSystem.h"
+#include "Memory/MemoryTracking.h"
 #include "Paths/Paths.h"
 #include "Platform/Filesystem/FileHelper.h"
 #include "TaskSystem/TaskSystem.h"
@@ -19,7 +20,7 @@
 #include "nlohmann/json.hpp"
 
 #include <chrono>
-#include <filesystem>
+#include "Platform/Filesystem/PlatformFilesystem.h"
 #include "Log/Log.h"
 
 namespace Lumina
@@ -49,21 +50,8 @@ namespace Lumina
 
         int64 FileMTimeNanos(FStringView VirtualPath)
         {
-            // Resolve virtual -> absolute and stat via std::filesystem (VFS has no uniform mtime accessor).
-            const FFixedString Resolved = VFS::ResolvePath(VirtualPath);
-            if (Resolved.empty())
-            {
-                return 0;
-            }
-            std::error_code Ec;
-            const auto Ftime = std::filesystem::last_write_time(
-                std::filesystem::path(Resolved.c_str(), Resolved.c_str() + Resolved.size()), Ec);
-            if (Ec)
-            {
-                return 0;
-            }
-            const auto Dur = Ftime.time_since_epoch();
-            return std::chrono::duration_cast<std::chrono::nanoseconds>(Dur).count();
+            const FPathString Resolved = VFS::ResolvePath(VirtualPath);
+            return Resolved.empty() ? 0 : Filesystem::LastWriteTime(Resolved);
         }
 
         // Quick xxh64 of the on-disk asset bytes. Reads via VFS so it works
@@ -111,6 +99,7 @@ namespace Lumina
 
     void FAssetRegistry::RunInitialDiscovery()
     {
+        LUMINA_MEMORY_SCOPE("Asset Registry");
         LUMINA_PROFILE_SCOPE();
 
         // Load cached registry first; the discovery pass below only
@@ -432,6 +421,7 @@ namespace Lumina
 
     void FAssetRegistry::RunTextAssetDiscovery()
     {
+        LUMINA_MEMORY_SCOPE("Asset Registry");
         LUMINA_PROFILE_SCOPE();
 
         TVector<FFixedString> Roots;
@@ -712,6 +702,7 @@ namespace Lumina
 
     void FAssetRegistry::RebuildReverseMap()
     {
+        LUMINA_MEMORY_SCOPE("Asset Registry");
         // Caller holds ReverseMapMutex write lock.
         ReverseDepMap.clear();
         FReadScopeLock AssetsLock(AssetsMutex);
@@ -759,6 +750,7 @@ namespace Lumina
 
     void FAssetRegistry::ProcessPackagePath(FStringView Path)
     {
+        LUMINA_MEMORY_SCOPE("Asset Registry");
         // Pre-check mtime + content hash vs cache; hash is over raw compressed bytes, so source or
         // compression-setting changes invalidate it.
         const int64 MTime = FileMTimeNanos(Path);
@@ -971,6 +963,7 @@ namespace Lumina
 
     bool FAssetRegistry::LoadFromArchive(FArchive& Ar)
     {
+        LUMINA_MEMORY_SCOPE("Asset Registry");
         uint32 Tag = 0;
         Ar << Tag;
         if (Tag != kAssetRegistryCacheTag)
@@ -1143,9 +1136,7 @@ namespace Lumina
         const FString CachePath = AssetDbPath();
         if (CachePath.empty()) return;
 
-        std::error_code Ec;
-        std::filesystem::create_directories(
-            std::filesystem::path(CachePath.c_str()).parent_path(), Ec);
+        Filesystem::MakeParentDirectoryTree(CachePath);
 
         nlohmann::json Root = nlohmann::json::object();
         {
@@ -1196,12 +1187,12 @@ namespace Lumina
 
     bool FAssetRegistry::LoadCache()
     {
+        LUMINA_MEMORY_SCOPE("Asset Registry");
         const FString CachePath = AssetDbPath();
         if (CachePath.empty()) return false;
 
         // First-launch / fresh-clone: no cache yet. Quiet exit; full rescan is the correct fallback.
-        std::error_code Ec;
-        if (!std::filesystem::exists(std::filesystem::path(CachePath.c_str()), Ec))
+        if (!Filesystem::Exists(CachePath))
         {
             return false;
         }

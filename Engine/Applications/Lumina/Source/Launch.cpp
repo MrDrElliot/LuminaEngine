@@ -1,4 +1,5 @@
 ﻿#include "Core/Application/Application.h"
+#include "Memory/MemoryTracking.h"
 #include "Core/Application/ApplicationGlobalState.h"
 #if WITH_EDITOR
 #include "LuminaEditor.h"
@@ -46,6 +47,11 @@ int LuminaMain(int ArgC, char** ArgV)  // NOLINT(misc-use-internal-linkage)
 
     FCommandLine Parsed{ArgC, ArgV};
     GCommandLine = &Parsed;
+
+#if LUMINA_MEMORY_TRACKING
+    // Steady-state memory predates the profiler window, so naming it needs capture from allocation one.
+    Memory::SetCaptureCallstacks(Parsed.Has("memcallstacks"));
+#endif
 
     FApplication Application{};
     GApp = &Application;

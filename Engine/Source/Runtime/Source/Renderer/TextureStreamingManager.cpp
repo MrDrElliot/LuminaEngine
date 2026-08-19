@@ -8,6 +8,7 @@
 #include "Core/Math/Math.h"
 #include "Core/Object/Package/Package.h"
 #include "Core/Profiler/Profile.h"
+#include "Memory/MemoryTracking.h"
 #include "Core/Threading/Thread.h"
 #include "Log/Log.h"
 #include "MaterialManager.h"
@@ -298,6 +299,7 @@ namespace Lumina
         LUMINA_PROFILE_VALUE("Streaming/UploadBudgetLeftKiB", (int64)(FrameUploadBudget / 1024));
         LUMINA_PROFILE_VALUE("Streaming/ResidentMiB", (int64)(ResidentBytesTotal / (1024 * 1024)));
         LUMINA_PROFILE_VALUE("Streaming/LoadsInFlight", (int64)PendingLoads.size());
+        LUMINA_PROFILE_VALUE("Streaming/LoadStagingKiB", (int64)(PendingLoadBytes / 1024));
         LUMINA_PROFILE_VALUE("Streaming/ResidencyChanges", (int64)(PromotedLastFrame + DemotedLastFrame));
     }
 
@@ -356,7 +358,7 @@ namespace Lumina
     {
         LUMINA_PROFILE_SECTION("Streaming::ComputeWantedMips");
 
-        const bool bEnabled = Settings().bEnabled;
+        const bool bStreaming = Settings().bTextureStreaming;
 
         for (FStreamingTexture& Entry : Textures)
         {
@@ -366,7 +368,7 @@ namespace Lumina
                 continue;
             }
 
-            if (!bEnabled || Entry.PinCount > 0)
+            if (!bStreaming || Entry.PinCount > 0)
             {
                 Entry.WantedFirstMip = 0;
                 continue;
@@ -454,7 +456,7 @@ namespace Lumina
         }
 
         const uint64 Budget = GetBudgetBytes();
-        if (Total <= Budget || !Settings().bEnabled)
+        if (Total <= Budget || !Settings().bTextureStreaming)
         {
             return;
         }
@@ -603,8 +605,34 @@ namespace Lumina
     void FTextureStreamingManager::IssuePromotions()
     {
         LUMINA_PROFILE_SECTION("Streaming::IssuePromotions");
+        LUMINA_MEMORY_SCOPE("Texture Streaming");
 
-        const int32 MaxInFlight = Math::Max(Settings().MaxLoadsInFlight, 1);
+        const int32  MaxInFlight     = Math::Max(Settings().MaxLoadsInFlight, 1);
+        const uint64 MaxStagingBytes = (uint64)Math::Max(Settings().MaxLoadStagingMB, 1) * 1024ull * 1024ull;
+
+        // Sized before the load is built: building one copies every already-resident mip.
+        auto PredictStagingBytes = [](const CTexture* Texture, uint32 TargetFirstMip, uint32 SourceFirstMip, uint32 LayerCount)
+        {
+            const FTextureResource& Resource = Texture->GetTextureResource();
+            uint64 Bytes = 0;
+
+            for (uint32 Layer = 0; Layer < LayerCount; ++Layer)
+            {
+                for (uint32 Mip = TargetFirstMip; Mip < SourceFirstMip; ++Mip)
+                {
+                    const uint32 MipIndex = Resource.MipIndex(Layer, Mip);
+                    if (MipIndex >= Resource.Mips.size())
+                    {
+                        continue;
+                    }
+
+                    const FTextureResource::FMip& MipData = Resource.Mips[MipIndex];
+                    Bytes += !MipData.Pixels.empty() ? (uint64)MipData.Pixels.size()
+                                                     : (uint64)Math::Max<int64>(MipData.BulkRef.Size, 0);
+                }
+            }
+            return Bytes;
+        };
 
         // Ordered by how starved each texture is, NOT by registry order. With only a handful of IO slots,
         // walking the registry lets whatever happens to be registered first take them -- so a distant
@@ -654,12 +682,21 @@ namespace Lumina
             CTexture*          Texture = Entry.Texture.Get();
 
             const uint32 CurrentFirstMip = Texture->GetResidentFirstMip();
+            const uint32 LayerCount      = Math::Max(Texture->GetTextureResource().GetNumLayers(), 1u);
+            const uint64 StagingBytes    = PredictStagingBytes(Texture, Entry.BudgetedFirstMip, CurrentFirstMip, LayerCount);
+
+            // Skip, not break: priority-ordered, so an oversized texture must not stall smaller ones.
+            if (!PendingLoads.empty() && PendingLoadBytes + StagingBytes > MaxStagingBytes)
+            {
+                continue;
+            }
 
             TUniquePtr<FPendingLoad> Load = MakeUnique<FPendingLoad>();
             Load->Texture        = Texture;
             Load->TargetFirstMip = Entry.BudgetedFirstMip;
             Load->SourceFirstMip = (uint8)CurrentFirstMip;
-            Load->LayerCount     = Math::Max(Texture->GetTextureResource().GetNumLayers(), 1u);
+            Load->LayerCount     = LayerCount;
+            Load->StagingBytes   = StagingBytes;
             Load->MipBytes.resize((SIZE_T)Load->LayerCount * Load->MipSpan());
             Load->MipRefs.resize((SIZE_T)Load->LayerCount * Load->MipSpan());
 
@@ -704,6 +741,7 @@ namespace Lumina
 
             FPendingLoad* Raw = Load.get();
             PendingLoads.push_back(Move(Load));
+            PendingLoadBytes += StagingBytes;
             Entry.bLoadInFlight = true;
 
             // Only the disk read happens off-thread, against refs and a package that were resolved above;
@@ -711,6 +749,7 @@ namespace Lumina
             Task::AsyncTask(1, 1, [Raw](uint32, uint32, uint32)
             {
                 LUMINA_PROFILE_SECTION("Texture Stream Read");
+                LUMINA_MEMORY_SCOPE("Texture Streaming");
 
                 // Resolved here rather than captured: a captured CPackage* would have to outlive the read
                 // on its own, whereas the texture's weak pointer already tells us whether any of this is
@@ -749,6 +788,7 @@ namespace Lumina
     void FTextureStreamingManager::ProcessCompletedLoads()
     {
         LUMINA_PROFILE_SECTION("Streaming::ProcessCompletedLoads");
+        LUMINA_MEMORY_SCOPE("Texture Streaming");
 
         // Applying a promotion is a full re-upload of the texture's resident chain (Recreate hands back an
         // empty image), which is a game-thread memcpy into the staging ring. Several large textures
@@ -851,6 +891,7 @@ namespace Lumina
                 }
             }
 
+            PendingLoadBytes -= Math::Min(PendingLoadBytes, Load.StagingBytes);
             PendingLoads[i] = Move(PendingLoads.back());
             PendingLoads.pop_back();
         }

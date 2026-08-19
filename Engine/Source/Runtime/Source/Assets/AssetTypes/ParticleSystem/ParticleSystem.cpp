@@ -1,4 +1,5 @@
 ﻿#include "RuntimePCH.h"
+#include "Memory/MemoryTracking.h"
 #include "ParticleSystem.h"
 #include "Renderer/ShaderLibrary.h"
 #include "World/Entity/Components/ParticleSystemComponent.h"
@@ -26,6 +27,7 @@ namespace Lumina
 
     void CParticleEmitter::PostLoad()
     {
+        LUMINA_MEMORY_SCOPE("Particles");
         if (!ComputeShaderBinaries.empty())
         {
             ComputeShader = FShaderLibrary::Commit(FName((GetGUID().ToString() + "_CS").c_str()), ERHIShaderType::Compute,
@@ -41,11 +43,13 @@ namespace Lumina
 
     void CParticleSystem::Serialize(FArchive& Ar)
     {
+        LUMINA_MEMORY_SCOPE("Particles");
         CObject::Serialize(Ar);
     }
 
     void CParticleSystem::PostLoad()
     {
+        LUMINA_MEMORY_SCOPE("Particles");
         // Emitters is the only thing every consumer indexes, so it is never allowed to be empty -- an asset
         // that somehow arrives with none gets a default rather than making each caller handle the case.
         if (Emitters.empty())

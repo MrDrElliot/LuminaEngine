@@ -1,4 +1,5 @@
 ﻿#include "RuntimePCH.h"
+#include "Memory/MemoryTracking.h"
 #include "Skeleton.h"
 #include "Renderer/SkeletonResource.h"
 
@@ -6,6 +7,7 @@ namespace Lumina
 {
     void CSkeleton::Serialize(FArchive& Ar)
     {
+        LUMINA_MEMORY_SCOPE("Animation");
         CObject::Serialize(Ar);
 
         if (!SkeletonResource)

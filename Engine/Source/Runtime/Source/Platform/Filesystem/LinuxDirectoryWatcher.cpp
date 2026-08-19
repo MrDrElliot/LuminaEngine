@@ -5,7 +5,7 @@
 
 #include <cerrno>
 #include <cstring>
-#include <filesystem>
+#include "PlatformFilesystem.h"
 #include <poll.h>
 #include <sys/inotify.h>
 #include <unistd.h>
@@ -52,24 +52,15 @@ namespace Lumina
                 return;
             }
 
-            std::error_code Error;
-            std::filesystem::recursive_directory_iterator Iterator(
-                Root.c_str(), std::filesystem::directory_options::skip_permission_denied, Error);
-
-            if (Error)
-            {
-                return;
-            }
-
-            for (const std::filesystem::directory_entry& Entry : Iterator)
+            Filesystem::IterateDirectoryRecursive(Root, [&Callback](const Filesystem::FDirectoryEntry& Entry)
             {
                 FFileEvent Event;
-                Event.Path = Entry.path().string().c_str();
+                Event.Path.assign(Entry.FullPath.data(), Entry.FullPath.size());
                 Event.Action = EFileAction::Added;
                 Paths::Normalize(Event.Path);
 
                 Callback(Event);
-            }
+            });
         }
 
         void AddWatchTree(int Notify, const FString& Root, bool bRecursive, FWatchPaths& OutWatchPaths)
@@ -79,24 +70,23 @@ namespace Lumina
                 return;
             }
 
-            std::error_code Error;
-            std::filesystem::recursive_directory_iterator Iterator(
-                Root.c_str(), std::filesystem::directory_options::skip_permission_denied, Error);
-
-            if (Error)
-            {
-                LOG_WARN("DirectoryWatcher: cannot enumerate '{0}': {1}", Root, Error.message().c_str());
-                return;
-            }
-
-            for (const std::filesystem::directory_entry& Entry : Iterator)
-            {
-                if (Entry.is_directory(Error) && !Error)
+            const bool bWalked = Filesystem::IterateDirectoryRecursive(Root,
+                [Notify, &OutWatchPaths](const Filesystem::FDirectoryEntry& Entry)
                 {
-                    FString Child = Entry.path().string().c_str();
+                    if (!Entry.IsDirectory())
+                    {
+                        return;
+                    }
+
+                    FString Child(Entry.FullPath.data(), Entry.FullPath.size());
                     Paths::Normalize(Child);
                     AddWatch(Notify, Child, OutWatchPaths);
-                }
+                });
+
+            if (!bWalked)
+            {
+                LOG_WARN("DirectoryWatcher: cannot enumerate '{0}': {1}", Root,
+                    Filesystem::ToString(Filesystem::GetLastResult()));
             }
         }
     }
@@ -138,9 +128,7 @@ namespace Lumina
         Callback = Move(InCallback);
         bWatchRecursive = bRecursive;
 
-        std::filesystem::path FSPath(Path.c_str());
-
-        if (!std::filesystem::exists(FSPath) || !std::filesystem::is_directory(FSPath))
+        if (!Filesystem::IsDirectory(Path))
         {
             return false;
         }

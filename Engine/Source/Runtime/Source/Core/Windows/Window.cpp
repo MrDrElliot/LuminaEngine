@@ -1,4 +1,5 @@
 ﻿#include "RuntimePCH.h"
+#include "Memory/MemoryTracking.h"
 #include "Window.h"
 #include "Core/Windows/GLFWInclude.h"
 #include "stb_image.h"
@@ -22,11 +23,13 @@ namespace
 
 	void* CustomGLFWAllocate(size_t size, void* user)
 	{
+		LUMINA_MEMORY_SCOPE("Windowing");
 		return Lumina::Memory::Malloc(size);
 	}
 
 	void* CustomGLFWReallocate(void* block, size_t size, void* user)
 	{
+		LUMINA_MEMORY_SCOPE("Windowing");
 		return Lumina::Memory::Realloc(block, size);
 	}
 

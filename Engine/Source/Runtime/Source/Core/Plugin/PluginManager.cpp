@@ -10,7 +10,7 @@
 #include "Paths/Paths.h"
 #include "Platform/Process/PlatformProcess.h"
 
-#include <filesystem>
+#include "Platform/Filesystem/PlatformFilesystem.h"
 
 namespace Lumina
 {
@@ -46,86 +46,58 @@ namespace Lumina
 
     void FPluginManager::DiscoverDirectory(FStringView RootView, bool bIsEngine)
     {
-        std::error_code EC;
-        std::filesystem::path Root(RootView.data(), RootView.data() + RootView.size());
-        const bool bExists = std::filesystem::exists(Root, EC);
-        if (EC)
+        if (!Filesystem::IsDirectory(RootView))
         {
-            LOG_WARN("[PluginManager] exists({}) failed: {}", RootView, EC.message().c_str());
-            return;
-        }
-        if (!bExists)
-        {
-            return;
-        }
-        if (!std::filesystem::is_directory(Root, EC) || EC)
-        {
-            if (EC) LOG_WARN("[PluginManager] is_directory({}) failed: {}", RootView, EC.message().c_str());
             return;
         }
 
         // Each subdir is a candidate plugin; prefer <SubDir>/<SubDir>.lplugin, else any .lplugin.
-        auto It = std::filesystem::directory_iterator(Root, EC);
-        if (EC)
+        Filesystem::IterateDirectory(RootView, [this, bIsEngine](const Filesystem::FDirectoryEntry& Entry)
         {
-            LOG_WARN("[PluginManager] directory_iterator({}) failed: {}", RootView, EC.message().c_str());
-            return;
-        }
-
-        for (const auto& Entry : It)
-        {
-            EC.clear();
-            if (!Entry.is_directory(EC) || EC)
+            if (!Entry.IsDirectory())
             {
-                if (EC) LOG_WARN("[PluginManager] is_directory({}) failed: {}", Entry.path().string().c_str(), EC.message().c_str());
-                continue;
+                return;
             }
 
-            std::filesystem::path PluginDir = Entry.path();
-            std::filesystem::path Conventional = PluginDir / (PluginDir.filename().string() + ".lplugin");
-            std::filesystem::path Descriptor;
+            const FString PluginDir(Entry.FullPath.data(), Entry.FullPath.size());
 
-            EC.clear();
-            if (std::filesystem::exists(Conventional, EC))
+            FString Conventional = PluginDir;
+            Conventional.push_back('/');
+            Conventional.append(Entry.Name.data(), Entry.Name.size());
+            Conventional.append(".lplugin");
+
+            FString Descriptor;
+
+            if (Filesystem::Exists(Conventional))
             {
                 Descriptor = Conventional;
             }
             else
             {
-                EC.clear();
-                auto Inner = std::filesystem::directory_iterator(PluginDir, EC);
-                if (EC)
+                Filesystem::IterateDirectory(PluginDir, [&](const Filesystem::FDirectoryEntry& Candidate) -> Filesystem::EVisit
                 {
-                    LOG_WARN("[PluginManager] directory_iterator({}) failed: {}", PluginDir.string().c_str(), EC.message().c_str());
-                    continue;
-                }
-                bool bFoundFallback = false;
-                for (const auto& Candidate : Inner)
-                {
-                    EC.clear();
-                    if (Candidate.is_regular_file(EC) && Candidate.path().extension() == ".lplugin")
+                    if (Candidate.IsDirectory() || Candidate.GetExtension() != FStringView(".lplugin"))
                     {
-                        Descriptor = Candidate.path();
-                        bFoundFallback = true;
-                        // Warn so a misnamed descriptor surfaces in the log
-                        // instead of "first .lplugin wins" silently.
-                        LOG_WARN("[PluginManager] {} contains a .lplugin not matching the folder name; using {} (rename to {})",
-                            PluginDir.string().c_str(),
-                            Descriptor.filename().string().c_str(),
-                            Conventional.filename().string().c_str());
-                        break;
+                        return Filesystem::EVisit::Continue;
                     }
-                }
-                (void)bFoundFallback;
+
+                    Descriptor.assign(Candidate.FullPath.data(), Candidate.FullPath.size());
+
+                    // Warn so a misnamed descriptor surfaces instead of "first .lplugin wins" silently.
+                    LOG_WARN("[PluginManager] {} contains a .lplugin not matching the folder name; using {} (rename to {})",
+                        PluginDir, Candidate.Name, Conventional);
+
+                    return Filesystem::EVisit::Stop;
+                });
             }
 
             if (Descriptor.empty())
             {
-                continue;
+                return;
             }
 
-            FString DescriptorPath(Descriptor.string().c_str());
-            FString PluginDirStr(PluginDir.string().c_str());
+            FString DescriptorPath = Descriptor;
+            FString PluginDirStr   = PluginDir;
             Paths::Normalize(DescriptorPath);
             Paths::Normalize(PluginDirStr);
 
@@ -134,7 +106,7 @@ namespace Lumina
             if (!FPluginDescriptor::LoadFromFile(DescriptorPath, Parsed, Error))
             {
                 LOG_WARN("[PluginManager] Skipping plugin at {}: {}", DescriptorPath, Error);
-                continue;
+                return;
             }
             Parsed.bIsEnginePlugin = bIsEngine;
 
@@ -144,7 +116,7 @@ namespace Lumina
             {
                 LOG_WARN("[PluginManager] Duplicate plugin name '{}' at {} ignored (already registered)",
                     Parsed.Name, DescriptorPath);
-                continue;
+                return;
             }
 
             LOG_INFO("[PluginManager] Discovered {} plugin '{}' ({} modules)",
@@ -168,7 +140,7 @@ namespace Lumina
             OwnedPlugins.emplace_back(Move(Owned));
             PluginLookup.emplace(Key, Raw);
             bLoadOrderDirty = true;
-        }
+        });
     }
 
     void FPluginManager::ApplyProjectOverrides(const TVector<FProjectPluginOverride>& Overrides)
@@ -372,22 +344,8 @@ namespace Lumina
         }
 
         FString ContentDir = Plugin.GetContentDirectory();
-        std::error_code EC;
-        std::filesystem::path P(ContentDir.c_str());
-        const bool bExists = std::filesystem::exists(P, EC);
-        if (EC)
+        if (!Filesystem::IsDirectory(ContentDir))
         {
-            LOG_WARN("[PluginManager] exists({}) failed: {}", ContentDir, EC.message().c_str());
-            return;
-        }
-        if (!bExists)
-        {
-            return;
-        }
-        EC.clear();
-        if (!std::filesystem::is_directory(P, EC) || EC)
-        {
-            if (EC) LOG_WARN("[PluginManager] is_directory({}) failed: {}", ContentDir, EC.message().c_str());
             return;
         }
 

@@ -1,5 +1,5 @@
 #include "LuminaEditor.h"
-#include <filesystem>
+#include "Platform/Filesystem/PlatformFilesystem.h"
 #include <fstream>
 #include <thread>
 #include <Core/Engine/Engine.h>
@@ -157,36 +157,32 @@ namespace Lumina
         const TFunction<void(FString&)>& ReplaceTokens,
         FString&                         OutError)
     {
-        std::error_code CreateEc;
-        std::filesystem::create_directories(DestDir.c_str(), CreateEc);
-        if (CreateEc)
+        if (!Filesystem::MakeDirectoryTree(DestDir))
         {
             OutError = "Failed to create directory: ";
-            OutError.append(CreateEc.message().c_str());
+            OutError.append(DestDir.c_str(), DestDir.size());
             return false;
         }
 
-        for (auto& Entry : std::filesystem::recursive_directory_iterator(TemplateDir.c_str()))
-        {
-            std::filesystem::path RelativePath = std::filesystem::relative(Entry.path(), TemplateDir.c_str());
+        const size_t TemplateRootLength = TemplateDir.size();
 
-            FString RelativePathStr = RelativePath.string().c_str();
-            eastl::replace(RelativePathStr.begin(), RelativePathStr.end(), '\\', '/');
+        Filesystem::IterateDirectoryRecursive(TemplateDir, [&](const Filesystem::FDirectoryEntry& Entry)
+        {
+            FString RelativePathStr(Entry.FullPath.substr(TemplateRootLength + 1));
 
             ReplaceTokens(RelativePathStr);
             FFixedString DestPath = Paths::Combine(DestDir, RelativePathStr);
 
-            if (Entry.is_directory())
+            if (Entry.IsDirectory())
             {
-                std::filesystem::create_directories(DestPath.c_str());
+                Filesystem::MakeDirectoryTree(DestPath);
             }
-            else if (Entry.is_regular_file())
+            else
             {
-                std::filesystem::path DestPathFS(DestPath.c_str());
-                std::filesystem::create_directories(DestPathFS.parent_path());
+                Filesystem::MakeParentDirectoryTree(DestPath);
 
-                const std::filesystem::path SourcePath = Entry.path();
-                const std::string Ext = SourcePath.extension().string();
+                const FStringView SourcePath = Entry.FullPath;
+                const FStringView Ext        = Entry.GetExtension();
 
                 // Token replace only on text files; anything else copies verbatim. .cs covers both
                 // the C# scripts and the .Build.cs / .Target.cs rules files, which carry
@@ -203,44 +199,26 @@ namespace Lumina
 
                 if (!bIsTextFile)
                 {
-                    std::filesystem::copy_file(
-                        SourcePath,
-                        DestPath.c_str(),
-                        std::filesystem::copy_options::overwrite_existing);
-                    continue;
+                    Filesystem::Copy(SourcePath, DestPath, true);
+                    return;
                 }
 
-                std::ifstream InputFile(SourcePath, std::ios::binary);
-                if (!InputFile.is_open())
+                FString FileContents;
+                if (!Filesystem::ReadFile(FileContents, SourcePath))
                 {
-                    continue;
+                    return;
                 }
 
-                std::string FileContentStr((std::istreambuf_iterator<char>(InputFile)), std::istreambuf_iterator<char>());
-                InputFile.close();
-
-                FString FileContents = FileContentStr.c_str();
                 ReplaceTokens(FileContents);
 
-                std::ofstream OutputFile(DestPath.c_str(), std::ios::binary);
-                if (OutputFile.is_open())
+                const TSpan<const uint8> Bytes(reinterpret_cast<const uint8*>(FileContents.data()), FileContents.size());
+                if (Filesystem::WriteFile(DestPath, Bytes))
                 {
-                    OutputFile.write(FileContents.data(), FileContents.size());
-                    OutputFile.close();
-
-                    // The token-replaced copy is a new file, so it gets default permissions rather
-                    // than the template's. That drops the executable bit, which is the difference
-                    // between a generated GenerateProject.sh that runs and one that reports
-                    // permission denied. copy_file above keeps the mode already.
-                    std::error_code PermissionsEc;
-                    std::filesystem::permissions(
-                        DestPathFS,
-                        std::filesystem::status(SourcePath).permissions(),
-                        std::filesystem::perm_options::replace,
-                        PermissionsEc);
+                    // A fresh write drops the executable bit a generated GenerateProject.sh needs.
+                    Filesystem::CopyPermissions(SourcePath, DestPath);
                 }
             }
-        }
+        });
 
         return true;
     }
@@ -312,18 +290,14 @@ namespace Lumina
         }
 
         const FFixedString Combined = Paths::Combine(NewProjectPath, NewProjectName);
-        std::error_code ParentEc;
-        const FString ParentPathStr(NewProjectPath.data(), NewProjectPath.size());
-        if (!std::filesystem::exists(ParentPathStr.c_str(), ParentEc))
+        if (!Filesystem::Exists(NewProjectPath))
         {
             OutError = "Project location does not exist: ";
             OutError.append(NewProjectPath.data(), NewProjectPath.size());
             return false;
         }
 
-        std::error_code ExistEc;
-        if (std::filesystem::exists(Combined.c_str(), ExistEc) &&
-            !std::filesystem::is_empty(Combined.c_str(), ExistEc))
+        if (Filesystem::Exists(Combined) && !Filesystem::IsDirectoryEmpty(Combined))
         {
             OutError = "A non-empty folder already exists at: ";
             OutError.append(Combined.c_str(), Combined.size());
@@ -405,9 +379,7 @@ namespace Lumina
         // Destination: <ProjectPath>/Plugins/<PluginName>/
         const FFixedString PluginDir = Paths::Combine(Paths::Combine(GetProjectPath(), "Plugins"), NameStr);
 
-        std::error_code ExistEc;
-        if (std::filesystem::exists(PluginDir.c_str(), ExistEc) &&
-            !std::filesystem::is_empty(PluginDir.c_str(), ExistEc))
+        if (Filesystem::Exists(PluginDir) && !Filesystem::IsDirectoryEmpty(PluginDir))
         {
             OutError = "A non-empty folder already exists at: ";
             OutError.append(PluginDir.c_str(), PluginDir.size());

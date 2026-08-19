@@ -1,4 +1,5 @@
 ﻿#include "RuntimePCH.h"
+#include "Memory/MemoryTracking.h"
 #include "MaterialInstance.h"
 #include "Material.h"
 #include "Assets/AssetTypes/Textures/Texture.h"
@@ -801,6 +802,7 @@ namespace Lumina
 
     void CMaterialInstance::PostLoad()
     {
+        LUMINA_MEMORY_SCOPE("Materials");
         if (!Material)
         {
             return;

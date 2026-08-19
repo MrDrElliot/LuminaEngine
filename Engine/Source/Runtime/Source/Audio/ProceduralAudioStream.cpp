@@ -4,6 +4,7 @@
 #include "MiniAudio/miniaudio.h"
 #include "Log/Log.h"
 #include "Memory/Memory.h"
+#include "Memory/MemoryTracking.h"
 #include "Memory/Memcpy.h"
 
 namespace Lumina
@@ -14,8 +15,8 @@ namespace Lumina
         ma_pcm_rb RingBuffer{};
     };
 
-    static void* MAStreamMalloc(size_t Size, void*) { return Memory::Malloc(Size); }
-    static void* MAStreamRealloc(void* P, size_t Size, void*) { return Memory::Realloc(P, Size); }
+    static void* MAStreamMalloc(size_t Size, void*) { LUMINA_MEMORY_SCOPE("Audio"); return Memory::Malloc(Size); }
+    static void* MAStreamRealloc(void* P, size_t Size, void*) { LUMINA_MEMORY_SCOPE("Audio"); return Memory::Realloc(P, Size); }
     static void  MAStreamFree(void* P, void*) { Memory::Free(P); }
 
     FProceduralAudioStream::FProceduralAudioStream(uint32 InSampleRate, uint32 InChannelCount, uint32 BufferFrames)

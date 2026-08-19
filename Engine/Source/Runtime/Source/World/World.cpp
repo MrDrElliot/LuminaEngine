@@ -1,4 +1,4 @@
-#include "RuntimePCH.h"
+﻿#include "RuntimePCH.h"
 #include "World.h"
 #include <cmath>
 #include <utility>
@@ -18,6 +18,7 @@
 #include "Core/Delegates/CoreDelegates.h"
 #include "Core/Engine/Engine.h"
 #include "Core/Profiler/CPUProfiler.h"
+#include "Memory/MemoryTracking.h"
 #include "TaskSystem/TaskSystem.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectIterator.h"
@@ -261,6 +262,7 @@ namespace Lumina
 
     void CWorld::Serialize(FArchive& Ar)
     {
+        LUMINA_MEMORY_SCOPE("World");
         CObject::Serialize(Ar);
 
         if (Ar.IsReading())
@@ -289,6 +291,7 @@ namespace Lumina
     
     void CWorld::InitializeWorld(EWorldType InWorldType)
     {
+        LUMINA_MEMORY_SCOPE("World");
         using namespace entt::literals;
         
         WorldType = InWorldType;
@@ -995,6 +998,7 @@ namespace Lumina
 
     void CWorld::DuplicateEntity(entt::entity& To, entt::entity From, const TFunctionRef<bool(entt::type_info)>& Callback)
     {
+        LUMINA_MEMORY_SCOPE("World");
         ASSERT(To != From);
 
         THashMap<entt::entity, entt::entity> SourceToDuplicate;

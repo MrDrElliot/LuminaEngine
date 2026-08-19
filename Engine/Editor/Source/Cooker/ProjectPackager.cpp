@@ -1,6 +1,6 @@
 ﻿#include "ProjectPackager.h"
 
-#include <filesystem>
+#include "Platform/Filesystem/PlatformFilesystem.h"
 
 #include "AssetCooker.h"
 #include "Core/Engine/Engine.h"
@@ -25,12 +25,27 @@ namespace Lumina
             LOG_INFO("[Packager] {}", FString(Msg.data(), Msg.size()).c_str());
         }
 
-        bool CopyFileTo(const std::filesystem::path& Src, const std::filesystem::path& Dst)
+        FString Join(FStringView Left, FStringView Right)
         {
-            std::error_code Ec;
-            std::filesystem::create_directories(Dst.parent_path(), Ec);
-            std::filesystem::copy_file(Src, Dst, std::filesystem::copy_options::overwrite_existing, Ec);
-            return !Ec;
+            FString Result(Left.data(), Left.size());
+            if (!Result.empty() && Result.back() != '/' && Result.back() != '\\')
+            {
+                Result.push_back('/');
+            }
+            Result.append(Right.data(), Right.size());
+            return Result;
+        }
+
+        FStringView StemOf(FStringView Name)
+        {
+            const size_t Dot = Name.find_last_of('.');
+            return Dot == FStringView::npos ? Name : Name.substr(0, Dot);
+        }
+
+        bool CopyFileTo(FStringView Src, FStringView Dst)
+        {
+            Filesystem::MakeParentDirectoryTree(Dst);
+            return Filesystem::Copy(Src, Dst, true);
         }
 
         bool EndsWithCI(FStringView Vp, FStringView Suffix)
@@ -63,8 +78,8 @@ namespace Lumina
 
             for (const FLooseRoot& Root : Roots)
             {
-                const std::filesystem::path DstRoot = std::filesystem::path(OutDir.c_str()) / Root.Top;
-                std::filesystem::create_directories(DstRoot, Ec);
+                const FString DstRoot = Join(OutDir, Root.Top);
+                Filesystem::MakeDirectoryTree(DstRoot);
 
                 const FString Alias(Root.Alias);
                 const FString Prefix = Alias + "/";
@@ -103,15 +118,11 @@ namespace Lumina
                         return;
                     }
 
-                    std::filesystem::path Dst = DstRoot / std::string(Relative.data(), Relative.size());
-                    std::filesystem::create_directories(Dst.parent_path(), Ec);
-
-                    std::ofstream Out(Dst, std::ios::binary);
-                    if (!Out)
+                    const FString Dst = Join(DstRoot, Relative);
+                    if (!Filesystem::WriteFile(Dst, TSpan<const uint8>(Bytes.data(), Bytes.size())))
                     {
                         return;
                     }
-                    Out.write(reinterpret_cast<const char*>(Bytes.data()), (std::streamsize)Bytes.size());
 
                     ++Count;
                     if (LogFunc)
@@ -125,7 +136,7 @@ namespace Lumina
         }
 
         // Stem ends with "-<OtherConfig>"; used to skip wrong-config DLLs from a previous Editor build.
-        bool HasOtherConfigSuffix(const std::string& Stem, const FString& MyConfig)
+        bool HasOtherConfigSuffix(FStringView Stem, const FString& MyConfig)
         {
             const char* Configs[] = { "Debug", "Development", "Shipping" };
             for (const char* Cfg : Configs)
@@ -134,9 +145,11 @@ namespace Lumina
                 {
                     continue;
                 }
-                const std::string Suffix = std::string("-") + Cfg;
-                if (Stem.size() >= Suffix.size() &&
-                    Stem.compare(Stem.size() - Suffix.size(), Suffix.size(), Suffix) == 0)
+
+                FString Suffix = "-";
+                Suffix.append(Cfg);
+
+                if (Stem.ends_with(FStringView(Suffix.c_str(), Suffix.size())))
                 {
                     return true;
                 }
@@ -145,13 +158,16 @@ namespace Lumina
         }
 
         // True if SourceDir has a "<Stem>-<Config>.dll" sibling; identifies stale pre-targetsuffix dupes.
-        bool HasSuffixedSibling(const std::filesystem::path& SourceDir, const std::string& Stem)
+        bool HasSuffixedSibling(FStringView SourceDir, FStringView Stem)
         {
-            std::error_code Ec;
             for (const char* Cfg : { "Debug", "Development", "Shipping" })
             {
-                std::filesystem::path Sibling = SourceDir / (Stem + "-" + Cfg + ".dll");
-                if (std::filesystem::exists(Sibling, Ec))
+                FString Name(Stem.data(), Stem.size());
+                Name.push_back('-');
+                Name.append(Cfg);
+                Name.append(".dll");
+
+                if (Filesystem::Exists(Join(SourceDir, Name)))
                 {
                     return true;
                 }
@@ -160,95 +176,100 @@ namespace Lumina
         }
 
         // Editor-only / tooling DLLs that aren't needed at runtime; hard-coded since no programmatic check exists.
-        bool IsEditorOnlyDll(const std::string& FileName)
+        bool IsEditorOnlyDll(FStringView FileName)
         {
             // libclang.dll is for the Reflector tool's Clang frontend (compile-time only).
-            return FileName == "libclang.dll";
+            return FileName == FStringView("libclang.dll");
         }
 
-        size_t CopyRuntimePayload(const std::filesystem::path& SourceDir,
-                                  const std::filesystem::path& DestDir,
+        size_t CopyRuntimePayload(FStringView SourceDir,
+                                  FStringView DestDir,
                                   const FString& ConfigSuffix,
                                   FStringView ProjectName,
                                   const TFunction<void(FStringView)>& LogFunc)
         {
             size_t Copied = 0;
             size_t Skipped = 0;
-            const std::string MyExeName = std::string("Lumina-") + ConfigSuffix.c_str() + ".exe";
 
-            std::error_code Ec;
-            for (const auto& Entry : std::filesystem::directory_iterator(SourceDir, Ec))
+            FString MyExeName = "Lumina-";
+            MyExeName.append(ConfigSuffix);
+            MyExeName.append(".exe");
+
+            Filesystem::IterateDirectory(SourceDir, [&](const Filesystem::FDirectoryEntry& Entry)
             {
-                if (!Entry.is_regular_file())
+                if (Entry.IsDirectory())
                 {
-                    continue;
+                    return;
                 }
 
-                const std::string FileName = Entry.path().filename().string();
-                const std::string Ext      = Entry.path().extension().string();
-                const std::string Stem     = Entry.path().stem().string();
+                const FStringView FileName = Entry.Name;
+                const FStringView Ext      = Entry.GetExtension();
+                const FStringView Stem     = StemOf(FileName);
+
+                const bool bExe = Ext == FStringView(".exe");
+                const bool bDll = Ext == FStringView(".dll");
 
                 // Skip tools / wrong-config exes.
-                if (Ext == ".exe" && FileName != MyExeName)
+                if (bExe && FileName != FStringView(MyExeName.c_str(), MyExeName.size()))
                 {
-                    continue;
+                    return;
                 }
 
-                if (Ext != ".dll" && Ext != ".exe")
+                if (!bDll && !bExe)
                 {
-                    continue;
+                    return;
                 }
 
                 if (HasOtherConfigSuffix(Stem, ConfigSuffix))
                 {
                     ++Skipped;
-                    continue;
+                    return;
                 }
 
                 // Skip stale Editor-*.dll left over from a prior Editor build.
-                if (Stem.size() >= 7 && Stem.compare(0, 7, "Editor-") == 0)
+                if (Stem.starts_with("Editor-"))
                 {
                     ++Skipped;
-                    continue;
+                    return;
                 }
 
                 if (IsEditorOnlyDll(FileName))
                 {
                     ++Skipped;
-                    continue;
+                    return;
                 }
 
                 // Stale unsuffixed dupe of a now-suffixed DLL (pre-targetsuffix builds).
-                if (Ext == ".dll"
-                    && Stem.find("-Debug") == std::string::npos
-                    && Stem.find("-Development") == std::string::npos
-                    && Stem.find("-Shipping") == std::string::npos
+                if (bDll
+                    && Stem.find("-Debug") == FStringView::npos
+                    && Stem.find("-Development") == FStringView::npos
+                    && Stem.find("-Shipping") == FStringView::npos
                     && HasSuffixedSibling(SourceDir, Stem))
                 {
                     ++Skipped;
-                    continue;
+                    return;
                 }
 
                 // Rename launcher to <ProjectName>.exe; safe because it never reads its own filename.
-                std::filesystem::path DstName = Entry.path().filename();
-                if (Ext == ".exe" && !ProjectName.empty())
+                FString DstName(FileName.data(), FileName.size());
+                if (bExe && !ProjectName.empty())
                 {
-                    DstName = std::filesystem::path(
-                        FString().sprintf("%.*s.exe", (int)ProjectName.size(), ProjectName.data()).c_str());
+                    DstName.assign(ProjectName.data(), ProjectName.size());
+                    DstName.append(".exe");
                 }
 
-                std::filesystem::path Dst = DestDir / DstName;
-                if (CopyFileTo(Entry.path(), Dst))
+                if (CopyFileTo(Entry.FullPath, Join(DestDir, DstName)))
                 {
                     ++Copied;
-                    LogPackager(LogFunc, FString().sprintf("  + %s -> %s",
-                        FileName.c_str(), DstName.string().c_str()).c_str());
+                    LogPackager(LogFunc, FString().sprintf("  + %.*s -> %s",
+                        (int)FileName.size(), FileName.data(), DstName.c_str()).c_str());
                 }
                 else
                 {
-                    LogPackager(LogFunc, FString().sprintf("  [warn] failed to copy %s", FileName.c_str()).c_str());
+                    LogPackager(LogFunc, FString().sprintf("  [warn] failed to copy %.*s",
+                        (int)FileName.size(), FileName.data()).c_str());
                 }
-            }
+            });
 
             if (Skipped > 0)
             {
@@ -258,33 +279,10 @@ namespace Lumina
         }
 
         // Recursively copies a directory tree (overwriting existing files). Returns the file count copied.
-        size_t CopyDirectoryRecursive(const std::filesystem::path& Src, const std::filesystem::path& Dst)
+        size_t CopyDirectoryRecursive(FStringView Src, FStringView Dst)
         {
-            std::error_code Ec;
-            if (!std::filesystem::exists(Src, Ec))
-            {
-                return 0;
-            }
-            size_t Count = 0;
-            std::filesystem::create_directories(Dst, Ec);
-            for (const auto& Entry : std::filesystem::recursive_directory_iterator(Src, Ec))
-            {
-                const std::filesystem::path Rel    = std::filesystem::relative(Entry.path(), Src, Ec);
-                const std::filesystem::path Target = Dst / Rel;
-                if (Entry.is_directory())
-                {
-                    std::filesystem::create_directories(Target, Ec);
-                }
-                else if (Entry.is_regular_file())
-                {
-                    std::filesystem::create_directories(Target.parent_path(), Ec);
-                    std::filesystem::copy_file(Entry.path(), Target, std::filesystem::copy_options::overwrite_existing, Ec);
-                    if (!Ec)
-                    {
-                        ++Count;
-                    }
-                }
-            }
+            uint32 Count = 0;
+            Filesystem::CopyTree(Src, Dst, &Count);
             return Count;
         }
 
@@ -293,54 +291,51 @@ namespace Lumina
         //   - DotNet/Managed/{LuminaSharp.dll, .runtimeconfig.json, Roslyn + deps}  (managed bootstrap)
         //   - External/DotNet/runtime/<rid>/...                                     (bundled CoreCLR + hostfxr)
         //   - DotNet/Scripts/<Unit>.dll + scripts.manifest.json                     (prebuilt user/plugin scripts)
-        void CopyDotNetPayload(const std::filesystem::path& EngineInstallDir,
-                               const std::filesystem::path& BinariesDir,
-                               const std::filesystem::path& DestDir,
+        void CopyDotNetPayload(FStringView EngineInstallDir,
+                               FStringView BinariesDir,
+                               FStringView DestDir,
                                const TFunction<void(FStringView)>& LogFunc)
         {
-            std::error_code Ec;
-
             // 1. Managed bootstrap assembly + its dependency closure (Roslyn, runtimeconfig, deps.json).
-            const std::filesystem::path ManagedSrc = BinariesDir / "DotNet" / "Managed";
-            if (std::filesystem::exists(ManagedSrc, Ec))
+            const FString ManagedSrc = Join(BinariesDir, "DotNet/Managed");
+            if (Filesystem::Exists(ManagedSrc))
             {
-                const size_t N = CopyDirectoryRecursive(ManagedSrc, DestDir / "DotNet" / "Managed");
+                const size_t N = CopyDirectoryRecursive(ManagedSrc, Join(DestDir, "DotNet/Managed"));
                 LogPackager(LogFunc, FString().sprintf("DotNet: staged managed bootstrap (%zu file(s)).", N).c_str());
             }
             else
             {
-                LogPackager(LogFunc, FString().sprintf("DotNet: [warn] managed bootstrap not found at %s; C# disabled in package.", ManagedSrc.string().c_str()).c_str());
+                LogPackager(LogFunc, FString().sprintf("DotNet: [warn] managed bootstrap not found at %s; C# disabled in package.", ManagedSrc.c_str()).c_str());
             }
 
             // 2. Bundled .NET runtime (whole tree so whatever <rid> the host resolves is present).
-            const std::filesystem::path RuntimeSrc = EngineInstallDir / "External" / "DotNet" / "runtime";
-            if (std::filesystem::exists(RuntimeSrc, Ec))
+            const FString RuntimeSrc = Join(EngineInstallDir, "External/DotNet/runtime");
+            if (Filesystem::Exists(RuntimeSrc))
             {
                 LogPackager(LogFunc, "DotNet: copying bundled .NET runtime (this can take a moment)...");
-                const size_t N = CopyDirectoryRecursive(RuntimeSrc, DestDir / "External" / "DotNet" / "runtime");
+                const size_t N = CopyDirectoryRecursive(RuntimeSrc, Join(DestDir, "External/DotNet/runtime"));
                 LogPackager(LogFunc, FString().sprintf("DotNet: staged .NET runtime (%zu file(s)).", N).c_str());
             }
             else
             {
-                LogPackager(LogFunc, FString().sprintf("DotNet: [warn] bundled runtime not found at %s; C# disabled in package.", RuntimeSrc.string().c_str()).c_str());
+                LogPackager(LogFunc, FString().sprintf("DotNet: [warn] bundled runtime not found at %s; C# disabled in package.", RuntimeSrc.c_str()).c_str());
             }
 
             // 3. Prebuilt script assemblies + the manifest the cooked loader reads.
             TVector<DotNet::FPackagedScriptUnit> Units;
             DotNet::GatherScriptUnitsForPackaging(Units);
 
-            const std::filesystem::path ScriptsDst = DestDir / "DotNet" / "Scripts";
+            const FString ScriptsDst = Join(DestDir, "DotNet/Scripts");
             FString Manifest = "{\n  \"Units\": [\n";
             size_t Staged = 0;
             for (const DotNet::FPackagedScriptUnit& Unit : Units)
             {
-                const std::filesystem::path DllSrc(Unit.DllSourcePath.c_str());
-                if (Unit.DllSourcePath.empty() || !std::filesystem::exists(DllSrc, Ec))
+                if (Unit.DllSourcePath.empty() || !Filesystem::Exists(Unit.DllSourcePath))
                 {
                     continue; // unit had no .cs / failed to emit -> nothing to ship
                 }
                 const FString DllName = Unit.Name + ".dll";
-                if (!CopyFileTo(DllSrc, ScriptsDst / DllName.c_str()))
+                if (!CopyFileTo(Unit.DllSourcePath, Join(ScriptsDst, DllName)))
                 {
                     LogPackager(LogFunc, FString().sprintf("DotNet: [warn] failed to stage script DLL %s", DllName.c_str()).c_str());
                     continue;
@@ -363,12 +358,8 @@ namespace Lumina
 
             if (Staged > 0)
             {
-                std::filesystem::create_directories(ScriptsDst, Ec);
-                std::ofstream Out(ScriptsDst / "scripts.manifest.json", std::ios::binary | std::ios::trunc);
-                if (Out)
-                {
-                    Out.write(Manifest.c_str(), (std::streamsize)Manifest.size());
-                }
+                const TSpan<const uint8> ManifestBytes(reinterpret_cast<const uint8*>(Manifest.data()), Manifest.size());
+                Filesystem::WriteFile(Join(ScriptsDst, "scripts.manifest.json"), ManifestBytes);
                 LogPackager(LogFunc, FString().sprintf("DotNet: staged %zu prebuilt script assembly(ies) + manifest.", Staged).c_str());
             }
             else
@@ -430,12 +421,11 @@ namespace Lumina
             return Result;
         }
 
-        const std::filesystem::path BinariesDir =
-            std::filesystem::path(Paths::GetEngineInstallDirectory().c_str()) / "Binaries" / "Windows64";
-        const std::filesystem::path DestDir(Options.OutputDirectory.c_str());
+        const FString BinariesDir = Join(Paths::GetEngineInstallDirectory(), "Binaries/Windows64");
+        const FString& DestDir    = Options.OutputDirectory;
 
         LogPackager(LogFunc, FString().sprintf("Copying %s binaries from %s",
-            Config.c_str(), BinariesDir.string().c_str()).c_str());
+            Config.c_str(), BinariesDir.c_str()).c_str());
 
         size_t Copied = CopyRuntimePayload(BinariesDir, DestDir, Config, ProjectName, LogFunc);
 
@@ -443,14 +433,12 @@ namespace Lumina
         // game needs both. Engine binaries are shared by every project and stay where they are.
         if (!ProjectDir.empty())
         {
-            const std::filesystem::path ProjectBinaries =
-                std::filesystem::path(ProjectDir.c_str()) / "Binaries" / "Windows64";
+            const FString ProjectBinaries = Join(ProjectDir, "Binaries/Windows64");
 
-            std::error_code Ec;
-            if (std::filesystem::exists(ProjectBinaries, Ec))
+            if (Filesystem::Exists(ProjectBinaries))
             {
                 LogPackager(LogFunc, FString().sprintf("Copying project binaries from %s",
-                    ProjectBinaries.string().c_str()).c_str());
+                    ProjectBinaries.c_str()).c_str());
 
                 Copied += CopyRuntimePayload(ProjectBinaries, DestDir, Config, ProjectName, LogFunc);
             }
@@ -465,11 +453,7 @@ namespace Lumina
 
         // Stage the C# scripting payload (managed bootstrap, bundled .NET runtime, prebuilt script DLLs +
         // manifest) so the cooked game can boot CoreCLR and load its scripts without the editor/dev tree.
-        CopyDotNetPayload(
-            std::filesystem::path(Paths::GetEngineInstallDirectory().c_str()),
-            BinariesDir,
-            DestDir,
-            LogFunc);
+        CopyDotNetPayload(Paths::GetEngineInstallDirectory(), BinariesDir, DestDir, LogFunc);
 
         Result.bSuccess = true;
         return Result;
@@ -498,11 +482,9 @@ namespace Lumina
             OutDir = FString(GEngine->GetProjectPath().data(), GEngine->GetProjectPath().size()) + "/Build/" + ProjectName;
         }
 
-        std::error_code Ec;
-        std::filesystem::create_directories(OutDir.c_str(), Ec);
-        if (Ec)
+        if (!Filesystem::MakeDirectoryTree(OutDir))
         {
-            Result.ErrorMessage = FString("Failed to create output directory: ") + OutDir + " (" + Ec.message().c_str() + ")";
+            Result.ErrorMessage = FString("Failed to create output directory: ") + OutDir;
             return Result;
         }
         Result.OutputDirectory = OutDir;

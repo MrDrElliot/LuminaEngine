@@ -242,6 +242,9 @@ namespace Lumina
 
     void FMemoryProfilerEditorTool::OnInitialize()
     {
+#if LUMINA_MEMORY_TRACKING
+        bCaptureAtStartup = Memory::IsCapturingCallstacks();
+#endif
         CreateToolWindow("Memory", [this](bool bIsFocused)
         {
             DrawWindow(bIsFocused);
@@ -251,9 +254,8 @@ namespace Lumina
     void FMemoryProfilerEditorTool::OnDeinitialize(const FUpdateContext& UpdateContext)
     {
 #if LUMINA_MEMORY_TRACKING
-        // Base category tracking is always on; just stop the heavy per-alloc call-stack
-        // capture so it doesn't keep walking stacks after the window is closed.
-        Memory::SetCaptureCallstacks(false);
+        // Stop the heavy per-alloc stack walk, unless -memcallstacks asked for it process-wide.
+        Memory::SetCaptureCallstacks(bCaptureAtStartup);
 #endif
     }
 
@@ -1005,6 +1007,13 @@ namespace Lumina
             ImGui::Spacing();
             DrawCallSites();
         }
+        else if (!CallSiteCategory.empty())
+        {
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f),
+                LE_ICON_ALERT " Enable 'Capture call stacks' to see what allocates inside '%s'.",
+                CallSiteCategory.c_str());
+        }
 #endif
     }
 
@@ -1036,6 +1045,15 @@ namespace Lumina
         ImGuiX::TextTooltip("Zero all counters and start a fresh capture.");
 
         ImGui::SameLine();
+        if (ImGui::Button(LE_ICON_MAGNIFY " Analyze Ledger"))
+        {
+            CopyLedgerAnalysisToClipboard();
+        }
+        ImGuiX::TextTooltip("Walk every live allocation in the selected category (all categories if none "
+                            "is selected) and copy a size histogram plus the largest blocks. Reads the "
+                            "allocation ledger directly, so it works even where no call stack was captured.");
+
+        ImGui::SameLine();
         ImGui::Dummy(ImVec2(16, 0));
         ImGui::SameLine();
 
@@ -1046,6 +1064,86 @@ namespace Lumina
         }
         ImGuiX::TextTooltip("Record the stack of every allocation so Top Call Sites can name the "
                             "exact leaking line. Heavier -- turn on once a category is confirmed leaking.");
+    }
+
+    void FMemoryProfilerEditorTool::CopyLedgerAnalysisToClipboard()
+    {
+        const char* Cat = CallSiteCategory.empty() ? nullptr : CallSiteCategory.c_str();
+
+        Memory::FCategoryLedger Summary;
+        Memory::FLedgerAlloc    Largest[Memory::kMaxLedgerTop];
+        const uint32 NumLargest = Memory::AnalyzeCategory(Cat, Summary, Largest, 24);
+
+        FString Report;
+        char    Line[640];
+
+        std::snprintf(Line, sizeof(Line), "=== Memory ledger: [%s] ===\n",
+            Cat ? Cat : "all categories");
+        Report += Line;
+
+        std::snprintf(Line, sizeof(Line), "live %s across %llu allocations\n",
+            ImGuiX::FormatSize(Summary.LiveBytes).c_str(),
+            (unsigned long long)Summary.LiveCount);
+        Report += Line;
+
+        const double UnattribPct = Summary.LiveBytes > 0
+            ? (100.0 * (double)Summary.UnattributedBytes / (double)Summary.LiveBytes) : 0.0;
+        std::snprintf(Line, sizeof(Line), "no captured stack: %s across %llu allocations (%.1f%%)\n\n",
+            ImGuiX::FormatSize(Summary.UnattributedBytes).c_str(),
+            (unsigned long long)Summary.UnattributedCount, UnattribPct);
+        Report += Line;
+
+        const uint64 Dropped = Memory::GetCallSiteOverflowCount();
+        if (Dropped > 0)
+        {
+            std::snprintf(Line, sizeof(Line),
+                "WARNING: %llu allocations lost their stack (call-site table full).\n\n",
+                (unsigned long long)Dropped);
+            Report += Line;
+        }
+
+        Report += "Size class            Allocations        Live bytes\n";
+        for (uint32 b = 0; b < 64; ++b)
+        {
+            if (Summary.BucketCount[b] == 0)
+            {
+                continue;
+            }
+            const uint64 Low = (b == 0) ? 0ull : (1ull << b);
+            std::snprintf(Line, sizeof(Line), "%8s - %-8s %12llu %17s\n",
+                ImGuiX::FormatSize(Low).c_str(),
+                ImGuiX::FormatSize((1ull << (b + 1)) - 1).c_str(),
+                (unsigned long long)Summary.BucketCount[b],
+                ImGuiX::FormatSize(Summary.BucketBytes[b]).c_str());
+            Report += Line;
+        }
+
+        Report += "\nLargest live allocations\n";
+        char SymBuf[512];
+        for (uint32 i = 0; i < NumLargest; ++i)
+        {
+            std::snprintf(Line, sizeof(Line), "\n[%u] %s\n", i + 1,
+                ImGuiX::FormatSize(Largest[i].Size).c_str());
+            Report += Line;
+
+            if (Largest[i].FrameCount == 0)
+            {
+                Report += "    (no stack captured)\n";
+                continue;
+            }
+            for (uint32 f = 0; f < Largest[i].FrameCount; ++f)
+            {
+                Memory::ResolveSymbol(Largest[i].Frames[f], SymBuf, sizeof(SymBuf));
+                Report += "    ";
+                Report += SymBuf;
+                Report += "\n";
+            }
+        }
+
+        ImGui::SetClipboardText(Report.c_str());
+        LOG_INFO("Memory ledger analysis for [{}] copied to clipboard ({} live, {} allocations)",
+            Cat ? Cat : "all categories",
+            ImGuiX::FormatSize(Summary.LiveBytes).c_str(), Summary.LiveCount);
     }
 
     void FMemoryProfilerEditorTool::DrawCategoryTable(float Height)
@@ -1065,26 +1163,20 @@ namespace Lumina
             return nullptr;
         };
 
-        struct FRow
-        {
-            const Memory::FMemoryCategoryStats* S;
-            int64                               DeltaBytes;
-            int64                               DeltaCount;
-        };
-
-        TVector<FRow> Rows;
+        TVector<FCategoryRow>& Rows = CategoryRows;
+        Rows.clear();
         Rows.reserve(Categories.size());
         for (const Memory::FMemoryCategoryStats& S : Categories)
         {
             const Memory::FMemoryCategoryStats* B = FindBaseline(S.Name);
-            FRow Row;
+            FCategoryRow Row;
             Row.S          = &S;
             Row.DeltaBytes = B ? (int64)S.LiveBytes - (int64)B->LiveBytes : 0;
             Row.DeltaCount = B ? (int64)S.LiveCount - (int64)B->LiveCount : 0;
             Rows.push_back(Row);
         }
 
-        eastl::sort(Rows.begin(), Rows.end(), [this](const FRow& A, const FRow& B)
+        eastl::sort(Rows.begin(), Rows.end(), [this](const FCategoryRow& A, const FCategoryRow& B)
         {
             if (bHasBaseline) { return A.DeltaBytes > B.DeltaBytes; }
             return A.S->LiveBytes > B.S->LiveBytes;
@@ -1120,13 +1212,19 @@ namespace Lumina
             ImGui::TableSetupColumn("Alloc/Free", ImGuiTableColumnFlags_WidthFixed, 150);
             ImGui::TableHeadersRow();
 
-            for (const FRow& Row : Rows)
+            for (const FCategoryRow& Row : Rows)
             {
                 const Memory::FMemoryCategoryStats& S = *Row.S;
                 ImGui::TableNextRow();
 
                 ImGui::TableSetColumnIndex(0);
-                ImGui::TextUnformatted(S.Name[0] ? S.Name : "Default");
+                const char* Name = S.Name[0] ? S.Name : "Default";
+                const bool bSelected = (CallSiteCategory == Name);
+                if (ImGui::Selectable(Name, bSelected, ImGuiSelectableFlags_SpanAllColumns))
+                {
+                    CallSiteCategory = bSelected ? FString() : FString(Name);
+                }
+                ImGuiX::TextTooltip("Select to rank Top Call Sites within this category only.");
 
                 ImGui::TableSetColumnIndex(1);
                 ImGui::TextUnformatted(ImGuiX::FormatSize(S.LiveBytes).c_str());
@@ -1195,6 +1293,8 @@ namespace Lumina
 
         Frame.bNoise    = IsNoiseFrame(Frame.Function.c_str());
         Frame.bPlumbing = IsPlumbingFrame(Frame.Function.c_str());
+        Frame.RowLabel   = ShortenForRow(Frame.Function, kRowLabelMaxLen);
+        Frame.FrameLabel = ShortenForRow(Frame.Function, kFrameLabelMaxLen);
 
         return SymbolCache.emplace(Address, Move(Frame)).first->second;
     }
@@ -1216,13 +1316,33 @@ namespace Lumina
         const Memory::ECallSiteSort Sort = bSortCallSitesByAllocs
             ? Memory::ECallSiteSort::TotalAllocs : Memory::ECallSiteSort::LiveBytes;
 
+        if (!CallSiteCategory.empty())
+        {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.98f, 0.78f, 0.35f, 1.0f), LE_ICON_FILTER " %s", CallSiteCategory.c_str());
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Clear filter"))
+            {
+                CallSiteCategory.clear();
+            }
+        }
+
         static constexpr uint32 kMaxSites = 64;
         Memory::FCallSiteStat Sites[kMaxSites];
-        const uint32 NumSites = Memory::GetTopCallSites(Sites, kMaxSites, Sort);
+        const uint32 NumSites = Memory::GetTopCallSites(Sites, kMaxSites, Sort,
+            CallSiteCategory.empty() ? nullptr : CallSiteCategory.c_str());
 
         if (NumSites == 0)
         {
-            ImGui::TextDisabled("No call sites captured yet -- give it a few frames.");
+            if (CallSiteCategory.empty())
+            {
+                ImGui::TextDisabled("No call sites captured yet -- give it a few frames.");
+            }
+            else
+            {
+                ImGui::TextDisabled("Nothing captured for '%s' yet -- its allocations predate the capture.",
+                    CallSiteCategory.c_str());
+            }
             return;
         }
 
@@ -1234,8 +1354,9 @@ namespace Lumina
             FString Report;
             char Line[640];
             std::snprintf(Line, sizeof(Line),
-                "=== Memory: top %u call sites by %s (tracked live %s, %llu allocs) ===\n",
-                NumSites, bSortCallSitesByAllocs ? "total allocs" : "live bytes",
+                "=== Memory: top %u call sites in [%s] by %s (tracked live %s, %llu allocs) ===\n",
+                NumSites, CallSiteCategory.empty() ? "all categories" : CallSiteCategory.c_str(),
+                bSortCallSitesByAllocs ? "total allocs" : "live bytes",
                 ImGuiX::FormatSize(Memory::GetTrackedLiveBytes()).c_str(),
                 (unsigned long long)Memory::GetTrackedLiveCount());
             Report += Line;
@@ -1324,12 +1445,11 @@ namespace Lumina
             ImGui::PushID((int)i);
 
             ImGui::TableSetColumnIndex(0);
-            const FString RowLabel = FString().sprintf("%u. %s", i + 1,
-                Site.FrameCount > 0 ? ShortenForRow(Headline->Function, 96).c_str() : "(no frames)");
+            const char* RowLabel = Site.FrameCount > 0 ? Headline->RowLabel.c_str() : "(no frames)";
 
             const bool bOpen = ImGui::TreeNodeEx("##site", ImGuiTreeNodeFlags_SpanAllColumns
                 | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick,
-                "%s", RowLabel.c_str());
+                "%u. %s", i + 1, RowLabel);
 
             if (ImGui::IsItemHovered() && !Headline->Location.empty())
             {
@@ -1392,7 +1512,7 @@ namespace Lumina
                     // Frames carrying a file:line are the ones worth reading; the rest recede.
                     const bool bHasSource = !Frame.Location.empty();
                     ImGui::PushStyleColor(ImGuiCol_Text, bHasSource ? SourceColor : ForeignColor);
-                    ImGui::TextUnformatted(ShortenForRow(Frame.Function, 110).c_str());
+                    ImGui::TextUnformatted(Frame.FrameLabel.c_str());
                     ImGui::PopStyleColor();
 
                     if (ImGui::IsItemHovered())

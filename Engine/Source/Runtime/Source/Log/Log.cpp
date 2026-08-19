@@ -5,7 +5,6 @@
 #include <condition_variable>
 #include <cstdio>
 #include <ctime>
-#include <filesystem>
 #include <mutex>
 #include <thread>
 
@@ -446,14 +445,17 @@ namespace Lumina::Logging
 		// Keeps prior run evidence; WindowedApp builds have no console. Starts next to the exe
 		// because no project is known this early; SetLogFileDirectory moves it once one loads.
 		{
-			const std::filesystem::path ExePath(Platform::BaseDir());
-			const std::filesystem::path LogPath = ExePath.parent_path() / "Logs" / GLogFileName;
+			FString LogPath(TCHAR_TO_UTF8(Platform::BaseDir()));
+			const size_t ExeNameStart = LogPath.find_last_of("/\\");
+			LogPath.resize(ExeNameStart == FString::npos ? 0 : ExeNameStart);
+			LogPath.append("/Logs/");
+			LogPath.append(GLogFileName);
 
 			constexpr uint64 MaxLogSizeBytes = 16llu * 1024 * 1024;
 			constexpr uint32 MaxLogFiles     = 5;
 
 			TUniquePtr<FFileSink> FileSink = MakeUnique<FFileSink>(
-				FString(LogPath.string().c_str()), MaxLogSizeBytes, MaxLogFiles);
+				LogPath, MaxLogSizeBytes, MaxLogFiles);
 
 			if (FileSink->IsOpen())
 			{
@@ -535,11 +537,15 @@ namespace Lumina::Logging
 			return;
 		}
 
-		const std::filesystem::path LogPath =
-			std::filesystem::path(FString(Directory.data(), Directory.size()).c_str()) / GLogFileName;
+		FString LogPath(Directory.data(), Directory.size());
+		if (!LogPath.empty() && LogPath.back() != '/' && LogPath.back() != '\\')
+		{
+			LogPath.push_back('/');
+		}
+		LogPath.append(GLogFileName);
 
 		// Retarget flushes what the sink is holding, so nothing written so far is lost.
-		GFileSink->Retarget(FString(LogPath.string().c_str()));
+		GFileSink->Retarget(LogPath);
 	}
 
 

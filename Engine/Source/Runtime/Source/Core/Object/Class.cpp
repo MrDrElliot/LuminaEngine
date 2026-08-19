@@ -1,4 +1,5 @@
 ﻿#include "RuntimePCH.h"
+#include "Memory/MemoryTracking.h"
 #include "Class.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Reflection/Type/Metadata/PropertyMetadata.h"
@@ -120,6 +121,7 @@ namespace Lumina
         // Process-lifetime allocation, mirroring how class CDOs are rooted and never released.
         const uint32 InstanceSize = GetSize();
         const uint32 InstanceAlign = GetAlignment();
+        LUMINA_MEMORY_SCOPE("CObject");
         DefaultInstance = Memory::Malloc(InstanceSize, InstanceAlign);
         Ops->Construct(DefaultInstance);
         return DefaultInstance;

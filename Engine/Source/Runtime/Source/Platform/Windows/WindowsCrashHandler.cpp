@@ -14,7 +14,6 @@
 #include <cstring>
 #include <ctime>
 #include <exception>
-#include <filesystem>
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN

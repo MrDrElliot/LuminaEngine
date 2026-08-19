@@ -7,7 +7,6 @@
 #include "Paths/Paths.h"
 #include "Platform/Filesystem/DirectoryWatcher.h"
 #include "Tools/Actions/DeferredActions.h"
-#include "Tools/UI/ImGui/imfilebrowser.h"
 #include "Tools/UI/ImGui/ImGuiDragDrop.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "Tools/UI/ImGui/Widgets/TileViewWidget.h"

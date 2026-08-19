@@ -1,5 +1,6 @@
-#pragma once
+﻿#pragma once
 
+#include "Animation/AnimCompression.h"
 #include "Animation/AnimNotify.h"
 #include "Assets/AssetTypes/Curve/CurveAsset.h"
 #include "Core/Math/AABB.h"
@@ -122,34 +123,47 @@ namespace Lumina
     {
         FName Name;
         float Duration;
+
+        // Import-time staging for Compressed, and never written: a loaded clip has none.
         TVector<FAnimationChannel> Channels;
+
         TVector<FAnimationNotify> Notifies;
         TVector<FAnimationNotifyState> NotifyStates;
         TVector<FAnimationCurve> Curves;
+
+        // The only pose data the sampler reads.
+        FCompressedAnimData Compressed;
 
         // Notify lanes in display order; persisted separately so empty tracks and ordering survive
         // save/reload. A notify references its lane by name (NotifyTrack).
         TVector<FName> NotifyTracks;
 
-        // Channel -> skeleton bone indices resolved once per (skeleton, bind generation) instead of a
-        // per-channel FName hash lookup every sample. Sets are immutable once published so readers can
-        // hold one without locking; sampling runs inside ParallelFor.
-        struct FResolvedChannelSet
+        // Resolved once per (skeleton, bind generation) and never mutated after, so sampling inside ParallelFor needs no lock.
+        struct FResolvedSkeleton
         {
             const FSkeletonResource* Skeleton = nullptr;
             uint32 Generation = 0;
-            TVector<int32> BoneIndices;
+
+            TVector<int32> CompressedBones;
+
+            // Inverse of CompressedBones, so sampling one bone never scans.
+            TVector<int32> SkeletonToCompressed;
         };
 
-        const FResolvedChannelSet* GetResolvedChannelSet(const FSkeletonResource* Skeleton);
+        RUNTIME_API const FResolvedSkeleton* GetResolvedSkeleton(const FSkeletonResource* Skeleton);
 
-        void InvalidateResolvedChannelSets();
+        RUNTIME_API void InvalidateResolvedSkeletons();
 
         friend FArchive& operator << (FArchive& Ar, FAnimationResource& Data)
         {
             Ar << Data.Name;
             Ar << Data.Duration;
-            Ar << Data.Channels;
+
+            if (Ar.GetFileVersion() < (int32)ELuminaEngineVersion::ANIM_CHANNELS_DROPPED)
+            {
+                Ar << Data.Channels;
+            }
+
             Ar << Data.Notifies;
             Ar << Data.NotifyStates;
             Ar << Data.NotifyTracks;
@@ -159,16 +173,21 @@ namespace Lumina
                 Ar << Data.Curves;
             }
 
-            Data.InvalidateResolvedChannelSets();
+            if (Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::ANIM_COMPRESSED_TRACKS)
+            {
+                Ar << Data.Compressed;
+            }
+
+            Data.InvalidateResolvedSkeletons();
 
             return Ar;
         }
 
     private:
 
-        std::atomic<const FResolvedChannelSet*> ActiveChannelSet{ nullptr };
-        FMutex ChannelSetMutex;
-        TVector<TUniquePtr<FResolvedChannelSet>> ChannelSets;
+        std::atomic<const FResolvedSkeleton*> ActiveResolvedSkeleton{ nullptr };
+        FMutex ResolveMutex;
+        TVector<TUniquePtr<FResolvedSkeleton>> ResolvedSkeletons;
     };
     
     

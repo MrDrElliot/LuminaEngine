@@ -96,6 +96,8 @@ namespace Lumina
         float       NotifyFlash[256] = {};
 
         // Curve view
+        // Encodes bone * NumTrackKinds + kind, since a compressed bone carries its three tracks inline.
+        static constexpr int32 NumTrackKinds = 3;
         int  SelectedChannel = -1;
         int  SelectedCurve   = -1;
 

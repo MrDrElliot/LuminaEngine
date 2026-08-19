@@ -4,8 +4,7 @@
 #include "Platform/Platform.h"
 #include "Core/LuminaMacros.h"
 
-// Category-attributed allocation tracking for the Memory Profiler. Compiled out in Shipping; in
-// Debug/Dev gated behind a runtime atomic (off by default) = one predicted branch per alloc until enabled.
+// Allocation tracking: gone in Shipping; ON by default elsewhere, ~3x a malloc+free pair.
 #if defined(LE_SHIPPING)
     #define LUMINA_MEMORY_TRACKING 0
 #else
@@ -76,9 +75,34 @@ namespace Lumina::Memory
     RUNTIME_API void SetCaptureCallstacks(bool bEnabled);
     RUNTIME_API bool IsCapturingCallstacks();
 
-    // Copies up to MaxOut call sites into Out, ranked descending by the chosen key.
-    // Only sites with a non-zero key are returned. Returns the number written.
-    RUNTIME_API uint32 GetTopCallSites(FCallSiteStat* Out, uint32 MaxOut, ECallSiteSort Sort = ECallSiteSort::LiveBytes);
+    // Non-zero means the call-site table filled and later allocations lost their stacks.
+    RUNTIME_API uint64 GetCallSiteOverflowCount();
+
+    // Read straight from the allocation ledger, so it is complete even where no stack was captured.
+    struct FCategoryLedger
+    {
+        uint64 LiveBytes          = 0;
+        uint64 LiveCount          = 0;
+        uint64 UnattributedBytes  = 0;      // live bytes whose allocation carries no captured stack
+        uint64 UnattributedCount  = 0;
+        uint64 BucketBytes[64]    = {};     // indexed by floor(log2(Size))
+        uint64 BucketCount[64]    = {};
+    };
+
+    struct FLedgerAlloc
+    {
+        uint64 Size                         = 0;
+        uint32 FrameCount                   = 0;
+        void*  Frames[kMaxStackFrames]      = {};
+    };
+
+    static constexpr uint32 kMaxLedgerTop = 64;
+
+    // Walks every live allocation; returns how many entries were written to OutLargest.
+    RUNTIME_API uint32 AnalyzeCategory(const char* CategoryName, FCategoryLedger& OutSummary, FLedgerAlloc* OutLargest, uint32 MaxLargest);
+
+    // Ranks call sites descending by the chosen key; CategoryName != null restricts to that category.
+    RUNTIME_API uint32 GetTopCallSites(FCallSiteStat* Out, uint32 MaxOut, ECallSiteSort Sort = ECallSiteSort::LiveBytes, const char* CategoryName = nullptr);
 
     // Resolves a captured return address to "function (file:line)" text. Returns
     // false if symbols are unavailable (writes a hex address fallback in that case).

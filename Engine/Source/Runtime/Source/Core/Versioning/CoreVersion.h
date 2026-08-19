@@ -60,6 +60,12 @@ enum class ELuminaEngineVersion : uint32
 	// FAnimationNotify/FAnimationNotifyState carry an instanced notify, so one can run its own code.
 	ANIM_NOTIFY_OBJECTS,
 
+	// FAnimationResource carries a uniformly resampled, quantized copy of its channels (re-import to gain one).
+	ANIM_COMPRESSED_TRACKS,
+
+	// FAnimationResource no longer writes its raw channels; older files still read them and compress on load.
+	ANIM_CHANNELS_DROPPED,
+
 	AUTOMATIC_VERSION_PLUS_ONE,
 	AUTOMATIC_VERSION = AUTOMATIC_VERSION_PLUS_ONE - 1
 };

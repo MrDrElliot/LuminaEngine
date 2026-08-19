@@ -5,6 +5,7 @@
 #include "FileSystem/FileSystem.h"
 #include "Log/Log.h"
 #include "Memory/Memory.h"
+#include "Memory/MemoryTracking.h"
 #include "MiniAudio/miniaudio.h"
 #include "TaskSystem/Scheduler/JobScheduler.h"
 
@@ -17,11 +18,13 @@ namespace Lumina
 
 		void* MiniAudioMalloc(size_t Size, void*)
 		{
+			LUMINA_MEMORY_SCOPE("Audio");
 			return Memory::Malloc(Size);
 		}
 
 		void* MiniAudioRealloc(void* P, size_t Size, void*)
 		{
+			LUMINA_MEMORY_SCOPE("Audio");
 			return Memory::Realloc(P, Size);
 		}
 

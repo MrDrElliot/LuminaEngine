@@ -349,6 +349,7 @@ namespace Lumina
 
     void CMaterial::PostLoad()
     {
+        LUMINA_MEMORY_SCOPE("Materials");
         // Asked of the whole stage table, not two named stages: PBR geometry is task + mesh and compiles no
         // vertex stage, so keying on that would classify every surface material as never-compiled.
         bool bHasCompiledStage = false;

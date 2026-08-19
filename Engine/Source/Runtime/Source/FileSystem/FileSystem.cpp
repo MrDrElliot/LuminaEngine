@@ -4,6 +4,7 @@
 #include "Containers/Function.h"
 #include "Core/Templates/LuminaTemplate.h"
 #include "Paths/Paths.h"
+#include "Platform/Filesystem/PlatformFilesystem.h"
 
 
 namespace Lumina::VFS
@@ -182,9 +183,37 @@ namespace Lumina::VFS
         });
     }
 
-    FFixedString ResolvePath(FStringView Path)
+    // Overlay mounts win; with nothing on disk the topmost candidate answers "where would this go".
+    FPathString ResolvePath(FStringView Path)
     {
-        return {};
+        Detail::FMountList* List = Detail::FindMountList(Path);
+        if (List == nullptr)
+        {
+            return {};
+        }
+
+        FPathString Candidate;
+
+        for (auto It = List->rbegin(); It != List->rend(); ++It)
+        {
+            FPathString Disk = (*It)->ResolveToDiskPath(Path);
+            if (Disk.empty())
+            {
+                continue;
+            }
+
+            if (Filesystem::Exists(Disk))
+            {
+                return Disk;
+            }
+
+            if (Candidate.empty())
+            {
+                Candidate = Move(Disk);
+            }
+        }
+
+        return Candidate;
     }
 
     bool CreateDir(FStringView Path)

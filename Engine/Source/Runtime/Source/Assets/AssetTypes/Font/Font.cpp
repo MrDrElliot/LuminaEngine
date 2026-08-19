@@ -1,4 +1,5 @@
 ﻿#include "RuntimePCH.h"
+#include "Memory/MemoryTracking.h"
 #include "Font.h"
 #include "Core/Object/Class.h"
 #include "Core/Serialization/Archiver.h"
@@ -7,6 +8,7 @@ namespace Lumina
 {
     void CFont::Serialize(FArchive& Ar)
     {
+        LUMINA_MEMORY_SCOPE("Fonts");
         Super::Serialize(Ar);
 
         Ar << FontData;
@@ -22,6 +24,7 @@ namespace Lumina
 
     void CFont::PostLoad()
     {
+        LUMINA_MEMORY_SCOPE("Fonts");
         BuildGlyphLookup();
 
         GetAtlasResourceID();

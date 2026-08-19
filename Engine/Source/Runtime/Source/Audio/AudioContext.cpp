@@ -1,4 +1,5 @@
 ﻿#include "RuntimePCH.h"
+#include "Memory/MemoryTracking.h"
 #include "AudioContext.h"
 
 #include "AudioGlobals.h"
@@ -26,6 +27,7 @@ namespace Lumina
 
 	void Audio::Initialize()
 	{
+		LUMINA_MEMORY_SCOPE("Audio");
 		Audio::Internal::SetContext(new FMiniaudioContext{});
 	}
 

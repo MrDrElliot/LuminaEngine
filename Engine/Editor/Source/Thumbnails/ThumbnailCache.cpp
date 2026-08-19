@@ -5,7 +5,7 @@
 #include "Paths/Paths.h"
 #include "Platform/Filesystem/FileHelper.h"
 
-#include <filesystem>
+#include "Platform/Filesystem/PlatformFilesystem.h"
 
 namespace Lumina::ThumbnailCache
 {
@@ -49,10 +49,8 @@ namespace Lumina::ThumbnailCache
             return false;
         }
 
-        // A cold cache misses on almost every asset; check existence directly (std::filesystem, no VFS/log)
-        // so the common miss doesn't spam "failed to get file size" through FileHelper.
-        std::error_code Ec;
-        if (!std::filesystem::exists(std::filesystem::path(Path.c_str()), Ec))
+        // Probing disk directly keeps FileHelper's per-miss "failed to get file size" out of the log.
+        if (!Filesystem::Exists(Path))
         {
             return false;
         }
@@ -121,7 +119,6 @@ namespace Lumina::ThumbnailCache
             return;
         }
 
-        std::error_code Ec;
-        std::filesystem::remove(std::filesystem::path(Path.c_str()), Ec);
+        Filesystem::RemoveFile(Path);
     }
 }

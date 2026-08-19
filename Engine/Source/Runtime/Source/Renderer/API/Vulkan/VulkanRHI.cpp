@@ -1,5 +1,6 @@
-#include "Containers/HandleAllocator.h"
+﻿#include "Containers/HandleAllocator.h"
 #include "RuntimePCH.h"
+#include "Memory/MemoryTracking.h"
 #include "Core/Templates/LuminaTemplate.h"
 
 #define VOLK_IMPLEMENTATION
@@ -1267,6 +1268,7 @@ namespace Lumina::RHI
 
     void CreateDevice(const FDeviceDesc& DeviceDesc)
     {
+        LUMINA_MEMORY_SCOPE("RHI");
         GDevice = new FDeviceImpl{};
         GDevice->CrashTracker = MakeUnique<FVulkanCrashTracker>();
         GDevice->bHeadless    = DeviceDesc.bHeadless;
@@ -2530,6 +2532,7 @@ namespace Lumina::RHI
 
     GPUPtr Malloc(uint64 Size, uint64 Alignment, EMemoryType Type)
     {
+        LUMINA_MEMORY_SCOPE("RHI");
         if (Size == 0)
         {
             return 0;
@@ -3017,6 +3020,7 @@ namespace Lumina::RHI
 
     FPipelineH CreateGraphicsPipeline(const FShaderSource& Vertex, const FShaderSource& Fragment, const FRasterDesc& Desc, TSpan<const FSpecializationConstant> Constants)
     {
+        LUMINA_MEMORY_SCOPE("RHI");
         VkShaderModuleCreateInfo VertInfo
         {
             .sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
@@ -3333,6 +3337,7 @@ namespace Lumina::RHI
 
     FPipelineH CreateComputePipeline(const FShaderSource& Compute, TSpan<const FSpecializationConstant> Constants)
     {
+        LUMINA_MEMORY_SCOPE("RHI");
         // @TODO Decide if we should load this and keep a shader handle instead.
         VkShaderModuleCreateInfo ModuleInfo
         {
@@ -3394,6 +3399,7 @@ namespace Lumina::RHI
 
     FPipelineH CreateMeshShaderPipeline(const FShaderSource& Task, const FShaderSource& Mesh, const FShaderSource& Fragment, const FRasterDesc& Desc, TSpan<const FSpecializationConstant> Constants)
     {
+        LUMINA_MEMORY_SCOPE("RHI");
         auto MakeModule = [](const FShaderSource& Src) -> VkShaderModule
         {
             if (Src.Source.empty())
@@ -3670,6 +3676,7 @@ namespace Lumina::RHI
 
     FTextureH CreateTexture(const FTextureDesc& Desc, GPUPtr Location)
     {
+        LUMINA_MEMORY_SCOPE("RHI");
         const VkFormat Format = ConvertFormat(Desc.Format);
         const VkImageAspectFlags Aspect = GuessImageAspectFlags(Format);
 
@@ -3801,6 +3808,7 @@ namespace Lumina::RHI
 
     FTextureHeapH CreateTextureHeap(uint32 TextureCount, uint32 RWTextureCount, uint32 SamplerCount)
     {
+        LUMINA_MEMORY_SCOPE("RHI");
         VkDescriptorSetAllocateInfo Info
         {
             .sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
@@ -4464,6 +4472,7 @@ namespace Lumina::RHI
 
     FSwapchainH CreateSwapchain(FSurfaceH SurfaceHandle, const FUIntVector2& Extent)
     {
+        LUMINA_MEMORY_SCOPE("RHI");
         FSurface& Source = GDevice->Surfaces[SurfaceHandle];
 
         FSwapchain SC{};
@@ -4669,6 +4678,7 @@ namespace Lumina::RHI
 
     FCmdListH OpenCommandList(EQueueType Type)
     {
+        LUMINA_MEMORY_SCOPE("RHI");
         static constexpr VkCommandBufferBeginInfo BeginInfo
         {
             .sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,

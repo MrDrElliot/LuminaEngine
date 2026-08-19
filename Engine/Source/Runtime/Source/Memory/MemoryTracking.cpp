@@ -77,11 +77,12 @@ namespace Lumina::Memory
             void*  Frames[kMaxStackFrames];
         };
 
-        constexpr uint32 kMaxCallSites = 16384;     // power of two; open-addressed by Hash
+        constexpr uint32 kMaxCallSites = 131072;    // power of two; open-addressed by Hash
 
-        TAtomic<bool> gCaptureStacks;
-        FMutex        gCallSiteMutex;
-        FCallSite*    gCallSites     = nullptr;     // lazily allocated [kMaxCallSites]
+        TAtomic<bool>   gCaptureStacks;
+        TAtomic<uint64> gCallSiteOverflow;          // allocations that found the table full
+        FMutex          gCallSiteMutex;
+        FCallSite*      gCallSites   = nullptr;     // lazily allocated [kMaxCallSites]
 
         // Per-thread attribution scope stack and a re-entrancy guard.
         thread_local uint32 tlCategoryStack[kMaxCatDepth];
@@ -299,7 +300,8 @@ namespace Lumina::Memory
                     return ((Slot + Probe) & Mask) + 1;
                 }
             }
-            return 0;   // table full
+            gCallSiteOverflow.fetch_add(1, Atomic::MemoryOrderRelaxed);
+            return 0;
 #else
             (void)Size; (void)CatId;
             return 0;
@@ -580,14 +582,154 @@ namespace Lumina::Memory
         tlInTracker = false;
     }
 
+    uint64 GetCallSiteOverflowCount() { return gCallSiteOverflow.load(Atomic::MemoryOrderRelaxed); }
+
     void SetCaptureCallstacks(bool bEnabled) { gCaptureStacks.store(bEnabled, Atomic::MemoryOrderRelease); }
     bool IsCapturingCallstacks()             { return gCaptureStacks.load(Atomic::MemoryOrderAcquire); }
 
-    uint32 GetTopCallSites(FCallSiteStat* Out, uint32 MaxOut, ECallSiteSort Sort)
+    uint32 AnalyzeCategory(const char* CategoryName, FCategoryLedger& OutSummary, FLedgerAlloc* OutLargest, uint32 MaxLargest)
+    {
+        OutSummary = FCategoryLedger{};
+
+        uint32 FilterCat = 0;
+        bool   bFilter   = false;
+        if (CategoryName != nullptr && CategoryName[0] != '\0')
+        {
+            FScopeLock Lock(gCategoryMutex);
+            EnsureDefaultCategory();
+            const uint64 Hash  = HashString(CategoryName);
+            const uint32 Count = gCategoryCount.load(Atomic::MemoryOrderAcquire);
+            for (uint32 i = 0; i < Count; ++i)
+            {
+                if (gCategories[i].NameHash == Hash && std::strcmp(gCategories[i].Name, CategoryName) == 0)
+                {
+                    FilterCat = i;
+                    bFilter   = true;
+                    break;
+                }
+            }
+            if (!bFilter)
+            {
+                return 0;
+            }
+        }
+
+        struct FTopEntry
+        {
+            uint64 Size    = 0;
+            uint32 StackId = 0;
+        };
+
+        FTopEntry    Top[kMaxLedgerTop];
+        const uint32 Want = (OutLargest == nullptr) ? 0
+                          : ((MaxLargest < kMaxLedgerTop) ? MaxLargest : kMaxLedgerTop);
+        uint32       TopCount = 0;
+
+        // The ledger has no tombstones (ShardRemove back-shifts), so a non-null Key is a live entry.
+        for (FShard& Shard : gShards)
+        {
+            FScopeLock Lock(Shard.Mutex);
+            if (Shard.Entries == nullptr)
+            {
+                continue;
+            }
+            for (uint32 i = 0; i < Shard.Capacity; ++i)
+            {
+                const FEntry& E = Shard.Entries[i];
+                if (E.Key == nullptr || (bFilter && E.CatId != FilterCat))
+                {
+                    continue;
+                }
+
+                const uint64 Size = (uint64)E.Size;
+                OutSummary.LiveBytes += Size;
+                ++OutSummary.LiveCount;
+                if (E.StackId == 0)
+                {
+                    OutSummary.UnattributedBytes += Size;
+                    ++OutSummary.UnattributedCount;
+                }
+
+                uint32 Bucket = 0;
+                while (Bucket < 63 && (Size >> (Bucket + 1)) != 0)
+                {
+                    ++Bucket;
+                }
+                OutSummary.BucketBytes[Bucket] += Size;
+                OutSummary.BucketCount[Bucket] += 1;
+
+                if (Want > 0 && (TopCount < Want || Size > Top[Want - 1].Size))
+                {
+                    uint32 Pos = (TopCount < Want) ? TopCount : (Want - 1);
+                    while (Pos > 0 && Top[Pos - 1].Size < Size)
+                    {
+                        Top[Pos] = Top[Pos - 1];
+                        --Pos;
+                    }
+                    Top[Pos] = FTopEntry{ Size, E.StackId };
+                    if (TopCount < Want)
+                    {
+                        ++TopCount;
+                    }
+                }
+            }
+        }
+
+        // Frames are copied after the shard locks are dropped; the two mutexes are never nested.
+        for (uint32 i = 0; i < TopCount; ++i)
+        {
+            OutLargest[i]      = FLedgerAlloc{};
+            OutLargest[i].Size = Top[i].Size;
+        }
+        if (TopCount > 0)
+        {
+            FScopeLock Lock(gCallSiteMutex);
+            if (gCallSites != nullptr)
+            {
+                for (uint32 i = 0; i < TopCount; ++i)
+                {
+                    if (Top[i].StackId == 0)
+                    {
+                        continue;
+                    }
+                    const FCallSite& C = gCallSites[Top[i].StackId - 1];
+                    OutLargest[i].FrameCount = C.FrameCount;
+                    std::memcpy(OutLargest[i].Frames, C.Frames, sizeof(void*) * C.FrameCount);
+                }
+            }
+        }
+
+        return TopCount;
+    }
+
+    uint32 GetTopCallSites(FCallSiteStat* Out, uint32 MaxOut, ECallSiteSort Sort, const char* CategoryName)
     {
         if (Out == nullptr || MaxOut == 0)
         {
             return 0;
+        }
+
+        uint32 FilterCat = 0;
+        bool   bFilter   = false;
+        if (CategoryName != nullptr && CategoryName[0] != '\0')
+        {
+            FScopeLock Lock(gCategoryMutex);
+            EnsureDefaultCategory();
+            const uint64 Hash  = HashString(CategoryName);
+            const uint32 Count = gCategoryCount.load(Atomic::MemoryOrderAcquire);
+            for (uint32 i = 0; i < Count; ++i)
+            {
+                if (gCategories[i].NameHash == Hash && std::strcmp(gCategories[i].Name, CategoryName) == 0)
+                {
+                    FilterCat = i;
+                    bFilter   = true;
+                    break;
+                }
+            }
+            if (!bFilter)
+            {
+                return 0;
+            }
         }
 
         const bool bByAllocs = (Sort == ECallSiteSort::TotalAllocs);
@@ -608,6 +750,10 @@ namespace Lumina::Memory
             const FCallSite& C = gCallSites[i];
             const uint64 Key = bByAllocs ? C.TotalAllocs : C.LiveBytes;
             if (C.Hash == 0 || Key == 0)
+            {
+                continue;
+            }
+            if (bFilter && C.CatId != FilterCat)
             {
                 continue;
             }
