@@ -641,9 +641,7 @@ internal sealed class TypeLibrary
     }
 }
 
-// Cached, immutable-after-Build description of one script type: the recursive [Property] member set and the
-// precomputed callback bitmask; one description serves every entity carrying the type. Create() uses Activator
-// deliberately: a compiled factory would pin this collectible ALC's ctor and block hot-reload unload.
+// Cached, immutable-after-Build description of one script type; Create() uses Activator deliberately, since a compiled factory would pin this collectible ALC's ctor and block hot-reload unload.
 internal sealed class TypeDescription
 {
     public Type Type { get; }
@@ -651,15 +649,11 @@ internal sealed class TypeDescription
     public IReadOnlyList<ScriptButton> Buttons { get; private set; } = Array.Empty<ScriptButton>();
     private IReadOnlyList<ScriptProperty> InputBindings = Array.Empty<ScriptProperty>();
     public bool HasInputBindings { get; private set; }
-    public string ProfileLabel { get; }
-    public string FixedProfileLabel { get; }
     private IReadOnlyList<RequiredComponent> RequiredComponents = Array.Empty<RequiredComponent>();
 
     public TypeDescription(Type Type)
     {
         this.Type = Type;
-        ProfileLabel = Type.Name;
-        FixedProfileLabel = Type.Name + ".FixedUpdate";
     }
 
     public void Build(TypeLibrary Library)

@@ -134,7 +134,7 @@ internal sealed class ScriptableRuntime
         if (Instance is EntityScript Script)
         {
             PrepareEntityScript(Script, TypeName, Type);
-            EntityScripts.Adopt(Allocated, Script);
+            EntityScripts.Adopt(Allocated);
         }
         return GCHandle.ToIntPtr(Allocated);
     }
