@@ -75,6 +75,19 @@ namespace Lumina
             return Folder.ID;
         }
 
+        /** Returns the folder of this name under ParentID, created if there is not one yet. */
+        uint32 FindOrCreateFolder(const FName& Name, uint32 ParentID = NoFolder)
+        {
+            for (const FSceneFolder& Folder : Folders)
+            {
+                if (Folder.Name == Name && Folder.ParentID == ParentID)
+                {
+                    return Folder.ID;
+                }
+            }
+            return CreateFolder(Name, ParentID);
+        }
+
         void RenameFolder(uint32 FolderID, const FName& NewName)
         {
             if (FSceneFolder* Folder = Find(FolderID))
@@ -178,6 +191,17 @@ namespace Lumina
             return NoFolder;
         }
 
+        /** Files an entity under FolderName, creating it if it does not already exist,
+         * removing it from whichever folder held it. NoFolder unfiles it.
+         */
+        void AssignEntity(entt::entity Entity, FName FolderName)
+        {
+            if (uint32 FolderID = FindOrCreateFolder(FolderName))
+            {
+                AssignEntity(Entity, FolderID);
+            }
+        }
+        
         /** Files an entity under FolderID, removing it from whichever folder held it. NoFolder unfiles it. */
         void AssignEntity(entt::entity Entity, uint32 FolderID)
         {
