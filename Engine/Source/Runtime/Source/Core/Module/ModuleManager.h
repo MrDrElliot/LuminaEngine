@@ -96,7 +96,7 @@ namespace Lumina
         TUniquePtr<IModuleInterface> ModuleInterface;
         // null in monolithic builds where the module is statically linked.
         // UnloadModule must guard FreeDLLHandle on it.
-        void* ModuleHandle;
+        void* ModuleHandle = nullptr;
     };
 
     using ModuleInitFunc = IModuleInterface* (*)();

@@ -233,17 +233,34 @@ namespace Lumina
     {
         FName ModuleFName = FName(ModuleName);
         auto it = ModuleHashMap.find(ModuleFName);
-        
-        DEBUG_ASSERT(it != ModuleHashMap.end());
 
-        FModuleInfo& Info = it->second;
-        DEBUG_ASSERT(Info.ModuleInterface.get());
-        
-        Info.ModuleInterface->ShutdownModule();
+        DEBUG_ASSERT(it != ModuleHashMap.end());
+        if (it == ModuleHashMap.end())
+        {
+            return false;
+        }
+
+        DEBUG_ASSERT(it->second.ModuleInterface.get());
+
+        if (it->second.ModuleInterface)
+        {
+            it->second.ModuleInterface->ShutdownModule();
+        }
+
+        // Re-find: ShutdownModule may have inserted into the registry and invalidated the iterator.
+        it = ModuleHashMap.find(ModuleFName);
+        if (it == ModuleHashMap.end())
+        {
+            return true;
+        }
+
+        // Both must leave the node before erase frees it, or the read double-frees and jumps through a garbage handle.
+        TUniquePtr<IModuleInterface> ModuleInterface = Move(it->second.ModuleInterface);
+        void* ModulePtr = it->second.ModuleHandle;
 
         ModuleHashMap.erase(it);
-        Info.ModuleInterface.reset();
-        void* ModulePtr = Info.ModuleHandle;
+
+        ModuleInterface.reset();
 
         // Statically-linked modules have no DLL handle; skip the
         // DLL-side teardown. The IModule's ShutdownModule above already ran.
@@ -270,7 +287,6 @@ namespace Lumina
             Keys.push_back(Pair.first);
         }
 
-        //@TODO This causes a crash with the heap.
         for (const FName& Key : Keys)
         {
             UnloadModule(Key.ToString());
