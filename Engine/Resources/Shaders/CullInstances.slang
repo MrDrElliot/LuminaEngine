@@ -221,6 +221,10 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     const bool bInRange = DrawID < Pass().NumBatches;
     bool bAnyView = false;
 
+    // A skinned block only needs a pre-skin slice for the view class that actually reads it.
+    bool bNeedsSurfaceSkin = false;
+    bool bNeedsShadowSkin  = false;
+
     // End of the last LOD: the bound on every mesh-global meshlet index the cull emits.
     const uint LODMeshletTotal = bSkinned ? Skin.MeshletTotalCount
                                : (bHasGeometry && NumLODs > 0u
@@ -300,6 +304,9 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
             Emitted = (Range.y == 0u || Range.x >= MeshletTotal || !bInRange)
                     ? 0u
                     : min(Range.y, MeshletTotal - Range.x);
+
+            bNeedsSurfaceSkin = bNeedsSurfaceSkin || (Emitted > 0u && !bShadowView);
+            bNeedsShadowSkin  = bNeedsShadowSkin  || (Emitted > 0u && bShadowView);
         }
 
         if (Emitted > 0u)
@@ -333,13 +340,21 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     // which is the question that was actually being asked before slots replaced addresses.
     if (bSkinned && Static.MeshletHeader.MeshletCount != 0u)
     {
-        SurfaceSkinBase = ClaimPreSkinSlice(Static.MeshletHeader, SurfaceMeshletOffset, SurfaceMeshletCount, MeshletTotal);
-
         // A shadow block that resolved to the surface block shares its slice; claiming twice would both
         // waste the budget and skin the same vertices into two places.
-        ShadowSkinBase = (ShadowMeshletOffset == SurfaceMeshletOffset)
+        const bool bShareShadowBlock = (ShadowMeshletOffset == SurfaceMeshletOffset);
+
+        if (bNeedsSurfaceSkin || (bNeedsShadowSkin && bShareShadowBlock))
+        {
+            SurfaceSkinBase = ClaimPreSkinSlice(Static.MeshletHeader, SurfaceMeshletOffset, SurfaceMeshletCount, MeshletTotal);
+        }
+
+        // An unclaimed block is not dropped: the draw path blends its bones inline instead.
+        ShadowSkinBase = bShareShadowBlock
                        ? SurfaceSkinBase
-                       : ClaimPreSkinSlice(Static.MeshletHeader, ShadowMeshletOffset, ShadowMeshletCount, MeshletTotal);
+                       : (bNeedsShadowSkin
+                            ? ClaimPreSkinSlice(Static.MeshletHeader, ShadowMeshletOffset, ShadowMeshletCount, MeshletTotal)
+                            : kNoPreSkinBase);
 
         // Written back so the skinning passes, which are keyed by RETAINED slot, see the same bases the
         // draw path will read off the compacted instance below.

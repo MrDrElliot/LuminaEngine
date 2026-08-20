@@ -3340,7 +3340,9 @@ namespace Lumina
         }
 
         // Coalesce, so a level whose skeletons were allocated together costs one copy instead of one per
-        // character. Sorted by base; adjacent and overlapping runs merge.
+        // character. Merging across a small gap re-sends a slice nothing reads, which beats a second copy.
+        constexpr uint32 kBoneMergeGap = 1024;
+
         TVector<FUIntVector2>& Ranges = BoneUploadScratch;
         Ranges.assign(Frame.Geometry.BoneUploadRanges.begin(), Frame.Geometry.BoneUploadRanges.end());
         if (Ranges.empty())
@@ -3375,7 +3377,7 @@ namespace Lumina
             const uint32 Start = Ranges[i].x;
             const uint32 End   = Ranges[i].x + Ranges[i].y;
 
-            if (Start <= RunEnd)
+            if (Start <= RunEnd + kBoneMergeGap)
             {
                 RunEnd = Math::Max(RunEnd, End);
                 continue;
@@ -3440,6 +3442,9 @@ namespace Lumina
         Algo::Sort(Ranges.begin(), Ranges.end(),
                     [](const FUIntVector2& A, const FUIntVector2& B) { return A.x < B.x; });
 
+        // Re-sending an ungathered slot is free: its older frame tag is rejected by the cull either way.
+        constexpr uint32 kSkinnedMergeGap = 2048;
+
         const uint32 Count = (uint32)Data.size();
 
         const auto Flush = [&](uint32 Start, uint32 End)
@@ -3459,7 +3464,7 @@ namespace Lumina
         {
             const uint32 Start = Ranges[i].x;
             const uint32 End   = Ranges[i].x + Ranges[i].y;
-            if (Start <= RunEnd)
+            if (Start <= RunEnd + kSkinnedMergeGap)
             {
                 RunEnd = Math::Max(RunEnd, End);
                 continue;

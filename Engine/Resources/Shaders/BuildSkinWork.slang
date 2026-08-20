@@ -63,32 +63,72 @@ uint SkinBlockMeshletCount(FSkinnedFrameData Data, bool bShadow)
     return Data.SurfaceMeshletCount;
 }
 
+#define SKIN_WORK_GROUP 256
+
+groupshared uint gsScan[SKIN_WORK_GROUP];
+groupshared uint gsRunning;
+
+// RULE: no lane may return early, or the barriers below go non-uniform and AMD hangs.
 [shader("compute")]
-[numthreads(1, 1, 1)]
-void ComputeMain()
+[numthreads(SKIN_WORK_GROUP, 1, 1)]
+void ComputeMain(uint Lane : SV_GroupIndex)
 {
-    const uint NumSlots = Pass().NumSlots;
+    const uint NumPairs = Pass().NumSlots * 2u;
+    const bool bHaveInputs = Pass().SlotList != nullptr && Pass().SkinnedData != nullptr;
 
-    uint Running = 0u;
-
-    if (Pass().SlotList != nullptr && Pass().SkinnedData != nullptr)
+    if (Lane == 0u)
     {
-        for (uint j = 0u; j < NumSlots; ++j)
-        {
-            const FSkinnedFrameData Data = Pass().SkinnedData[Pass().SlotList[j]];
+        gsRunning = 0u;
+    }
+    GroupMemoryBarrierWithGroupSync();
 
-            for (uint k = 0u; k < 2u; ++k)
-            {
-                Pass().OutWorkBase[j * 2u + k] = Running;
-                Running += SkinBlockMeshletCount(Data, k != 0u);
-            }
+    // Tiled: the running base is sequential across tiles, but the 256 loads inside one are not.
+    for (uint TileBase = 0u; TileBase < NumPairs; TileBase += SKIN_WORK_GROUP)
+    {
+        const uint Pair = TileBase + Lane;
+
+        uint Count = 0u;
+        if (bHaveInputs && Pair < NumPairs)
+        {
+            const FSkinnedFrameData Data = Pass().SkinnedData[Pass().SlotList[Pair >> 1u]];
+            Count = SkinBlockMeshletCount(Data, (Pair & 1u) != 0u);
         }
+
+        gsScan[Lane] = Count;
+        GroupMemoryBarrierWithGroupSync();
+
+        for (uint Offset = 1u; Offset < SKIN_WORK_GROUP; Offset <<= 1u)
+        {
+            const uint Add = (Lane >= Offset) ? gsScan[Lane - Offset] : 0u;
+            GroupMemoryBarrierWithGroupSync();
+            gsScan[Lane] += Add;
+            GroupMemoryBarrierWithGroupSync();
+        }
+
+        const uint Inclusive = gsScan[Lane];
+
+        // Written for EVERY pair, empty ones included, so Skinning.slang's search never reads a stale slot.
+        if (Pair < NumPairs)
+        {
+            Pass().OutWorkBase[Pair] = gsRunning + (Inclusive - Count);
+        }
+
+        const uint TileTotal = gsScan[SKIN_WORK_GROUP - 1u];
+        GroupMemoryBarrierWithGroupSync();
+        if (Lane == 0u)
+        {
+            gsRunning += TileTotal;
+        }
+        GroupMemoryBarrierWithGroupSync();
     }
 
-    // Folded across Y exactly as every other oversized grid in the renderer; Skinning.slang undoes it.
-    FDispatchIndirectArguments Args;
-    Args.GroupX = min(Running, (uint)MAX_DISPATCH_AXIS);
-    Args.GroupY = (Running + (uint)MAX_DISPATCH_AXIS - 1u) / (uint)MAX_DISPATCH_AXIS;
-    Args.GroupZ = 1u;
-    Pass().OutDispatchArgs[0] = Args;
+    if (Lane == 0u)
+    {
+        // Folded across Y exactly as every other oversized grid in the renderer; Skinning.slang undoes it.
+        FDispatchIndirectArguments Args;
+        Args.GroupX = min(gsRunning, (uint)MAX_DISPATCH_AXIS);
+        Args.GroupY = (gsRunning + (uint)MAX_DISPATCH_AXIS - 1u) / (uint)MAX_DISPATCH_AXIS;
+        Args.GroupZ = 1u;
+        Pass().OutDispatchArgs[0] = Args;
+    }
 }
