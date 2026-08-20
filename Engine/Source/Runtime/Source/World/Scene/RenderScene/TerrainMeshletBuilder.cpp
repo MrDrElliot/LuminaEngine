@@ -1,4 +1,5 @@
-﻿#include "RuntimePCH.h"
+﻿#include "Core/Templates/NumericLimits.h"
+#include "RuntimePCH.h"
 #include <limits>
 #include "TerrainMeshletBuilder.h"
 #include "TaskSystem/TaskSystem.h"
@@ -82,8 +83,8 @@ namespace Lumina::TerrainMeshletBuilder
             const int32 NVertsX  = Meshlet.QuadExtent.x + 1;
             const int32 NVertsY  = Meshlet.QuadExtent.y + 1;
 
-            float MinH =  std::numeric_limits<float>::infinity();
-            float MaxH = -std::numeric_limits<float>::infinity();
+            float MinH =  TNumericLimits<float>::Infinity();
+            float MaxH = -TNumericLimits<float>::Infinity();
             for (int32 vy = 0; vy < NVertsY; ++vy)
             {
                 for (int32 vx = 0; vx < NVertsX; ++vx)
@@ -114,8 +115,8 @@ namespace Lumina::TerrainMeshletBuilder
             Chunk.MeshletOffset = (uint32)(ChunkIndex * L.MeshletsPerChunk);
             Chunk.MeshletCount  = (uint32)L.MeshletsPerChunk;
 
-            float ChunkHeightMin =  std::numeric_limits<float>::infinity();
-            float ChunkHeightMax = -std::numeric_limits<float>::infinity();
+            float ChunkHeightMin =  TNumericLimits<float>::Infinity();
+            float ChunkHeightMax = -TNumericLimits<float>::Infinity();
 
             for (int32 my = 0; my < L.MeshletsPerChunkSide; ++my)
             {

@@ -39,7 +39,7 @@ namespace Lumina
             Memory::Free(Local);
         }
     };
-
+    
     /** The calling thread's frame arena; reset at the frame boundary, so Deallocate is a no-op. */
     struct FFrameAllocator
     {

@@ -8,12 +8,14 @@
 #include "World/Entity/EntityHandle.h"
 #include "World/Entity/Components/AudioSourceComponent.h"
 #include "World/Entity/Components/ProceduralAudioComponent.h"
+#include "SystemResources.h"
 
 namespace Lumina
 {
+	// PhysicsQuery: occlusion casts rays against the live scene (GetPhysicsScene bypasses CheckPhysics).
 	FSystemAccess SAudioSystem::Access = FSystemAccess{}
 		.Write<SAudioSourceComponent, SProceduralAudioComponent, SAudioListenerComponent>()
-		.Read<STransformComponent>();
+		.Read<STransformComponent, SystemResource::PhysicsQuery>();
 
 	namespace
 	{

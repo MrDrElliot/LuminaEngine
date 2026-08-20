@@ -1,3 +1,4 @@
+#include "Core/Templates/NumericLimits.h"
 #include <gtest/gtest.h>
 
 #include <format>
@@ -102,6 +103,9 @@ namespace LuminaFormatTests
         EXPECT_MATCHES_STD("{}", 1.0);
         EXPECT_MATCHES_STD("{}", 0.1);
         EXPECT_MATCHES_STD("{}", 3.14159265358979);
+        EXPECT_MATCHES_STD("{}", 1.0f / 3.0f);
+        EXPECT_MATCHES_STD("{}", 1e-8f);
+        EXPECT_MATCHES_STD("{:.3f}", 0.5f);
         EXPECT_MATCHES_STD("{}", 1e300);
         EXPECT_MATCHES_STD("{}", 1e-300);
         EXPECT_MATCHES_STD("{:.2f}", 3.14159);
@@ -119,8 +123,8 @@ namespace LuminaFormatTests
 
     TEST(Format, MatchesTheStandardOnFloatSpecialValues)
     {
-        const double Infinity = std::numeric_limits<double>::infinity();
-        const double NotANumber = std::numeric_limits<double>::quiet_NaN();
+        const double Infinity = TNumericLimits<double>::Infinity();
+        const double NotANumber = TNumericLimits<double>::QuietNaN();
 
         EXPECT_MATCHES_STD("{}", Infinity);
         EXPECT_MATCHES_STD("{}", -Infinity);

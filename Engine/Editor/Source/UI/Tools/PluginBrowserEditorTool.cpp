@@ -1,3 +1,4 @@
+#include "Containers/StringFormat.h"
 #include <string>
 #include "PluginBrowserEditorTool.h"
 
@@ -317,7 +318,7 @@ namespace Lumina
             Row("Path",     Plugin->GetDescriptorPath().data());
             Row("Category", Desc.Category.c_str());
             Row("Version",  Desc.VersionName.empty()
-                                ? std::to_string(Desc.Version).c_str()
+                                ? Format("{}", Desc.Version).c_str()
                                 : Desc.VersionName.c_str());
             Row("Type",     Plugin->IsEnginePlugin() ? "Engine plugin" : "Project plugin");
             Row("Editor-only", Desc.bEditorOnly ? "Yes" : "No");

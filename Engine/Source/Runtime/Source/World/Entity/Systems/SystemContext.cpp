@@ -1,4 +1,4 @@
-#include "RuntimePCH.h"
+﻿#include "RuntimePCH.h"
 #include "SystemContext.h"
 #include "World/World.h"
 #include "World/Entity/Components/DirtyComponent.h"
@@ -60,8 +60,10 @@ namespace Lumina
         return RuntimeView;
     }
 
+    // Read, not write: a declared Write satisfies it, so this only catches declaring no PhysicsQuery at all.
     Physics::IPhysicsScene* FSystemContext::GetPhysicsScene() const
     {
+        CheckPhysics(false);
         return World ? World->GetPhysicsScene() : nullptr;
     }
 

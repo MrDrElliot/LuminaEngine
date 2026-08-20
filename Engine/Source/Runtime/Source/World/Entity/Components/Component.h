@@ -9,6 +9,7 @@
 #include "Memory/Memory.h"
 #include "Traits/ComponentTraits.h"
 #include "World/Entity/Traits.h"
+#include "World/Entity/Systems/SystemAccess.h"
 
 namespace Lumina
 {
@@ -201,6 +202,23 @@ namespace Lumina
             return Ops;
         }
 
+#if !defined(LE_SHIPPING)
+        // entt hands the listener (registry, entity); the type is what the executing system had to declare.
+        template<typename TComponent>
+        void ValidateComponentStructuralWrite(entt::registry&, entt::entity)
+        {
+            ValidateSystemAccess(static_cast<uint32>(entt::type_hash<TComponent>::value()), true,
+                "a Write<> of the component being added or removed");
+        }
+
+        template<typename TComponent>
+        void ConnectComponentAccessValidator(entt::registry& Registry)
+        {
+            Registry.on_construct<TComponent>().template connect<&ValidateComponentStructuralWrite<TComponent>>();
+            Registry.on_destroy<TComponent>().template connect<&ValidateComponentStructuralWrite<TComponent>>();
+        }
+#endif
+
         template<typename TComponent>
         void RegisterComponentMeta()
         {
@@ -218,6 +236,10 @@ namespace Lumina
 
             // Direct-call op table for the C# bridge (bypasses the meta trampoline above on the hot path).
             RegisterComponentOps(TComponent::StaticStruct()->GetName().c_str(), &GetComponentOps<TComponent>());
+
+#if !defined(LE_SHIPPING)
+            RegisterComponentAccessValidator(&ConnectComponentAccessValidator<TComponent>);
+#endif
             
             if constexpr (!std::is_empty_v<TComponent>)
             {

@@ -2358,7 +2358,7 @@ namespace Lumina
 
                 if (ImGui::MenuItem("Copy Entity ID"))
                 {
-                    ImGui::SetClipboardText(std::to_string(entt::to_integral(LastSelected)).c_str());
+                    ImGui::SetClipboardText(Format("{}", entt::to_integral(LastSelected)).c_str());
                     ImGui::CloseCurrentPopup();
                 }
 

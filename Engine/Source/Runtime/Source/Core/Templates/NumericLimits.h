@@ -1,4 +1,6 @@
 #pragma once
+#include <bit>
+
 #include "Platform/GenericPlatform.h"
 
 // Min() is the smallest POSITIVE finite value for floats, as in std; the most negative is always Lowest().
@@ -73,17 +75,26 @@ struct TNumericLimits<int64>
 template <>
 struct TNumericLimits<float>
 {
-    static constexpr float Min()    { return 1.175494351e-38f; }
-    static constexpr float Lowest() { return -3.402823466e+38f; }
-    static constexpr float Max()    { return 3.402823466e+38f; }
+    static constexpr float Min()      { return 1.175494351e-38f; }
+    static constexpr float Lowest()   { return -3.402823466e+38f; }
+    static constexpr float Max()      { return 3.402823466e+38f; }
+    static constexpr float Epsilon()  { return 1.192092896e-07f; }
+
+    // Bit patterns rather than a builtin, so both stay constant expressions on every toolchain.
+    static constexpr float Infinity() { return std::bit_cast<float>(0x7F800000u); }
+    static constexpr float QuietNaN() { return std::bit_cast<float>(0x7FC00000u); }
 };
 
 template <>
 struct TNumericLimits<double>
 {
-    static constexpr double Min()    { return 2.2250738585072014e-308; }
-    static constexpr double Lowest() { return -1.7976931348623158e+308; }
-    static constexpr double Max()    { return 1.7976931348623158e+308; }
+    static constexpr double Min()      { return 2.2250738585072014e-308; }
+    static constexpr double Lowest()   { return -1.7976931348623158e+308; }
+    static constexpr double Max()      { return 1.7976931348623158e+308; }
+    static constexpr double Epsilon()  { return 2.2204460492503131e-016; }
+
+    static constexpr double Infinity() { return std::bit_cast<double>(0x7FF0000000000000ull); }
+    static constexpr double QuietNaN() { return std::bit_cast<double>(0x7FF8000000000000ull); }
 };
 
 template <typename T> struct TNumericLimits<const          T> : TNumericLimits<T> {};

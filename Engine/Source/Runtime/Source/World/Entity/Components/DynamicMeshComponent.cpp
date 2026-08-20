@@ -177,7 +177,7 @@ namespace Lumina
 
     TSharedPtr<FDynamicMeshRenderData> SDynamicMeshComponent::LoadRenderData() const
     {
-        return std::atomic_load(&RenderData);
+        return AtomicLoad(&RenderData);
     }
 
     uint32 SDynamicMeshComponent::LoadRenderDataVersion() const
@@ -188,7 +188,7 @@ namespace Lumina
 
     void SDynamicMeshComponent::PublishRenderData(TSharedPtr<FDynamicMeshRenderData> NewData)
     {
-        std::atomic_store(&RenderData, std::move(NewData));
+        AtomicStore(&RenderData, Move(NewData));
         (void)std::atomic_ref<uint32>(RenderDataVersion).fetch_add(1u, std::memory_order_release);
     }
 

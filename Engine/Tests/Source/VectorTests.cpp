@@ -6,6 +6,7 @@
 #include <span>
 #include <string>
 
+#include "Memory/SmartPtr.h"
 #include "Containers/Vector.h"
 #include "Memory/Allocators/Allocator.h"
 
@@ -108,7 +109,8 @@ TEST(VectorLayout, RelocatabilityIsAdvertisedCorrectly)
     static_assert(Lumina::TIsTriviallyRelocatable_V<TVector<int>>);
     static_assert(Lumina::TIsTriviallyRelocatable_V<TVector<std::string>>);
     static_assert(!Lumina::TIsTriviallyRelocatable_V<TInlineVector<int, 4>>);
-    static_assert(Lumina::TIsTriviallyRelocatable_V<std::unique_ptr<int>>);
+    static_assert(Lumina::TIsTriviallyRelocatable_V<Lumina::TUniquePtr<int>>);
+    static_assert(Lumina::TIsTriviallyRelocatable_V<Lumina::TSharedPtr<int>>);
     static_assert(!Lumina::TIsTriviallyRelocatable_V<FSelfReferencing>);
     SUCCEED();
 }

@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include "Core/Templates/NumericLimits.h"
 #include <limits>
 #include "Containers/HashTable.h"
 #include "Containers/Name.h"
@@ -29,7 +30,7 @@ namespace Lumina
         {
             char* End = nullptr;
             long long Value = std::strtoll(Str.data(), &End, 10);
-            if (End != Str.data() && Value >= std::numeric_limits<T>::min() && Value <= std::numeric_limits<T>::max())
+            if (End != Str.data() && Value >= TNumericLimits<T>::Min() && Value <= TNumericLimits<T>::Max())
             {
                 return static_cast<T>(Value);
             }

@@ -228,6 +228,7 @@ namespace Lumina::Fmt
         Char,
         Int64,
         UInt64,
+        Float,
         Double,
         CString,
         String,
@@ -245,6 +246,7 @@ namespace Lumina::Fmt
             char        CharValue;
             int64       Int64Value;
             uint64      UInt64Value;
+            float       FloatValue;
             double      DoubleValue;
             const char* CStringValue;
             const void* PointerValue;
@@ -328,6 +330,11 @@ namespace Lumina::Fmt
             Arg.UInt64Value = static_cast<uint64>(Value);
             Arg.Type = EFormatArgType::UInt64;
         }
+        else if constexpr (std::is_same_v<FValue, float>)
+        {
+            Arg.FloatValue = Value;
+            Arg.Type = EFormatArgType::Float;
+        }
         else if constexpr (std::is_floating_point_v<FValue>)
         {
             Arg.DoubleValue = static_cast<double>(Value);
@@ -382,6 +389,7 @@ namespace Lumina::Fmt
         else if constexpr (std::is_enum_v<FValue> && !CustomFormattable<FValue>)   { return EFormatArgType::Int64; }
         else if constexpr (std::is_integral_v<FValue> && std::is_signed_v<FValue>) { return EFormatArgType::Int64; }
         else if constexpr (std::is_integral_v<FValue>)                             { return EFormatArgType::UInt64; }
+        else if constexpr (std::is_same_v<FValue, float>)                          { return EFormatArgType::Float; }
         else if constexpr (std::is_floating_point_v<FValue>)                       { return EFormatArgType::Double; }
         else if constexpr (std::is_same_v<FValue, const char*> ||
                            std::is_same_v<FValue, char*>)                          { return EFormatArgType::CString; }
@@ -443,6 +451,7 @@ namespace Lumina::Fmt
             case EFormatArgType::UInt64:
                 return TypeChar == 'c' || TypeChar == 'b' || TypeChar == 'B' || TypeChar == 'd' ||
                        TypeChar == 'o' || TypeChar == 'x' || TypeChar == 'X';
+            case EFormatArgType::Float:
             case EFormatArgType::Double:
                 return TypeChar == 'a' || TypeChar == 'A' || TypeChar == 'e' || TypeChar == 'E' ||
                        TypeChar == 'f' || TypeChar == 'F' || TypeChar == 'g' || TypeChar == 'G';
@@ -696,6 +705,7 @@ namespace Lumina::Fmt
     RUNTIME_API void WriteAligned(FFormatBuffer& Out, FStringView Text, const FFormatSpec& Spec);
     RUNTIME_API void WriteInteger(FFormatBuffer& Out, uint64 Magnitude, bool bNegative, const FFormatSpec& Spec);
     RUNTIME_API void WriteFloat(FFormatBuffer& Out, double Value, const FFormatSpec& Spec);
+    RUNTIME_API void WriteFloat(FFormatBuffer& Out, float Value, const FFormatSpec& Spec);
 }
 
 namespace Lumina

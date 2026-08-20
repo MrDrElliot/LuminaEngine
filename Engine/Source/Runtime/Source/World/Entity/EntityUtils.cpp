@@ -51,7 +51,16 @@ namespace Lumina
     {
         THashMap<uint32, FString>& AccessTypeNameMap()
         {
-            static THashMap<uint32, FString> Map;
+            // Seeded, not lazily filled: the validator reads this from workers, so writes stay at startup.
+            static THashMap<uint32, FString> Map = []
+            {
+                THashMap<uint32, FString> Seed;
+                Seed[static_cast<uint32>(entt::type_hash<SystemResource::PhysicsQuery>::value())]    = "PhysicsQuery";
+                Seed[static_cast<uint32>(entt::type_hash<SystemResource::EntityStructure>::value())] = "EntityStructure";
+                Seed[static_cast<uint32>(entt::type_hash<SystemResource::EventDispatcher>::value())] = "EventDispatcher";
+                Seed[static_cast<uint32>(entt::type_hash<SystemResource::Input>::value())]           = "Input";
+                return Seed;
+            }();
             return Map;
         }
     }
@@ -63,14 +72,7 @@ namespace Lumina
 
     const char* GetAccessTypeName(uint32 Id)
     {
-        // Lazily register the non-reflected SystemResource:: tags (they have no op table to hook).
-        auto& Map = AccessTypeNameMap();
-        if (Map.empty() || Map.find(static_cast<uint32>(entt::type_hash<SystemResource::PhysicsQuery>::value())) == Map.end())
-        {
-            Map[static_cast<uint32>(entt::type_hash<SystemResource::PhysicsQuery>::value())]    = "PhysicsQuery";
-            Map[static_cast<uint32>(entt::type_hash<SystemResource::EntityStructure>::value())] = "EntityStructure";
-            Map[static_cast<uint32>(entt::type_hash<SystemResource::EventDispatcher>::value())] = "EventDispatcher";
-        }
+        const auto& Map = AccessTypeNameMap();
         const auto It = Map.find(Id);
         return It != Map.end() ? It->second.c_str() : nullptr;
     }
@@ -134,11 +136,54 @@ namespace Lumina
         }
         if (bFirst)
         {
-            LOG_ERROR("System ran in parallel but under-declared its ECS access: it touched something requiring "
-                      "{} which it did not declare. Add it to the system's FSystemAccess (or drop the Access member "
-                      "to run exclusive). This is a silent data race under concurrent scheduling.", What);
+            const char* TypeName = GetAccessTypeName(ComponentId);
+            LOG_ERROR("System ran in parallel but under-declared its ECS access: it touched '{}' ({}), which it did "
+                      "not declare. Add it to the system's FSystemAccess (or drop the Access member to run "
+                      "exclusive). This is a silent data race under concurrent scheduling.",
+                      TypeName != nullptr ? TypeName : "<unregistered type>", What);
             DEBUG_ASSERT(false, "System under-declared ECS access (see log).");
         }
+    }
+
+    namespace
+    {
+        // Set on a registry once its hooks are installed, so a re-init cannot stack duplicate listeners.
+        struct FAccessValidatorsConnected {};
+
+        TVector<void (*)(entt::registry&)>& ComponentAccessValidators()
+        {
+            static TVector<void (*)(entt::registry&)> Connectors;
+            return Connectors;
+        }
+
+        void ValidateEntityStructuralWrite(entt::registry&, entt::entity)
+        {
+            ValidateSystemAccess(static_cast<uint32>(entt::type_hash<SystemResource::EntityStructure>::value()),
+                true, "Write<SystemResource::EntityStructure>");
+        }
+    }
+
+    void RegisterComponentAccessValidator(void (*Connect)(entt::registry&))
+    {
+        ComponentAccessValidators().push_back(Connect);
+    }
+
+    void ConnectComponentAccessValidators(entt::registry& Registry)
+    {
+        if (Registry.ctx().contains<FAccessValidatorsConnected>())
+        {
+            return;
+        }
+        Registry.ctx().emplace<FAccessValidatorsConnected>();
+
+        for (void (*Connect)(entt::registry&) : ComponentAccessValidators())
+        {
+            Connect(Registry);
+        }
+
+        // entt routes create/destroy through the registry's own entity pool, so this covers every path.
+        Registry.on_construct<entt::entity>().connect<&ValidateEntityStructuralWrite>();
+        Registry.on_destroy<entt::entity>().connect<&ValidateEntityStructuralWrite>();
     }
 #endif
 }
@@ -147,25 +192,6 @@ using namespace entt::literals;
 
 namespace Lumina::ECS::Utils
 {
-    // --- Serialization ---
-
-    /**
-     * The reflected component types present in a registry, resolved ONCE.
-     *
-     * The write path has to ask, for each entity, which components it carries -- and entt offers no
-     * "components of entity X", so the storages must be probed. That probe is inherent. What was NOT
-     * inherent is that every probe HIT then paid `entt::resolve(Set.info())` plus an `InvokeMetaFunc`
-     * to recover the CStruct*, and both are hash lookups into entt's meta registry. Those depend only on
-     * the component TYPE, so paying them per component INSTANCE meant a whole-registry save spent
-     * (entities x components) on meta traffic alone. On the editor's undo snapshot -- which serializes
-     * the entire registry twice per transaction -- that was the bulk of a multi-hundred-millisecond stall.
-     *
-     * Empty storages are dropped here too: an assured-but-unused pool still cost a contains() probe per
-     * entity, and a mature registry has a lot of them.
-     *
-     * Built in `Registry.storage()` order, so the emitted component order is unchanged -- which matters,
-     * because the undo system byte-compares two captures to decide whether a transaction was a no-op.
-     */
     struct FComponentTypeCache
     {
         struct FEntry

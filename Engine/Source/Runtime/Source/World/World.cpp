@@ -315,7 +315,9 @@ namespace Lumina
         }
 
         EntityRegistry.ctx().emplace<entt::dispatcher&>(SingletonDispatcher);
-        
+
+        ConnectComponentAccessValidators(EntityRegistry);
+
         auto WorldSettingsView = EntityRegistry.view<SDefaultWorldSettings>();
         for (auto Entity : WorldSettingsView)
         {

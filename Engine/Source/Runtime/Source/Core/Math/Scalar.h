@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Core/Templates/NumericLimits.h"
 #include "Platform/GenericPlatform.h"
 #include "Core/LuminaMacros.h"
 #include <cmath>
@@ -14,7 +15,7 @@ namespace Lumina::Math
     template<typename T> [[nodiscard]] constexpr T Pi()       { return T(3.141592653589793238462643383279502884L); }
     template<typename T> [[nodiscard]] constexpr T TwoPi()    { return T(2) * Pi<T>(); }
     template<typename T> [[nodiscard]] constexpr T HalfPi()   { return Pi<T>() / T(2); }
-    template<typename T> [[nodiscard]] constexpr T Epsilon()  { return std::numeric_limits<T>::epsilon(); }
+    template<typename T> [[nodiscard]] constexpr T Epsilon()  { return TNumericLimits<T>::Epsilon(); }
 
     template<std::floating_point T> [[nodiscard]] constexpr T Radians(T Degrees) { return Degrees * (Pi<T>() / T(180)); }
     template<std::floating_point T> [[nodiscard]] constexpr T Degrees(T Radians) { return Radians * (T(180) / Pi<T>()); }

@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include "Core/Templates/NumericLimits.h"
 #include <limits>
 #include "Containers/Vector.h"
 #include "Core/Threading/Atomic.h"
@@ -30,7 +31,7 @@ namespace Lumina
         static FSimpleElementVertex MakePadVertex()
         {
             FSimpleElementVertex Pad;
-            Pad.Position.x = std::numeric_limits<float>::infinity();
+            Pad.Position.x = TNumericLimits<float>::Infinity();
             Pad.Position.y = Pad.Position.x;
             Pad.Position.z = Pad.Position.x;
             Pad.Color      = 0u;

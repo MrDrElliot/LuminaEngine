@@ -1,4 +1,4 @@
-#include "PrefabSpawnerSystem.h"
+﻿#include "PrefabSpawnerSystem.h"
 
 #include "Assets/AssetTypes/Prefabs/Prefab.h"
 #include "Assets/AssetTypes/Prefabs/PrefabComponents.h"
@@ -18,10 +18,23 @@ namespace Lumina
 
             return Math::RandRange(Min, Max);
         }
+
+        // Instantiate creates entities and every component the prefab carries, so a live view over the
+        // spawner's own storages can be reallocated out from under the loop.
+        void GatherSpawners(const FSystemContext& Context, TVector<entt::entity>& Out)
+        {
+            auto View = Context.CreateView<SPrefabSpawnerComponent, STransformComponent>();
+            Out.reserve(View.size_hint());
+            for (entt::entity Entity : View)
+            {
+                Out.push_back(Entity);
+            }
+        }
     }
 
-    FSystemAccess SPrefabSpawnerSystem::Access = FSystemAccess{}
-        .Write<SPrefabComponent, SPrefabSpawnerComponent, STransformComponent>();
+    // Exclusive: Instantiate does structural ECS changes, creates physics bodies, and fires entt construct
+    // hooks for whatever the prefab contains. No component-level declaration can describe that.
+    FSystemAccess SPrefabSpawnerSystem::Access = FSystemAccess::Exclusive();
 
     void SPrefabSpawnerSystem::Startup(const FSystemContext& Context) noexcept
     {
@@ -29,49 +42,84 @@ namespace Lumina
         {
             return;
         }
-        
-        auto View = Context.CreateView<SPrefabSpawnerComponent, STransformComponent>();
-        View.each([&](SPrefabSpawnerComponent& SpawnComponent, const STransformComponent& Transform)
+
+        FEntityRegistry& Registry = Context.GetRegistry();
+
+        TVector<entt::entity> Spawners;
+        GatherSpawners(Context, Spawners);
+
+        for (entt::entity Entity : Spawners)
         {
-            if (!SpawnComponent.bSpawnOnStartup)
+            if (!Registry.valid(Entity))
             {
-                return;
+                continue;
             }
 
-            SpawnComponent.Spawn(Context.GetWorld(), Transform.GetWorldTransform());
-        });
+            // Re-resolved per entity: an earlier spawn may have moved or removed these components.
+            const SPrefabSpawnerComponent* SpawnComponent = Registry.try_get<SPrefabSpawnerComponent>(Entity);
+            const STransformComponent* Transform = Registry.try_get<STransformComponent>(Entity);
+            if (SpawnComponent == nullptr || Transform == nullptr || !SpawnComponent->bSpawnOnStartup)
+            {
+                continue;
+            }
+
+            SpawnComponent->Spawn(Context.GetWorld(), Transform->GetWorldTransform());
+        }
     }
 
     void SPrefabSpawnerSystem::Update(const FSystemContext& Context) noexcept
     {
         const float DeltaTime = static_cast<float>(Context.GetDeltaTime());
 
-        auto View = Context.CreateView<SPrefabSpawnerComponent, STransformComponent>();
-        View.each([&](SPrefabSpawnerComponent& SpawnComponent, const STransformComponent& Transform)
+        FEntityRegistry& Registry = Context.GetRegistry();
+
+        TVector<entt::entity> Spawners;
+        GatherSpawners(Context, Spawners);
+
+        for (entt::entity Entity : Spawners)
         {
-            if (Math::Max(SpawnComponent.SpawnTimeRange.x, SpawnComponent.SpawnTimeRange.y) <= 0.0f)
+            if (!Registry.valid(Entity))
             {
-                SpawnComponent.TimeUntilNextSpawn = 0.0f;
-                return;
+                continue;
             }
 
-            if (SpawnComponent.TimeUntilNextSpawn <= 0.0f)
+            SPrefabSpawnerComponent* SpawnComponent = Registry.try_get<SPrefabSpawnerComponent>(Entity);
+            const STransformComponent* Transform = Registry.try_get<STransformComponent>(Entity);
+            if (SpawnComponent == nullptr || Transform == nullptr)
             {
-                SpawnComponent.TimeUntilNextSpawn = DrawSpawnInterval(SpawnComponent.SpawnTimeRange);
-                return;
+                continue;
             }
 
-            SpawnComponent.TimeUntilNextSpawn -= DeltaTime;
-            if (SpawnComponent.TimeUntilNextSpawn > 0.0f)
+            if (Math::Max(SpawnComponent->SpawnTimeRange.x, SpawnComponent->SpawnTimeRange.y) <= 0.0f)
             {
-                return;
+                SpawnComponent->TimeUntilNextSpawn = 0.0f;
+                continue;
             }
 
-            SpawnComponent.Spawn(Context.GetWorld(), Transform.GetWorldTransform());
-            
-            SpawnComponent.TimeUntilNextSpawn = Math::Max(
-                DrawSpawnInterval(SpawnComponent.SpawnTimeRange) + SpawnComponent.TimeUntilNextSpawn, 0.0001f);
-        });
+            if (SpawnComponent->TimeUntilNextSpawn <= 0.0f)
+            {
+                SpawnComponent->TimeUntilNextSpawn = DrawSpawnInterval(SpawnComponent->SpawnTimeRange);
+                continue;
+            }
+
+            SpawnComponent->TimeUntilNextSpawn -= DeltaTime;
+            if (SpawnComponent->TimeUntilNextSpawn > 0.0f)
+            {
+                continue;
+            }
+
+            const FVector2 Range = SpawnComponent->SpawnTimeRange;
+            const float Remainder = SpawnComponent->TimeUntilNextSpawn;
+
+            SpawnComponent->Spawn(Context.GetWorld(), Transform->GetWorldTransform());
+
+            // Re-resolved: the spawn may have reallocated the spawner pool.
+            SpawnComponent = Registry.try_get<SPrefabSpawnerComponent>(Entity);
+            if (SpawnComponent != nullptr)
+            {
+                SpawnComponent->TimeUntilNextSpawn = Math::Max(DrawSpawnInterval(Range) + Remainder, 0.0001f);
+            }
+        }
     }
 
     void SPrefabSpawnerSystem::Teardown(const FSystemContext& Context) noexcept

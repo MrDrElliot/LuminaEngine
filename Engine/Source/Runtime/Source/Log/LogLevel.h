@@ -26,9 +26,9 @@ namespace Lumina
         // string_view so every length is a compile-time constant.
         struct FLevelDescriptor
         {
-            std::string_view Name;
-            std::string_view DisplayName;   // padded to 8 columns
-            std::string_view AnsiColor;
+            FStringView Name;
+            FStringView DisplayName;   // padded to 8 columns
+            FStringView AnsiColor;
         };
 
         inline constexpr FLevelDescriptor GLevelDescriptors[GNumLogLevels + 1] =
@@ -42,7 +42,7 @@ namespace Lumina
             { "off",      "off     ", ""              },
         };
 
-        inline constexpr std::string_view GAnsiReset = "\x1b[m";
+        inline constexpr FStringView GAnsiReset = "\x1b[m";
 
         NODISCARD constexpr const FLevelDescriptor& GetLevelDescriptor(ELogLevel Level) noexcept
         {

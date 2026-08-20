@@ -1,34 +1,34 @@
 #pragma once
 
+#include "Containers/StringFormat.h"
 #include "Vector/VectorTypes.h"
 #include "Quat/Quat.h"
-#include <string>
 
 // Stringify helpers for the math types (debug / property display).
 
 namespace Lumina::Math
 {
     template<typename T>
-    [[nodiscard]] inline std::string ToString(const TVec<T, 2>& V)
+    [[nodiscard]] inline FString ToString(const TVec<T, 2>& V)
     {
-        return "(" + std::to_string(V.x) + ", " + std::to_string(V.y) + ")";
+        return Format("({}, {})", V.x, V.y);
     }
 
     template<typename T>
-    [[nodiscard]] inline std::string ToString(const TVec<T, 3>& V)
+    [[nodiscard]] inline FString ToString(const TVec<T, 3>& V)
     {
-        return "(" + std::to_string(V.x) + ", " + std::to_string(V.y) + ", " + std::to_string(V.z) + ")";
+        return Format("({}, {}, {})", V.x, V.y, V.z);
     }
 
     template<typename T>
-    [[nodiscard]] inline std::string ToString(const TVec<T, 4>& V)
+    [[nodiscard]] inline FString ToString(const TVec<T, 4>& V)
     {
-        return "(" + std::to_string(V.x) + ", " + std::to_string(V.y) + ", " + std::to_string(V.z) + ", " + std::to_string(V.w) + ")";
+        return Format("({}, {}, {}, {})", V.x, V.y, V.z, V.w);
     }
 
     template<typename T>
-    [[nodiscard]] inline std::string ToString(const TQuat<T>& Q)
+    [[nodiscard]] inline FString ToString(const TQuat<T>& Q)
     {
-        return "(w=" + std::to_string(Q.w) + ", " + std::to_string(Q.x) + ", " + std::to_string(Q.y) + ", " + std::to_string(Q.z) + ")";
+        return Format("(w={}, {}, {}, {})", Q.w, Q.x, Q.y, Q.z);
     }
 }

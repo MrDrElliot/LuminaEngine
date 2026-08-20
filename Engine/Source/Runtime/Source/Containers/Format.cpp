@@ -2,6 +2,8 @@
 
 #include <charconv>
 
+#include "Core/Templates/NumericLimits.h"
+
 namespace Lumina::Fmt
 {
     namespace
@@ -218,6 +220,9 @@ namespace Lumina::Fmt
                     WriteInteger(Out, Arg.UInt64Value, false, Spec);
                 }
                 break;
+            case EFormatArgType::Float:
+                WriteFloat(Out, Arg.FloatValue, Spec);
+                break;
             case EFormatArgType::Double:
                 WriteFloat(Out, Arg.DoubleValue, Spec);
                 break;
@@ -321,10 +326,13 @@ namespace Lumina::Fmt
         WritePadded(Out, SignCharacterFor(bNegative, Spec), Prefix, PrefixLength, End - Length, Length, Spec);
     }
 
-    void WriteFloat(FFormatBuffer& Out, double Value, const FFormatSpec& Spec)
+    namespace
     {
-        const bool bNegative = Value < 0.0 || (Value == 0.0 && std::signbit(Value));
-        const double Magnitude = bNegative ? -Value : Value;
+        template <typename TFloat>
+        void WriteFloatOfType(FFormatBuffer& Out, TFloat Value, const FFormatSpec& Spec)
+        {
+        const bool bNegative = Value < TFloat(0) || (Value == TFloat(0) && std::signbit(Value));
+        const TFloat Magnitude = bNegative ? -Value : Value;
         const char SignChar = SignCharacterFor(bNegative, Spec);
 
         if (Magnitude != Magnitude)
@@ -334,7 +342,7 @@ namespace Lumina::Fmt
             return;
         }
 
-        if (Magnitude > 1.7976931348623157e308)
+        if (Magnitude > TNumericLimits<TFloat>::Max())
         {
             const bool bUpper = Spec.Type == 'E' || Spec.Type == 'F' || Spec.Type == 'G' || Spec.Type == 'A';
             WritePadded(Out, SignChar, "", 0, bUpper ? "INF" : "inf", 3, Spec);
@@ -417,6 +425,17 @@ namespace Lumina::Fmt
         {
             FHeapAllocator::Deallocate(Heap, ScratchSize, alignof(char));
         }
+        }
+    }
+
+    void WriteFloat(FFormatBuffer& Out, double Value, const FFormatSpec& Spec)
+    {
+        WriteFloatOfType(Out, Value, Spec);
+    }
+
+    void WriteFloat(FFormatBuffer& Out, float Value, const FFormatSpec& Spec)
+    {
+        WriteFloatOfType(Out, Value, Spec);
     }
 
     void VFormatTo(FFormatBuffer& Out, FStringView Fmt, FFormatArgs Args)

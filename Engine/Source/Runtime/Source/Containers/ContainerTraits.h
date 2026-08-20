@@ -1,6 +1,5 @@
 #pragma once
 
-#include <memory>
 #include <optional>
 #include <tuple>
 #include <type_traits>
@@ -46,25 +45,6 @@ namespace Lumina
 
     template <typename T>
     concept TriviallyRelocatable = TIsTriviallyRelocatable_V<T>;
-
-    // The standard smart pointers are a pointer pair with no self-reference on any toolchain we build for.
-    template <typename T, typename D>
-    struct TIsTriviallyRelocatable<std::unique_ptr<T, D>>
-    {
-        static constexpr bool Value = TIsTriviallyRelocatable_V<D>;
-    };
-
-    template <typename T>
-    struct TIsTriviallyRelocatable<std::shared_ptr<T>>
-    {
-        static constexpr bool Value = true;
-    };
-
-    template <typename T>
-    struct TIsTriviallyRelocatable<std::weak_ptr<T>>
-    {
-        static constexpr bool Value = true;
-    };
 
     template <typename A, typename B>
     struct TIsTriviallyRelocatable<std::pair<A, B>>

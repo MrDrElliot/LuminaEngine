@@ -135,20 +135,26 @@ namespace Lumina
     // bWrite picks the required access kind. What is a human label naming the access to add (e.g.
     // "Write<STransformComponent>"). No-op when no system access is bound (i.e. called outside the scheduler,
     // such as gameplay code or editor tools) or when the bound system is exclusive (declares everything).
+    // ConnectComponentAccessValidators hooks entt's own signals, catching a structural write through the raw
+    // registry that never reaches an FSystemContext helper.
 #if defined(LE_SHIPPING)
     inline void SetExecutingSystemAccess(const FSystemAccess*) {}
     inline const FSystemAccess* GetExecutingSystemAccess() { return nullptr; }
     inline void ValidateSystemAccess(uint32, bool, const char*) {}
+    inline void RegisterComponentAccessValidator(void (*)(entt::registry&)) {}
+    inline void ConnectComponentAccessValidators(entt::registry&) {}
 #else
     RUNTIME_API void SetExecutingSystemAccess(const FSystemAccess* Access);
     RUNTIME_API const FSystemAccess* GetExecutingSystemAccess();
     RUNTIME_API void ValidateSystemAccess(uint32 ComponentId, bool bWrite, const char* What);
+    RUNTIME_API void RegisterComponentAccessValidator(void (*Connect)(entt::registry&));
+    RUNTIME_API void ConnectComponentAccessValidators(entt::registry& Registry);
 #endif
 
     // Reverse map from an access id (entt::type_hash, what FSystemAccess stores) to a display name, so editor
     // tooling can render a system's declared reads/writes as "STransformComponent" / "PhysicsQuery" rather than
-    // an opaque hash. Components self-register at op-table registration; the SystemResource:: tags register at
-    // first lookup. Returns nullptr for an unknown id.
+    // an opaque hash. Components self-register at op-table registration; the SystemResource:: tags are seeded.
+    // Returns nullptr for an unknown id.
     RUNTIME_API void RegisterAccessTypeName(uint32 Id, FStringView Name);
     RUNTIME_API const char* GetAccessTypeName(uint32 Id);
 }
