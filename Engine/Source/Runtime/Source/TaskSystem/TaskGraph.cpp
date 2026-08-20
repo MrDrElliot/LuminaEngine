@@ -24,7 +24,9 @@ namespace Lumina
         uint32                          Index          = 0;
 
         TAtomic<int32>                  PendingDeps{0};
-        TFrameVector<uint32>            Dependents;
+        // Graph-arena slice, not a frame vector: the thread frame arena is reset out from under a worker's read.
+        uint32*                         Dependents     = nullptr;
+        uint32                          DependentCount = 0;
 
         std::coroutine_handle<>         CoroHandle{};
 
@@ -128,9 +130,9 @@ namespace Lumina
     {
         FTaskGraph* Graph = Node->Graph;
 
-        for (uint32 DepIndex : Node->Dependents)
+        for (uint32 i = 0; i < Node->DependentCount; ++i)
         {
-            FNode* Dependent = Graph->Nodes[DepIndex];
+            FNode* Dependent = Graph->Nodes[Node->Dependents[i]];
             if (Dependent->PendingDeps.fetch_sub(1, std::memory_order_acq_rel) - 1 == 0)
             {
                 StartNode(Dependent);
@@ -240,13 +242,37 @@ namespace Lumina
             Node->Index = i;
             Node->Graph = this;
             Node->PendingDeps.store(0, std::memory_order_relaxed);
-            Node->Dependents.clear();
+            Node->Dependents     = nullptr;
+            Node->DependentCount = 0;
         }
-        for (const auto& Edge : Edges)
+
+        if (!Edges.empty())
         {
-            // Edge = (child, parent): child depends on parent.
-            Nodes[Edge.first]->PendingDeps.fetch_add(1, std::memory_order_relaxed);
-            Nodes[Edge.second]->Dependents.push_back(Edge.first);
+            for (const auto& Edge : Edges)
+            {
+                // Edge = (child, parent): child depends on parent.
+                Nodes[Edge.first]->PendingDeps.fetch_add(1, std::memory_order_relaxed);
+                ++Nodes[Edge.second]->DependentCount;
+            }
+
+            // Per node, not one block for every edge: the arena panics on a request >= its block size.
+            for (uint32 i = 0; i < NumNodes; ++i)
+            {
+                FNode* Node = Nodes[i];
+                if (Node->DependentCount != 0)
+                {
+                    Node->Dependents = static_cast<uint32*>(
+                        Allocator.Allocate(Node->DependentCount * sizeof(uint32), alignof(uint32)));
+                    // The fill below uses this as a write cursor, restoring it to the true count.
+                    Node->DependentCount = 0;
+                }
+            }
+
+            for (const auto& Edge : Edges)
+            {
+                FNode* Parent = Nodes[Edge.second];
+                Parent->Dependents[Parent->DependentCount++] = Edge.first;
+            }
         }
 
         // Create node coroutines single-threaded; the arena is not thread-safe.

@@ -74,6 +74,12 @@ namespace Lumina
         constexpr uint32 GFroxelMaxLocalLights = 16;
 
 
+        // Blocks and pre-skin are silent by default: both overflow once on a cold start and self-correct.
+        static TConsoleVar<bool> CVarLogCullOverflow(
+            "r.RenderScene.LogCullOverflow", false,
+            "Report every GPU cull budget that overflowed this frame, including the block list and the "
+            "pre-skin budget that the default warning deliberately stays quiet about.");
+
         static TAtomic<uint32> GReflectionProbeRebakeRequests{0};
 
         static FAutoConsoleCommand GCmdRebakeReflectionProbes(
@@ -87,8 +93,7 @@ namespace Lumina
         constexpr uint32 GPrimitiveGrain = 256;
 
 
-        // Uncapped, a large skinned crowd asks for tens of GB and skinning writes past the allocation.
-        // 10.5 Mi at the 32 B stride is the same 336 MB the old 12 Mi cost at 28 B.
+        // Bounds VRAM, not correctness: the claim and the store both clamp, and losers skin inline.
         constexpr uint32 GMaxPreSkinnedVertices = (21 * 1024 * 1024) / 2;
 
         // A zero grain would ask for an unbounded task split; floor it.
@@ -3493,11 +3498,10 @@ namespace Lumina
         const uint32 NumDraws                      = NumDrawsPerView;
         SceneGlobalData.CullData.MeshletDrawTag    = (MeshletDrawTagCounter++ % 4095u) + 1u;
 
-        // The claim is on the GPU now, so only the GPU knows the demand. Same lagged high-water mark the
-        // block list uses: an undersized frame drops blocks to inline skinning and corrects on the next.
-        PreSkinHighWater = Math::Max(PreSkinHighWater, LastPreSkinRequested);
+        // Only the GPU knows the demand; an undersized frame drops blocks to inline skinning and corrects.
+        const uint32 PreSkinWanted        = Math::Min(PreSkinDemand.Observe(LastPreSkinRequested), GMaxPreSkinnedVertices);
         const SIZE_T PreSkinnedSize       = Math::Max<SIZE_T>(sizeof(FPreSkinnedVertex),
-                                            (SIZE_T)Math::Max<uint32>(PreSkinHighWater, 1u) * sizeof(FPreSkinnedVertex));
+                                            (SIZE_T)Math::Max<uint32>(PreSkinWanted, 1u) * sizeof(FPreSkinnedVertex));
 
         UpdateMeshletBoundFeedback(CurrentFrameSlot);
 
@@ -3565,13 +3569,12 @@ namespace Lumina
             ResizeBufferIfNeeded(CL, InstanceViewRangeRing[Slot], InstanceViewRangeSize, 1.25f, InstanceViewRangeRingLowUsage[Slot],
                                  true, EBufferInit::Zeroed, "Cull.InstanceViewRanges");
 
-            // Only the GPU knows how many blocks were appended, so its counter (lagged by the frames in flight)
-            // sizes this as a high-water mark that only grows.
-            BlockListHighWater = Math::Max(BlockListHighWater, LastBlocksRequested);
+            // Only the GPU knows how many blocks were appended, and its counter lags the frames in flight.
+            const uint32 BlockListWanted = BlockListDemand.Observe(LastBlocksRequested);
 
             const SIZE_T MeshletBlockSize = Math::Max<SIZE_T>(
                 sizeof(uint32) * 2,
-                (SIZE_T)Math::Max<uint32>(BlockListHighWater, 1u) * sizeof(uint32) * 2);
+                (SIZE_T)Math::Max<uint32>(BlockListWanted, 1u) * sizeof(uint32) * 2);
             ResizeBufferIfNeeded(CL, MeshletBlockRing[Slot], MeshletBlockSize, 1.2f, MeshletBlockRingLowUsage[Slot],
                                  true, EBufferInit::Zeroed, "Cull.MeshletBlocks");
             BlockListCapacity = (uint32)Math::Min<uint64>(MeshletBlockRing[Slot].GetSize() / (sizeof(uint32) * 2), 0xFFFFFFFFull);
@@ -3588,13 +3591,31 @@ namespace Lumina
             // The block list is deliberately not reported: it is sized from a GPU high-water mark that
             // lags by the frames in flight, so it overflows once on any cold start and corrects itself
             // the next frame. That is the design working, not a fault worth a warning.
+            // Demand over the cap, not the readback's lag: only the latter corrects itself.
+            const bool bPreSkinCapped = LastPreSkinOverflowed && LastPreSkinRequested > GMaxPreSkinnedVertices;
+
+            if (CVarLogCullOverflow.GetValue())
+            {
+                if (LastVisibleOverflowed)  { LogOverflow("visible-instance buffer",  LastVisibleInstances, FrameVisibleInstanceCapacity); }
+                if (LastDrawListOverflowed) { LogOverflow("meshlet draw list",        LastDrawListRequired, DrawListCapacity); }
+                if (LastBlocksOverflowed)   { LogOverflow("meshlet block list",       LastBlocksRequested,  BlockListCapacity); }
+                if (LastPreSkinOverflowed)  { LogOverflow("pre-skinned vertex buffer", LastPreSkinRequested, PreSkinnedVertexCapacity); }
+            }
+
             static uint32 OverflowLogCounter = 0;
-            if (LastVisibleOverflowed || LastDrawListOverflowed)
+            if (LastVisibleOverflowed || LastDrawListOverflowed || bPreSkinCapped)
             {
                 if ((OverflowLogCounter++ % 60u) == 0u)
                 {
                     if (LastVisibleOverflowed)  { LogOverflow("visible-instance buffer", LastVisibleInstances, FrameVisibleInstanceCapacity); }
                     if (LastDrawListOverflowed) { LogOverflow("meshlet draw list",       LastDrawListRequired, DrawListCapacity); }
+                    if (bPreSkinCapped)
+                    {
+                        LOG_WARN("RenderScene: pre-skinned vertex budget spent: {} vertices wanted against a "
+                                 "{} cap. Skinned meshes past it blend their bones in every pass instead of once; "
+                                 "raise GMaxPreSkinnedVertices or cut skinned LOD detail.",
+                                 LastPreSkinRequested, GMaxPreSkinnedVertices);
+                    }
                 }
             }
         }
@@ -11166,19 +11187,13 @@ namespace Lumina
             ResizeBufferIfNeeded(CL, RetainedStaticBuffer,    StaticBytes,    1.5f, RetainedStaticLowUsage,    Upload.bFull,
                                  EBufferInit::Zeroed, "Retained.Static");
 
-            // Two-phase occlusion state, keyed by retained slot and therefore sized with these. The flip
-            // is what keeps last frame's set readable for the whole of this one: both dispatches decide
-            // their phase from it, and CullInstances reserves one draw slot per meshlet on the strength of
-            // their draw sets partitioning. Accumulating into the buffer being read would clear that set
-            // out from under the late dispatch, which would then re-emit everything early had drawn.
+            // Flipped so last frame's set stays readable all frame; both dispatches take their phase from it.
             InstanceVisibilityWriteIndex ^= 1u;
 
             const SIZE_T VisBytes = Math::Max<SIZE_T>(sizeof(uint32), (SIZE_T)RetainedSlots * sizeof(uint32));
             uint32 VisCapacity = 0xFFFFFFFFu;
             for (uint32 v = 0; v < 2u; ++v)
             {
-                // Zeroed on reallocate by ResizeBufferIfNeeded: a grow drops last frame's set, which costs
-                // one frame of everything taking the late phase and nothing else.
                 ResizeBufferIfNeeded(CL, InstanceVisibilityBuffers[v], VisBytes, 1.5f, InstanceVisibilityLowUsage[v],
                                      true, EBufferInit::Zeroed, "Retained.InstanceVisibility");
 
@@ -11187,8 +11202,6 @@ namespace Lumina
                     : 0u);
             }
 
-            // Bounds every shader read, and 0 when either buffer is missing so a null address is
-            // short-circuited rather than dereferenced.
             InstanceVisibilityCapacity = VisCapacity;
 
             // This frame's accumulator starts empty; the late dispatch only ORs into it.
@@ -12558,27 +12571,35 @@ namespace Lumina
 
         auto AlignUp16 = [](uint64 Size) { return (Size + 15ull) & ~15ull; };
 
-        const auto Reallocate = [&]()
+        // Allocates before retiring the old one: a failed grow must leave the previous allocation usable.
+        const auto Reallocate = [&]() -> bool
         {
+            const FSceneBuffer Grown = CreateSceneBuffer(AlignUp16((uint64)((double)NeededSize * SlackFactor)), DebugName);
+            if (!Grown)
+            {
+                return false;
+            }
+
             DeferFree(Buffer.Ptr);
-            Buffer = CreateSceneBuffer(AlignUp16((uint64)((double)NeededSize * SlackFactor)), DebugName);
+            Buffer = Grown;
             LowUsageCounter = 0;
 
-            if (Buffer && Init == EBufferInit::Zeroed)
+            if (Init == EBufferInit::Zeroed)
             {
                 RHI::CmdMemzero(CL, Buffer.Ptr, Buffer.GetSize());
                 Barriers::TransferToAll(CL);
             }
+            return true;
         };
 
         if (NeededSize > Buffer.Size)
         {
-            Reallocate();
-
-            if (!Buffer)
+            if (!Reallocate())
             {
-                LOG_ERROR("RenderScene: scene buffer allocation of {} MiB failed; the pass using it will run degraded this frame.",
-                          NeededSize / (1024ull * 1024ull));
+                LOG_ERROR("RenderScene: scene buffer '{}' could not grow to {} MiB; keeping the {} MiB it "
+                          "already has and running degraded.",
+                          DebugName != nullptr ? DebugName : "<unnamed>",
+                          NeededSize / (1024ull * 1024ull), Buffer.Size / (1024ull * 1024ull));
             }
             return;
         }

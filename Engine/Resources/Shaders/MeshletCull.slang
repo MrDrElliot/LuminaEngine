@@ -16,9 +16,7 @@
 //
 // The two draw sets partition the frustum-visible set, so whatever the flag holds -- stale, raced, or
 // wrong -- each instance rasterizes exactly once. The flag only decides which phase, i.e. how good the
-// occluder set is. That partition is also what makes CullInstances' single draw-slot reservation per
-// meshlet correct, so the two buffers below must stay distinct: reading and accumulating in one would
-// make late see "not visible" for everything and re-emit the whole set early had already drawn.
+// occluder set is. Both dispatches must read the SAME flags, hence the separate write target below.
 //
 // Only views flagged CULL_VIEW_FLAG_MESHLET_HIZ are two-phase. Every other view (shadow cascades) is
 // culled in full by the early dispatch and skipped entirely by the late one, which is what stops it
@@ -35,17 +33,14 @@ struct FMeshletCullArgs
     uint            NumDraws;
     // MESHLET_SLICE_EARLY or MESHLET_SLICE_LATE.
     uint            Slice;
-    // Bounds RetainedSlot, and 0 when either buffer below is missing -- which is what short-circuits the
-    // reads rather than dereferencing a null device address.
+    // Bounds RetainedSlot, and 0 when either buffer is missing, so the reads short-circuit.
     uint            VisibilityCapacity;
 
     FRenderBucket*  Buckets;
     FMeshletBlock*  BlockList;
-    // Last frame's set, one uint per retained slot. READ-ONLY, and read by BOTH dispatches: the phase
-    // decision has to see the same flags in early and in late for their draw sets to partition.
+    // Read by BOTH dispatches and written by neither: the partition needs them to see one set of flags.
     uint*           PrevVisibility;
-    // This frame's set, zeroed before the early dispatch. Late only ever ORs a 1 in, because an instance's
-    // blocks span many workgroups and a plain store would let an occluded block clear a visible one's bit.
+    // OR only: an instance's blocks span workgroups, so a store lets an occluded one clear a visible bit.
     uint*           OutVisibility;
 };
 FMeshletCullArgs* Pass() { return GetPassArgs<FMeshletCullArgs>(); }

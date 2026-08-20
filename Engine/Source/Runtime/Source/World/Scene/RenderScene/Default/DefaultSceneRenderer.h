@@ -520,11 +520,8 @@ namespace Lumina
         FSceneBuffer GetMeshletDrawList()  const { return MeshletDrawListRing[CurrentFrameSlot]; }
         FSceneBuffer GetMeshDrawArgs()     const { return MeshDrawArgsRing[CurrentFrameSlot]; }
         FSceneBuffer GetMeshletBlocks()    const { return MeshletBlockRing[CurrentFrameSlot]; }
-        /** Last frame's two-phase occlusion set: one uint per retained slot, "was that instance visible to
-            the camera at the end of last frame". Read by BOTH meshlet-cull dispatches and written by
-            neither, which is what makes their draw sets partition. */
+        // Read by both meshlet-cull dispatches and written by neither: that is what makes them partition.
         FSceneBuffer GetInstanceVisibilityPrev()  const { return InstanceVisibilityBuffers[InstanceVisibilityWriteIndex ^ 1u]; }
-        /** This frame's set, accumulated by the late dispatch and read as Prev next frame. */
         FSceneBuffer GetInstanceVisibilityWrite() const { return InstanceVisibilityBuffers[InstanceVisibilityWriteIndex]; }
         FSceneBuffer GetBlockDispatchArgs() const { return BlockDispatchArgsRing[CurrentFrameSlot]; }
         FSceneBuffer GetSkinDispatchArgs()  const { return SkinDispatchArgsRing[CurrentFrameSlot]; }
@@ -903,8 +900,7 @@ namespace Lumina
         TArray<uint32, RHI::kFramesInFlight>                MeshDrawArgsRingLowUsage = {};
         TArray<uint32, RHI::kFramesInFlight>                InstanceViewRangeRingLowUsage = {};
         TArray<uint32, RHI::kFramesInFlight>                MeshletBlockRingLowUsage = {};
-        /** Ping-ponged, not ringed: one buffer is last frame's result and stays read-only all frame while
-            the other accumulates. Sharing one would clear the flags the late dispatch needs to read. */
+        // Sharing one buffer would clear the flags the late dispatch still needs to read.
         TArray<FSceneBuffer, 2>                            InstanceVisibilityBuffers = {};
         TArray<uint32, 2>                                  InstanceVisibilityLowUsage = {};
         uint32                                             InstanceVisibilityCapacity = 0;
@@ -1102,8 +1098,30 @@ namespace Lumina
         uint32                                              LastVisibleOverflowed = 0;
         uint32                                              DrawListCapacity = 0;
         uint32                                              BlockListCapacity = 0;
-        uint32                                              BlockListHighWater = 0;
-        uint32                                              PreSkinHighWater = 0;
+        // A plain running max never decays, pinning the allocation at the session's peak forever.
+        struct FDemandWindow
+        {
+            uint32 Observe(uint32 Demand)
+            {
+                Current = Math::Max(Current, Demand);
+                if (++Frames >= kWindowFrames)
+                {
+                    Previous = Current;
+                    Current  = Demand;
+                    Frames   = 0;
+                }
+                return Math::Max(Current, Previous);
+            }
+
+            static constexpr uint32 kWindowFrames = 120;
+
+            uint32 Current  = 0;
+            uint32 Previous = 0;
+            uint32 Frames   = 0;
+        };
+
+        FDemandWindow                                       BlockListDemand;
+        FDemandWindow                                       PreSkinDemand;
         uint32                                              PreSkinnedVertexCapacity = 0;
         uint32                                              MeshSubDrawsPerSlice = 1;
         uint32                                              LastBlocksRequested = 0;
