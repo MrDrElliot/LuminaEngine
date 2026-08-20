@@ -7,16 +7,18 @@
 // and only the meshlet bounds are scattered. Survivors are appended to MeshletDrawList, which every
 // geometry pass then draws straight out of.
 //
-// Classic two-phase occlusion. InstanceVisibility[RetainedSlot] holds "this instance was visible to the
+// Classic two-phase occlusion. PrevVisibility[RetainedSlot] holds "this instance was visible to the
 // camera at the end of last frame":
 //
 //   EARLY  replays that set with NO Hi-Z test, producing the depth the pyramid is built from.
 //   LATE   tests EVERY instance against that fresh pyramid, emits only the ones early did not draw,
-//          and rewrites the flag for next frame.
+//          and accumulates next frame's set into OutVisibility.
 //
 // The two draw sets partition the frustum-visible set, so whatever the flag holds -- stale, raced, or
 // wrong -- each instance rasterizes exactly once. The flag only decides which phase, i.e. how good the
-// occluder set is. That is what makes it safe to keep in one buffer across frames in flight.
+// occluder set is. That partition is also what makes CullInstances' single draw-slot reservation per
+// meshlet correct, so the two buffers below must stay distinct: reading and accumulating in one would
+// make late see "not visible" for everything and re-emit the whole set early had already drawn.
 //
 // Only views flagged CULL_VIEW_FLAG_MESHLET_HIZ are two-phase. Every other view (shadow cascades) is
 // culled in full by the early dispatch and skipped entirely by the late one, which is what stops it
@@ -33,15 +35,18 @@ struct FMeshletCullArgs
     uint            NumDraws;
     // MESHLET_SLICE_EARLY or MESHLET_SLICE_LATE.
     uint            Slice;
-    // Bounds RetainedSlot. Instances past it (skinned, which are CPU-fed and never retained) still get a
-    // slot in the tail of the allocation; anything beyond that is treated as never-visible.
+    // Bounds RetainedSlot, and 0 when either buffer below is missing -- which is what short-circuits the
+    // reads rather than dereferencing a null device address.
     uint            VisibilityCapacity;
 
     FRenderBucket*  Buckets;
     FMeshletBlock*  BlockList;
-    // One uint per retained slot. Zeroed before the late dispatch, so late only ever ORs a 1 in and the
-    // many workgroups sharing an instance cannot race a 0 over a 1.
-    uint*           InstanceVisibility;
+    // Last frame's set, one uint per retained slot. READ-ONLY, and read by BOTH dispatches: the phase
+    // decision has to see the same flags in early and in late for their draw sets to partition.
+    uint*           PrevVisibility;
+    // This frame's set, zeroed before the early dispatch. Late only ever ORs a 1 in, because an instance's
+    // blocks span many workgroups and a plain store would let an occluded block clear a visible one's bit.
+    uint*           OutVisibility;
 };
 FMeshletCullArgs* Pass() { return GetPassArgs<FMeshletCullArgs>(); }
 
@@ -154,7 +159,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
     {
         RetainedSlot = Inst.RetainedSlot;
         bWasVisible  = (RetainedSlot < Pass().VisibilityCapacity)
-                     && (Pass().InstanceVisibility[RetainedSlot] != 0u);
+                     && (Pass().PrevVisibility[RetainedSlot] != 0u);
     }
 
     // EARLY emits exactly last frame's visible set; LATE emits exactly its complement. Disjoint, so no
@@ -195,9 +200,9 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
 
     // OR only, never a store: an instance's blocks are spread across workgroups, and a plain write would
     // let a fully-occluded block clear a flag a visible one had just set. The zero comes from the clear
-    // the CPU issues between the two dispatches.
+    // the CPU issues against this buffer at the top of the frame.
     if (bLate && bTwoPhase && ThreadID == 0u && gsAnyVisible != 0u && RetainedSlot < Pass().VisibilityCapacity)
     {
-        InterlockedOr(Pass().InstanceVisibility[RetainedSlot], 1u);
+        InterlockedOr(Pass().OutVisibility[RetainedSlot], 1u);
     }
 }

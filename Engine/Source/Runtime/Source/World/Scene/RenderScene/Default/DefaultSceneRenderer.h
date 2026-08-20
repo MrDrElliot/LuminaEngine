@@ -520,10 +520,12 @@ namespace Lumina
         FSceneBuffer GetMeshletDrawList()  const { return MeshletDrawListRing[CurrentFrameSlot]; }
         FSceneBuffer GetMeshDrawArgs()     const { return MeshDrawArgsRing[CurrentFrameSlot]; }
         FSceneBuffer GetMeshletBlocks()    const { return MeshletBlockRing[CurrentFrameSlot]; }
-        /** One uint per retained slot: was that instance visible to the camera at the end of last frame.
-            Persistent and deliberately NOT ringed -- the early and late draw sets partition the visible
-            set, so any value here yields exactly one draw and a race can only pick the wrong phase. */
-        FSceneBuffer GetInstanceVisibility() const { return InstanceVisibilityBuffer; }
+        /** Last frame's two-phase occlusion set: one uint per retained slot, "was that instance visible to
+            the camera at the end of last frame". Read by BOTH meshlet-cull dispatches and written by
+            neither, which is what makes their draw sets partition. */
+        FSceneBuffer GetInstanceVisibilityPrev()  const { return InstanceVisibilityBuffers[InstanceVisibilityWriteIndex ^ 1u]; }
+        /** This frame's set, accumulated by the late dispatch and read as Prev next frame. */
+        FSceneBuffer GetInstanceVisibilityWrite() const { return InstanceVisibilityBuffers[InstanceVisibilityWriteIndex]; }
         FSceneBuffer GetBlockDispatchArgs() const { return BlockDispatchArgsRing[CurrentFrameSlot]; }
         FSceneBuffer GetSkinDispatchArgs()  const { return SkinDispatchArgsRing[CurrentFrameSlot]; }
         /** One workgroup per written meshlet block, sized by BuildMeshletCullArgs. */
@@ -901,9 +903,12 @@ namespace Lumina
         TArray<uint32, RHI::kFramesInFlight>                MeshDrawArgsRingLowUsage = {};
         TArray<uint32, RHI::kFramesInFlight>                InstanceViewRangeRingLowUsage = {};
         TArray<uint32, RHI::kFramesInFlight>                MeshletBlockRingLowUsage = {};
-        FSceneBuffer                                       InstanceVisibilityBuffer = {};
+        /** Ping-ponged, not ringed: one buffer is last frame's result and stays read-only all frame while
+            the other accumulates. Sharing one would clear the flags the late dispatch needs to read. */
+        TArray<FSceneBuffer, 2>                            InstanceVisibilityBuffers = {};
+        TArray<uint32, 2>                                  InstanceVisibilityLowUsage = {};
         uint32                                             InstanceVisibilityCapacity = 0;
-        uint32                                             InstanceVisibilityLowUsage = 0;
+        uint8                                              InstanceVisibilityWriteIndex = 0;
         uint32                                             LastStaleValidationGeneration = 0;
         TArray<uint32, RHI::kFramesInFlight>                MaterialClassifyRingLowUsage = {};
         TArray<uint32, RHI::kFramesInFlight>                MaterialPixelListRingLowUsage = {};

@@ -365,6 +365,8 @@ namespace Lumina
         FreeBuffer(BoneArenaBuffer);
         FreeBuffer(SkinnedFrameDataBuffer);
         FreeBuffer(SkinnedSlotListBuffer);
+        FreeBuffer(InstanceVisibilityBuffers[0]);
+        FreeBuffer(InstanceVisibilityBuffers[1]);
 
         for (uint32 Slot = 0; Slot < RHI::kFramesInFlight; ++Slot)
         {
@@ -1094,12 +1096,6 @@ namespace Lumina
                     DepthPyramidPass(CL);
                 }
                 
-                if (InstanceVisibilityBuffer)
-                {
-                    RHI::CmdMemset(CL, InstanceVisibilityBuffer.GetAddress(), InstanceVisibilityBuffer.GetSize(), 0u);
-                    Barriers::TransferToCompute(CL);
-                }
-
                 MeshletCullPass(CL, EMeshletSlice::Late);
 
                 {
@@ -11170,22 +11166,36 @@ namespace Lumina
             ResizeBufferIfNeeded(CL, RetainedStaticBuffer,    StaticBytes,    1.5f, RetainedStaticLowUsage,    Upload.bFull,
                                  EBufferInit::Zeroed, "Retained.Static");
 
-            // Two-phase occlusion state, keyed by retained slot and therefore sized with these. A grow
-            // reallocates, so the contents are undefined until the pre-late clear runs -- harmless, since
-            // early and late partition the visible set whatever the flags say, but zeroed anyway so a
-            // resize frame is not a different frame.
+            // Two-phase occlusion state, keyed by retained slot and therefore sized with these. The flip
+            // is what keeps last frame's set readable for the whole of this one: both dispatches decide
+            // their phase from it, and CullInstances reserves one draw slot per meshlet on the strength of
+            // their draw sets partitioning. Accumulating into the buffer being read would clear that set
+            // out from under the late dispatch, which would then re-emit everything early had drawn.
+            InstanceVisibilityWriteIndex ^= 1u;
+
             const SIZE_T VisBytes = Math::Max<SIZE_T>(sizeof(uint32), (SIZE_T)RetainedSlots * sizeof(uint32));
-            const SIZE_T VisBefore = InstanceVisibilityBuffer ? InstanceVisibilityBuffer.GetSize() : 0;
-            ResizeBufferIfNeeded(CL, InstanceVisibilityBuffer, VisBytes, 1.5f, InstanceVisibilityLowUsage,
-                                 true, EBufferInit::Zeroed, "Retained.InstanceVisibility");
-
-            InstanceVisibilityCapacity = InstanceVisibilityBuffer
-                                       ? (uint32)Math::Min<uint64>(InstanceVisibilityBuffer.GetSize() / sizeof(uint32), 0xFFFFFFFFull)
-                                       : 0u;
-
-            if (InstanceVisibilityBuffer && InstanceVisibilityBuffer.GetSize() != VisBefore)
+            uint32 VisCapacity = 0xFFFFFFFFu;
+            for (uint32 v = 0; v < 2u; ++v)
             {
-                RHI::CmdMemset(CL, InstanceVisibilityBuffer.GetAddress(), InstanceVisibilityBuffer.GetSize(), 0u);
+                // Zeroed on reallocate by ResizeBufferIfNeeded: a grow drops last frame's set, which costs
+                // one frame of everything taking the late phase and nothing else.
+                ResizeBufferIfNeeded(CL, InstanceVisibilityBuffers[v], VisBytes, 1.5f, InstanceVisibilityLowUsage[v],
+                                     true, EBufferInit::Zeroed, "Retained.InstanceVisibility");
+
+                VisCapacity = Math::Min(VisCapacity, InstanceVisibilityBuffers[v]
+                    ? (uint32)Math::Min<uint64>(InstanceVisibilityBuffers[v].GetSize() / sizeof(uint32), 0xFFFFFFFFull)
+                    : 0u);
+            }
+
+            // Bounds every shader read, and 0 when either buffer is missing so a null address is
+            // short-circuited rather than dereferenced.
+            InstanceVisibilityCapacity = VisCapacity;
+
+            // This frame's accumulator starts empty; the late dispatch only ORs into it.
+            if (GetInstanceVisibilityWrite())
+            {
+                RHI::CmdMemset(CL, GetInstanceVisibilityWrite().GetAddress(),
+                               GetInstanceVisibilityWrite().GetSize(), 0u);
             }
 
             if (RetainedCullEntryBuffer && RetainedTransformBuffer && RetainedStaticBuffer && RetainedSlots > 0)
@@ -12256,17 +12266,19 @@ namespace Lumina
             uint32 VisibilityCapacity;
             uint64 BucketsAddr;
             uint64 BlockListAddr;
-            uint64 InstanceVisibilityAddr;
+            uint64 PrevVisibilityAddr;
+            uint64 OutVisibilityAddr;
         } CPC = {};
-        static_assert(sizeof(FMeshletCullPC) == 40, "FMeshletCullPC must match MeshletCull.slang.");
+        static_assert(sizeof(FMeshletCullPC) == 48, "FMeshletCullPC must match MeshletCull.slang.");
 
         CPC.NumViews      = NumViews;
         CPC.NumDraws      = NumDraws;
         CPC.Slice         = (uint32)Slice;
-        CPC.VisibilityCapacity     = InstanceVisibilityCapacity;
-        CPC.BucketsAddr            = GetRenderBuckets().GetAddress();
-        CPC.BlockListAddr          = GetMeshletBlocks().GetAddress();
-        CPC.InstanceVisibilityAddr = GetInstanceVisibility().GetAddress();
+        CPC.VisibilityCapacity  = InstanceVisibilityCapacity;
+        CPC.BucketsAddr         = GetRenderBuckets().GetAddress();
+        CPC.BlockListAddr       = GetMeshletBlocks().GetAddress();
+        CPC.PrevVisibilityAddr  = GetInstanceVisibilityPrev().GetAddress();
+        CPC.OutVisibilityAddr   = GetInstanceVisibilityWrite().GetAddress();
 
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CullShader));
         RHI::CmdDispatchIndirect(CL, MakeArgs(CPC), GetMeshletCullDispatchArgs().Ptr, 0u);
