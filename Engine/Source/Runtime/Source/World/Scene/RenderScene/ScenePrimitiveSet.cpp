@@ -321,13 +321,9 @@ namespace Lumina
 
         const uint32 Last = (uint32)Primitives.size() - 1u;
 
-        // Hand this primitive's draw slots and bone slice back before the entry is overwritten. Not folded
-        // into ReleaseBindings: that also runs on a re-bind, where the skeleton has not changed and the
-        // slice must survive.
         ReleaseBindings(Index);
-        FreeBoneRange(Primitives[Index].BoneArenaBase, Primitives[Index].BoneArenaCount);
-        Primitives[Index].BoneArenaBase  = kNoBoneRange;
-        Primitives[Index].BoneArenaCount = 0u;
+        ReleaseBoneSlice(Primitives[Index]);
+        Primitives[Index].BoneCount = 0u;
 
         if (Index != Last)
         {
@@ -475,51 +471,77 @@ namespace Lumina
         InstanceFreeSlots.push_back(Slot);
     }
 
-    uint32 FScenePrimitiveSet::AllocateBoneRange(uint32 Count)
+    void FScenePrimitiveSet::SetBoneCount(uint32 Index, uint32 Count)
     {
-        if (Count == 0u)
-        {
-            return kNoBoneRange;
-        }
-
-        auto It = BoneFreeRanges.find(Count);
-        if (It != BoneFreeRanges.end() && !It->second.empty())
-        {
-            const uint32 Base = It->second.back();
-            It->second.pop_back();
-            return Base;
-        }
-
-        const uint32 Base = BoneArenaSize;
-        BoneArenaSize += Count;
-        return Base;
+        Primitives[Index].BoneCount = Count;
     }
 
-    void FScenePrimitiveSet::FreeBoneRange(uint32 Base, uint32 Count)
+    void FScenePrimitiveSet::ReleaseBoneSlice(FScenePrimitive& Prim)
     {
-        if (Base == kNoBoneRange || Count == 0u)
+        if (Prim.BoneSliceBase != kNoBoneSlice && Prim.BoneSliceCount != 0u)
         {
-            return;
+            BoneSliceFreeLists[Prim.BoneSliceCount].push_back(Prim.BoneSliceBase);
         }
 
-        // Never shrinks BoneArenaSize, even when this was the tail range: a base the render scene captured
-        // for a frame still in flight has to stay addressable.
-        BoneFreeRanges[Count].push_back(Base);
+        Prim.BoneSliceBase      = kNoBoneSlice;
+        Prim.BoneSliceCount     = 0u;
+        Prim.UploadedSliceBase  = kNoBoneSlice;
+        Prim.UploadedPoseSerial = 0u;
     }
 
-    void FScenePrimitiveSet::EnsureBoneRange(uint32 Index, uint32 Count)
+    uint32 FScenePrimitiveSet::AcquireBoneSlice(uint32 Index, uint32 Count, uint32 FrameNumber)
     {
         FScenePrimitive& Prim = Primitives[Index];
+        Prim.BoneSliceFrame = FrameNumber;
 
-        if (Prim.BoneArenaCount == Count)
+        if (Prim.BoneSliceBase != kNoBoneSlice && Prim.BoneSliceCount == Count)
         {
+            return Prim.BoneSliceBase;
+        }
+
+        ReleaseBoneSlice(Prim);
+        if (Count == 0u)
+        {
+            return kNoBoneSlice;
+        }
+
+        auto It = BoneSliceFreeLists.find(Count);
+        if (It != BoneSliceFreeLists.end() && !It->second.empty())
+        {
+            Prim.BoneSliceBase = It->second.back();
+            It->second.pop_back();
+        }
+        else
+        {
+            Prim.BoneSliceBase = BoneSliceExtent;
+            BoneSliceExtent += Count;
+        }
+
+        Prim.BoneSliceCount = Count;
+        return Prim.BoneSliceBase;
+    }
+
+    void FScenePrimitiveSet::ReleaseStaleBoneSlices(uint32 FrameNumber, uint32 GraceFrames)
+    {
+        const uint32 Num = (uint32)Primitives.size();
+        if (Num == 0u)
+        {
+            BoneSliceSweepCursor = 0u;
             return;
         }
 
-        FreeBoneRange(Prim.BoneArenaBase, Prim.BoneArenaCount);
+        const uint32 Budget = Math::Max(Num / 32u, 64u);
+        for (uint32 n = 0; n < Budget; ++n)
+        {
+            const uint32 i = BoneSliceSweepCursor % Num;
+            BoneSliceSweepCursor = i + 1u;
 
-        Prim.BoneArenaBase  = AllocateBoneRange(Count);
-        Prim.BoneArenaCount = (Prim.BoneArenaBase == kNoBoneRange) ? 0u : Count;
+            FScenePrimitive& Prim = Primitives[i];
+            if (Prim.BoneSliceBase != kNoBoneSlice && (FrameNumber - Prim.BoneSliceFrame) > GraceFrames)
+            {
+                ReleaseBoneSlice(Prim);
+            }
+        }
     }
 
     void FScenePrimitiveSet::MarkInstanceDirty(uint32 Slot)
@@ -646,7 +668,7 @@ namespace Lumina
             // their per-frame LOD ranges and pre-skin slices from FSkinnedFrameData. They used to be held
             // inactive here and CPU-fed into the head of the visible buffer instead.
             const bool bAwaitingBones = Prim.Source == EPrimitiveSource::SkeletalMesh
-                                     && Prim.BoneArenaBase == kNoBoneRange;
+                                     && Prim.BoneCount == 0u;
 
             if (Prim.Surfaces != nullptr && !bAwaitingBones)
             {
@@ -674,7 +696,7 @@ namespace Lumina
             // Stable for as long as the primitive holds its skeleton, which is what lets it live in a
             // payload that only re-uploads on a re-bind. 0 for anything unskinned; the shaders read it
             // only under EInstanceFlags::Skinned.
-            OutStatic.BoneOffset              = (Prim.BoneArenaBase != kNoBoneRange) ? Prim.BoneArenaBase : 0u;
+            OutStatic.BoneOffset              = 0u;
             // Still per-frame: assigned from a global budget every frame, so it cannot be stable here.
             // Phase 2 moves the claim onto the GPU and drops these two fields from this payload.
             OutStatic.SkinnedVertexBase       = 0u;
@@ -1022,7 +1044,7 @@ namespace Lumina
                     const FSkeletonResource* SkelRes  = (SkelMesh != nullptr && SkelMesh->Skeleton.IsValid())
                                                       ? SkelMesh->Skeleton->GetSkeletonResource()
                                                       : nullptr;
-                    EnsureBoneRange(Index, SkelRes != nullptr ? (uint32)SkelRes->GetNumBones() : 0u);
+                    SetBoneCount(Index, SkelRes != nullptr ? (uint32)SkelRes->GetNumBones() : 0u);
                 }
 
                 Prim.LocalCenter          = Base->CachedLocalCenter;
@@ -1344,13 +1366,13 @@ namespace Lumina
         ResolveKeys.clear();
         IndexByKey.clear();
         Bindings.clear();
+        // Every slice died with the primitives, so the arena restarts rather than leaking live bases.
+        BoneSliceFreeLists.clear();
+        BoneSliceExtent = 0;
+        BoneSliceSweepCursor = 0;
         DeadBindings = 0;
         LinksByEntityIndex.clear();
         SkinnedCount = 0;
-        // Every BoneArenaBase died with the primitives, so the arena restarts empty rather than leaking
-        // every live range into the free lists.
-        BoneFreeRanges.clear();
-        BoneArenaSize = 0;
         RetainedCullEntries.clear();
         RetainedTransforms.clear();
         RetainedStatic.clear();
@@ -1433,7 +1455,7 @@ namespace Lumina
         for (const FScenePrimitive& Prim : Primitives)
         {
             // A live slice can only need resizing when the MESH changes, which marks the primitive itself.
-            if (Prim.Source != EPrimitiveSource::SkeletalMesh || Prim.BoneArenaCount != 0u)
+            if (Prim.Source != EPrimitiveSource::SkeletalMesh || Prim.BoneCount != 0u)
             {
                 continue;
             }
@@ -1905,13 +1927,13 @@ namespace Lumina
         ResolveKeys.clear();
         IndexByKey.clear();
         Bindings.clear();
+        // Every slice died with the primitives, so the arena restarts rather than leaking live bases.
+        BoneSliceFreeLists.clear();
+        BoneSliceExtent = 0;
+        BoneSliceSweepCursor = 0;
         DeadBindings = 0;
         LinksByEntityIndex.clear();
         SkinnedCount = 0;
-        // Every BoneArenaBase died with the primitives, so the arena restarts empty rather than leaking
-        // every live range into the free lists.
-        BoneFreeRanges.clear();
-        BoneArenaSize = 0;
         RetainedCullEntries.clear();
         RetainedTransforms.clear();
         RetainedStatic.clear();

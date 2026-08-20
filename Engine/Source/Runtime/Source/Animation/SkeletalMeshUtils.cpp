@@ -209,18 +209,17 @@ namespace Lumina::SkeletalUtils
         return Closest;
     }
 
-    void PackRenderBones(const TVector<FMatrix4>& BoneTransforms, TVector<FVector4>& OutRows)
+    void PackRenderBones(const TVector<FMatrix4>& BoneTransforms, TVector<FBoneTransform>& OutBones)
     {
         LUMINA_PROFILE_SCOPE();
-        static_assert(sizeof(FBoneTransform) == 3 * sizeof(FVector4), "RenderBones rows must alias FBoneTransform");
 
         const SIZE_T NumBones = BoneTransforms.size();
-        OutRows.resize(NumBones * 3);
+        OutBones.resize(NumBones);
 
-        FBoneTransform* RESTRICT Out = reinterpret_cast<FBoneTransform*>(OutRows.data());
+        FBoneTransform* RESTRICT Out = OutBones.data();
         for (SIZE_T i = 0; i < NumBones; ++i)
         {
-            Out[i] = PackTransform3x4(BoneTransforms[i]);
+            Out[i] = PackBoneTransform(BoneTransforms[i]);
         }
     }
 }

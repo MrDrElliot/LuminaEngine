@@ -2317,19 +2317,29 @@ namespace Lumina
 
                 if (ScenePrimitives.GetSkinnedPrimitiveCount() > 0)
                 {
-                    // Sized ONCE, here, before any worker can touch it: the gather writes poses straight
-                    // into disjoint arena slices, which is only safe while nothing reallocates the storage.
-                    // Untouched entries keep whatever was there -- they are never uploaded.
-                    ExtractFrame->Geometry.BonesData.resize(ScenePrimitives.GetBoneArenaSize());
-
                     FTaskGraph::FNodeHandle CullNode = Graph.AddParallelFor(NumPrimitives, GPrimitiveGrain, [&](const Task::FParallelRange& Range)
                     {
-                        LUMINA_PROFILE_SECTION("Cull And Emit Skinned Primitives");
+                        LUMINA_PROFILE_SECTION("Cull Skinned Primitives");
                         FThreadLocalDrawData& Local = AcquireThreadLocalDrawData(Range.Thread);
-                        CullAndEmitSkinnedPrimitives(Range, Local);
+                        CullSkinnedPrimitives(Range, Local);
                     }, ETaskPriority::High); // critical path: MergeNode waits on this, so it runs ahead of emitters
 
-                    Graph.AddDependency(MergeNode, CullNode);
+                    // Sizes the arena from what survived, which is what keeps it O(visible), not O(scene).
+                    FTaskGraph::FNodeHandle LayoutNode = Graph.Add([&]
+                    {
+                        LayoutSkinnedBoneSlices(ThreadLocal);
+                    }, ETaskPriority::High);
+
+                    FTaskGraph::FNodeHandle EmitNode = Graph.AddParallelFor(NumPrimitives, GPrimitiveGrain, [&](const Task::FParallelRange& Range)
+                    {
+                        LUMINA_PROFILE_SECTION("Emit Skinned Primitives");
+                        FThreadLocalDrawData& Local = AcquireThreadLocalDrawData(Range.Thread);
+                        EmitSkinnedPrimitives(Range, Local);
+                    }, ETaskPriority::High);
+
+                    Graph.AddDependency(LayoutNode, CullNode);
+                    Graph.AddDependency(EmitNode, LayoutNode);
+                    Graph.AddDependency(MergeNode, EmitNode);
                 }
             }
 
@@ -3321,47 +3331,48 @@ namespace Lumina
     void FDefaultSceneRenderer::UploadBoneArena(RHI::FCmdListH CL, const FFrameData& Frame)
     {
         const TVector<FBoneTransform>& Mirror = Frame.Geometry.BonesData;
-        if (Mirror.empty())
+
+        const uint32 ArenaCount = Math::Min(Frame.Geometry.BoneCount, (uint32)Mirror.size());
+        if (ArenaCount == 0)
         {
             return;
         }
 
         LUMINA_PROFILE_SECTION("Upload Bone Arena");
 
-        const SIZE_T ArenaBytes = Mirror.size() * sizeof(FBoneTransform);
+        // Sized by residency, so it tracks the meshes the cull keeps rather than every skeleton alive.
+        const SIZE_T ArenaBytes = (SIZE_T)ArenaCount * sizeof(FBoneTransform);
 
-        // Grown, never shrunk while primitives are live: a base handed out earlier has to stay addressable,
-        // and the arena size only rises within a level. bAllowShrink off for exactly that reason.
-        ResizeBufferIfNeeded(CL, BoneArenaBuffer, ArenaBytes, 1.25f, BoneArenaLowUsage, /*bAllowShrink*/ false,
+        const RHI::GPUPtr PrevArena = BoneArenaBuffer.Ptr;
+        ResizeBufferIfNeeded(CL, BoneArenaBuffer, ArenaBytes, 1.5f, BoneArenaLowUsage, /*bAllowShrink*/ true,
                              EBufferInit::Zeroed, "Skinning.BoneArena");
         if (!BoneArenaBuffer)
         {
             return;
         }
 
-        // Coalesce, so a level whose skeletons were allocated together costs one copy instead of one per
-        // character. Merging across a small gap re-sends a slice nothing reads, which beats a second copy.
-        constexpr uint32 kBoneMergeGap = 1024;
+        // A reallocation drops every resident pose, so the dirty set no longer describes the buffer.
+        if (BoneArenaBuffer.Ptr != PrevArena)
+        {
+            WriteBuffer(CL, BoneArenaBuffer.GetAddress(), Mirror.data(), ArenaBytes);
+            return;
+        }
 
         TVector<FUIntVector2>& Ranges = BoneUploadScratch;
         Ranges.assign(Frame.Geometry.BoneUploadRanges.begin(), Frame.Geometry.BoneUploadRanges.end());
         if (Ranges.empty())
         {
-            return;
+            return;   // every pose the gather kept is already resident
         }
 
         Algo::Sort(Ranges.begin(), Ranges.end(),
                     [](const FUIntVector2& A, const FUIntVector2& B) { return A.x < B.x; });
 
-        const uint32 ArenaCount = (uint32)Mirror.size();
-
-        uint32 RunStart = Ranges[0].x;
-        uint32 RunEnd   = Ranges[0].x + Ranges[0].y;
+        // Merging across a small gap re-sends a slice that was already resident, which beats a second copy.
+        constexpr uint32 kBoneMergeGap = 1024;
 
         const auto Flush = [&](uint32 Start, uint32 End)
         {
-            // The gather bounds every write against the mirror, so this only ever trims a range whose
-            // primitive lost its slice between gather and upload.
             End = Math::Min(End, ArenaCount);
             if (Start >= End)
             {
@@ -3371,6 +3382,9 @@ namespace Lumina
             WriteBuffer(CL, BoneArenaBuffer.GetAddress() + (uint64)Start * sizeof(FBoneTransform),
                         Mirror.data() + Start, (uint64)(End - Start) * sizeof(FBoneTransform));
         };
+
+        uint32 RunStart = Ranges[0].x;
+        uint32 RunEnd   = Ranges[0].x + Ranges[0].y;
 
         for (SIZE_T i = 1; i < Ranges.size(); ++i)
         {
@@ -3484,7 +3498,6 @@ namespace Lumina
         FFrameData& Frame = *RenderFrame;
         ApplyCullFreeze(Frame);
         auto& SceneGlobalData            = Frame.SceneGlobalData;
-        const auto& BonesData            = Frame.Geometry.BonesData;
         const auto& CullViews            = Frame.Views.CullViews;
         const auto& LightData            = Frame.Lighting.LightData;
         const auto& EnvironmentParams    = Frame.Volumetrics.EnvironmentParams;
@@ -3619,7 +3632,7 @@ namespace Lumina
         UploadSkinnedFrameData(CL, Frame);
         // The arena's size, not a per-frame total: it bounds an INDEX, and a stable base can point anywhere
         // in it regardless of how many skeletons were gathered.
-        SceneGlobalData.CullData.BoneNum                 = (uint32)BonesData.size();
+        SceneGlobalData.CullData.BoneNum                 = Frame.Geometry.BoneCount;
 
         {
             LUMINA_PROFILE_SECTION_COLORED("Write Scene Buffers", tracy::Color::OrangeRed3);
@@ -3881,7 +3894,74 @@ namespace Lumina
         }
     }
 
-    void FDefaultSceneRenderer::CullAndEmitSkinnedPrimitives(const Task::FParallelRange& Range, FThreadLocalDrawData& Local)
+    void FDefaultSceneRenderer::CullSkinnedPrimitives(const Task::FParallelRange& Range, FThreadLocalDrawData& Local)
+    {
+        const FFrameData&        Frame     = *ExtractFrame;
+        const FSceneCullContext& SceneCull = Frame.Geometry.SceneCullContext;
+        const FVector3           CameraPos = FVector3(Frame.SceneGlobalData.CameraData.Location);
+
+        const FScenePrimitive*    Prims   = ScenePrimitives.GetPrimitives();
+        const FVector4*           Spheres = ScenePrimitives.GetBounds();
+        const FPrimitiveCullData* Culls   = ScenePrimitives.GetCullData();
+
+        for (uint32 i = Range.Start; i < Range.End; ++i)
+        {
+            if (ScenePrimitives.GetSource(i) != EPrimitiveSource::SkeletalMesh)
+            {
+                continue;
+            }
+
+            const FScenePrimitive&    Prim   = Prims[i];
+            const FVector4&           Sphere = Spheres[i];
+            const FPrimitiveCullData& Cull   = Culls[i];
+
+            if (!SceneCull.ShouldKeep(FVector3(Sphere), Sphere.w, Cull.bCastShadow != 0u, Cull.MaxDrawDistance, CameraPos))
+            {
+                ++Local.Stats.NumInstancesCulled;
+                continue;
+            }
+
+            if (Prim.Surfaces == nullptr || Prim.SurfaceCount == 0u || Prim.BoneCount == 0u)
+            {
+                continue;   // parked awaiting resolve or a skeleton; the sync pass retries it
+            }
+
+            // A SUPERSET of what the emit pass accepts; anything it rejects just leaves an unused hole.
+            Local.BoneCandidates.push_back(FUIntVector2{ i, Prim.BoneCount });
+        }
+    }
+
+    void FDefaultSceneRenderer::LayoutSkinnedBoneSlices(TVector<FThreadLocalDrawData>& ThreadLocal)
+    {
+        LUMINA_PROFILE_SECTION("Layout Skinned Bone Slices");
+
+        const uint32 NumPrimitives = ScenePrimitives.Num();
+
+        BoneSliceByPrimitive.assign(NumPrimitives, kNoBoneSlice);
+
+        ++BoneSliceFrameNumber;
+
+        // A primitive that keeps being gathered keeps its base, which is what lets the emit pass skip it.
+        for (FThreadLocalDrawData& Local : ThreadLocal)
+        {
+            for (const FUIntVector2& Candidate : Local.BoneCandidates)
+            {
+                if (Candidate.x < NumPrimitives)
+                {
+                    BoneSliceByPrimitive[Candidate.x] =
+                        ScenePrimitives.AcquireBoneSlice(Candidate.x, Candidate.y, BoneSliceFrameNumber);
+                }
+            }
+            Local.BoneCandidates.clear();
+        }
+
+        ScenePrimitives.ReleaseStaleBoneSlices(BoneSliceFrameNumber, kBoneSliceGraceFrames);
+
+        ExtractFrame->Geometry.BoneCount = ScenePrimitives.GetBoneSliceExtent();
+        ExtractFrame->Geometry.BonesData.resize(ExtractFrame->Geometry.BoneCount);
+    }
+
+    void FDefaultSceneRenderer::EmitSkinnedPrimitives(const Task::FParallelRange& Range, FThreadLocalDrawData& Local)
     {
         const FFrameData&        Frame           = *ExtractFrame;
         const FSceneCullContext& SceneCull       = Frame.Geometry.SceneCullContext;
@@ -3892,21 +3972,23 @@ namespace Lumina
         const FVector4*             Spheres  = ScenePrimitives.GetBounds();
         const FPrimitiveCullData*   Culls    = ScenePrimitives.GetCullData();
         const FSurfaceBinding*      Bindings = ScenePrimitives.GetBindings();
+        FScenePrimitive*            MutablePrims = ScenePrimitives.GetMutablePrimitives();
 
         FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
         auto& SkeletalStorage = Registry.storage<SSkeletalMeshComponent>();
 
-        // Written concurrently by every worker, at disjoint per-primitive offsets. Sized once before the
-        // parallel gather is launched, so no worker can reallocate it out from under another.
+        // Sized by LayoutSkinnedBoneSlices before this pass runs, and every slice below is disjoint.
         TVector<FBoneTransform>& ArenaMirror = ExtractFrame->Geometry.BonesData;
+        const uint32 ArenaCount = (uint32)ArenaMirror.size();
 
         const double WorldTime = World->GetTimeSinceWorldCreation();
 
         for (uint32 i = Range.Start; i < Range.End; ++i)
         {
-            if (ScenePrimitives.GetSource(i) != EPrimitiveSource::SkeletalMesh)
+            const uint32 BoneSlice = BoneSliceByPrimitive[i];
+            if (BoneSlice == kNoBoneSlice)
             {
-                continue;
+                continue;   // the cull pass already rejected it
             }
 
             const FScenePrimitive& Prim = Prims[i];
@@ -3917,17 +3999,6 @@ namespace Lumina
             const FVector3 Center = FVector3(Sphere);
             const float    Radius = Sphere.w;
 
-            if (!SceneCull.ShouldKeep(Center, Radius, Cull.bCastShadow != 0u, Cull.MaxDrawDistance, CameraPos))
-            {
-                ++Local.Stats.NumInstancesCulled;
-                continue;
-            }
-
-            if (Prim.Surfaces == nullptr || Prim.SurfaceCount == 0u)
-            {
-                continue;   // parked awaiting resolve; the sync pass retries it
-            }
-
             const FVector3 ToCamera = Center - CameraPos;
             const float    DistSq   = Math::Dot(ToCamera, ToCamera);
             const float    RadiusSq = Radius * Radius;
@@ -3936,10 +4007,10 @@ namespace Lumina
             FEntityRecord& EntityRecord = Local.EntityRecords.emplace_back();
             EntityRecord.Transform            = Prim.Transform;
             EntityRecord.SphereBounds         = Sphere;
-            EntityRecord.MeshletHeaderSlot = Prim.MeshletHeaderSlot;
+            EntityRecord.MeshletHeaderSlot    = Prim.MeshletHeaderSlot;
             EntityRecord.CustomData           = Prim.CustomData;
             EntityRecord.EntityID             = Prim.EntityID;
-            EntityRecord.BoneArenaBase        = ~0u;
+            EntityRecord.BoneArenaBase        = kNoBoneSlice;
             EntityRecord.BoneArenaCount       = 0u;
 
             //~ Everything below needs the live component.
@@ -3975,54 +4046,55 @@ namespace Lumina
                 {
                     LOG_ERROR("Skinning: mesh '{}' references {} bones but its skeleton provides {}. Vertices "
                               "weighted to joints >= {} read PAST the bone slice (the GPU fetch is unbounded) "
-                              "and will be wildly displaced. Mesh and skeleton are out of sync -- reimport both.",
+                              "and will be wildly displaced. Mesh and skeleton are out of sync, reimport both.",
                               Mesh->GetName(), Resource.RequiredBoneCount, SkeletonBoneCount, SkeletonBoneCount);
                 }
             }
 
-            // The pose goes straight into this primitive's own arena slice. Ranges are disjoint per
-            // primitive and the base is stable, so parallel workers need no shared cursor and no
-            // per-thread base to be reconciled later -- that is the whole point of the arena.
-            uint32 BoneArenaBase  = ~0u;
-            uint32 BoneArenaCount = 0u;
+            // The slice was sized from Prim.BoneCount, so a skeleton that grew since the sync overruns it.
             if (SkeletonBoneCount > 0
-                && Prim.BoneArenaBase != kNoBoneRange
-                && (SIZE_T)Prim.BoneArenaBase + SkeletonBoneCount <= ArenaMirror.size())
+                && SkeletonBoneCount <= Prim.BoneCount
+                && (SIZE_T)BoneSlice + SkeletonBoneCount <= ArenaCount)
             {
-                // The sync claimed the slice from the SKELETON's bone count; a mismatch here means the
-                // asset changed and the sync has not caught up, so skip rather than write out of the slice.
-                if (SkeletonBoneCount <= Prim.BoneArenaCount)
+                EntityRecord.BoneArenaBase  = BoneSlice;
+                EntityRecord.BoneArenaCount = SkeletonBoneCount;
+
+                if (MeshComponent.bRenderBonesDirty || (uint32)MeshComponent.RenderBones.size() != SkeletonBoneCount)
                 {
-                    BoneArenaBase  = Prim.BoneArenaBase;
-                    BoneArenaCount = SkeletonBoneCount;
+                    SkeletalUtils::PackRenderBones(MeshComponent.BoneTransforms, MeshComponent.RenderBones);
+                    MeshComponent.bRenderBonesDirty = false;
+                    ++MeshComponent.PoseSerial;
+                }
 
-                    FBoneTransform* Dst = ArenaMirror.data() + BoneArenaBase;
+                // Disjoint per primitive, so workers stamp this without synchronizing.
+                FScenePrimitive& Tracked = MutablePrims[i];
+                const bool bResident = Tracked.UploadedSliceBase == BoneSlice
+                                    && Tracked.UploadedPoseSerial == MeshComponent.PoseSerial;
 
-                    if ((uint32)MeshComponent.BoneTransforms.size() == SkeletonBoneCount)
+                if (!bResident)
+                {
+                    FBoneTransform* Dst = ArenaMirror.data() + BoneSlice;
+
+                    if ((uint32)MeshComponent.RenderBones.size() == SkeletonBoneCount)
                     {
-                        if (MeshComponent.bRenderBonesDirty || (uint32)MeshComponent.RenderBones.size() != SkeletonBoneCount * 3u)
-                        {
-                            SkeletalUtils::PackRenderBones(MeshComponent.BoneTransforms, MeshComponent.RenderBones);
-                            MeshComponent.bRenderBonesDirty = false;
-                        }
-
-                        const FBoneTransform* Packed = reinterpret_cast<const FBoneTransform*>(MeshComponent.RenderBones.data());
-                        Memory::Memcpy(Dst, Packed, (SIZE_T)SkeletonBoneCount * sizeof(FBoneTransform));
+                        Memory::Memcpy(Dst, MeshComponent.RenderBones.data(),
+                                       (SIZE_T)SkeletonBoneCount * sizeof(FBoneTransform));
                     }
                     else
                     {
                         // No active animation: BoneWorld * InvBindMatrix collapses to identity for every bone.
-                        static constexpr FBoneTransform IdentityBone{ FVector4(1,0,0,0), FVector4(0,1,0,0), FVector4(0,0,1,0) };
+                        const FBoneTransform IdentityBone = IdentityBoneTransform();
                         for (uint32 b = 0; b < SkeletonBoneCount; ++b)
                         {
                             Dst[b] = IdentityBone;
                         }
                     }
+
+                    Tracked.UploadedSliceBase  = BoneSlice;
+                    Tracked.UploadedPoseSerial = MeshComponent.PoseSerial;
+                    Local.BoneUploadRanges.push_back(FUIntVector2{ BoneSlice, SkeletonBoneCount });
                 }
             }
-
-            EntityRecord.BoneArenaBase  = BoneArenaBase;
-            EntityRecord.BoneArenaCount = BoneArenaCount;
 
             MeshComponent.LastDistanceOverRadius = (Radius > 0.0f) ? (Math::Sqrt(DistSq) / Radius) : 0.0f;
 
@@ -4047,8 +4119,6 @@ namespace Lumina
 
         DeferredMaterials.clear();
 
-        // Bone bases are stable now, so there is no per-thread base to reconcile. What the merge collects
-        // instead is which arena slices were written, so the upload can send those and nothing else.
         TVector<FUIntVector2>& BoneUploadRanges = Frame.Geometry.BoneUploadRanges;
         BoneUploadRanges.clear();
 
@@ -4058,17 +4128,8 @@ namespace Lumina
             FThreadLocalDrawData& Local = ThreadLocal[t];
             TotalInstancesCulled += Local.Stats.NumInstancesCulled;
 
-            for (FEntityRecord& Rec : Local.EntityRecords)
-            {
-                if (Rec.BoneArenaBase == ~0u)
-                {
-                    continue;
-                }
-
-                // The pose has to reach the GPU whichever path skins it: the pre-skin pass reads it, and so
-                // does the inline fallback in the draw.
-                BoneUploadRanges.push_back(FUIntVector2{ Rec.BoneArenaBase, Rec.BoneArenaCount });
-            }
+            BoneUploadRanges.insert(BoneUploadRanges.end(),
+                                    Local.BoneUploadRanges.begin(), Local.BoneUploadRanges.end());
         }
         FrameStats.NumInstancesCulled += TotalInstancesCulled;
 
@@ -4158,6 +4219,9 @@ namespace Lumina
                     }
 
                     FSkinnedFrameData& Out = SkinnedData[Item.InstanceSlot];
+                    Out.BoneOffset              = (Item.EntityRecordIndex < Local.EntityRecords.size())
+                                                ? Local.EntityRecords[Item.EntityRecordIndex].BoneArenaBase
+                                                : kNoBoneSlice;
                     // FrameTag is stamped by UploadSkinnedFrameData, on the render thread: the tag this
                     // frame will cull against does not exist yet here.
                     Out.SurfaceMeshletOffset    = Item.SurfaceMeshletOffset;
@@ -5442,9 +5506,8 @@ namespace Lumina
         Frame.Geometry.DrawCommands.clear();
         Frame.Geometry.OpaqueDrawList.clear();
         Frame.Geometry.TranslucentDrawList.clear();
-        // BonesData is NOT cleared: it is arena-indexed, so clearing it would only force resize() to
-        // value-initialize the whole arena again every frame. Slices nobody gathered are never uploaded,
-        // so their contents are don't-care rather than stale.
+        // BonesData keeps its capacity; the layout pass resizes it to the live arena extent.
+        Frame.Geometry.BoneCount = 0;
         Frame.Geometry.BoneUploadRanges.clear();
         Frame.Views.NumDrawsPerView   = 0;
     }

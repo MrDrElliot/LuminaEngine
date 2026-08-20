@@ -457,6 +457,7 @@ struct FInstanceStatic
 // Sentinel: this entity was not pre-skinned this frame (it fell outside r.Skinning.MaxVertices), so
 // the draw path blends bones inline. The CPU reserves the value, so a wrapped base cannot collide.
 static const uint kNoPreSkinBase = 0xFFFFFFFFu;
+static const uint kNoBoneSlice   = 0xFFFFFFFFu;
 
 // Mirror of Lumina::FSkinnedFrameData. Per-frame values for one SKINNED instance slot, indexed by RETAINED
 // slot: what FInstanceStatic cannot hold because it re-uploads only on a re-bind. The LOD ranges travel with
@@ -474,6 +475,8 @@ struct FSkinnedFrameData
     uint MeshletTotalCount;
     uint SkinnedVertexBase;
     uint ShadowSkinnedVertexBase;
+    // Slice in the COMPACTED per-frame arena; kNoBoneSlice falls the blend back to identity.
+    uint BoneOffset;
 
     bool IsFromFrame(uint ExpectedTag) { return FrameTag == ExpectedTag && ExpectedTag != 0u; }
 };
@@ -493,8 +496,14 @@ struct FTransform3x4
     }
 };
 
-// Historical name, kept for the skinning path that is written in terms of bones.
-typealias FBoneTransform = FTransform3x4;
+// Mirror of Lumina::FPackedBoneTransform: 3x3 in halves, translation left at full precision.
+struct FBoneTransform
+{
+    uint  Rot[5];
+    float Tx;
+    float Ty;
+    float Tz;
+};
 
 // One entry per surviving meshlet, stamped with the frame that wrote it: capacity bounds are
 // fault-safe but not correctness-safe, so the tag turns a stale slot into a reject, not geometry.

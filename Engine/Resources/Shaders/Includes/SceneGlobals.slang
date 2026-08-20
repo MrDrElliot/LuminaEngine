@@ -249,6 +249,21 @@ FSkinRows IdentitySkinRows()
     return Rows;
 }
 
+FSkinRows UnpackBoneRows(FBoneTransform B)
+{
+    const float2 A = float2(f16tof32(B.Rot[0] & 0xFFFFu), f16tof32(B.Rot[0] >> 16u));
+    const float2 C = float2(f16tof32(B.Rot[1] & 0xFFFFu), f16tof32(B.Rot[1] >> 16u));
+    const float2 D = float2(f16tof32(B.Rot[2] & 0xFFFFu), f16tof32(B.Rot[2] >> 16u));
+    const float2 E = float2(f16tof32(B.Rot[3] & 0xFFFFu), f16tof32(B.Rot[3] >> 16u));
+    const float  F = f16tof32(B.Rot[4] & 0xFFFFu);
+
+    FSkinRows Rows;
+    Rows.R0 = float4(A.x, A.y, C.x, B.Tx);
+    Rows.R1 = float4(C.y, D.x, D.y, B.Ty);
+    Rows.R2 = float4(E.x, E.y, F,   B.Tz);
+    return Rows;
+}
+
 // RENORMALIZES: an unnormalized set drags the vertex toward the MODEL ORIGIN by (1 - sum).
 FSkinRows BlendSkinRows(FBoneTransform B0, FBoneTransform B1, FBoneTransform B2, FBoneTransform B3,
                         float4 Weights)
@@ -261,11 +276,16 @@ FSkinRows BlendSkinRows(FBoneTransform B0, FBoneTransform B1, FBoneTransform B2,
 
     const float4 W = Weights / WeightSum;
 
+    const FSkinRows U0 = UnpackBoneRows(B0);
+    const FSkinRows U1 = UnpackBoneRows(B1);
+    const FSkinRows U2 = UnpackBoneRows(B2);
+    const FSkinRows U3 = UnpackBoneRows(B3);
+
     // Rigid per bone, so these same rows rotate Tangent and its handedness sign is preserved.
     FSkinRows Rows;
-    Rows.R0 = B0.Row0 * W.x + B1.Row0 * W.y + B2.Row0 * W.z + B3.Row0 * W.w;
-    Rows.R1 = B0.Row1 * W.x + B1.Row1 * W.y + B2.Row1 * W.z + B3.Row1 * W.w;
-    Rows.R2 = B0.Row2 * W.x + B1.Row2 * W.y + B2.Row2 * W.z + B3.Row2 * W.w;
+    Rows.R0 = U0.R0 * W.x + U1.R0 * W.y + U2.R0 * W.z + U3.R0 * W.w;
+    Rows.R1 = U0.R1 * W.x + U1.R1 * W.y + U2.R1 * W.z + U3.R1 * W.w;
+    Rows.R2 = U0.R2 * W.x + U1.R2 * W.y + U2.R2 * W.z + U3.R2 * W.w;
     return Rows;
 }
 
@@ -323,9 +343,10 @@ uint ResolvePaletteBone(FMeshletHeader* Header, FMeshletBonePalette Palette, uin
 }
 
 // True when the bone arena and this meshlet's palette can both actually be read.
-bool CanSkinMeshlet(FMeshletBonePalette Palette)
+bool CanSkinMeshlet(FMeshletBonePalette Palette, uint BoneOffset)
 {
-    return (Bones() != nullptr) && (Scene().CullData.BoneNum != 0u) && (Palette.Count != 0u);
+    return (Bones() != nullptr) && (Scene().CullData.BoneNum != 0u) && (Palette.Count != 0u)
+        && (BoneOffset != kNoBoneSlice);
 }
 
 FPreSkinnedVertex SkinWithRows(FSkinSource S, FSkinRows Rows)
@@ -357,7 +378,7 @@ FPreSkinnedVertex SkinVertex(FMeshletHeader* Header, FMeshlet M, uint MeshletInd
     const FMeshletBonePalette Palette = GetBonePalette(Header, MeshletIndex);
 
     FSkinRows Rows = IdentitySkinRows();
-    if (CanSkinMeshlet(Palette))
+    if (CanSkinMeshlet(Palette, BoneOffset))
     {
         Rows = BlendSkinRows(
             Bones()[ResolvePaletteBone(Header, Palette, S.Slots.x, BoneOffset)],

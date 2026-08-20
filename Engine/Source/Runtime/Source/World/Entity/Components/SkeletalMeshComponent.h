@@ -93,7 +93,10 @@ namespace Lumina
         // FBoneTransform); the render gather bulk-copies this instead of converting per bone per
         // frame. Repacked only when the pose changes: writers of BoneTransforms either call
         // SkeletalUtils::PackRenderBones or set bRenderBonesDirty so the gather repacks lazily.
-        TVector<FVector4> RenderBones;
+        TVector<FBoneTransform> RenderBones;
         bool bRenderBonesDirty = false;
+
+        // Bumped whenever RenderBones is rewritten; the gather uploads a pose only when this moved.
+        uint32 PoseSerial = 0;
     };
 }

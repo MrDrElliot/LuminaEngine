@@ -374,7 +374,8 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     Inst.CustomData              = Static.CustomData;
     Inst.MaterialIndex           = Static.MaterialIndex;
     Inst.EntityID                = Static.EntityID;
-    Inst.BoneOffset              = Static.BoneOffset;
+    // Per-FRAME for skinned: the compacted arena base cannot live in the retained payload.
+    Inst.BoneOffset              = bSkinned ? Skin.BoneOffset : Static.BoneOffset;
     // Claimed just above for skinned; kNoPreSkinBase routes the block to inline skinning in the draw path.
     Inst.SkinnedVertexBase       = bSkinned ? SurfaceSkinBase : Static.SkinnedVertexBase;
     Inst.ShadowSkinnedVertexBase = bSkinned ? ShadowSkinBase  : Static.ShadowSkinnedVertexBase;

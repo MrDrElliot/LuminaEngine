@@ -64,7 +64,7 @@ namespace Lumina
             uint32                  MeshletHeaderSlot;
             uint32                  CustomData;
             uint32                  EntityID;
-            uint32                  BoneArenaBase;
+            uint32                  BoneArenaBase;   // into the compacted per-frame arena
             uint32                  BoneArenaCount;
         };
 
@@ -91,6 +91,8 @@ namespace Lumina
             TVector<uint32>                     DrawInstanceCounts;
             TVector<uint8>                      BatchSkinFlags;
             TVector<uint32>                     TouchedSlots;
+            TVector<FUIntVector2>               BoneCandidates;
+            TVector<FUIntVector2>               BoneUploadRanges;
 
             FSceneRenderStats                   Stats = {};
             bool                                bTouched = false;
@@ -105,6 +107,8 @@ namespace Lumina
             {
                 Items.Reset();
                 EntityRecords.Reset();
+                BoneCandidates.clear();
+                BoneUploadRanges.clear();
                 Stats = {};
                 bTouched = false;
             }
@@ -261,13 +265,11 @@ namespace Lumina
 
             struct FGeometry
             {
-                // CPU mirror of the bone arena, indexed by FScenePrimitive::BoneArenaBase -- NOT a packed
-                // concatenation. Only the slices of skeletons gathered this frame are written and uploaded;
-                // the rest holds don't-care data, because an entity that was not gathered is not drawn.
-                // 48B/bone (last row dropped).
+                // CPU mirror, COMPACTED to this frame's gathered skeletons. 48B/bone (last row dropped).
                 TVector<FBoneTransform>          BonesData;
-                // (base, count) per gathered skeleton, coalesced into the upload. Derived in the merge from
-                // the entity records, so workers need no shared list.
+                // Extent of the bone arena this frame; only the ranges below are actually uploaded.
+                uint32                           BoneCount = 0;
+                // Slices whose pose or base moved this frame. Everything else is already resident.
                 TVector<FUIntVector2>            BoneUploadRanges;
                 // Per-frame skinned data indexed by RETAINED slot; only gathered slots are written, and
                 // SkinnedSlots lists which. Stale entries are rejected by their frame tag, not cleared.
@@ -719,12 +721,21 @@ namespace Lumina
         void SyncScenePrimitives();
 
         // Skeletal primitives only; statics flow through the retained batch registry, not a per-frame gather.
-        void CullAndEmitSkinnedPrimitives(const Task::FParallelRange& Range, FThreadLocalDrawData& Local);
+        void CullSkinnedPrimitives(const Task::FParallelRange& Range, FThreadLocalDrawData& Local);
+        void LayoutSkinnedBoneSlices(TVector<FThreadLocalDrawData>& ThreadLocal);
+        void EmitSkinnedPrimitives(const Task::FParallelRange& Range, FThreadLocalDrawData& Local);
 
         void BuildSceneCullContext();
         void MergeMeshDrawData(TVector<FThreadLocalDrawData>& ThreadLocal);
 
         FThreadLocalDrawData& AcquireThreadLocalDrawData(uint32 Slot);
+
+        // Per-primitive base in the bone arena; kNoBoneSlice for anything not gathered this frame.
+        TVector<uint32>                        BoneSliceByPrimitive;
+        // Frames a slice survives ungathered, so a mesh flicking through the cull does not thrash its base.
+        static constexpr uint32                kBoneSliceGraceFrames = 300;
+        uint32                                 BoneSliceFrameNumber = 0;
+        TVector<FUIntVector2>                  BoneUploadScratch;
 
         void ProcessPointLight(const SPointLightComponent& PointLight, const STransformComponent& TransformComponent, TAtomic<uint32>& LightCount);
         void ProcessSpotLight(const SSpotLightComponent& SpotLight, const STransformComponent& TransformComponent, TAtomic<uint32>& LightCount);
@@ -1037,7 +1048,6 @@ namespace Lumina
         uint32                                              SkinnedSlotListLowUsage = 0;
         TVector<FUIntVector2>                               SkinnedUploadScratch;
         uint32                                              CurrentSkinnedFrameTag = 0;
-        TVector<FUIntVector2>                               BoneUploadScratch;
         uint32                                              RetainedCullEntryLowUsage = 0;
         uint32                                              RetainedTransformLowUsage = 0;
         uint32                                              RetainedStaticLowUsage = 0;

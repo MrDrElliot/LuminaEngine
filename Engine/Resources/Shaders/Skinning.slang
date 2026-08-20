@@ -108,21 +108,21 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
     }
 
     const uint SkinnedVertexBase = bShadow ? Data.ShadowSkinnedVertexBase : Data.SkinnedVertexBase;
-    if (SkinnedVertexBase == kNoPreSkinBase)
+    if (SkinnedVertexBase == kNoPreSkinBase || Data.BoneOffset == kNoBoneSlice)
     {
-        return;   // this block lost the pre-skin budget; the draw path skins it inline instead
+        return;   // no pre-skin budget or no bone slice; the draw path skins it inline instead
     }
 
     // Every reject above is workgroup-UNIFORM, which is what lets the barrier below sit after them.
     const FMeshletBonePalette Palette = GetBonePalette(Header, MeshletIndex);
-    const bool bCanSkin = CanSkinMeshlet(Palette);
+    const bool bCanSkin = CanSkinMeshlet(Palette, Data.BoneOffset);
     const bool bStaged  = bCanSkin && (Palette.Count <= (uint)SKIN_GROUP_PALETTE_BONES);
 
     if (bStaged)
     {
         for (uint i = Lane; i < Palette.Count; i += 64u)
         {
-            GroupBones[i] = Bones()[ResolvePaletteBone(Header, Palette, i, Static.BoneOffset)];
+            GroupBones[i] = Bones()[ResolvePaletteBone(Header, Palette, i, Data.BoneOffset)];
         }
     }
     GroupMemoryBarrierWithGroupSync();
@@ -150,10 +150,10 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
             else if (bCanSkin)
             {
                 Rows = BlendSkinRows(
-                    Bones()[ResolvePaletteBone(Header, Palette, S.Slots.x, Static.BoneOffset)],
-                    Bones()[ResolvePaletteBone(Header, Palette, S.Slots.y, Static.BoneOffset)],
-                    Bones()[ResolvePaletteBone(Header, Palette, S.Slots.z, Static.BoneOffset)],
-                    Bones()[ResolvePaletteBone(Header, Palette, S.Slots.w, Static.BoneOffset)],
+                    Bones()[ResolvePaletteBone(Header, Palette, S.Slots.x, Data.BoneOffset)],
+                    Bones()[ResolvePaletteBone(Header, Palette, S.Slots.y, Data.BoneOffset)],
+                    Bones()[ResolvePaletteBone(Header, Palette, S.Slots.z, Data.BoneOffset)],
+                    Bones()[ResolvePaletteBone(Header, Palette, S.Slots.w, Data.BoneOffset)],
                     S.Weights);
             }
 

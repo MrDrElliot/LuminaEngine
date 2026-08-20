@@ -111,6 +111,29 @@ namespace Lumina
             return true;
         }
 
+        // Frozen time deliberately does NOT accumulate, so an off-screen pose resumes where it left off.
+        bool ShouldUpdatePose(SSkeletalMeshComponent& Mesh, entt::entity Entity, float DeltaTime,
+                              double Now, bool bForce, float& OutStepTime)
+        {
+            OutStepTime = 0.0f;
+
+            if (Mesh.VisibilityBasedAnimTick == EAnimUpdateMode::TickWhenRendered &&
+                (Now - Mesh.LastRenderedTime) > kAnimVisibilityGrace)
+            {
+                return false;
+            }
+
+            Mesh.PendingAnimTime += DeltaTime;
+            if (!ShouldEvaluateThisFrame(Mesh, Entity, bForce))
+            {
+                return false;
+            }
+
+            OutStepTime = Mesh.PendingAnimTime;
+            Mesh.PendingAnimTime = 0.0f;
+            return true;
+        }
+
         // Meshes farther than this (distance / bounding radius) animate the skeleton's low-detail
         // bone prefix; closer ones animate every bone.
         constexpr float kBoneLODDistanceOverRadius = 60.0f;
@@ -155,13 +178,6 @@ namespace Lumina
         {
             Anim.NotifyEvents.clear();
 
-            if (Mesh.VisibilityBasedAnimTick == EAnimUpdateMode::TickWhenRendered &&
-                (Now - Mesh.LastRenderedTime) > kAnimVisibilityGrace)
-            {
-                Anim.bAdvancedThisFrame = false;
-                return;
-            }
-
             if (!Anim.Animation.IsValid())
             {
                 Anim.bAdvancedThisFrame = false;
@@ -181,15 +197,13 @@ namespace Lumina
                 return;
             }
 
-            // Update-rate gate; a fresh PlayAnimation (bDirty) always evaluates immediately.
-            Mesh.PendingAnimTime += DeltaTime;
-            if (!ShouldEvaluateThisFrame(Mesh, Entity, Anim.bDirty))
+            // A fresh PlayAnimation (bDirty) always evaluates immediately.
+            float StepTime = 0.0f;
+            if (!ShouldUpdatePose(Mesh, Entity, DeltaTime, Now, Anim.bDirty, StepTime))
             {
                 Anim.bAdvancedThisFrame = false;
                 return;
             }
-            const float StepTime = Mesh.PendingAnimTime;
-            Mesh.PendingAnimTime = 0.0f;
 
             const float Duration = Anim.Animation->GetDuration();
 
@@ -369,12 +383,6 @@ namespace Lumina
             AnimGraph.NotifyEvents.clear();
             AnimGraph.PendingRootMotion = FRootMotionDelta();
 
-            if (Mesh.VisibilityBasedAnimTick == EAnimUpdateMode::TickWhenRendered &&
-                (Now - Mesh.LastRenderedTime) > kAnimVisibilityGrace)
-            {
-                return;
-            }
-
             if (!AnimGraph.Graph.IsValid())
             {
                 AnimGraph.Montages.Reset();
@@ -393,15 +401,12 @@ namespace Lumina
                 return;
             }
 
-            // Update-rate gate: skipped frames keep the previous pose; the next evaluation consumes
-            // the accumulated step so clocks and transitions stay on time.
-            Mesh.PendingAnimTime += DeltaTime;
-            if (!ShouldEvaluateThisFrame(Mesh, Entity, false))
+            // Skipped frames keep the previous pose; the next evaluation consumes the accumulated step.
+            float StepTime = 0.0f;
+            if (!ShouldUpdatePose(Mesh, Entity, DeltaTime, Now, false, StepTime))
             {
                 return;
             }
-            const float StepTime = Mesh.PendingAnimTime;
-            Mesh.PendingAnimTime = 0.0f;
 
             // Init VM state first so BuildTasks won't re-init and wipe the written values.
             AnimGraph.EnsureStateInitialized();
@@ -636,6 +641,7 @@ namespace Lumina
                     // render gather bulk-copies instead of converting per bone on its critical path.
                     SkeletalUtils::PackRenderBones(Mesh.BoneTransforms, Mesh.RenderBones);
                     Mesh.bRenderBonesDirty = false;
+                    ++Mesh.PoseSerial;
                 }
             }
         });

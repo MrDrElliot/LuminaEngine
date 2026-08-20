@@ -18,10 +18,6 @@ namespace Lumina
     struct SFoliageComponent;
     struct FDynamicMeshRenderData;
 
-    /** No bone-arena slice held. CPU-side only: FInstanceStatic.BoneOffset carries 0 for anything
-     *  unskinned, and the shaders read it only when EInstanceFlags::Skinned is set. */
-    constexpr uint32 kNoBoneRange = 0xFFFFFFFFu;
-
     enum class EPrimitiveSource : uint8
     {
         StaticMesh,
@@ -197,8 +193,17 @@ namespace Lumina
         EPrimitiveSource                    Source = EPrimitiveSource::StaticMesh;
         bool                                bCastShadow = true;
 
-        uint32                              BoneArenaBase = kNoBoneRange;
-        uint32                              BoneArenaCount = 0;
+        // Cached skeleton bone count; 0 means unresolved, which holds the instance inactive.
+        uint32                              BoneCount = 0;
+
+        // Bone-arena slice held while this primitive keeps being gathered; stable across frames.
+        uint32                              BoneSliceBase = kNoBoneSlice;
+        uint32                              BoneSliceCount = 0;
+        uint32                              BoneSliceFrame = 0;
+
+        // What the GPU arena currently holds for this primitive. Either half differing forces a re-upload.
+        uint32                              UploadedSliceBase = kNoBoneSlice;
+        uint32                              UploadedPoseSerial = 0;
     };
 
     /** Cull-hot per-primitive data, kept in its own array so the reject path streams it densely. */
@@ -223,6 +228,8 @@ namespace Lumina
 
         uint32                              Num() const { return (uint32)Primitives.size(); }
         const FScenePrimitive*              GetPrimitives() const { return Primitives.data(); }
+        // The gather stamps per-primitive upload state through this; entries are disjoint per worker.
+        FScenePrimitive*                    GetMutablePrimitives() { return Primitives.data(); }
         const FVector4*                     GetBounds() const { return Bounds.data(); }
         const FPrimitiveCullData*           GetCullData() const { return CullData.data(); }
         const FSurfaceBinding*              GetBindings() const { return Bindings.data(); }
@@ -236,7 +243,6 @@ namespace Lumina
 
         /** Bones the arena must hold. Only grows within a level, so a buffer sized from it never shrinks
          *  under live data and a base handed out last frame is still valid this frame. */
-        uint32                              GetBoneArenaSize() const { return BoneArenaSize; }
 
         EPrimitiveSource                    GetSource(uint32 Index) const
         {
@@ -247,6 +253,12 @@ namespace Lumina
         const FTransform3x4*        GetRetainedTransforms() const { return RetainedTransforms.data(); }
         const FInstanceStatic*      GetRetainedStatic() const     { return RetainedStatic.data(); }
         uint32                      GetRetainedSlotCount() const  { return (uint32)RetainedCullEntries.size(); }
+
+        // Recycled by EXACT size: bone counts come from assets, so same-size reuse never fragments.
+        uint32                      AcquireBoneSlice(uint32 Index, uint32 Count, uint32 FrameNumber);
+        // Rolling sweep, a slab of the table per call, so the cost never scales with scene size at once.
+        void                        ReleaseStaleBoneSlices(uint32 FrameNumber, uint32 GraceFrames);
+        uint32                      GetBoneSliceExtent() const { return BoneSliceExtent; }
 
         const FSurfaceDescGPU*      GetSurfaceDescs() const     { return SurfaceDescs.data(); }
         uint32                      GetSurfaceDescCount() const { return (uint32)SurfaceDescs.size(); }
@@ -309,14 +321,8 @@ namespace Lumina
         void    MarkInstanceDirty(uint32 Slot);
         void    MarkStaticDirty(uint32 Slot);
 
-        // Bone arena. Recycled by EXACT size: a skeleton's bone count is fixed by its asset, so a level
-        // has a small set of distinct sizes and same-size reuse recycles perfectly without ever splitting
-        // or coalescing a range. Growth is append-only, so a live base never moves.
-        uint32  AllocateBoneRange(uint32 Count);
-        void    FreeBoneRange(uint32 Base, uint32 Count);
-        // Claims/releases Prim.BoneArenaBase to match Count. No-op when the size already matches, which is
-        // the common case for a re-bind (same skeleton, new material).
-        void    EnsureBoneRange(uint32 Index, uint32 Count);
+        // Caches the skeleton's bone count; the arena slice is assigned by the render gather.
+        void    SetBoneCount(uint32 Index, uint32 Count);
         // Interns a surface's LOD table; identical tables collapse to one entry.
         uint32  InternSurfaceDesc(const FResolvedSurface& Surface);
 
@@ -442,10 +448,7 @@ namespace Lumina
         TVector<uint32>                     InstanceFreeSlots;
         TVector<uint32>                     DirtyInstanceSlots;   // cull entry + transform
 
-        // Free bases keyed by exact range size; see AllocateBoneRange.
-        THashMap<uint32, TVector<uint32>>   BoneFreeRanges;
         // One past the highest bone ever handed out. The arena's size, and it only grows.
-        uint32                              BoneArenaSize = 0;
         TVector<uint32>                     DirtyStaticSlots;     // static payload
         bool                                bFullInstanceUpload = true;
 
@@ -454,6 +457,11 @@ namespace Lumina
         bool                                bSurfaceDescsDirty = true;
         // See GetMaxSurfaceDescMeshlets. Only ever grows while the table does, and is reset with it.
         uint32                              MaxSurfaceDescMeshlets = 0;
+
+        void                                ReleaseBoneSlice(FScenePrimitive& Prim);
+        THashMap<uint32, TVector<uint32>>   BoneSliceFreeLists;
+        uint32                              BoneSliceExtent = 0;
+        uint32                              BoneSliceSweepCursor = 0;
 
 
         uint64                              StructureGeneration = 1;

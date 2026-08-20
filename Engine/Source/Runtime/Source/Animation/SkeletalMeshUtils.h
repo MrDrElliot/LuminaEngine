@@ -6,6 +6,7 @@
 #include "Platform/GenericPlatform.h"
 #include "World/Entity/Registry/EntityRegistry.h"
 #include "Renderer/SkeletonResource.h"
+#include "World/Scene/RenderScene/SceneRenderTypes.h"
 
 namespace Lumina
 {
@@ -50,5 +51,5 @@ namespace Lumina::SkeletalUtils
     // Packs skinning matrices into the GPU 3x4-row layout (FBoneTransform: 3 FVector4 rows per bone)
     // consumed by the render gather. Writers of SSkeletalMeshComponent.BoneTransforms either call this
     // into Mesh.RenderBones or set Mesh.bRenderBonesDirty so the gather repacks lazily.
-    RUNTIME_API void PackRenderBones(const TVector<FMatrix4>& BoneTransforms, TVector<FVector4>& OutRows);
+    RUNTIME_API void PackRenderBones(const TVector<FMatrix4>& BoneTransforms, TVector<FBoneTransform>& OutBones);
 }

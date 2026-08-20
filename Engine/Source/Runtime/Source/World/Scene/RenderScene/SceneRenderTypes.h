@@ -824,8 +824,36 @@ namespace Lumina
     static_assert(sizeof(FTransform3x4) == 48, "FTransform3x4 must match shader");
     VERIFY_SSBO_ALIGNMENT(FTransform3x4);
 
-    // Historical name, kept for the skinning path that is written in terms of bones.
-    using FBoneTransform = FTransform3x4;
+    // 32B, not 48: the 3x3 halves error-bound by the mesh extent, the translation kept full.
+    struct FPackedBoneTransform
+    {
+        uint32 Rot[5];   // 9 halves of the 3x3, row-major; the 10th is unused
+        float  Tx;
+        float  Ty;
+        float  Tz;
+    };
+    static_assert(sizeof(FPackedBoneTransform) == 32, "FPackedBoneTransform must match shader");
+
+    using FBoneTransform = FPackedBoneTransform;
+
+    FORCEINLINE FPackedBoneTransform PackBoneTransform(const FMatrix4& M)
+    {
+        FPackedBoneTransform Out;
+        Out.Rot[0] = Math::PackHalf2x16(FVector2(M[0][0], M[1][0]));
+        Out.Rot[1] = Math::PackHalf2x16(FVector2(M[2][0], M[0][1]));
+        Out.Rot[2] = Math::PackHalf2x16(FVector2(M[1][1], M[2][1]));
+        Out.Rot[3] = Math::PackHalf2x16(FVector2(M[0][2], M[1][2]));
+        Out.Rot[4] = Math::PackHalf2x16(FVector2(M[2][2], 0.0f));
+        Out.Tx     = M[3][0];
+        Out.Ty     = M[3][1];
+        Out.Tz     = M[3][2];
+        return Out;
+    }
+
+    FORCEINLINE FPackedBoneTransform IdentityBoneTransform()
+    {
+        return PackBoneTransform(FMatrix4(1.0f));
+    }
 
     // Drop the redundant 4th row of an affine matrix. p' = M*p == dot(Row_r, p4).
     FORCEINLINE FTransform3x4 PackTransform3x4(const FMatrix4& M)
@@ -912,6 +940,9 @@ namespace Lumina
 
     constexpr uint32 kNoPreSkinBase = 0xFFFFFFFFu;
 
+    // No slice in the per-frame bone arena; the blend falls back to identity rather than reading garbage.
+    constexpr uint32 kNoBoneSlice = 0xFFFFFFFFu;
+
     /** Per-frame data for one SKINNED instance slot: exactly the values that cannot live in FInstanceStatic,
      *  because they are re-decided every frame while that payload only re-uploads on a re-bind. Indexed by
      *  RETAINED instance slot, so the instance cull can reach it before compaction has happened.
@@ -931,8 +962,10 @@ namespace Lumina
         uint32      MeshletTotalCount;
         uint32      SkinnedVertexBase;          // kNoPreSkinBase = over budget, skin inline instead
         uint32      ShadowSkinnedVertexBase;
+        // Slice in the COMPACTED per-frame bone arena; kNoBoneSlice when the gather assigned none.
+        uint32      BoneOffset;
     };
-    static_assert(sizeof(FSkinnedFrameData) == 32, "FSkinnedFrameData must match shader");
+    static_assert(sizeof(FSkinnedFrameData) == 36, "FSkinnedFrameData must match shader");
 
     constexpr uint32 PackDrawIDAndFlags(uint32 DrawID, EInstanceFlags Flags)
     {
