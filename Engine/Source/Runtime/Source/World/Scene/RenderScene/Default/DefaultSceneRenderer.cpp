@@ -74,20 +74,6 @@ namespace Lumina
         constexpr uint32 GFroxelMaxLocalLights = 16;
 
 
-        // Blocks and pre-skin are silent by default: both overflow once on a cold start and self-correct.
-        static TConsoleVar<bool> CVarLogCullOverflow(
-            "r.RenderScene.LogCullOverflow", false,
-            "Report every GPU cull budget that overflowed this frame, including the block list and the "
-            "pre-skin budget that the default warning stays quiet about, plus the per-frame skinned census.");
-
-        static TAtomic<uint32> GDumpSkinnedRequests{0};
-
-        static FAutoConsoleCommand GCmdDumpSkinnedState(
-            "r.RenderScene.DumpSkinned",
-            "Dump the per-primitive skinned state latched at world load: bone slice, meshlet header slot, "
-            "surface desc index and the Active flag. Diff a load that flickers against one that does not.",
-            []{ GDumpSkinnedRequests.fetch_add(1, std::memory_order_relaxed); });
-
         static TAtomic<uint32> GReflectionProbeRebakeRequests{0};
 
         static FAutoConsoleCommand GCmdRebakeReflectionProbes(
@@ -3603,14 +3589,6 @@ namespace Lumina
             // Demand over the cap, not the readback's lag: only the latter corrects itself.
             const bool bPreSkinCapped = LastPreSkinOverflowed && LastPreSkinRequested > GMaxPreSkinnedVertices;
 
-            if (CVarLogCullOverflow.GetValue())
-            {
-                if (LastVisibleOverflowed)  { LogOverflow("visible-instance buffer",  LastVisibleInstances, FrameVisibleInstanceCapacity); }
-                if (LastDrawListOverflowed) { LogOverflow("meshlet draw list",        LastDrawListRequired, DrawListCapacity); }
-                if (LastBlocksOverflowed)   { LogOverflow("meshlet block list",       LastBlocksRequested,  BlockListCapacity); }
-                if (LastPreSkinOverflowed)  { LogOverflow("pre-skinned vertex buffer", LastPreSkinRequested, PreSkinnedVertexCapacity); }
-            }
-
             static uint32 OverflowLogCounter = 0;
             if (LastVisibleOverflowed || LastDrawListOverflowed || bPreSkinCapped)
             {
@@ -4094,9 +4072,6 @@ namespace Lumina
 
         DrawCommands.clear();
 
-        uint32 SkinnedOnlyBatches = 0;
-        uint32 MixedSkinBatches   = 0;
-
         for (uint32 b = 0; b < NumBatches; ++b)
         {
             const FSceneBatchRegistry::FBatch& Batch = Registry.Get(b);
@@ -4113,9 +4088,6 @@ namespace Lumina
             {
                 SkinFlags = 2u;
             }
-
-            SkinnedOnlyBatches += (SkinFlags == 1u) ? 1u : 0u;
-            MixedSkinBatches   += (SkinFlags == 3u) ? 1u : 0u;
 
             FMeshDrawCommand& Cmd = DrawCommands.emplace_back();
             Cmd.VertexShader                   = Batch.VertexShader;
@@ -4198,34 +4170,6 @@ namespace Lumina
                 }
             }
 
-            if (GDumpSkinnedRequests.exchange(0, std::memory_order_relaxed) != 0)
-            {
-                DumpSkinnedPrimitiveState();
-            }
-
-            // A skinned instance the gather misses is rejected outright by its frame tag, unlike a static one.
-            if (CVarLogCullOverflow.GetValue())
-            {
-                static uint32 LastGatheredSurfaces = ~0u;
-                const uint32 GatheredSurfaces = (uint32)SkinnedSlots.size();
-                if (GatheredSurfaces != LastGatheredSurfaces)
-                {
-                    LastGatheredSurfaces = GatheredSurfaces;
-                    LOG_DISPLAY("Skinned census CHANGED: {} gathered surfaces from {} skeletal primitives, {} instances CPU-culled.",
-                                GatheredSurfaces, ScenePrimitives.GetSkinnedPrimitiveCount(), TotalInstancesCulled);
-                }
-
-                static uint32 LastSkinnedOnly = ~0u;
-                static uint32 LastMixed       = ~0u;
-                if (SkinnedOnlyBatches != LastSkinnedOnly || MixedSkinBatches != LastMixed)
-                {
-                    LastSkinnedOnly = SkinnedOnlyBatches;
-                    LastMixed       = MixedSkinBatches;
-                    LOG_DISPLAY("Batch skin specialization CHANGED: {} skinned-only, {} mixed. A flip here reloads "
-                                "skinned vertices as static and blacks out the whole batch.",
-                                SkinnedOnlyBatches, MixedSkinBatches);
-                }
-            }
         }
 
         const uint32 NumEmittedBatches = (uint32)DrawCommands.size();
@@ -4241,43 +4185,6 @@ namespace Lumina
             else
             {
                 OpaqueDrawList.push_back(i);
-            }
-        }
-    }
-
-    void FDefaultSceneRenderer::DumpSkinnedPrimitiveState() const
-    {
-        const FScenePrimitive*    Prims       = ScenePrimitives.GetPrimitives();
-        const FSurfaceBinding*    Bindings    = ScenePrimitives.GetBindings();
-        const FInstanceCullEntry* CullEntries = ScenePrimitives.GetRetainedCullEntries();
-        const uint32 NumPrimitives  = ScenePrimitives.Num();
-        const uint32 RetainedSlots  = ScenePrimitives.GetRetainedSlotCount();
-
-        LOG_DISPLAY("=== Skinned primitive state: {} skeletal of {} primitives, {} retained slots, bone arena {} ===",
-                    ScenePrimitives.GetSkinnedPrimitiveCount(), NumPrimitives, RetainedSlots,
-                    ScenePrimitives.GetBoneArenaSize());
-
-        for (uint32 i = 0; i < NumPrimitives; ++i)
-        {
-            if (ScenePrimitives.GetSource(i) != EPrimitiveSource::SkeletalMesh)
-            {
-                continue;
-            }
-
-            const FScenePrimitive& Prim = Prims[i];
-            LOG_DISPLAY("  prim {} entity {}: bones [{}, +{}), headerSlot {}, surfaces {} ({}), radius {}",
-                        i, Prim.EntityID, Prim.BoneArenaBase, Prim.BoneArenaCount, Prim.MeshletHeaderSlot,
-                        Prim.SurfaceCount, Prim.Surfaces != nullptr ? "resolved" : "NULL", Prim.LocalRadius);
-
-            for (uint32 sIdx = 0; sIdx < Prim.SurfaceCount; ++sIdx)
-            {
-                const FSurfaceBinding& Binding = Bindings[Prim.BindingBase + sIdx];
-                const bool bSlotValid = Binding.InstanceSlot < RetainedSlots;
-                const uint32 Flags = bSlotValid ? (CullEntries[Binding.InstanceSlot].DrawIDAndFlags >> 16) : 0u;
-                LOG_DISPLAY("      surface {}: slot {}, descIndex {}, batch {}, material {}, flags 0x{:X}{}",
-                            sIdx, Binding.InstanceSlot, Binding.SurfaceDescIndex, Binding.BatchIndex,
-                            Binding.MaterialIndex, Flags,
-                            (Flags & (uint32)EInstanceFlags::Active) ? "" : "  [NOT ACTIVE]");
             }
         }
     }
