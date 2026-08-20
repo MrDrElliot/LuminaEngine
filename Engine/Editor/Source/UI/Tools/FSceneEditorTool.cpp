@@ -1,8 +1,8 @@
-﻿#include "FSceneEditorTool.h"
+﻿#include "TaskSystem/ParallelSort.h"
+#include "FSceneEditorTool.h"
 #include <algorithm>
 #include "Scripting/DotNet/DotNetHost.h"
 
-#include <execution>
 
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Assets/AssetTypes/Prefabs/Prefab.h"
@@ -851,7 +851,7 @@ namespace Lumina
             Roots.push_back(Entity);
         }
 
-        std::sort(std::execution::par, Roots.begin(), Roots.end(), [&](entt::entity LHS, entt::entity RHS)
+        Task::ParallelSort(Roots.begin(), Roots.end(), [&](entt::entity LHS, entt::entity RHS)
         {
             const FName& A = View.get<SNameComponent>(LHS).Name;
             const FName& B = View.get<SNameComponent>(RHS).Name;

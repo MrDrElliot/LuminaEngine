@@ -139,11 +139,10 @@ namespace LuminaSyncTests
         EXPECT_EQ(Counter, 4ull * 5000);
     }
 
-    TEST(SharedMutex, LetsReadersOverlapButNotWriters)
+    TEST(SharedMutex, NeverLetsAWriterInWhileAReaderHoldsIt)
     {
         FSharedMutex Mutex;
         std::atomic<int32> Concurrent{ 0 };
-        std::atomic<int32> HighWater{ 0 };
         std::atomic<int32> WriterOverlap{ 0 };
 
         std::vector<FThread> Threads;
@@ -152,16 +151,10 @@ namespace LuminaSyncTests
         {
             Threads.emplace_back([&]
             {
-                for (uint32 Step = 0; Step < 500; ++Step)
+                for (uint32 Step = 0; Step < 2000; ++Step)
                 {
                     FReadScopeLock Lock(Mutex);
-                    const int32 Now = Concurrent.fetch_add(1, std::memory_order_acq_rel) + 1;
-
-                    int32 Seen = HighWater.load(std::memory_order_relaxed);
-                    while (Now > Seen && !HighWater.compare_exchange_weak(Seen, Now, std::memory_order_relaxed))
-                    {
-                    }
-
+                    Concurrent.fetch_add(1, std::memory_order_acq_rel);
                     PlatformTime::YieldThread();
                     Concurrent.fetch_sub(1, std::memory_order_acq_rel);
                 }
@@ -172,7 +165,7 @@ namespace LuminaSyncTests
         {
             Threads.emplace_back([&]
             {
-                for (uint32 Step = 0; Step < 500; ++Step)
+                for (uint32 Step = 0; Step < 2000; ++Step)
                 {
                     FWriteScopeLock Lock(Mutex);
                     if (Concurrent.load(std::memory_order_acquire) != 0)
@@ -189,7 +182,37 @@ namespace LuminaSyncTests
         }
 
         EXPECT_EQ(WriterOverlap.load(), 0);
-        EXPECT_GT(HighWater.load(), 1);
+    }
+
+    TEST(SharedMutex, LetsEveryReaderInAtOnce)
+    {
+        constexpr int32 kReaders = 4;
+
+        FSharedMutex Mutex;
+        std::atomic<int32> Inside{ 0 };
+
+        // No writer runs here, so every reader can hold the lock at once and the barrier cannot deadlock.
+        std::vector<FThread> Threads;
+        Threads.reserve(kReaders);
+        for (int32 Index = 0; Index < kReaders; ++Index)
+        {
+            Threads.emplace_back([&]
+            {
+                FReadScopeLock Lock(Mutex);
+                Inside.fetch_add(1, std::memory_order_acq_rel);
+                while (Inside.load(std::memory_order_acquire) < kReaders)
+                {
+                    PlatformTime::YieldThread();
+                }
+            });
+        }
+
+        for (FThread& Thread : Threads)
+        {
+            Thread.Join();
+        }
+
+        EXPECT_EQ(Inside.load(), kReaders);
     }
 
     TEST(SharedMutex, TryLockSharedReportsWhetherItTook)
