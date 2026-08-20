@@ -908,7 +908,13 @@ namespace Lumina
         // Only unparented entities are filed in folders; an attached one lives under its parent's row.
         if (!bHasEntityParent)
         {
-            ParentNode = FindFolderNode(GetEntityFolderID(Entity));
+            const uint32 FolderID = GetEntityFolderID(Entity);
+            ParentNode = FindFolderNode(FolderID);
+
+            if (FolderID != SSceneFolderComponent::NoFolder && !ParentNode.IsValid())
+            {
+                OutlinerListView.MarkTreeDirty();
+            }
         }
 
         SNameComponent& NameComponent = Registry.get<SNameComponent>(Entity);
@@ -1308,7 +1314,13 @@ namespace Lumina
     uint32 FSceneEditorTool::GetEntityFolderID(entt::entity Entity) const
     {
         auto It = EntityFolderCache.find(Entity);
-        return It != EntityFolderCache.end() ? It->second : SSceneFolderComponent::NoFolder;
+        if (It != EntityFolderCache.end())
+        {
+            return It->second;
+        }
+
+        const SSceneFolderComponent* Folders = GetSceneFolders();
+        return Folders != nullptr ? Folders->FindEntityFolder(Entity) : SSceneFolderComponent::NoFolder;
     }
 
     FTreeNodeID FSceneEditorTool::FindFolderNode(uint32 FolderID) const
