@@ -723,6 +723,7 @@ namespace Lumina
 
         void BuildSceneCullContext();
         void MergeMeshDrawData(TVector<FThreadLocalDrawData>& ThreadLocal);
+        void DumpSkinnedPrimitiveState() const;
 
         FThreadLocalDrawData& AcquireThreadLocalDrawData(uint32 Slot);
 
