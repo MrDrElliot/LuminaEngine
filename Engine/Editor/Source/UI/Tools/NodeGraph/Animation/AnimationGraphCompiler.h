@@ -66,6 +66,16 @@ namespace Lumina
         uint16 AllocObjectReg() { return NextObjectReg++; }
         uint16 AllocStateSlot() { return NextStateSlot++; }
 
+        // Only clocks may be wound back while inactive; zeroing a nested machine's bookkeeping thrashes it.
+        uint16 AllocClockSlot()
+        {
+            const uint16 Slot = NextStateSlot++;
+            ClockSlots.push_back(Slot);
+            return Slot;
+        }
+
+        const TVector<uint16>& GetClockSlots() const { return ClockSlots; }
+
         // Value-producing emitters return the destination register they allocated; callers thread that
         // index into downstream emitters.
         uint16 EmitLoadConst(float Value);
@@ -225,6 +235,8 @@ namespace Lumina
         uint16 NextPoseReg   = 0;
         uint16 NextObjectReg = 0;
         uint16 NextStateSlot = 0;
+
+        TVector<uint16> ClockSlots;
 
         bool bEmittedOutput = false;
     };

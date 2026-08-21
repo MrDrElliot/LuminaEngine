@@ -187,7 +187,7 @@ TEST(AnimationCurves, StateTransitionEasesCurvesAcrossTheBlend)
     Machine.StatePoseRegisters   = { IdlePose, RunPose };
     Machine.CurrentStateSlot     = Compiler.AllocStateSlot();
     Machine.FromStateSlot        = Compiler.AllocStateSlot();
-    Machine.TimerSlot            = Compiler.AllocStateSlot();
+    Machine.TimeInStateSlot      = Compiler.AllocStateSlot();
     Machine.DurationSlot         = Compiler.AllocStateSlot();
 
     FAnimGraphTransition ToRun;

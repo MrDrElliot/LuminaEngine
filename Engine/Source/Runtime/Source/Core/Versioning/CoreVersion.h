@@ -66,6 +66,12 @@ enum class ELuminaEngineVersion : uint32
 	// FAnimationResource no longer writes its raw channels; older files still read them and compress on load.
 	ANIM_CHANNELS_DROPPED,
 
+	// FAnimGraphStateMachine serializes per-state clock ranges; FAnimGraphTransition its condition source.
+	ANIM_GRAPH_STATE_CLOCKS,
+
+	// Clock ranges index a serialized ClockSlots list, which excludes a nested machine's bookkeeping.
+	ANIM_GRAPH_STATE_CLOCK_LIST,
+
 	AUTOMATIC_VERSION_PLUS_ONE,
 	AUTOMATIC_VERSION = AUTOMATIC_VERSION_PLUS_ONE - 1
 };

@@ -31,6 +31,17 @@ namespace Lumina
         NotEqual,
     };
 
+    // Where a transition's left-hand value comes from.
+    REFLECT()
+    enum class EAnimTransitionSource : uint8
+    {
+        /** The graph parameter named by Condition Parameter. */
+        Parameter,
+
+        /** Seconds the state machine has spent in its current state, so a state can time itself out. */
+        TimeInState,
+    };
+
     // How the bytes at a resolved offset decode. Filled at link from the property's TypeFlags.
     enum class EAnimParamValueType : uint8
     {
@@ -134,6 +145,9 @@ namespace Lumina
         int32 FromState = -1;
         int32 ToState = 0;
 
+        // What the compare reads. ConditionParameter is ignored unless this is Parameter.
+        EAnimTransitionSource ConditionSource = EAnimTransitionSource::Parameter;
+
         // Gating parameter; an undeclared parameter evaluates as 0.
         FName ConditionParameter;
         EAnimTransitionCompare Compare = EAnimTransitionCompare::Greater;
@@ -159,6 +173,10 @@ namespace Lumina
             Ar << Data.CompareValue;
             Ar << Data.BlendDuration;
             Ar << Data.bCanInterrupt;
+            if (Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::ANIM_GRAPH_STATE_CLOCKS)
+            {
+                Ar << Data.ConditionSource;
+            }
             return Ar;
         }
     };
@@ -243,11 +261,16 @@ namespace Lumina
         // Outgoing edges, checked in list order; first passing wins.
         TVector<FAnimGraphTransition> Transitions;
 
+        // Clocks only: a nested machine's bookkeeping sits in its owner's blend tree and must not be zeroed.
+        TVector<uint16> ClockSlots;
+        TVector<uint16> StateClockSlotFirst;
+        TVector<uint16> StateClockSlotEnd;
+
         // Slots into FAnimGraphVMState.StateSlots: Current/From state indices (From -1 when not
-        // transitioning), Timer elapsed, Duration of the active transition.
+        // transitioning), seconds spent in the current state, Duration of the active transition.
         uint16 CurrentStateSlot = 0;
         uint16 FromStateSlot = 0;
-        uint16 TimerSlot = 0;
+        uint16 TimeInStateSlot = 0;
         uint16 DurationSlot = 0;
 
         friend FArchive& operator << (FArchive& Ar, FAnimGraphStateMachine& Data)
@@ -257,8 +280,22 @@ namespace Lumina
             Ar << Data.Transitions;
             Ar << Data.CurrentStateSlot;
             Ar << Data.FromStateSlot;
-            Ar << Data.TimerSlot;
+            Ar << Data.TimeInStateSlot;
             Ar << Data.DurationSlot;
+            if (Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::ANIM_GRAPH_STATE_CLOCK_LIST)
+            {
+                Ar << Data.ClockSlots;
+                Ar << Data.StateClockSlotFirst;
+                Ar << Data.StateClockSlotEnd;
+            }
+            else if (Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::ANIM_GRAPH_STATE_CLOCKS)
+            {
+                // The interim layout's ranges addressed a different array; drop them and let a recompile refill.
+                TVector<uint16> UnusedClockSlotFirst;
+                TVector<uint16> UnusedClockSlotEnd;
+                Ar << UnusedClockSlotFirst;
+                Ar << UnusedClockSlotEnd;
+            }
             return Ar;
         }
     };

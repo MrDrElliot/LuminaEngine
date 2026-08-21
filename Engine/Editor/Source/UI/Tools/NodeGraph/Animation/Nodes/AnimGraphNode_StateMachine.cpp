@@ -114,6 +114,9 @@ namespace Lumina
         THashSet<int64> AnyStateNodeIDs;
         TVector<TPair<CEdGraphNode*, int32>> StateNodesForDebug;
 
+        // Machine-relative: a nested machine appended to the same list, and those entries belong to its owner.
+        const uint16 MachineClockFirst = (uint16)Compiler.GetClockSlots().size();
+
         for (CEdGraphNode* Node : SMGraph->Nodes)
         {
             if (Node->IsA<CAnimGraphNode_StateAny>())
@@ -129,6 +132,8 @@ namespace Lumina
 
             CAnimationGraphNodeGraph* BlendTree = StateNode->GetOrCreateBlendTree();
 
+            const uint16 ClockSlotFirst = (uint16)Compiler.GetClockSlots().size() - MachineClockFirst;
+
             uint16 PoseReg = 0;
             if (!BlendTree->CompileNodes(Compiler, PoseReg))
             {
@@ -139,9 +144,14 @@ namespace Lumina
 
             const int32 StateIndex = (int32)StateMachine.StatePoseRegisters.size();
             StateMachine.StatePoseRegisters.push_back(PoseReg);
+            StateMachine.StateClockSlotFirst.push_back(ClockSlotFirst);
+            StateMachine.StateClockSlotEnd.push_back((uint16)Compiler.GetClockSlots().size() - MachineClockFirst);
             NodeIDToStateIndex[StateNode->GetNodeID()] = StateIndex;
             StateNodesForDebug.emplace_back(StateNode, StateIndex);
         }
+
+        const TVector<uint16>& CompiledClockSlots = Compiler.GetClockSlots();
+        StateMachine.ClockSlots.assign(CompiledClockSlots.begin() + MachineClockFirst, CompiledClockSlots.end());
 
         if (StateMachine.StatePoseRegisters.empty())
         {
@@ -237,6 +247,7 @@ namespace Lumina
             FAnimGraphTransition Runtime;
             Runtime.FromState          = FromIndex;
             Runtime.ToState            = ToIt->second;
+            Runtime.ConditionSource    = Transition->ConditionSource;
             Runtime.ConditionParameter = Transition->ConditionParameter;
             Runtime.Compare            = Transition->Compare;
             Runtime.CompareValue       = Transition->CompareValue;
@@ -245,8 +256,11 @@ namespace Lumina
 
             // Make sure the condition parameter exists in the compiled table,
             // and warn if it doesn't match a blackboard key (renamed / retyped).
-            Compiler.ValidateParameterKey(Transition->ConditionParameter, this);
-            Compiler.AddParameter(Transition->ConditionParameter, EAnimGraphParamType::Float, 0.0f);
+            if (Runtime.ConditionSource == EAnimTransitionSource::Parameter)
+            {
+                Compiler.ValidateParameterKey(Transition->ConditionParameter, this);
+                Compiler.AddParameter(Transition->ConditionParameter, EAnimGraphParamType::Float, 0.0f);
+            }
 
             StateMachine.Transitions.push_back(Runtime);
         }
@@ -256,7 +270,7 @@ namespace Lumina
         const uint16 FromStateSlot    = Compiler.AllocStateSlot();
         StateMachine.CurrentStateSlot = CurrentStateSlot;
         StateMachine.FromStateSlot    = FromStateSlot;
-        StateMachine.TimerSlot        = Compiler.AllocStateSlot();
+        StateMachine.TimeInStateSlot  = Compiler.AllocStateSlot();
         StateMachine.DurationSlot     = Compiler.AllocStateSlot();
 
         const uint16 ResultReg    = Compiler.EmitEvalStateMachine(Move(StateMachine));

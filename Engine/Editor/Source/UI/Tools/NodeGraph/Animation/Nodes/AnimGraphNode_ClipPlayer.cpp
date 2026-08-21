@@ -34,7 +34,7 @@ namespace Lumina
         }
 
         const uint16 ClipIndex = bDynamicClip ? (uint16)ClipObjectReg : Compiler.AddClip(Clip.Get());
-        const uint16 StateSlot = Compiler.AllocStateSlot();
+        const uint16 StateSlot = Compiler.AllocClockSlot();
         const uint16 SpeedReg  = ResolveValueInput(SpeedPin, Compiler);
 
         // Loop mode is register-driven so it can be wired; an unconnected pin

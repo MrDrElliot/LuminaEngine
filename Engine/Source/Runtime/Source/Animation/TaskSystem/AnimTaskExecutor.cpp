@@ -135,7 +135,12 @@ namespace Lumina
                     float V0 = 0.0f;
                     if (InvDt > 0.0f)
                     {
-                        const FQuat Qp = Math::Normalize(SourcePrev.Rotations[i] * Math::Inverse(Target.Rotations[i]));
+                        FQuat Qp = Math::Normalize(SourcePrev.Rotations[i] * Math::Inverse(Target.Rotations[i]));
+                        if (Qp.w < 0.0f)
+                        {
+                            // Same shortest arc as X0; a full turn out here is fake velocity.
+                            Qp = Qp * -1.0f;
+                        }
                         V0 = (X0 - QuatAngleAbout(Qp, Axis)) * InvDt;
                     }
                     In.Rot[i] = FInertChannel{ Axis, X0, V0 };
