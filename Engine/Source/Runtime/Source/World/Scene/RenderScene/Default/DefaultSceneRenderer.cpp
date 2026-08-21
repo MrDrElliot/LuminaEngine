@@ -89,6 +89,9 @@ namespace Lumina
         // Finer, because these are candidates rather than a sparse scan: every entry does real work.
         constexpr uint32 GSkinnedEmitGrain = 16;
 
+        // A multiple of the 8-wide batch, so a range never splits one mid-way into the scalar tail.
+        constexpr uint32 GSkinnedCullGrain = 256;
+
         // Layout does far less per candidate than emit, so it wants wider chunks to stay worth splitting.
         constexpr uint32 GSkinnedLayoutGrain = 256;
 
@@ -2323,17 +2326,21 @@ namespace Lumina
 
                 if (ScenePrimitives.GetSkinnedPrimitiveCount() > 0)
                 {
+                    // Rebuilt only on a shape change, so the cull walks skeletal, not every primitive.
+                    const TVector<uint32>& SkeletalList = ScenePrimitives.GetSkeletalIndices();
+                    SkeletalPrimitiveIndices = SkeletalList.data();
+                    const uint32 NumSkeletal = (uint32)SkeletalList.size();
+
                     // Exact bound: only a skeletal primitive can become a candidate.
-                    const uint32 CandidateCapacity = ScenePrimitives.GetSkinnedPrimitiveCount();
-                    if ((uint32)SkinnedCandidates.size() < CandidateCapacity)
+                    if ((uint32)SkinnedCandidates.size() < NumSkeletal)
                     {
-                        SkinnedCandidates.resize(CandidateCapacity);
-                        SkinnedCandidateBones.resize(CandidateCapacity);
-                        PendingSliceAllocs.resize(CandidateCapacity);
+                        SkinnedCandidates.resize(NumSkeletal);
+                        SkinnedCandidateBones.resize(NumSkeletal);
+                        PendingSliceAllocs.resize(NumSkeletal);
                     }
                     SkinnedCandidateCursor.store(0, std::memory_order_relaxed);
 
-                    FTaskGraph::FNodeHandle CullNode = Graph.AddParallelFor(NumPrimitives, GPrimitiveGrain, [&](const Task::FParallelRange& Range)
+                    FTaskGraph::FNodeHandle CullNode = Graph.AddParallelFor(NumSkeletal, GSkinnedCullGrain, [&](const Task::FParallelRange& Range)
                     {
                         LUMINA_PROFILE_SECTION("Cull Skinned Primitives");
                         FThreadLocalDrawData& Local = AcquireThreadLocalDrawData(Range.Thread);
@@ -3927,35 +3934,93 @@ namespace Lumina
         const FVector4*           Spheres = ScenePrimitives.GetBounds();
         const FPrimitiveCullData* Culls   = ScenePrimitives.GetCullData();
 
-        for (uint32 i = Range.Start; i < Range.End; ++i)
+        // Dense: the range indexes skeletal primitives, not the whole table.
+        const uint32* RESTRICT Skeletal = SkeletalPrimitiveIndices;
+
+        const auto Accept = [&](uint32 PrimIndex)
         {
-            if (ScenePrimitives.GetSource(i) != EPrimitiveSource::SkeletalMesh)
-            {
-                continue;
-            }
-
-            const FScenePrimitive&    Prim   = Prims[i];
-            const FVector4&           Sphere = Spheres[i];
-            const FPrimitiveCullData& Cull   = Culls[i];
-
-            if (!SceneCull.ShouldKeep(FVector3(Sphere), Sphere.w, Cull.bCastShadow != 0u, Cull.MaxDrawDistance, CameraPos))
-            {
-                ++Local.Stats.NumInstancesCulled;
-                continue;
-            }
-
+            const FScenePrimitive& Prim = Prims[PrimIndex];
             if (Prim.Surfaces == nullptr || Prim.SurfaceCount == 0u || Prim.BoneCount == 0u)
             {
-                continue;   // parked awaiting resolve or a skeleton; the sync pass retries it
+                return;   // parked awaiting resolve or a skeleton; the sync pass retries it
             }
 
             // A SUPERSET of what the emit pass accepts; anything it rejects just leaves an unused hole.
             const uint32 Slot = SkinnedCandidateCursor.fetch_add(1, std::memory_order_relaxed);
             if (Slot < (uint32)SkinnedCandidates.size())
             {
-                SkinnedCandidates[Slot]     = i;
+                SkinnedCandidates[Slot]     = PrimIndex;
                 SkinnedCandidateBones[Slot] = Prim.BoneCount;
             }
+        };
+
+        if (!SceneCull.bEnabled)
+        {
+            for (uint32 d = Range.Start; d < Range.End; ++d)
+            {
+                Accept(Skeletal[d]);
+            }
+            return;
+        }
+
+        alignas(32) float CX[8], CY[8], CZ[8], RR[8], MD[8];
+
+        uint32 d = Range.Start;
+        for (; d + 8u <= Range.End; d += 8u)
+        {
+            uint32 CasterMask = 0u;
+            for (uint32 n = 0; n < 8u; ++n)
+            {
+                const uint32 PrimIndex = Skeletal[d + n];
+                const FVector4& S = Spheres[PrimIndex];
+                CX[n] = S.x;
+                CY[n] = S.y;
+                CZ[n] = S.z;
+                RR[n] = S.w;
+                MD[n] = Culls[PrimIndex].MaxDrawDistance;
+                CasterMask |= (Culls[PrimIndex].bCastShadow != 0u) ? (1u << n) : 0u;
+            }
+
+            uint32 KeepMask = 0u;
+            uint32 MaybeMask = 0u;
+            SceneCull.ShouldKeepBatch8(CX, CY, CZ, RR, MD, CasterMask, CameraPos, KeepMask, MaybeMask);
+
+            for (uint32 n = 0; n < 8u; ++n)
+            {
+                const uint32 Bit = 1u << n;
+                bool bKeep = (KeepMask & Bit) != 0u;
+
+                if (!bKeep && (MaybeMask & Bit) != 0u)
+                {
+                    const uint32 PrimIndex = Skeletal[d + n];
+                    bKeep = SceneCull.ShouldKeep(FVector3(CX[n], CY[n], CZ[n]), RR[n],
+                                                 Culls[PrimIndex].bCastShadow != 0u, MD[n], CameraPos);
+                }
+
+                if (bKeep)
+                {
+                    Accept(Skeletal[d + n]);
+                }
+                else
+                {
+                    ++Local.Stats.NumInstancesCulled;
+                }
+            }
+        }
+
+        for (; d < Range.End; ++d)
+        {
+            const uint32 PrimIndex = Skeletal[d];
+            const FVector4& S = Spheres[PrimIndex];
+
+            if (!SceneCull.ShouldKeep(FVector3(S), S.w, Culls[PrimIndex].bCastShadow != 0u,
+                                      Culls[PrimIndex].MaxDrawDistance, CameraPos))
+            {
+                ++Local.Stats.NumInstancesCulled;
+                continue;
+            }
+
+            Accept(PrimIndex);
         }
     }
 

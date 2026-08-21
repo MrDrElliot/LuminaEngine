@@ -174,13 +174,13 @@ namespace Lumina::Containers
 
         NODISCARD FORCEINLINE TChar& operator[](size_t Index) noexcept
         {
-            LUMINA_CONTAINER_CHECK(Index <= GetSize());
+            LUMINA_CONTAINER_CHECK_WITHIN(Index, GetSize());
             return GetData()[Index];
         }
 
         NODISCARD FORCEINLINE const TChar& operator[](size_t Index) const noexcept
         {
-            LUMINA_CONTAINER_CHECK(Index <= GetSize());
+            LUMINA_CONTAINER_CHECK_WITHIN(Index, GetSize());
             return GetData()[Index];
         }
 
@@ -357,7 +357,7 @@ namespace Lumina::Containers
         TBasicString& insert(size_t Position, view_type Text)
         {
             const size_t Size = GetSize();
-            LUMINA_CONTAINER_CHECK(Position <= Size);
+            LUMINA_CONTAINER_CHECK_WITHIN(Position, Size);
 
             if (Text.empty())
             {
@@ -378,7 +378,7 @@ namespace Lumina::Containers
         TBasicString& erase(size_t Position = 0, size_t Count = npos)
         {
             const size_t Size = GetSize();
-            LUMINA_CONTAINER_CHECK(Position <= Size);
+            LUMINA_CONTAINER_CHECK_WITHIN(Position, Size);
 
             const size_t Removed = Count < Size - Position ? Count : Size - Position;
             if (Removed != 0)
@@ -413,7 +413,7 @@ namespace Lumina::Containers
         NODISCARD TBasicString substr(size_t Position = 0, size_t Count = npos) const
         {
             const size_t Size = GetSize();
-            LUMINA_CONTAINER_CHECK(Position <= Size);
+            LUMINA_CONTAINER_CHECK_WITHIN(Position, Size);
             const size_t Taken = Count < Size - Position ? Count : Size - Position;
             return TBasicString(GetData() + Position, Taken);
         }
@@ -647,7 +647,7 @@ namespace Lumina::Containers
             {
                 Grown = Required;
             }
-            LUMINA_CONTAINER_CHECK(Grown <= MaxCapacity);
+            LUMINA_CONTAINER_CHECK_WITHIN(Grown, MaxCapacity);
             return Grown;
         }
 
@@ -700,7 +700,7 @@ namespace Lumina::Containers
                 return;
             }
 
-            LUMINA_CONTAINER_CHECK(Length <= MaxCapacity);
+            LUMINA_CONTAINER_CHECK_WITHIN(Length, MaxCapacity);
 
             // Fill the new block before releasing the old one, since Text may point into it.
             TChar* NewData = static_cast<TChar*>(TAllocator::Allocate((Length + 1) * sizeof(TChar), alignof(TChar)));

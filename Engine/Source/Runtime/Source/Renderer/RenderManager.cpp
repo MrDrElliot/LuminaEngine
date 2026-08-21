@@ -44,16 +44,6 @@ namespace Lumina
         return GRenderManager;
     }
 
-    static TConsoleVar CVarVSync("Core.VSync", true, "Toggles v-sync", [](const CVarValueType& Value)
-    {
-        const bool bEnabled = Containers::Get<bool>(Value);
-        RHI::SetVSync(bEnabled);
-        if (FRenderManager* Manager = TryRender())
-        {
-            Manager->RecreatePrimarySwapchain();
-        }
-    });
-
     FRenderManager::FRenderManager()
     {
     }

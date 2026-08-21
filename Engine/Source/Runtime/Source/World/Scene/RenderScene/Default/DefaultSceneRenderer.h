@@ -737,6 +737,8 @@ namespace Lumina
         TAtomic<uint32>                        SkinnedCandidateCursor{0};
         TAtomic<uint32>                        PendingSliceCursor{0};
         uint32                                 SkinnedCandidateCount = 0;
+        // Snapshot of the primitive set's dense skeletal list, captured before the parallel cull.
+        const uint32*                          SkeletalPrimitiveIndices = nullptr;
         // Frames a slice survives ungathered, so a mesh flicking through the cull does not thrash its base.
         static constexpr uint32                kBoneSliceGraceFrames = 300;
         uint32                                 BoneSliceFrameNumber = 0;

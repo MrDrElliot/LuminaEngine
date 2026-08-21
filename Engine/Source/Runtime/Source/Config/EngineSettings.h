@@ -8,6 +8,7 @@
 #include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "Input/Key.h"
+#include "Renderer/PresentMode.h"
 #include "World/World.h"
 #include "EngineSettings.generated.h"
 
@@ -225,6 +226,15 @@ namespace Lumina
     {
         GENERATED_BODY()
     public:
+
+        // How finished frames reach the display. Falls back if the device lacks the requested mode.
+        PROPERTY(Editable, Category = "Display")
+        EPresentMode PresentMode = EPresentMode::FIFO;
+
+        void PostInitSettings() override;
+
+        // Pushes PresentMode to the RHI, rebuilding the primary swapchain if one already exists.
+        void ApplyPresentMode() const;
 
         /** Volumetric fog froxel grid resolution multiplier (1.0 = 160x90x128). Higher is sharper but
             costs more GPU; takes effect on viewport resize or editor restart. */

@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include "Containers/StringFormat.h"
+#include "CheckFailure.h"
 #include <source_location>
 #include "Containers/String.h"
 #include "Platform/GenericPlatform.h"

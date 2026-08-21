@@ -77,7 +77,7 @@ namespace Lumina::Containers
 
         NODISCARD FORCEINLINE constexpr const TChar& operator[](size_t Index) const noexcept
         {
-            LUMINA_CONTAINER_CHECK(Index < Size);
+            LUMINA_CONTAINER_CHECK_INDEX(Index, Size);
             return Data[Index];
         }
 
@@ -97,14 +97,14 @@ namespace Lumina::Containers
 
         constexpr void remove_prefix(size_t Count) noexcept
         {
-            LUMINA_CONTAINER_CHECK(Count <= Size);
+            LUMINA_CONTAINER_CHECK_WITHIN(Count, Size);
             Data += Count;
             Size -= Count;
         }
 
         constexpr void remove_suffix(size_t Count) noexcept
         {
-            LUMINA_CONTAINER_CHECK(Count <= Size);
+            LUMINA_CONTAINER_CHECK_WITHIN(Count, Size);
             Size -= Count;
         }
 
@@ -123,7 +123,7 @@ namespace Lumina::Containers
 
         NODISCARD constexpr TStringView substr(size_t Position = 0, size_t Count = npos) const noexcept
         {
-            LUMINA_CONTAINER_CHECK(Position <= Size);
+            LUMINA_CONTAINER_CHECK_WITHIN(Position, Size);
             return TStringView(Data + Position, Clamp(Position, Count));
         }
 
@@ -441,14 +441,14 @@ namespace Lumina::Containers
 
         NODISCARD FORCEINLINE constexpr const TChar& operator[](size_t Index) const noexcept
         {
-            LUMINA_CONTAINER_CHECK(Index <= Size);
+            LUMINA_CONTAINER_CHECK_WITHIN(Index, Size);
             return Data[Index];
         }
 
         /** Dropping from the front keeps the terminator, which is why there is no matching RemoveSuffix. */
         constexpr void RemovePrefix(size_t Count) noexcept
         {
-            LUMINA_CONTAINER_CHECK(Count <= Size);
+            LUMINA_CONTAINER_CHECK_WITHIN(Count, Size);
             Data += Count;
             Size -= Count;
         }

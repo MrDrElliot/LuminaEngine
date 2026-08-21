@@ -307,6 +307,7 @@ namespace Lumina
             ++SkinnedCount;
         }
 
+        ++SkeletalSetGeneration;
         ++StructureGeneration;
         return Index;
     }
@@ -324,6 +325,9 @@ namespace Lumina
         ReleaseBindings(Index);
         ReleaseBoneSlice(Primitives[Index]);
         Primitives[Index].BoneCount = 0u;
+
+        // Swap-remove moves the tail primitive into this slot, so every cached index can shift.
+        ++SkeletalSetGeneration;
 
         if (Index != Last)
         {
@@ -474,6 +478,29 @@ namespace Lumina
     void FScenePrimitiveSet::SetBoneCount(uint32 Index, uint32 Count)
     {
         Primitives[Index].BoneCount = Count;
+    }
+
+    const TVector<uint32>& FScenePrimitiveSet::GetSkeletalIndices()
+    {
+        if (SkeletalIndicesGeneration != SkeletalSetGeneration)
+        {
+            LUMINA_PROFILE_SCOPE();
+
+            SkeletalIndices.clear();
+            SkeletalIndices.reserve(SkinnedCount);
+
+            const uint32 Num = (uint32)Primitives.size();
+            for (uint32 i = 0; i < Num; ++i)
+            {
+                if (Primitives[i].Source == EPrimitiveSource::SkeletalMesh)
+                {
+                    SkeletalIndices.push_back(i);
+                }
+            }
+
+            SkeletalIndicesGeneration = SkeletalSetGeneration;
+        }
+        return SkeletalIndices;
     }
 
     void FScenePrimitiveSet::ReleaseBoneSlice(FScenePrimitive& Prim)
@@ -1380,6 +1407,7 @@ namespace Lumina
         BoneSliceFreeLists.clear();
         BoneSliceExtent = 0;
         BoneSliceSweepCursor = 0;
+        ++SkeletalSetGeneration;
         DeadBindings = 0;
         LinksByEntityIndex.clear();
         SkinnedCount = 0;
@@ -1941,6 +1969,7 @@ namespace Lumina
         BoneSliceFreeLists.clear();
         BoneSliceExtent = 0;
         BoneSliceSweepCursor = 0;
+        ++SkeletalSetGeneration;
         DeadBindings = 0;
         LinksByEntityIndex.clear();
         SkinnedCount = 0;

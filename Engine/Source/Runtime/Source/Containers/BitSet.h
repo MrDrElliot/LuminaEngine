@@ -70,7 +70,7 @@ namespace Lumina::Containers
 
         NODISCARD FORCEINLINE bool Test(size_t Index) const noexcept
         {
-            LUMINA_CONTAINER_CHECK(Index < N);
+            LUMINA_CONTAINER_CHECK_INDEX(Index, N);
             return (Words[Index / kBitsPerWord] & Bit(Index)) != 0;
         }
 
@@ -78,7 +78,7 @@ namespace Lumina::Containers
 
         FORCEINLINE TBitSet& Set(size_t Index, bool Value = true) noexcept
         {
-            LUMINA_CONTAINER_CHECK(Index < N);
+            LUMINA_CONTAINER_CHECK_INDEX(Index, N);
             if (Value)
             {
                 Words[Index / kBitsPerWord] |= Bit(Index);
@@ -113,7 +113,7 @@ namespace Lumina::Containers
 
         FORCEINLINE TBitSet& Flip(size_t Index) noexcept
         {
-            LUMINA_CONTAINER_CHECK(Index < N);
+            LUMINA_CONTAINER_CHECK_INDEX(Index, N);
             Words[Index / kBitsPerWord] ^= Bit(Index);
             return *this;
         }

@@ -206,13 +206,13 @@ namespace Lumina::Containers
 
         NODISCARD FORCEINLINE T& operator[](size_t Index) noexcept
         {
-            LUMINA_CONTAINER_CHECK(Index < Count);
+            LUMINA_CONTAINER_CHECK_INDEX(Index, Count);
             return Data[Index];
         }
 
         NODISCARD FORCEINLINE const T& operator[](size_t Index) const noexcept
         {
-            LUMINA_CONTAINER_CHECK(Index < Count);
+            LUMINA_CONTAINER_CHECK_INDEX(Index, Count);
             return Data[Index];
         }
 
@@ -491,7 +491,7 @@ namespace Lumina::Containers
         T* erase(const T* Pos)
         {
             const size_t Index = static_cast<size_t>(Pos - Data);
-            LUMINA_CONTAINER_CHECK(Index < Count);
+            LUMINA_CONTAINER_CHECK_INDEX(Index, Count);
 
             ElementOps::DestructRange(Data + Index, 1);
             ElementOps::RelocateRangeOverlapping(Data + Index, Data + Index + 1, Count - Index - 1);
@@ -503,7 +503,8 @@ namespace Lumina::Containers
         {
             const size_t Index   = static_cast<size_t>(First - Data);
             const size_t Removed = static_cast<size_t>(Last - First);
-            LUMINA_CONTAINER_CHECK(Index <= Count && Index + Removed <= Count);
+            LUMINA_CONTAINER_CHECK_WITHIN(Index, Count);
+            LUMINA_CONTAINER_CHECK_WITHIN(Index + Removed, Count);
 
             if (Removed == 0)
             {
@@ -519,7 +520,7 @@ namespace Lumina::Containers
         /** Erase in constant time by moving the last element into the hole; does not preserve order. */
         void RemoveAtSwap(size_t Index)
         {
-            LUMINA_CONTAINER_CHECK(Index < Count);
+            LUMINA_CONTAINER_CHECK_INDEX(Index, Count);
 
             ElementOps::DestructRange(Data + Index, 1);
             --Count;
@@ -531,7 +532,7 @@ namespace Lumina::Containers
 
         void EraseAt(size_t Index)
         {
-            LUMINA_CONTAINER_CHECK(Index < Count);
+            LUMINA_CONTAINER_CHECK_INDEX(Index, Count);
             erase(Data + Index);
         }
 
@@ -784,7 +785,7 @@ namespace Lumina::Containers
 
         NODISCARD static uint32 ToCapacity(size_t Requested)
         {
-            LUMINA_CONTAINER_CHECK(Requested <= MaxCapacity);
+            LUMINA_CONTAINER_CHECK_WITHIN(Requested, MaxCapacity);
             return static_cast<uint32>(Requested);
         }
 
@@ -855,7 +856,7 @@ namespace Lumina::Containers
         NODISCARD size_t ValidateInsertPosition(const T* Pos) const noexcept
         {
             const size_t Index = static_cast<size_t>(Pos - Data);
-            LUMINA_CONTAINER_CHECK(Index <= Count);
+            LUMINA_CONTAINER_CHECK_WITHIN(Index, Count);
             return Index;
         }
 

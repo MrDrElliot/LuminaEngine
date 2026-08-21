@@ -12,6 +12,7 @@
 #include "Core/Windows/GLFWInclude.h"
 #include "Memory/SmartPtr.h"
 #include "Memory/Allocators/Allocator.h"
+#include "Renderer/PresentMode.h"
 #include "Renderer/RHI.h"
 #include "Renderer/RHICore.h"
 #include "Renderer/API/Vulkan/VulkanMacros.h"
@@ -4272,22 +4273,21 @@ namespace Lumina::RHI
         HeapData.SamplerSlots.Free(Slot);
     }
     
-    static bool GVSyncEnabled = true;
+    static EPresentMode GPresentMode = EPresentMode::FIFO;
 
-    void SetVSync(bool bEnabled)
+    void SetPresentMode(EPresentMode Mode)
     {
-        GVSyncEnabled = bEnabled;
+        GPresentMode = Mode;
     }
 
-    bool GetVSync()
+    EPresentMode GetPresentMode()
     {
-        return GVSyncEnabled;
+        return GPresentMode;
     }
 
     static VkPresentModeKHR ChoosePresentMode(VkSurfaceKHR Surface)
     {
-        // FIFO (always supported) caps to the display refresh = vsync.
-        if (GVSyncEnabled)
+        if (GPresentMode == EPresentMode::FIFO)
         {
             return VK_PRESENT_MODE_FIFO_KHR;
         }
@@ -4309,15 +4309,25 @@ namespace Lumina::RHI
             return false;
         };
 
-        // Uncapped: MAILBOX (low-latency, no tearing) preferred, then IMMEDIATE, then FIFO.
-        if (Supports(VK_PRESENT_MODE_MAILBOX_KHR))
+        const VkPresentModeKHR Requested = GPresentMode == EPresentMode::Mailbox
+            ? VK_PRESENT_MODE_MAILBOX_KHR
+            : VK_PRESENT_MODE_IMMEDIATE_KHR;
+
+        if (Supports(Requested))
         {
-            return VK_PRESENT_MODE_MAILBOX_KHR;
+            return Requested;
         }
-        if (Supports(VK_PRESENT_MODE_IMMEDIATE_KHR))
+
+        // Both remaining modes render uncapped, so the other one is a closer match than falling back to FIFO.
+        const VkPresentModeKHR Alternate = Requested == VK_PRESENT_MODE_MAILBOX_KHR
+            ? VK_PRESENT_MODE_IMMEDIATE_KHR
+            : VK_PRESENT_MODE_MAILBOX_KHR;
+
+        if (Supports(Alternate))
         {
-            return VK_PRESENT_MODE_IMMEDIATE_KHR;
+            return Alternate;
         }
+
         return VK_PRESENT_MODE_FIFO_KHR;
     }
 

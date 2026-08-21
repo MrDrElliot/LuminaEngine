@@ -3689,14 +3689,6 @@ namespace Lumina
         ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.62f, 1.0f), "Settings");
         ImGui::Separator();
         
-        const bool bVSyncEnabled = RHI::GetVSync();
-        if (ImGui::MenuItem(LE_ICON_DISC_PLAYER " V-Sync", nullptr, bVSyncEnabled))
-        {
-            const bool bNewVSync = !bVSyncEnabled;
-            RHI::SetVSync(bNewVSync);
-            Render().RecreatePrimarySwapchain();
-        }
-        
         if (ImGui::BeginMenu(LE_ICON_PALETTE " Theme"))
         {
             if (ImGui::MenuItem("Dark", nullptr, true))  // Currently selected

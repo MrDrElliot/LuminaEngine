@@ -10,6 +10,11 @@
 #include "Core/Math/Math.h"
 #include "Platform/GenericPlatform.h"
 
+namespace Lumina
+{
+    enum class EPresentMode : uint8;
+}
+
 namespace Lumina::RHI
 {
     constexpr auto kDefaultAlign                = 16;
@@ -553,8 +558,8 @@ namespace Lumina::RHI
     RUNTIME_API FSwapchainH  CreateSwapchain(FSurfaceH Surface, const FUIntVector2& Extent);
     RUNTIME_API void         RecreateSwapchain(FSwapchainH Swapchain, const FUIntVector2& Extent);
     
-    RUNTIME_API void         SetVSync(bool bEnabled);
-    RUNTIME_API bool         GetVSync();
+    RUNTIME_API void         SetPresentMode(EPresentMode Mode);
+    RUNTIME_API EPresentMode GetPresentMode();
     RUNTIME_API FTextureH    AcquireNextImage(FSwapchainH Swapchain);   // invalid handle if out-of-date this call
     RUNTIME_API FUIntVector2 GetSwapchainExtent(FSwapchainH Swapchain);
     RUNTIME_API EFormat      GetSwapchainFormat(FSwapchainH Swapchain);

@@ -241,6 +241,9 @@ namespace Lumina
 
         uint32                              GetSkinnedPrimitiveCount() const { return SkinnedCount; }
 
+        // Dense skeletal primitive indices, ascending; rebuilt only when the set changes shape.
+        const TVector<uint32>&              GetSkeletalIndices();
+
         /** Bones the arena must hold. Only grows within a level, so a buffer sized from it never shrinks
          *  under live data and a base handed out last frame is still valid this frame. */
 
@@ -461,6 +464,11 @@ namespace Lumina
         uint32                              MaxSurfaceDescMeshlets = 0;
 
         void                                ReleaseBoneSlice(FScenePrimitive& Prim);
+
+        TVector<uint32>                     SkeletalIndices;
+        // Adds and removes only; StructureGeneration also moves on a transform, which would thrash this.
+        uint32                              SkeletalSetGeneration = 0;
+        uint32                              SkeletalIndicesGeneration = ~0u;
         THashMap<uint32, TVector<uint32>>   BoneSliceFreeLists;
         uint32                              BoneSliceExtent = 0;
         uint32                              BoneSliceSweepCursor = 0;

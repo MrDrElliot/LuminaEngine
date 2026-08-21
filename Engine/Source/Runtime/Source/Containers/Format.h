@@ -140,7 +140,7 @@ namespace Lumina::Fmt
             if (Used + Count > Cap)
             {
                 GrowFn(*this, Used + Count);
-                LUMINA_CONTAINER_CHECK(Used + Count <= Cap);
+                LUMINA_CONTAINER_CHECK_WITHIN(Used + Count, Cap);
             }
 
             return Ptr + Used;

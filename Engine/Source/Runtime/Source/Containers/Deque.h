@@ -141,13 +141,13 @@ namespace Lumina::Containers
 
         NODISCARD FORCEINLINE T& operator[](size_t Index) noexcept
         {
-            LUMINA_CONTAINER_CHECK(Index < Count);
+            LUMINA_CONTAINER_CHECK_INDEX(Index, Count);
             return Storage[SlotFor(Index)];
         }
 
         NODISCARD FORCEINLINE const T& operator[](size_t Index) const noexcept
         {
-            LUMINA_CONTAINER_CHECK(Index < Count);
+            LUMINA_CONTAINER_CHECK_INDEX(Index, Count);
             return Storage[SlotFor(Index)];
         }
 

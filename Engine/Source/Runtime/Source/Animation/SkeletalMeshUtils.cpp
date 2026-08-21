@@ -1,6 +1,9 @@
 ﻿#include "RuntimePCH.h"
 #include "SkeletalMeshUtils.h"
 
+#include "Core/Math/SIMD/PackHalf.h"
+#include "Core/Math/SIMD/SIMD.h"
+
 #include "Assets/AssetTypes/Mesh/SkeletalMesh/SkeletalMesh.h"
 #include "Assets/AssetTypes/Mesh/Skeleton/Skeleton.h"
 #include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
@@ -213,13 +216,59 @@ namespace Lumina::SkeletalUtils
     {
         LUMINA_PROFILE_SCOPE();
 
-        const SIZE_T NumBones = BoneTransforms.size();
+        const uint32 NumBones = (uint32)BoneTransforms.size();
         OutBones.resize(NumBones);
 
         FBoneTransform* RESTRICT Out = OutBones.data();
-        for (SIZE_T i = 0; i < NumBones; ++i)
+        const FMatrix4* RESTRICT   Src = BoneTransforms.data();
+
+        // Chunked to keep the staging on the stack, and long enough for the wide half-conversion path.
+        constexpr uint32 kChunk = 64;
+        alignas(16) float  RowScratch[kChunk * 10];
+        uint32             PackScratch[kChunk * 5];
+
+        for (uint32 Base = 0; Base < NumBones; Base += kChunk)
         {
-            Out[i] = PackBoneTransform(BoneTransforms[i]);
+            const uint32 Count = Math::Min(kChunk, NumBones - Base);
+
+            for (uint32 n = 0; n < Count; ++n)
+            {
+                // Columns in, mathematical rows out; the packed layout is row-major.
+                __m128 R0 = SIMD::VFloat4::Load(&Src[Base + n][0].x);
+                __m128 R1 = SIMD::VFloat4::Load(&Src[Base + n][1].x);
+                __m128 R2 = SIMD::VFloat4::Load(&Src[Base + n][2].x);
+                __m128 R3 = SIMD::VFloat4::Load(&Src[Base + n][3].x);
+                _MM_TRANSPOSE4_PS(R0, R1, R2, R3);
+
+                alignas(16) float Rows[12];
+                SIMD::VFloat4(R0).StoreAligned(Rows + 0);
+                SIMD::VFloat4(R1).StoreAligned(Rows + 4);
+                SIMD::VFloat4(R2).StoreAligned(Rows + 8);
+
+                float* RESTRICT Dst = RowScratch + n * 10;
+                Dst[0] = Rows[0]; Dst[1] = Rows[1]; Dst[2] = Rows[2];
+                Dst[3] = Rows[4]; Dst[4] = Rows[5]; Dst[5] = Rows[6];
+                Dst[6] = Rows[8]; Dst[7] = Rows[9]; Dst[8] = Rows[10];
+                Dst[9] = 0.0f;
+
+                // The w lane of each row is the translation, which stays at full precision.
+                Out[Base + n].Tx = Rows[3];
+                Out[Base + n].Ty = Rows[7];
+                Out[Base + n].Tz = Rows[11];
+            }
+
+            SIMD::PackHalf2x16Array(RowScratch, PackScratch, Count * 5);
+
+            for (uint32 n = 0; n < Count; ++n)
+            {
+                const uint32* RESTRICT Packed = PackScratch + n * 5;
+                uint32* RESTRICT       Rot    = Out[Base + n].Rot;
+                Rot[0] = Packed[0];
+                Rot[1] = Packed[1];
+                Rot[2] = Packed[2];
+                Rot[3] = Packed[3];
+                Rot[4] = Packed[4];
+            }
         }
     }
 }

@@ -1,4 +1,5 @@
 ﻿#include "RuntimePCH.h"
+#include <atomic>
 #include <string>
 #include "Assert.h"
 #include "Core/Threading/Thread.h"
@@ -54,6 +55,43 @@ namespace Lumina::Assert
     void Detail::HandleAssertion(const FAssertion& Assertion)
     {
         GAssertionHandler(Assertion);
+    }
+
+    [[noreturn]] static void ReportCheckFailure(const char* Expression, const char* Message,
+        const std::source_location& Location)
+    {
+        LUMINA_DEBUG_BREAK();
+
+        // The logger runs on these containers, so a check failing inside it would recurse through here forever.
+        static std::atomic<bool> bReporting = false;
+        if (bReporting.exchange(true, std::memory_order_relaxed))
+        {
+            Detail::Abort();
+        }
+
+        Detail::HandleAssertion(FAssertion
+        {
+            .Message = Message,
+            .Location = Location,
+            .Expression = Expression,
+            .Type = EAssertionType::Assert
+        });
+
+        Detail::Abort();
+    }
+
+    void Detail::HandleCheckFailure(const char* Expression, const std::source_location& Location)
+    {
+        ReportCheckFailure(Expression, "", Location);
+    }
+
+    void Detail::HandleBoundsFailure(const char* IndexName, uint64 IndexValue,
+        const char* Relation, const char* BoundName, uint64 BoundValue, const std::source_location& Location)
+    {
+        const FString ExpressionText = Format("{} {} {}", IndexName, Relation, BoundName);
+        const FString MessageText = Format("{} is {}, {} is {}.", IndexName, IndexValue, BoundName, BoundValue);
+
+        ReportCheckFailure(ExpressionText.c_str(), MessageText.c_str(), Location);
     }
 
     void Detail::Abort()

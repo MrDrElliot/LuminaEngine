@@ -247,6 +247,10 @@ namespace Lumina
             {
                 Audio::ApplySettings();
             }
+            else if (Class == CRendererSettings::StaticClass())
+            {
+                GetDefault<CRendererSettings>()->ApplyPresentMode();
+            }
         });
 
         FConsoleRegistry::Get().LoadFromConfig();

@@ -5,15 +5,14 @@
 #include <type_traits>
 #include <utility>
 
+#include "Core/Assertions/CheckFailure.h"
 #include "Platform/GenericPlatform.h"
 #include "Platform/Platform.h"
 
 #if defined(_MSC_VER)
     #define LUMINA_NO_UNIQUE_ADDRESS [[msvc::no_unique_address]]
-    #define LUMINA_CONTAINER_TRAP() __debugbreak()
 #else
     #define LUMINA_NO_UNIQUE_ADDRESS [[no_unique_address]]
-    #define LUMINA_CONTAINER_TRAP() __builtin_trap()
 #endif
 
 #if !defined(LUMINA_CONTAINER_CHECKS)
@@ -24,11 +23,18 @@
     #endif
 #endif
 
-// Deliberately not Assert.h; that reaches FString, <format> and <stacktrace>, and every container includes this.
+// The out-of-line handler, not Assert.h itself: that reaches FString, and every container includes this.
+// _INDEX and _WITHIN are the bounds forms; they report the two values, not just the expression text.
 #if LUMINA_CONTAINER_CHECKS
-    #define LUMINA_CONTAINER_CHECK(Expr) do { if (!(Expr)) { LUMINA_CONTAINER_TRAP(); } } while (false)
+    #define LUMINA_CONTAINER_CHECK(Expr) do { if (!(Expr)) [[unlikely]] { ::Lumina::Assert::Detail::HandleCheckFailure(#Expr, std::source_location::current()); } } while (false)
+    #define LUMINA_CONTAINER_CHECK_BOUNDS(IndexExpr, Op, OpText, BoundExpr) do { const uint64 LuminaCheckedIndex = (uint64)(IndexExpr); const uint64 LuminaCheckedBound = (uint64)(BoundExpr); if (!(LuminaCheckedIndex Op LuminaCheckedBound)) [[unlikely]] { ::Lumina::Assert::Detail::HandleBoundsFailure(#IndexExpr, LuminaCheckedIndex, OpText, #BoundExpr, LuminaCheckedBound, std::source_location::current()); } } while (false)
+    #define LUMINA_CONTAINER_CHECK_INDEX(IndexExpr, BoundExpr)  LUMINA_CONTAINER_CHECK_BOUNDS(IndexExpr, <, "<", BoundExpr)
+    #define LUMINA_CONTAINER_CHECK_WITHIN(IndexExpr, BoundExpr) LUMINA_CONTAINER_CHECK_BOUNDS(IndexExpr, <=, "<=", BoundExpr)
 #else
     #define LUMINA_CONTAINER_CHECK(Expr) ((void)0)
+    #define LUMINA_CONTAINER_CHECK_BOUNDS(IndexExpr, Op, OpText, BoundExpr) ((void)0)
+    #define LUMINA_CONTAINER_CHECK_INDEX(IndexExpr, BoundExpr) ((void)0)
+    #define LUMINA_CONTAINER_CHECK_WITHIN(IndexExpr, BoundExpr) ((void)0)
 #endif
 
 namespace Lumina

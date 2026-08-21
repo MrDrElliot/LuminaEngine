@@ -332,7 +332,7 @@ namespace HashTableInternal
                 return { Seq.GetOffset(*Mask), Seq.GetIndex() };
             }
             Seq.Next();
-            LUMINA_CONTAINER_CHECK(Seq.GetIndex() <= Capacity);
+            LUMINA_CONTAINER_CHECK_WITHIN(Seq.GetIndex(), Capacity);
         }
     }
 
@@ -981,7 +981,7 @@ namespace Private
                     return kNoIndex;
                 }
                 Seq.Next();
-                LUMINA_CONTAINER_CHECK(Seq.GetIndex() <= Capacity);
+                LUMINA_CONTAINER_CHECK_WITHIN(Seq.GetIndex(), Capacity);
             }
         }
 
@@ -1007,7 +1007,7 @@ namespace Private
                     return kNoIndex;
                 }
                 Seq.Next();
-                LUMINA_CONTAINER_CHECK(Seq.GetIndex() <= Capacity);
+                LUMINA_CONTAINER_CHECK_WITHIN(Seq.GetIndex(), Capacity);
             }
         }
 

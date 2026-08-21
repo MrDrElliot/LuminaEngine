@@ -119,7 +119,7 @@ namespace Lumina::Containers
 
         NODISCARD FORCEINLINE constexpr T& operator[](size_t Index) const noexcept
         {
-            LUMINA_CONTAINER_CHECK(Index < Size);
+            LUMINA_CONTAINER_CHECK_INDEX(Index, Size);
             return Data[Index];
         }
 
@@ -139,19 +139,19 @@ namespace Lumina::Containers
 
         NODISCARD constexpr TSpan first(size_t Count) const noexcept
         {
-            LUMINA_CONTAINER_CHECK(Count <= Size);
+            LUMINA_CONTAINER_CHECK_WITHIN(Count, Size);
             return TSpan(Data, Count);
         }
 
         NODISCARD constexpr TSpan last(size_t Count) const noexcept
         {
-            LUMINA_CONTAINER_CHECK(Count <= Size);
+            LUMINA_CONTAINER_CHECK_WITHIN(Count, Size);
             return TSpan(Data + (Size - Count), Count);
         }
 
         NODISCARD constexpr TSpan subspan(size_t Offset, size_t Count = npos) const noexcept
         {
-            LUMINA_CONTAINER_CHECK(Offset <= Size);
+            LUMINA_CONTAINER_CHECK_WITHIN(Offset, Size);
             const size_t Available = Size - Offset;
             return TSpan(Data + Offset, Count < Available ? Count : Available);
         }

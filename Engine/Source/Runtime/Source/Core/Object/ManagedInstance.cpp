@@ -2,6 +2,8 @@
 #include "ManagedInstance.h"
 
 #include "Containers/Vector.h"
+#include "Core/Threading/Thread.h"
+#include "Log/Log.h"
 #include "Lumina.h"
 #include "ObjectBase.h"
 
@@ -53,7 +55,14 @@ namespace Lumina
             {
                 return nullptr;
             }
-            return Slots[Object->ManagedInstanceSlot];
+
+            const int32 Slot = Object->ManagedInstanceSlot;
+            if (!IsValidSlot(Slot))
+            {
+                ReportBadSlot("Find", Object, Slot);
+                return nullptr;
+            }
+            return Slots[Slot];
         }
 
         void Set(CObjectBase* Object, void* Handle)
@@ -67,6 +76,15 @@ namespace Lumina
             {
                 Release(Object);
                 return;
+            }
+
+            NoteMutation();
+
+            const int32 Existing = Object->ManagedInstanceSlot;
+            if (Existing != INDEX_NONE && !IsValidSlot(Existing))
+            {
+                ReportBadSlot("Set", Object, Existing);
+                Object->ManagedInstanceSlot = INDEX_NONE;
             }
 
             if (Object->ManagedInstanceSlot != INDEX_NONE)
@@ -90,8 +108,17 @@ namespace Lumina
                 return;
             }
 
+            NoteMutation();
+
             const int32 Slot = Object->ManagedInstanceSlot;
             Object->ManagedInstanceSlot = INDEX_NONE;
+
+            // A slot the table never handed out must not reach FreeSlots; it would be reissued as a valid one.
+            if (!IsValidSlot(Slot))
+            {
+                ReportBadSlot("Release", Object, Slot);
+                return;
+            }
 
             FreeHandle(Slots[Slot]);
             Slots[Slot] = nullptr;
@@ -102,6 +129,8 @@ namespace Lumina
 
         void ReleaseAll()
         {
+            NoteMutation();
+
             // The owning objects' slot indices are cleared through the back-reference list, so a later
             // Release/Find on a surviving object sees INDEX_NONE rather than a recycled slot.
             for (int32 Slot = 0; Slot < (int32)Slots.size(); ++Slot)
@@ -132,6 +161,35 @@ namespace Lumina
 
     private:
 
+        bool IsValidSlot(int32 Slot) const
+        {
+            return Slot >= 0 && (size_t)Slot < Slots.size();
+        }
+
+        void NoteMutation()
+        {
+            if (!Threading::IsMainThread())
+            {
+                ++OffMainThreadMutations;
+            }
+        }
+
+        // Temporary diagnostic: a slot the table never issued means either a stale/corrupt object or a race.
+        void ReportBadSlot(const char* Site, const CObjectBase* Object, int32 Slot) const
+        {
+            if (bReportedBadSlot)
+            {
+                return;
+            }
+            bReportedBadSlot = true;
+
+            LOG_ERROR("ManagedInstances::{}: object {} carries slot {}, but the table has {} slots. "
+                      "Object InternalIndex {}, flags {}. Caller on main thread: {}. Off-main-thread table "
+                      "mutations so far: {}.",
+                Site, (const void*)Object, Slot, (int32)Slots.size(), Object->GetInternalIndex(),
+                (uint32)Object->GetFlags(), Threading::IsMainThread(), OffMainThreadMutations);
+        }
+
         int32 AcquireSlot()
         {
             if (!FreeSlots.empty())
@@ -158,6 +216,8 @@ namespace Lumina
         TVector<int32>                    FreeSlots;
         int32                             LiveCount = 0;
         ManagedInstances::FFreeHandleFn   FreeHandleFn = nullptr;
+        uint64                            OffMainThreadMutations = 0;
+        mutable bool                      bReportedBadSlot = false;
     };
 
     namespace ManagedInstances
