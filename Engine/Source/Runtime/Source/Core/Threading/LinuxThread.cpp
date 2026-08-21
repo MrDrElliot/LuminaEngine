@@ -5,6 +5,7 @@
 
 #include <cstring>
 #include <pthread.h>
+#include <linux/futex.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
@@ -67,8 +68,22 @@ namespace Lumina::Threading
         return false;
     }
 
+    bool WaitOnAddress32(const volatile uint32* Address, uint32 Compare, uint32 TimeoutMs)
+    {
+        timespec Timeout;
+        Timeout.tv_sec  = (time_t)(TimeoutMs / 1000u);
+        Timeout.tv_nsec = (long)((TimeoutMs % 1000u) * 1000000u);
+        const long Result = ::syscall(SYS_futex, (uint32*)Address, FUTEX_WAIT_PRIVATE, Compare, &Timeout, nullptr, 0);
+        return Result == 0;
+    }
+
+    void WakeAllOnAddress32(const volatile uint32* Address)
+    {
+        ::syscall(SYS_futex, (uint32*)Address, FUTEX_WAKE_PRIVATE, INT32_MAX, nullptr, nullptr, 0);
+    }
+
     // Not read from sysfs yet: without it the scheduler treats every worker as equidistant, which is what it
-    // did before topology existed at all.
+    // did before topology existed at all.""
     uint32 GetCpuTopology(FCpuTopology* /*Out*/, uint32 /*MaxCount*/)
     {
         return 0;

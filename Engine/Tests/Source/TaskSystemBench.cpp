@@ -564,3 +564,115 @@ TEST(TaskBench, ResumeStorm_ParkedFiberWake)
     std::fflush(stdout);
     SUCCEED();
 }
+
+// Minimum effective granularity: the crossover decides whether an engine loop should fan out at all.
+TEST(TaskBench, GranularityCrossover)
+{
+    constexpr uint32 N        = 1u << 20;
+    constexpr uint64 PerItem  = 24;
+    constexpr int    Runs     = 15;
+
+    auto RunSerial = [&]
+    {
+        const auto T0 = Lumina::PlatformTime::Cycles();
+        double Sink = 0.0;
+        for (uint32 i = 0; i < N; ++i)
+        {
+            Sink += BusySpin(PerItem, (double)i);
+        }
+        const double Ms = MsSince(T0);
+        return Sink == 1.0 ? Ms + 1e-9 : Ms;
+    };
+
+    auto RunGrain = [&](uint32 Grain)
+    {
+        const auto T0 = Lumina::PlatformTime::Cycles();
+        Task::ParallelFor(N, [&](const Task::FParallelRange& R)
+        {
+            double Local = 0.0;
+            for (uint32 i = R.Start; i < R.End; ++i)
+            {
+                Local += BusySpin(PerItem, (double)i);
+            }
+            if (Local == 1.0) { std::printf(" "); }
+        }, Grain);
+        return MsSince(T0);
+    };
+
+    for (int i = 0; i < 3; ++i) { (void)RunSerial(); (void)RunGrain(4096); }
+
+    TVector<double> SerialSamples;
+    SerialSamples.reserve(Runs);
+    for (int r = 0; r < Runs; ++r) SerialSamples.push_back(RunSerial());
+    const double SerialMed = Summarize(SerialSamples).Median;
+
+    std::printf("[TaskBench] %-40s  serial %8.4f ms over %u items\n", "granularity sweep", SerialMed, N);
+
+    const uint32 Grains[] = { 32u, 128u, 512u, 2048u, 8192u, 32768u, 131072u };
+    for (uint32 Grain : Grains)
+    {
+        TVector<double> Samples;
+        Samples.reserve(Runs);
+        for (int r = 0; r < Runs; ++r) Samples.push_back(RunGrain(Grain));
+        const FStats S = Summarize(Samples);
+        const double Speedup = SerialMed / S.Median;
+        std::printf("[TaskBench]   grain %6u: med %8.4f ms  speedup %5.2fx  efficiency %5.1f%%  (p99 %8.4f)\n",
+            Grain, S.Median, Speedup, 100.0 * Speedup / (double)GTaskSystem->GetNumWorkers(), S.P99);
+    }
+    std::fflush(stdout);
+    SUCCEED();
+}
+
+// Independent producers: queue and counter-pool contention rather than steal behavior.
+TEST(TaskBench, ConcurrentProducers)
+{
+    const uint32 W = GTaskSystem->GetNumWorkers();
+    constexpr uint32 Producers = 4;
+    constexpr uint32 Iters     = 400;
+
+    auto Body = [](uint32 i) { (void)BusySpin(16, (double)i); };
+
+    auto MeasureOne = [&]
+    {
+        const auto T0 = Lumina::PlatformTime::Cycles();
+        for (uint32 i = 0; i < Iters; ++i)
+        {
+            Task::ParallelFor(W, Body, 1);
+        }
+        return MsSince(T0) / (double)Iters;
+    };
+
+    for (int i = 0; i < 3; ++i) { (void)MeasureOne(); }
+    const double SoloMs = MeasureOne();
+
+    TAtomic<uint32> Ready{0};
+    TAtomic<uint64> TotalUs{0};
+    TVector<FThread> Threads;
+    Threads.reserve(Producers);
+
+    for (uint32 p = 0; p < Producers; ++p)
+    {
+        Threads.emplace_back([&]
+        {
+            GTaskSystem->RegisterExternalThread();
+            Ready.fetch_add(1, std::memory_order_release);
+            while (Ready.load(std::memory_order_acquire) < Producers)
+            {
+                Threading::ThreadYield();
+            }
+            const double PerCallMs = MeasureOne();
+            TotalUs.fetch_add((uint64)(PerCallMs * 1000.0), std::memory_order_relaxed);
+            GTaskSystem->UnregisterExternalThread();
+        });
+    }
+    for (FThread& T : Threads)
+    {
+        T.Join();
+    }
+
+    const double SharedMs = ((double)TotalUs.load(std::memory_order_relaxed) / Producers) / 1000.0;
+    std::printf("[TaskBench] %-40s  solo %8.4f ms  %u producers %8.4f ms  (x%.2f contention)\n",
+        "concurrent producers", SoloMs, Producers, SharedMs, SoloMs > 0.0 ? SharedMs / SoloMs : 0.0);
+    std::fflush(stdout);
+    SUCCEED();
+}

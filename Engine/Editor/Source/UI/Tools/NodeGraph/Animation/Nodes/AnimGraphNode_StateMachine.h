@@ -24,12 +24,29 @@ namespace Lumina
         void BuildNode() override;
         void GenerateBytecode(FAnimationGraphCompiler& Compiler) override;
 
+        FString GetNodeTitleText() const override;
+        bool GetRenameText(FString& OutText) const override;
+        void SetRenameText(const FString& InText) override;
+
         // Double-click descends into the state machine canvas, creating it on
         // first access.
         CEdNodeGraph* GetEnterableSubGraph() override;
 
         // Returns (creating if needed) the state machine canvas graph.
         CAnimStateMachineGraph* GetOrCreateStateMachineGraph();
+
+        // Without this a duplicated machine shares the original's canvas and edits track both.
+        void PostCloneFrom(const CEdGraphNode* Source) override;
+
+        CEdNodeGraph* GetOwnedSubGraph() const override;
+        void ReplaceSubGraphWithCopy() override;
+
+        // Fresh and un-set-up, so a caller can clone into it before EnsureSetup adds an Entry node.
+        CAnimStateMachineGraph* AllocateStateMachineGraph();
+
+        /** Name shown on the node and in the breadcrumb bar. Press F2 on the node to change it. */
+        PROPERTY(Editable, Category = "State Machine")
+        FName MachineName;
 
         /** The state machine's canvas. Allocated lazily; edited by double-clicking the node. */
         PROPERTY()

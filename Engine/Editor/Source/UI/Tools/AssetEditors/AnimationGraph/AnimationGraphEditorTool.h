@@ -57,7 +57,6 @@ namespace Lumina
         // preview mesh so transition conditions and Get Parameter nodes can be exercised.
         void DrawParametersWindow();
         void DrawParameters(class CAnimationGraph* Graph);
-        void DrawEnumParameter(const char* Name, class FEnumProperty* Property, void* Value);
 
         // Read-only live values of the curves the graph's clips carry, sampled off the debug target's
         // output pose. Curves are produced by evaluation, so unlike parameters they can't be driven here.
@@ -79,9 +78,15 @@ namespace Lumina
         // is skipped for the per-frame preview recompile so the asset isn't always unsaved.
         void Compile(bool bMarkPackageDirty = true);
 
+        // Gates the auto-compile, so a graph nobody is editing is not recompiled every frame.
+        bool NeedsCompile() const;
+
         // Builds the live debug overlay (pin values, active state) from the target's VM state
         // and pushes it onto the displayed graph. No-op when the Debug toggle is off.
         void UpdateDebugOverlay();
+
+        // Resolves the machine's live From/Current pair onto a transition and its blend weight.
+        void UpdateDebugTransition(class CAnimStateMachineGraph* SMGraph, const struct FAnimGraphVMState& VMState);
 
         // Dropdown choosing the debug overlay's source: the editor preview, or any live
         // entity (across worlds) whose anim component uses this graph asset.
@@ -130,6 +135,8 @@ namespace Lumina
         CAnimStateTransition*                   SelectedTransition = nullptr;
         FString                                 CompilationLog;
         bool                                    bHasCompilationErrors = false;
+        uint64                                  CompiledContentVersion = 0;
+        bool                                    bHasCompiledOnce = false;
 
         // Graph navigation: GraphStack[0] is top-level, back() is the drawn canvas.
         // InitializedGraphs tracks graphs this tool created so they shut down on close.
@@ -147,8 +154,10 @@ namespace Lumina
         // keyed by transition ptr; cleared when the canvas's transition list changes.
         THashMap<CAnimStateTransition*, TUniquePtr<FPropertyTable>> TransitionTables;
 
-        // Live preview: recompile the graph every frame so node edits show up
-        // in the viewport immediately. Cheap for preview-sized graphs.
+        // Read-only view of the preview entity's live parameter block; rebound when that memory moves.
+        TUniquePtr<FPropertyTable>              ParameterTable;
+
+        // Live preview: recompile whenever the graph changes, so edits need no manual compile.
         bool                                    bAutoCompile = true;
 
         // Debug overlay: when on, the graph animates link flow, prints live pin

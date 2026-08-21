@@ -3,6 +3,7 @@
 
 #include "Thread.h"
 #include <windows.h>
+#pragma comment(lib, "Synchronization.lib")
 #include <tracy/Tracy.hpp>
 
 namespace Lumina::Threading
@@ -145,6 +146,18 @@ namespace Lumina::Threading
 
         ::free(Buffer);
         return Described;
+    }
+
+    bool WaitOnAddress32(const volatile uint32* Address, uint32 Compare, uint32 TimeoutMs)
+    {
+        uint32 Expected = Compare;
+        return ::WaitOnAddress(const_cast<volatile VOID*>(reinterpret_cast<const volatile VOID*>(Address)),
+                               &Expected, sizeof(uint32), TimeoutMs) != FALSE;
+    }
+
+    void WakeAllOnAddress32(const volatile uint32* Address)
+    {
+        ::WakeByAddressAll(const_cast<PVOID>(reinterpret_cast<const volatile void*>(Address)));
     }
 
     void SetThreadIdealProcessor(uint32 LogicalProcessor)

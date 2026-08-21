@@ -19,7 +19,8 @@ namespace Lumina
         struct FWaiterNode
         {
             Jobs::FFiberHandle Fiber;            // valid when bIsFiber
-            TAtomic<bool>      Signaled{false};  // external (non-fiber) waiters poll this
+            // A word, not a bool, because an external waiter sleeps on it and the futex layer takes 32 bits.
+            TAtomic<uint32>    Signaled{0};
             bool               bIsFiber = false;
             uint8              Mode     = 0;      // primitive-specific (shared/exclusive for the RW lock)
             FWaiterNode*       Next     = nullptr;
@@ -54,7 +55,11 @@ namespace Lumina
             }
             else
             {
-                Node->Signaled.store(true, std::memory_order_release);
+                // The waiter can return and drop this stack frame the moment the store lands, so the wake
+                // runs on a possibly dead address. That is safe: waking hashes the address, it never reads it.
+                const volatile uint32* Word = reinterpret_cast<const volatile uint32*>(&Node->Signaled);
+                Node->Signaled.store(1u, std::memory_order_release);
+                Threading::WakeAllOnAddress32(Word);
             }
         }
 
@@ -63,17 +68,18 @@ namespace Lumina
         FORCEINLINE void WaitExternal(FWaiterNode* Node)
         {
             uint32 IdleSpins = 0;
-            while (!Node->Signaled.load(std::memory_order_acquire))
+            while (Node->Signaled.load(std::memory_order_acquire) == 0u)
             {
                 if (++IdleSpins < 256)
                 {
                     Pause();
+                    continue;
                 }
-                else
-                {
-                    Threading::ThreadYield();
-                    IdleSpins = 0;
-                }
+                IdleSpins = 0;
+
+                // Sleeping beats yielding: a contended lock on a busy machine used to donate this core to a
+                // worker and wait a scheduler quantum to get it back. Capped so a lost wake costs a millisecond.
+                Threading::WaitOnAddress32(reinterpret_cast<const volatile uint32*>(&Node->Signaled), 0u, 1);
             }
         }
     }

@@ -114,6 +114,24 @@ namespace Lumina
         // compiles first.
         virtual CEdGraphNode* GetImplicitInputNode() const { return nullptr; }
 
+        // Title-bar text. Separate from GetNodeDisplayName, which pin ids hash and a rename must not move.
+        virtual FString GetNodeTitleText() const;
+
+        // F2 rename: fills OutText and returns true for a node with an editable name. Default is no.
+        virtual bool GetRenameText(FString& OutText) const { return false; }
+
+        // Commits an F2 rename. Only reached when GetRenameText returned true.
+        virtual void SetRenameText(const FString& InText) {}
+
+        // A clone copies object references as references, so a node owning a sub-graph re-copies it here.
+        virtual void PostCloneFrom(const CEdGraphNode* Source) {}
+
+        // The sub-graph this node owns, or null. Unlike GetEnterableSubGraph this never creates one.
+        virtual CEdNodeGraph* GetOwnedSubGraph() const { return nullptr; }
+
+        // Swaps the owned sub-graph for a private deep copy, repairing one shared with another node.
+        virtual void ReplaceSubGraphWithCopy() {}
+
         void SetDebugExecutionOrder(uint32 Order) { DebugExecutionOrder = Order; }
         uint32 GetDebugExecutionOrder() const { return DebugExecutionOrder; }
 

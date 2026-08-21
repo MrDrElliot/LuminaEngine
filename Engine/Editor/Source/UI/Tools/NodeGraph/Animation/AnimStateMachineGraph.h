@@ -32,9 +32,18 @@ namespace Lumina
         // objects against the live State -> State wires.
         void ValidateGraph() override;
 
+        // Transitions are keyed by node id, so a cloned canvas has to re-key them onto its own nodes.
+        void PostCloneContent(const CEdNodeGraph* Source, const THashMap<CEdGraphNode*, CEdGraphNode*>& Clones) override;
+
         // Finds the transition object bound to a State -> State link, or null
         // (e.g. the Entry wire, which has no transition data).
         CAnimStateTransition* FindTransition(int64 FromStateNodeID, int64 ToStateNodeID) const;
+
+        // The Any State edge into this state, which the runtime can only report by its destination.
+        CAnimStateTransition* FindAnyStateTransitionTo(int64 ToStateNodeID) const;
+
+        // Live blend readout, pushed by the editor tool each frame. Weight is the destination's share.
+        void SetDebugTransition(const CAnimStateTransition* Transition, float Weight);
 
         // The State the Entry node wires to, or null when unwired.
         CAnimGraphNode_State* GetEntryState() const;
@@ -64,5 +73,9 @@ namespace Lumina
         // full Initialize() (which additionally creates the node-editor context).
         bool bSetupDone = false;
         bool bInitialized = false;
+
+        // Transition the VM is blending through right now, and how far along. Transient.
+        const CAnimStateTransition* DebugTransition = nullptr;
+        float                       DebugTransitionWeight = 0.0f;
     };
 }

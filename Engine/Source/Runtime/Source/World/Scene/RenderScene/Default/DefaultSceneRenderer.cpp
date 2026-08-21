@@ -1770,6 +1770,8 @@ namespace Lumina
     // Routes this frame's transform + component changes into the persistent primitive table.
     void FDefaultSceneRenderer::SyncScenePrimitives()
     {
+        LUMINA_PROFILE_SCOPE();
+
         FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
 
         MovedTransformScratch.clear();
@@ -1995,6 +1997,8 @@ namespace Lumina
 
     void FDefaultSceneRenderer::ResolveDynamicMeshMaterials(FEntityRegistry& Registry, FRenderDirtyTracker& Tracker)
     {
+        LUMINA_PROFILE_SCOPE();
+
         auto& Storage = Registry.storage<SDynamicMeshComponent>();
         const uint32 Count = (uint32)Storage.size();
 
@@ -2316,10 +2320,13 @@ namespace Lumina
             }
             CurrentReservePerThread = (uint32)((EstimatedProxies + NumThreads - 1) / Math::Max(1u, NumThreads));
             
-            // Every entry, not the first NumThreads: the merge walks the whole container.
-            for (FThreadLocalDrawData& Local : ThreadLocal)
             {
-                Local.ResetForFrame();
+                LUMINA_PROFILE_SECTION("Thread Local Reset");
+                // Every entry, not the first NumThreads: the merge walks the whole container.
+                for (FThreadLocalDrawData& Local : ThreadLocal)
+                {
+                    Local.ResetForFrame();
+                }
             }
             
             if (CFont* DefaultFont = CFontManager::Get().GetDefaultFont())
@@ -5643,6 +5650,8 @@ namespace Lumina
     // Split out of ResetPass so it can be ordered against SyncScenePrimitives.
     void FDefaultSceneRenderer::ResetGeometry_Extract()
     {
+        LUMINA_PROFILE_SCOPE();
+
         FFrameData& Frame = *ExtractFrame;
 
         Frame.Geometry.DrawCommands.clear();

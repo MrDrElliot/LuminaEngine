@@ -120,6 +120,15 @@ namespace Lumina
         // Asks the scheduler to prefer LogicalProcessor for the calling thread. A hint, not an affinity mask:
         // the thread still migrates under load, so nothing may depend on it for correctness.
         RUNTIME_API void SetThreadIdealProcessor(uint32 LogicalProcessor);
+
+        // Sleeps until the word at Address stops reading Compare or TimeoutMs elapses, whichever comes first.
+        // The timeout is what makes a missed wake cost latency instead of a hang, so callers may treat the
+        // wake as advisory and re-check their own condition on every return.
+        RUNTIME_API bool WaitOnAddress32(const volatile uint32* Address, uint32 Compare, uint32 TimeoutMs);
+
+        // Wakes everything sleeping in WaitOnAddress32 on this word. Never mix with std::atomic::wait on the
+        // same word: the two use different wait queues on Windows.
+        RUNTIME_API void WakeAllOnAddress32(const volatile uint32* Address);
     }
     
 

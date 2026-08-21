@@ -137,9 +137,24 @@ namespace Lumina::Jobs
         FWaitNode*      Waiters = nullptr;   // intrusive list, guarded by WaitLock
         TAtomic<bool>   HasWaiters{false};   // seq_cst gate so the lock-free decrement can skip the lock
 
+        // Futex word for threads with no fiber to park. Monotonic across pool reuse on purpose: a stale
+        // sequence can only ever cause an extra wakeup, where a reset one could cause a missed sleep.
+        TAtomic<uint32> ThreadWaitSeq{0};
+        TAtomic<bool>   HasThreadWaiters{false};
+
+        // The futex layer works on a plain word; std::atomic<uint32> is lock-free and layout-compatible.
+        const volatile uint32* SeqWord() const
+        {
+            return reinterpret_cast<const volatile uint32*>(&ThreadWaitSeq);
+        }
+
         uint16          PoolIndex = 0xFFFF;
         bool            bPooled   = false;
     };
+
+    // FQueuedJob hides its park flag in bit 0 of the counter pointer, which only works while a counter can
+    // never land on an odd address.
+    static_assert(alignof(FCounter) >= 2, "FQueuedJob::CounterAndPark needs bit 0 of an FCounter* free.");
 
     namespace
     {
@@ -227,6 +242,10 @@ namespace Lumina::Jobs
 
             FWorkerLocal*   Workers = nullptr;        // [NumWorkers] per-worker queues (the job storage)
             alignas(64) TAtomic<uint32> NextSubmitWorker{0}; // rotating distribution start, anti-bias
+            // Bumped when InFlight reaches zero, so WaitForAll sleeps instead of spinning a core it needs.
+            alignas(64) TAtomic<uint32> DrainSeq{0};
+            TAtomic<bool>               HasDrainWaiters{false};
+
             alignas(64) TAtomic<int64> AvailJobs{0};   // queued, not yet popped (idle-wake hint)
 
             // Counts only bands an assist-wait may take. Separate from AvailJobs because they diverge exactly
@@ -758,8 +777,12 @@ namespace Lumina::Jobs
         // joins the waiter list, so the poller can recycle this counter while we are still walking it.
         void ReleaseCounter(FCounter* Counter, int32 NewValue, uint32 WorkerIndex)
         {
-            // Fast path: nothing reached zero and no fiber is parked.
-            if (NewValue > 0 && !Counter->HasWaiters.load(std::memory_order_seq_cst))
+            // A sleeping thread may be waiting on a NON-zero target, so any decrement has to reach it. Fibers
+            // keep their target in the wait node and are only unlinked once it is met.
+            const bool bWakeThreads = Counter->HasThreadWaiters.load(std::memory_order_seq_cst);
+
+            // Fast path: nothing reached zero and nobody is parked at all.
+            if (NewValue > 0 && !bWakeThreads && !Counter->HasWaiters.load(std::memory_order_seq_cst))
             {
                 Counter->Releasers.fetch_sub(1, std::memory_order_release);
                 return;
@@ -806,6 +829,12 @@ namespace Lumina::Jobs
                 N = Next;
             }
 
+            if (bWakeThreads)
+            {
+                Counter->ThreadWaitSeq.fetch_add(1, std::memory_order_release);
+                Threading::WakeAllOnAddress32(Counter->SeqWord());
+            }
+
             // Last touch of the counter, so the guard drops here -- before the completion callback, which owns the
             // counter lifetime and may free it. Holding it across would deadlock against our own FreeCounter.
             Counter->Releasers.fetch_sub(1, std::memory_order_release);
@@ -825,11 +854,21 @@ namespace Lumina::Jobs
             ReleaseCounter(Counter, NewValue, WorkerIndex);
         }
 
+        FORCEINLINE void NoteJobRetired()
+        {
+            const int64 Remaining = G->InFlight.fetch_sub(1, std::memory_order_acq_rel) - 1;
+            if (Remaining == 0 && G->HasDrainWaiters.load(std::memory_order_seq_cst))
+            {
+                G->DrainSeq.fetch_add(1, std::memory_order_release);
+                Threading::WakeAllOnAddress32(reinterpret_cast<const volatile uint32*>(&G->DrainSeq));
+            }
+        }
+
         void OnJobComplete(FCounter* Counter, uint32 WorkerIndex)
         {
             if (Counter == nullptr)
             {
-                G->InFlight.fetch_sub(1, std::memory_order_acq_rel);
+                NoteJobRetired();
                 return;
             }
 
@@ -837,7 +876,7 @@ namespace Lumina::Jobs
             const int32 NewValue = Counter->Value.fetch_sub(1, std::memory_order_seq_cst) - 1;
             ReleaseCounter(Counter, NewValue, WorkerIndex);
             // After the release, so WaitForAll cannot return while this job's completion is still running.
-            G->InFlight.fetch_sub(1, std::memory_order_acq_rel);
+            NoteJobRetired();
         }
 
 #if USING(WITH_EDITOR)
@@ -1090,7 +1129,14 @@ namespace Lumina::Jobs
                 std::memory_order_acq_rel, std::memory_order_relaxed);
         }
 
-        // An assist wait that spins this long without finding one job is pathological, not slow work.
+        // Failed steals before a waiter stops burning its core and sleeps on the counter instead.
+        constexpr uint32 kAssistSpinsBeforePark = 256;
+
+        // Sleep is capped so a wake that never comes costs a millisecond of latency instead of the run. Every
+        // wake is advisory: the sleeper re-checks its counter and re-tries the steal on each return.
+        constexpr uint32 kParkTimeoutMs = 1;
+
+        // An assist wait that goes this long without finding one job is pathological, not slow work.
         constexpr double kAssistStallSeconds  = 0.010;
         constexpr int64  kAssistStallReportMs = 2000;
 
@@ -1422,7 +1468,7 @@ namespace Lumina::Jobs
                 }
             }
 
-            LOG_ERROR("Job system: a counter wait spun {}ms without finding a single job to run. "
+            LOG_ERROR("Job system: a counter wait went {}ms without finding a single job to run. "
                       "Counter value {} (waiting for {}), queued {} (assistable {}), ready fibers {}, "
                       "in-flight {}, {}/{} workers parked.",
                 static_cast<int64>(IdleSeconds * 1000.0), CounterValue, Target,
@@ -1713,6 +1759,7 @@ namespace Lumina::Jobs
         Counter->Waiters = nullptr;
         Counter->WaitLock.store(0u, std::memory_order_relaxed);
         Counter->HasWaiters.store(false, std::memory_order_relaxed);
+        Counter->HasThreadWaiters.store(false, std::memory_order_relaxed);
         return Counter;
     }
 
@@ -1912,10 +1959,12 @@ namespace Lumina::Jobs
         // Assist-wait: run queued jobs inline until satisfied, never yielding to the scheduler. Taken by
         // an external thread (no fiber to park) and by a fiber under a no-yield guard (see above).
         const uint32 Slot = GetWorkerIndex();
-        uint32 IdleSpins = 0;
-        // Clock read only on the yield branch, and only while the assist is finding nothing: a wait that keeps
-        // adopting jobs is working, however long it takes, and never pays for this.
+        uint32 IdleSpins   = 0;
+        bool   bRegistered = false;
+        // Clock read only once the assist has run dry: a wait that keeps adopting jobs is working, however
+        // long it takes, and never pays for this.
         double IdleSince = 0.0;
+
         while (Counter->Value.load(std::memory_order_acquire) > Value)
         {
             FQueuedJob Job;
@@ -1925,27 +1974,47 @@ namespace Lumina::Jobs
                 OnJobComplete(Job.GetCounter(), Slot);
                 IdleSpins = 0;
                 IdleSince = 0.0;
+                continue;
             }
-            else if (++IdleSpins < 256)
+
+            if (++IdleSpins < kAssistSpinsBeforePark)
             {
                 CpuPause();
+                continue;
             }
-            else
-            {
-                Threading::ThreadYield();
-                IdleSpins = 0;
 
-                const double Now = PlatformTime::Seconds();
-                if (IdleSince == 0.0)
-                {
-                    IdleSince = Now;
-                }
-                else if (Now - IdleSince >= kAssistStallSeconds && ShouldReportAssistStall())
-                {
-                    ReportAssistStall(Counter->Value.load(std::memory_order_relaxed), Value, Now - IdleSince);
-                    IdleSince = Now;
-                }
+            const double Now = PlatformTime::Seconds();
+            if (IdleSince == 0.0)
+            {
+                IdleSince = Now;
             }
+            else if (Now - IdleSince >= kAssistStallSeconds && ShouldReportAssistStall())
+            {
+                ReportAssistStall(Counter->Value.load(std::memory_order_relaxed), Value, Now - IdleSince);
+                IdleSince = Now;
+            }
+
+            // Publish before the next value check, so a decrement racing this cannot leave us asleep with
+            // nobody knowing to wake us. Never cleared: another thread may be waiting on the same counter,
+            // and AllocCounter resets it when the counter is reused.
+            if (!bRegistered)
+            {
+                bRegistered = true;
+                Counter->HasThreadWaiters.store(true, std::memory_order_seq_cst);
+                continue;
+            }
+
+            // Sleep rather than yield. ThreadYield is SwitchToThread, which hands this core to a worker that
+            // is already spinning; on a fully subscribed machine getting it back costs a scheduler quantum,
+            // and two of those is the 30ms tail this used to show.
+            const uint32 Seen = Counter->ThreadWaitSeq.load(std::memory_order_acquire);
+            if (Counter->Value.load(std::memory_order_acquire) <= Value)
+            {
+                break;
+            }
+
+            Threading::WaitOnAddress32(Counter->SeqWord(), Seen, kParkTimeoutMs);
+            IdleSpins = 0;
         }
     }
 
@@ -1966,6 +2035,7 @@ namespace Lumina::Jobs
 
         // This is a quiescence barrier, not a latency-sensitive frame wait, so it drains EVERY band:
         const uint32 Slot = GetWorkerIndex();
+        uint32 IdleSpins = 0;
         while (G->InFlight.load(std::memory_order_acquire) > 0)
         {
             FQueuedJob Job;
@@ -1973,9 +2043,25 @@ namespace Lumina::Jobs
             {
                 Job.Function(Job.Argument, Slot);
                 OnJobComplete(Job.GetCounter(), Slot);
+                IdleSpins = 0;
                 continue;
             }
-            Threading::ThreadYield();
+
+            if (++IdleSpins < kAssistSpinsBeforePark)
+            {
+                CpuPause();
+                continue;
+            }
+            IdleSpins = 0;
+
+            // Published before the sequence is read, so a drain racing this cannot leave us asleep unseen.
+            G->HasDrainWaiters.store(true, std::memory_order_seq_cst);
+            const uint32 Seen = G->DrainSeq.load(std::memory_order_acquire);
+            if (G->InFlight.load(std::memory_order_acquire) > 0)
+            {
+                Threading::WaitOnAddress32(reinterpret_cast<const volatile uint32*>(&G->DrainSeq),
+                    Seen, kParkTimeoutMs);
+            }
 
             const double Now = PlatformTime::Seconds();
             if (Now >= NextReport)
@@ -1987,6 +2073,8 @@ namespace Lumina::Jobs
                     G->InFlight.load(std::memory_order_relaxed));
             }
         }
+
+        G->HasDrainWaiters.store(false, std::memory_order_release);
     }
 
     void ParkFiber(FParkFn OnPark, void* Ctx)

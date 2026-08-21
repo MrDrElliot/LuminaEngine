@@ -26,6 +26,10 @@ namespace Lumina
 
         void BuildNode() override;
 
+        FString GetNodeTitleText() const override;
+        bool GetRenameText(FString& OutText) const override;
+        void SetRenameText(const FString& InText) override;
+
         // State nodes live on the state machine canvas; they are never visited
         // by the blend-tree compiler's topological walk, so this is a no-op.
         void GenerateBytecode(FAnimationGraphCompiler& Compiler) override {}
@@ -37,6 +41,15 @@ namespace Lumina
         // Returns (creating if needed) this state's blend-tree graph. Used by
         // both the editor (to draw it) and the compiler (to evaluate the state).
         CAnimationGraphNodeGraph* GetOrCreateBlendTree();
+
+        // Without this a duplicated state shares the original's blend tree and edits track both.
+        void PostCloneFrom(const CEdGraphNode* Source) override;
+
+        CEdNodeGraph* GetOwnedSubGraph() const override;
+        void ReplaceSubGraphWithCopy() override;
+
+        // Fresh and un-set-up, so a caller can clone into it before EnsureSetup adds an Output node.
+        CAnimationGraphNodeGraph* AllocateBlendTree();
 
         /** Name used to reference this state from the entry connection and transitions. */
         PROPERTY(Editable, Category = "State")

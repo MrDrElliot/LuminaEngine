@@ -1,11 +1,11 @@
 ﻿#include "AnimationGraphEditorTool.h"
 
 #include <cfloat>
-#include <cstdio>
 #include "Animation/TaskSystem/AnimTaskExecutor.h"
 #include "Assets/AssetRegistry/AssetData.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Assets/AssetTypes/Mesh/Animation/Animation.h"
+#include "Containers/StringFormat.h"
 #include "Tools/UI/ImGui/EditorColors.h"
 #include "Tools/UI/ImGui/ImGuiDragDrop.h"
 #include "UI/Tools/NodeGraph/Animation/Nodes/AnimGraphNode_ClipPlayer.h"
@@ -88,41 +88,34 @@ namespace Lumina
 
             FString BuildTaskDetail(const FAnimTaskDebugEntry& Entry)
             {
-                char Buffer[192] = {};
                 switch (Entry.Type)
                 {
                 case EAnimTaskType::SampleClip:
                     // Time first: it's the per-frame liveness signal, and clip names are long enough
                     // that the tail is what gets ellipsized on a narrow box.
-                    snprintf(Buffer, sizeof(Buffer), "t=%.3fs   %s",
-                             Entry.Time, Entry.ClipName.IsNone() ? "<no clip>" : Entry.ClipName.c_str());
-                    break;
+                    return Format("t={:.3f}s   {}", Entry.Time,
+                                  Entry.ClipName.IsNone() ? "<no clip>" : Entry.ClipName.c_str());
 
                 case EAnimTaskType::BlendMasked:
-                    snprintf(Buffer, sizeof(Buffer), "alpha %.2f   mask %d/%d bones",
-                             Entry.Alpha, Entry.MaskWeightedBones, Entry.MaskTotalBones);
-                    break;
+                    return Format("alpha {:.2f}   mask {}/{} bones",
+                                  Entry.Alpha, Entry.MaskWeightedBones, Entry.MaskTotalBones);
 
                 case EAnimTaskType::Blend:
                 case EAnimTaskType::ApplyAdditive:
                 case EAnimTaskType::BoneTransform:
                 case EAnimTaskType::TwoBoneIK:
-                    snprintf(Buffer, sizeof(Buffer), "alpha %.2f", Entry.Alpha);
-                    break;
+                    return Format("alpha {:.2f}", Entry.Alpha);
 
                 case EAnimTaskType::StateMachineOutput:
-                    snprintf(Buffer, sizeof(Buffer), "inertialization t=%.3fs", Entry.Time);
-                    break;
+                    return Format("inertialization t={:.3f}s", Entry.Time);
 
                 case EAnimTaskType::MakeAdditive:
-                    snprintf(Buffer, sizeof(Buffer), "relative to bind pose");
-                    break;
+                    return FString("relative to bind pose");
 
                 case EAnimTaskType::ReferencePose:
-                    snprintf(Buffer, sizeof(Buffer), "skeleton bind pose");
-                    break;
+                    return FString("skeleton bind pose");
                 }
-                return FString(Buffer);
+                return FString();
             }
 
             // Trims Text to MaxWidth with a trailing ellipsis. Measured with the same font and size
@@ -158,20 +151,15 @@ namespace Lumina
 
             FString BuildDepText(const FAnimTaskDebugEntry& Entry)
             {
-                char Buffer[64] = {};
                 if (Entry.DepA < 0 && Entry.DepB < 0)
                 {
-                    snprintf(Buffer, sizeof(Buffer), "none (source task)");
+                    return FString("none (source task)");
                 }
-                else if (Entry.DepB < 0)
+                if (Entry.DepB < 0)
                 {
-                    snprintf(Buffer, sizeof(Buffer), "task %d", (int32)Entry.DepA);
+                    return Format("task {}", (int32)Entry.DepA);
                 }
-                else
-                {
-                    snprintf(Buffer, sizeof(Buffer), "task %d, task %d", (int32)Entry.DepA, (int32)Entry.DepB);
-                }
-                return FString(Buffer);
+                return Format("task {}, task {}", (int32)Entry.DepA, (int32)Entry.DepB);
             }
         }
     }
@@ -222,6 +210,29 @@ namespace Lumina
         }
 
         NodeGraph->SetAnimationGraph(Cast<CAnimationGraph>(Asset.Get()));
+
+        // Duplicating a state used to hand the copy the original's sub-graph; this splits those apart.
+        THashSet<CEdNodeGraph*> VisitedGraphs;
+        VisitedGraphs.insert(NodeGraph);
+        if (const uint32 Repaired = NodeGraph->UnaliasSubGraphs(VisitedGraphs))
+        {
+            Asset->GetPackage()->MarkDirty();
+            ImGuiX::Notifications::NotifyWarning("Gave {0} duplicated node(s) their own sub-graph. Save to keep the split.", Repaired);
+        }
+
+        GetPropertyTable()->SetPostEditCallback([this](const FPropertyChangedEvent&)
+        {
+            if (Asset.IsValid())
+            {
+                Asset->GetPackage()->MarkDirty();
+            }
+
+            // A clip swap or a transition condition changes the compiled graph as much as rewiring does.
+            if (NodeGraph != nullptr)
+            {
+                NodeGraph->NotifyContentChanged();
+            }
+        });
 
         // Seed the navigation stack with the top-level graph. EnterGraph readies
         // it (creates its context, wires callbacks) and pushes it.
@@ -296,12 +307,7 @@ namespace Lumina
             }
             if (CEdNodeGraph* SubGraph = Node->GetEnterableSubGraph())
             {
-                FString Label = FString(Node->GetNodeDisplayName());
-                if (CAnimGraphNode_State* StateNode = Cast<CAnimGraphNode_State>(Node))
-                {
-                    Label = StateNode->StateName.IsNone() ? FString("State") : StateNode->StateName.ToString();
-                }
-                EnterGraph(SubGraph, Label);
+                EnterGraph(SubGraph, Node->GetNodeTitleText());
             }
         });
 
@@ -478,7 +484,7 @@ namespace Lumina
 
         // Live preview: keep the runtime asset's bytecode in sync with the node
         // graph so edits resolve in the viewport without a manual compile.
-        if (bAutoCompile)
+        if (bAutoCompile && NeedsCompile())
         {
             Compile(false);
         }
@@ -527,12 +533,16 @@ namespace Lumina
             }
 
             const bool bIsCurrent = (i == (int32)GraphStack.size() - 1);
+
+            // Nesting repeats labels, and a button IDs off its label.
+            ImGui::PushID(i);
             ImGui::BeginDisabled(bIsCurrent);
             if (ImGui::Button(GraphStack[i].Label.c_str()))
             {
                 PopToLevel(i);
             }
             ImGui::EndDisabled();
+            ImGui::PopID();
         }
 
         ImGui::Separator();
@@ -814,8 +824,8 @@ namespace Lumina
 
     void FAnimationGraphEditorTool::DrawParameters(CAnimationGraph* Graph)
     {
-        ImGui::TextWrapped("Live fields of the preview entity's parameter block. At runtime gameplay code "
-            "writes these directly on the Animation Graph Component.");
+        ImGui::TextWrapped("Read-only view of the preview entity's live parameter block. At runtime gameplay "
+            "code writes these directly on the Animation Graph Component.");
         ImGui::Separator();
 
         CStruct* Struct = Graph->GetParameterStruct();
@@ -832,91 +842,37 @@ namespace Lumina
             ? World->TryGetComponent<SAnimationGraphComponent>(MeshEntity)
             : nullptr;
 
-        uint8* Base = Comp != nullptr ? static_cast<uint8*>(Comp->GetParameterMemory()) : nullptr;
+        void* Base = Comp != nullptr ? Comp->GetParameterMemory() : nullptr;
         if (Base == nullptr)
         {
+            ParameterTable.Reset();
             ImGui::TextDisabled("Preview entity has no instance yet.");
             return;
         }
 
-        int32 Shown = 0;
-        Struct->ForEachProperty<FProperty>([&](FProperty* Property)
+        if (ParameterTable == nullptr)
         {
-            if (Property->HasSetterOrGetter())
-            {
-                return;
-            }
+            ParameterTable = MakeUnique<FPropertyTable>(Base, Struct);
+            ParameterTable->SetShowSearchBar(false);
+        }
+        else if (ParameterTable->GetObject() != Base || ParameterTable->GetType() != Struct)
+        {
+            ParameterTable->SetObject(Base, Struct);
+        }
 
-            const char* Name = Property->Name.c_str();
-            void* Value = Base + Property->Offset;
-            ++Shown;
-
-            ImGui::PushID(Name);
-            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-
-            switch (Property->TypeFlags)
-            {
-            case EPropertyTypeFlags::Bool:
-                ImGui::Checkbox(Name, static_cast<bool*>(Value));
-                break;
-
-            case EPropertyTypeFlags::Float:
-                ImGui::DragFloat(Name, static_cast<float*>(Value), 0.01f);
-                break;
-
-            case EPropertyTypeFlags::Int32:
-                ImGui::DragInt(Name, static_cast<int32*>(Value));
-                break;
-
-            case EPropertyTypeFlags::Enum:
-                DrawEnumParameter(Name, static_cast<FEnumProperty*>(Property), Value);
-                break;
-
-            default:
-                ImGui::TextDisabled("%s (%s)", Name, Property->TypeName.c_str());
-                break;
-            }
-
-            ImGui::PopID();
-        });
-
-        if (Shown == 0)
+        if (!ParameterTable->PrepareAndTestFilter())
         {
             ImGui::TextColored(ImVec4(0.95f, 0.65f, 0.35f, 1.0f),
                 "Struct declares no readable fields.");
-        }
-    }
-
-    void FAnimationGraphEditorTool::DrawEnumParameter(const char* Name, FEnumProperty* Property, void* Value)
-    {
-        FNumericProperty* Inner = Property->GetInnerProperty();
-        CEnum* Enum = Property->GetEnum();
-        if (Inner == nullptr || Enum == nullptr)
-        {
-            ImGui::TextDisabled("%s (enum)", Name);
             return;
         }
 
-        const int64 Current = Inner->GetSignedIntPropertyValue(Value);
+        ParameterTable->DrawTree(true);
+    }
 
-        int32 CurrentIndex = INDEX_NONE;
-        for (int64 e = 0; e < (int64)Enum->Names.size(); ++e)
-        {
-            if ((int64)Enum->GetValueAtIndex(e) == Current)
-            {
-                CurrentIndex = (int32)e;
-                break;
-            }
-        }
-
-        const FFixedString Preview = Enum->GetNameAtValue((uint64)Current).c_str();
-        const int32 Picked = ImGuiX::SearchableCombo(Name, Preview.c_str(), (int32)Enum->Names.size(), CurrentIndex,
-            [Enum](int32 Index) { return FFixedString(Enum->GetNameAtIndex(Index).c_str()); }, LE_ICON_RHOMBUS_OUTLINE);
-
-        if (Picked != INDEX_NONE)
-        {
-            Inner->SetIntPropertyValue(Value, (int64)Enum->GetValueAtIndex(Picked));
-        }
+    bool FAnimationGraphEditorTool::NeedsCompile() const
+    {
+        return NodeGraph != nullptr && (!bHasCompiledOnce || NodeGraph->GetContentVersion() != CompiledContentVersion);
     }
 
     void FAnimationGraphEditorTool::Compile(bool bMarkPackageDirty)
@@ -930,6 +886,10 @@ namespace Lumina
             return;
         }
 
+        // Stamped before the early-outs below so a failing compile does not re-run every frame.
+        CompiledContentVersion = NodeGraph->GetContentVersion();
+        bHasCompiledOnce = true;
+
         FAnimationGraphCompiler Compiler;
 
         // Resolve bone-mask names to per-bone weight arrays up front so Layered Blend
@@ -937,13 +897,6 @@ namespace Lumina
         if (Graph->Skeleton.IsValid())
         {
             Compiler.ResolveBoneMasks(Graph->BoneMaskDefs, Graph->Skeleton->GetSkeletonResource());
-        }
-
-        // Seed the compiler with parameters already declared on the asset so they persist
-        // across compiles even if no node/transition references them yet.
-        for (const FAnimGraphParameter& Param : Graph->Parameters)
-        {
-            Compiler.AddParameter(Param.Name, Param.Type, Param.DefaultValue);
         }
 
         // Registered before the node walk so a runtime-chosen clip has slots to write into.
@@ -1000,6 +953,12 @@ namespace Lumina
             return;
         }
 
+        CAnimStateMachineGraph* SMGraph = Cast<CAnimStateMachineGraph>(Graph);
+        if (SMGraph != nullptr)
+        {
+            SMGraph->SetDebugTransition(nullptr, 0.0f);
+        }
+
         if (!bDebugEnabled)
         {
             Graph->ClearDebugContext();
@@ -1030,9 +989,7 @@ namespace Lumina
                     continue;
                 }
 
-                char Buffer[32];
-                snprintf(Buffer, sizeof(Buffer), "%.2f", Scalars[Reg]);
-                DebugPinValues[const_cast<CEdNodeGraphPin*>(Pin)] = Buffer;
+                DebugPinValues[const_cast<CEdNodeGraphPin*>(Pin)] = Format("{:.2f}", Scalars[Reg]);
             }
 
             // Highlight whichever State node the VM is currently in.
@@ -1045,6 +1002,11 @@ namespace Lumina
                     DebugActiveNodes.insert(Entry.Node);
                 }
             }
+
+            if (SMGraph != nullptr)
+            {
+                UpdateDebugTransition(SMGraph, *VMState);
+            }
         }
 
         CEdNodeGraph::FGraphDebugContext Context;
@@ -1053,6 +1015,67 @@ namespace Lumina
         Context.PinValues   = &DebugPinValues;
         Context.ActiveNodes = &DebugActiveNodes;
         Graph->SetDebugContext(Context);
+    }
+
+    void FAnimationGraphEditorTool::UpdateDebugTransition(CAnimStateMachineGraph* SMGraph, const FAnimGraphVMState& VMState)
+    {
+        // Every entry on this canvas describes the same machine, so the last one seen carries its slots.
+        THashMap<int32, CEdGraphNode*> StateNodesByIndex;
+        uint16 CurrentSlot  = 0;
+        uint16 FromSlot     = 0;
+        uint16 MachineIndex = 0;
+        bool bFoundMachine  = false;
+
+        for (const FAnimGraphDebugStateNode& Entry : DebugStateNodes)
+        {
+            if (Entry.Node == nullptr || Entry.Node->GetOwningGraph() != SMGraph)
+            {
+                continue;
+            }
+
+            StateNodesByIndex[Entry.StateIndex] = Entry.Node;
+            CurrentSlot   = Entry.CurrentStateSlot;
+            FromSlot      = Entry.FromStateSlot;
+            MachineIndex  = Entry.MachineIndex;
+            bFoundMachine = true;
+        }
+
+        const TVector<float>& Slots = VMState.StateSlots;
+        if (!bFoundMachine || CurrentSlot >= Slots.size() || FromSlot >= Slots.size())
+        {
+            return;
+        }
+
+        // Negative means settled on one state, so nothing is blending.
+        if (Slots[FromSlot] < 0.0f)
+        {
+            return;
+        }
+
+        auto FromItr = StateNodesByIndex.find((int32)(Slots[FromSlot] + 0.5f));
+        auto ToItr   = StateNodesByIndex.find((int32)(Slots[CurrentSlot] + 0.5f));
+        if (FromItr == StateNodesByIndex.end() || ToItr == StateNodesByIndex.end())
+        {
+            return;
+        }
+
+        const int64 ToNodeID = ToItr->second->GetNodeID();
+        CAnimStateTransition* Active = SMGraph->FindTransition(FromItr->second->GetNodeID(), ToNodeID);
+        if (Active == nullptr)
+        {
+            Active = SMGraph->FindAnyStateTransitionTo(ToNodeID);
+        }
+
+        if (Active == nullptr || MachineIndex >= VMState.Inertializers.size())
+        {
+            return;
+        }
+
+        // An instant transition has no blend to report, so it reads as fully arrived.
+        const FAnimInertializer& Inert = VMState.Inertializers[MachineIndex];
+        const float Weight = Inert.Duration > 1e-5f ? Inert.Elapsed / Inert.Duration : 1.0f;
+
+        SMGraph->SetDebugTransition(Active, Weight);
     }
 
     void FAnimationGraphEditorTool::DrawDebugTargetCombo()
@@ -1510,11 +1533,10 @@ namespace Lumina
                               EditorColors::U32(EditorColors::WithAlpha(EditorColors::PanelBg(), (L % 2) ? 0.55f : 0.28f)),
                               6.0f * Scale);
 
-            char Header[64];
             const int32 Count = (int32)Columns[L].size();
-            snprintf(Header, sizeof(Header), "Level %d  -  %d task%s", L, Count, Count == 1 ? "" : "s");
+            const FString Header = Format("Level {}  ({} task{})", L, Count, Count == 1 ? "" : "s");
             DL->AddText(Font, SmallFont, ImVec2(BandMin.x + 8.0f * Scale, Origin.y - HeaderH + 4.0f * Scale),
-                        EditorColors::U32(EditorColors::TextMuted()), Header);
+                        EditorColors::U32(EditorColors::TextMuted()), Header.c_str());
         }
 
         // Dependency links behind the boxes. Curves flow left (producer) to right (consumer),
@@ -1591,16 +1613,8 @@ namespace Lumina
 
             // Execution order (or "skipped"), right-aligned; measured first so the title can
             // reserve room for it instead of running underneath.
-            char Order[32];
-            if (Entry.bReachable)
-            {
-                snprintf(Order, sizeof(Order), "#%d", (int32)Entry.ExecOrder);
-            }
-            else
-            {
-                snprintf(Order, sizeof(Order), "skipped");
-            }
-            const ImVec2 OrderSize = Font->CalcTextSizeA(SmallFont, FLT_MAX, 0.0f, Order);
+            const FString Order = Entry.bReachable ? Format("#{}", (int32)Entry.ExecOrder) : FString("skipped");
+            const ImVec2 OrderSize = Font->CalcTextSizeA(SmallFont, FLT_MAX, 0.0f, Order.c_str());
 
             // Category dot + title.
             DL->AddCircleFilled(ImVec2(TextX + 3.0f * Scale, TextY + FontSize * 0.5f), 3.5f * Scale,
@@ -1613,7 +1627,7 @@ namespace Lumina
 
             DL->AddText(Font, SmallFont, ImVec2(Max.x - InnerPad - OrderSize.x, TextY + 1.0f * Scale),
                         EditorColors::U32(EditorColors::WithAlpha(
-                            Entry.bReachable ? EditorColors::TextMuted() : EditorColors::Warning(), Alpha)), Order);
+                            Entry.bReachable ? EditorColors::TextMuted() : EditorColors::Warning(), Alpha)), Order.c_str());
 
             TextY += FontSize + LineGap;
 
@@ -1626,10 +1640,9 @@ namespace Lumina
             // Buffer chip: where this task's pose lives, and whether it reused its input's buffer.
             if (Entry.bReachable && Entry.BufferIndex >= 0)
             {
-                char Buffer[64];
-                snprintf(Buffer, sizeof(Buffer), Entry.bStoleBuffer ? "buffer %d  (in place)" : "buffer %d  (new)",
-                         (int32)Entry.BufferIndex);
-                const FString Chip = AnimGraphDetail::FitText(Font, SmallFont, Buffer, BodyMaxW);
+                const FString Where = Format("buffer {}  ({})", (int32)Entry.BufferIndex,
+                                             Entry.bStoleBuffer ? "in place" : "new");
+                const FString Chip = AnimGraphDetail::FitText(Font, SmallFont, Where.c_str(), BodyMaxW);
                 DL->AddText(Font, SmallFont, ImVec2(TextX, TextY),
                             EditorColors::U32(EditorColors::WithAlpha(
                                 Entry.bStoleBuffer ? EditorColors::AccentAlt() : EditorColors::TextMuted(), Alpha)),

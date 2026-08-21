@@ -72,15 +72,21 @@ namespace Lumina
         }
     }
 
+    FString CEdGraphNode::GetNodeTitleText() const
+    {
+        return FString(GetNodeDisplayName());
+    }
+
     void CEdGraphNode::DrawNodeTitleBar()
     {
+        const FString Title = GetNodeTitleText();
         if (HasError())
         {
-            ImGui::TextColored(ImVec4(255.0f, 0.0f, 0.0f, 255.f), LE_ICON_EXCLAMATION_THICK " %s", GetNodeDisplayName().data());
+            ImGui::TextColored(ImVec4(255.0f, 0.0f, 0.0f, 255.f), LE_ICON_EXCLAMATION_THICK " %s", Title.c_str());
         }
         else
         {
-            ImGui::TextUnformatted(GetNodeDisplayName().data());
+            ImGui::TextUnformatted(Title.c_str());
         }
     }
 

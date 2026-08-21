@@ -996,7 +996,9 @@ TEST(TaskSystem, FiberPoolSaturation_MoreBlockedJobsThanFibers)
 
     for (uint32 i = 0; i < Blockers; ++i)
     {
-        Jobs::RunJob(&SaturateBlockingJob, &Probe, Jobs::EJobPriority::Normal, nullptr, "Saturate.Block");
+        // Park-capable: this test is about the FIBER pool growing, and a native job takes no fiber at all.
+        Jobs::RunJob(&SaturateBlockingJob, &Probe, Jobs::EJobPriority::Normal, nullptr, "Saturate.Block",
+            /*bMayPark*/ true);
     }
 
     // Every job must get a fiber even though far more of them are blocked at once than the pool started

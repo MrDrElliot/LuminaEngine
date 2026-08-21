@@ -20,17 +20,68 @@ namespace Lumina
         ResultPin = CreateAnimPin("Result", ENodePinDirection::Output, EAnimPinType::Pose);
     }
 
+    FString CAnimGraphNode_StateMachine::GetNodeTitleText() const
+    {
+        return MachineName.IsNone() ? FString(GetNodeDisplayName()) : MachineName.ToString();
+    }
+
+    bool CAnimGraphNode_StateMachine::GetRenameText(FString& OutText) const
+    {
+        OutText = MachineName.IsNone() ? FString() : MachineName.ToString();
+        return true;
+    }
+
+    void CAnimGraphNode_StateMachine::SetRenameText(const FString& InText)
+    {
+        MachineName = InText.empty() ? NAME_None : FName(InText.c_str());
+    }
+
+    CAnimStateMachineGraph* CAnimGraphNode_StateMachine::AllocateStateMachineGraph()
+    {
+        const FString GraphName = FString("StateMachine_") + Format("{}", GetNodeID());
+        StateMachineGraph = NewObject<CAnimStateMachineGraph>(GetPackage(), GraphName);
+        return StateMachineGraph.Get();
+    }
+
     CAnimStateMachineGraph* CAnimGraphNode_StateMachine::GetOrCreateStateMachineGraph()
     {
         if (!StateMachineGraph.IsValid())
         {
-            const FString GraphName = FString("StateMachine_") + Format("{}", GetNodeID());
-            StateMachineGraph = NewObject<CAnimStateMachineGraph>(GetPackage(), GraphName);
+            AllocateStateMachineGraph();
         }
 
         // Context-free: compiler walks state machines never opened; Initialize() deferred to editor tool.
         StateMachineGraph->EnsureSetup();
         return StateMachineGraph.Get();
+    }
+
+    void CAnimGraphNode_StateMachine::PostCloneFrom(const CEdGraphNode* Source)
+    {
+        const CAnimGraphNode_StateMachine* SourceMachine = Cast<CAnimGraphNode_StateMachine>(Source);
+        CAnimStateMachineGraph* SourceGraph = SourceMachine != nullptr ? SourceMachine->StateMachineGraph.Get() : nullptr;
+
+        StateMachineGraph = nullptr;
+        if (SourceGraph == nullptr)
+        {
+            return;
+        }
+
+        // Cloned before EnsureSetup so the copied Entry node is not joined by a second one.
+        AllocateStateMachineGraph()->CloneContentFrom(SourceGraph);
+    }
+
+    CEdNodeGraph* CAnimGraphNode_StateMachine::GetOwnedSubGraph() const
+    {
+        return StateMachineGraph.Get();
+    }
+
+    void CAnimGraphNode_StateMachine::ReplaceSubGraphWithCopy()
+    {
+        CAnimStateMachineGraph* Shared = StateMachineGraph.Get();
+        if (Shared != nullptr)
+        {
+            AllocateStateMachineGraph()->CloneContentFrom(Shared);
+        }
     }
 
     CEdNodeGraph* CAnimGraphNode_StateMachine::GetEnterableSubGraph()
@@ -202,20 +253,23 @@ namespace Lumina
             StateMachine.Transitions.push_back(Runtime);
         }
 
-        // Allocate the four persistent bookkeeping slots.
-        StateMachine.CurrentStateSlot = Compiler.AllocStateSlot();
-        StateMachine.FromStateSlot    = Compiler.AllocStateSlot();
+        // Allocate the four persistent bookkeeping slots. Kept in locals: the machine is moved below.
+        const uint16 CurrentStateSlot = Compiler.AllocStateSlot();
+        const uint16 FromStateSlot    = Compiler.AllocStateSlot();
+        StateMachine.CurrentStateSlot = CurrentStateSlot;
+        StateMachine.FromStateSlot    = FromStateSlot;
         StateMachine.TimerSlot        = Compiler.AllocStateSlot();
         StateMachine.DurationSlot     = Compiler.AllocStateSlot();
 
-        // Record which slot/index each State node maps to so the editor's debug
-        // overlay can highlight the state the VM is currently in.
+        const uint16 ResultReg    = Compiler.EmitEvalStateMachine(Move(StateMachine));
+        const uint16 MachineIndex = Compiler.GetStateMachineCount() - 1;
+
+        // What lets the debug overlay find the live state and the transition being blended through.
         for (const TPair<CEdGraphNode*, int32>& Entry : StateNodesForDebug)
         {
-            Compiler.AddDebugStateNode(Entry.first, StateMachine.CurrentStateSlot, Entry.second);
+            Compiler.AddDebugStateNode(Entry.first, CurrentStateSlot, FromStateSlot, MachineIndex, Entry.second);
         }
 
-        const uint16 ResultReg = Compiler.EmitEvalStateMachine(Move(StateMachine));
         Compiler.SetPinRegister(ResultPin, ResultReg);
     }
 }

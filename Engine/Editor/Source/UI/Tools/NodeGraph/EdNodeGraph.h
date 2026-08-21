@@ -67,6 +67,9 @@ namespace Lumina
 
         virtual CEdGraphNode* CreateNode(CClass* NodeClass);
 
+        // The node carrying this id, or null.
+        CEdGraphNode* FindNode(int64 InNodeID) const;
+
         // Picks a pin on NewNode to auto-connect to SourcePin after a drag-from-pin creates a node.
         // Default returns the first opposite-direction pin the schema accepts; override for type-aware matching.
         virtual CEdNodeGraphPin* FindAutoConnectPin(CEdGraphNode* NewNode, CEdNodeGraphPin* SourcePin) const;
@@ -93,6 +96,15 @@ namespace Lumina
         // reaching outside it are dropped, so a paste never rewires the graph it lands in. Must run
         // inside DrawGraph (node positions need the editor context).
         void CloneNodes(const TVector<CEdGraphNode*>& SourceNodes, ImVec2 Delta);
+
+        // Deep-copies Source's nodes, links and layout into this empty graph, with no editor context.
+        void CloneContentFrom(const CEdNodeGraph* Source);
+
+        // Hook for graph data keyed by node id: the map carries every source node to its clone.
+        virtual void PostCloneContent(const CEdNodeGraph* Source, const THashMap<CEdGraphNode*, CEdGraphNode*>& Clones) {}
+
+        // Gives any sub-graph reached twice its own copy, repairing assets saved when clones aliased.
+        uint32 UnaliasSubGraphs(THashSet<CEdNodeGraph*>& Visited);
 
         // Moves the selected nodes into alignment. No-op below two selected nodes (and below three for
         // the Distribute modes). Must run inside DrawGraph: node geometry and SetNodePosition both need
@@ -216,6 +228,9 @@ namespace Lumina
         static bool GraphSaveSettings(const char* data, size_t size, ax::NodeEditor::SaveReasonFlags reason, void* userPointer);
         static size_t GraphLoadSettings(char* data, void* userPointer);
 
+        // F2 on a single selected renamable node. Must run inside DrawGraph's suspended region.
+        void HandleRenameShortcut();
+
         // Compact reroute renderer (single dot, no header).
         void DrawRerouteNode(CEdGraphNode* Node);
 
@@ -247,6 +262,11 @@ namespace Lumina
 
         // Node the "Node Context Menu" popup was opened on; the popup outlives the frame that spawned it.
         uint64         ContextMenuNodeID = 0;
+
+        // F2 rename box: opened a frame after the key, since the popup lives in the suspended region.
+        bool           bOpenRenamePopup = false;
+        int64          RenameNodeID     = 0;
+        char           RenameBuffer[128] = {};
         
     public:
 

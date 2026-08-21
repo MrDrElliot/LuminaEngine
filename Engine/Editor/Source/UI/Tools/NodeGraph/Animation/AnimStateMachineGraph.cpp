@@ -6,6 +6,7 @@
 #include "Core/Object/Class.h"
 #include "Containers/HashTable.h"
 #include "Containers/Pair.h"
+#include "Containers/StringFormat.h"
 #include "Containers/Vector.h"
 #include "Core/Math/Math.h"
 #include "Tools/UI/ImGui/EditorColors.h"
@@ -13,7 +14,6 @@
 #include "UI/Tools/NodeGraph/EdNodeGraphPin.h"
 
 #include <cfloat>
-#include <cstdio>
 
 namespace Lumina
 {
@@ -105,10 +105,7 @@ namespace Lumina
             return FString("Always");
         }
 
-        char Buffer[128] = {};
-        snprintf(Buffer, sizeof(Buffer), "%s %s %g",
-                 ConditionParameter.c_str(), SM::CompareSymbol(Compare), (double)CompareValue);
-        return FString(Buffer);
+        return Format("{} {} {}", ConditionParameter.c_str(), SM::CompareSymbol(Compare), CompareValue);
     }
 
     void CAnimStateMachineGraph::EnsureSetup()
@@ -174,6 +171,30 @@ namespace Lumina
             }
         }
         return nullptr;
+    }
+
+    CAnimStateTransition* CAnimStateMachineGraph::FindAnyStateTransitionTo(int64 ToStateNodeID) const
+    {
+        for (const TObjectPtr<CAnimStateTransition>& Transition : Transitions)
+        {
+            if (!Transition.IsValid() || Transition->ToStateNodeID != ToStateNodeID)
+            {
+                continue;
+            }
+
+            CEdGraphNode* FromNode = FindNode(Transition->FromStateNodeID);
+            if (FromNode != nullptr && FromNode->IsA<CAnimGraphNode_StateAny>())
+            {
+                return Transition.Get();
+            }
+        }
+        return nullptr;
+    }
+
+    void CAnimStateMachineGraph::SetDebugTransition(const CAnimStateTransition* Transition, float Weight)
+    {
+        DebugTransition       = Transition;
+        DebugTransitionWeight = Math::Clamp(Weight, 0.0f, 1.0f);
     }
 
     CAnimGraphNode_State* CAnimStateMachineGraph::GetEntryState() const
@@ -303,6 +324,48 @@ namespace Lumina
                 NewTransition->ToStateNodeID   = ToNodeID;
                 Transitions.push_back(NewTransition);
             }
+        }
+    }
+
+    void CAnimStateMachineGraph::PostCloneContent(const CEdNodeGraph* Source, const THashMap<CEdGraphNode*, CEdGraphNode*>& Clones)
+    {
+        const CAnimStateMachineGraph* SourceGraph = Cast<CAnimStateMachineGraph>(Source);
+        if (SourceGraph == nullptr)
+        {
+            return;
+        }
+
+        THashMap<int64, int64> RemappedIDs;
+        RemappedIDs.reserve(Clones.size());
+        for (const auto& Entry : Clones)
+        {
+            RemappedIDs.emplace(Entry.first->GetNodeID(), Entry.second->GetNodeID());
+        }
+
+        for (const TObjectPtr<CAnimStateTransition>& SourceTransition : SourceGraph->Transitions)
+        {
+            if (!SourceTransition.IsValid())
+            {
+                continue;
+            }
+
+            const auto FromItr = RemappedIDs.find(SourceTransition->FromStateNodeID);
+            const auto ToItr   = RemappedIDs.find(SourceTransition->ToStateNodeID);
+            if (FromItr == RemappedIDs.end() || ToItr == RemappedIDs.end())
+            {
+                continue;
+            }
+
+            // ValidateGraph already made a bare transition for the cloned wire; this fills its data in.
+            CAnimStateTransition* Transition = FindTransition(FromItr->second, ToItr->second);
+            if (Transition == nullptr)
+            {
+                continue;
+            }
+
+            SourceTransition->CopyPropertiesTo(Transition);
+            Transition->FromStateNodeID = FromItr->second;
+            Transition->ToStateNodeID   = ToItr->second;
         }
     }
 
@@ -577,8 +640,14 @@ namespace Lumina
                 }
             }
 
+            const bool bBlending = Transition != nullptr && Transition == DebugTransition;
+
             ImVec4 LineColor = bEntryWire ? EditorColors::Success() : EditorColors::TextDim();
-            if (bSelected)
+            if (bBlending)
+            {
+                LineColor = EditorColors::Warning();
+            }
+            else if (bSelected)
             {
                 LineColor = EditorColors::Accent();
             }
@@ -592,7 +661,7 @@ namespace Lumina
                 LineColor = EditorColors::Warning();
             }
 
-            const float Thickness = bSelected ? 3.2f : (bHovered ? 2.6f : 1.9f);
+            const float Thickness = bBlending ? 4.0f : (bSelected ? 3.2f : (bHovered ? 2.6f : 1.9f));
             const ImU32 LineU32 = EditorColors::U32(LineColor);
 
             // Stop the shaft short of the arrowhead so the tip stays crisp.
@@ -603,6 +672,12 @@ namespace Lumina
             if (bSelected)
             {
                 DL->AddCircleFilled(Start, 3.4f, LineU32);
+            }
+
+            // A dot riding the shaft at the blend alpha reads the direction and the progress at once.
+            if (bBlending)
+            {
+                DL->AddCircleFilled(Start + (ShaftEnd - Start) * DebugTransitionWeight, 5.0f, LineU32);
             }
 
             const ImVec4 BadgeBg = bSelected
@@ -618,13 +693,27 @@ namespace Lumina
             // want to compare across edges without clicking each one.
             if (Transition != nullptr)
             {
-                char Meta[64] = {};
-                snprintf(Meta, sizeof(Meta), Transition->bCanInterrupt ? "%.2fs  " LE_ICON_LIGHTNING_BOLT : "%.2fs",
-                         Transition->BlendDuration);
-                const ImVec2 MetaSize = Font->CalcTextSizeA(FontSize * 0.85f, FLT_MAX, 0.0f, Meta);
-                DL->AddText(Font, FontSize * 0.85f,
+                TStringBuilder<64> Meta;
+                Meta.AppendFormat("{:.2f}s", Transition->BlendDuration);
+                if (Transition->bCanInterrupt)
+                {
+                    Meta.Append("  " LE_ICON_LIGHTNING_BOLT);
+                }
+
+                const float MetaFontSize = FontSize * 0.85f;
+                const ImVec2 MetaSize = Font->CalcTextSizeA(MetaFontSize, FLT_MAX, 0.0f, Meta.c_str());
+                DL->AddText(Font, MetaFontSize,
                             ImVec2(Mid.x - MetaSize.x * 0.5f, BadgeMax.y + 2.0f),
-                            EditorColors::U32(EditorColors::WithAlpha(EditorColors::TextMuted(), 0.9f)), Meta);
+                            EditorColors::U32(EditorColors::WithAlpha(EditorColors::TextMuted(), 0.9f)), Meta.c_str());
+
+                if (bBlending)
+                {
+                    const FString Weight = Format("{:.0f}%", DebugTransitionWeight * 100.0f);
+                    const ImVec2 WeightSize = Font->CalcTextSizeA(FontSize, FLT_MAX, 0.0f, Weight.c_str());
+                    DL->AddText(Font, FontSize,
+                                ImVec2(Mid.x - WeightSize.x * 0.5f, BadgeMax.y + 2.0f + MetaSize.y + 1.0f),
+                                LineU32, Weight.c_str());
+                }
             }
         }
 
@@ -658,6 +747,11 @@ namespace Lumina
                 if (FromNode->IsA<CAnimGraphNode_StateAny>())
                 {
                     ImGui::TextColored(EditorColors::Warning(), "Checked from every state.");
+                }
+                if (Transition == DebugTransition)
+                {
+                    ImGui::TextColored(EditorColors::Warning(), "Blending now, %.0f%% into the target.",
+                                       DebugTransitionWeight * 100.0f);
                 }
                 ImGui::Separator();
                 ImGui::TextColored(EditorColors::TextMuted(), "Click to edit. Select and press Delete to remove.");

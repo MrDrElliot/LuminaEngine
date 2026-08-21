@@ -23,6 +23,13 @@ namespace Lumina
     {
         CEdGraphNode* Node = nullptr;
         uint16        CurrentStateSlot = 0;
+
+        // Holds the state being blended out of, or -1 when the machine is settled.
+        uint16        FromStateSlot = 0;
+
+        // Index into CAnimationGraph::StateMachines, which is what addresses the live inertializer.
+        uint16        MachineIndex = 0;
+
         int32         StateIndex = 0;
     };
 
@@ -118,11 +125,15 @@ namespace Lumina
         // (pin values, active-state highlight).
         const THashMap<const CEdNodeGraphPin*, uint16>& GetPinRegisters() const { return PinRegisters; }
 
-        void AddDebugStateNode(CEdGraphNode* Node, uint16 CurrentStateSlot, int32 StateIndex)
+        void AddDebugStateNode(CEdGraphNode* Node, uint16 CurrentStateSlot, uint16 FromStateSlot,
+                               uint16 MachineIndex, int32 StateIndex)
         {
-            DebugStateNodes.push_back({ Node, CurrentStateSlot, StateIndex });
+            DebugStateNodes.push_back({ Node, CurrentStateSlot, FromStateSlot, MachineIndex, StateIndex });
         }
         const TVector<FAnimGraphDebugStateNode>& GetDebugStateNodes() const { return DebugStateNodes; }
+
+        // Machines emitted so far. One less than this is the index of the machine just emitted.
+        uint16 GetStateMachineCount() const { return (uint16)StateMachines.size(); }
 
         // Modifies a single bone of an incoming pose. Returns the destination
         // pose register; (T, R, S) are baked into the bytecode at compile time.

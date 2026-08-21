@@ -359,6 +359,53 @@ namespace Lumina
         return nullptr;
     }
 
+    // Runs once every clone exists: a link can point forwards in the list as easily as backwards.
+    static void RelinkClones(const TVector<CEdGraphNode*>& SourceOrder, const THashMap<CEdGraphNode*, CEdGraphNode*>& Clones)
+    {
+        // Walking INPUT pins only visits each link once, so nothing gets connected twice.
+        for (CEdGraphNode* Source : SourceOrder)
+        {
+            const auto CloneItr = Clones.find(Source);
+            if (CloneItr == Clones.end())
+            {
+                continue;
+            }
+
+            for (const TObjectPtr<CEdNodeGraphPin>& SourceInput : Source->GetInputPins())
+            {
+                if (!SourceInput.IsValid())
+                {
+                    continue;
+                }
+
+                for (CEdNodeGraphPin* Upstream : SourceInput->GetConnections())
+                {
+                    if (Upstream == nullptr)
+                    {
+                        continue;
+                    }
+
+                    // A link reaching outside the set would hang the clone off the original's neighbor.
+                    const auto UpstreamItr = Clones.find(Upstream->GetOwningNode());
+                    if (UpstreamItr == Clones.end())
+                    {
+                        continue;
+                    }
+
+                    CEdNodeGraphPin* CloneInput  = FindPinByName(CloneItr->second, SourceInput->GetPinName(), ENodePinDirection::Input);
+                    CEdNodeGraphPin* CloneOutput = FindPinByName(UpstreamItr->second, Upstream->GetPinName(), ENodePinDirection::Output);
+                    if (CloneInput == nullptr || CloneOutput == nullptr)
+                    {
+                        continue;
+                    }
+
+                    CloneOutput->AddConnection(CloneInput);
+                    CloneInput->AddConnection(CloneOutput);
+                }
+            }
+        }
+    }
+
     void CEdNodeGraph::CloneNodes(const TVector<CEdGraphNode*>& SourceNodes, ImVec2 Delta)
     {
         using namespace ax;
@@ -381,60 +428,92 @@ namespace Lumina
             }
 
             Source->CopyPropertiesTo(Clone);
+            Clone->PostCloneFrom(Source);
             Clones.emplace(Source, Clone);
 
             NodeEditor::SetNodePosition(Clone->GetNodeID(), NodeEditor::GetNodePosition(Source->GetNodeID()) + Delta);
             NodeEditor::SelectNode(Clone->GetNodeID(), true);
         }
 
-        // Second pass, once every clone exists: a link can point forwards in the list as easily as
-        // backwards. Walking INPUT pins only visits each link exactly once (same traversal the draw
-        // loop uses to collect them), so nothing gets connected twice.
-        for (CEdGraphNode* Source : SourceNodes)
+        RelinkClones(SourceNodes, Clones);
+
+        ValidateGraph();
+    }
+
+    void CEdNodeGraph::CloneContentFrom(const CEdNodeGraph* Source)
+    {
+        if (Source == nullptr)
         {
-            const auto CloneItr = Clones.find(Source);
-            if (CloneItr == Clones.end())
+            return;
+        }
+
+        THashMap<CEdGraphNode*, CEdGraphNode*> Clones;
+        Clones.reserve(Source->Nodes.size());
+
+        TVector<CEdGraphNode*> SourceOrder;
+        SourceOrder.reserve(Source->Nodes.size());
+
+        for (const TObjectPtr<CEdGraphNode>& SourceNode : Source->Nodes)
+        {
+            if (!SourceNode.IsValid())
             {
                 continue;
             }
 
-            for (const TObjectPtr<CEdNodeGraphPin>& SourceInput : Source->GetInputPins())
+            CEdGraphNode* Clone = CreateNode(SourceNode->GetClass());
+            if (Clone == nullptr)
             {
-                if (!SourceInput.IsValid())
+                continue;
+            }
+
+            SourceNode->CopyPropertiesTo(Clone);
+            Clone->PostCloneFrom(SourceNode.Get());
+
+            // Positions are DuplicateTransient and the copy has no saved editor layout to key off.
+            Clone->SetGridPos(SourceNode->GetNodeX(), SourceNode->GetNodeY());
+            Clones.emplace(SourceNode.Get(), Clone);
+            SourceOrder.push_back(SourceNode.Get());
+        }
+
+        RelinkClones(SourceOrder, Clones);
+
+        ValidateGraph();
+        PostCloneContent(Source, Clones);
+    }
+
+    uint32 CEdNodeGraph::UnaliasSubGraphs(THashSet<CEdNodeGraph*>& Visited)
+    {
+        uint32 Repaired = 0;
+
+        for (const TObjectPtr<CEdGraphNode>& Node : Nodes)
+        {
+            if (!Node.IsValid())
+            {
+                continue;
+            }
+
+            CEdNodeGraph* SubGraph = Node->GetOwnedSubGraph();
+            if (SubGraph == nullptr)
+            {
+                continue;
+            }
+
+            if (!Visited.insert(SubGraph).second)
+            {
+                Node->ReplaceSubGraphWithCopy();
+                ++Repaired;
+
+                SubGraph = Node->GetOwnedSubGraph();
+                if (SubGraph == nullptr || !Visited.insert(SubGraph).second)
                 {
                     continue;
                 }
-
-                for (CEdNodeGraphPin* Upstream : SourceInput->GetConnections())
-                {
-                    if (Upstream == nullptr)
-                    {
-                        continue;
-                    }
-
-                    // Only when the far end was copied too. A link to a node outside the set would
-                    // otherwise hang the clone off the original's neighbor, quietly editing a part of
-                    // the graph the user never selected.
-                    const auto UpstreamItr = Clones.find(Upstream->GetOwningNode());
-                    if (UpstreamItr == Clones.end())
-                    {
-                        continue;
-                    }
-
-                    CEdNodeGraphPin* CloneInput  = FindPinByName(CloneItr->second, SourceInput->GetPinName(), ENodePinDirection::Input);
-                    CEdNodeGraphPin* CloneOutput = FindPinByName(UpstreamItr->second, Upstream->GetPinName(), ENodePinDirection::Output);
-                    if (CloneInput == nullptr || CloneOutput == nullptr)
-                    {
-                        continue;
-                    }
-
-                    CloneOutput->AddConnection(CloneInput);
-                    CloneInput->AddConnection(CloneOutput);
-                }
             }
+
+            Repaired += SubGraph->UnaliasSubGraphs(Visited);
         }
 
-        ValidateGraph();
+        return Repaired;
     }
 
     void CEdNodeGraph::AlignSelectedNodes(ENodeAlignment Alignment)
@@ -1176,6 +1255,8 @@ namespace Lumina
                     }
                 }
             }
+
+            HandleRenameShortcut();
         
             if (NodeEditor::BeginShortcut())
             {
@@ -1681,6 +1762,77 @@ namespace Lumina
         CEdGraphNode* NewNode = NewObject<CEdGraphNode>(NodeClass, GetNodeOuter());
         AddNode(NewNode);
         return NewNode;
+    }
+
+    void CEdNodeGraph::HandleRenameShortcut()
+    {
+        using namespace ax;
+
+        const bool bCanTakeKey = !ImGui::IsAnyItemActive() && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+        if (bCanTakeKey && ImGui::IsKeyPressed(ImGuiKey_F2, false))
+        {
+            // Two slots: a second selected node means the target is ambiguous, so rename nothing.
+            NodeEditor::NodeId Selection[2];
+            if (NodeEditor::GetSelectedNodes(Selection, 2) == 1)
+            {
+                CEdGraphNode* Node = FindNode((int64)Selection[0].Get());
+
+                FString Current;
+                if (Node != nullptr && Node->GetRenameText(Current))
+                {
+                    RenameNodeID = Node->GetNodeID();
+                    const size_t Count = Math::Min(Current.size(), sizeof(RenameBuffer) - 1);
+                    Memory::Memcpy(RenameBuffer, Current.data(), Count);
+                    RenameBuffer[Count] = '\0';
+                    bOpenRenamePopup = true;
+                }
+            }
+        }
+
+        if (bOpenRenamePopup)
+        {
+            bOpenRenamePopup = false;
+            ImGui::OpenPopup("Rename Node");
+        }
+
+        if (!ImGui::BeginPopup("Rename Node"))
+        {
+            return;
+        }
+
+        if (ImGui::IsWindowAppearing())
+        {
+            ImGui::SetKeyboardFocusHere();
+        }
+
+        ImGui::SetNextItemWidth(200.0f);
+        const bool bCommitted = ImGui::InputText("##RenameNode", RenameBuffer, sizeof(RenameBuffer),
+            ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+
+        if (bCommitted)
+        {
+            if (CEdGraphNode* Node = FindNode(RenameNodeID))
+            {
+                Node->SetRenameText(FString(RenameBuffer));
+                Node->NotifyValueEdited();
+                GetPackage()->MarkDirty();
+            }
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    }
+
+    CEdGraphNode* CEdNodeGraph::FindNode(int64 InNodeID) const
+    {
+        for (const TObjectPtr<CEdGraphNode>& Node : Nodes)
+        {
+            if (Node.IsValid() && Node->GetNodeID() == InNodeID)
+            {
+                return Node.Get();
+            }
+        }
+        return nullptr;
     }
     
     const THashSet<CClass*>& CEdNodeGraph::GetSupportedNodes()
