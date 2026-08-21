@@ -6,13 +6,20 @@ namespace Lumina
     void CAnimGraphNode_MakeAdditive::BuildNode()
     {
         PoseInputPin   = CreateAnimPin("Pose", ENodePinDirection::Input, EAnimPinType::Pose);
+        BasePosePin    = CreateAnimPin("Base", ENodePinDirection::Input, EAnimPinType::Pose);
         DeltaOutputPin = CreateAnimPin("Delta", ENodePinDirection::Output, EAnimPinType::Pose);
     }
 
     void CAnimGraphNode_MakeAdditive::GenerateBytecode(FAnimationGraphCompiler& Compiler)
     {
         const uint16 SrcReg = ResolvePoseInput(PoseInputPin, Compiler);
-        const uint16 DstReg = Compiler.EmitMakeAdditive(SrcReg);
+
+        // An unconnected Base means the bind pose, which the VM reads straight off the skeleton.
+        const uint16 BaseReg = (BasePosePin != nullptr && BasePosePin->HasConnection())
+            ? ResolvePoseInput(BasePosePin, Compiler)
+            : kAnimNoPoseRegister;
+
+        const uint16 DstReg = Compiler.EmitMakeAdditive(SrcReg, BaseReg, Space);
         Compiler.SetPinRegister(DeltaOutputPin, DstReg);
     }
 

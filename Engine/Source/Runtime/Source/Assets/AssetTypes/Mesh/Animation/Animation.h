@@ -20,6 +20,24 @@ namespace Lumina
     struct FSkeletonResource;
     struct FPose;
 
+    // An additive clip holds a delta against a base pose, which the graph layers onto another pose.
+    REFLECT()
+    enum class EAdditiveAnimType : uint8
+    {
+        None,
+        LocalSpace,
+        MeshSpace,
+    };
+
+    // What an additive clip subtracts from itself to get its delta.
+    REFLECT()
+    enum class EAdditiveBasePoseType : uint8
+    {
+        RefPose,
+        AnimFrame,
+        AnimScaled,
+    };
+
     struct FAnimationChannel
     {
         enum class ETargetPath : uint8
@@ -209,10 +227,27 @@ namespace Lumina
         /** Writes (Global * InvBind) per bone; bones without channels keep their bind-pose local transform. */
         void SamplePose(float Time, FSkeletonResource* RESTRICT InSkeleton, TVector<FMatrix4>& RESTRICT OutBoneTransforms) const;
 
-        /** Samples the clip into a local-space TRS pose; bones without channels keep their bind-pose local transform. */
+        /** Samples the clip into a local-space TRS pose, or into its additive delta when the clip is additive. */
         // MaxBones < 0 samples every animated bone; otherwise only channels targeting bones below
         // MaxBones are sampled and the rest stay at bind pose (skeleton LOD for distant meshes).
         void SampleLocalPose(float Time, FSkeletonResource* RESTRICT InSkeleton, FPose& RESTRICT OutPose, int32 MaxBones = -1) const;
+
+        /** Samples the authored pose as-is, ignoring the additive settings. */
+        void SampleRawLocalPose(float Time, FSkeletonResource* RESTRICT InSkeleton, FPose& RESTRICT OutPose, int32 MaxBones = -1) const;
+
+        /** Samples the clip's delta against its configured base pose. Yields an identity delta on a non-additive clip. */
+        void SampleAdditiveDelta(float Time, FSkeletonResource* RESTRICT InSkeleton, FPose& RESTRICT OutDelta, int32 MaxBones = -1) const;
+
+        /** Samples the base pose an additive clip is authored against, at the clip time Time maps to. */
+        void SampleAdditiveBasePose(float Time, FSkeletonResource* RESTRICT InSkeleton, FPose& RESTRICT OutBase, int32 MaxBones = -1) const;
+
+        bool IsAdditive() const { return AdditiveAnimType != EAdditiveAnimType::None; }
+
+        /** The base clip an additive delta is taken against, or null when the base is the skeleton's ref pose. */
+        CAnimation* GetAdditiveBaseAnimation() const;
+
+        /** Time in the base clip that a playhead of Time in this clip maps to. */
+        float GetAdditiveBaseTime(float Time) const;
 
         /** Samples a single bone's local TRS at Time, falling back to its bind-pose value for untouched channels. */
         void SampleBoneLocal(float Time, FSkeletonResource* RESTRICT InSkeleton, int32 BoneIndex,
@@ -250,6 +285,24 @@ namespace Lumina
         /** Bone driving root motion; empty resolves to the first root bone (ParentIndex < 0). */
         PROPERTY(Editable, Category = "Root Motion")
         FName RootBoneName;
+
+        /** Makes the clip a delta layered onto another pose: Local Space subtracts per bone, Mesh Space in component space. */
+        PROPERTY(Editable, Category = "Additive")
+        EAdditiveAnimType AdditiveAnimType = EAdditiveAnimType::None;
+
+        /** What the delta is measured against: the skeleton's ref pose, one frame of a base clip, or that clip followed over time. */
+        PROPERTY(Editable, Category = "Additive", EditCondition = "AdditiveAnimType != None", EditConditionHides)
+        EAdditiveBasePoseType AdditiveBasePoseType = EAdditiveBasePoseType::RefPose;
+
+        /** Clip the base pose is sampled from. Leaving it empty falls back to the skeleton's ref pose. */
+        PROPERTY(Editable, Category = "Additive",
+                 EditCondition = "AdditiveAnimType != None && AdditiveBasePoseType != RefPose", EditConditionHides)
+        TObjectPtr<CAnimation> AdditiveBaseAnimation;
+
+        /** Time in the base clip that Anim Frame freezes on. */
+        PROPERTY(Editable, Category = "Additive", Units = "s", ClampMin = 0.0f,
+                 EditCondition = "AdditiveAnimType != None && AdditiveBasePoseType == AnimFrame", EditConditionHides)
+        float AdditiveBaseFrameTime = 0.0f;
 
     private:
         

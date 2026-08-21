@@ -86,6 +86,9 @@ namespace Lumina
         // Blends / additive / bone ops.
         float Alpha = 1.0f;
 
+        // MakeAdditive: delta space (EPoseAdditiveSpace). DepB is the base pose, absent = bind pose.
+        uint8 AdditiveSpace = (uint8)EPoseAdditiveSpace::LocalSpace;
+
         // BlendMasked: dense per-bone weights on the graph asset; null falls back to a plain blend.
         const TVector<float>* MaskWeights = nullptr;
 

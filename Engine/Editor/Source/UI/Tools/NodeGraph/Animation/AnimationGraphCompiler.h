@@ -109,9 +109,9 @@ namespace Lumina
         uint16 EmitBlend(uint16 PoseRegA, uint16 PoseRegB, uint16 AlphaReg);
         uint16 EmitBlendMasked(uint16 PoseRegA, uint16 PoseRegB, uint16 AlphaReg, uint16 MaskIndex);
 
-        // Additive blending: MakeAdditive produces a pose-delta against the
-        // skeleton's bind pose; ApplyAdditive layers that delta onto a base pose.
-        uint16 EmitMakeAdditive(uint16 SrcPoseReg);
+        // MakeAdditive deltas against BasePoseReg (kAnimNoPoseRegister = bind pose); ApplyAdditive layers it back.
+        uint16 EmitMakeAdditive(uint16 SrcPoseReg, uint16 BasePoseReg = kAnimNoPoseRegister,
+                                EAdditiveSpace Space = EAdditiveSpace::LocalSpace);
         uint16 EmitApplyAdditive(uint16 BasePoseReg, uint16 DeltaPoseReg, uint16 AlphaReg);
 
         // Registers a compiled state machine and emits its eval opcode. The machine's

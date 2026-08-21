@@ -454,20 +454,52 @@ namespace Lumina
                     break;
                 }
                 Dst = bStealA ? BufA : Pool.Acquire();
-                AnimPose::MakeAdditive(Pool.Get(BufA), Skeleton, Pool.Get(Dst), ActiveBones);
+
+                const bool bMeshSpace = (EPoseAdditiveSpace)Task.AdditiveSpace == EPoseAdditiveSpace::MeshSpace;
+                if (BufB != FAnimTask::NoTask)
+                {
+                    if (bMeshSpace)
+                    {
+                        AnimPose::MakeAdditiveMeshSpace(Pool.Get(BufA), Pool.Get(BufB), Skeleton, Pool.Get(Dst), ActiveBones);
+                    }
+                    else
+                    {
+                        AnimPose::MakeAdditiveFromBase(Pool.Get(BufA), Pool.Get(BufB), Pool.Get(Dst), ActiveBones);
+                    }
+                }
+                else if (bMeshSpace)
+                {
+                    AnimPose::MakeAdditiveMeshSpace(Pool.Get(BufA), Skeleton, Pool.Get(Dst), ActiveBones);
+                }
+                else
+                {
+                    AnimPose::MakeAdditive(Pool.Get(BufA), Skeleton, Pool.Get(Dst), ActiveBones);
+                }
                 break;
             }
 
             case EAnimTaskType::ApplyAdditive:
             {
-                if (BufA == FAnimTask::NoTask || BufB == FAnimTask::NoTask)
+                if (BufA == FAnimTask::NoTask)
                 {
                     Dst = Pool.Acquire();
                     Pool.Get(Dst).ResetToBindPose(Skeleton);
                     break;
                 }
+
+                // No delta reaching the layer means nothing to add, not a lost base pose.
+                if (BufB == FAnimTask::NoTask)
+                {
+                    Dst = bStealA ? BufA : Pool.Acquire();
+                    if (Dst != BufA)
+                    {
+                        Pool.Get(Dst) = Pool.Get(BufA);
+                    }
+                    break;
+                }
+
                 Dst = bStealA ? BufA : Pool.Acquire();
-                AnimPose::ApplyAdditive(Pool.Get(BufA), Pool.Get(BufB), Task.Alpha, Pool.Get(Dst), ActiveBones);
+                AnimPose::ApplyAdditivePose(Pool.Get(BufA), Pool.Get(BufB), Task.Alpha, Skeleton, Pool.Get(Dst), ActiveBones);
                 break;
             }
 

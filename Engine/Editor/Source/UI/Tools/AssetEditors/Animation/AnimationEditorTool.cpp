@@ -144,6 +144,15 @@ namespace Lumina
         }
     }
 
+    void FAnimationEditorTool::OnPropertyEditFinished(const FPropertyChangedEvent& Event)
+    {
+        // A paused preview holds its last pose, so an additive-settings edit needs a forced resample.
+        if (SSimpleAnimationComponent* AnimComp = GetPreviewComponent())
+        {
+            AnimComp->bDirty = true;
+        }
+    }
+
     SSimpleAnimationComponent* FAnimationEditorTool::GetPreviewComponent() const
     {
         if (!World.IsValid() || MeshEntity == entt::null)

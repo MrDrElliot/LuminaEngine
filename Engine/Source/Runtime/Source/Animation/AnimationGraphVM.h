@@ -42,6 +42,14 @@ namespace Lumina
         Replace,
     };
 
+    // Frame the MakeAdditive op measures its delta in.
+    REFLECT()
+    enum class EAdditiveSpace : uint8
+    {
+        LocalSpace,
+        MeshSpace,
+    };
+
     enum class EAnimOp : uint8
     {
         Halt = 0,
@@ -70,7 +78,13 @@ namespace Lumina
         SampleAnimDyn,          // clip:oReg, time:sReg, dst:pReg
         AdvanceClockDyn,        // stateIdx:uint16, speed:sReg, clip:oReg, loopMode:sReg, dstClock:sReg, dstFinished:sReg, syncGroup:uint16
         SampleBlendSpaceDyn,    // bs:oReg, x:sReg, y:sReg, speed:sReg, phase:uint16, dst:pReg
+
+        //~ MakeAdditive with an explicit base pose and space. Appended, so old programs stay valid.
+        MakeAdditiveEx,         // src:pReg, base:pReg (kAnimNoPoseRegister = bind pose), space:uint8, dst:pReg
     };
+
+    // MakeAdditiveEx base operand meaning "no base pose supplied".
+    inline constexpr uint16 kAnimNoPoseRegister = 0xFFFFu;
 
     // Append-only: the enum value is baked into compiled bytecode.
     REFLECT()

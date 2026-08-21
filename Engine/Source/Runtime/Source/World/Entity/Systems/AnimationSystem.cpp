@@ -299,7 +299,9 @@ namespace Lumina
 
             const bool bLock = (Anim.RootMotionLock == ERootMotionLockMode::ForceLock) ||
                                (Anim.RootMotionLock == ERootMotionLockMode::FromAsset && Asset->bLockRootMotion);
-            const bool bExtract = !bLock && Asset->bEnableRootMotion;
+
+            // An additive clip's root track is a delta against its base, never entity motion.
+            const bool bExtract = !bLock && Asset->bEnableRootMotion && !Asset->IsAdditive();
 
             // Resolved only when something actually consumes it. A named RootBoneName costs an FName hash
             // and a random probe into the skeleton's name map -- a cache miss per entity per frame that the
@@ -319,7 +321,33 @@ namespace Lumina
             Sample.Type = EAnimTaskType::SampleClip;
             Sample.Clip = Asset;
             Sample.Time = Anim.CurrentTime;
-            Tasks.OutputTask = Tasks.Add(Sample);
+
+            if (Asset->IsAdditive())
+            {
+                // Played on its own, an additive clip shows layered onto the base it was authored against.
+                FAnimTask Base;
+                if (CAnimation* BaseClip = Asset->GetAdditiveBaseAnimation())
+                {
+                    Base.Type = EAnimTaskType::SampleClip;
+                    Base.Clip = BaseClip;
+                    Base.Time = Asset->GetAdditiveBaseTime(Anim.CurrentTime);
+                }
+                else
+                {
+                    Base.Type = EAnimTaskType::ReferencePose;
+                }
+
+                FAnimTask Apply;
+                Apply.Type  = EAnimTaskType::ApplyAdditive;
+                Apply.DepA  = Tasks.Add(Base);
+                Apply.DepB  = Tasks.Add(Sample);
+                Apply.Alpha = 1.0f;
+                Tasks.OutputTask = Tasks.Add(Apply);
+            }
+            else
+            {
+                Tasks.OutputTask = Tasks.Add(Sample);
+            }
 
             if (RootIdx != INDEX_NONE)
             {

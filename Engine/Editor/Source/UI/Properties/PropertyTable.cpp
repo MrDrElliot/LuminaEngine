@@ -56,6 +56,19 @@ namespace Lumina
         return Op == EPropertyChangeOp::Started
             || (Op == EPropertyChangeOp::Updated && !bSessionActive);
     }
+
+    // Byte offset of an edited value inside its outer instance; -1 when it sits in a separate heap block.
+    static int64 ValueOffsetInOuter(const void* ValuePtr, const void* OuterInstance, const CStruct* OuterType)
+    {
+        if (ValuePtr == nullptr || OuterInstance == nullptr || OuterType == nullptr)
+        {
+            return -1;
+        }
+
+        const int64 Offset = static_cast<const uint8*>(ValuePtr) - static_cast<const uint8*>(OuterInstance);
+        return (Offset >= 0 && Offset < (int64)OuterType->GetSize()) ? Offset : -1;
+    }
+
     static ImU32 CategoryBgColor()     { return EditorColors::U32(EditorColors::RowBg()); }
 
     // Caller passes explicit Y bounds; the table row's bottom isn't queryable until after row finalization.
@@ -554,7 +567,13 @@ namespace Lumina
             return;
         }
 
-        const FPropertyChangedEvent Event{Callbacks.Type, PropertyHandle->Property, PropertyHandle->Property->Name};
+        // Hoisted above the event so it can carry the commit flag; equal to reading bEditSessionActive after the Started transition below.
+        const bool bSessionActiveForHooks = bEditSessionActive || (Op == EPropertyChangeOp::Started);
+        const bool bFirePreEdit  = IsPreEditOp(Op, bSessionActiveForHooks);
+        const bool bFirePostEdit = IsCommitOp(Op, bSessionActiveForHooks);
+
+        const FPropertyChangedEvent Event{Callbacks.Type, PropertyHandle->Property, PropertyHandle->Property->Name,
+            bFirePostEdit, ValueOffsetInOuter(PropertyHandle->GetValuePtr(), Callbacks.Instance, Callbacks.Type)};
 
         if (Op == EPropertyChangeOp::Started && Callbacks.StartChangeCallback)
         {
@@ -582,8 +601,6 @@ namespace Lumina
         {
             bEditSessionActive = true;
         }
-        const bool bFirePreEdit  = IsPreEditOp(Op, bEditSessionActive);
-        const bool bFirePostEdit = IsCommitOp(Op, bEditSessionActive);
         if (Op == EPropertyChangeOp::Finished)
         {
             bEditSessionActive = false;
@@ -1479,7 +1496,12 @@ namespace Lumina
 
         // Commit the in-flight key edit, then notify the map field. Keys are edited in place (entries are
         // addressed by iteration index, and save/reload re-hashes).
-        const FPropertyChangedEvent Event{Callbacks.Type, Map, Map->Name};
+        const bool bKeySessionActiveForHooks = bKeyEditSessionActive || (KeyChangeOp == EPropertyChangeOp::Started);
+        const bool bFirePreEdit  = IsPreEditOp(KeyChangeOp, bKeySessionActiveForHooks);
+        const bool bFirePostEdit = IsCommitOp(KeyChangeOp, bKeySessionActiveForHooks);
+
+        const FPropertyChangedEvent Event{Callbacks.Type, Map, Map->Name,
+            bFirePostEdit, ValueOffsetInOuter(MapContainer, Callbacks.Instance, Callbacks.Type)};
         if (KeyChangeOp == EPropertyChangeOp::Started && Callbacks.StartChangeCallback)
         {
             Callbacks.StartChangeCallback(Event);
@@ -1492,8 +1514,6 @@ namespace Lumina
         {
             bKeyEditSessionActive = true;
         }
-        const bool bFirePreEdit  = IsPreEditOp(KeyChangeOp, bKeyEditSessionActive);
-        const bool bFirePostEdit = IsCommitOp(KeyChangeOp, bKeyEditSessionActive);
         if (KeyChangeOp == EPropertyChangeOp::Finished)
         {
             bKeyEditSessionActive = false;
@@ -2124,8 +2144,13 @@ namespace Lumina
             const EPropertyChangeOp ChangeOp = Customization->UpdateAndDraw(PropertyHandle, bReadOnly);
             if (ChangeOp != EPropertyChangeOp::None)
             {
+                const bool bObjectSessionActiveForHooks = bObjectEditSessionActive || (ChangeOp == EPropertyChangeOp::Started);
+                const bool bFirePreEdit  = IsPreEditOp(ChangeOp, bObjectSessionActiveForHooks);
+                const bool bFirePostEdit = IsCommitOp(ChangeOp, bObjectSessionActiveForHooks);
+
                 const FPropertyChangedEvent Event{Struct, PropertyHandle->Property,
-                    PropertyHandle->Property ? PropertyHandle->Property->Name : FName()};
+                    PropertyHandle->Property ? PropertyHandle->Property->Name : FName(), bFirePostEdit,
+                    ValueOffsetInOuter(PropertyHandle->GetValuePtr(), ChangeEventCallbacks.Instance, ChangeEventCallbacks.Type)};
 
                 if (ChangeOp == EPropertyChangeOp::Started && ChangeEventCallbacks.StartChangeCallback)
                 {
@@ -2139,8 +2164,6 @@ namespace Lumina
                 {
                     bObjectEditSessionActive = true;
                 }
-                const bool bFirePreEdit  = IsPreEditOp(ChangeOp, bObjectEditSessionActive);
-                const bool bFirePostEdit = IsCommitOp(ChangeOp, bObjectEditSessionActive);
                 if (ChangeOp == EPropertyChangeOp::Finished)
                 {
                     bObjectEditSessionActive = false;

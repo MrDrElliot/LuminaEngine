@@ -1,12 +1,12 @@
 #pragma once
 
+#include "Animation/AnimationGraphVM.h"
 #include "UI/Tools/NodeGraph/Animation/AnimGraphNode.h"
 #include "AnimGraphNode_Additive.generated.h"
 
 namespace Lumina
 {
-    // Converts a regular pose into an additive delta relative to the skeleton's bind pose.
-    // Pair with Apply Additive to layer expressions/lean/look-at on top of a base pose.
+    // Converts a pose into a delta against the Base pin, or against the bind pose when Base is unconnected.
     REFLECT()
     class CAnimGraphNode_MakeAdditive : public CAnimGraphNode
     {
@@ -14,13 +14,18 @@ namespace Lumina
     public:
 
         FStringView GetNodeDisplayName() const override { return "Make Additive"; }
-        FStringView GetNodeTooltip() const override { return "Converts a pose into an additive delta relative to the skeleton's bind pose."; }
+        FStringView GetNodeTooltip() const override { return "Converts a pose into an additive delta against the Base pose, or against the skeleton's bind pose when Base is unconnected."; }
         FFixedString GetNodeCategory() const override { return "Animation"; }
 
         void BuildNode() override;
         void GenerateBytecode(FAnimationGraphCompiler& Compiler) override;
 
+        /** Local Space subtracts in each bone's parent frame; Mesh Space takes the rotation delta in component space. */
+        PROPERTY(Editable, Category = "Additive")
+        EAdditiveSpace Space = EAdditiveSpace::LocalSpace;
+
         CAnimGraphPin* PoseInputPin = nullptr;
+        CAnimGraphPin* BasePosePin = nullptr;
         CAnimGraphPin* DeltaOutputPin = nullptr;
     };
 
@@ -33,7 +38,7 @@ namespace Lumina
     public:
 
         FStringView GetNodeDisplayName() const override { return "Apply Additive"; }
-        FStringView GetNodeTooltip() const override { return "Adds a delta pose (produced by Make Additive or an additive clip) on top of a base pose."; }
+        FStringView GetNodeTooltip() const override { return "Adds a delta pose (produced by Make Additive or an additive clip) on top of a base pose. A mesh-space delta is applied in mesh space automatically."; }
         FFixedString GetNodeCategory() const override { return "Animation"; }
 
         void BuildNode() override;

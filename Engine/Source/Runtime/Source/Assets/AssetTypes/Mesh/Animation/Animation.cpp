@@ -255,12 +255,95 @@ namespace Lumina
         }
     }
 
+    CAnimation* CAnimation::GetAdditiveBaseAnimation() const
+    {
+        if (AdditiveBasePoseType == EAdditiveBasePoseType::RefPose)
+        {
+            return nullptr;
+        }
+
+        CAnimation* Base = AdditiveBaseAnimation.Get();
+        return Base != this ? Base : nullptr;
+    }
+
     void CAnimation::SampleLocalPose(float Time, FSkeletonResource* RESTRICT InSkeleton, FPose& RESTRICT OutPose, int32 MaxBones) const
+    {
+        if (IsAdditive())
+        {
+            SampleAdditiveDelta(Time, InSkeleton, OutPose, MaxBones);
+            return;
+        }
+
+        SampleRawLocalPose(Time, InSkeleton, OutPose, MaxBones);
+    }
+
+    float CAnimation::GetAdditiveBaseTime(float Time) const
+    {
+        const CAnimation* BaseClip = GetAdditiveBaseAnimation();
+        if (BaseClip == nullptr || AdditiveBasePoseType != EAdditiveBasePoseType::AnimScaled)
+        {
+            return AdditiveBaseFrameTime;
+        }
+
+        const float Duration = AnimationResource->Duration;
+        return Duration > 0.0f ? (Time / Duration) * BaseClip->GetDuration() : 0.0f;
+    }
+
+    void CAnimation::SampleAdditiveBasePose(float Time, FSkeletonResource* RESTRICT InSkeleton, FPose& RESTRICT OutBase, int32 MaxBones) const
+    {
+        const CAnimation* BaseClip = GetAdditiveBaseAnimation();
+        if (BaseClip == nullptr)
+        {
+            OutBase.ResetToBindPose(InSkeleton);
+            return;
+        }
+
+        BaseClip->SampleRawLocalPose(GetAdditiveBaseTime(Time), InSkeleton, OutBase, MaxBones);
+    }
+
+    void CAnimation::SampleAdditiveDelta(float Time, FSkeletonResource* RESTRICT InSkeleton, FPose& RESTRICT OutDelta, int32 MaxBones) const
+    {
+        LUMINA_PROFILE_SCOPE();
+
+        // Per-thread scratch: the executor samples inside a ParallelFor.
+        thread_local FPose SourceScratch;
+        thread_local FPose BaseScratch;
+
+        SampleRawLocalPose(Time, InSkeleton, SourceScratch, MaxBones);
+
+        const bool bMeshSpace = AdditiveAnimType == EAdditiveAnimType::MeshSpace;
+        if (GetAdditiveBaseAnimation() == nullptr)
+        {
+            if (bMeshSpace)
+            {
+                AnimPose::MakeAdditiveMeshSpace(SourceScratch, InSkeleton, OutDelta, MaxBones);
+            }
+            else
+            {
+                AnimPose::MakeAdditive(SourceScratch, InSkeleton, OutDelta, MaxBones);
+            }
+            return;
+        }
+
+        SampleAdditiveBasePose(Time, InSkeleton, BaseScratch, MaxBones);
+
+        if (bMeshSpace)
+        {
+            AnimPose::MakeAdditiveMeshSpace(SourceScratch, BaseScratch, InSkeleton, OutDelta, MaxBones);
+        }
+        else
+        {
+            AnimPose::MakeAdditiveFromBase(SourceScratch, BaseScratch, OutDelta, MaxBones);
+        }
+    }
+
+    void CAnimation::SampleRawLocalPose(float Time, FSkeletonResource* RESTRICT InSkeleton, FPose& RESTRICT OutPose, int32 MaxBones) const
     {
         LUMINA_PROFILE_SCOPE();
 
         const int32 NumBones = InSkeleton->GetNumBones();
         OutPose.SetNumBones(NumBones);
+        OutPose.AdditiveSpace = EPoseAdditiveSpace::None;
 
         if (NumBones == 0)
         {

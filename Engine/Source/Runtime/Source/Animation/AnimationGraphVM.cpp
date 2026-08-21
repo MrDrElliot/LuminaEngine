@@ -730,7 +730,8 @@ namespace Lumina
                         // Tag the clock scalar with this advance's root delta; SampleAnim adopts it
                         // onto the pose register it feeds. bHasMotion stays set even on a paused
                         // frame so the branch keeps reading as root-motion driven (stable pinning).
-                        if (bExtractRootMotion && Clip != nullptr && Clip->bEnableRootMotion && !Clip->bLockRootMotion)
+                        if (bExtractRootMotion && Clip != nullptr && Clip->bEnableRootMotion
+                            && !Clip->bLockRootMotion && !Clip->IsAdditive())
                         {
                             FRootMotionDelta ClipDelta;
                             if (Clock != PrevSampleTime)
@@ -1023,13 +1024,27 @@ namespace Lumina
             }
 
             case EAnimOp::MakeAdditive:
+            case EAnimOp::MakeAdditiveEx:
             {
                 const uint16 Src = Reader.Read<uint16>();
+
+                uint16 Base  = kAnimNoPoseRegister;
+                uint8  Space = (uint8)EPoseAdditiveSpace::LocalSpace;
+                if (Op == EAnimOp::MakeAdditiveEx)
+                {
+                    Base  = Reader.Read<uint16>();
+                    Space = Reader.Read<uint8>() == (uint8)EAdditiveSpace::MeshSpace
+                        ? (uint8)EPoseAdditiveSpace::MeshSpace
+                        : (uint8)EPoseAdditiveSpace::LocalSpace;
+                }
+
                 const uint16 Dst = Reader.Read<uint16>();
 
                 FAnimTask Task;
                 Task.Type = EAnimTaskType::MakeAdditive;
                 Task.DepA = PoseTaskFor(Src);
+                Task.DepB = Base != kAnimNoPoseRegister ? PoseTaskFor(Base) : FAnimTask::NoTask;
+                Task.AdditiveSpace = Space;
                 SetPoseTask(Dst, OutTasks.Add(Task));
 
                 // A delta pose carries no root motion of its own; its events and curves ride along.
@@ -1371,6 +1386,7 @@ namespace Lumina
                     }
 
                     const float Alpha = Math::Clamp(Contribution.Weight, 0.0f, 1.0f);
+                    const bool bAdditive = Contribution.Clip->IsAdditive();
 
                     FAnimTask Sample;
                     Sample.Type = EAnimTaskType::SampleClip;
@@ -1378,12 +1394,13 @@ namespace Lumina
                     Sample.Time = Contribution.ClipTime;
                     const int16 SampleTask = OutTasks.Add(Sample);
 
-                    FAnimTask Blend;
-                    Blend.Type  = EAnimTaskType::Blend;
-                    Blend.DepA  = Current;
-                    Blend.DepB  = SampleTask;
-                    Blend.Alpha = Alpha;
-                    Current = OutTasks.Add(Blend);
+                    // An additive montage layers onto the slot's input instead of blending away from it.
+                    FAnimTask Combine;
+                    Combine.Type  = bAdditive ? EAnimTaskType::ApplyAdditive : EAnimTaskType::Blend;
+                    Combine.DepA  = Current;
+                    Combine.DepB  = SampleTask;
+                    Combine.Alpha = Alpha;
+                    Current = OutTasks.Add(Combine);
 
                     // A montage curve whose name the graph does not carry has no slot to land in.
                     if (float* DstCurves = CurvesOf(Dst))
@@ -1394,12 +1411,12 @@ namespace Lumina
                             if (Slot != INDEX_NONE)
                             {
                                 const float Value = Curve.Curve.Evaluate(Contribution.ClipTime);
-                                DstCurves[Slot] += (Value - DstCurves[Slot]) * Alpha;
+                                DstCurves[Slot] += bAdditive ? Value * Alpha : (Value - DstCurves[Slot]) * Alpha;
                             }
                         }
                     }
 
-                    if (bExtractRootMotion && Contribution.bRootMotion &&
+                    if (bExtractRootMotion && Contribution.bRootMotion && !bAdditive &&
                         Contribution.Clip->bEnableRootMotion && !Contribution.Clip->bLockRootMotion)
                     {
                         FRootMotionDelta MontageDelta;
@@ -1414,7 +1431,10 @@ namespace Lumina
                         CurrentDelta = RootMotion::BlendRootMotion(CurrentDelta, MontageDelta, Alpha);
                     }
 
-                    ScaleEventWeights(CurrentEvents, 1.0f - Alpha);
+                    if (!bAdditive)
+                    {
+                        ScaleEventWeights(CurrentEvents, 1.0f - Alpha);
+                    }
                 }
 
                 SetPoseTask(Dst, Current);

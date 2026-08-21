@@ -589,6 +589,9 @@ namespace Lumina
         // Fires on every op, not just the commit, so scrubbing a transform field tracks live in the viewport.
         const bool bTransformEdited = Event.OuterType == STransformComponent::StaticStruct();
 
+        // Null for script-defined structs, which carry no compile-time struct ops.
+        FStructOps* PeerOps = Event.OuterType->GetStructOps();
+
         // Multi-edit source: the focus entity is what the bound property table edited. Locate its
         // component instance so the change can be replicated onto the rest of the selection.
         void* FocusInstance = nullptr;
@@ -624,9 +627,17 @@ namespace Lumina
                     }
                 });
 
-                if (DestInstance != nullptr && DestInstance != FocusInstance)
+                // Offset-addressed: a nested row's property is offset within its own struct, not the component.
+                if (DestInstance != nullptr && DestInstance != FocusInstance && Event.ValueOffset >= 0)
                 {
-                    Event.Property->CopyCompleteValue_InContainer(DestInstance, FocusInstance);
+                    Event.Property->CopyCompleteValue(static_cast<uint8*>(DestInstance) + Event.ValueOffset,
+                                                      static_cast<const uint8*>(FocusInstance) + Event.ValueOffset);
+
+                    // The copy above is a raw store, so the peer needs the commit hook the focus instance got.
+                    if (Event.bIsCommit && PeerOps != nullptr && PeerOps->HasPostEdit())
+                    {
+                        PeerOps->PostEdit(DestInstance, Event);
+                    }
                 }
             }
 

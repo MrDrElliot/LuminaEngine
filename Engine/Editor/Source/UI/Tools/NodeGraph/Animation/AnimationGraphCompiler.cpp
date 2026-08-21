@@ -294,11 +294,13 @@ namespace Lumina
         return Dst;
     }
 
-    uint16 FAnimationGraphCompiler::EmitMakeAdditive(uint16 SrcPoseReg)
+    uint16 FAnimationGraphCompiler::EmitMakeAdditive(uint16 SrcPoseReg, uint16 BasePoseReg, EAdditiveSpace Space)
     {
         const uint16 Dst = AllocPoseReg();
-        WriteOp(EAnimOp::MakeAdditive);
+        WriteOp(EAnimOp::MakeAdditiveEx);
         Write(SrcPoseReg);
+        Write(BasePoseReg);
+        Write((uint8)Space);
         Write(Dst);
         return Dst;
     }

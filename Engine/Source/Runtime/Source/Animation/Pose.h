@@ -10,6 +10,14 @@ namespace Lumina
 {
     struct FSkeletonResource;
 
+    // Absolute pose, or a delta layered onto one; a mesh-space delta needs the hierarchy to apply.
+    enum class EPoseAdditiveSpace : uint8
+    {
+        None,
+        LocalSpace,
+        MeshSpace,
+    };
+
     // Local-space skeletal pose (per-bone TRS relative to parent); the VM blends in this space,
     // FK + InvBind fold into skinning matrices once when the final pose is resolved.
     struct RUNTIME_API FPose
@@ -18,8 +26,12 @@ namespace Lumina
         TVector<FQuat> Rotations;
         TVector<FVector3> Scales;
 
+        // Every kernel that writes a pose stamps this, since pose buffers are pooled and reused.
+        EPoseAdditiveSpace AdditiveSpace = EPoseAdditiveSpace::None;
+
         FORCEINLINE int32 GetNumBones() const { return (int32)Rotations.size(); }
         FORCEINLINE bool IsValid() const { return !Rotations.empty(); }
+        FORCEINLINE bool IsAdditive() const { return AdditiveSpace != EPoseAdditiveSpace::None; }
 
         void SetNumBones(int32 NumBones)
         {
@@ -87,8 +99,21 @@ namespace Lumina
         // Bones past the LOD cut get the identity delta.
         RUNTIME_API void MakeAdditive(const FPose& Src, const FSkeletonResource* Skeleton, FPose& OutDelta, int32 NumActiveBones = -1);
 
+        // MakeAdditive against an arbitrary base pose instead of the bind pose.
+        RUNTIME_API void MakeAdditiveFromBase(const FPose& Src, const FPose& Base, FPose& OutDelta, int32 NumActiveBones = -1);
+
+        // Rotation delta between component-space rotations, so it survives the base's parent chain. T/S stay local.
+        RUNTIME_API void MakeAdditiveMeshSpace(const FPose& Src, const FPose& Base, const FSkeletonResource* Skeleton, FPose& OutDelta, int32 NumActiveBones = -1);
+        RUNTIME_API void MakeAdditiveMeshSpace(const FPose& Src, const FSkeletonResource* Skeleton, FPose& OutDelta, int32 NumActiveBones = -1);
+
         // Out := Base + Alpha * Delta (TRS-wise): T adds, S lerps from 1, R slerps from identity then post-multiplies base.
         RUNTIME_API void ApplyAdditive(const FPose& Base, const FPose& Delta, float Alpha, FPose& Out, int32 NumActiveBones = -1);
+
+        // Counterpart of MakeAdditiveMeshSpace: rotates each component-space rotation, then converts back.
+        RUNTIME_API void ApplyAdditiveMeshSpace(const FPose& Base, const FPose& Delta, float Alpha, const FSkeletonResource* Skeleton, FPose& Out, int32 NumActiveBones = -1);
+
+        // Dispatches on Delta's own AdditiveSpace, so callers holding a pose from anywhere apply it right.
+        RUNTIME_API void ApplyAdditivePose(const FPose& Base, const FPose& Delta, float Alpha, const FSkeletonResource* Skeleton, FPose& Out, int32 NumActiveBones = -1);
 
         // Resolves a local-space pose into GPU skinning matrices (Global * InvBind).
         RUNTIME_API void ToSkinningMatrices(const FPose& Pose, const FSkeletonResource* Skeleton, TVector<FMatrix4>& OutMatrices);

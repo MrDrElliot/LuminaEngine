@@ -113,6 +113,7 @@ namespace Lumina
     void FPose::ResetToBindPose(const FSkeletonResource* Skeleton)
     {
         const int32 NumBones = Skeleton ? Skeleton->GetNumBones() : 0;
+        AdditiveSpace = EPoseAdditiveSpace::None;
 
         if (Skeleton && Skeleton->HasBindPoseCache())
         {
@@ -189,6 +190,7 @@ namespace Lumina
         SIMD::BlendQuatArray(Out.Rotations.data(), A.Rotations.data(), B.Rotations.data(), Active, Alpha);
 
         Detail::CopyPoseTail(Out, A, Active, NumBones);
+        Out.AdditiveSpace = A.IsAdditive() ? A.AdditiveSpace : B.AdditiveSpace;
     }
 
     void AnimPose::BlendMasked(const FPose& A, const FPose& B, float Alpha, const TVector<float>& BoneWeights, FPose& Out, int32 NumActiveBones)
@@ -242,6 +244,7 @@ namespace Lumina
         SIMD::BlendQuatArrayVarAlpha(Out.Rotations.data(), A.Rotations.data(), B.Rotations.data(), BoneAlphas.data(), Active);
 
         Detail::CopyPoseTail(Out, A, Active, NumBones);
+        Out.AdditiveSpace = A.IsAdditive() ? A.AdditiveSpace : B.AdditiveSpace;
     }
 
     namespace Detail
@@ -258,15 +261,36 @@ namespace Lumina
         }
     }
 
+    namespace Detail
+    {
+        // Local-space delta: T subtracts, R = Src * conj(Base), S is the ratio (degenerate base passes through).
+        static void MakeLocalDelta(FPose& OutDelta,
+                                   const FVector3* SrcT, const FQuat* SrcR, const FVector3* SrcS,
+                                   const FVector3* BaseT, const FQuat* BaseR, const FVector3* BaseS,
+                                   int32 Active, int32 NumBones)
+        {
+            const int32 NumComponents = Active * 3;
+            SubArray(reinterpret_cast<float*>(OutDelta.Translations.data()),
+                     reinterpret_cast<const float*>(SrcT), reinterpret_cast<const float*>(BaseT), NumComponents);
+            MulConjQuatArray(OutDelta.Rotations.data(), SrcR, BaseR, Active);
+            DivSafeArray(reinterpret_cast<float*>(OutDelta.Scales.data()),
+                         reinterpret_cast<const float*>(SrcS), reinterpret_cast<const float*>(BaseS), NumComponents);
+            FillIdentityDeltaTail(OutDelta, Active, NumBones);
+            OutDelta.AdditiveSpace = EPoseAdditiveSpace::LocalSpace;
+        }
+    }
+
     void AnimPose::MakeAdditive(const FPose& Src, const FSkeletonResource* Skeleton, FPose& OutDelta, int32 NumActiveBones)
     {
         LUMINA_PROFILE_SCOPE();
 
         const int32 NumBones = Skeleton ? Skeleton->GetNumBones() : 0;
         OutDelta.SetNumBones(NumBones);
+        OutDelta.AdditiveSpace = EPoseAdditiveSpace::LocalSpace;
 
         if (NumBones == 0 || Src.GetNumBones() != NumBones)
         {
+            Detail::FillIdentityDeltaTail(OutDelta, 0, NumBones);
             return;
         }
 
@@ -274,18 +298,12 @@ namespace Lumina
 
         if (Skeleton->HasBindPoseCache())
         {
-            const int32 NumComponents = Active * 3;
-
-            // Delta := Src "relative to" Bind: T subtracts, R = Src * conj(Bind) (bind is unit),
-            // S is the component-wise ratio with degenerate bind scales passing through.
-            Detail::SubArray(reinterpret_cast<float*>(OutDelta.Translations.data()),
-                             reinterpret_cast<const float*>(Src.Translations.data()),
-                             reinterpret_cast<const float*>(Skeleton->BindLocalTranslations.data()), NumComponents);
-            Detail::MulConjQuatArray(OutDelta.Rotations.data(), Src.Rotations.data(), Skeleton->BindLocalRotations.data(), Active);
-            Detail::DivSafeArray(reinterpret_cast<float*>(OutDelta.Scales.data()),
-                                 reinterpret_cast<const float*>(Src.Scales.data()),
-                                 reinterpret_cast<const float*>(Skeleton->BindLocalScales.data()), NumComponents);
-            Detail::FillIdentityDeltaTail(OutDelta, Active, NumBones);
+            Detail::MakeLocalDelta(OutDelta,
+                                   Src.Translations.data(), Src.Rotations.data(), Src.Scales.data(),
+                                   Skeleton->BindLocalTranslations.data(),
+                                   Skeleton->BindLocalRotations.data(),
+                                   Skeleton->BindLocalScales.data(),
+                                   Active, NumBones);
             return;
         }
 
@@ -307,6 +325,100 @@ namespace Lumina
         Detail::FillIdentityDeltaTail(OutDelta, Active, NumBones);
     }
 
+    void AnimPose::MakeAdditiveFromBase(const FPose& Src, const FPose& Base, FPose& OutDelta, int32 NumActiveBones)
+    {
+        LUMINA_PROFILE_SCOPE();
+
+        const int32 NumBones = Src.GetNumBones();
+        OutDelta.SetNumBones(NumBones);
+        OutDelta.AdditiveSpace = EPoseAdditiveSpace::LocalSpace;
+
+        if (NumBones == 0 || Base.GetNumBones() != NumBones)
+        {
+            Detail::FillIdentityDeltaTail(OutDelta, 0, NumBones);
+            return;
+        }
+
+        const int32 Active = Detail::ResolveActiveBones(NumActiveBones, NumBones);
+        Detail::MakeLocalDelta(OutDelta,
+                               Src.Translations.data(), Src.Rotations.data(), Src.Scales.data(),
+                               Base.Translations.data(), Base.Rotations.data(), Base.Scales.data(),
+                               Active, NumBones);
+    }
+
+    namespace Detail
+    {
+        // Bones[] is parents-before-children, so one linear pass resolves the whole chain.
+        static void ComputeComponentRotations(const FQuat* Local, const FSkeletonResource* Skeleton, FQuat* Out, int32 Active)
+        {
+            for (int32 i = 0; i < Active; ++i)
+            {
+                const int32 Parent = Skeleton->GetBone(i).ParentIndex;
+                Out[i] = Parent >= 0 ? Out[Parent] * Local[i] : Local[i];
+            }
+        }
+
+        // Slerps identity -> Delta by Alpha along the shortest arc.
+        static FORCEINLINE FQuat ScaleDelta(const FQuat& Delta, float Alpha)
+        {
+            FQuat Scaled = Delta;
+            if (Scaled.w < 0.0f)
+            {
+                Scaled = -Scaled;
+            }
+            return Math::Slerp(FQuat::Identity(), Scaled, Alpha);
+        }
+    }
+
+    void AnimPose::MakeAdditiveMeshSpace(const FPose& Src, const FPose& Base, const FSkeletonResource* Skeleton, FPose& OutDelta, int32 NumActiveBones)
+    {
+        LUMINA_PROFILE_SCOPE();
+
+        const int32 NumBones = Skeleton ? Skeleton->GetNumBones() : 0;
+        OutDelta.SetNumBones(NumBones);
+        OutDelta.AdditiveSpace = EPoseAdditiveSpace::MeshSpace;
+
+        if (NumBones == 0 || Src.GetNumBones() != NumBones || Base.GetNumBones() != NumBones)
+        {
+            Detail::FillIdentityDeltaTail(OutDelta, 0, NumBones);
+            return;
+        }
+
+        const int32 Active = Detail::ResolveActiveBones(NumActiveBones, NumBones);
+
+        thread_local TVector<FQuat> SrcComponent;
+        thread_local TVector<FQuat> BaseComponent;
+        if ((int32)SrcComponent.size() < Active)
+        {
+            SrcComponent.resize(Active);
+            BaseComponent.resize(Active);
+        }
+
+        Detail::ComputeComponentRotations(Src.Rotations.data(), Skeleton, SrcComponent.data(), Active);
+        Detail::ComputeComponentRotations(Base.Rotations.data(), Skeleton, BaseComponent.data(), Active);
+
+        for (int32 i = 0; i < Active; ++i)
+        {
+            OutDelta.Rotations[i]    = SrcComponent[i] * Math::Conjugate(BaseComponent[i]);
+            OutDelta.Translations[i] = Src.Translations[i] - Base.Translations[i];
+
+            const FVector3 BaseS = Base.Scales[i];
+            OutDelta.Scales[i] = FVector3(
+                BaseS.x > 1e-8f ? Src.Scales[i].x / BaseS.x : Src.Scales[i].x,
+                BaseS.y > 1e-8f ? Src.Scales[i].y / BaseS.y : Src.Scales[i].y,
+                BaseS.z > 1e-8f ? Src.Scales[i].z / BaseS.z : Src.Scales[i].z);
+        }
+
+        Detail::FillIdentityDeltaTail(OutDelta, Active, NumBones);
+    }
+
+    void AnimPose::MakeAdditiveMeshSpace(const FPose& Src, const FSkeletonResource* Skeleton, FPose& OutDelta, int32 NumActiveBones)
+    {
+        thread_local FPose BindPose;
+        BindPose.ResetToBindPose(Skeleton);
+        MakeAdditiveMeshSpace(Src, BindPose, Skeleton, OutDelta, NumActiveBones);
+    }
+
     void AnimPose::ApplyAdditive(const FPose& Base, const FPose& Delta, float Alpha, FPose& Out, int32 NumActiveBones)
     {
         LUMINA_PROFILE_SCOPE();
@@ -320,6 +432,7 @@ namespace Lumina
             {
                 Out = Base;
             }
+            Out.AdditiveSpace = Base.AdditiveSpace;
             return;
         }
 
@@ -362,6 +475,7 @@ namespace Lumina
                 OutR[i] = ScaledDelta * BaseR[i];
             }
             Detail::CopyPoseTail(Out, Base, Active, NumBones);
+            Out.AdditiveSpace = Base.AdditiveSpace;
             return;
         }
 
@@ -382,6 +496,64 @@ namespace Lumina
             Out.Scales[i] = Base.Scales[i] * ScaledScale;
         }
         Detail::CopyPoseTail(Out, Base, Active, NumBones);
+        Out.AdditiveSpace = Base.AdditiveSpace;
+    }
+
+    void AnimPose::ApplyAdditiveMeshSpace(const FPose& Base, const FPose& Delta, float Alpha, const FSkeletonResource* Skeleton, FPose& Out, int32 NumActiveBones)
+    {
+        LUMINA_PROFILE_SCOPE();
+
+        const int32 NumBones = Base.GetNumBones();
+        Out.SetNumBones(NumBones);
+
+        if (Skeleton == nullptr || NumBones == 0 || NumBones != Skeleton->GetNumBones()
+            || Delta.GetNumBones() != NumBones || Alpha <= 0.0f)
+        {
+            if (&Out != &Base)
+            {
+                Out = Base;
+            }
+            Out.AdditiveSpace = Base.AdditiveSpace;
+            return;
+        }
+
+        const int32 Active = Detail::ResolveActiveBones(NumActiveBones, NumBones);
+
+        thread_local TVector<FQuat> BaseComponent;
+        thread_local TVector<FQuat> NewComponent;
+        if ((int32)BaseComponent.size() < Active)
+        {
+            BaseComponent.resize(Active);
+            NewComponent.resize(Active);
+        }
+
+        // Base rotations are consumed into BaseComponent before Out is written, so Out may alias Base.
+        for (int32 i = 0; i < Active; ++i)
+        {
+            const int32 Parent = Skeleton->GetBone(i).ParentIndex;
+
+            BaseComponent[i] = Parent >= 0 ? BaseComponent[Parent] * Base.Rotations[i] : Base.Rotations[i];
+            NewComponent[i]  = Detail::ScaleDelta(Delta.Rotations[i], Alpha) * BaseComponent[i];
+
+            const FQuat Local = Parent >= 0 ? Math::Conjugate(NewComponent[Parent]) * NewComponent[i] : NewComponent[i];
+
+            Out.Translations[i] = Base.Translations[i] + Alpha * Delta.Translations[i];
+            Out.Rotations[i]    = Math::Normalize(Local);
+            Out.Scales[i]       = Base.Scales[i] * Math::Mix(FVector3(1.0f), Delta.Scales[i], Alpha);
+        }
+
+        Detail::CopyPoseTail(Out, Base, Active, NumBones);
+        Out.AdditiveSpace = Base.AdditiveSpace;
+    }
+
+    void AnimPose::ApplyAdditivePose(const FPose& Base, const FPose& Delta, float Alpha, const FSkeletonResource* Skeleton, FPose& Out, int32 NumActiveBones)
+    {
+        if (Delta.AdditiveSpace == EPoseAdditiveSpace::MeshSpace && Skeleton != nullptr)
+        {
+            ApplyAdditiveMeshSpace(Base, Delta, Alpha, Skeleton, Out, NumActiveBones);
+            return;
+        }
+        ApplyAdditive(Base, Delta, Alpha, Out, NumActiveBones);
     }
 
     namespace Detail
