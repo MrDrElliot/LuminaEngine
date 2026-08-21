@@ -12,7 +12,7 @@ namespace Lumina
 {
     namespace
     {
-        // The whole binding as one string: "Ctrl + Shift + K", "RMB", "Unbound".
+        // The whole binding as one string, such as Ctrl + Shift + K, RMB, or Unbound.
         FString KeyBindingText(const SKey& Key)
         {
             if (!Key.IsValid())
@@ -51,9 +51,7 @@ namespace Lumina
         const float       Height = ImGui::GetFrameHeight();
         const bool        bValid = DisplayValue.IsValid();
 
-        // Clear is its own button beside the field rather than a sub-region inside it, so hover and
-        // hit-testing are ImGui's instead of a mouse-x compare against a hand-computed rect. Hidden
-        // while listening: the click would land on the button AND be polled as an LMB binding.
+        // Its own button, so hit-testing is ImGui's, and hidden while listening or the click double-counts.
         const bool  bShowClear = bValid && !bCapturing;
         const float ClearW     = bShowClear ? Height + St.ItemSpacing.x : 0.0f;
         const float Avail  = ImGui::GetContentRegionAvail().x - ClearW;
@@ -96,9 +94,7 @@ namespace Lumina
             }
             else
             {
-                // Commit only on a real (non-modifier) key or a mouse button, reading the modifiers
-                // held at that instant. This is the standard key-binder flow: hold Ctrl/Shift/Alt and
-                // then press the key. Bare modifier presses keep listening so a chord can be built.
+                // Bare modifier presses keep listening, so a chord can be built before the key commits.
                 const ImGuiIO& Io = ImGui::GetIO();
                 const EKey K = ImGuiX::PollPressedKey();
                 if (K != EKey::Num && !ImGuiX::IsModifierEKey(K))
@@ -122,7 +118,7 @@ namespace Lumina
             }
         }
 
-        // Discrete-edit transaction: open on the change frame, close the next.
+        // A discrete-edit transaction, opened on the change frame and closed the next.
         if (bCommitted)
         {
             bFinishPending = true;
@@ -147,9 +143,7 @@ namespace Lumina
         SKey ActualValue;
         Property->GetValue(&ActualValue);
 
-        // An external change (reset-to-default, undo/redo, multi-select) must win, even mid-listen:
-        // otherwise the next UpdatePropertyValue writes our stale DisplayValue back and undoes it.
-        // While listening with no external change, ActualValue == CachedValue, so capture isn't disturbed.
+        // An external change must win even mid-listen, or the next write puts the stale value back.
         if (CachedValue != ActualValue)
         {
             CachedValue = DisplayValue = ActualValue;

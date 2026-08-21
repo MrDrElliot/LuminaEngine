@@ -28,10 +28,7 @@ namespace Lumina::Reflection::Visitor
         auto It = MacroMap.find(CursorName);
         if (It != MacroMap.end())
         {
-            // Record the header so the post-parse pass knows to validate its include block (must contain
-            // <stem>.generated.h, must be last). SCRIPT_EXPORT is exempt: a free function emits a thunk into
-            // the .generated.cpp but nothing the header itself must include, so a SCRIPT_EXPORT-only header
-            // needs no .generated.h.
+            // SCRIPT_EXPORT is exempt, since a free function needs nothing the header itself must include.
             if (It->second != EReflectionMacro::ScriptExport)
             {
                 Context->ReflectedHeader->bHasReflectionMacros = true;

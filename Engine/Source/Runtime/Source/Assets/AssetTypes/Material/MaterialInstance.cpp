@@ -19,7 +19,7 @@ namespace Lumina
 
     CMaterial* CMaterialInstance::GetMaterial() const
     {
-        // Bounded, not while(Parent): a cycle that slipped past SetParentMaterial must not hang the walk.
+        // Bounded rather than unbounded, so a cycle that slipped past SetParentMaterial cannot hang.
         CMaterialInterface* Parent = Material.Get();
         for (uint32 Depth = 0; Parent != nullptr && Depth < MaxChainDepth; ++Depth)
         {
@@ -114,7 +114,7 @@ namespace Lumina
 
     static void ApplyOverride(CMaterial* Root, const FMaterialParameterOverride& Override, FMaterialUniforms& Uniforms)
     {
-        // Through the root's name->parameter map, not a scan: a material carries up to 72 parameters.
+        // Through the root's name map rather than a scan, since a material carries up to 72 parameters.
         FMaterialParameter Param;
         if (!Root->GetParameterValue(Override.Type, Override.ParameterName, Param))
         {
@@ -160,19 +160,16 @@ namespace Lumina
             return;
         }
 
-        // The choke point for every override change (RefreshFromParent, PostPropertyChange, enabling or
-        // disabling a parameter), and an override flipping on or off changes which texture a slot samples
-        // -- so it changes what this instance owes the streamer.
+        // An override flipping changes which texture a slot samples, so it changes what is owed the streamer.
 
         EnsureRegisteredWithParent();
 
         // The IMMEDIATE parent's resolved block, which composes a chain only because propagation is top-down.
         MaterialUniforms = *Material->GetMaterialUniforms();
 
-        // Overrides are never pruned here: a recompile that drops a parameter must not destroy its value.
+        // Overrides are never pruned here, so a recompile that drops a parameter cannot destroy its value.
 
-        // Slots are demanded from the parent one at a time, so a parameter this instance overrides never
-        // asks the parent to resolve its default. Runs BEFORE the override loop, which has the last word.
+        // Runs BEFORE the override loop, which has the last word, so an override never resolves the parent default.
         const uint32 OverriddenMask = GetOverriddenTextureMask();
         for (const FMaterialParameter& Param : Root->Parameters)
         {
@@ -198,8 +195,7 @@ namespace Lumina
             }
         }
 
-        // The flags came from the parent wholesale, shading model included. Re-stamp the model field so an
-        // instance override lands -- last, so nothing above can undo it.
+        // Re-stamped last so an instance override lands and nothing above can undo it.
         const uint32 ModelBits =
             ((uint32)GetShadingModel() & kMaterialShadingModelMask) << kMaterialShadingModelShift;
 
@@ -212,7 +208,7 @@ namespace Lumina
         RebuildUniformsFromOverrides();
         UpdateMaterialUniforms();
 
-        // No InvalidateDependency: a resolve stamps the GPU slot INDEX, which a value change never moves.
+        // No invalidate, since a resolve stamps the slot INDEX and a value change never moves it.
     }
 
     void CMaterialInstance::PostPropertyChange(FProperty* ChangedProperty)
@@ -277,8 +273,7 @@ namespace Lumina
 
     bool CMaterialInstance::IsTextureSlotOverridden(uint32 Index) const
     {
-        // A slot no parameter names is a plainly bound texture on the parent, and there is nothing an
-        // instance could override it with -- the mask has no bit for it either way.
+        // A slot no parameter names is plainly bound on the parent, and the mask has no bit for it.
         return Index < MAX_TEXTURES && (GetOverriddenTextureMask() & (1u << Index)) != 0;
     }
 
@@ -388,7 +383,7 @@ namespace Lumina
         Override.Vector = Value;
         Override.bEnabled = true;
 
-        // See SetScalarValue: a targeted 16-byte write, not a rebuild of the whole block.
+        // A targeted 16-byte write rather than a rebuild of the whole block, as in SetScalarValue.
         if (Param.Index < MAX_VECTORS)
         {
             MaterialUniforms.Vectors[Param.Index] = Value;
@@ -419,8 +414,7 @@ namespace Lumina
         Override.Texture = TextureValue;
         Override.bEnabled = true;
 
-        // Writes the uniform slot directly rather than going through RebuildUniformsFromOverrides, so it
-        // has to mark dirty itself.
+        // Writes the uniform slot directly rather than rebuilding, so it has to mark dirty itself.
 
         if (Param.Index < MAX_TEXTURES)
         {
@@ -477,8 +471,7 @@ namespace Lumina
             return;
         }
 
-        // An existing entry just flips its flag; the stored value is retained either way, so re-enabling
-        // restores the user's edits rather than resetting to the parent.
+        // The stored value is retained, so re-enabling restores the user's edits rather than resetting.
         for (FMaterialParameterOverride& O : Overrides)
         {
             if (O.ParameterName == Name)
@@ -490,21 +483,19 @@ namespace Lumina
 
                 O.bEnabled = bEnabled;
 
-                // A full rebuild, unlike the setters: disabling has to restore the parent's value, which
-                // for a texture means resolving the parent default this instance had been skipping.
+                // Disabling has to restore the parent's value, which for a texture means resolving its default.
                 RefreshSubtree();
                 return;
             }
         }
 
-        // Disabling a parameter that was never overridden: nothing to do.
+        // Disabling a parameter that was never overridden has nothing to do.
         if (!bEnabled)
         {
             return;
         }
 
-        // First enable: create the entry seeded with the parent's current value so it starts where the
-        // parameter already is. From here the value persists across toggles.
+        // Seeded with the parent's current value, and from here it persists across toggles.
         FMaterialParameter Param;
         const bool bFound =
             GetParameterValue(EMaterialParameterType::Scalar,  Name, Param) ||
@@ -552,8 +543,7 @@ namespace Lumina
 
         Overrides.erase(NewEnd, Overrides.end());
 
-        // Dropping an override restores the parent's value, which for a texture means resolving the parent
-        // default this instance had been skipping -- a rebuild, not a targeted write.
+        // A texture restore means resolving the parent default this instance had been skipping.
         RefreshSubtree();
     }
 
@@ -655,15 +645,13 @@ namespace Lumina
             return true;
         }
 
-        // The parent owns every slot this instance does not override and handles the async kick. Asking it
-        // first is what makes the rebuild below non-blocking.
+        // Asking the parent first, which owns every unoverridden slot, is what makes the rebuild non-blocking.
         if (!Material->RequestTexturesResolved())
         {
             return false;
         }
 
-        // An override's texture is a hard ref, so it is loaded -- but loaded is not GPU-resident, and the
-        // heap slot is assigned in the texture's own PostLoad. Losing that race bakes the placeholder in.
+        // Loaded is not GPU-resident, and losing the race with the texture's PostLoad bakes the placeholder.
         for (const FMaterialParameterOverride& Override : Overrides)
         {
             if (Override.Type != EMaterialParameterType::Texture || !Override.bEnabled)
@@ -717,9 +705,7 @@ namespace Lumina
             UpdateMaterialUniforms();
         }
 
-        // Only reachable once the parent has fully resolved (the early-out above), so the parent slots this
-        // instance inherits are settled and the collected set will not be stale a frame later. Queued rather
-        // than published -- this gate runs on a worker fiber inside Extract.
+        // Only reachable once the parent resolved, and queued since this gate runs on a worker fiber.
 
         return true;
     }
@@ -771,8 +757,7 @@ namespace Lumina
 
     bool CMaterialInstance::IsUnlit()
     {
-        // Through GetShadingModel so an override is honored here too; querying the parent directly
-        // would let the two disagree about the same instance.
+        // Through GetShadingModel so an override is honored and the two cannot disagree.
         return GetShadingModel() == EMaterialShadingModel::Unlit;
     }
 
@@ -835,8 +820,7 @@ namespace Lumina
 
         SetReadyForRender(true);
 
-        // Surfaces that fell back to the default material while this was compiling still record it as a
-        // dependency, so they are woken here even though they never resolved against it.
+        // Surfaces that fell back to the default still record this as a dependency, so they wake here.
         FMeshResolveCache::InvalidateDependency(this);
     }
 
@@ -854,8 +838,7 @@ namespace Lumina
             Material->UnregisterChild(this);
         }
 
-        // Deferred for the same reason as CMaterial::OnDestroy -- see the note there.
-        // TryRender on a teardown path: an instance outliving the renderer must release quietly, not assert.
+        // An instance outliving the renderer must release quietly rather than assert.
         if (GetMaterialIndex() != -1)
         {
             if (FRenderManager* RenderManager = TryRender())

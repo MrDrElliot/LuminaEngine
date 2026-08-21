@@ -50,8 +50,7 @@ namespace Lumina
     {
         (void)CPackage::OnPackageDestroyed.AddMember(this, &ThisClass::OnPackageDestroyed);
 
-        // Any registry change (import/save/delete) may have altered content hashes; flag a sweep so
-        // stale in-memory records regenerate. The actual erase happens on Extract (ProcessRenderQueue).
+        // Any registry change may have altered content hashes, so flag a sweep for stale records.
         (void)FAssetRegistry::Get().GetOnAssetRegistryUpdated().AddLambda([this]()
         {
             bRegistryDirty.store(true, std::memory_order_relaxed);
@@ -80,8 +79,7 @@ namespace Lumina
             Scene.SetCameraTransform(CamPos, Center, kThumbnailFOV);
         };
 
-        // Populate the scene with a skeletal mesh in bind pose (the render path falls back to identity
-        // bones when no animation drives it). Shared by skeletal-mesh/skeleton/animation thumbnails.
+        // The render path falls back to identity bones when no animation drives the mesh.
         auto RenderSkeletalMesh = [SetupStudioLighting, FrameBounds](FThumbnailScene& Scene, CSkeletalMesh* Mesh)
         {
             if (Mesh == nullptr)
@@ -227,12 +225,12 @@ namespace Lumina
                 {
                     return &Record->Thumbnail;
                 }
-                // Present but in-flight (Requested/queued) or Failed: show the generic icon, don't re-enqueue.
+                // In-flight or failed, so show the generic icon and do not re-enqueue.
                 return nullptr;
             }
         }
 
-        // First sighting of this asset: insert a placeholder (dedups concurrent callers) and resolve async.
+        // First sighting, so insert a placeholder to dedup concurrent callers and resolve asynchronously.
         {
             FWriteScopeLock Lock(ThumbnailLock);
             if (Thumbnails.find(Package) != Thumbnails.end())
@@ -253,8 +251,7 @@ namespace Lumina
         LUMINA_MEMORY_SCOPE("Thumbnails");
         Task::AsyncTask(1, 1, [this, Package](uint32, uint32, uint32)
         {
-            // Snapshot the identity out of the registry immediately; the returned pointer is only valid
-            // under the registry's momentary lock.
+            // The returned pointer is only valid under the registry's momentary lock, so snapshot it now.
             FGuid        GUID;
             uint64       ContentHash = 0;
             FName        ClassName;
@@ -308,8 +305,7 @@ namespace Lumina
                 }
             }
 
-            // 3. Queue for render. Only bother if this class has a renderer; the extract-phase drain renders it
-            // once it is resident (we never load the object here -- that races the editor's loader).
+            // Never load the object here, since that would race the editor's own loader on the same object.
             CClass* Klass = FindObject<CClass>(ClassName);
             if (Klass == nullptr || !CanGenerateFor(Klass))
             {
@@ -429,9 +425,7 @@ namespace Lumina
             return false;
         }
 
-        // Painted first: it needs no world, no GPU and no readback, so a class that can be drawn should
-        // never pay for a scene capture. Everything downstream (cache record, .lasset embed, GPU upload)
-        // consumes the same FPackageThumbnail either way.
+        // Painted first, since a class that can be drawn should never pay for a scene capture.
         if (FThumbnailPainterFn* Painter = FindPainter(Asset->GetClass()))
         {
             return (*Painter)(Asset, ThumbnailUtils::kThumbnailResolution, Out);
@@ -443,22 +437,13 @@ namespace Lumina
             return false;
         }
 
-        // Reuse ONE preview world across captures. This used to construct and tear down a whole
-        // FThumbnailScene per thumbnail, which meant every single capture paid a CWorld construction, an
-        // FDefaultSceneRenderer::Init (a full RHI::WaitDeviceIdle, a sky/IBL bake, a shadow-atlas allocation
-        // and ~40 render targets) and the matching teardown -- on the game thread, once per frame for as
-        // long as the queue was non-empty. That is what made browsing a folder feel like the editor had
-        // locked up.
-        //
-        // ResetContents() destroys the previous asset's entities and keeps the camera, so each capture
-        // still starts from a clean scene. Begin() is idempotent.
+        // ONE preview world is reused, since a scene per thumbnail made browsing a folder feel locked up.
         if (!AcquireScene())
         {
             return false;
         }
 
-        // This path BLOCKS, so an in-flight browser capture has to be collected first -- one scene means
-        // one render target, and repurposing it would corrupt that pending copy.
+        // This path BLOCKS, so an in-flight browser capture must be collected before the target is reused.
         FlushPendingCapture();
 
         PersistentScene->ResetContents();
@@ -476,7 +461,7 @@ namespace Lumina
         PersistentScene->Begin();
         if (PersistentScene->GetWorld() == nullptr)
         {
-            PersistentScene    = nullptr;   // failed init: don't cache a dead scene for every later capture
+            PersistentScene    = nullptr;   // failed init, so do not cache a dead scene for every later capture
             bHasPendingRequest = false;
             return false;
         }
@@ -525,10 +510,7 @@ namespace Lumina
             SweepInvalidatedRecords();
         }
 
-        // Collect the capture submitted on an earlier frame. This is the whole point of the async path: the
-        // game thread submits, returns, and picks the bytes up once the GPU has signaled -- instead of
-        // blocking on a readback per thumbnail. Nothing else may start while one is in flight, because the
-        // scene (and therefore the render target the pending copy reads) is shared.
+        // Nothing else may start while one is in flight, because the render target it reads is shared.
         if (bHasPendingRequest)
         {
             if (PersistentScene == nullptr || !PersistentScene->HasPendingCapture())
@@ -537,7 +519,7 @@ namespace Lumina
             }
             else if (!PersistentScene->IsCaptureReady())
             {
-                return;                       // still on the GPU -- do NOT wait for it
+                return;                       // still on the GPU, do NOT wait for it
             }
             else
             {
@@ -555,12 +537,7 @@ namespace Lumina
             }
         }
 
-        // Take the whole queue and render up to Budget assets that are ALREADY resident + fully loaded, keeping
-        // the rest for a later frame. We NEVER load the object here (or on a worker): loading a CObject off the
-        // editor's own loader path races it on the same non-atomic object and tears its resources -> crash.
-        // So an asset without a cached/embedded thumbnail only renders once something else has loaded it (the
-        // open level, or the user opening it). FindObject is a cheap hash lookup, so scanning the queue each
-        // frame is fine; kMaxDeferChecks bounds how long a never-loaded asset lingers before we give up.
+        // Loading a CObject off the editor's loader path races it and tears its resources.
         TVector<FRenderRequest> Work;
         {
             FScopeLock Lock(RenderQueueMutex);
@@ -568,11 +545,7 @@ namespace Lumina
         }
         if (Work.empty())
         {
-            // Nothing queued: hold the scene briefly in case more tiles scroll into view, then let it go.
-            // Keeping a 512^2 render scene (plus shadow atlas, sky cube and IBL targets) resident for the
-            // whole session to serve an empty queue is the wrong trade -- and releasing it while idle also
-            // keeps it from outliving the RHI at shutdown, which is the one ordering this class has no
-            // explicit hook for.
+            // Releasing while idle also keeps the scene from outliving the RHI at shutdown.
             constexpr uint32 kSceneIdleFramesBeforeRelease = 240;   // ~4s at 60fps
             if (PersistentScene != nullptr && !PersistentScene->HasPendingCapture()
                 && ++SceneIdleFrames >= kSceneIdleFramesBeforeRelease)
@@ -607,7 +580,7 @@ namespace Lumina
         {
             FRenderRequest& Request = Work[Index];
 
-            // bHasPendingRequest gates as hard as the budget does: only one capture can be in flight.
+            // bHasPendingRequest gates as hard as the budget, since only one capture can be in flight.
             if (Rendered >= Budget || bHasPendingRequest)
             {
                 Keep.push_back(Move(Request));   // budget spent this frame; re-check next frame
@@ -623,7 +596,7 @@ namespace Lumina
                 continue;
             }
 
-            // A material whose shaders aren't compiled yet would capture as the default material -- defer.
+            // A material whose shaders are not compiled yet would capture as the default material, so defer.
             if (CMaterialInterface* Material = Cast<CMaterialInterface>(Asset))
             {
                 if (!Material->IsReadyForRender())

@@ -50,7 +50,7 @@ namespace Lumina::SlowTaskModal
             constexpr float SpinnerRadius = 8.0f;
             constexpr float TextIndent    = SpinnerRadius * 2.0f + 12.0f;
 
-            // Header row: spinner + bold title, vertically centered against each other.
+            // The header row holds a spinner and bold title, vertically centered against each other.
             const float RowStartY = ImGui::GetCursorPosY();
             DrawSpinner(SpinnerRadius, 2.5f, ImGui::GetColorU32(GAccent));
 
@@ -74,12 +74,10 @@ namespace Lumina::SlowTaskModal
 
             ImGui::Spacing();
 
-            // Progress bar: accent fill on a faint accent track, rounded.
+            // An accent fill on a faint accent track, rounded.
             const FFixedString Overlay = FormatAs<FFixedString>("{:.0f}%", Task.Fraction * 100.0f);
 
-            // ProgressBar draws the overlay percentage INSIDE the bar, clipped to it, so the bar has to be
-            // at least a line of text plus padding tall or the digits lose their top and bottom. 14 keeps
-            // the slim look at 1x; the text term is what makes it survive DPI scaling.
+            // The overlay percentage draws inside the bar, so it must clear a line of text plus padding.
             constexpr float BarPaddingY = 3.0f;
             const float BarHeight = ImMax(14.0f, ImGui::GetTextLineHeight() + BarPaddingY * 2.0f);
 

@@ -34,23 +34,14 @@ namespace Lumina
     static constexpr float      ResetColumnWidth = 22.0f;
     static ImU32 ModifiedMarkerColor() { return EditorColors::U32(EditorColors::Warning()); }
 
-    // EPropertyChangeOp::Updated means two different things depending on the widget. Ones with an
-    // activate/deactivate lifecycle (numeric drag or type-in, asset pickers) emit
-    // Started -> Updated ... Updated -> Finished, so every keystroke and every drag frame is an Updated and
-    // only Finished is the commit. Ones without a lifecycle (enum and tag dropdowns, text committed on
-    // deactivate) emit a lone Updated as their commit and never send Finished at all.
-    //
-    // The struct edit hooks want the commit. So inside a session the Updateds are suppressed and only its
-    // Finished counts; outside one, a lone Updated fires immediately. That keeps PostEditChange from running
-    // per keystroke while still reaching the widgets that have no Finished to wait for.
+    // Inside a session only Finished commits, since a lifecycle-free widget sends a lone Updated.
     static bool IsCommitOp(EPropertyChangeOp Op, bool bSessionActive)
     {
         return Op == EPropertyChangeOp::Finished
             || (Op == EPropertyChangeOp::Updated && !bSessionActive);
     }
 
-    // PreEditChange wants the value as it stood before the edit. For a session that is its Started -- by the
-    // commit the interactive writes have already landed and the original is gone.
+    // For a session that is Started, since by the commit the interactive writes have already landed.
     static bool IsPreEditOp(EPropertyChangeOp Op, bool bSessionActive)
     {
         return Op == EPropertyChangeOp::Started
@@ -401,7 +392,7 @@ namespace Lumina
     {
         Update();
 
-        // Skip collapsed subtrees: children only accumulate ChangeOp when drawn, and huge arrays get expensive.
+        // Children only accumulate ChangeOp when drawn, and a huge array gets expensive.
         if (bExpanded)
         {
             for (const TUniquePtr<FPropertyRow>& Child : Children)
@@ -430,16 +421,11 @@ namespace Lumina
 
     namespace
     {
-        // Shift+RMB copy / Shift+LMB paste clipboard. One buffer for the whole editor, so a value can
-        // move between panels (an entity's detail row into an asset's), not just within one table.
+        // One buffer for the whole editor, so a value can move between panels, not just within one table.
         TVector<uint8> GPropertyClipboardBytes;
         FProperty*     GPropertyClipboardSource = nullptr;
 
-        // "Same type" has to mean the same CONCRETE type. Matching type flags and element size is not
-        // enough: two different structs agree on both, and pasting one into the other reinterprets raw
-        // bytes. Containers are excluded outright -- their element type would need the same treatment
-        // one level down, and silently pasting a TVector<float> over a TVector<FVector3> is exactly the
-        // kind of corruption this check exists to prevent.
+        // Two different structs agree on flags and size, so a paste between them reinterprets raw bytes.
         bool ArePropertiesCompatible(FProperty* A, FProperty* B)
         {
             if (A == nullptr || B == nullptr)
@@ -487,8 +473,7 @@ namespace Lumina
 
         GPropertyClipboardBytes.clear();
 
-        // Same serialization CopyPropertiesTo uses, so object references survive as GUIDs rather than
-        // raw pointers and a paste resolves them properly.
+        // The same serialization CopyPropertiesTo uses, so object references survive as GUIDs.
         FMemoryWriter Writer(GPropertyClipboardBytes);
         FObjectProxyArchiver Proxy(Writer, true);
         PropertyHandle->Property->Serialize(Proxy, Value);
@@ -512,8 +497,7 @@ namespace Lumina
             return;
         }
 
-        // Bracketed like a discrete edit so undo captures the old value and post-edit hooks fire --
-        // the same shape PerformResetToDefault uses.
+        // Bracketed like a discrete edit so undo captures the old value and post-edit hooks fire.
         DispatchChange(EPropertyChangeOp::Started);
 
         {
@@ -579,16 +563,7 @@ namespace Lumina
         {
             Callbacks.StartChangeCallback(Event);
         }
-        // An ATOMIC commit -- a picker, a combo, a bind menu -- has no drag to open a session with, so it
-        // reports Finished on its own. The start hook is what opens the undo transaction and snapshots the
-        // before-image, so without this the matching commit found nothing open and the edit silently left
-        // no undo entry at all. Opening it here beats making every such customization fake a two-frame
-        // Started/Finished sequence.
-        //
-        // Deliberately fires only the start CALLBACK rather than recursing through DispatchChange: a nested
-        // dispatch would also re-run PreEdit and the post-change callback, which the commit below runs
-        // anyway. And it has to happen here, above UpdatePropertyValue, or the "before" image would be
-        // snapshotted after the new value was already written.
+        // An atomic commit has no drag to open a session, so its undo transaction is opened here.
         else if (Op == EPropertyChangeOp::Finished && !bEditSessionActive && Callbacks.StartChangeCallback)
         {
             Callbacks.StartChangeCallback(Event);
@@ -639,8 +614,7 @@ namespace Lumina
 
     void FPropertyRow::DrawRow(float Offset, bool bReadOnly)
     {
-        // First: HasExtraControls() is queried further down and resolves through AllowResize(), which
-        // reads this.
+        // First, since HasExtraControls() resolves through AllowResize(), which reads this.
         bDrawReadOnly = bReadOnly;
 
         ImGui::PushID(this);
@@ -663,9 +637,7 @@ namespace Lumina
         ImGui::AlignTextToFramePadding();
         DrawHeader(Offset);
 
-        // Shift+RMB copies this property's value, Shift+LMB pastes a compatible one. Hung off the name
-        // cell (the row's only stable click target -- the value cell belongs to whatever widget the
-        // customization drew there).
+        // Hung off the name cell, the row's only stable click target, since the value cell is the widget's.
         const bool bShiftHeld = ImGui::GetIO().KeyShift;
         if (!bIsCategory && PropertyHandle && PropertyHandle->Property && bShiftHeld && ImGui::IsItemHovered())
         {
@@ -680,8 +652,7 @@ namespace Lumina
             }
         }
 
-        // Right-click context menu; categories don't get one. Skipped while Shift is held so the copy
-        // chord above does not also pop the menu.
+        // Skipped while Shift is held, so the copy chord above does not also pop the menu.
         if (!bIsCategory && !bShiftHeld && PropertyHandle && PropertyHandle->Property)
         {
             if (ImGui::BeginPopupContextItem("##PropCtx"))
@@ -700,8 +671,7 @@ namespace Lumina
         {
             const bool bHasExtras = HasExtraControls();
 
-            // Opt-in trailing control (e.g. delete button), gated to top-level rows so
-            // nested struct members / array elements don't inherit it from shared callbacks.
+            // Gated to top-level rows so nested members do not inherit it from shared callbacks.
             const bool bHasTrailing = Callbacks.RowTrailingControlFn
                 && PropertyHandle && PropertyHandle->Property
                 && ParentRow != nullptr && ParentRow->IsCategory();
@@ -776,8 +746,7 @@ namespace Lumina
 
         ImGui::PopID();
 
-        // Multi-value top-level rows hide their children; the aggregate "(Multiple Values)" stands in
-        // for the whole subtree (which would otherwise show the focus object's values, misleadingly).
+        // The aggregate stands in for the subtree, which would otherwise show the focus object's values.
         if (bExpanded && !Children.empty() && !bMultipleValues)
         {
             ImGui::BeginDisabled(IsReadOnly());
@@ -800,8 +769,7 @@ namespace Lumina
 
     bool FPropertyRow::ApplyFilter(const ImGuiTextFilter& Filter, bool bFilterActive, bool bJustActivated, bool bJustCleared)
     {
-        // Stash the user's real collapse state on the way in, put it back on the way out. Without this a
-        // search would silently expand the whole tree and leave it that way.
+        // Without this a search would silently expand the whole tree and leave it that way.
         if (bJustActivated)
         {
             bExpandedSaved = bExpanded;
@@ -810,8 +778,7 @@ namespace Lumina
         bool bAnyChildPasses = false;
         for (const TUniquePtr<FPropertyRow>& Child : Children)
         {
-            // Not short-circuited: every descendant needs its own flag updated, not just enough of them
-            // to answer this row's question.
+            // Not short-circuited, since every descendant needs its own flag updated.
             bAnyChildPasses |= Child->ApplyFilter(Filter, bFilterActive, bJustActivated, bJustCleared);
         }
 
@@ -830,9 +797,7 @@ namespace Lumina
 
         bPassesFilter = bSelfMatches || bAnyChildPasses;
 
-        // Open anything that survived so a match several levels down is on screen rather than behind a
-        // collapsed parent. A row that matched on its own name stays as the user left it -- expanding it
-        // would dump its whole subtree on them when they searched for the row itself.
+        // A row that matched on its own name stays as the user left it rather than dumping its subtree.
         if (bAnyChildPasses)
         {
             bExpanded = true;
@@ -869,9 +834,7 @@ namespace Lumina
         ImGuiX::WrappedTooltip_Internal(*Tooltip);
     }
 
-    // Leaf-property customization factory (numeric / bool / object / name / string / enum ...). Shared by the
-    // leaf property row and the map-entry key/value editors. Returns null for non-leaf types (struct/array/...),
-    // which have their own dedicated rows.
+    // Shared by the leaf row and the map-entry editors, returning null for struct and array types.
     TSharedPtr<IPropertyTypeCustomization> MakeLeafPropertyCustomization(FProperty* Prop)
     {
         switch (Prop->GetType())
@@ -883,7 +846,7 @@ namespace Lumina
         case EPropertyTypeFlags::UInt8:  return FNumericPropertyCustomization<uint8,  ImGuiDataType_U8>::MakeInstance();
         case EPropertyTypeFlags::UInt16: return FNumericPropertyCustomization<uint16, ImGuiDataType_U16>::MakeInstance();
         case EPropertyTypeFlags::UInt32:
-            // A uint32 tagged PROPERTY(Entity) is an entity reference: draw the picker instead of a raw number.
+            // A uint32 tagged PROPERTY(Entity) draws the picker instead of a raw number.
             if (Prop->HasMetadata("Entity"))
             {
                 return FEntityPropertyCustomization::MakeInstance();
@@ -918,8 +881,7 @@ namespace Lumina
 
     FStringView FPropertyPropertyRow::GetFilterLabel() const
     {
-        // Array elements are labeled by index, which nobody searches for; they still survive on a
-        // descendant match through ApplyFilter.
+        // Array elements are labeled by index, which nobody searches, but a descendant match still passes.
         if (IsArrayElementProperty() || PropertyHandle == nullptr || PropertyHandle->Property == nullptr)
         {
             return FStringView();
@@ -1201,9 +1163,7 @@ namespace Lumina
 
     bool FArrayPropertyRow::AllowResize() const
     {
-        // Read-only has to disable STRUCTURAL edits too. Disabling only the value widgets left the +,
-        // trash and per-element insert/remove live, so a read-only table could still change the array's
-        // length -- which is a bigger edit than the ones it was refusing.
+        // Disabling only the value widgets left the add and trash buttons live, a bigger edit than refused.
         return !bDrawReadOnly && (ArrayProperty == nullptr || !ArrayProperty->HasMetadata("NoResize"));
     }
 
@@ -1214,8 +1174,7 @@ namespace Lumina
 
     bool FArrayPropertyRow::HasExtraControls() const
     {
-        // The array-level extra controls are add-element and clear-all, both
-        // resize operations, so a NoResize array hides them entirely.
+        // Both extra controls are resize operations, so a NoResize array hides them entirely.
         return AllowResize();
     }
 
@@ -1494,8 +1453,7 @@ namespace Lumina
             return;
         }
 
-        // Commit the in-flight key edit, then notify the map field. Keys are edited in place (entries are
-        // addressed by iteration index, and save/reload re-hashes).
+        // Keys are edited in place, since entries are addressed by iteration index and reload re-hashes.
         const bool bKeySessionActiveForHooks = bKeyEditSessionActive || (KeyChangeOp == EPropertyChangeOp::Started);
         const bool bFirePreEdit  = IsPreEditOp(KeyChangeOp, bKeySessionActiveForHooks);
         const bool bFirePostEdit = IsCommitOp(KeyChangeOp, bKeySessionActiveForHooks);
@@ -1566,7 +1524,7 @@ namespace Lumina
         }
         else
         {
-            // Non-leaf key (e.g. a struct): read-only placeholder, edited via add/remove.
+            // A non-leaf key gets a read-only placeholder and is edited through add and remove.
             ImGui::TextDisabled("<key %lld>", static_cast<long long>(EntryIndex));
         }
     }
@@ -1678,16 +1636,14 @@ namespace Lumina
         void* InstancePtr = PropertyHandle->GetValuePtr();
         void* DefaultInstancePtr = PropertyHandle->GetDefaultValuePtr();
         PropertyTable = MakeUnique<FPropertyTable>(InstancePtr, StructProperty->GetStruct(), DefaultInstancePtr);
-        // Nested table inside a row: the owning table's search box already covers these properties.
+        // A nested table, since the owning table's search box already covers these properties.
         PropertyTable->SetShowSearchBar(false);
-        // Forward the owning row's change callbacks so edits to nested-struct members notify
-        // (save/undo) exactly like top-level property edits.
+        // Forwarded so a nested-struct member edit notifies save and undo like a top-level one.
         PropertyTable->ChangeEventCallbacks = Callbacks;
         PropertyTable->RebuildTree();
     }
 
-    // Display label for a candidate. The script candidate's C# type name in ScriptTypeName metadata
-    // when present, else the struct's own name.
+    // The C# type name from ScriptTypeName when present, otherwise the struct's own name.
     static const char* InstancedStructLabel(const CStruct* Type)
     {
         if (const FString* ScriptName = Type->Metadata.TryGetMetadata("ScriptTypeName"))
@@ -1697,8 +1653,7 @@ namespace Lumina
         return Type->GetName().c_str();
     }
 
-    // Type picker over Base and its derived structs, with a None entry at index 0. Returns the chosen
-    // type (or Current when unchanged). ScriptInstanceBase markers are hidden.
+    // A None entry sits at index 0, and ScriptInstanceBase markers are hidden.
     static CStruct* DrawInstancedStructTypePicker(const char* StrId, CStruct* Base, CStruct* Current, bool& bOutChanged)
     {
         bOutChanged = false;
@@ -1846,7 +1801,7 @@ namespace Lumina
 
         // Diff/reset of the instance's own fields compares against that struct's default instance.
         PropertyTable = MakeUnique<FPropertyTable>(Instance->GetMutableMemory(), Type, Type->GetDefaultInstance());
-        // Nested table inside a row: the owning table's search box already covers these properties.
+        // A nested table, since the owning table's search box already covers these properties.
         PropertyTable->SetShowSearchBar(false);
         PropertyTable->ChangeEventCallbacks = Callbacks;
         PropertyTable->RebuildTree();
@@ -1862,8 +1817,7 @@ namespace Lumina
 
     void FOptionalPropertyRow::Update()
     {
-        // Detect external mutations of the engaged state (e.g. gameplay code or
-        // an undo) and rebuild the child tree to match before drawing.
+        // Detects an external change such as gameplay code or an undo, and rebuilds before drawing.
         const bool bEngagedNow = OptionalProperty->HasValue(GetPropertyHandle()->GetValuePtr());
         if (bEngagedNow != bWasEngaged)
         {
@@ -1891,8 +1845,7 @@ namespace Lumina
         ImGui::BeginDisabled(bReadOnly || IsReadOnly());
         if (ImGui::Checkbox("##OptionalSet", &bEngaged))
         {
-            // Engaging default-constructs the payload, disengaging discards it.
-            // Children rebuild now to keep the UI in sync (also next frame in Update).
+            // Engaging default-constructs the payload, so children rebuild now to keep the UI in sync.
             if (bEngaged)
             {
                 OptionalProperty->SetValue(ContainerPtr, nullptr);
@@ -1997,8 +1950,7 @@ namespace Lumina
 
     void FCategoryPropertyRow::DrawHeader(float Offset)
     {
-        // Categories paint both row cells with a darker background to read as
-        // a visual section break independent of the row-bg alternation.
+        // A darker background reads as a section break independent of the row-bg alternation.
         ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, CategoryBgColor());
         ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg1, CategoryBgColor());
 
@@ -2057,8 +2009,7 @@ namespace Lumina
             ChangeEventCallbacks.Type = Class;
             ChangeEventCallbacks.Instance = InObject;
 
-            // Don't plumb a default when we are the CDO; avoids a misleading
-            // "modified" indicator on the rare CDO-edit flow.
+            // Avoids a misleading modified indicator on the rare CDO-edit flow.
             if (Class != nullptr && !InObject->HasAnyFlag(OF_DefaultObject))
             {
                 DefaultObject = Class->GetDefaultObject();
@@ -2098,7 +2049,7 @@ namespace Lumina
 
                     if (Sep > SegmentStart)
                     {
-                        // Via FStringView: FName(const char*, uint32) is base+NUMBER, so a raw length there yields "Physics_8".
+                        // Through FStringView, since FName(const char*, uint32) is base plus NUMBER, not a length.
                         FName SegmentName(FStringView(CategoryPath.data() + SegmentStart, Sep - SegmentStart));
                         TargetRow = (TargetRow == nullptr)
                             ? FindOrCreateCategoryRow(SegmentName)
@@ -2205,12 +2156,10 @@ namespace Lumina
             ImGuiTableFlags_SizingStretchSame |
             ImGuiTableFlags_RowBg;
 
-        // Search runs before the width measure below: a filtered-out row must not size the header column.
+        // Search runs first, so a filtered-out row cannot size the header column.
         if (bShowSearchBar)
         {
-            // Scoped to the table instance. The PushID(this) below only covers the rows, so two tables
-            // in one window (node details plus the preview editor) submitted the same widget id and
-            // tripped ImGui's conflicting-id check.
+            // PushID(this) only covers rows, so two tables in one window collided on the same widget id.
             ImGui::PushID(this);
             ImGuiX::SearchBar("##PropertySearch", PropertyFilter, LE_ICON_MAGNIFY " Search properties...");
             ImGui::PopID();
@@ -2241,8 +2190,7 @@ namespace Lumina
 
             for (auto& [Name, Row] : CategoryMap)
             {
-                // UpdateRow still runs on filtered-out rows: it drains queued array mutations and edit
-                // state, and skipping it would strand an edit made just before the search was typed.
+                // UpdateRow drains queued array mutations, so skipping it strands an edit made before the search.
                 Row->UpdateRow();
                 if (Row->PassesFilter())
                 {
@@ -2282,9 +2230,7 @@ namespace Lumina
         const bool bJustCleared = !bFiltering && bWasFiltering;
         bWasFiltering = bFiltering;
 
-        // Re-evaluated every frame rather than only on a text change: the tree is rebuilt underneath us by
-        // array edits, resets and object swaps, and a stale flag would hide a live row. Safe to call twice
-        // in a frame -- the second call sees no transition and just recomputes the same flags.
+        // The tree is rebuilt underneath by array edits and object swaps, so a stale flag would hide a row.
         if (bFiltering || bJustCleared)
         {
             for (auto& [Name, Row] : CategoryMap)
@@ -2310,8 +2256,7 @@ namespace Lumina
     {
         EnsureTreeBuilt();
 
-        // A customization draws the whole table itself; there is no row tree to filter, so it is always
-        // shown rather than silently vanishing under a search.
+        // A customization draws its own table, so it is always shown rather than vanishing under a search.
         if (Customization != nullptr)
         {
             return true;
@@ -2338,8 +2283,7 @@ namespace Lumina
     {
         PropertyFilter.Clear();
 
-        // Restore collapse state immediately rather than waiting for the next draw's edge detection --
-        // the button press and the restore should look like one action.
+        // Restored immediately, so the button press and the restore look like one action.
         if (bWasFiltering)
         {
             for (auto& [Name, Row] : CategoryMap)

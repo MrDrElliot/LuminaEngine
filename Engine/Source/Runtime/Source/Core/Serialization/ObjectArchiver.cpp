@@ -47,8 +47,7 @@ namespace Lumina
     {
         FObjectProxyArchiver::operator<<(Obj);
 
-        // Write side is untouched: the source object's GUID is what goes into the buffer. The swap
-        // happens on the way back out, once the GUID has resolved to the object it named.
+        // The source GUID goes into the buffer, and the swap happens on the way back out.
         if (IsReading())
         {
             Obj = Remapped(Obj);

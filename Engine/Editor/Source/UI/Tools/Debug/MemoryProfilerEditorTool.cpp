@@ -36,8 +36,7 @@ namespace Lumina
             return std::strncmp(Text, Prefix, std::strlen(Prefix)) == 0;
         }
 
-        // Frames every stack ends in: the CRT entry point, the OS thread/fiber thunks, and the window
-        // proc chain. They carry no information about the allocation and trebled the height of a stack.
+        // The CRT entry point and OS thunks carry no information and trebled a stack's height.
         bool IsNoiseFrame(const char* Fn)
         {
             static const char* const kNoise[] = {
@@ -52,9 +51,7 @@ namespace Lumina
             return false;
         }
 
-        // Container and allocator internals. They say HOW the memory was taken (a vector grew, a
-        // hashtable inserted a node); the frame below says WHO wanted it, which is what a reader is
-        // looking for -- so these never get to be the headline of a call site.
+        // These say HOW the memory was taken, while the frame below says WHO wanted it.
         bool IsPlumbingFrame(const char* Fn)
         {
             static const char* const kPrefixes[] = {
@@ -68,9 +65,7 @@ namespace Lumina
             return false;
         }
 
-        // Template arguments are most of the length of a name like
-        // Containers::TRawHashTable<__int64,TPair<...>,...>::insert and none of the meaning at a glance.
-        // Collapsed to <...> for the row; the tooltip still carries the full text.
+        // Collapsed for the row, and the tooltip still carries the full text.
         FString CollapseTemplateArgs(const FString& In)
         {
             FString Out;
@@ -93,8 +88,7 @@ namespace Lumina
             return Out;
         }
 
-        // Namespace-qualified names are long and the qualification repeats on every row. The leaf
-        // (last "::" segment plus the type it hangs off) is what distinguishes one frame from another.
+        // The leaf segment plus the type it hangs off is what distinguishes one frame from another.
         FString ShortenForRow(const FString& Full, size_t MaxLen)
         {
             FString Text = Full.find('<') != FString::npos ? CollapseTemplateArgs(Full) : Full;
@@ -102,18 +96,12 @@ namespace Lumina
             {
                 return Text;
             }
-            // Keep the tail: the leaf function is at the end of a qualified name.
+            // Keep the tail, since the leaf function is at the end of a qualified name.
             return FString("...") + Text.substr(Text.size() - MaxLen);
         }
 #endif
 
-        // Every GPU allocation the engine makes is named "Subsystem.Thing" -- Scene.HDR, Texture.Rock_D,
-        // Upload.StagingSlice -- so the segment before the first dot already is the purpose, and no
-        // parallel category enum has to be kept in sync with the allocation sites.
-        //
-        // Unnamed allocations fall back to what the allocation structurally is, which is all the RHI
-        // knows about one. A growing "unnamed" bucket means a site that needs a SetDebugName, not a
-        // limitation of the breakdown.
+        // Every GPU allocation is named Subsystem.Thing, so the segment before the dot is the purpose.
         FString GPUPurposeOf(const RHI::FGPUAllocation& Alloc)
         {
             if (Alloc.Name[0] != '\0')
@@ -168,7 +156,7 @@ namespace Lumina
             return "?";
         }
 
-        // "2048x2048 2DArray x6, 11 mips, BC7_UNORM" / "GPU-only" -- what the row is, past its size.
+        // What the row is, past its size.
         FString DescribeAllocation(const RHI::FGPUAllocation& Alloc)
         {
             if (Alloc.Kind != RHI::EGPUAllocationKind::Texture)
@@ -202,8 +190,7 @@ namespace Lumina
             return Out;
         }
 
-        // "12.3 MB (12884901 bytes)" -- human-readable plus exact, so an AI gets both the
-        // gestalt and a parseable number.
+        // Human-readable plus exact, so a reader gets both the gestalt and a parseable number.
         FString SizeBoth(uint64 Bytes)
         {
             return Format("{} ({} bytes)", ImGuiX::FormatSize((size_t)Bytes).c_str(), (unsigned long long)Bytes);
@@ -540,8 +527,7 @@ namespace Lumina
         GPUTextureBytes = 0;
         GPUBufferBytes  = 0;
 
-        // Rebuilt rather than accumulated: the ledger is a snapshot of what is live right now, and a
-        // purpose that dropped to zero has to disappear from the table rather than linger at its last value.
+        // Rebuilt rather than accumulated, so a purpose that dropped to zero disappears from the table.
         GPUPurposes.clear();
 
         auto FindOrAdd = [this](const FString& Name) -> FGPUPurposeRow&
@@ -629,8 +615,7 @@ namespace Lumina
                 ImGui::TableSetColumnIndex(0);
                 ImGui::TextUnformatted(Row.Name.c_str());
 
-                // Against the largest purpose, not the total: with one purpose dominating, bars scaled
-                // to the total are all invisible and the column says nothing.
+                // Against the largest purpose, since bars scaled to the total are invisible when one dominates.
                 ImGui::TableSetColumnIndex(1);
                 const float Frac = Largest > 0 ? (float)((double)Row.Total() / (double)Largest) : 0.0f;
                 const float Share = Attributed > 0 ? (float)((double)Row.Total() / (double)Attributed) : 0.0f;
@@ -684,8 +669,7 @@ namespace Lumina
         ImGui::SameLine();
         ImGui::Checkbox("Buffers", &bShowBuffers);
 
-        // Filter once into an index list: the table body runs through a clipper, and re-testing the
-        // filter per visible row would make scrolling depend on where you are in the list.
+        // The body runs through a clipper, so re-testing per visible row makes scrolling position-dependent.
         TVector<const RHI::FGPUAllocation*> Visible;
         Visible.reserve(GPUAllocations.size());
 
@@ -800,8 +784,7 @@ namespace Lumina
 
         DrawGPUHeaps();
 
-        // Ledger walk is on the tab, not the refresh tick: it takes the allocator locks and copies
-        // every live allocation, which is not something to do behind a tab nobody is looking at.
+        // The walk takes the allocator locks and copies every live allocation, so it waits for the tab.
         if (!bGPUAllocationsValid)
         {
             RefreshGPUAllocations();
@@ -893,9 +876,7 @@ namespace Lumina
         bAddressSpaceValid = true;
     }
 
-    // Splits the "external" number above into buckets the OS can actually name. This is the only
-    // panel that sees allocations no engine allocator made -- the GPU driver's raw VirtualAlloc and
-    // the CRT heap that every foreign DLL (Slang, the driver, basisu) allocates from.
+    // The only panel that sees allocations no engine allocator made, such as the driver's own.
     void FMemoryProfilerEditorTool::DrawAddressSpace()
     {
         ImGui::Spacing();
@@ -948,9 +929,7 @@ namespace Lumina
         Row("mapped", AddressSpace.MappedCommitted, ImVec4(0.62f, 0.68f, 0.78f, 1.0f), "file mappings and shared sections");
         Row("reserved", AddressSpace.Reserved, ImVec4(0.55f, 0.58f, 0.62f, 1.0f), "address space only, costs no RAM");
 
-        // Every byte of private commit belongs to exactly one of these three. Whichever is largest
-        // tells you which trace to run: rpmalloc -> the category table below; heap -> a heap ETW
-        // trace; unattributed -> a VirtualAlloc ETW trace (see BuildScripts/MemoryTrace.ps1).
+        // Whichever is largest tells you which trace to run, see BuildScripts/MemoryTrace.ps1.
         const uint64 Rpmalloc = Memory::GetCurrentMappedMemory();
         const uint64 Heap     = AddressSpace.bHeapWalkValid ? AddressSpace.HeapCommitted : 0;
         const uint64 Accounted = Rpmalloc + Heap;
@@ -1278,8 +1257,7 @@ namespace Lumina
 
         FResolvedFrame Frame;
 
-        // ResolveSymbol formats a located frame as "Function  (File.cpp:1234)"; everything else
-        // (no line info, no PDB, a bare address) arrives as a single token.
+        // ResolveSymbol formats a located frame with its file and line, and everything else is one token.
         const char* Open = std::strstr(SymBuf, "  (");
         const size_t Len = std::strlen(SymBuf);
         if (Open != nullptr && Len > 0 && SymBuf[Len - 1] == ')')
@@ -1307,7 +1285,7 @@ namespace Lumina
             return;
         }
 
-        // Live bytes finds leaks/persistent; total allocs finds transient churn -- different sites.
+        // Live bytes finds leaks while total allocations finds transient churn, which are different sites.
         ImGui::TextUnformatted("Rank by:");
         ImGui::SameLine();
         if (ImGui::RadioButton("Live bytes", !bSortCallSitesByAllocs)) { bSortCallSitesByAllocs = false; }
@@ -1412,16 +1390,14 @@ namespace Lumina
 
         // The ranking metric is what the eye should land on first; the other column stays plain.
         const ImVec4 RankedColor  = ImVec4(0.98f, 0.78f, 0.35f, 1.0f);
-        const ImVec4 SourceColor  = ImVec4(0.60f, 0.80f, 1.00f, 1.0f);   // frames with a file:line
-        const ImVec4 ForeignColor = ImVec4(0.60f, 0.60f, 0.65f, 1.0f);   // no source: system/plumbing
+        const ImVec4 SourceColor  = ImVec4(0.60f, 0.80f, 1.00f, 1.0f);   // frames carrying a file and line
+        const ImVec4 ForeignColor = ImVec4(0.60f, 0.60f, 0.65f, 1.0f);   // no source, so system or plumbing
 
         for (uint32 i = 0; i < NumSites; ++i)
         {
             const Memory::FCallSiteStat& Site = Sites[i];
 
-            // The headline is the first frame that names engine code rather than the container that
-            // happened to do the allocating -- "STerrainControllerSystem::CollectChunkCandidates",
-            // not "Containers::TRawHashTable<...>::insert". The plumbing frame is still there when expanded.
+            // The headline is the first frame naming engine code rather than the container that allocated.
             uint32 HeadlineFrame = 0;
             for (uint32 f = 0; f < Site.FrameCount; ++f)
             {
@@ -1433,8 +1409,7 @@ namespace Lumina
                 }
             }
 
-            // By pointer: the cache is node-based, so entries stay put as later frames resolve, and a
-            // conditional-expression reference would have copied the whole struct once per row.
+            // By pointer, since the cache is node-based and a reference copy would clone the struct per row.
             static const FResolvedFrame EmptyFrame;
             const FResolvedFrame* Headline = &EmptyFrame;
             if (Site.FrameCount > 0)
@@ -1510,7 +1485,7 @@ namespace Lumina
                     ImGui::TextDisabled("%2u", f);
                     ImGui::SameLine();
 
-                    // Frames carrying a file:line are the ones worth reading; the rest recede.
+                    // Frames carrying a file and line are the ones worth reading, and the rest recede.
                     const bool bHasSource = !Frame.Location.empty();
                     ImGui::PushStyleColor(ImGuiCol_Text, bHasSource ? SourceColor : ForeignColor);
                     ImGui::TextUnformatted(Frame.FrameLabel.c_str());
@@ -1521,10 +1496,7 @@ namespace Lumina
                         ImGui::SetTooltip("%s", Frame.Function.c_str());
                     }
 
-                    // Right-aligned at the far edge of the (stretching) call-site column, the way a
-                    // debugger's stack pane reads. It lives here rather than in a stat column because
-                    // no 90px column can hold a path, and dropping it when it does not fit keeps the
-                    // function name -- the more important half -- from being pushed out.
+                    // Right-aligned like a debugger's stack pane, and dropped rather than pushing the name out.
                     if (bHasSource)
                     {
                         const float Available = ImGui::GetContentRegionAvail().x;
@@ -1599,8 +1571,7 @@ namespace Lumina
         AppendFormat(R, "- External:        {} (RSS - mapped: GPU driver host memory, CRT malloc, code + stacks)\n", SizeBoth(External).c_str());
         AppendFormat(R, "- Untracked:       {} (RSS - tracked; = retained + external)\n\n", SizeBoth(Untracked).c_str());
 
-        // Address space -- the OS-level view, which is the only one that covers allocators the
-        // engine never sees. Omitted rather than faked when the user hasn't run a scan.
+        // The OS-level view, omitted rather than faked when the user has not run a scan.
         R += "## Address space (OS scan)\n";
         if (!bAddressSpaceValid)
         {
@@ -1656,7 +1627,7 @@ namespace Lumina
         }
         R += "\n";
 
-        // GPU by purpose -- the attribution the heap numbers above cannot give.
+        // GPU by purpose, the attribution the heap numbers above cannot give.
         RefreshGPUAllocations();
         {
             const uint64 Attributed = GPUTextureBytes + GPUBufferBytes;

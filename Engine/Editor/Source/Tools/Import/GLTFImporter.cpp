@@ -101,7 +101,7 @@ namespace Lumina
 
     void CGLTFImporter::ReleaseSourceData()
     {
-        // Source data first: its image spans point into the buffers cgltf owns.
+        // Source data first, since its image spans point into the buffers cgltf owns.
         CMeshImporter::ReleaseSourceData();
 
         if (ParsedData != nullptr)
@@ -110,15 +110,14 @@ namespace Lumina
             ParsedData = nullptr;
         }
 
-        // After cgltf_free: the views pointing at these are gone, so nothing can read them now.
+        // After cgltf_free the views pointing at these are gone, so nothing can read them now.
         DecodedBufferViews.clear();
         DecodedBufferViews.shrink_to_fit();
     }
 
     bool CGLTFImporter::ValidateRequiredExtensions(cgltf_data& Data, FString& OutError) const
     {
-        // Everything the importer can honor. An extension that only ADDS optional data can be ignored
-        // safely, but a REQUIRED one the file cannot be read without has to stop the import.
+        // An extension that only ADDS data can be ignored, but a REQUIRED one has to stop the import.
         static constexpr const char* kSupported[] =
         {
             "KHR_lights_punctual",
@@ -164,8 +163,7 @@ namespace Lumina
             return true;
         }
 
-        // Draco is the one users hit in practice: Blender's exporter has a Compression checkbox that
-        // turns it on, and the resulting file is unreadable without the Draco library (not vendored).
+        // Blender's Compression checkbox turns Draco on, and the library is not vendored.
         const bool bDraco = Unsupported.find("KHR_draco_mesh_compression") != FFixedString::npos;
 
         OutError = FString(Format(
@@ -247,7 +245,7 @@ namespace Lumina
                 break;
             }
 
-            // The documented cgltf hook: accessors read this in preference to buffer->data.
+            // The documented cgltf hook, which accessors read in preference to buffer->data.
             View.data = Dest.data();
         }
 
@@ -266,7 +264,7 @@ namespace Lumina
             ParsedData = nullptr;
         }
 
-        //~ Stage 1: source parsing.
+        //~ Stage 1, source parsing.
 
         if (Progress)
         {
@@ -287,8 +285,7 @@ namespace Lumina
             return false;
         }
 
-        // Before anything reads a buffer: a required extension we cannot honor makes every subsequent
-        // accessor read meaningless, and cgltf will not have complained.
+        // A required extension we cannot honor makes every later accessor read meaningless.
         if (!ValidateRequiredExtensions(*ParsedData, OutError))
         {
             cgltf_free(ParsedData);
@@ -306,8 +303,7 @@ namespace Lumina
             return false;
         }
 
-        // Buffers are raw at this point; meshopt views still hold encoded bytes. Decode before any
-        // accessor is touched, or every read past this line is garbage.
+        // meshopt views still hold encoded bytes, so every read past this line would be garbage.
         if (!DecompressMeshopt(*ParsedData, OutError))
         {
             cgltf_free(ParsedData);
@@ -316,8 +312,7 @@ namespace Lumina
             return false;
         }
 
-        // Catches structural problems cgltf tolerates, after decompression so the sizes are decoded ones.
-        // Only data_too_short is fatal (the unpack helpers would over-read); the rest warn.
+        // Only data_too_short is fatal, since the unpack helpers would over-read, and the rest warn.
         Result = cgltf_validate(ParsedData);
         if (Result == cgltf_result_data_too_short)
         {
@@ -338,8 +333,7 @@ namespace Lumina
         const FStringView SourceName = VFS::FileName(SourcePath, true);
         const FStringView SourceDir  = VFS::Parent(SourcePath);
 
-        //~ Stage 2 + 3: images. Deduplicated by source key, and never copied: an embedded payload stays a
-        //~ view into the buffer cgltf already parsed.
+        //~ Deduplicated by source key and never copied, so an embedded payload stays a view into the buffer.
 
         TVector<int32> ImageToUnique(Data.images_count, INDEX_NONE);
 
@@ -394,8 +388,7 @@ namespace Lumina
             }
         }
 
-        // KHR_texture_transform + the view's TEXCOORD set. Both are per texture SLOT, not per texture, so a
-        // material can sample one image twice with different mappings.
+        // Both are per texture SLOT, so one material can sample the same image twice with different mappings.
         auto ResolveUVTransform = [](const cgltf_texture_view& View) -> FTextureUVTransform
         {
             FTextureUVTransform Out;
@@ -418,8 +411,7 @@ namespace Lumina
             return Out;
         };
 
-        // glTF samplers are wrap-per-axis; the engine's stock table is one mode for both. U wins, because a
-        // texture authored CLAMP/REPEAT is nearly always a gradient or atlas strip that clamps horizontally.
+        // U wins, since a CLAMP and REPEAT pair is nearly always a gradient or atlas strip.
         auto ResolveSampler = [](const cgltf_texture_view& View) -> EImportSampler
         {
             if (View.texture == nullptr || View.texture->sampler == nullptr)
@@ -429,8 +421,7 @@ namespace Lumina
 
             const cgltf_sampler& S = *View.texture->sampler;
 
-            // Only mag_filter distinguishes point from linear for the stock set; the min filter's mip mode
-            // is always trilinear here, which is what every stock sampler does.
+            // Only mag_filter distinguishes point from linear, since the stock set is always trilinear.
             const bool bPoint = (S.mag_filter == cgltf_filter_type_nearest);
 
             switch (S.wrap_s)
@@ -439,8 +430,7 @@ namespace Lumina
                 return bPoint ? EImportSampler::PointClamp : EImportSampler::LinearClamp;
 
             case cgltf_wrap_mode_mirrored_repeat:
-                // No point-mirror in the stock table; linear-mirror keeps the addressing, which is the part
-                // that changes what pixels you see.
+                // No point-mirror exists in the stock table, and linear-mirror keeps the addressing that matters.
                 return EImportSampler::LinearMirror;
 
             case cgltf_wrap_mode_repeat:
@@ -469,8 +459,7 @@ namespace Lumina
             return (Index < ImageToUnique.size()) ? ImageToUnique[Index] : INDEX_NONE;
         };
 
-        // Semantic role drives the cook's BC format and color space, so it is resolved from how each
-        // material uses the image rather than guessed from the filename.
+        // Resolved from how each material uses the image rather than guessed from the filename.
         auto MarkRole = [&](int32 ImageIndex, ETextureColorSpace Role)
         {
             if (ImageIndex >= 0 && (size_t)ImageIndex < OutData.Images.size())
@@ -479,7 +468,7 @@ namespace Lumina
             }
         };
 
-        //~ Stage 2 + 3: materials, deduplicated by their resolved parameter set.
+        //~ Stage 2 and 3, materials deduplicated by their resolved parameter set.
 
         TVector<int32> MaterialToUnique(Data.materials_count, INDEX_NONE);
 
@@ -519,16 +508,11 @@ namespace Lumina
                         ResolveSampler(PBR.metallic_roughness_texture);
                 }
 
-                // The engine has no IOR term, it has Specular where F0 = 0.08 * Specular. Converting through
-                // F0 = ((ior-1)/(ior+1))^2 lands glTF's default 1.5 on the engine's 0.5, so untouched IOR is a no-op.
+                // Converting through F0 lands the glTF default of 1.5 on the engine's 0.5, so untouched IOR is a no-op.
                 Material.IOR            = Source.has_ior ? Source.ior.ior : 1.5f;
                 Material.SpecularFactor = Source.has_specular ? Source.specular.specular_factor : 1.0f;
 
-                // Only meaningful when the map exists. cgltf zero-fills a texture_view it never parsed, so
-                // reading these unconditionally hands back 0 -- not the spec default of 1 -- for every
-                // material with no normal or occlusion map, which is most of them. That reads downstream as
-                // "this material scales its normals to nothing", building a whole master variant for a map
-                // that isn't there.
+                // cgltf zero-fills an unparsed texture_view, so an absent map would read 0 instead of the spec's 1.
                 Material.NormalScale       = (Source.normal_texture.texture    != nullptr) ? Source.normal_texture.scale    : 1.0f;
                 Material.OcclusionStrength = (Source.occlusion_texture.texture != nullptr) ? Source.occlusion_texture.scale : 1.0f;
 
@@ -568,8 +552,7 @@ namespace Lumina
                 Material.Samplers[(size_t)EMaterialTextureSlot::Occlusion] = ResolveSampler(Source.occlusion_texture);
                 Material.Samplers[(size_t)EMaterialTextureSlot::Emissive]  = ResolveSampler(Source.emissive_texture);
 
-                // Everything Lit/Unlit cannot express. Reported per material rather than dropped: glass importing
-                // as opaque plastic is otherwise indistinguishable from a broken import.
+                // Reported per material, since glass importing as opaque plastic looks like a broken import.
                 {
                     FFixedString Unsupported;
                     auto Note = [&Unsupported](bool bPresent, const char* Name)
@@ -599,8 +582,7 @@ namespace Lumina
                 MarkRole(Material.MetallicRoughnessImage, ETextureColorSpace::PackedData);
                 MarkRole(Material.OcclusionImage,         ETextureColorSpace::Linear);
                 MarkRole(Material.EmissiveImage,          ETextureColorSpace::SRGB);
-                // Normal maps cook as Linear (BC7 RGB), not NormalMap: the BC5-packed path is broken and
-                // the material output node reconstructs Z from XY either way.
+                // Normals cook as Linear BC7 since the BC5 path is broken and the output node rebuilds Z anyway.
                 MarkRole(Material.NormalImage,            ETextureColorSpace::Linear);
 
                 if (!bDeduplicateMaterials)
@@ -629,8 +611,7 @@ namespace Lumina
                 Key.push_back((uint32)Material.EmissiveImage);
                 Key.push_back((uint32)Material.OcclusionImage);
 
-                // Two materials pointing at the same images but mapping or filtering them differently are
-                // NOT the same material; without this they collapse and one renders with the other's setup.
+                // Same images mapped or filtered differently are NOT the same material and must not collapse.
                 for (const FTextureUVTransform& UVT : Material.UVTransforms)
                 {
                     Key.push_back(UVT.TexCoordSet);
@@ -648,8 +629,7 @@ namespace Lumina
                 Key.push_back(QuantizeFloat(Material.SpecularFactor));
                 Key.push_back(QuantizeFloat(Material.NormalScale));
                 Key.push_back(QuantizeFloat(Material.OcclusionStrength));
-                // Clearcoat selects a different SHADING MODEL, so omitting it here would let a coated and
-                // an uncoated material collapse into one and render with whichever won.
+                // Clearcoat selects a different SHADING MODEL, so a coated and uncoated pair must not collapse.
                 Key.push_back(QuantizeFloat(Material.ClearcoatFactor));
                 Key.push_back(QuantizeFloat(Material.ClearcoatRoughness));
 
@@ -663,8 +643,7 @@ namespace Lumina
             }
         }
 
-        //~ Stage 2: scene / resource discovery. One iterative walk; world transforms accumulate down the
-        //~ stack so a deep hierarchy stays linear instead of re-walking ancestors per node.
+        //~ World transforms accumulate down the stack so a deep hierarchy stays linear.
 
         if (Progress)
         {
@@ -749,8 +728,7 @@ namespace Lumina
                 const cgltf_node& Node = *Entry.Node;
                 const FMatrix4 World = Entry.ParentWorld * NodeLocalMatrix(Node);
 
-                // Nodes are appended in visit order, which is parents-before-children: a child is only
-                // pushed once its parent has been popped and recorded.
+                // Appended in visit order, so a child is only pushed once its parent has been popped and recorded.
                 const int32 SceneNodeIndex = (int32)OutData.SceneNodes.size();
                 FSourceSceneNode& SceneNode = OutData.SceneNodes.push_back();
                 SceneNode.ParentIndex = Entry.ParentSceneNode;
@@ -801,8 +779,7 @@ namespace Lumina
                 {
                     FillLight(SceneNode, *Node.light);
                 }
-                // Always parsed: the settings dialogue runs after this, so gating on bImportCameras here
-                // would read whatever the previous import left behind. BuildScenePrefab applies the option.
+                // Always parsed, since the settings dialogue runs later and BuildScenePrefab applies the option.
                 else if (Node.camera != nullptr)
                 {
                     const cgltf_camera& Camera = *Node.camera;
@@ -823,8 +800,7 @@ namespace Lumina
                         SceneNode.Camera.bOrthographic = false;
                         SceneNode.Camera.YFov          = Perspective.yfov;
                         SceneNode.Camera.ZNear         = Perspective.znear;
-                        // An absent zfar means an infinite projection, which the engine cannot express;
-                        // 0 tells the consumer to keep the component's finite default.
+                        // An absent zfar means an infinite projection, so 0 keeps the component's finite default.
                         SceneNode.Camera.ZFar          = Perspective.has_zfar ? Perspective.zfar : 0.0f;
                     }
                 }
@@ -859,8 +835,7 @@ namespace Lumina
 
         OutData.SourceNodeCount = VisitedNodes;
 
-        //~ Stage 3: mesh deduplication. Meshes are keyed by the accessors their primitives reference, so
-        //~ two exporter-duplicated objects collapse without comparing a single vertex.
+        //~ Keyed by the accessors their primitives reference, so duplicates collapse without comparing vertices.
 
         TVector<uint32> UniqueMeshes;         // unique slot -> representative cgltf mesh index
         TVector<int32>  MeshToUnique(Data.meshes_count, INDEX_NONE);
@@ -931,10 +906,9 @@ namespace Lumina
             }
         }
 
-        //~ Stage 4: geometry processing.
+        //~ Stage 4, geometry processing.
 
-        // Per-primitive counts, computed once for the unique meshes. Merge mode multiplies these out over
-        // the instance list rather than re-walking primitives once per placement.
+        // Merge mode multiplies these out rather than re-walking primitives once per placement.
         struct FMeshCounts { size_t StaticVerts, StaticIndices, SkinnedVerts, SkinnedIndices; };
         TVector<FMeshCounts> PerMeshCounts(Data.meshes_count, FMeshCounts{0, 0, 0, 0});
 
@@ -969,9 +943,7 @@ namespace Lumina
                 (bSkinned ? Counts.SkinnedVerts   : Counts.StaticVerts)   += VertexCount;
                 (bSkinned ? Counts.SkinnedIndices : Counts.StaticIndices) += IndexCount;
 
-                // Detected here rather than where the attribute is unpacked: that runs one task per mesh,
-                // and latching a shared flag from all of them is a race for no gain -- this walk already
-                // visits every primitive, serially.
+                // This walk already visits every primitive serially, unlike the one-task-per-mesh unpack.
                 if (cgltf_find_accessor(&Primitive, cgltf_attribute_type_color, 0) != nullptr)
                 {
                     OutData.bHasVertexColors = true;
@@ -979,8 +951,7 @@ namespace Lumina
             }
         }
 
-        // WorldMatrix is identity on the deduplicated per-mesh path, where geometry stays in object space
-        // and the renderer carries the per-instance transform.
+        // Geometry stays in object space, so the renderer carries the per-instance transform.
         auto AppendMesh = [&](const cgltf_mesh& Mesh,
                               FStringView MeshName,
                               FMeshResource* StaticTarget,
@@ -1054,8 +1025,7 @@ namespace Lumina
 
                 Resource.ResizeVertices(BaseVertex + VertexCount);
 
-                // Positions land straight in the destination stream; the world+scale transform is then
-                // applied in place rather than through an intermediate array.
+                // Positions land straight in the destination, then transform in place with no intermediate array.
                 cgltf_accessor_unpack_floats(Position, &Resource.Positions[BaseVertex].x, VertexCount * 3);
                 for (size_t i = 0; i < VertexCount; ++i)
                 {
@@ -1104,8 +1074,7 @@ namespace Lumina
                 }
                 else
                 {
-                    // Mirror set 0 rather than leaving zeros: a material that asks for set 1 on a
-                    // single-set mesh then renders like set 0 instead of collapsing to a single texel.
+                    // Mirroring set 0 makes a material asking for set 1 render like set 0 rather than one texel.
                     for (size_t i = 0; i < VertexCount; ++i)
                     {
                         Resource.UVs1[BaseVertex + i] = Resource.UVs[BaseVertex + i];
@@ -1143,8 +1112,7 @@ namespace Lumina
                             (uint16)Math::Clamp((int32)J[2], 0, kMaxJointIndex), (uint16)Math::Clamp((int32)J[3], 0, kMaxJointIndex));
                     }
 
-                    // glTF only guarantees WEIGHTS_0 is normalized ACROSS ALL sets, so a mesh using WEIGHTS_1 leaves the
-                    // four retained weights summing under 1, which pulls those vertices toward the origin.
+                    // glTF only normalizes across ALL sets, so using WEIGHTS_1 pulls those vertices toward the origin.
                     float* RawWeights = Scratch.Reserve(VertexCount * 4);
                     cgltf_accessor_unpack_floats(Weights, RawWeights, VertexCount * 4);
                     for (size_t i = 0; i < VertexCount; ++i)
@@ -1198,7 +1166,6 @@ namespace Lumina
         }
 
         {
-            // One asset per UNIQUE mesh, in object space; a node's world transform is deliberately not baked in.
             // blender-3.3-splash.glb would turn 3.07M vertices into 644M across its 187,851 nodes.
             struct FMeshSlot
             {
@@ -1208,8 +1175,7 @@ namespace Lumina
 
             TVector<FMeshSlot> Slots(UniqueMeshes.size());
 
-            // Names are assigned serially so a collision suffix is deterministic, then the parallel pass
-            // only touches its own slot.
+            // Named serially so a collision suffix is deterministic, then the parallel pass owns its own slot.
             TVector<FFixedString> MeshNames(UniqueMeshes.size());
             {
                 THashMap<FFixedString, uint32> NameCounts;
@@ -1222,8 +1188,7 @@ namespace Lumina
                         : FormatAs<FFixedString>("{}_{}",
                                                  FStringView(SourceName.data(), SourceName.length()), (uint32)UniqueMeshes[Slot]);
 
-                    // glTF does not require unique mesh names, and two DIFFERENT meshes sharing one would
-                    // collide as asset names. Suffix only genuine collisions so the common case stays clean.
+                    // glTF mesh names are not unique, so suffix only genuine collisions and keep the common case clean.
                     uint32& Count = NameCounts[Name];
                     if (Count > 0)
                     {

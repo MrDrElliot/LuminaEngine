@@ -47,8 +47,7 @@ namespace Lumina
         Resource.ImageDescription.NumMips = 1;
     }
 
-    // Box-downsamples an RGBA-float32 image to half dimensions (min 1px). Plain 2x2 average in linear
-    // radiance, which is correct for HDR -- no gamma to undo.
+    // A plain 2x2 average in linear radiance, which is correct for HDR since there is no gamma to undo.
     static void DownsampleEnvironmentMip(const TVector<float>& Src, uint32 SrcW, uint32 SrcH,
                                          TVector<float>& Dst, uint32& DstW, uint32& DstH)
     {
@@ -157,7 +156,7 @@ namespace Lumina
         {
             const uint64 MipTexels = (uint64)MipW * MipH;
 
-            // RGBA16F: two uint32 per pixel; (R,G) low half, (B,A) high half. 8 bytes per pixel.
+            // RGBA16F packs two uint32 per pixel, (R,G) low half and (B,A) high half, eight bytes per pixel.
             TVector<uint32> Halves(MipTexels * 2);
             for (uint64 i = 0; i < MipTexels; ++i)
             {
@@ -196,7 +195,7 @@ namespace Lumina
             return true;
         }
 
-        // Recreate: see CookTexturePixels. A re-cook must keep the published ResourceID.
+        // A re-cook must keep the published ResourceID, same as CookTexturePixels.
         const FString DebugName = "Texture." + Texture->GetName().ToString();
         RHI::Textures::Recreate(Texture->TextureResource->NewTexture, RHI::FTexture2DDesc
         {
@@ -212,9 +211,7 @@ namespace Lumina
             RHI::Textures::Upload(Texture->TextureResource->NewTexture, i, Mip.Pixels.data(), Mip.Pixels.size(), Mip.Width, Mip.Width, Mip.Height);
         }
 
-        // Publishes the image staged above once those uploads have executed. Skipping it does not merely
-        // delay the new pixels: the swap stays unarmed forever, so the slot keeps sampling the pre-cook
-        // image AND the texture can never change residency again. See RHITexture.h.
+        // Skipping this leaves the swap unarmed forever, so the slot never changes residency again.
         RHI::Textures::CommitRecreate(Texture->TextureResource->NewTexture);
         Texture->OnFullyUploadedExternally();
 
@@ -422,7 +419,7 @@ namespace Lumina
                 const float MaxC = Math::Max(R, Math::Max(G, B));
                 const float MinC = Math::Min(R, Math::Min(G, B));
 
-                // Weighted by how UNsaturated the texel already is: vivid colors are left alone.
+                // Weighted by how UNsaturated the texel already is, so vivid colors are left alone.
                 const float Boost = Texture->AdjustVibrance * (1.0f - (MaxC - MinC));
 
                 R = Luma + (R - Luma) * (1.0f + Boost);
@@ -531,7 +528,7 @@ namespace Lumina
 
         Params.m_uastc                      = true;
         Params.m_print_stats                = false;
-        Params.m_status_output              = false;   // silence per-slice "Slice: N, alpha: ..." spam during cook
+        Params.m_status_output              = false;   // silence the per-slice progress spam during cook
         Params.m_mip_gen                    = Texture->GetResolvedPolicy().bGenerateMips;
         Params.m_mip_fast                   = true;
         Params.m_multithreading             = (TotalEncodeThreads > 1);
@@ -578,9 +575,7 @@ namespace Lumina
         }
         else
         {
-            // Normal maps included: BC5-packed normals are currently broken, so they cook as full BC7 RGB
-            // like everything else. The material output node reconstructs Z from XY, so a linear RGB normal
-            // renders correctly, and a NormalMap-tagged texture stays safe even if one is set manually.
+            // BC5-packed normals are broken, so normals cook as full BC7 RGB and the output node rebuilds Z.
             StoredFormat    = EFormat::BC7_UNORM;
             TranscodeTarget = basist::transcoder_texture_format::cTFBC7_RGBA;
         }
@@ -663,9 +658,7 @@ namespace Lumina
             }
         }
 
-        // Publishes the image staged above once those uploads have executed. Skipping it does not merely
-        // delay the new pixels: the swap stays unarmed forever, so the slot keeps sampling the pre-cook
-        // image AND the texture can never change residency again. See RHITexture.h.
+        // Skipping this leaves the swap unarmed forever, so the slot never changes residency again.
         RHI::Textures::CommitRecreate(Texture->TextureResource->NewTexture);
         Texture->OnFullyUploadedExternally();
 
@@ -683,10 +676,7 @@ namespace Lumina
         return Data.size() >= 128 && Data[0] == 'D' && Data[1] == 'D' && Data[2] == 'S' && Data[3] == ' ';
     }
 
-    // DDS holds already-block-compressed (BCn) data that stb_image cannot read. Instead of decode+recompress,
-    // map the DDS format to our EFormat and upload the blocks VERBATIM (lossless; the GPU samples BCn natively).
-    // sRGB-ness is taken from the texture's role (base color = SRGB, normals/data = Linear), matching the cook.
-    // Returns false for non-DDS or unsupported (uncompressed/legacy) DDS so the caller can fall back to stb.
+    // Maps the DDS format to EFormat and uploads the blocks VERBATIM, losslessly, with no recompress.
     static bool CookDDS(CTexture* Texture, TSpan<const uint8> Data, ETextureColorSpace ColorSpace,
                         bool bCreateGPUResource = true)
     {
@@ -777,7 +767,7 @@ namespace Lumina
 
             if (Offset + MipSize > Data.size())
             {
-                break;   // truncated file -- keep whatever mips parsed cleanly
+                break;   // truncated file, keep whatever mips parsed cleanly
             }
 
             FTextureResource::FMip Mip;
@@ -804,8 +794,7 @@ namespace Lumina
         Desc.NumMips = (uint8)StoredMips;
         Texture->TextureResource->ImageDescription = Desc;
 
-        // Trim to the group's mip policy BEFORE the GPU texture is created, so the allocation
-        // itself is single-mip rather than a full chain we then ignore.
+        // Trimmed before the GPU texture exists, so the allocation is single-mip rather than a full chain.
         ApplyTextureGroupMipPolicy(Texture);
         const uint32 UploadMips = (uint32)Texture->TextureResource->Mips.size();
 
@@ -814,7 +803,7 @@ namespace Lumina
             return true;
         }
 
-        // Recreate: see CookTexturePixels. A re-cook must keep the published ResourceID.
+        // A re-cook must keep the published ResourceID, same as CookTexturePixels.
         const FString DebugName = "Texture." + Texture->GetName().ToString();
         RHI::Textures::Recreate(Texture->TextureResource->NewTexture, RHI::FTexture2DDesc
         {
@@ -833,9 +822,7 @@ namespace Lumina
             }
         }
 
-        // Publishes the image staged above once those uploads have executed. Skipping it does not merely
-        // delay the new pixels: the swap stays unarmed forever, so the slot keeps sampling the pre-cook
-        // image AND the texture can never change residency again. See RHITexture.h.
+        // Skipping this leaves the swap unarmed forever, so the slot never changes residency again.
         RHI::Textures::CommitRecreate(Texture->TextureResource->NewTexture);
         Texture->OnFullyUploadedExternally();
 
@@ -872,8 +859,7 @@ namespace Lumina
             return Stem.size() >= SufLen && Stem.compare(Stem.size() - SufLen, SufLen, Suffix) == 0;
         };
 
-        // Normal maps resolve to Linear (BC7 RGB), NOT NormalMap: the BC5-packed normal path is currently
-        // broken. The material output node reconstructs Z from XY, so Linear-stored normals work correctly.
+        // Normals resolve to Linear BC7 rather than NormalMap, since the BC5-packed path is broken.
         if (EndsWith("_n") || EndsWith("_normal") || EndsWith("_norm") || EndsWith("_nrm"))
             return ETextureColorSpace::Linear;
 
@@ -903,8 +889,7 @@ namespace Lumina
         return (uint8)Math::Clamp((int32)std::lround(Srgb * 255.0f), 0, 255);
     }
 
-    // Builds an RGBA8 thumbnail from the imported source. Float (HDR) sources are tonemapped so they no
-    // longer clip to white; 8-bit sources pass through. The shared helper does the downsample + flip.
+    // Float sources are tonemapped so they no longer clip to white, while 8-bit sources pass through.
     static void CreatePackageThumbnail(CTexture* Texture, const Import::Textures::FTextureImportResult& Source)
     {
         const uint32 Width  = Source.Dimensions.x;
@@ -1096,13 +1081,11 @@ namespace Lumina
             Texture->TextureResource = MakeUnique<FTextureResource>();
         }
 
-        // Embedded bytes come from a mesh source and have no file of their own; SourcePath is then only a
-        // name hint for the color-space heuristic and is deliberately not persisted.
+        // Embedded bytes have no file, so SourcePath is only a color-space name hint and is not persisted.
         const bool bEmbedded = !Request.EmbeddedBytes.empty();
         const FFixedString& SourcePath = Request.SourcePath;
 
-        // DDS containers hold pre-compressed BCn blocks stb_image can't read; pass them straight through to
-        // the GPU. Non-DDS falls through to stb.
+        // DDS holds pre-compressed blocks stb_image cannot read, so pass them straight through to the GPU.
         {
             auto HasDDSExtension = [](const FFixedString& P) -> bool
             {
@@ -1154,7 +1137,7 @@ namespace Lumina
             }
         }
 
-        // Read once and KEPT, not handed to stb as a path: these bytes become the asset's stored source.
+        // Read once and KEPT rather than handed to stb as a path, since these become the stored source.
         TVector<uint8> SourceBytes;
         if (bEmbedded)
         {
@@ -1266,8 +1249,7 @@ namespace Lumina
             return false;
         }
 
-        // Single-threaded encode: the caller cooks layers in a loop, so a full basisu pool per layer
-        // would oversubscribe. EncodeThreads = 1 means "no new threads", not "one extra".
+        // The caller cooks layers in a loop, so a full basisu pool per layer would oversubscribe.
         TVector<uint8> Pixels = Move(Result.Pixels);
         return CookTexturePixels(Scratch, Pixels, Result.Dimensions, ColorSpace, 1u, /*bCreateGPUResource*/ false);
     }
@@ -1317,7 +1299,7 @@ namespace Lumina
 
         TOptional<Import::Textures::FTextureImportResult> MaybeResult;
 
-        // The file on disk wins when it is there: the user may have edited it since the import.
+        // The file on disk wins when present, since the user may have edited it since the import.
         if (!Texture->SourcePath.empty())
         {
             MaybeResult = Import::Textures::ImportTexture(Texture->SourcePath, false);

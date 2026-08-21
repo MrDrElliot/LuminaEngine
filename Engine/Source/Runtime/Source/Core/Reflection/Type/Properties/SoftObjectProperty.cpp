@@ -8,8 +8,7 @@ namespace Lumina
 {
     void FSoftObjectProperty::Serialize(FArchive& Ar, void* Value)
     {
-        // TSoftObjectPtr<T> holds a single FSoftObjectPath, so reinterpreting the storage
-        // is safe; the path's operator<< handles the save-side soft-ref hook.
+        // The path's stream operator handles the save-side soft-ref hook.
         FSoftObjectPath* Path = static_cast<FSoftObjectPath*>(Value);
         Ar << *Path;
     }

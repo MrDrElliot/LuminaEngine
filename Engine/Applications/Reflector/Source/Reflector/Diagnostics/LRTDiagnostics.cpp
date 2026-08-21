@@ -42,8 +42,7 @@ namespace Lumina::Reflection
 
     void FDiagnostics::Emit(const char* Severity, const FDiagLocation& Loc, EDiagId Id, const char* Message)
     {
-        // MSBuild's regex wants "<file>(<line>,<col>): <severity> <CODE>: <text>";
-        // without a usable location, fall back to a bare prefix so the line still parses.
+        // Without a usable location, fall back to a bare prefix so the line still parses for MSBuild.
         if (!Loc.File.empty() && Loc.Line != 0)
         {
             std::fprintf(stderr,

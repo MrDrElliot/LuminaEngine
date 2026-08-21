@@ -42,8 +42,7 @@ int main(int argc, char* argv[])
     std::ifstream File(InputFile.c_str());
     if (!File.is_open())
     {
-        // Anchor the diagnostic at the JSON path so double-clicking the build
-        // log error opens the missing file in the IDE.
+        // Anchoring at the JSON path lets a double-click on the build log open the missing file.
         FDiagLocation Loc;
         Loc.File = InputFile;
         FDiagnostics::Get().Errorf(Loc, EDiagId::DriverInputUnreadable,
@@ -67,32 +66,29 @@ int main(int argc, char* argv[])
         
         auto ReflectedProject = std::make_unique<FReflectedProject>(&Workspace);
         ReflectedProject->Name = std::move(ProjectName);
-        // Normalize so prefix-matching against Header->HeaderPath (also normalized)
-        // works without per-call slash/case fixups.
+        // Normalized so prefix-matching against Header->HeaderPath works without per-call fixups.
         ReflectedProject->Path = Lumina::ClangUtils::NormalizeHeaderPath(std::move(ProjectPath));
 
-        // A reference-only project (the engine's modules, pulled into a game or plugin workspace) is
-        // parsed so its types are known, but never generated for.
+        // A reference-only project is parsed so its types are known, but never generated for.
         if (Project.contains("ReferenceOnly"))
         {
             ReflectedProject->bReferenceOnly = Project["ReferenceOnly"].get<bool>();
         }
 
-        // Optional: the build system pins where this project's generated C++ lands.
+        // Optional, the build system pins where this project's generated C++ lands.
         if (Project.contains("GeneratedDir") && !Project["GeneratedDir"].get<std::string>().empty())
         {
             std::string GeneratedDir = Project["GeneratedDir"].get<std::string>().c_str();
             ReflectedProject->GeneratedDir = Lumina::ClangUtils::NormalizeHeaderPath(std::move(GeneratedDir));
         }
 
-        // Optional: the precompiled header generated sources must open with. Absent or empty means
-        // the module has none, and the generated sources then include no PCH at all.
+        // Absent or empty means the module has none, and generated sources then include no PCH.
         if (Project.contains("PrecompiledHeader"))
         {
             ReflectedProject->PrecompiledHeader = Project["PrecompiledHeader"].get<std::string>().c_str();
         }
 
-        // Optional: a plugin/game module routes its C# bindings into its own Scripts/Generated dir.
+        // Optional, a plugin or game module routes its C# bindings into its own Scripts/Generated dir.
         if (Project.contains("CSharpBindingsDir") && !Project["CSharpBindingsDir"].get<std::string>().empty())
         {
             std::string CSharpDir = Project["CSharpBindingsDir"].get<std::string>().c_str();
@@ -143,8 +139,7 @@ int main(int argc, char* argv[])
         Workspace.AddReflectedProject(std::move(ReflectedProject));
     }
 
-    // Static include-graph pass before libclang: cycles otherwise produce confusing
-    // downstream parse errors; surfacing them up front gives a clean LRT error.
+    // Static include-graph pass first, since cycles otherwise surface as confusing parse errors.
     {
         FHeaderIncludeGraph Graph;
         Graph.BuildFromWorkspace(&Workspace);
@@ -177,8 +172,7 @@ int main(int argc, char* argv[])
 
         if (!Cycles.empty())
         {
-            // Bail before parsing -- clang would otherwise spend tens of
-            // seconds chewing on a workspace that has a structural defect.
+            // Bail before parsing, or clang chews for tens of seconds on a broken workspace.
             FDiagnostics::Get().PrintSummary();
             return 1;
         }
@@ -199,12 +193,10 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    // Per-header include validation: any header with a reflection macro must end its
-    // include block with `<stem>.generated.h` (catches missing/misordered/wrong-file includes).
+    // Any header with a reflection macro must end its include block with the matching generated.h.
     for (const auto& Project : Workspace.ReflectedProjects)
     {
-        // Someone else's module. It was validated by the workspace that owns it, and reporting its
-        // problems here would blame a game build for an engine header.
+        // Someone else's module, already validated by the workspace that owns it.
         if (Project->bReferenceOnly)
         {
             continue;
@@ -217,7 +209,7 @@ int main(int argc, char* argv[])
                 continue;
             }
 
-            // find() not operator[]: the latter inserts empty entries the codegen would emit empty files for.
+            // find() not operator[], since the latter inserts empty entries the codegen would emit empty files for.
             auto TypeIt = Parser.ParsingContext.ReflectionDatabase.ReflectedTypes.find(Header.get());
             if (TypeIt != Parser.ParsingContext.ReflectionDatabase.ReflectedTypes.end() && !TypeIt->second.empty())
             {
@@ -290,8 +282,7 @@ int main(int argc, char* argv[])
                 continue;
             }
 
-            // Confirmed the right generated.h is included; now verify it's
-            // the last include in the file.
+            // The right generated.h is included, now verify it is the last include in the file.
             const FIncludeRef* LaterInclude = nullptr;
             for (const FIncludeRef& Inc : Header->Includes)
             {
@@ -312,9 +303,7 @@ int main(int argc, char* argv[])
         }
     }
 
-    // A property whose type is a struct/class emits a Construct_ call for it. If that type was never
-    // reflected there is nothing to call, and the module fails to compile on an undeclared identifier
-    // pointing at generated code. Say what is actually wrong, at the header that caused it.
+    // An unreflected property type emits a Construct_ call with nothing to call, so name the header.
     for (const auto& Project : Workspace.ReflectedProjects)
     {
         if (Project->bReferenceOnly)
@@ -345,7 +334,7 @@ int main(int argc, char* argv[])
                         continue;
                     }
 
-                    // Empty means deliberately unconstrained (a bare FInstancedStruct): no base to demand.
+                    // Empty means deliberately unconstrained (a bare FInstancedStruct), so there is no base to demand.
                     if (Property->TypeName.empty())
                     {
                         continue;
@@ -381,8 +370,7 @@ int main(int argc, char* argv[])
 
     Lumina::FStringHash::Shutdown();
 
-    // If any LRT diagnostics fired we surface a non-zero exit so the build
-    // halts; the diagnostic lines themselves were already printed when emitted.
+    // Non-zero exit halts the build; the diagnostic lines were already printed when emitted.
     FDiagnostics::Get().PrintSummary();
     return FDiagnostics::Get().GetErrorCount() == 0 ? 0 : 1;
 }

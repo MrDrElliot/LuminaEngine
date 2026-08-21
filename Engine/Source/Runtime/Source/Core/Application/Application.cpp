@@ -30,7 +30,7 @@ namespace Lumina
 
         PreInitStartup();
 
-        // Headless dedicated server: no window, no input viewport, no rendering surface.
+        // A headless dedicated server has no window, no input viewport and no rendering surface.
         if (!GIsHeadless)
         {
             CreateApplicationWindow();

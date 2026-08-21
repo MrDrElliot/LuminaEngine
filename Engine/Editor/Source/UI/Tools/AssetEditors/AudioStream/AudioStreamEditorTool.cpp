@@ -223,7 +223,7 @@ namespace Lumina
         const ImVec2 Origin = ImGui::GetCursorScreenPos();
         ImDrawList* DrawList = ImGui::GetWindowDrawList();
 
-        // Scrub surface: click or drag anywhere on the waveform to move the playhead.
+        // Click or drag anywhere on the waveform to move the playhead.
         ImGui::InvisibleButton("##WaveformScrub", Avail);
         if (ImGui::IsItemActive())
         {

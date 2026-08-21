@@ -6,8 +6,7 @@
 #include "Containers/String.h"
 #include "Paths/Paths.h"
 #include "Platform/Process/PlatformProcess.h"
-// windows.h must be included unconditionally: WIN32_LEAN_AND_MEAN is already defined
-// workspace-wide, so guarding the include on it would skip it entirely.
+// The lean-and-mean macro is already defined workspace-wide, so guarding on it would skip the include.
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -34,10 +33,7 @@ namespace Lumina::Platform
     {
         TVector<FString> GDLLSearchPaths;
 
-        // Hands the directory to the loader itself, which is the only way it participates in
-        // resolving the *imports* of a DLL we load. GDLLSearchPaths alone only ever helped locate
-        // the file we asked for, and a plugin binary a project module statically links is never
-        // the file we ask for: the loader resolves that import before LoadLibrary returns.
+        // GDLLSearchPaths only locates the file asked for, not the imports the loader resolves first.
         void RegisterLoaderDirectory(const FString& Directory)
         {
             FWString Wide = StringUtils::ToWideString(Directory);
@@ -48,10 +44,7 @@ namespace Lumina::Platform
             }
         }
 
-        // Searches the loading module's own directory and everything AddDLLDirectory registered,
-        // so a project DLL under <Project>/Binaries resolves an import of a plugin DLL under
-        // <Plugin>/Binaries. Falls back to the default order on failure, because that flag set
-        // drops PATH and the current directory, which vendored dependencies still rely on.
+        // Falls back to the default order, since that flag set drops PATH and vendored deps rely on it.
         void* LoadModuleImage(const FWString& Wide)
         {
             constexpr DWORD SearchFlags =
@@ -72,9 +65,7 @@ namespace Lumina::Platform
                 return Handle;
             }
 
-            // 126 (ERROR_MOD_NOT_FOUND) here means a dependency is missing, not this file: it
-            // exists, we just resolved a path to it. 193 (ERROR_BAD_EXE_FORMAT) is a bitness or
-            // corruption problem. Logged because the loader gives the caller no way to ask.
+            // Error 126 means a dependency is missing rather than this file, which we resolved a path to.
             LOG_ERROR("LoadLibrary failed for '{0}' (error {1}, {2} with default search order)",
                 StringUtils::FromWideString(Wide), (uint32)SearchError, (uint32)GetLastError());
 
@@ -121,8 +112,7 @@ namespace Lumina::Platform
 
         FString Narrow = StringUtils::FromWideString(Directory);
 
-        // SetDllDirectory is ignored once a load passes LOAD_LIBRARY_SEARCH flags, so register
-        // the same directory the other way too; the pair have to agree about what is searched.
+        // SetDllDirectory is ignored once search flags are passed, so both have to agree.
         RegisterLoaderDirectory(Narrow);
 
         GDLLSearchPaths.push_back(Narrow);
@@ -171,7 +161,7 @@ namespace Lumina::Platform
 
             if (!bOk)
             {
-                // Topology unavailable: treat every logical core as a performance core.
+                // With no topology, treat every logical core as a performance core.
                 const DWORD N = GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
                 T.NumLogicalCores = N < 256 ? N : 256;
                 T.NumPerformance  = T.NumLogicalCores;
@@ -179,8 +169,7 @@ namespace Lumina::Platform
                 return T;
             }
 
-            // First pass: record each logical processor's efficiency class and find the top class.
-            // Per MSDN, a higher EfficiencyClass is the more performant core, so the max class is the P-cores.
+            // A higher efficiency class is the more performant core, so the max class is the P-cores.
             uint8 EffClass[256];
             memset(EffClass, 0xFF, sizeof(EffClass));
             uint8 MaxClass = 0;
@@ -208,7 +197,7 @@ namespace Lumina::Platform
                 Cursor += Info->Size;
             }
 
-            // Second pass: classify against the top class. Top class = P-cores; anything below = E-cores.
+            // The top class is the P-cores and anything below it is an E-core.
             for (uint32 i = 0; i < 256; ++i)
             {
                 if (EffClass[i] == 0xFF) continue;
@@ -255,8 +244,7 @@ namespace Lumina::Platform
             return false;
         }
 
-        // Skip the write (and the broadcast) when the stored value already matches,
-        // so a normal launch doesn't churn the registry or spam WM_SETTINGCHANGE.
+        // So a normal launch does not churn the registry or broadcast a settings change.
         char Existing[1024] = {};
         DWORD ExistingSize = sizeof(Existing);
         DWORD Type = 0;
@@ -278,8 +266,7 @@ namespace Lumina::Platform
             return false;
         }
 
-        // Tell already-running shells/Explorer to reload the environment block so
-        // newly-spawned processes pick up the change without a reboot.
+        // Lets already-running shells pick up the change without a reboot.
         SendMessageTimeoutA(HWND_BROADCAST, WM_SETTINGCHANGE, 0,
             reinterpret_cast<LPARAM>("Environment"), SMTO_ABORTIFHUNG, 5000, nullptr);
 
@@ -307,8 +294,7 @@ namespace Lumina::Platform
             URLString += Params;
         }
 
-        // DETACHED_PROCESS + CREATE_NEW_CONSOLE are mutually exclusive (ERROR_INVALID_PARAMETER);
-        // "detached" here means the child owns its own console and outlives the parent: CREATE_NEW_CONSOLE.
+        // Detached here means the child owns its own console and outlives the parent.
         DWORD creationFlags = 0;
         if (bLaunchDetached)
         {
@@ -393,8 +379,7 @@ namespace Lumina::Platform
 
         PROCESS_INFORMATION pi{};
 
-        // CREATE_NO_WINDOW: the editor isn't a console app, and we're capturing
-        // output anyway; suppressing the popup keeps the experience clean.
+        // The editor is not a console app and output is captured, so suppress the popup.
         const DWORD CreationFlags = CREATE_NO_WINDOW;
 
         BOOL ok = CreateProcessW(
@@ -605,8 +590,7 @@ namespace Lumina::Platform
             return;
         }
 
-        // GetProcessHeaps needs the count up front; 256 is far beyond what any real process has,
-        // and an overflowing return just means we'd miss heaps, not that we'd read out of bounds.
+        // 256 is far beyond any real process, and overflowing means missing heaps, not reading out of bounds.
         constexpr DWORD MaxHeaps = 256;
         HANDLE Heaps[MaxHeaps];
         const DWORD NumHeaps = GetProcessHeaps(MaxHeaps, Heaps);
@@ -617,9 +601,7 @@ namespace Lumina::Platform
         {
             const HANDLE Heap = Heaps[HeapIndex];
 
-            // HeapWalk requires exclusive access; without the lock it can trip over another thread
-            // mid-allocation and return garbage. The lock is recursive on this thread, so our own
-            // incidental allocations during the walk are safe -- but don't add any.
+            // The lock is recursive on this thread, so our own incidental allocations are safe. Do not add any.
             if (!HeapLock(Heap))
             {
                 Out.bHeapWalkValid = false;
@@ -645,8 +627,7 @@ namespace Lumina::Platform
             HeapUnlock(Heap);
         }
 
-        // Blocks the heap manager services with its own VirtualAlloc live outside any region, so
-        // the region total can under-count. Never report less committed than we know is handed out.
+        // The heap manager's own reservations live outside any region, so never under-report committed.
         const uint64 HeapInUse = Out.HeapAllocated + Out.HeapOverhead;
         if (HeapInUse > Out.HeapCommitted)
         {
@@ -944,8 +925,7 @@ namespace Lumina::Platform
         FWString Normalized(Directory);
         Algo::Replace(Normalized.begin(), Normalized.end(), L'/', L'\\');
 
-        // Prefer Windows Terminal when present; the -d flag sets the starting
-        // directory and the new tab gets the user's default profile.
+        // The -d flag sets the starting directory and the new tab gets the user's default profile.
         const HINSTANCE WtResult = ShellExecuteW(
             nullptr,
             L"open",
@@ -954,8 +934,7 @@ namespace Lumina::Platform
             nullptr,
             SW_SHOWNORMAL);
 
-        // ShellExecute returns >32 on success. If wt isn't installed we get
-        // SE_ERR_FNF (2), fall back to plain cmd.exe.
+        // ShellExecute returns above 32 on success, so a not-found result falls back to cmd.exe.
         if (reinterpret_cast<INT_PTR>(WtResult) <= 32)
         {
             ShellExecuteW(

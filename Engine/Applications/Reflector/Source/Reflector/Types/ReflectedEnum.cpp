@@ -9,13 +9,7 @@ namespace Lumina::Reflection
 {
     namespace
     {
-        // The forward declaration has to name the SAME underlying type as the real declaration or
-        // MSVC rejects it with C3433. Mirrors the mapping CSharpBindingEmitter uses for the managed
-        // backing type, from the same two captured fields.
-        //
-        // The 4-byte default also covers an enum with no fixed underlying type: the standard gives
-        // a scoped enum an implicit underlying type of int, and int32 is signed int here, so the
-        // redeclaration still matches.
+        // The forward declaration must name the SAME underlying type as the real one or MSVC rejects it C3433.
         const char* UnderlyingTypeName(uint32_t Size, bool bUnsigned)
         {
             switch (Size)
@@ -33,11 +27,7 @@ namespace Lumina::Reflection
         const std::string Api = Names::ProjectApiMacro(Header->Project->Name);
         const std::string ConstructFn = Names::ConstructFunction("CEnum", Namespace, DisplayName);
 
-        // Wrapped in its namespace, matching FReflectedStruct. Emitting the forward declaration at
-        // global scope creates a second, distinct ::EWorldType alongside the real Lumina::EWorldType,
-        // and any translation unit that sees both gets C2872 on the unqualified name from inside the
-        // namespace. It only shows up when a unity shard happens to pull both together, so it
-        // survives for a long time and then breaks on an unrelated file being added.
+        // At global scope this would create a second distinct type and any TU seeing both gets C2872.
         const char* Underlying = UnderlyingTypeName(UnderlyingSize, bUnsignedUnderlying);
 
         if (!Namespace.empty())
@@ -52,16 +42,14 @@ namespace Lumina::Reflection
 
         Writer.Linef("%s Lumina::CEnum* %s();", Api.c_str(), ConstructFn.c_str());
 
-        // Qualified: this specialization is emitted at global scope, so an unqualified name would
-        // name the wrong type (or nothing at all once the forward declaration is namespaced).
+        // Qualified, since this specialization is emitted at global scope where an unqualified name misses.
         Writer.Linef("template<> Lumina::CEnum* StaticEnum<%s>();", QualifiedName.c_str());
         Writer.Line();
     }
 
     void FReflectedEnum::DefineSecondaryHeader(FCodeWriter& /*Writer*/, const std::string& /*FileID*/)
     {
-        // Enums don't have a GENERATED_BODY expansion - StaticEnum is a template
-        // specialization declared in the initial header.
+        // Enums have no GENERATED_BODY, since StaticEnum is a specialization declared in the header.
     }
 
     void FReflectedEnum::DeclareImplementation(FCodeWriter& Writer)
@@ -127,8 +115,7 @@ namespace Lumina::Reflection
         Writer.EndBlock();
         Writer.Line();
 
-        // StaticEnum<T>() outer singleton. Qualified to match the declaration above; an unqualified
-        // name here would define a specialization for a different type than the one declared.
+        // Qualified to match the declaration, or this defines a specialization for a different type.
         Writer.Linef("template<> Lumina::CEnum* StaticEnum<%s>()", QualifiedName.c_str());
         Writer.BeginBlock();
         Writer.Linef("if (!%s.OuterSingleton)", RegInfo.c_str());

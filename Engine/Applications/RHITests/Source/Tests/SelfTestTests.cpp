@@ -2,25 +2,11 @@
 
 #include "Log/Log.h"
 
-// Negative controls. Every other test in this harness is correct by construction, so a clean validation
-// run proves only that nothing WRONG was done -- not that a wrong thing would have been noticed. These
-// deliberately break a rule and PASS when the validation layer reports it.
-//
-//   RHITests.exe --group=SelfTest
-//
-// STRICTLY CPU-SIDE VIOLATIONS ONLY. A previous version provoked an out-of-bounds WRITE from a shader to
-// prove GPU-AV's buffer-address instrumentation was live. It proved that -- and GPU-AV reported the
-// access as "4 bytes written", i.e. it diagnosed the write rather than suppressing it. Every subsequent
-// GPU-AV run in that session page-faulted (Error_DMA_PageFault, MMU fault, stable low address bits across
-// runs) until the machine was reset, while the same tests had passed cleanly minutes earlier. A negative
-// control that corrupts the GPU for every later run is worse than no negative control: what belongs here
-// is anything the validation layer rejects BEFORE it reaches the device.
+// Negative controls that PASS when validation reports them; CPU-side ONLY, a GPU-side fault poisons the device.
 
 namespace Lumina::RHITests
 {
-    /** A plain core-validation violation, no instrumentation involved: a transfer write recorded inside
-     *  a render pass. Proves the capture path itself works even with GPU-AV off, which is the control
-     *  for the control. */
+    // A plain core-validation violation with no instrumentation, the control for the control.
     RHI_TEST_EXPECT_VALIDATION(SelfTest, TransferInsideRenderPass)
     {
         RHI::FTextureDesc Desc;

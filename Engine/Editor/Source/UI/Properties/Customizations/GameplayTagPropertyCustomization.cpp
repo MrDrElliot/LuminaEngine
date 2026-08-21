@@ -25,7 +25,7 @@ namespace Lumina
         const float LineHeight = ImGui::GetFrameHeight();
         const float Spacing    = Style.ItemInnerSpacing.x;
 
-        // Closed preview mirrors the open list: tag icon + the dotted name (or "None").
+        // The closed preview mirrors the open list, showing the tag icon and the dotted name.
         FFixedString Preview = LE_ICON_TAG "  ";
         Preview += Value.TagName.IsNone() ? "None" : Value.TagName.c_str();
 
@@ -106,7 +106,7 @@ namespace Lumina
             ImGui::EndCombo();
         }
 
-        // "+" : author a new tag. Interns it, persists it to the project's tag settings, and selects it.
+        // Authors a new tag, interning it, persisting it to the project settings and selecting it.
         ImGui::SameLine(0.0f, Spacing);
         if (ImGui::Button(LE_ICON_PLUS "##addtag", ImVec2(LineHeight, LineHeight)))
         {
@@ -222,7 +222,7 @@ namespace Lumina
                         State.bSelected = true;
                     }
 
-                    // Reveal: expand everything while searching, otherwise just the path to the current value.
+                    // Expands everything while searching, otherwise only the path to the current value.
                     const bool bAncestorOfCurrent = Current.size() > Accum.size()
                         && Current.compare(0, Accum.size(), Accum) == 0
                         && Current[Accum.size()] == '.';

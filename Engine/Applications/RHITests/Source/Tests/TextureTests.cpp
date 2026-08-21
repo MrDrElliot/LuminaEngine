@@ -95,8 +95,7 @@ namespace Lumina::RHITests
         RHI_CHECK_EQ(Pixels[3], 255u);   // A
     }
 
-    // The depth aspect goes down vkCmdClearDepthStencilImage instead of the color path. Worth its own
-    // test: it is the call the Reset Pass makes on the shadow atlas and the depth attachment.
+    // The depth aspect goes down vkCmdClearDepthStencilImage, the call the Reset Pass makes.
     RHI_TEST(Textures, ClearDepth)
     {
         RHI::FTextureDesc Desc;
@@ -224,8 +223,7 @@ namespace Lumina::RHITests
         RHI_CHECK(!Managed.IsValid());
     }
 
-    // The contract materials depend on: a re-cook replaces the image but keeps the published index, so
-    // every uniform that already baked the old ResourceID stays correct.
+    // A re-cook replaces the image but keeps the published index, so baked ResourceIDs stay correct.
     RHI_TEST(Textures, RecreateKeepsSampledSlot)
     {
         RHI::FManagedTexture Managed = RHI::Textures::Create(RHI::FTexture2DDesc

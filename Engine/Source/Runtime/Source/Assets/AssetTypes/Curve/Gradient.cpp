@@ -16,8 +16,7 @@ namespace Lumina
             return Keys[0].Color;
         }
 
-        // Clamp outside the keyed range. Extrapolating color has no useful meaning (it leaves gamut
-        // almost immediately), so unlike SKeyedCurve there is no per-side extrapolation mode.
+        // Extrapolating color leaves gamut almost immediately, so there is no per-side mode here.
         if (InTime <= Keys.front().Time)
         {
             return Keys.front().Color;
@@ -37,16 +36,13 @@ namespace Lumina
 
             const SGradientKey& Lo = Keys[i - 1];
             const float Span = Hi.Time - Lo.Time;
-            // Coincident stops are a legal way to author a hard edge; take the later color rather than
-            // dividing by zero.
+            // Coincident stops are a legal hard edge, so take the later color rather than divide by zero.
             if (Span <= 1e-6f)
             {
                 return Hi.Color;
             }
 
-            // Component-wise rather than Math::Lerp: the vector overloads are ambiguous for FVector4, and
-            // spelling it out keeps alpha interpolating linearly with the color rather than picking up
-            // whatever a vector specialization does.
+            // Spelled out so alpha interpolates linearly rather than picking up a vector specialization.
             const float Alpha = (InTime - Lo.Time) / Span;
             return FVector4(
                 Lo.Color.x + (Hi.Color.x - Lo.Color.x) * Alpha,
@@ -64,8 +60,7 @@ namespace Lumina
         Key.Time  = InTime;
         Key.Color = InColor;
 
-        // Insert in place rather than push-then-sort: Evaluate relies on the ordering, and a caller that
-        // forgot to sort would read a silently wrong ramp instead of failing.
+        // Evaluate relies on the ordering, so a caller that forgot to sort would read a wrong ramp.
         SIZE_T Index = 0;
         while (Index < Keys.size() && Keys[Index].Time <= InTime)
         {

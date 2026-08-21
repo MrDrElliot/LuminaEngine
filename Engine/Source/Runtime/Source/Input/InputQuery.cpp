@@ -18,8 +18,7 @@ namespace Lumina::Input
         const FInputViewportRegistry& Registry = FInputViewportRegistry::Get();
         const FInputViewport* Viewport = Registry.FindViewportForWorld(World);
 
-        // Both conditions are global, so exactly one world is driven at a time and the editor's input
-        // focus toggle reliably stops all of them.
+        // Both conditions are global, so exactly one world is driven and the focus toggle stops all of them.
         if (Viewport == nullptr || !Registry.IsGameInputFocused() || Viewport != Registry.GetActiveViewport())
         {
             return nullptr;
@@ -54,8 +53,7 @@ namespace Lumina::Input
         return FVector2(State.X, State.Y);
     }
 
-    // Layers are pushed on the world's own context, NOT the receiving one: a world must be able to arm its
-    // pause layer while the editor holds input focus, otherwise the layer would silently fail to apply.
+    // A world must arm its pause layer while the editor holds focus, or the layer silently fails.
     static FInputContext* FindOwnContext(const CWorld* World)
     {
         FInputViewport* Viewport = FInputViewportRegistry::Get().FindViewportForWorld(World);
@@ -182,7 +180,7 @@ namespace Lumina::Input
 
     float GetAxisPair(const CWorld* World, const FInputActionHandle& Positive, const FInputActionHandle& Negative)
     {
-        // Resolved once and reused: going back through GetActionState would re-derive the context per side.
+        // Resolved once, since GetActionState would re-derive the context per side.
         const FInputContext* Context = GetReceivingContext(World);
         if (Context == nullptr)
         {

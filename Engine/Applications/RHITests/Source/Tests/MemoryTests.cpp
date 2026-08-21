@@ -9,8 +9,7 @@ namespace Lumina::RHITests
         const RHI::GPUPtr Ptr = Ctx.Malloc(64 * 1024, RHI::EMemoryType::GPUOnly, "RHITests.GPUOnly");
         RHI_REQUIRE(Ptr != 0);
 
-        // Device-local memory has no host mapping, and asking for one must say so rather than hand back
-        // a pointer into somebody else's block.
+        // Device-local memory has no host mapping, so asking for one must not hand back a stray pointer.
         RHI_CHECK(RHI::ToHost(Ptr) == nullptr);
     }
 
@@ -50,8 +49,7 @@ namespace Lumina::RHITests
         RHI_CHECK(bDisjoint);
     }
 
-    // Above kDedicatedMemoryThreshold, so this takes the VMA dedicated-allocation path rather than a
-    // suballocation. Worth its own test: it is the path a large mesh or a streamed texture lands on.
+    // Above kDedicatedMemoryThreshold, so this takes the VMA dedicated path a large mesh lands on.
     RHI_TEST(Memory, LargeDedicatedAllocation)
     {
         const RHI::GPUPtr Ptr = Ctx.Malloc(96ull * 1024 * 1024, RHI::EMemoryType::GPUOnly, "RHITests.Large");

@@ -55,9 +55,7 @@ namespace Lumina
     {
         FInputViewportRegistry& Reg = FInputViewportRegistry::Get();
 
-        // Target the CALLER's own viewport when known (per-window capture); else the active one. This is
-        // what makes multiple game-preview windows behave: each player's script sets only its own window's
-        // mode, so an inactive player's release can't wipe the focused window's capture.
+        // Each player's script sets only its own window, so an inactive one cannot wipe the focused capture.
         FInputViewport* Target = (CallerWorld != nullptr) ? Reg.FindViewportForWorld(CallerWorld) : nullptr;
         if (Target == nullptr)
         {

@@ -142,8 +142,7 @@ namespace Lumina
 
     bool FInputViewport::RouteEvent(FEvent& Event)
     {
-        // State updates run unconditionally so a release we routed as a
-        // fallback still latches, otherwise keys can stay "down" forever.
+        // State updates run unconditionally, or a fallback-routed release leaves keys down forever.
         Context->OnEvent(Event);
 
         const EInputMode Mode = Context->GetInputMode();
@@ -193,7 +192,7 @@ namespace Lumina
 
     bool FInputViewport::ForwardMouseEventToRmlUi(FEvent& Event)
     {
-        // Hold lock for full ProcessXxx: event listeners can mutate the DOM concurrently read by render.
+        // Event listeners can mutate the DOM that render reads concurrently, so hold the lock throughout.
         RmlUi::FLockedWorldContext Ctx(World);
         if (!Ctx)
         {
@@ -349,10 +348,7 @@ namespace Lumina
         }
         bGameInputFocused = bFocused;
 
-        // Cursor ownership follows input focus: releasing hands the cursor back across every window (the
-        // editor needs it) and re-acquiring restores the active game world's capture. Each world's desired
-        // mouse mode is preserved (not wiped), so it survives the round-trip -- ApplyActiveCursorMode gates
-        // a game world's capture on this flag instead.
+        // Each world's desired mouse mode is preserved rather than wiped, so it survives the round-trip.
         ApplyActiveCursorMode();
     }
 
@@ -373,8 +369,7 @@ namespace Lumina
 
     void FInputViewportRegistry::BeginFrame(double DeltaSeconds)
     {
-        // Actions are evaluated once here, after the frame's events have been pumped and before anything
-        // updates, so every query during the frame sees the same snapshot and edges fire exactly once.
+        // Evaluated once after the events pump, so every query sees one snapshot and edges fire once.
         const FInputActionMap& Map = FInputActionMap::Get();
         for (FInputViewport* V : Viewports)
         {
@@ -424,8 +419,7 @@ namespace Lumina
 
         RawInput->OnEvent(Event);
 
-        // Captured cursor owns input, ImGui hover/focus flags lie under
-        // GLFW_CURSOR_DISABLED, so don't trust them for routing.
+        // ImGui hover and focus flags lie under a disabled cursor, so they cannot be trusted for routing.
         for (FInputViewport* V : Viewports)
         {
             if (V->GetContext().GetMouseMode() == EMouseMode::Captured)
@@ -444,8 +438,7 @@ namespace Lumina
             return Target->RouteEvent(Event);
         }
 
-        // Fall through to focused/active so a release after the cursor leaves
-        // the panel still reaches whichever viewport saw the press.
+        // So a release after the cursor leaves the panel still reaches whichever viewport saw the press.
         FInputViewport* Target = HoveredViewport;
         if (Target == nullptr)
         {
@@ -480,9 +473,7 @@ namespace Lumina
         {
             EMouseMode Mode = ActiveViewport->GetContext().GetMouseMode();
 
-            // A game world only holds the cursor while it owns input focus; releasing focus (Shift+F1 / Stop)
-            // shows the cursor without discarding the world's desired mode. Editor worlds keep their mode so
-            // RMB-look capture is unaffected.
+            // Releasing focus shows the cursor without discarding the world's desired mode.
             const CWorld* ActiveWorld = ActiveViewport->GetWorld();
             if (ActiveWorld != nullptr && ActiveWorld->IsGameWorld() && !bGameInputFocused)
             {

@@ -14,8 +14,7 @@ namespace Lumina
         CTextureArray* Array = NewObject<CTextureArray>(Package, Name);
         if (Array != nullptr && Array->TextureResource == nullptr)
         {
-            // An empty array still needs a resource: the texture editor reads extent/layer count off it
-            // before any layer has been added, and CTexture::PostLoad dereferences it unconditionally.
+            // The texture editor reads extent and layer count before any layer exists, and PostLoad dereferences it.
             Array->TextureResource = MakeUnique<FTextureResource>();
         }
         return Array;
@@ -37,16 +36,13 @@ namespace Lumina
 
         if (LayerCount > 2048)
         {
-            // maxImageArrayLayers is 2048 on every target we support; a larger request fails at
-            // vkCreateImage with nothing useful in the log, so name the real limit here instead.
+            // maxImageArrayLayers is 2048 everywhere we ship, and a larger request fails with nothing in the log.
             LOG_ERROR("TextureArrayFactory: '{0}' asks for {1} layers; the hardware limit is 2048.",
                       Array->GetName().c_str(), LayerCount);
             return false;
         }
 
-        // The asset's real resource is STASHED and a throwaway put in its place for the duration, so
-        // every failure path can restore it exactly. It also gives the resize path (which cooks through
-        // a CTexture) somewhere to write that is not the live asset.
+        // The real resource is STASHED so every failure path can restore it exactly.
         TUniquePtr<FTextureResource> Saved = Move(Array->TextureResource);
         Array->TextureResource = MakeUnique<FTextureResource>();
 
@@ -71,8 +67,7 @@ namespace Lumina
                 return Rollback();
             }
 
-            // Guarding against an array nested inside itself, which would recurse through mips that
-            // are laid out layer-major and produce a silently wrong image rather than an error.
+            // An array nested inside itself would recurse through layer-major mips and silently produce garbage.
             if (Source->IsA<CTextureArray>())
             {
                 LOG_ERROR("TextureArrayFactory: '{0}' layer {1} ('{2}') is itself a texture array; layers must be plain textures.",
@@ -103,25 +98,15 @@ namespace Lumina
 
             if (bMatches)
             {
-                // A streamed source is sitting at its inline tail, so the mips below FirstInlineMip have
-                // no Pixels at all -- their bytes are still in the source package's bulk region. Copying
-                // in that state assembles the array around holes, and because the copy cannot bring the
-                // source's BulkRef with it (see below), those holes are unfillable: the array can never
-                // stream up past them, and saving it writes them out as zero-length payloads. Which mips
-                // happen to be resident depends on what the streamer did to the source minutes ago, so
-                // without this the array you get is a function of the camera, not of the assets.
+                // A streamed source has holes the copy cannot fill, so the array would depend on what the streamer did.
                 Source->MakeStreamedMipsResident();
 
-                // The fast path, and the common one: the layer is already cooked to the right shape, so
-                // its mip chain is copied straight across. COPIED, not moved -- the source texture keeps
-                // owning its pixels and stays perfectly usable on its own.
+                // COPIED, not moved, so the source texture keeps owning its pixels and stays usable on its own.
                 for (uint32 Mip = 0; Mip < SrcMips; ++Mip)
                 {
                     const FTextureResource::FMip& SrcMip = Source->TextureResource->Mips[Mip];
 
-                    // MakeStreamedMipsResident logs its own reason. Refusing here is the point: an array
-                    // with a hole in it is worse than no rebuild, because the hole survives into the saved
-                    // asset and the old array was fine.
+                    // An array with a hole survives into the saved asset, so refusing beats rebuilding.
                     if (SrcMip.Pixels.empty())
                     {
                         LOG_ERROR("TextureArrayFactory: '{0}' layer {1} ('{2}') mip {3} could not be made "
@@ -133,11 +118,7 @@ namespace Lumina
 
                     AssembledMips.push_back(SrcMip);
 
-                    // The copy brings the SOURCE's BulkRef with it, and that addresses the source's
-                    // package, not this array's. Left in place, the first demotion would drop these
-                    // pixels (a valid BulkRef is what marks them re-readable) and the promotion after it
-                    // would read the array's package at the source's offsets -- another texture's bytes.
-                    // The array's own refs are written when it is saved.
+                    // The copy carries the SOURCE's BulkRef, which addresses the wrong package, so clear it here.
                     AssembledMips.back().BulkRef = FBulkDataRef{};
                 }
                 continue;
@@ -145,9 +126,7 @@ namespace Lumina
 
             if (!Array->bResizeLayersToFirst)
             {
-                // Every slice of one VkImage shares extent, format and mip count. Stretching to fit
-                // distorts anything with a different aspect ratio, so that stays opt-in -- but say so
-                // here, because the option is the answer nearly every time this fires.
+                // Every slice of one VkImage shares extent, format and mip count, so stretching stays opt-in.
                 LOG_ERROR("TextureArrayFactory: '{0}' layer {1} ('{2}') is {3}x{4} fmt {5} with {6} mips, but layer 0 "
                           "established {7}x{8} fmt {9} with {10} mips. Every layer must match -- resize the source, "
                           "reorder so the intended size is layer 0, or enable 'Resize Layers To First' on the asset.",
@@ -157,9 +136,7 @@ namespace Lumina
                 return Rollback();
             }
 
-            // Resize path. Re-cooked from the texture's ORIGINAL source file at the contract size:
-            // rescaling the cooked BCn blocks instead would mean decode, resample and re-encode, so the
-            // layer would carry two generations of block artifacts.
+            // Re-cooked from the ORIGINAL source, since rescaling BCn would stack two generations of artifacts.
             if (Source->SourcePath.empty())
             {
                 LOG_ERROR("TextureArrayFactory: '{0}' layer {1} ('{2}') needs resizing to {3}x{4}, but it has no source "
@@ -183,8 +160,7 @@ namespace Lumina
              || Recooked.Format != Contract.Format
              || RecookedMips    != (uint32)Contract.NumMips)
             {
-                // Resizing fixes dimensions, never FORMAT: a normal map cooks to BC5 and an albedo to
-                // BC7, and no amount of rescaling reconciles those.
+                // Resizing fixes dimensions but never FORMAT, and no rescaling reconciles BC5 with BC7.
                 LOG_ERROR("TextureArrayFactory: '{0}' layer {1} ('{2}') still doesn't match after resizing "
                           "({3}x{4} fmt {5} with {6} mips vs {7}x{8} fmt {9} with {10} mips). Layers must share a "
                           "color space so they cook to the same format.",
@@ -205,10 +181,7 @@ namespace Lumina
         Array->TextureResource->ImageDescription = Contract;
         Array->TextureResource->Mips             = Move(AssembledMips);
 
-        // Success. The STASHED resource is what still owns the previous GPU image, so release it here
-        // rather than let Saved go out of scope holding a live handle. Released + recreated rather than
-        // repointed: the layer count is baked into the image, so unlike a plain re-cook there is no
-        // same-shape image to swap underneath the heap slot.
+        // Released and recreated, since the layer count is baked in and no same-shape image exists to swap.
         if (Saved)
         {
             RHI::Textures::Release(Saved->NewTexture);
@@ -222,9 +195,7 @@ namespace Lumina
             Package->MarkDirty();
         }
 
-        // Unlike a plain re-cook, this took a NEW bindless slot (the layer count is baked into the image,
-        // so there was no same-shape image to repoint). Every material that already baked the old
-        // ResourceID is now sampling a slot this array no longer owns, and nothing else rewrites them.
+        // This took a NEW bindless slot, so every material holding the old ResourceID now samples a stale one.
         AssetEvents::BroadcastAssetDataChanged(Array);
 
         LOG_INFO("TextureArrayFactory: rebuilt '{0}' with {1} layers at {2}x{3} ({4} mips).",

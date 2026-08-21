@@ -52,10 +52,7 @@ namespace Lumina
 
         NewObject->ConstructInternal(FObjectInitializer(Params.Package, Params));
 
-        // Script-appended properties live past the C++ shim and are not covered by EmplaceInstance's
-        // placement-new, so they are constructed here -- after the class is known, before any user code runs.
-        // No-op (one empty-vector test) for every native class. The flag is what lets ~CObjectBase skip
-        // reaching through its class entirely unless this object really has trailing storage to tear down.
+        // The flag is what lets the destructor skip its class unless there is trailing storage.
         if (Params.Class->ConstructScriptProperties(NewObject))
         {
             NewObject->SetFlag(OF_ScriptProperties);
@@ -168,7 +165,7 @@ namespace Lumina
             return CPackage::LoadAssetGraph(Data->AssetGUID);
         }
 
-        // Not a registered asset: nothing to fan out, fall back to the plain inline load.
+        // Not a registered asset, so there is nothing to fan out and the plain inline load stands.
         return StaticLoadObject(Name);
     }
 
@@ -432,8 +429,7 @@ namespace Lumina
             break;
         case EPropertyTypeFlags::Map:
             {
-                // Two inners follow (backward: Key first, then Value). The emitter lays them out as
-                // [Value, Key, Map] so the ReadMore=2 recursion attaches Key on the first pass, Value the second.
+                // The emitter lays them out so the recursion attaches Key on the first pass and Value on the second.
                 NewProperty = NewFProperty<FMapProperty, FMapPropertyParams>(FieldOwner, Param);
 
                 ReadMore = 2;
@@ -462,8 +458,7 @@ namespace Lumina
             ConstructProperties(Owner, Properties, NumProperties);
         }
 
-        // FEnumProperty is not a TProperty<>, so nothing else sets its ElementSize, and AddProperty is
-        // too early -- the inner only gets its own size after Init() has already run AddProperty.
+        // The inner only gets its own size after Init has already run AddProperty.
         if (Param->TypeFlags == EPropertyTypeFlags::Enum)
         {
             FEnumProperty* EnumProperty = static_cast<FEnumProperty*>(NewProperty);

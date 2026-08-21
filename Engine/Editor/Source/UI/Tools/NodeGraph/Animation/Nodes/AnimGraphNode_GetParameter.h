@@ -13,6 +13,7 @@ namespace Lumina
 
         FStringView GetNodeDisplayName() const override { return "Get Parameter"; }
         FStringView GetNodeTooltip() const override { return "Reads a named graph parameter as a scalar value."; }
+        FString GetNodeTitleText() const override;
 
         void BuildNode() override;
         void GenerateBytecode(FAnimationGraphCompiler& Compiler) override;

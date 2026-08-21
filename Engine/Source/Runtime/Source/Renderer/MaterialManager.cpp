@@ -10,12 +10,7 @@ namespace Lumina::RHI
     /** What the table starts at. Sized so a typical scene never grows at all. */
     static constexpr uint32 kInitialMaterialSlots = 1024;
 
-    /**
-     * The ceiling, and it is not arbitrary: the draw path carries the material index as a uint16
-     * (FMeshResolveCache::FResolvedSurface::MaterialIdx), and ScenePrimitiveSet treats (uint16)-1 as
-     * "no material". So 65534 is the highest index that can survive the trip to the GPU, and a table
-     * one slot larger than that is the most that can ever be addressed.
-     */
+    // The draw path carries the index as a uint16 and treats the maximum as no material.
     static constexpr uint32 kMaxMaterialSlots = 65535;
 
     // Slots kept in hand when a grow is staged, so the swap can land before the table is really full.
@@ -67,10 +62,7 @@ namespace Lumina::RHI
             return 0;
         }
 
-        // The mirror IS what the shader reads, so these are exactly the slots that material samples --
-        // no separate mapping to fall out of sync, which is what made the previous material-keyed
-        // attempt fail silently for anything missing from its map. A freed slot reads as zeroed, and
-        // slot 0 is the magenta fallback, so a zero entry is correctly "no texture".
+        // The mirror IS what the shader reads, so there is no separate mapping to fall out of sync.
         const FMaterialUniforms& Uniforms = Mirror[Index];
 
         uint32 Count = 0;
@@ -82,8 +74,7 @@ namespace Lumina::RHI
                 continue;
             }
 
-            // Materials repeat the same texture across channels constantly (one packed ORM feeding three
-            // slots); de-duplicating here keeps the caller's inner loop honest.
+            // Materials repeat one packed texture across three channels, so de-duplicating keeps callers honest.
             bool bSeen = false;
             for (uint32 j = 0; j < Count; ++j)
             {
@@ -104,7 +95,7 @@ namespace Lumina::RHI
             return;
         }
 
-        // Plain fence lifetime: the old address only lives in scene roots, which are rebuilt every frame.
+        // The old address only lives in scene roots, which are rebuilt every frame.
         Core::Retire(MaterialBuffer);
 
         MaterialBuffer  = PendingBuffer;
@@ -234,8 +225,7 @@ namespace Lumina::RHI
 
         const int32 MaterialIndex = Material->GetMaterialIndex();
 
-        // Cleared BEFORE the slot goes back on the free list: once it is free another material can claim
-        // it, and an owner still naming it would then write through someone else's slot.
+        // Once free another material can claim it, and an owner still naming it would write through it.
         Material->SetMaterialIndex(-1);
 
         RemoveMaterialSlot((uint32)MaterialIndex);
@@ -245,10 +235,7 @@ namespace Lumina::RHI
     {
         FWriteScopeLock Lock(Mutex);
 
-        // Zeroing here is what makes an unreleased reference render the magenta placeholder (every
-        // Textures[i] becomes 0, which is the 1x1 fallback's heap slot). That is intended as the terminal
-        // state -- it is only safe because this runs after FRenderReleaseQueue's extract gate, i.e. once
-        // no recorded or recordable frame still names the slot.
+        // Safe only because this runs after the extract gate, when no recordable frame names the slot.
         WriteSlotLocked(nullptr, Index);
 
         FreeList.push_back(Index);
@@ -269,7 +256,7 @@ namespace Lumina::RHI
             return;
         }
 
-        // Read lock for the same reason WriteSlotLocked takes one: only a grow moves the mirror's storage.
+        // A read lock suffices for the same reason WriteSlotLocked takes one, only a grow moves storage.
         FReadScopeLock Lock(Mutex);
 
         if (Index >= Capacity)

@@ -15,6 +15,7 @@ namespace Lumina
 
         FStringView GetNodeDisplayName() const override { return "Get Object Parameter"; }
         FStringView GetNodeTooltip() const override { return "Reads an asset reference from a blackboard object key."; }
+        FString GetNodeTitleText() const override;
 
         void BuildNode() override;
         void GenerateBytecode(FAnimationGraphCompiler& Compiler) override;

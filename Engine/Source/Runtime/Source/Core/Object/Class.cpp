@@ -147,8 +147,7 @@ namespace Lumina
         Params.Package  = GetPackage();
         Params.Guid     = FGuid::New();
         
-        // OF_DefaultObject rides in on Params; ConstructInternal applies it, so it is already live inside
-        // PostInitProperties. It used to need a re-stamp here because construction dropped the flag.
+        // It used to need a re-stamp here because construction dropped the flag.
         ClassDefaultObject = StaticAllocateObject(Params);
         ClassDefaultObject->AddToRoot();
 
@@ -163,8 +162,7 @@ namespace Lumina
         {
             return;
         }
-        // Rooted by CreateDefaultObject, and that root reference is the only strong one a CDO has, so
-        // un-rooting IS the destruction. The ForceDestroyNow that used to follow ran on freed memory.
+        // That root reference is the only strong one a CDO has, so un-rooting IS the destruction.
         CObject* Discarded = ClassDefaultObject;
         ClassDefaultObject = nullptr;
         Discarded->RemoveFromRoot();

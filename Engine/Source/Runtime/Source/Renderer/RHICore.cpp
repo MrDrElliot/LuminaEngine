@@ -13,8 +13,7 @@
 
 namespace Lumina::RHI::Core
 {
-    // Typed, not a ull literal: unsigned long long is a distinct type from uint64 wherever
-    // uint64_t is unsigned long, and Math::Max/AlignUp deduce one T from both arguments.
+    // Typed, since unsigned long long is a distinct type and Max deduces one T from both arguments.
     static constexpr uint64 kMegabyte = 1024 * 1024;
 
     static constexpr uint64 kTransientSliceRequest = 32 * kMegabyte;
@@ -32,8 +31,7 @@ namespace Lumina::RHI::Core
 
     static constexpr uint32 kNumQueues = 3;   // EQueueType::Graphics / Transfer / Compute
 
-    // One retirement queue per frame slot. Kinds rather than a queue each, so there is exactly one place
-    // in the engine that destroys a GPU resource and one invariant to check.
+    // Kinds rather than a queue each, so one place destroys a GPU resource and one invariant holds.
     struct FRetireItem
     {
         enum class EKind : uint8 { Buffer, Texture, SampledSlot, StorageSlot, Pipeline, Callback };
@@ -43,15 +41,10 @@ namespace Lumina::RHI::Core
         FTextureH  Texture     = {};
         uint32     Slot        = kInvalidHeapSlot;
         FPipelineH Pipeline    = {};
-        // Callback kind: runs on the same fence boundary a buffer retired alongside it would be freed on.
-        // For state that must stop describing a resource at the exact moment that resource dies -- not
-        // before, or already-recorded frames lose it, and not after, or future frames read it freed.
+        // For state that must stop describing a resource at the exact moment that resource dies.
         TFunction<void()> Callback;
 
-        /** Per-queue timeline value this resource must outlive: the value the NEXT submission on that queue
-         *  will signal, captured at retire time. Timelines are monotonic, so waiting it covers everything
-         *  already submitted AND the one command list that may have been mid-record when the retire landed.
-         *  The frame slot alone cannot express this -- its wait value is the frame from two frames back. */
+        // Timelines are monotonic, so waiting the next value covers a list mid-record at retire time.
         uint64     Fence[kNumQueues] = {};
     };
 
@@ -243,8 +236,7 @@ namespace Lumina::RHI::Core
 
     static void PushRetire(FRetireItem Item)
     {
-        // Asset destructors can outlive Core::Shutdown. With no frames in flight there is nothing to wait
-        // for, so destroy immediately rather than queueing into a drain that will never run again.
+        // With no frames in flight there is nothing to wait for, and the drain will never run again.
         if (!GCore.bInitialized)
         {
             DestroyRetired(Item);
@@ -253,7 +245,7 @@ namespace Lumina::RHI::Core
 
         for (uint32 QueueIndex = 0; QueueIndex < kNumQueues; ++QueueIndex)
         {
-            // Open lists first: a submit bumps the counter before dropping this, so the sum only over-reads.
+            // Open lists first, since a submit bumps the counter before dropping this and the sum over-reads.
             const uint32 Open = GetOpenCommandListCount((EQueueType)QueueIndex);
 
             // Reaches past what is submitted, to cover an open recording that may already name the resource.
@@ -266,7 +258,7 @@ namespace Lumina::RHI::Core
         GCore.RetireQueues[Slot].push_back(Item);
     }
 
-    // Metered: a destroy can reach vkFreeMemory, and a streaming burst retires hundreds at once.
+    // Metered, since a destroy can reach the driver free and a streaming burst retires hundreds.
     static constexpr uint32 kMaxDestroysPerDrain = 64;
 
     // Past this the backlog is itself VRAM the frame is trying to allocate, so the cap is dropped.
@@ -276,8 +268,7 @@ namespace Lumina::RHI::Core
     {
         LUMINA_PROFILE_SECTION("RHI::DrainRetireQueue");
 
-        // Sampled together under the submit lock, which is held across RHI::Submit -- so the pair is never
-        // observed mid-submission, where the list has stopped being open but the counter has not moved yet.
+        // Sampled under the submit lock, so the pair is never observed mid-submission.
         uint64 Submitted[kNumQueues];
         uint32 OpenNow[kNumQueues];
         {
@@ -320,8 +311,7 @@ namespace Lumina::RHI::Core
             FScopeLock Lock(GCore.RetireMutex);
             TVector<FRetireItem>& Queue = GCore.RetireQueues[Slot];
 
-            // Every kind counts, callbacks included: a callback is paired with the resource beside it, so
-            // metering only some kinds would fire it a drain early.
+            // A callback is paired with the resource beside it, so metering some kinds fires it a drain early.
             const bool bUncapped = Queue.size() > kRetireBacklogHighWater;
 
             for (size_t i = 0; i < Queue.size(); )
@@ -331,7 +321,7 @@ namespace Lumina::RHI::Core
                     break;
                 }
 
-                // Not yet retired on some queue: leave it for the next drain of this slot.
+                // Not yet retired on some queue, so leave it for the next drain of this slot.
                 if (!HasRetired(Queue[i]))
                 {
                     ++i;
@@ -349,7 +339,7 @@ namespace Lumina::RHI::Core
         LUMINA_PROFILE_VALUE("RHI/RetireBacklog", (int64)Backlog);
         LUMINA_PROFILE_VALUE("RHI/RetireDestroyed", (int64)Ready.size());
 
-        // Outside the lock: the destroy paths take their own backend locks.
+        // Outside the lock, since the destroy paths take their own backend locks.
         for (const FRetireItem& Item : Ready)
         {
             DestroyRetired(Item);
@@ -475,8 +465,7 @@ namespace Lumina::RHI::Core
         }
         GCore.SlotCommandLists[Slot].clear();
 
-        // Dedicated staging blocks the flush below reads. Released after CurrentSlot becomes Slot, so they
-        // land on THIS slot's retire queue -- the one gated by the upload submit's own timeline value.
+        // Released after CurrentSlot advances, so they land on the slot gated by the upload's timeline.
         TVector<GPUPtr> UploadStaging;
 
         {
@@ -568,8 +557,7 @@ namespace Lumina::RHI::Core
 
         GCore.CurrentSlot.store(Slot, std::memory_order_release);
 
-        // Only with CurrentSlot == Slot does Retire queue onto the slot whose SlotWaitValue the upload just
-        // set. Retiring earlier queues on the previous slot, which waits a value older than that submit.
+        // Retiring earlier queues on the previous slot, which waits a value older than that submit.
         for (GPUPtr Staging : UploadStaging)
         {
             Retire(Staging);
@@ -577,9 +565,7 @@ namespace Lumina::RHI::Core
 
         Upload::BeginSlot(Slot);
 
-        // After the publish for the same reason as the staging retires above: this retires the images the
-        // swaps move off, and a Retire landing on the previous slot would be gated by a timeline value
-        // older than the work this frame is about to submit.
+        // A retire landing on the previous slot would be gated by a value older than this frame's work.
         LUMINA_PROFILE_SECTION("Textures::TickPendingSwaps");
         Textures::TickPendingSwaps();
     }
@@ -614,7 +600,7 @@ namespace Lumina::RHI::Core
         const FSemaphoreInfo Signal { GCore.QueueTimeline[QueueIndex], Value, EStageFlags::AllCommands };
         RHI::Submit(Queue, CommandLists, EffectiveWaits, TSpan<const FSemaphoreInfo>{&Signal, 1});
 
-        // Relaxed: only BeginFrame writes this, and both run on the frame thread.
+        // Relaxed, since only BeginFrame writes this and both run on the frame thread.
         const uint32 Slot = GCore.CurrentSlot.load(std::memory_order_relaxed);
         GCore.SlotWaitValue[Slot][QueueIndex] = Value;
         for (FCmdListH CommandList : CommandLists)
@@ -684,8 +670,7 @@ namespace Lumina::RHI::Core
         if (RawOffset + Padded > Slice.Capacity)
         {
             const GPUPtr Mem = Malloc(Size, Alignment, EMemoryType::CPUWrite);
-            // Named even on this hot-ish path: an overflow that shows up in the memory tool is the
-            // signal that the ring slice is undersized, and it costs a fraction of the Malloc above.
+            // An overflow visible in the memory tool signals an undersized ring slice, and naming is cheap.
             SetDebugName(Mem, "Transient.Overflow");
             Retire(Mem);
             return FTransientAlloc{ .Cpu = ToHost(Mem), .Gpu = Mem };

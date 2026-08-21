@@ -18,9 +18,7 @@ namespace Lumina::Reflection::Visitor
         {
             std::string DisplayName = ClangUtils::GetCursorDisplayName(Cursor);
 
-            // Read with the enum's own signedness. Reading an unsigned constant as signed
-            // sign-extends it, so a flag like `All = 0xFFFF` on a uint16 enum would come back as
-            // 0xFFFFFFFF and no longer fit the type the binding emitter gives it.
+            // Read with the enum's own signedness, or All = 0xFFFF on a uint16 enum sign-extends to 0xFFFFFFFF.
             const CXType Underlying = clang_getEnumDeclIntegerType(clang_getCursorSemanticParent(Cursor));
 
             const uint32_t Value = ClangUtils::IsUnsignedIntegerType(Underlying)
@@ -77,7 +75,7 @@ namespace Lumina::Reflection::Visitor
             return CXChildVisit_Continue;
         }
 
-        // Naming convention: reflected enums are prefixed with `E`.
+        // Reflected enums are prefixed with E by convention.
         if (CursorName.empty() || CursorName[0] != 'E')
         {
             LRT_WARNING(Cursor, EDiagId::BadTypePrefix,
@@ -85,9 +83,7 @@ namespace Lumina::Reflection::Visitor
                 CursorName.c_str(), CursorName.c_str());
         }
 
-        // Through the C API rather than by casting Cursor.data to a clang::EnumDecl: that cast is
-        // only valid while the LLVM headers match the linked libclang exactly, and when they do
-        // not it yields a pointer that is neither null nor safe to dereference.
+        // Through the C API, since casting Cursor.data is only valid while LLVM headers match libclang exactly.
         const CXType IntegerType = clang_getEnumDeclIntegerType(Cursor);
 
         if (IntegerType.kind == CXType_Invalid)
@@ -107,8 +103,7 @@ namespace Lumina::Reflection::Visitor
         ReflectedEnum->GenerateMetadata(Macro.MacroContents);
         ValidateSpecifiers(Cursor, ESpecifierTarget::Reflect, ReflectedEnum->Metadata);
 
-        // Record the underlying integer size + signedness so the C# emitter can give the generated enum a
-        // matching explicit backing type, letting it mirror by value inside a blittable struct at any width.
+        // The C# emitter gives the generated enum a matching explicit backing type, so it mirrors by value.
         const long long EnumSizeBytes = clang_Type_getSizeOf(IntegerType);
         ReflectedEnum->UnderlyingSize = (EnumSizeBytes > 0) ? (uint32_t)EnumSizeBytes : 4;
         ReflectedEnum->bUnsignedUnderlying = ClangUtils::IsUnsignedIntegerType(IntegerType);

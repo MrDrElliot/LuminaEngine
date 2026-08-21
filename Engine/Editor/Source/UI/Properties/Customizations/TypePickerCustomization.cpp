@@ -14,10 +14,7 @@ namespace Lumina
 {
     namespace
     {
-        // Struct picker: builds the candidate list (every struct that is Base or derived), renders the
-        // searchable combo, and returns the newly chosen struct (or no change). Index 0 is always "None".
-        // The class analog is ImGuiX::ClassCombo -- shared with the data asset creation dialogue, which
-        // needs the same picker outside a property row.
+        // Index 0 is always None, and the class analog is ImGuiX::ClassCombo, shared with the dialogue.
         template<typename TType>
         TType* DrawTypePicker(const char* StrId, TType* Base, TType* Current, bool& bOutChanged)
         {

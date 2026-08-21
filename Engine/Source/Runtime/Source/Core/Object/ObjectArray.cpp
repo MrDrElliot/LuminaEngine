@@ -123,14 +123,7 @@ namespace Lumina
 
         bShuttingDown = true;
 
-        // Types outlive their instances. An instance's teardown is entitled to ask for its class -- a
-        // minted script class's destructor reaches through it to destruct the appended trailing block --
-        // so freeing a class while its instances are still alive is a use-after-free. Index order alone
-        // does not give that ordering: freed indices are recycled, so an object created late can sit at a
-        // lower index than the class it was made from.
-        //
-        // CField covers CClass / CStruct / CEnum, i.e. everything that can be another object's class or
-        // describe its layout. Classifying is safe here because nothing has been freed yet.
+        // Freed indices are recycled, so index order alone cannot keep a class alive past its instances.
         auto DestroyPass = [this](bool bTypeObjects)
         {
             ForEachObject([bTypeObjects](CObjectBase* Object, int32)
@@ -252,9 +245,7 @@ namespace Lumina
             return nullptr;
         }
 
-        // Generation matches, so the slot still holds this object (not yet deallocated), the pointer is
-        // safe to read and to test the flag on. Treat an object already marked for destruction as gone,
-        // matching FindObject and so weak resolves don't hand back a dying object.
+        // An object already marked for destruction reads as gone, matching FindObject.
         CObjectBase* Object = Item->GetObj();
         if (Object == nullptr || Object->HasAnyFlag(OF_MarkedDestroy))
         {
@@ -306,8 +297,7 @@ namespace Lumina
 
         if (Object)
         {
-            // The caller still holds the ref being dropped, so the object is alive here, reading its
-            // index is safe. The decrement is lock-free; only the at-zero free takes the lock.
+            // The caller still holds the ref being dropped, so reading the index is safe and only the free locks.
             if (FCObjectEntry* Item = ChunkedArray.GetItem(Object->GetInternalIndex()))
             {
                 uint32 NewCount = Item->ReleaseStrongRef();
@@ -341,8 +331,7 @@ namespace Lumina
             return nullptr; // being destroyed
         }
 
-        // Holding the lock here serializes against ConditionalDestroy: it either sees this incremented
-        // count and bails, or already marked the object (caught above). No resurrection-after-free.
+        // The lock serializes against ConditionalDestroy, so there is no resurrection after free.
         Item->AddStrongRef();
         return Object;
     }
@@ -368,8 +357,7 @@ namespace Lumina
                 return false; // (re)acquired a strong ref since the count hit zero, keep it alive
             }
 
-            // Mark under the lock so any concurrent TryAddStrongRef now refuses. Once marked we own the
-            // destruction; the actual teardown runs outside the lock so OnDestroy can't deadlock on it.
+            // Marked under the lock so a concurrent upgrade refuses, and torn down outside it to avoid deadlock.
             Object->SetFlag(OF_MarkedDestroy);
         }
 

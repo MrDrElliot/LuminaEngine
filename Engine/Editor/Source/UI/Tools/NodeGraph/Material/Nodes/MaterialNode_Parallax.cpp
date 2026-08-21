@@ -11,8 +11,7 @@ namespace Lumina
 {
     void CMaterialExpression_ParallaxOcclusionMapping::BuildNode()
     {
-        // Deliberately not Super::BuildNode(): the base creates the single unnamed Output, and this node
-        // publishes three named ones instead (bound individually through ResolvedVar).
+        // The base creates one unnamed Output, while this node publishes three named ones instead.
         UV             = MakeIn(this, "UV", EMaterialInputType::Float2);
         HeightScale    = MakeIn(this, "Height Scale");
         MinSamples     = MakeIn(this, "Min Samples");

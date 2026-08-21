@@ -193,8 +193,7 @@ namespace Lumina
             return;
         }
 
-        // Migrate legacy clips: rebuild the lane list from whatever tracks the existing
-        // notifies reference, then guarantee at least one default lane to author into.
+        // Rebuilds the lane list from the notifies, then guarantees one default lane to author into.
         auto AddUnique = [&](const FName& Track)
         {
             if (Track.IsNone())
@@ -381,8 +380,7 @@ namespace Lumina
 
     void FAnimationEditorTool::DrawTransport(SSimpleAnimationComponent* AnimComp, float Duration)
     {
-        // The editor world is paused (system delta-time is 0), so advance the playhead
-        // from the UI clock and let the animation system resample the pose via bDirty.
+        // The editor world is paused, so advance the playhead from the UI clock and set bDirty.
         AnimComp->bPlaying = false;
         AnimComp->bLooping = bLooping;
 
@@ -500,7 +498,7 @@ namespace Lumina
         const ImGuiIO& IO = ImGui::GetIO();
         const bool bCanvasHovered = ImGui::IsWindowHovered();
 
-        // Wheel over the lanes: zoom toward the cursor; shift+wheel pans.
+        // The wheel zooms toward the cursor over the lanes, and shift plus wheel pans.
         if (bCanvasHovered && IO.MouseWheel != 0.0f && IO.MousePos.x > LaneX0)
         {
             if (IO.KeyShift)
@@ -556,7 +554,7 @@ namespace Lumina
             DrawList->AddRectFilled(ImVec2(LaneX0, RowY0), ImVec2(LaneX1, RowY1), RowBg);
             DrawList->AddLine(ImVec2(CanvasPos.x, RowY1), ImVec2(LaneX1, RowY1), IM_COL32(0, 0, 0, 120));
 
-            // Header: color chip + name + context menu.
+            // A header of color chip, name and context menu.
             const FVector4 TrackColor = PaletteColor(t);
             DrawList->AddRectFilled(ImVec2(CanvasPos.x + 6, RowY0 + 7), ImVec2(CanvasPos.x + 16, RowY0 + kTrackHeight - 7), ToU32(TrackColor), 2.0f);
 
@@ -627,7 +625,7 @@ namespace Lumina
             ImGui::EndPopup();
         }
 
-        // Helper: find the lane row index for a track name.
+        // Finds the lane row index for a track name.
         auto TrackRow = [&](const FName& Track) -> int
         {
             for (int t = 0; t < NumTracks; ++t)
@@ -717,7 +715,7 @@ namespace Lumina
             FVector4 C = Notify.Color;
             if (Flash > 0.0f) { C = Math::Mix(C, FVector4(1.0f), Flash * 0.8f); }
 
-            // Flag shape: stem + pennant.
+            // A flag shape, stem plus pennant.
             DrawList->AddLine(ImVec2(X, Top), ImVec2(X, Bot), ToU32(C), 2.0f);
             ImVec2 Flag[3] = { ImVec2(X, Top), ImVec2(X + 11.0f, Top + 4.0f), ImVec2(X, Top + 8.0f) };
             DrawList->AddTriangleFilled(Flag[0], Flag[1], Flag[2], ToU32(C));
@@ -1092,7 +1090,7 @@ namespace Lumina
             MarkAnimationDirty();
         }
 
-        // Re-keying at the playhead is the primary authoring gesture: scrub, type a value, done.
+        // Re-keying at the playhead is the primary gesture, so scrub, type a value, done.
         const float PlayheadTime = SnapTime(AnimComp->CurrentTime, Duration);
         float ValueAtPlayhead = Curve.Curve.Evaluate(PlayheadTime);
 
@@ -1213,8 +1211,7 @@ namespace Lumina
                 ImPlot::DragLineX(0, &CurrentTimeDouble, ImVec4(1, 1, 0, 1), 2.0f);
                 AnimComp->CurrentTime = Math::Clamp((float)CurrentTimeDouble, 0.0f, Duration);
 
-                // Scrubbing the curve playhead must resample the pose: the editor world
-                // is paused, so the animation system only re-evaluates when bDirty is set.
+                // The editor world is paused, so the animation system only re-evaluates when bDirty is set.
                 if (AnimComp->CurrentTime != TimeBefore)
                 {
                     bIsPlaying = false;

@@ -15,8 +15,7 @@ namespace Lumina
             return Row.FullBytes > 0 ? (float)((double)Row.ResidentBytes / (double)Row.FullBytes) : 1.0f;
         }
 
-        // Green fully resident, amber partially, red at the tail. The point of the color is that a screen
-        // full of red while the camera is close to those surfaces means feedback is not arriving.
+        // A screen of red while the camera is close to those surfaces means feedback is not arriving.
         ImVec4 ResidencyColor(const FTextureStreamingManager::FTextureSnapshot& Row)
         {
             if (Row.ResidentFirstMip == 0)
@@ -37,8 +36,7 @@ namespace Lumina
             if (Row.BudgetedFirstMip < Row.ResidentFirstMip)  { return "streaming in"; }
             if (Row.BudgetedFirstMip > Row.ResidentFirstMip)  { return "trimming"; }
 
-            // Budget == resident, but the budget had to give up mips quality asked for: this texture is
-            // paying for the pool being too small, which is the state worth spotting.
+            // The budget had to give up mips quality asked for, so this texture pays for a pool that is too small.
             if (Row.BudgetedFirstMip > Row.WantedFirstMip)    { return "budget-capped"; }
             return "settled";
         }
@@ -135,8 +133,7 @@ namespace Lumina
             ImGui::Text("Pool");
             ImGui::SameLine();
 
-            // Red past the budget: over-budget is a real state (pinned textures are exempt from eviction
-            // and can push through it), not an impossible one, so it has to be visible rather than clamped.
+            // Over-budget is a real state, since pinned textures are exempt from eviction and push through it.
             const bool bOver = Fraction > 1.0f;
             if (bOver)
             {
@@ -195,8 +192,7 @@ namespace Lumina
             ImGui::SameLine();
             ImGui::Text("%s read", ImGuiX::FormatSize(Stats.TotalBytesRead).c_str());
 
-            // Loud, because a failed load is not a policy outcome -- it means a bulk ref did not resolve,
-            // and the texture is stuck at whatever it had.
+            // Loud, since a failed load means a bulk ref did not resolve rather than a policy outcome.
             if (Stats.TotalFailedLoads > 0)
             {
                 ImGui::TextColored(ImVec4(0.95f, 0.4f, 0.35f, 1.0f),
@@ -255,8 +251,7 @@ namespace Lumina
                 ImGui::TableSetColumnIndex(4);
                 if (Row.bComplete)
                 {
-                    // Complete but still listed = read finished, residency not applied yet. It is applied on
-                    // the game thread at the next Update, so a row should never sit here for long.
+                    // Complete but still listed means residency is applied on the game thread at the next Update.
                     ImGui::TextColored(ImVec4(0.5f, 0.9f, 0.6f, 1.0f), "read, applying");
                 }
                 else
@@ -294,8 +289,7 @@ namespace Lumina
         ImGui::TableSetupColumn("State", ImGuiTableColumnFlags_WidthFixed, 90.0f);
         ImGui::TableHeadersRow();
 
-        // Sorted by resident bytes descending by default: the question this tool answers most often is
-        // "what is eating the pool", and that is the top of this list.
+        // The question this answers most often is what is eating the pool, which is the top of the list.
         TVector<const FTextureStreamingManager::FTextureSnapshot*> Rows;
         Rows.reserve(Snapshot.size());
 
@@ -344,7 +338,7 @@ namespace Lumina
             ImGui::TextUnformatted(RHI::Format::Info(Row->Format).Name);
 
             ImGui::TableSetColumnIndex(3);
-            // "4..12 of 13" reads as: the image holds mips 4 through 12 of a 13-mip chain.
+            // Reads as the image holding mips 4 through 12 of a 13-mip chain.
             ImGui::TextColored(ResidencyColor(*Row), "%u..%u of %u",
                 Row->ResidentFirstMip, Row->NumMips > 0 ? Row->NumMips - 1u : 0u, Row->NumMips);
             if (ImGui::IsItemHovered())
@@ -371,8 +365,7 @@ namespace Lumina
             ImGui::TextDisabled("%s", ImGuiX::FormatSize(Row->FullBytes).c_str());
 
             ImGui::TableSetColumnIndex(7);
-            // CPU bytes well above the resident total on a streamed-out texture means the streamer freed
-            // the GPU image but kept its mip pixels -- a RAM leak the GPU numbers alone would not show.
+            // CPU bytes far above resident means the streamer freed the image but kept its mip pixels.
             const bool bCpuHeavy = Row->CpuBytes > Row->ResidentBytes + (Row->ResidentBytes / 2);
             if (bCpuHeavy)
             {
@@ -385,8 +378,6 @@ namespace Lumina
 
             ImGui::TableSetColumnIndex(8);
             // GPU feedback wins over the CPU estimate wherever it exists, so show what actually decided.
-            // "want finer" = a shaded pixel asked for a mip finer than the finest one resident; "+N" = N
-            // levels coarser would have done; "idle" = nothing sampled it this readback.
             if (Row->bFeedbackValid)
             {
                 if (Row->FeedbackMask == 0u)

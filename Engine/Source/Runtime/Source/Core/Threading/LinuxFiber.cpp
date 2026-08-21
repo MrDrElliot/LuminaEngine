@@ -230,7 +230,7 @@ namespace Lumina::Fibers
         Frame[3] = 0;   // r13
         Frame[4] = 0;   // r12
         Frame[5] = 0;   // rbx
-        Frame[6] = 0;   // rbp -- zero terminates a frame-pointer walk at the fiber base
+        Frame[6] = 0;   // zero terminates a frame-pointer walk at the fiber base
         Frame[7] = reinterpret_cast<uint64>(&LuminaFiberTrampoline);
 
         Fiber->StackPointer = Frame;

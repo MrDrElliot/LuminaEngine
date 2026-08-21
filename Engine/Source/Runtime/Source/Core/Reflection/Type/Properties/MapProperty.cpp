@@ -6,9 +6,7 @@
 
 namespace Lumina
 {
-    // A hash_map can't create a keyed slot before the key is known, so the read path deserializes each key into a
-    // scratch buffer (default-constructed via the ops), Inserts it (which copies the key + default-constructs the
-    // value), then deserializes the value straight into the returned slot. One reusable scratch buffer per call.
+    // One reusable scratch buffer per call, since a hash map cannot create a slot before the key exists.
 
     void FMapProperty::NetSerialize(FNetArchive& Ar, void* Value)
     {
@@ -47,8 +45,7 @@ namespace Lumina
         SIZE_T Count = GetNum(Value);
         Ar << Count;
 
-        // Persist the inner element sizes so a later type change is at least detectable (maps never bulk-copy,
-        // so a mismatch is not fatal the way it is for a trivial array; we still round-trip per pair).
+        // A map never bulk-copies, so a size mismatch is detectable but not fatal, and pairs round-trip.
         size_t SerializedKeySize   = KeyProperty->GetElementSize();
         size_t SerializedValueSize = ValueProperty->GetElementSize();
         Ar << SerializedKeySize;
@@ -88,8 +85,7 @@ namespace Lumina
 
     void FMapProperty::SerializeItem(IStructuredArchive::FSlot Slot, void* Value, void const* /*Defaults*/)
     {
-        // Flattened key/value stream: element 2i is key i, element 2i+1 is value i. Uses only the array slot API
-        // (what FArrayProperty uses), so it round-trips uniformly without a per-pair record shape.
+        // Uses only the array slot API, so it round-trips uniformly with no per-pair record shape.
         int32 NumSlots = static_cast<int32>(GetNum(Value)) * 2;
         FArchiveArray Array = Slot.EnterArray(NumSlots);
 

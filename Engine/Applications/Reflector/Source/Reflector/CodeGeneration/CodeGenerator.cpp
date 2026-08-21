@@ -26,7 +26,6 @@ namespace Lumina::Reflection
     {
         constexpr size_t kStreamInitialCapacity = 10 * 1024;
 
-        // Express the header relative to a project -I dir (longest match) or the project root.
         // A relative form lets the generated artifact survive being moved or rebuilt elsewhere.
         std::string ComputeSourceHeaderInclude(const FReflectedHeader& Header)
         {
@@ -76,8 +75,7 @@ namespace Lumina::Reflection
                 return Rel;
             }
 
-            // No prefix matched -- keep absolute. Better to bake in the path
-            // than silently emit something the compiler can't resolve.
+            // No prefix matched, so keep it absolute rather than emit a path the compiler cannot resolve.
             return Path;
         }
 
@@ -90,10 +88,7 @@ namespace Lumina::Reflection
             Writer.Line();
         }
 
-        // Paths produced by generation, relative to the workspace root.
-        // Where a project's generated C++ lives. The build system pins this per target, because
-        // two targets that share a module would otherwise write the same files and each would
-        // see the other's output as its own having changed.
+        // Pinned per target, or two targets sharing a module each see the other's output as a change.
         std::string ProjectGeneratedDir(const std::string& WorkspacePath, const FReflectedProject& Project)
         {
             if (!Project.GeneratedDir.empty())
@@ -124,22 +119,10 @@ namespace Lumina::Reflection
             return WorkspacePath + "/Intermediates/CSharpBindings/" + Header.Project->Name + "/" + Header.FileName + ".generated.cs";
         }
 
-        // One unity TU per project was a 52s serial spike on Runtime's critical path (more than the
-        // ~43s ideal parallel time of every other Runtime TU combined), and every edit to any reflected
-        // header paid all 52s. Sharding spreads the generated bodies over TUs that compile concurrently.
-        //
-        // kUnityShardCount is the number of shard FILES, and MUST match
-        // LuminaConfig.ReflectionUnityShardCount in BuildScripts/Dependencies.lua: premake bakes the
-        // shard paths into the vcxproj at generation time (deliberately a fixed list, not a glob, so
-        // Visual Studio never has to re-detect generated sources), so a mismatch drops shards silently.
-        //
-        // How many of those files actually carry content is chosen per project below. Sharding is not
-        // free: each shard re-parses the PCH and its includes' headers, so a project with a handful of
-        // reflected types is better off in one TU. Unused shards are written as stubs (~0.05s each).
+        // kUnityShardCount MUST match LuminaConfig.ReflectionUnityShardCount in BuildScripts/Dependencies.lua.
         constexpr int kUnityShardCount = 8;
 
-        // Generated sources per shard. Runtime (~132) lands on the 8-shard cap; a plugin with 10 stays
-        // at 1 and compiles exactly as it did before sharding.
+        // Runtime lands on the 8-shard cap, while a plugin with ten types stays at one and compiles as before.
         constexpr size_t kGeneratedSourcesPerShard = 20;
 
         int ShardCountFor(size_t SourceCount)
@@ -175,10 +158,7 @@ namespace Lumina::Reflection
             "// only so the vcxproj's source list resolves. The Reflector\n"
             "// will overwrite it the moment a reflected type appears.\n";
 
-        /// The project's precompiled header include, or nothing when it has none. Generated sources
-        /// must open with their own module's PCH: naming another module's only compiles while that
-        /// module happens to sit on the include path, and MSVC rejects a translation unit built with
-        /// /Yu whose first content is anything else.
+        // Generated sources must open with their own module's PCH, since MSVC rejects anything else under /Yu.
         std::string PchInclude(const FReflectedProject& Project)
         {
             if (Project.PrecompiledHeader.empty())
@@ -189,8 +169,7 @@ namespace Lumina::Reflection
             return std::string("#include \"") + Project.PrecompiledHeader + "\"\n";
         }
 
-        // The reflected types for a header, or a shared empty list when the header has none (e.g. a header
-        // whose only reflection is SCRIPT_EXPORT free functions). Avoids ReflectedTypes.at() throwing.
+        // Returns a shared empty list for a header with no reflected types, so ReflectedTypes.at() cannot throw.
         const std::vector<std::unique_ptr<FReflectedType>>& TypesFor(const FReflectionDatabase& Db, FReflectedHeader* Header)
         {
             static const std::vector<std::unique_ptr<FReflectedType>> Empty;
@@ -203,9 +182,7 @@ namespace Lumina::Reflection
             std::filesystem::path OutputPath(PathUtf8.c_str());
             std::filesystem::create_directories(OutputPath.parent_path());
 
-            // Binary, so the bytes on disk are exactly Contents. In text mode every \n becomes \r\n
-            // and the file can never compare equal to what generated it, which defeats the skip in
-            // WriteTextFileIfChanged.
+            // Binary mode, since text mode turns every newline into a pair and defeats the unchanged-file skip.
             std::ofstream Stream(OutputPath, std::ios::binary);
             if (Stream.is_open())
             {
@@ -213,9 +190,7 @@ namespace Lumina::Reflection
             }
         }
 
-        // Skips the write when the contents already match. A generated header that keeps its
-        // timestamp costs nothing; rewriting one recompiles every translation unit that includes it,
-        // so a change in any module would otherwise drag the whole build along.
+        // Rewriting a generated header recompiles every TU that includes it, so skip an unchanged write.
         void WriteTextFileIfChanged(const std::string& PathUtf8, const std::string& Contents)
         {
             std::filesystem::path OutputPath(PathUtf8.c_str());
@@ -248,20 +223,16 @@ namespace Lumina::Reflection
 
     void FCodeGenerator::GenerateCode()
     {
-        // Per-project accumulator: every reflected header's .generated.cpp name. Sorted and
-        // distributed over the unity shards at write time, so shard contents stay deterministic
-        // (ReflectedTypes is a hash_map; its iteration order is not stable across runs, and an
-        // unstable order would rewrite the unity files and dirty the build for no reason).
+        // ReflectedTypes iterates in hash order, so sorting keeps shard contents byte-stable across runs.
         std::unordered_map<FReflectedProject*, std::vector<std::string>>   UnityPerProject;
         std::unordered_set<FReflectedProject*>                                 DirtyProjects;
         std::unordered_map<FReflectedProject*, std::unordered_set<std::string>> ExpectedArtifacts;
-        // Routed .generated.cs keyed by DIR, not project: plugin modules share one, and a per-project whitelist would have each sweep away the others'.
+        // Keyed by DIR rather than project, since plugin modules share one and would sweep each other away.
         std::unordered_map<std::string, std::unordered_set<std::string>> RoutedArtifacts;
 
         for (const auto& [Header, _] : ReflectionDatabase->ReflectedTypes)
         {
-            // Reference-only modules are in the database so this workspace's types can name theirs.
-            // Generating for them would write into another workspace's intermediates.
+            // A reference-only module is in the database only so this workspace's types can name its types.
             if (Header->Project->bReferenceOnly)
             {
                 continue;
@@ -295,15 +266,12 @@ namespace Lumina::Reflection
             else if (!std::filesystem::exists(
                 MakeGeneratedCSharpPath(Workspace->GetPath(), *Header, bRouteTypes).c_str()))
             {
-                // Routing changed under an unchanged header, either way: the old copy is swept, so re-emit.
+                // Routing changed under an unchanged header, and the old copy is swept either way, so re-emit.
                 GenerateCSharpFile(Header, bRouteTypes);
             }
         }
 
-        // Headers whose ONLY reflection is SCRIPT_EXPORT free functions (no reflected type) aren't in
-        // ReflectedTypes, so the loop above skips them. Process them here: they need a .generated.cpp (the
-        // thunks) and a .generated.cs (the bindings), but NO .generated.h (no types, and they don't include
-        // it, SCRIPT_EXPORT doesn't set bHasReflectionMacros).
+        // A free-function-only header needs a generated .cpp and .cs but no .generated.h, and includes none.
         for (const auto& [Header, Fns] : ReflectionDatabase->FreeFunctions)
         {
             if (Fns.empty() || ReflectionDatabase->ReflectedTypes.find(Header) != ReflectionDatabase->ReflectedTypes.end())
@@ -331,9 +299,7 @@ namespace Lumina::Reflection
             }
         }
 
-        // Orphan sweep: a deleted header leaves stale generated files the dirty-loop above never visits.
-        // Reflection\<Project> holds .generated.{h,cpp}; CSharpBindings\<Project> holds .generated.cs.
-        // Remove any whose backing header is gone (not in ExpectedArtifacts) and mark the project dirty.
+        // A deleted header leaves stale generated files the dirty loop never visits, so sweep them here.
         auto SweepOrphanDir = [&](FReflectedProject* Project, const std::string& DirPath,
             const std::unordered_set<std::string>* Expected, const char* SuffixA, const char* SuffixB)
         {
@@ -403,16 +369,13 @@ namespace Lumina::Reflection
 
         for (auto* DirtyProject : DirtyProjects)
         {
-            // A project that lost its last reflected type has no UnityPerProject entry;
-            // WriteUnityBuildFiles then stubs out every shard so the vcxproj still compiles cleanly.
+            // A project that lost its last reflected type has no entry, so every shard is stubbed out instead.
             auto It = UnityPerProject.find(DirtyProject);
             static const std::vector<std::string> Empty;
             WriteUnityBuildFiles(DirtyProject, It != UnityPerProject.end() ? It->second : Empty);
         }
 
-        // Stub guard: every shard must exist even for projects with zero reflected types, or premake's
-        // static shard list points at missing files. Only write when one is missing (keeps incremental
-        // builds fast); the __has_include stub works PCH or not.
+        // Every shard must exist even at zero reflected types, or premake's static list points at missing files.
         for (auto& Project : Workspace->ReflectedProjects)
         {
             if (Project->bReferenceOnly)
@@ -463,7 +426,7 @@ namespace Lumina::Reflection
         }
         else
         {
-            // Header contributes no C#-exposed types: drop any stale .cs so it can't linger in the build.
+            // The header contributes no C#-exposed types, so drop any stale .cs before it lingers in the build.
             std::error_code Ec;
             std::filesystem::remove(std::filesystem::path(Path.c_str()), Ec);
         }
@@ -545,8 +508,7 @@ namespace Lumina::Reflection
 
     namespace
     {
-        // Cross-module references for every reflected type in this TU, plus one per
-        // struct/class property that points at a type in another module.
+        // One reference per reflected type in this TU, plus one per property pointing at another module.
         void EmitCrossModuleReferences(FCodeWriter& Writer, const FReflectionDatabase& Db,
             FReflectedHeader* Header, const std::vector<std::unique_ptr<FReflectedType>>& Types)
         {
@@ -630,8 +592,7 @@ namespace Lumina::Reflection
             Writer.PopIndent();
             Writer.Line("};");
 
-            // Trampoline that feeds the Registration_* struct into the compiled-in
-            // registrar at translation-unit init time.
+            // Feeds the Registration_* struct into the compiled-in registrar at translation-unit init time.
             Writer.Linef("static Lumina::FRegisterCompiledInInfo %s_Register_Static_Initializer(",
                 FileID.c_str());
 
@@ -678,15 +639,13 @@ namespace Lumina::Reflection
         Writer.Linef("#include \"%s\"", ComputeSourceHeaderInclude(*Header).c_str());
         Writer.Line("#include \"World/Entity/Components/Component.h\"");
         Writer.Line("#include \"World/Entity/Events/ECSEvent.h\"");
-        // REFLECT(System) emits Meta::RegisterECSSystem<T>(). Engine modules got this transitively
-        // through their pch; a game project's pch chain doesn't reach it, so declare it explicitly.
+        // Engine modules get this through their PCH, but a game project's chain does not reach it.
         Writer.Line("#include \"World/Entity/Systems/EntitySystem.h\"");
         Writer.Line("#include \"Core/Profiler/Profile.h\"");
         Writer.Line("#include \"Core/Math/Hash/Hash.h\"");
         Writer.Line("#include \"Core/Object/Class.h\"");
         Writer.Line("#include \"Containers/ContainerOps.h\"");
-        // A REFLECT(Scriptable) class generates a forwarding shim (FScriptableBridge + the host resolver) into
-        // this .cpp; pull the headers + placement-new only when the header actually declares one.
+        // Pull the headers and placement-new only when the header actually declares a Scriptable class.
         for (const auto& T : Types)
         {
             if (T->Type == FReflectedType::EType::Class && T->HasMetadata("Scriptable"))
@@ -697,8 +656,7 @@ namespace Lumina::Reflection
                 break;
             }
         }
-        // A function taking FAssetRef gets a thunk that constructs one by value; the source header may
-        // only forward-declare it, so pull the definition in when any reflected function names it.
+        // The source header may only forward-declare FAssetRef, so pull the definition in when one is named.
         [&]
         {
             for (const auto& T : Types)
@@ -731,8 +689,7 @@ namespace Lumina::Reflection
         }
 
         Writer.BlankLines(2);
-        // Static type-registration only when there ARE types. A free-function-only (SCRIPT_EXPORT) header
-        // has none, and an empty registration block pulls in compiled-in-registrar machinery it doesn't need.
+        // A free-function-only header has none, and an empty block pulls in registrar machinery it never needs.
         if (!Types.empty())
         {
             EmitStaticRegistration(Writer, FileID, Types);
@@ -772,9 +729,7 @@ namespace Lumina::Reflection
 
     void FCodeGenerator::WriteUnityBuildFiles(FReflectedProject* Project, const std::vector<std::string>& SourceNames)
     {
-        // Sort first: the caller collected these by walking hash containers, so the order varies
-        // run to run. Sorted input keeps each shard's contents byte-stable, which is what lets the
-        // "unchanged file" case avoid dirtying the build.
+        // The caller walked hash containers, so sorting is what keeps each shard's contents byte-stable.
         std::vector<std::string> Sorted = SourceNames;
         std::sort(Sorted.begin(), Sorted.end());
 
@@ -783,8 +738,7 @@ namespace Lumina::Reflection
         std::vector<std::string> Shards(kUnityShardCount);
         for (size_t Index = 0; Index < Sorted.size(); ++Index)
         {
-            // Round-robin rather than contiguous chunks: adjacent generated files tend to come from
-            // the same subsystem and pull the same heavy headers, so striping balances the shards.
+            // Adjacent generated files pull the same heavy headers, so striping balances the shards.
             Shards[Index % ActiveShards] += "#include \"" + Sorted[Index] + "\"\n";
         }
 

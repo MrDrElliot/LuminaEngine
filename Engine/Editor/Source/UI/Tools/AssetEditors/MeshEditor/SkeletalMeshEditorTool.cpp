@@ -127,7 +127,7 @@ namespace Lumina
 
         Skinning.PerBone.resize(BoneCount);
 
-        // Every LOD: a coarse level can weight to a bone the base mesh never touches, and the GPU fetches it.
+        // Every LOD, since a coarse level can weight to a bone the base mesh never touches.
         const FMeshletData& MD = Resource.MeshletData;
         for (uint32 GlobalBone : MD.MeshletBoneIndices)
         {
@@ -519,7 +519,7 @@ namespace Lumina
 
     void FSkeletalMeshEditorTool::OnInitialize()
     {
-        // Scrolling disabled: the UV canvas claims the wheel for zoom, and a scrollable host would fight it.
+        // Scrolling is off, since the UV canvas claims the wheel for zoom and a scrollable host would fight.
         CreateToolWindow(UVViewerName, [&](bool bFocused)
         {
             if (CSkeletalMesh* SkeletalMesh = Cast<CSkeletalMesh>(Asset.Get()))
@@ -570,7 +570,7 @@ namespace Lumina
                     }
                 };
 
-                // Measured off meshlets: GenerateGPUBuffers drops Positions and Indices once the mesh loads.
+                // Measured off meshlets, since GenerateGPUBuffers drops Positions and Indices once the mesh loads.
                 uint32 LOD0Triangles = 0;
                 uint32 MaxLODsAcrossSurfaces = 0;
                 for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
@@ -864,7 +864,7 @@ namespace Lumina
         SSkeletalMeshComponent& MeshComponent = World->GetComponent<SSkeletalMeshComponent>(MeshEntity);
         STransformComponent&    Transform     = World->GetComponent<STransformComponent>(MeshEntity);
 
-        // A direct write is not enough: the retained scene only re-reads primitives that report a change.
+        // A direct write is not enough, since the retained scene only re-reads primitives reporting a change.
         if (MeshComponent.ForcedLODIndex != PreviewLODIndex)
         {
             MeshComponent.ForcedLODIndex = PreviewLODIndex;
@@ -1119,8 +1119,7 @@ namespace Lumina
         ImGui::DockBuilderSplitNode(InDockspaceID, ImGuiDir_Right, 0.3f, &rightDockID, &leftDockID);
 
         ImGui::DockBuilderDockWindow(GetToolWindowName(ViewportWindowName).c_str(), leftDockID);
-        // Tabbed with the viewport rather than split off it: the unwrap wants the same large canvas, and
-        // it is an inspect-one-then-the-other workflow, not a side-by-side one.
+        // The unwrap wants the same large canvas, and this is an inspect-one-then-the-other workflow.
         ImGui::DockBuilderDockWindow(GetToolWindowName(UVViewerName.data()).c_str(), leftDockID);
         ImGui::DockBuilderDockWindow(GetToolWindowName(MeshPropertiesName.data()).c_str(), rightDockID);
         ImGui::DockBuilderDockWindow(GetToolWindowName(SkinningName.data()).c_str(), rightDockID);

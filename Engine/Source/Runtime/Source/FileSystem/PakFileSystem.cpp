@@ -30,8 +30,7 @@ namespace Lumina::VFS
         return true;
     }
 
-    // FPakArchive already holds the whole .pak in memory, so a ranged read is a slice -- no IO saved over
-    // the default, but it avoids copying the entire entry just to throw most of it away.
+    // The archive already holds the whole pak, so a ranged read avoids copying the whole entry.
     bool FPakFileSystem::ReadFileRange(TVector<uint8>& Result, FStringView Path, uint64 Offset, uint64 Size)
     {
         Result.clear();
@@ -84,8 +83,7 @@ namespace Lumina::VFS
         {
             return true;
         }
-        // A "directory" exists if any entry is under it. The archive has no
-        // explicit directory records, so we infer from the entry list.
+        // The archive has no explicit directory records, so a directory is inferred from the entry list.
         bool bFound = false;
         Archive->ForEachEntryUnder(Path, [&](FStringView, size_t) { bFound = true; });
         return bFound;
@@ -134,14 +132,12 @@ namespace Lumina::VFS
             return;
         }
 
-        // Track which immediate-child *directories* we've already emitted so
-        // a directory containing many files only shows up once.
+        // So a directory containing many files only shows up once.
         THashSet<FFixedString> EmittedDirs;
 
         Archive->ForEachEntryUnder(Path, [&](FStringView EntryPath, size_t Bytes)
         {
-            // Only emit immediate children of `Path`, entries deeper than
-            // one level become a synthetic directory entry instead.
+            // Anything deeper than one level becomes a synthetic directory entry instead.
             FStringView Suffix = EntryPath.substr(Path.size() + 1); // skip leading "/"
             const size_t NextSlash = Suffix.find('/');
 

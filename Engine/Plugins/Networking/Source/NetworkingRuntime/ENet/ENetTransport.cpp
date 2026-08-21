@@ -9,15 +9,13 @@
 
 namespace Lumina
 {
-    // Network condition simulation (PIE/testing). Global; every per-world transport reads them, so one
-    // setting degrades the whole local session. Driven from the editor's Play settings popup.
+    // Global, so one setting degrades the whole local session, driven from the Play settings popup.
     static TConsoleVar<int32> CVarSimLatencyMs("Net.Sim.LatencyMs", 0,
         "Simulated one-way send latency in milliseconds (0 = off). Applied to outgoing packets.");
     static TConsoleVar<float> CVarSimPacketLossPct("Net.Sim.PacketLossPct", 0.0f,
         "Simulated outgoing packet loss, 0..100%. Only unreliable packets are dropped (reliable ones retransmit).");
 
-    // ENet's built-in adaptive range coder: compresses every outgoing datagram, decompresses incoming, host
-    // -wide and transparent. Both peers must enable it (they do -- same engine). Read once at host creation.
+    // Both peers must enable it, which they do, and it is read once at host creation.
     static TConsoleVar<bool> CVarCompression("Net.Compression", true,
         "Compress packets with ENet's range coder (good ratio on game traffic, low overhead). Both peers must match.");
 
@@ -87,8 +85,7 @@ namespace Lumina
             return It != Peers.end() ? It->second : nullptr;
         }
 
-        // Outgoing packet held for latency simulation. Peer == 0 means broadcast. Resolved at flush time
-        // (the peer may have gone away while the packet sat in the queue).
+        // A peer of 0 means broadcast, resolved at flush time since the peer may have gone away.
         struct FDelayedPacket
         {
             uint32         Peer = 0;
@@ -114,12 +111,11 @@ namespace Lumina
             ENetPeer* Peer = FindPeer(FConnectionHandle{ PeerHandle });
             if (Peer == nullptr || enet_peer_send(Peer, Channel, Packet) < 0)
             {
-                enet_packet_destroy(Packet); // no peer / send failed: ENet did not take ownership
+                enet_packet_destroy(Packet); // no peer or the send failed, so ENet did not take ownership
             }
         }
 
-        // Apply simulated loss/latency. Returns true if the packet was consumed here (dropped or queued);
-        // false means the caller should send it immediately.
+        // Returns true when the packet was consumed here, and false to send it immediately.
         bool ApplySim(uint32 PeerHandle, uint8 Channel, ESendMode Mode, const void* Data, SIZE_T Size)
         {
             const int32 LatencyMs = CVarSimLatencyMs.GetValue();
@@ -129,8 +125,7 @@ namespace Lumina
                 return false; // simulation off -> fast path
             }
 
-            // Drop only unreliable traffic; a real dropped reliable packet is retransmitted by ENet, so
-            // for reliable the only observable effect of loss is the added latency below.
+            // ENet retransmits a dropped reliable packet, so for reliable only the added latency is observable.
             if (LossPct > 0.0f && Mode != ESendMode::Reliable && SimRand01() * 100.0f < LossPct)
             {
                 return true; // dropped
@@ -149,8 +144,7 @@ namespace Lumina
             return false; // loss didn't drop it and no latency -> send now
         }
 
-        // Send any delayed packets whose release time has passed. Constant latency keeps the queue ordered
-        // by ReleaseTime, so a due prefix is safe to flush and erase.
+        // Constant latency keeps the queue ordered, so a due prefix is safe to flush and erase.
         void FlushDelayed()
         {
             if (Delayed.empty())
@@ -181,9 +175,7 @@ namespace Lumina
     {
         if (Impl->Host)
         {
-            // Notify peers before tearing down (e.g. a client whose PIE preview window was closed):
-            // disconnect_now queues the packet, flush pushes it out so the other side gets a clean
-            // DISCONNECT instead of waiting on a timeout.
+            // disconnect_now queues the packet and flush pushes it, so the peer gets a clean disconnect.
             for (const auto& [Id, Peer] : Impl->Peers)
             {
                 if (Peer != nullptr)
@@ -353,7 +345,7 @@ namespace Lumina
                     }
                     else
                     {
-                        // Client: the handle was assigned in ConnectToServer; CONNECT just confirms it.
+                        // The handle was assigned in ConnectToServer, and CONNECT only confirms it.
                         Id = static_cast<uint32>(reinterpret_cast<uintptr_t>(Event.peer->data));
                     }
 

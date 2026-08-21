@@ -21,8 +21,7 @@ namespace Lumina::NetGraph
         Out.Reset();
         OutOwnerToRecord.clear();
 
-        // Lead on SNetworkComponent (not FRepTransform): every replicating entity needs a relevancy/spawn
-        // record, whether or not it streams a transform. Movement is a per-record axis (NETREC_Movement).
+        // Every replicating entity needs a record whether or not it streams a transform.
         auto View   = Registry.view<SNetworkComponent>();
         auto Handle = View.handle();
         const uint32 N = static_cast<uint32>(Handle->size());
@@ -39,8 +38,7 @@ namespace Lumina::NetGraph
 
         auto&& NetStorage   = Registry.storage<SNetworkComponent>();
         auto&& RepStorage   = Registry.storage<FRepTransform>();
-        // Every entity has a transform, so it's NOT in the lead view (joining the universal pool is a
-        // regression); fetch it from its storage by entity in the hot loop.
+        // Every entity has a transform, so joining the universal pool would be a regression.
         auto&& TformStorage = Registry.storage<STransformComponent>();
 
         if (N > 0)
@@ -54,8 +52,7 @@ namespace Lumina::NetGraph
                     const entt::entity E = (*Handle)[i];
                     SNetworkComponent& Net = NetStorage.get(E);
 
-                    // Existence gate: anything that replicates to clients gets a record. Movement is a separate
-                    // axis below -- a static-but-stateful or purely-logical entity must still spawn + replicate.
+                    // A static-but-stateful or purely logical entity must still spawn and replicate.
                     if (!Net.bReplicates || !Net.bNetLoadOnClient)
                     {
                         continue;
@@ -67,8 +64,7 @@ namespace Lumina::NetGraph
                     if (Net.bAlwaysRelevant)                       { Flags |= NETREC_AlwaysRelevant; }
                     if (Net.NetGUID.Value >= NetGUID_DynamicStart) { Flags |= NETREC_Dynamic; }
 
-                    // No transform -> can't be placed in the AOI grid, so it must be AlwaysRelevant to replicate
-                    // at all (a purely logical entity: game/match/score state). Carries no pose.
+                    // With no transform it cannot be placed in the AOI grid, so it must be always relevant.
                     if (!TformStorage.contains(E))
                     {
                         if (!Net.bAlwaysRelevant)
@@ -87,10 +83,7 @@ namespace Lumina::NetGraph
 
                     STransformComponent& T = TformStorage.get(E);
 
-                    // Send LOCAL (relative) only when the parent replicates to clients -- then the client
-                    // reparents and composes against the parent's world (rigid). For no parent, or a parent the
-                    // client won't have, send WORLD so the (unparented-on-client) entity lands at the right pose.
-                    // Must match WriteEntityComponents' parent-NetGUID gate (Net::ParentReplicates).
+                    // Must match the parent-NetGUID gate in WriteEntityComponents.
                     const FRelationshipComponent* Rel = Registry.try_get<FRelationshipComponent>(E);
                     const bool bNetParent = (Rel != nullptr && Rel->Parent != entt::null && Net::ParentReplicates(Registry, Rel->Parent));
                     FVector3 Pos;
@@ -113,9 +106,7 @@ namespace Lumina::NetGraph
                     const NetQuantize::FQuantizedQuat   QRot   = NetQuantize::FQuantizedQuat::FromQuat(Rot);
                     const NetQuantize::FQuantizedVector QScale = NetQuantize::FQuantizedVector::FromVector(Scale, NetQuantize::ScaleQuantum);
 
-                    // Movement entities stream their transform: run the global "did it move at all" change gate
-                    // vs the server-wide FRepTransform baseline (per-entity write -> parallel-safe). Non-movement
-                    // entities skip this -- their pose only ever rides the spawn baseline.
+                    // A non-movement entity's pose only ever rides the spawn baseline, so it skips this gate.
                     if (bMovement)
                     {
                         FRepTransform& Rep = RepStorage.get(E);
@@ -139,8 +130,7 @@ namespace Lumina::NetGraph
             }, 256);
         }
 
-        // Serial merge into the dense SoA + build the owner->record map (cost = the BuildExtract zone minus
-        // the Extract::Parallel child).
+        // The cost is the BuildExtract zone minus its parallel child.
         uint32 Total = 0;
         for (uint32 t = 0; t < NumThreads; ++t) { Total += static_cast<uint32>(Out.Threads[t].Guid.size()); }
         Out.Guid.reserve(Total); 
@@ -172,7 +162,7 @@ namespace Lumina::NetGraph
             }
         }
 
-        // Total replicating-entity count -- the dominant driver of every per-tick replication cost.
+        // The total replicating-entity count, the dominant driver of every per-tick replication cost.
         LUMINA_PROFILE_VALUE("Net/ExtractRecords", static_cast<int64>(Out.Num()));
     }
 
@@ -190,7 +180,7 @@ namespace Lumina::NetGraph
         const int32  NumCells = Grid.NumCells();
         const uint32 N        = Extract.Num();
 
-        // Counting sort: count -> prefix-sum -> scatter.
+        // A counting sort, so count, prefix-sum, then scatter.
         Grid.CellStart.assign(NumCells + 1, 0);
         Grid.SortedRecords.resize(N);
         Grid.SortedWorldPos.resize(N);

@@ -24,8 +24,7 @@ namespace Lumina
             CurveWidget.SetCurve(&CurveAsset->Curve);
         }
 
-        // Canvas edits bypass the PropertyTable, so they have to dirty the package themselves and
-        // rebuild the tree that is showing the same keys.
+        // Canvas edits bypass the PropertyTable, so they dirty the package and rebuild the tree here.
         CurveWidget.SetOnModified([this]()
         {
             if (Asset.IsValid() && Asset->GetPackage() != nullptr)

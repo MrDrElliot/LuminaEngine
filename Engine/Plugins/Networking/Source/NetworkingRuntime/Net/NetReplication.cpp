@@ -33,9 +33,7 @@ namespace Lumina::Net
             return S ? S.cast<CStruct*>() : nullptr;
         }
 
-        // Live pointer to Entity's component of the given meta type, or null. O(1): the component's storage
-        // is keyed by its type-info hash (the inverse of entt::resolve(Set.info())), so resolve it directly
-        // instead of scanning every storage.
+        // Constant time, since the storage is keyed by type-info hash rather than scanned.
         void* FindComponentPtr(entt::registry& Registry, entt::entity Entity, const entt::meta_type& Type)
         {
             if (auto* Set = Registry.storage(Type.info().hash()))
@@ -55,9 +53,7 @@ namespace Lumina::Net
             CStruct*        Struct;
         };
 
-        // Every reflected component, sorted by name-hash so the array index is a stable cross-peer type id.
-        // Same build => identical set + order on both peers, so we send a 1-byte varint index on the wire
-        // instead of the 4-byte hash. ByIndex[i] is the type; HashToIndex maps a local component to its index.
+        // The same build gives an identical order, so the wire carries a 1-byte index, not the hash.
         struct FReplTypeTable
         {
             TVector<FReplType>      ByIndex;
@@ -90,9 +86,7 @@ namespace Lumina::Net
             return Table;
         }
 
-        // Client, apply a replicated attachment: reparent Child under the entity owning ParentGuid. No-op when
-        // already correct; ParentGuid 0 detaches; an unspawned parent is recorded in PendingAttach and retried
-        // when it spawns (DrainPendingAttach). Keep-local reparent -- the child's local transform is replicated.
+        // A parent guid of 0 detaches, and an unspawned parent is retried when it spawns.
         void ApplyReplicatedParent(entt::registry& Registry, entt::entity Child, uint32 ParentGuid)
         {
             FNetWorldState* State = Registry.ctx().find<FNetWorldState>();
@@ -132,7 +126,7 @@ namespace Lumina::Net
             }
             else
             {
-                State->PendingAttach[ChildKey] = ParentGuid; // parent not spawned yet -- retry on its spawn
+                State->PendingAttach[ChildKey] = ParentGuid; // the parent is not spawned yet, so retry on its spawn
             }
         }
     }
@@ -172,8 +166,7 @@ namespace Lumina::Net
         // Bump on any hand-rolled wire-format change (message layout, codec) that reflection won't catch.
         constexpr uint32 NetProtocolVersion = 1;
 
-        // FNV-1a over the version + the sorted replicated-component name-hashes. Same build => same table
-        // order => same hash; a differing component set on either peer flips it.
+        // The same build gives the same table order, so a differing component set flips the hash.
         uint32 H = 2166136261u;
         auto Combine = [&H](uint32 V) { H ^= V; H *= 16777619u; };
         Combine(NetProtocolVersion);
@@ -203,9 +196,7 @@ namespace Lumina::Net
         LUMINA_PROFILE_SCOPE();
         TVector<FComponentRepOut> Out;
 
-        // Hook-carrier: BindWriters sets the object/asset/name net-index hooks that NetSerializeReplicatedToBuffers
-        // copies onto each per-field temp archive, so refs mint into State's outgoing maps (and queue exports)
-        // exactly as the live write would. The scratch buffer itself is never written to.
+        // BindWriters sets the hooks so refs mint into the outgoing maps exactly as a live write would.
         TVector<uint8> HookScratch;
         FNetArchive HookSrc(HookScratch);
         Net::BindWriters(HookSrc, State);
@@ -268,8 +259,7 @@ namespace Lumina::Net
                 }
             }
 
-            // On a delta, skip a component with no changed fields. On a baseline, keep it even when it has
-            // no replicated fields so the client still emplaces the (possibly tag-only) component.
+            // A baseline keeps a fieldless component so the client still emplaces the tag-only one.
             if (!bBaseline && !bAny)
             {
                 continue;
@@ -294,8 +284,7 @@ namespace Lumina::Net
     void WriteEntityComponents(FNetArchive& Ar, entt::registry& Registry, entt::entity Entity, const TVector<FComponentRepOut>* Components)
     {
         LUMINA_PROFILE_SCOPE();
-        // Component blocks precomputed by CollectComponentFields: [varint wire type id][changed-field bitmask
-        // ++ changed fields]. Recipient-independent, so the same blocks serve every recipient.
+        // Recipient-independent, so the same precomputed blocks serve every recipient.
         uint16 Count = Components ? static_cast<uint16>(Components->size()) : 0;
         Ar << Count;
         if (Components != nullptr)
@@ -325,8 +314,7 @@ namespace Lumina::Net
         uint16 Count = 0;
         Ar << Count;
 
-        // Components applied this message; patched after the loop to fire on_update<T> (the "OnRep" signal)
-        // once the entity is fully updated, so a handler reacting to one component sees the others applied.
+        // Patched after the loop so an OnRep handler sees every other component already applied.
         TVector<entt::meta_type> Applied;
 
         const FReplTypeTable& Types = ReplTypes();
@@ -340,8 +328,7 @@ namespace Lumina::Net
 
             if (Index >= static_cast<uint32>(Types.ByIndex.size()))
             {
-                // Can't skip an unknown component without a size prefix. Same-build peers never hit this;
-                // abort the entity if they do.
+                // An unknown component cannot be skipped without a size prefix, so abort the entity.
                 LOG_WARN("[Net] Replication: component type index {} out of range -- aborting.", Index);
                 Ar.SetHasError(true);
                 return;
@@ -355,7 +342,7 @@ namespace Lumina::Net
                 return;
             }
 
-            // Changed-field bitmask: width is the struct's replicated-field count (same on both peers).
+            // The bitmask width is the struct's replicated-field count, the same on both peers.
             const uint32 N = St->GetNetReplicatedPropertyCount();
             const uint32 MaskBytes = (N + 7) / 8;
             TVector<uint8> Mask(MaskBytes, 0);
@@ -368,8 +355,7 @@ namespace Lumina::Net
                 }
             }
 
-            // Apply only the changed replicated fields into the live component, preserving the rest. Emplace a
-            // default first if absent.
+            // Applies only the changed fields into the live component, emplacing a default first if absent.
             void* Ptr = FindComponentPtr(Registry, Entity, Type);
             if (Ptr == nullptr)
             {
@@ -401,7 +387,7 @@ namespace Lumina::Net
             ECS::Utils::InvokeMetaFunc(Type, entt::hashed_string("patch"), entt::forward_as_meta(Registry), Entity, entt::forward_as_meta(Signal));
         }
 
-        // Attachment link (mirrors WriteEntityComponents): always read to stay aligned, then resolve + reparent.
+        // Always read to stay aligned, then resolved and reparented.
         const uint32 ParentGuid = ReadNetGuid(Ar);
         ApplyReplicatedParent(Registry, Entity, ParentGuid);
     }
@@ -468,8 +454,7 @@ namespace Lumina::Net
             return Index;
         }
 
-        // Resolve an index to an object via the sender's exported GUID, loading on demand if not resident.
-        // The result is cached (including null) so a missing asset is tried once, not per reference.
+        // The result is cached including null, so a missing asset is tried once rather than per reference.
         CObject* NetObj_Resolve(FNetObjectMap& Map, uint32 Index)
         {
             if (Index == 0)

@@ -17,9 +17,7 @@ namespace Lumina
 
     void FAssetEditorTool::SubscribeToAssetDataChanges()
     {
-        // Filtered to THIS tool's asset. Every open tool hears every change, which is what makes the
-        // broadcast worth having (a reimported texture reaches the material editors using it too, once
-        // those subscribe), but the base only acts on its own.
+        // Every open tool hears every change, which is the point, but the base only acts on its own.
         AssetDataChangedHandle = AssetEvents::OnAssetDataChanged().AddLambda([this](CObject* Changed)
         {
             if (Changed != nullptr && Changed == Asset.Get())
@@ -45,15 +43,14 @@ namespace Lumina
             return;
         }
 
-        // Re-point rather than just MarkDirty: a reimport can change the shape of the reflected data, and
-        // the table's rows (and the handles inside them) describe the old shape. SetObject rebuilds both.
+        // A reimport can change the reflected shape, so SetObject rebuilds rows and handles both.
         PropertyTable.SetObject(Asset.Get(), Asset->GetClass());
         PropertyTable.MarkDirty();
     }
 
     void FAssetEditorTool::SetupPropertyUndo()
     {
-        // Start (edit begin / drag start): open a transaction and snapshot the asset's before-image.
+        // On edit begin, open a transaction and snapshot the asset's before-image.
         PropertyTable.SetStartEditCallback([this](const FPropertyChangedEvent& Event)
         {
             if (Asset != nullptr)
@@ -64,21 +61,19 @@ namespace Lumina
             }
         });
 
-        // Finish (edit end): commit; the command captures its after-image and self-drops if nothing changed.
+        // On edit end, commit, and the command self-drops if nothing actually changed.
         PropertyTable.SetFinishEditCallback([this](const FPropertyChangedEvent& Event)
         {
             GetTransactionManager().CommitTransaction();
 
-            // After the commit, so anything the tool does in response is a separate transaction rather than
-            // landing inside the one that recorded the edit.
+            // After the commit, so a tool's response is its own transaction rather than joining the edit's.
             OnPropertyEditFinished(Event);
         });
     }
 
     FAssetEditorTool::~FAssetEditorTool()
     {
-        // Backstop for a tool torn down without Deinitialize: the handle holds `this`, so leaving it
-        // subscribed means the next broadcast calls into freed memory.
+        // The handle holds this, so leaving it subscribed means the next broadcast hits freed memory.
         UnsubscribeFromAssetDataChanges();
     }
 
@@ -93,10 +88,7 @@ namespace Lumina
     {
         if (Asset != nullptr)
         {
-            // "<Icon> Name###GUID": ImGui shows the label but hashes the stable GUID, so same-named
-            // assets don't merge. The icon is part of the label rather than added by the base class,
-            // because this override replaces the name the base composed -- without it here, every
-            // asset tab would be the only unlabeled kind of tab in the editor.
+            // ImGui shows the label but hashes the stable GUID, so same-named assets do not merge.
             const FName Name = Asset->GetName();
             if (CachedWindowNameSource != Name)
             {
@@ -121,14 +113,12 @@ namespace Lumina
             bAssetLoadBroadcasted = true;
         }
 
-        // Ctrl+S is dispatched centrally by FEditorUI to the focused tool only;
-        // doing it here would fire OnSave on every open tool simultaneously.
+        // FEditorUI dispatches Ctrl+S to the focused tool, so handling it here would fire for all of them.
     }
 
     void FAssetEditorTool::OnSave()
     {
-        // Default save path applies to CObject-backed assets only. Tools that
-        // edit raw files (e.g. .rml) override this to write through the VFS.
+        // A tool editing a raw file such as .rml overrides this to write through the VFS instead.
         if (Asset == nullptr)
         {
             return;
@@ -174,8 +164,7 @@ namespace Lumina
             return {};
         }
 
-        // Package path is the mount-relative virtual path with the .lasset extension, the same form
-        // the content browser's tile items carry.
+        // The mount-relative virtual path with the .lasset extension, as the browser tiles carry it.
         return Package->GetPackagePath();
     }
 }

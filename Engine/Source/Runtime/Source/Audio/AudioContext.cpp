@@ -33,15 +33,13 @@ namespace Lumina
 
 	void Audio::Shutdown()
 	{
-		// Unpublish before destroying: anything still calling audio during teardown lands on the
-		// no-op context rather than a dangling device.
+		// Unpublished first, so teardown-time audio calls land on the no-op context, not a dangling device.
 		delete Audio::Internal::SetContext(nullptr);
 	}
 
 	void Audio::Update()
 	{
-		// A real HasDevice case: with no device there is no suspend state to track and no pump to run,
-		// so this is skipped work rather than a guard against Context().
+		// With no device there is no suspend state and no pump, so this is skipped work rather than a guard.
 		if (!HasDevice())
 		{
 			return;
@@ -52,8 +50,7 @@ namespace Lumina
 			bool bShouldSuspend = Window->IsWindowMinimized();
 
 			#if !USING(WITH_EDITOR)
-			// Editor builds skip the focus test: PIE preview windows are separate native windows, so an
-			// unfocused primary window doesn't mean the user has left the app.
+			// PIE previews are separate native windows, so an unfocused primary window is not the app leaving.
 			if (!bShouldSuspend)
 			{
 				const CAudioSettings* Settings = GetDefault<CAudioSettings>();

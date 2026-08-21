@@ -36,8 +36,7 @@ namespace Lumina::RHITests
 
     RHI_TEST(Device, FallbackTextureIsRegistered)
     {
-        // Every unset bindless index resolves through this. Without it a missing texture reads whatever
-        // the slot happened to contain.
+        // Without this a missing texture reads whatever the slot happened to contain.
         RHI_CHECK(RHI::Textures::DefaultResourceID() != RHI::kInvalidHeapSlot);
     }
 
@@ -56,8 +55,7 @@ namespace Lumina::RHITests
 
     RHI_TEST(Device, FramePumpIsStable)
     {
-        // BeginFrame waits, drains, flushes uploads and recycles command lists. Running it well past a
-        // full ring rotation with nothing else going on should be completely inert.
+        // Well past a full ring rotation with nothing else running should be completely inert.
         Ctx.PumpFrames(RHI::kFramesInFlight * 8);
     }
 }

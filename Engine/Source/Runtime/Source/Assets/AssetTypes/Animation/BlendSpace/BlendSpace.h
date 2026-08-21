@@ -118,6 +118,9 @@ namespace Lumina
         /** Sample indices sorted along X, for the one-axis path and for the editor's line view. */
         const TVector<int32>& GetSortedOrder() const { return SortedOrder; }
 
+        /** False once Samples has been resized without a matching RebuildTopology. */
+        bool HasValidTopology() const { return TopologySampleCount == (int32)Samples.size(); }
+
     private:
 
         void EvaluateOneAxis(float X, FBlendSpaceWeights& OutWeights) const;
@@ -127,5 +130,6 @@ namespace Lumina
         // than no triangulation, and rebuilding is cheap at these counts.
         TVector<FBlendSpaceTriangle> Triangles;
         TVector<int32>               SortedOrder;
+        int32                        TopologySampleCount = 0;
     };
 }

@@ -21,13 +21,7 @@ namespace Lumina
 {
     namespace
     {
-        // ONE clipboard for every graph in the process, not one per graph instance. Copying in one
-        // material editor and pasting into another is the point; a per-graph buffer made Ctrl+C/Ctrl+V
-        // work only within the graph you copied from.
-        //
-        // Raw pointers, deliberately: a TObjectPtr clipboard would keep nodes alive past their graph and
-        // hand the destruction-order problem to static teardown. Lifetime is handled by scrubbing
-        // instead -- on node delete, and on graph shutdown for everything that graph owns.
+        // Raw pointers deliberately, since a TObjectPtr clipboard would outlive its graph at teardown.
         TVector<CEdGraphNode*>& GetNodeClipboard()
         {
             static TVector<CEdGraphNode*> Clipboard;
@@ -44,8 +38,7 @@ namespace Lumina
         }
     }
 
-    // Display names may carry spaces or punctuation ("Curve Sample", "Two-Bone IK"), but FullName becomes
-    // the emitted shader variable, so anything outside [A-Za-z0-9_] has to collapse to an underscore.
+    // FullName becomes the emitted shader variable, so anything outside the identifier set collapses.
     static FString SanitizeNodeIdentifier(const FString& In)
     {
         FString Out = In;
@@ -118,8 +111,7 @@ namespace Lumina
 
     void CEdNodeGraph::Shutdown()
     {
-        // This graph's nodes die with it, so drop anything of ours still on the shared clipboard --
-        // otherwise closing the editor you copied from leaves a paste pointing at freed nodes.
+        // Otherwise closing the editor you copied from leaves a paste pointing at freed nodes.
         for (const TObjectPtr<CEdGraphNode>& Node : Nodes)
         {
             if (Node.IsValid())
@@ -195,7 +187,7 @@ namespace Lumina
             InputPin->AddConnection(OutputPin);
         }
 
-        // The load's one reconcile: rebuilds Connections and re-matches link-keyed data against them.
+        // The load's one reconcile, rebuilding Connections and re-matching link-keyed data against them.
         bIsPostLoading = false;
         ValidateGraph();
     }
@@ -243,8 +235,7 @@ namespace Lumina
         const ImVec2 CursorStart = ImGui::GetCursorScreenPos();
         const ImVec2 DotSize(DotRadius * 2.0f, DotRadius * 2.0f);
 
-        // Reserve a square for the dot. The hit area extends past it on each side so dragging a
-        // wire onto the dot consistently hits one of the pins instead of the empty node body.
+        // The hit area extends past the dot, so dragging a wire onto it hits a pin, not the node body.
         ImGui::Dummy(DotSize);
 
         const ImVec2 Center      = CursorStart + DotSize * 0.5f;
@@ -254,8 +245,7 @@ namespace Lumina
         const ImVec2 OutputRectMin(Center.x,                  InputRectMin.y);
         const ImVec2 OutputRectMax(CursorStart.x + DotSize.x + HitHalfX, InputRectMax.y);
 
-        // Input pin: hit-tests against the LEFT half of the (enlarged) dot. Both pins share the
-        // same pivot point at the center so wires visually meet at a single dot.
+        // Both pins share the same center pivot, so wires visually meet at a single dot.
         if (CEdNodeGraphPin* InputPin = Node->GetInputPins().empty() ? nullptr : Node->GetInputPins()[0].Get())
         {
             NodeEditor::PushStyleVar(NodeEditor::StyleVar_PivotAlignment, ImVec2(0.5f, 0.5f));
@@ -268,8 +258,7 @@ namespace Lumina
             NodeEditor::PopStyleVar(3);
         }
 
-        // Output pin: RIGHT half of the dot's hit area. Same pivot as the input so the visual dot
-        // remains a single point.
+        // The right half of the same hit area, sharing the pivot so the visual dot stays one point.
         if (CEdNodeGraphPin* OutputPin = Node->GetOutputPins().empty() ? nullptr : Node->GetOutputPins()[0].Get())
         {
             NodeEditor::PushStyleVar(NodeEditor::StyleVar_PivotAlignment, ImVec2(0.5f, 0.5f));
@@ -288,8 +277,7 @@ namespace Lumina
         NodeEditor::PopStyleColor(2);
         NodeEditor::PopStyleVar(3);
 
-        // Paint the dot itself on the node's background draw list so it sits behind incoming wires
-        // but above the (transparent) node background.
+        // Painted on the node background list, so it sits behind wires but above the node background.
         if (ImDrawList* DrawList = NodeEditor::GetNodeBackgroundDrawList(Node->GetNodeID()))
         {
             DrawList->AddCircleFilled(Center, DotRadius + 1.5f, DotShadow, 16);
@@ -337,10 +325,7 @@ namespace Lumina
         return RerouteNode;
     }
 
-    // Pins are matched by name rather than by index: a node whose pins are built from its properties
-    // (the material function-call node) can rebuild them lazily after the clone is constructed, and an
-    // index match would then silently attach the wrong pin. Missing a link is recoverable; mis-wiring
-    // one is not.
+    // Matched by name, since a lazily rebuilt pin set would make an index match wire the wrong pin.
     static CEdNodeGraphPin* FindPinByName(CEdGraphNode* Node, const FString& Name, ENodePinDirection Direction)
     {
         if (Node == nullptr)
@@ -362,7 +347,7 @@ namespace Lumina
         return nullptr;
     }
 
-    // Runs once every clone exists: a link can point forwards in the list as easily as backwards.
+    // Runs once every clone exists, since a link can point forwards in the list as easily as backwards.
     static void RelinkClones(const TVector<CEdGraphNode*>& SourceOrder, const THashMap<CEdGraphNode*, CEdGraphNode*>& Clones)
     {
         // Walking INPUT pins only visits each link once, so nothing gets connected twice.
@@ -523,8 +508,7 @@ namespace Lumina
     {
         using namespace ax;
 
-        // GetSelectedObjectCount counts links too, so it is an upper bound rather than the node count;
-        // GetSelectedNodes reports how many it actually wrote.
+        // GetSelectedObjectCount counts links too, so it is an upper bound on the node count.
         const int32 SelectionBound = NodeEditor::GetSelectedObjectCount();
         if (SelectionBound < 2)
         {
@@ -570,8 +554,7 @@ namespace Lumina
         const float CenterX = SumCenterX / (float)Count;
         const float CenterY = SumCenterY / (float)Count;
 
-        // Distribute walks the selection in screen order rather than selection order, otherwise the
-        // nodes get shuffled into whatever order they happened to be clicked in.
+        // Distribute walks in screen order, or nodes get shuffled into whatever order they were clicked.
         const bool bDistributeX = Alignment == ENodeAlignment::DistributeX;
         const bool bDistributeY = Alignment == ENodeAlignment::DistributeY;
         if (bDistributeX || bDistributeY)
@@ -642,8 +625,7 @@ namespace Lumina
         THashSet<CEdGraphNode*> Contributing;
         CollectContributingNodes(Contributing);
 
-        // No roots means no way to tell live from dead. Reporting every node as dead would be worse than
-        // reporting none, so say nothing.
+        // With no roots there is no way to tell live from dead, and reporting all of them would be worse.
         if (Contributing.empty())
         {
             return;
@@ -679,9 +661,7 @@ namespace Lumina
         TVector<CEdGraphNode*> Dead;
         CollectDeadNodes(Dead);
 
-        // Routed through the editor's own delete request rather than erasing here: that path already
-        // unhooks every pin, forgets the clipboard entry and re-validates. Duplicating it is how the two
-        // drift apart.
+        // Routed through the editor's delete request, which already unhooks pins and re-validates.
         for (CEdGraphNode* Node : Dead)
         {
             NodeEditor::DeleteNode(Node->GetNodeID());
@@ -692,8 +672,7 @@ namespace Lumina
     {
         using namespace ax;
 
-        // Column spacing is generous because material wires read left-to-right and cramped columns make
-        // long wires ambiguous; row spacing is tight since nodes in a column rarely relate to each other.
+        // Column spacing is generous since cramped columns make long wires ambiguous.
         constexpr float kColumnGap = 90.0f;
         constexpr float kRowGap    = 28.0f;
 
@@ -704,15 +683,12 @@ namespace Lumina
             return;
         }
 
-        // Depth = longest path from this node to a root, so a node sits one column left of its FURTHEST
-        // consumer. Taking the longest (not the shortest) is what stops a wire skipping backwards over a
-        // column, which is the thing that makes an auto-layout look wrong.
+        // Longest path, not shortest, so no wire skips backwards over a column.
         THashMap<CEdGraphNode*, int32> Depth;
         TVector<CEdGraphNode*> Sorted;
         GraphAlgorithms::TopologicalSortReachable(Nodes, Contributing, Sorted);
 
-        // Sorted is dependency order (producers first), so walking it backwards visits every consumer
-        // before its producers -- exactly the order the relaxation below needs.
+        // Walking Sorted backwards visits every consumer before its producers, as the relaxation needs.
         for (CEdGraphNode* Node : Sorted)
         {
             Depth[Node] = 0;
@@ -739,8 +715,7 @@ namespace Lumina
             MaxDepth = Math::Max(MaxDepth, Pair.second);
         }
 
-        // Order within a column by the mean Y of each node's consumers, a single barycentric pass. It is
-        // not optimal crossing reduction, but it is stable, O(edges), and removes the obvious tangles.
+        // A single barycentric pass, stable and linear in edges, which removes the obvious tangles.
         TVector<TVector<CEdGraphNode*>> Columns;
         Columns.resize(MaxDepth + 1);
         for (const auto& Pair : Depth)
@@ -752,8 +727,7 @@ namespace Lumina
 
         THashMap<CEdGraphNode*, float> PlacedY;
 
-        // Roots (depth 0) are the rightmost column; walk outward so a column is ordered against consumers
-        // that already have their final Y.
+        // Roots are the rightmost column, so a column is ordered against consumers with final Y.
         float ColumnRight = Origin.x;
         for (int32 D = 0; D <= MaxDepth; ++D)
         {
@@ -801,8 +775,7 @@ namespace Lumina
             ColumnRight = ColumnX - kColumnGap;
         }
 
-        // Dead nodes are parked in their own column to the left of everything, so tidying never silently
-        // buries work-in-progress inside the live graph.
+        // Dead nodes park in their own column, so tidying never buries work-in-progress in the graph.
         TVector<CEdGraphNode*> Dead;
         CollectDeadNodes(Dead);
         if (!Dead.empty())
@@ -841,8 +814,7 @@ namespace Lumina
             { ENodeAlignment::DistributeY, "Distribute Y",    nullptr   },
         };
 
-        // Alignment needs two nodes to mean anything; gray the whole set out rather than offering
-        // items that silently do nothing.
+        // Graying the whole set out beats offering items that silently do nothing.
         const bool bEnabled = ax::NodeEditor::GetSelectedObjectCount() >= 2;
 
         for (const FAlignEntry& Entry : Entries)
@@ -872,19 +844,13 @@ namespace Lumina
         LUMINA_PROFILE_SCOPE();
         using namespace ax;
         
-        // Sampled BEFORE NodeEditor::Begin, while the graph's host window is still the current one. The
-        // node editor hit-tests its canvas purely in screen space and has no idea another ImGui window may
-        // be drawn over it, so without this a right-click on a docked window sitting ON TOP of the graph
-        // also reads as a canvas right-click.
+        // The node editor hit-tests purely in screen space, so a window drawn over it would also match.
         const bool bHostWindowHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
 
         NodeEditor::SetCurrentEditor(Context);
         NodeEditor::Begin(GetName().c_str());
 
-        // Shortcuts are re-armed every frame. A node drawing a text field turns them off for that frame
-        // so Ctrl+C/V/X reach the field instead of copy/pasting nodes (ShortcutAction::Accept gates on
-        // nothing but focus and this flag). Re-arming here means no one has to remember to switch them
-        // back on -- including when the node being edited is deleted mid-edit.
+        // Re-armed here so nobody has to remember to switch them back on after a node's text field.
         NodeEditor::EnableShortcuts(true);
 
         PushGraphStyle();
@@ -894,9 +860,7 @@ namespace Lumina
         TVector<TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>> Links;
         Links.reserve(40);
 
-        // Procedurally-built graphs (e.g. import-generated materials) carry node positions in GridX/GridY but
-        // have no saved editor layout; seed the editor from them on first draw so the graph isn't stacked at
-        // the origin. Interactive graphs always have GraphSaveData after their first save, so this is skipped.
+        // A procedurally-built graph carries positions but no saved layout, so seed from them once.
         if (bFirstDraw && GraphSaveData.empty())
         {
             for (CEdGraphNode* Node : Nodes)
@@ -905,8 +869,7 @@ namespace Lumina
             }
         }
 
-        // Apply placements queued from outside the draw loop (drop handlers), now that the editor
-        // context is current and the screen->canvas transform is available.
+        // Applied now that the editor context is current and the screen to canvas transform exists.
         for (const FPendingPlacement& Placement : PendingPlacements)
         {
             if (Placement.Node != nullptr)
@@ -928,17 +891,14 @@ namespace Lumina
             TidyGraph();
         }
 
-        // One analysis pass per draw, reused by the fade below. Skipped entirely when the graph declares
-        // no root, which is also what keeps this off graphs that have no notion of a dead node.
+        // Skipped when the graph declares no root, which keeps it off graphs with no dead-node notion.
         THashSet<CEdGraphNode*> ContributingNodes;
         if (bFadeDeadNodes)
         {
             CollectContributingNodes(ContributingNodes);
         }
 
-        // Collected before anything is submitted so a graph drawing its own wires (the state machine
-        // canvas) can lay them out under the nodes. Order matches the node/pin/connection walk the
-        // rest of the pass assumes when mapping a link id back to its pins.
+        // Collected before submission so a graph drawing its own wires can lay them under the nodes.
         for (CEdGraphNode* Node : Nodes)
         {
             for (CEdNodeGraphPin* InputPin : Node->GetInputPins())
@@ -958,8 +918,7 @@ namespace Lumina
             Node->GridX = Position.x;
             Node->GridY = Position.y;
 
-            // Faded: this node's result reaches no output, so the compiler never emits it. Cheaper to
-            // read at a glance than any badge, and it costs nothing when the graph is fully connected.
+            // This node reaches no output, so the compiler never emits it, and it costs nothing when connected.
             const bool bDeadNode = !ContributingNodes.empty()
                 && ContributingNodes.find(Node) == ContributingNodes.end();
             if (bDeadNode)
@@ -1047,8 +1006,7 @@ namespace Lumina
 
                     ImGui::TextUnformatted(InputPin->GetPinName().c_str());
 
-                    // Inline editor for unconnected pins; spring aligns editors in a column.
-                    // Opt-in per graph via ShouldDrawInlinePinEditors().
+                    // Inline editors for unconnected pins, opt-in per graph through ShouldDrawInlinePinEditors().
                     if (ShouldDrawInlinePinEditors() && !InputPin->HasConnection() && InputPin->HasInlineEditor())
                     {
                         ImGui::Spring(1.0f, 12.0f);
@@ -1129,10 +1087,7 @@ namespace Lumina
         NodeEditor::Suspend();
         {
             
-            // Only claim a right-click that actually landed on this graph. ImGui allows one popup at a
-            // level, so an unguarded OpenPopup here REPLACES the one the window on top just opened --
-            // which is why right-clicking a content-browser tile docked over a material graph opened
-            // nothing at all.
+            // ImGui allows one popup per level, so an unguarded OpenPopup replaces the one just opened.
             if (bHostWindowHovered)
             {
                 NodeEditor::NodeId NodeId;
@@ -1179,9 +1134,7 @@ namespace Lumina
                 PendingSourcePin = nullptr;
             }
 
-            // The popup above was being opened and never begun, so right-clicking a node showed nothing
-            // and every node's own DrawContextMenu (Make Parameter, Make Texture Parameter, ...) was
-            // unreachable.
+            // The popup was opened and never begun, so every node's own context menu was unreachable.
             if (ImGui::BeginPopup("Node Context Menu"))
             {
                 auto NodeItr = Algo::FindIf(Nodes.begin(), Nodes.end(), [this](const TObjectPtr<CEdGraphNode>& A)
@@ -1199,11 +1152,7 @@ namespace Lumina
                 && !NodeEditor::GetHoveredLink())
             {
                 
-                // Letter quick-place, same gesture as the digit row below: hold the key, click empty
-                // canvas. IsKeyDown rather than IsKeyPressed because the CLICK is the trigger and the
-                // letter is acting as a modifier. ImGuiKey_A is an enum value, not the character 'A',
-                // so the index has to be mapped back -- passing the raw enum through was why this
-                // never matched anything when it was first written.
+                // IsKeyDown, since the CLICK is the trigger and the letter acts as a modifier.
                 for (int i = ImGuiKey_A; i <= ImGuiKey_Z; ++i)
                 {
                     if (ImGui::IsKeyDown((ImGuiKey)i))
@@ -1232,8 +1181,7 @@ namespace Lumina
                 }
             }
 
-            // Alignment hotkeys. Shift+letter rather than Shift+arrow: keyboard nav is enabled app-wide,
-            // so ImGui eats the arrows. Applied next frame through PendingAlignment like the menu items.
+            // Shift and a letter, since keyboard nav is enabled app-wide and ImGui eats the arrows.
             if (!ImGui::IsAnyItemActive() && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)
                 && ImGui::GetIO().KeyShift && !ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyAlt)
             {
@@ -1308,10 +1256,7 @@ namespace Lumina
 
                     ImVec2 PasteLocation = NodeEditor::ScreenToCanvas(ImGui::GetMousePos());
 
-                    // The clipboard is shared across every graph in the editor, so filter to what THIS
-                    // graph accepts: pasting an animation node into a material graph would build a node
-                    // its compiler cannot walk. Registered node classes are the graph's own definition
-                    // of what it can hold, so that is the test.
+                    // The clipboard is shared, so filter to what THIS graph's registered node classes accept.
                     TVector<CEdGraphNode*> Pastable;
                     Pastable.reserve(GetNodeClipboard().size());
                     uint32 Rejected = 0;
@@ -1376,8 +1321,7 @@ namespace Lumina
                         Max.y = Math::Max(Max.y, Pos.y + Size.y);
                     }
                 
-                    // Local pivot: duplicate never leaves this graph, so it must not disturb the shared
-                    // copy/paste clipboard's pivot.
+                    // A local pivot, since duplicate never leaves this graph and must not disturb the shared one.
                     const ImVec2 DupPivot = (Min + Max) * 0.5f;
 
                     NodeEditor::ClearSelection();
@@ -1391,9 +1335,7 @@ namespace Lumina
 
         NodeEditor::EndShortcut();
         
-        // Report the selection once per frame, not once per selected node. Firing per node made every
-        // consumer bind its property table to each selected node in turn, so a multi-selection
-        // reassigned the table several times a frame and it never settled on anything editable.
+        // Firing per node made a multi-selection reassign the table several times a frame.
         CEdGraphNode* SoleSelectedNode = nullptr;
         int32 SelectedNodeCount = 0;
 
@@ -1416,14 +1358,11 @@ namespace Lumina
 
         if (NodeSelectedCallback)
         {
-            // A multi-selection has no single object to edit, and the property table holds one object.
-            // Reporting none lets consumers fall back to their default view rather than picking an
-            // arbitrary member of the selection.
+            // Reporting none lets consumers fall back rather than picking an arbitrary selection member.
             NodeSelectedCallback(SelectedNodeCount == 1 ? SoleSelectedNode : nullptr);
         }
 
-        // Surface the single selected link to the graph. Their 1-based IDs match last frame's
-        // emission order, so the index is stable.
+        // The 1-based IDs match last frame's emission order, so the index is stable.
         if (LinkSelectedCallback)
         {
             NodeEditor::LinkId SelectedLink;
@@ -1472,16 +1411,14 @@ namespace Lumina
 
             NodeEditor::Link(ThisLinkID, Start->GetPinGUID(), End->GetPinGUID(), LinkColor, LinkThickness);
 
-            // Debug: animate flow along every wire so the running graph reads as
-            // "live". Re-issued each frame to keep the animation looping.
+            // Re-issued each frame to keep the flow animation looping.
             if (DebugContext.bEnabled && DebugContext.bFlowLinks)
             {
                 NodeEditor::Flow(ThisLinkID);
             }
         }
 
-        // Double-click a wire to insert a reroute at the click position.
-        // MousePos is already in canvas space outside Suspend(); ScreenToCanvas would double-transform.
+        // MousePos is already canvas space outside Suspend(), so ScreenToCanvas would double-transform.
         if (NodeEditor::LinkId DoubleClickedLink = NodeEditor::GetDoubleClickedLink())
         {
             const uint64 LinkIndex = DoubleClickedLink.Get() - 1u;
@@ -1536,7 +1473,7 @@ namespace Lumina
                         }
                     }
 
-                    // User dragged input -> output: swap so StartPin is always the output side.
+                    // The user dragged input to output, so swap and keep StartPin on the output side.
                     if (StartPin && EndPin && StartPin->bInputPin && !EndPin->bInputPin)
                     {
                         std::swap(StartPin, EndPin);
@@ -1569,8 +1506,7 @@ namespace Lumina
                 }
             }
 
-            // Drag-from-pin released on empty space: capture the source pin and queue the
-            // create-node popup. The popup is opened in the Suspend block above on the next iteration.
+            // The popup is opened in the Suspend block above on the next iteration.
             NodeEditor::PinId NewNodeFromPinId;
             if (NodeEditor::QueryNewNode(&NewNodeFromPinId))
             {
@@ -1649,8 +1585,7 @@ namespace Lumina
                     
                     Nodes.erase(NodeItr);
 
-                    // The copy buffer holds raw pointers, so a node deleted between Ctrl+C and Ctrl+V
-                    // would be cloned out of freed memory.
+                    // The copy buffer holds raw pointers, so a node deleted between copy and paste would be cloned dead.
                     ForgetClipboardNode(Node);
 
                     Node->ConditionalBeginDestroy();
@@ -1687,8 +1622,7 @@ namespace Lumina
         NodeEditor::End();
         NodeEditor::SetCurrentEditor(nullptr);
 
-        // After End(): the host window is current again, and any node the hook spawns lands in
-        // PendingPlacements for the next frame's screen->canvas conversion.
+        // The host window is current again, and a spawned node lands in PendingPlacements for next frame.
         DrawCanvasDropTarget();
 
         bFirstDraw = false;
@@ -1736,8 +1670,7 @@ namespace Lumina
         TVector<CEdGraphNode*> Dead;
         CollectDeadNodes(Dead);
 
-        // Disabled rather than hidden when the graph is clean: a menu whose entries come and go is harder
-        // to learn than one that tells you there is nothing to do.
+        // A menu whose entries come and go is harder to learn than one that says there is nothing to do.
         ImGui::BeginDisabled(Dead.empty());
         if (ImGui::MenuItem(Dead.empty()
                 ? LE_ICON_SELECTION_OFF " No Unused Nodes"
@@ -1774,7 +1707,7 @@ namespace Lumina
         const bool bCanTakeKey = !ImGui::IsAnyItemActive() && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
         if (bCanTakeKey && ImGui::IsKeyPressed(ImGuiKey_F2, false))
         {
-            // Two slots: a second selected node means the target is ambiguous, so rename nothing.
+            // A second selected node makes the target ambiguous, so rename nothing.
             NodeEditor::NodeId Selection[2];
             if (NodeEditor::GetSelectedNodes(Selection, 2) == 1)
             {
@@ -1842,15 +1775,13 @@ namespace Lumina
     {
         FGraphNodeRegistry& Registry = FGraphNodeRegistry::Get();
 
-        // Refill when a module load has invalidated the registry since we last asked, so a graph left
-        // open across a plugin load picks up its nodes.
+        // So a graph left open across a plugin load picks up that plugin's nodes.
         if (!bSupportedNodesBuilt || SupportedNodesGeneration != Registry.GetGeneration())
         {
             bSupportedNodesBuilt    = true;
             SupportedNodesGeneration = Registry.GetGeneration();
 
-            // Union rather than assign: RegisterGraphNode entries are per-instance additions the shared
-            // per-graph-class cache knows nothing about, and a refill must not drop them.
+            // A union, since RegisterGraphNode adds per-instance entries the shared cache knows nothing about.
             const THashSet<CClass*>& Discovered = Registry.GetNodesForGraphClass(GetClass());
             SupportedNodes.insert(Discovered.begin(), Discovered.end());
         }
@@ -1949,8 +1880,7 @@ namespace Lumina
             return PreferredID;
         }
 
-        // Never hand out 0: it is the "unassigned" sentinel AddNode tests against, so a node holding it
-        // would be re-rolled on any later pass through here.
+        // 0 is the unassigned sentinel AddNode tests against, so a node holding it would be re-rolled.
         for (int32 Attempt = 0; Attempt < 64; ++Attempt)
         {
             const int64 Candidate = (int64)Math::RandRange(1u, UINT32_MAX);
@@ -1972,9 +1902,7 @@ namespace Lumina
 
     uint64 CEdNodeGraph::AddNode(CEdGraphNode* InNode)
     {
-        // Uniqueness is not cosmetic: the node editor keys nodes on this ID and callers scope each node's
-        // ImGui widget IDs by it, so a duplicate silently merges two nodes' interaction state rather than
-        // failing outright.
+        // A duplicate ID silently merges two nodes' interaction state rather than failing outright.
         const int64 NodeID = GenerateUniqueNodeID(InNode->NodeID);
 
         if (InNode->NodeID != 0 && NodeID != InNode->NodeID)

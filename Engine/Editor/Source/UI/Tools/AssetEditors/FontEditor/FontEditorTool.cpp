@@ -16,8 +16,7 @@ namespace Lumina
         CFont* Font = Cast<CFont>(Asset.Get());
         if (Font && Font->IsValid())
         {
-            // Dynamic atlas (ImGui 1.92): the face can be added live and rasterized
-            // at any pushed size. Bytes are owned by the asset, not the atlas.
+            // The face can be added live and rasterized at any size, with bytes owned by the asset.
             ImFontConfig Config;
             Config.FontDataOwnedByAtlas = false;
             PreviewFont = ImGui::GetIO().Fonts->AddFontFromMemoryTTF(

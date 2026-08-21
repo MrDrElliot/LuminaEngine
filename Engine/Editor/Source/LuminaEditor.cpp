@@ -24,13 +24,7 @@ namespace Lumina
 
     bool FEditorEngine::Init()
     {
-        // Keep LUMINA_DIR in sync with this engine install. The editor knows the
-        // authoritative root (Paths resolved it from this exe's location), so it
-        // heals a missing or stale env var for everything downstream that still
-        // depends on it -- shells, the IDE, and external game-project builds whose
-        // the build tool hard-fails without it. Process-local set covers tools we spawn
-        // this session; the persist covers future sessions. Editor-only on purpose:
-        // a shipped game must never touch the player's environment.
+        // Heals a missing or stale LUMINA_DIR for shells, the IDE and external game builds that need it.
         const FString& EngineRoot = Paths::GetEngineInstallDirectory();
         if (!EngineRoot.empty())
         {
@@ -47,8 +41,7 @@ namespace Lumina
 
         bool bSuccess = FEngine::Init();
 
-        // Editor + runtime settings classes are registered and /Editor is mounted by now.
-        // Project settings (under /Config) load on a later pass once a project mounts it.
+        // Project settings under /Config load on a later pass, once a project mounts it.
         GConfig->DiscoverAndLoadSettings();
 
         entt::locator<entt::meta_ctx>::reset(Lumina::GetEngineMetaService());
@@ -106,9 +99,7 @@ namespace Lumina
         ReplaceAll(Text, "$PROJECTNAME", Ctx.Name);
     }
 
-    // Tokens for the plugin template. The runtime/editor module names and their
-    // uppercased API-macro forms are precomputed so the template never has to
-    // compose tokens, which keeps replacement order-independent.
+    // Precomputed so the template never composes tokens, which keeps replacement order-independent.
     struct FPluginTemplateContext
     {
         FString Name;               // e.g. "Combat"
@@ -136,9 +127,7 @@ namespace Lumina
             }
         };
 
-        // Longest / most-specific tokens first so prefixes (e.g. $RUNTIMEMODULE
-        // inside $RUNTIMEMODULEUPPER, or $PLUGINNAME inside $PLUGINNAMEUPPER)
-        // aren't eaten early.
+        // Longest tokens first so a prefix such as $PLUGINNAME inside $PLUGINNAMEUPPER is not eaten early.
         ReplaceAll(Text, "$RUNTIMEMODULEUPPER", Ctx.RuntimeModuleUpper);
         ReplaceAll(Text, "$EDITORMODULEUPPER", Ctx.EditorModuleUpper);
         ReplaceAll(Text, "$PLUGINNAMEUPPER", Ctx.NameUpper);
@@ -148,10 +137,7 @@ namespace Lumina
         ReplaceAll(Text, "$PLUGINNAME", Ctx.Name);
     }
 
-    // Recursively copies a template tree to DestDir, running ReplaceTokens over
-    // both relative paths (so $TOKEN filenames are substituted) and the contents
-    // of text files. Binary files are copied verbatim. Shared by project and
-    // plugin scaffolding.
+    // Relative paths are substituted too, so a $TOKEN filename works. Binary files copy verbatim.
     static bool CopyTemplateTree(
         const FFixedString&              TemplateDir,
         const FFixedString&              DestDir,
@@ -221,8 +207,7 @@ namespace Lumina
         return true;
     }
 
-    // Project name must produce a valid C identifier (it becomes the module
-    // name, vcxproj name, and goes into source identifiers via the API macro).
+    // It becomes the module name, the vcxproj name and part of source identifiers via the API macro.
     static bool ValidateProjectName(FStringView Name, FString& OutError)
     {
         if (Name.empty())
@@ -363,8 +348,7 @@ namespace Lumina
             return false;
         }
 
-        // Reject collisions with any already-discovered plugin (engine or project);
-        // plugin names must be globally unique or discovery silently drops one.
+        // Plugin names must be globally unique, or discovery silently drops one of the pair.
         const FString NameStr(NewPluginName.data(), NewPluginName.size());
         if (FPluginManager::Get().FindPlugin(NameStr) != nullptr)
         {
@@ -374,7 +358,7 @@ namespace Lumina
             return false;
         }
 
-        // Destination: <ProjectPath>/Plugins/<PluginName>/
+        // Lands under the project's own Plugins directory.
         const FFixedString PluginDir = Paths::Combine(Paths::Combine(GetProjectPath(), "Plugins"), NameStr);
 
         if (Filesystem::Exists(PluginDir) && !Filesystem::IsDirectoryEmpty(PluginDir))
@@ -417,9 +401,7 @@ namespace Lumina
 
     bool FEditorEngine::GenerateProjectFiles(FStringView ProjectDirectory) const
     {
-        // Both scripts ship in every generated project, because a project is not tied to the
-        // platform it was created on. Which one to run is decided by the host: handing a .bat to
-        // a POSIX exec fails with "permission denied", which describes nothing about the problem.
+        // The host decides which to run, since handing a .bat to a POSIX exec says nothing useful.
 #if defined(_WIN32)
         constexpr const char* ScriptName = "GenerateProject.bat";
 #else
@@ -433,10 +415,7 @@ namespace Lumina
             return false;
         }
 
-        // Detached worker thread runs the build tool, captures stdout+stderr, and
-        // streams each line into the editor log under a [BuildTool] tag so the
-        // user sees what's happening without a separate console window. The
-        // FScopedSlowTask drives a centered progress modal for the duration.
+        // Streams each line under a [BuildTool] tag so the user sees progress without a console window.
         const std::string ScriptPathStr(ScriptPath.c_str(), ScriptPath.size());
         const std::string WorkingDirStr(ProjectDirectory.data(), ProjectDirectory.size());
 

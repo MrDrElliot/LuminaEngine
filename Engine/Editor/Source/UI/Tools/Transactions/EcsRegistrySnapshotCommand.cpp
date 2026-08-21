@@ -23,9 +23,7 @@ namespace Lumina
 
     void FEcsRegistrySnapshotCommand::Capture(TVector<uint8>& Out) const
     {
-        // Scoped because this is a full reflective serialize of every entity and component, and it
-        // used to be completely invisible: it ran inline under the editor's "Draw Viewport" zone with
-        // no zone of its own, so a 500 ms gizmo-grab stall showed up only as unattributed SELF time.
+        // It used to run inline with no zone, so a long gizmo-grab stall showed as unattributed self time.
         LUMINA_PROFILE_SCOPE();
 
         Out.clear();
@@ -52,7 +50,7 @@ namespace Lumina
 
         FEntityRegistry& Registry = ECS::GetWorldRegistry(*W);
 
-        // True restore: destroy transactable entities so those absent from the snapshot are removed (this is what makes undo-of-add / redo-of-remove correct); freed slots let the deserialize reclaim exact handles. Keep editor entities and the world-settings singleton alive -- their non-reflected components (the singleton's cached line/triangle batchers) aren't in the snapshot and must not dangle.
+        // Editor entities and the settings singleton stay, since their unreflected components would dangle.
         TVector<entt::entity> ToDestroy;
         Registry.view<entt::entity>(entt::exclude<FEditorComponent, FSingletonEntityTag>).each([&](entt::entity E) { ToDestroy.push_back(E); });
         for (entt::entity E : ToDestroy)

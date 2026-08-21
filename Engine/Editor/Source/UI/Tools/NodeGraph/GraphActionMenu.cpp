@@ -120,8 +120,7 @@ namespace Lumina
 
     namespace
     {
-        // Renders Text with MatchIndices highlighted in MatchColor. Consecutive match indices are
-        // coalesced into a single TextUnformatted call to keep draw-call count low.
+        // Consecutive match indices coalesce into one call to keep the draw-call count low.
         void DrawHighlightedText(const char* Text, const TVector<uint16>& MatchIndices, const ImVec4& MatchColor)
         {
             if (Text == nullptr)

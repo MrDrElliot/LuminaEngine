@@ -28,8 +28,7 @@ namespace Lumina::RHITests
             return Tests;
         }
 
-        //~ Validation capture. The debug messenger fires on whatever thread the driver reports on, so the
-        //  sink is guarded and the runner only reads it between tests.
+        //~ The debug messenger fires on whatever thread the driver reports on, so the sink is guarded.
         FMutex           GValidationMutex;
         TVector<FString> GValidationMessages;
         bool             GCapturing = false;
@@ -161,8 +160,7 @@ namespace Lumina::RHITests
         Options.DebugName = DebugName;
         Options.bGenerateReflectionData = false;
 
-        // The callback runs on a worker; Flush below is the join, so no extra synchronization is needed
-        // around Spirv -- nothing reads it until every pending task has drained.
+        // Flush below is the join, so nothing reads Spirv until every pending task has drained.
         GShaderCompiler->CompilerShaderRaw(FString(Source), Options,
             [&Spirv](FShaderHeader Header) { Spirv = Move(Header.Binaries); });
 
@@ -192,9 +190,7 @@ namespace Lumina::RHITests
 
     void FTestContext::ReleaseScratch()
     {
-        // Reverse order, and through the retire queue rather than FreeH: a test is allowed to leave work
-        // in flight, and tearing its resources down synchronously would produce the very destroy-in-use
-        // error the harness exists to detect.
+        // A test may leave work in flight, so a synchronous teardown provokes destroy-in-use itself.
         for (auto It = ScratchPipelines.rbegin(); It != ScratchPipelines.rend(); ++It)
         {
             RHI::Core::Retire(*It);
@@ -251,9 +247,7 @@ namespace Lumina::RHITests
                 }
             }
 
-            // SelfTest deliberately provokes faults to prove the harness can SEE one. Never part of a
-            // default run: without GPU-AV instrumenting them, those shaders corrupt memory or take the
-            // device down. Reachable only by naming the group outright.
+            // SelfTest provokes real faults, so it runs only when the group is named outright.
             if (!bFiltered && strcmp(Test.Group, "SelfTest") == 0)
             {
                 ++Skipped;
@@ -267,9 +261,7 @@ namespace Lumina::RHITests
 
             Test.Fn(Ctx);
 
-            // Everything the test left behind, then enough frames for the retire queue to actually reach
-            // it, then a full idle. Deferred destruction happens inside this window, so a lifetime bug
-            // lands in THIS test's capture rather than being blamed on whichever test runs next.
+            // Deferred destruction happens in this window, so a lifetime bug lands in THIS test's capture.
             Ctx.ReleaseScratch();
             Ctx.PumpFrames(RHI::kFramesInFlight * 2 + 1);
             RHI::WaitDeviceIdle();
@@ -278,8 +270,7 @@ namespace Lumina::RHITests
 
             if (Test.bExpectValidationError)
             {
-                // Negative control: the driver complaining IS the pass condition. Silence means either the
-                // rule stopped being enforced or the harness stopped hearing about it -- both worth failing.
+                // The driver complaining IS the pass condition, so silence means the check went dark.
                 if (Validation.empty())
                 {
                     Ctx.Failf("expected a validation error, but none was reported "

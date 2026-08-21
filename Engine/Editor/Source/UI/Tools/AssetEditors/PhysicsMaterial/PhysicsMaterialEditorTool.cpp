@@ -17,8 +17,7 @@ namespace Lumina
     {
         FAssetEditorTool::OnInitialize();
 
-        // PropertyTable is already bound to the asset by FAssetEditorTool's ctor; we just need
-        // a window to draw it in. The base SetPostEditCallback already marks the package dirty.
+        // The base ctor already bound the table and marks the package dirty, so this only adds a window.
         CreateToolWindow(PhysicsMaterialWindowName, [this](bool /*bFocused*/)
         {
             PropertyTable.DrawTree();

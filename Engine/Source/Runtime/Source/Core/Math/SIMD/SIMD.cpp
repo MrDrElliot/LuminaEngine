@@ -8,8 +8,7 @@ namespace Lumina::SIMD
     static_assert(sizeof(VFloat8) == 32 && alignof(VFloat8) == 32, "VFloat8 must be a 32-byte, 32-aligned __m256");
     static_assert(VFloat4::Width == 4 && VFloat8::Width == 8, "Lane width mismatch");
 
-    // Touch a representative slice of the API so it is instantiated and
-    // type-checked even before any real call site exists.
+    // Instantiated and type-checked even before any real call site exists.
     [[maybe_unused]] static VFloat8 SmokeTest(const float* A, const float* B, float S)
     {
         VFloat8 Va = VFloat8::Load(A);

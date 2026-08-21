@@ -71,9 +71,7 @@ namespace Lumina
             std::error_code Ec;
             size_t Count = 0;
 
-            // Mirror the project root's loose (non-.lasset) files under <OutDir>/<TopName>/, preserving the
-            // top-level dir name so they re-resolve under the same alias at runtime. /Game is the project
-            // root, so this covers loose content (Content/.rml/.rcss/...) and C# scripts (Scripts/) alike.
+            // Preserves the top-level dir name so loose files re-resolve under the same alias at runtime.
             struct FLooseRoot { const char* Alias; const char* Top; };
             const FLooseRoot Roots[] = { { "/Game", "Game" } };
 
@@ -98,8 +96,7 @@ namespace Lumina
                         return;
                     }
 
-                    // C# build artifacts (generated project, obj/bin output) are never needed at
-                    // runtime, the C# host compiles .cs sources directly, so keep them out of the package.
+                    // The C# host compiles sources directly, so generated projects and build output never ship.
                     if (EndsWithCI(Vp, ".csproj")
                         || Vp.find("/obj/") != FStringView::npos
                         || Vp.find("/bin/") != FStringView::npos)
@@ -287,11 +284,7 @@ namespace Lumina
             return Count;
         }
 
-        // Stages the C# scripting payload a packaged (monolithic) game needs at runtime, mirroring the
-        // exe-relative layout DotNetHost::Initialize + DotNet::LoadCookedScripts probe:
-        //   - DotNet/Managed/{LuminaSharp.dll, .runtimeconfig.json, Roslyn + deps}  (managed bootstrap)
-        //   - External/DotNet/runtime/<rid>/...                                     (bundled CoreCLR + hostfxr)
-        //   - DotNet/Scripts/<Unit>.dll + scripts.manifest.json                     (prebuilt user/plugin scripts)
+        // Mirrors the exe-relative layout DotNetHost::Initialize and DotNet::LoadCookedScripts probe.
         void CopyDotNetPayload(FStringView EngineInstallDir,
                                FStringView BinariesDir,
                                FStringView DestDir,
@@ -383,9 +376,7 @@ namespace Lumina
         const FString Config = Options.BuildConfiguration.empty() ? FString("Shipping") : Options.BuildConfiguration;
         const FString EngineDir = FString(Paths::GetEngineInstallDirectory().c_str());
 
-        // The project's own target, built as a Game. Naming the project rather than the engine is
-        // what makes the game module part of the build: the engine comes along as its dependency,
-        // and is reused rather than rebuilt when it is already current.
+        // Naming the project is what puts the game module in the build, with the engine as a dependency.
         const FString ProjectDir = Options.ProjectDirectory;
         const FString BuildTool  = EngineDir + "/LuminaBuild.bat";
 
@@ -429,8 +420,7 @@ namespace Lumina
 
         size_t Copied = CopyRuntimePayload(BinariesDir, DestDir, Config, ProjectName, LogFunc);
 
-        // The project's own modules link into the project tree, not the engine's, so a packaged
-        // game needs both. Engine binaries are shared by every project and stay where they are.
+        // Project modules link into the project tree, while engine binaries stay shared where they are.
         if (!ProjectDir.empty())
         {
             const FString ProjectBinaries = Join(ProjectDir, "Binaries/Windows64");
@@ -451,8 +441,7 @@ namespace Lumina
         }
         LogPackager(LogFunc, Format("Copied {} runtime files.", Copied).c_str());
 
-        // Stage the C# scripting payload (managed bootstrap, bundled .NET runtime, prebuilt script DLLs +
-        // manifest) so the cooked game can boot CoreCLR and load its scripts without the editor/dev tree.
+        // Lets the cooked game boot CoreCLR and load its scripts without the editor or dev tree.
         CopyDotNetPayload(Paths::GetEngineInstallDirectory(), BinariesDir, DestDir, LogFunc);
 
         Result.bSuccess = true;

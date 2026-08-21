@@ -81,6 +81,8 @@ namespace Lumina
         SortedOrder.clear();
 
         const int32 NumSamples = (int32)Samples.size();
+        TopologySampleCount = NumSamples;
+
         if (NumSamples == 0)
         {
             return;
@@ -102,8 +104,7 @@ namespace Lumina
             return;
         }
 
-        // Normalized so the two axes carry equal weight; a speed axis of 0..600 against a strafe axis of
-        // -1..1 would otherwise triangulate into slivers.
+        // Normalized so both axes carry equal weight, or the triangulation degenerates into slivers.
         TVector<FVector2> Points;
         Points.reserve(NumSamples + 3);
         for (const SBlendSpaceSample& Sample : Samples)
@@ -111,11 +112,11 @@ namespace Lumina
             Points.push_back(FVector2(AxisX.Normalize(Sample.Position.x), AxisY.Normalize(Sample.Position.y)));
         }
 
-        // Super-triangle comfortably containing the unit square the samples normalize into.
+        // Far enough out that no super vertex lands in a real circumcircle and skips a hull triangle.
         const int32 Super0 = NumSamples;
-        Points.push_back(FVector2(-4.0f, -4.0f));
-        Points.push_back(FVector2( 5.0f, -4.0f));
-        Points.push_back(FVector2(-4.0f,  5.0f));
+        Points.push_back(FVector2(-1000.0f, -1000.0f));
+        Points.push_back(FVector2( 2001.0f, -1000.0f));
+        Points.push_back(FVector2(-1000.0f,  2001.0f));
 
         TVector<FBlendSpaceTriangle> Working;
         Working.push_back({ Super0, Super0 + 1, Super0 + 2 });
@@ -199,6 +200,13 @@ namespace Lumina
             return;
         }
 
+        // Stale derived data indexes off the end of Samples rather than merely blending wrong.
+        if (!HasValidTopology())
+        {
+            OutWeights.Add(0, 1.0f);
+            return;
+        }
+
         if (AxisCount == EBlendSpaceAxes::One)
         {
             EvaluateOneAxis(Input.x, OutWeights);
@@ -211,8 +219,7 @@ namespace Lumina
 
     void CBlendSpace::EvaluateOneAxis(float X, FBlendSpaceWeights& OutWeights) const
     {
-        // SortedOrder is ascending in X, so the bracketing pair is the first sample at or past the input
-        // and the one before it.
+        // SortedOrder ascends in X, so the bracketing pair is the first sample at or past the input.
         const int32 Count = (int32)SortedOrder.size();
 
         if (X <= Samples[SortedOrder[0]].Position.x)
@@ -255,8 +262,7 @@ namespace Lumina
     {
         const FVector2 P(AxisX.Normalize(Input.x), AxisY.Normalize(Input.y));
 
-        // Fewer than three samples, or a fully collinear set, produces no triangles. Fall back to the
-        // nearest pair projected onto the segment between them, which is what a 1D space would do.
+        // Falls back to the nearest pair projected onto their segment, which is what a 1D space does.
         if (Triangles.empty())
         {
             int32 NearestA = INDEX_NONE;
@@ -303,9 +309,7 @@ namespace Lumina
             return;
         }
 
-        // Best triangle = the one whose barycentric coordinates are least negative. Inside the hull that
-        // is the containing triangle; outside it, clamping and renormalizing slides the result along the
-        // nearest edge instead of snapping between triangles.
+        // Clamping and renormalizing slides along the nearest edge instead of snapping between triangles.
         int32 BestTriangle = INDEX_NONE;
         float BestScore = -1e30f;
         float BestU = 0.0f, BestV = 0.0f, BestW = 0.0f;

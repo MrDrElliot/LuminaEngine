@@ -41,8 +41,7 @@ namespace Lumina
         const uint16 SrcReg   = ResolvePoseInput(PoseInPin, Compiler);
         const uint16 AlphaReg = ResolveValueInput(AlphaPin, Compiler);
 
-        // Space / mode are register-driven so they can be wired; an unconnected
-        // pin bakes the property's current value as a constant.
+        // Register-driven so they can be wired, and an unconnected pin bakes the property as a constant.
         const uint16 SpaceReg = SpacePin->HasConnection()
             ? ResolveValueInput(SpacePin, Compiler)
             : Compiler.EmitLoadConst((float)Space);

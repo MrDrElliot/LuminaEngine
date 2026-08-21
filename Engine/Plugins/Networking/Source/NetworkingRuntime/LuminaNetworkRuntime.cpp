@@ -38,8 +38,7 @@ namespace Lumina
 
         FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
 
-        // Collected before destroying: destroying while iterating the view it came from is what the
-        // original two-pass shape was avoiding.
+        // Collected first, since destroying while iterating the view it came from is the hazard.
         TVector<entt::entity> ServerOnly;
         for (entt::entity Entity : Registry.view<SNetworkComponent>())
         {

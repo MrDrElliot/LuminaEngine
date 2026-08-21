@@ -13,9 +13,7 @@ namespace Lumina
             return nullptr;
         }
         CClass* Resolved = FindObject<CClass>(ClassName);
-        // Enforce the TSubclassOf<T> contract that the raw *Ptr write below bypasses: a name that resolves to a
-        // class which isn't MetaClass-derived (hand-edited config, a reparented or colliding class) yields null
-        // instead of a wrong-typed CClass that callers would Cast<T> to null and then dereference.
+        // A name resolving to a non-derived class yields null rather than a wrong-typed CClass.
         if (Resolved != nullptr && MetaClass != nullptr && !Resolved->IsChildOf(MetaClass))
         {
             return nullptr;

@@ -13,9 +13,7 @@
 
 namespace Lumina
 {
-	// MaterialGraphTypes.h only forward-declares EMaterialValueType, so ToMaterialInputType /
-	// ToMaterialValueType have to restate its ordinals as plain integers. This is the one translation
-	// unit that sees both definitions, so it is where a reorder or insertion gets caught.
+	// The one translation unit seeing both definitions, so a reorder gets caught here.
 	static_assert((uint8)EMaterialValueType::Float         == MaterialValueOrdinal::Float);
 	static_assert((uint8)EMaterialValueType::Float2        == MaterialValueOrdinal::Float2);
 	static_assert((uint8)EMaterialValueType::Float3        == MaterialValueOrdinal::Float3);
@@ -30,14 +28,12 @@ namespace Lumina
 		VertexOutputChunks.reserve(128);
 	}
 
-	// Vertex-stage alias preamble: maps pixel-stage variable names to vertex equivalents.
-	// Pixel-only references are stubbed to neutral values; WPO-sourced nodes won't reach them.
+	// Pixel-only references stub to neutral values, which WPO-sourced nodes never reach.
 	static const char* GVertexStageAliasPreamble =
 		"\t// Material graph variable aliases (vertex stage).\n"
 		"\tfloat3 WorldPosition = WorldPos.xyz;\n"
 		"\tfloat3 WorldNormal   = NormalWS;\n"
-		// Same name and float4 shape the PIXEL templates declare (xyz direction, w handedness), so a
-		// node reading the tangent frame emits identical code in either stage.
+		// The same name and float4 shape the pixel templates declare, so a node emits identical code.
 		"\tfloat4 WorldTangent  = float4(TangentWS, TangentSignWS);\n"
 		"\tfloat2 UV0           = VertexData.UV;\n"
 		"\tfloat4 VertexColor   = VertexData.Color;\n"
@@ -45,13 +41,12 @@ namespace Lumina
 		"\tuint   EntityID      = Inst.EntityID;\n"
 		"\tfloat3 ViewPosition  = float3(0.0);\n";
 
-	// Terrain variant: TerrainBaseVertexPass.slang lacks FVertexData/FGPUInstance; same alias names keep node-emit code reusable.
+	// The terrain vertex pass lacks the shared structs, and matching alias names keep node code reusable.
 	static const char* GVertexStageAliasPreambleTerrain =
 		"\t// Material graph variable aliases (vertex stage, terrain).\n"
 		"\tfloat3 WorldPosition = WorldPos;\n"
 		"\tfloat3 WorldNormal   = NormalWS;\n"
-		// Terrain's analytic tangent comes from the height slope after the material token, so it cannot be
-		// aliased here. Terrain UV is WorldPos.xz, making world +X the U direction -- the flat-ground case.
+		// Terrain UV is the world XZ plane, so world +X is the U direction on flat ground.
 		"\tfloat4 WorldTangent  = float4(1.0, 0.0, 0.0, 1.0);\n"
 		"\tfloat2 UV0           = HeightUV;\n"
 		"\tfloat4 VertexColor   = float4(1.0, 1.0, 1.0, 1.0);\n"
@@ -119,7 +114,7 @@ namespace Lumina
 		                                                   : (bIsTerrain ? BasePath + "TerrainBasePixelPass.slang"
 		                                                                 : BasePath + "BasePixelPass.slang")));
 
-		// Pixel: output node declares FMaterialPixelInputs Material; only append body + assignments.
+		// The output node declares the pixel input struct, so only the body and assignments are appended.
 		OutPixelShader.clear();
 		if (FileHelper::LoadFileIntoString(OutPixelShader, PixelPath))
 		{
@@ -142,7 +137,7 @@ namespace Lumina
 			return;
 		}
 
-		// Decal: fixed unit-cube vertex stage; the box is projected onto scene depth in the pixel stage, so no WPO.
+		// A decal uses a fixed unit-cube vertex stage and projects onto scene depth, so it has no WPO.
 		if (bIsDecal)
 		{
 			OutVertexShader.clear();
@@ -154,7 +149,6 @@ namespace Lumina
 			return;
 		}
 
-		// Vertex template declares FMaterialVertexInputs Material above the token; only emit assignments.
 		// Terrain is the only domain still rastering meshlet geometry through a vertex stage.
 		if (bIsTerrain)
 		{
@@ -162,8 +156,7 @@ namespace Lumina
 		}
 	}
 
-	// The stub goes first in every case, so a graph that leaves the WPO pin unconnected cannot reach
-	// `WorldPos.xyz += Material.WorldPositionOffset` with an unwritten struct; driving WPO overwrites it.
+	// The stub goes first, so an unconnected WPO pin never reaches an unwritten struct.
 	FString FMaterialCompiler::BuildVertexStageBody(EMaterialType MaterialType) const
 	{
 		static const char* kWPOStub = "\tMaterial.WorldPositionOffset = float3(0.0, 0.0, 0.0);\n";
@@ -232,7 +225,7 @@ namespace Lumina
 			case EMaterialInputType::Float3:	return "float3";
 			case EMaterialInputType::Float4:	return "float4";
 			case EMaterialInputType::Texture: return "float4";
-			// A bindless index, not a sampled color -- the one non-float type the graph can carry.
+			// A bindless index rather than a sampled color, the one non-float type the graph can carry.
 			case EMaterialInputType::TextureHandle: return "uint";
 			default: return "float";
 		}
@@ -356,8 +349,7 @@ namespace Lumina
 				return OutputPin;
 			}
 
-			// Chase back through whatever feeds the passthrough. For a plain reroute that is its own
-			// input pin; for a named reroute usage it is the matching declaration's input.
+			// A plain reroute chases its own input pin, while a named one chases its declaration's input.
 			CEdNodeGraphPin* RerouteInput = Owner->GetRerouteSourcePin();
 			if (RerouteInput == nullptr || !RerouteInput->HasConnection())
 			{
@@ -388,8 +380,7 @@ namespace Lumina
 				return Result;
 			}
 
-			// A function-call output pin binds its own emitted local via ResolvedVar; everything
-			// else reads the owning node's single FullName variable.
+			// A function-call output binds its own emitted local, while everything else uses the node name.
 			FString NodeName		= Conn->ResolvedVar.empty() ? Conn->GetOwningNode()->GetNodeFullName() : Conn->ResolvedVar;
 
 			Result.Type				= Conn->InputType;
@@ -397,8 +388,7 @@ namespace Lumina
 			Result.Value 			= NodeName;
 			Result.Mask  			= Conn->GetComponentMask();
 
-			// Absent = Unknown: a node with no derivative rule must not be mistaken for a constant, or its UV
-			// silently samples the wrong mip instead of falling back to UV0's gradient.
+			// Absent means Unknown, or a node with no rule silently samples the wrong mip.
 			auto It = DerivByVar.find(Result.Value);
 			if (It != DerivByVar.end())
 			{
@@ -429,8 +419,7 @@ namespace Lumina
 		auto It = EmittedParamFetches.find(FetchExpr);
 		if (It != EmittedParamFetches.end())
 		{
-			// Same parameter, already loaded in this stage. Downstream nodes address this one by name, so
-			// the variable still has to exist -- it just aliases rather than repeating the fetch.
+			// Downstream nodes address it by name, so the variable still has to exist and just aliases.
 			GetActiveChunk().append(TypeStr + " " + NodeID + " = " + It->second + ";\n");
 		}
 		else
@@ -439,8 +428,7 @@ namespace Lumina
 			EmittedParamFetches[FetchExpr] = NodeID;
 		}
 
-		// Material parameters are uniform across the surface, so their screen-space derivative is zero.
-		// Registering that lets a parameter-driven tiling value still produce a Valid UV gradient.
+		// Material parameters are uniform, so a parameter-driven tiling value keeps a valid UV gradient.
 		RegisterDeriv(NodeID, EDerivState::Zero);
 	}
 
@@ -451,8 +439,7 @@ namespace Lumina
 		FDerivInfo Info;
 		Info.State = State;
 
-		// A vertex shader has no quad to differentiate against. Record the state so the chain keeps
-		// propagating (Unknown makes any sample downstream fall back), but emit nothing.
+		// A vertex shader has no quad to differentiate against, so record the state and emit nothing.
 		if (Info.State == EDerivState::Valid && CurrentStage == EMaterialCompileStage::Vertex)
 		{
 			Info.State = EDerivState::Unknown;
@@ -460,8 +447,7 @@ namespace Lumina
 
 		if (Info.State == EDerivState::Valid)
 		{
-			// Named off the value so a consumer can find them from FInputValue::Value alone. The forward lanes
-			// ignore their gradient arguments, so these dead-strip outside the deferred pass.
+			// Named off the value so a consumer finds them from FInputValue alone, and they dead-strip.
 			Info.DDX = ID + "_DDX";
 			Info.DDY = ID + "_DDY";
 
@@ -479,7 +465,6 @@ namespace Lumina
 		{
 		case EDerivState::Valid:
 		{
-			// d(Source * Scale) = dSource * Scale; Scale is derivative-free here, so the second term is zero.
 			// The companion takes the same mask the value does, or the two describe different channels.
 			const FString Mask = GetSwizzleForMask(Source.Mask);
 			RegisterDeriv(ID, EDerivState::Valid,
@@ -504,8 +489,7 @@ namespace Lumina
 	{
 		if (UV.Deriv == EDerivState::Valid)
 		{
-			// Shaped exactly like the UV expression TextureSample builds from the same FInputValue, so the
-			// gradient describes the two channels actually sampled.
+			// Shaped exactly like the UV expression TextureSample builds from the same FInputValue.
 			if (UV.ComponentCount >= 2)
 			{
 				OutDdx = UV.DDX + ".xy";
@@ -519,8 +503,7 @@ namespace Lumina
 			return;
 		}
 
-		// Zero and Unknown both land here. Zero would mean every pixel samples one texel, which picks mip 0
-		// and thrashes; UV0's gradient is the honest approximation and matches the pre-propagation behavior.
+		// Zero would mean one texel per pixel, so UV0's gradient is the honest approximation.
 		++UVGradientFallbackCount;
 		OutDdx = "UV0_DDX";
 		OutDdy = "UV0_DDY";
@@ -531,8 +514,7 @@ namespace Lumina
 	                                            const FInputValue& B, const FString& BExpr,
 	                                            EMaterialInputType ResultType)
 	{
-		// Any width up to float4, so a world-space UV chain keeps its derivative instead of falling back.
-		// Shapes must still broadcast the way HLSL does -- the companions mirror the value term for term.
+		// Shapes must broadcast the way HLSL does, so the companions mirror the value term for term.
 		const int32 ResultComponents = GetComponentCount(ResultType);
 		const bool bShapeOK = ResultComponents >= 1 && ResultComponents <= 4
 		                   && (A.ComponentCount == B.ComponentCount
@@ -544,8 +526,7 @@ namespace Lumina
 			return;
 		}
 
-		// The companions hold each operand's FULL width; the value expressions handed in are already
-		// masked. Mask the companions identically or the two describe different channels.
+		// The companions hold each operand's FULL width, so mask them identically to the value.
 		const FString ADdx = A.DDX + GetSwizzleForMask(A.Mask);
 		const FString ADdy = A.DDY + GetSwizzleForMask(A.Mask);
 		const FString BDdx = B.DDX + GetSwizzleForMask(B.Mask);
@@ -677,8 +658,7 @@ namespace Lumina
 
 		GetActiveChunk().append(TypeStr + " " + OwningNode + " = " + Func + "(" + AValue.Value + GetSwizzleForMask(AValue.Mask) + ");\n");
 
-		// A function of a derivative-free input is derivative-free. Anything else needs a per-function rule,
-		// so it stays Unknown and falls back rather than claiming a gradient it cannot justify.
+		// Anything else stays Unknown and falls back rather than claiming a gradient it cannot justify.
 		RegisterDeriv(OwningNode, AValue.Deriv == EDerivState::Zero
 		                        ? EDerivState::Zero : EDerivState::Unknown);
 
@@ -724,8 +704,7 @@ namespace Lumina
 
 		GetActiveChunk().append(TypeStr + " " + OwningNode + " = " + Func + "(" + AValue.Value + ", " + BValue.Value + ", " + CValue.Value + ");\n");
 
-		// Covers lerp/clamp/smoothstep etc. All-constant in, constant out; otherwise Unknown until the
-		// specific function earns a rule (lerp's is dA*(1-T) + dB*T + (B-A)*dT).
+		// Otherwise Unknown until the specific function earns a rule of its own.
 		RegisterDeriv(OwningNode, (AValue.Deriv == EDerivState::Zero && BValue.Deriv == EDerivState::Zero
 		                        && CValue.Deriv == EDerivState::Zero) ? EDerivState::Zero : EDerivState::Unknown);
 
@@ -830,8 +809,7 @@ namespace Lumina
 		}
 
 		GetActiveChunk().append(TypeStr + " " + OwningNode + " = " + ValueString.Value + ".xy" + ";\n");
-		// Passing a derivative-free value through keeps it derivative-free. BreakFloatN is distinct from
-		// ComponentMask and was the last unruled link in the Break -> Append -> TexCoords tiling chain.
+		// BreakFloatN is distinct from ComponentMask and was the last unruled link in the tiling chain.
 		RegisterDeriv(OwningNode, ValueString.Deriv == EDerivState::Zero
 		                       ? EDerivState::Zero : EDerivState::Unknown);
 	}
@@ -854,8 +832,7 @@ namespace Lumina
 		}
 
 		GetActiveChunk().append(TypeStr + " " + OwningNode + " = " + ValueString.Value + ".xyz" + ";\n");
-		// Passing a derivative-free value through keeps it derivative-free. BreakFloatN is distinct from
-		// ComponentMask and was the last unruled link in the Break -> Append -> TexCoords tiling chain.
+		// BreakFloatN is distinct from ComponentMask and was the last unruled link in the tiling chain.
 		RegisterDeriv(OwningNode, ValueString.Deriv == EDerivState::Zero
 		                       ? EDerivState::Zero : EDerivState::Unknown);
 	}
@@ -879,8 +856,7 @@ namespace Lumina
 		}
 
 		GetActiveChunk().append(TypeStr + " " + OwningNode + " = " + ValueString.Value + ".xyzw" + ";\n");
-		// Passing a derivative-free value through keeps it derivative-free. BreakFloatN is distinct from
-		// ComponentMask and was the last unruled link in the Break -> Append -> TexCoords tiling chain.
+		// BreakFloatN is distinct from ComponentMask and was the last unruled link in the tiling chain.
 		RegisterDeriv(OwningNode, ValueString.Deriv == EDerivState::Zero
 		                       ? EDerivState::Zero : EDerivState::Unknown);
 	}
@@ -1000,8 +976,7 @@ namespace Lumina
 
 		GetActiveChunk().append(TypeStr + " " + OwningNode + " = " + TypeStr + "(" + AValue.Value + GetSwizzleForMask(AValue.Mask) + ", " + BValue.Value + GetSwizzleForMask(BValue.Mask) + ");\n");
 
-		// Any function of derivative-free inputs is itself derivative-free. This carries a uniform tiling
-		// value through Break/Append to a TexCoords node instead of degrading the whole UV chain.
+		// This carries a uniform tiling value through to TexCoords instead of degrading the UV chain.
 		RegisterDeriv(OwningNode, (AValue.Deriv == EDerivState::Zero && BValue.Deriv == EDerivState::Zero)
 		                        ? EDerivState::Zero : EDerivState::Unknown);
 
@@ -1013,8 +988,7 @@ namespace Lumina
 		CMaterialExpression_ComponentMask* OwningNode = A->GetOwningNode<CMaterialExpression_ComponentMask>();
 		const FString ResultName = OwningNode->GetNodeFullName();
 
-		// Emitting a masked scalar on the failure paths, because falling through used to append
-		// "float4 X = .rgba;" and the real complaint arrived later as a Slang syntax error.
+		// Falling through used to append a bare masked scalar and surface later as a Slang syntax error.
 		auto EmitFallback = [&]
 		{
 			GetActiveChunk().append("float " + ResultName + " = 0.0;\n");
@@ -1035,8 +1009,7 @@ namespace Lumina
 
 		FInputValue Value = GetTypedInputValue(A, "");
 
-		// Width the source actually has once its own mask is applied. The node offers R/G/B/A
-		// whatever it is fed, so selecting past the end is how ".ga" ended up on a float3.
+		// The node offers every channel whatever it is fed, so selecting past the end is the failure.
 		const int32 MaskComponents = GetComponentCount(Value.Mask);
 		const int32 Available = MaskComponents > 0 ? MaskComponents : GetComponentCount(Value.Type);
 
@@ -1087,13 +1060,11 @@ namespace Lumina
 			return;
 		}
 
-		// The source's own mask comes first: a channel output pin hands back the whole vector's
-		// variable and relies on the consumer to swizzle it down.
+		// A channel output pin hands back the whole vector and relies on the consumer to swizzle.
 		GetActiveChunk().append(GetVectorType(ComponentCount) + " " + ResultName + " = "
 			+ Value.Value + GetSwizzleForMask(Value.Mask) + "." + Swizzle + ";\n");
 
-		// The derivative takes the identical swizzle the value just took, which is what lets a world-space
-		// UV arrive as a float3 varying and leave as a float2 chain.
+		// The derivative takes the same swizzle, so a world-space UV can arrive wide and leave narrow.
 		if (Value.Deriv == EDerivState::Valid)
 		{
 			const FString Selector = GetSwizzleForMask(Value.Mask) + "." + Swizzle;
@@ -1143,8 +1114,7 @@ namespace Lumina
 		return Index;
 	}
 
-	// Raised as an editor warning, not just a shader comment nobody reads: a 32x-tiled UV sampled with
-	// UV0's gradient picks a mip ~5 levels too fine, i.e. 1024x the texel working set.
+	// A 32x-tiled UV on UV0's gradient picks a mip five levels too fine, so this warns in the editor.
 	void FMaterialCompiler::WarnUVGradientFallback(const FInputValue& UVValue, CEdGraphNode* Node)
 	{
 		if (UVValue.Deriv == EDerivState::Valid)
@@ -1193,13 +1163,11 @@ namespace Lumina
 			return;
 		}
 
-		// The deferred template samples with these gradients; the forward templates ignore them (their
-		// implicit derivatives are correct there), so the chunks dead-strip outside the deferred pass.
+		// The forward templates ignore these, so the chunks dead-strip outside the deferred pass.
 		FString Ddx, Ddy;
 		GetUVGradients(UVValue, Ddx, Ddy);
 
-		// Names the variable that broke the chain, so a captured shader dump localizes the unruled node
-		// without a rebuild. The same condition is raised to the editor, where an author can act on it.
+		// Names the variable that broke the chain, so a shader dump localizes the unruled node.
 		if (UVValue.Deriv != EDerivState::Valid)
 		{
 			GetActiveChunk().append("// UV-GRADIENT FALLBACK: '" + UVValue.Value
@@ -1234,13 +1202,11 @@ namespace Lumina
 			return;
 		}
 
-		// The deferred template samples with these gradients; the forward templates ignore them (their
-		// implicit derivatives are correct there), so the chunks dead-strip outside the deferred pass.
+		// The forward templates ignore these, so the chunks dead-strip outside the deferred pass.
 		FString Ddx, Ddy;
 		GetUVGradients(UVValue, Ddx, Ddy);
 
-		// Names the variable that broke the chain, so a captured shader dump localizes the unruled node
-		// without a rebuild. The same condition is raised to the editor, where an author can act on it.
+		// Names the variable that broke the chain, so a shader dump localizes the unruled node.
 		if (UVValue.Deriv != EDerivState::Valid)
 		{
 			GetActiveChunk().append("// UV-GRADIENT FALLBACK: '" + UVValue.Value
@@ -1256,8 +1222,7 @@ namespace Lumina
 	{
 		const FString OwningNode = GetCurrentInlinePrefix() + Node->GetNodeFullName();
 
-		// Declared and defaulted FIRST: downstream nodes read this node's variable by name, so a
-		// rejection below still has to leave a compilable shader. Opaque black is the neutral miss.
+		// Downstream nodes read this by name, so a rejection below still leaves a compilable shader.
 		AddRaw("float4 " + OwningNode + " = float4(0.0, 0.0, 0.0, 1.0);\n");
 		SetOwningOutputType(UV, EMaterialInputType::Float4);
 
@@ -1279,8 +1244,7 @@ namespace Lumina
 		                    ? UVValue.Value + ".xy"
 		                    : "float2(" + UVValue.Value + ")";
 
-		// Rounded, not truncated: arithmetic lands on 2.999... as readily as 3.0 and truncating drops a
-		// layer. Clamped because an out-of-range array index is undefined on the GPU, not a wrap.
+		// Rounded, since arithmetic lands on 2.999 as readily as 3.0, and clamped since an OOB index is undefined.
 		const FString MaxLayer = Format("{}", NumLayers > 0 ? NumLayers - 1u : 0u);
 		AddRaw("uint " + OwningNode + "_Slice = (uint)clamp(round(" + SliceValue.Value + "), 0.0, "
 			+ MaxLayer + ".0);\n");
@@ -1366,8 +1330,7 @@ namespace Lumina
 		float PostSlope = 0.0f;
 		Curve.GetExtrapolationSlopes(PreSlope, PostSlope);
 
-		// _L is the sample time remapped into the keyed range, _O an additive offset for the
-		// extrapolation modes that shift the result rather than the time.
+		// _L is the sample time remapped into the keyed range, _O an offset for the shifting modes.
 		Chunk.append("float " + ID + "_L = clamp(" + ID + "_T, " + CurveFloat(FirstTime) + ", " + CurveFloat(LastTime) + ");\n");
 		Chunk.append("float " + ID + "_O = 0.0;\n");
 
@@ -1524,8 +1487,7 @@ namespace Lumina
 				"ValueNoise(", "GradientNoise(", "PerlinNoise(",
 				"VoronoiNoise(", "SimpleNoise(",
 				"Hash11(", "Hash21(", "Hash22(", "Hash33(",
-				// One ComputeWind is an Octaves-deep sine sum, so it belongs in the noise bucket rather
-				// than counting as the single call site the line count sees.
+				// One ComputeWind is an Octaves-deep sine sum, so it belongs in the noise bucket.
 				"ComputeWind(",
 			};
 			uint32 Total = 0;
@@ -1560,8 +1522,7 @@ namespace Lumina
 		Stats.BoundTextures       = static_cast<uint32>(BoundImages.size());
 		Stats.bUsesVertexStage    = UsesVertexStage();
 
-		// Weighted approximation of relative cost. Texture samples and noise dominate; math is cheap;
-		// vertex-stage work is amortized across vertices so it counts less than per-pixel work.
+		// Vertex-stage work is amortized across vertices, so it counts less than per-pixel work.
 		Stats.EstimatedCost =
 			Stats.TextureSamples       * 8 +
 			Stats.NoiseOps             * 16 +
@@ -1668,8 +1629,7 @@ namespace Lumina
 			GetActiveChunk().append("float3 " + ID + " = float3(1.0, 0.0, 0.0);\n");
 			return;
 		}
-		// WorldTangent, not Input.TangentWS: `Input` is the pixel stage's interpolant struct and does not
-		// exist in the vertex templates. Both stages declare WorldTangent.
+		// Input is the pixel stage's interpolant struct, and both stages declare WorldTangent.
 		GetActiveChunk().append("float3 " + ID + " = WorldTangent.xyz;\n");
 	}
 
@@ -1680,8 +1640,7 @@ namespace Lumina
 			GetActiveChunk().append("float3 " + ID + " = float3(0.0, 1.0, 0.0);\n");
 			return;
 		}
-		// See VertexTangent: WorldTangent is the stage-neutral name, and its w carries the handedness
-		// sign the bitangent needs (wrong-signed on mirrored UVs otherwise).
+		// WorldTangent's w carries the handedness sign the bitangent needs on mirrored UVs.
 		GetActiveChunk().append("float3 " + ID + " = cross(WorldNormal.xyz, WorldTangent.xyz) * WorldTangent.w;\n");
 	}
 
@@ -1725,12 +1684,10 @@ namespace Lumina
 			}
 		}
 
-		// Every stage declares both sets, aliasing set 1 onto set 0 where it has no independent meaning,
-		// so an out-of-range index clamps to the last real set rather than reading zero.
+		// Every stage declares both sets, so an out-of-range index clamps rather than reading zero.
 		const FString SetName = (Index >= 1) ? FString("UV1") : FString("UV0");
 
-		// Rotation is applied AFTER tiling and about the UV origin, matching glTF KHR_texture_transform's
-		// translation * rotation * scale order (the offset is a separate node downstream).
+		// Rotation applies after tiling about the UV origin, matching KHR_texture_transform order.
 		const bool bRotationConnected = (Rotation != nullptr && Rotation->HasConnection());
 		FInputValue RotationValue = GetTypedInputValue(Rotation, Format("{}", Math::Radians(RotationDegrees)));
 		const bool  bHasRotation  = bRotationConnected || RotationDegrees != 0.0f;
@@ -1753,8 +1710,7 @@ namespace Lumina
 			                      + Scaled + ".x * " + Sin + " + " + Scaled + ".y * " + Cos + ");\n");
 		}
 
-		// Chain rule: d(UV * Scale) = dUV * Scale. Without it the deferred pass sampled tiled materials
-		// ~log2(Scale) mips too fine. A varying Tiling pin degrades to Unknown rather than lying.
+		// Without the chain rule the deferred pass sampled tiled materials several mips too fine.
 		FInputValue UVSetValue;
 		UVSetValue.Value = SetName;
 		UVSetValue.Deriv = EDerivState::Valid;
@@ -1764,8 +1720,7 @@ namespace Lumina
 		const bool bScaleIsConstant = (Tiling == nullptr || !Tiling->HasConnection())
 		                           || TilingValue.Deriv == EDerivState::Zero;
 
-		// A rotation driven by a uniform (material parameter or literal) is still derivative-free, so the
-		// chain stays exact; only a per-pixel rotation forces a fallback.
+		// A uniform-driven rotation is still derivative-free, so only a per-pixel one forces a fallback.
 		const bool bRotationIsConstant = !bRotationConnected || RotationValue.Deriv == EDerivState::Zero;
 
 		if (!bScaleIsConstant || !bRotationIsConstant)
@@ -1780,8 +1735,7 @@ namespace Lumina
 			return;
 		}
 
-		// Rotation is linear, so d(R * S * uv) = R * S * duv -- the same basis change on the gradients.
-		// Matters for anisotropic filtering direction; folds away entirely for a literal angle.
+		// Rotation is linear, so the same basis change applies to the gradients.
 		const FString Cos = ID + "_Cos";
 		const FString Sin = ID + "_Sin";
 
@@ -1809,8 +1763,7 @@ namespace Lumina
 
 		GetActiveChunk().append("float2 " + OwningNode + " = " + UVValue.Value + " + " + SpeedValue.Value + " * " + TimeValue.Value + ";\n");
 
-		// A pan is a translation, so d(UV + Speed*Time) = dUV as long as the offset does not vary per pixel
-		// (Speed/Time are uniforms in every real graph). Panning must not change the mip.
+		// A pan is a translation, and panning must not change the mip.
 		const bool bOffsetIsConstant = SpeedValue.Deriv == EDerivState::Zero
 		                            && TimeValue.Deriv  == EDerivState::Zero;
 		if (bOffsetIsConstant && UVValue.Deriv == EDerivState::Valid)
@@ -1844,8 +1797,7 @@ namespace Lumina
 			+ OwningNode + "_C.x * " + OwningNode + "_K - " + OwningNode + "_C.y * " + OwningNode + "_S, "
 			+ OwningNode + "_C.x * " + OwningNode + "_S + " + OwningNode + "_C.y * " + OwningNode + "_K) + " + CenterValue.Value + ";\n");
 
-		// A rotation is linear: d(R*(UV - C) + C) = R*dUV, provided the angle and center are uniform.
-		// Reuses the _S/_K sin/cos locals emitted just above.
+		// A rotation is linear provided the angle and center are uniform, reusing the sin and cos locals.
 		if (UVValue.Deriv == EDerivState::Valid
 		 && RotValue.Deriv == EDerivState::Zero
 		 && CenterValue.Deriv == EDerivState::Zero)
@@ -1878,7 +1830,7 @@ namespace Lumina
 
 		GetActiveChunk().append("float2 " + OwningNode + " = " + UVValue.Value + " * " + TilingValue.Value + " + " + OffsetValue.Value + ";\n");
 
-		// Affine in UV: d(UV*T + O) = dUV * T, provided the tiling and offset are themselves constant.
+		// Affine in UV, provided the tiling and offset are themselves constant.
 		if (TilingValue.Deriv == EDerivState::Zero && OffsetValue.Deriv == EDerivState::Zero)
 		{
 			RegisterScaledDeriv(OwningNode, UVValue, TilingValue.Value);
@@ -1920,8 +1872,7 @@ namespace Lumina
 		FInputValue UVValue = GetTypedInputValue(Inputs.UV, "float2(UV0)");
 		FString     UVStr   = UVValue.ComponentCount >= 2 ? UVValue.Value + ".xy" : "float2(" + UVValue.Value + ")";
 
-		// Outputs are declared and initialized FIRST and unconditionally: every downstream node reads them
-		// through ResolvedVar, so a rejected node below must still leave a compilable shader.
+		// Every downstream node reads these through ResolvedVar, so a rejection must still compile.
 		AddRaw("float2 " + UVVar + " = " + UVStr + ";\n");
 		AddRaw("float " + ShadowVar + " = 1.0;\n");
 		AddRaw("float " + HeightVar + " = 1.0;\n");
@@ -1930,8 +1881,7 @@ namespace Lumina
 		if (ShadowOut) ShadowOut->ResolvedVar = ShadowVar;
 		if (HeightOut) HeightOut->ResolvedVar = HeightVar;
 
-		// Pixel stage only. The vertex graph has no view ray, no UV gradients and no per-pixel tangent
-		// frame; emitting the march there would reference locals that template does not declare.
+		// The vertex graph has no view ray or tangent frame, so the march would reference missing locals.
 		if (CurrentStage != EMaterialCompileStage::Pixel)
 		{
 			EdNodeGraph::FError Error;
@@ -1942,8 +1892,7 @@ namespace Lumina
 			return;
 		}
 
-		// Surface domains only. UI and PostProcess are fullscreen passes with no tangent frame and no view
-		// ray to displace along, and UI builds without SceneGlobals so the helper is not even declared.
+		// UI and PostProcess are fullscreen passes with no tangent frame and no view ray to displace along.
 		const EMaterialType Domain = GetMaterialType();
 		if (Domain == EMaterialType::UI || Domain == EMaterialType::PostProcess)
 		{
@@ -1965,8 +1914,7 @@ namespace Lumina
 			return;
 		}
 
-		// A masked material's pixel graph also runs in the VisBuffer masked pre-pass, so the march is paid
-		// twice per pixel. Valid, but never intended -- say so once at compile time.
+		// A masked material also runs in the VisBuffer pre-pass, so the march is paid twice per pixel.
 		if (IsMasked())
 		{
 			LOG_WARN("[Material] ParallaxOcclusionMapping in a MASKED material: the height-field march also runs "
@@ -1990,23 +1938,20 @@ namespace Lumina
 		AddRaw(UVVar + " = " + Prefix + "_R.UV;\n");
 		AddRaw(HeightVar + " = " + Prefix + "_R.Height;\n");
 
-		// Self-shadowing is opt-in (ShadowSamples > 0): it is a second march per pixel, so a material that
-		// leaves the Shadow output unused pays nothing. bHasDirectional gates it on the sun existing at all.
+		// Opt-in, since it is a second march per pixel and an unused Shadow output should cost nothing.
 		AddRaw("if ((" + ShadowSamples.Value + ") > 0.0 && LightData().bHasSun != 0u && " + Prefix + "_R.Weight > 0.0)\n");
 		AddRaw("{\n");
 		AddRaw("\t" + ShadowVar + " = ParallaxSelfShadow(" + TexStr + ", SAMPLER_LINEAR_WRAP, " + UVVar + ", "
 			+ Prefix + "_R.Height, GetSunDirection(), WorldNormal, WorldTangent, (" + ScaleValue.Value + "), ("
 			+ ShadowSamples.Value + "), (" + ShadowSoftness.Value + "), ParallaxMipLevel(" + TexStr + ", UV0_DDX, UV0_DDY));\n");
-		// Fade the shadow out with the same LOD weight the offset uses, so a surface that has faded to flat
-		// normal mapping is not still casting parallax shadows onto itself.
+		// A surface faded to flat normal mapping must not still cast parallax shadows onto itself.
 		AddRaw("\t" + ShadowVar + " = lerp(1.0, " + ShadowVar + ", " + Prefix + "_R.Weight);\n");
 		AddRaw("}\n");
 	}
 
 	namespace
 	{
-		// The field is reached through the instance's meshlet header, which exists only in the surface
-		// domain's pixel lane; no other template has an instance to resolve it from.
+		// The field is reached through the meshlet header, which only the surface pixel lane can resolve.
 		bool RejectDistanceFieldNode(FMaterialCompiler& Compiler, CMaterialGraphNode* Node, const char* NodeName)
 		{
 			auto Fail = [&](const char* Reason)
@@ -2032,14 +1977,12 @@ namespace Lumina
 			return false;
 		}
 
-		/** Emits the per-node preamble: resolve this pixel's instance, its world->local matrix, its axis
-		 *  scales, and its distance field volume. Returns the variable-name prefix the caller appends to. */
+		// Returns the variable-name prefix the caller appends to.
 		FString EmitDistanceFieldPreamble(FMaterialCompiler& Compiler, CMaterialGraphNode* Node)
 		{
 			const FString Prefix = Compiler.GetCurrentInlinePrefix() + Node->GetNodeFullName();
 
-			// Resolved from Input.InstanceIndex rather than a bare `Inst`: only the deferred template declares
-			// that local, and all three pixel templates substitute the same chunk.
+			// Only the deferred template declares that local, and all three pixel templates share this chunk.
 			Compiler.AddRaw("FGPUInstance " + Prefix + "_Inst = GetInstance(Input.InstanceIndex);\n");
 			Compiler.AddRaw("float4x4 " + Prefix + "_M = " + Prefix + "_Inst.ModelMatrix;\n");
 			Compiler.AddRaw("float4x4 " + Prefix + "_W2L = MakeInstanceWorldToLocal(" + Prefix + "_M);\n");
@@ -2059,8 +2002,7 @@ namespace Lumina
 		const FString GradientVar  = Prefix + "_Gradient";
 		const FString ValidVar     = Prefix + "_Valid";
 
-		// Declared and defaulted FIRST and unconditionally: downstream nodes bind by ResolvedVar, so a
-		// rejected node still leaves a compilable shader. Large default reads as "nothing nearby".
+		// Downstream nodes bind by ResolvedVar, and a large default reads as nothing nearby.
 		AddRaw("float " + DistanceVar + " = 1e6;\n");
 		AddRaw("float3 " + GradientVar + " = float3(0.0, 0.0, 1.0);\n");
 		AddRaw("float " + ValidVar + " = 0.0;\n");
@@ -2085,8 +2027,7 @@ namespace Lumina
 			+ Prefix + "_W2L, " + Prefix + "_Scale, " + PositionStr + ");\n");
 		AddRaw(DistanceVar + " = " + Prefix + "_Q.Distance;\n");
 		AddRaw(ValidVar + " = " + Prefix + "_Q.bValid ? 1.0 : 0.0;\n");
-		// The gradient is zero on a saturated plateau, where its direction is undefined; keep the
-		// declared default there so a normalize() downstream cannot produce NaN.
+		// The gradient is zero on a saturated plateau, so keep the default and avoid a NaN downstream.
 		AddRaw("if (any(" + Prefix + "_Q.Gradient != 0.0)) { " + GradientVar + " = " + Prefix + "_Q.Gradient; }\n");
 	}
 
@@ -2105,8 +2046,7 @@ namespace Lumina
 			return;
 		}
 
-		// The cone march is StepCount texture fetches per pixel; a masked material runs the whole pixel
-		// graph a second time in the VisBuffer masked pre-pass, so it is paid for twice.
+		// A masked material runs the whole pixel graph again in the pre-pass, so this is paid twice.
 		if (IsMasked())
 		{
 			LOG_WARN("[Material] MeshDistanceFieldOcclusion in a MASKED material: the cone trace also runs in "
@@ -2127,8 +2067,7 @@ namespace Lumina
 		AddRaw("if (" + Prefix + "_Vol.IsValid())\n");
 		AddRaw("{\n");
 
-		// The trace runs in LOCAL space, so the direction goes there too. A normal transforms by the
-		// transpose of object->world, whose rows are the columns of the model matrix.
+		// A normal transforms by the transpose of object to world, whose rows are the model columns.
 		AddRaw("\tfloat3 " + Prefix + "_LP = mul(" + Prefix + "_W2L, float4(WorldPosition, 1.0)).xyz;\n");
 		AddRaw("\tfloat3 " + Prefix + "_NW = normalize(" + NormalStr + ");\n");
 		AddRaw("\tfloat3 " + Prefix + "_LN = normalize(float3("
@@ -2136,13 +2075,11 @@ namespace Lumina
 			"dot(float3(" + Prefix + "_M[0][1], " + Prefix + "_M[1][1], " + Prefix + "_M[2][1]), " + Prefix + "_NW), "
 			"dot(float3(" + Prefix + "_M[0][2], " + Prefix + "_M[1][2], " + Prefix + "_M[2][2]), " + Prefix + "_NW)));\n");
 
-		// Radius is authored as a fraction of the volume's own extent, so one value works across a prop
-		// and a building without retuning; converting it to local units is just that fraction of the box.
+		// Authored as a fraction of the volume extent, so one value works on a prop and a building alike.
 		AddRaw("\tfloat " + Prefix + "_R = max(" + RadiusValue.Value + ", 0.0) * "
 			"max(max(" + Prefix + "_Vol.VolumeSize.x, " + Prefix + "_Vol.VolumeSize.y), " + Prefix + "_Vol.VolumeSize.z);\n");
 
-		// Started off the surface: the field is 0 AT the surface, so a cone that begins there reads full
-		// occlusion on its first sample and never recovers.
+		// The field is 0 AT the surface, so a cone starting there reads full occlusion and never recovers.
 		AddRaw("\tfloat3 " + Prefix + "_Start = " + Prefix + "_LP + " + Prefix + "_LN * (" + Prefix + "_Vol.MaxDistance * 0.05);\n");
 
 		AddRaw("\tfloat " + Prefix + "_Vis = DistanceFieldConeOcclusion(" + Prefix + "_Vol, " + Prefix + "_Start, "
@@ -2195,8 +2132,7 @@ namespace Lumina
 		AddRaw("\t" + ThicknessVar + " = DistanceFieldThickness(" + Prefix + "_Vol, " + Prefix + "_LP, "
 			+ Prefix + "_LN, " + Prefix + "_Max, " + Prefix + "_Scale, " + Format("{}", StepCount) + ");\n");
 
-		// Normalized against the march distance in WORLD units, so the 0..1 output is directly usable as a
-		// subsurface/transmission mask without the material having to know the mesh's size.
+		// Normalized in WORLD units, so the output is usable without the material knowing the mesh size.
 		AddRaw("\t" + NormalizedVar + " = saturate(" + ThicknessVar + " / max(LocalDistanceToWorld("
 			+ Prefix + "_Max, " + Prefix + "_Scale), 1e-4));\n");
 		AddRaw("}\n");
@@ -2211,8 +2147,7 @@ namespace Lumina
 		const FString WeightVar = Prefix + "_Weight";
 		const FString NoiseVar  = Prefix + "_Noise";
 
-		// Declared and defaulted FIRST and unconditionally: downstream nodes bind by ResolvedVar, so a
-		// rejected node still leaves a compilable shader. Zero offset / weight is exactly "no wind".
+		// Downstream nodes bind by ResolvedVar, and zero offset and weight is exactly no wind.
 		AddRaw("float3 " + OffsetVar + " = float3(0.0, 0.0, 0.0);\n");
 		AddRaw("float " + WeightVar + " = 0.0;\n");
 		AddRaw("float " + NoiseVar + " = 0.0;\n");
@@ -2221,8 +2156,7 @@ namespace Lumina
 		if (WeightOut) WeightOut->ResolvedVar = WeightVar;
 		if (NoiseOut)  NoiseOut->ResolvedVar  = NoiseVar;
 
-		// Vertex stage only. The offset this produces displaces geometry, which only World Position Offset
-		// consumes; reached from a pixel pin it would burn the whole octave sum per PIXEL and move nothing.
+		// Only World Position Offset consumes this, so a pixel pin would burn the octave sum per pixel.
 		if (CurrentStage != EMaterialCompileStage::Vertex)
 		{
 			EdNodeGraph::FError Error;
@@ -2256,8 +2190,7 @@ namespace Lumina
 
 		AddRaw("float3 " + Prefix + "_P = " + PositionStr + ";\n");
 
-		// LOD gate. Off, the weight is a literal 1.0 rather than a call, so the whole distance test and its
-		// early-out fold away instead of leaving a dead compare in every vertex of every geometry pass.
+		// Off, the weight is a literal, so the distance test folds away instead of leaving a dead compare.
 		const FString LODWeightStr = bLODGate
 			? "WindLODWeight(" + Prefix + "_P, (" + FadeStartValue.Value + "), (" + FadeEndValue.Value + "))"
 			: FString("1.0");
@@ -2308,8 +2241,7 @@ namespace Lumina
 		}
 		GetActiveChunk().append("float3 " + ID + " = WorldPosition;\n");
 
-		// The seed for world-space and triplanar UVs. Every pixel template declares this pair -- exact
-		// barycentric derivatives in the deferred lane, ddx/ddy in the forward ones.
+		// Every pixel template declares this pair, exact in the deferred lane and ddx/ddy in the forward ones.
 		RegisterDeriv(ID, EDerivState::Valid, "WorldPosition_DDX", "WorldPosition_DDY", 3);
 	}
 
@@ -2327,14 +2259,12 @@ namespace Lumina
 	{
 		const FString MatrixVar = ID + "_M";
 
-		// Only the deferred pixel template declares an `Inst` local, and all three pixel templates share
-		// this chunk, so the pixel lane resolves the instance from the interpolated index instead.
+		// Only the deferred template declares an Inst local, so the pixel lane resolves from the index.
 		const FString Source = (CurrentStage == EMaterialCompileStage::Vertex)
 		                     ? FString("Inst.ModelMatrix")
 		                     : FString("GetInstance(Input.InstanceIndex).ModelMatrix");
 
-		// Bound to a local rather than inlined: ObjectScale reads it three times, and in the pixel lane
-		// each reference would otherwise re-fetch the instance through a BDA load.
+		// ObjectScale reads it three times, and each pixel-lane reference would re-fetch through a BDA load.
 		GetActiveChunk().append("float4x4 " + MatrixVar + " = " + Source + ";\n");
 		return MatrixVar;
 	}
@@ -2378,7 +2308,7 @@ namespace Lumina
 	void FMaterialCompiler::Time(const FString& ID)
 	{
 		GetActiveChunk().append("float " + ID + " = GetTime();\n");
-		// GetTime() is frame-uniform: zero screen-space derivative.
+		// GetTime() is frame-uniform, so its screen-space derivative is zero.
 		RegisterDeriv(ID, EDerivState::Zero);
 	}
 
@@ -2441,8 +2371,7 @@ namespace Lumina
 		GetActiveChunk().append("float " + ID + " = float(GetScreenSize().x) / max(float(GetScreenSize().y), 1.0);\n");
 	}
 
-	// SceneColor is only valid in PostProcess materials (samples the pass-input RT at set 2, binding 0);
-	// other domains have no such binding, so emit a graph error rather than a shader that fails to link.
+	// Other domains have no such binding, so emit a graph error rather than a shader that fails to link.
 	void FMaterialCompiler::SceneColor(const FString& ID, CMaterialInput* UV)
 	{
 		if (CurrentMaterialType != EMaterialType::PostProcess)

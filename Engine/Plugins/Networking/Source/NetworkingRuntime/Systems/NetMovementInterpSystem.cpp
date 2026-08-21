@@ -14,10 +14,7 @@
 
 namespace Lumina
 {
-    // Disjoint write set so the scheduler can overlap this with other PostPhysics systems that don't touch
-    // transforms. Dirty-tagging (FNeedsTransformUpdate) happens in the serial tail, covered by the transform
-    // write domain (same convention as SAnimationSystem's root-motion pass). FRelationshipComponent is read
-    // by the ResolveAllDirtyTransforms parent-chain walk.
+    // Dirty-tagging happens in the serial tail, covered by the transform write domain.
     FSystemAccess SNetMovementInterpSystem::Access = FSystemAccess{}
         .Write<STransformComponent>()
         .Write<FRepTransform>()               // per-entity SmoothedInterpDelay is updated in the parallel body
@@ -44,17 +41,14 @@ namespace Lumina
             return;
         }
 
-        //~ Serial pre-step. RenderTime and the clock offset are global render-clock state; computing them in
-        //  the parallel body would race. Track the server/client offset with a gentle EMA so RenderTime stays
-        //  ~InterpDelay behind the newest received server time and advances with the local frame clock.
+        //~ Rate-matching avoids the saw-tooth an offset EMA gives on a bursty send cadence.
         const CNetworkSettings* Settings = GetDefault<CNetworkSettings>();
         const double InterpDelay     = Settings ? static_cast<double>(Settings->InterpDelay) : 0.1;
         const bool   bExtrapolate    = Settings ? Settings->bEnableExtrapolation : true;
         const double MaxExtrap       = Settings ? static_cast<double>(Settings->MaxExtrapolation) : 0.25;
         const double BufferIntervals = Settings ? static_cast<double>(Settings->InterpBufferIntervals) : 1.5;
 
-        // Smooth render clock: advance by local dt and gently rate-match the newest server time, so the clock
-        // doesn't saw-tooth with the (bursty) send cadence the way an offset-EMA does. Snap only on a big desync.
+        // Tracks the offset with a gentle EMA so RenderTime stays behind the newest server time.
         const double Dt = Context.GetDeltaTime();
         if (!State->bClockInitialized)
         {
@@ -82,8 +76,7 @@ namespace Lumina
         auto&& NetStorage       = Registry.storage<SNetworkComponent>();
         auto&& TransformStorage = Registry.storage<STransformComponent>();
 
-        // True for any entity whose pose we should drive from its sample ring. AutonomousProxy is locally
-        // controlled (its ring is never filled, but skip explicitly); empty rings have no data yet.
+        // An AutonomousProxy is locally controlled, and an empty ring has no data yet.
         auto ShouldInterp = [&](entt::entity Entity) -> bool
         {
             if (!RepStorage.contains(Entity) || !NetStorage.contains(Entity) || !TransformStorage.contains(Entity))
@@ -110,9 +103,7 @@ namespace Lumina
                 FRepTransform&       Rep = RepStorage.get(Entity);
                 STransformComponent& T   = TransformStorage.get(Entity);
 
-                // Adaptive delay: stay ~BufferIntervals send-intervals behind THIS entity's sample rate, so a
-                // low-rate (LOD-far) proxy interpolates between real samples instead of extrapolating + snapping.
-                // Eased per tick so a tier/rate change ramps the delay rather than rewinding the render clock.
+                // Eased per tick, so a tier change ramps the delay rather than rewinding the render clock.
                 const double Interval = Rep.Ring.AverageInterval();
                 double TargetDelay = InterpDelay;
                 if (Interval > 0.0 && BufferIntervals * Interval > TargetDelay)
@@ -140,8 +131,7 @@ namespace Lumina
             }
         }, 16);
 
-        //~ Serial tail (Jolt ApplyInterpolatedTransforms pattern). Structural dirty-tagging + one bulk resolve.
-        //  Tagging a different pool (FNeedsTransformUpdate) doesn't invalidate the FRepTransform handle.
+        //~ Tagging a different pool does not invalidate the FRepTransform handle.
         for (uint32 i = 0; i < Count; ++i)
         {
             const entt::entity Entity = (*Handle)[i];

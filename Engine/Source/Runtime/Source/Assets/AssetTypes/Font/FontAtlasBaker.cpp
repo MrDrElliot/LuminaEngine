@@ -93,10 +93,7 @@ namespace Lumina
                 const Projection Proj(Vector2(EmPixelSize), Vector2(-B.PL, -B.PB));
                 generateMTSDF(B.Bmp, Glyph, Proj, Range(RangeEm), MSDFGeneratorConfig(true /*overlapSupport*/));
 
-                // Fix sign errors at overlapping-contour junctions: fonts like Lexend build glyphs from
-                // separate overlapping strokes, and the distance field can read "outside" inside the glyph
-                // where they meet (holes at b/a/e/g bowl-stem junctions). Rasterize the shape with the
-                // non-zero fill rule and flip disagreeing texels -- the non-Skia geometry-resolve step.
+                // Rasterizes with the non-zero fill rule and flips disagreeing texels, fixing bowl-stem holes.
                 distanceSignCorrection(B.Bmp, Glyph, Proj);
 
                 Baked.push_back(Move(B));
@@ -139,7 +136,7 @@ namespace Lumina
         }
         int AtlasH = (PenY + RowH + GlyphPad + 3) & ~3;   // round up to 4 rows
 
-        // RGBA8 atlas, zeroed: the cleared border reads as "fully outside" once resolved.
+        // Zeroed, so the cleared border reads as fully outside once resolved.
         TVector<uint8> Pixels;
         Pixels.resize((size_t)AtlasW * AtlasH * 4, 0);
 
@@ -164,7 +161,7 @@ namespace Lumina
                 const int GX = Placed[i].X;
                 const int GY = Placed[i].Y;
 
-                // Blit flipping Y: msdfgen bitmaps are Y-up (row 0 = bottom); the atlas is top-down.
+                // msdfgen bitmaps are Y-up while the atlas is top-down, so the blit flips.
                 for (int y = 0; y < B.H; ++y)
                 {
                     const float* Src = B.Bmp(0, B.H - 1 - y);
@@ -195,8 +192,7 @@ namespace Lumina
         Font->Ascender      = (float)Metrics.ascenderY;
         Font->Descender     = (float)Metrics.descenderY;
 
-        // In-memory bakes (default font) never hit PostLoad, so build the codepoint lookup now or
-        // FindGlyph/ShapeText would find nothing. Harmless for the import path (PostLoad rebuilds it).
+        // An in-memory bake never hits PostLoad, so FindGlyph would find nothing without this.
         Font->BuildGlyphLookup();
 
         return true;

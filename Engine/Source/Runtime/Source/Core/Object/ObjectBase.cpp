@@ -20,7 +20,7 @@ namespace Lumina
     RUNTIME_API FCObjectArray GObjectArray;
 
 
-    /** Rooted objects: never auto-destroyed. */
+    // Rooted objects are never auto-destroyed.
     static THashSet<TObjectPtr<CObjectBase>> GRootedObjects;
     static FMutex RootMutex;
 
@@ -51,18 +51,13 @@ namespace Lumina
 
     CObjectBase::~CObjectBase()
     {
-        // Mirror of the construct in StaticAllocateObject; must stay in lockstep with it or script strings
-        // leak / double-free. Gated on the flag rather than on a null class so that reaching through
-        // ClassPrivate here is confined to the objects that genuinely have trailing script storage: every
-        // native object's destructor stays independent of whether its class is still alive, and the ones
-        // that do depend on it are covered by the types-last shutdown order in FCObjectArray::Shutdown.
+        // Gated on the flag so reaching through ClassPrivate is confined to objects with script storage.
         if (HasAnyFlag(OF_ScriptProperties) && ClassPrivate != nullptr)
         {
             ClassPrivate->DestructScriptProperties(this);
         }
 
-        // Every destruction path lands here, so this is the one place the cached C# wrapper has to be let go.
-        // Guarded on the slot so an object that was never wrapped (the overwhelming majority) pays a compare.
+        // Guarded on the slot, so an object that was never wrapped pays only a compare.
         if (ManagedInstanceSlot != INDEX_NONE)
         {
             ManagedInstances::Release(this);
@@ -83,10 +78,7 @@ namespace Lumina
         ClassPrivate = const_cast<CClass*>(OI.Params.Class);
         PackagePrivate = OI.Package;
 
-        // The flags the construction asked for. Additive, so they join whatever the constructor set, and
-        // applied before AddObject/PostInitProperties so the object is registered and initialized as the
-        // caller declared it. Without this every flag passed to NewObject was silently dropped, and the
-        // only one that stuck anywhere was OF_DefaultObject, re-stamped by hand after the fact.
+        // Applied before AddObject so the object is registered as the caller declared it.
         EnumAddFlags(ObjectFlags, OI.Params.Flags);
 
         AddObject();
@@ -158,8 +150,7 @@ namespace Lumina
 
     void CObjectBase::FinishDestroyForShutdown()
     {
-        // An object created during the OnDestroy pass was never visited by it. Give it the same
-        // teardown rather than freeing it half-destroyed.
+        // An object created during the OnDestroy pass was never visited, so give it the same teardown.
         if (!HasAnyFlag(OF_MarkedDestroy))
         {
             SetFlag(OF_MarkedDestroy);
@@ -176,9 +167,7 @@ namespace Lumina
             return;
         }
 
-        // Unconditional teardown: any TObjectPtr still holding this object will be left dangling. That's
-        // valid at shutdown (everything goes) but a bug at runtime, long-lived non-owning references
-        // must be TWeakObjectPtr. Catch the misuse in debug builds; release still tears down.
+        // Valid at shutdown but a bug at runtime, so long-lived non-owning references must be weak.
         DEBUG_ASSERT(GObjectArray.IsShuttingDown() || GObjectArray.GetStrongRefCountByIndex(InternalIndex) == 0,
             "ForceDestroyNow on an object with live strong references; holders will dangle. Use TWeakObjectPtr for non-owning references.");
 
@@ -187,8 +176,7 @@ namespace Lumina
 
     void CObjectBase::ConditionalBeginDestroy()
     {
-        // The reference check + mark + free are serialized against weak->strong upgrades inside the
-        // object array, so this can't race a resurrection into a use-after-free.
+        // Serialized against weak-to-strong upgrades, so this cannot race a resurrection into a free.
         GObjectArray.ConditionalDestroy(this);
     }
 
@@ -225,16 +213,13 @@ namespace Lumina
 
     void CObjectBase::RemoveFromRoot()
     {
-        // OF_Rooted tracks membership exactly, so an unrooted object still costs nothing and, importantly,
-        // is never pinned by the line below (which on an unreferenced object would destroy it on release).
+        // OF_Rooted tracks membership exactly, so an unrooted object is never pinned by the line below.
         if (!HasAnyFlag(OF_Rooted))
         {
             return;
         }
 
-        // Pinned across the erase: the root set often holds the ONLY strong reference, so dropping it inside
-        // erase() destroys and frees this object, and ClearFlags below then writes to freed memory. The pin
-        // releases at the end of scope, where reaching zero is a clean destruction with nothing left to touch.
+        // The root set often holds the ONLY strong ref, so erase would free this before the flags clear.
         TObjectPtr<CObjectBase> Pinned(this);
         {
             FScopeLock Lock(RootMutex);
@@ -389,8 +374,7 @@ namespace Lumina
 
     void ShutdownCObjectSystem()
     {
-        // Must precede the root clear. Otherwise dropping the last ref on each rooted object destroys it
-        // immediately.
+        // Otherwise dropping the last ref on each rooted object destroys it immediately.
         GObjectArray.BeginShutdown();
 
         GRootedObjects.clear();

@@ -56,7 +56,7 @@ namespace Lumina::NetQuantize
         // --- quaternion smallest-three constants ---
         constexpr uint32 QuatComponentBits = 15;
         constexpr uint32 QuatMaxQ          = (1u << QuatComponentBits) - 1;
-        constexpr float  QuatRange         = 0.70710678118654752440f; // 1/sqrt(2): bound on the 3 smallest components
+        constexpr float  QuatRange         = 0.70710678118654752440f; // bounds the 3 smallest components
     }
 
     //~ FQuantizedVector
@@ -108,8 +108,7 @@ namespace Lumina::NetQuantize
             if (A > LargestAbs) { LargestAbs = A; Largest = i; }
         }
 
-        // q and -q are the same rotation; choose the sign that makes the dropped component positive,
-        // so the reader can reconstruct it as +sqrt(...) with no sign bit.
+        // Choosing the sign that makes the dropped component positive lets the reader skip a sign bit.
         const float Sign = (C[Largest] < 0.0f) ? -1.0f : 1.0f;
 
         uint16 Out[3] = { 0, 0, 0 };
@@ -147,7 +146,7 @@ namespace Lumina::NetQuantize
         }
         C4[LargestIndex] = std::sqrt(SumSq < 1.0f ? 1.0f - SumSq : 0.0f);
 
-        // Renormalize: quantization error can push the magnitude slightly off unit.
+        // Renormalized, since quantization error can push the magnitude slightly off unit.
         const float LenSq = C4[0] * C4[0] + C4[1] * C4[1] + C4[2] * C4[2] + C4[3] * C4[3];
         const float Inv   = (LenSq > 1e-12f) ? 1.0f / std::sqrt(LenSq) : 1.0f;
         FQuat Q;

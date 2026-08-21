@@ -10,15 +10,13 @@ namespace Lumina::DataTableCSV
 {
     namespace
     {
-        // A wholly mismatched file would otherwise produce one error per cell, which is noise rather
-        // than a report. The count still reflects reality; only the listing is capped.
+        // The count still reflects reality, and only the listing is capped.
         constexpr int32 GMaxReportedErrors = 32;
 
         /** One parsed record. Fields keep their order; a short row simply has fewer of them. */
         using FCSVRecord = TVector<FString>;
 
-        /** RFC 4180 reader. Quoted fields may contain commas, CRLFs and "" escaped quotes; unquoted
-         *  fields are taken verbatim up to the next comma or line break. */
+        // Quoted fields may hold commas, line breaks and escaped quotes, and unquoted ones are verbatim.
         TVector<FCSVRecord> ParseRecords(FStringView Text)
         {
             TVector<FCSVRecord> Records;
@@ -131,7 +129,7 @@ namespace Lumina::DataTableCSV
             return FString(In.data() + Begin, End - Begin);
         }
 
-        /** Quotes only when it has to: a file of plain values stays diffable. */
+        // Quotes only when it has to, so a file of plain values stays diffable.
         FString Escape(const FString& In)
         {
             bool bNeedsQuotes = false;
@@ -164,8 +162,7 @@ namespace Lumina::DataTableCSV
             return Out;
         }
 
-        /** Text-convertible properties of Struct, supers first, in declared order. Matches the order
-         *  ExportText writes and the grid displays. */
+        // Matches the order ExportText writes and the grid displays.
         void GatherColumns(CStruct* Struct, TVector<FProperty*>& Out)
         {
             if (Struct == nullptr)
@@ -208,8 +205,7 @@ namespace Lumina::DataTableCSV
             return Result;
         }
 
-        // Resolve the header once. Column 0 is the row name whatever it is called, since a name is
-        // structural here rather than a field on the row struct.
+        // Column 0 is the row name whatever it is called, since a name is structural rather than a field.
         const FCSVRecord& Header = Records[0];
         TVector<FProperty*> ColumnProperties;
         ColumnProperties.reserve(Header.size());
@@ -223,8 +219,7 @@ namespace Lumina::DataTableCSV
 
             if (Property != nullptr && !Reflection::IsTextConvertible(Property))
             {
-                // Named a real field, but one a CSV cell cannot represent. Report it as unknown
-                // rather than pretending it imported.
+                // It named a real field that a CSV cell cannot represent, so report unknown rather than imported.
                 Property = nullptr;
             }
 
@@ -253,8 +248,7 @@ namespace Lumina::DataTableCSV
             }
         }
 
-        // Build into a staging table first: a parse that dies partway must not leave the asset holding
-        // half of one file and half of another.
+        // A parse that dies partway must not leave the asset holding half of two files.
         TVector<SDataTableRow> NewRows;
         NewRows.reserve(Records.size() - 1);
         THashSet<FName> SeenNames;
@@ -277,8 +271,7 @@ namespace Lumina::DataTableCSV
             const FName RowName(RawName);
             if (SeenNames.find(RowName) != SeenNames.end())
             {
-                // Skipped rather than overwritten: a duplicate key means the file is wrong, and
-                // silently keeping the last one hides which value won.
+                // A duplicate key means the file is wrong, and keeping the last one hides which value won.
                 ++Result.RowsSkipped;
                 if ((int32)Result.Errors.size() < GMaxReportedErrors)
                 {
@@ -294,7 +287,7 @@ namespace Lumina::DataTableCSV
 
             void* RowMemory = Row.Value.GetMutableMemory();
 
-            // Short rows are legal: the absent columns keep the struct's defaults.
+            // Short rows are legal, and the absent columns keep the struct's defaults.
             const size_t CellCount = Math::Min(Record.size(), ColumnProperties.size());
             for (size_t Col = 1; Col < CellCount; ++Col)
             {

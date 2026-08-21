@@ -7,8 +7,7 @@ namespace Lumina
 {
     namespace
     {
-        // With multi-viewport enabled the main viewport can live on a different monitor than the
-        // window the user clicked in, so anchor the modal to the monitor containing the click.
+        // The main viewport can be on another monitor, so anchor to the one containing the click.
         ImVec2 ModalAnchorCenter(ImVec2 ClickPos)
         {
             if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
@@ -44,8 +43,7 @@ namespace Lumina
 
     void FEditorModalManager::DrawDialogue()
     {
-        // Slow-task popup nested inside the blocking modal: ImGui allows only one modal chain,
-        // so sibling modals would close each other every frame.
+        // ImGui allows only one modal chain, so sibling modals would close each other every frame.
         if (ActiveModal && ActiveModal->bBlocking)
         {
             ImGui::OpenPopup(ActiveModal->Title.c_str());
@@ -70,8 +68,7 @@ namespace Lumina
             }
             else if (!ActiveModal->bOpen)
             {
-                // X button: BeginPopupModal returns false here, so without this teardown OpenPopup
-                // above would re-open the modal every frame, blocking all input invisibly.
+                // Without this teardown OpenPopup re-opens the modal every frame, blocking input invisibly.
                 ActiveModal.reset();
             }
             return;
@@ -79,7 +76,7 @@ namespace Lumina
 
         if (ActiveModal)
         {
-            // Non-blocking modal: a plain window, so there is no modal chain to conflict with.
+            // A non-blocking modal is a plain window, so there is no modal chain to conflict with.
             ImGui::SetNextWindowPos(ModalAnchorCenter(ActiveModal->OpenPos), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
             ImGui::SetNextWindowSize(ActiveModal->Size, ImGuiCond_Appearing);
 
@@ -93,7 +90,7 @@ namespace Lumina
             ImGui::End();
         }
 
-        // No blocking modal in the way: the slow-task popup owns the root modal scope.
+        // With no blocking modal in the way, the slow-task popup owns the root modal scope.
         SlowTaskModal::Render();
     }
 }

@@ -14,9 +14,7 @@ namespace Lumina::CrashHandler
     {
         constexpr uint32 GMaxDirectoryChars = 512;
 
-        // Plain storage rather than an FString: the crash path reads this after the heap may already be
-        // corrupt. Double buffered so a repoint mid-crash hands the reader one whole path or the other,
-        // never a half-overwritten one.
+        // Double buffered so a repoint mid-crash hands the reader one whole path, never half of one.
         char                GDirectories[2][GMaxDirectoryChars] = {};
         std::atomic<uint32> GActive{ 0 };
         std::atomic<uint32> GLengths[2] = {};

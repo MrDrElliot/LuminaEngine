@@ -21,7 +21,7 @@ namespace Lumina::Reflection
 {
     namespace
     {
-        // No generated C# type: either an explicit opt-out or a mirror LuminaSharp already hand-writes.
+        // Either an explicit opt-out or a mirror LuminaSharp already hand-writes.
         bool IsExcludedFromCSharp(const FReflectedType& Type)
         {
             return std::any_of(Type.Metadata.begin(), Type.Metadata.end(),
@@ -37,9 +37,7 @@ namespace Lumina::Reflection
                 [Key](const FMetadataPair& Pair) { return Pair.Key == Key; });
         }
 
-        // The C# base type to back a generated enum with, matching the native underlying integer's width and
-        // signedness. Emitting it explicitly (e.g. `enum X : byte`) keeps a 1/2/8-byte enum the same size as
-        // its C++ source so it can live inside a blittable by-value struct mirror.
+        // An explicit backing type keeps a 1, 2 or 8-byte enum the same size as its C++ source.
         const char* CSharpEnumBackingType(const FReflectedEnum& Enum)
         {
             switch (Enum.UnderlyingSize)
@@ -52,9 +50,7 @@ namespace Lumina::Reflection
             }
         }
 
-        // The module a type is defined in ("Runtime", "Editor", "Sandbox", ...). Drives both the
-        // native thunk's export macro (RUNTIME_API/EDITOR_API/...) and the C# P/Invoke library key,
-        // so any module's reflected types can carry C# bindings, not just Runtime.
+        // Drives both the native thunk's export macro and the C# P/Invoke library key, not just Runtime.
         std::string ModuleOf(const FReflectedType& Type)
         {
             if (Type.Header != nullptr && Type.Header->Project != nullptr)
@@ -101,8 +97,7 @@ namespace Lumina::Reflection
             return IsCSharpKeyword(Name) ? ("@" + Name) : Name;
         }
 
-        // Maps a property kind (FReflectedProperty::GetTypeName) to a C# primitive. Returns true with
-        // the size/alignment for blittable primitives; false for non-primitive kinds.
+        // Returns true with the size and alignment for blittable primitives, false for every other kind.
         bool PrimitiveCSharp(const std::string& Kind, std::string& OutCSharp, int& OutSize, int& OutAlign)
         {
             struct FEntry { const char* Kind; const char* CSharp; int Size; int Align; };
@@ -130,8 +125,7 @@ namespace Lumina::Reflection
             return (Offset + Align - 1) & ~(Align - 1);
         }
 
-        // Computes the C# Sequential layout (== C++ layout) of a struct if every reflected field is
-        // blittable (primitive / int-backed enum / nested blittable struct). Returns false otherwise.
+        // Returns false unless every reflected field is a primitive, int-backed enum or blittable struct.
         bool ComputeBlittableLayout(const FReflectedStruct& Struct, const FReflectionDatabase& Db, int& OutSize, int& OutAlign, int Depth)
         {
             if (Depth > 16)
@@ -164,9 +158,7 @@ namespace Lumina::Reflection
                 }
                 else if (Kind == "Enum")
                 {
-                    // The generated C# enum carries an explicit backing type matching the native underlying
-                    // width (EmitForEnum), so a reflected enum mirrors by value at any size. Use that width as
-                    // the field's size/align; the auto-emitted static_assert(sizeof==N) keeps layout honest.
+                    // The generated enum's explicit backing type matches native width, so use it for size and align.
                     const FReflectedEnum* E = Db.GetReflectedType<FReflectedEnum>(FStringHash(Prop->TypeName));
                     if (E == nullptr)
                     {
@@ -213,15 +205,13 @@ namespace Lumina::Reflection
             }
             if (Struct.bHasUnreflectedFields)
             {
-                return false; // hidden non-PROPERTY state: reflected layout is incomplete, can't blit by value
+                return false; // hidden non-PROPERTY state, so the reflected layout is incomplete and cannot blit by value
             }
-            // An empty reflected struct computes a zero-size mirror, which can never match C++ sizeof
-            // >= 1. Treat it as opaque.
+            // An empty reflected struct computes a zero-size mirror, which can never match a C++ sizeof.
             return ComputeBlittableLayout(Struct, Db, OutSize, OutAlign, 0) && OutSize > 0;
         }
 
-        // An entt::entity / FEntity field (the reflector classifies it as Int32, so it stays a 4-byte
-        // blittable mirror field) surfaces as the C# Entity handle, same mapping the function path uses.
+        // An entt::entity field classifies as Int32, so it stays blittable and surfaces as the C# Entity.
         bool IsEntityField(const FReflectedProperty& Prop)
         {
             return Prop.RawTypeName.find("entt::entity") != std::string::npos
@@ -263,9 +253,7 @@ namespace Lumina::Reflection
             }
         }
 
-        // C# wrapper read-only, decoupled from the editor flags: ScriptReadOnly forces getter-only even on
-        // an editor-editable property; ScriptWritable forces a setter even on an editor ReadOnly/Const one;
-        // otherwise the editor ReadOnly/Const flags apply (the historical behavior).
+        // ScriptReadOnly forces getter-only and ScriptWritable forces a setter, else the editor flags apply.
         bool IsReadOnlyProp(const FReflectedProperty& Prop)
         {
             if (EnumHasAnyFlags(Prop.PropertyFlags, EPropertyFlags::ScriptReadOnly))
@@ -279,8 +267,7 @@ namespace Lumina::Reflection
             return EnumHasAnyFlags(Prop.PropertyFlags, EPropertyFlags::ReadOnly | EPropertyFlags::Const);
         }
 
-        // A property explicitly hidden from the C# layer (PROPERTY(ScriptHidden) / NotScriptable): no
-        // wrapper member is emitted for it at all.
+        // PROPERTY(ScriptHidden) emits no wrapper member for the property at all.
         bool IsScriptHidden(const FReflectedProperty& Prop)
         {
             return EnumHasAnyFlags(Prop.PropertyFlags, EPropertyFlags::ScriptHidden);
@@ -308,9 +295,7 @@ namespace Lumina::Reflection
             return "global::" + ToCSharpName(Qualified);
         }
 
-        // A reflected type that becomes an opaque handle wrapper (a C# class deriving NativeObject/
-        // NativeStruct), i.e. a class, or a struct that is NOT a blittable value mirror. Such a type
-        // is a valid C# *base class* for another wrapper.
+        // A class, or a struct that is not a blittable value mirror, becomes an opaque handle wrapper.
         bool IsOpaqueWrapperType(const FReflectionDatabase& Db, const std::string& Qualified)
         {
             const FReflectedType* T = Db.GetReflectedType<FReflectedType>(FStringHash(Qualified));
@@ -336,16 +321,13 @@ namespace Lumina::Reflection
             return true;
         }
 
-        // The CObject root, which is declared by hand (DECLARE_CLASS) rather than REFLECT'd, so it has no
-        // database entry and no generated wrapper - C# models it as LuminaSharp.NativeObject.
+        // The CObject root is hand-declared, so it has no database entry and models as NativeObject.
         bool IsObjectRootType(const std::string& Qualified)
         {
             return Qualified == "Lumina::CObject" || Qualified == "CObject";
         }
 
-        // The C# base for an opaque wrapper: the reflected parent's wrapper when it's an opaque type,
-        // otherwise the given Native* root. Mirrors the C++ single-inheritance chain so e.g. a
-        // CStaticMesh wrapper derives the CObject wrapper and inherits its bound members.
+        // Mirrors the C++ single-inheritance chain so a wrapper inherits its parent's bound members.
         std::string CSharpBase(const FReflectedStruct& Type, const FReflectionDatabase& Db, const char* Root)
         {
             const std::string& Parent = Type.Parent;
@@ -363,24 +345,20 @@ namespace Lumina::Reflection
             return Root;
         }
 
-        // How a property is surfaced to C#. Drives BOTH the managed member and the native thunk, so
-        // the two stay in lock-step: classify once, emit on each side from the same result.
+        // Drives BOTH the managed member and the native thunk, so classify once and emit from one result.
         enum class EBind { None, Number, Bool, Enum, Str, Object, StructValue, StructOpaque, Array, Span, Delegate };
 
         struct FBinding
         {
             EBind         Kind = EBind::None;
-            std::string CSharp;     // C# property type (for Array: the element's C# type)
+            std::string CSharp;     // C# property type (for Array, the element's C# type)
             std::string Cpp;        // by-value thunk C++ type for Number ("int32", "double", ...)
             std::string TargetCpp;  // qualified C++ type for Enum/Object/StructValue ("Lumina::CStaticMesh")
-            bool          bIsName = false;   // Str: FName (vs FString)
+            bool          bIsName = false;   // Str kind, FName rather than FString
             bool          bReadOnly = false;
-            // Object: true for a CObject-derived wrapper, false for an opaque STRUCT wrapper (components).
-            // Both marshal as void* and share EBind::Object, but only a CObject has the per-object managed
-            // instance slot -- routing a component pointer through Wrapper<T>.ForObject would reinterpret
-            // component memory as a CObjectBase. Gates the ForObject call in EmitProperties.
+            // Only a CObject has the managed instance slot, so a component pointer must not reach ForObject.
             bool          bCObject = false;
-            std::unique_ptr<FBinding> Elem; // Array: the element binding (one of the scalar kinds above)
+            std::unique_ptr<FBinding> Elem; // Array kind, the element binding (one of the scalar kinds above)
         };
 
         bool NumericCpp(const std::string& Kind, std::string& OutCSharp, std::string& OutCpp)
@@ -398,10 +376,7 @@ namespace Lumina::Reflection
             return false;
         }
 
-        // Classifies a TVector element by its C++ type spelling (e.g. "int32", "FString", "FNavTileData").
-        // Covers the same scalar kinds as Classify minus object elements (can't tell TObjectPtr<T> from a
-        // by-value T from the name alone, and a wrong guess would not compile). Unknowns return false so
-        // the whole array is skipped, never a broken binding.
+        // Unknown element spellings return false, so the whole array is skipped rather than bound wrong.
         bool ClassifyElement(const std::string& RawElem, const std::string& Ns, const FReflectionDatabase& Db, FBinding& B)
         {
             std::string Bare = RawElem;
@@ -465,11 +440,10 @@ namespace Lumina::Reflection
                     return true;
                 }
             }
-            return false; // classes (object elements) and anything else: skipped
+            return false; // classes (object elements) and anything else are skipped
         }
 
-        // Classifies a single (non-inner) property into its C# binding. Returns false for kinds with no
-        // binding (custom-accessor props, soft-objects, optionals here, unexposed targets).
+        // Returns false for kinds with no binding, such as custom accessors, soft objects and optionals.
         bool Classify(FReflectedProperty& Prop, const std::string& OwnerNs, const FReflectionDatabase& Db, FBinding& B)
         {
             if (EnumHasAnyFlags(Prop.PropertyFlags, EPropertyFlags::Private) ||
@@ -558,8 +532,7 @@ namespace Lumina::Reflection
                 B.bCObject = true;
                 B.TargetCpp = Prop.TypeName;
                 B.CSharp = IsExposed(Db, Prop.TypeName) ? GlobalCSharp(Prop.TypeName) : "global::LuminaSharp.NativeObject";
-                // Settable now via the type-erased LuminaSharp_SetObjectPtr helper (the element type need
-                // not be complete here); respect only the property's real const/readonly flags.
+                // Settable through the type-erased helper, so only the property's real readonly flags matter here.
                 B.bReadOnly = IsReadOnlyProp(Prop);
                 return true;
             }
@@ -590,21 +563,16 @@ namespace Lumina::Reflection
                 }
                 return false;
             }
-            return false; // SoftObject and anything else: not bound yet
+            return false; // SoftObject and anything else are not bound yet
         }
 
-        // An array element of one of these kinds is bit-for-bit identical in C# (primitive / 1-byte bool /
-        // width-matched enum mirror / blittable value-struct mirror), so the whole TVector<T> can be read as
-        // a zero-copy ReadOnlySpan<T> directly over the native storage instead of one crossing per element.
+        // A bit-for-bit identical element lets the whole TVector be read as a zero-copy ReadOnlySpan<T>.
         static bool IsBlittableElementKind(EBind Kind)
         {
             return Kind == EBind::Number || Kind == EBind::Bool || Kind == EBind::Enum || Kind == EBind::StructValue;
         }
 
-        // A read-only TVector<T> view. For a blittable element type it is a zero-copy ReadOnlySpan<T> read in
-        // place at the property's offset (no boundary crossing, no native thunk). Otherwise (FString/FName or
-        // an opaque struct element) it falls back to TSpan<element> backed by count + per-index
-        // thunks.
+        // A blittable element reads in place at the offset, everything else falls back to per-index thunks.
         void EmitCSharpArray(FCodeWriter& Writer, FReflectedProperty& Prop, const FBinding& B,
             const std::string& Friendly, const std::string& Module, const std::string& TypeName)
         {
@@ -619,14 +587,13 @@ namespace Lumina::Reflection
 
                 if (IsReadOnlyProp(Prop))
                 {
-                    // Read-only: a zero-copy ReadOnlySpan<T> over the native storage.
+                    // Read-only, so a zero-copy ReadOnlySpan<T> over the native storage.
                     Writer.Linef("public global::System.ReadOnlySpan<%s> %s =>", B.Elem->CSharp.c_str(), PropName.c_str());
                     Writer.Linef("    global::LuminaSharp.NativeMarshal.ReadVector<%s>(Handle, %s);", B.Elem->CSharp.c_str(), OffName.c_str());
                 }
                 else
                 {
-                    // Writable: a TVector<T> view = (vector pointer, element-type ops table). Reads decode
-                    // the header in place (zero crossing); Add/Remove/Clear call the ops fn-ptrs.
+                    // Reads decode the vector header in place, while Add and Remove call the ops function pointers.
                     const std::string OpsFn = "__vecopsfn_" + Member;
                     const std::string OpsField = "__ops_" + Member;
                     const std::string OpsThunk = "LuminaSharp_VecOps_" + Friendly + "_" + Member;
@@ -647,9 +614,7 @@ namespace Lumina::Reflection
             const std::string GetAtThunk = "LuminaSharp_GetAt_" + Friendly + "_" + Member;
             const std::string& ECS = B.Elem->CSharp;
 
-            // Only non-blittable elements reach here (blittable returned above): an opaque-struct element wraps the
-            // element pointer, an FString/FName element decodes via the two-pass buffer thunk. The projector is a
-            // static method (managed function pointer) so the property read allocates no closure.
+            // The projector is a static method, so the property read allocates no closure.
             std::string ProjBody;
             bool bStr = false;
             if (B.Elem->Kind == EBind::StructOpaque)
@@ -683,10 +648,7 @@ namespace Lumina::Reflection
             }
         }
 
-        // A writable blittable-element array exposes its container's ops table to C# (Lumina.TVector<T>): one
-        // nullary export per writable array property. The container type comes from decltype(Owner::Member),
-        // since this export sits at global scope where an unqualified TVector<T> spelling would not resolve,
-        // and because a fixed container must be operated on as the type it actually is.
+        // The container type comes from decltype, since an unqualified TVector<T> would not resolve here.
         void EmitVectorOpsExport(FCodeWriter& Writer, FReflectedProperty& Prop,
             const std::string& Friendly, const char* Qualified, const char* Api)
         {
@@ -741,28 +703,21 @@ namespace Lumina::Reflection
             }
         }
 
-        // The blittable-field offset static: resolved ONCE per property from live reflection (no native
-        // export per property). C# then reads/writes native memory directly at (Handle + offset).
+        // Resolved ONCE per property from live reflection, so C# reads native memory at (Handle + offset).
         void EmitOffsetField(FCodeWriter& Writer, const std::string& OffName, const std::string& TypeName, const std::string& Member)
         {
             Writer.Linef("private static readonly nint %s = (nint)global::LuminaSharp.NativeBindings.PropertyOffset(\"%s\", \"%s\");",
                 OffName.c_str(), TypeName.c_str(), Member.c_str());
         }
 
-        // The non-blittable-field token static: the FProperty* resolved ONCE per property, reused by the
-        // generic per-type exporters (PropGet/SetString/Name/Object).
+        // The FProperty* resolved ONCE per property, reused by the generic per-type exporters.
         void EmitTokenField(FCodeWriter& Writer, const std::string& PropFieldName, const std::string& TypeName, const std::string& Member)
         {
             Writer.Linef("private static readonly System.IntPtr %s = global::LuminaSharp.NativeBindings.FindProperty(\"%s\", \"%s\");",
                 PropFieldName.c_str(), TypeName.c_str(), Member.c_str());
         }
 
-        // The managed property on an opaque wrapper. Blittable kinds (Number/Bool/Enum/StructValue/
-        // StructOpaque) read/write native memory directly at the property's runtime-resolved offset (zero
-        // boundary crossing, zero per-property export). Non-blittable kinds (Str/Object) route through the
-        // fixed generic per-type exporters with the property's FProperty* token resolved once. Array still
-        // uses per-property thunks (the follow-up). TypeName is the reflected type's simple name, which the
-        // native FindProperty/PropertyOffset resolve via FindObject (mirrors the component-ops lookup).
+        // Blittable kinds read native memory at the resolved offset, non-blittable route through exporters.
         void EmitCSharpMember(FCodeWriter& Writer, FReflectedProperty& Prop, const FBinding& B,
             const std::string& Friendly, const std::string& Module, const std::string& TypeName)
         {
@@ -780,8 +735,7 @@ namespace Lumina::Reflection
                 case EBind::Enum:
                 case EBind::StructValue:
                 {
-                    // For Bool the C# type is bool (1 byte); for Enum it's the enum mirror (its underlying
-                    // width matches native); both are blittable so Unsafe.Read/Write at the offset is exact.
+                    // Bool is 1 byte and an enum mirror matches native width, so an Unsafe.Read at the offset is exact.
                     const char* T = (B.Kind == EBind::Bool) ? "bool" : CS;
                     Writer.Linef("public %s %s", T, PropName.c_str());
                     Writer.BeginBlock();
@@ -802,8 +756,7 @@ namespace Lumina::Reflection
                     Writer.BeginBlock();
                     if (B.bIsName)
                     {
-                        // FName is an interned id, not an std::string, so resolving it to text still goes
-                        // through the name table on the native side (one crossing each way).
+                        // FName is an interned id, so resolving it to text still goes through the native name table.
                         Writer.Linef("get => global::LuminaSharp.Native.PropGetName(Handle, %s);", PropFieldName.c_str());
                         if (!bRO)
                         {
@@ -814,8 +767,7 @@ namespace Lumina::Reflection
                     }
                     else
                     {
-                        // FString: read the std::basic_string in place (no crossing). The set still assigns
-                        // through the native allocator via the generic exporter.
+                        // The FString read decodes in place, while the set still assigns through the native allocator.
                         Writer.Linef("get => global::LuminaSharp.NativeMarshal.ReadString((nint)Handle + %s);", OffName.c_str());
                         if (!bRO)
                         {
@@ -839,8 +791,7 @@ namespace Lumina::Reflection
                     Writer.Linef("System.IntPtr __h = global::LuminaSharp.Native.PropGetObject(Handle, %s);", PropFieldName.c_str());
                     if (B.bCObject)
                     {
-                        // Canonical wrapper: reading the same object property twice returns the SAME managed
-                        // instance (identity holds, no per-read allocation). CObject only -- see FBinding::bCObject.
+                        // Reading the same object property twice returns the SAME managed instance, so identity holds.
                         Writer.Linef("return global::LuminaSharp.NativeObjectMarshal.FromHandle<%s>(__h);", CS);
                     }
                     else
@@ -888,11 +839,7 @@ namespace Lumina::Reflection
             }
         }
 
-        // The native `extern "C" <API>` thunk(s) backing one bound property. Only an array with a
-        // non-blittable element (FString/FName or an opaque struct) still needs them: blittable scalars and
-        // blittable-element arrays are read directly at the offset from C#, and the non-blittable scalar
-        // kinds (Str/Object) route through the fixed generic per-type exporters in DotNetProperty.cpp. So the
-        // per-property native-export count is now O(non-blittable-element array properties), not O(properties).
+        // Only a non-blittable array element still needs a thunk, so the count is no longer O(properties).
         void EmitNativeThunk(FCodeWriter& Writer, FReflectedProperty& Prop, const FBinding& B,
             const std::string& Friendly, const char* Qualified, const char* Api)
         {
@@ -902,13 +849,12 @@ namespace Lumina::Reflection
             }
             if (!IsBlittableElementKind(B.Elem->Kind))
             {
-                // Non-blittable element (FString/FName/opaque struct): per-index count/getat thunks.
+                // A non-blittable element (FString, FName or opaque struct) needs per-index count and getat thunks.
                 EmitNativeArray(Writer, Prop, B, Friendly, Qualified, Api);
             }
             else if (!IsReadOnlyProp(Prop))
             {
-                // Writable blittable element: the element-type ops table for TVector<T>. Read-only
-                // blittable arrays need no export (C# reads the header directly as a ReadOnlySpan).
+                // A read-only blittable array needs no export, since C# reads the header directly as a ReadOnlySpan.
                 EmitVectorOpsExport(Writer, Prop, Friendly, Qualified, Api);
             }
         }
@@ -961,15 +907,12 @@ namespace Lumina::Reflection
             std::string CSharp;
             std::string Cpp;
             std::string TargetCpp;
-            bool          bEntity = false; // entt::entity: ABI-marshalled as uint32, surfaced as C# Entity.
-            // Object: true for a CObject-derived wrapper, false for an opaque STRUCT wrapper (components).
-            // Same distinction as FBinding::bCObject -- only a CObject has a managed-instance slot, so only a
-            // CObject may be rebuilt through Wrapper<T>.ForObject.
+            bool          bEntity = false; // entt::entity, ABI-marshalled as uint32 and surfaced as the C# Entity.
+            // Only a CObject has a managed-instance slot, so only a CObject may be rebuilt through ForObject.
             bool          bCObject = false;
-            bool          bIsName = false; // EBind::Str arg: FName (true) vs FString (false), for the native ctor.
-            bool          bAssetRef = false; // EBind::Str arg: FAssetRef built from the marshalled path string.
-            // EBind::Span: a (T* ptr, int32 count) C++ pair -> one C# Span<T>/ReadOnlySpan<T>. SpanElemCpp is the
-            // C++ element ("uint32"); CSharp is the full "System.Span<uint>"; bReadOnlySpan = const T*.
+            bool          bIsName = false; // EBind::Str arg, FName (true) vs FString (false), for the native ctor.
+            bool          bAssetRef = false; // EBind::Str arg, an FAssetRef built from the marshalled path string.
+            // A (T* ptr, int32 count) C++ pair maps to one C# Span, with bReadOnlySpan tracking constness.
             std::string SpanElemCpp;
             bool          bReadOnlySpan = false;
         };
@@ -990,7 +933,7 @@ namespace Lumina::Reflection
             return false;
         }
 
-        // Type spelling with const / & / * / whitespace removed: "const FName &" -> "FName".
+        // Type spelling with const, ampersand, star and whitespace removed, so const FName & becomes FName.
         std::string StripQualifiers(const std::string& T)
         {
             std::string Out;
@@ -1008,18 +951,10 @@ namespace Lumina::Reflection
             return Out;
         }
 
-        // Classifies a function parameter / return by its reflected type flag. Conservative: only
-        // by-value-safe kinds (numeric / bool / enum / blittable value struct). Pointers are rejected
-        // (ambiguous marshaling); a mutable-reference *arg* is rejected (a by-value can't bind it),
-        // but a const-ref arg and a (copied) ref return are fine. For primitive kinds the raw spelling
-        // must actually BE that primitive, so strong types that classify as an int (entt::entity, scoped
-        // enums typedef'd to ints) are skipped rather than passed an incompatible int.
+        // Conservative by design, so a strong type that merely classifies as an int is skipped, not coerced.
         bool ClassifyField(const FFieldInfo& F, const FReflectionDatabase& Db, bool bIsArg, FArg& B)
         {
-            // A pointer to a reflected CObject class or opaque (non-blittable) struct marshals as the engine
-            // handle: void* at the thunk, the NativeObject/NativeStruct wrapper in C# (the generator wraps a
-            // returned handle / passes an arg's Handle). Handled before the generic pointer rejection since
-            // the pointer spelling IS the marshaling here. A blittable value struct by pointer is rejected.
+            // A pointer to a reflected class or opaque struct marshals as the engine handle, void* at the thunk.
             if (F.RawFieldType.find('*') != std::string::npos)
             {
                 if ((F.Flags == EPropertyTypeFlags::Object || F.Flags == EPropertyTypeFlags::Struct)
@@ -1031,9 +966,7 @@ namespace Lumina::Reflection
                     B.CSharp = GlobalCSharp(F.TypeName);
                     return true;
                 }
-                // CObject itself is hand-declared (DECLARE_CLASS, no REFLECT) so it never enters the
-                // database. A CObject* marshals as the untyped NativeObject root, matching how a
-                // TObjectPtr<CObject> property is surfaced; without this the whole function is dropped.
+                // CObject never enters the database, so without this the whole function would be dropped.
                 if (F.Flags == EPropertyTypeFlags::Object && IsObjectRootType(F.TypeName))
                 {
                     B.Kind = EBind::Object;
@@ -1052,10 +985,7 @@ namespace Lumina::Reflection
 
             const std::string Bare = StripQualifiers(F.RawFieldType);
 
-            // entt::entity (a scoped enum over uint32) marshals as the C# Entity handle. Checked before the
-            // numeric/enum classification below, where it would otherwise be skipped (it classifies as an
-            // int but spells "entt::entity"). The thunk passes it as a raw uint32; bEntity drives the C#
-            // Entity wrapper + the native static_cast back to entt::entity.
+            // Checked before the numeric path, where entt::entity classifies as an int and would be skipped.
             if (Bare == "entt::entity")
             {
                 B.Kind = EBind::Number;
@@ -1077,8 +1007,7 @@ namespace Lumina::Reflection
             {
                 if (F.Flags == N.Flag)
                 {
-                    // Accept either the canonical spelling (Bare, from RawFieldType) or the engine alias
-                    // (TypeName), clang canonicalizes int32 -> int, so the alias is what the source wrote.
+                    // Clang canonicalizes int32 to int, so the engine alias is what the source actually wrote.
                     if (Bare != N.Cpp && StripQualifiers(F.TypeName) != N.Cpp)
                     {
                         return false; // strong type spelled differently than its int -> skip
@@ -1104,8 +1033,7 @@ namespace Lumina::Reflection
                     B.Kind = EBind::Enum; B.CSharp = GlobalCSharp(F.TypeName); B.TargetCpp = F.TypeName; return true;
                 case EPropertyTypeFlags::Struct:
                 {
-                    // FAssetRef marshals as a C# string (the asset path); ARGS only - the thunk constructs a
-                    // temporary FAssetRef from the UTF-8 path. A return would need the two-pass string protocol.
+                    // FAssetRef binds for ARGS only, since a return would need the two-pass string protocol.
                     if (bIsArg && (Bare == "FAssetRef" || Bare == "Lumina::FAssetRef"))
                     {
                         B.Kind = EBind::Str; B.CSharp = "string"; B.bAssetRef = true; return true;
@@ -1125,13 +1053,11 @@ namespace Lumina::Reflection
                 }
                 case EPropertyTypeFlags::Name:
                 case EPropertyTypeFlags::String:
-                    // FName/FString marshal as a C# string: an ARG as (UTF-8 byte*, len) at the thunk; a
-                    // RETURN via the engine two-pass caller-buffer protocol (the [NativeCall] generator
-                    // emits the C# two-pass, EmitNativeFunction the trailing (char*,int)->int thunk).
+                    // An arg passes (UTF-8 byte*, len) while a return uses the engine two-pass caller-buffer protocol.
                     B.Kind = EBind::Str; B.CSharp = "string"; B.bIsName = (F.Flags == EPropertyTypeFlags::Name);
                     return true;
                 default:
-                    return false; // Object / Vector / SoftObject / Optional / etc.: not in functions yet
+                    return false; // Object, Vector, SoftObject and Optional are not in functions yet
             }
         }
 
@@ -1142,8 +1068,7 @@ namespace Lumina::Reflection
             std::vector<FArg> Args;
         };
 
-        // Binds a reflected function only when the name is unique in the type (no overloads -> no C#
-        // method-name collision) and every arg + the return is a by-value-safe kind.
+        // Bound only when the name is unique in the type, so no two C# methods can collide.
         bool ClassifyFunction(const FReflectedFunction& Fn, const FReflectedStruct& Type, const FReflectionDatabase& Db, FFnBinding& Out)
         {
             int NameCount = 0;
@@ -1282,10 +1207,7 @@ namespace Lumina::Reflection
                     case EBind::StructValue: RetCpp = FB.Ret.TargetCpp; Body = "return " + CallExpr + ";";          break;
                     case EBind::Object:      RetCpp = "void*";          Body = "return (void*)(" + CallExpr + ");"; break;
                     case EBind::Str:
-                        // Two-pass caller-buffer protocol: copy the returned FString/FName into (Buffer,
-                        // Capacity) when given, and always return the full byte length so the C# side can
-                        // size an exact buffer on its first (null, 0) call. c_str() is null-terminated for
-                        // both, so a manual strlen avoids needing FName::length().
+                        // Always returns the full byte length, so C# can size an exact buffer on its first call.
                         bStringReturn = true;
                         RetCpp = "int";
                         Body = "auto __r = " + CallExpr + "; const char* __s = __r.c_str(); int __l = 0; if (__s) { while (__s[__l]) { ++__l; } } "
@@ -1354,26 +1276,15 @@ namespace Lumina::Reflection
             }
         }
 
-        // ---- Scriptable: C# subclassing of REFLECT(Scriptable) CObjects via their reflected virtuals ----
-        //
-        // A ScriptEvent is a native virtual a C# subclass may override. The Reflector emits: a C# `virtual`
-        // whose default body calls a native base thunk (runs the C++ impl); a reverse [UnmanagedCallersOnly]
-        // dispatcher native calls when a subclass overrides it; and a native shim subclass whose overrides route
-        // to managed (when overridden) or fall through to the base. Arg/return marshalling mirrors the forward
-        // function thunks (ClassifyField) in the opposite direction.
+        // A ScriptEvent is a native virtual a C# subclass may override, marshalled like a forward thunk reversed.
 
-        // On a REFLECT(Scriptable) class every reflected VIRTUAL is overridable from C#: the author marks the
-        // CLASS, and does not have to predict which methods someone will want to override. Gated on virtual
-        // because the shim emits `override`, and on Scriptable because only those classes get a shim at all --
-        // without that second gate a virtual on an ordinary class would be skipped here and emitted nowhere.
+        // Gated on virtual because the shim emits an override, and on Scriptable because only those get a shim.
         bool IsScriptEvent(const FReflectedFunction& Fn, const FReflectedStruct& Type)
         {
             return Fn.bIsVirtual && Type.HasMetadata("Scriptable");
         }
 
-        // Reverse-marshalable kinds. Objects (CObject pointers) marshal as the engine handle (void* native /
-        // IntPtr managed), exactly like the forward path. Strings are still deferred (their return needs the
-        // two-pass caller-buffer protocol, which the reverse dispatcher doesn't implement yet).
+        // Strings are still deferred, since their return needs the two-pass protocol the dispatcher lacks.
         bool ScriptEventArgSupported(const FArg& A)
         {
             if (A.bEntity) { return true; }
@@ -1384,9 +1295,7 @@ namespace Lumina::Reflection
             }
         }
 
-        // A ScriptEvent must be non-overloaded and have only v1 reverse-marshalable args + return. It must also
-        // be `virtual` for the shim's `override` to bind, but that's enforced at C++ compile time on the generated
-        // shim rather than here (libclang's isVirtual is unreliable for inline-defined methods in this parse).
+        // Also has to be virtual, enforced at C++ compile time since libclang's isVirtual is unreliable here.
         bool ClassifyScriptEvent(const FReflectedFunction& Fn, const FReflectedStruct& Type, const FReflectionDatabase& Db, FFnBinding& Out)
         {
             if (!ClassifyFunction(Fn, Type, Db, Out)) { return false; }
@@ -1397,8 +1306,7 @@ namespace Lumina::Reflection
 
         struct FScriptEvent { const FReflectedFunction* Fn; FFnBinding FB; int Index; };
 
-        // The classifiable ScriptEvents of a type, each tagged with its stable bit index (the index counts EVERY
-        // ScriptEvent in declaration order, so the native shim and C# [ScriptEvent(index)] tags align by construction).
+        // The bit index counts EVERY ScriptEvent in declaration order, so shim and C# tags align by construction.
         void CollectScriptEvents(const FReflectedStruct& Type, const FReflectionDatabase& Db, std::vector<FScriptEvent>& Out)
         {
             int Index = 0;
@@ -1424,9 +1332,7 @@ namespace Lumina::Reflection
             {
             case EBind::Bool:   return "(" + N + " != 0)";
             case EBind::Enum:   return "(" + A.CSharp + ")" + N;
-            // A CObject arriving at a C# override goes through the per-object wrapper cache, so the instance
-            // the override receives is the same one the rest of C# already holds for that object. Component
-            // (opaque struct) wrappers must not -- they have no managed-instance slot. See FArg::bCObject.
+            // A CObject goes through the per-object wrapper cache, but an opaque struct has no managed-instance slot.
             case EBind::Object: return A.bCObject
                 ? "global::LuminaSharp.NativeObjectMarshal.FromHandle<" + A.CSharp + ">(" + N + ")"
                 : "(" + N + " == global::System.IntPtr.Zero ? null : new " + A.CSharp + "(" + N + "))";
@@ -1485,8 +1391,7 @@ namespace Lumina::Reflection
             switch (FB.Ret.Kind) { case EBind::Bool: return "(" + Expr + " != 0)"; case EBind::Enum: return "(" + FB.Ret.TargetCpp + ")(" + Expr + ")"; case EBind::Object: return "static_cast<" + FB.Ret.TargetCpp + "*>(" + Expr + ")"; default: return Expr; }
         }
 
-        // Emits the C# side of one ScriptEvent into the wrapper class: a private [NativeCall] base partial (runs
-        // the C++ default), the overridable `virtual` (default body calls it), and the reverse dispatcher.
+        // Emits a private base partial running the C++ default, the overridable virtual, and the dispatcher.
         void EmitScriptEventCSharp(FCodeWriter& Writer, const FScriptEvent& E, const std::string& Friendly,
             const std::string& Module, const std::string& ClassName)
         {
@@ -1545,8 +1450,7 @@ namespace Lumina::Reflection
             Writer.EndBlock();
         }
 
-        // Emits the native side for a Scriptable class: per-event base thunks, a forwarding shim subclass, and a
-        // static registration so the host can mint a CClass(super = this class) using the shim.
+        // Per-event base thunks, a forwarding shim subclass, and a static registration minting the CClass.
         void EmitScriptableNative(FCodeWriter& Writer, const FReflectedStruct& Type, const FReflectionDatabase& Db, const char* Qualified, const char* Api)
         {
             const std::string Friendly = Names::FriendlyFromQualified(Type.QualifiedName);
@@ -1582,7 +1486,7 @@ namespace Lumina::Reflection
                 }
                 else
                 {
-                    // Return the ABI form (inverse of SeRetAbiToCpp): bool->0/1, enum->int, entity->uint32, else by value.
+                    // Return the ABI form, the inverse of SeRetAbiToCpp, so bool becomes 0/1 and enum becomes int.
                     std::string RetExpr;
                     if (FB.Ret.bEntity)                    { RetExpr = "return (uint32)(" + Call + ");"; }
                     else if (FB.Ret.Kind == EBind::Bool)   { RetExpr = "return (" + Call + ") ? 1 : 0;"; }
@@ -1594,14 +1498,12 @@ namespace Lumina::Reflection
                 }
             }
 
-            // The forwarding shim + its registration (anonymous namespace: one per Scriptable class, TU-local).
+            // The forwarding shim and its registration, in an anonymous namespace so both stay TU-local.
             Writer.Line("namespace");
             Writer.Line("{");
             Writer.Linef("    class %s final : public %s", Shim.c_str(), Qualified);
             Writer.Line("    {");
-            // No per-instance state: the managed instance lives in the object's managed-instance slot
-            // (created on first dispatch, freed by ~CObjectBase, drained on hot reload), and the override
-            // mask lives on the minted CClass. So the shim is nothing but the overrides.
+            // The managed instance lives in the object's slot and the override mask on the CClass, so this is bare.
             Writer.Line("    public:");
             for (const FScriptEvent& E : Events)
             {
@@ -1620,9 +1522,7 @@ namespace Lumina::Reflection
                 const std::string BaseCall = std::string(Qualified) + "::" + Name + "(" + BaseArgs + ")";
                 Writer.Linef("        virtual %s %s(%s) override", SeRetCpp(FB).c_str(), Name.c_str(), CppParams.c_str());
                 Writer.Line("        {");
-                // Class-level test first: for a type that does not override this event it is one load of a
-                // word that is zero for every native class, and perfectly predicted. Only then do we look up
-                // (and lazily create) the managed instance.
+                // The class-level test is one perfectly predicted load, so only then look up the managed instance.
                 Writer.Linef("            if (GetClass()->ScriptOverrides & (1ull << %d))", E.Index);
                 Writer.Line("            {");
                 Writer.Line("                void* __h = Lumina::Scriptable::GetOrCreateInstance(this);");
@@ -1660,8 +1560,7 @@ namespace Lumina::Reflection
 
         // ---- SCRIPT_EXPORT free functions (no owning type) ----
 
-        // Splits a C# target "Lumina.Native" into namespace "Lumina" + class "Native". An empty target
-        // defaults to namespace "Lumina", class "ScriptExports".
+        // An empty target defaults to namespace Lumina and class ScriptExports.
         void SplitTarget(const std::string& Target, std::string& OutNs, std::string& OutClass)
         {
             const std::string T = Target.empty() ? std::string("Lumina.ScriptExports") : Target;
@@ -1678,7 +1577,7 @@ namespace Lumina::Reflection
             }
         }
 
-        // The exported symbol name for a free-function thunk: unique across the module via the qualified name.
+        // Made unique across the module via the qualified name.
         std::string FreeThunkName(const FReflectedFunction& Fn)
         {
             return "LuminaSharp_Export_" + Names::FriendlyFromQualified(Fn.QualifiedName);
@@ -1703,9 +1602,7 @@ namespace Lumina::Reflection
             {
                 const FFieldInfo& Arg = Fn.Arguments[i];
 
-                // Span<T>: a primitive pointer (T*) immediately followed by an int32 count maps to ONE C#
-                // Span<T> / ReadOnlySpan<T>. The C# generator marshals it to (T* pinned, int Length); the
-                // native thunk passes that pair straight to the C++ function (which already takes T*, int).
+                // A primitive pointer immediately followed by an int32 count maps to ONE C# Span over the same pair.
                 if (Arg.RawFieldType.find('*') != std::string::npos && (i + 1) < Fn.Arguments.size())
                 {
                     const std::string Elem = StripQualifiers(Arg.RawFieldType);
@@ -1925,9 +1822,7 @@ namespace Lumina::Reflection
             return;
         }
 
-        // Interop thunks are resolved by name at runtime from whatever binary they land in (their module DLL
-        // in modular builds, the exe in monolithic), so they always use the always-dllexport LUMINA_SCRIPT_API
-        // rather than the per-module API macro (which is empty under LUMINA_MONOLITHIC). See ModuleAPI.h.
+        // Thunks are resolved by name at runtime, so they need the always-dllexport macro, not the module one.
         const char* Api = "LUMINA_SCRIPT_API";
         for (const auto& Fn : It->second)
         {
@@ -1946,11 +1841,7 @@ namespace Lumina::Reflection
             return false;
         }
 
-        // A reflected struct becomes a blittable C# VALUE mirror (a [StructLayout(Sequential)] struct passed
-        // by value) automatically when every field is blittable and it isn't a live ECS component (see
-        // IsBlittableValueStruct); a native size assert validates the layout. Otherwise it's an opaque
-        // handle, most reflected structs hold FString/containers/smart-ptrs and would corrupt if mirrored
-        // by value, and the Reflector can't see non-PROPERTY fields.
+        // Most reflected structs hold strings or smart pointers and would corrupt if mirrored by value.
         int Size = 0;
         int Align = 0;
         const bool bBlittable = IsBlittableValueStruct(Struct, Database, Size, Align);
@@ -1976,7 +1867,7 @@ namespace Lumina::Reflection
         }
         else
         {
-            // Non-blittable (FString/containers/smart-ptrs): an opaque handle, not a value mirror.
+            // Non-blittable payloads such as FString, containers or smart pointers get an opaque handle.
             const std::string Base = CSharpBase(Struct, Database, "global::LuminaSharp.NativeStruct");
             Writer.Linef("[global::LuminaSharp.NativeType(\"%s\")]", Struct.DisplayName.c_str());
             Writer.Linef("public unsafe partial class %s : %s", Struct.DisplayName.c_str(), Base.c_str());
@@ -2005,8 +1896,7 @@ namespace Lumina::Reflection
         bool bNs = false;
         OpenNamespace(Writer, Class.Namespace, bNs);
 
-        // Opaque handle wrapper: derives its reflected base's wrapper (inheriting its members) and
-        // adds its own bound properties.
+        // Derives its reflected base's wrapper, inheriting its members, and adds its own bound properties.
         const std::string Base = CSharpBase(Class, Database, "global::LuminaSharp.NativeObject");
         const bool bScriptable = Class.HasMetadata("Scriptable");
         if (bScriptable)
@@ -2018,8 +1908,7 @@ namespace Lumina::Reflection
         Writer.Linef("public unsafe partial class %s : %s", Class.DisplayName.c_str(), Base.c_str());
         Writer.BeginBlock();
         Writer.Linef("public %s(System.IntPtr handle) : base(handle) { }", Class.DisplayName.c_str());
-        // Managed-first ctor: a user subclass (or the Scriptable host) Activator-creates the instance, then the
-        // native object is bound via BindNativeHandle. Chains to the base's parameterless ctor up to NativeObject().
+        // The subclass is Activator-created first, then bound, chaining to the base parameterless ctor.
         Writer.Linef("protected %s() : base() { }", Class.DisplayName.c_str());
         if (bScriptable)
         {
@@ -2081,9 +1970,7 @@ namespace Lumina::Reflection
 
         const std::string Friendly = Names::FriendlyFromQualified(Type.QualifiedName);
         const char* Qualified = Type.EmittedCppQualifiedName().c_str();
-        // Interop thunks are resolved by name at runtime from whatever binary they land in (their module
-        // DLL in modular builds, the exe in monolithic), so they use the always-dllexport LUMINA_SCRIPT_API
-        // rather than the per-module API macro (empty under LUMINA_MONOLITHIC). See ModuleAPI.h.
+        // Thunks are resolved by name at runtime, so they need the always-dllexport macro, not the module one.
         const char* ApiMacro = "LUMINA_SCRIPT_API";
 
         for (const auto& Prop : Type.Props)
@@ -2101,7 +1988,7 @@ namespace Lumina::Reflection
 
         EmitNativeFunctions(Writer, Type, Qualified, ApiMacro, Database);
 
-        // Scriptable class: emit the forwarding shim subclass + base thunks + the CClass-minting registration.
+        // A Scriptable class emits the forwarding shim, its base thunks, and the CClass-minting registration.
         if (Type.Type == FReflectedType::EType::Class && Type.HasMetadata("Scriptable"))
         {
             EmitScriptableNative(Writer, Type, Database, Qualified, ApiMacro);

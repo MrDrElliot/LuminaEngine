@@ -80,10 +80,9 @@ namespace Lumina
             OutData.Materials.reserve(Materials.size());
             for (const tinyobj::material_t& Material : Materials)
             {
-                // Emitted for every channel the cook can use, even when the material itself is not
-                // imported, so "textures only" still brings the referenced files in.
+                // Emitted for every usable channel so a textures-only import still brings the referenced files in.
                 const int32 BaseColor = EmitImage(Material.diffuse_texname, ETextureColorSpace::SRGB);
-                // Linear (BC7 RGB), not NormalMap: the BC5-packed normal path is currently broken.
+                // Linear BC7 rather than NormalMap, since the BC5-packed normal path is currently broken.
                 const int32 Normal    = !Material.normal_texname.empty()
                     ? EmitImage(Material.normal_texname, ETextureColorSpace::Linear)
                     : EmitImage(Material.bump_texname,   ETextureColorSpace::Linear);
@@ -105,8 +104,7 @@ namespace Lumina
                 Out.BaseColorFactor = FVector4(Material.diffuse[0], Material.diffuse[1], Material.diffuse[2], Material.dissolve);
                 Out.MetallicFactor  = Material.metallic;
 
-                // Classic OBJ has no roughness; derive it from the Phong shininess exponent so non-PBR
-                // .mtl files don't import as mirror-smooth. PBR .mtl roughness (when authored) wins.
+                // Classic OBJ has no roughness, so derive it from shininess and let authored PBR roughness win.
                 Out.RoughnessFactor = (Material.roughness > 0.0f)
                     ? Material.roughness
                     : Math::Sqrt(2.0f / (Math::Max(Material.shininess, 0.0f) + 2.0f));

@@ -9,8 +9,7 @@ namespace Lumina
     void CTextureRenderTarget::Serialize(FArchive& Ar)
     {
         LUMINA_MEMORY_SCOPE("Textures");
-        // Skip CTexture's pixel-mip blob; only the reflected properties persist (CObject::Serialize
-        // walks them). The GPU image is rebuilt in PostLoad.
+        // Only the reflected properties persist, and the GPU image is rebuilt in PostLoad.
         CObject::Serialize(Ar);
     }
 
@@ -38,7 +37,7 @@ namespace Lumina
             TextureResource = MakeUnique<FTextureResource>();
         }
 
-        // No CPU mip data: the target is GPU-only.
+        // No CPU mip data, since the target is GPU-only.
         TextureResource->Mips.clear();
 
         const uint32 W = Width  > 0 ? Width  : 1u;

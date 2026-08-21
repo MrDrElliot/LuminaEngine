@@ -86,8 +86,7 @@ namespace Lumina
 
     namespace
     {
-        // Hand-rolled mirror of FCookResult::Chunks into the tool's
-        // FChunkSummary so the UI doesn't keep a pointer into a stale result.
+        // Mirrored into FChunkSummary so the UI never keeps a pointer into a stale result.
         template<typename ToolT>
         void CaptureChunksFromResult(const FCookResult& Result, ToolT& Out)
         {
@@ -112,8 +111,7 @@ namespace Lumina
             return;
         }
 
-        // Pull whatever the worker has produced since last frame. We swap the
-        // pending vector with an empty one to minimize lock hold time.
+        // The pending vector is swapped with an empty one to minimize lock hold time.
         TVector<FString> Drained;
         {
             FScopeLock Lock(Session->PendingMutex);
@@ -188,8 +186,7 @@ namespace Lumina
 
         if (Result.bSuccess)
         {
-            // Loose-script extraction runs here on the UI thread: it walks the VFS,
-            // which other main-thread systems may mutate.
+            // Runs on the UI thread, since it walks the VFS that other main-thread systems may mutate.
             if (bExtractScriptsLoose)
             {
                 AppendLog("Extracting loose scripts...");
@@ -234,8 +231,7 @@ namespace Lumina
 
         ClearLog();
 
-        // 1) Cook synchronously on the main thread. Touches engine state, but
-        //    fast, typically sub-second for a small project.
+        // Touches engine state, but is fast, typically sub-second for a small project.
         Stage = EStage::Cooking;
 
         const FString ProjectName(GEngine->GetProjectName().data(), GEngine->GetProjectName().size());
@@ -280,8 +276,7 @@ namespace Lumina
             AppendLog(Format("Extracted {} loose script files.", Extracted).c_str());
         }
 
-        // 2) Build + Copy on a worker thread. Captures everything by value so
-        //    the worker is independent of any UI state.
+        // Captures everything by value so the worker is independent of any UI state.
         Stage = EStage::Building;
 
         Session = MakeShared<FBuildSession>();
@@ -303,8 +298,7 @@ namespace Lumina
 
         Worker = FThread([WorkerSession, Opts, ProjectName, PakPath]()
         {
-            // Log callback runs on this thread; push lines into the mutex-protected
-            // pending buffer, drained each frame by the UI thread in DrainSession().
+            // Pushes into the mutex-protected pending buffer, drained each frame by the UI thread.
             auto LogFunc = [WorkerSession](FStringView Line)
             {
                 FScopeLock Lock(WorkerSession->PendingMutex);
@@ -454,8 +448,7 @@ namespace Lumina
             }
         }
 
-        // Per-chunk PAK summary from the last successful cook. Compact
-        // table; one row per .pak written, with click-to-open.
+        // A compact table with one row per .pak written, each click-to-open.
         if (!LastChunks.empty())
         {
             ImGui::Spacing();
@@ -496,8 +489,7 @@ namespace Lumina
 
         ImGui::Separator();
 
-        // Console-style log panel. Near-black background, subtle border,
-        // generous padding so lines don't feel cramped against the edge.
+        // Near-black with a subtle border and generous padding, so lines are not cramped against the edge.
         ImGui::PushStyleColor(ImGuiCol_ChildBg,    ImVec4(0.06f, 0.06f, 0.07f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_Border,     ImVec4(0.20f, 0.20f, 0.22f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ScrollbarBg, ImVec4(0.04f, 0.04f, 0.05f, 1.0f));

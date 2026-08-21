@@ -7,10 +7,7 @@ namespace Lumina
 {
     bool FSaveContext::AddExport(CObject* Export)
     {
-        // An object whose refcount hit 0 mid-save is marked-destroy but not yet freed (e.g. an intermediate
-        // created during a large import); it still matches the package, so GetObjectsWithPackage hands it back,
-        // but its weak handle resolves to null at write time -> the WriteExports invariant trips. It is on its
-        // way out, so skip it and don't recurse into a dying object's references.
+        // A dying object's weak handle resolves to null at write time and trips the WriteExports invariant.
         if (Export == nullptr || Export->HasAnyFlag(OF_MarkedDestroy))
         {
             return false;
@@ -32,8 +29,7 @@ namespace Lumina
             return *this;
         }
 
-        // Only recurse into same-package exports, and only on first sight.
-        // Skipping the guard re-enters Serialize for shared/cyclic refs and infinite-loops.
+        // Without the guard a shared or cyclic ref re-enters Serialize and loops forever.
         if (Value->GetPackage() == SaveContext->CurrentPackage)
         {
             if (SaveContext->AddExport(Value))
@@ -58,8 +54,7 @@ namespace Lumina
     FArchive& FPackageSaver::operator<<(CObject*& Value)
     {
         FObjectPackageIndex Index;
-        // A reference to a dying object (skipped from the export table) would otherwise write a stale index;
-        // serialize it as null instead. The default-constructed Index is the null sentinel.
+        // A skipped dying object would otherwise write a stale index, so serialize it as null.
         if (Value && !Value->HasAnyFlag(OF_MarkedDestroy) && Value->GetPackage() != nullptr)
         {
             if (Value->GetPackage() == Package)
@@ -89,7 +84,7 @@ namespace Lumina
     FArchive& FPackageSaver::operator<<(FObjectHandle& Value)
     {
         FObjectPackageIndex Index;
-        // Package-less writes null: an import resolves by GUID against a package, so it could only dangle.
+        // An import resolves by GUID against a package, so a package-less write could only dangle.
         if (CObject* Obj = Value.Resolve(); Obj && !Obj->HasAnyFlag(OF_MarkedDestroy) && Obj->GetPackage() != nullptr)
         {
             if (Obj->GetPackage() == Package)
@@ -127,9 +122,7 @@ namespace Lumina
 
     bool FPackageSaver::WriteBulkData(FBulkDataRef& OutRef, const void* Data, int64 Size)
     {
-        // Passthrough: the region this ref points into is being copied to the new file byte for byte, so
-        // the payload is already exactly where OutRef says it is. Succeeding without touching either is
-        // the whole mechanism -- it is what lets a rename move a multi-megabyte region it never read.
+        // The payload is already exactly where the ref says, which is what lets a rename move a huge region.
         if (IsBulkPassthrough())
         {
             if (OutRef.IsValid())
@@ -137,9 +130,7 @@ namespace Lumina
                 return true;
             }
 
-            // A payload with no ref into the region being copied. Passthrough has nowhere to put it, and
-            // the alternative -- writing the null ref through -- is the payload gone. Say so; the saver
-            // reads this as "these bytes cannot be spliced" and rebuilds the region the long way instead.
+            // The saver reads this as unspliceable and rebuilds the region the long way instead.
             if (Package != nullptr)
             {
                 Package->FlagUnresolvedBulkData();
@@ -186,8 +177,7 @@ namespace Lumina
             Out[Idx] = Move(Entry);
         }
 
-        // Append soft imports not already hard (no data-stream index; exist only as a typed
-        // edge for AssetRegistry/FCookGraph). Sort first: hash_set order would break determinism.
+        // Sorted first, since hash-set order would break determinism.
         TVector<FGuid> SortedSoft;
         SortedSoft.reserve(SoftReferencedGUIDs.size());
         for (const FGuid& Guid : SoftReferencedGUIDs)

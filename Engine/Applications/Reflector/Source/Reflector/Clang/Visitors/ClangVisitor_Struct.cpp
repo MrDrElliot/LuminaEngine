@@ -28,8 +28,7 @@
 
 namespace Lumina::Reflection::Visitor
 {
-	// Extract the brief doc comment above a cursor, escaping characters that would
-	// break a C string literal in the generated output (\, ").
+	// Escapes characters that would otherwise break a C string literal in the generated output.
 	static std::string GetCursorComment(const CXCursor& Cursor)
 	{
 		const CXString CommentString = clang_Cursor_getBriefCommentText(Cursor);
@@ -84,8 +83,7 @@ namespace Lumina::Reflection::Visitor
 		return MacroContents.substr(Open + 1, Close - Open - 1);
 	}
 
-	// Reflects a member as a different type, so a SIMD or otherwise unreflectable representation can
-	// still present its logical shape. The offset stays the real member's, so no layout is hand-tracked.
+	// Lets a SIMD or unreflectable representation present its logical shape without hand-tracking layout.
 	static void ApplyReflectAsOverride(FClangParserContext* Context, FReflectedType* Type,
 	                                   FReflectedProperty* Property, const CXCursor& Cursor)
 	{
@@ -511,8 +509,7 @@ namespace Lumina::Reflection::Visitor
 		break;
 		case EPropertyTypeFlags::Class:
 		{
-			// TSubclassOf<T>: T is the base-class filter. Reflect against it so the emitted
-			// Construct_CClass_<T>() symbol resolves.
+			// Reflect against the base-class filter T so the emitted Construct_CClass_<T>() symbol resolves.
 			const CXType ArgType = clang_Type_getTemplateArgumentAsType(FieldInfo.Type, 0);
 			std::optional<FFieldInfo> ParamFieldInfo;
 			if (ArgType.kind != CXType_Invalid)
@@ -532,7 +529,7 @@ namespace Lumina::Reflection::Visitor
 		break;
 		case EPropertyTypeFlags::SubStruct:
 		{
-			// TSubStructOf<T>: T is the base-struct filter; reflect against it for Construct_CStruct_<T>().
+			// TSubStructOf<T> reflects against the base-struct filter T for Construct_CStruct_<T>().
 			const CXType ArgType = clang_Type_getTemplateArgumentAsType(FieldInfo.Type, 0);
 			std::optional<FFieldInfo> ParamFieldInfo;
 			if (ArgType.kind != CXType_Invalid)
@@ -565,8 +562,7 @@ namespace Lumina::Reflection::Visitor
 			}
 
 			ParamFieldInfo->Name = FieldInfo.Name;
-			// FInstancedStruct owns heap memory, so never bulk-copy it as POD (the meta-struct's
-			// POD-ness would otherwise leak onto the owning property).
+			// FInstancedStruct owns heap memory, so its POD-ness must never leak onto the owning property.
 			ParamFieldInfo->PropertyFlags &= ~EPropertyFlags::Trivial;
 
 			NewProperty = CreateProperty<FReflectedInstancedStructProperty>(ParamFieldInfo.value());
@@ -574,8 +570,7 @@ namespace Lumina::Reflection::Visitor
 		break;
 		case EPropertyTypeFlags::SoftObject:
 		{
-			// FSoftObjectPath has no template arg (target defaults to CObject, accepts any asset);
-			// TSoftObjectPtr<T> exposes T as the target class.
+			// FSoftObjectPath has no template arg, while TSoftObjectPtr<T> exposes T as the target class.
 			const CXType ArgType = clang_Type_getTemplateArgumentAsType(FieldInfo.Type, 0);
 			std::optional<FFieldInfo> ParamFieldInfo;
 			if (ArgType.kind != CXType_Invalid)
@@ -584,8 +579,7 @@ namespace Lumina::Reflection::Visitor
 			}
 			if (!ParamFieldInfo.has_value())
 			{
-				// Bare FSoftObjectPath: reflect against CObject so the emitted
-				// Construct_CClass_<T>() symbol resolves instead of a nonexistent one.
+				// Reflect a bare FSoftObjectPath against CObject so the emitted Construct_CClass_<T>() resolves.
 				ParamFieldInfo = FieldInfo;
 				ParamFieldInfo->TypeName = "Lumina::CObject";
 			}
@@ -629,7 +623,7 @@ namespace Lumina::Reflection::Visitor
 		{
 			auto MapProperty = CreateProperty<FReflectedMapProperty>(FieldInfo);
 
-			// THashMap<K, V, Hash, Equal, Alloc>: args 0 and 1 are the key and value; the rest are ignored.
+			// THashMap args 0 and 1 are the key and value, and the rest are ignored.
 			if (clang_Type_getNumTemplateArguments(FieldInfo.Type) < 2)
 			{
 				LRT_ERROR(FieldInfo.OwningCursor, Reflection::EDiagId::ArrayElementUnknown,
@@ -652,9 +646,7 @@ namespace Lumina::Reflection::Visitor
 			ValueInfo->Name = FieldInfo.Name + "_ValueInner";
 			ValueInfo->PropertyFlags |= EPropertyFlags::SubField;
 
-			// Push the VALUE inner first, then the KEY inner, so Struct->Props ends up [Value, Key, Map]. The
-			// runtime constructs the map (ReadMore = 2) and walks backward, attaching Key then Value -- matching
-			// FMapProperty::AddProperty (Key first, Value second). This order is the ABI contract; do not swap.
+			// Value inner first so Props ends up [Value, Key, Map], matching how the runtime walks it backward.
 			FReflectedProperty* ValueProperty = nullptr;
 			CreatePropertyForType(Context, Struct, ValueProperty, ValueInfo.value());
 			FReflectedProperty* KeyProperty = nullptr;
@@ -679,8 +671,7 @@ namespace Lumina::Reflection::Visitor
 		{
 			auto OptionalProperty = CreateProperty<FReflectedOptionalProperty>(FieldInfo);
 
-			// TOptional<T> exposes T as the first template argument, same shape
-			// as TVector<T>. Fail loudly when the payload type isn't reflectable.
+			// TOptional<T> exposes T as its first template argument, the same shape as TVector<T>.
 			const CXType ArgType = clang_Type_getTemplateArgumentAsType(FieldInfo.Type, 0);
 			std::optional<FFieldInfo> ParamFieldInfo = CreateSubFieldInfo(Context, ArgType, FieldInfo);
 			if (!ParamFieldInfo.has_value())
@@ -734,8 +725,7 @@ namespace Lumina::Reflection::Visitor
 		break;
 		default:
 		{
-			// Catch-all for fields that slipped past every classifier; erroring here
-			// prevents silently dropping the property from the reflection database.
+			// Erroring here stops a field that slipped past every classifier from being silently dropped.
 			LRT_ERROR(FieldInfo.OwningCursor, Reflection::EDiagId::UnknownPropertyType,
 				"Property '%s' has type '%s' which is not supported by the reflector. "
 				"Supported kinds: numeric, bool, FString/FName, enum, struct (REFLECT'd), "
@@ -780,10 +770,7 @@ namespace Lumina::Reflection::Visitor
 			}
 			else
 			{
-				// Soft-fail: a missing arg only affects the Lua binding shape, not
-				// memory layout (C++ still links). Warn so it shows in the build log.
-				// Flag the function so the C# binder skips it - its reflected arg list is now shorter
-				// than the real signature, so a generated thunk would call with too few arguments.
+				// Flagged so the C# binder skips it, since a generated thunk would call with too few arguments.
 				NewFunction->bHasOmittedArgs = true;
 				LRT_WARNING(ArgCursor, Reflection::EDiagId::FunctionFieldFailed,
 					"Argument '%s' of function '%s' has an unsupported type and will be omitted from the script binding. Reflected function args accept core types, structs, enums, and TObjectPtr<T>.",
@@ -1013,7 +1000,7 @@ namespace Lumina::Reflection::Visitor
 	// A REFLECT'd `using X = SomeRecord;`, which reflects the aliased record's real members under X.
 	CXChildVisitResult VisitTypeAlias(CXCursor Cursor, CXCursor Parent, FClangParserContext* Context)
 	{
-		// Checked before touching the macro pool: a member alias must not consume its owner's REFLECT.
+		// Checked before touching the macro pool, or a member alias consumes its owner's REFLECT.
 		const CXCursorKind ParentKind = clang_getCursorKind(clang_getCursorSemanticParent(Cursor));
 		if (ParentKind != CXCursor_Namespace && ParentKind != CXCursor_TranslationUnit)
 		{
@@ -1119,9 +1106,7 @@ namespace Lumina::Reflection::Visitor
 	{
 		std::string CursorName = ClangUtils::GetCursorDisplayName(Cursor);
 
-		// Whether this struct is reflected at all is decided first. Every header carries ordinary
-		// helper structs, anonymous structs and unions that we are not being asked to reflect, and
-		// nothing about them should be able to affect the pass.
+		// Every header carries helper, anonymous and union structs that must not affect the pass at all.
 		FReflectionMacro Macro;
 		if (!Context->TryFindMacroForCursor(Context->ReflectedHeader->HeaderPath, Cursor, Macro))
 		{
@@ -1131,8 +1116,7 @@ namespace Lumina::Reflection::Visitor
 		std::string FullyQualifiedCursorName;
 		if (!ClangUtils::GetQualifiedNameForDeclCursor(Cursor, FullyQualifiedCursorName))
 		{
-			// Now that we know it was REFLECT'd, an unnameable type is a real error worth
-			// reporting, rather than something to abandon the whole run over.
+			// Now that the REFLECT is confirmed, an unnameable type is a real error rather than a reason to bail.
 			LRT_ERROR(Cursor, EDiagId::MissingGeneratedBody,
 				"REFLECT'd struct '%s' has no usable qualified name. Anonymous and locally "
 				"declared types cannot be reflected; declare it at namespace or class scope.",
@@ -1150,8 +1134,7 @@ namespace Lumina::Reflection::Visitor
 			return CXChildVisit_Continue;
 		}
 
-		// Keyed under the alias so a property naming FTransform resolves to the VTransform backing it,
-		// while CppName keeps the real identifier every emitted declaration has to use.
+		// Keyed under the alias so a property naming FTransform resolves to the VTransform backing it.
 		const std::string CppName = CursorName;
 		const std::string CppQualifiedName = FullyQualifiedCursorName;
 
@@ -1198,9 +1181,7 @@ namespace Lumina::Reflection::Visitor
 		return CXChildVisit_Recurse;
 	}
 
-	// A namespace-scope free function tagged with SCRIPT_EXPORT. Builds an FReflectedFunction (no owning
-	// type) carrying the fully-qualified C++ name (the thunk's call target) and the target C# class, then
-	// registers it under the header. Mirrors CreateFunctionForType's arg/return extraction.
+	// A namespace-scope SCRIPT_EXPORT free function, registered under the header with no owning type.
 	CXChildVisitResult VisitFunction(CXCursor Cursor, CXCursor Parent, FClangParserContext* Context)
 	{
 		FReflectionMacro Macro;
@@ -1219,8 +1200,7 @@ namespace Lumina::Reflection::Visitor
 		NewFunction->bFreeFunction = true;
 		NewFunction->Name = ClangUtils::GetCursorSpelling(Cursor);
 
-		// Fully-qualified C++ name by walking the semantic namespace parents (CurrentNamespace has no
-		// separators, so it can't be used to form a :: path).
+		// Walks the semantic namespace parents, since CurrentNamespace carries no separators to form a path.
 		std::string Qualified = NewFunction->Name;
 		for (CXCursor P = clang_getCursorSemanticParent(Cursor);
 			 !clang_Cursor_isNull(P) && clang_getCursorKind(P) == CXCursor_Namespace;
@@ -1282,8 +1262,7 @@ namespace Lumina::Reflection::Visitor
 	{
 		std::string CursorName = ClangUtils::GetCursorDisplayName(Cursor);
 
-		// Reflected or not comes first, for the same reason as structs: an ordinary helper class
-		// must never be able to influence the pass.
+		// Reflected or not comes first, so an ordinary helper class can never influence the pass.
 		FReflectionMacro Macro;
 		if (!Context->TryFindMacroForCursor(Context->ReflectedHeader->HeaderPath, Cursor, Macro))
 		{

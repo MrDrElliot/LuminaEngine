@@ -205,7 +205,7 @@ namespace Lumina
         {
             CMaterialInterface* NewParent = Cast<CMaterialInterface>(LoadObject<CObject>(ParentGUID));
 
-            // The setter, never the property: it is what rejects a cycle and re-registers with the new parent.
+            // The setter, never the property, since it rejects a cycle and re-registers with the new parent.
             if (Instance->SetParentMaterial(NewParent))
             {
                 Asset->GetPackage()->MarkDirty();
@@ -304,9 +304,7 @@ namespace Lumina
                 ImGui::TableSetupColumn("##Name", ImGuiTableColumnFlags_WidthFixed, 175);
                 ImGui::TableSetupColumn("##Editor", ImGuiTableColumnFlags_WidthStretch);
 
-                // The list belongs to the PARENT and an instance only ever diverges in values, so nothing a
-                // row can do reallocates it -- no defensive copy, which here would be a heap allocation per
-                // frame the panel is open.
+                // The list belongs to the PARENT, so nothing a row does reallocates it and no copy is needed.
                 const TVector<FMaterialParameter>& Params = Instance->GetMaterialParams();
                 for (const FMaterialParameter& Param : Params)
                 {
@@ -344,7 +342,7 @@ namespace Lumina
                     ImGui::TableNextColumn();
                     ImGui::AlignTextToFramePadding();
 
-                    // Editor disabled while the override is off: the retained value shows but cannot be edited.
+                    // Disabled while the override is off, so the retained value shows but cannot be edited.
                     ImGui::BeginDisabled(!bEnabled);
 
                     // Show the stored override value (kept even while disabled), else the parent default.
@@ -405,8 +403,7 @@ namespace Lumina
 
     void FMaterialInstanceEditorTool::DrawTextureParameterColumn(CMaterialInstance* Instance, const FMaterialParameter& Param, bool bEnabled)
     {
-        // Texture in effect for this slot: this instance's override, else the
-        // parent material's default for the slot.
+        // This instance's override, else the parent material's default for the slot.
         CTexture* DisplayTexture = nullptr;
         for (FMaterialParameterOverride& O : Instance->Overrides)
         {
@@ -422,10 +419,7 @@ namespace Lumina
             DisplayTexture = Instance->Material->GetTextureParameterTexture(Param.ParameterName, Param.Index);
         }
 
-        // Delegates to the engine's object picker rather than the bespoke thumbnail + drop target + browse
-        // popup this used to carry: that was a second implementation of the same widget, with its own
-        // asset-registry query and search box, which drifted from the standard one and had to re-solve
-        // problems (disabled-state handling inside the popup) already solved there.
+        // Delegates to the engine picker rather than a second implementation that drifted from it.
         if (TexturePicker == nullptr)
         {
             FProperty* TextureProp = FMaterialParameterOverride::StaticStruct()->GetProperty(FName("Texture"));
@@ -437,15 +431,13 @@ namespace Lumina
             TextureHandle = MakeShared<FPropertyHandle>(&TextureScratch, TextureProp);
         }
 
-        // Seeded before the draw: UpdateAndDraw syncs the picker from the handle first, so this is what
-        // decides which texture the row displays.
+        // Seeded before the draw, since UpdateAndDraw syncs the picker from the handle first.
         TextureScratch.Texture = DisplayTexture;
 
         const EPropertyChangeOp Op = TexturePicker->UpdateAndDraw(TextureHandle, !bEnabled);
         if (Op != EPropertyChangeOp::None && bEnabled)
         {
-            // UpdateAndDraw leaves the write-back to its caller; commit into the scratch, then push the
-            // result through the instance so the override list and uniform upload stay authoritative.
+            // UpdateAndDraw leaves the write-back to its caller, so push it through the instance here.
             TexturePicker->UpdatePropertyValue(TextureHandle);
             Instance->SetTextureValue(Param.ParameterName, TextureScratch.Texture.Get());
             Asset->GetPackage()->MarkDirty();

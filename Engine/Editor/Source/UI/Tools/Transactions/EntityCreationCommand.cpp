@@ -30,14 +30,12 @@ namespace Lumina
 
         FEntityRegistry& Registry = ECS::GetWorldRegistry(*W);
 
-        // Editor-only entities are excluded for the same reason the registry snapshot excludes them:
-        // they are not part of the document, and they come and go on their own.
+        // Excluded for the same reason the registry snapshot excludes them, they are not the document.
         auto View = Registry.view<entt::entity>(entt::exclude<FEditorComponent>);
         Out.reserve(View.size_hint());
         View.each([&](entt::entity E) { Out.push_back(E); });
 
-        // Sorted so Finalize's diff is a binary search rather than a nested scan. Handles only -- no
-        // component data is touched here, which is the whole point.
+        // Sorted so Finalize's diff is a binary search, and handles only with no component data touched.
         Algo::Sort(Out.begin(), Out.end());
     }
 
@@ -66,9 +64,7 @@ namespace Lumina
             }
         }
 
-        // Misuse guard. With nothing destroyed, After == Before + Created exactly; any shortfall is
-        // entities that went away. This command has no before-image, so Undo cannot bring them back --
-        // and silently committing a step that half-restores the world is far worse than saying so.
+        // Any shortfall means entities went away, and this command has no before-image to restore them.
         const int64 DestroyedCount = (int64)LiveBefore.size() + (int64)Created.size() - (int64)LiveAfter.size();
         if (DestroyedCount != 0)
         {
@@ -82,8 +78,7 @@ namespace Lumina
             return;
         }
 
-        // Serialize only what was added. SerializeEntity records each entity's own relationship
-        // component, and handles round-trip exactly, so links WITHIN the created set restore themselves.
+        // SerializeEntity records each relationship component, so links within the created set restore.
         FMemoryWriter Writer(CreatedData);
         FObjectProxyArchiver Ar(Writer, false);
 
@@ -117,9 +112,7 @@ namespace Lumina
 
         FEntityRegistry& Registry = ECS::GetWorldRegistry(*W);
 
-        // DestroyEntityHierarchy detaches from the parent's child list before destroying, which is
-        // exactly the fixup the created entities' own images cannot do. Descendants inside the created
-        // set are taken out by their root, so the validity guard is what makes the second visit a no-op.
+        // Descendants inside the created set are taken by their root, so the validity guard makes it a no-op.
         for (entt::entity E : Created)
         {
             if (Registry.valid(E))
@@ -156,9 +149,7 @@ namespace Lumina
             ECS::Utils::SerializeEntity(Ar, Registry, Entity);
         }
 
-        // Re-attach to pre-existing parents. bPreserveWorld = false to match how DuplicateEntity parented
-        // them originally -- preserving world here would recompute the local transform off the restored
-        // one and drift the entity every redo.
+        // Preserving world here would recompute the local transform and drift the entity every redo.
         for (const FExternalParent& Link : ExternalParents)
         {
             if (Registry.valid(Link.Child) && Registry.valid(Link.Parent))

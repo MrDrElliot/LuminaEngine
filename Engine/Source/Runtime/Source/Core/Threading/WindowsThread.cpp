@@ -38,8 +38,7 @@ namespace Lumina::Threading
 
     namespace
     {
-        // Logical processor index within the caller's group. Groups beyond the first are not described:
-        // the engine sizes its worker set from the active group, and a partial map is worse than none.
+        // Groups beyond the first are not described, since a partial map is worse than none.
         uint32 IndexOfBit(const GROUP_AFFINITY& Affinity, uint32 Bit)
         {
             return Affinity.Group * 64u + Bit;
@@ -82,8 +81,7 @@ namespace Lumina::Threading
         uint16 NextCache  = 0;
         uint8  BestLevel  = 0;
 
-        // Two passes: cores first, then the deepest cache level any processor reports, so an L2-only machine
-        // still groups by its own last level instead of falling back to "all equidistant".
+        // An L2-only machine still groups by its own last level instead of falling back to all-equidistant.
         for (uint8 Pass = 0; Pass < 2; ++Pass)
         {
             uint8* Cursor = Buffer;
@@ -170,8 +168,7 @@ namespace Lumina::Threading
 
     bool SetThreadPerformanceHint()
     {
-        // ControlMask selects EXECUTION_SPEED; StateMask = 0 means "do not throttle", i.e. opt out of
-        // EcoQoS so the Thread Director schedules this thread on performance cores.
+        // A zero state mask opts out of EcoQoS so the Thread Director picks performance cores.
         THREAD_POWER_THROTTLING_STATE Throttling = {};
         Throttling.Version     = THREAD_POWER_THROTTLING_CURRENT_VERSION;
         Throttling.ControlMask = THREAD_POWER_THROTTLING_EXECUTION_SPEED;

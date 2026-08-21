@@ -24,8 +24,7 @@ namespace Lumina
         };
         constexpr const char* GAxisLabels[3] = { "X", "Y", "Z" };
 
-        // Tracks a just-drawn item and folds its interaction into the running op
-        // (Finished > Started > Updated, matching the rest of the customizations).
+        // Folds a just-drawn item's interaction into the running op, Finished over Started over Updated.
         void AccumulateOp(EPropertyChangeOp& Op)
         {
             if (ImGui::IsItemEdited())                  Op = EPropertyChangeOp::Updated;
@@ -33,10 +32,7 @@ namespace Lumina
             if (ImGui::IsItemDeactivatedAfterEdit())    Op = EPropertyChangeOp::Finished;
         }
 
-        // One labeled row: leading category icon + three color-tagged XYZ drag fields.
-        // Clicking an axis tag zeroes that component and sets bResetClicked.
-        // UniformLock, when non-null, adds a trailing toggle to the row and reserves width for it. The
-        // caller owns what "uniform" means for its values; this only draws and stores the flag.
+        // Clicking an axis tag zeroes that component, and UniformLock adds a trailing toggle to the row.
         EPropertyChangeOp DrawAxisRow(const char* ID, const char* Icon, const ImVec4& IconColor, const char* Tooltip, float* Values, float Speed, bool& bResetClicked, float ResetValue = 0.0f, const char* Format = "%.3f", bool* UniformLock = nullptr)
         {
             EPropertyChangeOp Op = EPropertyChangeOp::None;
@@ -55,9 +51,7 @@ namespace Lumina
             ImGui::SameLine(IconColumnW);
 
             const float TagW = LineHeight;
-            // Reserved on EVERY row, not only the one that owns a lock. The width comes out of the three
-            // fields, so charging it to the scale row alone made that row's fields narrower than the two
-            // above it and broke the column alignment down the whole widget.
+            // Reserved on EVERY row, or the lock row's fields end up narrower and break column alignment.
             const float LockW = LineHeight + Style.ItemInnerSpacing.x;
             const float Avail = ImGui::GetContentRegionAvail().x;
             const float FieldW = Math::Max((Avail - LockW - 3.0f * (TagW + Style.ItemInnerSpacing.x)) / 3.0f, 1.0f);
@@ -141,7 +135,7 @@ namespace Lumina
         const char* Format = UnitFormat.empty() ? "%.3f" : UnitFormat.c_str();
         if (Prop->HasMetadata("NoDrag"))
         {
-            // UNSCALED base: the +/- buttons must step the same amount every press.
+            // An UNSCALED base, so the plus and minus buttons step the same amount every press.
             float Step = ResolveBaseStep(Prop, 0.01f);
             ImGui::InputScalarN("##", ImGuiDataType_Float, Math::ValuePtr(DisplayValue), 2, &Step, nullptr, Format);
         }
@@ -218,7 +212,7 @@ namespace Lumina
             const char* Format = UnitFormat.empty() ? "%.3f" : UnitFormat.c_str();
             if (Prop->HasMetadata("NoDrag"))
             {
-                // UNSCALED base: the +/- buttons must step the same amount every press.
+                // An UNSCALED base, so the plus and minus buttons step the same amount every press.
                 float Step = ResolveBaseStep(Prop, 0.01f);
                 ImGui::InputScalarN("##", ImGuiDataType_Float, Math::ValuePtr(DisplayValue), 3, &Step, nullptr, Format);
             }
@@ -296,7 +290,7 @@ namespace Lumina
             const char* Format = UnitFormat.empty() ? "%.3f" : UnitFormat.c_str();
             if (Prop->HasMetadata("NoDrag"))
             {
-                // UNSCALED base: the +/- buttons must step the same amount every press.
+                // An UNSCALED base, so the plus and minus buttons step the same amount every press.
                 float Step = ResolveBaseStep(Prop, 0.01f);
                 ImGui::InputScalarN("##", ImGuiDataType_Float, Math::ValuePtr(DisplayValue), 4, &Step, nullptr, Format);
             }
@@ -396,7 +390,6 @@ namespace Lumina
         };
 
         bool bReset = false;
-        // Translation is always in meters; rotation (degrees) and scale stay unitless.
         // The SIMD transform has no scalar member to point at, so edit scalar buffers and write back.
         FVector3 Translation = DisplayValue.GetLocation();
         Merge(DrawAxisRow("T", LE_ICON_AXIS_ARROW, ImVec4(0.40f, 0.70f, 1.0f, 1.0f), "Translation (Location)", Math::ValuePtr(Translation), 0.01f * MouseAdaptiveDragScale(), bReset, 0.0f, "%.3f m"));
@@ -420,9 +413,7 @@ namespace Lumina
 
         if (bUniformScale && ScaleOp == EPropertyChangeOp::Updated)
         {
-            // Propagate by RATIO, not by delta: scale is a multiplier, so dragging X from 1 to 2 should
-            // double the other two, not add 1 to them. A previous value of zero has no ratio to carry,
-            // so those axes take the edited value outright rather than staying stuck at zero.
+            // Propagated by RATIO, since scale multiplies, and a previous zero has no ratio to carry.
             float* Scale = Math::ValuePtr(ScaleVec);
             const float* Prev = Math::ValuePtr(PrevScale);
             for (int32 Axis = 0; Axis < 3; ++Axis)
@@ -454,8 +445,7 @@ namespace Lumina
         bReset |= bScaleReset;
         DisplayValue.SetScale(ScaleVec);
 
-        // A reset writes the value this frame: open the undo transaction now (Started),
-        // commit it next frame (Finished), like the discrete object/array edits.
+        // A reset writes this frame, so open the transaction now and commit it next, like a discrete edit.
         if (bReset)
         {
             if (bFinishPending)

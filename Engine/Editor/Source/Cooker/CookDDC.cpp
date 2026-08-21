@@ -97,8 +97,7 @@ namespace Lumina
             return false;
         }
 
-        // Reject torn writes / stale-format entries early; short file, wrong magic, version mismatch, or payload hash miss = corruption.
-        // Delete the entry so the next cook replaces it cleanly.
+        // A short file, wrong magic, version mismatch or payload hash miss all mean a torn or stale entry.
         auto DropCorrupt = [&](const char* Why)
         {
             LOG_WARN("[CookDDC] Discarding corrupt entry {}: {}", Path, Why);

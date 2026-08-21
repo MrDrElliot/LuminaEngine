@@ -53,7 +53,7 @@ namespace Lumina::Screenshot
                 }
                 else
                 {
-                    // Subnormal -- normalize.
+                    // Subnormal, so normalize.
                     Exp = 1;
                     while ((Mant & 0x0400u) == 0)
                     {

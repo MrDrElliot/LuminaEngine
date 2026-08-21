@@ -64,16 +64,14 @@ namespace Lumina
             return;
         }
 
-        // Before the world (and its render target) go away: a submitted copy still reading that image, or
-        // still writing that readback buffer, must be allowed to land first.
+        // A submitted copy still reading that image, or writing that readback, must be allowed to land.
         AbandonCapture();
 
         if (World.IsValid())
         {
             World->TeardownWorld();
         }
-        // Releasing the only strong ref to the transient preview world drops its refcount to zero and
-        // frees it, no ForceDestroyNow (which would dangle this TObjectPtr, then touch freed memory).
+        // Dropping the only strong ref frees the world, unlike ForceDestroyNow which would dangle this.
         World        = nullptr;
         CameraEntity = entt::null;
         bInitialized = false;
@@ -128,13 +126,7 @@ namespace Lumina
         const FVector3 Up      = Math::Normalize(Math::Cross(Forward, Right));
         Camera.SetView(Position, Forward, Up);
 
-        // Publish it as the RESOLVED view too. CWorld::Extract does not read the camera component -- it
-        // reads the FResolvedSceneView context singleton, which only SCameraSystem writes, and that system
-        // only runs on a world tick. An unticked world therefore leaves bHasView false and Extract falls
-        // back to a default-constructed FViewVolume: origin, 90 degrees, 0.01 near. Every thumbnail entity
-        // is spawned at the origin, so the frustum sat inside the subject and culled it, leaving the sky
-        // (a fullscreen pass that needs no scene data) as the only thing in the image. That was the
-        // empty-world thumbnail.
+        // Extract reads FResolvedSceneView, and an unticked world leaves it default, culling the subject.
         FResolvedSceneView& Resolved = ECS::GetWorldRegistry(*World).ctx().get<FResolvedSceneView>();
         Resolved.ViewVolume      = Camera.GetViewVolume();
         Resolved.bHasView        = true;
@@ -159,22 +151,14 @@ namespace Lumina
             return false;
         }
 
-        // Drive the mesh resolve to a fixed point BEFORE extracting. The resolve pre-pass defers
-        // anything it cannot finish to the next frame, which the normal loop absorbs invisibly -- but
-        // this capture renders exactly one frame and reads it straight back, so a deferred mesh is not
-        // "late", it is missing from the image. That is the empty-world thumbnail.
+        // This capture renders exactly one frame, so a deferred mesh is missing rather than merely late.
         static_cast<FDefaultSceneRenderer*>(World->GetRenderer())->SettleResolveWork();
 
         const uint8 FrameIndex = (uint8)Render().GetCurrentFrameIndex();
         World->Extract();
 
         {
-            // This render bypasses the frame pipeline, and queued RHI uploads only become resident at
-            // the next Core::BeginFrame. A mesh that finished loading since the last frame (exactly the
-            // asset being thumbnailed, or scene meshes streaming in) still has its meshlet header/bounds
-            // copies pending -- rendering now would make CullMeshlets read uninitialized header memory
-            // and chase a null Bounds address (GPU MMU page fault at a near-zero VA). Flush them first;
-            // the extra submit is ordered ahead of this frame's rendering.
+            // Queued uploads only land at the next BeginFrame, so culling would chase a null Bounds address.
             RHI::FlushUploadsAndWait();
 
             IRenderScene* Scene = World->GetRenderer();
@@ -202,10 +186,7 @@ namespace Lumina
             RHI::CmdCopyTextureToMemory(CL, Output.Texture, RHI::FTextureSlice{}, Out.Readback, Out.Width);
             RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
 
-            // Submit WITHOUT waiting, and keep the timeline value this submission signals so the caller can
-            // POLL it. This used to be SubmitAndWait, i.e. a synchronous GPU round-trip on the game thread
-            // for every thumbnail. SubmitOn also hands the command list to the frame slot's retire list, so
-            // it is reclaimed for us -- SubmitAndWait had to reset it by hand because it bypassed that.
+            // Submits WITHOUT waiting and keeps the timeline value, so the caller can poll instead of blocking.
             Out.Semaphore = RHI::Core::GetQueueTimeline(RHI::EQueueType::Graphics);
             Out.Value     = RHI::Core::SubmitOn(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
         }
@@ -244,8 +225,7 @@ namespace Lumina
             return false;
         }
 
-        // Wait only on THIS copy's completion, not the whole device: a WaitDeviceIdle here would stall on
-        // unrelated in-flight frame work.
+        // Waits on THIS copy only, since a device-wide idle would stall on unrelated in-flight frame work.
         RHI::WaitSemaphore(Local.Semaphore, Local.Value);
         return ResolveCapture(Local, Thumbnail);
     }
@@ -254,7 +234,7 @@ namespace Lumina
     {
         if (Pending != nullptr)
         {
-            return false;   // one at a time -- the next render would overwrite the target this copy reads
+            return false;   // one at a time, the next render would overwrite the target this copy reads
         }
 
         TUniquePtr<FPendingCapture> New = MakeUnique<FPendingCapture>();
@@ -306,8 +286,7 @@ namespace Lumina
             return;
         }
 
-        // The copy may still be in flight; freeing its destination now would hand a live GPU write freed
-        // memory. Waiting is fine here -- this only runs on teardown or when the scene is repurposed.
+        // Freeing the destination now would hand a live GPU write freed memory.
         RHI::WaitSemaphore(Pending->Semaphore, Pending->Value);
         if (Pending->Readback != 0)
         {

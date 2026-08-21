@@ -12,9 +12,7 @@ namespace Lumina
 {
     namespace
     {
-        // Per-thread pose buffer pool. A task list executes entirely on one thread, so buffers
-        // recycle across every entity that thread animates; live count is bounded by the deepest
-        // chain of concurrently-needed poses (a handful), not by graph size or entity count.
+        // A task list runs on one thread, so live buffers are bounded by chain depth, not entity count.
         struct FPosePool
         {
             TVector<FPose> Buffers;
@@ -98,10 +96,7 @@ namespace Lumina
             return 2.0f * Math::Atan2(Math::Dot(FVector3(Q.x, Q.y, Q.z), Axis), Q.w);
         }
 
-        // Capture the per-bone offset (Source vs Target) and its velocity (Source vs SourcePrev) at a
-        // seam. Channels only; the control fields (bActive/Elapsed/Duration) are set by the update pass.
-        // Only NumActiveBones channels are captured (skeleton LOD); InertApply's short-channel
-        // fallback copies the target through for the tail.
+        // Channels only, since the update pass sets the control fields, and the tail copies through.
         void InertCapture(FAnimInertializer& In, const FPose& Source, const FPose& SourcePrev,
                           const FPose& Target, float Dt, bool bHasVel, int32 NumActiveBones)
         {
@@ -120,7 +115,7 @@ namespace Lumina
 
             for (int32 i = 0; i < N; ++i)
             {
-                // Rotation: offset quaternion (Source relative to Target) as axis + angle.
+                // The rotation offset, Source relative to Target, expressed as an axis and angle.
                 {
                     const FQuat Qs = bSrc ? Source.Rotations[i] : Target.Rotations[i];
                     FQuat Q0 = Math::Normalize(Qs * Math::Inverse(Target.Rotations[i]));
@@ -145,7 +140,7 @@ namespace Lumina
                     }
                     In.Rot[i] = FInertChannel{ Axis, X0, V0 };
                 }
-                // Translation: vector offset, fixed direction, decaying length.
+                // Translation is a vector offset with a fixed direction and a decaying length.
                 {
                     const FVector3 Ps  = bSrc ? Source.Translations[i] : Target.Translations[i];
                     const FVector3 Off = Ps - Target.Translations[i];
@@ -158,7 +153,7 @@ namespace Lumina
                     }
                     In.Trans[i] = FInertChannel{ Dir, X0, V0 };
                 }
-                // Scale: same vector treatment as translation.
+                // Scale gets the same vector treatment as translation.
                 {
                     const FVector3 Ss  = bSrc ? Source.Scales[i] : Target.Scales[i];
                     const FVector3 Off = Ss - Target.Scales[i];
@@ -174,7 +169,7 @@ namespace Lumina
             }
         }
 
-        // Out := Target + the decaying offset at time T. Out may alias Target.
+        // Writes Target plus the decaying offset at time T, and Out may alias Target.
         void InertApply(const FAnimInertializer& In, const FPose& Target, FPose& Out, float T)
         {
             LUMINA_PROFILE_SCOPE();
@@ -212,9 +207,7 @@ namespace Lumina
 
     namespace
     {
-        // Debug capture target + the last published snapshot. Tools arm one component; the animation
-        // system checks the atomic once per mesh (relaxed load, null in the common case) and only
-        // pays for a snapshot on the single matching entity.
+        // Tools arm one component, so the system pays only a relaxed load per mesh in the common case.
         TAtomic<const void*> GCaptureOwner{ nullptr };
         FMutex               GCaptureMutex;
         FAnimTaskSnapshot    GCaptureSnapshot;
@@ -270,8 +263,7 @@ namespace Lumina
 
         const int32 NumTasks = (int32)List.Tasks.size();
 
-        // Skeleton LOD: distant meshes sample/blend only this many bones; the tail rides along at
-        // bind-pose locals through every kernel, and the final FK stays full-hierarchy.
+        // The tail rides along at bind-pose locals, and the final FK stays full-hierarchy.
         const int32 NumBones    = Skeleton->GetNumBones();
         const int32 ActiveBones = (List.ActiveBoneCount > 0 && List.ActiveBoneCount < NumBones)
             ? List.ActiveBoneCount
@@ -310,8 +302,7 @@ namespace Lumina
                     }
                 }
 
-                // Dependency depth. Deps always precede their consumer, so one forward pass resolves
-                // it; tasks sharing a level have no dependency path between them.
+                // Deps always precede their consumer, so one forward pass resolves the level.
                 int16 Level = 0;
                 if (Task.DepA >= 0 && Task.DepA < i)
                 {
@@ -338,9 +329,7 @@ namespace Lumina
             return;
         }
 
-        // Mark the output task's ancestor chain and count each result's consumers. Dependencies always
-        // precede consumers, so one reverse pass suffices; everything else (inactive state-machine
-        // branches) is skipped entirely.
+        // Dependencies always precede consumers, so one reverse pass suffices and the rest is skipped.
         thread_local TVector<uint8> Needed;
         thread_local TVector<uint8> UseCount;
         thread_local TVector<int16> ResultBuf;
@@ -391,8 +380,7 @@ namespace Lumina
             const int16 BufA = (Task.DepA >= 0 && Task.DepA < i) ? ResultBuf[Task.DepA] : FAnimTask::NoTask;
             const int16 BufB = (Task.DepB >= 0 && Task.DepB < i) ? ResultBuf[Task.DepB] : FAnimTask::NoTask;
 
-            // Steal the first dependency's buffer when this is its last consumer (in-place write,
-            // zero copy); otherwise take a fresh buffer and leave the shared result untouched.
+            // Stealing writes in place with zero copy, otherwise a fresh buffer leaves the shared result alone.
             const bool bStealA = BufA != FAnimTask::NoTask && UseCount[Task.DepA] == 1;
             int16 Dst = FAnimTask::NoTask;
 
@@ -586,8 +574,7 @@ namespace Lumina
                 Pool.Release(BufB);
             }
 
-            // Stamped after the retire above so LiveBuffers reflects the pool's steady-state
-            // occupancy between tasks rather than the transient peak inside one kernel.
+            // Stamped after the retire, so LiveBuffers reads as steady-state rather than a transient peak.
             if (OutSnapshot != nullptr)
             {
                 FAnimTaskDebugEntry& Entry = OutSnapshot->Entries[i];

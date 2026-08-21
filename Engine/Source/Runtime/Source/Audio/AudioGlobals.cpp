@@ -9,9 +9,7 @@ namespace Lumina
     {
         IAudioContext* GAudioContext;
         
-        /**
-         * Stand-in for a missing audio device.
-         */
+        // A stand-in for a missing audio device.
         class FNullAudioContext final : public IAudioContext
         {
         public:
@@ -83,9 +81,7 @@ namespace Lumina
 
     IAudioContext& Audio::Context()
     {
-        // Function-local rather than a namespace-scope object: a polymorphic global has its vptr written
-        // during this TU's dynamic init, leaving a window where an earlier static initializer calling
-        // audio would dispatch through garbage. Construct-on-first-use has no such window.
+        // A polymorphic global writes its vptr during dynamic init, leaving a window this has no equivalent of.
         static FNullAudioContext NullContext;
 
         IAudioContext* Live = GAudioContext;

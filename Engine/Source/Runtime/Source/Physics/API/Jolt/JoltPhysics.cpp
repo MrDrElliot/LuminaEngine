@@ -99,7 +99,7 @@ namespace Lumina::Physics
     }
     #endif
 
-    // Tag at the hook, not call-site: Jolt's job threads would miss a call-site scope.
+    // Tagged at the hook, since Jolt's job threads would miss a call-site scope.
     static void* JPHCustomAllocate(size_t size)
     {
         LUMINA_MEMORY_SCOPE("Physics");
@@ -139,16 +139,14 @@ namespace Lumina::Physics
             return false;
         }
 
-        // Any other assert is a genuine bug: break only when a debugger is attached, otherwise
-        // log and continue so a standalone run does not hard-crash on STATUS_BREAKPOINT.
+        // Break only under a debugger, so a standalone run logs and continues rather than hard-crashing.
         return ::IsDebuggerPresent() != 0;
     }
     #endif
 
     void FJoltPhysicsContext::Initialize()
     {
-        // Must be JPH_ENABLE_ASSERTS, not JPH_ASSERT: the latter is function-like, so `#if JPH_ASSERT`
-        // is 0 and the handler never installs (Jolt's always-break default runs instead).
+        // JPH_ASSERT is function-like, so testing it is 0 and the handler would never install.
         #ifdef JPH_ENABLE_ASSERTS
         JPH::Trace              = JoltTraceCallback;
         JPH::AssertFailed       = JoltAssertionFailed;
@@ -176,7 +174,7 @@ namespace Lumina::Physics
 
         if (CVarJoltUseEngineJobSystem.GetValue())
         {
-            // +1 mirrors Jolt's own pool: the thread calling WaitForJobs also executes jobs.
+            // The plus one mirrors Jolt's own pool, where the thread calling WaitForJobs also executes jobs.
             JoltData->JobSystem = MakeUnique<FJoltJobSystemBridge>(2048, 8, NumJoltThreads + 1);
             LOG_DISPLAY("[Jolt] Physics jobs routed through the engine fiber scheduler (max concurrency {}).", NumJoltThreads + 1);
         }
@@ -216,9 +214,7 @@ namespace Lumina::Physics
 
     void FJoltDebugRenderer::DrawLine(JPH::RVec3Arg inFrom, JPH::RVec3Arg inTo, JPH::ColorArg inColor)
     {
-        // Jolt colors are 0-255 bytes in RGBA order; FSimpleElementVertex packs ABGR. Building the
-        // uint directly skips the float round-trip, and fixes the old path's bug of feeding 0-255
-        // values into a 0-1 clamp, which turned every collider white.
+        // Building the uint directly skips a float round-trip that fed 0-255 into a 0-1 clamp.
         const uint32 Packed = ((uint32)inColor.a << 24) | ((uint32)inColor.b << 16)
                             | ((uint32)inColor.g <<  8) |  (uint32)inColor.r;
 
@@ -228,8 +224,7 @@ namespace Lumina::Physics
             return;
         }
 
-        // No immediate sink: a one-off query draw that wants a lifetime (SetDrawDuration), so it goes
-        // through the timed batcher.
+        // A one-off query draw that wants a lifetime goes through the timed batcher instead.
         const float DrawDuration = (float)Math::Max(World->GetWorldDeltaTime(), Duration);
         World->DrawLine(JoltUtils::FromJPHVec3(inFrom), JoltUtils::FromJPHVec3(inTo),
                         FVector4(inColor.r / 255.0f, inColor.g / 255.0f, inColor.b / 255.0f, inColor.a / 255.0f),
@@ -238,8 +233,7 @@ namespace Lumina::Physics
 
     namespace
     {
-        // Prunes bodies against SDebugDrawSystem's view before Jolt walks their shapes. This is where
-        // the immediate path's culling lives: at source granularity, not per line.
+        // The immediate path's culling lives here, at source granularity rather than per line.
         class FDebugDrawBodyFilter final : public JPH::BodyDrawFilter
         {
         public:
@@ -271,8 +265,7 @@ namespace Lumina::Physics
             return;
         }
 
-        // Jolt uses the camera position for its own LOD/backface decisions, so it gets the same view
-        // the cull is running against.
+        // Jolt uses the camera position for its own LOD, so it gets the same view the cull runs against.
         SetCameraPos(JoltUtils::ToJPHRVec3(State->ViewOrigin));
 
         SetImmediateSink(DebugDraw::GetLines(World));

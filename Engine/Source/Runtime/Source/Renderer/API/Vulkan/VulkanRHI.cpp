@@ -514,8 +514,7 @@ namespace Lumina::RHI
         uint32 BreadcrumbStack[FGpuBreadcrumbs::MaxDepth] = {};
         uint32 BreadcrumbDepth = 0;
 
-        /// Begun and not yet submitted or reset. Tracked per list rather than by counting Open/Reset pairs
-        /// because a SUBMITTED list is not reset until its frame slot comes back around.
+        // Tracked per list, since a submitted list is not reset until its frame slot comes back around.
         bool bOpen = false;
     };
 
@@ -552,8 +551,7 @@ namespace Lumina::RHI
         bool                            bMemoryPriority = false;
         bool                            bMeshShaderSupported = false;
         uint32                          MaxMeshWorkGroupCountX = 0;
-        // Non-zero when the mesh stage must be pinned to a fixed subgroup size at pipeline creation;
-        // see the ShuffleMeshletClip note where this is decided.
+        // Non-zero when the mesh stage must be pinned at pipeline creation, see the shuffle note.
         uint32                          MeshRequiredSubgroupSize = 0;
         bool                            bPipelineStats = false;
         TUniquePtr<FVulkanCrashTracker> CrashTracker;
@@ -569,8 +567,7 @@ namespace Lumina::RHI
         uint32                          NumSharedQueueFamilies = 0;
         bool                            bHasAsyncComputeQueue = false;
         bool                            bHasAsyncTransferQueue = false;
-        // No surface extensions and no VK_KHR_swapchain were requested. Checked by the presentation
-        // entry points so a headless device fails with a sentence rather than a null dispatch call.
+        // Checked by the presentation entry points, so headless fails with a sentence, not a null dispatch.
         bool                            bHeadless = false;
 
         VkDescriptorPool                DescriptorPool;
@@ -585,8 +582,7 @@ namespace Lumina::RHI
             uint32          Slot;
         };
         TVector<FPendingTransition>     PendingTransient;
-        // Frame slot currently being recorded. Published by RetireSlot AFTER it drains, so a concurrent
-        // retire can never land in the list being drained.
+        // Published AFTER the drain, so a concurrent retire can never land in the list being drained.
         TAtomic<uint32>                 CurrentRetireSlot{0};
 
         struct FPendingHeapDestroy
@@ -601,15 +597,13 @@ namespace Lumina::RHI
         TVector<FMemoryBlock>           MemoryBlocks;
 
 #if USING(WITH_EDITOR)
-        // Ring of destroyed allocations, guarded by MemoryMutex alongside MemoryBlocks. Unsorted: it is
-        // read once, by the device-lost report, and a linear scan of 4096 entries is free there.
+        // Unsorted, since it is read once by the device-lost report where a linear scan is free.
         TVector<FFreedBlock>            FreedBlocks;
         uint32                          FreedBlockCursor = 0;
-        // Bumped per submit, stamped into FreedBlocks. Relaxed: it is a coarse age, not a synchronizer.
+        // Relaxed, since it is a coarse age rather than a synchronizer.
         TAtomic<uint64>                 SubmitOrdinal{0};
 
-        // Live textures, for the memory tool's per-purpose breakdown. Its own lock rather than
-        // MemoryMutex: texture creation and buffer allocation both run on the streaming jobs.
+        // Its own lock, since texture creation and buffer allocation both run on the streaming jobs.
         THashMap<uint64, FTextureRecord> TextureLedger;
         FMutex                           TextureLedgerMutex;
 #endif
@@ -726,8 +720,7 @@ namespace Lumina::RHI
         std::snprintf(Dest, kMaxBlockNameLength, "%s", Name);
     }
 
-    // Caller holds MemoryMutex. Allocated once and overwritten in place forever after: this runs on the
-    // free path, which a growing scene renderer hits every time a ring resizes.
+    // Allocated once and overwritten forever after, since this runs on the free path.
     static void RecordFreedBlockLocked(const FMemoryBlock& Block)
     {
         TVector<FFreedBlock>& Ring = GDevice->FreedBlocks;
@@ -963,9 +956,7 @@ namespace Lumina::RHI
 
         if (bLog)
         {
-            // maxMeshWorkGroupCount[0] is printed RAW, before the caller's clamp: a device reporting
-            // 4294967295 there is the signature of the overflow that made an entire machine render
-            // nothing, so it is worth being able to read it straight out of a user's log.
+            // A device reporting the maximum there is the signature of an overflow that rendered nothing.
             LOG_DISPLAY("Mesh shader limits: workgroup {} (max invocations {}), out verts {}, out prims {}, "
                         "out components {}, out memory {} B, max workgroup count {}. "
                         "Subgroup {}-{}, mesh workgroup is {} threads{}.",
@@ -1097,14 +1088,13 @@ namespace Lumina::RHI
             Aperture = Math::Max(Aperture, Heap.BudgetBytes);
         }
 
-        // No host-visible VRAM heap: CPU-write already lands in system memory, nothing to ration.
+        // With no host-visible VRAM heap, a CPU write already lands in system memory.
         if (Aperture == 0)
         {
             return DesiredSliceSize;
         }
 
-        // Typed rather than a ull literal: ull is unsigned long long, which is a DIFFERENT type from
-        // uint64 wherever uint64_t is unsigned long, so the two arguments stopped deducing to one T.
+        // Typed, since ull is a different type wherever uint64 is unsigned long and deduction breaks.
         constexpr uint64 kMegabyte = 1024 * 1024;
 
         const uint64 PerSlice = (Aperture / kCPUWriteApertureDivisor) / SliceCount;
@@ -1277,8 +1267,7 @@ namespace Lumina::RHI
 
         GLogCopies = GCommandLine != nullptr && GCommandLine->Has("logcopies");
 
-        // GLFW is only consulted for the window-system bits. A headless caller has no GLFW instance at
-        // all, so asking it anything here would report failure on a perfectly good driver.
+        // A headless caller has no GLFW instance, so asking would report failure on a good driver.
         if (!DeviceDesc.bHeadless && !glfwVulkanSupported())
         {
             ShowVulkanInitFailure("Vulkan Not Supported",
@@ -1326,8 +1315,7 @@ namespace Lumina::RHI
                 }
             }
 
-            // Surface extensions for the swapchain plus debug utils. Headless takes neither: with no
-            // GLFW instance the query returns null, and there is nothing to present to anyway.
+            // Headless takes neither, since the query returns null and there is nothing to present to.
             TVector<const char*> InstanceExtensions;
             if (!DeviceDesc.bHeadless)
             {
@@ -1569,8 +1557,7 @@ namespace Lumina::RHI
             VkPhysicalDevice Best = VK_NULL_HANDLE;
             int32 BestScore = -1;
 
-            // Kept so a machine where every modern device is unusable can name each one and its
-            // reason, rather than reporting only whichever happened to score highest.
+            // Lets a machine where every device is unusable name each one and its reason.
             FString Rejections;
             bool bAnyModernDevice = false;
 
@@ -1586,8 +1573,7 @@ namespace Lumina::RHI
 
                 bAnyModernDevice = true;
 
-                // Asked before scoring, not after choosing. A device that cannot run the renderer
-                // must not be allowed to outrank one that can purely on the strength of its type.
+                // A device that cannot run the renderer must not outrank one that can on type alone.
                 const FDeviceSuitability Suitability = EvaluateDeviceSuitability(Gpu, DeviceDesc.bHeadless, false);
 
                 if (!Suitability.bSuitable)
@@ -1637,8 +1623,7 @@ namespace Lumina::RHI
             GDevice->PhysicsDevice = Best;
             vkGetPhysicalDeviceProperties(Best, &GDevice->Properties);
 
-            // Asked once more, this time reporting. The selection loop stayed quiet so that a
-            // rejected candidate's limits could never be mistaken for the chosen device's.
+            // The selection loop stayed quiet so a rejected candidate's limits cannot be mistaken for these.
             const FDeviceSuitability Chosen = EvaluateDeviceSuitability(Best, DeviceDesc.bHeadless, true);
 
             LOG_DISPLAY("Selected GPU '{}'.", GDevice->Properties.deviceName);
@@ -1646,8 +1631,7 @@ namespace Lumina::RHI
             GDevice->bMeshShaderSupported     = true;
             GDevice->MeshRequiredSubgroupSize = Chosen.MeshRequiredSubgroupSize;
 
-            // A driver reporting UINT32_MAX here means "no limit", but every ceil-divide and
-            // sub-draw stride derived from it then overflows.
+            // A driver reporting the maximum means no limit, but every derived divide then overflows.
             constexpr uint32 kMaxMeshGroupsPerDraw = 1u << 24;
             GDevice->MaxMeshWorkGroupCountX = (Chosen.MaxMeshWorkGroupCount < kMaxMeshGroupsPerDraw)
                                             ? Chosen.MaxMeshWorkGroupCount
@@ -1706,8 +1690,7 @@ namespace Lumina::RHI
                 EnableIfPresent(VK_EXT_PAGEABLE_DEVICE_LOCAL_MEMORY_EXTENSION_NAME);
             }
 
-            // Mesh/task shader pipeline. Presence, feature and limits were all required to get
-            // through selection, so this only has to put the extension on the enable list.
+            // Presence, feature and limits were all required to pass selection, so only the enable remains.
             EnableIfPresent(VK_EXT_MESH_SHADER_EXTENSION_NAME);
 
 #if USING(WITH_EDITOR)
@@ -1742,9 +1725,7 @@ namespace Lumina::RHI
         VkPhysicalDeviceFeatures2        Supported2 { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,          .pNext = &Supported11 };
         vkGetPhysicalDeviceFeatures2(GDevice->PhysicsDevice, &Supported2);
 
-        // Mesh shader support, its limits, and the subgroup pinning they may need were all settled
-        // during selection: a device that could not satisfy them was never a candidate. What that
-        // decided is already on GDevice, so nothing is re-queried here.
+        // All settled during selection, so nothing is re-queried here.
 
         VkPhysicalDeviceFeatures Features10             = {};
         Features10.fragmentStoresAndAtomics             = VK_TRUE;
@@ -1924,8 +1905,7 @@ namespace Lumina::RHI
                 }
             }
 
-            // Selection already refused any device without one, so reaching this means the two
-            // disagree about the same device rather than that the hardware is short of a queue.
+            // Selection refused any device without one, so reaching this means the two checks disagree.
             if (GraphicsFamily == UINT32_MAX)
             {
                 ShowVulkanInitFailure("Vulkan Device Unsuitable",
@@ -2338,7 +2318,7 @@ namespace Lumina::RHI
         {
             for (FTextureH Image : Swapchain->Images)
             {
-                GDevice->Textures.Erase(Image);   // external: dtor destroys the view, keeps the VkImage
+                GDevice->Textures.Erase(Image);   // external, so the destructor destroys the view and keeps the image
             }
             for (VkSemaphore Semaphore : Swapchain->AcquireSemaphores)
             {
@@ -2457,8 +2437,7 @@ namespace Lumina::RHI
         }
     }
 
-    // Backend half of resource retirement. Called from Core::BeginFrame once this slot's queue timelines
-    // have been waited, i.e. at the exact point everything recorded into it is known to be done.
+    // Called once this slot's timelines are waited, when everything recorded into it is known done.
     void RetireSlot(uint32 Slot)
     {
         {
@@ -2687,7 +2666,7 @@ namespace Lumina::RHI
         }
 
 #if USING(WITH_EDITOR)
-        // Exclusive: this branch writes the name back into the block.
+        // Exclusive, since this branch writes the name back into the block.
         FWriteScopeLock Lock(GDevice->MemoryMutex);
 
         if (FMemoryBlock* Block = FindMemoryMutable(GPU))
@@ -2754,12 +2733,10 @@ namespace Lumina::RHI
             return {};
         }
 
-        // Past this, the "nearest" allocation is just whichever one happened to be closest in a 40-bit
-        // address space, which reads as evidence and is not.
+        // Past this, the nearest allocation is just whichever was closest in a 40-bit address space.
         constexpr uint64 kNeighborWindow = 64ull * 1024 * 1024;
 
-        // try_lock, not a lock: this runs from the device-lost path, and another thread stuck mid-Malloc
-        // would otherwise turn a crash report into a hang. A missed report is the better failure.
+        // try_lock, since a thread stuck mid-Malloc would turn a crash report into a hang.
         FReadScopeLock Lock(GDevice->MemoryMutex, TryToLock);
         if (!Lock.OwnsLock())
         {
@@ -2768,8 +2745,7 @@ namespace Lumina::RHI
 
         const uint64 CurrentSubmit = GDevice->SubmitOrdinal.load(std::memory_order_relaxed);
 
-        // The fault address carries only page precision, so the question is whether the allocation
-        // INTERSECTS the reported window -- an exact-address probe misses by up to a page.
+        // The fault address has only page precision, so an exact-address probe misses by up to a page.
         const auto Overlaps = [&](GPUPtr Base, uint64 Size)
         {
             return Size != 0ull && Base <= AddressHigh && AddressLow < Base + Size;
@@ -2777,13 +2753,12 @@ namespace Lumina::RHI
 
         const auto NameOf = [](const char* Name) { return (Name != nullptr && Name[0] != '\0') ? Name : "<unnamed>"; };
 
-        // Nearest allocation that does NOT contain the address, either side. An overrun lands past the end
-        // of a buffer and inside nobody, which is the case a containment-only lookup reports as "unknown".
+        // An overrun lands past the end of a buffer and inside nobody, which containment misses.
         struct FNeighbor
         {
             bool        bValid   = false;
             bool        bFreed   = false;
-            bool        bPastEnd = false;   // the allocation ends before the fault: an overrun off its end
+            bool        bPastEnd = false;   // the allocation ends before the fault, an overrun off its end
             uint64      Distance = 0;
             GPUPtr      Base     = 0;
             uint64      Size     = 0;
@@ -2825,8 +2800,7 @@ namespace Lumina::RHI
             Nearest = FNeighbor{ true, bFreed, bPastEnd, Distance, Base, Size, Submit, Name };
         };
 
-        // Linear over both tables. This runs exactly once, on a dying device: clarity beats a clever
-        // bound, and a large allocation whose START sorts far below the fault defeats one anyway.
+        // This runs once on a dying device, so clarity beats a clever bound that a large block defeats.
         for (const FMemoryBlock& Block : GDevice->MemoryBlocks)
         {
             if (Overlaps(Block.Device, Block.Size))
@@ -2897,7 +2871,7 @@ namespace Lumina::RHI
         return true;
     }
 
-    // FreeH after FreeDevice is a no-op: everything was already destroyed with the device.
+    // A free after the device teardown is a no-op, since everything went with the device.
 
     void FreeH(FSemaphoreH Semaphore)
     {
@@ -2923,21 +2897,14 @@ namespace Lumina::RHI
 
         if (GDevice != nullptr)
         {
-            // Tripwire, and the last line of defense for the whole bindless design. A ResourceID is a bare
-            // uint32: nothing in the descriptor heap keeps a texture alive, and PARTIALLY_BOUND +
-            // UPDATE_AFTER_BIND suppress every layer check, so a slot left naming a destroyed image is
-            // silent until the GPU page-faults inside a SampleGrad with "failed to translate". Every
-            // release path is supposed to unbind first (Textures::Release -> RetireSampledSlot, and
-            // Release/RetireSceneImage). If one does not, sample magenta and say so loudly rather than
-            // hand the GPU a freed address.
+            // Every release path should unbind first, and if one does not, sample magenta and say so loudly.
             {
                 FScopeLock Lock(GDevice->HeapMutex);
                 FTexture& TextureData = GDevice->Textures[Texture];
                 FTextureHeap* HeapData = TextureData.BoundSampledSlot != kInvalidHeapSlot
                     ? GDevice->TextureHeaps.TryGet(TextureData.BoundHeap) : nullptr;
 
-                // The slot is a hint and can be stale (the heap may have moved on to another image, or the
-                // heap itself may be gone at teardown). The heap's own record is the authority.
+                // The slot is a hint and can be stale, so the heap's own record is the authority.
                 if (HeapData != nullptr
                     && TextureData.BoundSampledSlot < HeapData->SampledOwners.size()
                     && HeapData->SampledOwners[TextureData.BoundSampledSlot].Handle == Texture.Handle)
@@ -2985,8 +2952,7 @@ namespace Lumina::RHI
     {
         if (GDevice != nullptr)
         {
-            // Textures outlive the heap at shutdown (Core::Shutdown frees the heap, then asset destructors
-            // keep running). Drop the back-references first or FreeH's tripwire would index a dead heap.
+            // Textures outlive the heap at shutdown, so drop the back-references before the tripwire indexes it.
             {
                 FScopeLock Lock(GDevice->HeapMutex);
                 FTextureHeap& HeapData = GDevice->TextureHeaps[Heap];
@@ -3446,9 +3412,7 @@ namespace Lumina::RHI
                 .pSpecializationInfo = &SpecializationInfo,
             };
         }
-        // Only chained where the device could otherwise pick a subgroup narrower than the mesh workgroup,
-        // which would split it across two waves and break ShuffleMeshletClip's WaveReadLaneAt. Device init
-        // leaves MeshRequiredSubgroupSize at 0 on hardware that cannot do this (AMD, NVIDIA).
+        // Device init leaves this at 0 on hardware that cannot pick a narrower subgroup.
         const VkPipelineShaderStageRequiredSubgroupSizeCreateInfo MeshSubgroupSize
         {
             .sType                = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO,
@@ -3613,7 +3577,7 @@ namespace Lumina::RHI
             .stencilAttachmentFormat = StencilAttachmentFormat,
         };
 
-        // Mesh pipelines have no input assembler: pVertexInputState / pInputAssemblyState are ignored (left null).
+        // Mesh pipelines have no input assembler, so those state pointers are ignored and left null.
         VkGraphicsPipelineCreateInfo CreateInfo
         {
             .sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
@@ -3730,16 +3694,14 @@ namespace Lumina::RHI
         VmaAllocation Allocation = VK_NULL_HANDLE;
 
 #if USING(WITH_EDITOR)
-        // Only the memory tool asks how big an image actually landed; the driver's answer is free to
-        // collect but pointless to ask for in a game build.
+        // Only the memory tool asks, so the driver's answer is pointless to request in a game build.
         VmaAllocationInfo  AllocationInfo    = {};
         VmaAllocationInfo* AllocationInfoPtr = &AllocationInfo;
 #else
         VmaAllocationInfo* AllocationInfoPtr = nullptr;
 #endif
 
-        // Its own zone: a 16-21 MiB device-local image allocation can hit a fresh VMA block and a
-        // vkAllocateMemory, which is a very different spike from anything else in a residency change.
+        // A large device-local image can hit a fresh VMA block, a very different spike from the rest.
         VkResult ImageResult;
         {
             LUMINA_PROFILE_SECTION("RHI::vmaCreateImage");
@@ -3862,11 +3824,7 @@ namespace Lumina::RHI
     {
         FTexture& TextureData = GDevice->Textures[Texture];
 
-        // Whatever this slot used to name is no longer bound anywhere, so its tripwire has to be cleared
-        // or destroying it later would report a slot that has since moved on to a different image.
-        // Whatever this slot used to name is no longer bound anywhere. TryGet, not operator[]: the previous
-        // owner may already be destroyed, and the generation check is what makes reading a handle that
-        // outlived its resource a branch instead of a read of a recycled entry.
+        // TryGet rather than indexing, since the previous owner may already be destroyed.
         const FTextureH Previous = HeapData.SampledOwners[Slot];
         if (IsValid(Previous) && Previous.Handle != Texture.Handle)
         {
@@ -4345,7 +4303,7 @@ namespace Lumina::RHI
         ActualExtent.width  = Math::Clamp(ActualExtent.width,  Caps.minImageExtent.width,  Caps.maxImageExtent.width);
         ActualExtent.height = Math::Clamp(ActualExtent.height, Caps.minImageExtent.height, Caps.maxImageExtent.height);
 
-        // Skip a zero-area surface (minimized / mid-resize): imageExtent {0,0} is rejected by AMD; min extent can also be {0,0}.
+        // A zero-area extent is rejected by AMD, and the reported minimum can also be zero.
         if (ActualExtent.width == 0 || ActualExtent.height == 0)
         {
             return false;
@@ -4427,7 +4385,7 @@ namespace Lumina::RHI
             }));
         }
 
-        // Present semaphores: one per image. Acquire semaphores: a small ring.
+        // One present semaphore per image, and a small ring of acquire semaphores.
         const uint32 AcquireCount = Math::Max((uint32)kFramesInFlight, Count);
         SC.PresentSemaphores.resize(Count);
         SC.AcquireSemaphores.resize(AcquireCount);
@@ -4520,7 +4478,7 @@ namespace Lumina::RHI
         DestroySwapchainImages(SC);
         if (!BuildSwapchainImages(SC, Extent, Old))
         {
-            // No drawable area (minimized / mid-resize): leave it unbuilt; callers skip the frame and retry.
+            // With no drawable area it is left unbuilt, and callers skip the frame and retry.
             SC.Swapchain = VK_NULL_HANDLE;
             SC.Extent = FUIntVector2(0, 0);
         }
@@ -4624,8 +4582,7 @@ namespace Lumina::RHI
         }
 #endif
 
-        // Present submits without going through RHI::Submit, so it has to close the recording itself or the
-        // open-list count never comes back down and every retire is pinned against a value that keeps moving.
+        // Present submits outside RHI::Submit, so the open-list count would never come back down.
         if (CL.bOpen)
         {
             CL.bOpen = false;
@@ -4716,7 +4673,7 @@ namespace Lumina::RHI
                 CommandList.bOpen = true;
                 GDevice->OpenCommandLists[(uint32)Type].fetch_add(1, std::memory_order_release);
 
-                // Already in the initial state: ResetCommandList reset the pool when it recycled the list.
+                // ResetCommandList already reset the pool when it recycled the list.
                 vkBeginCommandBuffer(CommandList.CommandBuffer, &BeginInfo);
 
                 return Reused;
@@ -4764,7 +4721,7 @@ namespace Lumina::RHI
 
         FScopeLock Lock(GDevice->CommandPoolMutex);
 
-        // Reset without a submit: the recording is discarded, so it can never name anything.
+        // A reset without a submit discards the recording, so it can never name anything.
         if (List.bOpen)
         {
             List.bOpen = false;
@@ -4920,9 +4877,7 @@ namespace Lumina::RHI
         {
             FCommandList& CommandList = GDevice->CommandLists[CommandLists[i]];
 
-            // From here the recording is the queue's problem, not a pending reference no fence covers.
-            // Cleared before vkQueueSubmit2 but after the caller took its submit lock, which is what lets
-            // the retire drain sample "counter + open lists" as one consistent pair.
+            // Cleared after the caller took its submit lock, so the drain samples one consistent pair.
             if (CommandList.bOpen)
             {
                 CommandList.bOpen = false;
@@ -4966,7 +4921,7 @@ namespace Lumina::RHI
 
 #if !defined(LE_SHIPPING)
         {
-            // Flat and fixed: a hash map here rehashes and allocates while the queue lock is held.
+            // Flat and fixed, since a hash map here rehashes and allocates while the queue lock is held.
             struct FSignalHighWater { uint64 Native; uint64 Value; };
             static FSignalHighWater HighestSignaled[16] = {};
 
@@ -5007,8 +4962,7 @@ namespace Lumina::RHI
 #endif
 
 #if USING(WITH_EDITOR)
-        // Stamped into the freed-block ledger. Incremented before the submit so a block freed during
-        // recording reads the ordinal of the submit that may still reference it, never one earlier.
+        // Incremented before the submit, so a block freed during recording reads the right ordinal.
         GDevice->SubmitOrdinal.fetch_add(1, std::memory_order_relaxed);
 #endif
 
@@ -5189,8 +5143,7 @@ namespace Lumina::RHI
         const uint8 BlockW = RHI::Format::Info(DestTexture.Format).BlockSize;
         const uint32 RowLengthBlocks = (BlockW > 1) ? Math::AlignUp(RowLength, (uint32)BlockW) : RowLength;
 
-        // Clamped against what is left PAST THE OFFSET, because the caller's mip size comes from cooked data.
-        // imageOffset has no clamp of its own, so an offset already outside the subresource is dropped.
+        // imageOffset has no clamp, so an offset already outside the subresource is dropped.
         VkExtent3D Extent = SliceExtent(DestTexture, Slice);
         {
             const FTextureDesc& Desc = DestTexture.Desc;
@@ -5213,8 +5166,7 @@ namespace Lumina::RHI
             Extent.depth  = Math::Min(Extent.depth,  MipD - Slice.Offset.z);
         }
 
-        // bufferRowLength must be 0 or >= imageExtent.width. A shorter row is out of spec and the copy
-        // engine walks past the source, surfacing only as a device-lost with a write fault at address 0.
+        // A shorter row is out of spec and surfaces only as a device-lost with a write fault at address 0.
         if (RowLengthBlocks != 0 && RowLengthBlocks < Extent.width)
         {
             LOG_ERROR("RHI: dropped a texture copy with an out-of-spec region (rowLength {} < extent width {}, mip {}). "
@@ -5255,7 +5207,7 @@ namespace Lumina::RHI
 
         const FTexture& SourceTexture = GDevice->Textures[Source];
 
-        // See CmdCopyMemoryToTexture: block-compressed formats need bufferRowLength block-aligned.
+        // Block-compressed formats need the row length block-aligned, as in CmdCopyMemoryToTexture.
         const uint8 BlockW = RHI::Format::Info(SourceTexture.Format).BlockSize;
         const uint32 RowLengthBlocks = (BlockW > 1) ? Math::AlignUp(RowLength, (uint32)BlockW) : RowLength;
 
@@ -5439,7 +5391,7 @@ namespace Lumina::RHI
 
         const FTexture& TextureData = GDevice->Textures[Texture];
 
-        // GENERAL on both sides: the layout is not what we are after, the named-image dependency is.
+        // The layout is not what this is after, the named-image dependency is.
         VkImageMemoryBarrier2 BarrierInfo
         {
             .sType                  = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,

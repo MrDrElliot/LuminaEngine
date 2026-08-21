@@ -69,7 +69,7 @@ namespace Lumina
             return -1;
         }
 
-        // Linear RGBA8 MTSDF -- distance data, never sRGB; sampled bilinearly by the text pixel shader.
+        // Linear RGBA8 distance data, never sRGB, sampled bilinearly by the text pixel shader.
         AtlasTexture = RHI::Textures::Create(RHI::FTexture2DDesc
         {
             .Width  = AtlasWidth,
@@ -82,7 +82,7 @@ namespace Lumina
         return (int32)AtlasTexture.ResourceID();
     }
 
-    // Minimal UTF-8 decoder: advances Index past one code point, returning it (0xFFFD on malformed input).
+    // Advances Index past one code point and returns it, or the replacement char on bad input.
     static uint32 DecodeUTF8(const char* Str, size_t Length, size_t& Index)
     {
         const uint8 C0 = (uint8)Str[Index++];
@@ -117,7 +117,7 @@ namespace Lumina
         const size_t Length = Text.size();
         const float  LineAdvance = LineHeight * (LineSpacing <= 0.0f ? 1.0f : LineSpacing);
 
-        // Two-pass: gather per-line glyph runs + widths first so each line can be H-aligned independently.
+        // Two passes, so per-line runs and widths come first and each line aligns independently.
         TVector<TVector<const FFontGlyph*>> Lines;
         TVector<float>                      LineWidths;
         Lines.emplace_back();
@@ -156,7 +156,7 @@ namespace Lumina
             for (const FFontGlyph* G : Lines[Line])
             {
                 const FVector4& P = G->Plane;
-                // Skip zero-area glyphs (space/tab) -- they still advance the pen below.
+                // Zero-area glyphs such as space still advance the pen below.
                 if (P.z > P.x && P.w > P.y)
                 {
                     FShapedGlyph& S = Out.emplace_back();

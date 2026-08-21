@@ -76,8 +76,7 @@ namespace Lumina
         }
     }
 
-    // Sizes a body from where the bone's children sit, in bone space. False means the bone is too small
-    // to be worth simulating and Body was left untouched.
+    // False means the bone is too small to be worth simulating and Body was left untouched.
     static bool ShapeBodyForBone(SPhysicsBodySetup& Body, const TVector<FVector3>& ChildOffsets, float MinBoneLength)
     {
         if (ChildOffsets.empty())
@@ -103,9 +102,7 @@ namespace Lumina
             return true;
         }
 
-        // Branching bones (pelvis, chest) get a sphere at the joint. Averaging the child OFFSETS cancels
-        // out here -- a pelvis's two thighs point opposite ways -- which left the bone with no body, and a
-        // bodiless bone is pinned to its bind-pose local while everything below it falls away.
+        // Averaging child offsets cancels out on a branching bone, leaving it pinned to its bind pose.
         float MeanDistance = 0.0f;
         for (const FVector3& Offset : ChildOffsets)
         {
@@ -126,8 +123,7 @@ namespace Lumina
         return true;
     }
 
-    // Parameter along the infinite line (Anchor + t*Axis) closest to the ray. False when the two are
-    // near-parallel, where t runs away to nothing useful.
+    // False when the two are near-parallel, where t runs away to nothing useful.
     static bool ClosestParamOnAxisToRay(const FVector3& Anchor, const FVector3& Axis,
                                         const FVector3& RayOrigin, const FVector3& RayDirection, float& OutT)
     {
@@ -164,8 +160,7 @@ namespace Lumina
         return true;
     }
 
-    // Hit when the ray passes within Radius of the capsule's core segment; OutT is the ray parameter at
-    // closest approach, which is close enough for ordering overlapping bodies under the cursor.
+    // OutT is the ray parameter at closest approach, close enough to order overlapping bodies.
     static bool RayHitsCapsule(const FVector3& Origin, const FVector3& Direction,
                                const FVector3& SegmentStart, const FVector3& SegmentEnd, float Radius, float& OutT)
     {
@@ -329,8 +324,7 @@ namespace Lumina
                 const int32 BodyIndex = PhysicsAsset->FindBodyIndex(BoneName);
                 const char* Icon = (BodyIndex != INDEX_NONE) ? ShapeIcon(PhysicsAsset->Bodies[BodyIndex].Shape) : LE_ICON_BONE;
 
-                // The glyph goes in the label as well as IconText: the widget draws IconText OVER the row
-                // instead of reserving space ahead of it, so without the prefix it lands on the name.
+                // The widget draws IconText OVER the row, so without the prefix it lands on the name.
                 const FString Label = FString(Icon) + "  " + BoneName.c_str();
 
                 FTreeNodeID Node = Tree.CreateNode(ParentNode, FStringView(Label.c_str()));
@@ -392,8 +386,7 @@ namespace Lumina
 
             SelectedBone = Resource->GetBone(BoneIndex).Name;
 
-            // Selecting a bone selects its body when it has one; otherwise the details panel goes
-            // empty rather than keeping a stale body on screen.
+            // A bone with no body empties the details panel rather than keeping a stale one on screen.
             SelectBody(GetAsset<CPhysicsAsset>()->FindBodyIndex(SelectedBone));
         };
 
@@ -415,8 +408,7 @@ namespace Lumina
             CPhysicsAsset* PhysicsAsset = GetAsset<CPhysicsAsset>();
             const int32 BodyIndex = PhysicsAsset->FindBodyIndex(BoneName);
 
-            // Restructuring the body list under a live ragdoll leaves the simulated bodies describing a
-            // setup that no longer exists.
+            // Restructuring under a live ragdoll leaves simulated bodies describing a setup that is gone.
             ImGui::BeginDisabled(bSimulating);
 
             if (BodyIndex == INDEX_NONE)
@@ -522,9 +514,7 @@ namespace Lumina
     {
         FAssetEditorTool::OnPostUndoRedo();
 
-        // A restore rewrites Bodies and Constraints wholesale, so the details table's pointer into an
-        // element and the tree's body icons both describe data that no longer exists. Undoing an added
-        // body can also leave the selection index past the end.
+        // A restore rewrites Bodies and Constraints wholesale, so pointers and the selection go stale.
         DetailsTarget = nullptr;
         DetailsType = nullptr;
 
@@ -562,8 +552,7 @@ namespace Lumina
             World->GetRenderer()->GetSceneRenderSettings().bDrawBillboards = false;
         }
 
-        // The authoring overlays are drawn from the bind pose, which the live ragdoll has left behind, so
-        // they are replaced by a live one rather than shown alongside it.
+        // The overlays are drawn from the bind pose, which the live ragdoll has already left behind.
         if (bSimulating)
         {
             DrawSimulationOverlay();
@@ -705,8 +694,7 @@ namespace Lumina
                 break;
             }
 
-            // Body frame axes only on the selection: authoring RotationOffset is impossible without
-            // seeing which way the frame points, and drawing them for every body is unreadable.
+            // Authoring RotationOffset needs the frame visible, but drawing every body is unreadable.
             if (bSelected)
             {
                 constexpr float AxisLength = 0.12f;
@@ -918,8 +906,7 @@ namespace Lumina
         default: return;
         }
 
-        // No MarkDirty on the details table: its rows read through to the struct, so the numbers follow the
-        // drag on their own and rebuilding the tree every frame of a drag is pure cost.
+        // Rows read through to the struct, so rebuilding the tree every drag frame is pure cost.
         NotifyAssetDataChanged();
     }
 
@@ -1056,8 +1043,7 @@ namespace Lumina
         const FVector3 Target = RayOrigin + RayDirection * GrabDistance;
         const FVector3 AttachPoint = Scene->GetBodyPosition(GrabbedBodyID) + Scene->GetBodyRotation(GrabbedBodyID) * GrabLocalOffset;
 
-        // Critically-damped-ish spring: the damping term is what stops the body oscillating wildly once the
-        // cursor stops, which a pure position spring does badly at these stiffnesses.
+        // The damping term is what stops the body oscillating once the cursor stops.
         const FVector3 Force = (Target - AttachPoint) * GrabStiffness
                              - Scene->GetVelocityAtPoint(GrabbedBodyID, AttachPoint) * GrabDamping;
 
@@ -1075,10 +1061,7 @@ namespace Lumina
 
     void FPhysicsAssetEditorTool::DrawViewportOverlayElements(const FUpdateContext& UpdateContext, ImTextureRef ViewportTexture, ImVec2 ViewportSize)
     {
-        // Read BEFORE the base call. DrawViewport parks the cursor on the overlay origin, and every other
-        // tool takes it straight from there -- but the base override submits a Dummy, which advances the
-        // cursor to the next line. Reading after it displaced the origin, which pushed every mouse
-        // position off and made anything clicked near the top of the viewport fail the bounds test outright.
+        // Read BEFORE the base call, since its Dummy advances the cursor off the overlay origin.
         const ImVec2 ViewportOrigin = ImGui::GetCursorScreenPos();
 
         FAssetEditorTool::DrawViewportOverlayElements(UpdateContext, ViewportTexture, ViewportSize);
@@ -1092,8 +1075,7 @@ namespace Lumina
 
         if (bSimulating)
         {
-            // Gated on viewport focus/hover like the base's F11, so Esc typed into another panel does not
-            // kill the run out from under you.
+            // Gated on viewport focus, so Esc typed into another panel does not kill the run.
             if ((bViewportFocused || bViewportHovered) && ImGui::IsKeyPressed(ImGuiKey_Escape, false))
             {
                 StopSimulation();
@@ -1252,8 +1234,7 @@ namespace Lumina
             return;
         }
 
-        // Pick on release rather than press, and only when the mouse barely moved, so a click that turned
-        // into a camera drag does not also reselect.
+        // Picks on release with a movement threshold, so a click that became a drag does not reselect.
         if (HoveredHandle == INDEX_NONE && ImGui::IsMouseReleased(ImGuiMouseButton_Left))
         {
             const ImVec2 Drag = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
@@ -1294,7 +1275,7 @@ namespace Lumina
             const int32 BoneIndex = Resource->FindBoneIndex(BoneName);
             if (BoneIndex != INDEX_NONE)
             {
-                // No minimum here: an explicit add always produces a body, even on a stub bone.
+                // No minimum here, since an explicit add always produces a body even on a stub bone.
                 TVector<FVector3> ChildOffsets;
                 GatherChildOffsets(*Resource, BoneIndex, ChildOffsets);
                 ShapeBodyForBone(Body, ChildOffsets, 0.0f);
@@ -1467,8 +1448,7 @@ namespace Lumina
                 continue;
             }
 
-            // Leaf bones (fingertips, twist ends) have no length to fit a shape to; a body per one of
-            // those buries the ragdoll in tiny shapes nobody wants to simulate.
+            // A leaf bone has no length to fit a shape to, and a body per one buries the ragdoll in stubs.
             TVector<FVector3> ChildOffsets;
             GatherChildOffsets(*Resource, i, ChildOffsets);
 
@@ -1482,7 +1462,7 @@ namespace Lumina
             PhysicsAsset->Bodies.push_back(Candidate);
         }
 
-        // Second pass: every body exists now, so the ancestor walk sees the whole set.
+        // Every body exists by the second pass, so the ancestor walk sees the whole set.
         for (int32 i = 0; i < (int32)PhysicsAsset->Bodies.size(); ++i)
         {
             const FName ChildBone = PhysicsAsset->Bodies[i].BoneName;
@@ -1559,8 +1539,7 @@ namespace Lumina
                     FVector4(0.25f, 1.0f, 0.45f, 1.0f), 2.0f, false);
             }
 
-            // The body is built from a deferred queue, so report what actually landed rather than what
-            // was asked for.
+            // The body is built from a deferred queue, so report what landed rather than what was asked.
             const SRigidBodyComponent* FloorBody = World->TryGetComponent<SRigidBodyComponent>(FloorBodyEntity);
             if (!bFloorBodyReported && FloorBody != nullptr && FloorBody->BodyID != 0xFFFFFFFF)
             {
@@ -1574,8 +1553,7 @@ namespace Lumina
             }
         }
 
-        // Live bone positions, recovered from the skinning matrices the ragdoll wrote back
-        // (Skin = Global * InvBind, so Global = Skin * inverse(InvBind)).
+        // Recovered from the skinning matrices, since Global is Skin times the inverse of InvBind.
         FSkeletonResource* Resource = GetSkeletonResource();
         const SSkeletalMeshComponent* MeshComponent = (MeshEntity != entt::null)
             ? World->TryGetComponent<SSkeletalMeshComponent>(MeshEntity) : nullptr;
@@ -1625,8 +1603,7 @@ namespace Lumina
         FloorBodyEntity = World->ConstructEntity("Simulation Floor");
         World->GetComponent<STransformComponent>(FloorBodyEntity).SetLocation(FVector3(0.0f, -0.5f, 0.0f));
 
-        // Configured body first, then the collider: the Jolt body is built from what the component holds
-        // when it is constructed, so the values have to be passed in rather than assigned afterwards.
+        // The Jolt body is built from what the component holds at construction, so pass values in.
         SRigidBodyComponent BodyDesc;
         BodyDesc.BodyType = EBodyType::Static;
         BodyDesc.CollisionProfile.Layer = ECollisionProfiles::Static;
@@ -1641,7 +1618,7 @@ namespace Lumina
         Ragdoll.PhysicsAsset = PhysicsAsset;
         Ragdoll.State = ERagdollState::Simulated;
 
-        // Leave the entity where it is: moving it to follow the root drags the preview out of frame.
+        // Following the root would drag the preview out of frame, so leave the entity where it is.
         Ragdoll.bDriveEntityFromRoot = false;
 
         // Editor worlds are created paused, which stops systems and the physics step alike.
@@ -1706,8 +1683,7 @@ namespace Lumina
             Type = SPhysicsConstraintSetup::StaticStruct();
         }
 
-        // Comparing the address catches a vector reallocation as well as a selection change; the rows
-        // cache a pointer into the element and would write through a dangling one after a resize.
+        // Comparing the address catches a reallocation, since rows cache a pointer into the element.
         if (Target != DetailsTarget || Type != DetailsType)
         {
             DetailsTarget = Target;
@@ -1765,8 +1741,7 @@ namespace Lumina
         ImGui::TextDisabled("|");
         ImGui::SameLine();
 
-        // Editing the body list while a ragdoll is live would leave the simulated bodies describing a
-        // setup that no longer exists.
+        // Editing the body list under a live ragdoll leaves simulated bodies describing a setup that is gone.
         ImGui::BeginDisabled(bSimulating);
 
         if (ImGui::Button(LE_ICON_AUTO_FIX " Generate"))
@@ -1839,8 +1814,7 @@ namespace Lumina
                 ImGui::TableNextColumn();
                 const bool bSelected = (SelectionMode == EPhysicsAssetSelection::Constraint && i == SelectedConstraintIndex);
 
-                // Empty label + AllowOverlap: a labeled row-spanning selectable draws its text across the
-                // other columns and swallows the delete button's clicks.
+                // A labeled row-spanning selectable draws across the columns and swallows the delete clicks.
                 if (ImGui::Selectable("##Row", bSelected, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap))
                 {
                     SelectConstraint(i);
@@ -1863,7 +1837,7 @@ namespace Lumina
 
             ImGui::EndTable();
 
-            // Deferred: erasing mid-iteration invalidates the loop and every row drawn after it.
+            // Deferred, since erasing mid-iteration invalidates the loop and every row after it.
             if (PendingRemoval != INDEX_NONE)
             {
                 RemoveConstraintAt(PendingRemoval);

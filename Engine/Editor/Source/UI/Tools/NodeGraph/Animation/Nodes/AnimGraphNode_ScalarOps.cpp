@@ -32,8 +32,7 @@ namespace Lumina
 
     void CAnimGraphNode_ScalarUnaryOp::GenerateBytecode(FAnimationGraphCompiler& Compiler)
     {
-        // Unary ops ignore operand B; pass the A register twice so the opcode
-        // layout stays uniform with the binary ops.
+        // Unary ops ignore operand B, so pass A twice and keep the opcode layout uniform.
         const uint16 RegA   = ResolveValueInput(APin, Compiler);
         const uint16 Result = Compiler.EmitScalarOp(GetScalarOp(), RegA, RegA);
 

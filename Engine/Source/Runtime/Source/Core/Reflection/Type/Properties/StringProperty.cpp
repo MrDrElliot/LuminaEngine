@@ -33,7 +33,7 @@ namespace Lumina
 
         if (Ar.IsWriting())
         {
-            // Indexed path (replication): a compact net index; the string is exported once via NameExport.
+            // An indexed path uses a compact net index, with the string exported once via NameExport.
             if (Ar.NameToNetIndex)
             {
                 WriteVarUInt(Ar, NameValue->IsNone() ? 0u : Ar.NameToNetIndex(*NameValue));

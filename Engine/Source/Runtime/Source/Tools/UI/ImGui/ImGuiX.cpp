@@ -569,9 +569,13 @@ namespace Lumina::ImGuiX
         return PassSearchFilter(FStringView(Filter.InputBuf), Text);
     }
 
-    int32 SearchableCombo(const char* StrId, const char* Preview, int32 ItemCount, int32 CurrentIndex, const TFunction<FFixedString(int32)>& GetItemLabel, const char* ItemIcon)
+    int32 SearchableCombo(const char* StrId, const char* Preview, int32 ItemCount, int32 CurrentIndex, const TFunction<FFixedString(int32)>& GetItemLabel, const char* ItemIcon, FFixedString* OutCreatedText)
     {
         int32 Result = INDEX_NONE;
+        if (OutCreatedText != nullptr)
+        {
+            OutCreatedText->clear();
+        }
         const ImGuiStyle& Style = ImGui::GetStyle();
 
         const ImGuiID ComboId = ImGui::GetID(StrId);
@@ -644,6 +648,31 @@ namespace Lumina::ImGuiX
             if (ImGui::BeginChild("##list", ImVec2(PopupWidth, ListHeight)))
             {
                 bool bAnyVisible = false;
+
+                if (OutCreatedText != nullptr && Filter.InputBuf[0] != 0)
+                {
+                    bool bExists = false;
+                    for (int32 i = 0; i < ItemCount && !bExists; ++i)
+                    {
+                        bExists = strcmp(GetItemLabel(i).c_str(), Filter.InputBuf) == 0;
+                    }
+
+                    if (!bExists)
+                    {
+                        FFixedString Row = LE_ICON_PLUS "  Create \"";
+                        Row += Filter.InputBuf;
+                        Row += "\"";
+
+                        if (ImGui::Selectable(Row.c_str()))
+                        {
+                            *OutCreatedText = Filter.InputBuf;
+                            Filter.Clear();
+                            ImGui::CloseCurrentPopup();
+                        }
+                        bAnyVisible = true;
+                    }
+                }
+
                 for (int32 i = 0; i < ItemCount; ++i)
                 {
                     const FFixedString Label = GetItemLabel(i);

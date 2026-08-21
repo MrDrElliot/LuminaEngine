@@ -43,8 +43,7 @@ namespace Lumina
 
         Promise.SetValue(Object);
 
-        // Retire after fulfilling: a request arriving in this window attaches to the already-satisfied
-        // handle (and resolves immediately) instead of kicking off a duplicate load.
+        // A request arriving in this window attaches to the satisfied handle instead of loading again.
         FFiberScopeLock Lock(RequestMutex);
         InFlight.erase(GUID);
     }
@@ -75,8 +74,7 @@ namespace Lumina
 
         if (bShouldLoad)
         {
-            // No one else is loading this: load inline (the handle is fulfilled immediately, so the
-            // Get() below doesn't actually block) rather than pay a scheduling hop just to wait.
+            // The handle is fulfilled immediately, so this avoids a scheduling hop just to wait.
             PerformLoad(PackagePath, RequestedAsset, Move(Promise));
             return Handle.Get();
         }

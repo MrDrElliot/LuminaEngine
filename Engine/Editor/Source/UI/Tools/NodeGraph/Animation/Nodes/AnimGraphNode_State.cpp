@@ -20,8 +20,7 @@ namespace Lumina
 
     void CAnimGraphNode_State::BuildNode()
     {
-        // StateFlow pins: the In pin accepts many incoming transitions (and the
-        // entry wire); the Out pin fans out to many outgoing transitions.
+        // The In pin accepts many incoming transitions, while Out fans out to many outgoing ones.
         InPin  = CreateAnimPin("In", ENodePinDirection::Input, EAnimPinType::StateFlow);
         InPin->bAllowMultipleConnections = true;
 
@@ -58,7 +57,7 @@ namespace Lumina
             AllocateBlendTree();
         }
 
-        // Context-free: compiler evaluates states never opened; Initialize() deferred to editor tool.
+        // Context-free, since the compiler evaluates states never opened and Initialize is deferred.
         BlendTree->EnsureSetup();
         return BlendTree.Get();
     }

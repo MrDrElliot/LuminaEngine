@@ -23,22 +23,17 @@ namespace Lumina::DataTableUI
         {
             CStruct* Candidate = *It;
 
-            // The base itself carries no fields, so a table of it would be a list of names and
-            // nothing else. IsChildOf also excludes CClass instances, which derive from CStruct and
-            // would otherwise put every engine class in this list.
+            // IsChildOf also excludes CClass, which would otherwise put every engine class in this list.
             if (Candidate == Base || !Candidate->IsChildOf(Base))
             {
                 continue;
             }
 
-            // Reaches script-declared rows too: a minted CScriptStruct is force-registered like any other
-            // reflected type, and the iterator walks the object array rather than a package, so deriving
-            // from the base is the whole test. Nothing extra to merge in.
+            // A minted CScriptStruct is force-registered like any other type, so deriving is the whole test.
             Candidates.push_back(Candidate);
         }
 
-        // Nothing derives from the base yet. An empty combo reads as a broken picker, so say what is
-        // actually missing and how to supply it.
+        // An empty combo reads as a broken picker, so say what is missing and how to supply it.
         if (Candidates.empty())
         {
             ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.45f, 1.0f), "No row structs are defined.");

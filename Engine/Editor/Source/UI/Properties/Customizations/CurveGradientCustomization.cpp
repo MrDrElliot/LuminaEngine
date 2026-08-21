@@ -20,8 +20,7 @@ namespace Lumina
             return ImGui::ColorConvertFloat4ToU32(ImVec4(C.x, C.y, C.z, C.w));
         }
 
-        // Alpha has to read as transparency, not as a dark color, or a fade-to-zero gradient looks
-        // identical to a fade-to-black one.
+        // Alpha must read as transparency, or a fade-to-zero looks identical to a fade-to-black.
         void DrawCheckerboard(ImDrawList* DrawList, const ImVec2& Min, const ImVec2& Max)
         {
             constexpr float Cell = 6.0f;
@@ -68,8 +67,7 @@ namespace Lumina
         InCurve.GetTimeRange(TimeMin, TimeMax);
         InCurve.GetValueRange(ValueMin, ValueMax);
 
-        // A flat curve has no value range to normalize against; give it a band so it draws as a line
-        // through the middle rather than collapsing onto an edge or dividing by zero.
+        // A flat curve has no range to normalize against, so give it a band rather than divide by zero.
         if (TimeMax - TimeMin < 1e-6f)  { TimeMax  = TimeMin  + 1.0f; }
         if (ValueMax - ValueMin < 1e-6f) { ValueMin -= 0.5f; ValueMax += 0.5f; }
 
@@ -92,10 +90,7 @@ namespace Lumina
 
     bool FCurvePropertyCustomization::DrawAssetSlot()
     {
-        // The table hands this customization one handle, for the SCurve as a whole, so the child handle is
-        // synthesized: container is our own copy of the struct, property is SCurve's reflected Asset member.
-        // The picker reads the property's declared class off it, which is what gives it the CCurveAsset
-        // type filter for free.
+        // The child handle is synthesized, which is what gives the picker its declared-class filter free.
         if (AssetPicker == nullptr)
         {
             FProperty* AssetProp = SCurve::StaticStruct()->GetProperty(FName("Asset"));
@@ -108,8 +103,7 @@ namespace Lumina
             AssetHandle = MakeShared<FPropertyHandle>(&Value, AssetProp);
         }
 
-        // UpdateAndDraw syncs the picker from the handle and draws it, but leaves the write-back to the
-        // caller (normally the property table's dispatch), so commit it here when it reports a change.
+        // UpdateAndDraw leaves the write-back to the caller, so commit it here when it reports a change.
         const EPropertyChangeOp Op = AssetPicker->UpdateAndDraw(AssetHandle, false);
         if (Op != EPropertyChangeOp::None)
         {
@@ -129,8 +123,7 @@ namespace Lumina
 
         ImGui::PushID(this);
 
-        // Thumbnail doubles as the button that opens the editor: it is the clearest affordance and keeps
-        // the collapsed row to one line.
+        // The thumbnail is the clearest affordance and keeps the collapsed row to one line.
         const ImVec2 ThumbSize(ImGui::GetContentRegionAvail().x - 90.0f, ImGui::GetFrameHeight() * 1.6f);
         const ImVec2 ThumbMin = ImGui::GetCursorScreenPos();
         DrawThumbnail(Shown, ThumbSize);
@@ -161,7 +154,7 @@ namespace Lumina
         {
             if (bAssetMode)
             {
-                // Read-only: this curve is owned by another asset and shared with every other user of it.
+                // Read-only, since this curve is owned by another asset and shared with every other user.
                 ImGui::TextDisabled("Read-only -- open the Curve asset to edit it.");
                 ImGui::Separator();
                 DrawThumbnail(Shown, ImVec2(520.0f, 260.0f));
@@ -179,8 +172,7 @@ namespace Lumina
         else
         {
             bEditorOpen = false;
-            // The widget writes through a raw pointer into this customization's copy; drop it when the
-            // popup closes so a later HandleExternalUpdate replacing Value cannot leave it dangling.
+            // Dropped on close so a later HandleExternalUpdate replacing Value cannot leave it dangling.
             Editor.SetCurve(nullptr);
         }
 
@@ -204,8 +196,7 @@ namespace Lumina
         SCurve Actual;
         Property->GetValue(&Actual);
 
-        // Never swap the value out from under an open editor: the widget holds a pointer into Value.Curve,
-        // and replacing it mid-drag would both dangle and discard the edit in progress.
+        // The widget holds a pointer into Value.Curve, so a swap would dangle and discard the edit.
         if (bEditorOpen)
         {
             return;
@@ -239,8 +230,7 @@ namespace Lumina
             TimeMax = TimeMin + 1.0f;
         }
 
-        // One quad per pixel column: gradients are short and this handles any interpolation the evaluator
-        // does without the draw code having to mirror it.
+        // One quad per pixel column, so any interpolation the evaluator does is handled for free.
         const int32 Columns = Math::Max(1, (int32)(Max.x - Min.x));
         for (int32 i = 0; i < Columns; ++i)
         {
@@ -290,8 +280,7 @@ namespace Lumina
             {
                 const float NewAlpha = Math::Clamp((ImGui::GetIO().MousePos.x - RampMin.x) / (RampMax.x - RampMin.x), 0.0f, 1.0f);
                 Value.Keys[i].Time = TimeMin + (TimeMax - TimeMin) * NewAlpha;
-                // Re-sorting mid-drag changes indices under us, so the selection is re-found by identity
-                // afterwards rather than assumed to still be i.
+                // Re-sorting mid-drag changes indices, so the selection is re-found by identity afterwards.
                 const SGradientKey Moved = Value.Keys[i];
                 Value.SortKeys();
                 for (int32 j = 0; j < Value.NumKeys(); ++j)
@@ -351,8 +340,7 @@ namespace Lumina
             DrawRamp(PopupRampMin, PopupRampMax);
             ImGui::InvisibleButton("##PopupRamp", ImVec2(EditorWidth, 28.0f));
 
-            // Double-click inserts a stop at the clicked position, seeded with the color already there so
-            // the ramp does not visibly jump when you add a control point.
+            // Seeded with the color already there so the ramp does not jump when a stop is added.
             if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
             {
                 float TimeMin = 0.0f, TimeMax = 1.0f;

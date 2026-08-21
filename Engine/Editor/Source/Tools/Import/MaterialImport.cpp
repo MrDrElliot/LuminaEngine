@@ -33,8 +33,7 @@ namespace Lumina
             CMaterialNodeGraph* Graph = NewObject<CMaterialNodeGraph>(Material->GetPackage(), "AssetMaterialGraph");
             Graph->SetMaterial(Material);
 
-            // Deliberately skips CMaterialNodeGraph::Initialize(): it creates an ImGui/ax editor context that is
-            // not safe off the main thread. The editor recreates that lazily when the asset is opened.
+            // Skips Initialize, which creates an ImGui context that is not safe off the main thread.
             Graph->CreateNode(CMaterialOutputNode::StaticClass());
             return Graph;
         }
@@ -92,16 +91,13 @@ namespace Lumina
             }
         }
 
-        // Standard PBR template graph. Every texture and factor is a named parameter so per-source
-        // CMaterialInstances override them; Opacity is wired only for masked/translucent masters.
-        /** Parameter-name stems for the five texture slots, in EMaterialTextureSlot order. */
+        // Parameter-name stems for the five texture slots, in EMaterialTextureSlot order.
         constexpr const char* GSlotNames[(size_t)EMaterialTextureSlot::Count] =
         {
             "BaseColor", "MetallicRoughness", "Normal", "Emissive", "Occlusion", "Metallic", "Roughness",
         };
 
-        /** Two bits per slot: which TEXCOORD set it samples, and whether it needs a scale/offset chain.
-         *  Both are compiled in, so they key the MASTER; the scale/offset values stay per-instance. */
+        // Both bits are compiled in, so they key the MASTER while the values stay per-instance.
         uint32 BuildUVSignature(const FMeshImportMaterial& Src)
         {
             uint32 Signature = 0;
@@ -122,7 +118,7 @@ namespace Lumina
             return static_cast<EMaterialSampler>(Sampler);
         }
 
-        /** Packs the five slots' samplers into the master key: the sampler index is a shader constant. */
+        // The sampler index is a shader constant, so it belongs in the master key.
         uint32 BuildSamplerSignature(const FMeshImportMaterial& Src)
         {
             uint32 Signature = 0;
@@ -136,8 +132,7 @@ namespace Lumina
         /** Dielectric reflectance the engine's Specular term encodes, derived from IOR. */
         float ComputeEngineSpecular(const FMeshImportMaterial& Src)
         {
-            // Schlick F0 for a dielectric against air, scaled by KHR_materials_specular, then expressed in
-            // the engine's units (BasePixelPass.slang: F0 = 0.08 * Specular). IOR 1.5 -> F0 0.04 -> 0.5.
+            // Schlick F0 for a dielectric against air, so IOR 1.5 gives F0 0.04 and the engine's 0.5.
             const float IOR = Math::Max(Src.IOR, 1.0f);
             const float Ratio = (IOR - 1.0f) / (IOR + 1.0f);
             const float F0 = Ratio * Ratio * Math::Max(Src.SpecularFactor, 0.0f);
@@ -157,8 +152,7 @@ namespace Lumina
             MFB_SplitMetalRough  = BIT(5),
         };
 
-        /** True when the material's metal/rough comes from two separate maps instead of a packed one.
-         *  A packed map always wins, so a source that supplies both never builds the split chain. */
+        // A packed map always wins, so a source supplying both never builds the split chain.
         bool UsesSplitMetalRough(const FMeshImportMaterial& Src)
         {
             return Src.MetallicRoughnessImage == INDEX_NONE
@@ -173,8 +167,7 @@ namespace Lumina
             if (Src.OcclusionStrength != 1.0f) { Signature |= MFB_OcclusionStrength; }
             // 0.5 is the shading default, so an unauthored IOR needs no node at all.
             if (Math::Abs(ComputeEngineSpecular(Src) - 0.5f) > 0.001f) { Signature |= MFB_Specular; }
-            // Must match the Shading selection in GetMaster exactly: unlit wins, so a material that is both
-            // would otherwise build coat nodes and set coat parameters the Unlit model never reads.
+            // Must match GetMaster exactly, since unlit wins and would otherwise build unread coat nodes.
             if (Src.ClearcoatFactor > 0.0f && !Src.bUnlit) { Signature |= MFB_Clearcoat; }
             return Signature;
         }
@@ -190,7 +183,6 @@ namespace Lumina
                 return;
             }
 
-            // Layout: named columns + a vertical scale, sized so the (tall) texture-sample nodes aren't crowded.
             // Bump these to spread the auto-generated graph further apart.
             constexpr float ColTex = 0.0f;      // texture + factor inputs
             constexpr float ColMul = 620.0f;    // multiply nodes
@@ -202,8 +194,7 @@ namespace Lumina
             // UV chains sit to the LEFT of the texture column so they read as inputs to it.
             constexpr float ColUV = -700.0f;
 
-            /** Wires a slot's TextureSample UV pin to the set and transform its signature asks for. Set 0 with
-             *  no transform stays unwired. Scale rides the Tiling pin so the compiler applies the chain rule. */
+            // Set 0 with no transform stays unwired, and scale rides Tiling so the chain rule applies.
             auto ApplySlotUV = [&](CMaterialExpression_TextureSample* Sample, EMaterialTextureSlot Slot, float Y)
             {
                 // Filtering/addressing is per slot and compiled in, so it rides the same pass as the UV set.
@@ -274,9 +265,7 @@ namespace Lumina
             }
             else
             {
-                // glTF COLOR_0 multiplies base color. A scene can carry most of its look here -- 285 meshes
-                // sharing 7 white-factored materials is a vertex-colored scene, and dropping the attribute
-                // renders the whole thing white -- so it belongs in the chain, not in a note.
+                // 285 meshes sharing 7 white-factored materials is a vertex-colored scene that would render white.
                 auto* VertColor = AddNode<CMaterialExpression_VertexColor>(Graph, ColTex, 250.0f * VS);
 
                 auto* MulVertex = AddNode<CMaterialExpression_Multiplication>(Graph, ColMul + 160.0f, 60.0f * VS);
@@ -285,10 +274,7 @@ namespace Lumina
                 Connect(MulVertex->Output, Output->BaseColorPin);
             }
 
-            // Metallic and roughness, each scaled by its factor. Two shapes, because the two source
-            // conventions genuinely differ: glTF packs both into one image (G = roughness, B = metallic),
-            // while FBX exporters author a separate single-channel map per channel. Sampling a standalone
-            // roughness map through the packed chain would read metalness out of its blue channel.
+            // glTF packs both into one image while FBX authors a separate single-channel map per channel.
             const bool bSplitMetalRough = (FeatureSignature & MFB_SplitMetalRough) != 0;
 
             auto* FacMetal = AddNode<CMaterialExpression_ConstantFloat>(Graph, ColTex, 570.0f * VS);
@@ -343,7 +329,7 @@ namespace Lumina
             Connect(FacRough->GetOutputPins()[0].Get(), MulRough->B);
             Connect(MulRough->Output, Output->RoughnessPin);
 
-            // Normal map: feed the raw RGB; the output node decodes (xy*2-1) and reconstructs z.
+            // Feed the raw RGB, since the output node decodes and reconstructs z.
             auto* TexNormal = AddNode<CMaterialExpression_TextureSample>(Graph, ColTex, 730.0f * VS);
             TexNormal->bDynamic = true;
             TexNormal->ParameterName = "NormalTexture";
@@ -356,8 +342,7 @@ namespace Lumina
             }
             else
             {
-                // glTF: normal = normalize((rgb*2-1) * vec3(scale, scale, 1)). The output node reconstructs z, so
-                // scaling all three channels about 0.5 in ENCODED space is exactly equivalent and costs three nodes.
+                // Scaling all three channels about 0.5 in ENCODED space is equivalent and costs three nodes.
                 auto* Center = AddNode<CMaterialExpression_ConstantFloat>(Graph, ColTex - 320.0f, 730.0f * VS);
                 Center->Value = FVector4(0.5f, 0.0f, 0.0f, 0.0f);
 
@@ -410,7 +395,7 @@ namespace Lumina
             }
             else
             {
-                // glTF: ao = 1 + strength * (sampled - 1), i.e. strength fades the map toward unoccluded.
+                // Strength fades the occlusion map toward unoccluded rather than scaling it.
                 auto* One = AddNode<CMaterialExpression_ConstantFloat>(Graph, ColTex - 320.0f, 1300.0f * VS);
                 One->Value = FVector4(1.0f, 0.0f, 0.0f, 0.0f);
 
@@ -433,8 +418,7 @@ namespace Lumina
                 Connect(Add->Output, Output->AOPin);
             }
 
-            // Specular is a single scalar derived from IOR at import time, so it needs no math chain --
-            // just a parameter. Absent entirely when it works out to the shading default of 0.5.
+            // Derived from IOR at import time, so it needs a parameter rather than a math chain.
             if ((FeatureSignature & MFB_Specular) != 0)
             {
                 auto* SpecularParam = AddNode<CMaterialExpression_ConstantFloat>(Graph, ColTex, 1600.0f * VS);
@@ -444,8 +428,7 @@ namespace Lumina
                 Connect(SpecularParam->GetOutputPins()[0].Get(), Output->SpecularPin);
             }
 
-            // Clearcoat. Two scalars; the master's ShadingModel is what actually selects the coat lobe,
-            // and these only matter once it is Clearcoat.
+            // The master's ShadingModel selects the coat lobe, and these only matter once it is Clearcoat.
             if ((FeatureSignature & MFB_Clearcoat) != 0)
             {
                 auto* CoatParam = AddNode<CMaterialExpression_ConstantFloat>(Graph, ColTex, 1700.0f * VS);
@@ -515,8 +498,7 @@ namespace Lumina
                 return Instances;
             }
 
-            // <Dir>/<Prefix><cleaned BaseName><Variant>. Prefix follows the asset convention (M_ materials,
-            // T_ textures); Variant is an already-clean tag like "_Masked" appended after the sanitized core.
+            // Prefix follows the asset convention, and Variant is an already-clean tag appended after the core.
             auto MakeAssetPath = [&](FStringView Prefix, FStringView Variant) -> FFixedString
             {
                 FFixedString Path = MaterialsDir;
@@ -525,8 +507,7 @@ namespace Lumina
                 return Path;
             };
 
-            // Held as strong pins for the whole pass: a mid-loop master teardown would otherwise free them and
-            // leave every later master building against dangling pointers. Registered into OutCreated lazily.
+            // Held as strong pins, since a mid-loop teardown would leave later masters building on dangling pointers.
             TObjectPtr<CTexture> White = CTextureFactory::CreateSolidColorTexture(
                 EnsureUniquePath(MakeAssetPath("T_", "_DefaultWhite")), 255, 255, 255, 255, ETextureColorSpace::Linear);
             TObjectPtr<CTexture> FlatNormal = CTextureFactory::CreateSolidColorTexture(
@@ -588,8 +569,7 @@ namespace Lumina
                     }
                 }
 
-                // Master name: M_<BaseName>[_Masked/_Translucent/_Additive][_Unlit][_TwoSided] -- one master per
-                // distinct render state. The "M_" prefix replaces the old "_Material" tag.
+                // One master per distinct render state, with the M_ prefix replacing the old _Material tag.
                 FFixedString Variant;
                 if (Blend == EBlendMode::Masked)           { Variant.append("_Masked"); }
                 else if (Blend == EBlendMode::Translucent) { Variant.append("_Translucent"); }
@@ -597,8 +577,7 @@ namespace Lumina
                 if (Shading == EMaterialShadingModel::Unlit)     { Variant.append("_Unlit"); }
                 if (Shading == EMaterialShadingModel::Clearcoat) { Variant.append("_Clearcoat"); }
                 if (bTwoSided)                               { Variant.append("_TwoSided"); }
-                // Two masters that differ only in UV topology, filtering or feature set would otherwise
-                // fight for the same name.
+                // Two masters differing only in UV topology or feature set would otherwise fight for one name.
                 if (UVSignature != 0)
                 {
                     Variant.append("_UV");
@@ -621,8 +600,7 @@ namespace Lumina
                     return nullptr;
                 }
 
-                // glTF BLEND legitimately means blend, so cutout foliage arrives tagged translucent and silently
-                // pays two geometry passes with no occlusion culling. Warned per MASTER, so a foliage scene warns once.
+                // glTF BLEND legitimately means blend, so cutout foliage silently pays two geometry passes.
                 if (Blend == EBlendMode::Translucent)
                 {
                     LOG_WARN("[Import] '{}' imported as TRANSLUCENT (source alpha mode = BLEND). Translucency "
@@ -648,8 +626,7 @@ namespace Lumina
                 const FMaterialGraphCompileResult CompileResult = CompileMaterialGraph(Master, Graph);
                 if (!CompileResult.bSuccess)
                 {
-                    // Named even when the result carries no errors: a bSuccess=false with an empty list is
-                    // exactly the case that used to drop a master, and every instance behind it, in silence.
+                    // Named even with no errors, since an empty list is exactly what used to drop a master silently.
                     LOG_ERROR("[MaterialImport] Generated PBR material '{}' failed to compile ({} error(s)); "
                               "every surface using it will import with NO material.",
                               Master->GetName(), (uint32)CompileResult.Errors.size());
@@ -657,20 +634,17 @@ namespace Lumina
                     {
                         LOG_ERROR("[MaterialImport] Generated PBR material '{}' failed to compile [{}]: {}", Master->GetName(), Error.Name, Error.Description);
                     }
-                    // A failed compile leaves the master parameterless and not-ready; emitting it or its instances would
-                    // just spam missing-parameter errors. Meshes here fall back to the engine default material.
+                    // A failed compile leaves the master parameterless, so emitting it would only spam errors.
                     Graph->SetMaterial(nullptr);
                     Graph->ConditionalBeginDestroy();
                     Master->ConditionalBeginDestroy();
                     return nullptr;
                 }
 
-                // Register the shared default textures ahead of the first master that keeps them, so the
-                // caller's reverse-order teardown destroys masters/graphs before the textures they reference.
+                // Registered ahead of the first master, so reverse-order teardown frees masters before textures.
                 RegisterSharedDefaults();
 
-                // Master THEN graph: reverse-order teardown destroys the graph first, releasing its back-ref so the
-                // master and its default textures can actually reach refcount 0.
+                // Master THEN graph, so reverse-order teardown releases the back-ref before the master is freed.
                 OutCreated.push_back(Master);
                 OutCreated.push_back(Graph);
                 Groups.push_back({ Blend, Shading, bTwoSided, Cutoff, UVSignature, SamplerSignature,
@@ -692,7 +666,7 @@ namespace Lumina
                     continue;
                 }
 
-                // Instance name: MI_<source material name>, cleaned. The folder already scopes it to this import.
+                // The folder already scopes the instance, so the name only needs cleaning.
                 FFixedString InstPath = MaterialsDir;
                 InstPath.append(Import::MakeAssetName("MI_", Src.Name.c_str(), "Material").c_str());
                 InstPath = EnsureUniquePath(InstPath);
@@ -712,8 +686,7 @@ namespace Lumina
                 Instance->SetScalarValue("RoughnessFactor", Src.RoughnessFactor);
                 Instance->SetVectorValue("EmissiveColor", FVector4(Src.EmissiveColor.x, Src.EmissiveColor.y, Src.EmissiveColor.z, 1.0f));
 
-                // A channel with no image keeps the neutral default; an image that failed to cook warns,
-                // since that is the usual cause of a flat/untextured import.
+                // A channel with no image keeps the neutral default, and a failed cook warns since it flattens the look.
                 auto BindTexture = [&](const FName& Param, int32 ImageIndex)
                 {
                     if (ImageIndex < 0)
@@ -745,8 +718,7 @@ namespace Lumina
                 BindTexture("EmissiveTexture", Src.EmissiveImage);
                 BindTexture("OcclusionTexture", Src.OcclusionImage);
 
-                // UV scale/offset are instance parameters; the master only bakes WHICH set and whether a
-                // chain exists, so these only resolve on masters whose signature asked for them.
+                // The master bakes only WHICH set and whether a chain exists, so scale and offset stay per-instance.
                 const uint32 UVSignature = BuildUVSignature(Src);
                 for (size_t Slot = 0; Slot < (size_t)EMaterialTextureSlot::Count; ++Slot)
                 {
@@ -765,8 +737,7 @@ namespace Lumina
                     Instance->SetScalarValue(FName((Stem + "UVRotation").c_str()), UVT.Rotation);
                 }
 
-                // Only set on masters whose feature signature built the node. A stray write to an undeclared
-                // parameter is a no-op, but keeping it symmetric with the graph makes it obviously one decision.
+                // Set only where the feature signature built the node, keeping this symmetric with the graph.
                 const uint32 FeatureSignature = BuildFeatureSignature(Src, bSourceHasVertexColors);
                 if ((FeatureSignature & MFB_NormalScale) != 0)
                 {

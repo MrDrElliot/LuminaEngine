@@ -116,8 +116,7 @@ namespace Lumina
         {
             return;
         }
-        // Force a re-read even if already loaded; class-reference properties may now resolve to classes that
-        // didn't exist at first load (e.g. C# Scriptable subclasses minted during script (re)load).
+        // Class-reference properties may now resolve to classes that did not exist at first load.
         SettingsFileLoaded.erase(SettingsClass);
         LoadSettingsForClass(SettingsClass);
     }
@@ -204,8 +203,7 @@ namespace Lumina
 
     namespace
     {
-        // Split a dotted key like "Editor.WorldEditorTool.GuizmoSnapEnabled"
-        // into its segments. Returns false (and leaves Out empty) for empty Key.
+        // Returns false and leaves Out empty for an empty key.
         bool SplitDottedKey(FStringView Key, TVector<FString>& Out)
         {
             Out.clear();
@@ -230,9 +228,7 @@ namespace Lumina
 
     void FConfig::LoadPath(FStringView ConfigPath)
     {
-        // A config directory that does not exist yet holds no settings, which is the correct state
-        // for a clean clone: the directory appears when something is first saved into it. Iterating
-        // it anyway makes the VFS warn about a missing directory on every first run, so ask first.
+        // Iterating a missing directory makes the VFS warn on every first run, so ask first.
         if (!VFS::Exists(ConfigPath))
         {
             return;
@@ -267,8 +263,7 @@ namespace Lumina
 
             IndexPathsForFile(Parsed, FString(), FilePath);
 
-            // Merge into the root tree. Later files take precedence, this is
-            // intentional for project-overrides-engine layering, the same as before.
+            // Later files take precedence, which is the intended project-overrides-engine layering.
             for (auto It = Parsed.begin(); It != Parsed.end(); ++It)
             {
                 if (It->is_object() && RootConfig.contains(It.key()) && RootConfig[It.key()].is_object())

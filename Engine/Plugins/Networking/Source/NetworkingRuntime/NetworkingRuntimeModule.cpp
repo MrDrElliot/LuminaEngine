@@ -18,7 +18,6 @@ void FNetworkingRuntimeModule::StartupModule()
 
 void FNetworkingRuntimeModule::ShutdownModule()
 {
-    // Cleared unconditionally: this module owns the object the engine holds, and leaving the pointer
-    // behind would outlive the code it points at the moment this DLL unloads.
+    // This module owns the object the engine holds, which would outlive its code on unload.
     SetNetworkRuntime(nullptr);
 }

@@ -1,12 +1,10 @@
 #include "NsightPerfTool.h"
 
-// volk defines VK_NO_PROTOTYPES + the Vulkan types; it MUST precede every NvPerf Vulkan header.
-// Vulkan lives only in this plugin: RHINative.h hands out opaque handles we reinterpret below.
+// Vulkan lives only in this plugin, and RHINative hands out opaque handles reinterpreted below.
 #include <volk/volk.h>
 #include "Renderer/RHINative.h"
 
-// Nsight Perf SDK. NvPerfMetricConfigurationsHAL pulls the per-architecture metric/HUD configs the
-// data model needs; the ImPlot renderer draws into our (engine-owned) ImPlot + ImGui context.
+// The ImPlot renderer draws into the engine-owned ImPlot and ImGui context.
 #include <NvPerfVulkan.h>
 #include <NvPerfPeriodicSamplerVulkan.h>
 #include <NvPerfMetricConfigurationsHAL.h>
@@ -20,7 +18,7 @@
 
 namespace Lumina
 {
-    // Holds all NvPerf state. One-shot: built in OnInitialize, torn down in OnDeinitialize.
+    // Holds all NvPerf state, built in OnInitialize and torn down in OnDeinitialize.
     struct FNsightPerfState
     {
         bool        bSamplerInitialized = false;   // Sampler.Initialize succeeded
@@ -33,8 +31,7 @@ namespace Lumina
         bool  bShowMetrics    = false;
         char  MetricFilter[128] = {};
 
-        // Sampling parameters, kept so the session panel can report what the numbers actually mean
-        // rather than restating the constants from OnInitialize.
+        // Kept so the session panel reports what the numbers mean rather than restating constants.
         double SamplingIntervalSeconds = 0.0;
         double PlotTimeWidthSeconds    = 0.0;
 
@@ -46,11 +43,7 @@ namespace Lumina
 
     namespace
     {
-        // Current value plus min/avg/max across the retained window.
-        //
-        // Reads valBuffer EXACTLY as HudImPlotRenderer does: MetricSignal::AddSample already multiplied by
-        // `multiplier` before pushing (NvPerfHudDataModel.h), so the buffer is in display units and must
-        // not be scaled again here -- doing so would silently disagree with the plot beside it.
+        // AddSample already applied the multiplier, so scaling again would disagree with the plot.
         struct FSignalStats
         {
             bool   bValid = false;
@@ -120,8 +113,7 @@ namespace Lumina
             return;
         }
 
-        // Reinterpret the engine's opaque native handles back to Vulkan types (this plugin is the
-        // Vulkan-coupled consumer). volk builds with VK_NO_PROTOTYPES, so pass the proc-addr getters.
+        // volk builds with no prototypes, so the proc-address getters have to be passed in.
         const VkInstance       Instance       = static_cast<VkInstance>(H.Instance);
         const VkPhysicalDevice PhysicalDevice = static_cast<VkPhysicalDevice>(H.PhysicalDevice);
         const VkDevice         Device         = static_cast<VkDevice>(H.Device);
@@ -129,9 +121,7 @@ namespace Lumina
         const auto GetInstanceProcAddr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(H.GetInstanceProcAddr);
         const auto GetDeviceProcAddr   = reinterpret_cast<PFN_vkGetDeviceProcAddr>(H.GetDeviceProcAddr);
 
-        // NvPerf init (Initialize/BeginSession) submits to the shared graphics queue. The engine
-        // submits frames from engine threads; hold the RHI submit lock for the whole setup so the
-        // two never race. One-time hitch on tool open is fine. RAII releases on every return path.
+        // NvPerf setup submits to the shared graphics queue, so hold the RHI submit lock throughout.
         const RHI::Native::FScopedSubmitLock SubmitLock;
 
         if (!State->Sampler.Initialize(Instance, PhysicalDevice, Device, GetInstanceProcAddr, GetDeviceProcAddr))
@@ -286,8 +276,7 @@ namespace Lumina
             return;
         }
 
-        // Counted rather than stored: the preset decides how many of each, and a hardcoded number here
-        // would quietly go stale the moment the preset changes.
+        // Counted rather than stored, since a hardcoded number goes stale when the preset changes.
         size_t PanelCount  = 0;
         size_t SignalCount = 0;
         for (const auto& Config : State->HudDataModel.GetConfigurations())
@@ -326,8 +315,7 @@ namespace Lumina
         ImGui::SameLine(200.0f);
         ImGui::Text("%zu / %zu", PanelCount, SignalCount);
 
-        // The periodic sampler is asynchronous: these are GPU-side counter samples, NOT engine frames, so
-        // a rate far below the interval above means samples are being dropped rather than the GPU idling.
+        // These are GPU counter samples, so a rate far below the interval means samples are dropped.
         ImGui::TextColored(EditorColors::TextDim(), "Status");
         ImGui::SameLine(200.0f);
         ImGui::TextUnformatted(State->StatusMessage.c_str());
@@ -351,8 +339,7 @@ namespace Lumina
         constexpr ImGuiTableFlags TableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg
                                              | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_ScrollY;
 
-        // Emitted per signal. Split out so the ScalarText and TimePlot walks below cannot drift in how
-        // they format or filter -- they differ only in where the signal came from.
+        // Split out so the two walks cannot drift in how they format or filter their signals.
         auto DrawSignalRow = [this](const nv::perf::hud::MetricSignal& Signal)
         {
             if (!PassesFilter(Signal.label.text, Signal.metric, State->MetricFilter))
@@ -406,9 +393,7 @@ namespace Lumina
         {
             for (const auto& Panel : Config.panels)
             {
-                // A CollapsingHeader derives its ID from its LABEL, and nothing stops two configurations
-                // from carrying a panel of the same name -- they would then open and close together, and
-                // their tables would share scroll state. Scoping by position makes each one its own.
+                // A CollapsingHeader derives its ID from its LABEL, so same-named panels would share state.
                 ImGui::PushID(ScopeId++);
 
                 const std::string Header = Panel.label.text.empty() ? Panel.name : Panel.label.text;

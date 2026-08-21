@@ -212,7 +212,7 @@ namespace Lumina::SkeletalMeshMerge
             }
         }
 
-        //~ Layout, LOD-MAJOR as the importer bakes it: a pre-skin slice spans one LOD's meshlet range.
+        //~ LOD-MAJOR as the importer bakes it, so a pre-skin slice spans one LOD's meshlet range.
 
         TVector<FCell> Cells;
         for (uint32 LOD = 0; LOD < MAX_MESH_LODS; ++LOD)
@@ -318,7 +318,7 @@ namespace Lumina::SkeletalMeshMerge
                 Dst.MeshletSpheres[DstIndex] = Src.MeshletSpheres[SrcIndex];
                 Dst.MeshletCones[DstIndex]   = Src.MeshletCones[SrcIndex];
 
-                // Vertices copy VERBATIM: JointIndices address the meshlet's own palette, not the skeleton.
+                // Copied VERBATIM, since JointIndices address the meshlet's own palette, not the skeleton.
                 const uint32 VertexEnd = Math::Min(SrcM.VertexOffset + SrcM.VertexCount,
                                                    (uint32)Src.MeshletSkinnedVertices.size());
                 for (uint32 v = SrcM.VertexOffset; v < VertexEnd; ++v)

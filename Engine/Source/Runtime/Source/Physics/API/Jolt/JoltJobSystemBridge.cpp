@@ -18,7 +18,7 @@ namespace Lumina::Physics
     {
         LUMINA_PROFILE_SCOPE();
         Job* TheJob = static_cast<Job*>(Arg);
-        TheJob->Execute();   // execute-once: a no-op if the waiting thread already ran it
+        TheJob->Execute();   // a no-op if the waiting thread already ran it
         TheJob->Release();   // drop the reference taken in QueueJob/QueueJobs
     }
 

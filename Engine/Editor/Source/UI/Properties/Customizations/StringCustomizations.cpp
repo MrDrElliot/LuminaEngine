@@ -17,8 +17,7 @@ namespace Lumina
 {
     namespace
     {
-        // Grows the backing FString as the user types, so a multiline field isn't capped by a fixed
-        // buffer (a shader body outgrows any reasonable one, and the overflow would be dropped).
+        // Grows the backing FString as the user types, since a shader body outgrows any fixed buffer.
         int StringResizeCallback(ImGuiInputTextCallbackData* Data)
         {
             if (Data->EventFlag == ImGuiInputTextFlags_CallbackResize)
@@ -30,9 +29,7 @@ namespace Lumina
             return 0;
         }
 
-        // Rebuilds the picker tree from a skeleton. While the filter is active, matches are added
-        // as a flat list (a deep hierarchy under a filter is all indentation and no information);
-        // otherwise the full hierarchy is built expanded, with the current value's row selected.
+        // Under a filter matches go in flat, since a deep hierarchy is all indentation and no information.
         int32 BuildBoneTree(FTreeListView& Tree, const FSkeletonResource& Skeleton, const ImGuiTextFilter& Filter, const FName& Current)
         {
             const int32 NumBones = Skeleton.GetNumBones();
@@ -67,16 +64,122 @@ namespace Lumina
             return Count;
         }
 
-        // Compact indent for picker popups; the outliner default pushes 20+-deep skeleton
-        // chains past the popup's edge.
+        // The outliner default pushes a 20-deep skeleton chain past the popup's edge.
         constexpr float kBonePickerIndent = 12.0f;
 
+        void GatherGraphParameters(CAnimationGraph* Graph, bool bObjectValued, TVector<FName>& Out)
+        {
+            CStruct* Struct = (Graph != nullptr) ? Graph->GetParameterStruct() : nullptr;
+            if (Struct == nullptr)
+            {
+                return;
+            }
+
+            Struct->ForEachProperty<FProperty>([&](FProperty* Property)
+            {
+                const EAnimParamValueType Type = AnimParamValueTypeFromProperty(Property);
+                if (Type == EAnimParamValueType::Unresolved || Property->HasSetterOrGetter())
+                {
+                    return;
+                }
+                if ((Type == EAnimParamValueType::Object) != bObjectValued)
+                {
+                    return;
+                }
+                Out.push_back(Property->Name);
+            });
+        }
+    }
+
+    EPropertyChangeOp FNamePropertyCustomization::DrawNameCombo(const char* StrId, const TVector<FName>& Choices,
+                                                                const char* ItemIcon, const char* StaleHint, const char* EmptyHint,
+                                                                bool bAllowCreate)
+    {
+        // "None" occupies row 0, so every choice sits one slot further along.
+        constexpr int32 NoneOffset = 1;
+        const int32 Count = (int32)Choices.size() + NoneOffset;
+
+        int32 CurrentIndex = DisplayValue.IsNone() ? 0 : INDEX_NONE;
+        for (int32 i = 0; i < (int32)Choices.size(); ++i)
+        {
+            if (Choices[i] == DisplayValue)
+            {
+                CurrentIndex = i + NoneOffset;
+                break;
+            }
+        }
+
+        // A name the graph no longer offers still shows, flagged, rather than silently reading as None.
+        const bool bStale = CurrentIndex == INDEX_NONE;
+        FFixedString Preview;
+        if (bStale)
+        {
+            Preview = LE_ICON_ALERT_CIRCLE_OUTLINE "  ";
+        }
+        Preview += DisplayValue.IsNone() ? "None" : DisplayValue.c_str();
+
+        FFixedString Created;
+
+        ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);
+        const int32 Picked = ImGuiX::SearchableCombo(StrId, Preview.c_str(), Count, CurrentIndex,
+            [&Choices](int32 Index)
+            {
+                return (Index < NoneOffset) ? FFixedString("None") : FFixedString(Choices[Index - NoneOffset].c_str());
+            }, ItemIcon, bAllowCreate ? &Created : nullptr);
+        ImGui::PopItemWidth();
+
+        if (!Created.empty())
+        {
+            DisplayValue = FName(Created.c_str());
+            return EPropertyChangeOp::Updated;
+        }
+
+        const char* Hint = bStale ? StaleHint : (Choices.empty() ? EmptyHint : nullptr);
+        if (Hint != nullptr)
+        {
+            ImGuiX::TextTooltip_Internal(Hint);
+        }
+
+        if (Picked != INDEX_NONE && Picked != CurrentIndex)
+        {
+            DisplayValue = (Picked < NoneOffset) ? FName() : Choices[Picked - NoneOffset];
+            return EPropertyChangeOp::Updated;
+        }
+
+        return EPropertyChangeOp::None;
+    }
+
+    EPropertyChangeOp FNamePropertyCustomization::DrawParameterCombo(CAnimationGraph* Graph, bool bObjectValued)
+    {
+        TVector<FName> Parameters;
+        GatherGraphParameters(Graph, bObjectValued, Parameters);
+
+        const char* EmptyHint = "No graph context";
+        if (Graph != nullptr)
+        {
+            EmptyHint = (Graph->GetParameterStruct() == nullptr)
+                ? "No parameter struct assigned; set one on the graph asset"
+                : "The parameter struct declares no field of this type";
+        }
+
+        return DrawNameCombo("##ParamPick", Parameters, bObjectValued ? LE_ICON_CUBE_OUTLINE : LE_ICON_VARIABLE,
+                             "Not declared on this graph's parameter struct", EmptyHint, false);
+    }
+
+    EPropertyChangeOp FNamePropertyCustomization::DrawCurveCombo(CAnimationGraph* Graph)
+    {
+        static const TVector<FName> NoCurves;
+        const TVector<FName>& Curves = (Graph != nullptr) ? Graph->CurveNames : NoCurves;
+
+        // A Set Curve node names a curve no clip carries yet, so the typed text has to be enterable.
+        return DrawNameCombo("##CurvePick", Curves, LE_ICON_CHART_BELL_CURVE_CUMULATIVE,
+                             "Not authored on any clip this graph references; compile to publish it",
+                             "No curves yet; author one on a clip, or type a name to create it", true);
     }
 
     EPropertyChangeOp FNamePropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property)
     {
-        // PROPERTY(Editable, InputAction): the name is one of the project's input actions, so pick it from
-        // the authored list instead of typing it and finding out at runtime that it never matched.
+        // Picked from the authored list, rather than typed and found wrong at runtime.
         if (Property->Property->HasMetadata("InputAction"))
         {
             FString Picked = DisplayValue.IsNone() ? FString() : FString(DisplayValue.c_str());
@@ -97,9 +200,19 @@ namespace Lumina
         CAnimationGraph* PickerGraph = (bParamPicker || bCurvePicker) ? ParameterPickerContext::GetActiveGraph() : nullptr;
         const SocketPickerContext::FSocketPickerData* SocketData = bSocketPicker ? SocketPickerContext::GetActive() : nullptr;
 
+        if (bParamPicker)
+        {
+            return DrawParameterCombo(PickerGraph, bObjectParamPicker);
+        }
+
+        if (bCurvePicker)
+        {
+            return DrawCurveCombo(PickerGraph);
+        }
+
         EPropertyChangeOp Result = EPropertyChangeOp::None;
 
-        const float ButtonWidth = (bBonePicker || bParamPicker || bCurvePicker || bSocketPicker) ? ImGui::GetFrameHeight() : 0.0f;
+        const float ButtonWidth = (bBonePicker || bSocketPicker) ? ImGui::GetFrameHeight() : 0.0f;
 
         char Buffer[256];
         strncpy(Buffer, DisplayValue.c_str(), sizeof(Buffer));
@@ -116,118 +229,6 @@ namespace Lumina
         {
             Result = EPropertyChangeOp::Updated;
         }
-
-        if (bParamPicker)
-        {
-            ImGui::SameLine(0, 0);
-            const bool bHasGraph = PickerGraph != nullptr;
-            ImGui::BeginDisabled(!bHasGraph);
-            if (ImGui::Button(LE_ICON_MENU_DOWN "##ParamPick", ImVec2(ButtonWidth, 0)))
-            {
-                ImGui::OpenPopup("##ParameterPicker");
-            }
-            ImGui::EndDisabled();
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
-            {
-                ImGuiX::TextTooltip_Internal(bHasGraph ? "Pick existing parameter" : "No graph context");
-            }
-
-            if (ImGui::BeginPopup("##ParameterPicker"))
-            {
-                if (ImGui::Selectable("(none)", DisplayValue.IsNone()))
-                {
-                    DisplayValue = FName();
-                    Result = EPropertyChangeOp::Updated;
-                    ImGui::CloseCurrentPopup();
-                }
-                CStruct* Struct = (PickerGraph != nullptr) ? PickerGraph->GetParameterStruct() : nullptr;
-                if (Struct == nullptr)
-                {
-                    ImGui::Separator();
-                    ImGui::TextDisabled("No parameter struct assigned.");
-                    ImGui::TextDisabled("Set one on the graph asset.");
-                }
-                else
-                {
-                    ImGui::Separator();
-                    int32 Shown = 0;
-                    Struct->ForEachProperty<FProperty>([&](FProperty* Property)
-                    {
-                        const EAnimParamValueType Type = AnimParamValueTypeFromProperty(Property);
-                        const bool bIsObject = Type == EAnimParamValueType::Object;
-
-                        // Wrong-typed fields list disabled, so a mismatch reads as "wrong type", not "gone".
-                        if (Type == EAnimParamValueType::Unresolved || Property->HasSetterOrGetter())
-                        {
-                            return;
-                        }
-
-                        ++Shown;
-                        if (bIsObject != bObjectParamPicker)
-                        {
-                            ImGui::TextDisabled("%s (%s)", Property->Name.c_str(), Property->TypeName.c_str());
-                            return;
-                        }
-
-                        if (ImGui::Selectable(Property->Name.c_str(), Property->Name == DisplayValue))
-                        {
-                            DisplayValue = Property->Name;
-                            Result = EPropertyChangeOp::Updated;
-                            ImGui::CloseCurrentPopup();
-                        }
-                    });
-
-                    if (Shown == 0)
-                    {
-                        ImGui::TextDisabled("Struct declares no readable fields.");
-                    }
-                }
-                ImGui::EndPopup();
-            }
-        }
-
-        if (bCurvePicker)
-        {
-            ImGui::SameLine(0, 0);
-            const bool bHasCurves = PickerGraph != nullptr && !PickerGraph->CurveNames.empty();
-            ImGui::BeginDisabled(!bHasCurves);
-            if (ImGui::Button(LE_ICON_MENU_DOWN "##CurvePick", ImVec2(ButtonWidth, 0)))
-            {
-                ImGui::OpenPopup("##CurvePicker");
-            }
-            ImGui::EndDisabled();
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
-            {
-                ImGuiX::TextTooltip_Internal(bHasCurves ? "Pick a curve authored on this graph's clips"
-                                                        : "No curves; author them on an animation clip, then compile");
-            }
-
-            if (ImGui::BeginPopup("##CurvePicker"))
-            {
-                if (ImGui::Selectable("(none)", DisplayValue.IsNone()))
-                {
-                    DisplayValue = FName();
-                    Result = EPropertyChangeOp::Updated;
-                    ImGui::CloseCurrentPopup();
-                }
-                ImGui::Separator();
-                if (PickerGraph != nullptr)
-                {
-                    for (const FName& CurveName : PickerGraph->CurveNames)
-                    {
-                        if (ImGui::Selectable(CurveName.c_str(), CurveName == DisplayValue))
-                        {
-                            DisplayValue = CurveName;
-                            Result = EPropertyChangeOp::Updated;
-                            ImGui::CloseCurrentPopup();
-                        }
-                    }
-                }
-                ImGui::EndPopup();
-            }
-        }
-
-
 
         if (bBonePicker)
         {
@@ -260,7 +261,7 @@ namespace Lumina
 
                 if (Skeleton != nullptr)
                 {
-                    // None entry first: lets the user clear the selection.
+                    // A None entry first, so the user can clear the selection.
                     if (ImGui::Selectable("(none)", DisplayValue.IsNone()))
                     {
                         DisplayValue = FName();
@@ -425,7 +426,7 @@ namespace Lumina
 
     EPropertyChangeOp FStringPropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property)
     {
-        // The string form of the action picker: what a C# InputAction / InputAxis [Property] field mints as.
+        // The string form of the picker, matching what a C# InputAction property field mints.
         if (Property->Property->HasMetadata("InputAction"))
         {
             if (InputActionPicker::DrawCombo("##InputAction", DisplayValue, SearchFilter))
@@ -450,8 +451,7 @@ namespace Lumina
         if (bMultiline)
         {
             const ImVec2 Size(ImGui::GetContentRegionAvail().x, ImGui::GetTextLineHeight() * 4.0f + ImGui::GetStyle().FramePadding.y * 2.0f);
-            // Edited in place through the resize callback rather than a stack buffer -- the text can be
-            // arbitrarily long, and the callback keeps the string sized to it.
+            // Edited in place through the resize callback, since the text can be arbitrarily long.
             ImGui::InputTextMultiline("##ParamName", DisplayValue.data(), DisplayValue.capacity() + 1, Size,
                                       ImGuiInputTextFlags_CallbackResize, StringResizeCallback, &DisplayValue);
         }
@@ -527,9 +527,7 @@ namespace Lumina
         FString ActualValue;
         Property->GetValue(&ActualValue);
 
-        // Only adopt the property's value when it changed behind our back. This runs every frame, and an
-        // unconditional copy would throw away the in-progress edit -- the commit only happens when the
-        // field is deactivated, several frames after the last keystroke wrote DisplayValue.
+        // An unconditional copy would throw away an in-progress edit, which commits only on deactivate.
         if (CachedValue != ActualValue)
         {
             CachedValue = DisplayValue = ActualValue;

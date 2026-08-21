@@ -39,8 +39,7 @@ namespace Lumina
                 if (Equals != FStringView::npos)
                 {
                     Key   = Detail::Normalize(Raw.substr(0, Equals));
-                    // substr(pos, count), passing 0 used to silently empty
-                    // the value; we want the rest of the string.
+                    // Passing 0 as the count used to silently empty the value, and the rest of the string is wanted.
                     const FStringView ValueView = Raw.substr(Equals + 1);
                     Value.assign(ValueView.data(), ValueView.size());
                 }

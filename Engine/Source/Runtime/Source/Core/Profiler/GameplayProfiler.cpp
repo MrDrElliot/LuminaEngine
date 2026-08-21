@@ -25,9 +25,7 @@ namespace Lumina
             return H;
         }
 
-        // One open (not-yet-closed) scope. The stack is thread-local: a scope always opens and closes on the
-        // same thread/fiber, so nesting and self-time accounting are per-thread and need no lock. Only the
-        // shared per-frame aggregation (touched in EndScope) is mutex-guarded.
+        // A scope opens and closes on one thread, so only the shared per-frame aggregation is guarded.
         struct FOpenScope
         {
             FFixedString Name;
@@ -95,8 +93,7 @@ namespace Lumina
             FrameTotalHistory.erase(FrameTotalHistory.begin());
         }
 
-        // Per-entry sparkline rings: every known scope advances this frame (0 if it didn't run), so the
-        // rings stay aligned in length for a stable sparkline.
+        // Every known scope advances each frame, so the rings stay aligned for a stable sparkline.
         for (auto& Pair : EntryHistory)
         {
             const auto It = IndexOf.find(Pair.first);

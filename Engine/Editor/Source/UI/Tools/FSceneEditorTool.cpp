@@ -49,10 +49,7 @@
 
 namespace Lumina
 {
-    // Route through the asset-tool's display-name-only ctor so the inherited PropertyTable
-    // stays unbound (neither subclass uses it; they drive their own per-component tables).
-    // Asset + World are assigned directly; FEditorTool's ctor only stores World, so setting
-    // it post-construction is safe.
+    // Neither subclass uses the inherited PropertyTable, and FEditorTool's ctor only stores World.
     FSceneEditorTool::FSceneEditorTool(IEditorToolContext* Context, const FString& DisplayName, CObject* InAsset, CWorld* InWorld)
         : FAssetEditorTool(Context, DisplayName)
     {
@@ -63,10 +60,7 @@ namespace Lumina
     FSceneEditorTool::FSceneEditorTool(IEditorToolContext* Context, const FString& DisplayName, CWorld* InWorld)
         : FAssetEditorTool(Context, DisplayName)
     {
-        // World path: the live CWorld is the document, but it is NOT held as the FAssetEditorTool
-        // Asset, its lifetime is owned by the editor (created/swapped/destroyed elsewhere), so a
-        // second owning ref here would corrupt the refcount on swap. Asset stays null; saving and
-        // dirtying go through GetScenePackage()/OnSave overrides.
+        // The editor owns the world's lifetime, so a second owning ref here would corrupt the refcount.
         World = InWorld;
     }
 
@@ -102,7 +96,7 @@ namespace Lumina
             Entity = entt::null;
         }
 
-        // Fast-path: clicking the already-singularly-selected entity is a no-op.
+        // Clicking the already-singularly-selected entity is a no-op.
         if (Entity == LastSelectedEntity && SelectedEntities.size() == (Entity == entt::null ? 0 : 1)
             && (Entity == entt::null || SelectedEntities.find(Entity) != SelectedEntities.end()))
         {
@@ -301,17 +295,13 @@ namespace Lumina
 
     bool FSceneEditorTool::IsComponentHiddenInDetails(const CStruct* Type) const
     {
-        // Deliberately not HideInComponentList, which means "cannot be hand-added" and is a different
-        // question: SFoliageComponent carries it so the picker will not offer it, while its settings
-        // are exactly what the details panel is for.
+        // HideInComponentList means cannot be hand-added, which is a different question from this.
         return Type != nullptr && Type->HasMeta("HideInDetails");
     }
 
     void FSceneEditorTool::DrawComponentSearchBar()
     {
-        // Clearing needs no special handling here: DrawComponentList pushes the (now empty) text into
-        // every component table each frame, and each table restores its own collapse state when its
-        // filter goes inactive.
+        // Each table restores its own collapse state when its filter goes inactive.
         ImGuiX::SearchBar("##DetailsSearch", DetailsFilter, LE_ICON_MAGNIFY " Search components and properties...");
 
         ImGui::Spacing();
@@ -326,17 +316,14 @@ namespace Lumina
         {
             if (bFiltering)
             {
-                // A component whose NAME matches shows in full -- searching "Static Mesh" means you want
-                // that component, not the subset of its properties that happen to repeat the word.
+                // A name match shows the component in full, since that is what searching for it means.
                 const bool bTitleMatches = ImGuiX::PassSearchFilter(DetailsFilter, Entry.Title.c_str());
 
                 if (Entry.Table)
                 {
                     Entry.Table->SetSearchText(bTitleMatches ? FStringView() : FStringView(DetailsFilter.InputBuf));
 
-                    // Skip the whole component when nothing inside it survives. Drawing the header anyway
-                    // would leave a list of empty sections to scroll past, which is the thing a search is
-                    // meant to remove.
+                    // Drawing an empty header leaves sections to scroll past, which is what a search removes.
                     if (!bTitleMatches && !Entry.Table->PrepareAndTestFilter())
                     {
                         continue;
@@ -447,8 +434,7 @@ namespace Lumina
 
             ImGui::Indent(8.0f);
 
-            // Make this component's world resolvable to any PROPERTY(Entity) picker in the table, and
-            // the parent's mesh sockets/bones to any SocketPicker FName (e.g. SSocketAttachmentComponent).
+            // Makes the world resolvable to an entity picker, and the parent's sockets to a socket picker.
             {
                 SocketPickerContext::FSocketPickerData SocketData;
                 BuildSocketPickerData(Entity, SocketData);
@@ -530,8 +516,7 @@ namespace Lumina
 
         if (bWasRemoved)
         {
-            // Prefab instance: record the removal so a refresh won't re-add an inherited component (no-op
-            // for non-instance entities). The prefab asset is untouched, so the inherited/added test is valid.
+            // The prefab asset is untouched, so the inherited versus added test stays valid.
             CPrefab::NoteComponentRemoved(GetSceneRegistry(), Entity, const_cast<CStruct*>(ComponentType));
 
             // Mark dirty; next DrawEntityEditor pass rebuilds PropertyTables. Avoids tearing down handles mid-draw.
@@ -571,8 +556,7 @@ namespace Lumina
     {
         using namespace entt::literals;
 
-        // A reset-to-default (and some nested rows) can fire with no outer component type; there's
-        // nothing to resolve/patch then, so bail before dereferencing it.
+        // A reset can fire with no outer component type, so bail before dereferencing it.
         if (Event.OuterType == nullptr)
         {
             return;
@@ -592,8 +576,7 @@ namespace Lumina
         // Null for script-defined structs, which carry no compile-time struct ops.
         FStructOps* PeerOps = Event.OuterType->GetStructOps();
 
-        // Multi-edit source: the focus entity is what the bound property table edited. Locate its
-        // component instance so the change can be replicated onto the rest of the selection.
+        // The focus entity is what the bound table edited, so locate its instance to replicate from.
         void* FocusInstance = nullptr;
         if (Event.Property != nullptr && Registry.valid(DetailsEntity))
         {
@@ -627,7 +610,7 @@ namespace Lumina
                     }
                 });
 
-                // Offset-addressed: a nested row's property is offset within its own struct, not the component.
+                // Offset-addressed, since a nested row's property is offset within its own struct.
                 if (DestInstance != nullptr && DestInstance != FocusInstance && Event.ValueOffset >= 0)
                 {
                     Event.Property->CopyCompleteValue(static_cast<uint8*>(DestInstance) + Event.ValueOffset,
@@ -641,15 +624,13 @@ namespace Lumina
                 }
             }
 
-            // Same bypass as the focus instance, one step removed: the copy above is a raw property store.
+            // The same bypass as the focus instance, since the copy above is a raw property store.
             if (bTransformEdited)
             {
                 Registry.emplace_or_replace<FNeedsTransformUpdate>(Entity);
             }
 
-            // Prefab instance: re-diff this component against the prefab so the override ledger reflects the
-            // edit. A back-to-prefab edit (or a reset, which dispatches as an edit) leaves zero divergent
-            // leaves, clearing the record. No-op for non-instance entities.
+            // A back-to-prefab edit leaves zero divergent leaves, which clears the override record.
             CPrefab::RecaptureComponentOverrides(Registry, Entity, Event.OuterType);
         });
     }
@@ -678,8 +659,7 @@ namespace Lumina
                 TVector<void*>        OtherInstances;          // same component on the other selected entities (multi-edit)
             };
 
-            // Multi-edit: when more than one entity is selected, the details panel shows the intersection
-            // of components and compares each property's value across the whole selection.
+            // Shows the intersection of components and compares each value across the whole selection.
             const bool bMultiSelect = SelectedEntities.size() > 1 && IsEntitySelected(Entity);
 
             TVector<entt::entity> OtherTargets;
@@ -725,8 +705,7 @@ namespace Lumina
                     return;
                 }
 
-                // Intersection: drop components not present on every selected entity, gathering the
-                // matching instance pointers for the multi-value compare.
+                // Drops components not on every selected entity, gathering pointers for the multi-value compare.
                 TVector<void*> Others;
                 for (const THashMap<const CStruct*, void*>& Map : OtherReflected)
                 {
@@ -760,14 +739,10 @@ namespace Lumina
                 return LHS.Title < RHS.Title;
             });
 
-            // For a prefab instance, reset-to-default and the "modified" marker compare against the prefab
-            // baseline (not the class CDO). Resolve the focus entity's instance info once.
+            // A prefab instance compares against the prefab baseline rather than the class CDO.
             SPrefabInstanceComponent* FocusPrefabInstance = Registry.try_get<SPrefabInstanceComponent>(Entity);
 
-            // Resolved once rather than per row, and screened the way CPrefab::CullOrphanedInstances
-            // screens the same field: a source prefab can be a marked-destroy zombie, which a null
-            // test does not catch, because TObjectPtr's Get/IsValid are plain pointer reads that
-            // never consult GObjectArray.
+            // A source prefab can be a marked-destroy zombie, which a plain null test does not catch.
             CPrefab* FocusSourcePrefab = FocusPrefabInstance != nullptr ? FocusPrefabInstance->SourcePrefab.Get() : nullptr;
             if (FocusSourcePrefab != nullptr && FocusSourcePrefab->HasAnyFlag(OF_MarkedDestroy))
             {
@@ -780,8 +755,7 @@ namespace Lumina
                 Entry.ReflectedType = Row.ReflectedType;
                 Entry.Title         = Row.Title;
 
-                // Prefab instances diff/reset against the matched prefab component; everything else
-                // falls back to the struct CDO (the 2-arg form).
+                // Everything that is not a prefab instance falls back to the struct CDO.
                 void* PrefabDefault = nullptr;
                 if (FocusSourcePrefab != nullptr && Row.Layout != nullptr)
                 {
@@ -791,8 +765,7 @@ namespace Lumina
                 Entry.Table = (PrefabDefault != nullptr)
                     ? MakeUnique<FPropertyTable>(Row.Data, Row.Layout, PrefabDefault)
                     : MakeUnique<FPropertyTable>(Row.Data, Row.Layout);
-                // The details panel owns ONE search box across every component (DrawComponentSearchBar);
-                // a per-table box would put one above each component header.
+                // The panel owns ONE search box, or a per-table box would sit above each component header.
                 Entry.Table->SetShowSearchBar(false);
                 Entry.Table->SetPreEditCallback([&](const FPropertyChangedEvent& Event)    { OnPrePropertyChangeEvent(Event); });
                 Entry.Table->SetPostEditCallback([&](const FPropertyChangedEvent& Event)   { OnPostPropertyChangeEvent(Event); MarkSceneDirty(); });
@@ -842,7 +815,7 @@ namespace Lumina
 
     void FSceneEditorTool::RebuildSceneOutliner(FTreeListView& Tree)
     {
-        // Incremental tree: rebuild just resets the map and re-adds roots. Children fill lazily on expand.
+        // A rebuild resets the map and re-adds roots, and children fill lazily on expand.
         EntityToTreeNode.clear();
         PendingOutlinerAdds.clear();
         PendingExpanderRefresh.clear();
@@ -969,14 +942,12 @@ namespace Lumina
             Display.IconColor = EditorColors::EntityIcon();
         }
 
-        // The rich hover tooltip (title + subtitle + component chips) is intentionally NOT built here:
-        // the component scan is the dominant per-row cost, and tooltips only show on hover. Built lazily
-        // by BuildEntityTooltip on first hover instead.
+        // The component scan dominates the per-row cost, so tooltips build lazily on first hover.
 
         Display.bShowDisabledIcon = true;
         Display.bAllowRenaming = !bIsLockedPrefabChild;
 
-        // Per-entity script enable toggle: only shown when the entity carries a script.
+        // The per-entity script toggle is only shown when the entity carries a script.
         if (Registry.any_of<SEntityScriptComponent>(Entity))
         {
             Display.bShowSecondaryIcon = true;
@@ -1028,7 +999,7 @@ namespace Lumina
         const bool bIsPrefabInstanceRoot = PrefabInstance != nullptr && PrefabInstance->bIsRoot;
         const bool bIsLockedPrefabChild = PrefabInstance != nullptr && !PrefabInstance->bIsRoot;
 
-        // Styled hover tooltip: title (type icon + name), a dim subtitle, then component chips.
+        // A styled tooltip of type icon and name, a dim subtitle, then component chips.
         const char* TypeIcon = bIsPrefabInstanceRoot ? LE_ICON_PACKAGE_VARIANT_CLOSED
                              : bIsLockedPrefabChild   ? LE_ICON_LOCK
                                                       : LE_ICON_CUBE;
@@ -1150,8 +1121,7 @@ namespace Lumina
         // Newly-spawned rows are queued; without this a select-on-spawn would find no node.
         FlushOutlinerPending();
 
-        // Ancestor chain, entity first. Children are lazy, so a row under a never-expanded parent
-        // doesn't exist yet -- each level has to be opened top-down before the next one has a node.
+        // Children are lazy, so each level has to be opened top-down before the next has a node.
         TVector<entt::entity> Chain;
         for (entt::entity Cursor = Entity; Cursor != entt::null && Chain.size() < 64; )
         {
@@ -1191,7 +1161,7 @@ namespace Lumina
             return;
         }
 
-        // Child entity rows: skip filtered-out ones and ones already present (on_construct race).
+        // Skips filtered-out children and ones already present from an on_construct race.
         ECS::Utils::ForEachChild(Registry, Data.Entity, [&](entt::entity Child)
         {
             if (!IsOutlinerEntityVisible(Child))
@@ -1221,11 +1191,7 @@ namespace Lumina
     {
         (void)Registry;
 
-        // Remember the parent so its expander arrow can be re-evaluated after the destroy settles:
-        // deleting an entity's last child must drop the parent's twisty. Prefer the outliner's own
-        // tree parent (always accurate for a materialized row); fall back to the registry relationship
-        // for a collapsed parent whose child was never built into a row. The SNameComponent destroy
-        // signal fires before the FRelationshipComponent one, so the child's parent link is still intact.
+        // Deleting the last child must drop the parent's twisty, and the parent link is still intact here.
         entt::entity ParentEntity = entt::null;
         if (auto It = EntityToTreeNode.find(Entity); It != EntityToTreeNode.end())
         {
@@ -1268,9 +1234,7 @@ namespace Lumina
         }
         PendingOutlinerAdds.clear();
 
-        // Re-evaluate parents whose last child just left: the destroy has fully settled by now, so the
-        // registry child count is current. RefreshOutlinerExpander no-ops for parents that were themselves
-        // removed (e.g. deleting a whole subtree), so stale entries are harmless.
+        // The destroy has settled by now, and the refresh no-ops for parents that were removed too.
         for (entt::entity Parent : PendingExpanderRefresh)
         {
             RefreshOutlinerExpander(Parent);
@@ -1627,7 +1591,7 @@ namespace Lumina
             return;
         }
 
-        // A null table is fine when unfiling: the move still detaches entities from their entity parent.
+        // A null table is fine when unfiling, since the move still detaches from the entity parent.
         SSceneFolderComponent* Folders = GetEditableSceneFolders();
         if (FolderID != SSceneFolderComponent::NoFolder && (Folders == nullptr || Folders->Find(FolderID) == nullptr))
         {
@@ -2033,12 +1997,7 @@ namespace Lumina
             }
         }
 
-        // The reflected "emplace" uses emplace_or_replace for data components (would reset existing
-        // data) and plain emplace for tags (would assert if present), so targets that already hold the
-        // component are separated out rather than emplaced over.
-        //
-        // Partitioned before the transaction opens: an add that turns out to be a no-op should not
-        // leave an empty step on the undo stack for the user to step back through.
+        // Partitioned before the transaction, so a no-op add leaves no empty step on the undo stack.
         TVector<entt::entity> Missing;
         Missing.reserve(Targets.size());
 
@@ -2058,8 +2017,7 @@ namespace Lumina
 
         if (Missing.empty())
         {
-            // Nothing happened, which without saying so is indistinguishable from the click not
-            // registering.
+            // Saying nothing is indistinguishable from the click not registering.
             if (Targets.size() == 1)
             {
                 ImGuiX::Notifications::NotifyWarning("This entity already has {0}.", AddedStruct ? AddedStruct->GetName().c_str() : "that component");
@@ -2097,9 +2055,7 @@ namespace Lumina
 
     namespace
     {
-        // Shared visuals for the Add / Create-Entity picker. Kept compact and purely vertical: a
-        // collapsing section header per group, then a tight 2-column table (icon, name) of full-width
-        // selectable rows. Scales to large component counts without the old card-button style.
+        // Compact and purely vertical, so it scales to large component counts.
         constexpr ImGuiTableFlags GPickerTableFlags =
             ImGuiTableFlags_RowBg | ImGuiTableFlags_NoBordersInBody | ImGuiTableFlags_PadOuterX;
 
@@ -2127,8 +2083,7 @@ namespace Lumina
             return LE_ICON_PUZZLE_OUTLINE;
         }
 
-        // Collapsing group header with a trailing count. Force-opens while a search filter is active so
-        // matches stay visible even if the user previously collapsed the section. Returns whether open.
+        // Force-opens while a filter is active, so matches stay visible in a collapsed section.
         bool BeginPickerSection(const char* Icon, const char* Label, int32 Count, bool bForceOpen)
         {
             if (bForceOpen)
@@ -2151,8 +2106,7 @@ namespace Lumina
             return bOpen;
         }
 
-        // One compact picker row: [icon] Label with a full-row hover/click target. Returns true on click.
-        // Expects to be called between BeginTable/EndTable on a 2-column (icon, name) table.
+        // Expects to be called between BeginTable and EndTable on a two-column table.
         bool DrawPickerRow(const void* ID, const char* Icon, const char* Label)
         {
             ImGui::PushID(ID);
@@ -2163,8 +2117,7 @@ namespace Lumina
                 ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap);
 
             ImGui::SameLine();
-            // Soft slate tone (matches the section header) keeps the icon column a subtle visual rail
-            // rather than a loud accent stripe down a long list.
+            // A soft slate tone keeps the icon column a rail rather than an accent stripe down a long list.
             ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::SectionHeader());
             ImGui::TextUnformatted(Icon);
             ImGui::PopStyleColor();
@@ -2283,9 +2236,7 @@ namespace Lumina
 
                     for (const FComponentEntry& Entry : Category.Entries)
                     {
-                        // Offering a component every target already holds is offering a no-op: the add
-                        // skips them rather than replacing, so the click would do nothing at all. Stops
-                        // at the first target that lacks it, which is the usual answer on the first one.
+                        // The add skips targets that already hold it, so offering it would be offering a no-op.
                         bool bEveryTargetHasIt = !Targets.empty();
                         for (entt::entity Target : Targets)
                         {
@@ -2298,8 +2249,7 @@ namespace Lumina
 
                         ImGui::BeginDisabled(bEveryTargetHasIt);
 
-                        // Stable per-item ID across frames (the entry list is rebuilt every frame, so its
-                        // address is not stable -- an unstable ID breaks click press/release matching).
+                        // The entry list is rebuilt every frame, and an unstable ID breaks press and release matching.
                         FFixedString DisplayName = Entry.Struct->MakeDisplayName();
                         if (DrawPickerRow((void*)Entry.Struct, CategoryIcon, DisplayName.c_str()))
                         {
@@ -2310,7 +2260,7 @@ namespace Lumina
 
                         ImGui::EndDisabled();
 
-                        // Tooltip outside the disabled scope: a disabled item does not report hover.
+                        // Outside the disabled scope, since a disabled item does not report hover.
                         if (bEveryTargetHasIt && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                         {
                             ImGui::SetTooltip(Targets.size() == 1
@@ -2370,8 +2320,7 @@ namespace Lumina
             // Leading play/simulate controls (world only); draws its own trailing separator.
             DrawViewportToolbarPlayControls(ButtonSize);
 
-            // The rest of the bar is shown whenever the editor is focused, even mid-play, so debug/view
-            // controls stay reachable (the game-focused case returned early above).
+            // Debug and view controls stay reachable mid-play, since the game-focused case returned earlier.
             DrawCameraControls(ButtonSize);
 
             ImGui::SameLine();
@@ -2683,19 +2632,14 @@ namespace Lumina
             return;
         }
 
-        // The render scene can be torn down + rebuilt (idle reclaim), invalidating our handle. The
-        // pointer compare catches most rebuilds, but a new scene can land at the freed scene's
-        // address, so SetCaptureView's return below is the authoritative staleness check.
+        // A new scene can land at the freed one's address, so SetCaptureView's return is authoritative.
         if (RenderScene != CameraPreviewScene)
         {
             CameraPreviewScene  = RenderScene;
             CameraPreviewHandle = -1;
         }
 
-        // Only preview a selected camera entity in the tool's own world (the capture renders
-        // World's scene, so a foreign observed world's selection has nothing to render), and
-        // never inside a running game world. Otherwise leave the capture registered but
-        // disabled (no render cost).
+        // A foreign observed world's selection has nothing to render, and a running game never previews.
         entt::registry& Registry = ECS::GetWorldRegistry(*World);
         const entt::entity Selected = GetLastSelectedEntity();
         const bool bWantPreview =
@@ -2713,8 +2657,7 @@ namespace Lumina
             return;
         }
 
-        // Build the camera's view from its world transform + FOV (its own ViewVolume isn't
-        // resolved while it's a non-active camera). Forward/up convention matches SCameraSystem.
+        // A non-active camera has no resolved ViewVolume, so the view is built from its transform.
         const SCameraComponent& Camera = Registry.get<SCameraComponent>(Selected);
         STransformComponent& Transform = Registry.get<STransformComponent>(Selected);
         (void)Transform.GetWorldMatrix();   // ensure the world transform is current
@@ -2724,13 +2667,11 @@ namespace Lumina
         const FVector3 Forward  = Rotation * FVector3(0.0f, 0.0f, 1.0f);
         const FVector3 Up       = Rotation * FVector3(0.0f, 1.0f, 0.0f);
 
-        // Use the authored FOV property, not GetFOV(): ViewVolume only tracks the property for
-        // the active camera, so a non-active selected camera's value would be stale.
+        // ViewVolume only tracks the property for the active camera, so a selected one would be stale.
         FViewVolume View(Camera.FOV, (float)CameraPreviewWidth / (float)CameraPreviewHeight);
         View.SetView(Position, Forward, Up);
 
-        // Two attempts: if the first SetCaptureView rejects the handle (scene rebuilt at the same
-        // address, so the pointer compare above missed it), register against the live scene and retry.
+        // If the first call rejects the handle, register against the live scene and retry once.
         for (int32 Attempt = 0; Attempt < 2; ++Attempt)
         {
             if (CameraPreviewHandle < 0)
@@ -2754,9 +2695,7 @@ namespace Lumina
 
     void FSceneEditorTool::DrawCameraPreviewOverlay(const ImVec2& ViewportOrigin, const ImVec2& ViewportSize)
     {
-        // Selected-camera PiP, pinned bottom-right. The render scene shades it into a capture
-        // view (in UpdateCameraPreview); here we just composite it by its heap ResourceID.
-        // Drag the top-left corner grip to resize; the scale persists per tool.
+        // Drag the top-left corner grip to resize, and the scale persists per tool.
         bCameraPreviewMouseOver = false;
         const int32 PreviewID = (bCameraPreviewActive && CameraPreviewHandle >= 0 && World->GetRenderer() != nullptr)
             ? World->GetRenderer()->GetCaptureDisplayResourceID(CameraPreviewHandle) : -1;
@@ -2816,7 +2755,7 @@ namespace Lumina
         DL->AddImage(ImGuiX::ToImTextureRef((uint32)PreviewID), Min, Max);
         DL->AddRect(Min, Max, IM_COL32(255, 255, 255, 110), 2.0f);
 
-        // Corner resize grip: diagonal ticks, brightened while hovered/dragging.
+        // Diagonal corner ticks, brightened while hovered or dragging.
         const ImU32 GripCol = bCameraPreviewMouseOver ? IM_COL32(255, 255, 255, 255) : IM_COL32(255, 255, 255, 140);
         DL->AddLine(ImVec2(Min.x + 2.0f, Min.y + 9.0f),  ImVec2(Min.x + 9.0f,  Min.y + 2.0f), GripCol, 2.0f);
         DL->AddLine(ImVec2(Min.x + 2.0f, Min.y + 14.0f), ImVec2(Min.x + 14.0f, Min.y + 2.0f), GripCol, 2.0f);
@@ -2855,8 +2794,7 @@ namespace Lumina
             return;
         }
 
-        // Flatten the selection (view, not SelectedEntities, so entt::exclude<SDisabledTag> applies) into a
-        // contiguous list to index from worker threads. Bail before the resolve when nothing is selected.
+        // Flattened from the view so the disabled-tag exclusion applies and workers can index it.
         TVector<entt::entity> SelectedList;
         auto SelectedView = Registry.view<FSelectedInEditorComponent>(entt::exclude<SDisabledTag>);
         SelectedList.reserve(SelectedView.size_hint());
@@ -2910,14 +2848,7 @@ namespace Lumina
 
         ImGui::BeginChild("Property Editor", ImVec2(0, 0), true);
 
-        // A C# reload rebuilds every script component's value buffer and destroys the CScriptStruct that
-        // describes it, so a table built against the previous generation points at freed memory in both
-        // its data and its layout. Nothing broadcasts that, so the generation is compared here rather
-        // than trusting an invalidation that no one sends.
-        // A prefab refresh is the same hazard: it removes and re-emplaces components (entt's swap-and-pop
-        // relocates a pool's last element into the freed slot, so even an untouched neighbor's row can end
-        // up aliasing someone else's component) and a re-capture replaces the whole prefab registry the
-        // reset-to-prefab baselines point into.
+        // A C# reload or a prefab refresh frees what a built table points at, and nothing broadcasts it.
         const int32  ScriptGeneration = DotNet::GetScriptGeneration();
         const uint32 PrefabGeneration = CPrefab::GetDataGeneration();
         if (ScriptGeneration != DetailsScriptGeneration || PrefabGeneration != DetailsPrefabGeneration)
@@ -2925,8 +2856,7 @@ namespace Lumina
             DetailsScriptGeneration = ScriptGeneration;
             DetailsPrefabGeneration = PrefabGeneration;
 
-            // Dropped rather than rebuilt: the old tables must not be touched again, and the rebuild
-            // below only runs when there is a valid entity to rebuild for.
+            // Dropped rather than rebuilt, since the old tables must not be touched again.
             PropertyTables.clear();
             DetailsEntity = entt::null;
             bDetailsDirty = true;
@@ -2963,9 +2893,7 @@ namespace Lumina
         ImGui::PopStyleVar();
     }
 
-    // Lives on the base rather than the world tool: the details header offers Rename for every
-    // scene-flavored tool, and the prefab editor edits a preview world that GetSceneRegistry
-    // resolves and ECS::GetWorldRegistry(*World) would not.
+    // On the base, since the prefab editor's preview world is what GetSceneRegistry resolves.
     void FSceneEditorTool::PushRenameEntityModal(entt::entity Entity)
     {
         ToolContext->PushModal("Rename Entity", ImVec2(450.0f, 250.0f), [this, Entity]() -> bool
@@ -3092,13 +3020,12 @@ namespace Lumina
                 ImGui::SetTooltip("Add Component");
             }
 
-            // Tool-specific header buttons (world: Add Tag).
+            // Tool-specific header buttons, such as the world editor's Add Tag.
             DrawDetailsHeaderExtraButtons(Entity);
 
             ImGui::PopStyleColor(3);
 
-            // One name, so renaming a multi-selection has no sensible meaning, and an entity without
-            // a name component has nothing to write to.
+            // One name, so a multi-selection rename has no meaning and an unnamed entity has no target.
             const bool bCanRename = !bMultiSelect && NameComponent != nullptr;
             ImGui::BeginDisabled(!bCanRename);
 
@@ -3160,7 +3087,7 @@ namespace Lumina
 
         ImGui::SeparatorText("Details");
 
-        // Tool-specific sections above the component list (world: Tags).
+        // Tool-specific sections above the component list, such as the world editor's Tags.
         DrawDetailsExtraSections(Entity);
 
         ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextDim());

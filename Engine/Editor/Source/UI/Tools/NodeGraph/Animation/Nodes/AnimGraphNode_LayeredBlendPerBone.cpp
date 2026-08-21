@@ -19,8 +19,7 @@ namespace Lumina
         const uint16 Overlay = ResolvePoseInput(OverlayPin, Compiler);
         const uint16 Alpha   = ResolveValueInput(AlphaPin, Compiler);
 
-        // 0xFFFF leaves the VM to fall back to a whole-skeleton blend, so an
-        // unconfigured node still produces a sensible pose.
+        // 0xFFFF leaves the VM to fall back to a whole-skeleton blend on an unconfigured node.
         uint16 MaskIdx = 0xFFFFu;
 
         if (!BoneName.IsNone())

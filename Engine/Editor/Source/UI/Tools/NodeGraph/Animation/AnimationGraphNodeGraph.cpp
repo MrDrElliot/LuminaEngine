@@ -28,8 +28,7 @@ namespace Lumina
 {
     void CAnimationGraphNodeGraph::EnsureSetup()
     {
-        // Context-free: only touches nodes / the creatable-node registry, so it
-        // is safe to call on a graph the compiler readies but never opens.
+        // Context-free, so it is safe on a graph the compiler readies but never opens.
         if (bSetupDone)
         {
             return;
@@ -54,8 +53,7 @@ namespace Lumina
 
     void CAnimationGraphNodeGraph::Initialize()
     {
-        // Must run exactly once: this graph type is re-entered (nested state blend trees), and a repeat
-        // Super::Initialize() would leak a second node-editor context.
+        // This graph type is re-entered, and a repeat Super::Initialize leaks a node-editor context.
         if (bInitialized)
         {
             return;
@@ -74,8 +72,7 @@ namespace Lumina
 
     void CAnimationGraphNodeGraph::ValidateGraph()
     {
-        // Flatten live pin connections into the serialized (InputID, OutputID)
-        // pair list. PostLoad reads this back to rewire the pins on open.
+        // PostLoad reads this pair list back to rewire the pins on open.
         Connections.clear();
         Connections.reserve(16);
 
@@ -142,8 +139,7 @@ namespace Lumina
             return false;
         }
 
-        // SortedNodes is dependency-ordered (inputs before consumers, output last),
-        // so each node's input registers are populated by the time it emits.
+        // SortedNodes is dependency-ordered, so each node's input registers exist by the time it emits.
         for (uint32 i = 0; i < (uint32)SortedNodes.size(); ++i)
         {
             CEdGraphNode* Node = SortedNodes[i];
@@ -155,8 +151,7 @@ namespace Lumina
             }
         }
 
-        // The Output node resolves (but does not emit) the pose feeding the
-        // graph; hand that register back so the caller can wire it up.
+        // The Output node resolves but does not emit, so hand its register back to the caller.
         for (CEdGraphNode* Node : SortedNodes)
         {
             if (CAnimGraphNode_Output* Output = Cast<CAnimGraphNode_Output>(Node))
@@ -175,8 +170,7 @@ namespace Lumina
         {
             if (CAnimGraphNode_GetParameter* GetParam = Cast<CAnimGraphNode_GetParameter>(Node))
             {
-                // Register even when this node isn't wired anywhere, else the Parameters panel / Lua
-                // bindings never see the name.
+                // Registered even when unwired, or the Parameters panel never sees the name.
                 Compiler.AddParameter(GetParam->ParameterName, EAnimGraphParamType::Float, GetParam->DefaultValue);
             }
             else if (CAnimGraphNode_StateMachine* StateMachine = Cast<CAnimGraphNode_StateMachine>(Node))
@@ -187,8 +181,7 @@ namespace Lumina
                     continue;
                 }
 
-                // Transition conditions: each declares a parameter the runtime
-                // reads at evaluation time.
+                // Each transition condition declares a parameter the runtime reads at evaluation time.
                 for (const TObjectPtr<CAnimStateTransition>& Transition : SMGraph->Transitions)
                 {
                     if (Transition.IsValid() && !Transition->ConditionParameter.IsNone())
@@ -223,8 +216,7 @@ namespace Lumina
             Compiler.EmitOutput(ResultRegister);
         }
 
-        // Attach every accumulated error (including those from nested state
-        // blend trees compiled mid-walk) back to its originating node.
+        // Includes errors from nested state blend trees compiled mid-walk.
         for (auto& Error : Compiler.GetErrors())
         {
             if (Error.Node)

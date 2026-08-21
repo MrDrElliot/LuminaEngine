@@ -125,7 +125,7 @@ namespace Lumina::Reflection
             Prop->DeclareAccessors(Writer, FileID);
         }
 
-        // Close the #define cleanly: the last Macro line still ends with " \\\n", strip it.
+        // The last Macro line still ends with a line continuation, so strip it to close the define cleanly.
         Writer.FinalizeMacro();
         Writer.Line();
 

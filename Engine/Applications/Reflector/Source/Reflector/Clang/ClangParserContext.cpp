@@ -41,8 +41,7 @@ namespace Lumina::Reflection
         uint32_t cursorLine, cursorColumn;
         clang_getExpansionLocation(startLoc, &cursorFile, &cursorLine, &cursorColumn, nullptr);
 
-        // Position is monotonic with source order within the TU; used as a tiebreaker
-        // when the macro and the cursor live on the same physical line.
+        // Position is monotonic with source order, used as a tiebreaker when macro and cursor share a line.
         const int32_t cursorPosition = (int32_t)typeRange.begin_int_data;
 
         CXString FileName = clang_getFileName(cursorFile);
@@ -55,8 +54,7 @@ namespace Lumina::Reflection
         std::string FileNameChar = clang_getCString(FileName);
         clang_disposeString(FileName);
 
-        // Normalize the cursor's raw clang file name the same way HeaderID was,
-        // so case-sensitive filesystems don't drop legitimate hits.
+        // Normalized the same way HeaderID was, so case-sensitive filesystems do not drop legitimate hits.
         FileNameChar = ClangUtils::NormalizeHeaderPath(std::move(FileNameChar));
 
         if (FileNameChar != HeaderID)
@@ -66,7 +64,6 @@ namespace Lumina::Reflection
 
         std::vector<FReflectionMacro>& MacrosForHeader = HeaderIter->second;
 
-        // Prefer the closest macro preceding the cursor: same-line-before, then one line above.
         // Without the same-line case, inline-form macros mis-bind to the cursor below them.
         auto SameLineMatch = MacrosForHeader.end();
         auto LineAboveMatch = MacrosForHeader.end();
@@ -105,7 +102,7 @@ namespace Lumina::Reflection
 
     bool FClangParserContext::TryFindGeneratedBodyMacro(const std::string& HeaderID, const CXCursor& Cursor, FReflectionMacro& Macro)
     {
-        // A pure lookup: the struct visitor decides what a missing GENERATED_BODY means.
+        // A pure lookup, since the struct visitor decides what a missing GENERATED_BODY means.
         uint64_t Hash = XXH64(HeaderID.c_str(), strlen(HeaderID.c_str()), 0);
         auto headerIter = GeneratedBodyMacros.find(Hash);
         if (headerIter == GeneratedBodyMacros.end())
@@ -130,9 +127,7 @@ namespace Lumina::Reflection
         return true;
     }
     
-    // Joined with "::" so a nested namespace forms a real C++ path. Concatenating bare turned
-    // MyGame::Editor into "MyGameEditor", which only went unnoticed because every engine type sits
-    // one level deep in Lumina.
+    // Joined with a scope separator, since concatenating bare turned MyGame::Editor into MyGameEditor.
     void FClangParserContext::RebuildCurrentNamespace()
     {
         CurrentNamespace.clear();

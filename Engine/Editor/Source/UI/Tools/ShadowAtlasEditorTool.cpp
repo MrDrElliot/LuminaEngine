@@ -39,8 +39,7 @@ namespace Lumina
             "Increase atlas size if utilization regularly hits 100%.");
     }
 
-    // Warmer hue for bigger tiles (blue->red) so expensive allocations stand out
-    // when debugging atlas pressure.
+    // A warmer hue for bigger tiles, so expensive allocations stand out under atlas pressure.
     static ImU32 ColorForSize(uint32 SizePixels, uint32 MinSize, uint32 MaxSize)
     {
         const float LogMin = std::log2((float)MinSize);
@@ -122,8 +121,7 @@ namespace Lumina
         ImGui::Text("Tiles allocated: %u   Utilization: %.1f%% (%llu / %llu px)",
             (uint32)Tiles.size(), UsedPct, (unsigned long long)UsedPixels, (unsigned long long)AtlasPixels);
 
-        // Per-size-bucket histogram; counts only power-of-two buckets the allocator
-        // can produce, keeping the UI compact even if MaxTile grows later.
+        // Counts only power-of-two buckets the allocator can produce, keeping the UI compact.
         ImGui::Spacing();
         if (ImGui::BeginTable("##SizeHistogram", 3,
                 ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp))
@@ -182,8 +180,7 @@ namespace Lumina
         DL->AddRectFilled(Origin, ImVec2(Origin.x + Size.x, Origin.y + Size.y), IM_COL32(20, 20, 22, 255));
         DL->AddRect(Origin, ImVec2(Origin.x + Size.x, Origin.y + Size.y), IM_COL32(120, 120, 120, 255));
 
-        // Subdivision grid at MaxTileResolution; matches the top-level
-        // free-list grid and makes fragmentation obvious.
+        // Matches the top-level free-list grid, which makes fragmentation obvious.
         if (bShowGrid)
         {
             const uint32 GridDivs = Cfg.AtlasResolution / Cfg.MaxTileResolution;

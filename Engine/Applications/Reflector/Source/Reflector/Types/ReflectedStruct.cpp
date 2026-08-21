@@ -147,8 +147,7 @@ namespace Lumina::Reflection
         {
             Writer.Macrof("%s_%u_ACCESSORS", FileID.c_str(), GeneratedBodyLineNumber);
         }
-        // MinimalAPI: export StaticStruct() so the type is reflection-referenceable
-        // across module boundaries without force-exporting every member.
+        // Exports StaticStruct() so the type is referenceable without force-exporting every member.
         if (HasMetadata("MinimalAPI"))
         {
             const std::string Api = Names::ProjectApiMacro(Header->Project->Name);
@@ -164,8 +163,7 @@ namespace Lumina::Reflection
             Writer.Macrof("using Super = %s::%s;", Namespace.c_str(), Parent.c_str());
         }
 
-        // Components register with EnTT using in_place_delete so handles survive
-        // pool rearrangement.
+        // Registered with in_place_delete so handles survive pool rearrangement.
         if (HasMetadata("Component"))
         {
             Writer.Macro("static constexpr auto in_place_delete = true;");
@@ -303,7 +301,7 @@ namespace Lumina::Reflection
         Writer.EndBlock();
         Writer.Line();
 
-        // Outer singleton: QualifiedName::StaticStruct(). An alias has no such member to define.
+        // The outer singleton is a member of QualifiedName, and an alias has no such member to define.
         if (!bIsAlias)
         {
             Writer.Linef("class Lumina::CStruct* %s::StaticStruct()", EmittedCppQualifiedName().c_str());

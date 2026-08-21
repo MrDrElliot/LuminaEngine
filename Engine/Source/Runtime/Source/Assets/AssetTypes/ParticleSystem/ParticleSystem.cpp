@@ -51,15 +51,13 @@ namespace Lumina
     void CParticleSystem::PostLoad()
     {
         LUMINA_MEMORY_SCOPE("Particles");
-        // Emitters is the only thing every consumer indexes, so it is never allowed to be empty -- an asset
-        // that somehow arrives with none gets a default rather than making each caller handle the case.
+        // Emitters is the only thing every consumer indexes, so an empty one gets a default instead.
         if (Emitters.empty())
         {
             AddEmitter();
         }
 
-        // Emitters are package exports, so the loader has already constructed them; PostLoad is what commits
-        // their shader binaries, and a nested export does not get one from the outer object's load.
+        // PostLoad commits their shader binaries, and a nested export gets none from the outer load.
         for (const TObjectPtr<CParticleEmitter>& Emitter : Emitters)
         {
             if (Emitter.IsValid())
@@ -77,8 +75,7 @@ namespace Lumina
             return nullptr;
         }
 
-        // Unique by construction: names only have to disambiguate the column headers, so a running index
-        // that skips whatever is already taken is enough.
+        // Names only disambiguate column headers, so a running index skipping taken ones is enough.
         FString Candidate;
         for (int32 Suffix = (int32)Emitters.size(); ; ++Suffix)
         {
@@ -303,9 +300,7 @@ namespace Lumina
         R.NoiseSpeed              = ResolveBoundFloat(Asset, Component, "NoiseSpeed",             Emitter.NoiseSpeed);
 
         R.BlendMode               = Emitter.BlendMode;
-        // FacingMode supersedes the legacy bool. An asset saved before FacingMode existed has the enum at
-        // its default (CameraFacing) while the bool carries the authored intent, so the bool still decides
-        // when it says "not camera facing" -- otherwise those assets would silently start facing the camera.
+        // An asset saved before FacingMode existed carries its intent in the bool, so the bool still decides.
         R.FacingMode              = (!Emitter.bBillboardToCamera && Emitter.FacingMode == EParticleFacingMode::CameraFacing)
                                   ? EParticleFacingMode::WorldXZ
                                   : Emitter.FacingMode;
@@ -317,9 +312,7 @@ namespace Lumina
         return R;
     }
 
-    // Widens a parameter to the float4 a module slot holds. Int and Bool land in the same scalar lane as
-    // Float: the module input decides how many components are read, not the parameter, so an int knob can
-    // drive a float input without the user having to match the declared types exactly.
+    // The module input decides how many components are read, so an int knob can drive a float input.
     static FVector4 ParameterAsVector4(const FParticleParameter& Param)
     {
         switch (Param.Type)
@@ -333,7 +326,7 @@ namespace Lumina
 
     void ApplyParticleParamBindings(const CParticleEmitter& Emitter, const SParticleSystemComponent& Component, TVector<FVector4>& InOutValues)
     {
-        // The overwhelmingly common case: a stack of plain constants pays one empty-check per emitter.
+        // The common case, a stack of plain constants, pays one empty check per emitter.
         if (Emitter.ParamBindings.empty())
         {
             return;
@@ -341,8 +334,7 @@ namespace Lumina
 
         for (const SParticleParamBinding& Binding : Emitter.ParamBindings)
         {
-            // A slot out of range means the bindings were saved against a different compile than the
-            // values -- skip rather than write past the block; the constant already in the slot is right.
+            // An out-of-range slot means bindings saved against a different compile, so skip and keep the constant.
             if (Binding.SlotIndex < 0 || Binding.SlotIndex >= (int32)InOutValues.size())
             {
                 continue;
@@ -356,9 +348,7 @@ namespace Lumina
 
             FVector4 Value = ParameterAsVector4(*Param);
 
-            // Broadcast a scalar parameter across a wider input, so a single float can drive all three
-            // axes of a vector. Without this the y and z of that input would silently read zero, which
-            // for something like a gravity or noise-strength input reads as "the module stopped working".
+            // Without the broadcast, y and z read zero, which reads as the module having stopped working.
             if (ParticleParamComponents(Param->Type) == 1 && ParticleParamComponents(Binding.Type) > 1)
             {
                 Value = FVector4(Value.x, Value.x, Value.x, Value.x);

@@ -132,8 +132,7 @@ namespace Lumina
 
     namespace Detail
     {
-        // Skeleton-LOD tail passthrough: [Active, NumBones) copied from Src. No-op when Out aliases
-        // Src (the executor's buffer-steal path), which is the common case.
+        // A no-op when Out aliases Src on the executor's buffer-steal path, which is the common case.
         static void CopyPoseTail(FPose& Out, const FPose& Src, int32 Active, int32 NumBones)
         {
             if (Active >= NumBones || &Out == &Src)
@@ -263,7 +262,7 @@ namespace Lumina
 
     namespace Detail
     {
-        // Local-space delta: T subtracts, R = Src * conj(Base), S is the ratio (degenerate base passes through).
+        // T subtracts, R multiplies by the conjugate, S is the ratio with a degenerate base passing through.
         static void MakeLocalDelta(FPose& OutDelta,
                                    const FVector3* SrcT, const FQuat* SrcR, const FVector3* SrcS,
                                    const FVector3* BaseT, const FQuat* BaseR, const FVector3* BaseS,
@@ -438,8 +437,7 @@ namespace Lumina
 
         const int32 Active = Detail::ResolveActiveBones(NumActiveBones, NumBones);
 
-        // The SIMD slerp's sin approximation is only valid for alpha in [0,1]; overdriven
-        // additives (alpha > 1) take the exact scalar path.
+        // The SIMD slerp is only valid up to alpha 1, so an overdriven additive takes the scalar path.
         if (Alpha <= 1.0f)
         {
             using namespace SIMD;
@@ -452,7 +450,7 @@ namespace Lumina
                                     reinterpret_cast<const float*>(Base.Scales.data()),
                                     reinterpret_cast<const float*>(Delta.Scales.data()), Alpha, NumComponents);
 
-            // Rotation: slerp identity -> Delta by alpha, then layer onto Base.
+            // Slerps identity toward Delta by alpha, then layers the result onto Base.
             const VFloat4 VAlpha = VFloat4::Broadcast(Alpha);
             const FQuat* BaseR  = Base.Rotations.data();
             const FQuat* DeltaR = Delta.Rotations.data();
@@ -695,7 +693,6 @@ namespace Lumina
 
     namespace Detail
     {
-        // Shortest-arc rotation that takes unit vector A onto unit vector B.
         // Handles the antipodal case without producing NaN.
         static FQuat QuatFromTo(const FVector3& A, const FVector3& B)
         {
@@ -859,7 +856,7 @@ namespace Lumina
             return;
         }
 
-        // Pass 1: local TRS -> global, fused FK; Bones[] is parents-before-children so a single linear pass works.
+        // Bones[] is parents-before-children, so a single linear FK pass works.
         for (int32 i = 0; i < NumBones; ++i)
         {
             const FMatrix4 Local = ComposeTRS(Pose.Translations[i], Pose.Rotations[i], Pose.Scales[i]);
@@ -867,7 +864,7 @@ namespace Lumina
             OutMatrices[i] = Parent != INDEX_NONE ? OutMatrices[Parent] * Local : Local;
         }
 
-        // Pass 2: fold in InvBind to produce the GPU skinning matrix.
+        // Folds in InvBind to produce the GPU skinning matrix.
         for (int32 i = 0; i < NumBones; ++i)
         {
             OutMatrices[i] = OutMatrices[i] * Skeleton->GetBone(i).InvBindMatrix;

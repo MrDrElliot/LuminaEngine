@@ -44,7 +44,7 @@ namespace Lumina::Platform
     }
 }
 
-#else // Portable fallback: hand-rolled UTF-8 <-> UTF-16/UTF-32 (wchar_t width is platform dependent).
+#else // A portable hand-rolled fallback, since wchar_t width is platform dependent.
 
 namespace Lumina::Platform
 {

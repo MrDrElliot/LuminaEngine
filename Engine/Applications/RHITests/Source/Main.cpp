@@ -94,9 +94,7 @@ int main(int ArgC, char** ArgV)
     FApplicationGlobalState GlobalState("RHITests Main");
     Task::Initialize();
 
-    // Without this the RHI's own GPU-AV knobs are silently inert: every --validate= / --novalidate= /
-    // --maxinstrumented lookup runs through GCommandLine, and CreateDevice's IsListed() returns false
-    // when it is null. The flags parse, print nothing, and change nothing.
+    // Without this every RHI GPU-AV flag parses, prints nothing, and changes nothing.
     FCommandLine ParsedCommandLine{ ArgC, ArgV };
     GCommandLine = &ParsedCommandLine;
 

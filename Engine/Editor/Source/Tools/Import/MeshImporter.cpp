@@ -46,7 +46,7 @@ namespace Lumina
 
     namespace
     {
-        // Destination asset name: <Prefix><clean stem>, directory and extension stripped.
+        // Directory and extension are stripped, leaving the prefix and a clean stem.
         FFixedString TextureAssetName(FStringView Raw)
         {
             const size_t Slash = Raw.find_last_of("/\\");
@@ -59,8 +59,7 @@ namespace Lumina
             return FFixedString(Import::MakeAssetName("T_", Stem).c_str());
         }
 
-        // Package paths an import is about to mint. FindObject only sees what is already loaded, so a run
-        // that creates several assets under one directory needs its own claim set to stay collision-free.
+        // FindObject only sees loaded objects, so a multi-asset run needs its own claim set.
         class FUniquePathAllocator
         {
         public:
@@ -111,8 +110,7 @@ namespace Lumina
             return bAnyExplicit ? SlotCount : Resource.GeometrySurfaces.size();
         }
 
-        /** Rewrites a resource's surface material indices into a dense per-mesh slot range and returns the
-         *  slot -> source mapping. A parser indexes by position in the WHOLE file, leaving dangling slots. */
+        // A parser indexes by position in the WHOLE file, which leaves dangling slots behind.
         TVector<int16> DensifyMaterialSlots(FMeshResource& Resource)
         {
             TVector<int16> SlotToSource;
@@ -233,7 +231,7 @@ namespace Lumina
                         Surviving += Weights[w];
                     }
 
-                    // Matches PackSkinWeights: the quartet sums to 255, and an empty one goes rigid to bone 0.
+                    // Matches PackSkinWeights, where the quartet sums to 255 and an empty one goes rigid to bone 0.
                     if (Surviving == 0)
                     {
                         Indices = FU16Vector4(0, 0, 0, 0);
@@ -260,8 +258,7 @@ namespace Lumina
             return Result;
         }
 
-        // Which parsed sub-mesh replaces the asset on reimport. Prefers a name match (survives reordered
-        // exports) and falls back to the first compatible resource.
+        // Prefers a name match so reordered exports survive, and falls back to the first compatible resource.
         int32 FindResourceForAsset(const FMeshImportData& Data, const FName& AssetName, bool bWantSkinned)
         {
             int32 FirstCompatible = INDEX_NONE;
@@ -286,8 +283,7 @@ namespace Lumina
             return FirstCompatible;
         }
 
-        // Carries old material assignments onto new slots, keyed off surface names so a source whose
-        // materials were reordered keeps its overrides; index is the fallback.
+        // Keyed off surface names so reordered materials keep their overrides, with index as the fallback.
         void RemapMaterialSlots(const FMeshResource& OldResource,
                                 const TVector<TObjectPtr<CMaterialInterface>>& OldMaterials,
                                 const FMeshResource& NewResource,
@@ -333,8 +329,7 @@ namespace Lumina
             }
         }
 
-        // Flattens every scene-graph placement into one static/skinned pair, baking each instance's world
-        // transform in. The only stage that expands instances, so the cost is paid once and only on merge.
+        // The only stage that expands instances, so the cost is paid once and only on merge.
         bool MergeInstancesIntoSingleMesh(FMeshImportData& Data, FString& OutError)
         {
             size_t TotalStaticVerts = 0, TotalStaticIndices = 0;
@@ -365,8 +360,7 @@ namespace Lumina
                 }
             }
 
-            // Vertex indices are baked into a uint32 stream, so a merge past 4.29B vertices would silently
-            // wrap and scramble the geometry rather than fail.
+            // Indices bake into a uint32 stream, so a merge past 4.29B vertices would wrap rather than fail.
             constexpr size_t MaxMergedVerts = (size_t)0xFFFFFFFFu;
             if (TotalStaticVerts > MaxMergedVerts || TotalSkinnedVerts > MaxMergedVerts)
             {
@@ -389,8 +383,7 @@ namespace Lumina
                 if (Resource->bSkinnedMesh  && MergedSkinned->Name.IsNone()) { MergedSkinned->Name = Resource->Name; }
             }
 
-            // Measured first, allocated exactly once: growing these streams per instance would memcpy the
-            // whole buffer set repeatedly and hold two allocations at once mid-realloc.
+            // Growing per instance would memcpy the whole buffer set and hold two allocations mid-realloc.
             if (TotalStaticVerts > 0)
             {
                 MergedStatic->ReserveVertices(TotalStaticVerts);
@@ -443,8 +436,7 @@ namespace Lumina
                     FGeometrySurface Surface = SourceSurface;
                     Surface.StartIndex += (uint32)BaseIndex;
 
-                    // Primitives sharing a source material collapse onto one slot; without this every
-                    // instance would add its own duplicate of the same material.
+                    // Without this every instance would add its own duplicate of the same source material.
                     if (SourceSurface.MaterialIndex >= 0)
                     {
                         auto It = SlotRemap.find(SourceSurface.MaterialIndex);
@@ -501,8 +493,7 @@ namespace Lumina
             return true;
         }
 
-        // Material generation compiles shaders through GShaderCompiler->Flush(), whose atomic_wait would
-        // stall a worker fiber, so it has to land on the main thread.
+        // Flush uses an atomic_wait that would stall a worker fiber, so this must land on the main thread.
         void RunOnMainThread(const TFunction<void()>& Work)
         {
             if (Threading::IsMainThread())
@@ -524,8 +515,7 @@ namespace Lumina
 
     namespace
     {
-        /** Luminous efficacy at 555nm. The constant DCC exporters use converting watts -> lumens, so
-         *  dividing by it recovers the radiometric value the scene was actually authored with. */
+        // Luminous efficacy at 555nm, the constant DCC exporters use to convert watts into lumens.
         constexpr float GLuminousEfficacy = 683.0f;
 
         /** Steradians in a sphere; a point light's candela is its lumens spread over all of them. */
@@ -554,19 +544,16 @@ namespace Lumina
             return (LengthSq > Math::Epsilon<float>()) ? Math::Normalize(Light.LocalDirection) : FVector3(0.0f, 0.0f, -1.0f);
         }
 
-        /** Authors the environment an imported scene cannot carry itself. File-local so the importer header
-         *  does not have to pull in entt or the component headers. */
+        // File-local so the importer header does not have to pull in entt or the component headers.
         void AddSceneEnvironment(entt::registry& Registry, entt::entity Root, const FVector3& WorldColor)
         {
-            // A flat fill rather than the Dynamic default: the source authored a constant world color, and
-            // a procedural atmosphere would introduce a sun and a sky gradient it never asked for.
+            // A flat fill, since a procedural atmosphere would add a sun and sky gradient nobody asked for.
             SEnvironmentComponent& Environment = Registry.emplace<SEnvironmentComponent>(Root);
             Environment.bRenderSky   = true;
             Environment.SkyMode      = ESkyMode::SolidColor;
             Environment.SolidSkyColor = WorldColor;
 
-            // The world doubles as the ambient fill, which is what it does in a DCC. Intensity carries the
-            // magnitude so the color stays a hue, and the component clamps it to [0,1].
+            // Intensity carries the magnitude so the color stays a hue, and the component clamps it.
             const float Ambient = Math::Max(WorldColor.x, Math::Max(WorldColor.y, WorldColor.z));
             SSkyLightComponent& SkyLight = Registry.emplace<SSkyLightComponent>(Root);
             SkyLight.bAffectsWorld  = true;
@@ -574,13 +561,11 @@ namespace Lumina
             SkyLight.AmbientColor   = (Ambient > 0.0f) ? (WorldColor / Ambient) : FVector3(1.0f);
             SkyLight.Intensity      = Math::Clamp(Ambient, 0.0f, 1.0f);
 
-            // An identity grade. Without this the prefab inherits whatever the host world grades with, and
-            // a default Lumina world ships a deliberately art-directed one.
+            // Without this the prefab inherits the host world's grade, which Lumina art-directs by default.
             SPostProcessComponent& PostProcess = Registry.emplace<SPostProcessComponent>(Root);
             PostProcess.bEnabled        = true;
             PostProcess.bInfiniteExtent = true;
-            // A default world ships its own global volume at priority 0 and ties resolve by iteration order.
-            // Outranking it is the difference between the source's look and the editor's.
+            // A default world ships a volume at priority 0 and ties resolve by iteration order, so outrank it.
             PostProcess.Priority        = 100;
 
             SPostProcessSettings& Settings = PostProcess.Settings;
@@ -644,8 +629,7 @@ namespace Lumina
             return nullptr;
         }
 
-        // A node earns an entity by carrying something, or by sitting on the path to one: dropping the rest
-        // keeps an exporter's empty grouping nodes from becoming thousands of empty entities.
+        // Dropping the rest keeps an exporter's empty grouping nodes from becoming thousands of entities.
         TVector<uint8> bKeep(Nodes.size(), 0);
         for (size_t i = 0; i < Nodes.size(); ++i)
         {
@@ -653,8 +637,7 @@ namespace Lumina
             {
                 continue;
             }
-            // Cameras are always parsed (the dialogue runs after the parse), so a declined camera import
-            // has to drop them here rather than leave a bare entity behind.
+            // Cameras are always parsed, so a declined camera import drops them here rather than leaving a shell.
             if (Nodes[i].Kind == ESourceNodeKind::Camera && !bImportCameras)
             {
                 continue;
@@ -716,8 +699,7 @@ namespace Lumina
         TVector<entt::entity> NodeEntities;
         NodeEntities.resize(Nodes.size(), entt::null);
 
-        // World rotations accumulate parents-first in the same pass; a directional light stores a world
-        // vector rather than deriving one from its transform.
+        // A directional light stores a world vector rather than deriving one from its transform.
         TVector<FQuat> WorldRotations(Nodes.size(), FQuat(1.0f, 0.0f, 0.0f, 0.0f));
 
         bool   bClaimedActiveCamera = false;
@@ -761,8 +743,7 @@ namespace Lumina
 
             if (Node.Kind == ESourceNodeKind::Camera && bImportCameras)
             {
-                // A glTF camera looks down local -Z; the engine's camera forward is the entity's +Z. Yawing 180
-                // makes the imported orientation frame the same view instead of the exact opposite one.
+                // A glTF camera looks down local -Z, so yawing 180 frames the same view rather than the opposite.
                 Transform.SetRotation(Node.Rotation * FQuat(FVector3(0.0f, Math::Pi<float>(), 0.0f)));
             }
             else if (Node.Kind == ESourceNodeKind::SpotLight && bImportLights)
@@ -820,8 +801,7 @@ namespace Lumina
                     SPointLightComponent& Light = Registry.emplace<SPointLightComponent>(Entity);
                     Light.LightColor = Node.Light.Color;
                     Light.Intensity  = ConvertPunctualIntensity(Node.Light, BrightestPunctual);
-                    // glTF range 0 means unbounded, which a clustered renderer cannot express; the
-                    // component default is the finite stand-in.
+                    // glTF range 0 means unbounded, which a clustered renderer cannot express.
                     if (Node.Light.Range > 0.0f)
                     {
                         Light.Attenuation = Node.Light.Range;
@@ -882,8 +862,7 @@ namespace Lumina
                         Camera.FarPlane = Node.Camera.ZFar;
                     }
 
-                    // Only the first camera claims activation, so a multi-camera source does not fight
-                    // over which one wins on spawn.
+                    // Only the first camera claims activation, so a multi-camera source does not fight on spawn.
                     Camera.bAutoActivate = !bClaimedActiveCamera;
                     bClaimedActiveCamera = true;
 
@@ -906,8 +885,7 @@ namespace Lumina
 
         if (bCreateSceneEnvironment)
         {
-            // The environment belongs on whichever entity is the instantiation root, since that is the one
-            // guaranteed to exist for the life of the instance.
+            // The instantiation root is the one entity guaranteed to exist for the life of the instance.
             entt::entity EnvironmentRoot = SharedRoot;
             if (EnvironmentRoot == entt::null)
             {
@@ -955,8 +933,7 @@ namespace Lumina
 
     bool CMeshImporter::ParseSource(const FImportRequest& Request, FString& OutError, FScopedSlowTask* Progress)
     {
-        // The preview parse is deliberately neutral: user transforms and every heavy pass are deferred to
-        // BuildAssets, so changing a setting in the dialogue never costs a re-parse.
+        // User transforms and heavy passes are deferred to BuildAssets, so a setting change never re-parses.
         FMeshImportOptions PreviewOptions;
         PreviewOptions.bOptimize         = false;
         PreviewOptions.bMergeMeshes      = false;
@@ -1067,8 +1044,7 @@ namespace Lumina
         constexpr float kTextureBudget  = 0.13f;
         constexpr float kSaveBudget     = 0.10f;
 
-        // A source with a scene graph merges through the instance table, so each placement's world transform
-        // is baked and the layout survives. FBX and OBJ fall through to plain concatenation.
+        // A scene graph merges through the instance table, while FBX and OBJ fall through to concatenation.
         if (bMergeMeshes && !SourceData.MeshInstances.empty())
         {
             if (Progress)
@@ -1135,8 +1111,7 @@ namespace Lumina
         TObjectPtr<CSkeleton> PrimarySkeleton;
         const bool bMultipleSkeletons = SourceData.Skeletons.size() > 1;
 
-        // With a target skeleton the file's own is only still needed to bind skinned meshes, whose weights
-        // are bone INDICES into it. Nothing else would reference it, so skip minting a duplicate.
+        // With a target skeleton the file's own only binds skinned meshes, so skip minting a duplicate.
         bool bFileSkeletonNeeded = TargetSkeleton == nullptr;
         if (!bFileSkeletonNeeded && bImportMeshes && !bBoundToTargetSkeleton)
         {
@@ -1171,8 +1146,7 @@ namespace Lumina
             CreatedObjects.push_back(NewSkeleton);
         }
 
-        // Slot -> source-material mapping per resource. Merge mode densified globally at parse time and
-        // carries its own table; everything else is packed here, indexed alongside ResourceToMesh.
+        // Merge mode densified globally at parse time, so everything else is packed here alongside ResourceToMesh.
         TVector<TVector<int16>> ResourceSlotToSource(SourceData.Resources.size());
         if (!bMergeMeshes)
         {
@@ -1256,8 +1230,7 @@ namespace Lumina
 
         FScopedAssetRegistryBatch RegistryBatch;
 
-        // Textures are resolved by IMAGE INDEX, so binding a material channel is an array lookup rather
-        // than a hash of a path string that was rebuilt for every slot.
+        // Resolved by IMAGE INDEX, so binding a channel is an array lookup rather than a path hash.
         TVector<CTexture*> ImageAssets(SourceData.Images.size(), nullptr);
 
         const bool bWantTextures = bImportTextures || bImportMaterials;
@@ -1291,8 +1264,7 @@ namespace Lumina
 
                 const bool bAlreadyExists = (FindObject<CPackage>(PackagePath) != nullptr);
 
-                // TextureAssetName drops directory and extension, so two source images can sanitize to one name.
-                // Images are already deduplicated by key, so a collision here is always two different textures.
+                // Images are deduplicated by key already, so a name collision here is always two different textures.
                 if (!bAlreadyExists && !SeenPaths.insert(PackagePath).second)
                 {
                     PackagePath = Paths.Claim(PackagePath);
@@ -1318,15 +1290,12 @@ namespace Lumina
 
                 Import::Textures::FTextureCookRequest CookRequest;
                 CookRequest.EmbeddedBytes      = Image.Bytes;
-                // Embedded payloads have no file; the key still names them for the color-space heuristic
-                // and is not persisted onto the asset.
+                // Embedded payloads have no file, so the key only feeds the color-space heuristic and is not stored.
                 CookRequest.SourcePath         = Image.ResolvedPath.empty() ? Image.Key : Image.ResolvedPath;
                 CookRequest.ColorSpace         = Image.IntendedColorSpace;
-                // One encode thread each: this loop already saturates the cores, so a full basisu pool per
-                // texture would only oversubscribe them.
+                // This loop already saturates the cores, so a full basisu pool per texture would oversubscribe.
                 CookRequest.EncodeThreadBudget = 1;
-                // CPU mips only. Nothing renders these during import and PostLoad creates the image on first use,
-                // whereas creating one here queues a copy against an image this import destroys first.
+                // Creating a GPU image here would queue a copy against an image this import destroys first.
                 CookRequest.bCreateGPUResource  = false;
 
                 Cooked[i] = Import::Textures::ImportTextureAsset(W.PackagePath, CookRequest);
@@ -1354,8 +1323,7 @@ namespace Lumina
             Progress->EnterProgressFrame(kTextureBudget);
         }
 
-        // How many null slots the assignment below knows about. The sweep after it compares against this,
-        // so it only speaks up when the assets disagree with what assignment thought it did.
+        // The sweep after it compares against this, so it only speaks up when the assets disagree.
         uint32 ExpectedNullSlots = 0;
 
         if (bImportMaterials && !SourceData.Materials.empty())
@@ -1372,14 +1340,7 @@ namespace Lumina
                     TSpan<CTexture* const>(ImageAssets.data(), ImageAssets.size()),
                     MaterialsDir, BaseName, CreatedObjects, SourceData.bHasVertexColors);
 
-                // Every mesh's slots are dense now, so each needs its OWN slot -> source table: merge mode's
-                // global one, or the per-resource one built before the assets were created.
-                //
-                // Each of the four ways a surface can come out of here with no material is counted rather
-                // than passed over, because they have different causes and the symptom is identical: an
-                // untextured import. NoSource/OutOfRange mean the slot tables and the surfaces disagree;
-                // NoInstance means the material itself never got generated (see the [MaterialImport] errors
-                // above it); Unassigned means the source primitive genuinely had no material.
+                // Each of the four ways a surface ends up materialless is counted, since the symptom is identical.
                 uint32 SurfacesTotal = 0, NoAssignment = 0, OutOfRange = 0, NoSource = 0, NoInstance = 0;
 
                 for (size_t ResIdx = 0; ResIdx < ResourceToMesh.size(); ++ResIdx)
@@ -1432,10 +1393,7 @@ namespace Lumina
                     });
                 }
 
-                // A primitive the source left unmaterialed is not a fault, and a warning that fires on
-                // every healthy import is one nobody reads. Only the three that mean something broke --
-                // the slot tables disagreeing with the surfaces, or a material that failed to generate --
-                // raise the severity.
+                // A source primitive with no material is not a fault, so only the three real faults raise severity.
                 const uint32 Faults = OutOfRange + NoSource + NoInstance;
                 const uint32 Unresolved = NoAssignment + Faults;
                 ExpectedNullSlots = Unresolved;
@@ -1458,18 +1416,14 @@ namespace Lumina
         }
         else if (bImportMeshes)
         {
-            // The generation block is the ONLY thing that fills a mesh's slots, so being skipped here means
-            // every imported mesh lands with an all-null Materials array. Silent until now, and identical
-            // in the browser to a generation that ran and failed -- which is why it says which gate closed.
+            // Being skipped here lands every mesh with an all-null Materials array, so say which gate closed.
             LOG_WARN("[Import] no materials were generated: Import Materials is {}, and the source parsed "
                      "{} material(s). Every imported mesh will have empty material slots.",
                      bImportMaterials ? "ON" : "OFF", (uint32)SourceData.Materials.size());
             ExpectedNullSlots = UINT32_MAX;
         }
 
-        // Final state of the assets as saved, counted from the meshes themselves rather than from the
-        // assignment loop's bookkeeping. Reported only when the two disagree, which is the one thing the
-        // assignment loop cannot see for itself: a slot that was filled and then cleared again.
+        // Counted from the meshes themselves, which is the one thing the assignment loop cannot see.
         if (bImportMeshes)
         {
             uint32 SlotsTotal = 0, SlotsNull = 0, MeshesFullyNull = 0, MeshCount = 0;
@@ -1508,8 +1462,7 @@ namespace Lumina
             }
         }
 
-        // Built last: it references the mesh assets above and their materials, so everything it points at
-        // exists. Merging already flattened the scene, which is the opposite of what a prefab preserves.
+        // Built last so everything it points at exists, and merging already flattened what a prefab preserves.
         if (bImportAsPrefab && !bMergeMeshes && !SourceData.SceneNodes.empty())
         {
             if (Progress)
@@ -1535,8 +1488,7 @@ namespace Lumina
             CPackage* Package = Object->GetPackage();
             if (CPackage::SavePackage(Package, Package->GetPackagePath()))
             {
-                // A generated material node graph rides along in its master's package but is not itself a
-                // browsable asset.
+                // A generated material node graph rides in its master's package without being a browsable asset.
                 if (Object->IsAsset())
                 {
                     FAssetRegistry::Get().AssetCreated(Object);
@@ -1583,7 +1535,7 @@ namespace Lumina
             return;
         }
 
-        // Never the dialogue's target: worlds already pose this mesh against the skeleton it answers to.
+        // Never the dialogue's target, since worlds pose this mesh against the skeleton it answers to.
         const FSkeletonResource* Target = SkeletalMesh->Skeleton.IsValid()
                                         ? SkeletalMesh->Skeleton->GetSkeletonResource()
                                         : nullptr;
@@ -1628,8 +1580,7 @@ namespace Lumina
             return false;
         }
 
-        // Only the geometry matters: reimport replaces one asset's data, it does not mint the skeletons,
-        // animations, materials and textures a fresh import would, because those have their own identities.
+        // Reimport replaces one asset's data and does not mint the assets a fresh import would.
         FMeshImportOptions Options = BuildOptions(false);
         Options.bImportMeshes     = true;
         Options.bImportSkeleton   = false;
@@ -1637,8 +1588,7 @@ namespace Lumina
         Options.bImportMaterials  = false;
         Options.bImportTextures   = false;
 
-        // Taken from the ASSET, not the dialogue: without this a mesh with a field silently loses it on
-        // every reimport.
+        // Taken from the ASSET, since otherwise a mesh with a distance field loses it on every reimport.
         Options.DistanceField = Mesh->DistanceFieldSettings;
 
         RebindReimportSkinning(Mesh);
@@ -1666,11 +1616,10 @@ namespace Lumina
             Progress->EnterProgressFrame(0.1f, "Replacing mesh data...");
         }
 
-        // Name follows the ASSET: the object keeps its identity through a reimport.
+        // Name follows the ASSET, so the object keeps its identity through a reimport.
         NewResource->Name = Mesh->GetName();
 
-        // Match the fresh-import path, or a reimport would hand the asset back its file-global slot
-        // numbering and undo the dense packing. Merge mode densifies at parse time instead.
+        // Otherwise a reimport hands the asset its file-global slot numbering and undoes the dense packing.
         if (!bMergeMeshes)
         {
             DensifyMaterialSlots(*NewResource);
@@ -1680,8 +1629,7 @@ namespace Lumina
         RemapMaterialSlots(Mesh->GetMeshResource(), Mesh->Materials, *NewResource, RemappedMaterials);
         Mesh->Materials = Move(RemappedMaterials);
 
-        // Same CObject, same GUID, same package: SetMeshResource rebuilds bounds and GPU buffers and
-        // invalidates the resolve-cache entries, so live components pick the new geometry up.
+        // SetMeshResource rebuilds bounds and buffers and invalidates the resolve cache, so components follow.
         Mesh->SetMeshResource(Move(NewResource));
         Mesh->SourcePath = FString(Request.SourcePath.c_str());
 
@@ -1955,8 +1903,7 @@ namespace Lumina
                 {
                     ImGui::TextDisabled("Duration: %.2fs   Channels: %zu", Anim.Duration, Anim.Channels.size());
 
-                    // Channels resolve by bone name at sample time, and an unmatched one silently freezes
-                    // its bone at bind pose. Surface that here, where it can still be acted on.
+                    // An unmatched channel silently freezes its bone at bind pose, so surface it here.
                     if (Target != nullptr)
                     {
                         int32 Unmatched = 0;

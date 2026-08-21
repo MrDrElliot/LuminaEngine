@@ -139,8 +139,7 @@ namespace Lumina::SkeletonDebugDraw
 
     namespace
     {
-        // Shared iteration: invoke Callback(skeleton, meshWorld, globals) for every drawable
-        // skeletal mesh in the world. Keeps DrawWorldSkeletons / GatherWorldBoneLabels in sync.
+        // Keeps DrawWorldSkeletons and GatherWorldBoneLabels in sync over one iteration.
         template <typename TFunc>
         void ForEachSkeletalMesh(CWorld* World, TFunc&& Callback)
         {

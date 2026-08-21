@@ -145,11 +145,11 @@ namespace Lumina
 
     void FConsoleRegistry::SaveToConfig()
     {
-        // TODO: serialize console variables to Config/ConsoleSave.json.
+        // TODO serialize console variables to the config directory.
     }
 
     void FConsoleRegistry::LoadFromConfig()
     {
-        // TODO: restore console variables from Config/ConsoleSave.json.
+        // TODO restore console variables from the config directory.
     }
 }

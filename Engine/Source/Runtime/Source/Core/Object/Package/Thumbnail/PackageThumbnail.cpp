@@ -30,7 +30,7 @@ namespace Lumina
             Ar << Magic;
             if (Magic != kThumbnailMagic)
             {
-                // Unrecognized/absent thumbnail block: leave empty, it regenerates on next save.
+                // An unrecognized thumbnail block is left empty and regenerates on the next save.
                 ImageData.clear();
                 ImageWidth  = 0;
                 ImageHeight = 0;

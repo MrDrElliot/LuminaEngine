@@ -30,7 +30,7 @@ namespace Lumina
 
         ObjectGUIDHash.erase(It);
 
-        // Uses the object's CURRENT name -- HandleNameChange removes under the old name before it mutates.
+        // Uses the object's CURRENT name, since HandleNameChange removes before it mutates.
         ObjectNameHash[Object->GetName()].erase(Object);
     }
 

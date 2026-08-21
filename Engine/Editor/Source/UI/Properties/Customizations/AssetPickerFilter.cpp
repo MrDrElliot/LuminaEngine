@@ -9,8 +9,7 @@ namespace Lumina::AssetPickerFilter
 {
     namespace
     {
-        // Case-insensitive "does Path start with Root, at a segment boundary". The boundary test stops
-        // "/GameplayAbilities/..." (a plugin) from being read as project content under "/Game".
+        // The boundary test stops a plugin path like /GameplayAbilities from reading as /Game content.
         bool HasRoot(FStringView Path, FStringView Root)
         {
             if (Path.size() < Root.size())

@@ -95,14 +95,7 @@ namespace Lumina
             return Map.has_value ? ToVector3(Map.value_vec3) : Default;
         }
 
-        /**
-         * The image file behind a material map.
-         *
-         * A material property does not always point straight at a file texture: 3ds Max wraps normal maps
-         * in a bump shader node, and layered stacks sit in front of the real image. `file_textures` is
-         * ufbx's flattened view of the actual files behind any of those, and contains the texture itself
-         * for the plain case.
-         */
+        // 3ds Max wraps normal maps in a bump node, and file_textures is ufbx's flattened view of the files.
         const ufbx_texture* FindFileTexture(const ufbx_texture* Texture)
         {
             if (Texture == nullptr)
@@ -138,7 +131,7 @@ namespace Lumina
 
     void CFBXImporter::ReleaseSourceData()
     {
-        // Source data first: its image spans point into the scene ufbx owns.
+        // Source data first, since its image spans point into the scene ufbx owns.
         CMeshImporter::ReleaseSourceData();
 
         if (Scene != nullptr)
@@ -169,7 +162,7 @@ namespace Lumina
 
         const bool bWantTextures = Options.bImportTextures || Options.bImportMaterials;
 
-        //~ Stage 1: source parsing.
+        //~ Stage 1, source parsing.
 
         if (Progress)
         {
@@ -195,22 +188,15 @@ namespace Lumina
         LoadOptions.filename.data   = SourcePath.c_str();
         LoadOptions.filename.length = SourcePath.size();
 
-        // The engine is left-handed Y-up with +Z forward, which is -Z in ufbx's "front points at the
-        // viewer" convention. Mirroring on X rather than Z keeps this matching what FBX imports have
-        // always produced here, so existing FBX-sourced assets stay consistent with new ones.
-        // ufbx applies the conversion to geometry, node transforms, skin binds and animation together,
-        // and reverses winding on the mirrored meshes, which is the whole reason to hand it the job.
+        // Mirroring on X rather than Z keeps new imports consistent with every FBX asset already in the tree.
         LoadOptions.target_axes                = ufbx_axes_left_handed_y_up;
         LoadOptions.handedness_conversion_axis = UFBX_MIRROR_AXIS_X;
         LoadOptions.space_conversion           = UFBX_SPACE_CONVERSION_ADJUST_TRANSFORMS;
 
-        // Engine world units are meters. The user's Scale is deliberately NOT applied here: the shared
-        // FinalizeMeshImportData pass applies it to vertices, skeletons and animation translations, and
-        // applying it twice is exactly the bug the old importer had.
+        // The user's Scale is deliberately NOT applied here, since FinalizeMeshImportData already applies it.
         LoadOptions.target_unit_meters = 1.0f;
 
-        // FBX geometry transforms affect the mesh but not the node's children, which an entity hierarchy
-        // cannot express. Helper nodes keep instancing intact, unlike baking them into the geometry.
+        // Helper nodes keep instancing intact, unlike baking a geometry transform into the geometry.
         LoadOptions.geometry_transform_handling = UFBX_GEOMETRY_TRANSFORM_HANDLING_HELPER_NODES;
         LoadOptions.inherit_mode_handling       = UFBX_INHERIT_MODE_HANDLING_HELPER_NODES;
 
@@ -218,16 +204,14 @@ namespace Lumina
         LoadOptions.normalize_normals        = true;
         LoadOptions.clean_skin_weights       = true;
 
-        // Blender writes PBR materials as legacy Phong in a documented, reversible way. Without this every
-        // Blender FBX loses its roughness and metallic maps.
+        // Blender writes PBR as legacy Phong reversibly, and without this every Blender FBX loses its maps.
         LoadOptions.use_blender_pbr_material = true;
 
         LoadOptions.load_external_files            = bWantTextures;
         LoadOptions.ignore_missing_external_files  = true;
         LoadOptions.ignore_embedded                = !bWantTextures;
 
-        // A broken index becomes UFBX_NO_INDEX, which the ufbx_get_vertex_* accessors read as zero.
-        // Aborting instead would reject files that load fine everywhere else.
+        // A broken index reads as zero, and aborting would reject files that load fine everywhere else.
         LoadOptions.index_error_handling = UFBX_INDEX_ERROR_HANDLING_NO_INDEX;
         LoadOptions.connect_broken_elements = true;
 
@@ -247,19 +231,13 @@ namespace Lumina
             LOG_WARN("[FBX] '{}': {} (x{})", SourceName.data(), ToView(Warning.description).data(), (uint32)Warning.count);
         }
 
-        //~ Stage 2: images. ufbx already collapses the scene's textures onto a unique file list, so this is
-        //~ one FSourceImage per distinct image. Embedded payloads stay VIEWS into the scene ufbx owns --
-        //~ ReleaseSourceData is what frees them.
+        //~ Embedded payloads stay VIEWS into the scene ufbx owns, and ReleaseSourceData is what frees them.
 
         TVector<int32> FileToImage(Scene->texture_files.count, INDEX_NONE);
 
         if (bWantTextures && Scene->texture_files.count > 0)
         {
-            // Every place a texture's path might actually live, in decreasing order of authority. ufbx's
-            // `filename` is the authored path already resolved against the FBX, which is right whenever the
-            // asset traveled with its textures; the rest recover the common cases where it did not -- an
-            // absolute path from the authoring machine, a flattened texture folder, or the "<name>.fbm"
-            // sidecar the FBX SDK unpacks embedded media into.
+            // In decreasing order of authority, recovering absolute, flattened and .fbm sidecar layouts.
             auto ResolveOnDisk = [&](const ufbx_texture_file& File, FFixedString& OutTried) -> FFixedString
             {
                 const FStringView Relative = ToView(File.relative_filename);
@@ -305,8 +283,7 @@ namespace Lumina
 
                 FSourceImage Image;
 
-                // The key names the image for the asset it becomes and drives the cook's filename-based
-                // color-space heuristic, so it wants to look like a filename even for embedded content.
+                // The key drives the cook's filename color-space heuristic, so it wants to look like a filename.
                 Image.Key = PathLeaf(!ToView(File.relative_filename).empty() ? ToView(File.relative_filename)
                                                                             : ToView(File.filename));
                 if (Image.Key.empty())
@@ -325,9 +302,7 @@ namespace Lumina
                     Image.ResolvedPath = ResolveOnDisk(File, Tried);
                     if (Image.ResolvedPath.empty())
                     {
-                        // The single most common reason an FBX imports untextured. Named loudly, with the
-                        // paths that were tried, because the silent fallback to a default material is
-                        // otherwise indistinguishable from the file having no textures at all.
+                        // Named loudly with the paths tried, since a default material looks like an untextured file.
                         LOG_WARN("[FBX] Texture '{}' is neither embedded nor on disk; the materials using it "
                                  "will import with the neutral default. Looked in: {}",
                                  Image.Key, Tried.empty() ? FFixedString("(no path in the file)") : Tried);
@@ -350,10 +325,9 @@ namespace Lumina
                      (uint32)EmbeddedCount);
         }
 
-        //~ Stage 3: materials.
+        //~ Stage 3, materials.
 
-        // A texture names its UV set by string. The engine carries two sets, so the name resolves to a set
-        // index through the meshes that declare it; anything past set 1 clamps down onto it.
+        // The engine carries two UV sets, so anything past set 1 clamps down onto it.
         THashMap<FFixedString, uint32> UVSetIndexByName;
         for (const ufbx_mesh* Mesh : Scene->meshes)
         {
@@ -384,8 +358,7 @@ namespace Lumina
 
         auto ResolveImage = [&](const ufbx_material_map& Map) -> int32
         {
-            // texture_enabled is deliberately not consulted: exporters set it inconsistently, and a false
-            // there is the difference between a textured import and a flat gray one.
+            // texture_enabled is deliberately ignored, since exporters set it inconsistently.
             const ufbx_texture* File = FindFileTexture(Map.texture);
             if (File == nullptr || !File->has_file || File->file_index == UFBX_NO_INDEX)
             {
@@ -411,8 +384,7 @@ namespace Lumina
                 return Out;
             }
 
-            // uv_to_texture maps a UV coordinate to the sampled texture coordinate, which is the same
-            // direction the engine's scale/rotate/offset chain runs in.
+            // uv_to_texture runs the same direction as the engine's scale, rotate and offset chain.
             const ufbx_matrix& M = Texture->uv_to_texture;
             const FVector2 BasisU((float)M.m00, (float)M.m10);
             const FVector2 BasisV((float)M.m01, (float)M.m11);
@@ -442,9 +414,7 @@ namespace Lumina
             }
         };
 
-        // FBX has no masked flag and no way to point the engine's clip at anything but base-color alpha,
-        // so alpha-tested foliage would otherwise import Opaque. Flagged heuristically by name; the user
-        // can override the blend mode per material afterwards.
+        // FBX has no masked flag, so alpha-tested foliage is flagged by name and can be overridden after.
         auto IsFoliageName = [&](const FString& MaterialName, int32 BaseColorImage) -> bool
         {
             static const char* const kKeywords[] = {
@@ -491,16 +461,13 @@ namespace Lumina
                     ? FString(Source.name.data, Source.name.length)
                     : Format("{}_Mat{}", FStringView(SourceName.data(), SourceName.length()), (uint32)i);
 
-                // ufbx normalizes every shading model it knows -- Phong, Arnold, 3ds Max Physical,
-                // Substance, Blender's Phong-encoded PBR -- onto this one set of maps.
+                // ufbx normalizes Phong, Arnold, Max Physical, Substance and Blender onto this one set of maps.
                 Material.BaseColorImage = ResolveImage(PBR.base_color);
                 Material.NormalImage    = ResolveImage(PBR.normal_map);
                 Material.EmissiveImage  = ResolveImage(PBR.emission_color);
                 Material.OcclusionImage = ResolveImage(PBR.ambient_occlusion);
 
-                // FBX authors metalness and roughness as two single-channel maps far more often than as one
-                // packed image. The packed form is only assumed when both channels genuinely name the same
-                // file, otherwise each keeps its own slot and the generated master samples them separately.
+                // The packed form is only assumed when both channels genuinely name the same file.
                 const int32 MetallicImage  = ResolveImage(PBR.metalness);
                 const int32 RoughnessImage = ResolveImage(PBR.roughness);
                 if (MetallicImage != INDEX_NONE && MetallicImage == RoughnessImage)
@@ -513,11 +480,7 @@ namespace Lumina
                     Material.RoughnessImage = RoughnessImage;
                 }
 
-                // THE factor rule for FBX, and what decides whether a textured import looks right at all:
-                // a texture connected to an FBX property REPLACES that property's constant, it does not tint
-                // it the way a glTF factor does. Standard Surface leaves base_color sitting at 0.5 and
-                // roughness at 0 next to a live map, so carrying those through as multipliers would halve
-                // every albedo and drive every roughness map to a mirror.
+                // An FBX texture REPLACES its property's constant rather than tinting it the way a glTF factor does.
                 auto ScalarFactor = [](const ufbx_material_map& Map, int32 Image, float Default) -> float
                 {
                     return (Image != INDEX_NONE) ? 1.0f : MapReal(Map, Default);
@@ -538,8 +501,7 @@ namespace Lumina
                                                         BaseColor.z * BaseFactor, Opacity);
                 }
 
-                // A material with neither a metalness value nor a map is a dielectric; leaving the factor at
-                // the glTF default of 1 would import every Phong surface as raw metal.
+                // No metalness value and no map means a dielectric, so a factor of 1 would import Phong as metal.
                 Material.MetallicFactor = (PBR.metalness.has_value || MetallicImage != INDEX_NONE)
                     ? ScalarFactor(PBR.metalness, MetallicImage, 0.0f) : 0.0f;
 
@@ -581,8 +543,7 @@ namespace Lumina
                 Material.bTwoSided = Feat.double_sided.enabled;
                 Material.bUnlit    = Feat.unlit.enabled;
 
-                // Alpha. The engine clips and blends on base-color alpha only, so an opacity map that is
-                // NOT the base-color image cannot be honored -- say so rather than importing it opaque.
+                // The engine clips on base-color alpha only, so say so rather than importing it opaque.
                 if (OpacityImage != INDEX_NONE)
                 {
                     Material.AlphaMode   = EImportAlphaMode::Mask;
@@ -628,8 +589,7 @@ namespace Lumina
                 MarkRole(Material.MetallicImage,          ETextureColorSpace::Linear);
                 MarkRole(Material.RoughnessImage,         ETextureColorSpace::Linear);
                 MarkRole(Material.OcclusionImage,         ETextureColorSpace::Linear);
-                // Normal maps cook as Linear (BC7 RGB), not NormalMap: the BC5-packed path is broken and
-                // the material output node reconstructs Z from XY either way.
+                // Normals cook as Linear BC7 since the BC5 path is broken and the output node rebuilds Z anyway.
                 MarkRole(Material.NormalImage,            ETextureColorSpace::Linear);
 
                 if (!bDeduplicateMaterials)
@@ -660,8 +620,7 @@ namespace Lumina
                 Key.push_back((uint32)Material.EmissiveImage);
                 Key.push_back((uint32)Material.OcclusionImage);
 
-                // Two materials pointing at the same images but mapping or filtering them differently are
-                // NOT the same material; without this they collapse and one renders with the other's setup.
+                // Same images mapped or filtered differently are NOT the same material and must not collapse.
                 for (const FTextureUVTransform& UVT : Material.UVTransforms)
                 {
                     Key.push_back(UVT.TexCoordSet);
@@ -690,16 +649,14 @@ namespace Lumina
             }
         }
 
-        //~ Stage 4: scene graph. One DFS from the root so nodes land parents-before-children, which is what
-        //~ the prefab builder and the bone table below both need.
+        //~ One DFS from the root so nodes land parents-before-children, which the prefab builder needs.
 
         if (Progress)
         {
             Progress->EnterProgressFrame(0.15f, "Discovering scene...");
         }
 
-        // ufbx_node::typed_id indexes Scene->nodes, which makes it a dense key for every node-side table.
-        // The visit order is parents-before-children, which the bone table below reuses.
+        // typed_id is a dense key into Scene->nodes, and the visit order is parents-before-children.
         TVector<uint32> NodeVisitOrder;
         NodeVisitOrder.reserve(Scene->nodes.count);
 
@@ -807,8 +764,7 @@ namespace Lumina
                 SceneNode.Kind     = ESourceNodeKind::Mesh;
                 SceneNode.MeshSlot = (int32)MeshIndex;
 
-                // geometry_to_world, not node_to_world: geometry helper nodes carry the mesh's own offset,
-                // and the merge path bakes exactly this matrix into the vertices.
+                // geometry_to_world, since helper nodes carry the mesh offset the merge path bakes in.
                 OutData.MeshInstances.push_back(FSourceMeshInstance{
                     MeshIndex, (uint32)Node.typed_id, ToMatrix4(Node.geometry_to_world) });
 
@@ -873,8 +829,7 @@ namespace Lumina
             }
         }
 
-        //~ Stage 5: mesh deduplication. ufbx already shares one mesh across every node that instances it,
-        //~ so this only catches exporters that emitted the same geometry more than once.
+        //~ ufbx already shares a mesh across instances, so this only catches doubly-emitted geometry.
 
         TVector<uint32> UniqueMeshes;
         TVector<int32>  MeshToUnique(Scene->meshes.count, INDEX_NONE);
@@ -899,8 +854,7 @@ namespace Lumina
                     continue;
                 }
 
-                // Counts and material assignment, plus a hash of the position values. Cheap next to the
-                // geometry pass, and specific enough that two different meshes never collapse.
+                // Counts, material assignment and a position hash, specific enough that two meshes never collapse.
                 Key.clear();
                 Key.push_back((uint32)Mesh.num_vertices);
                 Key.push_back((uint32)Mesh.num_indices);
@@ -950,9 +904,7 @@ namespace Lumina
             }
         }
 
-        //~ Stage 6: the skeleton. Built before geometry, because the vertex joint indices reference it.
-        //~ Every bone a cluster binds AND every ancestor up to the scene root goes in: an FK chain that
-        //~ skips an intermediate node poses every bone below it in the wrong place.
+        //~ Every ancestor goes in too, since an FK chain that skips a node poses everything below it wrong.
 
         THashMap<uint32, int32> NodeToBone;   // ufbx_node::typed_id -> bone index
         TVector<const ufbx_node*> BoneNodes;
@@ -974,8 +926,7 @@ namespace Lumina
                 }
             }
 
-            // Emitted in the scene walk's order, which is parents-before-children -- what BuildBindPoseCache
-            // and every FK pass assume of the bone list.
+            // Emitted parents-before-children, which BuildBindPoseCache and every FK pass assume.
             for (uint32 TypedId : NodeVisitOrder)
             {
                 if (IsBone[TypedId] == 0)
@@ -1001,8 +952,7 @@ namespace Lumina
                 Bone.Name           = !ToView(Node.name).empty() ? FName(ToFixed(Node.name).c_str())
                                                                  : FName("Bone", (uint32)Node.typed_id);
                 Bone.LocalTransform = ToMatrix4(Node.node_to_parent);
-                // Overwritten below for bones a cluster actually binds; a pure ancestor keeps the inverse of
-                // its rest world transform, which is what makes FK*InvBind identity at bind pose for it too.
+                // A pure ancestor keeps its rest inverse, which makes FK times InvBind identity at bind pose.
                 Bone.InvBindMatrix  = ToMatrix4(Node.node_to_world);
                 Bone.InvBindMatrix  = Math::Inverse(Bone.InvBindMatrix);
 
@@ -1019,9 +969,7 @@ namespace Lumina
                 Skeleton->BoneNameToIndex[Bone.Name] = (int32)BoneIndex;
             }
 
-            // geometry_to_bone maps the mesh's geometry space into bone space at bind time, which is
-            // exactly the inverse bind the skinning pass wants -- and it already carries whatever geometry
-            // transform the mesh node had, so nothing has to be composed back in here.
+            // geometry_to_bone is already the inverse bind, and it carries the geometry transform with it.
             for (const ufbx_skin_deformer* Skin : Scene->skin_deformers)
             {
                 for (const ufbx_skin_cluster* Cluster : Skin->clusters)
@@ -1043,8 +991,7 @@ namespace Lumina
             OutData.Skeletons.push_back(Move(Skeleton));
         }
 
-        //~ Stage 7: geometry. One asset per unique mesh, in object space; the node's world transform stays
-        //~ on the instance so an instanced scene costs one mesh rather than one per placement.
+        //~ The node's world transform stays on the instance, so an instanced scene costs one mesh.
 
         if (Progress)
         {
@@ -1060,8 +1007,7 @@ namespace Lumina
 
         TVector<FMeshSlotResult> Slots(UniqueMeshes.size());
 
-        // Names are assigned serially so a collision suffix is deterministic, then the parallel pass only
-        // touches its own slot.
+        // Named serially so a collision suffix is deterministic, then the parallel pass owns its own slot.
         TVector<FFixedString> MeshNames(UniqueMeshes.size());
         {
             THashMap<FFixedString, uint32> NameCounts;
@@ -1109,9 +1055,7 @@ namespace Lumina
             const ufbx_vertex_vec2* UV1Source = (Mesh.uv_sets.count > 1) ? &Mesh.uv_sets.data[1].vertex_uv : nullptr;
             Slot.bHasColors = (Mesh.vertex_color.exists);
 
-            // One vertex per triangle corner up front, welded by ufbx_generate_indices afterwards. Working
-            // corner-by-corner is what makes the per-face attribute indices (split normals, hard edges) come
-            // out right; welding them back down is a bitwise compare over the packed vertex.
+            // Working corner-by-corner is what makes split normals and hard edges come out right.
             const size_t CornerCount = Mesh.num_triangles * 3;
             if (CornerCount == 0)
             {
@@ -1175,8 +1119,7 @@ namespace Lumina
                         Vertex.Normal   = PackNormal(Math::Normalize(
                             ToVector3(ufbx_get_vertex_vec3(&Mesh.vertex_normal, Corner))));
 
-                        // FBX authors UVs with the OpenGL bottom-left origin; the engine samples Vulkan
-                        // top-left. glTF is already top-left, which is why only this importer flips.
+                        // FBX authors UVs bottom-left and the engine samples top-left, so only this importer flips.
                         FVector2 UV(0.0f, 0.0f);
                         if (Mesh.vertex_uv.exists)
                         {
@@ -1185,8 +1128,7 @@ namespace Lumina
                         }
                         Vertex.UV = Math::PackHalf2x16(UV);
 
-                        // Mirror set 0 rather than leaving zeros: a material that asks for set 1 on a
-                        // single-set mesh then renders like set 0 instead of collapsing to one texel.
+                        // Mirroring set 0 makes a material asking for set 1 render like set 0 rather than one texel.
                         FVector2 UV1 = UV;
                         if (UV1Source != nullptr && UV1Source->exists)
                         {
@@ -1209,8 +1151,7 @@ namespace Lumina
                             if (VertexIndex < Skin->vertices.count)
                             {
                                 const ufbx_skin_vertex& SkinVertex = Skin->vertices.data[VertexIndex];
-                                // ufbx sorts influences by decreasing weight, so the first four are the
-                                // four that matter -- no keep-the-largest search to get wrong.
+                                // ufbx sorts influences by decreasing weight, so the first four are the four that matter.
                                 const uint32 Count = Math::Min<uint32>((uint32)SkinVertex.num_weights, 4u);
                                 for (uint32 w = 0; w < Count; ++w)
                                 {
@@ -1227,8 +1168,7 @@ namespace Lumina
                             }
 
                             Vertex.JointIndices = JointIndices;
-                            // Normalizes and quantizes to a quartet summing to exactly 255; a zero-sum set
-                            // becomes rigid-to-joint-0 rather than an all-zero matrix.
+                            // Quantizes to a quartet summing to 255, and a zero-sum set becomes rigid to joint 0.
                             Vertex.JointWeights = PackSkinWeights(JointWeights);
                         }
 
@@ -1254,9 +1194,7 @@ namespace Lumina
                 PendingSurfaces.push_back(Surface);
             }
 
-            // Weld. The stream is the packed vertex the engine stores, so two corners collapse only when
-            // every attribute the renderer reads is bit-identical. The skinned members are zeroed on an
-            // unskinned mesh, so one stride covers both cases.
+            // Two corners collapse only when every attribute the renderer reads is bit-identical.
             ufbx_vertex_stream Stream = {};
             Stream.data         = Corners.data();
             Stream.vertex_count = CornerCursor;
@@ -1357,9 +1295,7 @@ namespace Lumina
             }
         }
 
-        //~ Stage 8: animation. Baked rather than read curve-by-curve: FBX composes a transform from pivots,
-        //~ pre/post-rotations and Euler curves whose per-axis defaults matter, and ufbx_bake_anim collapses
-        //~ all of that into the TRS keys the engine's channels actually hold.
+        //~ Baked rather than read curve-by-curve, since FBX composes from pivots and per-axis Euler defaults.
 
         if (Options.bImportAnimations && Scene->anim_stacks.count > 0)
         {
@@ -1375,8 +1311,7 @@ namespace Lumina
                 ufbx_bake_opts BakeOptions = {};
                 BakeOptions.temp_allocator.allocator   = MakeTrackedAllocator();
                 BakeOptions.result_allocator.allocator = MakeTrackedAllocator();
-                // Clips play from zero in the engine, and a take authored on frames [30,60] would otherwise
-                // spend its first second frozen at the bind pose.
+                // Clips play from zero, so a take authored on frames 30 to 60 would start frozen at bind pose.
                 BakeOptions.trim_start_time = true;
 
                 ufbx_error BakeError;

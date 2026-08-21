@@ -20,11 +20,7 @@ namespace Lumina::RHI::Textures
     // Matches the backend's own debug-name buffer, so a staged swap stays trivially copyable.
     static constexpr uint32 kMaxSwapNameLength = 64;
 
-    /** A replacement image that exists, is being filled, and is NOT yet reachable by a shader.
-     *
-     *  Keyed by the bindless slot rather than by a pointer to the owning FManagedTexture: the slot is the
-     *  stable identity here (that is the whole premise of Recreate), whereas the owner gets copied by
-     *  value into release queues and asset structures, so a pointer to it would dangle. */
+    // Keyed by the bindless slot, since the owning struct is copied by value and a pointer would dangle.
     struct FPendingSwap
     {
         uint32    Slot       = kInvalidHeapSlot;
@@ -86,9 +82,7 @@ namespace Lumina::RHI::Textures
         }
     }
 
-    // Everything a texture owns, handed to the retire queue together: the storage (UAV) slots it
-    // registered, any upload still queued against it, and the image itself. The sampled slot is NOT
-    // included -- a swap keeps it and only a release gives it up.
+    // The sampled slot is NOT included, since a swap keeps it and only a release gives it up.
     static void RetireTextureAndSlots(FTextureH Texture)
     {
         if (!IsValid(Texture))
@@ -96,8 +90,7 @@ namespace Lumina::RHI::Textures
             return;
         }
 
-        // Collected (and forgotten) under the lock, retired outside it, so the ordering
-        // StorageMutex -> RetireMutex never has to be reasoned about.
+        // Collected under the lock and retired outside it, so the two lock orders never interleave.
         TVector<uint32> Storage;
         {
             FScopeLock Lock(GState.StorageMutex);
@@ -149,8 +142,7 @@ namespace Lumina::RHI::Textures
 
         HeapSetFallbackTexture(Core::GetGlobalHeap(), FTextureH{});
 
-        // Staged images were never bound, so nothing has to be repointed -- but they are real allocations
-        // and the only reference to them lives here.
+        // A staged image was never bound, but it is a real allocation and this is its only reference.
         {
             FScopeLock Lock(GState.SwapMutex);
             for (const FPendingSwap& Pending : GState.PendingSwaps)
@@ -251,8 +243,7 @@ namespace Lumina::RHI::Textures
         return Out;
     }
 
-    // Both overloads are the same steps -- build the replacement and stage it against the slot -- differing
-    // only in which description makes the image. Nothing here is visible to a shader; see the header.
+    // Both overloads differ only in which description makes the image. See the header.
     template<typename TDesc>
     static void RecreateInternal(FManagedTexture& Tex, const TDesc& Desc, const FTextureDesc& ImageDesc)
     {
@@ -260,8 +251,7 @@ namespace Lumina::RHI::Textures
 
         if (!Tex.IsValid() || Tex.SampledSlot == kInvalidHeapSlot)
         {
-            // Nothing published to keep valid, so there is nothing to stage against: this is a first load
-            // (or a texture that never got a slot), and the eager path is both correct and cheaper.
+            // Nothing is published to keep valid, so the eager path is both correct and cheaper.
             Release(Tex);
             Tex = Create(Desc);
             return;
@@ -285,8 +275,7 @@ namespace Lumina::RHI::Textures
                     continue;
                 }
 
-                // A second Recreate before the first became visible. The image staged by that one was
-                // never bound, so it can go; OldTexture is untouched because it is still what is sampled.
+                // The image staged by the first was never bound, and the old one is still what is sampled.
                 Abandoned           = Existing.NewTexture;
                 Existing.NewTexture = NewTexture;
                 Existing.Batch      = 0;
@@ -329,10 +318,7 @@ namespace Lumina::RHI::Textures
             return;
         }
 
-        // Read AFTER the caller queued its uploads, which is what makes this the batch those uploads are
-        // in (or, if a flush raced in between, a later one -- conservative, not wrong). It is legitimately
-        // ZERO before the first flush of the session, which is why "armed" is its own flag rather than a
-        // batch sentinel: 0 there means "already complete", not "never committed".
+        // Legitimately ZERO before the first flush, which is why armed is its own flag.
         const uint64 Batch = Upload::BatchForQueuedOps();
 
         FScopeLock Lock(GState.SwapMutex);
@@ -365,9 +351,7 @@ namespace Lumina::RHI::Textures
                     continue;
                 }
 
-                // Tex.Texture is the staged image -- Recreate pointed it there. Hand it back the one the
-                // slot never stopped naming, or the caller would be left describing an image that is about
-                // to be retired while its ResourceID still resolves to a different one.
+                // Hands back the image the slot never stopped naming, or the caller describes a retiring one.
                 Staged      = GState.PendingSwaps[i].NewTexture;
                 Tex.Texture = GState.PendingSwaps[i].OldTexture;
 

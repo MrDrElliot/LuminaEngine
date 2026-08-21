@@ -594,7 +594,7 @@ namespace Lumina::ReplaceReferences
 
                 State->Work.push_back(ReferencerGUID);
 
-                // FindObject rather than LoadObject: only an already resident package can be dirty.
+                // FindObject rather than LoadObject, since only an already resident package can be dirty.
                 const CObject* Resident = FindObject<CObject>(ReferencerGUID);
                 const CPackage* Package = Resident != nullptr ? Resident->GetPackage() : nullptr;
                 if (Package != nullptr && Package->IsDirty())

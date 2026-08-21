@@ -57,8 +57,7 @@ namespace Lumina
 
     CObject* CDataAssetFactory::CreateNew(const FName& Name, CPackage* Package)
     {
-        // The dialogue is the only way in, so a null selection means it was dismissed without a pick;
-        // fall back to the base rather than handing back nothing.
+        // The dialogue is the only way in, so a null selection means it was dismissed without a pick.
         CClass* Class = SelectedClass != nullptr ? SelectedClass : CDataAsset::StaticClass();
         SelectedClass = nullptr;
 

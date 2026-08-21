@@ -191,7 +191,7 @@ namespace Lumina
 
         Memory::Memset(ScratchTouched.data(), 0, (size_t)NumBones * sizeof(uint8));
 
-        // Pass 1: gather per-bone TRS overrides, bone indices pre-resolved.
+        // Pass 1 gathers per-bone TRS overrides with bone indices pre-resolved.
         const FAnimationResource::FResolvedSkeleton* Resolved = AnimationResource->GetResolvedSkeleton(InSkeleton);
         const FCompressedAnimData& Compressed = AnimationResource->Compressed;
 
@@ -214,7 +214,7 @@ namespace Lumina
             ScratchTouched[BoneIdx] = Decoded.Touched;
         }
 
-        // Pass 2: local matrices fused with FK; Bones[] is parents-before-children so a single linear pass works.
+        // Bones[] is parents-before-children, so local matrices fuse with FK in one linear pass.
         for (int32 i = 0; i < NumBones; ++i)
         {
             const FSkeletonResource::FBoneInfo& Bone = InSkeleton->GetBone(i);
@@ -248,7 +248,7 @@ namespace Lumina
             OutBoneTransforms[i] = Bone.ParentIndex != INDEX_NONE ? OutBoneTransforms[Bone.ParentIndex] * Local : Local;
         }
 
-        // Pass 3: fold in InvBind to produce the GPU skinning matrix.
+        // Pass 3 folds in InvBind to produce the GPU skinning matrix.
         for (int32 i = 0; i < NumBones; ++i)
         {
             OutBoneTransforms[i] = OutBoneTransforms[i] * InSkeleton->GetBone(i).InvBindMatrix;
@@ -305,7 +305,7 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        // Per-thread scratch: the executor samples inside a ParallelFor.
+        // Per-thread scratch, since the executor samples inside a ParallelFor.
         thread_local FPose SourceScratch;
         thread_local FPose BaseScratch;
 
@@ -352,8 +352,7 @@ namespace Lumina
 
         const int32 ActiveBones = (MaxBones >= 0 && MaxBones < NumBones) ? MaxBones : NumBones;
 
-        // Start from the bind pose, then overwrite whatever the channels animate: three bulk copies instead
-        // of a per-bone decompose. Bones past the LOD cut keep their bind-pose locals.
+        // Three bulk copies instead of a per-bone decompose, and the LOD tail keeps its bind-pose locals.
         OutPose.ResetToBindPose(InSkeleton);
 
         const FAnimationResource::FResolvedSkeleton* Resolved = AnimationResource->GetResolvedSkeleton(InSkeleton);

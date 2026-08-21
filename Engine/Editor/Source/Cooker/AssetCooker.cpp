@@ -38,8 +38,7 @@ namespace Lumina
 
         bool BundleVfsFile(FPakWriter& Writer, FStringView VirtualPath, const TFunction<void(FStringView)>& LogFunc)
         {
-            // Hidden text-asset identity sidecars are editor-only; the cooked AssetRegistry.bin carries the
-            // GUID<->path table, so never ship the .lmeta tree.
+            // Sidecars are editor-only, since the cooked AssetRegistry.bin already carries the GUID table.
             if (TextAssetSidecar::IsSidecarPath(VirtualPath))
             {
                 return false;
@@ -61,8 +60,7 @@ namespace Lumina
             return true;
         }
 
-        // Load + cook-mode-resave the .lasset (strips EditorOnly props + thumbnails) and bundle; DDC reuses cached bytes when the source hash is unchanged.
-        // On load/resave failure, falls back to a verbatim copy with a WARN so one bad asset doesn't kill the cook (bundled but unstripped).
+        // One bad asset falls back to a verbatim copy with a WARN rather than killing the whole cook.
         bool BundleAssetCooked(FPakWriter& Writer, FStringView VirtualPath, const TFunction<void(FStringView)>& LogFunc)
         {
             FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(VirtualPath);
@@ -94,8 +92,7 @@ namespace Lumina
                 return BundleVfsFile(Writer, VirtualPath, LogFunc);
             }
 
-            // Stash into DDC for next cook. Silent failure is fine, we still
-            // emit the freshly-cooked bytes; the cache just won't help next time.
+            // Silent failure is fine, since the freshly-cooked bytes still ship and only the cache misses.
             FCookDDC::Put(Key, CookedBytes);
 
             Writer.AddEntry(VirtualPath, TSpan<const uint8>(CookedBytes.data(), CookedBytes.size()));
@@ -123,8 +120,7 @@ namespace Lumina
             return true;
         }
 
-        // Bundle every non-.lasset file under /Game + plugin content mounts (.lasset arrives via dep-graph traversal).
-        // Picks up loose files (.rml, .rcss, JSON, fonts) loaded by name at runtime with no asset-reflected refs.
+        // Picks up loose files loaded by name at runtime, which carry no asset-reflected references.
         size_t BundleLooseContent(FPakWriter& Writer, const TFunction<void(FStringView)>& LogFunc)
         {
             size_t Count = 0;
@@ -260,7 +256,7 @@ namespace Lumina
             return true;
         }
 
-        // Bundle runtime-needed engine content: /Engine/Resources/{Content, Fonts, Textures, UI,...}.
+        // Bundles the engine content a runtime needs, under /Engine/Resources.
         size_t BundleEngineResources(FPakWriter& Writer, const TFunction<void(FStringView)>& LogFunc)
         {
             size_t Count = 0;
@@ -349,8 +345,7 @@ namespace Lumina
         FCookGraph Graph(FAssetRegistry::Get());
         Graph.AddRoots(Roots);
 
-        // Auto-root Primary-flagged assets (FAssetManager entry points via FPrimaryAssetId) so game code needn't list them in .lproject CookRoots[].
-        // FindByPredicate's hash_set order is undefined; sort by GUID before adding so the graph builds deterministically.
+        // FindByPredicate returns hash order, so sort by GUID before adding to keep the graph deterministic.
         {
             TVector<FAssetData*> Primaries = FAssetRegistry::Get().FindByPredicate(
                 [](const FAssetData& D) { return HasFlag(D.Flags, EAssetFlags::Primary); });
@@ -369,8 +364,7 @@ namespace Lumina
             }
         }
 
-        // Content roots scanned by the UI analyzer below:
-        // /Game/Content + /Game/Scripts (project-root subdirs) + every enabled plugin's mount.
+        // The project root subdirs plus every enabled plugin's mount.
         TVector<FString> ContentRoots;
         ContentRoots.emplace_back("/Game/Content");
         ContentRoots.emplace_back("/Game/Scripts");
@@ -381,8 +375,7 @@ namespace Lumina
             ContentRoots.emplace_back(Plugin->GetMountAlias());
         }
 
-        // Scan .rml/.rcss and fold references in as implicit Soft cook roots, else UI-only assets (e.g. a material in an .rcss decorator) get dropped by reachability.
-        // VFS walk order is OS-dependent; sort resolved paths before adding so the cook is reproducible.
+        // VFS walk order is OS-dependent, so sort resolved paths before adding to keep the cook reproducible.
         {
             FRmlUiAssetScan::FResult UiScan = FRmlUiAssetScan::ScanRoots(
                 ContentRoots, FAssetRegistry::Get(), LogFunc);
@@ -412,8 +405,7 @@ namespace Lumina
         const auto Reachable = Graph.GetReachableNodesSorted();
         LogCooker(LogFunc, Format("Reachable assets: {}", Reachable.size()).c_str());
 
-        // Bucket reachable assets by chunk. Sorted-by-GUID input order is
-        // preserved per chunk so PAK entry order is deterministic.
+        // Sorted-by-GUID input order is preserved per chunk so PAK entry order stays deterministic.
         const FName kMainChunk("Main");
         THashMap<FName, TVector<const FCookNode*>> ByChunk;
         for (const FCookNode* Node : Reachable)
@@ -422,7 +414,7 @@ namespace Lumina
             ByChunk[Chunk].push_back(Node);
         }
 
-        // Stable chunk order: alphabetical, with "Main" forced first (it carries shared content + uses the caller's verbatim OutputPakPath).
+        // Alphabetical with Main forced first, since Main carries shared content and the verbatim path.
         TVector<FName> ChunkOrder;
         ChunkOrder.reserve(ByChunk.size());
         for (const auto& Pair : ByChunk) ChunkOrder.push_back(Pair.first);
@@ -439,8 +431,7 @@ namespace Lumina
                 return A.ToString() < B.ToString();
             });
 
-        // Derive per-chunk output paths from OutputPakPath. Main keeps the
-        // caller's name verbatim; others become "<stem>-<chunk><ext>".
+        // Main keeps the caller's name verbatim, while others become stem, chunk and extension.
         auto ChunkPakPath = [&](FName Chunk) -> FString
         {
             const FString FullPath(OutputPakPath.data(), OutputPakPath.size());
@@ -505,8 +496,7 @@ namespace Lumina
                     ChunkExtras += BundleExtras(Writer, Options, LogFunc);
                 }
 
-                // Pre-baked asset registry: cooked-mode runtime loads this from the VFS at boot instead of walking the filesystem. In Main so it's always present.
-                // A near-empty registry usually means stale/wiped editor discovery; warn loudly so the cook log explains a future black-screen Shipping run.
+                // A near-empty registry usually means stale editor discovery, so warn loudly in the cook log.
                 {
                     const size_t LiveCount = FAssetRegistry::Get().GetAssets().size();
                     TVector<uint8> Bytes;

@@ -41,7 +41,7 @@ namespace Lumina
             return Out;
         }
 
-        // A category divider: bold, accent-tinted label with breathing room above/below.
+        // A category divider, bold and accent-tinted with breathing room above and below.
         void DrawCategoryHeader(const char* Label)
         {
             ImGui::Spacing();
@@ -53,8 +53,7 @@ namespace Lumina
             ImGui::Spacing();
         }
 
-        // A settings entry: rounded hover/selection background, a left accent bar + accent text when
-        // selected. Returns true when clicked.
+        // Rounded hover background with a left accent bar when selected, returning true on click.
         bool DrawSettingsEntry(const char* Label, bool bSelected)
         {
             using namespace EditorColors;
@@ -89,8 +88,7 @@ namespace Lumina
             ImGui::TextUnformatted(Label);
             ImGui::PopStyleColor();
 
-            // End the row on a real (zero-size) item so IsSetPos is cleared; otherwise a bare trailing
-            // SetCursorScreenPos on the last row trips ImGui's extend-bounds assert at End()/EndChild.
+            // Ending on a real zero-size item clears IsSetPos, or End() trips the extend-bounds assert.
             ImGui::SetCursorScreenPos(ImVec2(P0.x, P1.y + 2.0f * Scale));
             ImGui::Dummy(ImVec2(0.0f, 0.0f));
             return bClicked;
@@ -136,17 +134,12 @@ namespace Lumina
             return nullptr;
         }
 
-        // Edit the CDO directly (that is where the live config values live); diff/reset against the
-        // pristine code-default snapshot the manager captured before loading the file.
+        // Edits the CDO where the live values are, and diffs against the pristine code-default snapshot.
         void* Snapshot = GConfig->GetSettingsDefault(SettingsClass);
         TUniquePtr<FPropertyTable> Table = MakeUnique<FPropertyTable>((void*)CDO, SettingsClass, Snapshot);
 
         CClass* Captured = SettingsClass;
-        // Finish, not PostEdit: PostEdit fires on Started, Updated AND Finished, so every array
-        // mutation serialized the whole CDO three times -- once BEFORE the mutation, writing the
-        // pre-edit state to disk -- and each save broadcasts OnSettingsSaved, whose listeners
-        // live-refresh open editors while the property table that dispatched it is still drawing.
-        // A save only makes sense on the commit anyway.
+        // PostEdit fires on Started too, which wrote the pre-edit state to disk on every array mutation.
         Table->SetFinishEditCallback([Captured](const FPropertyChangedEvent&)
         {
             GConfig->SaveSettings(Captured);
@@ -183,8 +176,7 @@ namespace Lumina
             SelectedClass = Classes[0];
         }
 
-        // Group by category so each appears exactly once (the classes arrive in discovery order, which
-        // would otherwise split a category into several headers). Categories and entries are sorted.
+        // Grouped so each category appears once, since discovery order would split one into several.
         THashMap<FString, TVector<CClass*>> ByCategory;
         for (CClass* Class : Classes)
         {

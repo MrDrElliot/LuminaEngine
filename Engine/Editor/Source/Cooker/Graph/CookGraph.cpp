@@ -48,8 +48,7 @@ namespace Lumina
         auto It = Nodes.find(TargetGUID);
         if (It != Nodes.end())
         {
-            // Already in graph. Owned-edge wins: it pulls target into the
-            // referrer's chunk regardless of prior assignment.
+            // Already in the graph, and an owned edge wins because it pulls the target into the referrer's chunk.
             if (EdgeType == EDependencyType::Owned)
             {
                 It->second.Chunk = InheritedChunk;
@@ -61,11 +60,11 @@ namespace Lumina
         FAssetData* Data = Registry->GetAssetByGUID(TargetGUID);
         if (!Data)
         {
-            // Reachable GUID with no asset record (engine CDOs / CClass / CStruct): not cookable, silently ignored. Real dangling refs still cook; runtime warns on load.
+            // A reachable GUID with no asset record is not cookable, and real dangling refs still warn at load.
             return false;
         }
 
-        // Asset-level NeverCook: don't enter the graph + record an issue.
+        // Asset-level NeverCook stays out of the graph and records an issue instead.
         if (HasFlag(Data->Flags, EAssetFlags::NeverCook))
         {
             FCookGraphIssue Issue;
@@ -108,8 +107,7 @@ namespace Lumina
 
             for (const FAssetDependency& Dep : Data->Dependencies)
             {
-                // Owned edges inherit the parent's chunk; everything else
-                // also inherits for Phase 1 (chunk routing is Phase 3).
+                // Owned edges inherit the parent's chunk, and so does everything else until chunk routing lands.
                 VisitTarget(Dep.TargetGUID, ParentChunk, Dep.Type);
             }
         }
@@ -134,7 +132,7 @@ namespace Lumina
 
     TVector<const FCookNode*> FCookGraph::GetReachableNodesSorted() const
     {
-        // Sort by GUID for deterministic cook output: identical inputs -> identical PAK order -> identical hash (reproducible builds).
+        // Sorted by GUID so identical inputs give identical PAK order and a reproducible build hash.
         TVector<const FCookNode*> Out;
         Out.reserve(Nodes.size());
         for (const auto& Pair : Nodes)

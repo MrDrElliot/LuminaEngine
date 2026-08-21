@@ -11,11 +11,7 @@ namespace Lumina
 {
     namespace
     {
-        // Mirrors CObjectBase's fields MINUS ManagedInstanceSlot, in the same order. The slot was added to sit
-        // in the padding between the 4-byte ObjectFlags and the pointer after it, so caching a managed
-        // instance should cost no object growth -- if it ever does, every CObject in the engine gets bigger
-        // silently. Comparing against a probe rather than a magic number keeps the check meaningful after a
-        // field is added: mirror the addition here too, and the assert goes on measuring what it claims to.
+        // Comparing against a probe keeps the check meaningful when a field is added, if mirrored here too.
         struct FObjectBaseLayoutProbe
         {
             virtual ~FObjectBaseLayoutProbe() = default;
@@ -131,8 +127,7 @@ namespace Lumina
         {
             NoteMutation();
 
-            // The owning objects' slot indices are cleared through the back-reference list, so a later
-            // Release/Find on a surviving object sees INDEX_NONE rather than a recycled slot.
+            // Cleared through the back-reference list, so a later Find sees INDEX_NONE, not a recycled slot.
             for (int32 Slot = 0; Slot < (int32)Slots.size(); ++Slot)
             {
                 if (Owners[Slot] != nullptr)
@@ -174,7 +169,7 @@ namespace Lumina
             }
         }
 
-        // Temporary diagnostic: a slot the table never issued means either a stale/corrupt object or a race.
+        // A temporary diagnostic, since a slot the table never issued means a stale object or a race.
         void ReportBadSlot(const char* Site, const CObjectBase* Object, int32 Slot) const
         {
             if (bReportedBadSlot)

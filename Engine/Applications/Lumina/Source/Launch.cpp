@@ -18,16 +18,11 @@
 using namespace Lumina;
 
 
-// The allocator overrides used to be declared here by hand. GlobalAllocatorOverrides.cpp carries
-// them now and the build tool adds it to every image, this one included.
 
 
 int LuminaMain(int ArgC, char** ArgV)  // NOLINT(misc-use-internal-linkage)
 {
-    // Order matters. The reporter installs its unhandled-exception filter first so CrashHandler's
-    // install captures it as the previous filter; that is what lets the local dump be written and
-    // then handed off to the uploader. Reversed, the uploader would swallow the crash before
-    // anything was written to disk.
+    // Reversed, the uploader would swallow the crash before anything was written to disk.
     CrashReporting::Initialize();
     CrashHandler::Install();
 
@@ -36,13 +31,10 @@ int LuminaMain(int ArgC, char** ArgV)  // NOLINT(misc-use-internal-linkage)
     int Result = 0;
     FApplicationGlobalState GlobalState;
 
-    // Attach the engine-side log now that logging exists. LoadProject re-points this at the
-    // project's copy later; without it here, a crash before a project opens -- during renderer
-    // init, or sitting on the Open Project dialog -- would upload with no log at all.
+    // A crash before a project opens would otherwise upload with no log attached at all.
     CrashReporting::AddAttachment(Logging::GetLogFilePath());
 
-    // First point at which the reporter can say anything. Every log now states plainly whether
-    // crashes will be uploaded, instead of leaving it to be inferred from reports that never arrive.
+    // Every log now states plainly whether crashes will be uploaded, instead of leaving it inferred.
     CrashReporting::LogStatus();
 
     FCommandLine Parsed{ArgC, ArgV};

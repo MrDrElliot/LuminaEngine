@@ -17,8 +17,7 @@ namespace Lumina
 
     FStringView CMaterialExpression_ComponentMask::GetNodeDisplayName() const
     {
-        // The only display name that varies with node state. Rebuilt into an inline-storage member
-        // (no heap) rather than returned by value, so the view stays valid after we return.
+        // Rebuilt into an inline-storage member so the returned view stays valid after this returns.
         CachedDisplayName = "ComponentMask_";
         if (R) CachedDisplayName.append("R");
         if (G) CachedDisplayName.append("G");

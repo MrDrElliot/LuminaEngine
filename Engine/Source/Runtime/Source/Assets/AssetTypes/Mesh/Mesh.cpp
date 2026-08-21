@@ -49,8 +49,7 @@ namespace Lumina
     {
         Super::OnDestroy();
 
-        // The meshlet header address dies with this mesh, but copies of it live on in resolve entries,
-        // components and the instance buffer. Without this the next cull dispatch faults the device.
+        // Copies of the header address live on in resolve entries, so the next cull would fault the device.
         FMeshResolveCache::InvalidateDependency(this);
     }
 
@@ -75,8 +74,7 @@ namespace Lumina
             Materials[Slot] = NewMaterial;
         }
 
-        // Only the entries that resolved against THIS mesh are wrong. This used to bump the global epoch,
-        // which re-resolved every mesh component in every world and re-bound every primitive.
+        // This used to bump the global epoch, re-resolving every mesh component in every world.
         FMeshResolveCache::InvalidateDependency(this);
     }
 
@@ -144,8 +142,7 @@ namespace Lumina
         {
             const FMeshletData& MD = MeshResources->MeshletData;
 
-            // Cooked meshes have no Positions array, so this is the path that actually runs. Driven by
-            // the meshlet list because a position is only meaningful against its owning meshlet's anchor.
+            // A cooked mesh has no Positions array, and a position is only meaningful against its meshlet anchor.
             for (const FMeshlet& M : MD.Meshlets)
             {
                 for (uint32 v = 0; v < M.VertexCount; ++v)
@@ -170,8 +167,7 @@ namespace Lumina
 
             if (MD.MeshletVertices.empty() && MD.MeshletSkinnedVertices.empty() && !MD.MeshletSpheres.empty())
             {
-                // Last resort: each meshlet's bounding sphere squared off. Conservative for culling,
-                // wildly loose for anything that is not itself roughly spherical.
+                // Conservative for culling but wildly loose for anything not roughly spherical.
                 for (const FMeshletSphere& S : MD.MeshletSpheres)
                 {
                     BoundingBox.Min = Math::Min(BoundingBox.Min, S.Center - FVector3(S.Radius));
@@ -183,16 +179,14 @@ namespace Lumina
 
     namespace
     {
-        // Replaces any texture already there. Called from CreateForResource, so a mesh whose buffers
-        // are rebuilt refreshes the volume with everything else.
+        // Called from CreateForResource, so a mesh whose buffers rebuild refreshes the volume too.
         void CreateDistanceFieldTexture(FMeshResource& Resource)
         {
             LUMINA_MEMORY_SCOPE("Meshes");
 
             RHI::FManagedTexture& Texture = Resource.MeshBuffers.DistanceFieldTexture;
 
-            // Released unconditionally: a rebuild that turned the field OFF has to drop the old volume,
-            // and the sentinel written into the header below is what stops shaders reading it.
+            // A rebuild that turned the field off must drop the old volume, and the sentinel stops shaders reading it.
             RHI::Textures::Release(Texture);
 
             const FDistanceFieldVolume& Volume = Resource.DistanceField;
@@ -219,7 +213,6 @@ namespace Lumina
             RHI::Textures::Upload(Texture, 0, Volume.Distances.data(), Volume.Distances.size());
         }
 
-        // Legacy upgrade only: an older package stores skeleton-global 8-bit indices and no palette.
         // Meshes built by the importer already carry palettes and are left alone.
         void BuildBonePalettes(FMeshletData& MData)
         {
@@ -271,8 +264,7 @@ namespace Lumina
             }
         }
 
-        // Fills the header from the buffer set and volume currently on Resource. Split out so the
-        // distance-field refresh path can rewrite the header in place without rebuilding anything else.
+        // Split out so the distance-field refresh can rewrite the header without rebuilding anything else.
         FMeshletHeaderGPU MakeMeshletHeader(const FMeshResource& Resource)
         {
             const FMeshResource::FMeshBuffers& MB = Resource.MeshBuffers;
@@ -307,8 +299,7 @@ namespace Lumina
     {
         LUMINA_MEMORY_SCOPE("Meshes");
 
-        // Nothing to publish through: the mesh never got its buffers, so the next CreateForResource
-        // picks the volume up anyway.
+        // The mesh never got its buffers, so the next CreateForResource picks the volume up anyway.
         if (Resource.MeshBuffers.MeshletHeaderSlot == MeshletHeaderSlab::kNullSlot)
         {
             return;
@@ -316,8 +307,7 @@ namespace Lumina
 
         CreateDistanceFieldTexture(Resource);
 
-        // Rewritten into the same SLOT, so every cached copy stays correct. Frames in flight are safe:
-        // the replaced volume is frame-deferred, so the old index still resolves.
+        // Rewritten into the same SLOT, and the replaced volume is frame-deferred so the old index resolves.
         MeshletHeaderSlab::Write(Resource.MeshBuffers.MeshletHeaderSlot, MakeMeshletHeader(Resource));
     }
 
@@ -341,8 +331,7 @@ namespace Lumina
         const FMeshletData& MData = Resource.MeshletData;
         FMeshResource::FMeshBuffers& MB = Resource.MeshBuffers;
 
-        // Checked at resolve against the skeleton's bone count: the GPU bone fetch is unbounded, so a
-        // mesh that outruns its skeleton reads garbage matrices for its leaf bones.
+        // The GPU bone fetch is unbounded, so a mesh outrunning its skeleton reads garbage matrices.
         if (bSkinned)
         {
             uint32 MaxJoint = 0;
@@ -426,8 +415,7 @@ namespace Lumina
         MB.MeshletBoneIndexBuffer   = (PaletteBytes != 0 && BoneIdxBytes != 0) ? Block + BoneIdxOffset : 0;
         MB.MeshletCount          = (uint32)MData.Meshlets.size();
 
-        // Volume upload before the header, because the header publishes its heap slot. A field that
-        // failed to allocate leaves the sentinel in place, which is what every SDF shader path gates on.
+        // The header publishes the heap slot, and a failed allocation leaves the sentinel every SDF path gates on.
         CreateDistanceFieldTexture(Resource);
         
         if (MB.MeshletHeaderSlot == MeshletHeaderSlab::kNullSlot)
@@ -449,13 +437,11 @@ namespace Lumina
             return;
         }
 
-        // Build into a scratch volume first. Build() clears its output on every failure path, which
-        // would silently destroy a good field whenever a rebuild could not run.
+        // Build clears its output on every failure path, which would destroy a good field on a failed rebuild.
         FDistanceFieldVolume NewVolume;
         const bool bBuilt = DistanceField::Build(*MeshResources, DistanceFieldSettings, NewVolume);
 
-        // A disabled setting is a real instruction to drop the field, not a failure, so the two are
-        // distinguished here rather than inside Build.
+        // A disabled setting is a real instruction to drop the field rather than a failure.
         if (!bBuilt && DistanceFieldSettings.bEnabled && MeshResources->DistanceField.IsValid())
         {
             return;
@@ -463,8 +449,7 @@ namespace Lumina
 
         MeshResources->DistanceField = Move(NewVolume);
 
-        // Deliberately NOT GenerateGPUBuffers: that rebuilds the whole meshlet set to publish a volume
-        // the existing header can carry on its own.
+        // GenerateGPUBuffers would rebuild the whole meshlet set to publish a volume the header can carry.
         MeshBuffers::RefreshDistanceField(*MeshResources);
     }
 
@@ -472,8 +457,7 @@ namespace Lumina
     {
         MeshBuffers::CreateForResource(*MeshResources);
 
-        // Only entries holding THIS mesh need to re-read the header. Bumping the global epoch here made
-        // loading one mesh re-resolve every component in the world.
+        // Bumping the global epoch here made loading one mesh re-resolve every component in the world.
         FMeshResolveCache::InvalidateDependency(this);
 
         // Drop import-time scratch.

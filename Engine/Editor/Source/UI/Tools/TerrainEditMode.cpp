@@ -80,8 +80,7 @@ namespace Lumina
         // Start dead flat; the user sculpts from a clean slate.
         Terrain.Heightmap.assign(N, 0.0f);
 
-        // Seed four layers so a fresh terrain drives a four-input TerrainLayerBlend out of
-        // the box. Weights start at zero; painting raises them, shader normalizes at sample.
+        // Weights start at zero, painting raises them, and the shader normalizes at sample time.
         static const char* LayerNames[4] = { "Layer0", "Layer1", "Layer2", "Layer3" };
         for (int i = 0; i < 4; ++i)
         {
@@ -107,8 +106,7 @@ namespace Lumina
             return false;
         }
 
-        // Decode the image to raw pixels. Heightmaps are read as-is (no vertical flip, no sRGB curve) so the
-        // stored sample value maps directly to height; 16-bit grayscale gives the smoothest result.
+        // Read as-is with no flip and no sRGB curve, so the stored sample maps directly to height.
         TOptional<Import::Textures::FTextureImportResult> Decoded = Import::Textures::ImportTexture(FStringView(FilePath), /*bFlipVertical*/ false);
         if (!Decoded.has_value() || Decoded->Pixels.empty())
         {
@@ -170,8 +168,7 @@ namespace Lumina
             return 0.0f;
         };
 
-        // Resample the source image into the terrain's (pow2+1) grid with bilinear filtering, so any image
-        // size works without disturbing the chunking invariant.
+        // Bilinear resampling means any image size works without disturbing the chunking invariant.
         const int32 Res = Terrain.Resolution;
         if (Res < 2)
         {
@@ -214,8 +211,7 @@ namespace Lumina
 
     void FTerrainEditMode::OnEnter(CWorld* World)
     {
-        // Spawning a default terrain on enter makes the mode self-bootstrapping,
-        // first time the user clicks "Terrain" there's something to paint on.
+        // Spawning a default terrain makes the mode self-bootstrapping, with something to paint on.
         if (World && FindPreferredTerrain(World) == entt::null)
         {
             CreateDefaultTerrain(World);
@@ -224,8 +220,7 @@ namespace Lumina
 
     void FTerrainEditMode::OnExit(CWorld* World)
     {
-        // Leaving the mode mid-stroke (e.g. clicking another mode button) must still
-        // commit the in-flight transaction so undo stays balanced.
+        // Leaving mid-stroke must still commit the in-flight transaction so undo stays balanced.
         if (bTransactionOpen && Context)
         {
             Context->EndModeTransaction("Terrain Edit");
@@ -404,8 +399,7 @@ namespace Lumina
         ImGui::Separator();
         ImGui::TextUnformatted("Layers");
 
-        // Swatch row: one button per layer plus an "Add" tile, capped at the shader's
-        // 4-layer maximum so the editor can't paint into a slot the renderer ignores.
+        // Capped at the shader's four-layer maximum, so the editor cannot paint a slot nothing reads.
         constexpr ImU32 SwatchColors[GTerrainMaxLayers] = {
             IM_COL32(220,  80,  80, 255),
             IM_COL32( 80, 200, 110, 255),
@@ -462,8 +456,7 @@ namespace Lumina
 
         ActiveLayer = Math::Clamp(ActiveLayer, 0, Math::Max(LayerCount - 1, 0));
 
-        // Per-layer settings for the selected swatch (rename, UV tiling, reorder). Reorder
-        // also mutates LayerWeights so weights follow the layer rather than swapping under it.
+        // Reorder also mutates LayerWeights, so weights follow the layer rather than swapping under it.
         if (ActiveLayer >= 0 && ActiveLayer < LayerCount)
         {
             STerrainLayer& L = Terrain.Layers[ActiveLayer];
@@ -566,8 +559,7 @@ namespace Lumina
     {
         bHitValid = false;
 
-        // A stroke is bounded by the left button being held. The moment it's released
-        // (anywhere, even off the viewport), commit the stroke's undo transaction.
+        // The moment the button is released anywhere, commit the stroke's undo transaction.
         if (bTransactionOpen && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
         {
             if (Context)
@@ -595,13 +587,11 @@ namespace Lumina
             return;
         }
 
-        // The renderer centers the terrain on the owning entity's transform, so the
-        // sculpt system needs that origin to match sample coords to rendered world coords.
+        // The renderer centers on the entity transform, so sculpting needs that origin to match.
         const STransformComponent& TerrainTransform = World->GetComponent<STransformComponent>(TerrainEntity);
         const FVector3 TerrainOrigin = TerrainTransform.GetWorldLocation();
 
-        // Bracket keys resize the brush multiplicatively, like UE / Photoshop. Wired
-        // to ImGui's repeat so holding the key still scrubs the size.
+        // Wired to ImGui's repeat, so holding a bracket key still scrubs the size.
         if (ImGui::IsKeyPressed(ImGuiKey_LeftBracket, true))
         {
             Radius = Math::Max(8.0f, Radius / 1.1f);
@@ -644,8 +634,7 @@ namespace Lumina
         LastHit   = Hit;
         bHitValid = true;
 
-        // Ctrl+click in Flatten mode samples the cursor height as the target. Off click,
-        // not down, so a held stroke can't accidentally retarget itself.
+        // On click rather than down, so a held stroke cannot accidentally retarget itself.
         if (Mode == ETerrainBrushMode::Flatten
             && ImGui::IsKeyDown(ImGuiKey_LeftCtrl)
             && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
@@ -661,15 +650,12 @@ namespace Lumina
             return;
         }
 
-        // No gizmo guard here: the host suppresses gizmo manipulation entirely while
-        // this mode owns viewport input, so ImGuizmo state is stale and must not be read.
+        // The host suppresses gizmo manipulation entirely here, so ImGuizmo state is stale.
 
-        // Use wall-clock delta so brushes integrate even when paused; the passed-in
-        // DeltaSeconds is the simulated tick (zero in edit mode, every dab a no-op).
+        // Wall-clock delta, since the simulated tick is zero in edit mode and every dab a no-op.
         const float RealDelta = Math::Max(ImGui::GetIO().DeltaTime, 0.0f);
 
-        // Continuous brushes integrate by frame time, so apply every frame while held
-        // (including with a stationary cursor, that's how you dig deeper in place).
+        // Applied every frame while held, including a stationary cursor, which is how you dig in place.
 
         // Ramp captures the start of the stroke once, then drags the end while held.
         if (Mode == ETerrainBrushMode::Ramp)
@@ -693,8 +679,7 @@ namespace Lumina
         Dab.DeltaSeconds  = RealDelta;
         Dab.ActiveLayer   = ActiveLayer;
 
-        // Direction sign: explicit toggle + LAlt momentary flip. Shift was the old
-        // modifier but is now reserved for future shortcuts (constraint, slow drag).
+        // Shift was the old modifier but is now reserved for constraint and slow-drag shortcuts.
         const bool bInvertNow = bInvertSculpt != ImGui::IsKeyDown(ImGuiKey_LeftAlt);
         Dab.SculptSign = bInvertNow ? int8(-1) : int8(1);
 
@@ -707,16 +692,14 @@ namespace Lumina
         Dab.RampStartHeight        = RampStartHeight;
         Dab.RampEndHeight          = RampEndHeight;
 
-        // Open the stroke's undo transaction before the first edit so the snapshot
-        // captures the pre-stroke heightmap. Committed on mouse release (top of Tick).
+        // Opened before the first edit so the snapshot captures the pre-stroke heightmap.
         if (!bTransactionOpen && Context)
         {
             Context->BeginModeTransaction();
             bTransactionOpen = true;
         }
 
-        // Ramp re-applies the whole Start->End line each frame (single dab). Footprint brushes
-        // interpolate dabs along cursor travel (no gaps), splitting the frame's strength budget.
+        // Ramp re-applies the whole line each frame, while footprint brushes interpolate dabs along travel.
         if (Mode == ETerrainBrushMode::Ramp || !bHasStrokeHit)
         {
             FTerrainSculptSystem::ApplyDab(Terrain, Dab);
@@ -747,8 +730,7 @@ namespace Lumina
             return;
         }
 
-        // Footprint is a world-space disk that projects to an ellipse at oblique angles, so
-        // project ring samples individually. NDC.y is direct (not inverted) per BuildRayFromScreen.
+        // A world-space disk projects to an ellipse at oblique angles, so ring samples project individually.
         const FMatrix4 ViewProj = Camera.GetProjectionMatrix() * Camera.GetViewMatrix();
         auto ProjectToScreen = [&](const FVector3& W, ImVec2& Out) -> bool
         {
@@ -796,8 +778,7 @@ namespace Lumina
         AddWorldRing(Radius * Math::Max(0.0f, 1.0f - Falloff * 0.5f),  IM_COL32(255, 220,  80, 120), 1.0f);
         Draw->AddCircleFilled(Center, 3.0f, IM_COL32(255, 255, 255, 220));
 
-        // Ramp preview: anchor + live cursor + a thin perpendicular pair showing
-        // the configured half-width corridor.
+        // Anchor, live cursor and a thin perpendicular pair showing the half-width corridor.
         if (Mode == ETerrainBrushMode::Ramp && bRampStarted)
         {
             ImVec2 Anchor;

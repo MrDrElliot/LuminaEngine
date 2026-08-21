@@ -35,7 +35,7 @@ namespace Lumina
 
     void FStaticMeshEditorTool::OnInitialize()
     {
-        // Scrolling disabled: the UV canvas claims the wheel for zoom, and a scrollable host would fight it.
+        // Scrolling is off, since the UV canvas claims the wheel for zoom and a scrollable host would fight.
         CreateToolWindow(UVViewerName, [&](bool bFocused)
         {
             if (CStaticMesh* StaticMesh = Cast<CStaticMesh>(Asset.Get()))
@@ -180,9 +180,7 @@ namespace Lumina
             ImGui::Spacing();
 
             {
-                // Only the LODs this mesh actually has. Listing all MAX_MESH_LODS made a mesh whose
-                // simplifier stopped early look broken: selecting LOD 3 on a two-LOD mesh clamps to the
-                // coarsest one in ResolveSurfaceLOD, so the viewport correctly did nothing.
+                // Listing all MAX_MESH_LODS made a mesh whose simplifier stopped early look broken.
                 uint32 AvailableLODs = 1;
                 for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
                 {
@@ -286,9 +284,7 @@ namespace Lumina
             // Shared threshold editor writes to every surface in lockstep; per-surface overrides still work below.
             if (!Resource.GeometrySurfaces.empty())
             {
-                // Thresholds are authored globally, but a surface that built fewer LODs leaves FLT_MAX in its
-                // unused high slots. Read each LOD's shared value from a surface that actually has that LOD so a
-                // high row doesn't display the FLT_MAX sentinel when surface 0 happens to be a low-LOD surface.
+                // A surface with fewer LODs leaves FLT_MAX in its high slots, so read from one that has that LOD.
                 float SharedThresholds[MAX_MESH_LODS];
                 for (uint32 i = 0; i < MAX_MESH_LODS; ++i)
                 {
@@ -343,9 +339,7 @@ namespace Lumina
                             bThresholdChanged = true;
                         }
 
-                        // Reset this level to the ramp the importer bakes. Clamped against the level below
-                        // it for the same reason the drag is: the picker walks the ramp and stops at the
-                        // first miss, so a non-monotonic row would make every level past it unreachable.
+                        // Clamped against the level below, since the picker stops at the first non-monotonic miss.
                         ImGui::TableSetColumnIndex(2);
                         const float DefaultValue = Import::Mesh::GetDefaultLODScreenThreshold(lod);
                         ImGui::BeginDisabled(SharedThresholds[lod] == DefaultValue);
@@ -379,8 +373,7 @@ namespace Lumina
 
                 if (bThresholdChanged)
                 {
-                    // Replicate to every surface, but only into the LODs that surface actually has -- leave the
-                    // unused high slots at their FLT_MAX sentinel (never read at runtime; the picker stops at NumLODs).
+                    // Unused high slots keep their FLT_MAX sentinel, which is never read since the picker stops early.
                     for (FGeometrySurface& Surface : Resource.GeometrySurfaces)
                     {
                         for (uint32 i = 0; i < Surface.NumLODs; ++i)
@@ -388,8 +381,7 @@ namespace Lumina
                             Surface.LODScreenThreshold[i] = SharedThresholds[i];
                         }
                     }
-                    // Not just MarkDirty: the resolve cache holds the squared copy the picker actually
-                    // reads, so without the epoch bump this edit only survives a save, never shows up.
+                    // The resolve cache holds the squared copy the picker reads, so without a bump this needs a save.
                     NotifyAssetDataChanged();
                 }
             }
@@ -603,9 +595,7 @@ namespace Lumina
         SStaticMeshComponent& StaticMeshComponent = World->GetComponent<SStaticMeshComponent>(MeshEntity);
         STransformComponent&  Transform           = World->GetComponent<STransformComponent>(MeshEntity);
 
-        // A direct write is not enough: the renderer retains a per-primitive GPU record and only rewrites
-        // it for primitives that report a change, so this has to mark (see MeshComponent.h). Marking only
-        // on a change, because marking every frame would re-resolve and rewrite the record every frame.
+        // The renderer only rewrites primitives that report a change, and marking every frame re-resolves.
         if (StaticMeshComponent.ForcedLODIndex != PreviewLODIndex)
         {
             StaticMeshComponent.ForcedLODIndex = PreviewLODIndex;
@@ -693,8 +683,7 @@ namespace Lumina
     {
         FAssetEditorTool::OnAssetDataChangedExternally();
 
-        // Every one of these describes geometry that no longer exists: the unwrap is built from the old
-        // meshlets, and the surface/LOD indices are bounds into arrays that just changed length.
+        // The unwrap is built from the old meshlets and the indices bound arrays that just changed length.
         UVViewer.Invalidate();
         SelectedSurfaceIndex = -1;
         PreviewLODIndex = -1;
@@ -770,13 +759,10 @@ namespace Lumina
             }
             ImGui::Separator();
 
-            // Tune through Mesh Properties (Distance Field category); this only applies them. Keeping the
-            // settings on the property table means undo/redo and the dirty flag already work on them.
+            // Keeping the settings on the property table means undo and the dirty flag already work on them.
             if (ImGui::MenuItem(LE_ICON_REFRESH " Build Distance Field"))
             {
-                // Voxelizes the mesh's baked meshlets, so it works on a loaded asset with no source file
-                // in reach. Synchronous: a default 48^3 field is sub-second, and doing it off-thread would
-                // need the GPU upload marshalled back anyway.
+                // Voxelizes the baked meshlets, so it works with no source file, and a 48 cubed field is sub-second.
                 Mesh->BuildDistanceField();
                 Asset->GetPackage()->MarkDirty();
                 PropertyTable.MarkDirty();
@@ -832,8 +818,7 @@ namespace Lumina
         ImGui::DockBuilderSplitNode(InDockspaceID, ImGuiDir_Right, 0.3f, &rightDockID, &leftDockID);
 
         ImGui::DockBuilderDockWindow(GetToolWindowName(ViewportWindowName).c_str(), leftDockID);
-        // Tabbed with the viewport rather than split off it: the unwrap wants the same large canvas, and
-        // it is an inspect-one-then-the-other workflow, not a side-by-side one.
+        // The unwrap wants the same large canvas, and this is an inspect-one-then-the-other workflow.
         ImGui::DockBuilderDockWindow(GetToolWindowName(UVViewerName.data()).c_str(), leftDockID);
         ImGui::DockBuilderDockWindow(GetToolWindowName(MeshPropertiesName.data()).c_str(), rightDockID);
     }

@@ -118,8 +118,7 @@ namespace Lumina
             break;
 
         case EHandle::ArriveTangent:
-            // Dragging a tangent is an explicit authoring act, so the point flips to User -- otherwise
-            // UpdateTangents would overwrite the drag on the very next frame.
+            // Flipping to User is what stops UpdateTangents overwriting the drag on the next frame.
             Point.TangentMode  = ESplineTangentMode::User;
             Point.ArriveTangent = (Point.Location - Local) / kTangentHandleScale;
             break;
@@ -144,8 +143,7 @@ namespace Lumina
 
         for (int32 i = 0; i < static_cast<int32>(Spline.Points.size()); ++i)
         {
-            // Tangent handles are only pickable on the selected point: every point showing two extra
-            // handles turns a dense spline into an unpickable cloud.
+            // Every point showing two extra handles turns a dense spline into an unpickable cloud.
             const bool bTangentsPickable = (i == SelectedPoint);
 
             const EHandle Candidates[3] = { EHandle::Point, EHandle::ArriveTangent, EHandle::LeaveTangent };
@@ -218,8 +216,7 @@ namespace Lumina
         const ImVec2 MousePos = ImGui::GetMousePos();
         const ImVec2 MouseInViewport(MousePos.x - ViewportScreenOrigin.x, MousePos.y - ViewportScreenOrigin.y);
 
-        // Selection picking. Skipped while the gizmo is hovered or in use, so grabbing an axis never
-        // re-picks whatever handle happens to sit under the cursor.
+        // Skipped while the gizmo is busy, so grabbing an axis never re-picks the handle beneath it.
         const bool bGizmoBusy = ImGuizmo::IsOver() || ImGuizmo::IsUsing();
         if (bViewportHovered && !bGizmoBusy && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
         {
@@ -233,9 +230,7 @@ namespace Lumina
             }
             else if (ImGui::GetIO().KeyCtrl)
             {
-                // Ctrl+click on the curve inserts a point there. Found by walking key space and projecting:
-                // cheap, and it lands the new point exactly on the existing curve so the shape is preserved
-                // at the moment of insertion.
+                // Found by walking key space and projecting, which lands the point exactly on the existing curve.
                 const int32 NumSegments = Spline->GetNumSegments();
                 if (NumSegments > 0)
                 {
@@ -310,8 +305,7 @@ namespace Lumina
 
         if (SelectedPoint == INDEX_NONE || Spline->Points.empty())
         {
-            // Selection can vanish mid-drag (undo, a details-panel edit); close the transaction so the
-            // next interaction is not folded into it.
+            // The selection can vanish mid-drag, so close the transaction rather than fold the next one in.
             if (bGizmoUsedOnce)
             {
                 if (Context) { Context->EndModeTransaction("Edit Spline"); }
@@ -320,7 +314,7 @@ namespace Lumina
             return;
         }
 
-        // Handles only ever translate: rotating or scaling a control point has no meaning.
+        // Handles only translate, since rotating or scaling a control point has no meaning.
         const FVector3 HandleWorld = GetHandleWorldPosition(*Spline, LocalToWorld, SelectedPoint, SelectedHandle);
 
         FMatrix4 HandleMatrix = Math::Translate(FMatrix4(1.0f), HandleWorld);
@@ -339,8 +333,7 @@ namespace Lumina
             const FVector3 NewWorld(HandleMatrix[3][0], HandleMatrix[3][1], HandleMatrix[3][2]);
             ApplyHandleWorldPosition(*Spline, WorldToLocal, SelectedPoint, SelectedHandle, NewWorld);
 
-            // Auto/Linear neighbors re-derive from the moved point, so the curve updates live rather than
-            // snapping into shape on release.
+            // Auto and Linear neighbors re-derive, so the curve updates live rather than snapping on release.
             Spline->UpdateTangents();
         }
         else if (bGizmoUsedOnce)
@@ -370,9 +363,7 @@ namespace Lumina
         ProjectionMatrix[1][1] *= -1.0f;
         const FMatrix4 ViewProjection = ProjectionMatrix * Camera.GetViewMatrix();
 
-        // 3D decoration for the selected point: its two tangent handles, whatever the tangent mode. The
-        // component visualizer only draws handles for User points, which is right for an unselected
-        // spline but hides the very thing you came here to grab.
+        // The component visualizer only draws User handles, which hides the thing you came here to grab.
         if (SelectedPoint != INDEX_NONE && SelectedPoint < static_cast<int32>(Spline->Points.size()))
         {
             const FVector3 PointWorld  = GetHandleWorldPosition(*Spline, LocalToWorld, SelectedPoint, EHandle::Point);
@@ -453,8 +444,7 @@ namespace Lumina
 
         const bool bHasSelection = (SelectedPoint != INDEX_NONE) && (SelectedPoint < static_cast<int32>(Spline->Points.size()));
 
-        // Append a point past the end, continuing the curve's direction so it lands somewhere visible
-        // rather than on top of the last point.
+        // Continues the curve's direction, so a new point lands somewhere visible rather than on the last.
         if (ImGui::Button(LE_ICON_VECTOR_POINT_PLUS, ImVec2(ButtonSize, ButtonSize)))
         {
             if (Context) { Context->BeginModeTransaction(); }
@@ -512,8 +502,7 @@ namespace Lumina
         ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
         ImGui::SameLine();
 
-        // Tangent mode for the selected point. Resetting to Auto/Linear is the way back out of a hand-
-        // authored tangent, so it needs to be one click away.
+        // Resetting to Auto is the way back out of a hand-authored tangent, so it stays one click away.
         ImGui::BeginDisabled(!bHasSelection);
         {
             static const char* kModeNames[] = { "Auto", "Linear", "User" };

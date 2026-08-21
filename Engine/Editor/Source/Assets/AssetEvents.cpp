@@ -5,8 +5,7 @@ namespace Lumina::AssetEvents
 {
     FAssetDataChangedDelegate& OnAssetDataChanged()
     {
-        // Function-local rather than a namespace-scope global: subscribers are editor tools, which are
-        // constructed during editor startup, and a static-init ordering hazard here would be silent.
+        // Function-local, since a static-init ordering hazard against editor tool construction would be silent.
         static FAssetDataChangedDelegate Delegate;
         return Delegate;
     }

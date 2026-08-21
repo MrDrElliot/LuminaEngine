@@ -23,8 +23,7 @@ namespace Lumina
 {
     namespace
     {
-        // Read-only archive: runs Serialize to harvest referenced CObjects without writing
-        // (Serialize(void*,len) is a no-op). Like the package save ref builder, no same-package limit.
+        // Runs Serialize to harvest referenced CObjects without writing, and takes no same-package limit.
         class FReferenceCollectorArchive final : public FArchive
         {
         public:
@@ -224,8 +223,7 @@ namespace Lumina
             return false;
         }
 
-        // Absent == visible: only classes the user has explicitly unticked are stored, so an asset type
-        // that appears after the filter was last touched is not silently hidden.
+        // Only explicitly unticked classes are stored, so a new asset type is never silently hidden.
         auto TypeIt = TypeVisibility.find(Row.Class);
         if (TypeIt != TypeVisibility.end() && !TypeIt->second)
         {
@@ -282,8 +280,7 @@ namespace Lumina
             }
             Algo::Sort(Order.begin(), Order.end());
 
-            // Flattened in the exact order the groups are drawn, so a VisibleRows index means the same
-            // thing to shift-range as it does on screen.
+            // Flattened in draw order, so a VisibleRows index means the same thing to shift-range as on screen.
             for (const FString& Category : Order)
             {
                 TVector<const FAssetRow*>& Bucket = Buckets[Category];
@@ -318,8 +315,7 @@ namespace Lumina
             return;
         }
 
-        // IsAnyItemActive covers the search box: Ctrl+A there means "select the text", and stealing it
-        // to select every asset in the project would be a nasty surprise.
+        // Ctrl+A in the search box means select the text, so stealing it would be a nasty surprise.
         if (ImGui::IsAnyItemActive())
         {
             return;
@@ -361,8 +357,7 @@ namespace Lumina
 
         if (IO.KeyShift && RangeAnchor != INDEX_NONE && (uint32)RangeAnchor < (uint32)VisibleRows.size())
         {
-            // Range replaces the selection rather than adding to it, matching every file browser; hold
-            // Ctrl+Shift to extend instead.
+            // Range replaces the selection like every file browser, and Ctrl+Shift extends instead.
             if (!IO.KeyCtrl)
             {
                 SelectedGUIDs.clear();
@@ -431,8 +426,7 @@ namespace Lumina
             }
         }
 
-        // Before anything draws: the filter bar's Resave button needs the visible count, and Ctrl+A needs
-        // something to select against.
+        // The Resave button needs the visible count and Ctrl+A needs something to select against.
         BuildVisibleRows(Rows);
         HandleSelectionShortcuts();
 
@@ -506,8 +500,7 @@ namespace Lumina
 
     void FAssetRegistryEditorTool::DrawTypeFilterMenu()
     {
-        // Distinct classes, from the registry rather than from TypeVisibility, so a type nobody has
-        // touched still appears in the menu.
+        // Taken from the registry rather than TypeVisibility, so an untouched type still appears.
         TVector<FName> Types;
         for (const TUniquePtr<FAssetData>& Data : FAssetRegistry::Get().GetAssets())
         {
@@ -582,8 +575,7 @@ namespace Lumina
             TypeLabel = LE_ICON_FILTER " Types";
         }
 
-        // A Button + popup rather than BeginMenu: this is a plain toolbar row, not a menu bar, and
-        // BeginMenu outside one renders as a bare menu item with no button chrome.
+        // A plain toolbar row, and BeginMenu outside a menu bar renders with no button chrome.
         if (Hidden > 0)
         {
             ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::AccentAlt());
@@ -608,8 +600,7 @@ namespace Lumina
         ImGui::SameLine();
         ImGui::Checkbox("Loaded Only", &bShowLoadedOnly);
 
-        // Resave acts on the selection, falling back to everything currently visible. That fallback is
-        // what makes "filter to Texture, resave" a one-click migration without selecting anything.
+        // The fallback to everything visible is what makes filter-then-resave a one-click migration.
         const uint32 SelectedCount = (uint32)SelectedGUIDs.size();
         const uint32 TargetCount   = SelectedCount > 0 ? SelectedCount : (uint32)VisibleRows.size();
 
@@ -646,8 +637,7 @@ namespace Lumina
         ResaveCurrent = FName();
         ResavePhase   = EResavePhase::Confirm;
 
-        // Snapshot the GUIDs now: VisibleRows points into a per-frame array and the selection can change
-        // while the modal is up.
+        // VisibleRows points into a per-frame array and the selection can change while the modal is up.
         if (!SelectedGUIDs.empty())
         {
             ResaveQueue.reserve(SelectedGUIDs.size());
@@ -774,8 +764,7 @@ namespace Lumina
 
     void FAssetRegistryEditorTool::TickResave()
     {
-        // Bounded per frame so the editor keeps drawing and the progress bar actually moves. Small,
-        // because a single package save can be tens of milliseconds once loading is counted.
+        // Small, since one package save can be tens of milliseconds once loading is counted.
         constexpr uint32 kPackagesPerFrame = 4;
 
         uint32 Processed = 0;
@@ -784,12 +773,10 @@ namespace Lumina
             const FGuid GUID = ResaveQueue[ResaveIndex];
             ++ResaveIndex;
 
-            // Counted per queue entry, not per package actually written: the LoadObject below is the
-            // expensive half, and it runs even for an entry whose package a sibling export already saved.
+            // Counted per queue entry, since the LoadObject is the expensive half and runs regardless.
             ++Processed;
 
-            // Loads the asset if it is not resident: an unloaded package cannot be rewritten, and the
-            // whole point of this is to rewrite assets that have NOT changed.
+            // An unloaded package cannot be rewritten, and the point is to rewrite unchanged assets.
             CObject* Asset = LoadObject<CObject>(GUID);
             if (Asset == nullptr)
             {
@@ -807,8 +794,7 @@ namespace Lumina
                 continue;
             }
 
-            // One save per package however many exports it holds -- saving it again per export would
-            // rewrite the same file N times and count N successes for one file.
+            // One save per package, or the same file is rewritten once per export it holds.
             if (ResavedPackages.find(Package) != ResavedPackages.end())
             {
                 continue;
@@ -857,8 +843,7 @@ namespace Lumina
 
                 if (ImGui::BeginPopupContextItem("##RowCtx"))
                 {
-                    // Right-clicking outside the selection retargets it, so the menu never acts on
-                    // something the user cannot see is selected.
+                    // Right-clicking outside the selection retargets it, so the menu acts on what is visible.
                     if (SelectedGUIDs.find(Row.GUID) == SelectedGUIDs.end())
                     {
                         SelectedGUIDs.clear();
@@ -943,8 +928,7 @@ namespace Lumina
 
     void FAssetRegistryEditorTool::DrawAssetTable()
     {
-        // Base flags for both layouts. ScrollY only on the flat table; grouped tables auto-size
-        // and let the outer pane scroll, else the first table fills the region and shoves the rest.
+        // ScrollY only on the flat table, since grouped tables auto-size and let the outer pane scroll.
         constexpr ImGuiTableFlags TableFlags =
             ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders | ImGuiTableFlags_Resizable |
             ImGuiTableFlags_SizingStretchProp;
@@ -964,8 +948,7 @@ namespace Lumina
             ImGui::TableHeadersRow();
         };
 
-        // Both layouts draw out of VisibleRows, which BuildVisibleRows already filtered and ordered --
-        // so a row's index there is its index on screen, which is what shift-range and Ctrl+A rely on.
+        // A row's index in VisibleRows is its index on screen, which shift-range and Ctrl+A rely on.
         if (bGroupByCategory)
         {
             for (const FRowGroup& Group : VisibleGroups)

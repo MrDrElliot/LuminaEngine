@@ -42,7 +42,7 @@ namespace Lumina
             uint64 Offset;
             uint64 CompressedSize;
             uint64 UncompressedSize;
-            uint64 ContentHash;     // v3: xxh64 of uncompressed bytes; verified on load.
+            uint64 ContentHash;     // verified on load
             uint8  Method;
         };
     }
@@ -188,8 +188,7 @@ namespace Lumina
                 return nullptr;
             }
 
-            // Verify v3 per-entry hash on the just-decompressed bytes.
-            // Hash of 0 means "not set" (legacy / empty); accept silently.
+            // A hash of 0 means not set, from a legacy or empty entry, and is accepted silently.
             if (P.ContentHash != 0 && P.UncompressedSize > 0)
             {
                 const uint64 Actual = Hash::XXHash::GetHash64(Dst, (size_t)P.UncompressedSize);

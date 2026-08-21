@@ -147,8 +147,7 @@ namespace Lumina
 
     void CStruct::Unlink()
     {
-        // Only the head. Past Link the tail of this list is the SUPER's chain, spliced on rather than copied,
-        // so the super keeps its own properties and is untouched by dropping our pointer to them.
+        // Past Link the tail is the SUPER's chain, spliced on rather than copied, so the super is untouched.
         LinkedProperty = nullptr;
         bLinked = false;
     }
@@ -227,8 +226,7 @@ namespace Lumina
                 {
                     continue;
                 }
-                // Cook-mode strip: editor-only properties are absent in
-                // shipped packages.
+                // Editor-only properties are absent in shipped packages.
                 if (Ar.IsCooking() && Current->IsEditorOnly())
                 {
                     continue;
@@ -325,9 +323,7 @@ namespace Lumina
                             {
                                 End = Aliases.size();
                             }
-                            // FStringView, NOT FName(ptr, len): FName's two-arg ctor takes a NUMBER, not a
-                            // length, so that spelling built a name from the whole remaining string and
-                            // tagged it with the length. No alias ever matched.
+                            // FName's two-arg ctor takes a NUMBER, not a length, so that spelling never matched an alias.
                             if (End > Start && FName(FStringView(Aliases.data() + Start, End - Start)) == Tag.Name)
                             {
                                 FoundProperty = Search;
@@ -426,7 +422,7 @@ namespace Lumina
             return;
         }
 
-        // Otherwise every serializable field, in order (no Replicated filter -- the struct is a unit).
+        // No Replicated filter here, since the struct is serialized as a unit.
         for (FProperty* Current = LinkedProperty; Current; Current = (FProperty*)Current->Next)
         {
             if (!Current->ShouldSerialize())
@@ -437,8 +433,7 @@ namespace Lumina
         }
     }
 
-    // Same predicate as NetSerializeProperties; centralized so the count, the writer-side diff, and the
-    // reader-side mask all walk the identical replicated-field set in the identical order.
+    // Centralized so the count, the writer diff and the reader mask walk the identical set in order.
     static bool IsNetReplicatedField(const FProperty* P)
     {
         return P->ShouldSerialize() && !P->IsEditorOnly() && P->IsReplicated();

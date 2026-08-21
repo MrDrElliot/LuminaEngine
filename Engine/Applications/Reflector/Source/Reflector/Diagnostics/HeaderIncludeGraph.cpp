@@ -14,8 +14,7 @@ namespace Lumina::Reflection
 {
     namespace
     {
-        // Forward slashes + absolute, case preserved; mirrors NormalizeHeaderPath
-        // so these strings compare equal to AllHeaders entries on every filesystem.
+        // Mirrors NormalizeHeaderPath so these compare equal to AllHeaders entries on every filesystem.
         std::string Normalize(const std::filesystem::path& InPath)
         {
             std::error_code Ec;
@@ -39,8 +38,7 @@ namespace Lumina::Reflection
             return std::memcmp(Haystack.data(), Needle.data(), Needle.size()) == 0;
         }
 
-        // Extract the parent directory of `Path`, normalized. Empty if the path
-        // has no parent.
+        // Returns empty when the path has no parent.
         std::string ParentDir(const std::string& Path)
         {
             std::filesystem::path P(Path.c_str());
@@ -52,8 +50,7 @@ namespace Lumina::Reflection
             return Normalize(Parent);
         }
 
-        // Paths the cycle detector ignores even when they resolve: the `.inl` idiom
-        // (X.h includes X.inl includes X.h) is a deliberate pattern, not a cycle.
+        // The .inl idiom where X.h includes X.inl includes X.h is deliberate, not a cycle.
         bool IsExtensionIgnored(const std::string& Path)
         {
             const size_t Dot = Path.find_last_of('.');
@@ -73,8 +70,7 @@ namespace Lumina::Reflection
             return false;
         }
 
-        // Match `#include "x"` (any inter-token whitespace); `#include <...>` is
-        // skipped since system/external headers can't be resolved into the workspace.
+        // Angle-bracket includes are skipped, since system headers cannot be resolved into the workspace.
         static const std::regex IncludeRegex(R"(^\s*#\s*include\s*\"([^\"]+)\")");
 
         std::string LineBuf;
@@ -146,14 +142,12 @@ namespace Lumina::Reflection
             return;
         }
 
-        // Aggregate roots + the union of include dirs once. Resolution then has
-        // a single search list to walk for any header in the graph.
+        // Aggregated once so resolution has a single search list to walk for any header in the graph.
         std::vector<std::string> Seeds;
         for (const auto& Project : Workspace->ReflectedProjects)
         {
             const std::string ProjectRoot = Normalize(std::filesystem::path(Project->Path.c_str()));
-            // Trailing '/' guarantees prefix-match doesn't false-positive on
-            // sibling dirs that share a prefix (e.g. "Runtime" vs "RuntimeX").
+            // The trailing slash stops a prefix match false-positiving on a sibling such as Runtime vs RuntimeX.
             ProjectRoots.push_back(ProjectRoot + "/");
 
             for (const std::string& Dir : Project->IncludeDirs)
@@ -171,8 +165,7 @@ namespace Lumina::Reflection
             }
         }
 
-        // BFS-ish crawl from every reflected header, queuing files inside a project root.
-        // Stops at non-project paths so third-party cycles aren't reported to the user.
+        // Stops at non-project paths so third-party cycles are never reported to the user.
         std::vector<std::string> Frontier = Seeds;
         while (!Frontier.empty())
         {
@@ -210,8 +203,7 @@ namespace Lumina::Reflection
                 }
                 if (IsExtensionIgnored(Resolved))
                 {
-                    // .inl files are intentionally self-referential with their owning .h;
-                    // skip the edge so the idiom isn't reported as a false-positive cycle.
+                    // An .inl is intentionally self-referential with its owning header, so skip the edge.
                     continue;
                 }
 
@@ -246,8 +238,7 @@ namespace Lumina::Reflection
 
     std::vector<FHeaderCycle> FHeaderIncludeGraph::DetectCycles() const
     {
-        // Standard three-color DFS (White=unvisited, Gray=on stack, Black=done);
-        // hitting a Gray node means the active stack holds a cycle's members.
+        // Standard three-color DFS, where hitting a Gray node means the active stack holds a cycle.
         enum class EColor : uint8_t { White, Gray, Black };
 
         std::unordered_map<std::string, EColor> Color;
@@ -312,8 +303,7 @@ namespace Lumina::Reflection
 
                 if (ColorIt->second == EColor::Gray)
                 {
-                    // Walk the active stack back to find where Target first
-                    // appeared -- that index marks the start of the cycle.
+                    // Walking the stack back to Target's first appearance marks where the cycle starts.
                     auto StackIt = std::find(Stack.begin(), Stack.end(), Target);
                     if (StackIt == Stack.end())
                     {
@@ -321,10 +311,9 @@ namespace Lumina::Reflection
                     }
 
                     FHeaderCycle Cycle(StackIt, Stack.end());
-                    Cycle.push_back(Target);   // close the loop: last == first
+                    Cycle.push_back(Target);   // close the loop, last == first
 
-                    // Canonicalize: rotate so the smallest path is first, giving
-                    // identical keys for any start node that walked the same loop.
+                    // Rotated so the smallest path is first, giving identical keys for any start node on the same loop.
                     auto MinIt = std::min_element(Cycle.begin(), Cycle.end() - 1);
                     std::vector<std::string> Canonical;
                     Canonical.reserve(Cycle.size());
@@ -347,7 +336,7 @@ namespace Lumina::Reflection
                     continue;
                 }
 
-                // White -- descend into Target.
+                // White, so descend into Target.
                 const auto TargetNodeIt = Nodes.find(Target);
                 if (TargetNodeIt == Nodes.end())
                 {

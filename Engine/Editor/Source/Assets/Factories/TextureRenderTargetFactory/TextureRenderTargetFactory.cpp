@@ -51,12 +51,10 @@ namespace Lumina
             return Out;
         }
 
-        // Reads the live GPU image back and writes a 256x256 RGBA8 thumbnail. Contents
-        // aren't serialized, so the capture is whatever the target holds (clear color if fresh).
+        // Contents are not serialized, so the capture is whatever the target holds, clear color if fresh.
         void GenerateRenderTargetThumbnail(CTextureRenderTarget* RenderTarget)
         {
-            // @TODO Render-target thumbnail needs new-RHI readback (CmdCopyTextureToBuffer into a
-            // CPURead buffer); the old-RHI staging-image path is retired. No thumbnail for now.
+            // @TODO Render-target thumbnail needs new-RHI readback, since the staging-image path is retired.
             (void)RenderTarget;
         }
     }

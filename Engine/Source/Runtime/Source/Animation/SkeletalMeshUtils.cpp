@@ -39,8 +39,7 @@ namespace Lumina::SkeletalUtils
             return false;
         }
 
-        // Live pose stores Global * InvBind; undo InvBind to recover the component-space global.
-        // inverse(InvBind) is also the bind-pose global, so the no-pose fallback is the same undo.
+        // The inverse of InvBind is also the bind-pose global, so the no-pose fallback is the same undo.
         const FMatrix4 BindGlobal = Math::Inverse(Skeleton->GetBone(BoneIndex).InvBindMatrix);
         if ((int32)Mesh.BoneTransforms.size() == Skeleton->GetNumBones())
         {
@@ -190,7 +189,7 @@ namespace Lumina::SkeletalUtils
             return INDEX_NONE;
         }
 
-        // Compare in component space: one inverse instead of a matrix multiply per bone.
+        // Compared in component space, one inverse instead of a matrix multiply per bone.
         const FMatrix4 WorldToComponent = Math::Inverse(Transform->GetWorldMatrix());
         const FVector3 LocalPoint = FVector3(WorldToComponent * FVector4(WorldPoint, 1.0f));
 

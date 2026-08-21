@@ -25,8 +25,7 @@ namespace Lumina
             Node->ClearError();
         }
 
-        // Walk from every FunctionOutput node so disconnected branches that feed other outputs are
-        // all validated.
+        // Walks from every output node, so a branch feeding another output is still validated.
         TVector<CEdGraphNode*> SortedNodes;
         CEdGraphNode* CyclicNode = GraphAlgorithms::TopologicalSortFromRoots(Nodes, SortedNodes, [](CEdGraphNode* Node)
         {
@@ -50,8 +49,7 @@ namespace Lumina
             CEdGraphNode* Node = SortedNodes[i];
             Node->SetDebugExecutionOrder((uint32)i);
 
-            // Reroutes are passthrough; FunctionInput emits its preview default; FunctionOutput
-            // validates its connected type.
+            // Reroutes pass through, an input emits its preview default, and an output validates its type.
             if (Node->IsRerouteNode())
             {
                 continue;

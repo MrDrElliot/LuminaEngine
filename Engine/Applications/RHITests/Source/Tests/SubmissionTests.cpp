@@ -35,8 +35,7 @@ namespace Lumina::RHITests
         RHI::FreeH(Semaphore);
     }
 
-    // Two submissions chained through a timeline value rather than a host wait: the second must not
-    // start until the first signals.
+    // Chained through a timeline value rather than a host wait, so the second must not start early.
     RHI_TEST(Submission, WaitThenSignalChain)
     {
         const RHI::FSemaphoreH Semaphore = RHI::CreateTimelineSemaphore(0);
@@ -67,8 +66,7 @@ namespace Lumina::RHITests
 
     RHI_TEST(Submission, SubmitOnReturnsRisingValues)
     {
-        // Separate buffers on purpose: two unsynchronized submissions writing one buffer is a genuine
-        // write-after-write, and this test is about the returned timeline values, not about hazards.
+        // Separate buffers on purpose, since this is about the returned timeline values, not hazards.
         const RHI::GPUPtr FirstBuffer  = Ctx.Malloc(256, RHI::EMemoryType::GPUOnly, "RHITests.SubmitOnA");
         const RHI::GPUPtr SecondBuffer = Ctx.Malloc(256, RHI::EMemoryType::GPUOnly, "RHITests.SubmitOnB");
         RHI_REQUIRE(FirstBuffer != 0 && SecondBuffer != 0);
@@ -134,10 +132,7 @@ namespace Lumina::RHITests
         Ctx.SubmitAndWait(CL);
     }
 
-    // ResetCommandList RECYCLES the list into the per-queue free pool -- the handle is dead until
-    // OpenCommandList hands it back and re-begins recording. Recording into it without re-opening is
-    // "called before vkBeginCommandBuffer". This walks the supported loop several times over, which is
-    // also what proves the pool actually reuses rather than growing without bound.
+    // ResetCommandList recycles into the free pool, so recording without re-opening is a begin error.
     RHI_TEST(Submission, CommandListRecyclesThroughFreePool)
     {
         const RHI::GPUPtr Buffer = Ctx.Malloc(256, RHI::EMemoryType::GPUOnly, "RHITests.Recycle");

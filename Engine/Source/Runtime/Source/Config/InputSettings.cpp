@@ -7,9 +7,7 @@ namespace Lumina
 {
     void CInputSettings::PostInitSettings()
     {
-        // Fold the pre-EInputActionType bAxis flag into Type on the settings object itself, so the Input
-        // panel shows what the runtime will actually do and the next save drops the legacy flag. The same
-        // fold happens in RebuildFromSettings, which covers action lists that never come through here.
+        // The same fold happens in RebuildFromSettings, covering action lists that never come through here.
         for (SInputAction& Action : Actions)
         {
             if (Action.bAxis)

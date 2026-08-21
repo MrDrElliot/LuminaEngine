@@ -112,8 +112,7 @@ namespace Lumina
         History.LastRecv = Stats.TotalReceivedBytes;
         History.bPrimed  = true;
 
-        // Smooth the snapshot size for a readable progress bar (the raw per-tick value jitters as each tick
-        // sends a different subset of due entities).
+        // The raw per-tick value jitters as each tick sends a different subset of due entities.
         const float SnapNow = static_cast<float>(State->Stats.MovementFrameBytes);
         History.SnapshotEMA += (SnapNow - History.SnapshotEMA) * 0.1f;
     }
@@ -199,8 +198,7 @@ namespace Lumina
         TVector<FConnectionStats> Conns;
         State->Transport->GetConnectionStats(Conns);
 
-        // Proxy interpolation-ring health (reused by Warnings + Interpolation): how many rings hold samples,
-        // and their sample-count average/min. A low average means the buffer is starving -> visible stutter.
+        // A low average means the buffer is starving, which shows up as visible stutter.
         int RingCount = 0, RingSampleSum = 0, RingMin = 0;
         bool bRingMinSet = false;
         for (entt::entity E : Registry.view<FRepTransform>())
@@ -352,9 +350,7 @@ namespace Lumina
                 }
             }
 
-            // Transform snapshot size vs the 64 KB frame cap, colored by how close we are (red once dropped).
-            // Use the smoothed snapshot bytes so the bar reads as a steady level instead of flickering with the
-            // per-tick subset of due entities.
+            // The smoothed bytes make the bar read as a steady level rather than flickering per tick.
             FNetHistory& H = Histories[SelectedWorld];
             const float SmoothBytes = H.SnapshotEMA;
             float CapPct = (Net::MaxFramedMessageSize > 0)
@@ -396,8 +392,7 @@ namespace Lumina
             ImGui::BulletText("Roles: Authority %d, Simulated %d, Autonomous %d, None %d",
                 RoleAuth, RoleSim, RoleAuto, RoleNone);
 
-            // Largest-frame history (raw per-tick); plot top is the frame cap. With chunking this stays under
-            // the cap -- the snapshot just splits into more frames as entities grow.
+            // With chunking this stays under the cap, since the snapshot just splits into more frames.
             const float CurSnap = H.MovementBytes[(H.Head + FNetHistory::Capacity - 1) % FNetHistory::Capacity];
             ImGui::Spacing();
             ImGui::Text("Largest frame (cap = top of plot): %s", FormatBytesNice(CurSnap).c_str());

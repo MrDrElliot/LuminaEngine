@@ -62,8 +62,7 @@ namespace Lumina
             return bIsTrigger ? FColor::Green : FColor::Blue;
         }
 
-        // Wireframe cylinder, optionally tapered (different top vs bottom radius): two rings joined by a few
-        // vertical spokes. Reused by the cylinder / tapered-cylinder / compound visualizers.
+        // Two rings joined by vertical spokes, optionally tapered, shared by the cylinder visualizers.
         void DrawWireCylinder(IPrimitiveDrawInterface* PDI, const FVector3& Center, const FQuat& Rot,
             float TopRadius, float BottomRadius, float HalfHeight, const FVector4& Color, float Thickness)
         {
@@ -121,7 +120,7 @@ namespace Lumina
         const STransformComponent& Transform    = Registry.get<STransformComponent>(Entity);
         FVector3 Forward                       = Transform.GetWorldRotationCached() * FViewVolume::ForwardAxis;
 
-        // Cone opens along the spot's aim (transform forward) -- the direction it lights, matching FLight::Direction = -aim (to-light).
+        // The cone opens along the transform forward, which is the direction it lights.
         PDI->DrawCone(Transform.GetWorldLocationCached(), Forward, Math::Radians(SpotLight.OuterConeAngle), SpotLight.Attenuation, FVector4(SpotLight.LightColor, 1.0f));
         PDI->DrawCone(Transform.GetWorldLocationCached(), Forward, Math::Radians(SpotLight.InnerConeAngle), SpotLight.Attenuation, FVector4(SpotLight.LightColor, 1.0f));
     }
@@ -215,7 +214,7 @@ namespace Lumina
         const SCharacterPhysicsComponent& Character = Registry.get<SCharacterPhysicsComponent>(Entity);
         const STransformComponent& Transform = Registry.get<STransformComponent>(Entity);
 
-        // Match Jolt: Start/End are cylinder-axis endpoints; Radius scales by MaxScale.
+        // Matches Jolt, where Start and End are the cylinder-axis endpoints and Radius scales by MaxScale.
         const FVector3 Location = Transform.GetWorldLocationCached();
         const FVector3 Axis = Transform.GetWorldRotationCached() * FVector3(0.0f, Character.HalfHeight, 0.0f);
         const FVector3 Start = Location - Axis;
@@ -255,8 +254,7 @@ namespace Lumina
         const auto& Transform   = Registry.get<STransformComponent>(Entity);
         const auto& Camera      = Registry.get<SCameraComponent>(Entity);
 
-        // Cached ViewVolume only refreshes at runtime via SCameraSystem, so rebuild the view-projection from the live transform.
-        // The real far plane is effectively infinite; clamp only the gizmo's far for display (never affects the camera).
+        // The cached ViewVolume only refreshes at runtime, so rebuild the view-projection from the transform.
         constexpr float GizmoFar = 25.0f;
         const FVector3 Location = Transform.GetWorldLocationCached();
         const FQuat    Rotation = Transform.GetWorldRotationCached();
@@ -266,7 +264,7 @@ namespace Lumina
         FViewVolume Volume(Camera.GetFOV(), Camera.GetAspectRatio(), Camera.GetViewVolume().GetNear(), GizmoFar);
         Volume.SetView(Location, Forward, Up);
 
-        // Reverse-Z Vulkan NDC: near plane is z=1, far plane is z=0.
+        // Reverse-Z Vulkan NDC puts the near plane at z=1 and the far plane at z=0.
         PDI->DrawFrustum(Volume.GetViewProjectionMatrix(), 1.0f, 0.0f, FColor::White, 4.0f);
         PDI->DrawArrow(Location, Forward, 3.5f, FColor::Green, 4.0f);
     }
@@ -306,17 +304,13 @@ namespace Lumina
         const FVector3 Location = Transform.GetWorldLocationCached();
         const FQuat    Rotation = Transform.GetWorldRotationCached();
 
-        // Dim when the probe is switched off, so a disabled probe still shows where it sits without
-        // reading as an active influence volume.
+        // Dimmed when switched off, so a disabled probe shows where it sits without reading as active.
         const float Alpha = Probe.bEnabled ? 1.0f : 0.35f;
 
-        // Outer shell = where influence begins. Inner shell = where it reaches full strength; the gap
-        // between them is the cross-fade band, which is the thing you actually need to see when placing
-        // overlapping probes. BlendDistance is a fraction of the volume, matching Probe_InfluenceWeight.
+        // The gap between the shells is the cross-fade band, which is what matters for overlapping probes.
         const float InnerScale = Math::Clamp(1.0f - Probe.BlendDistance, 0.0f, 1.0f);
 
-        // Always probes draw warm instead of cyan: they cost six scene renders per turn, so leaving one
-        // switched on by accident is worth seeing without opening the details panel.
+        // Always probes cost six scene renders per turn, so one left on by accident is worth seeing.
         const bool bAlways = (Probe.UpdateMode == EReflectionProbeUpdateMode::Always);
         const FVector3 Hue = bAlways ? FVector3(1.00f, 0.45f, 0.25f) : FVector3(0.30f, 0.85f, 1.00f);
 
@@ -325,8 +319,7 @@ namespace Lumina
 
         if (Probe.Shape == EReflectionProbeShape::Sphere)
         {
-            // Sphere mode ignores Y/Z and any non-uniform scale (extraction collapses them too, so the
-            // shader's unit-sphere test matches what is drawn here).
+            // Sphere mode ignores Y and Z, and extraction collapses them too, so the shader test matches.
             const float Radius = Math::Max(Probe.Extent.x, 0.001f) * Transform.MaxScale();
             PDI->DrawSphere(Location, Radius, OuterColor, 24, 2.0f, true, 0.0f);
             if (InnerScale > 0.01f)
@@ -344,9 +337,7 @@ namespace Lumina
             }
         }
 
-        // The capture origin is what the cube is actually rendered from, and CaptureOffset can put it
-        // well away from the entity origin. Drawing it (and the link back) is what makes an offset probe
-        // comprehensible instead of looking mis-centered.
+        // CaptureOffset can put the origin well away from the entity, so drawing it explains an offset probe.
         const FVector3 CaptureWorld = Location + Rotation * Probe.CaptureOffset;
         const FVector4 CaptureColor(1.00f, 0.80f, 0.25f, Alpha);
 
@@ -419,8 +410,7 @@ namespace Lumina
         const FVector3 Up     = Rot * FVector3(0.0f, 1.0f, 0.0f);
         const FVector4 Color  = ColliderColor(Plane.bIsTrigger);
 
-        // Collision is effectively infinite; draw a fixed patch + cross so it's readable, plus the +Y surface
-        // normal (the solid half-space is below the plane).
+        // Collision is effectively infinite, so a fixed patch, a cross and the +Y normal keep it readable.
         constexpr float kHalf = 2.5f;
         const FVector3 Corners[4] =
         {
@@ -524,7 +514,7 @@ namespace Lumina
         PDI->DrawArrow(Pivot,  AxisN, 0.6f, AxisColor, 3.0f, false, 0.0f, 0.2f);
         PDI->DrawArrow(Pivot, -AxisN, 0.6f, AxisColor, 3.0f, false, 0.0f, 0.2f);
 
-        // Cone limit: show the allowed swing half-angle.
+        // Shows the allowed swing half-angle for a cone limit.
         if (Con.Type == EPhysicsConstraintType::Cone)
         {
             PDI->DrawCone(Pivot, AxisN, Math::Radians(Con.ConeHalfAngle), 0.6f, AxisColor, 16, 4, 2.0f, false, 0.0f);
@@ -591,8 +581,7 @@ namespace Lumina
         const FVector4 ArriveColor(0.35f, 0.75f, 1.0f, 1.0f);
         const FVector4 LeaveColor(0.35f, 1.00f, 0.55f, 1.0f);
 
-        // Marker size is a fraction of the curve's own extent so a 1 m spline and a 200 m road both read
-        // sensibly; clamped so a degenerate spline still shows something clickable.
+        // Sized from the curve's own extent so a 1 m spline and a 200 m road both read sensibly.
         float Extent = 0.0f;
         for (const SSplinePoint& Point : Spline.Points)
         {
@@ -602,8 +591,7 @@ namespace Lumina
 
         const int32 NumSegments = Spline.GetNumSegments();
 
-        // Walk key space to draw the curve. Independent of SamplesPerSegment: that knob sizes the GPU
-        // table, and the viewport should not get coarser just because the upload was made cheaper.
+        // Independent of SamplesPerSegment, since that knob sizes the GPU table, not the viewport.
         constexpr int32 kStepsPerSegment = 16;
         if (NumSegments > 0)
         {
@@ -623,8 +611,7 @@ namespace Lumina
             const FVector3 World = ToWorld(Point.Location);
             PDI->DrawSphere(World, MarkerRadius, PointColor, 10, 2.0f, false, 0.0f);
 
-            // Tangent handles are drawn at a third of their length: a Hermite tangent is three times the
-            // chord it produces, so drawing it raw puts the handle well past the neighboring point.
+            // A Hermite tangent is three times the chord it produces, so draw the handle at a third length.
             if (Point.TangentMode == ESplineTangentMode::User)
             {
                 const FVector3 Arrive = ToWorld(Point.Location - Point.ArriveTangent / 3.0f);

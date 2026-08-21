@@ -110,7 +110,7 @@ namespace Lumina
             }
             Parsed.bIsEnginePlugin = bIsEngine;
 
-            // Duplicate-name detection: first one wins, later ones logged.
+            // On a duplicate name the first wins and the later ones are logged.
             FName Key(Parsed.Name);
             if (PluginLookup.find(Key) != PluginLookup.end())
             {
@@ -122,10 +122,7 @@ namespace Lumina
             LOG_INFO("[PluginManager] Discovered {} plugin '{}' ({} modules)",
                 bIsEngine ? "engine" : "project", Parsed.Name, Parsed.Modules.size());
 
-            // Registered at discovery, before any module loads. A project or plugin module that
-            // links against this plugin has the import resolved by the OS loader the moment its
-            // own DLL loads, and nothing else puts a plugin's Binaries directory on the search
-            // path: without this the dependent DLL fails to load however early it is asked for.
+            // Nothing else puts a plugin's Binaries directory on the search path for a dependent DLL.
             FString BinariesDir = PluginDirStr;
             BinariesDir += "/Binaries/";
             BinariesDir += LUMINA_PLATFORM_NAME;
@@ -227,8 +224,7 @@ namespace Lumina
 
     TVector<FPlugin*> FPluginManager::BuildLoadOrder()
     {
-        // Kahn-style toposort; missing non-optional deps disable the dependent and log.
-        // Iterate OwnedPlugins (insertion order), not PluginLookup, so order is reproducible.
+        // Iterates OwnedPlugins in insertion order rather than the lookup, so the order is reproducible.
         TVector<FPlugin*> Enabled;
         Enabled.reserve(OwnedPlugins.size());
         for (auto& Owned : OwnedPlugins)
@@ -282,8 +278,7 @@ namespace Lumina
         TVector<FPlugin*> Result;
         Result.reserve(Enabled.size());
 
-        // Process the frontier as a FIFO and seed it in Enabled order so
-        // peers (zero-indegree siblings) come out in discovery order.
+        // Seeded in Enabled order so zero-indegree siblings come out in discovery order.
         TVector<FPlugin*> Frontier;
         Frontier.reserve(Enabled.size());
         for (FPlugin* P : Enabled)
@@ -298,8 +293,7 @@ namespace Lumina
         {
             FPlugin* P = Frontier[Head++];
             Result.push_back(P);
-            // Edges were built in Enabled order, so iterating push_back
-            // order keeps dependents stable too.
+            // Edges were built in Enabled order, so iterating push order keeps dependents stable.
             for (FPlugin* Dependent : Edges[P])
             {
                 if (--InDegree[Dependent] == 0)
@@ -311,7 +305,7 @@ namespace Lumina
 
         if (Result.size() != Enabled.size())
         {
-            // Cycle: emit leftovers in OwnedPlugins order (deterministic) and log each.
+            // On a cycle, leftovers are emitted in OwnedPlugins order and each is logged.
             THashSet<FPlugin*> Emitted;
             Emitted.reserve(Result.size());
             for (FPlugin* Q : Result) Emitted.insert(Q);
@@ -374,8 +368,7 @@ namespace Lumina
             }
         }
 
-        // Monolithic builds statically link plugin modules (no DLL on disk); LoadModule's
-        // static-factory branch resolves by bare name, so skip the DLL-existence pre-check.
+        // A monolithic build has no DLL on disk, and the static factory resolves by bare name.
         const FName BareName(Module.Name);
         if (FModuleManager::Get().HasStaticFactory(BareName))
         {
@@ -393,8 +386,7 @@ namespace Lumina
             Loaded.bStartupCalled  = true;
             Plugin.GetLoadedModules().emplace_back(Move(Loaded));
 
-            // DISPLAY, boot milestone; we want it visible in Shipping
-            // post-mortems so "plugin X didn't load" is debuggable.
+            // A boot milestone worth seeing in Shipping, so a plugin failing to load stays debuggable.
             LOG_DISPLAY("[PluginManager] Linked plugin '{}' static module '{}' (phase {})",
                 Plugin.GetName(), Module.Name, LexToString(Module.LoadingPhase));
             return true;
@@ -436,8 +428,7 @@ namespace Lumina
             bLoadOrderDirty = false;
         }
 
-        // Mount content here, not in DiscoverDirectory (VFS isn't up at Earliest);
-        // Earliest-phase modules see no content, which matches their contract.
+        // The VFS is not up at the earliest phase, and those modules see no content by contract.
         for (FPlugin* Plugin : CachedLoadOrder)
         {
             if (Phase != EPluginLoadingPhase::Earliest)
@@ -456,8 +447,7 @@ namespace Lumina
 
     void FPluginManager::ShutdownAllPlugins()
     {
-        // Reverse-order teardown: walk CachedLoadOrder back-to-front so dependents shut
-        // down before deps, calling UnloadModule for each so ShutdownModule runs in order.
+        // Walks back to front so dependents shut down before the plugins they depend on.
         for (auto It = CachedLoadOrder.rbegin(); It != CachedLoadOrder.rend(); ++It)
         {
             FPlugin* Plugin = *It;

@@ -74,8 +74,7 @@ namespace Lumina
         {
             return;
         }
-        // If the user re-toggles back to the current state, drop the pending
-        // entry so the Apply button accurately reflects "no pending changes".
+        // Re-toggling back drops the pending entry, so Apply reflects no pending changes.
         if (Plugin->IsEnabled() == bEnabled)
         {
             PendingChanges.erase(PluginName);
@@ -93,8 +92,7 @@ namespace Lumina
         DrawToolbar();
         ImGui::Separator();
 
-        // Build the filtered + sorted view. Engine plugins first, then
-        // project plugins; within each group, alphabetical by name.
+        // Engine plugins first, then project plugins, alphabetical within each group.
         TVector<const FPlugin*> All = FPluginManager::Get().GetAllPlugins();
         TVector<FPlugin*> Visible;
         Visible.reserve(All.size());
@@ -124,7 +122,7 @@ namespace Lumina
                 return A->GetName() < B->GetName();
             });
 
-        // Two-pane split: table on top (60% height), details below.
+        // A two-pane split with the table on top and details below.
         const float Avail = ImGui::GetContentRegionAvail().y;
         const float TableHeight = Math::Max(160.0f, Avail * 0.60f - 30.0f);
 
@@ -465,8 +463,7 @@ namespace Lumina
             return false;
         }
 
-        // Merge pending changes into the Plugins array; preserves existing entries
-        // (and any forward-compatible fields) and appends new ones.
+        // Preserves existing entries and any forward-compatible fields, and appends new ones.
         nlohmann::json& PluginsArr = Root["Plugins"];
         if (!PluginsArr.is_array())
         {
@@ -609,8 +606,7 @@ namespace Lumina
                     {
                         LOG_INFO("[PluginBrowser] Created plugin at {}", OutDir.c_str());
 
-                        // Regenerate the project so the new modules join its
-                        // .slnx, then prompt a rebuild + restart to load them.
+                        // Regenerates so the new modules join the project, then prompts a rebuild and restart.
                         GEditorEngine->GenerateProjectFiles(GEngine->GetProjectPath());
 
                         CreatePluginResult = "Created plugin '";

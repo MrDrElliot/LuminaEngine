@@ -71,8 +71,7 @@ namespace Lumina
         {
             return nullptr;
         }
-        // Soft paths are FString (deep package paths); narrow to FFixedString here,
-        // the load rejects oversize paths via its own bounds check.
+        // Soft paths are deep, and the load rejects an oversize path through its own bounds check.
         return FAssetManager::Get().LoadAssetSynchronous(FFixedString(Path.c_str(), Path.size()), CachedGUID);
     }
 
@@ -104,8 +103,7 @@ namespace Lumina
 
     FArchive& operator<<(FArchive& Ar, FSoftObjectPath& Self)
     {
-        // On write, resolve first so the persisted GUID is current and the saver can fold
-        // it into the ImportTable as a Soft edge for the cook graph.
+        // Resolved first on write, so the saver folds a current GUID in as a Soft edge for the cook graph.
         if (Ar.IsWriting())
         {
             if (!Self.Path.empty() && !Self.CachedGUID.IsValid())

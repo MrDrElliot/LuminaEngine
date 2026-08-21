@@ -45,8 +45,7 @@ namespace Lumina
 
     void FScriptDiagnosticsEditorTool::OnDeinitialize(const FUpdateContext&)
     {
-        // Nothing to disable: the managed host is only polled from DrawWindow, so closing the window already
-        // stops every cost. (The export itself is dormant unless this tool calls it.)
+        // The managed host is only polled from DrawWindow, so closing the window already stops every cost.
     }
 
     void FScriptDiagnosticsEditorTool::Refresh(bool bForceCollect)
@@ -124,7 +123,7 @@ namespace Lumina
             return;
         }
 
-        // ---- Headline: ALC / generation health (the hot-reload leak monitor) ----------------------
+        // ALC and generation health, the hot-reload leak monitor.
         ImGui::TextUnformatted("Resident generations");
         ImGui::SameLine();
         if (Snapshot.ScriptsOnline == 0)

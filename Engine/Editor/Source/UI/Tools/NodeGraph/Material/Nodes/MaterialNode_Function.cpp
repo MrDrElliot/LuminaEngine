@@ -33,8 +33,7 @@ namespace Lumina
             case EMaterialValueType::Float2: return "float2(" + Format("{}", V.x) + ", " + Format("{}", V.y) + ")";
             case EMaterialValueType::Float3: return "float3(" + Format("{}", V.x) + ", " + Format("{}", V.y) + ", " + Format("{}", V.z) + ")";
             case EMaterialValueType::Float4: return "float4(" + Format("{}", V.x) + ", " + Format("{}", V.y) + ", " + Format("{}", V.z) + ", " + Format("{}", V.w) + ")";
-            // A bindless index has no meaningful default -- FVector4 cannot express one, and slot 0 is an
-            // arbitrary texture rather than a null. An unconnected handle input samples whatever is there.
+            // A bindless index has no meaningful default, and slot 0 is an arbitrary texture rather than null.
             case EMaterialValueType::TextureHandle: return "0u";
             default:                         return "0.0";
         }
@@ -69,8 +68,7 @@ namespace Lumina
 
     void CMaterialExpression_FunctionInput::GenerateDefinition(FMaterialCompiler& Compiler)
     {
-        // Standalone validation path only: a call node binds Output->ResolvedVar before inlining and
-        // skips this node, so reaching here means a preview compile. Clear any stale binding first.
+        // A call node binds ResolvedVar before inlining, so reaching here means a preview compile.
         const EMaterialInputType T = ToMaterialInputType(InputType);
         if (Output)
         {
@@ -96,8 +94,7 @@ namespace Lumina
 
     void CMaterialFunctionOutput::GenerateDefinition(FMaterialCompiler& Compiler)
     {
-        // Validation only. Emitting the connected value as a local surfaces upstream type errors; an
-        // unconnected output is fine (call sites default it to zero).
+        // Emitting the connected value surfaces upstream type errors, and an unconnected output is fine.
         if (Input)
         {
             Input->SetComponentMask(FullMaskForType(ToMaterialInputType(OutputType)));
@@ -119,8 +116,7 @@ namespace Lumina
 
     void CMaterialExpression_MaterialFunctionCall::RebuildPins()
     {
-        // Snapshot existing connections by (direction, pin name) so a rebuild keeps wires whose pin
-        // still exists in the new signature.
+        // Snapshotted by direction and pin name, so a rebuild keeps wires whose pin still exists.
         struct FConnSnapshot { FString Name; bool bInput; TVector<CEdNodeGraphPin*> Remotes; };
         TVector<FConnSnapshot> Snapshots;
 
@@ -216,8 +212,7 @@ namespace Lumina
 
     void CMaterialExpression_MaterialFunctionCall::DrawNodeTitleBar()
     {
-        // Lazily resync pins to the assigned function. Runs before this node's pins are drawn this
-        // frame, so newly built pins appear immediately.
+        // Runs before this node's pins are drawn, so newly built pins appear immediately.
         if (!bPinsBuilt || Function.Get() != CachedFunction)
         {
             RebuildPins();
@@ -305,8 +300,7 @@ namespace Lumina
 
         Compiler.AddRaw(FString("\t// ---- inline material function: ") + Fn->GetName().c_str() + " ----\n");
 
-        // Bind each declared input: emit a typed local from the caller's argument and point the
-        // matching FunctionInput node's output at it. ResolvedVars are cleared again at the end.
+        // ResolvedVars are cleared again at the end.
         TVector<CMaterialOutput*> BoundInputOutputs;
         for (size_t i = 0; i < FunctionInputPins.size() && i < Fn->GetInputs().size(); ++i)
         {
@@ -330,8 +324,7 @@ namespace Lumina
             }
         }
 
-        // Safety: any FunctionInput node not matched above (signature drift) gets its own default so
-        // downstream references resolve to a declared variable rather than a dangling name.
+        // Signature drift gets its own default, so downstream references resolve to a declared variable.
         for (CMaterialExpression_FunctionInput* InNode : InputNodes)
         {
             if (InNode->Output == nullptr || !InNode->Output->ResolvedVar.empty())

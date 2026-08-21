@@ -43,10 +43,7 @@ namespace Lumina
         // Checked before anything derived from the count is trusted, including the skip below.
         if (ElementCount > TNumericLimits<uint32>::Max())
         {
-            // The count is the only record of how much payload follows, so a garbage one leaves no way to
-            // step over it. Returning here used to leave the archive misaligned and every later property
-            // read garbage, turning one bad array into a cascade of them; failing the archive stops that
-            // at the first real symptom instead.
+            // Failing the archive stops the cascade at the first real symptom instead of misaligning the rest.
             LOG_ERROR("Array property '{}' tried to serialize {} elements; failing the archive.", Name, ElementCount);
             Ar.SetHasError(true);
             return;
@@ -57,9 +54,7 @@ namespace Lumina
         {
             LOG_ERROR("Inner element size changed for array '{}' (inner '{}'), skipping it: Current=({}) Serialized=({})", Name, Inner->Name, CurrentInnerElementSize, SerializedInnerElementSize);
 
-            // The count is trustworthy here, so the payload can be stepped over exactly and the rest of the
-            // object still loads. Chunked through Serialize rather than Seek because Seek is a no-op on the
-            // base archive, and not every reader overrides it.
+            // Chunked through Serialize rather than Seek, since Seek is a no-op on the base archive.
             Resize(Value, 0);
 
             SIZE_T Remaining = ElementCount * SerializedInnerElementSize;

@@ -47,8 +47,7 @@ namespace Lumina
         Import::Textures::FTextureCookRequest CookRequest;
         CookRequest.SourcePath = Request.SourcePath;
         CookRequest.ColorSpace = ColorSpace;
-        // CPU mips only; see the mesh importer. The asset is saved and released here, and gets its GPU
-        // image from CTexture::PostLoad the first time something loads it.
+        // The asset gets its GPU image from CTexture::PostLoad the first time something loads it.
         CookRequest.bCreateGPUResource = false;
 
         CTexture* Texture = CFactory::CreateNewOf<CTexture>(PackagePath);
@@ -59,7 +58,7 @@ namespace Lumina
         }
 
         Texture->SetFlag(OF_NeedsPostLoad);
-        // Set before the cook: the mip policy is applied while the CPU chain is built, not after.
+        // Set before the cook, since the mip policy applies while the CPU chain is built.
         Texture->Group = Group;
 
         if (!CTextureFactory::CookIntoTexture(Texture, CookRequest))
@@ -89,15 +88,13 @@ namespace Lumina
 
     bool CTextureImporter::CanReimport(const CStruct* AssetClass) const
     {
-        // Mesh-embedded textures qualify too: reimport supplies the file, so a texture that arrived with no
-        // SourcePath of its own is exactly the case this exists to rescue.
+        // A mesh-embedded texture has no SourcePath of its own, which is exactly what this rescues.
         if (AssetClass == nullptr || !AssetClass->IsChildOf(CTexture::StaticClass()))
         {
             return false;
         }
 
-        // Render targets are CTextures, but the renderer writes their contents; anything reimported into
-        // one is gone on the next draw.
+        // The renderer writes a render target's contents, so anything reimported into one is gone next draw.
         return !AssetClass->IsChildOf(CTextureRenderTarget::StaticClass());
     }
 
@@ -115,8 +112,7 @@ namespace Lumina
             return false;
         }
 
-        // Recook reads SourcePath, so point it at the new file first. Restored on failure: a half-applied
-        // reimport that claims a source it was never cooked from is worse than no change.
+        // Restored on failure, since claiming a source it was never cooked from is worse than no change.
         const FString PreviousSource = Texture->SourcePath;
         Texture->SourcePath = FString(Request.SourcePath.c_str());
 

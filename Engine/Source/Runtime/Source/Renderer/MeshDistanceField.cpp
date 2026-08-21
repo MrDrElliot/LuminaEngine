@@ -29,7 +29,7 @@ namespace Lumina::DistanceField
         {
             FVector3 Min;
             FVector3 Max;
-            // Interior: index of the first child (second is First + 1). Leaf: index of the first triangle.
+            // An interior node points at its first child, and a leaf at its first triangle.
             uint32   First = 0;
             // 0 marks an interior node.
             uint32   Count = 0;
@@ -103,7 +103,7 @@ namespace Lumina::DistanceField
             BVH.Nodes.push_back(FBVHNode{});
             BVH.Nodes.push_back(FBVHNode{});
 
-            // Re-fetched by index: the two push_backs above can reallocate, which invalidates Node.
+            // Re-fetched by index, since the two pushes above can reallocate and invalidate the node.
             BVH.Nodes[NodeIndex].First = LeftIndex;
             BVH.Nodes[NodeIndex].Count = 0;
 

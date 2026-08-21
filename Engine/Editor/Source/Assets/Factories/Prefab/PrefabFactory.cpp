@@ -18,8 +18,7 @@ namespace Lumina
     {
         CPrefab* Prefab = NewObject<CPrefab>(Package, Name);
 
-        // Seed a single root so a brand-new prefab is instantiable immediately (Instantiate
-        // refuses an empty registry). Matches the prefab editor's canonical single-root shape.
+        // Seeded with one root so a new prefab is instantiable, since Instantiate refuses an empty registry.
         entt::entity Root = Prefab->Registry.create();
         Prefab->Registry.emplace<SNameComponent>(Root).Name = FName("Root");
         Prefab->Registry.emplace<STransformComponent>(Root);

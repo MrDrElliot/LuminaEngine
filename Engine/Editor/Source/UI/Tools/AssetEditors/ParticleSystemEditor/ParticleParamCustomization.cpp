@@ -61,19 +61,14 @@ namespace Lumina
             return "?";
         }
 
-        // A parameter can drive an input when it is the same width, or when it is a single scalar -- which
-        // broadcasts, so one float knob can drive all three axes of a vector input. Vec4 and Color are
-        // interchangeable here because they are the same four floats; the distinction is only which editor
-        // widget the asset shows.
+        // A single scalar broadcasts, and Vec4 and Color differ only in which editor widget is shown.
         bool CanParameterDrive(EParticleParameterType ParamType, EParticleParameterType InputType)
         {
             const uint32 ParamWidth = ParticleParamComponents(ParamType);
             return ParamWidth == 1 || ParamWidth == ParticleParamComponents(InputType);
         }
 
-        // The Color tag on the module's property is what distinguishes a color from any other float4, the
-        // same way it does for a plain FVector4 input. Honored here so a module declares a color exactly
-        // as it always has -- PROPERTY(Editable, Color) -- rather than through a second, parallel mechanism.
+        // The Color tag distinguishes a color from any other float4, as it does for a plain FVector4.
         EParticleParameterType ResolveInputType(const SParticleParam& Value, const FProperty* Property)
         {
             if (Value.Type == EParticleParameterType::Vec4 && Property != nullptr && Property->HasMetadata("Color"))
@@ -83,9 +78,7 @@ namespace Lumina
             return Value.Type;
         }
 
-        // Seeds a new asset parameter from the input being edited, so "drive this from code" is one click
-        // rather than: leave the module, go to the system, add a row, name it, retype the value, come back,
-        // and bind it. Named after the property, uniquified against what the system already declares.
+        // Named after the property and uniquified, so binding to code is one click rather than six steps.
         FName MakeUniqueParameterName(const CParticleSystem& System, const FName& Base)
         {
             const FString BaseStr = Base.IsNone() ? FString("Param") : FString(Base.c_str());
@@ -129,8 +122,7 @@ namespace Lumina
 
         if (Value.IsBound())
         {
-            // The value editor is replaced rather than disabled: a grayed-out number still reads as the
-            // value in effect, and it is not.
+            // The editor is replaced rather than disabled, since a grayed number still reads as the live value.
             ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_FrameBg));
             if (ImGui::Button((FString(LE_ICON_LINK " ") + Value.ParameterName.c_str()).c_str(), ImVec2(ValueWidth, 0)))
             {
@@ -215,8 +207,7 @@ namespace Lumina
 
             if (ImGui::Selectable("Use Constant", !Value.IsBound()))
             {
-                // Clearing only drops the name; the constant underneath was never overwritten, so the
-                // input returns to exactly the value it showed before it was bound.
+                // Clearing only drops the name, so the input returns to the constant it showed before binding.
                 Value.ParameterName = FName();
                 Result = EPropertyChangeOp::Finished;
                 ImGui::CloseCurrentPopup();
@@ -241,8 +232,7 @@ namespace Lumina
                         continue;
                     }
 
-                    // Incompatible parameters are listed disabled rather than hidden, so a parameter that
-                    // cannot drive this input reads as "wrong type" instead of "I must have deleted it".
+                    // Listed disabled rather than hidden, so an incompatible parameter reads as wrong type, not deleted.
                     if (!CanParameterDrive(Param.Type, InputType))
                     {
                         ImGui::TextDisabled("%s (%s)", Param.Name.c_str(), ParamTypeLabel(Param.Type));

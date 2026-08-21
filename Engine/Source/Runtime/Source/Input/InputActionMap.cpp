@@ -217,7 +217,7 @@ namespace Lumina
         bool ModifiersSatisfied(const SKey& Key, const FInputContext& Context)
         {
             const int Mods = Context.GetCachedModifierState();
-            // Rml::Input::KeyModifier: KM_CTRL=1, KM_SHIFT=2, KM_ALT=4, KM_META=8.
+            // The RmlUi modifier bits, control 1, shift 2, alt 4 and meta 8.
             const bool CtrlDown  = (Mods & 1) != 0;
             const bool ShiftDown = (Mods & 2) != 0;
             const bool AltDown   = (Mods & 4) != 0;
@@ -254,8 +254,7 @@ namespace Lumina
         Lookup.clear();
         for (int32 i = 0; i < int32(Actions.size()); ++i)
         {
-            // Actions authored before EInputActionType existed only said "this is an axis". Fold that into
-            // the type here rather than at every read, so nothing downstream has to know about bAxis.
+            // Folded here rather than at every read, so nothing downstream has to know about the old flag.
             SInputAction& Action = Actions[i];
             if (Action.bAxis && Action.Type == EInputActionType::Digital)
             {
@@ -264,8 +263,7 @@ namespace Lumina
             Lookup[Action.Name] = i;
         }
 
-        // Invalidates every cached action index and every context's state array (they re-size on their
-        // next update, which also clears state carried over from a removed action).
+        // Contexts re-size their state arrays on the next update, clearing state from a removed action.
         ++Serial;
         LOG_INFO("[InputActions] Loaded {} actions, {} mapping contexts.", Actions.size(), MappingContexts.size());
     }
@@ -296,8 +294,7 @@ namespace Lumina
 
     bool FInputActionMap::PassesGate(const SInputAction& Action, const FInputContext& Context) const
     {
-        // Top of the stack down: the first layer listing the action allows it, and a blocking layer that
-        // does not list it swallows it before any layer underneath is consulted.
+        // A blocking layer that does not list the action swallows it before any layer underneath.
         const TVector<FName>& Stack = Context.GetInputLayers();
         for (size_t i = Stack.size(); i > 0; --i)
         {
@@ -321,8 +318,7 @@ namespace Lumina
             }
         }
 
-        // No layer decided. bRunsInUI predates mapping layers and stays the escape hatch for a project
-        // that has not authored any: UI mode behaves as a blocking layer over the actions that opt in.
+        // The escape hatch for a project with no authored layers, where UI mode blocks what does not opt in.
         return Action.bRunsInUI || Context.GetInputMode() != EInputMode::UI;
     }
 
@@ -334,8 +330,7 @@ namespace Lumina
 
         for (const SInputActionBinding& Binding : Action.Bindings)
         {
-            // Only Axis2D splits channels; everything else collapses onto X so a 2D action demoted to
-            // Axis1D still reads its X bindings instead of silently going quiet.
+            // Everything else collapses onto X, so a demoted 2D action still reads its X bindings.
             const int32 Channel = (Action.Type == EInputActionType::Axis2D && Binding.Channel == EInputAxisChannel::Y) ? 1 : 0;
 
             switch (Binding.Source)
@@ -366,8 +361,7 @@ namespace Lumina
         OutX = Raw[0] * Action.Sensitivity * Sign;
         OutY = Raw[1] * Action.Sensitivity * Sign;
 
-        // Dead zone: radial for Axis2D so a diagonal isn't cut twice, per-channel otherwise. The remainder
-        // is rescaled, so full deflection still reaches the value it had without a dead zone.
+        // Radial for a 2D axis so a diagonal is not cut twice, with the remainder rescaled to full deflection.
         const float Dead = Math::Clamp(Action.DeadZone, 0.0f, 0.99f);
         if (Dead <= 0.0f)
         {
@@ -406,8 +400,7 @@ namespace Lumina
     {
         TVector<FInputActionState>& States = Context.GetMutableActionStates();
 
-        // A rebuild reshuffles indices, so the whole array is discarded rather than migrated: carrying a
-        // stale HeldTime onto a different action would fire a phantom release on the next frame.
+        // Carrying a stale HeldTime onto a different action would fire a phantom release next frame.
         if (Context.GetActionsSerial() != Serial || States.size() != Actions.size())
         {
             States.assign(Actions.size(), FInputActionState());
@@ -428,8 +421,7 @@ namespace Lumina
                 EvaluateRaw(Action, Context, X, Y, bAnyKeyDown);
             }
 
-            // A digital action is down while a key binding is held; a continuous one is down while its
-            // shaped value is non-zero (the dead zone has already decided what counts as movement).
+            // A continuous action is down while its shaped value is non-zero, past the dead zone.
             const bool bDown = (Action.Type == EInputActionType::Digital)
                 ? bAnyKeyDown
                 : (bAnyKeyDown || X != 0.0f || Y != 0.0f);
@@ -461,8 +453,7 @@ namespace Lumina
             return Empty;
         }
 
-        // The context has not been updated against this action table yet (a viewport queried before its
-        // first frame, or a context outside the registry). Reading Empty is the safe default.
+        // The context has not been updated against this action table yet, so Empty is the safe default.
         const TVector<FInputActionState>& States = Context.GetActionStates();
         if (Context.GetActionsSerial() != Serial || Index >= int32(States.size()))
         {
@@ -475,7 +466,7 @@ namespace Lumina
     {
         static const FInputActionState Empty;
 
-        // Name too: a details-panel edit does not bump the serial, so a serial-only check answers stale.
+        // A details-panel edit does not bump the serial, so a serial-only check answers stale.
         if (Handle.CachedSerial != Serial || Handle.CachedName != Handle.Name)
         {
             Handle.CachedIndex  = FindActionIndex(Handle.Name);

@@ -19,9 +19,7 @@
 #include "Platform/Process/PlatformProcess.h"
 
 
-// Async pipeline: a call site formats into a per-thread buffer, copies the bytes into a lock-free ring
-// slot and returns. One backend thread turns slots into lines, writes a whole drain per sink in one
-// call, and flushes to the OS once per batch.
+// A call site formats, copies into a lock-free ring slot and returns, and one backend thread drains.
 
 namespace Lumina::Logging
 {
@@ -50,8 +48,7 @@ namespace Lumina::Logging
 
 		static_assert(sizeof(FLogSlot) == 256, "FLogSlot should occupy exactly four cache lines");
 
-		// Vyukov bounded MPMC ring: producers claim a slot with one CAS on EnqueuePos and publish with a
-		// release store to the slot's sequence; the single consumer walks positions in order.
+		// A Vyukov bounded MPMC ring, so producers claim with one CAS and the single consumer walks in order.
 		FLogSlot GSlots[GQueueCapacity];
 
 		alignas(CACHE_LINE_SIZE) std::atomic<uint64> GEnqueuePos{ 0 };
@@ -66,8 +63,7 @@ namespace Lumina::Logging
 		FMutex              GWakeMutex;
 		FConditionVariable GWakeCv;
 
-		// Flush handshake: a caller publishes the position it needs drained; the backend bumps the
-		// generation once it is past that and every sink has reached the OS.
+		// A caller publishes the position it needs drained, and the backend bumps the generation past it.
 		std::atomic<uint64>     GFlushTarget{ 0 };
 		std::atomic<uint64>     GFlushGeneration{ 0 };
 		FMutex              GFlushMutex;
@@ -432,8 +428,7 @@ namespace Lumina::Logging
 		AddSink(MakeUnique<FStdoutSink>());
 		AddSink(MakeUnique<FMemorySink>(GetConsoleLogQueue()));
 
-		// Keeps prior run evidence; WindowedApp builds have no console. Starts next to the exe
-		// because no project is known this early; SetLogFileDirectory moves it once one loads.
+		// Starts beside the exe because no project is known this early, and moves once one loads.
 		{
 			FString LogPath(TCHAR_TO_UTF8(Platform::BaseDir()));
 			const size_t ExeNameStart = LogPath.find_last_of("/\\");
@@ -455,7 +450,7 @@ namespace Lumina::Logging
 			}
 		}
 
-		// Shipping must keep info: LOG_DISPLAY emits at info, so a higher floor drops boot breadcrumbs.
+		// Shipping must keep info, since LOG_DISPLAY emits there and a higher floor drops boot breadcrumbs.
 		#if defined(LUMINA_VERBOSE_LOGGING)
 		SetLevel(ELogLevel::Trace);
 		#else

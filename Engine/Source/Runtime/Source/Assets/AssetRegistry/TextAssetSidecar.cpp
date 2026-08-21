@@ -14,8 +14,7 @@ namespace Lumina::TextAssetSidecar
         constexpr uint32 kSidecarTag     = 0x4C4D5441; // 'LMTA'
         constexpr uint16 kSidecarVersion = 1;
 
-        // Content roots, most-specific first (longest-prefix match wins). Engine content is nested under
-        // /Engine, so the hidden .lmeta lands inside the Content folder rather than the engine root.
+        // Most-specific first, so the hidden .lmeta lands inside Content rather than the engine root.
         TVector<FFixedString> GatherContentRoots()
         {
             TVector<FFixedString> Roots;

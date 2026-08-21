@@ -14,8 +14,7 @@ namespace Lumina
 {
     namespace
     {
-        // Every alias here is declared natively for the pixel stage and re-declared by the vertex preamble,
-        // so an unconnected input resolves in either stage.
+        // Every alias is declared natively and re-declared by the vertex preamble, so both stages resolve.
         FString DefaultExpressionFor(ECustomSlangInputDefault Default)
         {
             switch (Default)
@@ -48,8 +47,7 @@ namespace Lumina
             return true;
         }
 
-        // Names that would produce a redeclaration or a parse error where we emit them. Not the full
-        // Slang keyword set -- just the ones a material author plausibly types as a pin name.
+        // Not the full Slang keyword set, just the ones a material author plausibly types as a pin name.
         bool IsReservedWord(const FString& Name)
         {
             static const char* Reserved[] =
@@ -74,8 +72,7 @@ namespace Lumina
             return false;
         }
 
-        // Brace/paren balance over the body, skipping comments and literals. Load-bearing: an unbalanced
-        // closing brace ends our generated scope early and cascades errors far from the node that caused it.
+        // An unbalanced closing brace ends our generated scope early and cascades errors far from the node.
         struct FBalanceResult
         {
             bool  bBalanced = true;
@@ -168,8 +165,7 @@ namespace Lumina
             return FBalanceResult{};
         }
 
-        // Preprocessor directives escape our scoping (and #include can pull arbitrary files into the
-        // generated shader), so they are rejected outright.
+        // Directives escape our scoping, and an include can pull arbitrary files into the shader.
         bool FindPreprocessorDirective(const FString& Code, FString& OutLine)
         {
             const size_t Len = Code.size();
@@ -201,8 +197,7 @@ namespace Lumina
 
     void CMaterialExpression_CustomSlang::BuildNode()
     {
-        // Starter signature so a freshly placed node compiles and shows something. Guarded by a serialized
-        // flag so it runs once at creation and never resurrects pins the user deleted.
+        // Guarded by a serialized flag, so it seeds once at creation and never resurrects deleted pins.
         if (!bDefaultsSeeded)
         {
             bDefaultsSeeded = true;
@@ -244,8 +239,7 @@ namespace Lumina
 
     void CMaterialExpression_CustomSlang::RebuildPins()
     {
-        // Keep wires whose pin name survives the rebuild (same approach as the material-function call
-        // node); pin IDs are name-hashed so they stay stable across save/load.
+        // Pin IDs are name-hashed, so they stay stable across save and load.
         struct FConnSnapshot { FString Name; bool bInput; TVector<CEdNodeGraphPin*> Remotes; };
         TVector<FConnSnapshot> Snapshots;
 
@@ -306,8 +300,7 @@ namespace Lumina
             CustomOutputPins.push_back(Pin);
         }
 
-        // Restore surviving wires by (direction, name). Names are not guaranteed unique, so a pin takes one
-        // snapshot only -- otherwise two pins sharing a name pile both wire sets onto the first.
+        // Names are not unique, so a pin takes one snapshot or two would pile onto the first.
         THashSet<CEdNodeGraphPin*> Restored;
         for (const FConnSnapshot& Snap : Snapshots)
         {
@@ -350,8 +343,7 @@ namespace Lumina
     {
         ImGui::TextUnformatted(Title.c_str());
 
-        // Compact status line: enough to see at a glance whether this node is wired and healthy,
-        // without trying to host a code editor on the canvas.
+        // Enough to see whether the node is wired and healthy, without hosting a code editor on canvas.
         int32 Lines = Code.empty() ? 0 : 1;
         for (char C : Code)
         {
@@ -377,8 +369,7 @@ namespace Lumina
 
     bool CMaterialExpression_CustomSlang::Validate(TVector<FString>& OutProblems) const
     {
-        // Declared names: valid identifiers, not keywords, unique across BOTH directions (an input
-        // sharing a name with an output would make the copy-back ambiguous).
+        // Unique across BOTH directions, since an input sharing an output's name makes copy-back ambiguous.
         THashSet<FString> Seen;
         auto CheckNames = [&](const TVector<FCustomSlangPin>& Pins, const char* Direction)
         {
@@ -438,8 +429,7 @@ namespace Lumina
             Compiler.AddError(NodeError);
         };
 
-        // Canonical outputs first, always emitted and always initialized: downstream nodes read these,
-        // so even a rejected node leaves a compilable shader instead of dangling references.
+        // Always emitted and initialized, so even a rejected node leaves a compilable shader.
         TVector<FString> OutVars;
         OutVars.reserve(CustomOutputPins.size());
         for (size_t i = 0; i < CustomOutputPins.size(); ++i)
@@ -474,11 +464,7 @@ namespace Lumina
         ArgExprs.reserve(CustomInputPins.size());
         for (size_t i = 0; i < CustomInputPins.size(); ++i)
         {
-            // An unconnected pin falls back to its declared default expression rather than zero, so
-            // the common "just give me UV" case needs nothing wired up.
-            // The stage aliases are all float-typed, so none of them is a sensible fallback for a texture
-            // handle -- casting UV0 to a uint would silently name some unrelated texture. An unconnected
-            // handle input falls back to the same neutral index the TextureHandle node's error path uses.
+            // The stage aliases are float-typed, so a handle input falls back to the neutral index instead.
             const bool bHandle = i < Inputs.size()
                               && ToMaterialInputType(Inputs[i].Type) == EMaterialInputType::TextureHandle;
 
@@ -493,8 +479,7 @@ namespace Lumina
         Compiler.AddRaw(FString("// ---- custom slang: ") + Title.c_str() + " ----\n");
         Compiler.AddRaw("{\n");
 
-        // Inputs as const locals under the author's own names. The cast coerces whatever width was wired in
-        // to the declared width, so the body always sees exactly the type it declared.
+        // The cast coerces whatever width was wired in, so the body sees exactly the type it declared.
         for (size_t i = 0; i < CustomInputPins.size() && i < Inputs.size(); ++i)
         {
             const EMaterialInputType T = ToMaterialInputType(Inputs[i].Type);
@@ -509,8 +494,7 @@ namespace Lumina
             Compiler.AddRaw(FMaterialCompiler::GetHLSLTypeName(T) + " " + Out.Name.ToString() + " = " + ZeroLiteral(T) + ";\n");
         }
 
-        // The body gets its own nested scope so the author's locals can't collide with the
-        // input/output declarations above.
+        // A nested scope, so the author's locals cannot collide with the declarations above.
         Compiler.AddRaw("{\n");
         Compiler.AddRaw(Code);
         Compiler.AddRaw("\n}\n");

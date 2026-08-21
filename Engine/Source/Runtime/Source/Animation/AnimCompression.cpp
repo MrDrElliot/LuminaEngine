@@ -366,7 +366,7 @@ FQuat AnimCompression::SampleKeysQuat(const TVector<float>& Times, const TVector
         {
             Q1 = -Q1;
         }
-        // nlerp, not slerp: adjacent keys are dense enough that a normalized lerp is visually identical.
+        // nlerp, since adjacent keys are dense enough that a normalized lerp is visually identical.
         return Math::Normalize(Q0 * (1.0f - t) + Q1 * t);
     }
 

@@ -29,8 +29,7 @@ namespace Lumina
 
     FAssetTilePainterFn* FAssetTilePainterRegistry::Find(CClass* AssetClass)
     {
-        // Most-derived first, matching how the editor-tool registry resolves, so a subclass can override
-        // the painter its base registered.
+        // Most-derived first, matching the editor-tool registry, so a subclass can override its base.
         for (CClass* Current = AssetClass; Current != nullptr; Current = Cast<CClass>(Current->GetSuperStruct()))
         {
             auto It = Painters.find(Current);
@@ -47,23 +46,17 @@ namespace Lumina
         /** Max samples in a curve preview. Fixed so both backends can use a stack array. */
         constexpr int32 kMaxCurveSamples = 128;
 
-        /** Fraction of the tile left as breathing room, so the extremes of the curve are not welded to the
-         *  border and a flat curve does not sit exactly on the frame. */
+        // Breathing room, so the curve extremes are not welded to the border.
         constexpr float kInsetFraction = 0.12f;
 
-        /** A curve reduced to plot-space points, both axes normalized to [0,1] with Y already flipped so 0
-         *  is the TOP. Shared by the live tile painter and the CPU thumbnail rasterizer: the two draw into
-         *  completely different targets, and the only thing they must agree on is the shape.
-         */
+        // Both axes normalized to [0,1] with Y flipped so 0 is the TOP, shared by tile and thumbnail paths.
         struct FCurveSamples
         {
             float X[kMaxCurveSamples] = {};
             float Y[kMaxCurveSamples] = {};
             int32 Count = 0;
 
-            // Normalized Y of value 0, valid only when zero falls INSIDE the plotted value range. Drawing a
-            // baseline clamped to an edge would show a line the curve never crosses, which reads as part of
-            // the shape rather than as an axis.
+            // Valid only when zero falls INSIDE the value range, since a clamped baseline reads as part of the shape.
             bool  bHasZeroLine = false;
             float ZeroY = 0.0f;
 
@@ -73,9 +66,7 @@ namespace Lumina
             int32 KeyCount = 0;
         };
 
-        /** Samples Curve into normalized plot space. Never fails: a degenerate curve (no keys, one key,
-         *  zero time span) yields a flat line down the middle, because a blank preview reads as "failed to
-         *  load", which is a different thing from "this curve is constant". */
+        // A degenerate curve yields a flat centered line, since a blank preview reads as a load failure.
         void SampleCurve(const SKeyedCurve& Curve, int32 DesiredSamples, FCurveSamples& Out)
         {
             const int32 SampleCount = Math::Clamp(DesiredSamples, 2, kMaxCurveSamples);
@@ -109,8 +100,7 @@ namespace Lumina
             float ValueMax = 0.0f;
             Curve.GetValueRange(ValueMin, ValueMax);
 
-            // A constant-valued curve has zero value span; widen it so the divide below is finite and the
-            // line lands centered instead of pinned to an edge.
+            // A constant curve has zero value span, so widen it to keep the divide finite and the line centered.
             float ValueSpan = ValueMax - ValueMin;
             if (ValueSpan <= Math::Epsilon<float>())
             {
@@ -210,12 +200,7 @@ namespace Lumina
             return FRGBA{ Chan(C.x), Chan(C.y), Chan(C.z), Chan(C.w) };
         }
 
-        /** Rasterizes a curve preview into an RGBA8 thumbnail.
-         *
-         *  A curve is a FUNCTION -- exactly one Y per X -- so this needs no general line algorithm. For each
-         *  output column it fills the vertical span between the previous sample and this one, which both
-         *  connects the samples and gives steep segments their thickness for free.
-         */
+        // A curve is a FUNCTION, so filling each column between adjacent samples needs no line algorithm.
         bool PaintCurveThumbnail(CObject* Asset, uint32 Size, FPackageThumbnail& Out)
         {
             const CCurveAsset* CurveAsset = Cast<CCurveAsset>(Asset);
@@ -236,9 +221,7 @@ namespace Lumina
 
             uint8* Pixels = Out.ImageData.data();
 
-            // StoreDownsampledRGBA stores vertically flipped and the upload path flips back, so every write
-            // here has to go through the same flip or a painted thumbnail would display upside down next to
-            // a captured one.
+            // StoreDownsampledRGBA stores flipped and the upload flips back, so every write goes through Plot.
             auto Plot = [&](int32 X, int32 Y, const FRGBA& C)
             {
                 if (X < 0 || Y < 0 || X >= (int32)Size || Y >= (int32)Size)
@@ -280,8 +263,7 @@ namespace Lumina
 
             auto SampleYAt = [&](float PixelX)
             {
-                // Position along the plot in [0,1], then linear interpolation between the two samples that
-                // straddle it -- the sample count is independent of the pixel count.
+                // Interpolates between the two samples straddling the pixel, so sample count is independent of it.
                 const float Alpha = Math::Clamp((PixelX - PlotL) / Math::Max(PlotR - PlotL, 1.0f), 0.0f, 1.0f);
                 const float Scaled = Alpha * (float)(Samples.Count - 1);
                 const int32 Index0 = Math::Clamp((int32)Scaled, 0, Samples.Count - 1);

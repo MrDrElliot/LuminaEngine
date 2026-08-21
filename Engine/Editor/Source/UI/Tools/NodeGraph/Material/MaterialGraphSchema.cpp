@@ -9,8 +9,7 @@ namespace Lumina
 {
     namespace
     {
-        // The pin's declared material type, or Float for anything that isn't a material pin (which is
-        // the permissive answer: unknown pins keep the old behavior of connecting to anything).
+        // Float for a non-material pin, the permissive answer that keeps unknown pins connecting freely.
         EMaterialInputType PinInputType(CEdNodeGraphPin* Pin)
         {
             if (CMaterialInput* In = Cast<CMaterialInput>(Pin))

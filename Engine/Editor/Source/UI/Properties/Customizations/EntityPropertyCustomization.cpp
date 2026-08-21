@@ -117,7 +117,7 @@ namespace Lumina
             bChanged = true;
         }
 
-        // Eyedropper: arm a viewport pick; click again (or Esc in the viewport) to cancel.
+        // Arms a viewport pick, and clicking again or pressing Esc in the viewport cancels it.
         ImGui::SameLine(0.0f, Spacing);
         const bool bPicking = IsEntityPickActiveFor(Token);
         if (bPicking)

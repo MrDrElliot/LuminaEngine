@@ -104,9 +104,7 @@ namespace Lumina
                 
                 TVector<uint8> Bytes;
 
-                // Every property, containers included, is handed its own value pointer. An array or map
-                // property given the OBJECT base instead reads its size out of the vtable pointer on write,
-                // and on read resizes over the destination's first bytes -- destroying its vptr and class.
+                // An array given the OBJECT base reads its size from the vtable pointer and destroys the vptr.
                 {
                     void* ValuePtr = Current->GetValuePtr<void>(this);
                     FMemoryWriter Writer(Bytes);
@@ -118,8 +116,7 @@ namespace Lumina
                     void* ValuePtr = Current->GetValuePtr<void>(Other);
                     FMemoryReader Reader(Bytes);
 
-                    // Remapping happens on the READ: the buffer holds the source's GUIDs either way,
-                    // and the swap is applied once each GUID has resolved back to an object.
+                    // The buffer holds the source's GUIDs either way, so the swap applies once each has resolved.
                     if (Remap != nullptr)
                     {
                         FObjectRemapArchiver Proxy(Reader, *Remap);

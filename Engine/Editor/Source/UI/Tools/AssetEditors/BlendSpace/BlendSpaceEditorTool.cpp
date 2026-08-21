@@ -60,6 +60,12 @@ namespace Lumina
             NotifyAssetDataChanged();
         });
 
+        // The Samples array and both axes live on this table, and all of them feed the topology.
+        GetPropertyTable()->SetPostEditCallback([this](const FPropertyChangedEvent&)
+        {
+            RefreshAfterStructuralEdit();
+        });
+
         CreateToolWindow(BlendSpaceGridWindowName, [this](bool) { DrawGridWindow(); });
         CreateToolWindow(BlendSpaceDetailsWindowName, [this](bool) { DrawDetailsWindow(); });
 
@@ -338,9 +344,7 @@ namespace Lumina
 
         SelectedSample = (int32)BlendSpace->Samples.size() - 1;
 
-        BlendSpace->RebuildTopology();
-        RebindSampleTable();
-        NotifyAssetDataChanged();
+        RefreshAfterStructuralEdit();
         EndAssetTransaction();
     }
 
@@ -357,9 +361,7 @@ namespace Lumina
         BlendSpace->Samples.erase(BlendSpace->Samples.begin() + SampleIndex);
         SelectedSample = INDEX_NONE;
 
-        BlendSpace->RebuildTopology();
-        RebindSampleTable();
-        NotifyAssetDataChanged();
+        RefreshAfterStructuralEdit();
         EndAssetTransaction();
     }
 
@@ -370,20 +372,37 @@ namespace Lumina
         SyncSampleTable();
     }
 
-    void FBlendSpaceEditorTool::SyncSampleTable()
+    // Every edit routed through the Details table can resize Samples or move it under the topology.
+    void FBlendSpaceEditorTool::RefreshAfterStructuralEdit()
     {
         CBlendSpace* BlendSpace = GetAsset<CBlendSpace>();
 
+        BlendSpace->RebuildTopology();
+        SyncSampleTable();
+        NotifyAssetDataChanged();
+    }
+
+    void FBlendSpaceEditorTool::SyncSampleTable()
+    {
+        CBlendSpace* BlendSpace = GetAsset<CBlendSpace>();
+        const int32 NumSamples = (int32)BlendSpace->Samples.size();
+
+        if (SelectedSample >= NumSamples)
+        {
+            SelectedSample = INDEX_NONE;
+        }
+
         void* Target = nullptr;
-        if (SelectedSample >= 0 && SelectedSample < (int32)BlendSpace->Samples.size())
+        if (SelectedSample >= 0)
         {
             Target = &BlendSpace->Samples[SelectedSample];
         }
 
-        // Comparing the address catches a vector reallocation as well as a selection change.
-        if (Target != SampleTarget)
+        // An in-place erase keeps the address while changing which sample lives there.
+        if (Target != SampleTarget || NumSamples != SampleTableSourceCount)
         {
             SampleTarget = Target;
+            SampleTableSourceCount = NumSamples;
             if (Target != nullptr)
             {
                 SampleTable->SetObject(Target, SBlendSpaceSample::StaticStruct());
@@ -442,8 +461,7 @@ namespace Lumina
         ImGui::TextDisabled("|");
         ImGui::SameLine();
 
-        // Same numbers the on-canvas readout shows, but editable, so an exact position can be dialled in
-        // rather than nudged toward.
+        // Editable, so an exact position can be dialled in rather than nudged toward.
         {
             const FString AxisXName = BlendSpace->AxisX.Name.ToString();
 
@@ -511,8 +529,7 @@ namespace Lumina
         CanvasMin = ImVec2(ImGui::GetCursorScreenPos().x + Margin, ImGui::GetCursorScreenPos().y + 10.0f);
         CanvasSize = ImVec2(Math::Max(Available.x - Margin - 16.0f, 32.0f), Math::Max(Available.y - Margin, 32.0f));
 
-        // Both axes need a positive size: InvisibleButton asserts on a zero extent, and the content region
-        // is legitimately zero on the frame the window is first docked or while it is collapsed.
+        // InvisibleButton asserts on a zero extent, and the region is legitimately zero while collapsed.
         ImGui::InvisibleButton("##BlendCanvas",
             ImVec2(Math::Max(Available.x, 32.0f), Math::Max(Available.y - 4.0f, 32.0f)));
 
@@ -524,8 +541,7 @@ namespace Lumina
 
         const bool bTwoAxis = BlendSpace->AxisCount == EBlendSpaceAxes::Two;
 
-        // Gridlines mark the snap increments, so what samples land on is what you can see. Brightened
-        // while snapping is live to make the modifier's effect obvious before you commit to a drag.
+        // Brightened while snapping is live, so the modifier's effect is obvious before a drag commits.
         const bool bSnapping = IsSnapActive();
         const ImU32 MinorLineColor = bSnapping ? IM_COL32(255, 255, 255, 40) : GridLineColor;
 
@@ -567,7 +583,7 @@ namespace Lumina
             DrawList->AddText(ImVec2(CanvasMin.x - Margin + 4.0f, CanvasMax.y - 14.0f), IM_COL32(190, 190, 200, 200), Label);
         }
 
-        if (bShowTriangulation && bTwoAxis)
+        if (bShowTriangulation && bTwoAxis && BlendSpace->HasValidTopology())
         {
             for (const FBlendSpaceTriangle& Tri : BlendSpace->GetTriangles())
             {
@@ -626,15 +642,14 @@ namespace Lumina
         DrawList->AddCircleFilled(CursorScreen, 5.0f, CursorColor);
         DrawList->AddCircle(CursorScreen, 10.0f, CursorColor, 0, 2.0f);
 
-        // Crosshair out to the axes: reading the value off the gridlines alone is guesswork.
+        // A crosshair out to the axes, since reading the value off the gridlines alone is guesswork.
         DrawList->AddLine(ImVec2(CursorScreen.x, CanvasMin.y), ImVec2(CursorScreen.x, CanvasMax.y), IM_COL32(120, 255, 150, 45));
         if (bTwoAxis)
         {
             DrawList->AddLine(ImVec2(CanvasMin.x, CursorScreen.y), ImVec2(CanvasMax.x, CursorScreen.y), IM_COL32(120, 255, 150, 45));
         }
 
-        // ToString rather than c_str: both names are alive at once here, and a numbered FName's c_str
-        // comes from a short-lived rotating buffer.
+        // ToString rather than c_str, since a numbered FName's buffer is short-lived and rotating.
         const FString AxisXName = BlendSpace->AxisX.Name.ToString();
         const FString AxisYName = BlendSpace->AxisY.Name.ToString();
 
@@ -721,7 +736,7 @@ namespace Lumina
             }
             else
             {
-                // Empty space moves the preview cursor: the whole point of the grid.
+                // Empty space moves the preview cursor, which is the whole point of the grid.
                 PreviewPosition = CanvasToAxis(MousePos);
             }
         }

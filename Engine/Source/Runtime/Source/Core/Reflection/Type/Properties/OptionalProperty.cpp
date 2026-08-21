@@ -5,7 +5,7 @@ namespace Lumina
 {
     void FOptionalProperty::Serialize(FArchive& Ar, void* Value)
     {
-        // Wire: [bool engaged][payload?]
+        // The wire carries an engaged bool followed by the payload only when engaged.
         if (Ar.IsWriting())
         {
             bool bEngaged = HasValue(Value);

@@ -29,8 +29,7 @@ namespace Lumina::Reflection
         Writer.Macro("private:");
         Writer.Macro("");
         Writer.Macro("public:");
-        // MinimalAPI exports only GetPrivateStaticClass() so the type is reflection-referenceable
-        // cross-module without force-exporting every member.
+        // Exports only GetPrivateStaticClass() so the type is referenceable without force-exporting members.
         const char* ClassApi = HasMetadata("MinimalAPI") ? Api.c_str() : "NO_API";
         Writer.Macrof("\tDECLARE_CLASS(%s, %s, %s, \"%s\", %s)",
             Namespace.c_str(), DisplayName.c_str(), Parent.c_str(), Package.c_str(), ClassApi);
@@ -122,8 +121,7 @@ namespace Lumina::Reflection
         Writer.Line("};");
         Writer.Line();
 
-        // Construct_CClass_*: classes populate OuterSingleton here (IMPLEMENT_CLASS
-        // owns InnerSingleton).
+        // Classes populate OuterSingleton here, while IMPLEMENT_CLASS owns InnerSingleton.
         Writer.Linef("Lumina::CClass* %s()", ConstructFn.c_str());
         Writer.BeginBlock();
         Writer.Linef("if (!%s.OuterSingleton)", RegInfo.c_str());

@@ -12,17 +12,15 @@ namespace Lumina::MeshletHeaderSlab
 {
     namespace
     {
-        // 80 KiB. Meshes with GPU buffers are counted in hundreds even in a large world, so this is
-        // usually the only allocation the slab ever makes.
+        // Meshes with GPU buffers number in the hundreds, so this is usually the only allocation made.
         constexpr uint32 kInitialCapacity = 1024;
 
-        // A wrap guard, not a policy: doubling past this overflows uint32 and spins the reserve loop forever.
+        // A wrap guard, since doubling past this overflows and spins the reserve loop forever.
         constexpr uint32 kMaxCapacity = 1u << 30;
 
         FMutex GMutex;
 
-        // Mirrors the GPU array so a grow can repopulate the new allocation without a GPU-side copy.
-        // 80 bytes per mesh; the mirror is not worth avoiding.
+        // 80 bytes per mesh, so a mirror that lets a grow repopulate without a GPU copy is worth keeping.
         TVector<FMeshletHeaderGPU> GMirror;
 
         RHI::GPUPtr GSlab     = 0;
@@ -36,25 +34,17 @@ namespace Lumina::MeshletHeaderSlab
         // Slots kept in hand when a grow starts, so the swap can land before the published capacity runs out.
         constexpr uint32 kGrowSlack = 64;
 
-        // FIFO: Release pushes to the back, Acquire takes from the front. See Release in the header for
-        // why the ordering is load-bearing rather than incidental.
+        // FIFO, with Release pushing to the back and Acquire taking from the front. See the header.
         TVector<uint32> GFreeList;
         SIZE_T          GFreeHead = 0;
 
-        // Bumped by every Write. Reset and Release are deferred to a fence, and a rebuild republishes into
-        // the same slot in between -- CreateForResource resets, then writes, and the reset's callback
-        // fires last. Without this it would blank the header that had just replaced the one it was asked
-        // to clear. The version says "this is no longer the header I was told to retire".
+        // The version says this is no longer the header the deferred reset was told to retire.
         TVector<uint32> GSlotVersion;
 
         // Highest slot ever handed out. Everything below it is either live or in the free list.
         uint32 GNextSlot = kNullSlot + 1u;
 
-        // Backs every pointer in the null header. Not null, because not every reader rejects on a zero
-        // count -- VisBufferSurface CLAMPS its meshlet index instead, so it reaches element 0 of arrays
-        // whose count is 0. Pointing those at readable zeroed memory makes "every pointer in every header
-        // is dereferenceable" an invariant rather than something each call site has to check, which is
-        // the whole point of the slab. One page covers element 0 of any of the five arrays.
+        // Not null, since VisBufferSurface clamps its index and reaches element 0 of a zero-count array.
         constexpr uint64 kNullGeometryBytes = 4096;
         RHI::GPUPtr GNullGeometry = 0;
 
@@ -86,16 +76,14 @@ namespace Lumina::MeshletHeaderSlab
         {
             FMeshletHeaderGPU Header = {};
 
-            // MeshletCount stays 0, which is what every count-bounded reader rejects on. These addresses
-            // exist only for the readers that clamp instead.
+            // MeshletCount stays 0, and these addresses exist only for readers that clamp instead.
             Header.MeshletsAddress  = GNullGeometry;
             Header.SpheresAddress   = GNullGeometry;
             Header.VerticesAddress  = GNullGeometry;
             Header.TrianglesAddress = GNullGeometry;
             Header.ConesAddress     = GNullGeometry;
 
-            // Zero is a VALID heap slot, so the sentinel has to be written explicitly. Every SDF path
-            // tests this field before it touches the volume.
+            // Zero is a VALID heap slot, so the sentinel has to be written explicitly.
             Header.DistanceFieldIndex = DistanceField::kInvalidIndex;
             return Header;
         }
@@ -108,7 +96,7 @@ namespace Lumina::MeshletHeaderSlab
                 return;
             }
 
-            // Plain fence lifetime is all the OLD SLAB needs: scene roots are rebuilt every frame and nothing caches it.
+            // Scene roots are rebuilt every frame and nothing caches the old slab.
             RHI::Core::Retire(GSlab);
 
             GSlab            = GPendingSlab;
@@ -187,7 +175,7 @@ namespace Lumina::MeshletHeaderSlab
                 return;
             }
 
-            // Before the slab: ReserveLocked fills the new allocation with null headers, and those name it.
+            // ReserveLocked fills the new allocation with null headers, and those name it.
             EnsureNullGeometryLocked();
             if (GNullGeometry == 0)
             {
@@ -201,9 +189,7 @@ namespace Lumina::MeshletHeaderSlab
                 return;
             }
 
-            // ReserveLocked filled every slot with the null header, kNullSlot included. Handing out slots
-            // from 1 is the whole of what reserves it: it is never acquired, so it is never released, so
-            // nothing can ever write over it.
+            // Handing out slots from 1 is the whole of what reserves the null slot, so nothing overwrites it.
             GNextSlot = kNullSlot + 1u;
         }
     }
@@ -240,7 +226,7 @@ namespace Lumina::MeshletHeaderSlab
 
         if (Slot >= GCapacity)
         {
-            // Guarded: with nothing staged the wait is a GPU stall that cannot change the answer.
+            // With nothing staged the wait is a GPU stall that cannot change the answer.
             if (GPendingSlab != 0)
             {
                 RHI::FlushUploadsAndWait();
@@ -304,11 +290,7 @@ namespace Lumina::MeshletHeaderSlab
             Version = VersionOfLocked(Slot);
         }
 
-        // On the FENCE, not now. The caller is retiring the geometry this header names, and that geometry
-        // stays alive until the fence passes -- so blanking the header any earlier would strip frames
-        // already recorded of geometry they can still legitimately draw. Waiting any longer would leave
-        // frames recorded after the free still naming it. The two have to happen at the same instant,
-        // which is the one thing a frame count cannot promise and the fence gives for free.
+        // The geometry stays alive until the fence, so the two have to happen at the same instant.
         RHI::Core::RetireCallback([Slot, Version]
         {
             FScopeLock Lock(GMutex);
@@ -329,8 +311,7 @@ namespace Lumina::MeshletHeaderSlab
             Version = VersionOfLocked(Slot);
         }
 
-        // Same boundary as Reset, and the free-list push rides with it: a slot must not be reacquired
-        // while a recorded frame can still name it, or that frame would draw the new owner's geometry.
+        // A slot must not be reacquired while a recorded frame can still name it.
         RHI::Core::RetireCallback([Slot, Version]
         {
             FScopeLock Lock(GMutex);
@@ -350,7 +331,7 @@ namespace Lumina::MeshletHeaderSlab
             return;
         }
 
-        // The invariant every consumer relies on: a non-zero count promises the arrays it bounds exist.
+        // The invariant every consumer relies on, a non-zero count promises its arrays exist.
         if (Header.MeshletCount != 0
             && (Header.MeshletsAddress == 0 || Header.SpheresAddress == 0 || Header.VerticesAddress == 0
                 || Header.TrianglesAddress == 0 || Header.ConesAddress == 0))
@@ -376,8 +357,7 @@ namespace Lumina::MeshletHeaderSlab
             return;
         }
 
-        // Bumped BEFORE the upload so any Reset already queued against the old contents recognizes that
-        // what sits here now is not what it was asked to clear.
+        // Bumped BEFORE the upload, so a queued reset recognizes that the contents have changed.
         ++GSlotVersion[Slot];
 
         GMirror[Slot] = Header;
@@ -424,9 +404,7 @@ namespace Lumina::MeshletHeaderSlab
             GFreeHead = 0;
         }
 
-        // Outside GMutex. Retire takes the RHI's retire lock, and RHI::Core::Shutdown runs pending retire
-        // items -- our callbacks among them, which take GMutex -- while holding that same lock. Retiring
-        // from under GMutex would put the two in opposite orders.
+        // Retiring under GMutex would order the two locks opposite to how Shutdown takes them.
         RHI::Core::Retire(Slab);
         RHI::Core::Retire(Pending);
         RHI::Core::Retire(Null);

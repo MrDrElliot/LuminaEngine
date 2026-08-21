@@ -57,8 +57,7 @@ namespace Lumina
             NotifyValueEdited();
         }
 
-        // Duplicates make the match ambiguous, so say so on the node rather than silently binding
-        // usages to whichever one happens to come first in the node list.
+        // Duplicates make the match ambiguous, so flag it rather than binding to whichever comes first.
         if (CEdNodeGraph* Graph = GetOwningGraph())
         {
             int32 MatchCount = 0;
@@ -154,8 +153,7 @@ namespace Lumina
 
         ImGui::PopID();
 
-        // An unresolved usage compiles as if its input were simply unconnected, which is silent.
-        // Flag it on the node so a renamed or deleted declaration is obvious.
+        // An unresolved usage compiles as if unconnected, which is silent, so flag it on the node.
         if (FindDeclaration() == nullptr)
         {
             ImGui::TextColored(ImVec4(0.96f, 0.36f, 0.38f, 1.0f), "Unresolved");

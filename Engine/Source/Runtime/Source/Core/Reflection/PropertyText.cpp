@@ -15,8 +15,7 @@ namespace Lumina::Reflection
 {
     namespace
     {
-        // Parsed with the whole-string form so trailing junk is an error rather than being ignored:
-        // "12abc" is a typo in a CSV, not the number 12.
+        // Trailing junk is an error rather than ignored, since a stray suffix is a typo in a CSV.
         template <typename T>
         bool ParseSigned(FStringView Text, T& Out)
         {
@@ -124,8 +123,7 @@ namespace Lumina::Reflection
         case EPropertyTypeFlags::UInt32:  return Format("{}", *static_cast<uint32*>(Value)).c_str();
         case EPropertyTypeFlags::UInt64:  return Format("{}", *static_cast<uint64*>(Value)).c_str();
 
-        // %g, not to_string: to_string on a float emits six trailing zeroes for every whole number,
-        // which makes a table of integers-stored-as-floats unreadable.
+        // to_string on a float emits six trailing zeroes, making a table of whole numbers unreadable.
         case EPropertyTypeFlags::Float:
             return Format("{:g}", (double)*static_cast<float*>(Value));
         case EPropertyTypeFlags::Double:
@@ -148,8 +146,7 @@ namespace Lumina::Reflection
                 // Through the inner, which knows the underlying width and signedness.
                 const uint64 Raw = (uint64)Inner->GetSignedIntPropertyValue(Value);
 
-                // Enumerators are stored fully qualified ("EItemRarity::Common"). Emit the bare name:
-                // a spreadsheet column of qualified names is unreadable, and FromText accepts both.
+                // A spreadsheet column of qualified names is unreadable, and FromText accepts both forms.
                 const FString Qualified = Enum->GetNameAtValue(Raw).ToString();
                 const size_t Separator = Qualified.rfind("::");
                 return Separator == FString::npos ? Qualified : Qualified.substr(Separator + 2);
@@ -216,8 +213,7 @@ namespace Lumina::Reflection
                     return false;
                 }
 
-                // Accept the bare enumerator as written by hand, and the qualified form ToText's
-                // round trip would produce if someone re-exported an older file.
+                // Accepts the bare enumerator and the qualified form a re-export would produce.
                 const FString Typed(Text.data(), Text.size());
                 const FName Candidates[] =
                 {
@@ -229,8 +225,7 @@ namespace Lumina::Reflection
                 {
                     const uint64 Raw = Enum->GetEnumValueByName(Entry);
 
-                    // GetEnumValueByName cannot report "not found" separately from a legitimate 0,
-                    // so confirm the round trip. Otherwise every typo becomes the first enumerator.
+                    // GetEnumValueByName cannot separate not-found from a legitimate 0, so confirm the round trip.
                     if (Enum->GetNameAtValue(Raw) != Entry)
                     {
                         continue;
@@ -258,8 +253,7 @@ namespace Lumina::Reflection
                     return false;
                 }
 
-                // Type-check before assigning: a CSV can name any asset, and writing an unrelated one
-                // into a typed reference would be a hole straight past the reflection system.
+                // A CSV can name any asset, and writing an unrelated one in would bypass the reflection system.
                 CClass* Required = static_cast<FObjectProperty*>(Prop)->GetPropertyClass();
                 if (Required != nullptr && !Loaded->GetClass()->IsChildOf(Required))
                 {

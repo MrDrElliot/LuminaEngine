@@ -39,8 +39,7 @@ namespace Lumina::EditorEntityUtils
 
     bool IsEditorOnlyComponent(entt::id_type TypeHash)
     {
-        // Mirror this list in CommitPreviewWorldToPrefab() / DuplicateEntity filters so
-        // every editor-only state is excluded from save and copy by one source of truth.
+        // Mirror this list in the prefab commit and duplicate filters, so editor-only state has one source.
         return TypeHash == entt::type_hash<FRelationshipComponent>::value()
             || TypeHash == entt::type_hash<FSelectedInEditorComponent>::value()
             || TypeHash == entt::type_hash<FHideInSceneOutliner>::value()
@@ -52,8 +51,7 @@ namespace Lumina::EditorEntityUtils
 
     bool DefaultDuplicateFilter(const entt::type_info& Type)
     {
-        // Same set, minus FRelationshipComponent and FNeedsTransformUpdate which CWorld::DuplicateEntity
-        // handles itself (it rebuilds parent/child links and re-emits the dirty flag).
+        // CWorld::DuplicateEntity rebuilds parent links and re-emits the dirty flag itself.
         const entt::id_type Hash = Type.hash();
         return !(Hash == entt::type_hash<FSelectedInEditorComponent>::value()
               || Hash == entt::type_hash<FCopiedTag>::value()
@@ -127,10 +125,7 @@ namespace Lumina::EditorEntityUtils
             return false;
         }
 
-        // Drained ONCE for the whole walk. GetWorldMatrix resolves lazily, and a lazy resolve propagates
-        // to the entity's entire subtree -- so calling it per descendant makes framing a hierarchy
-        // quadratic in its size. A 187k-entity prefab hung the main thread past the watchdog on this.
-        // Afterwards nothing is dirty, so every GetWorldMatrix below is a plain cached read.
+        // A lazy resolve propagates to the whole subtree, making a per-descendant call quadratic.
         ECS::Utils::ResolveAllDirtyTransforms(Registry);
 
         FVector3 Min(FLT_MAX);
@@ -214,8 +209,7 @@ namespace Lumina::EditorEntityUtils
         OutRotation = Transform->GetWorldRotation();
         const FVector3 WorldScale = Transform->GetWorldScale();
 
-        // Accumulate a box in the entity's rotated frame, in WORLD units. Each contributor scales on its own
-        // basis (mesh local AABB * WorldScale; text em-extent * WorldSize), so they're unioned here.
+        // Each contributor scales on its own basis, so they are unioned in the entity's rotated frame.
         auto VMin = [](const FVector3& A, const FVector3& B) { return FVector3(Math::Min(A.x, B.x), Math::Min(A.y, B.y), Math::Min(A.z, B.z)); };
         auto VMax = [](const FVector3& A, const FVector3& B) { return FVector3(Math::Max(A.x, B.x), Math::Max(A.y, B.y), Math::Max(A.z, B.z)); };
 
@@ -229,7 +223,7 @@ namespace Lumina::EditorEntityUtils
             bHasBounds = true;
         };
 
-        // Renderable mesh asset: local-space AABB scaled by the transform.
+        // A renderable mesh contributes its local-space AABB scaled by the transform.
         const SStaticMeshComponent*   Mesh    = Registry.try_get<SStaticMeshComponent>(Entity);
         const SSkeletalMeshComponent* Skinned = Registry.try_get<SSkeletalMeshComponent>(Entity);
         if (Mesh && Mesh->StaticMesh)
@@ -243,8 +237,7 @@ namespace Lumina::EditorEntityUtils
             Accumulate(Local.Min * WorldScale, Local.Max * WorldScale);
         }
 
-        // World text: include the shaped glyph extent (em units * WorldSize) in the entity's local X/Y plane,
-        // so a nameplate/label entity gets a box around the text rather than a unit cube.
+        // The shaped glyph extent gives a label entity a box around its text rather than a unit cube.
         if (const STextComponent* Text = Registry.try_get<STextComponent>(Entity); Text && !Text->Text.empty())
         {
             CFont* Font = Text->Font.Get();
@@ -288,7 +281,7 @@ namespace Lumina::EditorEntityUtils
         }
         else
         {
-            // No mesh/text bounds (lights, audio, empties, ...): a unit box scaled by the transform.
+            // With no mesh or text bounds, a unit box scaled by the transform stands in.
             OutCenter      = Transform->GetWorldLocation();
             OutHalfExtents = WorldScale;
         }
@@ -318,8 +311,7 @@ namespace Lumina::EditorEntityUtils
 
     namespace
     {
-        // Floor slab. The cube primitive is half-extent 1, so this scale gives a 20 x 1 x 20 box whose
-        // top face lands exactly on y = 0 -- which is what the sphere's resting height is measured from.
+        // The cube primitive is half-extent 1, so this scale lands the top face exactly on y = 0.
         constexpr float kFloorHalfSize  = 10.0f;
         constexpr float kFloorHalfDepth = 0.5f;
 
@@ -327,26 +319,18 @@ namespace Lumina::EditorEntityUtils
         constexpr float kSphereRadius = 1.0f;
         constexpr float kSphereStartY = 4.0f;
 
-        // Text sits behind the sphere so the drop happens in front of it rather than through it.
-        // Level with the top of the resting sphere (radius 1 centered at y = 1), so the separation is
-        // depth rather than height -- the Z offset is what keeps them from overlapping.
+        // Level with the resting sphere top, so the Z offset is what keeps them from overlapping.
         constexpr float kTextY = 2.0f;
         constexpr float kTextZ = -3.0f;
 
-        // Engine-content material for the preview sphere. Extension is optional -- GetAssetByPath
-        // strips it from both sides before comparing.
+        // The extension is optional, since GetAssetByPath strips it from both sides before comparing.
         constexpr const char* kPreviewMaterialPath = "/Engine/Resources/Content/M_EditorPreview";
 
-        // Colored accent lights ringing the sphere, 120 degrees apart on a 2m circle so no two sit
-        // on the same side and each gets its own arc of the surface. Placed at the sphere's resting
-        // center height rather than on the floor, so they wrap the sphere instead of uplighting it.
+        // Placed at the resting center height, so they wrap the sphere instead of uplighting it.
         constexpr float kAccentLightRadius = 2.0f;
         constexpr float kAccentLightY      = kSphereRadius;
 
-        // The text plane spans the entity's local X (right) and Y (up), so its facing normal runs
-        // along local Z. The convention is that -Z points at the viewer, and the preview camera sits
-        // at +Z, so a half turn about Y is what aims the text out of the screen. Without it the
-        // glyphs face away and read mirrored from the default pose.
+        // The convention is that -Z points at the viewer, so a half turn aims the text out of the screen.
         constexpr float kTextYawDegrees = 180.0f;
     }
 
@@ -360,10 +344,7 @@ namespace Lumina::EditorEntityUtils
         entt::entity Entity = World->ConstructEntity("Environment");
         World->EmplaceComponent<SEnvironmentComponent>(Entity);
 
-        // Warm key light raked across the scene rather than the default near-frontal direction:
-        // a light pointing where the camera looks flattens everything it touches. Coming from the
-        // side gives the sphere a terminator and the floor a long shadow, which is most of what
-        // makes a single-object scene read as three-dimensional.
+        // A light pointing where the camera looks flattens everything, so the key rakes from the side.
         Entity = World->ConstructEntity("DirectionalLight");
         {
             SDirectionalLightComponent& Light = World->EmplaceComponent<SDirectionalLightComponent>(Entity);
@@ -373,8 +354,7 @@ namespace Lumina::EditorEntityUtils
             Light.bCastShadows  = true;
         }
 
-        // Cool sky fill opposing the warm key. The warm/cool split is what stops the shadow side
-        // from going flat gray, and it costs nothing.
+        // The warm and cool split stops the shadow side going flat gray, and it costs nothing.
         Entity = World->ConstructEntity("SkyLight");
         {
             SSkyLightComponent& SkyLight = World->EmplaceComponent<SSkyLightComponent>(Entity);
@@ -382,11 +362,7 @@ namespace Lumina::EditorEntityUtils
             SkyLight.Intensity    = 0.22f;
         }
 
-        // A scaled cube rather than the plane primitive: the plane mesh stands upright in its local XY
-        // and would need a -90 rotation to lie flat, but SPlaneColliderComponent's normal is +Y in the
-        // ENTITY's frame, so that same rotation would tip its collider onto its side. A cube needs no
-        // rotation, and a box collider's half extents are scaled by the transform, so the collision box
-        // matches what is drawn without a second set of numbers to keep in sync.
+        // A cube needs no rotation, so the drawn box and the collider match without a second set of numbers.
         Entity = World->ConstructEntity("Floor", FTransform(
             FVector3(0.0f, -kFloorHalfDepth, 0.0f),
             FVector3(0.0f, 0.0f, 0.0f),
@@ -403,15 +379,7 @@ namespace Lumina::EditorEntityUtils
             SStaticMeshComponent& Mesh = World->EmplaceComponent<SStaticMeshComponent>(Entity);
             Mesh.SetStaticMesh(CPrimitiveManager::Get().SphereMesh);
 
-            // Resolved through the asset registry instead of hard-referenced. A path that is missing,
-            // renamed, or simply not discovered yet comes back null rather than faulting, and the
-            // sphere keeps the default material. A default scene that refuses to open because an
-            // engine asset moved would be a much worse failure than one that opens looking plain.
-            //
-            // Warned rather than swallowed, and the two failure modes are reported separately: a
-            // path the registry has never heard of (renamed, or discovery has not run yet) needs a
-            // completely different fix from a path that resolves but whose package will not load.
-            // One combined "could not be resolved" message cannot tell those apart.
+            // The two failure modes are reported apart, since an undiscovered path needs a different fix.
             if (const FAssetData* PreviewData = FAssetRegistry::Get().GetAssetByPath(kPreviewMaterialPath))
             {
                 if (CMaterialInterface* PreviewMaterial = LoadObject<CMaterialInterface>(kPreviewMaterialPath))
@@ -437,8 +405,7 @@ namespace Lumina::EditorEntityUtils
         World->EmplaceComponent<SSphereColliderComponent>(Entity).Radius = kSphereRadius;
         World->EmplaceComponent<SRigidBodyComponent>(Entity).BodyType = EBodyType::Dynamic;
 
-        // Volumetric on so the fog above picks the colors up as visible shafts; everything else is
-        // left at component defaults.
+        // Volumetric on so the fog picks the colors up as shafts, with everything else left at defaults.
         {
             struct FAccentLight
             {
@@ -447,8 +414,7 @@ namespace Lumina::EditorEntityUtils
                 float       AngleDegrees;
             };
 
-            // Blue is placed at 180 so it sits on the far side, between the sphere and the banner --
-            // the one position whose spill reaches the text.
+            // Blue sits at 180 on the far side, the one position whose spill reaches the text.
             constexpr FAccentLight AccentLights[] =
             {
                 { "PointLight_Red",   FVector3(1.0f, 0.0f, 0.0f),  60.0f },
@@ -473,8 +439,7 @@ namespace Lumina::EditorEntityUtils
             }
         }
 
-        // Font is left null on purpose: the text extractor falls back to the engine's default
-        // world-text font, so this works in a project that has not imported one.
+        // Font is left null so the extractor falls back to the engine default world-text font.
         Entity = World->ConstructEntity("Welcome Text", FTransform(
             FVector3(0.0f, kTextY, kTextZ),
             FVector3(0.0f, kTextYawDegrees, 0.0f),
@@ -484,20 +449,17 @@ namespace Lumina::EditorEntityUtils
             Text.Text            = "Welcome to Lumina!";
             Text.WorldSize       = 0.85f;
 
-            // Above 1 on purpose. The color feeds the same HDR buffer the bloom threshold reads, so
-            // pushing it over white is what makes the text bloom rather than just look bright.
+            // The color feeds the same HDR buffer bloom reads, so over white is what makes the text bloom.
             Text.Color           = FVector4(1.35f, 1.5f, 1.9f, 1.0f);
             Text.HorizontalAlign = ETextHorizontalAlign::Center;
             Text.VerticalAlign   = ETextVerticalAlign::Middle;
 
-            // Not a billboard: a fixed banner that swings to track the camera as you orbit reads as a
-            // bug. Depth-tested so the sphere passes in front of it properly on the way down.
+            // A banner that swings to track the camera reads as a bug, so this stays fixed and depth-tested.
             Text.bBillboard      = false;
             Text.bDepthTest      = true;
         }
 
-        // Infinite extent: this is the level's global look, not a region to walk into, so there is no
-        // box to sit inside and no boundary to blend across.
+        // This is the level's global look, so there is no box to sit inside and no boundary to blend.
         Entity = World->ConstructEntity("Post Process");
         {
             SPostProcessComponent& PostProcess = World->EmplaceComponent<SPostProcessComponent>(Entity);
@@ -506,14 +468,11 @@ namespace Lumina::EditorEntityUtils
 
             SPostProcessSettings& Settings = PostProcess.Settings;
 
-            // AGX over the ACES default: ACES hue-shifts saturated reds and crushes highlights, and
-            // the bloomed text is exactly the kind of bright saturated element it handles worst.
+            // ACES hue-shifts saturated reds and crushes highlights, which is exactly this bloomed text.
             Settings.ToneMapper          = EToneMapper::AGX;
             Settings.ExposureCompensation = 0.15f;
 
-            // Slight warm push and a touch of contrast/saturation. Small numbers on purpose -- this
-            // is the first thing anyone sees, and a heavily graded default is one somebody has to
-            // undo before they can judge their own content.
+            // Small numbers on purpose, since a heavily graded default is one somebody has to undo first.
             Settings.Temperature = 0.12f;
             Settings.Contrast    = 1.06f;
             Settings.Saturation  = 1.08f;
@@ -528,8 +487,7 @@ namespace Lumina::EditorEntityUtils
             Settings.VignetteSmoothness = 0.55f;
         }
 
-        // Thin ground haze. The floor slab ends abruptly at its edge; fog softens that seam into
-        // distance instead of leaving a hard rectangle floating in the void.
+        // The floor slab ends abruptly, and fog softens that seam into distance.
         Entity = World->ConstructEntity("Height Fog");
         {
             SExponentialHeightFogComponent& Fog = World->EmplaceComponent<SExponentialHeightFogComponent>(Entity);
@@ -544,13 +502,10 @@ namespace Lumina::EditorEntityUtils
 
     void GetDefaultScenePreviewPose(FVector3& OutLocation, FVector3& OutTarget)
     {
-        // Aimed between the sphere's RESTING height and the text behind it, so the opening shot frames
-        // both rather than centring the sphere and clipping the banner. The scene is looked at far
-        // more often after it has settled than during the first second of the drop.
+        // The scene is looked at far more after it settles than during the first second of the drop.
         OutTarget   = FVector3(0.0f, (kSphereRadius + kTextY) * 0.5f, kTextZ * 0.35f);
 
-        // Pulled back and swung further off-axis than a straight-on view: the key light rakes from
-        // -X, so sitting on +X puts the lit side toward the camera and keeps the terminator visible.
+        // The key rakes from -X, so sitting on +X keeps the lit side and the terminator toward the camera.
         OutLocation = FVector3(6.0f, 4.0f, 9.5f);
     }
 }

@@ -75,7 +75,7 @@ namespace Lumina
 
             if (EnumName.IsNone())
             {
-                // Missing/unknown key: leave the property at its default.
+                // A missing or unknown key leaves the property at its default.
                 return;
             }
 

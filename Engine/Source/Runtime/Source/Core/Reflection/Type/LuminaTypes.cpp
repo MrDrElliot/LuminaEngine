@@ -7,8 +7,7 @@
 
 namespace Lumina
 {
-    // Base default: raw, tag-less value (works for numerics/enum/string/name/object-ref). Tight-packing
-    // types (bool -> 1 bit, struct/array -> recurse) override NetSerialize on their own property class.
+    // Tight-packing types such as bool and struct override NetSerialize on their own property class.
     void FProperty::NetSerialize(FNetArchive& Ar, void* Value)
     {
         Serialize(Ar, Value);

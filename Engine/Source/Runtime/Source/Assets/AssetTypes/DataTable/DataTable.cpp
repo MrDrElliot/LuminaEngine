@@ -42,8 +42,7 @@ namespace Lumina
     {
         CStruct* Struct = GetRowStruct();
 
-        // TInstancedStruct's contract is that the stored value is always readable as
-        // SDataTableRowBase; a type outside that hierarchy would quietly break every reader.
+        // A type outside the row hierarchy would quietly break every reader of the stored value.
         if (Struct == nullptr || !Struct->IsChildOf(SDataTableRowBase::StaticStruct()))
         {
             return INDEX_NONE;
@@ -63,7 +62,7 @@ namespace Lumina
             return;
         }
 
-        // Ordered erase, not swap-and-pop: row order is authored and visible in the editor.
+        // Ordered erase, not swap-and-pop, since row order is authored and visible in the editor.
         Rows.erase(Rows.begin() + Index);
     }
 

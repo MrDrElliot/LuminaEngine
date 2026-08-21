@@ -12,9 +12,7 @@ namespace Lumina::PrefabOverride
 {
     namespace
     {
-        // A struct is recursed only if it exposes reflected child properties. Opaque structs
-        // (math types, StructOps-only) have an empty property chain and are handled atomically,
-        // so their bytes still copy/compare via the leaf path's FStructProperty.
+        // An opaque struct has an empty property chain, so its bytes still copy through the leaf path.
         bool StructHasReflectedProperties(CStruct* Struct)
         {
             for (CStruct* Cur = Struct; Cur != nullptr; Cur = Cur->GetSuperStruct())
@@ -27,9 +25,7 @@ namespace Lumina::PrefabOverride
             return false;
         }
 
-        // A component whose data lives entirely in a custom StructOps serializer (SEntityScriptComponent)
-        // exposes no reflected leaf, so the per-leaf walk below sees nothing and every per-instance edit
-        // to it was silently inherited away on the next refresh. Such a component is one atomic leaf.
+        // Such a component exposes no reflected leaf, so it is treated as one atomic leaf instead.
         bool HasSerializableLeaf(CStruct* Struct)
         {
             for (CStruct* Cur = Struct; Cur != nullptr; Cur = Cur->GetSuperStruct())
@@ -70,7 +66,7 @@ namespace Lumina::PrefabOverride
             TVector<uint8> PrefabBytes;
             if (!SerializeWholeValue(Struct, Instance, InstanceBytes) || !SerializeWholeValue(Struct, Prefab, PrefabBytes))
             {
-                return false;   // nothing comparable: treat as inherited rather than inventing an override
+                return false;   // nothing comparable, so treat it as inherited rather than invent an override
             }
             return InstanceBytes != PrefabBytes;
         }
@@ -92,9 +88,7 @@ namespace Lumina::PrefabOverride
             return Prefix + "." + Name.c_str();
         }
 
-        // Visits every serializable leaf of Struct in lockstep across an instance + prefab pointer,
-        // recursing into reflected nested structs and treating containers / opaque structs as leaves.
-        // Visit signature: (FProperty*, void* InstanceContainer, const void* PrefabContainer, const FString& Path).
+        // Recurses into reflected nested structs and treats containers and opaque structs as leaves.
         template<typename Visitor>
         void ForEachLeafPair(CStruct* Struct, void* Inst, const void* Pref, const FString& Prefix, Visitor& Visit)
         {
@@ -178,7 +172,7 @@ namespace Lumina::PrefabOverride
 
         auto Visit = [&](FProperty* Property, void* Inst, const void* Pref, const FString& Path)
         {
-            // Overridden leaf: keep the instance value, do not pull the prefab's.
+            // An overridden leaf keeps the instance value rather than pulling the prefab's.
             if (OverriddenPaths.find(FName(Path.c_str())) != OverriddenPaths.end())
             {
                 return;

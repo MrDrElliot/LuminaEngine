@@ -11,8 +11,7 @@ namespace Lumina
     constexpr FColor FColor::White      = FColor(1.0f, 1.0f, 1.0f);
     constexpr FColor FColor::Black      = FColor(0.0f, 0.0f, 0.0f);
 
-    // These previously held a plain `static std::mt19937` - shared, unsynchronized state that any two
-    // threads asking for a random color would corrupt. Math::ThreadRandomStream is per-thread.
+    // A shared unsynchronized generator corrupted whenever two threads asked for a random color.
 
     FColor FColor::MakeRandom(float alpha)
     {

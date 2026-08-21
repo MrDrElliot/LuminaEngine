@@ -67,8 +67,7 @@ namespace Lumina
 
     void CImporterRegistry::RegisterImporter(CImporter* Importer)
     {
-        // The base CDO claims nothing, so keeping it out of the list means every lookup below can skip
-        // the "is this actually a concrete importer" test.
+        // The base CDO claims nothing, so keeping it out lets every lookup skip a concreteness test.
         if (Importer == nullptr || Importer->GetClass() == CImporter::StaticClass())
         {
             return;
@@ -134,8 +133,7 @@ namespace Lumina
             return nullptr;
         }
 
-        // Seeded from the CDO rather than from the C++ defaults, so settings the user chose last time carry
-        // into the next import of the same type (CommitSettingsToDefaults writes them back).
+        // Seeded from the CDO so settings the user chose last time carry into the next import.
         if (CImporter* CDO = ImporterClass->GetDefaultObject<CImporter>())
         {
             CDO->CopyPropertiesTo(Instance);

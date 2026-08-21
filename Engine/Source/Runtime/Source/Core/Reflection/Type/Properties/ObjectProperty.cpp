@@ -27,7 +27,7 @@ namespace Lumina
         {
             CObject* Raw = Ptr->Get();
 
-            // Indexed path (replication): a compact net index; the GUID is exported once via ObjectExport.
+            // An indexed path uses a compact net index, with the GUID exported once via ObjectExport.
             if (Ar.ObjectToNetIndex)
             {
                 WriteVarUInt(Ar, Raw ? Ar.ObjectToNetIndex(Raw) : 0u);

@@ -54,8 +54,7 @@ namespace Lumina::VFS
             }
             else if (!It->second.bIsDirectory)
             {
-                // A file already exists at this path, refuse to convert it; bail out
-                // rather than silently corrupting the chain.
+                // A file already exists here, so refuse rather than silently corrupt the chain.
                 break;
             }
 
@@ -306,7 +305,7 @@ namespace Lumina::VFS
 
     void FMemoryFileSystem::PlatformOpen(FStringView /*Path*/) const
     {
-        // No-op: in-memory entries have no shell representation.
+        // A no-op, since in-memory entries have no shell representation.
     }
 
     void FMemoryFileSystem::EmitFileInfo(const FFixedString& Key, const FEntry& Entry, const TFunction<void(const FFileInfo&)>& Callback) const

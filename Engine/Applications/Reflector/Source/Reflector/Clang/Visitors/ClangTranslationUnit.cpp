@@ -56,8 +56,7 @@ namespace Lumina::Reflection
 
 		case (CXCursor_InclusionDirective):
 		{
-			// Capture the include directive so post-parse validation can enforce
-			// that reflection-bearing headers include their generated companion last.
+			// Captured so post-parse validation can enforce that the generated companion is included last.
 			FIncludeRef IncludeRef;
 			IncludeRef.Spelling = CursorName;
 			IncludeRef.Basename = CursorName;

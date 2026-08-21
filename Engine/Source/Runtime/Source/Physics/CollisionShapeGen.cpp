@@ -11,8 +11,7 @@ namespace Lumina::Physics::CollisionGen
 {
     namespace
     {
-        // LOD 0's meshlets are the only geometry a uploaded mesh keeps; the raw index and vertex streams
-        // are dropped. Appends one surface's meshlets into a flat position/index pair.
+        // LOD 0's meshlets are the only geometry an uploaded mesh keeps, since the raw streams are dropped.
         void AppendSurface(const FMeshResource& Resource, const FGeometrySurface& Surface,
                            TVector<FVector3>& OutPositions, TVector<uint32>& OutIndices)
         {
@@ -232,8 +231,7 @@ namespace Lumina::Physics::CollisionGen
 
         const FVector3 Center = (Min + Max) * 0.5f;
 
-        // Farthest point rather than half the diagonal: the bounding-box corner is not on the mesh, so a
-        // diagonal-derived radius is loose on anything that is not a cube.
+        // The bounding-box corner is not on the mesh, so a diagonal-derived radius is loose.
         float RadiusSq = 0.0f;
         for (const FVector3& P : Positions)
         {

@@ -37,10 +37,9 @@ namespace Lumina
         const bool bUI          = MaterialType == EMaterialType::UI;
         const bool bDecal       = MaterialType == EMaterialType::Decal;
 
-        // PostProcess/UI: surface attributes inert, WPO meaningless; UI keeps Opacity (brush alpha), PostProcess does not.
+        // UI keeps Opacity as its brush alpha, while PostProcess does not.
         const bool bFullscreen = bPostProcess || bUI;
-        // Decal writes BaseColor/Normal/Roughness/Metallic/AO into the DBuffer; Opacity is its coverage.
-        // No DBuffer slot for Specular, and WPO/Emissive don't apply to a projected decal (v1).
+        // There is no DBuffer slot for Specular, and WPO and Emissive do not apply to a projected decal.
         if (BaseColorPin)            BaseColorPin->SetDisabled(bFullscreen);
         if (MetallicPin)             MetallicPin->SetDisabled(bFullscreen);
         if (RoughnessPin)            RoughnessPin->SetDisabled(bFullscreen);
@@ -50,8 +49,7 @@ namespace Lumina
         if (OpacityPin)              OpacityPin->SetDisabled(bPostProcess);
         // Self-shadowing modulates the sun's direct contribution, which only surface materials receive.
         if (SelfShadowPin)           SelfShadowPin->SetDisabled(bFullscreen || bDecal);
-        // Clearcoat is a lighting layer, so domains with no lighting have no coat. It also needs the
-        // Shading Model set to Clearcoat -- an enabled pin here is necessary, not sufficient.
+        // Clearcoat also needs the Shading Model set, so an enabled pin is necessary but not sufficient.
         if (ClearcoatPin)            ClearcoatPin->SetDisabled(bFullscreen || bDecal);
         if (ClearcoatRoughnessPin)   ClearcoatRoughnessPin->SetDisabled(bFullscreen || bDecal);
         if (WorldPositionOffsetPin)  WorldPositionOffsetPin->SetDisabled(bFullscreen || bDecal);
@@ -96,21 +94,18 @@ namespace Lumina
         OpacityPin = CreatePin(CMaterialInput::StaticClass(), "Opacity", ENodePinDirection::Input);
         OpacityPin->SetPinName("Opacity");
 
-        // Self Shadow: height-field self-occlusion against the sun, from ParallaxOcclusionMapping's
-        // Shadow output. Unconnected = 1 (unshadowed), which is exactly the pre-POM behavior.
+        // Unconnected means 1, unshadowed, which is exactly the pre-parallax behavior.
         SelfShadowPin = CreatePin(CMaterialInput::StaticClass(), "Self Shadow", ENodePinDirection::Input);
         SelfShadowPin->SetPinName("Self Shadow");
 
-        // Clearcoat: read only when the material's Shading Model is Clearcoat. A clear dielectric layer
-        // over the base -- car paint, lacquer, varnish. Strength 0 is the same as not having one.
+        // A clear dielectric layer over the base, and a strength of 0 is the same as not having one.
         ClearcoatPin = CreatePin(CMaterialInput::StaticClass(), "Clearcoat", ENodePinDirection::Input);
         ClearcoatPin->SetPinName("Clearcoat");
 
         ClearcoatRoughnessPin = CreatePin(CMaterialInput::StaticClass(), "Clearcoat Roughness", ENodePinDirection::Input);
         ClearcoatRoughnessPin->SetPinName("Clearcoat Roughness");
 
-        // World Position Offset: vertex-stage world-space displacement routed through the vertex chunk.
-        // If connected, the vertex shader adds the graph emission to WorldPos before View/Projection.
+        // When connected, the vertex shader adds the graph emission to WorldPos before view and projection.
         WorldPositionOffsetPin = CreatePin(CMaterialInput::StaticClass(), "World Position Offset (WPO)", ENodePinDirection::Input);
         WorldPositionOffsetPin->SetPinName("World Position Offset (XYZ)");
     }
@@ -125,15 +120,13 @@ namespace Lumina
             return Out + DefaultValue + ";\n";
         }
 
-        // Resolve first: a reroute emits no variable, so binding to its node name would reference an
-        // identifier that was never declared. A chain that dead-ends reads as unconnected.
+        // A reroute emits no variable, so binding to its node name would reference an undeclared identifier.
         CMaterialOutput* ConnectedPin = FMaterialCompiler::ResolveThroughReroutes(Pin->GetConnection<CMaterialOutput>(0));
         if (ConnectedPin == nullptr)
         {
             return Out + DefaultValue + ";\n";
         }
-        // A material-function call output pin emits its own per-output local and binds it via
-        // ResolvedVar; everything else reads the source node's single FullName variable.
+        // A function-call output binds its own local, while everything else reads the node's FullName.
         FString NodeName              = ConnectedPin->ResolvedVar.empty()
                                       ? ConnectedPin->GetOwningNode()->GetNodeFullName()
                                       : ConnectedPin->ResolvedVar;
@@ -171,8 +164,7 @@ namespace Lumina
 
     void CMaterialOutputNode::GetPixelStagePins(TVector<CEdNodeGraphPin*>& OutPins) const
     {
-        // Mirrors the EmitMaterialAssignment block in GenerateDefinition below, one entry per line. Adding a
-        // pixel-stage pin means adding it in BOTH places -- see the header for what breaks otherwise.
+        // Adding a pixel-stage pin means adding it in BOTH places, see the header for what breaks.
         CEdNodeGraphPin* const Pins[] =
         {
             BaseColorPin, MetallicPin, RoughnessPin, SpecularPin,
@@ -191,11 +183,10 @@ namespace Lumina
     {
         FString PixelOut;
         PixelOut += "\n\n";
-        // Seeded from the shared neutral surface: every field below is then overwritten explicitly, but a
-        // field added to FMaterialPixelInputs without a matching pin here still starts initialized.
+        // A field added to FMaterialPixelInputs without a matching pin here still starts initialized.
         PixelOut += "\tFMaterialPixelInputs Material = DefaultMaterialInputs();\n";
 
-        // PostProcess: unconnected Emissive = passthrough (SceneColor); surface materials default to black.
+        // An unconnected Emissive passes SceneColor through, while surface materials default to black.
         const bool bPostProcess = Compiler.GetMaterialType() == EMaterialType::PostProcess;
         const FString EmissiveDefault = bPostProcess ? FString("SceneColor.rgb") : FString("float3(0.0, 0.0, 0.0)");
 
@@ -211,8 +202,7 @@ namespace Lumina
         PixelOut += EmitMaterialAssignment("Clearcoat",        ClearcoatPin,  "0.0",                   1);
         PixelOut += EmitMaterialAssignment("ClearcoatRoughness", ClearcoatRoughnessPin, "0.03",        1);
 
-        // Always reconstruct Z from the decoded XY: correct for BC7 and BC5 and avoids format detection.
-        // Must match what EmitMaterialAssignment wrote -- decoding a dead-end reroute default corrupts it.
+        // Must match what EmitMaterialAssignment wrote, or a dead-end reroute default gets corrupted.
         if (NormalPin->HasConnection()
             && FMaterialCompiler::ResolveThroughReroutes(NormalPin->GetConnection<CMaterialOutput>(0)) != nullptr)
         {

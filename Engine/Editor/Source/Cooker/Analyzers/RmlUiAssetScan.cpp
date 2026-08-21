@@ -16,8 +16,7 @@ namespace Lumina
     {
         bool IsPathChar(char c)
         {
-            // Conservative VFS path char set; rejects quotes, whitespace,
-            // parens and the few delimiters that close attributes / url().
+            // A conservative VFS path set, rejecting quotes, whitespace, parens and attribute delimiters.
             return c != '\0'
                 && !std::isspace(static_cast<unsigned char>(c))
                 && c != '"' && c != '\''
@@ -77,8 +76,7 @@ namespace Lumina
             return Out;
         }
 
-        // True if Src[Hit-1] would make `<Key>=` look like the tail of
-        // another identifier (e.g. `data-src=`, `nosrc=`, `border-src=`).
+        // Rejects a match that is really the tail of another identifier, such as data-src or nosrc.
         bool IsAttributeBoundary(FStringView Src, size_t Hit)
         {
             if (Hit == 0) return true;
@@ -87,8 +85,7 @@ namespace Lumina
                 || Prev == '_' || Prev == '-');
         }
 
-        // Scan forward from Pos for a path-like substring starting with '/'
-        // and containing at least one '.'; returns empty on miss.
+        // Scans forward for a path-like substring starting with a slash and holding at least one dot.
         FStringView ScanPath(FStringView Src, size_t Pos)
         {
             // Skip leading whitespace and a single optional quote.
@@ -141,8 +138,7 @@ namespace Lumina
             }
         }
 
-        // CSS url(...) extractor (handles single / double / no quotes).
-        // Left-boundary check rejects ident-tail matches like `my-url(`.
+        // Handles single, double and unquoted forms, with a left boundary check against ident tails.
         void ScanCssUrl(FStringView Src, TVector<FString>& Out)
         {
             const FStringView Tok("url(");
@@ -164,7 +160,7 @@ namespace Lumina
             }
         }
 
-        // Lumina "material:/path/..." URI scheme (UI material brush system); boundary-checked so prose like "fancy material: matte" doesn't match.
+        // The UI material brush URI scheme, boundary-checked so ordinary prose cannot match it.
         void ScanMaterialUri(FStringView Src, TVector<FString>& Out)
         {
             const FStringView Tok("material:");
@@ -196,8 +192,7 @@ namespace Lumina
 
     TVector<FString> FRmlUiAssetScan::ExtractCandidates(FStringView Contents)
     {
-        // Strip HTML/RML and CSS comment ranges first so commented-out
-        // examples don't show up as cook roots.
+        // Stripped first so commented-out examples never show up as cook roots.
         const FString Stripped = StripCommentRanges(Contents);
         const FStringView Src(Stripped.c_str(), Stripped.size());
 
@@ -228,7 +223,7 @@ namespace Lumina
         THashSet<FString> VisitedDocs;
         TVector<FString>  Worklist;
 
-        // Seed: every .rml/.rcss under the content roots; @import / sub-template chains followed so engine UI files reach analysis once a /Game doc links them.
+        // Seeded from every .rml and .rcss under the content roots, then @import chains are followed.
         for (const FString& Root : VirtualRoots)
         {
             VFS::RecursiveDirectoryIterator(Root, [&](const VFS::FFileInfo& Info)
@@ -263,7 +258,7 @@ namespace Lumina
             {
                 FStringView CandView(Candidate.c_str(), Candidate.size());
 
-                // Transitive chain: another .rml/.rcss on disk is queued for its own scan, registry membership not required (loose files today).
+                // Another .rml or .rcss on disk is queued for its own scan, with no registry membership required.
                 if (IsRmlOrRcss(CandView) && VFS::Exists(Candidate)
                     && VisitedDocs.find(Candidate) == VisitedDocs.end())
                 {

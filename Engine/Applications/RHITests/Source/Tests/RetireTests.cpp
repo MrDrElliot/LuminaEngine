@@ -40,16 +40,7 @@ namespace Lumina::RHITests
         Ctx.PumpFrames(RHI::kFramesInFlight * 2 + 1);
     }
 
-    /** Regression: a resource retired while the frame that referenced it is STILL EXECUTING.
-     *
-     *  This is the shape that produced VUID-vkDestroyImage-image-01000 on thumbnail textures and
-     *  VUID-vkDestroyBuffer-buffer-00922 on mesh buffers. The retire lands from a thread that is not
-     *  the one recording, so the frame-slot bucketing alone would drain it a frame early -- the slot's
-     *  wait value covers the frame from two frames back, not the one in flight. Passing means the
-     *  per-item Fence stamp held it long enough.
-     *
-     *  Deliberately submits WITHOUT waiting: the whole point is that the work is unfinished at the
-     *  moment of the retire. */
+    // Regression test for a resource retired while the frame referencing it is STILL EXECUTING.
     RHI_TEST(Retire, RetireWhileWorkInFlight)
     {
         const RHI::FTextureH Texture = RHI::CreateTexture(MakeSampledDesc(256));
@@ -84,14 +75,11 @@ namespace Lumina::RHITests
         RHI::Core::Retire(Texture);
         RHI::Core::Retire(Buffer);
 
-        // Drive the ring hard enough that a queue keyed only on the frame slot would have destroyed
-        // both by now. Any destroy-in-use shows up in this test's validation capture.
+        // Drives the ring hard enough that a queue keyed only on the frame slot would have destroyed both.
         Ctx.PumpFrames(RHI::kFramesInFlight * 3);
     }
 
-    /** The other half of the same bug: the descriptor must stop pointing at the texture the moment it
-     *  is retired, not when the queue drains. Otherwise every frame recorded in between re-binds a
-     *  texture its owner already gave up, and one of those frames is still running at destroy time. */
+    // The descriptor must stop pointing at the texture when it is retired, not when the queue drains.
     RHI_TEST(Retire, SampledSlotUnbindsBeforeDrain)
     {
         const RHI::FTextureH Texture = RHI::CreateTexture(MakeSampledDesc(64));
@@ -104,8 +92,7 @@ namespace Lumina::RHITests
         RHI::Core::RetireSampledSlot(Slot);
         RHI::Core::Retire(Texture);
 
-        // Record and submit AFTER the retire but BEFORE the drain. With the unbind deferred, this list
-        // would bind the retired texture through the heap and still be in flight when it is destroyed.
+        // With the unbind deferred, this list would bind a retired texture and still be in flight.
         for (uint32 i = 0; i < RHI::kFramesInFlight * 2; ++i)
         {
             const RHI::FCmdListH CL = Ctx.OpenCL();

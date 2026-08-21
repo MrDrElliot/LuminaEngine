@@ -6,8 +6,7 @@ namespace Lumina::RHITests
 {
     namespace
     {
-        // Copies Source into a fresh CPURead allocation and blocks until it lands, so a test can assert
-        // on what the GPU actually wrote rather than on what it asked for.
+        // Copies Source into a fresh CPURead allocation so a test asserts on what the GPU actually wrote.
         const uint32* ReadBack(FTestContext& Ctx, RHI::GPUPtr Source, uint64 Size)
         {
             const RHI::GPUPtr Readback = Ctx.Malloc(Size, RHI::EMemoryType::CPURead, "RHITests.Readback");
@@ -109,8 +108,7 @@ namespace Lumina::RHITests
         RHI_CHECK_EQ(Words[63], 63u * 7u + 1u);
     }
 
-    // Every barrier helper, back to back in one list. Catches a stage mask that the queue does not
-    // support, which is a validation error at record time rather than a wrong result.
+    // Catches a stage mask the queue does not support, which fails at record time rather than silently.
     RHI_TEST(Commands, BarrierHelpers)
     {
         const RHI::FCmdListH CL = Ctx.OpenCL();

@@ -27,16 +27,12 @@ namespace Lumina::CrashHandler
 {
     namespace
     {
-        // Raised by HandleNonSehCrash so ReportFatal / terminate / SIGABRT share the SEH dump path.
-        // Distinguishable from a real hardware fault, which matters below: a genuine unhandled
-        // exception kills the process and the reporter's monitor sees that by itself, whereas this
-        // one is caught and swallowed, so it has to be reported explicitly.
+        // A real fault kills the process and the monitor sees it, whereas this one is caught and swallowed.
         constexpr DWORD kSynthesizedFatalCode = 0xE0000001;
 
         std::atomic<bool> GInsideHandler{false};
 
-        // Fixed storage and a plain function-pointer array: the crash path walks these with the heap
-        // already suspect, so there is nothing here to allocate or lock.
+        // The crash path walks these with the heap already suspect, so nothing here allocates or locks.
         constexpr uint32 GMaxDiagnosticProviders = 8;
         FDiagnosticProvider GDiagnosticProviders[GMaxDiagnosticProviders] = {};
         std::atomic<uint32> GDiagnosticProviderCount{0};
@@ -44,9 +40,7 @@ namespace Lumina::CrashHandler
         LPTOP_LEVEL_EXCEPTION_FILTER GPreviousFilter = nullptr;
         PVOID GVectoredHandle = nullptr;
 
-        // Dump filename stem. A pointer to a string literal, so the crash path reads it without
-        // touching the heap. Defaults to CPU because that is what an unannounced hardware fault is;
-        // ReportFatal overrides it for the paths that know better.
+        // A pointer to a literal, so the crash path reads it without touching the heap.
         std::atomic<const wchar_t*> GDumpPrefix{ L"CPUCrash" };
         std::terminate_handler GPreviousTerminate = nullptr;
         bool GInstalled = false;
@@ -61,8 +55,7 @@ namespace Lumina::CrashHandler
         {
             wchar_t CrashDir[MAX_PATH] = {};
 
-            // Points at the loaded project once there is one. Stack buffers only; we may be running
-            // on a corrupt heap.
+            // Stack buffers only, since this may be running on a corrupt heap.
             char Configured[MAX_PATH] = {};
             const uint32 ConfiguredLength = GetCrashDumpDirectory(Configured, MAX_PATH);
 
@@ -85,8 +78,7 @@ namespace Lumina::CrashHandler
 
             SYSTEMTIME T;
             GetLocalTime(&T);
-            // Prefixed by failure kind so the folder sorts into CPU and GPU crashes at a glance, and
-            // sits alongside the tracker's own GPUCrash_* vendor dumps.
+            // Prefixed by failure kind, so the folder sorts by crash type and sits beside the vendor dumps.
             swprintf_s(Out.DumpPath, L"%s\\%s_%04d%02d%02d-%02d%02d%02d-%lu.dmp",
                 CrashDir, GDumpPrefix.load(std::memory_order_acquire),
                 T.wYear, T.wMonth, T.wDay, T.wHour, T.wMinute, T.wSecond,
@@ -163,7 +155,7 @@ namespace Lumina::CrashHandler
             }
         }
 
-        // Best-effort: bails on first failure since we are already in a crashed process.
+        // Best-effort, bailing on first failure since the process has already crashed.
         void CaptureStackTraceFromContext(CONTEXT* ContextRecord, char* OutBuffer, size_t BufferSize)
         {
             if (!ContextRecord || !OutBuffer || BufferSize == 0)
@@ -265,14 +257,7 @@ namespace Lumina::CrashHandler
                 }
                 else
                 {
-                    // No symbol, so fall back to the owning module and an offset into it. A bare
-                    // address is unactionable; "SomeLayer.dll+0x1234" names the culprit outright and
-                    // is stable across runs, because module-relative offsets do not move with ASLR.
-                    //
-                    // This is the normal case, not an edge case: users build the engine themselves,
-                    // so uploaded reports never resolve against symbols we hold. Module + offset is
-                    // what makes those reports mean anything, and it is what tells a crash inside a
-                    // driver or a validation layer apart from one in engine code.
+                    // Module-relative offsets do not move with ASLR, so this names a driver or layer culprit outright.
                     char ModuleLine[MAX_PATH] = {};
                     const DWORD64 ModuleBase = SymGetModuleBase64(Process, Frame.AddrPC.Offset);
 
@@ -297,8 +282,7 @@ namespace Lumina::CrashHandler
                     }
                     else
                     {
-                        // Not inside any loaded module at all -- a heap or generated-code address,
-                        // which usually means the walk has left a real call stack behind.
+                        // Not inside any loaded module, which usually means the walk left a real call stack behind.
                         _snprintf_s(Line, sizeof(Line), _TRUNCATE,
                             "  [0x%016llX] <not in any loaded module>",
                             (unsigned long long)Frame.AddrPC.Offset);
@@ -309,12 +293,7 @@ namespace Lumina::CrashHandler
             }
         }
 
-        // Codes worth treating as a crash from a vectored handler.
-        //
-        // A VEH sees every FIRST-chance exception in the process, most of which are entirely normal:
-        // a C++ throw is 0xE06D7363, a debugger breakpoint is EXCEPTION_BREAKPOINT, and thread
-        // naming is 0x406D1388. Reporting on those would fire constantly. Only genuinely fatal
-        // hardware faults, plus our own synthesized code, get through.
+        // A VEH sees every first-chance exception, most of which are entirely normal.
         bool IsFatalExceptionCode(DWORD Code)
         {
             switch (Code)
@@ -340,12 +319,7 @@ namespace Lumina::CrashHandler
             }
         }
 
-        // bMayHandOff is false when called from the vectored handler, where the reporter is going to
-        // consume the exception itself: handing off there would run its filter twice, and our modal
-        // would stack on top of its send dialog.
-        //
-        // The guard makes this run-once. If our own logging or dumping faults, the second entry
-        // falls straight through to the previous filter / WER.
+        // The guard makes this run-once, so a fault inside our own logging falls through to the previous filter.
         LONG HandleCrash(EXCEPTION_POINTERS* ExceptionInfo, bool bMayHandOff)
         {
             if (::IsDebuggerPresent())
@@ -374,8 +348,7 @@ namespace Lumina::CrashHandler
                     StackBuffer, sizeof(StackBuffer));
             }
 
-            // Best-effort log write, guarded because the logger sits on top of
-            // STL/heap that may itself be corrupted.
+            // Guarded, since the logger sits on top of a heap that may itself be corrupted.
             __try
             {
                 if (Logging::IsInitialized())
@@ -389,10 +362,7 @@ namespace Lumina::CrashHandler
                     }
                     LOG_CRITICAL("Minidump: {}", Paths.LogPath);
 
-                    // Subsystem state the handler cannot reach itself. Inside the same guard and
-                    // before the flush, so whatever they log rides out with everything above --
-                    // a GPU breadcrumb trail is just as relevant to a CPU crash on the render
-                    // thread as it is to a lost device.
+                    // Inside the same guard and before the flush, so their output rides out with everything above.
                     const uint32 Count = GDiagnosticProviderCount.load(std::memory_order_acquire);
                     for (uint32 Index = 0; Index < Count; ++Index)
                     {
@@ -443,17 +413,7 @@ namespace Lumina::CrashHandler
                     StackBuffer[0] ? StackBuffer : "  <unavailable>");
             }
 
-            // With a reporter installed, the local artifacts are now on disk and it owns the rest:
-            // its dialog shows the user what is about to be sent and asks, then its monitor process
-            // uploads. Two modals for one crash is worse than none, so ours only appears when
-            // nothing else is going to report this.
-            // A synthesized fatal never reaches the reporter on its own. HandleNonSehCrash catches the
-            // exception it raised, so the process does not die of it -- it goes on to abort() and then
-            // a controlled _Exit, which the out-of-process monitor sees as a clean shutdown. Every GPU
-            // device loss, failed assert and abort therefore wrote a local dump and uploaded nothing.
-            //
-            // Only for the synthesized code: a real unhandled exception does kill the process, the
-            // monitor picks that up itself, and asking for a second report would duplicate it.
+            // Only for the synthesized code, since a real unhandled exception is already reported by the monitor.
             if (CrashReporting::IsEnabled() && Code == kSynthesizedFatalCode)
             {
                 CrashReporting::GenerateReport(ExceptionInfo);
@@ -482,13 +442,7 @@ namespace Lumina::CrashHandler
             return HandleCrash(ExceptionInfo, /*bMayHandOff*/ true);
         }
 
-        // Runs BEFORE any SEH unhandled-exception filter, which is the only way to get in ahead of
-        // the crash reporter. BugSplat's monitor takes the exception and exits the process, so a
-        // top-level filter registered after it never executes at all -- no local dump, no crash
-        // block in the log, no GPU breadcrumbs. Everything we want recorded has to happen here.
-        //
-        // Always returns EXCEPTION_CONTINUE_SEARCH: this handler observes and records, it never
-        // consumes. The reporter still sees the crash and still uploads exactly as before.
+        // Always returns continue-search, so this handler observes and records but never consumes.
         LONG CALLBACK VectoredCrashHandler(EXCEPTION_POINTERS* ExceptionInfo)
         {
             if (ExceptionInfo == nullptr || ExceptionInfo->ExceptionRecord == nullptr)
@@ -501,15 +455,13 @@ namespace Lumina::CrashHandler
                 return EXCEPTION_CONTINUE_SEARCH;
             }
 
-            // Shares GInsideHandler with TopLevelFilter, so whichever runs first does the work once
-            // and the other becomes a no-op.
+            // Shares its guard with the top-level filter, so whichever runs first does the work once.
             (void)HandleCrash(ExceptionInfo, /*bMayHandOff*/ false);
 
             return EXCEPTION_CONTINUE_SEARCH;
         }
 
-        // Synthesize an EXCEPTION_POINTERS so terminate/abort paths share the
-        // same dump pipeline as SEH crashes.
+        // Synthesizes exception pointers so terminate and abort share the SEH dump pipeline.
         void HandleNonSehCrash(const char* Reason)
         {
             __try
@@ -553,8 +505,7 @@ namespace Lumina::CrashHandler
             LOG_CRITICAL("Fatal: {}", Reason);
         }
 
-        // Same synthesized-exception path as terminate and SIGABRT, so a non-exception fatal gets
-        // the identical treatment: stack walk, local dump, log flush, then the reporter's dialog.
+        // The same synthesized path, so a non-exception fatal gets a stack walk, dump and dialog too.
         HandleNonSehCrash(Reason);
     }
 
@@ -592,10 +543,7 @@ namespace Lumina::CrashHandler
 
         GPreviousFilter    = SetUnhandledExceptionFilter(&TopLevelFilter);
 
-        // Only when a reporter is present, and registered FIRST (the 1) so it precedes any vectored
-        // handler the reporter installed. Without a reporter the top-level filter is reached
-        // normally and still owns the modal, so adding a VEH there would only cost first-chance
-        // overhead on every exception in the process for nothing.
+        // Registered first so it precedes the reporter's own, and skipped when no reporter is present.
         if (CrashReporting::IsEnabled())
         {
             GVectoredHandle = AddVectoredExceptionHandler(1, &VectoredCrashHandler);

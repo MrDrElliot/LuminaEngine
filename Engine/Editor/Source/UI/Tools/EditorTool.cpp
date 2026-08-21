@@ -49,8 +49,7 @@ namespace Lumina
 {
     namespace
     {
-        // Skeleton debug visualization. Editor-scoped and off by default; toggling the master
-        // CVar makes bones appear in every editor tool's viewport (world, anim, anim-graph, etc.).
+        // Editor-scoped and off by default, and the master CVar reaches every editor viewport.
         static TConsoleVar<bool>  CVarDrawSkeletons    ("Editor.Debug.Skeletons",       false, "Draw the bone hierarchy for every skeletal mesh in the editor viewport.");
         static TConsoleVar<bool>  CVarSkeletonNames    ("Editor.Debug.SkeletonNames",   false, "Label bones with their names (requires Editor.Debug.Skeletons).");
         static TConsoleVar<bool>  CVarSkeletonAxes     ("Editor.Debug.SkeletonAxes",    false, "Draw a per-bone local X/Y/Z axis triad.");
@@ -102,8 +101,7 @@ namespace Lumina
             RHI::CmdBarrier(CL, RHI::EStageFlags::AllCommands, RHI::EStageFlags::Transfer);
             RHI::CmdCopyTextureToMemory(CL, RenderTarget, RHI::FTextureSlice{}, Readback, SourceWidth);
             RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
-            // Wait only on this copy, not the whole device (see RHI::SubmitAndWait): a WaitDeviceIdle
-            // here would stall on unrelated in-flight frame work.
+            // Waits on this copy only, since a device-wide idle would stall unrelated in-flight frame work.
             RHI::SubmitAndWait(CL);
             RHI::ResetCommandList(CL);
         };
@@ -158,10 +156,7 @@ namespace Lumina
 
         if (HasWorld())
         {
-            // DestroyWorldContext tears the world down and releases the world manager's strong ref;
-            // releasing ours then drops the refcount to zero and frees it. Do NOT ForceDestroyNow here:
-            // this TObjectPtr still holds the world, so force-freeing would dangle (and the subsequent
-            // release would touch freed memory).
+            // Do NOT ForceDestroyNow, since this TObjectPtr still holds the world and would then dangle.
             GWorldManager->DestroyWorldContext(World);
             World.Reset();
         }
@@ -177,8 +172,7 @@ namespace Lumina
         TickEditorCamera(UpdateContext.GetDeltaTime());
         TickEditorActions();
 
-        // Enqueue bone debug lines here (mirrors DrawWorldGrid timing) so every tool that
-        // calls the base Update gets skeleton visualization for free.
+        // Mirrors DrawWorldGrid timing, so every tool calling the base Update gets skeletons free.
         DrawSkeletonDebug();
     }
 
@@ -230,8 +224,7 @@ namespace Lumina
             return;
         }
 
-        // Same convention the world editor uses for its off-screen indicators: flip the
-        // projection Y, then map NDC -> panel pixels.
+        // The same convention the world editor uses, flipping projection Y then mapping to panel pixels.
         FMatrix4 Proj = Camera->GetProjectionMatrix();
         Proj[1][1] *= -1.0f;
         const FMatrix4 ViewProj = Proj * Camera->GetViewMatrix();
@@ -269,8 +262,7 @@ namespace Lumina
             const char* Text = Label.Name.c_str();
             const ImVec2 TextSize = ImGui::CalcTextSize(Text);
 
-            // A dark rounded pill behind the text keeps names legible against any geometry,
-            // anchored just to the upper-right of the joint with a small marker dot.
+            // A dark rounded pill keeps names legible against any geometry, with a small marker dot.
             const ImVec2 TextPos(ScreenX + 8.0f, ScreenY - TextSize.y - 4.0f);
             const ImVec2 PillMin(TextPos.x - Pad.x, TextPos.y - Pad.y);
             const ImVec2 PillMax(TextPos.x + TextSize.x + Pad.x, TextPos.y + TextSize.y + Pad.y);
@@ -331,10 +323,7 @@ namespace Lumina
             return;
         }
 
-        // Shortcuts belong to the focused tool. Every open tool ticks its actions every frame, so
-        // without this an unfocused tool's chords fire from whatever the user typed into a different
-        // one -- the world editor saving the world while a material graph had focus, or its Undo
-        // running on a Ctrl+Z meant for a text field elsewhere.
+        // Every open tool ticks its actions, so without this an unfocused tool's chords fire too.
         if (!bIsActiveTool)
         {
             return;
@@ -402,16 +391,14 @@ namespace Lumina
 
         if (World.IsValid())
         {
-            // Release our strong ref after the context teardown rather than force-freeing while still
-            // held (which would dangle this TObjectPtr). Refcount hitting zero frees the old world.
+            // Released after the teardown rather than force-freed while still held, which would dangle.
             GWorldManager->DestroyWorldContext(World);
             World.Reset();
         }
 
         World = InWorld;
 
-        // Initialize the world (creates its context) if needed. Keyed on the world context, not
-        // the physics scene -- editor worlds intentionally have no physics scene.
+        // Keyed on the world context, since editor worlds intentionally have no physics scene.
         if (GWorldManager->FindContext(World) == nullptr)
         {
             GWorldManager->CreateWorldContext(World, EWorldType::Editor);
@@ -483,9 +470,7 @@ namespace Lumina
 
         if (IsAssetEditorTool())
         {
-            // Tinted by dirty state. The icon used to look identical saved or not, so the only signal that
-            // an edit still needed saving was the tab's UnsavedDocument dot -- which asset editors did not
-            // report either. Left clickable when clean so a deliberate re-save is still possible.
+            // The icon looked identical saved or not, and asset editors never reported the unsaved dot.
             const bool bUnsaved = IsUnsavedDocument();
             ImGui::PushStyleColor(ImGuiCol_Text, bUnsaved ? EditorColors::Warning() : EditorColors::TextDim());
             if (ImGui::MenuItem(bUnsaved ? LE_ICON_CONTENT_SAVE_EDIT "##Save" : LE_ICON_CONTENT_SAVE "##Save"))
@@ -493,8 +478,7 @@ namespace Lumina
                 OnSave();
             }
             ImGui::PopStyleColor();
-            // "{}" + arg: TextTooltip takes a consteval format string, so a ternary of two literals
-            // cannot be passed as the format itself.
+            // TextTooltip takes a consteval format string, so a ternary of literals cannot be the format.
             ImGuiX::TextTooltip("{}", bUnsaved ? "Save -- this asset has unsaved changes" : "Save (no changes)");
         }
 
@@ -548,8 +532,7 @@ namespace Lumina
 
     void FEditorTool::DrawViewModeMenu()
     {
-        // One entry point per tool: scene tools already carry this in their viewport toolbar, so adding it
-        // here too would give them two menus editing the same render settings.
+        // Scene tools carry this in their viewport toolbar, so adding it here would give them two menus.
         if (!HasWorld() || DrawsViewModeInViewportToolbar())
         {
             return;
@@ -572,8 +555,7 @@ namespace Lumina
         const ImViewGuizmo::Style& Style = ImViewGuizmo::GetStyle();
         const bool bOrtho = CameraState.bOrthographic;
 
-        // A real ImGui item rather than a raw hit-test, so it stacks correctly against overlapping
-        // panels; the view gizmo beside it cannot do this because it reads the mouse directly.
+        // A real ImGui item stacks correctly against overlapping panels, unlike the raw-mouse gizmo.
         const ImVec2 Cursor = ImGui::GetCursorScreenPos();
         ImGui::SetCursorScreenPos(Position);
         ImGui::InvisibleButton("##ViewProjectionToggle", ImVec2(Radius * 2.0f, Radius * 2.0f));
@@ -693,8 +675,7 @@ namespace Lumina
         FVector3 Location = StartLocation;
         FQuat    Rotation = StartRotation;
 
-        // 0.4 deg/px matches the RMB orbit; the translation speeds track the pivot distance so the
-        // gizmo feels the same at any working scale.
+        // Translation speeds track the pivot distance, so the gizmo feels the same at any scale.
         const bool bRotated = ImViewGuizmo::Rotate(Location, Rotation, Pivot, GizmoCenter, Math::Radians(0.4f));
 
         const FVector3 RotatedLocation = Location;
@@ -720,8 +701,7 @@ namespace Lumina
 
         if (CameraState.Mode == EEditorCameraMode::Orbit)
         {
-            // Orbit mode regenerates the transform from these every tick, so writing it directly
-            // would be overwritten by the next ApplyOrbitTransform.
+            // Orbit mode regenerates the transform each tick, so a direct write would be overwritten.
             if (bRotated)
             {
                 const FVector3 Offset = RotatedLocation - Pivot;
@@ -747,8 +727,7 @@ namespace Lumina
             return;
         }
 
-        // Dollying along forward is invisible under a parallel projection, so in ortho the button
-        // drives the zoom distance instead and the position delta is discarded.
+        // Dollying is invisible under a parallel projection, so the button drives zoom distance instead.
         if (bDollied && CameraState.bOrthographic)
         {
             const FVector3 Forward = Rotation * FVector3(0.0f, 0.0f, 1.0f);
@@ -822,8 +801,7 @@ namespace Lumina
         const ImVec2 PanelMax(PanelMin.x + ViewportSize.x, PanelMin.y + ViewportSize.y);
         InputViewport->SetWindowRect(int(PanelMin.x), int(PanelMin.y), int(PanelMax.x), int(PanelMax.y));
 
-        // Kept in SCREEN space (not window-relative like the input rect above) so a drop handler can turn
-        // ImGui::GetMousePos() straight into a viewport-local pixel without knowing which window it is in.
+        // Kept in SCREEN space, so a drop handler can convert a mouse position without knowing the window.
         ViewportScreenMin  = CursorScreenPos;
         ViewportScreenSize = ViewportSize;
 
@@ -903,7 +881,7 @@ namespace Lumina
 
         const ImGuiStyle& ImStyle = ImGui::GetStyle();
 
-        // Before the overlay: the overlay's picking/gizmo code reads ShouldSuppressViewportClickInput.
+        // Before the overlay, since its picking code reads ShouldSuppressViewportClickInput.
         DrawViewGizmo(WindowPosition, ViewportSize);
 
         ImVec2 Origin = ImGui::GetCursorStartPos();
@@ -912,8 +890,7 @@ namespace Lumina
         ImGui::SetCursorPos(Origin + ImStyle.ItemSpacing);
         DrawViewportOverlayElements(UpdateContext, ViewportTexture, ViewportSize);
 
-        // Bone-name labels project onto the viewport panel; drawn after the overlay so they
-        // sit on top. WindowPosition is the viewport image's top-left in screen space.
+        // Drawn after the overlay so labels sit on top, anchored at the viewport image's top-left.
         DrawSkeletonNameLabels(WindowPosition, ViewportSize);
 
         Origin = ImGui::GetCursorStartPos();
@@ -922,8 +899,7 @@ namespace Lumina
         ImGui::SetCursorPos(Origin + ImStyle.ItemSpacing);
         DrawViewportToolbar(UpdateContext);
         
-        // Not while ejected: the editor owns the camera then, so a viewport click is a selection,
-        // not a request to hand the mouse back to the game.
+        // Not while ejected, since the editor owns the camera and a click is a selection.
         if (World != nullptr && World->IsGameWorld() && !HasEditorCameraControl() && bViewportHovered
             && ImGui::IsMouseClicked(ImGuiMouseButton_Left)
             && !ImGui::IsAnyItemHovered())
@@ -972,10 +948,7 @@ namespace Lumina
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ItemSpacing, ItemSpacing));
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
 
-        // Per-tool window ID. ImGui keys windows globally by name, so a shared literal made every open
-        // tool's bar the SAME window -- harmless while only the world and prefab editors drew one (rarely
-        // both at once), but now that every preview-world tool does, two open tools would append into one
-        // another's bar and fight over its position.
+        // ImGui keys windows globally by name, so a shared literal made every tool share one bar.
         const FFixedString WindowName = GetToolWindowName("##ViewportToolbar", CurrDockspaceID);
         return ImGui::Begin(WindowName.c_str(), nullptr, WindowFlags);
     }
@@ -1056,8 +1029,7 @@ namespace Lumina
             ImGui::EndMenu();
         }
 
-        // Everything below edits the world's render scene. A tool whose world has no renderer yet (still
-        // initializing, or headless) keeps the debug-draw menus above, which are CVar-backed and global.
+        // A tool whose world has no renderer keeps the debug-draw menus, which are CVar-backed.
         if (RenderScene == nullptr)
         {
             DrawViewModeExtraItems();
@@ -1090,9 +1062,7 @@ namespace Lumina
                     { ERenderSceneDebugFlags::SelfShadow,        "Self Shadow"       },
                     { ERenderSceneDebugFlags::UV,                "UV"                },
                 };
-                // Clearcoat's two channels BORROW SelfShadow and Specular in the GBuffer, so each of
-                // those four views marks the pixels it has no stored value for (violet) rather than
-                // showing the unpack fallback. Shading Model is the key to reading them.
+                // Clearcoat borrows SelfShadow and Specular, so each view marks pixels with no stored value.
                 static const FViewModeEntry ShadingModels[] =
                 {
                     { ERenderSceneDebugFlags::ShadingModel,       "Shading Model"       },
@@ -1104,9 +1074,7 @@ namespace Lumina
                     { ERenderSceneDebugFlags::Meshlets,         "Meshlets"          },
                     { ERenderSceneDebugFlags::MaterialID,       "Material ID"       },
                     { ERenderSceneDebugFlags::TriangleID,       "Triangle ID"       },
-                    // Unlike the rest, this one keeps the lit shading and draws over it. Deferred
-                    // opaque only -- the wire comes from the VisBuffer triangle, which terrain and
-                    // translucency do not go through.
+                    // Deferred opaque only, since the wire comes from the VisBuffer triangle terrain never enters.
                     { ERenderSceneDebugFlags::WireframeOverlay, "Wireframe Overlay" },
                 };
                 static const FViewModeEntry Lighting[] =
@@ -1116,16 +1084,11 @@ namespace Lumina
                     { ERenderSceneDebugFlags::ShadowCascades,  "Shadow Cascades"  },
                     { ERenderSceneDebugFlags::ShadowPenumbra,  "Shadow Penumbra"  },
                     { ERenderSceneDebugFlags::GTAO,            "GTAO"             },
-                    // Influence = does a probe reach this pixel and which one (black = none, so pure
-                    // sky). Radiance = what that probe actually captured. The two failure modes look
-                    // identical in a lit view, hence two separate inspectors.
+                    // The two failure modes look identical in a lit view, hence two separate inspectors.
                     { ERenderSceneDebugFlags::ProbeInfluence,  "Probe Influence"  },
                     { ERenderSceneDebugFlags::ProbeRadiance,   "Probe Radiance"   },
                 };
-                // Raw MBOIT target inspectors (OITResolve.slang): accum color flags INF red / NaN
-                // magenta, moments shows the raw absorbance moments the generation pass wrote, and
-                // transmittance is exp(-b_0), what the opaque scene behind the glass is multiplied
-                // by. For chasing translucency artifacts.
+                // Raw MBOIT target inspectors, for chasing translucency artifacts.
                 static const FViewModeEntry Translucency[] =
                 {
                     { ERenderSceneDebugFlags::OITAccumColor,   "OIT Accum Color"   },
@@ -1163,15 +1126,10 @@ namespace Lumina
                 ImGui::EndMenu();
             }
 
-            // Every stage that can remove geometry, individually switchable. This is a diagnostic
-            // menu, not a quality one: when part of a mesh is missing, the question is always which
-            // stage dropped it, and turning them off one at a time answers it in seconds where
-            // reading the cull shaders takes an afternoon. Each entry says what it costs to disable
-            // so nobody leaves one off and later reports the frame rate as a bug.
+            // Each entry says what it costs to disable, so nobody leaves one off and reports a frame-rate bug.
             if (ImGui::BeginMenu("Culling"))
             {
-                // Spelled out per entry rather than driven by a pointer-to-member table: these are
-                // bitfields, and there is no such thing as a pointer to one.
+                // Spelled out per entry, since these are bitfields and there is no pointer to one.
                 static const char* const kNames[] =
                 {
                     "Frustum Cull",
@@ -1225,8 +1183,7 @@ namespace Lumina
 
                 ImGui::Separator();
 
-                // The state to compare a suspicious frame against: whatever is still missing with all
-                // of these off was not culled, which is worth more than any single toggle.
+                // Whatever is still missing with all of these off was not culled, which beats any single toggle.
                 const bool bAllOff = !Settings.bFrustumCull && !Settings.bConeCull && !Settings.bOcclusionCull
                                   && !Settings.bMeshletOcclusionCull && !Settings.bShadowOcclusionCull
                                   && !Settings.bCPUInstanceCull && !Settings.bUseLODs;
@@ -1249,8 +1206,7 @@ namespace Lumina
 
                 ImGui::Separator();
 
-                // Deliberately outside "Disable All Culling": this does not turn a stage off, it pins every
-                // stage's inputs so you can fly out and look at what they decided.
+                // This pins every stage's inputs rather than turning one off, so you can fly out and look.
                 bool bFrozen = (bool)Settings.bFreezeCulling;
                 if (ImGui::MenuItem("Freeze Culling", nullptr, &bFrozen))
                 {
@@ -1287,7 +1243,7 @@ namespace Lumina
                 Settings.bDrawAABB = bDrawAABB;
             }
 
-            // Tool-specific view-mode items (world: Entity Debug Info, Game View).
+            // Tool-specific view-mode items, such as the world's Entity Debug Info and Game View.
             DrawViewModeExtraItems();
 
             ImGui::EndMenu();
@@ -1296,17 +1252,13 @@ namespace Lumina
 
     void FEditorTool::DrawViewportToolbar(const FUpdateContext& UpdateContext)
     {
-        // Asset tools get the visualization menu on the menu bar next to Help, not as a floating overlay
-        // -- see DrawViewModeMenu. Scene tools override this and keep theirs in the viewport.
+        // Asset tools put it on the menu bar next to Help, and scene tools override to keep it in-viewport.
         ImGui::Dummy(ImVec2(0, 0));
     }
 
     void FEditorTool::DrawGameFocusIndicator(ImVec2 ViewportSize)
     {
-        // The Shift+F1 hint shows on every visible game viewport while game input is focused (focus is
-        // global), so a user looking at any preview -- including a docked client Game Preview that isn't the
-        // active viewport -- always sees how to hand input back. The accent border marks the one viewport
-        // input is actually routed to.
+        // Input focus is global, so every visible game viewport shows how to hand input back.
         FInputViewportRegistry& Reg = FInputViewportRegistry::Get();
         if (InputViewport == nullptr || World == nullptr || !World->IsGameWorld() || !Reg.IsGameInputFocused())
         {
@@ -1321,7 +1273,7 @@ namespace Lumina
         const ImVec2 Min(Cursor.x - Spacing.x, Cursor.y - Spacing.y);
         const ImVec2 Max(Min.x + ViewportSize.x, Min.y + ViewportSize.y);
 
-        // Accent border only on the active viewport -- the one actually receiving input.
+        // An accent border marks only the viewport actually receiving input.
         if (InputViewport.get() == Reg.GetActiveViewport())
         {
             const ImU32 Accent = IM_COL32(255, 176, 64, 200);
@@ -1359,15 +1311,13 @@ namespace Lumina
         const FVector3 EntityWorldLocation = EntityTransform.GetWorldLocation();
         const float FocusDistance = (CameraState.Mode == EEditorCameraMode::Orbit) ? CameraState.OrbitDistance : 10.0f;
 
-        // Remembered so a later Alt+LMB tumble in Free mode picks a pivot at the distance the user
-        // last framed something at, instead of an arbitrary default.
+        // So a later Alt and left tumble picks a pivot at the distance the user last framed something at.
         CameraState.LastFocusPoint     = EntityWorldLocation;
         CameraState.bHasLastFocusPoint = true;
 
         if (CameraState.Mode == EEditorCameraMode::Orbit)
         {
-            // Re-anchor on the focused entity; TickEditorCamera lerps the orbit target here
-            // over a few frames. Anchor snaps so a later ResetOrbitPan returns to it.
+            // TickEditorCamera lerps the orbit target here, and the anchor snaps for a later ResetOrbitPan.
             CameraState.OrbitAnchor      = EntityWorldLocation;
             CameraState.FocusOrbitTarget = EntityWorldLocation;
             CameraState.FocusOrbitDistance = FocusDistance;
@@ -1415,8 +1365,7 @@ namespace Lumina
 
     void FEditorTool::SetEditorCameraOrthographic(bool bOrthographic)
     {
-        // Seed before the flag flips, so GetEditorViewDistance still reports the pivot distance and
-        // the ortho framing picks up where perspective left off.
+        // Seeded before the flag flips, so ortho framing picks up where perspective left off.
         if (bOrthographic && !CameraState.bOrthographic && CameraState.Mode == EEditorCameraMode::Free)
         {
             CameraState.OrthoFreeDistance = GetEditorViewDistance();
@@ -1424,8 +1373,7 @@ namespace Lumina
 
         CameraState.bOrthographic = bOrthographic;
 
-        // UpdateViewportInput rebuilds the projection every frame, but a tool whose viewport is not
-        // drawing this frame would otherwise keep the stale one.
+        // UpdateViewportInput rebuilds the projection per frame, so a non-drawing tool keeps a stale one.
         if (!bOrthographic && HasEditorCameraControl())
         {
             if (SCameraComponent* Camera = World->GetActiveCamera())
@@ -1528,8 +1476,7 @@ namespace Lumina
         }
         ImGui::PopItemWidth();
 
-        // Reset-pan button: only meaningful in orbit mode, and only when MMB-drag has actually
-        // moved OrbitTarget off its anchor. Hidden otherwise so it doesn't add noise.
+        // Only meaningful in orbit mode once a middle drag has moved the target off its anchor.
         if (CameraState.Mode == EEditorCameraMode::Orbit)
         {
             const bool bPanned = Math::Distance(CameraState.OrbitTarget, CameraState.OrbitAnchor) > 1e-4f;
@@ -1547,15 +1494,12 @@ namespace Lumina
         }
     }
 
-    // Pointer travel, in pixels, before a held right button counts as a look instead of a context-menu
-    // tap. Deliberately under ImGui's 15px viewport tap threshold, so a gesture can never both arm the
-    // camera and still read as a tap.
+    // Under ImGui's 15px tap threshold, so a gesture can never both arm the camera and read as a tap.
     static constexpr float RightLookArmThresholdPixels = 4.0f;
 
     void FEditorTool::TickEditorCamera(double DeltaTime)
     {
-        // Cleared first so a tool that early-outs never leaves the gesture flag latched for the
-        // viewport code that reads it later this frame.
+        // Cleared first, so a tool that early-outs never leaves the gesture flag latched for later readers.
         CameraState.bLeftDragGesture = false;
 
         if (!HasWorld() || EditorEntity == entt::null)
@@ -1583,14 +1527,12 @@ namespace Lumina
                                      || Raw.IsMouseButtonDown(EMouseKey::ButtonRight);   // ...and its first frame
         const double WheelDelta = (bAllowInput && bWheelOverViewport) ? Raw.GetMouseZ() : 0.0;
 
-        // The Alt modifier is read from ImGui like every other keyboard state here; only the mouse
-        // comes from the raw context (see the fly-key comment further down).
+        // Alt is read from ImGui like the other keyboard state, while the mouse comes from the raw context.
         const bool bAltDown   = IO.KeyAlt;
         const bool bLeftDown  = bAllowInput && Raw.IsMouseButtonDown(EMouseKey::ButtonLeft);
         const bool bRightDown = bAllowInput && Raw.IsMouseButtonDown(EMouseKey::ButtonRight);
 
-        // A left press made with no camera modifier belongs to selection/gizmo; latch it out of the
-        // camera until release, so adding Alt or RMB mid-gizmo-drag can't also start a gesture.
+        // Latched out until release, so adding Alt mid-gizmo-drag cannot also start a camera gesture.
         if (bLeftDown && !CameraState.bLeftMouseDownPrev)
         {
             CameraState.bLeftGestureBlocked = !bAltDown && !bRightDown;
@@ -1601,9 +1543,7 @@ namespace Lumina
         }
         CameraState.bLeftMouseDownPrev = bLeftDown;
 
-        // A right press only becomes a look once the pointer actually travels; until then it stays a
-        // candidate context-menu tap (see FEditorCameraState::bRightLookArmed). Pixels are accumulated
-        // rather than measured from the press point so a slow drift still arms.
+        // Pixels accumulate rather than measuring from the press point, so a slow drift still arms.
         if (!bRightDown)
         {
             CameraState.bRightLookArmed = false;
@@ -1613,9 +1553,7 @@ namespace Lumina
         {
             CameraState.RightLookTravel += static_cast<float>(Math::Abs(Raw.GetMouseDeltaX()) + Math::Abs(Raw.GetMouseDeltaY()));
 
-            // A fly key or the wheel while the button is held is camera intent with no pointer motion at
-            // all: RMB+W must fly immediately rather than after a jiggle. These only arm because the right
-            // button is already down, which is the same gate the fly keys themselves live behind.
+            // A fly key while the button is held is camera intent, so it must fly without a jiggle first.
             const bool bFlyKeyDown = ImGui::IsKeyDown(ImGuiKey_W) || ImGui::IsKeyDown(ImGuiKey_A)
                                   || ImGui::IsKeyDown(ImGuiKey_S) || ImGui::IsKeyDown(ImGuiKey_D)
                                   || ImGui::IsKeyDown(ImGuiKey_Q) || ImGui::IsKeyDown(ImGuiKey_E);
@@ -1625,7 +1563,6 @@ namespace Lumina
                                        || WheelDelta != 0.0;
         }
 
-        // Mutually exclusive, highest priority first: LMB+RMB pans, Alt+LMB orbits, RMB alone looks.
         // Both buttons held must pan only, never pan and look at once.
         const bool bLeftGesture   = bLeftDown && !CameraState.bLeftGestureBlocked;
         const bool bWantPanDrag   = bLeftGesture && bRightDown;
@@ -1662,8 +1599,7 @@ namespace Lumina
 
         STransformComponent& Transform = World->GetComponent<STransformComponent>(EditorEntity);
 
-        // Advance any in-flight focus lerp before reading user input. Movement input
-        // from the focused viewport cancels the lerp so the user can take over mid-flight.
+        // Movement input from the focused viewport cancels the lerp, so the user can take over mid-flight.
         if (CameraState.bFocusInterp)
         {
             const bool bWheel = WheelDelta != 0.0;
@@ -1713,8 +1649,7 @@ namespace Lumina
                 return;
             }
 
-            // Nothing to fly into under a parallel projection, so the wheel drives the zoom distance
-            // rather than the fly-speed multiplier. Same 10%-per-notch feel as the orbit zoom.
+            // Nothing to fly into under a parallel projection, so the wheel drives zoom distance instead.
             if (CameraState.bOrthographic && WheelDelta != 0.0)
             {
                 const float Zoom = 0.1f * CameraState.OrthoFreeDistance;
@@ -1726,14 +1661,12 @@ namespace Lumina
             const FVector3 Right   = Transform.GetRight();
             const FVector3 Up      = Transform.GetUp();
 
-            // Alt+LMB tumbles around a pivot captured once on the gesture's rising edge. It owns the
-            // transform for the whole drag, so the fly integration below is skipped entirely.
+            // The pivot is captured once on the rising edge and owns the transform for the whole drag.
             if (bWantOrbitDrag)
             {
                 if (!CameraState.bFreeOrbitActive)
                 {
-                    // Free mode has no focal point: frame one out along forward. Borrow the distance
-                    // to the last F-focus point when there is one, else the 10.0f FocusViewportToEntity uses.
+                    // Free mode has no focal point, so borrow the last focus distance or fall back to ten.
                     float PivotDistance = 10.0f;
                     if (CameraState.bHasLastFocusPoint)
                     {
@@ -1783,12 +1716,7 @@ namespace Lumina
                 Speed *= 10.0f;
             }
 
-            // WASDQE flies only while the right mouse button is held (UE-style), so the
-            // W/E/R gizmo hotkeys and Q/E don't shove the camera around. The LMB+RMB pan keeps
-            // the fly keys live, since the right button never left the mouse.
-            // Q/E rise and fall along world vertical, not the camera's own up. Using the camera's up
-            // means a pitched view slides you forward or back while you are only asking for height,
-            // and looking straight down makes the keys do nothing useful at all.
+            // Q and E rise along world vertical, since the camera's up makes a pitched view slide forward.
             const FVector3 WorldUp(0.0f, 1.0f, 0.0f);
 
             FVector3 Acceleration(0.0f);
@@ -1814,9 +1742,7 @@ namespace Lumina
 
             Transform.Translate(CameraState.Velocity * static_cast<float>(DeltaTime) * CameraState.SpeedScale);
 
-            // LMB+RMB grabs the world. Signs match the orbit MMB pan so both modes feel the same;
-            // the scale tracks the tumble pivot when one exists, else the focus distance convention
-            // scaled by the fly-speed multiplier so it stays sane at any working scale.
+            // Signs match the orbit pan so both modes feel the same, scaled to stay sane at any working scale.
             if (bWantPanDrag)
             {
                 float PanReference = 10.0f * CameraState.SpeedScale;
@@ -1841,8 +1767,7 @@ namespace Lumina
             {
                 Transform.AddYaw(static_cast<float>(Raw.GetMouseDeltaX() * 0.1));
 
-                // Clamp accumulated pitch, not the per-frame delta: derive current elevation
-                // from forward and limit the delta so the camera can't flip past vertical.
+                // Clamps accumulated pitch rather than the delta, so the camera cannot flip past vertical.
                 const FVector3 Forward2 = Transform.GetForward();
                 const float Elevation   = Math::Degrees(Math::Asin(Math::Clamp(Forward2.y, -1.0f, 1.0f)));
                 constexpr float PitchLimit = 89.0f;
@@ -1908,9 +1833,7 @@ namespace Lumina
             return true;
         }
 
-        // Alt is the orbit modifier, so an Alt-held click over the viewport is always camera intent.
-        // Suppressing on the modifier alone also covers the press frame itself: ImGui has already
-        // latched that click by the time TickEditorCamera resolves the gesture.
+        // Suppressing on the modifier alone covers the press frame, which ImGui has already latched.
         return (bViewportFocused || bViewportHovered) && ImGui::GetIO().KeyAlt;
     }
 
@@ -1948,9 +1871,7 @@ namespace Lumina
         const float Spacing = Math::Max(Settings->Spacing, 0.01f);
         const float Extent  = Math::Max(Settings->Extent, Spacing);
 
-        // Past the cap the grid coarsens instead of adding lines. Extent and spacing are independent
-        // settings, so nothing stops a large extent meeting a fine spacing, and the batcher would take
-        // the resulting hundreds of thousands of lines without complaining.
+        // Extent and spacing are independent, so the grid coarsens past the cap rather than adding lines.
         int32       HalfCount = (int32)(Extent / Spacing);
         const int32 HalfLimit = Math::Max(Settings->MaxLinesPerAxis / 2, 1);
         float       Step      = Spacing;
@@ -1963,9 +1884,7 @@ namespace Lumina
 
         const float Reach = Step * (float)HalfCount;
 
-        // Grid lines go on the immediate path: uniform thickness, single frame, and there can be
-        // thousands of them. The three axis lines keep their own thickness, which is raster state, so
-        // they stay on the batched path where a per-line thickness still means something.
+        // Axis lines keep their own thickness, which is raster state, so they stay on the batched path.
         const FDebugDrawState*  DrawState = DebugDraw::GetState(World);
         FImmediateLineRenderer* Lines     = DebugDraw::GetLines(World);
         const uint32            GridColor = PackColor(Settings->LineColor);
@@ -1989,8 +1908,7 @@ namespace Lumina
                 continue;
             }
 
-            // Each grid line is axis-aligned, so its own AABB is a tight cull volume -- looking away
-            // from most of the grid actually prunes it, which a bounding sphere would never manage.
+            // Each grid line is axis-aligned, so its own AABB prunes where a bounding sphere never would.
             if (DebugDraw::ShouldDraw(*DrawState, FAABB(FVector3(Coord, 0.0f, -Reach), FVector3(Coord, 0.0f, Reach))))
             {
                 Lines->Line(FVector3(Coord, 0, -Reach), FVector3(Coord, 0, Reach), GridColor);
@@ -2004,8 +1922,7 @@ namespace Lumina
 
         if (Settings->bShowVerticalAxis)
         {
-            // Reaches as far as the grid does. It used to use the line count rather than a distance,
-            // so it only matched the grid while spacing happened to be 1.
+            // It used to use the line count, so it only matched the grid while spacing happened to be 1.
             World->DrawLine(
                 FVector3(0, -Reach, 0),
                 FVector3(0,  Reach, 0),
@@ -2076,11 +1993,7 @@ namespace Lumina
         ImGui::BeginDisabled(bDisabled);
         const bool bOpen = ImGui::BeginMenu(LE_ICON_KEYBOARD" Keybinds");
 
-        // EndDisabled must NOT run here when the menu opened. BeginMenu returning true has already pushed
-        // the submenu WINDOW, which recorded the disabled-stack depth at its Begin; popping the scope now
-        // would pop it inside that window, and EndMenu -> EndPopup -> End would then see a mismatched
-        // stack and trip ImGui's error recovery. Closed after EndMenu instead, back in the window that
-        // opened the scope. (No visual cost: a disabled BeginMenu cannot open, so bOpen implies !bDisabled.)
+        // BeginMenu already pushed the submenu window, so popping here trips ImGui's error recovery.
         if (!bOpen)
         {
             ImGui::EndDisabled();
@@ -2247,8 +2160,7 @@ namespace Lumina
             return Result;
         }
 
-        // Prefer the world's active camera; fall back to the EditorEntity (asset editors
-        // typically own the camera there directly and may not call SetActiveCamera).
+        // Falls back to the EditorEntity, since asset editors often own the camera there directly.
         const SCameraComponent* Camera = World->GetActiveCamera();
         if (Camera == nullptr && EditorEntity != entt::null && World->IsValidEntity(EditorEntity))
         {
@@ -2282,8 +2194,7 @@ namespace Lumina
             return false;
         }
 
-        // Same construction the terrain sculpt cursor uses, including the ImGui Y-flip; anything else and
-        // the result lands mirrored vertically about the viewport center.
+        // The same construction the terrain sculpt cursor uses, including the ImGui Y-flip.
         const ImVec2 Size = ImVec2(Math::Max(ViewportScreenSize.x, 1.0f), Math::Max(ViewportScreenSize.y, 1.0f));
         const float  Sx   = ((ScreenPos.x - ViewportScreenMin.x) / Size.x) * 2.0f - 1.0f;
         const float  Sy   = 1.0f - ((ScreenPos.y - ViewportScreenMin.y) / Size.y) * 2.0f;
@@ -2347,8 +2258,7 @@ namespace Lumina
         float BestDistance = FLT_MAX;
         bool  bHit         = false;
 
-        // 1. Terrain, via the heightmap raycast the sculpt tools already use. This is the case that
-        //    matters most -- a landscape has no collision, so nothing else can hit it accurately.
+        // The case that matters most, since a landscape has no collision for anything else to hit.
         FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
         for (auto&& [Entity, Terrain] : Registry.view<STerrainComponent>().each())
         {
@@ -2371,13 +2281,7 @@ namespace Lumina
             }
         }
 
-        // 2. Mesh entities, against the bounding sphere the resolve cache already caches on the
-        //    component. Coarse -- the hit sits on the sphere, not the surface -- but it puts the asset
-        //    on the thing you pointed at, which is the whole point. No physics needed.
-        //
-        //    Static and skeletal both: the cached bounds live on the shared SMeshComponent base, and a
-        //    drop that ignored skeletal meshes could never land on a character -- which is exactly what
-        //    an animation drop has to hit to mean anything.
+        // Static and skeletal both, since an animation drop has to hit a character to mean anything.
         auto TraceMeshView = [&](auto View)
         {
             for (auto&& [Entity, Mesh, Transform] : View.each())
@@ -2387,8 +2291,7 @@ namespace Lumina
                     continue;
                 }
 
-                // World-space bounding sphere. Composed from the transform's own basis rather than a
-                // transform-point helper, which VTransform does not expose.
+                // Composed from the transform's own basis, which is what VTransform exposes.
                 const FTransform& WorldXform = Transform.GetWorldTransform();
                 const FVector3    Scale      = WorldXform.GetScale();
                 const FVector3    Local      = Mesh.CachedLocalCenter;
@@ -2398,7 +2301,7 @@ namespace Lumina
                                              + WorldXform.GetForward() * (Local.z * Scale.z);
                 const float    Radius = Mesh.CachedLocalRadius * Math::Max(Scale.x, Math::Max(Scale.y, Scale.z));
 
-                // Ray-sphere: solve |Origin + t*Dir - Center|^2 = Radius^2 for the nearer positive root.
+                // Solves the ray-sphere quadratic for the nearer positive root.
                 const FVector3 ToCenter = Center - RayOrigin;
                 const float    Along    = Math::Dot(ToCenter, RayDir);
                 const float    DistSq   = Math::Dot(ToCenter, ToCenter) - Along * Along;
@@ -2433,8 +2336,7 @@ namespace Lumina
             return true;
         }
 
-        // 3. Ground plane. Covers an empty world, where "on the floor" beats "floating in the air".
-        //    Only when the ray actually descends, or a camera tilted up would place behind the viewer.
+        // Only when the ray descends, or a camera tilted up would place the asset behind the viewer.
         if (RayDir.y < -1e-4f)
         {
             const float T = -RayOrigin.y / RayDir.y;
@@ -2445,8 +2347,7 @@ namespace Lumina
             }
         }
 
-        // 4. Nothing to hit: keep the old behavior, but along the CURSOR ray rather than straight
-        //    ahead, so the asset still lands where the user pointed.
+        // Along the CURSOR ray rather than straight ahead, so the asset still lands where they pointed.
         OutLocation = RayOrigin + RayDir * FallbackDistance;
         return true;
     }
@@ -2472,10 +2373,7 @@ namespace Lumina
             return entt::null;
         }
 
-        // Graph load, not the inline one: a dropped prefab pulls in its whole closure (a large one is
-        // dozens of meshes plus their materials and textures), and the inline path resolves every import
-        // depth-first on this thread from inside the parent's Serialize. Already-resident assets skip the
-        // BFS and the graph loader's mutex entirely -- same fast path StaticLoadObject takes.
+        // A dropped prefab pulls in its whole closure, which the inline path resolves depth-first here.
         CObject* Loaded = FindObject<CObject>(AssetData->AssetGUID);
         if (Loaded == nullptr)
         {
@@ -2487,8 +2385,7 @@ namespace Lumina
             return entt::null;
         }
 
-        // Place where the cursor points, not straight ahead. TraceViewportPlacement always yields a
-        // usable point, so the camera-relative transform is only for the no-camera case.
+        // TraceViewportPlacement always yields a point, so this is only for the no-camera case.
         FTransform SpawnTransform = GetCameraSpawnTransform();
         FVector3   TracedLocation;
         if (TraceViewportPlacement(ImGui::GetMousePos(), TracedLocation))

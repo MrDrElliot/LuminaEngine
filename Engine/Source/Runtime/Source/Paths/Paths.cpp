@@ -27,8 +27,7 @@ namespace Lumina::Paths
         FString LuminaDir = LuminaDirEnv ? FString(LuminaDirEnv) : FString();
         Normalize(LuminaDir);
 
-        // Fall back to exe-relative root when LUMINA_DIR is unset; exe lives at <root>/Binaries/Windows64,
-        // so root is two dirs up. Without this every resource path is malformed and font loading crashes.
+        // The exe lives two directories below the root, and without this every resource path is malformed.
         if (LuminaDir.empty() || !Filesystem::Exists(LuminaDir + "/Engine/Resources"))
         {
             FString ExePath = Platform::GetCurrentProcessPath();
@@ -229,8 +228,7 @@ namespace Lumina::Paths
 
     namespace
     {
-        // Backslashes â†’ '/', then collapse runs of '/'; without the collapse, repeated dir + "/" + name joins
-        // accumulate slashes and the path grows forever.
+        // Without collapsing runs, repeated joins accumulate slashes and the path grows forever.
         template<typename StringT>
         void NormalizeInPlace(StringT& Path)
         {

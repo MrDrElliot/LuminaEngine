@@ -12,8 +12,7 @@ namespace Lumina
             void* NodeValue = MaterialNode->GetNodeDefaultValue();
             switch (InputType)
             {
-            // Every one of these writes the node's value in place, so each has to report the edit --
-            // nothing else marks the graph as needing a recompile (CEdGraphNode::NotifyValueEdited).
+            // Each writes the value in place, so each must report the edit or nothing marks a recompile.
             case EMaterialInputType::Float:
                 {
                     ImGui::SetNextItemWidth(100.0f);

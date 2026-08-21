@@ -14,9 +14,7 @@ namespace Lumina
 
     FGraphNodeRegistry::FGraphNodeRegistry()
     {
-        // Plugin and project DLLs register their reflected classes when they load, and several loading
-        // phases run AFTER the editor UI is up. Without this, a graph opened before the plugin loaded
-        // would keep serving a stale palette for the rest of the session.
+        // Several loading phases run AFTER the editor UI is up, so a stale palette would persist.
         (void)FCoreDelegates::OnModuleLoaded.AddLambda([this](FModuleInfo*)
         {
             Invalidate();
@@ -38,8 +36,7 @@ namespace Lumina
     {
         CClass* NodeBase = CEdGraphNode::StaticClass();
 
-        // Two passes on purpose: GetDefaultObject() allocates into GObjectArray, and mutating the array
-        // from inside its own walk is what this collect-then-resolve shape exists to avoid.
+        // GetDefaultObject allocates into GObjectArray, so the walk collects before it resolves.
         TVector<CClass*> Candidates;
         GObjectArray.ForEachObject([&](CObjectBase* Object, int32)
         {
@@ -56,8 +53,7 @@ namespace Lumina
                 return;
             }
 
-            // Family bases and graph-created root nodes. See the note on FGraphNodeRegistry for why
-            // this is class metadata and not a virtual.
+            // Family bases and graph-created root nodes, which is class metadata rather than a virtual.
             if (Class->HasMeta("NotPlaceable"))
             {
                 return;

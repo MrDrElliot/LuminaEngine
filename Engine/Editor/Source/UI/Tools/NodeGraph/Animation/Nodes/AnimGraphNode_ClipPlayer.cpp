@@ -37,8 +37,7 @@ namespace Lumina
         const uint16 StateSlot = Compiler.AllocClockSlot();
         const uint16 SpeedReg  = ResolveValueInput(SpeedPin, Compiler);
 
-        // Loop mode is register-driven so it can be wired; an unconnected pin
-        // bakes the property's current value as a constant.
+        // Register-driven so it can be wired, and an unconnected pin bakes the property as a constant.
         const uint16 LoopModeReg = LoopModePin->HasConnection()
             ? ResolveValueInput(LoopModePin, Compiler)
             : Compiler.EmitLoadConst((float)LoopMode);

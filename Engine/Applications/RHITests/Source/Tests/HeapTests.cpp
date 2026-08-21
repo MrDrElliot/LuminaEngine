@@ -33,8 +33,7 @@ namespace Lumina::RHITests
         RHI::HeapFreeTexture(Heap, SlotB);
     }
 
-    // Repointing is how a texture is replaced without invalidating the index every material already
-    // baked. The slot must survive the swap.
+    // Repointing replaces a texture without invalidating the index every material already baked.
     RHI_TEST(Heap, RepointKeepsSlot)
     {
         const RHI::FTextureHeapH Heap = RHI::Core::GetGlobalHeap();
@@ -48,8 +47,7 @@ namespace Lumina::RHITests
 
         RHI::HeapRepointTexture(Heap, Slot, Second);
 
-        // Nothing observable from the outside beyond "it did not fault and did not free the index":
-        // the next allocation must not hand this one back.
+        // The only observable effect is that the next allocation must not hand this one back.
         const RHI::FTextureH Third = Ctx.CreateTexture(MakeSampledDesc(8), "RHITests.RepointThird");
         const uint32 OtherSlot = RHI::HeapWriteTexture(Heap, Third);
         RHI_CHECK(OtherSlot != Slot);
@@ -58,8 +56,7 @@ namespace Lumina::RHITests
         RHI::HeapFreeTexture(Heap, Slot);
     }
 
-    // Unbind points the descriptor at the fallback WITHOUT releasing the index, so a retiring texture
-    // stops being referenced immediately while its slot stays reserved until the GPU is done.
+    // Unbind points the descriptor at the fallback without releasing the index.
     RHI_TEST(Heap, UnbindKeepsSlotReserved)
     {
         const RHI::FTextureHeapH Heap = RHI::Core::GetGlobalHeap();
@@ -72,7 +69,7 @@ namespace Lumina::RHITests
 
         RHI::HeapUnbindTexture(Heap, Slot);
 
-        // Still reserved: a fresh registration must not be handed the unbound index.
+        // Still reserved, so a fresh registration must not be handed the unbound index.
         const RHI::FTextureH Other = Ctx.CreateTexture(MakeSampledDesc(8), "RHITests.UnbindOther");
         const uint32 OtherSlot = RHI::HeapWriteTexture(Heap, Other);
         RHI_CHECK(OtherSlot != Slot);
@@ -112,9 +109,7 @@ namespace Lumina::RHITests
         Ctx.PumpFrames(RHI::kFramesInFlight + 1);
     }
 
-    // The stock samplers are addressed by a fixed enum from every shader, so their slots must be exactly
-    // the enumerator values. A reordered AddSampler in Core::Initialize silently repoints every sampler
-    // in the engine.
+    // A reordered AddSampler in Core::Initialize silently repoints every sampler in the engine.
     RHI_TEST(Heap, StockSamplerSlotsMatchEnum)
     {
         RHI_CHECK_EQ((uint32)RHI::EStockSampler::LinearWrap, 0u);
@@ -125,7 +120,7 @@ namespace Lumina::RHITests
     {
         const RHI::FTextureHeapH Heap = RHI::Core::GetGlobalHeap();
 
-        // Out of range on every path: must be a no-op, not an out-of-bounds write into the slot arrays.
+        // Out of range on every path must be a no-op, not an out-of-bounds write into the slot arrays.
         RHI::HeapFreeTexture(Heap, 0x7FFFFFFFu);
         RHI::HeapUnbindTexture(Heap, 0x7FFFFFFFu);
         RHI::HeapFreeRWTexture(Heap, 0x7FFFFFFFu);

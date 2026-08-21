@@ -64,7 +64,7 @@ namespace Lumina
 
         uint8* Bytes = static_cast<uint8*>(Value);
 
-        // Fast path: byte-aligned cursor + whole-byte count -> memcpy.
+        // A byte-aligned cursor with a whole-byte count takes the memcpy fast path.
         if ((BitCursor & 7) == 0 && (NumBits & 7) == 0)
         {
             const int64 ByteCount = NumBits / 8;

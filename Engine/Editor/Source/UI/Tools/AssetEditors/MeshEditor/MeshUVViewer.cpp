@@ -89,9 +89,7 @@ namespace Lumina
             return *reinterpret_cast<const FMeshletVertex*>(reinterpret_cast<const uint8*>(Vertices) + Index * VertexStride);
         };
 
-        // Interior edges are shared by two triangles, and meshlets duplicate vertices along their seams, so
-        // the raw edge list is nearly twice the size it needs to be. Keying on the PACKED uv pair makes the
-        // match exact (no float compare) and collapses the duplicates that meshlet splitting introduced.
+        // Keying on the PACKED uv pair makes the match exact and collapses meshlet-split duplicates.
         THashSet<uint64> SeenEdges;
         SeenEdges.reserve(MaxEdges);
 
@@ -121,8 +119,7 @@ namespace Lumina
 
             const FGeometrySurface& Surface = Resource.GeometrySurfaces[SurfaceIndex];
 
-            // A surface can carry fewer levels than the mesh's deepest; clamp rather than skip, so a
-            // one-LOD surface still draws while the rest of the mesh is inspected at depth.
+            // A surface can carry fewer levels, so clamp rather than skip and it still draws at depth.
             const uint32 SurfaceLOD = Math::Min((uint32)LODIndex, Surface.NumLODs > 0 ? Surface.NumLODs - 1 : 0u);
             const uint32 MeshletOffset = Surface.LODMeshletOffset[SurfaceLOD];
             const uint32 MeshletCount  = Surface.LODMeshletCount[SurfaceLOD];
@@ -279,8 +276,7 @@ namespace Lumina
         CanvasOrigin = ImGui::GetCursorScreenPos();
         const ImRect CanvasRect(CanvasOrigin, ImVec2(CanvasOrigin.x + CanvasSize.x, CanvasOrigin.y + CanvasSize.y));
 
-        // An InvisibleButton rather than IsWindowHovered: this claims the canvas as an item, so the wheel
-        // scrolls the view instead of the parent window and the drag never reaches the dock host.
+        // Claiming the canvas as an item keeps the wheel and drag from reaching the parent window.
         ImGui::InvisibleButton("##UVCanvas", CanvasSize, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonMiddle);
         const bool bHovered = ImGui::IsItemHovered();
         const bool bActive  = ImGui::IsItemActive();
@@ -299,7 +295,7 @@ namespace Lumina
 
         if (bHovered && ImGui::GetIO().MouseWheel != 0.0f)
         {
-            // Anchored at the cursor: the UV under the pointer stays under the pointer.
+            // Anchored at the cursor, so the UV under the pointer stays under the pointer.
             const ImVec2 Cursor = ImGui::GetIO().MousePos;
             const ImVec2 AnchorUV = ToUV(Cursor);
 
@@ -337,8 +333,7 @@ namespace Lumina
 
         if (bShowGrid)
         {
-            // Subdivision count follows the zoom, so the grid stays legible instead of turning into a
-            // solid block when zoomed out or vanishing when zoomed in.
+            // Subdivision follows the zoom, so the grid neither turns solid nor vanishes.
             const int32 Divisions = (Zoom > 1200.0f) ? 16 : (Zoom > 500.0f ? 8 : 4);
             for (int32 i = 1; i < Divisions; ++i)
             {
@@ -418,8 +413,7 @@ namespace Lumina
 
         DrawToolbar(Resource);
 
-        // The surface filter is not in the key: it changes which edges are collected, so fold it in by
-        // rebuilding whenever it moves. Cheaper to compare than to store a second key.
+        // The surface filter changes which edges are collected, and comparing beats storing a second key.
         const FCacheKey Key{ &Resource, (uint32)LODIndex, MeshletCount, VertexCount };
         if (!(Key == CacheKey) || CachedSurfaceFilter != SurfaceFilter)
         {

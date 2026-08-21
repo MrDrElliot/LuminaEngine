@@ -116,8 +116,7 @@ namespace Lumina::Memory
             }
         }
 
-        // Fibonacci/murmur-style finalizer; spreads pointer bits across the whole word
-        // so the low byte (shard) and the high bits (table slot) are both well mixed.
+        // Spreads pointer bits so the low byte and the high bits are both well mixed.
         FORCEINLINE uint64 MixPtr(const void* P)
         {
             uint64 X = (uint64)reinterpret_cast<uintptr_t>(P);
@@ -172,8 +171,7 @@ namespace Lumina::Memory
             {
                 return false;
             }
-            // Value-init rather than memset: FEntry has member initializers, so it is not trivially
-            // default-constructible. Same zeroed bytes, without the UB.
+            // Value-init rather than memset, since FEntry has member initializers and is not trivially default.
             for (uint32 i = 0; i < NewCap; ++i)
             {
                 new (NewEntries + i) FEntry();
@@ -256,8 +254,7 @@ namespace Lumina::Memory
             }
         }
 
-        // Captures the current call stack into the insert-only call-site table.
-        // Returns a 1-based slot id, or 0 if not captured. Caller must NOT hold a shard lock.
+        // Returns a 1-based slot id or 0, and the caller must NOT hold a shard lock.
         uint32 CaptureCallSite(size_t Size, uint32 CatId)
         {
 #if defined(LE_PLATFORM_WINDOWS)
@@ -521,8 +518,7 @@ namespace Lumina::Memory
         }
         tlInTracker = true;
 
-        // Preserve the original allocation's category across the realloc so memory
-        // keeps being attributed to whoever first requested it.
+        // Preserves the original category so memory stays attributed to whoever first requested it.
         uint32 Cat = CurrentCategory();
 
         if (OldPtr != nullptr)
@@ -839,11 +835,7 @@ namespace Lumina::Memory
             return true;
         }
 
-        // SymInitialize only enumerated the modules loaded at that moment. Anything mapped later -- the
-        // game DLL, editor/runtime plugins, the C# host -- has no symbols registered, so every frame in it
-        // printed as a bare address and the call site was unattributable. Pick up new modules and retry.
-        // Rate-limited because a refresh walks the whole module list, and this is on the dump path where
-        // thousands of frames resolve back to back.
+        // SymInitialize only saw the modules loaded then, so anything mapped later has no symbols.
         {
             static uint64 LastRefreshMs = 0;
             const uint64  NowMs = GetTickCount64();
@@ -859,8 +851,7 @@ namespace Lumina::Memory
             }
         }
 
-        // Still nothing (module stripped, or a JIT/managed frame): name the owning module and the offset
-        // into it, which is enough to say WHERE the allocation came from even without a PDB.
+        // Naming the module and offset says WHERE an allocation came from even with no PDB.
         HMODULE Module = nullptr;
         if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                 static_cast<LPCSTR>(Address), &Module) && Module != nullptr)

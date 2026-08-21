@@ -28,14 +28,14 @@ namespace Lumina
     {
         CClass* SupportedGraph = GetSupportedGraphClass();
 
-        // IsChildOf is reflexive, so this covers the exact graph class as well as anything deriving
-        // from it -- which is what puts every material node in a material function graph too.
+        // IsChildOf is reflexive, which is what puts every material node in a material function graph.
         return SupportedGraph != nullptr && GraphClass != nullptr && GraphClass->IsChildOf(SupportedGraph);
     }
 
     ImVec2 CEdGraphNode::GetMinNodeTitleBarSize() const
     {
-        { const FStringView Name = GetNodeDisplayName(); return ImVec2(ImGui::CalcTextSize(Name.data(), Name.data() + Name.size()).x, 28); }
+        const FString Title = GetNodeTitleText();
+        return ImVec2(ImGui::CalcTextSize(Title.c_str(), Title.c_str() + Title.size()).x, 28);
     }
 
     void CEdGraphNode::PushNodeStyle()
@@ -114,10 +114,7 @@ namespace Lumina
         return NodePins[uint32(Direction)][Index];
     }
 
-    // True when any pin already on this node (either direction) owns this id. Two live pins sharing an
-    // id are begun as the same node-editor pin object, which self-links its m_PreviousPin chain and
-    // hangs the editor's pin walks. Nodes with user-named pins (Custom Slang) can produce that, so the
-    // id is salted until it is unique instead of trusting the name to be.
+    // Two live pins sharing an id self-link the editor's chain, so the id is salted until unique.
     bool CEdGraphNode::IsPinIDTaken(uint32 ID) const
     {
         for (const TVector<TObjectPtr<CEdNodeGraphPin>>& Pins : NodePins)

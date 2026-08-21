@@ -29,9 +29,7 @@ namespace Lumina
 {
     namespace
     {
-        // Shared by the skeletal-mesh, skeleton and physics-asset handlers: each resolves to a mesh and
-        // then wants exactly the skeletal-mesh behavior, so the spawn lives in one place.
-        // Mirrors the static-mesh handler: retarget an existing component, otherwise spawn.
+        // Retargets an existing component, otherwise spawns, mirroring the static-mesh handler.
         entt::entity DropSkeletalMesh(CWorld* World, CSkeletalMesh* Mesh, const FTransform& SpawnTransform, entt::entity DropTarget, bool bAttachToTarget)
         {
             if (Mesh == nullptr || World == nullptr)
@@ -70,8 +68,7 @@ namespace Lumina
         {
             bRegistered = true;
 
-            // Static mesh: spawn an entity carrying the mesh; if dropped on an existing
-            // mesh entity, just replace its mesh asset.
+            // Dropped on an existing mesh entity it just replaces that entity's mesh asset.
             Instance.Register(CStaticMesh::StaticClass()->GetName(),
                 [](CWorld* World, CObject* Asset, const FTransform& SpawnTransform, entt::entity DropTarget, bool bAttachToTarget) -> entt::entity
                 {
@@ -103,7 +100,7 @@ namespace Lumina
                     return Entity;
                 });
 
-            // Material: only meaningful when dropped on an existing mesh entity. Sets material slot 0.
+            // A material is only meaningful on an existing mesh entity, and sets slot 0.
             Instance.Register(CMaterialInterface::StaticClass()->GetName(),
                 [](CWorld* World, CObject* Asset, const FTransform& /*SpawnTransform*/, entt::entity DropTarget, bool /*bAttachToTarget*/) -> entt::entity
                 {
@@ -133,16 +130,14 @@ namespace Lumina
                     return DropTarget;
                 });
 
-            // Skeletal mesh: same shape as the static-mesh handler.
+            // A skeletal mesh takes the same shape as the static-mesh handler.
             Instance.Register(CSkeletalMesh::StaticClass()->GetName(),
                 [](CWorld* World, CObject* Asset, const FTransform& SpawnTransform, entt::entity DropTarget, bool bAttachToTarget) -> entt::entity
                 {
                     return DropSkeletalMesh(World, Cast<CSkeletalMesh>(Asset), SpawnTransform, DropTarget, bAttachToTarget);
                 });
 
-            // Skeleton: a skeleton is a bone hierarchy with no geometry, so there is nothing to render
-            // for one directly. It carries a preview mesh for exactly this reason -- dropping the
-            // skeleton spawns that, which is what someone dragging it into the world is asking for.
+            // A skeleton has no geometry, so dropping it spawns the preview mesh it carries.
             Instance.Register(CSkeleton::StaticClass()->GetName(),
                 [](CWorld* World, CObject* Asset, const FTransform& SpawnTransform, entt::entity DropTarget, bool bAttachToTarget) -> entt::entity
                 {
@@ -164,9 +159,7 @@ namespace Lumina
                     return DropSkeletalMesh(World, PreviewMesh, SpawnTransform, DropTarget, bAttachToTarget);
                 });
 
-            // Audio: spawns an emitter at the drop point, playing immediately so the placement can be
-            // heard while it is being positioned. Dropped onto an entity that already emits, it swaps
-            // that entity's sound rather than stacking a second source on top of it.
+            // Plays immediately so the placement can be heard, and swaps rather than stacking on an emitter.
             Instance.Register(CAudioStream::StaticClass()->GetName(),
                 [](CWorld* World, CObject* Asset, const FTransform& SpawnTransform, entt::entity DropTarget, bool bAttachToTarget) -> entt::entity
                 {
@@ -190,8 +183,7 @@ namespace Lumina
                     SAudioSourceComponent& Source = Registry.emplace<SAudioSourceComponent>(Entity);
                     Source.Sound        = Sound;
                     Source.bPlayOnReady = true;
-                    // Looping by default: a placed world emitter is nearly always ambience, and a one-shot
-                    // that plays once on spawn and never again reads as "the drop did not work".
+                    // Looping by default, since a one-shot that plays once on spawn reads as the drop not working.
                     Source.bLooping     = true;
 
                     if (bAttachToTarget && DropTarget != entt::null && Registry.valid(DropTarget))
@@ -202,9 +194,7 @@ namespace Lumina
                     return Entity;
                 });
 
-            // Particle system: spawns an emitter at the drop point. The component defaults to emitting
-            // with a burst on spawn, so the effect plays as soon as it lands and can be judged in place.
-            // Dropped onto an entity that already emits, it swaps that entity's system.
+            // The component bursts on spawn, so the effect plays as soon as it lands and can be judged.
             Instance.Register(CParticleSystem::StaticClass()->GetName(),
                 [](CWorld* World, CObject* Asset, const FTransform& SpawnTransform, entt::entity DropTarget, bool bAttachToTarget) -> entt::entity
                 {
@@ -219,9 +209,7 @@ namespace Lumina
                     {
                         if (SParticleSystemComponent* Existing = Registry.try_get<SParticleSystemComponent>(DropTarget))
                         {
-                            // Plain assignment is enough: the render extract re-reads ParticleSystem off
-                            // the component every frame rather than caching a resolve, unlike the mesh
-                            // components that need an explicit invalidate.
+                            // The extract re-reads ParticleSystem every frame, unlike the meshes that need an invalidate.
                             Existing->ParticleSystem = System;
                             Existing->Activate(/*bReset*/ true);
                             return DropTarget;
@@ -240,12 +228,7 @@ namespace Lumina
                     return Entity;
                 });
 
-            // Physics asset: gives a character a ragdoll. Dropped onto an existing skeletal mesh it just
-            // attaches to that one; dropped into open space it spawns its skeleton's preview mesh first,
-            // so a physics asset is draggable straight out of the browser to get something to test.
-            //
-            // Lands in the Simulated state deliberately: the point of dropping one in is to watch it fall
-            // when the world simulates, and an Inactive ragdoll looks identical to no ragdoll at all.
+            // Lands Simulated deliberately, since an Inactive ragdoll looks identical to no ragdoll at all.
             Instance.Register(CPhysicsAsset::StaticClass()->GetName(),
                 [](CWorld* World, CObject* Asset, const FTransform& SpawnTransform, entt::entity DropTarget, bool bAttachToTarget) -> entt::entity
                 {
@@ -285,8 +268,7 @@ namespace Lumina
                     }
                     else
                     {
-                        // Bodies are authored against bone indices of one skeleton; against another they
-                        // attach to the wrong bones rather than failing, so refuse and say which is which.
+                        // Bodies are authored against one skeleton's bone indices and would silently attach wrong.
                         CSkeletalMesh* Mesh = Registry.get<SSkeletalMeshComponent>(Target).GetSkeletalMesh();
                         if (Mesh != nullptr && Mesh->Skeleton.IsValid() && PhysicsAsset->Skeleton.IsValid()
                             && Mesh->Skeleton.Get() != PhysicsAsset->Skeleton.Get())
@@ -303,10 +285,7 @@ namespace Lumina
                     return Target;
                 });
 
-            // Animation: only meaningful on an entity that already has a skeletal mesh to play it on --
-            // there is nothing sensible to spawn from a clip alone, since the clip names a skeleton but
-            // not a mesh. Dropped on a valid target it starts looping playback immediately, which is what
-            // makes dragging a clip onto a character a one-gesture preview.
+            // A clip names a skeleton but not a mesh, so there is nothing sensible to spawn from one alone.
             Instance.Register(CAnimation::StaticClass()->GetName(),
                 [](CWorld* World, CObject* Asset, const FTransform& /*SpawnTransform*/, entt::entity DropTarget, bool /*bAttachToTarget*/) -> entt::entity
                 {
@@ -330,8 +309,7 @@ namespace Lumina
                         return entt::null;
                     }
 
-                    // Mismatched skeletons sample garbage rather than failing, so the pose would just look
-                    // broken with nothing to explain it. Refuse and say why instead.
+                    // Mismatched skeletons sample garbage rather than failing, so the pose breaks with no explanation.
                     CSkeletalMesh* Mesh = MeshComponent->GetSkeletalMesh();
                     if (Mesh != nullptr && Mesh->Skeleton.IsValid() && Animation->Skeleton.IsValid()
                         && Mesh->Skeleton.Get() != Animation->Skeleton.Get())
@@ -346,7 +324,7 @@ namespace Lumina
                     return DropTarget;
                 });
 
-            // Prefab: instantiate at SpawnTransform under DropTarget (or as a root).
+            // A prefab instantiates at SpawnTransform under DropTarget, or as a root.
             Instance.Register(CPrefab::StaticClass()->GetName(),
                 [](CWorld* World, CObject* Asset, const FTransform& SpawnTransform, entt::entity DropTarget, bool bAttachToTarget) -> entt::entity
                 {
@@ -355,8 +333,7 @@ namespace Lumina
                     {
                         return entt::null;
                     }
-                    // Instantiate takes a PARENT, not a drop target, so the entity under the cursor is
-                    // only passed on when the gesture actually meant to attach.
+                    // Instantiate takes a PARENT, so the entity under the cursor only passes on when attaching.
                     const entt::entity Parent = bAttachToTarget ? DropTarget : entt::null;
                     return Prefab->Instantiate(World, SpawnTransform, Parent);
                 });
@@ -378,8 +355,7 @@ namespace Lumina
             return &It->second;
         }
 
-        // Walk up the reflected class chain so a registration on CMaterialInterface picks
-        // up CMaterial / CMaterialInstance assets without a separate entry per subclass.
+        // Walking the class chain lets a CMaterialInterface registration cover both subclasses.
         CClass* Class = FindObject<CClass>(AssetClass);
         while (Class != nullptr)
         {

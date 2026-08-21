@@ -9,8 +9,7 @@ namespace Lumina
 {
     namespace
     {
-        // Extensions are stored lowercase with a leading dot so lookups are
-        // case-insensitive regardless of how the path was cased on disk.
+        // Stored lowercase with a leading dot, so lookups ignore how the path was cased on disk.
         FString NormalizeExtension(FStringView Extension)
         {
             FString Result;
@@ -27,8 +26,7 @@ namespace Lumina
             return Result;
         }
 
-        // Returns a string rather than FName::c_str()'s pointer on purpose: that pointer is only
-        // good for a few more c_str() calls on the thread, and every message below names two owners.
+        // FName::c_str() is only good for a few more calls, and every message below names two owners.
         FString DescribeOwner(FName Owner)
         {
             return Owner.IsNone() ? FString("<unnamed>") : Owner.ToString();
@@ -37,7 +35,7 @@ namespace Lumina
 
     FName FEditorToolRegistry::BuiltInOwner()
     {
-        // Not a file-scope FName: the pool is not up during static initialization.
+        // Not a file-scope FName, since the pool is not up during static initialization.
         static const FName Owner("Editor");
         return Owner;
     }
@@ -57,9 +55,7 @@ namespace Lumina
             return;
         }
 
-        // Replacement is legitimate and deliberate, so this is not an error. It is logged because
-        // two plugins claiming one asset type resolve by load order, and load order is not
-        // something either author chose.
+        // Not an error, but logged because two plugins claiming one type resolve by load order.
         if (auto Existing = AssetEditors.find(AssetClass); Existing != AssetEditors.end())
         {
             LOG_WARN("[EditorToolRegistry] {} replaces the '{}' asset editor previously registered by {}.",
@@ -121,8 +117,7 @@ namespace Lumina
     {
         if (Owner.IsNone())
         {
-            // Silently doing nothing would read as success to a caller that has just failed to
-            // clean up, and the crash would arrive later with nothing pointing back here.
+            // Silently doing nothing would read as success to a caller that has just failed to clean up.
             LOG_ERROR("[EditorToolRegistry] UnregisterAll needs the owner the registrations were made under. "
                       "An unnamed owner is the editor's own built-ins, which are not a plugin's to remove.");
             return 0;
@@ -168,8 +163,7 @@ namespace Lumina
             return nullptr;
         }
 
-        // Most-derived first: walk up the class chain so a registration for the
-        // concrete type wins over one for a base type.
+        // Walks up the class chain, so a concrete registration wins over one for a base type.
         for (CClass* Class = Asset->GetClass(); Class != nullptr; Class = Class->GetSuperClass())
         {
             auto Itr = AssetEditors.find(Class);

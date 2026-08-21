@@ -61,8 +61,7 @@ namespace Lumina
 
     bool FInputContext::OnEvent(FEvent& Event)
     {
-        // Build an SKey for a mouse button, taking the modifier chord from the cached modifier state
-        // (mouse events carry no modifier flags of their own).
+        // Mouse events carry no modifier flags, so the chord comes from the cached modifier state.
         auto MouseKeyWithMods = [this](EMouseKey Button) -> SKey
         {
             SKey K;

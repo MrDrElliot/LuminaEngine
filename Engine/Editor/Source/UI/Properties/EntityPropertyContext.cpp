@@ -4,8 +4,7 @@ namespace Lumina
 {
     namespace
     {
-        // Active only while a property table is being drawn; nested DrawTree calls
-        // (e.g. struct properties) inherit it, save/restore keeps them balanced.
+        // Nested DrawTree calls inherit it, and save and restore keep them balanced.
         CWorld* GActiveEntityPropertyWorld = nullptr;
     }
 

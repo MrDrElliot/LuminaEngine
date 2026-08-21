@@ -54,8 +54,7 @@ namespace Lumina
             return FString(Name.data(), Name.size());
         }
 
-        // A random, readable color: random hue with high saturation/value so the result stays vibrant
-        // rather than muddy. Backs the "Randomize colors" button in the settings popup.
+        // A random hue at high saturation and value, so the result stays vibrant rather than muddy.
         FVector3 RandomVibrantColor()
         {
             static std::mt19937 Rng{std::random_device{}()};
@@ -67,7 +66,7 @@ namespace Lumina
             return FVector3(R, G, B);
         }
 
-        // Standard 16:9 game-UI resolutions plus 4K. Index 0 = "Fit to pane".
+        // Standard 16 by 9 game-UI resolutions plus 4K, with index 0 meaning fit to pane.
         struct FResolutionPreset
         {
             const char* Label;
@@ -142,8 +141,7 @@ namespace Lumina
 
         ImU32 ToU32(const ImVec4& C) { return ImGui::ColorConvertFloat4ToU32(C); }
 
-        // RML/RCSS identifier rule: XID-style start, hyphens allowed after, so
-        // `font-size`/`border-top-left-radius` highlight as one token.
+        // Hyphens are allowed after the start, so border-top-left-radius highlights as one token.
         TextEditor::Iterator GetRmlIdentifier(TextEditor::Iterator start, TextEditor::Iterator end)
         {
             if (start < end && TextEditor::CodePoint::isXidStart(*start))
@@ -157,8 +155,7 @@ namespace Lumina
             return start;
         }
 
-        // A .rcss can't render alone; wrap the live buffer in a component specimen so the preview
-        // shows its effect. SourceUrl stays the .rcss path so relative refs resolve from its folder.
+        // SourceUrl stays the .rcss path, so relative references resolve from its own folder.
         std::string BuildStylesheetSpecimen(const std::string& Rcss)
         {
             std::string Doc;
@@ -167,9 +164,7 @@ namespace Lumina
             Doc += Rcss;
             Doc +=
                 "\n</style>\n<style>\n"
-                // Don't set a font-family here: the editor context root already carries the engine default
-                // family, so the scaffold inherits a loaded font. Naming a specific family that isn't
-                // registered (the bug this replaces) makes RmlUi log "No font face defined" every frame.
+                // The context root already carries the default family, and naming an unregistered one logs per frame.
                 "body { padding: 22dp; }\n"
                 ".spec-label { display:block; font-size:11dp; color:#6c7086; text-transform:uppercase; letter-spacing:1dp; margin-top:16dp; margin-bottom:6dp; }\n"
                 ".spec-row { display:flex; flex-direction:row; align-items:center; }\n"
@@ -208,8 +203,7 @@ namespace Lumina
             return Doc;
         }
 
-        // A <template>-root .rml is reusable chrome, not a document; LoadDocumentFromMemory
-        // trips RmlUi's inline-injection handler, so detect it and let the preview adapt.
+        // A template root is reusable chrome, and LoadDocumentFromMemory trips the injection handler.
         bool IsTemplateDocument(const std::string& Body)
         {
             size_t i = 0;
@@ -222,8 +216,7 @@ namespace Lumina
             return (Body.size() - i >= N) && (std::memcmp(Body.data() + i, Tag, N) == 0);
         }
 
-        // Render a template's own chrome: swap the <template ...> wrapper for
-        // <rml> so the framed body (with an empty content slot) previews directly.
+        // Swaps the template wrapper for rml so the framed body previews with an empty content slot.
         std::string BuildTemplatePreview(const std::string& Body)
         {
             std::string Doc = Body;
@@ -244,10 +237,9 @@ namespace Lumina
             return Doc;
         }
 
-        // ---- Composition designer: buffer parsing + edit helpers (operate on the raw .rml text) ----
+        // Composition designer buffer parsing and edit helpers, operating on the raw .rml text.
 
-        // A slot element's open tag located in the source buffer, used to read assignments and to know
-        // where to splice <template src> in. Quote-aware so attribute values containing '>' don't fool it.
+        // Quote-aware, so an attribute value containing a closing angle bracket does not fool it.
         struct FSlotTagLoc
         {
             bool        bFound = false;
@@ -316,8 +308,7 @@ namespace Lumina
             return Loc;
         }
 
-        // Reads back the assignment a slot carries: the src of a <template> that is the slot's first child,
-        // mirroring how AssignWidgetToSlot splices it in. Empty if the slot is unassigned.
+        // Mirrors how AssignWidgetToSlot splices it in, and returns empty when the slot is unassigned.
         std::string ParseSlotAssignment(const std::string& Text, const std::string& Id)
         {
             const FSlotTagLoc Loc = LocateSlotTag(Text, Id);
@@ -400,8 +391,7 @@ namespace Lumina
             OutContent = ReadAttr("content=");
         }
 
-        // Byte offset -> (line, visual column). Columns are tab-expanded to match TextEditor coordinates.
-        // Leading whitespace of the line containing Offset -- the indent a new sibling should match.
+        // Columns are tab-expanded to match TextEditor coordinates.
         std::string LineIndentAt(const std::string& Text, size_t Offset)
         {
             if (Offset > Text.size())
@@ -419,8 +409,7 @@ namespace Lumina
             return Text.substr(LineStart, i - LineStart);
         }
 
-        // Start of the whitespace run immediately before Offset. Insertions swallow it and re-emit their
-        // own, so a child lands on its own line whether or not the close tag was already broken out.
+        // Insertions swallow the run and re-emit their own, so a child lands on its own line either way.
         size_t TrimWhitespaceBefore(const std::string& Text, size_t Offset)
         {
             size_t i = Math::Min(Offset, Text.size());
@@ -489,7 +478,7 @@ namespace Lumina
             return S.substr(A, B - A);
         }
 
-        // Split an inline style value ("left: 4dp; top: 8dp") into ordered key/value pairs.
+        // Splits an inline style value into ordered key and value pairs.
         std::vector<std::pair<std::string, std::string>> ParseStyle(const std::string& Style)
         {
             std::vector<std::pair<std::string, std::string>> Out;
@@ -591,8 +580,7 @@ namespace Lumina
             return {};
         }
 
-        // Extract the translate offset (dp) from a `translate(Xdp, Ydp)` transform value. sscanf reads the
-        // leading number of each component and ignores the unit suffix; we only ever author dp here.
+        // sscanf reads each component's leading number and ignores the unit, and we only author dp.
         ImVec2 ParseTranslateDp(const std::string& Transform)
         {
             const size_t Open = Transform.find('(');
@@ -616,8 +604,7 @@ namespace Lumina
             return ImVec2(X, Y);
         }
 
-        // [start,end) of the close tag </name> that matches an open tag, or {npos,npos}. Depth-aware over the
-        // same tag name; nested same-tag opens raise depth, self-closing same-tag and other tags are ignored.
+        // Depth-aware over the same tag name, so a nested same-tag open raises depth.
         struct FCloseTagLoc { size_t Start = std::string::npos; size_t End = std::string::npos; };
         FCloseTagLoc FindMatchingClose(const std::string& Text, const FSlotTagLoc& Open)
         {
@@ -679,7 +666,7 @@ namespace Lumina
             return Out;
         }
 
-        // A unique id not already present in the buffer: Base, then Base1, Base2, ...
+        // A unique id not already in the buffer, so Base, then Base1, Base2, and so on.
         std::string GenerateUniqueId(const std::string& Text, const char* Base)
         {
             auto Exists = [&](const std::string& Id)
@@ -727,8 +714,7 @@ namespace Lumina
             { "Input",  "Slider",         "slider",   "<input id=\"%s\" type=\"range\" min=\"0\" max=\"100\" value=\"50\" style=\"width: 160dp;\"/>" },
         };
 
-        // Parse the tag that starts at '<' at Lt (quote-aware), filling an FSlotTagLoc. For walking siblings
-        // that may not carry an id (LocateSlotTag is id-keyed; this is position-keyed).
+        // Position-keyed rather than id-keyed, for walking siblings that may carry no id.
         FSlotTagLoc ParseElementAt(const std::string& Text, size_t Lt)
         {
             FSlotTagLoc Loc;
@@ -810,8 +796,7 @@ namespace Lumina
             return std::string::npos;
         }
 
-        // True (with OutInner) when a slot is a text leaf whose inner content can be edited inline: not
-        // self-closing, no child elements, and either a text-ish tag or it already holds text.
+        // Not self-closing, no child elements, and either a text-ish tag or already holding text.
         bool GetEditableInnerText(const std::string& Text, const std::string& Id, std::string& OutInner)
         {
             const FSlotTagLoc Open = LocateSlotTag(Text, Id);
@@ -860,10 +845,7 @@ namespace Lumina
             return {};
         }
 
-        // A node in the document's authored hierarchy (parsed from the SOURCE, not the live DOM, so it shows
-        // exactly what the user can edit -- every element, id or not -- and excludes injected widget internals).
-        // One hierarchy row's source facts. Held as tree user data so every callback can act on the element
-        // without re-parsing or indexing back into a parallel array that the tree could outlive.
+        // Parsed from the SOURCE, so it shows exactly what the user can edit and hides widget internals.
         struct FRmlHierarchyItem
         {
             std::string Tag;
@@ -881,8 +863,7 @@ namespace Lumina
             int         Depth;     // nesting depth under <body>
         };
 
-        // Walk <body>'s subtree in source order, recording each element. Depth is a simple open/close counter
-        // (assumes well-formed nesting, which the live preview already validates).
+        // Depth is an open and close counter, which assumes the well-formed nesting the preview validates.
         void ParseSourceElements(const std::string& Text, std::vector<FSourceNode>& Out)
         {
             Out.clear();
@@ -941,10 +922,7 @@ namespace Lumina
 
         const TextEditor::Language* GetRmlLanguage(bool bStylesheet)
         {
-            // Two variants: the TextEditor supports only ONE multi-line comment pair, and .rml vs .rcss want
-            // different ones. .rml uses HTML <!-- --> as the block style (so multi-line markup comments track
-            // across lines); .rcss uses /* */. (A .rml's inline <style> /* */ comments aren't block-tracked,
-            // an accepted edge.) Hex-color tokenizing is shared.
+            // The TextEditor supports only ONE multi-line pair, and .rml and .rcss want different ones.
             static bool InitializedDoc = false;
             static bool InitializedCss = false;
             static TextEditor::Language LangDoc;
@@ -966,8 +944,7 @@ namespace Lumina
             }
             else
             {
-                // RML markup: HTML comments are the multi-line block style; the built-in tracker carries the
-                // in-comment state across lines (the custom tokenizer no longer touches <!--).
+                // The built-in tracker carries in-comment state across lines, so the tokenizer no longer does.
                 Lang.commentStart = "<!--";
                 Lang.commentEnd = "-->";
             }
@@ -976,13 +953,10 @@ namespace Lumina
             Lang.stringEscape = '\\';
             Lang.getIdentifier = GetRmlIdentifier;
 
-            // Single-line <!-- --> + CSS hex color literals (anchors the swatch overlay and
-            // stops `#abcdef` lexing as an identifier). Iterator only does ++/compare, step manually.
+            // The hex-color token anchors the swatch overlay and stops it lexing as an identifier.
             Lang.customTokenizer = [](TextEditor::Iterator start, TextEditor::Iterator end, TextEditor::Color& color) -> TextEditor::Iterator
             {
-                // HTML <!-- --> comments are handled by the built-in block-comment tracker (see commentStart),
-                // so the tokenizer only needs the CSS hex-color literal here.
-                // # followed by 3, 4, 6, or 8 hex digits, CSS color literal.
+                // A hash followed by 3, 4, 6 or 8 hex digits, the CSS color literal.
                 if (start != end && *start == '#')
                 {
                     auto cursor = start;
@@ -1028,8 +1002,7 @@ namespace Lumina
             };
             for (const char* T : Tags) Lang.keywords.insert(T);
 
-            // Common HTML/RML attribute names, colored as declarations so
-            // `class=` and `id=` stand out from arbitrary identifiers.
+            // Colored as declarations so class and id stand out from arbitrary identifiers.
             static const char* const Attributes[] = {
                 "id", "class", "style", "src", "href", "type", "name", "value",
                 "checked", "disabled", "readonly", "selected", "for",
@@ -1107,8 +1080,7 @@ namespace Lumina
 
     void FRmlUiEditorTool::PullSettings()
     {
-        // Pull persisted preferences from the developer-settings object. (Syntax colors are read
-        // straight from the CDO in ApplyEditorSettings, so they aren't mirrored into members here.)
+        // Syntax colors are read straight from the CDO, so they are not mirrored into members here.
         const CRmlUiEditorSettings* Settings = GetDefault<CRmlUiEditorSettings>();
         EditorFontScale         = Settings->FontScale;
         EditorTabSize           = Math::Max(1, Math::Min(8, Settings->TabSize));
@@ -1145,8 +1117,7 @@ namespace Lumina
             ParentDir.assign(ParentView.data(), ParentView.size());
         });
 
-        // Live-refresh when the RmlUi editor settings (palette, fonts, completion) are edited in the
-        // global Settings panel, so color/appearance tweaks apply without reopening the editor.
+        // Live-refreshes so palette and font tweaks apply without reopening the editor.
         SettingsSavedHandle = FCoreDelegates::OnSettingsSaved.AddLambda([this](CClass* Class)
         {
             if (Class == CRmlUiEditorSettings::StaticClass())
@@ -1175,8 +1146,7 @@ namespace Lumina
         ReloadDocument();
         StartWatching();
 
-        // Delayed change callback: fires once the editor is quiet, kept long enough that typing
-        // a path doesn't reload mid-word. Compares last-synced text to ignore programmatic SetText.
+        // Kept long enough that typing a path does not reload mid-word, and ignores programmatic SetText.
         CodeEditor.SetChangeCallback([this]
         {
             const std::string Current = CodeEditor.GetText();
@@ -1200,8 +1170,7 @@ namespace Lumina
             const float StatusBarHeight = ImGui::GetTextLineHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
             const ImVec2 EditorSize(Avail.x, Math::Max(32.0f, Avail.y - StatusBarHeight));
 
-            // Ctrl+wheel over the editor adjusts font scale. Steal the wheel
-            // so TextEditor doesn't also use it for vertical scroll.
+            // Steals the wheel so TextEditor does not also use it for vertical scroll.
             const ImVec2 EditorMin = ImGui::GetCursorScreenPos();
             const ImVec2 EditorMax(EditorMin.x + EditorSize.x, EditorMin.y + EditorSize.y);
             ImGuiIO& Io = ImGui::GetIO();
@@ -1239,8 +1208,7 @@ namespace Lumina
             RebuildHierarchyTree(Tree);
         };
 
-        // Tag and id only, matching what the old row loop matched on. The assigned-widget name is a chip
-        // rather than part of the label, so it deliberately does not widen the search.
+        // The assigned-widget name is a chip rather than part of the label, so it does not widen the search.
         HierarchyContext.FilterFunction = [this](FTreeListView& Tree, FTreeNodeID Item)
         {
             if (HierarchySearch[0] == '\0')
@@ -1341,11 +1309,7 @@ namespace Lumina
     {
         FAssetEditorTool::Update(UpdateContext);
 
-        // Hover is derived state and expires with the frame that produced it. Nothing used to clear it,
-        // so the last hovered slot stayed lit once the cursor left both the canvas and the tree, and a
-        // lit slot draws in full whatever the overlay detail mode is, leaving no setting that could hide
-        // it again. Promoted here rather than cleared at the top of the frame because the hierarchy panel
-        // is registered after the preview and so publishes its hover a frame before the overlay reads it.
+        // Promoted here because the hierarchy publishes its hover a frame before the overlay reads it.
         HoveredSlotId = PendingHoveredSlotId;
         PendingHoveredSlotId.clear();
 
@@ -1416,9 +1380,7 @@ namespace Lumina
         ImGuiID DesignerDockID = 0, PreviewDockID = 0;
         ImGui::DockBuilderSplitNode(RightDockID, ImGuiDir_Right, 0.34f, &DesignerDockID, &PreviewDockID);
 
-        // Hierarchy and Inspector stack so both stay visible -- selecting an element used to reflow the
-        // panel because the inspector was inline. The Palette tabs behind the Hierarchy: it's used in
-        // bursts when adding content, not continuously while tweaking a selection.
+        // The Palette tabs behind the Hierarchy, since it is used in bursts rather than continuously.
         ImGuiID HierarchyDockID = 0, InspectorDockID = 0;
         ImGui::DockBuilderSplitNode(DesignerDockID, ImGuiDir_Down, 0.45f, &InspectorDockID, &HierarchyDockID);
 
@@ -1442,8 +1404,7 @@ namespace Lumina
         CodeEditor.SetShowMatchingBrackets(bShowMatchingBrackets);
         CodeEditor.SetCompletePairedGlyphs(bCompletePairedGlyphs);
 
-        // Start from the chosen Dark/Light base (chrome), then override the syntax-token slots with the
-        // user's customizable colors from CRmlUiEditorSettings.
+        // Starts from the chosen base chrome, then overrides syntax slots from CRmlUiEditorSettings.
         TextEditor::Palette Pal = (EditorPalette == EPalette::Dark)
             ? TextEditor::GetDarkPalette()
             : TextEditor::GetLightPalette();
@@ -1628,8 +1589,7 @@ namespace Lumina
                 bDirty = true;
             }
 
-            // Fun button: roll a fresh random vibrant palette for the syntax colors. Saving fires the
-            // OnSettingsSaved live-refresh, so the editor recolors immediately.
+            // Saving fires the live-refresh, so the editor recolors immediately.
             if (ImGui::Button(LE_ICON_DICE_5 " Randomize colors", ImVec2(-1, 0)))
             {
                 CRmlUiEditorSettings* Colors = GetMutableDefault<CRmlUiEditorSettings>();
@@ -1909,8 +1869,7 @@ namespace Lumina
             const TextEditor::CursorPosition Pos = CodeEditor.GetCurrentCursorPosition();
             const int LineCount = CodeEditor.GetLineCount();
 
-            // GetText() copies the whole document; only the byte count is shown here,
-            // so recompute it only when the buffer actually changed (undo index moves).
+            // GetText() copies the whole document, so recompute only when the undo index moves.
             const size_t Undo = CodeEditor.GetUndoIndex();
             if (Undo != CachedStatusUndoIndex)
             {
@@ -1998,8 +1957,7 @@ namespace Lumina
             if (ImGui::DragInt("##rml_h", &H, 4.0f, 16, 4320, "H %d")) CanvasHeight = (uint32)Math::Max(16, H);
         }
 
-        // Swap dimensions, handy for portrait/landscape testing without
-        // re-typing W/H. Only meaningful when both dims are set.
+        // Only meaningful when both dimensions are set.
         if (CanvasWidth > 0 && CanvasHeight > 0)
         {
             ImGui::SameLine();
@@ -2143,8 +2101,7 @@ namespace Lumina
             }
         }
 
-        // The canvas ASPECT comes from the selected resolution; 0,0 means "fit to pane", which just
-        // adopts the pane's own aspect so the canvas fills it with no letterboxing.
+        // Zero by zero means fit to pane, which adopts the pane's own aspect and never letterboxes.
         const uint32 EffW = (CanvasWidth  != 0 && CanvasHeight != 0) ? CanvasWidth  : (uint32)Math::Max(16.0f, PaneSize.x);
         const uint32 EffH = (CanvasWidth  != 0 && CanvasHeight != 0) ? CanvasHeight : (uint32)Math::Max(16.0f, PaneSize.y);
 
@@ -2163,27 +2120,11 @@ namespace Lumina
             FitSize.x = PaneSize.y * CanvasAspect;
         }
 
-        // Rasterize at the size we DISPLAY at, so one context pixel is one screen pixel.
-        //
-        // The preview used to render at the canvas resolution and then let ImGui scale the texture into
-        // this rect. ImGui samples every image bilinearly from a single mip, so any scale other than
-        // exactly 1.0 resampled the whole document on the way to the pane -- and fit-to-pane never hit
-        // 1.0, because the target was quantized UP to a 64px block while the rect it was drawn into was
-        // the un-quantized pane. The result was a permanent ~0.75-1.0x resample that ate one-pixel font
-        // stems and 1dp borders: text lost strokes and thin edges broke into dashes.
-        //
-        // Sizing the context to the on-screen rect removes the resample entirely. The DPI ratio then
-        // carries the selected resolution's scale (see below), so layout still matches the target
-        // resolution -- a 1080p preview shown in a 300px pane lays out with the same proportions, just
-        // rasterized at 300px instead of rasterized at 1080 and crushed down to 300.
+        // Rasterize at the size we DISPLAY at, so one context pixel is one screen pixel and never resamples.
         const float WantW = Math::Max(16.0f, std::floor(FitSize.x * ViewZoom));
         const float WantH = Math::Max(16.0f, std::floor(FitSize.y * ViewZoom));
 
-        // Cap the raster so zoom cannot balloon the target: at 8x on a large pane the honest size would
-        // be a nine-figure pixel count. Two device pixels per screen pixel is more than the pane can
-        // resolve anyway, and past the cap the image simply scales up the way it always did, which costs
-        // sharpness rather than hundreds of megabytes. Applied as ONE factor so the aspect is preserved;
-        // clamping the axes independently would stretch the blit.
+        // Applied as ONE factor so the aspect is preserved, since clamping axes apart would stretch.
         const float MaxRasterW = Math::Min(4096.0f, Math::Max(PaneSize.x * 2.0f, 512.0f));
         const float MaxRasterH = Math::Min(4096.0f, Math::Max(PaneSize.y * 2.0f, 512.0f));
         const float Shrink     = Math::Min(1.0f, Math::Min(MaxRasterW / WantW, MaxRasterH / WantH));
@@ -2193,10 +2134,7 @@ namespace Lumina
 
         EnsurePreviewTarget((uint32)CanvasPxW, (uint32)CanvasPxH);
 
-        // Auto DPI mirrors the runtime dp convention (ratio = height / 1080). It is keyed off the
-        // DISPLAYED height, which is what makes the compensation work: at the 1920x1080 preset shown in a
-        // 300px-tall rect the ratio is 300/1080, so dp-sized content occupies the same fraction of the
-        // canvas it would on a real 1080p screen.
+        // Keyed off the DISPLAYED height, which is what makes dp content occupy the right fraction.
         if (bAutoDpi && PreviewHeight > 0)
         {
             const float AutoDpi = Math::Clamp(float(PreviewHeight) / 1080.0f, 0.25f, 4.0f);
@@ -2215,8 +2153,7 @@ namespace Lumina
             return;
         }
 
-        // Bridge clear color: checker/transparent clears alpha=0 so ImGui composites bg
-        // below the image; solid clears with the chosen color.
+        // A checker or transparent clear leaves alpha at zero so ImGui composites the background below.
         FVector4 ClearColor;
         switch (BgMode)
         {
@@ -2225,18 +2162,15 @@ namespace Lumina
         case EBgMode::Transparent: ClearColor = FVector4(0.0f, 0.0f, 0.0f, 0.0f); break;
         }
         RmlUi::SetEditorContextClearColor(PreviewContext, ClearColor);
-        // The visible size, not the padded texture size: this drives both SetDimensions and the render
-        // viewport, so the document lays out into exactly the region we sample back.
+        // The visible size drives both SetDimensions and the viewport, so layout matches what is sampled.
         RmlUi::SetEditorContextTarget(PreviewContext, PreviewTarget.Texture, FUIntVector2(PreviewWidth, PreviewHeight));
 
-        // Unclamped, the display rect IS the raster, so the blit is exactly 1:1. Clamped (deep zoom), it
-        // stays the size the user asked for and the smaller raster scales up into it.
+        // Unclamped the display rect IS the raster, and clamped the smaller raster scales up into it.
         const ImVec2 CanvasSize = (Shrink >= 1.0f)
             ? ImVec2((float)CanvasPxW, (float)CanvasPxH)
             : ImVec2(WantW, WantH);
         const ImVec2 PaneCenter(PaneMin.x + PaneSize.x * 0.5f, PaneMin.y + PaneSize.y * 0.5f);
-        // Snapped to whole pixels. Texel centers have to land on pixel centers or the 1:1 mapping above
-        // is undone by a half-pixel offset, which blurs text just as effectively as scaling it.
+        // Texel centers must land on pixel centers, or a half-pixel offset blurs text just as badly.
         const ImVec2 CanvasMin(
             std::floor(PaneCenter.x - CanvasSize.x * 0.5f + ViewPan.x),
             std::floor(PaneCenter.y - CanvasSize.y * 0.5f + ViewPan.y));
@@ -2265,8 +2199,7 @@ namespace Lumina
         }
         // Transparent, draw nothing, the pane background shows through.
 
-        // Sample only the region the context actually rendered into. The texture is padded up to a block
-        // so a resize drag reuses one allocation, and the padding is never part of the document.
+        // The texture is padded up to a block so a resize drag reuses one allocation.
         const ImTextureID Tex = (ImTextureID)(uint64)PreviewTarget.SampledSlot;
         const ImVec2 Uv1(
             float(PreviewWidth)  / float(Math::Max(1u, PreviewRTWidth)),
@@ -2274,9 +2207,7 @@ namespace Lumina
         DL->AddImage(Tex, CanvasMin, CanvasMax, ImVec2(0.0f, 0.0f), Uv1);
         DL->AddRect(CanvasMin, CanvasMax, IM_COL32(80, 80, 95, 255), 0.0f, 0, 1.0f);
 
-        // Convert canvas-space px to pane-space px. The context is sized to the displayed rect, so this
-        // is 1.0 by construction; it stays a computed ratio so the overlay math below still holds if the
-        // two ever diverge (a clamped target, a mid-resize frame).
+        // 1.0 by construction, but kept computed so the overlay math holds if the two ever diverge.
         const float ScalePx = CanvasSize.x / float(Math::Max(1u, PreviewWidth));
 
         if (bShowGrid && GridSize > 0.0f)
@@ -2336,8 +2267,7 @@ namespace Lumina
                     IM_COL32(170, 170, 190, 220),
                     [&]
                     {
-                        // Both sizes, because they are now different things: the resolution the document
-                        // is laid out FOR, and the pixels it is actually rasterized INTO.
+                        // Both sizes, since the layout resolution and the rasterized pixel count now differ.
                         static char Buf[160];
                         std::snprintf(Buf, sizeof(Buf), "%ux%u  raster %ux%u  view %.2fx  dpi %.2fx",
                                       EffW, EffH, PreviewWidth, PreviewHeight, ViewZoom, PreviewDpiScale);
@@ -2361,8 +2291,7 @@ namespace Lumina
             return;
         }
 
-        // Our OnSave routes back here via the watcher; if disk matches last-synced the file
-        // didn't change, so skip SetText to preserve cursor/selection/scroll/undo.
+        // Skipping SetText when disk matches preserves cursor, selection, scroll and undo.
         if (Body.size() == LastSyncedText.size()
             && std::memcmp(Body.data(), LastSyncedText.data(), Body.size()) == 0)
         {
@@ -2392,8 +2321,7 @@ namespace Lumina
             return;
         }
 
-        // .rml is a document; .rcss is wrapped in a component specimen; a
-        // <template> file is shown as its own chrome (empty content slot).
+        // A .rcss is wrapped in a specimen and a template file is shown as its own chrome.
         std::string Doc;
         if (bIsStylesheet)
         {
@@ -2457,13 +2385,7 @@ namespace Lumina
         const size_t Slash = VirtualPath.find_last_of('/');
         const FString Name = Slash == FString::npos ? VirtualPath : VirtualPath.substr(Slash + 1);
 
-        // Auto reload re-parses shortly after every edit, so the same broken document would toast on a
-        // loop. Keyed on the outcome rather than throttled by time: the user hears about a problem the
-        // moment it appears, once, and again only when it changes or clears.
-        //
-        // An explicit reload opts out. Saving a file and being told nothing reads as "the error went
-        // away", when all that happened was that it had been reported once already and had not changed
-        // since. What the user asked for is the state of the thing they just acted on.
+        // Keyed on the outcome, so a problem is reported once and again only when it changes or clears.
         FString Signature;
         Signature = Format("{}|{}|{}|{}", bLoaded ? 1 : 0, ErrorCount, WarningCount, Headline.c_str());
 
@@ -2492,7 +2414,7 @@ namespace Lumina
 
         if (Diagnostics.empty())
         {
-            // Only worth saying when it is news: a clean reload is the normal case and says nothing.
+            // Only worth saying when it is news, since a clean reload is the normal case.
             if (!bWasClean)
             {
                 ImGuiX::Notifications::NotifySuccess("{} reloaded cleanly.", Name.c_str());
@@ -2523,9 +2445,7 @@ namespace Lumina
             return;
         }
 
-        // The visible canvas tracks the on-screen rect EXACTLY -- that is what makes one context pixel
-        // one screen pixel. Only the texture is quantized, so a resize or zoom drag still reuses one
-        // allocation instead of reallocating every frame.
+        // Only the texture is quantized, so a resize or zoom drag still reuses one allocation.
         PreviewWidth  = Width;
         PreviewHeight = Height;
 
@@ -2555,9 +2475,7 @@ namespace Lumina
         PreviewRTWidth  = RTWidth;
         PreviewRTHeight = RTHeight;
 
-        // No ReloadDocument() here: the document content is unchanged on a resize, and the context
-        // reflows to the new size automatically (TickEditorContexts -> SetDimensions(E->Size)). The new
-        // target is bound by the SetEditorContextTarget call right after EnsurePreviewTarget returns.
+        // The content is unchanged on a resize, and the context reflows to the new size automatically.
     }
 
     void FRmlUiEditorTool::TearDownPreview()
@@ -2652,9 +2570,7 @@ namespace Lumina
         }, false);
     }
 
-    //--------------------------------------------------------------------------------------------
-    // Composition designer
-    //--------------------------------------------------------------------------------------------
+    // Composition designer.
 
     void FRmlUiEditorTool::RefreshCompositionSlots()
     {
@@ -2675,9 +2591,7 @@ namespace Lumina
             CompAssignUndoIndex = Undo;
             bCompAssignDirty = false;
 
-            // The tree is parsed from this text, so it is stale for exactly the same reason and on
-            // exactly the same edits. Rebuilding here rather than per frame is what lets the widget
-            // keep its expansion state across everything that is not a markup change.
+            // Rebuilt here rather than per frame, so the widget keeps expansion state across non-markup edits.
             bHierarchyDirty = true;
         }
 
@@ -2696,8 +2610,7 @@ namespace Lumina
             const std::string Assigned = ParseSlotAssignment(CompAssignText, Id);
             Slot.AssignedSrc = FString(Assigned.c_str(), Assigned.size());
 
-            // GetAbsoluteOffset is the layout position and excludes the CSS transform; repositioning writes
-            // an inline `transform: translate`, so add it back here for the overlay to sit on the rendered box.
+            // GetAbsoluteOffset excludes the CSS transform, so add it back for the overlay to sit right.
             const std::string Tf = GetInlineStyleProp(CompAssignText, Id, "transform");
             if (!Tf.empty())
             {
@@ -2837,10 +2750,7 @@ namespace Lumina
     {
         Tree.ClearTree();
 
-        // The body is a real node rather than a separate row above the tree, so the whole document folds
-        // as one and "nothing selected" is expressible as selecting it.
-        // Icons go in the label rather than FTreeNodeDisplay::IconText: the widget draws IconText over the
-        // row's text instead of reserving space ahead of it, so a glyph and the name overlap.
+        // The body is a real node, so the document folds as one and nothing-selected is expressible.
         const FTreeNodeID Body = Tree.CreateNode(InvalidTreeNode, LE_ICON_FOLDER "  body (root)");
         {
             FTreeNodeDisplay& Display = Tree.Get<FTreeNodeDisplay>(Body);
@@ -2855,8 +2765,7 @@ namespace Lumina
         std::vector<FSourceNode> Nodes;
         ParseSourceElements(CompAssignText, Nodes);
 
-        // Depth is a running counter from the parser, so the parent of a node at depth D is the most
-        // recent node at depth D-1. One stack indexed by depth turns the flat list back into a tree.
+        // One stack indexed by depth turns the parser's flat list back into a tree.
         TVector<FTreeNodeID> ParentAtDepth;
         ParentAtDepth.push_back(Body);
 
@@ -2864,7 +2773,7 @@ namespace Lumina
         {
             if (Node.Tag == "template")
             {
-                continue;   // an assignment directive: shown as its parent's badge, not its own row
+                continue;   // an assignment directive, shown as its parent's badge rather than its own row
             }
 
             const int32 Depth = Math::Max(0, Node.Depth);
@@ -2891,8 +2800,7 @@ namespace Lumina
 
             FTreeNodeDisplay& Display = Tree.Get<FTreeNodeDisplay>(Handle);
 
-            // Tints the whole row, which is the readable way to show assignment now that the icon is
-            // part of the text and no longer has a color of its own.
+            // Tinting the whole row is readable now that the icon is part of the text and has no own color.
             if (bAssigned)
             {
                 Display.DisplayColor = ImVec4(0.45f, 0.75f, 1.0f, 1.0f);
@@ -2900,8 +2808,7 @@ namespace Lumina
 
             if (bAssigned)
             {
-                // The inline badge the old row drew after the label. A chip keeps it out of the label so
-                // filtering still matches on tag and id alone.
+                // A chip keeps it out of the label, so filtering still matches on tag and id alone.
                 Display.TooltipChipHeader = "Widget";
                 Display.TooltipChips.push_back(FString(Assigned.c_str(), Assigned.size()));
             }
@@ -3086,8 +2993,7 @@ namespace Lumina
         const bool bWindowHovered = ImGui::IsWindowHovered();
         const ImVec2 CanvasMax(CanvasMin.x + PreviewWidth * ScalePx, CanvasMin.y + PreviewHeight * ScalePx);
 
-        // True screen rect of a slot (exact, so overlays line up with the rendered DOM); plus a hit rect
-        // expanded to a clickable minimum for empty/degenerate containers without distorting the visual.
+        // The hit rect expands to a clickable minimum without distorting the visual one.
         auto Rects = [&](const FCompSlot& Slot, ImVec2& TrueMin, ImVec2& TrueMax, ImVec2& HitMin, ImVec2& HitMax)
         {
             TrueMin = ImVec2(CanvasMin.x + Slot.OffsetPx.x * ScalePx, CanvasMin.y + Slot.OffsetPx.y * ScalePx);
@@ -3130,8 +3036,7 @@ namespace Lumina
             const bool bHov = (Slot.Id == HoveredSlotId);
             const bool bTiny = (TMax.x - TMin.x) < 6.0f || (TMax.y - TMin.y) < 6.0f;
 
-            // Selection and hover always draw in full; everything else is filtered by the detail mode, and
-            // context slots degrade to a thin unlabeled outline so a real document stays readable.
+            // Context slots degrade to a thin unlabeled outline so a real document stays readable.
             const bool bFocus = bSel || bHov;
             if (!bFocus)
             {
@@ -3158,8 +3063,7 @@ namespace Lumina
 
             if (bTiny)
             {
-                // Empty/zero-size container: a small pill anchored exactly at the slot's top-left so it
-                // reads as a real, placeable marker instead of an inflated box that misaligns.
+                // Anchored exactly at the top-left so it reads as a placeable marker, not a misaligned box.
                 const ImVec2 P = TMin;
                 DL->AddRectFilled(P, ImVec2(P.x + Ts.x + 8.0f, P.y + Ts.y + 4.0f), IM_COL32(18, 18, 26, 230), 3.0f);
                 DL->AddRect(P, ImVec2(P.x + Ts.x + 8.0f, P.y + Ts.y + 4.0f), Line, 3.0f, 0, Thick);
@@ -3187,8 +3091,7 @@ namespace Lumina
                 }
             }
 
-            // Drag ghost: where the slot will land on release (snapped to the grid when it's shown, so the
-            // preview matches what CommitSlotMove will write).
+            // Snapped to the grid when shown, so the preview matches what CommitSlotMove will write.
             if (bDraggingSlot && Slot.Id == DraggingSlotId)
             {
                 float NewX = Slot.OffsetPx.x + DragDeltaPx.x;
@@ -3206,17 +3109,14 @@ namespace Lumina
         }
         DL->PopClipRect();
 
-        // Backdrop, submitted before the slots so their hit rects win any overlap: clicking canvas that
-        // is not a slot clears the selection. Without it the only way to deselect was the tree's
-        // "body (root)" row, which a stylesheet never draws, so a selection made on the specimen canvas
-        // could not be undone at all.
+        // Submitted first so slot hit rects win, since otherwise a canvas selection could not be undone.
         const ImVec2 CursorRestore = ImGui::GetCursorScreenPos();
         ImGui::SetCursorScreenPos(CanvasMin);
         ImGui::InvisibleButton("##canvas_backdrop", ImVec2(CanvasMax.x - CanvasMin.x, CanvasMax.y - CanvasMin.y));
         const bool bBackdropClicked = ImGui::IsItemClicked();
         ImGui::SetCursorScreenPos(CursorRestore);
 
-        // Interaction: submit innermost-first so an overlapping parent doesn't steal the hit.
+        // Submitted innermost-first so an overlapping parent cannot steal the hit.
         for (int i = (int)CompSlots.size() - 1; i >= 0; --i)
         {
             const FCompSlot& Slot = CompSlots[i];
@@ -3224,7 +3124,7 @@ namespace Lumina
             Rects(Slot, TMin, TMax, HMin, HMax);
 
             ImGui::SetCursorScreenPos(HMin);
-            ImGui::PushID(i); // index, not id string: duplicate DOM ids (a widget reused N times) would collide
+            ImGui::PushID(i); // index, not the id string, since duplicate DOM ids from a reused widget would collide
             ImGui::InvisibleButton("##slot_hit", ImVec2(HMax.x - HMin.x, HMax.y - HMin.y));
             const bool bThis = (DraggingSlotId == Slot.Id);
 
@@ -3233,7 +3133,7 @@ namespace Lumina
                 SelectedSlotId = Slot.Id;
             }
 
-            // Ctrl+drag nudges a slot via transform:translate (no position-mode change). Plain click selects.
+            // Ctrl and drag nudges a slot via a transform translate, while a plain click selects.
             if (Io.KeyCtrl && ImGui::IsItemHovered())
             {
                 ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
@@ -3274,9 +3174,7 @@ namespace Lumina
             ImGui::PopID();
         }
 
-        // Applied after the slot pass, so a click the backdrop reported cannot race a slot that also
-        // took it. Escape is the keyboard equivalent, gated the same way the Delete binding below is so
-        // it cannot swallow the key from a field or a dialog.
+        // Applied after the slot pass, so a backdrop click cannot race a slot that also took it.
         if (bBackdropClicked
             || (bWindowHovered && !ImGui::IsAnyItemActive() && ImGui::IsKeyPressed(ImGuiKey_Escape, false)))
         {
@@ -3297,7 +3195,7 @@ namespace Lumina
         {
             return;
         }
-        const FCompWidget Widget = CompWidgets[WidgetIndex]; // copy: a clear below may rescan the library
+        const FCompWidget Widget = CompWidgets[WidgetIndex]; // copied, since a clear below may rescan the library
         const std::string Id(SlotId.c_str(), SlotId.size());
 
         std::string Text = CodeEditor.GetText();
@@ -3320,8 +3218,7 @@ namespace Lumina
             return;
         }
 
-        // <link href>: bare file name when the widget sits in the document's folder, else the absolute
-        // virtual path (the RmlUi file interface resolves both).
+        // A bare file name when the widget sits in the document's folder, else the absolute virtual path.
         FString Href;
         {
             const FStringView DocDir = VFS::Parent(FStringView(VirtualPath.c_str(), VirtualPath.size()), true);
@@ -3420,8 +3317,7 @@ namespace Lumina
         OffsetToLineCol(Text, RemoveEnd, TabSize, L1, C1);
         CodeEditor.ReplaceSectionText(L0, C0, L1, C1, "");
 
-        // The <link> is intentionally left in place; an unused template registration is harmless and a
-        // shared widget is usually referenced from more than one slot.
+        // The link stays, since an unused registration is harmless and a widget is usually shared.
         bBufferDirty = true;
         bCompAssignDirty = true;
         ReloadDocument();
@@ -3463,14 +3359,12 @@ namespace Lumina
 
         if (bFound)
         {
-            // Open tag with no close: the document is malformed and blind repair could land the close in
-            // the wrong place, so leave it to the text editor rather than guessing.
+            // Blind repair could land the close tag in the wrong place, so leave it to the text editor.
             ImGuiX::Notifications::NotifyError("<body> is never closed -- fix the markup, then add elements.");
             return false;
         }
 
-        // No body at all (new or hand-trimmed file). Scaffold one inside the document root so authoring
-        // works immediately instead of dead-ending on an error.
+        // Scaffolds a body inside the document root so authoring works instead of dead-ending.
         static const char* kRoots[] = { "</rml>", "</template>" };
         size_t InsertAt = std::string::npos;
         for (const char* Root : kRoots)
@@ -3512,15 +3406,12 @@ namespace Lumina
         std::string Replacement;
         const std::string TargetId(TargetSlotId.c_str(), TargetSlotId.size());
 
-        // Every branch below re-emits the whitespace around its insertion point rather than appending
-        // inline, so a new child always lands on its own line at the right depth instead of extending
-        // the parent's line. Spaces (not tabs) to match the authored content, sized to the tab setting.
+        // Spaces rather than tabs, to match the authored content and sized to the tab setting.
         const std::string IndentUnit((size_t)Math::Max(1, CodeEditor.GetTabSize()), ' ');
 
         if (TargetId.empty())
         {
-            // No container selected -> append to the document body, scaffolding one if this document
-            // doesn't have it yet (rather than dead-ending on an error).
+            // With no container selected this appends to the body, scaffolding one when the file lacks it.
             if (Text.rfind("</body>") == std::string::npos)
             {
                 if (!EnsureDocumentBody())
@@ -3569,9 +3460,7 @@ namespace Lumina
                     ImGuiX::Notifications::NotifyError("Couldn't find the end of '#{0}'.", TargetSlotId.c_str());
                     return;
                 }
-                // Append as the last child. The whitespace before the close tag is absorbed and re-emitted
-                // so the child gets its own line and the close tag returns to the container's indent --
-                // inserting at Close.Start alone left the child glued to the parent's open tag.
+                // Inserting at the close tag alone left the child glued to the parent's open tag.
                 EditStart   = TrimWhitespaceBefore(Text, Close.Start);
                 EditEnd     = Close.Start;
                 Replacement = "\n" + ChildIndent + Markup + "\n" + ContainerIndent;
@@ -3826,7 +3715,7 @@ namespace Lumina
         }
         const std::string NewStyle = SerializeStyle(Props);
 
-        // Nothing to do: no existing style attribute and everything resolved to removals.
+        // No existing style attribute and everything resolved to removals, so there is nothing to do.
         if (ValStart == std::string::npos && NewStyle.empty())
         {
             return;
@@ -3842,7 +3731,7 @@ namespace Lumina
         }
         else
         {
-            // No style attribute yet: splice one in just before the tag's closing '>' (or '/>').
+            // With no style attribute yet, splice one in just before the tag's closing bracket.
             const size_t InsertAt = Loc.bSelfClosing ? (Loc.TagEnd - 1) : Loc.TagEnd;
             const std::string Attr = " style=\"" + NewStyle + "\"";
             OffsetToLineCol(Text, InsertAt, TabSize, L0, C0);
@@ -3882,9 +3771,7 @@ namespace Lumina
             TargetVisualPx.y = std::round(TargetVisualPx.y / GridSize) * GridSize;
         }
 
-        // Back out the layout position (rendered - existing transform), so the new translate moves the element
-        // from where layout naturally puts it. Repositioning is a relative nudge: no position-mode change, so
-        // the element keeps its flow/flex/anchor behavior and stays put-relative on resize.
+        // A relative nudge, so the element keeps its flow and anchor behavior and stays put on resize.
         const ImVec2 CurTransDp = ParseTranslateDp(GetInlineStyleProp(CodeEditor.GetText(),
             std::string(SlotId.c_str(), SlotId.size()), "transform"));
         const ImVec2 LayoutPx(Slot->OffsetPx.x - CurTransDp.x * Dpi, Slot->OffsetPx.y - CurTransDp.y * Dpi);
@@ -3914,8 +3801,7 @@ namespace Lumina
         const FCompSlot* Slot = FindSlot(SelectedSlotId);
         if (Slot == nullptr)
         {
-            // Selected in the source tree but not yet in the live DOM (just added, or inside a collapsed
-            // template). Say so rather than rendering an empty panel.
+            // Selected in the source tree but not yet in the live DOM, so say so rather than draw nothing.
             ImGui::TextDisabled("#%s", SelectedSlotId.c_str());
             ImGui::TextWrapped("Not present in the live preview yet. It will appear once the document reloads.");
             return;
@@ -3925,8 +3811,7 @@ namespace Lumina
         ImGui::Text("#%s  <%s>", Slot->Id.c_str(), Slot->Tag.c_str());
         ImGui::Separator();
 
-        // Text block for text-leaf elements (Text / Button / headings / ...): inner text + font size +
-        // color. Caches are owned by their widget while active and synced to the live value otherwise.
+        // Caches are owned by their widget while active and synced to the live value otherwise.
         {
             const std::string Sel(SelectedSlotId.c_str(), SelectedSlotId.size());
             std::string Inner;
@@ -3962,8 +3847,7 @@ namespace Lumina
                     InspFontSize = std::round(CurFs);
                 }
 
-                // Color (color). Synced on selection change (a ColorEdit popup leaves the item inactive, so a
-                // per-frame sync would fight the picker).
+                // Synced on selection change, since a ColorEdit popup leaves the item inactive and would fight.
                 const std::string ColStr = GetInlineStyleProp(CompAssignText, Sel, "color");
                 if (SelectedSlotId != InspColorSyncId)
                 {
@@ -3984,10 +3868,7 @@ namespace Lumina
         const float CurW = std::round(Slot->SizePx.x / Dpi);
         const float CurH = std::round(Slot->SizePx.y / Dpi);
 
-        // Drag to scrub, Ctrl+click to type. Cached members are owned by DragFloat while active and snap to
-        // the live DOM value otherwise (so canvas drags / reloads / reselects flow in). Commit on release.
-        // X/Y nudge the RENDERED position via transform (CommitSlotVisual) -- no position:absolute, so the
-        // element keeps its layout/anchor and stays responsive. Width/Height write directly.
+        // X and Y nudge the RENDERED position via transform, so the element keeps its layout and anchor.
         auto SizeField = [&](const char* Label, float* Cached, float Current, const char* Prop)
         {
             ImGui::SetNextItemWidth(110.0f);
@@ -4041,8 +3922,7 @@ namespace Lumina
         ImGui::Spacing();
         if (ImGui::Button(LE_ICON_BACKUP_RESTORE " Reset position"))
         {
-            // Strip every inline positioning prop so the element falls back to its RCSS layout. Also clears
-            // stale position:absolute+left/top that an earlier build's drag may have left behind.
+            // Also clears a stale absolute position an earlier build's drag may have left behind.
             SetSlotInlineStyle(SelectedSlotId, {
                 { "transform", "" }, { "position", "" },
                 { "left", "" }, { "top", "" }, { "right", "" }, { "bottom", "" } });

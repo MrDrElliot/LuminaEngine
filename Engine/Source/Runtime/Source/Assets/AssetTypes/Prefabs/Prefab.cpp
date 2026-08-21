@@ -40,8 +40,7 @@ namespace Lumina
         bool IsRuntimeOnlyComponent(entt::id_type ID)
         {
             if (ID == entt::type_hash<SPrefabInstanceComponent>::value()) return true;
-            // The override ledger lives on the instance root and is absent from the prefab, so the prune
-            // pass would otherwise delete it; it must survive every refresh.
+            // The ledger lives on the instance root and is absent from the prefab, so it must survive every refresh.
             if (ID == entt::type_hash<SPrefabOverrideComponent>::value()) return true;
             if (ID == entt::type_hash<SRigidBodyComponent>::value())      return true;
             if (ID == entt::type_hash<FNeedsTransformUpdate>::value())    return true;
@@ -54,11 +53,10 @@ namespace Lumina
             return FName(FGuid::New().ToShortString());
         }
 
-        // Game thread only: every writer below runs from world init, the prefab editor, or asset capture.
+        // Game thread only, since every writer runs from world init, the prefab editor or asset capture.
         uint32 GDataGeneration = 0;
 
-        // CopyRegistry extra-skip when capturing from a live world: nested instance tracking and the
-        // override ledger must not leak into the new prefab (entities get fresh SPrefabComponent tags instead).
+        // Nested instance tracking must not leak into the new prefab, which gets fresh tags instead.
         bool ShouldSkipInstanceComponent(entt::id_type ID)
         {
             return ID == entt::type_hash<SPrefabInstanceComponent>::value()
@@ -86,8 +84,7 @@ namespace Lumina
             return nullptr;
         }
 
-        // Tag root + descendants so the transform system reconciles world matrices this frame,
-        // else freshly spawned entities render at a stale position for one frame.
+        // Otherwise freshly spawned entities render at a stale position for one frame.
         void MarkSubtreeTransformsDirty(entt::registry& Registry, entt::entity Root)
         {
             if (!Registry.valid(Root))
@@ -117,8 +114,7 @@ namespace Lumina
         LUMINA_MEMORY_SCOPE("Prefabs");
         CObject::Serialize(Ar);
 
-        // A variant stores its DELTA here, never resolved data: resolved data would go stale the moment
-        // the parent changed, which is the one thing a variant must not do.
+        // Resolved data would go stale the moment the parent changed, which a variant must never do.
         bool bVariantPayload = IsVariant();
         if (Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::PREFAB_VARIANTS)
         {
@@ -137,8 +133,7 @@ namespace Lumina
         LUMINA_MEMORY_SCOPE("Prefabs");
         CObject::PostLoad();
 
-        // Not in Serialize: resolving reads the parent's registry, and a dependency's DATA is not loaded
-        // yet at serialize time (see the phased loader). By PostLoad the whole dependency set is in.
+        // A dependency's DATA is not loaded at serialize time, and by PostLoad the whole set is in.
         if (IsVariant())
         {
             ResolveVariant();
@@ -201,8 +196,7 @@ namespace Lumina
             }
         }
 
-        // Re-emplace rigid bodies with an invalid Jolt BodyID so on_construct builds a fresh body;
-        // copying the live id makes the physics scene skip creation (AlreadyExists).
+        // Copying the live Jolt id makes the physics scene skip creation as already existing.
         for (auto& [SrcE, DestE] : OutMap)
         {
             if (const SRigidBodyComponent* SrcBody = Source.try_get<SRigidBodyComponent>(SrcE))
@@ -238,8 +232,7 @@ namespace Lumina
             Dest.emplace_or_replace<FRelationshipComponent>(It->second, DestRel);
         });
 
-        // Remap reflected entity-handle fields onto the copied entities; references escaping the
-        // copied set are cleared so a stale id can't alias an unrelated entity in Dest.
+        // References escaping the copied set are cleared, so a stale id cannot alias an unrelated entity.
         for (auto& [SrcE, DestE] : OutMap)
         {
             ECS::Utils::RemapEntityReferences(Dest, DestE, OutMap, /*bClearUnmapped*/ true);
@@ -422,9 +415,7 @@ namespace Lumina
                 ToDestroy.push_back(WorldE);
             }
         }
-        // Rescue surviving instance entities nested under a to-be-destroyed one: deleting a prefab entity
-        // whose children survive (reparented in the prefab) must not take those children down with it.
-        // Detach survivors to the root first; the hierarchy-mirror pass below re-nests them per the prefab.
+        // Survivors detach to the root first, and the hierarchy-mirror pass re-nests them per the prefab.
         THashSet<entt::entity> DeadSet;
         DeadSet.reserve(ToDestroy.size());
         for (entt::entity E : ToDestroy)
@@ -495,8 +486,7 @@ namespace Lumina
             }
         }
 
-        // Read the instance's override ledger (root-only). Absent => nothing overridden, every inherited
-        // component refreshes wholesale (legacy behavior, preserved for un-edited instances).
+        // Absent means nothing overridden, so every inherited component refreshes wholesale.
         THashMap<FName, THashMap<FName, THashSet<FName>>> OverriddenLeaves; // node StableID -> comp name -> leaf paths
         THashMap<FName, THashSet<FName>> AddedComponents;                   // node StableID -> comp names
         THashMap<FName, THashSet<FName>> RemovedComponents;                 // node StableID -> comp names
@@ -516,15 +506,11 @@ namespace Lumina
             }
         }
 
-        // Transform is always per-instance: never propagated from the prefab and never pruned, at any node.
-        // This subsumes the old root-only special case and keeps gizmo edits (which bypass the property hook).
+        // This subsumes the old root-only case and keeps gizmo edits, which bypass the property hook.
         const entt::id_type TransformID = entt::type_hash<STransformComponent>::value();
         const entt::id_type ScriptComponentID = entt::type_hash<SEntityScriptComponent>::value();
 
-        // Replacing a component destroys the value it held, and for scripts that value is a set of live
-        // CObjects running user code. entt's replace raises on_update, not on_destroy, so the world's detach
-        // hook never fires and OnDetach is skipped -- leaving whatever the script registered (UI documents,
-        // input bindings, timers) bound to an object that is about to be freed.
+        // entt's replace raises on_update rather than on_destroy, so a script's OnDetach is skipped.
         auto EmplaceFromPrefab = [&](entt::id_type ID, const entt::meta_type& MetaType, entt::entity WorldE, void* SrcCompPtr)
         {
             using namespace entt::literals;
@@ -587,9 +573,7 @@ namespace Lumina
 
                 void* SrcCompPtr = PrefabStorage.value(PrefabE);
 
-                // Transform is per-instance: seed it from the prefab only when the node has none yet (freshly
-                // spawned), never overwriting a placed/edited/gizmoed transform. A spawned entity left with no
-                // transform would crash the hierarchy-mirror reparent (ReparentEntity requires one).
+                // A spawned entity left with no transform would crash the hierarchy-mirror reparent.
                 if (ID == TransformID)
                 {
                     auto* WorldXform = WorldRegistry.storage(ID);
@@ -602,7 +586,7 @@ namespace Lumina
                     continue;
                 }
 
-                // Fast path: a node with no override/removal ledger refreshes exactly as before.
+                // A node with no ledger refreshes exactly as before.
                 if (!bNodeHasLedger)
                 {
                     PrefabComponentIDs.insert(ID);
@@ -617,7 +601,7 @@ namespace Lumina
                 }
                 const FName CompName = CompStruct ? CompStruct->GetName() : FName();
 
-                // The instance deleted this inherited component: leave it absent (don't re-add).
+                // The instance deleted this inherited component, so leave it absent rather than re-adding.
                 if (NodeRemoved && !CompName.IsNone() && NodeRemoved->find(CompName) != NodeRemoved->end())
                 {
                     continue;
@@ -643,8 +627,7 @@ namespace Lumina
                     }
                 }
 
-                // Overridden component the instance already holds => merge per leaf, keeping overridden
-                // leaves. Otherwise replace wholesale (also adds a missing inherited component).
+                // Otherwise replace wholesale, which also adds a missing inherited component.
                 if (CompOverrides != nullptr && DstCompPtr != nullptr)
                 {
                     PrefabOverride::ApplyInheritedLeaves(CompStruct, DstCompPtr, SrcCompPtr, *CompOverrides);
@@ -656,8 +639,7 @@ namespace Lumina
                 }
             }
 
-            // Remove components on the instance the prefab no longer ships (skip non-replicated/runtime-only,
-            // transform, and instance-added components).
+            // Skips non-replicated, transform and instance-added components.
             TVector<entt::id_type> ToRemoveStorages;
             for (auto&& [ID, WorldStorage] : WorldRegistry.storage())
             {
@@ -692,18 +674,11 @@ namespace Lumina
                 }
             }
 
-            // Entity-handle fields copied from the prefab hold prefab ids; remap them onto the instance.
-            // When the entity carries overrides, don't clear unmapped ids: an overridden handle may point at
-            // a world entity outside the prefab. Prefab-authored handles never escape the prefab (CaptureFromWorld
-            // clears escaping refs), so inherited handles still resolve through the map either way.
+            // Prefab-authored handles never escape the prefab, so inherited handles resolve either way.
             ECS::Utils::RemapEntityReferences(WorldRegistry, WorldE, PrefabToInstance, /*bClearUnmapped*/ !bEntityHasOverrides);
         });
 
-        // Re-stamp instance tracking components and rebuild hierarchy. get_or_emplace, NOT
-        // emplace_or_replace: replacing assigns a default-constructed temp over the existing component,
-        // which releases its SourcePrefab strong ref before the line below re-adds it. Instance components
-        // are the only strong refs a placed prefab has (packages hold exports weakly), so for a prefab
-        // whose sole live holder is this entity that transient zero destroys the prefab mid-refresh.
+        // Replacing releases the SourcePrefab strong ref, and that transient zero can free the prefab mid-refresh.
         for (auto& [StableID, WorldE] : InstanceByStableID)
         {
             if (!WorldRegistry.valid(WorldE)) continue;
@@ -741,8 +716,7 @@ namespace Lumina
 
             const FRelationshipComponent* CurrentRel = WorldRegistry.try_get<FRelationshipComponent>(WorldE);
             const entt::entity CurrentParent = CurrentRel ? CurrentRel->Parent : entt::null;
-            // ReparentEntity requires a transform on both child and new parent; guard so a transform-less
-            // node (e.g. a prefab entity that never shipped one) can't crash the refresh.
+            // ReparentEntity requires a transform on both sides, so a transform-less node would crash the refresh.
             if (CurrentParent != DesiredWorldParent
                 && WorldRegistry.valid(DesiredWorldParent)
                 && WorldRegistry.all_of<STransformComponent>(WorldE)
@@ -765,8 +739,7 @@ namespace Lumina
 
         entt::registry& WorldRegistry = ECS::GetWorldRegistry(*World);
 
-        // Belt-and-suspenders: also cull orphans here (InitializeWorld culls the pending set pre-swap, but
-        // other paths reach this without that step).
+        // InitializeWorld culls the pending set pre-swap, but other paths reach this without that step.
         CullOrphanedInstances(WorldRegistry);
 
         TVector<entt::entity> Roots;
@@ -798,8 +771,7 @@ namespace Lumina
             return;
         }
 
-        // Every registered world (editor level, PIE, etc.). Worlds with no instance of this prefab
-        // simply do no work; the prefab editor's own preview world holds SPrefabComponent (not instances).
+        // A world with no instance does no work, and the prefab editor's preview holds tags, not instances.
         for (const TUniquePtr<FWorldContext>& Context : GWorldManager->GetContexts())
         {
             CWorld* World = Context ? Context->World.Get() : nullptr;
@@ -828,8 +800,7 @@ namespace Lumina
 
     void CPrefab::CullOrphanedInstances(entt::registry& Registry)
     {
-        // An instance whose source prefab was deleted resolves SourcePrefab to null on load (the asset can't
-        // be found or loaded), or to a marked-destroy zombie. Either way the entity is garbage.
+        // SourcePrefab resolves to null or to a marked-destroy zombie, and either way the entity is garbage.
         TVector<entt::entity> Orphans;
         Registry.view<SPrefabInstanceComponent>().each([&](entt::entity E, const SPrefabInstanceComponent& Inst)
         {
@@ -865,8 +836,7 @@ namespace Lumina
 
             entt::registry& WorldRegistry = ECS::GetWorldRegistry(*World);
 
-            // Every entity sourced from this prefab (roots + descendants). Detached subtrees have no
-            // SPrefabInstanceComponent, so they are not matched and survive.
+            // A detached subtree has no instance component, so it is not matched and survives.
             TVector<entt::entity> Matching;
             WorldRegistry.view<SPrefabInstanceComponent>().each([&](entt::entity E, const SPrefabInstanceComponent& Inst)
             {
@@ -876,8 +846,7 @@ namespace Lumina
                 }
             });
 
-            // DestroyEntityHierarchy on a root also destroys its descendants; entries already destroyed by an
-            // earlier iteration are skipped via valid(). Clean parent unlink, so no dangling relationships.
+            // Entries destroyed by an earlier iteration are skipped by the validity check, so no link dangles.
             for (entt::entity E : Matching)
             {
                 if (WorldRegistry.valid(E))
@@ -907,8 +876,7 @@ namespace Lumina
             return false;
         }
 
-        // Strip the tracking component from root + descendants tagged for this prefab, leaving
-        // plain entities; world load no longer refreshes them against the source asset.
+        // Leaves plain entities behind, so world load no longer refreshes them against the source asset.
         TVector<entt::entity> ToStrip;
         ToStrip.reserve(16);
         ToStrip.push_back(InstanceRoot);
@@ -951,15 +919,13 @@ namespace Lumina
             EntitiesToCapture.push_back(E);
         });
 
-        // Copy the captured subtree into a fresh registry; CopyRegistry remaps hierarchy +
-        // entity-handle fields (escaping refs fall to null) and skips nested instance tracking.
+        // CopyRegistry remaps hierarchy and handle fields, and skips nested instance tracking.
         BumpDataGeneration();
         Registry = entt::registry{};
         THashMap<entt::entity, entt::entity> Map;
         CopyRegistry(WorldRegistry, Registry, Map, &EntitiesToCapture, &ShouldSkipInstanceComponent);
 
-        // Tag each captured entity with a stable id (reusing an existing instance tag when present)
-        // so RefreshInstance can match prefab entities to their placed counterparts.
+        // Reuses an existing instance tag when present, so RefreshInstance can match placed counterparts.
         for (entt::entity SrcE : EntitiesToCapture)
         {
             auto It = Map.find(SrcE);
@@ -1032,8 +998,7 @@ namespace Lumina
             return nullptr;
         }
 
-        // Storages that describe structure or identity rather than authored values; the delta records
-        // those separately (by StableID) so they are never diffed as component data.
+        // The delta records these separately by StableID, so they are never diffed as component data.
         bool IsStructuralStorage(entt::id_type ID)
         {
             return ID == entt::type_hash<SPrefabComponent>::value()
@@ -1123,8 +1088,7 @@ namespace Lumina
 
         THashMap<FName, entt::entity> Resolved = IndexByStableID(Registry);
 
-        // Entities the variant deletes. Children that survive are rescued to the root first, then the
-        // structural pass below re-nests them, exactly as an instance refresh does.
+        // Surviving children are rescued to the root first, exactly as an instance refresh does.
         for (const FName& DeadID : VariantRemovedEntities)
         {
             auto It = Resolved.find(DeadID);
@@ -1155,8 +1119,7 @@ namespace Lumina
             Resolved.erase(It);
         }
 
-        // Copy the variant's authored entities in. An entity with no counterpart in the resolved parent
-        // data is one the variant adds; the rest carry only the components it diverges on.
+        // An entity with no counterpart is one the variant adds, and the rest carry only its divergences.
         THashMap<FName, THashSet<FName>> RemovedByNode;
         for (const SPrefabComponentRef& Ref : VariantRemovedComponents)
         {
@@ -1191,8 +1154,7 @@ namespace Lumina
             DeltaToResolved[DeltaE] = NewE;
         });
 
-        // Component values. A component absent from the resolved data is emplaced wholesale (the variant
-        // adds it, or the node itself is new); one that exists takes only its overridden leaves.
+        // A component absent from the resolved data is emplaced wholesale, otherwise only its leaves land.
         VariantDelta.view<SPrefabComponent>().each([&](entt::entity DeltaE, const SPrefabComponent& Comp)
         {
             auto DestIt = DeltaToResolved.find(DeltaE);
@@ -1234,8 +1196,7 @@ namespace Lumina
                     }
                 }
 
-                // Whole-component: the resolved data has no such component, or the delta recorded no leaf
-                // set for it (an added component). Otherwise write just the leaves the variant authors.
+                // Otherwise write just the leaves the variant authors.
                 if (DstPtr == nullptr || Leaves == nullptr || CompStruct == nullptr)
                 {
                     entt::meta_any SrcAny = MetaType.from_void(SrcPtr);
@@ -1279,7 +1240,7 @@ namespace Lumina
             }
         }
 
-        // Parentage last: every node the delta addresses now exists.
+        // Parentage last, since every node the delta addresses now exists.
         for (const SPrefabVariantNode& Node : VariantStructuralNodes)
         {
             auto ChildIt = Resolved.find(Node.StableID);
@@ -1333,8 +1294,7 @@ namespace Lumina
             }
         }
 
-        // Entities whose divergence has to be authored: added outright, reparented, or carrying a changed
-        // component. Collected first so the delta registry is built in one copy.
+        // Collected first so the delta registry is built in one copy.
         TVector<entt::entity> DivergedEntities;
         THashMap<FName, THashSet<FName>> KeepComponentsByNode;
 
@@ -1359,7 +1319,7 @@ namespace Lumina
 
             bool bNodeDiverged = false;
 
-            // Components this variant carries: added outright, or diverged on some leaf.
+            // Components this variant carries, added outright or diverged on some leaf.
             for (auto&& [ID, MyStorage] : Registry.storage())
             {
                 if (IsStructuralStorage(ID) || IsNonReplicatedStorage(ID)) continue;
@@ -1424,8 +1384,7 @@ namespace Lumina
         THashMap<entt::entity, entt::entity> Map;
         CopyRegistry(Registry, VariantDelta, Map, &DivergedEntities);
 
-        // Strip components that matched the parent: the delta is storage for authored values only, and
-        // carrying the rest would silently freeze them against future parent edits.
+        // The delta stores authored values only, and carrying the rest would freeze them against parent edits.
         VariantDelta.view<SPrefabComponent>().each([&](entt::entity DeltaE, const SPrefabComponent& Comp)
         {
             auto KeepIt = KeepComponentsByNode.find(Comp.StableID);
@@ -1465,8 +1424,7 @@ namespace Lumina
 
     void CPrefab::PropagateToVariants()
     {
-        // Breadth-first over the variant graph so a chain resolves parents before children. Each level is
-        // gathered before it is resolved, since resolving can load nothing new but the list must be stable.
+        // Each level is gathered before it resolves, since resolving loads nothing but the list must be stable.
         TVector<CPrefab*> Frontier = FindDirectVariants();
         THashSet<CPrefab*> Seen;
 
@@ -1499,8 +1457,7 @@ namespace Lumina
         {
             if (!Comp.StableID.IsNone())
             {
-                // First wins, matching the old scan. A duplicate id is a bug elsewhere; picking the same
-                // entity every time at least keeps the override baseline stable.
+                // A duplicate id is a bug elsewhere, and picking the same entity keeps the baseline stable.
                 StableIDLookup.try_emplace(Comp.StableID, E);
             }
         });
@@ -1513,10 +1470,7 @@ namespace Lumina
             return entt::null;
         }
 
-        // Every mutation path bumps the generation (the prefab editor's edits, RefreshInstance,
-        // CaptureFromWorld), so this rebuilds exactly when the data it indexes changed. It is a global
-        // counter, so an unrelated prefab's edit costs one extra rebuild -- cheap next to rescanning
-        // every entity per property, which is what the details panel used to do.
+        // A global counter, so an unrelated edit costs one rebuild, cheap next to rescanning per property.
         const uint32 Generation = GetDataGeneration();
         if (!bStableIDLookupBuilt || StableIDLookupGeneration != Generation)
         {
@@ -1531,9 +1485,7 @@ namespace Lumina
             return entt::null;
         }
 
-        // Verified rather than trusted: a registry edit that skipped the generation bump would otherwise
-        // hand back a recycled entity, and a wrong component is far worse here than a missing one -- this
-        // is the baseline the details panel diffs overrides against.
+        // A missed generation bump would hand back a recycled entity, and a wrong component is worse than none.
         const entt::entity Cached = It->second;
         if (!Registry.valid(Cached))
         {
@@ -1663,8 +1615,7 @@ namespace Lumina
             return C.EntityStableID == NodeID && C.ComponentType == CompName;
         };
 
-        // Adding an inherited component back un-removes it (inherits again); a genuinely new component
-        // is recorded as instance-added so refresh never prunes it.
+        // A genuinely new component is recorded as instance-added, so refresh never prunes it.
         auto& Removed = Ledger.RemovedComponents;
         Removed.erase(Algo::RemoveIf(Removed.begin(), Removed.end(), MatchesPair), Removed.end());
 

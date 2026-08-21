@@ -63,8 +63,7 @@ namespace Lumina
             ImGui::ImageButton(Label, ButtonTexture.value(), ImVec2(64, 64));
             ImGui::EndDisabled();
 
-            // Asset drop target: any drag of an asset whose class is-a property's
-            // declared class binds the property to that asset.
+            // Any dragged asset whose class is-a the property's declared class binds to it.
             if (ImGui::BeginDragDropTarget())
             {
                 if (CObject* Dropped = DragDrop::AcceptAssetOfClass(ObjectProperty->GetPropertyClass()))
@@ -205,9 +204,7 @@ namespace Lumina
         
             FEditorUI* EditorUI = static_cast<FEditorUI*>(GEditorEngine->GetDevelopmentToolsUI());
 
-            // "Use the asset selected in the Content Browser". Outside the disabled block below on
-            // purpose: this is most useful when the slot is EMPTY, which is exactly when everything
-            // else here is grayed out. Enabled only for a selection this property could actually hold.
+            // Outside the disabled block, since this is most useful exactly when the slot is empty.
             const FAssetData* BrowserSelection = EditorUI != nullptr ? EditorUI->GetContentBrowserSelectedAsset() : nullptr;
             bool bSelectionFits = false;
             if (BrowserSelection != nullptr)
@@ -235,7 +232,7 @@ namespace Lumina
 
             ImGui::BeginDisabled(Object == nullptr);
 
-            // Reveal in the Content Browser -- the inverse of the button above.
+            // Reveal in the Content Browser, the inverse of the button above.
             if (ImGui::Button(LE_ICON_MAGNIFY "##Browse", GButtonSize))
             {
                 if (HardObject && HardObject->GetPackage() && EditorUI != nullptr)
@@ -284,8 +281,7 @@ namespace Lumina
             {
                 return EPropertyChangeOp::Updated;
             }
-            // Open the transaction now: StartChangeCallback snapshots the old value
-            // before UpdatePropertyValue writes the new one.
+            // Opened now, since StartChangeCallback snapshots the old value before the new one is written.
             bFinishPending = true;
             return EPropertyChangeOp::Started;
         }

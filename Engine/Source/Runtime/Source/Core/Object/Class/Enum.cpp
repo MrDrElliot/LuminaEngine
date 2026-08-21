@@ -77,9 +77,7 @@ namespace Lumina
     {
         FFixedString DisplayName = GetName().c_str();
 
-        // Drop the 'E' only when the name actually follows the convention, the same test the bool 'b'
-        // prefix gets in MakeDisplayNameFromName. Erasing unconditionally silently ate the first letter
-        // of any enum that did not start with one, which script-declared enums generally do not.
+        // Erasing unconditionally ate the first letter of any enum not following the convention.
         if (DisplayName.size() >= 2 && DisplayName[0] == 'E' && std::isupper((unsigned char)DisplayName[1]))
         {
             DisplayName.erase(0, 1);

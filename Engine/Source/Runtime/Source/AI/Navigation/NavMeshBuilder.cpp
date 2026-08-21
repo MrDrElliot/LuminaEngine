@@ -20,8 +20,7 @@ namespace Lumina::NavMeshBuilder
     namespace
     {
 #if defined(LUMINA_HAS_RECAST)
-        // Route Recast + Detour through our allocator + tracker, attributed to "Navigation".
-        // The Set*Custom calls only store function pointers, so a static initializer is safe.
+        // The Set functions only store function pointers, so a static initializer is safe.
         void* RecastAlloc(size_t Size, rcAllocHint) { LUMINA_MEMORY_SCOPE("Navigation"); return Memory::Malloc(Size); }
         void  RecastFree(void* Ptr)                 { if (Ptr) { Memory::Free(Ptr); } }
         void* DetourAlloc(size_t Size, dtAllocHint) { LUMINA_MEMORY_SCOPE("Navigation"); return Memory::Malloc(Size); }
@@ -59,16 +58,14 @@ namespace Lumina::NavMeshBuilder
             return Grid;
         }
 
-        // Per-tile triangle index buckets. Rasterizing the full input per tile is O(tiles * tris) and
-        // grinds to a halt once terrain / large meshes are in the volume; binning makes each tile O(its tris).
+        // Rasterizing the full input per tile grinds to a halt, while binning makes each tile local.
         struct FTileBins
         {
             TVector<uint32> Offsets;     // size TileCount + 1; tile t owns [Offsets[t], Offsets[t+1])
             TVector<int32>  TriIndices;  // flattened global triangle indices
         };
 
-        // A triangle belongs to a tile if its XZ AABB (grown by BorderSize, matching BakeTile's expanded
-        // bmin/bmax) overlaps the tile's world rect.
+        // Grown by BorderSize to match BakeTile's expanded bounds.
         void TriTileRange(const FNavBuildInput& In, const FTileGrid& Grid, int32 Tri, int32& TX0, int32& TY0, int32& TX1, int32& TY1)
         {
             const FVector3& A = In.Vertices[In.Indices[Tri * 3 + 0]];
@@ -94,7 +91,7 @@ namespace Lumina::NavMeshBuilder
                 return;
             }
 
-            // Counting sort: tally per tile, prefix-sum into offsets, then scatter.
+            // A counting sort, so tally per tile, prefix-sum into offsets, then scatter.
             for (int32 t = 0; t < NumTris; ++t)
             {
                 int32 TX0, TY0, TX1, TY1;
@@ -129,8 +126,7 @@ namespace Lumina::NavMeshBuilder
         }
 
 #if defined(LUMINA_HAS_RECAST)
-        // Pure over (Input, Grid, X, Y, tri-subset); safe to call concurrently. TileTriIndices/NumTileTris
-        // are the global triangle indices overlapping this tile (from FTileBins).
+        // Pure over its inputs, so it is safe to call concurrently.
         bool BakeTile(const FNavBuildInput& In, const FTileGrid& Grid, int32 TX, int32 TY, const int32* TileTriIndices, int32 NumTileTris, FNavTileData& Out)
         {
             const FNavBuildSettings& S = In.Settings;
@@ -362,8 +358,7 @@ namespace Lumina::NavMeshBuilder
         const FTileGrid Grid = ComputeGrid(Input);
         const uint32 TileCount = (uint32)(Grid.TilesX * Grid.TilesY);
 
-        // Hard cap: a huge tile count is one Recast pipeline per tile and reads as "stuck". Abort with a
-        // clear message (the drain turns the empty output into a Failed state) instead of grinding for minutes.
+        // A huge tile count is one Recast pipeline each and reads as stuck, so abort with a message.
         constexpr uint32 kMaxTiles = 8192;
         if (TileCount > kMaxTiles)
         {
@@ -465,7 +460,7 @@ namespace Lumina::NavMeshBuilder
         Grid.TilesX = Math::Max(1, (int32)std::ceil((Input.BoundsMax.x - Input.BoundsMin.x) / Grid.TileWorldSize));
         Grid.TilesY = Math::Max(1, (int32)std::ceil((Input.BoundsMax.z - Input.BoundsMin.z) / Grid.TileWorldSize));
 
-        // Single tile: cull the input to just this tile's overlapping triangles.
+        // A single tile culls the input to just this tile's overlapping triangles.
         const int32 NumTris = (int32)(Input.Indices.size() / 3);
         TVector<int32> TileTris;
         TileTris.reserve(64);

@@ -82,8 +82,7 @@ namespace Lumina::Threading
         ::syscall(SYS_futex, (uint32*)Address, FUTEX_WAKE_PRIVATE, INT32_MAX, nullptr, nullptr, 0);
     }
 
-    // Not read from sysfs yet: without it the scheduler treats every worker as equidistant, which is what it
-    // did before topology existed at all.""
+    // Without it the scheduler treats every worker as equidistant, as it did before topology existed.
     uint32 GetCpuTopology(FCpuTopology* /*Out*/, uint32 /*MaxCount*/)
     {
         return 0;

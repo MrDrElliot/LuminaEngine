@@ -18,8 +18,7 @@ namespace Lumina
 {
     namespace
     {
-        // Column identity, shared by the header setup and the sort, so reordering the columns cannot
-        // silently start sorting by the wrong field.
+        // Shared by the header setup and the sort, so reordering columns cannot sort the wrong field.
         enum EObjectColumn : int32
         {
             Column_Name = 0,
@@ -107,8 +106,7 @@ namespace Lumina
         TotalSlots = GObjectArray.GetMaxObjects();
         Rows.reserve((size_t)Math::Max(TotalAlive, 0));
 
-        // The ONE walk. Everything the table needs is resolved to a value here, so the draw path never
-        // touches the object array, never builds a string and never dereferences a CObject.
+        // The ONE walk, so the draw path never touches the object array or dereferences a CObject.
         GObjectArray.ForEachObject([this](CObjectBase* Base, int32 Index)
         {
             CObject* Object = static_cast<CObject*>(Base);
@@ -187,9 +185,7 @@ namespace Lumina
             int32 Comparison = 0;
             switch (Column)
             {
-            // Compares the cached name's characters directly. The old browser's comparator called
-            // GetName().ToString() on BOTH sides of every comparison -- two heap allocations per compare,
-            // O(N log N) of them, every frame.
+            // The old comparator called ToString on both sides, two heap allocations per compare per frame.
             case Column_Name:       Comparison = strcmp(RowA.Name.c_str(), RowB.Name.c_str()); break;
             case Column_Class:      Comparison = strcmp(RowA.ClassName.c_str(), RowB.ClassName.c_str()); break;
             case Column_Package:    Comparison = strcmp(RowA.PackageName.c_str(), RowB.PackageName.c_str()); break;
@@ -257,16 +253,14 @@ namespace Lumina
         ImGui::SameLine();
         ImGui::TextDisabled("|");
 
-        // Counts come from the snapshot, so they describe what is actually on screen. The previous tool
-        // printed two function-local statics that were never assigned, so it always showed 0.
+        // Counts come from the snapshot, so they describe what is actually on screen.
         ImGui::SameLine();
         ImGui::AlignTextToFramePadding();
         ImGui::Text("%d shown", (int32)VisibleRows.size());
         ImGui::SameLine();
         ImGui::TextDisabled("of %d live / %d slots", TotalAlive, TotalSlots);
 
-        // A filter change invalidates the visible SET, never the snapshot. Re-walking the object array for
-        // every keystroke is what made the old tool feel slow.
+        // A filter change invalidates the visible SET, never the snapshot, so no re-walk per keystroke.
         bool bFilterChanged = false;
 
         ImGui::SetNextItemWidth(200.0f);
@@ -340,8 +334,7 @@ namespace Lumina
             }
         }
 
-        // Rebuilt here, after the sort spec is known and before the clipper indexes the list -- doing it
-        // earlier would leave the clipper walking a list ordered for the previous spec for one frame.
+        // After the sort spec is known, or the clipper walks a list ordered for the previous spec.
         if (bVisibleRowsDirty)
         {
             RebuildVisibleRows();
@@ -363,7 +356,7 @@ namespace Lumina
 
                 ImGui::TableSetColumnIndex(Column_Name);
 
-                // Compared by resolved pointer, not row index: the index changes on every refilter and sort.
+                // Compared by resolved pointer, since the index changes on every refilter and sort.
                 const bool bSelected = (Selected != nullptr) && (Selected == Row.Object.Get());
                 if (ImGui::Selectable(Row.Name.c_str(), bSelected, ImGuiSelectableFlags_SpanAllColumns))
                 {
@@ -380,8 +373,7 @@ namespace Lumina
                     {
                         ImGui::SetClipboardText(Row.ClassName.c_str());
                     }
-                    // Resolved on demand: the GUID is only wanted when asked for, so it is not worth a
-                    // string per row per snapshot.
+                    // Resolved on demand, since the GUID is not worth a string per row per snapshot.
                     if (CObject* Live = Row.Object.Get())
                     {
                         if (ImGui::MenuItem(LE_ICON_CONTENT_COPY " Copy GUID"))
@@ -427,8 +419,7 @@ namespace Lumina
 
         if (Object == nullptr)
         {
-            // "Nothing picked" and "what you picked has since died" are different answers, and in a tool
-            // used to watch objects die the difference is the whole point.
+            // Nothing picked and what you picked has died are different answers, which is the point here.
             if (SelectedObject.IsStale())
             {
                 ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f), "The selected object has been destroyed.");
@@ -447,7 +438,7 @@ namespace Lumina
         ImGui::TextUnformatted(Object->GetName().c_str());
         ImGuiX::Font::PopFont();
 
-        // Class chain: the quickest way to see what a thing actually is and what it inherits.
+        // The class chain is the quickest way to see what a thing is and what it inherits.
         FString Chain;
         for (CClass* Class = Object->GetClass(); Class != nullptr; Class = Cast<CClass>(Class->GetSuperStruct()))
         {
@@ -472,8 +463,7 @@ namespace Lumina
         ImGui::Separator();
         ImGui::Spacing();
 
-        // Rebound only when the selection actually changes: the table carries expansion and scroll state,
-        // and rebuilding it per frame would reset all of it.
+        // Rebound only on a real selection change, since the table carries expansion and scroll state.
         if (DetailsBoundObject != Object)
         {
             DetailsBoundObject = Object;
@@ -482,8 +472,7 @@ namespace Lumina
 
         if (DetailsTable)
         {
-            // Read-only on purpose: this is an inspector. Letting a debug list write into arbitrary engine
-            // objects -- class defaults included -- is a far bigger promise than the tool is making.
+            // Read-only on purpose, since letting a debug list write into class defaults is a bigger promise.
             DetailsTable->DrawTree(/*bReadOnly*/ true);
         }
     }

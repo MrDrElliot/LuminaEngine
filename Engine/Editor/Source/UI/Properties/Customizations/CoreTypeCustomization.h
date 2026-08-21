@@ -12,6 +12,8 @@
 
 namespace Lumina
 {
+    class CAnimationGraph;
+
     static bool IsFloatType(ImGuiDataType dt)
     {
         return dt == ImGuiDataType_Float || dt == ImGuiDataType_Double;
@@ -377,6 +379,11 @@ namespace Lumina
         void HandleExternalUpdate(const TSharedPtr<FPropertyHandle>& Property) override;
 
     private:
+
+        EPropertyChangeOp DrawNameCombo(const char* StrId, const TVector<FName>& Choices, const char* ItemIcon,
+                                        const char* StaleHint, const char* EmptyHint, bool bAllowCreate);
+        EPropertyChangeOp DrawParameterCombo(CAnimationGraph* Graph, bool bObjectValued);
+        EPropertyChangeOp DrawCurveCombo(CAnimationGraph* Graph);
 
         FName CachedValue;
         FName DisplayValue;

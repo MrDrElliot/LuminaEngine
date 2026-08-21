@@ -66,8 +66,7 @@ namespace Lumina
         CEdNodeGraph::Shutdown();
     }
 
-    // Reverse-BFS from a pin to partition nodes into pixel vs. vertex (WPO) sets.
-    // Reroutes are traversed but not added to the set; the compile loop skips them anyway.
+    // Reroutes are traversed but not added, since the compile loop skips them anyway.
     static void CollectInputClosure(CEdNodeGraphPin* StartPin, THashSet<CEdGraphNode*>& OutSet)
     {
         if (StartPin == nullptr || !StartPin->HasConnection())
@@ -92,8 +91,7 @@ namespace Lumina
             }
         }
 
-        // Reroutes are not added to OutSet, so they need their own visited set. Without it a named
-        // reroute pointing at a declaration downstream of itself would spin here forever.
+        // Without its own visited set a named reroute pointing downstream of itself spins forever.
         THashSet<CEdGraphNode*> VisitedPassthrough;
 
         auto Enqueue = [&](CEdGraphNode* Up)
@@ -144,8 +142,7 @@ namespace Lumina
         }
     }
 
-    // Emission order for one stage: depth-first POST-ORDER from that stage's root pins, so a node is
-    // emitted just before its first consumer and live ranges stay as short as the graph allows.
+    // Post-order, so a node is emitted just before its first consumer and live ranges stay short.
     static void CollectEmitOrderDepthFirst(CEdGraphNode* Node,
                                            const THashSet<CEdGraphNode*>& StageSet,
                                            THashSet<CEdGraphNode*>& Emitted,
@@ -159,8 +156,7 @@ namespace Lumina
             return;
         }
 
-        // Reroutes emit nothing -- GetTypedInputValue resolves through them -- but their source still has
-        // to be walked, and a named reroute can point at a declaration downstream of itself.
+        // Reroutes emit nothing, but their source still has to be walked, possibly downstream of itself.
         if (Node->IsRerouteNode())
         {
             if (!InProgress.insert(Node).second)
@@ -198,8 +194,7 @@ namespace Lumina
         OutOrder.push_back(Node);
     }
 
-    // Kept as a thin alias so all reroute resolution lives in one place; see
-    // FMaterialCompiler::ResolveThroughReroutes.
+    // A thin alias so all reroute resolution lives in FMaterialCompiler::ResolveThroughReroutes.
     static CMaterialOutput* ResolveOutputThroughReroutes(CMaterialOutput* OutputPin)
     {
         return FMaterialCompiler::ResolveThroughReroutes(OutputPin);
@@ -209,22 +204,13 @@ namespace Lumina
     // Infers the promoted output type after binary-op promotion without running full emit.
     static EMaterialInputType InferOutputType(CEdNodeGraphPin* InputPin, int32 Depth = 0);
 
-    /**
-     * A math node's output pin still carries its BuildNode default (Float) at validation time -- the
-     * promoted width is only stamped during emit, which runs AFTER this check. Reading the pin directly
-     * therefore reports every math chain as a float, no matter how wide it actually is, and rejects it on
-     * any pin that does not allow broadcast.
-     *
-     * So recompute the promotion here, by the same rule FMaterialCompiler::DetermineResultType uses for
-     * component-wise ops: a one-component operand takes the other side's width, otherwise the wider wins.
-     * An unconnected input is the node's scalar ConstA/ConstB, which is a float.
-     */
+    // The promoted width is stamped during emit, so the pin still reads Float at validation time.
     static EMaterialInputType InferMathOutputType(CMaterialExpression_Math* Node, int32 Depth)
     {
         const EMaterialInputType AType = InferOutputType(Node->A, Depth + 1);
         if (Node->B == nullptr || !Node->B->HasConnection())
         {
-            // Unary, or binary against a scalar constant: the width passes straight through.
+            // Unary, or binary against a scalar constant, so the width passes straight through.
             return AType;
         }
 
@@ -257,7 +243,7 @@ namespace Lumina
             return EMaterialInputType::Float;
         }
 
-        // Bounded like ResolveThroughReroutes: a cyclic graph must not recurse forever.
+        // Bounded like ResolveThroughReroutes, since a cyclic graph must not recurse forever.
         constexpr int32 MaxDepth = 64;
         if (Depth < MaxDepth)
         {
@@ -270,7 +256,7 @@ namespace Lumina
         return SourcePin->InputType;
     }
 
-    // Pre-emit type check: catches mismatches where no math op fires so no promotion happens.
+    // A pre-emit type check, catching mismatches where no math op fires and no promotion happens.
     static void ValidateOutputConnections(CMaterialOutputNode* OutputNode, FMaterialCompiler& Compiler)
     {
         if (OutputNode == nullptr)
@@ -417,13 +403,11 @@ namespace Lumina
 
         THashSet<CEdGraphNode*> VertexSet;
         THashSet<CEdGraphNode*> PixelSet;
-        // Both the closure and the emit roots below come from this one list, and it comes from the output
-        // node itself: a pin the node assigns from but that is missing here emits an assignment referencing
-        // a variable nothing ever declared, which fails the whole material's compile.
+        // A pin the output assigns from but that is missing here emits a reference nothing declared.
         TVector<CEdNodeGraphPin*> PixelPins;
         if (OutputNode)
         {
-            // Vertex stage: only WPO contributes for now.
+            // Only World Position Offset contributes to the vertex stage for now.
             CollectInputClosure(OutputNode->WorldPositionOffsetPin, VertexSet);
 
             OutputNode->GetPixelStagePins(PixelPins);
@@ -436,8 +420,7 @@ namespace Lumina
         Compiler.NewLine();
         Compiler.NewLine();
 
-        // Falls back to the global topological order if the depth-first walk did not reach the whole set.
-        // The fallback is the previous behavior: still correct, just with the longer live ranges.
+        // The fallback is the previous behavior, still correct but with longer live ranges.
         auto BuildEmitOrder = [&SortedNodes](const THashSet<CEdGraphNode*>& StageSet,
                                              const TVector<CEdNodeGraphPin*>& RootPins) -> TVector<CEdGraphNode*>
         {
@@ -472,8 +455,7 @@ namespace Lumina
             return Order;
         };
 
-        // Same list the closure was built from, so a node that was collected always has a root to be
-        // ordered from and can never end up emitted after the assignment that reads it.
+        // The same list the closure came from, so a collected node always has a root to be ordered from.
         const TVector<CEdNodeGraphPin*>& PixelRoots = PixelPins;
 
         Compiler.SetStage(EMaterialCompileStage::Pixel);
@@ -509,8 +491,7 @@ namespace Lumina
             }
         }
 
-        // Output node: emits per-stage assignment chunks via AddPixelOutput /
-        // AddVertexOutput regardless of cursor.
+        // The output node emits per-stage assignment chunks regardless of the cursor.
         if (OutputNode)
         {
             OutputNode->GenerateDefinition(Compiler);
@@ -553,8 +534,7 @@ namespace Lumina
 
     void CMaterialNodeGraph::DrawCanvasDropTarget()
     {
-        // The node editor consumes the canvas region itself and leaves no item behind, so the target is
-        // registered over the whole host window rect (same pattern as the anim graph's clip drops).
+        // The node editor consumes the canvas and leaves no item, so the target covers the host rect.
         ImGuiWindow* Window = ImGui::GetCurrentWindow();
         if (Window == nullptr)
         {
@@ -563,8 +543,7 @@ namespace Lumina
 
         if (ImGui::BeginDragDropTargetCustom(Window->Rect(), Window->ID))
         {
-            // Arrays are checked BEFORE plain textures: CTextureArray derives from CTexture, so the accept
-            // below would claim one and spawn a node sampling slice 0 as if it were a 2D texture.
+            // CTextureArray derives from CTexture, so the plain accept would sample slice 0 as a 2D texture.
             if (CTextureArray* DroppedArray = DragDrop::AcceptAsset<CTextureArray>())
             {
                 SpawnAssetNode(CMaterialExpression_TextureSampleArray::StaticClass(), DroppedArray, ImGui::GetMousePos());

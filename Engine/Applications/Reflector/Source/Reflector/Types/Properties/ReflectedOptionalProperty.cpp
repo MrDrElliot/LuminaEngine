@@ -7,7 +7,7 @@ namespace Lumina
 {
     namespace
     {
-        // Order must match FOptionalPropertyParams: HasValue, GetValue, SetValue, Reset.
+        // Order must match FOptionalPropertyParams, so HasValue, GetValue, SetValue, then Reset.
         constexpr const char* kOptionalFatTailSuffixes[] =
         {
             "OptionalHasValue_WrapperImpl",
@@ -60,8 +60,7 @@ namespace Lumina
         const char* Raw = RawTypeName.c_str();      // The wrapper type, e.g. TOptional<T>.
         const char* Elem = ElementTypeName.c_str(); // The payload type T.
 
-        // Object is the optional instance itself (&TOptional<T>), not the owning struct.
-        // The caller resolves the member offset via GetValuePtr, so optionals compose.
+        // Object is the optional instance itself, and the caller resolves the member offset via GetValuePtr.
 
         // HasValue
         Writer.Linef("bool %s%sOptionalHasValue_WrapperImpl(const void* Object)", Q.c_str(), N);
@@ -78,7 +77,7 @@ namespace Lumina
         Writer.EndBlock();
         Writer.Line();
 
-        // SetValue: copy-emplace when given a value, default-construct when null.
+        // Copy-emplaces when given a value and default-constructs when null.
         Writer.Linef("void %s%sOptionalSetValue_WrapperImpl(void* Object, const void* InValue)", Q.c_str(), N);
         Writer.BeginBlock();
         Writer.Linef("%s* Opt = (%s*)Object;", Raw, Raw);

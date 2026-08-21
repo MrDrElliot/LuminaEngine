@@ -309,7 +309,7 @@ namespace Lumina
         RegisterAction({"Redo", "History", "Re-apply the last undone edit",
             FInputChord{ImGuiKey_Y, true}, [this]{ Redo(); }, AlwaysOn});
 
-        // Advisory entries: inline-handled shortcuts surfaced in Help > Keybinds.
+        // Advisory entries, inline-handled shortcuts surfaced under Help and Keybinds.
         RegisterAction({"Duplicate", "Selection", "Duplicate the selection in place",
             FInputChord{ImGuiKey_D, true}, nullptr});
         RegisterAction({"Copy", "Selection", "Copy the selection to the entity clipboard",
@@ -347,8 +347,7 @@ namespace Lumina
             return;
         }
 
-        // The prefab's own property table, which is just the ReadOnly ParentPrefab: the ledger members are
-        // bare PROPERTY() and so invisible. Drawn disabled, so it reads as the normal asset slot it is.
+        // The ledger members are bare PROPERTY() and invisible, so only ParentPrefab shows, disabled.
         if (VariantPropertyTable == nullptr)
         {
             VariantPropertyTable = MakeUnique<FPropertyTable>();
@@ -373,12 +372,10 @@ namespace Lumina
         LoadPrefabIntoPreviewWorld();
         OutlinerListView.MarkTreeDirty();
 
-        // Loading the prefab repopulates the registry; nothing before this point is meaningful
-        // to undo back into.
+        // Loading repopulates the registry, so nothing before this point is meaningful to undo into.
         ClearTransactionHistory();
 
-        // Frame the freshly loaded prefab so the preview camera isn't dropped on origin
-        // when the prefab is offset away from world zero.
+        // Frames the loaded prefab so the camera is not dropped on origin when it sits away from zero.
         FrameAllEntities();
     }
 
@@ -393,8 +390,7 @@ namespace Lumina
         bDetailsDirty = true;
         DetailsEntity = entt::null;
 
-        // Undoing past the add/remove of a light changes whether the prefab lights itself, but the user's
-        // own rig choice is theirs to keep.
+        // Undoing past a light changes whether the prefab lights itself, but the rig choice stays theirs.
         SyncPreviewLighting(false);
     }
 
@@ -423,7 +419,7 @@ namespace Lumina
 
         ClearSelectedEntities();
 
-        // Empty prefab: seed a single root the user can edit.
+        // An empty prefab is seeded with a single root the user can edit.
         if (Prefab->Registry.view<entt::entity>().empty())
         {
             entt::entity Root = WorldRegistry.create();
@@ -507,26 +503,21 @@ namespace Lumina
 
         entt::registry& WorldRegistry = ECS::GetWorldRegistry(*World);
 
-        // Gather every entity that belongs to the prefab (tagged with SPrefabComponent); the
-        // preview world also holds preview-only lights/floor/camera that must not be captured.
+        // The preview world also holds preview-only lights, floor and camera that must not be captured.
         TVector<entt::entity> PrefabEntities;
         WorldRegistry.view<SPrefabComponent>().each([&](entt::entity E, const SPrefabComponent&)
         {
             PrefabEntities.push_back(E);
         });
 
-        // Rebuild from scratch (avoids accumulating dead entities). CopyRegistry copies just the
-        // tagged subset, skips the editor-only set, and remaps hierarchy + entity-handle fields.
-        // Replacing the registry frees the components any open details panel points at for its
-        // reset-to-prefab baseline, so the generation has to move with it.
+        // Replacing the registry frees what an open details panel points at, so the generation moves too.
         CPrefab::BumpDataGeneration();
         Prefab->Registry = entt::registry{};
         THashMap<entt::entity, entt::entity> SrcToDst;
         CPrefab::CopyRegistry(WorldRegistry, Prefab->Registry, SrcToDst, &PrefabEntities,
             +[](entt::id_type ID) { return EditorEntityUtils::IsEditorOnlyComponent(ID); });
 
-        // A variant persists only what it diverges from its parent on, so the edited registry has to be
-        // reduced to a delta before the package is written.
+        // A variant persists only its divergence, so the registry is reduced to a delta before writing.
         Prefab->CaptureVariantDelta();
     }
 
@@ -543,14 +534,12 @@ namespace Lumina
         // Super commits the preview world into the prefab (CommitScene) then saves the package.
         Super::OnSave();
 
-        // Push the just-committed edits onto every live instance in open worlds so they update
-        // immediately instead of only on the next world load.
+        // Pushes the edits onto live instances now rather than only on the next world load.
         if (CPrefab* Prefab = GetPrefab())
         {
             Prefab->RefreshInstancesInLoadedWorlds();
 
-            // Variants descending from this one re-resolve against the new data, then push to their own
-            // instances. This is the whole point of a variant: the edit reaches them without a copy.
+            // Descendant variants re-resolve and push on, which is the whole point of a variant.
             Prefab->PropagateToVariants();
         }
     }
@@ -559,8 +548,7 @@ namespace Lumina
     {
         FAssetEditorTool::Update(UpdateContext);
 
-        // A parent prefab was saved and re-resolved this variant underneath us. The preview world is a
-        // copy taken at load, so without this the editor keeps showing the pre-edit data.
+        // The preview world is a copy taken at load, so without this the editor shows pre-edit data.
         if (CPrefab* Prefab = GetPrefab())
         {
             const uint32 ResolveCount = Prefab->GetVariantResolveCount();
@@ -572,8 +560,7 @@ namespace Lumina
             }
         }
 
-        // The preview world never draws editor billboards (light/camera icons). Re-applied every
-        // frame because the render scene (and its settings) can be rebuilt by idle reclaim.
+        // Re-applied every frame, since idle reclaim can rebuild the render scene and its settings.
         if (IRenderScene* Renderer = World->GetRenderer())
         {
             Renderer->GetSceneRenderSettings().bDrawBillboards = false;
@@ -869,7 +856,7 @@ namespace Lumina
                     return;
                 }
 
-                // Cycle guard: dropping a parent into one of its descendants would form a loop.
+                // Dropping a parent into one of its own descendants would form a loop.
                 if (ECS::Utils::IsDescendantOf(Registry, DropItem, Source))
                 {
                     ImGuiX::Notifications::NotifyError("Cannot reparent: target is a descendant of the dragged entity.");
@@ -948,8 +935,7 @@ namespace Lumina
             return entt::null;
         }
 
-        // Force unique stable IDs across the subtree; the duplicate copies the source's
-        // SPrefabComponent verbatim, which would collide with its entity-pairing on save.
+        // The duplicate copies SPrefabComponent verbatim, which would collide on entity-pairing at save.
         auto FreshenStableID = [&](entt::entity E)
         {
             if (SPrefabComponent* Prefab = Registry.try_get<SPrefabComponent>(E))
@@ -986,9 +972,7 @@ namespace Lumina
         entt::registry& Registry = ECS::GetWorldRegistry(*World);
         const entt::entity Root = FindPrefabRoot();
 
-        // Ctrl+S is deliberately absent: FEditorUI routes it to the focused tool's OnSave. Handling it
-        // here as well saved twice when focused, and saved the prefab merely because the cursor was
-        // over its viewport while a different tool had focus.
+        // FEditorUI routes Ctrl+S to the focused tool, so handling it here saved twice or saved the wrong tool.
 
         if (bCopyPressed)
         {
@@ -1103,8 +1087,7 @@ namespace Lumina
         ImGuizmo::SetDrawlist(ImGui::GetCurrentWindow()->DrawList);
         ImGuizmo::SetRect(ViewportOrigin.x, ViewportOrigin.y, ViewportSize.x, ViewportSize.y);
 
-        // Drop-target on the viewport: dropping a content-browser asset onto empty space spawns it
-        // under the prefab root. Mirrors the world editor's behavior.
+        // Dropping a content-browser asset on empty space spawns it under the prefab root.
         {
             const ImRect ViewportRect(ViewportOrigin, ImVec2(ViewportOrigin.x + ViewportSize.x, ViewportOrigin.y + ViewportSize.y));
             if (ImGui::BeginDragDropTargetCustom(ViewportRect, ImGui::GetCurrentWindow()->ID))
@@ -1121,19 +1104,13 @@ namespace Lumina
         // Selected-camera PiP (shared with the world editor); before the gizmo's early returns.
         DrawCameraPreviewOverlay(ViewportOrigin, ViewportSize);
 
-        // The gizmo runs BEFORE viewport picking (mirroring the world editor). ImGuizmo only raises
-        // IsUsing() from inside Manipulate, so picking that ran first saw last frame's state: on the
-        // very frame the user presses a handle it read false and stole the click. Harmless on a leaf
-        // entity (the pixel under the handle is that same entity, so the re-select is invisible), but
-        // on a parent the handle sits over a CHILD's pixels and the selection jumped to the child --
-        // the "can't drag anything that has children" report. Wrapped in a lambda so the gizmo's
-        // early-outs don't skip the picking block below.
+        // ImGuizmo only raises IsUsing() inside Manipulate, so picking that ran first stole the click.
         [&]
         {
             const entt::entity PivotEntity = GetLastSelectedEntity();
             const bool bGizmoTargetValid = PivotEntity != entt::null && World->IsValidEntity(PivotEntity);
 
-            // Mid-drag selection vanish: end the transaction so future clicks aren't blocked by IsOver().
+            // Ending the transaction stops IsOver() blocking every future click after a mid-drag vanish.
             if (!bGizmoTargetValid && bImGuizmoUsedOnce)
             {
                 EndTransaction("Transform");
@@ -1179,9 +1156,7 @@ namespace Lumina
                 }
             }
 
-            // A camera gesture (or Alt merely held) must never grab the gizmo. Enable(false) leaves it
-            // drawn but inert; never applied mid-drag, since it clears ImGuizmo's using state without a
-            // release and would strand the open transaction.
+            // Never applied mid-drag, since clearing the using state without a release strands the transaction.
             const bool bGizmoInert = ShouldSuppressViewportClickInput() && !bImGuizmoUsedOnce;
             if (bGizmoInert)
             {
@@ -1200,8 +1175,7 @@ namespace Lumina
             {
                 if (!bImGuizmoUsedOnce)
                 {
-                    // Transform-only; see WorldEditorTool for why this is not the whole-registry snapshot.
-                    // The pivot is driven directly and the rest co-move, so the record is both.
+                    // The pivot is driven directly and the rest co-move, so the record covers both.
                     TVector<entt::entity> Dragged;
                     Dragged.reserve(SelectedEntities.size() + 1);
                     Dragged.push_back(PivotEntity);
@@ -1219,19 +1193,17 @@ namespace Lumina
 
                 entt::registry& Registry = ECS::GetWorldRegistry(*World);
 
-                // Apply the same world translation/rotation to every selected entity (rigid group);
-                // scale stays per-entity to avoid skew under mixed parent transforms.
+                // Scale stays per-entity, so a mixed parent transform cannot skew the group.
                 FMatrix4 DeltaWorld = EntityMatrix * Math::Inverse(PreManipulate);
                 FVector3 DeltaTranslation, DeltaScale, DeltaSkew;
                 FQuat DeltaRotation;
                 FVector4 DeltaPersp;
                 Math::Decompose(DeltaWorld, DeltaScale, DeltaRotation, DeltaTranslation, DeltaSkew, DeltaPersp);
 
-                // Pivot itself: drive it directly with the manipulator's full output.
+                // The pivot itself is driven directly with the manipulator's full output.
                 EditorEntityUtils::ApplyWorldMatrixToTransform(Registry, PivotEntity, EntityMatrix);
 
-                // Co-move every other selected entity by the pivot's delta. Skip locked-prefab-style
-                // children, prefab editor has no locked instances, so the only filter is "valid + not pivot".
+                // The prefab editor has no locked instances, so the only filter is valid and not the pivot.
                 const FVector3 PivotPreLocation = FVector3(PreManipulate[3]);
                 for (entt::entity Other : SelectedEntities)
                 {
@@ -1290,9 +1262,7 @@ namespace Lumina
             }
         }();
 
-        // Viewport entity picking: left-click a prefab entity to select it (Ctrl-click toggles).
-        // Selects the actual clicked entity (children included), no instance-root resolution here.
-        // Runs AFTER the gizmo so IsUsing()/IsOver() reflect this frame -- see the note above.
+        // Selects the clicked entity itself, children included, with no instance-root resolution.
         if (bViewportHovered)
         {
             IRenderScene* Renderer = World->GetRenderer();
@@ -1311,9 +1281,7 @@ namespace Lumina
                 // Publish the cursor so the renderer reads back the pixel under it.
                 Renderer->SetPickerCursor(TexX, TexY, true);
 
-                // IsOver() is only trusted mid-drag: with nothing selected the gizmo isn't drawn this
-                // frame and ImGuizmo would hand back a stale hover that blocks clicks forever.
-                // IsUsing() needs no such guard now that Manipulate has already run.
+                // IsOver() is only trusted mid-drag, since an undrawn gizmo hands back a stale hover forever.
                 const bool bOverGizmo = (bImGuizmoUsedOnce && ImGuizmo::IsOver()) || ImGuizmo::IsUsing();
                 if (!bOverGizmo && !bCameraPreviewMouseOver && !ShouldSuppressViewportClickInput()
                     && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
@@ -1321,8 +1289,7 @@ namespace Lumina
                     entt::entity Hit = Renderer->GetEntityAtPixel(TexX, TexY);
                     entt::registry& Registry = ECS::GetWorldRegistry(*World);
 
-                    // Anything that is not prefab-owned counts as empty space: the preview floor and
-                    // lights are scenery, so clicking them deselects rather than selecting them.
+                    // The preview floor and lights are scenery, so clicking them deselects rather than selects.
                     if (Hit == entt::null || !Registry.valid(Hit) || !Registry.any_of<SPrefabComponent>(Hit))
                     {
                         Hit = entt::null;

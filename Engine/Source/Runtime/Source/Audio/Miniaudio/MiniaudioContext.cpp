@@ -79,8 +79,7 @@ namespace Lumina
 			return;
 		}
 
-		// PumpCounter is allocated lazily on the first Update(); Audio::Initialize runs before
-		// Task::Initialize, so the Jobs system isn't up yet here.
+		// Audio::Initialize runs before Task::Initialize, so the Jobs system is not up yet here.
 		bRunning.store(true, Atomic::MemoryOrderRelease);
 	}
 
@@ -132,7 +131,7 @@ namespace Lumina
 
 	void FMiniaudioContext::DestroyEngine()
 	{
-		// Cleared first: the game thread gates every direct bus/device touch on this.
+		// Cleared first, since the game thread gates every direct bus and device touch on this.
 		if (!bEngineInitialized.exchange(false, Atomic::MemoryOrderAcqRel))
 		{
 			return;
@@ -243,7 +242,7 @@ namespace Lumina
 		bool Expected = false;
 		if (bPumpActive.compare_exchange_strong(Expected, true, Atomic::MemoryOrderAcqRel))
 		{
-			// Park-capable: the pump is long-lived and waits, so it must release its worker rather than hold one.
+			// The pump is long-lived and waits, so it must release its worker rather than hold one.
 			Jobs::RunJob(&FMiniaudioContext::PumpEntry, this, Jobs::EJobPriority::Normal, PumpCounter, "Audio::Pump", /*bMayPark*/ true);
 		}
 	}
@@ -271,8 +270,7 @@ namespace Lumina
 			ApplyReverbRouting();
 		}
 
-		// Plays are drained before commands so a play followed by a tweak in the same frame lands on
-		// the voice rather than being dropped for a handle the pump hasn't seen yet.
+		// Plays drain first, so a play and a tweak in one frame land on the voice rather than a stale handle.
 		FPendingPlay Play;
 		uint32 PlaysProcessed = 0;
 		while (PlaysProcessed < MaxPlaysPerPump && PendingPlays.try_dequeue(Play))
@@ -502,7 +500,7 @@ namespace Lumina
 			return;
 		}
 
-		// Priority takeover: this slot's previous occupant is evicted here.
+		// A priority takeover evicts this slot's previous occupant here.
 		if (Voices[Slot])
 		{
 			UninitSound(*Voices[Slot]);

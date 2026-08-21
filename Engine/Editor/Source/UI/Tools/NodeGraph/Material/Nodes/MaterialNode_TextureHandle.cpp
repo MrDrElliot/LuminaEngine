@@ -13,7 +13,7 @@ namespace Lumina
     {
         Super::BuildNode();
 
-        // A bindless index, so no component editor and no mask: nothing may ever swizzle a scalar uint.
+        // A bindless index, so no component editor and no mask, since nothing may swizzle a scalar uint.
         Output->SetPinName("Handle");
         Output->SetShouldDrawEditor(false);
         Output->SetHideDuringConnection(false);
@@ -24,8 +24,7 @@ namespace Lumina
 
     void CMaterialExpression_TextureHandle::GenerateDefinition(FMaterialCompiler& Compiler)
     {
-        // The variable is declared on every path, including the error one: downstream nodes bind to it by
-        // name, so bailing without it turns one clear error into a cascade of undefined identifiers.
+        // Downstream nodes bind by name, so bailing without it turns one error into a cascade.
         if (!Texture.IsValid() || Texture->GetResourceID() < 0)
         {
             Compiler.AddRaw("uint " + FullName + " = " + ZeroLiteral(EMaterialInputType::TextureHandle) + ";\n");
@@ -40,18 +39,15 @@ namespace Lumina
             return;
         }
 
-        // Same binding path a sample takes, and deduped against it, so a texture used by both a
-        // TextureSample and a TextureHandle still occupies one slot.
+        // Deduped against the sample path, so a texture used by both still occupies one slot.
         const int32 Index = (bDynamic && !ParameterName.IsNone())
                           ? Compiler.BindTextureParameter(ParameterName, Texture)
                           : Compiler.BindTexture(Texture);
 
-        // The slot index is the compile-time constant; the descriptor ID it holds is read at runtime,
-        // which is what lets a parameterized handle be re-pointed per instance without a recompile.
+        // The descriptor ID is read at runtime, which lets a parameterized handle be re-pointed per instance.
         Compiler.AddRaw("uint " + FullName + " = GetMaterialTexture(MaterialIndex, " + Format("{}", Index) + ");\n");
 
-        // Uniform across the surface, hence a zero screen-space derivative. Nothing consumes this today
-        // (a uint cannot reach a UV pin), but recording it keeps the handle out of the Unknown bucket.
+        // Nothing consumes this today, but recording it keeps the handle out of the Unknown bucket.
         Compiler.RegisterDeriv(FullName, FMaterialCompiler::EDerivState::Zero);
     }
 
@@ -68,8 +64,7 @@ namespace Lumina
             return;
         }
 
-        // An array is a perfectly valid thing to take a handle to, but ImGui draws through gTextures2D
-        // and would read the array's descriptor as a 2D one -- a purple square that looks like an error.
+        // ImGui draws through the 2D table and would read an array descriptor as 2D, showing an error square.
         if (Texture->IsA<CTextureArray>())
         {
             ImGui::TextColored(ImVec4(0.55f, 0.58f, 0.64f, 1.0f), "%s (array)", Texture->GetName().c_str());

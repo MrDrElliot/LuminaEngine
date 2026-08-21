@@ -55,8 +55,7 @@ namespace Lumina
             return Resolved.empty() ? 0 : Filesystem::LastWriteTime(Resolved);
         }
 
-        // Quick xxh64 of the on-disk asset bytes. Reads via VFS so it works
-        // for any mounted alias (including plugin /<PluginName>/Content).
+        // Read through the VFS so it works for any mounted alias, including a plugin's content.
         uint64 ContentHashOf(FStringView VirtualPath, TVector<uint8>* OutBytes = nullptr)
         {
             TVector<uint8> Bytes;
@@ -72,8 +71,7 @@ namespace Lumina
             return H;
         }
 
-        // Recognize /<Alias>/... and check if Alias matches a known plugin
-        // name. Returns the plugin name (without slash) or empty.
+        // Returns the plugin name without the slash, or empty when the alias is not a plugin.
         FName ExtractOwningPlugin(FStringView VirtualPath)
         {
             if (VirtualPath.empty() || VirtualPath[0] != '/')
@@ -103,8 +101,7 @@ namespace Lumina
         LUMINA_MEMORY_SCOPE("Asset Registry");
         LUMINA_PROFILE_SCOPE();
 
-        // Load cached registry first; the discovery pass below only
-        // touches entries whose mtime/content changed.
+        // The discovery pass below only touches entries whose mtime or content changed.
         const bool bHadCache = LoadCache();
         if (!bHadCache)
         {
@@ -149,8 +146,7 @@ namespace Lumina
             VFS::RecursiveDirectoryIterator(MountAlias, Callback);
         }
 
-        // Snapshot so OnInitialDiscoveryCompleted can reap cache entries
-        // whose files no longer exist under a walked root.
+        // Snapshotted so completion can reap cache entries whose files no longer exist under a walked root.
         LastDiscoveryWalkedRoots  = WalkedRoots;
         LastDiscoveryVisitedPaths = PackagePaths;
         Algo::Sort(LastDiscoveryVisitedPaths.begin(), LastDiscoveryVisitedPaths.end());
@@ -180,8 +176,7 @@ namespace Lumina
 
     void FAssetRegistry::OnInitialDiscoveryCompleted()
     {
-        // Drop cache entries whose underlying files vanished between sessions
-        // before we hand the registry out or persist it.
+        // Dropped before the registry is handed out or persisted.
         ReapStaleEntries();
 
         ImGuiX::Notifications::NotifySuccess("Asset Registry Finished Initial Discovery: Num [{}]", Assets.size());
@@ -206,8 +201,7 @@ namespace Lumina
         {
             if (Data->Path == Path)
             {
-                // Mtime is the cheap predicate; content hash is the truth.
-                // Pass either-or as 0 to force re-extract.
+                // Mtime is the cheap predicate and the content hash is the truth, with 0 forcing a re-extract.
                 if (MTimeNs == 0 || ContentHash == 0) return true;
                 return Data->SourceMTimeNs != MTimeNs || Data->ContentHash != ContentHash;
             }
@@ -234,10 +228,7 @@ namespace Lumina
 
     void FAssetRegistry::DispatchRegistryChanged()
     {
-        // Every subscriber to this is main-thread-only: the content browser rebuilds its tile tree, the
-        // editor reopens asset tabs and loads worlds, the thumbnail manager queues renders. Asset creation
-        // runs on a task fiber during import, so broadcasting inline ran all of that concurrently with the
-        // main thread drawing the very structures it rebuilds.
+        // Asset creation runs on a task fiber, so broadcasting inline raced the main thread's redraw.
         if (Threading::IsMainThread())
         {
             OnAssetRegistryUpdated.Broadcast();
@@ -363,8 +354,7 @@ namespace Lumina
 
     void FAssetRegistry::AssetSaved(CObject* Asset)
     {
-        // Re-extract the saved package: its ImportTable + content hash may
-        // have changed. Reverse map invalidated.
+        // The saved package's import table and content hash may have changed, so the reverse map dies.
         FFixedString Path = Asset->GetPackage()->GetPackagePath();
         ProcessPackagePath(Path);
 
@@ -457,8 +447,7 @@ namespace Lumina
             Data->OwningPlugin  = ExtractOwningPlugin(Vp);
             Data->SourceMTimeNs = FileMTimeNanos(Vp);
 
-            // Two files sharing a stale GUID (e.g. a copy-paste before re-discovery) would collide; the
-            // first one wins and the duplicate gets re-minted next pass once its sidecar is regenerated.
+            // The first of two files sharing a stale GUID wins, and the duplicate re-mints next pass.
             if (Rebuilt.find_as(Guid, FGuidHash(), FTextAssetGuidEqual()) == Rebuilt.end())
             {
                 Rebuilt.emplace(Move(Data));
@@ -591,7 +580,7 @@ namespace Lumina
 
         if (bRenamed)
         {
-            // Outside the lock: subscribers (open file editors) may read the registry back.
+            // Outside the lock, since subscribers may read the registry back.
             FCoreDelegates::OnContentFileRenamed.Broadcast(OldPath, NewPath);
             NotifyRegistryChanged();
         }
@@ -719,8 +708,7 @@ namespace Lumina
 
     TVector<FAssetData*> FAssetRegistry::GetReferencersOf(const FGuid& GUID) const
     {
-        // Two-phase: rebuild map under write lock if dirty, then read under
-        // shared lock. Const-cast is fine, map cache is mutable state.
+        // The const-cast is fine, since the map cache is mutable state.
         {
             FWriteScopeLock RLock(ReverseMapMutex);
             if (bReverseMapDirty)
@@ -752,8 +740,7 @@ namespace Lumina
     void FAssetRegistry::ProcessPackagePath(FStringView Path)
     {
         LUMINA_MEMORY_SCOPE("Asset Registry");
-        // Pre-check mtime + content hash vs cache; hash is over raw compressed bytes, so source or
-        // compression-setting changes invalidate it.
+        // The hash covers raw compressed bytes, so a source or compression change invalidates it.
         const int64 MTime = FileMTimeNanos(Path);
         TVector<uint8> RawBytes;
         const uint64 Hash = ContentHashOf(Path, &RawBytes);
@@ -770,8 +757,7 @@ namespace Lumina
             return;
         }
 
-        // ReadPackageFile decompresses the deflate-with-FCompressedPackageHeader file into Bytes,
-        // which holds the FPackageHeader and import/export tables.
+        // ReadPackageFile decompresses into Bytes, which holds the header and import and export tables.
         TVector<uint8> Bytes;
         if (!CPackage::ReadPackageFile(Path, Bytes))
         {
@@ -833,8 +819,7 @@ namespace Lumina
             return;
         }
 
-        // Each ImportTable entry is one outbound edge with the type the saver recorded (Hard for direct
-        // CObject* refs, Soft for FSoftObjectPath).
+        // Hard for a direct CObject reference and Soft for an FSoftObjectPath, as the saver recorded.
         TVector<FAssetDependency> Dependencies;
         if (Header.ImportTableOffset >= 0
             && static_cast<size_t>(Header.ImportTableOffset) <= Bytes.size())
@@ -863,15 +848,13 @@ namespace Lumina
         AssetData->OwningPlugin   = ExtractOwningPlugin(Path);
 
         FWriteScopeLock Lock(AssetsMutex);
-        // Drop any pre-existing entry with this GUID (external move/rename: path changed, GUID stable);
-        // else the dup-GUID collision rejects the new entry and leaves a dangling old path.
+        // An external move keeps the GUID, so a stale entry would otherwise leave a dangling old path.
         auto ExistingByGuid = Assets.find_as(AssetData->AssetGUID, FGuidHash(), FAssetDataGuidEqual());
         if (ExistingByGuid != Assets.end())
         {
             Assets.erase(ExistingByGuid);
         }
-        // Then drop any stale entry at this path with a different GUID (rare:
-        // user dropped a .lasset with a fresh GUID over an old one).
+        // Rare, a user dropping a .lasset with a fresh GUID over an old one.
         auto ExistingByPath = Algo::FindIf(Assets.begin(), Assets.end(), [&](const TUniquePtr<FAssetData>& D)
         {
             return D->Path == AssetData->Path;
@@ -892,8 +875,7 @@ namespace Lumina
 
     void FAssetRegistry::ClearAssets()
     {
-        // Scoped so every lock is released before the broadcast. Listeners read the registry straight back
-        // (the content browser rebuilds from it), and AssetsMutex is not recursive.
+        // Listeners read the registry straight back, and AssetsMutex is not recursive.
         {
             FWriteScopeLock Lock(AssetsMutex);
             Assets.clear();
@@ -1044,10 +1026,7 @@ namespace Lumina
         return true;
     }
 
-    // The editor cache is JSON (inspectable/diffable by hand) driven through the engine's
-    // FJsonStructuredArchive; the cooked PAK registry stays compact binary (see WriteToArchive).
-    // The leaf archive handles primitives/FName/FString directly; FGuid and FFixedString have no
-    // leaf overload, so they round-trip through an FString (GUID as text, path as a plain string).
+    // FGuid and FFixedString have no leaf overload, so they round-trip through an FString.
     namespace
     {
         void SerializeGuidField(FArchiveRecord& Rec, FName Field, FGuid& Guid, bool bLoading)
@@ -1192,7 +1171,7 @@ namespace Lumina
         const FString CachePath = AssetDbPath();
         if (CachePath.empty()) return false;
 
-        // First-launch / fresh-clone: no cache yet. Quiet exit; full rescan is the correct fallback.
+        // A first launch has no cache, so exit quietly and let the full rescan handle it.
         if (!Filesystem::Exists(CachePath))
         {
             return false;

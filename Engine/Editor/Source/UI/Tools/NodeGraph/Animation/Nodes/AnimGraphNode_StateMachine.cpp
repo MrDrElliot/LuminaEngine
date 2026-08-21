@@ -50,7 +50,7 @@ namespace Lumina
             AllocateStateMachineGraph();
         }
 
-        // Context-free: compiler walks state machines never opened; Initialize() deferred to editor tool.
+        // Context-free, since the compiler walks machines never opened and Initialize is deferred.
         StateMachineGraph->EnsureSetup();
         return StateMachineGraph.Get();
     }
@@ -108,13 +108,12 @@ namespace Lumina
 
         CAnimStateMachineGraph* SMGraph = GetOrCreateStateMachineGraph();
 
-        // Compile every State's blend tree into the shared register space and
-        // record which pose register each state resolved to.
+        // Compiles every state's blend tree into the shared register space and records its pose register.
         THashMap<int64, int32> NodeIDToStateIndex;
         THashSet<int64> AnyStateNodeIDs;
         TVector<TPair<CEdGraphNode*, int32>> StateNodesForDebug;
 
-        // Machine-relative: a nested machine appended to the same list, and those entries belong to its owner.
+        // Machine-relative, since a nested machine's entries belong to its own owner.
         const uint16 MachineClockFirst = (uint16)Compiler.GetClockSlots().size();
 
         for (CEdGraphNode* Node : SMGraph->Nodes)
@@ -137,8 +136,7 @@ namespace Lumina
             uint16 PoseReg = 0;
             if (!BlendTree->CompileNodes(Compiler, PoseReg))
             {
-                // CompileNodes already reported the error; fall back to a bind
-                // pose so state indices stay consistent with the canvas.
+                // CompileNodes already reported the error, so fall back to a bind pose and keep indices consistent.
                 PoseReg = Compiler.EmitRefPose();
             }
 
@@ -162,7 +160,7 @@ namespace Lumina
             Compiler.AddError(NodeError);
         }
 
-        // Entry state: follow the Entry node's single outgoing wire.
+        // The entry state follows the Entry node's single outgoing wire.
         StateMachine.EntryState = 0;
         for (CEdGraphNode* Node : SMGraph->Nodes)
         {
@@ -196,9 +194,7 @@ namespace Lumina
             break;
         }
 
-        // Transitions: resolve each transition object's endpoint node IDs to state indices and copy
-        // the condition through. The VM takes the first passing edge, so author Priority decides the
-        // emission order; without it the order would follow the reconcile pass's hash iteration.
+        // The VM takes the first passing edge, so author Priority decides the emission order.
         TVector<CAnimStateTransition*> SortedTransitions;
         SortedTransitions.reserve(SMGraph->GetTransitions().size());
         for (const TObjectPtr<CAnimStateTransition>& Transition : SMGraph->GetTransitions())
@@ -227,12 +223,11 @@ namespace Lumina
             auto ToIt = NodeIDToStateIndex.find(Transition->ToStateNodeID);
             if (ToIt == NodeIDToStateIndex.end())
             {
-                // Endpoint state missing -- skip rather than emit a bad index.
+                // The endpoint state is missing, so skip rather than emit a bad index.
                 continue;
             }
 
-            // An Any State source compiles to the runtime's from-anywhere edge (FromState < 0),
-            // checked no matter which state is active.
+            // An Any State source compiles to the from-anywhere edge, checked whichever state is active.
             int32 FromIndex = -1;
             if (AnyStateNodeIDs.find(Transition->FromStateNodeID) == AnyStateNodeIDs.end())
             {
@@ -254,8 +249,7 @@ namespace Lumina
             Runtime.BlendDuration      = Transition->BlendDuration;
             Runtime.bCanInterrupt      = Transition->bCanInterrupt;
 
-            // Make sure the condition parameter exists in the compiled table,
-            // and warn if it doesn't match a blackboard key (renamed / retyped).
+            // Warns when the condition parameter does not match a blackboard key, renamed or retyped.
             if (Runtime.ConditionSource == EAnimTransitionSource::Parameter)
             {
                 Compiler.ValidateParameterKey(Transition->ConditionParameter, this);
@@ -265,7 +259,7 @@ namespace Lumina
             StateMachine.Transitions.push_back(Runtime);
         }
 
-        // Allocate the four persistent bookkeeping slots. Kept in locals: the machine is moved below.
+        // Kept in locals, since the machine is moved below.
         const uint16 CurrentStateSlot = Compiler.AllocStateSlot();
         const uint16 FromStateSlot    = Compiler.AllocStateSlot();
         StateMachine.CurrentStateSlot = CurrentStateSlot;

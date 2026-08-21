@@ -17,7 +17,7 @@ namespace Lumina
 {
     namespace
     {
-        // Deterministic xorshift32 -- same seed reproduces the same fracture (replay/lockstep friendly).
+        // A deterministic xorshift32, so the same seed reproduces the same fracture.
         struct FRng
         {
             uint32 State;
@@ -78,7 +78,7 @@ namespace Lumina
             return Unique;
         }
 
-        // Clip the convex polyhedron by the half-space { x : dot(N,x) - D <= 0 }, capping the cut.
+        // Clips the convex polyhedron by the half-space and caps the cut.
         void ClipPolyByPlane(FConvexPoly& Poly, const FVector3& N, float D, float Eps)
         {
             TVector<FFace>     NewFaces;
@@ -235,8 +235,7 @@ namespace Lumina
             return true;
         }
 
-        // Pull LOD0 positions + triangles out of the mesh's meshlet data (the scratch vertex
-        // streams are dropped after GPU upload, so dequantize from the meshlets like the collider does).
+        // The scratch vertex streams are dropped after upload, so dequantize from the meshlets.
         void GatherMeshGeometry(const CMesh* Mesh, TVector<FVector3>& OutPositions, TVector<FUIntVector3>& OutTriangles)
         {
             const FMeshResource& Resource = Mesh->GetMeshResource();
@@ -272,8 +271,7 @@ namespace Lumina
             });
         }
 
-        // Convex-hull supporting planes (normal N, offset D; interior is dot(N,x) <= D). A triangle's
-        // plane is a hull face iff every vertex sits on one side.
+        // A triangle's plane is a hull face only when every vertex sits on one side of it.
         void ComputeHullPlanes(const TVector<FVector3>& Positions, const TVector<FUIntVector3>& Triangles, float Tol, TVector<FVector4>& OutPlanes)
         {
             auto AddUnique = [&](const FVector3& N, float D)
@@ -432,8 +430,7 @@ namespace Lumina
         Resource->ReserveVertices(Piece.Vertices.size());
         for (const FSourceVertex& V : Piece.Vertices)
         {
-            // Recenter to the piece centroid so the mesh origin (and convex CoM) sits on the chunk;
-            // callers place the entity at Piece.Center to reconstruct the original position.
+            // Callers place the entity at the piece center to reconstruct the original position.
             FSourceVertex Centered = V;
             Centered.Position -= Piece.Center;
             Resource->AppendVertex(Centered);
@@ -478,7 +475,7 @@ namespace Lumina
             return;
         }
 
-        // Match the runtime fracture's material choice: the baked collection materials, else the source mesh's.
+        // Matches the runtime fracture's choice, the baked collection materials else the source mesh's.
         const TVector<TObjectPtr<CMaterialInterface>>& Mats =
             (!Materials.empty() || SourceMesh.Get() == nullptr) ? Materials : SourceMesh->Materials;
 

@@ -69,7 +69,7 @@ namespace Lumina
             ImGui::ImageButton(Leaf.c_str(), ButtonTexture.value(), ImVec2(64, 64));
             ImGui::EndDisabled();
 
-            // Drop target: bind to a dragged asset of the property's class (by path, no load).
+            // Binds to a dragged asset of the property's class by path, with no load.
             if (ImGui::BeginDragDropTarget())
             {
                 if (CObject* Dropped = DragDrop::AcceptAssetOfClass(PropertyClass))

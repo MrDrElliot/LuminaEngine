@@ -33,7 +33,7 @@ namespace Lumina
 
     namespace
     {
-        // Tiny JSON helpers: tolerate missing fields rather than throwing.
+        // Tiny JSON helpers that tolerate a missing field rather than throwing.
         FString GetString(const nlohmann::json& J, const char* Key, const char* Default = "")
         {
             auto It = J.find(Key);
@@ -154,7 +154,7 @@ namespace Lumina
             }
         }
 
-        // Cook roots (Phase 1: read + carry into engine; cooker iterates them)
+        // Cook roots are read here and carried into the engine, and the cooker iterates them.
         if (auto It = J.find("CookRoots"); It != J.end() && It->is_array())
         {
             OutDescriptor.CookRoots.reserve(It->size());
@@ -163,7 +163,7 @@ namespace Lumina
                 FCookRoot Root;
                 if (R.is_string())
                 {
-                    // Shorthand form: bare string is the asset path.
+                    // The shorthand form, where a bare string is the asset path.
                     const std::string& S = R.get_ref<const std::string&>();
                     Root.Asset.assign(S.c_str(), S.size());
                 }

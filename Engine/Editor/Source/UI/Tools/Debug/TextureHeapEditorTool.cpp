@@ -114,8 +114,7 @@ namespace Lumina
             ? (float)((double)Stats.ResidentBytes / (double)Stats.BudgetBytes)
             : 0.0f;
 
-        // Saved, not just resident: the interesting number is what streaming is buying, which is the gap
-        // between what these textures cost now and what they would cost fully resident.
+        // The interesting number is the gap between what these cost now and fully resident.
         const uint64 Saved = Stats.FullyResidentBytes > Stats.ResidentBytes
             ? Stats.FullyResidentBytes - Stats.ResidentBytes
             : 0;

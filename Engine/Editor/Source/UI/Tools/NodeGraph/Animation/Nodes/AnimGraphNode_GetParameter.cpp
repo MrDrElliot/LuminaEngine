@@ -3,6 +3,11 @@
 
 namespace Lumina
 {
+    FString CAnimGraphNode_GetParameter::GetNodeTitleText() const
+    {
+        return ParameterName.IsNone() ? FString(GetNodeDisplayName()) : FString("Get ") + ParameterName.ToString();
+    }
+
     void CAnimGraphNode_GetParameter::BuildNode()
     {
         ValuePin = CreateAnimPin("Value", ENodePinDirection::Output, EAnimPinType::Value);

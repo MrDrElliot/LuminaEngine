@@ -67,7 +67,7 @@ namespace Lumina
             }
             if (D < -0.9999f)
             {
-                // Opposite: rotate 180 about any orthogonal axis.
+                // Opposite, so rotate 180 about any orthogonal axis.
                 FVector3 Axis = Math::Cross(FVector3(1.0f, 0.0f, 0.0f), From);
                 if (Math::Length(Axis) < 1e-3f)
                 {
@@ -188,8 +188,7 @@ namespace Lumina
             return;
         }
 
-        // Budget attempts by density * brush area * time, accumulating fractional leftovers so even sparse
-        // densities place instances over a stroke. Density is instances per (100 unit)^2 per second.
+        // Fractional leftovers accumulate, so even a sparse density places instances over a stroke.
         const float AreaUnits   = Math::Pi<float>() * Radius * Radius;
         const float TargetPerSec = Type.Density * (AreaUnits / 10000.0f);
         PaintAccumulator += TargetPerSec * DeltaSeconds;
@@ -222,7 +221,7 @@ namespace Lumina
                 continue;
             }
 
-            // Orientation: blend up toward the surface normal, then a random yaw about that axis.
+            // Blends up toward the surface normal, then applies a random yaw about that axis.
             const FVector3 AlignedUp = Math::Normalize(Math::Mix(WorldUp, SurfaceNormal, Math::Clamp(Type.AlignToNormal, 0.0f, 1.0f)));
             FQuat Rotation = QuatFromTo(WorldUp, AlignedUp);
             if (Type.bRandomYaw)
@@ -289,13 +288,7 @@ namespace Lumina
         AnchorPos.y += ImGui::GetWindowSize().y + 4.0f;
         ImGui::SetNextWindowPos(AnchorPos);
         ImGui::SetNextWindowBgAlpha(0.85f);
-        // Fixed width, auto height: the type settings below are a real property table, and an
-        // AlwaysAutoResize window would size itself to the widest row and jump about as rows change.
-        //
-        // The width is set by the asset picker, not by taste. The property table gives its name column a
-        // fixed width (widest header + 18) and stretches the value column, and the picker then spends 64px
-        // of that on the thumbnail before the path field and dropdown get any. At 330 the field and its
-        // buttons fell off the edge; this leaves the value column around 290.
+        // The width comes from the asset picker, whose thumbnail eats 64px before the path field.
         constexpr float PanelWidth = 460.0f;
         ImGui::SetNextWindowSizeConstraints(ImVec2(PanelWidth, 0.0f), ImVec2(PanelWidth, FLT_MAX));
         ImGui::Begin("##FoliageBrushSettings", nullptr,
@@ -305,8 +298,7 @@ namespace Lumina
 
         ImGui::SeparatorText("Brush");
 
-        // Paint / Erase as a pair of toggles rather than a dropdown: it is the control switched most
-        // often, and a combo costs two clicks and hides the current state behind a label.
+        // A pair of toggles, since a combo costs two clicks and hides the current state behind a label.
         const float HalfWidth = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
         const bool  bPainting = (Mode == EFoliageBrushMode::Paint);
 
@@ -353,10 +345,7 @@ namespace Lumina
             TypeSettings.SetObject(Desired, SFoliageType::StaticStruct());
             TypeSettings.SetShowSearchBar(false);   // a search box inside a viewport overlay is noise
 
-            // Any edit can invalidate the render cache -- swapping the mesh changes the bounds every
-            // instance of this type was baked with. Cheap: the bake is skipped when the version matches,
-            // so bumping on an edit that did not need it costs one rebuild, while missing one leaves
-            // instances culled against the previous mesh's bounds.
+            // Cheap, since the bake is skipped when the version matches, and missing one culls wrongly.
             TypeSettings.SetPostEditCallback([this, World, &Foliage](const FPropertyChangedEvent&)
             {
                 MarkFoliageDirty(World, Foliage);
@@ -376,8 +365,7 @@ namespace Lumina
 
         const int32 TypeCount = (int32)Foliage.Types.size();
 
-        // Instance counts, in one pass rather than a scan per type. Painted counts are the thing you
-        // actually want to see while working, and this is the only place they are visible.
+        // One pass rather than a scan per type, and this is the only place painted counts are visible.
         TVector<int32> Counts;
         Counts.resize((size_t)Math::Max(TypeCount, 1), 0);
         for (const SFoliageInstance& Inst : Foliage.Instances)
@@ -447,14 +435,12 @@ namespace Lumina
         ImGui::BeginDisabled(!Foliage.IsValidType(ActiveType));
         if (ImGui::Button("Duplicate"))
         {
-            // Copied by value before the push_back: emplace_back can reallocate, and a reference into the
-            // vector would dangle exactly when it is about to be read.
+            // Copied by value first, since emplace_back can reallocate and dangle the reference.
             const SFoliageType Source = Foliage.Types[ActiveType];
             Foliage.Types.push_back(Source);
             Foliage.Types.back().Name = Source.Name + " Copy";
             ActiveType = (int32)Foliage.Types.size() - 1;
-            // Same reason as Add and Remove: the copy carries an unstamped resolve, so without this it
-            // paints instances that never bind a mesh.
+            // The copy carries an unstamped resolve, so without this it paints instances with no mesh.
             MarkFoliageDirty(World, Foliage);
         }
         ImGui::SameLine();
@@ -475,8 +461,7 @@ namespace Lumina
             }
             Foliage.Types.erase(Foliage.Types.begin() + ActiveType);
             ActiveType = Math::Min(ActiveType, (int32)Foliage.Types.size() - 1);
-            // Instances were removed and the rest re-indexed; without this the render cache keeps drawing
-            // the deleted type's instances until some other edit happens to bump the version.
+            // Instances were removed and re-indexed, so the cache would keep drawing the deleted type.
             MarkFoliageDirty(World, Foliage);
         }
         ImGui::EndDisabled();
@@ -531,7 +516,7 @@ namespace Lumina
         FVector3 TerrainOrigin(0.0f);
         STerrainComponent* Terrain = FindTerrain(World, TerrainOrigin);
 
-        // Cursor hit: prefer the terrain surface, fall back to the ground plane.
+        // Prefers the terrain surface for the cursor hit and falls back to the ground plane.
         FVector3 Hit;
         bool bHit = false;
         if (Terrain && FTerrainSculptSystem::Raycast(*Terrain, TerrainOrigin, RayOrigin, RayDir, Hit))
@@ -582,10 +567,7 @@ namespace Lumina
             EraseDab(*Foliage, Hit);
         }
 
-        // AddInstance/RemoveInRadius bump InstancesVersion themselves, which only rebakes the CPU cache --
-        // the primitive set still has to be told, or the instances are baked and never drawn. Gated on the
-        // version so a dab that placed nothing (density budget not yet accumulated, nothing in erase range)
-        // does not queue a resync every frame the button is held.
+        // Gated on the version, so a dab that placed nothing does not resync every held frame.
         if (Foliage->InstancesVersion != VersionBefore && FoliageEntity != entt::null)
         {
             MarkFoliageChanged(*World, FoliageEntity, *Foliage);

@@ -32,7 +32,7 @@ namespace Lumina
     static const ImU32 SeqKeyOutline  = IM_COL32(20, 18, 12, 220);
     static const ImU32 SeqPlayhead    = IM_COL32(120, 255, 150, 235);
 
-    // Pleasant ruler steps: 1/2/5 per decade so labels never land on awkward fractions.
+    // Steps of 1, 2 and 5 per decade, so labels never land on awkward fractions.
     static float ChooseRulerStep(float VisibleSeconds, float TrackWidth)
     {
         const float TargetPixels = 90.0f;
@@ -97,7 +97,7 @@ namespace Lumina
                 continue;
             }
 
-            // Possess: match on the entity's name, which is what the binding stores.
+            // Possess matches on the entity's name, which is what the binding stores.
             auto View = World->View<SNameComponent>();
             for (entt::entity Entity : View)
             {
@@ -224,8 +224,7 @@ namespace Lumina
 
         PlayTime = NewTime;
 
-        // Evaluation just wrote every driven transform. Rebasing here is what stops auto-key treating the
-        // sequence's own output as an edit and baking a key on every scrubbed frame.
+        // Rebasing stops auto-key treating the sequence's own output as an edit on every scrubbed frame.
         RefreshAutoKeyWatch(World);
     }
 
@@ -264,8 +263,7 @@ namespace Lumina
             return;
         }
 
-        // Loose enough that float noise from the gizmo's matrix round-trip does not key, tight enough that
-        // a deliberate nudge does.
+        // Loose enough that the gizmo's matrix round-trip does not key, tight enough that a nudge does.
         constexpr float PositionEpsilonSq = 1e-6f;
         constexpr float AngleEpsilonSq    = 1e-4f;
 
@@ -369,8 +367,7 @@ namespace Lumina
         CSequenceTrack_Transform* Created = NewObject<CSequenceTrack_Transform>(Sequence->GetPackage(), "TransformTrack");
         Created->BindingIndex = BindingIndex;
 
-        // Keying is the only way tracks get made here, and a track that drives nothing is a trap, so all
-        // three channels start enabled.
+        // Keying is the only way tracks get made, and a track that drives nothing is a trap.
         Created->Location.bEnabled = true;
         Created->Rotation.bEnabled = true;
         Created->Scale.bEnabled = true;
@@ -407,8 +404,7 @@ namespace Lumina
         const FVector3 Rotation = Math::Degrees(Math::EulerAngles(Transform->GetRotation()));
         const FVector3 Scale = Transform->GetScale();
 
-        // Update-or-add, not add: keying the same frame twice has to overwrite. Stacking a duplicate key
-        // at an identical time makes a zero-width segment, which reads as a hard step in playback.
+        // A duplicate key at an identical time makes a zero-width segment, which reads as a hard step.
         const auto KeyChannel = [Time](SSequenceVectorCurve& Channel, const FVector3& Value)
         {
             Channel.X.Curve.UpdateOrAddKey(Time, Value.x);
@@ -453,8 +449,7 @@ namespace Lumina
             return;
         }
 
-        // Half a frame at 240fps: tight enough that two deliberately adjacent keys stay distinct, loose
-        // enough to absorb the float error of a time that has been through a pixel round-trip.
+        // Half a frame at 240fps, tight enough to keep adjacent keys distinct and loose enough for float error.
         constexpr float MatchEpsilon = 0.002f;
 
         SCurve* Channels[9] =
@@ -466,8 +461,7 @@ namespace Lumina
 
         for (SCurve* Channel : Channels)
         {
-            // Inline keys only: an asset-backed curve is shared, so retiming it here would silently edit
-            // every other user of that asset.
+            // An asset-backed curve is shared, so retiming it here would edit every other user of it.
             if (Channel->bUseAsset)
             {
                 continue;
@@ -518,8 +512,7 @@ namespace Lumina
                 }
             }
 
-            // Cubic reads tangents that are zero on a key authored as linear, and a zero-slope Hermite
-            // ease-in/ease-out is not the smooth arc the mode is chosen for.
+            // Tangents are zero on a linear key, and a zero-slope Hermite is not the arc the mode is chosen for.
             Channel->Curve.ComputeAutoTangents();
         }
     }
@@ -605,8 +598,7 @@ namespace Lumina
             return Existing;
         }
 
-        // One cut track per sequence: cuts are a single exclusive choice of live camera over time, so a
-        // second track would just be two things fighting for the same slot.
+        // Cuts are one exclusive choice over time, so a second track would just fight for the same slot.
         CSequenceTrack_CameraCut* Created = NewObject<CSequenceTrack_CameraCut>(Sequence->GetPackage(), "CameraCutTrack");
         Sequence->Tracks.push_back(Created);
         return Created;
@@ -681,8 +673,7 @@ namespace Lumina
             const float X = VisibleTimeToX(T);
             DrawList->AddLine(ImVec2(X, RulerMax.y - 10.0f), ImVec2(X, RulerMax.y), SeqGridMajor);
 
-            // Frames once a step is finer than a second, seconds above that: reading "0.033s" on a
-            // frame-stepped ruler is useless, and "f120" is useless when a step spans ten seconds.
+            // Reading a sub-second time in seconds is useless, and frames are useless across ten-second steps.
             if (Step < 1.0f)
             {
                 snprintf(Label, sizeof(Label), "f%d", Sequence->TimeToFrame(T));
@@ -756,8 +747,7 @@ namespace Lumina
                 SelectedCut = i;
                 DraggingCut = i;
 
-                // Edges resize, the middle moves. The grab offset keeps the clip from jumping so its
-                // start snaps under the cursor on the first frame of a move.
+                // The grab offset keeps a clip from jumping so its start snaps under the cursor on the first frame.
                 if (MousePos.x - StartX <= EdgeGrab)      { DragEdge = -1; }
                 else if (EndX - MousePos.x <= EdgeGrab)   { DragEdge = 1; }
                 else                                      { DragEdge = 0; DragGrabOffset = XToTime(MousePos.x) - Cut.StartTime; }
@@ -805,7 +795,7 @@ namespace Lumina
             }
         }
 
-        // Deferred: erasing mid-iteration invalidates the loop above.
+        // Deferred, since erasing mid-iteration invalidates the loop above.
         if (PendingRemoval != INDEX_NONE)
         {
             Track->Cuts.erase(Track->Cuts.begin() + PendingRemoval);
@@ -829,8 +819,7 @@ namespace Lumina
 
         if (!bPlaying)
         {
-            // Only while stopped: during playback every driven transform is the sequence's own output, so
-            // there is nothing a user could have edited to key.
+            // During playback every driven transform is the sequence's own output, so there is nothing to key.
             if (bAutoKey)
             {
                 ProcessAutoKey(World);
@@ -910,16 +899,14 @@ namespace Lumina
 
     void FSequencerEditMode::DrawSequencerWindow(CWorld* World)
     {
-        // Its own window rather than the toolbar strip: a timeline needs the full width of the screen,
-        // and the user docks it wherever suits.
+        // A timeline needs the full width of the screen, and the user docks it wherever suits.
         if (!ImGui::Begin(LE_ICON_FILMSTRIP " Sequencer"))
         {
             ImGui::End();
             return;
         }
 
-        // Scoped to this window and suppressed while a field has the caret, so Space stays a space when the
-        // user is typing a frame number.
+        // Suppressed while a field has the caret, so Space stays a space while typing a frame number.
         if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput)
         {
             if (ImGui::IsKeyPressed(ImGuiKey_Space, false))
@@ -949,8 +936,7 @@ namespace Lumina
         ImGui::Separator();
         DrawTimeline(World);
 
-        // Applied after the whole window has drawn: the request comes from a popup, and the row loop above
-        // is iterating the arrays this resizes.
+        // The request comes from a popup, and the row loop above iterates the arrays this resizes.
         if (PendingRemoveBinding != INDEX_NONE)
         {
             RemoveBinding(World, PendingRemoveBinding);
@@ -1023,7 +1009,7 @@ namespace Lumina
         }
         ImGuiX::TextTooltip("Loop playback instead of stopping at the end.");
 
-        // Frame rather than seconds: it is what a key snaps to, so it is the number worth typing.
+        // A frame rather than seconds, since it is what a key snaps to and what is worth typing.
         ImGui::SameLine();
         ImGui::SetNextItemWidth(90.0f);
         int32 FrameEntry = CurrentFrame;
@@ -1042,8 +1028,7 @@ namespace Lumina
         ImGui::DragFloat("##Rate", &PlayRate, 0.01f, 0.05f, 8.0f, "Rate %.2fx");
         ImGuiX::TextTooltip("Preview playback speed. Does not affect the asset.");
 
-        // Sequence settings share the transport row: length and rate are things you reach for while
-        // scrubbing, not things worth hiding in a details panel.
+        // Length and rate are reached for while scrubbing, not hidden away in a details panel.
         ImGui::SameLine();
         ImGui::TextUnformatted("|");
 
@@ -1105,7 +1090,7 @@ namespace Lumina
             }
             else if (const CSequenceTrack_CameraCut* Cuts = Cast<CSequenceTrack_CameraCut>(Track.Get()))
             {
-                // Both edges: a cut boundary is exactly where a director wants to land.
+                // Both edges, since a cut boundary is exactly where a director wants to land.
                 for (const SSequenceCameraCut& Cut : Cuts->Cuts)
                 {
                     OutTimes.push_back(Cut.StartTime);
@@ -1200,8 +1185,7 @@ namespace Lumina
             return;
         }
 
-        // Spawned entities belong to this binding, so let the normal teardown destroy them before the
-        // binding they are keyed to disappears.
+        // Spawned entities belong to this binding, so normal teardown destroys them before it disappears.
         ReleaseBindings(World);
 
         TVector<TObjectPtr<CSequenceTrack>> Kept;
@@ -1229,8 +1213,7 @@ namespace Lumina
             }
             else if (CSequenceTrack_CameraCut* Cuts = Cast<CSequenceTrack_CameraCut>(Track.Get()))
             {
-                // A cut row is shared by every binding, so it is repaired rather than dropped: cuts naming
-                // this binding go, the rest renumber.
+                // A cut row is shared by every binding, so cuts naming this one go and the rest renumber.
                 TVector<SSequenceCameraCut> KeptCuts;
                 KeptCuts.reserve(Cuts->Cuts.size());
 
@@ -1332,8 +1315,7 @@ namespace Lumina
 
         ImDrawList* DrawList = ImGui::GetWindowDrawList();
 
-        // Ctrl+wheel zooms about the cursor so the frame under it stays put, which is what makes zooming
-        // feel like a camera rather than a slider.
+        // Zooming about the cursor keeps the frame under it put, which feels like a camera not a slider.
         const float VisibleSeconds = Duration * TimelineZoom;
         if (bTimelineHovered && ImGui::GetIO().KeyCtrl && ImGui::GetIO().MouseWheel != 0.0f)
         {
@@ -1387,8 +1369,7 @@ namespace Lumina
                                  : (bHovered ? SeqRowHoverBg : ((i & 1) ? SeqRowAltBg : SeqRowBg));
             DrawList->AddRectFilled(RowMin, RowMax, RowColor);
 
-            // Separator between the name column and the track area, so long names read as clipped rather
-            // than as running into the keys.
+            // So a long name reads as clipped rather than as running into the keys.
             DrawList->AddLine(ImVec2(TrackLeft, RowY), ImVec2(TrackLeft, RowMax.y), SeqGridMajor);
 
             const FName& Name = Sequence->Bindings[i].Name;
@@ -1396,8 +1377,7 @@ namespace Lumina
             DrawList->AddText(ImVec2(Origin.x + 10.0f, RowY + 5.0f), bSelected ? SeqText : SeqTextDim, Name.c_str());
             DrawList->PopClipRect();
 
-            // Label column only: the track area to the right belongs to keys and cuts, which have their
-            // own context menus.
+            // The track area to the right belongs to keys and cuts, which have their own context menus.
             const bool bOnLabel = bHovered && ImGui::GetMousePos().x < TrackLeft;
 
             if (bHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
@@ -1423,11 +1403,10 @@ namespace Lumina
                     continue;
                 }
 
-                // X stands in for the row: the three channels are keyed together, so three overlapping
-                // diamond rows would be noise rather than information.
+                // The three channels are keyed together, so overlapping diamond rows would be noise.
                 const float RowMidY = RowY + SequencerTrackHeight * 0.5f;
 
-                // Snapshot the keys: a drag retimes and re-sorts the very array being walked.
+                // Snapshotted, since a drag retimes and re-sorts the very array being walked.
                 struct FKeyView { float Time; ECurveInterpMode Interp; };
                 TVector<FKeyView> KeyViews;
                 for (const SCurveKey& Key : Transform->Location.X.Resolve().Keys)
@@ -1446,8 +1425,7 @@ namespace Lumina
                     const float R = bIsSelected ? 7.5f : 6.0f;
                     const ImU32 Fill = bIsSelected ? IM_COL32(255, 255, 255, 255) : SeqKey;
 
-                    // Shape carries the interpolation, so the mode is readable without opening a menu and a
-                    // change to it visibly takes: square steps, diamond ramps, circle eases.
+                    // Square steps, diamond ramps and circle eases, so the mode reads without opening a menu.
                     switch (KeyView.Interp)
                     {
                     case ECurveInterpMode::Constant:
@@ -1505,8 +1483,7 @@ namespace Lumina
                                         ImVec2(PlayheadX, Origin.y + 9.0f), SeqPlayhead);
         }
 
-        // Key drag runs after the rows so it sees this frame's selection, and it retimes every channel at
-        // once so the row's single diamond stays a single thing.
+        // Runs after the rows so it sees this frame's selection, retiming every channel at once.
         if (bDraggingKey)
         {
             CSequenceTrack_Transform* Track = FindTransformTrack(SelectedKeyBinding);

@@ -309,7 +309,7 @@ namespace Lumina
 
     void FImmediateLineRenderer::FreeSlot(FChannel& Channel, uint32 Slot)
     {
-        // No DeferFree: this slot's last submission finished at the previous frame's fence (see kSlots).
+        // This slot's last submission finished at the previous frame's fence, so no deferred free is needed.
         if (Channel.SlotGpu[Slot] != 0)
         {
             RHI::Free(Channel.SlotGpu[Slot]);

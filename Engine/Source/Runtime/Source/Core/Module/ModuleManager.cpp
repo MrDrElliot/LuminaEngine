@@ -24,15 +24,13 @@ namespace Lumina
     {
         LastLoadError.clear();
 
-        // Reduce "Foo-Development.dll" (or an already-bare name) to the registry key "Foo".
         // VFS::FileName returns empty with no slash, so fall back to the input itself.
         FStringView FileNameView = VFS::FileName(ModulePath, true);
         FString BareName = FileNameView.empty()
             ? FString(ModulePath.data(), ModulePath.size())
             : FString(FileNameView.data(), FileNameView.size());
 
-        // Strip an optional ".dll"/".so" if the caller passed a bare filename
-        // with extension (e.g. "Foo.dll") rather than a full path.
+        // Covers a caller passing a bare filename with an extension rather than a full path.
         {
             const size_t Dot = BareName.find_last_of('.');
             if (Dot != FString::npos)
@@ -48,8 +46,7 @@ namespace Lumina
             BareName.erase(BareName.size() - CfgSuffix.size());
         }
 
-        // Mirrors Paths::MakeModuleFileName, which writes prefix + name + -config + ext. Leaving the prefix
-        // keys the module "libFoo" while PluginManager unloads "Foo", firing the DEBUG_ASSERT at shutdown.
+        // Leaving the prefix keys the module differently from what PluginManager unloads, firing the assert.
         const FStringView LibPrefix = LUMINA_SHAREDLIB_PREFIX_NAME;
         if (!LibPrefix.empty()
             && BareName.size() > LibPrefix.size()
@@ -60,7 +57,7 @@ namespace Lumina
 
         const FName BareFName(BareName);
 
-        // Monolithic / pre-registered path: no LoadLibrary, no filesystem.
+        // The monolithic path uses no LoadLibrary and touches no filesystem.
         if (ModuleInitFunc Factory = FindStaticFactory(BareFName))
         {
             IModuleInterface* ModuleInterface = Factory();
@@ -89,7 +86,7 @@ namespace Lumina
 
         if (!ModuleHandle)
         {
-            // Recorded, not just logged: LoadProject reads this to tell "no C++ module" from "module refused".
+            // Recorded so LoadProject can tell no C++ module from a module that refused to load.
             LastLoadError = FString("the module or one of its dependencies could not be loaded "
                                     "(see the LoadLibrary error above; a linked plugin or module "
                                     "may be missing or built for another configuration)");
@@ -136,20 +133,17 @@ namespace Lumina
             return nullptr;
         }
 
-        // Key by the bare name, matching what UnloadModule and PluginManager pass (the descriptor name).
-        // A decorated key is unfindable on unload and fires the DEBUG_ASSERT below at shutdown.
+        // A decorated key is unfindable on unload and fires the assert at shutdown.
         FModuleInfo* ModuleInfo = GetOrCreateModuleInfo(BareFName);
         ModuleInfo->ModuleHandle = ModuleHandle;
         ModuleInfo->ModuleInterface.reset(ModuleInterface);
 
         ModuleInterface->StartupModule();
 
-        // The registry key rather than the filename it came from. They differ on any platform with a
-        // library prefix, and logging the filename is what made a key mismatch here invisible.
+        // They differ on any platform with a library prefix, and logging the filename hid a key mismatch.
         LOG_INFO("[Module Manager] - Successfully loaded module {}", BareName);
 
-        // If ImGui is already up (module loaded after the editor UI), sync this module's ImGui copy
-        // now. Otherwise NotifyImGuiReady will catch it once the context exists. No-op without the hook.
+        // Otherwise NotifyImGuiReady catches it once the context exists, and it is a no-op without the hook.
         SyncModuleImGui(*ModuleInfo);
 
         FCoreDelegates::OnModuleLoaded.Broadcast(ModuleInfo);
@@ -188,8 +182,7 @@ namespace Lumina
         StaticModuleFactories.emplace_back(Name, Factory);
     }
 
-    // Drain pending static registrations into the FName map; called lazily on first
-    // FindStaticFactory use, by which point allocators / FName pool are up.
+    // Called lazily on first use, by which point the allocators and FName pool are up.
     static void DrainStaticRegistrationsOnce(FModuleManager& Mgr)
     {
         static bool bDrained = false;
@@ -217,8 +210,7 @@ namespace Lumina
         return nullptr;
     }
 
-    // Defined in the header struct as a static. Zero-init in BSS so it's
-    // valid before any FStaticModuleRegistration ctor runs.
+    // Zero-initialized in BSS so it is valid before any registration constructor runs.
     FStaticModuleRegistration* FStaticModuleRegistration::Head = nullptr;
 
     FStaticModuleRegistration::FStaticModuleRegistration(const char* InName, ModuleInitFunc InFactory)
@@ -247,7 +239,7 @@ namespace Lumina
             it->second.ModuleInterface->ShutdownModule();
         }
 
-        // Re-find: ShutdownModule may have inserted into the registry and invalidated the iterator.
+        // Re-found, since ShutdownModule may have inserted into the registry and invalidated the iterator.
         it = ModuleHashMap.find(ModuleFName);
         if (it == ModuleHashMap.end())
         {
@@ -262,8 +254,7 @@ namespace Lumina
 
         ModuleInterface.reset();
 
-        // Statically-linked modules have no DLL handle; skip the
-        // DLL-side teardown. The IModule's ShutdownModule above already ran.
+        // A statically-linked module has no DLL handle, and its ShutdownModule already ran.
         if (ModulePtr != nullptr)
         {
             auto ShutdownFunctionPtr = Platform::LumGetProcAddress<ModuleShutdownFunc>(ModulePtr, "ShutdownModule");

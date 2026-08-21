@@ -180,8 +180,7 @@ namespace Lumina
             }
         }
 
-        // Stable sort by SortPriority keeps a predictable pin order while leaving equal-priority nodes
-        // in graph order.
+        // A stable sort keeps a predictable pin order while leaving equal-priority nodes in graph order.
         Algo::StableSort(InputNodes.begin(), InputNodes.end(), [](CMaterialExpression_FunctionInput* A, CMaterialExpression_FunctionInput* B)
         {
             return A->SortPriority < B->SortPriority;
@@ -214,7 +213,7 @@ namespace Lumina
             Fn->Outputs.push_back(Move(Decl));
         }
 
-        // Validation compile: run every node into a throwaway compiler to surface type errors.
+        // Runs every node into a throwaway compiler to surface type errors.
         FMaterialCompiler Compiler;
         NodeGraph->CompileForValidation(Compiler);
 

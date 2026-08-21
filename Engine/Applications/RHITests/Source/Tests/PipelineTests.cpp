@@ -7,9 +7,7 @@ namespace Lumina::RHITests
 {
     namespace
     {
-        // Every source here is SELF-CONTAINED -- no #include. The harness never mounts the VFS, so Slang
-        // has no file system to resolve includes through. This is the same push-constant contract as
-        // Includes/GlobalRHI.slang: one 8-byte device address, VK_SHADER_STAGE_ALL, offset 0.
+        // Every source here is SELF-CONTAINED, since the harness never mounts a VFS for Slang to include through.
         constexpr const char* kRHIPrelude = R"SLANG(
             struct FRHIRoot { uint64_t Args; };
             [[vk::push_constant]] FRHIRoot gRHI;
@@ -32,8 +30,7 @@ namespace Lumina::RHITests
             return Desc;
         }
 
-        // Renders into a fresh RGBA8 target, reads the top-left texel back and checks it. The two draw
-        // paths below differ only in what they record between BeginRenderPass and EndRenderPass.
+        // The two draw paths below differ only in what they record between Begin and EndRenderPass.
         template<typename TRecordFn>
         void RenderAndCheckPixel(FTestContext& Ctx, const char* Name, TRecordFn&& Record)
         {
@@ -165,8 +162,7 @@ namespace Lumina::RHITests
         RHI_CHECK_EQ(Words[Count - 1], (Count - 1) * 3 + 1);
     }
 
-    // The indirect argument buffer is produced by a first dispatch and consumed by a second without a
-    // host round trip, so this covers the ComputeToIndirect barrier as much as the dispatch itself.
+    // The argument buffer is produced by one dispatch and consumed by the next with no host round trip.
     RHI_TEST(Pipelines, ComputeDispatchIndirect)
     {
         const TVector<uint32> Spirv = Ctx.CompileShader(WithPrelude(R"SLANG(
@@ -215,8 +211,7 @@ namespace Lumina::RHITests
         RHI_CHECK_EQ(Words[Groups - 1], 100u + Groups - 1);
     }
 
-    // Writes through the bindless storage heap rather than a device address, which is the half of the
-    // heap GPU-AV's descriptor checks actually look at.
+    // Writes through the bindless storage heap, the half GPU-AV's descriptor checks actually look at.
     RHI_TEST(Pipelines, ComputeWritesBindlessStorageTexture)
     {
         constexpr uint32 Size = 8;
@@ -280,9 +275,7 @@ namespace Lumina::RHITests
         RHI::Textures::Release(Managed);
     }
 
-    // Two pipelines from ONE SPIR-V module differing only by a specialization constant. This is the
-    // mechanism the shading-model and triangle-cull switches ride on, and a silently ignored spec
-    // constant would leave both pipelines identical.
+    // Two pipelines from ONE SPIR-V module, so a silently ignored spec constant leaves them identical.
     RHI_TEST(Pipelines, SpecializationConstantChangesResult)
     {
         const TVector<uint32> Spirv = Ctx.CompileShader(WithPrelude(R"SLANG(
@@ -399,8 +392,7 @@ namespace Lumina::RHITests
         Raster.Topology     = RHI::ETopology::TriangleList;
         Raster.ColorTargets = TSpan<const RHI::FColorTarget>(&ColorTarget, 1);
 
-        // Task-less, exactly as the engine builds its meshlet pipelines: culling already ran as compute,
-        // so there is nothing for an amplification stage to do.
+        // Task-less, exactly as the engine builds meshlet pipelines once culling has run as compute.
         const RHI::FPipelineH Pipeline = Ctx.TrackPipeline(RHI::CreateMeshShaderPipeline(
             RHI::FShaderSource{}, ShaderSource(MSSpirv), ShaderSource(PSSpirv), Raster));
         RHI_REQUIRE(RHI::IsValid(Pipeline));
@@ -452,8 +444,7 @@ namespace Lumina::RHITests
 
         const RHI::FDrawMeshTasksIndirectArguments DrawArgs{ 1, 1, 1 };
 
-        // Staged and completed BEFORE the pass: a transfer write is illegal inside a render pass, and the
-        // draw below has to read real values rather than uninitialized memory.
+        // A transfer write is illegal inside a render pass, so this has to complete before one opens.
         const RHI::FCmdListH Stage = Ctx.OpenCL();
         RHI::CmdWriteMemory(Stage, IndirectArgs, &DrawArgs, sizeof(DrawArgs));
         RHI::CmdBarrier(Stage, RHI::EStageFlags::Transfer, RHI::EStageFlags::IndirectArguments);
@@ -486,8 +477,7 @@ namespace Lumina::RHITests
         const RHI::FPipelineH Pipeline = Ctx.TrackPipeline(RHI::CreateComputePipeline(ShaderSource(Spirv)));
         RHI_REQUIRE(RHI::IsValid(Pipeline));
 
-        // Statistics capture is opt-in at device creation; absent it, this must report cleanly rather
-        // than hand back junk.
+        // Statistics capture is opt-in at device creation, so absent it this must report cleanly.
         TVector<RHI::FPipelineStat> Stats;
         if (!RHI::GetPipelineStatistics(Pipeline, Stats))
         {

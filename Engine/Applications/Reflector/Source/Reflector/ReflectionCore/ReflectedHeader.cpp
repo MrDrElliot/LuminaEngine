@@ -14,11 +14,7 @@ namespace Lumina::Reflection
 {
     namespace
     {
-        // The Reflector executable's own last-write time, computed once. When the tool is newer than a
-        // generated artifact the codegen itself may have changed (not just the source header), so every
-        // header must be treated as dirty. This mirrors the outer Reflection.lua dirty-check, which
-        // re-runs the tool whenever its binary is rebuilt; without it, an emitter change silently
-        // produces stale bindings (the generated output never regenerates).
+        // A newer tool may have changed the codegen itself, so every header must be treated as dirty.
         std::filesystem::file_time_type GetToolWriteTime()
         {
             static const std::filesystem::file_time_type ToolTime = []() -> std::filesystem::file_time_type
@@ -36,8 +32,7 @@ namespace Lumina::Reflection
                     }
                 }
             #endif
-                // Unknown (POSIX port, or query failed): the epoch sentinel is older than any real file
-                // time, so the dirty check falls back to source-header-only behavior.
+                // The epoch sentinel is older than any real file time, so the check falls back to header-only.
                 return std::filesystem::file_time_type{};
             }();
             return ToolTime;

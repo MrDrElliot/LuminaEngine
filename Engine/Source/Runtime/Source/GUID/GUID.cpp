@@ -166,8 +166,7 @@ namespace Lumina
         return FGuid(std::move(bytes));
 
     #else
-        // Fallback to random generation (not cryptographically secure). Per-thread, because a shared
-        // unsynchronized generator here would race and could hand two threads the same GUID.
+        // Per-thread, since a shared unsynchronized generator could hand two threads the same GUID.
         FRandomStream& Random = Math::ThreadRandomStream();
 
         ByteArray bytes;
@@ -199,7 +198,7 @@ namespace Lumina
             bytes[i + 8] = static_cast<uint8>((H1 >> (i * 8)) & 0xFFu);
         }
 
-        // RFC-4122-ish version (5: name-based) and variant bits.
+        // RFC 4122 version 5, name-based, plus the variant bits.
         bytes[6] = (bytes[6] & 0x0F) | 0x50;
         bytes[8] = (bytes[8] & 0x3F) | 0x80;
 

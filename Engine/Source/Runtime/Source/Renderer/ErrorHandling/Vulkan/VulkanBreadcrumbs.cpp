@@ -144,7 +144,7 @@ namespace Lumina::RHI
         Entry.Depth    = Depth;
         Entry.MarkerId = MarkerId;
 
-        // TOP_OF_PIPE: the write lands as the pass is entered, before any of its work runs.
+        // At top of pipe the write lands as the pass is entered, before any of its work runs.
         vkCmdWriteBufferMarkerAMD(Cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, Buffer,
             static_cast<VkDeviceSize>(Index) * 2 * sizeof(uint32), MarkerId);
 
@@ -226,8 +226,7 @@ namespace Lumina::RHI
             }
             else
             {
-                // A marker the GPU never entered writes neither value, so it is absent from both
-                // tallies; an empty outstanding list past the last completed one means it stopped.
+                // An empty outstanding list past the last completed marker means the GPU stopped there.
                 const FEntry& Next = Entries[(LastCompleted->MarkerId + 1) % MaxMarkers];
                 const bool bNextKnown = Next.MarkerId == LastCompleted->MarkerId + 1;
 

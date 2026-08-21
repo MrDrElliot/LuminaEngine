@@ -3,9 +3,7 @@
 #include "Core/Module/ModuleManager.h"
 #include "Log/Log.h"
 
-// volk defines VK_NO_PROTOTYPES + the Vulkan types; it MUST precede any NvPerf Vulkan header (which
-// pulls <vulkan/vulkan.h> and selects its no-prototypes paths). Vulkan lives only in this plugin,
-// the engine's RHINative.h hands out opaque handles, which we reinterpret to Vk types here.
+// Vulkan lives only in this plugin, and RHINative hands out opaque handles reinterpreted here.
 #include <volk/volk.h>
 #include "Renderer/RHINative.h"
 

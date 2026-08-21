@@ -44,8 +44,7 @@ namespace Lumina
     static const char* GraphTasksWindowName = "Task Graph";
     static const char* GraphClipsWindowName = "Animation Clips";
 
-    // Presentation helpers for the Task Graph window. Internal linkage: these names are generic
-    // enough to collide with other translation units' Detail helpers.
+    // Internal linkage, since these names would collide with another TU's Detail helpers.
     namespace
     {
         namespace AnimGraphDetail
@@ -67,8 +66,7 @@ namespace Lumina
                 return "Unknown";
             }
 
-            // Category hue so the shape of a recipe reads without parsing labels: pose sources green,
-            // blends blue, additive violet, state machine amber, bone ops teal.
+            // Pose sources green, blends blue, additive violet, state machines amber, bone ops teal.
             ImVec4 TaskTypeColor(EAnimTaskType Type)
             {
                 switch (Type)
@@ -91,8 +89,7 @@ namespace Lumina
                 switch (Entry.Type)
                 {
                 case EAnimTaskType::SampleClip:
-                    // Time first: it's the per-frame liveness signal, and clip names are long enough
-                    // that the tail is what gets ellipsized on a narrow box.
+                    // Time first, since it is the per-frame liveness signal and long clip names get ellipsized.
                     return Format("t={:.3f}s   {}", Entry.Time,
                                   Entry.ClipName.IsNone() ? "<no clip>" : Entry.ClipName.c_str());
 
@@ -118,9 +115,7 @@ namespace Lumina
                 return FString();
             }
 
-            // Trims Text to MaxWidth with a trailing ellipsis. Measured with the same font and size
-            // used to draw it, so boxes stay clean at any zoom or editor DPI scale rather than
-            // hard-clipping mid-glyph.
+            // Measured with the drawing font, so boxes stay clean at any zoom instead of clipping mid-glyph.
             FString FitText(ImFont* Font, float FontSize, const char* Text, float MaxWidth)
             {
                 if (Text == nullptr || Text[0] == '\0')
@@ -199,8 +194,7 @@ namespace Lumina
             DrawClipBrowserWindow();
         });
 
-        // Editor node graph is a sibling sub-object in the asset's package (like the
-        // material editor); created on first open, reloaded thereafter.
+        // A sibling sub-object in the asset's package, created on first open and reloaded thereafter.
         FString GraphName = "AssetAnimationGraph";
         NodeGraph = Cast<CAnimationGraphNodeGraph>(Asset->GetPackage()->LoadObjectByName(GraphName));
 
@@ -234,12 +228,10 @@ namespace Lumina
             }
         });
 
-        // Seed the navigation stack with the top-level graph. EnterGraph readies
-        // it (creates its context, wires callbacks) and pushes it.
+        // EnterGraph creates its context, wires callbacks and pushes it.
         EnterGraph(NodeGraph, "Animation Graph");
 
-        // Seed the runtime asset with bytecode so the preview viewport has
-        // something to evaluate on the very first frame.
+        // Seeds the runtime asset so the preview viewport has something to evaluate on the first frame.
         Compile(false);
     }
 
@@ -248,8 +240,7 @@ namespace Lumina
         // Never leave the runtime capture pointing at a component this tool no longer watches.
         Anim::DisarmTaskCapture();
 
-        // Tear down every node-editor context this tool created (the top graph
-        // plus any nested state machine / blend-tree canvases that were opened).
+        // Covers the top graph plus any nested state machine or blend-tree canvas that was opened.
         for (CEdNodeGraph* Graph : InitializedGraphs)
         {
             if (Graph != nullptr)
@@ -279,8 +270,7 @@ namespace Lumina
             else if (SelectedNode != nullptr)
             {
                 SelectedNode = nullptr;
-                // A transition may be (re)selected later this same frame by the
-                // link callback; only fall back to the asset if not.
+                // A transition may be reselected later this frame by the link callback, so only then fall back.
                 if (SelectedTransition == nullptr)
                 {
                     GetPropertyTable()->SetObject(Asset, Asset->GetClass());
@@ -293,8 +283,7 @@ namespace Lumina
             // A deleted node takes its sub-graph with it, which forward history may still point at.
             NavForwardStack.clear();
 
-            // Deleting a State node also drops its transitions, so clear any
-            // inspected transition defensively rather than risk a stale pointer.
+            // Deleting a State node drops its transitions, so clear the inspected one rather than dangle.
             if (Node == SelectedNode || SelectedTransition != nullptr)
             {
                 SelectedNode = nullptr;
@@ -328,8 +317,7 @@ namespace Lumina
                 return;
             }
 
-            // Links are emitted as (input pin, connected output pin); be order
-            // agnostic anyway.
+            // Links arrive as input pin then connected output pin, but stay order agnostic anyway.
             CEdNodeGraphPin* InPin  = PinA->bInputPin ? PinA : PinB;
             CEdNodeGraphPin* OutPin = PinA->bInputPin ? PinB : PinA;
 
@@ -339,7 +327,7 @@ namespace Lumina
                 (FromNode->IsA<CAnimGraphNode_State>() || FromNode->IsA<CAnimGraphNode_StateAny>());
             if (ToState == nullptr || !bTransitionSource)
             {
-                // Not a transition wire (e.g. the Entry link) -- leave as-is.
+                // Not a transition wire, such as the Entry link, so leave it as-is.
                 return;
             }
 
@@ -456,8 +444,7 @@ namespace Lumina
 
         CameraState.Speed = 5.0f;
 
-        // The skeleton may already be set (reopening a configured asset) or not
-        // (a fresh graph). SyncPreviewMesh handles both, and re-runs every frame.
+        // SyncPreviewMesh handles both a configured asset and a fresh graph, and re-runs every frame.
         SyncPreviewMesh();
     }
 
@@ -502,8 +489,7 @@ namespace Lumina
             return;
         }
 
-        // Entity exists -> keep its mesh / graph references current in case the
-        // skeleton's preview mesh or the graph asset changed underneath us.
+        // Keeps the references current in case the preview mesh or graph asset changed underneath.
         SSkeletalMeshComponent& MeshComp = World->GetComponent<SSkeletalMeshComponent>(MeshEntity);
         if (MeshComp.SkeletalMesh.Get() != PreviewMesh)
         {
@@ -522,12 +508,10 @@ namespace Lumina
     {
         FAssetEditorTool::Update(UpdateContext);
 
-        // The skeleton is frequently assigned after the tool is already open;
-        // pick that up here rather than only at world setup.
+        // The skeleton is often assigned after the tool is open, so pick it up here too.
         SyncPreviewMesh();
 
-        // Live preview: keep the runtime asset's bytecode in sync with the node
-        // graph so edits resolve in the viewport without a manual compile.
+        // Keeps the runtime bytecode in sync so edits resolve in the viewport without a manual compile.
         if (bAutoCompile && NeedsCompile())
         {
             Compile(false);
@@ -549,8 +533,7 @@ namespace Lumina
 
         ImGuiID leftDockID = 0, rightDockID = 0, bottomDockID = 0;
 
-        // Right pane: properties. Left pane splits into a preview viewport on
-        // top and the node graph canvas below it.
+        // Properties on the right, with the preview viewport above the node canvas on the left.
         ImGui::DockBuilderSplitNode(InDockspaceID, ImGuiDir_Right, 0.25f, &rightDockID, &leftDockID);
         ImGui::DockBuilderSplitNode(leftDockID, ImGuiDir_Up, 0.45f, &leftDockID, &bottomDockID);
 
@@ -559,7 +542,7 @@ namespace Lumina
         ImGui::DockBuilderDockWindow(GetToolWindowName(GraphPropertiesWindowName).c_str(),     rightDockID);
         // Parameters share the right pane, tabbed behind Properties.
         ImGui::DockBuilderDockWindow(GetToolWindowName(GraphParametersWindowName).c_str(),     rightDockID);
-        // Task Graph tabs behind the node canvas: same "what is this graph doing" workspace.
+        // Task Graph tabs sit behind the node canvas, in the same what-is-this-graph-doing workspace.
         ImGui::DockBuilderDockWindow(GetToolWindowName(GraphTasksWindowName).c_str(),          bottomDockID);
         // Clips sit with the other pickers on the right so they can be dragged onto the canvas.
         ImGui::DockBuilderDockWindow(GetToolWindowName(GraphClipsWindowName).c_str(),          rightDockID);
@@ -619,8 +602,7 @@ namespace Lumina
 
             GraphStack.back().Graph->DrawGraph();
 
-            // Clip drops onto the canvas. The node editor consumes the region itself, so the target
-            // is registered over the whole window rect (same pattern as the outliner's empty area).
+            // The node editor consumes the region, so the target covers the whole window rect instead.
             if (ImGui::BeginDragDropTargetCustom(ImGui::GetCurrentWindow()->Rect(), ImGui::GetCurrentWindow()->ID))
             {
                 if (CAnimation* DroppedClip = DragDrop::AcceptAsset<CAnimation>())
@@ -697,8 +679,7 @@ namespace Lumina
 
         ImGui::Separator();
 
-        // Contextual hint: on the state machine canvas, transitions are edited
-        // by selecting their arrow -- not obvious without a nudge.
+        // On the state machine canvas a transition is edited by selecting its arrow, which needs a nudge.
         if (SelectedNode == nullptr && SelectedTransition == nullptr &&
             !GraphStack.empty() && Cast<CAnimStateMachineGraph>(GraphStack.back().Graph) != nullptr)
         {
@@ -712,8 +693,7 @@ namespace Lumina
 
         GetPropertyTable()->DrawTree();
 
-        // When a State node is selected, inline-list its outgoing transitions
-        // so the user can edit conditions without having to click each wire.
+        // Inline-listing the outgoing transitions saves clicking each wire to edit its condition.
         if (CAnimGraphNode_State* StateNode = Cast<CAnimGraphNode_State>(SelectedNode))
         {
             DrawOutgoingTransitionsForState(StateNode);
@@ -785,8 +765,7 @@ namespace Lumina
             ImGui::SetNextItemOpen(true, ImGuiCond_Once);
             const bool bOpen = ImGui::CollapsingHeader(Header.c_str());
 
-            // Condition and blend length on the header row: the two things worth scanning without
-            // expanding every entry.
+            // Condition and blend length are the two things worth scanning without expanding every entry.
             ImGui::SameLine();
             ImGui::TextColored(Transition->ConditionParameter.IsNone() ? EditorColors::Warning() : EditorColors::TextDim(),
                                "   %s", Transition->GetConditionText().c_str());
@@ -949,8 +928,7 @@ namespace Lumina
 
         FAnimationGraphCompiler Compiler;
 
-        // Resolve bone-mask names to per-bone weight arrays up front so Layered Blend
-        // Per Bone nodes can look up by name during GenerateBytecode.
+        // Resolved up front so Layered Blend Per Bone nodes can look them up during GenerateBytecode.
         if (Graph->Skeleton.IsValid())
         {
             Compiler.ResolveBoneMasks(Graph->BoneMaskDefs, Graph->Skeleton->GetSkeletonResource());
@@ -967,8 +945,7 @@ namespace Lumina
 
         NodeGraph->CompileGraph(Compiler);
 
-        // Non-fatal diagnostics first, so they're visible whether or not the
-        // compile also produced hard errors.
+        // Non-fatal diagnostics first, so they show whether or not the compile also produced errors.
         for (const EdNodeGraph::FError& Warning : Compiler.GetWarnings())
         {
             CompilationLog += "WARNING - [" + Warning.Name + "]: " + Warning.Description + "\n";
@@ -986,8 +963,7 @@ namespace Lumina
 
         Compiler.BuildGraph(Graph);
 
-        // Snapshot pin->register and state-node mappings so the debug overlay can read live
-        // VM values back onto the graph; pin pointers stay valid (re-run every frame).
+        // Lets the debug overlay read live VM values back onto the graph, re-run every frame.
         DebugPinRegisters = Compiler.GetPinRegisters();
         DebugStateNodes   = Compiler.GetDebugStateNodes();
 
@@ -1166,8 +1142,7 @@ namespace Lumina
             }
         }
 
-        // Flatten candidates ("Preview" + every live entity across worlds running this graph)
-        // into one indexable list so the searchable picker can select by index.
+        // Flattened into one indexable list so the searchable picker can select by index.
         TVector<FString> Labels;
         TVector<TPair<CWorld*, entt::entity>> Targets;
         Labels.push_back("Preview");
@@ -1276,8 +1251,7 @@ namespace Lumina
             return;
         }
 
-        // Rebuild the list when the skeleton or the registry's asset count changes. Matching runs off
-        // the registry's dependency table, so clips are filtered without loading a single one.
+        // Matching runs off the registry dependency table, so clips filter without loading a single one.
         TVector<FAssetData*> AllAssets = FAssetRegistry::Get().FindByPredicate([](const FAssetData&) { return true; });
         if (ClipCacheSkeleton != Skeleton || ClipCacheAssetCount != (int32)AllAssets.size())
         {
@@ -1354,8 +1328,7 @@ namespace Lumina
                 Label += Entry.DisplayName.c_str();
                 ImGui::Selectable(Label.c_str());
 
-                // Drag source: the shared LumDD asset channel, so this row also drops onto any
-                // CAnimation property slot in the details panel.
+                // Uses the shared asset drag channel, so this row also drops onto any CAnimation property slot.
                 if (ImGui::BeginDragDropSource())
                 {
                     const FStringView Path(Entry.Path.c_str(), Entry.Path.size());
@@ -1391,8 +1364,7 @@ namespace Lumina
 
     bool FAnimationGraphEditorTool::ResolveDebugTarget(CWorld*& OutWorld, entt::entity& OutEntity) const
     {
-        // Null selected world = the editor preview; a stale selection (world/entity gone, e.g. PIE
-        // ended) falls back to it too.
+        // A null world means the editor preview, and a stale selection falls back to it too.
         OutWorld  = DebugTargetWorld.Get();
         OutEntity = DebugTargetEntity;
 
@@ -1415,9 +1387,7 @@ namespace Lumina
             MeshComp = TargetWorld->TryGetComponent<SSkeletalMeshComponent>(TargetEntity);
         }
 
-        // Arm the runtime capture for exactly this component while the window is visible; the next
-        // animation tick fills the snapshot read below. Disarmed everywhere else, so populated
-        // worlds pay one null compare per mesh.
+        // Disarmed everywhere else, so a populated world pays one null compare per mesh.
         Anim::ArmTaskCapture(MeshComp);
         if (MeshComp != nullptr)
         {
@@ -1460,7 +1430,7 @@ namespace Lumina
             return;
         }
 
-        // Summary line: what the recipe cost and how much of it was live.
+        // A summary of what the recipe cost and how much of it was live.
         const int32 SkippedCount = (int32)Snap.Entries.size() - Snap.ReachableCount;
 
         ImGui::Separator();
@@ -1493,7 +1463,7 @@ namespace Lumina
             ImGui::SameLine(0.0f, 6.0f); ImGui::TextColored(EditorColors::TextDim(), "root pinned");
         }
 
-        // The threading reality, stated where it can't be misread: one list = one thread.
+        // The threading reality stated where it cannot be misread, one list is one thread.
         ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
         ImGui::TextWrapped("This whole list runs start-to-finish on a single worker thread; the animation system's "
                            "parallelism is across meshes, not within one graph. Columns are dependency levels: tasks "
@@ -1505,8 +1475,7 @@ namespace Lumina
 
         const float Scale = TaskGraphZoom;
 
-        // Box metrics derive from the font rather than fixed pixels: the editor's DPI scale changes
-        // the font size independently of zoom, and a hardcoded height clipped the last line.
+        // The editor's DPI scale changes font size independently of zoom, so a fixed height clipped.
         ImFont*     Font      = ImGui::GetFont();
         const float FontSize  = ImGui::GetFontSize() * Scale;
         const float SmallFont = FontSize * 0.86f;
@@ -1579,7 +1548,7 @@ namespace Lumina
         ImDrawList* DL = ImGui::GetWindowDrawList();
         const bool bWindowHovered = ImGui::IsWindowHovered();
 
-        // Column bands + level headers: the visual answer to "what is grouped with what".
+        // Column bands and level headers, the visual answer to what is grouped with what.
         for (int32 L = 0; L < NumLevels; ++L)
         {
             const float BandX = Origin.x + (float)L * (NodeW + ColGap);
@@ -1596,8 +1565,7 @@ namespace Lumina
                         EditorColors::U32(EditorColors::TextMuted()), Header.c_str());
         }
 
-        // Dependency links behind the boxes. Curves flow left (producer) to right (consumer),
-        // matching the node canvas's reading direction.
+        // Curves flow producer to consumer, matching the node canvas's reading direction.
         for (int32 i = 0; i < NumEntries; ++i)
         {
             const FAnimTaskDebugEntry& Entry = Snap.Entries[i];
@@ -1624,8 +1592,7 @@ namespace Lumina
                 const ImVec2 To(Origin.x + Positions[i].x, Origin.y + Positions[i].y + NodeH * 0.5f);
                 const float Curve = (To.x - From.x) * 0.5f;
 
-                // A stolen buffer means this consumer writes in place over the producer's pose:
-                // draw it solid and accented, since that edge is where the zero-copy path happens.
+                // A stolen buffer means the consumer writes in place, which is where the zero-copy path happens.
                 const bool bLive  = Entry.bReachable && DepEntry.bReachable;
                 const bool bSteal = bLive && Entry.bStoleBuffer && D == 0;
 
@@ -1668,8 +1635,7 @@ namespace Lumina
             const float BodyMaxW  = NodeW - InnerPad * 2.0f;
             float TextY = Min.y + PadY;
 
-            // Execution order (or "skipped"), right-aligned; measured first so the title can
-            // reserve room for it instead of running underneath.
+            // Measured first so the title can reserve room instead of running underneath it.
             const FString Order = Entry.bReachable ? Format("#{}", (int32)Entry.ExecOrder) : FString("skipped");
             const ImVec2 OrderSize = Font->CalcTextSizeA(SmallFont, FLT_MAX, 0.0f, Order.c_str());
 
@@ -1694,7 +1660,7 @@ namespace Lumina
 
             TextY += SmallFont + LineGap;
 
-            // Buffer chip: where this task's pose lives, and whether it reused its input's buffer.
+            // Shows where this task's pose lives and whether it reused its input's buffer.
             if (Entry.bReachable && Entry.BufferIndex >= 0)
             {
                 const FString Where = Format("buffer {}  ({})", (int32)Entry.BufferIndex,

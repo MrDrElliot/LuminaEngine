@@ -75,11 +75,14 @@ namespace Lumina
         // Forces the rebind SyncSampleTable's address compare would miss when the block is reused.
         void RebindSampleTable();
 
+        void RefreshAfterStructuralEdit();
+
         void BeginAssetTransaction(FName Name);
         void EndAssetTransaction();
 
         TUniquePtr<FPropertyTable>  SampleTable;
         void*                       SampleTarget = nullptr;
+        int32                       SampleTableSourceCount = 0;
 
         // Canvas rect in screen space, refreshed every draw; the axis<->canvas mapping reads it.
         ImVec2                      CanvasMin = ImVec2(0.0f, 0.0f);

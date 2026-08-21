@@ -25,7 +25,7 @@ namespace Lumina
         constexpr uint32 kWatchMask =
             IN_CREATE                    // a file or directory appeared
             | IN_DELETE                  // ... or was removed
-            | IN_CLOSE_WRITE             // a writable handle was closed: "saved"
+            | IN_CLOSE_WRITE             // a writable handle was closed, meaning saved
             | IN_MOVED_FROM              // the two halves of a rename, paired by cookie
             | IN_MOVED_TO
             | IN_DELETE_SELF             // the watched directory itself went away

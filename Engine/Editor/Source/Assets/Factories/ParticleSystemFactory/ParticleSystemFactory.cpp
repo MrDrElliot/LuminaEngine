@@ -9,8 +9,7 @@ namespace Lumina
         CParticleSystem* System = NewObject<CParticleSystem>(Package, Name);
         if (System != nullptr)
         {
-            // PostLoad is what guarantees a loaded system has an emitter, and it does not run on a freshly
-            // constructed one -- so a new asset would otherwise open with an empty emitter list.
+            // PostLoad guarantees an emitter but never runs on a fresh asset, which would open with none.
             System->AddEmitter();
         }
         return System;

@@ -41,7 +41,7 @@ namespace Lumina
 
     void FTextureEditorTool::OnPropertyEditFinished(const FPropertyChangedEvent& Event)
     {
-        // Never Stream, Filter and Address Mode carry no RequiresRecook: no stored pixel depends on them.
+        // Never Stream, Filter and Address Mode carry no RequiresRecook, since no stored pixel depends on them.
         if (Event.Property == nullptr || !Event.Property->HasMetadata("RequiresRecook"))
         {
             return;
@@ -87,7 +87,7 @@ namespace Lumina
             SourcelessBaseline = Move(Recovered);
         }
 
-        // Copied, not handed over: CookFromSource consumes what it is given and the baseline has to survive.
+        // Copied, since CookFromSource consumes what it is given and the baseline has to survive.
         Import::Textures::FTextureImportResult Working = SourcelessBaseline.value();
         return CTextureFactory::CookFromSource(Texture, Working);
     }
@@ -109,14 +109,10 @@ namespace Lumina
                 return;
             }
 
-            // Reaching here means ImGui actually began this window: not collapsed, its dock tab selected, and
-            // its tool visible. That is the whole condition for holding the streaming pin -- Update reads and
-            // clears this next frame. Set before the early-outs below on purpose: an array still building is
-            // just as much "the user is looking at it" as one that draws.
+            // Set before the early-outs, since an array still building is as much on screen as one that draws.
             bPreviewDrawnSinceUpdate = true;
 
-            // An array with nothing built has no GPU image at all, so there is no slice to show and the
-            // usual path would sample the null slot. Say what to do instead of drawing a purple square.
+            // An unbuilt array has no GPU image, so say what to do rather than sample the null slot.
             const CTextureArray* PreviewArray = Cast<CTextureArray>(Texture);
             if (PreviewArray != nullptr && PreviewArray->GetNumLayers() == 0)
             {
@@ -140,17 +136,13 @@ namespace Lumina
 
             const FTextureResource::FDescription& ImageDesc = Texture->TextureResource->ImageDescription;
 
-            // Float formats are the cooked-HDR path (Environment color space, scene captures): their
-            // texels are linear radiance rather than display-encoded bytes. Drives both the display
-            // transform on the image below and whether the exposure control is shown at all.
+            // Float texels are linear radiance, which drives both the display transform and the exposure control.
             const bool bIsHDRPreview =
                 ImageDesc.Format == EFormat::RGBA16_FLOAT ||
                 ImageDesc.Format == EFormat::RGBA32_FLOAT ||
                 ImageDesc.Format == EFormat::R11G11B10_FLOAT;
 
-            // Slice picker, above the image so it doesn't move as the preview is panned/zoomed.
-            // Clamped every frame against the live count: a rebuild can shorten the array, and an
-            // out-of-range layer index is undefined on the GPU rather than a wrap.
+            // Clamped every frame, since a rebuild can shorten the array and an out-of-range layer is undefined.
             if (PreviewArray != nullptr)
             {
                 const uint32 Layers = PreviewArray->GetNumLayers();
@@ -174,9 +166,7 @@ namespace Lumina
                 ImGui::Separator();
             }
 
-            // Captured AFTER the slice picker, not before: the checkerboard and the image are painted
-            // from these across the whole remaining region, so a position taken above the picker would
-            // put them over it -- the slider still hit-tests, but nothing of it is visible.
+            // Captured AFTER the picker, or the checkerboard and image would paint over the slider.
             ImVec2 WindowSize = ImGui::GetContentRegionAvail();
             ImVec2 WindowPos  = ImGui::GetCursorScreenPos();
 
@@ -234,13 +224,7 @@ namespace Lumina
                 2.0f
             );
 
-            // Float formats hold LINEAR radiance, so they need the scene's display transform to read
-            // the way the same texture does in-world; blitting them straight to the _UNORM swapchain
-            // is what made cooked HDRIs look far darker here than in the viewport. Cooked color
-            // textures are already display-encoded and must go through untouched.
-            // Array slices must be sampled through gTextures2DArray[]; the two preview modes write the
-            // same display state, so they cannot both be active (array layers are always LDR anyway,
-            // since the layer cook rejects float sources outright).
+            // Float formats hold LINEAR radiance, so they need the scene display transform to read correctly.
             const bool bIsArrayPreview = (PreviewArray != nullptr);
             if (bIsArrayPreview)
             {
@@ -298,13 +282,9 @@ namespace Lumina
 
             if (ImGui::BeginChild("##Toolbar", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding))
             {
-                // No mip selector: the preview samples the texture through ImGui's bindless 2D path, which
-                // takes a heap slot and no explicit LOD, so there is nothing for a slider to change. It
-                // used to be here and silently did nothing. Showing a per-mip preview needs per-mip SRVs
-                // exposed through the heap.
+                // The preview samples through the bindless 2D path, which takes no explicit LOD to slide.
 
-                // HDR preview exposure: only for float-format textures (cooked HDRIs);
-                // hidden for LDR so the toolbar has no unused controls.
+                // Only for float-format textures, so the toolbar carries no unused controls on an LDR asset.
                 if (bIsHDRPreview)
                 {
                     if (ImageDesc.NumMips > 1)
@@ -438,9 +418,7 @@ namespace Lumina
                 
                 if (!Texture->TextureResource->Mips.empty())
                 {
-                    // SizeBytes(), not Pixels.size(): a streamed mip's bytes live in the package's bulk
-                    // region, so its Pixels are empty whenever it is not resident and reading them would
-                    // report the top of a 4K chain as 0 B.
+                    // SizeBytes(), not Pixels.size(), since a non-resident streamed mip would report as 0 B.
                     baseMipMemory = Texture->TextureResource->Mips[0].SizeBytes();
                     for (const auto& Mip : Texture->TextureResource->Mips)
                     {
@@ -619,8 +597,7 @@ namespace Lumina
             ImGui::Spacing();
             ImGui::Spacing();
             
-            // Array layer list. Only shown for CTextureArray; a plain texture has no layers and the
-            // section would just be dead UI.
+            // Only for CTextureArray, since a plain texture has no layers and the section would be dead UI.
             if (CTextureArray* Array = Cast<CTextureArray>(Texture))
             {
                 ImGuiX::Font::PushFont(ImGuiX::Font::EFont::Large);
@@ -645,8 +622,7 @@ namespace Lumina
                     ImGui::SameLine(40);
                     ImGui::TextUnformatted(Layer.IsValid() ? Layer->GetName().c_str() : "<missing>");
 
-                    // Slice order is the material's Slice index, so reordering has to be possible
-                    // without clearing and re-adding the whole list.
+                    // Slice order is the material's Slice index, so reordering must not need a clear and re-add.
                     ImGui::SameLine(ImGui::GetContentRegionAvail().x - 66.0f);
                     ImGui::BeginDisabled(i == 0);
                     if (ImGui::SmallButton("^")) { MoveFrom = (int)i; MoveTo = (int)i - 1; }
@@ -675,15 +651,13 @@ namespace Lumina
 
                 ImGui::Spacing();
 
-                // Drop target rather than a file dialog: layers are texture ASSETS now, so they come
-                // from the content browser and keep working when the project moves machines.
+                // Layers are texture ASSETS, so they come from the browser and survive the project moving machines.
                 ImGui::Button("Drop textures here to add a layer##TextureArray", ImVec2(-1, 0));
                 if (ImGui::BeginDragDropTarget())
                 {
                     if (CTexture* Dropped = DragDrop::AcceptAsset<CTexture>())
                     {
-                        // A nested array would recurse through layer-major mips and build a silently
-                        // wrong image; Rebuild refuses it too, but there is no reason to accept it here.
+                        // A nested array would recurse through layer-major mips and build a silently wrong image.
                         if (Dropped->IsA<CTextureArray>())
                         {
                             ImGuiX::Notifications::NotifyError("'{0}' is a texture array; layers must be plain textures",
@@ -734,7 +708,7 @@ namespace Lumina
 
             ImGui::Spacing();
 
-            // The settings above are recorded, not applied: the mip chain is whatever the last cook produced.
+            // The settings above are recorded, not applied, so the chain is whatever the last cook produced.
             {
                 const FTextureResource::FDescription& CookedDesc = Texture->TextureResource->ImageDescription;
                 const FTextureGroupPolicy Policy = Texture->GetResolvedPolicy();
@@ -763,7 +737,7 @@ namespace Lumina
                     }
                 }
 
-                // A missing source is a quality note, not a blocker: the cooked mips decode back to an image.
+                // A missing source is a quality note, since the cooked mips still decode back to an image.
                 if (Texture->SourcePath.empty())
                 {
                     ImGuiX::TextTooltip("Re-encodes the pixels already in this asset with the settings above. "
@@ -780,7 +754,7 @@ namespace Lumina
 
                 ImGui::Spacing();
 
-                // The live split, not the setting: bNeverStream only reaches the split on the next save.
+                // The live split, not the setting, since bNeverStream only reaches it on the next save.
                 ImGui::TextUnformatted("Streaming");
                 ImGui::SameLine(150);
                 if (Texture->IsStreamable())
@@ -813,13 +787,13 @@ namespace Lumina
             ImGui::Spacing();
             if (ImGui::Button("Export to File...", ImVec2(-1, 0)))
             {
-                // TODO: Implement export
+                // TODO Implement export
             }
             ImGuiX::TextTooltip("Export the texture to disk.");
             
             if (ImGui::Button("Analyze Color Distribution", ImVec2(-1, 0)))
             {
-                // TODO: Implement analysis
+                // TODO Implement analysis
             }
             ImGuiX::TextTooltip("Analyze the color distribution across all pixels.");
         });
@@ -827,9 +801,7 @@ namespace Lumina
 
     void FTextureEditorTool::OnDeinitialize(const FUpdateContext& UpdateContext)
     {
-        // Backstop for the reconcile in Update: a tool can be torn down without ever getting another Update,
-        // and a pinned texture is exempt from budget eviction, so a leaked pin is a permanent leak of however
-        // many MiB that texture is.
+        // A tool can be torn down without another Update, and a pinned texture is exempt from eviction.
         bPreviewDrawnSinceUpdate = false;
         UpdateStreamingPin();
     }
@@ -843,23 +815,14 @@ namespace Lumina
 
     void FTextureEditorTool::UpdateStreamingPin()
     {
-        // The preview draws the texture at up to 1:1, so the whole point of streaming (holding only the
-        // inline tail) is exactly wrong while it is on screen: showing a 4K texture as a 256px blur is not a
-        // preview. Pinning is what fixes that, and being over budget is acceptable for as long as the user is
-        // actually looking -- but ONLY that long. Held for the lifetime of the tab instead, ten open 4K tabs
-        // sitting in background docks would pin ~200 MiB of mips nothing draws until the editor closes.
-        //
-        // Reconciled against LAST frame's draw flag: EditorUI calls Update before it draws the tool's
-        // windows. The one-frame lag is harmless both ways -- a tab just brought forward sharpens a frame
-        // later, and one just hidden holds its mips a frame longer.
+        // Reconciled against LAST frame's draw flag, since EditorUI calls Update before drawing windows.
         const bool bWantPin = bPreviewDrawnSinceUpdate;
         bPreviewDrawnSinceUpdate = false;
 
         FTextureStreamingManager* Streaming = FTextureStreamingManager::TryGet();
         if (Streaming == nullptr)
         {
-            // No streamer means no pin counts to balance (it is gone, or never existed). Forget ours rather
-            // than trying to release it against a manager that cannot honor it.
+            // No streamer means no pin counts to balance, so forget ours rather than release against nothing.
             PinnedTexture.Reset();
             return;
         }
@@ -871,8 +834,7 @@ namespace Lumina
             return;
         }
 
-        // Unpin first, so a reimport that swapped the asset releases the OLD texture rather than leaking it
-        // and double-pinning the new one.
+        // Unpin first, so a reimport that swapped the asset releases the OLD texture rather than leaking.
         if (Current != nullptr)
         {
             Streaming->Unpin(Current);

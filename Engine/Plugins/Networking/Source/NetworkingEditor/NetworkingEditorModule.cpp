@@ -16,8 +16,7 @@ using namespace Lumina;
 
 IMPLEMENT_MODULE(FNetworkingEditorModule, "NetworkingEditor");
 
-// This module DRAWS (FNetworkEditorTool), and ImGui is a StaticLib -- so without this the DLL gets
-// its own null GImGui and the first ImGui call in the tool faults. Same opt-in NsightPerfEditor makes.
+// ImGui is a StaticLib, so without this the DLL gets its own null context and faults.
 LUMINA_MODULE_IMGUI();
 
 namespace
@@ -54,7 +53,7 @@ void FNetworkingEditorModule::StartupModule()
 
 void FNetworkingEditorModule::ShutdownModule()
 {
-    // Before the DLL goes: the entry holds callables whose code lives here.
+    // Before the DLL goes, since the entry holds callables whose code lives here.
     FToolsMenuRegistry::Get().Unregister(ToolsMenuHandle);
     ToolsMenuHandle = 0;
 }

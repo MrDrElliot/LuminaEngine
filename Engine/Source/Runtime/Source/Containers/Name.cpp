@@ -156,7 +156,7 @@ namespace Lumina
 
     const char* FStringPool::AllocateString(const char* Str, size_t Length)
     {
-        // Tightly packed: just the bytes plus a null terminator, no per-entry alignment padding.
+        // Tightly packed, just the bytes plus a terminator with no per-entry alignment padding.
         const size_t Need = Length + 1;
 
         if (!Head || Head->Used + Need > Head->Capacity)
@@ -271,8 +271,7 @@ namespace Lumina
             return Base ? Base : "";
         }
 
-        // Numbered names are rendered into a small per-thread rotating set of buffers so a handful of
-        // overlapping c_str() calls (e.g. inside a single format expression) stay valid.
+        // A handful of overlapping c_str() calls in one format expression stay valid.
         static constexpr int BufferCount = 4;
         static constexpr int BufferSize = 256;
         static thread_local char Buffers[BufferCount][BufferSize];

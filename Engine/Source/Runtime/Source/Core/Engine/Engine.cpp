@@ -79,10 +79,7 @@ namespace Lumina
     {
         const FString PrefsPath = Paths::GetEngineDirectory() + "/Editor/Config/EditorPreferences.json";
 
-        // Checked before the read rather than letting the read fail: the file is written on the
-        // first settings save and is deliberately untracked, so "not there" is what every clean
-        // clone looks like. LoadFileIntoString logs a missing file as an error, which put a red
-        // line in the very first thing a new user sees and described nothing wrong.
+        // LoadFileIntoString logs a missing file as an error, which is what every clean clone looks like.
         if (!Filesystem::Exists(PrefsPath))
         {
             return {};
@@ -202,8 +199,7 @@ namespace Lumina
         // Must run before renderer/Lua so Earliest/Core-phase plugins can wedge in ahead.
         FPluginManager::Get().DiscoverEnginePlugins();
 
-        // Apply project overrides before any module loads; path from --Project, falling back to the
-        // stored startup project so a bare-launch reopen respects plugin enable/disable.
+        // Falls back to the stored startup project, so a bare launch respects plugin enable and disable.
         {
             FString PreloadLproj;
             if (TOptional<FFixedString> ProjectArg = GCommandLine->Get("Project"))
@@ -235,8 +231,7 @@ namespace Lumina
         
         FCoreDelegates::OnPreEngineInit.BroadcastAndClear();
 
-        // Rebuild the runtime action map whenever the Input settings are saved in the editor.
-        // Engine-lifetime subscription; the handle is intentionally not retained.
+        // An engine-lifetime subscription, so the handle is intentionally not retained.
         (void)FCoreDelegates::OnSettingsSaved.AddLambda([](CClass* Class)
         {
             if (Class == CInputSettings::StaticClass())
@@ -275,8 +270,7 @@ namespace Lumina
             Internal::SetRenderManager(Memory::New<FRenderManager>());
             Render().Initialize();
 
-            // After the renderer: the streamer's residency changes go through the RHI. Before any asset
-            // load, so the first texture to PostLoad can already register.
+            // After the renderer since residency goes through the RHI, and before any asset load.
             FTextureStreamingManager::Initialize();
 
             EngineViewportSize = Windowing::GetPrimaryWindowHandle()->GetExtent();
@@ -287,8 +281,7 @@ namespace Lumina
 
         ProcessNewlyLoadedCObjects();
 
-        // Post-reflection so module static initializers don't null-deref;
-        // pre WorldManager so anything they spawn at its construction sees them.
+        // Post-reflection so module initializers do not null-deref, and pre WorldManager for what they spawn.
         FPluginManager::Get().LoadModulesForPhase(EPluginLoadingPhase::PreEngineInit);
         ProcessNewlyLoadedCObjects();
 
@@ -313,8 +306,7 @@ namespace Lumina
         #if USING(WITH_EDITOR)
         GConfig->DiscoverAndLoadSettings();
 
-        // Pre-fills the sender dialog's email box. Applied as soon as the setting is readable so a
-        // crash during the rest of startup still carries it.
+        // Applied as soon as the setting is readable, so a crash during startup still carries it.
         if (const CEditorSettings* EditorSettings = GetDefault<CEditorSettings>();
             !EditorSettings->CrashReportContactEmail.empty())
         {
@@ -368,10 +360,7 @@ namespace Lumina
         
         Jobs::WaitForAll();
 
-        // After Jobs::WaitForAll above -- the manager owns the FPendingLoad records that in-flight streaming
-        // reads are still writing into, so deleting it with a read outstanding is a use-after-free. Before
-        // ShutdownCObjectSystem, so the CTextures torn down there see a null TryGet() and skip unregistering
-        // from a manager that is on its way out.
+        // After WaitForAll since in-flight reads write into its records, and before the CObject shutdown.
         FTextureStreamingManager::Shutdown();
 
         ShutdownCObjectSystem();
@@ -412,12 +401,10 @@ namespace Lumina
 
         UpdateContext.MarkFrameStart(PlatformTime::Seconds());
 
-        // Prove the main thread is alive this frame; the hang watchdog dumps every thread's stack if
-        // this stops advancing (catches the intermittent asset-open deadlock).
+        // The hang watchdog dumps every thread's stack if this stops advancing.
         HangWatchdog::Heartbeat();
 
-        // Frame boundary: reclaim every thread's frame arena before any system gathers into it this frame.
-        // Quiescent here (single main thread, previous frame's parallel gathers already joined+consumed).
+        // Quiescent here, since the previous frame's parallel gathers are already joined and consumed.
         ResetThreadFrameAllocators();
 
         FCPUProfiler::Get().BeginFrame();
@@ -451,9 +438,7 @@ namespace Lumina
                 {
                     Render().FrameStart(UpdateContext);
 
-                    // Before the worlds tick and extract: this consumes last frame's coverage reports and
-                    // applies residency changes, so the draw commands built later this frame see the new
-                    // images rather than racing them.
+                    // Consumes last frame's reports, so draw commands see the new images rather than race them.
                     if (FTextureStreamingManager* Streaming = FTextureStreamingManager::TryGet())
                     {
                         Streaming->Update();
@@ -470,8 +455,7 @@ namespace Lumina
                     GWorldManager->ReclaimIdleRenderers(UpdateContext.GetFrameStartTime());
                 }
 
-                // After the editor UI's StartFrame above, which is what sets the per-tool intervals, and
-                // before the first of this frame's seven UpdateWorlds calls, which all read the result.
+                // After the editor UI sets the per-tool intervals and before the seven UpdateWorlds calls read them.
                 GWorldManager->BeginFrame(UpdateContext.GetFrameStartTime());
 
                 GWorldManager->UpdateWorlds(UpdateContext);
@@ -519,9 +503,7 @@ namespace Lumina
             }
 
             {
-                // The step itself, between the two stages named for it. Synchronous on the game thread:
-                // PostPhysics reads THIS frame's results, and contact events fire before it rather than a
-                // frame later. Jolt still spreads the step's internal work across the job pool.
+                // Synchronous, so PostPhysics reads THIS frame's results and contact events fire before it.
                 LUMINA_PROFILE_SECTION_COLORED("Physics", tracy::Color::DarkOliveGreen);
                 GWorldManager->TickPhysics();
             }
@@ -584,8 +566,7 @@ namespace Lumina
         {
             const int32 BackgroundFrameRate = GetDefault<CEditorSettings>()->MaxBackgroundFPS;
 
-            // Only ever slows things down: an uncapped foreground (0) takes the background rate outright,
-            // and a background value above the foreground cap is ignored rather than raising it.
+            // An uncapped foreground takes the background rate, and a higher background value is ignored.
             if (BackgroundFrameRate > 0 && (MaxFrameRate <= 0 || BackgroundFrameRate < MaxFrameRate))
             {
                 MaxFrameRate = BackgroundFrameRate;
@@ -639,8 +620,7 @@ namespace Lumina
     {
         TVector<FCookRoot> Result;
 
-        // Project.CookRoots: each entry is an asset path with implicit chunk "Main"
-        // (advanced chunking is plugin-only).
+        // Each entry is an asset path with an implicit Main chunk, since advanced chunking is plugin-only.
         if (GConfig != nullptr)
         {
             const TVector<TSoftObjectPtr<CWorld>>& Roots = GetDefault<CProjectSettings>()->CookRoots;
@@ -656,8 +636,7 @@ namespace Lumina
             }
         }
 
-        // Plugin-contributed roots (only from enabled plugins). Plugin
-        // descriptors can specify per-root chunk hints.
+        // Plugin descriptors can specify per-root chunk hints, and only enabled plugins contribute.
         for (const FPlugin* Plugin : FPluginManager::Get().GetAllPlugins())
         {
             if (!Plugin->IsEnabled())                  continue;
@@ -710,7 +689,7 @@ namespace Lumina
 
         Filesystem::MakeDirectoryTree(GameContentDir);
         Filesystem::MakeDirectoryTree(GameScriptsDir);
-        // Assets in Content/, C# in Scripts/, Slang in Shaders/ -- all three under the one /Game mount.
+        // Assets, C# and Slang all live under the one /Game mount, in their own subdirectories.
         Filesystem::MakeDirectoryTree(GameShadersDir);
         
         const FFixedString LogsDir = Paths::Combine(ProjectPath, "Logs");
@@ -791,8 +770,7 @@ namespace Lumina
             }
         }
         
-        // The project's C++ module DLL lives in its OWN Binaries, exactly like a template project:
-        // <Project>/Binaries/<Platform>/<Name>-<Config>.dll.
+        // The project's module DLL lives in its OWN Binaries, exactly like a template project.
         const FFixedString DLLPath = Paths::Combine(ProjectPath, "Binaries", LUMINA_PLATFORM_NAME,
                                                     Paths::MakeModuleFileName(ProjectName));
 
@@ -825,9 +803,7 @@ namespace Lumina
         FPluginManager::Get().LoadModulesForPhase(EPluginLoadingPhase::PostProjectLoad);
         ProcessNewlyLoadedCObjects();
 
-        // The shader compiler's own Initialize ran before any project existed, so it only saw the engine
-        // tree and engine plugins. /Game/Shaders and the project's plugins are mounted by now; compile
-        // them here (async) rather than leaving every one of them to a first-use stall. No-op headless.
+        // The compiler's Initialize ran before any project, so these roots compile here rather than stalling.
         Shaders::PrecompileNewRoots();
 
         FAssetRegistry::Get().RunInitialDiscovery();
@@ -838,9 +814,7 @@ namespace Lumina
         // Compile/load C# scripts before creating the GameInstance.
         DotNet::ReloadScripts();
 
-        // Re-resolve settings that reference classes now that C# scripts have minted their CClasses: a
-        // Project.GameInstanceClass naming a C# CGameInstance subclass couldn't resolve at first config load
-        // (scripts weren't minted yet), so its TSubclassOf was null until this re-read.
+        // A TSubclassOf naming a C# subclass could not resolve at first config load, since scripts were unminted.
         GConfig->ReloadSettings(CProjectSettings::StaticClass());
 
         CreateGameInstance();
@@ -863,14 +837,13 @@ namespace Lumina
         GameInstance = Cast<CGameInstance>(NewObject(InstanceClass, nullptr, NAME_None, FGuid::New(), OF_Transient));
         if (GameInstance == nullptr)
         {
-            // Defensive: the class resolved but isn't actually a CGameInstance (NewObject failure, or a future
-            // path that bypasses the TSubclassOf MetaClass check). Never Init() through a null Cast.
+            // The class resolved but is not a CGameInstance, and Init must never run through a null cast.
             LOG_WARN("GameInstance class '{}' is not a CGameInstance; using base CGameInstance.", InstanceClass->GetName().ToString().c_str());
             GameInstance = Cast<CGameInstance>(NewObject(CGameInstance::StaticClass(), nullptr, NAME_None, FGuid::New(), OF_Transient));
         }
         GameInstance->Init();
 
-        // DISPLAY so it survives Shipping: proves which class (native vs a C# subclass) actually backs the instance.
+        // DISPLAY so it survives Shipping and proves which class actually backs the instance.
         LOG_DISPLAY("GameInstance created: class '{}'.", GameInstance->GetClass()->GetName().ToString().c_str());
     }
 
@@ -954,15 +927,14 @@ namespace Lumina
 
     void FEngine::Travel(FStringView WorldPath)
     {
-        // Deferred: tearing down a world from inside its own tick is unsafe. Drained at next FrameStart.
+        // Deferred, since tearing down a world inside its own tick is unsafe, and drained next FrameStart.
         PendingTravelPath.assign(WorldPath.data(), WorldPath.size());
         bHasPendingTravel = true;
     }
 
     void FEngine::RequestExitGame()
     {
-        // The editor binds this to end PIE (deferred to a safe frame point on its side); with no
-        // subscriber this is a packaged game, where quitting the game means exiting the process.
+        // With no subscriber this is a packaged game, where quitting the game means exiting the process.
         if (FCoreDelegates::OnGameQuitRequested.IsBound())
         {
             FCoreDelegates::OnGameQuitRequested.Broadcast();
@@ -996,7 +968,7 @@ namespace Lumina
 
         const FFixedString MapName = VFS::ResolveToVirtualPath(RawPath);
 
-        // Phased parallel load: travel fans the destination world's whole dependency closure across workers.
+        // Travel fans the destination world's whole dependency closure across workers.
         CWorld* WorldAsset = LoadObjectGraph<CWorld>(FStringView(MapName.c_str(), MapName.size()));
         if (WorldAsset == nullptr)
         {
@@ -1088,7 +1060,7 @@ namespace Lumina
             }
         }
 
-        // Always duplicate: PIE never runs on the cached asset, and Travel-to-same-map would self-destroy.
+        // Always duplicated, since PIE never runs on the cached asset and same-map travel would self-destroy.
         CWorld* NewWorld = CWorld::DuplicateWorld(WorldAsset);
         if (NewWorld == nullptr)
         {
@@ -1184,7 +1156,7 @@ namespace Lumina
             return;
         }
 
-        // Host / standalone: travel to the map, then stamp the role + port onto the new world's context.
+        // Travels to the map, then stamps the role and port onto the new world's context.
         bPendingHostOverride  = true;
         bPendingHostListen    = URL.bListen;
         bPendingHostDedicated = URL.bDedicated;
@@ -1239,8 +1211,7 @@ namespace Lumina
             return false;
         }
 
-        // One FPakArchive per file, shared across alias mounts; the first exposing
-        // /Config drives the GameSettings probe below.
+        // One archive per file shared across mounts, and the first exposing /Config drives the probe.
         TSharedPtr<FPakArchive> ConfigArchive;
         for (const FFixedString& PakPath : PakPaths)
         {
@@ -1275,9 +1246,7 @@ namespace Lumina
         if (ConfigArchive)
         {
             GConfig->LoadPath("/Config");
-            // The developer-settings CDOs (CProjectSettings etc.) are populated later, in StartCookedGame:
-            // here at OnPreEngineInit the Runtime CObjects aren't registered yet (and the editor's Init-time
-            // DiscoverAndLoadSettings pass is WITH_EDITOR-only), so a call here would load into nothing.
+            // At this phase the Runtime CObjects are not registered, so a call here would load into nothing.
         }
         else
         {
@@ -1296,8 +1265,7 @@ namespace Lumina
             ? ExeFullPath
             : ExeFullPath.substr(0, LastSlash);
 
-        // Prefer the cooked /Engine/AssetRegistry.bin (avoids walking every .lasset at
-        // startup); fall back to full discovery only if the blob is missing.
+        // Prefers the cooked blob to avoid walking every asset, falling back to discovery only if missing.
         bool bLoadedFromBlob = false;
         {
             TVector<uint8> RegistryBlob;
@@ -1327,15 +1295,12 @@ namespace Lumina
             LOG_DISPLAY("FEngine::LoadCookedRuntime: asset discovery complete.");
         }
 
-        // Populate the developer-settings CDOs (CProjectSettings -> GameStartupMap / CookRoots, CInputSettings,
-        // ...) from the cooked /Config now that all Runtime CObjects are registered (we're at OnPostEngineInit,
-        // past every Init phase). The editor's Init-time DiscoverAndLoadSettings pass is WITH_EDITOR-only, so
-        // without this a cooked game sees empty project settings and LoadStartupMap finds no map.
+        // Without this a cooked game sees empty project settings and finds no startup map.
         GConfig->DiscoverAndLoadSettings();
 
         FInputActionMap::Get().RebuildFromSettings();
 
-        // Project DLL: cooker stashes Project.Name in config to resolve "<Name>-<Config>.dll" next to the exe.
+        // The cooker stashes the project name in config so the DLL beside the exe can be resolved.
         ProjectName = GConfig->Get<std::string>("Project.Name").c_str();
         if (!ProjectName.empty())
         {
@@ -1353,13 +1318,10 @@ namespace Lumina
             }
         }
 
-        // Load the prebuilt C# script assemblies the packager staged under DotNet/Scripts/ (manifest-driven).
-        // After the project DLL (so any C++ types its scripts reference exist) and before the startup map (so
-        // EntityScript types are registered when entities spawn). No-op when the game ships no C# scripts.
+        // After the project DLL so its types exist, and before the startup map so scripts are registered.
         DotNet::LoadCookedScripts();
 
-        // Cooked settings loaded before the scripts minted (DiscoverAndLoadSettings runs earlier in this fn), so
-        // re-resolve Project.GameInstanceClass now that a C# CGameInstance subclass (if any) has a minted CClass.
+        // Cooked settings loaded before the scripts minted, so re-resolve now that a C# class exists.
         GConfig->ReloadSettings(CProjectSettings::StaticClass());
 
         CreateGameInstance();

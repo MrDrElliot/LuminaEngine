@@ -159,10 +159,7 @@ namespace Lumina
         ImGui::BeginChild("##LogMessages", ImVec2(0, LogHeight), true,
             ImGuiWindowFlags_HorizontalScrollbar);
 
-        // Read before any row is submitted, so this is last frame's scroll against last frame's content
-        // size. The queue is a fixed-size ring, so its size stops growing once saturated -- sticking has
-        // to key off the scroll position, not the message count, or it dies after the first 300 lines.
-        // Any wheel input has already been applied by BeginChild, so scrolling up unsticks immediately.
+        // Sticking keys off the scroll position, since the ring's size stops growing once saturated.
         const bool bWasPinnedToBottom = ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 1.0f;
 
         const Logging::FLogQueue& Messages = Logging::GetConsoleLogQueue();
@@ -173,7 +170,7 @@ namespace Lumina
             ImGui::PushFontSize(ImGui::GetFontSize() * Settings.FontScale);
         }
 
-        // Build filtered index list (cheap: just indices, no allocs per frame beyond vector growth)
+        // Cheap, since it holds indices only and allocates nothing beyond vector growth
         TVector<uint32> VisibleIndices;
         VisibleIndices.reserve(Messages.size());
         for (size_t i = 0; i < Messages.size(); ++i)
@@ -188,9 +185,7 @@ namespace Lumina
         // Wrap disables clipper; full iteration is still cheaper than a table.
         const bool bUseClipper = !Settings.bWordWrap;
 
-        // Rows are plain text rather than ImGui items, so the highlight has to be painted manually.
-        // Splitting the draw list lets the text go down first and the selection rect still land behind
-        // it, which is what allows a row's height to be measured after the fact (word wrap).
+        // Splitting the draw list lets the selection rect land behind text measured after the fact.
         ImDrawList* RowDrawList = ImGui::GetWindowDrawList();
         RowDrawList->ChannelsSplit(2);
         RowDrawList->ChannelsSetCurrent(1);
@@ -283,9 +278,7 @@ namespace Lumina
 
         RowDrawList->ChannelsMerge();
 
-        // Not gated on focus: the log child never takes keyboard focus while the command input below
-        // holds it, so hovering is the only workable test. WantTextInput keeps Ctrl+C working normally
-        // for whoever is actually typing.
+        // The log child never takes focus while the command input holds it, so hovering is the only test.
         if (bLogHovered && !ImGui::GetIO().WantTextInput)
         {
             const ImGuiIO& IO = ImGui::GetIO();

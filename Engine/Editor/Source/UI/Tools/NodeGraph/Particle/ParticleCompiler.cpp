@@ -12,8 +12,7 @@ namespace Lumina
     static constexpr const char* AttrCountToken     = "$PARTICLE_ATTR_COUNT";
     static constexpr const char* AttrDefaultsToken  = "$PARTICLE_ATTR_DEFAULTS";
 
-    // Replaces every Token in Source (single pass, inserted text not rescanned); splices the
-    // module-stack chunks into the function-body tokens in ParticleSimulateTemplate.slang.
+    // A single pass, so inserted text is not rescanned.
     static void ReplaceAll(FString& Source, const char* Token, const FString& Replacement)
     {
         const size_t TokenLen = strlen(Token);
@@ -34,10 +33,7 @@ namespace Lumina
             return Source;
         }
 
-        // The tokens sit inside SpawnParticleGraph / UpdateParticleGraph in the template, so the
-        // chunks are spliced in as raw statement bodies. Empty stacks splice to nothing.
-        // Attribute defaults are spliced ahead of the spawn stack so a module that only READS an attribute
-        // still sees a sane value when no module wrote it.
+        // Attribute defaults splice ahead of the spawn stack, so a read-only module still sees a value.
         FString AttrDefaults;
         for (int32 i = 0; i < (int32)Attributes.size(); ++i)
         {
@@ -93,14 +89,7 @@ namespace Lumina
             Decl.DefaultExpr = DefaultExpr;
         }
 
-        // Addressed rather than named so no struct declaration is needed: FParticleSimArgs is defined in
-        // the shared include, which is parsed before any generated code, so it cannot reference a
-        // generated type. A plain float* sidesteps that ordering entirely.
-        //
-        // CONTRACT: this expression names `Index`, so BOTH SpawnParticleGraph and UpdateParticleGraph in
-        // ParticleSimulateTemplate.slang must take the particle index under exactly that name. Update
-        // originally took no index at all and Spawn called it SpawnIndex, which compiled fine until the
-        // first module actually declared an attribute.
+        // CONTRACT, both graph functions in the template must take the particle index named Index.
         return FString("PAttr()[Index * PARTICLE_ATTR_FLOATS + ") + Format("{}", Index).c_str() + "u]";
     }
 
@@ -132,9 +121,7 @@ namespace Lumina
 
     FString FParticleCompiler::Param(const char* DebugName, const SParticleParam& Value)
     {
-        // The slot always carries the authored constant, bound or not. It is what the editor preview
-        // simulates with (nothing overrides parameters there) and what the runtime falls back to when a
-        // binding names a parameter nobody ever declared or set.
+        // The editor preview simulates with it, and the runtime falls back to it for an unset parameter.
         const int32  Slot = (int32)ParamValues.size();
         const FString Expr = AddParamSlot(DebugName, Value.Constant, ParticleParamComponents(Value.Type));
 
@@ -173,9 +160,7 @@ namespace Lumina
     {
         const SKeyedCurve& Curve = Value.Resolve();
 
-        // Sampled across the curve's OWN time range, then addressed by normalized position in the shader.
-        // An over-life curve is authored 0..1, but nothing forces that, and re-normalizing here means a
-        // curve keyed over any domain still maps onto LifeRatio without the module having to know.
+        // Re-normalizing means a curve keyed over any domain still maps onto LifeRatio.
         float TimeMin = 0.0f, TimeMax = 1.0f;
         Curve.GetTimeRange(TimeMin, TimeMax);
         if (TimeMax - TimeMin < 1e-6f)
@@ -185,8 +170,7 @@ namespace Lumina
 
         const uint32 BaseSlot = (uint32)ParamValues.size();
 
-        // Packed 4 samples per float4 -- a curve is scalar, so one slot each would waste three quarters of
-        // the table.
+        // A curve is scalar, so one slot each would waste three quarters of the table.
         FVector4 Packed(0.0f, 0.0f, 0.0f, 0.0f);
         for (int32 i = 0; i < kParticleLUTSamples; ++i)
         {
@@ -226,7 +210,7 @@ namespace Lumina
 
         const uint32 BaseSlot = (uint32)ParamValues.size();
 
-        // One slot per sample: a color already fills a float4.
+        // One slot per sample, since a color already fills a float4.
         for (int32 i = 0; i < kParticleLUTSamples; ++i)
         {
             const float Alpha = (float)i / (float)(kParticleLUTSamples - 1);

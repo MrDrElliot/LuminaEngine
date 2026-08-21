@@ -83,8 +83,7 @@ namespace Lumina
 
         if (IsSaving())
         {
-            // CurrentContainer() returns null for a null RootNode or a container entered on a null node,
-            // and this dereferenced it unconditionally.
+            // CurrentContainer returns null for a null root, and this dereferenced it unconditionally.
             Leaf.PendingNode = Container ? &(*Container)[Key] : &MissingNode;
         }
         else
@@ -128,8 +127,7 @@ namespace Lumina
 
     FArchiveSlot FJsonStructuredArchive::EnterArrayElement()
     {
-        // Unbalanced Enter/Leave would make this back() UB, the way every other method here already
-        // guards for. Route to the sentinel instead so the caller writes somewhere harmless.
+        // Routes to the sentinel so an unbalanced Enter and Leave writes somewhere harmless.
         if (Containers.empty())
         {
             Leaf.PendingNode = &MissingNode;
@@ -148,10 +146,7 @@ namespace Lumina
             }
             else
             {
-                // MUST reassign. Leaving PendingNode alone left it pointing at the PREVIOUS element,
-                // whose storage a prior push_back has already reallocated (json arrays are vectors), so
-                // the caller's EnterRecord then wrote an object through a dangling pointer and the next
-                // push_back crashed on the corrupted heap.
+                // A prior push_back reallocates, so leaving PendingNode alone writes through a dangle.
                 Leaf.PendingNode = &MissingNode;
             }
         }
@@ -184,8 +179,7 @@ namespace Lumina
         return EnterArrayElement();
     }
 
-    // Maps are represented as a JSON array of [key, value] pairs. No reflected property
-    // type currently drives this path; implemented for interface completeness.
+    // No reflected property type drives this path, and it exists for interface completeness.
     void FJsonStructuredArchive::EnterMap(int32& NumElements)
     {
         json* Node = Leaf.PendingNode;

@@ -89,14 +89,10 @@ namespace Lumina::RootMotion
         FTransform Combined;
         Combined.SetScale(FVector3(1.0f));
 
-        // Component-space (left/fixed-frame) delta D = M_cur * M_prev^-1. The entity then absorbs it as
-        // E_new = E_prev * D, reproducing the root's world motion. Using the body-frame delta
-        // (M_prev^-1 * M_cur) instead would rotate the translation by the root bone's rest orientation --
-        // DCC exports often bake a tilt into the root -- turning forward motion into vertical drift.
+        // A body-frame delta would rotate translation by the root's rest tilt, turning forward into drift.
         if (bLooping && CurTime < PrevTime)
         {
-            // Playhead wrapped this frame: accumulate [Prev, Duration] then [0, Cur] so a full
-            // loop contributes the clip's whole root displacement.
+            // The playhead wrapped, so accumulate both spans and a full loop contributes the whole displacement.
             const FTransform Prev  = SampleRoot(Animation, Skeleton, RootIndex, PrevTime);
             const FTransform End   = SampleRoot(Animation, Skeleton, RootIndex, Duration);
             const FTransform Start = SampleRoot(Animation, Skeleton, RootIndex, 0.0f);

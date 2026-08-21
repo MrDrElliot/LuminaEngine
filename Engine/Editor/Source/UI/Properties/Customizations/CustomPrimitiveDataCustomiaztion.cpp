@@ -103,8 +103,7 @@ namespace Lumina
             {
                 return EPropertyChangeOp::Updated;
             }
-            // Open the transaction now: StartChangeCallback snapshots the old value
-            // before UpdatePropertyValue writes the new one.
+            // Opened now, since StartChangeCallback snapshots the old value before the new one is written.
             bFinishPending = true;
             return EPropertyChangeOp::Started;
         }

@@ -27,8 +27,7 @@ namespace Lumina
         const uint16 OutMinReg = ResolveValueInput(OutMinPin, Compiler);
         const uint16 OutMaxReg = ResolveValueInput(OutMaxPin, Compiler);
 
-        // Normalize: (Value - InMin) / (InMax - InMin). Divide-by-zero on a
-        // degenerate input range resolves to 0 inside the VM.
+        // A divide by zero on a degenerate input range resolves to 0 inside the VM.
         const uint16 Numerator   = Compiler.EmitScalarOp(EAnimScalarOp::Sub, ValueReg, InMinReg);
         const uint16 Denominator = Compiler.EmitScalarOp(EAnimScalarOp::Sub, InMaxReg, InMinReg);
         uint16 NormalizedReg     = Compiler.EmitScalarOp(EAnimScalarOp::Div, Numerator, Denominator);
@@ -38,7 +37,7 @@ namespace Lumina
             NormalizedReg = Compiler.EmitScalarOp(EAnimScalarOp::Clamp01, NormalizedReg, NormalizedReg);
         }
 
-        // Scale into the output range: OutMin + Normalized * (OutMax - OutMin).
+        // Scales into the output range as OutMin plus Normalized times the span.
         const uint16 OutRangeReg = Compiler.EmitScalarOp(EAnimScalarOp::Sub, OutMaxReg, OutMinReg);
         const uint16 ScaledReg   = Compiler.EmitScalarOp(EAnimScalarOp::Mul, NormalizedReg, OutRangeReg);
         const uint16 ResultReg   = Compiler.EmitScalarOp(EAnimScalarOp::Add, ScaledReg, OutMinReg);

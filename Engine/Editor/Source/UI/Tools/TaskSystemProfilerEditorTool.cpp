@@ -127,9 +127,7 @@ namespace Lumina
             ImGui::TextColored(ImVec4(0.95f, 0.65f, 0.30f, 1.0f), LE_ICON_PAUSE " FROZEN");
         }
 
-        // Liveness heartbeat: advances only on frames where this body actually runs. If it stalls while
-        // the panel is visible, DrawWindow is not being re-submitted (a docking/visibility issue) rather
-        // than a data-staleness one.
+        // A stall while the panel is visible means DrawWindow is not being re-submitted.
         ++DrawTicks;
         ImGui::SameLine();
         ImGui::TextDisabled("|");
@@ -187,18 +185,10 @@ namespace Lumina
         const float  WorkerFrac = TotalJobs ? (float)F.WorkerJobs / TotalJobs : 0.0f;
         const float  MigRate    = F.Resumes ? (float)F.Migrations / F.Resumes : 0.0f;
         const float  AffRate    = F.Resumes ? (float)F.AffinityOpps / F.Resumes : 0.0f;
-        // Expected migration if the shared ready queue hands each resume to a uniformly random worker.
-        // High raw migration is the baseline, not a problem, only affinity opportunities are actionable.
+        // High raw migration is the baseline, so only affinity opportunities are actionable.
         const float  MigBaseline = Workers > 1 ? (float)(Workers - 1) / Workers : 0.0f;
 
-        // The only two things per-worker deques + work-stealing improve over a shared MPMC queue:
-        // contention on the shared dequeue, and cache locality. The global queue already load-balances
-        // perfectly, so imbalance is never the argument here. Locality is only actionable when resumes
-        // could have stayed on their warm core for free, i.e. the owner worker was idle (AffRate), NOT
-        // merely that migration happened (which is expected near MigBaseline).
-        // Per-frame volume of free-win resumes below which locality is a non-issue regardless of rate: a
-        // handful of cache-cold resumes costs microseconds, not worth a scheduler change. Also guards the
-        // rate against tiny samples (1/1 resumes is 100% but means nothing).
+        // A handful of cache-cold resumes costs microseconds, and this also guards against tiny samples.
         constexpr uint32 kMinAffinityOpps = 16;
 
         const bool Contended = F.AvgPoppers >= Math::Max(2.0f, 0.5f * Workers);
@@ -274,7 +264,7 @@ namespace Lumina
             }
         }
 
-        // Verdict banner: a colored accent bar beside a colored headline + wrapped reasoning.
+        // A verdict banner, a colored accent bar beside a colored headline with wrapped reasoning.
         ImGui::Indent(10.0f);
         ImGui::BeginGroup();
         ImGui::PushStyleColor(ImGuiCol_Text, Col);
@@ -321,8 +311,7 @@ namespace Lumina
             StatRow("In use",       "%u", LS.FibersInUse);
             StatRow("Free",         "%u", LS.FibersFree);
             StatRow("Ready",        "%u", LS.FibersReady);
-            // Background is broken out rather than folded in: a deep Background queue is normal (a
-            // terrain stream), whereas a deep Low queue during a hitch is not, and summing them hides that.
+            // A deep Background queue is normal, while a deep Low queue during a hitch is not.
             StatRow("Queue H/N/L",  "%u / %u / %u", LS.QueueDepth[0], LS.QueueDepth[1], LS.QueueDepth[2]);
             StatRow("Queue Bkgd",   "%u", LS.QueueDepth[3]);
             StatRow("In flight",    "%lld", (long long)LS.InFlight);
@@ -385,7 +374,7 @@ namespace Lumina
 
         ImGui::TextDisabled("Workers running: %u on P / %u on E  (of %u workers)",
             PActive, EActive, (uint32)WorkerCores.size());
-        // Enough work to fill the P-cores, yet one sits idle while an E-core runs: scheduling waste.
+        // Enough work to fill the P-cores while one sits idle and an E-core runs is scheduling waste.
         if (Topo.bHybrid && PActive < Topo.NumPerformance && (PActive + EActive) >= Topo.NumPerformance)
         {
             ImGui::SameLine();
@@ -407,7 +396,7 @@ namespace Lumina
         Swatch(IM_COL32(60, 175, 95, 255), "running");
         ImGui::NewLine();
 
-        // Grid: one cell per logical core. Fill encodes type + busy; the worker # shows when running.
+        // One cell per logical core, where fill encodes type and busy and the worker number shows when running.
         const float Cell  = 30.0f;
         const float Pad   = 4.0f;
         const float Avail = ImGui::GetContentRegionAvail().x;

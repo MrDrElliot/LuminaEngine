@@ -255,8 +255,7 @@ namespace Lumina
         NewKey.Time = InTime;
         NewKey.Value = InValue;
 
-        // Inherit the shape of the segment being split. User tangents don't transfer, so those
-        // fall back to an auto key that ComputeAutoTangents will fill in.
+        // User tangents do not transfer, so those fall back to an auto key that gets filled in.
         if (!Keys.empty())
         {
             const ECurveInterpMode Neighbor = Keys[Math::Max(Index - 1, 0)].InterpMode;
@@ -273,12 +272,10 @@ namespace Lumina
         {
             if (Math::Abs(Keys[Index].Time - InTime) <= Tolerance)
             {
-                // Value only: the key's authored interpolation and tangents are the user's, not something
-                // to reset every time they re-pose the frame.
+                // The authored interpolation and tangents are the user's, not something to reset on a re-pose.
                 Keys[Index].Value = InValue;
 
-                // Collapse any duplicates already stacked here. Curves authored before AddKey stopped being
-                // called blind still carry them, and each one is a jump the user cannot see or select.
+                // Curves authored before AddKey stopped being called blind still carry invisible duplicates.
                 int32 Next = Index + 1;
                 while (Next < (int32)Keys.size() && Math::Abs(Keys[Next].Time - InTime) <= Tolerance)
                 {
@@ -397,9 +394,7 @@ namespace Lumina
 
     const SKeyedCurve& SCurve::Resolve() const
     {
-        // Falling back to the inline curve rather than returning null keeps every consumer branch-free:
-        // an unset or destroyed asset reference degrades to whatever was authored inline instead of
-        // needing a null check at each sample site.
+        // Falling back to the inline curve keeps every consumer branch-free at its sample site.
         if (const CCurveAsset* Resolved = Asset.Get(); bUseAsset && Resolved != nullptr)
         {
             return Resolved->Curve;

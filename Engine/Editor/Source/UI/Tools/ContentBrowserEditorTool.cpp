@@ -214,8 +214,7 @@ namespace Lumina
             return i == A.size() && B[i] == '\0';
         }
 
-        // Loose files the browser surfaces. Anything outside this set (generated .csproj, .lmeta
-        // sidecars, IDE files, C# build output) is hidden so the grid shows only engine content.
+        // Anything outside this set is hidden, so the grid shows only engine content.
         bool IsBrowsableFileExtension(FStringView Ext)
         {
             static constexpr const char* kSupported[] =
@@ -229,8 +228,7 @@ namespace Lumina
             return false;
         }
 
-        // "CStaticMesh" -> "Static Mesh". Drops the reflection prefix and splits camel case, so the filter
-        // menu reads as asset types rather than as class identifiers.
+        // Drops the reflection prefix and splits camel case, so the menu reads as asset types.
         FFixedString FriendlyClassName(const FName& ClassName)
         {
             const char* Raw = ClassName.c_str();
@@ -281,8 +279,7 @@ namespace Lumina
             return Out;
         }
 
-        // Per-type accent + glyph for the fallback tile card. Keyed on the uppercased type tag rather than
-        // on CClass, so a type with no factory, no painter and no loaded CDO still gets an identity.
+        // Keyed on the uppercased type tag, so a type with no factory or loaded CDO still gets an identity.
         struct FTypeStyle
         {
             const char* Glyph;
@@ -324,8 +321,7 @@ namespace Lumina
             return { LE_ICON_FILE_DOCUMENT_OUTLINE, IM_COL32(170, 175, 190, 255) };
         }
 
-        // Document card: rounded page with a folded corner, a large type glyph, and the type tag across
-        // the bottom. Drawn rather than blitted so it stays sharp at any tile size and needs no atlas.
+        // Drawn rather than blitted, so it stays sharp at any tile size and needs no atlas.
         void DrawTypeCard(ImDrawList& DrawList, const ImVec2& Min, const ImVec2& Max, FStringView TypeTag)
         {
             const FTypeStyle Style = StyleForType(TypeTag);
@@ -365,8 +361,7 @@ namespace Lumina
                 DrawList.AddText(Font, GlyphSize, GlyphPos, Style.Accent, Style.Glyph);
             }
 
-            // Type tag inside the page. Dropped rather than squeezed when the tile is too small for it to
-            // be legible -- the line under the name still carries the type.
+            // Dropped rather than squeezed when illegible, since the line under the name carries the type.
             const float TagSize = Math::Min((PageMax.y - PageMin.y) * 0.16f, 13.0f);
             if (TagSize >= 7.0f && !TypeTag.empty())
             {
@@ -412,8 +407,7 @@ namespace Lumina
             return false;
         }
 
-        // Engine-managed root mounts shown as protected, undeletable folders: each project root (Game,
-        // Engine) and its core Content + Scripts subdirs.
+        // Each project root and its core Content and Scripts subdirs are protected and undeletable.
         bool IsProtectedRoot(FStringView VirtualPath)
         {
             return IEquals(VirtualPath, "/Game")
@@ -424,9 +418,7 @@ namespace Lumina
                 || IEquals(VirtualPath, "/Engine/Resources/Scripts");
         }
 
-        // Assets belong under a mount's Content directory. "/Game" and "/Engine/Resources" are mount
-        // roots that hold Content and Scripts; creating into them puts an asset somewhere the asset
-        // registry does not scan.
+        // A mount root holds Content and Scripts, so creating into it puts the asset where nothing scans.
         bool IsAssetCreationAllowed(FStringView VirtualPath)
         {
             auto IsAtOrUnder = [VirtualPath](const char* RootLiteral)
@@ -612,7 +604,7 @@ namespace Lumina
                 }
             }
 
-            // overridden methods (lifecycle hooks: OnReady/OnUpdate/OnInput/...)
+            // overridden lifecycle hooks such as OnReady, OnUpdate and OnInput
             {
                 size_t P = 0;
                 while (Info.Lifecycle.size() < 16)
@@ -790,7 +782,7 @@ namespace Lumina
             else                                    { ImGui::TextColored(kMenuTextDim, "Size: %.2f GB", B / (1024.0 * 1024.0 * 1024.0)); }
         }
 
-        // Rich tooltip body for a .lasset: type, owning plugin, outbound refs, cook flags, size, GUID.
+        // The rich tooltip body for a .lasset, covering type, plugin, refs, flags, size and GUID.
         void DrawAssetTooltipContent(const VFS::FFileInfo& Info)
         {
             const FStringView VPath(Info.VirtualPath.c_str(), Info.VirtualPath.size());
@@ -838,9 +830,7 @@ namespace Lumina
         std::atomic<bool> GScriptReloadQueued{ false };
     }
 
-    // Single framework-driven hover tooltip (called via BeginItemTooltip). Rich, per-kind content:
-    // scripts show class/lifecycle/properties; assets show type/refs/flags/size/GUID; other files show
-    // type + size; folders show item counts.
+    // Scripts show lifecycle, assets show refs and GUID, files show size, folders show item counts.
     void FContentBrowserEditorTool::FContentBrowserTileViewItem::DrawTooltip() const
     {
         ImGui::PushTextWrapPos(ImGui::GetFontSize() * 26.0f);
@@ -1008,8 +998,7 @@ namespace Lumina
 
         PendingRenamePath.assign(VirtualPath.data(), VirtualPath.size());
 
-        // Navigate to the containing folder too: a factory can be invoked from a path other than the
-        // one on screen, and a rename box on a tile the user cannot see would just eat their keystrokes.
+        // A factory can run from another path, and a rename box on an unseen tile would eat keystrokes.
         const FStringView ParentPath = VFS::Parent(VirtualPath, true);
         if (!ParentPath.empty())
         {
@@ -1040,16 +1029,14 @@ namespace Lumina
 
         CreateToolWindow("Content", [&] (bool bIsFocused)
         {
-            // Starting width only. The directory pane is resizable, so its actual width is whatever
-            // the user last dragged it to.
+            // A starting width only, since the pane is resizable and keeps wherever it was last dragged.
             constexpr float DefaultDirectoryWidth = 225.0f;
 
             DrawDirectoryBrowser(bIsFocused, ImVec2(DefaultDirectoryWidth, 0));
 
             ImGui::SameLine();
 
-            // Measured, not derived from the default: subtracting a constant would ignore the drag and
-            // leave the content pane overlapping or short by however far the splitter had moved.
+            // Measured rather than derived, since a constant would ignore however far the splitter moved.
             DrawContentBrowser(bIsFocused, ImVec2(ImGui::GetContentRegionAvail().x, 0));
         });
         
@@ -1110,12 +1097,11 @@ namespace Lumina
             
             ImVec4 TintColor = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
 
-            // Set when this asset's type draws its own tile body (see FAssetTilePainterRegistry). The
-            // button below still draws its frame and owns every interaction; only the image is replaced.
+            // The button still draws its frame and owns every interaction, and only the image is replaced.
             FAssetTilePainterFn* TilePainter = nullptr;
             CObject*             PainterAsset = nullptr;
 
-            // Set when nothing else supplies a picture: the tile draws a type card instead of an image.
+            // Set when nothing else supplies a picture, so the tile draws a type card instead of an image.
             bool bDrawTypeCard = true;
 
             ImTextureRef ImTexture;
@@ -1123,7 +1109,7 @@ namespace Lumina
             {
             case EIconKind::Directory:
                 {
-                    // Folders keep the folder image: navigation should not read as a document.
+                    // Folders keep the folder image, since navigation should not read as a document.
                     ImTexture = ImGuiX::ToImTextureRef(Paths::GetEngineResourceDirectory() + "/Textures/Folder.png");
                     TintColor = ImVec4(1.0f, 0.82f, 0.45f, 1.0f);
                     bDrawTypeCard = false;
@@ -1131,12 +1117,7 @@ namespace Lumina
                 }
             case EIconKind::Asset:
                 {
-                    // A type-specific painter takes precedence over the rendered thumbnail: it is sharp at
-                    // any tile size and reflects edits immediately, with no cache to invalidate.
-                    //
-                    // RESIDENT ONLY. FindObject is a hash lookup that never loads -- loading here would race
-                    // the editor's own loader on a non-atomic object (the rule CThumbnailManager's render
-                    // queue documents). An asset nothing has loaded yet just keeps its ordinary thumbnail.
+                    // RESIDENT ONLY, since loading here would race the editor's loader on a non-atomic object.
                     FStringView AssetPath = ContentItem->GetVirtualPath();
                     if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(AssetPath))
                     {
@@ -1185,17 +1166,12 @@ namespace Lumina
                 8.0f
             );
             
-            // A painted tile hides the image (alpha 0) rather than skipping ImageButton: the button still
-            // supplies the frame, hover/active styling, sizing and the click handling below, so the painter
-            // only has to fill the body.
-            // The button always supplies the frame, hover/active styling, sizing and click handling; when
-            // a painter or a type card fills the body the image itself is drawn fully transparent.
+            // The button supplies frame, styling, sizing and clicks, so a painted body draws the image clear.
             const bool bHideImage = (TilePainter != nullptr) || bDrawTypeCard;
             ImGui::ImageButton("##", ImTexture, Size, ImVec2(0, 0), ImVec2(1, 1), ImVec4(0, 0, 0, 0),
                 bHideImage ? ImVec4(TintColor.x, TintColor.y, TintColor.z, 0.0f) : TintColor);
 
-            // Item rect, not Pos/Size: it already accounts for the frame padding pushed above, so the
-            // body bounds cannot drift if that padding is ever retuned.
+            // The item rect already accounts for the pushed frame padding, so the body cannot drift.
             const ImVec2 BodyMin = ImGui::GetItemRectMin();
             const ImVec2 BodyMax = ImGui::GetItemRectMax();
 
@@ -1287,7 +1263,7 @@ namespace Lumina
             }
             else
             {
-                // No in-engine editor: hand the native file to the OS association.
+                // With no in-engine editor, hand the native file to the OS association.
                 Platform::LaunchURL(UTF8_TO_TCHAR(ContentItem->GetPathSource().data()));
             }
         };
@@ -1315,10 +1291,7 @@ namespace Lumina
 
         ContentBrowserTileViewContext.RebuildTreeFunction = [this] (FTileViewWidget* Tree)
         {
-            // The Filter menu toggles asset classes. Directories, scripts, and loose files are not
-            // class-filterable, so they are always shown; assets are hidden when their class is off.
-            // Type label resolved ONCE per entry and carried to the tile. It costs a registry lookup and
-            // a string build, and both the filter test and the tile need it.
+            // Resolved ONCE per entry, since both the filter test and the tile need the same type label.
             struct FBrowseEntry
             {
                 VFS::FFileInfo Info;
@@ -1339,8 +1312,7 @@ namespace Lumina
                 }
                 else
                 {
-                    // Only surface extensions the engine actually authors/consumes; everything else
-                    // (csproj, sidecars, IDE cruft) stays hidden.
+                    // Only extensions the engine authors or consumes are surfaced, and the rest stay hidden.
                     if (!IsBrowsableFileExtension(FileInfo.GetExt()))
                     {
                         return;
@@ -1366,8 +1338,7 @@ namespace Lumina
                 return LHS.Info.Name < RHS.Info.Name;
             });
             
-            // Extension-insensitive so a package path ("/Game/Foo.lasset") still matches however the
-            // VFS spelled the entry.
+            // Extension-insensitive, so a package path still matches however the VFS spelled the entry.
             const FStringView BrowseTarget = VFS::RemoveExtension(FStringView(PendingBrowseToPath.c_str(), PendingBrowseToPath.size()));
             const FStringView RenameTarget = VFS::RemoveExtension(FStringView(PendingRenamePath.c_str(), PendingRenamePath.size()));
             FTileViewItem*               BrowseItem = nullptr;
@@ -1398,9 +1369,7 @@ namespace Lumina
                 Tree->SelectAndScrollTo(BrowseItem);
             }
 
-            // Rename-on-create. Held across rebuilds until the tile actually shows up, unlike the browse
-            // target above: a factory with a creation dialogue finishes its work on a task thread, so the
-            // first rebuild after the request routinely runs before the file has landed on disk.
+            // Held across rebuilds, since a dialogue factory finishes on a task thread after the first rebuild.
             if (RenameItem != nullptr)
             {
                 PendingRenamePath.clear();
@@ -1426,8 +1395,7 @@ namespace Lumina
 
             if (Key == ImGuiKey_Delete)
             {
-                // Item is only the key's anchor (the first selection). Delete has to take the whole set,
-                // or a marquee over fifty assets removes exactly one.
+                // Delete has to take the whole set, or a marquee over fifty assets removes exactly one.
                 const TVector<FTileViewItem*>& Selections = ContentBrowserTileView.GetSelections();
                 if (Selections.size() > 1)
                 {
@@ -1453,7 +1421,7 @@ namespace Lumina
         {
             FContentBrowserTileViewItem* ContentItem = static_cast<FContentBrowserTileViewItem*>(Item);
 
-            // Empty or unchanged: just drop the edit, no error spam.
+            // Empty or unchanged, so drop the edit rather than spam an error.
             if (NewName == nullptr || NewName[0] == 0)
             {
                 return;
@@ -1477,8 +1445,7 @@ namespace Lumina
             ActionRegistry.EnqueueAction<FPendingRename>(FPendingRename{ FFixedString(ContentItem->GetVirtualPath().data(), ContentItem->GetVirtualPath().length()), TestPath });
         };
 
-        // The tree selects the node on right-click before opening this, so SelectedPath is already the
-        // folder under the cursor and the shared directory menu targets the right thing.
+        // The tree selects on right-click first, so SelectedPath already names the folder under the cursor.
         DirectoryContext.ItemContextMenuFunction = [this](FTreeListView&, FTreeNodeID)
         {
             PushContextMenuItemStyle();
@@ -1525,7 +1492,7 @@ namespace Lumina
             }
         };
         
-        // Helper: add a single folder node, flag it as having lazy children if it actually has subdirectories.
+        // Adds one folder node, flagged for lazy children when it actually has subdirectories.
         auto AddFolderNode = [this](FTreeListView& Tree, FTreeNodeID Parent, const VFS::FFileInfo& Info)
         {
             FFixedString DisplayName;
@@ -1577,8 +1544,7 @@ namespace Lumina
                 Tree.MarkHasLazyChildren(RootItem);
                 return RootItem;
             };
-            // Primary mount roots: each project is a top-level node (Game, Engine, plugins). Expanding one
-            // reveals its real on-disk subdirs -- for the game, Content (assets) and Scripts (C#).
+            // Expanding a project root reveals its real on-disk subdirs, Content for assets and Scripts for C#.
             AddRoot("/Game", "Game");
             AddRoot("/Engine/Resources", "Engine");
             for (const FPlugin* Plugin : FPluginManager::Get().GetAllPlugins())
@@ -1614,8 +1580,7 @@ namespace Lumina
 
             FContentBrowserListViewItemData& Data = Tree.Get<FContentBrowserListViewItemData>(Item);
 
-            // No-ops when the tree is only catching up to a navigation that already happened, which is
-            // what keeps RevealPendingDirectory from recording history of its own.
+            // A no-op when the tree is only catching up, which keeps RevealPendingDirectory out of history.
             NavigateTo(FStringView(Data.Path.c_str(), Data.Path.size()));
         };
 
@@ -1633,8 +1598,7 @@ namespace Lumina
         
     }
     
-    // True while a Play-In-Editor or Simulate session is running. Deleting an asset out from under a
-    // live world can free objects the simulation still references, so deletes are blocked meanwhile.
+    // Deleting under a live world can free objects the simulation still references.
     static bool IsAnyWorldPlayingOrSimulating()
     {
         if (GWorldManager == nullptr)
@@ -1655,7 +1619,7 @@ namespace Lumina
     {
         bool bWroteSomething = false;
 
-        // Drop (don't queue) any delete requests while playing/simulating -- one notification covers them.
+        // Delete requests are dropped rather than queued while playing, and one notification covers them.
         const bool bWorldActive = IsAnyWorldPlayingOrSimulating();
         bool bBlockNotified = false;
 
@@ -1673,8 +1637,7 @@ namespace Lumina
 
             if (VFS::IsDirectory(Destroy.PendingDestroy))
             {
-                // Text-asset sidecars live in the hidden .lmeta tree (not under this folder), so collect
-                // contained text files first and drop their identities explicitly after the bulk remove.
+                // Sidecars live in the hidden .lmeta tree, so drop their identities after the bulk remove.
                 TVector<FFixedString> TextPaths;
                 VFS::RecursiveDirectoryIterator(Destroy.PendingDestroy, [&](const VFS::FFileInfo& FileInfo)
                 {
@@ -1715,10 +1678,7 @@ namespace Lumina
                     }
                 }
 
-                // Deleting a prefab asset deletes its placed instances in every open world (-style).
-                // Pin it first: dropping the instances' strong SourcePrefab refs could otherwise free the
-                // prefab out from under OnDestroyAsset/DestroyPackage below. Detached subtrees are untracked
-                // and survive automatically.
+                // Pinned first, since dropping the instances' strong refs could free the prefab out from under us.
                 TObjectPtr<CObject> KeepAlive = AliveObject;
                 if (AliveObject != nullptr && AliveObject->IsA<CPrefab>())
                 {
@@ -1902,7 +1862,7 @@ namespace Lumina
             return FFixedString("ASSET");
         }
 
-        // Loose file: its extension, minus the dot.
+        // A loose file shows its extension, minus the dot.
         const FString Ext = FileInfo.GetExt();
         FFixedString Out;
         for (size_t i = (!Ext.empty() && Ext[0] == '.') ? 1 : 0; i < Ext.size(); ++i)
@@ -1915,10 +1875,7 @@ namespace Lumina
 
     void FContentBrowserEditorTool::RefreshFilterClasses()
     {
-        // Driven off what the registry actually holds, not off the factories: a type with no factory
-        // (meshes, skeletons, animations, prefabs) is still something you want to filter by, and seeding
-        // from factories silently omitted them -- a checkbox that was never there cannot be unticked, and
-        // the missing entry defaulted to "show", so those types ignored the filter entirely.
+        // Seeding from factories omitted types that have none, and a missing entry defaulted to shown.
         for (const TUniquePtr<FAssetData>& Data : FAssetRegistry::Get().GetAssets())
         {
             if (Data && !Data->AssetClass.IsNone() && FilterState.find(Data->AssetClass) == FilterState.end())
@@ -1931,8 +1888,7 @@ namespace Lumina
 
     bool FContentBrowserEditorTool::PassesFilters(const VFS::FFileInfo& FileInfo, FStringView TypeLabel) const
     {
-        // Folders are navigation, not content: they stay put under a type filter, and only disappear when
-        // a search is active and their name does not match.
+        // Folders are navigation, so they stay under a type filter and only a name search hides them.
         const bool bDirectory = FileInfo.IsDirectory();
 
         if (!bDirectory && FileInfo.IsLAsset())
@@ -1962,7 +1918,7 @@ namespace Lumina
 
     void FContentBrowserEditorTool::DrawToolMenu(const FUpdateContext& UpdateContext)
     {
-        // Search first: it is the control reached for most often, and it reads as part of the path bar.
+        // Search first, since it is reached for most often and reads as part of the path bar.
         ImGui::SetNextItemWidth(200.0f);
         {
             char Buffer[128];
@@ -1987,8 +1943,7 @@ namespace Lumina
             }
         }
 
-        // Count of hidden types, so a filter left on is visible from the menu bar rather than being
-        // discovered later as "my assets disappeared".
+        // A filter left on is visible from the menu bar rather than discovered as vanished assets.
         uint32 HiddenTypes = 0;
         for (const auto& [Name, State] : FilterState)
         {
@@ -2011,8 +1966,7 @@ namespace Lumina
 
         if (bFilterOpen)
         {
-            // Only while the menu is open: a missing entry means "shown", so the map has to be complete
-            // when it is DRAWN, not on every refresh.
+            // A missing entry means shown, so the map has to be complete when DRAWN, not on every refresh.
             RefreshFilterClasses();
 
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2, 2));
@@ -2037,8 +1991,7 @@ namespace Lumina
                 ImGui::TextDisabled("No assets discovered yet.");
             }
 
-            // Alphabetical: the map's bucket order is arbitrary and would reshuffle the menu whenever a
-            // new type is discovered.
+            // Alphabetical, since bucket order is arbitrary and would reshuffle whenever a type is discovered.
             TVector<FName> Names;
             Names.reserve(FilterState.size());
             for (const auto& [Name, State] : FilterState)
@@ -2162,7 +2115,7 @@ namespace Lumina
             return;
         }
 
-        // Refused rather than cascaded: a variant is defined BY its parent, so deleting it empties descendants.
+        // Refused rather than cascaded, since a variant is defined BY its parent.
         const FFixedString DependentVariants = FindBlockingPrefabVariants(Paths);
         if (!DependentVariants.empty())
         {
@@ -2223,8 +2176,7 @@ namespace Lumina
 
     void FContentBrowserEditorTool::OnProjectLoaded()
     {
-        // Tear down any prior set; clearing is safe since FDirectoryWatcher's
-        // destructor stops its worker thread. Project reload rebuilds from scratch.
+        // Clearing is safe, since FDirectoryWatcher's destructor stops its worker thread.
         for (FContentWatcher& W : Watchers)
         {
             if (W.Watcher)
@@ -2256,8 +2208,7 @@ namespace Lumina
             Entry.WatchRootLen = DiskRoot.size();
             Entry.Watcher      = MakeUnique<FDirectoryWatcher>();
 
-            // Capture prefix + root length by value so the callback is self-contained
-            // even if Watchers reallocates (the TUniquePtr'd watcher itself is stable).
+            // Captured by value so the callback is self-contained even if Watchers reallocates.
             const FFixedString Prefix = Entry.VirtualPrefix;
             const size_t       RootLen = Entry.WatchRootLen;
 
@@ -2282,7 +2233,7 @@ namespace Lumina
                 const FFixedString RelativePath = MakeVirtualPath(Event.Path);
                 const FStringView  RelView(RelativePath.c_str(), RelativePath.size());
 
-                // Our own hidden identity sidecars: ignore so writing one doesn't churn the browser.
+                // Our own hidden identity sidecars, ignored so writing one does not churn the browser.
                 if (TextAssetSidecar::IsSidecarPath(RelView))
                 {
                     return;
@@ -2310,19 +2261,14 @@ namespace Lumina
                     });
                 }
 
-                // Text edits and C# sources want a browser refresh for add/remove/rename
-                // (C# isn't a text asset, so check its extension explicitly).
+                // C# is not a text asset, so its extension is checked explicitly.
                 const bool bIsCSharp = VFS::HasExtension(Event.Path, ".cs");
                 if ((TextAsset::IsTextAssetPath(RelView) || bIsCSharp) && Event.Action != EFileAction::Modified)
                 {
                     RefreshContentBrowser();
                 }
 
-                // A C# source added/removed/renamed (in the browser or an external editor) changes what
-                // compiles -> recompile + regenerate the IDE project automatically, so the user never has to
-                // hit "Reload Scripts". Coalesced, and marshalled to the game thread (CLR ops aren't thread-
-                // safe). ReloadScripts also self-heals the .csproj. (Content edits = Modified are left to the
-                // explicit reload; create/delete/rename are the browser operations.)
+                // A .cs add or rename changes what compiles, so recompile and regenerate without a manual reload.
                 if (bIsCSharp && Event.Action != EFileAction::Modified)
                 {
                     if (!GScriptReloadQueued.exchange(true))
@@ -2342,12 +2288,10 @@ namespace Lumina
         // Project's Content (assets), under the /Game mount. Always present.
         SpawnWatcher(FFixedString(GEditorEngine->GetProjectContentDirectory()), FStringView("/Game/Content"));
 
-        // Project's Scripts (C# sources), the sibling of Content under /Game. The callback refreshes the
-        // browser for .cs add/remove/rename.
+        // The project's C# sources, sibling to Content under /Game.
         SpawnWatcher(FFixedString(GEditorEngine->GetProjectScriptsDirectory()), FStringView("/Game/Scripts"));
 
-        // Every enabled plugin with a content mount. Same callback shape,
-        // virtual prefix is the plugin's mount alias ("/<PluginName>").
+        // Every enabled plugin with a content mount, keyed by its mount alias.
         for (const FPlugin* Plugin : FPluginManager::Get().GetAllPlugins())
         {
             if (!Plugin->IsEnabled())
@@ -2364,8 +2308,7 @@ namespace Lumina
                          FStringView(Mount.c_str(), Mount.size()));
         }
 
-        // Land on the project's /Game root so the browser shows content immediately after a
-        // load instead of sitting on a stale/empty path.
+        // Lands on /Game so the browser shows content immediately rather than a stale path.
         SelectedPath = "/Game";
         NavBackStack.clear();
         NavForwardStack.clear();
@@ -2402,8 +2345,7 @@ namespace Lumina
 
         if (ImGui::BeginChild("##ImportSettings", ImVec2(0.0f, -FooterHeight), ImGuiChildFlags_AlwaysUseWindowPadding))
         {
-            // Options come straight off the importer's reflected properties, so a new importer gets its
-            // settings UI for free.
+            // Options come from the importer's reflected properties, so a new importer gets its UI free.
             if (ImportSettingsTable)
             {
                 ImportSettingsTable->DrawTree();
@@ -2434,8 +2376,7 @@ namespace Lumina
         const float ButtonsWidth = ButtonWidth * ButtonCount + ImGui::GetStyle().ItemSpacing.x * (ButtonCount - 1.0f);
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - ButtonsWidth);
 
-        // The chosen values become the defaults for the next import of this type, which is what a batch
-        // wants and what the old per-factory static used to give.
+        // The chosen values become the defaults for the next import of this type, which is what a batch wants.
         auto CommitSettings = [Importer]()
         {
             if (CImporter* CDO = Importer->GetClass()->GetDefaultObject<CImporter>())
@@ -2456,8 +2397,7 @@ namespace Lumina
         {
             ImGui::SameLine();
 
-            // These settings become the answer for everything still queued, so the rest import
-            // without asking again.
+            // These become the answer for everything still queued, so the rest import without asking.
             if (ImGui::Button("Import All", ImVec2(ButtonWidth, 0.0f)))
             {
                 CommitSettings();
@@ -2481,12 +2421,10 @@ namespace Lumina
 
     FFixedString FContentBrowserEditorTool::MakeUniqueImportDestination(FStringView SourcePath)
     {
-        // Stem only. An import becomes a package, and a package name is the path with any extension
-        // stripped (see SanitizeObjectName), so "Foo.png" and "Foo.jpg" both want to be "Foo".
+        // A package name strips any extension, so Foo.png and Foo.jpg both want to be Foo.
         const FFixedString Base = Paths::Combine(SelectedPath, VFS::FileName(SourcePath, true));
 
-        // Three namespaces have to agree. Testing only the source path on disk -- which is what this used
-        // to do -- tests a name that can never exist, since the asset lands as "<stem>.lasset".
+        // Testing only the source path tests a name that can never exist, since the asset lands as .lasset.
         auto IsFree = [this](const FFixedString& Candidate) -> bool
         {
             // What CreatePackage actually refuses on.
@@ -2538,8 +2476,7 @@ namespace Lumina
             FImportResult Result;
             Importer->BuildAssets(Request, Result, &SlowTask);
 
-            // Reverse order: a generated graph must be destroyed before the material it back-references,
-            // and the scene prefab before the meshes it holds references to.
+            // Reverse order, since a generated graph must die before the material it back-references.
             for (auto It = Result.CreatedObjects.rbegin(); It != Result.CreatedObjects.rend(); ++It)
             {
                 (*It)->ConditionalBeginDestroy();
@@ -2552,8 +2489,7 @@ namespace Lumina
             {
                 CImporterRegistry::DestroyImporter(Importer);
 
-                // Released only now the import has run. On success the package is registered and saved, so
-                // the checks above see it; on failure the name goes back to being free.
+                // Released only now, since on success the package is registered and on failure the name frees up.
                 ReservedImportPaths.erase(Request.DestinationPath);
 
                 RefreshContentBrowser();
@@ -2578,9 +2514,7 @@ namespace Lumina
 
     void FContentBrowserEditorTool::TryImport(const TVector<FFixedString>& Paths)
     {
-        // Anything whose importer has no options dialogue imports straight away -- textures, fonts, audio.
-        // Only importers that ask something go in the queue, so dropping forty PNGs and one FBX is one
-        // prompt, not forty-one.
+        // Only importers that ask something are queued, so forty PNGs and one FBX is a single prompt.
         for (const FFixedString& Path : Paths)
         {
             CImporter* ImporterCDO = CImporterRegistry::Get().FindImporterForExtension(VFS::Extension(Path));
@@ -2604,8 +2538,7 @@ namespace Lumina
                 continue;
             }
 
-            // Queued files get their destination when they reach the front, not here: the dialogue can sit
-            // open for minutes, and reserving forty names up front would make every later one a "_1".
+            // Destinations are taken at the front of the queue, or reserving forty names makes every later one a copy.
             PendingImports.push_back(Path);
         }
 
@@ -2648,8 +2581,7 @@ namespace Lumina
         const FImportRequest Request{ Path, DestinationPath };
         CImporter* Importer = CImporterRegistry::CreateImporterOfClass(ImporterCDO->GetClass());
 
-        // Each file is parsed on its own: Import All reuses the chosen OPTIONS, not the previous file's
-        // parsed contents, which is why the parse still runs for every one of them.
+        // Import All reuses the chosen OPTIONS, not the previous file's parse, so each file still parses.
         Task::AsyncTask(1, 1, [this, Importer, Request](uint32, uint32, uint32)
         {
             const FStringView SourceName = VFS::FileName(Request.SourcePath, true);
@@ -2680,8 +2612,7 @@ namespace Lumina
                     return;
                 }
 
-                // Only once the dialogue is actually going to show them: the preview mints a GPU texture
-                // per source image, which is wasted work and live GPU state for an import that never asks.
+                // The preview mints a GPU texture per source image, wasted on an import that never asks.
                 Importer->PrepareSettingsPreview();
 
                 ImportSettingsTable = MakeUnique<FPropertyTable>(Importer);
@@ -2711,16 +2642,14 @@ namespace Lumina
                         {
                             ImportSettingsTable.reset();
 
-                            // Canceled: StartImport never ran, so nothing else releases the name or the
-                            // importer.
+                            // Canceled means StartImport never ran, so nothing else releases the name or the importer.
                             if (!SharedState->bStarted)
                             {
                                 CImporterRegistry::DestroyImporter(Importer);
                                 ReservedImportPaths.erase(Request.DestinationPath);
                             }
 
-                            // Advancing from here rather than from the confirm branch, so canceling one
-                            // file skips it and moves on instead of abandoning the rest of the batch.
+                            // Advanced here, not from the confirm branch, so canceling one file skips only it.
                             bImportWindowOpen = false;
                             MainThread::Enqueue([this]() { ProcessNextImport(); });
                         }
@@ -2733,13 +2662,10 @@ namespace Lumina
 
     void FContentBrowserEditorTool::DrawDirectoryBrowser(bool bIsFocused, ImVec2 Size)
     {
-        // ResizeX gives the pane a draggable right border. It also turns the size argument into a
-        // first-use default and persists the user's width in the ini, so the caller must not compute
-        // the content pane's width from that default -- see DrawContentBrowser's call site.
+        // ResizeX turns the size argument into a first-use default and persists the user's width.
         ImGui::BeginChild("Directories", Size, ImGuiChildFlags_ResizeX, ImGuiWindowFlags_HorizontalScrollbar);
 
-        // Wraps the tree because the widget owns the BeginPopup for a right-clicked node; pushing here
-        // is the only way that menu picks up the same styling as the one in the tile pane.
+        // The widget owns the popup, so pushing here is the only way it picks up the same styling.
         PushContextMenuWindowStyle();
 
         DirectoryListView.Draw(DirectoryContext);
@@ -2762,8 +2688,7 @@ namespace Lumina
 
         PopContextMenuWindowStyle();
 
-        // After Draw, so the tree has been rebuilt and the nodes we walk actually exist. The scroll
-        // request lands on the next Draw.
+        // After Draw, so the nodes exist, and the scroll request lands on the next Draw.
         RevealPendingDirectory();
 
         ImGui::EndChild();
@@ -2815,7 +2740,7 @@ namespace Lumina
 
         while (true)
         {
-            // Copied, not referenced: ExpandNode creates nodes and can reallocate the node pool.
+            // Copied, since ExpandNode creates nodes and can reallocate the node pool.
             const FFixedString CurrentPath = DirectoryListView.Get<FContentBrowserListViewItemData>(Current).Path;
             if (FStringView(CurrentPath.c_str(), CurrentPath.size()) == Target)
             {
@@ -2847,8 +2772,7 @@ namespace Lumina
 
         ImGui::BeginChild("Content", AdjustedSize, true, ImGuiWindowFlags_None);
 
-        // Mouse thumb buttons. GLFW reports these as buttons 3 and 4, which ImGui forwards; hover rather
-        // than focus, so they work without clicking into the browser first.
+        // Hover rather than focus, so the thumb buttons work without clicking into the browser first.
         if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows))
         {
             if (ImGui::IsMouseClicked(3))
@@ -2885,9 +2809,7 @@ namespace Lumina
             ContentBrowserTileView.ClearSelections();
         }
         
-        // WantTextInput covers the inline rename and the search box alike: while either owns the
-        // keyboard, Delete is editing text and must not reach the asset shortcut. The mouse is
-        // usually over empty space while typing, so this fired on almost every rename.
+        // While either the rename or search box owns the keyboard, Delete is editing text.
         if (!ImGui::GetIO().WantTextInput
             && ImGui::IsWindowHovered() && !ImGui::IsAnyItemHovered()
             && ImGui::IsKeyPressed(ImGuiKey_Delete)
@@ -2918,8 +2840,7 @@ namespace Lumina
 
         ImGui::TextUnformatted("|");
 
-        // Walk the virtual path segment-by-segment so every mount root (Content, Scripts, Engine,
-        // plugins) renders the same way. The first segment is the mount alias, shown with its tree label.
+        // The first segment is the mount alias, shown with its tree label.
         auto RootSegmentLabel = [](FStringView) -> const char*
         {
             return nullptr; // use the raw segment text (Game, Content, Scripts, Engine, plugins)
@@ -2967,8 +2888,7 @@ namespace Lumina
 
         ImGui::Separator();
 
-        // Per-item context menu popups are opened from inside the tile view's Draw().
-        // Push the popup window styles here so they apply when those popups are created.
+        // The tile view opens item popups inside Draw(), so the styles have to be pushed around it.
         PushContextMenuWindowStyle();
         ContentBrowserTileView.Draw(ContentBrowserTileViewContext);
         PopContextMenuWindowStyle();
@@ -3029,8 +2949,7 @@ namespace Lumina
 
         if (ImGui::MenuItem(LE_ICON_FILE_REPLACE " Reimport From File...", nullptr, false, !bIsProtected))
         {
-            // One options window at a time; the modal manager allows a single owner, and a reimport
-            // launched underneath a running batch import would lose its dialogue.
+            // The modal manager allows a single owner, and a reimport under a batch would lose its dialogue.
             if (bImportWindowOpen)
             {
                 ImGuiX::Notifications::NotifyWarning("An import is already in progress; finish it first.");
@@ -3044,8 +2963,7 @@ namespace Lumina
                 return;
             }
 
-            // Filter comes from the importer, so the dialog only offers files this asset type can actually
-            // be built from -- the whole reason this is safer than "import over the top".
+            // The filter comes from the importer, so only files this asset type can be built from are offered.
             TVector<FStringView> Extensions;
             ImporterCDO->GetSupportedExtensions(Extensions);
 
@@ -3075,8 +2993,7 @@ namespace Lumina
                 return;
             }
 
-            // The dialog can hand back anything, so the extension is re-checked here rather than trusted;
-            // the importers assume they were given a format they parse.
+            // The dialog can hand back anything, and the importers assume a format they parse.
             if (!ImporterCDO->SupportsExtension(VFS::Extension(Picked)))
             {
                 ImGuiX::Notifications::NotifyError("'{0}' is not a supported source file for this asset type.",
@@ -3098,8 +3015,7 @@ namespace Lumina
             return;
         }
 
-        // The asset's own package path, so the options window's header reads as the thing being replaced
-        // rather than as a destination that would be created.
+        // The asset's own path, so the header reads as the thing being replaced rather than a new one.
         CPackage* Package = Asset->GetPackage();
         const FFixedString AssetPath = Package != nullptr ? Package->GetPackagePath() : FFixedString();
 
@@ -3127,8 +3043,7 @@ namespace Lumina
                     return;
                 }
 
-                // Importers with no options (texture, font, audio) go straight through, matching what a
-                // fresh import of the same file does.
+                // Importers with no options go straight through, matching a fresh import of the same file.
                 if (!Importer->HasSettingsDialogue())
                 {
                     FinishReimport(AssetGUID, Importer, Request.SourcePath);
@@ -3151,8 +3066,7 @@ namespace Lumina
                 ToolContext->PushModal("Reimport", {940, 900},
                     [this, AssetGUID, Importer, Request, SharedState]() mutable
                     {
-                        // RemainingCount 0: a reimport is always a single file, so the window shows no
-                        // "apply to all" affordance and the flag it returns is ignored.
+                        // A reimport is always one file, so the window shows no apply-to-all and ignores the flag.
                         bool bApplyToAll = false;
 
                         if (DrawImportWindow(Importer, Request, 0, SharedState->bShouldClose, bApplyToAll))
@@ -3180,8 +3094,7 @@ namespace Lumina
     void FContentBrowserEditorTool::FinishReimport(const FGuid& AssetGUID, CImporter* Importer,
                                                    const FFixedString& SourceFile)
     {
-        // Stays on a worker like the import path does: the RHI takes multi-threaded submission, and the
-        // geometry finalize is seconds of work that would otherwise freeze the editor.
+        // The RHI takes multi-threaded submission, and a geometry finalize would otherwise freeze the editor.
         Task::AsyncTask(1, 1, [this, AssetGUID, Importer, SourceFile](uint32, uint32, uint32)
         {
             const FStringView SourceName = VFS::FileName(SourceFile, true);
@@ -3210,9 +3123,7 @@ namespace Lumina
                 return;
             }
 
-            // Thumbnail first, and on the main thread: it RENDERS the asset into the package's thumbnail
-            // slot, so it has to happen before the save that embeds it -- and it would otherwise keep
-            // showing the old contents, since nothing about the package path changed.
+            // It RENDERS into the package's thumbnail slot, so it must precede the save that embeds it.
             MainThread::Enqueue([this, AssetGUID, Importer, SourceFile]()
             {
                 CImporterRegistry::DestroyImporter(Importer);
@@ -3227,13 +3138,12 @@ namespace Lumina
                 CPackage* Package = ReimportedAsset->GetPackage();
                 if (Package != nullptr)
                 {
-                    // No registered renderer (or a type with none) just leaves the old image; the cache
-                    // drop below still forces the browser to re-read whatever the package now holds.
+                    // A type with no renderer keeps its old image, and the cache drop still forces a re-read.
                     CThumbnailManager::Get().GenerateThumbnail(ReimportedAsset, Package);
                     CThumbnailManager::Get().InvalidateThumbnail(Package->GetName());
                 }
 
-                // Back off the main thread for the write: a mesh package is megabytes of meshlet data.
+                // Off the main thread for the write, since a mesh package is megabytes of meshlet data.
                 Task::AsyncTask(1, 1, [this, AssetGUID, SourceFile](uint32, uint32, uint32)
                 {
                     bool bSaved = false;
@@ -3249,13 +3159,11 @@ namespace Lumina
                     {
                         if (CObject* SavedAsset = LoadObject<CObject>(AssetGUID))
                         {
-                            // The asset already existed, so this is a save notification and not a creation:
-                            // the registry entry keeps its GUID and path, only the on-disk state moved.
+                            // The asset already existed, so the registry entry keeps its GUID and path.
                             FAssetRegistry::Get().AssetSaved(SavedAsset);
                             FCoreEditorDelegates::OnAssetSaved.Broadcast(SavedAsset);
 
-                            // Nothing about the reference changed, so no open tool would otherwise notice
-                            // that what it is showing is a different mesh/texture than the one it cached.
+                            // Nothing about the reference changed, so no open tool would otherwise notice the swap.
                             AssetEvents::BroadcastAssetDataChanged(SavedAsset);
                         }
 
@@ -3296,9 +3204,7 @@ namespace Lumina
             const FFixedString NewPath = MakeSiblingAssetPath(
                 FStringView(SourcePath.c_str(), SourcePath.size()), "_Copy");
 
-            // Package-level, not a flat property copy: a material keeps its node graph as a second
-            // export found by name, and its nodes reference each other. DuplicateAssetPackage copies
-            // every export and rewrites the references between them, so the copy is self-contained.
+            // A material keeps its node graph as a second export, so the whole package is copied and rewritten.
             CObject* Copy = DuplicateAssetPackage(Source, FStringView(NewPath.c_str(), NewPath.size()));
             if (Copy == nullptr)
             {
@@ -3309,8 +3215,7 @@ namespace Lumina
             FAssetRegistry::Get().AssetCreated(Copy);
             ImGuiX::Notifications::NotifySuccess("Duplicated to '{0}'.", NewPath);
 
-            // A duplicate lands as "<Name>_Copy", which is even less likely to be the name you want
-            // than a factory default.
+            // A duplicate lands as Name_Copy, which is even less likely to be wanted than a factory default.
             QueueRenameAfterCreate(FStringView(NewPath.c_str(), NewPath.size()));
         }
     }
@@ -3345,8 +3250,7 @@ namespace Lumina
         const FFixedString NewPath = MakeSiblingAssetPath(
             FStringView(SourcePath.c_str(), SourcePath.size()), "_Variant");
 
-        // Not a package duplicate: a variant owns no data of its own, only a parent link. Everything it
-        // shows comes from resolving that link, which is what keeps it following the parent.
+        // A variant owns no data, only a parent link, which is what keeps it following that parent.
         CPrefab* Variant = CFactory::CreateNewOf<CPrefab>(FStringView(NewPath.c_str(), NewPath.size()));
         if (Variant == nullptr)
         {
@@ -3447,7 +3351,7 @@ namespace Lumina
                 }
                 else
                 {
-                    // .cs and other loose files: open in the OS-associated app.
+                    // A .cs or other loose file opens in the OS-associated app.
                     Platform::LaunchURL(UTF8_TO_TCHAR(ContentItem->GetPathSource().data()));
                 }
             }
@@ -3463,8 +3367,7 @@ namespace Lumina
             Platform::LaunchURL(UTF8_TO_TCHAR(Parent.c_str()));
         }
 
-        // Class-registered actions ("Create Material Instance", ...). Plugins contribute here without
-        // touching the content browser; see FAssetActionRegistry.
+        // Plugins contribute here without touching the content browser, through FAssetActionRegistry.
         if (bIsAsset)
         {
             const FFixedString AssetPath(ContentItem->GetVirtualPath().data(), ContentItem->GetVirtualPath().size());
@@ -3655,8 +3558,7 @@ namespace Lumina
         const bool bDeleteClicked = ImGui::MenuItem(LE_ICON_TRASH_CAN " Delete Selected", "Del", false, !bAllProtected && !bWorldActive);
         ImGui::PopStyleColor(3);
 
-        // Protected entries do not block the batch, they are simply skipped, so say so up front rather
-        // than only in the notification after the fact.
+        // Protected entries are skipped rather than blocking, so say so before the batch runs.
         if (bAllProtected || bWorldActive || ProtectedCount > 0)
         {
             ImGuiX::Font::PushFont(ImGuiX::Font::EFont::Tiny);
@@ -3682,8 +3584,7 @@ namespace Lumina
 
         PopContextMenuItemStyle();
 
-        // Last, after every read of Items: DeleteSelectedItems clears the selection and queues the tiles
-        // for destruction.
+        // Last, after every read of Items, since deleting clears the selection and queues the tiles.
         if (bDeleteClicked)
         {
             DeleteSelectedItems(Items);
@@ -3729,9 +3630,7 @@ namespace Lumina
 
         DrawMenuHeader(LE_ICON_FOLDER_OPEN, FolderTitle.c_str(), SelectedPath.c_str(), kMenuAccentFolder);
 
-        // Scripts and Content are kept strictly separate: a Scripts/ folder only offers C# scripts, and
-        // every other folder only offers assets/UI/imports. This is what stops scripts from landing outside
-        // Scripts/ and assets from landing inside it.
+        // This is what stops scripts landing outside Scripts and assets landing inside it.
         const bool bScriptDir = IsScriptDirectory(FStringView(SelectedPath.c_str(), SelectedPath.size()));
 
         DrawMenuSection("CREATE");
@@ -3740,7 +3639,7 @@ namespace Lumina
         {
             FFixedString FinalPath = VFS::MakeUniqueFilePath(SelectedPath + "/NewFolder");
             VFS::CreateDir(FinalPath);
-            // Same reasoning as a new asset: "NewFolder" is a placeholder, not a name.
+            // Same reasoning as a new asset, since NewFolder is a placeholder rather than a name.
             QueueRenameAfterCreate(FStringView(FinalPath.c_str(), FinalPath.size()));
         }
 
@@ -3771,8 +3670,7 @@ namespace Lumina
                         {
                             ImGuiX::Notifications::NotifySuccess("Successfully Created: \"{0}\"", Path);
 
-                            // The dialogue hands the actual creation to a task, so the tile may not
-                            // exist for several frames. The request just waits for it.
+                            // The dialogue hands creation to a task, so the tile may not exist for several frames.
                             QueueRenameAfterCreate(FStringView(Path.c_str(), Path.size()));
                         }
                         return bShouldClose;
@@ -3898,10 +3796,7 @@ namespace Lumina
             FFixedString NewWidgetPath = SelectedPath + "/" + "NewWidget.rml";
             NewWidgetPath = VFS::MakeUniqueFilePath(NewWidgetPath);
 
-            // A skeleton rather than an empty file. An empty .rml opens to a blank preview with no
-            // indication of what is missing, and the one rule nothing else teaches -- RmlUi has no
-            // user-agent stylesheet, so every element is display:inline until a rule says otherwise --
-            // costs a new author an afternoon when their first panel silently collapses.
+            // RmlUi has no user-agent stylesheet, so every element is inline until a rule says otherwise.
             VFS::WriteFile(NewWidgetPath,
                 "<rml>\n"
                 "<head>\n"
@@ -3947,8 +3842,7 @@ namespace Lumina
             RefreshContentBrowser();
         }
 
-        // IMPORT -----------------------------------------------------------
-        // Imports bring in assets, so they're offered only outside Scripts/.
+        // Imports bring in assets, so they are offered only outside Scripts.
         if (!bScriptDir)
         {
             DrawMenuSection("IMPORT");

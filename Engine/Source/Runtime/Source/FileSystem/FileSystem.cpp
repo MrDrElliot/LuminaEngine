@@ -79,7 +79,7 @@ namespace Lumina::VFS
                 }
             }
 
-            // Reverse: most recently mounted overlay (e.g. PAK) wins.
+            // Reversed, so the most recently mounted overlay wins.
             for (auto It = List->rbegin(); It != List->rend(); ++It)
             {
                 IFileSystem& FS = **It;
@@ -467,14 +467,13 @@ namespace Lumina::VFS
         // Normalize slashes once up front. Both branches need it.
         FFixedString Normalized = Paths::Normalize(InputPath);
 
-        // Case 1: already a virtual path.
+        // Already a virtual path.
         if (!Normalized.empty() && Normalized.front() == '/')
         {
             return Normalized;
         }
 
-        // Case 2: walk all native mounts, find one whose BasePath is a prefix.
-        // Native FS BasePaths are absolute, normalized at construction time.
+        // Native mount base paths are absolute and normalized at construction time.
         FStringView NormalizedView(Normalized.data(), Normalized.size());
 
         FFixedString Best;
@@ -489,15 +488,13 @@ namespace Lumina::VFS
                 {
                     continue;
                 }
-                // Prefer the longest match (more specific mount wins for nested
-                // mounts like /Engine vs /Engine/Editor).
+                // The longest match wins, so a more specific nested mount beats its parent.
                 if (NormalizedView.starts_with(Base) && Base.size() > BestBaseLen)
                 {
                     FStringView Tail = NormalizedView.substr(Base.size());
                     if (!Tail.empty() && Tail.front() != '/')
                     {
-                        // Base happens to be a prefix but not on a path boundary,
-                        // skip (e.g. "/Foo" matching "/FooBar/...").
+                        // The base is a prefix but not on a path boundary, so skip it.
                         continue;
                     }
                     Best.assign(Alias.data(), Alias.size());

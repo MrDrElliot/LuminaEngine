@@ -121,8 +121,7 @@ namespace Lumina
                 Asset->GetPackage()->MarkDirty();
             }
 
-            // A property edit (a constant's value, a texture reference, ...) changes the shader just as
-            // much as rewiring does, so it counts toward "needs compile" the same way.
+            // A property edit changes the shader as much as rewiring, so it counts toward needing a compile.
             if (NodeGraph != nullptr)
             {
                 NodeGraph->NotifyContentChanged();
@@ -424,17 +423,7 @@ namespace Lumina
     
     namespace
     {
-        // Slang for the Custom Slang node's body.
-        //
-        // Built by COPYING the editor's HLSL definition rather than authoring one from scratch: Slang is
-        // HLSL plus extensions, and the copy carries the pieces that are not data -- isPunctuation,
-        // getIdentifier, getNumber -- which are file-static inside TextEditor.cpp and cannot be reached
-        // from here. Only the additions below are ours.
-        //
-        // The split between `keywords` and `identifiers` is the reason this is worth doing at all: keywords
-        // color as language syntax, identifiers as knownIdentifier. Putting the intrinsics and the node's
-        // own pin names in the second bucket is what makes "this is a thing the engine gave me" visually
-        // distinct from "this is Slang", which a plain HLSL definition cannot express.
+        // Copied from the HLSL definition, since its file-static helpers cannot be reached from here.
         const TextEditor::Language& GetSlangLanguageBase()
         {
             static bool bInitialized = false;
@@ -465,8 +454,7 @@ namespace Lumina
                 Language.keywords.insert(Keyword);
             }
 
-            // Intrinsics. The HLSL definition ships keywords only, so before this every call in a custom
-            // node body -- saturate, lerp, dot -- rendered as plain text.
+            // The HLSL definition ships keywords only, so intrinsics rendered as plain text before this.
             static const char* const Intrinsics[] =
             {
                 "abs", "acos", "all", "any", "asin", "atan", "atan2", "ceil", "clamp", "cos", "cosh",
@@ -486,8 +474,7 @@ namespace Lumina
                 Language.identifiers.insert(Intrinsic);
             }
 
-            // Engine-side names reachable from a material body. These are what the material compiler
-            // substitutes around the node, so they are in scope whether or not the author declared them.
+            // The compiler substitutes these around the node, so they are in scope whether declared or not.
             static const char* const EngineIdentifiers[] =
             {
                 "MaterialIndex", "EntityID", "UV0", "UV0_DDX", "UV0_DDY", "WorldPosition", "WorldNormal",
@@ -505,9 +492,7 @@ namespace Lumina
             return Language;
         }
 
-        // Change detector for the highlight only, so it deliberately covers pin NAMES and nothing else --
-        // the node's own signature hash is private, and it also folds in pin types, which would rebuild
-        // the language on edits that cannot change a single color.
+        // Covers pin NAMES only, since the node's own hash folds in types that cannot change a color.
         uint64 HashPinNames(const CMaterialExpression_CustomSlang* Node)
         {
             uint64 Hash = 1469598103934665603ull;   // FNV-1a
@@ -531,8 +516,7 @@ namespace Lumina
 
     void FMaterialEditorTool::ConfigureCodeEditor()
     {
-        // SetTabSize is only honored while the document is empty and has no transactions, so this has to
-        // run before the first SetText -- hence OnInitialize rather than the first draw.
+        // SetTabSize is honored only while the document is empty, so it has to run before the first SetText.
         CodeEditor.SetTabSize(4);
         CodeEditor.SetInsertSpacesOnTabs(true);
         CodeEditor.SetAutoIndentEnabled(true);
@@ -550,8 +534,7 @@ namespace Lumina
     {
         CodeEditorLanguage = GetSlangLanguageBase();
 
-        // The node's own pins, so an author sees at a glance whether they spelled a declared name right --
-        // a misspelled output is otherwise a silent no-op that only surfaces as "nothing changed".
+        // A misspelled output is otherwise a silent no-op that only surfaces as nothing changing.
         if (Node != nullptr)
         {
             for (const FCustomSlangPin& Pin : Node->Inputs)
@@ -564,8 +547,7 @@ namespace Lumina
             }
         }
 
-        // Re-point even though the address is unchanged: SetLanguage raises the dirty flag that makes the
-        // colorizer re-run over the whole document, which is what picks up the new identifier set.
+        // SetLanguage raises the dirty flag that re-runs the colorizer, which picks up the new identifiers.
         CodeEditor.SetLanguage(&CodeEditorLanguage);
     }
 
@@ -584,8 +566,7 @@ namespace Lumina
             return;
         }
 
-        // (Re)bind on selection change. Only pull from the node here -- pulling every frame would
-        // fight the editor's own undo history and cursor state.
+        // Pulling every frame would fight the editor's own undo history and cursor state.
         if (CodeEditorBoundNode != Node)
         {
             CodeEditorBoundNode = Node;
@@ -596,13 +577,12 @@ namespace Lumina
         }
         else if (const uint64 Signature = HashPinNames(Node); Signature != CodeEditorPinSignature)
         {
-            // Pins are edited in the details panel while this tab stays bound, so the highlight has to
-            // follow them -- otherwise a freshly renamed output keeps coloring under its old name.
+            // Pins are edited while this tab stays bound, so a renamed output must not keep its old color.
             CodeEditorPinSignature = Signature;
             RebuildCodeEditorLanguage(Node);
         }
 
-        // Signature reference: what the body can actually read and must assign.
+        // What the body can actually read and must assign.
         ImGui::AlignTextToFramePadding();
         ImGui::TextColored(EditorColors::Accent(), "%s", Node->Title.c_str());
         ImGui::SameLine(0.0f, 12.0f);
@@ -639,12 +619,10 @@ namespace Lumina
 
         ImGui::Separator();
 
-        // Captured at the START of the toolbar line: SameLine's offset is measured from the line start, so
-        // reading the remaining width after the buttons would place the status by the wrong origin.
+        // SameLine measures from the line start, so reading width after the buttons uses the wrong origin.
         const float ToolbarWidth = ImGui::GetContentRegionAvail().x;
 
-        // Toolbar. Find/replace is built into the editor but has no discoverable entry point, so it gets a
-        // button as well as its shortcut.
+        // Find and replace has no discoverable entry point, so it gets a button as well as its shortcut.
         if (ImGui::SmallButton(LE_ICON_MAGNIFY " Find"))
         {
             CodeEditor.OpenFindReplaceWindow();
@@ -671,8 +649,7 @@ namespace Lumina
             ImGui::SetTooltip("Converts leading tabs to spaces at the editor's tab size.");
         }
 
-        // Right-aligned status: language and cursor. The language name is worth showing because the
-        // highlight includes THIS node's pin names, so it is not a generic Slang mode.
+        // The language name is worth showing, since the highlight includes THIS node's pin names.
         const TextEditor::CursorPosition Cursor = CodeEditor.GetCursorPosition(0);
         FFixedString Status;
         FormatTo(Status, "{}  |  Ln {}, Col {}  |  {} lines",
@@ -687,15 +664,12 @@ namespace Lumina
             ImGui::TextColored(EditorColors::TextDim(), "%s", Status.c_str());
         }
 
-        // Same monospaced face the RmlUi code editor uses -- column alignment is the whole point of a
-        // code view, and the proportional UI font makes indented shader code unreadable.
+        // Column alignment is the point of a code view, and the proportional UI font makes it unreadable.
         ImGuiX::Font::PushFont(ImGuiX::Font::EFont::Mono);
         CodeEditor.Render("##CustomSlangCode", ImGui::GetContentRegionAvail(), false);
         ImGuiX::Font::PopFont();
 
-        // Write back only on a real edit; the graph's auto-compile picks it up on the next frame. The
-        // undo cursor is just a cheap gate -- the text is compared before writing, because the cursor
-        // also moves on undo/redo (and back onto a value we already stored).
+        // The text is compared before writing, since the undo cursor also moves on undo and redo.
         if (CodeEditor.GetUndoIndex() != LastCodeEditorUndoIndex)
         {
             LastCodeEditorUndoIndex = CodeEditor.GetUndoIndex();
@@ -713,28 +687,10 @@ namespace Lumina
         }
     }
 
-    // Hardware-truth counterpart to the source-derived stats above: local-memory arrays (from the compiled
-    // SPIR-V) and the driver's own register count / occupancy (from VK_KHR_pipeline_executable_properties).
-    //
-    // These exist because both are invisible while authoring and only show up in a GPU capture. Register
-    // count in particular is a STEP function on occupancy, not a gradient -- on Ampere 128 regs caps a
-    // shader at 16 resident warps, 96 gets 20, 80 gets 24 -- so a material can sit one register over a
-    // cliff and lose a quarter of its latency hiding with nothing in the graph looking different.
+    // Both are invisible while authoring and only show up in a GPU capture.
     namespace
     {
-        // Register-limited warp occupancy on an NVIDIA SM.
-        //
-        // Occupancy is a STEP function of the per-thread register count: an SM partition has a fixed
-        // register budget and hands it out in fixed-size blocks, so shedding registers buys EXACTLY NOTHING
-        // until the count crosses into the next block. That is the whole reason this exists -- a raw
-        // "84 registers" tells an author nothing they can act on, while "4 fewer registers gains a warp"
-        // (or "you are 1 register into a new block, 7 more are free") does.
-        //
-        // Assumes the layout every NVIDIA part since Turing shares: 65536 32-bit registers per SM across 4
-        // partitions, allocated per warp in blocks of 8 registers/thread. AMD's register file and wave
-        // sizing are different enough that this model does not transfer, which is why it is only applied to
-        // a statistic the driver named like an NVIDIA register count (AMD names its "VGPRs"/"SGPRs" and
-        // reports an occupancy statistic of its own, which is displayed verbatim).
+        // Occupancy is a STEP function, so shedding registers buys nothing until it crosses a block.
         struct FOccupancyStep
         {
             bool   bValid            = false;
@@ -746,9 +702,7 @@ namespace Lumina
         constexpr uint32 kRegsPerPartition   = 16384u;   // 65536 per SM / 4 partitions
         constexpr uint32 kRegAllocGranularity = 8u;
         constexpr uint32 kThreadsPerWarp     = 32u;
-        // Slot cap, not a register cap. Ampere/Ada consumer parts top out at 48 warps/SM; Turing at 32.
-        // Taking the higher value keeps this an upper bound on the REGISTER-limited figure, which is the
-        // component the author actually controls.
+        // A slot cap, not a register cap, so taking the higher value keeps this an upper bound.
         constexpr uint32 kMaxWarpsPerSM      = 48u;
 
         uint32 WarpsPerSMForRegs(uint32 RegsPerThread)
@@ -774,9 +728,7 @@ namespace Lumina
             Out.bValid     = true;
             Out.WarpsPerSM = WarpsPerSMForRegs(RegsPerThread);
 
-            // Walk down to the first register count that yields MORE warps. Stepping by the allocation
-            // granularity is what makes the answer honest: any target that is not on a block boundary
-            // would be advice that cannot pay off.
+            // Stepping by the allocation granularity keeps the advice honest, since off-boundary cannot pay off.
             for (uint32 Candidate = (RegsPerThread / kRegAllocGranularity) * kRegAllocGranularity;
                  Candidate >= kRegAllocGranularity; Candidate -= kRegAllocGranularity)
             {
@@ -812,9 +764,7 @@ namespace Lumina
             return;
         }
 
-        // The DEFERRED (VisBuffer) permutation first: it is the one that shades opaque geometry, so it is
-        // the one whose register count matters. The forward pixel shader is listed too because translucent
-        // and capture views still use it, and the two can differ (different spec constants survive).
+        // The deferred permutation shades opaque geometry, so its register count is the one that matters.
         const struct { const char* Label; FShaderH Entry; } Lanes[] =
         {
             { "Deferred (VisBuffer)", Material->GetDeferredShader() },
@@ -859,8 +809,7 @@ namespace Lumina
             ImGui::PopStyleColor();
             ImGui::Indent(12.0f);
 
-            // Non-zero is a real finding, not a style note: a function-scope array does not live in
-            // registers, so each access is a local-memory round trip that stalls on the long scoreboard.
+            // A function-scope array does not live in registers, so each access stalls on a memory round trip.
             Row("Local Memory Arrays", "%u", Stats.LocalArrayCount,
                 Stats.LocalArrayCount > 0 ? WarnColor : ValueColor);
             if (Stats.LocalArrayCount > 0)
@@ -888,8 +837,7 @@ namespace Lumina
                     Row(Label.c_str(), "%lld", (long long)Stat.Value, ValueColor);
                 }
 
-                // Turn the raw count into the thing an author can act on. Only for a fragment stage: the
-                // step matters everywhere, but the deferred/forward PS is the shader a material controls.
+                // Only for a fragment stage, since the deferred or forward PS is the shader a material controls.
                 if (!Stat.bIsFloat && IsNvidiaRegisterStat(Stat.Name))
                 {
                     const FOccupancyStep Step = ComputeOccupancyStep((uint32)Stat.Value);
@@ -928,8 +876,7 @@ namespace Lumina
 
         if (!bAnyPipelineStats)
         {
-            // Two distinct causes, and the user can only act on the first: the pipeline is built lazily on
-            // first draw, so a material that has never been rendered simply has nothing to report yet.
+            // The pipeline is built lazily on first draw, so an unrendered material has nothing to report.
             ImGui::PushStyleColor(ImGuiCol_Text, MutedColor);
             ImGui::TextWrapped("Driver pipeline statistics unavailable. They are captured the first time this "
                                "material is drawn -- open a scene using it, or use the preview viewport. If they "
@@ -1014,8 +961,7 @@ namespace Lumina
 
             DrawDiagnosticRows(CompilationResult.Errors, /*bIsError*/ true);
 
-            // A failed compile can still have produced warnings; dropping them here would make them appear
-            // only once the error is fixed, which reads as the fix having caused them.
+            // Dropping them would make warnings appear only once the error is fixed, reading as caused by it.
             if (!CompilationResult.Warnings.empty())
             {
                 ImGui::Spacing();
@@ -1061,8 +1007,7 @@ namespace Lumina
         const ImVec4 ValueColor (1.00f, 1.00f, 1.00f, 1.0f);
         const ImVec4 HeaderColor(0.70f, 0.85f, 1.00f, 1.0f);
 
-        // FIRST, above the stats. These describe a material that compiled and renders, so nothing else
-        // flags them -- put anywhere lower they would sit below a fold nobody scrolls past.
+        // These describe a material that compiled and renders, so nothing lower would ever be scrolled to.
         if (!CompilationResult.Warnings.empty())
         {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.72f, 0.30f, 1.0f));
@@ -1141,17 +1086,13 @@ namespace Lumina
             Row("Vertex Source Size",  "%u chars", ShaderStats.VertexCharacters, ValueColor);
         }
 
-        // Everything above is derived from the GENERATED SOURCE -- op counts, parameter counts, a weighted
-        // cost estimate. Useful for comparing materials, but blind to the two things that actually decide
-        // what a pixel shader costs on the hardware, both of which only appear once the driver has compiled
-        // it. That is what this section is.
+        // Everything above comes from the GENERATED SOURCE, which is blind to what the hardware costs.
         DrawGPUStats(LabelWidth, HeaderColor, LabelColor, ValueColor);
 
         ImGui::Spacing();
         ImGui::Spacing();
 
-        // Generated source is intentionally tucked behind a collapsing header so it isn't part
-        // of the main stats view -- the user has to opt in to see the raw HLSL.
+        // Tucked behind a collapsing header, so the user opts in to see the raw HLSL.
         if (ImGui::CollapsingHeader("Generated Pixel Shader (HLSL)"))
         {
             ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.08f, 0.08f, 0.10f, 1.0f));
@@ -1208,20 +1149,17 @@ namespace Lumina
         CompilationResult = FCompilationResultInfo();
         CMaterial* Material = Cast<CMaterial>(Asset.Get());
 
-        // All the heavy lifting (graph compile -> every shader stage -> params/textures -> PostLoad) lives in
-        // the shared CompileMaterialGraph so the importer's procedural materials compile identically.
+        // Shared with CompileMaterialGraph so the importer's procedural materials compile identically.
         const FMaterialGraphCompileResult CompileResult = CompileMaterialGraph(Material, NodeGraph);
 
         ShaderStats       = CompileResult.Stats;
         bHasCompiledOnce  = true;
         bGLSLPreviewDirty = true;
 
-        // Stamped even on failure: the compile ran against this exact graph, so nagging about it again
-        // until something else changes would just be noise on top of the errors already surfaced.
+        // Stamped even on failure, since the compile ran against this exact graph.
         CompiledContentVersion = NodeGraph != nullptr ? NodeGraph->GetContentVersion() : 0;
 
-        // Before the failure branch: warnings survive a failed compile, and the log should carry them
-        // whether or not the material built.
+        // Before the failure branch, since warnings survive a failed compile and belong in the log.
         for (const EdNodeGraph::FError& Warning : CompileResult.Warnings)
         {
             CompilationResult.CompilationLog += "WARNING - [" + Warning.Name + "]: " + Warning.Description + "\n";
@@ -1268,9 +1206,7 @@ namespace Lumina
 
     void FMaterialEditorTool::OnSave()
     {
-        // Before the base save, not after: Compile writes the shaders, parameters and texture table back
-        // onto the material, so saving first would persist the pre-compile state and leave the asset on
-        // disk disagreeing with the graph it contains.
+        // Compile writes shaders and parameters back, so saving first would persist the pre-compile state.
         const CMaterialEditorSettings* Settings = GetDefault<CMaterialEditorSettings>();
         if (Settings != nullptr && Settings->bCompileOnSave && NeedsCompile())
         {
@@ -1293,7 +1229,7 @@ namespace Lumina
         ImGui::DockBuilderDockWindow(GetToolWindowName(ViewportWindowName).c_str(),      rightDockID);
         ImGui::DockBuilderDockWindow(GetToolWindowName(ShaderStatsName).c_str(),         rightBottomDockID);
         ImGui::DockBuilderDockWindow(GetToolWindowName(MaterialPropertiesName).c_str(),  rightBottomDockID);
-        // Tabs behind the graph: editing a node's code is the same task as editing the graph.
+        // Tabbed behind the graph, since editing a node's code is the same task as editing the graph.
         ImGui::DockBuilderDockWindow(GetToolWindowName(CustomCodeName).c_str(),          leftDockID);
     }
 }

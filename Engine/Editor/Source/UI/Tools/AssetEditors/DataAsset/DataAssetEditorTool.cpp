@@ -16,8 +16,7 @@ namespace Lumina
     {
         FAssetEditorTool::OnInitialize();
 
-        // FAssetEditorTool's ctor already bound PropertyTable to the asset's class and wired the
-        // dirty/undo callbacks; all this tool adds is a window to draw it in.
+        // The base ctor already bound the table and wired the callbacks, so this only adds a window.
         CreateToolWindow(DataAssetWindowName, [this](bool /*bFocused*/)
         {
             PropertyTable.DrawTree();

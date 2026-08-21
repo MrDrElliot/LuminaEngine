@@ -31,8 +31,7 @@ namespace Lumina::HangWatchdog
         FThread             GThread;
         float               GTimeoutSeconds   = 8.0f;
 
-        // Boot and project load block the main thread legitimately (asset discovery, script compile, shader
-        // warmup), so the pre-first-frame window gets a far looser bound than a steady-state frame stall.
+        // Boot and project load block the main thread legitimately, so they get a far looser bound.
         constexpr float     kBootTimeoutScale = 5.0f;
         DWORD               GMainThreadId     = 0;
         DWORD               GWatchdogThreadId = 0;
@@ -67,7 +66,7 @@ namespace Lumina::HangWatchdog
                 PRUNTIME_FUNCTION Function  = RtlLookupFunctionEntry(Context.Rip, &ImageBase, nullptr);
                 if (Function == nullptr)
                 {
-                    // Leaf function (no unwind data): the return address sits at the top of the stack.
+                    // A leaf function has no unwind data, so the return address sits at the top of the stack.
                     if (Context.Rsp == 0)
                     {
                         break;
@@ -86,9 +85,7 @@ namespace Lumina::HangWatchdog
         }
 #endif
 
-        // Suspend ThreadId, capture up to kMaxFrames return addresses, resume. No heap/log/dbghelp use
-        // while suspended (symbolization is deferred), so the watchdog can't deadlock on a lock the
-        // suspended thread holds. Returns frame count (0 if the thread couldn't be walked).
+        // No heap, log or symbol work while suspended, so the watchdog cannot deadlock on a held lock.
         uint32 CaptureThreadFrames(DWORD ThreadId, DWORD64* OutAddrs)
         {
             HANDLE Thread = OpenThread(THREAD_GET_CONTEXT | THREAD_SUSPEND_RESUME, FALSE, ThreadId);
@@ -214,8 +211,7 @@ namespace Lumina::HangWatchdog
             LOG_ERROR("Main thread (tid {}) stalled for >{:.1f}s. Dumping all thread stacks:",
                 (uint32)GMainThreadId, GTimeoutSeconds);
 
-            // The main thread is the most interesting stack; dump it first so we still get it even if
-            // walking a later (e.g. managed/JIT) thread misbehaves.
+            // The main thread is the most interesting stack, so dump it before a later one can misbehave.
             if (GMainThreadId != 0)
             {
                 DumpThread(GMainThreadId);
@@ -247,7 +243,7 @@ namespace Lumina::HangWatchdog
                 CloseHandle(Snapshot);
             }
 
-            // Subsystem reporters last: they explain state the stacks can't (parked fibers, counters).
+            // Subsystem reporters last, since they explain state the stacks cannot, such as parked fibers.
             const uint32 NumReporters = GNumReporters.load(std::memory_order_acquire);
             for (uint32 i = 0; i < NumReporters; ++i)
             {
@@ -287,11 +283,7 @@ namespace Lumina::HangWatchdog
                     continue;
                 }
 
-                // Beat == 0 means the frame loop hasn't started yet. Boot and project load can legitimately
-                // block the main thread for seconds, so this window gets a much longer grace -- but it does
-                // get one. Skipping it entirely made every pre-first-frame hang (asset discovery, script
-                // compile, a blocking drain in project load) completely undiagnosable: the process just sat
-                // there and the watchdog stayed silent by construction.
+                // Skipping the pre-first-frame window made every boot hang undiagnosable by construction.
                 const float Timeout = (Beat == 0) ? GTimeoutSeconds * kBootTimeoutScale : GTimeoutSeconds;
 
                 const float Elapsed = static_cast<float>(Now - LastChange);

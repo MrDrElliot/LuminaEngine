@@ -10,8 +10,7 @@
 
 namespace Lumina
 {
-    // Shared width for inline pin editors so the value / enum controls form a
-    // tidy right-aligned column on the node face.
+    // A shared width so the inline pin editors form a tidy right-aligned column on the node face.
     static constexpr float GInlinePinEditorWidth = 104.0f;
 
     CClass* CAnimGraphNode::GetSupportedGraphClass() const
@@ -108,8 +107,7 @@ namespace Lumina
             return;
         }
 
-        // Cycle button rather than a combo: imgui-node-editor doesn't host popup
-        // windows reliably inside a node, so clicking advances to the next value.
+        // A cycle button, since imgui-node-editor does not host popup windows reliably inside a node.
         Pin->InlineEditor = [this, Items, Get, Set]()
         {
             const int Count = (int)Items.size();
@@ -121,8 +119,7 @@ namespace Lumina
             const int Current = Get();
             const char* Label = (Current >= 0 && Current < Count) ? Items[Current] : "?";
 
-            // Left-align the label and reserve room on the right for a chevron so
-            // it reads as a value selector rather than a plain button.
+            // A left-aligned label with room for a chevron reads as a value selector, not a plain button.
             ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.0f, 0.5f));
             const bool bClicked = ImGui::Button(Label, ImVec2(GInlinePinEditorWidth, 0.0f));
             ImGui::PopStyleVar();
@@ -153,8 +150,7 @@ namespace Lumina
             }
         }
 
-        // Unconnected pose inputs resolve to the skeleton bind pose so partially
-        // wired graphs still compile and evaluate.
+        // An unconnected pose input resolves to the bind pose, so a partial graph still evaluates.
         return Compiler.EmitRefPose();
     }
 

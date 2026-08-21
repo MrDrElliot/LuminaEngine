@@ -58,8 +58,7 @@ namespace Lumina
             }
         }
 
-        // Manual rebuild: forces every nav volume to re-bake (use when world geometry changed but the
-        // bounds did not). Routine placement/move re-bakes automatically via SNavMeshComponent::bAutoBake.
+        // Routine placement re-bakes automatically, so this is for when world geometry changed.
         ImGui::SameLine();
         if (ImGui::Button(LE_ICON_REFRESH, ImVec2(ButtonSize, ButtonSize)))
         {

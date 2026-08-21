@@ -137,8 +137,7 @@ namespace Lumina
                 continue;
             }
 
-            // Piece meshes are recentered to their centroid in BuildPieceMesh, so place each
-            // entity at its centroid to reassemble the source mesh; explode pushes outward from there.
+            // Piece meshes are recentered in BuildPieceMesh, so placing at the centroid reassembles the source.
             const FVector3 PieceCenter = Collection->GetPiece(i).Center;
             const FVector3 Delta = PieceCenter - Center;
             const float Length = Math::Length(Delta);

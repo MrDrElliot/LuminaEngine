@@ -167,8 +167,7 @@
 
 namespace Lumina
 {
-    // Project dialog palette + row primitives, mirroring ContentBrowserEditorTool's
-    // constexpr ImVec4 + ImDrawList-painted rows so the dialogs match the editor.
+    // Mirrors ContentBrowserEditorTool's painted rows so the dialogs match the editor.
     namespace
     {
         constexpr ImVec4 kProjDialogPanelBg     = ImVec4(0.10f, 0.10f, 0.12f, 1.00f);
@@ -197,8 +196,7 @@ namespace Lumina
             ImGui::Spacing();
         }
 
-        // Two-line accent row (bCompact = single-line, de-emphasized); returns true on
-        // left-click. OutCloseClicked set when the trailing close button is hit (if bShowClose).
+        // Returns true on left-click, and sets OutCloseClicked when the trailing close button is hit.
         bool DrawProjectRow(
             const char*     Icon,
             const char*     Title,
@@ -219,9 +217,7 @@ namespace Lumina
             const ImVec2 P0       = ImGui::GetCursorScreenPos();
             const ImVec2 P1       = ImVec2(P0.x + Avail, P0.y + Height);
 
-            // Seed the ID scope from title AND subtitle: two rows can share a title (the "Sandbox"
-            // recent vs the "Sandbox" example, or two same-named projects in different folders), which
-            // would otherwise collide on the "##row"/"##close" IDs. Subtitle is the unique path for recents.
+            // Two rows can share a title, so seed the ID scope from the subtitle path as well.
             ImGui::PushID(Title);
             ImGui::PushID(Subtitle ? Subtitle : "");
 
@@ -229,7 +225,7 @@ namespace Lumina
             ImGui::SetCursorScreenPos(P0);
             const bool bRowClicked = ImGui::InvisibleButton(
                 "##row",
-                ImVec2(Math::Max(Avail - CloseW, 1.0f), Height));   // floor: InvisibleButton asserts on zero width
+                ImVec2(Math::Max(Avail - CloseW, 1.0f), Height));   // floor, InvisibleButton asserts on zero width
             const bool bHovered    = ImGui::IsItemHovered();
             const bool bActive     = ImGui::IsItemActive();
 
@@ -313,8 +309,7 @@ namespace Lumina
             return bRowClicked;
         }
 
-        // Recent .lproject paths: absolute, most-recent-first, deduped, capped at
-        // kMaxRecents. Backed by the CEditorSettings::RecentProjects variable.
+        // Absolute, most-recent-first, deduped and capped, backed by CEditorSettings::RecentProjects.
         constexpr size_t kMaxRecents = 10;
 
         void PushRecentProject(FStringView LprojPath)
@@ -351,8 +346,7 @@ namespace Lumina
             GConfig->SaveSettings(CEditorSettings::StaticClass());
         }
 
-        // Drop entries whose .lproject no longer exists; returns the cleaned list and
-        // writes it back if anything was pruned, keeping the menu and dialog in sync.
+        // Writes the cleaned list back when anything was pruned, keeping menu and dialog in sync.
         TVector<FString> PruneMissingRecents()
         {
             auto Recents = GetDefault<CEditorSettings>()->RecentProjects;
@@ -375,8 +369,7 @@ namespace Lumina
             return Recents;
         }
 
-        // Returns the project display name from an absolute .lproject path
-        // (basename without extension). Cheap; no filesystem access.
+        // The basename without extension, cheap because it touches no filesystem.
         FString DisplayNameFromLprojPath(const FString& LprojPath)
         {
             const size_t Slash = LprojPath.find_last_of("/\\");
@@ -408,8 +401,7 @@ namespace Lumina
             }
         }
 
-        // Consume input ImGui owns so it doesn't fall through; pass everything
-        // else to tools (file drops, etc.).
+        // Consume what ImGui owns so it does not fall through, and pass everything else to tools.
         const bool bIsMouseEvent =
                Event.IsA<FMouseMovedEvent>()
             || Event.IsA<FMouseButtonPressedEvent>()
@@ -455,8 +447,7 @@ namespace Lumina
         // Editor links its own ImGui copy; install allocator here because StartupModule never runs (editor links directly, not LoadModule'd).
         ImGuiX::InstallImGuiAllocator();
 
-        // Plugin DLLs each link their own ImGui copy too; hand the contexts to the module manager so it
-        // syncs every already-loaded plugin that opted in via LUMINA_MODULE_IMGUI() (and ones loaded later).
+        // Plugin DLLs link their own ImGui, so the module manager syncs every plugin that opted in.
         FModuleManager::Get().NotifyImGuiReady(Context, PlotContext);
 
         // Init ThumbnailManager before world load so engine primitive meshes are in the transient package before deserialization.
@@ -465,9 +456,7 @@ namespace Lumina
         // Content-browser tiles that draw their own body (curves, etc) instead of a rendered thumbnail.
         AssetTilePainters::RegisterBuiltin();
 
-        // A reimported texture keeps its bindless slot (RHI::Textures::Recreate repoints it), so materials
-        // sampling it are already correct. What is NOT correct is a material whose block was baked while
-        // that texture had no valid ResourceID -- it holds the fallback and nothing would ever rewrite it.
+        // A material block baked while its texture had no valid ResourceID holds the fallback forever.
         AssetDataChangedHandle = AssetEvents::OnAssetDataChanged().AddLambda([](CObject* Changed)
         {
             if (const CTexture* Texture = Cast<CTexture>(Changed))
@@ -570,34 +559,24 @@ namespace Lumina
         EditorWindowClass.ParentViewportId              = 0; // Top level window
         EditorWindowClass.DockingAlwaysTabBar           = true;
 
-        // Same starting scene a newly created world asset gets, so the editor's opening view is not a
-        // different world from the one File > New produces. Created here but POPULATED below, after
-        // the project has had its chance to load -- see the comment at the PopulateDefaultScene call.
-        //
-        // Held through a TObjectPtr, not a raw pointer: the world editor is this world's only other owner,
-        // and the project load below can hand that tool a different world, which frees this one on the
-        // spot (FEditorTool::SetWorld). A strong ref here keeps it alive to the end of Initialize so the
-        // check at the populate call is an identity test and not a compare against a freed address that
-        // the replacement world may have been allocated into.
+        // Held through a TObjectPtr, since a project load can hand the tool a different world and free this.
         TObjectPtr<CWorld> World = NewObject<CWorld>(nullptr, "Transient World", FGuid::New(), OF_Transient);
 
         WorldEditorTool = CreateTool<FWorldEditorTool>(this, World);
         ConsoleLogTool = CreateTool<FConsoleLogEditorTool>(this);
         ContentBrowser = CreateTool<FContentBrowserEditorTool>(this);
 
-        // Multiplayer PIE: spawn/destroy extra-player Game Preview tools when the world editor starts/stops play.
+        // Spawns and destroys extra-player Game Preview tools as the world editor starts and stops play.
         (void)WorldEditorTool->GetOnPreviewStartRequestedDelegate().AddLambda([this]() { CreateGameViewportTool(); });
         (void)WorldEditorTool->GetOnPreviewStopRequestedDelegate().AddLambda([this]() { DestroyGameViewportTool(); });
 
-        // Footer drawers: Content Browser (Ctrl+Space, UE-style) and Output Log.
         // They start undocked, living in the bottom status bar instead of a dock split.
         FooterDrawers.push_back({ ContentBrowser, LE_ICON_FOLDER,       "Content Browser", ImGuiMod_Ctrl | ImGuiKey_Space });
         FooterDrawers.push_back({ ConsoleLogTool, LE_ICON_CONSOLE_LINE, "Output Log",       ImGuiMod_Ctrl | ImGuiKey_J });
         
         if (GEditorEngine->GetProjectName().empty())
         {
-            // No --Project at startup: try the last-opened Editor.StartupProject,
-            // falling through to the Open dialog if that's also missing/stale.
+            // Falls through to the Open dialog when Editor.StartupProject is also missing or stale.
             const std::string StartupPath = GetDefault<CEditorSettings>()->StartupProject.c_str();
             if (!StartupPath.empty() && StartupPath != "NULL")
             {
@@ -618,14 +597,7 @@ namespace Lumina
             OnProjectLoaded();
         }
 
-        // Populated only now, because the default scene references engine content by path and the
-        // asset registry is not discovered until a project loads. With no --Project on the command
-        // line that load happens in the block above, so building the scene any earlier means every
-        // asset lookup runs against an empty registry and silently falls back.
-        //
-        // But that same load can open the project's EditorStartupMap, which retargets the world editor and
-        // frees this world. Skip in that case: the user is looking at their own map, and populating a world
-        // nothing owns any more writes through freed memory.
+        // The default scene references engine content by path, so it waits until a project load populates the registry.
         if (WorldEditorTool->GetWorld() == World)
         {
             EditorEntityUtils::PopulateDefaultScene(World);
@@ -659,8 +631,7 @@ namespace Lumina
         LUMINA_PROFILE_SCOPE();
         ImGuizmo::BeginFrame();
 
-        // ImGui stands down (game owns mouse + keyboard) while playing AND game-input focus is on. Driven
-        // centrally off the single registry flag so it's correct regardless of which preview window is active.
+        // Driven off the single registry flag so it stays correct whichever preview window is active.
         {
             ImGuiIO& IO = ImGui::GetIO();
 
@@ -672,9 +643,7 @@ namespace Lumina
                                       && Active != nullptr
                                       && Active->GetWorld() != nullptr
                                       && Active->GetWorld()->IsGameWorld();
-            // Reassert while the game owns input; clear ONCE on the way out. Never clear per-frame: the editor
-            // camera sets NoMouse itself during RMB-look (via FInputProcessor::SetMouseMode), and clobbering it
-            // every frame makes ImGui fight the capture (cursor flicker / camera lock).
+            // Never clear per-frame, since the editor camera sets NoMouse itself during a right-button look.
             if (bGameOwnsInput)            { IO.ConfigFlags |= Mask; }
             else if (bWasGameOwningInput)  { IO.ConfigFlags &= ~Mask; }
             bWasGameOwningInput = bGameOwnsInput;
@@ -685,8 +654,7 @@ namespace Lumina
             DrawTitleBarMenu(UpdateContext);
         };
 
-        // Composed and MEASURED before layout. The right-hand region was a hard-coded 230px, so adding a
-        // stat -- or just a wider frame time -- silently clipped the text off the end of the bar.
+        // The right-hand region was a hard-coded 230px, so a wider frame time silently clipped the text.
         const FTitleBarStats TitleStats = BuildTitleBarStats(UpdateContext);
 
         auto TitleBarInfoContents = [this, &TitleStats] ()
@@ -694,15 +662,13 @@ namespace Lumina
             DrawTitleBarInfoStats(TitleStats);
         };
 
-        // The menu section is not sized here: it takes whatever the info section and window controls
-        // leave, so the project name is bounded by the window rather than by a constant.
+        // The menu takes whatever the info section and window controls leave, so the window bounds it.
         TitleBar.Draw(TitleBarMenuContents, TitleBarInfoContents, TitleStats.Width);
 
         // Reserve the bottom status bar before the dockspace reads the viewport work area.
         DrawStatusBar(UpdateContext);
 
-        // "V2": renamed from "EditorDockSpace" so pre-footer-drawer layouts (with a
-        // permanent bottom split) are orphaned and rebuilt with the world editor filling it.
+        // Renamed so pre-footer-drawer layouts are orphaned and rebuilt with the world editor filling it.
         const ImGuiID DockspaceID = ImGui::GetID("EditorDockSpaceV2");
         MainDockspaceID = DockspaceID;
 
@@ -711,14 +677,7 @@ namespace Lumina
         ImGui::SetNextWindowSize(viewport->WorkSize);
         ImGui::SetNextWindowViewport(viewport->ID);
 
-        // NoDocking is not cosmetic. Without it this window registers as a second, full-viewport dockable
-        // drop target sitting on top of the dockspace's own one, and -- worse -- it can become the drag
-        // PAYLOAD: BeginDockableDragDropSource resolves the moving window to its RootWindowDockTree, which
-        // for the DockSpace child host is this window. On the frame the drag is released, g.MovingWindow is
-        // already null while the payload is still live, so Begin's "don't target the window being moved"
-        // guard passes and imgui queues a dock of this window into itself -> IM_ASSERT(target != payload).
-        // Real docking is unaffected: drops into the dockspace go through DockNodeUpdate against the
-        // "EditorDockSpaceWindow/DockSpace_XXXXXXXX" child that DockSpace() creates, not through this window.
+        // Without NoDocking this window can become the drag PAYLOAD and imgui asserts docking it into itself.
         constexpr ImGuiWindowFlags WindowFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse
         | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus
         | ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoDocking;
@@ -736,13 +695,11 @@ namespace Lumina
                 ImGui::DockBuilderSetNodeSize(DockspaceID, ImGui::GetContentRegionAvail());
                 ImGui::DockBuilderFinish(DockspaceID);
 
-                // World editor fills the whole dockspace; the Content Browser and Output
-                // Log default to footer drawers rather than eating a permanent bottom split.
+                // The Content Browser and Output Log default to footer drawers rather than a permanent bottom split.
                 ImGui::DockBuilderDockWindow(WorldEditorTool->GetToolName().c_str(), DockspaceID);
             }
 
-            // A drawer asked to be docked last frame. Resolved here, before DockSpace() consumes the node
-            // for this frame, and consumed by SubmitToolMainWindow further down the same frame.
+            // Resolved before DockSpace() consumes the node, and used by SubmitToolMainWindow later this frame.
             if (PendingBottomDockTool != nullptr)
             {
                 PendingBottomDockTool->DesiredDockID = GetOrCreateBottomDockID(PendingBottomDockHeightFrac);
@@ -758,8 +715,7 @@ namespace Lumina
         
         ImGui::End();
 
-        // One-time startup notices, raised on the first live UI frame so the toasts actually render (boot
-        // itself is pre-UI, so a modal can't show there). Debug builds warn about the perf hit.
+        // Raised on the first live UI frame, since boot is pre-UI and a modal cannot show there.
         static bool bStartupNoticesShown = false;
         if (!bStartupNoticesShown)
         {
@@ -783,19 +739,15 @@ namespace Lumina
             Screenshot::CaptureActiveWorld(Source);
         }
 
-        // Tracy sits on F7 next to the other external-tool keys (F9 screenshot, F11 RenderDoc). It used to
-        // be advertised as Ctrl+P, which quick-open has taken -- and which never had a handler regardless,
-        // so the menu was the only way to launch it. F8 is Eject/Possess.
+        // Ctrl+P is quick-open now, and never had a handler anyway, so Tracy sits on F7 with the other tools.
         if (ImGui::IsKeyPressed(ImGuiKey_F7, false))
         {
             LaunchTracyProfiler();
         }
 
-        // Recompile + hot-swap all C# script assemblies (every Scripts/ across game, plugins, engine). The
-        // chord is rebindable in Editor Settings > General > Hotkeys (default Ctrl+Shift+R).
+        // The chord is rebindable in Editor Settings, General, Hotkeys, defaulting to Ctrl+Shift+R.
         {
-            // EKey holds GLFW keycodes, which run contiguously for letters / digits / function keys -- the
-            // realistic hotkey set -- so they map onto the matching ImGuiKey ranges by offset.
+            // EKey holds GLFW keycodes, which run contiguously, so they map onto ImGuiKey ranges by offset.
             auto EKeyToImGuiKey = [](EKey Key) -> ImGuiKey
             {
                 const int Code = (int)Key;
@@ -875,8 +827,7 @@ namespace Lumina
                 VerifyDirtyPackages();
             }
 
-            // Keep the engine alive while the prompt is up; Cancel re-arms the guard
-            // via FApplication::CancelExit in VerifyDirtyPackages's callback.
+            // Cancel re-arms the guard through FApplication::CancelExit in VerifyDirtyPackages's callback.
             if (ModalManager.HasModal())
             {
                 GEngine->SetEngineReadyToClose(false);
@@ -887,8 +838,7 @@ namespace Lumina
 
         for (FEditorTool* Tool : EditorTools)
         {
-            // Undocked drawer tools render in the footer drawer, not the dock layout;
-            // still tick them so their per-frame logic keeps running.
+            // An undocked drawer tool renders in the footer, but still ticks so its per-frame logic runs.
             if (FFooterDrawer* Drawer = FindDrawerForTool(Tool); Drawer != nullptr && !Drawer->bDocked)
             {
                 Tool->Update(UpdateContext);
@@ -916,8 +866,7 @@ namespace Lumina
             DrawToolContents(UpdateContext, Tool);
         }
 
-        // A docked drawer tool closed via its tab returns to drawer mode instead of
-        // being destroyed.
+        // A docked drawer tool closed via its tab returns to drawer mode instead of being destroyed.
         if (ToolToClose)
         {
             if (FFooterDrawer* Drawer = FindDrawerForTool(ToolToClose); Drawer != nullptr)
@@ -953,8 +902,7 @@ namespace Lumina
 
         ModalManager.DrawDialogue();
 
-        // Run any dialog queued last frame (e.g. Open -> New); FEditorModalManager
-        // rejects CreateDialogue while a modal is active, so chains defer a frame.
+        // FEditorModalManager rejects CreateDialogue while a modal is active, so chains defer a frame.
         if (PendingDialogAction && !ModalManager.HasModal())
         {
             TFunction<void()> Action = std::move(PendingDialogAction);
@@ -967,36 +915,30 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        // Deferred to the first update rather than Initialize: the asset registry has to be populated
-        // before a GUID can resolve, and opening a tool wants a live ImGui frame for the focus call.
+        // The registry has to be populated before a GUID resolves, and focus wants a live ImGui frame.
         if (bSessionRestorePending)
         {
             bSessionRestorePending = false;
             RestoreSessionTabs();
         }
 
-        // Save All is global, unlike Ctrl+S which the focused tool claims. Handled once here rather
-        // than in the per-tool loop, which would fire it for every open tool.
+        // Save All is global, unlike Ctrl+S, so handling it per-tool would fire it once per open tool.
         if (ImGui::IsKeyDown(ImGuiKey_LeftCtrl) && ImGui::GetIO().KeyShift && ImGui::IsKeyPressed(ImGuiKey_S, false))
         {
             SaveAllDirtyPackages();
         }
 
-        // Ctrl+P quick-open. Gated on no active text input so it cannot fire out of a rename field or
-        // the search box of another panel.
+        // Gated on no active text input so it cannot fire out of a rename field or a search box.
         if (ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyShift && !ImGui::GetIO().WantTextInput
             && ImGui::IsKeyPressed(ImGuiKey_P, false))
         {
             OpenAssetSearchModal();
         }
 
-        // Drain a budget of pending thumbnail renders before the UI draws this frame's tiles. The render
-        // itself is extract-phase only (World::Extract + GPU readback); keeping the budget small avoids a
-        // hitch while cold thumbnails fill in a few per frame.
+        // A small budget avoids a hitch while cold thumbnails fill in a few per frame.
         CThumbnailManager::Get().ProcessRenderQueue();
 
-        // Recompile one stale-template material per frame (queued in CMaterial::PostLoad when an asset's
-        // baked shaders predate the current shader templates).
+        // Queued in CMaterial::PostLoad when an asset's baked shaders predate the current templates.
         ProcessStaleMaterialRecompiles();
 
         for (FEditorTool* Tool : EditorTools)
@@ -1030,17 +972,13 @@ namespace Lumina
     
     double FEditorUI::GetToolWorldUpdateInterval(const CWorld* ToolWorld, bool bFocused) const
     {
-        // The tool being worked in always runs live. "Focused" is the active TOOL rather than the viewport
-        // specifically: editing a material's node graph is still working in that material, and its preview
-        // should keep up with every edit.
+        // Focused means the active TOOL, since a material's node graph edits still want a live preview.
         if (bFocused || ToolWorld == nullptr)
         {
             return 0.0;
         }
 
-        // Editor preview worlds only. A Game/Simulation world is PIE -- throttling one because focus moved
-        // to another panel would stutter the thing being played, and on a net session it would stutter every
-        // client with it.
+        // A Game or Simulation world is PIE, and throttling it would stutter the thing being played.
         if (ToolWorld->GetWorldType() != EWorldType::Editor)
         {
             return 0.0;
@@ -1099,8 +1037,7 @@ namespace Lumina
             }
         }
 
-        // Nothing else drops this reference, so a closed tool would leave File > Save and Ctrl+S
-        // calling OnSave on freed memory.
+        // Nothing else drops this, so a closed tool would leave Ctrl+S calling OnSave on freed memory.
         if (Tool == LastActiveTool)
         {
             LastActiveTool = nullptr;
@@ -1293,8 +1230,7 @@ namespace Lumina
             return;
         }
 
-        // Already listed means this open is the restore replaying the list -- appending would duplicate
-        // it, and saving would rewrite the file mid-read.
+        // Already listed means the restore is replaying, and saving would rewrite the file mid-read.
         if (Algo::Find(Settings->OpenTabs.begin(), Settings->OpenTabs.end(), Key) != Settings->OpenTabs.end())
         {
             return;
@@ -1306,8 +1242,7 @@ namespace Lumina
 
     void FEditorUI::ForgetSessionTab(FEditorTool* Tool)
     {
-        // Teardown closes every tool; treating that as "the user closed these tabs" is what emptied the
-        // list on every clean shutdown. The list only shrinks on a deliberate close.
+        // Teardown closes every tool, which is what emptied the list on every clean shutdown.
         if (bTearingDownTools)
         {
             return;
@@ -1334,7 +1269,7 @@ namespace Lumina
             return;
         }
 
-        // Ordered erase, not swap-and-pop: the order of this list is the whole point.
+        // Ordered erase, not swap-and-pop, since the order of this list is the whole point.
         Settings->OpenTabs.erase(TabItr);
         GConfig->SaveSettings(CEditorSessionSettings::StaticClass());
     }
@@ -1347,11 +1282,10 @@ namespace Lumina
             return;
         }
 
-        // Copy: opening a tab writes back into the live list.
+        // A copy, since opening a tab writes back into the live list.
         const TVector<FString> Tabs = Settings->OpenTabs;
 
-        // Entries whose asset the registry has not scanned yet. The retry below is another pass over the
-        // same list, skipping whatever an earlier pass already restored.
+        // The retry below is another pass over the same list, skipping whatever an earlier pass restored.
         int32 NumUnscanned = 0;
 
         TVector<FString> Survivors;
@@ -1359,9 +1293,7 @@ namespace Lumina
 
         for (const FString& Tab : Tabs)
         {
-            // Restoring twice is not free: OpenAssetEditor reloads the asset graph and focuses the tool.
-            // Since the retry fires on every registry change, an asset import was enough to steal focus
-            // and dismiss the footer drawer mid-click.
+            // The retry fires on every registry change, so an import was enough to steal focus mid-click.
             if (RestoredSessionTabs.find(Tab) != RestoredSessionTabs.end())
             {
                 Survivors.push_back(Tab);
@@ -1374,12 +1306,10 @@ namespace Lumina
                 const TOptional<FGuid> Guid = FGuid::TryParse(FStringView(GuidText.c_str(), GuidText.size()));
                 if (!Guid.has_value())
                 {
-                    continue;   // unparseable: drop it
+                    continue;   // unparseable, so drop it
                 }
 
-                // Distinguish "deleted" from "not scanned yet". Dropping an entry the registry simply
-                // has not reached would silently lose tabs on a cold start, so only a miss AFTER the
-                // registry has assets in it counts as gone.
+                // Only a miss AFTER the registry has assets counts as gone, or a cold start loses tabs silently.
                 if (FAssetRegistry::Get().GetAssetByGUID(*Guid) == nullptr)
                 {
                     Survivors.push_back(Tab);
@@ -1396,7 +1326,7 @@ namespace Lumina
                 const FString Path = Tab.substr(strlen(GSessionFilePrefix));
                 if (!VFS::Exists(FStringView(Path.c_str(), Path.size())))
                 {
-                    continue;   // file is genuinely gone: drop it
+                    continue;   // the file is genuinely gone, so drop it
                 }
 
                 Survivors.push_back(Tab);
@@ -1414,8 +1344,7 @@ namespace Lumina
             GConfig->SaveSettings(CEditorSessionSettings::StaticClass());
         }
 
-        // Same pattern as the startup map: the registry scan runs asynchronously, so retry on each
-        // update until every tab has resolved, then unhook.
+        // The registry scan is asynchronous, so retry on each update until every tab resolves, then unhook.
         if (NumUnscanned > 0)
         {
             if (!SessionRestoreRetryHandle.IsValid())
@@ -1449,8 +1378,7 @@ namespace Lumina
         FEditorToolRegistry& Registry = FEditorToolRegistry::Get();
         const FName Owner = FEditorToolRegistry::BuiltInOwner();
 
-        // Asset editors, keyed by asset class. Lookup walks the class hierarchy
-        // most-derived first, so sibling/override registrations resolve cleanly.
+        // Lookup walks the class hierarchy most-derived first, so an override resolves before its base.
         Registry.RegisterAssetEditor<CParticleSystem,     FParticleSystemEditorTool>(Owner);
         Registry.RegisterAssetEditor<CMaterial,           FMaterialEditorTool>(Owner);
         Registry.RegisterAssetEditor<CMaterialInstance,   FMaterialInstanceEditorTool>(Owner);
@@ -1481,9 +1409,7 @@ namespace Lumina
 
     void FEditorUI::OpenAssetEditor(const FGuid& AssetGUID)
     {
-        // Phased parallel load: opening a world/large asset fans its whole Hard/Owned dependency closure
-        // across worker threads instead of the inline depth-first walk. Falls back to a plain load inside
-        // LoadAssetGraph if this isn't a registered asset.
+        // Fans the whole Hard and Owned closure across workers instead of an inline depth-first walk.
         CObject* Asset = CPackage::LoadAssetGraph(AssetGUID);
 
         if (Asset == nullptr)
@@ -1499,10 +1425,7 @@ namespace Lumina
             return;
         }
 
-        // While PIE/Simulate is running the tool's World is the transient duplicate, and the world actually
-        // being edited is stashed in ProxyWorld. Comparing against GetWorld() would never match the asset
-        // on disk, so re-opening the level you are already playing would fall through and stop the session
-        // just to re-open the same world. GetPIESourceWorld() is null whenever no session is live.
+        // GetWorld() is the transient PIE duplicate, so comparing it would never match the asset on disk.
         CWorld* PIESourceWorld = WorldEditorTool->GetPIESourceWorld();
         const CWorld* EditedWorld = (PIESourceWorld != nullptr) ? PIESourceWorld : WorldEditorTool->GetWorld();
 
@@ -1513,12 +1436,10 @@ namespace Lumina
             return;
         }
 
-        // Worlds are special: rather than spawning a dedicated tool we retarget
-        // the singleton WorldEditorTool, so this stays outside the registry.
+        // Worlds retarget the singleton WorldEditorTool, which is why they stay outside the registry.
         if (Asset->IsA<CWorld>())
         {
-            // Switching worlds mid-session kills PIE/Simulate, which is destructive enough to confirm.
-            // The same-world case never reaches here -- it focuses the tool above.
+            // Switching worlds mid-session kills PIE, which is destructive enough to confirm first.
             if (WorldEditorTool->HasSimulatingWorld())
             {
                 PromptOpenWorldDuringPlay(AssetGUID, Asset->GetName().ToString());
@@ -1529,8 +1450,7 @@ namespace Lumina
             return;
         }
 
-        // The registry hands ownership over; FinalizeNewTool puts it into EditorTools, which is
-        // what DestroyTool later frees, so the pointer is released into that model here.
+        // FinalizeNewTool puts it into EditorTools, which is what DestroyTool later frees.
         FEditorToolPtr CreatedTool = FEditorToolRegistry::Get().CreateAssetEditor(this, Asset);
 
         if (FEditorTool* NewTool = FinalizeNewTool(CreatedTool.release()))
@@ -1542,8 +1462,7 @@ namespace Lumina
 
     void FEditorUI::PromptOpenWorldDuringPlay(const FGuid& AssetGUID, const FString& WorldName)
     {
-        // The source world, not WorldEditorTool->GetWorld() -- the latter is the transient PIE duplicate,
-        // whose package dirty flag says nothing about the edits the user would be walking away from.
+        // The tool's own world is the transient PIE duplicate, whose dirty flag says nothing about edits.
         const CWorld* SourceWorld = WorldEditorTool->GetPIESourceWorld();
 
         const bool bSourceDirty = SourceWorld != nullptr
@@ -1609,9 +1528,7 @@ namespace Lumina
             ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.44f, 0.16f, 0.17f, 1.00f));
             if (ImGui::Button(LE_ICON_STOP "  Stop && Open", ImVec2(BtnW, BtnH)))
             {
-                // Deferred a frame: stopping play can destroy the extra game-preview tools through the
-                // stop delegate, and tearing down editor tools from inside a BeginPopupModal scope would
-                // free ImGui windows the current frame is still walking.
+                // Stopping play can destroy tools, and tearing them down inside BeginPopupModal frees live windows.
                 MainThread::Enqueue([this, AssetGUID]()
                 {
                     CWorld* NewWorld = Cast<CWorld>(CPackage::LoadAssetGraph(AssetGUID));
@@ -1700,8 +1617,7 @@ namespace Lumina
 
     FEditorTool* FEditorUI::FindToolByTypeID(uint32 TypeID) const
     {
-        // Linear scan is fine, the tool list is small (< ~20 in normal use)
-        // and lookups happen at menu-draw frequency, not per-frame hot paths.
+        // The tool list stays under about twenty and this runs at menu-draw frequency, not per frame.
         for (FEditorTool* Tool : EditorTools)
         {
             if (Tool->GetUniqueTypeID() == TypeID)
@@ -1842,8 +1758,7 @@ namespace Lumina
                 }
 
                 const FFixedString Label = FormatAs<FFixedString>("{}  {}", Drawer.Icon, Drawer.Label);
-                // Trigger on press, not release: the drawer's auto-dismiss runs on mouse-down,
-                // so a release-triggered toggle would re-open a drawer the press just closed.
+                // The drawer auto-dismisses on mouse-down, so a release toggle would re-open what the press closed.
                 if (ImGui::ButtonEx(Label.c_str(), ImVec2(0, 0), ImGuiButtonFlags_PressedOnClick))
                 {
                     ActivateDrawer(Drawer);
@@ -1868,8 +1783,7 @@ namespace Lumina
 
     ImGuiID FEditorUI::GetOrCreateBottomDockID(float HeightFrac)
     {
-        // Still live from an earlier dock: reuse it so the Content Browser and the Output Log end up as
-        // tabs in one bottom strip, rather than each carving another slice out of the viewport.
+        // Reusing it makes the Content Browser and Output Log tabs in one strip rather than two slices.
         if (BottomDockID != 0 && ImGui::DockBuilderGetNode(BottomDockID) != nullptr)
         {
             return BottomDockID;
@@ -1878,15 +1792,11 @@ namespace Lumina
         ImGuiDockNode* Root = ImGui::DockBuilderGetNode(MainDockspaceID);
         if (Root == nullptr)
         {
-            // No layout to split yet. Tabbing into the root is wrong, but it is what this did before and
-            // it keeps the panel reachable instead of dropping it on the floor.
+            // Tabbing into the root is wrong, but it keeps the panel reachable instead of dropping it.
             return MainDockspaceID;
         }
 
-        // A restored imgui.ini brings the split back without the id we cached, so adopt an existing bottom
-        // strip before making a second one. Only the simple case is claimed -- a root split along Y, whose
-        // lower child IS that strip. Anything the user rearranged by hand gets a fresh split, because at
-        // that point there is no way to tell which node they consider "the bottom".
+        // Only a root Y split whose lower child is the strip is claimed, since a hand-rearranged layout is ambiguous.
         if (Root->IsSplitNode() && Root->SplitAxis == ImGuiAxis_Y && Root->ChildNodes[1] != nullptr)
         {
             BottomDockID = Root->ChildNodes[1]->ID;
@@ -1900,8 +1810,7 @@ namespace Lumina
         ImGui::DockBuilderSplitNode(MainDockspaceID, ImGuiDir_Down, Ratio, &BottomDockID, &TopID);
         ImGui::DockBuilderFinish(MainDockspaceID);
 
-        // Whatever was in the root (the world editor) rides along into the top child: DockBuilderSplitNode
-        // hands the existing windows to the inheritor, which for a Down split is the upper node.
+        // DockBuilderSplitNode hands existing windows to the inheritor, which for a Down split is the upper node.
         return BottomDockID;
     }
 
@@ -1959,8 +1868,7 @@ namespace Lumina
         ImGuiViewport* Viewport = ImGui::GetMainViewport();
         FFooterDrawer* Drawer = FindDrawerForTool(OpenDrawer);
 
-        // WorkPos/WorkSize already exclude the title bar and status bar, so the bottom of
-        // the work area sits just above the status bar, exactly where the drawer anchors.
+        // WorkPos and WorkSize already exclude the title and status bars, which is where the drawer anchors.
         const float MaxHeight = Viewport->WorkSize.y * (Drawer ? Drawer->HeightFrac : 0.4f);
         const float Height    = MaxHeight * Eased;
 
@@ -1988,8 +1896,7 @@ namespace Lumina
 
         const bool bFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 
-        // Top-edge resize handle: drawer is bottom-anchored, so dragging up grows it.
-        // Only active once fully open so it doesn't fight the slide-in animation.
+        // Only active once fully open, so the handle does not fight the slide-in animation.
         if (Drawer != nullptr && DrawerOpenAmount >= 1.0f)
         {
             const float HandleH = 5.0f * Scale;
@@ -2052,8 +1959,7 @@ namespace Lumina
             {
                 Drawer->bDocked = true;
 
-                // Queued, not assigned: the bottom node this wants may not exist yet, and it can only be
-                // split off before DockSpace() is submitted. See PendingBottomDockTool.
+                // Queued because the bottom node may not exist yet and can only be split before DockSpace() runs.
                 PendingBottomDockTool       = Drawer->Tool;
                 PendingBottomDockHeightFrac = Drawer->HeightFrac;
 
@@ -2085,12 +1991,7 @@ namespace Lumina
         ImGui::End();
         ImGui::PopStyleVar();
 
-        // Auto-dismiss on click-outside, unless a footer button/shortcut toggled it this
-        // frame or one of the drawer's own popups is open (those read as a separate window).
-        //
-        // The geometric test is not redundant with bFocused. Anything that calls SetWindowFocus elsewhere
-        // in the frame leaves the drawer unfocused while the cursor is still over it, and then the user's
-        // very next click -- on the drawer -- read as a click-outside and closed it.
+        // The geometric test is not redundant, since a SetWindowFocus elsewhere leaves the drawer unfocused.
         const bool bPopupOpen   = ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup);
         const bool bMouseInside = ImGui::IsMouseHoveringRect(DrawerMin, DrawerMax, false);
 
@@ -2102,7 +2003,7 @@ namespace Lumina
             return;
         }
 
-        // Only drags that began inside: an outliner drag passing overhead must not dismiss the drawer.
+        // Only drags that began inside, or an outliner drag passing overhead dismisses the drawer.
         if (DragDrop::PeekPayload() == nullptr)
         {
             bDrawerDragSeen = false;
@@ -2127,8 +2028,7 @@ namespace Lumina
         ASSERT(TopLevelDockspaceID != 0);
 
         bool bIsToolStillOpen = true;
-        // The world editor can never be closed. Drawer tools (Content Browser / Output
-        // Log) are closable while docked, closing sends them back to the footer drawer.
+        // Closing a docked drawer tool sends it back to the footer rather than destroying it.
         bool* bIsToolOpen = (EditorTool == WorldEditorTool) ? nullptr : &bIsToolStillOpen;
         
         // Top level editors can only be docked with each others
@@ -2144,8 +2044,7 @@ namespace Lumina
         }
         else if (!EditorTool->bInitialDockApplied)
         {
-            // Force floating on first appearance, overriding any dock state restored from imgui.ini by window
-            // name. Applied once so the user can still dock the window manually afterwards.
+            // Applied once, overriding restored dock state, so the user can still dock it manually afterwards.
             ImGui::SetNextWindowDockID(0, ImGuiCond_Always);
         }
 
@@ -2167,8 +2066,7 @@ namespace Lumina
         ImGui::SetNextWindowSizeConstraints(ImVec2(128, 128), ImVec2(FLT_MAX, FLT_MAX));
         ImGui::SetNextWindowSize(ImVec2(1024, 768), ImGuiCond_FirstUseEver);
 
-        // On undock, inherit bounds are often a sliver; reset to a sensible floating size for one frame.
-        // CurrDockID is last frame's value; CurrentWindow->DockId is the upcoming frame's assignment.
+        // CurrDockID is last frame's value while CurrentWindow->DockId is the upcoming assignment.
         const ImGuiID PrevFrameDockID = EditorTool->CurrDockID;
         const ImGuiID NextFrameDockID = CurrentWindow ? CurrentWindow->DockId : 0;
         if (PrevFrameDockID != 0 && NextFrameDockID == 0 && CurrentWindow != nullptr)
@@ -2194,21 +2092,18 @@ namespace Lumina
             LastActiveTool = EditorTool;
         }
         
-        // Set WindowClass based on per-document ID, so tabs from Document A are not dockable in Document B etc. We could be using any ID suiting us, e.g. &doc
-        // We also set ParentViewportId to request the platform back-end to set parent/child relationship at the windowing level
+        // Per-document ID, so tabs from one document are not dockable in another.
         EditorTool->ToolWindowsClass.ClassId = EditorTool->GetID();
         EditorTool->ToolWindowsClass.ViewportFlagsOverrideSet = ImGuiViewportFlags_NoTaskBarIcon | ImGuiViewportFlags_NoDecoration | ImGuiViewportFlags_TopMost;
         EditorTool->ToolWindowsClass.ParentViewportId = ImGui::GetWindowViewport()->ID;
         EditorTool->ToolWindowsClass.DockingAllowUnclassed = true;
 
-        // Track LocationID change so we can fork/copy the layout data according to where the window is going + reference count
-        // LocationID ~~ (DockId != 0 ? DockId : DocumentID) // When we are in a loose floating window we use our own document id instead of the dock id
+        // In a loose floating window the document id stands in for the dock id.
         EditorTool->CurrDockID = ImGui::GetWindowDockID();
         EditorTool->PrevLocationID = EditorTool->CurrLocationID;
         EditorTool->CurrLocationID = EditorTool->CurrDockID != 0 ? EditorTool->CurrDockID : EditorTool->GetID();
 
-        // Dockspace ID ~~ Hash of LocationID + DocType, so same-type editors in a tab bar
-        // share a layout; also used as a window-title suffix.
+        // Hashed so same-type editors in a tab bar share a layout, and reused as a window-title suffix.
         EditorTool->PrevDockspaceID = EditorTool->CurrDockspaceID;
         EditorTool->CurrDockspaceID = EditorTool->CalculateDockspaceID();
         ASSERT(EditorTool->CurrDockspaceID != 0);
@@ -2251,8 +2146,7 @@ namespace Lumina
             return;
         }
 
-        // A docked drawer tool goes back to its footer drawer rather than being destroyed, same as when
-        // its own X is pressed.
+        // A docked drawer tool goes back to its footer drawer, same as when its own X is pressed.
         if (FFooterDrawer* Drawer = FindDrawerForTool(Tool); Drawer != nullptr)
         {
             Drawer->bDocked = false;
@@ -2267,16 +2161,12 @@ namespace Lumina
         ImGuiWindow*   Window = ImGui::GetCurrentWindow();
         ImGuiDockNode* Node   = Window->DockNode;
 
-        // Hit-tested by hand instead of with BeginPopupContextItem. A docked window whose tab is not the
-        // selected one has SkipItems set, and BeginPopupContextItem early-outs on that -- so only the
-        // frontmost tab would ever open a menu, which is not how tab strips behave anywhere else. The tab
-        // rect itself is filled in for every tab by the dockspace earlier this frame.
+        // A non-selected tab has SkipItems set, and BeginPopupContextItem early-outs on that.
         if (Window->DockIsActive && Node != nullptr && Node->HostWindow != nullptr)
         {
             const ImGuiContext& G = *ImGui::GetCurrentContext();
 
-            // Gated on HoveredWindow as well as the rect: the rect alone would fire through a floating
-            // window parked over the tab bar.
+            // Gated on HoveredWindow too, or the rect alone fires through a floating window over the tab bar.
             const bool bOverTab = G.HoveredWindow == Node->HostWindow
                 && Window->DC.DockTabItemRect.Contains(G.IO.MousePos);
 
@@ -2291,8 +2181,7 @@ namespace Lumina
             return;
         }
 
-        // Left-to-right as the user sees them. Node->Windows is explicitly an unordered list; TabBar->Tabs
-        // is the display order and is what ImGui rewrites when a tab is dragged.
+        // Node->Windows is explicitly unordered, while TabBar->Tabs is the display order ImGui rewrites.
         TVector<FEditorTool*> Order;
         int32 SelfIndex = -1;
 
@@ -2370,8 +2259,7 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        // This is the second Begin(), as SubmitToolMainWindow() has already done one
-        // (Therefore only the p_open and flags of the first call to Begin() applies)
+        // The second Begin(), so only the first call's p_open and flags apply.
         ImGui::Begin(Tool->GetToolName().c_str());
         
         ASSERT(ImGui::GetCurrentWindow()->BeginCount == 2);
@@ -2395,10 +2283,7 @@ namespace Lumina
                 }
             }
 
-            // Move the window but keep the destination layout when another same-type tool already
-            // shares it (CurrDockspaceRefCount counts ourselves, so > 1 means at least one other).
-            // Our identically-named sub-windows map straight onto that shared layout; copying would
-            // clobber it. Only fork our layout into a destination that is otherwise empty.
+            // Only fork into an empty destination, since a shared layout would be clobbered by the copy.
             if (CurrDockspaceRefCount <= 1)
             {
                 EditorToolLayoutCopy(Tool);
@@ -2408,8 +2293,7 @@ namespace Lumina
             {
                 ImGui::DockBuilderRemoveNode(Tool->PrevDockspaceID);
 
-                // Delete settings of old windows
-                // Rely on window name to ditch their .ini settings forever.
+                // Relies on window name to ditch the old windows' ini settings forever.
                 char windowSuffix[16];
                 ImFormatString(windowSuffix, IM_ARRAYSIZE(windowSuffix), "##%08X", Tool->PrevDockspaceID);
                 size_t windowSuffixLength = strlen(windowSuffix);
@@ -2449,7 +2333,7 @@ namespace Lumina
             ImGui::DockBuilderFinish(Tool->GetCurrentDockspaceID());
         }
 
-        // FIXME-DOCK: This is a little tricky to explain, but we currently need this to use the pattern of sharing a same dockspace between tabs of a same tab bar
+        // FIXME-DOCK, tabs of one tab bar currently have to share a single dockspace.
         bool bVisible = true;
         if (ImGui::GetCurrentWindow()->Hidden)
         {
@@ -2458,9 +2342,7 @@ namespace Lumina
         
         const bool bIsLastFocusedTool = (LastActiveTool == Tool);
 
-        // Ctrl+S routes to the focused tool only, checking IsKeyPressed inside
-        // each tool's Update fires for every open tool simultaneously.
-        // Shift excluded: Ctrl+Shift+S is Save All, handled once in OnUpdate.
+        // Shift is excluded because Ctrl+Shift+S is Save All, handled once in OnUpdate.
         if (bIsLastFocusedTool && ImGui::IsKeyDown(ImGuiKey_LeftCtrl) && !ImGui::GetIO().KeyShift
             && ImGui::IsKeyPressed(ImGuiKey_S, false))
         {
@@ -2477,10 +2359,7 @@ namespace Lumina
 
         if (Tool->HasWorld())
         {
-            // A server world must keep simulating even while its tool is hidden, otherwise tabbing onto a
-            // client's Game Preview freezes every player. Not gated on client count: a suspended server never
-            // ticks its transport, so it could never accept the first connection -- which deadlocks when a
-            // client preview spawns already docked over the server's tool and hides it on frame one.
+            // A suspended server never ticks its transport, so it could never accept the first connection.
             CWorld* ToolWorld = Tool->GetWorld();
             const bool bKeepAlive = bVisible || ToolWorld->IsNetServer();
             ToolWorld->SetActive(bKeepAlive);
@@ -2568,8 +2447,7 @@ namespace Lumina
                         ImGui::PopStyleVar();
                         ImGui::End();
 
-                        // Now draw the actual viewport into a separate fullscreen overlay window.
-                        // Different name so the docked window's position/dock state is untouched.
+                        // A different name keeps the docked window's position and dock state untouched.
                         const FFixedString FullscreenName = FormatAs<FFixedString>("{}##Fullscreen_{:08X}", FEditorTool::ViewportWindowName, Tool->GetCurrentDockspaceID());
 
                         const ImGuiViewport* MainVP = ImGui::GetMainViewport();
@@ -2596,9 +2474,7 @@ namespace Lumina
 
                             IRenderScene* SceneRenderer = Tool->GetWorld()->GetRenderer();
 
-                            // Size the scene to the panel that displays it, not the window. ImGui works in
-                            // physical pixels here (Io.DisplaySize is the swapchain extent), so the content
-                            // region is already the right unit. Floor matches DrawViewport's.
+                            // ImGui works in physical pixels here, so the content region is already the right unit.
                             const ImVec2 ViewportAvail = ImGui::GetContentRegionAvail();
                             SceneRenderer->SetPrimaryViewSize(FUIntVector2(
                                 (uint32)Math::Max(ViewportAvail.x, 64.0f),
@@ -2626,9 +2502,7 @@ namespace Lumina
                         {
                             IRenderScene* SceneRenderer = Tool->GetWorld()->GetRenderer();
 
-                            // Size the scene to the panel that displays it, not the window. ImGui works in
-                            // physical pixels here (Io.DisplaySize is the swapchain extent), so the content
-                            // region is already the right unit. Floor matches DrawViewport's.
+                            // ImGui works in physical pixels here, so the content region is already the right unit.
                             const ImVec2 ViewportAvail = ImGui::GetContentRegionAvail();
                             SceneRenderer->SetPrimaryViewSize(FUIntVector2(
                                 (uint32)Math::Max(ViewportAvail.x, 64.0f),
@@ -2679,8 +2553,7 @@ namespace Lumina
 
     void FEditorUI::CreateGameViewportTool()
     {
-        // Player 1 runs in the main world-editor viewport; players 2..N each get a Game Preview pop-up.
-        // CreateTool defers the actual add (ToolsPendingAdd), so this is safe to call mid-draw.
+        // CreateTool defers the actual add, so this is safe to call mid-draw.
         if (WorldEditorTool == nullptr)
         {
             return;
@@ -2703,8 +2576,7 @@ namespace Lumina
                 continue;
             }
 
-            // The tool owns the world: FEditorTool::Deinitialize calls DestroyWorldContext on teardown.
-            // PlayerIndex is the client number (player 1 is the main viewport), so previews are "Client: 1"..N.
+            // The tool owns the world, and PlayerIndex is the client number with player 1 in the main viewport.
             FGamePreviewTool* Tool = CreateTool<FGamePreviewTool>(this, PreviewWorld, PlayerIndex);
             ExtraGamePreviews.push_back(FExtraGamePreview{ PreviewWorld, Tool });
         }
@@ -2712,8 +2584,7 @@ namespace Lumina
 
     void FEditorUI::DestroyGameViewportTool()
     {
-        // Schedule each preview tool for destruction; the tool tears down its own PIE world on Deinitialize.
-        // DestroyTool also erases the matching ExtraGamePreviews entry, so just clear our list here.
+        // DestroyTool also erases the matching ExtraGamePreviews entry, so just clear the list here.
         for (const FExtraGamePreview& Preview : ExtraGamePreviews)
         {
             if (Preview.Tool != nullptr)
@@ -2731,15 +2602,13 @@ namespace Lumina
 
     void FEditorUI::OpenAssetSearchModal()
     {
-        // Snapshotted at open, not re-queried per frame: the list cannot change under the user while a
-        // modal is up, and re-walking the registry on every keystroke would be pure waste.
+        // The list cannot change while a modal is up, and re-walking the registry per keystroke is waste.
         struct FEntry
         {
             FGuid        GUID;
             FFixedString Name;
             FFixedString Path;
-            // Thumbnail lookup key. Precomputed because the alternative is interning the path string on
-            // every visible row on every frame the modal is up.
+            // Precomputed, since the alternative is interning the path on every visible row every frame.
             FName        PathName;
         };
 
@@ -2780,8 +2649,7 @@ namespace Lumina
                     LE_ICON_FILE_SEARCH " Search assets...");
             }
 
-            // Rebuilt each frame: the filter changes with every keystroke, and it is a substring test
-            // over a few thousand short strings.
+            // Rebuilt each frame, since the filter changes per keystroke over a few thousand short strings.
             TVector<const FEntry*> Matches;
             Matches.reserve(Entries.size());
             for (const FEntry& Entry : Entries)
@@ -2801,8 +2669,7 @@ namespace Lumina
                 Selected = Math::Clamp(Selected, 0, (int32)Matches.size() - 1);
             }
 
-            // Arrows move the selection while focus stays in the text box, so the whole flow is
-            // keyboard-only: type, arrow, Enter.
+            // Arrows move the selection while focus stays in the text box, so the flow stays keyboard-only.
             bool bScrollToSelected = false;
             if (!Matches.empty())
             {
@@ -2832,14 +2699,12 @@ namespace Lumina
             const float FooterHeight = ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
             if (ImGui::BeginChild("##Results", ImVec2(0.0f, -FooterHeight)))
             {
-                // Clipped, because asking for a thumbnail is what QUEUES it: walking every match would
-                // hand the thumbnail renderer the entire project the moment the modal opens.
+                // Asking for a thumbnail QUEUES it, so walking every match would hand over the whole project.
                 ImGuiListClipper Clipper;
                 Clipper.Begin((int32)Matches.size(), RowHeight);
                 if (!Matches.empty())
                 {
-                    // The selection can sit outside the visible range after an arrow keypress, and it has
-                    // to be submitted for SetScrollHereY to have an item to scroll to.
+                    // The selection can sit outside the visible range, and SetScrollHereY needs a submitted item.
                     Clipper.IncludeItemByIndex(Selected);
                 }
 
@@ -2864,13 +2729,10 @@ namespace Lumina
                             ImGui::SetScrollHereY(0.5f);
                         }
 
-                        // Painted onto the row rather than laid out with SameLine: the row is a single
-                        // full-height Selectable, and real widgets on top of it would advance the cursor
-                        // and take the hover off it.
+                        // The row is one full-height Selectable, so real widgets on top would steal the hover.
                         ImDrawList* DrawList = ImGui::GetWindowDrawList();
 
-                        // A miss starts the async resolve and draws the generic icon until it lands, the
-                        // same fallback the content browser tiles use.
+                        // A miss starts the async resolve and draws the generic icon, same as the content browser tiles.
                         ImTextureRef Thumbnail = ImGuiX::ToImTextureRef(GenericAssetIcon);
                         if (FPackageThumbnail* Ready = CThumbnailManager::Get().GetThumbnailForPackage(Entry.PathName))
                         {
@@ -2920,8 +2782,7 @@ namespace Lumina
 
         const FString FullPath = EngineRoot + "/External/Tracy/tracy-profiler.exe";
 
-        // Checked before launching so a missing tool names the path it looked at. ShellExecute on a
-        // non-existent exe reports nothing useful, which is how this managed to look like it worked.
+        // ShellExecute on a missing exe reports nothing, which is how this looked like it worked.
         if (!Filesystem::Exists(FullPath))
         {
             LOG_ERROR("Tracy profiler not found at '{}'.", FullPath.c_str());
@@ -2929,8 +2790,7 @@ namespace Lumina
             return;
         }
 
-        // LaunchProcess, not LaunchURL: this is an executable, and it returns the system error so a failed
-        // launch can say why instead of silently doing nothing.
+        // LaunchProcess returns the system error, so a failed launch can say why.
         const int Result = Platform::LaunchProcess(UTF8_TO_TCHAR(FullPath.c_str()));
         if (Result != 0)
         {
@@ -2950,8 +2810,7 @@ namespace Lumina
             return;
         }
 
-        // The tool's own OnSave reports success or failure, so no notification here -- a second one
-        // would just duplicate it.
+        // The tool's own OnSave reports the result, so a second notification would just duplicate it.
         LastActiveTool->OnSave();
     }
 
@@ -2975,9 +2834,7 @@ namespace Lumina
             return;
         }
 
-        // Route through the owning tool where one is open: its OnSave carries type-specific work a raw
-        // package write skips -- thumbnail capture, asset-registry notification, material compile-on-save.
-        // Those tools report their own result, so only the packages saved directly are counted here.
+        // A tool's OnSave carries thumbnail capture and registry notification a raw package write skips.
         THashSet<CPackage*> HandledByTool;
         for (const auto& [Asset, Tool] : ActiveAssetTools)
         {
@@ -3021,8 +2878,7 @@ namespace Lumina
         {
             ImGuiX::Notifications::NotifySuccess("Save All: {0} package(s) saved.", Saved);
         }
-        // Saved == 0 with no failures means every dirty package belonged to an open tool, and each of
-        // those already reported itself.
+        // Zero saved with no failures means every dirty package belonged to a tool that reported itself.
     }
 
     void FEditorUI::VerifyDirtyPackages()
@@ -3033,8 +2889,7 @@ namespace Lumina
         {
             CPackage* Package = *Itr;
 
-            // A package marked for destruction (a deleted asset awaiting the deferred drain) has nothing to
-            // save; never prompt for it.
+            // A package awaiting the deferred destroy drain has nothing to save, so never prompt for it.
             if (Package->HasAnyFlag(OF_MarkedDestroy))
             {
                 continue;
@@ -3061,8 +2916,7 @@ namespace Lumina
         ModalManager.CreateDialogue("Unsaved Changes", ImVec2(620, 540),
             [this, Packages = Move(DirtyPackages), Selection = Move(PackageSelection), States = Move(SaveStates)]() mutable
         {
-            // Hero header: matches the Open/New Project dialog opener so the
-            // shutdown prompt reads as part of the same family.
+            // Matches the Open and New Project dialog opener so the prompt reads as the same family.
             ImGuiX::Font::PushFont(ImGuiX::Font::EFont::MediumBold);
             ImGui::PushStyleColor(ImGuiCol_Text, kProjDialogAccentGold);
             ImGui::TextUnformatted(LE_ICON_ALERT_CIRCLE_OUTLINE "  Unsaved Changes");
@@ -3102,8 +2956,7 @@ namespace Lumina
 
             ImGui::Spacing();
 
-            // Package list: rows mimic DrawProjectRow (accent bar + hover) plus a
-            // leading checkbox and trailing status badge, sharing kProjDialog colors.
+            // Rows mimic DrawProjectRow with a leading checkbox and trailing badge, sharing its colors.
             ImGui::PushStyleColor(ImGuiCol_ChildBg, kProjDialogPanelBg);
             ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 6.0f);
             if (ImGui::BeginChild("##PackagesBody", ImVec2(0, -68), true, ImGuiWindowFlags_AlwaysVerticalScrollbar))
@@ -3126,8 +2979,7 @@ namespace Lumina
 
                     ImGui::PushID((int)i);
 
-                    // Hover-only background; click anywhere on the row
-                    // toggles the checkbox.
+                    // Hover-only background, and a click anywhere on the row toggles the checkbox.
                     ImGui::SetCursorScreenPos(P0);
                     const bool bRowClicked = ImGui::InvisibleButton("##row", ImVec2(Math::Max(Avail, 1.0f), Height));
                     const bool bHovered    = ImGui::IsItemHovered();
@@ -3141,8 +2993,7 @@ namespace Lumina
                     DL->AddRectFilled(P0, P1, BgCol, 4.0f);
                     DL->AddRectFilled(P0, ImVec2(P0.x + 3.0f, P1.y), ImGui::ColorConvertFloat4ToU32(Accent), 4.0f);
 
-                    // Checkbox (gets click priority over the row-wide
-                    // invisible button thanks to ImGui's per-widget rect).
+                    // The checkbox gets click priority over the row-wide invisible button through its own rect.
                     ImGui::SetCursorScreenPos(ImVec2(P0.x + 14.0f, P0.y + 16.0f));
                     if (States[i] != ESaveState::Idle)
                     {
@@ -3204,8 +3055,7 @@ namespace Lumina
                         ImGui::PopStyleColor();
                     }
 
-                    // End the row on a real (zero-size) item so IsSetPos is cleared; otherwise the last row's
-                    // bare trailing SetCursorScreenPos trips ImGui's extend-bounds assert at EndChild.
+                    // Ending on a real zero-size item clears IsSetPos, or EndChild trips the extend-bounds assert.
                     const ImVec2 PkgNextRow(P0.x, P1.y + 6.0f);
                     ImGui::SetCursorScreenPos(PkgNextRow);
                     ImGui::Dummy(ImVec2(0.0f, 0.0f));
@@ -3216,21 +3066,17 @@ namespace Lumina
             ImGui::PopStyleVar();
             ImGui::PopStyleColor();
 
-            // Footer: Save & Exit (blue), Discard & Exit (gold), Cancel (soft),
-            // right-aligned so the primary action lands at the F-pattern target.
+            // Right-aligned so the primary action lands at the F-pattern target.
             constexpr float ButtonH = 32.0f;
             constexpr float Gap     = 8.0f;
             constexpr float MinW    = 90.0f;
 
-            // Single '&': ImGui has no mnemonic escaping (only '#' is special), so "&&" reached the screen
-            // as a literal "&&".
+            // ImGui has no mnemonic escaping, so a doubled ampersand reached the screen literally.
             const char* SaveLabel    = LE_ICON_CONTENT_SAVE " Save & Exit";
             const char* DiscardLabel = LE_ICON_DELETE " Discard & Exit";
             const char* CancelLabel  = "Cancel";
 
-            // Measured per label rather than one shared constant. The three differ in length, two carry an
-            // icon glyph, and all of them scale with font size and DPI -- a fixed 150px fit "Save & Exit"
-            // and clipped the longer "Discard & Exit" to "Discard & Exi".
+            // The three labels differ in length and scale with DPI, so a fixed width clipped the longest.
             auto MeasureButton = [](const char* Label)
             {
                 const float Text = ImGui::CalcTextSize(Label).x + ImGui::GetStyle().FramePadding.x * 2.0f + 12.0f;
@@ -3258,8 +3104,7 @@ namespace Lumina
             }
             if (ImGui::Button(SaveLabel, ImVec2(SaveW, ButtonH)))
             {
-                // Synchronous save loop; the dialog stays open this frame so failed
-                // entries show a "Failed" badge instead of disappearing silently.
+                // The dialog stays open this frame so a failed entry shows a badge instead of vanishing.
                 bool bAllOK = true;
                 for (size_t i = 0; i < Packages.size(); ++i)
                 {
@@ -3275,8 +3120,7 @@ namespace Lumina
                         bAllOK = false;
                     }
                 }
-                // Close (and proceed with exit) only if every selected save succeeded;
-                // a failure keeps the dialog up so the user can pick another action.
+                // A failure keeps the dialog up so the user can pick another action.
                 bShouldClose = bAllOK;
             }
             if (!bAnySelected)
@@ -3322,8 +3166,7 @@ namespace Lumina
         {
             CPackage* Package = *Itr;
 
-            // Marked for destroy = a deleted asset awaiting the deferred drain; it has nothing to save, so
-            // counting it would leave the editor claiming unsaved work that cannot be saved.
+            // A package awaiting the destroy drain cannot be saved, so counting it would claim phantom work.
             if (Package->HasAnyFlag(OF_MarkedDestroy) || !Package->IsDirty())
             {
                 continue;
@@ -3346,8 +3189,7 @@ namespace Lumina
         const float Scale     = ImGuiX::GetUIScale();
         const float RowHeight = ImGuiX::FApplicationTitleBar::GetContentRowHeight();
 
-        // The icon is taller than a line of text, so lift it by half the difference to keep it centered on
-        // the same row as the menus. The bar restores the row's Y after each item, so put it straight back.
+        // The bar restores the row's Y after each item, so the lift has to be reapplied every time.
         const float IconSize = ImFloor(RowHeight * 1.5f);
         const float IconLift = ImFloor((IconSize - RowHeight) * 0.5f);
 
@@ -3375,8 +3217,7 @@ namespace Lumina
         ImGui::PopStyleColor(5);
         ImGui::PopStyleVar(3);
 
-        // Trails the menus with the rest of the bar to itself. The section is sized from what is left over
-        // rather than from a constant, so a long name is clipped only when it genuinely runs out of window.
+        // Sized from what is left over, so a long name clips only when it genuinely runs out of window.
         if (GEditorEngine->HasLoadedProject())
         {
             ImGui::Separator();
@@ -3401,8 +3242,7 @@ namespace Lumina
         const float DeltaSeconds     = UpdateContext.GetDeltaTime();
         const float CurrentFrameTime = DeltaSeconds * 1000.0f;
 
-        // Blend weight for this frame's share of the average, from how long the frame took rather than
-        // from the frame merely happening.
+        // Weighted by how long the frame took rather than by the frame merely happening.
         auto WeightFor = [DeltaSeconds](float TimeConstantSeconds) -> float
         {
             if (TimeConstantSeconds <= 0.0f || DeltaSeconds <= 0.0f)
@@ -3413,8 +3253,7 @@ namespace Lumina
             return 1.0f - Math::Exp(-DeltaSeconds / TimeConstantSeconds);
         };
 
-        // Averaging frame time and inverting, never averaging FPS: the mean of a reciprocal is not the
-        // reciprocal of the mean, and doing it the other way reads high whenever frame times vary.
+        // The mean of a reciprocal is not the reciprocal of the mean, so average frame time and invert.
         SmoothedFrameTime = (SmoothedFrameTime <= 0.0f)
             ? CurrentFrameTime
             : SmoothedFrameTime + (CurrentFrameTime - SmoothedFrameTime) * WeightFor(FrameTimeSmoothingSeconds);
@@ -3426,8 +3265,7 @@ namespace Lumina
             ? MemoryMiB
             : SmoothedMemoryMiB + (MemoryMiB - SmoothedMemoryMiB) * WeightFor(MemorySmoothingSeconds);
 
-        // Device-local heaps only: the host-visible ones are system RAM the GPU can see, already counted
-        // by the process working set above, and adding them would read as VRAM that is not there.
+        // Host-visible heaps are system RAM already counted in the working set, so they would double-count.
         RHI::FGPUMemoryStats GPUStats;
         RHI::GetGPUMemoryStats(GPUStats);
 
@@ -3454,8 +3292,7 @@ namespace Lumina
         FormatTo(Stats.Memory, LE_ICON_MEMORY " {:.0f} MiB", SmoothedMemoryMiB);
         FormatTo(Stats.GPUMemory, LE_ICON_EXPANSION_CARD " {:.0f} / {:.0f} MiB", SmoothedGPUMemoryMiB, GPUMemoryBudgetMiB);
 
-        // Four items, so three gaps -- plus one gap of slack, since the strings change width from frame to
-        // frame and a section that is a pixel short clips the last character.
+        // One gap of slack, since the strings change width and a pixel short clips the last character.
         const float Spacing = ImGui::GetStyle().ItemSpacing.x;
         Stats.Width = ImGui::CalcTextSize(Stats.Perf.c_str()).x
                     + ImGui::CalcTextSize(Stats.Objects.c_str()).x
@@ -3468,8 +3305,7 @@ namespace Lumina
 
     void FEditorUI::DrawTitleBarInfoStats(const FTitleBarStats& Stats)
     {
-        // Icons rather than labels: the section competes with the menus for bar width, and every stat has a
-        // tooltip spelling out what it is.
+        // Icons rather than labels, since the section competes with the menus and each stat has a tooltip.
         ImGui::TextUnformatted(Stats.Perf.c_str());
         ImGuiX::TextTooltip("{}", "Frame rate and frame time, smoothed.");
 
@@ -3493,8 +3329,7 @@ namespace Lumina
         {
             return;
         }
-        // Mirrors the Ctrl+S the focused tool already handles, so the menu and the shortcut do the
-        // same thing rather than one of them silently doing nothing.
+        // Mirrors the Ctrl+S the focused tool handles, so the menu and shortcut do the same thing.
         ImGui::BeginDisabled(LastActiveTool == nullptr);
         if (ImGui::MenuItem(LE_ICON_ZIP_DISK " Save", "Ctrl+S"))
         {
@@ -3550,10 +3385,6 @@ namespace Lumina
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.6f, 0.4f, 1.0f));
         if (ImGui::BeginMenu(LE_ICON_HAMMER " Shaders"))
         {
-            //if (ImGui::MenuItem(LE_ICON_HAMMER " Recompile All", "F5"))
-            //{
-            //    CMaterial::CreateDefaultMaterial();
-            //}
             
             if (ImGui::MenuItem(LE_ICON_MATERIAL_DESIGN " Recompile Default Material"))
             {
@@ -3774,7 +3605,7 @@ namespace Lumina
             ImGui::Separator();
             ImGui::Spacing();
 
-            // Hero: Create New Project (primary action).
+            // The primary action, Create New Project.
             ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.20f, 0.50f, 0.95f, 1.00f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.60f, 1.00f, 1.00f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.15f, 0.45f, 0.90f, 1.00f));
@@ -3794,8 +3625,7 @@ namespace Lumina
                 // Recent projects.
                 DrawSectionHeader("RECENT PROJECTS");
 
-                // Prune entries whose .lproject is gone (project folder
-                // deleted on disk) and legacy name-only entries in one pass.
+                // Prunes a deleted project folder and a legacy name-only entry in one pass.
                 auto Recents = PruneMissingRecents();
 
                 bool bAnyRecent = false;
@@ -3852,7 +3682,7 @@ namespace Lumina
             ImGui::EndChild();
             ImGui::PopStyleColor();
 
-            // Footer: Browse + Cancel.
+            // Footer with Browse and Cancel.
             ImGui::Separator();
             ImGui::Spacing();
 
@@ -3976,14 +3806,13 @@ namespace Lumina
 
             ImGui::EndChild();
 
-            // Footer: Back + Create.
+            // Footer with Back and Create.
             ImGui::Separator();
             ImGui::Spacing();
 
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
 
-            // Back returns to the Open Project dialog; defer so the modal closes
-            // cleanly before the next CreateDialogue.
+            // Deferred so the modal closes cleanly before the next CreateDialogue.
             ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.20f, 0.20f, 0.22f, 1.00f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.26f, 0.26f, 0.29f, 1.00f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.16f, 0.16f, 0.18f, 1.00f));
@@ -4018,8 +3847,7 @@ namespace Lumina
                     GEditorEngine->GenerateProjectFiles(VFS::Parent(ProjectFile));
                     PushRecentProject(ProjectFile.c_str());
 
-                    // Chain into the "Project Created" dialog so the user knows
-                    // they need to act (the editor has no project loaded).
+                    // Chains into the Project Created dialog, since the editor still has no project loaded.
                     const FString ProjectFileCopy(ProjectFile.c_str(), ProjectFile.size());
                     DeferShowDialog([this, ProjectFileCopy]
                     {
@@ -4185,25 +4013,19 @@ namespace Lumina
         if (RawEditorStartupMap.empty())
         {
             LOG_INFO("No Project.EditorStartupMap set; opening no map.");
-            return true;   // settled: nothing to wait for
+            return true;   // settled, nothing to wait for
         }
 
         // Tolerate legacy absolute paths from before the path resolver, same as FEngine::LoadStartupMap.
         const FFixedString EditorStartupMapFixed = VFS::ResolveToVirtualPath(RawEditorStartupMap);
         const FString EditorStartupMap(EditorStartupMapFixed.c_str(), EditorStartupMapFixed.size());
 
-        // Unlike the game path, this one needs a registry hit rather than loading the object directly, so
-        // a map that exists on disk is simply not visible until discovery has walked it. Not an error --
-        // the caller retries when the registry updates.
+        // A map on disk is invisible until discovery walks it, which is why the caller retries.
         if (FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(EditorStartupMap))
         {
             OpenAssetEditor(Data->AssetGUID);
 
-            // Reported AFTER the fact, and checked rather than assumed. OpenAssetEditor returns silently
-            // when the package fails to load, and routes a non-world asset to its own tool instead; both
-            // leave the editor on the world it already had. Logging "Opening..." before the call turned
-            // either into a success message, which is indistinguishable from the map having opened and
-            // simply containing the default scene.
+            // OpenAssetEditor returns silently on failure, so logging before the call faked a success.
             const CWorld* Opened = WorldEditorTool->GetWorld();
             if (Opened != nullptr && Opened->GetGUID() == Data->AssetGUID)
             {
@@ -4227,8 +4049,7 @@ namespace Lumina
     {
         FCoreEditorDelegates::OnProjectLoaded.Broadcast();
 
-        // Armed here, not at startup: the tab list lives in the project's own /Config, so it isn't
-        // readable until the project is mounted. Consumed on the next update.
+        // The tab list lives in the project's own /Config, so it is unreadable until the project mounts.
         bSessionRestorePending = true;
         RestoredSessionTabs.clear();
 
@@ -4244,7 +4065,7 @@ namespace Lumina
 
             PendingStartupMapHandle = FAssetRegistry::Get().GetOnAssetRegistryUpdated().AddLambda([this]
             {
-                // One-shot: stop retrying once the map opens (or turns out not to be configured at all).
+                // One-shot, so retrying stops once the map opens or turns out not to be configured.
                 if (TryOpenEditorStartupMap() && PendingStartupMapHandle.IsValid())
                 {
                     FAssetRegistry::Get().GetOnAssetRegistryUpdated().Remove(PendingStartupMapHandle);
@@ -4253,8 +4074,7 @@ namespace Lumina
             });
         }
 
-        // Reconstruct the .lproject path and record it as a recent + Editor.StartupProject
-        // (auto-loaded on the next bare launch). Normalize: the join can double the slash.
+        // Normalized, since the join can double the slash.
         const FStringView ProjectDir  = GEngine->GetProjectPath();
         const FStringView ProjectName = GEngine->GetProjectName();
         if (!ProjectDir.empty() && !ProjectName.empty())

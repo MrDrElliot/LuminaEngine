@@ -22,8 +22,7 @@ namespace Lumina
 
     namespace
     {
-        /** Numeric properties compare by value; everything else by its text. Sorting a column of
-         *  numbers as strings would put 10 before 2, which is worse than not sorting at all. */
+        // Sorting numbers as strings would put 10 before 2, which is worse than not sorting.
         bool IsNumericProperty(FProperty* Property)
         {
             switch (Property->GetType())
@@ -145,8 +144,7 @@ namespace Lumina
 
             if (bFiltering)
             {
-                // Match against the name and every visible cell, so searching for a value finds the
-                // row that holds it rather than only matching names.
+                // Matches every visible cell, so searching for a value finds the row holding it.
                 bool bMatched = ImGuiX::PassSearchFilter(Filter, Row.Name.c_str());
                 if (!bMatched)
                 {
@@ -240,8 +238,7 @@ namespace Lumina
 
             if (!Trimmed.empty() && NewName != Row.Name)
             {
-                // Names key the table; two rows sharing one would make FindRow's answer depend on
-                // array order. Uniquify rather than reject, so the edit is never silently lost.
+                // Names key the table, so uniquify rather than reject and the edit is never silently lost.
                 const int32 Collision = Table->FindRowIndex(NewName);
                 Row.Name = (Collision == INDEX_NONE) ? NewName : Table->MakeUniqueRowName(NewName);
 
@@ -308,8 +305,7 @@ namespace Lumina
 
         CancelCellEdit();
 
-        // Copy by value before touching the array: emplace_back can reallocate, which would leave a
-        // reference to the source row dangling mid-copy.
+        // Copied by value first, since emplace_back can reallocate and dangle the source reference.
         const SDataTableRow Source = Table->Rows[SelectedRow];
 
         SDataTableRow& Copy = Table->Rows.emplace_back();
@@ -401,8 +397,7 @@ namespace Lumina
             return;
         }
 
-        // Null filter selects a folder (see WindowsPlatformProcess::OpenFileDialogue); the file is
-        // named after the asset, which is what the round trip wants anyway.
+        // A null filter selects a folder, and the file is named after the asset anyway.
         FFixedString Folder;
         if (!Platform::OpenFileDialogue(Folder, "Choose Export Folder"))
         {
@@ -539,8 +534,7 @@ namespace Lumina
         }
 
         const bool bSelected = SelectedRow == RowIndex;
-        // AllowOverlap matters: without it this row-spanning selectable claims hover for the whole
-        // row and the value cells to its right never see a click.
+        // Without AllowOverlap this row-spanning selectable claims hover and the value cells see no click.
         constexpr ImGuiSelectableFlags NameFlags =
             ImGuiSelectableFlags_SpanAllColumns |
             ImGuiSelectableFlags_AllowDoubleClick |
@@ -583,8 +577,7 @@ namespace Lumina
         DraggingRow = RowIndex;
         ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
 
-        // Distance, not hover: value cells overlap this one, so IsItemHovered goes false on horizontal
-        // movement alone and would step the row for a drag that never left it.
+        // Distance, not hover, since overlapping value cells would step the row on horizontal movement.
         const float RowHeight = ImGui::GetItemRectSize().y + ImGui::GetStyle().CellPadding.y * 2.0f;
         const float DragY = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left).y;
 
@@ -654,9 +647,7 @@ namespace Lumina
             return;
         }
 
-        // A selectable rather than plain text: a text item is not hit-testable, so a cell drawn that
-        // way could never be clicked into. Cheaper than an InputText per cell, which is the thing
-        // actually worth avoiding at this row count.
+        // A text item is not hit-testable, and an InputText per cell is what costs at this row count.
         const FString Text = Reflection::ToText(Property, RowMemory);
 
         if (ImGui::Selectable(Text.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick | ImGuiSelectableFlags_AllowOverlap))
@@ -725,8 +716,7 @@ namespace Lumina
                 bSortActive = SortSpecs->SpecsCount > 0;
                 if (bSortActive)
                 {
-                    // Grid column 0 is the name, so shift into the Columns index space. The name
-                    // therefore lands on -1, which is why a separate flag tracks "sorting at all".
+                    // Grid column 0 is the name, so it lands on -1 and a separate flag tracks sorting at all.
                     SortColumn = SortSpecs->Specs[0].ColumnIndex - 1;
                     bSortAscending = SortSpecs->Specs[0].SortDirection == ImGuiSortDirection_Ascending;
                 }
@@ -741,8 +731,7 @@ namespace Lumina
             RebuildDisplayOrder();
         }
 
-        // Clipper over the display order, so a table of thousands of rows only builds widgets for the
-        // handful actually on screen.
+        // Clipped over the display order, so thousands of rows build widgets only for what is visible.
         ImGuiListClipper Clipper;
         Clipper.Begin((int32)DisplayOrder.size());
 
@@ -776,8 +765,7 @@ namespace Lumina
 
                 ImGui::TableNextRow();
 
-                // Name, not index: a drag moves the row through indices, and an index-derived id would
-                // change under the held widget and drop it after one step.
+                // Keyed by name, since an index-derived id changes under a dragged row and drops it.
                 ImGui::PushID(Table->Rows[RowIndex].Name.c_str());
 
                 ImGui::TableSetColumnIndex(0);
@@ -809,8 +797,7 @@ namespace Lumina
             return;
         }
 
-        // The row struct can change from the details panel, an import, or an undo; rebuild whenever
-        // the cached columns no longer describe it.
+        // The row struct can change from the details panel, an import or an undo, so rebuild on mismatch.
         if (Table->GetRowStruct() != BoundRowStruct)
         {
             RebuildColumns();

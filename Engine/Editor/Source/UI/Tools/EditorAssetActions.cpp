@@ -40,9 +40,7 @@ namespace Lumina
 
     void FAssetActionRegistry::GatherActions(CClass* AssetClass, TVector<const FAssetAction*>& Out) const
     {
-        // Walk base-ward from the concrete class, so a CMaterial action lists above one registered on
-        // CMaterialInterface. Accumulates rather than stopping at the first match -- an asset can
-        // legitimately have actions contributed at several levels of its hierarchy.
+        // Accumulates rather than stopping at the first match, since an asset can contribute at several levels.
         for (CClass* Class = AssetClass; Class != nullptr; Class = Class->GetSuperClass())
         {
             const auto Itr = Actions.find(Class);
@@ -80,11 +78,7 @@ namespace Lumina
             return nullptr;
         }
 
-        // Every export has to be RESIDENT before it can be copied. Opening a material only brings in the
-        // material itself -- its node graph is a lazily-loaded sibling export, so a copy made without
-        // this found one object, and the duplicate opened with an empty graph. FullyLoad is what the
-        // package saver itself uses for exactly this reason; pulling exports in by hand missed the ones
-        // whose weak pointer was never populated.
+        // FullyLoad is what the saver uses, since a lazily-loaded sibling export is missed otherwise.
         if (!SourcePackage->FullyLoad())
         {
             return nullptr;
@@ -111,15 +105,10 @@ namespace Lumina
             return nullptr;
         }
 
-        // The PRIMARY object is identified by having the same name as its package file -- that is how
-        // the factory creates assets and how loading finds them again. Carrying the source's name over
-        // produces a "NewMaterial" inside NewMaterial_Copy.lasset, which nothing can resolve: the asset
-        // shows in the browser but cannot be opened or deleted. Sub-objects are the opposite case --
-        // they are found by name (LoadObjectByName), so renaming THEM would break the copy's wiring.
+        // The PRIMARY object shares its package's name, while sub-objects are found by name instead.
         const FStringView DestAssetName = VFS::FileName(DestPath, /*bRemoveExtension*/ true);
 
-        // Pass 1: construct every copy first, so pass 2 can resolve a reference to ANY sibling,
-        // including one later in the table.
+        // Pass 1 constructs every copy first, so pass 2 can resolve a reference to any sibling.
         THashMap<CObject*, CObject*> Remap;
         Remap.reserve(SourceObjects.size());
 
@@ -133,15 +122,11 @@ namespace Lumina
                 return nullptr;
             }
 
-            // No ExportTable bookkeeping: the saver clears and rebuilds it from what the package
-            // actually owns, so being outered to DestPackage is what makes a copy an export.
+            // The saver rebuilds ExportTable, so being outered to DestPackage is what makes a copy an export.
             Remap.emplace(Source, Copy);
         }
 
-        // Pass 2: round-trip each object through its own Serialize, so the copy gets everything the asset
-        // actually owns. Copying reflected properties alone loses state a class serializes by hand -- a
-        // mesh's FMeshResource, an anim graph's bytecode -- and the copy then dereferences a resource that
-        // was never created. Remapping happens on the READ, once each GUID has resolved to an object.
+        // Copying reflected properties alone loses state a class serializes by hand, such as a mesh resource.
         for (CObject* Source : SourceObjects)
         {
             CObject* Copy = Remap[Source];
@@ -158,9 +143,7 @@ namespace Lumina
                 Copy->Serialize(Proxy);
             }
 
-            // Serialize has no concept of DuplicateTransient, so anything marked that way arrives copied
-            // and has to be put back to its default. Node graphs rely on this to drop per-instance editor
-            // state that must not survive a duplicate.
+            // Serialize has no concept of DuplicateTransient, so those fields are put back to their defaults.
             if (CClass* Class = Source->GetClass())
             {
                 const CObject* Defaults = Class->GetDefaultObject<CObject>();
@@ -177,8 +160,7 @@ namespace Lumina
             }
         }
 
-        // PostLoad after everything is wired, not per object: a PostLoad that reaches for a sibling
-        // (the material graph rebuilding its node links) needs the whole set present and remapped.
+        // A PostLoad that reaches for a sibling needs the whole set present and remapped first.
         for (CObject* Source : SourceObjects)
         {
             Remap[Source]->PostLoad();
@@ -196,7 +178,7 @@ namespace Lumina
     {
         void CreateMaterialInstanceFrom(const FAssetActionContext& Context)
         {
-            // Interface, not CMaterial: instancing an instance just parents to it and inherits everything.
+            // The interface, since instancing an instance just parents to it and inherits everything.
             CMaterialInterface* Parent = Cast<CMaterialInterface>(LoadObject<CObject>(Context.Asset->AssetGUID));
             if (Parent == nullptr)
             {
@@ -222,8 +204,7 @@ namespace Lumina
                 return;
             }
 
-            // Mirrors what the factory does after assigning a parent: populates Parameters/MaterialIndex
-            // so the instance is editable immediately instead of only after a reload.
+            // Populates Parameters so the instance is editable immediately rather than only after a reload.
             Instance->PostLoad();
 
             if (!CPackage::SavePackage(Instance->GetPackage(), NewPath))
@@ -232,13 +213,12 @@ namespace Lumina
                 return;
             }
 
-            // Without this the asset exists on disk but not in the registry, so it does not appear in
-            // the content browser and the lookup below finds nothing to open.
+            // Without this the asset exists on disk but not in the registry, so nothing can find it.
             FAssetRegistry::Get().AssetCreated(Instance);
 
             ImGuiX::Notifications::NotifySuccess("Created '{0}'.", NewPath);
 
-            // Open it: creating an instance is nearly always a prelude to tweaking its parameters.
+            // Opened, since creating an instance is nearly always a prelude to tweaking its parameters.
             if (Context.ToolContext != nullptr)
             {
                 if (const FAssetData* NewData = FAssetRegistry::Get().GetAssetByPath(FStringView(NewPath.c_str(), NewPath.size())))
@@ -267,13 +247,10 @@ namespace Lumina
                 return;
             }
 
-            // The only place SourceMesh is ever assigned: it is ReadOnly on the asset, because hulls baked
-            // against one mesh are meaningless on another.
+            // The only place SourceMesh is assigned, since hulls baked against one mesh are meaningless on another.
             Shape->SourceMesh = Mesh;
 
-            // Seed with a single hull so the asset is usable the moment it opens rather than empty. It is
-            // the safest default -- always convex, so it works on dynamic bodies -- and the editor offers
-            // the per-surface and triangle-mesh bakes from there.
+            // A single hull is the safest default, always convex, so it works on dynamic bodies immediately.
             if (!Physics::CollisionGen::GenerateSingleHull(Mesh, Shape))
             {
                 ImGuiX::Notifications::NotifyWarning("'{0}' produced no hull; the collision shape was created empty.",
@@ -308,13 +285,11 @@ namespace Lumina
                 return;
             }
 
-            // Held as CMaterialInterface, not CMaterial: the parent field is typed to CMaterial today,
-            // so the parent is always a base material -- but nothing below depends on that, so if
-            // instance-of-instance ever lands this follows the chain one link without changing.
+            // Held as the interface, so instance-of-instance would follow the chain without changing this.
             CMaterialInterface* Parent = Instance->Material.Get();
             if (Parent == nullptr || Parent->GetPackage() == nullptr)
             {
-                // Not an error: an instance with no parent yet is a legitimate (if useless) state.
+                // Not an error, since an instance with no parent yet is a legitimate if useless state.
                 ImGuiX::Notifications::NotifyWarning("'{0}' has no parent material.", Context.Asset->AssetName);
                 return;
             }
@@ -344,9 +319,7 @@ namespace Lumina
             .Execute = &CreateCollisionShapeFrom,
         });
 
-        // No CanExecute: answering "does this have a parent?" means loading the instance, and the menu
-        // is drawn every frame it is open. Enabled always, with a notification when there is nothing to
-        // navigate to -- cheaper than loading every listed asset to decide whether to gray one entry.
+        // Answering whether it has a parent means loading it, and the menu redraws every frame.
         Registry.RegisterAction(CMaterialInstance::StaticClass(), FAssetAction
         {
             .Label   = LE_ICON_ARROW_UP_BOLD_BOX " Browse to Parent Material",

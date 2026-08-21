@@ -203,7 +203,7 @@ namespace Lumina
             AllocateFor(Fresh);
             Fresh->InitializeStruct(InstanceMemory);
 
-            // By name, never memcpy: a reload can reorder or retype fields, so the old blob has no layout.
+            // By name, never memcpy, since a reload can reorder or retype fields and the old blob has no layout.
             if (StaleMemory != nullptr)
             {
                 Fresh->ForEachProperty<FProperty>([&](FProperty* NewProp)

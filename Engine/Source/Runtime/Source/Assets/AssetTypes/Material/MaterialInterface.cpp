@@ -96,7 +96,7 @@ namespace Lumina
 
     void CMaterialInterface::PropagateToChildren(uint32 Depth)
     {
-        // What terminates a cycle: the parent is serialized, so a corrupt asset can present one anyway.
+        // The parent is serialized, so a corrupt asset can present a cycle anyway.
         if (Depth >= MaxChainDepth)
         {
             LOG_ERROR("Material '{}': instance chain deeper than {} levels, or cyclic; refresh stopped.",
@@ -104,7 +104,7 @@ namespace Lumina
             return;
         }
 
-        // Snapshot then unlock: holding every level's lock down the chain is a lock-order hazard for nothing.
+        // Holding every level's lock down the chain is a lock-order hazard for nothing.
         TVector<CMaterialInterface*> Snapshot;
         {
             FScopeLock Lock(ChildrenMutex);

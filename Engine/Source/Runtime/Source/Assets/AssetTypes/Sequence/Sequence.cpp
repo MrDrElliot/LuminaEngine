@@ -87,8 +87,7 @@ namespace Lumina
             return;
         }
 
-        // Only on a change of cut, not every frame: SetActiveCamera is a switch, and re-issuing it each
-        // frame would stomp anything else that legitimately took the camera mid-shot.
+        // SetActiveCamera is a switch, so re-issuing it each frame would stomp anything that took the camera.
         if (Context.bJumped || FindCutAt(Context.PreviousTime) != CutIndex)
         {
             Context.World->SetActiveCamera(Camera);
@@ -137,8 +136,7 @@ namespace Lumina
             }
         }
 
-        // Snapshot only possessed entities: spawned ones are destroyed outright, so there is nothing to
-        // put back for them.
+        // Spawned entities are destroyed outright, so there is nothing to put back for them.
         for (entt::entity Entity : BoundEntities)
         {
             if (Entity == entt::null || !World->IsValidEntity(Entity))
@@ -252,8 +250,7 @@ namespace Lumina
 
     void CSequence::Evaluate(const FSequenceEvalContext& Context) const
     {
-        // Camera cuts last: a cut reads the camera entity's transform, and a transform track on that same
-        // camera has to have written it first or the shot lags a frame behind its own animation.
+        // A cut reads the camera transform, so a track on that camera has to write it first.
         for (const TObjectPtr<CSequenceTrack>& Track : Tracks)
         {
             if (Track.IsValid() && Track->bEnabled && !Track->IsA<CSequenceTrack_CameraCut>())

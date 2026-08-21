@@ -17,8 +17,7 @@
 
 namespace Lumina
 {
-    // Presentation helpers for the schedule canvas. Internal linkage: these names are generic
-    // enough to collide with other translation units' Detail helpers.
+    // Internal linkage, since these names would collide with another TU's Detail helpers.
     namespace
     {
         namespace InsightsDetail
@@ -121,8 +120,7 @@ namespace Lumina
                 return FString(Buffer);
             }
 
-            // Trims Text to MaxWidth with a trailing ellipsis, measured with the font and size it will be
-            // drawn at so boxes stay clean at any zoom or editor DPI scale.
+            // Measured with the font and size it will be drawn at, so boxes stay clean at any zoom.
             FString FitText(ImFont* Font, float FontSize, const char* Text, float MaxWidth)
             {
                 if (Text == nullptr || Text[0] == '\0')
@@ -345,7 +343,7 @@ namespace Lumina
         }
     }
 
-    // ---- Schedule: the frame's parallel batches as a dependency canvas ---------------------------------
+    // Schedule, the frame's parallel batches drawn as a dependency canvas.
     void FGameplayInsightsEditorTool::DrawSchedule()
     {
         if (Schedule.empty())
@@ -429,8 +427,7 @@ namespace Lumina
     {
         const float Scale = ScheduleZoom;
 
-        // Box metrics derive from the font rather than fixed pixels: the editor's DPI scale changes the
-        // font size independently of zoom, and a hardcoded height clips the last line.
+        // The editor's DPI scale changes font size independently of zoom, so a fixed height clips.
         ImFont*     Font      = ImGui::GetFont();
         const float FontSize  = ImGui::GetFontSize() * Scale;
         const float SmallFont = FontSize * 0.86f;
@@ -489,7 +486,7 @@ namespace Lumina
 
         const int32 Selection = ResolveSelection();
 
-        // Stage bands span every batch of a stage: the visual answer to "where are the hard barriers".
+        // Stage bands span every batch of a stage, showing where the hard barriers are.
         for (int32 L = 0; L < NumColumns; )
         {
             const uint8 Stage = ScheduleColumns[L].Stage;
@@ -548,8 +545,7 @@ namespace Lumina
                         EditorColors::U32(Column.Count > 1 ? EditorColors::Success() : EditorColors::TextMuted()), Header);
         }
 
-        // Conflict links behind the boxes. Only within a stage: across a stage boundary the barrier
-        // already serializes everything, so an edge there would claim a cause that isn't there.
+        // Only within a stage, since a stage barrier already serializes everything across one.
         if (bShowEdges)
         {
             for (int32 Index = 0; Index < NumEntries; ++Index)
@@ -632,8 +628,7 @@ namespace Lumina
             const FString Label = InsightsDetail::SystemLabel(Entry, Index);
             const FGameplayProfileEntry* Stat = Entry.bManaged ? nullptr : FindStat(Label.c_str());
 
-            // Cost (or the exclusivity marker) right-aligned; measured first so the title can reserve
-            // room for it instead of running underneath.
+            // Measured first so the title can reserve room instead of running underneath it.
             char Badge[40] = {};
             ImVec4 BadgeColor = EditorColors::TextMuted();
             if (Stat != nullptr)
@@ -749,7 +744,7 @@ namespace Lumina
         ImGui::EndChild();
     }
 
-    // ---- Stats: aggregate per-scope CPU timings (scripts, C# systems, Profiler.Sample scopes) ----------
+    // Stats, aggregate per-scope CPU timings for scripts, C# systems and sample scopes.
     void FGameplayInsightsEditorTool::DrawStats()
     {
         FGameplayProfiler& Prof = FGameplayProfiler::Get();
@@ -850,7 +845,7 @@ namespace Lumina
                 ImGui::TableNextColumn(); ImGui::Text("%.3f", Entry->ExclusiveMs);
                 ImGui::TableNextColumn(); ImGui::Text("%.3f", Avg(Entry));
 
-                // Share reads as a bar first, a number second: the outlier should be findable without reading.
+                // Share reads as a bar first and a number second, so an outlier is findable without reading.
                 ImGui::TableNextColumn();
                 const ImVec2 BarMin = ImGui::GetCursorScreenPos();
                 const float  BarW   = ImGui::GetContentRegionAvail().x;
@@ -889,7 +884,7 @@ namespace Lumina
         }
     }
 
-    // ---- Detail: full info for the system selected on the Schedule canvas ------------------------------
+    // Detail, the full information for the system selected on the Schedule canvas.
     void FGameplayInsightsEditorTool::DrawDetail()
     {
         const int32 Selection = ResolveSelection();
@@ -951,8 +946,7 @@ namespace Lumina
             ImGui::TextUnformatted(Reads.empty() ? "(none)" : Reads.c_str());
         }
 
-        // Everything in the same stage that can never share a batch with this system, and the access
-        // that forces it. Cross-stage pairs are omitted: a stage barrier already serializes those.
+        // Cross-stage pairs are omitted, since a stage barrier already serializes those.
         TVector<int32> ConflictIndices;
         for (int32 Index = 0; Index < (int32)Schedule.size(); ++Index)
         {

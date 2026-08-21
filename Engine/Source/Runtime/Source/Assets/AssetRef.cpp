@@ -11,7 +11,7 @@ namespace Lumina
     {
         if (Ar.IsWriting())
         {
-            // Indexed path (replication): a compact net index; Path+GUID are exported once via AssetExport.
+            // An indexed path uses a compact net index, with path and GUID exported once via AssetExport.
             if (Ar.AssetRefToNetIndex)
             {
                 std::ignore = ResolvePath(); // heal/back-fill the GUID so the export keys on a stable identity
@@ -57,7 +57,7 @@ namespace Lumina
     {
         FAssetRegistry& Registry = FAssetRegistry::Get();
 
-        // GUID-first: a valid GUID locates the asset even after a rename/move; heal Path in place.
+        // A valid GUID locates the asset even after a rename, and Path heals in place.
         const FGuid G = GetGuid();
         if (G.IsValid())
         {
@@ -72,8 +72,7 @@ namespace Lumina
             }
         }
 
-        // No GUID (or it didn't resolve): fall back to path, back-filling the GUID from the discovered
-        // record. This self-heals legacy path-only data once the file has a sidecar.
+        // Back-fills the GUID from the record, so legacy path-only data self-heals once a sidecar exists.
         if (!Path.empty())
         {
             if (FTextAssetData* Data = Registry.GetTextAssetByPath(GetPath()))

@@ -140,7 +140,7 @@ namespace Lumina
         return Entity;
     }
 
-    // CPU marquee-pick + drop-to-floor: editor world has no physics scene, so we project mesh AABBs in software.
+    // The editor world has no physics scene, so mesh AABBs are projected in software.
 
     // Project world AABB to screen rect (y-down, viewport pixels). Returns false if the box is behind near plane.
     static bool ProjectAABBToScreenRect(const FAABB& WorldAABB, const FMatrix4& ViewProj,
@@ -395,7 +395,7 @@ namespace Lumina
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,   ImVec2(8, 4));
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,  ImVec2(8, 4));
 
-            // Header: entity name + id (matches the viewport menu).
+            // A header of entity name and id, matching the viewport menu.
             {
                 const SNameComponent* Name = Registry.try_get<SNameComponent>(Data.Entity);
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
@@ -626,8 +626,7 @@ namespace Lumina
                 return;
             }
 
-            // bSecondaryToggled == script suppressed. Tag presence stops the script ticking
-            // (ScriptSystem excludes it) while leaving the entity itself active.
+            // Tag presence stops the script ticking while leaving the entity itself active.
             if (State.bSecondaryToggled)
             {
                 ECS::GetWorldRegistry(*World).emplace_or_replace<SScriptDisabledTag>(Data.Entity);
@@ -697,8 +696,7 @@ namespace Lumina
         
         OutlinerContext.ItemSelectedFunction = [this](FTreeListView& Tree, FTreeNodeID Item, bool bShouldClear)
         {
-            // bShouldClear: plain click replaces selection; false is Ctrl-toggle. Selection mutators below
-            // own writing bSelected so the canonical set, registry tags, and outliner rows stay in sync.
+            // The selection mutators own writing bSelected, so set, tags and outliner rows stay in sync.
             if (!Item.IsValid())
             {
                 if (bShouldClear)
@@ -905,8 +903,7 @@ namespace Lumina
             }
         }
 
-        // Ctrl means both "command modifier" and "vertex snap". Once it has served as a chord it must not
-        // also mean snap, or duplicating next to the gizmo yanks the entity onto a neighboring vertex.
+        // Once Ctrl has served as a chord it must not also mean snap, or a duplicate yanks onto a vertex.
         if (!ImGui::GetIO().KeyCtrl)
         {
             bCtrlConsumedByChord = false;
@@ -917,8 +914,7 @@ namespace Lumina
             {
                 const ImGuiKey Typed = (ImGuiKey)Key;
 
-                // Mouse buttons are excluded on purpose: Ctrl+click IS the vertex-snap drag. Modifiers
-                // are excluded because holding them is not yet a command.
+                // Ctrl and click IS the vertex-snap drag, and holding a modifier is not yet a command.
                 const bool bIgnored = (Typed >= ImGuiKey_Mouse_BEGIN && Typed < ImGuiKey_Mouse_END)
                                    || Typed == ImGuiKey_LeftCtrl  || Typed == ImGuiKey_RightCtrl
                                    || Typed == ImGuiKey_LeftShift || Typed == ImGuiKey_RightShift
@@ -933,8 +929,7 @@ namespace Lumina
             }
         }
 
-        // Selection edit shortcuts (Copy/Duplicate/Delete) work over the viewport OR the
-        // Scene Graph outliner. Gated off text input so renaming an entity doesn't delete it.
+        // Gated off text input, so renaming an entity does not delete it.
         const bool bSelectionEditActive = (bViewportHovered || bOutlinerActive) && !ImGui::GetIO().WantTextInput;
 
         if (bSelectionEditActive)
@@ -1027,8 +1022,7 @@ namespace Lumina
                     continue;
                 }
 
-                // Every selectable entity type gets the same selection box (static mesh, skeletal mesh,
-                // or a unit-box fallback for lights/empties/etc.), resolved by the shared helper.
+                // Every selectable type gets the same box, with a unit-box fallback resolved by the shared helper.
                 EditorEntityUtils::DrawEntitySelectionBox(World, Entity, FColor::Green, 0.2f, 5.0f);
             }
         }
@@ -1080,7 +1074,7 @@ namespace Lumina
             }
         }
         
-        // Camera bookmarks: 1..9 recall, Ctrl+1..9 save. Loop-driven, so handled inline rather than as N actions.
+        // Loop-driven, so the bookmark chords are handled inline rather than as nine actions.
         if (bViewportHovered && !ImGui::GetIO().WantTextInput)
         {
             const ImGuiIO& IO = ImGui::GetIO();
@@ -1234,12 +1228,11 @@ namespace Lumina
                 Redo();
             }, EditorWorld});
 
-        // Advisory only. FEditorUI routes Ctrl+S to the FOCUSED tool's OnSave; a live callback here
-        // would both bypass that focus check and save twice when this tool is the focused one.
+        // FEditorUI routes Ctrl+S to the focused tool, so a live callback here would save twice.
         RegisterAction({"Save World", "File", "Save the current world",
             FInputChord{ImGuiKey_S, true}, nullptr});
 
-        // Advisory entries: inline-handled shortcuts registered so the shortcuts window surfaces them.
+        // Advisory entries, inline-handled shortcuts registered so the shortcuts window surfaces them.
         RegisterAction({"Copy Entities", "Selection", "Copy the selection to the entity clipboard",
             FInputChord{ImGuiKey_C, true}, nullptr});
         
@@ -1291,12 +1284,7 @@ namespace Lumina
         constexpr uint32 InvalidBody = 0xFFFFFFFFu;
         constexpr float  GrabReach = 500.0f;
 
-        // Velocity controller, NOT a position spring. A spring is second order: it overshoots the cursor and
-        // the damping term whips it back, and since the force lands off-center that also spins the body,
-        // which moves the attach point and re-excites the whole thing. Retuning the gains only changes how
-        // fast it rings. Asking for a velocity instead makes it first order, which cannot overshoot.
-        //
-        // ApproachGain is 1/s: the gap to the cursor closes with a ~1/6s time constant.
+        // A spring is second order and rings, while asking for a velocity is first order and cannot overshoot.
         constexpr float  ApproachGain = 5.0f;
         constexpr float  MaxGrabSpeed = 6.0f;
 
@@ -1304,8 +1292,7 @@ namespace Lumina
         constexpr float  VelocityGain = 8.0f;
         constexpr float  MaxGrabAcceleration = 120.0f;
 
-        // Only while the world is actually stepping: on a paused editor world a force does nothing, so the
-        // gesture would look broken rather than inert.
+        // On a paused editor world a force does nothing, so the gesture would look broken rather than inert.
         Physics::IPhysicsScene* Scene = HasSimulatingWorld() && World != nullptr ? World->GetPhysicsScene() : nullptr;
         if (Scene == nullptr)
         {
@@ -1342,8 +1329,7 @@ namespace Lumina
                 return;
             }
 
-            // Static and kinematic bodies cannot answer a force, so latching onto one would leave the drag
-            // pulling on something that can never move.
+            // A static or kinematic body cannot answer a force, so latching on would pull on something immovable.
             const entt::entity HitEntity = (entt::entity)Hit->Entity;
             const SRigidBodyComponent* RigidBody = World->IsValidEntity(HitEntity)
                 ? World->TryGetComponent<SRigidBodyComponent>(HitEntity) : nullptr;
@@ -1364,8 +1350,7 @@ namespace Lumina
         const FVector3 AttachPoint = Scene->GetBodyPosition(GrabbedBodyID)
                                    + Scene->GetBodyRotation(GrabbedBodyID) * GrabLocalOffset;
 
-        // Speed the grab would like the attach point to be moving at, capped so a fast cursor asks for a
-        // drag rather than a launch. This cap is what stops the body arriving instantly.
+        // Capped so a fast cursor asks for a drag rather than a launch, which stops the body arriving instantly.
         FVector3 DesiredVelocity = (Target - AttachPoint) * ApproachGain;
 
         const float DesiredSpeed = Math::Length(DesiredVelocity);
@@ -1374,8 +1359,7 @@ namespace Lumina
             DesiredVelocity *= MaxGrabSpeed / DesiredSpeed;
         }
 
-        // GetVelocityAtPoint includes the spin contribution, so a body rotating under the grab is corrected
-        // by the same term rather than being left to wind up.
+        // GetVelocityAtPoint includes spin, so a body rotating under the grab is corrected by the same term.
         FVector3 Acceleration = (DesiredVelocity - Scene->GetVelocityAtPoint(GrabbedBodyID, AttachPoint))
                               * VelocityGain;
 
@@ -1385,8 +1369,7 @@ namespace Lumina
             Acceleration *= MaxGrabAcceleration / AccelerationMagnitude;
         }
 
-        // Mass turns the commanded acceleration back into the force Jolt wants. A body reporting zero mass
-        // is static or kinematic and cannot be pushed, so the grab lets go rather than pulling on nothing.
+        // A body reporting zero mass is static or kinematic, so the grab lets go rather than pulling on nothing.
         const float BodyMass = Scene->GetBodyMass(GrabbedBodyID);
         if (BodyMass <= 0.0f)
         {
@@ -1419,7 +1402,7 @@ namespace Lumina
         NewIndex = Math::Clamp(NewIndex, 0, (int32)EditorModes.size() - 1);
         if (NewIndex == ActiveModeIndex) return;
 
-        // Drop half-drag gizmo state before yielding: bImGuizmoUsedOnce sticks true otherwise and blocks clicks after switching back.
+        // bImGuizmoUsedOnce sticks true otherwise and blocks clicks after switching back.
         if (bImGuizmoUsedOnce)
         {
             EndTransaction("Transform");
@@ -1457,19 +1440,14 @@ namespace Lumina
             return Super::GetToolName();
         }
 
-        // The base class names the tab after its Asset, and the world editor keeps its CWorld live
-        // rather than as one, so it always fell through to the static "World Editor". A world that
-        // was never saved has no package and is still carrying the placeholder name it was created
-        // with, which is not something to show.
+        // A world that was never saved has no package and still carries its placeholder name.
         const FName Name = World->GetPackage() != nullptr ? World->GetName() : FName("Untitled");
 
         if (CachedWindowNameSource != Name)
         {
             CachedWindowNameSource = Name;
 
-            // Fixed "###WorldEditor" rather than anything derived from the world: ImGui identifies
-            // the window by what follows it, so opening another level renames this tab where it sits
-            // instead of leaving the layout behind and docking a new window somewhere else.
+            // ImGui identifies the window by what follows, so opening a level renames this tab in place.
             CachedWindowName = Format("{0} {1}###WorldEditor",
                 GetTitlebarIcon(), Name.c_str()).c_str();
         }
@@ -1528,12 +1506,11 @@ namespace Lumina
         ImGuiID dockLeft = 0, dockRight = 0;
         ImGui::DockBuilderSplitNode(InDockspaceID, ImGuiDir_Right, 0.25f, &dockRight, &dockLeft);
 
-        // Right column: scene graph on top, details/settings strip below.
-        // Note: SplitNode args are (parent, dir, ratio, out-at-dir, out-opposite); easy to swap by accident.
+        // SplitNode takes parent, direction, ratio, out-at-direction and out-opposite, easy to swap.
         ImGuiID dockRightBottom = 0, dockRightTop = 0;
         ImGui::DockBuilderSplitNode(dockRight, ImGuiDir_Down, 0.35f, &dockRightBottom, &dockRightTop);
 
-        // Bottom strip: Details / World Settings side by side.
+        // A bottom strip with Details and World Settings side by side.
         ImGuiID dockRightBottomLeft = 0, dockRightBottomRight = 0;
         ImGui::DockBuilderSplitNode(dockRightBottom, ImGuiDir_Right, 0.5f, &dockRightBottomRight, &dockRightBottomLeft);
 
@@ -1546,8 +1523,7 @@ namespace Lumina
 
     void FWorldEditorTool::DrawViewportOverlayElements(const FUpdateContext& UpdateContext, ImTextureRef ViewportTexture, ImVec2 ViewportSize)
     {
-        // Game-focus indicator: amber outline + hint so it's obvious input is routed to the game (not the
-        // editor), and how to hand it back. Shared with the game preview tool for consistent focus feedback.
+        // Shared with the game preview tool, so focus feedback reads the same in both.
         DrawGameFocusIndicator(ViewportSize);
 
         if (bViewportHovered)
@@ -1558,9 +1534,7 @@ namespace Lumina
             }
         }
 
-        // Net interest-management overlay: controlled by its own "Network (AOI / Grid)" toggle and safe during
-        // play (needs only the world's net state, not the play-time-null editor entity), so draw it before the
-        // editor-only gizmo gate below.
+        // It needs only the world's net state, so it draws before the editor-only gizmo gate below.
 
         if (World->IsGameWorld() || bGameViewMode)
         {
@@ -1583,10 +1557,7 @@ namespace Lumina
             const ImRect ViewportRect(ViewportOrigin, ImVec2(ViewportOrigin.x + ViewportSize.x, ViewportOrigin.y + ViewportSize.y));
             if (ImGui::BeginDragDropTargetCustom(ViewportRect, ImGui::GetCurrentWindow()->ID))
             {
-                // Whatever the cursor is over becomes the drop target. Passing entt::null unconditionally
-                // made every target-only handler dead in the viewport -- a material or an animation has
-                // nothing to act on without an entity, so dropping one could only ever fail there, and the
-                // outliner was the sole way to land it.
+                // Passing null unconditionally made every target-only handler dead in the viewport.
                 FVector3     TracedLocation(0.0f);
                 entt::entity HitEntity = entt::null;
                 TraceViewportPlacement(ImGui::GetMousePos(), TracedLocation, &HitEntity);
@@ -1604,14 +1575,11 @@ namespace Lumina
 
         UpdateSimulationGrab(ViewportOrigin, ViewportSize, bViewportHovered);
 
-        // Modes that own the viewport suppress selection, marquee, and gizmo input. A live grab does the
-        // same: shift+click is also the marquee's add-to-selection chord, so without this a poke at a
-        // ragdoll would select everything it dragged across.
+        // Shift and click is also the marquee chord, so a poke at a ragdoll would select everything crossed.
         const bool bModeOwnsInput = (GetActiveMode() && GetActiveMode()->ConsumesViewportInput())
                                  || IsSimulationGrabActive();
 
-        // Same for an editor-camera drag (Alt+LMB orbit, LMB+RMB pan) or Alt merely held over the
-        // viewport. TickEditorCamera runs in Update, before this draw, so the flag is current-frame.
+        // TickEditorCamera runs in Update before this draw, so the flag is current-frame.
         const bool bCameraOwnsInput = ShouldSuppressViewportClickInput();
 
         auto SelectionView = ECS::GetWorldRegistry(*World).view<FSelectedInEditorComponent, STransformComponent>();
@@ -1619,8 +1587,7 @@ namespace Lumina
         const entt::entity PivotEntityForGizmo = GetLastSelectedEntity();
         const bool bGizmoTargetValid = SelectionView.size_hint() && ECS::GetWorldRegistry(*World).valid(PivotEntityForGizmo);
 
-        // If selection/pivot vanished mid-drag (entity destroyed, selection cleared by undo, etc.),
-        // ImGuizmo never sees the release. End the transaction and reset so clicks are not blocked.
+        // ImGuizmo never sees the release, so end the transaction and reset or clicks stay blocked.
         if (!bGizmoTargetValid && bImGuizmoUsedOnce)
         {
             EndTransaction("Transform");
@@ -1710,9 +1677,7 @@ namespace Lumina
                         }
                     }
 
-                    // A camera gesture (or Alt merely held) must never grab the gizmo. Enable(false)
-                    // leaves it drawn but inert; never applied mid-drag, since it clears ImGuizmo's
-                    // using state without a release and would strand the open transaction.
+                    // Never applied mid-drag, since clearing the using state without a release strands the transaction.
                     const bool bGizmoInert = bCameraOwnsInput && !bImGuizmoUsedOnce;
                     if (bGizmoInert)
                     {
@@ -1732,10 +1697,7 @@ namespace Lumina
                     {
                         if (!bImGuizmoUsedOnce)
                         {
-                            // Transform-only, so record ONLY these entities' transforms. The general
-                            // BeginTransaction serializes the whole registry twice per drag, which in a
-                            // level with heavy foliage stalled for hundreds of ms right as the grab landed.
-                            // SelectionView is exactly the set the apply loops below write to.
+                            // BeginTransaction serializes the whole registry twice per drag.
                             TVector<entt::entity> Dragged;
                             Dragged.reserve(SelectionView.size_hint());
                             for (entt::entity Selected : SelectionView)
@@ -1978,11 +1940,7 @@ namespace Lumina
                             });
                         }
 
-                        // The gizmo writes LocalTransform via MarkDirty, whose cached dirty-signal can fail to
-                        // raise the registry's bAnyDirty flag in a duplicated (Simulate/PIE) world -- leaving the
-                        // edit unresolved (so e.g. AI perception/path-follow keeps reading the old position) until
-                        // something else moves. Tag the edited entities so the resolve runs reliably, matching the
-                        // FNeedsTransformUpdate path physics uses.
+                        // The cached dirty signal can fail in a duplicated world.
                         for (entt::entity Selected : SelectionView)
                         {
                             ECS::GetWorldRegistry(*World).emplace_or_replace<FNeedsTransformUpdate>(Selected);
@@ -1996,7 +1954,7 @@ namespace Lumina
                         bVertexSnapApplied     = false;
                     }
 
-                    // Vertex-snap viz: hint banner + anchor marker; locked target is drawn while snapping.
+                    // A hint banner and anchor marker, with the locked target drawn while snapping.
                     if (bVertexSnapArmed)
                     {
                         ImDrawList* DL = ImGui::GetCurrentWindow()->DrawList;
@@ -2057,16 +2015,13 @@ namespace Lumina
             }
         }
 
-        // A camera gesture owns the mouse: drop any armed marquee so releasing the buttons can't
-        // commit a box selection the user never asked for.
+        // Drops any armed marquee, so releasing cannot commit a box selection nobody asked for.
         if (bCameraOwnsInput)
         {
             SelectionBox.bActive = false;
         }
 
-        // Yield to the world's UI: a click over an interactive Rml element must not
-        // also fall through to entity picking / marquee behind it. Same for the camera-preview
-        // resize grip (bCameraPreviewMouseOver is set by the preview overlay below, one frame behind).
+        // The camera-preview grip flag is set by the overlay below, so it lags one frame.
         if (!bModeOwnsInput && !bCameraOwnsInput && !bCameraPreviewMouseOver && ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows) && !RmlUi::WorldUIWantsMouse(World))
         {
             uint32 PickerWidth = World->GetRenderer()->GetRenderExtent().x;
@@ -2093,8 +2048,7 @@ namespace Lumina
 
             bool bOverImGuizmo = bImGuizmoUsedOnce ? ImGuizmo::IsOver() : false;
 
-            // Eyedropper: a details-panel entity-reference picker is waiting for a click.
-            // Intercept it here so the click assigns the reference instead of selecting.
+            // Intercepted here so the click assigns the reference instead of selecting.
             if (IsEntityPickRequested())
             {
                 ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
@@ -2118,11 +2072,10 @@ namespace Lumina
             {
                 ImVec2 RightDragDelta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Right);
                 float RightDragDistance = sqrtf(RightDragDelta.x * RightDragDelta.x + RightDragDelta.y * RightDragDelta.y);
-                // Right release was a tap, not a camera-look gesture: open context menu.
+                // A right release short enough to be a tap rather than a camera look opens the context menu.
                 bool bRightWasShortClick = RightDragDistance < 15.0f;
 
-                // Outside the bOverImGuizmo gate below: a right click is never a gizmo interaction, and the
-                // gizmo sits directly on top of the entity whose menu is being asked for.
+                // A right click is never a gizmo interaction, and the gizmo sits over the entity being asked about.
                 if (ImGui::IsMouseReleased(ImGuiMouseButton_Right))
                 {
                     if (bRightWasShortClick)
@@ -2149,8 +2102,7 @@ namespace Lumina
                 }
             }
 
-            // Left click / marquee. Unlike the context menu this DOES yield to the gizmo, which owns the
-            // pointer while it is over a handle.
+            // Unlike the context menu this DOES yield to the gizmo, which owns the pointer over a handle.
             if (!IsEntityPickRequested() && !bOverImGuizmo)
             {
                 ImVec2 LeftDragDelta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
@@ -2201,8 +2153,7 @@ namespace Lumina
                             SetSingleSelectedEntity(EntityHandle);
                         }
 
-                        // Bring the outliner to whatever was just picked, so clicking something in
-                        // the world doesn't mean scrolling the tree to find it.
+                        // So clicking something in the world does not mean scrolling the tree to find it.
                         if (EntityHandle != entt::null && IsEntitySelected(EntityHandle))
                         {
                             RevealEntityInOutliner(EntityHandle);
@@ -2282,8 +2233,7 @@ namespace Lumina
         }
         else
         {
-            // Not a pick target this frame (cursor off the viewport or a mode owns input):
-            // tell the renderer to skip the picker readback.
+            // Not a pick target this frame, so tell the renderer to skip the picker readback.
             World->GetRenderer()->SetPickerCursor(0, 0, false);
         }
 
@@ -2302,7 +2252,7 @@ namespace Lumina
                 ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 4));
                 ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 4));
 
-                // Header: name + ID for the focal entity, with a "+N more" badge when there's a wider selection.
+                // A header of name and ID for the focal entity, with a more badge for a wider selection.
                 {
                     const SNameComponent* HeaderName = Registry.try_get<SNameComponent>(LastSelected);
                     FStringView HeaderText = HeaderName ? FStringView(HeaderName->Name.c_str()) : FStringView("<unnamed>");
@@ -2329,7 +2279,7 @@ namespace Lumina
                 ImGui::Separator();
                 ImGui::Spacing();
 
-                // Edit: clipboard + duplicate.
+                // Edit actions, the clipboard and duplicate.
                 if (!bLastSelectedLocked)
                 {
                     if (ImGui::MenuItem(LE_ICON_CONTENT_DUPLICATE " Duplicate", "Ctrl+D"))
@@ -2563,8 +2513,7 @@ namespace Lumina
 
     void FWorldEditorTool::DrawViewportToolbarModeSelector(float ButtonSize)
     {
-        // Mode-selector dropdown: mutually exclusive; switching drives OnEnter/OnExit. The active
-        // mode then appends its own toolbar, so the bar stays clean regardless of mode count.
+        // The active mode appends its own toolbar, so the bar stays clean regardless of mode count.
         ImGui::SameLine();
         ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
         ImGui::SameLine();
@@ -2625,8 +2574,7 @@ namespace Lumina
         ImGui::MenuItem("Draw Entity Debug Info", nullptr, &bDrawEntityDebugInfo);
         ImGui::MenuItem("Network (AOI / Grid)", nullptr, &bDrawNetworkDebug);
 
-        // Route through ToggleGameViewMode so grid/billboard/visualizer state is saved and restored;
-        // the bool* MenuItem overload would flip the flag without doing any of that.
+        // The bool overload would flip the flag without saving and restoring grid and billboard state.
         if (ImGui::MenuItem("Game View", "G", bGameViewMode))
         {
             ToggleGameViewMode();
@@ -2851,8 +2799,7 @@ namespace Lumina
 
         const bool bHasScript = Registry.all_of<SEntityScriptComponent>(Entity);
 
-        // Inline searchable dropdown of every loaded C# EntityScript class. Always offered -- it assigns
-        // a script, or swaps the one already on the entity for a quick change.
+        // Always offered, since it either assigns a script or swaps the one already on the entity.
         TVector<FString> Types;
         DotNet::GatherEntityScriptTypes(Types);
 
@@ -2894,7 +2841,7 @@ namespace Lumina
         const bool bHad = Registry.all_of<SEntityScriptComponent>(Entity);
 
         BeginTransaction();
-        // Attach by class -- the same call for a C++ script and a C# one. OnReady runs on the next tick.
+        // Attaches by class, the same call for a C++ script and a C# one, with OnReady on the next tick.
         EntityScripts::Attach(Registry, Entity, FindObject<CClass>(FName(ScriptClass)));
         EndTransaction(bHad ? "Add Script" : "Attach Script");
 
@@ -2940,8 +2887,7 @@ namespace Lumina
             return;
         }
 
-        // The world editor saves its live CWorld in place (it is not held as the FAssetEditorTool
-        // Asset). Thumbnail comes from the viewport, not the asset thumbnail manager.
+        // The world editor saves its live CWorld in place, and the thumbnail comes from the viewport.
         if (ShouldGenerateThumbnailOnSave())
         {
             GenerateThumbnail(World->GetPackage());
@@ -3086,8 +3032,7 @@ namespace Lumina
 
     namespace
     {
-        // Capture-time snapshot the modal needs: which entities to capture, the pivot, the suggested name,
-        // and a precomputed total entity count so the modal can show the user exactly what's being captured.
+        // Includes a precomputed entity count, so the modal shows exactly what is being captured.
         struct FCreatePrefabRequest
         {
             TVector<entt::entity> Roots;
@@ -3139,7 +3084,7 @@ namespace Lumina
 
         entt::registry& Registry = ECS::GetWorldRegistry(*World);
 
-        // Filter the selection: drop invalid handles and prefab-instance children whose hierarchy is locked.
+        // Drops invalid handles and prefab-instance children whose hierarchy is locked.
         THashSet<entt::entity> Filtered;
         for (entt::entity Entity : SelectedEntities)
         {
@@ -3155,7 +3100,7 @@ namespace Lumina
             return;
         }
 
-        // Reduce to top-level entities: if any ancestor is also selected, we descend through the parent.
+        // If any ancestor is also selected, the descent happens through the parent instead.
         TVector<entt::entity> Roots;
         Roots.reserve(Filtered.size());
         for (entt::entity Entity : Filtered)
@@ -3272,7 +3217,7 @@ namespace Lumina
             if (Prefab == nullptr) { ErrorMessage = "Failed to create prefab object."; return false; }
             Prefab->SetFlag(OF_Public);
 
-            // Multi-root: build scratch parent at pivot, reparent top-level entities under it (ReparentEntity is world-preserving), then capture and restore.
+            // A scratch parent at the pivot, reparented world-preserving, then captured and restored.
             entt::entity CaptureRoot = entt::null;
             entt::entity ScratchRoot = entt::null;
             TVector<entt::entity> OriginalParents;
@@ -3318,7 +3263,7 @@ namespace Lumina
                 }
             });
 
-            // Restore the world: detach top-level entities back to their original parents, drop the scratch.
+            // Detaches top-level entities back to their original parents and drops the scratch.
             if (ScratchRoot != entt::null)
             {
                 for (size_t i = 0; i < Req.Roots.size(); ++i)
@@ -3393,8 +3338,7 @@ namespace Lumina
             return;
         }
 
-        // Both reads happen BEFORE the refresh: RefreshInstance rewrites this entity's components,
-        // so the pointer above is dangling the moment it runs.
+        // RefreshInstance rewrites this entity's components, so the pointer above dangles once it runs.
         CPrefab* Source = Instance->SourcePrefab.Get();
         if (Source == nullptr)
         {
@@ -3403,8 +3347,7 @@ namespace Lumina
         }
         const FName PrefabName = Source->GetName();
 
-        // Structural: the refresh adds, destroys and reparents entities, so this needs the general
-        // whole-registry snapshot, not BeginTransformTransaction.
+        // The refresh adds, destroys and reparents, so this needs the whole-registry snapshot.
         BeginTransaction();
         Source->RefreshInstance(World, InstanceRoot);
         EndTransaction("Resync Prefab");
@@ -3454,8 +3397,7 @@ namespace Lumina
             SetObservedWorld(nullptr);
         }
 
-        // Unbind observers from whatever registry we're actually observing (tracked), then RebindRegistryObservers
-        // below re-binds to the new World. Clearing selection tags is on the current World's registry.
+        // RebindRegistryObservers re-binds to the new world, and tags clear on the current one.
         UnbindRegistryObservers();
         if (World)
         {
@@ -3464,7 +3406,7 @@ namespace Lumina
             OldRegistry.clear<FLastSelectedTag>();
         }
 
-        // Drop anything pointing at the old registry: property tables hold raw component pointers; selection cache holds old entt handles.
+        // Property tables hold raw component pointers and the selection cache holds old handles.
         PropertyTables.clear();
         SelectedEntities.clear();
         LastSelectedEntity = entt::null;
@@ -3487,8 +3429,7 @@ namespace Lumina
             return;
         }
 
-        // Entity is leaving the registry: drop from selection, fix up LastSelectedEntity,
-        // invalidate cached property tables (their component pointers are about to dangle).
+        // Cached property tables are invalidated, since their component pointers are about to dangle.
         if (SelectedEntities.find(Entity) != SelectedEntities.end())
         {
             SelectedEntities.erase(Entity);
@@ -3525,8 +3466,7 @@ namespace Lumina
         {
             if (!bSimulatingWorld)
             {
-                // Play/Simulate duplicate the world, which needs a package. An unsaved transient
-                // world has none, so disable both rather than letting StartPIE return null mid-launch.
+                // An unsaved transient world has no package, so disable both rather than let StartPIE return null.
                 const bool bCanSimulate = World != nullptr && World->GetPackage() != nullptr;
 
                 ImGui::BeginDisabled(!bCanSimulate);
@@ -3630,8 +3570,7 @@ namespace Lumina
     {
         const bool bPaused = IsPlaySessionPaused();
 
-        // Green (Play) when paused, amber (Pause) when running -- the button always advertises what
-        // the NEXT click does, matching the Play/Stop buttons either side of it.
+        // The button always advertises what the NEXT click does, matching Play and Stop beside it.
         ImGui::PushStyleColor(ImGuiCol_Button,        bPaused ? ImVec4(0.2f, 0.7f, 0.3f, 0.8f) : ImVec4(0.85f, 0.65f, 0.15f, 0.8f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, bPaused ? ImVec4(0.3f, 0.8f, 0.4f, 1.0f) : ImVec4(0.95f, 0.75f, 0.25f, 1.0f));
         if (ImGuiX::IconButton(bPaused ? LE_ICON_PLAY : LE_ICON_PAUSE, "##PauseResumeBtn", 0xFFFFFFFF, ButtonSize))
@@ -3652,8 +3591,7 @@ namespace Lumina
 
     bool FWorldEditorTool::IsPlaySessionPaused() const
     {
-        // The tool rebinds to the PIE/Simulation world for the duration of the session, so this is the
-        // session's own pause state. Editor worlds are permanently paused, hence the play-state gate.
+        // Editor worlds are permanently paused, hence the play-state gate on this session's own pause.
         return (bGamePreviewRunning || bSimulatingWorld) && World != nullptr && World->IsPaused();
     }
 
@@ -3664,10 +3602,7 @@ namespace Lumina
             return;
         }
 
-        // Every live play world, not just the one the viewport is bound to: multiplayer PIE spawns a
-        // world per player plus a hidden dedicated server, and pausing only ours would leave the rest
-        // simulating against a frozen client. Editor worlds are skipped -- they are always paused, and
-        // un-pausing one would start ticking gameplay systems in the level being edited.
+        // Multiplayer PIE spawns a world per player, and pausing only ours leaves the rest simulating.
         for (const TUniquePtr<FWorldContext>& Context : GWorldManager->GetContexts())
         {
             CWorld* Candidate = Context ? Context->World.Get() : nullptr;
@@ -3717,8 +3652,7 @@ namespace Lumina
         {
             if (EditorEntity != entt::null)
             {
-                // A play session has no editor entity (SetWorldPlayInEditor nulls it); one here means
-                // some other path already built a camera in this world, and a second would leak it.
+                // A play session has no editor entity, so one here means another path already built a camera.
                 LOG_WARN("Eject: the PIE world already has an editor camera; ignoring.");
                 return;
             }
@@ -3735,8 +3669,7 @@ namespace Lumina
                 bHasPose = true;
             }
 
-            // Builds the same flycam entity the editor and Simulate already fly, but in the PIE world.
-            // TickEditorCamera has no game-world gate, so it drives it with no further plumbing.
+            // TickEditorCamera has no game-world gate, so it drives the flycam with no further plumbing.
             SetupWorldForTool();
 
             // Start from the game camera's pose; the default pose would drop you at the world origin.
@@ -3746,23 +3679,20 @@ namespace Lumina
                 World->EmplaceComponent<FNeedsTransformUpdate>(EditorEntity);
             }
 
-            // Selecting and gizmoing a live entity is the point of ejecting, and game view hides the
-            // overlays that make that usable. Only reversed on possess if we were the one to turn it off.
+            // Game view hides the overlays that make selecting a live entity usable.
             bRestoreGameViewOnPossess = bGameViewMode;
             if (bGameViewMode)
             {
                 ToggleGameViewMode();
             }
 
-            // Set last: HasEditorCameraControl() flips with it, and the click-to-refocus-the-game
-            // handler in FEditorTool reads that on the very next viewport draw.
+            // Set last, since HasEditorCameraControl flips with it and the refocus handler reads it next draw.
             bEjectedFromPlay = true;
             SetInputFocus(EInputFocus::Editor);
         }
         else
         {
-            // Re-activate the game camera BEFORE destroying the flycam, so the world is never left with
-            // a resolved view pointing at a dead entity for a frame.
+            // Re-activated first, so the world is never left with a resolved view on a dead entity.
             if (PossessedCameraEntity != entt::null && World->IsValidEntity(PossessedCameraEntity))
             {
                 World->SetActiveCamera(PossessedCameraEntity);
@@ -3797,9 +3727,7 @@ namespace Lumina
             return;
         }
 
-        // Travel swaps the PIE world mid-session and takes the flycam with it; a stop we didn't drive
-        // does the same. Fall back to a clean un-ejected state rather than flying a dangling handle.
-        // Deliberately NOT SetEjectedFromPlay(false): its possess path would touch the dead world.
+        // Deliberately NOT SetEjectedFromPlay(false), since its possess path would touch the dead world.
         if (!bGamePreviewRunning || World == nullptr
             || EditorEntity == entt::null || !World->IsValidEntity(EditorEntity))
         {
@@ -3832,7 +3760,7 @@ namespace Lumina
             PlaySettings.NumPlayers = (Num < 1) ? 1 : (Num > MaxPlayers ? MaxPlayers : Num);
         }
 
-        // Order must match ENetMode: Standalone, Client, ListenServer, DedicatedServer.
+        // Order must match ENetMode, so Standalone, Client, ListenServer, then DedicatedServer.
         static const char* const NetModeNames[] = { "Standalone", "Client", "Listen Server", "Dedicated Server" };
         int32 ModeIdx = (int32)PlaySettings.NetMode;
         ImGui::SetNextItemWidth(170.0f);
@@ -3845,8 +3773,7 @@ namespace Lumina
         ImGui::Checkbox("Separate Processes (soon)", &PlaySettings.bSeparateProcesses);
         ImGui::EndDisabled();
 
-        // Network condition simulation. Bound straight to the CVars the transport reads, so dragging
-        // these takes effect live (even mid-PIE). Meaningless without a network, so gate on Standalone.
+        // Bound straight to the CVars the transport reads, so dragging these takes effect live.
         ImGui::Separator();
         ImGui::TextUnformatted("Network Simulation");
         {
@@ -3883,8 +3810,7 @@ namespace Lumina
         case ENetMode::Standalone:      return ENetMode::Standalone;
         case ENetMode::Client:          return ENetMode::Client;
         case ENetMode::ListenServer:    return PlayerIndex == 0 ? ENetMode::ListenServer : ENetMode::Client;
-        // Dedicated server is a separate hidden world (spawned in SetWorldPlayInEditor); every visible
-        // player is a client.
+        // The dedicated server is a separate hidden world, so every visible player is a client.
         case ENetMode::DedicatedServer: return ENetMode::Client;
         }
         return ENetMode::Standalone;
@@ -3902,8 +3828,7 @@ namespace Lumina
         // Outliner topology may have changed; force a rebuild.
         OutlinerListView.MarkTreeDirty();
 
-        // Terrain GPU mirrors are transient and not serialized, so the restored
-        // heightmap/weights won't show until we flag a full re-upload + chunk rebuild.
+        // Terrain GPU mirrors are transient, so a restore needs a full re-upload and chunk rebuild.
         if (World)
         {
             auto TerrainView = ECS::GetWorldRegistry(*World).view<STerrainComponent>();
@@ -3919,7 +3844,7 @@ namespace Lumina
 
     bool FWorldEditorTool::AllowsUndoRedo() const
     {
-        // Not during PIE/Simulate: World then points at the transient play world, not the edited source registry.
+        // Not during play, since World then points at the transient world, not the edited source.
         return World != nullptr && World->GetWorldType() == EWorldType::Editor;
     }
 
@@ -3972,15 +3897,14 @@ namespace Lumina
 
     void FWorldEditorTool::SetObservedWorld(CWorld* NewWorld)
     {
-        // Sentinel: observing the tool's own world is "follow World" (ObservedWorld == nullptr).
+        // A sentinel, where observing the tool's own world means following World with a null observed.
         CWorld* Target = (NewWorld == World.Get()) ? nullptr : NewWorld;
         if (Target == ObservedWorld)
         {
             return;
         }
 
-        // Caller guarantees the currently-observed registry is still alive here (foreign worlds are reset
-        // before teardown; the dead-world case is handled by the validation in Update, not this path).
+        // Foreign worlds are reset before teardown, and Update validates the dead-world case.
         UnbindRegistryObservers();
 
         // Old entt handles + component pointers mean nothing against the new registry.
@@ -4009,8 +3933,7 @@ namespace Lumina
             return;
         }
 
-        // Candidates: this tool's own world plus every live play world (Game/Simulation). Other tools'
-        // editor preview worlds (mesh/prefab/etc.) are excluded so the selector only appears for play.
+        // Other tools' preview worlds are excluded, so the selector only appears for play.
         TVector<FWorldContext*> Candidates;
         for (const TUniquePtr<FWorldContext>& Ctx : GWorldManager->GetContexts())
         {
@@ -4120,8 +4043,7 @@ namespace Lumina
 
         EditorEntity = entt::null;
 
-        // RebindToWorld updates World + InputViewport. ProxyWorld / ProxyEditorEntity are untouched
-        // so SetWorldPlayInEditor(false) can still restore the editor's source map on stop.
+        // ProxyWorld is untouched, so stopping play can still restore the editor's source map.
         RebindToWorld(NewWorld);
 
         WorldSettingsPropertyTable = MakeUnique<FPropertyTable>(&World->GetDefaultWorldSettings(), SDefaultWorldSettings::StaticStruct());
@@ -4134,8 +4056,7 @@ namespace Lumina
 
         RebindRegistryObservers();
 
-        // Simulate mode owns the editor entity inside the active world; rebuild it against NewWorld
-        // or simulate-exit dereferences entt::null when reading transform/camera.
+        // Simulate owns the editor entity, so rebuild it or simulate-exit dereferences a null handle.
         if (bSimulatingWorld)
         {
             SetupWorldForTool();
@@ -4149,8 +4070,7 @@ namespace Lumina
             return;
         }
 
-        // Detach from any inspected foreign world while its registry is still alive -- stopping play tears
-        // those worlds down, which would otherwise leave our observers dangling.
+        // Stopping play tears those worlds down, which would leave our observers dangling.
         if (IsInspectingForeignWorld())
         {
             SetObservedWorld(nullptr);
@@ -4166,7 +4086,7 @@ namespace Lumina
             DetailsEntity = entt::null;
             bDetailsDirty = true;
 
-            // Clear selection tags before stashing: leftover tags on ProxyWorld confuse the outliner rebuild on PIE-exit.
+            // Leftover tags on ProxyWorld confuse the outliner rebuild on PIE-exit.
             ECS::GetWorldRegistry(*World).clear<FSelectedInEditorComponent>();
             ECS::GetWorldRegistry(*World).clear<FLastSelectedTag>();
 
@@ -4174,9 +4094,7 @@ namespace Lumina
             ProxyWorld = World;
             ProxyEditorEntity = EditorEntity;
 
-            // Dedicated server: spawn a hidden, non-rendered server world (no viewport) before the player
-            // worlds. Its DedicatedServer net mode makes CreateRenderer a no-op, so it stays invisible
-            // while the editor renders the client worlds, and it listens for the clients on loopback:7777.
+            // Its net mode makes CreateRenderer a no-op, so it stays invisible and listens on loopback.
             if (PlaySettings.NetMode == ENetMode::DedicatedServer)
             {
                 PIEDedicatedServerWorld = GWorldManager->StartPIE(ProxyWorld, EWorldType::Game, ENetMode::DedicatedServer);
@@ -4186,8 +4104,7 @@ namespace Lumina
                 }
             }
 
-            // PIE world owned by FWorldManager; RebindToWorld is a pointer-only swap. StartPIE
-            // returns null when the world can't be duplicated, so bail before rebinding to null.
+            // StartPIE returns null when the world cannot be duplicated, so bail before rebinding to null.
             CWorld* PIEWorld = GWorldManager->StartPIE(ProxyWorld, EWorldType::Game, ResolvePlayerNetMode(0));
             if (PIEWorld == nullptr)
             {
@@ -4214,10 +4131,10 @@ namespace Lumina
 
             RebindRegistryObservers();
 
-            // Play starts in Game focus: ImGui stands down, input goes to game + UI.
+            // Play starts in Game focus, so ImGui stands down and input goes to the game and its UI.
             SetInputFocus(EInputFocus::Game);
 
-            // Players 2..N: FEditorUI spawns their PIE worlds + Game Preview pop-ups (deferred tool create).
+            // FEditorUI spawns the other players' PIE worlds and pop-ups through a deferred tool create.
             OnGamePreviewStartRequested.Broadcast();
             FCoreEditorDelegates::OnPIEBegin.Broadcast(PIEWorld);
         }
@@ -4236,9 +4153,7 @@ namespace Lumina
                 PIEDedicatedServerWorld = nullptr;
             }
 
-            // Drop eject state while the PIE world is still alive. Not via SetEjectedFromPlay: the
-            // possess path would rebuild a camera in a world about to be torn down, and the code below
-            // already restores editor focus and clears game view.
+            // Not via SetEjectedFromPlay, whose possess path would rebuild a camera in a dying world.
             bEjectedFromPlay = false;
             PossessedCameraEntity = entt::null;
             bRestoreGameViewOnPossess = false;
@@ -4255,8 +4170,7 @@ namespace Lumina
             // Hand input back to the editor on stop.
             SetInputFocus(EInputFocus::Editor);
 
-            // SetWorld -> SetupWorldForTool builds a fresh editor entity at the default origin. Stash the
-            // pre-Play camera pose so we can restore it; otherwise the viewport snaps back to world 0 on stop.
+            // SetupWorldForTool builds a fresh editor entity at origin, so stash the pre-Play camera pose.
             bool bHasSavedCamera = false;
             FTransform SavedCameraTransform;
             SCameraComponent SavedCamera;
@@ -4328,7 +4242,7 @@ namespace Lumina
             bDetailsDirty = true;
             bSimulatingWorld = true;
 
-            // Clear selection tags before stashing: leftover tags on ProxyWorld confuse the outliner rebuild on Simulate-exit.
+            // Leftover tags on ProxyWorld confuse the outliner rebuild on Simulate-exit.
             ECS::GetWorldRegistry(*World).clear<FSelectedInEditorComponent>();
             ECS::GetWorldRegistry(*World).clear<FLastSelectedTag>();
 
@@ -4339,8 +4253,7 @@ namespace Lumina
             ProxyWorld = World;
             ProxyEditorEntity = EditorEntity;
 
-            // StartPIE returns null when the world can't be duplicated (e.g. an unsaved
-            // transient world has no package). Bail before rebinding to null and dereferencing it.
+            // StartPIE returns null when the world cannot be duplicated, so bail before dereferencing it.
             CWorld* SimWorld = GWorldManager->StartPIE(ProxyWorld, EWorldType::Simulation, ENetMode::Standalone);
             if (SimWorld == nullptr)
             {
@@ -4442,17 +4355,13 @@ namespace Lumina
     {
         InputFocus = NewFocus;
 
-        // Game-input focus is a single global state (gated against the active viewport), so it survives the
-        // one global active viewport across multiple PIE preview windows. FEditorUI drives the ImGui
-        // stand-down flags off this each frame; SetGameInputFocused(false) hands the cursor back everywhere.
+        // One global state, so handing the cursor back reaches every PIE preview window at once.
         FInputViewportRegistry::Get().SetGameInputFocused(NewFocus == EInputFocus::Game);
     }
 
     bool FWorldEditorTool::OnEvent(FEvent& Event)
     {
-        // Shift+F1 (game-input focus toggle) is handled globally in FEditorUI::OnEvent so it works from any
-        // preview window. Esc ends the play session; handled here off the raw event since Game focus's
-        // NoKeyboard hides the key from ImGui. Deferred to Update, since stopping tears down the PIE world.
+        // Game focus hides the key from ImGui, and stopping tears down the world, so it defers to Update.
         if (bGamePreviewRunning && Event.IsA<FKeyPressedEvent>())
         {
             FKeyPressedEvent& Key = Event.As<FKeyPressedEvent>();
@@ -4467,8 +4376,7 @@ namespace Lumina
 
     void FWorldEditorTool::HandleEntityEditorDragDrop(FTreeListView& Tree, entt::entity DropItem)
     {
-        // Distinguish entity reparent from asset drop by inspecting the typed
-        // payload rather than racing two AcceptDragDropPayload calls.
+        // Inspects the typed payload rather than racing two AcceptDragDropPayload calls.
         const DragDrop::FPayload* Peek = DragDrop::PeekPayload();
         if (Peek == nullptr)
         {
@@ -4596,7 +4504,7 @@ namespace Lumina
         WorldSettingsPropertyTable->DrawTree();
     }
 
-    // Stages a system ticks in, compacted: lists up to three, else a count.
+    // Lists up to three stages, otherwise a count.
     static FString SystemStageSummary(const TVector<EUpdateStage>& Stages)
     {
         if (Stages.empty())
@@ -4619,9 +4527,7 @@ namespace Lumina
         return Out;
     }
 
-    // One polished system row: rounded background, a colored left accent bar, an icon, the name, a
-    // right-aligned muted stage summary, and (for script systems) a trailing trash button. Returns true
-    // when the row body is clicked; sets *OutTrash when the trash button is clicked.
+    // Returns true when the row body is clicked, and sets OutTrash when the trash button is.
     static bool DrawSystemRow(const char* Icon, const ImVec4& Accent, const char* Name, const FString& Stages,
                               bool bDimmed, bool bShowTrash, const char* Tooltip, bool* OutTrash)
     {
@@ -4642,7 +4548,7 @@ namespace Lumina
         const ImVec2 P1     = ImVec2(P0.x + Avail, P0.y + Height);
 
         ImGui::SetCursorScreenPos(P0);
-        // Floor the width: InvisibleButton asserts on an exactly-zero dimension when the panel is dragged to ~0.
+        // Floored, since InvisibleButton asserts on an exactly-zero dimension at a dragged-flat panel.
         const float RowWidth = Avail - TrashW;
         const bool bClicked = ImGui::InvisibleButton("##row", ImVec2(RowWidth < 1.0f ? 1.0f : RowWidth, Height));
         const bool bHovered = ImGui::IsItemHovered();
@@ -4807,8 +4713,7 @@ namespace Lumina
                 EmptyState("No systems match the filter.");
             }
 
-            // The rows finish by advancing the cursor with a bare SetCursorScreenPos; submit a real (zero-size)
-            // item as the LAST op so IsSetPos is cleared and ImGui's extend-bounds check isn't invoked at EndChild.
+            // A real zero-size item as the LAST op clears IsSetPos before EndChild checks bounds.
             ImGui::Dummy(ImVec2(0.0f, 0.0f));
         }
         ImGui::EndChild();
@@ -4818,7 +4723,7 @@ namespace Lumina
     {
         const DragDrop::FPayload* Peek = DragDrop::PeekPayload();
 
-        // Empty space is the root: an entity dropped here leaves both its folder and its entity parent.
+        // Empty space is the root, so an entity dropped here leaves both its folder and its parent.
         if (Peek != nullptr && Peek->Kind == DragDrop::EPayloadKind::Entity)
         {
             CWorld* OutWorld = nullptr;

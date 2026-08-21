@@ -317,8 +317,7 @@ namespace Lumina
         }
     }
 
-    // Keeps Keys time-sorted after a drag and rewrites the selection (and the tangent drag target)
-    // through the permutation, so entries keep pointing at the same keys.
+    // Rewrites the selection and tangent drag target through the permutation so they follow their keys.
     void FCurveEditorWidget::ResortAndRemapSelection()
     {
         const int32 Num = Curve->NumKeys();
@@ -830,7 +829,7 @@ namespace Lumina
 
         const ImVec2 Mouse = ImGui::GetIO().MousePos;
 
-        // Tangent grabbers win over keys: they sit further from the curve and are easier to miss.
+        // Tangent grabbers win over keys, since they sit further from the curve and are easier to miss.
         for (int32 Index : Selection)
         {
             if (Index < 0 || Index >= Curve->NumKeys() || !Curve->Keys[Index].IsCubic())

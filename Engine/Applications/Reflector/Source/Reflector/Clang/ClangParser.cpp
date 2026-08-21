@@ -140,9 +140,7 @@ namespace Lumina::Reflection
         }
         AmalgamationFile << "#pragma once\n\n";
         
-        // Needed to keep dynamic args alive. The pointer array is built only once every argument
-        // is in place: taking c_str() as we go dangles the moment the storage reallocates, and a
-        // fixed cap here silently mis-parsed the whole workspace once the include dirs outgrew it.
+        // The pointer array is built only once every argument is in place, or c_str() dangles on realloc.
         std::vector<std::string> ClangArgStorage;
         std::vector<const char*>   ClangArgs;
 
@@ -264,10 +262,7 @@ namespace Lumina::Reflection
 
         CXCursor Cursor = clang_getTranslationUnitCursor(TranslationUnit);
 
-        // A non-zero return means a visitor asked to stop, which abandons every cursor after it
-        // and silently drops the reflection data for the rest of the workspace. Visitors report
-        // their own problems and keep going, so reaching this is a defect in the walk itself
-        // rather than something the user can act on in their code.
+        // A non-zero return abandons every later cursor, so reaching this is a defect in the walk itself.
         if (clang_visitChildren(Cursor, VisitTranslationUnit, &ParsingContext) != 0)
         {
             FDiagLocation Loc;

@@ -17,8 +17,7 @@ namespace Lumina
 {
     namespace
     {
-        // Pulls display metadata out of the face. Failure is non-fatal; the bytes are still a valid asset,
-        // the fields just stay at their defaults.
+        // Failure is non-fatal, since the bytes are still a valid asset and the fields keep their defaults.
         void ExtractFontMetadata(CFont* Font)
         {
             FT_Library Library = nullptr;

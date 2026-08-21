@@ -11,9 +11,7 @@ namespace Lumina
 {
     namespace
     {
-        // Every concrete CEntityScript subclass in the project: native C++ scripts and minted C# ones alike,
-        // because both are just CClasses deriving the same base. Excludes the base itself and class default
-        // objects. Rebuilt per frame -- this is an inspector, and the set changes on every script hot reload.
+        // Rebuilt per frame, since this is an inspector and the set changes on every script hot reload.
         void GatherScriptClasses(TVector<CClass*>& Out)
         {
             Out.clear();
@@ -62,8 +60,7 @@ namespace Lumina
             const float ButtonWidth = ImGui::GetFrameHeight();
             const float HeaderRight = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
 
-            // AllowOverlap so the right-aligned remove button gets its own clicks instead of the header
-            // swallowing them and toggling collapse.
+            // AllowOverlap so the remove button gets its own clicks instead of the header toggling collapse.
             ImGui::SetNextItemOpen(true, ImGuiCond_FirstUseEver);
             const bool bOpen = ImGui::CollapsingHeader((HeaderLabel + "##scripthdr").c_str(), ImGuiTreeNodeFlags_AllowOverlap);
 
@@ -90,21 +87,13 @@ namespace Lumina
 
             if (bOpen && Script != nullptr && Script->GetClass() != nullptr)
             {
-                // A script's [Property] members are real FPropertys on its class, so the stock table draws
-                // them -- no bespoke drawer, and native and C# scripts render identically.
-                //
-                // The class is compared as well as the pointer: a destroyed script can be followed by a
-                // different one allocated at the same address, which the pointer test alone would miss and
-                // then draw with the wrong layout.
+                // The class is compared too, since a new script can land at a destroyed one's address.
                 if (View.BoundScript != Script || View.BoundClass != Script->GetClass())
                 {
                     View.ValueTable = MakeUnique<FPropertyTable>(static_cast<void*>(Script), static_cast<CStruct*>(Script->GetClass()));
                     View.ValueTable->SetShowSearchBar(false);
 
-                    // The nested table is a separate FPropertyTable, so its edits do not pass through the
-                    // outer one. Route them back out as this customization's own change op, which is what
-                    // puts a script property edit under the same transaction and scene-dirty handling as
-                    // every other property in the panel.
+                    // Routed out as this customization's op, so a script edit shares the panel's transaction handling.
                     View.ValueTable->SetStartEditCallback ([this](const FPropertyChangedEvent&) { NestedChangeOp = EPropertyChangeOp::Started; });
                     View.ValueTable->SetPostEditCallback  ([this](const FPropertyChangedEvent&)
                     {
@@ -137,10 +126,7 @@ namespace Lumina
                 {
                     PendingMutation = [Component, Class]
                     {
-                        // Constructed here rather than through EntityScripts::Attach: the customization has
-                        // the component but not the registry/entity. The driver adopts an owner-less script
-                        // on the next tick (running OnAttach then OnReady), which is the same path a
-                        // deserialized script takes.
+                        // The driver adopts an owner-less script next tick, the same path a deserialized script takes.
                         if (CObject* Created = NewObject(Class, nullptr, NAME_None, FGuid::New(), OF_Transient))
                         {
                             Component->Scripts.push_back(static_cast<CEntityScript*>(Created));
@@ -169,8 +155,7 @@ namespace Lumina
             return EPropertyChangeOp::Finished;
         }
 
-        // An edit inside one of the nested script tables. Reported after the add/remove ops above so a
-        // structural change to the script list always wins the frame.
+        // Reported after the add and remove ops, so a structural change always wins the frame.
         if (NestedChangeOp != EPropertyChangeOp::None)
         {
             const EPropertyChangeOp Op = NestedChangeOp;
@@ -192,12 +177,6 @@ namespace Lumina
 
     void FEntityScriptComponentCustomization::HandleExternalUpdate(const TSharedPtr<FPropertyHandle>& Property)
     {
-        // Deliberately empty, and it must stay cheap and idempotent: UpdateAndDraw calls this on EVERY draw,
-        // not only when something replaced the value. Clearing the cached tables here rebuilt them each frame,
-        // which threw away every widget's in-progress state -- a field could be clicked but never edited.
-        //
-        // Rebinding is handled where it can be decided per slot instead: DrawProperty rebuilds a slot's table
-        // only when that slot's script object or its class actually changed. A script-generation change is
-        // handled further out still, by the details panel dropping every table (FSceneEditorTool).
+        // Must stay cheap and idempotent, since UpdateAndDraw calls this on EVERY draw.
     }
 }

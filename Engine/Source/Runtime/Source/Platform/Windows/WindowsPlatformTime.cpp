@@ -151,8 +151,7 @@ namespace Lumina::PlatformTime
         ::Sleep(static_cast<DWORD>((Microseconds + 999u) / 1000u));
     }
 
-    // Just SwitchToThread: the Sleep(0) fallback hands over the whole quantum and cost the job system
-    // roughly 4x on its assist spin loops.
+    // The Sleep(0) fallback hands over the whole quantum and cost the job system roughly 4x.
     void YieldThread() noexcept
     {
         SwitchToThread();

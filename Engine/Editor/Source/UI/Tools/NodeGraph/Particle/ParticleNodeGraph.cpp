@@ -46,8 +46,7 @@ namespace Lumina
             Node->ClearError();
         }
 
-        // Cycle detection only. Emission itself is demand-driven from the output
-        // node, so we don't need the sorted list.
+        // Cycle detection only, since emission is demand-driven from the output node.
         TVector<CEdGraphNode*> SortedNodes;
         CEdGraphNode* CyclicNode = GraphAlgorithms::TopologicalSortFromRoot(Nodes, SortedNodes, [](CEdGraphNode* Node)
         {

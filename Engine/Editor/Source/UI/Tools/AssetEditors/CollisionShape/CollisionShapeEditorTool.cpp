@@ -221,8 +221,7 @@ namespace Lumina
     {
         FAssetEditorTool::OnPostUndoRedo();
 
-        // A restore rewrites Primitives wholesale, so the details pointer into an element is stale and the
-        // selection may be past the end.
+        // A restore rewrites Primitives wholesale, so the details pointer and selection go stale.
         DetailsTarget = nullptr;
 
         CCollisionShape* Shape = GetAsset<CCollisionShape>();
@@ -272,8 +271,7 @@ namespace Lumina
     {
         CCollisionShape* Shape = GetAsset<CCollisionShape>();
 
-        // A baked triangle mesh replaces the primitives rather than adding to them, so it is drawn alone
-        // to match what would actually be built.
+        // A baked triangle mesh replaces the primitives, so draw it alone to match what gets built.
         if (Shape->IsConcave())
         {
             for (SIZE_T i = 0; i + 2 < Shape->TriangleIndices.size(); i += 3)
@@ -548,7 +546,7 @@ namespace Lumina
             ImGui::PopID();
         }
 
-        // Deferred: erasing mid-iteration invalidates the loop and every row after it.
+        // Deferred, since erasing mid-iteration invalidates the loop and every row after it.
         if (PendingRemoval != INDEX_NONE)
         {
             RemovePrimitiveAt(PendingRemoval);
@@ -651,7 +649,7 @@ namespace Lumina
                 break;
 
             case ECollisionPrimitiveType::Capsule:
-                // Approximated by its bounding box: exact enough to pick, and picking is the only user.
+                // Approximated by its bounding box, which is exact enough for the only user, picking.
                 bHit = RayHitsBox(RayOrigin, RayDirection, Matrix,
                     FVector3(Primitive.Radius, Primitive.HalfHeight + Primitive.Radius, Primitive.Radius), Distance);
                 break;
@@ -780,7 +778,7 @@ namespace Lumina
 
     void FCollisionShapeEditorTool::DrawViewportOverlayElements(const FUpdateContext& UpdateContext, ImTextureRef ViewportTexture, ImVec2 ViewportSize)
     {
-        // Read before the base call: the base submits a Dummy, which advances the cursor off the origin.
+        // Read before the base call, since the base submits a Dummy that advances the cursor.
         const ImVec2 ViewportOrigin = ImGui::GetCursorScreenPos();
 
         FAssetEditorTool::DrawViewportOverlayElements(UpdateContext, ViewportTexture, ViewportSize);
@@ -931,8 +929,7 @@ namespace Lumina
             return;
         }
 
-        // Pick on release with a small drag threshold, so a click that became a camera move does not
-        // also reselect.
+        // Picks on release with a drag threshold, so a click that became a camera move does not reselect.
         if (HoveredHandle == INDEX_NONE && ImGui::IsMouseReleased(ImGuiMouseButton_Left))
         {
             const ImVec2 Drag = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);

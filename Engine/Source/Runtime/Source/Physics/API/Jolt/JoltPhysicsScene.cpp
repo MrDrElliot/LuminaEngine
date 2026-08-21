@@ -229,9 +229,7 @@ namespace Lumina::Physics
         TSpan<const uint32> IgnoreBodies;
     };
 
-    // Rejects character inner bodies so a character's MOVEMENT collision ignores other characters' proxies;
-    // char-vs-char is then handled solely by CharacterVsCharacterCollision (no double-collision). Only used on
-    // the serial character update, so reading the set is race-free.
+    // Only used on the serial character update, so reading the set is race-free.
     class FCharacterProxyFilter : public JPH::BodyFilter
     {
     public:
@@ -309,8 +307,7 @@ namespace Lumina::Physics
             return;
         }
 
-        // Jolt wants the relative surface velocity = body2 - body1 (world space). The angular term is taken
-        // about body1's center of mass (exact for a conveyor that is body1; an approximation if body2 spins).
+        // Taken about body1's center of mass, exact for a conveyor and an approximation if body2 spins.
         const FVector3 Lin1 = bActive1 ? SV1->Linear  : FVector3(0.0f);
         const FVector3 Lin2 = bActive2 ? SV2->Linear  : FVector3(0.0f);
         const FVector3 Ang1 = bActive1 ? SV1->Angular : FVector3(0.0f);
@@ -322,8 +319,7 @@ namespace Lumina::Physics
 
     void FJoltContactListener::OnContactAdded(const JPH::Body& inBody1, const JPH::Body& inBody2, const JPH::ContactManifold& inManifold, JPH::ContactSettings& ioSettings)
     {
-        // Apply per-material combine first so the constraint uses the right friction/restitution
-        // (Jolt invokes this once per contact pair per step before solving).
+        // Jolt invokes this once per contact pair per step before solving.
         OverrideFrictionAndRestitution(inBody1, inBody2, inManifold, ioSettings);
         ApplySurfaceVelocity(inBody1, inBody2, ioSettings);
 
@@ -335,8 +331,7 @@ namespace Lumina::Physics
 
     void FJoltContactListener::OnContactPersisted(const JPH::Body& inBody1, const JPH::Body& inBody2, const JPH::ContactManifold& inManifold, JPH::ContactSettings& ioSettings)
     {
-        // Don't dispatch to the bus (Enter/Exit cover scripts), but material combine + surface velocity must
-        // still run each step or resting contacts revert to Jolt's defaults (and the conveyor stops dragging).
+        // Without it a resting contact reverts to Jolt's defaults and the conveyor stops dragging.
         OverrideFrictionAndRestitution(inBody1, inBody2, inManifold, ioSettings);
         ApplySurfaceVelocity(inBody1, inBody2, ioSettings);
     }
@@ -356,7 +351,7 @@ namespace Lumina::Physics
             return;
         }
 
-        // OnContactRemoved: Jolt denies velocity read access here; GetLinearVelocity asserts (UB in release).
+        // Jolt denies velocity reads in OnContactRemoved, and GetLinearVelocity asserts there.
         FContactRecord Record;
         Record.Type      = EContactEventType::Removed;
         Record.EntityA   = static_cast<entt::entity>(B1->GetUserData());
@@ -384,8 +379,7 @@ namespace Lumina::Physics
         PendingActivations.enqueue(FActivationRecord{ Entity, bActivated });
     }
 
-    // Bulk-drain a staging queue into a reusable game-thread vector. Records are POD, so the stack batch
-    // costs nothing beyond the copy the queue would do anyway.
+    // Records are POD, so the stack batch costs nothing beyond the copy the queue would do anyway.
     template <typename TRecord, typename TQueueType>
     static bool DrainRecords(TQueueType& Queue, TVector<TRecord>& Out)
     {
@@ -418,16 +412,14 @@ namespace Lumina::Physics
             Event.OtherBodyID = OtherBodyID;
             Event.Point       = Record.Point;
 
-            // Convention: Normal points outward from self toward other so scripts
-            // can react with `-Normal` to bounce away from the impact.
+            // The normal points outward from self, so a script can react with its negation to bounce away.
             Event.Normal           = bFlipNormal ? -Record.Normal : Record.Normal;
             Event.Velocity         = bFlipNormal ? Record.VelocityB : Record.VelocityA;
             Event.OtherVelocity    = bFlipNormal ? Record.VelocityA : Record.VelocityB;
             Event.RelativeVelocity = Event.OtherVelocity - Event.Velocity;
             Event.ImpactSpeed      = Record.ImpactSpeed;
 
-            // bIsTrigger reports whether the OTHER side was a sensor; useful when the
-            // same handler covers both kinds.
+            // Reports whether the OTHER side was a sensor, useful when one handler covers both kinds.
             Event.bIsTrigger = bFlipNormal ? Record.bSensorA : Record.bSensorB;
             return Event;
         }
@@ -461,8 +453,7 @@ namespace Lumina::Physics
                 ? (bIsAdded ? Body->OnOverlapBegin : Body->OnOverlapEnd)
                 : (bIsAdded ? Body->OnContactBegin : Body->OnContactEnd);
 
-            // Scripts are dispatched independently of the delegate: an entity script overriding
-            // OnContactBegin must receive the event whether or not anything bound the component's delegate.
+            // An entity script overriding OnContactBegin must fire whether or not a delegate was bound.
             const bool bHasScripts = Registry.all_of<SEntityScriptComponent>(Self);
             if (!Delegate.IsBound() && !bHasScripts)
             {
@@ -527,8 +518,7 @@ namespace Lumina::Physics
 
     namespace
     {
-        // Combine a pair of values under a combine mode. The pair's effective mode is the max of
-        // each side's mode (Max > Min > Multiply > Average) so a "sticky" surface always wins.
+        // The pair's mode is the max of each side's, so a sticky surface always wins.
         FORCEINLINE float CombineUnder(EPhysicsMaterialCombineMode Mode, float A, float B)
         {
             switch (Mode)
@@ -543,8 +533,7 @@ namespace Lumina::Physics
 
         FORCEINLINE EPhysicsMaterialCombineMode PairMode(uint8 A, uint8 B)
         {
-            // Enum order (Average=0, Min=1, Multiply=2, Max=3) chosen so raw max yields the
-            // documented precedence.
+            // The enum order is chosen so a raw max yields the documented precedence.
             return (EPhysicsMaterialCombineMode)Math::Max<uint8>(A, B);
         }
     }
@@ -554,8 +543,7 @@ namespace Lumina::Physics
         const auto* M1 = Scene->GetBodyMaterial(inBody1.GetID());
         const auto* M2 = Scene->GetBodyMaterial(inBody2.GetID());
 
-        // No materials on either side: leave Jolt's defaults (already populated from the body's
-        // mFriction / mRestitution by the contact solver).
+        // Jolt's defaults are already populated from the body's own friction and restitution.
         if ((M1 == nullptr || !M1->bHasMaterial) && (M2 == nullptr || !M2->bHasMaterial))
         {
             return;
@@ -588,12 +576,7 @@ namespace Lumina::Physics
         outRestitution = inBody.GetRestitution();
     }
     
-    // CharacterVirtual contact listener. Reports the capsule's own contacts -- the ones the kinematic inner
-    // body doesn't generate, i.e. STATIC world geometry (walls, floors, terrain). Dynamic/kinematic contacts
-    // already reach the character's script through the inner body via the rigid FJoltContactListener (the
-    // inner body shares the capsule shape + carries the entity user data), so dispatching them here too would
-    // double-report; we skip them. Runs on the (parallel) character substep, so it only appends to the
-    // thread-safe contact queue, draining game-thread as the character's OnContactBegin.
+    // Dynamic contacts already reach the script through the inner body, so dispatching here would double-report.
     class FJoltCharacterContactListener : public JPH::CharacterContactListener
     {
     public:
@@ -641,8 +624,7 @@ namespace Lumina::Physics
         const JPH::BodyLockInterfaceNoLock* BodyLockInterface = nullptr;
     };
 
-    // Body sleep/wake listener. Jolt calls these during the step (any worker thread, body locked) with the
-    // body's user data = entity id; we just stage the transition for the game-thread script dispatch.
+    // Called during the step on any worker thread, so this only stages the transition for the game thread.
     class FJoltBodyActivationListener : public JPH::BodyActivationListener
     {
     public:
@@ -673,8 +655,7 @@ namespace Lumina::Physics
         JoltSystem->Init(InitSettings.MaxPhysicsBodies, 0, InitSettings.MaxPhysicsBodyPairs,
             InitSettings.MaxPhysicsContactConstraints, GJoltLayerInterface, GObjectVsBroadPhaseLayerFilter, GObjectVsObjectLayerFilter);
 
-        // Sized once to MaxPhysicsBodies; JPH::BodyID::GetIndex() is bounded by this so the
-        // contact-listener lookup is a bare array index with no resize race.
+        // GetIndex is bounded by this, so the contact-listener lookup is a bare index with no resize race.
         BodyMaterials.resize(InitSettings.MaxPhysicsBodies);
         BodySurfaceVelocities.resize(InitSettings.MaxPhysicsBodies);
 
@@ -727,11 +708,7 @@ namespace Lumina::Physics
         
         FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
 
-        // get_or_emplace, NOT emplace_or_replace: a collider added to an entity that already has a
-        // configured rigid body must leave it alone. Replacing it reset the body to defaults (dynamic,
-        // default profile) and fired on_update, which rebuilds nothing -- so "set the body type, then add
-        // a collider" silently produced a dynamic body. Body-first is fine either way: building with no
-        // collider yet returns NoCollider and the entity is retried on a later step.
+        // Replacing reset a configured body to defaults, so body-first then collider silently went dynamic.
         Registry.on_construct<SSphereColliderComponent>().connect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
         Registry.on_construct<SBoxColliderComponent>().connect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
         Registry.on_construct<SCapsuleColliderComponent>().connect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
@@ -778,15 +755,13 @@ namespace Lumina::Physics
     void FJoltPhysicsScene::DispatchPendingEvents()
     {
         LUMINA_PROFILE_SCOPE();
-        // Game thread, post-join: write the physics step's interpolated transforms
-        // into the ECS before contact callbacks (scripts read fresh transforms).
+        // Written before contact callbacks so scripts read fresh transforms.
         ApplyInterpolatedTransforms();
         DispatchContactEvents();
         DispatchActivationEvents();
     }
 
-    // Remove the display-time override so the entity renders off its resolved world matrix again.
-    // Erase only: this also runs from on_destroy hooks, where dirtying a dying entity would outlive it.
+    // Erase only, since this also runs from destroy hooks where dirtying would outlive the entity.
     static void DropRenderTransform(entt::registry& Registry, entt::entity Entity)
     {
         if (!Registry.valid(Entity))
@@ -894,14 +869,7 @@ namespace Lumina::Physics
 
         }, 64);
 
-        // Consume the requests. A blanket clear used to drop the ones this pass could not apply: an entity
-        // whose body does not exist yet (creation deferred behind a still-loading collider asset) was skipped
-        // above and then had its request wiped, so a spawn-then-SetLocation silently never reached the body.
-        // Carry those forward instead, payload intact, and let the next step retry.
-        //
-        // Only entities in this view are candidates. A tag on an entity with no SRigidBodyComponent -- the
-        // character path tags them too, but moves them through SCharacterMovementComponent::bPendingTeleport
-        // instead -- is still consumed here, or it would pin that entity's transform writeback forever.
+        // Carried forward with the payload intact, since a blanket clear lost a spawn-then-SetLocation.
         RetryBodyUpdates.clear();
         for (auto [Entity, BodyComponent, Update] : BodySyncView.each())
         {
@@ -927,14 +895,11 @@ namespace Lumina::Physics
     {
         LUMINA_PROFILE_SCOPE();
 
-        // Mark this scene as stepping so on_construct defers body creation (Jolt forbids it mid-step).
-        // Per-scene flag: the real question is whether THIS scene is mid-step, not which thread asked.
+        // A per-scene flag, since the question is whether THIS scene is mid-step, not which thread asked.
         bStepInProgress.store(true, std::memory_order_release);
         struct FStepGuard { TAtomic<bool>& F; ~FStepGuard() { F.store(false, std::memory_order_release); } } StepGuard{ bStepInProgress };
 
-        // Drain pending body creations before the step. Snapshot the queue first: an entity that
-        // still is not buildable re-pushes itself, so draining the live queue until empty spins forever.
-        // Re-pushes and on_construct deferrals land in the now-empty live queue and retry next step.
+        // Snapshotted first, since an unbuildable entity re-pushes itself and draining live would spin.
         {
             TQueue<entt::entity> PendingThisStep;
             {
@@ -942,8 +907,7 @@ namespace Lumina::Physics
                 PendingThisStep.swap(PendingRigidBodyCreations);
             }
 
-            // Batched, not one-by-one: a streamed chunk or a mid-step spawn burst lands here in bulk, and
-            // the per-body AddBody path would dirty the broadphase quadtree once per body.
+            // Batched, since the per-body path dirties the broadphase quadtree once per body.
             PendingDrainScratch.clear();
             while (!PendingThisStep.empty())
             {
@@ -1029,8 +993,7 @@ namespace Lumina::Physics
 
         if (CollisionSteps > 0)
         {
-            // Apply game-thread transform writes once before stepping; this also
-            // clears the FNeedsPhysicsBodyUpdate flags for the frame.
+            // This also clears the pending-update flags for the frame.
             ApplyDirtyTransforms(FixedTimestep);
             LatchCharacterInput();
             
@@ -1077,8 +1040,7 @@ namespace Lumina::Physics
             OnCharacterComponentConstructed(Registry, EntityID);
         });
 
-        // Seed the has-body hint for bodies that existed at play start (BulkCreateRigidBodies bypasses the
-        // on_construct hook). MarkDirty uses it to skip the DirtyBodies queue for bodiless entities.
+        // MarkDirty uses the hint to skip the dirty queue for bodiless entities.
         Registry.view<SRigidBodyComponent, STransformComponent>().each([](SRigidBodyComponent&, STransformComponent& T) { T.SetHasPhysicsBody(true); });
 
         JoltSystem->OptimizeBroadPhase();
@@ -1181,8 +1143,7 @@ namespace Lumina::Physics
         {
             entt::entity Entity = (*RigidHandle)[Index];
 
-            // Reflected components are in_place_delete: the packed array has tombstone holes that raw
-            // indexing/get() walks out of bounds. each() skips them, manual indexing must too. Do NOT remove.
+            // Reflected components use in-place delete, so raw indexing walks tombstone holes. Do NOT remove.
             if (Entity == entt::tombstone)
             {
                 return;
@@ -1213,8 +1174,7 @@ namespace Lumina::Physics
         });
     }
 
-    // In-place SoA quaternion nlerp toward Prev along the shortest arc, 8 quats per iteration (Curr* in/out).
-    // nlerp not slerp: per-frame alpha is tiny so the difference is invisible, and it drops the per-body acos/sin.
+    // nlerp not slerp, since the per-frame alpha is tiny and it drops the per-body trig.
     static void NlerpQuatsSoA(float* Qx, float* Qy, float* Qz, float* Qw,
                               const float* Px, const float* Py, const float* Pz, const float* Pw,
                               uint32 Count, float Alpha)
@@ -1279,8 +1239,7 @@ namespace Lumina::Physics
         const uint32 Total = RigidCount + CharCount;
         InterpStaging.Resize(Total);
 
-        // Identity-fill a skipped/killed slot so the bulk interp never sees NaNs
-        // (physics builds enable FP exceptions).
+        // Physics builds enable FP exceptions, so the bulk interp must never see a NaN.
         auto WriteIdentity = [&](uint32 i)
         {
             InterpStaging.PrevPos[i] = FVector3(0.0f);
@@ -1305,8 +1264,7 @@ namespace Lumina::Physics
             const entt::entity Entity = (*RigidHandle)[i];
             InterpStaging.Entities[i] = Entity;
 
-            // In_place_delete leaves tombstone holes in the packed array (see SnapshotBodyStates);
-            // skip them, identity-filling the slot so the bulk SIMD pass never sees NaNs.
+            // Identity-filling a tombstone slot keeps the bulk SIMD pass from seeing NaNs.
             if (Entity == entt::tombstone)
             {
                 InterpStaging.Flags[i] = EInterpFlag::Skip;
@@ -1335,7 +1293,7 @@ namespace Lumina::Physics
                           BodyComponent.LastBodyRotation, JoltUtils::FromJPHQuat(Body->GetRotation()));
         }, 64);
 
-        // Characters are few -- gather them serially into the tail of the batch.
+        // Characters are few, so gather them serially into the tail of the batch.
         uint32 ci = RigidCount;
         CharView.each([&](entt::entity Entity, SCharacterPhysicsComponent& CharacterComponent)
         {
@@ -1361,8 +1319,7 @@ namespace Lumina::Physics
                           CharacterComponent.LastBodyRotation, JoltUtils::FromJPHQuat(CharacterComponent.Character->Ref->GetRotation()));
         });
 
-        // Interp: one SIMD pass over the whole batch -- position lerp + quat nlerp, out-of-place into Lerp*.
-        // Curr* must survive as the simulated pose; it is what gets written back to the ECS.
+        // Curr must survive as the simulated pose, since that is what gets written back to the ECS.
         if (Total > 0)
         {
             SIMD::LerpArray(reinterpret_cast<float*>(InterpStaging.LerpPos.data()),
@@ -1401,8 +1358,7 @@ namespace Lumina::Physics
 
         const auto& PendingTeleport = Registry.storage<FNeedsPhysicsBodyUpdate>();
 
-        // Slots written this pass; the render matrix needs the resolved world scale, so it is built after
-        // the resolve below rather than inline.
+        // The render matrix needs the resolved world scale, so it is built after the resolve below.
         InterpApplied.clear();
         InterpApplied.reserve(Count);
 
@@ -1413,8 +1369,7 @@ namespace Lumina::Physics
 
             if (Flag == EInterpFlag::Skip || !Registry.valid(Entity))
             {
-                // Body went static or vanished: drop the override and republish so the primitive picks the
-                // resolved matrix back up instead of freezing on the last blend.
+                // Dropping the override republishes so the primitive picks the resolved matrix back up.
                 if (Registry.valid(Entity) && RenderStorage.contains(Entity))
                 {
                     RenderStorage.erase(Entity);
@@ -1434,8 +1389,7 @@ namespace Lumina::Physics
                 continue;
             }
 
-            // An authored move that hasn't reached the body yet outranks the body's own pose; drop the render
-            // override too so the visual shows the authored target instead of a stale blend.
+            // An authored move outranks the body's pose, so drop the override and show the target.
             if (PendingTeleport.contains(Entity))
             {
                 if (RenderStorage.contains(Entity))
@@ -1445,14 +1399,12 @@ namespace Lumina::Physics
                 continue;
             }
 
-            // The SIMULATED pose, not the blend: this is the value gameplay reads and the body re-sync writes
-            // back, so the round trip is a no-op instead of dragging the body onto a display-time pose.
+            // The value gameplay reads and the body re-sync writes back, so the round trip is a no-op.
             STransformComponent& TransformComponent = TransformStorage.get(Entity);
             TransformComponent.SetRaw(InterpStaging.CurrPos[i],
                 FQuat(InterpStaging.CurrQw[i], InterpStaging.CurrQx[i], InterpStaging.CurrQy[i], InterpStaging.CurrQz[i]));
 
-            // Unconditional: on a frame with no fixed step the simulated pose is unchanged but the blend still
-            // advanced, and the resolve's moved-publish is what refreshes the render primitive.
+            // On a frame with no fixed step the blend still advanced, and the resolve refreshes the primitive.
             ECS::Utils::MarkTransformDirtyNoBody(Registry, Entity);
 
             InterpApplied.push_back(i);
@@ -1578,8 +1530,7 @@ namespace Lumina::Physics
                 return;
             }
 
-            // Teleport before integration: move capsule, zero velocity, reseed interp snapshot so the render
-            // transform doesn't streak across the jump.
+            // Reseeds the interp snapshot so the render transform does not streak across the jump.
             if (Movement.bPendingTeleport)
             {
                 Movement.bPendingTeleport = false;
@@ -1588,8 +1539,7 @@ namespace Lumina::Physics
                 Character->SetPosition(JoltUtils::ToJPHRVec3(TeleportLocation));
                 Character->SetLinearVelocity(JPH::Vec3::sZero());
 
-                // Re-query contacts at the new spot; SetPosition alone leaves stale contacts, so the character
-                // can spawn stuck-in-air or fall through the floor until its next move.
+                // SetPosition alone leaves stale contacts, so the character can spawn stuck or fall through.
                 const JPH::ObjectLayer TeleportLayer = JoltUtils::PackToObjectLayer(Physics.CollisionProfile);
                 Character->RefreshContacts(
                     PhysicsSystem->GetDefaultBroadPhaseLayerFilter(TeleportLayer),
@@ -1623,8 +1573,7 @@ namespace Lumina::Physics
                 Movement.JumpCount = 0;
             }
 
-            // Surface the ground we're standing on: normal for slope handling, entity for footstep-surface
-            // lookups and moving-platform logic. GetGroundUserData carries the ground body's entity id.
+            // The normal drives slope handling and the entity drives footstep and moving-platform logic.
             if (Movement.bGrounded)
             {
                 Movement.GroundNormal = JoltUtils::FromJPHVec3(Character->GetGroundNormal());
@@ -1709,8 +1658,7 @@ namespace Lumina::Physics
                 }
             }
 
-            // Launch applied after the ground-velocity block and jump so an
-            // upward impulse survives even when the character is still grounded.
+            // Applied after the ground and jump blocks so an upward impulse survives while still grounded.
             if (Movement.bPendingLaunch)
             {
                 Movement.bPendingLaunch = false;
@@ -1741,9 +1689,7 @@ namespace Lumina::Physics
 
             const JPH::ObjectLayer Layer = JoltUtils::PackToObjectLayer(Physics.CollisionProfile);
 
-            // Char-vs-char characters skip all proxy inner bodies during movement (their mutual collision
-            // runs through CharacterVsCharacterCollision instead); others use the default filter so they
-            // still block via inner bodies.
+            // Their mutual collision runs through CharacterVsCharacterCollision instead of inner bodies.
             FCharacterProxyFilter ProxyFilter{CharacterProxyBodies};
             JPH::BodyFilter       DefaultBodyFilter;
             const JPH::BodyFilter& MovementBodyFilter = Physics.bCollideWithCharacters
@@ -1763,8 +1709,7 @@ namespace Lumina::Physics
             Movement.Velocity = JoltUtils::FromJPHVec3(Character->GetLinearVelocity());
         };
 
-        // CharacterVsCharacterCollisionSimple is brute-force and NOT thread-safe (it reads every other
-        // character's transform), so fall back to serial updates whenever any character opted into it.
+        // It reads every other character's transform, so any opt-in forces serial updates.
         const bool bCharacterVsCharacterActive = !CharacterVsCharacter->mCharacters.empty();
 
         if (Count < ParallelMinCount || CharacterAllocators.empty() || bCharacterVsCharacterActive)
@@ -2048,7 +1993,7 @@ namespace Lumina::Physics
 
     namespace
     {
-        // One body reports several sub-shape hits, so overlaps de-dup on the entity (linear scan: sets are small).
+        // One body reports several sub-shape hits, so overlaps de-dup on the entity with a linear scan.
         template<typename TCollector>
         void AppendDistinctEntity(TSpan<entt::entity> Out, int32& Count, entt::entity Entity, TCollector& Collector)
         {
@@ -2156,8 +2101,7 @@ namespace Lumina::Physics
         FRayAllCollector Collector(*this, OutHits, Settings, Ray, RayLength, Lock);
         FIgnoreFilter Filter{Settings.IgnoreBodies};
 
-        // Default layer filters = test every body along the ray (the "penetrate everything" use case);
-        // IgnoreBodies still excludes specific bodies (e.g. the shooter's own).
+        // IgnoreBodies still excludes specific bodies, such as the shooter's own.
         JoltSystem->GetNarrowPhaseQuery().CastRay(Ray, JPH::RayCastSettings(), Collector, {}, {}, Filter, {});
 
         Algo::Sort(OutHits.begin(), OutHits.end(), [](const SRayResult& A, const SRayResult& B) { return A.Fraction < B.Fraction; });
@@ -2252,8 +2196,7 @@ namespace Lumina::Physics
             return;
         }
 
-        // First character in this scene: stand up the per-worker substep allocator pool. 4 MiB
-        // per worker is comfortably above a single CharacterVirtual::ExtendedUpdate's high-water.
+        // 4 MiB per worker is comfortably above a single ExtendedUpdate's high-water mark.
         const uint32 NumWorkers = GTaskSystem ? GTaskSystem->GetNumTaskThreads() : 1u;
         CharacterAllocators.reserve(NumWorkers);
         for (uint32 i = 0; i < NumWorkers; ++i)
@@ -2268,9 +2211,7 @@ namespace Lumina::Physics
 
         EnsureCharacterAllocators();
 
-        // Inside a game-thread batch (prefab spawn): the CharacterVirtual is built from the transform below
-        // and owns the pose from then on, so it must not be created until the caller has finished writing
-        // that transform. Deferred to EndBodyBatch, which re-enters this at depth zero.
+        // Deferred to EndBodyBatch, since the character owns the pose once built from that transform.
         if (BodyBatchDepth > 0 && !bStepInProgress.load(std::memory_order_acquire))
         {
             BatchedCharacterCreations.push_back(Entity);
@@ -2320,14 +2261,12 @@ namespace Lumina::Physics
         JPH::BodyInterface& BodyInterface = JoltSystem->GetBodyInterface();
         BodyInterface.SetUserData(Character->GetInnerBodyID(), entt::to_integral(Entity));
 
-        // Entity id on the character itself so the contact listener can resolve it; smoother motion over
-        // mesh seams; and route the capsule's contacts to the shared character listener.
+        // Carries the entity id so the contact listener can resolve it, and routes to the shared listener.
         Character->SetUserData(entt::to_integral(Entity));
         Character->SetEnhancedInternalEdgeRemoval(CharacterComponent.bEnhancedInternalEdgeRemoval);
         Character->SetListener(CharacterContactListener.get());
 
-        // Opt into mutual char-vs-char pushing. Its inner body joins the proxy set so OTHER characters'
-        // movement collision skips it -- char-char then runs solely through CharacterVsCharacterCollision.
+        // Its inner body joins the proxy set, so char-char runs solely through the dedicated collision.
         if (CharacterComponent.bCollideWithCharacters)
         {
             Character->SetCharacterVsCharacterCollision(CharacterVsCharacter.get());
@@ -2335,8 +2274,7 @@ namespace Lumina::Physics
             CharacterProxyBodies.insert(Character->GetInnerBodyID().GetIndexAndSequenceNumber());
         }
 
-        // Wrap into the pimpl handle the component owns (component header
-        // doesn't see <Jolt/...> directly).
+        // The component header does not see Jolt headers directly, hence the pimpl handle.
         CharacterComponent.Character        = MakeShared<FJoltCharacterHandle>();
         CharacterComponent.Character->Ref   = Move(Character);
 
@@ -2355,9 +2293,7 @@ namespace Lumina::Physics
 
         DropRenderTransform(Registry, Entity);
 
-        // Drop the character from the char-vs-char registry before its CharacterVirtual is released (the
-        // shared list holds raw pointers). The proxy set is the source of truth for membership, so this is
-        // correct even if bCollideWithCharacters was toggled after construction.
+        // The shared list holds raw pointers, and the proxy set is the source of truth for membership.
         SCharacterPhysicsComponent* CharacterComponent = Registry.try_get<SCharacterPhysicsComponent>(Entity);
         if (CharacterComponent == nullptr || !CharacterComponent->Character || CharacterComponent->Character->Ref == nullptr)
         {
@@ -2378,9 +2314,7 @@ namespace Lumina::Physics
         
     }
 
-    // Bake-time hull reduction for CCollisionShape. Jolt's builder already runs QuickHull, so the hull is
-    // read back off the built shape rather than reimplementing it; storing the reduced points is what keeps
-    // a collision asset from being as large as the mesh it came from.
+    // The hull is read off the built shape, and storing reduced points keeps the asset small.
     bool CollisionGen::BuildHullPoints(const TVector<FVector3>& Points, TVector<FVector3>& OutHull)
     {
         OutHull.clear();
@@ -2563,11 +2497,7 @@ namespace Lumina::Physics
         return !OutIndices.empty();
     }
 
-    // Collision geometry comes from LOD 0's meshlets, which every mesh keeps after upload (the raw index and
-    // vertex streams are dropped). Sourced from the resource rather than a CMesh so the dynamic-mesh path --
-    // which owns an FMeshResource without owning a CMesh -- shares exactly this builder.
-    // One LOD-0 meshlet's slice of the output arrays. Precomputing these turns the gather into disjoint
-    // writes, so it sizes each array exactly once and fills it in parallel.
+    // Sourced from the resource, so the dynamic-mesh path shares exactly this builder.
     struct FColliderMeshletSlice
     {
         uint32 Meshlet;
@@ -2575,8 +2505,7 @@ namespace Lumina::Physics
         uint32 TriangleOut;
     };
 
-    // Meshlets per parallel chunk. A meshlet is ~64 verts, so anything under this runs inline rather than
-    // paying job dispatch for a handful of kilobytes.
+    // A meshlet is about 64 verts, so anything smaller runs inline rather than paying dispatch.
     static constexpr uint32 kColliderGatherGrain = 64;
 
     static JPH::ShapeRefC BuildMeshColliderShape(const FMeshResource& Resource, FStringView DebugName,
@@ -2627,10 +2556,7 @@ namespace Lumina::Physics
         const bool   bUnitScale = Math::IsNearlyEqual(Scale.x, 1.0f) && Math::IsNearlyEqual(Scale.y, 1.0f) && Math::IsNearlyEqual(Scale.z, 1.0f);
         const JPH::Vec3 ScaleVec = JoltUtils::ToJPHVec3(Scale);
 
-        // Positions are quantized against the owning meshlet's anchor, so this needs the meshlet as well
-        // as the vertex and cannot punch a raw Float3 load through the struct any more. Quantization
-        // error is relative to a ~124-triangle patch's extent, orders of magnitude under any collision
-        // tolerance, so the shape this produces is unchanged in practice.
+        // Quantization error is relative to a small patch, orders of magnitude under any tolerance.
         auto LoadPosition = [&](const FMeshlet& M, const FMeshletVertex& V)
         {
             const FVector3 Decoded = DecodeMeshletPosition(M, V);
@@ -2640,8 +2566,7 @@ namespace Lumina::Physics
 
         if (bConvex)
         {
-            // The hull ignores connectivity, so the whole triangle gather is skipped and positions land
-            // straight in the Vec3 array Jolt wants, with no Float3 staging copy in between.
+            // The hull ignores connectivity, so positions land straight in the array with no staging copy.
             JPH::Array<JPH::Vec3> Points;
             Points.resize(TotalVertices);
 
@@ -2766,7 +2691,7 @@ namespace Lumina::Physics
         return Result.Get();
     }
 
-    // Thread-safe: reads only registry + loaded assets; no PhysicsSystem mutation.
+    // Thread-safe, reading only the registry and loaded assets with no system mutation.
     static EBodyBuildStatus TryBuildRigidBodyCreationSettings(FJoltPhysicsScene* Scene, entt::registry& Registry, entt::entity Entity, FRigidBodyBuildResult& Out)
     {
         LUMINA_PROFILE_SCOPE();
@@ -2895,8 +2820,7 @@ namespace Lumina::Physics
             bColliderIsTrigger = PC->bIsTrigger;
             ResolvedMaterial   = PC->PhysicsMaterial.Get();
 
-            // Local plane through the origin with +Y normal; the entity's rotation/position orient + place it
-            // (negative half-space is solid). Built inline -- planes are few and rarely share dimensions.
+            // Built inline, since planes are few and rarely share dimensions.
             JPH::PlaneShapeSettings PlaneSettings(
                 JPH::Plane::sFromPointAndNormal(JPH::Vec3::sZero(), JPH::Vec3::sAxisY()),
                 nullptr,
@@ -2922,8 +2846,7 @@ namespace Lumina::Physics
             const CCollisionShape* Asset = CSC->CollisionShape.Get();
             if (Asset == nullptr || !Asset->HasCollision())
             {
-                // Deliberately not a Defer: an unassigned or empty asset is an authoring mistake that
-                // would otherwise retry forever, so it reports once and stops.
+                // An unassigned or empty asset is an authoring mistake, so it reports once rather than retrying.
                 LOG_WARN("CollisionShape on Entity {} is missing or empty; no body was built.", entt::to_integral(Entity));
                 return EBodyBuildStatus::Error;
             }
@@ -2945,8 +2868,7 @@ namespace Lumina::Physics
             bColliderIsTrigger = CompC->bIsTrigger;
             ResolvedMaterial   = CompC->PhysicsMaterial.Get();
 
-            // Children carry their own local offsets, so the outer collider-offset wrapper stays disabled.
-            // All children are convex primitives, so the compound can be a dynamic body.
+            // Every child is a convex primitive, so the compound can be a dynamic body.
             Shape = Scene->BuildCompoundShape(*CompC, *TransformComponent);
             if (Shape == nullptr)
             {
@@ -2991,14 +2913,11 @@ namespace Lumina::Physics
 
             const SDynamicMeshComponent* DM = Registry.try_get<SDynamicMeshComponent>(Entity);
 
-            // Ref-held across the shape build: Commit can swap the component's data from a worker, and
-            // BuildMeshColliderShape reads the resource for the whole call.
+            // Commit can swap the component's data from a worker, and the build reads it for the whole call.
             const TSharedPtr<FDynamicMeshRenderData> MeshData = DM ? DM->LoadRenderData() : nullptr;
             if (!MeshData || MeshData->Resource.MeshletData.IsEmpty())
             {
-                // A committed mesh with no CPU meshlet data isn't "not ready yet" -- it's ready and the
-                // streams this shape is built from were dropped on upload. Deferring would retry that
-                // forever without ever saying so, so fail loudly and name the exact fix.
+                // The streams were dropped on upload, so fail loudly and name the exact fix instead of deferring.
                 if (MeshData && MeshData->MeshletHeaderSlot != 0)
                 {
                     LOG_ERROR("Entity {}: SDynamicMeshColliderComponent needs the mesh's CPU meshlet data, but "
@@ -3007,13 +2926,11 @@ namespace Lumina::Physics
                     return EBodyBuildStatus::Error;
                 }
 
-                // Nothing committed yet. Defer rather than error: a streamed chunk builds its geometry a
-                // frame or more after the entity exists, and the pending list retries.
+                // A streamed chunk builds geometry after the entity exists, and the pending list retries.
                 return EBodyBuildStatus::Defer;
             }
 
-            // Deliberately uncached: a dynamic mesh is unique per component and rebuilt on every commit, so
-            // the CMesh-keyed shape cache has nothing to reuse.
+            // A dynamic mesh is unique per component, so the CMesh-keyed cache has nothing to reuse.
             Shape = BuildMeshColliderShape(MeshData->Resource, "DynamicMesh",
                                            TransformComponent->GetScale(), DMC->bConvex);
             if (Shape == nullptr)
@@ -3108,8 +3025,7 @@ namespace Lumina::Physics
         Out.Settings.mMaxLinearVelocity         = RigidBodyComponent->MaxLinearVelocity;
         Out.Settings.mMaxAngularVelocity        = RigidBodyComponent->MaxAngularVelocity;
 
-        // Per-axis DOF locks: start from All and clear each locked axis. Skip if nothing is locked, or if
-        // every axis is locked (EAllowedDOFs::None is invalid in Jolt -- such a body should be Static).
+        // Skipped when nothing is locked, and a fully locked body should be Static instead.
         {
             JPH::EAllowedDOFs DOFs = JPH::EAllowedDOFs::All;
             if (RigidBodyComponent->bLockTranslationX) { DOFs &= ~JPH::EAllowedDOFs::TranslationX; }
@@ -3165,7 +3081,7 @@ namespace Lumina::Physics
 
         Out.LastBodyPosition = Position;
         Out.LastBodyRotation = Rotation;
-        // Derived here rather than on commit: it walks the shape, and both commit paths want it.
+        // Derived here since it walks the shape and both commit paths want it.
         Out.ComputedMass = Out.Settings.GetMassProperties().mMass;
 
         return EBodyBuildStatus::Success;
@@ -3181,7 +3097,7 @@ namespace Lumina::Physics
             Transform->SetHasPhysicsBody(true);
         }
 
-        // Inside a game-thread batch (e.g. fracture): collect and create together in EndBodyBatch.
+        // Inside a game-thread batch, collect and create together in EndBodyBatch.
         if (BodyBatchDepth > 0 && !bStepInProgress.load(std::memory_order_acquire))
         {
             BatchedBodyCreations.push_back(Entity);
@@ -3201,8 +3117,7 @@ namespace Lumina::Physics
 
     void FJoltPhysicsScene::BeginBodyBatch()
     {
-        // Game-thread only. Nesting collapses into the outermost batch, so the collected list is never
-        // cleared here -- an inner Begin must not discard what the outer one already gathered.
+        // Nesting collapses into the outermost batch, so an inner Begin must not discard the outer list.
         ++BodyBatchDepth;
     }
 
@@ -3227,9 +3142,7 @@ namespace Lumina::Physics
         {
             entt::registry& Registry = ECS::GetWorldRegistry(*World);
 
-            // One at a time (no bulk CharacterVirtual insert), but now against the final transform.
-            // Re-checked rather than assumed: the batch may have destroyed the entity or removed the
-            // component after staging it.
+            // Re-checked, since the batch may have destroyed the entity or removed the component.
             for (entt::entity Entity : BatchedCharacterCreations)
             {
                 if (Registry.valid(Entity) && Registry.all_of<SCharacterPhysicsComponent, STransformComponent>(Entity))
@@ -3310,8 +3223,7 @@ namespace Lumina::Physics
         const FCollisionProfile Profile = Desc.Asset ? Desc.Asset->CollisionProfile : Desc.FallbackProfile;
         const JPH::ObjectLayer Layer = JoltUtils::PackToObjectLayer(Profile);
 
-        // Resolve which bones get bodies (authored or auto-generated), sorted parent-before-child (ascending
-        // bone index, since the skeleton stores parents before children).
+        // Sorted parent before child, since the skeleton stores parents before children.
         TVector<FRagdollBodyDef> Defs;
         THashMap<int32, int32> BoneToBody;
 
@@ -3384,7 +3296,7 @@ namespace Lumina::Physics
         }
         else
         {
-            // Auto-generate: a capsule per bone fit toward the average child position.
+            // Auto-generates a capsule per bone, fit toward the average child position.
             for (int32 BoneIndex = 0; BoneIndex < NumBones; ++BoneIndex)
             {
                 FRagdollBodyDef Def;
@@ -3591,8 +3503,7 @@ namespace Lumina::Physics
             Mapped[BoneIndex] = 1;
         }
 
-        // Bones without a body follow their parent rigidly via the bind-pose local transform (parents
-        // precede children in the bone array, so a single forward pass resolves them).
+        // Parents precede children in the bone array, so a single forward pass resolves them.
         for (int32 i = 0; i < NumBones; ++i)
         {
             if (!Mapped[i])
@@ -3637,16 +3548,11 @@ namespace Lumina::Physics
         OutRotation = JoltUtils::FromJPHQuat(BodyInterface.GetRotation(RootID));
     }
 
-    //================================================================================================
-    // Constraints / joints. Built from a Jolt-free FConstraintDesc; bodies resolved from entities, frames
-    // world-space. Create/Destroy run on the game thread outside the step (same contract as CreateRagdoll);
-    // the breakable monitor runs on the physics step right after Update().
-    //================================================================================================
+    // Built from a Jolt-free description, with create and destroy on the game thread outside the step.
 
     namespace
     {
-        // An axis perpendicular to In (normalized); seeds the hinge/slider reference normal when the caller
-        // doesn't care about the zero-angle orientation.
+        // Seeds the reference normal when the caller does not care about the zero-angle orientation.
         FVector3 ConstraintPerpendicular(const FVector3& In)
         {
             const FVector3 N   = Math::LengthSquared(In) > LE_SMALL_NUMBER ? Math::Normalize(In) : FVector3(0.0f, 1.0f, 0.0f);
@@ -3697,9 +3603,7 @@ namespace Lumina::Physics
     {
         LUMINA_PROFILE_SCOPE();
 
-        // All callers are outside the actual JoltSystem->Update() step: gameplay scripts run on the game
-        // thread (physics joined), and the component drain runs at the top of Update() before the step. So
-        // body locking + AddConstraint here is safe; we intentionally do not gate on bStepInProgress.
+        // Every caller is outside the step, so body locking here is safe and needs no step gate.
 
         // Resolve both bodies; entt::null or a body-less entity attaches that side to the world.
         auto ResolveID = [&](entt::entity E) -> JPH::BodyID
@@ -3989,8 +3893,7 @@ namespace Lumina::Physics
             }
         }
 
-        // Resolve the world-space frame from body B's live transform (BodyID overload; the entity helper is
-        // hidden by this class's GetBodyPosition(uint32) override).
+        // The BodyID overload, since the entity helper is hidden by this class's own override.
         const FVector3 BodyPos = GetBodyPosition(BodyBID);
         const FQuat    BodyRot = GetBodyRotation(BodyBID);
 
@@ -4180,16 +4083,14 @@ namespace Lumina::Physics
 
     JPH::ShapeRefC FJoltPhysicsScene::GetOrCreateCylinderShape(float Radius, float HalfHeight, float CapRadius)
     {
-        // Kind = 3 (cylinder). Z = cap (edge-rounding) radius so two cylinders with different
-        // bevels don't share a cached shape.
+        // The cap radius is part of the key, so two cylinders with different bevels never share a shape.
         const FShapeKey Key{ 3, Radius, HalfHeight, CapRadius };
         if (JPH::ShapeRefC Cached = FindCachedShape(Key))
         {
             return Cached;
         }
 
-        // Jolt requires CapRadius <= min(Radius, HalfHeight); clamp defensively so authoring an
-        // oversized bevel never trips an internal assert.
+        // Clamped defensively, so authoring an oversized bevel never trips an internal assert.
         const float ClampedCap = Math::Clamp(CapRadius, 0.0f, Math::Min(Radius, HalfHeight));
         JPH::CylinderShapeSettings Settings(HalfHeight, Radius, ClampedCap);
         Settings.SetEmbedded();
@@ -4228,8 +4129,7 @@ namespace Lumina::Physics
 
     JPH::ShapeRefC FJoltPhysicsScene::GetOrCreateTaperedCylinderShape(float HalfHeight, float TopRadius, float BottomRadius, float ConvexRadius)
     {
-        // Kind = 5 (tapered cylinder); W = convex (bevel) radius. Clamp the bevel so an oversized value
-        // can't trip an internal assert.
+        // The bevel is clamped so an oversized value cannot trip an internal assert.
         const float Top    = Math::Max(TopRadius, 0.001f);
         const float Bottom = Math::Max(BottomRadius, 0.001f);
         const float Convex = Math::Clamp(ConvexRadius, 0.0f, Math::Min(Math::Min(Top, Bottom), HalfHeight));
@@ -4253,8 +4153,7 @@ namespace Lumina::Physics
 
     JPH::ShapeRefC FJoltPhysicsScene::BuildCollisionShapeAsset(const CCollisionShape& Asset, const FVector3& Scale)
     {
-        // A baked triangle mesh replaces the primitives rather than joining them, matching what the editor
-        // draws and what the asset's IsConcave() reports.
+        // Matches what the editor draws and what the asset's own concavity check reports.
         if (Asset.IsConcave())
         {
             JPH::VertexList Vertices;
@@ -4301,7 +4200,7 @@ namespace Lumina::Physics
                         return {};
                     }
 
-                    // Uncached: hull point sets are per-asset, so there is nothing for a shared cache to hit.
+                    // Uncached, since hull point sets are per-asset and a shared cache would never hit.
                     JPH::Array<JPH::Vec3> Points;
                     Points.reserve(Primitive.HullPoints.size());
                     for (const FVector3& P : Primitive.HullPoints)
@@ -4454,8 +4353,7 @@ namespace Lumina::Physics
         Entry.FrictionCombine      = Build.MaterialFrictionCombine;
         Entry.RestitutionCombine   = Build.MaterialRestitutionCombine;
 
-        // Seed the conveyor surface velocity from the authored component (runtime changes go through
-        // SetSurfaceVelocity). Both creation paths route here, so this covers immediate + batched spawns.
+        // Both creation paths route here, so this covers immediate and batched spawns alike.
         StoreBodySurfaceVelocity(BodyID, Build.SurfaceLinearVelocity, Build.SurfaceAngularVelocity);
     }
 
@@ -4522,8 +4420,7 @@ namespace Lumina::Physics
         }
     }
 
-    // Decorate a cached unscaled shape for one scaled instance. ScaledShape is a refcounted wrapper holding a
-    // ref plus a Vec3, so instances share the one baked BVH/hull instead of each owning a copy.
+    // A refcounted wrapper, so instances share the one baked hull instead of each owning a copy.
     static JPH::ShapeRefC MakeScaledShape(const JPH::ShapeRefC& Base, const FVector3& Scale, FStringView DebugName)
     {
         if (Base == nullptr)
@@ -4537,9 +4434,7 @@ namespace Lumina::Physics
             return Base;   // unscaled instances use the cached shape directly
         }
 
-        // Jolt rejects scales a given shape type can't represent (zero on an axis, shear on a rotated
-        // compound child). MakeScaleValid drops the offending components; warn rather than silently
-        // building a collider that doesn't match the mesh.
+        // MakeScaleValid drops offending components, so warn rather than build a mismatched collider.
         const JPH::Vec3 ValidScale = Base->MakeScaleValid(JoltScale);
         if (!ValidScale.IsClose(JoltScale))
         {
@@ -4572,8 +4467,7 @@ namespace Lumina::Physics
 
         if (Base == nullptr)
         {
-            // Build outside the lock so parallel QuickHull on distinct meshes isn't serialized; the
-            // try_emplace below only guards the rare same-key race. Always built at unit scale.
+            // Built outside the lock so parallel hull builds are not serialized, and always at unit scale.
             JPH::ShapeRefC Built = BuildMeshColliderShape(Mesh->GetMeshResource(), Mesh->GetName().ToString(),
                                                           FVector3(1.0f), bConvex);
             if (Built == nullptr)
@@ -4593,7 +4487,7 @@ namespace Lumina::Physics
         // Instances merge into one static compound body per material per cell of this size (world units).
         constexpr float GStaticGroupCellSize = 32.0f;
 
-        // Sub-shape ceiling per body: sub-shape indices share Jolt's 32-bit SubShapeID with mesh triangle bits.
+        // Sub-shape indices share Jolt's 32-bit id with the mesh triangle bits.
         constexpr SIZE_T GStaticGroupMaxSubShapes = 256;
 
         struct FStaticInstanceKey
@@ -4849,8 +4743,7 @@ namespace Lumina::Physics
 
         entt::registry& Registry = ECS::GetWorldRegistry(*World);
 
-        // Grow-only: a repeat bulk spawn reuses the buffers instead of reallocating and re-zeroing
-        // ~350 bytes/body. Slots past Count hold stale data, so nothing may read beyond it.
+        // Slots past Count hold stale data, so nothing may read beyond it.
         if (BatchBuildScratch.size() < Count)
         {
             BatchBuildScratch.resize(Count);
@@ -4862,8 +4755,7 @@ namespace Lumina::Physics
 
         Task::ParallelFor(Count, [&](uint32 Index)
         {
-            // Reset on the worker, not serially up front: TryBuild only writes some fields, so a reused
-            // slot would otherwise inherit the previous batch's material/conveyor values.
+            // TryBuild only writes some fields, so a reused slot would inherit the previous batch's values.
             Results[Index] = FRigidBodyBuildResult();
             Statuses[Index] = TryBuildRigidBodyCreationSettings(this, Registry, Candidates[Index], Results[Index]);
         });
@@ -4894,8 +4786,7 @@ namespace Lumina::Physics
 
             JPH::Body* Body = BodyInterface.CreateBody(Results[i].Settings);
 
-            // The body holds its own reference now; drop the scratch slot's so an uncached shape
-            // (dynamic mesh, hull, compound) isn't kept alive until the slot is next overwritten.
+            // The body holds its own reference, so an uncached shape is not kept alive until the slot is reused.
             Results[i].Settings.SetShape(nullptr);
 
             if (Body == nullptr)
@@ -5049,9 +4940,7 @@ namespace Lumina::Physics
             return;
         }
 
-        // Jolt computes the submerged volume from the body's actual shape against the surface plane, so this
-        // replaces the old 4-point sampling with shape-accurate buoyancy + self-righting. Gravity is the
-        // system's own vector. The surface normal must be unit-length; guard against a degenerate input.
+        // The surface normal must be unit-length, so a degenerate input is guarded against.
         const FVector3 Normal = Math::LengthSquared(SurfaceNormal) > LE_SMALL_NUMBER
             ? Math::Normalize(SurfaceNormal) : FVector3(0.0f, 1.0f, 0.0f);
 
@@ -5116,8 +5005,7 @@ namespace Lumina::Physics
             return 0.0f;
         }
 
-        // Jolt stores the reciprocal; a kinematic body reports zero inverse mass, which is infinite mass and
-        // therefore not something a caller should try to scale a force by.
+        // A kinematic body reports zero inverse mass, which is infinite mass and not something to scale by.
         const float InverseMass = Body.GetMotionProperties()->GetInverseMass();
         return InverseMass > 0.0f ? 1.0f / InverseMass : 0.0f;
     }

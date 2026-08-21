@@ -19,15 +19,13 @@ namespace Lumina
 {
     namespace
     {
-        // State node IDs sit in the uint32 range (see CEdNodeGraph::AddNode), so
-        // a directed (from, to) pair packs losslessly into a uint64 key.
+        // State node IDs sit in the uint32 range, so a directed pair packs losslessly into a uint64.
         FORCEINLINE uint64 MakeTransitionKey(int64 FromNodeID, int64 ToNodeID)
         {
             return (uint64((uint32)FromNodeID) << 32) | (uint32)ToNodeID;
         }
 
-        // Canvas presentation helpers. Namespaced rather than bare so the generic names don't
-        // collide with another translation unit's helpers.
+        // Namespaced rather than bare, so the generic names do not collide with another TU's helpers.
         namespace SM
         {
             constexpr float StateMinWidth  = 168.0f;
@@ -112,8 +110,7 @@ namespace Lumina
 
     void CAnimStateMachineGraph::EnsureSetup()
     {
-        // Context-free: only touches nodes / the creatable-node registry, so it
-        // is safe to call on a state machine the compiler readies but never opens.
+        // Context-free, so it is safe on a state machine the compiler readies but never opens.
         if (bSetupDone)
         {
             return;
@@ -256,8 +253,7 @@ namespace Lumina
 
     void CAnimStateMachineGraph::ValidateGraph()
     {
-        // Flatten live pin connections into the serialized list (PostLoad reads
-        // it back to rewire pins on open) -- same contract as the other graphs.
+        // PostLoad reads the serialized list back to rewire pins on open, as in the other graphs.
         Connections.clear();
         Connections.reserve(16);
 
@@ -273,8 +269,7 @@ namespace Lumina
             }
         }
 
-        // Reconcile transition objects against live wires into a State. Entry wires carry no
-        // transition data; Any State wires do (they compile to a from-anywhere edge).
+        // Entry wires carry no transition data, while Any State wires compile to a from-anywhere edge.
         THashSet<uint64> LiveKeys;
 
         for (CEdGraphNode* Node : Nodes)
@@ -375,10 +370,7 @@ namespace Lumina
     {
         using namespace ax;
 
-        // Zero strength collapses a link's bezier handles onto its endpoints, and the pins below
-        // pivot at the node center, so the editor's own link is a straight center-to-center segment.
-        // It stays invisible (see GetLinkStyle) and only serves as the hit and delete target for the
-        // arrow DrawGraphOverlay draws in its place, hence killing its hover/selection decoration too.
+        // The editor's own link stays invisible and only serves as the hit and delete target.
         NodeEditor::PushStyleVar(NodeEditor::StyleVar_LinkStrength, 0.0f);
         NodeEditor::PushStyleVar(NodeEditor::StyleVar_NodeRounding, 9.0f);
         NodeEditor::PushStyleVar(NodeEditor::StyleVar_NodePadding, ImVec4(13.0f, 10.0f, 13.0f, 10.0f));
@@ -402,8 +394,7 @@ namespace Lumina
 
     void CAnimStateMachineGraph::GetLinkStyle(CEdNodeGraphPin*, CEdNodeGraphPin*, ImVec4& OutColor, float& OutThickness) const
     {
-        // Every wire on this canvas is drawn by DrawGraphOverlay. The editor's own link stays
-        // submitted but invisible so hover, selection and Delete keep working on it.
+        // Every wire is drawn by the overlay, so the editor's link stays submitted but invisible.
         OutColor = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
         OutThickness = 6.0f;
     }
@@ -439,8 +430,7 @@ namespace Lumina
             ? EditorColors::WithAlpha(Accent, 0.28f)
             : EditorColors::WithAlpha(EditorColors::PanelBg(), 0.96f);
 
-        // Previous frame's rect: the pin strips and the center pivot are expressed in it. Zero on
-        // the very first frame, corrected on the next one.
+        // Zero on the very first frame, corrected on the next one.
         const ImVec2 NodePos  = NodeEditor::GetNodePosition(Node->GetNodeID());
         const ImVec2 NodeSize = NodeEditor::GetNodeSize(Node->GetNodeID());
         const ImVec2 NodeMin  = NodePos;
@@ -452,9 +442,7 @@ namespace Lumina
 
         NodeEditor::BeginNode(Node->GetNodeID());
         {
-            // BeginNode does not scope ImGui IDs, so without this every state reuses the literal layout
-            // names below and the second one drawn in a frame trips the stack-layout "already live"
-            // assert. The blueprint node builder pushes the same way.
+            // BeginNode does not scope ImGui IDs, so a second state would trip the stack-layout assert.
             ImGui::PushID((int32)Node->GetNodeID());
 
             ImGui::BeginVertical("state");
@@ -476,8 +464,7 @@ namespace Lumina
                 }
                 ImGui::EndHorizontal();
 
-                // Reserve the minimum width here rather than on the text row, so a long state name
-                // is free to grow the box instead of being squeezed by the spring.
+                // Reserved here rather than on the text row, so a long name grows the box instead of squeezing.
                 ImGui::Dummy(ImVec2(SM::StateMinWidth, 1.0f));
 
                 TVector<CAnimStateTransition*> Outgoing;
@@ -508,9 +495,7 @@ namespace Lumina
 
             ImGui::EndVertical();
 
-            // Edge strips rather than pin widgets: the middle of the box still drags the node, while
-            // grabbing the left or right band starts (or accepts) a transition. Both pivot at the node
-            // center so links run center to center.
+            // The middle drags the node while an edge band starts a transition, both pivoting at the center.
             const float EdgeW = Math::Clamp((NodeMax.x - NodeMin.x) * 0.27f, 12.0f, 46.0f);
 
             CAnimGraphPin* InPin = State != nullptr ? State->InPin : nullptr;
@@ -548,8 +533,7 @@ namespace Lumina
             return;
         }
 
-        // Canvas space throughout: this runs before any node is submitted, so the wires land under
-        // the state boxes and the canvas transform scales everything with zoom for free.
+        // Canvas space throughout, so wires land under the boxes and scale with zoom for free.
         ImDrawList* DL = ImGui::GetWindowDrawList();
         ImFont* Font = ImGui::GetFont();
         const float FontSize = ImGui::GetFontSize();
@@ -594,8 +578,7 @@ namespace Lumina
                 continue;
             }
 
-            // A reciprocal transition gets both lines pushed off the center axis so they read as two
-            // separate edges instead of one line with arrows at each end.
+            // A reciprocal pair is pushed off the axis so they read as two edges, not one double-headed line.
             const bool bHasReverse = !bEntryWire &&
                 FindTransition(ToNode->GetNodeID(), FromNode->GetNodeID()) != nullptr;
 
@@ -608,7 +591,7 @@ namespace Lumina
 
             const bool bSelected = NodeEditor::IsLinkSelected(LinkID);
 
-            // Badge geometry first: it doubles as the primary click target for the transition.
+            // Badge geometry first, since it doubles as the primary click target for the transition.
             FString BadgeText;
             if (bEntryWire)
             {
@@ -691,8 +674,7 @@ namespace Lumina
             DL->AddText(Font, FontSize, ImVec2(Mid.x - TextSize.x * 0.5f, Mid.y - TextSize.y * 0.5f),
                         EditorColors::U32(bSelected ? EditorColors::TextPrimary() : EditorColors::TextDim()), BadgeText.c_str());
 
-            // Blend duration and the interrupt flag ride just under the badge: the two things you
-            // want to compare across edges without clicking each one.
+            // Blend duration and the interrupt flag are what you compare across edges without clicking each.
             if (Transition != nullptr)
             {
                 TStringBuilder<64> Meta;

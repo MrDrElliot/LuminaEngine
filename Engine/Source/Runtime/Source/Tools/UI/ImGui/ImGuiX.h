@@ -153,8 +153,10 @@ namespace Lumina::ImGuiX
     RUNTIME_API bool PassSearchFilter(FStringView Query, FStringView Text);
     RUNTIME_API bool PassSearchFilter(const ImGuiTextFilter& Filter, FStringView Text);
 
-    // A searchable single-select dropdown.
-    RUNTIME_API int32 SearchableCombo(const char* StrId, const char* Preview, int32 ItemCount, int32 CurrentIndex, const TFunction<FFixedString(int32)>& GetItemLabel, const char* ItemIcon = nullptr);
+    // A searchable single-select dropdown. Pass OutCreatedText for a list the user may extend: an entry
+    // offering the typed text appears whenever it matches no item, and the pick lands there instead of
+    // in the return value, which stays INDEX_NONE.
+    RUNTIME_API int32 SearchableCombo(const char* StrId, const char* Preview, int32 ItemCount, int32 CurrentIndex, const TFunction<FFixedString(int32)>& GetItemLabel, const char* ItemIcon = nullptr, FFixedString* OutCreatedText = nullptr);
 
     // Searchable combo for picking an asset of (or deriving from) FilterClass from the registry.
     // Writes the chosen asset's GUID into InOutGUID and returns true when it changes.

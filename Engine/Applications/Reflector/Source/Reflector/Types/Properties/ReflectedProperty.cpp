@@ -100,8 +100,7 @@ namespace Lumina
             const char*    Resolution;
         };
 
-        // Pairs that cannot both be true of one property. Each says what to write instead, because the
-        // useful part of the error is which specifier to delete, not that a rule exists.
+        // Each says what to write instead, since the useful part is which specifier to delete.
         static const FConflict Conflicts[] =
         {
             { EPropertyFlags::Editable, EPropertyFlags::ReadOnly, "Editable", "ReadOnly",

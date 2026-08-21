@@ -111,7 +111,7 @@ namespace Lumina
         const FString OldPath = BasePath;
         BasePath = NewBasePath;
 
-        // Whatever sits at the destination is a previous run: age it out before this one lands on it.
+        // Whatever sits at the destination is a previous run, so age it out before this one lands.
         Filesystem::MakeParentDirectoryTree(BasePath);
         RotateExisting();
 
@@ -122,7 +122,7 @@ namespace Lumina
             Filesystem::RemoveFile(OldPath);
         }
 
-        // Append: the moved file already holds everything written so far.
+        // Appends, since the moved file already holds everything written so far.
         OpenCurrent("ab");
     }
 
@@ -155,7 +155,7 @@ namespace Lumina
 
         std::fwrite(Batch.Data(), 1, Batch.Size(), Handle);
 
-        // To the OS, not the disk: survives a process crash without paying for a sync.
+        // To the OS rather than the disk, so it survives a crash without paying for a sync.
         std::fflush(Handle);
 
         WrittenBytes += Batch.Size();

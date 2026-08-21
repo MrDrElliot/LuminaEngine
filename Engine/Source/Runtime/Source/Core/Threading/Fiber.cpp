@@ -11,9 +11,7 @@ namespace Lumina::Fibers
 {
     namespace
     {
-        // CreateFiberEx wants a __stdcall entry taking the fiber param; our public Entry is plain cdecl.
-        // A one-time start record bridges the two without leaking platform calling conventions into the
-        // header. Freed on first entry (the real entry never returns through here).
+        // Freed on first entry, since the real entry never returns through here.
         struct FFiberStart
         {
             FFiberEntry Entry;
@@ -34,8 +32,7 @@ namespace Lumina::Fibers
 
     FFiber ThreadToFiber()
     {
-        // FIBER_FLAG_FLOAT_SWITCH: save/restore x87 + MXCSR across switches (else FP control state leaks
-        // between fibers). Already-a-fiber is fine, return the existing handle.
+        // The float-switch flag saves x87 and MXCSR, or FP control state leaks between fibers.
         if (::IsThreadAFiber())
         {
             return ::GetCurrentFiber();

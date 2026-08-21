@@ -21,8 +21,7 @@ namespace Lumina
 
     void FEntityTransformCommand::Capture(TVector<FTransform>& Out) const
     {
-        // Sized to Entities unconditionally so Before and After stay index-aligned even if an entity is
-        // destroyed mid-drag; a missing one records identity and is skipped again on the way back out.
+        // Index-aligned even if an entity dies mid-drag, and a missing one records identity and is skipped.
         Out.assign(Entities.size(), FTransform());
 
         CWorld* W = World.Get();
@@ -62,9 +61,7 @@ namespace Lumina
             STransformComponent& Transform = Registry.get<STransformComponent>(Entity);
             Transform.SetLocalTransform(In[i]);
 
-            // Same tag the gizmo emplaces after writing: SetLocalTransform's cached dirty-signal can fail
-            // to raise the registry's bAnyDirty flag, which would leave the world matrix -- and so the
-            // render scene's primitive -- reading the pre-undo position until something else moved.
+            // The cached dirty signal can fail to raise bAnyDirty, leaving the render primitive pre-undo.
             Registry.emplace_or_replace<FNeedsTransformUpdate>(Entity);
         }
 

@@ -14,9 +14,7 @@
 
 namespace Lumina
 {
-    // Diagnostic companion to anim.DumpGraphTasks: logs each AdvanceClock execution with the speed
-    // it actually read from the bytecode, discriminating a stale/incorrect compiled constant from a
-    // clock-advance bug.
+    // Discriminates a stale compiled constant from a clock-advance bug.
     static TConsoleVar<bool> CVarDumpGraphClocks(
         "anim.DumpGraphClocks",
         false,
@@ -24,8 +22,7 @@ namespace Lumina
 
     namespace Detail
     {
-        // Linear cursor over the flat bytecode array. Operand widths are fixed
-        // per opcode (see EAnimOp); the compiler and VM must agree on layout.
+        // Operand widths are fixed per opcode, so the compiler and VM must agree on the layout.
         struct FByteReader
         {
             const uint8* Data = nullptr;
@@ -176,9 +173,7 @@ namespace Lumina
             return;
         }
 
-        // A program compiled against an older opcode layout would misparse operands into garbage
-        // poses. Refuse it: bind pose + one warning per instance, until the graph is recompiled
-        // (opening it in the editor auto-compiles; save to persist).
+        // An older opcode layout misparses operands into garbage, so refuse until the graph recompiles.
         if (Graph->BytecodeVersion != kAnimBytecodeVersion)
         {
             if (State.SourceGraph != Graph)
@@ -229,8 +224,7 @@ namespace Lumina
 
         float* RESTRICT Scalars = State.ScalarRegisters.data();
 
-        // Pose registers now hold task indices: writing a register records which task produces that
-        // pose, reading one wires a dependency. Transient per call.
+        // Writing a register records which task produces that pose, and reading one wires a dependency.
         thread_local TVector<int16> PoseTasks;
         PoseTasks.assign(NumPose, FAnimTask::NoTask);
 
@@ -246,9 +240,7 @@ namespace Lumina
             return Reg < NumObjectRegs ? ObjectRegs[Reg] : nullptr;
         };
 
-        // Root-motion deltas and notify-event ranges flow alongside the registers: AdvanceClock tags
-        // its clock scalar, SampleAnim adopts the tag onto its pose register, blends combine, the
-        // state machine keeps only the target branch, Output reports whatever survived.
+        // AdvanceClock tags its clock scalar, SampleAnim adopts it, and blends combine what survives.
         struct FEventRange
         {
             uint16 Start = 0;
@@ -316,8 +308,7 @@ namespace Lumina
             }
         };
 
-        // Sync-group provenance: which group (and clip duration) produced a register, so blends can
-        // refine the group's blended duration from their alpha (consumed next update).
+        // Lets a blend refine the group's blended duration from its alpha, consumed next update.
         struct FSyncTag
         {
             int32 Group = -1;
@@ -342,8 +333,7 @@ namespace Lumina
             }
         };
 
-        // Curves ride the pose registers as a dense per-register slot array, so every op that blends
-        // poses blends the curves identically and a value tracks whatever its branch's weight does.
+        // Every op that blends poses blends the curves identically, so a value tracks its branch weight.
         const SIZE_T NumCurves = Graph->CurveNames.size();
 
         thread_local TVector<float> PoseCurves;
@@ -391,7 +381,7 @@ namespace Lumina
             return ClipIdx < Graph->ClipCurveMaps.size() ? &Graph->ClipCurveMaps[ClipIdx] : nullptr;
         };
 
-        // Keyed on the graph as well as the clip: slot layout is per graph, so one clip maps differently in each.
+        // Keyed on the graph too, since slot layout is per graph and one clip maps differently in each.
         struct FDynamicCurveMap
         {
             const CAnimationGraph* Graph = nullptr;
@@ -496,9 +486,7 @@ namespace Lumina
             }
         };
 
-        // State-machine seam: the pose is inertialized execute-side, so the curves have to follow the
-        // same schedule here or they step at the transition. Same quintic decay with zero initial
-        // velocity, evaluated against the transition's own elapsed time.
+        // The same quintic decay with zero initial velocity, or the curves step at the transition.
         const auto InertializeCurves = [&](FAnimInertializer& Inert, uint16 Dst, bool bStart)
         {
             float* D = CurvesOf(Dst);
@@ -536,8 +524,7 @@ namespace Lumina
             Inert.bHasCurveHistory = true;
         };
 
-        // Reading a never-written pose register wires a bind-pose leaf, so malformed graphs degrade
-        // to the reference pose instead of blending garbage.
+        // Reading a never-written register wires a bind-pose leaf, so malformed graphs degrade cleanly.
         const auto PoseTaskFor = [&](uint16 Reg) -> int16
         {
             if (Reg < NumPose && PoseTasks[Reg] != FAnimTask::NoTask)
@@ -662,9 +649,7 @@ namespace Lumina
 
                     const float Duration = Clip ? Clip->GetDuration() : 0.0f;
 
-                    // A synced clip samples at the group's shared phase instead of its own clock, so
-                    // every member of the group sits at the same stride phase. The phase advances once
-                    // per update at the group's blended-duration rate; synced clips always loop.
+                    // The phase advances once per update at the group's blended-duration rate, and synced clips loop.
                     if (SyncGroup != kAnimNoSyncGroup && SyncGroup < State.SyncGroups.size() && Duration > 0.0f)
                     {
                         FAnimSyncGroup& Group = State.SyncGroups[SyncGroup];
@@ -693,7 +678,7 @@ namespace Lumina
                                 Clock += Duration;
                             }
                         }
-                        else // PlayOnce -- clamp at the end and signal finished.
+                        else // PlayOnce clamps at the end and signals finished.
                         {
                             if (Clock >= Duration)
                             {
@@ -727,9 +712,7 @@ namespace Lumina
                             ClockSync[DstClock] = FSyncTag{ (int32)SyncGroup, Duration };
                         }
 
-                        // Tag the clock scalar with this advance's root delta; SampleAnim adopts it
-                        // onto the pose register it feeds. bHasMotion stays set even on a paused
-                        // frame so the branch keeps reading as root-motion driven (stable pinning).
+                        // bHasMotion stays set even on a paused frame, so the branch keeps reading as root-motion driven.
                         if (bExtractRootMotion && Clip != nullptr && Clip->bEnableRootMotion
                             && !Clip->bLockRootMotion && !Clip->IsAdditive())
                         {
@@ -831,9 +814,7 @@ namespace Lumina
                     ? &Graph->BlendSpaceCurveMaps[BlendSpaceIdx] : nullptr;
                 float* DstCurves = CurvesOf(Dst);
 
-                // One shared normalized phase across every contributing clip. Sampling each at the same
-                // fraction of its own duration is what keeps a walk/run blend on a single stride; the
-                // phase speed comes from the weighted duration so it retimes as the blend moves.
+                // The phase speed comes from the weighted duration, so it retimes as the blend moves.
                 const float PrevPhase = (PhaseSlot < (uint16)State.StateSlots.size()) ? State.StateSlots[PhaseSlot] : 0.0f;
                 float Phase = PrevPhase;
 
@@ -852,8 +833,7 @@ namespace Lumina
                 int16 Accumulated = FAnimTask::NoTask;
                 float AccumulatedWeight = 0.0f;
 
-                // Root motion and notifies are folded with the same running alpha as the pose, so a
-                // sample contributing 20% of the pose contributes 20% of the motion.
+                // A sample contributing 20% of the pose contributes 20% of the motion.
                 FRootMotionDelta BlendedDelta;
                 const uint16 EventStart = (uint16)EventScratch.size();
 
@@ -876,8 +856,7 @@ namespace Lumina
 
                     const int16 SampleTask = OutTasks.Add(Task);
 
-                    // Each sample walks the same normalized phase across its own duration, which is the
-                    // interval its root delta and notifies have to be measured over.
+                    // Each sample walks the same normalized phase across its own duration.
                     const float SampleDuration = SampleClip != nullptr ? SampleClip->GetDuration() : 0.0f;
                     const float PrevSampleTime = PrevPhase * SampleDuration;
                     const float SampleTime     = Phase * SampleDuration;
@@ -918,8 +897,7 @@ namespace Lumina
                         continue;
                     }
 
-                    // Fold in sequentially: each new sample's share of the running total, so three
-                    // barycentric weights collapse to two blends without renormalizing by hand.
+                    // Folded in sequentially, so three barycentric weights collapse to two blends.
                     AccumulatedWeight += Weights.Weights[i];
                     const float FoldAlpha = AccumulatedWeight > 1e-5f ? (Weights.Weights[i] / AccumulatedWeight) : 0.0f;
 
@@ -981,8 +959,7 @@ namespace Lumina
                             RootMotion::BlendRootMotion(DeltaOf(A), DeltaOf(B), BlendAlpha),
                             UnionEvents(EventsOf(A), EventsOf(B)));
 
-                // Both inputs from the same sync group: this blend's alpha refines the group's
-                // duration (consumed next update, so weights are one frame latent).
+                // Consumed next update, so the weights are one frame latent.
                 const FSyncTag SyncA = SyncOf(A);
                 const FSyncTag SyncB = SyncOf(B);
                 if (SyncA.Group >= 0 && SyncA.Group == SyncB.Group && SyncA.Group < (int32)State.SyncGroups.size())
@@ -1015,8 +992,7 @@ namespace Lumina
                 Task.MaskWeights = MaskIdx < Graph->BoneMasks.size() ? &Graph->BoneMasks[MaskIdx].Weights : nullptr;
                 SetPoseTask(Dst, OutTasks.Add(Task));
 
-                // A layered blend keeps the base's root motion (the layer shouldn't drive the entity);
-                // events from both layers fire at full weight (an upper-body attack still lands).
+                // A layered blend keeps the base's root motion, while events from both layers fire at full weight.
                 SetPoseTags(Dst, DeltaOf(A), UnionEvents(EventsOf(A), EventsOf(B)));
                 SetPoseSync(Dst, SyncOf(A));
                 LerpCurves(Dst, A, B, Math::Clamp(Task.Alpha, 0.0f, 1.0f));
@@ -1116,8 +1092,7 @@ namespace Lumina
                 int32 Current = Math::Clamp((int32)State.StateSlots[SM.CurrentStateSlot], 0, NumStates - 1);
                 int32 From    = (int32)State.StateSlots[SM.FromStateSlot];
 
-                // Pick a transition: any matching edge when stable; only interruptible edges mid-transition.
-                // The first passing edge (author order) wins.
+                // Any matching edge when stable, only interruptible ones mid-transition, first passing edge wins.
                 const bool bTransitioning = From >= 0;
                 bool bStart = false;
                 for (const FAnimGraphTransition& Transition : SM.Transitions)
@@ -1156,11 +1131,7 @@ namespace Lumina
                 }
                 else
                 {
-                    // Inertialize the seam: the update pass owns the control state (start/expiry/elapsed);
-                    // the recorded task captures the offset from the last shown pose and decays it onto the
-                    // freshly-evaluated target at execute time. Only the target state's chain is wired, so
-                    // inactive states never evaluate. An interrupt re-captures from the currently-shown
-                    // (already-inertializing) pose, so velocity stays continuous.
+                    // An interrupt re-captures from the currently-shown pose, so velocity stays continuous.
                     if (bStart)
                     {
                         Inert.bActive = Inert.Duration > 1e-5f;
@@ -1173,12 +1144,11 @@ namespace Lumina
                     Task.Inert     = &Inert;
                     Task.bCapture  = bStart;
                     Task.bApply    = Inert.bActive;
-                    Task.Time      = Inert.Elapsed; // pre-advance: the offset decays from this frame's time
+                    Task.Time      = Inert.Elapsed; // pre-advance, so the offset decays from this frame's time
                     Task.DeltaTime = DeltaTime;
                     SetPoseTask(Dst, OutTasks.Add(Task));
 
-                    // Only the target state's branch survives: its root motion drives the entity and
-                    // its events fire; inactive states' tags are simply never propagated.
+                    // Only the target branch survives, so inactive states' tags are never propagated.
                     SetPoseTags(Dst, DeltaOf(CurReg), EventsOf(CurReg));
                     SetPoseSync(Dst, SyncOf(CurReg));
                     CopyCurves(Dst, CurReg);
@@ -1300,8 +1270,7 @@ namespace Lumina
                     Memory::Memcpy(State.CurveValues.data(), OutputCurves, NumCurves * sizeof(float));
                 }
 
-                // Pin the root when locked, or when the branch that reached the output is
-                // root-motion driven (its motion moves the entity; the pose must stay centered).
+                // A root-motion driven branch moves the entity, so the pose itself must stay centered.
                 OutTasks.bLockRoot = RootMotionInOut.Mode == ERootMotionLockMode::ForceLock ||
                                      (bExtractRootMotion && RootMotionInOut.Delta.bHasMotion);
                 OutTasks.RootBoneIndex = RootMotionInOut.RootBoneIndex;
@@ -1343,8 +1312,7 @@ namespace Lumina
                 const uint16 ValueReg = Reader.Read<uint16>();
                 const uint16 Dst      = Reader.Read<uint16>();
 
-                // Curves live entirely in this pass, so overriding one costs no pose work: the
-                // destination register forwards the source's task and tags untouched.
+                // The destination register forwards the source's task and tags untouched, so a curve override is free.
                 SetPoseTask(Dst, PoseTaskFor(Src));
                 SetPoseTags(Dst, DeltaOf(Src), EventsOf(Src));
                 SetPoseSync(Dst, SyncOf(Src));
@@ -1452,8 +1420,7 @@ namespace Lumina
             }
         }
 
-        // A graph with no Output still yields a valid recipe (bind pose), so the executor always runs
-        // and the mesh never keeps stale matrices.
+        // A graph with no Output still yields a bind pose, so the mesh never keeps stale matrices.
         if (OutTasks.OutputTask == FAnimTask::NoTask)
         {
             FAnimTask Ref;

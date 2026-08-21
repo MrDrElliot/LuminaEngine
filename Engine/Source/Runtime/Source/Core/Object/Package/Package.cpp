@@ -38,11 +38,7 @@ namespace Lumina
         constexpr uint32 kPackageChunkVersion = 1;
         constexpr uint32 kPackageChunkSize    = 4u * 1024 * 1024; // 4 MiB uncompressed per chunk
 
-        // Bulk region trailer. A package with bulk data is [compressed container][raw bulk][trailer], and
-        // the trailer is the only fixed-position thing in the file, so it is what a reader finds first.
-        // Putting the region's location at the END (rather than in FPackageHeader) is what keeps the header
-        // wire-compatible: the header is inside the compressed container and cannot describe the file's
-        // own layout without a two-pass save.
+        // Putting the location at the END keeps the header wire-compatible with no two-pass save.
         constexpr uint32 kBulkTrailerMagic   = 0x4B4C424C; // 'LBLK'
         constexpr uint32 kBulkTrailerVersion = 1;
 
@@ -55,13 +51,10 @@ namespace Lumina
         };
         static_assert(std::is_trivially_copyable_v<FPackageBulkTrailer>);
 
-        // Below this, a package is read whole and its trailer parsed in memory: one IO instead of two.
-        // Above it, the tail is read first so a file whose bulk region dwarfs its container (exactly what a
-        // 4K texture looks like) never pulls the payload it is trying to avoid pulling.
+        // Above the limit the tail is read first, so a huge bulk region is never pulled needlessly.
         constexpr uint64 kWholeFileReadLimit = 1u * 1024 * 1024;
 
-        // Reads the trailer out of an in-memory tail slice. bytes must be the LAST bytes of the file, and
-        // FileSize the file's true length -- the offsets are validated against it.
+        // TailBytes must be the LAST bytes of the file, and the offsets are validated against its length.
         bool ParseBulkTrailer(const uint8* TailBytes, size_t TailSize, uint64 FileSize, CPackage::FBulkRegion& Out)
         {
             Out = CPackage::FBulkRegion{};
@@ -79,8 +72,7 @@ namespace Lumina
                 return false;
             }
 
-            // A malformed or truncated trailer must not be trusted into a read: the region has to sit
-            // entirely between the container and the trailer itself.
+            // The region has to sit entirely between the container and the trailer itself.
             const uint64 TrailerStart = FileSize - sizeof(FPackageBulkTrailer);
             if (Trailer.BulkOffset > TrailerStart || Trailer.BulkSize > TrailerStart - Trailer.BulkOffset)
             {
@@ -229,10 +221,7 @@ namespace Lumina
 
             Out.resize((size_t)Total);
 
-            // Each chunk inflates into a disjoint output slice, so the chunks are independent. A big
-            // multi-chunk package (e.g. a world or texture atlas) is the dominant load cost, so fan the
-            // inflate across workers. Single-chunk packages (the common small asset) stay inline to avoid
-            // a pointless task hop and any nested-parallelism cost on the registry-discovery path.
+            // A single-chunk package stays inline to avoid a task hop on the registry-discovery path.
             TVector<uint8> ChunkOk(NumChunks, 1);
 
             auto InflateOne = [&](uint32 i)
@@ -272,8 +261,7 @@ namespace Lumina
 
         bool DecompressPackageBinary(const TVector<uint8>& Raw, TVector<uint8>& Out)
         {
-            // Distinguish the chunked container by its leading magic; everything else is legacy
-            // single-stream (whose first bytes are an uncompressed-size that can't collide with the magic).
+            // A legacy stream starts with an uncompressed size that cannot collide with the magic.
             if (Raw.size() >= sizeof(uint32))
             {
                 uint32 Magic;
@@ -341,9 +329,7 @@ namespace Lumina
 
         const uint64 FileSize = (uint64)VFS::Size(Path);
 
-        // Small packages (the overwhelming majority -- materials, prefabs, settings) keep the single-read
-        // path they have always had; splitting them into a tail read plus a body read would double the IO
-        // count on a world load to save nothing.
+        // Splitting a small package into two reads would double the IO count on a world load for nothing.
         if (FileSize <= kWholeFileReadLimit)
         {
             TVector<uint8> RawBinary;
@@ -355,7 +341,7 @@ namespace Lumina
             FBulkRegion Region;
             if (ParseBulkTrailer(RawBinary.data(), RawBinary.size(), (uint64)RawBinary.size(), Region))
             {
-                // Trim to the container: the bulk bytes and trailer are not part of the deflate stream.
+                // The bulk bytes and trailer are not part of the deflate stream, so trim to the container.
                 RawBinary.resize((size_t)Region.FileOffset);
                 if (OutBulkRegion)
                 {
@@ -366,7 +352,7 @@ namespace Lumina
             return DecompressPackageBinary(RawBinary, OutBinary);
         }
 
-        // Large file: find out whether there is a bulk region before reading anything big.
+        // A large file checks for a bulk region before reading anything big.
         uint64 ContainerSize = FileSize;
 
         TVector<uint8> Tail;
@@ -401,14 +387,7 @@ namespace Lumina
             return false;
         }
 
-        // Taken together under the lock, then used outside it. Together, because a save commits a new
-        // region and a new file as ONE change and a reader that caught half of it would read the right
-        // offsets out of the wrong file; outside it, because this call is a blocking disk read on a
-        // streaming worker and holding the lock across it would serialize every streamed read in the game.
-        //
-        // The file is tracked explicitly rather than derived from the package's name: those agree right up
-        // until a rename, which renames in memory and then saves under the new name -- so a name-derived
-        // path would send this read at a file that does not exist yet.
+        // Tracked explicitly rather than derived from the name, which mid-rename points at a missing file.
         FBulkRegion  Region;
         FFixedString Path;
         {
@@ -465,8 +444,7 @@ namespace Lumina
 
     bool CPackage::Rename(const FName& NewName, CPackage* NewPackage)
     {
-        // In-memory rename only; caller (RenamePackage) handles disk. Exported objects survive so live refs stay valid.
-        // FName::ToString() returns by value; bind to locals so the FStringViews aren't dangling.
+        // FName::ToString returns by value, so bind to locals or the string views dangle.
         const FString NewNameStr = NewName.ToString();
         const FString OldNameStr = GetName().ToString();
         FStringView FileName = VFS::FileName(NewNameStr, true);
@@ -633,16 +611,12 @@ namespace Lumina
         // A deleted package has nothing to save; clear dirty so it can't surface in save prompts.
         PackageToDestroy->ClearDirty();
 
-        // Mark first so FindObject (name + GUID) stops resolving it immediately -- a deleted asset is
-        // unreachable by identity even while its husk is torn down below.
+        // A deleted asset is unreachable by identity even while its husk is torn down below.
         PackageToDestroy->SetFlag(OF_MarkedDestroy);
 
         // Synchronous teardown.
         {
-            // Pinned for the duration of the sweep. Nulling the last reference to an export frees it on
-            // the spot, and a primary asset's destructor releases the sub-object exports it owns (particle
-            // emitters, graph nodes) -- which are entries in this same list. Without the pin those
-            // siblings die mid-loop and the next iteration reads a freed vtable.
+            // A primary asset's destructor releases sibling exports, which would die mid-loop without the pin.
             TVector<TObjectPtr<CObject>> PinnedExports;
             {
                 TVector<CObject*> ExportObjects;
@@ -679,14 +653,12 @@ namespace Lumina
             }
         }
 
-        // Pins are gone: whatever the sweep orphaned has been freed, so the list is rebuilt from what is
-        // still alive rather than reusing pointers that may now dangle.
+        // Rebuilt from what is still alive, since the sweep may have freed pointers in the old list.
         TVector<CObject*> SurvivingExports;
         SurvivingExports.reserve(20);
         GetObjectsWithPackage(PackageToDestroy, SurvivingExports);
 
-        // Free the now-unreferenced assets. ConditionalBeginDestroy is a no-op for any still held by a
-        // non-reflected strong ref (e.g. an open editor, which closes on its own deferred queue and releases).
+        // A no-op for any still held by a non-reflected strong ref, such as an open editor.
         for (CObject* ExportObject : SurvivingExports)
         {
             if (ExportObject == nullptr || ExportObject == PackageToDestroy)
@@ -737,7 +709,7 @@ namespace Lumina
         FFixedString OldObjectName = SanitizeObjectName(OldPath);
         FFixedString NewObjectName = SanitizeObjectName(NewPath);
 
-        // Always rename-then-resave: in-place export-table patching is unsafe (FName length-prefix shifts offsets).
+        // In-place export-table patching is unsafe, since an FName length prefix shifts offsets.
         CPackage* Package = FindObject<CPackage>(OldObjectName);
         if (Package == nullptr)
         {
@@ -757,10 +729,7 @@ namespace Lumina
             return false;
         }
 
-        // The rename above moved the package's NAME, not its bytes: the file still sits at OldPath and is
-        // what BulkSourcePath points at, which is what lets the PreSave inside this save pull streamed-out
-        // payloads back off disk. Removing OldPath before this line, or resolving bulk reads through the
-        // package name, empties every streamed mip into the new file -- silently and permanently.
+        // The file still sits at OldPath, which is what lets PreSave pull streamed payloads back off disk.
         if (!SavePackage(Package, NewPath))
         {
             LOG_ERROR("RenamePackage: atomic save to {} failed; rolling back in-memory rename", NewPath);
@@ -778,7 +747,7 @@ namespace Lumina
 
     void CPackage::OnPackageMovedExternally(FStringView OldPath, FStringView NewPath)
     {
-        // Parent-dir rename: file already at NewPath on disk, just update in-memory identity.
+        // A parent-directory rename already moved the file, so only in-memory identity updates.
         if (OldPath == NewPath)
         {
             return;
@@ -790,9 +759,7 @@ namespace Lumina
             FFixedString NewObjectName = SanitizeObjectName(NewPath);
             Package->Rename(NewObjectName, nullptr);
 
-            // Unlike RenamePackage, the bytes really did move -- the bulk region is now in the file at
-            // NewPath, and the old one is gone. Follow it, or every later streamed read goes to a path
-            // that no longer exists. Same region, new file, published as one change.
+            // The bytes really did move, so follow them or every later streamed read hits a missing path.
             if (!Package->BulkSourcePath.empty())
             {
                 Package->SetBulkSource(Package->GetBulkRegion(), NewPath);
@@ -870,8 +837,7 @@ namespace Lumina
             }
             else if (PackageHeader.Version > GPackageFileLuminaVersion.FileVersion)
             {
-                // Older files load fine, readers branch on Ar.GetFileVersion() to migrate.
-                // Newer files we genuinely can't read.
+                // Older files load fine since readers branch on the file version, but newer ones cannot be read.
                 LOG_ERROR("LoadPackage: {} was saved with engine version {} (current {}); cannot load files from a newer engine", Path, PackageHeader.Version, GPackageFileLuminaVersion.FileVersion);
             }
             else if (!OffsetInRange(PackageHeader.ImportTableOffset) ||
@@ -920,8 +886,7 @@ namespace Lumina
 
     namespace
     {
-        // Build the on-disk bytes for a package (shared by editor and cook save).
-        // Clears then repopulates Package->Export/ImportTable so back-to-back saves stay consistent.
+        // Clears then repopulates the export and import tables so back-to-back saves stay consistent.
         bool BuildPackageBytes(CPackage* Package, bool bCooking,
                                TVector<uint8>& OutUncompressed,
                                TVector<uint8>& OutCompressed,
@@ -980,9 +945,7 @@ namespace Lumina
                 return false;
             }
 
-            // Passthrough: OutCompressed is the CONTAINER ONLY. The region and trailer are the caller's to
-            // append, because the bytes come off the source file rather than out of this process -- that is
-            // the point. It reports where the region will land and how big it is so the caller can splice.
+            // The bytes come off the source file, so the caller appends the region and trailer itself.
             if (Package->IsBulkPassthrough())
             {
                 OutBulkRegion.FileOffset = (int64)OutCompressed.size();
@@ -990,9 +953,7 @@ namespace Lumina
                 return true;
             }
 
-            // Bulk region rides after the container, raw. Emitted only when an export actually wrote
-            // something, so a package with no bulk data is byte-identical to what the old saver produced
-            // and stays readable by the whole-file path.
+            // A package with no bulk data stays byte-identical to what the old saver produced.
             const TVector<uint8>& BulkBytes = Writer.GetBulkBytes();
             OutBulkRegion = CPackage::FBulkRegion{};
 
@@ -1035,12 +996,7 @@ namespace Lumina
         TVector<uint8> DiskBinary;
         FBulkRegion    NewBulkRegion;
 
-        // A rename rewrites the container (the object's name lives in the export table) but changes nothing
-        // about the payloads, so the region can be copied from the old file rather than rebuilt out of
-        // memory -- which is the only reason a rename would have to pull a 4K texture's ~21 MiB of mips off
-        // disk at all. Region-relative offsets are what make it legal: copy the region whole and every ref
-        // into it still lands in the right place. Gated on the package being CLEAN, because a dirty one may
-        // hold payloads that no longer match what is on disk.
+        // Region-relative offsets make the copy legal, and a dirty package may not match what is on disk.
         const bool bSplice = Package->CanSpliceBulkRegion();
 
         Package->bBulkDataUnresolved = false;
@@ -1056,15 +1012,10 @@ namespace Lumina
             return false;
         }
 
-        // The splice attempt, and its exits. Note this deliberately does NOT check bBulkDataUnresolved the
-        // way the rebuild below does: during a passthrough that flag means "an export had a payload with no
-        // ref into the region being copied", which the splice cannot carry but a rebuild handles fine. The
-        // container built above describes a layout the source bytes do not have, so it must never be
-        // written on its own -- every path out of here either commits the splice or rebuilds from scratch.
+        // The container describes a layout the source bytes lack, so it must never be written alone.
         if (bSplice)
         {
-            // DiskBinary is the container alone; the region streams straight out of the source file and the
-            // trailer that locates it goes on the end.
+            // The region streams straight out of the source file, with the locating trailer on the end.
             FPackageBulkTrailer Trailer;
             Trailer.Magic      = kBulkTrailerMagic;
             Trailer.Version    = kBulkTrailerVersion;
@@ -1080,9 +1031,7 @@ namespace Lumina
 
             if (bSpliced)
             {
-                // Region and file together: a streaming read in flight against the old file either
-                // completes on it (the bytes are still there until the rename removes it) or picks up the
-                // new pair whole. The spliced region is byte-identical, so both answers are the same one.
+                // The spliced region is byte-identical, so an in-flight read gets the same answer either way.
                 Package->SetBulkSource(NewBulkRegion, Path);
 
                 Package->CreateLoader(FileBinary);
@@ -1100,8 +1049,7 @@ namespace Lumina
                 return true;
             }
 
-            // Nothing was written (the splice is all-or-nothing), so the rebuild is free to run from
-            // scratch -- and it is the path that needs nothing from the source file.
+            // The splice is all-or-nothing, so the rebuild runs from scratch and needs nothing from the source.
             LOG_WARN("SavePackage: cannot splice the bulk region into {} ({}); rebuilding it from memory, "
                      "which reads every streamed payload back in first.", Path,
                      Package->bBulkDataUnresolved ? "an export could not produce a payload the copy would carry"
@@ -1119,9 +1067,7 @@ namespace Lumina
             }
         }
 
-        // Checked after any rebuild, so it covers the plain build and the fallback alike: an export could
-        // not read back a payload it only holds a reference to, so the bytes here have it emptied out.
-        // Writing them would destroy data that is still intact on disk and nothing later could undo it.
+        // Writing these would destroy data still intact on disk, and nothing later could undo it.
         if (Package->bBulkDataUnresolved)
         {
             Package->bBulkDataUnresolved = false;
@@ -1133,19 +1079,15 @@ namespace Lumina
 
         if (!VFS::AtomicWriteFile(Path, DiskBinary))
         {
-            // Atomic write failed: disk unchanged, package stays dirty for retry.
+            // The atomic write failed, so disk is unchanged and the package stays dirty for retry.
             LOG_ERROR("Failed to save package: {}", Path);
             return false;
         }
 
-        // Only after the write commits: every FBulkDataRef an export just serialized is relative to THIS
-        // region, and a reader that used the old one would read the previous save's bytes. The path moves
-        // with it -- a rename read from the old file up to this point, and from here on this IS the file.
+        // Every ref an export just serialized is relative to THIS region, and the path moves with it.
         Package->SetBulkSource(NewBulkRegion, Path);
 
-        // Refresh loader only after disk commit so it can't point at uncommitted bytes (a partially-resident
-        // package still needs it for lazy loads at the new offsets). Drop it again immediately if the save
-        // left every export resident -- then the bytes are dead weight, re-read on demand if ever needed.
+        // Dropped again when the save left every export resident, since the bytes are then dead weight.
         Package->CreateLoader(FileBinary);
         Package->ConditionalDropLoader();
 
@@ -1173,8 +1115,7 @@ namespace Lumina
             return false;
         }
 
-        // The cooker writes OutCompressed straight into the pak, and the bulk region + trailer are part of
-        // those bytes, so cooked packages stream exactly like loose ones.
+        // The region and trailer are part of those bytes, so cooked packages stream like loose ones.
         TVector<uint8> FileBinary;
         FBulkRegion    CookedBulkRegion;
 
@@ -1184,8 +1125,7 @@ namespace Lumina
             return false;
         }
 
-        // Same rule as the editor save: a payload that could not be read back is emptied out in these
-        // bytes, and shipping that is a texture the packaged game can never get its mips for.
+        // Shipping an emptied payload is a texture the packaged game can never get its mips for.
         if (Package->bBulkDataUnresolved)
         {
             Package->bBulkDataUnresolved = false;
@@ -1227,12 +1167,7 @@ namespace Lumina
             return true;
         }
 
-        // In-memory (transient / never-saved) packages have no backing file to re-read; their objects are
-        // resident anyway, so this path is only ever hit for disk-backed packages whose bytes we dropped.
-        //
-        // The file this package was READ from, for the same reason ReadBulkData uses it: mid-rename the
-        // name already points at a file that has not been written yet, and resolving through it here would
-        // fail the FullyLoad that the rename's own save depends on.
+        // Mid-rename the name points at a file not yet written, so resolving through it would fail.
         const FFixedString Path = BulkSourcePath.empty() ? GetPackagePath() : BulkSourcePath;
         if (IsTransientPackage() || !VFS::Exists(Path))
         {
@@ -1281,9 +1216,7 @@ namespace Lumina
             return;
         }
 
-        // Keep the cached bytes while any export still needs them. A null/stale export weak-ptr is treated
-        // conservatively as "might load again" (we can't tell a never-requested export from a freed one),
-        // so we only reclaim once the whole package is resident -- exactly when the buffer is dead weight.
+        // A null export pointer is treated conservatively, so bytes are reclaimed only when fully resident.
         for (const FObjectExport& Export : ExportTable)
         {
             const CObject* Obj = Export.Object.Get();
@@ -1316,8 +1249,7 @@ namespace Lumina
 
     void CPackage::WriteImports(FPackageSaver& Ar, FPackageHeader& Header, FSaveContext& SaveContext)
     {
-        // Must run AFTER WriteExports, pulls the import order from the saver's ObjectToIndexMap
-        // so on-disk indices match what was emitted in export data.
+        // Pulls the import order from the saver's map so on-disk indices match what was emitted.
         Ar.PopulateImportTable(ImportTable);
 
         Header.ImportTableOffset = Ar.Tell();
@@ -1338,8 +1270,7 @@ namespace Lumina
         {
             ASSERT(Export.Object.Get() != nullptr);
 
-            // Before Tell(): PreSave can pull bulk payloads off disk, and anything it does must not land in
-            // the export stream between the recorded offset and the object's own data.
+            // PreSave can pull payloads off disk, and that must not land between the offset and the data.
             Export.Object.Get()->PreSave();
 
             Export.Offset = Ar.Tell();
@@ -1423,8 +1354,7 @@ namespace Lumina
             LOG_WARN("Mismatched size when loading object {}: expected {}, got {}", Object->GetName().ToString(), ExpectedSize, ActualSize);
         }
 
-        // Data is resident but PostLoad is still owed; the caller (or the graph loader's leaf-first pass)
-        // runs it via PostLoadObject. This is what lets serialize and PostLoad split into phases.
+        // This is what lets serialize and PostLoad split into phases.
         Object->ClearFlags(OF_NeedsLoad | OF_Loading);
         Object->SetFlag(OF_WasLoaded | OF_NeedsPostLoad);
 
@@ -1449,8 +1379,7 @@ namespace Lumina
     {
         SerializeObject(Object);
 
-        // The phased graph loader defers PostLoad for in-closure objects to its ordered leaf-first pass.
-        // Every other caller (and out-of-closure refs) gets the legacy serialize-then-PostLoad behavior.
+        // Every other caller gets the legacy serialize-then-PostLoad behavior.
         if (!ShouldDeferPostLoad(Object))
         {
             PostLoadObject(Object);
@@ -1672,8 +1601,7 @@ namespace Lumina
         {
             if (Packages[i])
             {
-                // Scope the defer flag to this worker's call stack so nested in-closure loads (same-package
-                // export refs reached inside Serialize) also defer their PostLoad to Phase D.
+                // Scoped to this worker's stack so nested in-closure loads also defer their PostLoad.
                 GtDeferPostLoad = true;
                 Packages[i]->SerializeExports();
                 GtDeferPostLoad = false;
@@ -1712,8 +1640,7 @@ namespace Lumina
 
             if (Wave.empty())
             {
-                // Dependency cycle among the survivors (e.g. a material instance pair): break it by taking
-                // them all at once; the per-asset PostLoad guards resolve the intra-cycle order.
+                // A dependency cycle breaks by taking them all at once, and the per-asset guards order the rest.
                 for (int32 i = 0; i < NumNodes; ++i)
                 {
                     if (!Processed[i])
