@@ -586,6 +586,9 @@ namespace Lumina
             return;
         }
 
+        // Fires on every op, not just the commit, so scrubbing a transform field tracks live in the viewport.
+        const bool bTransformEdited = Event.OuterType == STransformComponent::StaticStruct();
+
         // Multi-edit source: the focus entity is what the bound property table edited. Locate its
         // component instance so the change can be replicated onto the rest of the selection.
         void* FocusInstance = nullptr;
@@ -625,6 +628,12 @@ namespace Lumina
                 {
                     Event.Property->CopyCompleteValue_InContainer(DestInstance, FocusInstance);
                 }
+            }
+
+            // Same bypass as the focus instance, one step removed: the copy above is a raw property store.
+            if (bTransformEdited)
+            {
+                Registry.emplace_or_replace<FNeedsTransformUpdate>(Entity);
             }
 
             // Prefab instance: re-diff this component against the prefab so the override ledger reflects the

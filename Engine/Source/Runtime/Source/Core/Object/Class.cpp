@@ -163,10 +163,11 @@ namespace Lumina
         {
             return;
         }
-        // Rooted by CreateDefaultObject, so it has to come out of the root set before it can die.
-        ClassDefaultObject->RemoveFromRoot();
-        ClassDefaultObject->ForceDestroyNow();
+        // Rooted by CreateDefaultObject, and that root reference is the only strong one a CDO has, so
+        // un-rooting IS the destruction. The ForceDestroyNow that used to follow ran on freed memory.
+        CObject* Discarded = ClassDefaultObject;
         ClassDefaultObject = nullptr;
+        Discarded->RemoveFromRoot();
     }
 
     static CStruct* StaticGetBaseStructureInternal(const FName& Name)

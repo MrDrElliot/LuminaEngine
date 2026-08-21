@@ -5,6 +5,8 @@
 #include "Core/Object/Class.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Reflection/Type/Properties/StructProperty.h"
+#include "Core/Serialization/MemoryArchiver.h"
+#include "Core/Serialization/ObjectArchiver.h"
 
 namespace Lumina::PrefabOverride
 {
@@ -23,6 +25,62 @@ namespace Lumina::PrefabOverride
                 }
             }
             return false;
+        }
+
+        // A component whose data lives entirely in a custom StructOps serializer (SEntityScriptComponent)
+        // exposes no reflected leaf, so the per-leaf walk below sees nothing and every per-instance edit
+        // to it was silently inherited away on the next refresh. Such a component is one atomic leaf.
+        bool HasSerializableLeaf(CStruct* Struct)
+        {
+            for (CStruct* Cur = Struct; Cur != nullptr; Cur = Cur->GetSuperStruct())
+            {
+                for (FProperty* Property = Cur->LinkedProperty; Property != nullptr; Property = static_cast<FProperty*>(Property->Next))
+                {
+                    if (Property->ShouldSerialize())
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        bool SerializeWholeValue(CStruct* Struct, const void* Value, TVector<uint8>& Out)
+        {
+            FStructOps* Ops = Struct->GetStructOps();
+            if (Ops == nullptr || !Ops->HasSerializer())
+            {
+                return false;
+            }
+            FMemoryWriter Writer(Out);
+            FObjectProxyArchiver Proxy(Writer, false);
+            Ops->Serialize(Proxy, const_cast<void*>(Value));
+            return true;
+        }
+
+        bool WholeValueDiffers(CStruct* Struct, const void* Instance, const void* Prefab)
+        {
+            FStructOps* Ops = Struct->GetStructOps();
+            if (Ops != nullptr && Ops->HasEquality())
+            {
+                return !Ops->Equals(Instance, Prefab);
+            }
+
+            TVector<uint8> InstanceBytes;
+            TVector<uint8> PrefabBytes;
+            if (!SerializeWholeValue(Struct, Instance, InstanceBytes) || !SerializeWholeValue(Struct, Prefab, PrefabBytes))
+            {
+                return false;   // nothing comparable: treat as inherited rather than inventing an override
+            }
+            return InstanceBytes != PrefabBytes;
+        }
+
+        void CopyWholeValue(CStruct* Struct, void* Dest, const void* Source)
+        {
+            if (FStructOps* Ops = Struct->GetStructOps(); Ops != nullptr && Ops->HasCopy())
+            {
+                Ops->Copy(Dest, Source);
+            }
         }
 
         FString JoinPath(const FString& Prefix, const FName& Name)
@@ -68,10 +126,26 @@ namespace Lumina::PrefabOverride
         }
     }
 
+    const FName& WholeValuePath()
+    {
+        // Not a legal identifier, so it can never collide with a real property path.
+        static const FName Path("$Whole");
+        return Path;
+    }
+
     void CollectOverriddenLeaves(CStruct* Struct, const void* Instance, const void* Prefab, TVector<FName>& OutPaths)
     {
         if (Struct == nullptr || Instance == nullptr || Prefab == nullptr)
         {
+            return;
+        }
+
+        if (!HasSerializableLeaf(Struct))
+        {
+            if (WholeValueDiffers(Struct, Instance, Prefab))
+            {
+                OutPaths.push_back(WholeValuePath());
+            }
             return;
         }
 
@@ -93,6 +167,15 @@ namespace Lumina::PrefabOverride
             return;
         }
 
+        if (!HasSerializableLeaf(Struct))
+        {
+            if (OverriddenPaths.find(WholeValuePath()) == OverriddenPaths.end())
+            {
+                CopyWholeValue(Struct, Instance, Prefab);
+            }
+            return;
+        }
+
         auto Visit = [&](FProperty* Property, void* Inst, const void* Pref, const FString& Path)
         {
             // Overridden leaf: keep the instance value, do not pull the prefab's.
@@ -110,6 +193,15 @@ namespace Lumina::PrefabOverride
     {
         if (Struct == nullptr || Dest == nullptr || Authored == nullptr)
         {
+            return;
+        }
+
+        if (!HasSerializableLeaf(Struct))
+        {
+            if (OverriddenPaths.find(WholeValuePath()) != OverriddenPaths.end())
+            {
+                CopyWholeValue(Struct, Dest, Authored);
+            }
             return;
         }
 

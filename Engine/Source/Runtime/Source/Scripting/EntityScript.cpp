@@ -1,8 +1,11 @@
 #include "RuntimePCH.h"
 #include "EntityScript.h"
 
+#include "Assets/AssetTypes/Prefabs/Prefab.h"
+#include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectCore.h"
+#include "Core/Object/ObjectIterator.h"
 #include "World/World.h"
 #include "World/WorldManager.h"
 #include "ScriptableObject.h"
@@ -194,6 +197,52 @@ namespace Lumina
             return false;
         }
 
+        // Every registry that can hold script objects. A loaded prefab asset owns one (two, for a variant)
+        // and is not a world, so the world sweep alone left its scripts behind -- and one script the sweep
+        // misses is one live instance, which is all MigrateMintedClassLayout needs to refuse a rebuild
+        // forever.
+        struct FScriptRegistryRef
+        {
+            CObject*         Owner = nullptr;
+            FEntityRegistry* Registry = nullptr;
+            bool             bVariantDelta = false;
+        };
+
+        void GatherScriptRegistries(TVector<FScriptRegistryRef>& Out)
+        {
+            if (GWorldManager != nullptr)
+            {
+                GWorldManager->ForEachWorld([&](CWorld& World)
+                {
+                    Out.push_back(FScriptRegistryRef{ &World, &ECS::GetWorldRegistry(World), false });
+                });
+            }
+
+            for (TObjectIterator<CPrefab> It; It; ++It)
+            {
+                CPrefab* Prefab = *It;
+                if (Prefab == nullptr || Prefab->HasAnyFlag(OF_MarkedDestroy) || Prefab->HasAnyFlag(OF_DefaultObject))
+                {
+                    continue;
+                }
+                Out.push_back(FScriptRegistryRef{ Prefab, &Prefab->Registry, false });
+                Out.push_back(FScriptRegistryRef{ Prefab, &Prefab->VariantDelta, true });
+            }
+        }
+
+        FEntityRegistry* ResolveScriptRegistry(CObject* Owner, bool bVariantDelta)
+        {
+            if (CWorld* World = Cast<CWorld>(Owner))
+            {
+                return &ECS::GetWorldRegistry(*World);
+            }
+            if (CPrefab* Prefab = Cast<CPrefab>(Owner))
+            {
+                return bVariantDelta ? &Prefab->VariantDelta : &Prefab->Registry;
+            }
+            return nullptr;
+        }
+
         // Entities carrying scripts, captured before any callback runs. Scripts attached to a NEW entity
         // during the pass are not ticked this frame; they have already had their OnAttach from Attach, and
         // they ready on the next tick like every other freshly attached script.
@@ -372,7 +421,10 @@ namespace Lumina
             
             TObjectPtr<CEntityScript> Pinned(Script);
 
-            Script->OnDetach();
+            if (Script->IsAttached())
+            {
+                Script->OnDetach();
+            }
             
             SEntityScriptComponent* Component = Registry.try_get<SEntityScriptComponent>(Entity);
             if (Component == nullptr)
@@ -465,15 +517,18 @@ namespace Lumina
 
         int32 Evacuate(const THashSet<CClass*>& Classes, TVector<FEvacuatedScripts>& Out)
         {
-            if (Classes.empty() || GWorldManager == nullptr)
+            if (Classes.empty())
             {
                 return 0;
             }
 
+            TVector<FScriptRegistryRef> Registries;
+            GatherScriptRegistries(Registries);
+
             int32 Evacuated = 0;
-            GWorldManager->ForEachWorld([&](CWorld& World)
+            for (const FScriptRegistryRef& Ref : Registries)
             {
-                FEntityRegistry& Registry = ECS::GetWorldRegistry(World);
+                FEntityRegistry& Registry = *Ref.Registry;
 
                 // Collect first, mutate second. Serialize does not touch the registry, but clearing the
                 // component's Scripts destroys CObjects, and a script's destructor is user-reachable code.
@@ -502,8 +557,9 @@ namespace Lumina
                     }
 
                     FEvacuatedScripts Saved;
-                    Saved.World  = &World;
-                    Saved.Entity = Entity;
+                    Saved.Owner         = Ref.Owner;
+                    Saved.Entity        = Entity;
+                    Saved.bVariantDelta = Ref.bVariantDelta;
                     {
                         FMemoryWriter Writer(Saved.Bytes);
                         FObjectProxyArchiver Ar(Writer, /*bLoadIfFindFails*/ false);
@@ -515,7 +571,7 @@ namespace Lumina
                     Out.push_back(std::move(Saved));
                     ++Evacuated;
                 }
-            });
+            }
 
             return Evacuated;
         }
@@ -525,12 +581,12 @@ namespace Lumina
             int32 Restored = 0;
             for (const FEvacuatedScripts& Entry : Saved)
             {
-                CWorld* World = Entry.World.Get();
-                if (World == nullptr)
+                FEntityRegistry* RegistryPtr = ResolveScriptRegistry(Entry.Owner.Get(), Entry.bVariantDelta);
+                if (RegistryPtr == nullptr)
                 {
-                    continue;   // the world went away mid-reload
+                    continue;   // the world or prefab went away mid-reload
                 }
-                FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
+                FEntityRegistry& Registry = *RegistryPtr;
                 if (!Registry.valid(Entry.Entity))
                 {
                     continue;   // so did the entity
@@ -565,7 +621,10 @@ namespace Lumina
 
             for (TObjectPtr<CEntityScript>& Held : Scripts)
             {
-                if (CEntityScript* Script = Held.Get())
+                // Only a script that got its OnAttach gets an OnDetach. A stamped or freshly deserialized
+                // script the driver never adopted has no state to unwind, and for a C# one the call would
+                // mint a managed instance purely to tear it down again.
+                if (CEntityScript* Script = Held.Get(); Script != nullptr && Script->IsAttached())
                 {
                     Script->OnDetach();
                 }

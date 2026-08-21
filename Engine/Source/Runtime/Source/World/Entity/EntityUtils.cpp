@@ -25,6 +25,7 @@
 #include "Core/Reflection/Type/Properties/StructProperty.h"
 #include "Components/Component.h"
 #include "Memory/SmartPtr.h"
+#include "Scripting/EntityScript.h"
 #include "World/World.h"
 #include "World/WorldContext.h"
 #include <atomic>
@@ -1394,53 +1395,54 @@ namespace Lumina::ECS::Utils
 
         // Walk one struct's reflected properties: remap uint32 "Entity"-tagged handles through Map,
         // recurse into nested struct fields, and walk arrays of handles or of structs.
+        //
+        // One pass over LinkedProperty, NOT one per super: CStruct::Link splices the super's chain onto the
+        // tail of this one, so walking the super chain as well visits every inherited property twice and the
+        // second visit remaps an already-remapped handle -- which, with bClearUnmapped, nulls it.
         void RemapEntityRefsInStruct(CStruct* Struct, void* Data, const THashMap<entt::entity, entt::entity>& Map, bool bClearUnmapped)
         {
-            for (CStruct* Cur = Struct; Cur != nullptr; Cur = Cur->GetSuperStruct())
+            for (FProperty* Property = Struct->LinkedProperty; Property != nullptr; Property = static_cast<FProperty*>(Property->Next))
             {
-                for (FProperty* Property = Cur->LinkedProperty; Property != nullptr; Property = static_cast<FProperty*>(Property->Next))
+                if (Property->IsA(EPropertyTypeFlags::UInt32) && Property->HasMetadata("Entity"))
                 {
-                    if (Property->IsA(EPropertyTypeFlags::UInt32) && Property->HasMetadata("Entity"))
+                    uint32 Value = 0;
+                    Property->GetValue(Data, &Value);
+                    RemapEntityHandle(Value, Map, bClearUnmapped);
+                    Property->SetValue(Data, Value);
+                }
+                else if (Property->IsA(EPropertyTypeFlags::Struct))
+                {
+                    if (CStruct* Inner = static_cast<FStructProperty*>(Property)->GetStruct())
                     {
-                        uint32 Value = 0;
-                        Property->GetValue(Data, &Value);
-                        RemapEntityHandle(Value, Map, bClearUnmapped);
-                        Property->SetValue(Data, Value);
+                        RemapEntityRefsInStruct(Inner, Property->GetValuePtr<void>(Data), Map, bClearUnmapped);
                     }
-                    else if (Property->IsA(EPropertyTypeFlags::Struct))
+                }
+                else if (Property->IsA(EPropertyTypeFlags::Vector))
+                {
+                    FArrayProperty* ArrayProperty = static_cast<FArrayProperty*>(Property);
+                    FProperty* Inner = ArrayProperty->GetInternalProperty();
+                    if (Inner == nullptr)
                     {
-                        if (CStruct* Inner = static_cast<FStructProperty*>(Property)->GetStruct())
-                        {
-                            RemapEntityRefsInStruct(Inner, Property->GetValuePtr<void>(Data), Map, bClearUnmapped);
-                        }
+                        continue;
                     }
-                    else if (Property->IsA(EPropertyTypeFlags::Vector))
+
+                    void* ArrayPtr = Property->GetValuePtr<void>(Data);
+
+                    if (Inner->IsA(EPropertyTypeFlags::UInt32) && Property->HasMetadata("Entity"))
                     {
-                        FArrayProperty* ArrayProperty = static_cast<FArrayProperty*>(Property);
-                        FProperty* Inner = ArrayProperty->GetInternalProperty();
-                        if (Inner == nullptr)
+                        ArrayProperty->ForEach<uint32>(ArrayPtr, [&](uint32* Elem, SIZE_T)
                         {
-                            continue;
-                        }
-
-                        void* ArrayPtr = Property->GetValuePtr<void>(Data);
-
-                        if (Inner->IsA(EPropertyTypeFlags::UInt32) && Property->HasMetadata("Entity"))
+                            RemapEntityHandle(*Elem, Map, bClearUnmapped);
+                        });
+                    }
+                    else if (Inner->IsA(EPropertyTypeFlags::Struct))
+                    {
+                        if (CStruct* ElemStruct = static_cast<FStructProperty*>(Inner)->GetStruct())
                         {
-                            ArrayProperty->ForEach<uint32>(ArrayPtr, [&](uint32* Elem, SIZE_T)
+                            ArrayProperty->ForEach(ArrayPtr, [&](void* Elem, SIZE_T)
                             {
-                                RemapEntityHandle(*Elem, Map, bClearUnmapped);
+                                RemapEntityRefsInStruct(ElemStruct, Elem, Map, bClearUnmapped);
                             });
-                        }
-                        else if (Inner->IsA(EPropertyTypeFlags::Struct))
-                        {
-                            if (CStruct* ElemStruct = static_cast<FStructProperty*>(Inner)->GetStruct())
-                            {
-                                ArrayProperty->ForEach(ArrayPtr, [&](void* Elem, SIZE_T)
-                                {
-                                    RemapEntityRefsInStruct(ElemStruct, Elem, Map, bClearUnmapped);
-                                });
-                            }
                         }
                     }
                 }
@@ -1476,6 +1478,21 @@ namespace Lumina::ECS::Utils
             if (CStruct* Struct = Result.cast<CStruct*>())
             {
                 RemapEntityRefsInStruct(Struct, Storage.value(Entity), Map, bClearUnmapped);
+            }
+        }
+
+        // A script is a CObject held BY a component rather than a component, so its own reflected properties
+        // are invisible to the storage walk above. Without this an entity handle authored on a script in a
+        // prefab keeps the prefab registry's id after instantiation, where it aliases an unrelated entity.
+        if (SEntityScriptComponent* Scripts = Registry.try_get<SEntityScriptComponent>(Entity))
+        {
+            for (const TObjectPtr<CEntityScript>& Held : Scripts->Scripts)
+            {
+                CEntityScript* Script = Held.Get();
+                if (Script != nullptr && Script->GetClass() != nullptr)
+                {
+                    RemapEntityRefsInStruct(Script->GetClass(), Script, Map, bClearUnmapped);
+                }
             }
         }
     }

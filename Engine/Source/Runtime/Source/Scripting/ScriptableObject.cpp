@@ -181,13 +181,14 @@ namespace Lumina
                 }
             });
 
+            // Un-rooting is the destruction: the root set holds the only strong reference to a CDO and to a
+            // minted class, so it reaches zero and frees inside RemoveFromRoot. The ForceDestroyNow calls
+            // that used to follow each one read and wrote freed memory.
             if (CObject* DefaultObject = Class->GetDefaultObjectIfCreated())
             {
                 DefaultObject->RemoveFromRoot();
-                DefaultObject->ForceDestroyNow();
             }
             Class->RemoveFromRoot();
-            Class->ForceDestroyNow();
 
             // Safe only here, past the live-instance check above: the layout record owns everything the
             // class's appended properties point at.

@@ -12,6 +12,10 @@ namespace Lumina
 
 namespace Lumina::PrefabOverride
 {
+    /** Path recorded for a component that exposes no reflected leaf of its own (its state lives in a custom
+     *  StructOps serializer). Such a component is overridden as one atomic value. */
+    RUNTIME_API const FName& WholeValuePath();
+
     /** Recursively diff a reflected component instance against its prefab baseline, emitting the
      *  delimiter-joined path ("Top" or "Nested.Field") of every serializable leaf that differs.
      *  Nested structs with reflected fields recurse; dynamic containers and opaque structs (math

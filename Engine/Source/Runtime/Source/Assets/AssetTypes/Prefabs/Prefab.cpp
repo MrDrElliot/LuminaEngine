@@ -8,6 +8,7 @@
 #include "Core/Object/ObjectIterator.h"
 #include "Core/Object/Package/Package.h"
 #include "GUID/GUID.h"
+#include "Scripting/EntityScript.h"
 #include "World/Entity/Components/DirtyComponent.h"
 #include "World/Entity/Components/EditorComponent.h"
 #include "World/Entity/Components/NameComponent.h"
@@ -518,6 +519,23 @@ namespace Lumina
         // Transform is always per-instance: never propagated from the prefab and never pruned, at any node.
         // This subsumes the old root-only special case and keeps gizmo edits (which bypass the property hook).
         const entt::id_type TransformID = entt::type_hash<STransformComponent>::value();
+        const entt::id_type ScriptComponentID = entt::type_hash<SEntityScriptComponent>::value();
+
+        // Replacing a component destroys the value it held, and for scripts that value is a set of live
+        // CObjects running user code. entt's replace raises on_update, not on_destroy, so the world's detach
+        // hook never fires and OnDetach is skipped -- leaving whatever the script registered (UI documents,
+        // input bindings, timers) bound to an object that is about to be freed.
+        auto EmplaceFromPrefab = [&](entt::id_type ID, const entt::meta_type& MetaType, entt::entity WorldE, void* SrcCompPtr)
+        {
+            using namespace entt::literals;
+            if (ID == ScriptComponentID)
+            {
+                EntityScripts::DetachAll(WorldRegistry, WorldE);
+            }
+            entt::meta_any SrcAny = MetaType.from_void(SrcCompPtr);
+            ECS::Utils::InvokeMetaFunc(MetaType, "emplace"_hs,
+                entt::forward_as_meta(WorldRegistry), WorldE, entt::forward_as_meta(SrcAny));
+        };
 
         // Copy/replace components prefab -> instance honoring overrides, then prune ones the prefab dropped.
         Registry.view<SPrefabComponent>().each([&](entt::entity PrefabE, const SPrefabComponent& PrefabComp)
@@ -588,9 +606,7 @@ namespace Lumina
                 if (!bNodeHasLedger)
                 {
                     PrefabComponentIDs.insert(ID);
-                    entt::meta_any SrcAny = MetaType.from_void(SrcCompPtr);
-                    ECS::Utils::InvokeMetaFunc(MetaType, "emplace"_hs,
-                        entt::forward_as_meta(WorldRegistry), WorldE, entt::forward_as_meta(SrcAny));
+                    EmplaceFromPrefab(ID, MetaType, WorldE, SrcCompPtr);
                     continue;
                 }
 
@@ -636,9 +652,7 @@ namespace Lumina
                 }
                 else
                 {
-                    entt::meta_any SrcAny = MetaType.from_void(SrcCompPtr);
-                    ECS::Utils::InvokeMetaFunc(MetaType, "emplace"_hs,
-                        entt::forward_as_meta(WorldRegistry), WorldE, entt::forward_as_meta(SrcAny));
+                    EmplaceFromPrefab(ID, MetaType, WorldE, SrcCompPtr);
                 }
             }
 

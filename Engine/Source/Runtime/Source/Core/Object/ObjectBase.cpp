@@ -225,9 +225,22 @@ namespace Lumina
 
     void CObjectBase::RemoveFromRoot()
     {
-        FScopeLock Lock(RootMutex);
-        GRootedObjects.erase(this);
-        ClearFlags(OF_Rooted);
+        // OF_Rooted tracks membership exactly, so an unrooted object still costs nothing and, importantly,
+        // is never pinned by the line below (which on an unreferenced object would destroy it on release).
+        if (!HasAnyFlag(OF_Rooted))
+        {
+            return;
+        }
+
+        // Pinned across the erase: the root set often holds the ONLY strong reference, so dropping it inside
+        // erase() destroys and frees this object, and ClearFlags below then writes to freed memory. The pin
+        // releases at the end of scope, where reaching zero is a clean destruction with nothing left to touch.
+        TObjectPtr<CObjectBase> Pinned(this);
+        {
+            FScopeLock Lock(RootMutex);
+            GRootedObjects.erase(this);
+            ClearFlags(OF_Rooted);
+        }
     }
 
     FFixedString CObjectBase::MakeDisplayName() const

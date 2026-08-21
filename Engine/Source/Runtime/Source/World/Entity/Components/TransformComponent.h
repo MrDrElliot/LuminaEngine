@@ -11,7 +11,8 @@
 
 namespace Lumina
 {
-    
+    struct FPropertyChangedEvent;
+
     /**
      * OWNERSHIP AND SYNCHRONIZATION CONTRACT
      *
@@ -213,6 +214,15 @@ namespace Lumina
         {
             LocalTransform = InTransform;
             MarkDirty();
+        }
+
+        // A property editor stores into LocalTransform's bytes directly, so no setter runs to raise the dirty signal.
+        void PostEditChange(const FPropertyChangedEvent& Event)
+        {
+            if (DirtyState != nullptr)
+            {
+                MarkDirty();
+            }
         }
     
         FUNCTION(NoSuppressGCTransition)

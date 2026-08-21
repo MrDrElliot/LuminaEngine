@@ -103,6 +103,10 @@ namespace Lumina
             OwningWorld  = InWorld;
         }
 
+        /** OnAttach has run. The driver sets the owner immediately before it, so this is the exact pairing
+         *  test: a script that was loaded or stamped but never adopted must not receive OnDetach. */
+        bool IsAttached() const { return OwningEntity != entt::null; }
+
         bool IsReady() const { return bReady; }
         void MarkReady() { bReady = true; }
 
@@ -181,13 +185,18 @@ namespace Lumina
          */
         struct FEvacuatedScripts
         {
-            TWeakObjectPtr<CWorld> World;
-            entt::entity           Entity = entt::null;
-            TVector<uint8>         Bytes;
+            // The CWorld or CPrefab owning the registry Entity lives in. A prefab asset holds script objects
+            // of its own, and one of those blocks a layout rebuild exactly as a world's does.
+            TWeakObjectPtr<CObject> Owner;
+            entt::entity            Entity = entt::null;
+            // CPrefab only: the variant delta registry rather than the resolved one.
+            bool                    bVariantDelta = false;
+            TVector<uint8>          Bytes;
         };
 
         /**
-         * Serializes and detaches every script whose class is in Classes, across every live world.
+         * Serializes and detaches every script whose class is in Classes, across every live world AND every
+         * loaded prefab asset.
          *
          * Returns the number of entities evacuated. OnDetach is deliberately NOT run: the scripts are coming
          * straight back, and a detach/attach pair would fire lifecycle callbacks for what the author sees as
@@ -196,7 +205,7 @@ namespace Lumina
          */
         RUNTIME_API int32 Evacuate(const THashSet<CClass*>& Classes, TVector<FEvacuatedScripts>& Out);
 
-        /** Rebuilds the scripts Evacuate took out. Entities whose world or entity died in between are
+        /** Rebuilds the scripts Evacuate took out. Entities whose owner or entity died in between are
          *  skipped. Returns the number of entities restored. */
         RUNTIME_API int32 Restore(const TVector<FEvacuatedScripts>& Saved);
 

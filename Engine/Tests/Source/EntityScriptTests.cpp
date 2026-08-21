@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include "Assets/AssetTypes/Prefabs/PrefabOverride.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectBase.h"
@@ -85,6 +86,116 @@ TEST(EntityScriptUnification, CopyingTheComponentClonesItsScripts)
     EntityScripts::Tick(Registry, 0.1f);
     EXPECT_EQ(Clone->GetOwningEntity(), Destination) << "the clone adopts the entity it was copied onto";
     EXPECT_EQ(Script->GetOwningEntity(), Source) << "the source keeps its own entity";
+}
+
+// REGRESSION: a container property must be copied through its own member address. Handed the OBJECT base
+// instead -- which is what an IsA(Vector) special case in CopyPropertiesTo did -- TVector's {Data, Count, Cap}
+// lands exactly on {vtable pointer, ObjectFlags, ManagedInstanceSlot}, so the clone's vtable is overwritten
+// and the bogus element count is destructed/copied over read-only vtable memory.
+TEST(EntityScriptUnification, CloningAScriptCopiesContainerPropertiesWithoutSmashingTheObject)
+{
+    // The property chain is built when the class is finalized; the editor does this at startup.
+    ProcessNewlyLoadedCObjects();
+    CEntityScriptTest::StaticClass()->GetDefaultObject();
+
+    FEntityRegistry Registry{};
+    const entt::entity Source = Registry.create();
+
+    CEntityScriptTest* Script = AttachTestScript(Registry, Source);
+    ASSERT_NE(Script, nullptr);
+    Script->Values.push_back(FName("Alpha"));
+    Script->Values.push_back(FName("Beta"));
+
+    SEntityScriptComponent Copied = Registry.get<SEntityScriptComponent>(Source);
+    const entt::entity Destination = Registry.create();
+    Registry.emplace_or_replace<SEntityScriptComponent>(Destination, std::move(Copied));
+
+    ASSERT_EQ(Registry.get<SEntityScriptComponent>(Destination).Scripts.size(), size_t(1));
+    CEntityScript* Cloned = Registry.get<SEntityScriptComponent>(Destination).Scripts[0].Get();
+    ASSERT_NE(Cloned, nullptr);
+
+    // Read through the class rather than a static_cast: a smashed header shows up here first.
+    EXPECT_EQ(Cloned->GetClass(), CEntityScriptTest::StaticClass()) << "the clone's class survived the copy";
+    CEntityScriptTest* Clone = Cast<CEntityScriptTest>(Cloned);
+    ASSERT_NE(Clone, nullptr);
+
+    ASSERT_EQ(Clone->Values.size(), size_t(2)) << "the array copied, and copied into the right place";
+    EXPECT_EQ(Clone->Values[0], FName("Alpha"));
+    EXPECT_EQ(Clone->Values[1], FName("Beta"));
+
+    EXPECT_EQ(Script->Values.size(), size_t(2)) << "the source is untouched";
+
+    // A virtual call is what a corrupt vtable pointer actually faults on; the driver makes several.
+    EntityScripts::Tick(Registry, 0.1f);
+    EXPECT_EQ(Clone->UpdateCount, 1);
+}
+
+// A component with no reflected leaf of its own -- its whole state lives in a custom StructOps serializer --
+// still has to be diffable against a prefab, or every per-instance edit to it is silently inherited away on
+// the next refresh. It is tracked as ONE atomic leaf.
+TEST(EntityScriptUnification, PrefabOverridesTrackAScriptComponentAsOneAtomicValue)
+{
+    ProcessNewlyLoadedCObjects();
+    CEntityScriptTest::StaticClass()->GetDefaultObject();
+
+    auto MakeScript = []
+    {
+        return static_cast<CEntityScript*>(
+            NewObject(CEntityScriptTest::StaticClass(), nullptr, NAME_None, FGuid::New(), OF_Transient));
+    };
+    auto ValueOf = [](const SEntityScriptComponent& Component)
+    {
+        return static_cast<CEntityScriptTest*>(Component.Scripts[0].Get())->Values[0];
+    };
+
+    SEntityScriptComponent Authored;
+    Authored.Scripts.push_back(MakeScript());
+    static_cast<CEntityScriptTest*>(Authored.Scripts[0].Get())->Values.push_back(FName("Prefab"));
+
+    SEntityScriptComponent Instance = Authored;   // a placed instance starts as an exact clone
+
+    CStruct* Layout = SEntityScriptComponent::StaticStruct();
+    TVector<FName> Paths;
+    PrefabOverride::CollectOverriddenLeaves(Layout, &Instance, &Authored, Paths);
+    EXPECT_TRUE(Paths.empty()) << "an untouched instance overrides nothing";
+
+    static_cast<CEntityScriptTest*>(Instance.Scripts[0].Get())->Values[0] = FName("Instance");
+    Paths.clear();
+    PrefabOverride::CollectOverriddenLeaves(Layout, &Instance, &Authored, Paths);
+    ASSERT_EQ(Paths.size(), size_t(1)) << "editing a script value diverges the component";
+    EXPECT_EQ(Paths[0], PrefabOverride::WholeValuePath());
+
+    THashSet<FName> Overridden;
+    Overridden.insert(PrefabOverride::WholeValuePath());
+    PrefabOverride::ApplyInheritedLeaves(Layout, &Instance, &Authored, Overridden);
+    EXPECT_EQ(ValueOf(Instance), FName("Instance")) << "a refresh must not overwrite the override";
+
+    PrefabOverride::ApplyInheritedLeaves(Layout, &Instance, &Authored, THashSet<FName>{});
+    EXPECT_EQ(ValueOf(Instance), FName("Prefab")) << "with nothing overridden it still inherits the prefab";
+}
+
+// A script that was never adopted has had no OnAttach, so it must not receive OnDetach either -- for a C#
+// script that call would mint a managed instance during teardown purely to tear it back down.
+TEST(EntityScriptUnification, DetachSkipsAScriptThatNeverAttached)
+{
+    FEntityRegistry Registry{};
+    const entt::entity Entity = Registry.create();
+
+    CObject* Created = NewObject(CEntityScriptTest::StaticClass(), nullptr, NAME_None, FGuid::New(), OF_Transient);
+    CEntityScriptTest* Unadopted = static_cast<CEntityScriptTest*>(Created);
+    ASSERT_NE(Unadopted, nullptr);
+    Registry.get_or_emplace<SEntityScriptComponent>(Entity).Scripts.push_back(Unadopted);
+
+    EXPECT_FALSE(Unadopted->IsAttached());
+    EntityScripts::DetachAll(Registry, Entity);
+    EXPECT_EQ(Unadopted->DetachCount, 0) << "no OnAttach ran, so no OnDetach is owed";
+
+    // And the paired case still fires.
+    const entt::entity Adopted = Registry.create();
+    CEntityScriptTest* Attached = AttachTestScript(Registry, Adopted);
+    ASSERT_NE(Attached, nullptr);
+    EntityScripts::DetachAll(Registry, Adopted);
+    EXPECT_EQ(Attached->DetachCount, 1);
 }
 
 // Fixed update must not reach a script that has not readied yet -- otherwise a script could observe a physics
@@ -365,6 +476,10 @@ TEST(EntityScriptUnification, ScriptsSurviveAClassLayoutRebuild)
     ASSERT_NE(Speed, nullptr);
     Speed->SetValue<float>(Attached, 12.5f);
 
+    // Identity by GUID, not by address: the evacuated object is freed before the restore allocates, so the
+    // pooled allocator is free to hand the same block back and an address comparison proves nothing.
+    const FGuid AttachedGuid = Attached->GetGUID();
+
     // A rebuild is refused while the script is attached, which is exactly why evacuation exists.
     Scripting::FScriptExportSchema After;
     {
@@ -412,7 +527,7 @@ TEST(EntityScriptUnification, ScriptsSurviveAClassLayoutRebuild)
     CEntityScript* Restored = Component->Scripts[0].Get();
     ASSERT_NE(Restored, nullptr);
     EXPECT_EQ(Restored->GetClass(), Minted);
-    EXPECT_NE(Restored, Attached) << "restore must build a NEW object; the old one was the old size";
+    EXPECT_NE(Restored->GetGUID(), AttachedGuid) << "restore must build a NEW object; the old one was the old size";
 
     // The authored value rode across the rebuild, keyed by name.
     FProperty* NewSpeed = Minted->GetProperty(FName("Speed"));

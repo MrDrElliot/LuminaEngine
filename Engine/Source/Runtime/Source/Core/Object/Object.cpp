@@ -103,17 +103,19 @@ namespace Lumina
                 }
                 
                 TVector<uint8> Bytes;
-                
-                const bool bContainer = Current->IsA(EPropertyTypeFlags::Vector) || Current->IsA(EPropertyTypeFlags::Map);
+
+                // Every property, containers included, is handed its own value pointer. An array or map
+                // property given the OBJECT base instead reads its size out of the vtable pointer on write,
+                // and on read resizes over the destination's first bytes -- destroying its vptr and class.
                 {
-                    void* ValuePtr = bContainer ? this : Current->GetValuePtr<void>(this);
+                    void* ValuePtr = Current->GetValuePtr<void>(this);
                     FMemoryWriter Writer(Bytes);
                     FObjectProxyArchiver Proxy(Writer, true);
                     Current->Serialize(Proxy, ValuePtr);
                 }
 
                 {
-                    void* ValuePtr = bContainer ? Other : Current->GetValuePtr<void>(Other);
+                    void* ValuePtr = Current->GetValuePtr<void>(Other);
                     FMemoryReader Reader(Bytes);
 
                     // Remapping happens on the READ: the buffer holds the source's GUIDs either way,

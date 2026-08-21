@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Containers/Name.h"
 #include "Core/Object/Object.h"
 #include "Scripting/EntityScript.h"
 #include "ScriptableTest.generated.h"
@@ -48,6 +49,11 @@ namespace Lumina
         void OnUpdate(float Dt) override      { ++UpdateCount; AccumulatedTime += Dt; }
         void OnFixedUpdate(float Dt) override { ++FixedUpdateCount; }
         void OnDetach() override      { ++DetachCount; }
+
+        // A reflected CONTAINER property, so a clone/duplicate test can prove the copy is handed this
+        // member's address rather than the object base (which would land the array header on the vtable ptr).
+        PROPERTY()
+        TVector<FName> Values;
 
         int32 AttachCount = 0;
         int32 ReadyCount = 0;

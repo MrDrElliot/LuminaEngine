@@ -74,7 +74,7 @@ namespace Lumina
                 {
                     if (Index < (int32)Component->Scripts.size())
                     {
-                        if (CEntityScript* Removed = Component->Scripts[Index].Get())
+                        if (CEntityScript* Removed = Component->Scripts[Index].Get(); Removed != nullptr && Removed->IsAttached())
                         {
                             Removed->OnDetach();
                         }
