@@ -5,8 +5,6 @@
 
 namespace Lumina
 {
-    // Reads a named graph parameter as a scalar; parameters are exposed on the compiled
-    // CAnimationGraph and driven at runtime via SAnimationGraphComponent (editor or Lua).
     REFLECT()
     class CAnimGraphNode_GetParameter : public CAnimGraphNode
     {
