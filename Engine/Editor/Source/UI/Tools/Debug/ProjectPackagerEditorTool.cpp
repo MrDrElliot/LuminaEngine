@@ -411,7 +411,7 @@ namespace Lumina
         if (ImGui::IsItemHovered())
         {
             ImGui::SetTooltip(
-                "When enabled, every non-.lasset file under /Game/ (.luau, .rml,\n"
+                "When enabled, every non-.lasset file under /Game/ (.rcss, .rml,\n"
                 "JSON, etc) is mirrored next to the cooked exe instead of being\n"
                 "bundled in the PAK. End users (or you, post-ship) can tweak\n"
                 "gameplay and UI without re-cooking. The runtime mounts the\n"

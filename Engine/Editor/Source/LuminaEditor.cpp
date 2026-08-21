@@ -184,13 +184,10 @@ namespace Lumina
 
                 const FStringView SourcePath = Entry.FullPath;
                 const FStringView Ext        = Entry.GetExtension();
-
-                // Token replace only on text files; anything else copies verbatim. .cs covers both
-                // the C# scripts and the .Build.cs / .Target.cs rules files, which carry
-                // $PROJECTNAME in their contents and in their file names.
+                
                 const bool bIsTextFile =
                     Ext == ".h"          || Ext == ".hpp"        || Ext == ".cpp"     ||
-                    Ext == ".c"          || Ext == ".inl"        || Ext == ".lua"     ||
+                    Ext == ".c"          || Ext == ".inl"        ||
                     Ext == ".cs"         || Ext == ".rml"        || Ext == ".rcss"    ||
                     Ext == ".json"       || Ext == ".lproject"   || Ext == ".lplugin" ||
                     Ext == ".bat"        || Ext == ".sh"         || Ext == ".py"      ||

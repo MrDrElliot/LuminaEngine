@@ -1250,7 +1250,27 @@ namespace Lumina
         SetBulkSource(ReopenedRegion, Path);
 
         CreateLoader(FileBinary);
-        return Loader != nullptr;
+        if (!Loader)
+        {
+            return false;
+        }
+
+        // A fresh archive defaults to the CURRENT version, so without this an older file re-read here is parsed as if saved today.
+        FPackageLoader& Reader = *static_cast<FPackageLoader*>(Loader.get());
+
+        FPackageHeader Header;
+        Reader << Header;
+
+        if (Header.Tag != PACKAGE_FILE_TAG)
+        {
+            LOG_ERROR("EnsureLoader: {} is not a valid Lumina package (tag mismatch)", Path);
+            Loader.reset();
+            return false;
+        }
+
+        Reader.SetFileVersion(Header.Version);
+        Reader.Seek(0);
+        return true;
     }
 
     void CPackage::ConditionalDropLoader()

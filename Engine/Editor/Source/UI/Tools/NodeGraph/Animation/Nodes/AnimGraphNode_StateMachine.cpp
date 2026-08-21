@@ -95,8 +95,6 @@ namespace Lumina
 
         if (!StateMachineGraph.IsValid())
         {
-            // Never opened -> nothing to evaluate. Emit a bind pose so the
-            // graph still resolves; the user gets an error to act on.
             EdNodeGraph::FError NodeError;
             NodeError.Name        = "Empty State Machine";
             NodeError.Description = "State Machine has no states; double-click it to add some.";
