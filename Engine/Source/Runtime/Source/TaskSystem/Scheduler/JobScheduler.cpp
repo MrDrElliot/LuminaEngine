@@ -242,6 +242,9 @@ namespace Lumina::Jobs
             // Wall-clock gate for the pool-wedged report, shared so only one worker ever prints it.
             alignas(64) TAtomic<int64> NextWedgeReportMs{0};
 
+            // The same gate for the assist-wait stall report; every waiting thread shares one.
+            alignas(64) TAtomic<int64> NextAssistStallMs{0};
+
             // Bit per futex-parked worker. Load-bearing: WakeWorkers scans it to wake only idle workers, and only
             // as many as there are jobs. Own cache line.
             alignas(64) std::atomic<uint64>* IdleMask = nullptr; // [IdleMaskWords]
@@ -920,6 +923,23 @@ namespace Lumina::Jobs
                 std::memory_order_acq_rel, std::memory_order_relaxed);
         }
 
+        // An assist wait that spins this long without finding one job is pathological, not slow work.
+        constexpr double kAssistStallSeconds  = 0.010;
+        constexpr int64  kAssistStallReportMs = 2000;
+
+        bool ShouldReportAssistStall()
+        {
+            const int64 NowMs = static_cast<int64>(PlatformTime::Seconds() * 1000.0);
+
+            int64 Next = G->NextAssistStallMs.load(std::memory_order_relaxed);
+            if (NowMs < Next)
+            {
+                return false;
+            }
+            return G->NextAssistStallMs.compare_exchange_strong(Next, NowMs + kAssistStallReportMs,
+                std::memory_order_acq_rel, std::memory_order_relaxed);
+        }
+
         // Wedge recovery: run a queued job on the scheduler fiber posing as external, so any wait inside it assist-spins instead of parking a fiber that does not exist.
         bool RunOneJobInline(uint32 Slot)
         {
@@ -1234,6 +1254,35 @@ namespace Lumina::Jobs
             {
                 LOG_ERROR("  counter {}: value {} with {} parked waiter(s)", C.Id, C.Value, C.ParkedWaiters);
             }
+        }
+
+        // A waiting thread found nothing to run for a whole frame's worth of spinning, so the work it waits on is
+        // neither running nor stealable by it. These four numbers say which: queued-but-unassistable work, a ready
+        // fiber with no worker resuming it, or nothing queued at all and a decrement that never came.
+        void ReportAssistStall(int32 CounterValue, int32 Target, double IdleSeconds)
+        {
+            uint32 ParkedWorkers = 0;
+            for (uint32 Word = 0; Word < G->IdleMaskWords; ++Word)
+            {
+                uint64 Bits = G->IdleMask[Word].load(std::memory_order_relaxed);
+                while (Bits != 0)
+                {
+                    Bits &= Bits - 1;
+                    ++ParkedWorkers;
+                }
+            }
+
+            LOG_ERROR("Job system: a counter wait spun {}ms without finding a single job to run. "
+                      "Counter value {} (waiting for {}), queued {} (assistable {}), ready fibers {}, "
+                      "in-flight {}, {}/{} workers parked.",
+                static_cast<int64>(IdleSeconds * 1000.0), CounterValue, Target,
+                G->AvailJobs.load(std::memory_order_relaxed),
+                G->AvailAssistJobs.load(std::memory_order_relaxed),
+                G->ReadyCount.load(std::memory_order_relaxed),
+                G->InFlight.load(std::memory_order_relaxed),
+                ParkedWorkers, G->NumWorkers);
+
+            JobsHangReporter();
         }
     }
 
@@ -1664,6 +1713,9 @@ namespace Lumina::Jobs
         // an external thread (no fiber to park) and by a fiber under a no-yield guard (see above).
         const uint32 Slot = GetWorkerIndex();
         uint32 IdleSpins = 0;
+        // Clock read only on the yield branch, and only while the assist is finding nothing: a wait that keeps
+        // adopting jobs is working, however long it takes, and never pays for this.
+        double IdleSince = 0.0;
         while (Counter->Value.load(std::memory_order_acquire) > Value)
         {
             FQueuedJob Job;
@@ -1672,6 +1724,7 @@ namespace Lumina::Jobs
                 RunAdoptedJob(Job, Slot);
                 OnJobComplete(Job.Counter, Slot);
                 IdleSpins = 0;
+                IdleSince = 0.0;
             }
             else if (++IdleSpins < 256)
             {
@@ -1681,6 +1734,17 @@ namespace Lumina::Jobs
             {
                 Threading::ThreadYield();
                 IdleSpins = 0;
+
+                const double Now = PlatformTime::Seconds();
+                if (IdleSince == 0.0)
+                {
+                    IdleSince = Now;
+                }
+                else if (Now - IdleSince >= kAssistStallSeconds && ShouldReportAssistStall())
+                {
+                    ReportAssistStall(Counter->Value.load(std::memory_order_relaxed), Value, Now - IdleSince);
+                    IdleSince = Now;
+                }
             }
         }
     }
