@@ -91,7 +91,6 @@ namespace Lumina
             TVector<uint32>                     DrawInstanceCounts;
             TVector<uint8>                      BatchSkinFlags;
             TVector<uint32>                     TouchedSlots;
-            TVector<FUIntVector2>               BoneCandidates;
             TVector<FUIntVector2>               BoneUploadRanges;
 
             FSceneRenderStats                   Stats = {};
@@ -107,7 +106,6 @@ namespace Lumina
             {
                 Items.Reset();
                 EntityRecords.Reset();
-                BoneCandidates.clear();
                 BoneUploadRanges.clear();
                 Stats = {};
                 bTouched = false;
@@ -732,6 +730,13 @@ namespace Lumina
 
         // Per-primitive base in the bone arena; kNoBoneSlice for anything not gathered this frame.
         TVector<uint32>                        BoneSliceByPrimitive;
+        // Primitive indices the cull kept, dense, filled straight from the parallel cull via a cursor.
+        TVector<uint32>                        SkinnedCandidates;
+        TVector<uint32>                        SkinnedCandidateBones;
+        TVector<uint32>                        PendingSliceAllocs;
+        TAtomic<uint32>                        SkinnedCandidateCursor{0};
+        TAtomic<uint32>                        PendingSliceCursor{0};
+        uint32                                 SkinnedCandidateCount = 0;
         // Frames a slice survives ungathered, so a mesh flicking through the cull does not thrash its base.
         static constexpr uint32                kBoneSliceGraceFrames = 300;
         uint32                                 BoneSliceFrameNumber = 0;

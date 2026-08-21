@@ -489,6 +489,16 @@ namespace Lumina
         Prim.UploadedPoseSerial = 0u;
     }
 
+    uint32 FScenePrimitiveSet::TouchBoneSlice(uint32 Index, uint32 Count, uint32 FrameNumber)
+    {
+        FScenePrimitive& Prim = Primitives[Index];
+        Prim.BoneSliceFrame = FrameNumber;
+
+        return (Prim.BoneSliceBase != kNoBoneSlice && Prim.BoneSliceCount == Count)
+             ? Prim.BoneSliceBase
+             : kNoBoneSlice;
+    }
+
     uint32 FScenePrimitiveSet::AcquireBoneSlice(uint32 Index, uint32 Count, uint32 FrameNumber)
     {
         FScenePrimitive& Prim = Primitives[Index];

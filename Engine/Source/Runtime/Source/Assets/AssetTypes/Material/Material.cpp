@@ -887,7 +887,7 @@ namespace Lumina
             Gather("/Engine/Resources/Shaders/MaterialShader");
             Gather("/Engine/Resources/Shaders/Includes");
             
-            constexpr uint64 Seed = (uint64)FShaderCache::SHADER_CACHE_VERSION;
+            constexpr uint64 Seed = (uint64)FShaderCache::kShaderCacheVersion;
 
             Algo::Sort(Files.begin(), Files.end(), [](const FEntry& A, const FEntry& B)
             {

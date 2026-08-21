@@ -86,6 +86,12 @@ namespace Lumina
         // One grain for the whole gather: all primitive types share a single dense array.
         constexpr uint32 GPrimitiveGrain = 256;
 
+        // Finer, because these are candidates rather than a sparse scan: every entry does real work.
+        constexpr uint32 GSkinnedEmitGrain = 16;
+
+        // Layout does far less per candidate than emit, so it wants wider chunks to stay worth splitting.
+        constexpr uint32 GSkinnedLayoutGrain = 256;
+
 
         // Bounds VRAM, not correctness: the claim and the store both clamp, and losers skin inline.
         constexpr uint32 GMaxPreSkinnedVertices = (21 * 1024 * 1024) / 2;
@@ -2317,6 +2323,16 @@ namespace Lumina
 
                 if (ScenePrimitives.GetSkinnedPrimitiveCount() > 0)
                 {
+                    // Exact bound: only a skeletal primitive can become a candidate.
+                    const uint32 CandidateCapacity = ScenePrimitives.GetSkinnedPrimitiveCount();
+                    if ((uint32)SkinnedCandidates.size() < CandidateCapacity)
+                    {
+                        SkinnedCandidates.resize(CandidateCapacity);
+                        SkinnedCandidateBones.resize(CandidateCapacity);
+                        PendingSliceAllocs.resize(CandidateCapacity);
+                    }
+                    SkinnedCandidateCursor.store(0, std::memory_order_relaxed);
+
                     FTaskGraph::FNodeHandle CullNode = Graph.AddParallelFor(NumPrimitives, GPrimitiveGrain, [&](const Task::FParallelRange& Range)
                     {
                         LUMINA_PROFILE_SECTION("Cull Skinned Primitives");
@@ -2330,11 +2346,18 @@ namespace Lumina
                         LayoutSkinnedBoneSlices(ThreadLocal);
                     }, ETaskPriority::High);
 
-                    FTaskGraph::FNodeHandle EmitNode = Graph.AddParallelFor(NumPrimitives, GPrimitiveGrain, [&](const Task::FParallelRange& Range)
+                    // A graph AddParallelFor needs its count at BUILD time, before the cull produces one.
+                    FTaskGraph::FNodeHandle EmitNode = Graph.Add([&]
                     {
                         LUMINA_PROFILE_SECTION("Emit Skinned Primitives");
-                        FThreadLocalDrawData& Local = AcquireThreadLocalDrawData(Range.Thread);
-                        EmitSkinnedPrimitives(Range, Local);
+
+                        Task::ParallelFor(SkinnedCandidateCount,
+                            [&](const Task::FParallelRange& Range)
+                            {
+                                FThreadLocalDrawData& Local = AcquireThreadLocalDrawData(Range.Thread);
+                                EmitSkinnedPrimitives(Range, Local);
+                            },
+                            GSkinnedEmitGrain, ETaskPriority::High);
                     }, ETaskPriority::High);
 
                     Graph.AddDependency(LayoutNode, CullNode);
@@ -3927,7 +3950,12 @@ namespace Lumina
             }
 
             // A SUPERSET of what the emit pass accepts; anything it rejects just leaves an unused hole.
-            Local.BoneCandidates.push_back(FUIntVector2{ i, Prim.BoneCount });
+            const uint32 Slot = SkinnedCandidateCursor.fetch_add(1, std::memory_order_relaxed);
+            if (Slot < (uint32)SkinnedCandidates.size())
+            {
+                SkinnedCandidates[Slot]     = i;
+                SkinnedCandidateBones[Slot] = Prim.BoneCount;
+            }
         }
     }
 
@@ -3937,22 +3965,54 @@ namespace Lumina
 
         const uint32 NumPrimitives = ScenePrimitives.Num();
 
-        BoneSliceByPrimitive.assign(NumPrimitives, kNoBoneSlice);
+        // Grown, never cleared: only entries this frame wrote are ever read, so no O(scene) memset.
+        if ((uint32)BoneSliceByPrimitive.size() < NumPrimitives)
+        {
+            BoneSliceByPrimitive.resize(NumPrimitives, kNoBoneSlice);
+        }
+
+        SkinnedCandidateCount = Math::Min(SkinnedCandidateCursor.load(std::memory_order_relaxed),
+                                          (uint32)SkinnedCandidates.size());
+        PendingSliceCursor.store(0, std::memory_order_relaxed);
 
         ++BoneSliceFrameNumber;
 
-        // A primitive that keeps being gathered keeps its base, which is what lets the emit pass skip it.
-        for (FThreadLocalDrawData& Local : ThreadLocal)
-        {
-            for (const FUIntVector2& Candidate : Local.BoneCandidates)
+        // Reuse needs nothing shared; only the misses fall through to the serial allocator below.
+        Task::ParallelFor(SkinnedCandidateCount,
+            [&](const Task::FParallelRange& Range)
             {
-                if (Candidate.x < NumPrimitives)
+                for (uint32 c = Range.Start; c < Range.End; ++c)
                 {
-                    BoneSliceByPrimitive[Candidate.x] =
-                        ScenePrimitives.AcquireBoneSlice(Candidate.x, Candidate.y, BoneSliceFrameNumber);
+                    const uint32 Index = SkinnedCandidates[c];
+                    if (Index >= NumPrimitives)
+                    {
+                        continue;
+                    }
+
+                    const uint32 Base = ScenePrimitives.TouchBoneSlice(Index, SkinnedCandidateBones[c],
+                                                                      BoneSliceFrameNumber);
+                    BoneSliceByPrimitive[Index] = Base;
+
+                    if (Base == kNoBoneSlice)
+                    {
+                        const uint32 Slot = PendingSliceCursor.fetch_add(1, std::memory_order_relaxed);
+                        if (Slot < (uint32)PendingSliceAllocs.size())
+                        {
+                            PendingSliceAllocs[Slot] = c;
+                        }
+                    }
                 }
-            }
-            Local.BoneCandidates.clear();
+            },
+            GSkinnedLayoutGrain, ETaskPriority::High);
+
+        const uint32 NumPending = Math::Min(PendingSliceCursor.load(std::memory_order_relaxed),
+                                            (uint32)PendingSliceAllocs.size());
+        for (uint32 n = 0; n < NumPending; ++n)
+        {
+            const uint32 c     = PendingSliceAllocs[n];
+            const uint32 Index = SkinnedCandidates[c];
+            BoneSliceByPrimitive[Index] =
+                ScenePrimitives.AcquireBoneSlice(Index, SkinnedCandidateBones[c], BoneSliceFrameNumber);
         }
 
         ScenePrimitives.ReleaseStaleBoneSlices(BoneSliceFrameNumber, kBoneSliceGraceFrames);
@@ -3983,12 +4043,13 @@ namespace Lumina
 
         const double WorldTime = World->GetTimeSinceWorldCreation();
 
-        for (uint32 i = Range.Start; i < Range.End; ++i)
+        for (uint32 c = Range.Start; c < Range.End; ++c)
         {
+            const uint32 i = SkinnedCandidates[c];
             const uint32 BoneSlice = BoneSliceByPrimitive[i];
             if (BoneSlice == kNoBoneSlice)
             {
-                continue;   // the cull pass already rejected it
+                continue;   // its slice request failed; nothing to emit
             }
 
             const FScenePrimitive& Prim = Prims[i];
@@ -4059,7 +4120,11 @@ namespace Lumina
                 EntityRecord.BoneArenaBase  = BoneSlice;
                 EntityRecord.BoneArenaCount = SkeletonBoneCount;
 
-                if (MeshComponent.bRenderBonesDirty || (uint32)MeshComponent.RenderBones.size() != SkeletonBoneCount)
+                // A partial pose would leave the size test true forever, repacking every single frame.
+                const bool bHasFullPose = (uint32)MeshComponent.BoneTransforms.size() == SkeletonBoneCount;
+
+                if (bHasFullPose
+                    && (MeshComponent.bRenderBonesDirty || (uint32)MeshComponent.RenderBones.size() != SkeletonBoneCount))
                 {
                     SkeletalUtils::PackRenderBones(MeshComponent.BoneTransforms, MeshComponent.RenderBones);
                     MeshComponent.bRenderBonesDirty = false;
@@ -4075,14 +4140,14 @@ namespace Lumina
                 {
                     FBoneTransform* Dst = ArenaMirror.data() + BoneSlice;
 
-                    if ((uint32)MeshComponent.RenderBones.size() == SkeletonBoneCount)
+                    if (bHasFullPose && (uint32)MeshComponent.RenderBones.size() == SkeletonBoneCount)
                     {
                         Memory::Memcpy(Dst, MeshComponent.RenderBones.data(),
                                        (SIZE_T)SkeletonBoneCount * sizeof(FBoneTransform));
                     }
                     else
                     {
-                        // No active animation: BoneWorld * InvBindMatrix collapses to identity for every bone.
+                        // No pose: BoneWorld * InvBindMatrix collapses to identity for every bone.
                         const FBoneTransform IdentityBone = IdentityBoneTransform();
                         for (uint32 b = 0; b < SkeletonBoneCount; ++b)
                         {

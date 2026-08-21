@@ -254,7 +254,9 @@ namespace Lumina
         const FInstanceStatic*      GetRetainedStatic() const     { return RetainedStatic.data(); }
         uint32                      GetRetainedSlotCount() const  { return (uint32)RetainedCullEntries.size(); }
 
-        // Recycled by EXACT size: bone counts come from assets, so same-size reuse never fragments.
+        // Touches only Primitives[Index], so this half is parallel-safe; kNoBoneSlice means it needs one.
+        uint32                      TouchBoneSlice(uint32 Index, uint32 Count, uint32 FrameNumber);
+        // Recycled by EXACT size and mutates the free lists, so this half must stay serial.
         uint32                      AcquireBoneSlice(uint32 Index, uint32 Count, uint32 FrameNumber);
         // Rolling sweep, a slab of the table per call, so the cost never scales with scene size at once.
         void                        ReleaseStaleBoneSlices(uint32 FrameNumber, uint32 GraceFrames);

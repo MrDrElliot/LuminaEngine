@@ -79,7 +79,7 @@ namespace Lumina
                 return FString();
             }
 
-            VFS::CreateDir(FShaderCache::CACHE_DIR);
+            VFS::CreateDir(FShaderCache::kCacheDirectory);
 
             LOG_TRACE("Shader validation active: {}", Candidate.c_str());
             return Candidate;
@@ -106,7 +106,7 @@ namespace Lumina
         char NameBuf[32];
         snprintf(NameBuf, sizeof(NameBuf), "/spirv-val-%u.spv", Serial.fetch_add(1, std::memory_order_relaxed));
 
-        const FString VirtualPath = FString(FShaderCache::CACHE_DIR) + NameBuf;
+        const FString VirtualPath = FString(FShaderCache::kCacheDirectory) + NameBuf;
 
         const TSpan<const uint8> Bytes(reinterpret_cast<const uint8*>(Spirv.data()), Spirv.size() * sizeof(uint32));
         if (!VFS::WriteFile(VirtualPath, Bytes))
@@ -755,7 +755,7 @@ namespace Lumina
         if (Shaders::PrecompileNewRoots() == 0)
         {
             uint32 Loaded = 0;
-            VFS::DirectoryIterator(FShaderCache::CACHE_DIR, [&](const VFS::FFileInfo& Info)
+            VFS::DirectoryIterator(FShaderCache::kCacheDirectory, [&](const VFS::FFileInfo& Info)
             {
                 if (Info.GetExt() != ".lsc")
                 {

@@ -5,7 +5,6 @@
 #include "Core/Serialization/MemoryArchiver.h"
 #include "FileSystem/FileSystem.h"
 #include "Memory/MemoryTracking.h"
-#include "Log/Log.h"
 
 namespace Lumina::FShaderCache
 {
@@ -88,10 +87,7 @@ namespace Lumina::FShaderCache
             {
                 Candidate.assign(Token.data(), Token.size());
             }
-
-            // Sibling-of-includer first, then every shader root in the same order Slang searches them,
-            // so an include a plugin or game shader pulls in is hashed rather than silently ignored --
-            // an unhashed include is one that can be edited without invalidating the cache.
+            
             if (!IncludingDir.empty())
             {
                 FString Sibling(IncludingDir.data(), IncludingDir.size());
@@ -214,16 +210,13 @@ namespace Lumina::FShaderCache
 
     uint64 ComputeSourceSetHash(FStringView ShaderVirtualPath, const TVector<FString>& Defines, const TVector<FString>& SearchRoots)
     {
-        uint64 Hash = (uint64)SHADER_CACHE_VERSION;
+        uint64 Hash = (uint64)kShaderCacheVersion;
         const FString DefineBlob = JoinSortedDefines(Defines);
         Hash ^= Hash::GetHash64(DefineBlob) + 0x9e3779b97f4a7c15ULL + (Hash << 6) + (Hash >> 2);
 
         THashSet<FString> Visited;
         if (!GatherSourceHash(ShaderVirtualPath, SearchRoots, Visited, Hash))
         {
-            // Unreadable source (a name the roots could not resolve, or a packaged build with the source
-            // stripped). 0 means "do not serve or write a cache entry" -- better than a hash covering
-            // nothing but the defines, which would pin the first compile forever.
             return 0;
         }
 
@@ -245,7 +238,7 @@ namespace Lumina::FShaderCache
         char HexBuf[32];
         snprintf(HexBuf, sizeof(HexBuf), "%016llx", (unsigned long long)KeyHash);
 
-        FString Out = CACHE_DIR;
+        FString Out = kCacheDirectory;
         Out += '/';
         Out += HexBuf;
         Out += ".lsc";
@@ -274,7 +267,7 @@ namespace Lumina::FShaderCache
         Reader << Version;
         Reader << StoredHash;
 
-        if (Magic != CACHE_MAGIC || Version != SHADER_CACHE_VERSION)
+        if (Magic != CACHE_MAGIC || Version != kShaderCacheVersion)
         {
             return false;
         }
@@ -302,13 +295,13 @@ namespace Lumina::FShaderCache
         }
 
         // Make sure the cache directory exists; native FS WriteFile won't mkdir.
-        VFS::CreateDir(CACHE_DIR);
+        VFS::CreateDir(kCacheDirectory);
 
         TVector<uint8> Bytes;
         FMemoryWriter Writer(Bytes);
 
         uint32 Magic = CACHE_MAGIC;
-        uint32 Version = SHADER_CACHE_VERSION;
+        uint32 Version = kShaderCacheVersion;
         uint64 StoredHash = SourceHash;
         Writer << Magic;
         Writer << Version;
