@@ -220,6 +220,24 @@ namespace Lumina
         FVector4 RowBgActive = FVector4(0.160f, 0.175f, 0.215f, 1.00f);
     };
 
+    REFLECT()
+    enum class ESMAAQuality : uint8
+    {
+        Off,
+        Low,
+        Medium,
+        High,
+        Ultra,
+    };
+
+    REFLECT()
+    enum class EVariableRateShading : uint8
+    {
+        Off,        // 1x1 - full rate
+        Rate2x2,    // quarter the fragment shader invocations
+        Rate4x4,    // sixteenth (clamped to the GPU's max supported rate)
+    };
+
     // Per-project renderer quality settings; persists to the project's /Config/RendererSettings.json.
     REFLECT(MinimalAPI, ConfigFile = "/Config/RendererSettings.json", DisplayName = "Rendering", Category = "Engine")
     class CRendererSettings : public CDeveloperSettings
@@ -268,5 +286,29 @@ namespace Lumina
         /** Overall strength of the traced reflection against the prefiltered fallback. */
         PROPERTY(Editable, Category = "Screen Space Reflections", ClampMin = 0.0f, ClampMax = 1.0f)
         float SSRIntensity = 1.0f;
+
+        /** Antialiasing quality. Off disables SMAA; higher qualities detect more edges at higher GPU cost. */
+        PROPERTY(Editable, Category = "Anti-Aliasing")
+        ESMAAQuality SMAAQuality = ESMAAQuality::High;
+
+        // VRS rate for opted-in passes; coarser is fewer PS invocations but softer, and a no-op without pipeline FSR.
+        PROPERTY(Editable, Category = "Variable Rate Shading")
+        EVariableRateShading VariableRateShading = EVariableRateShading::Off;
+
+        // Screen-space ambient occlusion, reconstructed from depth; visible only where there is ambient to darken.
+        PROPERTY(Editable, Category = "Ambient Occlusion")
+        bool bEnableGTAO = false;
+
+        /** GTAO sample radius in world units. Larger = wider, softer occlusion. */
+        PROPERTY(Editable, Category = "Ambient Occlusion", ClampMin = 0.01f)
+        float GTAORadius = 0.5f;
+
+        /** GTAO strength multiplier. 0 = none. */
+        PROPERTY(Editable, Category = "Ambient Occlusion", ClampMin = 0.0f)
+        float GTAOIntensity = 1.0f;
+
+        /** GTAO contrast exponent applied to the AO factor. Higher = darker, tighter contact shadows. */
+        PROPERTY(Editable, Category = "Ambient Occlusion", ClampMin = 0.1f)
+        float GTAOPower = 2.0f;
     };
 }

@@ -22,7 +22,6 @@
 #include "TaskSystem/FiberSync.h"
 #include "World/Entity/Components/PostProcessSettings.h"
 #include "World/Entity/Components/CloudComponent.h"
-#include "World/Subsystems/WorldSettings.h"
 
 namespace Lumina
 {
@@ -250,7 +249,6 @@ namespace Lumina
             FViewVolume                      ViewVolume = {};
             FFrustum                         CameraFrustum = {};
             FSceneGlobalData                 SceneGlobalData = {};
-            SDefaultWorldSettings            CachedWorldSettings = {};
             float                            CachedWorldDeltaTime = 0.0f;
             bool                             bExtractedThisFrame = false;
             FSceneRenderStats                FrameStats = {};

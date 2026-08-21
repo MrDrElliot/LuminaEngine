@@ -8,24 +8,6 @@
 
 namespace Lumina
 {
-    REFLECT()
-    enum class ESMAAQuality : uint8
-    {
-        Off,
-        Low,
-        Medium,
-        High,
-        Ultra,
-    };
-
-    REFLECT()
-    enum class EVariableRateShading : uint8
-    {
-        Off,        // 1x1 - full rate
-        Rate2x2,    // quarter the fragment shader invocations
-        Rate4x4,    // sixteenth (clamped to the GPU's max supported rate)
-    };
-
     REFLECT(Component, HideInComponentList)
     struct RUNTIME_API SDefaultWorldSettings
     {
@@ -48,32 +30,6 @@ namespace Lumina
         /** Time dilation factor - values below 1 slow the world, above 1 speed it up. */
         PROPERTY(Editable)
         float DeltaTimeScale = 1.0f;
-
-        /** Antialiasing quality. Off disables SMAA; higher qualities detect more edges at higher GPU cost. */
-        PROPERTY(Editable, Category = "Rendering")
-        ESMAAQuality SMAAQuality = ESMAAQuality::High;
-
-        // VRS rate for opted-in passes (sky, particles, translucency, fog, opaque base). Coarser = fewer PS
-        // invocations but softer + reduced picker precision (base pass writes it). No-op without pipeline FSR.
-        PROPERTY(Editable, Category = "Rendering")
-        EVariableRateShading VariableRateShading = EVariableRateShading::Off;
-
-        /** Screen-space ambient occlusion. Reconstructs occlusion from depth and darkens the ambient/IBL
-            term -- only visible where there is some skylight/environment ambient. */
-        PROPERTY(Editable, Category = "Rendering")
-        bool bEnableGTAO = false;
-
-        /** GTAO sample radius in world units. Larger = wider, softer occlusion. */
-        PROPERTY(Editable, ClampMin = 0.01f, Category = "Rendering")
-        float GTAORadius = 0.5f;
-
-        /** GTAO strength multiplier. 0 = none. */
-        PROPERTY(Editable, ClampMin = 0.0f, Category = "Rendering")
-        float GTAOIntensity = 1.0f;
-
-        /** GTAO contrast exponent applied to the AO factor. Higher = darker, tighter contact shadows. */
-        PROPERTY(Editable, ClampMin = 0.1f, Category = "Rendering")
-        float GTAOPower = 2.0f;
 
         /** Normalized direction of gravity in world space. */
         PROPERTY(Editable, Category = "Physics")

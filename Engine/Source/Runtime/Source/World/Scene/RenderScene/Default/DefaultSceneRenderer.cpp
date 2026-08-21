@@ -55,7 +55,6 @@
 #include "World/Scene/RenderScene/MeshResolveCache.h"
 #include "World/Scene/RenderScene/TerrainMeshletBuilder.h"
 #include "World/Scene/RenderScene/TerrainRenderTypes.h"
-#include "World/Subsystems/WorldSettings.h"
 #include "Renderer/SMAA/AreaTex.h"
 #include "Renderer/SMAA/SearchTex.h"
 #include "TaskSystem/FiberSync.h"
@@ -99,6 +98,19 @@ namespace Lumina
         // Bounds VRAM, not correctness: the claim and the store both clamp, and losers skin inline.
         constexpr uint32 GMaxPreSkinnedVertices = (21 * 1024 * 1024) / 2;
 
+        // Read live from the project settings CDO, like SSR and the froxel grid; there is no per-world copy.
+        ESMAAQuality GetSMAAQuality()
+        {
+            const CRendererSettings* Settings = GetDefault<CRendererSettings>();
+            return Settings != nullptr ? Settings->SMAAQuality : ESMAAQuality::Off;
+        }
+
+        bool IsGTAOEnabled()
+        {
+            const CRendererSettings* Settings = GetDefault<CRendererSettings>();
+            return Settings != nullptr && Settings->bEnableGTAO;
+        }
+
         // A zero grain would ask for an unbounded task split; floor it.
     }
 
@@ -130,8 +142,6 @@ namespace Lumina
         LUMINA_MEMORY_SCOPE("Render Scene");
 
         RHI::WaitDeviceIdle();
-
-        const SDefaultWorldSettings& InitSettings = World ? World->GetDefaultWorldSettings() : SDefaultWorldSettings{};
 
         // Shared (view-independent) buffers + images first.
         InitBuffers();
@@ -468,7 +478,6 @@ namespace Lumina
         FFrameData& Frame = *ExtractFrame;
 
         Frame.bExtractedThisFrame  = false;
-        Frame.CachedWorldSettings  = World->GetDefaultWorldSettings();
         Frame.CachedWorldDeltaTime = (float)World->GetWorldDeltaTime();
         Frame.ViewVolume           = ViewVolume;
 
@@ -526,9 +535,12 @@ namespace Lumina
         SceneGlobalData.FarPlane                        = ViewVolume.GetFar();
         SceneGlobalData.NearPlane                       = ViewVolume.GetNear();
         SceneGlobalData.GTAOSettings                    = FGTAOSettings{};
-        SceneGlobalData.GTAOSettings.Radius             = Frame.CachedWorldSettings.GTAORadius;
-        SceneGlobalData.GTAOSettings.Intensity          = Frame.CachedWorldSettings.GTAOIntensity;
-        SceneGlobalData.GTAOSettings.Power              = Frame.CachedWorldSettings.GTAOPower;
+        if (const CRendererSettings* RendererSettings = GetDefault<CRendererSettings>())
+        {
+            SceneGlobalData.GTAOSettings.Radius         = RendererSettings->GTAORadius;
+            SceneGlobalData.GTAOSettings.Intensity      = RendererSettings->GTAOIntensity;
+            SceneGlobalData.GTAOSettings.Power          = RendererSettings->GTAOPower;
+        }
         SceneGlobalData.ParallaxSettings.SampleScale       = 1.0f;
         SceneGlobalData.ParallaxSettings.LODBias           = 0.0f;
         SceneGlobalData.ParallaxSettings.ShadowSampleScale = 1.0f;
@@ -1330,7 +1342,7 @@ namespace Lumina
                     PostProcessMaterialPass(CL);
                 }
 
-                if (Frame.CachedWorldSettings.SMAAQuality != ESMAAQuality::Off)
+                if (GetSMAAQuality() != ESMAAQuality::Off)
                 {
                     SCENE_GPU_SCOPE(CL, "SMAA");
                     SMAAEdgeDetectionPass(CL);
@@ -1638,7 +1650,7 @@ namespace Lumina
         ToneMappingPass(CL);
         PostProcessMaterialPass(CL);
 
-        if (RenderFrame->CachedWorldSettings.SMAAQuality != ESMAAQuality::Off)
+        if (GetSMAAQuality() != ESMAAQuality::Off)
         {
             SMAAEdgeDetectionPass(CL);
             SMAABlendWeightPass(CL);
@@ -3777,7 +3789,7 @@ namespace Lumina
             SceneRootShared.Materials          = Render().GetMaterialManager().GetMaterialBuffer();
             SceneRootShared.MeshletDrawList    = GetMeshletDrawList().GetAddress();
             SceneRootShared.PreSkinnedVertices = GetPreSkinnedVerticesBuffer().GetAddress();
-            if (Frame.CachedWorldSettings.bEnableGTAO)
+            if (IsGTAOEnabled())
             {
                 SceneGlobalData.GTAOSettings.AOTextureIndex = (uint32)CurrentView->Images[(int)ENamedImage::GTAOBlur].GetResourceID();
             }
@@ -8349,7 +8361,7 @@ namespace Lumina
     void FDefaultSceneRenderer::GTAOPass(RHI::FCmdListH CL)
     {
         FFrameData& Frame = *RenderFrame;
-        if (Frame.Geometry.DrawCommands.empty() || !Frame.CachedWorldSettings.bEnableGTAO)
+        if (Frame.Geometry.DrawCommands.empty() || !IsGTAOEnabled())
         {
             return;
         }
@@ -8401,7 +8413,7 @@ namespace Lumina
     void FDefaultSceneRenderer::GTAOBlurPass(RHI::FCmdListH CL)
     {
         FFrameData& Frame = *RenderFrame;
-        if (Frame.Geometry.DrawCommands.empty() || !Frame.CachedWorldSettings.bEnableGTAO)
+        if (Frame.Geometry.DrawCommands.empty() || !IsGTAOEnabled())
         {
             return;
         }
@@ -10908,7 +10920,6 @@ namespace Lumina
         LUMINA_PROFILE_SECTION_COLORED("Color Grading + Tone Map Pass", tracy::Color::Red2);
 
         const FFrameData& Frame = *RenderFrame;
-        const auto& CachedWorldSettings        = Frame.CachedWorldSettings;
         const auto& ActivePostProcessMaterials = Frame.PostProcess.ActivePostProcessMaterials;
         const SPostProcessSettings* ActivePostProcess = Frame.PostProcess.bHasActivePostProcess ? &Frame.PostProcess.ActivePostProcessStorage : nullptr;
         const auto& SceneGlobalData            = Frame.SceneGlobalData;
@@ -10920,7 +10931,7 @@ namespace Lumina
             return;
         }
 
-        const bool bSMAAEnabled = CachedWorldSettings.SMAAQuality != ESMAAQuality::Off;
+        const bool bSMAAEnabled = GetSMAAQuality() != ESMAAQuality::Off;
         const bool bPPMaterials = !ActivePostProcessMaterials.empty();
         const FSceneImage& Output = (bSMAAEnabled || bPPMaterials) ? GetNamedImage(ENamedImage::LDR) : CurrentView->Output;
 
@@ -10987,7 +10998,6 @@ namespace Lumina
     void FDefaultSceneRenderer::PostProcessMaterialPass(RHI::FCmdListH CL)
     {
         const FFrameData& Frame = *RenderFrame;
-        const auto& CachedWorldSettings        = Frame.CachedWorldSettings;
         const auto& ActivePostProcessMaterials = Frame.PostProcess.ActivePostProcessMaterials;
 
         if (ActivePostProcessMaterials.empty())
@@ -11000,7 +11010,7 @@ namespace Lumina
         const FSceneImage& DepthTex = GetNamedImage(ENamedImage::DepthAttachment);
         const FSceneImage& HDRTex   = GetNamedImage(ENamedImage::HDR);
 
-        const bool bSMAAEnabled = CachedWorldSettings.SMAAQuality != ESMAAQuality::Off;
+        const bool bSMAAEnabled = GetSMAAQuality() != ESMAAQuality::Off;
 
         const FSceneImage* Source = &GetNamedImage(ENamedImage::LDR);
         const FSceneImage* Dest   = &GetNamedImage(ENamedImage::PostProcessScratch);
@@ -11105,17 +11115,17 @@ namespace Lumina
         }
     }
 
-    static FSMAAPushConstants BuildSMAAPushConstants(const FSceneImage& Image, const SDefaultWorldSettings& Settings)
+    static FSMAAPushConstants BuildSMAAPushConstants(const FSceneImage& Image, ESMAAQuality Quality)
     {
         FSMAAPushConstants PC;
         const float W = (float)Image.GetSizeX();
         const float H = (float)Image.GetSizeY();
         PC.RTMetrics      = FVector4(1.0f / W, 1.0f / H, W, H);
-        PC.EdgeThreshold  = GetSMAAEdgeThreshold(Settings.SMAAQuality);
+        PC.EdgeThreshold  = GetSMAAEdgeThreshold(Quality);
         PC.DebugMode      = 0.0f;
         PC.TexIndex0 = 0; PC.TexIndex1 = 0; PC.TexIndex2 = 0;
 
-        const FVector2 Steps = GetSMAASearchSteps(Settings.SMAAQuality);
+        const FVector2 Steps = GetSMAASearchSteps(Quality);
         PC.MaxSearchSteps     = Steps.x;
         PC.MaxSearchStepsDiag = Steps.y;
         PC._Pad2 = 0;
@@ -11125,9 +11135,6 @@ namespace Lumina
     void FDefaultSceneRenderer::SMAAEdgeDetectionPass(RHI::FCmdListH CL)
     {
         LUMINA_PROFILE_SECTION_COLORED("SMAA Edge Detection", tracy::Color::Red2);
-
-        const FFrameData& Frame = *RenderFrame;
-        const auto& CachedWorldSettings = Frame.CachedWorldSettings;
 
         static const FShaderH VertexShader = FShaderLibrary::Get("FullscreenQuad.slang");
         static const FShaderH PixelShader = FShaderLibrary::Get("SMAAEdgeDetection.slang");
@@ -11159,7 +11166,7 @@ namespace Lumina
         Key.ColorTargets.push_back({ Output.Desc.Format, {} });
         RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
-        FSMAAPushConstants PC = BuildSMAAPushConstants(Output, CachedWorldSettings);
+        FSMAAPushConstants PC = BuildSMAAPushConstants(Output, GetSMAAQuality());
         PC.TexIndex0 = (uint32)InputColor.GetResourceID();
 
         RHI::CmdDraw(CL, MakeArgs(PC), 3, 1, 0, 0);
@@ -11170,9 +11177,6 @@ namespace Lumina
     void FDefaultSceneRenderer::SMAABlendWeightPass(RHI::FCmdListH CL)
     {
         LUMINA_PROFILE_SECTION_COLORED("SMAA Blend Weight", tracy::Color::Red2);
-
-        const FFrameData& Frame = *RenderFrame;
-        const auto& CachedWorldSettings = Frame.CachedWorldSettings;
 
         static const FShaderH VertexShader = FShaderLibrary::Get("FullscreenQuad.slang");
         static const FShaderH PixelShader = FShaderLibrary::Get("SMAABlendWeight.slang");
@@ -11206,7 +11210,7 @@ namespace Lumina
         Key.ColorTargets.push_back({ Output.Desc.Format, {} });
         RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
-        FSMAAPushConstants PC = BuildSMAAPushConstants(Output, CachedWorldSettings);
+        FSMAAPushConstants PC = BuildSMAAPushConstants(Output, GetSMAAQuality());
         PC.TexIndex0 = (uint32)EdgesTex.GetResourceID();
         PC.TexIndex1 = (uint32)AreaTex.GetResourceID();
         PC.TexIndex2 = (uint32)SearchTex.GetResourceID();
@@ -11219,9 +11223,6 @@ namespace Lumina
     void FDefaultSceneRenderer::SMAANeighborhoodBlendPass(RHI::FCmdListH CL)
     {
         LUMINA_PROFILE_SECTION_COLORED("SMAA Neighborhood Blend", tracy::Color::Red2);
-
-        const FFrameData& Frame = *RenderFrame;
-        const auto& CachedWorldSettings = Frame.CachedWorldSettings;
 
         static const FShaderH VertexShader = FShaderLibrary::Get("FullscreenQuad.slang");
         static const FShaderH PixelShader = FShaderLibrary::Get("SMAANeighborhoodBlend.slang");
@@ -11254,7 +11255,7 @@ namespace Lumina
         Key.ColorTargets.push_back({ Output.Desc.Format, {} });
         RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
-        FSMAAPushConstants PC = BuildSMAAPushConstants(Output, CachedWorldSettings);
+        FSMAAPushConstants PC = BuildSMAAPushConstants(Output, GetSMAAQuality());
         PC.TexIndex0 = (uint32)InputColor.GetResourceID();
         PC.TexIndex1 = (uint32)BlendTex.GetResourceID();
 
