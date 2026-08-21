@@ -50,11 +50,21 @@ namespace Lumina::Jobs
         {
             FJobFunction Function = nullptr;
             void*        Argument = nullptr;
-            FCounter*    Counter  = nullptr; // FCounter is incomplete here; pointer only
-            bool         bMayPark = false;   // needs a fiber; everything else runs on the worker's stack
+            // Counter pointer with "needs a fiber" in bit 0. FCounter is alignas(64), so the low six bits are
+            // always clear; a separate bool cost eight bytes of padding in every queue slot.
+            uintptr_t    CounterAndPark = 0;
 #if USING(WITH_EDITOR)
             const char*  Name     = nullptr; // label for the editor profiler; absent otherwise to shrink the queue element
 #endif
+            FORCEINLINE void SetCounter(FCounter* Counter, bool bMayPark)
+            {
+                CounterAndPark = reinterpret_cast<uintptr_t>(Counter) | (bMayPark ? 1ull : 0ull);
+            }
+            FORCEINLINE FCounter* GetCounter() const
+            {
+                return reinterpret_cast<FCounter*>(CounterAndPark & ~static_cast<uintptr_t>(1));
+            }
+            FORCEINLINE bool MayPark() const { return (CounterAndPark & 1) != 0; }
         };
 
         // A pooled fiber jobs run on. Long-lived: it loops running one bound job then switching back to
@@ -516,6 +526,34 @@ namespace Lumina::Jobs
                 G->Workers[Wk].Queues[Prio].enqueue_bulk(Jobs + Idx, N);
                 G->Workers[Wk].BandMask.fetch_or(static_cast<uint8>(1u << Prio), std::memory_order_release);
                 Idx += N;
+                ++Recipients;
+            }
+            return FSubmitSpan{ Start, Recipients };
+        }
+
+        // Same spread as DistributeJobs, for a fan-out whose jobs are byte-identical: no array is built and
+        // nothing is copied per job. Slices are one deep whenever Count <= worker count, which is the case
+        // every cursor fan-out hits.
+        FSubmitSpan DistributeIdenticalJobs(const FQueuedJob& Job, uint32 Count, int Prio)
+        {
+            const uint32 W     = G->NumWorkers;
+            const uint32 Start = G->NextSubmitWorker.fetch_add(1, std::memory_order_relaxed) % W;
+            const uint32 Base  = Count / W;
+            const uint32 Rem   = Count % W;
+            uint32 Recipients  = 0;
+            for (uint32 i = 0; i < W; ++i)
+            {
+                const uint32 N = Base + (i < Rem ? 1u : 0u);
+                if (N == 0)
+                {
+                    continue;
+                }
+                const uint32 Wk = (Start + i) % W;
+                for (uint32 j = 0; j < N; ++j)
+                {
+                    G->Workers[Wk].Queues[Prio].enqueue(Job);
+                }
+                G->Workers[Wk].BandMask.fetch_or(static_cast<uint8>(1u << Prio), std::memory_order_release);
                 ++Recipients;
             }
             return FSubmitSpan{ Start, Recipients };
@@ -1089,7 +1127,7 @@ namespace Lumina::Jobs
             GNoParkGuardName = nullptr;
 
             Job.Function(Job.Argument, Slot);
-            OnJobComplete(Job.Counter, Slot);
+            OnJobComplete(Job.GetCounter(), Slot);
 
             GNoParkGuardName = SavedGuard;
             TLS.CurrentFiber = SavedFiber;
@@ -1225,7 +1263,7 @@ namespace Lumina::Jobs
                 {
                     CascadeWake(Slot); // relay the ramp before running, so the two overlap
 
-                    if (!Job.bMayPark)
+                    if (!Job.MayPark())
                     {
                         RunJobNative(Job, Slot);
                         continue;
@@ -1290,7 +1328,7 @@ namespace Lumina::Jobs
                 FQueuedJob  Job  = Self->Job;
 
                 Job.Function(Job.Argument, TLS.WorkerIndex);
-                OnJobComplete(Job.Counter, TLS.WorkerIndex);
+                OnJobComplete(Job.GetCounter(), TLS.WorkerIndex);
 
                 // A job that returns without clearing its guard must not leak it onto the next fiber.
                 GNoParkGuardName  = nullptr;
@@ -1711,6 +1749,53 @@ namespace Lumina::Jobs
         Counter->CompletionCtx = Ctx;
     }
 
+    namespace
+    {
+        FORCEINLINE void NoteJobsSubmitted(uint32 Count, int Prio, FCounter* Counter)
+        {
+            if (Counter != nullptr)
+            {
+                Counter->Value.fetch_add(static_cast<int32>(Count), std::memory_order_acq_rel);
+            }
+            G->InFlight.fetch_add(static_cast<int64>(Count), std::memory_order_acq_rel);
+            G->AvailJobs.fetch_add(static_cast<int64>(Count), std::memory_order_relaxed);
+            if ((uint32)Prio <= kMaxAssistPriority)
+            {
+                G->AvailAssistJobs.fetch_add(static_cast<int64>(Count), std::memory_order_relaxed);
+            }
+        }
+    }
+
+    void RunJobs(const FJobDecl& Decl, uint32 Count, EJobPriority Priority, FCounter* Counter)
+    {
+        if (Count == 0)
+        {
+            return;
+        }
+
+        LUMINA_PROFILE_SCOPE();
+
+#if USING(WITH_EDITOR)
+        ProfSubmit(Count, TLS.bIsWorker);
+#endif
+
+        const int Prio = static_cast<int>(Priority);
+        NoteJobsSubmitted(Count, Prio, Counter);
+
+        FQueuedJob Job;
+        Job.Function = Decl.Function;
+        Job.Argument = Decl.Argument;
+        Job.SetCounter(Counter, Decl.bMayPark);
+#if USING(WITH_EDITOR)
+        Job.Name     = Decl.Name;
+#endif
+
+        const FSubmitSpan Span = DistributeIdenticalJobs(Job, Count, Prio);
+
+        const uint32 DirectWakes = Count < kDirectWakeMax ? Count : kDirectWakeMax;
+        WakeWorkers(DirectWakes, Span.Start, Span.NumRecipients);
+    }
+
     void RunJobs(const FJobDecl* Jobs, uint32 Count, EJobPriority Priority, FCounter* Counter)
     {
         if (Count == 0)
@@ -1724,12 +1809,6 @@ namespace Lumina::Jobs
         ProfSubmit(Count, TLS.bIsWorker); // tag fork-join (worker) vs externally-fed work for the advisor
 #endif
 
-        if (Counter != nullptr)
-        {
-            Counter->Value.fetch_add(static_cast<int32>(Count), std::memory_order_acq_rel);
-        }
-        G->InFlight.fetch_add(static_cast<int64>(Count), std::memory_order_acq_rel);
-
         const int Prio = static_cast<int>(Priority);
 
         constexpr uint32 kBatch = 256;
@@ -1739,17 +1818,12 @@ namespace Lumina::Jobs
         {
             const uint32 N = (Count - Base) < kBatch ? (Count - Base) : kBatch;
             // Per batch, not per submit: identical cost for ordinary submits, smaller stale-hint window for huge ones.
-            G->AvailJobs.fetch_add(static_cast<int64>(N), std::memory_order_relaxed);
-            if ((uint32)Prio <= kMaxAssistPriority)
-            {
-                G->AvailAssistJobs.fetch_add(static_cast<int64>(N), std::memory_order_relaxed);
-            }
+            NoteJobsSubmitted(N, Prio, Counter);
             for (uint32 i = 0; i < N; ++i)
             {
                 Batch[i].Function = Jobs[Base + i].Function;
                 Batch[i].Argument = Jobs[Base + i].Argument;
-                Batch[i].Counter  = Counter;
-                Batch[i].bMayPark = Jobs[Base + i].bMayPark;
+                Batch[i].SetCounter(Counter, Jobs[Base + i].bMayPark);
 #if USING(WITH_EDITOR)
                 Batch[i].Name     = Jobs[Base + i].Name;
 #endif
@@ -1848,7 +1922,7 @@ namespace Lumina::Jobs
             if (TryStealAny(Job, AssistMaxPriority()))
             {
                 RunAdoptedJob(Job, Slot);
-                OnJobComplete(Job.Counter, Slot);
+                OnJobComplete(Job.GetCounter(), Slot);
                 IdleSpins = 0;
                 IdleSince = 0.0;
             }
@@ -1898,7 +1972,7 @@ namespace Lumina::Jobs
             if (TryStealAny(Job, (uint32)EJobPriority::Background))
             {
                 Job.Function(Job.Argument, Slot);
-                OnJobComplete(Job.Counter, Slot);
+                OnJobComplete(Job.GetCounter(), Slot);
                 continue;
             }
             Threading::ThreadYield();
@@ -1986,7 +2060,7 @@ namespace Lumina::Jobs
         if (TryStealAny(Job, AssistMaxPriority()))
         {
             RunAdoptedJob(Job, Slot);
-            OnJobComplete(Job.Counter, Slot);
+            OnJobComplete(Job.GetCounter(), Slot);
             return true;
         }
         return false;

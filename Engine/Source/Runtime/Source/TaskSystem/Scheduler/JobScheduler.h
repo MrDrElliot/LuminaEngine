@@ -82,6 +82,9 @@ namespace Lumina::Jobs
 
     // Submit jobs. The counter is incremented by Count up-front; each job decrements it on completion.
     RUNTIME_API void RunJobs(const FJobDecl* Jobs, uint32 Count, EJobPriority Priority, FCounter* Counter);
+    // The same, Count times over one declaration. For a fan-out whose workers are interchangeable (every
+    // cursor ParallelFor), so no caller builds an array of identical declarations to be copied again.
+    RUNTIME_API void RunJobs(const FJobDecl& Decl, uint32 Count, EJobPriority Priority, FCounter* Counter);
     RUNTIME_API void RunJob(FJobFunction Fn, void* Arg, EJobPriority Priority, FCounter* Counter, const char* Name = nullptr, bool bMayPark = false);
 
     // Manually decrement a counter (not tied to a job). Fires waiters/completion at zero. Used for

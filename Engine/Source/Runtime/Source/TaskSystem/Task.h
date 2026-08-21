@@ -326,13 +326,8 @@ namespace Lumina
                     uint32 K = Grabs < Jobs::GetNumWorkers() ? Grabs : Jobs::GetNumWorkers();
                     K = K < ::Lumina::Task::kMaxChunks ? K : ::Lumina::Task::kMaxChunks;
 
-                    Jobs::FJobDecl Decls[::Lumina::Task::kMaxChunks];
-                    for (uint32 c = 0; c < K; ++c)
-                    {
-                        Decls[c] = Jobs::FJobDecl{ &FAwaiter::RunChunk, this, "Coro::ParallelFor" };
-                    }
-
-                    Jobs::RunJobs(Decls, K, ToJobPriority(Priority), Counter);
+                    const Jobs::FJobDecl Decl{ &FAwaiter::RunChunk, this, "Coro::ParallelFor" };
+                    Jobs::RunJobs(Decl, K, ToJobPriority(Priority), Counter);
                 }
 
                 void await_resume() const noexcept {}

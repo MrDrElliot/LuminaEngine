@@ -250,14 +250,10 @@ namespace Lumina
         uint32 K = Grabs - 1;
         K = Math::Min(K, Math::Min(Jobs::GetNumWorkers(), Task::kMaxChunks));
 
-        Jobs::FJobDecl Decls[kMaxChunks];
-        for (uint32 i = 0; i < K; ++i)
-        {
-            Decls[i] = Jobs::FJobDecl{ &RunCursorJob, &C, "Task::ParallelFor" };
-        }
+        const Jobs::FJobDecl Decl{ &RunCursorJob, &C, "Task::ParallelFor" };
 
         Jobs::FCounter* Counter = Jobs::AllocCounter(0);
-        Jobs::RunJobs(Decls, K, ToJobPriority(Priority), Counter);
+        Jobs::RunJobs(Decl, K, ToJobPriority(Priority), Counter);
         // The caller works the cursor too instead of parking for the whole fan-out. Timing its own slices is
         // what prices the next call: the work happens either way, so the estimate costs two clock reads.
         const double Start = PlatformTime::Seconds();
