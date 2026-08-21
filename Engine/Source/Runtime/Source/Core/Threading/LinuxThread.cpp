@@ -66,6 +66,17 @@ namespace Lumina::Threading
     {
         return false;
     }
+
+    // Not read from sysfs yet: without it the scheduler treats every worker as equidistant, which is what it
+    // did before topology existed at all.
+    uint32 GetCpuTopology(FCpuTopology* /*Out*/, uint32 /*MaxCount*/)
+    {
+        return 0;
+    }
+
+    void SetThreadIdealProcessor(uint32 /*LogicalProcessor*/)
+    {
+    }
 }
 
 

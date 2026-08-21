@@ -124,7 +124,9 @@ namespace Lumina
                 {
                     const uint32 Len = Base + (c < Rem ? 1u : 0u);
                     Chunks[c] = FChunk{ this, Start, Start + Len };
-                    Decls[c]  = Jobs::FJobDecl{ &FAsyncContext::RunChunk, &Chunks[c], "Task::Async" };
+                    // Park-capable: AsyncTask runs arbitrary user work, including asset loads that block on a
+                    // fiber-aware lock. A ParallelFor chunk is compute and stays native.
+                    Decls[c]  = Jobs::FJobDecl{ &FAsyncContext::RunChunk, &Chunks[c], "Task::Async", /*bMayPark*/ true };
                     Start += Len;
                 }
 

@@ -35,6 +35,126 @@ namespace Lumina::Threading
         return Result != 0;
     }
 
+    namespace
+    {
+        // Logical processor index within the caller's group. Groups beyond the first are not described:
+        // the engine sizes its worker set from the active group, and a partial map is worse than none.
+        uint32 IndexOfBit(const GROUP_AFFINITY& Affinity, uint32 Bit)
+        {
+            return Affinity.Group * 64u + Bit;
+        }
+    }
+
+    uint32 GetCpuTopology(FCpuTopology* Out, uint32 MaxCount)
+    {
+        if (Out == nullptr || MaxCount == 0)
+        {
+            return 0;
+        }
+
+        DWORD Bytes = 0;
+        ::GetLogicalProcessorInformationEx(RelationAll, nullptr, &Bytes);
+        if (Bytes == 0)
+        {
+            return 0;
+        }
+
+        auto* Buffer = static_cast<uint8*>(::malloc(Bytes));
+        if (Buffer == nullptr)
+        {
+            return 0;
+        }
+        auto* Info = reinterpret_cast<SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX*>(Buffer);
+        if (!::GetLogicalProcessorInformationEx(RelationAll, Info, &Bytes))
+        {
+            ::free(Buffer);
+            return 0;
+        }
+
+        for (uint32 i = 0; i < MaxCount; ++i)
+        {
+            Out[i] = FCpuTopology{};
+        }
+
+        uint32 Described  = 0;
+        uint16 NextCore   = 0;
+        uint16 NextCache  = 0;
+        uint8  BestLevel  = 0;
+
+        // Two passes: cores first, then the deepest cache level any processor reports, so an L2-only machine
+        // still groups by its own last level instead of falling back to "all equidistant".
+        for (uint8 Pass = 0; Pass < 2; ++Pass)
+        {
+            uint8* Cursor = Buffer;
+            while (Cursor < Buffer + Bytes)
+            {
+                auto* Entry = reinterpret_cast<SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX*>(Cursor);
+                Cursor += Entry->Size;
+
+                if (Pass == 0 && Entry->Relationship == RelationProcessorCore)
+                {
+                    const GROUP_AFFINITY& Affinity = Entry->Processor.GroupMask[0];
+                    for (uint32 Bit = 0; Bit < 64; ++Bit)
+                    {
+                        if ((Affinity.Mask & (1ull << Bit)) == 0)
+                        {
+                            continue;
+                        }
+                        const uint32 Index = IndexOfBit(Affinity, Bit);
+                        if (Index < MaxCount)
+                        {
+                            Out[Index].PhysicalCore = NextCore;
+                            Described = Index + 1 > Described ? Index + 1 : Described;
+                        }
+                    }
+                    ++NextCore;
+                }
+                else if (Entry->Relationship == RelationCache)
+                {
+                    const CACHE_RELATIONSHIP& Cache = Entry->Cache;
+                    if (Cache.Type != CacheUnified && Cache.Type != CacheData)
+                    {
+                        continue;
+                    }
+                    if (Pass == 0)
+                    {
+                        BestLevel = Cache.Level > BestLevel ? Cache.Level : BestLevel;
+                        continue;
+                    }
+                    if (Cache.Level != BestLevel)
+                    {
+                        continue;
+                    }
+                    const GROUP_AFFINITY& Affinity = Cache.GroupMask;
+                    for (uint32 Bit = 0; Bit < 64; ++Bit)
+                    {
+                        if ((Affinity.Mask & (1ull << Bit)) == 0)
+                        {
+                            continue;
+                        }
+                        const uint32 Index = IndexOfBit(Affinity, Bit);
+                        if (Index < MaxCount)
+                        {
+                            Out[Index].CacheGroup = NextCache;
+                        }
+                    }
+                    ++NextCache;
+                }
+            }
+        }
+
+        ::free(Buffer);
+        return Described;
+    }
+
+    void SetThreadIdealProcessor(uint32 LogicalProcessor)
+    {
+        PROCESSOR_NUMBER Ideal = {};
+        Ideal.Group  = static_cast<WORD>(LogicalProcessor / 64u);
+        Ideal.Number = static_cast<BYTE>(LogicalProcessor % 64u);
+        ::SetThreadIdealProcessorEx(::GetCurrentThread(), &Ideal, nullptr);
+    }
+
     bool SetThreadPerformanceHint()
     {
         // ControlMask selects EXECUTION_SPEED; StateMask = 0 means "do not throttle", i.e. opt out of

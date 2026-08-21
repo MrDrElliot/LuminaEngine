@@ -112,7 +112,7 @@ namespace Lumina
 
         FWaiterNode Node;
 
-        if (Jobs::IsWorkerThread())
+        if (Jobs::CanParkFiber())
         {
             FMutexPark Park{ this, &Node };
             Jobs::ParkFiber([](void* Ctx, Jobs::FFiberHandle Handle) -> bool
@@ -208,7 +208,7 @@ namespace Lumina
     {
         FWaiterNode Node;
 
-        if (Jobs::IsWorkerThread())
+        if (Jobs::CanParkFiber())
         {
             FSemPark Park{ this, &Node };
             Jobs::ParkFiber([](void* Ctx, Jobs::FFiberHandle Handle) -> bool
@@ -344,7 +344,7 @@ namespace Lumina
     {
         FWaiterNode Node;
 
-        if (Jobs::IsWorkerThread())
+        if (Jobs::CanParkFiber())
         {
             FRWPark Park{ this, &Node, kModeExclusive };
             Jobs::ParkFiber([](void* Ctx, Jobs::FFiberHandle Handle) -> bool
@@ -391,7 +391,7 @@ namespace Lumina
     {
         FWaiterNode Node;
 
-        if (Jobs::IsWorkerThread())
+        if (Jobs::CanParkFiber())
         {
             FRWPark Park{ this, &Node, kModeShared };
             Jobs::ParkFiber([](void* Ctx, Jobs::FFiberHandle Handle) -> bool
@@ -467,7 +467,7 @@ namespace Lumina
     {
         FWaiterNode Node;
 
-        if (Jobs::IsWorkerThread())
+        if (Jobs::CanParkFiber())
         {
             FCVPark Park{ this, &Mutex, &Node };
             Jobs::ParkFiber([](void* Ctx, Jobs::FFiberHandle Handle) -> bool

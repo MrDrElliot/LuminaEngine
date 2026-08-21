@@ -104,6 +104,22 @@ namespace Lumina
 
         // Opts the current thread out of EcoQoS power throttling.
         RUNTIME_API bool SetThreadPerformanceHint();
+
+        // One entry per logical processor. SMT siblings share PhysicalCore; last-level-cache peers share
+        // CacheGroup. Both are dense ids with no meaning beyond equality.
+        struct FCpuTopology
+        {
+            uint16 PhysicalCore = 0;
+            uint16 CacheGroup   = 0;
+        };
+
+        // Fills up to MaxCount entries and returns how many logical processors were described. Returns 0 when
+        // the platform cannot report topology, which callers must treat as "every processor is equidistant".
+        RUNTIME_API uint32 GetCpuTopology(FCpuTopology* Out, uint32 MaxCount);
+
+        // Asks the scheduler to prefer LogicalProcessor for the calling thread. A hint, not an affinity mask:
+        // the thread still migrates under load, so nothing may depend on it for correctness.
+        RUNTIME_API void SetThreadIdealProcessor(uint32 LogicalProcessor);
     }
     
 

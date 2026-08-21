@@ -243,7 +243,8 @@ namespace Lumina
 		bool Expected = false;
 		if (bPumpActive.compare_exchange_strong(Expected, true, Atomic::MemoryOrderAcqRel))
 		{
-			Jobs::RunJob(&FMiniaudioContext::PumpEntry, this, Jobs::EJobPriority::Normal, PumpCounter, "Audio::Pump");
+			// Park-capable: the pump is long-lived and waits, so it must release its worker rather than hold one.
+			Jobs::RunJob(&FMiniaudioContext::PumpEntry, this, Jobs::EJobPriority::Normal, PumpCounter, "Audio::Pump", /*bMayPark*/ true);
 		}
 	}
 

@@ -35,6 +35,10 @@ namespace Lumina::Jobs
         FJobFunction Function = nullptr;
         void*        Argument = nullptr;
         const char*  Name     = nullptr; // optional label (string literal) for the editor profiler
+        // Opt in ONLY for a job that must suspend a fiber, i.e. one that calls ParkFiber (directly or through
+        // FiberSync) and needs its worker released while it blocks. Everything else runs on the worker's own
+        // stack with no fiber and no context switch; a WaitForCounter inside one assist-waits instead.
+        bool         bMayPark = false;
     };
 
     struct FConfig
@@ -61,6 +65,9 @@ namespace Lumina::Jobs
     RUNTIME_API uint32 GetWorkerIndex();
     // True when the caller is a scheduler worker thread (so WaitForCounter yields instead of blocking).
     RUNTIME_API bool   IsWorkerThread();
+    // True when the caller runs on a work fiber it may suspend. False on an external thread AND inside a
+    // native (non-fiber) job, which is why it, not IsWorkerThread, gates every park.
+    RUNTIME_API bool   CanParkFiber();
 
     // Claim/release a thread slot for a non-worker thread (render, physics, ...).
     RUNTIME_API uint32 RegisterExternalThread();
@@ -75,7 +82,7 @@ namespace Lumina::Jobs
 
     // Submit jobs. The counter is incremented by Count up-front; each job decrements it on completion.
     RUNTIME_API void RunJobs(const FJobDecl* Jobs, uint32 Count, EJobPriority Priority, FCounter* Counter);
-    RUNTIME_API void RunJob(FJobFunction Fn, void* Arg, EJobPriority Priority, FCounter* Counter, const char* Name = nullptr);
+    RUNTIME_API void RunJob(FJobFunction Fn, void* Arg, EJobPriority Priority, FCounter* Counter, const char* Name = nullptr, bool bMayPark = false);
 
     // Manually decrement a counter (not tied to a job). Fires waiters/completion at zero. Used for
     // graph fan-in where a node's completion signals a shared counter.
@@ -104,7 +111,7 @@ namespace Lumina::Jobs
     using FParkFn = bool (*)(void* Ctx, FFiberHandle Handle);
 
     // Suspend the CURRENT worker fiber; returns only once ResumeFiber is called for it, possibly on a
-    // different worker. WORKER FIBERS ONLY -- external threads must assist-wait (see AssistOneJob).
+    // different worker. Requires CanParkFiber(): the job must have been submitted with bMayPark.
     RUNTIME_API void ParkFiber(FParkFn OnPark, void* Ctx);
 
     // Make a previously parked fiber runnable again. Callable from any thread.
