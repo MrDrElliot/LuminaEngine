@@ -42,7 +42,7 @@ namespace Lumina
 
         const uint16 BlendSpaceIndex = bDynamicBlendSpace ? (uint16)BlendSpaceObjectReg
                                                           : Compiler.AddBlendSpace(BlendSpace.Get());
-        const uint16 PhaseSlot       = Compiler.AllocStateSlot();
+        const uint16 PhaseSlot       = Compiler.AllocClockSlot();
 
         const uint16 XReg     = ResolveValueInput(XPin, Compiler);
         const uint16 SpeedReg = ResolveValueInput(SpeedPin, Compiler);

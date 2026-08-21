@@ -22,6 +22,11 @@ namespace Lumina
         PROPERTY()
         int64 ToStateNodeID = 0;
 
+        /** What Compare Value is tested against: a graph parameter, or how long the state machine has
+         *  been in its current state. Time In State is how a play-once state hands over when it ends. */
+        PROPERTY(Editable, Category = "Transition")
+        EAnimTransitionSource ConditionSource = EAnimTransitionSource::Parameter;
+
         /** Graph parameter compared against Compare Value to gate the transition.
          *  Leave empty for an unconditional / always-true transition. */
         PROPERTY(Editable, Category = "Transition", ParameterPicker)

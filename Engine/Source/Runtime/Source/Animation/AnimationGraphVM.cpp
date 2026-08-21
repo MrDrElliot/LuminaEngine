@@ -49,15 +49,25 @@ namespace Lumina
 
         static FORCEINLINE bool EvalTransitionCondition(const FAnimGraphTransition& Transition,
                                                         const CAnimationGraph* Graph,
-                                                        const TVector<float>& Parameters)
+                                                        const TVector<float>& Parameters,
+                                                        float TimeInState)
         {
-            // Resolved at load/compile; the fallback covers graphs built outside those paths.
-            const int32 ParamIdx = Transition.CachedParamIndex != FAnimGraphTransition::ParamUnresolved
-                ? Transition.CachedParamIndex
-                : Graph->FindParameterIndex(Transition.ConditionParameter);
-            const float Value = (ParamIdx >= 0 && ParamIdx < (int32)Parameters.size())
-                ? Parameters[ParamIdx]
-                : 0.0f;
+            float Value = TimeInState;
+            if (Transition.ConditionSource == EAnimTransitionSource::Parameter)
+            {
+                // Resolved at load/compile; the fallback covers graphs built outside those paths.
+                int32 ParamIdx = Transition.CachedParamIndex;
+                if (ParamIdx == FAnimGraphTransition::ParamUnresolved)
+                {
+                    ParamIdx = Graph->FindParameterIndex(Transition.ConditionParameter);
+                }
+
+                Value = 0.0f;
+                if (ParamIdx >= 0 && ParamIdx < (int32)Parameters.size())
+                {
+                    Value = Parameters[ParamIdx];
+                }
+            }
 
             switch (Transition.Compare)
             {
@@ -1076,7 +1086,7 @@ namespace Lumina
                 }
 
                 // Out-of-range slot = corrupt/version-mismatched bytecode; fall back to bind pose.
-                if (SM.CurrentStateSlot >= NumState || SM.FromStateSlot >= NumState ||
+                if (SM.CurrentStateSlot >= NumState || SM.FromStateSlot >= NumState || SM.TimeInStateSlot >= NumState ||
                     SmIdx >= State.Inertializers.size())
                 {
                     SetPoseTask(Dst, OutTasks.Add(RefTask));
@@ -1109,7 +1119,7 @@ namespace Lumina
                     {
                         continue;
                     }
-                    if (Detail::EvalTransitionCondition(Transition, Graph, State.Parameters))
+                    if (Detail::EvalTransitionCondition(Transition, Graph, State.Parameters, State.StateSlots[SM.TimeInStateSlot]))
                     {
                         From           = Current;
                         Current        = Transition.ToState;
@@ -1174,8 +1184,30 @@ namespace Lumina
                     }
                 }
 
-                State.StateSlots[SM.CurrentStateSlot] = (float)Current;
-                State.StateSlots[SM.FromStateSlot]    = (float)From;
+                State.StateSlots[SM.CurrentStateSlot]  = (float)Current;
+                State.StateSlots[SM.FromStateSlot]     = (float)From;
+                State.StateSlots[SM.TimeInStateSlot]   = bStart ? 0.0f : State.StateSlots[SM.TimeInStateSlot] + DeltaTime;
+
+                // Clocks advance whether or not the state is active, so a finished play-once never replays.
+                const int32 NumClockRanges = (int32)Math::Min(SM.StateClockSlotFirst.size(), SM.StateClockSlotEnd.size());
+                const uint16 NumClockSlots = (uint16)SM.ClockSlots.size();
+                for (int32 StateIndex = 0; StateIndex < NumStates && StateIndex < NumClockRanges; ++StateIndex)
+                {
+                    if (StateIndex == Current)
+                    {
+                        continue;
+                    }
+
+                    const uint16 RangeEnd = Math::Min(SM.StateClockSlotEnd[StateIndex], NumClockSlots);
+                    for (uint16 Index = SM.StateClockSlotFirst[StateIndex]; Index < RangeEnd; ++Index)
+                    {
+                        const uint16 Slot = SM.ClockSlots[Index];
+                        if (Slot < NumState)
+                        {
+                            State.StateSlots[Slot] = 0.0f;
+                        }
+                    }
+                }
                 break;
             }
 

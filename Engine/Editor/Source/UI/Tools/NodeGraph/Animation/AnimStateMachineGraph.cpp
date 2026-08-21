@@ -100,12 +100,14 @@ namespace Lumina
 
     FString CAnimStateTransition::GetConditionText() const
     {
-        if (ConditionParameter.IsNone())
+        const bool bTimeInState = ConditionSource == EAnimTransitionSource::TimeInState;
+        if (!bTimeInState && ConditionParameter.IsNone())
         {
             return FString("Always");
         }
 
-        return Format("{} {} {}", ConditionParameter.c_str(), SM::CompareSymbol(Compare), CompareValue);
+        const char* Source = bTimeInState ? "TimeInState" : ConditionParameter.c_str();
+        return Format("{} {} {}", Source, SM::CompareSymbol(Compare), CompareValue);
     }
 
     void CAnimStateMachineGraph::EnsureSetup()
