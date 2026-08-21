@@ -61,6 +61,32 @@ TEST(EntityScriptUnification, CppScriptRunsThroughTheDriver)
     EXPECT_TRUE(Registry.get<SEntityScriptComponent>(Entity).Scripts.empty());
 }
 
+// A component copy (prefab stamp, entity duplicate) clones its scripts rather than sharing one object.
+TEST(EntityScriptUnification, CopyingTheComponentClonesItsScripts)
+{
+    FEntityRegistry Registry{};
+    const entt::entity Source = Registry.create();
+
+    CEntityScriptTest* Script = AttachTestScript(Registry, Source);
+    ASSERT_NE(Script, nullptr);
+
+    SEntityScriptComponent Copied = Registry.get<SEntityScriptComponent>(Source);
+    const entt::entity Destination = Registry.create();
+    Registry.emplace_or_replace<SEntityScriptComponent>(Destination, std::move(Copied));
+
+    SEntityScriptComponent& Placed = Registry.get<SEntityScriptComponent>(Destination);
+    ASSERT_EQ(Placed.Scripts.size(), size_t(1));
+
+    CEntityScript* Clone = Placed.Scripts[0].Get();
+    ASSERT_NE(Clone, nullptr);
+    EXPECT_NE(Clone, Script) << "the copy must own its own script object, not the source's";
+    EXPECT_TRUE(Clone->GetOwningEntity() == entt::null) << "a clone is unowned until the driver adopts it";
+
+    EntityScripts::Tick(Registry, 0.1f);
+    EXPECT_EQ(Clone->GetOwningEntity(), Destination) << "the clone adopts the entity it was copied onto";
+    EXPECT_EQ(Script->GetOwningEntity(), Source) << "the source keeps its own entity";
+}
+
 // Fixed update must not reach a script that has not readied yet -- otherwise a script could observe a physics
 // step before its own OnReady.
 TEST(EntityScriptUnification, FixedUpdateWaitsForReady)

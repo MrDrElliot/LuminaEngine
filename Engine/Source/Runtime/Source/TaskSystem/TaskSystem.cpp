@@ -197,7 +197,11 @@ namespace Lumina
             const uint32 Hardware = Threading::GetNumThreads();
 
             Jobs::FConfig Config;
-            Config.NumWorkerThreads   = Hardware > 3 ? Hardware - 2 : 1; // leave headroom for main + render
+            // A quarter of the machine stays free, not a fixed two cores. The process runs well past the pool
+            // (main, watchdog, log sink, audio device, GPU driver, CLR), and once the total crosses the logical
+            // processor count an empty fan-out measures 5.5us instead of 45ns: a >100x dispatch cliff, for
+            // linear throughput. Small per-frame fan-outs are what the engine does most, so they win the trade.
+            Config.NumWorkerThreads   = Hardware > 4 ? Hardware - (Hardware / 4) - 1 : 1;
             if (const char* WorkersEnv = std::getenv("LUMINA_JOB_WORKERS"))
             {
                 const int N = std::atoi(WorkersEnv);

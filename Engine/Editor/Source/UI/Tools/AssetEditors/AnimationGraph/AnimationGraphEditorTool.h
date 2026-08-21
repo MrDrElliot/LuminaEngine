@@ -125,6 +125,13 @@ namespace Lumina
         // Pops the navigation stack back to the given level.
         void PopToLevel(int32 Index);
 
+        // Thumb-button history over the same stack: back steps out one level, forward retraces.
+        void NavigateBack();
+        void NavigateForward();
+
+        // Drops whatever the inspector was showing, since it belongs to the canvas being left.
+        void ClearGraphSelection();
+
         // Initializes a graph (creates its node-editor context) and wires its
         // selection / double-click callbacks. Idempotent per graph.
         void EnsureGraphReady(CEdNodeGraph* Graph);
@@ -141,6 +148,9 @@ namespace Lumina
         // Graph navigation: GraphStack[0] is top-level, back() is the drawn canvas.
         // InitializedGraphs tracks graphs this tool created so they shut down on close.
         TVector<FGraphStackEntry>               GraphStack;
+
+        // Levels stepped out of, newest last. Descending somewhere new discards them.
+        TVector<FGraphStackEntry>               NavForwardStack;
         THashSet<CEdNodeGraph*>                 InitializedGraphs;
 
         // Editor-driven live parameter values, pushed into the preview mesh each frame; keyed

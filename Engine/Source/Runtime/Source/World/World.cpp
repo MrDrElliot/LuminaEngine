@@ -473,9 +473,6 @@ namespace Lumina
             RHI::WaitDeviceIdle();
         }
 
-        RmlUi::DestroyWorldUI(this);
-        UIContext.reset();
-
         // The viewport outlives the world in the editor, so a layer this world pushed and never popped
         // would still be gating input in the next PIE session.
         Input::ClearLayers(this);
@@ -507,6 +504,11 @@ namespace Lumina
 
         RegistryPending.clear<>();
         EntityRegistry.clear<>();
+
+        // After the registry: clearing it runs OnDetach, where a script closes documents on the context this destroys.
+        RmlUi::DestroyWorldUI(this);
+        UIContext.reset();
+
         PhysicsScene.reset();
         DestroyRenderer();
 

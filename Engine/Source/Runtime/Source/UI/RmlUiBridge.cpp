@@ -417,6 +417,9 @@ namespace Lumina::RmlUi
 
             CWorld*                             ActiveWorld = nullptr;
 
+            // Live world UI contexts; membership is what separates a world a script cached from a freed one.
+            THashSet<CWorld*>                   Worlds;
+
             Rml::Context*                       DebuggerHost = nullptr;
             bool                                bDebuggerVisible = false;
             bool                                bInitialized = false;
@@ -442,6 +445,17 @@ namespace Lumina::RmlUi
         {
             static FState State;
             return State;
+        }
+
+        // Null for a world the bridge has no context for, INCLUDING a freed one whose pointer a script cached.
+        FWorldUIContext* WorldUI(const CWorld* World)
+        {
+            FState& State = S();
+            if (World == nullptr || !State.Worlds.contains(const_cast<CWorld*>(World)))
+            {
+                return nullptr;
+            }
+            return World->GetUIContext();
         }
 
         FWorldUIContext* ActiveUI()
@@ -870,6 +884,7 @@ namespace Lumina::RmlUi
         State.DefaultFontData.shrink_to_fit();
 
         State.EditorContexts.clear();
+        State.Worlds.clear();
         State.ActiveWorld = nullptr;
         State.bInitialized = false;
 
@@ -892,7 +907,13 @@ namespace Lumina::RmlUi
         FRecursiveScopeLock Lock(State.StateMutex);
 
         TUniquePtr<FWorldUIContext> UI = MakeUnique<FWorldUIContext>();
-        if (!State.bInitialized || World == nullptr)
+        if (World == nullptr)
+        {
+            return UI;
+        }
+        State.Worlds.insert(World);
+
+        if (!State.bInitialized)
         {
             return UI;
         }
@@ -939,6 +960,8 @@ namespace Lumina::RmlUi
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
 
+        State.Worlds.erase(World);
+
         // Backend already shut down (Rml::Shutdown destroyed every context): the pointer
         // is dangling, so just drop it without touching Rml.
         if (!State.bInitialized)
@@ -984,7 +1007,7 @@ namespace Lumina::RmlUi
     {
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
-        if (!State.bInitialized || World == nullptr || World->GetUIContext() == nullptr)
+        if (!State.bInitialized || World == nullptr || WorldUI(World) == nullptr)
         {
             return;
         }
@@ -1004,7 +1027,7 @@ namespace Lumina::RmlUi
         // Once per frame (flag self-clears): restyle all docs if a UI file changed on disk.
         ProcessPendingUIReload();
 
-        FWorldUIContext* UI = World->GetUIContext();
+        FWorldUIContext* UI = WorldUI(World);
         if (UI == nullptr || UI->Context == nullptr)
         {
             return;
@@ -1034,7 +1057,7 @@ namespace Lumina::RmlUi
         {
             return;
         }
-        FWorldUIContext* UI = World->GetUIContext();
+        FWorldUIContext* UI = WorldUI(World);
         if (UI == nullptr || UI->Context == nullptr)
         {
             return;
@@ -1060,7 +1083,7 @@ namespace Lumina::RmlUi
         {
             return;
         }
-        FWorldUIContext* UI = World->GetUIContext();
+        FWorldUIContext* UI = WorldUI(World);
         if (UI == nullptr)
         {
             return;
@@ -1160,7 +1183,7 @@ namespace Lumina::RmlUi
         {
             return;
         }
-        const FWorldUIContext* UI = World->GetUIContext();
+        const FWorldUIContext* UI = WorldUI(World);
         if (UI == nullptr)
         {
             return;
@@ -1232,7 +1255,7 @@ namespace Lumina::RmlUi
         
         if (World != nullptr)
         {
-            if (FWorldUIContext* UI = World->GetUIContext())
+            if (FWorldUIContext* UI = WorldUI(World))
             {
                 Rml::Context* DyingContext = Component.Runtime.Context;
                 for (auto It = UI->WidgetJobs.begin(); It != UI->WidgetJobs.end(); )
@@ -1320,7 +1343,7 @@ namespace Lumina::RmlUi
         }
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
-        FWorldUIContext* UI = World->GetUIContext();
+        FWorldUIContext* UI = WorldUI(World);
         return UI ? UI->Context : nullptr;
     }
 
@@ -1336,7 +1359,7 @@ namespace Lumina::RmlUi
         {
             return false;
         }
-        const FWorldUIContext* UI = World->GetUIContext();
+        const FWorldUIContext* UI = WorldUI(World);
         return UI != nullptr && UI->Context != nullptr && UI->Context->IsMouseInteracting();
     }
 
@@ -1351,7 +1374,7 @@ namespace Lumina::RmlUi
         bLocked = true;
         // Resolved INSIDE the locked scope so the Context* can't be torn down between
         // resolution and use; ~FLockedWorldContext releases.
-        FWorldUIContext* UI = World->GetUIContext();
+        FWorldUIContext* UI = WorldUI(World);
         Context = UI ? UI->Context : nullptr;
     }
 
@@ -1371,7 +1394,7 @@ namespace Lumina::RmlUi
         }
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
-        if (FWorldUIContext* UI = World->GetUIContext())
+        if (FWorldUIContext* UI = WorldUI(World))
         {
             UI->DisplaySize = Size;
         }
@@ -1389,7 +1412,7 @@ namespace Lumina::RmlUi
         {
             return false;
         }
-        FWorldUIContext* UI = World->GetUIContext();
+        FWorldUIContext* UI = WorldUI(World);
         if (UI == nullptr || UI->Context == nullptr)
         {
             return false;
@@ -1694,7 +1717,7 @@ namespace Lumina::RmlUi
         {
             return nullptr;
         }
-        FWorldUIContext* UI = World->GetUIContext();
+        FWorldUIContext* UI = WorldUI(World);
         if (UI == nullptr || UI->Context == nullptr)
         {
             return nullptr;
@@ -1715,7 +1738,7 @@ namespace Lumina::RmlUi
         {
             return nullptr;
         }
-        FWorldUIContext* UI = World->GetUIContext();
+        FWorldUIContext* UI = WorldUI(World);
         if (UI == nullptr || UI->Context == nullptr)
         {
             return nullptr;
@@ -1731,7 +1754,7 @@ namespace Lumina::RmlUi
         {
             return;
         }
-        FWorldUIContext* UI = World->GetUIContext();
+        FWorldUIContext* UI = WorldUI(World);
         if (UI != nullptr && UI->Context != nullptr)
         {
             UI->Context->UnloadDocument(AsDocument(Document));
@@ -1965,7 +1988,7 @@ namespace Lumina::RmlUi
         {
             return nullptr;
         }
-        FWorldUIContext* UI = World->GetUIContext();
+        FWorldUIContext* UI = WorldUI(World);
         if (UI == nullptr || UI->Context == nullptr)
         {
             return nullptr;
@@ -2277,7 +2300,7 @@ namespace Lumina::RmlUi
             }
             if (State.bInitialized && M->World != nullptr)
             {
-                if (FWorldUIContext* UI = M->World->GetUIContext())
+                if (FWorldUIContext* UI = WorldUI(M->World))
                 {
                     if (UI->Context != nullptr)
                     {

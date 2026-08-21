@@ -122,6 +122,15 @@ namespace Lumina
     {
         GENERATED_BODY()
 
+        SEntityScriptComponent() = default;
+        ~SEntityScriptComponent() = default;
+        SEntityScriptComponent(SEntityScriptComponent&&) = default;
+        SEntityScriptComponent& operator=(SEntityScriptComponent&&) = default;
+
+        // A script is a per-entity subobject, so a copy (prefab stamp, component duplicate) clones it.
+        SEntityScriptComponent(const SEntityScriptComponent& Other);
+        SEntityScriptComponent& operator=(const SEntityScriptComponent& Other);
+
         TVector<TObjectPtr<CEntityScript>> Scripts;
 
         /**

@@ -146,6 +146,9 @@ namespace Lumina
         Nodes.clear();
         Connections.clear();
 
+        // Reconciling before the links are back would drop everything keyed off them.
+        bIsPostLoading = true;
+
         for (const TObjectPtr<CEdGraphNode>& Node : SavedNodes)
         {
             if (Node.IsValid())
@@ -192,8 +195,8 @@ namespace Lumina
             InputPin->AddConnection(OutputPin);
         }
 
-        // Rebuild Connections from restored pin links: AddNode above ran ValidateGraph() before any links
-        // existed, so without this a save after load (no edit to re-trigger it) drops every link.
+        // The load's one reconcile: rebuilds Connections and re-matches link-keyed data against them.
+        bIsPostLoading = false;
         ValidateGraph();
     }
 
@@ -1995,7 +1998,10 @@ namespace Lumina
         }
 
         NotifyContentChanged();
-        ValidateGraph();
+        if (!bIsPostLoading)
+        {
+            ValidateGraph();
+        }
 
         return NodeID;
     }

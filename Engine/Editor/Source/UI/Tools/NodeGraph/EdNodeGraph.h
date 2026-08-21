@@ -263,6 +263,9 @@ namespace Lumina
         // Node the "Node Context Menu" popup was opened on; the popup outlives the frame that spawned it.
         uint64         ContextMenuNodeID = 0;
 
+        // Set while PostLoad rebuilds, so AddNode does not reconcile against links that are not back yet.
+        bool           bIsPostLoading = false;
+
         // F2 rename box: opened a frame after the key, since the popup lives in the suspended region.
         bool           bOpenRenamePopup = false;
         int64          RenameNodeID     = 0;

@@ -259,6 +259,7 @@ namespace Lumina
         }
         InitializedGraphs.clear();
         GraphStack.clear();
+        NavForwardStack.clear();
         NodeGraph = nullptr;
     }
 
@@ -289,6 +290,9 @@ namespace Lumina
 
         Graph->SetPreNodeDeletedCallback([this](const CEdGraphNode* Node)
         {
+            // A deleted node takes its sub-graph with it, which forward history may still point at.
+            NavForwardStack.clear();
+
             // Deleting a State node also drops its transitions, so clear any
             // inspected transition defensively rather than risk a stale pointer.
             if (Node == SelectedNode || SelectedTransition != nullptr)
@@ -378,12 +382,10 @@ namespace Lumina
         EnsureGraphReady(Graph);
         GraphStack.push_back({ Graph, Label });
 
-        // Reset the inspector on descent so it doesn't show a node from the graph we left;
-        // cached transition tables are tied to the outer canvas and would dangle.
-        SelectedNode = nullptr;
-        SelectedTransition = nullptr;
-        TransitionTables.clear();
-        GetPropertyTable()->SetObject(Asset, Asset->GetClass());
+        // Descending somewhere new is what abandons the levels forward was going to retrace.
+        NavForwardStack.clear();
+
+        ClearGraphSelection();
     }
 
     void FAnimationGraphEditorTool::PopToLevel(int32 Index)
@@ -392,10 +394,52 @@ namespace Lumina
         {
             return;
         }
+
+        // Deepest first, so the next forward step lands on the level just below Index.
+        for (int32 i = (int32)GraphStack.size() - 1; i > Index; --i)
+        {
+            NavForwardStack.push_back(GraphStack[i]);
+        }
         GraphStack.resize(Index + 1);
 
+        ClearGraphSelection();
+    }
+
+    void FAnimationGraphEditorTool::NavigateBack()
+    {
+        if (GraphStack.size() < 2)
+        {
+            return;
+        }
+
+        NavForwardStack.push_back(GraphStack.back());
+        GraphStack.pop_back();
+
+        ClearGraphSelection();
+    }
+
+    void FAnimationGraphEditorTool::NavigateForward()
+    {
+        if (NavForwardStack.empty())
+        {
+            return;
+        }
+
+        FGraphStackEntry Entry = NavForwardStack.back();
+        NavForwardStack.pop_back();
+
+        EnsureGraphReady(Entry.Graph);
+        GraphStack.push_back(Move(Entry));
+
+        ClearGraphSelection();
+    }
+
+    void FAnimationGraphEditorTool::ClearGraphSelection()
+    {
+        // Cached transition tables are tied to the canvas being left and would dangle.
         SelectedNode = nullptr;
         SelectedTransition = nullptr;
+        TransitionTables.clear();
         GetPropertyTable()->SetObject(Asset, Asset->GetClass());
     }
 
@@ -553,6 +597,19 @@ namespace Lumina
         DrawBreadcrumbBar();
 
         UpdateDebugOverlay();
+
+        // Thumb buttons, which GLFW reports as 3 and 4. Hovered, not focused, so no click-in first.
+        if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows))
+        {
+            if (ImGui::IsMouseClicked(3))
+            {
+                NavigateBack();
+            }
+            else if (ImGui::IsMouseClicked(4))
+            {
+                NavigateForward();
+            }
+        }
 
         if (!GraphStack.empty() && GraphStack.back().Graph != nullptr)
         {

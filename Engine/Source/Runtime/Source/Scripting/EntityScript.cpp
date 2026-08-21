@@ -15,6 +15,53 @@
 
 namespace Lumina
 {
+    namespace
+    {
+        // Clone, never share: one script object on two entities carries the first's state, and its world, into the second.
+        CEntityScript* CloneScript(CEntityScript* Source)
+        {
+            if (Source == nullptr || Source->GetClass() == nullptr)
+            {
+                return nullptr;
+            }
+
+            CObject* Created = NewObject(Source->GetClass(), nullptr, NAME_None, FGuid::New(), OF_Transient);
+            CEntityScript* Clone = static_cast<CEntityScript*>(Created);
+            if (Clone != nullptr)
+            {
+                Source->CopyPropertiesTo(Clone);
+            }
+            return Clone;
+        }
+
+        void CloneScripts(const TVector<TObjectPtr<CEntityScript>>& Source, TVector<TObjectPtr<CEntityScript>>& Out)
+        {
+            Out.clear();
+            Out.reserve(Source.size());
+            for (const TObjectPtr<CEntityScript>& Held : Source)
+            {
+                if (CEntityScript* Clone = CloneScript(Held.Get()))
+                {
+                    Out.push_back(Clone);
+                }
+            }
+        }
+    }
+
+    SEntityScriptComponent::SEntityScriptComponent(const SEntityScriptComponent& Other)
+    {
+        CloneScripts(Other.Scripts, Scripts);
+    }
+
+    SEntityScriptComponent& SEntityScriptComponent::operator=(const SEntityScriptComponent& Other)
+    {
+        if (this != &Other)
+        {
+            CloneScripts(Other.Scripts, Scripts);
+        }
+        return *this;
+    }
+
     bool SEntityScriptComponent::Serialize(FArchive& Ar)
     {
         if (Ar.IsWriting())
