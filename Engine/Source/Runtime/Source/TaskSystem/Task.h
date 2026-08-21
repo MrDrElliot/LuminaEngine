@@ -297,12 +297,27 @@ namespace Lumina
                 uint32                  Grain   = 1;
                 TAtomic<uint32>         Cursor{0};
 
-                bool await_ready() const noexcept { return Num == 0; }
+                // A range that fits in one grain runs right here, on the awaiting coroutine: suspending to
+                // dispatch a single job for it costs a counter, a submit and a wake to save nothing. Mirrors
+                // the same early-out in the blocking FTaskSystem::ParallelForImpl.
+                bool await_ready() noexcept
+                {
+                    if (Num == 0)
+                    {
+                        return true;
+                    }
+                    Grain = ::Lumina::Task::ComputeCursorGrain(Num, MinRange);
+                    if (Num > Grain)
+                    {
+                        return false;
+                    }
+                    RunRange(0, Num);
+                    return true;
+                }
 
                 void await_suspend(std::coroutine_handle<> InCaller)
                 {
                     Caller  = InCaller;
-                    Grain   = ::Lumina::Task::ComputeCursorGrain(Num, MinRange);
                     Counter = Jobs::AllocCounter(0);
                     Jobs::SetCounterCompletion(Counter, &FAwaiter::OnComplete, this);
 
@@ -322,6 +337,24 @@ namespace Lumina
 
                 void await_resume() const noexcept {}
 
+                void RunRange(uint32 Start, uint32 End)
+                {
+                    // Re-read the slot per range: the body may wait, and a resumed fiber can migrate.
+                    const uint32 Worker = Jobs::GetWorkerIndex();
+                    if constexpr (std::is_invocable_v<TFn, const ::Lumina::Task::FParallelRange&>)
+                    {
+                        Func(::Lumina::Task::FParallelRange{ Start, End, Worker });
+                    }
+                    else
+                    {
+                        for (uint32 i = Start; i < End; ++i)
+                        {
+                            if constexpr (std::is_invocable_v<TFn, uint32, uint32>) { Func(i, Worker); }
+                            else                                                     { Func(i); }
+                        }
+                    }
+                }
+
                 static void RunChunk(void* Arg, uint32 /*Worker*/)
                 {
                     FAwaiter* Self = static_cast<FAwaiter*>(Arg);
@@ -333,20 +366,7 @@ namespace Lumina
                             return;
                         }
                         const uint32 End = Self->Num - Start < Self->Grain ? Self->Num : Start + Self->Grain;
-                        // Re-read the slot per range: the body may wait, and a resumed fiber can migrate.
-                        const uint32 Worker = Jobs::GetWorkerIndex();
-                        if constexpr (std::is_invocable_v<TFn, const ::Lumina::Task::FParallelRange&>)
-                        {
-                            Self->Func(::Lumina::Task::FParallelRange{ Start, End, Worker });
-                        }
-                        else
-                        {
-                            for (uint32 i = Start; i < End; ++i)
-                            {
-                                if constexpr (std::is_invocable_v<TFn, uint32, uint32>) { Self->Func(i, Worker); }
-                                else                                                      { Self->Func(i); }
-                            }
-                        }
+                        Self->RunRange(Start, End);
                     }
                 }
 

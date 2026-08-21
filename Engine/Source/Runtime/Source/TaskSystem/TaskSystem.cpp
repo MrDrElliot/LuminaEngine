@@ -3,6 +3,7 @@
 
 #include "Core/Threading/Atomic.h"
 #include "Core/Threading/Thread.h"
+#include "Platform/Time/PlatformTime.h"
 #include "Log/Log.h"
 #include "Memory/Memory.h"
 #if USING(WITH_EDITOR)
@@ -51,24 +52,76 @@ namespace Lumina
             alignas(64) TAtomic<uint32> Cursor{0};
         };
 
-        void RunCursorRanges(FCursorFor& C)
+        // Items this thread pulled off the cursor, so the caller can price the loop from work it ran anyway.
+        uint32 RunCursorRanges(FCursorFor& C)
         {
+            uint32 Ran = 0;
             for (;;)
             {
                 const uint32 Start = C.Cursor.fetch_add(C.Grain, std::memory_order_relaxed);
                 if (Start >= C.Num)
                 {
-                    return;
+                    return Ran;
                 }
                 const uint32 End = C.Num - Start < C.Grain ? C.Num : Start + C.Grain;
                 // Re-read the slot per range: the thunk may wait inside, and a resumed fiber can migrate.
                 C.Thunk(C.Ctx, Start, End, Jobs::GetWorkerIndex());
+                Ran += End - Start;
             }
         }
 
         void RunCursorJob(void* Arg, uint32 /*Worker*/)
         {
-            RunCursorRanges(*static_cast<FCursorFor*>(Arg));
+            (void)RunCursorRanges(*static_cast<FCursorFor*>(Arg));
+        }
+
+        // Measured per-item cost per call site, so a small loop stops fanning out without an element-count
+        // rule deciding it. A count cannot express the crossover: 16 navmesh tiles must fan out and 16 matrix
+        // copies must not. The thunk address is one instantiation per call site, which is the key.
+        constexpr uint32 kCostSlots         = 256;
+        constexpr uint64 kSerialBudgetNanos = 25'000;   // below this, the fan-out costs more than the work
+
+        struct alignas(64) FCostEntry
+        {
+            TAtomic<uint64> Key{0};
+            TAtomic<uint64> NanosPerItem{0};
+        };
+        FCostEntry GCostTable[kCostSlots];
+
+        FORCEINLINE FCostEntry& CostSlot(FRawThunk Thunk)
+        {
+            const uint64 Key  = reinterpret_cast<uint64>(Thunk);
+            const uint64 Hash = (Key >> 4) * 0x9E3779B97F4A7C15ull;
+            return GCostTable[(Hash >> 56) % kCostSlots];
+        }
+
+        // Zero when this site has no usable estimate: never measured, or the slot belongs to someone else.
+        FORCEINLINE uint64 EstimatedNanosPerItem(FRawThunk Thunk)
+        {
+            const FCostEntry& Slot = CostSlot(Thunk);
+            return Slot.Key.load(std::memory_order_relaxed) == reinterpret_cast<uint64>(Thunk)
+                 ? Slot.NanosPerItem.load(std::memory_order_relaxed) : 0;
+        }
+
+        // Racy by design: a torn or stale estimate costs one mis-sized dispatch, never correctness.
+        void RecordItemCost(FRawThunk Thunk, uint32 ItemsRun, double Seconds)
+        {
+            if (ItemsRun == 0 || Seconds <= 0.0)
+            {
+                return;
+            }
+            const uint64 Sample = static_cast<uint64>((Seconds * 1'000'000'000.0) / ItemsRun);
+            FCostEntry&  Slot   = CostSlot(Thunk);
+            const uint64 Key    = reinterpret_cast<uint64>(Thunk);
+
+            if (Slot.Key.load(std::memory_order_relaxed) != Key)
+            {
+                Slot.Key.store(Key, std::memory_order_relaxed);
+                Slot.NanosPerItem.store(Sample, std::memory_order_relaxed);
+                return;
+            }
+            const uint64 Prior = Slot.NanosPerItem.load(std::memory_order_relaxed);
+            Slot.NanosPerItem.store(Prior == 0 ? Sample : (Prior * 3 + Sample) / 4, std::memory_order_relaxed);
         }
 
 
@@ -173,9 +226,16 @@ namespace Lumina
     {
         const uint32 Grain = Task::ComputeCursorGrain(Num, MinRange);
 
-        if (Num <= Grain)
+        // Priced from this site's last run: a loop that finishes inside the dispatch overhead runs here, on the
+        // caller, and submits nothing at all. Sites the table has never seen fan out and get priced by it.
+        const uint64 NanosPerItem = EstimatedNanosPerItem(Thunk);
+        const bool   bTooSmall    = NanosPerItem != 0 && NanosPerItem * Num <= kSerialBudgetNanos;
+
+        if (Num <= Grain || bTooSmall)
         {
+            const double Start = PlatformTime::Seconds();
             Thunk(Ctx, 0, Num, Jobs::GetWorkerIndex());
+            RecordItemCost(Thunk, Num, PlatformTime::Seconds() - Start);
             return;
         }
 
@@ -198,8 +258,12 @@ namespace Lumina
 
         Jobs::FCounter* Counter = Jobs::AllocCounter(0);
         Jobs::RunJobs(Decls, K, ToJobPriority(Priority), Counter);
-        // The caller works the cursor too instead of parking for the whole fan-out.
-        RunCursorRanges(C);
+        // The caller works the cursor too instead of parking for the whole fan-out. Timing its own slices is
+        // what prices the next call: the work happens either way, so the estimate costs two clock reads.
+        const double Start = PlatformTime::Seconds();
+        const uint32 Ran   = RunCursorRanges(C);
+        RecordItemCost(Thunk, Ran, PlatformTime::Seconds() - Start);
+
         Jobs::WaitForCounter(Counter, 0);
         Jobs::FreeCounter(Counter);
     }
