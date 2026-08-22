@@ -198,6 +198,9 @@ namespace Lumina
              *  (or that there was nothing to read, which fails the load). */
             TVector<FBulkDataRef>    MipRefs;
 
+            // The package's bulk generation when those refs were taken; a save since then invalidates them.
+            uint32                   BulkGeneration = 0;
+
             uint8                    SourceFirstMip = 0;
             uint32                   LayerCount     = 1;
 

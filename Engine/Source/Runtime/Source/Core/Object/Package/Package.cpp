@@ -430,7 +430,7 @@ namespace Lumina
         return DecompressPackageBinary(RawBinary, OutBinary);
     }
 
-    bool CPackage::ReadBulkData(const FBulkDataRef& Ref, TVector<uint8>& OutBytes) const
+    bool CPackage::ReadBulkData(const FBulkDataRef& Ref, TVector<uint8>& OutBytes, uint32 ExpectedGeneration) const
     {
         OutBytes.clear();
 
@@ -439,38 +439,64 @@ namespace Lumina
             return false;
         }
 
-        // Tracked explicitly rather than derived from the name, which mid-rename points at a missing file.
-        FBulkRegion  Region;
-        FFixedString Path;
+        // A save replaces the file and republishes the region as two steps, so a read starting between them
+        // would apply the old offsets to the new bytes and come back with the right size of the wrong payload.
+        for (int32 Attempt = 0; Attempt < 3; ++Attempt)
         {
-            FScopeLock Lock(BulkMutex);
-            Region = BulkRegion;
-            Path   = BulkSourcePath.empty() ? GetPackagePath() : BulkSourcePath;
-        }
+            // Tracked explicitly rather than derived from the name, which mid-rename points at a missing file.
+            FBulkRegion  Region;
+            FFixedString Path;
+            uint32       Generation = 0;
+            {
+                FScopeLock Lock(BulkMutex);
+                Region     = BulkRegion;
+                Path       = BulkSourcePath.empty() ? GetPackagePath() : BulkSourcePath;
+                Generation = BulkGeneration;
+            }
 
-        if (!Region.IsValid() || Ref.Offset < 0 || Ref.Size > Region.Size - Ref.Offset)
-        {
-            LOG_ERROR("ReadBulkData: ref (offset={}, size={}) is outside package {}'s bulk region (size={})",
-                Ref.Offset, Ref.Size, GetName(), Region.Size);
-            return false;
-        }
+            // The caller captured this ref against an earlier layout, so it no longer names anything.
+            if (ExpectedGeneration != 0 && Generation != ExpectedGeneration)
+            {
+                LOG_ERROR("ReadBulkData: {} was saved since this ref was taken, so the payload it named is gone", GetName());
+                return false;
+            }
 
-        if (!VFS::ReadFileRange(OutBytes, Path, (uint64)(Region.FileOffset + Ref.Offset), (uint64)Ref.Size))
-        {
-            LOG_ERROR("ReadBulkData: ranged read failed for {}", Path);
+            if (!Region.IsValid() || Ref.Offset < 0 || Ref.Size > Region.Size - Ref.Offset)
+            {
+                LOG_ERROR("ReadBulkData: ref (offset={}, size={}) is outside package {}'s bulk region (size={})",
+                    Ref.Offset, Ref.Size, GetName(), Region.Size);
+                return false;
+            }
+
+            if (!VFS::ReadFileRange(OutBytes, Path, (uint64)(Region.FileOffset + Ref.Offset), (uint64)Ref.Size))
+            {
+                LOG_ERROR("ReadBulkData: ranged read failed for {}", Path);
+                OutBytes.clear();
+                return false;
+            }
+
+            // A short read means the file changed under us (re-saved, truncated); the payload is unusable.
+            if ((int64)OutBytes.size() != Ref.Size)
+            {
+                LOG_ERROR("ReadBulkData: short read for {} (wanted {}, got {})", Path, Ref.Size, OutBytes.size());
+                OutBytes.clear();
+                return false;
+            }
+
+            // Same size out of a different file is what nothing above can see, so the generation catches it.
+            {
+                FScopeLock Lock(BulkMutex);
+                if (BulkGeneration == Generation)
+                {
+                    return true;
+                }
+            }
+
             OutBytes.clear();
-            return false;
         }
 
-        // A short read means the file changed under us (re-saved, truncated); the payload is unusable.
-        if ((int64)OutBytes.size() != Ref.Size)
-        {
-            LOG_ERROR("ReadBulkData: short read for {} (wanted {}, got {})", Path, Ref.Size, OutBytes.size());
-            OutBytes.clear();
-            return false;
-        }
-
-        return true;
+        LOG_ERROR("ReadBulkData: {} kept being saved underneath the read", GetName());
+        return false;
     }
 
     FObjectExport::FObjectExport(CObject* InObject)
@@ -1202,6 +1228,9 @@ namespace Lumina
         // Publication only; a reader already walking the old bytes keeps them alive through its own reference.
         FScopeLock Lock(LoaderBytesMutex);
         LoaderBytes = Move(NewBytes);
+
+        // Bytes just written are current format. A caller that parsed an older header overwrites this.
+        LoaderFileVersion = GPackageFileLuminaVersion.FileVersion;
     }
 
     TSharedPtr<FPackageFileBytes> CPackage::AcquireLoaderBytes(int32& OutFileVersion)
@@ -1230,6 +1259,15 @@ namespace Lumina
         FScopeLock Lock(BulkMutex);
         BulkRegion = Region;
         BulkSourcePath.assign(Path.data(), Path.size());
+
+        // Every ref taken against the old layout is now stale, and a reader mid-flight has to notice.
+        ++BulkGeneration;
+    }
+
+    uint32 CPackage::GetBulkGeneration() const
+    {
+        FScopeLock Lock(BulkMutex);
+        return BulkGeneration;
     }
 
     bool CPackage::CanSpliceBulkRegion() const

@@ -230,7 +230,10 @@ namespace Lumina
         RUNTIME_API static bool ReadPackageFile(FStringView Path, TVector<uint8>& OutBinary, FBulkRegion* OutBulkRegion = nullptr);
 
         /** One ranged read of a bulk payload, uncached so the caller owns the bytes, and safe from a worker thread. */
-        RUNTIME_API NODISCARD bool ReadBulkData(const FBulkDataRef& Ref, TVector<uint8>& OutBytes) const;
+        RUNTIME_API NODISCARD bool ReadBulkData(const FBulkDataRef& Ref, TVector<uint8>& OutBytes, uint32 ExpectedGeneration = 0) const;
+
+        /** Bumped by every save, so a caller holding refs it captured earlier can tell they went stale. */
+        RUNTIME_API NODISCARD uint32 GetBulkGeneration() const;
 
         RUNTIME_API NODISCARD const FBulkRegion& GetBulkRegion() const { return BulkRegion; }
 
@@ -332,6 +335,9 @@ namespace Lumina
 
         // Guards the region and path as a pair, held only to copy them, never across the disk read itself.
         mutable FMutex                  BulkMutex;
+
+        // Bumped whenever the pair is republished, which is what dates a ref taken against an older save.
+        uint32                          BulkGeneration = 1;
 
         // Set when an export could not re-read a payload, which refuses the save instead of emptying it.
         bool                            bBulkDataUnresolved = false;

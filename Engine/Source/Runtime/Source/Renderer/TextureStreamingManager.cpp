@@ -647,6 +647,12 @@ namespace Lumina
             {
                 const FTextureResource& Resource = Texture->GetTextureResource();
 
+                // Snapshotted with the refs, so a save landing before the worker reads is caught rather than read through.
+                if (const CPackage* RefPackage = Texture->GetPackage())
+                {
+                    Load->BulkGeneration = RefPackage->GetBulkGeneration();
+                }
+
                 for (uint32 Layer = 0; Layer < Load->LayerCount; ++Layer)
                 {
                     for (uint32 Mip = Load->TargetFirstMip; Mip < Load->SourceFirstMip; ++Mip)
@@ -702,7 +708,7 @@ namespace Lumina
                     }
 
                     if (!Raw->MipRefs[Slice].IsValid()
-                     || !Package->ReadBulkData(Raw->MipRefs[Slice], Raw->MipBytes[Slice]))
+                     || !Package->ReadBulkData(Raw->MipRefs[Slice], Raw->MipBytes[Slice], Raw->BulkGeneration))
                     {
                         Raw->bFailed = true;
                     }
