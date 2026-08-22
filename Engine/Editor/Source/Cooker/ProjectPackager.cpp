@@ -155,6 +155,33 @@ namespace Lumina
             return false;
         }
 
+        // A game binary ends in exactly "-<Config>", while every other target type names itself first.
+        bool HasForeignTargetElement(FStringView Stem, const FString& MyConfig)
+        {
+            FString ConfigTail = "-";
+            ConfigTail.append(MyConfig);
+
+            if (!Stem.ends_with(FStringView(ConfigTail.c_str(), ConfigTail.size())))
+            {
+                return false;
+            }
+
+            const FStringView Base = Stem.substr(0, Stem.size() - ConfigTail.size());
+
+            for (const char* Type : { "Editor", "Program" })
+            {
+                FString TypeTail = "-";
+                TypeTail.append(Type);
+
+                if (Base.ends_with(FStringView(TypeTail.c_str(), TypeTail.size())))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         // True if SourceDir has a "<Stem>-<Config>.dll" sibling; identifies stale pre-targetsuffix dupes.
         bool HasSuffixedSibling(FStringView SourceDir, FStringView Stem)
         {
@@ -224,7 +251,14 @@ namespace Lumina
                     return;
                 }
 
-                // Skip stale Editor-*.dll left over from a prior Editor build.
+                // An editor or program build of the same module, which exports a different surface.
+                if (HasForeignTargetElement(Stem, ConfigSuffix))
+                {
+                    ++Skipped;
+                    return;
+                }
+
+                // The editor module under its pre-rename name, which no game build ever produces.
                 if (Stem.starts_with("Editor-"))
                 {
                     ++Skipped;

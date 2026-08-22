@@ -935,9 +935,21 @@ namespace Lumina
         ParameterTable->DrawTree(true);
     }
 
+    uint64 FAnimationGraphEditorTool::GetContentVersion() const
+    {
+        // Summed over every canvas the tool opened, since a state's blend tree carries its own counter
+        // and versions only ever climb.
+        uint64 Version = 0;
+        for (CEdNodeGraph* Graph : InitializedGraphs)
+        {
+            Version += Graph->GetContentVersion();
+        }
+        return Version;
+    }
+
     bool FAnimationGraphEditorTool::NeedsCompile() const
     {
-        return NodeGraph != nullptr && (!bHasCompiledOnce || NodeGraph->GetContentVersion() != CompiledContentVersion);
+        return NodeGraph != nullptr && (!bHasCompiledOnce || GetContentVersion() != CompiledContentVersion);
     }
 
     void FAnimationGraphEditorTool::Compile(bool bMarkPackageDirty)
@@ -952,7 +964,7 @@ namespace Lumina
         }
 
         // Stamped before the early-outs below so a failing compile does not re-run every frame.
-        CompiledContentVersion = NodeGraph->GetContentVersion();
+        CompiledContentVersion = GetContentVersion();
         bHasCompiledOnce = true;
 
         FAnimationGraphCompiler Compiler;

@@ -46,7 +46,7 @@
 // Compile-time fingerprint, identical for the engine and any ABI-compatible module.
 #define LUMINA_MODULE_ABI_SIGNATURE                              \
     "LMABI/" LUMINA_MODULE_ABI_STR(LUMINA_MODULE_ABI_VERSION)    \
-    "|" LUMINA_CONFIGURATION_NAME                                \
+    "|" LUMINA_BINARY_SUFFIX                                     \
     "|" LUMINA_MODULE_ABI_PLATFORM                               \
     "|" LUMINA_MODULE_ABI_COMPILER                               \
     "|" LUMINA_MODULE_ABI_STDLIB

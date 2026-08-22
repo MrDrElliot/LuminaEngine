@@ -309,7 +309,7 @@ namespace Lumina::Paths
     {
         FFixedString Result = LUMINA_SHAREDLIB_PREFIX_NAME;
         Result.append(ModuleName.data(), ModuleName.size());
-        Result.append("-").append(LUMINA_CONFIGURATION_NAME).append(LUMINA_SHAREDLIB_EXT_NAME);
+        Result.append(LUMINA_BINARY_SUFFIX).append(LUMINA_SHAREDLIB_EXT_NAME);
         return Result;
     }
 

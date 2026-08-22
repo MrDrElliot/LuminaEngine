@@ -316,7 +316,7 @@ takes the same arguments.
    launches the configuration you name rather than whatever was built last. It
    takes the same `-TargetType` and `-Configuration` flags as `Build`, and
    anything after a bare `--` is forwarded to the editor untouched. The
-   executable itself is at `Binaries/Linux64/Lumina-Development` if you would
+   executable itself is at `Binaries/Linux64/Lumina-Editor-Development` if you would
    rather launch it directly; it finds the engine relative to itself, so it does
    not care what directory you run it from.
 

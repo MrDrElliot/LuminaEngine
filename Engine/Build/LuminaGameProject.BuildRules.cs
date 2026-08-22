@@ -55,10 +55,10 @@ public abstract class LuminaGameTargetRules : LuminaTargetRules
         // with this project opened rather than launching the library.
         string EngineBinaries = Path.Combine(Target.EngineDirectory, "Binaries", Target.PlatformName);
 
-        // From the target platform, not a literal .exe: ELF executables carry none.
+        // Through OutputSuffix so an editor target launches the editor app rather than the game one.
         DebuggerCommand = Path.Combine(
             EngineBinaries,
-            $"Lumina-{Target.Configuration}{Target.Platform.GetExecutableExtension()}");
+            $"Lumina{OutputSuffix}{Target.Platform.GetExecutableExtension()}");
 
         DebuggerWorkingDirectory = EngineBinaries;
     }

@@ -39,11 +39,11 @@ namespace Lumina
             }
         }
 
-        const FString CfgSuffix = FString("-") + LUMINA_CONFIGURATION_NAME;
-        if (BareName.size() > CfgSuffix.size()
-            && BareName.substr(BareName.size() - CfgSuffix.size()) == CfgSuffix)
+        const FString BinarySuffix = LUMINA_BINARY_SUFFIX;
+        if (BareName.size() > BinarySuffix.size()
+            && BareName.substr(BareName.size() - BinarySuffix.size()) == BinarySuffix)
         {
-            BareName.erase(BareName.size() - CfgSuffix.size());
+            BareName.erase(BareName.size() - BinarySuffix.size());
         }
 
         // Leaving the prefix keys the module differently from what PluginManager unloads, firing the assert.

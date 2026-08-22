@@ -27,7 +27,7 @@
 
 .EXAMPLE
     # Launch the editor under heap tracing (catches Slang / driver / CRT):
-    .\MemoryTrace.ps1 -Mode Heap -Exe Lumina-Development.exe
+    .\MemoryTrace.ps1 -Mode Heap -Exe Lumina-Editor-Development.exe
 #>
 [CmdletBinding()]
 param
@@ -35,7 +35,7 @@ param
     [ValidateSet('VirtualAlloc', 'Heap')]
     [string] $Mode = 'VirtualAlloc',
 
-    [string] $Exe = 'Lumina-Development.exe',
+    [string] $Exe = 'Lumina-Editor-Development.exe',
 
     [string] $OutDir = (Join-Path $PSScriptRoot '..\Saved\MemoryTraces')
 )

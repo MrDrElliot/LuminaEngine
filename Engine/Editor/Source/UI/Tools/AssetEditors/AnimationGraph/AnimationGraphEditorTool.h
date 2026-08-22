@@ -79,6 +79,9 @@ namespace Lumina
         // is skipped for the per-frame preview recompile so the asset isn't always unsaved.
         void Compile(bool bMarkPackageDirty = true);
 
+        // Content counter the auto-compile gate compares, covering the top graph and every nested canvas.
+        uint64 GetContentVersion() const;
+
         // Gates the auto-compile, so a graph nobody is editing is not recompiled every frame.
         bool NeedsCompile() const;
 

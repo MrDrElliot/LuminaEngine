@@ -75,6 +75,12 @@ namespace Lumina
         {
             Package->MarkDirty();
         }
+
+        // Auto-compile gates on the content version, so an inline pin edit that skips it keeps the old baked constant.
+        if (CEdNodeGraph* Graph = GetOwningGraph())
+        {
+            Graph->NotifyContentChanged();
+        }
     }
 
     void CAnimGraphNode::BindFloatPinEditor(CAnimGraphPin* Pin, float Speed, const char* Format)

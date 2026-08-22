@@ -17,12 +17,18 @@ public abstract class LuminaTargetRules : TargetRules
         bEnableRtti = false;
         bUseDynamicCrt = true;
 
-        OutputSuffix = Target.Configuration switch
+        string ConfigurationElement = Target.Configuration switch
         {
             BuildConfiguration.Debug => "-Debug",
             BuildConfiguration.Development => "-Development",
             _ => "-Shipping",
         };
+
+        // Editor and Game link different exports out of the same modules, so a shared file name would
+        // leave whichever built last overwriting the other. Game keeps the plain name it ships under.
+        OutputSuffix = Target.Type == TargetType.Game
+            ? ConfigurationElement
+            : $"-{Target.Type}{ConfigurationElement}";
 
         bDebugSymbols = Target.Configuration != BuildConfiguration.Shipping;
         bLinkTimeCodeGeneration = Target.Configuration == BuildConfiguration.Shipping;

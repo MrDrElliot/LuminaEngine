@@ -605,6 +605,9 @@ public sealed class TargetAssembler
         Definitions.AddRange(TargetRules.GlobalDefinitions);
         Definitions.Add($"WITH_EDITOR={(Info.bWithEditor ? 1 : 0)}");
 
+        // Read here rather than in the rules so it still matches after a target overrides the suffix.
+        Definitions.Add($"LUMINA_BINARY_SUFFIX=\"{TargetRules.OutputSuffix}\"");
+
         if (Module.BinaryType == ModuleBinaryType.SharedLibrary && !TargetRules.bMonolithic)
         {
             Definitions.Add($"{Module.Name.ToUpperInvariant()}_EXPORTS");
