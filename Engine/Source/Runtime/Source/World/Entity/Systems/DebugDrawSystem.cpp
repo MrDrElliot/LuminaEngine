@@ -43,10 +43,7 @@ namespace Lumina
             return;
         }
 
-        // SCameraSystem bakes FResolvedSceneView at the END of the world's update (FrameEnd, or Paused
-        // in the editor) and this runs at the start, so the view is one frame old. That is fine for a
-        // broad-phase cull -- worst case a source that just entered view pops in a frame late -- and it
-        // is the same view the renderer actually used, shake and preview overrides included.
+        // The resolved view is one frame old, which is fine for a broad-phase cull.
         const FResolvedSceneView* Resolved = Context.GetRegistry().ctx().find<FResolvedSceneView>();
         if (Resolved != nullptr && Resolved->bHasView)
         {
@@ -90,8 +87,7 @@ namespace Lumina
                 return nullptr;
             }
 
-            // Live off the world, so a renderer torn down since the last tick reads as null instead of
-            // as a stale pointer. CWorld::GetImmediateLines already handles suspended/renderer-less.
+            // Read live off the world so a torn-down renderer reads as null instead of a stale pointer.
             return World->GetImmediateLines();
         }
 

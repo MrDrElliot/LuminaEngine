@@ -32,7 +32,7 @@
 #include "Tools/UI/ImGui/ImGuiFonts.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "Tools/UI/ImGui/EditorColors.h"
-#include "UI/Properties/EntityPropertyContext.h"
+#include "UI/Properties/PropertyEditContexts.h"
 #include "UI/Tools/EditorEntityUtils.h"
 #include "World/Entity/Components/EditorComponent.h"
 #include "World/Entity/Components/EntityTags.h"
@@ -53,6 +53,10 @@ namespace Lumina
     FSceneEditorTool::FSceneEditorTool(IEditorToolContext* Context, const FString& DisplayName, CObject* InAsset, CWorld* InWorld)
         : FAssetEditorTool(Context, DisplayName)
     {
+        PickCtx.Broker = MakeShared<FEntityPickBroker>();
+        PropertyContext.Provide(&SocketCtx);
+        PropertyContext.Provide(&WorldCtx);
+        PropertyContext.Provide(&PickCtx);
         Asset = InAsset;
         World = InWorld;
     }
@@ -60,6 +64,11 @@ namespace Lumina
     FSceneEditorTool::FSceneEditorTool(IEditorToolContext* Context, const FString& DisplayName, CWorld* InWorld)
         : FAssetEditorTool(Context, DisplayName)
     {
+        PickCtx.Broker = MakeShared<FEntityPickBroker>();
+        PropertyContext.Provide(&SocketCtx);
+        PropertyContext.Provide(&WorldCtx);
+        PropertyContext.Provide(&PickCtx);
+
         // The editor owns the world's lifetime, so a second owning ref here would corrupt the refcount.
         World = InWorld;
     }
@@ -435,14 +444,12 @@ namespace Lumina
             ImGui::Indent(8.0f);
 
             // Makes the world resolvable to an entity picker, and the parent's sockets to a socket picker.
-            {
-                SocketPickerContext::FSocketPickerData SocketData;
-                BuildSocketPickerData(Entity, SocketData);
+            SocketCtx = FSocketEditContext();
+            BuildSocketPickerData(Entity, SocketCtx);
+            WorldCtx.World = World;
 
-                FScopedEntityPropertyContext EntityContext(World);
-                SocketPickerContext::FScope SocketScope(&SocketData);
-                Entry.Table->DrawTree();
-            }
+            Entry.Table->SetContext(&PropertyContext);
+            Entry.Table->DrawTree();
 
             ImGui::Unindent(8.0f);
 
@@ -455,7 +462,7 @@ namespace Lumina
         ImGui::PopID();
     }
 
-    void FSceneEditorTool::BuildSocketPickerData(entt::entity Entity, SocketPickerContext::FSocketPickerData& Out)
+    void FSceneEditorTool::BuildSocketPickerData(entt::entity Entity, FSocketEditContext& Out)
     {
         FEntityRegistry& Registry = GetSceneRegistry();
 

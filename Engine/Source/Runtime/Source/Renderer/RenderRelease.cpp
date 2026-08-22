@@ -48,8 +48,7 @@ namespace Lumina::RHI
             }
         }
 
-        // Outside the lock: ReleaseNow reaches into the material manager and the RHI retire queue, both of
-        // which take their own locks, and neither ordering should have to be reasoned about.
+        // Outside the lock, since ReleaseNow reaches into two subsystems that take their own locks.
         for (FRenderRelease& Item : Ready)
         {
             ReleaseNow(Item);
@@ -82,8 +81,7 @@ namespace Lumina::RHI
 
     void FRenderReleaseQueue::ReleaseNow(FRenderRelease& Item)
     {
-        // TryRender, not Render: a token posted late in teardown can outlive the manager, and it must
-        // release quietly rather than assert. The RHI half below stands on its own either way.
+        // A token posted late in teardown can outlive the manager and must release quietly.
         if (Item.MaterialSlot != -1)
         {
             if (FRenderManager* RenderManager = TryRender())
@@ -95,9 +93,7 @@ namespace Lumina::RHI
 
         if (Item.Texture.IsValid())
         {
-            // Unchanged from the direct path -- this still unbinds the slot immediately and fences the
-            // image through Core::Retire. What gate 1 bought is that no frame recorded from here on can
-            // name it, which is exactly the guarantee the immediate unbind could not provide on its own.
+            // What the gate bought is that no frame recorded from here on can name it.
             Textures::Release(Item.Texture);
         }
     }

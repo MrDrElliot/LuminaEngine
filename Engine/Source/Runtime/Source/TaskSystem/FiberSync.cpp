@@ -10,8 +10,7 @@
     #include <immintrin.h>
 #endif
 
-// All four share one shape: a spinlock guards a FIFO of waiter nodes, and wakeups are direct
-// hand-offs -- the releaser updates the shared state for the woken waiter so it never re-contends.
+// A spinlock guards a FIFO of waiters, and a wakeup hands off directly so the woken never re-contends.
 namespace Lumina
 {
     namespace FiberSyncDetail
@@ -45,8 +44,7 @@ namespace Lumina
             Spin.store(0u, std::memory_order_release);
         }
 
-        // Make a popped (already-unlinked) waiter runnable. Last touch of the node, the woken context
-        // may free it (it lives on the waiter's stack) the instant it runs, so never read it after this.
+        // The last touch of the node, since the woken context may free its stack the instant it runs.
         FORCEINLINE void Wake(FWaiterNode* Node)
         {
             if (Node->bIsFiber)
@@ -55,16 +53,14 @@ namespace Lumina
             }
             else
             {
-                // The waiter can return and drop this stack frame the moment the store lands, so the wake
-                // runs on a possibly dead address. That is safe: waking hashes the address, it never reads it.
+                // Safe on a possibly dead address, since waking hashes it and never reads it.
                 const volatile uint32* Word = reinterpret_cast<const volatile uint32*>(&Node->Signaled);
                 Node->Signaled.store(1u, std::memory_order_release);
                 Threading::WakeAllOnAddress32(Word);
             }
         }
 
-        // Deliberately does NOT run queued jobs (unlike the counter assist-wait): a job contending the same
-        // lock would enqueue a second waiter on this call stack, and FIFO hand-off would then deadlock.
+        // A job contending the same lock would enqueue a second waiter and the hand-off would deadlock.
         FORCEINLINE void WaitExternal(FWaiterNode* Node)
         {
             uint32 IdleSpins = 0;
@@ -77,8 +73,7 @@ namespace Lumina
                 }
                 IdleSpins = 0;
 
-                // Sleeping beats yielding: a contended lock on a busy machine used to donate this core to a
-                // worker and wait a scheduler quantum to get it back. Capped so a lost wake costs a millisecond.
+                // Sleeping beats yielding, and the cap means a lost wake costs a millisecond.
                 Threading::WaitOnAddress32(reinterpret_cast<const volatile uint32*>(&Node->Signaled), 0u, 1);
             }
         }
@@ -148,11 +143,11 @@ namespace Lumina
                 SpinUnlock(M->Spin);
                 return true;
             }, &Park);
-            // Resumed: Unlock() handed ownership directly to us. We hold the lock.
+            // Resumed, since Unlock handed ownership directly, so the lock is already held.
             return;
         }
 
-        // External thread: enqueue and assist-wait for the hand-off.
+        // An external thread enqueues and assist-waits for the hand-off.
         SpinLock(Spin);
         if (!bLocked)
         {
@@ -174,7 +169,7 @@ namespace Lumina
         SpinLock(Spin);
         if (Head != nullptr)
         {
-            // Direct hand-off: keep bLocked set and pass ownership to the next waiter.
+            // A direct hand-off keeps the locked flag set and passes ownership to the next waiter.
             FWaiterNode* Next = Head;
             Head = Next->Next;
             if (Head == nullptr) Tail = nullptr;
@@ -312,7 +307,7 @@ namespace Lumina
                 return; // exclusive grant is mutually exclusive, stop
             }
 
-            // Shared front: grant it (and keep going to batch consecutive readers).
+            // A shared front is granted, and the walk continues to batch consecutive readers.
             ++Readers;
             Head = Front->Next;
             if (Head == nullptr) Tail = nullptr;
@@ -480,8 +475,7 @@ namespace Lumina
             {
                 FCVPark*                 P  = static_cast<FCVPark*>(Ctx);
                 FFiberConditionVariable* CV = P->Self;
-                // Enqueue under the CV lock BEFORE releasing the user mutex: a notifier (which holds the
-                // mutex while changing the predicate) can't slip a wakeup past us.
+                // Enqueued under the condition lock first, so a notifier cannot slip a wakeup past us.
                 SpinLock(CV->Spin);
                 P->Node->Fiber    = Handle;
                 P->Node->bIsFiber = true;

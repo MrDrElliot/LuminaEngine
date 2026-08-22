@@ -1,4 +1,4 @@
-#include "ParticleParameterCustomization.h"
+﻿#include "ParticleParameterCustomization.h"
 #include "imgui.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 
@@ -19,7 +19,7 @@ namespace Lumina
         return MakeShared<FParticleParameterCustomization>();
     }
 
-    EPropertyChangeOp FParticleParameterCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property)
+    EPropertyChangeOp FParticleParameterCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args)
     {
         bool bChanged = false;
 

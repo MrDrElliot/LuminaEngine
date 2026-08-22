@@ -1151,12 +1151,13 @@ void ed::EditorContext::Begin(const char* id, const ImVec2& size)
     //ImGui::LogToClipboard();
     //Log("---- begin ----");
 
-    static auto resetAndCollect = [](auto& objects)
+    auto resetAndCollect = [this](auto& objects)
     {
-        objects.erase(std::remove_if(objects.begin(), objects.end(), [](auto objectWrapper)
+        objects.erase(std::remove_if(objects.begin(), objects.end(), [this](auto objectWrapper)
         {
             if (objectWrapper->m_DeleteOnNewFrame)
             {
+                NotifyObjectDestroyed(objectWrapper.m_Object);
                 delete objectWrapper.m_Object;
                 return true;
             }
@@ -1968,6 +1969,17 @@ void ed::EditorContext::NotifyLinkDeleted(Link* link)
 {
     if (m_LastActiveLink == link)
         m_LastActiveLink = nullptr;
+}
+
+void ed::EditorContext::NotifyObjectDestroyed(Object* object)
+{
+    DeselectObject(object);
+
+    if (auto link = object->AsLink())
+    {
+        NotifyLinkDeleted(link);
+        m_FlowAnimationController.Discard(link);
+    }
 }
 
 void ed::EditorContext::Suspend(SuspendFlags flags)
@@ -3112,6 +3124,14 @@ void ed::FlowAnimation::Flow(ed::Link* link, float markerDistance, float speed, 
     Play(duration);
 }
 
+void ed::FlowAnimation::Detach()
+{
+    Stop();
+
+    m_Link = nullptr;
+    ClearPath();
+}
+
 void ed::FlowAnimation::Draw(ImDrawList* drawList)
 {
     if (!IsPlaying() || !IsLinkValid() || !m_Link->IsVisible())
@@ -3250,6 +3270,15 @@ void ed::FlowAnimationController::Flow(Link* link, FlowDirection direction)
     animation->Flow(link, editorStyle.FlowMarkerDistance, editorStyle.FlowSpeed * speedDirection, editorStyle.FlowDuration);
 }
 
+void ed::FlowAnimationController::Discard(Link* link)
+{
+    for (auto animation : m_Animations)
+    {
+        if (animation->m_Link == link)
+            animation->Detach();
+    }
+}
+
 void ed::FlowAnimationController::Draw(ImDrawList* drawList)
 {
     if (m_Animations.empty())
@@ -3268,6 +3297,13 @@ ed::FlowAnimation* ed::FlowAnimationController::GetOrCreate(Link* link)
         auto animationIt = std::find_if(m_Animations.begin(), m_Animations.end(), [link](FlowAnimation* animation) { return animation->m_Link == link; });
         if (animationIt != m_Animations.end())
             return *animationIt;
+    }
+
+    // Detached animations outlived their link, so take one instead of growing the list forever.
+    {
+        auto detachedIt = std::find_if(m_Animations.begin(), m_Animations.end(), [](FlowAnimation* animation) { return animation->m_Link == nullptr; });
+        if (detachedIt != m_Animations.end())
+            return *detachedIt;
     }
 
     // There are no live animations for target link, try to reuse inactive old one

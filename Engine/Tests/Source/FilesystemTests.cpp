@@ -525,7 +525,7 @@ TEST(NativeFileSystemTest, ResolveVirtualPathRejectsForeignAliases)
 
     EXPECT_TRUE(Mount.ResolveVirtualPath("/Engine/Content/A.lasset").empty());
 
-    // A shared prefix is not a match: "/GameData" would otherwise resolve as "<Base>Data".
+    // A shared prefix is not a match, or "/GameData" would resolve as "<Base>Data".
     EXPECT_TRUE(Mount.ResolveVirtualPath("/GameData/A.lasset").empty());
     EXPECT_TRUE(Mount.ResolveVirtualPath("/Gam").empty());
 }

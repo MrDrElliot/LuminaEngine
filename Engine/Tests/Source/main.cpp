@@ -35,9 +35,7 @@ int main(int Argc, char** Argv)
 {
     ::testing::InitGoogleTest(&Argc, Argv);
 
-    // Benchmarks (*Bench*) and the slow perf smoke tests (*Perf*) are excluded from the default run so
-    // the correctness suite stays fast. Pass an explicit --gtest_filter to run them, e.g.
-    //   Tests.exe --gtest_filter=TaskBench.*
+    // Benchmarks and slow perf tests are excluded by default; pass an explicit --gtest_filter.
     if (::testing::GTEST_FLAG(filter) == "*")
     {
         ::testing::GTEST_FLAG(filter) = "-*Bench*:*Perf*";

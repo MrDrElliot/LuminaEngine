@@ -50,7 +50,7 @@ namespace LuminaHashVariantTests
         return Lumina::Containers::MixHash64(static_cast<Lumina::uint64>(Counted.Value));
     }
 
-    // The whole reason the node variant exists: a value address has to outlive every rehash.
+    // The whole reason the node variant exists is that a value address outlives every rehash.
     TEST(NodeHashMap, ValueAddressesSurviveGrowth)
     {
         TNodeMap<int, Lumina::FString> Map;

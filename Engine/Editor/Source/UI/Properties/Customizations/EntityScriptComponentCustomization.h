@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Core/Reflection/PropertyCustomization/PropertyCustomization.h"
 #include "Containers/Vector.h"
@@ -26,7 +26,7 @@ namespace Lumina
 
         static TSharedPtr<FEntityScriptComponentCustomization> MakeInstance();
 
-        EPropertyChangeOp DrawProperty(const TSharedPtr<FPropertyHandle>& Property) override;
+        EPropertyChangeOp DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args) override;
         void UpdatePropertyValue(const TSharedPtr<FPropertyHandle>& Property) override;
         void HandleExternalUpdate(const TSharedPtr<FPropertyHandle>& Property) override;
 

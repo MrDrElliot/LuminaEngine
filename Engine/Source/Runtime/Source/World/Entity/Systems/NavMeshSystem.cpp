@@ -53,8 +53,7 @@ namespace Lumina
 
     namespace
     {
-        // Per-area colors for at-a-glance area classification. Alpha currently unused by the line batcher,
-        // but kept consistent so future translucent rendering doesn't need a second table.
+        // Alpha is unused by the line batcher but kept consistent for future translucent rendering.
         FORCEINLINE FVector4 NavAreaColor(uint8 Area)
         {
             switch ((ENavArea)Area)
@@ -74,7 +73,7 @@ namespace Lumina
             const FVector3 Lift(0.0f, CVarNavDebugLift.GetValue(), 0.0f);
             const bool bColorByArea = CVarNavDebugColorArea.GetValue();
 
-            // Translucent filled walkable surface: the headline "is this walkable" read.
+            // Translucent filled walkable surface, the headline is-this-walkable read.
             if (CVarNavDebugSurface.GetValue())
             {
                 const float Alpha = CVarNavDebugSurfAlpha.GetValue();
@@ -127,7 +126,7 @@ namespace Lumina
                 });
             }
 
-            // Poly perimeter: thick + bright so the nav polygon shape stands out over the fill.
+            // Poly perimeter drawn thick and bright so the shape stands out over the fill.
             if (CVarNavDebugEdges.GetValue())
             {
                 Mesh.ForEachBoundaryEdge([&Context, &Lift, bColorByArea](const FVector3& A, const FVector3& B, uint8 Area)
@@ -214,8 +213,7 @@ namespace Lumina
             return ((uint64)(uint32)E << 8) | (uint64)T;
         }
 
-        // One entity can contribute several sources (a collision asset's pieces), so the index goes above
-        // the entity bits. SubIndex 0 is byte-identical to the plain key, which the change detector relies on.
+        // SubIndex 0 is byte-identical to the plain key, which the change detector relies on.
         FORCEINLINE uint64 PackSourceKey(entt::entity E, ENavColliderType T, uint32 SubIndex)
         {
             return ((uint64)SubIndex << 40) | ((uint64)(uint32)E << 8) | (uint64)T;
@@ -426,8 +424,7 @@ namespace Lumina
             }
         }
 
-        // Walk the heightfield grid (matching BuildTerrainHeightFieldShape's local layout), transform to
-        // world, keep only tris overlapping the bake bounds. Subsampled so a quad ~= one cell.
+        // Subsampled so a quad is about one cell, keeping only tris overlapping the bake bounds.
         void TessellateTerrain(const STerrainComponent& T, const FMatrix4& W, const FVector3& BakeMin, const FVector3& BakeMax, float CellSize, TVector<FVector3>& Out)
         {
             const int32 Res = T.Resolution;
@@ -481,7 +478,7 @@ namespace Lumina
         {
             ENavColliderType                Type  = ENavColliderType::Box;
             FMatrix4                        World = FMatrix4(1.0f);
-            FVector3                        Shape = FVector3(0.0f);   // Box: half-extent; Sphere: x=Radius; Capsule/Cylinder: x=Radius, y=HalfHeight
+            FVector3                        Shape = FVector3(0.0f);   // Box half-extent, or Radius and HalfHeight
             CStaticMesh*                    Mesh  = nullptr;
             TSharedPtr<TVector<FVector3>>   TriangleSoup;             // world-space tri soup (groups of 3); Terrain and TriangleSoup types
         };
@@ -518,8 +515,7 @@ namespace Lumina
             }
         }
 
-        // Conservative world AABBs. Change detector and cache rebuild MUST produce byte-identical values,
-        // so all four consumers share this single traversal.
+        // Change detector and cache rebuild MUST agree byte for byte, so all four share this walk.
         void CollectNavSources(const FSystemContext& Context, const FVector3& BakeMin, const FVector3& BakeMax, bool bTessellateTerrain, float CellSize, TVector<FNavSourceEntry>& Out)
         {
             auto CornersAABB = [](const FMatrix4& W, const FVector3* Local, int32 N, FVector3& Mn, FVector3& Mx)
@@ -577,9 +573,7 @@ namespace Lumina
                 Out.push_back(std::move(Entry));
             }
 
-            // An authored collision asset contributes one source per piece, so nav sees the same decomposed
-            // shape physics does rather than a single bound. Concave and hull pieces go through the tri-soup
-            // path because their geometry does not fit any primitive slot.
+            // One source per collision piece, so nav sees the same decomposed shape physics does.
             auto ShapeAssetView = Context.CreateView<SCollisionShapeComponent, STransformComponent>();
             for (entt::entity E : ShapeAssetView)
             {
@@ -759,7 +753,7 @@ namespace Lumina
                 Out.push_back(std::move(Entry));
             }
 
-            // Character capsule: opt-in (default off) since agents shouldn't normally carve the navmesh.
+            // Character capsules are opt-in, since agents should not normally carve the navmesh.
             auto CharView = Context.CreateView<SCharacterPhysicsComponent, STransformComponent>();
             for (entt::entity E : CharView)
             {
@@ -778,7 +772,7 @@ namespace Lumina
                 Out.push_back(std::move(Entry));
             }
 
-            // Terrain heightfield: needs both the collider (collision present) and the source component.
+            // Terrain heightfield needs both the collider and the source component.
             auto TerrainView = Context.CreateView<STerrainColliderComponent, STransformComponent>();
             for (entt::entity E : TerrainView)
             {
@@ -827,8 +821,7 @@ namespace Lumina
 
         FORCEINLINE uint64 PackTileKey(int32 TX, int32 TY) { return ((uint64)(uint32)TY << 32) | (uint32)TX; }
 
-        // Snapshot AABBs at bake completion so next change-detector tick reports zero diff. Shares the one
-        // CollectNavSources traversal (no terrain tessellation: the cheap AABB path only needs bounds).
+        // Snapshot at bake completion so the next change-detector tick reports zero diff.
         void RebuildEntityAABBCache(const FSystemContext& Context, const FVector3& BakeMin, const FVector3& BakeMax, THashMap<uint64, FNavSourceEntity>& OutCache)
         {
             OutCache.clear();
@@ -854,8 +847,7 @@ namespace Lumina
 
         void TickComponent(const FSystemContext& Context, entt::entity Entity, SNavMeshComponent& Comp)
         {
-            // Mirror the entity transform into the bake volume: scale always (effective extents match
-            // what was baked), location editor-only (runtime keeps the serialized Center). Auto-bake picks it up.
+            // Scale always mirrors, location only in the editor, since runtime keeps the serialized Center.
             if (const STransformComponent* X = Context.GetRegistry().try_get<STransformComponent>(Entity))
             {
                 const FTransform& WT = X->GetWorldTransform();
@@ -867,14 +859,13 @@ namespace Lumina
                 }
             }
 
-            // Auto-bake: once the bounds/settings stop changing (placed, moved, or scaled in the editor)
-            // and differ from what's baked, request a bake. Debounced so dragging doesn't bake every frame.
+            // Debounced so dragging a volume does not request a bake every frame.
             if (Comp.bAutoBake)
             {
                 FNavMeshRuntime& RT = Comp.Runtime;
                 const FVector3 WExt = Comp.GetWorldExtents();
 
-                // A loaded/already-baked component starts in sync: don't re-bake until something changes.
+                // A loaded, already-baked component starts in sync, so do not re-bake until something changes.
                 if (!RT.bAutoBuiltValid && Comp.HasBakedData())
                 {
                     RT.AutoBuiltCenter   = Comp.Center;
@@ -948,8 +939,7 @@ namespace Lumina
 
                 if (NonEmptyTiles == 0)
                 {
-                    // Fail explicitly. Leaving State=Building here (hydration only kicks when HasBakedData()
-                    // is true, which an empty Tiles list is not) is what read as "stuck on Baking".
+                    // Fail explicitly, since leaving State=Building here read as stuck on Baking.
                     LOG_WARN("NavMesh bake produced no walkable tiles ({} total). Check the bounds overlap source geometry, and that the volume/scale isn't so large the bake was capped.", (int32)Comp.Tiles.size());
                     Comp.Runtime.bRuntimeDirty = false;
                     Comp.Runtime.Mesh.reset();
@@ -989,8 +979,7 @@ namespace Lumina
                 }
             }
 
-            // Kick async hydration when tiles are present and mesh is missing or dirty.
-            // bRuntimeDirty branch is essential: re-bake otherwise leaves old Mesh and state stuck Building.
+            // The bRuntimeDirty branch is essential, or a re-bake leaves the old Mesh stuck Building.
             if (Comp.HasBakedData() && !Comp.Runtime.PendingInit && (Comp.Runtime.bRuntimeDirty || !Comp.Runtime.Mesh))
             {
                 const FVector3 BakeMin = Comp.Center - Comp.GetWorldExtents();
@@ -1153,8 +1142,7 @@ namespace Lumina
                 Comp.Runtime.PendingRebakes.push_back(std::move(Job));
             }
 
-            // Snapshot all nav sources into POD prims (terrain pre-tessellated on this thread); the worker
-            // re-emits + bakes the dirty tiles. One traversal, same as gather/cache/change-detect.
+            // Terrain is pre-tessellated on this thread; the worker re-emits and bakes the dirty tiles.
             struct FInputSnapshot
             {
                 TVector<FNavSourcePrim> Prims;
@@ -1178,7 +1166,7 @@ namespace Lumina
                 }
             }
 
-            // Coordinator: emit geometry once on a worker, ParallelFor the per-tile bakes.
+            // Coordinator emits geometry once on a worker, then ParallelFors the per-tile bakes.
             Task::AsyncTask(1, 1, [Snap, Jobs = std::move(BatchJobs)](uint32, uint32, uint32) mutable
             {
                 FNavBuildInput Input;

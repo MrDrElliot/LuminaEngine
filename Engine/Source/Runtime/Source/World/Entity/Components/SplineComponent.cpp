@@ -5,8 +5,7 @@ namespace Lumina
 {
     namespace
     {
-        // Cubic Hermite basis. T0 is the LEAVE tangent of the segment's first point, T1 the ARRIVE
-        // tangent of its second -- keeping them separate is what lets a point have a corner.
+        // T0 is the LEAVE tangent and T1 the ARRIVE tangent, which is what lets a point have a corner.
         FVector3 HermitePosition(const FVector3& P0, const FVector3& T0, const FVector3& P1, const FVector3& T1, float t)
         {
             const float t2 = t * t;
@@ -28,8 +27,7 @@ namespace Lumina
                  + T1 * (3.0f * t2 - 2.0f * t);
         }
 
-        // Math::Lerp is ambiguous for vectors: the generic <T> overload in Math.h and the <T,N> vector one
-        // in VectorMath.h are both exact matches for (FVector3, FVector3, float). Spell it out here.
+        // Math::Lerp is ambiguous for vectors, since both the generic and vector overloads match exactly.
         FVector3 LerpV(const FVector3& A, const FVector3& B, float Alpha)
         {
             return A + (B - A) * Alpha;
@@ -72,8 +70,7 @@ namespace Lumina
                 continue;
             }
 
-            // On an open spline the ends have no neighbor on one side, so they fall back to the single
-            // segment they do touch -- which also stops the curve flicking out past the last point.
+            // Open-spline ends fall back to the one segment they touch, so the curve cannot flick out.
             const bool bHasPrev = bClosedLoop || (i > 0);
             const bool bHasNext = bClosedLoop || (i < NumPoints - 1);
 
@@ -83,8 +80,7 @@ namespace Lumina
 
             if (Point.TangentMode == ESplineTangentMode::Linear)
             {
-                // Matching the segment's own chord on both of its endpoints is what makes the Hermite
-                // segment collapse to a straight line.
+                // Matching the segment's own chord on both endpoints collapses the Hermite to a straight line.
                 Point.ArriveTangent = bHasPrev ? (Curr - Prev) : (Next - Curr);
                 Point.LeaveTangent  = bHasNext ? (Next - Curr) : (Curr - Prev);
             }
@@ -184,8 +180,7 @@ namespace Lumina
         const FVector3 Derivative = EvaluateTangent(Key);
         const float    DerivLenSq = Math::LengthSquared(Derivative);
 
-        // A zero derivative happens at a cusp (coincident points, or a hand-authored zero tangent); there is
-        // no frame to build, so hand back the reference up rather than a NaN.
+        // A zero derivative at a cusp has no frame to build, so hand back the reference up.
         if (DerivLenSq <= 1.0e-12f)
         {
             return Math::Normalize(DefaultUpVector);
@@ -200,8 +195,7 @@ namespace Lumina
         }
         Reference = Math::Normalize(Reference);
 
-        // Gram-Schmidt the reference against the tangent. When the curve runs straight along the reference
-        // the projection vanishes, so fall back to a different axis instead of normalizing a zero vector.
+        // Gram-Schmidt against the tangent, falling back to another axis when the projection vanishes.
         FVector3 Up = Reference - Tangent * Math::Dot(Reference, Tangent);
         if (Math::LengthSquared(Up) <= 1.0e-6f)
         {
@@ -226,8 +220,7 @@ namespace Lumina
         const int32 NumSegments = Spline.GetNumSegments();
         if (NumSegments == 0)
         {
-            // A single point still has a defined (zero-length) sample, which keeps shader-side code from
-            // needing a special case for "spline with one point".
+            // A single point still has a defined zero-length sample, so shaders need no special case.
             if (!Spline.Points.empty())
             {
                 FSplineSample Only;
@@ -243,8 +236,7 @@ namespace Lumina
 
         const int32 PerSegment = Math::Clamp(Spline.SamplesPerSegment, 2, 256);
 
-        // Pass 1: walk key space densely and accumulate chord length. Oversampled relative to the output so
-        // the arc-length estimate does not inherit the output table's own error.
+        // Pass 1 accumulates chord length, oversampled so the estimate avoids the output table's error.
         const int32 DenseCount = NumSegments * PerSegment * 4 + 1;
         const float KeyRange   = static_cast<float>(NumSegments);
 
@@ -259,7 +251,7 @@ namespace Lumina
             FSplineSample Sample;
             Sample.Key      = Key;
             Sample.Position = FVector3(LocalToWorld * FVector4(Spline.EvaluatePosition(Key), 1.0f));
-            // Direction only, so the translation must not come along -- w = 0.
+            // Direction only, so w is 0 and the translation does not come along.
             Sample.Tangent  = Math::Normalize(FVector3(LocalToWorld * FVector4(Spline.EvaluateTangent(Key), 0.0f)));
             Sample.Up       = Math::Normalize(FVector3(LocalToWorld * FVector4(Spline.EvaluateUpVector(Key), 0.0f)));
             Sample.Roll     = Spline.EvaluateRoll(Key);
@@ -276,15 +268,13 @@ namespace Lumina
 
         const float TotalLength = RunningLength;
 
-        // Pass 2: resample the dense polyline at a uniform DISTANCE step. This is the whole point of the
-        // table -- a shader turns a distance into an index with one divide, no search.
+        // Pass 2 resamples at a uniform distance step, so a shader turns distance into an index.
         const int32 OutCount = NumSegments * PerSegment + 1;
         OutSamples.reserve(OutCount);
 
         if (TotalLength <= 1.0e-6f)
         {
-            // Degenerate (all points coincident): every entry is the same place. Still emit the full table
-            // so the sample count on the GPU matches what the header advertises.
+            // Degenerate spline still emits the full table so the GPU sample count matches the header.
             for (int32 i = 0; i < OutCount; ++i)
             {
                 OutSamples.push_back(Dense.front());
@@ -299,7 +289,7 @@ namespace Lumina
         {
             const float Target = Math::Min(static_cast<float>(i) * Step, TotalLength);
 
-            // Dense distances are monotonic, so the cursor only ever moves forward: the resample is O(n).
+            // Dense distances are monotonic, so the cursor only moves forward and the resample is O(n).
             while (Cursor + 2 < static_cast<int32>(Dense.size()) && Dense[Cursor + 1].DistanceAlong < Target)
             {
                 ++Cursor;

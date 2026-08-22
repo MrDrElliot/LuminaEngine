@@ -1,4 +1,4 @@
-#include "GameplayTagPropertyCustomization.h"
+﻿#include "GameplayTagPropertyCustomization.h"
 
 
 #include "imgui.h"
@@ -16,7 +16,7 @@
 
 namespace Lumina
 {
-    EPropertyChangeOp FGameplayTagPropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property)
+    EPropertyChangeOp FGameplayTagPropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args)
     {
         bool bChanged = false;
 

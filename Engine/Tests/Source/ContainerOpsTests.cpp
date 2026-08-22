@@ -8,8 +8,7 @@ using namespace Lumina;
 
 namespace
 {
-    // Every op is driven through the type-erased table, the way FArrayProperty and the C# TVector view see a
-    // reflected member: a fixed container reflects as a TVector, so its table must still be its own.
+    // A fixed container reflects as a TVector, so its type-erased table must still be its own.
     template <typename TContainer>
     void ExerciseVectorOps(SIZE_T Count)
     {
@@ -66,8 +65,7 @@ TEST(ContainerOps, VectorOpsDriveAFixedVectorWithinCapacity)
     ExerciseVectorOps<TFixedVector<int32, 8>>(6);
 }
 
-// The interesting case: the table grows the container past its inline buffer, so it must be the fixed
-// container's own table. A TVector table here would free the inline buffer as if it were a heap block.
+// Growing past the inline buffer needs the fixed container's own table, or it frees inline.
 TEST(ContainerOps, VectorOpsDriveAFixedVectorPastItsInlineCapacity)
 {
     ExerciseVectorOps<TFixedVector<int32, 4>>(9);

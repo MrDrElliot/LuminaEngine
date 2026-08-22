@@ -79,8 +79,7 @@ namespace Lumina
 {
     namespace ECS
     {
-        // Engine-internal raw registry access (friended). Routes through CWorld's private accessor so the
-        // registry stays off the public API; only whole-registry systems (serialization, net, meta) use this.
+        // Routes through CWorld's private accessor so the registry stays off the public API.
         FEntityRegistry& GetWorldRegistry(CWorld& World)
         {
             return World.GetEntityRegistry();
@@ -94,9 +93,7 @@ namespace Lumina
         template <> constexpr EPrimitiveSource PrimitiveSourceFor<SDynamicMeshComponent>()  { return EPrimitiveSource::DynamicMesh; }
         template <> constexpr EPrimitiveSource PrimitiveSourceFor<SSkeletalMeshComponent>() { return EPrimitiveSource::SkeletalMesh; }
 
-        // Clearing the component's stamp is what makes the resolve pre-pass revisit it; the tracker entry
-        // is what makes the render scene's primitive for it re-read the component. Both are needed: the
-        // first fixes the shared resolve, the second fixes this entity's cached render state.
+        // Both are needed, since one fixes the shared resolve and the other this entity's state.
         template <typename TComponent>
         void MarkMeshResolveDirty(FEntityRegistry& Registry, entt::entity Entity)
         {
@@ -105,8 +102,7 @@ namespace Lumina
                                                        EPrimitiveDirty::Data | EPrimitiveDirty::Membership);
         }
 
-        // Component (or its entity) going away. The resolve stamp is irrelevant now; only the render
-        // scene needs telling, so its primitive is dropped instead of dangling.
+        // The resolve stamp is irrelevant now; only the render scene needs telling.
         template <typename TComponent>
         void MarkMeshRemoved(FEntityRegistry& Registry, entt::entity Entity)
         {
@@ -130,8 +126,7 @@ namespace Lumina
             FRenderDirtyTracker::Ensure(Registry).Mark(Entity, EPrimitiveSource::Foliage, EPrimitiveDirty::Membership);
         }
 
-        // Enable/disable is a membership change for every renderable component the entity might carry;
-        // the sync pass drops the sources it doesn't actually have.
+        // The sync pass drops the sources the entity does not actually have.
         void MarkRenderVisibilityDirty(FEntityRegistry& Registry, entt::entity Entity)
         {
             FRenderDirtyTracker::Ensure(Registry).MarkAllSources(Entity, EPrimitiveDirty::Visibility | EPrimitiveDirty::Membership);
@@ -145,16 +140,14 @@ namespace Lumina
             return Mode == ENetMode::ListenServer || Mode == ENetMode::DedicatedServer;
         }
 
-        // Shared FSystemFn for every C#-authored system: the FStageSlot's Self is the managed system's
-        // GCHandle, so one shim forwards every managed tick to the right instance via the .NET host.
+        // One shim forwards every managed tick to the right instance via the .NET host.
         void ManagedSystemUpdate(void* Self, const FSystemContext& Ctx) noexcept
         {
             DotNet::TickManagedSystem(Self, &Ctx);
         }
     }
 
-    //~ World.Debug.* -- screen-space debug text + world debug shapes, forwarded to this world's draw
-    // interface. Trailing args are optional; Dev/Debug only (the draws are no-ops in Shipping).
+    //~ World.Debug forwards to this world's draw interface; the draws are no-ops in Shipping.
     void FWorldDebugInterface::DrawText(FStringView Text, TOptional<FVector4> Color)
     {
         if (World)
@@ -271,8 +264,7 @@ namespace Lumina
         }
         else
         {
-            // A freshly-loaded asset keeps entities in RegistryPending until InitializeWorld swaps them
-            // into EntityRegistry; DuplicateWorld serializes pre-init. Write from whichever holds the data.
+            // DuplicateWorld serializes pre-init, so write from whichever registry holds the data.
             FEntityRegistry& Source = (!EntityRegistry.storage<entt::entity>().empty())
                 ? EntityRegistry
                 : RegistryPending;
@@ -307,8 +299,7 @@ namespace Lumina
         
         EntityRegistry.compact();
         
-        // Which entities a client has no business holding is a netcode question, so it is reported
-        // rather than decided here.
+        // Which entities a client may hold is a netcode question, so it is reported not decided.
         if (INetworkRuntime* NetRuntime = GetNetworkRuntime())
         {
             NetRuntime->OnWorldEntitiesLoaded(this);
@@ -347,26 +338,22 @@ namespace Lumina
         {
             PhysicsScene = Physics::GetPhysicsContext()->CreatePhysicsScene(this);
         }
-        // Emplaced even when null so ctx().get<>() consumers find the key (value is null in
-        // non-simulating worlds and must be null-checked).
+        // Emplaced even when null so ctx().get consumers find the key and null-check it.
         EntityRegistry.ctx().emplace<Physics::IPhysicsScene*>(PhysicsScene.get());
         EntityRegistry.ctx().emplace<FSystemContext&>(SystemContext);
         EntityRegistry.ctx().emplace<CWorld*>(this);
 
-        // Per-world subsystem singleton ticked by its system: STimerSystem advances FTimerManager
-        // (FrameStart). Reached by ctx address.
+        // Per-world subsystem singleton ticked by STimerSystem and reached by ctx address.
         EntityRegistry.ctx().emplace<FTimerManager>();
 
-        // System-produced singletons: SCameraSystem owns FCameraGlobalState (active camera + blend) and
-        // writes FResolvedSceneView (read in Extract).
+        // SCameraSystem owns FCameraGlobalState and writes FResolvedSceneView for Extract.
         EntityRegistry.ctx().emplace<FCameraGlobalState>();
         EntityRegistry.ctx().emplace<FResolvedSceneView>();
 
         CreateRenderer();
         UIContext = RmlUi::CreateWorldUI(this);
 
-        // Seed the per-world disabled-system set from the saved world settings before registering systems,
-        // so disabled systems are never constructed/started. Tolerant of stale names (ignored below).
+        // Seeded before registering systems so a disabled system is never constructed.
         DisabledSystems.clear();
         for (const FName& Name : GetDefaultWorldSettings().DisabledSystems)
         {
@@ -396,9 +383,7 @@ namespace Lumina
         EntityRegistry.on_destroy   <SWidgetComponent>()            .connect<&ThisClass::OnWidgetComponentDestroyed>(this);
         SystemContext.EventSink     <FSwitchActiveCameraEvent>()    .connect<&ThisClass::OnChangeCameraEvent>(this);
 
-        // on_construct catches spawns/prefabs/loads; on_update catches registry.patch<T> edits;
-        // on_destroy catches component removal and entity destruction, which is what keeps the render
-        // scene's persistent primitive table from outliving what it was built from.
+        // on_destroy is what keeps the persistent primitive table from outliving its source.
         EntityRegistry.on_construct <SStaticMeshComponent>()  .connect<&MarkMeshResolveDirty<SStaticMeshComponent>>();
         EntityRegistry.on_update    <SStaticMeshComponent>()  .connect<&MarkMeshResolveDirty<SStaticMeshComponent>>();
         EntityRegistry.on_destroy   <SStaticMeshComponent>()  .connect<&MarkMeshRemoved<SStaticMeshComponent>>();
@@ -416,8 +401,7 @@ namespace Lumina
 
         // Components loaded before these hooks connected never saw on_construct.
         FMeshResolveCache::MarkPendingWork();
-        // Same reason, for the primitive table: a full rescan is the only way to pick up what predates
-        // the hooks (world load, level swap, editor world duplication).
+        // A full rescan is the only way to pick up primitives that predate the hooks.
         FRenderDirtyTracker::Ensure(EntityRegistry).RequestFullRescan();
 
         ECS::Utils::FTransformDirtyGate* DirtyState = ECS::Utils::EnsureTransformDirtyGate(EntityRegistry);
@@ -473,8 +457,7 @@ namespace Lumina
             RHI::WaitDeviceIdle();
         }
 
-        // The viewport outlives the world in the editor, so a layer this world pushed and never popped
-        // would still be gating input in the next PIE session.
+        // The viewport outlives the world, so an unpopped layer would gate input in the next PIE.
         Input::ClearLayers(this);
 
         Audio::Context().StopAllSounds();
@@ -492,9 +475,7 @@ namespace Lumina
         // Release this world's C# system instances (OnTeardown + GCHandle free).
         DestroyManagedSystems();
 
-        // Keyed on the scene, not the world type: an editor world can acquire one on demand through
-        // EnsurePhysicsScene, and StopSimulate is what disconnects its registry listeners. Skipping it
-        // leaves hooks pointing at a freed scene.
+        // Keyed on the scene, since StopSimulate is what disconnects its registry listeners.
         if (PhysicsScene != nullptr)
         {
             PhysicsScene->StopSimulate();
@@ -505,7 +486,7 @@ namespace Lumina
         RegistryPending.clear<>();
         EntityRegistry.clear<>();
 
-        // After the registry: clearing it runs OnDetach, where a script closes documents on the context this destroys.
+        // After the registry, since clearing it runs OnDetach on the context this destroys.
         RmlUi::DestroyWorldUI(this);
         UIContext.reset();
 
@@ -547,14 +528,10 @@ namespace Lumina
 
         CPU_PROFILE_SCOPE(StageName(Stage));
 
-        // Reconcile any deferred system enable/disable before the gate/tick, so a toggle requested mid-frame
-        // is applied here (between frames) and never inside a running system batch.
+        // Applied between frames, so a mid-frame toggle never lands inside a running batch.
         ApplyPendingSystemChanges();
 
-        // The script generation bumped, so the ManagedSystems hold GCHandles the managed
-        // side already freed. Rebuild the system lists (drops stale slots, re-creates under the new
-        // generation) before any tick so the shared shim never dereferences a freed handle. FrameStart
-        // only, between frames, never inside a running batch.
+        // Rebuild before any tick so the shared shim never dereferences a freed GCHandle.
         if (Stage == EUpdateStage::FrameStart && DotNet::IsInitialized()
             && DotNet::GetScriptGeneration() != ManagedSystemGeneration)
         {
@@ -576,8 +553,7 @@ namespace Lumina
         SystemContext.Time          = TimeSinceCreation;
         SystemContext.UpdateStage   = Stage;
 
-        // Deferred timers run inside TickSystems now (STimerSystem, FrameStart/Highest), so they tick
-        // before gameplay systems just as the old inline block did.
+        // Deferred timers run inside TickSystems now, still before gameplay systems.
         {
             CPU_PROFILE_SCOPE("Systems");
             TickSystems(SystemContext);
@@ -590,9 +566,7 @@ namespace Lumina
         {
             PhysicsScene = Physics::GetPhysicsContext()->CreatePhysicsScene(this);
 
-            // Simulate() is what connects the on_construct hook that turns SRigidBodyComponent into an
-            // actual body. Without it the scene steps but nothing is ever added to it, so a caller that
-            // only creates the scene gets gravity and no collision.
+            // Simulate() connects the hook that turns SRigidBodyComponent into an actual body.
             PhysicsScene->Simulate();
         }
 
@@ -699,7 +673,7 @@ namespace Lumina
             return false;
         }
 
-        // Resolve the mesh to shatter: explicit fragment override, else the entity's own static mesh.
+        // Resolve the mesh to shatter, taking an explicit override before the entity's own mesh.
         SStaticMeshComponent* MeshComp = EntityRegistry.try_get<SStaticMeshComponent>(Entity);
         CStaticMesh* SourceMesh = Destructible->FragmentMesh.Get();
         if (SourceMesh == nullptr && MeshComp != nullptr)
@@ -734,7 +708,7 @@ namespace Lumina
         const float LaunchSpeed = Strength > 0.0f ? Strength : Destructible->ExplosionStrength;
         const float SpinSpeed   = Destructible->SpinStrength;
 
-        // Deterministic per-fragment jitter (good for replays / lockstep): hash the index.
+        // Deterministic per-fragment jitter from the index hash, which replays and lockstep need.
         auto Hash01 = [](uint32 V) -> float
         {
             V ^= V >> 16; V *= 0x7feb352dU; V ^= V >> 15; V *= 0x846ca68bU; V ^= V >> 16;
@@ -769,8 +743,7 @@ namespace Lumina
 
         int32 Spawned = 0;
 
-        // Source of pieces: an assigned collection if present, else a convex Voronoi fracture
-        // generated on the fly from the mesh bounds (real chunks with zero authoring).
+        // An assigned collection if present, else a convex Voronoi fracture from the mesh bounds.
         const FFractureData* CollectionData = nullptr;
         if (CGeometryCollection* Collection = Destructible->Collection.Get())
         {
@@ -791,14 +764,12 @@ namespace Lumina
 
         const TVector<FFracturePiece>& Pieces = CollectionData ? CollectionData->Pieces : GeneratedPieces;
 
-        // Create all fragment bodies in one batch (AddBodiesPrepare/Finalize). BodyIDs valid only after
-        // EndBodyBatch, so collect launch impulses and apply them once inserted.
+        // BodyIDs are valid only after EndBodyBatch, so impulses are collected and applied then.
         struct FPendingLaunch { entt::entity Fragment; FVector3 Center; uint32 Seed; };
         TVector<FPendingLaunch> PendingLaunches;
         PendingLaunches.reserve(Pieces.size());
 
-        // Cap fragments at physics body headroom; overflowing Jolt's body/contact buffers trips a hard
-        // assert, so clamp + warn instead. Raise World Settings > Physics > Max* for denser destruction.
+        // Cap fragments at physics body headroom, since overflowing Jolt's buffers trips a hard assert.
         uint32 MaxFragments = 0xFFFFFFFFu;
         if (PhysicsScene)
         {
@@ -829,8 +800,7 @@ namespace Lumina
                     ? Destructible->Collection->Materials
                     : SourceMesh->Materials;
 
-            // Pre-baked collections cache piece meshes (built at load), so fracture does no per-piece
-            // meshlet build / upload. The on-the-fly Voronoi path has no cache and builds each inline.
+            // Pre-baked collections cache piece meshes; the Voronoi path builds each one inline.
             const TVector<TObjectPtr<CStaticMesh>>* CachedMeshes =
                 CollectionData ? &Destructible->Collection->GetPieceMeshes() : nullptr;
 
@@ -846,8 +816,7 @@ namespace Lumina
                     continue;
                 }
 
-                // BuildPieceMesh recenters geometry to the piece centroid (natural pivot + CoM); place
-                // the entity at the centroid's world position so pieces reconstruct the object at t=0.
+                // BuildPieceMesh recenters to the piece centroid, so place the entity at that world position.
                 const FVector3 WorldCenter = OwnerTransform.GetLocation() + OwnerTransform.GetRotation() * (OwnerTransform.GetScale() * Piece.Center);
                 FTransform PieceTransform;
                 PieceTransform.SetLocation(WorldCenter);
@@ -859,8 +828,7 @@ namespace Lumina
 
                 EntityRegistry.emplace<SStaticMeshComponent>(Fragment).SetStaticMesh(PieceMesh);
 
-                // The collider's on_construct builds the Jolt shape synchronously, so Mesh + bConvex must
-                // be set before insertion -- otherwise the body uses default (non-convex) settings, forced Static.
+                // The collider's on_construct builds the shape synchronously, so set Mesh and bConvex first.
                 SMeshColliderComponent ColliderDesc;
                 ColliderDesc.Mesh    = PieceMesh;
                 ColliderDesc.bConvex = true;
@@ -876,7 +844,7 @@ namespace Lumina
         }
         else
         {
-            // Fallback (degenerate fracture): subdivide the bounds into a grid of textured box chunks.
+            // Degenerate fracture falls back to subdividing the bounds into textured box chunks.
             const FAABB& LocalBounds = SourceMesh->GetAABB();
             const FVector3 LocalExtent = Math::Max(LocalBounds.GetSize(), FVector3(0.01f));
             const FVector3 LocalCenter = LocalBounds.GetCenter();
@@ -909,8 +877,7 @@ namespace Lumina
                     FragmentMeshComp.MaterialOverrides = MeshComp->MaterialOverrides;
                 }
 
-                // Box collider auto-emplaces a Dynamic rigid body, built synchronously from these
-                // settings the instant the component is inserted, so set HalfExtent up front.
+                // The box collider builds a Dynamic body synchronously, so set HalfExtent up front.
                 SBoxColliderComponent BoxDesc;
                 BoxDesc.HalfExtent = ColliderHalf;
                 EntityRegistry.emplace<SBoxColliderComponent>(Fragment, std::move(BoxDesc));
@@ -936,8 +903,7 @@ namespace Lumina
 
         Destructible->bFractured = true;
 
-        // Retire the original: strip render + physics now so it vanishes this frame; the lifetime system
-        // reaps it at FrameEnd -- safe even when called from the entity's own script callback.
+        // Strip render and physics now so it vanishes this frame; the lifetime system reaps it.
         if (Destructible->bDestroyOriginal)
         {
             EntityRegistry.remove<SStaticMeshComponent>(Entity);
@@ -966,9 +932,7 @@ namespace Lumina
             return entt::null;
         }
 
-        // Cold spawn fans the prefab's whole closure out across the task swarm instead of resolving each
-        // import depth-first on this thread. Resident prefabs -- the common case once one has spawned --
-        // take the plain lookup and never pay the graph loader's BFS or its serializing mutex.
+        // A cold spawn fans the prefab's closure across the swarm; a resident one takes the lookup.
         CPrefab* PrefabObject = FindObject<CPrefab>(AssetData->AssetGUID);
         if (PrefabObject == nullptr)
         {
@@ -1034,13 +998,11 @@ namespace Lumina
                 }
             }
 
-            // Rebind: bit-copy carries source's self-references (Entity/Registry ptr).
+            // Rebind, since a bit-copy carries the source's self-references.
             if (STransformComponent* NewTransform = EntityRegistry.try_get<STransformComponent>(NewEntity))
             {
                 NewTransform->Bind(EntityRegistry, NewEntity);
-                // The copied dirty guards describe the source's queue state; the duplicate is in neither
-                // queue, so leaving them set would suppress its own enqueues (transform never resolves,
-                // body never teleports).
+                // The duplicate is in neither queue, so a copied dirty guard would suppress its enqueues.
                 NewTransform->ResetDirtyState();
                 EntityRegistry.emplace_or_replace<FNeedsTransformUpdate>(NewEntity);
             }
@@ -1123,8 +1085,7 @@ namespace Lumina
             return;
         }
 
-        // Keep the local transform (bPreserveWorld false) -- the socket system overwrites it anyway,
-        // and the snap below avoids one frame at the stale local.
+        // The socket system overwrites the local transform anyway, and the snap avoids a stale frame.
         ECS::Utils::ReparentEntity(EntityRegistry, Child, Parent, /*bPreserveWorld*/ false);
 
         SSocketAttachmentComponent& Attachment = EntityRegistry.emplace_or_replace<SSocketAttachmentComponent>(Child);
@@ -1353,8 +1314,7 @@ namespace Lumina
 
     void CWorld::CreateRenderer()
     {
-        // Headless process or dedicated-server world: no RHI / nothing to display. Leaving RenderScene
-        // null makes Extract/Render skip this world (see ExtractWorlds/RenderWorlds and Extract()).
+        // A null RenderScene makes Extract and Render skip this world.
         if (!ShouldRender())
         {
             return;
@@ -1372,8 +1332,7 @@ namespace Lumina
     {
         if (RenderScene)
         {
-            // Submitted GPU work can still name the scene's resources; the destructor then
-            // releases everything it owns.
+            // Submitted GPU work can still name the scene's resources.
             if (!GIsHeadless)
             {
                 RHI::WaitDeviceIdle();
@@ -1390,8 +1349,7 @@ namespace Lumina
 
             if (bActive)
             {
-                // Back before the grace ran out: CreateRenderer no-ops on a live scene, so this is free.
-                // -1 re-arms the idle clock, which ReclaimIdleRenderer stamps on the next idle frame.
+                // Back before the grace ran out, and -1 re-arms the idle clock ReclaimIdleRenderer stamps.
                 SuspendedTime = -1.0;
                 CreateRenderer();
                 RmlUi::SetActiveWorld(this);
@@ -1409,9 +1367,7 @@ namespace Lumina
 
         UpdateIntervalSeconds = Clamped;
 
-        // Deadline in the past = "eligible now". Without this, a tool that had been throttled to 10fps and
-        // is clicked into would still sit out the remainder of its 100ms slot before the first live frame,
-        // which reads as the editor lagging behind the click.
+        // A deadline in the past means eligible now, so a clicked-into throttled tool draws at once.
         NextUpdateTime      = 0.0;
         bThrottledThisFrame = false;
     }
@@ -1428,9 +1384,7 @@ namespace Lumina
         bThrottledThisFrame = (NowSeconds < NextUpdateTime);
         if (!bThrottledThisFrame)
         {
-            // Anchored to NOW rather than advanced by one interval from the old deadline: a world that was
-            // suspended behind a hidden tab, or an editor that hitched, would otherwise come back owing a
-            // burst of catch-up frames it has no use for.
+            // Anchored to NOW, or a long-suspended world comes back owing a burst of catch-up frames.
             NextUpdateTime = NowSeconds + UpdateIntervalSeconds;
         }
     }
@@ -1444,7 +1398,7 @@ namespace Lumina
 
         if (SuspendedTime < 0.0)
         {
-            // First frame observed idle: start the clock.
+            // First frame observed idle, so start the clock.
             SuspendedTime = NowSeconds;
             return false;
         }
@@ -1478,8 +1432,7 @@ namespace Lumina
 
     bool CWorld::ShouldRender() const
     {
-        // GetNetMode() is valid during InitializeWorld because CreateWorldContext sets OwningContext
-        // (and its NetMode) before calling InitializeWorld -- keep that ordering.
+        // CreateWorldContext sets OwningContext before InitializeWorld, so keep that ordering.
         return !GIsHeadless && GetNetMode() != ENetMode::DedicatedServer;
     }
 
@@ -1544,9 +1497,7 @@ namespace Lumina
 
     void CWorld::OnRelationshipComponentConstruct(entt::registry& Registry, entt::entity Entity)
     {
-        // The entity is no longer flat, so its setters must go back to queueing for the resolve. Only ever
-        // CLEARS the bit: the reverse transition (a relationship component being destroyed) means the
-        // entity is being torn down, and leaving the bit false there just keeps the slow, correct path.
+        // Only ever CLEARS the bit, since the reverse transition means the entity is being torn down.
         if (STransformComponent* Transform = Registry.try_get<STransformComponent>(Entity))
         {
             Transform->bIsFlat = false;
@@ -1560,9 +1511,7 @@ namespace Lumina
         TransformComponent.Entity = Entity;
         TransformComponent.DirtyState = ECS::Utils::EnsureTransformDirtyGate(EntityRegistry);
 
-        // Usually true here (the relationship component is added later, if ever), and cleared by the
-        // on_construct<FRelationshipComponent> hook when it arrives. Checked rather than assumed, since
-        // nothing orders the two components.
+        // Checked rather than assumed, since nothing orders the two components.
         TransformComponent.bIsFlat = ECS::Utils::IsEntityTransformFlat(EntityRegistry, Entity);
 
         Registry.emplace_or_replace<FNeedsTransformUpdate>(Entity);
@@ -1575,12 +1524,7 @@ namespace Lumina
 
     void CWorld::OnCSharpScriptComponentDestroyed(entt::registry& Registry, entt::entity Entity)
     {
-        // Runs at on_destroy, while the entity is still queryable, so user OnDetach can still read it. The
-        // component destructor would free these anyway; doing it here just gives OnDetach a live entity.
-        //
-        // Routed through the driver rather than looped inline: OnDetach is user code and may attach or detach
-        // scripts, which reallocates the very vector an inline loop would be walking. DetachAll dispatches
-        // from a strong-ref snapshot for exactly that reason.
+        // Routed through the driver, since OnDetach is user code and may attach or detach scripts.
         EntityScripts::DetachAll(Registry, Entity);
     }
 
@@ -1603,13 +1547,7 @@ namespace Lumina
 
     namespace
     {
-        // List-scheduling: assign each system (already sorted by priority) to the LOWEST-indexed batch whose
-        // members it does not conflict with. Unlike the old consecutive batching, this groups mutually
-        // non-conflicting systems even when an exclusive/conflicting system sits between them in priority order
-        // -- that interleaving was the actual source of "everything runs serial". Batches run in ascending
-        // order; because systems are processed in priority order and a conflict pushes a system to a later
-        // batch, conflicting pairs still execute in priority order (the higher-priority one first). Returns one
-        // index list per batch (indices into Systems).
+        // List-scheduling assigns each system to the lowest-indexed batch it does not conflict with.
         TVector<TVector<uint16>> ComputeSystemBatches(const TVector<CWorld::FStageSlot>& Systems)
         {
             TVector<TVector<uint16>> Batches;
@@ -1712,8 +1650,7 @@ namespace Lumina
                 Managed.Priority   = Desc.Priority;
                 Managed.Generation = Generation;
 
-                // A C# system that declared [Reads]/[Writes] access joins the parallel batches exactly like a
-                // native system; one with no declared access stays exclusive (the safe default).
+                // A C# system with no declared access stays exclusive, which is the safe default.
                 FSystemAccess Access;
                 if (Desc.Writes.empty() && Desc.Reads.empty())
                 {
@@ -1737,17 +1674,14 @@ namespace Lumina
                 [](const FStageSlot& A, const FStageSlot& B) { return A.StagePriority < B.StagePriority; });
         }
 
-        // The batch layout is a pure function of the (now final) stage lists, so it is computed once here.
-        // TickSystems used to rebuild it -- one outer vector plus one inner vector per batch -- for every
-        // stage of every frame, which was the single largest allocation site in the whole engine.
+        // A pure function of the final stage lists, so computed once instead of every stage.
         for (uint8 i = 0; i < (uint8)EUpdateStage::Max; ++i)
         {
             SystemBatches[i] = ComputeSystemBatches(SystemUpdateList[i]);
         }
     }
 
-    // Read-only snapshot of how systems group into parallel batches per stage, with each system's declared
-    // access, for the Gameplay Insights editor tool. Game thread; cheap.
+    // Read-only snapshot of the per-stage batch layout for the Gameplay Insights tool.
     void CWorld::GetSystemSchedule(TVector<FSystemScheduleEntry>& Out) const
     {
         Out.clear();
@@ -1782,9 +1716,7 @@ namespace Lumina
             return;
         }
 
-        // After a hot reload the managed side already freed the old generation's GCHandles, so an
-        // instance from a stale generation must be DROPPED, not destroyed (that would touch a freed
-        // handle, mirroring the SScriptComponent generation guard).
+        // A stale-generation instance must be DROPPED, not destroyed, since its handle was freed.
         const int32 Generation = DotNet::IsInitialized() ? DotNet::GetScriptGeneration() : -1;
         for (FManagedSystem& Managed : ManagedSystems)
         {
@@ -1898,8 +1830,7 @@ namespace Lumina
             PendingDisabledSystems.insert(System);
         }
 
-        // Persist immediately into the world-settings component (safe to mutate; not the live system list).
-        // The actual system-list rebuild is deferred to the next frame via ApplyPendingSystemChanges.
+        // Persisted immediately; the system-list rebuild defers to ApplyPendingSystemChanges.
         SDefaultWorldSettings& Settings = GetDefaultWorldSettings();
         Settings.DisabledSystems.clear();
         for (const FName& Name : PendingDisabledSystems)
@@ -2112,9 +2043,7 @@ namespace Lumina
             }
             else
             {
-                // Create every pool the batch declares BEFORE going wide. entt creates pools lazily inside
-                // view(), which writes to the registry's shared pool map -- concurrently with sibling systems
-                // reading it. Doing it here on one thread leaves the map immutable for the parallel region.
+                // Create every declared pool before going wide, since view() writes the shared pool map.
                 for (uint16 Index : Batch)
                 {
                     for (void (*Assure)(entt::registry&) : Systems[Index].Access.PoolAssurers)
@@ -2125,7 +2054,7 @@ namespace Lumina
 
                 Task::ParallelFor(static_cast<uint32>(Batch.size()), [&](uint32 Index)
                 {
-                    DEBUG_ASSERT(!Systems[Batch[Index]].Access.bExclusive); // scheduler invariant: batched => not exclusive
+                    DEBUG_ASSERT(!Systems[Batch[Index]].Access.bExclusive); // batched implies not exclusive
                     RunOne(Systems[Batch[Index]]);
                 }, 1);
             }

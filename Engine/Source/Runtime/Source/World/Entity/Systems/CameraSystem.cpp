@@ -29,8 +29,7 @@ namespace Lumina
     {
         static void NewCameraConstructed(entt::registry& Registry, entt::entity Entity)
         {
-            // Auto-activate is a play-mode spawn convenience. In the editor it would hijack the
-            // viewport with no easy way back.
+            // Play-mode only, since auto-activate in the editor hijacks the viewport with no way back.
             const CWorld* World = Registry.ctx().get<CWorld*>();
             if (World == nullptr || World->GetWorldType() == EWorldType::Editor)
             {
@@ -44,8 +43,7 @@ namespace Lumina
             }
         }
 
-        // Advance every live shake by Dt, summing their additive offsets; expire finite ones. OutLocation is a
-        // local-space positional offset (world units); OutRotationDeg is pitch/yaw/roll in degrees.
+        // OutLocation is a local-space offset in world units; OutRotationDeg is pitch, yaw and roll.
         static void EvaluateCameraShakes(FCameraGlobalState& State, float Dt, FVector3& OutLocation, FVector3& OutRotationDeg)
         {
             OutLocation    = FVector3(0.0f);
@@ -57,7 +55,7 @@ namespace Lumina
                 FCameraShakeInstance& S = State.Shakes[i];
                 S.Elapsed += Dt;
 
-                // Envelope: ramp up over BlendInTime, ramp down over BlendOutTime before Duration ends.
+                // Envelope ramps up over BlendInTime and down over BlendOutTime before Duration ends.
                 float Env = 1.0f;
                 if (S.BlendInTime > 0.0f && S.Elapsed < S.BlendInTime)
                 {
@@ -234,7 +232,7 @@ namespace Lumina
             }
         }
 
-        // Drive the camera-to-camera blend: ease from the snapshot toward the live target.
+        // Drive the camera-to-camera blend, easing from the snapshot toward the live target.
         FCameraGlobalState::FBlendState& Blend = CameraState.Blend;
         if (Blend.bActive)
         {
@@ -279,8 +277,7 @@ namespace Lumina
             Math::Radians(ShakeRotationDeg.y),
             Math::Radians(ShakeRotationDeg.z)));
 
-        // Bake the resolved view into the camera so direct matrix consumers (editor gizmo, CPU picking)
-        // match the rendered view; SetResolvedView leaves the authored FOV intact as the blend target.
+        // Baked so direct matrix consumers match the rendered view; the authored FOV stays intact.
         Camera.SetResolvedView(
             ShakenPosition,
             ShakenRotation * FVector3(0.0f, 0.0f, 1.0f),
@@ -310,8 +307,7 @@ namespace Lumina
             return;
         }
 
-        // Snapshot the currently displayed view as the blend source. With no prior
-        // resolved view (first activation) or a zero duration we just snap.
+        // With no prior resolved view or a zero duration the camera just snaps.
         if (BlendTime > 0.0f && State.bHasResolvedView)
         {
             State.Blend.bActive        = true;
@@ -355,8 +351,7 @@ namespace Lumina
         S.Elapsed           = 0.0f;
         S.Handle            = State.NextShakeHandle++;
 
-        // Seed per-axis phase + slight frequency variation from the handle so axes (and successive shakes)
-        // don't oscillate in lockstep. Deterministic hash, no global RNG.
+        // Deterministic per-axis phase from the handle so axes do not oscillate in lockstep.
         auto Frac = [](uint32 X) { X *= 2654435761u; X ^= X >> 15; return (float)(X & 0xFFFFu) / 65535.0f; };
         for (int a = 0; a < 3; ++a)
         {

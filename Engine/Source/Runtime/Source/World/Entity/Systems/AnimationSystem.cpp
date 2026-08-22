@@ -29,38 +29,26 @@ namespace Lumina
     FSystemAccess SAnimationSystem::Access = FSystemAccess{}
         .Write<SSkeletalMeshComponent, STransformComponent, SSimpleAnimationComponent, SAnimationGraphComponent>();
 
-    // Skeletons not rendered within this window are treated as off-screen (a few frames of slack so brief
-    // occlusion / culling flicker doesn't stutter the pose).
+    // Slack so brief occlusion or culling flicker does not stutter the pose.
     static constexpr double kAnimVisibilityGrace = 0.25;
 
-    // Diagnostic: cross-check the deferred task executor against direct sampling for single-clip
-    // recipes and log any divergence. Answers "is the animation data wrong, or the playback logic?"
+    // Diagnostic cross-check of the deferred executor against direct single-clip sampling.
     static TConsoleVar<bool> CVarValidateAnimTasks(
         "anim.ValidateTasks",
         false,
         "Re-evaluate single-clip animation recipes directly and compare against the task executor's skinning matrices; logs mismatches.");
 
-    // Diagnostic: log the task recipe each graph-driven mesh records. Answers "what did the graph
-    // actually build?" when a blend looks wrong -- shared clocks, refpose fallbacks on a wired pin,
-    // and dead mask weights all show up directly in the dump.
+    // Diagnostic dump of the task recipe each graph-driven mesh records.
     static TConsoleVar<bool> CVarDumpGraphTasks(
         "anim.DumpGraphTasks",
         false,
         "Log every graph-driven mesh's recorded animation task list (types, deps, clips, times, alphas, masks) each frame while enabled.");
 
 
-    // The frame is split Esoterica-style: a cheap parallel UPDATE phase runs graph/playback logic and
-    // records each entity's pose recipe (FAnimTaskList), then a parallel EXECUTE phase runs only the
-    // recorded task chains into skinning matrices. Pose math for inactive state-machine branches never
-    // runs, and pose buffers come from small per-worker pools instead of per-instance registers.
+    // A parallel update phase records each entity's recipe, then a parallel execute phase runs it.
     namespace
     {
-        // Update-rate optimization: distant meshes re-evaluate every Nth frame (pose frozen in
-        // between) via a per-component countdown, phase-seeded by entity id so a crowd spreads
-        // across frames. Returns false on skipped frames; skipped time stays in Mesh.PendingAnimTime
-        // so the evaluating frame consumes one larger step and playback speed is unaffected.
-        // (A shared frame counter breaks here: with several worlds ticking, one world only ever sees
-        // every-Nth counter values and entities could permanently miss their evaluation slot.)
+        // Skipped time stays in PendingAnimTime, so playback speed survives the reduced update rate.
         bool ShouldEvaluateThisFrame(SSkeletalMeshComponent& Mesh, entt::entity Entity, bool bForce)
         {
             if (!Mesh.bUpdateRateOptimization || bForce)
@@ -98,7 +86,7 @@ namespace Lumina
 
             if (Mesh.AnimSkipCounter < 0)
             {
-                // First reduced-rate frame: phase by entity id, then settle into the countdown.
+                // First reduced-rate frame phases by entity id, then settles into the countdown.
                 const int16 Phase = (int16)(entt::to_integral(Entity) % (uint32)Interval);
                 if (Phase > 0)
                 {
@@ -134,15 +122,10 @@ namespace Lumina
             return true;
         }
 
-        // Meshes farther than this (distance / bounding radius) animate the skeleton's low-detail
-        // bone prefix; closer ones animate every bone.
+        // Distance over bounding radius past which the skeleton's low-detail bone prefix is used.
         constexpr float kBoneLODDistanceOverRadius = 60.0f;
 
-        // Skeleton LOD bone count for this frame. Bones are parents-first, so any prefix is a valid
-        // partial hierarchy; dropped bones hold bind-pose locals (full FK keeps attachments valid).
-        // Authored-only: bone order past the parents-first guarantee is importer-dependent, so an
-        // automatic cut can freeze visually important bones -- a skeleton animates every bone unless
-        // its LowDetailBoneCount says otherwise.
+        // Authored-only, because bone order past parents-first is importer-dependent.
         int32 ComputeActiveBoneCount(const SSkeletalMeshComponent& Mesh, const FSkeletonResource* Skeleton)
         {
             const int32 NumBones = Skeleton->GetNumBones();
@@ -171,8 +154,7 @@ namespace Lumina
             return (Skeleton != nullptr && Skeleton->GetNumBones() > 0) ? Skeleton : nullptr;
         }
 
-        // One entity's single-clip update (parallel-safe: touches only this entity's components).
-        // Advances playback + decides root motion, then records a one-task recipe; no pose math here.
+        // One entity's single-clip update, parallel-safe because it touches only this entity.
         void UpdateSimple(SSimpleAnimationComponent& Anim, SSkeletalMeshComponent& Mesh, entt::entity Entity,
                           float DeltaTime, double Now)
         {
@@ -237,9 +219,7 @@ namespace Lumina
 
             CAnimation* Asset = Anim.Animation.Get();
 
-            // Notify dispatch: point crossings while advancing (the accumulated step spans any
-            // update-rate-skipped frames), notify-state windows diffed against last frame's set.
-            // A stopped clip (bDirty, not advancing) ends every active state so effects never leak.
+            // A stopped clip ends every active notify state so effects never leak.
             if (Asset->HasNotifies())
             {
                 if (Anim.bAdvancedThisFrame)
@@ -303,9 +283,7 @@ namespace Lumina
             // An additive clip's root track is a delta against its base, never entity motion.
             const bool bExtract = !bLock && Asset->bEnableRootMotion && !Asset->IsAdditive();
 
-            // Resolved only when something actually consumes it. A named RootBoneName costs an FName hash
-            // and a random probe into the skeleton's name map -- a cache miss per entity per frame that the
-            // overwhelmingly common clip (no lock, no root motion) was paying for a value it never read.
+            // Resolved only when consumed, since a named RootBoneName costs a hash and a random probe.
             const int32 RootIdx = (bLock || bExtract)
                 ? RootMotion::ResolveRootBoneIndex(Skeleton, Asset->RootBoneName)
                 : INDEX_NONE;
@@ -358,8 +336,7 @@ namespace Lumina
                 }
                 else if (bExtract && Anim.bAdvancedThisFrame)
                 {
-                    // Skip on seek/stop frames (handled by bAdvancedThisFrame) so scrubbing doesn't teleport
-                    // the entity. The root is stripped from the final pose so the mesh stays centered.
+                    // Skipped on seek and stop frames so scrubbing does not teleport the entity.
                     Anim.PendingRootMotion = RootMotion::ExtractRootDelta(
                         Asset, Skeleton, RootIdx, Anim.PreviousTime, Anim.CurrentTime, Anim.bLooping, Duration);
                     Tasks.bLockRoot     = true;
@@ -402,8 +379,7 @@ namespace Lumina
             }
         }
 
-        // One entity's animation-graph update (parallel-safe: touches only this entity's components).
-        // Runs graph logic and records the pose recipe; pose math happens in the execute phase.
+        // One entity's graph update, parallel-safe; pose math happens in the execute phase.
         void UpdateGraph(const FSystemContext& SystemContext, entt::entity Entity,
                          SAnimationGraphComponent& AnimGraph, SSkeletalMeshComponent& Mesh,
                          float DeltaTime, double Now)
@@ -513,16 +489,12 @@ namespace Lumina
         const float  DeltaTime = (float)SystemContext.GetDeltaTime();
         const double Now       = SystemContext.GetTime();
 
-        // Set by the parallel passes when any entity extracts a root delta. Root motion is opt-in per clip,
-        // so for a crowd this stays false and the serial apply below is skipped outright -- see there for
-        // why that matters. Relaxed throughout: the TaskGraph::Wait() before the read is the ordering edge.
+        // Relaxed throughout, since the TaskGraph::Wait() before the read is the ordering edge.
         std::atomic<bool> bAnyRootMotion{ false };
 
         FTaskGraph TaskGraph;
 
-        // Update phase: record each entity's pose recipe. The graph pass runs after the simple pass so
-        // an entity carrying both components gets the graph's recipe deterministically (they share the
-        // mesh's task list; previously this was a write race on BoneTransforms).
+        // The graph pass runs after the simple pass so a dual-component entity resolves the same way.
         FTaskGraph::FNodeHandle SimpleUpdate;
         FTaskGraph::FNodeHandle GraphUpdate;
 
@@ -540,8 +512,7 @@ namespace Lumina
                     SSimpleAnimationComponent& Anim = SimpleView.get<SSimpleAnimationComponent>(Entity);
                     UpdateSimple(Anim, SimpleView.get<SSkeletalMeshComponent>(Entity), Entity, DeltaTime, Now);
 
-                    // Root motion is opt-in per clip and rare in a crowd; recording that ANY entity
-                    // produced some is what lets the serial apply below skip its whole sweep.
+                    // Recording that ANY entity produced root motion lets the serial apply skip its sweep.
                     if (Anim.PendingRootMotion.bHasMotion)
                     {
                         bAnyRootMotion.store(true, std::memory_order_relaxed);
@@ -578,9 +549,7 @@ namespace Lumina
             }
         }
 
-        // Execute phase: one pass over every skeletal mesh runs the recorded recipes into skinning
-        // matrices (each mesh has at most one recipe, so no entity is touched twice). Only chains
-        // reachable from the output task run; per-worker pose pools recycle buffers across entities.
+        // Each mesh has at most one recipe, so no entity is touched twice by the execute pass.
         const FTaskGraph::FNodeHandle Execute = TaskGraph.AddParallelFor((uint32)MeshHandle->size(), 16, [&](const Task::FParallelRange& Range)
         {
             for (uint32 i = Range.Start; i < Range.End; ++i)
@@ -610,8 +579,7 @@ namespace Lumina
                         ValidateRoot  = Mesh.AnimTasks.RootBoneIndex;
                     }
 
-                    // Debug capture (anim graph editor's task view): armed for at most one component,
-                    // so this is a null atomic compare for every other mesh.
+                    // Armed for at most one component, so this is a null atomic compare for every other mesh.
                     FAnimTaskSnapshot* Snapshot = nullptr;
                     thread_local FAnimTaskSnapshot CaptureScratch;
                     if (Anim::IsTaskCaptureArmed(&Mesh))
@@ -627,8 +595,7 @@ namespace Lumina
                         Anim::StoreTaskCapture(*Snapshot);
                     }
 
-                    // Reference evaluation the pre-refactor way; any divergence is a playback-logic
-                    // bug, agreement means the animation data itself is wrong.
+                    // Divergence means a playback-logic bug; agreement means the animation data is wrong.
                     if (ValidateClip != nullptr && ValidateSkeleton != nullptr)
                     {
                         thread_local FPose RefPose;
@@ -665,8 +632,7 @@ namespace Lumina
                         }
                     }
 
-                    // Pack for the GPU here (parallel, only for poses that actually evaluated) so the
-                    // render gather bulk-copies instead of converting per bone on its critical path.
+                    // Packed here so the render gather bulk-copies instead of converting per bone.
                     SkeletalUtils::PackRenderBones(Mesh.BoneTransforms, Mesh.RenderBones);
                     Mesh.bRenderBonesDirty = false;
                     ++Mesh.PoseSerial;
@@ -686,7 +652,7 @@ namespace Lumina
         TaskGraph.Dispatch();
         TaskGraph.Wait();
 
-        // Serial: a typed notify runs user code, which the parallel passes above must never do.
+        // Serial because a typed notify runs user code, which the parallel passes must never do.
         {
             FEntityRegistry& Registry = SystemContext.GetRegistry();
             if (bHasSimple)
@@ -711,14 +677,13 @@ namespace Lumina
             }
         }
 
-        // Nothing moved: everything below is dead work.
+        // Nothing moved, so everything below is dead work.
         if (!bAnyRootMotion.load(std::memory_order_relaxed))
         {
             return;
         }
 
-        // Serial: applying root motion marks the transform dirty (a structural registry change, not
-        // ParallelFor-safe).
+        // Serial because applying root motion marks the transform dirty, which is not ParallelFor-safe.
         auto&& TransformStorage = SystemContext.GetStorage<STransformComponent>();
 
         const auto ApplyRootMotion = [&](entt::entity Entity, FRootMotionDelta& Delta)
@@ -729,8 +694,7 @@ namespace Lumina
             }
             Delta.bHasMotion = false;
 
-            // Root-motion-driven branches stay tagged even on paused frames; an identity delta
-            // shouldn't dirty the transform.
+            // Root-motion branches stay tagged on paused frames, and an identity delta must not dirty.
             if (Math::LengthSquared(Delta.Translation) < 1e-12f && Math::Abs(Delta.Rotation.w) > 0.9999995f)
             {
                 return;

@@ -1,4 +1,4 @@
-#include "ParticleParamCustomization.h"
+﻿#include "ParticleParamCustomization.h"
 
 #include <imgui.h>
 #include <string>
@@ -99,7 +99,7 @@ namespace Lumina
         return MakeShared<FParticleParamCustomization>();
     }
 
-    EPropertyChangeOp FParticleParamCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property)
+    EPropertyChangeOp FParticleParamCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args)
     {
         FProperty* Prop = Property->Property;
         const EParticleParameterType InputType = ResolveInputType(Value, Prop);

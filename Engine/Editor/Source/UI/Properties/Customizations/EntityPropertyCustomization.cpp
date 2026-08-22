@@ -1,4 +1,4 @@
-#include "EntityPropertyCustomization.h"
+﻿#include "EntityPropertyCustomization.h"
 
 #include "imgui.h"
 #include "Containers/Vector.h"
@@ -8,7 +8,7 @@
 #include "Lumina.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
-#include "UI/Properties/EntityPropertyContext.h"
+#include "UI/Properties/PropertyEditContexts.h"
 #include "World/World.h"
 #include "World/Entity/Components/EditorComponent.h"
 #include "World/Entity/Components/NameComponent.h"
@@ -40,15 +40,20 @@ namespace Lumina
 
     FEntityPropertyCustomization::~FEntityPropertyCustomization()
     {
-        if (IsEntityPickActiveFor(reinterpret_cast<uint64>(this)))
+        // The broker is held shared, so withdrawing here is safe even after the tool that served it went.
+        if (PickBroker && PickBroker->IsActiveFor(reinterpret_cast<uint64>(this)))
         {
-            CancelEntityPick();
+            PickBroker->Cancel();
         }
     }
 
-    EPropertyChangeOp FEntityPropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property)
+    EPropertyChangeOp FEntityPropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args)
     {
-        CWorld* World = GetEntityPropertyContextWorld();
+        const FWorldEditContext* WorldCtx = Args.Context.Get<FWorldEditContext>();
+        CWorld* World = (WorldCtx != nullptr) ? WorldCtx->World : nullptr;
+
+        const FEntityPickContext* PickCtx = Args.Context.Get<FEntityPickContext>();
+        PickBroker = (PickCtx != nullptr) ? PickCtx->Broker : nullptr;
 
         // No world to resolve against (e.g. an asset editor); show the raw id, read-only.
         if (World == nullptr)
@@ -67,7 +72,7 @@ namespace Lumina
 
         // Apply an entity clicked in the viewport since last frame (eyedropper result).
         uint32 PickedEntity = 0;
-        if (ConsumeEntityPickResult(Token, PickedEntity))
+        if (PickBroker && PickBroker->ConsumeResult(Token, PickedEntity))
         {
             CachedValue = PickedEntity;
             bChanged = true;
@@ -119,14 +124,17 @@ namespace Lumina
 
         // Arms a viewport pick, and clicking again or pressing Esc in the viewport cancels it.
         ImGui::SameLine(0.0f, Spacing);
-        const bool bPicking = IsEntityPickActiveFor(Token);
+        const bool bPicking = PickBroker && PickBroker->IsActiveFor(Token);
         if (bPicking)
         {
             ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
         }
         if (ImGui::Button(LE_ICON_EYEDROPPER "##pickentity", ImVec2(LineHeight, LineHeight)))
         {
-            bPicking ? CancelEntityPick() : RequestEntityPick(Token);
+            if (PickBroker)
+            {
+                bPicking ? PickBroker->Cancel() : PickBroker->Request(Token);
+            }
         }
         if (bPicking)
         {

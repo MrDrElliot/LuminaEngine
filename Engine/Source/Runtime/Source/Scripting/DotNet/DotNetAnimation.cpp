@@ -10,14 +10,7 @@
 #include "Core/Object/Class.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 
-//================================================================================================
-// World.Animation: drive an entity's animation from script (LuminaSharp.Animation). Two backends share one
-// facade: SSimpleAnimationComponent (single-clip play/pause/stop/scrub) and SAnimationGraphComponent
-// (named float/bool parameters that gate the graph state machine, living in its own parameter struct).
-// Play auto-adds the simple component;
-// every other call is a safe no-op when the relevant component is absent. The clip is a CAnimation* passed
-// as a uint64 (the loaded asset handle). Game thread only.
-//================================================================================================
+// Two backends share one facade, and every call but Play is a no-op when the component is absent.
 
 using namespace Lumina;
 using namespace Lumina::DotNet;
@@ -240,11 +233,7 @@ LUMINA_DOTNET_EXPORT(int32, Animation_HasParameter)(uint64 World, uint32 Entity,
     return (Comp != nullptr && Comp->HasParameter(FName(FStringView(Name, (size_t)Length)))) ? 1 : 0;
 }
 
-//================================================================================================
-// Montages (SAnimationGraphComponent). The component must exist and its graph must contain a Slot node
-// named the same as one of the montage's slot tracks for anything to show. Play auto-adds the component
-// so a montage can drive an entity that had no graph assigned yet; every other call is a no-op without it.
-//================================================================================================
+// The graph must contain a matching Slot node for anything to show.
 
 LUMINA_DOTNET_EXPORT(uint32, Animation_PlayMontage)(uint64 World, uint32 Entity, void* MontagePtr, float PlayRate,
                                                     const char* Section, int32 Length)
@@ -368,7 +357,7 @@ LUMINA_DOTNET_EXPORT(void, Animation_SetMontagePlayRate)(uint64 World, uint32 En
     }
 }
 
-// Two-pass string return: (.., null, 0) sizes; (.., buffer, capacity) fills. Returns the name length.
+// A two-pass string return, sizing with a null buffer then filling, returning the name length.
 LUMINA_DOTNET_EXPORT(int32, Animation_GetMontageSection)(uint64 World, uint32 Entity, void* MontagePtr,
                                                          char* Buffer, int32 Capacity)
 {
@@ -397,8 +386,7 @@ LUMINA_DOTNET_EXPORT(int32, Animation_GetMontageSection)(uint64 World, uint32 En
     return Len;
 }
 
-// Raw parameter-block memory for typed C# access, or null when the graph's struct is not TypeName.
-// Name-checked rather than trusted: the offsets C# reads at come from its own mirror of that type.
+// Name-checked rather than trusted, since the offsets C# reads come from its own mirror.
 LUMINA_DOTNET_EXPORT(void*, AnimGraph_GetParameterMemory)(void* Component, const char* TypeName, int32 Length)
 {
     auto* Comp = static_cast<SAnimationGraphComponent*>(Component);

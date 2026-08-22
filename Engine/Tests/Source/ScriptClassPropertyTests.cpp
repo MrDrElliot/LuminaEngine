@@ -17,23 +17,9 @@
 
 using namespace Lumina;
 
-// Script properties on a runtime-minted CClass: the C#-facing half of the rewrite
-// (Docs/CSharpScriptingRewrite.md, Pillar 3).
-//
-// The premise these pin: a minted CClass declares a LARGER size than the C++ shim it was minted from and
-// carries real FPropertys in the trailing block. That is what lets a script's properties be drawn by the
-// stock FPropertyTable, carried by SerializeTaggedProperties, and covered by undo / prefab overrides /
-// replication -- instead of a parallel minted CStruct fed by a value blob.
-//
-// Two facts they lean on, both verified in the engine rather than assumed:
-//   * StaticAllocateObject sizes BOTH the allocation and the memzero from Class->GetSize() (ObjectCore.cpp),
-//     so bumping Size before the CDO exists makes every instance carry the trailing block, zeroed.
-//   * CClass::CreateDefaultObject calls Link() itself, and CStruct::Link chains the super's property list
-//     onto this class's -- and latches. So properties must be appended BEFORE the CDO is created, and the
-//     super's own registration must already have been processed or its properties are lost permanently.
+// A minted CClass declares a larger size and carries real FPropertys in the trailing block.
 
-// The schema is built by hand in these tests because a live .NET host is what normally produces it; the code
-// under test is identical either way.
+// The schema is built by hand here because a live .NET host normally produces it.
 
 namespace
 {
@@ -71,11 +57,7 @@ namespace
         OutShimSize = Minted->GetSize();
         Scripting::AppendScriptPropertiesToClass(Minted, Schema);
 
-        // Drain deferred registration FIRST. CStruct::Link chains the super's property list onto ours, but
-        // only if the super already has one -- and a compiled-in class gets its properties when its deferred
-        // registration is processed. Link latches (bLinked), so linking against an unregistered base loses
-        // the base's properties permanently. In the live engine registration is long done by the time a
-        // script class mints; in a test process it is not.
+        // Drain deferred registration FIRST, since Link latches and would lose the base's properties.
         ProcessNewlyLoadedCObjects();
         Minted->GetDefaultObject();   // Link (chains supers) + CDO at the enlarged size
         return Minted;
@@ -115,8 +97,7 @@ TEST(ScriptClassProperties, SchemaFieldsBecomeRealPropertiesPastTheShim)
     CObject* Object = NewObject(Sub, nullptr, NAME_None, FGuid::New(), OF_Transient);
     ASSERT_NE(Object, nullptr);
 
-    // Zero-initialized by StaticAllocateObject's memzero over the enlarged size -- this is exactly why the
-    // first increment is restricted to trivially-constructible fields.
+    // Zero-initialized by StaticAllocateObject's memzero over the enlarged size.
     EXPECT_FLOAT_EQ(*Speed->GetValuePtr<float>(Object), 0.0f);
     EXPECT_EQ(*Health->GetValuePtr<int32>(Object), 0);
 
@@ -177,10 +158,7 @@ TEST(ScriptClassProperties, ScriptPropertiesRoundTripThroughTheStockSerializer)
     EXPECT_FLOAT_EQ(Cast<CScriptableTest>(Restored)->NativeValue, 8.0f) << "native property did not round-trip";
 }
 
-// Storage-owning kinds are appended like any other, because the value lifecycle is the PROPERTY's
-// (ConstructValue / DestructValue / OwnsStorage) and the class just drives whichever of its appended
-// properties said they own storage. An FString field over memzeroed bytes would read as a plausible empty
-// string and corrupt on the first assignment, so "constructed, not just zeroed" is the whole contract here.
+// Constructed, not just zeroed, since an FString over memzeroed bytes corrupts on assignment.
 TEST(ScriptClassProperties, StorageOwningFieldsAreConstructedPerInstance)
 {
     Scripting::FScriptExportSchema Schema;
@@ -204,7 +182,7 @@ TEST(ScriptClassProperties, StorageOwningFieldsAreConstructedPerInstance)
     ASSERT_NE(First, nullptr);
     ASSERT_NE(Second, nullptr);
 
-    // Constructed, so assigning is safe: over memzeroed bytes this is where an FString corrupts the heap.
+    // Constructed, so assigning is safe; over memzeroed bytes an FString corrupts the heap.
     EXPECT_TRUE(Label->GetValuePtr<FString>(First)->empty());
     *Label->GetValuePtr<FString>(First) = "a string long enough to have heap storage rather than SSO";
     *Label->GetValuePtr<FString>(Second) = "another";
@@ -217,8 +195,7 @@ TEST(ScriptClassProperties, StorageOwningFieldsAreConstructedPerInstance)
     EXPECT_FLOAT_EQ(Cast<CScriptableTest>(First)->NativeValue, 1.5f);
 }
 
-// Strings round-trip through the stock tagged serializer, same as the scalars: nothing about the appended
-// block is special-cased in the serializer.
+// Strings round-trip through the stock tagged serializer, with nothing special-cased.
 TEST(ScriptClassProperties, StringPropertiesRoundTripThroughTheStockSerializer)
 {
     Scripting::FScriptExportSchema Schema;
@@ -259,11 +236,7 @@ TEST(ScriptClassProperties, StringPropertiesRoundTripThroughTheStockSerializer)
     EXPECT_EQ(*Health->GetValuePtr<int32>(Restored), 17);
 }
 
-// A script class has no C++ constructor, so its declared defaults are written once to the class default
-// object and every instance is copied from it inside ConstructScriptProperties. The write itself comes from
-// managed code replaying the C# initializers (DotNet::ApplyScriptableDefaults); what is pinned here is the
-// half that has to hold regardless of who wrote them -- CDO to instance, by value, for storage-owning kinds
-// as much as for memcpy-able ones.
+// Declared defaults live on the CDO and every instance is copied from it, by value.
 TEST(ScriptClassProperties, ValuesOnTheDefaultObjectSeedEveryInstance)
 {
     Scripting::FScriptExportSchema Schema;
@@ -282,8 +255,7 @@ TEST(ScriptClassProperties, ValuesOnTheDefaultObjectSeedEveryInstance)
     CObject* Cdo = Sub->GetDefaultObjectIfCreated();
     ASSERT_NE(Cdo, nullptr) << "the CDO must exist and carry the appended block";
 
-    // The CDO's own trailing block is in-bounds and constructed -- if Size were bumped after the CDO was
-    // created, this write would be past the end of its allocation.
+    // The CDO's own trailing block is in-bounds only because Size was bumped before it existed.
     Speed->SetValue<float>(Cdo, 6.5f);
     *Label->GetValuePtr<FString>(Cdo) = "declared default";
 
@@ -292,17 +264,12 @@ TEST(ScriptClassProperties, ValuesOnTheDefaultObjectSeedEveryInstance)
     EXPECT_FLOAT_EQ(*Speed->GetValuePtr<float>(Instance), 6.5f) << "instance was not seeded from the CDO";
     EXPECT_STREQ(Label->GetValuePtr<FString>(Instance)->c_str(), "declared default");
 
-    // Seeded by value, not shared: writing the instance leaves the CDO alone.
+    // Seeded by value, not shared, so writing the instance leaves the CDO alone.
     *Label->GetValuePtr<FString>(Instance) = "mutated";
     EXPECT_STREQ(Label->GetValuePtr<FString>(Cdo)->c_str(), "declared default");
 }
 
-//=============================================================================================================
-// Every reflected property kind, appended to a minted class. This is the claim the whole design rests on: the
-// class-append path plans layouts with the SAME code that plans a CScriptStruct, and drives value lifetime
-// through FProperty::ConstructValue / DestructValue / OwnsStorage. So "which kinds are supported" is not a
-// list anyone maintains -- it is whatever the property types themselves implement.
-//=============================================================================================================
+// Which kinds are supported is whatever the property types themselves implement.
 
 namespace
 {
@@ -318,7 +285,7 @@ namespace
         Schema.Fields.push_back(MakeScalarField("AString", EPropertyTypeFlags::String));
         Schema.Fields.push_back(MakeScalarField("AName",   EPropertyTypeFlags::Name));
 
-        // Enum: minted from the entries the C# type reported.
+        // Enum minted from the entries the C# type reported.
         {
             TSharedPtr<FScriptExportType> Type = MakeType(EPropertyTypeFlags::Enum);
             Type->EnumName = FName("EveryKind_Mode");
@@ -338,7 +305,7 @@ namespace
             Schema.Fields.push_back(MakeField("ANativeStruct", Type));
         }
 
-        // Script struct: a nested C#-declared struct, minted as its own CScriptStruct.
+        // Script struct, a nested C#-declared struct minted as its own CScriptStruct.
         {
             TSharedPtr<FScriptExportType> Type = MakeType(EPropertyTypeFlags::Struct);
             Type->Fields.push_back(MakeScalarField("Inner", EPropertyTypeFlags::Int32));
@@ -346,8 +313,7 @@ namespace
             Schema.Fields.push_back(MakeField("AScriptStruct", Type));
         }
 
-        // Array of a storage-owning element, which is the case that needs the element description wired
-        // into the container by ConstructValue.
+        // An array of a storage-owning element needs its element description wired in by ConstructValue.
         {
             TSharedPtr<FScriptExportType> Type = MakeType(EPropertyTypeFlags::Vector);
             Type->ElementType = MakeType(EPropertyTypeFlags::String);
@@ -367,7 +333,7 @@ namespace
             Schema.Fields.push_back(MakeField("AMap", Type));
         }
 
-        // Instanced struct: an empty base plus one selectable candidate.
+        // Instanced struct, an empty base plus one selectable candidate.
         {
             TSharedPtr<FScriptExportType> Type = MakeType(EPropertyTypeFlags::InstancedStruct);
             Type->BaseName = FName("EveryKind_Base");
@@ -416,7 +382,7 @@ TEST(ScriptClassProperties, EveryReflectedKindIsAppendedPastTheShim)
         {
             continue;
         }
-        // Distinct addresses: each instance carries its own value, not one aliased buffer.
+        // Distinct addresses, so each instance carries its own value rather than one aliased buffer.
         EXPECT_NE(Property->GetValuePtr<uint8>(First), Property->GetValuePtr<uint8>(Second))
             << Name << " shares storage between instances";
     }
@@ -428,9 +394,7 @@ TEST(ScriptClassProperties, EveryReflectedKindIsAppendedPastTheShim)
     EXPECT_EQ(Typed->OnTest(5), 10);
 }
 
-// The containers are the kinds that need more than placement-new: the element/pair description has to be
-// wired into the freshly-constructed container or every later op is a null deref. Mutating one through the
-// stock FArrayProperty / FMapProperty API is what proves that happened.
+// Containers need their element description wired in, or every later op is a null deref.
 TEST(ScriptClassProperties, AppendedContainersAreUsableThroughTheStockPropertyApi)
 {
     uint32 ShimSize = 0;
@@ -476,8 +440,7 @@ TEST(ScriptClassProperties, AppendedContainersAreUsableThroughTheStockPropertyAp
     }
 }
 
-// Containers and strings survive the stock tagged serializer with no bespoke codec, which is the entire
-// reason for appending real FPropertys rather than keeping a parallel value blob.
+// Containers and strings survive the stock tagged serializer with no bespoke codec.
 TEST(ScriptClassProperties, AppendedContainersRoundTripThroughTheStockSerializer)
 {
     uint32 ShimSize = 0;
@@ -522,13 +485,7 @@ TEST(ScriptClassProperties, AppendedContainersRoundTripThroughTheStockSerializer
     EXPECT_STREQ(Text->GetValuePtr<FString>(Restored)->c_str(), "carried alongside");
 }
 
-//~ ---------------------------------------------------------------------------------------------------------
-//~ Hot reload: rebuilding the appended block when a C# reload changes the property set.
-//~
-//~ A minted class is reused by name across reloads and keeps its identity, but StaticAllocateObject bakes
-//~ Class->GetSize() into every object at creation. So a changed property set cannot be patched in place, and
-//~ MigrateMintedClassLayout tears the block down and rebuilds it instead.
-//~ ---------------------------------------------------------------------------------------------------------
+//~ Hot reload rebuilds the appended block, since a changed set cannot be patched in place.
 
 TEST(ScriptClassReload, AnUnchangedSchemaNeedsNoRebuild)
 {
@@ -539,13 +496,12 @@ TEST(ScriptClassReload, AnUnchangedSchemaNeedsNoRebuild)
     CClass* Sub = MintWithSchema("ScriptReload_Unchanged", Schema, ShimSize);
     ASSERT_NE(Sub, nullptr);
 
-    // The common reload edits a method body. An identical schema must compare equal, or every reload would
-    // pay a rebuild and drop every instance for nothing.
+    // An identical schema must compare equal, or every reload pays a rebuild for nothing.
     Scripting::FScriptExportSchema Same;
     Same.Fields.push_back(MakeScalarField("Speed", EPropertyTypeFlags::Float));
     EXPECT_TRUE(Scripting::ScriptClassLayoutMatches(Sub, Same));
 
-    // Metadata is not layout: retitling a field must not force a rebuild either.
+    // Metadata is not layout, so retitling a field must not force a rebuild either.
     Scripting::FScriptExportSchema Retitled;
     Retitled.Fields.push_back(MakeScalarField("Speed", EPropertyTypeFlags::Float));
     Retitled.Fields[0].Meta.Set(FName("Tooltip"), "now with a tooltip");
@@ -591,8 +547,7 @@ TEST(ScriptClassReload, AddingAPropertyRebuildsTheBlock)
     EXPECT_GE(Health->Offset, ShimSize);
     EXPECT_NE(Speed->Offset, Health->Offset);
 
-    // The super's chain was spliced on by the first Link and dropped by Unlink; re-linking has to restore it,
-    // or every native member of the base silently disappears from the class.
+    // Re-linking has to restore the super's chain, or the base's members disappear.
     ASSERT_NE(Sub->GetProperty(FName("NativeValue")), nullptr) << "Unlink lost the base class's properties";
 
     // A fresh CDO at the new size, and instances built from it carry the new field.
@@ -641,9 +596,7 @@ TEST(ScriptClassReload, RemovingAndRetypingAPropertyRebuildTheBlock)
 
 TEST(ScriptClassReload, ValuesSurviveARebuildThroughTheStockSerializer)
 {
-    // The user-facing promise: a reload that adds a field keeps what you authored in the others. The carrier
-    // is SerializeTaggedProperties, which is name-keyed, so a value whose property still exists replays, a
-    // removed one is dropped, and an added one lands on its default.
+    // The carrier is name-keyed, so a surviving property replays and an added one takes its default.
     Scripting::FScriptExportSchema Before;
     Before.Fields.push_back(MakeScalarField("Speed", EPropertyTypeFlags::Float));
     Before.Fields.push_back(MakeScalarField("Doomed", EPropertyTypeFlags::Int32));
@@ -659,7 +612,7 @@ TEST(ScriptClassReload, ValuesSurviveARebuildThroughTheStockSerializer)
     Sub->GetProperty(FName("Doomed"))->SetValue<int32>(Authored, 7);
     *Sub->GetProperty(FName("Label"))->GetValuePtr<FString>(Authored) = "authored";
 
-    // Evacuate exactly the way a live reload must: tagged properties into a buffer.
+    // Evacuate exactly the way a live reload must, tagged properties into a buffer.
     TVector<uint8> Buffer;
     {
         FMemoryWriter Writer(Buffer);
@@ -689,8 +642,7 @@ TEST(ScriptClassReload, ValuesSurviveARebuildThroughTheStockSerializer)
     EXPECT_FLOAT_EQ(*Sub->GetProperty(FName("Speed"))->GetValuePtr<float>(Restored), 12.5f);
     EXPECT_EQ(*Sub->GetProperty(FName("Label"))->GetValuePtr<FString>(Restored), FString("authored"));
 
-    // Added after the snapshot was taken, so it is simply at its default rather than reading someone
-    // else's bytes -- which is the whole reason the carrier is name-keyed and not a raw blob.
+    // Added after the snapshot, so it sits at its default rather than reading someone else's bytes.
     ASSERT_NE(Sub->GetProperty(FName("Added")), nullptr);
     EXPECT_EQ(*Sub->GetProperty(FName("Added"))->GetValuePtr<int32>(Restored), 0);
 
@@ -714,8 +666,7 @@ TEST(ScriptClassReload, ARebuildIsRefusedWhileInstancesAreLive)
     After.Fields.push_back(MakeScalarField("Speed", EPropertyTypeFlags::Float));
     After.Fields.push_back(MakeScalarField("Health", EPropertyTypeFlags::Int32));
 
-    // An instance is laid out at the old size, so rebuilding under it would move its fields. Refusing is the
-    // contract; the caller evacuates first.
+    // An instance is laid out at the old size, so refusing is the contract and the caller evacuates.
     EXPECT_FALSE(Scripting::MigrateMintedClassLayout(Sub, After));
 
     // And the refusal changed nothing, so the live instance is still usable.
@@ -733,9 +684,7 @@ TEST(ScriptClassReload, ARebuildIsRefusedWhileInstancesAreLive)
 
 TEST(ScriptClassReload, ContainersSurviveARebuild)
 {
-    // Containers are the kinds with side data (element descriptions, ops tables) owned by the layout record,
-    // so they are what a teardown gets wrong first: the record is retired, not freed, and the new block
-    // builds its own.
+    // Containers own side data, so the layout record is retired rather than freed.
     Scripting::FScriptExportSchema Before;
     TSharedPtr<Scripting::FScriptExportType> List = MakeType(EPropertyTypeFlags::Vector);
     List->ElementType = MakeType(EPropertyTypeFlags::Int32);
@@ -746,8 +695,7 @@ TEST(ScriptClassReload, ContainersSurviveARebuild)
     ASSERT_NE(Sub, nullptr);
     ASSERT_NE(Sub->GetProperty(FName("Values")), nullptr);
 
-    // Change the ELEMENT type only. The top-level kind is Vector either way, so this is exactly the case a
-    // shallow comparison would miss and then lay out wrong.
+    // Changing the ELEMENT type only is the case a shallow comparison would lay out wrong.
     Scripting::FScriptExportSchema After;
     TSharedPtr<Scripting::FScriptExportType> Floats = MakeType(EPropertyTypeFlags::Vector);
     Floats->ElementType = MakeType(EPropertyTypeFlags::Float);
@@ -761,8 +709,7 @@ TEST(ScriptClassReload, ContainersSurviveARebuild)
     ASSERT_NE(Values->GetOps(), nullptr);
     EXPECT_EQ(Values->GetOps()->ElementSize, sizeof(float)) << "the rebuilt array kept the old element size";
 
-    // Usable through the stock API, which is what proves the new element description was wired into the
-    // freshly constructed container rather than left null.
+    // Usable through the stock API, which proves the new element description was wired in.
     CObject* Object = NewObject(Sub, nullptr, NAME_None, FGuid::New(), OF_Transient);
     ASSERT_NE(Object, nullptr);
     void* Array = Values->GetValuePtr<void>(Object);

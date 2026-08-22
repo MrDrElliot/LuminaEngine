@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "AnimNotify.h"
 #include "Assets/AssetTypes/Audio/SoundAttenuation.h"
@@ -24,7 +24,7 @@ namespace Lumina
         TObjectPtr<CAudioStream> Sound;
 
         /** Socket or bone to play at. Empty plays at the entity's origin. */
-        PROPERTY(Editable, Category = "Sound", SocketPicker)
+        PROPERTY(Editable, Category = "Sound", Picker = "Socket")
         FString Socket;
 
         /** Extra offset, in the socket's space when one is named, else the entity's. */
@@ -59,7 +59,7 @@ namespace Lumina
         TObjectPtr<CParticleSystem> ParticleSystem;
 
         /** Socket or bone to play at. Empty plays at the entity's origin. */
-        PROPERTY(Editable, Category = "Particle System", SocketPicker)
+        PROPERTY(Editable, Category = "Particle System", Picker = "Socket")
         FString Socket;
 
         /** Emitter offset in the spawned effect's local space. */

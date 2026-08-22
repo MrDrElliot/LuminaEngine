@@ -297,7 +297,7 @@ namespace Lumina::RHI::Textures
             }
         }
 
-        // Outside the lock: retiring re-enters the upload and storage-slot bookkeeping.
+        // Outside the lock, since retiring re-enters the upload and storage-slot bookkeeping.
         RetireTextureAndSlots(Abandoned);
     }
 
@@ -362,8 +362,7 @@ namespace Lumina::RHI::Textures
             }
         }
 
-        // Outside the lock: retiring re-enters the upload and storage-slot bookkeeping. Also cancels the
-        // partial uploads already queued against it, which would otherwise copy into a dead image.
+        // Outside the lock, and this also cancels queued uploads that would copy into a dead image.
         RetireTextureAndSlots(Staged);
     }
 
@@ -422,7 +421,7 @@ namespace Lumina::RHI::Textures
             return;
         }
 
-        // Retired outside the lock: Core::Retire re-enters the upload system, which takes its own locks.
+        // Retired outside the lock, since Core::Retire re-enters the upload system's own locks.
         TVector<FTextureH> Superseded;
         {
             FScopeLock Lock(GState.SwapMutex);
@@ -432,10 +431,7 @@ namespace Lumina::RHI::Textures
 
                 if (!Pending.bArmed)
                 {
-                    // Recreate ran and CommitRecreate never did. Deliberately NOT auto-armed: guessing a
-                    // batch could publish an image whose upload has not happened, which is the exact
-                    // failure this machinery exists to prevent. Stuck-and-loud beats visibly wrong.
-                    // A caller that cannot finish what it staged should say so with AbandonRecreate.
+                    // Deliberately NOT auto-armed, since guessing a batch could publish an unfilled image.
                     if (++Pending.IdleTicks == kMaxStagedIdleTicks)
                     {
                         LOG_ERROR("RHI: bindless slot {} ('{}') has a staged texture that took no upload for "
@@ -454,8 +450,7 @@ namespace Lumina::RHI::Textures
                     continue;
                 }
 
-                // The copies have executed, so the image now holds its texels. Only now does the slot move
-                // -- and only after that does the image it moved off become garbage.
+                // Only once the copies have executed does the slot move, and only then is the old image garbage.
                 HeapRepointTexture(Core::GetGlobalHeap(), Pending.Slot, Pending.NewTexture);
                 Superseded.push_back(Pending.OldTexture);
 
@@ -519,18 +514,13 @@ namespace Lumina::RHI::Textures
 
     void Release(FManagedTexture& Tex)
     {
-        // BOTH halves, not just the image. A managed texture with a live slot and a dead image is exactly
-        // what a half-finished swap leaves behind, and bailing on the image alone leaked the heap slot AND
-        // orphaned the pending-swap entry keyed on it -- which then sits unarmed forever, because the only
-        // thing that could have cleared it was this call.
+        // Bailing on the image alone leaked the heap slot and orphaned the pending-swap entry.
         if (!Tex.IsValid() && Tex.SampledSlot == kInvalidHeapSlot)
         {
             return;
         }
 
-        // A staged swap owns the image the slot still names -- Tex.Texture is the replacement, which was
-        // never bound. Both die here, and the entry has to go with them or the tick would repoint a slot
-        // that no longer exists at an image that has been retired.
+        // The entry has to go too, or the tick would repoint a dead slot at a retired image.
         FTextureH StillBound;
         if (Tex.SampledSlot != kInvalidHeapSlot)
         {
@@ -548,8 +538,7 @@ namespace Lumina::RHI::Textures
             }
         }
 
-        // Unbinds the descriptor immediately (pointing it at the fallback) and defers only the index free,
-        // so neither image is still named by the heap once they are retired below.
+        // Unbinds immediately and defers only the index free, so neither image stays named by the heap.
         Core::RetireSampledSlot(Tex.SampledSlot);
 
         RetireTextureAndSlots(StillBound);

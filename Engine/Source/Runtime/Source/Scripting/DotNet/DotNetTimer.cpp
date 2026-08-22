@@ -3,13 +3,7 @@
 #include "World/Subsystems/TimerManager.h"
 #include "Scripting/DotNet/DotNetExport.h"
 
-//================================================================================================
-// World.Timers: one-shot + looping callbacks against world time (LuminaSharp.Timers). Binds the per-world
-// FTimerManager. A timer's callback is a managed Action reached through a C# trampoline: the export stores
-// the (Thunk, Context) pair and the native FTimerCallback simply calls Thunk(Context) when it fires, so the
-// timer system stays free of any managed coupling. The returned uint32 is the FTimerHandle's entt id
-// (0xFFFFFFFF on failure); it is generational, so a stale id safely reports inactive after recycling.
-//================================================================================================
+// The returned id is generational, so a stale one safely reports inactive after recycling.
 
 using namespace Lumina;
 using namespace Lumina::DotNet;
@@ -18,9 +12,7 @@ namespace
 {
     using FTimerThunk = void (*)(void*);
 
-    // Wraps the managed trampoline + its context as the native timer callback. Context is a GCHandle (as a
-    // pointer) to the C# callback object; the C# side owns its lifetime (one-shots self-free, loops free on
-    // Clear), so this lambda never frees it.
+    // The C# side owns the context's lifetime, so this lambda never frees it.
     FTimerManager::FTimerCallback MakeCallback(void* Thunk, void* Context)
     {
         FTimerThunk Fn = reinterpret_cast<FTimerThunk>(Thunk);
@@ -39,7 +31,7 @@ LUMINA_DOTNET_EXPORT(uint32, Timer_Set)(uint64 World, float Rate, int32 bLoop, f
     return ToId(Handle.Handle);
 }
 
-// As Timer_Set, but owned by Owner: the timer is auto-cleared when that entity is destroyed.
+// As the plain setter, but owned by an entity so the timer clears when that entity is destroyed.
 LUMINA_DOTNET_EXPORT(uint32, Timer_SetForEntity)(uint64 World, uint32 Owner, float Rate, int32 bLoop, float FirstDelay, void* Thunk, void* Context)
 {
     CWorld* W = AsWorld(World);

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "UI/Tools/NodeGraph/Animation/AnimGraphNode.h"
 #include "AnimGraphNode_GetParameter.generated.h"
@@ -19,7 +19,7 @@ namespace Lumina
         void GenerateBytecode(FAnimationGraphCompiler& Compiler) override;
 
         /** Name of the parameter to read; must match the name set from Lua / the editor. */
-        PROPERTY(Editable, Category = "Parameter", ParameterPicker)
+        PROPERTY(Editable, Category = "Parameter", Picker = "Parameter")
         FName ParameterName;
 
         /** Value used when the parameter has not been set at runtime. */

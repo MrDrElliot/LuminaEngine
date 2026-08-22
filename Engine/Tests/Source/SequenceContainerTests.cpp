@@ -321,7 +321,7 @@ namespace LuminaSequenceTests
         EXPECT_EQ(Seen, (std::vector<int>{ 1, 2, 3 }));
     }
 
-    // The reason to pick a list over a vector: an element address outlives every later insert.
+    // The reason to pick a list over a vector is that an element address outlives every insert.
     TEST(List, ElementAddressesAreStable)
     {
         TList<int> Values;

@@ -105,7 +105,7 @@ namespace LuminaHashMapBench
         }
     }
 
-    /** The standard map never reports its footprint, so this reconstructs it: buckets plus one node each. */
+    // The standard map never reports its footprint, so this rebuilds it from buckets and nodes.
     template <typename TMap>
     size_t BaselineBytes(const TMap& Map)
     {
@@ -326,7 +326,7 @@ namespace LuminaHashMapBench
         SUCCEED();
     }
 
-    // A miss is where the group probe wins hardest: an empty byte in the group ends the search with no compare.
+    // A miss is where the group probe wins hardest, ending the search with no compare.
     TEST(HashMapBench, FindMissUInt32)
     {
         const std::vector<uint32>& Keys = UInt32Keys();
@@ -496,7 +496,7 @@ namespace LuminaHashMapBench
         SUCCEED();
     }
 
-    // Same keys, probed out of order: separates a real speed difference from a sequential-access best case.
+    // Same keys probed out of order, which separates real speed from a sequential best case.
     TEST(HashMapBench, FindHitPointerShuffled)
     {
         const std::vector<void*>& Keys = PointerKeys();
@@ -888,7 +888,7 @@ namespace LuminaHashMapBench
         SUCCEED();
     }
 
-    // Short-lived small maps are where an inline buffer should pay: no allocator traffic at all.
+    // Short-lived small maps are where an inline buffer should pay, with no allocator traffic.
     TEST(HashMapBench, InlineVersusFlatSmallTables)
     {
         constexpr int kTables = 200'000;

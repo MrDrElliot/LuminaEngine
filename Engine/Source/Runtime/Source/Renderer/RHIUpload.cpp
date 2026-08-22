@@ -13,7 +13,7 @@ namespace Lumina::RHI
 {
     namespace
     {
-        // Typed, not a ull literal: see the note in RHICore.cpp.
+        // Typed rather than a suffix literal, see the note in RHICore.cpp.
         constexpr uint64 kMegabyte = 1024 * 1024;
 
         constexpr uint64 kStagingSliceRequest = 64 * kMegabyte;
@@ -37,13 +37,13 @@ namespace Lumina::RHI
             FTextureH   TextureSource  = {};        // TextureCopy
             uint64      Size           = 0;
             uint32      RowPitchTexels = 0;         // Texture
-            uint32      Mip            = 0;         // Texture/TextureCopy: DESTINATION mip
+            uint32      Mip            = 0;         // the DESTINATION mip
             uint32      Layer          = 0;         // Texture/TextureCopy (array slice; 0 for non-array)
             uint32      SourceMip      = 0;         // TextureCopy
             uint32      SourceLayer    = 0;         // TextureCopy
-            uint32      Width          = 0;         // Texture: mip extent, 0 = derive from the description
+            uint32      Width          = 0;         // mip extent, 0 derives from the description
             uint32      Height         = 0;
-            uint32      OffsetY        = 0;         // Texture: first texel row this band writes
+            uint32      OffsetY        = 0;         // first texel row this band writes
             float       ClearValue[4]  = {};        // Clear
         };
 
@@ -58,7 +58,7 @@ namespace Lumina::RHI
 
             TAtomic<uint32> Writers{0};
 
-            // One gate per queue: a flush splits across two timelines whose values are unrelated.
+            // One gate per queue, since a flush splits across two timelines whose values are unrelated.
             FSemaphoreH ReadSemaphore[kNumUploadQueues] = {};
             uint64      ReadValue[kNumUploadQueues]     = {};
 
@@ -69,8 +69,7 @@ namespace Lumina::RHI
             bool        bWarnedGrowFailed = false;
         };
 
-        // A flush's completion gate. One entry per flush that has been swept out of the queue, retired once
-        // every queue it was submitted on has signaled past it.
+        // One entry per swept flush, retired once every queue it was submitted on has signaled past it.
         struct FBatchGate
         {
             uint64      Batch = 0;
@@ -85,8 +84,7 @@ namespace Lumina::RHI
             TVector<FUploadOp>  Queue;
             FMutex              Mutex;
 
-            // Guards the batch ledger only, and is never held while taking Mutex or any RHI lock -- the
-            // flush submit path already holds the core submit lock when it records a gate.
+            // Never held while taking the other locks, since the flush path already holds the core submit lock.
             FMutex              BatchMutex;
             uint64              BatchCounter   = 1;   // the flush queued ops will leave in
             uint64              CompletedBatch = 0;   // every batch at or below this has executed
@@ -121,8 +119,7 @@ namespace Lumina::RHI
 
             Slice.OverflowBytes += Size + Alignment;
 
-            // Separate zone: this arm is a fresh host-visible VRAM allocation on the CALLING thread,
-            // which is a completely different cost from writing into the ring.
+            // A separate zone, since a fresh host-visible allocation is a different cost from a ring write.
             LUMINA_PROFILE_SECTION("Upload::StagingOverflowAlloc");
             const GPUPtr Owned = Malloc(Size, Alignment, EMemoryType::CPUWrite);
             SetDebugName(Owned, "Upload.Overflow");
@@ -145,7 +142,7 @@ namespace Lumina::RHI
             return false;
         }
 
-        // Host-visible destination: write through the mapping, nothing to stage.
+        // A host-visible destination writes through the mapping with nothing to stage.
         if (void* Mapped = ToHost(Dest))
         {
             Memory::Memcpy(Mapped, Data, Size);
@@ -191,8 +188,7 @@ namespace Lumina::RHI
             return false;
         }
 
-        // A band with no explicit extent would be recorded against the whole mip and read Size bytes past
-        // the end of Data. Refuse rather than hand the copy engine an over-long region.
+        // A band with no explicit extent would read past the end of the source data.
         if (OffsetY != 0 && (Width == 0 || Height == 0))
         {
             LOG_ERROR("RHI: dropped a banded texture upload at row {} with no extent; Width/Height are "
@@ -203,7 +199,7 @@ namespace Lumina::RHI
         LUMINA_PROFILE_SECTION("Upload::StageTextureMip");
         LUMINA_PROFILE_VALUE("Upload/StagedMipKiB", (int64)(Size / 1024));
 
-        // Split from the copy below: this arm is a cursor bump, or a fresh VRAM allocation on overflow.
+        // Split from the copy, since this arm is a cursor bump or a fresh allocation on overflow.
         FStaging S;
         {
             LUMINA_PROFILE_SECTION("Upload::ReserveStaging");
@@ -218,8 +214,7 @@ namespace Lumina::RHI
         }
 
         {
-            // The host bandwidth itself, isolated so "staging is slow" can be told apart from "allocating
-            // staging is slow" without guessing. This is the cost MaxUploadMBPerFrame is meant to bound.
+            // Isolated so slow staging can be told from slow staging allocation without guessing.
             LUMINA_PROFILE_SECTION("Upload::CopyToStaging");
             Memory::MemcpyToWriteCombined(S.Cpu, Data, Size);
         }
@@ -257,8 +252,7 @@ namespace Lumina::RHI
             return;
         }
 
-        // No staging and no host bandwidth at all: this is the path a mip takes when it already exists on
-        // the GPU and is only moving between two images, which is most of what a residency change does.
+        // The path a mip takes when it already exists on the GPU and only moves between two images.
         FUploadOp Op;
         Op.Type          = EUploadOp::TextureCopy;
         Op.TextureDest   = Dest;
@@ -312,12 +306,7 @@ namespace Lumina::RHI
             return;
         }
 
-        // Through Core, not straight to the backend: a submission that does not advance the queue counter
-        // is invisible to the retire fence, which would then free resources this command list still reads.
-        //
-        // SubmitOn also hands CL to the frame slot, which resets it when that slot comes round. Resetting
-        // it here as well would recycle one command buffer twice -- two callers then record into the same
-        // VkCommandBuffer while it is pending, which is a device loss, not a warning.
+        // Resetting here too would recycle one command buffer twice, which is a device loss.
         const uint64 Value = Core::SubmitOn(EQueueType::Graphics, TSpan<const FCmdListH>{&CL, 1});
         Upload::NoteFlushSubmitted(Batch, 0, EQueueType::Graphics, Core::GetQueueTimeline(EQueueType::Graphics), Value);
 
@@ -454,8 +443,7 @@ namespace Lumina::RHI
                 Ops.swap(GUpload.Queue);
                 GUpload.QueuedOps.store(0u, std::memory_order_relaxed);
 
-                // Closes the batch these ops belonged to and opens the next one. Under the queue lock, so
-                // BatchForQueuedOps can never hand out a batch whose ops have already gone out.
+                // Under the queue lock, so BatchForQueuedOps cannot hand out a batch whose ops already went out.
                 FScopeLock BatchLock(GUpload.BatchMutex);
                 Batch = GUpload.BatchCounter++;
                 GUpload.InFlightBatches.push_back(FBatchGate{ Batch });
@@ -485,8 +473,7 @@ namespace Lumina::RHI
                     T.SliceMask |= (1u << Op.Slice);
                 }
 
-                // A copy READS a texture as well as writing one, so an earlier write to its source in this
-                // same flush has to be ordered against too -- otherwise it copies pre-upload contents.
+                // A copy reads as well as writes, so an earlier write to its source has to be ordered against.
                 const bool bReadsWritten = Op.Type == EUploadOp::TextureCopy && T.AlreadyWritten(Op.TextureSource);
 
                 if (bReadsWritten
@@ -634,8 +621,7 @@ namespace Lumina::RHI
                 return;
             }
 
-            // Source as well as destination: a queued copy READING an image that is about to be destroyed
-            // would record against a dead VkImage exactly as a write would.
+            // A queued copy reading a dying image records against a dead handle exactly as a write would.
             CancelMatching([Texture](const FUploadOp& Op)
             {
                 return Op.Type != EUploadOp::Buffer
@@ -698,8 +684,7 @@ namespace Lumina::RHI
                 }
             }
 
-            // A flush can straddle two queues (buffers on transfer, images on graphics); the gate closes
-            // only when BOTH have signaled, which is why this accumulates rather than overwrites.
+            // A flush can straddle two queues, so the gate accumulates rather than overwrites.
             FScopeLock Lock(GUpload.BatchMutex);
             for (FBatchGate& Gate : GUpload.InFlightBatches)
             {
@@ -717,9 +702,7 @@ namespace Lumina::RHI
             FScopeLock Lock(GUpload.Mutex);
             FScopeLock BatchLock(GUpload.BatchMutex);
 
-            // Nothing queued means everything queued has already been swept out, and the newest sweep is
-            // the one that took it. Returning the open batch there would wait on a flush that may never
-            // happen -- no ops, no flush.
+            // Returning the open batch would wait on a flush that may never happen, since no ops means no flush.
             if (GUpload.Queue.empty())
             {
                 return GUpload.BatchCounter - 1;
@@ -740,8 +723,7 @@ namespace Lumina::RHI
                 return true;
             }
 
-            // Batches are submitted in order on each queue, so the first one still running blocks the rest
-            // and there is no reason to look past it.
+            // Batches submit in order per queue, so the first still running blocks the rest.
             while (!GUpload.InFlightBatches.empty())
             {
                 const FBatchGate& Gate = GUpload.InFlightBatches.front();
@@ -763,8 +745,7 @@ namespace Lumina::RHI
                     }
                 }
 
-                // No queue recorded means the flush has not been submitted yet -- the copies have not been
-                // issued, let alone run.
+                // No recorded queue means the flush is unsubmitted, so the copies have not been issued.
                 if (!bSubmitted || !bExecuted)
                 {
                     break;
@@ -791,8 +772,7 @@ namespace Lumina::RHI
 
                 if (GetSemaphoreValue(Slice.ReadSemaphore[QueueIndex]) < Gate)
                 {
-                    // A BLOCKING wait on the frame thread for last frame's copies out of this slice. If a
-                    // hitch lands here the upload itself was fine and the frame simply caught up with it.
+                    // A hitch here means the frame caught up with the upload, not that the upload was slow.
                     LUMINA_PROFILE_SECTION("Upload::BeginSlot Wait");
                     WaitSemaphore(Slice.ReadSemaphore[QueueIndex], Gate);
                 }
@@ -838,8 +818,7 @@ namespace Lumina::RHI
                     }
                     else if (NewCapacity > Slice.Capacity && !Slice.bWarnedGrowFailed)
                     {
-                        // Silent before this: the ring kept its old capacity and every oversized upload
-                        // paid a fresh vkAllocateMemory on the calling thread, every frame.
+                        // Silent before this, so every oversized upload paid a fresh allocation on the calling thread.
                         Slice.bWarnedGrowFailed = true;
                         LOG_WARN("RHI: upload staging slice could not grow {} -> {} MiB (CPU-visible VRAM "
                                  "exhausted). Uploads larger than the slice will allocate dedicated staging "
@@ -848,8 +827,7 @@ namespace Lumina::RHI
                     }
                 }
 
-                // The number that explains a slow StageTextureMip: non-zero means uploads are falling out
-                // of the ring and paying for their own allocation.
+                // Non-zero means uploads are falling out of the ring and paying for their own allocation.
                 LUMINA_PROFILE_VALUE("Upload/StagingOverflowKiB", (int64)(Slice.OverflowBytes / 1024));
                 LUMINA_PROFILE_VALUE("Upload/StagingUsedKiB",     (int64)(Slice.Cursor / 1024));
 
@@ -858,7 +836,7 @@ namespace Lumina::RHI
                 Slice.OverflowBytes   = 0;
             }
 
-            // Outside the lock: Core::Retire() re-enters Upload::CancelBuffer(), which takes GUpload.Mutex.
+            // Outside the lock, since Core::Retire re-enters CancelBuffer, which takes the upload mutex.
             Core::Retire(OldGpu);
         }
     }

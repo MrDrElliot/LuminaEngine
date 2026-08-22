@@ -3,8 +3,7 @@
 
 using namespace Lumina;
 
-// Same seed must produce the same GUID. Regression for the hash +
-// shift-past-type-width UB that made Debug and Development emit different bytes.
+// Regression for the shift-past-type-width UB that made Debug and Development differ.
 TEST(GUIDTests, NewDeterministic_SameSeedSameGuid)
 {
     FGuid A = FGuid::NewDeterministic("Engine.PrimitiveMesh.Cube");
@@ -25,8 +24,7 @@ TEST(GUIDTests, NewDeterministic_DifferentSeedsDifferentGuids)
     EXPECT_NE(Sphere, Capsule);
 }
 
-// One-character difference must change the result. Catches a bug where the
-// hash collapsed long suffixes (e.g. only the first N bytes mattered).
+// Catches a hash that collapsed long suffixes, where only the first N bytes mattered.
 TEST(GUIDTests, NewDeterministic_SmallSeedChangeChangesGuid)
 {
     FGuid A = FGuid::NewDeterministic("Mesh.A");
@@ -43,8 +41,7 @@ TEST(GUIDTests, NewDeterministic_EmptySeedIsValid)
     EXPECT_NE(G, FGuid::Empty());
 }
 
-// Per the implementation: high nibble of byte[6] is the version (5,
-// name-based), and the top two bits of byte[8] are the RFC 4122 variant.
+// High nibble of byte[6] is version 5, and the top two bits of byte[8] are the variant.
 TEST(GUIDTests, NewDeterministic_VersionAndVariantBits)
 {
     FGuid G = FGuid::NewDeterministic("Engine.PrimitiveMesh.Cube");
@@ -54,8 +51,7 @@ TEST(GUIDTests, NewDeterministic_VersionAndVariantBits)
     EXPECT_EQ((B[8] & 0xC0), 0x80);
 }
 
-// High 8 bytes derive from the low 8 via SplitMix64; the halves must differ
-// (a copy was the symptom of the old shift-past-type-width UB).
+// High 8 bytes derive from the low 8 via SplitMix64, so the halves must differ.
 TEST(GUIDTests, NewDeterministic_HighAndLowHalvesDiffer)
 {
     FGuid G = FGuid::NewDeterministic("Engine.PrimitiveMesh.Cube");
@@ -98,8 +94,7 @@ TEST(GUIDTests, NewDeterministic_RoundTripThroughString)
     EXPECT_EQ(Original, Restored);
 }
 
-// Determinism is per-seed-bits, not per-FStringView identity: same characters
-// through different FStringView constructors must yield identical results.
+// Determinism is per seed bits, not per FStringView identity.
 TEST(GUIDTests, NewDeterministic_StringViewSourceIndependence)
 {
     const char* Literal = "Engine.PrimitiveMesh.Plane";

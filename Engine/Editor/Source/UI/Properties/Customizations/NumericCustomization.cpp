@@ -1,4 +1,4 @@
-#include <string>
+﻿#include <string>
 #include "CoreTypeCustomization.h"
 #include "imgui.h"
 #include "Core/Object/ObjectCore.h"
@@ -110,7 +110,7 @@ namespace Lumina
         }
     }
 
-    EPropertyChangeOp FVec2PropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property)
+    EPropertyChangeOp FVec2PropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args)
     {
         ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);
         FStructProperty* Prop = static_cast<FStructProperty*>(Property->Property);
@@ -180,7 +180,7 @@ namespace Lumina
         }
     }
 
-    EPropertyChangeOp FVec3PropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property)
+    EPropertyChangeOp FVec3PropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args)
     {
         FStructProperty* Prop = static_cast<FStructProperty*>(Property->Property);
 
@@ -258,7 +258,7 @@ namespace Lumina
         }
     }
 
-    EPropertyChangeOp FVec4PropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property)
+    EPropertyChangeOp FVec4PropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args)
     {
         FStructProperty* Prop = static_cast<FStructProperty*>(Property->Property);
 
@@ -336,7 +336,7 @@ namespace Lumina
         }
     }
 
-    EPropertyChangeOp FQuatPropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property)
+    EPropertyChangeOp FQuatPropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args)
     {
         ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);
 
@@ -378,7 +378,7 @@ namespace Lumina
         }
     }
     
-    EPropertyChangeOp FTransformPropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property)
+    EPropertyChangeOp FTransformPropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args)
     {
         EPropertyChangeOp DragOp = EPropertyChangeOp::None;
         auto Merge = [&DragOp](EPropertyChangeOp Op)

@@ -1,4 +1,4 @@
-#include "Containers/StringFormat.h"
+﻿#include "Containers/StringFormat.h"
 #include <iterator>
 #include "InputActionCustomization.h"
 
@@ -193,7 +193,7 @@ namespace Lumina
         }
     }
 
-    EPropertyChangeOp FInputActionHandlePropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property)
+    EPropertyChangeOp FInputActionHandlePropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args)
     {
         FString Picked = DisplayValue.Name.IsNone() ? FString() : FString(DisplayValue.Name.c_str());
 

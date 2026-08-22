@@ -1,4 +1,4 @@
-#include "CurveGradientCustomization.h"
+﻿#include "CurveGradientCustomization.h"
 
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Core/Object/Cast.h"
@@ -104,7 +104,7 @@ namespace Lumina
         }
 
         // UpdateAndDraw leaves the write-back to the caller, so commit it here when it reports a change.
-        const EPropertyChangeOp Op = AssetPicker->UpdateAndDraw(AssetHandle, false);
+        const EPropertyChangeOp Op = AssetPicker->UpdateAndDraw(AssetHandle, FPropertyDrawArgs{});
         if (Op != EPropertyChangeOp::None)
         {
             AssetPicker->UpdatePropertyValue(AssetHandle);
@@ -113,7 +113,7 @@ namespace Lumina
         return false;
     }
 
-    EPropertyChangeOp FCurvePropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property)
+    EPropertyChangeOp FCurvePropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args)
     {
         bDirty = false;
         EPropertyChangeOp Result = EPropertyChangeOp::None;
@@ -310,7 +310,7 @@ namespace Lumina
         return bChanged;
     }
 
-    EPropertyChangeOp FGradientPropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property)
+    EPropertyChangeOp FGradientPropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args)
     {
         bDirty = false;
         ImGui::PushID(this);

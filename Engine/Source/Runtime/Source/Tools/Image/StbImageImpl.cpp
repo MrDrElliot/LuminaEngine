@@ -3,14 +3,9 @@
 #include "ImageWrite.h"
 #include "Memory/Memory.h"
 
-// The one translation unit that compiles stb's implementations. Every other file includes the stb
-// headers for declarations only. Keeping the implementations together also keeps the allocator
-// hooks in one place: stb allocates through the engine allocator so its buffers show up in memory
-// tracking like everything else, and so a buffer handed back to stb is freed by the same allocator
-// that produced it.
+// A buffer handed back to stb is freed by the same allocator that produced it.
 
-// The LmThirdParty shims rather than Memory::Malloc directly: Memory::Free takes a pointer by
-// reference so it can null the caller's variable, and stb frees rvalue expressions.
+// Memory::Free takes its pointer by reference to null it, and stb frees rvalue expressions.
 #define STBI_MALLOC(Size)              LmThirdPartyMalloc(Size, "stb_image")
 #define STBI_REALLOC(Ptr, NewSize)     LmThirdPartyRealloc(Ptr, NewSize, "stb_image")
 #define STBI_FREE(Ptr)                 LmThirdPartyFree(Ptr)

@@ -19,11 +19,7 @@
 #include "World/Entity/Components/TransformComponent.h"
 #include "Scripting/DotNet/DotNetExport.h"
 
-//================================================================================================
-// World.Perception: AI perception queries + event injection (LuminaSharp.Perception). Every export takes
-// the opaque CWorld* (uint64) first; entities are entt ids (uint32). Game thread only. With no perceiver
-// component present each query simply reports "nothing" (never throws). See SPerceptionSystem for the model.
-//================================================================================================
+// With no perceiver component every query reports nothing rather than throwing.
 
 using namespace Lumina;
 using namespace Lumina::DotNet;
@@ -156,7 +152,7 @@ LUMINA_DOTNET_EXPORT(int32, Perception_HasLineOfSight)(uint64 World, uint32 From
     return (!Hit.has_value() || Hit->Entity == ToId(To)) ? 1 : 0;
 }
 
-// Queue a noise report: heard by every perceiver within HearingRadius * Loudness that detects the instigator's affiliation.
+// Heard by every perceiver in range that detects the instigator's affiliation.
 LUMINA_DOTNET_EXPORT(void, Perception_ReportNoise)(uint64 World, FVector3 Location, float Loudness, uint32 Instigator)
 {
     CWorld* W = AsWorld(World);
@@ -173,7 +169,7 @@ LUMINA_DOTNET_EXPORT(void, Perception_ReportNoise)(uint64 World, FVector3 Locati
     Perception::EnqueueStimulus(Perception::GetOrCreateState(ECS::GetWorldRegistry(*W)), Event);
 }
 
-// Queue a damage report: the victim immediately perceives its attacker (affiliation-agnostic).
+// The victim immediately perceives its attacker, regardless of affiliation.
 LUMINA_DOTNET_EXPORT(void, Perception_ReportDamage)(uint64 World, uint32 Victim, uint32 Instigator, FVector3 HitLocation, float Amount)
 {
     CWorld* W = AsWorld(World);
@@ -190,8 +186,7 @@ LUMINA_DOTNET_EXPORT(void, Perception_ReportDamage)(uint64 World, uint32 Victim,
     Perception::EnqueueStimulus(Perception::GetOrCreateState(ECS::GetWorldRegistry(*W)), Event);
 }
 
-// Make an entity perceivable: ensure an SAIStimuliSourceComponent, set its registered senses, add one
-// affiliation tag (0 = none). Authoring richer sets is done in the editor.
+// Authoring richer affiliation sets is done in the editor.
 LUMINA_DOTNET_EXPORT(void, Perception_RegisterSource)(uint64 World, uint32 Entity, uint32 AffiliationTagId, int32 SenseBits)
 {
     CWorld* W = AsWorld(World);
@@ -216,8 +211,7 @@ LUMINA_DOTNET_EXPORT(void, Perception_RegisterSource)(uint64 World, uint32 Entit
     }
 }
 
-// Ensure an SPerceptionComponent on the perceiver and add one tag to its DetectableTags affiliation filter
-// (only sources carrying a matching tag are then sensed; an empty filter senses everyone).
+// Only sources carrying a matching tag are sensed, and an empty filter senses everyone.
 LUMINA_DOTNET_EXPORT(void, Perception_AddDetectableTag)(uint64 World, uint32 Perceiver, uint32 TagId)
 {
     CWorld* W = AsWorld(World);

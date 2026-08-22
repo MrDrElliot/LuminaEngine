@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "UI/Tools/NodeGraph/Animation/AnimGraphNode.h"
 #include "AnimGraphNode_LayeredBlendPerBone.generated.h"
@@ -22,7 +22,7 @@ namespace Lumina
 
         /** Bone whose subtree the overlay affects (this bone + descendants), no authored mask needed.
          *  Takes priority over Mask Name; leave None to use a named mask instead. */
-        PROPERTY(Editable, Category = "Bone Mask", BonePicker)
+        PROPERTY(Editable, Category = "Bone Mask", Picker = "Bone")
         FName BoneName;
 
         /** When true the selected bone itself is affected; when false only its

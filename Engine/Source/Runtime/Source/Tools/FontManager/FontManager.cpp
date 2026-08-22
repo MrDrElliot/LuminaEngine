@@ -36,9 +36,7 @@ namespace Lumina
         DefaultFont->FontData   = Move(Bytes);
         DefaultFont->SourcePath = Path;
 
-        // Bake the glyph atlas now (CPU only). The GPU image is uploaded lazily on first render (the extract
-        // calls GetAtlasImage) -- uploading here at engine init is too early: the bindless texture table
-        // isn't ready, so the atlas would get an invalid resource id and never draw.
+        // Uploading at engine init is too early, so the atlas would take an invalid resource id.
         if (!BakeFontAtlas(DefaultFont))
         {
             LOG_ERROR("FontManager: failed to bake default font atlas from '{0}'", Path);

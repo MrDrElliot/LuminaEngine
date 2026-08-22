@@ -13,9 +13,7 @@
 
 namespace Lumina
 {
-    // STransformComponent is now READ-only: the scheduler's per-batch transform barrier resolves transforms,
-    // so this system only does pure cached GetWorld* reads (no inline resolve = no transform write). That lets
-    // it batch in PARALLEL with other transform readers. FindPath reads the navmesh component.
+    // STransformComponent is READ-only here, so this batches in parallel with other readers.
     FSystemAccess SPathFollowSystem::Access = FSystemAccess{}
         .Write<SPathFollowComponent, SCharacterControllerComponent>()
         .Read<STransformComponent, FRelationshipComponent, SNavMeshComponent>();
@@ -106,8 +104,7 @@ namespace Lumina
 
             const bool bMovedTarget = Math::Length(Goal - Comp.PathSourceTarget) > Comp.RepathDistance;
             const bool bIntervalElapsed = Comp.TimeSinceLastPath > Comp.RepathInterval;
-            // No CornerCount==0 trigger: an unreachable goal would otherwise re-query every tick. The
-            // first acquire is covered by bPathDirty; failed retries back off to the repath interval.
+            // No CornerCount==0 trigger, or an unreachable goal would re-query every tick.
             const bool bNeedRepath = Comp.bPathDirty || bMovedTarget || bIntervalElapsed;
 
             if (bNeedRepath)

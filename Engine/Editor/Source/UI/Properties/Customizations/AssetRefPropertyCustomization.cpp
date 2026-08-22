@@ -1,4 +1,4 @@
-#include "AssetRefPropertyCustomization.h"
+﻿#include "AssetRefPropertyCustomization.h"
 
 #include "imgui.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
@@ -16,7 +16,7 @@ namespace Lumina
         return MakeShared<FAssetRefPropertyCustomization>();
     }
 
-    EPropertyChangeOp FAssetRefPropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property)
+    EPropertyChangeOp FAssetRefPropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args)
     {
         FAssetRef* Ref = static_cast<FAssetRef*>(Property->GetValuePtr());
         if (Ref == nullptr)

@@ -49,17 +49,13 @@ namespace Lumina
         IO.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;   // ImTextureData create/update/destroy path
         IO.BackendFlags |= ImGuiBackendFlags_RendererHasViewports;  // we drive secondary-window swapchains
 
-        // Multi-viewport: ImGui strips ViewportsEnable on the first NewFrame unless both Platform and
-        // Renderer advertise viewport support. We render secondary viewports ourselves in
-        // RenderSecondaryViewports, so only the window-lifecycle hooks are registered;
-        // RenderPlatformWindowsDefault is intentionally not used.
+        // Secondary viewports render here, so the default platform-window render is intentionally unused.
         ImGuiPlatformIO& PlatformIO = ImGui::GetPlatformIO();
         PlatformIO.Renderer_CreateWindow  = &FVulkanImGuiRender::OnRendererCreateWindow;
         PlatformIO.Renderer_DestroyWindow = &FVulkanImGuiRender::OnRendererDestroyWindow;
         GImGuiBackend = this;
 
-        // The VS pulls ImDrawVert from the transient ring by device address; the shader hard-codes
-        // the field offsets, so pin the layout here.
+        // The shader hard-codes the field offsets, so the vertex layout is pinned here.
         static_assert(sizeof(ImDrawVert) == 20, "ImDrawVert layout drifted; ImGuiVert.slang must be updated.");
     }
 
@@ -83,8 +79,7 @@ namespace Lumina
         }
         PathTextures.clear();
 
-        // ImGui_ImplGlfw_Shutdown / DestroyContext tear down any remaining secondary windows, which
-        // calls OnRendererDestroyWindow back into us; keep GImGuiBackend valid until after.
+        // Teardown calls back into the destroy-window hook, so the backend stays valid until after.
         ImGui_ImplGlfw_Shutdown();
         ImPlot::DestroyContext();
         ImGui::DestroyContext();
@@ -110,8 +105,7 @@ namespace Lumina
         LUMINA_PROFILE_SCOPE();
         FRecursiveScopeLock Lock(Mutex);
 
-        // Create + upload the font atlas into the new texture heap, so its ImTextureID is a
-        // new-heap ResourceID the new-RHI ImGui shaders sample directly.
+        // So the atlas texture id is a new-heap resource id the ImGui shaders sample directly.
         for (ImTextureData* Tex : ImGui::GetPlatformIO().Textures)
         {
             if (Tex->Status == ImTextureStatus_WantCreate || Tex->Status == ImTextureStatus_WantUpdates)
@@ -228,14 +222,13 @@ namespace Lumina
             Args.Translate[0] = -1.0f - DrawData->DisplayPos.x * Args.Scale[0];
             Args.Translate[1] = -1.0f - DrawData->DisplayPos.y * Args.Scale[1];
             Args.SamplerIndex = (uint32)RHI::EStockSampler::LinearWrap;
-            Args.DisplayMode  = 0;      // IMGUI_DISPLAY_DIRECT: UI atlases and cooked textures are already encoded.
+            Args.DisplayMode  = 0;      // cooked textures are already encoded
             Args.Exposure     = 1.0f;
             Args.ArraySlice   = 0;
             Args.bIsArray     = 0;      // the overwhelming majority of ImGui draws are plain Texture2D
             Args.VertexAddr   = VB.Gpu;
 
-            // Resolved once: ImGuiX::BeginHDRPreview stamps this marker into the draw list, and we
-            // match on identity below.
+            // Resolved once, since the preview stamps this marker and the draws match on identity.
             const ImDrawCallback DisplayStateCallback = ImGuiX::Detail::GetDisplayStateCallback();
 
             RHI::CmdSetDepthStencilState(CL, NewDepthState.Get());
@@ -256,8 +249,7 @@ namespace Lumina
                     const ImDrawCmd& Cmd = List->CmdBuffer[c];
                     if (Cmd.UserCallback != nullptr)
                     {
-                        // Display-transform switch (HDR texture previews). It carries no geometry, so
-                        // it updates Args for the draws that follow and contributes nothing itself.
+                        // It carries no geometry, so it updates state for the draws that follow and contributes nothing.
                         if (Cmd.UserCallback == DisplayStateCallback &&
                             Cmd.UserCallbackData != nullptr &&
                             Cmd.UserCallbackDataSize == (int)sizeof(ImGuiX::Detail::FImGuiDisplayState))
@@ -302,8 +294,7 @@ namespace Lumina
             return;
         }
 
-        // The swapchain is built lazily on first render (RenderSecondaryViewport); the window-system
-        // surface is created here because GLFW's window calls are main-thread only.
+        // The surface is created here because the window-system calls are main-thread only.
         FImGuiViewportData* Data = IM_NEW(FImGuiViewportData)();
         Data->Window  = Viewport->PlatformHandle;
         Data->Surface = RHI::CreateSurface(Data->Window);
@@ -318,8 +309,7 @@ namespace Lumina
             return;
         }
 
-        // ImGui destroys the GLFW window (and its surface) right after this hook. Recording is
-        // synchronous, so only submitted GPU work can still reference the swapchain.
+        // Recording is synchronous, so only submitted GPU work can still reference the swapchain.
         if (RHI::IsValid(Data->Swapchain))
         {
             RHI::WaitDeviceIdle();
@@ -327,8 +317,7 @@ namespace Lumina
         }
         else
         {
-            // Never rendered, so nothing consumed it: the surface is still ours to destroy. (CreateSwapchain
-            // consumes the handle, so this must not run once a swapchain exists.)
+            // CreateSwapchain consumes the handle, so this must not run once a swapchain exists.
             RHI::FreeH(Data->Surface);
         }
 
@@ -364,8 +353,7 @@ namespace Lumina
 
         const FUIntVector2 RequestedExtent((uint32)ReqW, (uint32)ReqH);
 
-        // Create / resize the secondary swapchain, tracking the built extent so a clamped surface
-        // doesn't thrash recreation every frame.
+        // Tracks the built extent, so a clamped surface does not thrash recreation every frame.
         if (!RHI::IsValid(Data->Swapchain))
         {
             if (!RHI::IsValid(Data->Surface))
@@ -416,8 +404,7 @@ namespace Lumina
         Pass.RenderArea       = ImgExtent;
         RHI::CmdBeginRenderPass(CL, Pass);
 
-        // Clip rects project against the actual image, which can be smaller than the requested size
-        // when the surface clamped.
+        // The actual image can be smaller than requested when the surface clamped.
         RecordDrawLists(CL, DrawData, (float)ImgExtent.x, (float)ImgExtent.y);
 
         RHI::CmdEndRenderPass(CL);
@@ -434,8 +421,7 @@ namespace Lumina
             return (ImTextureID)(uint32)It->second.ResourceID();
         }
 
-        // Decode straight into the new texture heap (no old-RHI image), so the ImTextureID is a
-        // new-heap ResourceID the new-RHI ImGui shaders sample directly.
+        // Decoded straight into the new heap, so the texture id is one the ImGui shaders sample directly.
         TOptional<Import::Textures::FTextureImportResult> Result = Import::Textures::ImportTexture(Path, false);
         if (!Result.has_value() || Result->Pixels.empty())
         {

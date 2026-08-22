@@ -1,4 +1,4 @@
-#include "CoreTypeCustomization.h"
+﻿#include "CoreTypeCustomization.h"
 
 
 #include "imgui.h"
@@ -65,7 +65,7 @@ namespace Lumina
         }
     }
 
-    EPropertyChangeOp FClassPropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property)
+    EPropertyChangeOp FClassPropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args)
     {
         FClassProperty* ClassProperty = static_cast<FClassProperty*>(Property->Property);
 
@@ -92,7 +92,7 @@ namespace Lumina
         }
     }
 
-    EPropertyChangeOp FSubStructPropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property)
+    EPropertyChangeOp FSubStructPropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args)
     {
         FSubStructProperty* SubStructProperty = static_cast<FSubStructProperty*>(Property->Property);
 

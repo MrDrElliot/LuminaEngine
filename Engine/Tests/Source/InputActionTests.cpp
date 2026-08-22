@@ -9,14 +9,11 @@
 
 using namespace Lumina;
 
-// The Reflector forward-declares reflected enums at global scope as well as in Lumina, so an unqualified
-// EKey / EInputActionType is ambiguous under the using-directive above. Enum values are spelled out.
+// Enum values are spelled out, since the Reflector's global forward declarations make them ambiguous.
 
 namespace
 {
-    // One frame of the real input flow: whatever the caller pumped through OnEvent is evaluated into the
-    // context's action states, then EndFrame rolls Pressed->Held and clears the frame's motion. Mirrors
-    // FInputViewportRegistry::BeginFrame / EndFrame around the world update.
+    // One frame of the real input flow, mirroring BeginFrame and EndFrame around the world update.
     void Tick(FInputContext& Context, float DeltaSeconds = 1.0f / 60.0f)
     {
         FInputActionMap::Get().UpdateContext(Context, DeltaSeconds);
@@ -49,8 +46,7 @@ namespace
         return Binding;
     }
 
-    // Replaces the project's action list with this test's and rebuilds the map (which also bumps the
-    // serial, so every context re-sizes its state array on the next update).
+    // Rebuilds the map and bumps the serial, so contexts re-size their state arrays next update.
     void Author(const TVector<SInputAction>& Actions, const TVector<SInputMappingContext>& Layers = {})
     {
         GetMutableDefault<CInputSettings>()->Actions = Actions;
@@ -93,7 +89,7 @@ TEST(InputActionTests, DigitalEdgesFireExactlyOnce)
     EXPECT_TRUE(Map.IsActionPressed(Fire, Context));
     EXPECT_FALSE(Map.IsActionReleased(Fire, Context));
 
-    // Held: still down, but the press edge must not repeat.
+    // Held, so still down but the press edge must not repeat.
     Tick(Context);
     EXPECT_TRUE(Map.IsActionDown(Fire, Context));
     EXPECT_FALSE(Map.IsActionPressed(Fire, Context));
@@ -159,7 +155,7 @@ TEST(InputActionTests, TapOnlyOnAShortPress)
     Tick(Context, 0.1f);
     EXPECT_TRUE(Map.WasActionTapped(Interact, Context));
 
-    // Same action held well past TapTime: released, but not a tap.
+    // Same action held well past TapTime, so released but not a tap.
     PressKey(Context, Lumina::EKey::E);
     Tick(Context, 0.1f);
     for (int i = 0; i < 5; ++i)
@@ -245,7 +241,7 @@ TEST(InputActionTests, MouseSourceFeedsAnAxisWithSensitivity)
     EXPECT_FLOAT_EQ(Map.GetActionAxis(Look, Context), 5.0f);
     EXPECT_TRUE(Map.IsActionDown(Look, Context)) << "a moving axis reads as down";
 
-    // Motion is per frame: with no new movement the axis falls back to zero and reports its release.
+    // Motion is per frame, so with no new movement the axis falls back to zero.
     Tick(Context);
     EXPECT_FLOAT_EQ(Map.GetActionAxis(Look, Context), 0.0f);
     EXPECT_TRUE(Map.IsActionReleased(Look, Context));
@@ -358,17 +354,13 @@ TEST(InputActionTests, RebuildInvalidatesStaleContextState)
     Tick(Context);
     ASSERT_TRUE(Map.IsActionDown(FName("Fire"), Context));
 
-    // A settings change bumps the serial; the context's states are stale until its next update, and must
-    // not be read against the new indices in the meantime.
+    // A settings change bumps the serial, so stale states must not be read against new indices.
     const uint32 Before = Map.GetSerial();
     Author({ MakeDigital("Jump", Lumina::EKey::Space), MakeDigital("Fire", Lumina::EKey::F) });
     EXPECT_GT(Map.GetSerial(), Before);
     EXPECT_FALSE(Map.IsActionDown(FName("Fire"), Context)) << "stale state must not be read";
 
-    // The state array is rebuilt from scratch rather than remapped by name, so a key still physically
-    // down re-reports its press. Only an input-settings save can cause this, and re-arming a held action
-    // is the safe side of the trade: the alternative is reading a stale index and reporting the wrong
-    // action's state.
+    // The state array is rebuilt from scratch, so a key still down re-reports its press.
     Tick(Context);
     EXPECT_TRUE(Map.IsActionDown(FName("Fire"), Context));
     EXPECT_TRUE(Map.IsActionPressed(FName("Fire"), Context));
@@ -403,8 +395,7 @@ TEST(InputActionTests, HandleFollowsActionAcrossReorder)
     Tick(Context);
     ASSERT_TRUE(Map.GetActionState(Fire, Context).IsDown());
 
-    // Re-authoring moves Fire from index 1 to index 0. A handle caching the index alone would now read
-    // Jump; because it re-resolves from the NAME on a serial bump, it still answers for Fire.
+    // A handle caching the index alone would read Jump; re-resolving by NAME keeps Fire.
     Author({ MakeDigital("Fire", Lumina::EKey::F), MakeDigital("Jump", Lumina::EKey::Space) });
     Tick(Context);
     EXPECT_TRUE(Map.GetActionState(Fire, Context).IsDown());
@@ -494,7 +485,7 @@ TEST(InputActionTests, NonBlockingLayerOnlyAdds)
     PressKey(Context, Lumina::EKey::P);
     Tick(Context);
 
-    // bBlockLower false: the layer adds nothing to the gate, so gameplay underneath keeps firing.
+    // With bBlockLower false the layer adds nothing to the gate, so gameplay keeps firing.
     EXPECT_TRUE(Map.IsActionDown(FName("Photo"), Context));
     EXPECT_TRUE(Map.IsActionDown(FName("Fire"), Context));
 }

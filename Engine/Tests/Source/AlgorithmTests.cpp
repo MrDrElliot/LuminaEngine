@@ -113,7 +113,7 @@ namespace LuminaAlgorithmTests
 
     TEST(AlgoSort, DrivenIntoItsHeapsortFallbackStillSorts)
     {
-        // A median-of-three killer: quicksort degrades on it, so the depth limit has to catch it.
+        // A median-of-three killer, so the depth limit has to catch the quicksort degradation.
         constexpr size_t kCount = 4096;
         std::vector<int32> Values(kCount);
         for (size_t Index = 0; Index < kCount; ++Index)

@@ -9,11 +9,7 @@
 using namespace Lumina;
 using Json = nlohmann::json;
 
-// The JSON backend keeps a node stack that mirrors the record/array scope. Every scope is closed by an
-// RAII destructor, so anything that copies a scope handle closes it twice and the stack ends up one level
-// too shallow -- which silently writes the rest of the struct into the PARENT node. These tests pin the
-// shape of the produced JSON, not just the round-trip, because a collapsed stack still round-trips the
-// first few fields and only loses everything after the first nested container.
+// A copied scope handle closes twice and writes the rest of the struct into the PARENT node.
 
 namespace
 {
@@ -44,8 +40,7 @@ namespace
     }
 }
 
-// A struct whose fields come AFTER a nested array of structs. Those trailing fields are the first thing an
-// unbalanced scope loses.
+// Fields after a nested array are the first thing an unbalanced scope loses.
 TEST(StructuredArchive, StructWithNestedArrayKeepsEveryFieldInItsOwnNode)
 {
     const SInputAction Source = MakeAction("Move");
@@ -103,10 +98,7 @@ TEST(StructuredArchive, StructWithNestedArrayKeepsEveryFieldInItsOwnNode)
     }
 }
 
-// The CInputSettings::Actions shape: an array of structs that each carry their own array of structs. A
-// collapsed scope wrote the SECOND element of the inner array into the OUTER array instead. Driven through
-// the slot API rather than the settings CDO because the test harness stops short of the deferred
-// registration that attaches properties to a CClass.
+// An array of structs each carrying their own array of structs must stay nested.
 TEST(StructuredArchive, ArrayOfStructsWithNestedArraysStaysNested)
 {
     TVector<SInputAction> Actions;

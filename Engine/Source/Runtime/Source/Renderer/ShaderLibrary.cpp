@@ -18,8 +18,7 @@ namespace Lumina
         return Hash;
     }
 
-    // Salted and multiplied so a content hash cannot land on the small integers EntryHash produces for
-    // named shaders; the two share one map.
+    // Salted so a content hash cannot land on the small integers named shaders produce.
     static uint64 SpirvContentHash(ERHIShaderType Type, TSpan<const uint32> Spirv)
     {
         uint64 Hash = 0x9E3779B97F4A7C15ull ^ (uint64)Type;
@@ -51,8 +50,7 @@ namespace Lumina
             {
                 return It->second;
             }
-            // The slot was released since this hash was interned. Drop the dead mapping and mint a fresh
-            // entry rather than handing back a handle Resolve would reject.
+            // The slot was released since this hash was interned, so mint a fresh entry.
             HandlesByHash.erase(It);
         }
 
@@ -106,8 +104,7 @@ namespace Lumina
 
         if (--Entry->RefCount == 0)
         {
-            // Queued, never freed here: handles are dereferenced lock-free off the render thread, so the
-            // slot can only be recycled at a point with no lookup in flight.
+            // Queued rather than freed, since handles are dereferenced lock-free off the render thread.
             Library->PendingRelease.push_back(Handle);
         }
     }
@@ -133,8 +130,7 @@ namespace Lumina
                 FScopeLock Lock(Library->Mutex);
                 FShaderEntry* Entry = Library->Entries.TryGet(Handle);
 
-                // Re-acquired between Release and here (an identical recompile re-interned it), so it is
-                // live again and must not be freed.
+                // Re-acquired between Release and here by an identical recompile, so it is live again.
                 if (Entry == nullptr || Entry->RefCount != 0)
                 {
                     continue;
@@ -165,8 +161,7 @@ namespace Lumina
             return NameOrPath;
         }
 
-        // A committed shader's name index is the only mapping a packaged build has: the source tree it
-        // would otherwise search is stripped, and only the compiled cache ships.
+        // A packaged build strips the source tree, so the name index is its only mapping.
         if (FShaderLibrary* Library = GShaderLibrary)
         {
             FScopeLock Lock(Library->Mutex);
@@ -179,8 +174,7 @@ namespace Lumina
 
         const FString Resolved = Shaders::Resolve(FStringView(Str));
 
-        // Unresolved names are passed through rather than failed: Slang still resolves a bare module name
-        // against the same roots, so this degrades to a compile attempt instead of a hard miss.
+        // Slang still resolves a bare module name, so this degrades to a compile attempt.
         return Resolved.empty() ? NameOrPath : FName(Resolved);
     }
 
@@ -190,7 +184,7 @@ namespace Lumina
         const FStringView File = VFS::FileName(FullPath);
         if (File.empty() || File.size() == FullPath.size())
         {
-            return;   // not a path -- nothing to index it under
+            return;   // not a path, so there is nothing to index it under
         }
 
         const FName Name(File);
@@ -213,9 +207,7 @@ namespace Lumina
         LUMINA_MEMORY_SCOPE("Shaders");
         FShaderLibrary* Library = GShaderLibrary;
 
-        // Entries are keyed on the shader's virtual path, so the startup batch, a lookup by bare name and
-        // a lookup by full path all land on one entry -- and two roots shipping the same file name stay
-        // distinct instead of overwriting each other.
+        // Two roots shipping the same file name stay distinct rather than overwriting each other.
         const FName Path  = CanonicalPath(NameOrPath);
         const uint64 Hash = EntryHash(Path, Defines);
 
@@ -225,8 +217,7 @@ namespace Lumina
             FShaderEntry& Entry   = Library->Entries[Handle];
             if (Entry.IsValid())
             {
-                // Engine shaders are process-lifetime: the reference taken here is never released, which is
-                // what keeps them out of the release queue entirely.
+                // Engine shaders are process-lifetime, which keeps them out of the release queue entirely.
                 ++Entry.RefCount;
                 return Handle;
             }
@@ -404,8 +395,7 @@ namespace Lumina
         FShaderLibrary* Library = GShaderLibrary;
         FScopeLock Lock(Library->Mutex);
 
-        // Keyed by CONTENT, not caller name: most materials drive no WPO, so their geometry stages compile
-        // byte-identical. Content keying is also what makes sharing safe across a recompile.
+        // Content keying collapses identical geometry stages and stays safe across a recompile.
         const uint64 ContentHash = SpirvContentHash(Type, Spirv);
 
         uint64 Slot = ContentHash;
@@ -419,9 +409,7 @@ namespace Lumina
                                                     Spirv.size() * sizeof(uint32)) == 0;
                 if (bIdentical)
                 {
-                    // Generation deliberately NOT bumped: the bytecode is unchanged, so every pipeline already
-                    // built from this entry stays valid -- and the caller gets a reference to the SAME entry,
-                    // which is what collapses identical materials into one batch.
+                    // The bytecode is unchanged, so every pipeline built from this entry stays valid.
                     const FShaderH Handle = It->second;
                     ++Library->Entries[Handle].RefCount;
                     return Handle;

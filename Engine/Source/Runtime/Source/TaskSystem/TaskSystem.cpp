@@ -42,7 +42,7 @@ namespace Lumina
 
         using FRawThunk = void (*)(void* Ctx, uint32 Start, uint32 End, uint32 Thread);
 
-        // W worker jobs pulling ranges off one atomic cursor: 4x less queue/counter/fiber traffic than W*4 pre-split chunk jobs, at identical balance.
+        // Four times less queue and counter traffic than pre-split chunk jobs, at identical balance.
         struct FCursorFor
         {
             FRawThunk Thunk = nullptr;
@@ -64,7 +64,7 @@ namespace Lumina
                     return Ran;
                 }
                 const uint32 End = C.Num - Start < C.Grain ? C.Num : Start + C.Grain;
-                // Re-read the slot per range: the thunk may wait inside, and a resumed fiber can migrate.
+                // Re-read per range, since the thunk may wait inside and a resumed fiber can migrate.
                 C.Thunk(C.Ctx, Start, End, Jobs::GetWorkerIndex());
                 Ran += End - Start;
             }
@@ -75,9 +75,7 @@ namespace Lumina
             (void)RunCursorRanges(*static_cast<FCursorFor*>(Arg));
         }
 
-        // Measured per-item cost per call site, so a small loop stops fanning out without an element-count
-        // rule deciding it. A count cannot express the crossover: 16 navmesh tiles must fan out and 16 matrix
-        // copies must not. The thunk address is one instantiation per call site, which is the key.
+        // A count cannot express the crossover, and the thunk address is one instantiation per call site.
         constexpr uint32 kCostSlots         = 256;
         constexpr uint64 kSerialBudgetNanos = 25'000;   // below this, the fan-out costs more than the work
 
@@ -95,7 +93,7 @@ namespace Lumina
             return GCostTable[(Hash >> 56) % kCostSlots];
         }
 
-        // Zero when this site has no usable estimate: never measured, or the slot belongs to someone else.
+        // Zero when never measured, or when the slot belongs to someone else.
         FORCEINLINE uint64 EstimatedNanosPerItem(FRawThunk Thunk)
         {
             const FCostEntry& Slot = CostSlot(Thunk);
@@ -103,7 +101,7 @@ namespace Lumina
                  ? Slot.NanosPerItem.load(std::memory_order_relaxed) : 0;
         }
 
-        // Racy by design: a torn or stale estimate costs one mis-sized dispatch, never correctness.
+        // Racy by design, since a stale estimate costs one mis-sized dispatch and never correctness.
         void RecordItemCost(FRawThunk Thunk, uint32 ItemsRun, double Seconds)
         {
             if (ItemsRun == 0 || Seconds <= 0.0)
@@ -125,8 +123,7 @@ namespace Lumina
         }
 
 
-        // Fire-and-forget task backing Task::AsyncTask. Owns the user function + chunk storage and
-        // self-destructs once its counter drains.
+        // Owns the user function and chunk storage, and self-destructs once its counter drains.
         struct FAsyncContext
         {
             TaskSetFunction           Function;
@@ -177,8 +174,7 @@ namespace Lumina
                 {
                     const uint32 Len = Base + (c < Rem ? 1u : 0u);
                     Chunks[c] = FChunk{ this, Start, Start + Len };
-                    // Park-capable: AsyncTask runs arbitrary user work, including asset loads that block on a
-                    // fiber-aware lock. A ParallelFor chunk is compute and stays native.
+                    // AsyncTask runs arbitrary user work, while a ParallelFor chunk is compute and stays native.
                     Decls[c]  = Jobs::FJobDecl{ &FAsyncContext::RunChunk, &Chunks[c], "Task::Async", /*bMayPark*/ true };
                     Start += Len;
                 }
@@ -197,10 +193,7 @@ namespace Lumina
             const uint32 Hardware = Threading::GetNumThreads();
 
             Jobs::FConfig Config;
-            // A quarter of the machine stays free, not a fixed two cores. The process runs well past the pool
-            // (main, watchdog, log sink, audio device, GPU driver, CLR), and once the total crosses the logical
-            // processor count an empty fan-out measures 5.5us instead of 45ns: a >100x dispatch cliff, for
-            // linear throughput. Small per-frame fan-outs are what the engine does most, so they win the trade.
+            // Crossing the processor count turns an empty fan-out from nanoseconds into microseconds.
             Config.NumWorkerThreads   = Hardware > 4 ? Hardware - (Hardware / 4) - 1 : 1;
             if (const char* WorkersEnv = std::getenv("LUMINA_JOB_WORKERS"))
             {
@@ -230,8 +223,7 @@ namespace Lumina
     {
         const uint32 Grain = Task::ComputeCursorGrain(Num, MinRange);
 
-        // Priced from this site's last run: a loop that finishes inside the dispatch overhead runs here, on the
-        // caller, and submits nothing at all. Sites the table has never seen fan out and get priced by it.
+        // A loop finishing inside the dispatch overhead runs on the caller and submits nothing.
         const uint64 NanosPerItem = EstimatedNanosPerItem(Thunk);
         const bool   bTooSmall    = NanosPerItem != 0 && NanosPerItem * Num <= kSerialBudgetNanos;
 
@@ -258,8 +250,7 @@ namespace Lumina
 
         Jobs::FCounter* Counter = Jobs::AllocCounter(0);
         Jobs::RunJobs(Decl, K, ToJobPriority(Priority), Counter);
-        // The caller works the cursor too instead of parking for the whole fan-out. Timing its own slices is
-        // what prices the next call: the work happens either way, so the estimate costs two clock reads.
+        // The work happens either way, so timing the caller's own slices costs two clock reads.
         const double Start = PlatformTime::Seconds();
         const uint32 Ran   = RunCursorRanges(C);
         RecordItemCost(Thunk, Ran, PlatformTime::Seconds() - Start);

@@ -24,8 +24,7 @@ namespace Lumina::FutureDetail
     {
         FContinuationJob* Job = Memory::New<FContinuationJob>();
         Job->Fn = Move(Fn);
-        // Null counter: the job is fire-and-forget but still tracked by InFlight (so Task::WaitForAll
-        // drains continuations). The continuation owns any further sequencing via the future it sets.
+        // The continuation owns any further sequencing through the future it sets.
         Jobs::RunJob(&RunContinuationJob, Job, Jobs::EJobPriority::Normal, nullptr, "Future::Continuation");
     }
 }

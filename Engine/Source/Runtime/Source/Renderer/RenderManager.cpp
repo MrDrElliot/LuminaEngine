@@ -24,8 +24,7 @@ namespace Lumina
 {
     TMulticastDelegate<void, FVector2> FRenderManager::OnSwapchainResized;
 
-    // Not exported: every module reaches the renderer through Render()/TryRender(), so there is
-    // exactly one place that can be wrong about whether one exists.
+    // Not exported, so exactly one place can be wrong about whether a renderer exists.
     static FRenderManager* GRenderManager = nullptr;
 
     void Internal::SetRenderManager(FRenderManager* Manager)
@@ -59,8 +58,7 @@ namespace Lumina
         ImGuiRenderer = nullptr;
         #endif
 
-        // Before the material manager goes: there is no next frame to clear the extract gate, so anything
-        // still held would leak. Its slot writes need the manager still alive.
+        // There is no next frame to clear the extract gate, and slot writes need the manager alive.
         ReleaseQueue.FlushAll();
 
         MaterialManager = nullptr;
@@ -250,7 +248,7 @@ namespace Lumina
 
             #if WITH_EDITOR
             {
-                // Multi-viewport: render + present each dragged-out tool window into its own swapchain.
+                // Renders and presents each dragged-out tool window into its own swapchain.
                 LUMINA_PROFILE_SECTION_COLORED("ImGui Secondary Viewports", tracy::Color::SlateBlue4);
                 ImGuiRenderer->RenderSecondaryViewports();
             }

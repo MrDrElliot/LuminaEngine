@@ -367,7 +367,7 @@ namespace Lumina
         }
         else
         {
-            // By key rather than by a held iterator: the moved entry's fixup above can rehash the map.
+            // By key rather than a held iterator, since the fixup above can rehash the map.
             IndexByKey.erase(Key);
         }
 
@@ -701,9 +701,7 @@ namespace Lumina
                 Flags |= EInstanceFlags::CastShadow;
             }
 
-            // Skeletal primitives are Active now: CullInstances compacts them like everything else, taking
-            // their per-frame LOD ranges and pre-skin slices from FSkinnedFrameData. They used to be held
-            // inactive here and CPU-fed into the head of the visible buffer instead.
+            // Skeletal primitives are Active now, so CullInstances compacts them like everything else.
             const bool bAwaitingBones = Prim.Source == EPrimitiveSource::SkeletalMesh
                                      && Prim.BoneCount == 0u;
 
@@ -730,12 +728,9 @@ namespace Lumina
             OutStatic.CustomData              = Prim.CustomData;
             OutStatic.MaterialIndex           = Binding.MaterialIndex;
             OutStatic.EntityID                = Prim.EntityID;
-            // Stable for as long as the primitive holds its skeleton, which is what lets it live in a
-            // payload that only re-uploads on a re-bind. 0 for anything unskinned; the shaders read it
-            // only under EInstanceFlags::Skinned.
+            // Stable while the primitive holds its skeleton, so it lives in a re-bind-only payload.
             OutStatic.BoneOffset              = 0u;
-            // Still per-frame: assigned from a global budget every frame, so it cannot be stable here.
-            // Phase 2 moves the claim onto the GPU and drops these two fields from this payload.
+            // Still per-frame, since this is assigned from a global budget every frame.
             OutStatic.SkinnedVertexBase       = 0u;
             OutStatic.ShadowSkinnedVertexBase = 0u;
 
@@ -884,15 +879,7 @@ namespace Lumina
         return false;
     }
 
-    // The memo above is keyed on a resolve handle, and dynamic meshes have none. They also re-resolve
-    // their materials IN PLACE, into the same FDynamicMeshRenderData::Surfaces vector, so not one of the
-    // three identity fields RefreshPrimitiveData compares can move when a material recompiles: the
-    // vector's address is unchanged, the handle is always INVALID_MESH_RESOLVE_HANDLE, and the generation
-    // is always 0. Their bindings have to be compared against the surfaces themselves.
-    //
-    // Everything BindSurfaces would produce is compared here except InstanceSlot (the rebind reallocates
-    // it) and SurfaceDescIndex: the LOD table half of a surface is written only by Commit, which always
-    // publishes a fresh FDynamicMeshRenderData, so a change there already moves the Surfaces pointer.
+    // Dynamic meshes re-resolve in place, so bindings must be compared against the surfaces.
     bool FScenePrimitiveSet::BindingsMatchSurfaces(uint32 Index, const TVector<FResolvedSurface>& Surfaces) const
     {
         const FScenePrimitive& Prim = Primitives[Index];
@@ -912,9 +899,7 @@ namespace Lumina
                 return false;
             }
 
-            // Compares the batch's KEY rather than calling FindOrAddBatch: this runs on primitives that
-            // have usually not changed, and FindOrAdd would mint a batch on the miss that BindSurfaces is
-            // about to mint anyway.
+            // Compares the batch's KEY, since FindOrAddBatch would mint one on the miss.
             if (!(Batches.Get(Have.BatchIndex).Key == Want.BatchKey)
              || Have.MaterialIndex         != Want.MaterialIdx
              || Have.MaterialFlags         != Want.MaterialFlags
@@ -1074,9 +1059,7 @@ namespace Lumina
                     Base     = C;
                     LiveMesh = (const void*)C->SkeletalMesh.Get();
 
-                    // Claimed here rather than at bind: the slice is keyed to the SKELETON, so it must
-                    // survive a material re-bind and must be re-sized when the mesh itself changes. Serial
-                    // by construction -- only the structural sync path reaches this.
+                    // Claimed here rather than at bind, since the slice is keyed to the SKELETON.
                     const CSkeletalMesh*     SkelMesh = C->SkeletalMesh.Get();
                     const FSkeletonResource* SkelRes  = (SkelMesh != nullptr && SkelMesh->Skeleton.IsValid())
                                                       ? SkelMesh->Skeleton->GetSkeletonResource()
@@ -1149,9 +1132,7 @@ namespace Lumina
                 Prim.ResolveGeneration = 0;
                 bResolved              = true;
 
-                // The identity test below is blind here -- see BindingsMatchSurfaces. Without this, a
-                // material recompile re-resolved the surfaces (new FShaderH, new batch key) and the
-                // primitive kept drawing through its old binding, i.e. last build's shader.
+                // The identity test is blind here; see BindingsMatchSurfaces.
                 bContentChanged = !BindingsMatchSurfaces(Index, Data->Surfaces);
             }
             break;
@@ -1249,7 +1230,7 @@ namespace Lumina
         }
         else if (EnumHasAnyFlags(Flags, EPrimitiveDirty::Transform))
         {
-            // Transform-only: rebuild the world sphere and restamp this primitive's instance slots.
+            // Transform-only, so rebuild the world sphere and restamp this primitive's instance slots.
             RebuildWorldBounds(Index);
             RefreshInstances(Index);
             ++StructureGeneration;
@@ -1262,7 +1243,7 @@ namespace Lumina
     {
         (void)Flags;
 
-        // Counted, not scoped -- see SyncEntity.
+        // Counted, not scoped; see SyncEntity.
         ++SyncStats.SyncFoliageCalls;
 
         SFoliageComponent* Foliage = (Registry.valid(Entity) && Pools.Foliage->contains(Entity))
@@ -1283,7 +1264,7 @@ namespace Lumina
 
         uint32& OldCount = FoliageInstanceCount[Entity];
 
-        // Shrink: drop the tail. Grow and overlap are handled by the write loop below.
+        // Shrink drops the tail; grow and overlap are handled by the write loop below.
         for (uint32 i = NewCount; i < OldCount; ++i)
         {
             RemovePrimitive(MakeKey(Entity, EPrimitiveSource::Foliage, i));
@@ -1394,7 +1375,7 @@ namespace Lumina
         LUMINA_PROFILE_SCOPE();
 
         Batches.Reset();
-        // Paired with Batches.Reset(), always: a reset renumbers every batch index the memo cached.
+        // Always paired with Batches.Reset(), which renumbers every batch index the memo cached.
         BindingMemoByHandle.clear();
         Primitives.clear();
         Bounds.clear();
@@ -1520,7 +1501,7 @@ namespace Lumina
     {
         LUMINA_PROFILE_SECTION("Sync/Coalesce");
 
-        // Stamping beats clearing: the table is sized by the entity index space, not by the drain.
+        // Stamping beats clearing, since the table is sized by the entity index space.
         ++CoalesceStamp;
         CoalescedScratch.clear();
         CoalescedScratch.reserve(DrainScratch.size());
@@ -1788,7 +1769,7 @@ namespace Lumina
         {
             for (uint32 RecordIndex : TransformRecords)
             {
-                // nullptr sink: straight onto the shared list, thresholds and all. Nothing to merge.
+                // A nullptr sink goes straight onto the shared list, thresholds and all.
                 ApplyTransformRecord(Pools, RecordIndex, nullptr);
             }
             return;
@@ -1839,7 +1820,7 @@ namespace Lumina
 
         if (Tracker.ConsumeFullRescan())
         {
-            // Drain and discard: the rescan supersedes every queued entry.
+            // Drain and discard, since the rescan supersedes every queued entry.
             DrainScratch.clear();
             Tracker.Drain(DrainScratch);
             DrainScratch.clear();
@@ -1954,8 +1935,7 @@ namespace Lumina
         LUMINA_PROFILE_VALUE("Sync/Primitives",       (int64)Primitives.size());
     }
 
-    // Every active slot contributes its surface's LARGEST LOD, because a view may pick any of them.
-    // Summing that is a true bound on one view's appends, whatever the camera does.
+    // Every active slot contributes its surface's LARGEST LOD, a true bound on one view's appends.
     void FScenePrimitiveSet::Reset(FEntityRegistry* Registry)
     {
         Primitives.clear();
@@ -1986,7 +1966,7 @@ namespace Lumina
         MaxSurfaceDescMeshlets = 0;
         FoliageInstanceCount.clear();
         Batches.Reset();
-        // Paired with Batches.Reset(), always: a reset renumbers every batch index the memo cached.
+        // Always paired with Batches.Reset(), which renumbers every batch index the memo cached.
         BindingMemoByHandle.clear();
         bResolveTableChanged = false;
         ++StructureGeneration;

@@ -8,16 +8,11 @@
 #include "Scripting/DotNet/DotNetExport.h"
 #include "Scripting/DotNet/LayoutRegistry.h"
 
-// Hand-written native -> C# bindings for the entire RHI (Runtime/Renderer/RHI.h). Each export mirrors a
-// C++ RHI:: free function 1:1 and matches the signature the [NativeCall] generator emits on the C# side
-// (LuminaSharp.Rendering.RHI / RHICore): handles + GPUPtr cross as their 8-byte values, blittable descriptor
-// structs by value, enums as int32, C++ bool as uint8, spans as (ptr, count), strings as (ptr, len). The
-// C# layouts are byte-for-byte mirrors, so span/struct pointers are reinterpret_cast straight through.
+// The C# layouts are byte-for-byte mirrors, so span and struct pointers cast straight through.
 
 using namespace Lumina;
 
-// Wire structs used in the extern "C" signatures below live at file scope (external linkage), not in an
-// anonymous namespace, so they are well-formed as C-linkage parameter/return types.
+// At file scope with external linkage, so they are well-formed as C-linkage parameter types.
 
 // Scalar mirror of FRasterDesc (no ColorTargets span); matches the C# FRasterDesc wire struct (8 bytes).
 struct FRasterWire
@@ -59,7 +54,7 @@ struct FMemoryHeapWire
 
 namespace
 {
-    // Two-pass string return: (null, 0) sizes; (buffer, capacity) fills. Returns the full byte length.
+    // A two-pass string return, sizing with a null buffer then filling, returning the byte length.
     int32 RHICopyOut(const FString& Value, char* Buffer, int32 Capacity)
     {
         const int32 Len = (int32)Value.size();
@@ -97,23 +92,14 @@ namespace
     }
 }
 
-//================================================================================================
-// Device
-//
-// The device lifetime (CreateDevice/FreeDevice), the per-frame loop (TickFrame), the window
-// swapchain/present, and the device-wide stall (WaitDeviceIdle) are all owned by the engine and
-// deliberately NOT exposed to scripts. The managed RHI surface can only query the device and
-// synchronize its own submitted work with timeline semaphores.
-//================================================================================================
+// The managed surface can only query the device and synchronize its own submitted work.
 
 LUMINA_DOTNET_EXPORT(void, RHI_WaitSemaphore)(RHI::FSemaphoreH Semaphore, uint64 Value)
 {
     RHI::WaitSemaphore(Semaphore, Value);
 }
 
-//================================================================================================
-// Memory
-//================================================================================================
+// Memory.
 
 LUMINA_DOTNET_EXPORT(RHI::GPUPtr, RHI_Malloc)(uint64 Size, uint64 Alignment, int32 Type)
 {
@@ -131,9 +117,7 @@ LUMINA_DOTNET_EXPORT(void, RHI_FreeTexture)(RHI::FTextureH H)           { RHI::F
 LUMINA_DOTNET_EXPORT(void, RHI_FreeTextureHeap)(RHI::FTextureHeapH H)   { RHI::FreeH(H); }
 LUMINA_DOTNET_EXPORT(void, RHI_FreeDepthStencil)(RHI::FDepthStencilH H) { RHI::FreeH(H); }
 
-//================================================================================================
-// Resources
-//================================================================================================
+// Resources.
 
 LUMINA_DOTNET_EXPORT(RHI::FDepthStencilH, RHI_CreateDepthStencil)(RHI::FDepthStencilDesc Desc)
 {
@@ -182,9 +166,7 @@ LUMINA_DOTNET_EXPORT(RHI::FPipelineH, RHI_CreateComputePipeline)(
         TSpan<const RHI::FSpecializationConstant>(Constants, (size_t)(NumConstants > 0 ? NumConstants : 0)));
 }
 
-//================================================================================================
-// Texture heap
-//================================================================================================
+// Texture heap.
 
 LUMINA_DOTNET_EXPORT(uint32, RHI_HeapWriteTexture)(RHI::FTextureHeapH Heap, RHI::FTextureH Texture)
 {
@@ -223,9 +205,7 @@ LUMINA_DOTNET_EXPORT(RHI::FHeapTextureInfo, RHI_HeapTextureAt)(RHI::FTextureHeap
     return RHI::FHeapTextureInfo{};
 }
 
-//================================================================================================
-// Command lists / submission
-//================================================================================================
+// Command lists and submission.
 
 LUMINA_DOTNET_EXPORT(RHI::FCmdListH, RHI_OpenCommandList)(int32 Type)
 {
@@ -253,9 +233,7 @@ LUMINA_DOTNET_EXPORT(void, RHI_SubmitLists)(int32 Queue,
         TSpan<const RHI::FSemaphoreInfo>(Signals, (size_t)(NumSignals > 0 ? NumSignals : 0)));
 }
 
-//================================================================================================
-// Device / memory introspection
-//================================================================================================
+// Device and memory introspection.
 
 LUMINA_DOTNET_EXPORT(int32, RHI_GetDeviceName)(char* Buffer, int32 Capacity)
 {
@@ -309,9 +287,7 @@ LUMINA_DOTNET_EXPORT(FMemoryHeapWire, RHI_GetMemoryHeap)(int32 HeapIndex)
     return Out;
 }
 
-//================================================================================================
-// Core (RHI::Core)
-//================================================================================================
+// Core.
 
 LUMINA_DOTNET_EXPORT(RHI::FTextureHeapH, RHI_CoreGetGlobalHeap)()
 {
@@ -341,9 +317,7 @@ LUMINA_DOTNET_EXPORT(RHI::FPipelineH, RHI_CoreCreateComputePipeline)(const char*
     return RHI::Core::CreateComputePipeline(RHIName(Compute, Len));
 }
 
-//================================================================================================
-// Commands (hot path; SuppressGCTransition on the C# side)
-//================================================================================================
+// Commands, a hot path with the GC transition suppressed on the C# side.
 
 LUMINA_DOTNET_EXPORT(void, RHI_CmdMemcpy)(RHI::FCmdListH CL, RHI::GPUPtr Dest, RHI::GPUPtr Source, uint64 Size)
 {
@@ -486,10 +460,7 @@ LUMINA_DOTNET_EXPORT(void, RHI_CmdBeginMarker)(RHI::FCmdListH CL, const char* Na
 
 LUMINA_DOTNET_EXPORT(void, RHI_CmdEndMarker)(RHI::FCmdListH CL) { RHI::CmdEndMarker(CL); }
 
-//================================================================================================
-// Layout guards. The C# blittable mirrors (LuminaSharp.Rendering) are built against these exact native
-// sizes; if an RHI struct changes here, the matching C# struct must change in lockstep or the ABI breaks.
-//================================================================================================
+// The C# mirrors are built against these exact sizes, so both must change in lockstep.
 
 static_assert(sizeof(FUIntVector2) == 8,  "FUIntVector2 mirror");
 static_assert(sizeof(FUIntVector3) == 12, "FUIntVector3 mirror");
@@ -518,10 +489,7 @@ static_assert(sizeof(RHI::FTextureH) == 8 && sizeof(RHI::GPUPtr) == 8, "RHI hand
 // The pipeline raster wire struct must match the padded C# FRasterDesc (8 bytes).
 static_assert(sizeof(FRasterWire) == 8, "FRasterDesc wire mirror");
 
-//================================================================================================
-// Layout registry: report each RHI mirror's native sizeof to the managed LayoutValidator (keys match the
-// C# [NativeLayout("...")] on each LuminaSharp.Rendering type). A drift on either side fails C# bootstrap.
-//================================================================================================
+// Reports each mirror's native size to the managed validator, and a drift fails bootstrap.
 
 LE_REGISTER_LAYOUT("RHI::FPipelineH",                   RHI::FPipelineH);
 LE_REGISTER_LAYOUT("RHI::FTextureH",                    RHI::FTextureH);
@@ -549,6 +517,6 @@ LE_REGISTER_LAYOUT("RHI::FHeapTextureInfo",             RHI::FHeapTextureInfo);
 LE_REGISTER_LAYOUT("RHI::FTransientAlloc",              RHI::FTransientAlloc);
 LE_REGISTER_LAYOUT("RHI::FGPUMemoryHeapStats",          RHI::FGPUMemoryHeapStats);
 
-// Wire structs (no public native counterpart): the C# FRasterDesc / FGPUMemoryTotals mirror these.
+// Wire structs with no public native counterpart, mirrored on the C# side.
 LE_REGISTER_LAYOUT("RHI::FRasterDesc",                  FRasterWire);
 LE_REGISTER_LAYOUT("RHI::FGPUMemoryTotals",             FMemoryTotalsWire);

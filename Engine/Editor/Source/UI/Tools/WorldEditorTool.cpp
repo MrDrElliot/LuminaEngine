@@ -45,7 +45,7 @@
 #include "SplineEditMode.h"
 #include "World/Entity/Components/TerrainComponent.h"
 #include "UI/Tools/EditorEntityUtils.h"
-#include "UI/Properties/EntityPropertyContext.h"
+#include "UI/Properties/PropertyEditContexts.h"
 #include "World/WorldManager.h"
 #include "World/Entity/EntityUtils.h"
 #include "World/Entity/Components/TransformComponent.h"
@@ -469,7 +469,7 @@ namespace Lumina
                 }
 
                 // Attach to a socket on the parent's mesh (one click; adds/retargets the attachment component).
-                SocketPickerContext::FSocketPickerData SocketData;
+                FSocketEditContext SocketData;
                 BuildSocketPickerData(Data.Entity, SocketData);
                 const SSocketAttachmentComponent* Attachment = Registry.try_get<SSocketAttachmentComponent>(Data.Entity);
 
@@ -2049,14 +2049,14 @@ namespace Lumina
             bool bOverImGuizmo = bImGuizmoUsedOnce ? ImGuizmo::IsOver() : false;
 
             // Intercepted here so the click assigns the reference instead of selecting.
-            if (IsEntityPickRequested())
+            if (PickCtx.Broker->IsRequested())
             {
                 ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                 ImGui::SetTooltip(LE_ICON_EYEDROPPER " Click an entity to assign (Esc to cancel)");
 
                 if (ImGui::IsKeyPressed(ImGuiKey_Escape) || ImGui::IsMouseClicked(ImGuiMouseButton_Right))
                 {
-                    CancelEntityPick();
+                    PickCtx.Broker->Cancel();
                 }
                 else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
                 {
@@ -2064,7 +2064,7 @@ namespace Lumina
                     Hit = ResolveSelectionRootForViewportPick(ECS::GetWorldRegistry(*World), Hit);
                     if (Hit != entt::null)
                     {
-                        FulfillEntityPick(static_cast<uint32>(entt::to_integral(Hit)));
+                        PickCtx.Broker->Fulfill(static_cast<uint32>(entt::to_integral(Hit)));
                     }
                 }
             }
@@ -2103,7 +2103,7 @@ namespace Lumina
             }
 
             // Unlike the context menu this DOES yield to the gizmo, which owns the pointer over a handle.
-            if (!IsEntityPickRequested() && !bOverImGuizmo)
+            if (!PickCtx.Broker->IsRequested() && !bOverImGuizmo)
             {
                 ImVec2 LeftDragDelta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
                 float LeftDragDistance = sqrtf(LeftDragDelta.x * LeftDragDelta.x + LeftDragDelta.y * LeftDragDelta.y);

@@ -77,6 +77,7 @@
 #include "Platform/CrashReporter.h"
 #include "Platform/Process/PlatformProcess.h"
 #include "Properties/Customizations/CoreTypeCustomization.h"
+#include "Properties/NamePicker.h"
 #include "Properties/Customizations/EntityScriptComponentCustomization.h"
 #include "Properties/Customizations/CurveGradientCustomization.h"
 #include "Properties/Customizations/CustomPrimitiveDataCustomization.h"
@@ -475,6 +476,8 @@ namespace Lumina
 
         RegisterBuiltinEditorTools();
         RegisterBuiltinAssetActions();
+
+        NamePicker::RegisterBuiltInSources();
 
         PropertyCustomizationRegistry = Memory::New<FPropertyCustomizationRegistry>();
         PropertyCustomizationRegistry->RegisterPropertyCustomization(TBaseStructure<FVector2>::Get()->GetName(), []

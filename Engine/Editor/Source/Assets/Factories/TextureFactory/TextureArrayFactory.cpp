@@ -101,7 +101,7 @@ namespace Lumina
                 // A streamed source has holes the copy cannot fill, so the array would depend on what the streamer did.
                 Source->MakeStreamedMipsResident();
 
-                // COPIED, not moved, so the source texture keeps owning its pixels and stays usable on its own.
+                // copied, so the source texture keeps owning its pixels and stays usable on its own.
                 for (uint32 Mip = 0; Mip < SrcMips; ++Mip)
                 {
                     const FTextureResource::FMip& SrcMip = Source->TextureResource->Mips[Mip];
@@ -118,7 +118,7 @@ namespace Lumina
 
                     AssembledMips.push_back(SrcMip);
 
-                    // The copy carries the SOURCE's BulkRef, which addresses the wrong package, so clear it here.
+                    // The copy carries the source's BulkRef, which addresses the wrong package, so clear it here.
                     AssembledMips.back().BulkRef = FBulkDataRef{};
                 }
                 continue;

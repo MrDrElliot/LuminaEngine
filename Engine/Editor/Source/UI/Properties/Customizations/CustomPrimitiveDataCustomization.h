@@ -13,7 +13,7 @@ namespace Lumina
 
         static TSharedPtr<FCustomPrimDataPropertyCustomization> MakeInstance();
         
-        EPropertyChangeOp DrawProperty(const TSharedPtr<FPropertyHandle>& Property) override;
+        EPropertyChangeOp DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args) override;
         
         void UpdatePropertyValue(const TSharedPtr<FPropertyHandle>& Property) override;
 

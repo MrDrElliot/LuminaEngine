@@ -24,8 +24,7 @@ TEST(HandleAllocator, HandsOutLowestFreeSlot)
     EXPECT_EQ(A.GetNumAllocated(), 8u);
 }
 
-// The packing property the whole design exists for: a hole anywhere must be refilled before the
-// occupied range grows, or the region creeps upward and every sweep over it gets longer.
+// A hole must be refilled before the occupied range grows, or every sweep gets longer.
 TEST(HandleAllocator, RefillsHolesBeforeExtending)
 {
     FHandleAllocator A(256);
@@ -44,8 +43,7 @@ TEST(HandleAllocator, RefillsHolesBeforeExtending)
     EXPECT_EQ(A.Alloc(), 100u);   // only now does it extend
 }
 
-// The search hint is what makes allocation cheap; a free below it must pull it back or that slot is
-// invisible until the region wraps. This is the bug the hint invites.
+// A free below the search hint must pull it back, or that slot is invisible until wrap.
 TEST(HandleAllocator, FreeBelowTheHintIsStillFound)
 {
     FHandleAllocator A(4096);
@@ -74,9 +72,7 @@ TEST(HandleAllocator, ExhaustionReturnsInvalidAndDoesNotWrap)
     EXPECT_EQ(A.Alloc(), 31u);
 }
 
-// A capacity that is not a multiple of 64 leaves padding bits in the last word. They are pre-marked
-// allocated so the scan cannot hand them out -- if that broke, this returns a slot past the end and the
-// caller writes a descriptor outside the heap.
+// Padding bits in the last word are pre-marked allocated so the scan cannot hand them out.
 TEST(HandleAllocator, NeverHandsOutPaddingPastCapacity)
 {
     FHandleAllocator A(100);
@@ -103,7 +99,7 @@ TEST(HandleAllocator, MarkAllocatedClaimsAPublishedSlot)
 
     EXPECT_TRUE(A.MarkAllocated(200));
     EXPECT_TRUE(A.IsAllocated(200));
-    EXPECT_FALSE(A.MarkAllocated(200));          // already taken -- the repoint case
+    EXPECT_FALSE(A.MarkAllocated(200));          // already taken, the repoint case
     EXPECT_FALSE(A.MarkAllocated(999));          // out of range
 
     EXPECT_NE(A.Alloc(), 200u);                  // never handed out twice
@@ -181,8 +177,7 @@ TEST(HandleAllocator, ResetReclaimsEverything)
     EXPECT_EQ(A.Alloc(), 0u);
 }
 
-// Mirrors the bindless heap's actual usage: churn a mostly-full region and confirm every live slot is
-// unique and in range. A duplicate here is two textures sharing one descriptor.
+// Churn a mostly-full region; a duplicate here is two textures sharing one descriptor.
 TEST(HandleAllocator, ChurnKeepsSlotsUniqueAndInRange)
 {
     FHandleAllocator A(1024);

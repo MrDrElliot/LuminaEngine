@@ -23,8 +23,7 @@ namespace Lumina
             RebuildTree(Context);
         }
 
-        // Apply a pending reveal now the tree is final. Consumed either way, so a target that no
-        // longer exists (the folder changed under us) simply lapses.
+        // Consumed either way, so a target that no longer exists simply lapses.
         int32 RevealIndex = PendingRevealIndex;
         PendingRevealIndex = -1;
         if (RevealIndex >= 0 && RevealIndex < (int32)ListItems.size())
@@ -52,13 +51,11 @@ namespace Lumina
 
         const int ScrollToRow = (RevealIndex >= 0) ? (RevealIndex / ItemsPerRow) : -1;
 
-        // Virtualize by row: the clipper measures one row's height and only submits visible rows,
-        // so a folder with thousands of files costs the same as one screenful.
+        // A folder with thousands of files costs the same as one screenful.
         ImGuiListClipper Clipper;
         Clipper.Begin(RowCount);
 
-        // The revealed row is almost always off-screen (that's the point), so force the clipper to
-        // submit it -- SetScrollHereY needs the row's real item rect.
+        // The revealed row is almost always off-screen, and scrolling needs its real item rect.
         if (ScrollToRow != -1)
         {
             Clipper.IncludeItemByIndex(ScrollToRow);
@@ -90,8 +87,7 @@ namespace Lumina
 
         ImGui::PopStyleVar();
 
-        // After every tile: the start test needs IsAnyItemHovered() to be meaningful, and the band should
-        // paint over the tiles rather than under them.
+        // The start test needs hover to be meaningful, and the band paints over the tiles.
         UpdateMarquee(Context);
 
         HandleSelectionKeys(Context);
@@ -114,14 +110,12 @@ namespace Lumina
             return;
         }
 
-        // Draw the label as a raw draw-list primitive (not an ImGui item) so the cell's logical
-        // height stays fixed regardless of name length, keeping the row clipper aligned.
+        // A raw draw-list primitive, so the cell's logical height stays fixed regardless of name length.
         const FStringView Name = Item->GetCachedDisplayName();
         const char* NameBegin  = Name.data();
         const char* NameEnd    = Name.data() + Name.size();
 
-        // Long names get an ellipsis rather than being sliced mid-glyph by the clip rect below. The
-        // buffer must outlive the AddText call, so it lives out here.
+        // The buffer must outlive the draw call, so it lives out here rather than in the branch.
         char Truncated[256];
 
         ImGuiX::Font::PushFont(ImGuiX::Font::EFont::SmallBold);
@@ -134,10 +128,7 @@ namespace Lumina
             static constexpr char Ellipsis[]  = "...";
             constexpr size_t      EllipsisLen = sizeof(Ellipsis) - 1;
 
-            // Longest prefix that still fits the band once the ellipsis is appended. Bisected rather
-            // than walked, and measured through CalcTextSize so ImGui's own wrapping decides the fit --
-            // reproducing its line breaks by hand is what gets this subtly wrong. Only names that
-            // actually overflow pay for the handful of extra measurements.
+            // Measured through ImGui's own text sizing, since reproducing its line breaks by hand gets it wrong.
             size_t Low  = 0;
             size_t High = Math::Min(Name.size(), sizeof(Truncated) - EllipsisLen - 1);
             while (Low < High)
@@ -184,12 +175,9 @@ namespace Lumina
         // Reserve the fixed label band so the group (and thus every row) has a uniform height.
         ImGui::Dummy(ImVec2(TileSize, GLabelHeight));
 
-        // Type line. Reserved from the context rather than from whether THIS item has one, so a folder
-        // among assets does not shorten its own cell and break the row grid.
+        // Reserved from the context, so a folder among assets does not shorten its cell and break the grid.
         if (Context.bShowTypeLabels)
         {
-            // Band height comes from the font, not a constant: the editor's UI scale changes the glyph
-            // size but would leave a hardcoded band behind, clipping the line it is supposed to hold.
             // Measured for every item, label or not, so the band stays uniform across a row.
             ImGuiX::Font::PushFont(ImGuiX::Font::EFont::Small);
             ImFont*     TypeFont      = ImGui::GetFont();
@@ -217,8 +205,7 @@ namespace Lumina
 
         ImGui::EndGroup();
 
-        // Rubber-band hit test against the whole cell, evaluated every frame of the drag rather than only
-        // on entry, so shrinking the band gives items back instead of leaving them stuck selected.
+        // Evaluated every frame of the drag, so shrinking the band gives items back.
         ImVec2 MarqueeMin, MarqueeMax;
         if (GetMarqueeScreenRect(MarqueeMin, MarqueeMax))
         {
@@ -262,7 +249,7 @@ namespace Lumina
         const bool bEscapePressed = ImGui::IsKeyPressed(ImGuiKey_Escape, false);
         const float FrameHeight   = ImGui::GetItemRectSize().y;
 
-        // Match the fixed label band exactly: the field, one item spacing, then filler.
+        // Matches the fixed label band exactly, the field, one item spacing, then filler.
         const float Spacing = ImGui::GetStyle().ItemSpacing.y;
         const float Filler  = Math::Max(1.0f, GLabelHeight - Spacing - FrameHeight);
         ImGui::Dummy(ImVec2(TileSize, Filler));
@@ -297,8 +284,7 @@ namespace Lumina
 
     void FTileViewWidget::BeginInlineRename(FTileViewItem* Item)
     {
-        // One asset at a time. A rename field over a multi-selection either renames the wrong thing or
-        // silently applies one name to many files; refusing is the only safe reading.
+        // A rename over a multi-selection renames the wrong thing, so refusing is the only safe reading.
         if (Item != nullptr && Selections.size() > 1)
         {
             return;
@@ -330,7 +316,7 @@ namespace Lumina
     {
         FTileViewItem* Item = RenamingItem;
 
-        // Clear first: the callback usually dirties the tree, which frees every item.
+        // Clear first, since the callback usually dirties the tree and frees every item.
         RenamingItem = nullptr;
         bRenameFocusPending = false;
         bRenameWasActive = false;
@@ -387,22 +373,19 @@ namespace Lumina
 
     void FTileViewWidget::HandleSelectionKeys(const FTileViewContext& Context)
     {
-        // Typing must not fire item actions, and a rubber-band drag owns input. WantTextInput covers
-        // any focused text field, including the search box, not just this widget's rename.
+        // WantTextInput covers any focused field, including the search box, not just this rename.
         if (RenamingItem != nullptr || bMarqueeActive || ImGui::GetIO().WantTextInput)
         {
             return;
         }
 
-        // Only the focused panel acts on keys. Checked against the root so a click on any tile,
-        // which focuses the child, still counts as the browser having focus.
+        // Checked against the root, so a click on any tile still counts as the browser having focus.
         if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
         {
             return;
         }
 
-        // Returns rather than falling through: the dispatch loop below would otherwise deliver a bare
-        // 'A' to the item handler on the same press.
+        // Returns rather than falling through, or the dispatch loop delivers a bare A to the item handler.
         if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_A, false))
         {
             SelectAll(Context);
@@ -494,11 +477,7 @@ namespace Lumina
         
         ImGui::PopStyleVar(2);
 
-        // Capture hover while this tile is still ImGui's current item. DrawTooltip below submits items
-        // of its own, and a tooltip window does not restore the previous last-item on close, so every
-        // later IsItemHovered() in this function would be testing the tooltip's contents instead of the
-        // tile. That is what made right-click intermittent: it failed exactly when you had hovered long
-        // enough for the tooltip to appear.
+        // A tooltip does not restore the previous last-item, so later hover tests would read its contents.
         const bool bItemHovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup);
 
         if (ImGui::BeginItemTooltip())
@@ -509,8 +488,7 @@ namespace Lumina
 
         if (bItemHovered && ImGui::IsMouseReleased(ImGuiMouseButton_Right) && ItemToDraw->HasContextMenu())
         {
-            // Right-clicking outside the selection retargets it; right-clicking inside one keeps it, so
-            // the menu can act on everything a marquee just gathered. Matches every file manager.
+            // Right-clicking inside a selection keeps it, so the menu acts on what a marquee gathered.
             if (!ItemToDraw->IsSelected())
             {
                 ClearSelections();
@@ -523,8 +501,7 @@ namespace Lumina
 
         if (ImGui::BeginDragDropSource())
         {
-            // Same rule as the context menu. Without it, dragging an unselected tile also drags whatever
-            // was selected elsewhere, since the drop handler moves the whole selection.
+            // Without it, dragging an unselected tile also drags whatever was selected elsewhere.
             if (!ItemToDraw->IsSelected())
             {
                 ClearSelections();
@@ -551,12 +528,10 @@ namespace Lumina
         
         if (ItemToDraw->HasContextMenu())
         {
-            // BeginPopup, not BeginPopupContextItem: the open decision is made above off a hover state
-            // captured at the right moment. Letting it re-test here would reintroduce the same bug.
+            // The open decision was made above off a hover captured at the right moment, so do not re-test.
             if (ImGui::BeginPopup("ItemContextMenu"))
             {
-                // Copied rather than passed by reference: the menu can clear or rebuild the selection
-                // (deleting is the whole point), which would resize Selections mid-iteration.
+                // Copied, since the menu can clear or rebuild the selection mid-iteration.
                 TVector<FTileViewItem*> SelectionsToDraw;
                 if (ItemToDraw->IsSelected())
                 {
@@ -598,9 +573,7 @@ namespace Lumina
 
         if (!bMarqueeActive)
         {
-            // Started only from EMPTY space: a drag that began on a tile is a drag-and-drop, and a drag
-            // that began outside this window belongs to whatever it started in. Checked here, at the tail
-            // of Draw, because IsAnyItemHovered() is only meaningful once every tile has been submitted.
+            // Checked at the tail of Draw, since hover is only meaningful once every tile is submitted.
             const bool bCanStart = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)
                 && !ImGui::IsAnyItemHovered()
                 && !ImGui::IsAnyItemActive()
@@ -614,8 +587,7 @@ namespace Lumina
 
             const ImVec2 ContentOrigin(ImGui::GetWindowPos().x - ImGui::GetScrollX(),
                                        ImGui::GetWindowPos().y - ImGui::GetScrollY());
-            // Anchored at where the button went DOWN, not where the drag threshold was crossed, so the
-            // band starts under the initial click rather than a few pixels into the gesture.
+            // Anchored where the button went DOWN, so the band starts under the initial click.
             const ImVec2 Pressed = IO.MouseClickedPos[ImGuiMouseButton_Left];
 
             bMarqueeActive       = true;
@@ -686,8 +658,7 @@ namespace Lumina
 
         const int32 To = (int32)std::distance(ListItems.begin(), Found);
 
-        // No anchor yet (first click in a fresh folder): shift-click behaves as a plain click and
-        // becomes the anchor, so the next one has a range to span.
+        // With no anchor, a shift-click behaves as a plain click and becomes the anchor.
         if (SelectionAnchorIndex < 0 || SelectionAnchorIndex >= (int32)ListItems.size())
         {
             ClearSelections();
@@ -705,8 +676,7 @@ namespace Lumina
             ToggleSelection(ListItems[Index], Context);
         }
 
-        // Anchor deliberately left where it was: shift-clicking again re-spans from the same origin
-        // rather than growing from wherever the last one landed.
+        // The anchor is left where it was, so shift-clicking again re-spans from the same origin.
     }
 
     void FTileViewWidget::SelectAll(const FTileViewContext& Context)

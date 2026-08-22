@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "UI/Tools/NodeGraph/Animation/AnimGraphNode.h"
 #include "Assets/AssetTypes/Animation/AnimationGraph/AnimationGraph.h"
@@ -21,7 +21,7 @@ namespace Lumina
         void GenerateBytecode(FAnimationGraphCompiler& Compiler) override;
 
         /** Blackboard object key to read. */
-        PROPERTY(Editable, Category = "Parameter", ObjectParameterPicker)
+        PROPERTY(Editable, Category = "Parameter", Picker = "ObjectParameter")
         FName ParameterName;
 
         /** Asset kind consumers should expect; a mismatch is caught when the node is wired. */

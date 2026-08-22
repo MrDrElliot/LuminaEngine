@@ -4,7 +4,6 @@
 #include "Core/Math/Math.h"
 #include "Tools/UI/ImGui/ImGuiFonts.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
-#include "UI/Properties/Customizations/BonePickerContext.h"
 #include "World/Entity/Components/EnvironmentComponent.h"
 #include "World/Entity/Components/SkyLightComponent.h"
 #include "World/Entity/Components/LightComponent.h"
@@ -26,13 +25,16 @@ namespace Lumina
 
     void FSkeletonEditorTool::OnInitialize()
     {
+        PropertyContext.Provide(&SkeletonCtx);
+        GetPropertyTable()->SetContext(&PropertyContext);
+
         CreateToolWindow(SkeletonPropertiesName, [&](bool bFocused)
         {
             CSkeleton* Skeleton = GetAsset<CSkeleton>();
             FSkeletonResource* SkeletonResource = Skeleton->GetSkeletonResource();
 
-            // Socket BoneName fields get the bone-tree popup.
-            BonePickerContext::FScope BonePickerScope(SkeletonResource);
+            // Socket BoneName fields get the bone tree.
+            SkeletonCtx.Skeleton = SkeletonResource;
 
             ImGuiX::Font::PushFont(ImGuiX::Font::EFont::Large);
             ImGui::SeparatorText("Asset Details");

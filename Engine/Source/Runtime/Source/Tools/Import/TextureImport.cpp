@@ -51,7 +51,7 @@ namespace Lumina::Import::Textures
     
         const uint32 BytesPerPixel = (uint32)Source.Pixels.size() / (SrcW * SrcH);
 
-        // A fresh buffer, not in place: stbir reads the source while it writes.
+        // A fresh buffer rather than in place, since the resampler reads the source while it writes.
         TVector<uint8> Resized(static_cast<size_t>(DstW) * DstH * BytesPerPixel);
 
         stbir_resize

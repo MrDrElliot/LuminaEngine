@@ -1,4 +1,4 @@
-#include "CoreTypeCustomization.h"
+﻿#include "CoreTypeCustomization.h"
 #include "imgui.h"
 #include "Core/Object/Class.h"
 #include "Core/Reflection/Type/Properties/SoftObjectProperty.h"
@@ -33,7 +33,7 @@ namespace Lumina
         return FFixedString(Leaf.data(), Leaf.size());
     }
 
-    EPropertyChangeOp FSoftObjectPropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property)
+    EPropertyChangeOp FSoftObjectPropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args)
     {
         FSoftObjectProperty* SoftProperty = static_cast<FSoftObjectProperty*>(Property->Property);
         CClass* PropertyClass = SoftProperty->GetPropertyClass();

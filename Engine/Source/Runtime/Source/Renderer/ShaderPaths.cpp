@@ -21,8 +21,7 @@ namespace Lumina::Shaders
         TVector<FString>    GExtraRoots;         // module-registered, in registration order
         THashSet<FString>   GEnumeratedRoots;    // roots PrecompileNewRoots has already walked
 
-        // Appends a root once, and only if it actually exists: a plugin without shaders, or a packaged
-        // build with the source stripped, must not put a dead path in Slang's search list.
+        // A plugin without shaders must not put a dead path in Slang's search list.
         void AppendRoot(TVector<FString>& Out, FString Root)
         {
             if (Root.empty() || !VFS::Exists(Root))
@@ -45,7 +44,7 @@ namespace Lumina::Shaders
         OutRoots.clear();
         OutRoots.reserve(8);
 
-        // Engine first: locked against accidental shadowing by a plugin or game file of the same name.
+        // Engine first, locked against accidental shadowing by a plugin or game file of the same name.
         AppendRoot(OutRoots, kEngineRoot);
 
         for (const FPlugin* Plugin : FPluginManager::Get().GetAllPlugins())
@@ -118,8 +117,7 @@ namespace Lumina::Shaders
 
         FString Name(NameOrPath.data(), NameOrPath.size());
 
-        // Already rooted -- the caller named the exact file, which is how a shader whose name collides
-        // with one in an earlier root is reached.
+        // Already rooted, which is how a shader whose name collides with an earlier root is reached.
         if (Name[0] == '/')
         {
             return VFS::Exists(Name) ? Name : FString();
@@ -163,8 +161,7 @@ namespace Lumina::Shaders
                 }
             }
 
-            // Non-recursive on purpose: `Includes/` headers and the tokenized `MaterialShader/`
-            // templates are not standalone modules and must not be compiled on their own.
+            // Includes and tokenized templates are not standalone modules and must not compile alone.
             VFS::DirectoryIterator(Root, [&ShaderPaths](const VFS::FFileInfo& Info)
             {
                 if (Info.GetExt() == ".slang")

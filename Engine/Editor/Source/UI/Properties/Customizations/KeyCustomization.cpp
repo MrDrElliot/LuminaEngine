@@ -1,4 +1,4 @@
-#include "Containers/StringFormat.h"
+﻿#include "Containers/StringFormat.h"
 #include <iterator>
 #include "CoreTypeCustomization.h"
 
@@ -43,7 +43,7 @@ namespace Lumina
         }
     }
 
-    EPropertyChangeOp FKeyPropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property)
+    EPropertyChangeOp FKeyPropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args)
     {
         bool bCommitted = false; // a new binding was set (or cleared) this frame
 

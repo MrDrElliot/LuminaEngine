@@ -4,7 +4,7 @@
 #include "AssetEditors/AssetEditorTool.h"
 #include "ImGuizmo.h"
 #include "Tools/UI/ImGui/Widgets/TreeListView.h"
-#include "UI/Properties/Customizations/SocketPickerContext.h"
+#include "UI/Properties/PropertyEditContexts.h"
 
 namespace Lumina
 {
@@ -236,7 +236,13 @@ namespace Lumina
         ImGuiTextFilter DetailsFilter;
         void DrawComponentHeader(FComponentTableEntry& Entry, entt::entity Entity);
         // Sockets/bones on Entity's parent's mesh, for SocketPicker FName properties in the details.
-        void BuildSocketPickerData(entt::entity Entity, SocketPickerContext::FSocketPickerData& Out);
+        void BuildSocketPickerData(entt::entity Entity, FSocketEditContext& Out);
+
+        // Provided to every details table this tool draws, refreshed per entity as the panel walks them.
+        FPropertyEditContext PropertyContext;
+        FSocketEditContext   SocketCtx;
+        FWorldEditContext    WorldCtx;
+        FEntityPickContext   PickCtx;
         // Remove a reflected component from Entity (marks details dirty for rebuild).
         void RemoveComponent(entt::entity Entity, const CStruct* ComponentType);
         // Drain queued reflected-component removals inside one transaction. Call from Update.

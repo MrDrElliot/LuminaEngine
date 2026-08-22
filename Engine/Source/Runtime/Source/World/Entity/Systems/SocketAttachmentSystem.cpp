@@ -47,10 +47,7 @@ namespace Lumina
                 continue;
             }
 
-            // Local space of a child == component space of its parent, so the socket transform (plus the
-            // authored offset) drops straight into the local transform; the dirty resolve propagates it.
-            // The equality check keeps static sockets and frozen poses from re-dirtying every frame
-            // (identical inputs decompose bit-identically).
+            // The equality check keeps static sockets and frozen poses from re-dirtying every frame.
             const FTransform NewLocal(SocketTransform * Attachment.RelativeTransform.GetMatrix());
             STransformComponent& Transform = View.get<STransformComponent>(Entity);
             if (NewLocal != Transform.LocalTransform)

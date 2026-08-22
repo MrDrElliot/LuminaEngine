@@ -37,9 +37,7 @@ namespace Lumina
     // RmlUi's own decorators cap out at 16; anything past that is dropped rather than overrunning.
     static constexpr uint32 GMaxColorStops = 16;
 
-    // Mirrors UIMaterialGlobals.slang::FUIMaterialArgs (scalar layout). ScreenSize must stay at offset
-    // 16: the shader reads this block by device address, where relaxed block layout forbids a vector
-    // straddling a 16-byte boundary -- see the note on the Slang side.
+    // ScreenSize must stay at offset 16, since relaxed block layout forbids a straddling vector.
     struct FUIMaterialBrushArgs
     {
         RHI::GPUPtr Materials;
@@ -54,7 +52,7 @@ namespace Lumina
     // RmlUi wants bilinear + clamp; stock sampler heap slot 1.
     static constexpr uint32 GRmlUiSamplerIndex = (uint32)RHI::EStockSampler::LinearClamp;
 
-    // Vertex layout: pos(8) color(4) uv(8).
+    // Vertex layout is pos(8) color(4) uv(8).
     static_assert(sizeof(Rml::Vertex) == 20, "Rml::Vertex layout drifted; renderer vertex conversion must be updated.");
 
     FRmlUiRenderer::FRmlUiRenderer() = default;
@@ -156,7 +154,7 @@ namespace Lumina
             return It->second;
         }
 
-        // Premultiplied alpha: RmlUi pre-multiplies vertex colors.
+        // Premultiplied alpha, since RmlUi pre-multiplies vertex colors.
         RHI::FBlendDesc Blend;
         Blend.bBlendEnable   = true;
         Blend.ColorOp        = RHI::EBlend::Add;
@@ -241,8 +239,7 @@ namespace Lumina
         UserTransform = FMatrix4(1.0f);
         CachedMVP     = ProjectionMatrix;
         bScissorEnabled = false;
-        // Reset the leftover clip rect too: a stale region from the previously rendered context
-        // would otherwise clip this one's first draws (preview-into-live bleed).
+        // Reset the leftover clip rect too, or a stale region clips this context's first draws.
         CurrentScissor  = Rml::Rectanglei();
     }
 
@@ -387,8 +384,7 @@ namespace Lumina
 
     void FRmlUiRenderer::EvictStaleBatches()
     {
-        // A world/preview RT is destroyed on resize without telling us, and the RHI recycles the handle,
-        // so an unclaimed batch both leaks its buffers and can be matched against an unrelated target.
+        // A destroyed RT recycles its handle, so an unclaimed batch can match an unrelated target.
         constexpr uint64 StaleFrames = 300;
         if (FrameCounter < StaleFrames || FrameCounter - LastEvictFrame < StaleFrames)
         {
@@ -423,8 +419,7 @@ namespace Lumina
         // Texture uploads must be outside a render pass.
         UploadPendingTextures();
 
-        // UI materials evaluate into their brush RTs before the UI samples them.
-        // Also outside the UI render pass (each brush opens its own pass).
+        // Outside the UI render pass, since each brush opens its own pass before the UI samples it.
         RenderMaterialBrushes();
 
         // The clear rides the pass load op, so a frame that bails before recording one still owes it.
@@ -469,8 +464,7 @@ namespace Lumina
         const float FullW = float(CurrentSize.x);
         const float FullH = float(CurrentSize.y);
 
-        // RmlUi reports scissor rects in layout pixels, but the shader tests them against SV_Position,
-        // which is in render-target pixels. The two differ whenever the RT is not the layout size.
+        // Scissor rects arrive in layout pixels, but the shader tests SV_Position in target pixels.
         const float ClipScaleX = (CurrentLogicalSize.x > 0) ? FullW / float(CurrentLogicalSize.x) : 1.0f;
         const float ClipScaleY = (CurrentLogicalSize.y > 0) ? FullH / float(CurrentLogicalSize.y) : 1.0f;
 
@@ -553,7 +547,7 @@ namespace Lumina
 
                 const uint32 BaseVertex = uint32(BatchVertices.size());
 
-                // Convert to the GPU vertex: bake translation, tag with the draw index.
+                // Convert to the GPU vertex, baking translation and tagging with the draw index.
                 BatchVertices.reserve(BatchVertices.size() + VtxCount);
                 for (uint32 v = 0; v < VtxCount; ++v)
                 {
@@ -591,8 +585,7 @@ namespace Lumina
             const uint64 IBytes = BatchIndices.size()  * sizeof(uint32);
             EnsureBatchBuffers(Batch, VBytes, IBytes);
 
-            // Stage through the transient ring and copy into the resident buffers. The leading barrier
-            // also orders against any still-executing prior frame reading the old contents.
+            // The leading barrier also orders against a prior frame still reading the old contents.
             RHI::FTransientAlloc VBStage = RHI::Core::AllocTransient(VBytes, 16);
             RHI::FTransientAlloc IBStage = RHI::Core::AllocTransient(IBytes, 4);
             Memory::Memcpy(VBStage.Cpu, BatchVertices.data(), VBytes);
@@ -623,8 +616,7 @@ namespace Lumina
             return;
         }
 
-        // Only the small per-draw data is transient (read in-shader via device address); the bulk
-        // vertex/index data lives in the resident buffers above.
+        // Only the small per-draw data is transient; bulk vertex and index data is resident.
         const RHI::GPUPtr DrawsPtr = RHI::Core::CopyTransientArray(Batch.Draws.data(), Batch.Draws.size());
 
         // Always upload at least one stop so the args block never carries a null device address.
@@ -674,8 +666,7 @@ namespace Lumina
             return 0;
         }
 
-        // CPU-side cache only. At EndFrame the referenced geometry is concatenated into the
-        // target's resident VB/IB (translation baked in), rebuilt only when the draw list changes.
+        // CPU-side cache only, concatenated into the target's resident buffers at EndFrame.
         FGeometry Geom;
         const uint8* VBytes = reinterpret_cast<const uint8*>(Vertices.data());
         const uint8* IBytes = reinterpret_cast<const uint8*>(Indices.data());
@@ -777,8 +768,7 @@ namespace Lumina
             return 0;
         }
 
-        // Pin the asset for the lifetime of the RmlUi handle so an unload doesn't
-        // dangle the bindless slot. Released in ReleaseTexture.
+        // Pinned for the lifetime of the RmlUi handle so an unload cannot dangle the bindless slot.
         Texture->AddToRoot();
 
         const Rml::TextureHandle Handle = NextTextureHandle++;
@@ -1043,8 +1033,7 @@ namespace Lumina
 
     void FRmlUiRenderer::RevalidateBrushes(RHI::FCmdListH CmdList)
     {
-        // Mark each brush stale by whether its source path still resolves to the cached material (stays rooted,
-        // so a rename-back resumes without a reload). Driven by the asset-registry broadcast, not per frame.
+        // Driven by the asset-registry broadcast, not per frame; a rename-back resumes without a reload.
         for (auto& KV : Textures)
         {
             FTexture& Tex = KV.second;
@@ -1059,8 +1048,7 @@ namespace Lumina
 
             if (!bResolves && !Tex.bBrushStale)
             {
-                // Source renamed/deleted: clear to transparent and stop rendering
-                // so the document breaks instead of showing the old asset.
+                // Clear to transparent so the document breaks instead of showing the old asset.
                 const float Transparent[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
                 RHI::CmdBarrier(CmdList, RHI::EStageFlags::AllCommands, RHI::EStageFlags::Transfer);
                 RHI::CmdClearTexture(CmdList, Tex.Managed.Texture, Transparent);
@@ -1070,7 +1058,7 @@ namespace Lumina
             }
             else if (bResolves && Tex.bBrushStale)
             {
-                // Asset returned at this path (e.g. renamed back): resume next frame.
+                // An asset returned at this path (renamed back, say) resumes next frame.
                 Tex.bBrushStale = false;
             }
         }
@@ -1085,8 +1073,7 @@ namespace Lumina
         }
         RHI::FCmdListH CL = CurrentCmdList;
 
-        // Drop brushes whose source asset went away. Event-driven (set on the
-        // registry broadcast), so there is no per-frame validation cost.
+        // Event-driven off the registry broadcast, so there is no per-frame validation cost.
         if (bBrushRevalidatePending.exchange(false, std::memory_order_acquire))
         {
             RevalidateBrushes(CL);
@@ -1100,13 +1087,11 @@ namespace Lumina
         // Monotonic wall clock drives animated UI materials (GetTime() in-shader).
         const float Time = static_cast<float>(PlatformTime::Seconds());
 
-        // Only render brushes referenced this frame (brushes are shared across all
-        // contexts; this scopes work to the drawing context). De-dup repeats.
+        // Brushes are shared across contexts, so scope the work to the drawing context and de-dup.
         TVector<Rml::TextureHandle> Rendered;
         bool bAnyWrites = false;
 
-        // A brush RT is created undefined, so a material that cannot draw yet would leave the UI
-        // sampling uninitialized memory. Give it transparent black once, then leave it alone.
+        // A brush RT is created undefined, so give it transparent black once before anything samples it.
         auto ClearBrushOnce = [&](FTexture& Tex)
         {
             if (Tex.bBrushCleared)

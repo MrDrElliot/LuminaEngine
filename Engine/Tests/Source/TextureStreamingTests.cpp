@@ -13,15 +13,11 @@
 
 using namespace Lumina;
 
-// The texture streaming split is a WIRE FORMAT change: mips above the inline threshold are written to a
-// raw region appended after the compressed container and located by a trailer at EOF. Getting any of that
-// wrong is silent -- a bad offset reads plausible garbage rather than failing -- so these tests pin the
-// actual bytes rather than just "it loaded".
+// A WIRE FORMAT change, so these pin the actual bytes rather than just that it loaded.
 
 namespace
 {
-    // Mip bytes are filled with a per-mip pattern so a mis-addressed bulk read is caught as wrong CONTENT,
-    // not merely a wrong length. A pure length check passes for two mips of the same size.
+    // Per-mip patterns catch a mis-addressed bulk read as wrong CONTENT, not wrong length.
     void FillMip(FTextureResource::FMip& Mip, uint32 Width, uint32 Height, uint8 Seed)
     {
         Mip.Width      = Width;
@@ -37,8 +33,7 @@ namespace
         }
     }
 
-    // A 1024x1024 RGBA8 chain: mips 0 (1024) and 1 (512) are above the 256 inline threshold and stream,
-    // mips 2..10 are the inline tail.
+    // Mips 0 and 1 are above the 256 inline threshold and stream; 2 through 10 are inline.
     void BuildChain(FTextureResource& Resource, uint32 BaseSize = 1024)
     {
         uint32 NumMips = 1;
@@ -103,7 +98,7 @@ TEST(TextureStreaming, ComputeFirstInlineMipSplitsAtThreshold)
     Desc.NumMips = 7;
     EXPECT_EQ(FTextureResource::ComputeFirstInlineMip(Desc), 0);
 
-    // Non-square: the LONG edge decides, or a 4096x64 texture would be treated as tiny.
+    // Non-square, so the LONG edge decides or a 4096x64 texture reads as tiny.
     Desc.Extent  = FUIntVector2(4096, 64);
     Desc.NumMips = 13;
     EXPECT_EQ(FTextureResource::ComputeFirstInlineMip(Desc), 4);
@@ -114,18 +109,16 @@ TEST(TextureStreaming, ComputeFirstInlineMipSplitsAtThreshold)
     EXPECT_EQ(FTextureResource::ComputeFirstInlineMip(Desc), 4)
         << "arrays stream on the same split as 2D since Recreate gained an overload that repoints the slot";
 
-    // A chain that stops above the threshold still keeps its smallest mip inline, so there is always
-    // something to draw without IO.
+    // A chain stopping above the threshold still keeps its smallest mip inline.
     Desc.Extent     = FUIntVector2(4096, 4096);
-    Desc.NumMips    = 2;   // 4096, 2048 -- both above 256
+    Desc.NumMips    = 2;   // 4096 and 2048, both above 256
     Desc.LayerCount = 1;
     EXPECT_EQ(FTextureResource::ComputeFirstInlineMip(Desc), 1);
 }
 
 TEST(TextureStreaming, NonPackageArchiveKeepsEveryMipInline)
 {
-    // FMemoryWriter has nowhere to put a bulk region. The serializer must notice and fall back to a fully
-    // inline chain -- silently writing zero-length payloads here would lose the texture.
+    // FMemoryWriter has nowhere to put a bulk region, so it must fall back to fully inline.
     FTextureResource Source;
     BuildChain(Source);
 
@@ -165,8 +158,7 @@ TEST(TextureStreaming, PackageSaveWritesRecoverableBulkMips)
     Texture->TextureResource = MakeUnique<FTextureResource>();
     BuildChain(*Texture->TextureResource);
 
-    // Keep a copy of the source bytes: saving may legitimately move the mips out of the live object, and
-    // the whole point is to prove the bytes are recoverable from disk afterwards.
+    // Saving may move the mips out of the live object, so keep a copy of the source bytes.
     TVector<TVector<uint8>> Expected;
     for (const FTextureResource::FMip& Mip : Texture->TextureResource->Mips)
     {
@@ -191,8 +183,7 @@ TEST(TextureStreaming, PackageSaveWritesRecoverableBulkMips)
     }
     EXPECT_EQ((uint64)Region.Size, ExpectedBulkBytes);
 
-    // Every streamed mip carries a ref, and reading it back gives the original bytes -- content, not just
-    // length, so a swapped or overlapping offset fails here.
+    // Content, not just length, so a swapped or overlapping offset fails here.
     for (uint32 Mip = 0; Mip < FirstInlineMip; ++Mip)
     {
         const FBulkDataRef& Ref = Texture->TextureResource->Mips[Mip].BulkRef;
@@ -211,8 +202,7 @@ TEST(TextureStreaming, PackageSaveWritesRecoverableBulkMips)
             << "mip " << Mip << " is inline and should carry no bulk ref";
     }
 
-    // Reading the package back must yield only the container: the whole point is that the mip bytes stay
-    // on disk until something asks for them.
+    // Reading the package back must yield only the container, with mip bytes still on disk.
     TVector<uint8>          Container;
     CPackage::FBulkRegion   ReadRegion;
     ASSERT_TRUE(CPackage::ReadPackageFile(Path, Container, &ReadRegion));
@@ -226,8 +216,7 @@ TEST(TextureStreaming, PackageSaveWritesRecoverableBulkMips)
 
 TEST(TextureStreaming, ReSaveAfterStreamOutPreservesMips)
 {
-    // The data-loss case: a texture whose streamed mips have been evicted has empty Pixels. Saving it in
-    // that state would write zero-length payloads over the real ones. PreSave exists to stop that.
+    // A texture whose streamed mips were evicted has empty Pixels, which PreSave must catch.
     FScopedPackageMount Mount;
 
     CPackage* Package = CPackage::CreatePackage("/StreamTest/ResaveTexture");

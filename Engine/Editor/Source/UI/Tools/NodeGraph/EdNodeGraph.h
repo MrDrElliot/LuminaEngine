@@ -214,9 +214,12 @@ namespace Lumina
         }
 
         // Draws the graph's wires itself. Called before any node is submitted, so coordinates are
-        // canvas space and the drawing lands under the nodes. Links are indexed by (link id - 1).
+        // canvas space and the drawing lands under the nodes. Wire ids come from MakeLinkID.
         // Suspend the editor around any ImGui window (tooltip, popup) opened from here.
         virtual void DrawGraphOverlay(const TVector<TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>>& Links) {}
+
+        // A wire is identified by its two endpoints, so ids survive deleting some other wire.
+        static uint64 MakeLinkID(const CEdNodeGraphPin* InputPin, const CEdNodeGraphPin* OutputPin);
 
         // Package under which newly constructed nodes are allocated. Defaults to this graph's package,
         // so nodes live alongside the asset that owns the graph.

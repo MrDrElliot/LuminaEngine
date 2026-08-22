@@ -1,4 +1,4 @@
-#include "MaterialInstanceEditorTool.h"
+﻿#include "MaterialInstanceEditorTool.h"
 
 #include "Assets/AssetRegistry/AssetData.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
@@ -434,7 +434,7 @@ namespace Lumina
         // Seeded before the draw, since UpdateAndDraw syncs the picker from the handle first.
         TextureScratch.Texture = DisplayTexture;
 
-        const EPropertyChangeOp Op = TexturePicker->UpdateAndDraw(TextureHandle, !bEnabled);
+        const EPropertyChangeOp Op = TexturePicker->UpdateAndDraw(TextureHandle, FPropertyDrawArgs{ !bEnabled });
         if (Op != EPropertyChangeOp::None && bEnabled)
         {
             // UpdateAndDraw leaves the write-back to its caller, so push it through the instance here.

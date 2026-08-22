@@ -26,8 +26,7 @@ namespace Lumina
         {
             TUniquePtr<FMeshResource> Resource = MakeUnique<FMeshResource>();
 
-            // The Generate* helpers build an interleaved FSourceVertex array; scatter it into
-            // the resource's structure-of-arrays vertex streams.
+            // Scatters the interleaved build array into the resource's structure-of-arrays streams.
             TVector<FSourceVertex> GeneratedVerts;
             Generate(GeneratedVerts, Resource->Indices);
             Resource->ReserveVertices(GeneratedVerts.size());

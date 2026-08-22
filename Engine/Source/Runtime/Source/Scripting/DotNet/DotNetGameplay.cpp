@@ -29,13 +29,7 @@
 #include "Input/InputMode.h"
 #include "Events/MouseCodes.h"
 
-// Hand-written native -> C# gameplay bindings: the World / Physics / Debug / Net / Navigation surface a
-// scripter needs but the Reflector can't auto-generate (CWorld and IPhysicsScene gameplay calls aren't
-// reflected FUNCTION()s). Each export uses LUMINA_DOTNET_EXPORT (DotNetExport.h) to stamp the flat
-// `extern "C" RUNTIME_API LuminaSharp_<Domain>_<Op>` ABI, resolved on the C# side by a `delegate*` field
-// (NativeBindings.Resolve). The matching C# facades live in LuminaSharp/{World,Physics,Debug,Networking,
-// AI/Navigation}. World is an opaque CWorld* (uint64), Entity an entt id (uint32) - the same convention the
-// component ops use. Game thread only.
+// World is an opaque pointer and Entity an entt id, matching the component ops convention.
 
 using namespace Lumina;
 using namespace Lumina::DotNet;   // AsWorld / AsEntity / ToId
@@ -54,11 +48,7 @@ struct FLmRayHit
 };
 LE_REGISTER_LAYOUT("RaycastHitWire", FLmRayHit);
 
-//================================================================================================
-// World (FName-keyed spawn/find + ECS::Utils rotation/scale. The entity transform/time/destroy/count
-// methods are GENERATED from CWorld's FUNCTION() declarations now that the Reflector marshals
-// entt::entity - see World.generated.{cpp,cs}. Only the not-yet-reflectable surface lives here.)
-//================================================================================================
+// Only the not-yet-reflectable surface lives here, the rest is generated from CWorld's declarations.
 
 LUMINA_DOTNET_EXPORT(int32, World_IsValidEntity)(uint64 World, uint32 Entity)
 {
@@ -72,12 +62,9 @@ LUMINA_DOTNET_EXPORT(FQuat, World_GetRotation)(uint64 World, uint32 Entity)
     return W ? ECS::Utils::GetEntityRotation(ECS::GetWorldRegistry(*W), AsEntity(Entity)) : FQuat();
 }
 
-//================================================================================================
-// Game (engine-level session ops)
-//================================================================================================
+// Game, the engine-level session operations.
 
-// Deferred level switch; URL forms per FURL::Parse: "/Game/Maps/Foo", "/Game/Maps/Foo?listen?port=7777",
-// or "host:port" to connect. The swap runs at the next FrameStart, so this is safe mid-tick.
+// The swap runs at the next FrameStart, so this is safe mid-tick.
 LUMINA_DOTNET_EXPORT(void, Game_OpenLevel)(const char* Url, int32 UrlLen)
 {
     if (GEngine != nullptr && Url != nullptr && UrlLen > 0)
@@ -95,11 +82,9 @@ LUMINA_DOTNET_EXPORT(void, Game_Quit)()
     }
 }
 
-//~ Entity-script API over the unified CEntityScript path. Everything is keyed on the script's CClass, so the
-//~ same calls find a C++ script and a C# one -- the C# type's full name IS its minted class's name.
+//~ Keyed on the script's CClass, so the same calls find a C++ script and a C# one.
 
-// Attaches a script of the named class to an entity. Returns the CEntityScript* (C# wraps it via
-// Wrapper<T>.ForObject, so the managed instance is the canonical one for that object).
+// C# wraps the returned pointer, so the managed instance is the canonical one for that object.
 LUMINA_DOTNET_EXPORT(void*, AddEntityScript)(uint64 World, uint32 Entity, const char* ClassName, int32 ClassLen)
 {
     CWorld* W = AsWorld(World);
@@ -123,8 +108,7 @@ LUMINA_DOTNET_EXPORT(void*, FindEntityScript)(uint64 World, uint32 Entity, const
     return EntityScripts::Find(ECS::GetWorldRegistry(*W), AsEntity(Entity), ScriptClass);
 }
 
-// Every script on the entity whose class IS-A the named class, written into a caller buffer. Returns the total
-// count, so a caller that under-sized its buffer can retry (mirrors the two-pass string protocol).
+// Returns the total count, so an under-sized buffer can retry as with the two-pass string protocol.
 LUMINA_DOTNET_EXPORT(int32, FindEntityScripts)(uint64 World, uint32 Entity, const char* ClassName, int32 ClassLen,
     void** OutScripts, int32 Capacity)
 {
@@ -182,8 +166,7 @@ LUMINA_DOTNET_EXPORT(void, World_SetActiveCamera)(uint64 World, uint32 Entity)
     }
 }
 
-// Scene-graph traversal for World.Messages SendUp/SendDown. Parent/first-child/next-sibling read straight
-// from FRelationshipComponent so the C# bus can walk ancestors and descendants. entt::null -> 0 (Entity.Null).
+// Read straight from the relationship component, with a null entity mapping to zero.
 LUMINA_DOTNET_EXPORT(uint32, World_GetParentEntity)(uint64 World, uint32 Entity)
 {
     CWorld* W = AsWorld(World);
@@ -217,9 +200,7 @@ LUMINA_DOTNET_EXPORT(uint32, World_GetNextSiblingEntity)(uint64 World, uint32 En
     return ToId(Rel ? Rel->Next : entt::null);
 }
 
-// Batched scene-graph traversal for SendUp/SendDown: one crossing returns the whole chain/subtree instead of a
-// P/Invoke per hop. Both write [Entity, ...] into OutIds (up to Max) and return the TOTAL count; if it exceeds
-// Max the caller re-fetches with a larger buffer. The relationship graph is engine-maintained (acyclic).
+// One crossing returns the whole chain instead of a call per hop, and the graph is acyclic.
 LUMINA_DOTNET_EXPORT(int32, World_GetAncestorChain)(uint64 World, uint32 Entity, uint32* OutIds, int32 Max)
 {
     CWorld* W = AsWorld(World);
@@ -271,10 +252,7 @@ LUMINA_DOTNET_EXPORT(int32, World_GetSubtree)(uint64 World, uint32 Entity, uint3
     return Count;
 }
 
-//================================================================================================
-// Camera (World.Camera) -- additive camera shake on the active view. Multiple shakes sum; each Play
-// returns a handle to stop it. Game thread only.
-//================================================================================================
+// Multiple shakes sum, and each Play returns a handle to stop it. Game thread only.
 
 // Blittable mirror of LuminaSharp.CameraShakeWire (2 FVector3 + 4 float, no padding).
 struct FLmCameraShake
@@ -316,9 +294,7 @@ LUMINA_DOTNET_EXPORT(void, Camera_StopAllShakes)(uint64 World)
     if (CWorld* W = AsWorld(World)) { SCameraSystem::StopAllCameraShakes(ECS::GetWorldRegistry(*W)); }
 }
 
-//================================================================================================
-// Physics (entity-keyed; the scene resolves the body)
-//================================================================================================
+// Physics, entity-keyed, where the scene resolves the body.
 
 LUMINA_DOTNET_EXPORT(FLmRayHit, Physics_Raycast)(uint64 World, FVector3 Start, FVector3 End, uint32 IgnoreEntity)
 {
@@ -474,8 +450,7 @@ LUMINA_DOTNET_EXPORT(void, Physics_DeactivateBody)(uint64 World, uint32 Entity)
     }
 }
 
-// Collect every rigid body constructed until the matching End, then insert them with one broadphase
-// prepare/finalize instead of one per body. Nests; game thread only. See LuminaSharp.Physics.Batch().
+// Nests, and runs on the game thread only. See the managed batch helper.
 LUMINA_DOTNET_EXPORT(void, Physics_BeginBodyBatch)(uint64 World)
 {
     if (Physics::IPhysicsScene* S = SceneOf(World)) { S->BeginBodyBatch(); }
@@ -507,8 +482,7 @@ namespace
     }
 }
 
-// Fills OutEntities (entt ids) with distinct entities whose bodies overlap the sphere; returns the count
-// written (clamped to Max). IgnoreEntity excludes one entity (e.g. the querier). See LuminaSharp.Physics.
+// Returns the count written, clamped to Max, with IgnoreEntity excluding the querier.
 LUMINA_DOTNET_EXPORT(int32, Physics_OverlapSphere)(uint64 World, FVector3 Center, float Radius, uint32 IgnoreEntity, uint32* OutEntities, int32 Max)
 {
     Physics::IPhysicsScene* S = SceneOf(World);
@@ -535,8 +509,7 @@ LUMINA_DOTNET_EXPORT(int32, Physics_OverlapBox)(uint64 World, FVector3 Center, F
     return S->OverlapBox(Center, HalfExtents, Rotation, Ignore, AsEntitySpan(OutEntities, Max));
 }
 
-// Sphere sweep from Start to End; fills OutHits (blittable FLmRayHit) sorted near-to-far; returns the count
-// written (clamped to Max). IgnoreEntity excludes one entity's body.
+// Fills the hit buffer sorted near-to-far and returns the count written, clamped to Max.
 LUMINA_DOTNET_EXPORT(int32, Physics_SphereCast)(uint64 World, FVector3 Start, FVector3 End, float Radius, uint32 IgnoreEntity, FLmRayHit* OutHits, int32 Max)
 {
     CWorld* W = AsWorld(World);
@@ -572,8 +545,7 @@ LUMINA_DOTNET_EXPORT(int32, Physics_SphereCast)(uint64 World, FVector3 Start, FV
     return Count;
 }
 
-// Blittable mirror of LuminaSharp.ConstraintDescWire: a joint creation request. Field order/sizes must
-// match the C# struct byte for byte (all 4-byte scalars + 12-byte FVector3, no padding).
+// Field order and sizes must match the C# struct byte for byte, with no padding.
 struct FLmConstraintDesc
 {
     int32    Type;
@@ -653,7 +625,7 @@ LUMINA_DOTNET_EXPORT(void, Physics_SetSurfaceVelocity)(uint64 World, uint32 Enti
     if (Physics::IPhysicsScene* S = SceneOf(World)) { S->SetSurfaceVelocity(AsEntity(Entity), Linear, Angular); }
 }
 
-// Current driven value of a joint: Hinge angle (radians) or Slider position (meters); 0 for other types.
+// A hinge reports radians and a slider meters, and other types report zero.
 LUMINA_DOTNET_EXPORT(float, Physics_GetConstraintValue)(uint64 World, uint32 ConstraintID)
 {
     Physics::IPhysicsScene* S = SceneOf(World);
@@ -672,8 +644,7 @@ LUMINA_DOTNET_EXPORT(int32, Physics_IsAwake)(uint64 World, uint32 Entity)
     return (BodyID != 0xFFFFFFFFu && S->IsBodyActive(BodyID)) ? 1 : 0;
 }
 
-// Every body the ray crosses, sorted near-to-far (penetrating bullets / all-targets line trace). Fills
-// OutHits (blittable FLmRayHit); returns the count written (clamped to Max). IgnoreEntity excludes one body.
+// Every body the ray crosses, sorted near-to-far, returning the count written.
 LUMINA_DOTNET_EXPORT(int32, Physics_RaycastAll)(uint64 World, FVector3 Start, FVector3 End, uint32 IgnoreEntity, FLmRayHit* OutHits, int32 Max)
 {
     Physics::IPhysicsScene* S = SceneOf(World);
@@ -790,9 +761,7 @@ LUMINA_DOTNET_EXPORT(int32, Physics_OverlapPoint)(uint64 World, FVector3 Point, 
     return S->CollidePoint(Point, Ignore, AsEntitySpan(OutEntities, Max));
 }
 
-//================================================================================================
-// Debug draw (World.Draw)
-//================================================================================================
+// Debug draw, the World.Draw surface.
 
 LUMINA_DOTNET_EXPORT(void, Debug_DrawLine)(uint64 World, FVector3 Start, FVector3 End, FVector4 Color, float Thickness, float Duration)
 {
@@ -826,9 +795,7 @@ LUMINA_DOTNET_EXPORT(void, Debug_DrawText)(uint64 World, const char* Text, int32
     }
 }
 
-//================================================================================================
-// Net (World.Net) - the role/mode queries; C# derives IsServer/IsClient/etc. from the mode.
-//================================================================================================
+// Net, the role and mode queries, from which C# derives the rest.
 
 LUMINA_DOTNET_EXPORT(int32, Net_GetMode)(uint64 World)
 {
@@ -842,11 +809,7 @@ LUMINA_DOTNET_EXPORT(int32, Net_GetConnectedClients)(uint64 World)
     return W ? W->GetConnectedClientCount() : 0;
 }
 
-//================================================================================================
-// SystemContext (the per-tick context handed to a C# EntitySystem). Ctx is the live const
-// FSystemContext* the native scheduler passes through the shared managed-system shim; valid only for
-// the duration of the OnUpdate crossing. Each shim forwards to the matching FSystemContext method.
-//================================================================================================
+// Valid only for the duration of the OnUpdate crossing, forwarding to the matching context method.
 
 LUMINA_DOTNET_EXPORT(float, SystemContext_GetDeltaTime)(const FSystemContext* Ctx)
 {
@@ -873,8 +836,7 @@ LUMINA_DOTNET_EXPORT(void, SystemContext_Destroy)(const FSystemContext* Ctx, uin
 
 LUMINA_DOTNET_EXPORT(void, SystemContext_SetEntityLocation)(const FSystemContext* Ctx, uint32 Entity, FVector3 Location)
 {
-    // SetEntityLocation is a non-const FSystemContext method (it mutates via the registry reference, not
-    // the context object). The scheduler owns a non-const FSystemContext, so removing const here is safe.
+    // The scheduler owns a non-const context, so removing const here is safe.
     if (Ctx)
     {
         const_cast<FSystemContext*>(Ctx)->SetEntityLocation(AsEntity(Entity), Location);
@@ -889,14 +851,9 @@ LUMINA_DOTNET_EXPORT(void, SystemContext_DrawDebugLine)(const FSystemContext* Ct
     }
 }
 
-//================================================================================================
-// Navigation (World.Navigation) - navmesh queries + script-driven rebuild. Each query dispatches to
-// the first ready SNavMeshComponent in the world (the Nav:: helpers). All queries are safe with no
-// navmesh present: they report "not found" rather than crashing. Game thread only.
-//================================================================================================
+// Every query is safe with no navmesh present, reporting not-found rather than crashing.
 
-// Blittable path result mirrored by LuminaSharp.NavPathWire. The caller's OutCorners buffer is filled
-// up to MaxCorners; Count is clamped to it. bValid == 0 means no path (OutCorners left untouched).
+// The corner buffer is filled up to its capacity, and an invalid result leaves it untouched.
 struct FLmNavPath
 {
     int32 Count;
@@ -905,8 +862,7 @@ struct FLmNavPath
 };
 LE_REGISTER_LAYOUT("NavPathWire", FLmNavPath);
 
-// Blittable point result mirrored by LuminaSharp.NavPointWire, shared by ProjectPoint / Raycast /
-// FindRandomReachablePoint. bFound == 0 means the query missed (Point is zero).
+// Shared by the projection, raycast and random-point queries, with a miss reporting zero.
 struct FLmNavPoint
 {
     int32    bFound;
@@ -1001,10 +957,7 @@ LUMINA_DOTNET_EXPORT(void, Nav_DrawPath)(uint64 World, FVector3 From, FVector3 T
     Nav::DrawDebugPath(AsWorld(World), From, To, Color, Duration);
 }
 
-//================================================================================================
-// Gameplay tags (hierarchical, interned). Id-based value API backing the C# GameplayTag struct; the
-// process-global FGameplayTagRegistry is the single source of truth. Id 0 == None / invalid.
-//================================================================================================
+// The process-global registry is the single source of truth, and id 0 means none.
 
 LUMINA_DOTNET_EXPORT(uint32, GameplayTag_Request)(const char* Name, int32 Len)
 {
@@ -1031,7 +984,7 @@ LUMINA_DOTNET_EXPORT(int32, GameplayTag_IsValid)(uint32 A)
     return FGameplayTagRegistry::Get().IsValid(A) ? 1 : 0;
 }
 
-// Two-pass string return: (Id, null, 0) sizes; (Id, buffer, capacity) fills. Returns the name length.
+// A two-pass string return, sizing with a null buffer then filling, returning the name length.
 LUMINA_DOTNET_EXPORT(int32, GameplayTag_GetName)(uint32 Id, char* Buffer, int32 Capacity)
 {
     const FString Name = FGameplayTagRegistry::Get().GetName(Id);
@@ -1047,10 +1000,7 @@ LUMINA_DOTNET_EXPORT(int32, GameplayTag_GetName)(uint32 Id, char* Buffer, int32 
     return Len;
 }
 
-//================================================================================================
-// Per-entity gameplay tags (World.Tags). Tags live on an SGameplayTagComponent; queries are hierarchical
-// (an entity tagged "Status.Burning" matches a "Status" query). TagId 0 is None. Game thread only.
-//================================================================================================
+// Queries are hierarchical, so an entity tagged with a leaf matches a query on its parent.
 
 namespace
 {
@@ -1179,10 +1129,7 @@ LUMINA_DOTNET_EXPORT(int32, GameplayTags_Get)(uint64 World, uint32 Entity, uint3
     return Count;
 }
 
-//================================================================================================
-// Gameplay profiler. Open/close named scopes that the editor "Gameplay Profiler" aggregates by name.
-// IsEnabled lets the managed side skip per-script scope calls entirely when nobody is recording.
-//================================================================================================
+// IsEnabled lets the managed side skip per-script scope calls when nobody is recording.
 
 LUMINA_DOTNET_EXPORT(void, GameplayProfiler_Begin)(const char* Name, int32 Len)
 {
@@ -1202,13 +1149,7 @@ LUMINA_DOTNET_EXPORT(int32, GameplayProfiler_IsEnabled)()
     return FGameplayProfiler::Get().IsEnabled() ? 1 : 0;
 }
 
-//================================================================================================
-// UI (World.UI). Screen-space RmlUi documents + element manipulation + event listeners, driving the
-// world's own Rml::Context -- the same context FInputViewport already forwards mouse/keyboard to. The
-// document/element walking + StateMutex locking lives in RmlUi:: (UI/RmlUiBridge.cpp); these are the
-// flat ABI wrappers. Documents/elements/listeners cross as opaque pointers; strings as (ptr,len), with
-// getters using the two-pass buffer protocol. Game thread only.
-//================================================================================================
+// The document walking and locking lives in the bridge, and these are the flat ABI wrappers.
 
 namespace
 {
@@ -1217,7 +1158,7 @@ namespace
         return (P != nullptr && Len > 0) ? FStringView(P, (size_t)Len) : FStringView();
     }
 
-    // Two-pass string return: (..., null, 0) sizes; (..., buffer, capacity) fills. Returns full length.
+    // A two-pass string return, sizing with a null buffer then filling, returning the full length.
     int32 UICopyOut(const FString& Value, char* Buffer, int32 Capacity)
     {
         const int32 Len = (int32)Value.size();
@@ -1333,10 +1274,7 @@ LUMINA_DOTNET_EXPORT(void, UI_RemoveEventListener)(uint64 World, void* Listener)
     RmlUi::RemoveElementEventListener(AsWorld(World), Listener);
 }
 
-// Data binding (MVVM). Backs LuminaSharp's ViewModel / World.UI.AddModel: a named data model on the world
-// context with scalar variables and command callbacks, bound declaratively in RML (data-model, {{ var }},
-// data-event-*). Variables are registered before the document loads; values cross as double (coerced to the
-// registered type natively) or (ptr,len) strings. SetThunk/EventThunk are managed function pointers.
+// Variables register before the document loads, and values cross as doubles or string pairs.
 LUMINA_DOTNET_EXPORT(void*, UI_CreateDataModel)(uint64 World, const char* Name, int32 Len, void* Context, void* SetThunk, void* EventThunk)
 {
     return RmlUi::CreateDataModel(AsWorld(World), UIView(Name, Len), Context,
@@ -1379,7 +1317,7 @@ LUMINA_DOTNET_EXPORT(void, UI_DestroyDataModel)(void* Model)
     RmlUi::DestroyDataModel(Model);
 }
 
-// Lists (data-for): array-of-struct variables with string cells, pushed as a snapshot on change.
+// Array-of-struct variables with string cells, pushed as a snapshot on change.
 LUMINA_DOTNET_EXPORT(int32, UI_ModelBindList)(void* Model, const char* Name, int32 Len)
 {
     return RmlUi::DataModelBindList(Model, UIView(Name, Len));
@@ -1424,11 +1362,7 @@ LUMINA_DOTNET_EXPORT(void, UI_SetMouseMode)(uint64 World, int32 Mode)
     }
 }
 
-//================================================================================================
-// Input actions. A script binding resolves its action name to an index once per settings generation
-// (the serial the poll carries), then reads state straight out of the per-frame array native hands
-// it, so a bound action costs no crossing per frame.
-//================================================================================================
+// A binding resolves its name once per settings generation, so it costs no crossing per frame.
 
 LUMINA_DOTNET_EXPORT(int32, Input_FindActionIndex)(const char* Name, int32 Len)
 {
@@ -1439,9 +1373,7 @@ LUMINA_DOTNET_EXPORT(int32, Input_FindActionIndex)(const char* Name, int32 Len)
     return FInputActionMap::Get().FindActionIndex(FName(FStringView(Name, (size_t)Len)));
 }
 
-// The World.Input facade: the escape hatch for code that wants to poll by name rather than declare an
-// SInputAction binding. Every one of these returns the neutral value when the world is not receiving
-// input, so a caller never has to test first.
+// Each returns the neutral value when the world is not receiving input, so callers never test first.
 LUMINA_DOTNET_EXPORT(FInputActionState, Input_GetActionState)(uint64 World, const char* Name, int32 Len)
 {
     if (Name == nullptr || Len <= 0)
@@ -1452,8 +1384,7 @@ LUMINA_DOTNET_EXPORT(FInputActionState, Input_GetActionState)(uint64 World, cons
     return Input::GetActionState(AsWorld(World), Handle);
 }
 
-// Mapping layers. Push a layer authored in the Input settings to change what input means right now; a
-// blocking layer stops any action it does not list from reaching gameplay underneath.
+// A blocking layer stops any action it does not list from reaching gameplay underneath.
 LUMINA_DOTNET_EXPORT(void, Input_PushLayer)(uint64 World, const char* Name, int32 Len)
 {
     if (Name != nullptr && Len > 0)

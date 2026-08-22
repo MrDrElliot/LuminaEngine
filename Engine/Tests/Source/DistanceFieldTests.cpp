@@ -6,17 +6,13 @@
 #include "Renderer/MeshDistanceField.h"
 #include "Renderer/MeshQuantization.h"
 
-// Distance field builder correctness. The field is built from BAKED MESHLETS, so these fixtures hand
-// GenerateMeshlets' output shape directly (one meshlet per shape) rather than going through the
-// importer -- which keeps the tests independent of meshopt and of the import pipeline entirely.
+// Fixtures hand GenerateMeshlets' output shape directly, so no importer is involved.
 
 using namespace Lumina;
 
 namespace
 {
-    // Appends one meshlet covering Positions/Triangles, and the surface that indexes it. Triangles are
-    // packed exactly as GenerateMeshlets does: one dword per triangle, three micro-indices in the low
-    // bytes, relative to the meshlet's vertex base.
+    // Triangles are packed exactly as GenerateMeshlets does, one dword per triangle.
     void AddMeshlet(FMeshResource& Resource, const TVector<FVector3>& Positions, const TVector<FUIntVector3>& Triangles)
     {
         const bool bSkinned = Resource.bSkinnedMesh;
@@ -29,13 +25,11 @@ namespace
         Meshlet.TriangleCount  = (uint32)Triangles.size();
         Meshlet.LODIndex       = 0;
 
-        // Positions are quantized against the meshlet, so the frame has to be derived before any vertex
-        // can be written -- exactly the order GenerateMeshlets uses.
+        // Positions are quantized against the meshlet, so the frame is derived first.
         const FMeshletQuantization Quant = ComputeMeshletQuantization(Positions.data(), (uint32)Positions.size());
         ApplyMeshletQuantization(Meshlet, Quant);
 
-        // Whichever stream the resource declares, so a skinned fixture is genuinely populated rather
-        // than passing a test for the trivial reason that its vertex stream was empty.
+        // Whichever stream the resource declares, so a skinned fixture is genuinely populated.
         for (const FVector3& P : Positions)
         {
             if (bSkinned)
@@ -92,9 +86,7 @@ namespace
         AddMeshlet(Resource, P, T);
     }
 
-    /** Trilinear read of the built volume at a local-space point, decoded back to local units. Mirrors
-     *  SampleDistanceFieldLocal in Includes/DistanceField.slang, including the texel-center convention,
-     *  so a disagreement between the two shows up here rather than on screen. */
+    // Mirrors SampleDistanceFieldLocal, texel-center convention included.
     float SampleVolume(const FDistanceFieldVolume& Volume, FVector3 LocalPosition)
     {
         const FVector3 UVW = (LocalPosition - Volume.VolumeMin) / Volume.VolumeSize;
@@ -177,8 +169,7 @@ TEST(DistanceField, EmptyMeshProducesNoField)
 
 TEST(DistanceField, SkeletalMeshIsRefused)
 {
-    // A field baked in mesh-local space cannot follow skinning, so it must be refused outright rather
-    // than silently describing the bind pose while the character animates.
+    // A mesh-local field cannot follow skinning, so it must be refused outright.
     FMeshResource Resource;
     Resource.bSkinnedMesh = true;
     BuildBox(Resource, FVector3(1.0f));
@@ -197,8 +188,7 @@ TEST(DistanceField, VolumeCoversPaddedBoundsWithCubicVoxels)
     ASSERT_TRUE(DistanceField::Build(Resource, MakeSettings(32), Volume));
     ASSERT_TRUE(Volume.IsValid());
 
-    // Longest mesh extent is 2, band scale 0.2 -> MaxDistance 0.4, so the volume spans 2 + 2*0.4 = 2.8
-    // on every axis. Cubic voxels means the derived per-axis step must agree across all three.
+    // Cubic voxels mean the derived per-axis step must agree across all three.
     EXPECT_NEAR(Volume.MaxDistance, 0.4f, 1e-5f);
 
     const FVector3 Step(
@@ -208,8 +198,7 @@ TEST(DistanceField, VolumeCoversPaddedBoundsWithCubicVoxels)
     EXPECT_NEAR(Step.x, Step.y, 1e-5f);
     EXPECT_NEAR(Step.x, Step.z, 1e-5f);
 
-    // And it must actually contain the padded bounds, or the outer voxels clamp before reaching the
-    // full band and the gradient at the boundary goes flat.
+    // It must contain the padded bounds, or outer voxels clamp and the gradient goes flat.
     EXPECT_LE(Volume.VolumeMin.x, -1.4f + 1e-4f);
     EXPECT_GE(Volume.VolumeMin.x + Volume.VolumeSize.x, 1.4f - 1e-4f);
 }
@@ -222,8 +211,7 @@ TEST(DistanceField, SignIsNegativeInsideAndPositiveOutside)
     FDistanceFieldVolume Volume;
     ASSERT_TRUE(DistanceField::Build(Resource, MakeSettings(48), Volume));
 
-    // Deep inside: the band saturates, so only the SIGN is meaningful here, which is exactly the
-    // property the ray vote exists to get right.
+    // Deep inside the band saturates, so only the SIGN is meaningful here.
     EXPECT_LT(SampleVolume(Volume, FVector3(0.0f, 0.0f, 0.0f)), 0.0f);
     EXPECT_LT(SampleVolume(Volume, FVector3(0.5f, -0.3f, 0.2f)), 0.0f);
 
@@ -251,8 +239,7 @@ TEST(DistanceField, MatchesAnalyticBoxDistanceInsideTheBand)
         FVector3(1.1f, 1.1f, 0.0f),   FVector3(1.05f, 1.05f, 1.05f),
     };
 
-    // Tolerance is one voxel: a 64^3 grid over a 2.8-unit span puts a voxel at ~0.044, and both the
-    // trilinear reconstruction and the 8-bit quantization are bounded well inside that.
+    // Tolerance is one voxel, about 0.044 here, which bounds reconstruction and quantization.
     const float VoxelSize = Volume.VolumeSize.x / (float)Volume.Dimensions.x;
 
     for (const FVector3& P : Samples)
@@ -275,22 +262,19 @@ TEST(DistanceField, TwoSidedFieldIsUnsigned)
     ASSERT_TRUE(DistanceField::Build(Resource, Settings, Volume));
     EXPECT_TRUE(Volume.bTwoSided);
 
-    // The two-sided encoding spends the whole byte on [0, MaxDistance], so the interior -- which a
-    // SIGNED field would put at 0.0 (fully negative) -- must instead saturate to the far end.
+    // The two-sided encoding spends the whole byte on [0, MaxDistance], so the interior saturates.
     const float Interior = SampleVolume(Volume, FVector3(0.0f, 0.0f, 0.0f));
     EXPECT_NEAR(Interior, Volume.MaxDistance, Volume.MaxDistance * 0.02f);
     EXPECT_GT(SampleVolume(Volume, FVector3(1.2f, 0.0f, 0.0f)), 0.0f);
 
-    // And a point near the surface must still read near zero from both sides, which is the property the
-    // unsigned encoding exists to preserve.
+    // A point near the surface must read near zero from both sides.
     const float VoxelSize = Volume.VolumeSize.x / (float)Volume.Dimensions.x;
     EXPECT_NEAR(SampleVolume(Volume, FVector3(1.0f, 0.0f, 0.0f)), 0.0f, VoxelSize);
 }
 
 TEST(DistanceField, NonUniformBoundsKeepVoxelsCubic)
 {
-    // A long thin slab: the axis-count derivation is where a bug would show up as anisotropic voxels,
-    // which silently break every central-difference gradient in the shader.
+    // A long thin slab is where a bad axis-count derivation shows up as anisotropic voxels.
     FMeshResource Resource;
     BuildBox(Resource, FVector3(4.0f, 0.5f, 0.25f));
 
@@ -336,10 +320,7 @@ TEST(DistanceField, SerializationRoundTrips)
     EXPECT_TRUE(Restored.IsValid());
 }
 
-// The GPU mirror in Includes/Common.slang is hand-written, so nothing but this catches a member added
-// on one side only. Slang reads the header through a pointer under scalar layout, where the total is
-// exactly the sum of the declared members, so every offset below is the running sum of the ones above.
-// These numbers are a transcription of FMeshletHeader in Common.slang: if one moves, check that file.
+// Transcribed from FMeshletHeader in Common.slang, which is hand-written; if one moves, check it.
 TEST(DistanceField, MeshletHeaderMatchesGPUMirrorSize)
 {
     EXPECT_EQ(sizeof(FMeshletHeaderGPU), 96u);
@@ -365,8 +346,7 @@ TEST(DistanceField, MeshletHeaderMatchesGPUMirrorSize)
 
     EXPECT_EQ(offsetof(FMeshletHeaderGPU, MeshletCount), 92u);
 
-    // Every member is accounted for above, so a new one on the C++ side lands past the end and shows up
-    // here as a size mismatch rather than as silently misread bytes on the GPU.
+    // Every member is accounted for above, so a new one shows up here as a size mismatch.
     EXPECT_EQ(offsetof(FMeshletHeaderGPU, MeshletCount) + sizeof(FMeshletHeaderGPU::MeshletCount),
               sizeof(FMeshletHeaderGPU));
 }

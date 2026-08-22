@@ -16,10 +16,7 @@
 
 using namespace Lumina;
 
-// Phase 5 of the C# scripting rewrite (Docs/CSharpScriptingRewrite.md): CEntityScript is one base that BOTH
-// languages subclass, and EntityScripts::Tick is one loop of plain virtual calls with no language-specific
-// path in it. These tests pin that: a C++ script and a minted (C#-shaped) script go through the exact same
-// driver, and the driver never mentions either language.
+// CEntityScript is one base both languages subclass, driven by one loop of virtual calls.
 
 namespace
 {
@@ -30,8 +27,7 @@ namespace
     }
 }
 
-// The native half: a C++ subclass is created, attached, readied once, and ticked -- through the same driver a
-// C# script uses. This is what "we can now write C++ entity scripts" means concretely.
+// The native half, a C++ subclass through the same driver a C# script uses.
 TEST(EntityScriptUnification, CppScriptRunsThroughTheDriver)
 {
     FEntityRegistry Registry{};
@@ -88,10 +84,7 @@ TEST(EntityScriptUnification, CopyingTheComponentClonesItsScripts)
     EXPECT_EQ(Script->GetOwningEntity(), Source) << "the source keeps its own entity";
 }
 
-// REGRESSION: a container property must be copied through its own member address. Handed the OBJECT base
-// instead -- which is what an IsA(Vector) special case in CopyPropertiesTo did -- TVector's {Data, Count, Cap}
-// lands exactly on {vtable pointer, ObjectFlags, ManagedInstanceSlot}, so the clone's vtable is overwritten
-// and the bogus element count is destructed/copied over read-only vtable memory.
+// A container property must be copied through its own member address, never the object base.
 TEST(EntityScriptUnification, CloningAScriptCopiesContainerPropertiesWithoutSmashingTheObject)
 {
     // The property chain is built when the class is finalized; the editor does this at startup.
@@ -114,7 +107,7 @@ TEST(EntityScriptUnification, CloningAScriptCopiesContainerPropertiesWithoutSmas
     CEntityScript* Cloned = Registry.get<SEntityScriptComponent>(Destination).Scripts[0].Get();
     ASSERT_NE(Cloned, nullptr);
 
-    // Read through the class rather than a static_cast: a smashed header shows up here first.
+    // Read through the class rather than a static_cast, so a smashed header shows up here.
     EXPECT_EQ(Cloned->GetClass(), CEntityScriptTest::StaticClass()) << "the clone's class survived the copy";
     CEntityScriptTest* Clone = Cast<CEntityScriptTest>(Cloned);
     ASSERT_NE(Clone, nullptr);
@@ -130,9 +123,7 @@ TEST(EntityScriptUnification, CloningAScriptCopiesContainerPropertiesWithoutSmas
     EXPECT_EQ(Clone->UpdateCount, 1);
 }
 
-// A component with no reflected leaf of its own -- its whole state lives in a custom StructOps serializer --
-// still has to be diffable against a prefab, or every per-instance edit to it is silently inherited away on
-// the next refresh. It is tracked as ONE atomic leaf.
+// A component whose state lives in a custom serializer is tracked as ONE atomic leaf.
 TEST(EntityScriptUnification, PrefabOverridesTrackAScriptComponentAsOneAtomicValue)
 {
     ProcessNewlyLoadedCObjects();
@@ -174,8 +165,7 @@ TEST(EntityScriptUnification, PrefabOverridesTrackAScriptComponentAsOneAtomicVal
     EXPECT_EQ(ValueOf(Instance), FName("Prefab")) << "with nothing overridden it still inherits the prefab";
 }
 
-// A script that was never adopted has had no OnAttach, so it must not receive OnDetach either -- for a C#
-// script that call would mint a managed instance during teardown purely to tear it back down.
+// A script that never attached must not receive OnDetach, which would mint an instance.
 TEST(EntityScriptUnification, DetachSkipsAScriptThatNeverAttached)
 {
     FEntityRegistry Registry{};
@@ -198,8 +188,7 @@ TEST(EntityScriptUnification, DetachSkipsAScriptThatNeverAttached)
     EXPECT_EQ(Attached->DetachCount, 1);
 }
 
-// Fixed update must not reach a script that has not readied yet -- otherwise a script could observe a physics
-// step before its own OnReady.
+// Fixed update must not reach a script that has not readied yet.
 TEST(EntityScriptUnification, FixedUpdateWaitsForReady)
 {
     FEntityRegistry Registry{};
@@ -241,10 +230,7 @@ TEST(EntityScriptUnification, ManyScriptsAndEntitiesTickThroughOneLoop)
     EXPECT_EQ(C->GetOwningEntity(), Second);
 }
 
-// THE UNIFICATION ITSELF: a minted CClass deriving CEntityScript -- the exact shape the host creates for a C#
-// subclass -- is attached and ticked by the SAME driver, alongside a C++ script, with no separate code path.
-// With no .NET host in the test process the shim falls through to the native default, which is the documented
-// behavior; what this pins is that the driver accepts both and needs to know about neither.
+// A minted CClass is attached and ticked by the SAME driver, with no separate code path.
 TEST(EntityScriptUnification, MintedScriptClassTicksThroughTheSameDriver)
 {
     CClass* Minted = FScriptableRegistry::Mint("EntityScript_GTestMinted", "CEntityScript", 0);
@@ -286,9 +272,7 @@ TEST(EntityScriptUnification, AttachRefusesANonScriptClass)
     EXPECT_EQ(EntityScripts::Attach(Registry, Entity, nullptr), nullptr);
 }
 
-// Step 3 of the cutover: a script is a per-entity SUBOBJECT, so the component serializes each one by class
-// name plus its own tagged properties -- the same stock serializer every reflected type uses. Load cannot
-// know the entity, so the driver adopts owner-less scripts on the next tick; that is asserted here too.
+// A script is a per-entity SUBOBJECT, serialized by class name plus its tagged properties.
 TEST(EntityScriptUnification, ComponentSerializationRoundTripsScriptsAndAdoptsThemOnTick)
 {
     FEntityRegistry Source{};
@@ -322,7 +306,7 @@ TEST(EntityScriptUnification, ComponentSerializationRoundTripsScriptsAndAdoptsTh
     EXPECT_EQ(Restored.Scripts[0].Get()->GetClass(), CEntityScriptTest::StaticClass())
         << "the script's concrete class must round-trip, not its base";
 
-    // Freshly loaded: no owner yet, and no lifecycle has run.
+    // Freshly loaded, so no owner yet and no lifecycle has run.
     EXPECT_EQ(Restored.Scripts[0].Get()->GetOwningEntity(), entt::entity{entt::null});
     EXPECT_FALSE(Restored.Scripts[0].Get()->IsReady());
 
@@ -339,11 +323,7 @@ TEST(EntityScriptUnification, ComponentSerializationRoundTripsScriptsAndAdoptsTh
     }
 }
 
-// The link the test above does NOT cover: a script's authored PROPERTY VALUES surviving the round-trip.
-// This is the exact path a scene save/load and a PIE start take -- CWorld::DuplicateWorld serializes the
-// editor world and deserializes it into the play world, so a value that does not survive here is a value
-// that silently reverts the moment you press Play, which is indistinguishable from "the inspector does not
-// work".
+// A script's authored property VALUES must survive the round-trip a scene save and PIE take.
 TEST(EntityScriptUnification, ScriptPropertyValuesSurviveTheComponentRoundTrip)
 {
     Scripting::FScriptExportSchema Schema;
@@ -375,8 +355,7 @@ TEST(EntityScriptUnification, ScriptPropertyValuesSurviveTheComponentRoundTrip)
     CEntityScript* Script = EntityScripts::Attach(Source, Entity, Minted);
     ASSERT_NE(Script, nullptr);
 
-    // Stand-in for the user typing values into the inspector: the property table writes through exactly
-    // these FPropertys, at exactly this object.
+    // Stand-in for the inspector, writing through exactly these FPropertys at this object.
     Speed->SetValue<float>(Script, 12.5f);
     *Label->GetValuePtr<FString>(Script) = "authored in the inspector";
 
@@ -414,8 +393,7 @@ TEST(EntityScriptUnification, ScriptPropertyValuesSurviveTheComponentRoundTrip)
         << "adoption (OnAttach/OnReady) clobbered an authored value";
 }
 
-// The by-class lookup API backing GetScript/AddScript/RemoveScript. Class-based, so a C++ script is found by
-// exactly the same call a C# one is.
+// Class-based lookup, so a C++ script is found by exactly the same call a C# one is.
 TEST(EntityScriptUnification, FindAndRemoveByClass)
 {
     FEntityRegistry Registry{};
@@ -443,12 +421,7 @@ TEST(EntityScriptUnification, FindAndRemoveByClass)
     EXPECT_FALSE(EntityScripts::Remove(Registry, Entity, First)) << "removing twice must be refused";
 }
 
-// Hot reload's round trip, end to end: a script attached to an entity survives its class's property block
-// being torn down and rebuilt under it.
-//
-// The rebuild cannot happen with instances alive (an object's size is baked in at allocation), so the reload
-// evacuates first: serialize every affected entity's scripts, drop them, migrate the class, read them back.
-// This pins the whole sequence, because each half is useless alone.
+// The reload evacuates first, since a class rebuild cannot happen with instances alive.
 TEST(EntityScriptUnification, ScriptsSurviveAClassLayoutRebuild)
 {
     FEntityRegistry Registry{};
@@ -476,8 +449,7 @@ TEST(EntityScriptUnification, ScriptsSurviveAClassLayoutRebuild)
     ASSERT_NE(Speed, nullptr);
     Speed->SetValue<float>(Attached, 12.5f);
 
-    // Identity by GUID, not by address: the evacuated object is freed before the restore allocates, so the
-    // pooled allocator is free to hand the same block back and an address comparison proves nothing.
+    // Identity by GUID, not by address, since the pooled allocator may reuse the block.
     const FGuid AttachedGuid = Attached->GetGUID();
 
     // A rebuild is refused while the script is attached, which is exactly why evacuation exists.
@@ -497,8 +469,7 @@ TEST(EntityScriptUnification, ScriptsSurviveAClassLayoutRebuild)
     }
     EXPECT_FALSE(Scripting::MigrateMintedClassLayout(Minted, After));
 
-    // Evacuate by hand against this registry (the reload path walks every world through
-    // GWorldManager::ForEachWorld, which a unit test has no contexts for).
+    // Evacuated by hand, since a unit test has no world contexts for ForEachWorld to walk.
     TVector<uint8> Bytes;
     {
         SEntityScriptComponent* Component = Registry.try_get<SEntityScriptComponent>(Entity);
@@ -539,7 +510,7 @@ TEST(EntityScriptUnification, ScriptsSurviveAClassLayoutRebuild)
     ASSERT_NE(Health, nullptr) << "the added property is missing from the restored instance";
     EXPECT_EQ(*Health->GetValuePtr<int32>(Restored), 0);
 
-    // Still a working script: the driver adopts it and ticks it like any other.
+    // Still a working script, so the driver adopts it and ticks it like any other.
     EntityScripts::Tick(Registry, 0.016f);
 
     EntityScripts::DetachAll(Registry, Entity);
@@ -555,19 +526,14 @@ namespace
         Field.Type->Kind = Kind;
         if (Aliases != nullptr)
         {
-            // Exactly what ReadAliasesInto folds a C# [Alias] list into: a ';'-joined metadata value.
+            // Exactly what ReadAliasesInto folds a C# [Alias] list into, a ';'-joined metadata value.
             Field.Meta.Set(FName("Aliases"), Aliases);
         }
         return Field;
     }
 }
 
-// Renaming a [Property] keeps its value, as long as the new name declares the old one with [Alias].
-//
-// The replay is name-keyed, so a rename is indistinguishable from "one property removed, another added"
-// unless something carries the old name across. [Alias] is that something, and SerializeTaggedProperties
-// already matches tags against it -- this pins that the hot-reload round trip inherits the behavior rather
-// than needing its own.
+// The replay is name-keyed, so [Alias] is what carries the old name across a rename.
 TEST(EntityScriptUnification, RenamingAPropertyKeepsItsValueViaAlias)
 {
     FEntityRegistry Registry{};
@@ -625,9 +591,7 @@ TEST(EntityScriptUnification, RenamingAPropertyKeepsItsValueViaAlias)
     EntityScripts::DetachAll(Registry, Entity);
 }
 
-// Without an [Alias] the value is genuinely gone, and the new property is at its default rather than holding
-// whatever the old one happened to leave in those bytes. Worth pinning: silently keeping the value would mean
-// the replay was matching by OFFSET, which is exactly the bug a name-keyed carrier exists to prevent.
+// Silently keeping the value would mean the replay was matching by OFFSET.
 TEST(EntityScriptUnification, RenamingWithoutAnAliasResetsToDefault)
 {
     FEntityRegistry Registry{};
@@ -673,9 +637,7 @@ TEST(EntityScriptUnification, RenamingWithoutAnAliasResetsToDefault)
     EntityScripts::DetachAll(Registry, Entity);
 }
 
-// Renaming the SCRIPT CLASS. The instances are not the wrong size, they are the wrong class, so the fix is a
-// redirect from the old class name to the new one plus the same evacuate/restore round trip. The redirect is
-// consulted by SEntityScriptComponent's load path, which means a scene saved before the rename loads too.
+// The instances are the wrong class, so a class-name redirect joins the evacuate round trip.
 TEST(EntityScriptUnification, RenamingAScriptClassMovesItsInstances)
 {
     FEntityRegistry Registry{};
@@ -694,7 +656,7 @@ TEST(EntityScriptUnification, RenamingAScriptClassMovesItsInstances)
     ASSERT_NE(Attached, nullptr);
     Old->GetProperty(FName("Speed"))->SetValue<float>(Attached, 4.25f);
 
-    // Evacuate: the buffer records the OLD class name.
+    // Evacuate, where the buffer records the OLD class name.
     TVector<uint8> Bytes;
     {
         SEntityScriptComponent* Component = Registry.try_get<SEntityScriptComponent>(Entity);
@@ -743,9 +705,7 @@ TEST(EntityScriptUnification, RenamingAScriptClassMovesItsInstances)
     EntityScripts::DetachAll(Registry, Entity);
 }
 
-// [SkipHotReload] asks for the OPPOSITE of what a reload normally does: the value goes back to the class
-// default instead of being carried across. The attribute crossed to native as metadata for a long time with
-// nothing acting on it, so this pins that the restore path honors it.
+// [SkipHotReload] sends the value back to the class default instead of carrying it across.
 TEST(EntityScriptUnification, SkipHotReloadFieldsResetOnRestore)
 {
     FEntityRegistry Registry{};
@@ -779,8 +739,7 @@ TEST(EntityScriptUnification, SkipHotReloadFieldsResetOnRestore)
         Component->Scripts.clear();
     }
 
-    // EntityScripts::Restore does the replay and then this reset. A unit test has no world contexts for it
-    // to walk, so the two steps are driven directly here.
+    // A unit test has no world contexts to walk, so replay and reset are driven directly.
     {
         SEntityScriptComponent& Component = Registry.get_or_emplace<SEntityScriptComponent>(Entity);
         FMemoryReader Reader(Bytes);

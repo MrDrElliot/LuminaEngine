@@ -1,4 +1,4 @@
-#include "CoreTypeCustomization.h"
+﻿#include "CoreTypeCustomization.h"
 #include "imgui.h"
 #include "Core/Reflection/Type/Properties/EnumProperty.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
@@ -6,7 +6,7 @@
 
 namespace Lumina
 {
-    EPropertyChangeOp FEnumPropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property)
+    EPropertyChangeOp FEnumPropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args)
     {
         FEnumProperty* EnumProperty = static_cast<FEnumProperty*>(Property->Property);
         bool bWasChanged = false;

@@ -20,24 +20,19 @@ namespace Lumina
 {
     namespace
     {
-        // Not exported: every module reaches the streamer through TryGet(), so there is exactly one place
-        // that can be wrong about whether one exists.
+        // Not exported, so exactly one place can be wrong about whether a streamer exists.
         FTextureStreamingManager* GTextureStreamingManager = nullptr;
 
-        // Read fresh each frame rather than cached: the Settings panel edits the CDO in place, so a change
-        // takes effect on the next Update with no apply step.
+        // Read fresh each frame, since the Settings panel edits the CDO in place with no apply step.
         const CTextureStreamingSettings& Settings()
         {
             return *GetDefault<CTextureStreamingSettings>();
         }
 
-        // A texture whose coverage collapsed is not demoted immediately -- a camera cut or a one-frame
-        // occlusion would otherwise cost a full reload on the very next frame.
+        // A camera cut or a one-frame occlusion would otherwise cost a full reload on the next frame.
         constexpr uint64 kDemoteHysteresisFrames = 120;
 
-        // How long a coarser budget must hold before residency actually follows it, when the pool is not
-        // under pressure. Short enough to reclaim promptly, long enough that stepping back and forth over
-        // a mip boundary does not realloc the image every few frames.
+        // Short enough to reclaim promptly, long enough that a mip boundary is not crossed repeatedly.
         constexpr uint16 kDemoteDeadBandFrames = 30;
 
     }
@@ -54,8 +49,7 @@ namespace Lumina
     {
         FTextureStreamingManager* Manager = GTextureStreamingManager;
 
-        // Unpublish before deleting: CTexture::OnDestroy calls TryGet(), and textures are still being torn
-        // down after this point.
+        // Unpublish before deleting, since CTexture::OnDestroy calls TryGet and textures still tear down.
         GTextureStreamingManager = nullptr;
 
         if (Manager)
@@ -83,8 +77,7 @@ namespace Lumina
         auto It = TextureToIndex.find(Texture);
         if (It != TextureToIndex.end())
         {
-            // Re-registration (a texture editor flip, an array recook) -- refresh the cached sizes rather
-            // than adding a second entry that would double-count against the budget.
+            // Refreshes the cached sizes rather than adding a second entry that double-counts.
             FStreamingTexture& Existing = Textures[It->second];
             ResidentBytesTotal -= Existing.ResidentBytes;
             Existing.ResidentBytes = Resource.CalcResidentSizeBytes();
@@ -140,8 +133,7 @@ namespace Lumina
         Textures.pop_back();
         TextureToIndex.erase(Texture);
 
-        // Any in-flight load for this texture is left to complete and be discarded: its weak pointer will
-        // have gone null, and canceling mid-read would mean synchronizing with the worker.
+        // The worker's weak pointer will have gone null, and canceling mid-read means synchronizing.
     }
 
     FTextureStreamingManager::FStreamingTexture* FTextureStreamingManager::Find(CTexture* Texture)
@@ -201,9 +193,7 @@ namespace Lumina
 
         FScopeLock Lock(Mutex);
 
-        // The feedback is complete by construction -- every lane that shades a material reports -- so a
-        // texture nobody reported for genuinely was not sampled. Start from zero and let the expansion
-        // below fill in; "valid but empty" is what drives the decay-to-tail branch in ComputeWantedMips.
+        // Valid but empty is what drives the decay-to-tail branch in ComputeWantedMips.
         SlotToEntry.clear();
         for (uint32 i = 0; i < (uint32)Textures.size(); ++i)
         {
@@ -227,8 +217,7 @@ namespace Lumina
             SlotToEntry.insert_or_assign(Slot, i);
         }
 
-        // Walk only the material slots that actually reported. Cost is (materials that drew) x (their
-        // distinct textures), which is a few thousand hash lookups in a heavy scene.
+        // Costs materials that drew times their distinct textures, a few thousand lookups in a heavy scene.
         const uint32 NumMaterialSlots = Math::Min(Count, Materials.GetCapacity());
         uint32 TextureIDs[MAX_TEXTURES];
 
@@ -249,8 +238,7 @@ namespace Lumina
                     continue;
                 }
 
-                // OR, not assign: two materials sharing a texture at different scales must both be
-                // satisfied, and the highest set bit is the one that wins downstream.
+                // Two materials sharing a texture at different scales must both be satisfied.
                 FStreamingTexture& Entry = Textures[It->second];
                 Entry.FeedbackMask     |= Mask;
                 Entry.LastFeedbackFrame = FrameCounter;
@@ -274,17 +262,13 @@ namespace Lumina
         PromotedLastFrame = 0;
         DemotedLastFrame  = 0;
 
-        // ONE host-upload budget for the whole frame, spent by the staged fills first and by newly applied
-        // loads with whatever is left. Splitting it per stage would let two stages each spend the "budget"
-        // and land twice the spike the setting names.
+        // Splitting it per stage would let two stages each spend the budget and double the spike.
         FrameUploadBudget = (uint64)Math::Max(Settings().MaxUploadMBPerFrame, 1) * 1024ull * 1024ull;
 
-        // And ONE image-churn budget: a demotion recreates the image while copying zero host bytes, so the
-        // upload budget above cannot see it.
+        // A demotion recreates the image while copying zero host bytes, which the upload budget cannot see.
         FrameResidencyChanges = (uint32)Math::Max(Settings().MaxResidencyChangesPerFrame, 1);
 
-        // Before anything new is started: an image that is already staged and half-filled is holding a
-        // whole second allocation and is closer to paying off than anything not begun.
+        // A half-filled staged image holds a second allocation and is closest to paying off.
         TickResidencyFills();
 
         ProcessCompletedLoads();
@@ -293,8 +277,7 @@ namespace Lumina
         ApplyDemotions();
         IssuePromotions();
 
-        // Plotted rather than logged: a hitch is a shape over time, and these are the two numbers that say
-        // whether the frame's cost was host uploads or something else entirely.
+        // A hitch is a shape over time, and these say whether the cost was host uploads or something else.
         LUMINA_PROFILE_VALUE("Streaming/UploadBudgetLeftKiB", (int64)(FrameUploadBudget / 1024));
         LUMINA_PROFILE_VALUE("Streaming/ResidentMiB", (int64)(ResidentBytesTotal / (1024 * 1024)));
         LUMINA_PROFILE_VALUE("Streaming/LoadsInFlight", (int64)PendingLoads.size());
@@ -312,9 +295,7 @@ namespace Lumina
             return;
         }
 
-        // Rotated rather than registry order, so the frame's SURPLUS is shared out instead of always
-        // landing on whatever registered first. Fairness only -- the invariant that a fill cannot stall is
-        // the guarantee below, not this.
+        // Fairness only, since the guarantee that a fill cannot stall is the floor below, not this.
         for (SIZE_T i = 0; i < Count; ++i)
         {
             FStreamingTexture& Entry = Textures[(FillCursor + i) % Count];
@@ -325,23 +306,12 @@ namespace Lumina
                 continue;
             }
 
-            // EVERY in-flight fill advances, every frame. The budget decides how MUCH each one moves, never
-            // whether it moves at all -- because a texture mid-swap is not a candidate for deferral. Its
-            // staged image is invisible and its bindless slot is frozen until the fill completes, so a
-            // frame it spends waiting is not bandwidth saved, it is a texture stuck at the wrong residency
-            // and a slot that cannot be reused. Deferring instead is what let a big texture starve behind
-            // the rest of the registry forever, silently, until the RHI's never-committed error fired.
-            //
-            // The floor is one BLOCK ROW per in-flight texture -- kilobytes each. The old once-per-frame
-            // restriction was sized against per-MIP granularity, where a free step meant 16 MiB.
+            // The budget decides how MUCH each fill moves, never whether it moves at all.
             const uint32 FirstMipWas = Texture->GetResidentFirstMip();
 
             Texture->TickResidencyFill(FrameUploadBudget, /*bGuaranteeProgress*/ true);
 
-            // A fill that had to abandon its staged image rolls residency back, and the entry's cached
-            // size was charged against the pool when the change was APPLIED. Left alone, the pool would
-            // keep counting mips that were given back -- permanently, since nothing else recomputes it
-            // until the next successful change.
+            // Left alone the pool would keep counting mips that were given back, permanently.
             if (Texture->GetResidentFirstMip() != FirstMipWas)
             {
                 ResidentBytesTotal -= Entry.ResidentBytes;
@@ -377,10 +347,7 @@ namespace Lumina
             const uint32 LongEdge = Math::Max(Resource.ImageDescription.Extent.x, Resource.ImageDescription.Extent.y);
             const uint8  Current  = (uint8)Texture->GetResidentFirstMip();
 
-            // GPU feedback wins wherever it exists. It is a measurement of the mip the shaders actually
-            // sampled, so it needs no bounds, no distance and no texel density -- the three things the CPU
-            // estimate below got wrong. The mask is an ABSOLUTE required resolution, independent of what
-            // is currently resident, so it names a target directly rather than nudging toward one.
+            // The mask is an ABSOLUTE required resolution, so it names a target rather than nudging toward one.
             if (Entry.bFeedbackValid)
             {
                 if (Entry.FeedbackMask == 0u)
@@ -391,30 +358,22 @@ namespace Lumina
                     continue;
                 }
 
-                // HIGHEST set bit: the request is an absolute resolution ("at least 2^N texels across"),
-                // so the largest anything asked for is the one to satisfy. Independent of what is currently
-                // resident, which is what stopped this from being a convergence loop.
+                // The highest set bit is the largest anything asked for, so it is the one to satisfy.
                 const uint32 RequiredLongEdge = 1u << (31u - (uint32)std::countl_zero(Entry.FeedbackMask));
 
-                // First mip whose long edge still meets the request. Walks down from the full chain, so it
-                // lands on an absolute target in one step rather than creeping toward it.
+                // Walks down from the full chain, landing on an absolute target in one step.
                 uint32 Target = 0;
                 while (Target < Entry.TailFirstMip && (LongEdge >> (Target + 1u)) >= RequiredLongEdge)
                 {
                     ++Target;
                 }
 
-                // Straight to the target, no per-frame stepping. That cap existed to bound the cost of a
-                // step back when every step was a full image realloc plus a re-upload of the entire
-                // resident chain -- converging 4 -> 0 meant four of them, re-staging ~28 MiB to deliver 21.
-                // Retained mips now move GPU-side and the host half is metered by TickResidencyFill, which
-                // bounds the cost where it actually is; stepping would only multiply the reallocations.
+                // Retained mips move GPU-side now, so stepping would only multiply the reallocations.
                 Entry.WantedFirstMip = (uint8)Target;
                 continue;
             }
 
-            // Nothing reported this texture this frame. Hold what it has until the hysteresis window
-            // expires, then let it fall back to the tail.
+            // Holds what it has until the hysteresis window expires, then falls back to the tail.
             const uint8 CurrentFirstMip = (uint8)Texture->GetResidentFirstMip();
             const bool  bRecentlyUsed   = (FrameCounter - Entry.LastDemandFrame) < kDemoteHysteresisFrames;
 
@@ -429,9 +388,7 @@ namespace Lumina
             return FLT_MAX;
         }
 
-        // Recency alone now that coverage is gone: the GPU mask says whether a texture was sampled, not
-        // how big it was, so "sampled most recently" is the honest ranking. The +1 keeps a never-drawn
-        // texture at a small positive priority rather than a divide-by-zero.
+        // The plus one keeps a never-drawn texture at a small positive priority rather than dividing by zero.
         const uint64 Age = FrameCounter - Entry.LastFeedbackFrame;
         return 1.0f / (1.0f + (float)Age);
     }
@@ -440,9 +397,7 @@ namespace Lumina
     {
         LUMINA_PROFILE_SECTION("Streaming::ComputeBudgetedMips");
 
-        // Start from pure quality. Under budget this is the answer, and it is also what makes an
-        // over-resident texture fall back to what it actually needs -- holding mips nothing samples is not
-        // free, it is pool that another texture could have used.
+        // Holding mips nothing samples is not free, it is pool another texture could have used.
         uint64 Total = 0;
         for (FStreamingTexture& Entry : Textures)
         {
@@ -460,10 +415,7 @@ namespace Lumina
             return;
         }
 
-        // Over budget: shed. Sorted worst-retention-first, then walked in ROUNDS taking a single mip per
-        // texture per pass. That spread is the whole point -- dropping one texture all the way to its tail
-        // frees the same bytes but concentrates every bit of the damage on one surface, and then that
-        // surface immediately streams back up. One mip off many textures is both less visible and stable.
+        // One mip off many textures is both less visible and more stable than gutting one surface.
         TVector<uint32> Order;
         Order.reserve(Textures.size());
         for (uint32 i = 0; i < (uint32)Textures.size(); ++i)
@@ -547,9 +499,7 @@ namespace Lumina
                 continue;
             }
 
-            // Dead-band, so walking past a wall and crossing a mip boundary does not demote and re-promote
-            // every few frames -- each swap is a full image realloc plus a re-upload of every resident mip.
-            // Budget pressure overrides it: when the pool is full, freeing memory beats staying smooth.
+            // Budget pressure overrides it, since when the pool is full freeing memory beats staying smooth.
             if (Entry.FramesWantingCoarser < 0xFFFFu)
             {
                 ++Entry.FramesWantingCoarser;
@@ -559,8 +509,7 @@ namespace Lumina
                 continue;
             }
 
-            // Demotion never needs IO: every mip from the budgeted level down to the tail is either inline
-            // or one we already loaded and still hold.
+            // Every mip from the budgeted level down is either inline or already loaded and still held.
             if (!Texture->ApplyMipResidency(Entry.BudgetedFirstMip))
             {
                 continue;
@@ -575,9 +524,7 @@ namespace Lumina
             ++DemotedLastFrame;
             ++TotalDemotions;
 
-            // CPU copies of the mips we just dropped are dead weight; they are re-readable from the
-            // package's bulk region, which is the whole reason they can be thrown away. Only below the new
-            // resident level -- anything at or above it is what the GPU image now holds.
+            // Only below the new resident level, since anything at or above it is what the image now holds.
             FTextureResource& Resource = Texture->GetTextureResource();
             const uint32 NumLayers = Math::Max(Resource.GetNumLayers(), 1u);
             for (uint32 Layer = 0; Layer < NumLayers; ++Layer)
@@ -609,7 +556,7 @@ namespace Lumina
         const int32  MaxInFlight     = Math::Max(Settings().MaxLoadsInFlight, 1);
         const uint64 MaxStagingBytes = (uint64)Math::Max(Settings().MaxLoadStagingMB, 1) * 1024ull * 1024ull;
 
-        // Sized before the load is built: building one copies every already-resident mip.
+        // Sized before the load is built, since building one copies every already-resident mip.
         auto PredictStagingBytes = [](const CTexture* Texture, uint32 TargetFirstMip, uint32 SourceFirstMip, uint32 LayerCount)
         {
             const FTextureResource& Resource = Texture->GetTextureResource();
@@ -633,10 +580,7 @@ namespace Lumina
             return Bytes;
         };
 
-        // Ordered by how starved each texture is, NOT by registry order. With only a handful of IO slots,
-        // walking the registry lets whatever happens to be registered first take them -- so a distant
-        // texture short one mip could hold up one filling the screen and short four. Priority is the mip
-        // deficit weighted by how big the thing is on screen.
+        // Priority is the mip deficit weighted by how big the thing is on screen.
         TVector<uint32> Candidates;
         Candidates.reserve(Textures.size());
 
@@ -664,7 +608,7 @@ namespace Lumina
                 const CTexture* T = E.Texture.Get();
                 const uint32 Deficit = T ? (T->GetResidentFirstMip() - E.BudgetedFirstMip) : 0u;
 
-                // Pinned first regardless: a pin is an explicit request (an open editor tab), not a hint.
+                // A pin is an explicit request such as an open editor tab, not a hint.
                 return (E.PinCount > 0 ? 1.0e9f : 0.0f) + (float)Deficit;
             };
             return Score(A) > Score(B);
@@ -684,7 +628,7 @@ namespace Lumina
             const uint32 LayerCount      = Math::Max(Texture->GetTextureResource().GetNumLayers(), 1u);
             const uint64 StagingBytes    = PredictStagingBytes(Texture, Entry.BudgetedFirstMip, CurrentFirstMip, LayerCount);
 
-            // Skip, not break: priority-ordered, so an oversized texture must not stall smaller ones.
+            // Skip rather than break, since priority order means an oversized texture must not stall smaller ones.
             if (!PendingLoads.empty() && PendingLoadBytes + StagingBytes > MaxStagingBytes)
             {
                 continue;
@@ -699,14 +643,7 @@ namespace Lumina
             Load->MipBytes.resize((SIZE_T)Load->LayerCount * Load->MipSpan());
             Load->MipRefs.resize((SIZE_T)Load->LayerCount * Load->MipSpan());
 
-            // Snapshot what the read needs BEFORE it is dispatched, so the worker never dereferences the
-            // texture's mips. It used to read FMip::Pixels and FMip::BulkRef live, which raced anything on
-            // the game thread that touched them -- most sharply a save: CTexture::PreSave refills Pixels
-            // from disk, and reallocating that vector while the worker is copying it is a use-after-free.
-            // Renaming a texture that is streaming in is exactly that sequence.
-            //
-            // Every layer, not just layer 0: Mips is a flat Layer-major array and ApplyMipResidency refuses
-            // the promotion unless all of them are populated.
+            // Every layer, since Mips is layer-major and the promotion is refused unless all are populated.
             {
                 const FTextureResource& Resource = Texture->GetTextureResource();
 
@@ -717,15 +654,13 @@ namespace Lumina
                         const uint32 MipIndex = Resource.MipIndex(Layer, Mip);
                         if (MipIndex >= Resource.Mips.size())
                         {
-                            continue;   // no ref and no bytes: the worker fails the load on this slice
+                            continue;   // no ref and no bytes, so the worker fails the load on this slice
                         }
 
                         const FTextureResource::FMip& MipData = Resource.Mips[MipIndex];
                         const uint32 Slice = Load->SliceIndex(Layer, Mip);
 
-                        // Already in memory (a save just pulled it back, or a demotion has not reclaimed it
-                        // yet): hand the bytes over now rather than re-reading them. Also the correct
-                        // fallback when a failed save left BulkRef pointing into a region never written.
+                        // Also the correct fallback when a failed save left the ref pointing into an unwritten region.
                         if (!MipData.Pixels.empty())
                         {
                             Load->MipBytes[Slice] = MipData.Pixels;
@@ -743,19 +678,13 @@ namespace Lumina
             PendingLoadBytes += StagingBytes;
             Entry.bLoadInFlight = true;
 
-            // Only the disk read happens off-thread, against refs and a package that were resolved above;
-            // the residency change it feeds is applied back on the game thread by ProcessCompletedLoads.
+            // Only the disk read is off-thread, and the residency change it feeds runs on the game thread.
             Task::AsyncTask(1, 1, [Raw](uint32, uint32, uint32)
             {
                 LUMINA_PROFILE_SECTION("Texture Stream Read");
                 LUMINA_MEMORY_SCOPE("Texture Streaming");
 
-                // Resolved here rather than captured: a captured CPackage* would have to outlive the read
-                // on its own, whereas the texture's weak pointer already tells us whether any of this is
-                // still worth doing. A rename does NOT invalidate it -- CPackage::Rename keeps its exported
-                // objects alive precisely so live references survive -- and ReadBulkData takes the region
-                // and the file it lives in as one consistent snapshot, so a save committing underneath this
-                // read moves it to the new file wholesale rather than half-way.
+                // The texture's weak pointer already says whether any of this is still worth doing.
                 CTexture* Target  = Raw->Texture.Get();
                 CPackage* Package = Target ? Target->GetPackage() : nullptr;
                 if (Target == nullptr || Package == nullptr)
@@ -789,14 +718,9 @@ namespace Lumina
         LUMINA_PROFILE_SECTION("Streaming::ProcessCompletedLoads");
         LUMINA_MEMORY_SCOPE("Texture Streaming");
 
-        // Applying a promotion is a full re-upload of the texture's resident chain (Recreate hands back an
-        // empty image), which is a game-thread memcpy into the staging ring. Several large textures
-        // finishing their reads on the same frame is what produces the stream-in hitch, so only so many
-        // bytes are allowed to land per frame. A load that does not fit stays complete and pending -- its
-        // bytes are already in memory, so waiting a frame costs nothing but the wait.
+        // A load that does not fit stays complete and pending, so waiting a frame costs nothing.
 
-        // Promotions run first, so under pressure they leave half the changes for the half that frees
-        // memory. Floored at one: over-budget can be permanent, and zero would strand a PINNED texture.
+        // Floored at one, since over-budget can be permanent and zero would strand a pinned texture.
         const uint32 PromotionLimit = (ResidentBytesTotal > GetBudgetBytes())
             ? Math::Max(FrameResidencyChanges / 2u, 1u)
             : FrameResidencyChanges;
@@ -812,8 +736,7 @@ namespace Lumina
                 continue;
             }
 
-            // Budget is checked per load, not per byte: a single texture larger than the whole budget must
-            // still make progress, so the first load of a frame is always allowed through.
+            // The first load of a frame is always allowed through, so an oversized texture still progresses.
             if (FrameUploadBudget == 0 || PromotionsApplied >= PromotionLimit)
             {
                 ++i;
@@ -822,9 +745,7 @@ namespace Lumina
 
             CTexture* Texture = Load.Texture.Get();
 
-            // The last residency change for this texture is staged and not visible yet. Applying another
-            // one now would abandon it, so hold the load instead of spending it -- ApplyMipResidency would
-            // refuse anyway, and the bytes it moved into the resource would be dropped on the floor.
+            // Applying another now would abandon the staged one, and the bytes moved would be dropped.
             if (Texture != nullptr && Texture->HasPendingGPUResidency())
             {
                 ++i;
@@ -837,9 +758,7 @@ namespace Lumina
                 {
                     Entry->bLoadInFlight = false;
 
-                    // Re-check against the CURRENT residency, not the one the load was issued against: a
-                    // budget sweep may have demoted this texture while the read was in flight, which would
-                    // leave a hole between what we loaded and what is on the GPU.
+                    // A budget sweep may have demoted this while the read was in flight, leaving a hole.
                     const uint32 NowFirstMip = Texture->GetResidentFirstMip();
 
                     if (!Load.bFailed && NowFirstMip == Load.SourceFirstMip && Load.TargetFirstMip < NowFirstMip)
@@ -876,9 +795,7 @@ namespace Lumina
                             ++TotalPromotions;
                             TotalBytesRead += BytesRead;
 
-                            // NOT charged here. Applying a promotion only STAGES an image; the host
-                            // uploads that actually cost bandwidth are metered by TickResidencyFill as
-                            // they happen. Charging here as well would bill the same bytes twice.
+                            // Applying only STAGES an image, and the host uploads are metered as they happen.
                         }
                     }
                     else if (Load.bFailed)
@@ -959,8 +876,7 @@ namespace Lumina
             Row.ResidentBytes = Entry.ResidentBytes;
             Row.FullBytes     = Entry.FullBytes;
 
-            // What the mips are still costing in RAM, which is a separate question from GPU residency and
-            // the one that catches a streamer that is freeing GPU images but leaking their CPU copies.
+            // Catches a streamer freeing GPU images while leaking their CPU copies.
             for (const FTextureResource::FMip& Mip : Resource.Mips)
             {
                 Row.CpuBytes += Mip.Pixels.size();

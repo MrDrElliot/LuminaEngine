@@ -68,16 +68,12 @@ namespace Lumina::RmlUi
     static TConsoleVar<int32> CVarWidgetDormancyFrames("UI.Widget.DormancyFrames", 4,
         "Frames of unchanged output before a world-space widget stops ticking; 0 = always tick.");
 
-    // RmlUi has no implicit default font: an element whose cascade never sets 'font-family' renders nothing
-    // ("No font face defined"). The bridge registers the engine font under this family and sets it on every
-    // context's root element, so all documents inherit it unless they specify their own font-family.
+    // RmlUi has no implicit default font, so the bridge registers the engine font under this family.
     static constexpr const char* GDefaultUIFontFamily = "Lumina";
 
     namespace
     {
-        // Set only for the duration of a parse the caller asked to collect diagnostics for. Thread-local
-        // because RmlUi logs from whichever thread is driving it: a world context ticking elsewhere must
-        // not append into an editor tool's buffer, or race it.
+        // Thread-local because RmlUi logs from whichever thread drives it.
         thread_local TVector<FRmlDiagnostic>* GDiagnosticSink = nullptr;
 
         struct FScopedDiagnosticSink
@@ -89,18 +85,7 @@ namespace Lumina::RmlUi
         };
 
 #if USING(WITH_EDITOR)
-        /**
-         * Surfaces an RmlUi warning or error as an editor toast.
-         *
-         * RmlUi reports a problem once per thing it affects, every frame it persists: a document missing
-         * its font logs once per text element per frame. Toasts hold ten entries for three seconds, so an
-         * unfiltered hook would evict every other notification in the editor and still show nothing but
-         * copies of one message. Each distinct message is therefore shown once and then muted, which also
-         * turns a per-frame repeat into a single readable line.
-         *
-         * Called from whichever thread drives RmlUi, so the bookkeeping is locked. Notify itself is
-         * already safe from any thread.
-         */
+        // Each distinct message is shown once and then muted, since RmlUi repeats them every frame.
         void NotifyDiagnostic(Rml::Log::Type Type, const Rml::String& Message)
         {
             constexpr double MuteSeconds = 10.0;
@@ -115,9 +100,7 @@ namespace Lumina::RmlUi
             {
                 FScopeLock Lock(Mutex);
 
-                // Bounded rather than evicted one by one: a message whose text carries a line number is
-                // effectively unique, so the map would otherwise grow for the life of the process. Dropping
-                // the whole table just means a stale message may announce itself once more.
+                // Bounded rather than evicted one by one, since messages carrying line numbers are unique.
                 if (LastShown.size() >= MaxTracked)
                 {
                     LastShown.clear();
@@ -131,8 +114,7 @@ namespace Lumina::RmlUi
                 LastShown[Key] = Now;
             }
 
-            // NotifyInternal, not the format-string wrappers: RCSS and selector text is full of braces and
-            // would be parsed as format specifiers.
+            // NotifyInternal, not the format wrappers, because RCSS text is full of braces.
             const ImGuiX::Notifications::EType Severity = (Type == Rml::Log::LT_WARNING)
                 ? ImGuiX::Notifications::EType::Warning
                 : ImGuiX::Notifications::EType::Error;
@@ -153,8 +135,7 @@ namespace Lumina::RmlUi
 
             bool LogMessage(Rml::Log::Type Type, const Rml::String& Message) override
             {
-                // Only the two levels that mean the author has something to fix; info and debug would
-                // bury those in a notification.
+                // Only the two levels that mean the author has something to fix.
                 const bool bDiagnostic =
                     (Type == Rml::Log::LT_ERROR || Type == Rml::Log::LT_ASSERT || Type == Rml::Log::LT_WARNING);
 
@@ -165,8 +146,7 @@ namespace Lumina::RmlUi
                     Diagnostic.Message = FString(Message.c_str(), Message.size());
                 }
 #if USING(WITH_EDITOR)
-                // Only when nobody is collecting: a caller that captures reports its own summary, naming the
-                // file and folding the count, and toasting each line here as well would duplicate it.
+                // Only when nobody is collecting, since a capturing caller reports its own summary.
                 else if (bDiagnostic)
                 {
                     NotifyDiagnostic(Type, Message);
@@ -205,8 +185,7 @@ namespace Lumina::RmlUi
                     return;
                 }
 
-                // Scheme-prefixed source (e.g. "material:/Game/..") -- a ':' before
-                // any '/'. Pass through so custom URI schemes survive path joining.
+                // Scheme-prefixed source, so custom URI schemes survive path joining.
                 const size_t Colon = Path.find(':');
                 const size_t Slash = Path.find('/');
                 if (Colon != Rml::String::npos && (Slash == Rml::String::npos || Colon < Slash))
@@ -215,8 +194,7 @@ namespace Lumina::RmlUi
                     return;
                 }
 
-                // Relative path -> resolve against the document's directory,
-                // preserving its leading '/'.
+                // Relative path resolved against the document's directory, preserving its leading slash.
                 OutPath = DocumentPath;
                 const size_t LastSlash = OutPath.rfind('/');
                 if (LastSlash != Rml::String::npos)
@@ -245,10 +223,7 @@ namespace Lumina::RmlUi
             FVector4             ClearColor{0.10f, 0.10f, 0.12f, 1.0f};
         };
 
-        // Bridges one RmlUi element event to a managed callback (LuminaSharp World.UI). Owned by the bridge
-        // (FState::UIListeners), reaped when the world's UI is destroyed. RmlUi does NOT delete listeners on
-        // element destruction -- it only calls OnDetach -- so we track bAttached to avoid touching a freed
-        // element if RemoveElementEventListener is called after the element is already gone.
+        // RmlUi never deletes listeners on element destruction, so bAttached guards a freed element.
         class FManagedUIListener final : public Rml::EventListener
         {
         public:
@@ -291,22 +266,18 @@ namespace Lumina::RmlUi
             bool                 bAttached = false;
         };
 
-        // A list (array-of-struct) bound for data-for. Backed by a snapshot of string cells the managed side
-        // pushes on change (pull from RmlUi would mean a managed crossing per cell per refresh). Owns the
-        // three custom VariableDefinitions that expose Rows to RmlUi; RmlUi only references them (it does not
-        // own custom-bound DataVariables), so their lifetime is this struct's. Element/member identity is
-        // packed into the DataVariable's void* handle: row in the high 32 bits, column in the low 32.
+        // Element and member identity packs into the handle, row in the high 32 bits, column in the low.
         struct FListField
         {
             Rml::String                             Name;
             TVector<Rml::String>                    MemberNames;   // column names ({{ item.Name }})
-            TVector<TVector<Rml::Variant>>          Rows;          // Rows[row][col] -- string variants
+            TVector<TVector<Rml::Variant>>          Rows;          // Rows[row][col], string variants
             Rml::UniquePtr<Rml::VariableDefinition> ArrayDef;
             Rml::UniquePtr<Rml::VariableDefinition> StructDef;
             Rml::UniquePtr<Rml::VariableDefinition> MemberDef;
         };
 
-        // Leaf: reads one cell. The handle packs (row << 32 | col).
+        // Leaf that reads one cell; the handle packs (row << 32 | col).
         class FListMemberDef final : public Rml::VariableDefinition
         {
         public:
@@ -327,7 +298,7 @@ namespace Lumina::RmlUi
             FListField* List;
         };
 
-        // One row: resolves {{ item.<member> }} to a member-cell handle. Incoming handle carries the row index.
+        // One row, resolving {{ item.<member> }} to a member-cell handle from the row index.
         class FListStructDef final : public Rml::VariableDefinition
         {
         public:
@@ -349,7 +320,7 @@ namespace Lumina::RmlUi
             FListField* List;
         };
 
-        // The array: Size + index -> row handle. ".size" is handled by RmlUi via the literal int path.
+        // The array, mapping Size and index to a row handle; '.size' takes RmlUi's literal int path.
         class FListArrayDef final : public Rml::VariableDefinition
         {
         public:
@@ -373,10 +344,7 @@ namespace Lumina::RmlUi
             FListField* List;
         };
 
-        // A managed ViewModel's data model bound to a world context (World.UI.AddModel). Owns the per-variable
-        // Variant cache the bound getters read; C# pushes values down and dirties them. Owned by the bridge
-        // (FState::DataModels), reaped per-world on teardown like FManagedUIListener. Variant::Set is private,
-        // so values are assigned through the public templated operator=.
+        // Variant::Set is private, so values are assigned through the public templated operator=.
         struct FManagedDataModel
         {
             CWorld*                   World = nullptr;
@@ -412,7 +380,7 @@ namespace Lumina::RmlUi
             TUniquePtr<FRmlUiRenderer>          Renderer;
             TVector<TUniquePtr<FEditorEntry>>   EditorContexts;
 
-            // Editor hot-reload: OnContentFileModified raises this on any .rml/.rcss save; next TickWorldUI restyles.
+            // Editor hot-reload, raised by OnContentFileModified on any .rml or .rcss save.
             TAtomic<bool>                       bUIReloadPending{false};
 
             CWorld*                             ActiveWorld = nullptr;
@@ -426,18 +394,16 @@ namespace Lumina::RmlUi
 
             uint32                              WidgetRenderCursor = 0;
 
-            // Script-registered UI event listeners (World.UI). Owned here; reaped per-world on DestroyWorldUI
-            // and en masse on Shutdown. Small N (a handful per screen), so linear scan on add/remove is fine.
+            // Small N per screen, so a linear scan on add and remove is fine.
             TVector<FManagedUIListener*>        UIListeners;
 
             // Script-registered data models (World.UI.AddModel). Owned here; reaped per-world like UIListeners.
             TVector<FManagedDataModel*>         DataModels;
 
-            // Backing bytes for the default UI font. RmlUi's memory LoadFontFace references this buffer for the
-            // face's lifetime (it does not copy), so it must outlive the font engine -- kept here until Shutdown.
+            // RmlUi references this buffer for the face's lifetime instead of copying it.
             TVector<uint8>                      DefaultFontData;
 
-            // Recursive: Update may fire event callbacks that re-enter the bridge on the same thread.
+            // Recursive because Update may fire callbacks that re-enter the bridge on the same thread.
             FRecursiveMutex                     StateMutex;
         };
 
@@ -535,9 +501,7 @@ namespace Lumina::RmlUi
             return Filesystem::LastWriteTime(Physical);
         }
 
-        // Establish the engine default font on a freshly created context: set GDefaultUIFontFamily on the
-        // root element, which every document/element in the context inherits unless it sets its own
-        // 'font-family'. Without this, RmlUi warns "No font face defined" and the text is invisible.
+        // Every element in the context inherits this family unless it sets its own font-family.
         void ApplyDefaultFontFamily(Rml::Context* Ctx)
         {
             if (Ctx == nullptr)
@@ -551,13 +515,7 @@ namespace Lumina::RmlUi
             }
             Root->SetProperty("font-family", GDefaultUIFontFamily);
 
-            // Setting the property is not the same as the root having computed it. An element inherits from its
-            // parent's *computed* values, and the context root's are only computed inside Context::Update. But
-            // ElementDocument::Show() lays the document out on the spot, so a document loaded and shown before
-            // the context's first update inherits an empty font-family and every text element in it reports
-            // "No font face defined" for a font that is loaded and resolving perfectly well. Update once here,
-            // while the context still has no documents and the call costs nothing, so the root already carries
-            // the family by the time anything can be parented to it.
+            // Update once here so the root carries a computed family before any document is shown.
             Ctx->Update();
         }
 
@@ -648,8 +606,7 @@ namespace Lumina::RmlUi
             LOG_INFO("[RmlUi] UI hot-reload: restyled all documents across {} context(s).", NumContexts);
         }
 
-        // Detach + delete every script UI listener bound to this world. Callers hold StateMutex. Safe whether
-        // or not the elements still exist: a destroyed element already fired OnDetach (bAttached == false).
+        // Safe whether or not the elements still exist, since a destroyed one already fired OnDetach.
         void ReapWorldUIListeners(FState& State, CWorld* World)
         {
             for (size_t i = 0; i < State.UIListeners.size(); )
@@ -672,9 +629,7 @@ namespace Lumina::RmlUi
             }
         }
 
-        // Delete every data model bound to this world. Callers hold StateMutex. The model's context is being
-        // (or was already) destroyed by RemoveContext, which tears down the underlying Rml::DataModel too, so
-        // we only free the wrapper here -- never touch Rml. An undisposed managed binding leaks its GCHandle.
+        // RemoveContext already tore down the underlying DataModel, so only the wrapper is freed.
         void ReapWorldDataModels(FState& State, CWorld* World)
         {
             for (size_t i = 0; i < State.DataModels.size(); )
@@ -754,14 +709,7 @@ namespace Lumina::RmlUi
             return false;
         }
 
-        // Register the default UI font under GDefaultUIFontFamily (from memory, so we control the family name).
-        // ApplyDefaultFontFamily then sets it on each context root, giving every document a working font
-        // without authoring 'font-family'. The byte buffer is kept in State for the font face's lifetime.
-        // Every candidate is loaded from MEMORY so the family name is ours to choose. A path load names the
-        // family from the file's own metadata ("Lato"), which no document ever asks for: ApplyDefaultFontFamily
-        // still stamps GDefaultUIFontFamily on each context root, so the lookup misses and RmlUi logs
-        // "No font face defined ... 'Lumina' [regular]" for every text element, every frame, forever. A font
-        // that cannot be reached is not a fallback, so the alternates are tried under the same family instead.
+        // Loaded from memory so the family name is ours rather than the file's own metadata.
         constexpr const char* DefaultFontCandidates[] =
         {
             "/Engine/Resources/UI/Fonts/LatoLatin-Regular.ttf",
@@ -792,14 +740,7 @@ namespace Lumina::RmlUi
 
         if (bDefaultFontRegistered)
         {
-            // Registering a face only means one was added under some name. What every document depends on
-            // is that the name ApplyDefaultFontFamily stamps on each context root actually resolves, and
-            // the two are separate steps that can disagree. Probing once here turns that into a single
-            // line at startup, instead of RmlUi reporting it per text element per frame at render time
-            // with no way to tell which half went wrong.
-            //
-            // Lowercased because the provider keys on lowercase and only asserts it in Debug, so a mixed
-            // case name silently misses in Development, which is exactly the shape of failure this catches.
+            // Probe once at startup, lowercased, since the provider keys on lowercase and asserts in Debug.
             const Rml::String Probe = Rml::StringUtilities::ToLower(Rml::String(GDefaultUIFontFamily));
 
             if (Rml::GetFontEngineInterface()->GetFontFaceHandle(Probe, Rml::Style::FontStyle::Normal,
@@ -816,16 +757,14 @@ namespace Lumina::RmlUi
         }
         else
         {
-            // Nothing else in the UI stack fails visibly when this happens, so say it once and plainly here
-            // rather than leaving the per-element warning to imply the documents are at fault.
+            // Nothing else in the UI stack fails visibly here, so say it once and plainly.
             State.DefaultFontData.clear();
             LOG_ERROR("[RmlUi] No UI font could be registered as '{}'. Every document that does not author its "
                       "own 'font-family' will render no text. Check that the engine content is mounted.",
                 GDefaultUIFontFamily);
         }
 
-        // Monospace face for digit-heavy HUDs (speedometer, RPM, etc.). Optional;
-        // RmlUi will fall back to LatoLatin if the file is missing.
+        // Optional monospace face for digit-heavy HUDs; falls back to LatoLatin when missing.
         Rml::LoadFontFace("/Engine/Resources/Fonts/JetbrainsMono/JetBrainsMono-ExtraBold.ttf", false);
         Rml::LoadFontFace("/Engine/Resources/Fonts/JetbrainsMono/JetBrainsMono-Bold.ttf", false);
 
@@ -861,8 +800,7 @@ namespace Lumina::RmlUi
             }
         }
 
-        // Widget contexts (owned by SWidgetComponent.Runtime) are torn down with their worlds
-        // via the on_destroy hook; Rml::Shutdown drops any that outlive their world here.
+        // Widget contexts are torn down with their worlds; Shutdown drops any that outlive theirs.
         Rml::Shutdown();
 
         // All contexts are gone; free any script UI listeners that outlived their world.
@@ -894,7 +832,7 @@ namespace Lumina::RmlUi
         Rml::SetFileInterface(nullptr);
         Rml::SetSystemInterface(nullptr);
 
-        // Clear fields individually -- StateMutex is non-movable.
+        // Clear fields individually because StateMutex is non-movable.
         State.System.reset();
         State.Files.reset();
         State.Renderer.reset();
@@ -962,8 +900,7 @@ namespace Lumina::RmlUi
 
         State.Worlds.erase(World);
 
-        // Backend already shut down (Rml::Shutdown destroyed every context): the pointer
-        // is dangling, so just drop it without touching Rml.
+        // Rml::Shutdown already destroyed every context, so drop the dangling pointer untouched.
         if (!State.bInitialized)
         {
             ReapWorldUIListeners(State, World);
@@ -1024,7 +961,7 @@ namespace Lumina::RmlUi
             return;
         }
 
-        // Once per frame (flag self-clears): restyle all docs if a UI file changed on disk.
+        // Once per frame, restyling all docs when a UI file changed on disk; the flag self-clears.
         ProcessPendingUIReload();
 
         FWorldUIContext* UI = WorldUI(World);
@@ -1036,8 +973,7 @@ namespace Lumina::RmlUi
         const FWorldTarget Tgt = GetWorldTarget(World);
         if (RHI::IsValid(Tgt.Image))
         {
-            // DisplaySize override (set by editor each frame) lets the UI lay out at the
-            // panel's aspect instead of the RT's. Falls back to RT size in standalone.
+            // The editor's DisplaySize override lays the UI out at the panel's aspect, not the RT's.
             const FUIntVector2 LayoutSize = (UI->DisplaySize.x > 0 && UI->DisplaySize.y > 0) ? UI->DisplaySize : Tgt.Size;
 
             constexpr float NominalHeight = 1080.0f;
@@ -1122,8 +1058,7 @@ namespace Lumina::RmlUi
 
             if (bPathChanged || bFileChanged)
             {
-                // On-disk edit: drop RmlUi's cached stylesheets/templates so the re-parse picks
-                // up .rcss changes too, not just the .rml body.
+                // Drop cached stylesheets so a re-parse picks up .rcss changes, not just the .rml body.
                 if (bFileChanged)
                 {
                     Rml::Factory::ClearStyleSheetCache();
@@ -1155,7 +1090,7 @@ namespace Lumina::RmlUi
             {
                 if (State.Renderer->GetTargetStableFrames(R.Target.Texture) >= (uint32)DormancyFrames)
                 {
-                    return;   // settled: no Update, no job; keep last RT
+                    return;   // settled, so no Update and no job; keep last RT
                 }
             }
 
@@ -1163,8 +1098,7 @@ namespace Lumina::RmlUi
             R.Context->SetDensityIndependentPixelRatio(Math::Max(0.1f, float(Height) / 1080.0f));
             R.Context->Update();
 
-            // RmlUi sets the next-update timeout to infinity at the start of Update and lowers it when
-            // an animation/transition (incl. delayed) is pending. Huge => idle => dormancy-eligible.
+            // RmlUi lowers this from infinity when an animation is pending, so huge means idle.
             R.bRmlIdle = (R.Context->GetNextUpdateDelay() > 1.0e6);
 
             // Queue for the render phase (R.ResourceID is read by the scene gather directly).
@@ -1207,8 +1141,7 @@ namespace Lumina::RmlUi
                 continue;
             }
 
-            // Transparent clear rides the UI pass load op; a standalone transfer clear would cost a
-            // full barrier pair per widget per frame.
+            // Transparent clear rides the UI pass load op instead of a barrier pair per widget.
             const FVector4 Transparent(0.0f, 0.0f, 0.0f, 0.0f);
             State.Renderer->BeginFrame(CmdList, Job.Target, Job.Size, FUIntVector2(0), &Transparent);
             Job.Context->Render();
@@ -1332,7 +1265,7 @@ namespace Lumina::RmlUi
         }
     }
 
-    // Renderer pointer is set once in Initialize() and only cleared in Shutdown() -- safe to read unlocked.
+    // Renderer pointer is set once in Initialize() and cleared only in Shutdown(), so reads go unlocked.
     FRmlUiRenderer* GetRenderer()      { return S().Renderer.get(); }
 
     Rml::Context* GetContextForWorld(CWorld* World)
@@ -1372,8 +1305,7 @@ namespace Lumina::RmlUi
         FState& State = S();
         State.StateMutex.lock();
         bLocked = true;
-        // Resolved INSIDE the locked scope so the Context* can't be torn down between
-        // resolution and use; ~FLockedWorldContext releases.
+        // Resolved inside the locked scope so the Context* cannot be torn down before use.
         FWorldUIContext* UI = WorldUI(World);
         Context = UI ? UI->Context : nullptr;
     }
@@ -1607,8 +1539,7 @@ namespace Lumina::RmlUi
         Rml::Factory::ClearStyleSheetCache();
         Rml::Factory::ClearTemplateCache();
 
-        // Scoped over Show() as well: property and decorator errors surface when the document is first
-        // styled, not while its markup is being read.
+        // Scoped over Show() too, since property and decorator errors surface at first styling.
         {
             FScopedDiagnosticSink Capture(OutDiagnostics);
 
@@ -1697,10 +1628,7 @@ namespace Lumina::RmlUi
         }
     }
 
-    //--------------------------------------------------------------------------------------------
-    // Scripting surface implementation (World.UI). All take the bridge lock; handles are raw
-    // Rml::ElementDocument* / Rml::Element*. Game thread only.
-    //--------------------------------------------------------------------------------------------
+    // Scripting surface for World.UI; takes the bridge lock, game thread only.
 
     namespace
     {
@@ -1976,9 +1904,7 @@ namespace Lumina::RmlUi
         }
     }
 
-    //--------------------------------------------------------------------------------------------
-    // Data binding (MVVM) implementation. Backs LuminaSharp's ViewModel / World.UI.AddModel.
-    //--------------------------------------------------------------------------------------------
+    // Data binding for LuminaSharp ViewModel and World.UI.AddModel.
 
     void* CreateDataModel(CWorld* World, FStringView Name, void* Context, FManagedDataSetThunk SetThunk, FManagedDataEventThunk EventThunk)
     {
@@ -2024,18 +1950,15 @@ namespace Lumina::RmlUi
         }
         FManagedDataModel* M = static_cast<FManagedDataModel*>(ModelPtr);
 
-        // The field id == the slot this variable WILL occupy. Register the bound funcs first; only commit to
-        // the cache vectors on success, so a failed bind never burns an id (keeps it dense for the C# side).
+        // Only commit to the cache vectors on success, so a failed bind never burns an id.
         const int32       Field = (int32)M->Values.size();
         const Rml::String VarName(Name.data(), Name.size());
         const bool        bString = ((EUIVarType)Type == EUIVarType::String);
 
         const bool bOk = M->Constructor.BindFunc(VarName,
-            // Getter: hand RmlUi the cached value (no managed crossing on read).
+            // Getter hands RmlUi the cached value, with no managed crossing on read.
             [M, Field](Rml::Variant& Out) { Out = M->Values[Field]; },
-            // Setter: two-way controllers (data-value / data-checked) write here. Coerce the incoming value
-            // (a form control hands back a string) to the registered type before caching, so the getter keeps
-            // returning a consistently-typed Variant; then push the change to the managed property.
+            // Coerce before caching, since a form control hands the setter back a string.
             [M, Field, bString](const Rml::Variant& In)
             {
                 if (bString)
@@ -2289,8 +2212,7 @@ namespace Lumina::RmlUi
         {
             return;
         }
-        // Validate against the live set rather than dereferencing blindly: if the world already tore down,
-        // the model was reaped and this pointer is stale -- a disposed managed binding then no-ops safely.
+        // Validate against the live set, since a torn-down world already reaped the model.
         for (size_t i = 0; i < State.DataModels.size(); ++i)
         {
             FManagedDataModel* M = State.DataModels[i];

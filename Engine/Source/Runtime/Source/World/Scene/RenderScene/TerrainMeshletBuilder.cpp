@@ -70,7 +70,7 @@ namespace Lumina::TerrainMeshletBuilder
             Out.WorldOriginY = WorldOrigin.y;
             Out.MaxHeight    = Terrain.MaxHeight;
             Out.DilateXZ     = Out.Stride * 0.5f;
-            // Y dilation: matrix rounding can produce Y values microscopically outside the CPU range -> silhouette culling.
+            // Y dilation, since matrix rounding can push Y just outside the CPU range and cull silhouettes.
             Out.DilateY      = Math::Max(0.05f, Out.MaxHeight * 0.01f);
             return true;
         }
@@ -150,7 +150,7 @@ namespace Lumina::TerrainMeshletBuilder
             Chunk.BoundsMax = FVector3(ChunkXMax, L.WorldOriginY + ChunkHeightMax + L.DilateY, ChunkZMax);
         }
 
-        // Safe to fan out: a chunk writes only its own Chunks entry and its own MeshletsPerChunk slice.
+        // Safe to fan out, since a chunk writes only its own entry and meshlet slice.
         void RebuildChunkRect(FTerrainCPUState& State, int32 CxMin, int32 CxMax, int32 CyMin, int32 CyMax,
                               const TVector<float>& Heightmap, const FLayout& L)
         {

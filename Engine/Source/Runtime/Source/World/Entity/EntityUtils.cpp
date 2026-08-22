@@ -52,7 +52,7 @@ namespace Lumina
     {
         THashMap<uint32, FString>& AccessTypeNameMap()
         {
-            // Seeded, not lazily filled: the validator reads this from workers, so writes stay at startup.
+            // Seeded, not lazily filled, since the validator reads it from workers and writes stay at startup.
             static THashMap<uint32, FString> Map = []
             {
                 THashMap<uint32, FString> Seed;
@@ -93,8 +93,7 @@ namespace Lumina
         return It != ComponentOpsMap().end() ? It->second : nullptr;
     }
 
-    //~ Honest-access validation (see SystemAccess.h). One thread_local per Runtime thread holds the access
-    //  of the system currently ticking on that thread; the scheduler binds/unbinds it around each Update.
+    //~ Honest-access validation, one thread_local per Runtime thread; see SystemAccess.h.
 #if !defined(LE_SHIPPING)
     namespace
     {
@@ -125,8 +124,7 @@ namespace Lumina
             return;
         }
 
-        // Log each unique (system access, missing access) once so a per-entity loop doesn't spam, then assert
-        // (debug only). The same access object pointer identifies the offending system for the frame.
+        // Log each unique missing access once so a per-entity loop cannot spam, then assert in debug.
         static FFiberMutex SeenMutex;
         static THashSet<uint64> Seen;
         const uint64 Key = (reinterpret_cast<uint64>(Access) ^ (uint64(ComponentId) << 1)) ^ (bWrite ? 1ull : 0ull);
@@ -224,8 +222,7 @@ namespace Lumina::ECS::Utils
         }
     };
 
-    // Internal write path. Cache may be null, in which case one is built for this entity alone -- correct
-    // but pointless for a bulk save, which is why SerializeRegistry builds it once and passes it down.
+    // A null cache builds one for this entity alone, which is pointless for a bulk save.
     static bool SerializeEntityWrite(FArchive& RESTRICT Ar, FEntityRegistry& RESTRICT Registry,
                                      entt::entity& RESTRICT Entity, const FComponentTypeCache* Cache);
 
@@ -393,9 +390,7 @@ namespace Lumina::ECS::Utils
             Registry.compact<>();
             auto View = Registry.view<entt::entity>(entt::exclude<FEditorComponent>);
 
-            // ONCE for the whole walk, not once per entity. See FComponentTypeCache -- this is what turns
-            // the write from (entities x component types) meta-registry lookups into (entities x populated
-            // types) plain sparse probes.
+            // ONCE for the whole walk; see FComponentTypeCache for what that saves per entity.
             FComponentTypeCache TypeCache;
             TypeCache.Build(Registry);
 
@@ -465,8 +460,7 @@ namespace Lumina::ECS::Utils
                 entt::entity NewEntity = entt::null;
                 bool bSuccess = ECS::Utils::SerializeEntity(Ar, Registry, NewEntity);
 
-                // Clear the per-entity error so one corrupt entity doesn't poison subsequent
-                // SerializeEntity calls; the size-header seek below re-aligns the stream regardless.
+                // Clear the per-entity error so one corrupt entity cannot poison the calls after it.
                 Ar.SetHasError(false);
 
                 if (!bSuccess || NewEntity == entt::null)
@@ -536,8 +530,7 @@ namespace Lumina::ECS::Utils
             return;
         }
 
-        // Always guarded: a cycle here infinite-loops in ForEachChild traversal, so this
-        // must reject in shipping builds too, not just debug.
+        // Always guarded, since a cycle here infinite-loops ForEachChild even in shipping.
         if (Parent != entt::null && IsDescendantOf(Registry, Parent, Child))
         {
             LOG_ERROR("Cannot create circular hierarchy - parent is a descendant of child!");
@@ -598,8 +591,7 @@ namespace Lumina::ECS::Utils
             Registry.emplace_or_replace<FNeedsTransformUpdate>(Child);
         }
 
-        // An attachment change may have to reach clients. Whether it does, and what that costs, is
-        // the netcode's business.
+        // An attachment change may have to reach clients, which is the netcode's business.
         if (INetworkRuntime* NetRuntime = GetNetworkRuntime())
         {
             if (CWorld** WorldPtr = Registry.ctx().find<CWorld*>())
@@ -619,8 +611,7 @@ namespace Lumina::ECS::Utils
         TVector<entt::entity> ToDestroy;
         CollectDescendants(Registry, Entity, ToDestroy);
 
-        // Detach from the parent's sibling list first so the parent's relationship component
-        // stops pointing at freed entities, then destroy this entity and all descendants.
+        // Detach first so the parent stops pointing at freed entities, then destroy the subtree.
         if (Registry.any_of<FRelationshipComponent>(Entity))
         {
             RemoveFromParent(Registry, Entity);
@@ -659,8 +650,7 @@ namespace Lumina::ECS::Utils
             return;
         }
 
-        // Snapshot the world transform while the parent chain is still intact; once detached the
-        // entity has no parent, so its local space becomes its world space (see SetEntityWorldTransform).
+        // Snapshot the world transform while the parent chain is intact; see SetEntityWorldTransform.
         FTransform WorldSnapshot;
         bool bHasTransform = false;
         if (STransformComponent* TransformComponent = Registry.try_get<STransformComponent>(Child))
@@ -699,8 +689,7 @@ namespace Lumina::ECS::Utils
         ChildRelationship->Prev = entt::null;
         ChildRelationship->Next = entt::null;
 
-        // Bake the snapshot back as local now that there's no parent to inherit from, so the
-        // detached entity keeps its world placement.
+        // Bake the snapshot back as local so the detached entity keeps its world placement.
         if (bHasTransform)
         {
             SetEntityWorldTransform(Registry, Child, WorldSnapshot);
@@ -819,34 +808,25 @@ namespace Lumina::ECS::Utils
     // bAnyDirty comes from the base, which lives in the header so a component can read it inline.
     struct CACHE_ALIGN FTransformDirtyState : FTransformDirtyGate
     {
-        // entt::entity is a trivially-copyable uint32; the lock-free queue lets setters on any thread
-        // (worker fibers, Jolt's step jobs) enqueue without a lock, so they stay SuppressGCTransition-safe.
+        // The lock-free queue lets setters on any thread enqueue and stay SuppressGCTransition-safe.
         using FDirtyQueue = moodycamel::ConcurrentQueue<entt::entity, Memory::FTrackedConcurrentQueueTraits>;
 
         FDirtyQueue       DirtyTransforms;     // entities whose local transform changed (drained at resolve)
         FDirtyQueue       DirtyBodies;         // setter-moved entities to re-sync to physics (drained pre-sync)
         FFiberMutex       ResolveGuard;        // one resolver writes WorldTransform at a time (fiber-aware)
 
-        // Per-thread-slot producer tokens: skip moodycamel's per-enqueue implicit-producer hash lookup on
-        // the hot setter path. Indexed by Jobs::GetWorkerIndex() -- one slot per thread, so a given token is
-        // never used concurrently (the same invariant the job scheduler's own tokens rely on). Sized once at
-        // construction; left empty if the scheduler isn't up yet, in which case enqueue falls back to implicit.
+        // Per-slot producer tokens skip the implicit-producer hash lookup on the hot setter path.
         TVector<moodycamel::ProducerToken> TransformTokens;
         TVector<moodycamel::ProducerToken> BodyTokens;
 
-        // Resolve scratch, reused across calls (ResolveAllDirtyTransforms holds ResolveGuard, so single
-        // owner). DrainScratch is the raw bulk-dequeued id list; HierBySlot collects the rare hierarchical
-        // entities per worker slot during the parallel filter (so the filter itself parallelizes).
+        // Resolve scratch reused across calls; HierBySlot lets the hierarchical filter parallelize.
         TVector<entt::entity>          DrainScratch;
         TVector<TVector<entt::entity>> HierBySlot;
 
         // Merged HierBySlot, kept as a member so the resolve reuses one allocation across frames.
         TVector<entt::entity>          HierScratch;
 
-        // Published "who moved" channel, off until a consumer opts in (SetPublishMovedTransforms).
-        // Written from the resolve's ParallelFor bodies and from the lazy chain resolve, hence the
-        // concurrent queue; drained on the game thread. Duplicates are fine -- the consumer is
-        // idempotent per entity, and dedup here would cost more than it saves.
+        // Published moved-transform channel, off until a consumer opts in; duplicates are fine.
         std::atomic<bool> bPublishMoved{ false };
         FDirtyQueue       MovedTransforms;
 
@@ -925,13 +905,12 @@ namespace Lumina::ECS::Utils
             return;
         }
 
-        // Single, non-virtual base: the gate IS the state, viewed through the part the header can see.
+        // Single, non-virtual base, so the gate IS the state seen through the part the header knows.
         FTransformDirtyState* State = static_cast<FTransformDirtyState*>(Gate);
 
         if (bQueueBody)
         {
-            // Same per-slot token fast path as QueueDirtyTransform; the implicit enqueue is the always-safe
-            // fallback for an unexpected slot or a scheduler that is not up yet.
+            // Same per-slot token fast path as QueueDirtyTransform, with implicit enqueue as fallback.
             const uint32 Slot = State->BodyTokens.empty() ? ~0u : Jobs::GetWorkerIndex();
             if (Slot < State->BodyTokens.size())
             {
@@ -958,9 +937,7 @@ namespace Lumina::ECS::Utils
 
         FTransformDirtyState* State = static_cast<FTransformDirtyState*>(Gate);
 
-        // Fast path: this thread's slot token (no implicit-producer hash lookup). The slot guard skips
-        // GetWorkerIndex() when tokens are unset (scheduler not up), and the implicit enqueue below is the
-        // always-safe fallback for any unexpected slot -- mixing explicit/implicit on one queue is allowed.
+        // This thread's slot token avoids the hash lookup; mixing explicit and implicit is allowed.
         if (!State->TransformTokens.empty())
         {
             const uint32 Slot = Jobs::GetWorkerIndex();
@@ -999,8 +976,7 @@ namespace Lumina::ECS::Utils
             return;   // no dirty state yet -> no setter has moved anything, so no body to re-sync
         }
 
-        // Drain the lock-free queue of setter-moved entities and tag the bodied ones for the physics sync.
-        // Single-threaded (the physics boundary); the emplace is the deferred, batched MarkPhysicsBodyDirtyIfBodied.
+        // Single-threaded at the physics boundary; the emplace is the batched dirty-body mark.
         entt::entity Batch[128];
         std::size_t Count;
         while ((Count = State->DirtyBodies.try_dequeue_bulk(Batch, 128)) != 0)
@@ -1027,8 +1003,7 @@ namespace Lumina::ECS::Utils
         }
     }
 
-    // Recompute world = parentWorld * local for every descendant of Root. Walks the child links via the
-    // cached relationship storage (no per-node try_get through the registry's type map).
+    // Recompute world from parentWorld and local for every descendant via cached relationship storage.
     template<typename TTransformStorage, typename TRelStorage>
     static void PropagateTransformsToDescendants(TTransformStorage& TransformStorage, TRelStorage& RelStorage, entt::entity Root, bool bClearDirty,
                                                  FTransformDirtyState* PublishState = nullptr)
@@ -1060,8 +1035,7 @@ namespace Lumina::ECS::Utils
                     ChildTransform.bWorldDirty = false;
                 }
 
-                // A descendant moved because its ancestor did; its own bWorldDirty was never set, so
-                // this is the only place a downstream cache can learn about it.
+                // A descendant moved because its ancestor did, so its own bWorldDirty was never set.
                 if (PublishState != nullptr)
                 {
                     PublishState->PublishMoved(Child);
@@ -1088,8 +1062,7 @@ namespace Lumina::ECS::Utils
             return;
         }
 
-        // Serialize against the boundary / physics-thread resolvers so a shared ancestor's WorldTransform is
-        // never written concurrently. Fiber-aware: parks the fiber instead of spinning a core if contended.
+        // Serialized against the other resolvers so a shared ancestor is never written concurrently.
         FFiberScopeLock ResolveLock(DirtyState.ResolveGuard);
 
         TFixedVector<entt::entity, 64> AncestorChain;
@@ -1173,8 +1146,7 @@ namespace Lumina::ECS::Utils
             Out.insert(Out.end(), Batch, Batch + Count);
         }
 
-        // Opens the next publish window: a flat setter compares its stamp against this, so bumping it here
-        // is what lets every entity publish once more. No clearing pass over the drained entities needed.
+        // Bumping the epoch opens the next publish window, so no clearing pass over drained entities.
         State->PublishEpoch.fetch_add(1, std::memory_order_relaxed);
 
         return Out.size() != Before;
@@ -1192,10 +1164,9 @@ namespace Lumina::ECS::Utils
         FFiberScopeLock ResolveLock(DirtyState.ResolveGuard);   // one resolver writes WorldTransform at a time
 
         auto& TransformStorage = Registry.storage<STransformComponent>();
-        auto& RelStorage       = Registry.storage<FRelationshipComponent>();   // cached: avoids per-entity try_get
+        auto& RelStorage       = Registry.storage<FRelationshipComponent>();   // cached, avoids per-entity try_get
 
-        // Fold any external FNeedsTransformUpdate tags (editor/net/prefab/serialize, or tags emplaced before
-        // the on_construct hook connected) into the dirty queue. bWorldDirty dedups vs already-queued ones.
+        // Fold external FNeedsTransformUpdate tags into the queue; bWorldDirty dedups already-queued.
         for (entt::entity Tagged : Registry.view<FNeedsTransformUpdate>())
         {
             if (TransformStorage.contains(Tagged))
@@ -1216,9 +1187,7 @@ namespace Lumina::ECS::Utils
             return;
         }
         
-        // Bulk-dequeue the raw dirty ids (serial but cheap -- just copies uint32s, no per-entity registry
-        // work). The expensive per-entity filter + flat resolve then runs in parallel, so the whole drain
-        // scales across workers instead of bottlenecking one thread (which it did before).
+        // The raw drain is serial and cheap; the per-entity filter and flat resolve run in parallel.
         TVector<entt::entity>& Raw = DirtyState.DrainScratch;
         Raw.clear();
         {
@@ -1278,7 +1247,7 @@ namespace Lumina::ECS::Utils
             }
         }
 
-        // Gather the hierarchical entities from the per-slot buffers: one reserve, one memcpy per slot.
+        // Gather hierarchical entities from the per-slot buffers with one reserve and one memcpy each.
         TVector<entt::entity>& HierEntities = DirtyState.HierScratch;
         HierEntities.clear();
         {
@@ -1372,8 +1341,7 @@ namespace Lumina::ECS::Utils
 
     namespace
     {
-        // Remap one stored entity-handle id (uint32 of an entt::entity) in place: through Map if
-        // present, else cleared to null when bClearUnmapped. entt::null is left as-is.
+        // Remap in place through Map, or clear to null when bClearUnmapped; entt::null is left alone.
         void RemapEntityHandle(uint32& Value, const THashMap<entt::entity, entt::entity>& Map, bool bClearUnmapped)
         {
             const entt::entity Stored = static_cast<entt::entity>(Value);
@@ -1393,12 +1361,7 @@ namespace Lumina::ECS::Utils
             }
         }
 
-        // Walk one struct's reflected properties: remap uint32 "Entity"-tagged handles through Map,
-        // recurse into nested struct fields, and walk arrays of handles or of structs.
-        //
-        // One pass over LinkedProperty, NOT one per super: CStruct::Link splices the super's chain onto the
-        // tail of this one, so walking the super chain as well visits every inherited property twice and the
-        // second visit remaps an already-remapped handle -- which, with bClearUnmapped, nulls it.
+        // One pass over LinkedProperty, NOT one per super, since Link splices the super chain onto it.
         void RemapEntityRefsInStruct(CStruct* Struct, void* Data, const THashMap<entt::entity, entt::entity>& Map, bool bClearUnmapped)
         {
             for (FProperty* Property = Struct->LinkedProperty; Property != nullptr; Property = static_cast<FProperty*>(Property->Next))
@@ -1481,9 +1444,7 @@ namespace Lumina::ECS::Utils
             }
         }
 
-        // A script is a CObject held BY a component rather than a component, so its own reflected properties
-        // are invisible to the storage walk above. Without this an entity handle authored on a script in a
-        // prefab keeps the prefab registry's id after instantiation, where it aliases an unrelated entity.
+        // A script is held BY a component, so its reflected properties are invisible to the storage walk.
         if (SEntityScriptComponent* Scripts = Registry.try_get<SEntityScriptComponent>(Entity))
         {
             for (const TObjectPtr<CEntityScript>& Held : Scripts->Scripts)

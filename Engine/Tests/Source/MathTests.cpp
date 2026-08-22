@@ -135,7 +135,7 @@ TEST(MathTests, RandomStream_DifferentSequencesDiverge)
         Differences += (A.NextUInt32() != B.NextUInt32()) ? 1 : 0;
     }
 
-    // Same seed, different stream selector: the two must not walk the same sequence.
+    // Same seed, different stream selector, so the two must not walk the same sequence.
     EXPECT_GT(Differences, 250);
 }
 
@@ -189,8 +189,7 @@ TEST(MathTests, RandomStream_BoundedDrawCoversWholeRange)
 {
     Lumina::FRandomStream Stream(4242u);
 
-    // Every value in a small inclusive range must be reachable - an off-by-one in the Lemire bound
-    // would silently drop the top or bottom value while every other assertion still passed.
+    // Every value in a small inclusive range must be reachable, catching a Lemire off-by-one.
     bool bSeen[5] = {};
     for (int i = 0; i < 4000; ++i)
     {

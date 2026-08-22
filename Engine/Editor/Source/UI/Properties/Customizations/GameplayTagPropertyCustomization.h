@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "imgui.h"
 #include "Core/Reflection/PropertyCustomization/PropertyCustomization.h"
@@ -20,7 +20,7 @@ namespace Lumina
             return MakeShared<FGameplayTagPropertyCustomization>();
         }
 
-        EPropertyChangeOp DrawProperty(const TSharedPtr<FPropertyHandle>& Property) override;
+        EPropertyChangeOp DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args) override;
         void UpdatePropertyValue(const TSharedPtr<FPropertyHandle>& Property) override;
         void HandleExternalUpdate(const TSharedPtr<FPropertyHandle>& Property) override;
 

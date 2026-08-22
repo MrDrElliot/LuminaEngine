@@ -77,7 +77,13 @@ namespace Lumina
             Params.Offset        = (uint16)Offset;
         }
 
-        void ApplyMeta(FProperty* Property, const FScriptExportMeta* Meta, const char* ExtraKey)
+        struct FKindTag
+        {
+            const char* Key = nullptr;
+            const char* Value = "";
+        };
+
+        void ApplyMeta(FProperty* Property, const FScriptExportMeta* Meta, const FKindTag& Extra)
         {
             if (Meta != nullptr)
             {
@@ -86,28 +92,25 @@ namespace Lumina
                     Property->Metadata.AddValue(Arg.Key.c_str(), Arg.Value.c_str());
                 }
             }
-            if (ExtraKey != nullptr)
+            if (Extra.Key != nullptr)
             {
-                Property->Metadata.AddValue(ExtraKey, "");
+                Property->Metadata.AddValue(Extra.Key, Extra.Value);
             }
             Property->OnMetadataFinalized();
         }
 
-        // The metadata key a kind carries on its OWN, independent of the author's [Property] arguments: both
-        // are what make the editor draw a picker instead of the raw value. Shared so a field and a container
-        // element of the same kind are tagged identically. The two flags are set on disjoint kinds -- bEntity
-        // on the uint32 an Entity handle is, bInputAction on the string an input binding is.
-        const char* KindTag(const FScriptExportType& Type)
+        // Shared so a field and a container element of the same kind are tagged identically.
+        FKindTag KindTag(const FScriptExportType& Type)
         {
             if (Type.bEntity)
             {
-                return "Entity";
+                return FKindTag{ "Entity" };
             }
             if (Type.bInputAction)
             {
-                return "InputAction";
+                return FKindTag{ "Picker", "InputAction" };
             }
-            return nullptr;
+            return FKindTag{};
         }
 
         template<typename TPropertyType, EPropertyTypeFlags TypeFlags>
@@ -359,10 +362,7 @@ namespace Lumina
             Ops.Swap        = &ArraySwap;
             Ops.ElementSize = ElementSize;
 
-            // Constructing the container is what wires the element description into it -- every other op above
-            // reads Element, so a script array built any other way is a null deref waiting to happen. The
-            // description is handed through the ops table's Context (it is the description that owns this very
-            // Ops instance, so the self-reference is fine and keeps the two from ever drifting apart).
+            // The description owns this ops instance, so the self-reference keeps the two from drifting.
             Ops.ConstructContainer = [](void* Vector, const void* Context)
             {
                 FScriptDynamicArray* Array = new (Vector) FScriptDynamicArray();
@@ -448,7 +448,7 @@ namespace Lumina
                 void* Pair = Data + i * Desc->PairStride;
                 if (Desc->Key.Inner->Identical(Desc->KeyAt(Pair), KeyPtr))
                 {
-                    // Order-independent removal: overwrite the hole with the last pair, then shrink.
+                    // Order-independent removal, overwriting the hole with the last pair then shrinking.
                     void* Last = Data + (Count - 1) * Desc->PairStride;
                     if (Pair != Last) { Desc->CopyPair(Pair, Last); }
                     Desc->DestructPair(Last);
@@ -537,7 +537,7 @@ namespace Lumina
             Ops.KeySize      = KeySize;
             Ops.ValueSize    = ValueSize;
 
-            // See FillArrayOps: constructing the container is what wires the pair description into it.
+            // Constructing the container is what wires the pair description into it, as in the array ops.
             Ops.ConstructContainer = [](void* Map, const void* Context)
             {
                 FScriptDynamicMap* Instance = new (Map) FScriptDynamicMap();
@@ -555,13 +555,7 @@ namespace Lumina
     {
         static TAtomic<uint64> Serial{ 0 };
 
-        // The C# enum's own name, so anything that stores an enum type by name (a blackboard key's
-        // EnumType, for one) keeps a value that means something and survives a reload. The serial is
-        // only a fallback for an unnamed enum, or one whose name a native enum already claims -- a
-        // minted type must never shadow a native one.
-        // The simple name, not the namespace-qualified one C# ships: reflected type names live in one
-        // flat space (a blackboard key stores a bare name), and a qualified name would also read as a
-        // namespace to anything that splits on '.'.
+        // The simple name, since reflected type names live in one flat space and a dot reads as a namespace.
         FString Name = Type.EnumName.IsNone() ? FString() : FString(Type.EnumName.c_str());
         if (const size_t Dot = Name.find_last_of('.'); Dot != FString::npos)
         {
@@ -591,8 +585,7 @@ namespace Lumina
         return Raw;
     }
 
-    // Field defaults -> the entry list BuildFromSchema writes into a struct's default buffer. Without this a
-    // minted sub-struct or instanced candidate is only default-constructed, i.e. all zeroes.
+    // Without this a minted sub-struct is only default-constructed, meaning all zeroes.
     static TVector<FScriptPropertyEntry> CollectFieldDefaults(const TVector<FScriptExportField>& Fields)
     {
         TVector<FScriptPropertyEntry> Defaults;
@@ -689,8 +682,7 @@ namespace Lumina
             return nullptr;
         }
 
-        // Derive from Base so the IsChildOf picker enumerates this candidate (Base is empty, no relink
-        // needed). The stable C# name drives value round-trip.
+        // Derives from the empty base so the picker enumerates this candidate with no relink needed.
         Sub->SetSuperStruct(Base);
         Sub->Metadata.AddValue("ScriptTypeName", Candidate.TypeName.c_str());
 
@@ -699,8 +691,7 @@ namespace Lumina
         return Raw;
     }
 
-    // Size, alignment and resolved struct for one non-container export kind. See the declaration in
-    // ScriptStruct.h for why this exists rather than one chain per caller.
+    // See the declaration for why this exists rather than one chain per caller.
     struct CScriptStruct::FKindLayout
     {
         uint32         Size   = 0;
@@ -711,8 +702,7 @@ namespace Lumina
 
     bool CScriptStruct::ResolveKindLayout(const FScriptExportType& Type, const FName& DiagName, FKindLayout& Out)
     {
-        // Claims Enum too, which is a 64-bit slot whatever the C# underlying type is. That is only a
-        // statement about SIZE -- MakeForKind still builds an FEnumProperty, not a bare int64.
+        // A statement about SIZE only, since MakeForKind still builds a real enum property.
         uint32 ScalarSize = 0;
         uint32 ScalarAlign = 0;
         if (ScalarSizeAlign(Type.Kind, ScalarSize, ScalarAlign))
@@ -762,9 +752,7 @@ namespace Lumina
         }
         if (Type.Kind == EPropertyTypeFlags::InstancedStruct)
         {
-            // Mint an empty base plus one candidate sub-CScriptStruct per selectable C# type; the value is
-            // an FInstancedStruct the editor picks into. The base is what MakeForKind hands the
-            // FInstancedStructProperty as its meta-base, which is why it is carried out of here.
+            // The base is what the instanced-struct property takes as its meta-base, hence carrying it out.
             CScriptStruct* Base = MintInstanceBase(Type.BaseName);
             if (Base == nullptr)
             {
@@ -780,17 +768,14 @@ namespace Lumina
             return true;
         }
 
-        // Everything left is a container (Vector/Map) or a kind nothing maps to. A container reaching here
-        // means it was asked for as an ELEMENT, and native has no nested-container property -- refusing is
-        // the enforcement, and the C# classifier refuses the same shape at the declaration.
+        // A container reaching here was asked for as an ELEMENT, which native has no property for.
         return false;
     }
 
     FProperty* CScriptStruct::MakeForKind(const FFieldOwner& Owner, const FName& FieldName, uint32 Offset,
         const FScriptExportType& Type, CStruct* Resolved)
     {
-        // Before the scalar test, which also claims Enum: an enum property is an FEnumProperty wrapping an
-        // int64 inner, not the bare scalar its size makes it look like.
+        // An enum property wraps an int64 inner rather than being the bare scalar its size suggests.
         if (Type.Kind == EPropertyTypeFlags::Enum)
         {
             return MakeEnum(Owner, FieldName, Offset, MintEnum(Type));
@@ -830,7 +815,7 @@ namespace Lumina
         {
             return false;
         }
-        // No alignment: elements are packed at their size, in a buffer the map/array ops align as a whole.
+        // Elements pack at their size, in a buffer the container ops align as a whole.
         Out.Size = Layout.Size;
         Out.NativeStruct = Layout.Native;
         Out.ScriptStruct = Layout.Script;
@@ -849,11 +834,11 @@ namespace Lumina
             return nullptr;
         }
 
-        // An element carries the kind's own tag and nothing else: the author's [Property] metadata belongs
-        // to the field that OWNS the container, and is applied there.
-        if (const char* Tag = KindTag(Type))
+        // The author's metadata belongs to the field that OWNS the container and is applied there.
+        const FKindTag Tag = KindTag(Type);
+        if (Tag.Key != nullptr)
         {
-            Property->Metadata.AddValue(Tag, "");
+            Property->Metadata.AddValue(Tag.Key, Tag.Value);
             Property->OnMetadataFinalized();
         }
         return Property;
@@ -928,19 +913,18 @@ namespace Lumina
             FProperty* Array = MakeArray(Owner, Field.Name, Offset, &Plan.ArrayDesc->Ops);
             FProperty* Inner = CreateElement(Array, *Type.ElementType, *Plan.ArrayDesc);
             Plan.ArrayDesc->Inner = Inner;
-            ApplyMeta(Array, &Field.Meta, nullptr);
+            ApplyMeta(Array, &Field.Meta, FKindTag{});
             return Array;
         }
         if (Plan.bMap)
         {
             FProperty* Map = MakeMap(Owner, Field.Name, Offset, &Plan.MapDesc->Ops);
-            // Key inner FIRST (FMapProperty::AddProperty assigns Key on the first call, Value on the second),
-            // then the Value inner. The dynamic-map ops use Key.Inner->Identical, so both must be set here.
+            // The dynamic map ops use the key inner's compare, so both inners must be set here.
             FProperty* KeyInner   = CreateElement(Map, *Type.KeyType, Plan.MapDesc->Key);
             FProperty* ValueInner = CreateElement(Map, *Type.ValueType, Plan.MapDesc->Value);
             Plan.MapDesc->Key.Inner   = KeyInner;
             Plan.MapDesc->Value.Inner = ValueInner;
-            ApplyMeta(Map, &Field.Meta, nullptr);
+            ApplyMeta(Map, &Field.Meta, FKindTag{});
             return Map;
         }
         CStruct* Resolved = Plan.Native != nullptr ? Plan.Native
@@ -952,8 +936,7 @@ namespace Lumina
             return nullptr;
         }
 
-        // A field carries the author's [Property] metadata AND the kind's own tag -- the tag is what makes
-        // the editor draw an entity or input-action picker instead of the raw value.
+        // The tag is what makes the editor draw a picker instead of the raw value.
         ApplyMeta(Property, &Field.Meta, KindTag(Type));
         return Property;
     }
@@ -987,8 +970,7 @@ namespace Lumina
             const uint32 Offset = Align(RunningSize, Plan.Align);
             if (Offset + Plan.Size > UINT16_MAX)
             {
-                // FPropertyParams::Offset is a uint16; past that the offset silently wraps and the field
-                // would alias something inside the object. Stop rather than emit a corrupt layout.
+                // The offset field is a uint16, so past that a field would silently alias something else.
                 LOG_ERROR("Script layout '{}': field '{}' lands past the 64KB property-offset limit; dropped.",
                     Target->GetName().c_str(), Plan.Field->Name.c_str());
                 break;
@@ -1034,16 +1016,14 @@ namespace Lumina
             if (DefaultValues != nullptr && !DefaultValues->empty())
             {
                 WriteValuesToStruct(this, this->Defaults, *DefaultValues);
-                // Defaults worth seeding means a memzeroed buffer is not a valid instance of this layout
-                // either -- InitializeStruct has to run to copy them in.
+                // Defaults worth seeding mean a zeroed buffer is not a valid instance of this layout.
                 bRequiresLifecycle = true;
             }
         }
         return true;
     }
 
-    // Same shape as FScriptArrayElementDesc::ConstructElement, one level up: zero the buffer (which is the
-    // whole story for every trivial field) and let each property that owns storage build its own value.
+    // Zero the buffer, which is the whole story for a trivial field, then let owners build their values.
     void CScriptStruct::ConstructInto(void* Buffer) const
     {
         if (Buffer == nullptr)
@@ -1157,8 +1137,7 @@ namespace Lumina
 
 namespace Lumina::Scripting
 {
-    // Zero first, because that is already the whole story for a trivial element, then let the element's own
-    // property finish the job. No kind switch: a new element type is supported by teaching its FProperty.
+    // No kind switch, so a new element type is supported by teaching its property rather than this.
     void FScriptArrayElementDesc::ConstructElement(void* Element) const
     {
         Memory::Memzero(Element, Size);
@@ -1273,10 +1252,7 @@ namespace Lumina::Scripting
 
     namespace
     {
-        // The CScriptStruct that owns everything a minted class's appended properties point at: element
-        // descriptions, minted sub-structs, minted enums. Rooted and process-lifetime, exactly like the
-        // FPropertys themselves -- a minted class is reused by name across hot reloads and its live instances
-        // keep pointing at this layout, so it must outlive them. Dropped only when the class is retired.
+        // A minted class is reused by name across reloads, so this must outlive its live instances.
         struct FScriptClassLayout
         {
             TObjectPtr<CScriptStruct> Record;
@@ -1291,11 +1267,7 @@ namespace Lumina::Scripting
             return Map;
         }
 
-        // Layout records a rebuild replaced. Kept, not freed: the FPropertys the old block emitted are not
-        // freed either (a stale FProperty* may still be cached anywhere from an editor row to a managed
-        // token), and those properties point INTO this record's element descriptions and minted sub-structs.
-        // Retiring the pair together means a stale pointer is merely stale, never dangling. Bounded by
-        // "reloads that changed a script's property set", which is a developer-time action.
+        // Retiring the pair together means a stale pointer is merely stale, never dangling.
         TVector<TObjectPtr<CScriptStruct>>& GRetiredLayouts()
         {
             static TVector<TObjectPtr<CScriptStruct>> Records;
@@ -1310,8 +1282,7 @@ namespace Lumina::Scripting
             return 0;
         }
 
-        // The layout record owns the side data the emitted properties point at. It is a CScriptStruct because
-        // that is where the planner lives -- it is NOT this class's layout, and nothing ever instantiates it.
+        // A CScriptStruct because that is where the planner lives, and nothing ever instantiates it.
         FConstructCObjectParams Params(CScriptStruct::StaticClass());
         FString RecordName = "ScriptClassLayout_";
         RecordName += Target->GetName().c_str();
@@ -1323,8 +1294,7 @@ namespace Lumina::Scripting
         TObjectPtr<CScriptStruct> Record = static_cast<CScriptStruct*>(StaticAllocateObject(Params));
         CObjectForceRegistration(Record.Get());
 
-        // Everything the C++ shim itself occupies. Appended properties start past it, so they can never
-        // overlap a native member.
+        // Appended properties start past the shim, so they can never overlap a native member.
         const uint32 ShimSize  = Target->GetSize();
         const uint32 ShimAlign = Target->GetAlignment();
         const CScriptStruct::FEmittedLayout Layout = Record->EmitLayoutInto(Target, ShimSize, Schema);
@@ -1336,16 +1306,14 @@ namespace Lumina::Scripting
         Target->ScriptProperties = Layout.Properties;
         for (FProperty* Property : Layout.Properties)
         {
-            // Ask the property whether its value owns storage rather than testing kinds here: a property type
-            // that learns ConstructValue is picked up with no change to this loop.
+            // Asking the property means a type that learns to construct is picked up with no change here.
             if (Property->OwnsStorage())
             {
                 Target->ScriptLifecycleProperties.push_back(Property);
             }
         }
 
-        // Grow the class so StaticAllocateObject allocates AND memzeroes the appended block. Must happen
-        // before the CDO is created: CreateDefaultObject allocates from GetSize() and calls Link().
+        // Must happen before the CDO exists, since creating it allocates from the class size.
         Target->Size      = Align(Layout.EndOffset, Math::Max(Layout.Alignment, Target->GetAlignment()));
         Target->Alignment = Math::Max(Layout.Alignment, Target->GetAlignment());
 
@@ -1367,8 +1335,7 @@ namespace Lumina::Scripting
             Out += ";";
         }
 
-        // A string that changes exactly when the LAYOUT does. Metadata is deliberately absent: retitling a
-        // field or widening its Min/Max must not cost a rebuild, while retyping it must.
+        // Metadata is deliberately absent, so retitling a field costs no rebuild but retyping it does.
         void AppendTypeSignature(const FScriptExportType* Type, FString& Out)
         {
             if (Type == nullptr)
@@ -1426,8 +1393,7 @@ namespace Lumina::Scripting
         {
             return;
         }
-        // ScriptProperties, not the whole chain: only the C#-declared block can carry the attribute, and a
-        // native member of the shim has nothing to do with a script reload.
+        // Only the C#-declared block can carry the attribute, and a native shim member is unaffected.
         for (FProperty* Property : Class->ScriptProperties)
         {
             if (Property != nullptr && Property->HasMetadata("SkipHotReload"))
@@ -1471,10 +1437,7 @@ namespace Lumina::Scripting
             return false;   // never had an appended block; the caller wants AppendScriptPropertiesToClass
         }
 
-        // Live instances are laid out at the OLD size, and StaticAllocateObject sizes an object once, at
-        // creation, from Class->GetSize(). So the block cannot be rebuilt under them: the caller evacuates
-        // first (serializing the owning components) and repopulates after. Refusing here mirrors what
-        // TryRetireMintedClass does for the same reason, and keeps the failure loud instead of corrupting.
+        // The caller evacuates first and repopulates after, so refusing here keeps the failure loud.
         int32 LiveInstances = 0;
         GObjectArray.ForEachObject([&](CObjectBase* Base, int32)
         {
@@ -1494,9 +1457,7 @@ namespace Lumina::Scripting
         const uint32 ShimSize  = It->second.ShimSize;
         const uint32 ShimAlign = It->second.ShimAlign;
 
-        // Retire, do not free. The emitted FPropertys are not freed either, and they point into this
-        // record's element descriptions; keeping the pair alive together means a pointer cached anywhere is
-        // stale rather than dangling. See GRetiredLayouts.
+        // Keeping the pair alive means a cached pointer is stale rather than dangling. See the retired list.
         GRetiredLayouts().push_back(std::move(It->second.Record));
         GClassLayouts().erase(Target);
 
@@ -1513,8 +1474,7 @@ namespace Lumina::Scripting
 
         if (!Schema.IsValid() || Schema.Fields.empty())
         {
-            // The type dropped every [Property]. The class is back to just its shim, which is a valid
-            // outcome, so re-link and rebuild the CDO at the shim size.
+            // The type dropped every property, which is a valid outcome, so rebuild at the shim size.
             Target->GetDefaultObject();
             LOG_DISPLAY("Scriptable '{}': script properties removed; the class is back to its shim layout.",
                 Target->GetName().c_str());
@@ -1523,8 +1483,7 @@ namespace Lumina::Scripting
 
         const uint32 Count = AppendScriptPropertiesToClass(Target, Schema);
 
-        // Link + CDO, in that order, and only now: CreateDefaultObject allocates from GetSize() and is what
-        // calls Link, so both have to come after the new block is in place.
+        // Creating the default object allocates from the class size and calls Link, so both come after.
         Target->GetDefaultObject();
 
         LOG_DISPLAY("Scriptable '{}': rebuilt the script property block ({} propert{}) after a schema change.",

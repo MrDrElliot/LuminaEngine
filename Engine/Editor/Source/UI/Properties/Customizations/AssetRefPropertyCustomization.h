@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "ImGuiDrawUtils.h"
 #include "Core/Reflection/PropertyCustomization/PropertyCustomization.h"
@@ -15,7 +15,7 @@ namespace Lumina
 
         static TSharedPtr<FAssetRefPropertyCustomization> MakeInstance();
 
-        EPropertyChangeOp DrawProperty(const TSharedPtr<FPropertyHandle>& Property) override;
+        EPropertyChangeOp DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args) override;
         void UpdatePropertyValue(const TSharedPtr<FPropertyHandle>& Property) override;
         void HandleExternalUpdate(const TSharedPtr<FPropertyHandle>& Property) override;
 

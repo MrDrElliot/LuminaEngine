@@ -276,8 +276,7 @@ namespace Lumina
             return false;
         }
 
-        // The address survived but the object behind it did not: a different asset now occupies the slot,
-        // so the revision there means nothing. Report stale and let the re-resolve re-key the surface.
+        // A different asset occupies the slot now, so the revision there means nothing.
         if (Surface.SourceMaterial->GetGUID() != Surface.SourceMaterialGuid)
         {
             return true;
@@ -327,8 +326,7 @@ namespace Lumina
         const bool       bTranslucent = BlendMode == EBlendMode::Translucent || BlendMode == EBlendMode::Additive;
         const bool       bMasked      = BlendMode == EBlendMode::Masked;
         const bool       bAdditive    = BlendMode == EBlendMode::Additive;
-        // Translucency forces two-sided: with no back faces a translucent surface reads as a hole from
-        // behind. Dropping the force was tried and reverted -- those passes are geometry-front-end bound.
+        // Translucency forces two-sided, or a translucent surface reads as a hole from behind.
         const bool       bTwoSided    = bTranslucent || Material->IsTwoSided();
 
         R.PixelShader                = Material->GetPixelShader();
@@ -341,9 +339,7 @@ namespace Lumina
         R.DeferredShader             = ConcreteMaterial ? ConcreteMaterial->GetDeferredShader() : FShaderH{};
         R.MomentPixelShader          = ConcreteMaterial ? ConcreteMaterial->GetMomentPixelShader() : FShaderH{};
 
-        // Recorded from the RAW request, not the possibly-substituted default: the point is to notice when
-        // what the caller ASKED for changes underneath this resolve, including a not-ready material that
-        // fell back to the default and has since compiled.
+        // Recorded from the RAW request, so a not-ready material that later compiles is noticed.
         MeshResolve::StampSurfaceSource(R, RawMaterial);
 
         R.MaterialID            = (uint64)ConcreteMaterial;
@@ -359,14 +355,12 @@ namespace Lumina
         // The MBOIT passes and the additive pass are the only ones that bind MeshShaderBase / PixelShader.
         const bool bForwardShaded = bTranslucent || bAdditive;
 
-        // MBOIT pass 1 draws non-additive translucency only: additive blending is already
-        // order-independent, so those batches skip the moments and composite after the resolve.
+        // Additive blending is already order-independent, so those batches skip the moments.
         const bool bMomentGenerated = bTranslucent && !bAdditive;
 
         R.BatchKey = FDrawBatchKey
         {
-            // Only the shaders the batch's OWN passes bind. An opaque batch binds the shared VisPixel and no
-            // shadow pixel shader, so keying on the forward pair would split it on something nothing reads.
+            // Only the shaders the batch's OWN passes bind, or it splits on something nothing reads.
             .VisBufferMeshShader        = R.VisBufferMeshShader,
             .VisBufferMeshShaderMasked  = bMasked        ? R.VisBufferMeshShaderMasked  : FShaderH{},
             .MaskedVisBufferPixelShader = bMasked        ? R.MaskedVisBufferPixelShader : FShaderH{},

@@ -108,8 +108,7 @@ namespace Lumina::Import::Mesh
 
     namespace
     {
-        // Upper bound on what BuildVertexStreams emits: the five always-on streams plus the two skinning
-        // ones. Callers size their array from this so adding a stream cannot silently overflow it.
+        // Callers size their array from this, so adding a stream cannot silently overflow it.
         constexpr uint32 kMaxVertexStreams = 8;
 
         // Describe every active SoA vertex stream for meshopt's multi-stream remap.
@@ -257,8 +256,7 @@ namespace Lumina::Import::Mesh
         }, 4096);
     }
 
-    // MUST run before meshlet/LOD generation regardless of the optimize option: meshopt_simplify
-    // allocates O(vertex_count), so un-deduplicated FBX input can request multi-GB and OOM.
+    // meshopt_simplify allocates per vertex, so un-deduplicated input can request multi-GB.
     void DeduplicateMeshVertices(FMeshResource& MeshResource, FScopedSlowTask* Progress)
     {
         LUMINA_PROFILE_SCOPE();
@@ -296,8 +294,7 @@ namespace Lumina::Import::Mesh
         }
     }
 
-    // Vertex cache / overdraw / fetch reordering -- a pure optimization gated on the import option.
-    // Assumes vertices were already deduplicated (DeduplicateMeshVertices ran first).
+    // Assumes vertices were already deduplicated, which the pass above guarantees.
     void OptimizeNewlyImportedMesh(FMeshResource& MeshResource, FScopedSlowTask* Progress)
     {
         LUMINA_PROFILE_SCOPE();
@@ -377,7 +374,7 @@ namespace Lumina::Import::Mesh
         // 50/25/12.5% topology-preserving ramp; 3%/0.5% sloppy for distant near-billboards.
         constexpr FLODSettings kLODs[MAX_MESH_LODS] =
         {
-            { 1.0f,     0.0f,  0.05f, false },  // LOD 0 -- full detail
+            { 1.0f,     0.0f,  0.05f, false },  // LOD 0, full detail
             { 0.5f,     8.0f,  0.05f, false },  // LOD 1
             { 0.25f,   16.0f,  0.05f, false },  // LOD 2
             { 0.125f,  32.0f,  0.05f, false },  // LOD 3
@@ -497,7 +494,7 @@ namespace Lumina::Import::Mesh
                 Out.TriangleCount  = M.triangle_count;
                 Result.OutMeshlets.push_back(Out);
 
-                // Hoisted above the bounds: without cones this pass IS the bounds, so it must run first.
+                // Hoisted above the bounds, since without cones this pass IS the bounds.
                 FVector3 Lo( FLT_MAX);
                 FVector3 Hi(-FLT_MAX);
                 FVector3 MeshletPositions[MESHLET_MAX_VERTICES];
@@ -548,14 +545,7 @@ namespace Lumina::Import::Mesh
             Result.bHasData = !Result.OutMeshlets.empty();
         }
 
-        /**
-         * Per-surface world-size of one UV tile: sqrt(sum(WorldArea) / sum(UVArea)) over the surface's
-         * triangles. Areas are summed before the ratio rather than averaging per-triangle ratios, so
-         * slivers and degenerate triangles contribute in proportion to how much surface they actually are.
-         *
-         * MUST run before the scratch vertex streams are dropped -- Positions/UVs/Indices are build-time
-         * only and are never serialized, so this is the one and only chance to measure it.
-         */
+        // MUST run before the scratch streams are dropped, since they are never serialized.
         void ComputeSurfaceTexelFactors(FMeshResource& MeshResource)
         {
             LUMINA_PROFILE_SCOPE();
@@ -563,8 +553,7 @@ namespace Lumina::Import::Mesh
             const size_t NumIndices  = MeshResource.Indices.size();
             const size_t NumVertices = MeshResource.Positions.size();
 
-            // No UV stream means no unwrap to measure. Leaving TexelFactor at 0 is the honest answer;
-            // consumers fall back rather than acting on a fabricated density.
+            // Leaving it at zero is the honest answer, and consumers fall back rather than act on it.
             if (MeshResource.UVs.size() < NumVertices || NumVertices == 0 || NumIndices < 3)
             {
                 for (FGeometrySurface& Surface : MeshResource.GeometrySurfaces)
@@ -585,8 +574,7 @@ namespace Lumina::Import::Mesh
                     continue;
                 }
 
-                // Doubles: a large mesh in centimeters can sum world areas past float precision long
-                // before it runs out of triangles, and the ratio is what we ultimately want.
+                // A large mesh in centimeters can sum world areas past float precision before running out.
                 double WorldArea = 0.0;
                 double UVArea    = 0.0;
 
@@ -618,9 +606,7 @@ namespace Lumina::Import::Mesh
                     UVArea += 0.5 * Math::Abs((double)T1.x * (double)T2.y - (double)T2.x * (double)T1.y);
                 }
 
-                // A surface with area but no UV area is unwrapped onto a point or a line (untextured
-                // collision-ish geometry, or a broken unwrap). Dividing would be +inf, which downstream
-                // would read as "needs infinite resolution", so report unknown instead.
+                // Dividing would be infinite, which downstream reads as needing infinite resolution.
                 if (UVArea > 1e-12 && WorldArea > 0.0)
                 {
                     Surface.TexelFactor = (float)Math::Sqrt(WorldArea / UVArea);
@@ -760,8 +746,7 @@ namespace Lumina::Import::Mesh
                 return;
             }
 
-            // Scratch is per cell now that cells run concurrently. Sized to the FULL source range and
-            // value-initialized, i.e. 4 bytes per source index per LOD cell on top of the meshlet scratch.
+            // Per cell now that cells run concurrently, at four bytes per source index per LOD cell.
             TVector<uint32> Simplified;
             {
                 LUMINA_PROFILE_SECTION("Simplify Scratch Alloc");
@@ -771,8 +756,7 @@ namespace Lumina::Import::Mesh
             float  ResultError = 0.0f;
             size_t NewCount    = 0;
             {
-                // Note this simplifies from the FULL LOD-0 range every level, not from LOD N-1, so each
-                // cell's input is the whole surface regardless of how coarse the target is.
+                // Simplifies from the FULL source range every level, so each cell's input is the whole surface.
                 LUMINA_PROFILE_SECTION("meshopt_simplify");
                 NewCount = Cfg.bSloppy
                     ? meshopt_simplifySloppy(
@@ -844,8 +828,7 @@ namespace Lumina::Import::Mesh
                     continue;
                 }
 
-                // 5% progress floor for topology-preserving simplify; sloppy always hits target. Measured
-                // against the last ACCEPTED level, so skipping one keeps the bar where it was.
+                // Measured against the last ACCEPTED level, so skipping one keeps the bar where it was.
                 if (!Cfg.bSloppy && (float)NewCount > (float)LastIndexCount * 0.95f)
                 {
                     continue;
@@ -875,8 +858,7 @@ namespace Lumina::Import::Mesh
             }
         }
 
-        // Positions are stored as full mesh-local float3 in the vertex buffer -- no quantization grid,
-        // so no per-meshlet/per-LOD precision tradeoff and no boundary cracks (shared verts are bit-identical).
+        // No quantization grid, so no per-LOD precision tradeoff and no boundary cracks.
 
         size_t TotalMeshlets  = 0;
         size_t TotalVertices  = 0;
@@ -922,8 +904,7 @@ namespace Lumina::Import::Mesh
             }
         }
 
-        // Slot, NOT source level: accepted levels compact down so LODMeshletOffset is dense, which both
-        // selectors require. Each slot keeps its SOURCE level's threshold, so the sequence stays ascending.
+        // Each slot keeps its SOURCE level's threshold, so the sequence stays ascending.
         for (uint32 Slot = 0; Slot < LODCount; ++Slot)
         {
             LUMINA_PROFILE_SECTION("Serial Pack LODs");
@@ -961,8 +942,7 @@ namespace Lumina::Import::Mesh
 
                     Out.LODIndex = Slot;
 
-                    // Quantization frame first -- the encodes below need it. Derived from the source positions this
-                    // meshlet references, which Out.VertexOffset still indexes until it is rewritten below.
+                    // The quantization frame comes first, derived from the source positions this meshlet references.
                     QuantScratch.clear();
                     for (uint32 i = 0; i < Out.VertexCount; ++i)
                     {
@@ -996,8 +976,7 @@ namespace Lumina::Import::Mesh
                             Packed.UV1      = MeshResource.UVs1[GlobalIdx];
                             Packed.Color    = MeshResource.Colors[GlobalIdx];
 
-                            // The source index is 16-bit and the packed one is 8-bit, so it can only be a
-                            // palette slot. That indirection is what lifts the 256-bone ceiling.
+                            // The source index is 16-bit and the packed one 8-bit, so it can only be a palette slot.
                             const FU16Vector4& SourceJoints  = MeshResource.JointIndices[GlobalIdx];
                             const FU8Vector4&  SourceWeights = MeshResource.JointWeights[GlobalIdx];
 
@@ -1064,8 +1043,7 @@ namespace Lumina::Import::Mesh
             MeshResource.MeshletData.MeshletTriangles.push_back(0u);
         }
 
-        // LOD selection clamps to each surface's OWN NumLODs, so a surface that built one level silently
-        // ignores every pick -- indistinguishable in the viewport from a broken selector.
+        // A surface that built one level silently ignores every pick, looking like a broken selector.
         for (uint32 SurfaceIdx = 0; SurfaceIdx < NumSurfaces; ++SurfaceIdx)
         {
             const FGeometrySurface& Section = MeshResource.GeometrySurfaces[SurfaceIdx];
@@ -1078,8 +1056,7 @@ namespace Lumina::Import::Mesh
 
     float GetDefaultLODScreenThreshold(uint32 Index)
     {
-        // Reads the same table GenerateMeshlets bakes from, so the editor's reset and the importer can
-        // never drift apart.
+        // Reads the same table the meshlet builder bakes from, so the two can never drift.
         return Index < MAX_MESH_LODS ? kLODs[Index].Threshold : FLT_MAX;
     }
 
@@ -1275,8 +1252,7 @@ namespace Lumina::Import::Mesh
                             if (bFlipU)   { UV.x = 1.0f - UV.x; }
                             return UV;
                         };
-                        // Both sets: a flip is a property of the source's UV convention, so applying it to
-                        // one set would tear a material that samples the other.
+                        // A flip is a property of the source's UV convention, so applying it to one set would tear.
                         M.SetUVAt(i, Flip(M.GetUVAt(i)));
                         M.SetUV1At(i, Flip(M.GetUV1At(i)));
                     }
@@ -1288,8 +1264,7 @@ namespace Lumina::Import::Mesh
             });
         }
 
-        // Skeleton bind/local translations scale like positions; rotation
-        // is untouched because uniform scale commutes with R^T.
+        // Rotation is untouched, since a uniform scale commutes with the transpose.
         if (bScaleEnabled)
         {
             for (TUniquePtr<FSkeletonResource>& SkelPtr : Data.Skeletons)
@@ -1332,8 +1307,7 @@ namespace Lumina::Import::Mesh
             }
         }
 
-        // Merge into static + skinned pair before optimize/meshlets so the
-        // heavy passes run on the merged geometry.
+        // Merged before optimize and meshlets, so the heavy passes run on the merged geometry.
         if (Options.bMergeMeshes && Data.Resources.size() > 1)
         {
             TUniquePtr<FMeshResource> MergedStatic = MakeUnique<FMeshResource>();
@@ -1355,9 +1329,7 @@ namespace Lumina::Import::Mesh
                 }
             }
 
-            // ONE remap across both targets. The static and skinned halves become two assets but share a
-            // single slot numbering, which is what lets the one MergedMaterialSlotToSource table below
-            // describe both; two independent remaps would give slot 0 a different meaning in each.
+            // Two independent remaps would give slot 0 a different meaning in each half.
             THashMap<int16, int16> MatRemap;
 
             for (TUniquePtr<FMeshResource>& Res : Data.Resources)
@@ -1376,9 +1348,7 @@ namespace Lumina::Import::Mesh
                 }
             }
 
-            // Publish the inverse. Without it the importer has no way back from a merged slot to the source
-            // material it came from, falls back to treating the slot AS the source index, and hands every
-            // surface whichever material happens to sit at that position -- or none at all.
+            // Without it the importer falls back to treating the slot as the source index.
             Data.MergedMaterialSlotToSource.assign(MatRemap.size(), 0);
             for (const auto& Pair : MatRemap)
             {
@@ -1400,8 +1370,7 @@ namespace Lumina::Import::Mesh
             Data.Resources = std::move(NewResources);
         }
 
-        // Heavy CPU finalize. Stats run serially afterwards so the parallel
-        // pass writes only resource-local data.
+        // Stats run serially afterwards, so the parallel pass writes only resource-local data.
         Data.MeshStatistics.OverdrawStatics.clear();
         Data.MeshStatistics.VertexFetchStatics.clear();
 
@@ -1417,8 +1386,7 @@ namespace Lumina::Import::Mesh
             }
         });
 
-        // Spread the finalize progress budget evenly across every surface in every
-        // resource, so the bar moves smoothly even when merge collapses to one resource.
+        // So the bar moves smoothly even when a merge collapses everything to one resource.
         size_t TotalSurfaces = 0;
         for (const TUniquePtr<FMeshResource>& MeshPtr : Data.Resources)
         {
@@ -1442,15 +1410,13 @@ namespace Lumina::Import::Mesh
                 return;
             }
             FMeshResource& M = *MeshPtr;
-            // Dedup ALWAYS (correctness: meshlet/simplify need a sane vertex count or they OOM); only the
-            // cache/overdraw/fetch reordering is the optional "optimize" pass.
+            // Dedup ALWAYS for correctness, and only the reordering is the optional optimize pass.
             DeduplicateMeshVertices(M, Progress);
             if (Options.bOptimize)
             {
                 OptimizeNewlyImportedMesh(M, Progress);
             }
-            // GenerateMeshlets internally runs ComputeTangents before packing,
-            // and advances StepPerSurface of progress for each surface it meshletizes.
+            // It runs tangent generation internally and advances progress per surface it meshletizes.
             GenerateMeshlets(M, Progress, StepPerSurface);
         });
 
@@ -1463,8 +1429,7 @@ namespace Lumina::Import::Mesh
             AnalyzeMeshStatistics(*MeshPtr, Data.MeshStatistics);
         }
 
-        // Serially over resources: the builder parallelizes over its own Z slices, so nesting it in the
-        // per-resource ParallelFor would nest two. Must follow GenerateMeshlets -- it voxelizes the bake.
+        // The builder parallelizes over its own slices, so nesting it here would nest two levels.
         if (Options.DistanceField.bEnabled)
         {
             if (Progress)

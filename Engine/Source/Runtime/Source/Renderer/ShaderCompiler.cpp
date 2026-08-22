@@ -196,7 +196,7 @@ namespace Lumina
 
 #endif
 
-    // Slang's interfaces are COM: lifetime runs through release(), never through a base pointer delete.
+    // Slang's interfaces are COM, so lifetime runs through release rather than a base pointer delete.
     #if defined(__GNUC__)
         #pragma GCC diagnostic push
         #pragma GCC diagnostic ignored "-Wnon-virtual-dtor"
@@ -325,9 +325,7 @@ namespace Lumina
 
     static FSlangSessionPool GSlangSessionPool;
 
-    /** VFS roots Slang resolves #includes against: engine, plugins, project, module-registered (see
-        Shaders::GetSearchRoots). Invariant for a whole batch -- this used to be rebuilt, plugin walk and
-        VFS::Exists included, once per shader. */
+    // Invariant for a whole batch, where this used to be rebuilt once per shader.
     static TVector<FString> BuildShaderSearchRoots()
     {
         TVector<FString> Roots;
@@ -335,10 +333,7 @@ namespace Lumina
         return Roots;
     }
 
-    /** Search paths for ONE shader: its own directory first, then the shared roots. Slang resolves
-        loadModule by file name against the search paths in order, so without the leading own-directory
-        entry a game shader named like an engine one would compile the engine's file under the game's
-        identity. */
+    // Without the leading own-directory entry a game shader would compile the engine's file.
     static void BuildModuleSearchPaths(FStringView ShaderPath, const TVector<FString>& SharedRoots, TVector<FString>& OutPaths)
     {
         const FStringView OwnDir = VFS::Parent(ShaderPath, true);
@@ -367,8 +362,7 @@ namespace Lumina
         TVector<slang::PreprocessorMacroDesc>   Macros;
     };
 
-    /** Session setup shared by both entry points. Macros are baked into the SessionDesc, so a session is
-        only reusable across shaders that share a macro set. */
+    // Macros are baked into the description, so a session is reusable only across a shared macro set.
     static Slang::ComPtr<slang::ISession> CreateCompileSession(slang::IGlobalSession* GlobalSession,
         const TVector<FString>& SearchRoots, const TVector<FString>& MacroDefinitions, FSessionScratch& Scratch)
     {
@@ -390,8 +384,7 @@ namespace Lumina
         TargetOptions[1].value.intValue0 = GetShaderOptimizationLevel();
         uint32 TargetOptionCount = 2;
 
-        // ShuffleMeshletClip needs subgroup shuffle, outside the base spirv_1_5 profile, so Slang widens
-        // it and warns 41012 per mesh entry point. Declaring it silences that; the SPIR-V is identical.
+        // Declaring the capability silences warning 41012, and the emitted SPIR-V is identical.
         const SlangCapabilityID ShuffleCapability = GlobalSession->findCapability("spvGroupNonUniformShuffle");
         if (ShuffleCapability != SLANG_CAPABILITY_UNKNOWN)
         {
@@ -404,7 +397,7 @@ namespace Lumina
         TargetDesc.compilerOptionEntries = TargetOptions;
         TargetDesc.compilerOptionEntryCount = TargetOptionCount;
 
-        // 39001: unbounded descriptor array (intentional, bindless)
+        // Silences the unbounded descriptor array warning, which is intentional for bindless.
         slang::CompilerOptionEntry SessionOptions[1] = {};
         SessionOptions[0].name = slang::CompilerOptionName::DisableWarnings;
         SessionOptions[0].value.kind = slang::CompilerOptionValueKind::String;
@@ -424,8 +417,7 @@ namespace Lumina
         SessionDesc.searchPaths     = Scratch.SearchPaths.data();
         SessionDesc.searchPathCount = (SlangInt)Scratch.SearchPaths.size();
 
-        // Reserved up front and never exceeded: Macros holds c_str() into MacroSplits, so a reallocation
-        // mid-loop would dangle every pointer already pushed.
+        // Macros hold pointers into the split storage, so a reallocation would dangle every one pushed.
         Scratch.MacroSplits.clear();
         Scratch.Macros.clear();
         Scratch.MacroSplits.reserve(MacroDefinitions.size() * 2);
@@ -472,13 +464,7 @@ namespace Lumina
         }
     }
 
-    /**
-     * Module -> linked program -> SPIR-V -> FShaderHeader. Everything downstream of the module load,
-     * which is the only step that differs between a file path and a raw source string.
-     *
-     * Shared so the two entry points cannot drift again. They already had: the raw path knew nothing
-     * about the mesh and task stages, so a raw-compiled mesh shader came back typed as a vertex shader.
-     */
+    // Shared so the two entry points cannot drift, as they did over the mesh and task stages.
     static bool BuildShaderFromModule(slang::IModule* Module, FStringView DebugName,
         const FShaderCompileOptions& Options, FShaderHeader& OutHeader)
     {
@@ -609,7 +595,7 @@ namespace Lumina
             return false;
         }
 
-        // Cache pass: serve hits inline, queue misses for the Slang task swarm.
+        // The cache pass serves hits inline and queues misses for the Slang task swarm.
         TVector<FString> Paths;
         TVector<FShaderCompileOptions> Options;
         TVector<uint64> SourceHashes;
@@ -617,8 +603,7 @@ namespace Lumina
         Options.reserve(NumInputs);
         SourceHashes.reserve(NumInputs);
 
-        // Hoisted: include resolution for the source hash walks these, and rebuilding them per shader
-        // means a plugin walk and a VFS::Exists per root, per shader.
+        // Hoisted, since rebuilding per shader costs a plugin walk and an existence check per root.
         const TVector<FString> CacheSearchRoots = BuildShaderSearchRoots();
 
         uint32 NumHits = 0;
@@ -687,10 +672,7 @@ namespace Lumina
 
             for (uint32 i = Start; i < End; ++i)
             {
-                // Per shader, NOT per chunk: a failure here must not take the rest of the chunk with it.
-                // It used to `return`, which abandoned every later shader in the chunk while the pending
-                // count was still decremented for all of them, so Flush() reported success and the
-                // dropped shaders simply did not exist until something demanded one.
+                // It used to return, abandoning later shaders while still decrementing the pending count for all.
                 const uint64 CompileStart = PlatformTime::Cycles();
 
                 const FString&    Path     = Paths[i];
@@ -720,8 +702,7 @@ namespace Lumina
                     continue;
                 }
 
-                // Identity is the full virtual path, not the file name: two roots may ship the same
-                // name, and the library keys entries on whatever lands in DebugName.
+                // Two roots may ship the same file name, and the library keys on whatever lands in DebugName.
                 FShaderHeader Shader;
                 if (!BuildShaderFromModule(SlangModule, Path, Options[i], Shader))
                 {
@@ -750,8 +731,7 @@ namespace Lumina
 
     void FSpirVShaderCompiler::Initialize()
     {
-        // Engine tree + engine plugins; the project and its plugins mount later and are picked up by the
-        // second Shaders::PrecompileNewRoots() call at the end of FEngine::LoadProject.
+        // The project and its plugins mount later and are picked up by the second precompile call.
         if (Shaders::PrecompileNewRoots() == 0)
         {
             uint32 Loaded = 0;
@@ -826,8 +806,7 @@ namespace Lumina
 
             const uint64 CompileStart = PlatformTime::Cycles();
 
-            // Same search roots as the path compile. This used to hardcode the engine tree alone, so a
-            // material graph could not #include anything a plugin shipped under its /Shaders.
+            // This used to hardcode the engine tree, so a graph could not include a plugin's shader header.
             const TVector<FString> SearchRoots = BuildShaderSearchRoots();
             FSessionScratch Scratch;
 

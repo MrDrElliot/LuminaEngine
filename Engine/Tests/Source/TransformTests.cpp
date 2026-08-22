@@ -15,8 +15,7 @@ TEST(TransformTests, DefaultTransformIsIdentity)
     EXPECT_FLOAT_EQ(Transform.GetScale().z, 1.0f);
 }
 
-// The single-quat SSE kernels (VQuat1.h) must match the scalar FQuat math lane-for-lane, so the
-// SIMD FTransform composes/rotates identically to the old scalar transform.
+// The single-quat SSE kernels must match the scalar FQuat math lane for lane.
 TEST(SIMDQuat, MatchesScalarQuat)
 {
     using namespace Lumina;

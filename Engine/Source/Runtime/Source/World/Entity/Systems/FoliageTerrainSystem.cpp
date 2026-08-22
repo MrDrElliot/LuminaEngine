@@ -34,7 +34,7 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        // Snapshot terrains: world origin, accumulated dirty world-rect, and the running version sum.
+        // Snapshot of terrain origin, accumulated dirty world-rect, and the running version sum.
         FTerrainDirty Terrains[8];
         int32 NumTerrains = 0;
         uint32 CombinedVersion = 0;

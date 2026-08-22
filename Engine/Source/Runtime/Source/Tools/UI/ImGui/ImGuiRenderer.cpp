@@ -74,8 +74,7 @@ namespace Lumina
             GApp->GetEventProcessor().Dispatch<FMouseScrolledEvent>(EMouseKey::Scroll, YOffset);
         }
 
-        // Install the forwarding callbacks on every current secondary platform window. Re-set each frame
-        // (cheap, idempotent) so windows created this frame are covered without tracking creation events.
+        // Re-set each frame, cheap and idempotent, so new windows are covered without tracking creation.
         void ForwardSecondaryPlatformWindowInput()
         {
             ImGuiPlatformIO& PlatformIO = ImGui::GetPlatformIO();
@@ -119,8 +118,7 @@ namespace Lumina
 
         float ResolveUIScale()
         {
-            // CEditorSettings::UIScale: 0 = auto (monitor DPI + resolution), >0 = explicit factor.
-            // Unset in game builds (the editor config file is not mounted).
+            // Zero means auto from monitor DPI, and it is unset in game builds where the config is unmounted.
             const float Override = GetDefault<CEditorSettings>()->UIScale;
             if (Override > 0.0f)
             {
@@ -222,8 +220,7 @@ namespace Lumina
             return Hash::GetHash64(Begin, static_cast<size_t>(End - Begin));
         }
 
-        // Per-frame poll: re-derive the global style when the palette changes (e.g. the user edits a color
-        // in the Settings panel). Cheap -- one hash unless something changed.
+        // Cheap, one hash unless something changed.
         void RefreshStyleIfPaletteChanged()
         {
             if (!GBaseStyleValid)
@@ -244,8 +241,7 @@ namespace Lumina
     {
         IMGUI_CHECKVERSION();
 
-        // Route this Runtime ImGui copy through our allocator (every module that links ImGui must;
-        // see ImGuiAllocator.h). Before CreateContext so even ImGui's first internal alloc is ours.
+        // Before CreateContext, so even ImGui's first internal allocation goes through our allocator.
         ImGuiX::InstallImGuiAllocator();
 		
         Context = ImGui::CreateContext();
@@ -345,8 +341,7 @@ namespace Lumina
     	
         Style.Alpha = 1.0f;
 
-        // Structural colors not driven by the editor palette (scrollbars, plots, docking, dimmed tabs,
-        // resize-grip base, nav/modal overlays).
+        // Structural colors not driven by the editor palette, such as scrollbars, plots and docking.
         Style.Colors[ImGuiCol_BorderShadow] =           ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
         Style.Colors[ImGuiCol_ScrollbarBg] =            ImVec4(0.02f, 0.02f, 0.02f, 0.53f);
         Style.Colors[ImGuiCol_ScrollbarGrab] =          ImVec4(0.31f, 0.31f, 0.31f, 1.00f);
@@ -365,8 +360,7 @@ namespace Lumina
         Style.Colors[ImGuiCol_NavWindowingDimBg] =      ImVec4(0.80f, 0.80f, 0.80f, 0.20f);
         Style.Colors[ImGuiCol_ModalWindowDimBg] =       ImVec4(0.80f, 0.80f, 0.80f, 0.35f);
 
-        // Everything else (text, surfaces, accents, buttons, headers, tabs, selection) is themed from the
-        // editor color palette, and re-derived live when those settings change (RefreshStyleIfPaletteChanged).
+        // Everything else is themed from the editor palette and re-derived live when it changes.
         ApplyPaletteColors(Style);
 
     	

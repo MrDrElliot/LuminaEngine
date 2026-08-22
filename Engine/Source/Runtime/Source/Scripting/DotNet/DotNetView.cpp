@@ -6,10 +6,7 @@
 #include "World/Entity/Components/Component.h"
 #include "World/Entity/Systems/SystemContext.h"
 
-// The C# View<...> path: native does the entt::runtime_view iteration (type-erased, no templates cross
-// the boundary) and GATHERS results into parallel chunk buffers the C# side consumes. One boundary
-// crossing per CHUNK (ViewNextChunk), not per entity. Per element, C# rebinds a REUSED wrapper Handle to
-// the live component pointer this gathers; field access then uses the existing property interop.
+// One boundary crossing per CHUNK rather than per entity, rebinding a reused wrapper handle.
 
 using namespace Lumina;
 
@@ -21,11 +18,7 @@ namespace
         return W ? &ECS::GetWorldRegistry(*W) : nullptr;
     }
 
-    // Per-call view state, heap-allocated by ViewBegin and freed by ViewEnd. Holds the matched-entity
-    // SNAPSHOT (not a live iterator), a cursor into it, and the include + exclude storages so each chunk
-    // re-validates and re-resolves per-entity component pointers. Snapshotting (rather than holding a live
-    // runtime_view iterator across the C#-side chunk loop) is what makes the view structural-mutation safe:
-    // the Each/foreach body can Emplace/Remove via SystemContext.Registry without UB.
+    // Snapshotting rather than holding a live iterator is what makes the view mutation-safe.
     struct FViewState
     {
         TVector<entt::entity>               Entities;
@@ -35,10 +28,7 @@ namespace
     };
 }
 
-// Builds an entt::runtime_view over the include component storages, excluding the exclude storages, and
-// SNAPSHOTS the matching entity ids into the returned opaque state (null if any include storage is missing
-// -> empty view). IncludeOps / ExcludeOps are arrays of const FComponentOps* tokens (resolved C#-side via
-// FindComponentOps). The runtime_view is consumed here and not retained; only the snapshot + storages live on.
+// The runtime view is consumed here, and only the snapshot and storages live on.
 LUMINA_DOTNET_EXPORT(void*, ViewBegin)(uint64 World, const void* const* IncludeOps, int NInc, const void* const* ExcludeOps, int NExc)
 {
     FEntityRegistry* Registry = LmViewRegistryFromWorld(World);
@@ -78,8 +68,7 @@ LUMINA_DOTNET_EXPORT(void*, ViewBegin)(uint64 World, const void* const* IncludeO
         }
     }
 
-    // Snapshot up front. Additions to the view during iteration are intentionally not visited (defined),
-    // and removals are handled by the per-chunk re-validation below.
+    // Additions during iteration are intentionally not visited, and removals are re-validated per chunk.
     for (const entt::entity Entity : View)
     {
         State->Entities.push_back(Entity);
@@ -87,11 +76,7 @@ LUMINA_DOTNET_EXPORT(void*, ViewBegin)(uint64 World, const void* const* IncludeO
     return State;
 }
 
-// Fills up to MaxCount entities (from the snapshot cursor) into OutEntities and, for each emitted entity i
-// and include k, OutPtrs[i*NInclude + k] = the live component pointer. Each snapshot entry is re-validated
-// against the live storages (skipped if it lost an include or gained an exclude since ViewBegin) and its
-// pointers are resolved fresh, so a storage realloc between chunks is harmless. Returns the count emitted
-// (0 when the snapshot is exhausted). One crossing per chunk.
+// Pointers resolve fresh per chunk, so a storage realloc between chunks is harmless.
 LUMINA_DOTNET_EXPORT(int, ViewNextChunk)(void* StatePtr, uint32* OutEntities, void** OutPtrs, int MaxCount, int NInclude)
 {
     FViewState* State = static_cast<FViewState*>(StatePtr);
@@ -146,8 +131,7 @@ LUMINA_DOTNET_EXPORT(void, ViewEnd)(void* StatePtr)
     }
 }
 
-// The C# system reaches its registry through the system context: returns the CWorld* (as uint64) the
-// FSystemContext is bound to, so SystemContext.Registry can build an EntityRegistry / View over it.
+// Returns the world the context is bound to, so the managed side can build a view over it.
 LUMINA_DOTNET_EXPORT(uint64, SystemContext_GetWorld)(const FSystemContext* Ctx)
 {
     if (Ctx == nullptr)

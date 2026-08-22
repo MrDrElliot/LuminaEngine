@@ -11,8 +11,7 @@ namespace Lumina::DotNet
 {
     namespace
     {
-        // Live proxies + the worlds mid-reload teardown left renderer-less. Game thread only: renderers are
-        // created/destroyed on the game thread and script (re)loads run there too.
+        // Game thread only, since renderers and script reloads both run there.
         TVector<FManagedRenderScene*>   GLiveScenes;
         TVector<CWorld*>                GPendingRecreate;
 
@@ -21,8 +20,7 @@ namespace Lumina::DotNet
 
         TUniquePtr<IRenderScene> CreateForWorld(CWorld* World)
         {
-            // Editor/utility worlds (thumbnails, asset previews) keep the engine renderer; returning null
-            // makes RenderSceneFactory fall back to the default.
+            // Returning null makes the factory fall back to the engine default for editor worlds.
             if (World == nullptr || !World->IsGameWorld())
             {
                 return nullptr;
@@ -40,8 +38,7 @@ namespace Lumina::DotNet
 
     FManagedRenderScene::~FManagedRenderScene()
     {
-        // Destroying the proxy releases the managed instance; the caller (CWorld::DestroyRenderer)
-        // has already waited for the GPU, so nothing is still referencing the handle.
+        // The caller has already waited for the GPU, so nothing still references the handle.
         DestroyManagedRenderScene(Handle);
         Handle = nullptr;
 
@@ -165,8 +162,7 @@ namespace Lumina::DotNet
                 RenderSceneFactory::SetOverride(&CreateForWorld, GActiveTypeName.c_str());
             }
 
-            // Give the worlds PreScriptUnload tore down a renderer again (managed if the new generation
-            // still ships one, engine default otherwise).
+            // Managed if the new generation still ships one, otherwise the engine default.
             for (CWorld* World : GPendingRecreate)
             {
                 World->CreateRenderer();

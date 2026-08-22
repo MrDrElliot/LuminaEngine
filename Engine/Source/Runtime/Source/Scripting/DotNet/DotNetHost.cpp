@@ -59,8 +59,7 @@
 
 namespace Lumina
 {
-    // Defined in CSharpLayoutChecks.cpp: validates the FString/TVector byte layout that
-    // LuminaSharp.NativeMarshal reads in place (Dev/Debug self-test; a no-op in Shipping).
+    // Validates the container byte layout the managed marshal reads in place, a no-op in Shipping.
     void VerifyContainerInteropLayout();
 }
 
@@ -127,8 +126,7 @@ namespace Lumina::DotNet
             #endif
         };
 
-        // Native<->managed boundary. The managed Host mirrors this layout exactly;
-        // any change here bumps GAbiVersion and the matching managed constant.
+        // The managed host mirrors this layout exactly, so any change bumps the ABI version.
         struct FExporterTable
         {
             void (CORECLR_DELEGATE_CALLTYPE* Log)(int32 Level, const char* Utf8, int32 Len);
@@ -150,10 +148,7 @@ namespace Lumina::DotNet
             int32       TextLen;
         };
 
-        // One compilation unit handed to managed (a plugin, the game, or the engine library). Mirrors
-        // LuminaSharp.FSourceAssembly. Sources points at SourceCount FSourceFile; Deps is a ';'-joined list
-        // of sibling unit names this one references; DllPath (optional) is an absolute prebuilt managed
-        // assembly used when SourceCount == 0. All pointers must outlive the LoadScripts call.
+        // A DllPath is an absolute prebuilt assembly used when there are no sources.
         struct FSourceAssembly
         {
             const char*        Name;
@@ -167,8 +162,7 @@ namespace Lumina::DotNet
         };
 
         typedef int32 (CORECLR_DELEGATE_CALLTYPE* BootstrapFn)(const FBootstrapArgs*);
-        // Resolves a native->managed export by name to its function pointer (engine or script/plugin), or null.
-        // Native resolves THIS entry by name via hostfxr, then uses it to look up every other managed entry.
+        // Native resolves this one entry by name, then uses it to look up every other managed entry.
         typedef void* (CORECLR_DELEGATE_CALLTYPE* ResolveManagedExportFn)(const char*, int32);
         typedef int32 (CORECLR_DELEGATE_CALLTYPE* LoadScriptsFn)(const FSourceAssembly*, int32);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* TickFn)();
@@ -203,9 +197,7 @@ namespace Lumina::DotNet
         typedef void  (CORECLR_DELEGATE_CALLTYPE* ManagedFreeHandleFn)(void*);
         typedef int32 (CORECLR_DELEGATE_CALLTYPE* InvokeScriptButtonFn)(void*, const char*, int32);
 
-        // A LOCAL typed cache of the engine's managed entries (call sites stay typed). NOT an ABI mirror: native
-        // fills each field at bootstrap by resolving it by name via ResolveManagedExport, so field set/order is
-        // a local concern only, no C# struct to match, no drift hash. A missing entry fails loudly per-name.
+        // NOT an ABI mirror, since each field is resolved by name and a missing one fails loudly.
         struct FManagedExports
         {
             CreateEntitySystemFn        CreateEntitySystem;
@@ -348,9 +340,7 @@ namespace Lumina::DotNet
             }
         }
 
-        // Sink the managed EnumerateEntitySystems calls once per system type; Ctx is the out vector. The
-        // write/read tokens are FComponentOps* the system declared via [Writes]/[Reads]; their TypeId is the
-        // entt::type_hash used to build the FSystemAccess (no tokens => exclusive).
+        // The read and write tokens carry the type hashes used to build the access set.
         void LmSystemDescSink(void* Ctx, const char* Name, int Len, int Stage, int Priority,
             const void* const* WriteTokens, int NWrite, const void* const* ReadTokens, int NRead)
         {
@@ -374,10 +364,7 @@ namespace Lumina::DotNet
             FString Text;
         };
 
-        // Gathers every .cs under an absolute DISK directory (recursively), skipping obj/bin. Scripts are
-        // source, not VFS content, so this is decoupled from plugin content-mounts: a code-only plugin
-        // (bContainsContent=false) still gets its <PluginDir>/Scripts compiled. Paths are absolute (good for
-        // compiler diagnostics + the debugger).
+        // Scripts are source rather than VFS content, so a code-only plugin still gets its scripts compiled.
         void GatherSourcesUnder(const FString& DiskDir, TVector<FGatheredSource>& Out)
         {
             if (DiskDir.empty())
@@ -414,10 +401,7 @@ namespace Lumina::DotNet
             });
         }
         
-        // One compilation unit of a script generation: the game, an enabled plugin, or the engine library.
-        // The SINGLE source of truth for the dependency graph -- both the runtime compile (ReloadScripts) and
-        // the IDE project generation (GenerateScriptProjects) consume the same units, so the IntelliSense view
-        // can never disagree with what actually compiles.
+        // The SINGLE source of truth, so the IDE view can never disagree with what actually compiles.
         struct FScriptUnit
         {
             FString          Name;            // assembly label (becomes the managed assembly name)
@@ -428,11 +412,7 @@ namespace Lumina::DotNet
             TVector<FString> Deps;            // sibling unit names this one references
         };
 
-        // Enumerate the script units: every enabled plugin (deps = its .lplugin dependencies), the game (an
-        // implicit dependency on every enabled plugin), and the engine library (standalone base). Each unit
-        // compiles into its OWN DLL under its OWN <root>/Binaries/DotNet, the game in the project, a plugin in
-        // its plugin dir (alongside its C++ Binaries), the engine next to the engine binaries. Nothing is
-        // bundled into LuminaSharp, and a disabled plugin is filtered out here so it produces no unit at all.
+        // Each unit compiles into its OWN DLL, and a disabled plugin produces no unit at all.
         TVector<FScriptUnit> BuildScriptUnits()
         {
             TVector<FScriptUnit> Units;
@@ -497,11 +477,7 @@ namespace Lumina::DotNet
             return Units;
         }
 
-        // Cooked-game unit graph. The packager stages each script unit's prebuilt DLL under
-        // <exeDir>/DotNet/Scripts/ together with scripts.manifest.json carrying [{Name, Deps, Dll}], so the
-        // managed load order (topo-sort over Deps) and cross-assembly references survive without re-running
-        // plugin discovery. Units carry NO sources (DiskDir empty) -> the shared load core takes the
-        // prebuilt-DLL branch. Returns empty when no manifest is present (dev runs, or a project with no C#).
+        // Returns empty when no manifest is present, as in a dev run or a project with no C#.
         TVector<FScriptUnit> BuildCookedScriptUnits()
         {
             TVector<FScriptUnit> Units;
@@ -565,8 +541,7 @@ namespace Lumina::DotNet
             return Units;
         }
 
-        // Writes Content to Path only when it differs from what is on disk (so frequent reloads don't churn
-        // the files and the IDE doesn't reload projects on every hot-reload). Creates parent dirs as needed.
+        // So frequent reloads do not churn the files and the IDE does not reload projects each time.
         void WriteTextIfChanged(FStringView Path, const std::string& Content)
         {
             FString Existing;
@@ -584,16 +559,13 @@ namespace Lumina::DotNet
             }
         }
 
-        // Sidecar stamped next to a unit's DLL when WE compiled it from sources. It is what tells a stale
-        // emitted artifact (sources since deleted -> delete the DLL, never load it) apart from an authored
-        // prebuilt assembly at the same canonical path (a code-only plugin -> load it).
+        // Tells a stale emitted artifact apart from an authored prebuilt assembly at the same path.
         FString CompiledMarkerPath(const FString& DllPath)
         {
             return DllPath + ".compiled";
         }
 
-        // Deterministic GUID from a seed string (FNV-1a x2 -> 16 bytes), so a unit's .sln project GUID is
-        // stable across regenerations and the IDE doesn't treat each regen as a brand-new project.
+        // Stable across regenerations, so the IDE does not treat each regen as a brand-new project.
         std::string MakeStableGuid(const FString& Seed)
         {
             auto Fnv = [](const char* S, uint64 Basis) -> uint64
@@ -629,9 +601,7 @@ namespace Lumina::DotNet
             return NativePath(Join(Unit.DiskDir, Unit.Name + ".Scripts.csproj"));
         }
 
-        // The SDK-style .csproj XML for a unit: references the engine LuminaSharp.dll and ProjectReferences
-        // every dependency unit that has a generated project on disk -- so editing this unit's scripts gives
-        // IntelliSense for the plugins it builds on, matching the runtime cross-assembly references exactly.
+        // Matches the runtime cross-assembly references exactly, so IntelliSense sees the same graph.
         std::string BuildCsprojXml(const FScriptUnit& Unit, const TVector<FScriptUnit>& AllUnits, const FString& LuminaSharpDll)
         {
             std::string Xml;
@@ -647,8 +617,7 @@ namespace Lumina::DotNet
             // Generated reflected-type bindings read properties through raw pointers.
             Xml += "    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>\n";
             Xml += "    <AssemblyName>" + std::string(Unit.Name.c_str()) + "</AssemblyName>\n";
-            // Build output goes to this unit's OWN Binaries/Intermediates (matching the engine's runtime emit
-            // location), so an IDE build produces the same artifact and nothing lands in LuminaSharp.
+            // An IDE build produces the same artifact and nothing lands in the engine library's output.
             if (!Unit.BinaryDir.empty())
             {
                 Xml += "    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>\n";
@@ -696,8 +665,7 @@ namespace Lumina::DotNet
             return Xml;
         }
 
-        // Writes a solution tying every generated script project together, so opening it in an IDE gives one
-        // unified, cross-plugin IntelliSense view. Placed at the project root; skipped if no project is loaded.
+        // Placed at the project root, and skipped when no project is loaded.
         void WriteScriptSolution(const TVector<FScriptUnit>& Units)
         {
             if (GEngine == nullptr || GEngine->GetProjectPath().empty())
@@ -809,8 +777,7 @@ namespace Lumina::DotNet
         #endif
         }
 
-        // Handle of the module this code lives in (Runtime.dll), where the generated property thunks
-        // are exported. Managed maps the "LuminaNative" P/Invoke library name to it.
+        // Managed maps its P/Invoke library name to this module, where the thunks are exported.
         void* GetThunkModuleHandle()
         {
         #if defined(_WIN32)
@@ -819,8 +786,7 @@ namespace Lumina::DotNet
                 reinterpret_cast<LPCWSTR>(&Export_Log), &Module);
             return (void*)Module;
         #else
-            // RTLD_NOLOAD: this image is already mapped, so the handle is a reference to it rather
-            // than a second load.
+            // The image is already mapped, so this takes a reference rather than loading a second copy.
             Dl_info Info{};
             if (::dladdr(reinterpret_cast<const void*>(&Export_Log), &Info) != 0 && Info.dli_fname != nullptr)
             {
@@ -830,16 +796,13 @@ namespace Lumina::DotNet
         #endif
         }
 
-        // Best-effort recursive copy (overwriting). Returns false if any file failed to copy (e.g. a
-        // destination locked by another process). Used to shadow the managed dir so the build output stays free.
+        // Returns false when any file failed to copy, such as a destination locked by another process.
         bool CopyTreeBestEffort(FStringView Src, FStringView Dst)
         {
             return Filesystem::CopyTree(Src, Dst);
         }
 
-        // Frees one cached-wrapper GC handle on Core's behalf. Core owns the per-CObject managed-instance
-        // cache but knows nothing about the managed runtime, so it calls back through here. Null-safe against
-        // a teardown that has already cleared the managed export table.
+        // Core owns the cache but knows nothing about the managed runtime, so it calls back through here.
         void FreeManagedInstanceHandle(void* Handle)
         {
             if (Handle != nullptr && GManaged.FreeHandle != nullptr)
@@ -856,9 +819,7 @@ namespace Lumina::DotNet
             return;
         }
 
-        // A packaged game ships the runtime next to the exe (<exeDir>/External/DotNet/runtime/<rid>) and has
-        // no LUMINA_DIR / on-disk Engine/Resources, so GetEngineInstallDirectory() is empty there. Probe the
-        // exe-relative layout first, then fall back to the engine install dir for the in-tree dev build.
+        // A packaged game ships the runtime beside the exe, so probe that layout before the install dir.
         const FString ExeDir = ParentOf(Platform::GetCurrentProcessPath());
 
         FString RuntimeSubPath = "External/DotNet/runtime/";
@@ -924,12 +885,7 @@ namespace Lumina::DotNet
         const FString ExePath    = NativePath(Platform::GetCurrentProcessPath());
         const FString ManagedDir = Join(ExeDir, "DotNet/Managed");
 
-        // In the editor, CoreCLR keeps LuminaSharp.dll (and the Roslyn assemblies the script compiler pulls
-        // from the same folder) open for the whole session. That locks the build output, so a packaging
-        // MSBuild can't overwrite it ("LuminaSharp.dll is in use"). Load from a shadow copy instead, leaving
-        // the canonical DotNet/Managed output free to rebuild. A cooked game has no build step (and may sit in
-        // a read-only dir), so it loads in place. Multi-instance: if the shadow is locked by another editor,
-        // the copy fails and we fall back to loading in place.
+        // Loading from a shadow copy leaves the canonical output free for a packaging build to overwrite.
         FString LoadDir = ManagedDir;
     #if WITH_EDITOR
         {
@@ -998,8 +954,7 @@ namespace Lumina::DotNet
             return;
         }
 
-        // Bootstrap registers every engine [ManagedExport] into the managed ManagedExportRegistry (by name);
-        // it no longer hands native a function-pointer table.
+        // Bootstrap registers every engine export by name rather than handing native a pointer table.
         GExports.Log = &Export_Log;
 
         FBootstrapArgs Args{};
@@ -1014,13 +969,10 @@ namespace Lumina::DotNet
             return;
         }
 
-        // C# now reads reflected FString/TVector properties in place by hard-coding the container layout
-        // (LuminaSharp.NativeMarshal). Validate that layout against the real accessors once (Dev/Debug).
+        // Validates that layout against the real accessors once, in Dev and Debug builds.
         VerifyContainerInteropLayout();
 
-        // Resolve the managed export resolver by name (like Bootstrap itself), then fill the engine entry cache
-        // through it. There is no hand-mirrored table: each field is resolved by its own name, and a missing
-        // entry simply leaves that field null (the mandatory ones are checked below).
+        // Each field is resolved by its own name, and a missing entry leaves that field null.
         rc = LoadAssembly(HostBootstrapDll.Get(), HostType, LSTR("ResolveManagedExport"), UNMANAGEDCALLERSONLY_METHOD, nullptr, (void**)&GResolveManagedExport);
         if (rc != 0 || GResolveManagedExport == nullptr)
         {
@@ -1033,14 +985,14 @@ namespace Lumina::DotNet
         LM_RESOLVE(DestroyEntitySystem,    DestroyEntitySystemFn);
         LM_RESOLVE(EnumerateEntityScripts, EnumerateEntityScriptsFn);
         LM_RESOLVE(EnumerateEntitySystems, EnumerateEntitySystemsFn);
-        LM_RESOLVE(CreateScriptable,       CreateScriptableFn);      // optional: only when scripts ship Scriptables
+        LM_RESOLVE(CreateScriptable,       CreateScriptableFn);      // optional, only when scripts ship Scriptables
         LM_RESOLVE(EnumerateScriptables,   EnumerateScriptablesFn);
-        LM_RESOLVE(EnumerateScriptableAliases, EnumerateScriptableAliasesFn);   // optional: only when a script class declares [Alias]
-        LM_RESOLVE(ApplyScriptableDefaults, ApplyScriptableDefaultsFn);   // optional: only when a script declares a [Property] initializer
-        LM_RESOLVE(EnumerateScriptStructs, EnumerateScriptStructsFn);   // optional: only when scripts ship data types
+        LM_RESOLVE(EnumerateScriptableAliases, EnumerateScriptableAliasesFn);   // optional, only with an alias
+        LM_RESOLVE(ApplyScriptableDefaults, ApplyScriptableDefaultsFn);   // optional, initializers only
+        LM_RESOLVE(EnumerateScriptStructs, EnumerateScriptStructsFn);   // optional, only when scripts ship data types
         LM_RESOLVE(GetScriptStructSchema,  GetScriptStructSchemaFn);
         LM_RESOLVE(FreeHandle,             ManagedFreeHandleFn);
-        LM_RESOLVE(InvokeScriptButton,     InvokeScriptButtonFn);   // optional: editor [Button] support
+        LM_RESOLVE(InvokeScriptButton,     InvokeScriptButtonFn);   // optional, for editor button support
         LM_RESOLVE(GetGeneration,          GetGenerationFn);
         LM_RESOLVE(GetRuntimeDiagnostics,  GetRuntimeDiagnosticsFn);
         LM_RESOLVE(GetScriptSchema,        GetScriptSchemaFn);
@@ -1063,9 +1015,7 @@ namespace Lumina::DotNet
         LM_RESOLVE(RenderSceneGetExtent,   RenderSceneGetExtentFn);
         #undef LM_RESOLVE
 
-        // The core script entries are mandatory. Entity-script creation and ticking are NOT among them any
-        // more: scripts are CEntityScript CObjects driven by the native SEntityScriptSystem, so the managed
-        // side no longer owns their lifecycle.
+        // Scripts are CObjects driven by the native system, so managed no longer owns their lifecycle.
         if (GManaged.LoadScripts == nullptr || GManaged.Tick == nullptr || GManaged.Shutdown == nullptr ||
             GManaged.GetGeneration == nullptr)
         {
@@ -1076,8 +1026,7 @@ namespace Lumina::DotNet
         bInitialized = true;
         GOnScriptDelegateDestroyed = &NotifyManagedDelegateDestroyed;
 
-        // Core owns the per-CObject managed-instance cache but must not know about GC handles; hand it the
-        // free function now that the managed side can service one.
+        // Core must not know about GC handles, so hand it the free function once managed can service one.
         Lumina::ManagedInstances::SetFreeHandleFn(&FreeManagedInstanceHandle);
 
         LOG_DISPLAY(".NET host initialized (bundled runtime: {}).", Bundled);
@@ -1090,8 +1039,7 @@ namespace Lumina::DotNet
             return;
         }
 
-        // Before the managed side goes away: drop every cached C# wrapper while the handles can still be
-        // freed. After this the table is empty and SetFreeHandleFn(nullptr) makes any later Set a no-op free.
+        // After this the table is empty and clearing the free function makes any later set a no-op.
         Lumina::ManagedInstances::ReleaseAll();
 
         if (GManaged.Shutdown)
@@ -1119,10 +1067,7 @@ namespace Lumina::DotNet
         GManaged.Tick();
     }
 
-    // Core load path shared by the editor (ReloadScripts, compile-from-source) and the cooked game
-    // (LoadCookedScripts, prebuilt DLLs). Turns a prepared unit list into managed assemblies and refreshes
-    // the native mirrors. bEditorFollowups drives the editor-only steps (toast notifications + .csproj regen)
-    // that a cooked game has no use for. Returns the managed load result (0 == ok, <0 = could not run).
+    // Returns the managed load result, where zero is success and a negative could not run.
     int32 LoadScriptUnitsCore(const TVector<FScriptUnit>& UnitList, bool bEditorFollowups)
     {
         if (!bInitialized || GManaged.LoadScripts == nullptr)
@@ -1130,16 +1075,13 @@ namespace Lumina::DotNet
             return -1;
         }
 
-        // Turn the shared unit graph into compilation buckets: gather each unit's .cs, and skip units with
-        // neither sources nor a prebuilt DLL. Each surviving bucket becomes its own assembly in the managed
-        // collectible ALC, emitted to its own <root>/Binaries/DotNet/<Name>.dll. DllPath is that canonical
-        // location: the emit target when the unit has sources, or the load source when it ships a prebuilt DLL.
+        // The canonical path is the emit target with sources, or the load source for a prebuilt DLL.
         struct FSourceBucket
         {
             FString                  Name;
             FString                  Deps;     // ';'-joined sibling unit names
             TVector<FGatheredSource> Sources;  // owns the path/text strings the marshaled views point at
-            FString                  DllPath;  // canonical on-disk DLL: emit target (sources) or load source (prebuilt)
+            FString                  DllPath;  // emit target, or load source
         };
 
         TVector<FSourceBucket> Buckets;
@@ -1151,9 +1093,7 @@ namespace Lumina::DotNet
 
             GatherSourcesUnder(Unit.DiskDir, Bucket.Sources);
 
-            // A source-rooted unit (editor units carry a DiskDir; cooked ones don't) whose sources are all
-            // gone must NOT fall back to the DLL we emitted from them earlier: loading it would resurrect
-            // every deleted class. The compile marker identifies that DLL as ours; delete both and move on.
+            // Loading the emitted DLL would resurrect every deleted class, so the marker identifies and deletes it.
             if (Bucket.Sources.empty() && !Unit.DiskDir.empty() && !Unit.AssemblyPath.empty())
             {
                 std::error_code Ec;
@@ -1167,8 +1107,7 @@ namespace Lumina::DotNet
                 }
             }
 
-            // With no .cs, the unit can still load a prebuilt managed DLL sitting at its canonical path (a
-            // code-only plugin that ships a compiled assembly). With neither, there is nothing to do.
+            // With no sources a unit can still load a prebuilt assembly at its canonical path.
             const bool bHasPrebuilt = Bucket.Sources.empty() && !Unit.AssemblyPath.empty()
                 && Filesystem::Exists(Unit.AssemblyPath);
             if (Bucket.Sources.empty() && !bHasPrebuilt)
@@ -1226,14 +1165,11 @@ namespace Lumina::DotNet
         LOG_DISPLAY("C#: {} {} script unit(s), {} file(s)...",
             bEditorFollowups ? "compiling" : "loading", Units.size(), TotalFiles);
 
-        // Managed render scenes hold GCHandles into the generation about to unload; tear their worlds'
-        // renderers down first (waits for the GPU) so nothing dispatches into a dead ALC.
+        // Tears those worlds' renderers down first, so nothing dispatches into a dead load context.
         ManagedRenderScenes::PreScriptUnload();
 
         const int32 Result = GManaged.LoadScripts(Units.empty() ? nullptr : Units.data(), (int32)Units.size());
-        // The compile runs synchronously on this (main) thread, so a live progress modal can't animate during
-        // it; instead report the outcome as a toast (covers every reload trigger: hot-key, content-browser
-        // save-watch, console command, and the initial project-load compile). A cooked game has no editor UI.
+        // The compile is synchronous, so the outcome is reported as a toast rather than a progress modal.
         if (Result != 0)
         {
             LOG_ERROR("C# script load/reload returned error {}.", Result);
@@ -1249,8 +1185,7 @@ namespace Lumina::DotNet
 
         if (Result == 0)
         {
-            // Stamp each source-compiled unit's emitted DLL so a later reload can tell it apart from an
-            // authored prebuilt assembly (and delete it once the unit's sources are gone, see above).
+            // So a later reload tells our emitted DLL apart from an authored prebuilt assembly.
             for (const FSourceBucket& Bucket : Buckets)
             {
                 if (!Bucket.Sources.empty() && !Bucket.DllPath.empty())
@@ -1266,37 +1201,24 @@ namespace Lumina::DotNet
             }
         }
 
-        // Refresh the native generation mirror once here (the only place it can change), so the
-        // per-frame tick never crosses the boundary to read it.
+        // The only place it can change, so the per-frame tick never crosses the boundary to read it.
         GCachedGeneration = GManaged.GetGeneration ? GManaged.GetGeneration() : GCachedGeneration;
 
-        // Drop every cached C# wrapper for this generation. The handles are WEAK, so they never pinned the
-        // ALC that just unloaded and this is not what makes hot reload work -- it exists so the table does not
-        // carry handles whose target died with the old ALC, and so its slots are recycled instead of growing
-        // once per reload. Objects are untouched; the next access re-creates the wrapper against the new
-        // generation's types.
+        // The handles are WEAK, so this exists to recycle slots rather than to make hot reload work.
         Lumina::ManagedInstances::ReleaseAll();
 
         GScriptStructs.Clear();
 
-        // Mint a real CClass for every C# subclass of a REFLECT(Scriptable) native class, so FindObject<CClass>
-        // / NewObject / editor pickers see them like any native class (minted classes are reused by name across
-        // reloads; the managed instance behind each rebinds via the per-instance FScriptableBridge generation gate).
+        // Minted classes are reused by name across reloads, with each instance rebinding through its bridge.
         FScriptableRegistry::RefreshMintedClasses();
 
-        // Mint a CScriptStruct for every C# type carrying a data marker, deriving from the native base the
-        // marker names, so blackboards and data tables see script-declared shapes exactly as native ones.
-        // Ordered after the CClass minting for the same reason: both read the generation that just loaded.
+        // Ordered after the class minting, since both read the generation that just loaded.
         FScriptDataStructRegistry::Get().Refresh();
 
-        // Re-sync the renderer override against the new generation's RenderScene types and give the worlds
-        // PreScriptUnload tore down a renderer again. Runs even on a failed load so those worlds fall back
-        // to the engine renderer instead of staying black.
+        // Runs even on a failed load, so those worlds fall back to the engine renderer instead of black.
         ManagedRenderScenes::PostScriptLoad();
 
-        // Keep the IDE projects in lockstep with the scripts that just (re)loaded so an absent or deleted
-        // .csproj self-heals on ANY reload, not only on a full project load (idempotent; no-op if unchanged).
-        // Editor-only: a cooked game ships no sources and no IDE.
+        // Idempotent and editor-only, so an absent project self-heals on any reload.
         if (bEditorFollowups)
         {
             GenerateScriptProjects();
@@ -1333,15 +1255,14 @@ namespace Lumina::DotNet
             return;
         }
 
-        // Recompile first so each unit's <root>/Binaries/DotNet/<Name>.dll is emitted fresh (captures the
-        // latest .cs edits); the cooked game then loads these prebuilt rather than running Roslyn at boot.
+        // The cooked game loads these prebuilt rather than running the compiler at boot.
         ReloadScripts();
 
         for (const FScriptUnit& Unit : BuildScriptUnits())
         {
             if (Unit.AssemblyPath.empty())
             {
-                continue; // no canonical DLL location (e.g. a unit with no project path) -- nothing to ship
+                continue; // no canonical DLL location, so there is nothing to ship
             }
             FPackagedScriptUnit Packaged;
             Packaged.Name          = Unit.Name;
@@ -1361,9 +1282,7 @@ namespace Lumina::DotNet
         const FString ExePath = NativePath(Platform::GetCurrentProcessPath());
         const FString Dll = NativePath(Join(ParentOf(ExePath), "DotNet/Managed/LuminaSharp.dll"));
 
-        // One SDK-style project per unit (game, each enabled plugin, engine library), each ProjectReferencing
-        // its dependencies, plus a solution tying them together. Same unit graph the runtime compiles, so the
-        // IDE view matches what actually builds. Only emit for roots that exist on disk.
+        // The same unit graph the runtime compiles, so the IDE view matches what actually builds.
         const TVector<FScriptUnit> Units = BuildScriptUnits();
         for (const FScriptUnit& Unit : Units)
         {
@@ -1395,16 +1314,14 @@ namespace Lumina::DotNet
             return;
         }
 
-        // Find, never create: a C++ script has no managed instance and minting one per frame for every
-        // script on an input entity is exactly the cost this lookup exists to avoid.
+        // Find, never create, since minting per frame is exactly the cost this lookup avoids.
         void* Handle = ManagedInstances::Find(Script);
         if (Handle == nullptr)
         {
             return;
         }
 
-        // An engine export lives in the non-collectible LuminaSharp.dll, so its pointer outlives hot
-        // reloads and is safe to cache, matching what the generated ScriptEvent shims do.
+        // An engine export lives in the non-collectible assembly, so its pointer survives hot reloads.
         using FThunk = void (CORECLR_DELEGATE_CALLTYPE*)(void*, const FInputActionState*, int32, uint32, float);
         static FThunk Thunk = (FThunk)ResolveManagedExport("PollScriptInputBindings");
         if (Thunk == nullptr)
@@ -1613,8 +1530,7 @@ namespace Lumina::DotNet
             double  F64() { double V = 0; Take(&V, 8); return V; }
             uint8   U8()  { uint8 V = 0; Take(&V, 1); return V; }
 
-            // On a truncated/corrupt length, consume the rest of the buffer so every subsequent read fails
-            // cleanly: returning without advancing P would desync the cursor and silently misread the tail.
+            // Returning without advancing would desync the cursor and silently misread the tail.
             FString Str()
             {
                 int32 N = I32();
@@ -1664,9 +1580,7 @@ namespace Lumina::DotNet
             }
         }
 
-        // The editor display block a [Property] carries: category, tooltip, units, clamps, color flag.
-        // Shared by the top-level schema and by every nested / instanced-candidate field so the two can
-        // never drift -- they read the identical bytes WriteMeta wrote.
+        // Shared by the schema and every nested field, so the two read the identical bytes.
         void ReadMetaInto(FBlobReader& R, Scripting::FScriptExportMeta& Meta)
         {
             const FString Category = R.Str();
@@ -1706,8 +1620,7 @@ namespace Lumina::DotNet
                 }
                 case EPropertyTypeFlags::Struct:
                 {
-                    // A native-struct mirror (NativeName set) and a C#-defined script struct (NativeName empty)
-                    // share one wire shape; the reader tells them apart by whether NativeName is present.
+                    // The reader tells the two apart by whether a native name is present.
                     const FString NativeName = R.Str();
                     if (!NativeName.empty())
                     {
@@ -1905,8 +1818,7 @@ namespace Lumina::DotNet
 
     namespace
     {
-        // Decodes one managed schema blob. Shared by every caller that asks for a member layout, so the
-        // wire format is read in exactly one place regardless of which managed export produced it.
+        // The wire format is read in exactly one place, whichever managed export produced it.
         bool ParseSchemaBlob(const TVector<uint8>& Blob, Scripting::FScriptExportSchema& OutSchema,
             TVector<Scripting::FScriptPropertyEntry>& OutDefaults)
         {
@@ -1924,8 +1836,7 @@ namespace Lumina::DotNet
                 ReadAliasesInto(R, Field.Meta);
                 ReadMetaInto(R, Field.Meta);
 
-                // Top level only: nested fields have no hot-reload identity of their own, so WriteFields
-                // does not emit this byte and nothing here may consume one.
+                // Top level only, since nested fields have no hot-reload identity and WriteFields emits no byte.
                 if (R.U8())
                 {
                     Field.Meta.Set("SkipHotReload", FString());
@@ -2053,8 +1964,7 @@ namespace Lumina::DotNet
         return bInitialized;
     }
 
-    // Resumes a managed Asset.LoadAsync continuation on the game thread. Reachable from the global
-    // extern "C" load export (which can't see the anonymous-namespace delegate directly).
+    // Reachable from the global load export, which cannot see the anonymous-namespace delegate.
     void DispatchAssetCallback(void* Callback, void* Object)
     {
         if (bInitialized && GManaged.InvokeAssetCallback != nullptr)
@@ -2078,8 +1988,7 @@ namespace Lumina::DotNet
     }
 }
 
-// Validates the managed P/Invoke path (LibraryImport "LuminaNative" -> this Runtime module via the
-// DllImportResolver). The generated property thunks are exported the same way.
+// Validates the managed P/Invoke path, which the generated property thunks also use.
 LUMINA_DOTNET_EXPORT(int, NativeSelfTest)(int A, int B)
 {
     return A + B;
@@ -2133,9 +2042,7 @@ LUMINA_DOTNET_EXPORT(int, RemoveComponent)(uint64 World, uint32 Entity, const vo
     return (R && O) ? O->Remove(*R, static_cast<entt::entity>(Entity)) : 0;
 }
 
-// Registry signals: connect a managed listener (UnmanagedCallersOnly Thunk + GCHandle Ctx) to a component's
-// on_construct/on_destroy/on_update sink. Allocates the listener (its address is the disconnect key) and
-// returns it as an opaque subscription handle; null on failure. Kind matches EComponentSignal.
+// Allocates the listener, whose address is the disconnect key, and returns it as an opaque handle.
 LUMINA_DOTNET_EXPORT(void*, RegistryConnect)(uint64 World, const void* Ops, int32 Kind, void* Thunk, void* Context)
 {
     Lumina::FEntityRegistry* R = LmRegistryFromWorld(World);
@@ -2184,10 +2091,7 @@ LUMINA_DOTNET_EXPORT(void, SetObjectPtr)(void* Member, void* Value)
     }
 }
 
-// Weak-handle validity backing the managed NativeObject. GetHandle packs a live CObject*'s array handle
-// as (Generation << 32 | Index), Index = -1 if the object isn't array-tracked. Resolve returns the live
-// CObject* only if that (Index, Generation) still names a live, non-destroyed object, else null, so a
-// managed wrapper to a since-freed object throws on access instead of reading reclaimed memory.
+// A wrapper to a since-freed object throws on access rather than reading reclaimed memory.
 LUMINA_DOTNET_EXPORT(int64, ObjectGetHandle)(void* Object)
 {
     const Lumina::FObjectHandle Handle(static_cast<Lumina::CObjectBase*>(static_cast<Lumina::CObject*>(Object)));
@@ -2200,10 +2104,7 @@ LUMINA_DOTNET_EXPORT(void*, ObjectResolve)(int32 Index, int32 Generation)
     return Lumina::FObjectHandle(Index, Generation).Resolve();
 }
 
-// Per-CObject managed-instance cache, backing Wrapper<T>.ForObject. Get returns the WEAK GC handle of the
-// wrapper already created for this object (or null); Set installs one, freeing whatever it replaces. Passing
-// a null handle to Set clears the slot. Weak by design: the cache remembers the wrapper that exists, it never
-// keeps one alive, so it cannot pin the collectible script ALC across a hot reload.
+// Weak by design, so the cache never pins the collectible script load context across a reload.
 LUMINA_DOTNET_EXPORT(void*, ObjectGetManagedInstance)(void* Object)
 {
     return Lumina::ManagedInstances::Find(static_cast<Lumina::CObjectBase*>(static_cast<Lumina::CObject*>(Object)));
@@ -2214,8 +2115,7 @@ LUMINA_DOTNET_EXPORT(void, ObjectSetManagedInstance)(void* Object, void* Handle)
     Lumina::ManagedInstances::Set(static_cast<Lumina::CObjectBase*>(static_cast<Lumina::CObject*>(Object)), Handle);
 }
 
-// Drains every cached managed instance. Called by the managed teardown contract (ScriptManager.UnloadCurrent)
-// before the collectible ALC unloads: Scriptable subclass instances are held by STRONG handles here.
+// Called before the collectible load context unloads, since Scriptable instances are held strongly.
 LUMINA_DOTNET_EXPORT(void, ReleaseAllManagedInstances)()
 {
     Lumina::ManagedInstances::ReleaseAll();
@@ -2241,8 +2141,7 @@ LUMINA_DOTNET_EXPORT(int, AssetExists)(const char* Path, int Len)
     return Lumina::FAssetRegistry::Get().GetAssetByPath(Lumina::FStringView(Path, static_cast<size_t>(Len))) != nullptr ? 1 : 0;
 }
 
-// Async load; resumes the managed continuation (a GCHandle to an Action) on the game thread with the
-// loaded CObject* (or null). Backs Asset.LoadAsync<T>.
+// Resumes the managed continuation on the game thread with the loaded object, or null.
 LUMINA_DOTNET_EXPORT(void, LoadObjectAsync)(const char* Path, int Len, void* Callback)
 {
     if (Path == nullptr || Len <= 0)
@@ -2261,8 +2160,7 @@ LUMINA_DOTNET_EXPORT(void, LoadObjectAsync)(const char* Path, int Len, void* Cal
     });
 }
 
-// Reverse lookup: a loaded CObject* -> its asset's virtual path (registry by GUID). Fills Buffer up to
-// Capacity and returns the full length. Backs serializing a C# TObjectPtr<T> field back to a path.
+// Fills the buffer up to capacity and returns the full length, backing a path round-trip.
 LUMINA_DOTNET_EXPORT(int, GetObjectPath)(void* Object, char* Buffer, int Capacity)
 {
     if (Object == nullptr)
@@ -2288,15 +2186,7 @@ LUMINA_DOTNET_EXPORT(int, GetObjectPath)(void* Object, char* Buffer, int Capacit
     return L;
 }
 
-// Maps a module name ("Runtime", "Editor", "Sandbox", ...) to its loaded native handle so the managed
-// binding resolver can route each generated binding's call to the module that exports its thunks. Matches
-// the base name up to the build-config suffix ("Editor-Development.dll") or extension, so any module's
-// reflected types can carry C# bindings, not just Runtime.
-//
-// Monolithic (LUMINA_MONOLITHIC): engine + plugin module thunks are whole-archived into the exe's own
-// export table (there is no per-module DLL to enumerate), so a name matching no loaded DLL falls back to
-// the exe handle. A separately loaded game module DLL (<Project>-<Cfg>.dll) still matches the enumeration
-// and keeps its own handle, so its thunks resolve from there.
+// Matches up to the build-config suffix, so any module's reflected types can carry C# bindings.
 LUMINA_DOTNET_EXPORT(void*, ResolveModuleHandle)(const char* Name, int Len)
 {
     if (Name == nullptr || Len <= 0)

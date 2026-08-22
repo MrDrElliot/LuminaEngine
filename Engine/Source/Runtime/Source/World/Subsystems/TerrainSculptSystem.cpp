@@ -126,8 +126,7 @@ namespace Lumina
             return Lx >= 0.0f && Lz >= 0.0f && Lx <= float(Res - 1) && Lz <= float(Res - 1);
         };
 
-        // Bilinear surface height at a world XZ (clamped to the tile), so the hit
-        // tracks the rendered surface smoothly instead of snapping to texels.
+        // Bilinear so the hit tracks the rendered surface instead of snapping to texels.
         auto SurfaceY = [&](float Wx, float Wz)
         {
             const float Fx = Math::Clamp((Wx - OriginXZ.x) / Stride, 0.0f, float(Res - 1));
@@ -154,7 +153,7 @@ namespace Lumina
             if (bIn)
             {
                 const float Diff = Pos.y - SurfaceY(Pos.x, Pos.z);
-                // Downward crossing (above -> on/below) between Prev and Pos: bisect for a tight hit.
+                // Downward crossing between Prev and Pos, so bisect for a tight hit.
                 if (bPrevIn && PrevDiff > 0.0f && Diff <= 0.0f)
                 {
                     FVector3 A = Prev, B = Pos;
@@ -465,8 +464,7 @@ namespace Lumina
             return;
         }
 
-        // Endpoint heights are relative to the terrain origin (as sampled everywhere else); absolute
-        // world Y would break ramps once the terrain entity moves off Y=0.
+        // Heights are relative to the terrain origin, or ramps break once the entity moves off Y=0.
         const float MaxH = Math::Max(Terrain.MaxHeight, 1e-3f);
         const float StartN = Dab.RampUseExplicitHeights
             ? Math::Clamp(Dab.RampStartHeight / MaxH, 0.0f, 1.0f)
@@ -500,8 +498,7 @@ namespace Lumina
                         continue;
                     }
 
-                    // Lateral feather: full strength in an inner core, smoothstepped to 0 at the edge so
-                    // the ramp blends in instead of a vertical wall. Falloff sets the feathered band width.
+                    // Lateral feather so the ramp blends in instead of forming a vertical wall.
                     const float Edge = Perp / HalfWidth;       // 0 center, 1 edge
                     float Lat = 1.0f;
                     if (Feather > 1e-4f)
@@ -510,8 +507,7 @@ namespace Lumina
                         Lat = 1.0f - U * U * (3.0f - 2.0f * U);
                     }
 
-                    // Longitudinal feather: fade the rounded end-caps over one half-width so the
-                    // ramp tapers into the terrain at each end rather than stamping a flat disc.
+                    // Longitudinal feather so the ramp tapers in rather than stamping a flat disc.
                     float Long = 1.0f;
                     const float CapU = HalfWidth * InvLen;
                     if (Along < 0.0f)

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Core/Object/Object.h"
 #include "Assets/AssetTypes/Animation/AnimationGraph/AnimationGraph.h"
@@ -29,7 +29,7 @@ namespace Lumina
 
         /** Graph parameter compared against Compare Value to gate the transition.
          *  Leave empty for an unconditional / always-true transition. */
-        PROPERTY(Editable, Category = "Transition", ParameterPicker)
+        PROPERTY(Editable, Category = "Transition", Picker = "Parameter")
         FName ConditionParameter;
 
         /** How the parameter is tested against Compare Value. */

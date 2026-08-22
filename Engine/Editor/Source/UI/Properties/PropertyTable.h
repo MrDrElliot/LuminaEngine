@@ -105,8 +105,8 @@ namespace Lumina
         // including indent; auto-sizes the header column each frame.
         float ComputeRequiredHeaderWidth(float Offset) const;
 
-        virtual void DrawHeader(float Offset) { }
-        virtual void DrawEditor(bool bReadOnly) { }
+        virtual void DrawHeader(float Offset, const FPropertyDrawArgs& Args) { }
+        virtual void DrawEditor(const FPropertyDrawArgs& Args) { }
         
         virtual bool HasExtraControls() const;
         virtual void DrawExtraControlsSection();
@@ -116,8 +116,8 @@ namespace Lumina
 
         virtual void Update() { }
         void UpdateRow();
-        void DrawRow(float Offset, bool bReadOnly);
-        virtual void DrawChildren(float ChildOffset, bool bReadOnly);
+        void DrawRow(float Offset, const FPropertyDrawArgs& Args);
+        virtual void DrawChildren(float ChildOffset, const FPropertyDrawArgs& Args);
 
         // Fired after ResetToDefault(); container rows (array/optional/struct) override
         // to rebuild child rows so the UI reflects the new structure next frame.
@@ -202,8 +202,8 @@ namespace Lumina
 
         FPropertyPropertyRow(const TSharedPtr<FPropertyHandle>& InPropHandle, FPropertyRow* InParentRow, const FPropertyChangedEventCallbacks& Callbacks);
         void Update() override;
-        void DrawHeader(float Offset) override;
-        void DrawEditor(bool bReadOnly) override;
+        void DrawHeader(float Offset, const FPropertyDrawArgs& Args) override;
+        void DrawEditor(const FPropertyDrawArgs& Args) override;
         float GetMeasuredHeaderTextWidth() const override;
 
         TSharedPtr<FPropertyHandle> GetPropertyHandle() const { return PropertyHandle; }
@@ -216,10 +216,10 @@ namespace Lumina
 
         FArrayPropertyRow(const TSharedPtr<FPropertyHandle>& InPropHandle, FPropertyRow* InParentRow, const FPropertyChangedEventCallbacks& Callbacks);
         void Update() override;
-        void DrawHeader(float Offset) override;
-        void DrawEditor(bool bReadOnly) override;
+        void DrawHeader(float Offset, const FPropertyDrawArgs& Args) override;
+        void DrawEditor(const FPropertyDrawArgs& Args) override;
         float GetMeasuredHeaderTextWidth() const override;
-        void DrawChildren(float ChildOffset, bool bReadOnly) override;
+        void DrawChildren(float ChildOffset, const FPropertyDrawArgs& Args) override;
         void RebuildChildren();
         bool HasExtraControls() const override;
         float GetExtraControlsSectionWidth() override;
@@ -255,8 +255,8 @@ namespace Lumina
 
         FMapPropertyRow(const TSharedPtr<FPropertyHandle>& InPropHandle, FPropertyRow* InParentRow, const FPropertyChangedEventCallbacks& InCallbacks);
         void Update() override;
-        void DrawHeader(float Offset) override;
-        void DrawEditor(bool bReadOnly) override;
+        void DrawHeader(float Offset, const FPropertyDrawArgs& Args) override;
+        void DrawEditor(const FPropertyDrawArgs& Args) override;
         float GetMeasuredHeaderTextWidth() const override;
         void RebuildChildren();
         bool HasExtraControls() const override;
@@ -286,8 +286,8 @@ namespace Lumina
         FMapEntryRow(FMapPropertyRow* InMapRow, int64 InIndex, const FPropertyChangedEventCallbacks& InCallbacks);
         ~FMapEntryRow() override;
         void Update() override;
-        void DrawHeader(float Offset) override;
-        void DrawEditor(bool bReadOnly) override;
+        void DrawHeader(float Offset, const FPropertyDrawArgs& Args) override;
+        void DrawEditor(const FPropertyDrawArgs& Args) override;
         float GetMeasuredHeaderTextWidth() const override;
         bool HasExtraControls() const override { return true; }
         float GetExtraControlsSectionWidth() override { return 22.0f; }
@@ -321,8 +321,8 @@ namespace Lumina
         ~FStructPropertyRow() override = default;
 
         void Update() override;
-        void DrawHeader(float Offset) override;
-        void DrawEditor(bool bReadOnly) override;
+        void DrawHeader(float Offset, const FPropertyDrawArgs& Args) override;
+        void DrawEditor(const FPropertyDrawArgs& Args) override;
         float GetMeasuredHeaderTextWidth() const override;
         void OnValueResetToDefault() override { RebuildChildren(); }
 
@@ -344,8 +344,8 @@ namespace Lumina
         ~FInstancedStructPropertyRow() override = default;
 
         void Update() override;
-        void DrawHeader(float Offset) override;
-        void DrawEditor(bool bReadOnly) override;
+        void DrawHeader(float Offset, const FPropertyDrawArgs& Args) override;
+        void DrawEditor(const FPropertyDrawArgs& Args) override;
         float GetMeasuredHeaderTextWidth() const override;
         void OnValueResetToDefault() override { RebuildChildren(); }
 
@@ -368,8 +368,8 @@ namespace Lumina
         FOptionalPropertyRow(const TSharedPtr<FPropertyHandle>& InPropHandle, FPropertyRow* InParentRow, const FPropertyChangedEventCallbacks& InCallbacks);
 
         void Update() override;
-        void DrawHeader(float Offset) override;
-        void DrawEditor(bool bReadOnly) override;
+        void DrawHeader(float Offset, const FPropertyDrawArgs& Args) override;
+        void DrawEditor(const FPropertyDrawArgs& Args) override;
         float GetMeasuredHeaderTextWidth() const override;
         void OnValueResetToDefault() override;
 
@@ -401,7 +401,7 @@ namespace Lumina
         FStringView GetFilterLabel() const override;
         bool IsCategory() const override { return true; }
 
-        void DrawHeader(float Offset) override;
+        void DrawHeader(float Offset, const FPropertyDrawArgs& Args) override;
         float GetMeasuredHeaderTextWidth() const override;
 
     private:
@@ -437,6 +437,12 @@ namespace Lumina
 
         void MarkDirty();
         void DrawTree(bool bReadOnly = false);
+
+        // Nested tables draw with the parent's args, which is how a struct row inherits its context.
+        void DrawTree(const FPropertyDrawArgs& Args);
+
+        // Borrowed for as long as the table draws. Providers own the storage.
+        void SetContext(const FPropertyEditContext* InContext) { Context = InContext; }
 
         // Search box filtering the tree by property/category name. On by default so every tool's details
         // panel gets one; nested tables (a struct or instanced-struct row hosting its own table) turn it
@@ -497,6 +503,7 @@ namespace Lumina
         void*                                               Object = nullptr;
         void*                                               DefaultObject = nullptr;
         THashMap<FName, TUniquePtr<FCategoryPropertyRow>>   CategoryMap;
+        const FPropertyEditContext*                         Context = nullptr;
         
     };
 

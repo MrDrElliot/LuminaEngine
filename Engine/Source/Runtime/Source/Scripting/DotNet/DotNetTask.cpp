@@ -3,23 +3,17 @@
 #include "TaskSystem/TaskSystem.h"
 #include "TaskSystem/TaskTypes.h"
 
-// Hand-written native -> C# bindings for the engine Task system: lets C# do Task.ParallelFor, schedule a
-// one-shot async task, and wait. Each export uses LUMINA_DOTNET_EXPORT (-> LuminaSharp_Task_<Op>) resolved on
-// the C# side by the [NativeCall] generated delegate* (NativeBindings.Resolve("Runtime", ...)), mirroring
-// the gameplay facades. The managed body is type-erased into a Thunk + Ctx the native lambda forwards to;
-// Ctx is a GCHandle to the managed Action the C# side owns and frees.
+// The managed body is type-erased into a thunk and context the native lambda forwards to.
 
 using namespace Lumina;
 
 namespace
 {
-    // The managed thunk the C# side passes: receives its GCHandle Ctx plus the [Start, End) range and the
-    // executing worker slot. Mirrors the FParallelThunk shape, marshalled as a plain Cdecl function pointer.
+    // Mirrors the parallel thunk shape, marshalled as a plain Cdecl function pointer.
     using FThunkC = void (*)(void* Ctx, uint32 Start, uint32 End, uint32 Thread);
 }
 
-// Splits [0, Num) across worker threads and invokes the managed thunk per chunk. BLOCKS until every chunk
-// completes (ParallelFor is synchronous), so Ctx (the C# GCHandle) stays valid for the whole call.
+// BLOCKS until every chunk completes, so the managed context stays valid for the whole call.
 LUMINA_DOTNET_EXPORT(void, Task_ParallelFor)(uint32 Num, uint32 MinRange, void* Thunk, void* Ctx, int32 Priority)
 {
     FThunkC T = reinterpret_cast<FThunkC>(Thunk);
@@ -34,8 +28,7 @@ LUMINA_DOTNET_EXPORT(void, Task_ParallelFor)(uint32 Num, uint32 MinRange, void* 
     }, MinRange, static_cast<ETaskPriority>(Priority));
 }
 
-// Schedules one async task that invokes the managed thunk once. Returns a heap-copied FTaskHandle (the
-// completion shared_ptr) the C# side keeps alive and must release via LuminaSharp_Task_Release.
+// Returns a heap-copied handle the C# side keeps alive and must release explicitly.
 LUMINA_DOTNET_EXPORT(void*, Task_Run)(void* Thunk, void* Ctx, int32 Priority)
 {
     FThunkC T = reinterpret_cast<FThunkC>(Thunk);

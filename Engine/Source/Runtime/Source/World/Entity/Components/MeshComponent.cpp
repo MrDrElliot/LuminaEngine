@@ -16,7 +16,7 @@ namespace Lumina
             return nullptr;
         }
 
-        // Already transient: wrapping again would add a chain level per call, up to the depth limit.
+        // Already transient, and wrapping again adds a chain level per call up to the depth limit.
         if (CMaterialInstance* Existing = Cast<CMaterialInstance>(Current); Existing != nullptr && !Existing->IsAsset())
         {
             return Existing;
@@ -27,10 +27,7 @@ namespace Lumina
 
     void SMeshComponent::InvalidateRenderResolve()
     {
-        // Bit 0 is set, which no live entry token ever has, so the next resolve pass re-reads this one.
-        // Note the scope: this invalidates THIS COMPONENT's copy, not the shared resolve entry. Anything
-        // that changes the entry itself (the mesh's GPU buffers landing, a material recompiling) goes
-        // through FMeshResolveCache::InvalidateDependency instead.
+        // Invalidates THIS COMPONENT's copy; the shared entry goes through InvalidateDependency.
         CachedEntryState = MESH_RESOLVE_STATE_STALE;
         FMeshResolveCache::MarkPendingWork();
     }

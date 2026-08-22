@@ -1,4 +1,4 @@
-#include "DataTableRowHandleCustomization.h"
+﻿#include "DataTableRowHandleCustomization.h"
 
 #include "Assets/AssetRegistry/AssetData.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
@@ -50,7 +50,7 @@ namespace Lumina
         return MakeShared<FDataTableRowHandlePropertyCustomization>();
     }
 
-    EPropertyChangeOp FDataTableRowHandlePropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property)
+    EPropertyChangeOp FDataTableRowHandlePropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args)
     {
         bool bWasChanged = false;
 

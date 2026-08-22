@@ -542,7 +542,7 @@ namespace Lumina
         const bool bCanPick = !NodeEditor::GetHoveredNode() && !NodeEditor::GetHoveredPin();
 
         int32 HoveredLink = INDEX_NONE;
-        uint32 ClickLinkID = 0;
+        uint64 ClickLinkID = 0;
 
         for (int32 Index = 0; Index < (int32)Links.size(); ++Index)
         {
@@ -560,7 +560,7 @@ namespace Lumina
                 continue;
             }
 
-            const uint32 LinkID = (uint32)Index + 1u;
+            const uint64 LinkID = MakeLinkID(InputPin, OutputPin);
             const bool bEntryWire = FromNode->IsA<CAnimGraphNode_StateEntry>();
             CAnimStateTransition* Transition = bEntryWire
                 ? nullptr

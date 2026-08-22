@@ -13,8 +13,7 @@ namespace Lumina::DragDrop
 {
     static FPayload GPayload;
 
-    // ImGui needs a non-zero data buffer for SetDragDropPayload. We only use
-    // the channel as a signal, the typed data lives in GPayload.
+    // ImGui needs a non-zero buffer, and the typed data lives in the payload rather than here.
     static char GSentinel = 0;
 
     static FFixedString MakeFixed(FStringView View)
@@ -152,8 +151,7 @@ namespace Lumina::DragDrop
         {
             return GPayload.AssetObject;
         }
-        // Lazy load by virtual path so Sources that hand us only metadata still
-        // resolve to a usable asset on delivery.
+        // Lazy loaded by virtual path, so a source handing over only metadata still resolves on delivery.
         if (!GPayload.AssetPath.empty())
         {
             return StaticLoadObject(FStringView(GPayload.AssetPath.c_str(), GPayload.AssetPath.size()));

@@ -11,22 +11,14 @@
 #include "Config/Config.h"
 #include "Scripting/DotNet/DotNetExport.h"
 
-//================================================================================================
-// World.Audio: play and control sounds from script (LuminaSharp.Audio). The engine audio context is a
-// process-wide singleton (Audio::Context()); the leading World handle is reserved (unused today) to keep the
-// facade uniform with the other World.* surfaces and to leave room for per-world listeners/mixers. A sound
-// is identified by CAudioStream* (the loaded asset, passed as a handle) and controlled afterward by the
-// returned FAudioHandle (mirrored byte-for-byte by LuminaSharp.AudioHandle). Thread-safe: each call queues
-// a command drained by the audio pump. With no context (audio disabled) every call is a safe no-op.
-//================================================================================================
+// The leading World handle is reserved to keep the facade uniform and leave room for per-world mixers.
 
 using namespace Lumina;
 using namespace Lumina::DotNet;
 
 namespace
 {
-    // Resolves the shared decoded bytes of a script-passed CAudioStream*, or an empty ptr when the
-    // asset handle is null/invalid (a null FAudioData makes the play calls return an invalid handle).
+    // A null handle makes the play calls return an invalid handle.
     const TSharedPtr<FAudioData>& AudioDataOf(void* StreamPtr)
     {
         static const TSharedPtr<FAudioData> None;
@@ -97,7 +89,7 @@ LUMINA_DOTNET_EXPORT(FAudioHandle, Audio_PlaySoundAtLocation)(uint64 World, void
     return Audio::Context().PlayAudioAtLocation(Data, Location, Volume, Pitch, MinDistance, MaxDistance, bLoop != 0);
 }
 
-// Full-control playback: bus, attenuation, priority, fades, occlusion.
+// Full-control playback covering bus, attenuation, priority, fades and occlusion.
 LUMINA_DOTNET_EXPORT(FAudioHandle, Audio_PlaySoundEx)(uint64 World, void* Stream, FScriptAudioPlayParams Params)
 {
     (void)World;
@@ -240,8 +232,7 @@ LUMINA_DOTNET_EXPORT(void, Audio_SetBusVolume)(uint64 World, int32 Bus, float Vo
 LUMINA_DOTNET_EXPORT(float, Audio_GetBusVolume)(uint64 World, int32 Bus)
 {
     (void)World;
-    // Kept: the no-op context answers 1.0 (what an idle device reports), but this export's contract
-    // with script has always been 0 for "no audio". Collapsing it would silently change that.
+    // This export's contract with script has always been 0 for no audio, so collapsing it would change that.
     if (!Audio::HasDevice())
     {
         return 0.0f;
@@ -294,9 +285,7 @@ LUMINA_DOTNET_EXPORT(void, Audio_SetSuspended)(uint64 World, int32 bSuspended)
 LUMINA_DOTNET_EXPORT(void, Audio_SaveMixSettings)(uint64 World)
 {
     (void)World;
-    // Kept, and load-bearing: this READS the live mix back into CAudioSettings and persists it. With no
-    // device the no-op context reports neutral values, so collapsing this would overwrite the user's
-    // saved mix with defaults every time a headless or pre-init save ran.
+    // Collapsing this would overwrite the user's saved mix with defaults on a headless save.
     if (!Audio::HasDevice() || GConfig == nullptr)
     {
         return;

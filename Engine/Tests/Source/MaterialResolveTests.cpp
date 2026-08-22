@@ -7,15 +7,13 @@
 #include "Renderer/ShaderLibrary.h"
 #include "World/Scene/RenderScene/MeshResolveCache.h"
 
-// The invariants live material updates rest on. All three were load-bearing and none were covered:
-// a recompile that changes bytecode must be observable, one that does not must be free, and the
-// pipeline cache must be able to tell the two apart.
+// A recompile that changes bytecode must be observable and one that does not must be free.
 
 namespace Lumina
 {
     namespace
     {
-        // Arbitrary words. Nothing here validates SPIR-V -- Commit hashes and stores the blob.
+        // Arbitrary words, since Commit only hashes and stores the blob.
         TVector<uint32> MakeBlob(uint32 Seed, uint32 Words = 8)
         {
             TVector<uint32> Blob;
@@ -27,8 +25,7 @@ namespace Lumina
             return Blob;
         }
 
-        // GShaderLibrary is normally owned by FRenderManager, which needs a device. It is a plain pointer,
-        // so a test can stand one up on its own.
+        // GShaderLibrary is a plain pointer, so a test can stand one up without a device.
         struct FScopedShaderLibrary
         {
             FShaderLibrary Library;
@@ -46,9 +43,7 @@ namespace Lumina
         };
     }
 
-    // The property that makes FDrawBatchKey work: two materials whose stages compile to identical bytecode
-    // must receive the SAME entry, so they collapse into one batch and one draw. If this ever regresses,
-    // every material instance silently becomes its own draw call.
+    // Two materials compiling to identical bytecode must receive the SAME entry and one draw.
     TEST(ShaderLibrary, IdenticalBytecodeSharesOneEntry)
     {
         FScopedShaderLibrary Scope;
@@ -57,7 +52,7 @@ namespace Lumina
 
         const FShaderH A = FShaderLibrary::Commit(FName("MatA_PS"), ERHIShaderType::Fragment,
                                                        TSpan<const uint32>(Blob.data(), Blob.size()));
-        // Deliberately a DIFFERENT key name with the same content -- that is the sharing case.
+        // Deliberately a DIFFERENT key name with the same content, which is the sharing case.
         const FShaderH B = FShaderLibrary::Commit(FName("MatB_PS"), ERHIShaderType::Fragment,
                                                        TSpan<const uint32>(Blob.data(), Blob.size()));
 
@@ -65,8 +60,7 @@ namespace Lumina
         EXPECT_EQ(A, B);
     }
 
-    // The no-churn half. An unchanged recompile must not move the generation, or every pipeline built from
-    // the entry is needlessly rebuilt and every consumer caching a revision re-resolves for nothing.
+    // An unchanged recompile must not move the generation, or every pipeline rebuilds.
     TEST(ShaderLibrary, UnchangedRecommitDoesNotBumpGeneration)
     {
         FScopedShaderLibrary Scope;
@@ -86,9 +80,7 @@ namespace Lumina
         EXPECT_EQ(HashBefore, Second.Handle);
     }
 
-    // Changed bytecode must change PipelineHash, because that hash IS the pipeline cache key
-    // (FDefaultSceneRenderer::GetOrCreatePipeline hashes every shader slot through it). If it did not move,
-    // a recompiled shader would keep running its old PSO with nothing to detect it.
+    // Changed bytecode must change PipelineHash, because that hash IS the pipeline cache key.
     TEST(ShaderLibrary, ChangedBytecodeChangesPipelineHash)
     {
         FScopedShaderLibrary Scope;
@@ -108,8 +100,7 @@ namespace Lumina
         EXPECT_NE(HashA, B.Handle);
     }
 
-    // CMaterial::ShaderRevision is what lets a consumer holding resolved FShaderEntry*s notice they were
-    // superseded. It must move on a real swap and stay put otherwise.
+    // ShaderRevision must move on a real swap and stay put otherwise.
     TEST(MaterialShaderRevision, MovesOnlyWhenAnEntryIsActuallySwapped)
     {
         FScopedShaderLibrary Scope;
@@ -126,20 +117,19 @@ namespace Lumina
         const uint32 AfterFirst = Material->GetShaderRevision();
         EXPECT_NE(Start, AfterFirst) << "first commit installs an entry and must be observable";
 
-        // Same bytecode: content-keyed Commit hands back the same entry, so nothing was superseded.
+        // Same bytecode, so content-keyed Commit hands back the same entry and nothing was superseded.
         Material->CommitShaderStage(EMaterialShaderStage::Pixel,
                                     TSpan<const uint32>(BlobA.data(), BlobA.size()));
         EXPECT_EQ(AfterFirst, Material->GetShaderRevision()) << "an unchanged recompile must not churn";
 
-        // Different bytecode: a new entry, so anything caching the old pointer is now stale.
+        // Different bytecode gets a new entry, so anything caching the old pointer is stale.
         const TVector<uint32> BlobB = MakeBlob(6);
         Material->CommitShaderStage(EMaterialShaderStage::Pixel,
                                     TSpan<const uint32>(BlobB.data(), BlobB.size()));
         EXPECT_NE(AfterFirst, Material->GetShaderRevision()) << "a real recompile must be observable";
     }
 
-    // The check the dynamic-mesh gate rests on. A resolved surface must report itself stale once its
-    // source material recompiles, without holding anything but a pointer and a uint.
+    // A resolved surface must report itself stale once its source material recompiles.
     TEST(MaterialResolve, SurfaceReportsStaleAfterSourceRecompiles)
     {
         FScopedShaderLibrary Scope;
@@ -151,8 +141,7 @@ namespace Lumina
         Material->CommitShaderStage(EMaterialShaderStage::Pixel,
                                     TSpan<const uint32>(BlobA.data(), BlobA.size()));
 
-        // The same call ResolveSurfaceMaterial makes, deliberately -- if the test hand-rolled the key it
-        // would drift the moment the key gained a field, which is exactly what happened once.
+        // The same call ResolveSurfaceMaterial makes, so a hand-rolled key cannot drift.
         FResolvedSurface Surface;
         MeshResolve::StampSurfaceSource(Surface, Material);
 
@@ -165,9 +154,7 @@ namespace Lumina
         EXPECT_TRUE(MeshResolve::IsSurfaceStale(Surface)) << "recompile must supersede the cached entries";
     }
 
-    // The no-leak guarantee. Dropping the last strong reference must actually free the entry, and every
-    // weak handle to it must then resolve to null rather than to freed memory -- that is the whole reason
-    // the library moved off raw pointers.
+    // Dropping the last strong reference must free the entry and stale every weak handle.
     TEST(ShaderLibrary, LastReleaseFreesTheEntryAndStalesItsHandles)
     {
         FScopedShaderLibrary Scope;
@@ -179,12 +166,12 @@ namespace Lumina
         ASSERT_NE(Owned, nullptr);
         ASSERT_NE(FShaderLibrary::Resolve(Owned), nullptr);
 
-        // A cache would hold exactly this: a copy of the handle, with no reference taken.
+        // A cache would hold exactly this, a copy of the handle with no reference taken.
         const FShaderH Weak = Owned;
 
         FShaderLibrary::Release(Owned);
 
-        // Deferred on purpose -- the free only happens at a frame boundary, so it is still live here.
+        // Deferred on purpose, since the free only happens at a frame boundary.
         EXPECT_NE(FShaderLibrary::Resolve(Weak), nullptr) << "release must not free inline";
 
         FShaderLibrary::FlushPendingReleases();
@@ -192,8 +179,7 @@ namespace Lumina
         EXPECT_EQ(FShaderLibrary::Resolve(Weak), nullptr) << "weak handle must go stale once freed";
     }
 
-    // Shared ownership: two materials compiling to identical bytecode share ONE entry, so one of them
-    // releasing must not pull the shaders out from under the other.
+    // Two materials share ONE entry, so one releasing must not pull the shaders from the other.
     TEST(ShaderLibrary, SharedEntrySurvivesOneOwnerReleasing)
     {
         FScopedShaderLibrary Scope;
@@ -217,8 +203,7 @@ namespace Lumina
         EXPECT_EQ(FShaderLibrary::Resolve(B), nullptr) << "last owner gone, entry must be freed";
     }
 
-    // A surface that never resolved a material has nothing to go stale against; the assignment hash is
-    // what covers a slot changing. Guards against IsSurfaceStale spuriously firing every frame.
+    // A surface that never resolved a material has nothing to go stale against.
     TEST(MaterialResolve, SurfaceWithNoSourceMaterialIsNeverStale)
     {
         FResolvedSurface Surface;

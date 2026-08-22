@@ -2,11 +2,7 @@
 #include "World/Entity/Components/DynamicMeshComponent.h"
 #include "Scripting/DotNet/DotNetExport.h"
 
-// Hand-written native -> C# bindings for SDynamicMeshComponent's bulk vertex-stream uploads. These can't be
-// auto-generated FUNCTION() methods because a member function can't take a Span<T>; the C# facade
-// (LuminaSharp/World/DynamicMeshComponent.cs) declares matching [NativeCall] partials whose Span<T> args
-// expand to (T*, int) and whose leading argument is the component Handle. The rest of the build API
-// (AddSection/Commit/Clear/...) is reflected normally on the component. Game thread only.
+// A member function cannot take a Span, so the C# facade declares matching partials instead.
 
 namespace Lumina
 {

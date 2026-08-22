@@ -14,20 +14,13 @@ namespace Lumina
 {
     namespace
     {
-        // OnFixedUpdate is contractually a FIXED step: the delta a script receives is 1/PhysicsHz, and it is
-        // dispatched however many times this frame's elapsed time accounts for -- 0..MaxPhysicsSteps. Handing
-        // it the frame delta once per frame instead would make every script written against it (integrating a
-        // velocity, stepping a controller) behave differently at 30 fps than at 60, which is the one thing a
-        // fixed step exists to prevent.
-        //
-        // A game-thread accumulator of its own, mirroring JoltPhysicsScene::Update's: same Hz, same cap, so it
-        // runs the same number of steps per frame as the physics scene without a cross-thread query.
+        // OnFixedUpdate is a fixed 1/PhysicsHz step, dispatched 0..MaxPhysicsSteps times per frame.
         void DispatchFixedUpdates(FEntityRegistry& Registry, float DeltaSeconds)
         {
             float FixedDt  = 1.0f / 60.0f;
             int32 MaxSteps = 8;
 
-            // find, not get: a bare registry (a test, a tool) has no world, and the defaults above stand.
+            // find, not get, because a bare registry has no world and the defaults above stand.
             if (CWorld** WorldPtr = Registry.ctx().find<CWorld*>(); WorldPtr != nullptr && *WorldPtr != nullptr)
             {
                 const SDefaultWorldSettings& Settings = (*WorldPtr)->GetDefaultWorldSettings();
@@ -44,8 +37,7 @@ namespace Lumina
             FScriptFixedUpdateState* StatePtr = Ctx.find<FScriptFixedUpdateState>();
             FScriptFixedUpdateState& FixedState = StatePtr ? *StatePtr : Ctx.emplace<FScriptFixedUpdateState>();
 
-            // Accumulate + clamp (spiral-of-death guard): a long hitch must not queue up a hundred steps that
-            // then cost more than the hitch did.
+            // Clamped as a spiral-of-death guard, so a long hitch cannot queue a hundred steps.
             FixedState.Accumulator = Math::Min(FixedState.Accumulator + DeltaSeconds, (float)MaxSteps * FixedDt);
 
             const int32 Steps = (FixedState.Accumulator >= FixedDt)
@@ -60,8 +52,7 @@ namespace Lumina
 
             for (int32 Step = 0; Step < Steps; ++Step)
             {
-                // Re-walked per step rather than dispatched off one gathered list: a script that detaches
-                // itself (or spawns another) in OnFixedUpdate must not be dispatched again in a later step.
+                // Re-walked per step so a script that detaches itself is not dispatched in a later step.
                 EntityScripts::TickFixed(Registry, FixedDt);
             }
         }
@@ -79,8 +70,7 @@ namespace Lumina
         }
         else
         {
-            // The frame delta, not a fixed one -- it is what feeds the accumulator. Both stages are dispatched
-            // once per frame with the same delta, so driving the accumulator from here counts each frame once.
+            // The frame delta feeds the accumulator, so each frame is counted exactly once.
             DispatchFixedUpdates(Registry, (float)Context.GetDeltaTime());
         }
     }

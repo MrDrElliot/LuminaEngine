@@ -32,8 +32,7 @@ namespace Lumina
                 Player.bAutoPlay = false;
             }
 
-            // The asset being swapped underneath a live instance would leave bindings pointing at the old
-            // sequence's table, so a change tears down before anything else looks at it.
+            // A swapped asset would leave bindings pointing at the old sequence's table.
             if (Player.Instance.bBound && Player.BoundSequence != Sequence)
             {
                 Player.Instance.Release(World, Player.FinishAction == ESequenceFinishAction::Restore);
@@ -90,8 +89,7 @@ namespace Lumina
             Player.Time = NewTime;
             Player.bJumped = false;
 
-            // Evaluated at the final frame first, then torn down: stopping a frame early would leave the
-            // shot one frame short of the pose it was authored to end on.
+            // Evaluate the final frame before tearing down, or the shot ends one frame short.
             if (bFinished)
             {
                 Player.bPlaying = false;

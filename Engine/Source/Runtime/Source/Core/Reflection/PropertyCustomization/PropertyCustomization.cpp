@@ -110,12 +110,12 @@ namespace Lumina
         Property->CopyCompleteValue(Value, Default);
     }
 
-    EPropertyChangeOp IPropertyTypeCustomization::UpdateAndDraw(const TSharedPtr<FPropertyHandle>& Property, bool bReadOnly)
+    EPropertyChangeOp IPropertyTypeCustomization::UpdateAndDraw(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args)
     {
         ImGui::PushID(Property.get());
         HandleExternalUpdate(Property);
-        ImGui::BeginDisabled(bReadOnly);
-        EPropertyChangeOp Result = DrawProperty(Property);
+        ImGui::BeginDisabled(Args.bReadOnly);
+        EPropertyChangeOp Result = DrawProperty(Property, Args);
         ImGui::EndDisabled();
         ImGui::PopID();
 

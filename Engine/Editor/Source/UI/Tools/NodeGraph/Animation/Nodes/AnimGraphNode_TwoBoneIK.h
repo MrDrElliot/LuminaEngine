@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "UI/Tools/NodeGraph/Animation/AnimGraphNode.h"
 #include "AnimGraphNode_TwoBoneIK.generated.h"
@@ -22,15 +22,15 @@ namespace Lumina
         void GenerateBytecode(FAnimationGraphCompiler& Compiler) override;
 
         /** Root joint (e.g. shoulder, hip). */
-        PROPERTY(Editable, Category = "Chain", BonePicker)
+        PROPERTY(Editable, Category = "Chain", Picker = "Bone")
         FName RootBone;
 
         /** Mid joint between Root and End (e.g. elbow, knee). Its parent must be Root. */
-        PROPERTY(Editable, Category = "Chain", BonePicker)
+        PROPERTY(Editable, Category = "Chain", Picker = "Bone")
         FName MidBone;
 
         /** End / tip joint (e.g. wrist, ankle). Its parent must be Mid. */
-        PROPERTY(Editable, Category = "Chain", BonePicker)
+        PROPERTY(Editable, Category = "Chain", Picker = "Bone")
         FName EndBone;
 
         /** Component-space "pole" point that picks the bend side of the chain

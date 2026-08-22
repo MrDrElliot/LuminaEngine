@@ -66,10 +66,7 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        // Mirrors ExtractWorlds's filter exactly: a world that will not extract must not have an open
-        // window either, or its producers would fill a buffer nobody ever snapshots or resets. Worlds
-        // that fail the filter get closed rather than skipped, so a world suspended mid-frame does not
-        // leave its last window open indefinitely. A throttled frame counts as not extracting.
+        // Mirrors ExtractWorlds's filter exactly, or a producer fills a buffer nobody snapshots.
         for (const TUniquePtr<FWorldContext>& Context : Contexts)
         {
             CWorld* World = Context->World.Get();
@@ -97,7 +94,7 @@ namespace Lumina
 
         const double Grace = (double)CVarIdleReclaimSeconds.GetValue();
 
-        // One reclaim per frame: DestroyRenderer calls WaitIdle; batching stalls hard.
+        // One reclaim per frame, since DestroyRenderer calls WaitIdle and batching stalls hard.
         for (const TUniquePtr<FWorldContext>& Context : Contexts)
         {
             CWorld* World = Context->World.Get();
@@ -122,9 +119,7 @@ namespace Lumina
 
             World->TickPhysics();
 
-            // Immediately after this world's step, on the same thread that stepped it. Jolt raises
-            // contact callbacks from its own worker jobs, so the scene still queues them rather than
-            // dispatching inline -- but the queue no longer outlives the frame that filled it.
+            // Dispatched on the thread that stepped it, so the queue never outlives its frame.
             World->DispatchPhysicsEvents();
         }
     }
@@ -133,9 +128,7 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        // Opens a new extract generation. Anything posted for deferred release from here on is stamped
-        // with it and cannot be freed until a LATER extract has been rendered -- which is what keeps a
-        // material slot and its textures alive for the frames the retained scene is still drawing them.
+        // Opens a new extract generation, which is what keeps retained slots alive while drawn.
         if (FRenderManager* RenderManager = TryRender())
         {
             RenderManager->GetReleaseQueue().BeginExtract();
@@ -158,11 +151,7 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
         
-        // Preparation for a render that is not happening is waste, and it is not free: FFrameData::
-        // bExtractedThisFrame is cleared at the START of Extract, so a world that stops extracting keeps
-        // it set from its last real frame and PrepareRender's early-out never fires. Gating on the same
-        // condition as the record below also restores what happened before renderers outlived suspension
-        // -- back then a suspended world had no renderer at all and never reached this loop.
+        // bExtractedThisFrame clears at the start of Extract, so a idle world keeps it set.
         uint32 LiveWorlds = 0;
         for (const TUniquePtr<FWorldContext>& Context : Contexts)
         {
@@ -184,17 +173,14 @@ namespace Lumina
             {
                 return;
             }
-            // Same gate as the prepare loop above, so a world either does both or neither. Skipping the
-            // record leaves SceneViews[0].Output holding the last frame it drew, which is exactly what a
-            // throttled viewport should keep showing -- low frame rate, not frozen.
+            // Same gate as the prepare loop, so a throttled viewport keeps showing its last frame.
             if (World->IsTickingThisFrame())
             {
                 Renderer->RenderView(FrameIndex);
             }
         };
 
-        // Parallel only earns its keep with multiple live worlds (editor multi-view); a single world
-        // takes the identical serial path with no task overhead.
+        // Parallel only earns its keep with multiple live worlds; one world takes the serial path.
         if (CVarParallelWorldRender.GetValue() && LiveWorlds > 1)
         {
             Task::ParallelFor((uint32)Contexts.size(), [&](const Task::FParallelRange& Range)
@@ -213,8 +199,6 @@ namespace Lumina
             }
         }
 
-        // Every world has now recorded this generation's extract, so anything posted BEFORE this
-        // generation opened is provably unnamed by any recorded frame and by anything recordable next.
         // Must stay after the record loop, including the parallel branch.
         if (FRenderManager* RenderManager = TryRender())
         {
@@ -332,8 +316,7 @@ namespace Lumina
             Ctx->bPIE = true;
             Ctx->SourceWorld = SourceWorld;
 
-            // Map identity = the editor source map's path. Lets the networked Welcome handshake see that a
-            // PIE client is already on the server's map (both duplicate the same source) and skip travel.
+            // Map identity is the editor source map's path, which lets a PIE client skip travel.
             if (CPackage* Pkg = SourceWorld->GetPackage())
             {
                 Ctx->MapPath = FString(Pkg->GetName().c_str());

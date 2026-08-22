@@ -20,31 +20,27 @@ namespace Lumina
     static_assert(sizeof(FQuat)    == 16, "LuminaSharp FQuat mirror size mismatch (update Math.cs).");
     static_assert(sizeof(FMatrix4) == 64, "LuminaSharp FMatrix mirror size mismatch (update Matrix.cs).");
 
-    // The script layer reads a whole array of these through a raw pointer (the Lumina.FInputActionState
-    // mirror), so a field added on either side without the other silently misreads every action's state.
+    // A field added on either side without the other silently misreads every action's state.
     static_assert(sizeof(FInputActionState)              == 16, "LuminaSharp FInputActionState mirror size mismatch (update InputActionState.cs).");
     static_assert(offsetof(FInputActionState, X)         == 0,  "InputActionState.X offset mismatch.");
     static_assert(offsetof(FInputActionState, Y)         == 4,  "InputActionState.Y offset mismatch.");
     static_assert(offsetof(FInputActionState, HeldTime)  == 8,  "InputActionState.HeldTime offset mismatch.");
     static_assert(offsetof(FInputActionState, Flags)     == 12, "InputActionState.Flags offset mismatch.");
 
-    // SIMD FTransform (VTransform): three 16-byte VFloat4 (Location.xyz+pad, Rotation.xyzw, Scale.xyz+pad).
-    // The hand-written C# mirror (Transform.cs) reproduces this padded 48-byte layout for the by-value blit.
+    // The hand-written C# mirror reproduces this padded layout for the by-value blit.
     static_assert(sizeof(FTransform)              == 48, "LuminaSharp FTransform mirror size mismatch (update Transform.cs).");
     static_assert(offsetof(FTransform, Location)  == 0,  "FTransform.Location offset mismatch.");
     static_assert(offsetof(FTransform, Rotation)  == 16, "FTransform.Rotation offset mismatch.");
     static_assert(offsetof(FTransform, Scale)     == 32, "FTransform.Scale offset mismatch.");
 
-    // Runtime cross-check: report each math mirror's native sizeof so the managed LayoutValidator can compare
-    // it against Unsafe.SizeOf<T>() at bootstrap (keys match the C# [LuminaSharp.NativeLayout("...")]).
+    // Reports each mirror's native size so the managed validator can compare it at bootstrap.
     LE_REGISTER_LAYOUT("FVector2",     FVector2);
     LE_REGISTER_LAYOUT("FVector3",     FVector3);
     LE_REGISTER_LAYOUT("FVector4",     FVector4);
     LE_REGISTER_LAYOUT("FQuat",        FQuat);
     LE_REGISTER_LAYOUT("FMatrix",      FMatrix4);
     LE_REGISTER_LAYOUT("FTransform",   FTransform);
-    // FName is POD, so C# mirrors it by value; this is what stops a field added on either side
-    // from silently shifting every element of an FName container.
+    // Stops a field added on either side from silently shifting every element of an FName container.
     LE_REGISTER_LAYOUT("FName",        FName);
     LE_REGISTER_LAYOUT("FInputActionState", FInputActionState);
     LE_REGISTER_LAYOUT("FUIntVector2", FUIntVector2);
@@ -52,8 +48,7 @@ namespace Lumina
     LE_REGISTER_LAYOUT("FIntVector2",  FIntVector2);
     LE_REGISTER_LAYOUT("FIntVector3",  FIntVector3);
 
-    // LuminaSharp.NativeMarshal reads FString / TVector<T> in place from C# by hard-coding the container byte
-    // layout (mode byte at 15, heap ptr@0 / size@8 as uint32; vector Data@0 / Count@8 as uint32).
+    // The managed marshal reads these containers in place by hard-coding their byte layout.
     static_assert(sizeof(size_t) == 8, "NativeMarshal assumes a 64-bit pointer.");
     static_assert(sizeof(FString) == 16, "NativeMarshal assumes a 16-byte FString (update NativeMarshal.cs).");
     static_assert(sizeof(TVector<int32>) == 16, "NativeMarshal assumes a 16-byte TVector (update NativeMarshal.cs).");
@@ -66,9 +61,7 @@ namespace Lumina
 #if defined(LE_DEBUG) || defined(LE_DEVELOPMENT)
     namespace
     {
-        // Replays NativeMarshal.ReadString's decode against the real container accessors. A layout drift
-        // (mode byte offset, heap ptr/size offsets, endianness) is caught here at host init rather than
-        // silently corrupting a managed string field.
+        // A layout drift is caught at host init rather than silently corrupting a managed string field.
         bool FStringDecodeMatches(const FString& S)
         {
             const uint8* Base = reinterpret_cast<const uint8*>(&S);
@@ -89,8 +82,7 @@ namespace Lumina
         }
     }
 
-    // Called once from the C# host bootstrap (DotNetHost::Initialize) before any managed code reads a
-    // reflected FString/TVector property through the zero-crossing NativeMarshal path.
+    // Called once from the host bootstrap before any managed code reads a container property.
     void VerifyContainerInteropLayout()
     {
         const FString Empty;

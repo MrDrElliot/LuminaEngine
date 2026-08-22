@@ -22,8 +22,7 @@ namespace Lumina
             size_t         Cursor = 0;
         };
 
-        // An RML/RCSS path naming a CFont asset is resolved through the asset system and its bytes returned,
-        // not read raw off the VFS. RmlUi copies them into its own face storage, so the asset needn't outlive this.
+        // A path naming a CFont asset is resolved through the asset system, not read raw off the VFS.
         bool TryReadFontAsset(const Rml::String& RawPath, TVector<uint8>& OutBytes)
         {
             FString Path(RawPath.c_str(), RawPath.size());

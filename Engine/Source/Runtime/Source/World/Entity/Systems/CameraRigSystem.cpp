@@ -13,8 +13,7 @@
 
 namespace Lumina
 {
-    // FRelationshipComponent is read by SetEntityWorldTransform (parent-chain world matrix); CastSphere reads
-    // the physics scene.
+    // SetEntityWorldTransform reads FRelationshipComponent, and CastSphere reads the physics scene.
     FSystemAccess SCameraRigSystem::Access = FSystemAccess{}
         .Write<STransformComponent, SCameraFollowComponent, SSpringArmComponent>()
         .Read<SystemResource::PhysicsQuery, FRelationshipComponent>();
@@ -31,8 +30,7 @@ namespace Lumina
             return 1.0f - Math::Exp(-LagSpeed * Dt);
         }
 
-        // Rotation whose +Z (forward) axis points along Forward, +Y near WorldUp.
-        // Matches the camera convention (forward = rotation * (0,0,1)).
+        // Matches the camera convention where forward is rotation * (0,0,1).
         static FQuat MakeLookRotation(const FVector3& Forward, const FVector3& WorldUp)
         {
             const FVector3 F = Math::Normalize(Forward);
@@ -67,7 +65,7 @@ namespace Lumina
         entt::registry& Registry = Context.GetRegistry();
         const float Dt = (float)Context.GetDeltaTime();
 
-        //~ Follow: ease toward Target + Offset, optionally facing the target.
+        //~ Follow eases toward Target + Offset, optionally facing the target.
         auto FollowView = Registry.view<SCameraFollowComponent, STransformComponent>(entt::exclude<SDisabledTag, SSpringArmComponent>);
         for (entt::entity Entity : FollowView)
         {
@@ -126,7 +124,7 @@ namespace Lumina
             Detail::ApplyWorldPose(Registry, Entity, Xform, Follow.CurrentPosition, Follow.CurrentRotation);
         }
 
-        //~ Spring arm: place the camera a (collision-shortened) distance behind the pivot.
+        //~ Spring arm places the camera a collision-shortened distance behind the pivot.
         auto ArmView = Registry.view<SSpringArmComponent, STransformComponent>(entt::exclude<SDisabledTag>);
         for (entt::entity Entity : ArmView)
         {

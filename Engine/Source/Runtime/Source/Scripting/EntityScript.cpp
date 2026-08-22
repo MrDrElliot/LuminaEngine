@@ -20,7 +20,7 @@ namespace Lumina
 {
     namespace
     {
-        // Clone, never share: one script object on two entities carries the first's state, and its world, into the second.
+        // Cloned, never shared, since one object on two entities carries the first's state into the second.
         CEntityScript* CloneScript(CEntityScript* Source)
         {
             if (Source == nullptr || Source->GetClass() == nullptr)
@@ -104,12 +104,7 @@ namespace Lumina
                 FName ClassName;
                 Ar << ClassName;
 
-                // A class that no longer exists (script deleted, or a C# type removed from this generation)
-                // drops its instance. There is nothing safe to construct, and the tagged-property block is
-                // self-delimiting only within a known layout -- so bail rather than desynchronize the stream.
-                // Through the redirect registry, not FindObject: a script class renamed in C# leaves every
-                // saved scene (and every hot-reload evacuation buffer) naming the old one, and an `[Alias]`
-                // on the new type is what carries them across.
+                // Resolved through the redirect registry, since an alias is what carries a renamed class across.
                 CClass* ScriptClass = FScriptableRegistry::ResolveClass(ClassName);
                 if (ScriptClass == nullptr || !ScriptClass->IsChildOf(CEntityScript::StaticClass()))
                 {
@@ -136,19 +131,7 @@ namespace Lumina
 
     namespace
     {
-        // Every callback below is user code, and user code is allowed to attach or detach scripts -- on this
-        // entity or another one -- from inside it. Both are structurally hostile to a plain range-for:
-        //
-        //   - Attach pushes onto the SAME TVector being iterated, so it reallocates and dangles the loop's
-        //     reference and end iterator.
-        //   - Attach's get_or_emplace<SEntityScriptComponent> on a DIFFERENT entity grows entt's storage,
-        //     which invalidates both the view being iterated and any held component pointer.
-        //   - Remove erases from the vector, and dropping the last TObjectPtr destroys the script object
-        //     immediately (FCObjectArray::ReleaseStrongRef -> ConditionalDestroy).
-        //
-        // So nothing dispatches straight off live storage. Snapshotting as TObjectPtr (a STRONG ref) is what
-        // makes the third case safe: a script detached mid-pass stays alive until the snapshot dies, and the
-        // IsStillAttached guard is what stops it receiving any further callback.
+        // Snapshotting as a strong ref keeps a script detached mid-pass alive until the snapshot dies.
 
         using FScriptSnapshot = TVector<TObjectPtr<CEntityScript>>;
 
@@ -172,8 +155,7 @@ namespace Lumina
             }
         }
 
-        // Re-resolved per dispatch rather than cached: an earlier callback in this same pass may have removed
-        // this script, destroyed its entity, or dropped the whole component.
+        // Re-resolved per dispatch, since an earlier callback may have removed this script or its entity.
         bool IsStillAttached(FEntityRegistry& Registry, entt::entity Entity, const CEntityScript* Script)
         {
             if (Script == nullptr || !Registry.valid(Entity))
@@ -197,10 +179,7 @@ namespace Lumina
             return false;
         }
 
-        // Every registry that can hold script objects. A loaded prefab asset owns one (two, for a variant)
-        // and is not a world, so the world sweep alone left its scripts behind -- and one script the sweep
-        // misses is one live instance, which is all MigrateMintedClassLayout needs to refuse a rebuild
-        // forever.
+        // A loaded prefab owns a registry and is not a world, so the world sweep alone left its scripts.
         struct FScriptRegistryRef
         {
             CObject*         Owner = nullptr;
@@ -243,9 +222,7 @@ namespace Lumina
             return nullptr;
         }
 
-        // Entities carrying scripts, captured before any callback runs. Scripts attached to a NEW entity
-        // during the pass are not ticked this frame; they have already had their OnAttach from Attach, and
-        // they ready on the next tick like every other freshly attached script.
+        // A script attached to a new entity during the pass readies on the next tick like any other.
         void SnapshotScriptedEntities(FEntityRegistry& Registry, TVector<entt::entity>& Out)
         {
             Out.clear();
@@ -277,24 +254,21 @@ namespace Lumina
                 return nullptr;
             }
 
-            // Resolve the world from the registry's context singleton rather than making every caller pass it.
-            // find, not get: a bare registry (a test, a tool) has no world, and a script there simply has none.
+            // find, not get, since a bare registry in a test or tool has no world and its scripts have none.
             CWorld** WorldPtr = Registry.ctx().find<CWorld*>();
             Script->SetOwner(Entity, WorldPtr != nullptr ? *WorldPtr : nullptr);
 
             SEntityScriptComponent& Component = Registry.get_or_emplace<SEntityScriptComponent>(Entity);
             Component.Scripts.push_back(Script);
 
-            // Attach immediately, ready on the first tick: by then every sibling script the same frame added
-            // exists, so OnReady can reference them.
+            // By the first tick every sibling script added the same frame exists, so OnReady can reference them.
             Script->OnAttach();
             return Script;
         }
 
         void Tick(FEntityRegistry& Registry, float DeltaTime)
         {
-            // One loop, one virtual call. A C++ subclass runs its own override directly; a C# subclass runs
-            // the Reflector-generated shim, which dispatches into managed. Nothing here knows the difference.
+            // A C++ subclass runs its own override and a C# one runs the generated shim, indistinguishably.
             CWorld** WorldPtr = Registry.ctx().find<CWorld*>();
             CWorld* World = WorldPtr != nullptr ? *WorldPtr : nullptr;
 
@@ -314,10 +288,7 @@ namespace Lumina
                         continue;
                     }
 
-                    // Adopt a script that arrived without an owner -- deserialization reconstructs the objects
-                    // but cannot know their entity (see SEntityScriptComponent::Serialize). This is the one
-                    // place the entity and the registry are both in hand, and it runs before OnReady, so a
-                    // loaded script sees a valid Entity/World from its very first callback.
+                    // The one place entity and registry are both in hand, and it runs before OnReady.
                     if (Script->GetOwningEntity() == entt::null)
                     {
                         Script->SetOwner(Entity, World);
@@ -357,8 +328,7 @@ namespace Lumina
 
                 for (TObjectPtr<CEntityScript>& Held : Scripts)
                 {
-                    // Fixed update runs only on a script that has readied, so a script cannot see a fixed step
-                    // before its OnReady.
+                    // Fixed update only runs on a readied script, so none sees a fixed step before its OnReady.
                     CEntityScript* Script = Held.Get();
                     if (Script != nullptr && Script->IsReady() && IsStillAttached(Registry, Entity, Script))
                     {
@@ -530,8 +500,7 @@ namespace Lumina
             {
                 FEntityRegistry& Registry = *Ref.Registry;
 
-                // Collect first, mutate second. Serialize does not touch the registry, but clearing the
-                // component's Scripts destroys CObjects, and a script's destructor is user-reachable code.
+                // Serialize does not touch the registry, but clearing Scripts destroys user-reachable objects.
                 TVector<entt::entity> Affected;
                 auto View = Registry.view<SEntityScriptComponent>();
                 for (entt::entity Entity : View)
@@ -599,8 +568,7 @@ namespace Lumina
                     Component.Serialize(Ar);
                 }
 
-                // The replay put the authored value back on EVERY property. Fields marked [SkipHotReload]
-                // asked for the opposite, so they are returned to their class default afterwards.
+                // Fields marked to skip hot reload asked for the opposite, so they return to their class default.
                 for (const TObjectPtr<CEntityScript>& Held : Component.Scripts)
                 {
                     Scripting::ResetSkipHotReloadProperties(Held.Get());
@@ -621,9 +589,7 @@ namespace Lumina
 
             for (TObjectPtr<CEntityScript>& Held : Scripts)
             {
-                // Only a script that got its OnAttach gets an OnDetach. A stamped or freshly deserialized
-                // script the driver never adopted has no state to unwind, and for a C# one the call would
-                // mint a managed instance purely to tear it down again.
+                // For a C# script the call would mint a managed instance purely to tear it down again.
                 if (CEntityScript* Script = Held.Get(); Script != nullptr && Script->IsAttached())
                 {
                     Script->OnDetach();

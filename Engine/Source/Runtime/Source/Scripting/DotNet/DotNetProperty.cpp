@@ -14,16 +14,7 @@
 #include "Memory/Memory.h"
 #include "Memory/SmartPtr.h"
 
-// The scalable property-interop surface that replaces the Reflector's per-property get/set thunks
-// (LuminaSharp_Get_<Type>_<Member>). BLITTABLE fields (numeric/bool/enum/blittable-struct) are read and
-// written by C# DIRECTLY at the property's runtime-resolved offset (Unsafe.Read/WriteUnaligned), so they
-// need no export at all. NON-BLITTABLE fields (FString/FName/object ref) route through this fixed library
-// of GENERIC per-FProperty-type exporters: one export per property KIND, reused for every property of that
-// kind, with each property's FProperty* token resolved once and cached on the C# side. Net: native exports
-// drop from O(properties) to O(property-types).
-//
-// The token is an opaque const FProperty*; the C# binding holds it and the container pointer (the live
-// component/object) and passes both back here. Game thread only.
+// The token is an opaque property pointer the C# binding holds and passes back with the container.
 
 using namespace Lumina;
 
@@ -44,8 +35,7 @@ namespace
     }
 }
 
-// Resolves "Type::Prop" to the FProperty* token (searches the full inheritance chain). Cached once per
-// property on the C# side; null when the type or property isn't found.
+// Cached once per property on the C# side, and null when the type or property is not found.
 LUMINA_DOTNET_EXPORT(const void*, FindProperty)(const char* Type, int TLen, const char* Prop, int PLen)
 {
     const CStruct* Struct = FindReflectedType(Type, TLen);
@@ -73,14 +63,13 @@ LUMINA_DOTNET_EXPORT(const void*, FindProperty)(const char* Type, int TLen, cons
     return nullptr;
 }
 
-// The property's byte offset within its container. Resolved once per blittable property on the C# side,
-// which then reads/writes native memory directly at (container + offset).
+// Resolved once per blittable property, which then reads native memory directly at that offset.
 LUMINA_DOTNET_EXPORT(int32, PropertyOffset)(const void* Prop)
 {
     return Prop ? (int32)static_cast<const FProperty*>(Prop)->Offset : -1;
 }
 
-// Combined resolve: type+prop -> offset in one crossing (the C# blittable path caches just the offset).
+// One crossing resolves type and property to an offset, which the blittable path caches.
 LUMINA_DOTNET_EXPORT(int32, PropertyOffsetByName)(const char* Type, int TLen, const char* Prop, int PLen)
 {
     const void* Property = LuminaSharp_FindProperty(Type, TLen, Prop, PLen);
@@ -106,7 +95,7 @@ LUMINA_DOTNET_EXPORT(void, PropSetString)(void* C, const void* Prop, const char*
     }
 }
 
-// FName get/set: same buffer-fill shape as FString; the set builds an FName from the UTF-8 bytes.
+// The same buffer-fill shape as a string, with the setter building a name from the UTF-8 bytes.
 LUMINA_DOTNET_EXPORT(int32, PropGetName)(void* C, const void* Prop, char* Buf, int Cap)
 {
     if (C == nullptr || Prop == nullptr)
@@ -163,9 +152,7 @@ LUMINA_DOTNET_EXPORT(void, PropSetObject)(void* C, const void* Prop, void* Obj)
     LuminaSharp_SetObjectPtr(Property->GetValuePtr<TObjectPtr<CObject>>(C), Obj);
 }
 
-// Asset reference (FSoftObjectPath) get/set as its virtual path, the same shape C# stores it in. Kept as a
-// property-kind exporter rather than reading the embedded FString at a hardcoded offset, so the storage
-// layout stays FSoftObjectPath's business.
+// Kept as a property-kind exporter so the storage layout stays the path type's own business.
 LUMINA_DOTNET_EXPORT(int32, PropGetAssetPath)(void* C, const void* Prop, char* Buf, int Cap)
 {
     if (C == nullptr || Prop == nullptr)
@@ -197,9 +184,7 @@ LUMINA_DOTNET_EXPORT(void, PropSetAssetPath)(void* C, const void* Prop, const ch
     *Value = (Len > 0) ? FSoftObjectPath(FString(Utf8, (size_t)Len)) : FSoftObjectPath();
 }
 
-// The element ops table for an array property, so C# can build a TVector<T> view over ANY reflected
-// array -- including one appended to a minted script class, where there is no generated code to emit a
-// per-property ops export the way the Reflector does for native components.
+// Works for an array appended to a minted script class, where no generated code exists.
 LUMINA_DOTNET_EXPORT(const void*, PropVectorOps)(const void* Prop)
 {
     if (Prop == nullptr)
@@ -214,12 +199,7 @@ LUMINA_DOTNET_EXPORT(const void*, PropVectorOps)(const void* Prop)
     return static_cast<const FArrayProperty*>(Property)->GetOps();
 }
 
-// Assigns an FString that lives at an arbitrary address.
-//
-// PropSetString addresses a string BY property on an object, which cannot reach a string inside a container:
-// a script list of strings holds FStrings packed in the array's own buffer, and the element address comes
-// from the ops table, not from an FProperty. Reading needs no export at all (NativeMarshal.ReadString decodes
-// the native string in place), so this is the write half only.
+// Reading needs no export, since the managed marshal decodes the native string in place.
 LUMINA_DOTNET_EXPORT(void, StringAssign)(void* StringPtr, const char* Utf8, int Len)
 {
     if (StringPtr == nullptr)
@@ -237,13 +217,7 @@ LUMINA_DOTNET_EXPORT(void, StringAssign)(void* StringPtr, const char* Utf8, int 
     }
 }
 
-// FName interning, both directions.
-//
-// FName is POD -- an interned id plus a number, no heap -- so unlike FString the C# side mirrors it BY VALUE
-// and reads and writes the bytes in place at the property's offset, exactly as it does for FVector3. Only
-// these two conversions need the name table, so only they cross. The pair is address-based rather than
-// property-based so it also serves an FName sitting inside a container, where there is no FProperty to
-// address it by.
+// Address-based rather than property-based, so it also serves an FName inside a container.
 LUMINA_DOTNET_EXPORT(void, NameFromString)(const char* Utf8, int Len, void* OutName)
 {
     if (OutName == nullptr)
@@ -259,8 +233,7 @@ LUMINA_DOTNET_EXPORT(int32, NameToString)(const void* NamePtr, char* Buf, int Ca
     {
         return 0;
     }
-    // c_str() hands back a pointer into a ring buffer, so the copy has to happen before anything else can
-    // intern a name. It does: this is the whole body.
+    // c_str hands back a ring-buffer pointer, so the copy happens before anything can intern a name.
     const FName& Value = *static_cast<const FName*>(NamePtr);
     const char* S = Value.c_str();
     const int L = S ? (int)Value.length() : 0;

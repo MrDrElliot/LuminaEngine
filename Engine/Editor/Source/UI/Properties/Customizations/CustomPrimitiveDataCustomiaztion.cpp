@@ -9,7 +9,7 @@ namespace Lumina
         return MakeShared<FCustomPrimDataPropertyCustomization>();
     }
 
-    EPropertyChangeOp FCustomPrimDataPropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property)
+    EPropertyChangeOp FCustomPrimDataPropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args)
     {
         bool bWasChanged = false;
     

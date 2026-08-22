@@ -24,7 +24,7 @@ namespace Lumina
         uint32                          Index          = 0;
 
         TAtomic<int32>                  PendingDeps{0};
-        // Graph-arena slice, not a frame vector: the thread frame arena is reset out from under a worker's read.
+        // A graph-arena slice, since the thread frame arena is reset out from under a worker's read.
         uint32*                         Dependents     = nullptr;
         uint32                          DependentCount = 0;
 
@@ -44,8 +44,7 @@ namespace Lumina
     {
         struct promise_type
         {
-            // The coroutine's FNode* is forwarded here so the frame lands in the graph arena, and kept
-            // so the final awaiter can signal the graph without the body having to.
+            // Forwarded so the frame lands in the graph arena, and kept so the final awaiter can signal.
             explicit promise_type(FNode* InNode) noexcept : Node(InNode) {}
 
             static void* operator new(std::size_t Size, FNode* Node)
@@ -60,15 +59,14 @@ namespace Lumina
                 return FNodeCoro{ std::coroutine_handle<promise_type>::from_promise(*this) };
             }
 
-            /** Signals the graph counter HERE, not from the coroutine body: that decrement releases Wait(), whose
-             *  caller typically Reset()s the arena this frame lives in before the compiler has finished with it. */
+            // That decrement releases Wait, whose caller resets the arena this frame lives in.
             struct FFinalAwaiter
             {
                 bool await_ready() const noexcept { return false; }
 
                 void await_suspend(std::coroutine_handle<promise_type> Handle) const noexcept
                 {
-                    // Read the counter out before the drop: the last decrement lets Wait() free it.
+                    // Read the counter out before the drop, since the last decrement lets Wait free it.
                     Jobs::FCounter* Counter = Handle.promise().Node->Graph->GraphCounter;
                     Jobs::DecrementCounter(Counter, 1);
                 }
@@ -87,7 +85,6 @@ namespace Lumina
         std::coroutine_handle<promise_type> Handle;
     };
 
-    // The coroutine frame GCC synthesizes here holds the co_awaited lambda, a type with no linkage.
     // The frame is compiler-generated, so there is nothing at source level to give linkage to.
     #if defined(__GNUC__) && !defined(__clang__)
         #pragma GCC diagnostic push
@@ -124,8 +121,7 @@ namespace Lumina
         CoroDetail::ScheduleResume(Node->CoroHandle, Node->Priority);
     }
 
-    // Schedules whatever this node unblocked; it does NOT signal the graph counter -- FNodeCoro's final
-    // awaiter does, once the coroutine is done with its own frame.
+    // It does NOT signal the graph counter, since the final awaiter does once the frame is done.
     void FTaskGraph::CompleteNode(FNode* Node)
     {
         FTaskGraph* Graph = Node->Graph;
@@ -250,12 +246,12 @@ namespace Lumina
         {
             for (const auto& Edge : Edges)
             {
-                // Edge = (child, parent): child depends on parent.
+                // An edge is child then parent, meaning the child depends on the parent.
                 Nodes[Edge.first]->PendingDeps.fetch_add(1, std::memory_order_relaxed);
                 ++Nodes[Edge.second]->DependentCount;
             }
 
-            // Per node, not one block for every edge: the arena panics on a request >= its block size.
+            // Per node rather than one block for every edge, since the arena panics on an oversized request.
             for (uint32 i = 0; i < NumNodes; ++i)
             {
                 FNode* Node = Nodes[i];

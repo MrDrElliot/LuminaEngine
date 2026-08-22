@@ -134,7 +134,7 @@ TEST(AnimCompression, CollapsesUnmovingTracks)
     EXPECT_EQ(Bone->Scale.Format, EAnimTrackFormat::Constant);
     EXPECT_EQ(Bone->Rotation.Format, EAnimTrackFormat::Quantized);
 
-    // Only the rotation should own frame data: 31 frames of four lanes.
+    // Only the rotation should own frame data, 31 frames of four lanes.
     EXPECT_EQ(Resource.Compressed.QuantizedData.size(), 31u * 4u);
     EXPECT_TRUE(Resource.Compressed.RawData.empty());
 }
@@ -283,7 +283,7 @@ namespace
     }
 }
 
-// End to end: the pose the sampler hands back has to match the keys the clip was imported from.
+// End to end, the pose the sampler hands back has to match the keys the clip came from.
 TEST(AnimCompressionSampler, LocalPoseMatchesSourceKeys)
 {
     FSkeletonResource Skeleton;

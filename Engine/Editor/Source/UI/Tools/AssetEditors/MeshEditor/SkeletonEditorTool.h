@@ -4,6 +4,7 @@
 #include <imgui.h>
 #include "ImGuizmo.h"
 #include "Tools/UI/ImGui/Widgets/TreeListView.h"
+#include "UI/Properties/PropertyEditContexts.h"
 #include "UI/Tools/AssetEditors/AssetEditorTool.h"
 #include "Renderer/SkeletonResource.h"
 
@@ -37,6 +38,9 @@ namespace Lumina
         entt::entity DirectionalLightEntity = entt::null;
         entt::entity MeshEntity = entt::null;
         
+        FPropertyEditContext PropertyContext;
+        FSkeletonEditContext SkeletonCtx;
+
         FTreeListViewContext BoneListContext;
         FTreeListView BoneListView;
         

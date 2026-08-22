@@ -44,7 +44,7 @@ namespace Lumina
             {
                 SRagdollComponent& Ragdoll = View.get<SRagdollComponent>(Entity);
 
-                // Inactive -> Simulated: build the ragdoll from the current animated pose.
+                // Inactive to Simulated, so build the ragdoll from the current animated pose.
                 if (Ragdoll.State == ERagdollState::Simulated && Ragdoll.RealizedState != ERagdollState::Simulated)
                 {
                     const SSkeletalMeshComponent& Mesh = View.get<SSkeletalMeshComponent>(Entity);
@@ -57,8 +57,7 @@ namespace Lumina
                         continue;
                     }
 
-                    // Seed from the live animation pose if present, else the skeleton's bind pose (so an
-                    // un-animated skeletal mesh still ragdolls). Both are skinning matrices (Global*InvBind).
+                    // Seed from the live pose or the bind pose, both of which are skinning matrices.
                     const int32 NumBones = Skeleton->GetNumBones();
                     TVector<FMatrix4> BindMatrices;
                     const TVector<FMatrix4>* Source = &Mesh.BoneTransforms;
@@ -87,7 +86,7 @@ namespace Lumina
                     Ragdoll.Ragdoll = Scene->CreateRagdoll(Desc);
                     Ragdoll.RealizedState = Ragdoll.Ragdoll ? ERagdollState::Simulated : ERagdollState::Inactive;
                 }
-                // Simulated -> Inactive: tear the bodies down.
+                // Simulated to Inactive, so tear the bodies down.
                 else if (Ragdoll.State == ERagdollState::Inactive && Ragdoll.RealizedState == ERagdollState::Simulated)
                 {
                     Scene->DestroyRagdoll(Ragdoll.Ragdoll);
@@ -116,8 +115,7 @@ namespace Lumina
                     continue;
                 }
 
-                // Optionally move the entity to follow the ragdoll's root body so the mesh's culling
-                // bounds track it; compute the bone readback relative to that same frame.
+                // Optionally follow the ragdoll root so culling bounds track it, and read bones back there.
                 FMatrix4 WorldToEntity;
                 if (Ragdoll.bDriveEntityFromRoot)
                 {

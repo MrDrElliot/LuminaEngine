@@ -9,13 +9,7 @@
 
 using namespace Lumina;
 
-// Phase 2 of the C# scripting rewrite (Docs/CSharpScriptingRewrite.md, Pillar 1): each CObject caches the one
-// managed wrapper that exists for it, so repeated wrapping returns the same C# instance instead of allocating.
-//
-// These tests cover the half where a leak would actually live -- the native side table -- WITHOUT the .NET
-// host: handles are opaque void* here, and a counting free function stands in for the managed GC-handle free.
-// That is the point: the table must free exactly once per handle, recycle its slots, and be drained by both
-// hot reload and shutdown. (The managed half, Wrapper<T>.ForObject, needs a running host; verify in editor.)
+// Covers the native side table without a .NET host, where a leak would actually live.
 
 namespace
 {
@@ -26,8 +20,7 @@ namespace
         ++GManagedInstanceFreeCount;
     }
 
-    // Each test installs the counter and starts from a drained table, so tests do not observe each other's
-    // handles. Note this drains any wrapper the rest of the suite left behind, which is harmless.
+    // Each test starts from a drained table so tests do not observe each other's handles.
     struct FManagedInstanceFixture : public ::testing::Test
     {
         void SetUp() override
@@ -84,7 +77,7 @@ TEST_F(FManagedInstanceFixture, ReplacingAHandleFreesTheOldOneExactlyOnce)
     Object->ForceDestroyNow();
 }
 
-// The leak that matters: an object dying must take its cached wrapper handle with it.
+// The leak that matters, where an object dying takes its cached wrapper handle with it.
 TEST_F(FManagedInstanceFixture, DestroyingTheObjectFreesItsHandle)
 {
     CObject* Object = NewTestObject();
@@ -115,7 +108,7 @@ TEST_F(FManagedInstanceFixture, UnwrappedObjectsCostNothing)
     EXPECT_EQ(ManagedInstances::GetSlotCapacity(), CapacityBefore) << "unwrapped objects should allocate no slot";
 }
 
-// Slots must be recycled: churning objects should not grow the table without bound.
+// Slots must be recycled, or churning objects grows the table without bound.
 TEST_F(FManagedInstanceFixture, SlotsAreRecycledAcrossObjectChurn)
 {
     // One live object at a time, wrapped then destroyed, 64 times over.
@@ -132,8 +125,7 @@ TEST_F(FManagedInstanceFixture, SlotsAreRecycledAcrossObjectChurn)
     EXPECT_LE(ManagedInstances::GetSlotCapacity(), 1) << "slots grew per object instead of being recycled";
 }
 
-// Hot reload: the table is drained, every handle freed once, and objects keep working afterwards. This is the
-// native mirror of what happens when the collectible script ALC is swapped.
+// The native mirror of a collectible script ALC swap, freeing each handle exactly once.
 TEST_F(FManagedInstanceFixture, HotReloadDrainsTheTableAndObjectsStillWork)
 {
     constexpr int32 Count = 8;
@@ -192,8 +184,7 @@ TEST_F(FManagedInstanceFixture, DestroyAfterReleaseAllIsNotADoubleFree)
     EXPECT_EQ(ManagedInstances::GetLiveCount(), 0);
 }
 
-// With no host installed there is nothing to free; the table must still track and drain cleanly rather than
-// calling through a null function pointer.
+// With no host installed the table must still drain rather than call a null function pointer.
 TEST_F(FManagedInstanceFixture, WorksWithNoFreeFunctionInstalled)
 {
     ManagedInstances::SetFreeHandleFn(nullptr);

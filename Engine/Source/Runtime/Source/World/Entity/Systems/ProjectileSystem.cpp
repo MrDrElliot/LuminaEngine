@@ -47,8 +47,7 @@ namespace Lumina
             const FVector3 Start = Transform.GetLocalLocation();
             const FVector3 End = Start + Projectile.Velocity * Dt;
 
-            // Sweep this frame's movement and take the nearest hit, ignoring the projectile's own body
-            // (if any) and the shooter.
+            // Sweep this frame's movement and take the nearest hit, ignoring own body and shooter.
             TOptional<SRayResult> Hit;
             if (Scene != nullptr)
             {

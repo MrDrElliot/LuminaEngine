@@ -14,21 +14,7 @@
 #include <cmath>
 #include <cstdio>
 
-// ============================================================================
-// Task-system benchmarks. Excluded from the default test run (main.cpp filters
-// out *Bench*); run explicitly:
-//     Tests.exe --gtest_filter=TaskBench.*
-// They don't assert on timing (CI-noise-proof), they print numbers so the
-// scheduler can be measured and tuned. The metrics that matter for the fiber
-// scheduler are OVERLAP EFFICIENCY (do all workers engage on a fan-out?) and
-// its run-to-run SPREAD (the "random spikes" a staggered ramp produces), so
-// the distribution (min/median/p99/max), not just the mean, is reported.
-//
-// Bodies are written to defeat the optimizer: BusySpin takes a per-call Seed
-// (so identical-argument calls can't be memoized/CSE'd into one), and the
-// iteration body is a loop-carried LCG (no closed form). Without this the
-// compiler folds the "work" away and the numbers are meaningless.
-// ============================================================================
+// Task-system benchmarks, excluded by default; run with --gtest_filter=TaskBench.*
 
 using namespace Lumina;
 
@@ -39,9 +25,7 @@ namespace
         return Lumina::PlatformTime::ToMilliseconds(Lumina::PlatformTime::Cycles() - T0);
     }
 
-    // Pure compute, no memory traffic, isolates scheduling + core parallelism from memory bandwidth so
-    // a poor overlap shows up as lost speedup rather than being masked by a saturated bus. Seed varies the
-    // result per call so the compiler can't memoize identical-argument calls into one. Returns a sink.
+    // Pure compute with no memory traffic, so poor overlap shows up as lost speedup.
     FORCENOINLINE double BusySpin(uint64 Iterations, double Seed)
     {
         double a = Seed;
@@ -81,9 +65,7 @@ namespace
     }
 }
 
-// ----------------------------------------------------------------------------
-// 1. Scheduling-overhead floor: empty fan-out, no per-element work. ns/dispatch.
-// ----------------------------------------------------------------------------
+// 1. Scheduling-overhead floor, an empty fan-out with no per-element work.
 TEST(TaskBench, EmptyDispatchOverhead)
 {
     const uint32 Workers = GTaskSystem->GetNumWorkers();
@@ -103,9 +85,7 @@ TEST(TaskBench, EmptyDispatchOverhead)
     SUCCEED();
 }
 
-// ----------------------------------------------------------------------------
-// 2. Strong scaling on heavy compute-bound work. speedup + per-core efficiency.
-// ----------------------------------------------------------------------------
+// 2. Strong scaling on heavy compute-bound work.
 TEST(TaskBench, StrongScaling_HeavyCompute)
 {
     const uint32 Workers   = GTaskSystem->GetNumWorkers();
@@ -116,7 +96,7 @@ TEST(TaskBench, StrongScaling_HeavyCompute)
     TVector<double> Partials;
     Partials.resize(GTaskSystem->GetNumTaskThreads(), 0.0);
 
-    // Serial baseline: same total work. Per-call seed (c) blocks memoization; sink keeps the loop alive.
+    // Serial baseline over the same total work, with a per-call seed to block memoization.
     volatile double SerialSink = 0.0;
     const auto S0 = Lumina::PlatformTime::Cycles();
     double SerialAcc = 0.0;
@@ -146,11 +126,7 @@ TEST(TaskBench, StrongScaling_HeavyCompute)
     EXPECT_NE(SerialSink, -1.0);
 }
 
-// ----------------------------------------------------------------------------
-// 3. Overlap efficiency + spike spread: balanced equal-cost chunks, many runs.
-//    This is the original complaint, do all workers engage on a fan-out, and
-//    how consistent is it run to run? Reports the wall-time DISTRIBUTION.
-// ----------------------------------------------------------------------------
+// 3. Overlap efficiency and spike spread over balanced equal-cost chunks.
 TEST(TaskBench, OverlapEfficiency_BalancedFanout)
 {
     const uint32 Workers   = GTaskSystem->GetNumWorkers();
@@ -158,7 +134,7 @@ TEST(TaskBench, OverlapEfficiency_BalancedFanout)
     const uint32 Chunks    = Workers * 4u;      // a few chunks per worker
     constexpr uint64 PerChunk = 120000;          // equal cost each
 
-    // Calibrate ideal: one chunk's serial cost.
+    // Calibrate the ideal from one chunk's serial cost.
     volatile double Sink = 0.0;
     const auto C0 = Lumina::PlatformTime::Cycles();
     Sink = BusySpin(PerChunk, 1.0);
@@ -196,11 +172,7 @@ TEST(TaskBench, OverlapEfficiency_BalancedFanout)
     SUCCEED();
 }
 
-// ----------------------------------------------------------------------------
-// 4. Cold-wake cadence: dispatch, idle a beat (workers park), dispatch again,
-//    the real per-frame pattern. Captures the re-engagement ramp the keep-hot
-//    spin targets. Reports the per-dispatch distribution incl. p99/max.
-// ----------------------------------------------------------------------------
+// 4. Cold-wake cadence, the real per-frame dispatch, idle, dispatch pattern.
 TEST(TaskBench, ColdWakeCadence_PerFramePattern)
 {
     const uint32 Workers = GTaskSystem->GetNumWorkers();
@@ -225,11 +197,7 @@ TEST(TaskBench, ColdWakeCadence_PerFramePattern)
     SUCCEED();
 }
 
-// ----------------------------------------------------------------------------
-// 5. Iteration throughput: chew through N items with light per-item work. The
-//    body is a loop-carried LCG (no closed form) accumulated per-thread (no
-//    shared atomic), so this measures dispatch + iteration, not contention.
-// ----------------------------------------------------------------------------
+// 5. Iteration throughput with light per-item work and no shared atomic.
 TEST(TaskBench, IterationThroughput)
 {
     constexpr uint32 N = 64'000'000;
@@ -241,7 +209,7 @@ TEST(TaskBench, IterationThroughput)
         uint64 h = (uint64)R.Start * 2654435761ull + 1ull;
         for (uint32 i = R.Start; i < R.End; ++i)
         {
-            h = h * 6364136223846793005ull + (uint64)i; // LCG: loop-carried, no closed form
+            h = h * 6364136223846793005ull + (uint64)i; // loop-carried LCG, no closed form
         }
         Partials[R.Thread] += h;
     };
@@ -262,10 +230,7 @@ TEST(TaskBench, IterationThroughput)
     SUCCEED();
 }
 
-// ----------------------------------------------------------------------------
-// 6. Graph fan-out -> merge, the CompileDrawCommands shape: parallel producers
-//    + a merge node gated on all of them. Wall-time distribution.
-// ----------------------------------------------------------------------------
+// 6. Graph fan-out into a merge, the CompileDrawCommands shape.
 TEST(TaskBench, GraphFanOutMerge_DrawCommandsShape)
 {
     const uint32 Workers = GTaskSystem->GetNumWorkers();
@@ -307,9 +272,7 @@ TEST(TaskBench, GraphFanOutMerge_DrawCommandsShape)
     SUCCEED();
 }
 
-// ----------------------------------------------------------------------------
-// 7. Nested parallelism throughput (fiber park/resume under fan-out).
-// ----------------------------------------------------------------------------
+// 7. Nested parallelism throughput, fiber park and resume under fan-out.
 TEST(TaskBench, NestedParallelThroughput)
 {
     constexpr uint32 Outer = 256, Inner = 256;
@@ -454,7 +417,7 @@ namespace
 TEST(TaskBench, NarrowColdSubmit_WakeFanout)
 {
     const uint32 Workers = GTaskSystem->GetNumWorkers();
-    const uint32 K       = std::max(2u, Workers / 4u); // narrow: well under the worker count
+    const uint32 K       = std::max(2u, Workers / 4u); // narrow, well under the worker count
 
     volatile double OneSink = 0.0;
     double OneJobMs = 0.0;
@@ -491,7 +454,7 @@ TEST(TaskBench, NarrowColdSubmit_WakeFanout)
     Samples.reserve(Runs);
     for (int r = 0; r < Runs; ++r)
     {
-        Threading::Sleep(2); // let the pool drain and park -- the cold-wake precondition
+        Threading::Sleep(2); // let the pool drain and park, the cold-wake precondition
         Samples.push_back(RunOnce());
     }
 
@@ -524,7 +487,7 @@ namespace
 
 TEST(TaskBench, ResumeStorm_ParkedFiberWake)
 {
-    constexpr uint32 N = 200; // under the 256 fiber pool: each parked job pins one
+    constexpr uint32 N = 200; // under the 256 fiber pool, each parked job pins one
 
     auto RunOnce = [&]() -> double
     {
@@ -565,7 +528,7 @@ TEST(TaskBench, ResumeStorm_ParkedFiberWake)
     SUCCEED();
 }
 
-// Minimum effective granularity: the crossover decides whether an engine loop should fan out at all.
+// Minimum effective granularity, the crossover that decides whether to fan out at all.
 TEST(TaskBench, GranularityCrossover)
 {
     constexpr uint32 N        = 1u << 20;
@@ -623,7 +586,7 @@ TEST(TaskBench, GranularityCrossover)
     SUCCEED();
 }
 
-// Independent producers: queue and counter-pool contention rather than steal behavior.
+// Independent producers, measuring queue and counter-pool contention rather than steals.
 TEST(TaskBench, ConcurrentProducers)
 {
     const uint32 W = GTaskSystem->GetNumWorkers();

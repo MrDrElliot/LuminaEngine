@@ -17,9 +17,7 @@
 
 using namespace Lumina;
 
-// ----------------------------------------------------------------------------
 // ParallelFor
-// ----------------------------------------------------------------------------
 
 TEST(TaskSystem, ParallelFor_RunsEachIndexExactlyOnce)
 {
@@ -112,9 +110,7 @@ TEST(TaskSystem, ParallelForEach_VisitsAndMutates)
     }
 }
 
-// ----------------------------------------------------------------------------
 // AsyncTask
-// ----------------------------------------------------------------------------
 
 TEST(TaskSystem, AsyncTask_CompletesAndRunsBody)
 {
@@ -137,9 +133,7 @@ TEST(TaskSystem, AsyncTask_CompletesAndRunsBody)
     EXPECT_EQ(Sum.load(), N);
 }
 
-// ----------------------------------------------------------------------------
 // TaskGraph dependency ordering
-// ----------------------------------------------------------------------------
 
 TEST(TaskSystem, TaskGraph_LinearChainRunsInOrder)
 {
@@ -181,9 +175,7 @@ TEST(TaskSystem, TaskGraph_DiamondFanInWaitsForBothParents)
     EXPECT_GT(OrderD.load(), OrderC.load());
 }
 
-// Mirrors the render-extract topology (parallel-for producers + a merge node that
-// depends on them) that exposed the root double-scheduling race. Repeated many times
-// to stress the dispatch/worker scheduling boundary.
+// Mirrors the render-extract topology that exposed the root double-scheduling race.
 TEST(TaskSystem, TaskGraph_FanOutMerge_Stress)
 {
     constexpr int Iterations = 5000;
@@ -235,9 +227,7 @@ TEST(TaskSystem, TaskGraph_FanOutMerge_Stress)
     }
 }
 
-// ----------------------------------------------------------------------------
-// Nested parallelism (fiber yielding must not deadlock or lose work)
-// ----------------------------------------------------------------------------
+// Nested parallelism, where fiber yielding must not deadlock or lose work
 
 TEST(TaskSystem, NestedParallelFor)
 {
@@ -269,9 +259,7 @@ TEST(TaskSystem, ManyConcurrentParallelFors_Stress)
     }
 }
 
-// ----------------------------------------------------------------------------
-// Performance smoke tests (report numbers; assert only loose bounds)
-// ----------------------------------------------------------------------------
+// Performance smoke tests, reporting numbers and asserting only loose bounds
 
 TEST(TaskSystem, Perf_EmptyParallelForSchedulingOverhead)
 {
@@ -324,7 +312,7 @@ TEST(TaskSystem, Perf_ParallelForScalesWithWork)
     auto S1 = Lumina::PlatformTime::Cycles();
     const double SerialMs = Lumina::PlatformTime::ToMilliseconds(S1 - S0);
 
-    // Parallel: per-worker partials avoid contention.
+    // Parallel, with per-worker partials to avoid contention.
     TVector<double> Partials;
     Partials.resize(GTaskSystem->GetNumTaskThreads(), 0.0);
 
@@ -350,12 +338,9 @@ TEST(TaskSystem, Perf_ParallelForScalesWithWork)
     EXPECT_GT(Speedup, 1.5);
 }
 
-// ----------------------------------------------------------------------------
-// Fiber scheduler specifics: park/resume, migration, multi-waiter wakeups
-// ----------------------------------------------------------------------------
+// Fiber scheduler specifics, park and resume, migration, multi-waiter wakeups
 
-// Three nesting levels: every level above the leaf parks its fiber on the level below. Exercises
-// park/resume depth and pool non-starvation well beyond the 2-level NestedParallelFor case.
+// Three nesting levels, so every level above the leaf parks its fiber on the one below.
 TEST(TaskSystem, DeepNestedParallelFor)
 {
     constexpr uint32 L0 = 16, L1 = 16, L2 = 16;
@@ -376,9 +361,7 @@ TEST(TaskSystem, DeepNestedParallelFor)
     }
 }
 
-// A job that parks (via a nested ParallelFor) may resume on a different worker. The worker slot read
-// after the wait must still be a valid, in-range slot, the across-yield re-read contract. Also a
-// liveness probe: the system must keep making progress across migration.
+// A job that parks may resume on a different worker, so the slot must be re-read after.
 TEST(TaskSystem, WorkerIndexValidAcrossNestedWait)
 {
     const uint32 Slots = GTaskSystem->GetNumTaskThreads();
@@ -402,9 +385,7 @@ TEST(TaskSystem, WorkerIndexValidAcrossNestedWait)
     EXPECT_EQ(Ran.load(), 256);
 }
 
-// Wide fan-in: many sink nodes all depend on one root, so the root's completion must wake every
-// dependent, and the graph counter has many decrements feeding a single Wait. Repeated to stress the
-// multi-waiter wake path + counter recycle.
+// Wide fan-in, so the root's completion must wake every dependent through one counter.
 TEST(TaskSystem, TaskGraph_WideFanIn_Stress)
 {
     constexpr int Iterations = 2000;
@@ -453,14 +434,11 @@ TEST(TaskSystem, TaskGraph_WideFanIn_Stress)
     }
 }
 
-// ----------------------------------------------------------------------------
 // Fiber-aware mutex
-// ----------------------------------------------------------------------------
 
 TEST(FiberSync, Mutex_MutualExclusionUnderContention)
 {
-    // Many jobs hammer a shared counter guarded by the fiber mutex; if the lock leaks, the
-    // non-atomic increment loses updates. Contention forces the worker-fiber park path.
+    // If the lock leaks, the non-atomic increment loses updates under contention.
     FFiberMutex Mutex;
     int64 Shared = 0;
     constexpr uint32 N = 20000;
@@ -484,9 +462,7 @@ TEST(FiberSync, Mutex_TryLockReflectsState)
     Mutex.Unlock();
 }
 
-// ----------------------------------------------------------------------------
 // Fiber-aware semaphore
-// ----------------------------------------------------------------------------
 
 TEST(FiberSync, Semaphore_BoundsConcurrency)
 {
@@ -512,9 +488,7 @@ TEST(FiberSync, Semaphore_BoundsConcurrency)
     EXPECT_LE(MaxLive.load(), K);
 }
 
-// ----------------------------------------------------------------------------
-// Fiber-aware shared (reader/writer) mutex
-// ----------------------------------------------------------------------------
+// Fiber-aware shared reader/writer mutex
 
 TEST(FiberSync, SharedMutex_NoReaderWriterOverlap)
 {
@@ -553,9 +527,7 @@ TEST(FiberSync, SharedMutex_NoReaderWriterOverlap)
     EXPECT_EQ(Protected, 1000) << "8000/8 writer sections expected";
 }
 
-// ----------------------------------------------------------------------------
 // Fiber-aware condition variable
-// ----------------------------------------------------------------------------
 
 TEST(FiberSync, ConditionVariable_ProducerConsumerHandoff)
 {
@@ -585,9 +557,7 @@ TEST(FiberSync, ConditionVariable_ProducerConsumerHandoff)
     EXPECT_EQ(Observed.load(), 42);
 }
 
-// ----------------------------------------------------------------------------
-// Futures / promises
-// ----------------------------------------------------------------------------
+// Futures and promises
 
 TEST(Future, PromiseSetValue_FutureGetsIt)
 {
@@ -802,24 +772,7 @@ TEST(Coro, ManyConcurrentWhenAll_Stress)
     }
 }
 
-// ----------------------------------------------------------------------------
-// Assist-wait isolation (ETaskPriority::Background / EJobPriority::Background)
-//
-// An external thread that waits on a counter cannot park (it has no fiber), so it "assist-waits": it
-// dequeues and runs queued jobs inline until the counter clears. That steal is UNTARGETED -- it takes
-// the first job in any worker queue, with no relationship to the counter being awaited. Unbounded,
-// that means a main thread waiting on the draw graph can adopt an unrelated multi-hundred-millisecond
-// background build and run it to completion inside the wait (which Tracy then renders, correctly and
-// very confusingly, as the build nesting under FTaskGraph::Wait).
-//
-// Background is the band excluded from that path. Both halves of the contract are pinned here: an
-// assisting thread must NEVER run Background work, and must STILL run everything else -- the latter is
-// what keeps an external wait from starving when the work it needs is queued behind busy workers.
-//
-// Neither test saturates the pool or spins without a bound. An earlier version tried to occupy every
-// worker with blocking jobs and deadlocked when two blockers landed on the same worker: job placement
-// rotates through a shared cursor, so "N jobs reach N distinct workers" is not something a test may assume.
-// ----------------------------------------------------------------------------
+// An assisting thread must never run Background work and must still run everything else.
 
 namespace
 {
@@ -830,8 +783,7 @@ namespace
         std::atomic<uint32> RanTotal{0};
     };
 
-    // Real work, so the queue stays deep enough that an assisting thread gets many chances to steal
-    // from it. A trivial body would drain before the wait even starts and prove nothing.
+    // Real work, so the queue stays deep enough for an assisting thread to steal from it.
     void AssistProbeJob(void* Arg, uint32)
     {
         FAssistProbe& P = *static_cast<FAssistProbe*>(Arg);
@@ -862,11 +814,7 @@ TEST(TaskSystem, AssistWaitNeverRunsBackgroundWork)
         Jobs::RunJob(&AssistProbeJob, &Probe, Jobs::EJobPriority::Background, ProbeCounter, "AssistTest.Background");
     }
 
-    // The wait is gated by an OS thread, NOT by the Background work itself. Waiting on that work from
-    // this thread is the anti-pattern EJobPriority::Background explicitly warns about: this is exactly
-    // the thread forbidden from running it, so the wait would make no progress of its own and rest
-    // entirely on worker wake-ups. That is a fine thing to warn about and a terrible thing to build a
-    // test on -- an earlier version did, and intermittently hung the suite.
+    // The wait is gated by an OS thread, not by the Background work it must not run.
     Jobs::FCounter* Gate = Jobs::AllocCounter(1);
     FThread Releaser([Gate]
     {
@@ -874,8 +822,7 @@ TEST(TaskSystem, AssistWaitNeverRunsBackgroundWork)
         Jobs::DecrementCounter(Gate, 1);
     });
 
-    // Assist-waits for ~50ms with a deep Background queue alongside. Pre-fix, this drained dozens of
-    // them onto this thread.
+    // Assist-waits with a deep Background queue alongside, which used to drain onto this thread.
     Jobs::WaitForCounter(Gate, 0);
     Releaser.join();
 
@@ -883,8 +830,7 @@ TEST(TaskSystem, AssistWaitNeverRunsBackgroundWork)
         << "an assist-waiting thread executed Background work; the exclusion in TryStealAny is not holding, "
            "so a frame-critical wait can again inline an unrelated background build";
 
-    // Drained by polling rather than by waiting on the counter, for the same reason. Bounded, so a
-    // stalled pool fails the assertion instead of hanging the suite.
+    // Drained by polling and bounded, so a stalled pool fails instead of hanging the suite.
     const double Deadline = Lumina::PlatformTime::Seconds() + 10.0;
     while (Probe.RanTotal.load(std::memory_order_relaxed) < kAssistProbeCount
         && Lumina::PlatformTime::Seconds() < Deadline)
@@ -892,7 +838,7 @@ TEST(TaskSystem, AssistWaitNeverRunsBackgroundWork)
         Lumina::PlatformTime::YieldThread();
     }
 
-    // Proves the assertion above did not pass vacuously: the work really was there to be stolen.
+    // Proves the assertion above did not pass vacuously, since the work was there to steal.
     EXPECT_EQ(Probe.RanTotal.load(), kAssistProbeCount) << "Background work never drained onto workers";
     EXPECT_EQ(Probe.RanOnWaitingThread.load(), 0u);
 
@@ -906,10 +852,7 @@ TEST(TaskSystem, AssistWaitNeverRunsBackgroundWork)
 
 TEST(TaskSystem, AssistWaitStillRunsNonBackgroundWork)
 {
-    // The complement, guarding against over-correcting the above into "assist nothing". The assist path
-    // is what stops an external thread's wait from starving while its own fan-out sits queued behind
-    // busy workers; if this regresses, every ParallelFor issued from the main thread gets slower and
-    // WaitForCounter can stall for as long as the pool stays saturated.
+    // The complement, guarding against over-correcting this into assisting with nothing.
     FAssistProbe Probe;
     Probe.WaitingThread = Threading::GetThreadID();
 
@@ -928,18 +871,7 @@ TEST(TaskSystem, AssistWaitStillRunsNonBackgroundWork)
     Jobs::FreeCounter(Counter);
 }
 
-// ----------------------------------------------------------------------------
-// Fiber pool saturation
-//
-// A fiber is held for as long as its job is BLOCKED, not just while it runs, so the pool has to cover
-// peak simultaneous blocked jobs. Exceed it and the scheduler does not merely slow down: the queued work
-// that would release the parked fibers needs a fiber to run on, and the only fibers are the ones parked
-// waiting for it. Nothing in the scheduler breaks that cycle, which is why the pool grows on demand.
-//
-// Both tests deliberately poll instead of waiting on a counter. An external WaitForCounter assist-runs
-// queued jobs inline, which papers over the whole failure -- and the paths that actually hang in
-// practice (FTaskCompletion::Wait, a fire-and-forget submit nobody waits on) have no such rescue.
-// ----------------------------------------------------------------------------
+// A fiber is held while its job is BLOCKED, so the pool must grow on demand or deadlock.
 
 namespace
 {
@@ -958,8 +890,7 @@ namespace
         P->Finished.fetch_add(1, std::memory_order_relaxed);
     }
 
-    // Poll a predicate up to a deadline. Never assists, so a wedged pool shows up as a failed
-    // expectation instead of being rescued by the waiting thread (or hanging the suite).
+    // Polls a predicate to a deadline and never assists, so a wedged pool fails visibly.
     template<typename FPred>
     bool PollUntil(FPred&& Pred, double TimeoutSeconds)
     {
@@ -981,11 +912,7 @@ TEST(TaskSystem, FiberPoolSaturation_MoreBlockedJobsThanFibers)
     Jobs::FJobLiveStats Stats;
     Jobs::GetLiveStats(Stats);
 
-    // Past the pool by more than the workers could have in flight transiently, so the excess genuinely
-    // cannot be bound without the pool growing. Deliberately NOT guarded against MaxWorkFibers: a build
-    // whose ceiling sits at the starting size is one where this deadlocks, and that has to fail here
-    // rather than skip. The test recovers either way -- the gate opens after the deadline, which frees
-    // the parked fibers and lets the stalled jobs through.
+    // Past the pool by more than the workers could hold, so the excess needs the pool to grow.
     const uint32 Blockers = Stats.NumWorkFibers + Stats.NumWorkers * 2 + 64;
 
     // Static so a timed-out run cannot leave jobs pointing at a dead stack frame.
@@ -996,14 +923,12 @@ TEST(TaskSystem, FiberPoolSaturation_MoreBlockedJobsThanFibers)
 
     for (uint32 i = 0; i < Blockers; ++i)
     {
-        // Park-capable: this test is about the FIBER pool growing, and a native job takes no fiber at all.
+        // Park-capable, since this test is about the FIBER pool and a native job takes no fiber.
         Jobs::RunJob(&SaturateBlockingJob, &Probe, Jobs::EJobPriority::Normal, nullptr, "Saturate.Block",
             /*bMayPark*/ true);
     }
 
-    // Every job must get a fiber even though far more of them are blocked at once than the pool started
-    // with. Before on-demand growth this stalled at NumWorkFibers forever, with every worker pinned at
-    // 100% in the starvation spin.
+    // Every job must get a fiber even with more blocked at once than the pool started with.
     const bool AllEntered = PollUntil([&] { return Probe.Entered.load() == Blockers; },
         10.0);
     EXPECT_TRUE(AllEntered) << "only " << Probe.Entered.load() << " of " << Blockers
@@ -1028,13 +953,7 @@ TEST(TaskSystem, FiberPoolSaturation_MoreBlockedJobsThanFibers)
 
 TEST(TaskSystem, ManyBlockingAsyncTasks_AllComplete)
 {
-    // The same failure through the public API, in the shape it actually shows up as: a pile of
-    // fire-and-forget tasks (asset imports, thumbnails, shader compiles) that each block, then fan out.
-    //
-    // The gate is what makes it deterministic. Left to race, the outer tasks drain about as fast as they
-    // pile up and the pool is never provably exceeded -- an earlier version of this test passed on a
-    // 256-fiber build for exactly that reason. Holding every task at the same barrier forces all Outer
-    // of them to be blocked, and holding a fiber, simultaneously.
+    // The gate holds every task at one barrier, so the pool is provably exceeded, not raced.
     constexpr uint32 Outer = 400;
     constexpr uint32 Inner = 256;
 
@@ -1084,9 +1003,7 @@ TEST(TaskSystem, ManyBlockingAsyncTasks_AllComplete)
     }
 }
 
-// ----------------------------------------------------------------------------
 // External thread slots
-// ----------------------------------------------------------------------------
 
 TEST(TaskSystem, ExternalThreadSlotsAreRecycled)
 {
@@ -1094,9 +1011,7 @@ TEST(TaskSystem, ExternalThreadSlotsAreRecycled)
     const uint32 Slots   = Jobs::GetNumThreadSlots() - Workers;
     ASSERT_GT(Slots, 1u);
 
-    // Churn well past the supply. Handing slots out with a monotonic counter leaked one per cycle, and
-    // once the supply ran dry every later thread aliased a live one -- silently, since the index is what
-    // sizes and indexes every per-thread array in the engine.
+    // Churn well past the supply, since a monotonic counter leaked one slot per cycle.
     for (uint32 Round = 0; Round < Slots * 4; ++Round)
     {
         FThread T([&]
@@ -1109,8 +1024,7 @@ TEST(TaskSystem, ExternalThreadSlotsAreRecycled)
         T.join();
     }
 
-    // After all that churn, concurrently live external threads must still get distinct slots. The main
-    // thread holds one of its own, so it is Slots - 1 that are actually available.
+    // Concurrently live external threads must still get distinct slots, minus the main one.
     const uint32 Concurrent = Slots - 1;
     std::vector<uint32>      Indices(Concurrent, ~0u);
     std::vector<FThread> Threads;
@@ -1143,7 +1057,7 @@ TEST(TaskSystem, ExternalThreadSlotsAreRecycled)
            "indexed by GetWorkerIndex() are racing";
 }
 
-// Wedged pool recovery: a pool at its ceiling with every fiber parked used to deadlock forever, workers must now drain the queued backlog by running jobs inline on the scheduler fiber.
+// Wedged pool recovery, where workers now drain the backlog inline on the scheduler fiber.
 namespace
 {
     struct FWedgeProbe

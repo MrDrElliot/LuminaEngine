@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "UI/Tools/NodeGraph/Animation/AnimGraphNode.h"
 #include "Animation/AnimationGraphVM.h"
@@ -23,7 +23,7 @@ namespace Lumina
         void GenerateBytecode(FAnimationGraphCompiler& Compiler) override;
 
         /** Name of the bone to drive. Must exist in the graph's skeleton. */
-        PROPERTY(Editable, Category = "Bone", BonePicker)
+        PROPERTY(Editable, Category = "Bone", Picker = "Bone")
         FName BoneName;
 
         /** Frame the offset is interpreted in: Local Bone (parent-relative, cheap) or Component

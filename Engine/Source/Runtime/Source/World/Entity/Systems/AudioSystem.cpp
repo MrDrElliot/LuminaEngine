@@ -12,7 +12,7 @@
 
 namespace Lumina
 {
-	// PhysicsQuery: occlusion casts rays against the live scene (GetPhysicsScene bypasses CheckPhysics).
+	// PhysicsQuery is needed because occlusion casts rays against the live scene.
 	FSystemAccess SAudioSystem::Access = FSystemAccess{}
 		.Write<SAudioSourceComponent, SProceduralAudioComponent, SAudioListenerComponent>()
 		.Read<STransformComponent, SystemResource::PhysicsQuery>();
@@ -119,8 +119,7 @@ namespace Lumina
 			});
 		}
 
-		// With no listener component the engine keeps its default listener 0 at the origin, which is what
-		// preview scenes rely on; only take over the slots once a world actually drives one.
+		// Only take over the listener slots once a world drives one, so preview scenes keep default 0.
 		if (bHasListener)
 		{
 			for (uint32 Index = 0; Index < Audio::Context().GetListenerCount(); ++Index)
@@ -164,7 +163,7 @@ namespace Lumina
 					return;
 				}
 
-				// Looping sources virtualize: they drop their voice out of range and take a new one back.
+				// Looping sources virtualize, dropping their voice out of range and taking a new one back.
 				if (Audio.bLooping && Audio.bPlayOnReady && Audio.Sound != nullptr && Audio.Sound->IsValid())
 				{
 					if (!Audio.bPlaying && bInRange)

@@ -107,8 +107,7 @@ TEST(ECSTests, ResolveTransformChain_GrandchildFollowsRootMove)
     Registry.emplace<STransformComponent>(B).LocalTransform.SetLocation(FVector3(5.f,  0.f, 0.f));
     Registry.emplace<STransformComponent>(C).LocalTransform.SetLocation(FVector3(2.f,  0.f, 0.f));
 
-    // AddToParent only links the relationship; ReparentEntity would
-    // bake the (zeroed) cached world matrix into local transforms.
+    // AddToParent only links, while ReparentEntity would bake the zeroed world matrix in.
     ECS::Utils::AddToParent(Registry, B, A);
     ECS::Utils::AddToParent(Registry, C, B);
 
@@ -122,8 +121,7 @@ TEST(ECSTests, ResolveTransformChain_GrandchildFollowsRootMove)
     Registry.get<STransformComponent>(A).LocalTransform.SetLocation(FVector3(20.f, 0.f, 0.f));
     Registry.emplace_or_replace<FNeedsTransformUpdate>(A);
 
-    // Lazy resolve via the grandchild: A is dirty, B/C clean. ResolveTransformChain
-    // must walk up to A and refresh the chain rather than serving C's stale matrix.
+    // ResolveTransformChain must walk up to the dirty A rather than serving C's stale matrix.
     ECS::Utils::ResolveTransformChain(Registry, C);
 
     const STransformComponent& WorldC = Registry.get<STransformComponent>(C);
@@ -163,8 +161,7 @@ TEST(ECSTests, ResolveTransformChain_SiblingSubtreeStaysConsistent)
     Registry.get<STransformComponent>(A).LocalTransform.SetLocation(FVector3(20.f, 0.f, 0.f));
     Registry.emplace_or_replace<FNeedsTransformUpdate>(A);
 
-    // Resolving via C must also refresh sibling D, which isn't dirty itself and would
-    // otherwise serve a stale matrix once C's resolve clears A's dirty bit.
+    // Resolving via C must also refresh sibling D, which is not dirty itself.
     ECS::Utils::ResolveTransformChain(Registry, C);
     ECS::Utils::ResolveTransformChain(Registry, D);
 
@@ -193,9 +190,7 @@ TEST(ECSTests, Parent_Unparent)
     EXPECT_EQ(ParentRel.First, entt::entity{entt::null});
 }
 
-// Guards the lock-free read fast path: after a clean phase (bAnyDirty=false), a gameplay setter marks
-// the parent dirty via MarkTransformDirty -> the on_construct hook must re-arm the flag so the child's
-// lazy read resolves the chain instead of serving a stale world transform.
+// After a clean phase the on_construct hook must re-arm bAnyDirty for the lazy read.
 TEST(ECSTests, LazyResolve_AfterCleanPhase_SeesUpdatedWorld)
 {
     FEntityRegistry Registry{};
@@ -209,7 +204,7 @@ TEST(ECSTests, LazyResolve_AfterCleanPhase_SeesUpdatedWorld)
     Registry.get<STransformComponent>(Parent).Bind(Registry, Parent);
     Registry.get<STransformComponent>(Child).Bind(Registry, Child);
 
-    // Clean phase: resolve everything, arming the lock-free fast path (bAnyDirty=false).
+    // Clean phase resolves everything, arming the lock-free fast path.
     Registry.emplace<FNeedsTransformUpdate>(Parent);
     Registry.emplace<FNeedsTransformUpdate>(Child);
     ECS::Utils::ResolveAllDirtyTransforms(Registry);

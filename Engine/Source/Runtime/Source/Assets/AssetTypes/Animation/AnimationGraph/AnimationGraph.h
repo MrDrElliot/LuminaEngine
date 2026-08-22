@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectHandleTyped.h"
@@ -188,7 +188,7 @@ namespace Lumina
         GENERATED_BODY()
 
         /** Name of the bone to weight. Must exist in the graph's skeleton. */
-        PROPERTY(Editable, Category = "Bone Mask", BonePicker)
+        PROPERTY(Editable, Category = "Bone Mask", Picker = "Bone")
         FName BoneName;
 
         /** Blend weight applied to this bone (0 = base, 1 = overlay). */

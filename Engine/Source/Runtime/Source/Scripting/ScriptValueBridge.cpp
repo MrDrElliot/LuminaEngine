@@ -273,8 +273,7 @@ namespace Lumina::Scripting
                 Map->Clear(ValuePtr);
                 if (KeyProp == nullptr || ValueProp == nullptr) { break; }
 
-                // Items are the interleaved [key, value] pairs. Build a scratch key, write the key into it, insert
-                // to get the value slot, then write the value in place.
+                // Build a scratch key, insert to get the value slot, then write the value in place.
                 const uint32 KeySize = Map->GetKeySize();
                 void* KeyScratch = Memory::Malloc(KeySize > 0 ? KeySize : 1, 16);
                 for (SIZE_T Index = 0; Index + 1 < Value.Items.size(); Index += 2)

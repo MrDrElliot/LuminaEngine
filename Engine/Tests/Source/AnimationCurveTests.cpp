@@ -26,8 +26,7 @@ namespace
         Clip->GetAnimationResource()->Curves.push_back(Curve);
     }
 
-    // BuildTasks only records the pose recipe, so a one-bone skeleton with no bind data is enough:
-    // curve evaluation never touches bone transforms.
+    // Curve evaluation never touches bone transforms, so a one-bone skeleton is enough.
     void MakeSkeleton(FSkeletonResource& Skeleton)
     {
         FSkeletonResource::FBoneInfo Bone;
@@ -52,7 +51,7 @@ namespace
     }
 }
 
-// A curve rides its pose: blending two poses must blend their curve values by the same alpha.
+// A curve rides its pose, so blending two poses blends their curve values by the same alpha.
 TEST(AnimationCurves, BlendLerpsCurveValues)
 {
     CAnimation* WalkClip = MakeClip(1.0f);
@@ -167,8 +166,7 @@ TEST(AnimationCurves, ApplyAdditiveAddsCurvesScaledByAlpha)
     EXPECT_NEAR(RunGraph(Graph, FName("Lean")), 1.0f + 2.0f * 0.5f, 1e-4f);
 }
 
-// A state transition cross-fades the pose, so the curves it carries have to ease across the same
-// window instead of stepping to the target state's values on the transition frame.
+// A transition cross-fades the pose, so its curves must ease across the same window.
 TEST(AnimationCurves, StateTransitionEasesCurvesAcrossTheBlend)
 {
     CAnimation* IdleClip = MakeClip(1.0f);
@@ -218,7 +216,7 @@ TEST(AnimationCurves, StateTransitionEasesCurvesAcrossTheBlend)
     FAnimationGraphVM::BuildTasks(Graph, &Skeleton, 0.05f, State, Tasks, RootMotion);
     EXPECT_NEAR(State.CurveValues[Slot], 1.0f, 1e-4f) << "idle state's curve";
 
-    // The frame the transition starts still shows the previous value: the offset has not decayed yet.
+    // The frame the transition starts still shows the previous value, undecayed.
     State.Parameters[GoParam] = 1.0f;
     FAnimationGraphVM::BuildTasks(Graph, &Skeleton, 0.05f, State, Tasks, RootMotion);
     EXPECT_NEAR(State.CurveValues[Slot], 1.0f, 1e-3f) << "curve must not step to the target on the seam";

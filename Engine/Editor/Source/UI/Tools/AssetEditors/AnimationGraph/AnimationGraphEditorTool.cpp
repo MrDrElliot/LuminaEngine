@@ -17,8 +17,7 @@
 #include "Core/Object/ObjectArray.h"
 #include "Core/Object/Package/Package.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
-#include "UI/Properties/Customizations/BonePickerContext.h"
-#include "UI/Properties/Customizations/ParameterPickerContext.h"
+#include "UI/Properties/PropertyEditContexts.h"
 #include "Core/Reflection/Type/Properties/EnumProperty.h"
 #include "UI/Tools/NodeGraph/EdNodeGraphPin.h"
 #include "UI/Tools/NodeGraph/Animation/AnimGraphPin.h"
@@ -168,6 +167,10 @@ namespace Lumina
     void FAnimationGraphEditorTool::OnInitialize()
     {
         FAssetEditorTool::OnInitialize();
+
+        PropertyContext.Provide(&SkeletonCtx);
+        PropertyContext.Provide(&AnimGraphCtx);
+        GetPropertyTable()->SetContext(&PropertyContext);
 
         CreateToolWindow(AnimationGraphWindowName, [this](bool /*bFocused*/)
         {
@@ -637,11 +640,9 @@ namespace Lumina
     void FAnimationGraphEditorTool::DrawPropertiesWindow()
     {
         CAnimationGraph* Graph = Cast<CAnimationGraph>(Asset.Get());
-        const FSkeletonResource* ActiveSkeleton = (Graph != nullptr && Graph->Skeleton.IsValid())
-            ? Graph->Skeleton->GetSkeletonResource()
-            : nullptr;
-        BonePickerContext::FScope      BonePickerScope(ActiveSkeleton);
-        ParameterPickerContext::FScope ParamPickerScope(Graph);
+
+        SkeletonCtx.Skeleton = (Graph != nullptr && Graph->Skeleton.IsValid()) ? Graph->Skeleton->GetSkeletonResource() : nullptr;
+        AnimGraphCtx.Graph = Graph;
 
         if (ImGui::Button(LE_ICON_COG " Compile"))
         {
@@ -778,6 +779,7 @@ namespace Lumina
                 if (It == TransitionTables.end())
                 {
                     TUniquePtr<FPropertyTable> NewTable = MakeUnique<FPropertyTable>(Transition);
+                    NewTable->SetContext(&PropertyContext);
                     It = TransitionTables.emplace(Transition, Move(NewTable)).first;
                 }
                 It->second->DrawTree();
@@ -890,6 +892,7 @@ namespace Lumina
         {
             ParameterTable = MakeUnique<FPropertyTable>(Base, Struct);
             ParameterTable->SetShowSearchBar(false);
+            ParameterTable->SetContext(&PropertyContext);
         }
         else if (ParameterTable->GetObject() != Base || ParameterTable->GetType() != Struct)
         {

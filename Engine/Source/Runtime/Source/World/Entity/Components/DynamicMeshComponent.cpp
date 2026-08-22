@@ -339,8 +339,7 @@ namespace Lumina
         Resource->bOptimizeMeshlets     = bOptimizeMeshlets;
         Resource->bFastMeshletBuild     = bFastMeshletBuild;
 
-        // Normals are derived first because deriving them is the only stage that reads Positions and
-        // Indices; once it is done both streams can be moved into the resource rather than copied.
+        // Normals derive first because that is the only stage reading Positions and Indices.
         const TVector<FVector3>* SourceNormals = &BD.Normals;
         TVector<FVector3> DerivedNormals;
         if (BD.Normals.size() != VertexCount)

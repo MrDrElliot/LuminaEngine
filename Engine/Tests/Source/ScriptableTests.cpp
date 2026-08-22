@@ -11,10 +11,7 @@
 
 using namespace Lumina;
 
-// Verifies the native half of the Scriptable pipeline WITHOUT the managed host: the Reflector-generated shim
-// registers CScriptableTest, we mint a real CClass subclass from it (the same path a C# subclass takes), and
-// confirm discovery + instantiation + vtable. With no managed override bound, OnTest runs the C++ default.
-// (The full C# override -> 105 path needs the .NET host + a loaded C# subclass; see `script.scriptable_selftest`.)
+// Verifies the native half without the managed host, so OnTest runs the C++ default.
 TEST(Scriptable, MintInstantiateAndNativeDefaultDispatch)
 {
     CClass* Base = CScriptableTest::StaticClass();
@@ -35,16 +32,13 @@ TEST(Scriptable, MintInstantiateAndNativeDefaultDispatch)
     // No managed instance bound (host not running in the test) -> the shim falls through to the C++ default.
     EXPECT_EQ(Inst->OnTest(5), 10);
 
-    // Object arg + return marshalling: the C++ default echoes its input. Exercises the shim's object signature
-    // (CWorld* in/out); a non-null sentinel proves the arg passes through to the return rather than being dropped.
+    // A non-null sentinel proves the object arg passes through to the return.
     CWorld* const Sentinel = reinterpret_cast<CWorld*>(0x1234);
     EXPECT_EQ(Inst->OnEchoWorld(Sentinel), Sentinel);
     EXPECT_EQ(Inst->OnEchoWorld(nullptr), nullptr);
 }
 
-// Phase 3 (Docs/CSharpScriptingRewrite.md, Pillar 2): the per-instance FScriptableBridge is gone. The override
-// mask lives on the minted CClass, and the managed instance lives in the object's managed-instance slot,
-// created on first dispatch. These cover the native half; the managed half needs a running .NET host.
+// The override mask lives on the minted CClass and the managed instance in the object's slot.
 
 TEST(Scriptable, MintStampsTheOverrideMaskOnTheClass)
 {
@@ -60,9 +54,7 @@ TEST(Scriptable, MintStampsTheOverrideMaskOnTheClass)
         << "a native class must carry an empty mask, so its shim never even looks for a managed instance";
 }
 
-// The dispatch gate: with the bit SET but no managed instance obtainable (no .NET host in this process), the
-// shim must fall through to the C++ default rather than crashing or dispatching into nothing. This is also the
-// path a live object takes in the window right after a hot reload drains the table.
+// With the bit set but no managed instance, the shim must fall through to the C++ default.
 TEST(Scriptable, DispatchFallsBackToNativeWhenNoManagedInstanceExists)
 {
     CClass* Sub = FScriptableRegistry::Mint("ScriptableTest_GTestDispatch", "CScriptableTest", 1ull << 0);
@@ -88,8 +80,7 @@ TEST(Scriptable, DispatchFallsBackToNativeWhenNoManagedInstanceExists)
     EXPECT_EQ(ManagedInstances::GetLiveCount(), LiveBefore);
 }
 
-// The class default object must never acquire a managed counterpart -- it exists before any script generation
-// and is never a real script instance.
+// The class default object must never acquire a managed counterpart.
 TEST(Scriptable, DefaultObjectNeverGetsAManagedInstance)
 {
     CClass* Sub = FScriptableRegistry::Mint("ScriptableTest_GTestCdo", "CScriptableTest", 1ull << 0);

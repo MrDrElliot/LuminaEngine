@@ -60,7 +60,7 @@ namespace Lumina
         return RuntimeView;
     }
 
-    // Read, not write: a declared Write satisfies it, so this only catches declaring no PhysicsQuery at all.
+    // Read, not write, since a declared Write satisfies it and only a total absence is caught.
     Physics::IPhysicsScene* FSystemContext::GetPhysicsScene() const
     {
         CheckPhysics(false);

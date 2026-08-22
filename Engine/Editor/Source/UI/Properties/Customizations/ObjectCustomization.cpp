@@ -1,4 +1,4 @@
-#include "CoreTypeCustomization.h"
+﻿#include "CoreTypeCustomization.h"
 #include "imgui.h"
 #include "Core/Engine/Engine.h"
 #include "Core/Object/Class.h"
@@ -28,7 +28,7 @@ namespace Lumina
 {
     static constexpr ImVec2 GButtonSize(42, 0);
 
-    EPropertyChangeOp FCObjectPropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property)
+    EPropertyChangeOp FCObjectPropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args)
     {
         FObjectProperty* ObjectProperty = static_cast<FObjectProperty*>(Property->Property);
         

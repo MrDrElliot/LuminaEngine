@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "Containers/Name.h"
 #include "Core/Math/Transform.h"
 #include "Core/Object/ObjectMacros.h"
@@ -16,7 +16,7 @@ namespace Lumina
         GENERATED_BODY()
 
         /** Socket (or skeletal bone) on the parent's mesh to follow. */
-        PROPERTY(Editable, Category = "Attachment", SocketPicker)
+        PROPERTY(Editable, Category = "Attachment", Picker = "Socket")
         FName SocketName;
 
         /** Additional offset applied in socket space. */

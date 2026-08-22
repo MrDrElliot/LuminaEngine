@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "UI/Tools/NodeGraph/Animation/AnimGraphNode.h"
 #include "AnimGraphNode_Curve.generated.h"
@@ -20,7 +20,7 @@ namespace Lumina
         void GenerateBytecode(FAnimationGraphCompiler& Compiler) override;
 
         /** Curve to read; must be authored on one of the graph's clips or written by a Set Curve node. */
-        PROPERTY(Editable, Category = "Curve", CurvePicker)
+        PROPERTY(Editable, Category = "Curve", Picker = "Curve")
         FName CurveName;
 
         CAnimGraphPin* PosePin = nullptr;
@@ -41,7 +41,7 @@ namespace Lumina
         void GenerateBytecode(FAnimationGraphCompiler& Compiler) override;
 
         /** Curve to write. Downstream Get Curve nodes and script reads see this value. */
-        PROPERTY(Editable, Category = "Curve", CurvePicker)
+        PROPERTY(Editable, Category = "Curve", Picker = "Curve")
         FName CurveName;
 
         CAnimGraphPin* PosePin = nullptr;

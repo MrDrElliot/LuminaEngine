@@ -715,6 +715,9 @@ struct FlowAnimation final: Animation
 
     void Flow(Link* link, float markerDistance, float speed, float duration);
 
+    // Called when the link this animation points at is about to be freed.
+    void Detach();
+
     void Draw(ImDrawList* drawList);
 
 private:
@@ -765,6 +768,8 @@ struct FlowAnimationController final : AnimationController
     virtual ~FlowAnimationController();
 
     void Flow(Link* link, FlowDirection direction = FlowDirection::Forward);
+
+    void Discard(Link* link);
 
     virtual void Draw(ImDrawList* drawList) override final;
 
@@ -1363,6 +1368,9 @@ struct EditorContext
     ImVec2 ToScreen(const ImVec2& point) const { return m_Canvas.FromLocal(point); }
 
     void NotifyLinkDeleted(Link* link);
+
+    // Drops every reference the editor holds to an object whose storage is about to be released.
+    void NotifyObjectDestroyed(Object* object);
 
     void Suspend(SuspendFlags flags = SuspendFlags::None);
     void Resume(SuspendFlags flags = SuspendFlags::None);

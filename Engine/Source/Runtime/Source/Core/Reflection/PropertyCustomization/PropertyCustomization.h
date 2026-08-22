@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include "Containers/Function.h"
 #include "Memory/SmartPtr.h"
+#include "Core/Reflection/PropertyCustomization/PropertyEditContext.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 
 namespace Lumina
@@ -98,9 +99,9 @@ namespace Lumina
 
         virtual ~IPropertyTypeCustomization() = default;
 
-        virtual EPropertyChangeOp DrawProperty(const TSharedPtr<FPropertyHandle>& Property) = 0;
+        virtual EPropertyChangeOp DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args) = 0;
         
-        EPropertyChangeOp UpdateAndDraw(const TSharedPtr<FPropertyHandle>& Property, bool bReadOnly);
+        EPropertyChangeOp UpdateAndDraw(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args);
 
         virtual void UpdatePropertyValue(const TSharedPtr<FPropertyHandle>& Property) = 0;
 

@@ -118,7 +118,7 @@ TEST(AnimationStateMachine, PlayOnceStateRestartsOnReEntry)
     }
     EXPECT_NEAR(State.StateSlots[OneShot.ClockSlot], 0.0f, 1e-4f) << "inactive state's clock must not run on";
 
-    // Re-enter: the clip plays from the top rather than resuming at its finished end.
+    // Re-entering plays the clip from the top rather than resuming at its finished end.
     State.Parameters[GoParam] = 0.0f;
     FAnimationGraphVM::BuildTasks(Graph, &Skeleton, 0.05f, State, Tasks, RootMotion);
     EXPECT_NEAR(State.StateSlots[OneShot.ClockSlot], 0.05f, 1e-4f) << "re-entry must restart the clip";

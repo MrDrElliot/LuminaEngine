@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Containers/Vector.h"
 #include "Containers/Name.h"
@@ -20,7 +20,7 @@ namespace Lumina
         FName SocketName;
 
         /** Bone the socket rides on. Skeletal meshes only; ignored on static meshes. */
-        PROPERTY(Editable, Category = "Socket", BonePicker)
+        PROPERTY(Editable, Category = "Socket", Picker = "Bone")
         FName BoneName;
 
         /** Offset from the bone (skeletal) or the mesh origin (static). */

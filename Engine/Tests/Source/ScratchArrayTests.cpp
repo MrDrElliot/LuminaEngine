@@ -81,7 +81,7 @@ TEST(ScratchArray, FillWritesEveryElement)
     }
 }
 
-// The point of the pool: a same-sized reacquire reuses a retired block instead of hitting the allocator.
+// The point of the pool is that a same-sized reacquire reuses a retired block.
 TEST(ScratchArray, ReleasedBlockIsReusedBySameSizeRequest)
 {
     ScratchPool::Trim();

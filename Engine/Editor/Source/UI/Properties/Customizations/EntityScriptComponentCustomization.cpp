@@ -1,4 +1,4 @@
-#include "EntityScriptComponentCustomization.h"
+﻿#include "EntityScriptComponentCustomization.h"
 
 #include "imgui.h"
 #include "Core/Object/Class.h"
@@ -38,7 +38,7 @@ namespace Lumina
         return MakeShared<FEntityScriptComponentCustomization>();
     }
 
-    EPropertyChangeOp FEntityScriptComponentCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property)
+    EPropertyChangeOp FEntityScriptComponentCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args)
     {
         bool bWasChanged = false;
         auto* Component = static_cast<SEntityScriptComponent*>(Property->ContainerPtr);

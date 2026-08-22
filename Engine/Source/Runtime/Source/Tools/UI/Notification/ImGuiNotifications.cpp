@@ -61,8 +61,7 @@ namespace Lumina::ImGuiX::Notifications
             return Message.empty() || memcmp(Message.data(), InMessage.data(), Message.size()) == 0;
         }
 
-        // A repeat of an already visible notification restarts its lifetime instead of stacking a
-        // duplicate. Rewinding to the end of the fade-in keeps it fully opaque, so it doesn't blink.
+        // A repeat restarts lifetime at the end of the fade-in, so the toast never blinks.
         void Refresh()
         {
             CreationTime = glfwGetTime() - DefaultFadeTime;
@@ -165,8 +164,7 @@ namespace Lumina::ImGuiX::Notifications
         EType           Type = EType::None;
     };
 
-    // Hard cap on the live stack. Anything past this evicts the oldest entry, so a flood of
-    // notifications can never grow the stack off the top of the screen.
+    // Hard cap on the live stack; anything past this evicts the oldest entry.
     constexpr static size_t MaxNotifications = 6;
 
     static FMutex NotificationMutex;
@@ -193,8 +191,7 @@ namespace Lumina::ImGuiX::Notifications
         constexpr static float PaddingNotificationY = 10.0f; // Padding Y between each message
         
         const ImGuiViewport* MainViewport = ImGui::GetMainViewport();
-        // Anchor to the work area (excludes the status bar) and lift above any open
-        // footer drawer via GBottomInset so toasts are never covered/clipped.
+        // Anchored to the work area and lifted by GBottomInset so toasts clear an open footer drawer.
         const ImVec2 WorkPos  = MainViewport->WorkPos;
         const ImVec2 WorkSize = MainViewport->WorkSize;
 
@@ -213,8 +210,7 @@ namespace Lumina::ImGuiX::Notifications
             }
         }
 
-        // The stack grows upwards from the bottom-right corner, so it can only ever consume the
-        // work area above the padding/inset. Stop drawing before it would run off the top edge.
+        // Stop drawing before the stack would run off the top edge of the work area.
         const float AvailableHeight = WorkSize.y - PaddingY - GBottomInset;
         if (AvailableHeight <= 0.0f)
         {
@@ -227,8 +223,7 @@ namespace Lumina::ImGuiX::Notifications
         size_t NumHidden = 0;
         size_t NumDrawn = 0;
 
-        // Walk newest to oldest so the newest sits in the corner and older ones stack above it.
-        // Running out of height then drops the oldest, which are the ones worth losing.
+        // Newest to oldest, so the newest sits in the corner and lost height drops the oldest.
         for (size_t i = GNotifications.size(); i-- > 0;)
         {
             const FNotification& Notification = GNotifications[i];

@@ -10,8 +10,7 @@ namespace Lumina
     {
         constexpr float kRowHeight = 15.0f;
 
-        // Styled hover tooltip for a node: an accent title, a dim subtitle, and a wrapped row of
-        // rounded "chip" pills. Falls back to the plain TooltipText when no rich fields are set.
+        // Falls back to the plain TooltipText when no rich fields are set.
         void DrawTreeNodeTooltip(const FTreeNodeDisplay& Display)
         {
             const bool bRich = !Display.TooltipTitle.empty() || !Display.TooltipChips.empty();
@@ -127,16 +126,7 @@ namespace Lumina
             RebuildVisibleList();
         }
 
-        // Resolve the filter into a DENSE row list before the clipper starts.
-        //
-        // ImGuiListClipper requires every index in [DisplayStart, DisplayEnd) to submit a row: it measures
-        // row height from the first one. Filtering with a `continue` inside the loop leaves the first index
-        // submitting nothing, so the cursor never moves and the clipper asserts ("first item hasn't moved
-        // the cursor vertically") -- which is what typing in the outliner search hit.
-        //
-        // Rebuilt per frame rather than folded into RebuildVisibleList, which is cached behind
-        // bVisibleListDirty; the widget cannot know when the caller's filter text changed. It also makes
-        // the scrollbar reflect the FILTERED count instead of leaving a long empty scroll region.
+        // Dense row list, because the clipper measures row height from the first submitted index.
         const TVector<int32>* Rows = &VisibleList;
         if (Context.FilterFunction)
         {
@@ -154,8 +144,7 @@ namespace Lumina
 
         CurrentRows = Rows;
 
-        // Resolve a pending reveal to a row index now the row list is final. Consumed either
-        // way: if the node ended up filtered or collapsed out, the request simply lapses.
+        // Consumed either way, so a filtered or collapsed-out reveal request simply lapses.
         int32 ScrollToRow = -1;
         if (PendingScrollNode >= 0)
         {
@@ -175,7 +164,7 @@ namespace Lumina
 
         bool bAnyRowExpansionChanged = false;
 
-        // Rows sit flush: the height cell padding used to add moves into the node's own frame padding.
+        // Rows sit flush, so the height cell padding used to add moves into the node's frame padding.
         const ImGuiStyle& DrawStyle = ImGui::GetStyle();
         const ImVec2 RowFramePadding(DrawStyle.FramePadding.x, DrawStyle.FramePadding.y + 2.0f);
 
@@ -189,19 +178,13 @@ namespace Lumina
             ImGuiListClipper Clipper;
             Clipper.Begin(static_cast<int>(Rows->size()));
 
-            // The target row is almost always off-screen (that's the point), so force the clipper
-            // to submit it -- SetScrollHereY needs the row's real item rect.
+            // The target row is off-screen by definition, and SetScrollHereY needs its real item rect.
             if (ScrollToRow != -1)
             {
                 Clipper.IncludeItemByIndex(ScrollToRow);
             }
 
-            // A row's own callbacks can restructure the tree mid-iteration: dropping an entity onto
-            // another reparents it right there in DragDropFunction, which frees nodes, recycles their
-            // indices and can reallocate Nodes. Everything this loop depends on -- the row-index list,
-            // node liveness, parent/child links -- is invalidated by that. Stop the frame at the row that
-            // did it and let the next one draw the rebuilt tree; a single half-drawn frame is the frame
-            // the user released the mouse on, so it is not visible.
+            // A row's callbacks can reparent mid-iteration, invalidating rows, nodes and the Nodes vector.
             const uint32 VersionAtStart = StructureVersion;
             bool bStructureChanged = false;
 
@@ -209,8 +192,7 @@ namespace Lumina
             {
                 for (int i = Clipper.DisplayStart; i < Clipper.DisplayEnd; ++i)
                 {
-                    // Already filtered above; every index here submits exactly one row, which is the
-                    // clipper's contract.
+                    // Already filtered above, so every index here submits exactly one row.
                     const int32 NodeIdx = (*Rows)[i];
 
                     ImGui::TableNextRow();
@@ -288,13 +270,12 @@ namespace Lumina
             }
         }
 
-        // Do NOT call ClearSelections: structural rebuild != user intent; clients re-apply bSelected from their own source of truth.
+        // Do NOT call ClearSelections, since a structural rebuild is not user intent.
         ClearTree();
 
         Context.RebuildTreeFunction(*this);
 
-        // Restore expansion top-down. Lazy nodes that were expanded must have their children
-        // rebuilt here, otherwise the arrow shows open over an empty (un-built) subtree.
+        // Top-down, so an expanded lazy node rebuilds its children before the arrow shows open.
         TVector<int32> Stack(Roots.begin(), Roots.end());
         while (!Stack.empty())
         {
@@ -360,9 +341,7 @@ namespace Lumina
         const bool bDeclaresChildren = !Node.Children.empty() || Node.bHasLazyChildren;
         const float kIndentPerDepth = Context.IndentPerDepth;
 
-        // Node/Display/State are references INTO Nodes, and this row's callbacks (drop, context menu) can
-        // create or destroy nodes, which reallocates that vector. Depth is cached so the unindent at the
-        // bottom never has to read back through a reference the callbacks may have invalidated.
+        // Depth is cached because row callbacks can reallocate Nodes and invalidate these references.
         const int32  RowDepth       = Node.Depth;
         const uint32 VersionAtEntry = StructureVersion;
 
@@ -373,8 +352,7 @@ namespace Lumina
             ImGui::Indent(RowDepth * kIndentPerDepth);
         }
 
-        // DrawLinesNone: this is a flattened list (NoTreePushOnOpen + manual indent), so ImGui's built-in
-        // tree lines have no nesting to draw from. The connector elbows are drawn by hand below instead.
+        // DrawLinesNone because this is a flattened list; the connector elbows are drawn by hand below.
         ImGuiTreeNodeFlags Flags = ImGuiTreeNodeFlags_SpanFullWidth | ImGuiTreeNodeFlags_FramePadding | ImGuiTreeNodeFlags_DrawLinesNone
             | ImGuiTreeNodeFlags_AllowOverlap | ImGuiTreeNodeFlags_NoTreePushOnOpen;
 
@@ -385,10 +363,7 @@ namespace Lumina
         else
         {
             ImGui::SetNextItemOpen(State.bExpanded);
-            // OpenOnArrow alone made the arrow the ONLY way to expand, which is a small target. Adding
-            // OpenOnDoubleClick lets a double-click anywhere on the row toggle it; a single click still
-            // selects (and, for the content browser, navigates) rather than collapsing what you just
-            // clicked. Single-click also expands -- see the click handler below.
+            // Double-click toggles anywhere on the row, so a single click can select without collapsing.
             Flags |= ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick;
         }
 
@@ -411,8 +386,7 @@ namespace Lumina
             ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg1, ImGui::GetColorU32(ImVec4(0.22f, 0.52f, 0.22f, 0.40f)));
         }
 
-        // Closes exactly what this row still has open, for the early return taken when a callback
-        // restructures the tree. Mirrors the tail of this function.
+        // Closes what this row still has open when a callback restructures the tree; mirrors the tail.
         auto UnwindRow = [&]()
         {
             if (RowDepth > 0)
@@ -424,7 +398,7 @@ namespace Lumina
 
         const ImVec2 RowCursorScreenPos = ImGui::GetCursorScreenPos();
 
-        // Scoped to the node: left pushed it also blanks selected rows in the row's context menu and tooltip.
+        // Scoped to the node, since pushing it wider also blanks selected rows in menus and tooltips.
         ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
         const bool bNowExpanded = ImGui::TreeNodeEx("##TreeNode", Flags, "%s", Display.DisplayName.c_str());
         ImGui::PopStyleColor();
@@ -474,7 +448,7 @@ namespace Lumina
                     const float VLineX = BaseX + (d - 1) * kIndentPerDepth + Gutter;
                     if (d < MaxDepth)
                     {
-                        // Ancestor gutter: keep the line going only while that ancestor has siblings below.
+                        // Ancestor gutter, drawn only while that ancestor still has siblings below.
                         if (!LastChild[d])
                         {
                             DL->AddLine(ImVec2(VLineX, LineTop), ImVec2(VLineX, LineBot), LineCol, LineThickness);
@@ -482,7 +456,7 @@ namespace Lumina
                     }
                     else
                     {
-                        // This node's own level: drop in from above, elbow across to the arrow, continue down if not last.
+                        // Drop in from above, elbow across to the arrow, continue down when not last.
                         DL->AddLine(ImVec2(VLineX, LineTop), ImVec2(VLineX, MidY), LineCol, LineThickness);
                         DL->AddLine(ImVec2(VLineX, MidY), ImVec2(BaseX + d * kIndentPerDepth + Gutter, MidY), LineCol, LineThickness);
                         if (!LastChild[d])
@@ -568,9 +542,7 @@ namespace Lumina
 
         bool bTreeNodeClicked = ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen();
 
-        // Clicking a row REVEALS its children -- expand only, never collapse. Selecting a folder and
-        // having it fold shut under the cursor is the annoying half of a toggle, and collapsing stays
-        // available on the arrow and on double-click.
+        // Expand only, never collapse; folding a folder shut under the cursor is the annoying half.
         if (bTreeNodeClicked && bDeclaresChildren && !State.bExpanded)
         {
             State.bExpanded = true;
@@ -589,8 +561,7 @@ namespace Lumina
                 Context.HoveredFunction(*this, FTreeNodeID{NodeIdx});
             }
             
-            // Nothing is a shortcut while a text field owns the keyboard. Without this, Delete typed
-            // into an inline rename reaches KeyPressedFunction and deletes the row being renamed.
+            // Nothing is a shortcut while a text field owns the keyboard, or Delete kills the renamed row.
             if (!ImGui::GetIO().WantTextInput)
             {
                 if (ImGui::IsKeyDown(ImGuiKey_F2) && Display.bAllowRenaming)
@@ -632,8 +603,7 @@ namespace Lumina
             ImGui::EndDragDropTarget();
         }
 
-        // Dropping onto a row reparents right here, which frees nodes, recycles their indices and can
-        // reallocate Nodes. Node/Display/State all point into it, so nothing below may run.
+        // A drop reparents here, freeing nodes and reallocating Nodes, so nothing below may run.
         if (StructureVersion != VersionAtEntry)
         {
             UnwindRow();
@@ -652,7 +622,7 @@ namespace Lumina
             }
         }
 
-        // Same again: a context menu entry is just as free to delete the entity this row belongs to.
+        // Same again, since a context menu entry is just as free to delete this row's entity.
         if (StructureVersion != VersionAtEntry)
         {
             UnwindRow();
@@ -784,8 +754,7 @@ namespace Lumina
             return;
         }
 
-        // Index-based throughout: EnsureChildrenBuilt calls back into CreateNode, which can
-        // reallocate Nodes and invalidate any reference held across it.
+        // Index-based because EnsureChildrenBuilt can reallocate Nodes and invalidate a reference.
         if (!Nodes[Handle.Index].bChildrenBuilt && Nodes[Handle.Index].bHasLazyChildren)
         {
             EnsureChildrenBuilt(Handle.Index, Context);
@@ -805,8 +774,7 @@ namespace Lumina
             return;
         }
 
-        // Ancestors are already materialized (the node exists under them), so they only need
-        // expanding for the row to make it into the visible list.
+        // Ancestors already exist, so they only need expanding to reach the visible list.
         for (int32 Cursor = Nodes[Handle.Index].ParentIdx; Cursor >= 0; Cursor = Nodes[Cursor].ParentIdx)
         {
             if (!Nodes[Cursor].State.bExpanded)
@@ -864,7 +832,7 @@ namespace Lumina
             ParentDepth = Nodes[Parent.Index].Depth;
             bShouldBeDisabled = Nodes[Parent.Index].State.bDisabled;
             Nodes[Parent.Index].Children.push_back(Idx);
-            // Do NOT set bChildrenBuilt: callers may mix explicit CreateNode + lazy BuildChildrenFunction; the lazy cb must be idempotent.
+            // Do NOT set bChildrenBuilt, since explicit CreateNode can mix with the lazy build callback.
         }
         else
         {
@@ -1110,7 +1078,7 @@ namespace Lumina
             }
         }
 
-        // Reported through ItemSelectedFunction: the first row replaces the selection, the rest extend it.
+        // Reported through ItemSelectedFunction, where the first row replaces the selection.
         bool bFirst = bShouldClear;
         for (int32 i = AnchorRow; i <= TargetRow; ++i)
         {
@@ -1120,7 +1088,7 @@ namespace Lumina
                 continue;
             }
 
-            // Extending must not re-report an already-selected row: the consumer would toggle it back off.
+            // Extending must not re-report an already-selected row, which the consumer would toggle off.
             const bool bWasSelected = Nodes[NodeIdx].State.bSelected;
             Nodes[NodeIdx].State.bSelected = true;
 

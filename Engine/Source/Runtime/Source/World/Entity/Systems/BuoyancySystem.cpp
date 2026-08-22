@@ -56,8 +56,7 @@ namespace Lumina
         return Y;
     }
 
-    // Outward water-surface normal at (WorldX, WorldZ), from the Gerstner height gradient (central
-    // differences). Lets a floating body tilt with the wave slope rather than only bobbing vertically.
+    // Outward water-surface normal from the Gerstner gradient, so a body tilts with the slope.
     static FVector3 WaterGerstnerNormal(const SWaterComponent& W, float WorldX, float WorldZ, float Time)
     {
         constexpr float Eps = 0.5f;
@@ -129,8 +128,7 @@ namespace Lumina
                     return;
                 }
 
-                // Sample the wave surface under the body; Jolt derives the submerged volume from the body's
-                // real collider against this surface plane (so float depth + self-righting are shape-accurate).
+                // Jolt derives submerged volume from the real collider, so depth and self-righting stay accurate.
                 const float SurfaceY = Plane->SurfaceY + WaterGerstnerHeight(*Plane->W, BodyPos.x, BodyPos.z, Time);
                 const FVector3 SurfacePos(BodyPos.x, SurfaceY, BodyPos.z);
                 const FVector3 SurfaceNormal = WaterGerstnerNormal(*Plane->W, BodyPos.x, BodyPos.z, Time);

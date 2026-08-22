@@ -612,8 +612,10 @@ namespace Lumina
         }
     }
 
-    void FPropertyRow::DrawRow(float Offset, bool bReadOnly)
+    void FPropertyRow::DrawRow(float Offset, const FPropertyDrawArgs& Args)
     {
+        const bool bReadOnly = Args.bReadOnly;
+
         // First, since HasExtraControls() resolves through AllowResize(), which reads this.
         bDrawReadOnly = bReadOnly;
 
@@ -635,7 +637,7 @@ namespace Lumina
 
         ImGui::TableNextColumn();
         ImGui::AlignTextToFramePadding();
-        DrawHeader(Offset);
+        DrawHeader(Offset, Args);
 
         // Hung off the name cell, the row's only stable click target, since the value cell is the widget's.
         const bool bShiftHeld = ImGui::GetIO().KeyShift;
@@ -703,7 +705,7 @@ namespace Lumina
                 }
                 else
                 {
-                    DrawEditor(bReadOnly);
+                    DrawEditor(Args);
                 }
 
                 if (bHasExtras)
@@ -750,12 +752,12 @@ namespace Lumina
         if (bExpanded && !Children.empty() && !bMultipleValues)
         {
             ImGui::BeginDisabled(IsReadOnly());
-            DrawChildren(Offset + ChildIndentStep, bReadOnly);
+            DrawChildren(Offset + ChildIndentStep, Args);
             ImGui::EndDisabled();
         }
     }
 
-    void FPropertyRow::DrawChildren(float ChildOffset, bool bReadOnly)
+    void FPropertyRow::DrawChildren(float ChildOffset, const FPropertyDrawArgs& Args)
     {
         for (const TUniquePtr<FPropertyRow>& Row : Children)
         {
@@ -763,7 +765,7 @@ namespace Lumina
             {
                 continue;
             }
-            Row->DrawRow(ChildOffset, bReadOnly);
+            Row->DrawRow(ChildOffset, Args);
         }
     }
 
@@ -890,7 +892,7 @@ namespace Lumina
         return FStringView(Display.c_str(), Display.size());
     }
 
-    void FPropertyPropertyRow::DrawHeader(float Offset)
+    void FPropertyPropertyRow::DrawHeader(float Offset, const FPropertyDrawArgs& Args)
     {
         ImGui::Dummy(ImVec2(Offset, 0));
         ImGui::SameLine();
@@ -907,13 +909,13 @@ namespace Lumina
         DrawPropertyTooltip(PropertyHandle->Property);
     }
 
-    void FPropertyPropertyRow::DrawEditor(bool bReadOnly)
+    void FPropertyPropertyRow::DrawEditor(const FPropertyDrawArgs& Args)
     {
         ImGui::BeginDisabled(IsReadOnly());
 
         if (Customization)
         {
-            ChangeOp = Customization->UpdateAndDraw(PropertyHandle, bReadOnly);
+            ChangeOp = Customization->UpdateAndDraw(PropertyHandle, Args);
         }
         else
         {
@@ -1041,7 +1043,7 @@ namespace Lumina
         PendingMutations.push_back(Move(Mutation));
     }
 
-    void FArrayPropertyRow::DrawHeader(float Offset)
+    void FArrayPropertyRow::DrawHeader(float Offset, const FPropertyDrawArgs& Args)
     {
         ImGui::Dummy(ImVec2(Offset, 0));
         ImGui::SameLine();
@@ -1059,7 +1061,7 @@ namespace Lumina
         DrawPropertyTooltip(ArrayProperty);
     }
 
-    void FArrayPropertyRow::DrawEditor(bool bReadOnly)
+    void FArrayPropertyRow::DrawEditor(const FPropertyDrawArgs& Args)
     {
         const size_t ElementCount = ArrayProperty->GetNum(GetPropertyHandle()->GetValuePtr());
         ImGui::TextColored(EditorColors::TextMuted(), "%llu Elements", static_cast<unsigned long long>(ElementCount));
@@ -1086,7 +1088,7 @@ namespace Lumina
         return IsFixedHeightPropertyType(Inner->GetType());
     }
 
-    void FArrayPropertyRow::DrawChildren(float ChildOffset, bool bReadOnly)
+    void FArrayPropertyRow::DrawChildren(float ChildOffset, const FPropertyDrawArgs& Args)
     {
         const int ChildCount = static_cast<int>(Children.size());
         if (ChildCount == 0)
@@ -1102,7 +1104,7 @@ namespace Lumina
             {
                 for (int i = Clipper.DisplayStart; i < Clipper.DisplayEnd; ++i)
                 {
-                    Children[i]->DrawRow(ChildOffset, bReadOnly);
+                    Children[i]->DrawRow(ChildOffset, Args);
                 }
             }
             return;
@@ -1111,7 +1113,7 @@ namespace Lumina
         const int DisplayCount = bShowAllElements ? ChildCount : Math::Min(ChildCount, ComplexArrayDisplayLimit);
         for (int i = 0; i < DisplayCount; ++i)
         {
-            Children[i]->DrawRow(ChildOffset, bReadOnly);
+            Children[i]->DrawRow(ChildOffset, Args);
         }
 
         if (DisplayCount < ChildCount)
@@ -1250,7 +1252,7 @@ namespace Lumina
         PendingMutations.push_back(Move(Mutation));
     }
 
-    void FMapPropertyRow::DrawHeader(float Offset)
+    void FMapPropertyRow::DrawHeader(float Offset, const FPropertyDrawArgs& Args)
     {
         ImGui::Dummy(ImVec2(Offset, 0));
         ImGui::SameLine();
@@ -1268,7 +1270,7 @@ namespace Lumina
         DrawPropertyTooltip(MapProperty);
     }
 
-    void FMapPropertyRow::DrawEditor(bool bReadOnly)
+    void FMapPropertyRow::DrawEditor(const FPropertyDrawArgs& Args)
     {
         const size_t Count = MapProperty->GetNum(GetPropertyHandle()->GetValuePtr());
         ImGui::TextColored(EditorColors::TextMuted(), "%llu Entries", static_cast<unsigned long long>(Count));
@@ -1513,14 +1515,14 @@ namespace Lumina
         KeyChangeOp = EPropertyChangeOp::None;
     }
 
-    void FMapEntryRow::DrawHeader(float Offset)
+    void FMapEntryRow::DrawHeader(float Offset, const FPropertyDrawArgs& Args)
     {
         ImGui::Dummy(ImVec2(Offset, 0));
         ImGui::SameLine();
 
         if (KeyCustomization)
         {
-            KeyChangeOp = KeyCustomization->UpdateAndDraw(KeyHandle, IsReadOnly());
+            KeyChangeOp = KeyCustomization->UpdateAndDraw(KeyHandle, FPropertyDrawArgs{ IsReadOnly(), Args.Context });
         }
         else
         {
@@ -1529,11 +1531,11 @@ namespace Lumina
         }
     }
 
-    void FMapEntryRow::DrawEditor(bool bReadOnly)
+    void FMapEntryRow::DrawEditor(const FPropertyDrawArgs& Args)
     {
         if (ValueRow)
         {
-            ValueRow->DrawEditor(bReadOnly);
+            ValueRow->DrawEditor(Args);
         }
     }
 
@@ -1590,7 +1592,7 @@ namespace Lumina
         ChangeOp = EPropertyChangeOp::None;
     }
 
-    void FStructPropertyRow::DrawHeader(float Offset)
+    void FStructPropertyRow::DrawHeader(float Offset, const FPropertyDrawArgs& Args)
     {
         ImGui::Dummy(ImVec2(Offset, 0));
         ImGui::SameLine();
@@ -1605,7 +1607,7 @@ namespace Lumina
         DrawPropertyTooltip(StructProperty);
     }
 
-    void FStructPropertyRow::DrawEditor(bool bReadOnly)
+    void FStructPropertyRow::DrawEditor(const FPropertyDrawArgs& Args)
     {
         if (!bExpanded)
         {
@@ -1616,11 +1618,11 @@ namespace Lumina
 
         if (Customization)
         {
-            ChangeOp = Customization->UpdateAndDraw(PropertyHandle, bReadOnly);
+            ChangeOp = Customization->UpdateAndDraw(PropertyHandle, Args);
         }
         else if (PropertyTable)
         {
-            PropertyTable->DrawTree(bReadOnly);
+            PropertyTable->DrawTree(Args);
         }
 
         ImGui::EndDisabled();
@@ -1731,7 +1733,7 @@ namespace Lumina
         ChangeOp = EPropertyChangeOp::None;
     }
 
-    void FInstancedStructPropertyRow::DrawHeader(float Offset)
+    void FInstancedStructPropertyRow::DrawHeader(float Offset, const FPropertyDrawArgs& Args)
     {
         ImGui::Dummy(ImVec2(Offset, 0));
         ImGui::SameLine();
@@ -1746,7 +1748,7 @@ namespace Lumina
         DrawPropertyTooltip(InstancedStructProperty);
     }
 
-    void FInstancedStructPropertyRow::DrawEditor(bool bReadOnly)
+    void FInstancedStructPropertyRow::DrawEditor(const FPropertyDrawArgs& Args)
     {
         auto* Instance = static_cast<FInstancedStruct*>(PropertyHandle->GetValuePtr());
         if (Instance == nullptr)
@@ -1755,7 +1757,7 @@ namespace Lumina
         }
 
         // Type picker on the header line; visible whether expanded or not so the type is always changeable.
-        ImGui::BeginDisabled(bReadOnly || IsReadOnly());
+        ImGui::BeginDisabled(Args.bReadOnly || IsReadOnly());
 
         bool bChanged = false;
         CStruct* Current = Instance->GetScriptStruct();
@@ -1777,7 +1779,7 @@ namespace Lumina
         if (bExpanded && PropertyTable && Instance->IsValid())
         {
             ImGui::BeginDisabled(IsReadOnly());
-            PropertyTable->DrawTree(bReadOnly);
+            PropertyTable->DrawTree(Args);
             ImGui::EndDisabled();
         }
     }
@@ -1829,7 +1831,7 @@ namespace Lumina
         ChangeOp = EPropertyChangeOp::None;
     }
 
-    void FOptionalPropertyRow::DrawHeader(float Offset)
+    void FOptionalPropertyRow::DrawHeader(float Offset, const FPropertyDrawArgs& Args)
     {
         ImGui::Dummy(ImVec2(Offset, 0));
         ImGui::SameLine();
@@ -1837,12 +1839,12 @@ namespace Lumina
         DrawPropertyTooltip(OptionalProperty);
     }
 
-    void FOptionalPropertyRow::DrawEditor(bool bReadOnly)
+    void FOptionalPropertyRow::DrawEditor(const FPropertyDrawArgs& Args)
     {
         void* ContainerPtr = GetPropertyHandle()->GetValuePtr();
         bool bEngaged = OptionalProperty->HasValue(ContainerPtr);
 
-        ImGui::BeginDisabled(bReadOnly || IsReadOnly());
+        ImGui::BeginDisabled(Args.bReadOnly || IsReadOnly());
         if (ImGui::Checkbox("##OptionalSet", &bEngaged))
         {
             // Engaging default-constructs the payload, so children rebuild now to keep the UI in sync.
@@ -1948,7 +1950,7 @@ namespace Lumina
         return FStringView(Category.c_str());
     }
 
-    void FCategoryPropertyRow::DrawHeader(float Offset)
+    void FCategoryPropertyRow::DrawHeader(float Offset, const FPropertyDrawArgs& Args)
     {
         // A darker background reads as a section break independent of the row-bg alternation.
         ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, CategoryBgColor());
@@ -2083,6 +2085,14 @@ namespace Lumina
 
     void FPropertyTable::DrawTree(bool bReadOnly)
     {
+        DrawTree(FPropertyDrawArgs{ bReadOnly });
+    }
+
+    void FPropertyTable::DrawTree(const FPropertyDrawArgs& InArgs)
+    {
+        // A table with no context of its own inherits the caller's, which is what nests a struct row.
+        const FPropertyDrawArgs Args{ InArgs.bReadOnly, (Context != nullptr) ? *Context : InArgs.Context };
+
         EnsureTreeBuilt();
 
         if (Customization)
@@ -2092,7 +2102,7 @@ namespace Lumina
                 PropertyHandle = MakeShared<FPropertyHandle>(Object, nullptr);
             }
 
-            const EPropertyChangeOp ChangeOp = Customization->UpdateAndDraw(PropertyHandle, bReadOnly);
+            const EPropertyChangeOp ChangeOp = Customization->UpdateAndDraw(PropertyHandle, Args);
             if (ChangeOp != EPropertyChangeOp::None)
             {
                 const bool bObjectSessionActiveForHooks = bObjectEditSessionActive || (ChangeOp == EPropertyChangeOp::Started);
@@ -2194,7 +2204,7 @@ namespace Lumina
                 Row->UpdateRow();
                 if (Row->PassesFilter())
                 {
-                    Row->DrawRow(0.0f, bReadOnly);
+                    Row->DrawRow(0.0f, Args);
                 }
             }
 

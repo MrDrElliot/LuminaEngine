@@ -839,6 +839,11 @@ namespace Lumina
         }
     }
 
+    uint64 CEdNodeGraph::MakeLinkID(const CEdNodeGraphPin* InputPin, const CEdNodeGraphPin* OutputPin)
+    {
+        return ((uint64)OutputPin->GetPinGUID() << 32) | (uint64)InputPin->GetPinGUID();
+    }
+
     void CEdNodeGraph::DrawGraph()
     {
         LUMINA_PROFILE_SCOPE();
@@ -909,6 +914,24 @@ namespace Lumina
                 }
             }
         }
+
+        THashMap<uint64, uint32> LinkIndexByID;
+        for (uint32 Index = 0; Index < (uint32)Links.size(); ++Index)
+        {
+            LinkIndexByID[MakeLinkID(Links[Index].first, Links[Index].second)] = Index;
+        }
+
+        auto FindLinkIndex = [&LinkIndexByID] (NodeEditor::LinkId LinkID, uint32& OutIndex)
+        {
+            auto Itr = LinkIndexByID.find((uint64)LinkID.Get());
+            if (Itr == LinkIndexByID.end())
+            {
+                return false;
+            }
+
+            OutIndex = Itr->second;
+            return true;
+        };
 
         DrawGraphOverlay(Links);
 
@@ -1366,10 +1389,10 @@ namespace Lumina
         if (LinkSelectedCallback)
         {
             NodeEditor::LinkId SelectedLink;
+            uint32 LinkIndex = 0;
             if (NodeEditor::GetSelectedLinks(&SelectedLink, 1) == 1)
             {
-                const uint64 LinkIndex = SelectedLink.Get() - 1u;
-                if (LinkIndex < Links.size())
+                if (FindLinkIndex(SelectedLink, LinkIndex))
                 {
                     LinkSelectedCallback(Links[LinkIndex].first, Links[LinkIndex].second);
                 }
@@ -1400,10 +1423,9 @@ namespace Lumina
             }
         }
 
-        uint32 LinkID = 1;
         for (auto& [Start, End] : Links)
         {
-            const uint32 ThisLinkID = LinkID++;
+            const uint64 ThisLinkID = MakeLinkID(Start, End);
 
             ImVec4 LinkColor(1.0f, 1.0f, 1.0f, 1.0f);
             float  LinkThickness = 1.0f;
@@ -1421,8 +1443,8 @@ namespace Lumina
         // MousePos is already canvas space outside Suspend(), so ScreenToCanvas would double-transform.
         if (NodeEditor::LinkId DoubleClickedLink = NodeEditor::GetDoubleClickedLink())
         {
-            const uint64 LinkIndex = DoubleClickedLink.Get() - 1u;
-            if (LinkIndex < Links.size() && GetRerouteNodeClass() != nullptr)
+            uint32 LinkIndex = 0;
+            if (FindLinkIndex(DoubleClickedLink, LinkIndex) && GetRerouteNodeClass() != nullptr)
             {
                 CEdNodeGraphPin* SidePinA = Links[LinkIndex].first;
                 CEdNodeGraphPin* SidePinB = Links[LinkIndex].second;
@@ -1602,8 +1624,8 @@ namespace Lumina
             {
                 if (NodeEditor::AcceptDeletedItem())
                 {
-                    uint64 LinkIndex = DeletedLinkId.Get() - 1u;
-                    if (LinkIndex < Links.size())
+                    uint32 LinkIndex = 0;
+                    if (FindLinkIndex(DeletedLinkId, LinkIndex))
                     {
                         const TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>& Pair = Links[LinkIndex];
                         Pair.first->RemoveConnection(Pair.second);

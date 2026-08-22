@@ -128,8 +128,7 @@ namespace Lumina::FShaderCache
             return Path.substr(0, Slash);
         }
 
-        // False when the file itself could not be read; the caller turns that into "do not cache", since
-        // a hash that covers none of the source would never notice an edit.
+        // False when the file could not be read, and the caller turns that into do-not-cache.
         bool GatherSourceHash(FStringView VirtualPath, const TVector<FString>& SearchRoots, THashSet<FString>& Visited, uint64& Hash)
         {
             FString PathStr(VirtualPath.data(), VirtualPath.size());
@@ -168,7 +167,7 @@ namespace Lumina::FShaderCache
 
                 if (Trim.size() > 7 && Trim.substr(0, 7) == "import ")
                 {
-                    // Form: import Foo.Bar.Baz ;
+                    // The import statement form, a keyword followed by a dotted module name.
                     size_t j = 7;
                     while (j < Trim.size() && (Trim[j] == ' ' || Trim[j] == '\t')) ++j;
                     size_t Start = j;
@@ -202,8 +201,7 @@ namespace Lumina::FShaderCache
                 }
             }
 
-            // An include that fails to resolve is not fatal: Slang may still find it, and the worst case
-            // is a hash that misses one file. Only the root file being unreadable disables the cache.
+            // An unresolved include is not fatal, since Slang may still find it and only the root matters.
             return true;
         }
     }

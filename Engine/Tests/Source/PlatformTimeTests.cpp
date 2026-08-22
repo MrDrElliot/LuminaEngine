@@ -84,7 +84,7 @@ namespace LuminaPlatformTimeTests
 
     TEST(PlatformTime, BreaksDownAKnownInstant)
     {
-        // 2001-09-09T01:46:40Z, the moment Unix time hit 1,000,000,000.
+        // The moment Unix time hit 1,000,000,000, in September 2001.
         const int64 Nanoseconds = 1000000000ll * 1000000000ll;
         const PlatformTime::FDateTime Utc = PlatformTime::UtcTime(Nanoseconds);
 

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Animation/TaskSystem/AnimTask.h"
 #include "Containers/HashTable.h"
@@ -6,6 +6,7 @@
 #include "Containers/Name.h"
 #include "Containers/String.h"
 #include "Core/Object/ObjectHandleTyped.h"
+#include "UI/Properties/PropertyEditContexts.h"
 #include "UI/Properties/PropertyTable.h"
 #include "UI/Tools/AssetEditors/AssetEditorTool.h"
 #include "UI/Tools/NodeGraph/EdGraphNode.h"
@@ -163,6 +164,10 @@ namespace Lumina
         // Lazily-built inline property tables for the selected State's outgoing transitions,
         // keyed by transition ptr; cleared when the canvas's transition list changes.
         THashMap<CAnimStateTransition*, TUniquePtr<FPropertyTable>> TransitionTables;
+
+        FPropertyEditContext                    PropertyContext;
+        FSkeletonEditContext                    SkeletonCtx;
+        FAnimGraphEditContext                   AnimGraphCtx;
 
         // Read-only view of the preview entity's live parameter block; rebound when that memory moves.
         TUniquePtr<FPropertyTable>              ParameterTable;

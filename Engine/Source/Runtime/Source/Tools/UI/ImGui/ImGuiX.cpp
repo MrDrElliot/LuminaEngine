@@ -43,7 +43,7 @@ namespace Lumina::ImGuiX
 
         static void DisplayStateCallback(const ImDrawList*, const ImDrawCmd*)
         {
-            // Intentionally empty: the backend intercepts this by identity before it would ever run.
+            // Intentionally empty, since the backend intercepts this by identity before it would run.
         }
 
         ImDrawCallback GetDisplayStateCallback()
@@ -63,8 +63,7 @@ namespace Lumina::ImGuiX
         State.DisplayMode = Detail::GDisplayModeHDR;
         State.Exposure    = std::exp2(ExposureStops);
 
-        // Non-zero size: ImGui copies the payload into the draw list's own buffer, so it stays alive
-        // until the backend records this frame.
+        // A non-zero size makes ImGui copy the payload into the draw list, so it outlives this call.
         DrawList->AddCallback(Detail::GetDisplayStateCallback(), &State, sizeof(State));
     }
 
@@ -91,8 +90,7 @@ namespace Lumina::ImGuiX
         State.bIsArray   = 1;
         State.ArraySlice = Slice;
 
-        // Non-zero size: ImGui copies the payload into the draw list's own buffer, so it stays alive
-        // until the backend records this frame.
+        // A non-zero size makes ImGui copy the payload into the draw list, so it outlives this call.
         DrawList->AddCallback(Detail::GetDisplayStateCallback(), &State, sizeof(State));
     }
 
@@ -103,8 +101,7 @@ namespace Lumina::ImGuiX
             return;
         }
 
-        // Defaults restore the plain Texture2D path; every other ImGui draw depends on that being the
-        // state it finds, so this pair must not be left unbalanced.
+        // Every other ImGui draw depends on the default state, so this pair must not be left unbalanced.
         Detail::FImGuiDisplayState State;
         DrawList->AddCallback(Detail::GetDisplayStateCallback(), &State, sizeof(State));
     }
@@ -255,8 +252,7 @@ namespace Lumina::ImGuiX
 
             const ImU32 finalIconColor = iconColor;
 
-            // Icon-only buttons always center: left-aligning a lone glyph looks ragged
-            // across icons with different advance widths (e.g. the viewport toolbar).
+            // Left-aligning a lone glyph looks ragged across icons with different advance widths.
             if ( shouldCenterContents || labelSize.x <= 0.0f )
             {
                 if ( labelSize.x > 0 )
@@ -341,7 +337,7 @@ namespace Lumina::ImGuiX
             const bool Hovered = ImGui::ItemHoverable(FrameBB, ID, g.LastItemData.ItemFlags);
             bool TempInputActive = TempInputAllowed && ImGui::TempInputIsActive(ID);
 
-            // Activation: click or nav, with Ctrl+Click opening the text-input box (matches ImGui::SliderScalar).
+            // Activation by click or nav, with Ctrl and click opening the text-input box.
             if (!ReadOnly && !TempInputActive)
             {
                 const bool Clicked = Hovered && ImGui::IsMouseClicked(0, ImGuiInputFlags_None, ID);
@@ -373,8 +369,7 @@ namespace Lumina::ImGuiX
                 return ImGui::TempInputScalar(FrameBB, ID, Label, DataType, Value, Format, nullptr, nullptr);
             }
 
-            // Drive value via the stock behavior, but force its usable grab range to match the knob
-            // travel (center inset by KnobRadius) so the cursor tracks the knob exactly.
+            // Forces the usable grab range to match the knob travel, so the cursor tracks the knob exactly.
             bool ValueChanged = false;
             if (!ReadOnly)
             {
@@ -446,7 +441,7 @@ namespace Lumina::ImGuiX
                 DL->AddCircleFilled(KnobCenter, KnobRadius * 1.6f, GlowInner);
             }
 
-            // Knob: drop shadow, body, colored rim, and a top highlight to read as a sphere.
+            // A drop shadow, body, colored rim and top highlight, so the knob reads as a sphere.
             DL->AddCircleFilled(KnobCenter + ImVec2(0.0f, KnobRadius * 0.18f), KnobRadius, IM_COL32(0, 0, 0, 55));
             DL->AddCircleFilled(KnobCenter, KnobRadius, KnobCol);
             DL->AddCircleFilled(KnobCenter + ImVec2(0.0f, KnobRadius * 0.22f), KnobRadius * 0.85f, IM_COL32(0, 0, 0, 22));
@@ -496,9 +491,7 @@ namespace Lumina::ImGuiX
         const ImGuiStyle& Style = ImGui::GetStyle();
         const float ButtonWidth = ImGui::GetFrameHeight();
 
-        // A right MARGIN on top of the item spacing, not just spacing. Sizing the row to fit exactly
-        // leaves the trailing button flush with the panel edge, where it gets clipped -- and
-        // GetContentRegionAvail does not yet account for a scrollbar that appears on this same frame.
+        // GetContentRegionAvail does not yet account for a scrollbar appearing on this same frame.
         const float Margin = Style.FramePadding.x;
         const float Avail  = ImGui::GetContentRegionAvail().x;
 
@@ -589,9 +582,7 @@ namespace Lumina::ImGuiX
             PreviewStr += Preview;
         }
 
-        // Size the dropdown to its widest entry (clamped), so long labels like script paths aren't
-        // truncated to the combo button's width. Only measured while open; ImGui honors a
-        // caller-supplied size constraint instead of forcing the button width onto the popup.
+        // Measured only while open, and ImGui honors a size constraint rather than forcing the button width.
         const ImGuiID PopupId = ImHashStr("##ComboPopup", 0, ComboId);
         if (ImGui::IsPopupOpen(PopupId, ImGuiPopupFlags_None))
         {
@@ -635,13 +626,10 @@ namespace Lumina::ImGuiX
 
             ImGui::Separator();
 
-            // Push the row spacing first so the height math below measures the rows we
-            // actually draw; using the default spacing over-counts and leaves a gap.
+            // Pushed first so the height math measures the rows actually drawn rather than default spacing.
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(Style.ItemSpacing.x, 2.0f));
 
-            // Cap the visible rows; the child scrolls past that. The popup auto-fits this
-            // child exactly, so the combo window itself never grows a scrollbar. Reserve at
-            // least one row so the "No matches" / empty-list message isn't clipped.
+            // Reserves at least one row, so the empty-list message is never clipped.
             const int32 VisibleRows = ImClamp(ItemCount, 1, 12);
             const float ListHeight = VisibleRows * ImGui::GetTextLineHeightWithSpacing() + Style.FramePadding.y * 2.0f;
 
@@ -794,8 +782,7 @@ namespace Lumina::ImGuiX
             }
         }
 
-        // Copied, not pointed at: FName::c_str() hands back a rotating thread-local buffer for a name
-        // with a numeric suffix (CWeapon_2), which the per-item labels below would overwrite.
+        // Copied, since c_str hands back a rotating buffer the per-item labels below would overwrite.
         const FFixedString Preview = InOutClass ? FFixedString(InOutClass->GetName().c_str())
                                                 : FFixedString(bAllowNone ? "None" : "Select a class...");
 
@@ -846,7 +833,7 @@ namespace Lumina::ImGuiX
             }
         }
 
-        // Copied for the same reason ClassCombo copies: FName::c_str() reuses a thread-local buffer.
+        // Copied for the same reason ClassCombo copies, since c_str reuses a thread-local buffer.
         const FFixedString Preview = InOutStruct ? FFixedString(InOutStruct->GetName().c_str())
                                                  : FFixedString(bAllowNone ? "None" : "Select a type...");
 
@@ -1029,7 +1016,7 @@ namespace Lumina::ImGuiX
 				if (is_popup || is_menu) // Popups and menus bypass style.WindowMinSize by default, but we give then a non-zero minimum size to facilitate understanding problematic cases (e.g. empty popups)
 					size_min = ImMin(size_min, ImVec2(4.0f, 4.0f));
 
-				// FIXME-VIEWPORT-WORKAREA: May want to use GetWorkSize() instead of Size depending on the type of windows?
+				// FIXME may want the work size rather than the full size, depending on the window type.
 				ImVec2 avail_size = window->Viewport->Size;
 				if (window->ViewportOwned)
 				{
@@ -1043,8 +1030,7 @@ namespace Lumina::ImGuiX
 				ImVec2 size_auto_fit = ImClamp(size_desired, size_min, ImMax(size_min, { avail_size.x - style.DisplaySafeAreaPadding.x * 2.0f,
 					                                                             avail_size.y - style.DisplaySafeAreaPadding.y * 2.0f }));
 
-				// When the window cannot fit all contents (either because of constraints, either because screen is too small),
-				// we are growing the size on the other axis to compensate for expected scrollbar. FIXME: Might turn bigger than ViewportSize-WindowPadding.
+				// Grows the other axis to compensate for an expected scrollbar. FIXME may exceed the viewport.
 				ImVec2 size_auto_fit_after_constraint = CalcWindowSizeAfterConstraint(window, size_auto_fit);
 				bool will_have_scrollbar_x = (size_auto_fit_after_constraint.x - size_pad.x - 0.0f < size_contents.x && !(window->Flags & ImGuiWindowFlags_NoScrollbar) && (window->Flags & ImGuiWindowFlags_HorizontalScrollbar)) || (window->Flags & ImGuiWindowFlags_AlwaysHorizontalScrollbar);
 				bool will_have_scrollbar_y = (size_auto_fit_after_constraint.y - size_pad.y - decoration_up_height < size_contents.y && !(window->Flags& ImGuiWindowFlags_NoScrollbar)) || (window->Flags & ImGuiWindowFlags_AlwaysVerticalScrollbar);
@@ -1072,7 +1058,7 @@ namespace Lumina::ImGuiX
 
 	    const ImVec2 size_auto_fit = CalcWindowAutoFitSize(Window, Window->ContentSizeIdeal);
 
-		// Handle manual resize: Resize Grips, Borders, Gamepad
+		// Handles manual resize through grips, borders and gamepad.
 		int border_held = -1;
 		[[maybe_unused]] ImU32 resize_grip_col[4] = {};
 		const int resize_grip_count = g.IO.ConfigWindowsResizeFromEdges ? 2 : 1; // Allow resize from lower-left if we have the mouse cursor feedback for it.
@@ -1167,20 +1153,14 @@ namespace Lumina::ImGuiX
 		ImVec2 pos_target(FLT_MAX, FLT_MAX);
 		ImVec2 size_target(FLT_MAX, FLT_MAX);
 
-		// Calculate the range of allowed position for that window (to be movable and visible past safe area padding)
-		// When clamping to stay visible, we will enforce that window->Pos stays inside of visibility_rect.
+		// Clamping to stay visible enforces that the window position stays inside the visibility rect.
 		ImRect viewport_rect(Window->Viewport->GetMainRect());
 		ImRect viewport_work_rect(Window->Viewport->GetWorkRect());
 		ImVec2 visibility_padding = ImMax(style.DisplayWindowPadding, style.DisplaySafeAreaPadding);
 		ImRect visibility_rect({ viewport_work_rect.Min.x + visibility_padding.x, viewport_work_rect.Min.y + visibility_padding.y },
 			{ viewport_work_rect.Max.x - visibility_padding.x, viewport_work_rect.Max.y - visibility_padding.y });
 
-		// Clip mouse interaction rectangles within the viewport rectangle (in practice the narrowing is going to happen most of the time).
-		// - Not narrowing would mostly benefit the situation where OS windows _without_ decoration have a threshold for hovering when outside their limits.
-		//   This is however not the case with current backends under Win32, but a custom borderless window implementation would benefit from it.
-		// - When decoration are enabled we typically benefit from that distance, but then our resize elements would be conflicting with OS resize elements, so we also narrow.
-		// - Note that we are unable to tell if the platform setup allows hovering with a distance threshold (on Win32, decorated window have such threshold).
-		// We only clip interaction so we overwrite window->ClipRect, cannot call PushClipRect() yet as DrawList is not yet setup.
+		// Only interaction is clipped, so the clip rect is overwritten rather than pushed before setup.
 		const bool clip_with_viewport_rect = !(g.IO.BackendFlags & ImGuiBackendFlags_HasMouseHoveredViewport) || (g.IO.MouseHoveredViewport != Window->ViewportId) || !(Window->Viewport->Flags & ImGuiViewportFlags_NoDecoration);
 		if (clip_with_viewport_rect)
 		{
@@ -1227,8 +1207,7 @@ namespace Lumina::ImGuiX
 			}
 			else if (held)
 			{
-				// Resize from any of the four corners
-				// We don't use an incremental MouseDelta but rather compute an absolute target size based on mouse position
+				// An absolute target size from the mouse position, rather than an incremental delta.
 				ImVec2 clamp_min = ImVec2(def.CornerPosN.x == 1.0f ? visibility_rect.Min.x : -FLT_MAX, def.CornerPosN.y == 1.0f ? visibility_rect.Min.y : -FLT_MAX);
 				ImVec2 clamp_max = ImVec2(def.CornerPosN.x == 0.0f ? visibility_rect.Max.x : +FLT_MAX, def.CornerPosN.y == 0.0f ? visibility_rect.Max.y : +FLT_MAX);
 
@@ -1303,9 +1282,7 @@ namespace Lumina::ImGuiX
 
     namespace
     {
-        // Section host: a transparent child pinned at an explicit spot on the bar. Transparent is the point --
-        // ChildBg and MenuBarBg are both distinct from the bar's own background, and painting them is what
-        // drew the visible seams between the title bar's sections.
+        // Transparent is the point, since painting the child background drew the seams between sections.
         bool BeginTitleBarSection(const char* ID, const ImVec2& Position, const ImVec2& Size, bool bMenuBar)
         {
             ImGui::SetCursorPos(Position);
@@ -1314,9 +1291,7 @@ namespace Lumina::ImGuiX
             ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
             ImGui::PushStyleColor(ImGuiCol_MenuBarBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
 
-            // A section's menu bar is grown to the full height of the child so its clip rectangle covers the
-            // whole bar: content taller than a line of text is then free to overhang the text row without
-            // being cut off, and menu popups open flush against the bottom of the bar.
+            // Taller content then overhangs the text row, and menu popups open flush against the bar.
             const ImGuiStyle& Style = ImGui::GetStyle();
             if (bMenuBar)
             {
@@ -1361,17 +1336,14 @@ namespace Lumina::ImGuiX
             return;
         }
 
-        // Sized to fill the section so the buttons read as part of the bar rather than as three widgets
-        // floating on it, and so their hit boxes reach the window edge (Fitts' law, and what the OS does).
+        // Their hit boxes reach the window edge, which is what the OS does and what Fitts' law wants.
         const ImVec2 ButtonSize(UnscaledButtonWidth * GetUIScale(), ImGui::GetContentRegionAvail().y);
 
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 0.0f));
 
-        // Transparent until hovered, then a translucent white wash so the highlight follows whatever the
-        // bar's background is. NOTE: drawn with ImGui::Button rather than ImGuiX::FlatButton -- FlatButton
-        // derives its hover color by scaling its (fully transparent) background, so it never shows any.
+        // Drawn with the stock button, since the flat one scales a transparent background and shows none.
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 1.0f, 1.0f, 0.10f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1.0f, 1.0f, 1.0f, 0.16f));
@@ -1420,8 +1392,7 @@ namespace Lumina::ImGuiX
         const float Padding        = UnscaledSectionPadding * Scale;
         const float ControlsWidth  = GetWindowControlsWidth();
 
-        // Sections are positioned and sized by hand and each spans the full height, so the bar itself
-        // carries no padding of its own.
+        // Sections are positioned by hand and span the full height, so the bar carries no padding.
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
         const bool bBarVisible = ImGui::BeginViewportSideBar("##ApplicationTitleBar", ImGui::GetMainViewport(),
@@ -1438,9 +1409,7 @@ namespace Lumina::ImGuiX
         const ImVec2 BarSize = ImGui::GetWindowSize();
         Rect = FVector4(BarPos.x, BarPos.y, BarSize.x, BarSize.y);
 
-        // Laid out right to left: the window controls pin to the far edge, the info section sits inside
-        // them at its measured width, and the menu section takes everything that is left. Nothing is sized
-        // from a constant, so a long project name is bounded by the window instead of being clipped.
+        // Nothing is sized from a constant, so a long project name is bounded by the window.
         const float ControlsX = Math::Max(0.0f, BarSize.x - ControlsWidth);
 
         const float MaxInfoWidth = Math::Max(0.0f, ControlsX - Padding * 2.0f);
@@ -1450,9 +1419,7 @@ namespace Lumina::ImGuiX
         const float MenuX     = Padding;
         const float MenuWidth = Math::Max(0.0f, InfoX - Padding - MenuX);
 
-        // The row every section draws on, centered in the bar. Applied relative to wherever the section
-        // starts, NOT as an absolute Y: a child with a menu bar reports its content origin BELOW the menu
-        // bar, so an absolute SetCursorPosY would push the menus off the bottom of the bar entirely.
+        // A child with a menu bar reports its origin below it, so an absolute Y would push menus off.
         const float RowOffsetY = ImFloor((BarHeight - GetContentRowHeight()) * 0.5f);
 
         if (MenuSectionDrawFunction && MenuWidth > 0.0f)
@@ -1489,8 +1456,7 @@ namespace Lumina::ImGuiX
         }
         ImGui::EndChild();
 
-        // Anything not covered by a widget is caption, so the whole bar drags. Reporting it this way is
-        // what frees the sections from having to reserve a fixed drag gap between them.
+        // Frees the sections from having to reserve a fixed drag gap between them.
         if (FWindow* MainWindow = Windowing::GetPrimaryWindowHandle())
         {
             const bool bOverBar    = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);

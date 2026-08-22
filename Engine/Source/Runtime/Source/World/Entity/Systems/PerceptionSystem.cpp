@@ -26,8 +26,7 @@ namespace Lumina
 
     void SPerceptionSystem::Startup(const FSystemContext& Context) noexcept
     {
-        // Serial (world init): create the registry-context singleton here so Update -- which runs in parallel
-        // with other systems -- only ever READS the context (a concurrent ctx().emplace corrupts the registry).
+        // Created serially at world init so Update only ever READS the registry context.
         Perception::GetOrCreateState(Context.GetRegistry());
     }
 
@@ -41,8 +40,7 @@ namespace Lumina
         constexpr uint8 DamageBit     = (uint8)EAISenseChannel::Damage;
         constexpr uint8 MomentaryBits = HearingBit | DamageBit; // cleared every tick after firing; only sight is sticky.
 
-        // A perceived/lost event captured during the (state-mutating) diff pass and fired afterward, so a C#
-        // callback that adds/removes components can't invalidate the state we're still walking.
+        // Fired after the diff pass so a callback adding components cannot invalidate the walk.
         struct FPendingEvent
         {
             entt::entity     Perceiver;
@@ -50,8 +48,7 @@ namespace Lumina
             bool             bSensed;
         };
 
-        // Affiliation gate: an empty perceiver filter senses everyone; otherwise the source must carry a tag
-        // the filter matches.
+        // An empty perceiver filter senses everyone; otherwise the source must carry a matching tag.
         bool PassesAffiliation(const FGameplayTagContainer& Filter, const FGameplayTagContainer* SourceTags)
         {
             if (Filter.IsEmpty())
@@ -110,7 +107,7 @@ namespace Lumina
 
             if (Stim.Sense == EAISenseChannel::Damage)
             {
-                // The victim perceives whoever damaged it (affiliation-agnostic: you always notice an attacker).
+                // The victim perceives whoever damaged it, since you always notice an attacker.
                 SPerceptionComponent* Comp = Registry.try_get<SPerceptionComponent>(Stim.Target);
                 if (Comp != nullptr && Comp->bDamageEnabled)
                 {
@@ -119,7 +116,7 @@ namespace Lumina
                 return;
             }
 
-            // Hearing: every in-range perceiver that cares about the instigator's affiliation.
+            // Hearing reaches every in-range perceiver that cares about the instigator's affiliation.
             for (entt::entity E : Perceivers)
             {
                 if (E == Stim.Instigator)
@@ -171,8 +168,7 @@ namespace Lumina
             }
             TScriptDelegate<SPerceptionEvent>& Delegate = bSensed ? Comp->OnTargetPerceived : Comp->OnTargetLost;
 
-            // Scripts receive perception independently of the delegate: an entity script overriding
-            // OnTargetPerceived must fire whether or not anything bound the component's delegate.
+            // A script override must fire whether or not anything bound the component's delegate.
             FEntityRegistry& Registry = Context.GetRegistry();
             const bool bHasScripts = Registry.all_of<SEntityScriptComponent>(Perceiver);
             if (!Delegate.IsBound() && !bHasScripts)
@@ -340,9 +336,7 @@ namespace Lumina
                     return;
                 }
 
-                // Hysteresis: a target already in sight is RETAINED by the larger lose-sight radius + line of
-                // sight, regardless of angle. The FOV cone only gates fresh ACQUISITION -- otherwise a moving
-                // target that steps to the perceiver's side (faster than it can turn) is dropped every scan.
+                // The FOV cone gates fresh acquisition only, or a target stepping aside is dropped each scan.
                 const int32 Existing = Comp.Find(Src.Entity);
                 const bool bAlreadySighted = (Existing >= 0 && WasSighted[Existing]);
                 const float Range = bAlreadySighted ? Comp.LoseSightRadius : Comp.SightRadius;
