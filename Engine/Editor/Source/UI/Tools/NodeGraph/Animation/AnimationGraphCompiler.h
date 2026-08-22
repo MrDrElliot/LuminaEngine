@@ -115,6 +115,19 @@ namespace Lumina
         // written on separate nodes address the same buffer.
         uint16 AddPoseSnapshot(const FName& Name);
 
+        void SetCachedPose(const FName& Name, uint16 PoseRegister) { CachedPoses[Name] = PoseRegister; }
+
+        bool TryGetCachedPose(const FName& Name, uint16& OutRegister) const
+        {
+            auto It = CachedPoses.find(Name);
+            if (It == CachedPoses.end())
+            {
+                return false;
+            }
+            OutRegister = It->second;
+            return true;
+        }
+
         uint16 EmitSavePoseSnapshot(uint16 SrcPoseReg, uint16 RequestReg, uint16 SnapshotIndex);
         uint16 EmitLoadPoseSnapshot(uint16 SnapshotIndex);
 
@@ -267,6 +280,7 @@ namespace Lumina
         TVector<TObjectPtr<CObject>>            ObjectConstants;
         TVector<FAnimGraphBoneMask>             BoneMasks;
         THashMap<FName, int32>                  BoneMaskNameToIndex;
+        THashMap<FName, uint16>                 CachedPoses;
         TVector<FAnimGraphStateMachine>         StateMachines;
         TVector<EdNodeGraph::FError>            Errors;
         TVector<EdNodeGraph::FError>            Warnings;
