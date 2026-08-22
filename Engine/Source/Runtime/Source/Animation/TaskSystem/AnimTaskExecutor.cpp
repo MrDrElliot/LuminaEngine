@@ -261,7 +261,7 @@ namespace Lumina
         }
 
         // The extrapolated source cross-fades into Target, so a fast source keeps moving through the seam.
-        void DeadBlendApply(const FAnimDeadBlend& Dead, const FPose& Target, FPose& Out, float T, int32 NumActiveBones)
+        void DeadBlendApply(const FAnimDeadBlend& Dead, const FPose& Target, FPose& Out, float T)
         {
             LUMINA_PROFILE_SCOPE();
 
@@ -651,7 +651,7 @@ namespace Lumina
 
                 if (Dead != nullptr && Task.bApply)
                 {
-                    DeadBlendApply(*Dead, Pool.Get(BufA), Pool.Get(Dst), Task.Time, ActiveBones);
+                    DeadBlendApply(*Dead, Pool.Get(BufA), Pool.Get(Dst), Task.Time);
                 }
                 else if (Dst != BufA)
                 {
