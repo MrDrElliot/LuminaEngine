@@ -26,6 +26,7 @@
 #include "UI/Tools/NodeGraph/Animation/AnimStateMachineGraph.h"
 #include "UI/Tools/NodeGraph/Animation/AnimStateTransition.h"
 #include "UI/Tools/NodeGraph/Animation/Nodes/AnimGraphNode_State.h"
+#include "UI/Tools/NodeGraph/Animation/Nodes/AnimGraphNode_StateRouting.h"
 #include "World/WorldManager.h"
 #include "World/Entity/Components/EnvironmentComponent.h"
 #include "World/Entity/Components/SkyLightComponent.h"
@@ -347,11 +348,16 @@ namespace Lumina
             CEdNodeGraphPin* InPin  = PinA->bInputPin ? PinA : PinB;
             CEdNodeGraphPin* OutPin = PinA->bInputPin ? PinB : PinA;
 
-            CAnimGraphNode_State* ToState = Cast<CAnimGraphNode_State>(InPin->GetOwningNode());
+            CEdGraphNode* ToNode   = InPin->GetOwningNode();
             CEdGraphNode* FromNode = OutPin->GetOwningNode();
+
+            const bool bTransitionTarget = ToNode != nullptr &&
+                (ToNode->IsA<CAnimGraphNode_State>() || ToNode->IsA<CAnimGraphNode_StateConduit>());
             const bool bTransitionSource = FromNode != nullptr &&
-                (FromNode->IsA<CAnimGraphNode_State>() || FromNode->IsA<CAnimGraphNode_StateAny>());
-            if (ToState == nullptr || !bTransitionSource)
+                (FromNode->IsA<CAnimGraphNode_State>() || FromNode->IsA<CAnimGraphNode_StateAny>() ||
+                 FromNode->IsA<CAnimGraphNode_StateAlias>() || FromNode->IsA<CAnimGraphNode_StateConduit>());
+
+            if (!bTransitionTarget || !bTransitionSource)
             {
                 // Not a transition wire, such as the Entry link, so leave it as-is.
                 return;
@@ -365,7 +371,7 @@ namespace Lumina
                 return;
             }
 
-            CAnimStateTransition* Transition = SMGraph->FindTransition(FromNode->GetNodeID(), ToState->GetNodeID());
+            CAnimStateTransition* Transition = SMGraph->FindTransition(FromNode->GetNodeID(), ToNode->GetNodeID());
             if (Transition != nullptr && Transition != SelectedTransition)
             {
                 SelectedTransition = Transition;
