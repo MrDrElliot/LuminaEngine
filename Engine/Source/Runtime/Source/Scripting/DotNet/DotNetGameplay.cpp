@@ -92,7 +92,7 @@ LUMINA_DOTNET_EXPORT(void*, AddEntityScript)(uint64 World, uint32 Entity, const 
     {
         return nullptr;
     }
-    CClass* ScriptClass = FindObject<CClass>(FName(ClassName, (size_t)ClassLen));
+    CClass* ScriptClass = FindObject<CClass>(FName(FStringView(ClassName, (size_t)ClassLen)));
     return EntityScripts::Attach(ECS::GetWorldRegistry(*W), AsEntity(Entity), ScriptClass);
 }
 
@@ -104,7 +104,7 @@ LUMINA_DOTNET_EXPORT(void*, FindEntityScript)(uint64 World, uint32 Entity, const
     {
         return nullptr;
     }
-    CClass* ScriptClass = FindObject<CClass>(FName(ClassName, (size_t)ClassLen));
+    CClass* ScriptClass = FindObject<CClass>(FName(FStringView(ClassName, (size_t)ClassLen)));
     return EntityScripts::Find(ECS::GetWorldRegistry(*W), AsEntity(Entity), ScriptClass);
 }
 
@@ -117,7 +117,7 @@ LUMINA_DOTNET_EXPORT(int32, FindEntityScripts)(uint64 World, uint32 Entity, cons
     {
         return 0;
     }
-    CClass* ScriptClass = FindObject<CClass>(FName(ClassName, (size_t)ClassLen));
+    CClass* ScriptClass = FindObject<CClass>(FName(FStringView(ClassName, (size_t)ClassLen)));
 
     TVector<CEntityScript*> Found;
     EntityScripts::FindAll(ECS::GetWorldRegistry(*W), AsEntity(Entity), ScriptClass, Found);

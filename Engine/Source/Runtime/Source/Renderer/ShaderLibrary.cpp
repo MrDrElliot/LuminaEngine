@@ -10,7 +10,7 @@ namespace Lumina
 {
     static uint64 EntryHash(const FName& Path, TSpan<const FString> Defines)
     {
-        uint64 Hash = Path.GetID();
+        uint64 Hash = Path.Hash();
         for (const FString& Define : Defines)
         {
             Hash::HashCombine(Hash, Define);

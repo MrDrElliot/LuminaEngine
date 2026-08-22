@@ -228,7 +228,7 @@ namespace Lumina
             Hash::HashCombine(Seed, Salt);
             for (const FCustomSlangPin& Pin : Pins)
             {
-                Hash::HashCombine(Seed, Pin.Name.GetID());
+                Hash::HashCombine(Seed, Pin.Name.Hash());
                 Hash::HashCombine(Seed, (uint64)Pin.Type);
             }
         };

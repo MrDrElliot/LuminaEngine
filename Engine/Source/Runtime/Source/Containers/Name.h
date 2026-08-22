@@ -48,7 +48,7 @@ namespace Lumina
 
         bool IsNone() const { return ID == 0 && Number == kNoNumber; }
 
-        /** Case-folded hash of the base string, ignoring any numeric suffix (so "A" and "a" share it). */
+        /** Case-folded hash of the base string, ignoring any numeric suffix, so it is not an identity. */
         uint64 GetID() const { return ID; }
         uint64 GetComparisonID() const { return ID; }
 
