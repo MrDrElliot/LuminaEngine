@@ -203,6 +203,106 @@ namespace Lumina
                 }
             }
         }
+
+        // Seam velocities for dead blending, from the same 2-frame history inertialization uses.
+        void DeadBlendCapture(FAnimDeadBlend& Dead, const FPose& Source, const FPose& SourcePrev,
+                              const FPose& Target, float Dt, bool bHasVel, int32 NumActiveBones)
+        {
+            LUMINA_PROFILE_SCOPE();
+
+            const int32 N = (NumActiveBones >= 0 && NumActiveBones < Target.GetNumBones())
+                ? NumActiveBones
+                : Target.GetNumBones();
+
+            const bool bSrc = Source.GetNumBones() >= N;
+            Dead.Source = bSrc ? Source : Target;
+
+            Dead.RotVel.assign(N, FVector3(0.0f));
+            Dead.TransVel.assign(N, FVector3(0.0f));
+            Dead.ScaleVel.assign(N, FVector3(0.0f));
+
+            const bool bVel = bHasVel && Dt > 1e-6f && bSrc && SourcePrev.GetNumBones() >= N;
+            if (!bVel)
+            {
+                return;
+            }
+
+            const float InvDt = 1.0f / Dt;
+            for (int32 i = 0; i < N; ++i)
+            {
+                // Rotation velocity as a scaled axis, from the shortest arc between the last two frames.
+                FQuat Delta = Math::Normalize(Source.Rotations[i] * Math::Inverse(SourcePrev.Rotations[i]));
+                if (Delta.w < 0.0f)
+                {
+                    Delta = Delta * -1.0f;
+                }
+                const FVector3 V(Delta.x, Delta.y, Delta.z);
+                const float Len = Math::Length(V);
+                if (Len > 1e-5f)
+                {
+                    const float Angle = 2.0f * Math::Atan2(Len, Delta.w);
+                    Dead.RotVel[i] = V * (Angle * InvDt / Len);
+                }
+
+                Dead.TransVel[i] = (Source.Translations[i] - SourcePrev.Translations[i]) * InvDt;
+                Dead.ScaleVel[i] = (Source.Scales[i] - SourcePrev.Scales[i]) * InvDt;
+            }
+        }
+
+        // Integral of an exponentially decaying velocity, which is how far the source coasts by time T.
+        FORCEINLINE float DecayedTravel(float T, float HalfLife)
+        {
+            if (HalfLife <= 1e-5f)
+            {
+                return 0.0f;
+            }
+            const float Tau = HalfLife / 0.6931472f;
+            return Tau * (1.0f - Math::Exp(-T / Tau));
+        }
+
+        // The extrapolated source cross-fades into Target, so a fast source keeps moving through the seam.
+        void DeadBlendApply(const FAnimDeadBlend& Dead, const FPose& Target, FPose& Out, float T, int32 NumActiveBones)
+        {
+            LUMINA_PROFILE_SCOPE();
+
+            const int32 NumBones = Target.GetNumBones();
+            Out.SetNumBones(NumBones);
+
+            const int32 NumChannels = (int32)Dead.RotVel.size();
+            const int32 N = Math::Min(NumBones, Math::Min(NumChannels, Dead.Source.GetNumBones()));
+
+            const float U = (Dead.Duration > 1e-5f) ? Math::Clamp(T / Dead.Duration, 0.0f, 1.0f) : 1.0f;
+
+            // Smoothstep, so the hand-off starts and ends without a velocity step of its own.
+            const float Alpha = U * U * (3.0f - 2.0f * U);
+            const float Travel = DecayedTravel(T, Dead.HalfLife);
+
+            for (int32 i = 0; i < N; ++i)
+            {
+                const FVector3 RotV = Dead.RotVel[i];
+                const float Speed = Math::Length(RotV);
+
+                FQuat SourceRot = Dead.Source.Rotations[i];
+                if (Speed > 1e-5f)
+                {
+                    SourceRot = Math::Normalize(Math::AngleAxis(Speed * Travel, RotV * (1.0f / Speed)) * SourceRot);
+                }
+
+                const FVector3 SourceTrans = Dead.Source.Translations[i] + Dead.TransVel[i] * Travel;
+                const FVector3 SourceScale = Dead.Source.Scales[i] + Dead.ScaleVel[i] * Travel;
+
+                Out.Rotations[i]    = Math::Slerp(SourceRot, Target.Rotations[i], Alpha);
+                Out.Translations[i] = SourceTrans + (Target.Translations[i] - SourceTrans) * Alpha;
+                Out.Scales[i]       = SourceScale + (Target.Scales[i] - SourceScale) * Alpha;
+            }
+
+            for (int32 i = N; i < NumBones; ++i)
+            {
+                Out.Rotations[i]    = Target.Rotations[i];
+                Out.Translations[i] = Target.Translations[i];
+                Out.Scales[i]       = Target.Scales[i];
+            }
+        }
     }
 
     namespace
@@ -491,9 +591,9 @@ namespace Lumina
                 break;
             }
 
-            case EAnimTaskType::StateMachineOutput:
+            case EAnimTaskType::Inertialize:
             {
-                LUMINA_PROFILE_SECTION("Anim StateMachine");
+                LUMINA_PROFILE_SECTION("Anim Inertialize");
                 if (BufA == FAnimTask::NoTask)
                 {
                     Dst = Pool.Acquire();
@@ -522,10 +622,48 @@ namespace Lumina
                 // 2-frame output history for the next seam's velocity estimate.
                 if (Inert != nullptr)
                 {
-                    LUMINA_PROFILE_SECTION("Anim SM History");
+                    LUMINA_PROFILE_SECTION("Anim Inert History");
                     std::swap(Inert->PrevPrevOutput, Inert->PrevOutput);
                     Inert->PrevOutput   = Pool.Get(Dst);
                     Inert->HistoryCount = Math::Min(Inert->HistoryCount + 1, 2);
+                }
+                break;
+            }
+
+            case EAnimTaskType::DeadBlend:
+            {
+                LUMINA_PROFILE_SECTION("Anim DeadBlend");
+                if (BufA == FAnimTask::NoTask)
+                {
+                    Dst = Pool.Acquire();
+                    Pool.Get(Dst).ResetToBindPose(Skeleton);
+                    break;
+                }
+
+                Dst = bStealA ? BufA : Pool.Acquire();
+                FAnimDeadBlend* Dead = Task.Dead;
+
+                if (Dead != nullptr && Task.bCapture)
+                {
+                    DeadBlendCapture(*Dead, Dead->PrevOutput, Dead->PrevPrevOutput, Pool.Get(BufA),
+                                     Task.DeltaTime, Dead->HistoryCount >= 2, ActiveBones);
+                }
+
+                if (Dead != nullptr && Task.bApply)
+                {
+                    DeadBlendApply(*Dead, Pool.Get(BufA), Pool.Get(Dst), Task.Time, ActiveBones);
+                }
+                else if (Dst != BufA)
+                {
+                    Pool.Get(Dst) = Pool.Get(BufA);
+                }
+
+                if (Dead != nullptr)
+                {
+                    LUMINA_PROFILE_SECTION("Anim DeadBlend History");
+                    std::swap(Dead->PrevPrevOutput, Dead->PrevOutput);
+                    Dead->PrevOutput   = Pool.Get(Dst);
+                    Dead->HistoryCount = Math::Min(Dead->HistoryCount + 1, 2);
                 }
                 break;
             }

@@ -72,6 +72,9 @@ enum class ELuminaEngineVersion : uint32
 	// Clock ranges index a serialized ClockSlots list, which excludes a nested machine's bookkeeping.
 	ANIM_GRAPH_STATE_CLOCK_LIST,
 
+	// CAnimationGraph serializes the smoothing record counts its Inertialization / Dead Blending nodes use.
+	ANIM_GRAPH_INERTIALIZATION_NODES,
+
 	AUTOMATIC_VERSION_PLUS_ONE,
 	AUTOMATIC_VERSION = AUTOMATIC_VERSION_PLUS_ONE - 1
 };

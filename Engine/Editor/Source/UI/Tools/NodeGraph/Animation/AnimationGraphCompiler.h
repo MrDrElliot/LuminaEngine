@@ -66,6 +66,13 @@ namespace Lumina
         uint16 AllocObjectReg() { return NextObjectReg++; }
         uint16 AllocStateSlot() { return NextStateSlot++; }
 
+        // Persistent smoothing records, one per node rather than per register.
+        uint16 AllocInertializerNode() { return NextInertializerNode++; }
+        uint16 AllocDeadBlendNode()    { return NextDeadBlendNode++; }
+
+        uint16 GetInertializerNodeCount() const { return NextInertializerNode; }
+        uint16 GetDeadBlendNodeCount() const { return NextDeadBlendNode; }
+
         // Only clocks may be wound back while inactive; zeroing a nested machine's bookkeeping thrashes it.
         uint16 AllocClockSlot()
         {
@@ -113,6 +120,10 @@ namespace Lumina
         uint16 EmitMakeAdditive(uint16 SrcPoseReg, uint16 BasePoseReg = kAnimNoPoseRegister,
                                 EAdditiveSpace Space = EAdditiveSpace::LocalSpace);
         uint16 EmitApplyAdditive(uint16 BasePoseReg, uint16 DeltaPoseReg, uint16 AlphaReg);
+
+        // Smooths the seam when SrcPoseReg jumps, on the rising edge of RequestReg.
+        uint16 EmitInertialize(uint16 SrcPoseReg, uint16 RequestReg, uint16 DurationReg, uint16 RecordIndex);
+        uint16 EmitDeadBlend(uint16 SrcPoseReg, uint16 RequestReg, uint16 DurationReg, uint16 HalfLifeReg, uint16 RecordIndex);
 
         // Registers a compiled state machine and emits its eval opcode. The machine's
         // StatePoseRegisters / *Slot fields must be filled by the caller. Returns the resolved-pose register.
@@ -235,6 +246,8 @@ namespace Lumina
         uint16 NextPoseReg   = 0;
         uint16 NextObjectReg = 0;
         uint16 NextStateSlot = 0;
+        uint16 NextInertializerNode = 0;
+        uint16 NextDeadBlendNode = 0;
 
         TVector<uint16> ClockSlots;
 

@@ -75,6 +75,11 @@ namespace Lumina
         {
             Ar << NumObjectRegisters;
         }
+        if (Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::ANIM_GRAPH_INERTIALIZATION_NODES)
+        {
+            Ar << NumInertializerNodes;
+            Ar << NumDeadBlendNodes;
+        }
 
         ResolveTransitionParameters();
         LinkParameters();

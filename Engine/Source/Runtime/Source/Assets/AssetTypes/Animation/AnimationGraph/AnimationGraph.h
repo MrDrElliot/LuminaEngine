@@ -399,6 +399,10 @@ namespace Lumina
         /** Sync groups referenced by AdvanceClock opcodes; members share one normalized phase. */
         uint16 NumSyncGroups = 0;
 
+        /** Per-instance smoothing records the Inertialization and Dead Blending nodes address. */
+        uint16 NumInertializerNodes = 0;
+        uint16 NumDeadBlendNodes = 0;
+
         /** Montage slot names referenced by EvalSlot opcodes, indexed by slot index. */
         TVector<FName> SlotNames;
 

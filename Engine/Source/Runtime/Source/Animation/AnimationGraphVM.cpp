@@ -158,6 +158,8 @@ namespace Lumina
 
         // One inertialization record per state machine (transition smoothing; rebuilt each init).
         State.Inertializers.assign(Graph->StateMachines.size(), FAnimInertializer());
+        State.NodeInertializers.assign(Graph->NumInertializerNodes, FAnimInertializer());
+        State.DeadBlends.assign(Graph->NumDeadBlendNodes, FAnimDeadBlend());
 
         State.SyncGroups.assign(Graph->NumSyncGroups, FAnimSyncGroup());
         State.CurveValues.assign(Graph->CurveNames.size(), 0.0f);
@@ -495,7 +497,8 @@ namespace Lumina
         };
 
         // The same quintic decay with zero initial velocity, or the curves step at the transition.
-        const auto InertializeCurves = [&](FAnimInertializer& Inert, uint16 Dst, bool bStart)
+        // Generic over the record, since inertialization and dead blending smooth curves identically.
+        const auto InertializeCurves = [&](auto& Inert, uint16 Dst, bool bStart)
         {
             float* D = CurvesOf(Dst);
             if (D == nullptr)
@@ -1038,6 +1041,121 @@ namespace Lumina
                 break;
             }
 
+            case EAnimOp::Inertialize:
+            {
+                const uint16 Src      = Reader.Read<uint16>();
+                const uint16 Request  = Reader.Read<uint16>();
+                const uint16 Duration = Reader.Read<uint16>();
+                const uint16 Index    = Reader.Read<uint16>();
+                const uint16 Dst      = Reader.Read<uint16>();
+
+                if (Index >= State.NodeInertializers.size())
+                {
+                    SetPoseTask(Dst, PoseTaskFor(Src));
+                    SetPoseTags(Dst, DeltaOf(Src), EventsOf(Src));
+                    SetPoseSync(Dst, SyncOf(Src));
+                    CopyCurves(Dst, Src);
+                    break;
+                }
+
+                FAnimInertializer& Inert = State.NodeInertializers[Index];
+
+                // Rising edge, so holding the request high smooths once instead of every frame.
+                const float RequestValue = ReadScalar(Request, 0.0f);
+                const bool bStart = RequestValue > 0.5f && Inert.PrevRequest <= 0.5f;
+                Inert.PrevRequest = RequestValue;
+
+                if (bStart)
+                {
+                    Inert.Duration = Math::Max(ReadScalar(Duration, 0.2f), 0.0f);
+                    Inert.bActive  = Inert.Duration > 1e-5f;
+                    Inert.Elapsed  = 0.0f;
+                }
+
+                FAnimTask Task;
+                Task.Type      = EAnimTaskType::Inertialize;
+                Task.DepA      = PoseTaskFor(Src);
+                Task.Inert     = &Inert;
+                Task.bCapture  = bStart;
+                Task.bApply    = Inert.bActive;
+                Task.Time      = Inert.Elapsed;
+                Task.DeltaTime = DeltaTime;
+                SetPoseTask(Dst, OutTasks.Add(Task));
+
+                SetPoseTags(Dst, DeltaOf(Src), EventsOf(Src));
+                SetPoseSync(Dst, SyncOf(Src));
+                CopyCurves(Dst, Src);
+                InertializeCurves(Inert, Dst, bStart);
+
+                if (Inert.bActive)
+                {
+                    Inert.Elapsed += DeltaTime;
+                    if (Inert.Elapsed >= Inert.Duration)
+                    {
+                        Inert.bActive = false;
+                    }
+                }
+                break;
+            }
+
+            case EAnimOp::DeadBlend:
+            {
+                const uint16 Src      = Reader.Read<uint16>();
+                const uint16 Request  = Reader.Read<uint16>();
+                const uint16 Duration = Reader.Read<uint16>();
+                const uint16 HalfLife = Reader.Read<uint16>();
+                const uint16 Index    = Reader.Read<uint16>();
+                const uint16 Dst      = Reader.Read<uint16>();
+
+                if (Index >= State.DeadBlends.size())
+                {
+                    SetPoseTask(Dst, PoseTaskFor(Src));
+                    SetPoseTags(Dst, DeltaOf(Src), EventsOf(Src));
+                    SetPoseSync(Dst, SyncOf(Src));
+                    CopyCurves(Dst, Src);
+                    break;
+                }
+
+                FAnimDeadBlend& Dead = State.DeadBlends[Index];
+
+                const float RequestValue = ReadScalar(Request, 0.0f);
+                const bool bStart = RequestValue > 0.5f && Dead.PrevRequest <= 0.5f;
+                Dead.PrevRequest = RequestValue;
+
+                if (bStart)
+                {
+                    Dead.Duration = Math::Max(ReadScalar(Duration, 0.2f), 0.0f);
+                    Dead.HalfLife = Math::Max(ReadScalar(HalfLife, 0.1f), 0.0f);
+                    Dead.bActive  = Dead.Duration > 1e-5f;
+                    Dead.Elapsed  = 0.0f;
+                }
+
+                FAnimTask Task;
+                Task.Type      = EAnimTaskType::DeadBlend;
+                Task.DepA      = PoseTaskFor(Src);
+                Task.Dead      = &Dead;
+                Task.bCapture  = bStart;
+                Task.bApply    = Dead.bActive;
+                Task.Time      = Dead.Elapsed;
+                Task.DeltaTime = DeltaTime;
+                SetPoseTask(Dst, OutTasks.Add(Task));
+
+                SetPoseTags(Dst, DeltaOf(Src), EventsOf(Src));
+                SetPoseSync(Dst, SyncOf(Src));
+                CopyCurves(Dst, Src);
+                InertializeCurves(Dead, Dst, bStart);
+
+                if (Dead.bActive)
+                {
+                    Dead.Elapsed += DeltaTime;
+                    if (Dead.Elapsed >= Dead.Duration)
+                    {
+                        Dead.bActive = false;
+                    }
+                }
+                break;
+            }
+
             case EAnimOp::ApplyAdditive:
             {
                 const uint16 Base  = Reader.Read<uint16>();
@@ -1147,7 +1265,7 @@ namespace Lumina
                     }
 
                     FAnimTask Task;
-                    Task.Type      = EAnimTaskType::StateMachineOutput;
+                    Task.Type      = EAnimTaskType::Inertialize;
                     Task.DepA      = PoseTaskFor(CurReg);
                     Task.Inert     = &Inert;
                     Task.bCapture  = bStart;

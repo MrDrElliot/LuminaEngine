@@ -58,7 +58,8 @@ namespace Lumina
                 case EAnimTaskType::BlendMasked:        return "Layered Blend";
                 case EAnimTaskType::MakeAdditive:       return "Make Additive";
                 case EAnimTaskType::ApplyAdditive:      return "Apply Additive";
-                case EAnimTaskType::StateMachineOutput: return "State Machine";
+                case EAnimTaskType::Inertialize:        return "Inertialize";
+                case EAnimTaskType::DeadBlend:          return "Dead Blend";
                 case EAnimTaskType::BoneTransform:      return "Bone Transform";
                 case EAnimTaskType::TwoBoneIK:          return "Two Bone IK";
                 }
@@ -76,7 +77,8 @@ namespace Lumina
                 case EAnimTaskType::BlendMasked:        return ImVec4(0.36f, 0.62f, 0.92f, 1.0f);
                 case EAnimTaskType::MakeAdditive:
                 case EAnimTaskType::ApplyAdditive:      return ImVec4(0.70f, 0.52f, 0.90f, 1.0f);
-                case EAnimTaskType::StateMachineOutput: return ImVec4(0.93f, 0.68f, 0.33f, 1.0f);
+                case EAnimTaskType::Inertialize:
+                case EAnimTaskType::DeadBlend:          return ImVec4(0.93f, 0.68f, 0.33f, 1.0f);
                 case EAnimTaskType::BoneTransform:
                 case EAnimTaskType::TwoBoneIK:          return ImVec4(0.40f, 0.80f, 0.80f, 1.0f);
                 }
@@ -102,8 +104,11 @@ namespace Lumina
                 case EAnimTaskType::TwoBoneIK:
                     return Format("alpha {:.2f}", Entry.Alpha);
 
-                case EAnimTaskType::StateMachineOutput:
+                case EAnimTaskType::Inertialize:
                     return Format("inertialization t={:.3f}s", Entry.Time);
+
+                case EAnimTaskType::DeadBlend:
+                    return Format("dead blend t={:.3f}s", Entry.Time);
 
                 case EAnimTaskType::MakeAdditive:
                     return FString("relative to bind pose");

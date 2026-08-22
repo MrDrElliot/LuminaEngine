@@ -81,6 +81,10 @@ namespace Lumina
 
         //~ MakeAdditive with an explicit base pose and space. Appended, so old programs stay valid.
         MakeAdditiveEx,         // src:pReg, base:pReg (kAnimNoPoseRegister = bind pose), space:uint8, dst:pReg
+
+        //~ Seam smoothing a graph can ask for anywhere, not just at a state machine edge.
+        Inertialize,            // src:pReg, request:sReg, duration:sReg, inertIdx:uint16, dst:pReg
+        DeadBlend,              // src:pReg, request:sReg, duration:sReg, halfLife:sReg, deadIdx:uint16, dst:pReg
     };
 
     // MakeAdditiveEx base operand meaning "no base pose supplied".
@@ -140,7 +144,9 @@ namespace Lumina
         // Current object parameter values, refilled each update from the entity's blackboard.
         TVector<TObjectPtr<CObject>> ObjectParameters;
 
-        TVector<FAnimInertializer> Inertializers; // per state machine; transition smoothing state
+        TVector<FAnimInertializer> Inertializers;     // per state machine; transition smoothing state
+        TVector<FAnimInertializer> NodeInertializers; // per Inertialization node
+        TVector<FAnimDeadBlend>    DeadBlends;        // per Dead Blending node
         TVector<FAnimSyncGroup> SyncGroups;       // shared phase per sync group
 
         // Curve values the output pose carried this update, indexed by CAnimationGraph::CurveNames.

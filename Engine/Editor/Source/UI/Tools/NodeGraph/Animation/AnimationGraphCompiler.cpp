@@ -282,6 +282,31 @@ namespace Lumina
         return Dst;
     }
 
+    uint16 FAnimationGraphCompiler::EmitInertialize(uint16 SrcPoseReg, uint16 RequestReg, uint16 DurationReg, uint16 RecordIndex)
+    {
+        const uint16 Dst = AllocPoseReg();
+        WriteOp(EAnimOp::Inertialize);
+        Write(SrcPoseReg);
+        Write(RequestReg);
+        Write(DurationReg);
+        Write(RecordIndex);
+        Write(Dst);
+        return Dst;
+    }
+
+    uint16 FAnimationGraphCompiler::EmitDeadBlend(uint16 SrcPoseReg, uint16 RequestReg, uint16 DurationReg, uint16 HalfLifeReg, uint16 RecordIndex)
+    {
+        const uint16 Dst = AllocPoseReg();
+        WriteOp(EAnimOp::DeadBlend);
+        Write(SrcPoseReg);
+        Write(RequestReg);
+        Write(DurationReg);
+        Write(HalfLifeReg);
+        Write(RecordIndex);
+        Write(Dst);
+        return Dst;
+    }
+
     uint16 FAnimationGraphCompiler::EmitBlendMasked(uint16 PoseRegA, uint16 PoseRegB, uint16 AlphaReg, uint16 MaskIndex)
     {
         const uint16 Dst = AllocPoseReg();
@@ -648,6 +673,8 @@ namespace Lumina
         OutGraph->NumPoseRegisters    = NextPoseReg;
         OutGraph->NumStateSlots       = NextStateSlot;
         OutGraph->NumSyncGroups       = (uint16)SyncGroupNames.size();
+        OutGraph->NumInertializerNodes = NextInertializerNode;
+        OutGraph->NumDeadBlendNodes    = NextDeadBlendNode;
         OutGraph->SlotNames           = SlotNames;
         OutGraph->BytecodeVersion     = kAnimBytecodeVersion;
 

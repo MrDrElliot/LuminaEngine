@@ -20,7 +20,8 @@ namespace Lumina
         BlendMasked,
         MakeAdditive,
         ApplyAdditive,
-        StateMachineOutput,
+        Inertialize,
+        DeadBlend,
         BoneTransform,
         TwoBoneIK,
     };
@@ -44,9 +45,9 @@ namespace Lumina
         float    V0 = 0.0f;
     };
 
-    // Per-state-machine inertialization. Control fields (bActive/Elapsed/Duration) are advanced by the
-    // graph update pass; channel capture/apply and the 2-frame pose history run execute-side in the
-    // StateMachineOutput task, since they need evaluated poses.
+    // One smoothing record, held per state machine and per Inertialization node. Control fields
+    // (bActive/Elapsed/Duration) are advanced by the graph update pass; channel capture/apply and the
+    // 2-frame pose history run execute-side in the Inertialize task, since they need evaluated poses.
     struct FAnimInertializer
     {
         bool  bActive  = false;
@@ -64,6 +65,38 @@ namespace Lumina
         TVector<float> CurveOffsets;
         TVector<float> PrevCurves;
         bool bHasCurveHistory = false;
+
+        // Rising edge of a node's Request input; unused by a state machine, which starts from a transition.
+        float PrevRequest = 0.0f;
+    };
+
+    // Dead blending (Boulic-style extrapolation, UE5-style node). Where inertialization decays an offset
+    // onto the target, this extrapolates the source pose forward from its seam velocity while the decayed
+    // source cross-fades into the target, so a fast-moving source does not read as a stuck offset.
+    struct FAnimDeadBlend
+    {
+        bool  bActive  = false;
+        float Elapsed  = 0.0f;
+        float Duration = 0.0f;
+
+        // Seconds for the extrapolated velocity to halve; small keeps the source honest, large coasts.
+        float HalfLife = 0.1f;
+
+        // Pose shown at the seam, extrapolated forward for the length of the blend.
+        FPose Source;
+        TVector<FVector3> RotVel;     // axis times radians per second
+        TVector<FVector3> TransVel;
+        TVector<FVector3> ScaleVel;
+
+        FPose PrevOutput;
+        FPose PrevPrevOutput;
+        int32 HistoryCount = 0;
+
+        TVector<float> CurveOffsets;
+        TVector<float> PrevCurves;
+        bool bHasCurveHistory = false;
+
+        float PrevRequest = 0.0f;
     };
 
     // A recorded pose operation. Dependencies are indices of earlier tasks in the same list, so
@@ -92,9 +125,10 @@ namespace Lumina
         // BlendMasked: dense per-bone weights on the graph asset; null falls back to a plain blend.
         const TVector<float>* MaskWeights = nullptr;
 
-        // StateMachineOutput: per-instance smoothing state + this frame's capture/apply decisions
+        // Inertialize / DeadBlend: per-instance smoothing state + this frame's capture/apply decisions
         // (made update-side; Time carries the pre-advance Elapsed the apply evaluates at).
         FAnimInertializer* Inert = nullptr;
+        FAnimDeadBlend* Dead = nullptr;
         float DeltaTime = 0.0f;
         bool bCapture = false;
         bool bApply = false;
