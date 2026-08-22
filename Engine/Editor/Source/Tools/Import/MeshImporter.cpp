@@ -1250,7 +1250,6 @@ namespace Lumina
 
             TVector<FTextureWork> Work;
             Work.reserve(SourceData.Images.size());
-            THashSet<FFixedString> SeenPaths;
 
             for (size_t i = 0; i < SourceData.Images.size(); ++i)
             {
@@ -1265,10 +1264,9 @@ namespace Lumina
                 const bool bAlreadyExists = (FindObject<CPackage>(PackagePath) != nullptr);
 
                 // Images are deduplicated by key already, so a name collision here is always two different textures.
-                if (!bAlreadyExists && !SeenPaths.insert(PackagePath).second)
+                if (!bAlreadyExists)
                 {
                     PackagePath = Paths.Claim(PackagePath);
-                    SeenPaths.insert(PackagePath);
                 }
 
                 CPackage::AddPackageExt(PackagePath);

@@ -67,6 +67,11 @@ namespace Lumina
     {
         FFixedString SafePath = SanitizeObjectName(Path);
         CPackage* Package = CPackage::CreatePackage(SafePath);
+        if (Package == nullptr)
+        {
+            return nullptr;
+        }
+
         FStringView FileName = VFS::FileName(Path, true);
 
         CObject* New = NewObject(Class, Package, FileName, FGuid::New(), OF_Public);

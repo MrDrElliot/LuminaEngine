@@ -412,7 +412,7 @@ namespace Lumina
                     Source.Key = (Image.name != nullptr && Image.name[0] != '\0')
                         ? SanitizedSourceName(Image.name)
                         : FormatAs<FFixedString>("{}_Image_{}",
-                                                 FStringView(SourceName.data(), SourceName.length()), (uint32)i);
+                                                 SanitizedSourceName(SourceName.data(), SourceName.length()), (uint32)i);
 
                     if (bDataURI)
                     {

@@ -142,17 +142,17 @@ namespace Lumina::Import::Textures
             Math::Max(1u, (uint32)std::lround(Size.y * Scale)));
     }
 
-    // A source "path" can be a data URI, and the whole payload in the log buries every line around it.
-    static FFixedString ClipPathForLog(FStringView Path)
+    // A source "path" can be a data URI, and the whole payload in a log line or a GPU label is dead weight.
+    static FFixedString ClipPathForLabel(FStringView Path)
     {
-        constexpr size_t MaxLoggedChars = 96;
-        if (Path.size() <= MaxLoggedChars)
+        constexpr size_t MaxLabelChars = 96;
+        if (Path.size() <= MaxLabelChars)
         {
             return FFixedString(Path.data(), Path.size());
         }
 
         return FormatAs<FFixedString>("{}...[{} chars]",
-                                      FStringView(Path.data(), MaxLoggedChars), (uint64)Path.size());
+                                      FStringView(Path.data(), MaxLabelChars), (uint64)Path.size());
     }
 
     TOptional<FTextureImportResult> ImportTexture(FStringView RawFilePath, bool bFlipVertical, FUIntVector2 Size)
@@ -170,7 +170,7 @@ namespace Lumina::Import::Textures
             float* data = stbi_loadf(RawFilePath.data(), &x, &y, &channels, 0);
             if (data == nullptr)
             {
-                LOG_WARN("Failed to load HDR image: {0}", ClipPathForLog(RawFilePath));
+                LOG_WARN("Failed to load HDR image: {0}", ClipPathForLabel(RawFilePath));
                 return NullOpt;
             }
             
@@ -199,7 +199,7 @@ namespace Lumina::Import::Textures
             uint16* data = stbi_load_16(RawFilePath.data(), &x, &y, &channels, 0);
             if (data == nullptr)
             {
-                LOG_WARN("Failed to load 16-bit image: {0}", ClipPathForLog(RawFilePath));
+                LOG_WARN("Failed to load 16-bit image: {0}", ClipPathForLabel(RawFilePath));
                 return NullOpt;
             }
             
@@ -245,7 +245,7 @@ namespace Lumina::Import::Textures
         uint8* data = stbi_load(RawFilePath.data(), &x, &y, &channels, 0);
         if (data == nullptr)
         {
-            LOG_WARN("Failed to load 8-bit image: {0}", ClipPathForLog(RawFilePath));
+            LOG_WARN("Failed to load 8-bit image: {0}", ClipPathForLabel(RawFilePath));
             return NullOpt;
         }
         
@@ -448,7 +448,7 @@ namespace Lumina::Import::Textures
 
         const FTextureImportResult& Result = MaybeResult.value();
 
-        const FString DebugName = FString("Import.") + FString(RawFilePath.data(), RawFilePath.size());
+        const FFixedString DebugName = FFixedString("Import.") + ClipPathForLabel(RawFilePath);
 
         RHI::FManagedTexture Texture = RHI::Textures::Create(RHI::FTexture2DDesc
         {
