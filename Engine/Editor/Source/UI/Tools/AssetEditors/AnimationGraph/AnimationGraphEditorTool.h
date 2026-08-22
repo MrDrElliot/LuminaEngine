@@ -168,6 +168,7 @@ namespace Lumina
         FPropertyEditContext                    PropertyContext;
         FSkeletonEditContext                    SkeletonCtx;
         FAnimGraphEditContext                   AnimGraphCtx;
+        FAnimStateMachineEditContext            StateMachineCtx;
 
         // Read-only view of the preview entity's live parameter block; rebound when that memory moves.
         TUniquePtr<FPropertyTable>              ParameterTable;

@@ -33,6 +33,14 @@ namespace Lumina
         const FSkeletonResource* Skeleton = nullptr;
     };
 
+    // The state machine canvas being edited, so a picker can list the states on it.
+    struct FAnimStateMachineEditContext
+    {
+        static FName ContextKey() { return "AnimStateMachine"; }
+
+        class CAnimStateMachineGraph* Graph = nullptr;
+    };
+
     struct FWorldEditContext
     {
         static FName ContextKey() { return "World"; }

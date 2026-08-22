@@ -143,6 +143,27 @@ namespace Lumina
 
         // In-place analytical two-bone IK so EndIdx reaches Target (component space); Pole picks bend side, Alpha slerps.
         // Requires MidIdx's parent == RootIdx and EndIdx's parent == MidIdx.
+        // Iterative chain solver (FABRIK) reaching Target with the chain from RootIdx down to TipIdx.
+        // TipIdx must descend from RootIdx. Positions are component space, as everywhere else here.
+        RUNTIME_API void FABRIK(FPose& Pose, const FSkeletonResource* Skeleton, int32 RootIdx, int32 TipIdx,
+                                const FVector3& Target, int32 Iterations, float Alpha);
+
+        // Turns one bone so its LocalForward axis points at Target, clamped to MaxAngleRadians of its
+        // rest direction. 0 or less leaves it unclamped.
+        RUNTIME_API void LookAt(FPose& Pose, const FSkeletonResource* Skeleton, int32 BoneIdx,
+                                const FVector3& Target, const FVector3& LocalForward, float MaxAngleRadians, float Alpha);
+
+        // Two bone IK onto the foot displaced by Offset, then the foot rotated onto GroundNormal.
+        // Offset and GroundNormal are component space, so the caller converts its trace results once.
+        RUNTIME_API void FootIK(FPose& Pose, const FSkeletonResource* Skeleton, int32 ThighIdx, int32 CalfIdx,
+                                int32 FootIdx, const FVector3& Offset, const FVector3& GroundNormal,
+                                const FVector3& FootUpAxis, float NormalAlpha, float Alpha);
+
+        // Displaces one bone by Offset in component space, keeping its rotation. What lowers a pelvis
+        // by the amount the feet needed, which no baked transform can express.
+        RUNTIME_API void TranslateBoneComponentSpace(FPose& Pose, const FSkeletonResource* Skeleton, int32 BoneIdx,
+                                                     const FVector3& Offset, float Alpha);
+
         RUNTIME_API void TwoBoneIK(FPose& Pose,
                                    const FSkeletonResource* Skeleton,
                                    int32 RootIdx, int32 MidIdx, int32 EndIdx,

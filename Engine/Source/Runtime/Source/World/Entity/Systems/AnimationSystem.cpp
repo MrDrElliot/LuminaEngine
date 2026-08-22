@@ -15,6 +15,7 @@
 #include "TaskSystem/TaskGraph.h"
 #include "World/Entity/Components/EntityTags.h"
 #include "World/Entity/Components/AnimationGraphComponent.h"
+#include "World/Entity/Components/FollowerPoseComponent.h"
 #include "World/Entity/Components/SimpleAnimationComponent.h"
 #include "World/Entity/Components/SkeletalMeshComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
@@ -25,9 +26,85 @@
 
 namespace Lumina
 {
+    namespace
+    {
+        // A follower of a follower reads the root of the chain, so the copy pass needs no ordering
+        // between followers. A cycle stops at the hop limit and simply drives nothing.
+        entt::entity ResolveLeaderRoot(FEntityRegistry& Registry, entt::entity Start)
+        {
+            constexpr int32 MaxHops = 8;
+
+            entt::entity Cursor = Start;
+            for (int32 Hop = 0; Hop < MaxHops; ++Hop)
+            {
+                if (Cursor == entt::null || !Registry.valid(Cursor))
+                {
+                    return entt::null;
+                }
+
+                const SFollowerPoseComponent* Follower = Registry.try_get<SFollowerPoseComponent>(Cursor);
+                if (Follower == nullptr || Follower->Leader == SFollowerPoseComponent::NoLeader)
+                {
+                    return Cursor;
+                }
+
+                const entt::entity Next = (entt::entity)Follower->Leader;
+                if (Next == Cursor)
+                {
+                    return entt::null;
+                }
+                Cursor = Next;
+            }
+
+            return entt::null;
+        }
+
+        // Names are the only thing two skeletons reliably share, so the map is built from them once.
+        void BuildFollowerBoneMap(SFollowerPoseComponent& Follower, const FSkeletonResource& LeaderSkeleton,
+                                  const FSkeletonResource& FollowerSkeleton)
+        {
+            const int32 NumFollowerBones = FollowerSkeleton.GetNumBones();
+
+            Follower.BoneMap.assign(NumFollowerBones, INDEX_NONE);
+            Follower.BindFixups.assign(NumFollowerBones, FMatrix4(1.0f));
+
+            int32 NumMatched = 0;
+            for (int32 i = 0; i < NumFollowerBones; ++i)
+            {
+                const int32 LeaderIndex = LeaderSkeleton.FindBoneIndex(FollowerSkeleton.GetBone(i).Name);
+                if (LeaderIndex == INDEX_NONE)
+                {
+                    continue;
+                }
+
+                Follower.BoneMap[i] = LeaderIndex;
+
+                // The leader hands over a skinning matrix, which carries its own bind pose folded in.
+                const FMatrix4 LeaderBind = Math::Inverse(LeaderSkeleton.GetBone(LeaderIndex).InvBindMatrix);
+                Follower.BindFixups[i] = LeaderBind * FollowerSkeleton.GetBone(i).InvBindMatrix;
+                ++NumMatched;
+            }
+
+            Follower.MappedLeaderSkeleton   = &LeaderSkeleton;
+            Follower.MappedFollowerSkeleton = &FollowerSkeleton;
+
+            if (NumMatched == 0 && Follower.bWarnOnMissingBones && !Follower.bWarnedNoMatch)
+            {
+                Follower.bWarnedNoMatch = true;
+                LOG_WARN("Follower pose: '{}' shares no bone names with leader skeleton '{}', so it will not follow it.",
+                         FollowerSkeleton.Name.ToString(), LeaderSkeleton.Name.ToString());
+            }
+            else if (NumMatched > 0)
+            {
+                Follower.bWarnedNoMatch = false;
+            }
+        }
+    }
+
     // Time advance, VM state and lazy init all mutate these, so they are declared Write, not Read.
     FSystemAccess SAnimationSystem::Access = FSystemAccess{}
-        .Write<SSkeletalMeshComponent, STransformComponent, SSimpleAnimationComponent, SAnimationGraphComponent>();
+        .Write<SSkeletalMeshComponent, STransformComponent, SSimpleAnimationComponent, SAnimationGraphComponent,
+               SFollowerPoseComponent>();
 
     // Slack so brief occlusion or culling flicker does not stutter the pose.
     static constexpr double kAnimVisibilityGrace = 0.25;
@@ -470,16 +547,19 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        auto SimpleView = SystemContext.CreateView<SSimpleAnimationComponent, SSkeletalMeshComponent>(entt::exclude<SDisabledTag>);
-        auto GraphView  = SystemContext.CreateView<SAnimationGraphComponent, SSkeletalMeshComponent>(entt::exclude<SDisabledTag>);
-        auto MeshView   = SystemContext.CreateView<SSkeletalMeshComponent>(entt::exclude<SDisabledTag>);
+        auto SimpleView   = SystemContext.CreateView<SSimpleAnimationComponent, SSkeletalMeshComponent>(entt::exclude<SDisabledTag, SFollowerPoseComponent>);
+        auto GraphView    = SystemContext.CreateView<SAnimationGraphComponent, SSkeletalMeshComponent>(entt::exclude<SDisabledTag, SFollowerPoseComponent>);
+        auto MeshView     = SystemContext.CreateView<SSkeletalMeshComponent>(entt::exclude<SDisabledTag>);
+        auto FollowerView = SystemContext.CreateView<SFollowerPoseComponent, SSkeletalMeshComponent>(entt::exclude<SDisabledTag>);
 
-        auto SimpleHandle = SimpleView.handle();
-        auto GraphHandle  = GraphView.handle();
-        auto MeshHandle   = MeshView.handle();
+        auto SimpleHandle   = SimpleView.handle();
+        auto GraphHandle    = GraphView.handle();
+        auto MeshHandle     = MeshView.handle();
+        auto FollowerHandle = FollowerView.handle();
 
-        const bool bHasSimple = SimpleHandle != nullptr && !SimpleHandle->empty();
-        const bool bHasGraph  = GraphHandle != nullptr && !GraphHandle->empty();
+        const bool bHasSimple   = SimpleHandle != nullptr && !SimpleHandle->empty();
+        const bool bHasGraph    = GraphHandle != nullptr && !GraphHandle->empty();
+        const bool bHasFollower = FollowerHandle != nullptr && !FollowerHandle->empty();
 
         if ((!bHasSimple && !bHasGraph) || MeshHandle == nullptr)
         {
@@ -647,6 +727,103 @@ namespace Lumina
         if (GraphUpdate.IsValid())
         {
             TaskGraph.AddDependency(Execute, GraphUpdate);
+        }
+
+        // Copying is its own pass so every leader has finished before any follower reads one. Followers
+        // resolve to the root of their chain, so nothing here depends on the order within the pass.
+        if (bHasFollower)
+        {
+            FEntityRegistry& Registry = SystemContext.GetRegistry();
+
+            const FTaskGraph::FNodeHandle CopyFollowers = TaskGraph.AddParallelFor((uint32)FollowerHandle->size(), 16, [&](const Task::FParallelRange& Range)
+            {
+                for (uint32 i = Range.Start; i < Range.End; ++i)
+                {
+                    const entt::entity Entity = (*FollowerHandle)[i];
+                    if (!FollowerView.contains(Entity))
+                    {
+                        continue;
+                    }
+
+                    SFollowerPoseComponent& Follower = FollowerView.get<SFollowerPoseComponent>(Entity);
+                    SSkeletalMeshComponent& Mesh     = FollowerView.get<SSkeletalMeshComponent>(Entity);
+
+                    if (Follower.Leader == SFollowerPoseComponent::NoLeader)
+                    {
+                        continue;
+                    }
+
+                    const entt::entity LeaderEntity = ResolveLeaderRoot(Registry, (entt::entity)Follower.Leader);
+                    if (LeaderEntity == entt::null || LeaderEntity == Entity)
+                    {
+                        continue;
+                    }
+
+                    const SSkeletalMeshComponent* LeaderMesh = Registry.try_get<SSkeletalMeshComponent>(LeaderEntity);
+                    if (LeaderMesh == nullptr || LeaderMesh->RenderBones.empty())
+                    {
+                        continue;
+                    }
+
+                    // The leader's pose has not moved, so the copy already on this mesh still stands.
+                    if (Follower.LastLeaderPoseSerial == LeaderMesh->PoseSerial && !Mesh.RenderBones.empty())
+                    {
+                        continue;
+                    }
+
+                    CSkeleton* LeaderSkeletonAsset   = SkeletalUtils::GetSkeletonAsset(*LeaderMesh);
+                    CSkeleton* FollowerSkeletonAsset = SkeletalUtils::GetSkeletonAsset(Mesh);
+                    if (LeaderSkeletonAsset == nullptr || FollowerSkeletonAsset == nullptr)
+                    {
+                        continue;
+                    }
+
+                    const FSkeletonResource* LeaderSkeleton   = LeaderSkeletonAsset->GetSkeletonResource();
+                    const FSkeletonResource* FollowerSkeleton = FollowerSkeletonAsset->GetSkeletonResource();
+                    if (LeaderSkeleton == nullptr || FollowerSkeleton == nullptr)
+                    {
+                        continue;
+                    }
+
+                    // One skeleton behind both meshes is the common case, and it is a straight copy.
+                    if (LeaderSkeleton == FollowerSkeleton)
+                    {
+                        Mesh.BoneTransforms = LeaderMesh->BoneTransforms;
+                        Mesh.RenderBones    = LeaderMesh->RenderBones;
+                    }
+                    else
+                    {
+                        if (Follower.MappedLeaderSkeleton != LeaderSkeleton ||
+                            Follower.MappedFollowerSkeleton != FollowerSkeleton ||
+                            Follower.BoneMap.size() != (SIZE_T)FollowerSkeleton->GetNumBones())
+                        {
+                            BuildFollowerBoneMap(Follower, *LeaderSkeleton, *FollowerSkeleton);
+                        }
+
+                        const int32 NumFollowerBones = FollowerSkeleton->GetNumBones();
+                        const int32 NumLeaderMatrices = (int32)LeaderMesh->BoneTransforms.size();
+                        Mesh.BoneTransforms.resize(NumFollowerBones);
+
+                        for (int32 Bone = 0; Bone < NumFollowerBones; ++Bone)
+                        {
+                            const int32 LeaderBone = Follower.BoneMap[Bone];
+
+                            // An unmatched bone resolves to its own bind pose, which skins as the identity.
+                            Mesh.BoneTransforms[Bone] = (LeaderBone >= 0 && LeaderBone < NumLeaderMatrices)
+                                ? LeaderMesh->BoneTransforms[LeaderBone] * Follower.BindFixups[Bone]
+                                : FMatrix4(1.0f);
+                        }
+
+                        SkeletalUtils::PackRenderBones(Mesh.BoneTransforms, Mesh.RenderBones);
+                    }
+
+                    Mesh.bRenderBonesDirty = false;
+                    Follower.LastLeaderPoseSerial = LeaderMesh->PoseSerial;
+                    ++Mesh.PoseSerial;
+                }
+            });
+
+            TaskGraph.AddDependency(CopyFollowers, Execute);
         }
 
         TaskGraph.Dispatch();

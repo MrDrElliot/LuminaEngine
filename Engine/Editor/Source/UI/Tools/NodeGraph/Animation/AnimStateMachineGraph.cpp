@@ -2,6 +2,7 @@
 #include "AnimGraphSchema.h"
 #include "AnimStateTransition.h"
 #include "Nodes/AnimGraphNode_State.h"
+#include "Nodes/AnimGraphNode_StateRouting.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
 #include "Containers/HashTable.h"
@@ -112,16 +113,78 @@ namespace Lumina
         }
     }
 
+    FString FAnimTransitionCondition::ToText() const
+    {
+        switch (ConditionSource)
+        {
+        case EAnimTransitionSource::TimeInState:
+            return Format("TimeInState {} {}", SM::CompareSymbol(Compare), CompareValue);
+
+        case EAnimTransitionSource::ClipFinished:
+            return Format("Finished {} {}", SM::CompareSymbol(Compare), CompareValue);
+
+        case EAnimTransitionSource::Curve:
+            return CurveName.IsNone()
+                ? FString("Always")
+                : Format("{} {} {}", CurveName.c_str(), SM::CompareSymbol(Compare), CompareValue);
+
+        default:
+            return ParameterName.IsNone()
+                ? FString("Always")
+                : Format("{} {} {}", ParameterName.c_str(), SM::CompareSymbol(Compare), CompareValue);
+        }
+    }
+
+    void CAnimStateTransition::PostLoad()
+    {
+        CObject::PostLoad();
+        MigrateLegacyCondition();
+    }
+
+    void CAnimStateTransition::MigrateLegacyCondition()
+    {
+        if (!Conditions.empty())
+        {
+            return;
+        }
+
+        const bool bHadRule = !ConditionParameter.IsNone() || ConditionSource != EAnimTransitionSource::Parameter;
+        if (!bHadRule)
+        {
+            return;
+        }
+
+        FAnimTransitionCondition& Migrated = Conditions.emplace_back();
+        Migrated.ConditionSource = ConditionSource;
+        Migrated.ParameterName   = ConditionParameter;
+        Migrated.Compare         = Compare;
+        Migrated.CompareValue    = CompareValue;
+
+        // Cleared so emptying the list is not undone by a second load off the same fields.
+        ConditionSource    = EAnimTransitionSource::Parameter;
+        ConditionParameter = FName();
+    }
+
     FString CAnimStateTransition::GetConditionText() const
     {
-        const bool bTimeInState = ConditionSource == EAnimTransitionSource::TimeInState;
-        if (!bTimeInState && ConditionParameter.IsNone())
+        if (Conditions.empty())
         {
             return FString("Always");
         }
 
-        const char* Source = bTimeInState ? "TimeInState" : ConditionParameter.c_str();
-        return Format("{} {} {}", Source, SM::CompareSymbol(Compare), CompareValue);
+        // Two rules is what a badge can carry before it stops being readable next to the wire.
+        const char* Join = bRequireAll ? " & " : " | ";
+        FString Text = Conditions[0].ToText();
+        if (Conditions.size() > 1)
+        {
+            Text += Join;
+            Text += Conditions[1].ToText();
+        }
+        if (Conditions.size() > 2)
+        {
+            Text += Format("{}+{}", Join, (int32)Conditions.size() - 2);
+        }
+        return Text;
     }
 
     void CAnimStateMachineGraph::EnsureSetup()
@@ -290,8 +353,9 @@ namespace Lumina
 
         for (CEdGraphNode* Node : Nodes)
         {
-            CAnimGraphNode_State* ToState = Cast<CAnimGraphNode_State>(Node);
-            if (ToState == nullptr)
+            // A conduit is an endpoint like a state; the compiler folds it away afterwards.
+            const bool bTransitionTarget = Node->IsA<CAnimGraphNode_State>() || Node->IsA<CAnimGraphNode_StateConduit>();
+            if (!bTransitionTarget)
             {
                 continue;
             }
@@ -302,12 +366,13 @@ namespace Lumina
                 {
                     CEdGraphNode* FromNode = Connection->GetOwningNode();
                     const bool bTransitionSource = FromNode != nullptr &&
-                        (FromNode->IsA<CAnimGraphNode_State>() || FromNode->IsA<CAnimGraphNode_StateAny>());
+                        (FromNode->IsA<CAnimGraphNode_State>() || FromNode->IsA<CAnimGraphNode_StateAny>() ||
+                         FromNode->IsA<CAnimGraphNode_StateAlias>() || FromNode->IsA<CAnimGraphNode_StateConduit>());
                     if (!bTransitionSource)
                     {
                         continue;
                     }
-                    LiveKeys.insert(MakeTransitionKey(FromNode->GetNodeID(), ToState->GetNodeID()));
+                    LiveKeys.insert(MakeTransitionKey(FromNode->GetNodeID(), Node->GetNodeID()));
                 }
             }
         }
@@ -419,11 +484,13 @@ namespace Lumina
     {
         using namespace ax;
 
-        CAnimGraphNode_State*      State = Cast<CAnimGraphNode_State>(Node);
-        CAnimGraphNode_StateEntry* Entry = Cast<CAnimGraphNode_StateEntry>(Node);
-        CAnimGraphNode_StateAny*   AnyState   = Cast<CAnimGraphNode_StateAny>(Node);
+        CAnimGraphNode_State*        State    = Cast<CAnimGraphNode_State>(Node);
+        CAnimGraphNode_StateEntry*   Entry    = Cast<CAnimGraphNode_StateEntry>(Node);
+        CAnimGraphNode_StateAny*     AnyState = Cast<CAnimGraphNode_StateAny>(Node);
+        CAnimGraphNode_StateAlias*   Alias    = Cast<CAnimGraphNode_StateAlias>(Node);
+        CAnimGraphNode_StateConduit* Conduit  = Cast<CAnimGraphNode_StateConduit>(Node);
 
-        if (State == nullptr && Entry == nullptr && AnyState == nullptr)
+        if (State == nullptr && Entry == nullptr && AnyState == nullptr && Alias == nullptr && Conduit == nullptr)
         {
             return false;
         }
@@ -504,8 +571,25 @@ namespace Lumina
             }
             else
             {
+                const char* Icon = LE_ICON_ARROW_EXPAND_HORIZONTAL " Any State";
+                FString Label;
+                if (Entry != nullptr)
+                {
+                    Icon = LE_ICON_PLAY " Entry";
+                }
+                else if (Alias != nullptr)
+                {
+                    Label = FString(LE_ICON_ARROW_DECISION " ") + Alias->GetNodeTitleText();
+                    Icon  = Label.c_str();
+                }
+                else if (Conduit != nullptr)
+                {
+                    Label = FString(LE_ICON_SOURCE_MERGE " ") + Conduit->GetNodeTitleText();
+                    Icon  = Label.c_str();
+                }
+
                 ImGui::BeginHorizontal("title");
-                ImGui::TextColored(Accent, "%s", Entry != nullptr ? LE_ICON_PLAY " Entry" : LE_ICON_ARROW_EXPAND_HORIZONTAL " Any State");
+                ImGui::TextColored(Accent, "%s", Icon);
                 ImGui::EndHorizontal();
             }
 
@@ -514,7 +598,7 @@ namespace Lumina
             // The middle drags the node while an edge band starts a transition, both pivoting at the center.
             const float EdgeW = Math::Clamp((NodeMax.x - NodeMin.x) * 0.27f, 12.0f, 46.0f);
 
-            CAnimGraphPin* InPin = State != nullptr ? State->InPin : nullptr;
+            CAnimGraphPin* InPin = State != nullptr ? State->InPin : (Conduit != nullptr ? Conduit->InPin : nullptr);
             if (InPin != nullptr)
             {
                 NodeEditor::BeginPin(InPin->GetPinGUID(), NodeEditor::PinKind::Input);
@@ -523,7 +607,10 @@ namespace Lumina
                 NodeEditor::EndPin();
             }
 
-            CAnimGraphPin* OutPin = State != nullptr ? State->OutPin : (Entry != nullptr ? Entry->OutPin : AnyState->OutPin);
+            CAnimGraphPin* OutPin = State != nullptr ? State->OutPin
+                : (Entry != nullptr ? Entry->OutPin
+                : (Alias != nullptr ? Alias->OutPin
+                : (Conduit != nullptr ? Conduit->OutPin : AnyState->OutPin)));
             if (OutPin != nullptr)
             {
                 NodeEditor::BeginPin(OutPin->GetPinGUID(), NodeEditor::PinKind::Output);
@@ -656,7 +743,7 @@ namespace Lumina
             {
                 LineColor = EditorColors::Lighten(LineColor, 0.25f);
             }
-            else if (Transition != nullptr && Transition->ConditionParameter.IsNone())
+            else if (Transition != nullptr && Transition->Conditions.empty())
             {
                 // An unconditional edge fires the instant its source becomes active; call it out.
                 LineColor = EditorColors::Warning();

@@ -90,6 +90,98 @@ namespace Lumina
             return X > 0.0f ? X : 0.0f;
         }
 
+        // The same curve, 8 bones at a time, and every branch above becomes a select.
+        void InertEvalChannels(FInertChannelSet& Set, float Duration, float T)
+        {
+            LUMINA_PROFILE_SCOPE();
+
+            const int32 N = Set.Num();
+            if (N == 0)
+            {
+                return;
+            }
+
+            using namespace SIMD;
+
+            const VFloat8 Zero      = VFloat8::Zero();
+            const VFloat8 Eps       = VFloat8::Broadcast(1e-5f);
+            const VFloat8 X0Eps     = VFloat8::Broadcast(1e-7f);
+            const VFloat8 VDuration = VFloat8::Broadcast(Duration);
+            const VFloat8 VT        = VFloat8::Broadcast(T);
+            const VFloat8 VNegFive  = VFloat8::Broadcast(-5.0f);
+
+            const float* RESTRICT X0Ptr = Set.X0.data();
+            const float* RESTRICT V0Ptr = Set.V0.data();
+            float* RESTRICT       Out   = Set.Eval.data();
+
+            int32 i = 0;
+            if (Duration > 1e-5f)
+            {
+                for (; i + 8 <= N; i += 8)
+                {
+                    const VFloat8 X0 = VFloat8::Load(X0Ptr + i);
+                    const VFloat8 V0 = VFloat8::Load(V0Ptr + i);
+
+                    // A closing offset would dip below zero, so its lane finishes early instead.
+                    const VFloat8 Overshoot = VNegFive * X0 / Min(V0, -Eps);
+                    const VFloat8 T1        = Select(CmpLt(V0, Zero), Min(VDuration, Overshoot), VDuration);
+
+                    const VFloat8 T1_2 = T1 * T1;
+                    const VFloat8 T1_3 = T1_2 * T1;
+                    const VFloat8 T1_4 = T1_3 * T1;
+                    const VFloat8 T1_5 = T1_4 * T1;
+
+                    const VFloat8 A = -(VFloat8::Broadcast(3.0f) * V0 * T1 + VFloat8::Broadcast(6.0f)  * X0) / T1_5;
+                    const VFloat8 B =  (VFloat8::Broadcast(8.0f) * V0 * T1 + VFloat8::Broadcast(15.0f) * X0) / T1_4;
+                    const VFloat8 C = -(VFloat8::Broadcast(6.0f) * V0 * T1 + VFloat8::Broadcast(10.0f) * X0) / T1_3;
+
+                    const VFloat8 T2 = VT * VT;
+                    const VFloat8 T3 = T2 * VT;
+                    const VFloat8 T4 = T3 * VT;
+                    const VFloat8 T5 = T4 * VT;
+
+                    VFloat8 X = MulAdd(A, T5, MulAdd(B, T4, MulAdd(C, T3, MulAdd(V0, VT, X0))));
+
+                    // Dead lanes, matching the scalar early-outs one for one.
+                    const VFloat8 Alive = And(CmpGt(X0, X0Eps), And(CmpGt(T1, Eps), CmpLt(VT, T1)));
+                    X = Select(Alive, Max(X, Zero), Zero);
+                    X.Store(Out + i);
+                }
+            }
+
+            for (; i < N; ++i)
+            {
+                Out[i] = InertEval(X0Ptr[i], V0Ptr[i], Duration, T);
+            }
+
+            // Splatted once so the vector and translation passes share one flat layout.
+            float* RESTRICT Out3 = Set.Eval3.data();
+            for (int32 Bone = 0; Bone < N; ++Bone)
+            {
+                const float Value = Out[Bone];
+                Out3[Bone * 3 + 0] = Value;
+                Out3[Bone * 3 + 1] = Value;
+                Out3[Bone * 3 + 2] = Value;
+            }
+        }
+
+        // Out = Base + Dir * Scale over Count floats, which is the whole translation and scale apply.
+        void MulAddArray(float* RESTRICT Out, const float* RESTRICT Base, const float* RESTRICT Dir,
+                         const float* RESTRICT Scale, int32 Count)
+        {
+            using namespace SIMD;
+
+            int32 i = 0;
+            for (; i + 8 <= Count; i += 8)
+            {
+                MulAdd(VFloat8::Load(Dir + i), VFloat8::Load(Scale + i), VFloat8::Load(Base + i)).Store(Out + i);
+            }
+            for (; i < Count; ++i)
+            {
+                Out[i] = Base[i] + Dir[i] * Scale[i];
+            }
+        }
+
         // Signed angle (rad) of quaternion Q about unit Axis.
         FORCEINLINE float QuatAngleAbout(const FQuat& Q, const FVector3& Axis)
         {
@@ -105,9 +197,9 @@ namespace Lumina
             const int32 N = (NumActiveBones >= 0 && NumActiveBones < Target.GetNumBones())
                 ? NumActiveBones
                 : Target.GetNumBones();
-            In.Rot.resize(N);
-            In.Trans.resize(N);
-            In.Scale.resize(N);
+            In.Rot.Resize(N);
+            In.Trans.Resize(N);
+            In.Scale.Resize(N);
 
             const bool  bSrc  = Source.GetNumBones() == N;
             const bool  bVel  = bHasVel && Dt > 1e-6f && bSrc && SourcePrev.GetNumBones() == N;
@@ -138,7 +230,11 @@ namespace Lumina
                         }
                         V0 = (X0 - QuatAngleAbout(Qp, Axis)) * InvDt;
                     }
-                    In.Rot[i] = FInertChannel{ Axis, X0, V0 };
+                    In.Rot.Dir[i * 3 + 0] = Axis.x;
+                    In.Rot.Dir[i * 3 + 1] = Axis.y;
+                    In.Rot.Dir[i * 3 + 2] = Axis.z;
+                    In.Rot.X0[i] = X0;
+                    In.Rot.V0[i] = V0;
                 }
                 // Translation is a vector offset with a fixed direction and a decaying length.
                 {
@@ -151,7 +247,11 @@ namespace Lumina
                     {
                         V0 = (X0 - Math::Dot(SourcePrev.Translations[i] - Target.Translations[i], Dir)) * InvDt;
                     }
-                    In.Trans[i] = FInertChannel{ Dir, X0, V0 };
+                    In.Trans.Dir[i * 3 + 0] = Dir.x;
+                    In.Trans.Dir[i * 3 + 1] = Dir.y;
+                    In.Trans.Dir[i * 3 + 2] = Dir.z;
+                    In.Trans.X0[i] = X0;
+                    In.Trans.V0[i] = V0;
                 }
                 // Scale gets the same vector treatment as translation.
                 {
@@ -164,42 +264,61 @@ namespace Lumina
                     {
                         V0 = (X0 - Math::Dot(SourcePrev.Scales[i] - Target.Scales[i], Dir)) * InvDt;
                     }
-                    In.Scale[i] = FInertChannel{ Dir, X0, V0 };
+                    In.Scale.Dir[i * 3 + 0] = Dir.x;
+                    In.Scale.Dir[i * 3 + 1] = Dir.y;
+                    In.Scale.Dir[i * 3 + 2] = Dir.z;
+                    In.Scale.X0[i] = X0;
+                    In.Scale.V0[i] = V0;
                 }
             }
         }
 
         // Writes Target plus the decaying offset at time T, and Out may alias Target.
-        void InertApply(const FAnimInertializer& In, const FPose& Target, FPose& Out, float T)
+        void InertApply(FAnimInertializer& In, const FPose& Target, FPose& Out, float T)
         {
             LUMINA_PROFILE_SCOPE();
 
             const int32 N  = Target.GetNumBones();
-            const int32 NR = (int32)In.Rot.size();
+            const int32 NR = In.Rot.Num();
             Out.SetNumBones(N);
+
+            InertEvalChannels(In.Rot,   In.Duration, T);
+            InertEvalChannels(In.Trans, In.Duration, T);
+            InertEvalChannels(In.Scale, In.Duration, T);
+
+            // Both are flat xyz streams in the same order, so the offset applies in one vector pass.
+            const int32 NumComponents = Math::Min(N, NR) * 3;
+            MulAddArray(reinterpret_cast<float*>(Out.Translations.data()),
+                        reinterpret_cast<const float*>(Target.Translations.data()),
+                        In.Trans.Dir.data(), In.Trans.Eval3.data(), NumComponents);
+            MulAddArray(reinterpret_cast<float*>(Out.Scales.data()),
+                        reinterpret_cast<const float*>(Target.Scales.data()),
+                        In.Scale.Dir.data(), In.Scale.Eval3.data(), NumComponents);
+
+            // Rotation stays scalar; the axis-angle build and the shortest-arc handling are worth more
+            // than the lanes, and a decayed bone skips the trig entirely.
+            const float* RESTRICT RotEval = In.Rot.Eval.data();
+            const float* RESTRICT RotDir  = In.Rot.Dir.data();
 
             for (int32 i = 0; i < N; ++i)
             {
-                if (i < NR)
-                {
-                    const float Xr = InertEval(In.Rot[i].X0,   In.Rot[i].V0,   In.Duration, T);
-                    const float Xt = InertEval(In.Trans[i].X0, In.Trans[i].V0, In.Duration, T);
-                    const float Xs = InertEval(In.Scale[i].X0, In.Scale[i].V0, In.Duration, T);
-
-                    FQuat R = Target.Rotations[i];
-                    if (Xr > 1e-6f)
-                    {
-                        R = Math::Normalize(Math::AngleAxis(Xr, In.Rot[i].Direction) * R);
-                    }
-                    Out.Rotations[i]    = R;
-                    Out.Translations[i] = Target.Translations[i] + In.Trans[i].Direction * Xt;
-                    Out.Scales[i]       = Target.Scales[i] + In.Scale[i].Direction * Xs;
-                }
-                else
+                if (i >= NR)
                 {
                     Out.Rotations[i]    = Target.Rotations[i];
                     Out.Translations[i] = Target.Translations[i];
                     Out.Scales[i]       = Target.Scales[i];
+                    continue;
+                }
+
+                const float Xr = RotEval[i];
+                if (Xr > 1e-6f)
+                {
+                    const FVector3 Axis(RotDir[i * 3 + 0], RotDir[i * 3 + 1], RotDir[i * 3 + 2]);
+                    Out.Rotations[i] = Math::Normalize(Math::AngleAxis(Xr, Axis) * Target.Rotations[i]);
+                }
+                else if (&Out != &Target)
+                {
+                    Out.Rotations[i] = Target.Rotations[i];
                 }
             }
         }
@@ -630,6 +749,46 @@ namespace Lumina
                 break;
             }
 
+            case EAnimTaskType::SavePoseSnapshot:
+            {
+                LUMINA_PROFILE_SECTION("Anim SavePoseSnapshot");
+                if (BufA == FAnimTask::NoTask)
+                {
+                    Dst = Pool.Acquire();
+                    Pool.Get(Dst).ResetToBindPose(Skeleton);
+                    break;
+                }
+
+                Dst = bStealA ? BufA : Pool.Acquire();
+                if (Dst != BufA)
+                {
+                    Pool.Get(Dst) = Pool.Get(BufA);
+                }
+
+                if (Task.Snapshot != nullptr && Task.bCapture)
+                {
+                    *Task.Snapshot = Pool.Get(BufA);
+                }
+                break;
+            }
+
+            case EAnimTaskType::LoadPoseSnapshot:
+            {
+                LUMINA_PROFILE_SECTION("Anim LoadPoseSnapshot");
+                Dst = Pool.Acquire();
+
+                // A slot nothing has saved into yet reads as the bind pose rather than as garbage.
+                if (Task.Snapshot != nullptr && Task.Snapshot->GetNumBones() == Skeleton->GetNumBones())
+                {
+                    Pool.Get(Dst) = *Task.Snapshot;
+                }
+                else
+                {
+                    Pool.Get(Dst).ResetToBindPose(Skeleton);
+                }
+                break;
+            }
+
             case EAnimTaskType::DeadBlend:
             {
                 LUMINA_PROFILE_SECTION("Anim DeadBlend");
@@ -670,6 +829,10 @@ namespace Lumina
 
             case EAnimTaskType::BoneTransform:
             case EAnimTaskType::TwoBoneIK:
+            case EAnimTaskType::FABRIK:
+            case EAnimTaskType::LookAt:
+            case EAnimTaskType::FootIK:
+            case EAnimTaskType::TranslateBone:
             {
                 LUMINA_PROFILE_SECTION("Anim BoneOp");
                 if (BufA == FAnimTask::NoTask)
@@ -683,18 +846,38 @@ namespace Lumina
                 {
                     Pool.Get(Dst) = Pool.Get(BufA);
                 }
-                if (Task.Type == EAnimTaskType::BoneTransform)
+                switch (Task.Type)
                 {
+                case EAnimTaskType::BoneTransform:
                     AnimPose::ApplyBoneTransform(Pool.Get(Dst), Skeleton, (int32)Task.BoneA,
                                                  (AnimPose::EBoneSpace)Task.Space,
                                                  (AnimPose::EBoneApplyMode)Task.Mode,
                                                  Task.T, Task.R, Task.S, Task.Alpha);
-                }
-                else
-                {
+                    break;
+
+                case EAnimTaskType::FABRIK:
+                    AnimPose::FABRIK(Pool.Get(Dst), Skeleton, (int32)Task.BoneA, (int32)Task.BoneB,
+                                     Task.T, (int32)Task.BoneC, Task.Alpha);
+                    break;
+
+                case EAnimTaskType::LookAt:
+                    AnimPose::LookAt(Pool.Get(Dst), Skeleton, (int32)Task.BoneA, Task.T, Task.S, Task.Time, Task.Alpha);
+                    break;
+
+                case EAnimTaskType::FootIK:
+                    AnimPose::FootIK(Pool.Get(Dst), Skeleton, (int32)Task.BoneA, (int32)Task.BoneB, (int32)Task.BoneC,
+                                     Task.T, FVector3(Task.R.x, Task.R.y, Task.R.z), Task.S, Task.Time, Task.Alpha);
+                    break;
+
+                case EAnimTaskType::TranslateBone:
+                    AnimPose::TranslateBoneComponentSpace(Pool.Get(Dst), Skeleton, (int32)Task.BoneA, Task.T, Task.Alpha);
+                    break;
+
+                default:
                     AnimPose::TwoBoneIK(Pool.Get(Dst), Skeleton,
                                         (int32)Task.BoneA, (int32)Task.BoneB, (int32)Task.BoneC,
                                         Task.T, Task.S, Task.Alpha);
+                    break;
                 }
                 break;
             }

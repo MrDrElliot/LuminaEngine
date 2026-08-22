@@ -4,6 +4,8 @@
 #include "UI/Properties/PropertyEditContexts.h"
 
 #include "Assets/AssetTypes/Animation/AnimationGraph/AnimationGraph.h"
+#include "UI/Tools/NodeGraph/Animation/AnimStateMachineGraph.h"
+#include "UI/Tools/NodeGraph/Animation/Nodes/AnimGraphNode_State.h"
 #include "Renderer/SkeletonResource.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
@@ -380,6 +382,38 @@ namespace Lumina
             }
         };
 
+        class FAnimStateSource : public INamePickerSource
+        {
+        public:
+
+            void GatherChoices(const FPropertyEditContext& Context, TVector<FName>& Out) const override
+            {
+                const FAnimStateMachineEditContext* Machine = Context.Get<FAnimStateMachineEditContext>();
+                if (Machine == nullptr || Machine->Graph == nullptr)
+                {
+                    return;
+                }
+
+                for (CEdGraphNode* Node : Machine->Graph->Nodes)
+                {
+                    CAnimGraphNode_State* State = Cast<CAnimGraphNode_State>(Node);
+                    if (State != nullptr && !State->StateName.IsNone())
+                    {
+                        Out.push_back(State->StateName);
+                    }
+                }
+            }
+
+            const char* GetItemIcon() const override { return LE_ICON_CIRCLE_OUTLINE; }
+
+            const char* GetStaleHint() const override { return "No state of this name on this machine"; }
+
+            const char* GetUnavailableHint(const FPropertyEditContext&) const override
+            {
+                return "No named states on this machine; a state must be named before it can be aliased";
+            }
+        };
+
         class FInputActionSource : public INamePickerSource
         {
         public:
@@ -409,5 +443,6 @@ namespace Lumina
         Register("ObjectParameter", MakeShared<FAnimParameterSource>(true));
         Register("Curve",           MakeShared<FAnimCurveSource>());
         Register("InputAction",     MakeShared<FInputActionSource>());
+        Register("AnimState",       MakeShared<FAnimStateSource>());
     }
 }

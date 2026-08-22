@@ -75,6 +75,10 @@ namespace Lumina
         {
             Ar << NumObjectRegisters;
         }
+        if (Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::ANIM_GRAPH_POSE_SNAPSHOTS)
+        {
+            Ar << PoseSnapshotNames;
+        }
         if (Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::ANIM_GRAPH_INERTIALIZATION_NODES)
         {
             Ar << NumInertializerNodes;
@@ -199,7 +203,12 @@ namespace Lumina
         {
             for (FAnimGraphTransition& Transition : SM.Transitions)
             {
-                Transition.CachedParamIndex = FindParameterIndex(Transition.ConditionParameter);
+                for (FAnimGraphTransitionTerm& Term : Transition.Terms)
+                {
+                    Term.CachedIndex = (Term.ConditionSource == EAnimTransitionSource::Curve)
+                        ? FindCurveIndex(Term.Name)
+                        : FindParameterIndex(Term.Name);
+                }
             }
         }
     }

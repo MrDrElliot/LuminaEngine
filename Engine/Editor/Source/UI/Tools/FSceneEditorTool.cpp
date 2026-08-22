@@ -33,6 +33,7 @@
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "Tools/UI/ImGui/EditorColors.h"
 #include "UI/Properties/PropertyEditContexts.h"
+#include "World/Entity/Components/AnimationGraphComponent.h"
 #include "UI/Tools/EditorEntityUtils.h"
 #include "World/Entity/Components/EditorComponent.h"
 #include "World/Entity/Components/EntityTags.h"
@@ -55,6 +56,7 @@ namespace Lumina
     {
         PickCtx.Broker = MakeShared<FEntityPickBroker>();
         PropertyContext.Provide(&SocketCtx);
+        PropertyContext.Provide(&AnimGraphCtx);
         PropertyContext.Provide(&WorldCtx);
         PropertyContext.Provide(&PickCtx);
         Asset = InAsset;
@@ -66,6 +68,7 @@ namespace Lumina
     {
         PickCtx.Broker = MakeShared<FEntityPickBroker>();
         PropertyContext.Provide(&SocketCtx);
+        PropertyContext.Provide(&AnimGraphCtx);
         PropertyContext.Provide(&WorldCtx);
         PropertyContext.Provide(&PickCtx);
 
@@ -447,6 +450,10 @@ namespace Lumina
             SocketCtx = FSocketEditContext();
             BuildSocketPickerData(Entity, SocketCtx);
             WorldCtx.World = World;
+
+            // Lets a parameter picker on a component list the graph that entity actually runs.
+            const SAnimationGraphComponent* AnimGraph = GetSceneRegistry().try_get<SAnimationGraphComponent>(Entity);
+            AnimGraphCtx.Graph = (AnimGraph != nullptr) ? AnimGraph->Graph.Get() : nullptr;
 
             Entry.Table->SetContext(&PropertyContext);
             Entry.Table->DrawTree();

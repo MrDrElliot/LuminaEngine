@@ -44,46 +44,109 @@ namespace Lumina
             }
         };
 
-        static FORCEINLINE bool EvalTransitionCondition(const FAnimGraphTransition& Transition,
-                                                        const CAnimationGraph* Graph,
-                                                        const TVector<float>& Parameters,
-                                                        float TimeInState)
+        // What a transition's terms can read beyond the parameter block, gathered once per machine.
+        struct FTransitionContext
         {
-            float Value = TimeInState;
-            if (Transition.ConditionSource == EAnimTransitionSource::Parameter)
+            float TimeInState = 0.0f;
+            const float* Curves = nullptr;
+            SIZE_T NumCurves = 0;
+            float ClipFinished = 0.0f;
+        };
+
+        static FORCEINLINE bool CompareValues(EAnimTransitionCompare Compare, float Value, float Against)
+        {
+            switch (Compare)
             {
-                // No parameter is authored as unconditional, so the compare never runs against a stand-in 0.
-                if (Transition.ConditionParameter.IsNone())
+            case EAnimTransitionCompare::Greater:      return Value >  Against;
+            case EAnimTransitionCompare::GreaterEqual: return Value >= Against;
+            case EAnimTransitionCompare::Less:         return Value <  Against;
+            case EAnimTransitionCompare::LessEqual:    return Value <= Against;
+            case EAnimTransitionCompare::Equal:        return Value == Against;
+            case EAnimTransitionCompare::NotEqual:     return Value != Against;
+            }
+            return false;
+        }
+
+        static FORCEINLINE bool EvalTransitionTerm(const FAnimGraphTransitionTerm& Term,
+                                                   const CAnimationGraph* Graph,
+                                                   const TVector<float>& Parameters,
+                                                   const FTransitionContext& Context)
+        {
+            float Value = 0.0f;
+
+            switch (Term.ConditionSource)
+            {
+            case EAnimTransitionSource::TimeInState:
+                Value = Context.TimeInState;
+                break;
+
+            case EAnimTransitionSource::ClipFinished:
+                Value = Context.ClipFinished;
+                break;
+
+            case EAnimTransitionSource::Curve:
+            case EAnimTransitionSource::Parameter:
+            {
+                // No name is authored as unconditional, so the compare never runs against a stand-in 0.
+                if (Term.Name.IsNone())
                 {
                     return true;
                 }
 
+                const bool bCurve = Term.ConditionSource == EAnimTransitionSource::Curve;
+
                 // Resolved at load/compile; the fallback covers graphs built outside those paths.
-                int32 ParamIdx = Transition.CachedParamIndex;
-                if (ParamIdx == FAnimGraphTransition::ParamUnresolved)
+                int32 Index = Term.CachedIndex;
+                if (Index == FAnimGraphTransitionTerm::Unresolved)
                 {
-                    ParamIdx = Graph->FindParameterIndex(Transition.ConditionParameter);
+                    Index = bCurve ? Graph->FindCurveIndex(Term.Name) : Graph->FindParameterIndex(Term.Name);
                 }
 
                 // A name that resolves to nothing holds the edge shut rather than comparing against 0.
-                if (ParamIdx < 0 || ParamIdx >= (int32)Parameters.size())
+                if (Index < 0)
                 {
                     return false;
                 }
 
-                Value = Parameters[ParamIdx];
+                if (bCurve)
+                {
+                    if (Context.Curves == nullptr || (SIZE_T)Index >= Context.NumCurves)
+                    {
+                        return false;
+                    }
+                    Value = Context.Curves[Index];
+                }
+                else
+                {
+                    if (Index >= (int32)Parameters.size())
+                    {
+                        return false;
+                    }
+                    Value = Parameters[Index];
+                }
+                break;
+            }
             }
 
-            switch (Transition.Compare)
+            return CompareValues(Term.Compare, Value, Term.CompareValue);
+        }
+
+        static FORCEINLINE bool EvalTransitionCondition(const FAnimGraphTransition& Transition,
+                                                        const CAnimationGraph* Graph,
+                                                        const TVector<float>& Parameters,
+                                                        const FTransitionContext& Context)
+        {
+            // An edge with no terms is the unconditional one, taken the moment its source is active.
+            for (const FAnimGraphTransitionTerm& Term : Transition.Terms)
             {
-            case EAnimTransitionCompare::Greater:      return Value >  Transition.CompareValue;
-            case EAnimTransitionCompare::GreaterEqual: return Value >= Transition.CompareValue;
-            case EAnimTransitionCompare::Less:         return Value <  Transition.CompareValue;
-            case EAnimTransitionCompare::LessEqual:    return Value <= Transition.CompareValue;
-            case EAnimTransitionCompare::Equal:        return Value == Transition.CompareValue;
-            case EAnimTransitionCompare::NotEqual:     return Value != Transition.CompareValue;
+                const bool bPassed = EvalTransitionTerm(Term, Graph, Parameters, Context);
+                if (bPassed != Transition.bRequireAll)
+                {
+                    return bPassed;
+                }
             }
-            return false;
+
+            return Transition.bRequireAll;
         }
 
         template <typename TEnum>
@@ -159,6 +222,7 @@ namespace Lumina
         // One inertialization record per state machine (transition smoothing; rebuilt each init).
         State.Inertializers.assign(Graph->StateMachines.size(), FAnimInertializer());
         State.NodeInertializers.assign(Graph->NumInertializerNodes, FAnimInertializer());
+        State.PoseSnapshots.assign(Graph->PoseSnapshotNames.size(), FPose());
         State.DeadBlends.assign(Graph->NumDeadBlendNodes, FAnimDeadBlend());
 
         State.SyncGroups.assign(Graph->NumSyncGroups, FAnimSyncGroup());
@@ -473,6 +537,12 @@ namespace Lumina
             }
             const float* SA = CurvesOf(A);
             const float* SB = CurvesOf(B);
+            if (SA != nullptr && SB != nullptr)
+            {
+                SIMD::LerpArray(D, SA, SB, (int)NumCurves, Alpha);
+                return;
+            }
+
             for (SIZE_T i = 0; i < NumCurves; ++i)
             {
                 const float VA = SA != nullptr ? SA[i] : 0.0f;
@@ -1041,6 +1111,194 @@ namespace Lumina
                 break;
             }
 
+            case EAnimOp::SmoothScalar:
+            {
+                const uint16 ValueReg    = Reader.Read<uint16>();
+                const uint16 HalfLifeReg = Reader.Read<uint16>();
+                const uint16 ValueSlot   = Reader.Read<uint16>();
+                const uint16 SeededSlot  = Reader.Read<uint16>();
+                const uint16 Dst         = Reader.Read<uint16>();
+
+                const float Target   = ReadScalar(ValueReg, 0.0f);
+                const float HalfLife = Math::Max(ReadScalar(HalfLifeReg, 0.0f), 0.0f);
+
+                float Result = Target;
+                if (ValueSlot < NumState && SeededSlot < NumState)
+                {
+                    // The first frame snaps, or every graph would ease up from zero on spawn.
+                    const bool bSeeded = State.StateSlots[SeededSlot] > 0.5f;
+                    if (bSeeded && HalfLife > 1e-5f && DeltaTime > 0.0f)
+                    {
+                        const float Alpha = 1.0f - Math::Exp(-DeltaTime * 0.6931472f / HalfLife);
+                        Result = State.StateSlots[ValueSlot] + (Target - State.StateSlots[ValueSlot]) * Alpha;
+                    }
+
+                    State.StateSlots[ValueSlot]  = Result;
+                    State.StateSlots[SeededSlot] = 1.0f;
+                }
+
+                if (Dst < NumScalar)
+                {
+                    Scalars[Dst] = Result;
+                }
+                break;
+            }
+
+            case EAnimOp::FABRIK:
+            {
+                const uint16 Src        = Reader.Read<uint16>();
+                const uint16 AlphaReg   = Reader.Read<uint16>();
+                const uint16 TxReg      = Reader.Read<uint16>();
+                const uint16 TyReg      = Reader.Read<uint16>();
+                const uint16 TzReg      = Reader.Read<uint16>();
+                const uint16 RootIdx    = Reader.Read<uint16>();
+                const uint16 TipIdx     = Reader.Read<uint16>();
+                const uint16 Iterations = Reader.Read<uint16>();
+                const uint16 Dst        = Reader.Read<uint16>();
+
+                FAnimTask Task;
+                Task.Type  = EAnimTaskType::FABRIK;
+                Task.DepA  = PoseTaskFor(Src);
+                Task.Alpha = ReadScalar(AlphaReg, 1.0f);
+                Task.T     = FVector3(ReadScalar(TxReg, 0.0f), ReadScalar(TyReg, 0.0f), ReadScalar(TzReg, 0.0f));
+                Task.BoneA = RootIdx;
+                Task.BoneB = TipIdx;
+                Task.BoneC = Iterations;
+                SetPoseTask(Dst, OutTasks.Add(Task));
+
+                SetPoseTags(Dst, DeltaOf(Src), EventsOf(Src));
+                SetPoseSync(Dst, SyncOf(Src));
+                CopyCurves(Dst, Src);
+                break;
+            }
+
+            case EAnimOp::LookAt:
+            {
+                const uint16 Src      = Reader.Read<uint16>();
+                const uint16 AlphaReg = Reader.Read<uint16>();
+                const uint16 TxReg    = Reader.Read<uint16>();
+                const uint16 TyReg    = Reader.Read<uint16>();
+                const uint16 TzReg    = Reader.Read<uint16>();
+                const uint16 BoneIdx  = Reader.Read<uint16>();
+                const FVector3 Forward = Reader.Read<FVector3>();
+                const float Clamp      = Reader.Read<float>();
+                const uint16 Dst      = Reader.Read<uint16>();
+
+                FAnimTask Task;
+                Task.Type  = EAnimTaskType::LookAt;
+                Task.DepA  = PoseTaskFor(Src);
+                Task.Alpha = ReadScalar(AlphaReg, 1.0f);
+                Task.T     = FVector3(ReadScalar(TxReg, 0.0f), ReadScalar(TyReg, 0.0f), ReadScalar(TzReg, 0.0f));
+                Task.S     = Forward;
+                Task.Time  = Clamp;
+                Task.BoneA = BoneIdx;
+                SetPoseTask(Dst, OutTasks.Add(Task));
+
+                SetPoseTags(Dst, DeltaOf(Src), EventsOf(Src));
+                SetPoseSync(Dst, SyncOf(Src));
+                CopyCurves(Dst, Src);
+                break;
+            }
+
+            case EAnimOp::FootIK:
+            {
+                const uint16 Src        = Reader.Read<uint16>();
+                const uint16 AlphaReg   = Reader.Read<uint16>();
+                const uint16 OxReg      = Reader.Read<uint16>();
+                const uint16 OyReg      = Reader.Read<uint16>();
+                const uint16 OzReg      = Reader.Read<uint16>();
+                const uint16 NxReg      = Reader.Read<uint16>();
+                const uint16 NyReg      = Reader.Read<uint16>();
+                const uint16 NzReg      = Reader.Read<uint16>();
+                const uint16 AlignReg   = Reader.Read<uint16>();
+                const uint16 ThighIdx   = Reader.Read<uint16>();
+                const uint16 CalfIdx    = Reader.Read<uint16>();
+                const uint16 FootIdx    = Reader.Read<uint16>();
+                const FVector3 UpAxis   = Reader.Read<FVector3>();
+                const uint16 Dst        = Reader.Read<uint16>();
+
+                const FVector3 Normal(ReadScalar(NxReg, 0.0f), ReadScalar(NyReg, 0.0f), ReadScalar(NzReg, 0.0f));
+
+                FAnimTask Task;
+                Task.Type  = EAnimTaskType::FootIK;
+                Task.DepA  = PoseTaskFor(Src);
+                Task.Alpha = ReadScalar(AlphaReg, 1.0f);
+                Task.T     = FVector3(ReadScalar(OxReg, 0.0f), ReadScalar(OyReg, 0.0f), ReadScalar(OzReg, 0.0f));
+                Task.R     = FQuat(0.0f, Normal.x, Normal.y, Normal.z);
+                Task.S     = UpAxis;
+                Task.Time  = ReadScalar(AlignReg, 1.0f);
+                Task.BoneA = ThighIdx;
+                Task.BoneB = CalfIdx;
+                Task.BoneC = FootIdx;
+                SetPoseTask(Dst, OutTasks.Add(Task));
+
+                SetPoseTags(Dst, DeltaOf(Src), EventsOf(Src));
+                SetPoseSync(Dst, SyncOf(Src));
+                CopyCurves(Dst, Src);
+                break;
+            }
+
+            case EAnimOp::TranslateBone:
+            {
+                const uint16 Src      = Reader.Read<uint16>();
+                const uint16 AlphaReg = Reader.Read<uint16>();
+                const uint16 XReg     = Reader.Read<uint16>();
+                const uint16 YReg     = Reader.Read<uint16>();
+                const uint16 ZReg     = Reader.Read<uint16>();
+                const uint16 BoneIdx  = Reader.Read<uint16>();
+                const uint16 Dst      = Reader.Read<uint16>();
+
+                FAnimTask Task;
+                Task.Type  = EAnimTaskType::TranslateBone;
+                Task.DepA  = PoseTaskFor(Src);
+                Task.Alpha = ReadScalar(AlphaReg, 1.0f);
+                Task.T     = FVector3(ReadScalar(XReg, 0.0f), ReadScalar(YReg, 0.0f), ReadScalar(ZReg, 0.0f));
+                Task.BoneA = BoneIdx;
+                SetPoseTask(Dst, OutTasks.Add(Task));
+
+                SetPoseTags(Dst, DeltaOf(Src), EventsOf(Src));
+                SetPoseSync(Dst, SyncOf(Src));
+                CopyCurves(Dst, Src);
+                break;
+            }
+
+            case EAnimOp::SavePoseSnapshot:
+            {
+                const uint16 Src     = Reader.Read<uint16>();
+                const uint16 Request = Reader.Read<uint16>();
+                const uint16 Index   = Reader.Read<uint16>();
+                const uint16 Dst     = Reader.Read<uint16>();
+
+                FAnimTask Task;
+                Task.Type     = EAnimTaskType::SavePoseSnapshot;
+                Task.DepA     = PoseTaskFor(Src);
+                Task.Snapshot = Index < State.PoseSnapshots.size() ? &State.PoseSnapshots[Index] : nullptr;
+                Task.bCapture = ReadScalar(Request, 0.0f) > 0.5f;
+                SetPoseTask(Dst, OutTasks.Add(Task));
+
+                SetPoseTags(Dst, DeltaOf(Src), EventsOf(Src));
+                SetPoseSync(Dst, SyncOf(Src));
+                CopyCurves(Dst, Src);
+                break;
+            }
+
+            case EAnimOp::LoadPoseSnapshot:
+            {
+                const uint16 Index = Reader.Read<uint16>();
+                const uint16 Dst   = Reader.Read<uint16>();
+
+                FAnimTask Task;
+                Task.Type     = EAnimTaskType::LoadPoseSnapshot;
+                Task.Snapshot = Index < State.PoseSnapshots.size() ? &State.PoseSnapshots[Index] : nullptr;
+                SetPoseTask(Dst, OutTasks.Add(Task));
+
+                // A stored pose carries no motion of its own, and its curves were not captured with it.
+                SetPoseTags(Dst, FRootMotionDelta(), FEventRange());
+                SetPoseSync(Dst, FSyncTag());
+                ZeroCurves(Dst);
+                break;
+            }
+
             case EAnimOp::Inertialize:
             {
                 const uint16 Src      = Reader.Read<uint16>();
@@ -1218,6 +1476,16 @@ namespace Lumina
                 int32 Current = Math::Clamp((int32)State.StateSlots[SM.CurrentStateSlot], 0, NumStates - 1);
                 int32 From    = (int32)State.StateSlots[SM.FromStateSlot];
 
+                // Terms read the state we are in now, so this is gathered before any edge fires.
+                Detail::FTransitionContext TransitionContext;
+                TransitionContext.TimeInState = State.StateSlots[SM.TimeInStateSlot];
+                TransitionContext.Curves      = CurvesOf(SM.StatePoseRegisters[Current]);
+                TransitionContext.NumCurves   = NumCurves;
+                if (Current < (int32)SM.StateFinishedRegisters.size())
+                {
+                    TransitionContext.ClipFinished = ReadScalar(SM.StateFinishedRegisters[Current], 0.0f);
+                }
+
                 // Any matching edge when stable, only interruptible ones mid-transition, first passing edge wins.
                 const bool bTransitioning = From >= 0;
                 bool bStart = false;
@@ -1235,7 +1503,7 @@ namespace Lumina
                     {
                         continue;
                     }
-                    if (Detail::EvalTransitionCondition(Transition, Graph, State.Parameters, State.StateSlots[SM.TimeInStateSlot]))
+                    if (Detail::EvalTransitionCondition(Transition, Graph, State.Parameters, TransitionContext))
                     {
                         From           = Current;
                         Current        = Transition.ToState;
@@ -1302,9 +1570,39 @@ namespace Lumina
                 // Clocks advance whether or not the state is active, so a finished play-once never replays.
                 const int32 NumClockRanges = (int32)Math::Min(SM.StateClockSlotFirst.size(), SM.StateClockSlotEnd.size());
                 const uint16 NumClockSlots = (uint16)SM.ClockSlots.size();
-                for (int32 StateIndex = 0; StateIndex < NumStates && StateIndex < NumClockRanges; ++StateIndex)
+                const int32 NumChildRanges = (int32)Math::Min(SM.StateChildMachineFirst.size(), SM.StateChildMachineEnd.size());
+
+                for (int32 StateIndex = 0; StateIndex < NumStates; ++StateIndex)
                 {
                     if (StateIndex == Current)
+                    {
+                        continue;
+                    }
+
+                    // A machine under an inactive state is held at its entry, so re-entering restarts it.
+                    if (StateIndex < NumChildRanges)
+                    {
+                        const uint16 ChildEnd = Math::Min(SM.StateChildMachineEnd[StateIndex], (uint16)Graph->StateMachines.size());
+                        for (uint16 ChildIndex = SM.StateChildMachineFirst[StateIndex]; ChildIndex < ChildEnd; ++ChildIndex)
+                        {
+                            const FAnimGraphStateMachine& Child = Graph->StateMachines[ChildIndex];
+                            if (!Child.bResetOnEntry)
+                            {
+                                continue;
+                            }
+
+                            if (Child.CurrentStateSlot < NumState) { State.StateSlots[Child.CurrentStateSlot] = (float)Child.EntryState; }
+                            if (Child.FromStateSlot < NumState)    { State.StateSlots[Child.FromStateSlot] = -1.0f; }
+                            if (Child.TimeInStateSlot < NumState)  { State.StateSlots[Child.TimeInStateSlot] = 0.0f; }
+
+                            if (ChildIndex < State.Inertializers.size())
+                            {
+                                State.Inertializers[ChildIndex].bActive = false;
+                            }
+                        }
+                    }
+
+                    if (StateIndex >= NumClockRanges)
                     {
                         continue;
                     }

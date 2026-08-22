@@ -733,6 +733,302 @@ namespace Lumina
         }
     }
 
+    void AnimPose::FABRIK(FPose& Pose, const FSkeletonResource* Skeleton, int32 RootIdx, int32 TipIdx,
+                          const FVector3& Target, int32 Iterations, float Alpha)
+    {
+        LUMINA_PROFILE_SCOPE();
+
+        if (Skeleton == nullptr) return;
+        const int32 NumBones = Skeleton->GetNumBones();
+        if (Pose.GetNumBones() != NumBones) return;
+        if (RootIdx < 0 || TipIdx < 0 || RootIdx >= NumBones || TipIdx >= NumBones || RootIdx == TipIdx) return;
+
+        Alpha = Math::Clamp(Alpha, 0.0f, 1.0f);
+        if (Alpha <= 0.0f) return;
+
+        // Tip first, since only the parent chain is walkable; reversed below to run root to tip.
+        constexpr int32 MaxChain = 32;
+        int32 Chain[MaxChain];
+        int32 ChainLen = 0;
+        for (int32 Cursor = TipIdx; Cursor >= 0 && ChainLen < MaxChain; Cursor = Skeleton->GetBone(Cursor).ParentIndex)
+        {
+            Chain[ChainLen++] = Cursor;
+            if (Cursor == RootIdx)
+            {
+                break;
+            }
+        }
+
+        // The walk ended somewhere other than the root, so the two bones are not on one chain.
+        if (ChainLen < 2 || Chain[ChainLen - 1] != RootIdx)
+        {
+            return;
+        }
+
+        for (int32 i = 0; i < ChainLen / 2; ++i)
+        {
+            const int32 Swap = Chain[i];
+            Chain[i] = Chain[ChainLen - 1 - i];
+            Chain[ChainLen - 1 - i] = Swap;
+        }
+
+        const int32 RootParent = Skeleton->GetBone(RootIdx).ParentIndex;
+        const FMatrix4 RootParentG = RootParent >= 0
+            ? Detail::ComputeBoneGlobalLocal(Pose, Skeleton, RootParent)
+            : FMatrix4(1.0f);
+
+        FMatrix4 Globals[MaxChain];
+        FVector3 Points[MaxChain];
+        FMatrix4 Running = RootParentG;
+        for (int32 i = 0; i < ChainLen; ++i)
+        {
+            const int32 Bone = Chain[i];
+            Running = Running * ComposeTRS(Pose.Translations[Bone], Pose.Rotations[Bone], Pose.Scales[Bone]);
+            Globals[i] = Running;
+            Points[i] = FVector3(Running[3]);
+        }
+
+        float Lengths[MaxChain];
+        float TotalLength = 0.0f;
+        for (int32 i = 0; i < ChainLen - 1; ++i)
+        {
+            Lengths[i] = Math::Length(Points[i + 1] - Points[i]);
+            TotalLength += Lengths[i];
+        }
+        if (TotalLength < 1e-5f) return;
+
+        const FVector3 Origin = Points[0];
+        FVector3 Solved[MaxChain];
+        for (int32 i = 0; i < ChainLen; ++i)
+        {
+            Solved[i] = Points[i];
+        }
+
+        const FVector3 ToTarget = Target - Origin;
+        const float TargetDist = Math::Length(ToTarget);
+
+        if (TargetDist > TotalLength)
+        {
+            // Out of reach, so the chain straightens at the target instead of iterating toward nothing.
+            const FVector3 Dir = ToTarget / TargetDist;
+            for (int32 i = 1; i < ChainLen; ++i)
+            {
+                Solved[i] = Solved[i - 1] + Dir * Lengths[i - 1];
+            }
+        }
+        else
+        {
+            const int32 NumIterations = Math::Clamp(Iterations, 1, 32);
+            for (int32 Iter = 0; Iter < NumIterations; ++Iter)
+            {
+                if (Math::Length(Solved[ChainLen - 1] - Target) < 0.01f)
+                {
+                    break;
+                }
+
+                // Backward pass pins the tip to the target, forward pass pins the root back home.
+                Solved[ChainLen - 1] = Target;
+                for (int32 i = ChainLen - 2; i >= 0; --i)
+                {
+                    const FVector3 Dir = Math::Normalize(Solved[i] - Solved[i + 1]);
+                    Solved[i] = Solved[i + 1] + Dir * Lengths[i];
+                }
+
+                Solved[0] = Origin;
+                for (int32 i = 1; i < ChainLen; ++i)
+                {
+                    const FVector3 Dir = Math::Normalize(Solved[i] - Solved[i - 1]);
+                    Solved[i] = Solved[i - 1] + Dir * Lengths[i - 1];
+                }
+            }
+        }
+
+        // Solved positions become rotations, parent first, so each bone sees its parent's new frame.
+        FMatrix4 NewParentG = RootParentG;
+        for (int32 i = 0; i < ChainLen - 1; ++i)
+        {
+            const int32 Bone = Chain[i];
+
+            const FMatrix4 CurrentG = NewParentG * ComposeTRS(Pose.Translations[Bone], Pose.Rotations[Bone], Pose.Scales[Bone]);
+            const FVector3 CurrentPos = FVector3(CurrentG[3]);
+
+            const FMatrix4 ChildG = CurrentG * ComposeTRS(Pose.Translations[Chain[i + 1]], Pose.Rotations[Chain[i + 1]], Pose.Scales[Chain[i + 1]]);
+            const FVector3 CurrentChild = FVector3(ChildG[3]);
+
+            const FVector3 CurrentDir = CurrentChild - CurrentPos;
+            const FVector3 DesiredDir = Solved[i + 1] - CurrentPos;
+            if (Math::Length(CurrentDir) < 1e-5f || Math::Length(DesiredDir) < 1e-5f)
+            {
+                NewParentG = CurrentG;
+                continue;
+            }
+
+            FVector3 GT, GS; FQuat GR;
+            DecomposeTRS(CurrentG, GT, GR, GS);
+            FVector3 PT, PS; FQuat PR;
+            DecomposeTRS(NewParentG, PT, PR, PS);
+
+            const FQuat Delta = Detail::QuatFromTo(Math::Normalize(CurrentDir), Math::Normalize(DesiredDir));
+            FQuat NewLocal = Math::Conjugate(PR) * (Delta * GR);
+
+            FQuat& LocalRef = Pose.Rotations[Bone];
+            if (Math::Dot(LocalRef, NewLocal) < 0.0f) NewLocal = -NewLocal;
+            LocalRef = Math::Normalize(Math::Slerp(LocalRef, NewLocal, Alpha));
+
+            NewParentG = NewParentG * ComposeTRS(Pose.Translations[Bone], LocalRef, Pose.Scales[Bone]);
+        }
+    }
+
+    void AnimPose::LookAt(FPose& Pose, const FSkeletonResource* Skeleton, int32 BoneIdx,
+                          const FVector3& Target, const FVector3& LocalForward, float MaxAngleRadians, float Alpha)
+    {
+        LUMINA_PROFILE_SCOPE();
+
+        if (Skeleton == nullptr) return;
+        const int32 NumBones = Skeleton->GetNumBones();
+        if (Pose.GetNumBones() != NumBones) return;
+        if (BoneIdx < 0 || BoneIdx >= NumBones) return;
+
+        Alpha = Math::Clamp(Alpha, 0.0f, 1.0f);
+        if (Alpha <= 0.0f) return;
+
+        const float ForwardLen = Math::Length(LocalForward);
+        if (ForwardLen < 1e-5f) return;
+        const FVector3 Forward = LocalForward / ForwardLen;
+
+        const int32 ParentIdx = Skeleton->GetBone(BoneIdx).ParentIndex;
+        const FMatrix4 ParentG = ParentIdx >= 0
+            ? Detail::ComputeBoneGlobalLocal(Pose, Skeleton, ParentIdx)
+            : FMatrix4(1.0f);
+
+        const FMatrix4 BoneG = ParentG * ComposeTRS(Pose.Translations[BoneIdx], Pose.Rotations[BoneIdx], Pose.Scales[BoneIdx]);
+
+        FVector3 GT, GS; FQuat GR;
+        DecomposeTRS(BoneG, GT, GR, GS);
+
+        const FVector3 ToTarget = Target - GT;
+        if (Math::Length(ToTarget) < 1e-5f) return;
+
+        const FVector3 RestDir    = Math::Normalize(GR * Forward);
+        const FVector3 DesiredDir = Math::Normalize(ToTarget);
+
+        FQuat Swing = Detail::QuatFromTo(RestDir, DesiredDir);
+
+        // Clamped against the rest direction, so a target behind the head does not snap the neck around.
+        if (MaxAngleRadians > 0.0f)
+        {
+            const float CosHalf = Math::Clamp(Swing.w, -1.0f, 1.0f);
+            const float Angle = 2.0f * Math::Acos(CosHalf);
+            if (Angle > MaxAngleRadians)
+            {
+                const FVector3 Axis = FVector3(Swing.x, Swing.y, Swing.z);
+                const float AxisLen = Math::Length(Axis);
+                if (AxisLen > 1e-5f)
+                {
+                    Swing = Math::AngleAxis(MaxAngleRadians, Axis / AxisLen);
+                }
+            }
+        }
+
+        FVector3 PT, PS; FQuat PR;
+        DecomposeTRS(ParentG, PT, PR, PS);
+
+        FQuat NewLocal = Math::Conjugate(PR) * (Swing * GR);
+        FQuat& LocalRef = Pose.Rotations[BoneIdx];
+        if (Math::Dot(LocalRef, NewLocal) < 0.0f) NewLocal = -NewLocal;
+        LocalRef = Math::Normalize(Math::Slerp(LocalRef, NewLocal, Alpha));
+    }
+
+    void AnimPose::FootIK(FPose& Pose, const FSkeletonResource* Skeleton, int32 ThighIdx, int32 CalfIdx,
+                          int32 FootIdx, const FVector3& Offset, const FVector3& GroundNormal,
+                          const FVector3& FootUpAxis, float NormalAlpha, float Alpha)
+    {
+        LUMINA_PROFILE_SCOPE();
+
+        if (Skeleton == nullptr) return;
+        const int32 NumBones = Skeleton->GetNumBones();
+        if (Pose.GetNumBones() != NumBones) return;
+        if (ThighIdx < 0 || CalfIdx < 0 || FootIdx < 0) return;
+        if (ThighIdx >= NumBones || CalfIdx >= NumBones || FootIdx >= NumBones) return;
+
+        Alpha = Math::Clamp(Alpha, 0.0f, 1.0f);
+        if (Alpha <= 0.0f) return;
+
+        // One walk to the thigh's parent, which the solve never touches; the leg composes down from it.
+        const int32 ThighParent = Skeleton->GetBone(ThighIdx).ParentIndex;
+        const FMatrix4 ThighParentG = ThighParent >= 0
+            ? Detail::ComputeBoneGlobalLocal(Pose, Skeleton, ThighParent)
+            : FMatrix4(1.0f);
+
+        const FMatrix4 ThighG = ThighParentG * ComposeTRS(Pose.Translations[ThighIdx], Pose.Rotations[ThighIdx], Pose.Scales[ThighIdx]);
+        const FMatrix4 CalfG  = ThighG * ComposeTRS(Pose.Translations[CalfIdx], Pose.Rotations[CalfIdx], Pose.Scales[CalfIdx]);
+        const FMatrix4 FootG  = CalfG * ComposeTRS(Pose.Translations[FootIdx], Pose.Rotations[FootIdx], Pose.Scales[FootIdx]);
+
+        // The pole keeps the knee where the animation already had it, so IK does not flip the bend.
+        const FVector3 Hip  = FVector3(ThighG[3]);
+        const FVector3 Knee = FVector3(CalfG[3]);
+        const FVector3 Foot = FVector3(FootG[3]);
+
+        const FVector3 Target = Foot + Offset;
+        const FVector3 Pole   = Knee + (Knee - Hip);
+
+        TwoBoneIK(Pose, Skeleton, ThighIdx, CalfIdx, FootIdx, Target, Pole, Alpha);
+
+        const float NormalLen = Math::Length(GroundNormal);
+        const float UpLen = Math::Length(FootUpAxis);
+        const float AlignAlpha = Math::Clamp(NormalAlpha, 0.0f, 1.0f) * Alpha;
+        if (NormalLen < 1e-5f || UpLen < 1e-5f || AlignAlpha <= 0.0f)
+        {
+            return;
+        }
+
+        // Recomposed rather than re-walked, since only the thigh and calf rotations moved.
+        const FMatrix4 SolvedThighG = ThighParentG * ComposeTRS(Pose.Translations[ThighIdx], Pose.Rotations[ThighIdx], Pose.Scales[ThighIdx]);
+        const FMatrix4 SolvedCalfG  = SolvedThighG * ComposeTRS(Pose.Translations[CalfIdx], Pose.Rotations[CalfIdx], Pose.Scales[CalfIdx]);
+        const FMatrix4 SolvedFootG  = SolvedCalfG * ComposeTRS(Pose.Translations[FootIdx], Pose.Rotations[FootIdx], Pose.Scales[FootIdx]);
+
+        FVector3 FT, FS; FQuat FR;
+        DecomposeTRS(SolvedFootG, FT, FR, FS);
+
+        FVector3 PT, PS; FQuat PR;
+        DecomposeTRS(SolvedCalfG, PT, PR, PS);
+
+        const FVector3 CurrentUp = Math::Normalize(FR * (FootUpAxis / UpLen));
+        const FQuat Align = Detail::QuatFromTo(CurrentUp, GroundNormal / NormalLen);
+
+        FQuat NewLocal = Math::Conjugate(PR) * (Align * FR);
+        FQuat& LocalRef = Pose.Rotations[FootIdx];
+        if (Math::Dot(LocalRef, NewLocal) < 0.0f) NewLocal = -NewLocal;
+        LocalRef = Math::Normalize(Math::Slerp(LocalRef, NewLocal, AlignAlpha));
+    }
+
+    void AnimPose::TranslateBoneComponentSpace(FPose& Pose, const FSkeletonResource* Skeleton, int32 BoneIdx,
+                                               const FVector3& Offset, float Alpha)
+    {
+        if (Skeleton == nullptr) return;
+        const int32 NumBones = Skeleton->GetNumBones();
+        if (Pose.GetNumBones() != NumBones) return;
+        if (BoneIdx < 0 || BoneIdx >= NumBones) return;
+
+        Alpha = Math::Clamp(Alpha, 0.0f, 1.0f);
+        if (Alpha <= 0.0f) return;
+
+        const int32 ParentIdx = Skeleton->GetBone(BoneIdx).ParentIndex;
+        if (ParentIdx < 0)
+        {
+            Pose.Translations[BoneIdx] += Offset * Alpha;
+            return;
+        }
+
+        // Rotated into the parent's frame, so the offset means the same thing whatever the hips are doing.
+        const FMatrix4 ParentG = Detail::ComputeBoneGlobalLocal(Pose, Skeleton, ParentIdx);
+        FVector3 PT, PS; FQuat PR;
+        DecomposeTRS(ParentG, PT, PR, PS);
+
+        const FVector3 LocalOffset = Math::Conjugate(PR) * (Offset * Alpha);
+        Pose.Translations[BoneIdx] += LocalOffset;
+    }
+
     void AnimPose::TwoBoneIK(FPose& Pose, const FSkeletonResource* Skeleton,
                              int32 RootIdx, int32 MidIdx, int32 EndIdx,
                              const FVector3& Target, const FVector3& Pole, float Alpha)

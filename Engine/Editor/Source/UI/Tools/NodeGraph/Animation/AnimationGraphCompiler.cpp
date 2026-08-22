@@ -200,6 +200,12 @@ namespace Lumina
         Write(DstFinished);
         Write(SyncGroup);
         OutFinishedReg = DstFinished;
+
+        // First clip in the state wins, so a layered state reports its base clip rather than an overlay.
+        if (CapturedFinishedReg == 0xFFFFu)
+        {
+            CapturedFinishedReg = DstFinished;
+        }
         return DstClock;
     }
 
@@ -267,6 +273,55 @@ namespace Lumina
     {
         const uint16 Dst = AllocPoseReg();
         WriteOp(EAnimOp::RefPose);
+        Write(Dst);
+        return Dst;
+    }
+
+    uint16 FAnimationGraphCompiler::AddPoseSnapshot(const FName& Name)
+    {
+        for (SIZE_T i = 0; i < PoseSnapshotNames.size(); ++i)
+        {
+            if (PoseSnapshotNames[i] == Name)
+            {
+                return (uint16)i;
+            }
+        }
+        PoseSnapshotNames.push_back(Name);
+        return (uint16)(PoseSnapshotNames.size() - 1);
+    }
+
+    uint16 FAnimationGraphCompiler::EmitSavePoseSnapshot(uint16 SrcPoseReg, uint16 RequestReg, uint16 SnapshotIndex)
+    {
+        const uint16 Dst = AllocPoseReg();
+        WriteOp(EAnimOp::SavePoseSnapshot);
+        Write(SrcPoseReg);
+        Write(RequestReg);
+        Write(SnapshotIndex);
+        Write(Dst);
+        return Dst;
+    }
+
+    uint16 FAnimationGraphCompiler::EmitLoadPoseSnapshot(uint16 SnapshotIndex)
+    {
+        const uint16 Dst = AllocPoseReg();
+        WriteOp(EAnimOp::LoadPoseSnapshot);
+        Write(SnapshotIndex);
+        Write(Dst);
+        return Dst;
+    }
+
+    uint16 FAnimationGraphCompiler::EmitSmoothScalar(uint16 ValueReg, uint16 HalfLifeReg)
+    {
+        // Not clock slots; winding a smoother back to zero while its state is inactive would pop on entry.
+        const uint16 ValueSlot  = AllocStateSlot();
+        const uint16 SeededSlot = AllocStateSlot();
+        const uint16 Dst        = AllocScalarReg();
+
+        WriteOp(EAnimOp::SmoothScalar);
+        Write(ValueReg);
+        Write(HalfLifeReg);
+        Write(ValueSlot);
+        Write(SeededSlot);
         Write(Dst);
         return Dst;
     }
@@ -477,6 +532,82 @@ namespace Lumina
         return Dst;
     }
 
+    uint16 FAnimationGraphCompiler::EmitFABRIK(uint16 SrcPoseReg, uint16 AlphaReg,
+                                               uint16 TargetXReg, uint16 TargetYReg, uint16 TargetZReg,
+                                               uint16 RootIndex, uint16 TipIndex, uint16 Iterations)
+    {
+        const uint16 Dst = AllocPoseReg();
+        WriteOp(EAnimOp::FABRIK);
+        Write(SrcPoseReg);
+        Write(AlphaReg);
+        Write(TargetXReg);
+        Write(TargetYReg);
+        Write(TargetZReg);
+        Write(RootIndex);
+        Write(TipIndex);
+        Write(Iterations);
+        Write(Dst);
+        return Dst;
+    }
+
+    uint16 FAnimationGraphCompiler::EmitLookAt(uint16 SrcPoseReg, uint16 AlphaReg,
+                                               uint16 TargetXReg, uint16 TargetYReg, uint16 TargetZReg,
+                                               uint16 BoneIndex, const FVector3& LocalForward, float MaxAngleRadians)
+    {
+        const uint16 Dst = AllocPoseReg();
+        WriteOp(EAnimOp::LookAt);
+        Write(SrcPoseReg);
+        Write(AlphaReg);
+        Write(TargetXReg);
+        Write(TargetYReg);
+        Write(TargetZReg);
+        Write(BoneIndex);
+        Write(LocalForward);
+        Write(MaxAngleRadians);
+        Write(Dst);
+        return Dst;
+    }
+
+    uint16 FAnimationGraphCompiler::EmitFootIK(uint16 SrcPoseReg, uint16 AlphaReg,
+                                               uint16 OffsetXReg, uint16 OffsetYReg, uint16 OffsetZReg,
+                                               uint16 NormalXReg, uint16 NormalYReg, uint16 NormalZReg,
+                                               uint16 AlignAlphaReg, uint16 ThighIndex, uint16 CalfIndex, uint16 FootIndex,
+                                               const FVector3& FootUpAxis)
+    {
+        const uint16 Dst = AllocPoseReg();
+        WriteOp(EAnimOp::FootIK);
+        Write(SrcPoseReg);
+        Write(AlphaReg);
+        Write(OffsetXReg);
+        Write(OffsetYReg);
+        Write(OffsetZReg);
+        Write(NormalXReg);
+        Write(NormalYReg);
+        Write(NormalZReg);
+        Write(AlignAlphaReg);
+        Write(ThighIndex);
+        Write(CalfIndex);
+        Write(FootIndex);
+        Write(FootUpAxis);
+        Write(Dst);
+        return Dst;
+    }
+
+    uint16 FAnimationGraphCompiler::EmitTranslateBone(uint16 SrcPoseReg, uint16 AlphaReg,
+                                                      uint16 XReg, uint16 YReg, uint16 ZReg, uint16 BoneIndex)
+    {
+        const uint16 Dst = AllocPoseReg();
+        WriteOp(EAnimOp::TranslateBone);
+        Write(SrcPoseReg);
+        Write(AlphaReg);
+        Write(XReg);
+        Write(YReg);
+        Write(ZReg);
+        Write(BoneIndex);
+        Write(Dst);
+        return Dst;
+    }
+
     uint16 FAnimationGraphCompiler::EmitTwoBoneIK(uint16 SrcPoseReg, uint16 AlphaReg,
                                                   uint16 TargetXReg, uint16 TargetYReg, uint16 TargetZReg,
                                                   uint16 RootIndex, uint16 MidIndex, uint16 EndIndex,
@@ -676,6 +807,7 @@ namespace Lumina
         OutGraph->NumInertializerNodes = NextInertializerNode;
         OutGraph->NumDeadBlendNodes    = NextDeadBlendNode;
         OutGraph->SlotNames           = SlotNames;
+        OutGraph->PoseSnapshotNames   = PoseSnapshotNames;
         OutGraph->BytecodeVersion     = kAnimBytecodeVersion;
 
         OutGraph->ResolveTransitionParameters();

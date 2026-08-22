@@ -75,6 +75,12 @@ enum class ELuminaEngineVersion : uint32
 	// CAnimationGraph serializes the smoothing record counts its Inertialization / Dead Blending nodes use.
 	ANIM_GRAPH_INERTIALIZATION_NODES,
 
+	// FAnimGraphTransition carries a list of condition terms; states carry their clip Finished register.
+	ANIM_GRAPH_TRANSITION_TERMS,
+
+	// CAnimationGraph serializes the named pose snapshot slots its snapshot opcodes address.
+	ANIM_GRAPH_POSE_SNAPSHOTS,
+
 	AUTOMATIC_VERSION_PLUS_ONE,
 	AUTOMATIC_VERSION = AUTOMATIC_VERSION_PLUS_ONE - 1
 };

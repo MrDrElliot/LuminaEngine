@@ -35,11 +35,17 @@ namespace Lumina
     REFLECT()
     enum class EAnimTransitionSource : uint8
     {
-        /** The graph parameter named by Condition Parameter. */
+        /** The graph parameter named by Parameter Name. */
         Parameter,
 
         /** Seconds the state machine has spent in its current state, so a state can time itself out. */
         TimeInState,
+
+        /** A curve carried by the current state's pose, named by Curve Name. */
+        Curve,
+
+        /** 1 once the current state's first play-once clip reaches its end, 0 while it plays. */
+        ClipFinished,
     };
 
     // How the bytes at a resolved offset decode. Filled at link from the property's TypeFlags.
@@ -92,6 +98,27 @@ namespace Lumina
         }
     }
 
+    // Counterpart of ReadAnimParamScalar, for gameplay writing a parameter it resolved once by name.
+    FORCEINLINE void WriteAnimParamScalar(uint8* Base, const FAnimGraphParamBinding& Binding, float Value)
+    {
+        uint8* At = Base + Binding.Offset;
+        switch (Binding.Type)
+        {
+        case EAnimParamValueType::Float:  *reinterpret_cast<float*>(At)  = Value; break;
+        case EAnimParamValueType::Double: *reinterpret_cast<double*>(At) = (double)Value; break;
+        case EAnimParamValueType::Bool:   *reinterpret_cast<bool*>(At)   = Value > 0.5f; break;
+        case EAnimParamValueType::Int8:   *reinterpret_cast<int8*>(At)   = (int8)Value; break;
+        case EAnimParamValueType::Int16:  *reinterpret_cast<int16*>(At)  = (int16)Value; break;
+        case EAnimParamValueType::Int32:  *reinterpret_cast<int32*>(At)  = (int32)Value; break;
+        case EAnimParamValueType::Int64:  *reinterpret_cast<int64*>(At)  = (int64)Value; break;
+        case EAnimParamValueType::UInt8:  *reinterpret_cast<uint8*>(At)  = (uint8)Value; break;
+        case EAnimParamValueType::UInt16: *reinterpret_cast<uint16*>(At) = (uint16)Value; break;
+        case EAnimParamValueType::UInt32: *reinterpret_cast<uint32*>(At) = (uint32)Value; break;
+        case EAnimParamValueType::UInt64: *reinterpret_cast<uint64*>(At) = (uint64)Value; break;
+        default: break;
+        }
+    }
+
     // TObjectPtr<T> holds exactly one T*, so an object property reads as a plain pointer at its offset.
     FORCEINLINE CObject* ReadAnimParamObject(const uint8* Base, const FAnimGraphParamBinding& Binding)
     {
@@ -137,21 +164,43 @@ namespace Lumina
         EAnimObjectParamType Type = EAnimObjectParamType::Animation;
     };
 
+    // One test inside a transition's rule. Name addresses a parameter or a curve depending on the source.
+    struct FAnimGraphTransitionTerm
+    {
+        EAnimTransitionSource ConditionSource = EAnimTransitionSource::Parameter;
+
+        // Empty is unconditional; a name that resolves to nothing never passes.
+        FName Name;
+        EAnimTransitionCompare Compare = EAnimTransitionCompare::Greater;
+        float CompareValue = 0.0f;
+
+        // Name resolved to a parameter or curve index so the VM skips the per-frame lookup. Transient.
+        static constexpr int32 Unresolved = -2;
+        int32 CachedIndex = Unresolved;
+
+        friend FArchive& operator << (FArchive& Ar, FAnimGraphTransitionTerm& Data)
+        {
+            Ar << Data.ConditionSource;
+            Ar << Data.Name;
+            Ar << Data.Compare;
+            Ar << Data.CompareValue;
+            return Ar;
+        }
+    };
+
     // One compiled state-machine edge; the VM cross-fades FromState->ToState over BlendDuration
-    // when the condition passes while FromState is active.
+    // when every term passes (or any term, when bRequireAll is false) while FromState is active.
     struct FAnimGraphTransition
     {
         // -1 means "any state" (checked regardless of active state).
         int32 FromState = -1;
         int32 ToState = 0;
 
-        // What the compare reads. ConditionParameter is ignored unless this is Parameter.
-        EAnimTransitionSource ConditionSource = EAnimTransitionSource::Parameter;
+        // Rule this edge is gated by. Empty passes unconditionally.
+        TVector<FAnimGraphTransitionTerm> Terms;
 
-        // Gating parameter; empty is unconditional, and a name that resolves to nothing never passes.
-        FName ConditionParameter;
-        EAnimTransitionCompare Compare = EAnimTransitionCompare::Greater;
-        float CompareValue = 0.0f;
+        // Terms are ANDed when true, ORed when false.
+        bool bRequireAll = true;
 
         // Cross-fade length in seconds; 0 snaps instantly.
         float BlendDuration = 0.2f;
@@ -159,23 +208,36 @@ namespace Lumina
         // Re-evaluate the condition mid-cross-fade to pre-empt in flight; default off (runs to completion).
         bool bCanInterrupt = false;
 
-        // ConditionParameter resolved to a Parameters index (INDEX_NONE = undeclared) so the VM skips
-        // the per-frame name lookup. Transient: filled by ResolveTransitionParameters, not serialized.
-        static constexpr int32 ParamUnresolved = -2;
-        int32 CachedParamIndex = ParamUnresolved;
-
         friend FArchive& operator << (FArchive& Ar, FAnimGraphTransition& Data)
         {
             Ar << Data.FromState;
             Ar << Data.ToState;
-            Ar << Data.ConditionParameter;
-            Ar << Data.Compare;
-            Ar << Data.CompareValue;
+
+            if (Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::ANIM_GRAPH_TRANSITION_TERMS)
+            {
+                Ar << Data.Terms;
+                Ar << Data.bRequireAll;
+                Ar << Data.BlendDuration;
+                Ar << Data.bCanInterrupt;
+                return Ar;
+            }
+
+            // Single-compare layout, folded into one term so old bytecode keeps its rule until a recompile.
+            FAnimGraphTransitionTerm Legacy;
+            Ar << Legacy.Name;
+            Ar << Legacy.Compare;
+            Ar << Legacy.CompareValue;
             Ar << Data.BlendDuration;
             Ar << Data.bCanInterrupt;
             if (Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::ANIM_GRAPH_STATE_CLOCKS)
             {
-                Ar << Data.ConditionSource;
+                Ar << Legacy.ConditionSource;
+            }
+
+            Data.Terms.clear();
+            if (!Legacy.Name.IsNone() || Legacy.ConditionSource != EAnimTransitionSource::Parameter)
+            {
+                Data.Terms.push_back(Legacy);
             }
             return Ar;
         }
@@ -266,6 +328,17 @@ namespace Lumina
         TVector<uint16> StateClockSlotFirst;
         TVector<uint16> StateClockSlotEnd;
 
+        // Scalar register holding each state's first clip player Finished flag, or 0xFFFF for none.
+        TVector<uint16> StateFinishedRegisters;
+
+        // Machines compiled inside each state's blend tree, transitive, as a range of machine indices.
+        // A machine flagged bResetOnEntry is rewound while the state hosting it is inactive.
+        TVector<uint16> StateChildMachineFirst;
+        TVector<uint16> StateChildMachineEnd;
+
+        // Rewind to EntryState whenever the state hosting this machine is not the active one.
+        bool bResetOnEntry = false;
+
         // Slots into FAnimGraphVMState.StateSlots: Current/From state indices (From -1 when not
         // transitioning), seconds spent in the current state, Duration of the active transition.
         uint16 CurrentStateSlot = 0;
@@ -287,6 +360,13 @@ namespace Lumina
                 Ar << Data.ClockSlots;
                 Ar << Data.StateClockSlotFirst;
                 Ar << Data.StateClockSlotEnd;
+            }
+            if (Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::ANIM_GRAPH_TRANSITION_TERMS)
+            {
+                Ar << Data.StateFinishedRegisters;
+                Ar << Data.StateChildMachineFirst;
+                Ar << Data.StateChildMachineEnd;
+                Ar << Data.bResetOnEntry;
             }
             else if (Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::ANIM_GRAPH_STATE_CLOCKS)
             {
@@ -320,7 +400,7 @@ namespace Lumina
 
         int32 FindCurveIndex(const FName& Name) const;
 
-        // Fills every transition's CachedParamIndex; call after Parameters/StateMachines change.
+        // Fills every transition term's CachedIndex; call after Parameters/CurveNames/StateMachines change.
         void ResolveTransitionParameters();
 
         // Swapping the parameter struct moves every offset, so re-link rather than trust the old ones.
@@ -405,6 +485,9 @@ namespace Lumina
 
         /** Montage slot names referenced by EvalSlot opcodes, indexed by slot index. */
         TVector<FName> SlotNames;
+
+        /** Pose snapshot slots, indexed by the Save / Load Pose Snapshot opcodes. */
+        TVector<FName> PoseSnapshotNames;
 
         /** Opcode layout the bytecode was compiled against (kAnimBytecodeVersion); the VM refuses
          *  mismatches instead of misparsing. 0 = compiled before versioning existed. */

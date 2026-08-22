@@ -22,8 +22,14 @@ namespace Lumina
         ApplyAdditive,
         Inertialize,
         DeadBlend,
+        SavePoseSnapshot,
+        LoadPoseSnapshot,
         BoneTransform,
         TwoBoneIK,
+        FABRIK,
+        LookAt,
+        FootIK,
+        TranslateBone,
     };
 
     // Which side of the physics step a task must run on. Everything is Any today; the split exists
@@ -35,14 +41,29 @@ namespace Lumina
         PostPhysics,
     };
 
-    // One channel's inertialization record (Bollo 2018): the offset decays along Direction from magnitude
-    // X0 (with initial velocity V0) to zero over the transition. Rotation: Direction = axis, X0 = angle
-    // (rad); translation/scale: Direction = unit offset, X0 = length.
-    struct FInertChannel
+    // One channel of inertialization (Bollo 2018), where the offset decays along Dir from magnitude X0
+    // with initial velocity V0. Rotation reads Dir as an axis and X0 as radians; translation and scale
+    // read Dir as a unit offset and X0 as a length.
+    // Structure of arrays, with Dir interleaved exactly as the pose stores its vectors, so the decay
+    // evaluates 8 bones at a time and the translation apply is one flat pass over both.
+    struct FInertChannelSet
     {
-        FVector3 Direction = FVector3(0.0f);
-        float    X0 = 0.0f;
-        float    V0 = 0.0f;
+        TVector<float> Dir;    // 3 per bone
+        TVector<float> X0;     // 1 per bone
+        TVector<float> V0;     // 1 per bone
+        TVector<float> Eval;   // 1 per bone, this frame's decayed magnitude
+        TVector<float> Eval3;  // 3 per bone, Eval splatted for the flat vector pass
+
+        void Resize(int32 NumBones)
+        {
+            Dir.assign((SIZE_T)NumBones * 3, 0.0f);
+            X0.assign((SIZE_T)NumBones, 0.0f);
+            V0.assign((SIZE_T)NumBones, 0.0f);
+            Eval.resize((SIZE_T)NumBones);
+            Eval3.resize((SIZE_T)NumBones * 3);
+        }
+
+        int32 Num() const { return (int32)X0.size(); }
     };
 
     // One smoothing record, held per state machine and per Inertialization node. Control fields
@@ -53,9 +74,9 @@ namespace Lumina
         bool  bActive  = false;
         float Elapsed  = 0.0f;
         float Duration = 0.0f;
-        TVector<FInertChannel> Rot;
-        TVector<FInertChannel> Trans;
-        TVector<FInertChannel> Scale;
+        FInertChannelSet Rot;
+        FInertChannelSet Trans;
+        FInertChannelSet Scale;
         FPose PrevOutput;
         FPose PrevPrevOutput;
         int32 HistoryCount = 0; // 0/1/2 - velocity is only estimated once 2 frames of history exist
@@ -129,12 +150,18 @@ namespace Lumina
         // (made update-side; Time carries the pre-advance Elapsed the apply evaluates at).
         FAnimInertializer* Inert = nullptr;
         FAnimDeadBlend* Dead = nullptr;
+
+        // Save / Load Pose Snapshot: the per-instance buffer this slot owns.
+        FPose* Snapshot = nullptr;
         float DeltaTime = 0.0f;
         bool bCapture = false;
         bool bApply = false;
 
         // BoneTransform: offset TRS + target bone + space/mode. TwoBoneIK reuses T as the component-space
-        // target, S as the pole, and BoneA/B/C as root/mid/end.
+        // target, S as the pole, and BoneA/B/C as root/mid/end. FABRIK reuses T as the target and BoneC as
+        // the iteration count; LookAt reuses T as the target, S as the local forward axis and Time as the
+        // clamp; FootIK reuses T as the offset, R.xyz as the ground normal, S as the foot up axis and Time
+        // as the align alpha; TranslateBone reuses T as the component-space offset.
         FVector3 T = FVector3(0.0f);
         FQuat    R = FQuat(1.0f, 0.0f, 0.0f, 0.0f);
         FVector3 S = FVector3(1.0f);

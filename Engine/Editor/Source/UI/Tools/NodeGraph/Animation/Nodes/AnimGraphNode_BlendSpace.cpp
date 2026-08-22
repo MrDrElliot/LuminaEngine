@@ -44,13 +44,22 @@ namespace Lumina
                                                           : Compiler.AddBlendSpace(BlendSpace.Get());
         const uint16 PhaseSlot       = Compiler.AllocClockSlot();
 
-        const uint16 XReg     = ResolveValueInput(XPin, Compiler);
         const uint16 SpeedReg = ResolveValueInput(SpeedPin, Compiler);
 
+        uint16 XReg = ResolveValueInput(XPin, Compiler);
+        if (XSmoothingHalfLife > 0.0f)
+        {
+            XReg = Compiler.EmitSmoothScalar(XReg, Compiler.EmitLoadConst(XSmoothingHalfLife));
+        }
+
         // A one-axis blend space ignores Y, so an unconnected pin costs nothing to bake as a constant.
-        const uint16 YReg = YPin->HasConnection()
+        uint16 YReg = YPin->HasConnection()
             ? ResolveValueInput(YPin, Compiler)
             : Compiler.EmitLoadConst(0.0f);
+        if (YSmoothingHalfLife > 0.0f)
+        {
+            YReg = Compiler.EmitSmoothScalar(YReg, Compiler.EmitLoadConst(YSmoothingHalfLife));
+        }
 
         const uint16 PoseReg = Compiler.EmitSampleBlendSpace(BlendSpaceIndex, XReg, YReg, SpeedReg, PhaseSlot, bDynamicBlendSpace);
 

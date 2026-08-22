@@ -60,6 +60,12 @@ namespace Lumina
                 case EAnimTaskType::ApplyAdditive:      return "Apply Additive";
                 case EAnimTaskType::Inertialize:        return "Inertialize";
                 case EAnimTaskType::DeadBlend:          return "Dead Blend";
+                case EAnimTaskType::SavePoseSnapshot:   return "Save Snapshot";
+                case EAnimTaskType::LoadPoseSnapshot:   return "Pose Snapshot";
+                case EAnimTaskType::FABRIK:             return "FABRIK";
+                case EAnimTaskType::LookAt:             return "Look At";
+                case EAnimTaskType::FootIK:             return "Foot IK";
+                case EAnimTaskType::TranslateBone:      return "Translate Bone";
                 case EAnimTaskType::BoneTransform:      return "Bone Transform";
                 case EAnimTaskType::TwoBoneIK:          return "Two Bone IK";
                 }
@@ -80,7 +86,14 @@ namespace Lumina
                 case EAnimTaskType::Inertialize:
                 case EAnimTaskType::DeadBlend:          return ImVec4(0.93f, 0.68f, 0.33f, 1.0f);
                 case EAnimTaskType::BoneTransform:
-                case EAnimTaskType::TwoBoneIK:          return ImVec4(0.40f, 0.80f, 0.80f, 1.0f);
+                case EAnimTaskType::TwoBoneIK:
+                case EAnimTaskType::FABRIK:
+                case EAnimTaskType::LookAt:
+                case EAnimTaskType::FootIK:
+                case EAnimTaskType::TranslateBone:      return ImVec4(0.40f, 0.80f, 0.80f, 1.0f);
+
+                case EAnimTaskType::SavePoseSnapshot:
+                case EAnimTaskType::LoadPoseSnapshot:   return ImVec4(0.56f, 0.72f, 0.50f, 1.0f);
                 }
                 return ImVec4(0.60f, 0.60f, 0.60f, 1.0f);
             }
@@ -102,6 +115,10 @@ namespace Lumina
                 case EAnimTaskType::ApplyAdditive:
                 case EAnimTaskType::BoneTransform:
                 case EAnimTaskType::TwoBoneIK:
+                case EAnimTaskType::FABRIK:
+                case EAnimTaskType::LookAt:
+                case EAnimTaskType::FootIK:
+                case EAnimTaskType::TranslateBone:
                     return Format("alpha {:.2f}", Entry.Alpha);
 
                 case EAnimTaskType::Inertialize:
@@ -175,6 +192,7 @@ namespace Lumina
 
         PropertyContext.Provide(&SkeletonCtx);
         PropertyContext.Provide(&AnimGraphCtx);
+        PropertyContext.Provide(&StateMachineCtx);
         GetPropertyTable()->SetContext(&PropertyContext);
 
         CreateToolWindow(AnimationGraphWindowName, [this](bool /*bFocused*/)
@@ -649,6 +667,9 @@ namespace Lumina
         SkeletonCtx.Skeleton = (Graph != nullptr && Graph->Skeleton.IsValid()) ? Graph->Skeleton->GetSkeletonResource() : nullptr;
         AnimGraphCtx.Graph = Graph;
 
+        // The canvas in view, so a State Alias lists the states it can name.
+        StateMachineCtx.Graph = GraphStack.empty() ? nullptr : Cast<CAnimStateMachineGraph>(GraphStack.back().Graph);
+
         if (ImGui::Button(LE_ICON_COG " Compile"))
         {
             Compile();
@@ -773,7 +794,7 @@ namespace Lumina
 
             // Condition and blend length are the two things worth scanning without expanding every entry.
             ImGui::SameLine();
-            ImGui::TextColored(Transition->ConditionParameter.IsNone() ? EditorColors::Warning() : EditorColors::TextDim(),
+            ImGui::TextColored(Transition->Conditions.empty() ? EditorColors::Warning() : EditorColors::TextDim(),
                                "   %s", Transition->GetConditionText().c_str());
             ImGui::SameLine();
             ImGui::TextColored(EditorColors::TextMuted(), "   %.2fs", Transition->BlendDuration);

@@ -85,6 +85,19 @@ namespace Lumina
         //~ Seam smoothing a graph can ask for anywhere, not just at a state machine edge.
         Inertialize,            // src:pReg, request:sReg, duration:sReg, inertIdx:uint16, dst:pReg
         DeadBlend,              // src:pReg, request:sReg, duration:sReg, halfLife:sReg, deadIdx:uint16, dst:pReg
+
+        //~ Exponential smoothing of a scalar, state carried in two slots (value + seeded flag).
+        SmoothScalar,           // value:sReg, halfLife:sReg, valueSlot:uint16, seededSlot:uint16, dst:sReg
+
+        //~ Named pose buffers that outlive the frame, for blending out of a pose captured earlier.
+        SavePoseSnapshot,       // src:pReg, request:sReg, snapIdx:uint16, dst:pReg
+        LoadPoseSnapshot,       // snapIdx:uint16, dst:pReg
+
+        //~ Solvers whose targets are computed at runtime, so every operand is a register.
+        FABRIK,                 // src:pReg, alpha:sReg, tx:sReg, ty:sReg, tz:sReg, rootIdx:uint16, tipIdx:uint16, iterations:uint16, dst:pReg
+        LookAt,                 // src:pReg, alpha:sReg, tx:sReg, ty:sReg, tz:sReg, boneIdx:uint16, forward:vec3, clamp:float, dst:pReg
+        FootIK,                 // src:pReg, alpha:sReg, ox/oy/oz:sReg, nx/ny/nz:sReg, alignAlpha:sReg, thigh/calf/foot:uint16, up:vec3, dst:pReg
+        TranslateBone,          // src:pReg, alpha:sReg, x:sReg, y:sReg, z:sReg, boneIdx:uint16, dst:pReg
     };
 
     // MakeAdditiveEx base operand meaning "no base pose supplied".
@@ -147,6 +160,7 @@ namespace Lumina
         TVector<FAnimInertializer> Inertializers;     // per state machine; transition smoothing state
         TVector<FAnimInertializer> NodeInertializers; // per Inertialization node
         TVector<FAnimDeadBlend>    DeadBlends;        // per Dead Blending node
+        TVector<FPose>             PoseSnapshots;     // per named snapshot slot
         TVector<FAnimSyncGroup> SyncGroups;       // shared phase per sync group
 
         // Curve values the output pose carried this update, indexed by CAnimationGraph::CurveNames.

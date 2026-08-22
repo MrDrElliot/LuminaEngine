@@ -111,6 +111,9 @@ namespace Lumina
         // Compiles every state's blend tree into the shared register space and records its pose register.
         THashMap<int64, int32> NodeIDToStateIndex;
         THashSet<int64> AnyStateNodeIDs;
+        THashSet<int64> ConduitNodeIDs;
+        THashMap<int64, CAnimGraphNode_StateAlias*> AliasNodes;
+        THashMap<FName, int64> StateNameToNodeID;
         TVector<TPair<CEdGraphNode*, int32>> StateNodesForDebug;
 
         // Machine-relative, since a nested machine's entries belong to its own owner.
@@ -123,15 +126,33 @@ namespace Lumina
                 AnyStateNodeIDs.insert(Node->GetNodeID());
             }
 
+            if (Node->IsA<CAnimGraphNode_StateConduit>())
+            {
+                ConduitNodeIDs.insert(Node->GetNodeID());
+            }
+
+            if (CAnimGraphNode_StateAlias* AliasNode = Cast<CAnimGraphNode_StateAlias>(Node))
+            {
+                AliasNodes.emplace(AliasNode->GetNodeID(), AliasNode);
+            }
+
             CAnimGraphNode_State* StateNode = Cast<CAnimGraphNode_State>(Node);
             if (StateNode == nullptr)
             {
                 continue;
             }
 
+            if (!StateNode->StateName.IsNone())
+            {
+                StateNameToNodeID[StateNode->StateName] = StateNode->GetNodeID();
+            }
+
             CAnimationGraphNodeGraph* BlendTree = StateNode->GetOrCreateBlendTree();
 
-            const uint16 ClockSlotFirst = (uint16)Compiler.GetClockSlots().size() - MachineClockFirst;
+            const uint16 ClockSlotFirst   = (uint16)Compiler.GetClockSlots().size() - MachineClockFirst;
+            const uint16 ChildMachineFirst = Compiler.GetStateMachineCount();
+
+            Compiler.BeginStateCapture();
 
             uint16 PoseReg = 0;
             if (!BlendTree->CompileNodes(Compiler, PoseReg))
@@ -142,6 +163,11 @@ namespace Lumina
 
             const int32 StateIndex = (int32)StateMachine.StatePoseRegisters.size();
             StateMachine.StatePoseRegisters.push_back(PoseReg);
+            StateMachine.StateFinishedRegisters.push_back(Compiler.EndStateCapture());
+
+            // Machines emitted while this state compiled, descendants included, since they are contiguous.
+            StateMachine.StateChildMachineFirst.push_back(ChildMachineFirst);
+            StateMachine.StateChildMachineEnd.push_back(Compiler.GetStateMachineCount());
             StateMachine.StateClockSlotFirst.push_back(ClockSlotFirst);
             StateMachine.StateClockSlotEnd.push_back((uint16)Compiler.GetClockSlots().size() - MachineClockFirst);
             NodeIDToStateIndex[StateNode->GetNodeID()] = StateIndex;
@@ -218,20 +244,171 @@ namespace Lumina
             return A->ToStateNodeID < B->ToStateNodeID;
         });
 
+        // Routing nodes are authoring conveniences, so they are folded into direct edges here.
+        struct FResolvedEdge
+        {
+            int64 FromNodeID = 0;
+            int64 ToNodeID = 0;
+            TVector<FAnimTransitionCondition> Conditions;
+            bool  bRequireAll = true;
+            float BlendDuration = 0.2f;
+            bool  bCanInterrupt = false;
+            bool  bFromAnyState = false;
+        };
+
+        // An OR group cannot be ANDed with another rule without a term tree, so it is rejected instead.
+        const auto CanCombine = [](const CAnimStateTransition* Edge)
+        {
+            return Edge->Conditions.size() <= 1 || Edge->bRequireAll;
+        };
+
+        TVector<FResolvedEdge> ResolvedEdges;
+        ResolvedEdges.reserve(SortedTransitions.size());
+
         for (CAnimStateTransition* Transition : SortedTransitions)
         {
-            auto ToIt = NodeIDToStateIndex.find(Transition->ToStateNodeID);
+            Transition->MigrateLegacyCondition();
+
+            // Out-edges of a conduit are consumed when their in-edge is paired with them.
+            if (ConduitNodeIDs.find(Transition->FromStateNodeID) != ConduitNodeIDs.end())
+            {
+                continue;
+            }
+
+            // One source, or every state an alias names.
+            TVector<int64> Sources;
+            bool bFromAnyState = false;
+
+            if (AnyStateNodeIDs.find(Transition->FromStateNodeID) != AnyStateNodeIDs.end())
+            {
+                bFromAnyState = true;
+                Sources.push_back(0);
+            }
+            else if (AliasNodes.find(Transition->FromStateNodeID) != AliasNodes.end())
+            {
+                CAnimGraphNode_StateAlias* Alias = AliasNodes[Transition->FromStateNodeID];
+                if (Alias->SourceStates.empty())
+                {
+                    EdNodeGraph::FError Warning;
+                    Warning.Name        = "Empty State Alias";
+                    Warning.Description = "State Alias names no states, so the transitions drawn out of it compile to nothing.";
+                    Warning.Node        = Alias;
+                    Compiler.AddWarning(Warning);
+                }
+
+                for (const FName& StateName : Alias->SourceStates)
+                {
+                    auto NameIt = StateNameToNodeID.find(StateName);
+                    if (NameIt == StateNameToNodeID.end())
+                    {
+                        EdNodeGraph::FError Warning;
+                        Warning.Name        = "Unknown Aliased State";
+                        Warning.Description = FString("State Alias names ") + StateName.ToString() +
+                            ", which is not a state on this machine (renamed or removed?). That edge is skipped.";
+                        Warning.Node        = Alias;
+                        Compiler.AddWarning(Warning);
+                        continue;
+                    }
+                    Sources.push_back(NameIt->second);
+                }
+            }
+            else
+            {
+                Sources.push_back(Transition->FromStateNodeID);
+            }
+
+            // One target, or every exit of the conduit this edge feeds.
+            TVector<CAnimStateTransition*> Exits;
+            const bool bToConduit = ConduitNodeIDs.find(Transition->ToStateNodeID) != ConduitNodeIDs.end();
+            if (bToConduit)
+            {
+                for (CAnimStateTransition* Exit : SortedTransitions)
+                {
+                    if (Exit->FromStateNodeID != Transition->ToStateNodeID)
+                    {
+                        continue;
+                    }
+
+                    if (ConduitNodeIDs.find(Exit->ToStateNodeID) != ConduitNodeIDs.end())
+                    {
+                        EdNodeGraph::FError Error;
+                        Error.Name        = "Chained Conduits";
+                        Error.Description = "A conduit wired into another conduit is not supported; wire it to a State.";
+                        Error.Node        = this;
+                        Compiler.AddError(Error);
+                        continue;
+                    }
+                    Exits.push_back(Exit);
+                }
+
+                if (Exits.empty())
+                {
+                    EdNodeGraph::FError Warning;
+                    Warning.Name        = "Conduit Routes Nowhere";
+                    Warning.Description = "A conduit with no outgoing transition swallows the edges drawn into it.";
+                    Warning.Node        = this;
+                    Compiler.AddWarning(Warning);
+                }
+            }
+            else
+            {
+                Exits.push_back(nullptr);
+            }
+
+            for (int64 SourceNodeID : Sources)
+            {
+                for (CAnimStateTransition* Exit : Exits)
+                {
+                    if (Exit != nullptr && (!CanCombine(Transition) || !CanCombine(Exit)))
+                    {
+                        EdNodeGraph::FError Error;
+                        Error.Name        = "Conduit Rule Cannot Be Combined";
+                        Error.Description = "An edge through a conduit ANDs the two rules, so neither side may be an "
+                            "any-of rule with more than one condition. Split it into separate transitions.";
+                        Error.Node        = this;
+                        Compiler.AddError(Error);
+                        continue;
+                    }
+
+                    FResolvedEdge Resolved;
+                    Resolved.FromNodeID    = SourceNodeID;
+                    Resolved.bFromAnyState = bFromAnyState;
+                    Resolved.Conditions    = Transition->Conditions;
+                    Resolved.bRequireAll   = Transition->bRequireAll;
+
+                    // The edge that actually reaches the state owns the blend; the conduit only routes.
+                    const CAnimStateTransition* Final = (Exit != nullptr) ? Exit : Transition;
+                    Resolved.ToNodeID      = Final->ToStateNodeID;
+                    Resolved.BlendDuration = Final->BlendDuration;
+                    Resolved.bCanInterrupt = Final->bCanInterrupt;
+
+                    if (Exit != nullptr)
+                    {
+                        Resolved.bRequireAll = true;
+                        for (const FAnimTransitionCondition& Condition : Exit->Conditions)
+                        {
+                            Resolved.Conditions.push_back(Condition);
+                        }
+                    }
+
+                    ResolvedEdges.push_back(Move(Resolved));
+                }
+            }
+        }
+
+        for (const FResolvedEdge& Edge : ResolvedEdges)
+        {
+            auto ToIt = NodeIDToStateIndex.find(Edge.ToNodeID);
             if (ToIt == NodeIDToStateIndex.end())
             {
                 // The endpoint state is missing, so skip rather than emit a bad index.
                 continue;
             }
 
-            // An Any State source compiles to the from-anywhere edge, checked whichever state is active.
             int32 FromIndex = -1;
-            if (AnyStateNodeIDs.find(Transition->FromStateNodeID) == AnyStateNodeIDs.end())
+            if (!Edge.bFromAnyState)
             {
-                auto FromIt = NodeIDToStateIndex.find(Transition->FromStateNodeID);
+                auto FromIt = NodeIDToStateIndex.find(Edge.FromNodeID);
                 if (FromIt == NodeIDToStateIndex.end())
                 {
                     continue;
@@ -240,25 +417,54 @@ namespace Lumina
             }
 
             FAnimGraphTransition Runtime;
-            Runtime.FromState          = FromIndex;
-            Runtime.ToState            = ToIt->second;
-            Runtime.ConditionSource    = Transition->ConditionSource;
-            Runtime.ConditionParameter = Transition->ConditionParameter;
-            Runtime.Compare            = Transition->Compare;
-            Runtime.CompareValue       = Transition->CompareValue;
-            Runtime.BlendDuration      = Transition->BlendDuration;
-            Runtime.bCanInterrupt      = Transition->bCanInterrupt;
+            Runtime.FromState     = FromIndex;
+            Runtime.ToState       = ToIt->second;
+            Runtime.bRequireAll   = Edge.bRequireAll;
+            Runtime.BlendDuration = Edge.BlendDuration;
+            Runtime.bCanInterrupt = Edge.bCanInterrupt;
 
-            // Warns when the condition parameter does not match a blackboard key, renamed or retyped.
-            // An empty name is the unconditional edge, so it registers no parameter of its own.
-            if (Runtime.ConditionSource == EAnimTransitionSource::Parameter && !Transition->ConditionParameter.IsNone())
+            for (const FAnimTransitionCondition& Condition : Edge.Conditions)
             {
-                Compiler.ValidateParameterKey(Transition->ConditionParameter, this);
-                Compiler.AddParameter(Transition->ConditionParameter, EAnimGraphParamType::Float, 0.0f);
+                FAnimGraphTransitionTerm Term;
+                Term.ConditionSource = Condition.ConditionSource;
+                Term.Compare         = Condition.Compare;
+                Term.CompareValue    = Condition.CompareValue;
+
+                switch (Condition.ConditionSource)
+                {
+                case EAnimTransitionSource::Parameter:
+                    Term.Name = Condition.ParameterName;
+
+                    // Warns when the name does not match a parameter struct field, renamed or retyped.
+                    // An empty name is the unconditional term, so it registers no parameter of its own.
+                    if (!Term.Name.IsNone())
+                    {
+                        Compiler.ValidateParameterKey(Term.Name, this);
+                        Compiler.AddParameter(Term.Name, EAnimGraphParamType::Float, 0.0f);
+                    }
+                    break;
+
+                case EAnimTransitionSource::Curve:
+                    Term.Name = Condition.CurveName;
+
+                    // Reserves the slot, so a curve only a transition reads still rides on the pose.
+                    if (!Term.Name.IsNone())
+                    {
+                        Compiler.AddCurve(Term.Name);
+                    }
+                    break;
+
+                default:
+                    break;
+                }
+
+                Runtime.Terms.push_back(Term);
             }
 
             StateMachine.Transitions.push_back(Runtime);
         }
+
+        StateMachine.bResetOnEntry = bResetOnEntry;
 
         // Kept in locals, since the machine is moved below.
         const uint16 CurrentStateSlot = Compiler.AllocStateSlot();

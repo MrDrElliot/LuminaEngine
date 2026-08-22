@@ -239,8 +239,9 @@ namespace Lumina
         void BuildSocketPickerData(entt::entity Entity, FSocketEditContext& Out);
 
         // Provided to every details table this tool draws, refreshed per entity as the panel walks them.
-        FPropertyEditContext PropertyContext;
-        FSocketEditContext   SocketCtx;
+        FPropertyEditContext  PropertyContext;
+        FAnimGraphEditContext AnimGraphCtx;
+        FSocketEditContext    SocketCtx;
         FWorldEditContext    WorldCtx;
         FEntityPickContext   PickCtx;
         // Remove a reflected component from Entity (marks details dirty for rebuild).

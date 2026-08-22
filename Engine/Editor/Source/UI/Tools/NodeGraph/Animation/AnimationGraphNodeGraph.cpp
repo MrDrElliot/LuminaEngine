@@ -184,9 +184,18 @@ namespace Lumina
                 // Each transition condition declares a parameter the runtime reads at evaluation time.
                 for (const TObjectPtr<CAnimStateTransition>& Transition : SMGraph->Transitions)
                 {
-                    if (Transition.IsValid() && !Transition->ConditionParameter.IsNone())
+                    if (!Transition.IsValid())
                     {
-                        Compiler.AddParameter(Transition->ConditionParameter, EAnimGraphParamType::Float, 0.0f);
+                        continue;
+                    }
+
+                    Transition->MigrateLegacyCondition();
+                    for (const FAnimTransitionCondition& Condition : Transition->Conditions)
+                    {
+                        if (Condition.ConditionSource == EAnimTransitionSource::Parameter && !Condition.ParameterName.IsNone())
+                        {
+                            Compiler.AddParameter(Condition.ParameterName, EAnimGraphParamType::Float, 0.0f);
+                        }
                     }
                 }
 

@@ -66,6 +66,11 @@ namespace Lumina
         uint16 AllocObjectReg() { return NextObjectReg++; }
         uint16 AllocStateSlot() { return NextStateSlot++; }
 
+        // Records the first clip player Finished register emitted while a state's blend tree compiles,
+        // which is what a Clip Finished transition term reads. 0xFFFF when the state plays no clip.
+        void BeginStateCapture() { CapturedFinishedReg = 0xFFFFu; }
+        uint16 EndStateCapture() const { return CapturedFinishedReg; }
+
         // Persistent smoothing records, one per node rather than per register.
         uint16 AllocInertializerNode() { return NextInertializerNode++; }
         uint16 AllocDeadBlendNode()    { return NextDeadBlendNode++; }
@@ -89,6 +94,9 @@ namespace Lumina
         uint16 EmitLoadParam(uint16 ParameterIndex);
         uint16 EmitScalarOp(EAnimScalarOp Op, uint16 RegA, uint16 RegB);
 
+        // Exponentially eases a scalar toward its input; a half life of 0 passes the value straight through.
+        uint16 EmitSmoothScalar(uint16 ValueReg, uint16 HalfLifeReg);
+
         // Object-register producers; both return the object register they allocated.
         uint16 EmitLoadObjectParam(uint16 ObjectParameterIndex);
         uint16 EmitLoadObjectConst(uint16 ObjectConstantIndex);
@@ -102,6 +110,13 @@ namespace Lumina
 
         // Registers a montage slot name and returns its index; dedups by name.
         uint16 AddSlot(const FName& Name);
+
+        // Registers a pose snapshot slot and returns its index; dedups by name, so a save and a load
+        // written on separate nodes address the same buffer.
+        uint16 AddPoseSnapshot(const FName& Name);
+
+        uint16 EmitSavePoseSnapshot(uint16 SrcPoseReg, uint16 RequestReg, uint16 SnapshotIndex);
+        uint16 EmitLoadPoseSnapshot(uint16 SnapshotIndex);
 
         // Layers whatever montages are playing on the slot over the incoming pose.
         uint16 EmitEvalSlot(uint16 SrcPoseReg, uint16 SlotIndex);
@@ -164,6 +179,23 @@ namespace Lumina
 
         // Two-bone analytical IK. Target X/Y/Z come from scalar registers so they
         // can be driven dynamically; Pole is baked at compile time.
+        uint16 EmitFABRIK(uint16 SrcPoseReg, uint16 AlphaReg,
+                          uint16 TargetXReg, uint16 TargetYReg, uint16 TargetZReg,
+                          uint16 RootIndex, uint16 TipIndex, uint16 Iterations);
+
+        uint16 EmitLookAt(uint16 SrcPoseReg, uint16 AlphaReg,
+                          uint16 TargetXReg, uint16 TargetYReg, uint16 TargetZReg,
+                          uint16 BoneIndex, const FVector3& LocalForward, float MaxAngleRadians);
+
+        uint16 EmitFootIK(uint16 SrcPoseReg, uint16 AlphaReg,
+                          uint16 OffsetXReg, uint16 OffsetYReg, uint16 OffsetZReg,
+                          uint16 NormalXReg, uint16 NormalYReg, uint16 NormalZReg,
+                          uint16 AlignAlphaReg, uint16 ThighIndex, uint16 CalfIndex, uint16 FootIndex,
+                          const FVector3& FootUpAxis);
+
+        uint16 EmitTranslateBone(uint16 SrcPoseReg, uint16 AlphaReg,
+                                 uint16 XReg, uint16 YReg, uint16 ZReg, uint16 BoneIndex);
+
         uint16 EmitTwoBoneIK(uint16 SrcPoseReg, uint16 AlphaReg,
                              uint16 TargetXReg, uint16 TargetYReg, uint16 TargetZReg,
                              uint16 RootIndex, uint16 MidIndex, uint16 EndIndex,
@@ -225,6 +257,7 @@ namespace Lumina
         TVector<TObjectPtr<CBlendSpace>>        BlendSpaces;
         TVector<FName>                          SyncGroupNames;
         TVector<FName>                          SlotNames;
+        TVector<FName>                          PoseSnapshotNames;
         TVector<FName>                          CurveNames;
         THashMap<FName, int32>                  CurveNameToIndex;
         TVector<FAnimGraphClipCurveMap>         ClipCurveMaps;
@@ -246,6 +279,7 @@ namespace Lumina
         uint16 NextPoseReg   = 0;
         uint16 NextObjectReg = 0;
         uint16 NextStateSlot = 0;
+        uint16 CapturedFinishedReg = 0xFFFFu;
         uint16 NextInertializerNode = 0;
         uint16 NextDeadBlendNode = 0;
 

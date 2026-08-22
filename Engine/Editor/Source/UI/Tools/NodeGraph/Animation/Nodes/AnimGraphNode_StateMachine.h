@@ -22,6 +22,12 @@ namespace Lumina
         uint32 GetNodeTitleColor() const override { return IM_COL32(120, 70, 150, 255); }
 
         void BuildNode() override;
+
+        /** Rewinds this machine to its entry state whenever the state hosting it is not the active one,
+         *  so re-entering a state restarts its inner machine instead of resuming where it left off.
+         *  Off on a top level machine, which is never hosted by a state and so never rewinds. */
+        PROPERTY(Editable, Category = "State Machine")
+        bool bResetOnEntry = false;
         void GenerateBytecode(FAnimationGraphCompiler& Compiler) override;
 
         FString GetNodeTitleText() const override;
