@@ -333,6 +333,13 @@ namespace Lumina
         template<typename ValueType>
         FArchive& operator << (TVector<ValueType>& Array)
         {
+            // A stream that already failed reports garbage sizes forever, so the first report is the one.
+            if (IsReading() && HasError())
+            {
+                Array.clear();
+                return *this;
+            }
+
             uint64 SerializeNum = IsReading() ? 0 : Array.size();
             *this << SerializeNum;
         

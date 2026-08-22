@@ -113,9 +113,14 @@ namespace Lumina
         // Check for overflow and out-of-bounds
         if (Size < 0 || ReaderPos + Size > ReaderSize)
         {
+            // Reported once per stream, since every read after the first is a consequence of it.
+            const bool bFirstFailure = !HasError();
             SetHasError(true);
             Memory::Memzero(Data, Size > 0 ? Size : 0);
-            LOG_ERROR("FBufferReader: Attempted to read {0} bytes at position {1}, but buffer size is {2}", Size, ReaderPos, ReaderSize);
+            if (bFirstFailure)
+            {
+                LOG_ERROR("FBufferReader: Attempted to read {0} bytes at position {1}, but buffer size is {2}", Size, ReaderPos, ReaderSize);
+            }
             return;
         }
 

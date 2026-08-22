@@ -307,6 +307,58 @@ namespace Lumina
 
     namespace
     {
+        // Loads run in parallel now, so an export is claimed before it is read. The owner deserializes,
+        // anyone else waits for it, and a load that re-enters its own object takes the partial one, which
+        // is how a reference cycle resolves.
+        FMutex                            GClaimMutex;
+        FConditionVariable                GClaimSignal;
+        THashMap<const CObject*, uint64>  GClaimOwners;
+
+        enum class EClaimResult : uint8
+        {
+            Owned,       // this thread must load it
+            AlreadyDone, // someone finished it while we waited
+            Reentrant,   // this thread is already loading it, so the partial object is the answer
+        };
+
+        EClaimResult ClaimObjectForLoad(CObject* Object)
+        {
+            const uint64 ThisThread = (uint64)Threading::GetThreadID();
+
+            FUniqueLock Lock(GClaimMutex);
+            for (;;)
+            {
+                if (!Object->HasAnyFlag(OF_NeedsLoad))
+                {
+                    return EClaimResult::AlreadyDone;
+                }
+
+                const auto It = GClaimOwners.find(Object);
+                if (It == GClaimOwners.end())
+                {
+                    GClaimOwners.emplace(Object, ThisThread);
+                    Object->SetFlag(OF_Loading);
+                    return EClaimResult::Owned;
+                }
+
+                if (It->second == ThisThread)
+                {
+                    return EClaimResult::Reentrant;
+                }
+
+                GClaimSignal.Wait(Lock);
+            }
+        }
+
+        void ReleaseObjectLoad(CObject* Object)
+        {
+            {
+                FScopeLock Lock(GClaimMutex);
+                GClaimOwners.erase(Object);
+            }
+            GClaimSignal.NotifyAll();
+        }
+
         thread_local bool          GtDeferPostLoad = false;
         
         const THashSet<CPackage*>* GGraphClosure = nullptr;
@@ -819,8 +871,8 @@ namespace Lumina
             Package->SetBulkSource(LoadedBulkRegion, Path);
 
             Package->CreateLoader(FileBinary);
-        
-            FPackageLoader& Reader = *static_cast<FPackageLoader*>(Package->Loader.get());
+
+            FPackageLoader Reader(Package->LoaderBytes, Package);
         
             FPackageHeader PackageHeader;
             Reader << PackageHeader;
@@ -849,8 +901,10 @@ namespace Lumina
             }
             else
             {
-                // Stamp source version so per-type Serialize can branch for migration.
+                // Stamped on this reader and kept on the package, so every later reader over these bytes
+                // branches for migration the same way.
                 Reader.SetFileVersion(PackageHeader.Version);
+                Package->LoaderFileVersion = PackageHeader.Version;
 
                 Reader.Seek(PackageHeader.ImportTableOffset);
                 Reader << Package->ImportTable;
@@ -872,7 +926,7 @@ namespace Lumina
                 const double DurationMs = PlatformTime::ToMilliseconds(PlatformTime::Cycles() - Start);
                 
                 bSuccess = true;
-                LOG_INFO("Loaded Package: \"{}\" - ( [{}] Exports | [{}] Imports | [{}] Bytes | [{}] ms | Thread: [{}])", Package->GetName(), Package->ExportTable.size(), Package->ImportTable.size(), Package->Loader->TotalSize(), DurationMs, Threading::GetThreadID());
+                LOG_INFO("Loaded Package: \"{}\" - ( [{}] Exports | [{}] Imports | [{}] Bytes | [{}] ms | Thread: [{}])", Package->GetName(), Package->ExportTable.size(), Package->ImportTable.size(), Package->LoaderBytes->Size, DurationMs, Threading::GetThreadID());
             }
         }
         
@@ -1142,7 +1196,33 @@ namespace Lumina
     {
         void* HeapData = Memory::Malloc(FileBinary.size());
         Memory::Memcpy(HeapData, FileBinary.data(), FileBinary.size());
-        Loader = MakeUnique<FPackageLoader>(HeapData, FileBinary.size(), this);
+
+        TSharedPtr<FPackageFileBytes> NewBytes = MakeShared<FPackageFileBytes>(HeapData, (int64)FileBinary.size());
+
+        // Publication only; a reader already walking the old bytes keeps them alive through its own reference.
+        FScopeLock Lock(LoaderBytesMutex);
+        LoaderBytes = Move(NewBytes);
+    }
+
+    TSharedPtr<FPackageFileBytes> CPackage::AcquireLoaderBytes(int32& OutFileVersion)
+    {
+        {
+            FScopeLock Lock(LoaderBytesMutex);
+            if (LoaderBytes)
+            {
+                OutFileVersion = LoaderFileVersion;
+                return LoaderBytes;
+            }
+        }
+
+        if (!EnsureLoader())
+        {
+            return nullptr;
+        }
+
+        FScopeLock Lock(LoaderBytesMutex);
+        OutFileVersion = LoaderFileVersion;
+        return LoaderBytes;
     }
 
     void CPackage::SetBulkSource(const FBulkRegion& Region, FStringView Path)
@@ -1162,9 +1242,12 @@ namespace Lumina
 
     bool CPackage::EnsureLoader()
     {
-        if (Loader)
         {
-            return true;
+            FScopeLock Lock(LoaderBytesMutex);
+            if (LoaderBytes)
+            {
+                return true;
+            }
         }
 
         // Mid-rename the name points at a file not yet written, so resolving through it would fail.
@@ -1185,13 +1268,19 @@ namespace Lumina
         SetBulkSource(ReopenedRegion, Path);
 
         CreateLoader(FileBinary);
-        if (!Loader)
+
+        TSharedPtr<FPackageFileBytes> Bytes;
+        {
+            FScopeLock Lock(LoaderBytesMutex);
+            Bytes = LoaderBytes;
+        }
+
+        if (!Bytes)
         {
             return false;
         }
 
-        // A fresh archive defaults to the CURRENT version, so without this an older file re-read here is parsed as if saved today.
-        FPackageLoader& Reader = *static_cast<FPackageLoader*>(Loader.get());
+        FPackageLoader Reader(Bytes, this);
 
         FPackageHeader Header;
         Reader << Header;
@@ -1199,21 +1288,26 @@ namespace Lumina
         if (Header.Tag != PACKAGE_FILE_TAG)
         {
             LOG_ERROR("EnsureLoader: {} is not a valid Lumina package (tag mismatch)", Path);
-            Loader.reset();
+            FScopeLock Lock(LoaderBytesMutex);
+            LoaderBytes.reset();
             return false;
         }
 
-        Reader.SetFileVersion(Header.Version);
-        Reader.Seek(0);
+        // A fresh archive defaults to the current version, so every reader over these bytes is stamped
+        // with the file's own version or an older asset is parsed as if it were saved today.
+        FScopeLock Lock(LoaderBytesMutex);
+        LoaderFileVersion = Header.Version;
         return true;
     }
 
     void CPackage::ConditionalDropLoader()
     {
-        // Never free the buffer out from under an in-flight (possibly nested) load.
-        if (!Loader || ActiveLoadDepth > 0)
         {
-            return;
+            FScopeLock Lock(LoaderBytesMutex);
+            if (!LoaderBytes)
+            {
+                return;
+            }
         }
 
         // A null export pointer is treated conservatively, so bytes are reclaimed only when fully resident.
@@ -1226,12 +1320,9 @@ namespace Lumina
             }
         }
 
-        Loader.reset();
-    }
-
-    FPackageLoader* CPackage::GetLoader() const
-    {
-        return (FPackageLoader*)Loader.get();
+        // A reader still walking these bytes holds its own reference, so this only drops the cache.
+        FScopeLock Lock(LoaderBytesMutex);
+        LoaderBytes.reset();
     }
 
     void CPackage::BuildSaveContext(FSaveContext& Context)
@@ -1288,20 +1379,32 @@ namespace Lumina
     void CPackage::SerializeObject(CObject* Object)
     {
         LUMINA_PROFILE_SCOPE();
-        if (!Object || !Object->HasAnyFlag(OF_NeedsLoad) || Object->HasAnyFlag(OF_Loading))
+        if (!Object || !Object->HasAnyFlag(OF_NeedsLoad))
         {
             return;
         }
 
-        Object->SetFlag(OF_Loading);
-
         CPackage* ObjectPackage = Object->GetPackage();
-
         if (ObjectPackage != this)
         {
             ObjectPackage->SerializeObject(Object);
             return;
         }
+
+        // Whoever claims it reads it; a second thread waits here rather than racing the same export, and
+        // this thread re-entering its own load takes the partial object so a reference cycle resolves.
+        const EClaimResult Claim = ClaimObjectForLoad(Object);
+        if (Claim != EClaimResult::Owned)
+        {
+            return;
+        }
+
+        // Released on every path out, or a waiter would sit here forever.
+        struct FClaimScope
+        {
+            CObject* Object;
+            ~FClaimScope() { ReleaseObjectLoad(Object); }
+        } ClaimScope{ Object };
 
         int32 FoundLoaderIndex = FObjectPackageIndex(Object->LoaderIndex).GetArrayIndex();
 
@@ -1314,20 +1417,6 @@ namespace Lumina
 
         FObjectExport& Export = ExportTable[FoundLoaderIndex];
 
-        // The cached file bytes are dropped once a package is fully resident; re-open them on demand.
-        if (!Loader)
-        {
-            EnsureLoader();
-        }
-
-        if (!Loader)
-        {
-            LOG_ERROR("No loader set for package {}", GetName().ToString());
-            Object->ClearFlags(OF_Loading);
-            return;
-        }
-
-        const int64 SavedPos = Loader->Tell();
         const int64 DataPos = Export.Offset;
         const int64 ExpectedSize = Export.Size;
 
@@ -1338,16 +1427,34 @@ namespace Lumina
             return;
         }
 
-        // Guard the buffer against being dropped by a nested IndexToObject load triggered inside Serialize.
-        ++ActiveLoadDepth;
+        // The cached file bytes are dropped once a package is fully resident; re-open them on demand.
+        int32 FileVersion = 0;
+        TSharedPtr<FPackageFileBytes> Bytes = AcquireLoaderBytes(FileVersion);
 
-        Loader->Seek(DataPos);
+        if (!Bytes)
+        {
+            LOG_ERROR("No loader set for package {}", GetName().ToString());
+            Object->ClearFlags(OF_Loading);
+            return;
+        }
+
+        // This reader's own cursor, and its own reference to the bytes, so a concurrent load of another
+        // export cannot move it and a concurrent drop of the cache cannot free it.
+        FPackageLoader Reader(Bytes, this);
+        Reader.SetFileVersion(FileVersion);
+        Reader.Seek(DataPos);
 
         Object->PreLoad();
 
-        Object->Serialize(*Loader);
+        Object->Serialize(Reader);
 
-        const int64 ActualSize = Loader->Tell() - DataPos;
+        const int64 ActualSize = Reader.Tell() - DataPos;
+
+        if (Reader.HasError())
+        {
+            LOG_ERROR("Corrupt read loading '{}' from package '{}'; the object is left at its defaults.",
+                      Object->GetName().ToString(), GetName().ToString());
+        }
 
         if (ActualSize != ExpectedSize)
         {
@@ -1358,11 +1465,7 @@ namespace Lumina
         Object->ClearFlags(OF_NeedsLoad | OF_Loading);
         Object->SetFlag(OF_WasLoaded | OF_NeedsPostLoad);
 
-        Loader->Seek(SavedPos);
-
-        --ActiveLoadDepth;
-
-        // Reclaim the cached file bytes once the outermost load leaves the package fully resident.
+        // Reclaim the cached file bytes once the package is fully resident.
         ConditionalDropLoader();
     }
 
