@@ -420,13 +420,71 @@ namespace Lumina
             Clone->PostCloneFrom(Source);
             Clones.emplace(Source, Clone);
 
-            NodeEditor::SetNodePosition(Clone->GetNodeID(), NodeEditor::GetNodePosition(Source->GetNodeID()) + Delta);
+            // The source's own canvas, since asking this one for a node it never held answers FLT_MAX.
+            const ImVec2 SourcePos(Source->GetNodeX(), Source->GetNodeY());
+            NodeEditor::SetNodePosition(Clone->GetNodeID(), SourcePos + Delta);
             NodeEditor::SelectNode(Clone->GetNodeID(), true);
         }
 
         RelinkClones(SourceNodes, Clones);
 
         ValidateGraph();
+
+        // Without this a pasted state pair keeps its wire but loses the transition's conditions and blend.
+        for (CEdGraphNode* Source : SourceNodes)
+        {
+            if (Source != nullptr && Source->GetOwningGraph() != nullptr)
+            {
+                PostCloneContent(Source->GetOwningGraph(), Clones);
+                break;
+            }
+        }
+    }
+
+    void CEdNodeGraph::CollectSelectedNodesForClone(TVector<CEdGraphNode*>& OutNodes, ImVec2& OutPivot)
+    {
+        using namespace ax;
+
+        OutNodes.clear();
+        OutPivot = ImVec2(0.0f, 0.0f);
+
+        // GetSelectedObjectCount counts links too, so it is an upper bound on the node count.
+        TVector<NodeEditor::NodeId> Selected;
+        Selected.resize(Math::Max(NodeEditor::GetSelectedObjectCount(), 0));
+        if (Selected.empty())
+        {
+            return;
+        }
+
+        const int32 Num = NodeEditor::GetSelectedNodes(Selected.data(), (int)Selected.size());
+
+        ImVec2 Min(FLT_MAX, FLT_MAX);
+        ImVec2 Max(-FLT_MAX, -FLT_MAX);
+
+        for (int32 i = 0; i < Num; ++i)
+        {
+            NodeEditor::NodeId Selection = Selected[i];
+            CEdGraphNode* Node = FindNode(static_cast<int64>(Selection.Get()));
+            if (Node == nullptr || !Node->IsDeletable())
+            {
+                continue;
+            }
+
+            OutNodes.push_back(Node);
+
+            const ImVec2 Pos  = NodeEditor::GetNodePosition(Selection);
+            const ImVec2 Size = NodeEditor::GetNodeSize(Selection);
+
+            Min.x = Math::Min(Min.x, Pos.x);
+            Min.y = Math::Min(Min.y, Pos.y);
+            Max.x = Math::Max(Max.x, Pos.x + Size.x);
+            Max.y = Math::Max(Max.y, Pos.y + Size.y);
+        }
+
+        if (!OutNodes.empty())
+        {
+            OutPivot = (Min + Max) * 0.5f;
+        }
     }
 
     void CEdNodeGraph::CloneContentFrom(const CEdNodeGraph* Source)
@@ -1237,41 +1295,7 @@ namespace Lumina
             {
                 if (NodeEditor::AcceptCopy())
                 {
-                    TVector<CEdGraphNode*>& CopiedNodes = GetNodeClipboard();
-                    CopiedNodes.clear();
-
-                    NodeEditor::NodeId Selections[12];
-                    int Num = NodeEditor::GetSelectedNodes(Selections, std::size(Selections));
-                
-                    ImVec2 Min(FLT_MAX, FLT_MAX);
-                    ImVec2 Max(-FLT_MAX, -FLT_MAX);
-                
-                    for (int i = 0; i < Num; ++i)
-                    {
-                        NodeEditor::NodeId Selection = Selections[i];
-                        auto NodeItr = Algo::FindIf(Nodes.begin(), Nodes.end(), [&] (const TObjectPtr<CEdGraphNode>& A)
-                        {
-                            return Cmp::Equal(A->GetNodeID(), Selection.Get()) && A->IsDeletable();
-                        });
-                    
-                        if (NodeItr == Nodes.end())
-                        {
-                            continue;
-                        }
-                    
-                        CopiedNodes.push_back(NodeItr->Get());
-                    
-                        ImVec2 Pos = NodeEditor::GetNodePosition(Selection);
-                        ImVec2 Size = NodeEditor::GetNodeSize(Selection);
-
-                        Min.x = Math::Min(Min.x, Pos.x);
-                        Min.y = Math::Min(Min.y, Pos.y);
-
-                        Max.x = Math::Max(Max.x, Pos.x + Size.x);
-                        Max.y = Math::Max(Max.y, Pos.y + Size.y);
-                    }
-                
-                    GClipboardPivot = (Min + Max) * 0.5f;
+                    CollectSelectedNodesForClone(GetNodeClipboard(), GClipboardPivot);
                 }
             
                 if (NodeEditor::AcceptPaste())
@@ -1312,41 +1336,10 @@ namespace Lumina
             
                 if (NodeEditor::AcceptDuplicate())
                 {
-                    TVector<CEdGraphNode*> DupNodes;
-                
-                    NodeEditor::NodeId Selections[12];
-                    int Num = NodeEditor::GetSelectedNodes(Selections, std::size(Selections));
-                
-                    ImVec2 Min(FLT_MAX, FLT_MAX);
-                    ImVec2 Max(-FLT_MAX, -FLT_MAX);
-                
-                    for (int i = 0; i < Num; ++i)
-                    {
-                        NodeEditor::NodeId Selection = Selections[i];
-                        auto NodeItr = Algo::FindIf(Nodes.begin(), Nodes.end(), [&] (const TObjectPtr<CEdGraphNode>& A)
-                        {
-                            return A->GetNodeID() == static_cast<int64>(Selection.Get()) && A->IsDeletable();
-                        });
-                    
-                        if (NodeItr == Nodes.end())
-                        {
-                            continue;
-                        }
-                    
-                        DupNodes.push_back(NodeItr->Get());
-                    
-                        ImVec2 Pos = NodeEditor::GetNodePosition(Selection);
-                        ImVec2 Size = NodeEditor::GetNodeSize(Selection);
-
-                        Min.x = Math::Min(Min.x, Pos.x);
-                        Min.y = Math::Min(Min.y, Pos.y);
-
-                        Max.x = Math::Max(Max.x, Pos.x + Size.x);
-                        Max.y = Math::Max(Max.y, Pos.y + Size.y);
-                    }
-                
                     // A local pivot, since duplicate never leaves this graph and must not disturb the shared one.
-                    const ImVec2 DupPivot = (Min + Max) * 0.5f;
+                    TVector<CEdGraphNode*> DupNodes;
+                    ImVec2 DupPivot;
+                    CollectSelectedNodesForClone(DupNodes, DupPivot);
 
                     NodeEditor::ClearSelection();
                     ImVec2 PasteLocation = NodeEditor::ScreenToCanvas(ImGui::GetMousePos());

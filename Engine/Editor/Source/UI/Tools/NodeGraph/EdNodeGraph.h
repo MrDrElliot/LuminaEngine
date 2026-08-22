@@ -97,6 +97,10 @@ namespace Lumina
         // inside DrawGraph (node positions need the editor context).
         void CloneNodes(const TVector<CEdGraphNode*>& SourceNodes, ImVec2 Delta);
 
+        // Deletable selected nodes plus the canvas-space center of their boxes, for copy and duplicate.
+        // Must run inside DrawGraph (node geometry needs the editor context).
+        void CollectSelectedNodesForClone(TVector<CEdGraphNode*>& OutNodes, ImVec2& OutPivot);
+
         // Deep-copies Source's nodes, links and layout into this empty graph, with no editor context.
         void CloneContentFrom(const CEdNodeGraph* Source);
 
