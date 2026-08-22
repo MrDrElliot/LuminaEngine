@@ -67,7 +67,7 @@ namespace Lumina::JoltUtils
     
     JPH::RVec3 ToJPHRVec3(const FDoubleVector3& Vec)
     {
-        return JPH::RVec3(Vec.x, Vec.y, Vec.z);
+        return JPH::RVec3((float)Vec.x, (float)Vec.y, (float)Vec.z);
     }
     
     FDoubleVector3 FromJPHRVec3(const JPH::RVec3& Vec)

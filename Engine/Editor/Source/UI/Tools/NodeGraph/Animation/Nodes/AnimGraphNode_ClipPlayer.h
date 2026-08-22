@@ -43,6 +43,7 @@ namespace Lumina
 
         CAnimGraphPin* AnimationPin = nullptr;
         CAnimGraphPin* SpeedPin = nullptr;
+        CAnimGraphPin* StartPositionPin = nullptr;
         CAnimGraphPin* LoopModePin = nullptr;
         CAnimGraphPin* PosePin = nullptr;
         CAnimGraphPin* FinishedPin = nullptr;

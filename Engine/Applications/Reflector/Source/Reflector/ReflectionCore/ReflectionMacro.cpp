@@ -11,6 +11,7 @@ namespace Lumina::Reflection
         , Position(Range.begin_int_data)
     {
         clang_getExpansionLocation(clang_getRangeStart(Range), nullptr, &LineNumber, nullptr, nullptr);
+        clang_getExpansionLocation(clang_getRangeEnd(Range), nullptr, &EndLineNumber, nullptr, nullptr);
         
         CXToken* Tokens = nullptr;
         CXTranslationUnit TranslationUnit = clang_Cursor_getTranslationUnit(Cursor);

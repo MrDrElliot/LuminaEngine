@@ -56,9 +56,9 @@ namespace Lumina
         LoadConst,       // imm:float, dst:sReg
         LoadParam,       // paramIdx:uint16, dst:sReg
         ScalarOp,        // op:uint8, a:sReg, b:sReg, dst:sReg
-        AdvanceClock,    // stateIdx:uint16, speed:sReg, clipIdx:uint16, loopMode:sReg, dstClock:sReg, dstFinished:sReg, syncGroup:uint16
+        AdvanceClock,    // stateIdx:uint16, speed:sReg, clipIdx:uint16, loopMode:sReg, startPos:sReg, seededSlot:uint16, dstClock:sReg, dstFinished:sReg, syncGroup:uint16
         SampleAnim,      // clipIdx:uint16, time:sReg, dst:pReg
-        SampleBlendSpace,// bsIdx:uint16, x:sReg, y:sReg, phase:sReg, dst:pReg
+        SampleBlendSpace,// bsIdx:uint16, x:sReg, y:sReg, speed:sReg, phaseSlot:uint16, startPos:sReg, seededSlot:uint16, dst:pReg
         RefPose,         // dst:pReg
         Blend,           // a:pReg, b:pReg, alpha:sReg, dst:pReg
         BlendMasked,     // a:pReg, b:pReg, alpha:sReg, maskIdx:uint16, dst:pReg
@@ -76,8 +76,8 @@ namespace Lumina
         LoadObjectParam,        // paramIdx:uint16, dst:oReg
         LoadObjectConst,        // constIdx:uint16, dst:oReg
         SampleAnimDyn,          // clip:oReg, time:sReg, dst:pReg
-        AdvanceClockDyn,        // stateIdx:uint16, speed:sReg, clip:oReg, loopMode:sReg, dstClock:sReg, dstFinished:sReg, syncGroup:uint16
-        SampleBlendSpaceDyn,    // bs:oReg, x:sReg, y:sReg, speed:sReg, phase:uint16, dst:pReg
+        AdvanceClockDyn,        // stateIdx:uint16, speed:sReg, clip:oReg, loopMode:sReg, startPos:sReg, seededSlot:uint16, dstClock:sReg, dstFinished:sReg, syncGroup:uint16
+        SampleBlendSpaceDyn,    // bs:oReg, x:sReg, y:sReg, speed:sReg, phaseSlot:uint16, startPos:sReg, seededSlot:uint16, dst:pReg
 
         //~ MakeAdditive with an explicit base pose and space. Appended, so old programs stay valid.
         MakeAdditiveEx,         // src:pReg, base:pReg (kAnimNoPoseRegister = bind pose), space:uint8, dst:pReg
@@ -137,7 +137,7 @@ namespace Lumina
     // AdvanceClock operand value for "not in a sync group".
     inline constexpr uint16 kAnimNoSyncGroup = 0xFFFFu;
     
-    inline constexpr uint16 kAnimBytecodeVersion = 4;
+    inline constexpr uint16 kAnimBytecodeVersion = 5;
     
     struct FAnimSyncGroup
     {

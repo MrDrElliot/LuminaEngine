@@ -54,8 +54,8 @@ namespace Lumina
             double X, Y;
             glfwGetCursorPos(W, &X, &Y);
             FEventProcessor& EP = GApp->GetEventProcessor();
-            if (Action == GLFW_PRESS)        { EP.Dispatch<FMouseButtonPressedEvent>(static_cast<EMouseKey>(Button), X, Y); }
-            else if (Action == GLFW_RELEASE) { EP.Dispatch<FMouseButtonReleasedEvent>(static_cast<EMouseKey>(Button), X, Y); }
+            if (Action == GLFW_PRESS)        { EP.Dispatch<FMouseButtonPressedEvent>(static_cast<EMouseKey>(Button), (float)X, (float)Y); }
+            else if (Action == GLFW_RELEASE) { EP.Dispatch<FMouseButtonReleasedEvent>(static_cast<EMouseKey>(Button), (float)X, (float)Y); }
         }
 
         void SecondaryCursorPosCallback(GLFWwindow* W, double X, double Y)
@@ -65,13 +65,13 @@ namespace Lumina
             const double DeltaX = X - Last.x;
             const double DeltaY = Y - Last.y;
             Last = ImVec2(static_cast<float>(X), static_cast<float>(Y));
-            GApp->GetEventProcessor().Dispatch<FMouseMovedEvent>(X, Y, DeltaX, DeltaY);
+            GApp->GetEventProcessor().Dispatch<FMouseMovedEvent>((float)X, (float)Y, (float)DeltaX, (float)DeltaY);
         }
 
         void SecondaryScrollCallback(GLFWwindow* W, double XOffset, double YOffset)
         {
             ImGui_ImplGlfw_ScrollCallback(W, XOffset, YOffset);
-            GApp->GetEventProcessor().Dispatch<FMouseScrolledEvent>(EMouseKey::Scroll, YOffset);
+            GApp->GetEventProcessor().Dispatch<FMouseScrolledEvent>(EMouseKey::Scroll, (float)YOffset);
         }
 
         // Re-set each frame, cheap and idempotent, so new windows are covered without tracking creation.

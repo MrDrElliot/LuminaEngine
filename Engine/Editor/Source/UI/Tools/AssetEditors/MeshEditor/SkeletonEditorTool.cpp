@@ -62,7 +62,7 @@ namespace Lumina
                 }
                 
                 int32 Depth = 0;
-                int32 CurrentIndex = &Bone - SkeletonResource->Bones.data();
+                int32 CurrentIndex = (int32)(&Bone - SkeletonResource->Bones.data());
                 while (SkeletonResource->Bones[CurrentIndex].ParentIndex != -1)
                 {
                     CurrentIndex = SkeletonResource->Bones[CurrentIndex].ParentIndex;

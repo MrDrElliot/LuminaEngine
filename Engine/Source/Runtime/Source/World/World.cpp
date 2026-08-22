@@ -1536,7 +1536,7 @@ namespace Lumina
         }
 
         // Class-keyed, so this attaches a C++ script and a C# one through exactly the same call.
-        CClass* Class = FindObject<CClass>(FName(ScriptClass.data(), ScriptClass.size()));
+        CClass* Class = FindObject<CClass>(FName(ScriptClass));
         return EntityScripts::Attach(EntityRegistry, Entity, Class);
     }
 

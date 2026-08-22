@@ -205,7 +205,18 @@ namespace Lumina
             ValueType ActualValue;
             Property->GetValue(&ActualValue);
         
-            if (!Math::IsNearlyEqual(CachedValue, ActualValue, LE_SMALL_NUMBER))
+            // Exact for integers, since two int64 values a long way apart are nearly equal as floats.
+            bool bChanged;
+            if constexpr (std::is_floating_point_v<ValueType>)
+            {
+                bChanged = !Math::IsNearlyEqual((float)CachedValue, (float)ActualValue, LE_SMALL_NUMBER);
+            }
+            else
+            {
+                bChanged = CachedValue != ActualValue;
+            }
+
+            if (bChanged)
             {
                 CachedValue = DisplayValue = ActualValue;
             }

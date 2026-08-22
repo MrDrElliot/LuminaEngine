@@ -64,20 +64,21 @@ namespace Lumina::Reflection
 
         std::vector<FReflectionMacro>& MacrosForHeader = HeaderIter->second;
 
+        // Matched on the macro's closing line, so a wrapped argument list still binds to the field below it.
         // Without the same-line case, inline-form macros mis-bind to the cursor below them.
         auto SameLineMatch = MacrosForHeader.end();
         auto LineAboveMatch = MacrosForHeader.end();
 
         for (auto iter = MacrosForHeader.begin(); iter != MacrosForHeader.end(); ++iter)
         {
-            if (iter->LineNumber == cursorLine && iter->Position < cursorPosition)
+            if (iter->EndLineNumber == cursorLine && iter->Position < cursorPosition)
             {
                 if (SameLineMatch == MacrosForHeader.end() || iter->Position > SameLineMatch->Position)
                 {
                     SameLineMatch = iter;
                 }
             }
-            else if (iter->LineNumber + 1 == cursorLine)
+            else if (iter->EndLineNumber + 1 == cursorLine)
             {
                 if (LineAboveMatch == MacrosForHeader.end() || iter->Position > LineAboveMatch->Position)
                 {

@@ -246,7 +246,7 @@ namespace Lumina
         FEntry* Get(uint32 Index)
         {
             uint64 Segment = 63 - std::countl_zero(static_cast<uint64>((Index >> kSmallSegmentsToSkip) + 1));
-            uint32 Slot = Index - CapacityForSegmentCount(Segment);
+            uint32 Slot = Index - CapacityForSegmentCount((uint32)Segment);
 
             return &Segments[Segment][Slot];
         }
@@ -254,7 +254,7 @@ namespace Lumina
         const FEntry* Get(uint32 Index) const
         {
             uint64 Segment = 63 - std::countl_zero(static_cast<uint64>((Index >> kSmallSegmentsToSkip) + 1));
-            uint32 Slot = Index - CapacityForSegmentCount(Segment);
+            uint32 Slot = Index - CapacityForSegmentCount((uint32)Segment);
 
             return &Segments[Segment][Slot];
         }

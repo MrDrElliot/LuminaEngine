@@ -187,15 +187,21 @@ namespace Lumina
         return Dst;
     }
 
-    uint16 FAnimationGraphCompiler::EmitAdvanceClock(uint16 StateSlot, uint16 SpeedReg, uint16 ClipIndex, uint16 LoopModeReg, uint16& OutFinishedReg, uint16 SyncGroup, bool bDynamicClip)
+    uint16 FAnimationGraphCompiler::EmitAdvanceClock(uint16 StateSlot, uint16 SpeedReg, uint16 ClipIndex, uint16 LoopModeReg, uint16 StartPosReg, uint16& OutFinishedReg, uint16 SyncGroup, bool bDynamicClip)
     {
         const uint16 DstClock    = AllocScalarReg();
         const uint16 DstFinished = AllocScalarReg();
+
+        // A clock slot, so a state machine winds it back with the clock it guards and re-entry re-seeds.
+        const uint16 SeededSlot  = AllocClockSlot();
+
         WriteOp(bDynamicClip ? EAnimOp::AdvanceClockDyn : EAnimOp::AdvanceClock);
         Write(StateSlot);
         Write(SpeedReg);
         Write(ClipIndex);
         Write(LoopModeReg);
+        Write(StartPosReg);
+        Write(SeededSlot);
         Write(DstClock);
         Write(DstFinished);
         Write(SyncGroup);
@@ -256,15 +262,21 @@ namespace Lumina
     }
 
     uint16 FAnimationGraphCompiler::EmitSampleBlendSpace(uint16 BlendSpaceIndex, uint16 XReg, uint16 YReg, uint16 SpeedReg, uint16 PhaseSlot,
-                                                         bool bDynamicBlendSpace)
+                                                         uint16 StartPosReg, bool bDynamicBlendSpace)
     {
         const uint16 Dst = AllocPoseReg();
+
+        // A clock slot, so a state machine winds it back with the phase it guards and re-entry re-seeds.
+        const uint16 SeededSlot = AllocClockSlot();
+
         WriteOp(bDynamicBlendSpace ? EAnimOp::SampleBlendSpaceDyn : EAnimOp::SampleBlendSpace);
         Write(BlendSpaceIndex);
         Write(XReg);
         Write(YReg);
         Write(SpeedReg);
         Write(PhaseSlot);
+        Write(StartPosReg);
+        Write(SeededSlot);
         Write(Dst);
         return Dst;
     }

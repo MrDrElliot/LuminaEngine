@@ -791,7 +791,7 @@ namespace Lumina::Physics
         auto BodySyncView = Registry.view<SRigidBodyComponent, FNeedsPhysicsBodyUpdate>();
         auto Handle = BodySyncView.handle();
         auto&& Storage = Registry.storage<STransformComponent>();
-        Task::ParallelFor(Handle->size(), [&] (uint32 Index)
+        Task::ParallelFor((uint32)Handle->size(), [&] (uint32 Index)
         {
             entt::entity Entity = (*Handle)[Index];
             if (!BodySyncView.contains(Entity))
@@ -1139,7 +1139,7 @@ namespace Lumina::Physics
         
         auto RigidView = Registry.view<SRigidBodyComponent>();
         auto RigidHandle = RigidView.handle();
-        Task::ParallelFor(RigidHandle->size(), [&](uint32 Index)
+        Task::ParallelFor((uint32)RigidHandle->size(), [&](uint32 Index)
         {
             entt::entity Entity = (*RigidHandle)[Index];
 

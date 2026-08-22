@@ -301,7 +301,7 @@ namespace Lumina
         }
 
         StructuredArchive::FSlotID NewSlotID = IDGenerator.Generate();
-        uint32 NewDepth = CurrentScope.size();
+        uint32 NewDepth = (uint32)CurrentScope.size();
         
         return FArchiveSlot(*this, NewDepth, NewSlotID);
     }
@@ -331,7 +331,7 @@ namespace Lumina
     FArchiveSlot FBinaryStructuredArchive::EnterArrayElement()
     {
         StructuredArchive::FSlotID NewSlotID = IDGenerator.Generate();
-        uint32 NewDepth = CurrentScope.size();
+        uint32 NewDepth = (uint32)CurrentScope.size();
         
         return FArchiveSlot(*this, NewDepth, NewSlotID);
     }
@@ -351,7 +351,7 @@ namespace Lumina
     FArchiveSlot FBinaryStructuredArchive::EnterStreamElement()
     {
         StructuredArchive::FSlotID NewSlotID = IDGenerator.Generate();
-        uint32 NewDepth = CurrentScope.size();
+        uint32 NewDepth = (uint32)CurrentScope.size();
         
         return FArchiveSlot(*this, NewDepth, NewSlotID);
     }
@@ -377,7 +377,7 @@ namespace Lumina
     FArchiveSlot FBinaryStructuredArchive::EnterMapKey()
     {
         StructuredArchive::FSlotID NewSlotID = IDGenerator.Generate();
-        uint32 NewDepth = CurrentScope.size();
+        uint32 NewDepth = (uint32)CurrentScope.size();
         
         return FArchiveSlot(*this, NewDepth, NewSlotID);
     }
@@ -385,7 +385,7 @@ namespace Lumina
     FArchiveSlot FBinaryStructuredArchive::EnterMapValue()
     {
         StructuredArchive::FSlotID NewSlotID = IDGenerator.Generate();
-        uint32 NewDepth = CurrentScope.size();
+        uint32 NewDepth = (uint32)CurrentScope.size();
         
         return FArchiveSlot(*this, NewDepth, NewSlotID);
     }

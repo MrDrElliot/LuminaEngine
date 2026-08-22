@@ -16,7 +16,7 @@ namespace Lumina
     public:
 
         FStringView GetNodeDisplayName() const override { return "Evaluate Animation Clip"; }
-        FStringView GetNodeTooltip() const override { return "Samples a clip at the Time input instead of on a playback clock, which is how a pose is indexed by a value (a lean scrubbed by angle, a turn indexed by yaw). Normalized treats Time as 0..1 across the clip; otherwise it is seconds."; }
+        FStringView GetNodeTooltip() const override { return "Samples a clip at the Time input instead of on a playback clock, which is how a pose is indexed by a value (a lean scrubbed by angle, a turn indexed by yaw). Normalized treats Time as 0..1 across the clip; otherwise it is seconds. Start Position offsets Time in those same units."; }
 
         void BuildNode() override;
         void GenerateBytecode(FAnimationGraphCompiler& Compiler) override;
@@ -31,6 +31,7 @@ namespace Lumina
 
         CAnimGraphPin* AnimationPin = nullptr;
         CAnimGraphPin* TimePin = nullptr;
+        CAnimGraphPin* StartPositionPin = nullptr;
         CAnimGraphPin* PosePin = nullptr;
     };
 }

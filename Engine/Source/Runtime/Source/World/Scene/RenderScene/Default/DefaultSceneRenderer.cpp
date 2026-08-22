@@ -2672,7 +2672,7 @@ namespace Lumina
             }, ETaskPriority::Medium);
             #endif
 
-            auto DLightTask = EmitGraph.AddParallelFor(DirectionalView.handle()->size(), 32, [&](Task::FParallelRange Range)
+            auto DLightTask = EmitGraph.AddParallelFor((uint32)DirectionalView.handle()->size(), 32, [&](Task::FParallelRange Range)
             {
                 LUMINA_PROFILE_SECTION("Process Directional Light");
                 auto Handle = DirectionalView.handle();
@@ -2687,7 +2687,7 @@ namespace Lumina
                 }
             });
             
-            auto PointLightTask = EmitGraph.AddParallelFor(PointLightView.handle()->size(), 32, [&](Task::FParallelRange Range)
+            auto PointLightTask = EmitGraph.AddParallelFor((uint32)PointLightView.handle()->size(), 32, [&](Task::FParallelRange Range)
             {
                 LUMINA_PROFILE_SECTION("Process Point Light Range");
 
@@ -2704,7 +2704,7 @@ namespace Lumina
                 }
             });
             
-            auto SpotLightTask = EmitGraph.AddParallelFor(SpotLightView.handle()->size(), 32, [&](Task::FParallelRange Range)
+            auto SpotLightTask = EmitGraph.AddParallelFor((uint32)SpotLightView.handle()->size(), 32, [&](Task::FParallelRange Range)
             {
                 LUMINA_PROFILE_SECTION("Process Spot Light Range");
 

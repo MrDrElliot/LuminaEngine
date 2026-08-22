@@ -61,7 +61,7 @@ namespace Lumina
         /** Same base name with the numeric suffix stripped. */
         FName GetBaseName() const { return FName(ID); }
 
-        operator uint64() const { return ID; }
+        explicit operator uint64() const { return ID; }
 
         /**
          * Pointer to a null-terminated rendering of this name including any numeric suffix.

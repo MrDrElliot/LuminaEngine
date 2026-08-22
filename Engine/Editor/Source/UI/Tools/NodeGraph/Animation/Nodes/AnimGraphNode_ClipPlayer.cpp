@@ -6,13 +6,15 @@ namespace Lumina
 {
     void CAnimGraphNode_ClipPlayer::BuildNode()
     {
-        AnimationPin = CreateAnimPin("Animation", ENodePinDirection::Input, EAnimPinType::Object);
-        SpeedPin    = CreateAnimPin("Speed", ENodePinDirection::Input, EAnimPinType::Value, 1.0f);
-        LoopModePin = CreateAnimPin("Loop Mode", ENodePinDirection::Input, EAnimPinType::Value, (float)LoopMode);
-        PosePin     = CreateAnimPin("Pose", ENodePinDirection::Output, EAnimPinType::Pose);
-        FinishedPin = CreateAnimPin("Finished", ENodePinDirection::Output, EAnimPinType::Value);
+        AnimationPin     = CreateAnimPin("Animation", ENodePinDirection::Input, EAnimPinType::Object);
+        SpeedPin         = CreateAnimPin("Speed", ENodePinDirection::Input, EAnimPinType::Value, 1.0f);
+        StartPositionPin = CreateAnimPin("Start Position", ENodePinDirection::Input, EAnimPinType::Value, 0.0f);
+        LoopModePin      = CreateAnimPin("Loop Mode", ENodePinDirection::Input, EAnimPinType::Value, (float)LoopMode);
+        PosePin          = CreateAnimPin("Pose", ENodePinDirection::Output, EAnimPinType::Pose);
+        FinishedPin      = CreateAnimPin("Finished", ENodePinDirection::Output, EAnimPinType::Value);
 
         BindFloatPinEditor(SpeedPin);
+        BindFloatPinEditor(StartPositionPin);
         BindEnumPinEditor(LoopModePin, { "Loop", "Play Once" },
             [this]() { return (int)LoopMode; },
             [this](int Value) { LoopMode = (EClipLoopMode)Value; });
@@ -34,8 +36,9 @@ namespace Lumina
         }
 
         const uint16 ClipIndex = bDynamicClip ? (uint16)ClipObjectReg : Compiler.AddClip(Clip.Get());
-        const uint16 StateSlot = Compiler.AllocClockSlot();
-        const uint16 SpeedReg  = ResolveValueInput(SpeedPin, Compiler);
+        const uint16 StateSlot   = Compiler.AllocClockSlot();
+        const uint16 SpeedReg    = ResolveValueInput(SpeedPin, Compiler);
+        const uint16 StartPosReg = ResolveValueInput(StartPositionPin, Compiler);
 
         // Register-driven so it can be wired, and an unconnected pin bakes the property as a constant.
         const uint16 LoopModeReg = LoopModePin->HasConnection()
@@ -45,7 +48,7 @@ namespace Lumina
         const uint16 SyncGroupIndex = SyncGroup.IsNone() ? kAnimNoSyncGroup : Compiler.AddSyncGroup(SyncGroup);
 
         uint16 FinishedReg = 0;
-        const uint16 TimeReg = Compiler.EmitAdvanceClock(StateSlot, SpeedReg, ClipIndex, LoopModeReg, FinishedReg, SyncGroupIndex, bDynamicClip);
+        const uint16 TimeReg = Compiler.EmitAdvanceClock(StateSlot, SpeedReg, ClipIndex, LoopModeReg, StartPosReg, FinishedReg, SyncGroupIndex, bDynamicClip);
         const uint16 PoseReg = Compiler.EmitSampleAnim(ClipIndex, TimeReg, bDynamicClip);
 
         Compiler.SetPinRegister(PosePin, PoseReg);

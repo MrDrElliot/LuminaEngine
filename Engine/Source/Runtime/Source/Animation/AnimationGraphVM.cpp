@@ -709,6 +709,8 @@ namespace Lumina
                 const uint16 SpeedReg     = Reader.Read<uint16>();
                 const uint16 ClipIdx      = Reader.Read<uint16>();
                 const uint16 LoopModeReg  = Reader.Read<uint16>();
+                const uint16 StartPosReg  = Reader.Read<uint16>();
+                const uint16 SeededSlot   = Reader.Read<uint16>();
                 const uint16 DstClock     = Reader.Read<uint16>();
                 const uint16 DstFinished  = Reader.Read<uint16>();
                 const uint16 SyncGroup    = Reader.Read<uint16>();
@@ -721,14 +723,21 @@ namespace Lumina
                         ? Cast<CAnimation>(ReadObjectReg(ClipIdx))
                         : ((ClipIdx < NumClips && Graph->Clips[ClipIdx].IsValid()) ? Graph->Clips[ClipIdx].Get() : nullptr);
 
+                    const float Duration = Clip ? Clip->GetDuration() : 0.0f;
+
+                    // Seeding waits for a clip, so a dynamic clip that resolves late still starts where it was asked to.
+                    if (Clip != nullptr && SeededSlot < NumState && State.StateSlots[SeededSlot] < 0.5f)
+                    {
+                        State.StateSlots[SeededSlot] = 1.0f;
+                        State.StateSlots[StateIdx]   = Math::Clamp(ReadScalar(StartPosReg, 0.0f), 0.0f, Duration);
+                    }
+
                     const float PrevClock = State.StateSlots[StateIdx];
                     const float Speed = ReadScalar(SpeedReg, 1.0f);
                     float Clock = PrevClock + DeltaTime * Speed;
                     float PrevSampleTime = PrevClock;
                     float Finished = 0.0f;
                     bool bSynced = false;
-
-                    const float Duration = Clip ? Clip->GetDuration() : 0.0f;
 
                     // The phase advances once per update at the group's blended-duration rate, and synced clips loop.
                     if (SyncGroup != kAnimNoSyncGroup && SyncGroup < State.SyncGroups.size() && Duration > 0.0f)
@@ -869,6 +878,8 @@ namespace Lumina
                 const uint16 YReg          = Reader.Read<uint16>();
                 const uint16 SpeedReg      = Reader.Read<uint16>();
                 const uint16 PhaseSlot     = Reader.Read<uint16>();
+                const uint16 StartPosReg   = Reader.Read<uint16>();
+                const uint16 SeededSlot    = Reader.Read<uint16>();
                 const uint16 Dst           = Reader.Read<uint16>();
 
                 const CBlendSpace* BlendSpace = bDynamicBlendSpace
@@ -894,6 +905,16 @@ namespace Lumina
                     (!bDynamicBlendSpace && BlendSpaceIdx < Graph->BlendSpaceCurveMaps.size())
                     ? &Graph->BlendSpaceCurveMaps[BlendSpaceIdx] : nullptr;
                 float* DstCurves = CurvesOf(Dst);
+
+                // Seeding waits for a resolved blend space, so a dynamic asset that arrives late still starts on phase.
+                if (SeededSlot < NumState && State.StateSlots[SeededSlot] < 0.5f)
+                {
+                    State.StateSlots[SeededSlot] = 1.0f;
+                    if (PhaseSlot < NumState)
+                    {
+                        State.StateSlots[PhaseSlot] = Math::Clamp(ReadScalar(StartPosReg, 0.0f), 0.0f, 1.0f);
+                    }
+                }
 
                 // The phase speed comes from the weighted duration, so it retimes as the blend moves.
                 const float PrevPhase = (PhaseSlot < (uint16)State.StateSlots.size()) ? State.StateSlots[PhaseSlot] : 0.0f;

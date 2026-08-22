@@ -6,11 +6,13 @@ namespace Lumina
 {
     void CAnimGraphNode_ClipEvaluator::BuildNode()
     {
-        AnimationPin = CreateAnimPin("Animation", ENodePinDirection::Input, EAnimPinType::Object);
-        TimePin      = CreateAnimPin("Time", ENodePinDirection::Input, EAnimPinType::Value, 0.0f);
-        PosePin      = CreateAnimPin("Pose", ENodePinDirection::Output, EAnimPinType::Pose);
+        AnimationPin     = CreateAnimPin("Animation", ENodePinDirection::Input, EAnimPinType::Object);
+        TimePin          = CreateAnimPin("Time", ENodePinDirection::Input, EAnimPinType::Value, 0.0f);
+        StartPositionPin = CreateAnimPin("Start Position", ENodePinDirection::Input, EAnimPinType::Value, 0.0f);
+        PosePin          = CreateAnimPin("Pose", ENodePinDirection::Output, EAnimPinType::Pose);
 
         BindFloatPinEditor(TimePin);
+        BindFloatPinEditor(StartPositionPin);
     }
 
     void CAnimGraphNode_ClipEvaluator::GenerateBytecode(FAnimationGraphCompiler& Compiler)
@@ -31,6 +33,12 @@ namespace Lumina
         const uint16 ClipIndex = bDynamicClip ? (uint16)ClipObjectReg : Compiler.AddClip(Clip.Get());
 
         uint16 TimeReg = ResolveValueInput(TimePin, Compiler);
+
+        // The node has no clock to start, so the offset lands on Time, in whichever units Time is read as.
+        if (StartPositionPin->HasConnection() || GetValuePinDefault(StartPositionPin) != 0.0f)
+        {
+            TimeReg = Compiler.EmitScalarOp(EAnimScalarOp::Add, TimeReg, ResolveValueInput(StartPositionPin, Compiler));
+        }
 
         if (bNormalizedTime)
         {

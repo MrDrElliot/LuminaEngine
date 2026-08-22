@@ -101,9 +101,9 @@ namespace Lumina
         uint16 EmitLoadObjectParam(uint16 ObjectParameterIndex);
         uint16 EmitLoadObjectConst(uint16 ObjectConstantIndex);
 
-        // bDynamicClip reads ClipIndex as an OBJECT REGISTER rather than a clip-table index.
-        uint16 EmitAdvanceClock(uint16 StateSlot, uint16 SpeedReg, uint16 ClipIndex, uint16 LoopModeReg, uint16& OutFinishedReg,
-                                uint16 SyncGroup = kAnimNoSyncGroup, bool bDynamicClip = false);
+        // bDynamicClip reads ClipIndex as an object register rather than a clip-table index; StartPosReg seeds a wound-back clock.
+        uint16 EmitAdvanceClock(uint16 StateSlot, uint16 SpeedReg, uint16 ClipIndex, uint16 LoopModeReg, uint16 StartPosReg,
+                                uint16& OutFinishedReg, uint16 SyncGroup = kAnimNoSyncGroup, bool bDynamicClip = false);
 
         // Registers a named sync group and returns its index; dedups by name.
         uint16 AddSyncGroup(const FName& Name);
@@ -126,7 +126,7 @@ namespace Lumina
         // Samples a blend space at (X, Y). The op owns its playback phase in PhaseSlot and advances it
         // against the weighted-blend duration, so the contributing clips stay stride-aligned.
         uint16 EmitSampleBlendSpace(uint16 BlendSpaceIndex, uint16 XReg, uint16 YReg, uint16 SpeedReg, uint16 PhaseSlot,
-                                    bool bDynamicBlendSpace = false);
+                                    uint16 StartPosReg, bool bDynamicBlendSpace = false);
         uint16 EmitRefPose();
         uint16 EmitBlend(uint16 PoseRegA, uint16 PoseRegB, uint16 AlphaReg);
         uint16 EmitBlendMasked(uint16 PoseRegA, uint16 PoseRegB, uint16 AlphaReg, uint16 MaskIndex);

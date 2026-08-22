@@ -72,7 +72,7 @@ namespace Lumina
         ImVec4 CategoryColor(const FName& Class)
         {
             // Stable hue per class so categories are visually distinct.
-            const uint32 Hash = Class.GetID();
+            const uint32 Hash = (uint32)Class.GetID();
             const float Hue = (Hash % 360) / 360.0f;
             ImVec4 Color;
             ImGui::ColorConvertHSVtoRGB(Hue, 0.5f, 0.95f, Color.x, Color.y, Color.z);

@@ -2096,7 +2096,7 @@ namespace Lumina
         }
         
         // Per-document ID, so tabs from one document are not dockable in another.
-        EditorTool->ToolWindowsClass.ClassId = EditorTool->GetID();
+        EditorTool->ToolWindowsClass.ClassId = (ImGuiID)EditorTool->GetID();
         EditorTool->ToolWindowsClass.ViewportFlagsOverrideSet = ImGuiViewportFlags_NoTaskBarIcon | ImGuiViewportFlags_NoDecoration | ImGuiViewportFlags_TopMost;
         EditorTool->ToolWindowsClass.ParentViewportId = ImGui::GetWindowViewport()->ID;
         EditorTool->ToolWindowsClass.DockingAllowUnclassed = true;
@@ -2104,7 +2104,7 @@ namespace Lumina
         // In a loose floating window the document id stands in for the dock id.
         EditorTool->CurrDockID = ImGui::GetWindowDockID();
         EditorTool->PrevLocationID = EditorTool->CurrLocationID;
-        EditorTool->CurrLocationID = EditorTool->CurrDockID != 0 ? EditorTool->CurrDockID : EditorTool->GetID();
+        EditorTool->CurrLocationID = EditorTool->CurrDockID != 0 ? EditorTool->CurrDockID : (ImGuiID)EditorTool->GetID();
 
         // Hashed so same-type editors in a tab bar share a layout, and reused as a window-title suffix.
         EditorTool->PrevDockspaceID = EditorTool->CurrDockspaceID;
@@ -3182,7 +3182,7 @@ namespace Lumina
 
     void FEditorUI::DrawTitleBarMenu(const FUpdateContext& UpdateContext)
     {
-        DirtyPackageScanCountdown -= UpdateContext.GetDeltaTime();
+        DirtyPackageScanCountdown -= (float)UpdateContext.GetDeltaTime();
         if (DirtyPackageScanCountdown <= 0.0f)
         {
             DirtyPackageScanCountdown = DirtyPackageScanInterval;
@@ -3242,7 +3242,7 @@ namespace Lumina
     {
         FTitleBarStats Stats;
 
-        const float DeltaSeconds     = UpdateContext.GetDeltaTime();
+        const float DeltaSeconds     = (float)UpdateContext.GetDeltaTime();
         const float CurrentFrameTime = DeltaSeconds * 1000.0f;
 
         // Weighted by how long the frame took rather than by the frame merely happening.

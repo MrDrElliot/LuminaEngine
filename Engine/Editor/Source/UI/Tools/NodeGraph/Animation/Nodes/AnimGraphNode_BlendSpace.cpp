@@ -10,11 +10,16 @@ namespace Lumina
         XPin     = CreateAnimPin("X", ENodePinDirection::Input, EAnimPinType::Value, 0.0f);
         YPin     = CreateAnimPin("Y", ENodePinDirection::Input, EAnimPinType::Value, 0.0f);
         SpeedPin = CreateAnimPin("Speed", ENodePinDirection::Input, EAnimPinType::Value, 1.0f);
+
+        // Normalized, because the samples share one phase and have no common duration to measure seconds against.
+        StartPositionPin = CreateAnimPin("Start Position", ENodePinDirection::Input, EAnimPinType::Value, 0.0f);
+
         PosePin  = CreateAnimPin("Pose", ENodePinDirection::Output, EAnimPinType::Pose);
 
         BindFloatPinEditor(XPin);
         BindFloatPinEditor(YPin);
         BindFloatPinEditor(SpeedPin);
+        BindFloatPinEditor(StartPositionPin);
     }
 
     void CAnimGraphNode_BlendSpace::GenerateBytecode(FAnimationGraphCompiler& Compiler)
@@ -44,7 +49,8 @@ namespace Lumina
                                                           : Compiler.AddBlendSpace(BlendSpace.Get());
         const uint16 PhaseSlot       = Compiler.AllocClockSlot();
 
-        const uint16 SpeedReg = ResolveValueInput(SpeedPin, Compiler);
+        const uint16 SpeedReg    = ResolveValueInput(SpeedPin, Compiler);
+        const uint16 StartPosReg = ResolveValueInput(StartPositionPin, Compiler);
 
         uint16 XReg = ResolveValueInput(XPin, Compiler);
         if (XSmoothingHalfLife > 0.0f)
@@ -61,7 +67,7 @@ namespace Lumina
             YReg = Compiler.EmitSmoothScalar(YReg, Compiler.EmitLoadConst(YSmoothingHalfLife));
         }
 
-        const uint16 PoseReg = Compiler.EmitSampleBlendSpace(BlendSpaceIndex, XReg, YReg, SpeedReg, PhaseSlot, bDynamicBlendSpace);
+        const uint16 PoseReg = Compiler.EmitSampleBlendSpace(BlendSpaceIndex, XReg, YReg, SpeedReg, PhaseSlot, StartPosReg, bDynamicBlendSpace);
 
         Compiler.SetPinRegister(PosePin, PoseReg);
     }

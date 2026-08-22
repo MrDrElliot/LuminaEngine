@@ -16,6 +16,7 @@
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "Containers/StringFormat.h"
+#include "Core/Templates/IntegerCompare.h"
 
 namespace Lumina
 {
@@ -230,7 +231,7 @@ namespace Lumina
         NodeEditor::PushStyleColor(NodeEditor::StyleColor_NodeBorder, ImColor(0, 0, 0, 0));
 
         NodeEditor::BeginNode(Node->GetNodeID());
-        ImGui::PushID(Node->GetNodeID());
+        ImGui::PushID((int)Node->GetNodeID());
 
         const ImVec2 CursorStart = ImGui::GetCursorScreenPos();
         const ImVec2 DotSize(DotRadius * 2.0f, DotRadius * 2.0f);
@@ -1024,7 +1025,7 @@ namespace Lumina
                         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 0.6f));
                     }
 
-                    DrawPinIcon(InputPin->HasConnection(), IconAlpha, PinColor);
+                    DrawPinIcon(InputPin->HasConnection(), (int)IconAlpha, PinColor);
                     ImGui::Spring(0);
 
                     ImGui::TextUnformatted(InputPin->GetPinName().c_str());
@@ -1082,7 +1083,7 @@ namespace Lumina
                     {
                         PinColor = ImVec4(255.0f, 0.0f, 0.0f, 255.0f);
                     }
-                    DrawPinIcon(OutputPin->HasConnection(), bDisabledOut ? 80.0f : 255.0f, PinColor);
+                    DrawPinIcon(OutputPin->HasConnection(), bDisabledOut ? 80 : 255, PinColor);
 
                     if (bDebug)
                     {
@@ -1162,7 +1163,7 @@ namespace Lumina
             {
                 auto NodeItr = Algo::FindIf(Nodes.begin(), Nodes.end(), [this](const TObjectPtr<CEdGraphNode>& A)
                 {
-                    return A.IsValid() && std::cmp_equal(A->GetNodeID(), ContextMenuNodeID);
+                    return A.IsValid() && Cmp::Equal(A->GetNodeID(), ContextMenuNodeID);
                 });
 
                 DrawNodeContextMenu(NodeItr != Nodes.end() ? NodeItr->Get() : nullptr);
@@ -1250,7 +1251,7 @@ namespace Lumina
                         NodeEditor::NodeId Selection = Selections[i];
                         auto NodeItr = Algo::FindIf(Nodes.begin(), Nodes.end(), [&] (const TObjectPtr<CEdGraphNode>& A)
                         {
-                            return std::cmp_equal(A->GetNodeID(), Selection.Get()) && A->IsDeletable();
+                            return Cmp::Equal(A->GetNodeID(), Selection.Get()) && A->IsDeletable();
                         });
                     
                         if (NodeItr == Nodes.end())
@@ -1414,7 +1415,7 @@ namespace Lumina
             {
                 for (CEdGraphNode* Node : Nodes)
                 {
-                    if (std::cmp_equal(Node->GetNodeID(), DoubleClickedNode.Get()))
+                    if (Cmp::Equal(Node->GetNodeID(), DoubleClickedNode.Get()))
                     {
                         NodeDoubleClickedCallback(Node);
                         break;
@@ -1563,7 +1564,7 @@ namespace Lumina
                 // O(n^2) scan mirrors the approach from the imgui-node-editor examples; acceptable for typical graph sizes.
                 auto NodeItr = Algo::FindIf(Nodes.begin(), Nodes.end(), [NodeId] (const TObjectPtr<CEdGraphNode>& A)
                 {
-                    return std::cmp_equal(A->GetNodeID(), NodeId.Get()) && A->IsDeletable();
+                    return Cmp::Equal(A->GetNodeID(), NodeId.Get()) && A->IsDeletable();
                 });
 
                 if (NodeItr != Nodes.end())

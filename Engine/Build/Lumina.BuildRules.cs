@@ -146,14 +146,13 @@ public abstract class LuminaTargetRules : TargetRules
             // Noise inherent to exporting C++ types across a DLL boundary.
             Warnings.Set(WarningSeverity.Off,
                 CompilerWarning.DllInterface,
-                CompilerWarning.DllInterfaceBase,
-                CompilerWarning.ConversionLoss,
-                CompilerWarning.ConversionSizeT);
+                CompilerWarning.DllInterfaceBase);
 
-            // A symbol defined here but declared with another module's export macro, so callers
-            // outside this DLL would link against an import that nothing exports.
+            // A narrowing conversion is a silent wrong answer rather than untidiness.
             Warnings.Set(WarningSeverity.Fatal,
-                CompilerWarning.InconsistentDllLinkage);
+                CompilerWarning.InconsistentDllLinkage,  // a definition declared with another module's export macro
+                CompilerWarning.ConversionLoss,          // a value that does not survive its target type
+                CompilerWarning.ConversionSizeT);        // a 64-bit count truncated into a 32-bit one
         }
         else
         {

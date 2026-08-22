@@ -2223,7 +2223,7 @@ namespace Lumina::RHI
 
                 tracy::VkCtx* Context = TracyVkContext(GDevice->PhysicsDevice, GDevice->Device,
                     GDevice->Queues[QueueIndex], TracyCmd);
-                TracyVkContextName(Context, Name, NameLength);
+                TracyVkContextName(Context, Name, (uint16_t)NameLength);
 
                 GTracyGPUContexts[QueueIndex]   = Context;
                 GTracyOwnedContexts[QueueIndex] = Context;

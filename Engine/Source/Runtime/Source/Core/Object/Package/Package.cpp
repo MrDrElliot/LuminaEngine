@@ -16,6 +16,7 @@
 #include "Thumbnail/PackageThumbnail.h"
 #include "miniz.h"
 #include "Log/Log.h"
+#include "Core/Templates/IntegerCompare.h"
 
 
 namespace Lumina
@@ -1446,7 +1447,7 @@ namespace Lumina
 
         int32 FoundLoaderIndex = FObjectPackageIndex(Object->LoaderIndex).GetArrayIndex();
 
-        if (FoundLoaderIndex < 0 || std::cmp_greater_equal(FoundLoaderIndex, ExportTable.size()))
+        if (FoundLoaderIndex < 0 || Cmp::GreaterEqual(FoundLoaderIndex, ExportTable.size()))
         {
             LOG_ERROR("Invalid loader index {} for object {}", FoundLoaderIndex, Object->GetName());
             Object->ClearFlags(OF_Loading);

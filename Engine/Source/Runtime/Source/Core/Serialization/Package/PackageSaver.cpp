@@ -59,7 +59,7 @@ namespace Lumina
         {
             if (Value->GetPackage() == Package)
             {
-                Index = FObjectPackageIndex(Value->GetLoaderIndex());
+                Index = FObjectPackageIndex((int32)Value->GetLoaderIndex());
             }
             else
             {
@@ -89,7 +89,7 @@ namespace Lumina
         {
             if (Obj->GetPackage() == Package)
             {
-                Index = FObjectPackageIndex(Obj->GetLoaderIndex());
+                Index = FObjectPackageIndex((int32)Obj->GetLoaderIndex());
             }
             else
             {

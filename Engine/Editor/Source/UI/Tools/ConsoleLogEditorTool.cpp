@@ -879,7 +879,7 @@ namespace Lumina
         
         for (size_t i = 0; i < Input.size() && CandidatePos < Candidate.size(); ++i)
         {
-            char InputChar = std::tolower(Input[i]);
+            char InputChar = (char)std::tolower((unsigned char)Input[i]);
             while (CandidatePos < Candidate.size())
             {
                 if (std::tolower(Candidate[CandidatePos]) == InputChar)

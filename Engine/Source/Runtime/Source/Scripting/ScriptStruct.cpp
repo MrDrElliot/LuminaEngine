@@ -1211,7 +1211,7 @@ namespace Lumina::Scripting
         {
             return nullptr;
         }
-        const FName Key(ScriptClass.data(), ScriptClass.size());
+        const FName Key(ScriptClass);
         if (auto It = Entries.find(Key); It != Entries.end())
         {
             return It->second.Get();
@@ -1368,7 +1368,7 @@ namespace Lumina::Scripting
             for (const FScriptExportInstanceCandidate& Candidate : Type->Candidates)
             {
                 Out += "~";
-                Out += Candidate.TypeName;
+                Out += Candidate.TypeName.ToString();
                 for (const FScriptExportField& Nested : Candidate.Fields)
                 {
                     AppendFieldSignature(Nested, Out);

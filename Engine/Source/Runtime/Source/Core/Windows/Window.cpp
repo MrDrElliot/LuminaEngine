@@ -80,11 +80,11 @@ namespace Lumina
 			switch (Action)
 			{
 			case GLFW_PRESS:
-				GApp->GetEventProcessor().Dispatch<FMouseButtonPressedEvent>(static_cast<EMouseKey>(Button), xpos, ypos);
+				GApp->GetEventProcessor().Dispatch<FMouseButtonPressedEvent>(static_cast<EMouseKey>(Button), (float)xpos, (float)ypos);
 				break;
 
 			case GLFW_RELEASE:
-				GApp->GetEventProcessor().Dispatch<FMouseButtonReleasedEvent>(static_cast<EMouseKey>(Button), xpos, ypos);
+				GApp->GetEventProcessor().Dispatch<FMouseButtonReleasedEvent>(static_cast<EMouseKey>(Button), (float)xpos, (float)ypos);
 				break;
 			}
 		}
@@ -99,7 +99,7 @@ namespace Lumina
 				Impl->LastMouseY = ypos;
 				Impl->bFirstMouseUpdate = false;
 
-				GApp->GetEventProcessor().Dispatch<FMouseMovedEvent>(xpos, ypos, 0.0, 0.0);
+				GApp->GetEventProcessor().Dispatch<FMouseMovedEvent>((float)xpos, (float)ypos, 0.0f, 0.0f);
 				return;
 			}
 
@@ -109,13 +109,13 @@ namespace Lumina
 			Impl->LastMouseX = xpos;
 			Impl->LastMouseY = ypos;
 
-			GApp->GetEventProcessor().Dispatch<FMouseMovedEvent>(xpos, ypos, DeltaX, DeltaY);
+			GApp->GetEventProcessor().Dispatch<FMouseMovedEvent>((float)xpos, (float)ypos, (float)DeltaX, (float)DeltaY);
 		}
 
 		void MouseScrollCallback(GLFWwindow* /*Window*/, double /*xoffset*/, double yoffset)
 		{
 			// Vertical scroll only.
-			GApp->GetEventProcessor().Dispatch<FMouseScrolledEvent>(EMouseKey::Scroll, yoffset);
+			GApp->GetEventProcessor().Dispatch<FMouseScrolledEvent>(EMouseKey::Scroll, (float)yoffset);
 		}
 
 		void KeyCallback(GLFWwindow* /*Window*/, int Key, int /*Scancode*/, int Action, int Mods)

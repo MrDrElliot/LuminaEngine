@@ -191,9 +191,12 @@ TEST(AnimationCurves, StateTransitionEasesCurvesAcrossTheBlend)
     FAnimGraphTransition ToRun;
     ToRun.FromState          = 0;
     ToRun.ToState            = 1;
-    ToRun.ConditionParameter = FName("Go");
-    ToRun.Compare            = EAnimTransitionCompare::Greater;
-    ToRun.CompareValue       = 0.5f;
+    FAnimGraphTransitionTerm GoTerm;
+    GoTerm.ConditionSource   = EAnimTransitionSource::Parameter;
+    GoTerm.Name              = FName("Go");
+    GoTerm.Compare           = EAnimTransitionCompare::Greater;
+    GoTerm.CompareValue      = 0.5f;
+    ToRun.Terms              = { GoTerm };
     ToRun.BlendDuration      = 0.2f;
     Machine.Transitions.push_back(ToRun);
 

@@ -550,17 +550,17 @@ namespace Lumina
 
         const basisu::uint8_vec& BasisData = Compressor.get_output_basis_file();
         basist::basisu_transcoder Transcoder;
-        if (!Transcoder.start_transcoding(BasisData.data(), BasisData.size()))
+        if (!Transcoder.start_transcoding(BasisData.data(), (uint32_t)BasisData.size()))
         {
             return false;
         }
 
         basist::basisu_file_info FileInfo;
-        Transcoder.get_file_info(BasisData.data(), BasisData.size(), FileInfo);
+        Transcoder.get_file_info(BasisData.data(), (uint32_t)BasisData.size(), FileInfo);
         const uint32 NumMips = FileInfo.m_image_mipmap_levels[0];
 
         basist::basisu_image_info ImageInfo;
-        Transcoder.get_image_info(BasisData.data(), BasisData.size(), ImageInfo, 0);
+        Transcoder.get_image_info(BasisData.data(), (uint32_t)BasisData.size(), ImageInfo, 0);
         
         const uint32 Width  = ImageInfo.m_orig_width;
         const uint32 Height = ImageInfo.m_orig_height;
@@ -599,7 +599,7 @@ namespace Lumina
         for (uint32 MipIndex = 0; MipIndex < NumMips; ++MipIndex)
         {
             basist::basisu_image_level_info LevelInfo;
-            if (!Transcoder.get_image_level_info(BasisData.data(), BasisData.size(), LevelInfo, 0, MipIndex))
+            if (!Transcoder.get_image_level_info(BasisData.data(), (uint32_t)BasisData.size(), LevelInfo, 0, MipIndex))
             {
                 continue;
             }
@@ -612,7 +612,7 @@ namespace Lumina
 
             TVector<uint8> TranscodedData(TotalBlocks * BytesPerBlock);
             if (!Transcoder.transcode_image_level(
-                    BasisData.data(), BasisData.size(),
+                    BasisData.data(), (uint32_t)BasisData.size(),
                     0,
                     MipIndex,
                     TranscodedData.data(), TotalBlocks,

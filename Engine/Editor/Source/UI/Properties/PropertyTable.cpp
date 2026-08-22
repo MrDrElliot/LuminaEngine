@@ -25,6 +25,7 @@
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "Tools/UI/ImGui/EditorColors.h"
+#include "Core/Templates/IntegerCompare.h"
 
 namespace Lumina
 {
@@ -985,7 +986,7 @@ namespace Lumina
                 });
             }
 
-            if (bAllowReorder && ArrayNum > 0 && std::cmp_less(Index, ArrayNum - 1) && ImGui::MenuItem(LE_ICON_ARROW_DOWN " Move Element Down"))
+            if (bAllowReorder && ArrayNum > 0 && Cmp::Less(Index, ArrayNum - 1) && ImGui::MenuItem(LE_ICON_ARROW_DOWN " Move Element Down"))
             {
                 ArrayRow->QueueMutation([ArrayProperty, ContainerPtr, Index]
                 {

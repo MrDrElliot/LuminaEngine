@@ -196,11 +196,11 @@ namespace Lumina
         if (TypeName == "Int8Property") { int8 v; Ar << v; OutValue = v; return true; }
         if (TypeName == "Int16Property") { int16 v; Ar << v; OutValue = v; return true; }
         if (TypeName == "Int32Property") { int32 v; Ar << v; OutValue = v; return true; }
-        if (TypeName == "Int64Property") { int64 v; Ar << v; OutValue = v; return true; }
+        if (TypeName == "Int64Property") { int64 v; Ar << v; OutValue = (double)v; return true; }
         if (TypeName == "UInt8Property") { uint8 v; Ar << v; OutValue = v; return true; }
         if (TypeName == "UInt16Property") { uint16 v; Ar << v; OutValue = v; return true; }
         if (TypeName == "UInt32Property") { uint32 v; Ar << v; OutValue = v; return true; }
-        if (TypeName == "UInt64Property") { uint64 v; Ar << v; OutValue = v; return true; }
+        if (TypeName == "UInt64Property") { uint64 v; Ar << v; OutValue = (double)v; return true; }
         if (TypeName == "FloatProperty") { float v; Ar << v; OutValue = v; return true; }
         if (TypeName == "DoubleProperty") { Ar << OutValue; return true; }
         return false;

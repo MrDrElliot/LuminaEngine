@@ -99,7 +99,7 @@ namespace Lumina
             }
         }
 
-        return FArchiveSlot(*this, CurrentScope.size(), IDGenerator.Generate());
+        return FArchiveSlot(*this, (uint32)CurrentScope.size(), IDGenerator.Generate());
     }
 
     void FJsonStructuredArchive::EnterArray(int32& NumElements)
@@ -131,7 +131,7 @@ namespace Lumina
         if (Containers.empty())
         {
             Leaf.PendingNode = &MissingNode;
-            return FArchiveSlot(*this, CurrentScope.size(), IDGenerator.Generate());
+            return FArchiveSlot(*this, (uint32)CurrentScope.size(), IDGenerator.Generate());
         }
 
         FContainer& C = Containers.back();
@@ -156,7 +156,7 @@ namespace Lumina
             Leaf.PendingNode = (Node && Node->is_array() && Index < Node->size()) ? &(*Node)[Index] : &MissingNode;
         }
 
-        return FArchiveSlot(*this, CurrentScope.size(), IDGenerator.Generate());
+        return FArchiveSlot(*this, (uint32)CurrentScope.size(), IDGenerator.Generate());
     }
 
     void FJsonStructuredArchive::EnterStream()
@@ -220,7 +220,7 @@ namespace Lumina
             const size_t Index = C.ReadIndex;
             Leaf.PendingNode = (Node && Node->is_array() && Index < Node->size()) ? &(*Node)[Index][0] : &MissingNode;
         }
-        return FArchiveSlot(*this, CurrentScope.size(), IDGenerator.Generate());
+        return FArchiveSlot(*this, (uint32)CurrentScope.size(), IDGenerator.Generate());
     }
 
     FArchiveSlot FJsonStructuredArchive::EnterMapValue()
@@ -236,6 +236,6 @@ namespace Lumina
             const size_t Index = C.ReadIndex++;
             Leaf.PendingNode = (Node && Node->is_array() && Index < Node->size()) ? &(*Node)[Index][1] : &MissingNode;
         }
-        return FArchiveSlot(*this, CurrentScope.size(), IDGenerator.Generate());
+        return FArchiveSlot(*this, (uint32)CurrentScope.size(), IDGenerator.Generate());
     }
 }
