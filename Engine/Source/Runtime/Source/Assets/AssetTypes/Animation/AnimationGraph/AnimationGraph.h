@@ -148,7 +148,7 @@ namespace Lumina
         // What the compare reads. ConditionParameter is ignored unless this is Parameter.
         EAnimTransitionSource ConditionSource = EAnimTransitionSource::Parameter;
 
-        // Gating parameter; an undeclared parameter evaluates as 0.
+        // Gating parameter; empty is unconditional, and a name that resolves to nothing never passes.
         FName ConditionParameter;
         EAnimTransitionCompare Compare = EAnimTransitionCompare::Greater;
         float CompareValue = 0.0f;

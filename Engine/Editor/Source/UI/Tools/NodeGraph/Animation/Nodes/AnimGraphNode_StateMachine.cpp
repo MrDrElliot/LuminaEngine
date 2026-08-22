@@ -250,7 +250,8 @@ namespace Lumina
             Runtime.bCanInterrupt      = Transition->bCanInterrupt;
 
             // Warns when the condition parameter does not match a blackboard key, renamed or retyped.
-            if (Runtime.ConditionSource == EAnimTransitionSource::Parameter)
+            // An empty name is the unconditional edge, so it registers no parameter of its own.
+            if (Runtime.ConditionSource == EAnimTransitionSource::Parameter && !Transition->ConditionParameter.IsNone())
             {
                 Compiler.ValidateParameterKey(Transition->ConditionParameter, this);
                 Compiler.AddParameter(Transition->ConditionParameter, EAnimGraphParamType::Float, 0.0f);

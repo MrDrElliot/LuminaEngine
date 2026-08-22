@@ -52,6 +52,12 @@ namespace Lumina
             float Value = TimeInState;
             if (Transition.ConditionSource == EAnimTransitionSource::Parameter)
             {
+                // No parameter is authored as unconditional, so the compare never runs against a stand-in 0.
+                if (Transition.ConditionParameter.IsNone())
+                {
+                    return true;
+                }
+
                 // Resolved at load/compile; the fallback covers graphs built outside those paths.
                 int32 ParamIdx = Transition.CachedParamIndex;
                 if (ParamIdx == FAnimGraphTransition::ParamUnresolved)
@@ -59,11 +65,13 @@ namespace Lumina
                     ParamIdx = Graph->FindParameterIndex(Transition.ConditionParameter);
                 }
 
-                Value = 0.0f;
-                if (ParamIdx >= 0 && ParamIdx < (int32)Parameters.size())
+                // A name that resolves to nothing holds the edge shut rather than comparing against 0.
+                if (ParamIdx < 0 || ParamIdx >= (int32)Parameters.size())
                 {
-                    Value = Parameters[ParamIdx];
+                    return false;
                 }
+
+                Value = Parameters[ParamIdx];
             }
 
             switch (Transition.Compare)

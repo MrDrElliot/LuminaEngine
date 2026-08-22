@@ -13,6 +13,24 @@ namespace Lumina
 {
     namespace Import::Textures
     {
+        // Nothing outside the import has seen this package, so a failed cook takes it down with the texture.
+        static void DiscardFailedCook(CTexture* Texture)
+        {
+            CPackage* Package = Texture->GetPackage();
+
+            Texture->ConditionalBeginDestroy();
+
+            if (Package == nullptr || Package->IsTransientPackage() || Package->HasAnyFlag(OF_MarkedDestroy))
+            {
+                return;
+            }
+
+            Package->ClearDirty();
+            Package->SetFlag(OF_MarkedDestroy);
+            Package->RemoveFromRoot();
+            Package->ConditionalBeginDestroy();
+        }
+
         CTexture* ImportTextureAsset(const FFixedString& PackagePath, const FTextureCookRequest& Request)
         {
             CTexture* Texture = CFactory::CreateNewOf<CTexture>(PackagePath);
@@ -26,7 +44,7 @@ namespace Lumina
 
             if (!CTextureFactory::CookIntoTexture(Texture, Request))
             {
-                Texture->ConditionalBeginDestroy();
+                DiscardFailedCook(Texture);
                 return nullptr;
             }
 
@@ -63,7 +81,7 @@ namespace Lumina
 
         if (!CTextureFactory::CookIntoTexture(Texture, CookRequest))
         {
-            Texture->ConditionalBeginDestroy();
+            Import::Textures::DiscardFailedCook(Texture);
             OutResult.Error = FString("Failed to cook ") + FString(Request.SourcePath.c_str());
             return;
         }

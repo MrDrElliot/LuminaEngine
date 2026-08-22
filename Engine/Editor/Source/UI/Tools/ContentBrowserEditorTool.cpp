@@ -11,6 +11,7 @@
 #include "Assets/Factories/Factory.h"
 #include "Assets/AssetTypes/Prefabs/Prefab.h"
 #include "Core/Object/Package/Package.h"
+#include "Core/Object/ObjectIterator.h"
 #include "Core/Progress/SlowTask.h"
 #include "Tools/Import/Importer.h"
 #include "UI/Properties/PropertyTable.h"
@@ -1615,6 +1616,74 @@ namespace Lumina
         return false;
     }
 
+    // A loaded world would be freed out from under the editor that has it open.
+    static bool IsLoadedWorldAsset(FStringView AssetPath)
+    {
+        if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(AssetPath))
+        {
+            if (CObject* Object = FindObject<CObject>(Data->AssetGUID))
+            {
+                return Object->IsA<CWorld>();
+            }
+        }
+
+        return false;
+    }
+
+    // Loaded packages under Directory, including any created but never saved, which a file walk misses.
+    static void CollectLoadedPackagePaths(FStringView Directory, TVector<FFixedString>& OutPaths)
+    {
+        FFixedString Prefix(Directory.data(), Directory.size());
+        if (!Prefix.empty() && Prefix.back() != '/')
+        {
+            Prefix.push_back('/');
+        }
+
+        for (TObjectIterator<CPackage> Itr; Itr; ++Itr)
+        {
+            CPackage* Package = *Itr;
+            if (Package->HasAnyFlag(OF_MarkedDestroy) || Package->IsTransientPackage())
+            {
+                continue;
+            }
+
+            FFixedString PackagePath = Package->GetPackagePath();
+            if (PackagePath.starts_with(Prefix))
+            {
+                OutPaths.push_back(Move(PackagePath));
+            }
+        }
+    }
+
+    bool FContentBrowserEditorTool::DestroyAssetAtPath(FStringView AssetPath)
+    {
+        CObject* AliveObject = nullptr;
+        if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(AssetPath))
+        {
+            AliveObject = FindObject<CObject>(Data->AssetGUID);
+        }
+
+        // Pinned first, since dropping the instances' strong refs could free the prefab out from under us.
+        TObjectPtr<CObject> KeepAlive = AliveObject;
+        if (AliveObject != nullptr && AliveObject->IsA<CPrefab>())
+        {
+            static_cast<CPrefab*>(AliveObject)->DestroyAllInstancesInLoadedWorlds();
+        }
+
+        if (AliveObject != nullptr)
+        {
+            ToolContext->OnDestroyAsset(AliveObject);
+        }
+
+        if (!CPackage::DestroyPackage(AssetPath))
+        {
+            return false;
+        }
+
+        FCoreEditorDelegates::OnAssetDeleted.Broadcast(AssetPath);
+        return true;
+    }
+
     void FContentBrowserEditorTool::EndFrame()
     {
         bool bWroteSomething = false;
@@ -1637,8 +1706,27 @@ namespace Lumina
 
             if (VFS::IsDirectory(Destroy.PendingDestroy))
             {
+                TVector<FFixedString> LoadedPaths;
+                CollectLoadedPackagePaths(Destroy.PendingDestroy, LoadedPaths);
+
+                for (const FFixedString& LoadedPath : LoadedPaths)
+                {
+                    if (IsLoadedWorldAsset(LoadedPath))
+                    {
+                        ImGuiX::Notifications::NotifyError("Cannot destroy a folder holding an open world {0}", LoadedPath);
+                        return;
+                    }
+                }
+
+                // Destroyed first, which also removes their files, so the walk below sees only the rest.
+                for (const FFixedString& LoadedPath : LoadedPaths)
+                {
+                    DestroyAssetAtPath(LoadedPath);
+                }
+
                 // Sidecars live in the hidden .lmeta tree, so drop their identities after the bulk remove.
                 TVector<FFixedString> TextPaths;
+                TVector<FFixedString> UnloadedAssetPaths;
                 VFS::RecursiveDirectoryIterator(Destroy.PendingDestroy, [&](const VFS::FFileInfo& FileInfo)
                 {
                     if (FileInfo.IsDirectory()) return;
@@ -1647,7 +1735,17 @@ namespace Lumina
                     {
                         TextPaths.emplace_back(FileInfo.VirtualPath.c_str(), FileInfo.VirtualPath.size());
                     }
+                    else if (VFS::HasExtension(Vp, ".lasset"))
+                    {
+                        UnloadedAssetPaths.emplace_back(FileInfo.VirtualPath.c_str(), FileInfo.VirtualPath.size());
+                    }
                 });
+
+                // Never loaded, so this drops the registry identity a plain file remove would strand.
+                for (const FFixedString& AssetPath : UnloadedAssetPaths)
+                {
+                    DestroyAssetAtPath(AssetPath);
+                }
 
                 VFS::RemoveAll(Destroy.PendingDestroy);
 
@@ -1664,35 +1762,14 @@ namespace Lumina
 
             if (VFS::HasExtension(Destroy.PendingDestroy, ".lasset"))
             {
-                CObject* AliveObject = nullptr;
-                if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(Destroy.PendingDestroy))
+                if (IsLoadedWorldAsset(Destroy.PendingDestroy))
                 {
-                    if (CObject* Object = FindObject<CObject>(Data->AssetGUID))
-                    {
-                        AliveObject = Object;
-                        if (AliveObject->IsA<CWorld>())
-                        {
-                            ImGuiX::Notifications::NotifyError("Cannot destroy a world that's open {0}", Destroy.PendingDestroy);
-                            return;
-                        }
-                    }
+                    ImGuiX::Notifications::NotifyError("Cannot destroy a world that's open {0}", Destroy.PendingDestroy);
+                    return;
                 }
 
-                // Pinned first, since dropping the instances' strong refs could free the prefab out from under us.
-                TObjectPtr<CObject> KeepAlive = AliveObject;
-                if (AliveObject != nullptr && AliveObject->IsA<CPrefab>())
+                if (DestroyAssetAtPath(Destroy.PendingDestroy))
                 {
-                    static_cast<CPrefab*>(AliveObject)->DestroyAllInstancesInLoadedWorlds();
-                }
-
-                if (AliveObject)
-                {
-                    ToolContext->OnDestroyAsset(AliveObject);
-                }
-
-                if (CPackage::DestroyPackage(Destroy.PendingDestroy))
-                {
-                    FCoreEditorDelegates::OnAssetDeleted.Broadcast(Destroy.PendingDestroy);
                     ImGuiX::Notifications::NotifySuccess("Deleted Asset {0}", Destroy.PendingDestroy);
                     bWroteSomething = true;
                 }

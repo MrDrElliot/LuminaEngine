@@ -44,6 +44,59 @@ namespace Lumina
             }
         }
 
+        // A data URI carries the payload inline, so there is no file to resolve and no name to read from it.
+        bool IsDataURI(const char* Uri)
+        {
+            return Uri != nullptr && strncmp(Uri, "data:", 5) == 0;
+        }
+
+        bool DecodeBase64(const char* Encoded, TVector<uint8>& OutBytes)
+        {
+            auto Sextet = [](char C) -> int32
+            {
+                if (C >= 'A' && C <= 'Z') return C - 'A';
+                if (C >= 'a' && C <= 'z') return C - 'a' + 26;
+                if (C >= '0' && C <= '9') return C - '0' + 52;
+                if (C == '+') return 62;
+                if (C == '/') return 63;
+                return INDEX_NONE;
+            };
+
+            const size_t Length = strlen(Encoded);
+
+            OutBytes.clear();
+            OutBytes.reserve((Length / 4) * 3);
+
+            uint32 Buffer = 0;
+            uint32 BufferBits = 0;
+
+            for (size_t i = 0; i < Length; ++i)
+            {
+                const char C = Encoded[i];
+                if (C == '=')
+                {
+                    break;
+                }
+
+                const int32 Index = Sextet(C);
+                if (Index == INDEX_NONE)
+                {
+                    return false;
+                }
+
+                Buffer = (Buffer << 6) | (uint32)Index;
+                BufferBits += 6;
+
+                if (BufferBits >= 8)
+                {
+                    BufferBits -= 8;
+                    OutBytes.push_back((uint8)(Buffer >> BufferBits));
+                }
+            }
+
+            return !OutBytes.empty();
+        }
+
         FStringView ResultToString(cgltf_result Result)
         {
             switch (Result)
@@ -347,7 +400,9 @@ namespace Lumina
                 const cgltf_image& Image = Data.images[i];
 
                 FSourceImage Source;
-                if (Image.uri != nullptr && Image.uri[0] != '\0')
+                const bool bDataURI = IsDataURI(Image.uri);
+
+                if (Image.uri != nullptr && Image.uri[0] != '\0' && !bDataURI)
                 {
                     Source.Key = Image.uri;
                     Source.ResolvedPath = Paths::Combine(SourceDir, Source.Key);
@@ -359,7 +414,21 @@ namespace Lumina
                         : FormatAs<FFixedString>("{}_Image_{}",
                                                  FStringView(SourceName.data(), SourceName.length()), (uint32)i);
 
-                    if (Image.buffer_view != nullptr)
+                    if (bDataURI)
+                    {
+                        const char* Comma = strchr(Image.uri, ',');
+                        const bool bBase64 = Comma != nullptr && (Comma - Image.uri) >= 7
+                            && strncmp(Comma - 7, ";base64", 7) == 0;
+
+                        if (!bBase64 || !DecodeBase64(Comma + 1, Source.OwnedBytes))
+                        {
+                            LOG_WARN("[glTF] image {} has a data URI this importer cannot decode; skipping.", (uint32)i);
+                            continue;
+                        }
+
+                        Source.AdoptOwnedBytes();
+                    }
+                    else if (Image.buffer_view != nullptr)
                     {
                         if (const uint8* Base = cgltf_buffer_view_data(Image.buffer_view))
                         {

@@ -367,7 +367,7 @@ namespace Lumina::Logging
 					&& !GStopRequested.load(std::memory_order_acquire)
 					&& GFlushTarget.load(std::memory_order_acquire) == 0)
 				{
-					GWakeCv.WaitFor(Lock, 0.05);
+					(void)GWakeCv.WaitFor(Lock, 0.05);
 				}
 
 				GBackendSleeping.store(false, std::memory_order_release);

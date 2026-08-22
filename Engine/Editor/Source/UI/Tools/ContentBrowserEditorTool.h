@@ -192,6 +192,9 @@ namespace Lumina
         // Single funnel for every delete: play guard, variant guard, referencer fixup, then the destroy queue.
         void RequestDeletion(TVector<FFixedString> Paths, int32 ProtectedCount);
 
+        // The full single-asset teardown, run per contained asset by the directory delete too.
+        bool DestroyAssetAtPath(FStringView AssetPath);
+
         // Names the prefab variants that would be orphaned, empty when the set is safe to delete.
         FFixedString FindBlockingPrefabVariants(const TVector<FFixedString>& Paths) const;
 

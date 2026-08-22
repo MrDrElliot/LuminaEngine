@@ -1434,7 +1434,7 @@ namespace Lumina
             NodeEditor::Link(ThisLinkID, Start->GetPinGUID(), End->GetPinGUID(), LinkColor, LinkThickness);
 
             // Re-issued each frame to keep the flow animation looping.
-            if (DebugContext.bEnabled && DebugContext.bFlowLinks)
+            if (DebugContext.bEnabled && DebugContext.bFlowLinks && WantsDebugLinkFlow())
             {
                 NodeEditor::Flow(ThisLinkID);
             }

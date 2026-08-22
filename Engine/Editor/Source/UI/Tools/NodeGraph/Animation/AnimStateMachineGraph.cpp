@@ -30,9 +30,13 @@ namespace Lumina
         {
             constexpr float StateMinWidth  = 168.0f;
             constexpr float BadgeRounding  = 5.0f;
-            constexpr float ArrowLength    = 13.0f;
-            constexpr float ArrowWidth     = 9.0f;
+            constexpr float ArrowLength    = 15.0f;
+            constexpr float ArrowWidth     = 11.0f;
             constexpr float ParallelOffset = 11.0f;
+
+            // Fraction along the shaft carrying a direction chevron, short of the condition badge.
+            constexpr float ChevronT       = 0.28f;
+            constexpr float ChevronScale   = 0.8f;
 
             const char* CompareSymbol(EAnimTransitionCompare Compare)
             {
@@ -87,11 +91,23 @@ namespace Lumina
                 return Math::Sqrt(D.x * D.x + D.y * D.y);
             }
 
-            void DrawArrowHead(ImDrawList* DL, const ImVec2& Tip, const ImVec2& Dir, ImU32 Color)
+            void DrawArrowHead(ImDrawList* DL, const ImVec2& Tip, const ImVec2& Dir, ImU32 Color, float Scale = 1.0f)
             {
-                const ImVec2 Back = Tip - Dir * ArrowLength;
-                const ImVec2 Side(-Dir.y * ArrowWidth * 0.5f, Dir.x * ArrowWidth * 0.5f);
+                const ImVec2 Back = Tip - Dir * (ArrowLength * Scale);
+                const ImVec2 Side(-Dir.y * ArrowWidth * Scale * 0.5f, Dir.x * ArrowWidth * Scale * 0.5f);
                 DL->AddTriangleFilled(Tip, Back + Side, Back - Side, Color);
+            }
+
+            // A head at the target alone is easy to lose behind a node, so the shaft states the
+            // direction too. Skipped on a short edge, where the two would collide.
+            void DrawShaftChevron(ImDrawList* DL, const ImVec2& Start, const ImVec2& End, const ImVec2& Dir, ImU32 Color)
+            {
+                const ImVec2 Shaft = End - Start;
+                if (Shaft.x * Shaft.x + Shaft.y * Shaft.y < (ArrowLength * 4.0f) * (ArrowLength * 4.0f))
+                {
+                    return;
+                }
+                DrawArrowHead(DL, Start + (End - Start) * ChevronT, Dir, Color, ChevronScale);
             }
         }
     }
@@ -653,6 +669,7 @@ namespace Lumina
             const ImVec2 ShaftEnd = End - Dir * (SM::ArrowLength * 0.85f);
             DL->AddLine(Start, ShaftEnd, LineU32, Thickness);
             SM::DrawArrowHead(DL, End, Dir, LineU32);
+            SM::DrawShaftChevron(DL, Start, ShaftEnd, Dir, LineU32);
 
             if (bSelected)
             {

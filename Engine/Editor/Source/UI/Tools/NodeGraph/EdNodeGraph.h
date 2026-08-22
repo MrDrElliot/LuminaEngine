@@ -213,6 +213,10 @@ namespace Lumina
             OutThickness = 1.0f;
         }
 
+        // Whether debug mode animates flow markers along the links. A graph drawing its own wires
+        // returns false, since the markers ignore the link's alpha and would bury them.
+        virtual bool WantsDebugLinkFlow() const { return true; }
+
         // Draws the graph's wires itself. Called before any node is submitted, so coordinates are
         // canvas space and the drawing lands under the nodes. Wire ids come from MakeLinkID.
         // Suspend the editor around any ImGui window (tooltip, popup) opened from here.
