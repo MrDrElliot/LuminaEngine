@@ -244,8 +244,6 @@ namespace Lumina
 
         // The cached bytes and the version to stamp a reader with, re-read on demand, null for a transient package.
         TSharedPtr<FPackageFileBytes> AcquireLoaderBytes(int32& OutFileVersion);
-        
-
 
         RUNTIME_API void BuildSaveContext(FSaveContext& Context);
 
