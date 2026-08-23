@@ -131,6 +131,8 @@ namespace Lumina
             return true;
         }
 
+        const THashMap<FName, uint16>& GetCachedPoses() const { return CachedPoses; }
+
         uint16 EmitSavePoseSnapshot(uint16 SrcPoseReg, uint16 RequestReg, uint16 SnapshotIndex);
         uint16 EmitLoadPoseSnapshot(uint16 SnapshotIndex);
 

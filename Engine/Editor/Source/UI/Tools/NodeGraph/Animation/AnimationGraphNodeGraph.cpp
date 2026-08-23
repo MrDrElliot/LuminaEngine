@@ -140,32 +140,99 @@ namespace Lumina
             return false;
         }
 
-        // Cached pose branches emit ahead of everything else, so a state machine compiled later in this
-        // walk can resolve a Use Cached Pose sitting inside one of its states.
-        TVector<CEdGraphNode*> CachedPoseNodes;
-        CEdGraphNode* CyclicCachedPoseNode = GraphAlgorithms::TopologicalSortFromRoots(Nodes, CachedPoseNodes, [](CEdGraphNode* Node)
+        // A Save branch can read another cache from inside a nested state graph, which the pin-level
+        // sort cannot see. So order the Save nodes by that dependency and emit one branch at a time.
+        TVector<CAnimGraphNode_SaveCachedPose*> PendingSaves;
+        for (CEdGraphNode* Node : Nodes)
         {
-            return Cast<CAnimGraphNode_SaveCachedPose>(Node) != nullptr;
-        });
-
-        if (CyclicCachedPoseNode != nullptr)
-        {
-            EdNodeGraph::FError Error;
-            Error.Name        = "Cyclic";
-            Error.Description = "Cycle detected feeding a Save Cached Pose node! Graph must be acyclic.";
-            Error.Node        = CyclicCachedPoseNode;
-            Compiler.AddError(Error);
-            return false;
+            if (CAnimGraphNode_SaveCachedPose* Save = Cast<CAnimGraphNode_SaveCachedPose>(Node))
+            {
+                PendingSaves.push_back(Save);
+            }
         }
 
         THashSet<CEdGraphNode*> EmittedNodes;
-        for (CEdGraphNode* Node : CachedPoseNodes)
+        THashSet<FName> WrittenCaches;
+
+        while (!PendingSaves.empty())
         {
-            if (CAnimGraphNode* AnimNode = Cast<CAnimGraphNode>(Node))
+            int32 ReadyIndex = -1;
+            for (int32 i = 0; i < (int32)PendingSaves.size(); ++i)
             {
-                AnimNode->GenerateBytecode(Compiler);
-                EmittedNodes.insert(Node);
+                THashSet<CEdGraphNode*> BranchNodes;
+                GraphAlgorithms::CollectReachableFromRoot(PendingSaves[i], BranchNodes);
+
+                THashSet<FName> ReadCaches;
+                CollectReadCacheNames(BranchNodes, ReadCaches);
+
+                bool bWaiting = false;
+                for (const FName& ReadCache : ReadCaches)
+                {
+                    if (WrittenCaches.find(ReadCache) != WrittenCaches.end())
+                    {
+                        continue;
+                    }
+
+                    for (CAnimGraphNode_SaveCachedPose* Other : PendingSaves)
+                    {
+                        if (Other != PendingSaves[i] && Other->CacheName == ReadCache)
+                        {
+                            bWaiting = true;
+                            break;
+                        }
+                    }
+
+                    if (bWaiting)
+                    {
+                        break;
+                    }
+                }
+
+                if (!bWaiting)
+                {
+                    ReadyIndex = i;
+                    break;
+                }
             }
+
+            // Every remaining Save waits on another, so let the Use node report the circular read.
+            if (ReadyIndex == -1)
+            {
+                ReadyIndex = 0;
+            }
+
+            CAnimGraphNode_SaveCachedPose* ReadySave = PendingSaves[ReadyIndex];
+            PendingSaves.erase(PendingSaves.begin() + ReadyIndex);
+
+            TVector<CEdGraphNode*> BranchOrder;
+            CEdGraphNode* CyclicCachedPoseNode = GraphAlgorithms::TopologicalSortFromRoot(Nodes, BranchOrder,
+                [ReadySave](CEdGraphNode* Node) { return Node == ReadySave; });
+
+            if (CyclicCachedPoseNode != nullptr)
+            {
+                EdNodeGraph::FError Error;
+                Error.Name        = "Cyclic";
+                Error.Description = "Cycle detected feeding a Save Cached Pose node! Graph must be acyclic.";
+                Error.Node        = CyclicCachedPoseNode;
+                Compiler.AddError(Error);
+                return false;
+            }
+
+            for (CEdGraphNode* Node : BranchOrder)
+            {
+                if (EmittedNodes.find(Node) != EmittedNodes.end())
+                {
+                    continue;
+                }
+
+                if (CAnimGraphNode* AnimNode = Cast<CAnimGraphNode>(Node))
+                {
+                    AnimNode->GenerateBytecode(Compiler);
+                    EmittedNodes.insert(Node);
+                }
+            }
+
+            WrittenCaches.insert(ReadySave->CacheName);
         }
 
         // SortedNodes is dependency-ordered, so each node's input registers exist by the time it emits.
@@ -196,6 +263,53 @@ namespace Lumina
         }
 
         return true;
+    }
+
+    void CAnimationGraphNodeGraph::CollectReadCacheNames(const THashSet<CEdGraphNode*>& SubtreeNodes, THashSet<FName>& OutNames)
+    {
+        for (CEdGraphNode* Node : SubtreeNodes)
+        {
+            if (CAnimGraphNode_UseCachedPose* Use = Cast<CAnimGraphNode_UseCachedPose>(Node))
+            {
+                OutNames.insert(Use->CacheName);
+            }
+
+            CAnimGraphNode_StateMachine* Machine = Cast<CAnimGraphNode_StateMachine>(Node);
+            if (Machine == nullptr)
+            {
+                continue;
+            }
+
+            CAnimStateMachineGraph* SMGraph = Machine->StateMachineGraph.Get();
+            if (SMGraph == nullptr)
+            {
+                continue;
+            }
+
+            for (CEdGraphNode* SubNode : SMGraph->Nodes)
+            {
+                if (CAnimGraphNode_State* State = Cast<CAnimGraphNode_State>(SubNode))
+                {
+                    CollectReadCacheNamesInGraph(State->BlendTree.Get(), OutNames);
+                }
+            }
+        }
+    }
+
+    void CAnimationGraphNodeGraph::CollectReadCacheNamesInGraph(CAnimationGraphNodeGraph* Graph, THashSet<FName>& OutNames)
+    {
+        if (Graph == nullptr)
+        {
+            return;
+        }
+
+        THashSet<CEdGraphNode*> GraphNodes;
+        for (CEdGraphNode* Node : Graph->Nodes)
+        {
+            GraphNodes.insert(Node);
+        }
+
+        CollectReadCacheNames(GraphNodes, OutNames);
     }
 
     void CAnimationGraphNodeGraph::CollectAllParameters(FAnimationGraphCompiler& Compiler)
