@@ -1366,7 +1366,7 @@ namespace Lumina::ECS::Utils
         {
             for (FProperty* Property = Struct->LinkedProperty; Property != nullptr; Property = static_cast<FProperty*>(Property->Next))
             {
-                if (Property->IsA(EPropertyTypeFlags::UInt32) && Property->HasMetadata("Entity"))
+                if (Property->IsA(EPropertyTypeFlags::UInt32) && Property->IsEntityHandle())
                 {
                     uint32 Value = 0;
                     Property->GetValue(Data, &Value);
@@ -1391,7 +1391,7 @@ namespace Lumina::ECS::Utils
 
                     void* ArrayPtr = Property->GetValuePtr<void>(Data);
 
-                    if (Inner->IsA(EPropertyTypeFlags::UInt32) && Property->HasMetadata("Entity"))
+                    if (Inner->IsA(EPropertyTypeFlags::UInt32) && Property->IsEntityHandle())
                     {
                         ArrayProperty->ForEach<uint32>(ArrayPtr, [&](uint32* Elem, SIZE_T)
                         {

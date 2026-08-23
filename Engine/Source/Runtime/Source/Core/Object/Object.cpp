@@ -62,7 +62,7 @@ namespace Lumina
         {
             for (FProperty* Current = Class->LinkedProperty; Current; Current = (FProperty*)Current->Next)
             {
-                if (Current->HasMetadata("DuplicateTransient"))
+                if (Current->IsDuplicateTransient())
                 {
                     continue;
                 }
@@ -97,7 +97,7 @@ namespace Lumina
         {
             for (FProperty* Current = Class->LinkedProperty; Current; Current = (FProperty*)Current->Next)
             {
-                if (Current->HasMetadata("DuplicateTransient"))
+                if (Current->IsDuplicateTransient())
                 {
                     continue;
                 }

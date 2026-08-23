@@ -81,7 +81,7 @@ namespace Lumina::Reflection
     X(Picker,               Value,  Editor,    "Draws a name or string property as the named picker, resolved from the editor picker registry. Built in kinds are Bone, Socket, Curve, Parameter, ObjectParameter and InputAction.") \
     X(AssetType,            Value,  Editor,    "Restricts an asset reference picker to the named asset class.") \
     X(RowType,              Value,  Editor,    "Restricts a data table row handle picker to the named row struct.") \
-    X(Entity,               Flag,   Editor,    "Draws the property as an entity reference picker.") \
+    X(Entity,               Flag,   Runtime,   "Draws the property as an entity reference picker, and marks the id for prefab remapping.") \
     X(NoReorder,            Flag,   Editor,    "Removes the drag handles from an array property.") \
     X(NoResize,             Flag,   Editor,    "Removes the add and remove buttons from an array property.") \
     X(DefaultCollapsed,     Flag,   Editor,    "Draws a struct or instanced struct property collapsed on first open.") \

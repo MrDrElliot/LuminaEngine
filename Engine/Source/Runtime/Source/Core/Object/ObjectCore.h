@@ -126,7 +126,7 @@ namespace Lumina
         return T::StaticClass()->template GetDefaultObject<T>();
     }
     
-    enum class EPropertyFlags : uint16
+    enum class EPropertyFlags : uint32
     {
         None                = 0,
         Editable            = BIT(0),
@@ -137,6 +137,8 @@ namespace Lumina
         Protected           = BIT(5),
         SubField            = BIT(6),
         Trivial             = BIT(7),
+        // Prefab instancing remaps these raw entity ids, and a flag survives where METADATA_PARAMS strips metadata.
+        EntityHandle        = BIT(8),
         Builtin             = BIT(9),
         BulkSerialize       = BIT(10),
         // Property exists only for editor tooling. Stripped from cooked
@@ -151,6 +153,9 @@ namespace Lumina
         ScriptReadOnly      = BIT(13), // C# wrapper emits a getter only (no setter), even if editor-editable.
         ScriptWritable      = BIT(14), // C# wrapper emits a setter even if the property is editor ReadOnly/Const.
         ScriptHidden        = BIT(15), // No C# wrapper member is emitted for this property at all.
+
+        // Duplication resets this property instead of copying it, and a flag survives where METADATA_PARAMS strips metadata.
+        DuplicateTransient  = BIT(16),
     };
 
     ENUM_CLASS_FLAGS(EPropertyFlags);
