@@ -5,8 +5,9 @@
 
 namespace Lumina
 {
+    // Exported so the editor can reach StaticStruct when recording it as a prefab override.
     REFLECT(Component, HideInComponentList)
-    struct SDisabledTag
+    struct RUNTIME_API SDisabledTag
     {
         GENERATED_BODY()
     };

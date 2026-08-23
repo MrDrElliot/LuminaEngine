@@ -1165,6 +1165,9 @@ namespace Lumina::DotNet
         LOG_DISPLAY("C#: {} {} script unit(s), {} file(s)...",
             bEditorFollowups ? "compiling" : "loading", Units.size(), TotalFiles);
 
+        // A queued Task.Run body is user code holding a strong handle, so let it finish before the teardown.
+        GTaskSystem->WaitForAll();
+
         // Tears those worlds' renderers down first, so nothing dispatches into a dead load context.
         ManagedRenderScenes::PreScriptUnload();
 

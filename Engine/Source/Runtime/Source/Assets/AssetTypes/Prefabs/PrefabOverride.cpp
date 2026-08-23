@@ -12,30 +12,22 @@ namespace Lumina::PrefabOverride
 {
     namespace
     {
+        // Iterated without walking GetSuperStruct, since CStruct::Link already spliced the super onto the tail.
+
         // An opaque struct has an empty property chain, so its bytes still copy through the leaf path.
         bool StructHasReflectedProperties(CStruct* Struct)
         {
-            for (CStruct* Cur = Struct; Cur != nullptr; Cur = Cur->GetSuperStruct())
-            {
-                if (Cur->LinkedProperty != nullptr)
-                {
-                    return true;
-                }
-            }
-            return false;
+            return Struct != nullptr && Struct->LinkedProperty != nullptr;
         }
 
         // Such a component exposes no reflected leaf, so it is treated as one atomic leaf instead.
         bool HasSerializableLeaf(CStruct* Struct)
         {
-            for (CStruct* Cur = Struct; Cur != nullptr; Cur = Cur->GetSuperStruct())
+            for (FProperty* Property = Struct->LinkedProperty; Property != nullptr; Property = static_cast<FProperty*>(Property->Next))
             {
-                for (FProperty* Property = Cur->LinkedProperty; Property != nullptr; Property = static_cast<FProperty*>(Property->Next))
+                if (Property->ShouldSerialize())
                 {
-                    if (Property->ShouldSerialize())
-                    {
-                        return true;
-                    }
+                    return true;
                 }
             }
             return false;
@@ -92,30 +84,27 @@ namespace Lumina::PrefabOverride
         template<typename Visitor>
         void ForEachLeafPair(CStruct* Struct, void* Inst, const void* Pref, const FString& Prefix, Visitor& Visit)
         {
-            for (CStruct* Cur = Struct; Cur != nullptr; Cur = Cur->GetSuperStruct())
+            for (FProperty* Property = Struct->LinkedProperty; Property != nullptr; Property = static_cast<FProperty*>(Property->Next))
             {
-                for (FProperty* Property = Cur->LinkedProperty; Property != nullptr; Property = static_cast<FProperty*>(Property->Next))
+                if (!Property->ShouldSerialize())
                 {
-                    if (!Property->ShouldSerialize())
+                    continue;
+                }
+
+                if (Property->GetType() == EPropertyTypeFlags::Struct)
+                {
+                    FStructProperty* StructProp = static_cast<FStructProperty*>(Property);
+                    CStruct* Inner = StructProp->GetStruct();
+                    if (Inner != nullptr && StructHasReflectedProperties(Inner))
                     {
+                        void* InstChild = StructProp->GetValuePtr<void>(Inst);
+                        const void* PrefChild = StructProp->GetValuePtr<void>(Pref);
+                        ForEachLeafPair(Inner, InstChild, PrefChild, JoinPath(Prefix, Property->Name), Visit);
                         continue;
                     }
-
-                    if (Property->GetType() == EPropertyTypeFlags::Struct)
-                    {
-                        FStructProperty* StructProp = static_cast<FStructProperty*>(Property);
-                        CStruct* Inner = StructProp->GetStruct();
-                        if (Inner != nullptr && StructHasReflectedProperties(Inner))
-                        {
-                            void* InstChild = StructProp->GetValuePtr<void>(Inst);
-                            const void* PrefChild = StructProp->GetValuePtr<void>(Pref);
-                            ForEachLeafPair(Inner, InstChild, PrefChild, JoinPath(Prefix, Property->Name), Visit);
-                            continue;
-                        }
-                    }
-
-                    Visit(Property, Inst, Pref, JoinPath(Prefix, Property->Name));
                 }
+
+                Visit(Property, Inst, Pref, JoinPath(Prefix, Property->Name));
             }
         }
     }

@@ -343,6 +343,9 @@ namespace Lumina
         // Modal name prompt for one entity. Also reached from the outliner context menu.
         void PushRenameEntityModal(entt::entity Entity);
 
+        // Owned by the tool rather than the modal lambda, which cannot hold state across frames.
+        FFixedString RenameModalBuffer;
+
         virtual void DrawDetailsHeaderExtraButtons(entt::entity Entity) {}
         // Hook: extra sections above the component list (world: the Tags chip section).
         virtual void DrawDetailsExtraSections(entt::entity Entity) {}

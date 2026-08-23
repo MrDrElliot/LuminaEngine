@@ -5,6 +5,7 @@
 
 #include "Containers/HashTable.h"
 #include "Containers/Vector.h"
+#include "Core/Engine/Engine.h"
 #include "DotNet/DotNetHost.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/InstancedStruct.h"
@@ -339,6 +340,12 @@ namespace Lumina
         GatherRenamedClasses(NeedRebuild);
 
         TVector<EntityScripts::FEvacuatedScripts> Evacuated;
+
+        // The one live instance no registry owns, so nothing else would take it out of the way of a rebuild.
+        FName          EvacuatedGameInstanceClass;
+        TVector<uint8> EvacuatedGameInstanceBytes;
+        bool           bEvacuatedGameInstance = false;
+
         if (!NeedRebuild.empty())
         {
             const int32 Count = EntityScripts::Evacuate(NeedRebuild, Evacuated);
@@ -346,6 +353,17 @@ namespace Lumina
             {
                 LOG_DISPLAY("Scriptable: {} script class(es) changed shape or name; evacuated {} entit{}.",
                     NeedRebuild.size(), Count, Count == 1 ? "y" : "ies");
+            }
+
+            if (GEngine != nullptr)
+            {
+                bEvacuatedGameInstance = GEngine->EvacuateGameInstance(
+                    NeedRebuild, EvacuatedGameInstanceClass, EvacuatedGameInstanceBytes);
+                if (bEvacuatedGameInstance)
+                {
+                    LOG_DISPLAY("Scriptable: evacuated the game instance ('{}') for the rebuild.",
+                        EvacuatedGameInstanceClass.c_str());
+                }
             }
         }
 
@@ -429,6 +447,12 @@ namespace Lumina
         {
             const int32 Count = EntityScripts::Restore(Evacuated);
             LOG_DISPLAY("Scriptable: restored {} entit{} after the rebuild.", Count, Count == 1 ? "y" : "ies");
+        }
+
+        if (bEvacuatedGameInstance && GEngine != nullptr)
+        {
+            GEngine->RestoreGameInstance(EvacuatedGameInstanceClass, EvacuatedGameInstanceBytes);
+            LOG_DISPLAY("Scriptable: restored the game instance after the rebuild.");
         }
     }
 }

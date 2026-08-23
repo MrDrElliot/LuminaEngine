@@ -254,7 +254,13 @@ namespace Lumina
         {
             return entt::null;
         }
-        
+
+        if (bVariantResolveFailed)
+        {
+            LOG_WARN("Prefab '{}' did not resolve against its parent; refusing to instantiate it.", GetName().c_str());
+            return entt::null;
+        }
+
         LUMINA_PROFILE_SCOPE();
 
         entt::registry& WorldRegistry = ECS::GetWorldRegistry(*TargetWorld);
@@ -360,6 +366,14 @@ namespace Lumina
 
         if (World == nullptr)
         {
+            return;
+        }
+
+        // An empty Registry here would read as the prefab having deleted every entity it ships.
+        if (bVariantResolveFailed)
+        {
+            LOG_WARN("Prefab '{}' did not resolve against its parent; leaving its instances untouched.",
+                GetName().c_str());
             return;
         }
 
@@ -1058,6 +1072,7 @@ namespace Lumina
         if (Algo::Find(VisitStack.begin(), VisitStack.end(), this) != VisitStack.end())
         {
             LOG_ERROR("Prefab '{}' is in a variant cycle; leaving it unresolved.", GetName().c_str());
+            bVariantResolveFailed = true;
             return;
         }
 
@@ -1065,12 +1080,24 @@ namespace Lumina
         if (Parent == this || Parent->IsDescendantOf(this))
         {
             LOG_ERROR("Prefab '{}' would parent onto its own descendant; leaving it unresolved.", GetName().c_str());
+            bVariantResolveFailed = true;
             return;
         }
 
         VisitStack.push_back(this);
         Parent->ResolveVariantGuarded(VisitStack);
         VisitStack.pop_back();
+
+        // Resolving onto a parent that is itself empty would read as the variant having deleted everything.
+        if (Parent->IsUnresolvedVariant())
+        {
+            LOG_ERROR("Prefab '{}' cannot resolve because its parent '{}' did not; leaving it unresolved.",
+                GetName().c_str(), Parent->GetName().c_str());
+            bVariantResolveFailed = true;
+            return;
+        }
+
+        bVariantResolveFailed = false;
 
         BumpDataGeneration();
         ++VariantResolveCount;
@@ -1278,6 +1305,14 @@ namespace Lumina
 
         CPrefab* Parent = ParentPrefab.Get();
         Parent->ResolveVariant();
+
+        // Diffing an unresolved side would persist a delta that deletes or re-adds the whole prefab.
+        if (bVariantResolveFailed || Parent->IsUnresolvedVariant())
+        {
+            LOG_ERROR("Prefab '{}' is unresolved against its parent; keeping its stored delta rather than "
+                      "overwriting it with a diff of empty data.", GetName().c_str());
+            return;
+        }
 
         ClearVariantDelta();
         BumpDataGeneration();

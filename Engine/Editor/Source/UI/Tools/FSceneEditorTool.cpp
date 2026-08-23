@@ -1696,13 +1696,16 @@ namespace Lumina
         FEntityRegistry& Registry = GetSceneRegistry();
         for (entt::entity Entity : Contents)
         {
+            // Recorded in the prefab ledger, or the next refresh prunes the tag and unhides the instance.
             if (bHidden)
             {
                 Registry.emplace_or_replace<SDisabledTag>(Entity);
+                CPrefab::NoteComponentAdded(Registry, Entity, SDisabledTag::StaticStruct());
             }
             else
             {
                 Registry.remove<SDisabledTag>(Entity);
+                CPrefab::NoteComponentRemoved(Registry, Entity, SDisabledTag::StaticStruct());
             }
 
             auto It = EntityToTreeNode.find(Entity);
@@ -2913,8 +2916,10 @@ namespace Lumina
         ToolContext->PushModal("Rename Entity", ImVec2(450.0f, 250.0f), [this, Entity]() -> bool
         {
             auto& NameComponent = GetSceneRegistry().get<SNameComponent>(Entity);
-            static FFixedString InputBuffer;
-    
+
+            // Per modal rather than process-wide, so two rename dialogs cannot share a buffer.
+            FFixedString& InputBuffer = RenameModalBuffer;
+
             if (ImGui::IsWindowAppearing())
             {
                 InputBuffer = NameComponent.Name.c_str();
@@ -2939,6 +2944,9 @@ namespace Lumina
             if (ImGui::Button("OK", ImVec2(ButtonWidth, 0.0f)) || bShouldClose)
             {
                 NameComponent.Name = FName(InputBuffer.c_str());
+
+                // Without this the next prefab refresh would replace the component and revert the rename.
+                CPrefab::RecaptureComponentOverrides(GetSceneRegistry(), Entity, SNameComponent::StaticStruct());
 
                 // Update just this entity's row label rather than rebuilding the whole tree.
                 auto It = EntityToTreeNode.find(Entity);

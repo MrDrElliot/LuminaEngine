@@ -175,8 +175,9 @@ namespace Lumina
         bool operator!=(const TObjectPtr& Other) const { return Object != Other.Object; }
         bool operator==(T* Other) const { return Object == Other; }
         bool operator!=(T* Other) const { return Object != Other; }
-        bool operator==(nullptr_t) const { return Object == nullptr; }
-        bool operator!=(nullptr_t) const { return Object != nullptr; }
+        // Routed through Get, so a null test and a later deref of the same handle cannot disagree.
+        bool operator==(nullptr_t) const { return Get() == nullptr; }
+        bool operator!=(nullptr_t) const { return Get() != nullptr; }
 
         template<typename U> friend class TObjectPtr;
         template<typename U> friend class TWeakObjectPtr;

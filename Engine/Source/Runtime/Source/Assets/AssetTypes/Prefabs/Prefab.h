@@ -117,6 +117,9 @@ namespace Lumina
         // preview world is showing data the parent has since replaced.
         NODISCARD uint32 GetVariantResolveCount() const { return VariantResolveCount; }
 
+        // A variant serializes only its delta, so an unresolved Registry is empty rather than authoritative.
+        NODISCARD bool IsUnresolvedVariant() const { return bVariantResolveFailed; }
+
         entt::registry Registry;
 
         /** Entities the variant diverges on. Only these are serialized; everything else comes from the
@@ -152,5 +155,8 @@ namespace Lumina
         uint32                        StableIDLookupGeneration = 0;
         bool                          bStableIDLookupBuilt     = false;
         uint32                        VariantResolveCount      = 0;
+
+        // Transient, since it describes this session's parent chain rather than anything on disk.
+        bool                          bVariantResolveFailed    = false;
     };
 }

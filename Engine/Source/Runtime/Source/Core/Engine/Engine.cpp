@@ -36,6 +36,9 @@
 #include "Platform/CrashReporter.h"
 #include "Platform/Process/PlatformProcess.h"
 #include "TaskSystem/TaskSystem.h"
+#include "Core/Serialization/MemoryArchiver.h"
+#include "Core/Serialization/ObjectArchiver.h"
+#include "Scripting/ScriptableObject.h"
 #include "Input/InputProcessor.h"
 #include "nlohmann/json.hpp"
 #include "Paths/Paths.h"
@@ -1334,6 +1337,73 @@ namespace Lumina
         CreateGameInstance();
         LoadStartupMap();
         return true;
+    }
+
+    // Mirrors the rule CreateWorldContext uses, so a restore lands on exactly the contexts that had one.
+    void FEngine::RepointGameInstanceContexts(CGameInstance* Instance)
+    {
+        if (GWorldManager == nullptr)
+        {
+            return;
+        }
+
+        for (const TUniquePtr<FWorldContext>& Context : GWorldManager->GetContexts())
+        {
+            if (Context->Type == EWorldType::Game || Context->Type == EWorldType::Simulation)
+            {
+                Context->GameInstance = Instance;
+            }
+        }
+    }
+
+    bool FEngine::EvacuateGameInstance(const THashSet<CClass*>& Classes, FName& OutClassName,
+        TVector<uint8>& OutBytes)
+    {
+        CGameInstance* Instance = GameInstance.Get();
+        if (Instance == nullptr || Instance->GetClass() == nullptr
+            || Classes.find(Instance->GetClass()) == Classes.end())
+        {
+            return false;
+        }
+
+        OutClassName = Instance->GetClass()->GetName();
+        {
+            FMemoryWriter Writer(OutBytes);
+            FObjectProxyArchiver Ar(Writer, /*bLoadIfFindFails*/ false);
+            Instance->GetClass()->SerializeTaggedProperties(Ar, Instance);
+        }
+
+        // Shutdown is skipped for the same reason an evacuated entity script is not detached; it is coming back.
+        RepointGameInstanceContexts(nullptr);
+        GameInstance = nullptr;
+        return true;
+    }
+
+    void FEngine::RestoreGameInstance(const FName& ClassName, const TVector<uint8>& Bytes)
+    {
+        // Resolved through the redirect registry, since an alias is what carries a renamed class across.
+        CClass* InstanceClass = FScriptableRegistry::ResolveClass(ClassName);
+        if (InstanceClass == nullptr || !InstanceClass->IsChildOf(CGameInstance::StaticClass()))
+        {
+            LOG_WARN("GameInstance class '{}' did not survive the script reload; falling back to the base class.",
+                ClassName.c_str());
+            InstanceClass = CGameInstance::StaticClass();
+        }
+
+        GameInstance = Cast<CGameInstance>(NewObject(InstanceClass, nullptr, NAME_None, FGuid::New(), OF_Transient));
+        if (GameInstance == nullptr)
+        {
+            LOG_ERROR("GameInstance could not be rebuilt after the script reload.");
+            return;
+        }
+
+        {
+            FMemoryReader Reader(const_cast<TVector<uint8>&>(Bytes));
+            FObjectProxyArchiver Ar(Reader, /*bLoadIfFindFails*/ true);
+            GameInstance->GetClass()->SerializeTaggedProperties(Ar, GameInstance.Get());
+        }
+
+        RepointGameInstanceContexts(GameInstance.Get());
     }
 
     void FEngine::DestroyGameInstance()

@@ -93,6 +93,13 @@ namespace Lumina
 
         RUNTIME_API CGameInstance* GetGameInstance() const { return GameInstance; }
 
+        // Writes the game instance out and destroys it so a script reload can relay out its class.
+        RUNTIME_API bool EvacuateGameInstance(const THashSet<CClass*>& Classes, FName& OutClassName,
+            TVector<uint8>& OutBytes);
+
+        // Rebuilds what EvacuateGameInstance took out, deliberately without re-running Init.
+        RUNTIME_API void RestoreGameInstance(const FName& ClassName, const TVector<uint8>& Bytes);
+
         /** Queues world travel; swap runs at next FrameStart. Prefers PIE Game world; preserves editor proxy on PIE exit. */
         RUNTIME_API void Travel(FStringView WorldPath);
 
@@ -126,6 +133,8 @@ namespace Lumina
         RUNTIME_API virtual void LoadStartupMap();
 
         RUNTIME_API virtual void DestroyGameInstance();
+
+        void RepointGameInstanceContexts(CGameInstance* Instance);
 
         /** Drains a queued Travel request; called at FrameStart. */
         RUNTIME_API void ProcessPendingTravel();
