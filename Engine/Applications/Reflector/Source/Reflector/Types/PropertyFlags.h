@@ -84,7 +84,7 @@ void EnumRemoveFlags(Enum& Flags, Enum FlagsToRemove)
     };
 
     /** Must be in-sync with EPropertyFlags in ObjectCore.h */
-    enum class EPropertyFlags : uint16_t
+    enum class EPropertyFlags : uint32_t
     {
         None            = 0,
         Editable        = BIT(0),
@@ -95,6 +95,8 @@ void EnumRemoveFlags(Enum& Flags, Enum FlagsToRemove)
         Protected       = BIT(5),
         SubField        = BIT(6),
         Trivial         = BIT(7),
+        // Prefab instancing remaps these raw entity ids, and a flag survives where METADATA_PARAMS strips metadata.
+        EntityHandle    = BIT(8),
         Builtin         = BIT(9),
         BulkSerialize   = BIT(10),
         // Property exists only for editor tooling. Stripped from cooked
@@ -106,6 +108,8 @@ void EnumRemoveFlags(Enum& Flags, Enum FlagsToRemove)
         ScriptReadOnly  = BIT(13),
         ScriptWritable  = BIT(14),
         ScriptHidden    = BIT(15),
+        // Duplication resets this property instead of copying it, and a flag survives where METADATA_PARAMS strips metadata.
+        DuplicateTransient = BIT(16),
     };
 
     ENUM_CLASS_FLAGS(EPropertyFlags);
@@ -139,6 +143,7 @@ void EnumRemoveFlags(Enum& Flags, Enum FlagsToRemove)
         AppendFlag(EPropertyFlags::Protected, "Lumina::EPropertyFlags::Protected");
         AppendFlag(EPropertyFlags::SubField, "Lumina::EPropertyFlags::SubField");
         AppendFlag(EPropertyFlags::Trivial, "Lumina::EPropertyFlags::Trivial");
+        AppendFlag(EPropertyFlags::EntityHandle, "Lumina::EPropertyFlags::EntityHandle");
         AppendFlag(EPropertyFlags::Builtin, "Lumina::EPropertyFlags::Builtin");
         AppendFlag(EPropertyFlags::BulkSerialize, "Lumina::EPropertyFlags::BulkSerialize");
         AppendFlag(EPropertyFlags::EditorOnly, "Lumina::EPropertyFlags::EditorOnly");
@@ -146,6 +151,7 @@ void EnumRemoveFlags(Enum& Flags, Enum FlagsToRemove)
         AppendFlag(EPropertyFlags::ScriptReadOnly, "Lumina::EPropertyFlags::ScriptReadOnly");
         AppendFlag(EPropertyFlags::ScriptWritable, "Lumina::EPropertyFlags::ScriptWritable");
         AppendFlag(EPropertyFlags::ScriptHidden, "Lumina::EPropertyFlags::ScriptHidden");
+        AppendFlag(EPropertyFlags::DuplicateTransient, "Lumina::EPropertyFlags::DuplicateTransient");
 
         return Result;
     }

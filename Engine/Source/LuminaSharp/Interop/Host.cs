@@ -40,12 +40,14 @@ public static unsafe partial class Host
 
             // NativeModule must be set before any binding resolves (Native's static init may run here).
             NativeModule = Args->NativeModule;
+
+            NativeSelfTestPtr = (delegate* unmanaged[Cdecl]<int, int, int>)NativeBindings.ResolveFrom(NativeModule, "LuminaSharp_NativeSelfTest");
+            // Touching Native below runs its one-shot binding resolves, and any non-default module needs this first.
+            ResolveModuleHandlePtr = (delegate* unmanaged[Cdecl]<byte*, int, IntPtr>)NativeBindings.ResolveFrom(NativeModule, "LuminaSharp_ResolveModuleHandle");
+
             Native.SetExports(*Args->Exports);
 
             ManagedExportTable.RegisterEngineExports();
-
-            NativeSelfTestPtr = (delegate* unmanaged[Cdecl]<int, int, int>)NativeBindings.ResolveFrom(NativeModule, "LuminaSharp_NativeSelfTest");
-            ResolveModuleHandlePtr = (delegate* unmanaged[Cdecl]<byte*, int, IntPtr>)NativeBindings.ResolveFrom(NativeModule, "LuminaSharp_ResolveModuleHandle");
 
             int Sum = NativeSelfTestPtr != null ? NativeSelfTestPtr(2, 3) : -1;
             Native.Log(Sum == 5 ? ELogLevel.Info : ELogLevel.Error,
