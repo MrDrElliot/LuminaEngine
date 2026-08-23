@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 
 namespace Lumina
