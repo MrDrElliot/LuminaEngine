@@ -163,9 +163,14 @@ namespace Lumina
     {
     private:
         
+        // Delays slot reuse so a stale reference meets an empty slot, not an address-identical stranger.
+        static constexpr int32      QuarantineCapacity = 1024;
+
         FRecursiveMutex             Mutex;
         FChunkedFixedCObjectArray   ChunkedArray;
         TVector<int32>              FreeIndices;
+        TVector<int32>              QuarantinedIndices;
+        int32                       QuarantineCursor = 0;
         bool                        bInitialized = false;
         bool                        bShuttingDown = false;
     
@@ -197,6 +202,12 @@ namespace Lumina
 
         // False once Object's slot has been recycled to someone else, so a stale reference is dropped not applied.
         bool OwnsSlot(const CObjectBase* Object, const FCObjectEntry* Item, const char* Site) const;
+
+        // Entries outlive every object, so a reference caching one refcounts without touching object memory.
+        RUNTIME_API FCObjectEntry* GetEntry(const CObjectBase* Object) const;
+
+        // Releases through the entry rather than the object, and destroys at zero.
+        RUNTIME_API bool ReleaseStrongRefEntry(FCObjectEntry* Entry, const CObjectBase* Expected);
 
         RUNTIME_API void AddStrongRef(CObjectBase* Object);
 

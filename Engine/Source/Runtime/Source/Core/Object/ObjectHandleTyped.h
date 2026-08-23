@@ -12,66 +12,81 @@ namespace Lumina
     template <typename T>
     char (&ResolveTypeIsComplete(...))[1];
     
-    // Strong, owning reference to a CObject, a CObject-specific shared_ptr. While any TObjectPtr holds
-    // an object it keeps it alive (intrusive strong refcount in GObjectArray), so dereferencing is safe:
-    // the object cannot be freed out from under you. The last TObjectPtr to release triggers destruction.
-    //
-    // Layout invariant: exactly one T* (pointer-sized). FObjectProperty serialization and the Lua bindings
-    // read a TObjectPtr<T> member as a raw T* at offset 0, do NOT add members.
-    //
-    // For a NON-owning reference that must survive the object being destroyed elsewhere, use
-    // TWeakObjectPtr instead: it validates on access and returns null once the object is gone.
+    // Owning reference that refcounts through the object's array entry, which outlives the object itself.
     template<typename T>
     class TObjectPtr
     {
     private:
-        T* Object = nullptr;
+        T*             Object = nullptr;
+        FCObjectEntry* Entry  = nullptr;
 
-        // Tag for adopting an already-incremented strong ref (no extra AddRef). Used by the weak->strong
-        // upgrade, which increments atomically inside the object array before handing the pointer back.
+        // Adopts a strong ref the object array already incremented, as the weak to strong upgrade does.
         struct FAdoptRef {};
-        TObjectPtr(T* InObject, FAdoptRef) : Object(InObject) {}
+        TObjectPtr(T* InObject, FCObjectEntry* InEntry, FAdoptRef) : Object(InObject), Entry(InEntry) {}
 
-        void AddRefInternal()
+        // Resolved once, so every later add and release goes through the entry instead of the object.
+        void AcquireInternal(T* InObject)
         {
-            if (Object)
+            Object = InObject;
+            Entry  = (InObject != nullptr) ? GObjectArray.GetEntry((const CObjectBase*)InObject) : nullptr;
+            if (Entry != nullptr)
             {
-                GObjectArray.AddStrongRef((CObjectBase*)Object);
+                Entry->AddStrongRef();
+            }
+        }
+
+        // Copying a source that outlived its object yields null, never a claim on the slot's new occupant.
+        void AdoptInternal(T* InObject, FCObjectEntry* InEntry)
+        {
+            if (InEntry != nullptr && InEntry->GetObj() != (const CObjectBase*)InObject)
+            {
+                Object = nullptr;
+                Entry  = nullptr;
+                return;
+            }
+
+            Object = InObject;
+            Entry  = InEntry;
+            if (Entry != nullptr)
+            {
+                Entry->AddStrongRef();
             }
         }
 
         void ReleaseInternal()
         {
-            if (Object)
+            if (Entry != nullptr)
             {
-                GObjectArray.ReleaseStrongRef((CObjectBase*)Object);
-                Object = nullptr;
+                GObjectArray.ReleaseStrongRefEntry(Entry, (const CObjectBase*)Object);
+                Entry = nullptr;
             }
+            Object = nullptr;
         }
 
     public:
         TObjectPtr() = default;
 
-        TObjectPtr(T* InObject) : Object(InObject)
+        TObjectPtr(T* InObject)
         {
-            AddRefInternal();
+            AcquireInternal(InObject);
         }
 
-        TObjectPtr(const TObjectPtr& Other) : Object(Other.Object)
+        TObjectPtr(const TObjectPtr& Other)
         {
-            AddRefInternal();
+            AdoptInternal(Other.Object, Other.Entry);
         }
 
-        TObjectPtr(TObjectPtr&& Other) noexcept : Object(Other.Object)
+        TObjectPtr(TObjectPtr&& Other) noexcept : Object(Other.Object), Entry(Other.Entry)
         {
             Other.Object = nullptr;
+            Other.Entry  = nullptr;
         }
 
         template<typename U>
         requires std::is_base_of_v<T, U>
-        TObjectPtr(const TObjectPtr<U>& Other) : Object(Other.Get())
+        TObjectPtr(const TObjectPtr<U>& Other)
         {
-            AddRefInternal();
+            AdoptInternal(Other.Object, Other.Entry);
         }
 
         ~TObjectPtr()
@@ -84,8 +99,7 @@ namespace Lumina
             if (this != &Other)
             {
                 ReleaseInternal();
-                Object = Other.Object;
-                AddRefInternal();
+                AdoptInternal(Other.Object, Other.Entry);
             }
             return *this;
         }
@@ -96,7 +110,9 @@ namespace Lumina
             {
                 ReleaseInternal();
                 Object = Other.Object;
+                Entry  = Other.Entry;
                 Other.Object = nullptr;
+                Other.Entry  = nullptr;
             }
             return *this;
         }
@@ -106,8 +122,7 @@ namespace Lumina
             if (Object != InObject)
             {
                 ReleaseInternal();
-                Object = InObject;
-                AddRefInternal();
+                AcquireInternal(InObject);
             }
             return *this;
         }
@@ -118,18 +133,28 @@ namespace Lumina
             return *this;
         }
 
-        T* Get() const { return Object; }
-        T* operator->() const { return Object; }
-        T& operator*() const { return *Object; }
-        
-        explicit operator bool() const { return Object != nullptr; }
-        operator T*() const { return Object; }
+        // Null once the slot has moved on, which means this reference outlived what it pointed at.
+        T* Get() const
+        {
+            if (Entry == nullptr)
+            {
+                return Object;
+            }
+            return (Entry->GetObj() == (const CObjectBase*)Object) ? Object : nullptr;
+        }
 
-        bool IsValid() const { return Object != nullptr; }
+        T* operator->() const { return Get(); }
+        T& operator*() const { return *Get(); }
+
+        explicit operator bool() const { return Get() != nullptr; }
+        operator T*() const { return Get(); }
+
+        bool IsValid() const { return Get() != nullptr; }
 
         FObjectHandle GetHandle() const
         {
-            return Object ? GObjectArray.GetHandleByObject(Object) : FObjectHandle();
+            T* Live = Get();
+            return Live ? GObjectArray.GetHandleByObject(Live) : FObjectHandle();
         }
 
         // Release ownership without decrementing ref count
@@ -137,6 +162,7 @@ namespace Lumina
         {
             T* Temp = Object;
             Object = nullptr;
+            Entry  = nullptr;
             return Temp;
         }
 
@@ -284,7 +310,8 @@ namespace Lumina
                 return TObjectPtr<T>();
             }
             // TryAddStrongRef already incremented the strong count; adopt it without a second AddRef.
-            return TObjectPtr<T>(static_cast<T*>(Obj), typename TObjectPtr<T>::FAdoptRef{});
+            return TObjectPtr<T>(static_cast<T*>(Obj), GObjectArray.GetEntry(Obj),
+                typename TObjectPtr<T>::FAdoptRef{});
         }
 
         T* Get() const

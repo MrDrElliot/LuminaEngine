@@ -52,6 +52,8 @@ namespace Lumina
                 return nullptr;
             }
 
+            FScopeLock Lock(Mutex);
+
             const int32 Slot = Object->ManagedInstanceSlot;
             if (!IsValidSlot(Slot))
             {
@@ -76,25 +78,34 @@ namespace Lumina
 
             NoteMutation();
 
-            const int32 Existing = Object->ManagedInstanceSlot;
-            if (Existing != INDEX_NONE && !IsValidSlot(Existing))
+            // Freeing re-enters the managed runtime, so it happens after the lock is dropped.
+            void* Replaced = nullptr;
             {
-                ReportBadSlot("Set", Object, Existing);
-                Object->ManagedInstanceSlot = INDEX_NONE;
+                FScopeLock Lock(Mutex);
+
+                const int32 Existing = Object->ManagedInstanceSlot;
+                if (Existing != INDEX_NONE && !IsValidSlot(Existing))
+                {
+                    ReportBadSlot("Set", Object, Existing);
+                    Object->ManagedInstanceSlot = INDEX_NONE;
+                }
+
+                if (Object->ManagedInstanceSlot != INDEX_NONE)
+                {
+                    // Replacing an instance (the previous wrapper was collected, or was the wrong type).
+                    Replaced = Slots[Object->ManagedInstanceSlot];
+                    Slots[Object->ManagedInstanceSlot] = Handle;
+                }
+                else
+                {
+                    Object->ManagedInstanceSlot = AcquireSlot();
+                    Slots[Object->ManagedInstanceSlot] = Handle;
+                    Owners[Object->ManagedInstanceSlot] = Object;
+                    ++LiveCount;
+                }
             }
 
-            if (Object->ManagedInstanceSlot != INDEX_NONE)
-            {
-                // Replacing an instance (the previous wrapper was collected, or was the wrong type).
-                FreeHandle(Slots[Object->ManagedInstanceSlot]);
-                Slots[Object->ManagedInstanceSlot] = Handle;
-                return;
-            }
-
-            Object->ManagedInstanceSlot = AcquireSlot();
-            Slots[Object->ManagedInstanceSlot] = Handle;
-            Owners[Object->ManagedInstanceSlot] = Object;
-            ++LiveCount;
+            FreeHandle(Replaced);
         }
 
         void Release(CObjectBase* Object)
@@ -106,53 +117,72 @@ namespace Lumina
 
             NoteMutation();
 
-            const int32 Slot = Object->ManagedInstanceSlot;
-            Object->ManagedInstanceSlot = INDEX_NONE;
-
-            // A slot the table never handed out must not reach FreeSlots; it would be reissued as a valid one.
-            if (!IsValidSlot(Slot))
+            void* Released = nullptr;
             {
-                ReportBadSlot("Release", Object, Slot);
-                return;
+                FScopeLock Lock(Mutex);
+
+                const int32 Slot = Object->ManagedInstanceSlot;
+                Object->ManagedInstanceSlot = INDEX_NONE;
+
+                // A slot the table never handed out must not reach FreeSlots; it would be reissued as a valid one.
+                if (!IsValidSlot(Slot))
+                {
+                    ReportBadSlot("Release", Object, Slot);
+                    return;
+                }
+
+                Released = Slots[Slot];
+                Slots[Slot] = nullptr;
+                Owners[Slot] = nullptr;
+                FreeSlots.push_back(Slot);
+                --LiveCount;
             }
 
-            FreeHandle(Slots[Slot]);
-            Slots[Slot] = nullptr;
-            Owners[Slot] = nullptr;
-            FreeSlots.push_back(Slot);
-            --LiveCount;
+            FreeHandle(Released);
         }
 
         void ReleaseAll()
         {
             NoteMutation();
 
-            // Cleared through the back-reference list, so a later Find sees INDEX_NONE, not a recycled slot.
-            for (int32 Slot = 0; Slot < (int32)Slots.size(); ++Slot)
+            TVector<void*> Released;
             {
-                if (Owners[Slot] != nullptr)
+                FScopeLock Lock(Mutex);
+
+                Released.reserve(Slots.size());
+
+                // Cleared through the back-reference list, so a later Find sees INDEX_NONE, not a recycled slot.
+                for (int32 Slot = 0; Slot < (int32)Slots.size(); ++Slot)
                 {
-                    Owners[Slot]->ManagedInstanceSlot = INDEX_NONE;
-                    Owners[Slot] = nullptr;
+                    if (Owners[Slot] != nullptr)
+                    {
+                        Owners[Slot]->ManagedInstanceSlot = INDEX_NONE;
+                        Owners[Slot] = nullptr;
+                    }
+                    if (Slots[Slot] != nullptr)
+                    {
+                        Released.push_back(Slots[Slot]);
+                        Slots[Slot] = nullptr;
+                    }
                 }
-                if (Slots[Slot] != nullptr)
+
+                FreeSlots.clear();
+                FreeSlots.reserve(Slots.size());
+                for (int32 Slot = (int32)Slots.size() - 1; Slot >= 0; --Slot)
                 {
-                    FreeHandle(Slots[Slot]);
-                    Slots[Slot] = nullptr;
+                    FreeSlots.push_back(Slot);
                 }
+                LiveCount = 0;
             }
 
-            FreeSlots.clear();
-            FreeSlots.reserve(Slots.size());
-            for (int32 Slot = (int32)Slots.size() - 1; Slot >= 0; --Slot)
+            for (void* Handle : Released)
             {
-                FreeSlots.push_back(Slot);
+                FreeHandle(Handle);
             }
-            LiveCount = 0;
         }
 
-        int32 GetLiveCount() const { return LiveCount; }
-        int32 GetSlotCapacity() const { return (int32)Slots.size(); }
+        int32 GetLiveCount() const { FScopeLock Lock(Mutex); return LiveCount; }
+        int32 GetSlotCapacity() const { FScopeLock Lock(Mutex); return (int32)Slots.size(); }
 
     private:
 
@@ -165,7 +195,7 @@ namespace Lumina
         {
             if (!Threading::IsMainThread())
             {
-                ++OffMainThreadMutations;
+                OffMainThreadMutations.fetch_add(1, std::memory_order_relaxed);
             }
         }
 
@@ -182,7 +212,8 @@ namespace Lumina
                       "Object InternalIndex {}, flags {}. Caller on main thread: {}. Off-main-thread table "
                       "mutations so far: {}.",
                 Site, (const void*)Object, Slot, (int32)Slots.size(), Object->GetInternalIndex(),
-                (uint32)Object->GetFlags(), Threading::IsMainThread(), OffMainThreadMutations);
+                (uint32)Object->GetFlags(), Threading::IsMainThread(),
+                OffMainThreadMutations.load(std::memory_order_relaxed));
         }
 
         int32 AcquireSlot()
@@ -206,12 +237,14 @@ namespace Lumina
             }
         }
 
+        // The render thread reaches this through the managed RenderScene bridge, so it is not game-thread only.
+        mutable FMutex                    Mutex;
         TVector<void*>                    Slots;
         TVector<CObjectBase*>             Owners;   // back-reference, so ReleaseAll can clear slot indices
         TVector<int32>                    FreeSlots;
         int32                             LiveCount = 0;
         ManagedInstances::FFreeHandleFn   FreeHandleFn = nullptr;
-        uint64                            OffMainThreadMutations = 0;
+        TAtomic<uint64>                   OffMainThreadMutations{0};
         mutable bool                      bReportedBadSlot = false;
     };
 

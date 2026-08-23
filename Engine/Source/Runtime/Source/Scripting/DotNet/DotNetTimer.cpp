@@ -1,4 +1,8 @@
 #include "Platform/GenericPlatform.h"
+#include "Containers/HashTable.h"
+#include "Containers/Vector.h"
+#include "Core/Object/ObjectHandleTyped.h"
+#include "Memory/SmartPtr.h"
 #include "World/World.h"
 #include "World/Subsystems/TimerManager.h"
 #include "Scripting/DotNet/DotNetExport.h"
@@ -10,37 +14,132 @@ using namespace Lumina::DotNet;
 
 namespace
 {
-    using FTimerThunk = void (*)(void*);
+    using FTimerThunk     = void (*)(void*);
+    using FTimerFreeThunk = void (*)(void*);
 
-    // The C# side owns the context's lifetime, so this lambda never frees it.
-    FTimerManager::FTimerCallback MakeCallback(void* Thunk, void* Context)
+    struct FManagedTimerContext;
+
+    // Cleared wholesale before a script generation unloads, since each context roots a user delegate.
+    THashSet<FManagedTimerContext*> GLiveManagedTimers;
+
+    // Native owns the managed context, so every path that destroys a timer entry also frees its GC handle.
+    struct FManagedTimerContext
     {
-        FTimerThunk Fn = reinterpret_cast<FTimerThunk>(Thunk);
-        return [Fn, Context]() { Fn(Context); };
+        FTimerThunk            Fn      = nullptr;
+        FTimerFreeThunk        FreeFn  = nullptr;
+        void*                  Context = nullptr;
+        TWeakObjectPtr<CWorld> World;
+        FTimerHandle           Handle;
+
+        FManagedTimerContext(void* InThunk, void* InFree, void* InContext, CWorld* InWorld)
+            : Fn(reinterpret_cast<FTimerThunk>(InThunk))
+            , FreeFn(reinterpret_cast<FTimerFreeThunk>(InFree))
+            , Context(InContext)
+            , World(InWorld)
+        {
+            GLiveManagedTimers.insert(this);
+        }
+
+        ~FManagedTimerContext()
+        {
+            GLiveManagedTimers.erase(this);
+            Release();
+        }
+
+        LE_NO_COPYMOVE(FManagedTimerContext);
+
+        void Release()
+        {
+            if (FreeFn != nullptr && Context != nullptr)
+            {
+                FreeFn(Context);
+            }
+            Detach();
+        }
+
+        // Gives ownership back to the caller, for a timer that never got scheduled.
+        void Detach()
+        {
+            Fn      = nullptr;
+            FreeFn  = nullptr;
+            Context = nullptr;
+        }
+
+        void Invoke() const
+        {
+            if (Fn != nullptr)
+            {
+                Fn(Context);
+            }
+        }
+    };
+
+    // Shared, since a looping timer moves its callback out and back on every fire.
+    FTimerManager::FTimerCallback MakeCallback(const TSharedPtr<FManagedTimerContext>& Ctx)
+    {
+        return [Ctx]() { Ctx->Invoke(); };
+    }
+
+    uint32 SetManagedTimer(uint64 World, entt::entity Owner, bool bHasOwner, float Rate, int32 bLoop,
+        float FirstDelay, void* Thunk, void* FreeThunk, void* Context)
+    {
+        CWorld* W = AsWorld(World);
+        if (W == nullptr || Thunk == nullptr)
+        {
+            return ToId(entt::null);
+        }
+
+        TSharedPtr<FManagedTimerContext> Ctx = MakeShared<FManagedTimerContext>(Thunk, FreeThunk, Context, W);
+
+        const FTimerHandle Handle = bHasOwner
+            ? W->GetTimerManager().SetTimerForEntity(Owner, Rate, MakeCallback(Ctx), bLoop != 0, FirstDelay)
+            : W->GetTimerManager().SetTimer(Rate, MakeCallback(Ctx), bLoop != 0, FirstDelay);
+
+        // Native owns the context only when a real id comes back, which is exactly what the caller frees on.
+        if (Handle.Handle == entt::null)
+        {
+            Ctx->Detach();
+            return ToId(entt::null);
+        }
+
+        Ctx->Handle = Handle;
+        return ToId(Handle.Handle);
     }
 }
 
-LUMINA_DOTNET_EXPORT(uint32, Timer_Set)(uint64 World, float Rate, int32 bLoop, float FirstDelay, void* Thunk, void* Context)
+LUMINA_DOTNET_EXPORT(uint32, Timer_Set)(uint64 World, float Rate, int32 bLoop, float FirstDelay, void* Thunk, void* FreeThunk, void* Context)
 {
-    CWorld* W = AsWorld(World);
-    if (W == nullptr || Thunk == nullptr)
-    {
-        return ToId(entt::null);
-    }
-    const FTimerHandle Handle = W->GetTimerManager().SetTimer(Rate, MakeCallback(Thunk, Context), bLoop != 0, FirstDelay);
-    return ToId(Handle.Handle);
+    return SetManagedTimer(World, entt::null, false, Rate, bLoop, FirstDelay, Thunk, FreeThunk, Context);
 }
 
 // As the plain setter, but owned by an entity so the timer clears when that entity is destroyed.
-LUMINA_DOTNET_EXPORT(uint32, Timer_SetForEntity)(uint64 World, uint32 Owner, float Rate, int32 bLoop, float FirstDelay, void* Thunk, void* Context)
+LUMINA_DOTNET_EXPORT(uint32, Timer_SetForEntity)(uint64 World, uint32 Owner, float Rate, int32 bLoop, float FirstDelay, void* Thunk, void* FreeThunk, void* Context)
 {
-    CWorld* W = AsWorld(World);
-    if (W == nullptr || Thunk == nullptr)
+    return SetManagedTimer(World, AsEntity(Owner), true, Rate, bLoop, FirstDelay, Thunk, FreeThunk, Context);
+}
+
+// Clears every managed timer before its generation unloads, freeing the delegates that root that context.
+LUMINA_DOTNET_EXPORT(void, Timer_ClearAllManaged)()
+{
+    // Snapshotted, since clearing a timer destroys its context and mutates the registry.
+    TVector<FManagedTimerContext*> Snapshot;
+    Snapshot.reserve(GLiveManagedTimers.size());
+    for (FManagedTimerContext* Ctx : GLiveManagedTimers)
     {
-        return ToId(entt::null);
+        Snapshot.push_back(Ctx);
     }
-    const FTimerHandle Handle = W->GetTimerManager().SetTimerForEntity(AsEntity(Owner), Rate, MakeCallback(Thunk, Context), bLoop != 0, FirstDelay);
-    return ToId(Handle.Handle);
+
+    for (FManagedTimerContext* Ctx : Snapshot)
+    {
+        if (CWorld* W = Ctx->World.Get())
+        {
+            FTimerHandle Handle = Ctx->Handle;
+            W->GetTimerManager().ClearTimer(Handle);
+        }
+
+        // Released even when the world is gone, so a delegate never outlives the code that owns it.
+        Ctx->Release();
+    }
 }
 
 LUMINA_DOTNET_EXPORT(void, Timer_Clear)(uint64 World, uint32 Timer)

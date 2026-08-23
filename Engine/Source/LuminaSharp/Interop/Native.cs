@@ -114,12 +114,18 @@ public static unsafe partial class Native
     // Per-CObject managed-instance cache backing Wrapper<T>.ForObject: Get returns the weak GC handle of the
     // wrapper this object already has (or zero), Set installs one and frees whatever it replaces (a zero
     // handle just clears). See Core/Object/ManagedInstance.h for the ownership rules.
-    [NativeCall(SuppressGCTransition = true)] public static partial IntPtr ObjectGetManagedInstance(IntPtr Object);
-    [NativeCall(SuppressGCTransition = true)] public static partial void ObjectSetManagedInstance(IntPtr Object, IntPtr Handle);
+
+    // No suppressed transition, since the table locks and Set frees a GC handle, re-entering the runtime.
+    [NativeCall] public static partial IntPtr ObjectGetManagedInstance(IntPtr Object);
+    [NativeCall] public static partial void ObjectSetManagedInstance(IntPtr Object, IntPtr Handle);
 
     // Frees every cached managed instance. Called from the script teardown contract before the collectible ALC
     // unloads: Scriptable subclass instances are held by STRONG handles in that table and would pin it.
     [NativeCall] public static partial void ReleaseAllManagedInstances();
+
+    // Cancels every timer holding a managed callback, whose delegates would otherwise root this generation.
+    [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Timer_ClearAllManaged")]
+    public static partial void ClearAllManagedTimers();
 
     // Generic per-property-type accessors. The Reflector emits these for non-blittable properties
     // (FString/FName/object ref) with the property's FProperty* token (Prop) resolved once and cached;

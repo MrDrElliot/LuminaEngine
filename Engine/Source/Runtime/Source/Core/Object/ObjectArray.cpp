@@ -107,7 +107,8 @@ namespace Lumina
         ChunkedArray.Initialize(MaxObjects);
             
         FreeIndices.reserve(MaxObjects / 4);
-    
+        QuarantinedIndices.reserve(QuarantineCapacity);
+
         bInitialized = true;
     }
 
@@ -159,6 +160,8 @@ namespace Lumina
 
         ChunkedArray.Shutdown();
         FreeIndices.clear();
+        QuarantinedIndices.clear();
+        QuarantineCursor = 0;
         bInitialized = false;
     }
 
@@ -171,7 +174,19 @@ namespace Lumina
             
         int32 Index;
         int32 Generation;
-    
+
+        // Capacity beats the quarantine window, so give the delayed slots up rather than hit the ceiling.
+        if (FreeIndices.empty() && !QuarantinedIndices.empty()
+            && ChunkedArray.GetNumElements() >= ChunkedArray.GetMaxElements())
+        {
+            for (int32 Quarantined : QuarantinedIndices)
+            {
+                FreeIndices.push_back(Quarantined);
+            }
+            QuarantinedIndices.clear();
+            QuarantineCursor = 0;
+        }
+
         if (!FreeIndices.empty())
         {
             Index = FreeIndices.back();
@@ -219,11 +234,19 @@ namespace Lumina
         DEBUG_ASSERT(Item->GetObj() != nullptr);
     
         Item->SetObj(nullptr);
-    
+
         Item->IncrementGeneration();
-    
-        FreeIndices.push_back(Index);
-    
+
+        if ((int32)QuarantinedIndices.size() < QuarantineCapacity)
+        {
+            QuarantinedIndices.push_back(Index);
+            return;
+        }
+
+        // A ring, since erasing the front of the vector would memmove the whole window on every free.
+        FreeIndices.push_back(QuarantinedIndices[QuarantineCursor]);
+        QuarantinedIndices[QuarantineCursor] = Index;
+        QuarantineCursor = (QuarantineCursor + 1) % QuarantineCapacity;
     }
 
     CObjectBase* FCObjectArray::ResolveHandle(const FObjectHandle& Handle) const
@@ -291,6 +314,55 @@ namespace Lumina
             Site, (const void*)Object, Object->GetInternalIndex(), (const void*)Occupant,
             OccupantClass != nullptr ? OccupantClass->GetName().c_str() : "empty");
         return false;
+    }
+
+    FCObjectEntry* FCObjectArray::GetEntry(const CObjectBase* Object) const
+    {
+        if (Object == nullptr)
+        {
+            return nullptr;
+        }
+
+        FCObjectEntry* Item = const_cast<FCObjectArray*>(this)->ChunkedArray.GetItem(Object->GetInternalIndex());
+        return (Item != nullptr && Item->GetObj() == Object) ? Item : nullptr;
+    }
+
+    bool FCObjectArray::ReleaseStrongRefEntry(FCObjectEntry* Entry, const CObjectBase* Expected)
+    {
+        // Shutdown destroys all objects manually; skip individual release.
+        if (bShuttingDown || Entry == nullptr)
+        {
+            return false;
+        }
+
+        // Comparing addresses never dereferences Expected, so a dangling one is safe to ask about.
+        if (Entry->GetObj() != Expected)
+        {
+            const CObjectBase* Occupant = Entry->GetObj();
+            const CClass* OccupantClass = Occupant != nullptr ? Occupant->GetClass() : nullptr;
+            LOG_ERROR("FCObjectArray::ReleaseStrongRefEntry: reference to freed object {} whose slot now holds "
+                      "{} ('{}'). Dropped rather than charged to the new occupant.",
+                (const void*)Expected, (const void*)Occupant,
+                OccupantClass != nullptr ? OccupantClass->GetName().c_str() : "empty");
+            return false;
+        }
+
+        int32 NewCount = 0;
+        if (!Entry->ReleaseStrongRef(NewCount))
+        {
+            LOG_ERROR("FCObjectArray::ReleaseStrongRefEntry: unbalanced release; the entry's strong count was "
+                      "already zero. Destruction was skipped.");
+            return false;
+        }
+
+        if (NewCount != 0)
+        {
+            return false;
+        }
+
+        // Read after the decrement, since the entry is what stayed valid, not the caller's pointer.
+        CObjectBase* Object = Entry->GetObj();
+        return Object != nullptr && ConditionalDestroy(Object);
     }
 
     void FCObjectArray::AddStrongRef(CObjectBase* Object)

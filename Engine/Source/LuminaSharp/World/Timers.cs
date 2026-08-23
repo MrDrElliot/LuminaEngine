@@ -58,7 +58,7 @@ public readonly unsafe partial struct Timers
     public TimerHandle SetTimer(float Seconds, Action Callback, bool Loop = false, float FirstDelay = -1.0f)
     {
         GCHandle Context = GCHandle.Alloc(new Entry { Body = Callback, Loop = Loop });
-        uint Id = SetRaw(Seconds, Loop ? 1 : 0, FirstDelay, ThunkPtr, GCHandle.ToIntPtr(Context));
+        uint Id = SetRaw(Seconds, Loop ? 1 : 0, FirstDelay, ThunkPtr, FreeThunkPtr, GCHandle.ToIntPtr(Context));
         if (Id == 0xFFFFFFFFu)
         {
             Context.Free();
@@ -75,7 +75,7 @@ public readonly unsafe partial struct Timers
     public TimerHandle SetTimerForEntity(Entity Owner, float Seconds, Action Callback, bool Loop = false, float FirstDelay = -1.0f)
     {
         GCHandle Context = GCHandle.Alloc(new Entry { Body = Callback, Loop = Loop });
-        uint Id = SetForEntityRaw(Owner.Id, Seconds, Loop ? 1 : 0, FirstDelay, ThunkPtr, GCHandle.ToIntPtr(Context));
+        uint Id = SetForEntityRaw(Owner.Id, Seconds, Loop ? 1 : 0, FirstDelay, ThunkPtr, FreeThunkPtr, GCHandle.ToIntPtr(Context));
         if (Id == 0xFFFFFFFFu)
         {
             Context.Free();
@@ -91,11 +91,9 @@ public readonly unsafe partial struct Timers
         {
             return;
         }
+
+        // Destroying the native entry frees the context, so freeing here too would be a double free.
         ClearRaw(Timer.Id);
-        if (Timer.Callback.IsAllocated)
-        {
-            Timer.Callback.Free();
-        }
     }
 
     public bool IsActive(TimerHandle Timer) => Timer.IsValid && IsActiveRaw(Timer.Id) != 0;
@@ -116,8 +114,7 @@ public readonly unsafe partial struct Timers
 
     private static readonly TimerHandle Invalid = new TimerHandle(0xFFFFFFFFu, default);
 
-    // Native timer callback trampoline: resolve the GCHandle context back to the managed callback, invoke
-    // it, and free the handle when it was a one-shot (looping timers free on Clear / owner destruction).
+    // Native owns the handle and frees it through FreeContext when the timer entry dies.
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
     private static void Fire(IntPtr Context)
     {
@@ -127,10 +124,24 @@ public readonly unsafe partial struct Timers
             if (Handle.Target is Entry E)
             {
                 E.Body();
-                if (!E.Loop && Handle.IsAllocated)
-                {
-                    Handle.Free();
-                }
+            }
+        }
+        catch (Exception Exception)
+        {
+            Interop.LogException(Exception);
+        }
+    }
+
+    // Called by native when a timer entry is destroyed, whatever destroyed it.
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static void FreeContext(IntPtr Context)
+    {
+        try
+        {
+            GCHandle Handle = GCHandle.FromIntPtr(Context);
+            if (Handle.IsAllocated)
+            {
+                Handle.Free();
             }
         }
         catch (Exception Exception)
@@ -142,11 +153,14 @@ public readonly unsafe partial struct Timers
     private static readonly IntPtr ThunkPtr =
         (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, void>)&Fire;
 
+    private static readonly IntPtr FreeThunkPtr =
+        (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, void>)&FreeContext;
+
     [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Timer_Set")]
-    private partial uint SetRaw(float Rate, int Loop, float FirstDelay, IntPtr Thunk, IntPtr Context);
+    private partial uint SetRaw(float Rate, int Loop, float FirstDelay, IntPtr Thunk, IntPtr FreeThunk, IntPtr Context);
 
     [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Timer_SetForEntity")]
-    private partial uint SetForEntityRaw(uint Owner, float Rate, int Loop, float FirstDelay, IntPtr Thunk, IntPtr Context);
+    private partial uint SetForEntityRaw(uint Owner, float Rate, int Loop, float FirstDelay, IntPtr Thunk, IntPtr FreeThunk, IntPtr Context);
 
     [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Timer_Clear")]
     private partial void ClearRaw(uint Timer);
