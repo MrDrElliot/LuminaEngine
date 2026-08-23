@@ -53,6 +53,8 @@ TEST(EntityScriptUnification, CppScriptRunsThroughTheDriver)
     EntityScripts::TickFixed(Registry, 1.0f / 60.0f);
     EXPECT_EQ(Script->FixedUpdateCount, 1);
 
+    // Detaching drops the component's only strong ref, so the counter is read through a pin.
+    TObjectPtr<CEntityScript> Pinned(Script);
     EntityScripts::DetachAll(Registry, Entity);
     EXPECT_EQ(Script->DetachCount, 1);
     EXPECT_TRUE(Registry.get<SEntityScriptComponent>(Entity).Scripts.empty());
@@ -177,6 +179,9 @@ TEST(EntityScriptUnification, DetachSkipsAScriptThatNeverAttached)
     Registry.get_or_emplace<SEntityScriptComponent>(Entity).Scripts.push_back(Unadopted);
 
     EXPECT_FALSE(Unadopted->IsAttached());
+
+    // Detaching drops the component's only strong ref, so the counters are read through pins.
+    TObjectPtr<CEntityScript> PinnedUnadopted(Unadopted);
     EntityScripts::DetachAll(Registry, Entity);
     EXPECT_EQ(Unadopted->DetachCount, 0) << "no OnAttach ran, so no OnDetach is owed";
 
@@ -184,6 +189,7 @@ TEST(EntityScriptUnification, DetachSkipsAScriptThatNeverAttached)
     const entt::entity Adopted = Registry.create();
     CEntityScriptTest* Attached = AttachTestScript(Registry, Adopted);
     ASSERT_NE(Attached, nullptr);
+    TObjectPtr<CEntityScript> PinnedAttached(Attached);
     EntityScripts::DetachAll(Registry, Adopted);
     EXPECT_EQ(Attached->DetachCount, 1);
 }
@@ -258,6 +264,8 @@ TEST(EntityScriptUnification, MintedScriptClassTicksThroughTheSameDriver)
     EXPECT_EQ(Native->UpdateCount, 2);
     EXPECT_EQ(Managed->GetClass(), Minted);
 
+    // Detaching drops the component's only strong ref, so the counter is read through a pin.
+    TObjectPtr<CEntityScript> PinnedNative(Native);
     EntityScripts::DetachAll(Registry, Entity);
     EXPECT_EQ(Native->DetachCount, 1);
 }

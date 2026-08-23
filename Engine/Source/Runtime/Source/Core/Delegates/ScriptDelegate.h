@@ -48,6 +48,16 @@ namespace Lumina
 
     protected:
 
+        // Every broadcast open on this delegate, so destroying the owner can flag all of them at once.
+        struct FBroadcastFrame
+        {
+            FBroadcastFrame* Previous = nullptr;
+            bool             bAlive   = true;
+        };
+
+        RUNTIME_API void PushBroadcastFrame(FBroadcastFrame& Frame);
+        RUNTIME_API void PopBroadcastFrame(FBroadcastFrame& Frame);
+
         // Fans out to managed listeners; Payload points at the blittable arg, or nullptr for no payload.
         RUNTIME_API void BroadcastManaged(const void* Payload);
 
@@ -56,6 +66,7 @@ namespace Lumina
         RUNTIME_API static uint64 GenerateId();
 
         TVector<FManagedDelegateBinding> ManagedBindings;
+        FBroadcastFrame* ActiveBroadcast = nullptr;
         int32   LockCount = 0;
         bool    bCompactionPending = false;
     };
@@ -67,6 +78,14 @@ namespace Lumina
     public:
 
         using FNativeDelegate = TMulticastDelegate<void, const TPayload&>;
+
+        TScriptDelegate() = default;
+
+        // Inert like the base, or assignment would replace the native listeners while keeping the managed ones.
+        TScriptDelegate(const TScriptDelegate&) {}
+        TScriptDelegate(TScriptDelegate&&) noexcept {}
+        TScriptDelegate& operator=(const TScriptDelegate&) { return *this; }
+        TScriptDelegate& operator=(TScriptDelegate&&) noexcept { return *this; }
 
         template<typename TFunc>
         FDelegateHandle AddStatic(TFunc&& Func) { return Native.AddStatic(std::forward<TFunc>(Func)); }
@@ -84,8 +103,23 @@ namespace Lumina
 
         void Broadcast(const TPayload& Payload)
         {
+            // A native handler may destroy the owner, which would leave the managed fan-out reading freed memory.
+            FBroadcastFrame Frame;
+            PushBroadcastFrame(Frame);
+
             Native.Broadcast(Payload);
+
+            if (!Frame.bAlive)
+            {
+                return;
+            }
+
             BroadcastManaged(&Payload);
+
+            if (Frame.bAlive)
+            {
+                PopBroadcastFrame(Frame);
+            }
         }
 
     private:
@@ -100,6 +134,14 @@ namespace Lumina
     public:
 
         using FNativeDelegate = TMulticastDelegate<void>;
+
+        TScriptDelegate() = default;
+
+        // Inert like the base, or assignment would replace the native listeners while keeping the managed ones.
+        TScriptDelegate(const TScriptDelegate&) {}
+        TScriptDelegate(TScriptDelegate&&) noexcept {}
+        TScriptDelegate& operator=(const TScriptDelegate&) { return *this; }
+        TScriptDelegate& operator=(TScriptDelegate&&) noexcept { return *this; }
 
         template<typename TFunc>
         FDelegateHandle AddStatic(TFunc&& Func) { return Native.AddStatic(std::forward<TFunc>(Func)); }
@@ -116,8 +158,23 @@ namespace Lumina
 
         void Broadcast()
         {
+            // A native handler may destroy the owner, which would leave the managed fan-out reading freed memory.
+            FBroadcastFrame Frame;
+            PushBroadcastFrame(Frame);
+
             Native.Broadcast();
+
+            if (!Frame.bAlive)
+            {
+                return;
+            }
+
             BroadcastManaged(nullptr);
+
+            if (Frame.bAlive)
+            {
+                PopBroadcastFrame(Frame);
+            }
         }
 
     private:

@@ -9,6 +9,17 @@
 
 namespace Lumina
 {
+    namespace
+    {
+        // Matching type flags alone would let a retyped field copy one type's bytes into another's slot.
+        bool CanMigrateField(const FProperty* Old, const FProperty* New)
+        {
+            return Old->TypeFlags == New->TypeFlags
+                && Old->GetElementSize() == New->GetElementSize()
+                && Old->GetTypeName() == New->GetTypeName();
+        }
+    }
+
     FInstancedStruct::~FInstancedStruct()
     {
         Reset();
@@ -185,9 +196,13 @@ namespace Lumina
         CStruct* Stale = ScriptStruct;
         const bool bStaleInline = bInline;
 
+        // Pinned, since a type that already died can neither be walked for fields nor destructed through.
+        TObjectPtr<CStruct> StalePin(Stale);
+        const bool bStaleAlive = StalePin.IsValid();
+
         // Inline bytes are about to be overwritten, so the old value has to be moved out first.
         uint8* StaleMemory = InstanceMemory;
-        uint8 StaleCopy[kInlineSize];
+        alignas(kInlineAlign) uint8 StaleCopy[kInlineSize];
         if (bStaleInline && StaleMemory != nullptr)
         {
             Memory::Memcpy(StaleCopy, StaleMemory, kInlineSize);
@@ -204,25 +219,48 @@ namespace Lumina
             Fresh->InitializeStruct(InstanceMemory);
 
             // By name, never memcpy, since a reload can reorder or retype fields and the old blob has no layout.
-            if (StaleMemory != nullptr)
+            if (StaleMemory != nullptr && bStaleAlive)
             {
-                Fresh->ForEachProperty<FProperty>([&](FProperty* NewProp)
-                {
-                    FProperty* OldProp = Stale != nullptr ? Stale->GetProperty(NewProp->Name) : nullptr;
-                    if (OldProp != nullptr && OldProp->TypeFlags == NewProp->TypeFlags)
-                    {
-                        NewProp->CopyCompleteValue_InContainer(InstanceMemory, StaleMemory);
-                    }
-                });
+                MigrateStructByFieldName(Stale, StaleMemory, Fresh, InstanceMemory);
             }
         }
 
-        // The stale type object may already be gone, so free the bytes without destructing through it.
-        if (StaleMemory != nullptr && !bStaleInline)
+        if (StaleMemory != nullptr)
         {
-            void* Raw = StaleMemory;
-            Memory::Free(Raw);
+            // Destructed while the type is still pinned, or everything the old value owned leaks.
+            if (bStaleAlive)
+            {
+                Stale->DestroyStruct(StaleMemory);
+            }
+
+            if (!bStaleInline)
+            {
+                void* Raw = StaleMemory;
+                Memory::Free(Raw);
+            }
         }
+    }
+
+    void MigrateStructByFieldName(const CStruct* From, const void* FromMemory,
+        const CStruct* To, void* ToMemory)
+    {
+        if (From == nullptr || FromMemory == nullptr || To == nullptr || ToMemory == nullptr)
+        {
+            return;
+        }
+
+        const_cast<CStruct*>(To)->ForEachProperty<FProperty>([&](FProperty* NewProp)
+        {
+            FProperty* OldProp = const_cast<CStruct*>(From)->GetProperty(NewProp->Name);
+            if (OldProp == nullptr || !CanMigrateField(OldProp, NewProp))
+            {
+                return;
+            }
+
+            // Each side addressed through its own property, or a reordered field reads the wrong bytes.
+            NewProp->CopyCompleteValue(NewProp->GetValuePtr<void>(ToMemory),
+                                       OldProp->GetValuePtr<void>(FromMemory));
+        });
     }
 
     FName InstancedStructKey(CStruct* Type)

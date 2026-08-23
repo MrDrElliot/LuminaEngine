@@ -467,7 +467,8 @@ namespace Lumina::Physics
                 Delegate.Broadcast(Event);
             }
 
-            if (bHasScripts)
+            // Re-checked, since a handler above is free to have destroyed the entity it fired for.
+            if (bHasScripts && Registry.valid(Self))
             {
                 using ECallback = EntityScripts::ECollisionCallback;
                 const ECallback Callback = bIsOverlap

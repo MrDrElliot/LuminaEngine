@@ -1,5 +1,8 @@
 #include <gtest/gtest.h>
 
+// The graph compiler is editor-only, so these tests compile out when Tests is built without it.
+#if WITH_EDITOR
+
 #include "Animation/AnimationGraphVM.h"
 #include "Assets/AssetTypes/Animation/AnimationGraph/AnimationGraph.h"
 #include "Assets/AssetTypes/Mesh/Animation/Animation.h"
@@ -262,3 +265,5 @@ TEST(AnimationCurves, GraphWithoutCurvesCarriesNoCurveState)
     EXPECT_TRUE(State.CurveValues.empty());
     EXPECT_TRUE(Tasks.HasWork());
 }
+
+#endif

@@ -1,5 +1,8 @@
 #include "gtest/gtest.h"
 
+// Pulls in editor-only headers, so these tests compile out when Tests is built without the editor.
+#if WITH_EDITOR
+
 #include "Core/Math/Math.h"
 #include "Renderer/MeshData.h"
 #include "Renderer/MeshQuantization.h"
@@ -181,3 +184,5 @@ TEST(MeshletBuild, LargeMeshExceedsTheMeshoptArenaAndStillBuilds)
         EXPECT_LT(Stats.WorstSnap, 0.01f);
     }
 }
+
+#endif

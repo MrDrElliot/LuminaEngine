@@ -100,6 +100,15 @@ namespace Lumina
 
         TMulticastDelegate() noexcept = default;
 
+        // Flags every open broadcast so it stops iterating and leaves this object alone on the way out.
+        ~TMulticastDelegate()
+        {
+            for (FBroadcastFrame* Frame = ActiveBroadcast; Frame != nullptr; Frame = Frame->Previous)
+            {
+                Frame->bAlive = false;
+            }
+        }
+
         template<typename TFunc>
         NODISCARD FDelegateHandle AddStatic(TFunc&& Func)
         {
@@ -167,10 +176,15 @@ namespace Lumina
         template<typename... CallArgs>
         void Broadcast(CallArgs&&... args)
         {
+            // A handler is free to destroy whatever owns this delegate, so nothing below touches a dead this.
+            FBroadcastFrame Frame;
+            Frame.Previous  = ActiveBroadcast;
+            ActiveBroadcast = &Frame;
+
             ++LockCount;
-            
+
             const SIZE_T Count = InvocationList.size();
-            for (SIZE_T Index = 0; Index < Count; ++Index)
+            for (SIZE_T Index = 0; Index < Count && Frame.bAlive; ++Index)
             {
                 if (InvocationList[Index].Delegate.IsBound())
                 {
@@ -179,6 +193,12 @@ namespace Lumina
                 }
             }
 
+            if (!Frame.bAlive)
+            {
+                return;
+            }
+
+            ActiveBroadcast = Frame.Previous;
             Unlock();
         }
 
@@ -256,7 +276,15 @@ namespace Lumina
             return Handle;
         }
 
+        // Every broadcast open on this delegate, so destroying the owner can flag all of them at once.
+        struct FBroadcastFrame
+        {
+            FBroadcastFrame* Previous = nullptr;
+            bool             bAlive   = true;
+        };
+
         TVector<FDelegateEntry> InvocationList;
+        FBroadcastFrame*        ActiveBroadcast = nullptr;
         int32                   LockCount = 0;
         bool                    bCompactionPending = false;
     };

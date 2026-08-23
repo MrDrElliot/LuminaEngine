@@ -813,10 +813,7 @@ namespace Lumina
 
         // Discovery is async and LoadStartupMap resolves the map by path, which finds nothing in a
         // registry still filling in.
-        if (GTaskSystem != nullptr)
-        {
-            GTaskSystem->WaitForAll();
-        }
+        GTaskSystem->WaitForAll();
 
         // Must run after GConfig->LoadPath but before any OnReady script body.
         FInputActionMap::Get().RebuildFromSettings();

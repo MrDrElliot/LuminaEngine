@@ -1,5 +1,8 @@
 ﻿#include <gtest/gtest.h>
 
+// Pulls in editor-only headers, so these tests compile out when Tests is built without the editor.
+#if WITH_EDITOR
+
 #include "Animation/AnimationGraphVM.h"
 #include "Assets/AssetTypes/Animation/AnimationGraph/AnimationGraph.h"
 #include "Assets/AssetTypes/Mesh/Animation/Animation.h"
@@ -271,3 +274,5 @@ TEST(AnimationStateMachine, NestedMachineKeepsItsStateWhileItsOwnerIsInactive)
     EXPECT_NEAR(State.StateSlots[InnerCurrentStateSlot], 1.0f, 1e-4f)
         << "an inactive owner must not reset its nested machine";
 }
+
+#endif

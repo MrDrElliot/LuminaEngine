@@ -108,6 +108,10 @@ namespace Lumina
         static CStruct* StaticBaseStruct() { return T::StaticStruct(); }
     };
 
+    // Copies fields shared by name, addressing each side through its own property so a reorder is safe.
+    RUNTIME_API void MigrateStructByFieldName(const CStruct* From, const void* FromMemory,
+        const CStruct* To, void* ToMemory);
+
     // Registered name, or ScriptTypeName for a script candidate whose object name changes every load.
     RUNTIME_API FName InstancedStructKey(CStruct* Type);
 

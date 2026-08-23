@@ -179,6 +179,12 @@ namespace Lumina
         {
             Out.clear();
 
+            // try_get on a dead entity indexes the sparse set out of bounds rather than returning null.
+            if (Entity == entt::null || !Registry.valid(Entity))
+            {
+                return;
+            }
+
             SEntityScriptComponent* Component = Registry.try_get<SEntityScriptComponent>(Entity);
             if (Component == nullptr)
             {

@@ -9,11 +9,30 @@ namespace Lumina
 
     FScriptDelegateBase::~FScriptDelegateBase()
     {
+        // A handler is free to destroy the owner mid-broadcast, so every open frame stops touching this.
+        for (FBroadcastFrame* Frame = ActiveBroadcast; Frame != nullptr; Frame = Frame->Previous)
+        {
+            Frame->bAlive = false;
+        }
+        ActiveBroadcast = nullptr;
+
         // Live bindings at destruction ask the managed registry to free the matching GCHandles.
         if (!ManagedBindings.empty() && GOnScriptDelegateDestroyed != nullptr)
         {
             GOnScriptDelegateDestroyed(this);
         }
+    }
+
+    void FScriptDelegateBase::PushBroadcastFrame(FBroadcastFrame& Frame)
+    {
+        Frame.Previous  = ActiveBroadcast;
+        Frame.bAlive    = true;
+        ActiveBroadcast = &Frame;
+    }
+
+    void FScriptDelegateBase::PopBroadcastFrame(FBroadcastFrame& Frame)
+    {
+        ActiveBroadcast = Frame.Previous;
     }
 
     uint64 FScriptDelegateBase::BindManaged(FManagedThunk Thunk, void* Context)
@@ -81,10 +100,14 @@ namespace Lumina
             return;
         }
 
+        // A handler is free to destroy whatever owns this delegate, so nothing below touches a dead this.
+        FBroadcastFrame Frame;
+        PushBroadcastFrame(Frame);
+
         ++LockCount;
 
         const SIZE_T Count = ManagedBindings.size();
-        for (SIZE_T Index = 0; Index < Count; ++Index)
+        for (SIZE_T Index = 0; Index < Count && Frame.bAlive; ++Index)
         {
             // Copy out before invoking; a handler may reallocate the vector mid-broadcast.
             const FManagedThunk Thunk = ManagedBindings[Index].Thunk;
@@ -94,6 +117,13 @@ namespace Lumina
                 Thunk(Context, Payload);
             }
         }
+
+        if (!Frame.bAlive)
+        {
+            return;
+        }
+
+        PopBroadcastFrame(Frame);
 
         ASSERT(LockCount > 0);
         if (--LockCount == 0 && bCompactionPending)
