@@ -98,6 +98,9 @@ namespace Lumina
         LookAt,                 // src:pReg, alpha:sReg, tx:sReg, ty:sReg, tz:sReg, boneIdx:uint16, forward:vec3, clamp:float, dst:pReg
         FootIK,                 // src:pReg, alpha:sReg, ox/oy/oz:sReg, nx/ny/nz:sReg, alignAlpha:sReg, thigh/calf/foot:uint16, up:vec3, dst:pReg
         TranslateBone,          // src:pReg, alpha:sReg, x:sReg, y:sReg, z:sReg, boneIdx:uint16, dst:pReg
+
+        // Reshapes an alpha through an easing curve. Operands are easing uint8, value sReg, dst sReg.
+        EaseAlpha,
     };
 
     // MakeAdditiveEx base operand meaning "no base pose supplied".
@@ -133,6 +136,38 @@ namespace Lumina
         Negate,      // -A
         Sign,        // -1 / 0 / 1
     };
+
+    // Easing curve applied to a node's alpha before it blends. Append-only, the value rides in bytecode.
+    REFLECT()
+    enum class EAnimAlphaEasing : uint8
+    {
+        Linear,            // Passes the alpha through untouched, and emits no opcode at all.
+        SmoothStep,        // Hermite, the gentle default when you just want the ends eased.
+        QuadraticIn,
+        QuadraticOut,
+        QuadraticInOut,
+        CubicIn,
+        CubicOut,
+        CubicInOut,
+        QuarticIn,
+        QuarticOut,
+        QuarticInOut,
+        QuinticIn,
+        QuinticOut,
+        QuinticInOut,
+        SinusoidalIn,
+        SinusoidalOut,
+        SinusoidalInOut,
+        ExponentialIn,
+        ExponentialOut,
+        ExponentialInOut,
+        CircularIn,
+        CircularOut,
+        CircularInOut,
+    };
+
+    // Clamps to the unit range before shaping, so an unbounded input cannot overshoot a blend.
+    RUNTIME_API float ApplyAlphaEasing(EAnimAlphaEasing Easing, float Alpha);
 
     // AdvanceClock operand value for "not in a sync group".
     inline constexpr uint16 kAnimNoSyncGroup = 0xFFFFu;

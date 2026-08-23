@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AnimGraphPin.h"
+#include "Animation/AnimationGraphVM.h"
 #include "UI/Tools/NodeGraph/EdGraphNode.h"
 #include "AnimGraphNode.generated.h"
 
@@ -78,5 +79,9 @@ namespace Lumina
 
         // Object register feeding InputPin, or INDEX_NONE when the pin is unconnected.
         static int32 ResolveObjectInput(CEdNodeGraphPin* InputPin, FAnimationGraphCompiler& Compiler);
+
+        // ResolveValueInput reshaped by Easing, for the nodes that expose an alpha pin.
+        static uint16 ResolveAlphaInput(CEdNodeGraphPin* InputPin, FAnimationGraphCompiler& Compiler,
+            EAnimAlphaEasing Easing);
     };
 }

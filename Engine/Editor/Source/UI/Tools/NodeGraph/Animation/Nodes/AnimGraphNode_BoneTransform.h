@@ -49,6 +49,10 @@ namespace Lumina
         FVector3 Scale = FVector3(1.0f);
 
         CAnimGraphPin* PoseInPin = nullptr;
+        /** Interpolation applied to Alpha before it blends. Linear leaves the input untouched. */
+        PROPERTY(Editable, Category = "Alpha")
+        EAnimAlphaEasing AlphaEasing = EAnimAlphaEasing::Linear;
+
         CAnimGraphPin* AlphaPin = nullptr;
         CAnimGraphPin* SpacePin = nullptr;
         CAnimGraphPin* ModePin = nullptr;

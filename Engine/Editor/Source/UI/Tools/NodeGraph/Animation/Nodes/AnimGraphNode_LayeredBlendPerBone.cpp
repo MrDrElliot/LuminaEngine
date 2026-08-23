@@ -17,7 +17,7 @@ namespace Lumina
     {
         const uint16 Base    = ResolvePoseInput(BasePin, Compiler);
         const uint16 Overlay = ResolvePoseInput(OverlayPin, Compiler);
-        const uint16 Alpha   = ResolveValueInput(AlphaPin, Compiler);
+        const uint16 Alpha   = ResolveAlphaInput(AlphaPin, Compiler, AlphaEasing);
 
         // 0xFFFF leaves the VM to fall back to a whole-skeleton blend on an unconfigured node.
         uint16 MaskIdx = 0xFFFFu;

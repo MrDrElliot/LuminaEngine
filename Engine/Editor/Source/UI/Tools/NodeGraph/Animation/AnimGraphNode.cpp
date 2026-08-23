@@ -199,4 +199,10 @@ namespace Lumina
         }
         return Compiler.EmitLoadConst(Default);
     }
+
+    uint16 CAnimGraphNode::ResolveAlphaInput(CEdNodeGraphPin* InputPin, FAnimationGraphCompiler& Compiler,
+        EAnimAlphaEasing Easing)
+    {
+        return Compiler.EmitEaseAlpha(ResolveValueInput(InputPin, Compiler), Easing);
+    }
 }

@@ -33,6 +33,10 @@ namespace Lumina
         int32 Iterations = 10;
 
         CAnimGraphPin* PoseInPin = nullptr;
+        /** Interpolation applied to Alpha before it blends. Linear leaves the input untouched. */
+        PROPERTY(Editable, Category = "Alpha")
+        EAnimAlphaEasing AlphaEasing = EAnimAlphaEasing::Linear;
+
         CAnimGraphPin* AlphaPin = nullptr;
         CAnimGraphPin* TargetXPin = nullptr;
         CAnimGraphPin* TargetYPin = nullptr;
@@ -68,6 +72,10 @@ namespace Lumina
         float MaxAngle = 70.0f;
 
         CAnimGraphPin* PoseInPin = nullptr;
+        /** Interpolation applied to Alpha before it blends. Linear leaves the input untouched. */
+        PROPERTY(Editable, Category = "Alpha")
+        EAnimAlphaEasing AlphaEasing = EAnimAlphaEasing::Linear;
+
         CAnimGraphPin* AlphaPin = nullptr;
         CAnimGraphPin* TargetXPin = nullptr;
         CAnimGraphPin* TargetYPin = nullptr;
@@ -107,6 +115,10 @@ namespace Lumina
         FVector3 FootUpAxis = FVector3(0.0f, 1.0f, 0.0f);
 
         CAnimGraphPin* PoseInPin = nullptr;
+        /** Interpolation applied to Alpha before it blends. Linear leaves the input untouched. */
+        PROPERTY(Editable, Category = "Alpha")
+        EAnimAlphaEasing AlphaEasing = EAnimAlphaEasing::Linear;
+
         CAnimGraphPin* AlphaPin = nullptr;
         CAnimGraphPin* OffsetXPin = nullptr;
         CAnimGraphPin* OffsetYPin = nullptr;
@@ -138,6 +150,10 @@ namespace Lumina
         FName Bone;
 
         CAnimGraphPin* PoseInPin = nullptr;
+        /** Interpolation applied to Alpha before it blends. Linear leaves the input untouched. */
+        PROPERTY(Editable, Category = "Alpha")
+        EAnimAlphaEasing AlphaEasing = EAnimAlphaEasing::Linear;
+
         CAnimGraphPin* AlphaPin = nullptr;
         CAnimGraphPin* OffsetXPin = nullptr;
         CAnimGraphPin* OffsetYPin = nullptr;

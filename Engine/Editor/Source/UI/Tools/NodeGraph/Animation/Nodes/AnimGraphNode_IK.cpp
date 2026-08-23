@@ -75,7 +75,7 @@ namespace Lumina
             }
         }
 
-        const uint16 AlphaReg   = ResolveValueInput(AlphaPin, Compiler);
+        const uint16 AlphaReg   = ResolveAlphaInput(AlphaPin, Compiler, AlphaEasing);
         const uint16 TargetXReg = ResolveValueInput(TargetXPin, Compiler);
         const uint16 TargetYReg = ResolveValueInput(TargetYPin, Compiler);
         const uint16 TargetZReg = ResolveValueInput(TargetZPin, Compiler);
@@ -112,7 +112,7 @@ namespace Lumina
             return;
         }
 
-        const uint16 AlphaReg   = ResolveValueInput(AlphaPin, Compiler);
+        const uint16 AlphaReg   = ResolveAlphaInput(AlphaPin, Compiler, AlphaEasing);
         const uint16 TargetXReg = ResolveValueInput(TargetXPin, Compiler);
         const uint16 TargetYReg = ResolveValueInput(TargetYPin, Compiler);
         const uint16 TargetZReg = ResolveValueInput(TargetZPin, Compiler);
@@ -176,7 +176,7 @@ namespace Lumina
             return;
         }
 
-        const uint16 AlphaReg   = ResolveValueInput(AlphaPin, Compiler);
+        const uint16 AlphaReg   = ResolveAlphaInput(AlphaPin, Compiler, AlphaEasing);
         const uint16 OffsetXReg = ResolveValueInput(OffsetXPin, Compiler);
         const uint16 OffsetYReg = ResolveValueInput(OffsetYPin, Compiler);
         const uint16 OffsetZReg = ResolveValueInput(OffsetZPin, Compiler);
@@ -220,7 +220,7 @@ namespace Lumina
             return;
         }
 
-        const uint16 AlphaReg   = ResolveValueInput(AlphaPin, Compiler);
+        const uint16 AlphaReg   = ResolveAlphaInput(AlphaPin, Compiler, AlphaEasing);
         const uint16 OffsetXReg = ResolveValueInput(OffsetXPin, Compiler);
         const uint16 OffsetYReg = ResolveValueInput(OffsetYPin, Compiler);
         const uint16 OffsetZReg = ResolveValueInput(OffsetZPin, Compiler);

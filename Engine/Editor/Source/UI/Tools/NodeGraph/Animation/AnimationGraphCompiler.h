@@ -97,6 +97,9 @@ namespace Lumina
         // Exponentially eases a scalar toward its input; a half life of 0 passes the value straight through.
         uint16 EmitSmoothScalar(uint16 ValueReg, uint16 HalfLifeReg);
 
+        // Returns ValueReg untouched for Linear, so an unshaped alpha costs no opcode.
+        uint16 EmitEaseAlpha(uint16 ValueReg, EAnimAlphaEasing Easing);
+
         // Object-register producers; both return the object register they allocated.
         uint16 EmitLoadObjectParam(uint16 ObjectParameterIndex);
         uint16 EmitLoadObjectConst(uint16 ObjectConstantIndex);

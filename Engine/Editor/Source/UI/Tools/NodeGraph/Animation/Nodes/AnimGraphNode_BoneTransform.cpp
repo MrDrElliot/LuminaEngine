@@ -39,7 +39,7 @@ namespace Lumina
         }
 
         const uint16 SrcReg   = ResolvePoseInput(PoseInPin, Compiler);
-        const uint16 AlphaReg = ResolveValueInput(AlphaPin, Compiler);
+        const uint16 AlphaReg = ResolveAlphaInput(AlphaPin, Compiler, AlphaEasing);
 
         // Register-driven so they can be wired, and an unconnected pin bakes the property as a constant.
         const uint16 SpaceReg = SpacePin->HasConnection()

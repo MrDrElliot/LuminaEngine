@@ -21,6 +21,10 @@ namespace Lumina
 
         CAnimGraphPin* PoseAPin = nullptr;
         CAnimGraphPin* PoseBPin = nullptr;
+        /** Interpolation applied to Alpha before it blends. Linear leaves the input untouched. */
+        PROPERTY(Editable, Category = "Alpha")
+        EAnimAlphaEasing AlphaEasing = EAnimAlphaEasing::Linear;
+
         CAnimGraphPin* AlphaPin = nullptr;
         CAnimGraphPin* ResultPin = nullptr;
     };

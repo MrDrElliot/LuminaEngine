@@ -322,6 +322,22 @@ namespace Lumina
         return Dst;
     }
 
+    uint16 FAnimationGraphCompiler::EmitEaseAlpha(uint16 ValueReg, EAnimAlphaEasing Easing)
+    {
+        if (Easing == EAnimAlphaEasing::Linear)
+        {
+            return ValueReg;
+        }
+
+        const uint16 Dst = AllocScalarReg();
+
+        WriteOp(EAnimOp::EaseAlpha);
+        Write((uint8)Easing);
+        Write(ValueReg);
+        Write(Dst);
+        return Dst;
+    }
+
     uint16 FAnimationGraphCompiler::EmitSmoothScalar(uint16 ValueReg, uint16 HalfLifeReg)
     {
         // Not clock slots; winding a smoother back to zero while its state is inactive would pop on entry.

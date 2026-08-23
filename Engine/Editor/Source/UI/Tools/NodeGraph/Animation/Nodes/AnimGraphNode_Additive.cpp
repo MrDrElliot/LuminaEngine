@@ -37,7 +37,7 @@ namespace Lumina
     {
         const uint16 Base   = ResolvePoseInput(BasePin, Compiler);
         const uint16 Delta  = ResolvePoseInput(DeltaPin, Compiler);
-        const uint16 Alpha  = ResolveValueInput(AlphaPin, Compiler);
+        const uint16 Alpha  = ResolveAlphaInput(AlphaPin, Compiler, AlphaEasing);
         const uint16 Result = Compiler.EmitApplyAdditive(Base, Delta, Alpha);
         Compiler.SetPinRegister(ResultPin, Result);
     }

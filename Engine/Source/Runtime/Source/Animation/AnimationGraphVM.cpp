@@ -14,6 +14,72 @@
 
 namespace Lumina
 {
+    float ApplyAlphaEasing(EAnimAlphaEasing Easing, float Alpha)
+    {
+        const float T = Math::Clamp(Alpha, 0.0f, 1.0f);
+
+        // Mirrored halves, so an InOut curve is its In curve for the first half and its Out for the second.
+        auto InOut = [T](auto In, auto Out)
+        {
+            return (T < 0.5f) ? 0.5f * In(T * 2.0f) : 0.5f + 0.5f * Out(T * 2.0f - 1.0f);
+        };
+
+        auto PowIn  = [](float X, int32 Power)
+        {
+            float Result = X;
+            for (int32 i = 1; i < Power; ++i) { Result *= X; }
+            return Result;
+        };
+        auto PowOut = [PowIn](float X, int32 Power)
+        {
+            const float Inv = 1.0f - X;
+            return 1.0f - PowIn(Inv, Power);
+        };
+
+        switch (Easing)
+        {
+        case EAnimAlphaEasing::Linear:          return T;
+        case EAnimAlphaEasing::SmoothStep:      return T * T * (3.0f - 2.0f * T);
+
+        case EAnimAlphaEasing::QuadraticIn:     return PowIn(T, 2);
+        case EAnimAlphaEasing::QuadraticOut:    return PowOut(T, 2);
+        case EAnimAlphaEasing::QuadraticInOut:  return InOut([&](float X) { return PowIn(X, 2); }, [&](float X) { return PowOut(X, 2); });
+
+        case EAnimAlphaEasing::CubicIn:         return PowIn(T, 3);
+        case EAnimAlphaEasing::CubicOut:        return PowOut(T, 3);
+        case EAnimAlphaEasing::CubicInOut:      return InOut([&](float X) { return PowIn(X, 3); }, [&](float X) { return PowOut(X, 3); });
+
+        case EAnimAlphaEasing::QuarticIn:       return PowIn(T, 4);
+        case EAnimAlphaEasing::QuarticOut:      return PowOut(T, 4);
+        case EAnimAlphaEasing::QuarticInOut:    return InOut([&](float X) { return PowIn(X, 4); }, [&](float X) { return PowOut(X, 4); });
+
+        case EAnimAlphaEasing::QuinticIn:       return PowIn(T, 5);
+        case EAnimAlphaEasing::QuinticOut:      return PowOut(T, 5);
+        case EAnimAlphaEasing::QuinticInOut:    return InOut([&](float X) { return PowIn(X, 5); }, [&](float X) { return PowOut(X, 5); });
+
+        case EAnimAlphaEasing::SinusoidalIn:    return 1.0f - Math::Cos(T * Math::HalfPi<float>());
+        case EAnimAlphaEasing::SinusoidalOut:   return Math::Sin(T * Math::HalfPi<float>());
+        case EAnimAlphaEasing::SinusoidalInOut: return 0.5f * (1.0f - Math::Cos(T * Math::Pi<float>()));
+
+        // Normalized so the curve still spans exactly 0 to 1 rather than starting slightly above zero.
+        case EAnimAlphaEasing::ExponentialIn:   return (T <= 0.0f) ? 0.0f : Math::Pow(2.0f, 10.0f * (T - 1.0f));
+        case EAnimAlphaEasing::ExponentialOut:  return (T >= 1.0f) ? 1.0f : 1.0f - Math::Pow(2.0f, -10.0f * T);
+        case EAnimAlphaEasing::ExponentialInOut:
+            if (T <= 0.0f) { return 0.0f; }
+            if (T >= 1.0f) { return 1.0f; }
+            return (T < 0.5f) ? 0.5f * Math::Pow(2.0f, 20.0f * T - 10.0f)
+                              : 1.0f - 0.5f * Math::Pow(2.0f, -20.0f * T + 10.0f);
+
+        case EAnimAlphaEasing::CircularIn:      return 1.0f - Math::Sqrt(Math::Max(0.0f, 1.0f - T * T));
+        case EAnimAlphaEasing::CircularOut:     return Math::Sqrt(Math::Max(0.0f, 1.0f - (T - 1.0f) * (T - 1.0f)));
+        case EAnimAlphaEasing::CircularInOut:
+            return (T < 0.5f) ? 0.5f * (1.0f - Math::Sqrt(Math::Max(0.0f, 1.0f - 4.0f * T * T)))
+                              : 0.5f * (Math::Sqrt(Math::Max(0.0f, 1.0f - (2.0f * T - 2.0f) * (2.0f * T - 2.0f))) + 1.0f);
+        }
+
+        return T;
+    }
+
     // Discriminates a stale compiled constant from a clock-advance bug.
     static TConsoleVar<bool> CVarDumpGraphClocks(
         "anim.DumpGraphClocks",
@@ -1280,6 +1346,19 @@ namespace Lumina
                 SetPoseTags(Dst, DeltaOf(Src), EventsOf(Src));
                 SetPoseSync(Dst, SyncOf(Src));
                 CopyCurves(Dst, Src);
+                break;
+            }
+
+            case EAnimOp::EaseAlpha:
+            {
+                const EAnimAlphaEasing Easing = (EAnimAlphaEasing)Reader.Read<uint8>();
+                const uint16 ValueReg = Reader.Read<uint16>();
+                const uint16 Dst      = Reader.Read<uint16>();
+
+                if (ValueReg < NumScalar && Dst < NumScalar)
+                {
+                    Scalars[Dst] = ApplyAlphaEasing(Easing, Scalars[ValueReg]);
+                }
                 break;
             }
 

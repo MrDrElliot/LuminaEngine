@@ -17,7 +17,7 @@ namespace Lumina
     {
         const uint16 PoseA   = ResolvePoseInput(PoseAPin, Compiler);
         const uint16 PoseB   = ResolvePoseInput(PoseBPin, Compiler);
-        const uint16 Alpha   = ResolveValueInput(AlphaPin, Compiler);
+        const uint16 Alpha   = ResolveAlphaInput(AlphaPin, Compiler, AlphaEasing);
         const uint16 Result  = Compiler.EmitBlend(PoseA, PoseB, Alpha);
 
         Compiler.SetPinRegister(ResultPin, Result);
