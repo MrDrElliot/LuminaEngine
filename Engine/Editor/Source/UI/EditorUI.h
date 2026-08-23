@@ -105,7 +105,7 @@ namespace Lumina
 
         // File > Save All: every dirty package, routed through its open editor tool when there is one
         // so type-specific save work still runs.
-        void SaveAllDirtyPackages();
+        void SaveAllDirtyPackages() override;
 
         // Re-entry guard for the dirty-packages prompt; true while the dialog is open.
         // A member (not a function-local static) so Cancel can re-arm it.

@@ -44,6 +44,12 @@ namespace Lumina::Paths
     /** Binary file name for a module: <prefix><Name>-<Config><ext>, e.g. libFoo-Development.so. */
     RUNTIME_API FFixedString MakeModuleFileName(FStringView ModuleName);
 
+    /** The engine's game application, which a package ships and a standalone launch runs. */
+    RUNTIME_API FFixedString MakeGameApplicationName();
+
+    /** Module file name as a Game target builds it, which is not what an editor process is named. */
+    RUNTIME_API FFixedString MakeGameModuleFileName(FStringView ModuleName);
+
     RUNTIME_API bool PathsEqual(FStringView A, FStringView B);
 
     RUNTIME_API FString Parent(FStringView Path, bool bRemoveTrailingSlash = true);

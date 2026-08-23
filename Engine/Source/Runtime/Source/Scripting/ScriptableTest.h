@@ -48,7 +48,11 @@ namespace Lumina
         void OnReady() override       { ++ReadyCount; }
         void OnUpdate(float Dt) override      { ++UpdateCount; AccumulatedTime += Dt; }
         void OnFixedUpdate(float Dt) override { ++FixedUpdateCount; }
-        void OnDetach() override      { ++DetachCount; }
+        void OnDetach() override      { ++DetachCount; if (DetachHook != nullptr) { DetachHook(*this, HookContext); } }
+
+        // Lets a test make OnDetach mutate the registry. Unreflected, so a clone never carries it over.
+        void (*DetachHook)(CEntityScriptTest&, void*) = nullptr;
+        void* HookContext = nullptr;
 
         // A reflected CONTAINER property, so a clone/duplicate test can prove the copy is handed this
         // member's address rather than the object base (which would land the array header on the vtable ptr).

@@ -761,3 +761,60 @@ TEST(EntityScriptUnification, SkipHotReloadFieldsResetOnRestore)
 
     EntityScripts::DetachAll(Registry, Entity);
 }
+
+namespace
+{
+    struct FDetachMutationContext
+    {
+        FEntityRegistry* Registry = nullptr;
+        entt::entity     Spawned  = entt::null;
+    };
+}
+
+// World teardown detaches over a snapshot, so an OnDetach touching the pool cannot invalidate the walk.
+TEST(EntityScriptUnification, DetachAllInRegistrySurvivesAnOnDetachThatAttachesScripts)
+{
+    FEntityRegistry Registry{};
+
+    const entt::entity First  = Registry.create();
+    const entt::entity Second = Registry.create();
+    const entt::entity Third  = Registry.create();
+
+    CEntityScriptTest* FirstScript  = AttachTestScript(Registry, First);
+    CEntityScriptTest* SecondScript = AttachTestScript(Registry, Second);
+    CEntityScriptTest* ThirdScript  = AttachTestScript(Registry, Third);
+    ASSERT_NE(FirstScript, nullptr);
+    ASSERT_NE(SecondScript, nullptr);
+    ASSERT_NE(ThirdScript, nullptr);
+
+    // Detaching drops the component's only strong ref, so the counters are read through pins, not raw.
+    TObjectPtr<CEntityScript> PinFirst(FirstScript);
+    TObjectPtr<CEntityScript> PinSecond(SecondScript);
+    TObjectPtr<CEntityScript> PinThird(ThirdScript);
+
+    FDetachMutationContext Context;
+    Context.Registry = &Registry;
+
+    // Attaching mid-walk grows the very pool a view-based loop would still be iterating.
+    FirstScript->HookContext = &Context;
+    FirstScript->DetachHook = [](CEntityScriptTest&, void* Ctx)
+    {
+        FDetachMutationContext& Mutation = *static_cast<FDetachMutationContext*>(Ctx);
+        Mutation.Spawned = Mutation.Registry->create();
+        EntityScripts::Attach(*Mutation.Registry, Mutation.Spawned, CEntityScriptTest::StaticClass());
+    };
+
+    EntityScripts::DetachAllInRegistry(Registry);
+
+    EXPECT_EQ(FirstScript->DetachCount, 1);
+    EXPECT_EQ(SecondScript->DetachCount, 1) << "every entity in the snapshot is detached";
+    EXPECT_EQ(ThirdScript->DetachCount, 1) << "a mutation mid-walk must not cut the pass short";
+
+    EXPECT_TRUE(Registry.get<SEntityScriptComponent>(First).Scripts.empty());
+    EXPECT_TRUE(Registry.get<SEntityScriptComponent>(Second).Scripts.empty());
+    EXPECT_TRUE(Registry.get<SEntityScriptComponent>(Third).Scripts.empty());
+
+    ASSERT_TRUE(Context.Spawned != entt::null);
+    EXPECT_FALSE(Registry.get<SEntityScriptComponent>(Context.Spawned).Scripts.empty())
+        << "a script attached during the pass is outside the snapshot; the clear that follows drops it";
+}

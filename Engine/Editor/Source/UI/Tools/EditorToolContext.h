@@ -42,6 +42,9 @@ namespace Lumina
 
         /** Called just before an asset is marked for destroy, mostly to close any asset editors that may be using it */
         virtual void OnDestroyAsset(CObject* InAsset) = 0;
+
+        /** Writes every dirty package through its open tool, which is what a standalone launch reads from disk. */
+        virtual void SaveAllDirtyPackages() = 0;
         
     };
 }

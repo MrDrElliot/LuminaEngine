@@ -276,11 +276,29 @@ namespace Lumina
         return FObjectHandle(Index, Item->GetGeneration());
     }
 
+    // A freed object's slot is recycled immediately, so a stale reference would land on its successor.
+    bool FCObjectArray::OwnsSlot(const CObjectBase* Object, const FCObjectEntry* Item, const char* Site) const
+    {
+        if (Item != nullptr && Item->GetObj() == Object)
+        {
+            return true;
+        }
+
+        const CObjectBase* Occupant = Item != nullptr ? Item->GetObj() : nullptr;
+        const CClass* OccupantClass = Occupant != nullptr ? Occupant->GetClass() : nullptr;
+        LOG_ERROR("FCObjectArray::{}: reference to freed object {} whose slot {} now holds {} ('{}'). "
+                  "Something outlived the object it referenced; the reference was dropped instead of applied.",
+            Site, (const void*)Object, Object->GetInternalIndex(), (const void*)Occupant,
+            OccupantClass != nullptr ? OccupantClass->GetName().c_str() : "empty");
+        return false;
+    }
+
     void FCObjectArray::AddStrongRef(CObjectBase* Object)
     {
         if (Object)
         {
-            if (FCObjectEntry* Item = ChunkedArray.GetItem(Object->GetInternalIndex()))
+            FCObjectEntry* Item = ChunkedArray.GetItem(Object->GetInternalIndex());
+            if (Item != nullptr && OwnsSlot(Object, Item, "AddStrongRef"))
             {
                 Item->AddStrongRef();
             }
@@ -298,9 +316,20 @@ namespace Lumina
         if (Object)
         {
             // The caller still holds the ref being dropped, so reading the index is safe and only the free locks.
-            if (FCObjectEntry* Item = ChunkedArray.GetItem(Object->GetInternalIndex()))
+            FCObjectEntry* Item = ChunkedArray.GetItem(Object->GetInternalIndex());
+            if (Item != nullptr && OwnsSlot(Object, Item, "ReleaseStrongRef"))
             {
-                uint32 NewCount = Item->ReleaseStrongRef();
+                int32 NewCount = 0;
+                if (!Item->ReleaseStrongRef(NewCount))
+                {
+                    const CClass* Class = Object->GetClass();
+                    LOG_ERROR("FCObjectArray::ReleaseStrongRef: unbalanced release of {} ('{}') at slot {}; "
+                              "its strong count was already zero. Destruction was skipped.",
+                        (const void*)Object, Class != nullptr ? Class->GetName().c_str() : "unknown",
+                        Object->GetInternalIndex());
+                    return false;
+                }
+
                 if (NewCount == 0)
                 {
                     return ConditionalDestroy(Object);
@@ -346,13 +375,18 @@ namespace Lumina
         {
             FRecursiveScopeLock Lock(Mutex);
 
+            const FCObjectEntry* Item = ChunkedArray.GetItem(Object->GetInternalIndex());
+            if (!OwnsSlot(Object, Item, "ConditionalDestroy"))
+            {
+                return false; // freed already, and the slot has moved on
+            }
+
             if (Object->HasAnyFlag(OF_MarkedDestroy))
             {
                 return false; // already being destroyed
             }
 
-            const FCObjectEntry* Item = ChunkedArray.GetItem(Object->GetInternalIndex());
-            if (Item && Item->IsReferenced())
+            if (Item->IsReferenced())
             {
                 return false; // (re)acquired a strong ref since the count hit zero, keep it alive
             }
@@ -381,7 +415,14 @@ namespace Lumina
         }
         if (FCObjectEntry* Item = ChunkedArray.GetItem(Index))
         {
-            uint32 NewCount = Item->ReleaseStrongRef();
+            int32 NewCount = 0;
+            if (!Item->ReleaseStrongRef(NewCount))
+            {
+                LOG_ERROR("FCObjectArray::ReleaseStrongRefByIndex: unbalanced release at slot {}; its strong "
+                          "count was already zero. Destruction was skipped.", Index);
+                return false;
+            }
+
             if (NewCount == 0)
             {
                 if (CObjectBase* Object = Item->GetObj())

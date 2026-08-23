@@ -40,6 +40,16 @@ int LuminaMain(int ArgC, char** ArgV)  // NOLINT(misc-use-internal-linkage)
     FCommandLine Parsed{ArgC, ArgV};
     GCommandLine = &Parsed;
 
+    LOG_WARN("ARGPROBE argc={}", ArgC);
+    for (int i = 0; i < ArgC; ++i)
+    {
+        LOG_WARN("ARGPROBE [{}] = '{}'", i, ArgV[i]);
+    }
+    for (const auto& Pair : Parsed.GetAll())
+    {
+        LOG_WARN("ARGPROBE parsed '{}' = '{}'", Pair.first.c_str(), Pair.second.c_str());
+    }
+
 #if LUMINA_MEMORY_TRACKING
     // Steady-state memory predates the profiler window, so naming it needs capture from allocation one.
     Memory::SetCaptureCallstacks(Parsed.Has("memcallstacks"));
@@ -61,14 +71,29 @@ int LuminaMain(int ArgC, char** ArgV)  // NOLINT(misc-use-internal-linkage)
     FEngine Engine{};
     GEngine = &Engine;
 
-    FCoreDelegates::OnPreEngineInit.AddLambda([]
+    // Named so a standalone run stops rotating the log the editor that launched it is still writing.
+    if (TOptional<FFixedString> LogName = Parsed.Get("logfile"))
     {
-        GEngine->MountCookedRuntime();
-    });
-    FCoreDelegates::OnPostEngineInit.AddLambda([]
+        Logging::SetLogFileName(LogName.value());
+    }
+
+    // A project on the command line is a standalone run straight out of the project tree, which
+    // FEngine::LoadProject mounts and starts itself. Only a packaged game has paks to mount.
+    if (!Parsed.Has("project"))
     {
-        GEngine->StartCookedGame();
-    });
+        FCoreDelegates::OnPreEngineInit.AddLambda([]
+        {
+            GEngine->MountCookedRuntime();
+        });
+        FCoreDelegates::OnPostEngineInit.AddLambda([]
+        {
+            GEngine->StartCookedGame();
+        });
+    }
+    else
+    {
+        LOG_DISPLAY("Standalone: running the project tree uncooked, so no pak is mounted.");
+    }
     #endif
 
     Result = Application.Run(ArgC, ArgV);

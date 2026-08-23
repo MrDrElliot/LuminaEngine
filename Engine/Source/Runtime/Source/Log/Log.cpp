@@ -75,7 +75,8 @@ namespace Lumina::Logging
 		// Owned by GSinks; kept for SetLogFileDirectory. Only touched under GSinkMutex.
 		FFileSink*                      GFileSink = nullptr;
 
-		constexpr const char* GLogFileName = "Lumina.log";
+		// Not constant, since a standalone launch renames it to keep off the editor's file.
+		FString GLogFileName = "Lumina.log";
 
 		// Guards the direct-to-stdout path used before Init() and after Shutdown().
 		FMutex GFallbackMutex;
@@ -531,6 +532,34 @@ namespace Lumina::Logging
 
 		// Retarget flushes what the sink is holding, so nothing written so far is lost.
 		GFileSink->Retarget(LogPath);
+	}
+
+
+	void SetLogFileName(FStringView FileName)
+	{
+		if (FileName.empty())
+		{
+			return;
+		}
+
+		FScopeLock Lock(GSinkMutex);
+		if (GFileSink == nullptr)
+		{
+			return;
+		}
+
+		GLogFileName.assign(FileName.data(), FileName.size());
+		if (!GLogFileName.ends_with(".log"))
+		{
+			GLogFileName.append(".log");
+		}
+
+		FString NewPath = GFileSink->GetBasePath();
+		const size_t LastSlash = NewPath.find_last_of("/\\");
+		NewPath.resize(LastSlash == FString::npos ? 0 : LastSlash + 1);
+		NewPath.append(GLogFileName);
+
+		GFileSink->Retarget(NewPath);
 	}
 
 

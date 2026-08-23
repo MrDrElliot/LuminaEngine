@@ -305,6 +305,21 @@ namespace Lumina::Paths
         return true;
     }
     
+    FFixedString MakeGameApplicationName()
+    {
+        FFixedString Result = "Lumina-";
+        Result.append(LUMINA_CONFIGURATION_NAME).append(LUMINA_EXECUTABLE_EXT_NAME);
+        return Result;
+    }
+
+    FFixedString MakeGameModuleFileName(FStringView ModuleName)
+    {
+        FFixedString Result = LUMINA_SHAREDLIB_PREFIX_NAME;
+        Result.append(ModuleName.data(), ModuleName.size());
+        Result.append("-").append(LUMINA_CONFIGURATION_NAME).append(LUMINA_SHAREDLIB_EXT_NAME);
+        return Result;
+    }
+
     FFixedString MakeModuleFileName(FStringView ModuleName)
     {
         FFixedString Result = LUMINA_SHAREDLIB_PREFIX_NAME;

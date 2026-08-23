@@ -483,6 +483,10 @@ namespace Lumina
 
         EntityRegistry.ctx().get<FTimerManager>().Clear();
 
+        // Detached up front, since entt publishes on_destroy while iterating the pool it is about to empty.
+        EntityRegistry.on_destroy<SEntityScriptComponent>().disconnect<&ThisClass::OnCSharpScriptComponentDestroyed>(this);
+        EntityScripts::DetachAllInRegistry(EntityRegistry);
+
         RegistryPending.clear<>();
         EntityRegistry.clear<>();
 

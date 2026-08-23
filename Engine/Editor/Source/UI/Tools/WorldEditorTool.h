@@ -177,6 +177,9 @@ namespace Lumina
         /** Play-in-editor settings popup (player count + net mode), opened from the play controls. */
         void DrawPlaySettingsPopup();
 
+        /** Starts the game in its own process against this project, with no editor around it. */
+        void LaunchStandalone();
+
         /** Rebind OnEntityCreated/OnEntityDestroyed observers to the observed world's registry. */
         void RebindRegistryObservers();
         void UnbindRegistryObservers();
@@ -274,7 +277,11 @@ namespace Lumina
         {
             int32    NumPlayers          = 1;                     // 1..4; player 1 = main viewport, 2..N = preview windows
             ENetMode NetMode             = ENetMode::Standalone;
-            bool     bSeparateProcesses  = false;                 // reserved; not wired yet
+
+            // A separate game process reads assets off disk, so it opens the edited map only once saved.
+            bool     bStandaloneCurrentMap = true;
+            bool     bStandaloneSaveFirst  = true;
+            bool     bStandaloneBuild      = true;
         };
         FPlayInEditorSettings                   PlaySettings;
         static constexpr int32                  MaxPlayers = 4;

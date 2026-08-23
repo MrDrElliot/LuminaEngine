@@ -1,6 +1,7 @@
 #include <string>
 #include "WorldEditorTool.h"
 #include "Core/CoreEditorDelegates.h"
+#include "Play/StandaloneLauncher.h"
 #include "Core/Math/Math.h"
 #include "EditorToolContext.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
@@ -3769,9 +3770,33 @@ namespace Lumina
             PlaySettings.NetMode = (ENetMode)ModeIdx;
         }
 
-        ImGui::BeginDisabled(true);
-        ImGui::Checkbox("Separate Processes (soon)", &PlaySettings.bSeparateProcesses);
-        ImGui::EndDisabled();
+        ImGui::Separator();
+        ImGui::TextUnformatted("Standalone");
+        {
+            const bool bBuilding = FStandaloneLauncher::IsBuilding();
+
+            ImGui::Checkbox("Current map", &PlaySettings.bStandaloneCurrentMap);
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+            {
+                ImGui::SetTooltip("Off launches the project's configured startup map instead.");
+            }
+
+            ImGui::Checkbox("Save modified assets", &PlaySettings.bStandaloneSaveFirst);
+            ImGui::Checkbox("Build game binaries if missing", &PlaySettings.bStandaloneBuild);
+
+            ImGui::BeginDisabled(bBuilding);
+            if (ImGui::Button(bBuilding ? "Building..." : "Launch Standalone", ImVec2(170.0f, 0.0f)))
+            {
+                LaunchStandalone();
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndDisabled();
+
+            if (!bBuilding && !FStandaloneLauncher::HasGameBinaries())
+            {
+                ImGui::TextDisabled("Game binaries not built yet.");
+            }
+        }
 
         // Bound straight to the CVars the transport reads, so dragging these takes effect live.
         ImGui::Separator();
@@ -3801,6 +3826,26 @@ namespace Lumina
         ImGui::TextDisabled("Players 2+ open preview windows in this process.");
 
         ImGui::EndPopup();
+    }
+
+    void FWorldEditorTool::LaunchStandalone()
+    {
+        // The game process reads packages off disk, so anything unsaved here is invisible to it.
+        if (PlaySettings.bStandaloneSaveFirst && ToolContext != nullptr)
+        {
+            ToolContext->SaveAllDirtyPackages();
+        }
+
+        FStandaloneLaunchOptions Options;
+        Options.bBuildIfMissing = PlaySettings.bStandaloneBuild;
+
+        if (PlaySettings.bStandaloneCurrentMap && World != nullptr && World->GetPackage() != nullptr)
+        {
+            const FFixedString MapPath = World->GetPackage()->GetPackagePath();
+            Options.MapPath.assign(MapPath.c_str(), MapPath.size());
+        }
+
+        FStandaloneLauncher::Request(Options);
     }
 
     ENetMode FWorldEditorTool::ResolvePlayerNetMode(int32 PlayerIndex) const

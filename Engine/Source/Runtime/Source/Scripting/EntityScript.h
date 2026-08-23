@@ -170,6 +170,9 @@ namespace Lumina
         /** Runs OnDetach and drops every script on Entity. */
         RUNTIME_API void DetachAll(FEntityRegistry& Registry, entt::entity Entity);
 
+        // Walks a snapshot, so an OnDetach that adds or removes scripts cannot invalidate the pool underneath.
+        RUNTIME_API void DetachAllInRegistry(FEntityRegistry& Registry);
+
         /**
          * One entity's scripts, serialized, while its script classes are rebuilt underneath it.
          *

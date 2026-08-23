@@ -51,6 +51,7 @@ public abstract class LuminaTargetRules : TargetRules
             $"LUMINA_CONFIGURATION_NAME=\"{Target.Configuration}\"",
             $"LUMINA_SHAREDLIB_EXT_NAME=\"{BuildPlatformRegistry.Get(Target.Platform).SharedLibraryExtension}\"",
             $"LUMINA_SHAREDLIB_PREFIX_NAME=\"{BuildPlatformRegistry.Get(Target.Platform).SharedLibraryPrefix}\"",
+            $"LUMINA_EXECUTABLE_EXT_NAME=\"{Target.Platform.GetExecutableExtension()}\"",
         });
 
         LuminaFeatures.ApplyDefinitions(Target, GlobalDefinitions);

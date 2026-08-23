@@ -44,20 +44,22 @@ namespace Lumina
             StrongRefCount.fetch_add(1, std::memory_order_relaxed);
         }
 
-        uint32 ReleaseStrongRef()
+        // Returns false for an unbalanced release, which a zero count alone cannot be told apart from.
+        bool ReleaseStrongRef(int32& OutNewCount)
         {
             int32 PrevCount = StrongRefCount.load(std::memory_order_relaxed);
             do
             {
                 if (PrevCount <= 0)
                 {
-                    ASSERT(false, "ReleaseStrongRef on object with zero refcount");
-                    return 0;
+                    OutNewCount = 0;
+                    return false;
                 }
             }
             while (!StrongRefCount.compare_exchange_weak(PrevCount, PrevCount - 1,
                 std::memory_order_acq_rel, std::memory_order_relaxed));
-            return uint32(PrevCount - 1);
+            OutNewCount = PrevCount - 1;
+            return true;
         }
 
         void AddWeakRef()
@@ -192,6 +194,9 @@ namespace Lumina
         RUNTIME_API FObjectHandle GetHandleByObject(const CObjectBase* Object) const;
 
         RUNTIME_API FObjectHandle GetHandleByIndex(int32 Index) const;
+
+        // False once Object's slot has been recycled to someone else, so a stale reference is dropped not applied.
+        bool OwnsSlot(const CObjectBase* Object, const FCObjectEntry* Item, const char* Site) const;
 
         RUNTIME_API void AddStrongRef(CObjectBase* Object);
 

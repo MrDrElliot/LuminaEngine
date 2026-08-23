@@ -1,6 +1,7 @@
 ﻿#include "EditorUI.h"
 #include <string>
 #include "Core/CoreEditorDelegates.h"
+#include "Play/StandaloneLauncher.h"
 #include <cfloat>
 #include <cstdlib>
 #include "Platform/Filesystem/PlatformFilesystem.h"
@@ -917,6 +918,9 @@ namespace Lumina
     void FEditorUI::OnUpdate(const FUpdateContext& UpdateContext)
     {
         LUMINA_PROFILE_SCOPE();
+
+        // A standalone launch waiting on its build finishes here, on the thread that may spawn it.
+        FStandaloneLauncher::Tick();
 
         // The registry has to be populated before a GUID resolves, and focus wants a live ImGui frame.
         if (bSessionRestorePending)

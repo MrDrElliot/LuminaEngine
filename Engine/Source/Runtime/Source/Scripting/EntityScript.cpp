@@ -601,5 +601,25 @@ namespace Lumina
                 Component->Scripts.clear();
             }
         }
+
+        void DetachAllInRegistry(FEntityRegistry& Registry)
+        {
+            // Disabled entities are included, since a disabled script still ran OnAttach and is owed its OnDetach.
+            TVector<entt::entity> Entities;
+            auto View = Registry.view<SEntityScriptComponent>();
+            Entities.reserve(View.size_hint());
+            for (entt::entity Entity : View)
+            {
+                Entities.push_back(Entity);
+            }
+
+            for (entt::entity Entity : Entities)
+            {
+                if (Registry.valid(Entity))
+                {
+                    DetachAll(Registry, Entity);
+                }
+            }
+        }
     }
 }
