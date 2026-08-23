@@ -17,6 +17,7 @@
 #include "Nodes/AnimGraphNode_BoneTransform.h"
 #include "Nodes/AnimGraphNode_Curve.h"
 #include "Nodes/AnimGraphNode_TwoBoneIK.h"
+#include "Nodes/AnimGraphNode_CachedPose.h"
 #include "AnimStateMachineGraph.h"
 #include "AnimStateTransition.h"
 #include "AnimationGraphCompiler.h"
@@ -139,11 +140,44 @@ namespace Lumina
             return false;
         }
 
+        // Cached pose branches emit ahead of everything else, so a state machine compiled later in this
+        // walk can resolve a Use Cached Pose sitting inside one of its states.
+        TVector<CEdGraphNode*> CachedPoseNodes;
+        CEdGraphNode* CyclicCachedPoseNode = GraphAlgorithms::TopologicalSortFromRoots(Nodes, CachedPoseNodes, [](CEdGraphNode* Node)
+        {
+            return Cast<CAnimGraphNode_SaveCachedPose>(Node) != nullptr;
+        });
+
+        if (CyclicCachedPoseNode != nullptr)
+        {
+            EdNodeGraph::FError Error;
+            Error.Name        = "Cyclic";
+            Error.Description = "Cycle detected feeding a Save Cached Pose node! Graph must be acyclic.";
+            Error.Node        = CyclicCachedPoseNode;
+            Compiler.AddError(Error);
+            return false;
+        }
+
+        THashSet<CEdGraphNode*> EmittedNodes;
+        for (CEdGraphNode* Node : CachedPoseNodes)
+        {
+            if (CAnimGraphNode* AnimNode = Cast<CAnimGraphNode>(Node))
+            {
+                AnimNode->GenerateBytecode(Compiler);
+                EmittedNodes.insert(Node);
+            }
+        }
+
         // SortedNodes is dependency-ordered, so each node's input registers exist by the time it emits.
         for (uint32 i = 0; i < (uint32)SortedNodes.size(); ++i)
         {
             CEdGraphNode* Node = SortedNodes[i];
             Node->SetDebugExecutionOrder(i);
+
+            if (EmittedNodes.find(Node) != EmittedNodes.end())
+            {
+                continue;
+            }
 
             if (CAnimGraphNode* AnimNode = Cast<CAnimGraphNode>(Node))
             {
