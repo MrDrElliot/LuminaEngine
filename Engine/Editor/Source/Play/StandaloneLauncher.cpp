@@ -228,14 +228,15 @@ namespace Lumina
             return;
         }
 
-        if (HasGameBinaries())
-        {
-            LaunchOrReport(Options);
-            return;
-        }
-
+        // An existence check cannot tell a stale project module from a current one, and LBT is incremental.
         if (!Options.bBuildIfMissing)
         {
+            if (HasGameBinaries())
+            {
+                LaunchOrReport(Options);
+                return;
+            }
+
             const FString Command = GetBuildCommandLine();
             LOG_ERROR("Standalone: the project's Game binaries are missing. Run: {}", Command.c_str());
             ImGuiX::Notifications::NotifyError("Game binaries are missing. Run: {}", Command.c_str());

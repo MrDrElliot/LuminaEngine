@@ -40,16 +40,6 @@ int LuminaMain(int ArgC, char** ArgV)  // NOLINT(misc-use-internal-linkage)
     FCommandLine Parsed{ArgC, ArgV};
     GCommandLine = &Parsed;
 
-    LOG_WARN("ARGPROBE argc={}", ArgC);
-    for (int i = 0; i < ArgC; ++i)
-    {
-        LOG_WARN("ARGPROBE [{}] = '{}'", i, ArgV[i]);
-    }
-    for (const auto& Pair : Parsed.GetAll())
-    {
-        LOG_WARN("ARGPROBE parsed '{}' = '{}'", Pair.first.c_str(), Pair.second.c_str());
-    }
-
 #if LUMINA_MEMORY_TRACKING
     // Steady-state memory predates the profiler window, so naming it needs capture from allocation one.
     Memory::SetCaptureCallstacks(Parsed.Has("memcallstacks"));

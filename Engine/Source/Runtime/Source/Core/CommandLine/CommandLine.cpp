@@ -73,26 +73,32 @@ namespace Lumina
         }
     }
 
+    // Args is keyed by FName, and find is heterogeneous, so a raw string would be hashed as a string and miss.
+    static FName LookupKey(const FString& Name)
+    {
+        return FName(Detail::Normalize(Name));
+    }
+
     bool FCommandLine::Has(const FString& name) const
     {
-        return Args.find(Detail::Normalize(name)) != Args.end();
+        return Args.find(LookupKey(name)) != Args.end();
     }
 
     TOptional<FFixedString> FCommandLine::Get(const FString& Name) const
     {
-        auto it = Args.find(Detail::Normalize(Name));
+        auto it = Args.find(LookupKey(Name));
         return it != Args.end() ? TOptional(it->second) : NullOpt;
     }
 
     TOptional<int> FCommandLine::GetInt(const FString& name) const
     {
-        auto it = Args.find(Detail::Normalize(name));
+        auto it = Args.find(LookupKey(name));
         return it != Args.end() ? TOptional(std::stoi(it->second.c_str())) : NullOpt;
     }
 
     TOptional<bool> FCommandLine::GetBool(const FString& name) const
     {
-        auto it = Args.find(Detail::Normalize(name));
+        auto it = Args.find(LookupKey(name));
         if (it == Args.end())
         {
             return NullOpt;
