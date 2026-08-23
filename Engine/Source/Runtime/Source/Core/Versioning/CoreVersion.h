@@ -81,6 +81,9 @@ enum class ELuminaEngineVersion : uint32
 	// CAnimationGraph serializes the named pose snapshot slots its snapshot opcodes address.
 	ANIM_GRAPH_POSE_SNAPSHOTS,
 
+	// SEntityScriptComponent length-prefixes each script, so an unresolvable one is skipped, not fatal.
+	ENTITY_SCRIPT_LENGTH_PREFIX,
+
 	AUTOMATIC_VERSION_PLUS_ONE,
 	AUTOMATIC_VERSION = AUTOMATIC_VERSION_PLUS_ONE - 1
 };

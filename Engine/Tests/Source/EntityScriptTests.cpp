@@ -818,3 +818,83 @@ TEST(EntityScriptUnification, DetachAllInRegistrySurvivesAnOnDetachThatAttachesS
     EXPECT_FALSE(Registry.get<SEntityScriptComponent>(Context.Spawned).Scripts.empty())
         << "a script attached during the pass is outside the snapshot; the clear that follows drops it";
 }
+
+// One script class going missing used to end the record, taking its still-resolvable siblings with it.
+TEST(EntityScriptUnification, AnUnresolvableScriptClassSkipsOnlyItself)
+{
+    // ResolveClass goes through FindObject, so the class has to be registered before the read path runs.
+    ProcessNewlyLoadedCObjects();
+    CEntityScriptTest::StaticClass()->GetDefaultObject();
+
+    FEntityRegistry Registry{};
+    const entt::entity Entity = Registry.create();
+
+    CEntityScriptTest* First = AttachTestScript(Registry, Entity);
+    ASSERT_NE(First, nullptr);
+    First->Values.push_back(FName("KeptFirst"));
+
+    CEntityScriptTest* Second = AttachTestScript(Registry, Entity);
+    ASSERT_NE(Second, nullptr);
+    Second->Values.push_back(FName("KeptSecond"));
+
+    // A real two-script payload, so the bogus record below sits between two well-formed ones.
+    TVector<uint8> Good;
+    {
+        SEntityScriptComponent& Live = Registry.get<SEntityScriptComponent>(Entity);
+        FMemoryWriter Writer(Good);
+        FObjectProxyArchiver Ar(Writer, /*bLoadIfFindFails*/ false);
+        Live.Serialize(Ar);
+    }
+
+    // Rebuilt by hand, since nothing can write a class name that does not resolve.
+    TVector<uint8> Mixed;
+    {
+        FMemoryWriter Writer(Mixed);
+        FObjectProxyArchiver Ar(Writer, /*bLoadIfFindFails*/ false);
+
+        int32 Count = 3;
+        Ar << Count;
+
+        FName Missing("CScriptClassThatWasDeleted");
+        Ar << Missing;
+        int64 MissingSize = 8;
+        Ar << MissingSize;
+        int64 Filler = 0;
+        Ar << Filler;
+
+        // The two real scripts, appended verbatim after the count they were written with.
+        TVector<uint8> Tail;
+        {
+            SEntityScriptComponent& Live = Registry.get<SEntityScriptComponent>(Entity);
+            FMemoryWriter TailWriter(Tail);
+            FObjectProxyArchiver TailAr(TailWriter, /*bLoadIfFindFails*/ false);
+            int32 Ignored = 0;
+            TailAr << Ignored;
+            Live.Serialize(TailAr);
+        }
+        const size_t HeaderBytes = sizeof(int32) * 2;
+        ASSERT_GT(Tail.size(), HeaderBytes);
+        Ar.Serialize(Tail.data() + HeaderBytes, (int64)(Tail.size() - HeaderBytes));
+    }
+
+    SEntityScriptComponent Restored;
+    {
+        FMemoryReader Reader(Mixed);
+        FObjectProxyArchiver Ar(Reader, /*bLoadIfFindFails*/ true);
+        Restored.Serialize(Ar);
+    }
+
+    ASSERT_EQ(Restored.Scripts.size(), size_t(2)) << "the siblings of a missing class must survive it";
+
+    CEntityScriptTest* RestoredFirst  = Cast<CEntityScriptTest>(Restored.Scripts[0].Get());
+    CEntityScriptTest* RestoredSecond = Cast<CEntityScriptTest>(Restored.Scripts[1].Get());
+    ASSERT_NE(RestoredFirst, nullptr);
+    ASSERT_NE(RestoredSecond, nullptr);
+
+    ASSERT_EQ(RestoredFirst->Values.size(), size_t(1));
+    ASSERT_EQ(RestoredSecond->Values.size(), size_t(1));
+    EXPECT_EQ(RestoredFirst->Values[0], FName("KeptFirst")) << "skipping must not shift the next script";
+    EXPECT_EQ(RestoredSecond->Values[0], FName("KeptSecond"));
+
+    EntityScripts::DetachAll(Registry, Entity);
+}

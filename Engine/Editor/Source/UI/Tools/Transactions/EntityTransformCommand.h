@@ -48,9 +48,8 @@ namespace Lumina
         void Capture(TVector<FTransform>& Out) const;
         void Apply(const TVector<FTransform>& In) const;
 
-        // Validity-checked handle (not raw): a transaction can outlive a map swap, so Apply must not
-        // deref a freed world.
-        TObjectPtr<CWorld>      World;
+        // Weak, since a strong ref would keep a torn-down world alive and stop a stale undo from no-opping.
+        TWeakObjectPtr<CWorld>  World;
         TVector<entt::entity>   Entities;
         TVector<FTransform>     Before;
         TVector<FTransform>     After;

@@ -34,8 +34,8 @@ namespace Lumina
         void Capture(TVector<uint8>& Out) const;
         void Restore(const TVector<uint8>& In) const;
 
-        // Validity-checked handle (not raw): a transaction can outlive a map swap, so Restore must not deref a freed world.
-        TObjectPtr<CWorld> World;
+        // Weak, since a strong ref would keep a torn-down world alive and stop a stale undo from no-opping.
+        TWeakObjectPtr<CWorld> World;
         TVector<uint8>     Before;
         TVector<uint8>     After;
     };

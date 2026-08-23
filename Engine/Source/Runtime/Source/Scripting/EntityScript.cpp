@@ -88,7 +88,20 @@ namespace Lumina
                 }
                 FName ClassName = Script->GetClass()->GetName();
                 Ar << ClassName;
+
+                // Length-prefixed, so a reader that cannot resolve this class can skip exactly this script.
+                const int64 SizePos = Ar.Tell();
+                int64 ScriptSize = 0;
+                Ar << ScriptSize;
+
+                const int64 DataStart = Ar.Tell();
                 Script->GetClass()->SerializeTaggedProperties(Ar, Script);
+                const int64 DataEnd = Ar.Tell();
+
+                ScriptSize = DataEnd - DataStart;
+                Ar.Seek(SizePos);
+                Ar << ScriptSize;
+                Ar.Seek(DataEnd);
             }
             return true;
         }
@@ -98,29 +111,56 @@ namespace Lumina
             int32 Count = 0;
             Ar << Count;
 
+            // Older files have no per-script length, so an unresolvable class there still ends the record.
+            const bool bLengthPrefixed =
+                Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::ENTITY_SCRIPT_LENGTH_PREFIX;
+
             Scripts.clear();
             for (int32 Index = 0; Index < Count; ++Index)
             {
                 FName ClassName;
                 Ar << ClassName;
 
-                // Resolved through the redirect registry, since an alias is what carries a renamed class across.
-                CClass* ScriptClass = FScriptableRegistry::ResolveClass(ClassName);
-                if (ScriptClass == nullptr || !ScriptClass->IsChildOf(CEntityScript::StaticClass()))
+                int64 ScriptSize = 0;
+                int64 DataStart  = 0;
+                if (bLengthPrefixed)
                 {
-                    LOG_WARN("SEntityScriptComponent: script class '{}' no longer exists; the rest of this "
-                             "component's scripts were dropped.", ClassName.c_str());
-                    break;
+                    Ar << ScriptSize;
+                    DataStart = Ar.Tell();
                 }
 
-                CObject* Created = NewObject(ScriptClass, nullptr, NAME_None, FGuid::New(), OF_Transient);
-                CEntityScript* Script = static_cast<CEntityScript*>(Created);
+                // Resolved through the redirect registry, since an alias is what carries a renamed class across.
+                CClass* ScriptClass = FScriptableRegistry::ResolveClass(ClassName);
+                CEntityScript* Script = nullptr;
+                if (ScriptClass != nullptr && ScriptClass->IsChildOf(CEntityScript::StaticClass()))
+                {
+                    Script = static_cast<CEntityScript*>(
+                        NewObject(ScriptClass, nullptr, NAME_None, FGuid::New(), OF_Transient));
+                }
+
                 if (Script == nullptr)
                 {
-                    break;
+                    if (!bLengthPrefixed)
+                    {
+                        LOG_WARN("SEntityScriptComponent: script class '{}' no longer exists; the rest of this "
+                                 "component's scripts were dropped.", ClassName.c_str());
+                        break;
+                    }
+
+                    LOG_WARN("SEntityScriptComponent: script class '{}' no longer exists; skipping it and "
+                             "keeping this entity's other scripts.", ClassName.c_str());
+                    Ar.Seek(DataStart + ScriptSize);
+                    continue;
                 }
 
                 ScriptClass->SerializeTaggedProperties(Ar, Script);
+
+                // Trusted over wherever the property reader stopped, so drift cannot shift the next script.
+                if (bLengthPrefixed)
+                {
+                    Ar.Seek(DataStart + ScriptSize);
+                }
+
                 Scripts.push_back(Script);
             }
             return true;

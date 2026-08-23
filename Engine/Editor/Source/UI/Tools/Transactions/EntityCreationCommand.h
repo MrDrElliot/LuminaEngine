@@ -43,8 +43,8 @@ namespace Lumina
 
         void CaptureLiveEntities(TVector<entt::entity>& Out) const;
 
-        // Validity-checked handle (not raw): a transaction can outlive a map swap.
-        TObjectPtr<CWorld>      World;
+        // Weak, since a strong ref would keep a torn-down world alive and stop a stale undo from no-opping.
+        TWeakObjectPtr<CWorld>  World;
 
         // Sorted live handles at the moment the transaction opened.
         TVector<entt::entity>   LiveBefore;

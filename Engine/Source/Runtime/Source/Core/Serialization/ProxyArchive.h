@@ -10,6 +10,9 @@ namespace Lumina
         FProxyArchive(FArchive& InInnerAr)
             :InnerArchive(InInnerAr)
         {
+            // Inherited, or a proxy over a loaded package reads as the current engine version and misparses.
+            SetFileVersion(InInnerAr.GetFileVersion());
+
             if (InInnerAr.IsReading())
             {
                 SetFlag(EArchiverFlags::Reading);
