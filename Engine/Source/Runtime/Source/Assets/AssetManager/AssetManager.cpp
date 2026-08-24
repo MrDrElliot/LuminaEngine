@@ -5,6 +5,7 @@
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/Package/Package.h"
+#include "Core/Profiler/AssetLoadTracker.h"
 #include "Log/Log.h"
 
 namespace Lumina
@@ -13,6 +14,22 @@ namespace Lumina
     {
         static FAssetManager Instance;
         return Instance;
+    }
+
+    void FAssetManager::RecordRequest(const FFixedString& Path, double DurationMs, EAssetLoadOutcome Outcome)
+    {
+#if USING(WITH_EDITOR)
+        FAssetLoadRecord Entry;
+        Entry.Name        = FName(Path.c_str());
+        Entry.Source      = EAssetLoadSource::Request;
+        Entry.Outcome     = Outcome;
+        Entry.DurationMs  = DurationMs;
+        Entry.CompletedAt = PlatformTime::Seconds();
+        Entry.ThreadId    = (uint32)Threading::GetThreadID();
+        FAssetLoadTracker::Get().Record(Entry);
+#else
+        (void)Path; (void)DurationMs; (void)Outcome;
+#endif
     }
 
     FAssetHandle FAssetManager::AcquireLoad(const FGuid& GUID, TPromise<CObject*>& OutPromise, bool& bShouldLoad)
@@ -35,11 +52,18 @@ namespace Lumina
 
     void FAssetManager::PerformLoad(const FFixedString& Path, const FGuid& GUID, TPromise<CObject*> Promise)
     {
+        const uint64 Start = PlatformTime::Cycles();
+
         CObject* Object = nullptr;
         if (CPackage* Package = CPackage::LoadPackage(Path))
         {
             Object = Package->LoadObject(GUID);
         }
+
+        // Timed around LoadObject as well, so a request reports what the caller waited for rather than
+        // only the package read underneath it.
+        RecordRequest(Path, PlatformTime::ToMilliseconds(PlatformTime::Cycles() - Start),
+            Object != nullptr ? EAssetLoadOutcome::Loaded : EAssetLoadOutcome::Failed);
 
         Promise.SetValue(Object);
 
@@ -68,19 +92,26 @@ namespace Lumina
 
     CObject* FAssetManager::LoadAssetSynchronous(const FFixedString& PackagePath, const FGuid& RequestedAsset)
     {
+        const uint64 Start = PlatformTime::Cycles();
+
         TPromise<CObject*> Promise;
         bool bShouldLoad = false;
         FAssetHandle Handle = AcquireLoad(RequestedAsset, Promise, bShouldLoad);
 
         if (bShouldLoad)
         {
-            // The handle is fulfilled immediately, so this avoids a scheduling hop just to wait.
+            // PerformLoad records this request; the handle is fulfilled immediately, so no scheduling hop.
             PerformLoad(PackagePath, RequestedAsset, Move(Promise));
             return Handle.Get();
         }
 
         // An async load for this asset is already in flight.
-        return FindObject<CObject>(RequestedAsset);
+        CObject* Object = FindObject<CObject>(RequestedAsset);
+
+        RecordRequest(PackagePath, PlatformTime::ToMilliseconds(PlatformTime::Cycles() - Start),
+            Object != nullptr ? EAssetLoadOutcome::Joined : EAssetLoadOutcome::Failed);
+
+        return Object;
     }
 
     void FAssetManager::FlushAsyncLoading()

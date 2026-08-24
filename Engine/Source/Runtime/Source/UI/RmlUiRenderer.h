@@ -60,7 +60,22 @@ namespace Lumina
         void                        EnableScissorRegion(bool bEnable) override;
         void                        SetScissorRegion(Rml::Rectanglei Region) override;
 
+        void                        EnableClipMask(bool bEnable) override;
+        void                        RenderToClipMask(Rml::ClipMaskOperation Operation, Rml::CompiledGeometryHandle Geometry,
+                                                     Rml::Vector2f Translation) override;
+
         void                        SetTransform(const Rml::Matrix4f* Transform) override;
+
+        Rml::LayerHandle            PushLayer() override;
+        void                        CompositeLayers(Rml::LayerHandle Source, Rml::LayerHandle Destination, Rml::BlendMode BlendMode,
+                                                    Rml::Span<const Rml::CompiledFilterHandle> Filters) override;
+        void                        PopLayer() override;
+
+        Rml::TextureHandle          SaveLayerAsTexture() override;
+        Rml::CompiledFilterHandle   SaveLayerAsMaskImage() override;
+
+        Rml::CompiledFilterHandle   CompileFilter(const Rml::String& Name, const Rml::Dictionary& Parameters) override;
+        void                        ReleaseFilter(Rml::CompiledFilterHandle Filter) override;
 
         Rml::CompiledShaderHandle   CompileShader(const Rml::String& Name, const Rml::Dictionary& Parameters) override;
         void                        RenderShader(Rml::CompiledShaderHandle Shader, Rml::CompiledGeometryHandle Geometry,
@@ -68,6 +83,10 @@ namespace Lumina
         void                        ReleaseShader(Rml::CompiledShaderHandle Shader) override;
 
     private:
+        // Count in the low 8 bits, first PendingClipMasks index above them. Zero means unclipped.
+        static constexpr uint32 kMaxClipMasksPerDraw = 8;
+        static constexpr uint32 kNoLayer    = 0xFFFFFFFFu;
+
         // RmlUi compiles geometry once per element; we cache the CPU bytes and concatenate them at EndFrame
         // into the target's resident VB/IB (rebuilt only on draw-list change).
         struct FGeometry
@@ -102,6 +121,7 @@ namespace Lumina
             Rml::CompiledGeometryHandle Geometry = 0;
             Rml::TextureHandle          Texture = 0;
             Rml::CompiledShaderHandle   Shader = 0;   // gradient decorator; 0 = plain textured draw
+            uint32                      ClipMaskRange = 0;
             FVector2                    Translation = {0.0f, 0.0f};
             FMatrix4                    MVP = FMatrix4(1.0f);
             bool                        bScissorEnabled = false;
@@ -117,7 +137,8 @@ namespace Lumina
             float  Translation[2];
             float  MVP[16];
             int32  Scissor[4];
-            uint64 bScissorEnabled;
+            uint32 bScissorEnabled;
+            uint32 ClipMaskRange;
         };
         static_assert(sizeof(FDrawKey) == 120, "FDrawKey must stay padding-free");
 
@@ -145,7 +166,16 @@ namespace Lumina
             uint32   StopCount;
             uint32   bRepeating;
             float    ShaderScale;
-            uint32   Pad0;
+            uint32   ClipMaskRange;
+        };
+
+
+        // Matches RmlUiCommon.slang::FUiClipMask.
+        struct FUiClipMask
+        {
+            FVector4 Rect;    // center.xy, half-extent.zw in document space
+            FVector4 Radii;   // top-left, top-right, bottom-right, bottom-left
+            FVector4 Params;  // .x nonzero keeps the area outside the shape instead of inside
         };
 
         // Matches RmlUiCommon.slang::FUiColorStop.
@@ -176,6 +206,13 @@ namespace Lumina
             uint64            IndexCapacity = 0;
             TVector<FUiDraw>      Draws;        // cached per-draw data; re-uploaded to transient each draw
             TVector<FUiColorStop> Stops;        // cached gradient stops, indexed by FUiDraw::StopOffset
+            TVector<FUiClipMask>  ClipMasks;    // cached rounded-rect clips, ranged by FUiDraw::ClipMaskRange
+            TVector<uint32>       DrawFirstIndex;  // per draw call, so layer ops can split the batch
+            TVector<uint32>       DrawIndexCount;
+
+            // RmlUi handles rather than heap slots. A slot baked into a cached batch goes stale the
+            // moment its texture is released, and the heap answers a dead slot with magenta.
+            TVector<Rml::TextureHandle> DrawTextures;
             uint32            IndexCount = 0;
             uint64            LastHash = 0;
             uint32            StableFrames = 0;  // consecutive frames the draw list was unchanged (drives dormancy)
@@ -183,15 +220,99 @@ namespace Lumina
             bool              bValid = false;
         };
 
+        // A pooled full-size render target. Layer 0 is the frame's own target and is never pooled.
+        struct FLayer
+        {
+            RHI::FManagedTexture Color;
+            uint32               SampledSlot = RHI::kInvalidHeapSlot;
+            FUIntVector2         Size = {0, 0};
+            uint64               LastUsedFrame = 0;
+        };
+
+        enum class EFilterKind : uint32
+        {
+            None = 0,
+            ColorMatrix,   // brightness, contrast, invert, grayscale, sepia, hue-rotate, saturate
+            Opacity,       // scales the whole premultiplied color
+            Blur,
+            DropShadow,
+            MaskImage,
+        };
+
+        struct FFilter
+        {
+            EFilterKind Kind = EFilterKind::None;
+            FMatrix4    ColorMatrix = FMatrix4(1.0f);
+            float       Opacity = 1.0f;
+            float       Sigma = 0.0f;
+            FVector2    Offset = {0.0f, 0.0f};
+            FVector4    Color = FVector4(0.0f);
+            uint32      MaskLayer = kNoLayer;   // MaskImage only, an index into OwnedLayers
+        };
+
+        enum class ELayerOp : uint8
+        {
+            Push,
+            Composite,
+            Pop,
+            SaveTexture,
+            SaveMaskImage,
+        };
+
+        // Replayed at EndFrame, so the op records how many draws preceded it and the batch splits there.
+        struct FLayerCommand
+        {
+            ELayerOp           Op = ELayerOp::Push;
+            uint32             DrawsBefore = 0;
+            uint32             Source = 0;
+            uint32             Destination = 0;
+            bool               bReplace = false;      // Composite with BlendMode::Replace
+            uint32             FilterOffset = 0;
+            uint32             FilterCount = 0;
+            uint32             TargetLayer = kNoLayer;
+            bool               bScissorEnabled = false;
+            Rml::Rectanglei    Scissor;
+            uint32             ClipMaskRange = 0;
+            RHI::FTextureH     DestTexture = {};
+            FUIntVector2       DestSize = {0, 0};
+            FVector4           SourceRect = FVector4(1.0f, 1.0f, 0.0f, 0.0f);
+            Rml::TextureHandle SavedTexture = 0;
+        };
+
         RHI::FPipelineH             GetPipelineForFormat(EFormat Format);
+        RHI::FPipelineH             GetFilterPipeline(EFormat Format, bool bBlend);
         RHI::FPipelineH             GetBrushPipeline(FShaderH VS, FShaderH PS);
+
+        uint32                      AcquireLayer();
+        void                        ReleaseLayerToPool(uint32 LayerIndex);
+        void                        ReleaseAllLayers();
+        void                        EvictStaleLayers();
+        void                        OpenPass(RHI::FCmdListH CL, RHI::FTextureH Target, bool bClear);
+        void                        OpenPassSized(RHI::FCmdListH CL, RHI::FTextureH Target, bool bClear, const FUIntVector2& Extent);
+        void                        ClearLayer(RHI::FCmdListH CL, uint32 LayerIndex);
+        void                        RunFilterPass(RHI::FCmdListH CL, uint32 SourceLayer, uint32 DestLayer, struct FUiFilterArgs Args, bool bBlend);
+        void                        CopyLayer(RHI::FCmdListH CL, uint32 SourceLayer, uint32 DestLayer, bool bBlend);
+        void                        BlitTargetToLayer(RHI::FCmdListH CL, uint32 DestLayer);
+        void                        CopyLayerToTexture(RHI::FCmdListH CL, uint32 SourceLayer, RHI::FTextureH Dest,
+                                                       const FUIntVector2& DestSize, const FVector4& SourceRect);
+        void                        ApplyBlur(RHI::FCmdListH CL, uint32 InOut, uint32 Scratch, float Sigma);
+        void                        ApplyFilters(RHI::FCmdListH CL, uint32& Primary, uint32 Scratch, uint32 FilterOffset, uint32 FilterCount);
+        void                        ReplayFrame(RHI::FCmdListH CL, const FTargetBatch& Batch, RHI::FPipelineH TargetPipeline, RHI::GPUPtr ArgsPtr);
+
+        uint32                      ResolveLayerHandle(Rml::LayerHandle Handle) const;
+        uint32                      CurrentLayerIndex() const;
+        RHI::FTextureH              LayerTexture(uint32 LayerIndex) const;
+        uint32                      LayerSlot(uint32 LayerIndex) const;
         uint64                      ComputeDrawCallHash() const;
+        void                        ResolveBatchTextures(FTargetBatch& Batch) const;
+        static bool                 InferRoundedRect(const FGeometry& Geom, FVector2 Translation, FUiClipMask& Out);
         void                        EnsureBatchBuffers(FTargetBatch& Batch, uint64 VertexBytes, uint64 IndexBytes);
         void                        EvictStaleBatches();
         void                        ResetFrameState();   // clears the pending draw list + current frame target/cmdlist
         Rml::TextureHandle          RegisterTexturePending(TVector<uint8>&& Bytes, int Width, int Height);
         Rml::TextureHandle          LoadMaterialBrush(Rml::Vector2i& OutDimensions, class CMaterialInterface* Material, const FStringView& SourcePath, uint32 Width, uint32 Height);
         Rml::TextureHandle          LoadTextureAsset(Rml::Vector2i& OutDimensions, class CTexture* Texture);
+        void                        ReleaseTextureNow(Rml::TextureHandle Texture);
         void                        UploadPendingTextures();
         void                        RenderMaterialBrushes();
         void                        RevalidateBrushes(RHI::FCmdListH CmdList);
@@ -220,8 +341,26 @@ namespace Lumina
         uint64                      FrameCounter = 0;
         uint64                      LastEvictFrame = 0;
 
+        // FrameCounter counts BeginFrame calls, one per UI target, so several land in one engine frame.
+        // Resource lifetimes have to be measured against engine frames, which is what the GPU retires.
+        uint64                      EngineFrameCounter = 0;
+        uint32                      LastRenderFrameSlot = 0xFFFFFFFFu;
+
         TVector<FPendingTexture>    PendingTextureUploads;
         TVector<FDrawCall>          DrawCalls;
+
+        // Resources RmlUi frees mid-frame, held until the deferred draws referencing them are built.
+        TVector<Rml::CompiledGeometryHandle> DeferredGeometryReleases;
+        TVector<Rml::CompiledFilterHandle>   DeferredFilterReleases;
+        TVector<Rml::CompiledShaderHandle>   DeferredShaderReleases;
+        // Releasing a texture unbinds its heap slot immediately, so a handle has to outlive every
+        // frame still in flight that might sample it, not just the frame that dropped it.
+        struct FRetiredTexture
+        {
+            Rml::TextureHandle Handle = 0;
+            uint64             Frame = 0;
+        };
+        TVector<FRetiredTexture>             DeferredTextureReleases;
 
         // Reused across frames so the dormancy hash does not allocate on an idle widget.
         mutable TVector<FDrawKey>   HashKeyScratch;
@@ -233,6 +372,37 @@ namespace Lumina
         TVector<uint32>             BatchIndices;
         TVector<FUiDraw>            BatchDrawData;
         TVector<FUiColorStop>       BatchStops;
+        TVector<Rml::TextureHandle> BatchDrawTextures;
+
+        // Rounded-rect clip masks recorded during Context::Render; FDrawCall::ClipMaskRange spans this.
+        TVector<FUiClipMask>        PendingClipMasks;
+        uint32                      ActiveClipOffset = 0;
+        uint32                      ActiveClipCount = 0;
+
+        // Layers owned this frame; kNoLayer stands for the frame's own target, RmlUi's layer zero.
+        TVector<FLayer>             OwnedLayers;
+        TVector<uint32>             LayerStack;
+        TVector<uint32>             FreeLayers;      // pooled across frames, matched to a target by extent
+
+
+        TVector<FLayerCommand>      LayerCommands;
+        TVector<uint32>             PendingFilterRefs;   // flattened filter lists, indexed by FLayerCommand
+        THashMap<Rml::CompiledFilterHandle, FFilter>  Filters;
+        Rml::CompiledFilterHandle   NextFilterHandle = 1;
+
+        // Index range each recorded draw occupies in the batch, so a layer op can split the draw.
+        TVector<uint32>             DrawIndexOffsets;
+        TVector<uint32>             DrawIndexCounts;
+
+        THashMap<uint64, RHI::FPipelineH> FilterPipelines;
+
+        // Composites honor the clip region RmlUi set when the op was recorded, not the frame extent.
+        RHI::FRect                  PassScissor = {};
+        bool                        bPassScissorSet = false;
+
+        uint32                      PassClipMaskRange = 0;
+        FVector2                    PassClipScale = {1.0f, 1.0f};
+        RHI::GPUPtr                 PassClipMasksPtr = 0;
 
         RHI::FCmdListH              CurrentCmdList = {};
         RHI::FTextureH              CurrentTarget = {};

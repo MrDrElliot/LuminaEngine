@@ -1,5 +1,6 @@
 #include "RuntimePCH.h"
 #include "RHICore.h"
+#include "GPUProfiler.h"
 #include "Log/Log.h"
 #include "Containers/Function.h"
 
@@ -167,6 +168,10 @@ namespace Lumina::RHI::Core
         }
 
         WaitDeviceIdle();
+
+#if defined(LUMINA_WITH_GPU_PROFILING)
+        FGPUProfiler::Get().Shutdown();
+#endif
 
         Upload::Shutdown();
         Textures::Shutdown();
@@ -453,6 +458,11 @@ namespace Lumina::RHI::Core
         
         DrainRetireQueue(Slot);
         RHI::RetireSlot(Slot);
+
+#if defined(LUMINA_WITH_GPU_PROFILING)
+        // After the slot wait, so last cycle's timestamps in this pool are guaranteed readable.
+        FGPUProfiler::Get().BeginFrame(Slot);
+#endif
 
         
         FShaderLibrary::FlushPendingReleases();

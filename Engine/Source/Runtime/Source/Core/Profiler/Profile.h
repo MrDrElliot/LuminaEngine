@@ -8,6 +8,10 @@
 #define LUMINA_PROFILE_FRAME(x)                     FrameMark
 #define LUMINA_PROFILE_SECTION(x)                   ZoneScopedN(x)
 #define LUMINA_PROFILE_SECTION_COLORED(x, c)        ZoneScopedNC(x, c)
+// Caller attribution costs a stack walk per hit, so it is opt-in at the few sites that need it.
+#define LUMINA_PROFILE_SCOPE_CALLSTACK(Depth)       ZoneScopedS(Depth)
+#define LUMINA_PROFILE_SECTION_CALLSTACK(x, Depth)  ZoneScopedNS(x, Depth)
+
 #define LUMINA_PROFILE_TAG(x)                       ZoneText(x, strlen(x))
 #define LUMINA_PROFILE_LOG(text, size)              TracyMessage(text, size)
 #define LUMINA_PROFILE_VALUE(text, value)           TracyPlot(text, value)

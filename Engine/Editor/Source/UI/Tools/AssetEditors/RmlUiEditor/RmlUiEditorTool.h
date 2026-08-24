@@ -250,6 +250,9 @@ namespace Lumina
         // small canvases. The slider becomes a manual override when this is off.
         bool                        bAutoDpi = true;
         float                       PreviewDpiScale = 1.5f;
+        bool  bPreviewHovered = false;
+        bool  bPreviewLeftDown = false;
+        bool  bPreviewRightDown = false;
         float                       ViewZoom = 1.0f;          // pan/zoom over the canvas
         ImVec2                      ViewPan{0.0f, 0.0f};
 

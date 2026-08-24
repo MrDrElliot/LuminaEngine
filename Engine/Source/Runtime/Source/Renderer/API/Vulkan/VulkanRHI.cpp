@@ -14,6 +14,7 @@
 #include "Memory/Allocators/Allocator.h"
 #include "Renderer/PresentMode.h"
 #include "Renderer/RHI.h"
+#include "Renderer/GPUProfiler.h"
 #include "Renderer/RHICore.h"
 #include "Renderer/API/Vulkan/VulkanMacros.h"
 #include "Renderer/RHINative.h"
@@ -524,6 +525,14 @@ namespace Lumina::RHI
         void*        Window  = nullptr;   // GLFWwindow*
     };
 
+#if defined(LUMINA_WITH_GPU_PROFILING)
+    struct FQueryPool
+    {
+        VkQueryPool Pool     = VK_NULL_HANDLE;
+        uint32      Capacity = 0;
+    };
+#endif
+
     struct FSwapchain
     {
         VkSurfaceKHR            Surface;
@@ -554,6 +563,7 @@ namespace Lumina::RHI
         // Non-zero when the mesh stage must be pinned at pipeline creation, see the shuffle note.
         uint32                          MeshRequiredSubgroupSize = 0;
         bool                            bPipelineStats = false;
+        bool                            bTimestampsSupported = false;
         TUniquePtr<FVulkanCrashTracker> CrashTracker;
         FGpuBreadcrumbs                 Breadcrumbs;
 
@@ -616,6 +626,9 @@ namespace Lumina::RHI
         TSegmentMap<FDepthStencilState> DepthStates;
         TSegmentMap<FSwapchain>         Swapchains;
         TSegmentMap<FSurface>           Surfaces;
+#if defined(LUMINA_WITH_GPU_PROFILING)
+        TSegmentMap<FQueryPool>         QueryPools;
+#endif
 
         TArray<TVector<FCmdListH>, 3>   FreeCommandLists;
         
@@ -1837,6 +1850,11 @@ namespace Lumina::RHI
             Chain(PipelineStatsFeatures);
             GDevice->bPipelineStats = true;
         }
+
+#if defined(LUMINA_WITH_GPU_PROFILING)
+        // A zero period means the device cannot timestamp at all, whatever the queues report.
+        GDevice->bTimestampsSupported = GDevice->Properties.limits.timestampPeriod > 0.0f;
+#endif
 
         VkDeviceDiagnosticsConfigCreateInfoNV* NvDiagnostics = nullptr;
         if (bNvDiagnostics)
@@ -3231,6 +3249,133 @@ namespace Lumina::RHI
 
         return GDevice->Pipelines.Emplace(VulkanPipeline, VK_PIPELINE_BIND_POINT_GRAPHICS);
     }
+
+#if defined(LUMINA_WITH_GPU_PROFILING)
+
+    // Shared with the barrier helpers below, so a timestamp never names a stage its queue cannot report.
+    static EStageFlags ClampStagesToQueue(EStageFlags Stages, EQueueType Queue);
+
+    // Relaxed, since arming is a coarse mode change rather than a handshake with the recording thread.
+    static TAtomic<bool> GTimestampCollection{false};
+
+    bool SupportsTimestamps()
+    {
+        return GDevice != nullptr && GDevice->bTimestampsSupported;
+    }
+
+    double GetTimestampPeriodNs()
+    {
+        return SupportsTimestamps() ? (double)GDevice->Properties.limits.timestampPeriod : 0.0;
+    }
+
+    void SetTimestampCollection(bool bEnabled)
+    {
+        GTimestampCollection.store(bEnabled, std::memory_order_relaxed);
+    }
+
+    bool IsTimestampCollectionEnabled()
+    {
+        return GTimestampCollection.load(std::memory_order_relaxed);
+    }
+
+    FQueryPoolH CreateTimestampPool(uint32 Capacity)
+    {
+        if (!SupportsTimestamps() || Capacity == 0)
+        {
+            return {};
+        }
+
+        VkQueryPoolCreateInfo Info
+        {
+            .sType      = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
+            .pNext      = nullptr,
+            .flags      = 0,
+            .queryType  = VK_QUERY_TYPE_TIMESTAMP,
+            .queryCount = Capacity,
+            .pipelineStatistics = 0,
+        };
+
+        VkQueryPool Pool = VK_NULL_HANDLE;
+        VK_CHECK(vkCreateQueryPool(*GDevice, &Info, nullptr, &Pool));
+
+        return GDevice->QueryPools.Emplace(FQueryPool{ Pool, Capacity });
+    }
+
+    void FreeH(FQueryPoolH Pool)
+    {
+        if (GDevice == nullptr || !IsValid(Pool))
+        {
+            return;
+        }
+
+        FQueryPool& Query = GDevice->QueryPools[Pool];
+        if (Query.Pool != VK_NULL_HANDLE)
+        {
+            vkDestroyQueryPool(*GDevice, Query.Pool, nullptr);
+        }
+        GDevice->QueryPools.Erase(Pool);
+    }
+
+    // Clamped rather than asserted, so a profiler that outgrows its pool loses tail samples instead of the frame.
+    void CmdResetTimestamps(FCmdListH CL, FQueryPoolH Pool, uint32 First, uint32 Count)
+    {
+        if (!IsTimestampCollectionEnabled() || !IsValid(Pool))
+        {
+            return;
+        }
+
+        const FQueryPool& Query = GDevice->QueryPools[Pool];
+        if (Query.Pool == VK_NULL_HANDLE || First >= Query.Capacity)
+        {
+            return;
+        }
+
+        const uint32 Clamped = Math::Min(Count, Query.Capacity - First);
+        if (Clamped > 0)
+        {
+            vkCmdResetQueryPool(GDevice->CommandLists[CL].CommandBuffer, Query.Pool, First, Clamped);
+        }
+    }
+
+    void CmdWriteTimestamp(FCmdListH CL, FQueryPoolH Pool, uint32 Index, EStageFlags Stage)
+    {
+        if (!IsTimestampCollectionEnabled() || !IsValid(Pool))
+        {
+            return;
+        }
+
+        const FQueryPool& Query = GDevice->QueryPools[Pool];
+        if (Query.Pool == VK_NULL_HANDLE || Index >= Query.Capacity)
+        {
+            return;
+        }
+
+        FCommandList& List = GDevice->CommandLists[CL];
+        const VkPipelineStageFlags2 VkStage = ToVkPipelineState(ClampStagesToQueue(Stage, List.Queue));
+        vkCmdWriteTimestamp2(List.CommandBuffer, VkStage, Query.Pool, Index);
+    }
+
+    // No WAIT bit, so an unfinished frame reports not-ready instead of stalling the caller.
+    bool ReadTimestamps(FQueryPoolH Pool, uint32 First, uint32 Count, TSpan<uint64> OutTicks)
+    {
+        if (!IsValid(Pool) || Count == 0 || OutTicks.size() < Count)
+        {
+            return false;
+        }
+
+        const FQueryPool& Query = GDevice->QueryPools[Pool];
+        if (Query.Pool == VK_NULL_HANDLE || First >= Query.Capacity || First + Count > Query.Capacity)
+        {
+            return false;
+        }
+
+        const VkResult Result = vkGetQueryPoolResults(*GDevice, Query.Pool, First, Count,
+            Count * sizeof(uint64), OutTicks.data(), sizeof(uint64), VK_QUERY_RESULT_64_BIT);
+
+        return Result == VK_SUCCESS;
+    }
+
+#endif
 
     bool GetPipelineStatistics(FPipelineH Pipeline, TVector<FPipelineStat>& Out)
     {
@@ -6006,6 +6151,10 @@ namespace Lumina::RHI
             vkCmdBeginDebugUtilsLabelEXT(List.CommandBuffer, &Label);
         }
 
+#if defined(LUMINA_WITH_GPU_PROFILING)
+        FGPUProfiler::Get().BeginScope(CL, Name);
+#endif
+
 #if defined(TRACY_ENABLE)
         tracy::VkCtx* ZoneContext = GTracyGPUContexts[(uint32)List.Queue];
         if (ZoneContext != nullptr && List.GPUZoneDepth < kMaxGPUZoneDepth)
@@ -6021,6 +6170,10 @@ namespace Lumina::RHI
     void CmdEndMarker(FCmdListH CL)
     {
         FCommandList& List = GDevice->CommandLists[CL];
+
+#if defined(LUMINA_WITH_GPU_PROFILING)
+        FGPUProfiler::Get().EndScope(CL);
+#endif
 
         if (List.BreadcrumbDepth > 0)
         {

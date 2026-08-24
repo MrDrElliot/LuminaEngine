@@ -205,6 +205,7 @@ namespace Lumina
     
     using FMatrix2 = TMat<float, 2, 2>;
     using FMatrix3 = TMat<float, 3, 3>;
+    REFLECT(NoCSharp, CSharpValueMirror)
     using FMatrix4 = TMat<float, 4, 4>;
     using FMatrix  = FMatrix4;
 

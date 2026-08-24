@@ -17,7 +17,6 @@
 #include "Audio/AudioGlobals.h"
 #include "Core/Delegates/CoreDelegates.h"
 #include "Core/Engine/Engine.h"
-#include "Core/Profiler/CPUProfiler.h"
 #include "Memory/MemoryTracking.h"
 #include "TaskSystem/TaskSystem.h"
 #include "Core/Object/Class.h"
@@ -503,38 +502,12 @@ namespace Lumina
 
         FCoreDelegates::PostWorldUnload.Broadcast();
     }
-    
-    static const char* StageName(EUpdateStage Stage)
-    {
-        switch (Stage)
-        {
-        case EUpdateStage::FrameStart:    return "FrameStart";
-        case EUpdateStage::PrePhysics:    return "PrePhysics";
-        case EUpdateStage::DuringPhysics: return "DuringPhysics";
-        case EUpdateStage::PostPhysics:   return "PostPhysics";
-        case EUpdateStage::FrameEnd:      return "FrameEnd";
-        case EUpdateStage::Paused:        return "Paused";
-        default:                          return "Unknown";
-        }
-    }
 
     void CWorld::Update(const FUpdateContext& Context)
     {
         LUMINA_PROFILE_SCOPE();
 
         const EUpdateStage Stage = Context.GetUpdateStage();
-
-        FCPUProfiler::Get().PushWorldTarget(this);
-        
-        struct FPopGuard
-        {
-            ~FPopGuard()
-            {
-                FCPUProfiler::Get().PopTarget();
-            }
-        } PopGuard;
-
-        CPU_PROFILE_SCOPE(StageName(Stage));
 
         // Applied between frames, so a mid-frame toggle never lands inside a running batch.
         ApplyPendingSystemChanges();
@@ -562,10 +535,7 @@ namespace Lumina
         SystemContext.UpdateStage   = Stage;
 
         // Deferred timers run inside TickSystems now, still before gameplay systems.
-        {
-            CPU_PROFILE_SCOPE("Systems");
-            TickSystems(SystemContext);
-        }
+        TickSystems(SystemContext);
     }
 
     Physics::IPhysicsScene* CWorld::EnsurePhysicsScene()
@@ -590,7 +560,6 @@ namespace Lumina
             return;
         }
 
-        CPU_PROFILE_SCOPE_COLOR("Physics", FColor(0.20f, 0.75f, 0.90f));
         PhysicsScene->Update(DeltaTime);
     }
 
@@ -2174,6 +2143,8 @@ namespace Lumina
 
     void CWorld::TickSystems(FSystemContext& Context)
     {
+        LUMINA_PROFILE_SCOPE();
+
         TVector<FStageSlot>& Systems = SystemUpdateList[(uint32)Context.GetUpdateStage()];
         
         auto RunOne = [&](FStageSlot& S)

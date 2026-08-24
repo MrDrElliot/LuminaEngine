@@ -1,6 +1,7 @@
 ﻿#include "Platform/Time/PlatformTime.h"
 #include "RuntimePCH.h"
 #include "Package.h"
+#include "Core/Profiler/AssetLoadTracker.h"
 #include <utility>
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Core/Object/Class.h"
@@ -865,6 +866,8 @@ namespace Lumina
             }
         }
         
+        const uint64 RequestStart = PlatformTime::Cycles();
+
         ELoadState Expected = ELoadState::Unloaded;
         bool bIsLoaderThread = Package->LoadState.compare_exchange_strong(
             Expected, 
@@ -874,7 +877,10 @@ namespace Lumina
         
         if (!bIsLoaderThread)
         {
-            if (Expected == ELoadState::Loading)
+            // Distinguished before the spin, since an already-loaded package never enters it.
+            const bool bJoinedInFlight = Expected == ELoadState::Loading;
+
+            if (bJoinedInFlight)
             {
                 ELoadState State;
                 while ((State = Package->LoadState.load(std::memory_order_acquire)) == ELoadState::Loading)
@@ -883,13 +889,26 @@ namespace Lumina
                 }
                 Expected = State;
             }
-        
+
+#if USING(WITH_EDITOR)
+            FAssetLoadRecord Entry;
+            Entry.Name        = Package->GetName();
+            Entry.Source      = EAssetLoadSource::Package;
+            Entry.DurationMs  = PlatformTime::ToMilliseconds(PlatformTime::Cycles() - RequestStart);
+            Entry.CompletedAt = PlatformTime::Seconds();
+            Entry.ThreadId    = (uint32)Threading::GetThreadID();
+            Entry.Outcome     = (Expected != ELoadState::Loaded) ? EAssetLoadOutcome::Failed
+                              : bJoinedInFlight ? EAssetLoadOutcome::Joined
+                              : EAssetLoadOutcome::AlreadyResident;
+            FAssetLoadTracker::Get().Record(Entry);
+#endif
+
             return (Expected == ELoadState::Loaded) ? Package : nullptr;
         }
         
         
         bool bSuccess = false;
-        const uint64 Start = PlatformTime::Cycles();
+        const uint64 Start = RequestStart;
 
         TVector<uint8> FileBinary;
         FBulkRegion    LoadedBulkRegion;
@@ -954,6 +973,20 @@ namespace Lumina
                 
                 bSuccess = true;
                 LOG_INFO("Loaded Package: \"{}\" - ( [{}] Exports | [{}] Imports | [{}] Bytes | [{}] ms | Thread: [{}])", Package->GetName(), Package->ExportTable.size(), Package->ImportTable.size(), Package->LoaderBytes->Size, DurationMs, Threading::GetThreadID());
+
+#if USING(WITH_EDITOR)
+                FAssetLoadRecord Entry;
+                Entry.Name        = Package->GetName();
+                Entry.Source      = EAssetLoadSource::Package;
+                Entry.Outcome     = EAssetLoadOutcome::Loaded;
+                Entry.DurationMs  = DurationMs;
+                Entry.CompletedAt = PlatformTime::Seconds();
+                Entry.Bytes       = Package->LoaderBytes->Size;
+                Entry.Exports     = (uint32)Package->ExportTable.size();
+                Entry.Imports     = (uint32)Package->ImportTable.size();
+                Entry.ThreadId    = (uint32)Threading::GetThreadID();
+                FAssetLoadTracker::Get().Record(Entry);
+#endif
             }
         }
         

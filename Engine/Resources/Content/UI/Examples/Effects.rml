@@ -1,0 +1,84 @@
+<rml>
+<head>
+    <title>Effects</title>
+    <link type="text/rcss" href="Theme.rcss"/>
+    <style>
+        body { display: block; box-sizing: border-box; width: 100%; height: 100%; overflow-y: auto; decorator: night-fade; padding: 28dp; }
+        .tile { width: 128dp; height: 92dp; border-radius: 10dp; decorator: linear-gradient(120deg, #89b4fa, #cba6f7); }
+        .stack { width: 128dp; }
+        .caption { margin-top: 8dp; text-align: center; font-size: 12dp; }
+        .plate { width: 132dp; height: 96dp; border-radius: 12dp; background-color: #313244; }
+        .backdrop { height: 150dp; position: relative; border-radius: 12dp; overflow: hidden; decorator: repeating-linear-gradient(45deg, #f38ba8 0%, #f38ba8 8%, #f9e2af 8%, #f9e2af 16%); }
+        .glass { position: absolute; left: 26dp; top: 26dp; width: 260dp; height: 98dp; border-radius: 14dp; background-color: #1e1e2e77; }
+        .masked { width: 128dp; height: 92dp; decorator: linear-gradient(120deg, #a6e3a1, #89dceb); }
+    </style>
+</head>
+
+<!-- No data model, so this previews in the editor with no script running. -->
+<body>
+<div class="panel">
+
+    <div class="h1">Layer effects</div>
+    <div class="muted">Everything on this page routes through RmlUi's layer stack. The renderer pushes a pooled render target, runs each filter as a fullscreen pass, then composites the result back down. A document that uses none of this still draws in a single call.</div>
+
+    <div class="divider"/>
+
+    <div class="h2">Color-matrix filters</div>
+    <div class="muted">Eight of RmlUi's filters are a 4x4 matrix over straight-alpha color, so each is one pass.</div>
+    <div class="row wrap" style="margin-top: 14dp; align-items: flex-start; gap: 16dp;">
+        <div class="stack"><div class="tile"/><div class="caption muted">none</div></div>
+        <div class="stack"><div class="tile" style="filter: brightness(1.6);"/><div class="caption muted">brightness(1.6)</div></div>
+        <div class="stack"><div class="tile" style="filter: contrast(2.0);"/><div class="caption muted">contrast(2)</div></div>
+        <div class="stack"><div class="tile" style="filter: grayscale(1);"/><div class="caption muted">grayscale(1)</div></div>
+        <div class="stack"><div class="tile" style="filter: invert(1);"/><div class="caption muted">invert(1)</div></div>
+        <div class="stack"><div class="tile" style="filter: sepia(1);"/><div class="caption muted">sepia(1)</div></div>
+        <div class="stack"><div class="tile" style="filter: saturate(3);"/><div class="caption muted">saturate(3)</div></div>
+        <div class="stack"><div class="tile" style="filter: hue-rotate(90deg);"/><div class="caption muted">hue-rotate(90deg)</div></div>
+        <div class="stack"><div class="tile" style="filter: opacity(0.35);"/><div class="caption muted">opacity(0.35)</div></div>
+    </div>
+
+    <div class="divider"/>
+
+    <div class="h2">Blur and drop-shadow</div>
+    <div class="muted">Blur is a separable Gaussian, two passes ping-ponging between pooled layers. Drop-shadow blurs the alpha, tints it, offsets it, then lays the element back on top.</div>
+    <div class="row wrap" style="margin-top: 14dp; align-items: flex-start; gap: 16dp;">
+        <div class="stack"><div class="tile" style="filter: blur(2dp);"/><div class="caption muted">blur(2dp)</div></div>
+        <div class="stack"><div class="tile" style="filter: blur(6dp);"/><div class="caption muted">blur(6dp)</div></div>
+        <div class="stack"><div class="tile" style="filter: drop-shadow(#f9e2af 8dp 8dp 4dp);"/><div class="caption muted">drop-shadow</div></div>
+        <div class="stack"><div class="tile" style="filter: grayscale(1) blur(3dp);"/><div class="caption muted">chained</div></div>
+    </div>
+
+    <div class="divider"/>
+
+    <div class="h2">box-shadow</div>
+    <div class="muted">RmlUi builds these through the layer stack too, pushing a layer, blurring it, then saving it as a texture it draws behind the element.</div>
+    <div class="row wrap" style="margin-top: 18dp; align-items: flex-start; gap: 26dp;">
+        <div class="stack" style="width: 132dp;"><div class="plate" style="box-shadow: #f38ba8 0dp 8dp 14dp;"/><div class="caption muted">outer</div></div>
+        <div class="stack" style="width: 132dp;"><div class="plate" style="box-shadow: #f38ba8 0dp 8dp 0dp;"/><div class="caption muted">no blur</div></div>
+        <div class="stack" style="width: 132dp;"><div class="plate" style="box-shadow: #89b4fa 0dp 0dp 18dp 6dp;"/><div class="caption muted">glow (spread 6dp)</div></div>
+        <div class="stack" style="width: 132dp;"><div class="plate" style="box-shadow: #a6e3a1 10dp 10dp 0dp;"/><div class="caption muted">hard offset</div></div>
+        <div class="stack" style="width: 132dp;"><div class="plate" style="box-shadow: #f38ba8 0dp 0dp 10dp 4dp inset;"/><div class="caption muted">inset</div></div>
+    </div>
+
+    <div class="divider"/>
+
+    <div class="h2">backdrop-filter</div>
+    <div class="muted">The one filter that reads what is already behind it. RmlUi composites the backdrop layer through the filter chain before the element draws over it.</div>
+    <div class="backdrop" style="margin-top: 14dp;">
+        <div class="glass" style="backdrop-filter: blur(6dp);"/>
+        <div class="glass" style="left: 316dp; backdrop-filter: grayscale(1);"/>
+    </div>
+
+    <div class="divider"/>
+
+    <div class="h2">mask-image</div>
+    <div class="muted">The mask is rendered into its own layer, saved, and then multiplied into the source alpha as a filter.</div>
+    <div class="row wrap" style="margin-top: 14dp; align-items: flex-start; gap: 16dp;">
+        <div class="stack"><div class="masked"/><div class="caption muted">unmasked</div></div>
+        <div class="stack"><div class="masked" style="mask-image: linear-gradient(to right, white, transparent);"/><div class="caption muted">linear mask</div></div>
+        <div class="stack"><div class="masked" style="mask-image: radial-gradient(circle closest-side at 50% 50%, white, transparent);"/><div class="caption muted">radial mask</div></div>
+    </div>
+
+</div>
+</body>
+</rml>

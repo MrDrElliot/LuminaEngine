@@ -113,6 +113,12 @@ LUMINA_DOTNET_EXPORT(void, Game_Quit)()
     }
 }
 
+// The one object that outlives a level change, so it is where state that has to survive travel belongs.
+LUMINA_DOTNET_EXPORT(void*, Game_GetInstance)()
+{
+    return GEngine ? GEngine->GetGameInstance() : nullptr;
+}
+
 //~ Keyed on the script's CClass, so the same calls find a C++ script and a C# one.
 
 // C# wraps the returned pointer, so the managed instance is the canonical one for that object.

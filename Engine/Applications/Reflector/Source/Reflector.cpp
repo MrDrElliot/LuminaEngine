@@ -340,15 +340,30 @@ int main(int argc, char* argv[])
                         continue;
                     }
 
-                    if (Parser.ParsingContext.ReflectionDatabase.GetReflectedType<FReflectedType>(
-                            Lumina::FStringHash(Property->TypeName)) != nullptr)
-                    {
-                        continue;
-                    }
+                    const FReflectedType* Referenced =
+                        Parser.ParsingContext.ReflectionDatabase.GetReflectedType<FReflectedType>(
+                            Lumina::FStringHash(Property->TypeName));
 
                     FDiagLocation Loc;
                     Loc.File = Header->HeaderPath;
                     Loc.Line = Type->LineNumber;
+
+                    if (Referenced != nullptr)
+                    {
+                        const auto* AsStruct = dynamic_cast<const FReflectedStruct*>(Referenced);
+                        // A value mirror exists for the C# marshal alone, so a PROPERTY of it would store nothing.
+                        if (AsStruct != nullptr && AsStruct->Props.empty()
+                            && Referenced->HasMetadata("CSharpValueMirror"))
+                        {
+                            FDiagnostics::Get().Errorf(Loc, EDiagId::ScriptOnlyPropertyType,
+                                "Property '%s' on '%s' has type '%s', which is reflected only as a hand-written C# "
+                                "value mirror and carries no members. It can cross to script by value but cannot be "
+                                "serialized or edited. Remove the PROPERTY() macro from this field.",
+                                Property->Name.c_str(), Type->DisplayName.c_str(), Property->TypeName.c_str());
+                        }
+                        continue;
+                    }
+
                     FDiagnostics::Get().Errorf(Loc, EDiagId::UnreflectedPropertyType,
                         "Property '%s' on '%s' has type '%s', which is not reflected. "
                         "Give that type a REFLECT() + GENERATED_BODY(), or remove the PROPERTY() macro from this field.",

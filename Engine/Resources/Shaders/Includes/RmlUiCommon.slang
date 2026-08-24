@@ -23,7 +23,20 @@ struct FUiDraw
     uint     StopCount;    // @112
     uint     bRepeating;   // @116
     float    ShaderScale;  // @120 linear only: 1 / dot(p1-p0, p1-p0)
-    uint     _Pad;         // @124
+    uint     ClipMaskRange;// @124 count in the low 8 bits, first ClipMasks[] index above them
+};
+
+#define UI_CLIP_COUNT(Range)  ((Range) & 0xFFu)
+#define UI_CLIP_OFFSET(Range) ((Range) >> 8u)
+
+// Analytic stand-in for RmlUi's clip mask. The mask is always an axis-aligned rounded rect in
+// document space, so an SDF costs one varying instead of a stencil attachment. A draw carries a
+// range of them because RmlUi intersects nested clips.
+struct FUiClipMask
+{
+    float4 Rect;   // centre.xy, half-extent.zw in document space
+    float4 Radii;  // top-left, top-right, bottom-right, bottom-left
+    float4 Params; // .x nonzero keeps the area outside the shape instead of inside
 };
 
 // Position rides a float4 so both members stay 16-byte aligned under PhysicalStorageBuffer rules.
@@ -51,6 +64,7 @@ struct FRmlUiArgs
     FUiDraw*      Draws;      // device address of the per-draw array (transient)
     FUiVertex*    Vertices;   // device address of the resident batch vertex buffer (vertex pulling)
     FUiColorStop* Stops;      // device address of the gradient colour stops (transient, never null)
+    FUiClipMask*  ClipMasks;  // device address of the rounded-rect clip masks (transient, never null)
 };
 
 FRmlUiArgs* Pass() { return GetArgs<FRmlUiArgs>(); }

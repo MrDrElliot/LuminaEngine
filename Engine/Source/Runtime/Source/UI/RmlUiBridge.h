@@ -108,6 +108,12 @@ namespace Lumina::RmlUi
     /** RGBA8; 0-alpha clear allows the editor to composite its own background. */
     RUNTIME_API void            SetEditorContextClearColor(Rml::Context* Context, const FVector4& Color);
 
+    // Editor previews are drawn as a texture, so nothing reaches the document without this. Position is
+    // in the context's own layout pixels; the caller maps from its canvas rect.
+    RUNTIME_API void            ForwardEditorContextMouse(Rml::Context* Context, const FVector2& Position, float WheelDelta,
+                                                          bool bLeftDown, bool bRightDown, bool bLeftWasDown, bool bRightWasDown);
+    RUNTIME_API void            ForwardEditorContextMouseLeave(Rml::Context* Context);
+
     /**
      * SourceUrl resolves relative includes. Previous document unloads either way; returns false on parse
      * failure. Pass OutDiagnostics to also receive the warnings and errors RmlUi raised while parsing:

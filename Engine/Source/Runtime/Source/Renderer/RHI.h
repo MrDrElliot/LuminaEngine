@@ -46,6 +46,7 @@ namespace Lumina::RHI
     struct FDepthStencilState;
     struct FSwapchain;
     struct FSurface;
+    struct FQueryPool;
 
     using GPUPtr            = uint64;
     using FPipelineH        = THandle<FPipeline>;
@@ -56,6 +57,7 @@ namespace Lumina::RHI
     using FCmdListH         = THandle<FCommandList>;
     using FSwapchainH       = THandle<FSwapchain>;
     using FSurfaceH         = THandle<FSurface>;
+    using FQueryPoolH       = THandle<FQueryPool>;
     using FDevice           = struct FDeviceImpl*;
     
     // @TODO Setup all platform agnostic dispatches
@@ -575,6 +577,34 @@ namespace Lumina::RHI
     };
 
     RUNTIME_API bool            GetPipelineStatistics(FPipelineH Pipeline, TVector<FPipelineStat>& Out);
+
+#if defined(LUMINA_WITH_GPU_PROFILING)
+
+    //~ GPU timestamps. Indices are caller-assigned; give each frame in flight its own pool so a read never races the next frame's writes.
+
+    /** False when the device or the queue cannot timestamp, which makes every call below inert. */
+    RUNTIME_API bool         SupportsTimestamps();
+
+    /** Nanoseconds per tick, 0 when unsupported. Deltas are in ticks until scaled by this. */
+    RUNTIME_API double       GetTimestampPeriodNs();
+
+    /** Arms recording. While off, CmdWriteTimestamp is a relaxed load and a branch. */
+    RUNTIME_API void         SetTimestampCollection(bool bEnabled);
+    RUNTIME_API bool         IsTimestampCollectionEnabled();
+
+    RUNTIME_API FQueryPoolH  CreateTimestampPool(uint32 Capacity);
+    RUNTIME_API void         FreeH(FQueryPoolH Pool);
+
+    /** Reclaims a range for reuse. Vulkan requires it before any write, so record it first each frame. */
+    RUNTIME_API void         CmdResetTimestamps(FCmdListH CL, FQueryPoolH Pool, uint32 First, uint32 Count);
+
+    /** Writes the GPU tick at Stage into Index. No-op unless collection is armed. */
+    RUNTIME_API void         CmdWriteTimestamp(FCmdListH CL, FQueryPoolH Pool, uint32 Index, EStageFlags Stage);
+
+    /** Fills OutTicks, or returns false without blocking while the GPU has not reached the writes yet. */
+    RUNTIME_API bool         ReadTimestamps(FQueryPoolH Pool, uint32 First, uint32 Count, TSpan<uint64> OutTicks);
+
+#endif
 
     RUNTIME_API FDepthStencilH  CreateDepthStencil(const FDepthStencilDesc& Desc);
     RUNTIME_API FPipelineH      CreateGraphicsPipeline(const FShaderSource& Vertex, const FShaderSource& Fragment, const FRasterDesc& Desc, TSpan<const FSpecializationConstant> Constants = {});

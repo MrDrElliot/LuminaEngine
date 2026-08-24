@@ -6,6 +6,8 @@ public static class LuminaFeatures
 {
     public const string Tracy = "Tracy";
 
+    public const string GpuProfiling = "GpuProfiling";
+
     public const string Validation = "Validation";
 
     public const string GpuValidation = "GpuValidation";
@@ -44,6 +46,9 @@ public static class LuminaFeatures
             // Profiler instrumentation is not worth its overhead in a shipping build.
             Tracy => bNonShipping,
 
+            // Query pools and their readback are dead weight in a shipping build.
+            GpuProfiling => bNonShipping,
+
             // Debug only: on in Development these instrumented every physics measurement taken there.
             JoltDebugChecks => Target.Configuration == BuildConfiguration.Debug,
 
@@ -79,7 +84,8 @@ public static class LuminaFeatures
             {
                 "LUMINA_WITH_TRACY",
                 "TRACY_ENABLE",
-                "TRACY_CALLSTACK",
+
+                // TRACY_CALLSTACK is absent on purpose; a valueless /D is 1, which stack-walks every zone.
                 "TRACY_ON_DEMAND",
 
                 // The scheduler brackets fiber switches with TracyFiberEnter and Leave; without
@@ -88,6 +94,11 @@ public static class LuminaFeatures
                 "TRACY_ALLOW_SHADOW_WARNING",
                 "RMLUI_TRACY_PROFILING",
             });
+        }
+
+        if (IsActive(Target, GpuProfiling))
+        {
+            Definitions.Add("LUMINA_WITH_GPU_PROFILING");
         }
 
         if (IsActive(Target, Validation))

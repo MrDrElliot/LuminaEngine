@@ -270,26 +270,38 @@ internal static class ScriptPropertyRewriter
                     return System.Array.Empty<MemberDeclarationSyntax>();
             }
 
-            var Builder = new StringBuilder();
-            Builder.Append("private static global::LuminaSharp.LazyPropertyOffset __lazyoff_").Append(Name).AppendLine(";");
-            Builder.Append("private static global::LuminaSharp.LazyPropertyToken __lazyprop_").Append(Name).AppendLine(";");
+            // Built first, so only the cache the accessors actually reached for gets emitted below.
+            var Body = new StringBuilder();
             // The attributes come across verbatim, and they are not decoration: TypeLibrary discovers a
             // member BY [Property] at run time, and reads Category/Tooltip/Min/Max off it to build the
             // inspector row. Dropping them here would compile perfectly and publish nothing.
             foreach (AttributeListSyntax List in Field.AttributeLists)
             {
-                Builder.AppendLine(List.ToString());
+                Body.AppendLine(List.ToString());
             }
-            Builder.Append(Accessibility(Field)).Append(' ').Append(Type).Append(' ').AppendLine(Name);
-            Builder.AppendLine("{");
+            Body.Append(Accessibility(Field)).Append(' ').Append(Type).Append(' ').AppendLine(Name);
+            Body.AppendLine("{");
             // Gated on HasNativeStorage: the schema pass creates one UNBOUND instance per script type purely
             // to describe it, and reading through a null handle there is an access violation on load.
-            Builder.Append("    get => HasNativeStorage ? ").Append(Get).Append(" : ").Append(Unbound).AppendLine(";");
+            Body.Append("    get => HasNativeStorage ? ").Append(Get).Append(" : ").Append(Unbound).AppendLine(";");
             if (bWritable && Set != null)
             {
-                Builder.Append("    set { if (HasNativeStorage) { ").Append(Set).AppendLine("; } }");
+                Body.Append("    set { if (HasNativeStorage) { ").Append(Set).AppendLine("; } }");
             }
-            Builder.AppendLine("}");
+            Body.AppendLine("}");
+
+            string BodyText = Body.ToString();
+
+            var Builder = new StringBuilder();
+            if (BodyText.Contains("__lazyoff_" + Name))
+            {
+                Builder.Append("private static global::LuminaSharp.LazyPropertyOffset __lazyoff_").Append(Name).AppendLine(";");
+            }
+            if (BodyText.Contains("__lazyprop_" + Name))
+            {
+                Builder.Append("private static global::LuminaSharp.LazyPropertyToken __lazyprop_").Append(Name).AppendLine(";");
+            }
+            Builder.Append(BodyText);
             // Parsed as a class body rather than with ParseMemberDeclaration, which returns only the FIRST
             // member it finds -- that silently dropped the property and kept just the offset static.
             List<MemberDeclarationSyntax> Members = ParseMembers(Builder.ToString()).ToList();

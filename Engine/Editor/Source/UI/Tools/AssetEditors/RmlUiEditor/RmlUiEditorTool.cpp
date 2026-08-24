@@ -2207,6 +2207,41 @@ namespace Lumina
         DL->AddImage(Tex, CanvasMin, CanvasMax, ImVec2(0.0f, 0.0f), Uv1);
         DL->AddRect(CanvasMin, CanvasMax, IM_COL32(80, 80, 95, 255), 0.0f, 0, 1.0f);
 
+        // The preview is only a texture, so scrollbars and hover states are dead until input is forwarded.
+        {
+            ImGuiIO& InputIo = ImGui::GetIO();
+            const bool bOverCanvas = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)
+                && ImGui::IsMouseHoveringRect(CanvasMin, CanvasMax);
+
+            if (bOverCanvas && !InputIo.KeyCtrl)
+            {
+                const float CanvasScale = (CanvasSize.x > 0.0f) ? (float(PreviewWidth) / CanvasSize.x) : 1.0f;
+                const FVector2 Local(
+                    (InputIo.MousePos.x - CanvasMin.x) * CanvasScale,
+                    (InputIo.MousePos.y - CanvasMin.y) * CanvasScale);
+
+                const bool bLeft  = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+                const bool bRight = ImGui::IsMouseDown(ImGuiMouseButton_Right);
+
+                RmlUi::ForwardEditorContextMouse(PreviewContext, Local, InputIo.MouseWheel,
+                                                 bLeft, bRight, bPreviewLeftDown, bPreviewRightDown);
+
+                bPreviewLeftDown  = bLeft;
+                bPreviewRightDown = bRight;
+                bPreviewHovered   = true;
+
+                // Consumed here, or the pane scrolls behind the document.
+                InputIo.MouseWheel = 0.0f;
+            }
+            else if (bPreviewHovered)
+            {
+                RmlUi::ForwardEditorContextMouseLeave(PreviewContext);
+                bPreviewHovered   = false;
+                bPreviewLeftDown  = false;
+                bPreviewRightDown = false;
+            }
+        }
+
         // 1.0 by construction, but kept computed so the overlay math holds if the two ever diverge.
         const float ScalePx = CanvasSize.x / float(Math::Max(1u, PreviewWidth));
 

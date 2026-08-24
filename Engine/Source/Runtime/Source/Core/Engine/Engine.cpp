@@ -16,7 +16,6 @@
 #include "Core/Object/ObjectIterator.h"
 #include "Core/Plugin/PluginManager.h"
 #include "Core/Object/Package/Package.h"
-#include "Core/Profiler/CPUProfiler.h"
 #include "Core/Profiler/GameplayProfiler.h"
 #include "Core/Profiler/Profile.h"
 #include "Memory/Allocators/Allocator.h"
@@ -410,7 +409,6 @@ namespace Lumina
         // Quiescent here, since the previous frame's parallel gathers are already joined and consumed.
         ResetThreadFrameAllocators();
 
-        FCPUProfiler::Get().BeginFrame();
         FGameplayProfiler::Get().BeginFrame();
         #if USING(WITH_EDITOR)
         FJobProfiler::Get().BeginFrame();
@@ -555,7 +553,6 @@ namespace Lumina
             }
         }
         
-        FCPUProfiler::Get().EndFrame();
         FGameplayProfiler::Get().EndFrame();
 #if USING(WITH_EDITOR)
         FJobProfiler::Get().EndFrame();

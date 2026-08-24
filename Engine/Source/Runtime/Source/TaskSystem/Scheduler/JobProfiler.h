@@ -58,7 +58,7 @@ namespace Lumina
 
         void Shutdown();
 
-        // Driven from the engine loop (next to FCPUProfiler::Begin/EndFrame).
+        // Driven from the engine loop, once per frame.
         void BeginFrame();
         void EndFrame();
 

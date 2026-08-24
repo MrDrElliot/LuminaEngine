@@ -1,0 +1,106 @@
+<rml>
+<head>
+    <title>Clipping</title>
+    <link type="text/rcss" href="Theme.rcss"/>
+    <style>
+        body { display: block; box-sizing: border-box; width: 100%; height: 100%; overflow-y: auto; decorator: night-fade; padding: 28dp; }
+        .demo { width: 150dp; height: 150dp; background-color: #11111b; }
+        .demo.clipped { overflow: hidden; }
+        .fill { width: 150dp; height: 150dp; decorator: repeating-linear-gradient(45deg, #89b4fa 0%, #89b4fa 9%, #cba6f7 9%, #cba6f7 18%); }
+        .stack { width: 150dp; }
+        .caption { margin-top: 8dp; text-align: center; font-size: 12dp; }
+        .scrolls { overflow-y: auto; padding: 14dp; }
+    </style>
+</head>
+
+<!-- No data model on purpose, so this previews as-is in the editor without a script running. -->
+<body>
+<div class="panel">
+
+    <div id="div2" class="h1">Clip masks</div>
+    <div id="div3" class="muted">A scissor rectangle cannot describe a rounded corner, and a rotated box is not axis-aligned to begin with. RmlUi asks for a clip mask in both cases. The renderer answers with a signed-distance test against a rounded rect in the pixel shader, so the document still draws in one call.</div>
+
+    <div id="div4" class="divider"/>
+
+    <div class="h2">With and without the mask</div>
+    <div class="muted">Same container, same child. The only difference is whether the container clips its overflow.</div>
+    <div class="row wrap" style="margin-top: 14dp; align-items: flex-start; gap: 20dp;">
+        <div class="stack">
+            <div class="demo" style="border-radius: 36dp;">
+                <div class="fill"/>
+            </div>
+            <div class="caption muted">overflow visible, corners square off</div>
+        </div>
+        <div id="div1" class="stack">
+            <div id="div" class="demo clipped" style="border-radius: 36dp;">
+                <div class="fill"/>
+            </div>
+            <div class="caption muted">overflow hidden, mask applies</div>
+        </div>
+    </div>
+
+    <div class="divider"/>
+
+    <div class="h2">Shapes the mask has to carry</div>
+    <div class="row wrap" style="margin-top: 14dp; align-items: flex-start; gap: 20dp;">
+
+        <!-- Four different radii, so a single-radius mask would visibly get three of them wrong. -->
+        <div class="stack">
+            <div class="demo clipped" style="border-top-left-radius: 74dp; border-top-right-radius: 8dp; border-bottom-right-radius: 74dp; border-bottom-left-radius: 8dp;">
+                <div class="fill"/>
+            </div>
+            <div class="caption muted">one radius per corner</div>
+        </div>
+
+        <!-- A radius at half the smaller side is a circle, the clamp ceiling. -->
+        <div class="stack">
+            <div class="demo clipped" style="border-radius: 999dp;">
+                <div class="fill"/>
+            </div>
+            <div class="caption muted">radius clamped to a circle</div>
+        </div>
+
+        <!-- A transform disables scissor clipping entirely, leaving the mask as the only clip. -->
+        <div class="stack">
+            <div class="demo clipped" style="border-radius: 36dp; transform: rotate(-9deg);">
+                <div class="fill"/>
+            </div>
+            <div class="caption muted">rotated</div>
+        </div>
+
+        <!-- The transform moves every frame, so the mask is rebuilt with it. -->
+        <div class="stack">
+            <div class="demo clipped anim-spin" style="border-radius: 36dp;">
+                <div class="fill"/>
+            </div>
+            <div class="caption muted">animated transform</div>
+        </div>
+    </div>
+
+    <div class="divider"/>
+
+    <div class="h2">Text and scrolling</div>
+    <div class="muted">Glyphs are the readable case. Watch the first and last lines, which should fade along the curve rather than stop at a straight edge.</div>
+    <div class="row wrap" style="margin-top: 14dp; align-items: flex-start; gap: 20dp;">
+        <div class="stack">
+            <div class="demo clipped scrolls" style="border-radius: 36dp;">
+                <div>Scrolling text in a rounded container.</div>
+                <div style="margin-top: 10dp;">An element with only a radius stays in the scissor region, so the rect test and the mask both apply here.</div>
+                <div style="margin-top: 10dp;">Scroll to bring a line under the curve and watch where it disappears.</div>
+            </div>
+            <div class="caption muted">rounded scroll container</div>
+        </div>
+
+        <div class="stack" style="width: 320dp;">
+            <div class="demo clipped scrolls" style="width: 320dp; border-radius: 36dp; transform: rotate(4deg);">
+                <div>The same thing under a transform.</div>
+                <div style="margin-top: 10dp;">Here the scissor test is switched off by the transform, so everything you see bounded is bounded by the mask alone.</div>
+                <div style="margin-top: 10dp;">Without one, this text would spill across the whole document.</div>
+            </div>
+            <div class="caption muted">rotated scroll container</div>
+        </div>
+    </div>
+
+</div>
+</body>
+</rml>

@@ -106,9 +106,7 @@
 #include "Tools/EditorTool.h"
 #include "Tools/EditorToolRegistry.h"
 #include "Tools/ToolsMenuRegistry.h"
-#include "Tools/CPUProfilerEditorTool.h"
-#include "Tools/TaskSystemProfilerEditorTool.h"
-#include "Tools/GameplayInsightsEditorTool.h"
+#include "Tools/ProfilerEditorTool.h"
 #include "Tools/PluginBrowserEditorTool.h"
 #include "Tools/ShadowAtlasEditorTool.h"
 #include "Tools/EditorToolModal.h"
@@ -3449,9 +3447,7 @@ namespace Lumina
         ImGui::Separator();
 
         DrawToolMenuItem<FAssetRegistryEditorTool>(LE_ICON_DATABASE " Asset Registry", this);
-        DrawToolMenuItem<FCPUProfilerEditorTool>(LE_ICON_CHART_BAR " CPU Profiler", this);
-        DrawToolMenuItem<FTaskSystemProfilerEditorTool>(LE_ICON_CHART_TIMELINE " Task System", this);
-        DrawToolMenuItem<FGameplayInsightsEditorTool>(LE_ICON_CHART_TIMELINE_VARIANT " Gameplay Insights", this);
+        DrawToolMenuItem<FProfilerEditorTool>(LE_ICON_CHART_BAR " Profiler", this);
         DrawToolMenuItem<FShadowAtlasEditorTool>(LE_ICON_GRID " Shadow Atlas", this);
         DrawToolMenuItem<FTextureHeapEditorTool>(LE_ICON_IMAGE_ALBUM " Texture Heap", this);
         DrawToolMenuItem<FTextureStreamingEditorTool>(LE_ICON_SWAP_VERTICAL " Texture Streaming", this);

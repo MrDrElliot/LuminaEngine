@@ -6,6 +6,7 @@
 #include "PrimaryAssetId.h"
 #include "TaskSystem/FiberSync.h"
 #include "TaskSystem/Future.h"
+#include "Core/Profiler/AssetLoadTracker.h"
 
 
 namespace Lumina
@@ -52,6 +53,7 @@ namespace Lumina
 	private:
 
 		FAssetHandle AcquireLoad(const FGuid& GUID, TPromise<CObject*>& OutPromise, bool& bShouldLoad);
+		static void  RecordRequest(const FFixedString& Path, double DurationMs, EAssetLoadOutcome Outcome);
 		void         PerformLoad(const FFixedString& Path, const FGuid& GUID, TPromise<CObject*> Promise);
 
 	private:

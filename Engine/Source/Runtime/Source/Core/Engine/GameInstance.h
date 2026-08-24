@@ -20,9 +20,11 @@ namespace Lumina
     public:
 
         // Called once after the GameInstance is constructed during project load.
+        FUNCTION()
         virtual void Init();
 
         // Called once before the GameInstance is destroyed during engine shutdown / project unload.
+        FUNCTION()
         virtual void Shutdown();
 
         // Called for every Game world (packaged boot, runtime travel, and editor PIE play) right BEFORE it is

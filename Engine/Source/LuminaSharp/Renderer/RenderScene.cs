@@ -12,9 +12,9 @@ namespace LuminaSharp;
 [StructLayout(LayoutKind.Sequential)]
 public struct SceneView
 {
-    public FMatrix View;
-    public FMatrix Projection;
-    public FMatrix ViewProjection;
+    public FMatrix4 View;
+    public FMatrix4 Projection;
+    public FMatrix4 ViewProjection;
     public FVector3 Position;   public float FOV;
     public FVector3 Forward;    public float Near;
     public FVector3 Up;         public float Far;

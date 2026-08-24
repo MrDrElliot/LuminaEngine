@@ -1,4 +1,5 @@
-#include "TaskSystemProfilerEditorTool.h"
+#include "ProfilerEditorTool.h"
+#include "ProfilerViewCommon.h"
 
 #include "imgui.h"
 #include "implot.h"
@@ -10,14 +11,6 @@ namespace Lumina
 {
     namespace
     {
-        ImU32 ColorForName(const char* Name)
-        {
-            uint32 H = 2166136261u;
-            for (const char* P = Name ? Name : "?"; *P; ++P) { H ^= (uint8)*P; H *= 16777619u; }
-            float R, G, B;
-            ImGui::ColorConvertHSVtoRGB((H % 360) / 360.0f, 0.55f, 0.88f, R, G, B);
-            return ImGui::ColorConvertFloat4ToU32(ImVec4(R, G, B, 1.0f));
-        }
 
         ImU32 WorkerColor(uint32 Worker)
         {
@@ -80,34 +73,7 @@ namespace Lumina
         }
     }
 
-    void FTaskSystemProfilerEditorTool::OnInitialize()
-    {
-        CreateToolWindow("Task System", [&] (bool bIsFocused) { DrawWindow(bIsFocused); });
-    }
-
-    void FTaskSystemProfilerEditorTool::OnDeinitialize(const FUpdateContext&)
-    {
-    }
-
-    void FTaskSystemProfilerEditorTool::DrawHelpMenu()
-    {
-        DrawHelpTextRow("Enable",
-            "Span recording is gated on task.Profiler.Enabled (toggle at the top). The fiber grid and "
-            "pool stats are live even with recording off; the timeline and the advisor need recording.");
-        DrawHelpTextRow("Advisor",
-            "While recording, samples shared-queue contention (concurrent poppers), fiber migration and "
-            "workload shape, then judges whether per-worker deques + work-stealing would actually help - "
-            "or whether the bottleneck is elsewhere (pool size, locality). The sampling adds a little "
-            "overhead, so leave recording off in normal use.");
-        DrawHelpTextRow("Fiber grid",
-            "Each cell is one work fiber: Free (gray), Running (green, worker #), Parked (amber, counter), "
-            "Ready (blue). Watch the pool breathe in real time.");
-        DrawHelpTextRow("Timeline",
-            "By-worker shows core saturation; By-fiber tints each slice by the worker it ran on, so a "
-            "fiber migrating between workers is visible directly.");
-    }
-
-    void FTaskSystemProfilerEditorTool::DrawWindow(bool)
+    void FProfilerEditorTool::DrawTasks()
     {
         FConsoleVariable* CVar = FConsoleRegistry::Get().Find("task.Profiler.Enabled");
         bool bEnabled = (CVar != nullptr) ? Containers::Get<bool>(*CVar->ValuePtr) : false;
@@ -119,26 +85,11 @@ namespace Lumina
         ImGui::TextDisabled("|");
         ImGui::SameLine();
         ImGui::Checkbox("By fiber", &bByFiber);
-        ImGui::SameLine();
-        ImGui::Checkbox("Freeze", &bFrozen);
-        if (bFrozen)
-        {
-            ImGui::SameLine();
-            ImGui::TextColored(ImVec4(0.95f, 0.65f, 0.30f, 1.0f), LE_ICON_PAUSE " FROZEN");
-        }
-
-        // A stall while the panel is visible means DrawWindow is not being re-submitted.
-        ++DrawTicks;
-        ImGui::SameLine();
-        ImGui::TextDisabled("|");
-        ImGui::SameLine();
-        const char Spinner[] = { '|', '/', '-', '\\' };
-        ImGui::TextColored(ImVec4(0.45f, 0.80f, 0.55f, 1.0f), "live %c", Spinner[(DrawTicks / 6) % 4]);
 
         // Refresh the display copies only while live, so Freeze holds a stable frame to inspect.
         if (!bFrozen)
         {
-            DisplayFrame = FJobProfiler::Get().GetLatest();
+            TaskFrame = FJobProfiler::Get().GetLatest();
             Jobs::SnapshotFiberStates(FiberStates);
             Jobs::SnapshotActiveCounters(Counters);
             Jobs::SnapshotWorkerCores(WorkerCores);
@@ -174,9 +125,9 @@ namespace Lumina
         }
     }
 
-    void FTaskSystemProfilerEditorTool::DrawAdvisor()
+    void FProfilerEditorTool::DrawAdvisor()
     {
-        const FJobProfFrame& F = DisplayFrame;
+        const FJobProfFrame& F = TaskFrame;
         Jobs::FJobLiveStats LS;
         Jobs::GetLiveStats(LS);
 
@@ -296,11 +247,11 @@ namespace Lumina
         ImGui::Columns(1);
     }
 
-    void FTaskSystemProfilerEditorTool::DrawDashboard()
+    void FProfilerEditorTool::DrawDashboard()
     {
         Jobs::FJobLiveStats LS;
         Jobs::GetLiveStats(LS);
-        const FJobProfFrame& F = DisplayFrame;
+        const FJobProfFrame& F = TaskFrame;
 
         ImGui::Columns(2, "##dashcols", false);
 
@@ -333,7 +284,7 @@ namespace Lumina
         ImGui::Columns(1);
     }
 
-    void FTaskSystemProfilerEditorTool::DrawCores()
+    void FProfilerEditorTool::DrawCores()
     {
         const Platform::FCpuTopology& Topo = Platform::GetCpuTopology();
         if (Topo.NumLogicalCores == 0)
@@ -451,7 +402,7 @@ namespace Lumina
         ImGui::Dummy(ImVec2(Avail, Rows * (Cell + Pad)));
     }
 
-    void FTaskSystemProfilerEditorTool::DrawFiberGrid()
+    void FProfilerEditorTool::DrawFiberGrid()
     {
         if (FiberStates.empty())
         {
@@ -513,9 +464,9 @@ namespace Lumina
         }
     }
 
-    void FTaskSystemProfilerEditorTool::DrawTimeline()
+    void FProfilerEditorTool::DrawTimeline()
     {
-        const FJobProfFrame& F = DisplayFrame;
+        const FJobProfFrame& F = TaskFrame;
         const double T0 = F.FrameStartMs;
         const double T1 = F.FrameEndMs;
         if (T1 <= T0 || F.Spans.empty())
@@ -554,7 +505,8 @@ namespace Lumina
         if (RowCount == 0) { ImGui::TextDisabled("No spans."); return; }
 
         const float LabelW = 52.0f;
-        const float Height = RowCount * RowHeight + 8.0f;
+        const float RowH   = ProfilerView::RowHeight(RowHeight);
+        const float Height = RowCount * RowH + 8.0f;
         ImGui::BeginChild("##timeline", ImVec2(0, Math::Min(Height + 4.0f, 360.0f)), true, ImGuiWindowFlags_HorizontalScrollbar);
 
         ImDrawList* DL = ImGui::GetWindowDrawList();
@@ -566,18 +518,18 @@ namespace Lumina
         // Row backgrounds + labels.
         for (int r = 0; r < RowCount; ++r)
         {
-            const float Y = Origin.y + r * RowHeight;
-            DL->AddRectFilled(ImVec2(Origin.x, Y), ImVec2(Origin.x + LabelW + Width, Y + RowHeight - 1),
+            const float Y = Origin.y + r * RowH;
+            DL->AddRectFilled(ImVec2(Origin.x, Y), ImVec2(Origin.x + LabelW + Width, Y + RowH - 1),
                 (r & 1) ? IM_COL32(36, 38, 42, 255) : IM_COL32(30, 32, 36, 255));
         }
         // Row labels need the worker/fiber id for each row; invert the map cheaply.
         for (uint32 Id = 0; Id < RowOf.size(); ++Id)
         {
             if (RowOf[Id] < 0) continue;
-            const float Y = Origin.y + RowOf[Id] * RowHeight;
+            const float Y = Origin.y + RowOf[Id] * RowH;
             char Lbl[16];
             snprintf(Lbl, sizeof(Lbl), bByFiber ? "F%u" : "W%u", Id);
-            DL->AddText(ImVec2(Origin.x + 4, Y + 2), IM_COL32(180, 180, 185, 255), Lbl);
+            DL->AddText(ImVec2(Origin.x + 4, ProfilerView::LabelY(Y, RowH)), IM_COL32(180, 180, 185, 255), Lbl);
         }
 
         const float PlotX = Origin.x + LabelW;
@@ -590,13 +542,13 @@ namespace Lumina
             if (B < 0.0 || A > 1.0) continue;
             const float X0 = PlotX + (float)Math::Max(0.0, A) * Width;
             const float X1 = PlotX + (float)Math::Min(1.0, B) * Width;
-            const float Y  = Origin.y + Row * RowHeight;
-            const ImVec2 Min(X0, Y + 1), Max(Math::Max(X1, X0 + 1.0f), Y + RowHeight - 2);
+            const float Y  = Origin.y + Row * RowH;
+            const ImVec2 Min(X0, Y + 1), Max(Math::Max(X1, X0 + 1.0f), Y + RowH - 2);
 
             ImU32 Col;
             if (S.Kind == (uint8)EJobSpanKind::Idle)       Col = IM_COL32(48, 50, 54, 160);
             else if (bByFiber)                             Col = WorkerColor(S.Worker);
-            else                                           Col = ColorForName(S.Name);
+            else                                           Col = ProfilerView::ScopeColor(S.Name);
             DL->AddRectFilled(Min, Max, Col, 2.0f);
             if (S.Kind == (uint8)EJobSpanKind::RanThenParked)
             {
@@ -614,7 +566,7 @@ namespace Lumina
             }
         }
 
-        ImGui::Dummy(ImVec2(LabelW + Width, RowCount * RowHeight));
+        ImGui::Dummy(ImVec2(LabelW + Width, RowCount * RowH));
 
         if (Hover)
         {
@@ -629,7 +581,7 @@ namespace Lumina
         ImGui::EndChild();
     }
 
-    void FTaskSystemProfilerEditorTool::DrawCounters()
+    void FProfilerEditorTool::DrawCounters()
     {
         if (Counters.empty())
         {

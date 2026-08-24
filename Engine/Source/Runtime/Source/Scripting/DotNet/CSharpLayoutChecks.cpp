@@ -18,7 +18,7 @@ namespace Lumina
     static_assert(sizeof(FVector3) == 12, "LuminaSharp FVector3 mirror size mismatch (update Math.cs).");
     static_assert(sizeof(FVector4) == 16, "LuminaSharp FVector4 mirror size mismatch (update Math.cs).");
     static_assert(sizeof(FQuat)    == 16, "LuminaSharp FQuat mirror size mismatch (update Math.cs).");
-    static_assert(sizeof(FMatrix4) == 64, "LuminaSharp FMatrix mirror size mismatch (update Matrix.cs).");
+    static_assert(sizeof(FMatrix4) == 64, "LuminaSharp FMatrix4 mirror size mismatch (update Matrix.cs).");
 
     // A field added on either side without the other silently misreads every action's state.
     static_assert(sizeof(FInputActionState)              == 16, "LuminaSharp FInputActionState mirror size mismatch (update InputActionState.cs).");
@@ -38,7 +38,7 @@ namespace Lumina
     LE_REGISTER_LAYOUT("FVector3",     FVector3);
     LE_REGISTER_LAYOUT("FVector4",     FVector4);
     LE_REGISTER_LAYOUT("FQuat",        FQuat);
-    LE_REGISTER_LAYOUT("FMatrix",      FMatrix4);
+    LE_REGISTER_LAYOUT("FMatrix4",     FMatrix4);
     LE_REGISTER_LAYOUT("FTransform",   FTransform);
     // Stops a field added on either side from silently shifting every element of an FName container.
     LE_REGISTER_LAYOUT("FName",        FName);

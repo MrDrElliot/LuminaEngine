@@ -9,6 +9,7 @@ struct PSInput
     float4 Colour   : COLOR;
     float2 UV       : TEXCOORD0;
     nointerpolation uint DrawIndex : TEXCOORD1;
+    float2 DocPos   : TEXCOORD2;
 };
 
 // Progressive lerp with a saturated segment weight: stops before the one containing T resolve to
@@ -64,23 +65,58 @@ float GradientCoordinate(FUiDraw Draw, float2 P)
     return Turns - floor(Turns);
 }
 
+// Signed distance to a rounded box centred on the origin; negative inside.
+float SdRoundedBox(float2 P, float2 HalfExtent, float4 Radii)
+{
+    float2 Pair   = (P.x > 0.0) ? Radii.yz : Radii.xw;   // right pair (TR, BR) or left pair (TL, BL)
+    float  Radius = (P.y > 0.0) ? Pair.y : Pair.x;
+    float2 Q      = abs(P) - HalfExtent + Radius;
+    return min(max(Q.x, Q.y), 0.0) + length(max(Q, 0.0)) - Radius;
+}
+
+// Coverage rather than a hard discard, so the curve stays smooth at the corners. Nested clips
+// intersect, and multiplying coverage is what intersection means once it is antialiased.
+float ClipMaskCoverage(FUiDraw Draw, float2 DocPos)
+{
+    const uint Count  = UI_CLIP_COUNT(Draw.ClipMaskRange);
+    const uint Offset = UI_CLIP_OFFSET(Draw.ClipMaskRange);
+
+    float Coverage = 1.0;
+    for (uint i = 0u; i < Count; ++i)
+    {
+        FUiClipMask Mask = Pass().ClipMasks[Offset + i];
+        float Distance   = SdRoundedBox(DocPos - Mask.Rect.xy, Mask.Rect.zw, Mask.Radii);
+
+        // Document space, so the derivative also converts the distance into target pixels.
+        float Width = max(fwidth(Distance), 1e-5);
+        float Cover = saturate(0.5 - Distance / Width);
+        Coverage *= (Mask.Params.x != 0.0) ? (1.0 - Cover) : Cover;
+    }
+    return Coverage;
+}
+
 [shader("fragment")]
 float4 FragmentMain(PSInput Input) : SV_Target0
 {
     FUiDraw Draw = Pass().Draws[Input.DrawIndex];
 
+    // Ahead of any discard, because killing a lane leaves the quad's derivatives undefined.
+    float Coverage = ClipMaskCoverage(Draw, Input.DocPos);
+
     // Shader-side scissor (axis-aligned, framebuffer pixels).
     float2 P = Input.Position.xy;
-    if (P.x < Draw.ClipRect.x || P.y < Draw.ClipRect.y || P.x >= Draw.ClipRect.z || P.y >= Draw.ClipRect.w)
+    bool Scissored = P.x < Draw.ClipRect.x || P.y < Draw.ClipRect.y || P.x >= Draw.ClipRect.z || P.y >= Draw.ClipRect.w;
+
+    if (Scissored || Coverage <= 0.0)
     {
         discard;
     }
 
     if (Draw.ShaderType != UI_SHADER_TEXTURED)
     {
-        return Input.Colour * SampleColorStops(Draw, GradientCoordinate(Draw, Input.UV));
+        return Input.Colour * SampleColorStops(Draw, GradientCoordinate(Draw, Input.UV)) * Coverage;
     }
 
     float4 Texel = SampleTexture2D(Draw.TextureID, Draw.SamplerIndex, Input.UV);
-    return Input.Colour * Texel;
+    return Input.Colour * Texel * Coverage;
 }

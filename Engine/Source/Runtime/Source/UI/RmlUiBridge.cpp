@@ -1237,7 +1237,9 @@ namespace Lumina::RmlUi
             RHI::CmdClearTexture(CmdList, E->Target, Clear);
             RHI::Barriers::TransferToAll(CmdList);
 
-            State.Renderer->BeginFrame(CmdList, E->Target, E->Size);
+            // A resized preview target starts undefined, so loading it showed a frame of garbage.
+            const FVector4 PreviewClear(0.0f, 0.0f, 0.0f, 0.0f);
+            State.Renderer->BeginFrame(CmdList, E->Target, E->Size, FUIntVector2(0), &PreviewClear);
             E->Context->Render();
             State.Renderer->EndFrame();
             bAnyRendered = true;
@@ -1460,6 +1462,45 @@ namespace Lumina::RmlUi
                 return;
             }
         }
+    }
+
+    void ForwardEditorContextMouse(Rml::Context* Context, const FVector2& Position, float WheelDelta,
+                                   bool bLeftDown, bool bRightDown, bool bLeftWasDown, bool bRightWasDown)
+    {
+        if (Context == nullptr)
+        {
+            return;
+        }
+
+        FRecursiveScopeLock Lock(S().StateMutex);
+
+        Context->ProcessMouseMove(int(Position.x), int(Position.y), 0);
+
+        if (bLeftDown != bLeftWasDown)
+        {
+            bLeftDown ? Context->ProcessMouseButtonDown(0, 0) : Context->ProcessMouseButtonUp(0, 0);
+        }
+        if (bRightDown != bRightWasDown)
+        {
+            bRightDown ? Context->ProcessMouseButtonDown(1, 0) : Context->ProcessMouseButtonUp(1, 0);
+        }
+
+        if (WheelDelta != 0.0f)
+        {
+            // RmlUi counts wheel down as positive, the opposite of ImGui.
+            Context->ProcessMouseWheel(-WheelDelta, 0);
+        }
+    }
+
+    void ForwardEditorContextMouseLeave(Rml::Context* Context)
+    {
+        if (Context == nullptr)
+        {
+            return;
+        }
+
+        FRecursiveScopeLock Lock(S().StateMutex);
+        Context->ProcessMouseLeave();
     }
 
     void SetEditorContextClearColor(Rml::Context* Context, const FVector4& Color)

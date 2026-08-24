@@ -64,12 +64,11 @@ namespace Lumina::Containers
 
     /** A T that may or may not be there, with the T stored inline rather than on the heap. */
     template <typename T>
+    requires(!std::is_reference_v<T>)
     class TOptional : private Private::TOptionalStorage<T>
     {
         using FStorage = Private::TOptionalStorage<T>;
-
-        static_assert(!std::is_reference_v<T>, "TOptional cannot hold a reference; hold a pointer instead.");
-
+    
     public:
 
         using value_type = T;

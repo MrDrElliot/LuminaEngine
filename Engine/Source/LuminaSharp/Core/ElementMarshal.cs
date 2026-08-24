@@ -1,4 +1,6 @@
 using System;
+using System.Linq.Expressions;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using Lumina;
 
@@ -16,6 +18,12 @@ internal enum EElementKind
     /// <summary>A refcounted object slot. Read as a raw pointer, written through the native assignment so the
     /// reference it held is released and one is taken on the new target.</summary>
     ObjectRef,
+
+    /// <summary>An opaque reflected struct. Read as a wrapper viewing the slot, written by native struct copy.</summary>
+    StructView,
+
+    /// <summary>An asset reference. Stored natively as one FSoftObjectPath, so the path is the whole value.</summary>
+    SoftRef,
 }
 
 /// <summary>
@@ -52,7 +60,42 @@ internal static class ElementKind<T>
         {
             return EElementKind.ObjectRef;
         }
+        // Recognised by the interface rather than by name, so a new asset-reference type needs no change here.
+        if (typeof(IAssetRef).IsAssignableFrom(Element))
+        {
+            return EElementKind.SoftRef;
+        }
+        // A generated wrapper views native memory rather than holding it, so both ends go through a real copy.
+        if (typeof(NativeStruct).IsAssignableFrom(Element))
+        {
+            return EElementKind.StructView;
+        }
         return EElementKind.Blittable;
+    }
+
+    /// <summary>Builds the slot view once per T, from the same (IntPtr) ctor Wrapper uses.</summary>
+    public static readonly Func<nint, T>? MakeView = BuildView();
+
+    /// <summary>The reflected struct name StructAssign resolves; empty for every other kind.</summary>
+    public static readonly string NativeName = Kind == EElementKind.StructView ? NativeTypeName.Of<T>() : string.Empty;
+
+    private static Func<nint, T>? BuildView()
+    {
+        if (Kind != EElementKind.StructView)
+        {
+            return null;
+        }
+
+        ConstructorInfo? Ctor = typeof(T).GetConstructor(
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            null, new[] { typeof(IntPtr) }, null);
+        if (Ctor == null)
+        {
+            return null;
+        }
+
+        ParameterExpression Address = Expression.Parameter(typeof(nint), "Address");
+        return Expression.Lambda<Func<nint, T>>(Expression.New(Ctor, Address), Address).Compile();
     }
 }
 
@@ -75,6 +118,17 @@ internal static unsafe class ElementMarshal
                 // TObjectPtr<X> is a single IntPtr, and so is the native slot, so the read is the same
                 // reinterpretation a blittable element gets. Only the WRITE differs.
                 return Unsafe.ReadUnaligned<T>((void*)Address);
+
+            case EElementKind.StructView:
+                // The wrapper points at the slot, so a mutation through it edits the array in place.
+                return ElementKind<T>.MakeView!(Address);
+
+            case EElementKind.SoftRef:
+            {
+                T Value = default!;
+                ((IAssetRef)Value!).SetFromPath(Native.SoftPathGet(Address));
+                return Value;
+            }
 
             default:
                 return Unsafe.ReadUnaligned<T>((void*)Address);
@@ -101,6 +155,20 @@ internal static unsafe class ElementMarshal
                 Native.SetObjectPtr(Address, Target);
                 break;
             }
+            case EElementKind.StructView:
+            {
+                // Copied through the reflected struct's own ops, so a heap member is duplicated rather than aliased.
+                if (Value is NativeStruct Source && Source.Handle != IntPtr.Zero)
+                {
+                    Native.StructAssign(Address, Source.Handle, ElementKind<T>.NativeName);
+                }
+                break;
+            }
+            case EElementKind.SoftRef:
+            {
+                Native.SoftPathSet(Address, ((IAssetRef)Value!).GetPath() ?? "");
+                break;
+            }
             default:
                 Unsafe.WriteUnaligned((void*)Address, Value);
                 break;
@@ -116,6 +184,11 @@ internal static unsafe class ElementMarshal
             FString A = Unsafe.As<T, FString>(ref Left);
             FString B = Unsafe.As<T, FString>(ref Right);
             return A.Equals(B);
+        }
+        // Same element means same slot, since a container element has no property handle to reach Identical.
+        if (ElementKind<T>.Kind == EElementKind.StructView)
+        {
+            return Left is NativeStruct A2 && Right is NativeStruct B2 && A2.Handle == B2.Handle;
         }
         return System.Collections.Generic.EqualityComparer<T>.Default.Equals(Left, Right);
     }

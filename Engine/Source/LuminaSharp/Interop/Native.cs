@@ -51,6 +51,39 @@ public static unsafe partial class Native
     [NativeCall(EntryPoint = "LuminaSharp_DataTable_GetRowAt")] public static partial IntPtr DataTableGetRowAt(IntPtr Table, int Index);
     [NativeCall(EntryPoint = "LuminaSharp_DataTableHandle_GetRowMemory")] public static partial IntPtr DataTableHandleGetRowMemory(IntPtr Handle);
 
+    // TSubclassOf. The setter is a shim rather than a byte write so the MetaClass constraint is enforced.
+    [NativeCall] public static partial IntPtr PropGetClass(IntPtr C, IntPtr Prop);
+    [NativeCall] public static partial void PropSetClass(IntPtr C, IntPtr Prop, IntPtr Class);
+    [NativeCall] public static partial IntPtr FindClassByName(string Name);
+    [NativeCall] public static partial string ClassGetName(IntPtr Class);
+    [NativeCall] public static partial IntPtr ClassGetDefaultObject(IntPtr Class);
+
+    // TSubStructOf. The setter is a shim rather than a byte write so the MetaStruct constraint is enforced.
+    [NativeCall] public static partial IntPtr PropGetSubStruct(IntPtr C, IntPtr Prop);
+    [NativeCall] public static partial void PropSetSubStruct(IntPtr C, IntPtr Prop, IntPtr Struct);
+    [NativeCall] public static partial IntPtr FindStructByName(string Name);
+    [NativeCall] public static partial string StructGetName(IntPtr Struct);
+
+    // Instanced structs, addressed by raw pointer so a member and a container element use the same calls.
+    [NativeCall] public static partial string InstancedStructGetType(IntPtr Ptr);
+    [NativeCall] public static partial IntPtr InstancedStructGetMemory(IntPtr Ptr);
+    [NativeCall] public static partial int InstancedStructIsA(IntPtr Ptr, string TypeName);
+    [NativeCall] public static partial void InstancedStructInitializeAs(IntPtr Ptr, string TypeName);
+    [NativeCall] public static partial void InstancedStructReset(IntPtr Ptr);
+
+    // The same path access as PropGetAssetPath, against a bare FSoftObjectPath such as a container element.
+    [NativeCall] public static partial string SoftPathGet(IntPtr PathPtr);
+    [NativeCall] public static partial void SoftPathSet(IntPtr PathPtr, string Path);
+
+    // Copies one reflected struct value over another, for a container element whose type owns heap members.
+    [NativeCall] public static partial void StructAssign(IntPtr Dst, IntPtr Src, string TypeName);
+
+    // TOptional access. The get returns the payload address, or zero when the optional is unset.
+    [NativeCall] public static partial IntPtr PropOptionalGetValue(IntPtr Container, IntPtr Prop);
+    [NativeCall] public static partial int PropOptionalHasValue(IntPtr Container, IntPtr Prop);
+    [NativeCall] public static partial void PropOptionalSetValue(IntPtr Container, IntPtr Prop, IntPtr Value);
+    [NativeCall] public static partial void PropOptionalReset(IntPtr Container, IntPtr Prop);
+
     // Component op-table access. The token returned by FindComponentOps is resolved once per type and
     // reused; the get/has/emplace/remove calls take it plus the world + entity.
 

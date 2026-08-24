@@ -1090,7 +1090,8 @@ namespace Lumina::Reflection::Visitor
 		Context->AliasTargetMacroHeader.clear();
 		Context->ParentReflectedType = PreviousType;
 
-		if (ReflectedStruct->Props.empty())
+		// A hand-written C# mirror is marshalled by value and never walked, so it needs no member list.
+		if (ReflectedStruct->Props.empty() && !ReflectedStruct->HasMetadata("CSharpValueMirror"))
 		{
 			LRT_ERROR(Cursor, EDiagId::ReflectedNoMembers,
 				"REFLECT'd alias '%s' reflected no members. The aliased type's fields need PROPERTY() macros.",

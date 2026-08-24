@@ -10,6 +10,7 @@ struct VSOutput
     float4 Colour   : COLOR;
     float2 UV       : TEXCOORD0;
     nointerpolation uint DrawIndex : TEXCOORD1;
+    float2 DocPos   : TEXCOORD2;
 };
 
 [shader("vertex")]
@@ -27,5 +28,6 @@ VSOutput VertexMain(uint VertexID : SV_VulkanVertexID)
                                ((V.Colour >> 24) & 0xFFu)) / 255.0;
     Output.UV        = V.UV;
     Output.DrawIndex = V.DrawIndex;
+    Output.DocPos    = V.Position;
     return Output;
 }

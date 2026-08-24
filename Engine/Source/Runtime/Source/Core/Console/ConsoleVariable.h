@@ -2,6 +2,7 @@
 #include "Core/Templates/NumericLimits.h"
 #include <limits>
 #include "Containers/HashTable.h"
+#include "Core/Assertions/Assert.h"
 #include "Containers/Name.h"
 #include "Containers/String.h"
 #include "Core/Templates/LuminaTemplate.h"
@@ -120,23 +121,40 @@ namespace Lumina
         FConsoleVariable* Find(FStringView Name);
         FConsoleCommand* FindCommand(FStringView Name);
 
+        // An unregistered name reads as the default.
         template<ValidConsoleVarType T>
         const T& GetAs(FStringView Name)
         {
-			return Containers::Get<T>(*Find(Name)->ValuePtr);
+            static const T Fallback{};
+            const T* Value = TryGetAs<T>(Name);
+            DEBUG_ASSERT(Value != nullptr);
+            return Value != nullptr ? *Value : Fallback;
         }
-        
+
         template<ValidConsoleVarType T>
         const T* TryGetAs(FStringView Name)
         {
-			return Containers::GetIf<T>(Find(Name)->ValuePtr);
+            FConsoleVariable* ConsoleVar = Find(Name);
+            return ConsoleVar != nullptr ? Containers::GetIf<T>(ConsoleVar->ValuePtr) : nullptr;
         }
-        
+
+        /** Sets a variable and runs its OnChange, so a set from code behaves like one typed at the console. */
         template<ValidConsoleVarType T>
-        decltype(auto) SetAs(FStringView Name, const T& Value)
+        bool SetAs(FStringView Name, const T& Value)
         {
             FConsoleVariable* ConsoleVar = Find(Name);
-            return ConsoleVar->ValuePtr->emplace<T>(Value);
+            if (ConsoleVar == nullptr)
+            {
+                return false;
+            }
+
+            ConsoleVar->ValuePtr->emplace<T>(Value);
+
+            if (ConsoleVar->OnChange != nullptr)
+            {
+                ConsoleVar->OnChange(*(ConsoleVar->ValuePtr));
+            }
+            return true;
         }
 
         const FConsoleContainer& GetAll() const;
@@ -178,7 +196,12 @@ namespace Lumina
             return Containers::Get<T>(Storage);
         }
 
-        T* GetValuePtr() const
+        T* GetValuePtr()
+        {
+            return Containers::GetIf<T>(&Storage);
+        }
+
+        const T* GetValuePtr() const
         {
             return Containers::GetIf<T>(&Storage);
         }

@@ -24,6 +24,22 @@ public static partial class Game
     /// </summary>
     public static void Quit() => QuitRaw();
 
+    /// The persistent game instance, or null before the project has created one.
+    public static Lumina.CGameInstance? Instance
+    {
+        get
+        {
+            IntPtr Handle = GetInstanceRaw();
+            return Handle == IntPtr.Zero ? null : Wrapper<Lumina.CGameInstance>.ForObject(Handle);
+        }
+    }
+
+    /// The game instance as your own subclass, or null when the project runs a different one.
+    public static T? GetInstance<T>() where T : Lumina.CGameInstance => Instance as T;
+
+    [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Game_GetInstance")]
+    private static partial IntPtr GetInstanceRaw();
+
     [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Game_OpenLevel")]
     private static partial void OpenLevelRaw(string Url);
     [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Game_Quit")]

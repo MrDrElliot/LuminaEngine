@@ -16,6 +16,10 @@
         .chip { padding: 4dp 10dp; background-color: #313244; border-radius: 999dp; font-size: 12dp; }
         .chip.on { background-color: #a6e3a1; color: #11111b; }
         .member { width: 190dp; }
+        .clip-demo { width: 158dp; height: 158dp; overflow: hidden; background-color: #11111b; }
+        .clip-fill { width: 158dp; height: 158dp; decorator: repeating-linear-gradient(45deg, #89b4fa 0%, #89b4fa 9%, #cba6f7 9%, #cba6f7 18%); }
+        .clip-scroll { overflow-y: auto; padding: 14dp; }
+        .clip-stack { width: 158dp; }
     </style>
 </head>
 
@@ -156,6 +160,55 @@
                     <div class="chip" style="position: absolute; left: 50%; top: 50%; margin: -12dp 0dp 0dp -28dp;">center</div>
                     <div class="chip" style="position: absolute; left: 10dp; bottom: 10dp;">bottom left</div>
                     <div class="chip" style="position: absolute; right: 10dp; bottom: 10dp;">bottom right</div>
+                </div>
+            </div>
+
+            <div class="divider"/>
+
+            <div class="h2">Clipping a shape a scissor rect cannot describe</div>
+            <div class="muted">A rectangle cannot express a rounded corner, and a rotated box is not axis-aligned at all, so both of these need a clip mask. The renderer evaluates one as a signed-distance test in the pixel shader, which keeps the whole document in a single draw.</div>
+            <div class="row wrap" style="margin-top: 14dp; align-items: flex-start; gap: 20dp;">
+
+                <!-- The child is a full-bleed decorator, so a missing mask squares off all four corners. -->
+                <div class="clip-stack">
+                    <div class="clip-demo" style="border-radius: 36dp;">
+                        <div class="clip-fill"/>
+                    </div>
+                    <div class="swatch-label muted">border-radius</div>
+                </div>
+
+                <!-- Uneven radii, to show the mask carries one radius per corner rather than a single value. -->
+                <div class="clip-stack">
+                    <div class="clip-demo" style="border-top-left-radius: 70dp; border-bottom-right-radius: 70dp;">
+                        <div class="clip-fill"/>
+                    </div>
+                    <div class="swatch-label muted">per-corner radii</div>
+                </div>
+
+                <!-- A transform turns the scissor test off entirely, leaving the mask as the only clip. -->
+                <div class="clip-stack">
+                    <div class="clip-demo" style="border-radius: 36dp; transform: rotate(-9deg);">
+                        <div class="clip-fill"/>
+                    </div>
+                    <div class="swatch-label muted">rotated</div>
+                </div>
+
+                <!-- The transform changes every frame, so the mask has to be rebuilt with it. -->
+                <div class="clip-stack">
+                    <div class="clip-demo anim-spin" style="border-radius: 36dp;">
+                        <div class="clip-fill"/>
+                    </div>
+                    <div class="swatch-label muted">animated transform</div>
+                </div>
+
+                <!-- Text is the readable case: glyphs should follow the curve, not stop at a straight edge. -->
+                <div class="clip-stack">
+                    <div class="clip-demo clip-scroll" style="border-radius: 36dp;">
+                        <div>Scrolling text inside a rounded container.</div>
+                        <div style="margin-top: 10dp;">The first and last lines are the ones to watch: they should disappear along the curve rather than at a straight edge.</div>
+                        <div style="margin-top: 10dp;">The scissor rect still applies here as well, since an element with only a radius stays in the scissor region.</div>
+                    </div>
+                    <div class="swatch-label muted">rounded scroll container</div>
                 </div>
             </div>
         </panel>

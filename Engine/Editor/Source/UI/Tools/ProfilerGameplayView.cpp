@@ -1,4 +1,5 @@
-﻿#include "GameplayInsightsEditorTool.h"
+﻿#include "ProfilerEditorTool.h"
+#include "ProfilerViewCommon.h"
 
 #include <cfloat>
 #include <cstdio>
@@ -171,19 +172,7 @@ namespace Lumina
         }
     }
 
-    void FGameplayInsightsEditorTool::OnInitialize()
-    {
-        // Record while this window exists; zero cost once it closes.
-        FGameplayProfiler::Get().SetEnabled(true);
-        CreateToolWindow("Gameplay Insights", [&] (bool bIsFocused) { DrawWindow(bIsFocused); });
-    }
-
-    void FGameplayInsightsEditorTool::OnDeinitialize(const FUpdateContext&)
-    {
-        FGameplayProfiler::Get().SetEnabled(false);
-    }
-
-    CWorld* FGameplayInsightsEditorTool::ResolveWorld() const
+    CWorld* FProfilerEditorTool::ResolveWorld() const
     {
         if (GWorldManager == nullptr)
         {
@@ -210,7 +199,7 @@ namespace Lumina
         return Editor;
     }
 
-    void FGameplayInsightsEditorTool::RefreshSchedule()
+    void FProfilerEditorTool::RefreshSchedule()
     {
         if (CWorld* ResolvedWorld = ResolveWorld())
         {
@@ -238,7 +227,7 @@ namespace Lumina
         }
     }
 
-    int32 FGameplayInsightsEditorTool::ResolveSelection() const
+    int32 FProfilerEditorTool::ResolveSelection() const
     {
         const int32 Count = (int32)Schedule.size();
         if (SelectedIndex == INDEX_NONE)
@@ -265,13 +254,13 @@ namespace Lumina
         return INDEX_NONE;
     }
 
-    const FGameplayProfileEntry* FGameplayInsightsEditorTool::FindStat(const char* Name) const
+    const FGameplayProfileEntry* FProfilerEditorTool::FindStat(const char* Name) const
     {
         if (Name == nullptr || Name[0] == '\0')
         {
             return nullptr;
         }
-        for (const FGameplayProfileEntry& Entry : DisplayFrame.Entries)
+        for (const FGameplayProfileEntry& Entry : GameplayFrame.Entries)
         {
             if (strcmp(Entry.Name.c_str(), Name) == 0)
             {
@@ -281,25 +270,23 @@ namespace Lumina
         return nullptr;
     }
 
-    void FGameplayInsightsEditorTool::DrawWindow(bool)
+    void FProfilerEditorTool::DrawGameplay()
     {
         FGameplayProfiler& Prof = FGameplayProfiler::Get();
 
         if (!bFrozen)
         {
-            DisplayFrame = Prof.GetLatest();
+            GameplayFrame = Prof.GetLatest();
             RefreshSchedule();
         }
 
         ImGui::AlignTextToFramePadding();
-        ImGui::Checkbox("Freeze", &bFrozen);
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
         {
             ImGuiX::TextTooltip_Internal("Hold the last capture so it can be read without it moving under the cursor");
         }
 
         ImGui::SameLine(0.0f, 16.0f);
-        ++DrawTicks;
         if (bFrozen)
         {
             ImGui::TextColored(EditorColors::Warning(), LE_ICON_PAUSE " frozen");
@@ -317,10 +304,10 @@ namespace Lumina
         InsightsDetail::StripSeparator();
 
         constexpr double BudgetMs = 16.667;
-        const double Share = DisplayFrame.TotalMs / BudgetMs;
+        const double Share = GameplayFrame.TotalMs / BudgetMs;
         const ImVec4 HotColor = Share > 1.0 ? EditorColors::Danger()
             : (Share > 0.6 ? EditorColors::Warning() : EditorColors::Success());
-        ImGui::TextColored(HotColor, "%.3f ms gameplay", DisplayFrame.TotalMs);
+        ImGui::TextColored(HotColor, "%.3f ms gameplay", GameplayFrame.TotalMs);
 
         if (ImGui::BeginTabBar("##insights"))
         {
@@ -344,7 +331,7 @@ namespace Lumina
     }
 
     // Schedule, the frame's parallel batches drawn as a dependency canvas.
-    void FGameplayInsightsEditorTool::DrawSchedule()
+    void FProfilerEditorTool::DrawSchedule()
     {
         if (Schedule.empty())
         {
@@ -423,7 +410,7 @@ namespace Lumina
         DrawScheduleCanvas();
     }
 
-    void FGameplayInsightsEditorTool::DrawScheduleCanvas()
+    void FProfilerEditorTool::DrawScheduleCanvas()
     {
         const float Scale = ScheduleZoom;
 
@@ -634,7 +621,7 @@ namespace Lumina
             if (Stat != nullptr)
             {
                 snprintf(Badge, sizeof(Badge), "%.3f ms", Stat->InclusiveMs);
-                BadgeColor = InsightsDetail::CostColor(DisplayFrame.TotalMs > 0.0 ? Stat->InclusiveMs / DisplayFrame.TotalMs : 0.0);
+                BadgeColor = InsightsDetail::CostColor(GameplayFrame.TotalMs > 0.0 ? Stat->InclusiveMs / GameplayFrame.TotalMs : 0.0);
             }
             else if (Entry.bExclusive)
             {
@@ -745,18 +732,18 @@ namespace Lumina
     }
 
     // Stats, aggregate per-scope CPU timings for scripts, C# systems and sample scopes.
-    void FGameplayInsightsEditorTool::DrawStats()
+    void FProfilerEditorTool::DrawStats()
     {
         FGameplayProfiler& Prof = FGameplayProfiler::Get();
 
-        const double TotalMs = DisplayFrame.TotalMs;
+        const double TotalMs = GameplayFrame.TotalMs;
         constexpr double BudgetMs = 16.667;
         const double Share = TotalMs / BudgetMs;
         const ImVec4 HotColor = Share > 1.0 ? EditorColors::Danger()
             : (Share > 0.6 ? EditorColors::Warning() : EditorColors::Success());
 
         uint32 TotalCalls = 0;
-        for (const FGameplayProfileEntry& Entry : DisplayFrame.Entries)
+        for (const FGameplayProfileEntry& Entry : GameplayFrame.Entries)
         {
             TotalCalls += Entry.Calls;
         }
@@ -766,7 +753,7 @@ namespace Lumina
         InsightsDetail::StripSeparator();
         ImGui::TextColored(HotColor, "%.0f%% of 16.7 ms", Share * 100.0);
         InsightsDetail::StripSeparator();
-        ImGui::TextColored(EditorColors::TextDim(), "%d scopes", (int32)DisplayFrame.Entries.size());
+        ImGui::TextColored(EditorColors::TextDim(), "%d scopes", (int32)GameplayFrame.Entries.size());
         InsightsDetail::StripSeparator();
         ImGui::TextColored(EditorColors::TextDim(), "%d calls", (int32)TotalCalls);
 
@@ -798,8 +785,8 @@ namespace Lumina
             ImGui::TableHeadersRow();
 
             TVector<const FGameplayProfileEntry*> Rows;
-            Rows.reserve(DisplayFrame.Entries.size());
-            for (const FGameplayProfileEntry& Entry : DisplayFrame.Entries)
+            Rows.reserve(GameplayFrame.Entries.size());
+            for (const FGameplayProfileEntry& Entry : GameplayFrame.Entries)
             {
                 if (Filter[0] == '\0' || Entry.Name.find(Filter) != FFixedString::npos)
                 {
@@ -874,7 +861,7 @@ namespace Lumina
             ImGui::EndTable();
         }
 
-        if (DisplayFrame.Entries.empty())
+        if (GameplayFrame.Entries.empty())
         {
             ImGui::Spacing();
             ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
@@ -885,7 +872,7 @@ namespace Lumina
     }
 
     // Detail, the full information for the system selected on the Schedule canvas.
-    void FGameplayInsightsEditorTool::DrawDetail()
+    void FProfilerEditorTool::DrawDetail()
     {
         const int32 Selection = ResolveSelection();
         if (Selection == INDEX_NONE)
@@ -1023,7 +1010,7 @@ namespace Lumina
             ImGui::SeparatorText("Timing (last frame)");
             ImGui::TextColored(EditorColors::TextDim(), "%d call%s", (int32)Stat->Calls, Stat->Calls == 1 ? "" : "s");
             InsightsDetail::StripSeparator();
-            ImGui::TextColored(InsightsDetail::CostColor(DisplayFrame.TotalMs > 0.0 ? Stat->InclusiveMs / DisplayFrame.TotalMs : 0.0),
+            ImGui::TextColored(InsightsDetail::CostColor(GameplayFrame.TotalMs > 0.0 ? Stat->InclusiveMs / GameplayFrame.TotalMs : 0.0),
                                "%.3f ms inclusive", Stat->InclusiveMs);
             InsightsDetail::StripSeparator();
             ImGui::TextColored(EditorColors::TextDim(), "%.3f ms self", Stat->ExclusiveMs);
