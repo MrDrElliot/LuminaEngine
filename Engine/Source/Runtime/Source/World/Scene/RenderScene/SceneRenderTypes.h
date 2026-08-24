@@ -928,28 +928,21 @@ namespace Lumina
         float       Px;
         float       Py;
         float       Pz;
-        int16       NormalX;
-        int16       NormalY;
-        int16       NormalZ;
+        uint32      Normal;     // PackNormal
         uint32      Tangent;    // PackTangent
         uint32      UV;         // TEXCOORD_0
         uint32      UV1;        // TEXCOORD_1
         uint32      Color;
     };
-    static_assert(sizeof(FPreSkinnedVertex) == 36, "FPreSkinnedVertex must match shader");
+    // 32 B lands every element on a sector boundary, so a warp's skinned writes fill whole sectors.
+    static_assert(sizeof(FPreSkinnedVertex) == 32, "FPreSkinnedVertex must match shader");
 
     constexpr uint32 kNoPreSkinBase = 0xFFFFFFFFu;
 
     // No slice in the per-frame bone arena; the blend falls back to identity rather than reading garbage.
     constexpr uint32 kNoBoneSlice = 0xFFFFFFFFu;
 
-    /** Per-frame data for one SKINNED instance slot: exactly the values that cannot live in FInstanceStatic,
-     *  because they are re-decided every frame while that payload only re-uploads on a re-bind. Indexed by
-     *  RETAINED instance slot, so the instance cull can reach it before compaction has happened.
-     *
-     *  The LOD ranges are here rather than re-derived on the GPU on purpose: the pre-skin slice below was
-     *  assigned against THIS pick, and a view that re-selected a different LOD would pre-skin one LOD's
-     *  meshlets while the raster read another's vertices. */
+    /** Per-frame data for one skinned instance slot*/
     struct FSkinnedFrameData
     {
         // CullData.MeshletDrawTag as of the frame that wrote this. Anything else means the entity was not
@@ -996,11 +989,6 @@ namespace Lumina
 
     struct FCullData
     {
-        // Uploaded raw to the GPU -- plane-only mirrors, NOT the rich CPU FFrustum (see Frustum.h).
-    // The camera the CULL evaluates against. Normally a straight copy of the render camera; they are
-    // separate fields so freezing the cull cannot move the picture with it. Cull code must read these and
-    // never CameraView, or a frozen cull would still track the live camera for distance, LOD and the
-    // micro-poly projection.
         FVector4 CullCameraPosition;
         FMatrix4 CullCameraView;
         FMatrix4 CullCameraProjection;
@@ -1061,13 +1049,10 @@ namespace Lumina
             None            = 0,
             Frustum         = BIT(0),
             Cone            = BIT(1),
-            // Instance-level Hi-Z plus the meshlet-level sub-pixel reject; NOT meshlet occlusion.
             Occlusion       = BIT(2),
             Distance        = BIT(3),
             CastShadowOnly  = BIT(4),
             SunAligned      = BIT(5),
-            // Meshlet-level Hi-Z. Only legal on a view that rasterizes BOTH VisBuffer phases -- a
-            // single-phase view would defer meshlets that nothing ever re-tests, and they would not draw.
             MeshletHiZ      = BIT(6),
             Cascade         = BIT(7),
         };

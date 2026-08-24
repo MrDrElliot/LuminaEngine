@@ -8,6 +8,8 @@
 #define SKY_MODE_GRADIENT 1u
 #define SKY_MODE_DYNAMIC  2u
 #define SKY_MODE_HDRI     3u
+// Not a mode. The SPEC_SKY_MODE default, meaning the shader branches on Misc.x at runtime.
+#define SKY_MODE_RUNTIME  4u
 
 struct FEnvironmentParams
 {

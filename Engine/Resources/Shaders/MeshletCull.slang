@@ -22,9 +22,7 @@
 // culled in full by the early dispatch and skipped entirely by the late one, which is what stops it
 // emitting its meshlets twice.
 //
-// RULE inherited from the task stage: no lane may return early. The group barrier below must be reached
-// by every lane, and a lane that left before it makes the barrier non-uniform -- undefined behaviour
-// NVIDIA tolerates and AMD hangs on. Every reject sets bKeep = false.
+// No lane may return early or the wave vote below sees a partial group, so every reject sets bKeep false.
 
 struct FMeshletCullArgs
 {
@@ -45,9 +43,9 @@ struct FMeshletCullArgs
 };
 FMeshletCullArgs* Pass() { return GetPassArgs<FMeshletCullArgs>(); }
 
-// Set by any lane that keeps a meshlet, read by lane 0 after the barrier. Groupshared rather than a wave
-// intrinsic: a 32-thread workgroup is a full wave on some devices and a partial one on others.
-groupshared uint gsAnyVisible;
+#if MESHLET_CULL_GROUP_SIZE > 32
+#error "MESHLET_CULL_GROUP_SIZE must fit one wave, or WaveActiveAnyTrue below covers only part of the group."
+#endif
 
 uint EmitMeshletSlot(uint ArgIdx, uint InstanceID, uint MeshletIdx)
 {
@@ -127,12 +125,6 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
     // keeps a cascade's meshlets out of the draw list twice -- both dispatches share the bucket.
     const bool bHasWork = bBlockInRange && (!bLate || bTwoPhase);
 
-    if (ThreadID == 0u)
-    {
-        gsAnyVisible = 0u;
-    }
-    GroupMemoryBarrierWithGroupSync();
-
     // Workgroup-uniform, so this is a uniform branch: blocks the builder never filled are never read.
     const FMeshletBlock Block = bHasWork ? Pass().BlockList[BlockIdx] : (FMeshletBlock)0;
     const uint InstanceID = Block.InstanceID;
@@ -166,6 +158,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
     // going to draw costs it nothing.
     const bool bTest = bInstanceOK && (ThreadID < Block.Count) && (bLate || bEmitPhase);
     bool       bKeep = bTest && bEmitPhase;
+    bool       bLaneVisible = false;
 
     if (bTest)
     {
@@ -177,11 +170,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
         const bool bVisible = TestMeshletAgainstView(Ctx, Inst, View, MeshletIdx, Cache, /*bApplyHiZ*/ bLate);
 
         bKeep = bKeep && bVisible;
-
-        if (bVisible && bLate && bTwoPhase)
-        {
-            InterlockedOr(gsAnyVisible, 1u);
-        }
+        bLaneVisible = bVisible;
     }
 
     if (bKeep)
@@ -191,12 +180,13 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
         bKeep = EmitMeshletSlot(ArgIdx, InstanceID, MeshletIdx) != kAppendFull;
     }
 
-    GroupMemoryBarrierWithGroupSync();
+    // Reached by every lane, so the vote covers the whole group. Replaces gsAnyVisible and both barriers.
+    const bool bBlockVisible = WaveActiveAnyTrue(bLaneVisible);
 
     // OR only, never a store: an instance's blocks are spread across workgroups, and a plain write would
     // let a fully-occluded block clear a flag a visible one had just set. The zero comes from the clear
     // the CPU issues against this buffer at the top of the frame.
-    if (bLate && bTwoPhase && ThreadID == 0u && gsAnyVisible != 0u && RetainedSlot < Pass().VisibilityCapacity)
+    if (bLate && bTwoPhase && ThreadID == 0u && bBlockVisible && RetainedSlot < Pass().VisibilityCapacity)
     {
         InterlockedOr(Pass().OutVisibility[RetainedSlot], 1u);
     }

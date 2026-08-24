@@ -362,13 +362,12 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
         Pass().SkinnedFrameData[SlotIdx].ShadowSkinnedVertexBase = ShadowSkinBase;
     }
 
-    // Written THROUGH the pointer, never assembled in a local: a local FGPUInstance puts its
-    // MeshletHeader in a Function OpVariable that SPIR-V requires to carry Aliased or Restrict and
-    // Slang emits with neither. Invalid module, accepted by every driver, device-lost frames later.
-    FGPUInstance* Inst           = Pass().OutInstances + OutSlot;
+    // Safe to assemble in a local and store once now that FGPUInstance holds a header slot, not an address.
+    FGPUInstance Inst            = (FGPUInstance)0;
     Inst.Transform               = Pass().RetainedTransforms[SlotIdx];   // straight copy, no expansion
     Inst.SphereBounds            = Cull.SphereBounds;
     Inst.MeshletHeaderSlot       = Static.MeshletHeaderSlot;
+    Inst._HeaderPad0             = 0u;
     Inst.DrawID                  = DrawID;
     Inst.Flags                   = Cull.Flags;
     Inst.CustomData              = Static.CustomData;
@@ -387,4 +386,6 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     Inst.MeshletTotalCount       = MeshletTotal;
     // Survives compaction, which OutSlot does not: it is the key into the two-phase visibility flags.
     Inst.RetainedSlot            = SlotIdx;
+
+    Pass().OutInstances[OutSlot] = Inst;
 }

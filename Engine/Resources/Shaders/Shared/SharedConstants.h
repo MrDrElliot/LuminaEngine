@@ -33,9 +33,8 @@
 #define MESHLET_SLICE_ALL               2u
 #define MESHLET_SLICE_COUNT             3u
 
-// Vulkan only guarantees 65535 for maxComputeWorkGroupCount, so a larger domain folds into Y and the
-// shader undoes the fold. Shared because the two halves are in different languages.
-#define MAX_DISPATCH_AXIS               65535
+// Y-fold axis, far below the 65535 Vulkan guarantees because the fold rounds group counts up to a multiple of it.
+#define MAX_DISPATCH_AXIS               1024
 
 // DXR2 COMPRESSED1: three 16-bit offsets from a signed 24-bit anchor on a shared power-of-two exponent.
 // Anchor + Offset < 2^24, so the decode is bit-identical everywhere -- load-bearing for early-Z.

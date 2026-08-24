@@ -204,7 +204,7 @@ FVertexData DecodePreSkinnedVertex(FPreSkinnedVertex S)
 {
     FVertexData Data;
     Data.Position = float3(S.Px, S.Py, S.Pz);
-    Data.Normal   = UnpackNormalSNorm16(S.NormalX, S.NormalY, S.NormalZ);
+    Data.Normal   = UnpackNormal(S.Normal);
     Data.Tangent  = UnpackTangent(S.Tangent);
     Data.UV       = UnpackUV(S.UV);
     Data.UV1      = UnpackUV(S.UV1);
@@ -360,9 +360,7 @@ FPreSkinnedVertex SkinWithRows(FSkinSource S, FSkinRows Rows)
     Out.Px      = SkinnedPos.x;
     Out.Py      = SkinnedPos.y;
     Out.Pz      = SkinnedPos.z;
-    Out.NormalX = FloatToSNorm16(SkinnedNormal.x);
-    Out.NormalY = FloatToSNorm16(SkinnedNormal.y);
-    Out.NormalZ = FloatToSNorm16(SkinnedNormal.z);
+    Out.Normal  = PackNormal(SkinnedNormal);
     Out.Tangent = PackTangent(float4(SkinnedTangent, S.Tangent.w));
     Out.UV      = S.UV;     // skin-invariant; carried so the draw VS never reads the source
     Out.UV1     = S.UV1;

@@ -33,10 +33,13 @@ struct FUiFilterArgs
     uint     TapCount;      // @132 blur taps on each side of center
     float    Sigma;         // @136
     uint     ClipMaskRange; // @140 count in the low 8 bits, first ClipMasks[] index above them
-    FUiClipMask* ClipMasks; // @144
+    uint64_t ClipMaskAddress; // @144
     float2   ClipScale;     // @152 document to target pixels
     float2   _Pad0;         // @160
     float2   _Pad1;         // @168
+
+    // Reached, never stored; a typed pointer field lands in an undecorated Function variable.
+    property FUiClipMask* ClipMasks { get { return (FUiClipMask*)ClipMaskAddress; } }
 };
 
 FUiFilterArgs* Pass() { return GetArgs<FUiFilterArgs>(); }

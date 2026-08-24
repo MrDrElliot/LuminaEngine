@@ -15,6 +15,8 @@ namespace Lumina
     constexpr uint32 GSkyMode_Gradient   = 1u;
     constexpr uint32 GSkyMode_Dynamic    = 2u;
     constexpr uint32 GSkyMode_HDRI       = 3u;
+    // Not a mode. The SPEC_SKY_MODE default, meaning the shader branches on Misc.x at runtime.
+    constexpr uint32 GSkyMode_Runtime    = 4u;
 
     struct FIBLBakeResolution
     {

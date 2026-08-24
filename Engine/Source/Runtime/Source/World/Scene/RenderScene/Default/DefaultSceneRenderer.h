@@ -782,6 +782,7 @@ namespace Lumina
             bool            bVisBufferMasked = false;        // VISBUFFER_MASKED spec constant (id 4): VisBuffer geometry emits interpolants
             uint8           SkinnedMode = 2;                 // SPEC_SKINNED spec constant (id 5): 0=static, 1=skinned, 2=dynamic (runtime branch)
             uint8           TriCullMode = 0;
+            uint8           SkyMode = (uint8)GSkyMode_Runtime;   // SPEC_SKY_MODE spec constant (id 8)
             TFixedVector<RHI::FColorTarget, 4> ColorTargets;
         };
 

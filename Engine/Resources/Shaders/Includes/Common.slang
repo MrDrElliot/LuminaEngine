@@ -110,16 +110,13 @@ int16_t FloatToSNorm16(float V)
     return (int16_t)(clamp(V, -1.0, 1.0) * 32767.0 + (V >= 0.0 ? 0.5 : -0.5));
 }
 
-// Mirror of Lumina::FPreSkinnedVertex. Written by Skinning.slang, read by every draw VS. Position is
-// full-precision (skinning breaks meshlet quantization); all-scalar for a tight 36 B stride.
+// Mirror of Lumina::FPreSkinnedVertex. Position stays fp32 because skinning breaks meshlet quantization.
 struct FPreSkinnedVertex
 {
     float    Px;
     float    Py;
     float    Pz;
-    int16_t  NormalX;
-    int16_t  NormalY;
-    int16_t  NormalZ;
+    uint     Normal;    // PackNormal
     uint     Tangent;   // PackTangent
     uint     UV;        // carried through from the source vertex (skin-invariant)
     uint     UV1;       // likewise
@@ -973,8 +970,33 @@ float4 UnpackTangent(uint Packed)
     return float4(normalize(t), Sign);
 }
 
-// Inverse of UnpackNormal: 16-16 signed octahedral. Standard oct encode (the decode above
-// Inverse of UnpackTangent: 15-15 signed octahedral + handedness sign at bit 30.
+// Octahedral 16-16 unit normal, matching Lumina::UnpackNormal.
+float3 UnpackNormal(uint Packed)
+{
+    int sx = bitfieldExtract(int(Packed),  0, 16);
+    int sy = bitfieldExtract(int(Packed), 16, 16);
+    float2 e = float2(sx, sy) * (1.0 / 32767.0);
+
+    float3 n = float3(e, 1.0 - abs(e.x) - abs(e.y));
+    float hn = max(-n.z, 0.0);
+    n.xy -= float2(n.x >= 0.0 ? hn : -hn, n.y >= 0.0 ? hn : -hn);
+    return normalize(n);
+}
+
+// Inverse of UnpackNormal, matching Lumina::PackNormal.
+uint PackNormal(float3 n)
+{
+    float3 d = normalize(n);
+    float2 e = d.xy * (1.0 / (abs(d.x) + abs(d.y) + abs(d.z)));
+    if (d.z < 0.0)
+    {
+        e = (1.0 - abs(float2(e.y, e.x))) * float2(e.x >= 0.0 ? 1.0 : -1.0, e.y >= 0.0 ? 1.0 : -1.0);
+    }
+    int2 q = int2(round(clamp(e, -1.0, 1.0) * 32767.0));
+    return (uint(q.x) & 0xFFFFu) | ((uint(q.y) & 0xFFFFu) << 16);
+}
+
+// Inverse of UnpackTangent, 15-15 signed octahedral plus a handedness sign at bit 30.
 uint PackTangent(float4 t)
 {
     float3 d = normalize(t.xyz);

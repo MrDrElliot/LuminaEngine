@@ -16,6 +16,9 @@ struct FEnvPushConstants
 };
 FEnvPushConstants* Pass() { return GetPassArgs<FEnvPushConstants>(); }
 
+// Uniform for the whole draw, so specializing it strips the three modes this pipeline is not.
+[vk::constant_id(8)] const uint SPEC_SKY_MODE = SKY_MODE_RUNTIME;
+
 struct FragmentInput  { float2 UV : TEXCOORD0; };
 struct FragmentOutput { float4 Color : SV_Target0; };
 
@@ -37,7 +40,7 @@ FragmentOutput FragmentMain(FragmentInput Input)
     FEnvironmentParams uEnvironment = LoadBlock<FEnvironmentParams>(Pass().Env);
 
     float3 Color;
-    uint SkyMode = asuint(uEnvironment.Misc.x);
+    uint SkyMode = (SPEC_SKY_MODE == SKY_MODE_RUNTIME) ? asuint(uEnvironment.Misc.x) : SPEC_SKY_MODE;
     if (SkyMode == SKY_MODE_SOLID)
     {
         // Flat color: skip the cube fetch entirely.

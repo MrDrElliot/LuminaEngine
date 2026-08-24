@@ -1121,13 +1121,8 @@ namespace Lumina
                     SCENE_GPU_SCOPE(CL, "VisBuffer Late");
                     VisBufferPass(CL, CurrentCameraEarlyView, /*bClear*/ false, ECullPhase::Late);
                 }
-                
-                if (!RenderSettings.bFreezeCulling)
-                {
-                    SCENE_GPU_SCOPE(CL, "Depth Pyramid (End)");
-                    DepthPyramidPass(CL);
-                }
 
+                // No rebuild here. Nothing between this and the build after Terrain Render writes depth or reads it.
 
                 {
                     SCENE_GPU_SCOPE(CL, "Cluster Build");
@@ -9823,9 +9818,14 @@ namespace Lumina
         RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(RHI::FDepthStencilDesc{}));
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
+        // Mirrors the bit-cast the extract does into Misc.x; specializing on it strips the other modes.
+        uint32 SkyModeBits = GSkyMode_Runtime;
+        std::memcpy(&SkyModeBits, &RenderFrame->Volumetrics.EnvironmentParams.Misc.x, sizeof(uint32));
+
         FGraphicsPipelineKey Key;
         Key.VS          = VertexShader;
         Key.PS          = PixelShader;
+        Key.SkyMode     = (SkyModeBits <= GSkyMode_HDRI) ? (uint8)SkyModeBits : (uint8)GSkyMode_Runtime;
         Key.ColorTargets.push_back({ ColorRT.Desc.Format, {} });
         RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
@@ -12440,6 +12440,7 @@ namespace Lumina
                                 ((uint64)Key.DepthFormat << 24) |
                                 ((uint64)Key.ShadingFeatures << 40) | ((uint64)Key.bVisBufferMasked << 56) |
                                 ((uint64)Key.SkinnedMode << 57) | ((uint64)Key.TriCullMode << 59) |
+                                ((uint64)Key.SkyMode << 61) |
                                 0ull);
         for (const RHI::FColorTarget& Target : Key.ColorTargets)
         {
@@ -12500,8 +12501,9 @@ namespace Lumina
             MakeUInt(5, (uint32)Key.SkinnedMode),   // SPEC_SKINNED 0=static, 1=skinned, 2=dynamic
             MakeUInt(6, (Key.ShadingFeatures & SF_ShadowMask) ? 1u : 0u),
             MakeUInt(7, (uint32)Key.TriCullMode),   // SPEC_TRI_CULL, per-triangle rejects
+            MakeUInt(8, (uint32)Key.SkyMode),       // SPEC_SKY_MODE, GSkyMode_Runtime = branch at runtime
         };
-        const TSpan<const RHI::FSpecializationConstant> Consts(SpecConsts, 7);
+        const TSpan<const RHI::FSpecializationConstant> Consts(SpecConsts, 8);
 
         FWriteScopeLock Lock(PipelineCacheMutex);
         if (auto Existing = PipelineCache.find(Seed); Existing != PipelineCache.end())
