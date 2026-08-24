@@ -1,31 +1,3 @@
-/*
- * This source file is part of RmlUi, the HTML/CSS Interface Middleware
- *
- * For the latest information, see http://github.com/mikke89/RmlUi
- *
- * Copyright (c) 2008-2010 CodePoint Ltd, Shift Technology Ltd
- * Copyright (c) 2019-2023 The RmlUi Team, and contributors
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- *
- */
-
 #include "../../Include/RmlUi/Core/PropertySpecification.h"
 #include "../../Include/RmlUi/Core/Debug.h"
 #include "../../Include/RmlUi/Core/Log.h"
@@ -39,6 +11,23 @@
 #include <stdint.h>
 
 namespace Rml {
+
+static void SetShorthandPropertiesToPendingSubstitution(PropertyDictionary& dictionary, const ShorthandDefinition* shorthand_definition)
+{
+	for (const ShorthandItem& shorthand_item : shorthand_definition->items)
+	{
+		if (shorthand_item.type == ShorthandItemType::Property)
+		{
+			Property property;
+			property.unit = Unit::SHORTHAND_PLACEHOLDER;
+			dictionary.SetProperty(shorthand_item.property_id, property);
+		}
+		else if (shorthand_item.type == ShorthandItemType::Shorthand)
+		{
+			SetShorthandPropertiesToPendingSubstitution(dictionary, shorthand_item.shorthand_definition);
+		}
+	}
+}
 
 PropertySpecification::PropertySpecification(size_t reserve_num_properties, size_t reserve_num_shorthands) :
 	// Increment reserve numbers by one because the 'invalid' property occupies the first element
@@ -182,6 +171,10 @@ ShorthandId PropertySpecification::RegisterShorthand(const String& shorthand_nam
 
 	property_shorthand->id = id;
 	property_shorthand->type = type;
+	property_shorthand->inherited = std::any_of(property_shorthand->items.begin(), property_shorthand->items.end(), [](const ShorthandItem& item) {
+		return (item.type == ShorthandItemType::Property && item.property_definition->IsInherited()) ||
+			(item.type == ShorthandItemType::Shorthand && item.shorthand_definition->inherited);
+	});
 
 	const size_t index = (size_t)id;
 
@@ -193,7 +186,7 @@ ShorthandId PropertySpecification::RegisterShorthand(const String& shorthand_nam
 
 	if (index < shorthands.size())
 	{
-		// We don't want to owerwrite an existing entry.
+		// We don't want to overwrite an existing entry.
 		if (shorthands[index])
 		{
 			Log::Message(Log::LT_ERROR, "The shorthand '%s' already exists, ignoring.", shorthand_name.c_str());
@@ -237,6 +230,23 @@ bool PropertySpecification::ParsePropertyDeclaration(PropertyDictionary& diction
 	if (shorthand_id != ShorthandId::Invalid)
 		return ParseShorthandDeclaration(dictionary, shorthand_id, property_value);
 
+	if (StringUtilities::StartsWith(property_name, "--"))
+	{
+		Unit unit = {};
+		StringList property_values;
+		// Allow empty strings for custom properties, otherwise one has to specify an extra pair of quotes for an empty string with the API.
+		ParsePropertyResult parse_result =
+			(property_value.empty() ? ParsePropertyResult::Success : ParsePropertyValues(property_values, property_value, SplitOption::None));
+		switch (parse_result)
+		{
+		case ParsePropertyResult::Success: unit = Unit::STRING; break;
+		case ParsePropertyResult::ContainsVariable: unit = Unit::VAR_EXPRESSION; break;
+		case ParsePropertyResult::Error: return false;
+		}
+		dictionary.SetCustomProperty(property_name, Property{property_value, unit});
+		return true;
+	}
+
 	return false;
 }
 
@@ -248,8 +258,20 @@ bool PropertySpecification::ParsePropertyDeclaration(PropertyDictionary& diction
 		return false;
 
 	StringList property_values;
-	if (!ParsePropertyValues(property_values, property_value, SplitOption::None) || property_values.empty())
+	switch (ParsePropertyValues(property_values, property_value, SplitOption::None))
+	{
+	case ParsePropertyResult::Success: break;
+	case ParsePropertyResult::ContainsVariable:
+	{
+		dictionary.SetProperty(property_id, Property{property_value, Unit::VAR_EXPRESSION});
+		return true;
+	}
+	case ParsePropertyResult::Error:
+	{
 		return false;
+	}
+	}
+	RMLUI_ASSERT(!property_values.empty());
 
 	Property new_property;
 	if (!property_definition->ParseValue(new_property, property_values[0]))
@@ -269,8 +291,21 @@ bool PropertySpecification::ParseShorthandDeclaration(PropertyDictionary& dictio
 		(shorthand_definition->type == ShorthandType::RecursiveCommaSeparated ? SplitOption::Comma : SplitOption::Whitespace);
 
 	StringList property_values;
-	if (!ParsePropertyValues(property_values, property_value, split_option) || property_values.empty())
+	switch (ParsePropertyValues(property_values, property_value, split_option))
+	{
+	case ParsePropertyResult::Success: break;
+	case ParsePropertyResult::ContainsVariable:
+	{
+		dictionary.SetVarShorthand(shorthand_id, Property{property_value, Unit::VAR_EXPRESSION});
+		SetShorthandPropertiesToPendingSubstitution(dictionary, shorthand_definition);
+		return true;
+	}
+	case ParsePropertyResult::Error:
+	{
 		return false;
+	}
+	}
+	RMLUI_ASSERT(!property_values.empty());
 
 	// Handle the special behavior of the flex shorthand first, otherwise it acts like 'FallThrough'.
 	if (shorthand_definition->type == ShorthandType::Flex && !property_values.empty())
@@ -475,26 +510,47 @@ String PropertySpecification::PropertiesToString(const PropertyDictionary& dicti
 	return result;
 }
 
-bool PropertySpecification::ParsePropertyValues(StringList& values_list, const String& values, const SplitOption split_option) const
+PropertySpecification::ParsePropertyResult PropertySpecification::ParsePropertyValues(StringList& values_list, const String& values,
+	const SplitOption split_option) const
 {
+	RMLUI_ASSERT(values_list.empty());
+
 	const bool split_values = (split_option != SplitOption::None);
 	const bool split_by_comma = (split_option == SplitOption::Comma);
 	const bool split_by_whitespace = (split_option == SplitOption::Whitespace);
 
 	String value;
 
+	auto SubmitExactValue = [&]() {
+		values_list.push_back(std::move(value));
+		value.clear();
+	};
+
 	auto SubmitValue = [&]() {
 		value = StringUtilities::StripWhitespace(value);
-		if (value.size() > 0)
-		{
-			values_list.push_back(value);
-			value.clear();
-		}
+		if (!value.empty())
+			SubmitExactValue();
+	};
+
+	auto IsAllWhitespace = [](const String& string) { return std::all_of(string.begin(), string.end(), StringUtilities::IsWhitespace); };
+	auto IsIdentifierChar = [](char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_'; };
+	auto EndsWithVariable = [&](const String& string) {
+		return StringUtilities::EndsWith(string, "var") && (string.size() == 3 || !IsIdentifierChar(string[string.size() - 4]));
+	};
+
+	auto Error = [&]() {
+		values_list.clear();
+		return ParsePropertyResult::Error;
+	};
+	auto ContainsVariable = [&]() {
+		values_list.clear();
+		return ParsePropertyResult::ContainsVariable;
 	};
 
 	enum ParseState { VALUE, VALUE_PARENTHESIS, VALUE_QUOTE, VALUE_QUOTE_ESCAPE_NEXT };
 	ParseState state = VALUE;
 	int open_parentheses = 0;
+	char open_quote_character = 0;
 	size_t character_index = 0;
 
 	while (character_index < values.size())
@@ -508,30 +564,33 @@ bool PropertySpecification::ParsePropertyValues(StringList& values_list, const S
 		{
 			if (character == ';')
 			{
-				value = StringUtilities::StripWhitespace(value);
 				if (value.size() > 0)
 				{
 					values_list.push_back(value);
 					value.clear();
 				}
 			}
-			else if (split_by_comma ? (character == ',') : StringUtilities::IsWhitespace(character))
+			else if ((split_by_comma && character == ',') || (split_by_whitespace && StringUtilities::IsWhitespace(character)))
 			{
-				if (split_values)
-					SubmitValue();
-				else
-					value += character;
+				SubmitValue();
 			}
-			else if (character == '"')
+			else if (character == '"' || character == '\'')
 			{
 				state = VALUE_QUOTE;
+				open_quote_character = character;
 				if (split_by_whitespace)
 					SubmitValue();
+				else if (split_by_comma)
+					value += character;
+				else if (IsAllWhitespace(value))
+					value.clear();
 				else
-					value += (split_by_comma ? '"' : ' ');
+					return Error();
 			}
 			else if (character == '(')
 			{
+				if (EndsWithVariable(value))
+					return ContainsVariable();
 				open_parentheses = 1;
 				value += character;
 				state = VALUE_PARENTHESIS;
@@ -546,6 +605,8 @@ bool PropertySpecification::ParsePropertyValues(StringList& values_list, const S
 		{
 			if (character == '(')
 			{
+				if (EndsWithVariable(value))
+					return ContainsVariable();
 				open_parentheses++;
 			}
 			else if (character == ')')
@@ -554,9 +615,10 @@ bool PropertySpecification::ParsePropertyValues(StringList& values_list, const S
 				if (open_parentheses == 0)
 					state = VALUE;
 			}
-			else if (character == '"')
+			else if (character == '"' || character == '\'')
 			{
 				state = VALUE_QUOTE;
+				open_quote_character = character;
 			}
 
 			value += character;
@@ -564,15 +626,15 @@ bool PropertySpecification::ParsePropertyValues(StringList& values_list, const S
 		break;
 		case VALUE_QUOTE:
 		{
-			if (character == '"')
+			if (character == open_quote_character)
 			{
 				if (open_parentheses == 0)
 				{
 					state = VALUE;
-					if (split_by_whitespace)
-						SubmitValue();
+					if (split_by_comma)
+						value += character;
 					else
-						value += (split_by_comma ? '"' : ' ');
+						SubmitExactValue();
 				}
 				else
 				{
@@ -592,7 +654,7 @@ bool PropertySpecification::ParsePropertyValues(StringList& values_list, const S
 		break;
 		case VALUE_QUOTE_ESCAPE_NEXT:
 		{
-			if (character == '"' || character == '\\')
+			if (character == '"' || character == '\'' || character == '\\')
 			{
 				value += character;
 			}
@@ -610,7 +672,13 @@ bool PropertySpecification::ParsePropertyValues(StringList& values_list, const S
 	if (state == VALUE)
 		SubmitValue();
 
-	return true;
+	if (!split_values && values_list.size() > 1)
+		return Error();
+
+	if (values_list.empty())
+		return ParsePropertyResult::Error;
+
+	return ParsePropertyResult::Success;
 }
 
 } // namespace Rml

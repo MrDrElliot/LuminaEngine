@@ -1,33 +1,4 @@
-/*
- * This source file is part of RmlUi, the HTML/CSS Interface Middleware
- *
- * For the latest information, see http://github.com/mikke89/RmlUi
- *
- * Copyright (c) 2008-2010 CodePoint Ltd, Shift Technology Ltd
- * Copyright (c) 2019-2023 The RmlUi Team, and contributors
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- *
- */
-
-#ifndef RMLUI_CORE_LAYOUT_BLOCKCONTAINER_H
-#define RMLUI_CORE_LAYOUT_BLOCKCONTAINER_H
+#pragma once
 
 #include "../../../Include/RmlUi/Core/Types.h"
 #include "ContainerBox.h"
@@ -141,10 +112,10 @@ private:
 	/// Increment our cursor and content size, to enclose a sized block-level child box.
 	/// @param[in] child The child box.
 	/// @param[in] child_position The border position of the child, relative to the current block formatting context.
-	/// @param[in] child_size The border size of the child.
-	/// @param[in] child_margin_bottom The bottom margin width of the child.
+	/// @param[in] child_border_size The border size of the child.
+	/// @param[in] child_margin_bottom_right The edge size of the bottom-right margin corner.
 	/// @return False if this caused an automatic vertical scrollbar to appear, forcing a reformat of the current block formatting context.
-	bool EncloseChildBox(LayoutBox* child, Vector2f child_position, float child_height, float child_margin_bottom);
+	bool EncloseChildBox(LayoutBox* child, Vector2f child_position, Vector2f child_border_size, Vector2f child_margin_bottom_right);
 
 	// Closes the inline container if there is one open. Returns false if our formatting context needs to be reformatted.
 	bool CloseOpenInlineContainer();
@@ -189,7 +160,9 @@ private:
 	// The inner content size (excluding any padding/border/margins).
 	// This is extended as child block boxes are closed, or from external formatting contexts.
 	Vector2f inner_content_size;
+
+	// The bottom-right extent of the margin boxes of our direct children, relative to our content area. Contributes to our own scrollable overflow.
+	Vector2f inner_content_margin_size;
 };
 
 } // namespace Rml
-#endif

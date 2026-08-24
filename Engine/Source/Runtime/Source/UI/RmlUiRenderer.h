@@ -108,6 +108,19 @@ namespace Lumina
             Rml::Rectanglei             Scissor;
         };
 
+        // Flattened FDrawCall for the dormancy hash, padding-free so the hash never reads indeterminate bytes.
+        struct FDrawKey
+        {
+            uint64 Geometry;
+            uint64 Texture;
+            uint64 Shader;
+            float  Translation[2];
+            float  MVP[16];
+            int32  Scissor[4];
+            uint64 bScissorEnabled;
+        };
+        static_assert(sizeof(FDrawKey) == 120, "FDrawKey must stay padding-free");
+
         // GPU vertex for the batched path (pos/uv/color + per-draw index); matches RmlUiCommon.slang (stride 24).
         // The two float2s stay adjacent so neither straddles a 16-byte boundary under BDA layout rules.
         struct FUiVertex
@@ -209,6 +222,12 @@ namespace Lumina
 
         TVector<FPendingTexture>    PendingTextureUploads;
         TVector<FDrawCall>          DrawCalls;
+
+        // Reused across frames so the dormancy hash does not allocate on an idle widget.
+        mutable TVector<FDrawKey>   HashKeyScratch;
+
+        // Lets the hash skip a per-draw map lookup entirely when no material brush is live.
+        uint32                      LiveBrushCount = 0;
 
         TVector<FUiVertex>          BatchVertices;
         TVector<uint32>             BatchIndices;

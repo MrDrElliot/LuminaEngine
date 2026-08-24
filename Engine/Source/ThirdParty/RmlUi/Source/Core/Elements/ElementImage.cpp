@@ -1,31 +1,3 @@
-/*
- * This source file is part of RmlUi, the HTML/CSS Interface Middleware
- *
- * For the latest information, see http://github.com/mikke89/RmlUi
- *
- * Copyright (c) 2008-2010 CodePoint Ltd, Shift Technology Ltd
- * Copyright (c) 2019-2023 The RmlUi Team, and contributors
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- *
- */
-
 #include "ElementImage.h"
 #include "../../../Include/RmlUi/Core/ComputedValues.h"
 #include "../../../Include/RmlUi/Core/ElementDocument.h"
@@ -39,6 +11,8 @@
 
 namespace Rml {
 
+RMLUI_RTTI_Define(ElementImage)
+
 ElementImage::ElementImage(const String& tag) : Element(tag), dimensions(-1, -1), rect_source(RectSource::None)
 {
 	dimensions_scale = 1.0f;
@@ -50,34 +24,55 @@ ElementImage::~ElementImage() {}
 
 bool ElementImage::GetIntrinsicDimensions(Vector2f& _dimensions, float& _ratio)
 {
-	// Check if we need to reload the texture.
-	if (texture_dirty)
-		LoadTexture();
+	EnsureSourceLoaded();
 
-	// Calculate the x dimension.
-	if (HasAttribute("width"))
-		dimensions.x = GetAttribute<float>("width", -1);
-	else if (rect_source == RectSource::None)
-		dimensions.x = (float)texture.GetDimensions().x;
+	if (rect_source == RectSource::None)
+	{
+		dimensions = Vector2f(texture.GetDimensions());
+	}
 	else
-		dimensions.x = rect.Width();
+	{
+		dimensions = rect.Size();
+	}
 
-	// Calculate the y dimension.
-	if (HasAttribute("height"))
-		dimensions.y = GetAttribute<float>("height", -1);
-	else if (rect_source == RectSource::None)
-		dimensions.y = (float)texture.GetDimensions().y;
-	else
-		dimensions.y = rect.Height();
+	if (dimensions.y > 0)
+	{
+		_ratio = dimensions.x / dimensions.y;
+
+		// Scale intrinsic size based on attributes. CSS properties can in turn override these attributes, see LayoutDetails.
+		auto requested_width = GetAttribute<float>("width", -1);
+		auto requested_height = GetAttribute<float>("height", -1);
+		if (requested_height > 0 && requested_width > 0)
+		{
+			// If both a height and width are set update the ratio to match
+			_ratio = requested_width / requested_height;
+			dimensions.x = requested_width;
+			dimensions.y = requested_height;
+		}
+		else if (requested_height > 0)
+		{
+			dimensions.x = requested_height * _ratio;
+			dimensions.y = requested_height;
+		}
+		else if (requested_width > 0)
+		{
+			dimensions.x = requested_width;
+			dimensions.y = requested_width / _ratio;
+		}
+	}
 
 	dimensions *= dimensions_scale;
 
 	// Return the calculated dimensions. If this changes the size of the element, it will result in
 	// a call to 'onresize' below which will regenerate the geometry.
 	_dimensions = dimensions;
-	_ratio = dimensions.x / dimensions.y;
 
 	return true;
+}
+void ElementImage::EnsureSourceLoaded()
+{
+	if (texture_dirty)
+		LoadTexture();
 }
 
 void ElementImage::OnRender()
@@ -86,8 +81,7 @@ void ElementImage::OnRender()
 	if (geometry_dirty)
 		GenerateGeometry();
 
-	// Render the geometry beginning at this element's content region.
-	geometry.Render(GetAbsoluteOffset(BoxArea::Content).Round(), texture);
+	geometry.Render(GetAbsoluteOffset(BoxArea::Border), texture);
 }
 
 void ElementImage::OnAttributeChange(const ElementAttributes& changed_attributes)
@@ -131,9 +125,7 @@ void ElementImage::OnPropertyChange(const PropertyIdSet& changed_properties)
 	Element::OnPropertyChange(changed_properties);
 
 	if (changed_properties.Contains(PropertyId::ImageColor) || changed_properties.Contains(PropertyId::Opacity))
-	{
-		GenerateGeometry();
-	}
+		geometry_dirty = true;
 }
 
 void ElementImage::OnChildAdd(Element* child)
@@ -147,7 +139,7 @@ void ElementImage::OnChildAdd(Element* child)
 
 void ElementImage::OnResize()
 {
-	GenerateGeometry();
+	geometry_dirty = true;
 }
 
 void ElementImage::OnDpRatioChange()
@@ -185,10 +177,10 @@ void ElementImage::GenerateGeometry()
 	}
 
 	const ComputedValues& computed = GetComputedValues();
-	ColourbPremultiplied quad_colour = computed.image_color().ToPremultiplied(computed.opacity());
-	Vector2f quad_size = GetBox().GetSize(BoxArea::Content).Round();
+	const ColourbPremultiplied quad_colour = computed.image_color().ToPremultiplied(computed.opacity());
+	const RenderBox render_box = GetRenderBox(BoxArea::Content);
 
-	MeshUtilities::GenerateQuad(mesh, Vector2f(0, 0), quad_size, quad_colour, texcoords[0], texcoords[1]);
+	MeshUtilities::GenerateQuad(mesh, render_box.GetFillOffset(), render_box.GetFillSize(), quad_colour, texcoords[0], texcoords[1]);
 
 	if (RenderManager* render_manager = GetRenderManager())
 		geometry = render_manager->MakeGeometry(std::move(mesh));

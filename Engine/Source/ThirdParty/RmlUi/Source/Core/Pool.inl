@@ -1,37 +1,24 @@
-/*
- * This source file is part of RmlUi, the HTML/CSS Interface Middleware
- *
- * For the latest information, see http://github.com/mikke89/RmlUi
- *
- * Copyright (c) 2008-2010 CodePoint Ltd, Shift Technology Ltd
- * Copyright (c) 2019-2023 The RmlUi Team, and contributors
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- * 
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- *
- */
+#if defined(__SANITIZE_ADDRESS__)
+	#define RMLUI_POOL_ASAN_POISONING
+#elif defined(__has_feature)
+	#if __has_feature(address_sanitizer)
+		#define RMLUI_POOL_ASAN_POISONING
+	#endif
+#endif
 
-
+#ifdef RMLUI_POOL_ASAN_POISONING
+	#include <sanitizer/asan_interface.h>
+	#define RMLUI_POOL_POISON_MEMORY(address, size) __asan_poison_memory_region(address, size)
+	#define RMLUI_POOL_UNPOISON_MEMORY(address, size) __asan_unpoison_memory_region(address, size)
+#else
+	#define RMLUI_POOL_POISON_MEMORY(address, size) ((void)0)
+	#define RMLUI_POOL_UNPOISON_MEMORY(address, size) ((void)0)
+#endif
 
 namespace Rml {
 
-template < typename PoolType >
-Pool< PoolType >::Pool(int _chunk_size, bool _grow)
+template <typename PoolType>
+Pool<PoolType>::Pool(int _chunk_size, bool _grow)
 {
 	chunk_size = 0;
 	grow = _grow;
@@ -46,8 +33,8 @@ Pool< PoolType >::Pool(int _chunk_size, bool _grow)
 		Initialise(_chunk_size, _grow);
 }
 
-template < typename PoolType >
-Pool< PoolType >::~Pool()
+template <typename PoolType>
+Pool<PoolType>::~Pool()
 {
 	RMLUI_ASSERT(num_allocated_objects == 0);
 
@@ -56,6 +43,7 @@ Pool< PoolType >::~Pool()
 	{
 		PoolChunk* next_chunk = chunk->next;
 
+		RMLUI_POOL_UNPOISON_MEMORY(chunk->chunk, sizeof(PoolNode) * (size_t)chunk_size);
 		delete[] chunk->chunk;
 		delete chunk;
 
@@ -64,8 +52,8 @@ Pool< PoolType >::~Pool()
 }
 
 // Initialises the pool to a given size.
-template < typename PoolType >
-void Pool< PoolType >::Initialise(int _chunk_size, bool _grow)
+template <typename PoolType>
+void Pool<PoolType>::Initialise(int _chunk_size, bool _grow)
 {
 	// Should resize the pool here ... ?
 	if (chunk_size > 0)
@@ -83,15 +71,15 @@ void Pool< PoolType >::Initialise(int _chunk_size, bool _grow)
 }
 
 // Returns the head of the linked list of allocated objects.
-template < typename PoolType >
-typename Pool< PoolType >::Iterator Pool< PoolType >::Begin()
+template <typename PoolType>
+typename Pool<PoolType>::Iterator Pool<PoolType>::Begin()
 {
-	return typename Pool< PoolType >::Iterator(first_allocated_node);
+	return typename Pool<PoolType>::Iterator(first_allocated_node);
 }
 
 // Attempts to allocate a deallocated object in the memory pool.
-template<typename PoolType>
-template<typename ...Args>
+template <typename PoolType>
+template <typename... Args>
 inline PoolType* Pool<PoolType>::AllocateAndConstruct(Args&&... args)
 {
 	// We can't allocate a new object if the deallocated list is empty.
@@ -140,18 +128,20 @@ inline PoolType* Pool<PoolType>::AllocateAndConstruct(Args&&... args)
 
 	first_allocated_node = allocated_object;
 
+	RMLUI_POOL_UNPOISON_MEMORY(allocated_object->object, N);
 	return new (allocated_object->object) PoolType(std::forward<Args>(args)...);
 }
 
 // Deallocates the object pointed to by the given iterator.
-template < typename PoolType >
-void Pool< PoolType >::DestroyAndDeallocate(Iterator& iterator)
+template <typename PoolType>
+void Pool<PoolType>::DestroyAndDeallocate(Iterator& iterator)
 {
 	// We're about to deallocate an object.
 	--num_allocated_objects;
 
 	PoolNode* object = iterator.node;
 	reinterpret_cast<PoolType*>(object->object)->~PoolType();
+	RMLUI_POOL_POISON_MEMORY(object->object, N);
 
 	// Get the previous and next pointers now, because they will be overwritten
 	// before we're finished.
@@ -188,25 +178,25 @@ void Pool< PoolType >::DestroyAndDeallocate(Iterator& iterator)
 }
 
 // Deallocates the given object.
-template < typename PoolType >
-void Pool< PoolType >::DestroyAndDeallocate(PoolType* object)
+template <typename PoolType>
+void Pool<PoolType>::DestroyAndDeallocate(PoolType* object)
 {
 	// This assumes the object has the same address as the node, which will be
 	// true as long as the struct definition does not change.
-	Iterator iterator((PoolNode*) object);
+	Iterator iterator((PoolNode*)object);
 	DestroyAndDeallocate(iterator);
 }
 
 // Returns the number of objects in the pool.
-template < typename PoolType >
-int Pool< PoolType >::GetSize() const
+template <typename PoolType>
+int Pool<PoolType>::GetSize() const
 {
 	return chunk_size * GetNumChunks();
 }
 
 /// Returns the number of object chunks in the pool.
-template < typename PoolType >
-int Pool< PoolType >::GetNumChunks() const
+template <typename PoolType>
+int Pool<PoolType>::GetNumChunks() const
 {
 	int num_chunks = 0;
 
@@ -221,15 +211,15 @@ int Pool< PoolType >::GetNumChunks() const
 }
 
 // Returns the number of allocated objects in the pool.
-template < typename PoolType >
-int Pool< PoolType >::GetNumAllocatedObjects() const
+template <typename PoolType>
+int Pool<PoolType>::GetNumAllocatedObjects() const
 {
 	return num_allocated_objects;
 }
 
 // Creates a new pool chunk and appends its nodes to the beginning of the free list.
-template < typename PoolType >
-void Pool< PoolType >::CreateChunk()
+template <typename PoolType>
+void Pool<PoolType>::CreateChunk()
 {
 	if (chunk_size <= 0)
 		return;
@@ -246,7 +236,7 @@ void Pool< PoolType >::CreateChunk()
 	for (int i = 0; i < chunk_size; i++)
 	{
 		if (i == 0)
-			new_chunk->chunk[i].previous = nullptr ;
+			new_chunk->chunk[i].previous = nullptr;
 		else
 			new_chunk->chunk[i].previous = &new_chunk->chunk[i - 1];
 
@@ -254,6 +244,8 @@ void Pool< PoolType >::CreateChunk()
 			new_chunk->chunk[i].next = first_free_node;
 		else
 			new_chunk->chunk[i].next = &new_chunk->chunk[i + 1];
+
+		RMLUI_POOL_POISON_MEMORY(new_chunk->chunk[i].object, N);
 	}
 
 	first_free_node = new_chunk->chunk;

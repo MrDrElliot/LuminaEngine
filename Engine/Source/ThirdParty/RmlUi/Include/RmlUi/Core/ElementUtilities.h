@@ -1,33 +1,4 @@
-/*
- * This source file is part of RmlUi, the HTML/CSS Interface Middleware
- *
- * For the latest information, see http://github.com/mikke89/RmlUi
- *
- * Copyright (c) 2008-2010 CodePoint Ltd, Shift Technology Ltd
- * Copyright (c) 2019-2023 The RmlUi Team, and contributors
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- *
- */
-
-#ifndef RMLUI_CORE_ELEMENTUTILITIES_H
-#define RMLUI_CORE_ELEMENTUTILITIES_H
+#pragma once
 
 #include "Header.h"
 #include "RenderManager.h"
@@ -43,8 +14,6 @@ namespace Style {
 
 /**
     Utility functions for dealing with elements.
-
-    @author Lloyd Weehuizen
  */
 
 class RMLUICORE_API ElementUtilities {
@@ -69,14 +38,15 @@ public:
 	/// @param[out] elements Resulting elements.
 	/// @param[in] root_element First element to check.
 	/// @param[in] tag Tag to search for.
-	static void GetElementsByTagName(ElementList& elements, Element* root_element, const String& tag);
+	/// @param[in] stop_tag Optional, tag to stop searching at i.e. won't look for other elements within this tag.
+	static void GetElementsByTagName(ElementList& elements, Element* root_element, const String& tag, const String& stop_tag = "");
 	/// Get all elements with the given class set on them.
 	/// @param[out] elements Resulting elements.
 	/// @param[in] root_element First element to check.
-	/// @param[in] tag Class name to search for.
+	/// @param[in] class_name Class name to search for.
 	static void GetElementsByClassName(ElementList& elements, Element* root_element, const String& class_name);
 
-	/// Returns an element's density-independent pixel ratio, defined by it's context
+	/// Returns an element's density-independent pixel ratio, defined by its context.
 	/// @param[in] element The element to determine the density-independent pixel ratio for.
 	/// @return The density-independent pixel ratio of the context, or 1.0 if no context assigned.
 	static float GetDensityIndependentPixelRatio(Element* element);
@@ -121,14 +91,14 @@ public:
 	/// @param[in] inline_element True if the element is placed in an inline context, false if not.
 	static void BuildBox(Box& box, Vector2f containing_block, Element* element, bool inline_element = false);
 
-	/// Sizes an element, and positions it within its parent offset from the borders of its content area. Any relative
-	/// values will be evaluated against the size of the element parent's content area.
+	/// Sizes and sets the box of an element, and positions the element at the content area of its parent, plus any
+	/// specified offset. Any relative values will be evaluated against the size of the element parent's content area.
 	/// @param element[in] The element to size and position.
 	/// @param offset[in] The offset from the parent's borders.
 	/// @param anchor[in] Defines which corner or edge the border is to be positioned relative to.
 	static bool PositionElement(Element* element, Vector2f offset, PositionAnchor anchor);
 
-	/// Applies an element's accumulated transform matrix, determined from its and ancestor's `perspective' and `transform' properties.
+	/// Applies an element's accumulated transform matrix, determined from the `perspective` and `transform` properties of itself and ancestors.
 	/// @param[in] element The element whose transform to apply, or nullptr for identity transform.
 	/// @return True if the transform could be submitted to the render interface.
 	static bool ApplyTransform(Element& element);
@@ -137,12 +107,6 @@ public:
 	/// Attributes such as 'data-' are used to create the views and controllers.
 	/// @return True if a data view or controller was constructed.
 	static bool ApplyDataViewsControllers(Element* element);
-
-	/// Creates data views that use a raw inner xml content string to construct child elements.
-	/// Right now, this only applies to the 'data-for' view.
-	/// @return True if a data view was constructed.
-	static bool ApplyStructuralDataViews(Element* element, const String& inner_rml);
 };
 
 } // namespace Rml
-#endif

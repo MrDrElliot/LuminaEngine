@@ -1,33 +1,4 @@
-/*
- * This source file is part of RmlUi, the HTML/CSS Interface Middleware
- *
- * For the latest information, see http://github.com/mikke89/RmlUi
- *
- * Copyright (c) 2008-2010 CodePoint Ltd, Shift Technology Ltd
- * Copyright (c) 2019-2023 The RmlUi Team, and contributors
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- *
- */
-
-#ifndef RMLUI_CORE_DATAVARIABLE_H
-#define RMLUI_CORE_DATAVARIABLE_H
+#pragma once
 
 #include "DataTypes.h"
 #include "Header.h"
@@ -48,18 +19,20 @@ enum class DataVariableType { Scalar, Array, Struct };
 
 class RMLUICORE_API DataVariable {
 public:
-	DataVariable() {}
+	DataVariable() = default;
 	DataVariable(VariableDefinition* definition, void* ptr) : definition(definition), ptr(ptr) {}
 
 	explicit operator bool() const { return definition; }
 
-	bool Get(Variant& variant);
+	bool Get(Variant& variant) const;
 	bool Set(const Variant& variant);
-	int Size();
-	DataVariable Child(const DataAddressEntry& address);
-	DataVariableType Type();
+	int Size() const;
+	DataVariable Child(const DataAddressEntry& address) const;
+	DataVariableType Type() const;
 
 private:
+	friend class Detail::DataVariableAccessor;
+
 	VariableDefinition* definition = nullptr;
 	void* ptr = nullptr;
 };
@@ -80,6 +53,8 @@ public:
 
 	virtual int Size(void* ptr);
 	virtual DataVariable Child(void* ptr, const DataAddressEntry& address);
+
+	virtual StringList ReflectMemberNames();
 
 protected:
 	VariableDefinition(DataVariableType type) : type(type) {}
@@ -147,10 +122,12 @@ public:
 
 	DataVariable Child(void* ptr, const DataAddressEntry& address) override;
 
+	StringList ReflectMemberNames() override;
+
 	void AddMember(const String& name, UniquePtr<VariableDefinition> member);
 
 private:
-	SmallUnorderedMap<String, UniquePtr<VariableDefinition>> members;
+	SmallOrderedMap<String, UniquePtr<VariableDefinition>> members;
 };
 
 template <typename Container>
@@ -198,6 +175,8 @@ public:
 	int Size(void* ptr) override;
 	DataVariable Child(void* ptr, const DataAddressEntry& address) override;
 
+	StringList ReflectMemberNames() override;
+
 protected:
 	virtual void* DereferencePointer(void* ptr) = 0;
 
@@ -217,7 +196,7 @@ protected:
 template <typename Object, typename MemberType>
 class MemberObjectDefinition final : public BasePointerDefinition {
 public:
-	MemberObjectDefinition(VariableDefinition* underlying_definition, MemberType Object::*member_ptr) :
+	MemberObjectDefinition(VariableDefinition* underlying_definition, MemberType Object::* member_ptr) :
 		BasePointerDefinition(underlying_definition), member_ptr(member_ptr)
 	{}
 
@@ -225,13 +204,13 @@ protected:
 	void* DereferencePointer(void* base_ptr) override { return &(static_cast<Object*>(base_ptr)->*member_ptr); }
 
 private:
-	MemberType Object::*member_ptr;
+	MemberType Object::* member_ptr;
 };
 
 template <typename Object, typename MemberType, typename BasicReturnType>
 class MemberGetFuncDefinition final : public BasePointerDefinition {
 public:
-	MemberGetFuncDefinition(VariableDefinition* underlying_definition, MemberType Object::*member_get_func_ptr) :
+	MemberGetFuncDefinition(VariableDefinition* underlying_definition, MemberType Object::* member_get_func_ptr) :
 		BasePointerDefinition(underlying_definition), member_get_func_ptr(member_get_func_ptr)
 	{}
 
@@ -245,62 +224,63 @@ private:
 	BasicReturnType* Extract(BasicReturnType* value) { return value; }
 	BasicReturnType* Extract(BasicReturnType& value) { return &value; }
 
-	MemberType Object::*member_get_func_ptr;
+	MemberType Object::* member_get_func_ptr;
 };
 
 template <typename Object, typename MemberGetType, typename MemberSetType, typename UnderlyingType>
 class MemberScalarGetSetFuncDefinition final : public VariableDefinition {
 public:
-	MemberScalarGetSetFuncDefinition(VariableDefinition* underlying_definition, MemberGetType Object::*member_get_func_ptr,
-		MemberSetType Object::*member_set_func_ptr) :
-		VariableDefinition(underlying_definition->Type()),
-		underlying_definition(underlying_definition), member_get_func_ptr(member_get_func_ptr), member_set_func_ptr(member_set_func_ptr)
+	MemberScalarGetSetFuncDefinition(VariableDefinition* underlying_definition, MemberGetType Object::* member_get_func_ptr,
+		MemberSetType Object::* member_set_func_ptr) :
+		VariableDefinition(underlying_definition->Type()), underlying_definition(underlying_definition), member_get_func_ptr(member_get_func_ptr),
+		member_set_func_ptr(member_set_func_ptr)
 	{}
 
-	bool Get(void* ptr, Variant& variant) override { return GetDetail(ptr, variant); }
-	bool Set(void* ptr, const Variant& variant) override { return SetDetail(ptr, variant); }
+	bool Get(void* ptr, Variant& variant) override
+	{
+		if constexpr (IsVoidMemberFunc<MemberGetType>)
+		{
+			return false;
+		}
+		else
+		{
+			RMLUI_ASSERT(member_get_func_ptr);
+			auto&& value = (static_cast<Object*>(ptr)->*member_get_func_ptr)();
+			bool result = underlying_definition->Get(static_cast<void*>(&value), variant);
+			return result;
+		}
+	}
+
+	bool Set(void* ptr, const Variant& variant) override
+	{
+		if constexpr (IsVoidMemberFunc<MemberSetType>)
+		{
+			return false;
+		}
+		else
+		{
+			RMLUI_ASSERT(member_set_func_ptr);
+
+			UnderlyingType result;
+			if (!underlying_definition->Set(static_cast<void*>(&result), variant))
+				return false;
+
+			(static_cast<Object*>(ptr)->*member_set_func_ptr)(result);
+
+			return true;
+		}
+	}
 
 private:
-	template <typename T = MemberGetType, typename std::enable_if<IsVoidMemberFunc<T>::value, int>::type = 0>
-	bool GetDetail(void* /*ptr*/, Variant& /*variant*/)
-	{
-		return false;
-	}
-
-	template <typename T = MemberGetType, typename std::enable_if<!IsVoidMemberFunc<T>::value, int>::type = 0>
-	bool GetDetail(void* ptr, Variant& variant)
-	{
-		RMLUI_ASSERT(member_get_func_ptr);
-
-		auto&& value = (static_cast<Object*>(ptr)->*member_get_func_ptr)();
-		bool result = underlying_definition->Get(static_cast<void*>(&value), variant);
-		return result;
-	}
-
-	template <typename T = MemberSetType, typename std::enable_if<IsVoidMemberFunc<T>::value, int>::type = 0>
-	bool SetDetail(void* /*ptr*/, const Variant& /*variant*/)
-	{
-		return false;
-	}
-
-	template <typename T = MemberSetType, typename std::enable_if<!IsVoidMemberFunc<T>::value, int>::type = 0>
-	bool SetDetail(void* ptr, const Variant& variant)
-	{
-		RMLUI_ASSERT(member_set_func_ptr);
-
-		UnderlyingType result;
-		if (!underlying_definition->Set(static_cast<void*>(&result), variant))
-			return false;
-
-		(static_cast<Object*>(ptr)->*member_set_func_ptr)(result);
-
-		return true;
-	}
-
 	VariableDefinition* underlying_definition;
-	MemberGetType Object::*member_get_func_ptr;
-	MemberSetType Object::*member_set_func_ptr;
+	MemberGetType Object::* member_get_func_ptr;
+	MemberSetType Object::* member_set_func_ptr;
 };
 
+namespace Detail {
+	class DataVariableAccessor {
+	public:
+		RMLUICORE_API_INLINE static VariableDefinition* GetDefinition(const DataVariable& variable) { return variable.definition; }
+	};
+} // namespace Detail
 } // namespace Rml
-#endif

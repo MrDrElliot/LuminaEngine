@@ -1,43 +1,13 @@
-/*
- * This source file is part of RmlUi, the HTML/CSS Interface Middleware
- *
- * For the latest information, see http://github.com/mikke89/RmlUi
- *
- * Copyright (c) 2008-2010 CodePoint Ltd, Shift Technology Ltd
- * Copyright (c) 2019-2023 The RmlUi Team, and contributors
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- *
- */
-
-#ifndef RMLUI_CORE_PROPERTYDICTIONARY_H
-#define RMLUI_CORE_PROPERTYDICTIONARY_H
+#pragma once
 
 #include "Header.h"
+#include "ID.h"
 #include "Property.h"
 
 namespace Rml {
 
 /**
     A dictionary to property names to values.
-
-    @author Peter Curry
  */
 
 class RMLUICORE_API PropertyDictionary {
@@ -51,10 +21,30 @@ public:
 	/// Returns the value of the property with the requested id, if one exists.
 	const Property* GetProperty(PropertyId id) const;
 
-	/// Returns the number of properties in the dictionary.
+	/// Sets a custom property on the dictionary.
+	void SetCustomProperty(String name, Property property);
+	/// Removes a custom property from the dictionary, if it exists. Returns true if it existed.
+	bool RemoveCustomProperty(const String& name);
+	/// Returns the value of the custom property with the requested name, if one exists.
+	const Property* GetCustomProperty(const String& name) const;
+
+	/// Sets a var shorthand (shorthand with var expression) on the dictionary.
+	void SetVarShorthand(ShorthandId id, Property property);
+	/// Removes a var shorthand from the dictionary, if it exists. Returns true if it existed.
+	bool RemoveVarShorthand(ShorthandId id);
+	/// Returns the var shorthand value with the requested id, if one exists.
+	const Property* GetVarShorthand(ShorthandId id) const;
+
+	/// Returns true if the dictionary contains no properties, custom properties, or var shorthands.
+	bool Empty() const;
+	/// Returns the number of plain properties in the dictionary, excludes custom properties and shorthands.
 	int GetNumProperties() const;
-	/// Returns the map of properties in the dictionary.
+	/// Returns the map of plain properties in the dictionary.
 	const PropertyMap& GetProperties() const;
+	/// Returns the map of custom properties in the dictionary.
+	const UnorderedMap<String, Property>& GetCustomProperties() const;
+	/// Returns the map of var shorthands in the dictionary.
+	const UnorderedMap<ShorthandId, Property>& GetVarShorthands() const;
 
 	/// Imports into the dictionary, and optionally defines the specificity of, potentially
 	/// un-specified properties. In the case of id conflicts, the incoming properties will
@@ -72,6 +62,9 @@ public:
 	/// @param[in] specificity_offset The specificities of all incoming properties will be offset by this value.
 	void Merge(const PropertyDictionary& property_dictionary, int specificity_offset = 0);
 
+	/// Clears the dictionary.
+	void Clear();
+
 	/// Set the source of all properties in the dictionary to the given one.
 	void SetSourceOfAllProperties(const SharedPtr<const PropertySource>& property_source);
 
@@ -81,8 +74,16 @@ private:
 	// the specificity of the conflicting property.
 	void SetProperty(PropertyId id, const Property& property, int specificity);
 
+	// Sets a custom property on the dictionary and its specificity as in `SetProperty(..., specificity)`.
+	void SetCustomProperty(const String& name, const Property& property, int specificity);
+
+	// Sets a var shorthand on the dictionary and its specificity as in `SetProperty(..., specificity)`.
+	void SetVarShorthand(ShorthandId id, const Property& property, int specificity);
+
 	PropertyMap properties;
+
+	UnorderedMap<String, Property> custom_properties;
+	UnorderedMap<ShorthandId, Property> var_shorthands;
 };
 
 } // namespace Rml
-#endif

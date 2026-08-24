@@ -1,31 +1,3 @@
-/*
- * This source file is part of RmlUi, the HTML/CSS Interface Middleware
- *
- * For the latest information, see http://github.com/mikke89/RmlUi
- *
- * Copyright (c) 2008-2010 CodePoint Ltd, Shift Technology Ltd
- * Copyright (c) 2019-2023 The RmlUi Team, and contributors
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- *
- */
-
 #include "../../Include/RmlUi/Core/Element.h"
 #include "../../Include/RmlUi/Core/Context.h"
 #include "../../Include/RmlUi/Core/Core.h"
@@ -35,6 +7,7 @@
 #include "../../Include/RmlUi/Core/ElementScroll.h"
 #include "../../Include/RmlUi/Core/ElementUtilities.h"
 #include "../../Include/RmlUi/Core/Factory.h"
+#include "../../Include/RmlUi/Core/Math.h"
 #include "../../Include/RmlUi/Core/Profiling.h"
 #include "../../Include/RmlUi/Core/PropertiesIteratorView.h"
 #include "../../Include/RmlUi/Core/PropertyDefinition.h"
@@ -49,6 +22,7 @@
 #include "ElementBackgroundBorder.h"
 #include "ElementDefinition.h"
 #include "ElementEffects.h"
+#include "ElementMeta.h"
 #include "ElementStyle.h"
 #include "EventDispatcher.h"
 #include "EventSpecification.h"
@@ -84,31 +58,22 @@ static float GetScrollOffsetDelta(ScrollAlignment alignment, float begin_offset,
 			return Math::Max(begin_offset, end_offset);
 		else if (begin_offset > 0.f && end_offset > 0.f)
 			return Math::Min(begin_offset, end_offset);
-		else
-			return 0.f; // Shouldn't happen
+		return 0.f; // Shouldn't happen
+	case ScrollAlignment::Adaptive:
+		if (begin_offset >= 0.f && end_offset <= 0.f)
+			return 0.f; // Element is already visible, don't scroll
+		return (begin_offset + end_offset) / 2.0f;
 	}
 	return 0.f;
 }
 
-// Meta objects for element collected in a single struct to reduce memory allocations
-struct ElementMeta {
-	ElementMeta(Element* el) : event_dispatcher(el), style(el), background_border(), effects(el), scroll(el), computed_values(el) {}
-	SmallUnorderedMap<EventId, EventListener*> attribute_event_listeners;
-	EventDispatcher event_dispatcher;
-	ElementStyle style;
-	ElementBackgroundBorder background_border;
-	ElementEffects effects;
-	ElementScroll scroll;
-	Style::ComputedValues computed_values;
-};
-
-static Pool<ElementMeta> element_meta_chunk_pool(200, true);
+RMLUI_RTTI_Define(Element)
 
 Element::Element(const String& tag) :
 	local_stacking_context(false), local_stacking_context_forced(false), stacking_context_dirty(false), computed_values_are_default_initialized(true),
-	visible(true), offset_fixed(false), absolute_offset_dirty(true), dirty_definition(false), dirty_child_definitions(false), dirty_animation(false),
-	dirty_transition(false), dirty_transform(false), dirty_perspective(false), tag(tag), relative_offset_base(0, 0), relative_offset_position(0, 0),
-	absolute_offset(0, 0), scroll_offset(0, 0)
+	visible(true), offset_fixed(false), absolute_offset_dirty(true), rounded_main_padding_size_dirty(true), dirty_definition(false),
+	dirty_child_definitions(false), dirty_animation(false), dirty_transition(false), dirty_transform(false), dirty_perspective(false), tag(tag),
+	relative_offset_base(0, 0), relative_offset_position(0, 0), absolute_offset(0, 0), scroll_offset(0, 0)
 {
 	RMLUI_ASSERT(tag == StringUtilities::ToLower(tag));
 	parent = nullptr;
@@ -125,7 +90,7 @@ Element::Element(const String& tag) :
 
 	z_index = 0;
 
-	meta = element_meta_chunk_pool.AllocateAndConstruct(this);
+	meta = ElementMetaPool::element_meta_pool->pool.AllocateAndConstruct(this);
 	data_model = nullptr;
 }
 
@@ -145,10 +110,11 @@ Element::~Element()
 		child->SetParent(nullptr);
 	}
 
+	// Destroy meta objects before clearing children. In particular, ElementScroll may still refer to some of our children.
+	ElementMetaPool::element_meta_pool->pool.DestroyAndDeallocate(meta);
+
 	children.clear();
 	num_non_dom_children = 0;
-
-	element_meta_chunk_pool.DestroyAndDeallocate(meta);
 }
 
 void Element::Update(float dp_ratio, Vector2f vp_dimensions)
@@ -219,23 +185,16 @@ void Element::Render()
 	RMLUI_ZoneText(name.c_str(), name.size());
 #endif
 
-	// TODO: This is a work-around for the dirty offset not being properly updated when used by containing block children. This results
-	// in scrolling not working properly. We don't care about the return value, the call is only used to force the absolute offset to update.
-	if (absolute_offset_dirty)
-		GetAbsoluteOffset(BoxArea::Border);
+	UpdateAbsoluteOffsetAndRenderBoxData();
 
-	// Rebuild our stacking context if necessary.
 	if (stacking_context_dirty)
 		BuildLocalStackingContext();
 
 	UpdateTransformState();
-
-	// Apply our transform
 	ElementUtilities::ApplyTransform(*this);
 
 	meta->effects.RenderEffects(RenderStage::Enter);
 
-	// Set up the clipping region for this element.
 	if (ElementUtilities::SetClippingRegion(this))
 	{
 		meta->background_border.Render(this);
@@ -243,15 +202,14 @@ void Element::Render()
 
 		{
 			RMLUI_ZoneScopedNC("OnRender", 0x228B22);
-
 			OnRender();
 		}
 	}
 
-	// Render all elements in our local stacking context.
 	for (Element* element : stacking_context)
 		element->Render();
 
+	ElementUtilities::ApplyTransform(*this);
 	meta->effects.RenderEffects(RenderStage::Exit);
 }
 
@@ -278,8 +236,15 @@ ElementPtr Element::Clone() const
 		clone_attributes.erase("class");
 		clone->SetAttributes(clone_attributes);
 
-		for (auto& id_property : GetStyle()->GetLocalStyleProperties())
+		const PropertyDictionary& local_properties = GetStyle()->GetLocalStyleProperties();
+		for (auto& id_property : local_properties.GetProperties())
 			clone->SetProperty(id_property.first, id_property.second);
+
+		for (auto& id_property : local_properties.GetCustomProperties())
+			clone->SetProperty(id_property.first, id_property.second.ToString());
+
+		for (auto& [shorthand_id, property] : local_properties.GetVarShorthands())
+			clone->SetProperty(StyleSheetSpecification::GetShorthandName(shorthand_id), property.ToString());
 
 		clone->GetStyle()->SetClassNames(GetStyle()->GetClassNames());
 
@@ -395,28 +360,51 @@ Vector2f Element::GetRelativeOffset(BoxArea area)
 
 Vector2f Element::GetAbsoluteOffset(BoxArea area)
 {
-	if (absolute_offset_dirty)
+	UpdateAbsoluteOffsetAndRenderBoxData();
+	return area == BoxArea::Border ? absolute_offset : absolute_offset + GetBox().GetPosition(area);
+}
+
+void Element::UpdateAbsoluteOffsetAndRenderBoxData()
+{
+	if (absolute_offset_dirty || rounded_main_padding_size_dirty)
 	{
 		absolute_offset_dirty = false;
+		rounded_main_padding_size_dirty = false;
 
+		Vector2f offset_from_ancestors;
 		if (offset_parent)
-			absolute_offset = offset_parent->GetAbsoluteOffset(BoxArea::Border) + relative_offset_base + relative_offset_position;
-		else
-			absolute_offset = relative_offset_base + relative_offset_position;
+			offset_from_ancestors = offset_parent->GetAbsoluteOffset(BoxArea::Border);
 
 		if (!offset_fixed)
 		{
 			// Add any parent scrolling onto our position as well.
 			if (offset_parent)
-				absolute_offset -= offset_parent->scroll_offset;
+				offset_from_ancestors -= offset_parent->scroll_offset;
 
 			// Finally, there may be relatively positioned elements between ourself and our containing block, add their relative offsets as well.
 			for (Element* ancestor = parent; ancestor && ancestor != offset_parent; ancestor = ancestor->parent)
-				absolute_offset += ancestor->relative_offset_position;
+				offset_from_ancestors += ancestor->relative_offset_position;
+		}
+
+		const Vector2f relative_offset = relative_offset_base + relative_offset_position;
+		absolute_offset = relative_offset + offset_from_ancestors;
+
+		// Next, we find the rounded size of the box so that elements can be placed border-to-border next to each other
+		// without any gaps. To achieve this, we have to adjust their rounded/rendered sizes based on their position, in
+		// such a way that the bottom-right of this element exactly matches the top-left of the next element. The order
+		// of floating-point operations matter here, we want to replicate the operations in the layout engine as close
+		// as possible to avoid any gaps.
+		const Vector2f main_padding_size = main_box.GetSize(BoxArea::Padding);
+		const Vector2f bottom_right_absolute_offset = (relative_offset + main_padding_size) + offset_from_ancestors;
+		const Vector2f new_rounded_main_padding_size = bottom_right_absolute_offset.Round() - absolute_offset.Round();
+		if (new_rounded_main_padding_size != rounded_main_padding_size)
+		{
+			rounded_main_padding_size = new_rounded_main_padding_size;
+			meta->background_border.DirtyBackground();
+			meta->background_border.DirtyBorder();
+			meta->effects.DirtyEffectsData();
 		}
 	}
-
-	return absolute_offset + GetBox().GetPosition(area);
 }
 
 void Element::SetClipArea(BoxArea _clip_area)
@@ -443,23 +431,33 @@ void Element::SetBox(const Box& box)
 {
 	if (box != main_box || additional_boxes.size() > 0)
 	{
+#ifdef RMLUI_DEBUG
+		for (const BoxEdge edge : {BoxEdge::Top, BoxEdge::Right, BoxEdge::Bottom, BoxEdge::Left})
+		{
+			const float border_width = box.GetEdge(BoxArea::Border, edge);
+			if (border_width != Math::Round(border_width))
+				Log::Message(Log::LT_WARNING, "Expected integer border width but got %g px on element: %s", border_width, GetAddress().c_str());
+		}
+#endif
+
 		main_box = box;
 		additional_boxes.clear();
 
 		OnResize();
-
+		rounded_main_padding_size_dirty = true;
 		meta->background_border.DirtyBackground();
 		meta->background_border.DirtyBorder();
 		meta->effects.DirtyEffectsData();
+
+		if (transform_state)
+			DirtyTransformState(true, true);
 	}
 }
 
 void Element::AddBox(const Box& box, Vector2f offset)
 {
 	additional_boxes.emplace_back(PositionedBox{box, offset});
-
 	OnResize();
-
 	meta->background_border.DirtyBackground();
 	meta->background_border.DirtyBorder();
 	meta->effects.DirtyEffectsData();
@@ -474,16 +472,55 @@ const Box& Element::GetBox(int index, Vector2f& offset)
 {
 	offset = Vector2f(0);
 
-	if (index < 1)
-		return main_box;
-
 	const int additional_box_index = index - 1;
-	if (additional_box_index >= (int)additional_boxes.size())
+	if (index < 1 || additional_box_index >= (int)additional_boxes.size())
 		return main_box;
 
 	offset = additional_boxes[additional_box_index].offset;
-
 	return additional_boxes[additional_box_index].box;
+}
+
+RenderBox Element::GetRenderBox(BoxArea fill_area, int index)
+{
+	RMLUI_ASSERTMSG(fill_area >= BoxArea::Border && fill_area <= BoxArea::Content,
+		"Render box can only be generated with fill area of border, padding or content.");
+
+	UpdateAbsoluteOffsetAndRenderBoxData();
+
+	struct BoxReference {
+		const Box& box;
+		Vector2f padding_size;
+		Vector2f offset;
+	};
+	auto GetBoxAndOffset = [this, index]() {
+		const int additional_box_index = index - 1;
+		if (index < 1 || additional_box_index >= (int)additional_boxes.size())
+			return BoxReference{main_box, rounded_main_padding_size, {}};
+		const PositionedBox& positioned_box = additional_boxes[additional_box_index];
+		return BoxReference{positioned_box.box, positioned_box.box.GetSize(BoxArea::Padding), positioned_box.offset.Round()};
+	};
+
+	BoxReference box = GetBoxAndOffset();
+
+	EdgeSizes edge_sizes = {};
+	for (int area = (int)BoxArea::Border; area < (int)fill_area; area++)
+	{
+		edge_sizes[0] += box.box.GetEdge(BoxArea(area), BoxEdge::Top);
+		edge_sizes[1] += box.box.GetEdge(BoxArea(area), BoxEdge::Right);
+		edge_sizes[2] += box.box.GetEdge(BoxArea(area), BoxEdge::Bottom);
+		edge_sizes[3] += box.box.GetEdge(BoxArea(area), BoxEdge::Left);
+	}
+	Vector2f inner_size;
+	switch (fill_area)
+	{
+	case BoxArea::Border: inner_size = box.padding_size + box.box.GetFrameSize(BoxArea::Border); break;
+	case BoxArea::Padding: inner_size = box.padding_size; break;
+	case BoxArea::Content: inner_size = box.padding_size - box.box.GetFrameSize(BoxArea::Padding); break;
+	case BoxArea::Margin:
+	case BoxArea::Auto: RMLUI_ERROR;
+	}
+
+	return RenderBox{inner_size, box.offset, edge_sizes, meta->computed_values.border_radius()};
 }
 
 int Element::GetNumBoxes()
@@ -567,6 +604,14 @@ bool Element::SetProperty(const String& name, const String& value)
 		if (!meta->style.SetProperty(property.first, property.second))
 			return false;
 	}
+	for (auto& property : properties.GetCustomProperties())
+	{
+		meta->style.SetCustomProperty(property.first, property.second);
+	}
+	for (auto& [shorthand_id, property] : properties.GetVarShorthands())
+	{
+		meta->style.SetVarShorthand(shorthand_id, property);
+	}
 	return true;
 }
 
@@ -577,18 +622,28 @@ bool Element::SetProperty(PropertyId id, const Property& property)
 
 void Element::RemoveProperty(const String& name)
 {
-	auto property_id = StyleSheetSpecification::GetPropertyId(name);
+	const PropertyId property_id = StyleSheetSpecification::GetPropertyId(name);
 	if (property_id != PropertyId::Invalid)
-		meta->style.RemoveProperty(property_id);
-	else
 	{
-		auto shorthand_id = StyleSheetSpecification::GetShorthandId(name);
-		if (shorthand_id != ShorthandId::Invalid)
-		{
-			auto property_id_set = StyleSheetSpecification::GetShorthandUnderlyingProperties(shorthand_id);
-			for (auto it = property_id_set.begin(); it != property_id_set.end(); ++it)
-				meta->style.RemoveProperty(*it);
-		}
+		meta->style.RemoveProperty(property_id);
+		return;
+	}
+
+	if (StringUtilities::StartsWith(name, "--"))
+	{
+		meta->style.RemoveCustomProperty(name);
+		return;
+	}
+
+	const ShorthandId shorthand_id = StyleSheetSpecification::GetShorthandId(name);
+	if (shorthand_id != ShorthandId::Invalid)
+	{
+		const PropertyIdSet property_id_set = StyleSheetSpecification::GetShorthandUnderlyingProperties(shorthand_id);
+		for (const PropertyId id : property_id_set)
+			meta->style.RemoveProperty(id);
+
+		meta->style.RemoveVarShorthand(shorthand_id);
+		return;
 	}
 }
 
@@ -599,7 +654,14 @@ void Element::RemoveProperty(PropertyId id)
 
 const Property* Element::GetProperty(const String& name)
 {
-	return meta->style.GetProperty(StyleSheetSpecification::GetPropertyId(name));
+	const PropertyId property_id = StyleSheetSpecification::GetPropertyId(name);
+	if (property_id != PropertyId::Invalid)
+		return meta->style.GetProperty(property_id);
+
+	if (StringUtilities::StartsWith(name, "--"))
+		return meta->style.GetCustomProperty(name);
+
+	return nullptr;
 }
 
 const Property* Element::GetProperty(PropertyId id)
@@ -609,7 +671,14 @@ const Property* Element::GetProperty(PropertyId id)
 
 const Property* Element::GetLocalProperty(const String& name)
 {
-	return meta->style.GetLocalProperty(StyleSheetSpecification::GetPropertyId(name));
+	const PropertyId property_id = StyleSheetSpecification::GetPropertyId(name);
+	if (property_id != PropertyId::Invalid)
+		return meta->style.GetLocalProperty(property_id);
+
+	if (StringUtilities::StartsWith(name, "--"))
+		return meta->style.GetLocalCustomProperty(name);
+
+	return nullptr;
 }
 
 const Property* Element::GetLocalProperty(PropertyId id)
@@ -619,7 +688,7 @@ const Property* Element::GetLocalProperty(PropertyId id)
 
 const PropertyMap& Element::GetLocalStyleProperties()
 {
-	return meta->style.GetLocalStyleProperties();
+	return meta->style.GetLocalStyleProperties().GetProperties();
 }
 
 float Element::ResolveLength(NumericValue value)
@@ -640,9 +709,9 @@ float Element::ResolveNumericValue(NumericValue value, float base_value)
 
 Vector2f Element::GetContainingBlock()
 {
-	Vector2f containing_block(0, 0);
+	Vector2f containing_block;
 
-	if (offset_parent != nullptr)
+	if (offset_parent)
 	{
 		using namespace Style;
 		Position position_property = GetPosition();
@@ -651,11 +720,17 @@ Vector2f Element::GetContainingBlock()
 		if (position_property == Position::Static || position_property == Position::Relative)
 		{
 			containing_block = parent_box.GetSize();
+			containing_block.x -= meta->scroll.GetScrollbarSize(ElementScroll::VERTICAL);
+			containing_block.y -= meta->scroll.GetScrollbarSize(ElementScroll::HORIZONTAL);
 		}
 		else if (position_property == Position::Absolute || position_property == Position::Fixed)
 		{
 			containing_block = parent_box.GetSize(BoxArea::Padding);
 		}
+	}
+	else if (Context* context = GetContext())
+	{
+		containing_block = Vector2f(context->GetDimensions());
 	}
 
 	return containing_block;
@@ -710,7 +785,7 @@ bool Element::Project(Vector2f& point) const noexcept
 		Vector3f ray = local_points[1] - local_points[0];
 
 		// Only continue if we are not close to parallel with the plane.
-		if (std::fabs(ray.z) > 1.0f)
+		if (Math::Absolute(ray.z) > 1.0f)
 		{
 			// Solving the line equation p = p0 + t*ray for t, knowing that p.z = 0, produces the following.
 			float t = -local_points[0].z / ray.z;
@@ -725,9 +800,9 @@ bool Element::Project(Vector2f& point) const noexcept
 	return false;
 }
 
-PropertiesIteratorView Element::IterateLocalProperties() const
+PropertiesIteratorView Element::IterateLocalProperties(Element* filter_inherited_by) const
 {
-	return PropertiesIteratorView(MakeUnique<PropertiesIterator>(meta->style.Iterate()));
+	return PropertiesIteratorView(meta->style.IterateAll(filter_inherited_by));
 }
 
 void Element::SetPseudoClass(const String& pseudo_class, bool activate)
@@ -926,7 +1001,7 @@ float Element::GetScrollLeft()
 
 void Element::SetScrollLeft(float scroll_left)
 {
-	const float new_offset = Math::Clamp(Math::Round(scroll_left), 0.0f, GetScrollWidth() - GetClientWidth());
+	const float new_offset = Math::Round(Math::Clamp(scroll_left, 0.0f, GetScrollWidth() - GetClientWidth()));
 	if (new_offset != scroll_offset.x)
 	{
 		scroll_offset.x = new_offset;
@@ -944,7 +1019,7 @@ float Element::GetScrollTop()
 
 void Element::SetScrollTop(float scroll_top)
 {
-	const float new_offset = Math::Clamp(Math::Round(scroll_top), 0.0f, GetScrollHeight() - GetClientHeight());
+	const float new_offset = Math::Round(Math::Clamp(Math::Round(scroll_top), 0.0f, GetScrollHeight() - GetClientHeight()));
 	if (new_offset != scroll_offset.y)
 	{
 		scroll_offset.y = new_offset;
@@ -1007,7 +1082,7 @@ Element* Element::Closest(const String& selectors) const
 	{
 		for (const StyleSheetNode* node : leaf_nodes)
 		{
-			if (node->IsApplicable(parent))
+			if (node->IsApplicable(parent, this))
 			{
 				return parent;
 			}
@@ -1237,6 +1312,9 @@ void Element::ScrollIntoView(const ScrollIntoViewOptions options)
 			// Currently, only a single scrollable parent can be smooth scrolled at a time, so any other parents must be instant scrolled.
 			scroll_behavior = ScrollBehavior::Instant;
 		}
+
+		if ((scrollable_box_x || scrollable_box_y) && options.parentage == ScrollParentage::Closest)
+			break;
 	}
 }
 
@@ -1461,7 +1539,7 @@ void Element::GetElementsByClassName(ElementList& elements, const String& class_
 	return ElementUtilities::GetElementsByClassName(elements, this, class_name);
 }
 
-static Element* QuerySelectorMatchRecursive(const StyleSheetNodeListRaw& nodes, Element* element)
+static Element* QuerySelectorMatchRecursive(const StyleSheetNodeListRaw& nodes, Element* element, Element* scope)
 {
 	const int num_children = element->GetNumChildren();
 
@@ -1473,11 +1551,11 @@ static Element* QuerySelectorMatchRecursive(const StyleSheetNodeListRaw& nodes, 
 
 		for (const StyleSheetNode* node : nodes)
 		{
-			if (node->IsApplicable(child))
+			if (node->IsApplicable(child, scope))
 				return child;
 		}
 
-		Element* matching_element = QuerySelectorMatchRecursive(nodes, child);
+		Element* matching_element = QuerySelectorMatchRecursive(nodes, child, scope);
 		if (matching_element)
 			return matching_element;
 	}
@@ -1485,7 +1563,7 @@ static Element* QuerySelectorMatchRecursive(const StyleSheetNodeListRaw& nodes, 
 	return nullptr;
 }
 
-static void QuerySelectorAllMatchRecursive(ElementList& matching_elements, const StyleSheetNodeListRaw& nodes, Element* element)
+static void QuerySelectorAllMatchRecursive(ElementList& matching_elements, const StyleSheetNodeListRaw& nodes, Element* element, Element* scope)
 {
 	const int num_children = element->GetNumChildren();
 
@@ -1497,14 +1575,14 @@ static void QuerySelectorAllMatchRecursive(ElementList& matching_elements, const
 
 		for (const StyleSheetNode* node : nodes)
 		{
-			if (node->IsApplicable(child))
+			if (node->IsApplicable(child, scope))
 			{
 				matching_elements.push_back(child);
 				break;
 			}
 		}
 
-		QuerySelectorAllMatchRecursive(matching_elements, nodes, child);
+		QuerySelectorAllMatchRecursive(matching_elements, nodes, child, scope);
 	}
 }
 
@@ -1519,7 +1597,7 @@ Element* Element::QuerySelector(const String& selectors)
 		return nullptr;
 	}
 
-	return QuerySelectorMatchRecursive(leaf_nodes, this);
+	return QuerySelectorMatchRecursive(leaf_nodes, this, this);
 }
 
 void Element::QuerySelectorAll(ElementList& elements, const String& selectors)
@@ -1533,7 +1611,7 @@ void Element::QuerySelectorAll(ElementList& elements, const String& selectors)
 		return;
 	}
 
-	QuerySelectorAllMatchRecursive(elements, leaf_nodes, this);
+	QuerySelectorAllMatchRecursive(elements, leaf_nodes, this, this);
 }
 
 bool Element::Matches(const String& selectors)
@@ -1549,12 +1627,23 @@ bool Element::Matches(const String& selectors)
 
 	for (const StyleSheetNode* node : leaf_nodes)
 	{
-		if (node->IsApplicable(this))
+		if (node->IsApplicable(this, this))
 		{
 			return true;
 		}
 	}
 
+	return false;
+}
+
+bool Element::Contains(Element* element) const
+{
+	while (element)
+	{
+		if (element == this)
+			return true;
+		element = element->GetParentNode();
+	}
 	return false;
 }
 
@@ -1636,16 +1725,18 @@ void Element::OnAttributeChange(const ElementAttributes& changed_attributes)
 		}
 		else if (attribute.size() > 2 && attribute[0] == 'o' && attribute[1] == 'n')
 		{
-			static constexpr bool IN_CAPTURE_PHASE = false;
-
+			static constexpr size_t on_length = 2;
+			static constexpr size_t capture_length = 7;
+			const bool in_capture_phase = StringUtilities::EndsWith(attribute, "capture");
 			auto& attribute_event_listeners = meta->attribute_event_listeners;
 			auto& event_dispatcher = meta->event_dispatcher;
-			const auto event_id = EventSpecificationInterface::GetIdOrInsert(attribute.substr(2));
-			const auto remove_event_listener_if_exists = [&attribute_event_listeners, &event_dispatcher, event_id]() {
+			const size_t event_name_length = attribute.size() - on_length - (in_capture_phase ? capture_length : 0);
+			const auto event_id = EventSpecificationInterface::GetIdOrInsert(attribute.substr(on_length, event_name_length));
+			const auto remove_event_listener_if_exists = [&attribute_event_listeners, &event_dispatcher, event_id, in_capture_phase]() {
 				const auto listener_it = attribute_event_listeners.find(event_id);
 				if (listener_it != attribute_event_listeners.cend())
 				{
-					event_dispatcher.DetachEvent(event_id, listener_it->second, IN_CAPTURE_PHASE);
+					event_dispatcher.DetachEvent(event_id, listener_it->second, in_capture_phase);
 					attribute_event_listeners.erase(listener_it);
 				}
 			};
@@ -1657,7 +1748,7 @@ void Element::OnAttributeChange(const ElementAttributes& changed_attributes)
 				const auto value_as_string = value.Get<String>();
 				auto insertion_result = attribute_event_listeners.emplace(event_id, Factory::InstanceEventListener(value_as_string, this));
 				if (auto* listener = insertion_result.first->second)
-					event_dispatcher.AttachEvent(event_id, listener, IN_CAPTURE_PHASE);
+					event_dispatcher.AttachEvent(event_id, listener, in_capture_phase);
 			}
 			else if (value.GetType() == Variant::Type::NONE)
 				remove_event_listener_if_exists();
@@ -1672,6 +1763,12 @@ void Element::OnAttributeChange(const ElementAttributes& changed_attributes)
 
 				for (const auto& name_value : properties.GetProperties())
 					meta->style.SetProperty(name_value.first, name_value.second);
+
+				for (const auto& name_value : properties.GetCustomProperties())
+					meta->style.SetCustomProperty(name_value.first, name_value.second);
+
+				for (const auto& [shorthand_id, property] : properties.GetVarShorthands())
+					meta->style.SetVarShorthand(shorthand_id, property);
 			}
 			else if (value.GetType() != Variant::NONE)
 				Log::Message(Log::LT_WARNING, "Invalid 'style' attribute, string type required. In element: %s", GetAddress().c_str());
@@ -1781,15 +1878,20 @@ void Element::OnPropertyChange(const PropertyIdSet& changed_properties)
 	);
 	const bool filter_or_mask_changed = (changed_properties.Contains(PropertyId::Filter) || changed_properties.Contains(PropertyId::BackdropFilter) ||
 		changed_properties.Contains(PropertyId::MaskImage));
+	const bool perspective_changed = changed_properties.Contains(PropertyId::Perspective) ||
+		changed_properties.Contains(PropertyId::PerspectiveOriginX) || changed_properties.Contains(PropertyId::PerspectiveOriginY);
+	const bool transform_changed = changed_properties.Contains(PropertyId::Transform) || changed_properties.Contains(PropertyId::TransformOriginX) ||
+		changed_properties.Contains(PropertyId::TransformOriginY) || changed_properties.Contains(PropertyId::TransformOriginZ);
 
 	// Update the z-index and stacking context.
-	if (changed_properties.Contains(PropertyId::ZIndex) || filter_or_mask_changed)
+	if (changed_properties.Contains(PropertyId::ZIndex) || filter_or_mask_changed || perspective_changed || transform_changed)
 	{
 		const Style::ZIndex z_index_property = meta->computed_values.z_index();
 
 		const float new_z_index = (z_index_property.type == Style::ZIndex::Auto ? 0.f : z_index_property.value);
 		const bool enable_local_stacking_context = (z_index_property.type != Style::ZIndex::Auto || local_stacking_context_forced ||
-			meta->computed_values.has_filter() || meta->computed_values.has_backdrop_filter() || meta->computed_values.has_mask_image());
+			meta->computed_values.has_filter() || meta->computed_values.has_backdrop_filter() || meta->computed_values.has_mask_image() ||
+			meta->computed_values.has_local_transform() || meta->computed_values.has_local_perspective());
 
 		if (z_index != new_z_index || local_stacking_context != enable_local_stacking_context)
 		{
@@ -1842,30 +1944,25 @@ void Element::OnPropertyChange(const PropertyIdSet& changed_properties)
 		meta->effects.DirtyEffects();
 	}
 
+	const bool font_changed = (changed_properties.Contains(PropertyId::FontFamily) || changed_properties.Contains(PropertyId::FontStyle) ||
+		changed_properties.Contains(PropertyId::FontWeight) || changed_properties.Contains(PropertyId::FontSize) ||
+		changed_properties.Contains(PropertyId::FontKerning) || changed_properties.Contains(PropertyId::LetterSpacing));
+
 	// Dirty the effects data when their visual looks may have changed.
 	if (border_radius_changed ||                            //
+		font_changed ||                                     //
 		changed_properties.Contains(PropertyId::Opacity) || //
+		changed_properties.Contains(PropertyId::Color) ||   //
 		changed_properties.Contains(PropertyId::ImageColor))
 	{
 		meta->effects.DirtyEffectsData();
 	}
 
-	// Check for `perspective' and `perspective-origin' changes
-	if (changed_properties.Contains(PropertyId::Perspective) ||        //
-		changed_properties.Contains(PropertyId::PerspectiveOriginX) || //
-		changed_properties.Contains(PropertyId::PerspectiveOriginY))
-	{
+	if (perspective_changed)
 		DirtyTransformState(true, false);
-	}
 
-	// Check for `transform' and `transform-origin' changes
-	if (changed_properties.Contains(PropertyId::Transform) ||        //
-		changed_properties.Contains(PropertyId::TransformOriginX) || //
-		changed_properties.Contains(PropertyId::TransformOriginY) || //
-		changed_properties.Contains(PropertyId::TransformOriginZ))
-	{
+	if (transform_changed)
 		DirtyTransformState(false, true);
-	}
 
 	// Check for `animation' changes
 	if (changed_properties.Contains(PropertyId::Animation))
@@ -1978,22 +2075,36 @@ void Element::GetRML(String& content)
 		}
 	}
 
-	const PropertyMap& local_properties = meta->style.GetLocalStyleProperties();
-	if (!local_properties.empty())
+	const PropertyDictionary& local_properties = meta->style.GetLocalStyleProperties();
+	if (!local_properties.Empty())
 		content += " style=\"";
 
-	for (const auto& pair : local_properties)
+	for (const auto& [id, property] : local_properties.GetProperties())
 	{
-		const PropertyId id = pair.first;
-		const Property& property = pair.second;
-
+		// Skip placeholders for shorthands that are pending substitution, the shorthand itself is serialized below.
+		if (property.unit == Unit::SHORTHAND_PLACEHOLDER)
+			continue;
 		content += StyleSheetSpecification::GetPropertyName(id);
 		content += ": ";
 		content += StringUtilities::EncodeRml(property.ToString());
 		content += "; ";
 	}
+	for (const auto& [name, property] : local_properties.GetCustomProperties())
+	{
+		content += name;
+		content += ": ";
+		content += StringUtilities::EncodeRml(property.ToString());
+		content += "; ";
+	}
+	for (const auto& [shorthand_id, property] : local_properties.GetVarShorthands())
+	{
+		content += StyleSheetSpecification::GetShorthandName(shorthand_id);
+		content += ": ";
+		content += StringUtilities::EncodeRml(property.ToString());
+		content += "; ";
+	}
 
-	if (!local_properties.empty())
+	if (!local_properties.Empty())
 		content.back() = '\"';
 
 	if (HasChildNodes())
@@ -2012,8 +2123,11 @@ void Element::GetRML(String& content)
 	}
 }
 
-void Element::SetOwnerDocument(ElementDocument* document)
+void Element::SetOwnerDocument(ElementDocument* document, bool force_set)
 {
+	if (owner_document == document)
+		return;
+
 	if (owner_document && !document)
 	{
 		// We are detaching from the document and thereby also the context.
@@ -2021,12 +2135,12 @@ void Element::SetOwnerDocument(ElementDocument* document)
 			context->OnElementDetach(this);
 	}
 
-	// If this element is a document, then never change owner_document.
-	if (owner_document != this && owner_document != document)
+	// If this element is a document, then never change owner_document, except if forced.
+	if (owner_document != this || force_set)
 	{
 		owner_document = document;
 		for (ElementPtr& child : children)
-			child->SetOwnerDocument(document);
+			child->SetOwnerDocument(document, false);
 	}
 }
 
@@ -2079,7 +2193,7 @@ void Element::SetParent(Element* _parent)
 	if (transform_state || (parent && parent->transform_state))
 		DirtyTransformState(true, true);
 
-	SetOwnerDocument(parent ? parent->GetOwnerDocument() : nullptr);
+	SetOwnerDocument(parent ? parent->GetOwnerDocument() : nullptr, false);
 
 	if (!parent)
 	{
@@ -2258,6 +2372,13 @@ void Element::BuildLocalStackingContext()
 	stacking_context.resize(stacking_children.size());
 	for (size_t i = 0; i < stacking_children.size(); i++)
 		stacking_context[i] = stacking_children[i].element;
+
+	// If the stacking context changed, any previously hidden elements may not have had their transforms updated. Ensure they will be updated now.
+	if (transform_state)
+	{
+		for (Element* child : stacking_context)
+			child->DirtyTransformState(false, true);
+	}
 }
 
 void Element::AddChildrenToStackingContext(Vector<StackingContextChild>& stacking_children)
@@ -2369,15 +2490,20 @@ void Element::AddToStackingContext(Vector<StackingContextChild>& stacking_childr
 
 void Element::DirtyStackingContext()
 {
-	// Find the first ancestor that has a local stacking context, that is our stacking context parent.
+	if (Element* stacking_context_parent = ClosestStackingContextContainer())
+		stacking_context_parent->stacking_context_dirty = true;
+}
+
+Element* Element::ClosestStackingContextContainer()
+{
+	// Find the first ancestor, or this, that has a local stacking context. That is our stacking context container.
 	Element* stacking_context_parent = this;
 	while (stacking_context_parent && !stacking_context_parent->local_stacking_context)
 	{
 		stacking_context_parent = stacking_context_parent->GetParentNode();
 	}
 
-	if (stacking_context_parent)
-		stacking_context_parent->stacking_context_dirty = true;
+	return stacking_context_parent;
 }
 
 void Element::DirtyDefinition(DirtyNodes dirty_nodes)
@@ -2418,10 +2544,15 @@ void Element::UpdateDefinition()
 bool Element::Animate(const String& property_name, const Property& target_value, float duration, Tween tween, int num_iterations,
 	bool alternate_direction, float delay, const Property* start_value)
 {
-	bool result = false;
-	PropertyId property_id = StyleSheetSpecification::GetPropertyId(property_name);
+	return Animate(StyleSheetSpecification::GetPropertyId(property_name), target_value, duration, tween, num_iterations, alternate_direction, delay,
+		start_value);
+}
 
-	auto it_animation = StartAnimation(property_id, start_value, num_iterations, alternate_direction, delay, false);
+bool Element::Animate(PropertyId id, const Property& target_value, float duration, Tween tween, int num_iterations, bool alternate_direction,
+	float delay, const Property* start_value)
+{
+	bool result = false;
+	auto it_animation = StartAnimation(id, start_value, num_iterations, alternate_direction, delay, false);
 	if (it_animation != animations.end())
 	{
 		result = it_animation->AddKey(duration, target_value, *this, tween, true);
@@ -2434,13 +2565,15 @@ bool Element::Animate(const String& property_name, const Property& target_value,
 
 bool Element::AddAnimationKey(const String& property_name, const Property& target_value, float duration, Tween tween)
 {
+	return AddAnimationKey(StyleSheetSpecification::GetPropertyId(property_name), target_value, duration, tween);
+}
+
+bool Element::AddAnimationKey(PropertyId id, const Property& target_value, float duration, Tween tween)
+{
 	ElementAnimation* animation = nullptr;
-
-	PropertyId property_id = StyleSheetSpecification::GetPropertyId(property_name);
-
 	for (auto& existing_animation : animations)
 	{
-		if (existing_animation.GetPropertyId() == property_id)
+		if (existing_animation.GetPropertyId() == id)
 		{
 			animation = &existing_animation;
 			break;
@@ -2608,7 +2741,7 @@ void Element::HandleTransitionProperty()
 			});
 		}
 
-		// We can decide what to do with cancelled transitions here.
+		// We can decide what to do with canceled transitions here.
 		for (auto it = it_remove; it != animations.end(); ++it)
 			RemoveProperty(it->GetPropertyId());
 
@@ -2639,7 +2772,7 @@ void Element::HandleAnimationProperty()
 				auto it_remove = std::partition(animations.begin(), animations.end(),
 					[](const ElementAnimation& animation) { return animation.GetOrigin() != ElementAnimationOrigin::Animation; });
 
-				// We can decide what to do with cancelled animations here.
+				// We can decide what to do with canceled animations here.
 				for (auto it = it_remove; it != animations.end(); ++it)
 					RemoveProperty(it->GetPropertyId());
 
@@ -2649,6 +2782,7 @@ void Element::HandleAnimationProperty()
 			// Start animations
 			if (animation_list)
 			{
+				Property property_storage;
 				for (const auto& animation : *animation_list)
 				{
 					const Keyframes* keyframes_ptr = stylesheet->GetKeyframes(animation.name);
@@ -2656,29 +2790,53 @@ void Element::HandleAnimationProperty()
 					{
 						auto& property_ids = keyframes_ptr->property_ids;
 						auto& blocks = keyframes_ptr->blocks;
+						SmallUnorderedSet<String> variable_dependencies;
+						std::optional<PropertyDictionary> substituted_shorthands_cache;
+						int previous_block_index = -1;
 
-						bool has_from_key = (blocks[0].normalized_time == 0);
-						bool has_to_key = (blocks.back().normalized_time == 1);
+						auto ResolveProperty = [&](PropertyId id, const Property* property, int block_index) {
+							if (!property)
+								return property;
+							if (block_index != previous_block_index)
+							{
+								substituted_shorthands_cache.reset();
+								previous_block_index = block_index;
+							}
+							return meta->style.ResolveKeyFrameProperty(id, property, blocks[block_index].properties, substituted_shorthands_cache,
+								variable_dependencies, property_storage);
+						};
+
+						const bool has_from_key = (blocks.front().normalized_time == 0);
+						const bool has_to_key = (blocks.back().normalized_time == 1);
 
 						// If the first key defines initial conditions for a given property, use those values, else, use this element's current
 						// values.
 						for (PropertyId id : property_ids)
-							StartAnimation(id, (has_from_key ? blocks[0].properties.GetProperty(id) : nullptr), animation.num_iterations,
-								animation.alternate, animation.delay, true);
+						{
+							const Property* property = ResolveProperty(id, (has_from_key ? blocks.front().properties.GetProperty(id) : nullptr), 0);
+							StartAnimation(id, property, animation.num_iterations, animation.alternate, animation.delay, true);
+						}
 
 						// Add middle keys: Need to skip the first and last keys if they set the initial and end conditions, respectively.
 						for (int i = (has_from_key ? 1 : 0); i < (int)blocks.size() + (has_to_key ? -1 : 0); i++)
 						{
 							// Add properties of current key to animation
 							float time = blocks[i].normalized_time * animation.duration;
-							for (auto& property : blocks[i].properties.GetProperties())
-								AddAnimationKeyTime(property.first, &property.second, time, animation.tween);
+							for (const auto& [id, unresolved_property] : blocks[i].properties.GetProperties())
+							{
+								const Property* property = ResolveProperty(id, &unresolved_property, i);
+								AddAnimationKeyTime(id, property, time, animation.tween);
+							}
 						}
 
 						// If the last key defines end conditions for a given property, use those values, else, use this element's current values.
 						float time = animation.duration;
 						for (PropertyId id : property_ids)
-							AddAnimationKeyTime(id, (has_to_key ? blocks.back().properties.GetProperty(id) : nullptr), time, animation.tween);
+						{
+							const Property* property =
+								ResolveProperty(id, (has_to_key ? blocks.back().properties.GetProperty(id) : nullptr), (int)blocks.size() - 1);
+							AddAnimationKeyTime(id, property, time, animation.tween);
+						}
 					}
 				}
 			}
@@ -2843,12 +3001,13 @@ void Element::UpdateTransformState()
 			// believe the motivation is. Then we would need to subtract the absolute zero-offsets during geometry submit whenever we have transforms.
 		}
 
-		if (parent && parent->transform_state)
+		Element* stacking_parent = parent ? parent->ClosestStackingContextContainer() : nullptr;
+		if (stacking_parent && stacking_parent->transform_state)
 		{
 			// Apply the parent's local perspective and transform.
 			// @performance: If we have no local transform and no parent perspective, we can effectively just point to the parent transform instead of
 			// copying it.
-			const TransformState& parent_state = *parent->transform_state;
+			const TransformState& parent_state = *stacking_parent->transform_state;
 
 			if (auto parent_perspective = parent_state.GetLocalPerspective())
 			{
@@ -2879,8 +3038,8 @@ void Element::UpdateTransformState()
 	// A change in perspective or transform will require an update to children transforms as well.
 	if (perspective_or_transform_changed)
 	{
-		for (size_t i = 0; i < children.size(); i++)
-			children[i]->DirtyTransformState(false, true);
+		for (Element* stacking_child : stacking_context)
+			stacking_child->DirtyTransformState(false, true);
 	}
 
 	// No reason to keep the transform state around if transform and perspective have been removed.
@@ -2929,8 +3088,8 @@ void Element::DirtyFontFaceRecursive()
 void Element::ClampScrollOffset()
 {
 	const Vector2f new_scroll_offset = {
-		Math::Min(scroll_offset.x, GetScrollWidth() - GetClientWidth()),
-		Math::Min(scroll_offset.y, GetScrollHeight() - GetClientHeight()),
+		Math::Round(Math::Min(scroll_offset.x, GetScrollWidth() - GetClientWidth())),
+		Math::Round(Math::Min(scroll_offset.y, GetScrollHeight() - GetClientHeight())),
 	};
 
 	if (new_scroll_offset != scroll_offset)
@@ -2938,12 +3097,17 @@ void Element::ClampScrollOffset()
 		scroll_offset = new_scroll_offset;
 		DirtyAbsoluteOffset();
 	}
+
+	// At this point the scrollbars have been resolved, both in terms of size and visibility. Update their properties
+	// now so that any visibility changes in particular are reflected immediately on the next render. Otherwise we risk
+	// that the scrollbars renders a frame late, since changes to scrollbars can happen during layouting.
+	meta->scroll.UpdateProperties();
 }
 
 void Element::ClampScrollOffsetRecursive()
 {
 	ClampScrollOffset();
-	const int num_children = GetNumChildren(true);
+	const int num_children = GetNumChildren();
 	for (int i = 0; i < num_children; ++i)
 		GetChild(i)->ClampScrollOffsetRecursive();
 }

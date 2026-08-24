@@ -1,33 +1,4 @@
-/*
- * This source file is part of RmlUi, the HTML/CSS Interface Middleware
- *
- * For the latest information, see http://github.com/mikke89/RmlUi
- *
- * Copyright (c) 2008-2010 CodePoint Ltd, Shift Technology Ltd
- * Copyright (c) 2019-2023 The RmlUi Team, and contributors
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- *
- */
-
-#ifndef RMLUI_CORE_DATASTRUCTHANDLE_H
-#define RMLUI_CORE_DATASTRUCTHANDLE_H
+#pragma once
 
 #include "DataTypeRegister.h"
 #include "DataTypes.h"
@@ -91,9 +62,9 @@ public:
 	{
 		using BasicReturnType = typename std::remove_reference<ReturnType>::type;
 		using BasicAssignType = typename std::remove_const<typename std::remove_reference<AssignType>::type>::type;
-		using UnderlyingType = typename std::conditional<IsVoidMemberFunc<ReturnType>::value, BasicAssignType, BasicReturnType>::type;
+		using UnderlyingType = typename std::conditional<IsVoidMemberFunc<ReturnType>, BasicAssignType, BasicReturnType>::type;
 
-		static_assert(IsVoidMemberFunc<ReturnType>::value || IsVoidMemberFunc<AssignType>::value ||
+		static_assert(IsVoidMemberFunc<ReturnType> || IsVoidMemberFunc<AssignType> ||
 				std::is_same<BasicReturnType, BasicAssignType>::value,
 			"Provided getter and setter functions must get and set the same type.");
 
@@ -182,11 +153,11 @@ bool StructHandle<Object>::CreateMemberScalarGetSetFuncDefinition(const String& 
 		"Struct member getter/setter functions must return/assign a type that is default constructible.");
 	static_assert(!std::is_const<UnderlyingType>::value, "Const qualified type illegal in data member getter functions.");
 
-	if (!IsVoidMemberFunc<MemberGetType>::value)
+	if (!IsVoidMemberFunc<MemberGetType>)
 	{
 		RMLUI_ASSERTMSG(member_get_func_ptr, "Expected member getter function, but none provided.");
 	}
-	if (!IsVoidMemberFunc<MemberSetType>::value)
+	if (!IsVoidMemberFunc<MemberSetType>)
 	{
 		RMLUI_ASSERTMSG(member_get_func_ptr, "Expected member setter function, but none provided.");
 	}
@@ -210,4 +181,3 @@ bool StructHandle<Object>::CreateMemberScalarGetSetFuncDefinition(const String& 
 }
 
 } // namespace Rml
-#endif

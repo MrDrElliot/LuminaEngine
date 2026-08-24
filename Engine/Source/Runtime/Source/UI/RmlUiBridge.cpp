@@ -400,9 +400,6 @@ namespace Lumina::RmlUi
             // Script-registered data models (World.UI.AddModel). Owned here; reaped per-world like UIListeners.
             TVector<FManagedDataModel*>         DataModels;
 
-            // RmlUi references this buffer for the face's lifetime instead of copying it.
-            TVector<uint8>                      DefaultFontData;
-
             // Recursive because Update may fire callbacks that re-enter the bridge on the same thread.
             FRecursiveMutex                     StateMutex;
         };
@@ -709,7 +706,7 @@ namespace Lumina::RmlUi
             return false;
         }
 
-        // Loaded from memory so the family name is ours rather than the file's own metadata.
+        // Registered under our own family name rather than whatever the file's metadata calls it.
         constexpr const char* DefaultFontCandidates[] =
         {
             "/Engine/Resources/UI/Fonts/LatoLatin-Regular.ttf",
@@ -720,14 +717,7 @@ namespace Lumina::RmlUi
         bool bDefaultFontRegistered = false;
         for (const char* Candidate : DefaultFontCandidates)
         {
-            if (!VFS::ReadFile(State.DefaultFontData, Candidate) || State.DefaultFontData.empty())
-            {
-                LOG_WARN("[RmlUi] Could not read UI font '{}'; trying the next candidate.", Candidate);
-                continue;
-            }
-
-            const Rml::Span<const Rml::byte> FontSpan(State.DefaultFontData.data(), State.DefaultFontData.size());
-            if (Rml::LoadFontFace(FontSpan, GDefaultUIFontFamily, Rml::Style::FontStyle::Normal,
+            if (Rml::LoadFontFace(Candidate, GDefaultUIFontFamily, Rml::Style::FontStyle::Normal,
                     Rml::Style::FontWeight::Auto, true /*fallback_face*/))
             {
                 bDefaultFontRegistered = true;
@@ -758,7 +748,6 @@ namespace Lumina::RmlUi
         else
         {
             // Nothing else in the UI stack fails visibly here, so say it once and plainly.
-            State.DefaultFontData.clear();
             LOG_ERROR("[RmlUi] No UI font could be registered as '{}'. Every document that does not author its "
                       "own 'font-family' will render no text. Check that the engine content is mounted.",
                 GDefaultUIFontFamily);
@@ -816,10 +805,6 @@ namespace Lumina::RmlUi
             delete M;
         }
         State.DataModels.clear();
-
-        // Font faces are destroyed; the default-font bytes RmlUi referenced are now safe to release.
-        State.DefaultFontData.clear();
-        State.DefaultFontData.shrink_to_fit();
 
         State.EditorContexts.clear();
         State.Worlds.clear();

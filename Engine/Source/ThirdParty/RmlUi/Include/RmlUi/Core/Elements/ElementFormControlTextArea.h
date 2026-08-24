@@ -1,33 +1,4 @@
-/*
- * This source file is part of RmlUi, the HTML/CSS Interface Middleware
- *
- * For the latest information, see http://github.com/mikke89/RmlUi
- *
- * Copyright (c) 2008-2010 CodePoint Ltd, Shift Technology Ltd
- * Copyright (c) 2019-2023 The RmlUi Team, and contributors
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- *
- */
-
-#ifndef RMLUI_CORE_ELEMENTS_ELEMENTFORMCONTROLTEXTAREA_H
-#define RMLUI_CORE_ELEMENTS_ELEMENTFORMCONTROLTEXTAREA_H
+#pragma once
 
 #include "../Header.h"
 #include "ElementFormControl.h"
@@ -37,14 +8,12 @@ namespace Rml {
 class WidgetTextInputMultiLine;
 
 /**
-    Default RmlUi implemention of a text area.
-
-    @author Peter Curry
+    Default RmlUi implementation of a text area.
  */
 
 class RMLUICORE_API ElementFormControlTextArea : public ElementFormControl {
 public:
-	RMLUI_RTTI_DefineWithParent(ElementFormControlTextArea, ElementFormControl)
+	RMLUI_RTTI_DeclareWithParent(ElementFormControlTextArea, ElementFormControl)
 
 	/// Constructs a new ElementFormControlTextArea. This should not be called directly; use the
 	/// Factory instead.
@@ -62,7 +31,7 @@ public:
 
 	/// Sets the number of characters visible across the text area. Note that this will only be precise when using
 	/// a fixed-width font.
-	/// @param[in] size The number of visible characters.
+	/// @param[in] num_columns The number of visible columns (characters).
 	void SetNumColumns(int num_columns);
 	/// Returns the approximate number of characters visible at once.
 	/// @return The number of visible characters.
@@ -132,11 +101,10 @@ protected:
 	void GetInnerRML(String& content) const override;
 
 private:
-	/// Sets the necessary properties to display the widget in current word wrap state.
+	/// Sets the necessary properties to display the widget in the current word wrap state.
 	void SetWordWrapProperties();
 
 	UniquePtr<WidgetTextInputMultiLine> widget;
 };
 
 } // namespace Rml
-#endif

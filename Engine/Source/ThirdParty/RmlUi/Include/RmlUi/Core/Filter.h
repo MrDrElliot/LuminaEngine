@@ -1,33 +1,4 @@
-/*
- * This source file is part of RmlUi, the HTML/CSS Interface Middleware
- *
- * For the latest information, see http://github.com/mikke89/RmlUi
- *
- * Copyright (c) 2008-2010 CodePoint Ltd, Shift Technology Ltd
- * Copyright (c) 2019-2023 The RmlUi Team, and contributors
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- *
- */
-
-#ifndef RMLUI_CORE_FILTER_H
-#define RMLUI_CORE_FILTER_H
+#pragma once
 
 #include "EffectSpecification.h"
 #include "Header.h"
@@ -55,7 +26,7 @@ public:
 	/// Called to allow extending the area being affected by this filter beyond the border box of the element.
 	/// @param[in] element The element the filter is being rendered on.
 	/// @param[in,out] overflow The ink overflow rectangle determining the clipping region to be applied when filtering the current element.
-	/// @note Modifying the ink overflow rectangle affects rendering of all filters active on the current element.
+	/// @note Modifying the ink overflow rectangle affects the rendering of all filters active on the current element.
 	/// @note Only affects the 'filter' property, not 'backdrop-filter'.
 	virtual void ExtendInkOverflow(Element* element, Rectanglef& overflow) const;
 };
@@ -76,4 +47,3 @@ public:
 };
 
 } // namespace Rml
-#endif

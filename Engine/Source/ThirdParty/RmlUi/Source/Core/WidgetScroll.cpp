@@ -1,31 +1,3 @@
-/*
- * This source file is part of RmlUi, the HTML/CSS Interface Middleware
- *
- * For the latest information, see http://github.com/mikke89/RmlUi
- *
- * Copyright (c) 2008-2010 CodePoint Ltd, Shift Technology Ltd
- * Copyright (c) 2019-2023 The RmlUi Team, and contributors
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- *
- */
-
 #include "WidgetScroll.h"
 #include "../../Include/RmlUi/Core/ComputedValues.h"
 #include "../../Include/RmlUi/Core/Context.h"
@@ -148,7 +120,7 @@ void WidgetScroll::Update()
 	if (!std::any_of(std::begin(arrow_timers), std::end(arrow_timers), [](float timer) { return timer > 0; }))
 		return;
 
-	double current_time = Clock::GetElapsedTime();
+	const double current_time = Clock::GetElapsedTime();
 	const float delta_time = float(current_time - last_update_time);
 	last_update_time = current_time;
 
@@ -456,17 +428,21 @@ void WidgetScroll::PositionBar()
 
 	if (orientation == VERTICAL)
 	{
-		float traversable_track_length = track_dimensions.y - bar_dimensions.y;
-		bar->SetOffset(
-			Vector2f(bar->GetBox().GetEdge(BoxArea::Margin, BoxEdge::Left), track->GetRelativeOffset().y + traversable_track_length * bar_position),
-			parent);
+		const float traversable_track_length = track_dimensions.y - bar_dimensions.y;
+		const Vector2f offset = {
+			bar->GetBox().GetEdge(BoxArea::Margin, BoxEdge::Left),
+			track->GetRelativeOffset().y + traversable_track_length * bar_position,
+		};
+		bar->SetOffset(offset.Round(), parent);
 	}
 	else
 	{
-		float traversable_track_length = track_dimensions.x - bar_dimensions.x;
-		bar->SetOffset(
-			Vector2f(track->GetRelativeOffset().x + traversable_track_length * bar_position, bar->GetBox().GetEdge(BoxArea::Margin, BoxEdge::Top)),
-			parent);
+		const float traversable_track_length = track_dimensions.x - bar_dimensions.x;
+		const Vector2f offset = {
+			track->GetRelativeOffset().x + traversable_track_length * bar_position,
+			bar->GetBox().GetEdge(BoxArea::Margin, BoxEdge::Top),
+		};
+		bar->SetOffset(offset.Round(), parent);
 	}
 }
 

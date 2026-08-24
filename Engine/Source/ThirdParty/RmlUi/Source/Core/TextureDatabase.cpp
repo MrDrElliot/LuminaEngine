@@ -1,31 +1,3 @@
-/*
- * This source file is part of RmlUi, the HTML/CSS Interface Middleware
- *
- * For the latest information, see http://github.com/mikke89/RmlUi
- *
- * Copyright (c) 2008-2010 CodePoint Ltd, Shift Technology Ltd
- * Copyright (c) 2019-2023 The RmlUi Team, and contributors
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- *
- */
-
 #include "TextureDatabase.h"
 #include "../../Include/RmlUi/Core/Log.h"
 #include "../../Include/RmlUi/Core/RenderInterface.h"
@@ -75,10 +47,11 @@ auto CallbackTextureDatabase::EnsureLoaded(RenderManager* render_manager, Render
 	-> CallbackTextureEntry&
 {
 	CallbackTextureEntry& data = texture_list[callback_index];
-	if (!data.texture_handle)
+	if (!data.texture_handle && !data.load_failed)
 	{
 		if (!data.callback(CallbackTextureInterface(*render_manager, *render_interface, data.texture_handle, data.dimensions)))
 		{
+			data.load_failed = true;
 			data.texture_handle = {};
 			data.dimensions = {};
 		}
@@ -116,22 +89,16 @@ FileTextureDatabase::~FileTextureDatabase()
 #endif
 }
 
-TextureFileIndex FileTextureDatabase::LoadTexture(RenderInterface* render_interface, const String& source)
+TextureFileIndex FileTextureDatabase::InsertTexture(const String& source)
 {
 	auto it = texture_map.find(source);
 	if (it != texture_map.end())
 		return it->second;
 
-	FileTextureEntry entry = LoadTextureEntry(render_interface, source);
-	if (!entry.texture_handle)
-	{
-		Rml::Log::Message(Rml::Log::LT_WARNING, "Could not load texture: %s", source.c_str());
-		return TextureFileIndex::Invalid;
-	}
-
+	// The texture is not yet loaded from the render interface. That is deferred until the texture is needed, such as when it becomes visible.
 	const auto index = TextureFileIndex(texture_list.size());
 	texture_map[source] = index;
-	texture_list.push_back(std::move(entry));
+	texture_list.push_back({});
 
 	return index;
 }
@@ -140,6 +107,11 @@ FileTextureDatabase::FileTextureEntry FileTextureDatabase::LoadTextureEntry(Rend
 {
 	FileTextureEntry result = {};
 	result.texture_handle = render_interface->LoadTexture(result.dimensions, source);
+	if (!result.texture_handle)
+	{
+		result.load_texture_failed = true;
+		Rml::Log::Message(Rml::Log::LT_WARNING, "Could not load texture: %s", source.c_str());
+	}
 	return result;
 }
 
@@ -151,7 +123,8 @@ FileTextureDatabase::FileTextureEntry& FileTextureDatabase::EnsureLoaded(RenderI
 		auto it = std::find_if(texture_map.begin(), texture_map.end(), [index](const auto& pair) { return pair.second == index; });
 		RMLUI_ASSERT(it != texture_map.end());
 		const String& source = it->first;
-		entry = LoadTextureEntry(render_interface, source);
+		if (!entry.load_texture_failed)
+			entry = LoadTextureEntry(render_interface, source);
 	}
 	return entry;
 }
@@ -185,7 +158,7 @@ bool FileTextureDatabase::ReleaseTexture(RenderInterface* render_interface, cons
 	if (texture.texture_handle)
 	{
 		render_interface->ReleaseTexture(texture.texture_handle);
-		texture.texture_handle = {};
+		texture = {};
 		return true;
 	}
 
@@ -199,7 +172,7 @@ void FileTextureDatabase::ReleaseAllTextures(RenderInterface* render_interface)
 		if (texture.texture_handle)
 		{
 			render_interface->ReleaseTexture(texture.texture_handle);
-			texture.texture_handle = {};
+			texture = {};
 		}
 	}
 }

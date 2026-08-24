@@ -1,32 +1,5 @@
-/*
- * This source file is part of RmlUi, the HTML/CSS Interface Middleware
- *
- * For the latest information, see http://github.com/mikke89/RmlUi
- *
- * Copyright (c) 2008-2010 CodePoint Ltd, Shift Technology Ltd
- * Copyright (c) 2019-2023 The RmlUi Team, and contributors
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- *
- */
-
 #include "../../Include/RmlUi/Core/XMLParser.h"
+#include "../../Include/RmlUi/Core/Element.h"
 #include "../../Include/RmlUi/Core/Factory.h"
 #include "../../Include/RmlUi/Core/Log.h"
 #include "../../Include/RmlUi/Core/Profiling.h"
@@ -34,18 +7,23 @@
 #include "../../Include/RmlUi/Core/Types.h"
 #include "../../Include/RmlUi/Core/URL.h"
 #include "../../Include/RmlUi/Core/XMLNodeHandler.h"
+#include "ControlledLifetimeResource.h"
 #include "DocumentHeader.h"
 
 namespace Rml {
 
-using NodeHandlers = UnorderedMap<String, SharedPtr<XMLNodeHandler>>;
-static NodeHandlers node_handlers;
-static SharedPtr<XMLNodeHandler> default_node_handler;
+struct XmlParserData {
+	UnorderedMap<String, SharedPtr<XMLNodeHandler>> node_handlers;
+	UnorderedSet<String> cdata_tags;
+	SharedPtr<XMLNodeHandler> default_node_handler;
+};
+
+static ControlledLifetimeResource<XmlParserData> xml_parser_data;
 
 XMLParser::XMLParser(Element* root)
 {
-	RegisterCDATATag("script");
-	RegisterCDATATag("style");
+	for (const String& cdata_tag : xml_parser_data->cdata_tags)
+		RegisterCDATATag(cdata_tag);
 
 	for (const String& name : Factory::GetStructuralDataViewAttributeNames())
 		RegisterInnerXMLAttribute(name);
@@ -53,6 +31,19 @@ XMLParser::XMLParser(Element* root)
 	// Add the first frame.
 	ParseFrame frame;
 	frame.element = root;
+	if (root != nullptr)
+	{
+		frame.tag = root->GetTagName();
+		auto itr = xml_parser_data->node_handlers.find(root->GetTagName());
+		if (itr != xml_parser_data->node_handlers.end())
+		{
+			frame.node_handler = itr->second.get();
+		}
+		else
+		{
+			frame.node_handler = xml_parser_data->default_node_handler.get();
+		}
+	}
 	stack.push(frame);
 
 	active_handler = nullptr;
@@ -62,26 +53,42 @@ XMLParser::XMLParser(Element* root)
 
 XMLParser::~XMLParser() {}
 
+void XMLParser::RegisterPersistentCDATATag(const String& _tag)
+{
+	if (!xml_parser_data)
+		xml_parser_data.Initialize();
+
+	String tag = StringUtilities::ToLower(_tag);
+
+	if (tag.empty())
+		return;
+
+	xml_parser_data->cdata_tags.insert(tag);
+}
+
 XMLNodeHandler* XMLParser::RegisterNodeHandler(const String& _tag, SharedPtr<XMLNodeHandler> handler)
 {
+	if (!xml_parser_data)
+		xml_parser_data.Initialize();
+
 	String tag = StringUtilities::ToLower(_tag);
 
 	// Check for a default node registration.
 	if (tag.empty())
 	{
-		default_node_handler = std::move(handler);
-		return default_node_handler.get();
+		xml_parser_data->default_node_handler = std::move(handler);
+		return xml_parser_data->default_node_handler.get();
 	}
 
 	XMLNodeHandler* result = handler.get();
-	node_handlers[tag] = std::move(handler);
+	xml_parser_data->node_handlers[tag] = std::move(handler);
 	return result;
 }
 
 XMLNodeHandler* XMLParser::GetNodeHandler(const String& tag)
 {
-	auto it = node_handlers.find(tag);
-	if (it != node_handlers.end())
+	auto it = xml_parser_data->node_handlers.find(tag);
+	if (it != xml_parser_data->node_handlers.end())
 		return it->second.get();
 
 	return nullptr;
@@ -89,8 +96,7 @@ XMLNodeHandler* XMLParser::GetNodeHandler(const String& tag)
 
 void XMLParser::ReleaseHandlers()
 {
-	default_node_handler.reset();
-	node_handlers.clear();
+	xml_parser_data.Shutdown();
 }
 
 DocumentHeader* XMLParser::GetDocumentHeader()
@@ -100,16 +106,16 @@ DocumentHeader* XMLParser::GetDocumentHeader()
 
 void XMLParser::PushDefaultHandler()
 {
-	active_handler = default_node_handler.get();
+	active_handler = xml_parser_data->default_node_handler.get();
 }
 
 bool XMLParser::PushHandler(const String& tag)
 {
-	NodeHandlers::iterator i = node_handlers.find(StringUtilities::ToLower(tag));
-	if (i == node_handlers.end())
+	auto it = xml_parser_data->node_handlers.find(StringUtilities::ToLower(tag));
+	if (it == xml_parser_data->node_handlers.end())
 		return false;
 
-	active_handler = i->second.get();
+	active_handler = it->second.get();
 	return true;
 }
 
@@ -130,8 +136,8 @@ void XMLParser::HandleElementStart(const String& _name, const XMLAttributes& att
 	const String name = StringUtilities::ToLower(_name);
 
 	// Check for a specific handler that will override the child handler.
-	NodeHandlers::iterator itr = node_handlers.find(name);
-	if (itr != node_handlers.end())
+	auto itr = xml_parser_data->node_handlers.find(name);
+	if (itr != xml_parser_data->node_handlers.end())
 		active_handler = itr->second.get();
 
 	// Store the current active handler, so we can use it through this function (as active handler may change)
@@ -156,28 +162,23 @@ void XMLParser::HandleElementStart(const String& _name, const XMLAttributes& att
 
 void XMLParser::HandleElementEnd(const String& _name)
 {
+	RMLUI_ASSERT(stack.size() >= 1);
 	RMLUI_ZoneScoped;
 	String name = StringUtilities::ToLower(_name);
 
-	// Copy the top of the stack
-	ParseFrame frame = stack.top();
-	// Pop the frame
+	ParseFrame frame = std::move(stack.top());
 	stack.pop();
-	// Restore active handler to the previous frame's child handler
+
 	active_handler = stack.top().child_handler;
 
-	// Check frame names
 	if (name != frame.tag)
 	{
 		Log::Message(Log::LT_ERROR, "Closing tag '%s' mismatched on %s:%d was expecting '%s'.", name.c_str(), GetSourceURL().GetURL().c_str(),
 			GetLineNumber(), frame.tag.c_str());
 	}
 
-	// Call element end handler
 	if (frame.node_handler)
-	{
 		frame.node_handler->ElementEnd(this, name);
-	}
 }
 
 void XMLParser::HandleData(const String& data, XMLDataType type)

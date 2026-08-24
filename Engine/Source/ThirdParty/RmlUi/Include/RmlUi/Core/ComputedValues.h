@@ -1,35 +1,8 @@
-/*
- * This source file is part of RmlUi, the HTML/CSS Interface Middleware
- *
- * For the latest information, see http://github.com/mikke89/RmlUi
- *
- * Copyright (c) 2019-2023 The RmlUi Team, and contributors
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- *
- */
-
-#ifndef RMLUI_CORE_COMPUTEDVALUES_H
-#define RMLUI_CORE_COMPUTEDVALUES_H
+#pragma once
 
 #include "Animation.h"
 #include "Element.h"
+#include "RenderBox.h"
 #include "StyleTypes.h"
 #include "Types.h"
 #include <cfloat>
@@ -112,10 +85,10 @@ namespace Style {
 
 	struct InheritedValues {
 		InheritedValues() :
-			font_weight(FontWeight::Normal), has_letter_spacing(0), font_style(FontStyle::Normal), has_font_effect(false),
-			pointer_events(PointerEvents::Auto), focus(Focus::Auto), text_align(TextAlign::Left), text_decoration(TextDecoration::None),
-			text_transform(TextTransform::None), white_space(WhiteSpace::Normal), word_break(WordBreak::Normal),
-			direction(Direction::Auto), line_height_inherit_type(LineHeight::Number)
+			font_weight(FontWeight::Normal), font_kerning(FontKerning::Auto), has_letter_spacing(0), font_style(FontStyle::Normal),
+			has_font_effect(false), pointer_events(PointerEvents::Auto), focus(Focus::Auto), text_align(TextAlign::Left),
+			text_decoration(TextDecoration::None), text_transform(TextTransform::None), white_space(WhiteSpace::Normal),
+			word_break(WordBreak::Normal), direction(Direction::Auto), line_height_inherit_type(LineHeight::Number)
 		{}
 
 		// Font face used to render text and resolve ex properties. Does not represent a true property
@@ -128,6 +101,7 @@ namespace Style {
 		Colourb color = Colourb(255, 255, 255);
 
 		FontWeight font_weight : 10;
+		FontKerning font_kerning : 2;
 		uint16_t has_letter_spacing : 1;
 
 		FontStyle font_style : 1;
@@ -163,7 +137,7 @@ namespace Style {
 
 			vertical_align_type(VerticalAlign::Baseline), drag(Drag::None), tab_index(TabIndex::None), overscroll_behavior(OverscrollBehavior::Auto),
 
-			has_mask_image(false), has_filter(false), has_backdrop_filter(false), has_box_shadow(false)
+			has_mask_image(false), has_filter(false), has_backdrop_filter(false), has_box_shadow(false), text_overflow(TextOverflow::Clip)
 		{}
 
 		LengthPercentage::Type min_width_type : 1, max_width_type : 1;
@@ -185,6 +159,8 @@ namespace Style {
 		bool has_filter : 1;
 		bool has_backdrop_filter : 1;
 		bool has_box_shadow : 1;
+
+		TextOverflow text_overflow : 2;
 
 		Clip clip;
 
@@ -213,7 +189,7 @@ namespace Style {
 		explicit ComputedValues(Element* element) : element(element) {}
 
 		// clang-format off
-		
+
 		// -- Common --
 		LengthPercentageAuto width()               const { return LengthPercentageAuto(common.width_type, common.width_value); }
 		LengthPercentageAuto height()              const { return LengthPercentageAuto(common.height_type, common.height_value); }
@@ -248,7 +224,7 @@ namespace Style {
 		Colourb              border_bottom_color() const { return common.border_bottom_color; }
 		Colourb              border_left_color()   const { return common.border_left_color; }
 		bool                 has_decorator()       const { return common.has_decorator; }
-		
+
 		// -- Inherited --
 		String         font_family()      const;
 		String         cursor()           const;
@@ -258,6 +234,7 @@ namespace Style {
 		bool           has_font_effect()  const { return inherited.has_font_effect; }
 		FontStyle      font_style()       const { return inherited.font_style; }
 		FontWeight     font_weight()      const { return inherited.font_weight; }
+		FontKerning    font_kerning()     const { return inherited.font_kerning; }
 		PointerEvents  pointer_events()   const { return inherited.pointer_events; }
 		Focus          focus()            const { return inherited.focus; }
 		TextAlign      text_align()       const { return inherited.text_align; }
@@ -275,7 +252,7 @@ namespace Style {
 		MinWidth          min_width()                  const { return LengthPercentage(rare.min_width_type, rare.min_width); }
 		MaxWidth          max_width()                  const { return LengthPercentage(rare.max_width_type, rare.max_width); }
 		MinHeight         min_height()                 const { return LengthPercentage(rare.min_height_type, rare.min_height); }
-		MinHeight         max_height()                 const { return LengthPercentage(rare.max_height_type, rare.max_height); }
+		MaxHeight         max_height()                 const { return LengthPercentage(rare.max_height_type, rare.max_height); }
 		VerticalAlign     vertical_align()             const { return VerticalAlign(rare.vertical_align_type, rare.vertical_align_length); }
 		const             AnimationList* animation()   const;
 		const             TransitionList* transition() const;
@@ -301,8 +278,10 @@ namespace Style {
 		float             border_top_right_radius()    const { return (float)rare.border_top_right_radius; }
 		float             border_bottom_right_radius() const { return (float)rare.border_bottom_right_radius; }
 		float             border_bottom_left_radius()  const { return (float)rare.border_bottom_left_radius; }
-		Vector4f          border_radius()              const { return {(float)rare.border_top_left_radius,     (float)rare.border_top_right_radius,
+		CornerSizes       border_radius()              const { return {(float)rare.border_top_left_radius,     (float)rare.border_top_right_radius,
 		                                                               (float)rare.border_bottom_right_radius, (float)rare.border_bottom_left_radius}; }
+		TextOverflow      text_overflow()              const { return rare.text_overflow; }
+		String            text_overflow_string()       const { return GetLocalProperty(PropertyId::TextOverflow, String());; }
 		Clip              clip()                       const { return rare.clip; }
 		Drag              drag()                       const { return rare.drag; }
 		TabIndex          tab_index()                  const { return rare.tab_index; }
@@ -315,7 +294,7 @@ namespace Style {
 		bool              has_filter()                 const { return rare.has_filter; }
 		bool              has_backdrop_filter()        const { return rare.has_backdrop_filter; }
 		bool              has_box_shadow()             const { return rare.has_box_shadow; }
-		
+
 		// -- Assignment --
 		// Common
 		void width              (LengthPercentageAuto value) { common.width_type          = value.type; common.width_value          = value.value; }
@@ -358,6 +337,7 @@ namespace Style {
 		void has_font_effect   (bool value)           { inherited.has_font_effect    = value; }
 		void font_style        (FontStyle value)      { inherited.font_style         = value; }
 		void font_weight       (FontWeight value)     { inherited.font_weight        = value; }
+		void font_kerning      (FontKerning value)    { inherited.font_kerning       = value; }
 		void pointer_events    (PointerEvents value)  { inherited.pointer_events     = value; }
 		void focus             (Focus value)          { inherited.focus              = value; }
 		void text_align        (TextAlign value)      { inherited.text_align         = value; }
@@ -391,6 +371,7 @@ namespace Style {
 		void border_top_right_radius   (float value)             { rare.border_top_right_radius    = (int16_t)value; }
 		void border_bottom_right_radius(float value)             { rare.border_bottom_right_radius = (int16_t)value; }
 		void border_bottom_left_radius (float value)             { rare.border_bottom_left_radius  = (int16_t)value; }
+		void text_overflow             (TextOverflow value)      { rare.text_overflow              = value; }
 		void clip                      (Clip value)              { rare.clip                       = value; }
 		void drag                      (Drag value)              { rare.drag                       = value; }
 		void tab_index                 (TabIndex value)          { rare.tab_index                  = value; }
@@ -416,17 +397,19 @@ namespace Style {
 		template <typename T>
 		inline T GetLocalPropertyKeyword(PropertyId id, T default_value) const
 		{
-			if (auto p = element->GetLocalProperty(id))
+			if (auto p = GetLocalPropertyWithResolvedVariables(id))
 				return static_cast<T>(p->Get<int>());
 			return default_value;
 		}
 		template <typename T>
 		inline T GetLocalProperty(PropertyId id, T default_value) const
 		{
-			if (auto p = element->GetLocalProperty(id))
+			if (auto p = GetLocalPropertyWithResolvedVariables(id))
 				return p->Get<T>();
 			return default_value;
 		}
+
+		const Property* GetLocalPropertyWithResolvedVariables(PropertyId id) const;
 
 		Element* element = nullptr;
 
@@ -455,4 +438,3 @@ RMLUICORE_API_INLINE float ResolveValue(Style::LengthPercentage length, float ba
 using ComputedValues = Style::ComputedValues;
 
 } // namespace Rml
-#endif

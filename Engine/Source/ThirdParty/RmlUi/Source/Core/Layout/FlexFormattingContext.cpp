@@ -1,31 +1,3 @@
-/*
- * This source file is part of RmlUi, the HTML/CSS Interface Middleware
- *
- * For the latest information, see http://github.com/mikke89/RmlUi
- *
- * Copyright (c) 2008-2010 CodePoint Ltd, Shift Technology Ltd
- * Copyright (c) 2019-2023 The RmlUi Team, and contributors
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- *
- */
-
 #include "FlexFormattingContext.h"
 #include "../../../Include/RmlUi/Core/ComputedValues.h"
 #include "../../../Include/RmlUi/Core/Element.h"
@@ -34,7 +6,6 @@
 #include "../../../Include/RmlUi/Core/Types.h"
 #include "ContainerBox.h"
 #include "LayoutDetails.h"
-#include "LayoutEngine.h"
 #include <algorithm>
 #include <float.h>
 #include <numeric>
@@ -91,12 +62,15 @@ UniquePtr<LayoutBox> FlexFormattingContext::Format(ContainerBox* parent_containe
 			context.flex_content_containing_block.y = containing_block.y;
 		}
 
-		Math::SnapToPixelGrid(context.flex_content_offset, context.flex_available_content_size);
-
 		// Format the flexbox and all its children.
-		Vector2f flex_resulting_content_size, content_overflow_size;
+		Vector2f flex_resulting_content_size, visible_overflow_size, scrollable_content_size;
 		float flex_baseline = 0.f;
-		context.Format(flex_resulting_content_size, content_overflow_size, flex_baseline);
+		context.Format(flex_resulting_content_size, visible_overflow_size, scrollable_content_size, flex_baseline);
+
+		// Catch overflow before our height becomes fixed. This way the enabled scrollbar can extend the height of the flex container, instead of
+		// eating into the content size, which could otherwise result in an unnecessary scrollbar on the opposite axis.
+		if (auto_height && !flex_container_box->CatchOverflow(visible_overflow_size, scrollable_content_size, box, context.flex_max_size.y))
+			continue;
 
 		// Output the size of the formatted flexbox. The width is determined as a normal block box so we don't need to change that.
 		Vector2f formatted_content_size = box_content_size;
@@ -111,7 +85,7 @@ UniquePtr<LayoutBox> FlexFormattingContext::Format(ContainerBox* parent_containe
 			sized_box.GetSizeAcross(BoxDirection::Vertical, BoxArea::Border) + sized_box.GetEdge(BoxArea::Margin, BoxEdge::Bottom) - flex_baseline;
 
 		// Close the box, and break out of the loop if it did not produce any new scrollbars, otherwise continue to format the flexbox again.
-		if (flex_container_box->Close(content_overflow_size, sized_box, element_baseline))
+		if (flex_container_box->Close(visible_overflow_size, scrollable_content_size, sized_box, element_baseline))
 			break;
 	}
 
@@ -120,8 +94,7 @@ UniquePtr<LayoutBox> FlexFormattingContext::Format(ContainerBox* parent_containe
 
 Vector2f FlexFormattingContext::GetMaxContentSize(Element* element)
 {
-	// A large but finite number is used here, because the flexbox formatting algorithm
-	// needs to round numbers, and it doesn't support infinities.
+	// A large but finite number is used here, since layouting doesn't always work well with infinities.
 	const Vector2f infinity(10000.0f, 10000.0f);
 	RootBox root(infinity);
 	auto flex_container_box = MakeUnique<FlexContainer>(element, &root);
@@ -134,9 +107,9 @@ Vector2f FlexFormattingContext::GetMaxContentSize(Element* element)
 	context.flex_max_size = Vector2f(FLT_MAX, FLT_MAX);
 
 	// Format the flexbox and all its children.
-	Vector2f flex_resulting_content_size, content_overflow_size;
+	Vector2f flex_resulting_content_size, visible_overflow_size, scrollable_content_size;
 	float flex_baseline = 0.f;
-	context.Format(flex_resulting_content_size, content_overflow_size, flex_baseline);
+	context.Format(flex_resulting_content_size, visible_overflow_size, scrollable_content_size, flex_baseline);
 	return flex_resulting_content_size;
 }
 
@@ -229,7 +202,19 @@ static void GetItemSizing(FlexItem::Size& destination, const ComputedAxisSize& c
 	}
 }
 
-void FlexFormattingContext::Format(Vector2f& flex_resulting_content_size, Vector2f& flex_content_overflow_size, float& flex_baseline) const
+static float GetInnerUsedMainSize(const FlexItem& item)
+{
+	// Due to floating-point precision the outer size may be smaller than `sum_edges`, so clamp the result to zero.
+	return Math::Max(item.used_main_size - item.main.sum_edges, 0.f);
+}
+
+static float GetInnerUsedCrossSize(const FlexItem& item)
+{
+	return Math::Max(item.used_cross_size - item.cross.sum_edges, 0.f);
+}
+
+void FlexFormattingContext::Format(Vector2f& flex_resulting_content_size, Vector2f& flex_visible_overflow_size,
+	Vector2f& flex_scrollable_content_size, float& flex_baseline) const
 {
 	// The following procedure is based on the CSS flexible box layout algorithm.
 	// For details, see https://drafts.csswg.org/css-flexbox/#layout-algorithm
@@ -355,6 +340,12 @@ void FlexFormattingContext::Format(Vector2f& flex_resulting_content_size, Vector
 			FormattingContext::FormatIndependent(flex_container_box, element, (format_box.GetSize().x >= 0 ? &format_box : nullptr),
 				FormattingContextType::Block);
 			item.inner_flex_base_size = element->GetBox().GetSize().y;
+
+			// Apply the automatic block size as minimum size (§4.5). Strictly speaking, we should also apply this to
+			// the other branches in column mode (and inline min-content size in row mode). However, the formatting step
+			// can be expensive, here we have already done that step so the value is readily accessible to us.
+			if (item.main.min_size == 0.f && !LayoutDetails::IsScrollContainer(computed.overflow_x(), computed.overflow_y()))
+				item.main.min_size = Math::Min(item.inner_flex_base_size, item.main.max_size);
 		}
 
 		// Calculate the hypothetical main size (clamped flex base size).
@@ -553,9 +544,10 @@ void FlexFormattingContext::Format(Vector2f& flex_resulting_content_size, Vector
 	}
 
 	// -- Align main axis (§9.5) --
-	// Main alignment is done before cross sizing. Due to rounding to the pixel grid, the main size can
-	// change slightly after main alignment/offseting. Also, the cross sizing depends on the main sizing
-	// so doing it in this order ensures no surprises (overflow/wrapping issues) due to pixel rounding.
+	// Main alignment is done before cross sizing. Previously, doing it in this order was important due to pixel
+	// rounding, since changing the main offset could change the main size after rounding, which in turn could influence
+	// the cross size. However, now we no longer do pixel rounding, so we may be free to do cross sizing first if we
+	// want to do it in that order for some particular reason.
 	for (FlexLine& line : container.lines)
 	{
 		const float remaining_free_space = used_main_size -
@@ -636,7 +628,7 @@ void FlexFormattingContext::Format(Vector2f& flex_resulting_content_size, Vector
 			}
 		}
 
-		// Now find the offset and snap the outer edges to the pixel grid.
+		// Now find the offset for each item.
 		float cursor = 0.0f;
 		for (FlexItem& item : line.items)
 		{
@@ -646,7 +638,6 @@ void FlexFormattingContext::Format(Vector2f& flex_resulting_content_size, Vector
 				item.main_offset = cursor + item.main.margin_a + item.main_auto_margin_size_a;
 
 			cursor += item.used_main_size + item.main_auto_margin_size_a + item.main_auto_margin_size_b;
-			Math::SnapToPixelGrid(item.main_offset, item.used_main_size);
 		}
 	}
 
@@ -664,20 +655,31 @@ void FlexFormattingContext::Format(Vector2f& flex_resulting_content_size, Vector
 		}
 	}
 
+	auto CanSkipHypotheticalCrossSize = [=](const FlexItem& item) {
+		// If the following conditions are met, the hypothetical cross size will never be used. This allows us to skip a
+		// potentially slow step with content-based sizing.
+		const bool stretch_item = (item.align_self == Style::AlignSelf::Stretch);
+		const bool stretched = (stretch_item && item.cross.auto_size && !item.cross.auto_margin_a && !item.cross.auto_margin_b);
+		const bool single_line_definite_cross_size = (cross_available_size >= 0.f && flex_single_line);
+		return stretched && single_line_definite_cross_size;
+	};
+
 	// -- Determine cross size (§9.4) --
 	// First, determine the cross size of each item, format it if necessary.
 	for (FlexLine& line : container.lines)
 	{
 		for (FlexItem& item : line.items)
 		{
+			if (CanSkipHypotheticalCrossSize(item))
+				continue;
+
 			const Vector2f content_size = item.box.GetSize();
-			const float used_main_size_inner = item.used_main_size - item.main.sum_edges;
 
 			if (main_axis_horizontal)
 			{
 				if (content_size.y < 0.0f)
 				{
-					item.box.SetContent(Vector2f(used_main_size_inner, content_size.y));
+					item.box.SetContent(Vector2f(GetInnerUsedMainSize(item), content_size.y));
 					FormattingContext::FormatIndependent(flex_container_box, item.element, &item.box, FormattingContextType::Block);
 					item.hypothetical_cross_size = item.element->GetBox().GetSize().y + item.cross.sum_edges;
 				}
@@ -688,9 +690,9 @@ void FlexFormattingContext::Format(Vector2f& flex_resulting_content_size, Vector
 			}
 			else
 			{
-				if (content_size.x < 0.0f || item.cross.auto_size)
+				if (content_size.x < 0.0f)
 				{
-					item.box.SetContent(Vector2f(content_size.x, used_main_size_inner));
+					item.box.SetContent(Vector2f(content_size.x, GetInnerUsedMainSize(item)));
 					item.hypothetical_cross_size =
 						LayoutDetails::GetShrinkToFitWidth(item.element, flex_content_containing_block) + item.cross.sum_edges;
 				}
@@ -703,21 +705,24 @@ void FlexFormattingContext::Format(Vector2f& flex_resulting_content_size, Vector
 	}
 
 	// Determine cross size of each line.
-	if (cross_available_size >= 0.f && flex_single_line && container.lines.size() == 1)
+	if (cross_available_size >= 0.f && flex_single_line)
 	{
+		RMLUI_ASSERT(container.lines.size() == 1);
 		container.lines[0].cross_size = cross_available_size;
 	}
 	else
 	{
 		for (FlexLine& line : container.lines)
 		{
+			RMLUI_ASSERT(std::none_of(line.items.begin(), line.items.end(), [&](const auto& item) { return CanSkipHypotheticalCrossSize(item); }));
+
 			const float largest_hypothetical_cross_size =
 				std::max_element(line.items.begin(), line.items.end(), [](const FlexItem& a, const FlexItem& b) {
 					return a.hypothetical_cross_size < b.hypothetical_cross_size;
 				})->hypothetical_cross_size;
 
 			// Currently, we don't handle the case where baseline alignment could extend the line's cross size, see CSS specs 9.4.8.
-			line.cross_size = Math::Max(0.0f, Math::Round(largest_hypothetical_cross_size));
+			line.cross_size = Math::Max(0.0f, largest_hypothetical_cross_size);
 
 			if (flex_single_line)
 				line.cross_size = Math::Clamp(line.cross_size, cross_min_size, cross_max_size);
@@ -759,6 +764,7 @@ void FlexFormattingContext::Format(Vector2f& flex_resulting_content_size, Vector
 			}
 			else
 			{
+				RMLUI_ASSERT(!CanSkipHypotheticalCrossSize(item));
 				item.used_cross_size = item.hypothetical_cross_size;
 			}
 		}
@@ -846,10 +852,6 @@ void FlexFormattingContext::Format(Vector2f& flex_resulting_content_size, Vector
 				}
 			}
 		}
-
-		// Snap the outer item cross edges to the pixel grid.
-		for (FlexItem& item : line.items)
-			Math::SnapToPixelGrid(item.cross_offset, item.used_cross_size);
 	}
 
 	const float accumulated_lines_cross_size = std::accumulate(container.lines.begin(), container.lines.end(), 0.f,
@@ -931,7 +933,6 @@ void FlexFormattingContext::Format(Vector2f& flex_resulting_content_size, Vector
 				line.cross_offset = cursor + line.cross_spacing_a;
 
 			cursor += line.cross_spacing_a + line.cross_size + line.cross_spacing_b;
-			Math::SnapToPixelGrid(line.cross_offset, line.cross_size);
 		}
 	}
 
@@ -946,7 +947,7 @@ void FlexFormattingContext::Format(Vector2f& flex_resulting_content_size, Vector
 	{
 		for (FlexItem& item : line.items)
 		{
-			const Vector2f item_size = MainCrossToVec2(item.used_main_size - item.main.sum_edges, item.used_cross_size - item.cross.sum_edges);
+			const Vector2f item_size = MainCrossToVec2(GetInnerUsedMainSize(item), GetInnerUsedCrossSize(item));
 			const Vector2f item_offset = MainCrossToVec2(item.main_offset, line.cross_offset + item.cross_offset);
 
 			item.box.SetContent(item_size);
@@ -954,7 +955,7 @@ void FlexFormattingContext::Format(Vector2f& flex_resulting_content_size, Vector
 			UniquePtr<LayoutBox> item_layout_box =
 				FormattingContext::FormatIndependent(flex_container_box, item.element, &item.box, FormattingContextType::Block);
 
-			// Set the position of the element within the the flex container
+			// Set the position of the element within the flex container
 			item.element->SetOffset(flex_content_offset + item_offset, element_flex);
 
 			// The flex container baseline is simply set to the first flex item that has a baseline.
@@ -964,10 +965,15 @@ void FlexFormattingContext::Format(Vector2f& flex_resulting_content_size, Vector
 				baseline_set = true;
 			}
 
-			// The cell contents may overflow, propagate this to the flex container.
+			// The item and its contents may overflow, propagate their border-box overflow to the flex container.
 			const Vector2f overflow_size = item_offset + item_layout_box->GetVisibleOverflowSize();
+			flex_visible_overflow_size = Math::Max(flex_visible_overflow_size, overflow_size);
 
-			flex_content_overflow_size = Math::Max(flex_content_overflow_size, overflow_size);
+			// Return the margin size of the direct flex items, so that we can scroll over to them with their full margin visible.
+			const Vector2f margin_bottom_right =
+				Vector2f{item.box.GetEdge(BoxArea::Margin, BoxEdge::Right), item.box.GetEdge(BoxArea::Margin, BoxEdge::Bottom)};
+			const Vector2f item_scrollable_content_size = item_offset + item.box.GetSize(BoxArea::Border) + margin_bottom_right;
+			flex_scrollable_content_size = Math::Max(flex_scrollable_content_size, item_scrollable_content_size);
 		}
 	}
 

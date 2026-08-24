@@ -1,34 +1,7 @@
-/*
- * This source file is part of RmlUi, the HTML/CSS Interface Middleware
- *
- * For the latest information, see http://github.com/mikke89/RmlUi
- *
- * Copyright (c) 2008-2010 CodePoint Ltd, Shift Technology Ltd
- * Copyright (c) 2019-2023 The RmlUi Team, and contributors
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- *
- */
-
 #include "../../Include/RmlUi/Core/RenderManager.h"
 #include "../../Include/RmlUi/Core/Core.h"
 #include "../../Include/RmlUi/Core/Geometry.h"
+#include "../../Include/RmlUi/Core/Profiling.h"
 #include "../../Include/RmlUi/Core/RenderInterface.h"
 #include "../../Include/RmlUi/Core/SystemInterface.h"
 #include "TextureDatabase.h"
@@ -68,7 +41,7 @@ RenderManager::~RenderManager()
 	ReleaseAllTextures();
 }
 
-void RenderManager::PrepareRender()
+void RenderManager::PrepareRender(Vector2i dimensions)
 {
 #ifdef RMLUI_DEBUG
 	const RenderState default_state;
@@ -77,6 +50,8 @@ void RenderManager::PrepareRender()
 	RMLUI_ASSERT(state.transform == default_state.transform);
 	RMLUI_ASSERTMSG(render_stack.empty(), "Unbalanced render stack detected, ensure every PushLayer call has a corresponding call to PopLayer.");
 #endif
+
+	SetViewport(dimensions);
 }
 
 void RenderManager::SetViewport(Vector2i dimensions)
@@ -91,6 +66,8 @@ Vector2i RenderManager::GetViewport() const
 
 Geometry RenderManager::MakeGeometry(Mesh&& mesh)
 {
+	if (!mesh)
+		return Geometry();
 	return Geometry(this, InsertGeometry(std::move(mesh)));
 }
 
@@ -102,7 +79,7 @@ Texture RenderManager::LoadTexture(const String& source, const String& document_
 	else
 		GetSystemInterface()->JoinPath(path, StringUtilities::Replace(document_path, '|', ':'), source);
 
-	return Texture(this, texture_database->file_database.LoadTexture(render_interface, path));
+	return Texture(this, texture_database->file_database.InsertTexture(path));
 }
 
 CallbackTexture RenderManager::MakeCallbackTexture(CallbackTextureFunction callback)
@@ -225,6 +202,7 @@ CompiledGeometryHandle RenderManager::GetCompiledGeometryHandle(StableVectorInde
 	GeometryData& geometry = geometry_list[index];
 	if (!geometry.handle && !geometry.mesh.indices.empty())
 	{
+		RMLUI_ZoneScopedNC("CompileGeometry", 0x1E60D2);
 		geometry.handle = render_interface->CompileGeometry(geometry.mesh.vertices, geometry.mesh.indices);
 
 		if (!geometry.handle)
@@ -236,6 +214,8 @@ CompiledGeometryHandle RenderManager::GetCompiledGeometryHandle(StableVectorInde
 void RenderManager::Render(const Geometry& geometry, Vector2f translation, Texture texture, const CompiledShader& shader)
 {
 	RMLUI_ASSERT(geometry);
+	RMLUI_ASSERTMSG(translation == translation.Round(), "RenderManager::Render expects translation to be rounded");
+
 	if (geometry.render_manager != this || (shader && shader.render_manager != this) || (texture && texture.render_manager != this))
 	{
 		RMLUI_ERRORMSG("Trying to render geometry with resources constructed in different render managers.");
@@ -250,6 +230,7 @@ void RenderManager::Render(const Geometry& geometry, Vector2f translation, Textu
 		else if (texture.callback_index != StableVectorIndex::Invalid)
 			texture_handle = texture_database->callback_database.GetHandle(this, render_interface, texture.callback_index);
 
+		RMLUI_ZoneScopedNC("RenderGeometry", 0x3E60B2);
 		if (shader)
 			render_interface->RenderShader(shader.resource_handle, geometry_handle, translation, texture_handle);
 		else
@@ -260,6 +241,12 @@ void RenderManager::Render(const Geometry& geometry, Vector2f translation, Textu
 void RenderManager::GetTextureSourceList(StringList& source_list) const
 {
 	texture_database->file_database.GetSourceList(source_list);
+}
+
+const Mesh& RenderManager::GetMesh(const Geometry& geometry) const
+{
+	RMLUI_ASSERT(geometry.render_manager == this && geometry.resource_handle != geometry.InvalidHandle());
+	return geometry_list[geometry.resource_handle].mesh;
 }
 
 bool RenderManager::ReleaseTexture(const String& texture_source)
@@ -358,16 +345,12 @@ void RenderManager::ReleaseResource(const CallbackTexture& texture)
 Mesh RenderManager::ReleaseResource(const Geometry& geometry)
 {
 	RMLUI_ASSERT(geometry.render_manager == this && geometry.resource_handle != geometry.InvalidHandle());
+	RMLUI_ZoneScopedNC("ReleaseGeometry", 0x1E60D2);
 
-	GeometryData& data = geometry_list[geometry.resource_handle];
+	GeometryData data = geometry_list.erase(geometry.resource_handle);
 	if (data.handle)
-	{
 		render_interface->ReleaseGeometry(data.handle);
-		data.handle = {};
-	}
-	Mesh result = std::exchange(data.mesh, Mesh());
-	geometry_list.erase(geometry.resource_handle);
-	return result;
+	return std::move(data.mesh);
 }
 
 void RenderManager::ReleaseResource(const CompiledFilter& filter)

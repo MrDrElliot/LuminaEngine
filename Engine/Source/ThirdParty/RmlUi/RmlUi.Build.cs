@@ -8,12 +8,7 @@ public class RmlUi : LuminaThirdPartyModuleRules
         // RmlUi's own error handling is exception based.
         bEnableExceptions = true;
 
-        // rmlui_dynamic_cast is a real dynamic_cast unless RMLUI_CUSTOM_RTTI is defined, and the engine
-        // builds /GR- by default. Without this, Context's construction casts an Element to
-        // ElementDocument against a vtable carrying no type information and crashes on startup.
-        // Safe to scope to this module: every dynamic_cast target in RmlUi is an Element subclass
-        // declared inside RmlUi, and no engine type derives from Element or instantiates the cast.
-        bEnableRtti = true;
+        // Since 6.3 RmlUi's own RTTI is always on, so rmlui_dynamic_cast survives the engine's /GR-.
 
         PublicIncludePaths.Add("Include");
         PrivateIncludePaths.Add("Source/Core");
@@ -24,7 +19,7 @@ public class RmlUi : LuminaThirdPartyModuleRules
         // RMLUI_STATIC_LIB is also a global definition; both sides must agree or consumers see
         // dllimport declarations against a static library.
         PublicDefinitions.Add("RMLUI_STATIC_LIB");
-        PrivateDefinitions.Add("RMLUI_VERSION=\"6.0\"");
+        PrivateDefinitions.Add("RMLUI_VERSION=\"6.3\"");
         PrivateDefinitions.Add("RMLUI_FONT_ENGINE_FREETYPE");
 
         // Vendored and trimmed to Core plus Debugger.
@@ -55,6 +50,7 @@ public class RmlUi : LuminaThirdPartyModuleRules
             "StyleSheetSpecification.cpp",   // static instance
             "TemplateCache.cpp",             // static instance
             "StyleSheetSelector.cpp",        // IsTextElement, also in StyleSheetNode.cpp
+            "StyleSheetParser.cpp",          // IsEscapedCharacter, also in StringUtilities.cpp
         })
         {
             ExcludeFromUnity.Add(Source);

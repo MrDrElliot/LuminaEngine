@@ -1,33 +1,4 @@
-/*
- * This source file is part of RmlUi, the HTML/CSS Interface Middleware
- *
- * For the latest information, see http://github.com/mikke89/RmlUi
- *
- * Copyright (c) 2008-2010 CodePoint Ltd, Shift Technology Ltd
- * Copyright (c) 2019-2023 The RmlUi Team, and contributors
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- *
- */
-
-#ifndef RMLUI_CORE_PLUGIN_H
-#define RMLUI_CORE_PLUGIN_H
+#pragma once
 
 #include "Header.h"
 #include "Types.h"
@@ -40,8 +11,6 @@ class Context;
 
 /**
     Generic Interface for plugins to RmlUi.
-
-    @author Lloyd Weehuizen
  */
 
 class RMLUICORE_API Plugin {
@@ -49,11 +18,12 @@ public:
 	virtual ~Plugin();
 
 	enum EventClasses {
-		EVT_BASIC = (1 << 0),    // Initialise, Shutdown, ContextCreate, ContextDestroy
-		EVT_DOCUMENT = (1 << 1), // DocumentOpen, DocumentLoad, DocumentUnload
-		EVT_ELEMENT = (1 << 2),  // ElementCreate, ElementDestroy
+		EVT_BASIC = (1 << 0),      // Initialise, Shutdown, ContextCreate, ContextDestroy
+		EVT_DOCUMENT = (1 << 1),   // DocumentOpen, DocumentLoad, DocumentUnload
+		EVT_ELEMENT = (1 << 2),    // ElementCreate, ElementDestroy
+		EVT_DATA_MODEL = (1 << 3), // DataModelCreate, DataModelDestroy
 
-		EVT_ALL = EVT_BASIC | EVT_DOCUMENT | EVT_ELEMENT
+		EVT_ALL = EVT_BASIC | EVT_DOCUMENT | EVT_ELEMENT | EVT_DATA_MODEL
 	};
 	/// Called when the plugin is registered to determine which of the above event types the plugin is interested in.
 	virtual int GetEventClasses();
@@ -82,7 +52,13 @@ public:
 	virtual void OnElementCreate(Element* element);
 	/// Called when an element is destroyed.
 	virtual void OnElementDestroy(Element* element);
+
+	/// Called when a new data model is created on a context.
+	virtual void OnDataModelCreate(Context* context, const String& name);
+	/// Called when a data model is about to be destroyed, either explicitly through Context::RemoveDataModel or
+	/// implicitly when the owning context is destroyed. At this point the data model is still accessible through
+	/// Context::GetDataModel, but will be unusable as soon as this callback returns.
+	virtual void OnDataModelDestroy(Context* context, const String& name);
 };
 
 } // namespace Rml
-#endif

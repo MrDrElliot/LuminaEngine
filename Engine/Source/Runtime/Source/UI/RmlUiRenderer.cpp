@@ -245,49 +245,50 @@ namespace Lumina
 
     uint64 FRmlUiRenderer::ComputeDrawCallHash() const
     {
-        uint64 Hash = 1469598103934665603ull;
-        auto Mix = [&Hash](const void* Data, size_t Size)
-        {
-            const uint8* Bytes = static_cast<const uint8*>(Data);
-            for (size_t i = 0; i < Size; ++i)
-            {
-                Hash ^= Bytes[i];
-                Hash *= 1099511628211ull;
-            }
-        };
+        LUMINA_PROFILE_SCOPE();
 
-        const uint64 Count = DrawCalls.size();
-        Mix(&Count, sizeof(Count));
-        Mix(&CurrentSize, sizeof(CurrentSize));
-        Mix(&CurrentLogicalSize, sizeof(CurrentLogicalSize));
+        HashKeyScratch.clear();
+        HashKeyScratch.reserve(DrawCalls.size());
 
+        // Only worth a per-draw map lookup when a brush exists at all, and most UIs have none.
         bool bHasBrush = false;
+
         for (const FDrawCall& Draw : DrawCalls)
         {
-            Mix(&Draw.Geometry, sizeof(Draw.Geometry));
-            Mix(&Draw.Texture, sizeof(Draw.Texture));
-            Mix(&Draw.Shader, sizeof(Draw.Shader));
-            Mix(&Draw.Translation, sizeof(Draw.Translation));
-            Mix(&Draw.MVP, sizeof(Draw.MVP));
-            Mix(&Draw.bScissorEnabled, sizeof(Draw.bScissorEnabled));
-            Mix(&Draw.Scissor, sizeof(Draw.Scissor));
+            FDrawKey Key;
+            Key.Geometry        = Draw.Geometry;
+            Key.Texture         = Draw.Texture;
+            Key.Shader          = Draw.Shader;
+            Key.Translation[0]  = Draw.Translation.x;
+            Key.Translation[1]  = Draw.Translation.y;
+            Memory::Memcpy(Key.MVP, &Draw.MVP, sizeof(Key.MVP));
+            Key.Scissor[0]      = Draw.Scissor.Position().x;
+            Key.Scissor[1]      = Draw.Scissor.Position().y;
+            Key.Scissor[2]      = Draw.Scissor.Width();
+            Key.Scissor[3]      = Draw.Scissor.Height();
+            Key.bScissorEnabled = Draw.bScissorEnabled ? 1ull : 0ull;
+            HashKeyScratch.push_back(Key);
 
-            if (Draw.Texture != 0)
+            if (!bHasBrush && LiveBrushCount > 0 && Draw.Texture != 0)
             {
                 auto It = Textures.find(Draw.Texture);
-                if (It != Textures.end() && It->second.BrushMaterial != nullptr)
-                {
-                    bHasBrush = true;
-                }
+                bHasBrush = (It != Textures.end() && It->second.BrushMaterial != nullptr);
             }
         }
 
-        // Without per-frame salt an animated material brush would freeze (draw list unchanged).
-        if (bHasBrush)
+        uint64 Hash = Hash::XXHash::GetHash64(HashKeyScratch.data(), HashKeyScratch.size() * sizeof(FDrawKey));
+
+        struct FFrameKey
         {
-            Mix(&FrameCounter, sizeof(FrameCounter));
-        }
-        return Hash;
+            FUIntVector2 Size;
+            FUIntVector2 LogicalSize;
+            uint64       Count;
+            uint64       BrushSalt;
+        };
+
+        // Without per-frame salt an animated material brush would freeze (draw list unchanged).
+        const FFrameKey FrameKey { CurrentSize, CurrentLogicalSize, DrawCalls.size(), bHasBrush ? FrameCounter : 0ull };
+        return Hash::XXHash::GetHash64(&FrameKey, sizeof(FrameKey), Hash);
     }
 
     uint64 FRmlUiRenderer::PeekFrameHash() const
@@ -596,8 +597,8 @@ namespace Lumina
             RHI::CmdMemcpy(CL, Batch.IndexBuffer,  IBStage.Gpu, IBytes);
             RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::AllCommands);
 
-            Batch.Draws      = BatchDrawData;
-            Batch.Stops      = BatchStops;
+            Batch.Draws      = Move(BatchDrawData);
+            Batch.Stops      = Move(BatchStops);
             Batch.IndexCount = uint32(BatchIndices.size());
             Batch.LastHash   = Hash;
             Batch.bValid     = true;
@@ -817,6 +818,7 @@ namespace Lumina
         Tex.BrushSize       = FUIntVector2(Width, Height);
         Tex.BrushSourcePath = FString(SourcePath.data(), SourcePath.size());
         Textures.emplace(Handle, Move(Tex));
+        ++LiveBrushCount;
 
         OutDimensions.x = int(Width);
         OutDimensions.y = int(Height);
@@ -898,6 +900,7 @@ namespace Lumina
             {
                 It->second.BrushMaterial->RemoveFromRoot();
                 It->second.BrushMaterial = nullptr;
+                --LiveBrushCount;
             }
             if (It->second.Managed.IsValid())
             {

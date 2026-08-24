@@ -1,31 +1,3 @@
-/*
- * This source file is part of RmlUi, the HTML/CSS Interface Middleware
- *
- * For the latest information, see http://github.com/mikke89/RmlUi
- *
- * Copyright (c) 2008-2010 CodePoint Ltd, Shift Technology Ltd
- * Copyright (c) 2019-2023 The RmlUi Team, and contributors
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- *
- */
-
 #include "DataModel.h"
 #include "../../Include/RmlUi/Core/DataTypeRegister.h"
 #include "../../Include/RmlUi/Core/Element.h"
@@ -120,7 +92,8 @@ static String DataAddressToString(const DataAddress& address)
 	return result;
 }
 
-DataModel::DataModel(DataTypeRegister* data_type_register) : data_type_register(data_type_register)
+DataModel::DataModel(DataTypeRegister* data_type_register, bool allow_missing_variables) :
+	data_type_register(data_type_register), allow_missing_variables(allow_missing_variables)
 {
 	views = MakeUnique<DataViews>();
 	controllers = MakeUnique<DataControllers>();
@@ -238,14 +211,14 @@ void DataModel::CopyAliases(Element* from_element, Element* to_element)
 {
 	if (from_element == to_element)
 		return;
-	auto existing_map = aliases.find(from_element);
 
+	auto existing_map = aliases.find(from_element);
 	if (existing_map != aliases.end())
 	{
 		// Need to create a copy to prevent errors during concurrent modification for 3rd party containers
-		auto copy = existing_map->second;
-		for (auto const& it : copy)
-			aliases[to_element][it.first] = std::move(it.second);
+		SmallUnorderedMap<String, DataAddress> copy = existing_map->second;
+		for (auto& [name, address] : copy)
+			aliases[to_element][name] = std::move(address);
 	}
 }
 
@@ -290,6 +263,9 @@ DataAddress DataModel::ResolveAddress(const String& address_str, Element* elemen
 
 		ancestor = ancestor->GetParentNode();
 	}
+
+	if (allow_missing_variables)
+		return address;
 
 	Log::Message(Log::LT_WARNING, "Could not find variable name '%s' in data model.", address_str.c_str());
 
@@ -341,7 +317,7 @@ bool DataModel::GetVariableInto(const DataAddress& address, Variant& out_value) 
 {
 	DataVariable variable = GetVariable(address);
 	bool result = (variable && variable.Get(out_value));
-	if (!result)
+	if (!result && !allow_missing_variables)
 		Log::Message(Log::LT_WARNING, "Could not get value from data variable '%s'.", DataAddressToString(address).c_str());
 	return result;
 }
@@ -349,7 +325,8 @@ bool DataModel::GetVariableInto(const DataAddress& address, Variant& out_value) 
 void DataModel::DirtyVariable(const String& variable_name)
 {
 	RMLUI_ASSERTMSG(LegalVariableName(variable_name) == nullptr, "Illegal variable name provided. Only top-level variables can be dirtied.");
-	RMLUI_ASSERTMSG(variables.count(variable_name) == 1, "In DirtyVariable: Variable name not found among added variables.");
+	RMLUI_ASSERTMSG(allow_missing_variables || variables.count(variable_name) == 1,
+		"In DirtyVariable: Variable name not found among added variables.");
 	dirty_variables.emplace(variable_name);
 }
 

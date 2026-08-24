@@ -1,32 +1,4 @@
-/*
- * This source file is part of RmlUi, the HTML/CSS Interface Middleware
- *
- * For the latest information, see http://github.com/mikke89/RmlUi
- *
- * Copyright (c) 2008-2010 CodePoint Ltd, Shift Technology Ltd
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- *
- */
-
-#ifndef RMLUI_CORE_FONTENGINEINTERFACE_H
-#define RMLUI_CORE_FONTENGINEINTERFACE_H
+#pragma once
 
 #include "FontMetrics.h"
 #include "Header.h"
@@ -57,20 +29,34 @@ public:
 
 	/// Called by RmlUi when it wants to load a font face from file.
 	/// @param[in] file_name The file to load the face from.
+	/// @param[in] face_index The index of the font face within a font collection.
 	/// @param[in] fallback_face True to use this font face for unknown characters in other font faces.
 	/// @param[in] weight The weight to load when the font face contains multiple weights, otherwise the weight to register the font as.
 	/// @return True if the face was loaded successfully, false otherwise.
-	virtual bool LoadFontFace(const String& file_name, bool fallback_face, Style::FontWeight weight);
+	virtual bool LoadFontFace(const String& file_name, int face_index, bool fallback_face, Style::FontWeight weight);
+
+	/// Called by RmlUi when it wants to load a font face from file, registered using the provided family, style, and weight.
+	/// @param[in] file_name The file to load the face from.
+	/// @param[in] face_index The index of the font face within a font collection.
+	/// @param[in] family The family to register the font as.
+	/// @param[in] style The style to register the font as.
+	/// @param[in] weight The weight to load when the font face contains multiple weights, otherwise the weight to register the font as.
+	/// @param[in] fallback_face True to use this font face for unknown characters in other font faces.
+	/// @return True if the face was loaded successfully, false otherwise.
+	virtual bool LoadFontFace(const String& file_name, int face_index, const String& family, Style::FontStyle style, Style::FontWeight weight,
+		bool fallback_face);
 
 	/// Called by RmlUi when it wants to load a font face from memory, registered using the provided family, style, and weight.
 	/// @param[in] data The font data.
+	/// @param[in] face_index The index of the font face within a font collection.
 	/// @param[in] family The family to register the font as.
 	/// @param[in] style The style to register the font as.
 	/// @param[in] weight The weight to load when the font face contains multiple weights, otherwise the weight to register the font as.
 	/// @param[in] fallback_face True to use this font face for unknown characters in other font faces.
 	/// @return True if the face was loaded successfully, false otherwise.
 	/// @note The debugger plugin will load its embedded font faces through this method using the family name 'rmlui-debugger-font'.
-	virtual bool LoadFontFace(Span<const byte> data, const String& family, Style::FontStyle style, Style::FontWeight weight, bool fallback_face);
+	virtual bool LoadFontFace(Span<const byte> data, int face_index, const String& family, Style::FontStyle style, Style::FontWeight weight,
+		bool fallback_face);
 
 	/// Called by RmlUi when a font configuration is resolved for an element. Should return a handle that
 	/// can later be used to resolve properties of the face, and generate string geometry to be rendered.
@@ -128,4 +114,3 @@ public:
 };
 
 } // namespace Rml
-#endif

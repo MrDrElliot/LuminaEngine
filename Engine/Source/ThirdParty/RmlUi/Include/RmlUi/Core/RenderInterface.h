@@ -1,33 +1,4 @@
-/*
- * This source file is part of RmlUi, the HTML/CSS Interface Middleware
- *
- * For the latest information, see http://github.com/mikke89/RmlUi
- *
- * Copyright (c) 2008-2010 CodePoint Ltd, Shift Technology Ltd
- * Copyright (c) 2019-2023 The RmlUi Team, and contributors
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- *
- */
-
-#ifndef RMLUI_CORE_RENDERINTERFACE_H
-#define RMLUI_CORE_RENDERINTERFACE_H
+#pragma once
 
 #include "Header.h"
 #include "Traits.h"
@@ -49,8 +20,6 @@ enum class BlendMode {
 /**
     The abstract base class for application-specific rendering implementation. Your application must provide a concrete
     implementation of this class and install it through Rml::SetRenderInterface() in order for anything to be rendered.
-
-    @author Peter Curry
  */
 
 class RMLUICORE_API RenderInterface : public NonCopyMoveable {
@@ -93,7 +62,7 @@ public:
 	virtual void ReleaseTexture(TextureHandle texture) = 0;
 
 	/// Called by RmlUi when it wants to enable or disable scissoring to clip content.
-	/// @param[in] enable True if scissoring is to enabled, false if it is to be disabled.
+	/// @param[in] enable True to enable scissoring, false to disable it.
 	virtual void EnableScissorRegion(bool enable) = 0;
 	/// Called by RmlUi when it wants to change the scissor region.
 	/// @param[in] region The region to be rendered. All pixels outside this region should be clipped.
@@ -105,7 +74,7 @@ public:
 	 */
 
 	/// Called by RmlUi when it wants to enable or disable the clip mask.
-	/// @param[in] enable True if the clip mask is to be enabled, false if it is to be disabled.
+	/// @param[in] enable True to enable the clip mask, false to disable it.
 	virtual void EnableClipMask(bool enable);
 	/// Called by RmlUi when it wants to set or modify the contents of the clip mask.
 	/// @param[in] operation Describes how the geometry should affect the clip mask.
@@ -113,7 +82,7 @@ public:
 	/// @param[in] translation The translation to apply to the geometry.
 	/// @note When enabled, the clip mask should hide any rendered contents outside the area of the mask.
 	/// @note The clip mask applies exclusively to all other functions that render with a geometry handle, in addition
-	/// to the layer compositing function while rendering to its destination.
+	/// to the `CompositeLayers` function while rendering to its destination.
 	virtual void RenderToClipMask(ClipMaskOperation operation, CompiledGeometryHandle geometry, Vector2f translation);
 
 	/// Called by RmlUi when it wants the renderer to use a new transform matrix.
@@ -172,4 +141,3 @@ public:
 };
 
 } // namespace Rml
-#endif

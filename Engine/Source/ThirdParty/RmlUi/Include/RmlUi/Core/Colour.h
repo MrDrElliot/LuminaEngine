@@ -1,35 +1,7 @@
-/*
- * This source file is part of RmlUi, the HTML/CSS Interface Middleware
- *
- * For the latest information, see http://github.com/mikke89/RmlUi
- *
- * Copyright (c) 2008-2010 CodePoint Ltd, Shift Technology Ltd
- * Copyright (c) 2019-2023 The RmlUi Team, and contributors
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- *
- */
-
-#ifndef RMLUI_CORE_COLOUR_H
-#define RMLUI_CORE_COLOUR_H
+#pragma once
 
 #include "Header.h"
+#include <type_traits>
 
 namespace Rml {
 
@@ -37,8 +9,6 @@ using byte = unsigned char;
 
 /**
     Templated class for a four-component RGBA colour.
-
-    @author Peter Curry
  */
 
 template <typename ColourType, int AlphaDefault, bool PremultipliedAlpha>
@@ -79,7 +49,7 @@ public:
 	/// @param[in] rhs The colour to subtract.
 	inline void operator-=(Colour rhs);
 	/// Scales this colour component-wise in-place.
-	/// @param[in] rhs The value to scale this colours's components by.
+	/// @param[in] rhs The value to scale this colour's components by.
 	inline void operator*=(float rhs);
 	/// Scales this colour component-wise in-place by the inverse of a value.
 	/// @param[in] rhs The value to divide this colour's components by.
@@ -103,7 +73,7 @@ public:
 
 	// Convert color to premultiplied alpha.
 	template <typename IsPremultiplied = std::integral_constant<bool, PremultipliedAlpha>,
-		typename = typename std::enable_if_t<!IsPremultiplied::value && std::is_same<ColourType, byte>::value>>
+		typename = std::enable_if_t<!IsPremultiplied::value && std::is_same_v<ColourType, byte>>>
 	inline Colour<ColourType, AlphaDefault, true> ToPremultiplied() const
 	{
 		return {
@@ -115,7 +85,7 @@ public:
 	}
 	// Convert color to premultiplied alpha, after multiplying alpha by opacity.
 	template <typename IsPremultiplied = std::integral_constant<bool, PremultipliedAlpha>,
-		typename = typename std::enable_if_t<!IsPremultiplied::value && std::is_same<ColourType, byte>::value>>
+		typename = std::enable_if_t<!IsPremultiplied::value && std::is_same_v<ColourType, byte>>>
 	inline Colour<ColourType, AlphaDefault, true> ToPremultiplied(float opacity) const
 	{
 		const float new_alpha = alpha * opacity;
@@ -129,7 +99,7 @@ public:
 
 	// Convert color to non-premultiplied alpha.
 	template <typename IsPremultiplied = std::integral_constant<bool, PremultipliedAlpha>,
-		typename = typename std::enable_if_t<IsPremultiplied::value && std::is_same<ColourType, byte>::value>>
+		typename = std::enable_if_t<IsPremultiplied::value && std::is_same_v<ColourType, byte>>>
 	inline Colour<ColourType, AlphaDefault, false> ToNonPremultiplied() const
 	{
 		return {
@@ -152,5 +122,3 @@ public:
 } // namespace Rml
 
 #include "Colour.inl"
-
-#endif
