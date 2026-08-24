@@ -1,5 +1,7 @@
 #include "AnimGraphNode_CachedPose.h"
 #include "UI/Tools/NodeGraph/Animation/AnimationGraphCompiler.h"
+#include "UI/Tools/NodeGraph/EdNodeGraph.h"
+#include "Core/Object/Cast.h"
 
 namespace Lumina
 {
@@ -22,6 +24,26 @@ namespace Lumina
     void CAnimGraphNode_UseCachedPose::BuildNode()
     {
         PosePin = CreateAnimPin("Pose", ENodePinDirection::Output, EAnimPinType::Pose);
+    }
+
+    CEdGraphNode* CAnimGraphNode_UseCachedPose::GetImplicitInputNode() const
+    {
+        CEdNodeGraph* Graph = GetOwningGraph();
+        if (Graph == nullptr || CacheName.IsNone())
+        {
+            return nullptr;
+        }
+
+        for (CEdGraphNode* Node : Graph->Nodes)
+        {
+            CAnimGraphNode_SaveCachedPose* Save = Cast<CAnimGraphNode_SaveCachedPose>(Node);
+            if (Save != nullptr && Save->CacheName == CacheName)
+            {
+                return Save;
+            }
+        }
+
+        return nullptr;
     }
 
     void CAnimGraphNode_UseCachedPose::GenerateBytecode(FAnimationGraphCompiler& Compiler)

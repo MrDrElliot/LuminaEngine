@@ -50,6 +50,10 @@ namespace Lumina
 
     private:
 
+        // Cache names read by Use Cached Pose nodes under these, nested state blend trees included.
+        static void CollectReadCacheNames(const THashSet<CEdGraphNode*>& SubtreeNodes, THashSet<FName>& OutNames);
+        static void CollectReadCacheNamesInGraph(CAnimationGraphNodeGraph* Graph, THashSet<FName>& OutNames);
+
         TObjectPtr<CAnimationGraph> AnimationGraph;
 
         // One-shot guards; not serialized. bSetupDone covers context-free setup; bInitialized covers

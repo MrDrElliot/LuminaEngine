@@ -42,6 +42,9 @@ namespace Lumina
         void BuildNode() override;
         void GenerateBytecode(FAnimationGraphCompiler& Compiler) override;
 
+        // Wireless dependency on the Save node naming this cache, so the sort emits that Save first.
+        CEdGraphNode* GetImplicitInputNode() const override;
+
         FString GetNodeTitleText() const override;
 
         /** Cache read back. Must match the name on the Save Cached Pose node that writes it. */
