@@ -2057,6 +2057,64 @@ namespace Lumina
         return *Storage.data();
     }
 
+    // The resolved view, not the camera component, so shake and blends are already folded in.
+    const FResolvedSceneView* CWorld::GetResolvedView() const
+    {
+        const FResolvedSceneView* View = EntityRegistry.ctx().find<FResolvedSceneView>();
+        return (View != nullptr && View->bHasView) ? View : nullptr;
+    }
+
+    FVector2 CWorld::GetViewportSize() const
+    {
+        if (RenderScene == nullptr)
+        {
+            return FVector2(0.0f);
+        }
+        const FUIntVector2 Extent = RenderScene->GetRenderExtent();
+        return FVector2((float)Extent.x, (float)Extent.y);
+    }
+
+    FScreenProjection CWorld::WorldToScreen(FVector3 WorldLocation) const
+    {
+        FScreenProjection Result;
+        const FResolvedSceneView* View = GetResolvedView();
+        const FVector2 Viewport = GetViewportSize();
+        if (View == nullptr || Viewport.x <= 0.0f || Viewport.y <= 0.0f)
+        {
+            return Result;
+        }
+
+        Result.bOnScreen = View->ViewVolume.WorldToScreen(WorldLocation, Viewport, Result.Position, Result.Depth);
+        return Result;
+    }
+
+    FWorldRay CWorld::ScreenToWorldRay(FVector2 ScreenPosition) const
+    {
+        FWorldRay Result;
+        const FResolvedSceneView* View = GetResolvedView();
+        const FVector2 Viewport = GetViewportSize();
+        if (View == nullptr || Viewport.x <= 0.0f || Viewport.y <= 0.0f)
+        {
+            return Result;
+        }
+
+        View->ViewVolume.ScreenToWorldRay(ScreenPosition, Viewport, Result.Origin, Result.Direction);
+        Result.bValid = true;
+        return Result;
+    }
+
+    FWorldRay CWorld::ViewportCenterRay() const
+    {
+        const FVector2 Viewport = GetViewportSize();
+        return ScreenToWorldRay(FVector2(Viewport.x * 0.5f, Viewport.y * 0.5f));
+    }
+
+    FVector3 CWorld::DeprojectScreenToWorld(FVector2 ScreenPosition, float WorldDistance) const
+    {
+        const FWorldRay Ray = ScreenToWorldRay(ScreenPosition);
+        return Ray.bValid ? (Ray.Origin + Ray.Direction * WorldDistance) : FVector3(0.0f);
+    }
+
     void CWorld::GetEntitiesByTag(const FName& Tag, TVector<entt::entity>& Out)
     {
         // Iterating the storage yields components; the sparse-set base is what yields the entities.

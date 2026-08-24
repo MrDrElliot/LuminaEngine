@@ -53,6 +53,18 @@ namespace Lumina
         FORCEINLINE const FVector3& GetUpVector() const { return UpVector; }
         FMatrix4 ToReverseDepthViewProjectionMatrix() const;
 
+        // False once the point is at or behind the near plane, where the divide would mirror it on screen.
+        bool WorldToScreen(const FVector3& WorldLocation, const FVector2& ViewportSize,
+            FVector2& OutScreen, float& OutViewDepth) const;
+
+        /** Pixel coordinates to a world ray. Origin lands on the near plane; Direction is normalized. */
+        void ScreenToWorldRay(const FVector2& ScreenPosition, const FVector2& ViewportSize,
+            FVector3& OutOrigin, FVector3& OutDirection) const;
+
+        /** A point WorldDistance along the ray through ScreenPosition, measured from the near plane. */
+        FVector3 DeprojectScreenToWorld(const FVector2& ScreenPosition, const FVector2& ViewportSize,
+            float WorldDistance) const;
+
         FORCEINLINE float GetNear() const { return Near; }
         FORCEINLINE float GetFar() const { return Far; }
         FFrustum GetFrustum() const;

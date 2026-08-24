@@ -31,6 +31,7 @@ namespace Lumina
     struct FTriangleBatcherComponent;
     struct FSimpleElementVertex;
     struct FWorldContext;
+    struct FResolvedSceneView;
     class CTexture;
     class CTextureRenderTarget;
     class CEntityScript;
@@ -250,6 +251,31 @@ namespace Lumina
         
         FUNCTION()
         bool EntityHasTag(entt::entity Entity, const FName& Tag);
+
+        //~ Screen and world projection, through the rendered view and this world's render extent.
+
+        /** The rendered view, or null when nothing has resolved one this frame. */
+        const FResolvedSceneView* GetResolvedView() const;
+
+        /** Viewport size in pixels, or zero when the world has no renderer (a dedicated server). */
+        FUNCTION()
+        FVector2 GetViewportSize() const;
+
+        /** Projects a world point to pixel coordinates, origin top-left. Check bOnScreen before using it. */
+        FUNCTION()
+        FScreenProjection WorldToScreen(FVector3 WorldLocation) const;
+
+        /** Pixel coordinates to a world ray; the aiming and picking primitive. */
+        FUNCTION()
+        FWorldRay ScreenToWorldRay(FVector2 ScreenPosition) const;
+
+        /** ScreenToWorldRay through the center of the viewport, which is where a crosshair sits. */
+        FUNCTION()
+        FWorldRay ViewportCenterRay() const;
+
+        /** A point WorldDistance along the ray through ScreenPosition, measured from the near plane. */
+        FUNCTION()
+        FVector3 DeprojectScreenToWorld(FVector2 ScreenPosition, float WorldDistance) const;
 
         FUNCTION()
         entt::entity GetEntityByTag(const FName& Tag);

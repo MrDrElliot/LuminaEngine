@@ -10,6 +10,7 @@
 #include "World/Entity/Systems/SystemContext.h"
 #include "World/Entity/Systems/NavMeshSystem.h"
 #include "World/Entity/Systems/CameraSystem.h"
+#include "World/Entity/Systems/SystemSingletons.h"
 #include "Scripting/EntityScript.h"
 #include "Scripting/EntityScript.h"
 #include "World/Entity/Components/RelationshipComponent.h"
@@ -280,6 +281,64 @@ LUMINA_DOTNET_EXPORT(int32, World_GetSubtree)(uint64 World, uint32 Entity, uint3
         }
     }
     return Count;
+}
+
+// Read from the resolved view, so a script aims down the same axis the player is looking along.
+LUMINA_DOTNET_EXPORT(FVector3, Camera_GetPosition)(uint64 World)
+{
+    CWorld* W = AsWorld(World);
+    const FResolvedSceneView* View = W ? W->GetResolvedView() : nullptr;
+    return View ? View->ViewVolume.GetViewPosition() : FVector3(0.0f);
+}
+
+LUMINA_DOTNET_EXPORT(FVector3, Camera_GetForward)(uint64 World)
+{
+    CWorld* W = AsWorld(World);
+    const FResolvedSceneView* View = W ? W->GetResolvedView() : nullptr;
+    return View ? View->ViewVolume.GetForwardVector() : FVector3(0.0f, 0.0f, 1.0f);
+}
+
+LUMINA_DOTNET_EXPORT(FVector3, Camera_GetRight)(uint64 World)
+{
+    CWorld* W = AsWorld(World);
+    const FResolvedSceneView* View = W ? W->GetResolvedView() : nullptr;
+    return View ? View->ViewVolume.GetRightVector() : FVector3(1.0f, 0.0f, 0.0f);
+}
+
+LUMINA_DOTNET_EXPORT(FVector3, Camera_GetUp)(uint64 World)
+{
+    CWorld* W = AsWorld(World);
+    const FResolvedSceneView* View = W ? W->GetResolvedView() : nullptr;
+    return View ? View->ViewVolume.GetUpVector() : FVector3(0.0f, 1.0f, 0.0f);
+}
+
+LUMINA_DOTNET_EXPORT(float, Camera_GetFOV)(uint64 World)
+{
+    CWorld* W = AsWorld(World);
+    const FResolvedSceneView* View = W ? W->GetResolvedView() : nullptr;
+    return View ? View->ViewVolume.GetFOV() : 0.0f;
+}
+
+LUMINA_DOTNET_EXPORT(uint32, Camera_GetActiveEntity)(uint64 World)
+{
+    CWorld* W = AsWorld(World);
+    return ToId(W ? W->GetActiveCameraEntity() : entt::null);
+}
+
+// Blend time <= 0 cuts; anything larger runs the cinematic blend.
+LUMINA_DOTNET_EXPORT(void, Camera_SetActiveEntity)(uint64 World, uint32 Entity, float BlendTime, int32 BlendFunction)
+{
+    if (CWorld* W = AsWorld(World))
+    {
+        if (BlendTime > 0.0f)
+        {
+            W->SetActiveCamera(AsEntity(Entity), BlendTime, (ECameraBlendFunction)BlendFunction);
+        }
+        else
+        {
+            W->SetActiveCamera(AsEntity(Entity));
+        }
+    }
 }
 
 // Multiple shakes sum, and each Play returns a handle to stop it. Game thread only.

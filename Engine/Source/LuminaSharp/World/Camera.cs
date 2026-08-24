@@ -20,6 +20,50 @@ public readonly unsafe partial struct Camera
 
     public bool IsValid => Handle != 0;
 
+    // Read from the resolved view, so shake and any active blend are already folded into the basis.
+
+    /// World-space position of the rendered view.
+    public FVector3 Position => GetPositionRaw();
+
+    /// Normalized forward axis of the rendered view.
+    public FVector3 Forward => GetForwardRaw();
+
+    /// Normalized right axis of the rendered view.
+    public FVector3 Right => GetRightRaw();
+
+    /// Normalized up axis of the rendered view.
+    public FVector3 Up => GetUpRaw();
+
+    /// Vertical field of view in degrees, 0 when nothing has been rendered yet.
+    public float FieldOfView => GetFOVRaw();
+
+    /// The entity holding the active SCameraComponent, or Entity.Null.
+    public Entity Active => new(GetActiveEntityRaw());
+
+    /// Makes an entity's camera the active view. A BlendTime above 0 runs the cinematic blend instead of cutting.
+    public void SetActive(Entity Camera, float BlendTime = 0.0f,
+        ECameraBlendFunction Blend = ECameraBlendFunction.EaseInOut)
+        => SetActiveEntityRaw(Camera.Id, BlendTime, (int)Blend);
+
+    /// Viewport size in pixels, zero on a world with no renderer.
+    public FVector2 ViewportSize => GetViewportSizeRaw();
+
+    /// Projects a world point to pixel coordinates, origin top-left. Check bOnScreen before you draw with it.
+    public FScreenProjection WorldToScreen(FVector3 WorldLocation) => WorldToScreenRaw(WorldLocation);
+
+    /// Pixel coordinates to a world ray, for picking and mouse-aimed shots.
+    public FWorldRay ScreenToWorldRay(FVector2 ScreenPosition) => ScreenToWorldRayRaw(ScreenPosition);
+
+    /// The ray through the middle of the viewport, which is where a crosshair sits.
+    public FWorldRay CenterRay => ViewportCenterRayRaw();
+
+    /// The ray under the mouse cursor.
+    public FWorldRay MouseRay => ScreenToWorldRayRaw(new Input(Handle).MousePosition);
+
+    /// A point WorldDistance along the ray through ScreenPosition, measured from the near plane.
+    public FVector3 DeprojectScreenToWorld(FVector2 ScreenPosition, float WorldDistance)
+        => DeprojectScreenToWorldRaw(ScreenPosition, WorldDistance);
+
     /// <summary>
     /// Start a camera shake and return a handle to stop it. <paramref name="LocationAmplitude"/> is the max
     /// local-space positional offset per axis (world units); <paramref name="RotationAmplitude"/> is the max
@@ -56,6 +100,33 @@ public readonly unsafe partial struct Camera
 
     /// <summary>Stop every active shake immediately.</summary>
     public void StopAllShakes() => StopAllShakesRaw();
+
+    [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Camera_GetPosition")]
+    private partial FVector3 GetPositionRaw();
+    [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Camera_GetForward")]
+    private partial FVector3 GetForwardRaw();
+    [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Camera_GetRight")]
+    private partial FVector3 GetRightRaw();
+    [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Camera_GetUp")]
+    private partial FVector3 GetUpRaw();
+    [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Camera_GetFOV")]
+    private partial float GetFOVRaw();
+    [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Camera_GetActiveEntity")]
+    private partial uint GetActiveEntityRaw();
+    [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Camera_SetActiveEntity")]
+    private partial void SetActiveEntityRaw(uint Entity, float BlendTime, int BlendFunction);
+
+    // The projection shims are CWorld calls; this facade's Handle is that same CWorld pointer.
+    [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Call_Lumina_CWorld_GetViewportSize")]
+    private partial FVector2 GetViewportSizeRaw();
+    [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Call_Lumina_CWorld_WorldToScreen")]
+    private partial FScreenProjection WorldToScreenRaw(FVector3 WorldLocation);
+    [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Call_Lumina_CWorld_ScreenToWorldRay")]
+    private partial FWorldRay ScreenToWorldRayRaw(FVector2 ScreenPosition);
+    [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Call_Lumina_CWorld_ViewportCenterRay")]
+    private partial FWorldRay ViewportCenterRayRaw();
+    [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Call_Lumina_CWorld_DeprojectScreenToWorld")]
+    private partial FVector3 DeprojectScreenToWorldRaw(FVector2 ScreenPosition, float WorldDistance);
 
     [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Camera_PlayShake")]
     private partial uint PlayShakeRaw(FCameraShakeWire Shake);

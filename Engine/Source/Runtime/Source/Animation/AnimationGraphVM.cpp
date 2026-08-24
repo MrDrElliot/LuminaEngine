@@ -1464,6 +1464,75 @@ namespace Lumina
                 break;
             }
 
+            case EAnimOp::LoadMoveAngle:
+            {
+                const FVector3 AxisRaw    = Reader.Read<FVector3>();
+                const FVector3 ForwardRaw = Reader.Read<FVector3>();
+                const float    MinSpeed   = Reader.Read<float>();
+                const uint16   Dst        = Reader.Read<uint16>();
+
+                float Angle = 0.0f;
+
+                const float AxisLength    = Math::Length(AxisRaw);
+                const float ForwardLength = Math::Length(ForwardRaw);
+
+                if (SceneContext != nullptr && AxisLength > 1e-5f && ForwardLength > 1e-5f)
+                {
+                    const FVector3 Axis    = AxisRaw / AxisLength;
+                    const FVector3 Forward = ForwardRaw / ForwardLength;
+
+                    // Measured in component space, so the angle is the character's own, not the world's.
+                    const FVector3 Local = Math::Conjugate(SceneContext->WorldRotation) * SceneContext->Velocity;
+                    const FVector3 Planar = Local - Axis * Math::Dot(Local, Axis);
+
+                    // Standing still has no direction to face, and noise would spin the hips.
+                    if (Math::Length(Planar) >= Math::Max(MinSpeed, 1e-4f))
+                    {
+                        const FVector3 PlanarForward = Math::Normalize(Forward - Axis * Math::Dot(Forward, Axis));
+                        const FVector3 Direction     = Math::Normalize(Planar);
+
+                        Angle = Math::Atan2(Math::Dot(Math::Cross(PlanarForward, Direction), Axis),
+                                            Math::Dot(PlanarForward, Direction));
+                    }
+                }
+
+                if (Dst < NumScalar)
+                {
+                    Scalars[Dst] = Angle;
+                }
+                break;
+            }
+
+            case EAnimOp::AxisRotateBone:
+            {
+                const uint16   Src      = Reader.Read<uint16>();
+                const uint16   AlphaReg = Reader.Read<uint16>();
+                const uint16   AngleReg = Reader.Read<uint16>();
+                const FVector3 AxisRaw  = Reader.Read<FVector3>();
+                const uint16   BoneIdx  = Reader.Read<uint16>();
+                const uint16   Dst      = Reader.Read<uint16>();
+
+                const float AxisLength = Math::Length(AxisRaw);
+                const FVector3 Axis = AxisLength > 1e-5f ? AxisRaw / AxisLength : FVector3(0.0f, 1.0f, 0.0f);
+
+                FAnimTask Task;
+                Task.Type  = EAnimTaskType::BoneTransform;
+                Task.DepA  = PoseTaskFor(Src);
+                Task.Alpha = ReadScalar(AlphaReg, 1.0f);
+                Task.R     = Math::AngleAxis(ReadScalar(AngleReg, 0.0f), Axis);
+                Task.T     = FVector3(0.0f);
+                Task.S     = FVector3(1.0f);
+                Task.BoneA = BoneIdx;
+                Task.Space = (uint8)AnimPose::EBoneSpace::ComponentSpace;
+                Task.Mode  = (uint8)AnimPose::EBoneApplyMode::Add;
+                SetPoseTask(Dst, OutTasks.Add(Task));
+
+                SetPoseTags(Dst, DeltaOf(Src), EventsOf(Src));
+                SetPoseSync(Dst, SyncOf(Src));
+                CopyCurves(Dst, Src);
+                break;
+            }
+
             case EAnimOp::EaseAlpha:
             {
                 const EAnimAlphaEasing Easing = (EAnimAlphaEasing)Reader.Read<uint8>();

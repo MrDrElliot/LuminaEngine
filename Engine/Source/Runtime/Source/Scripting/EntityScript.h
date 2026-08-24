@@ -20,17 +20,7 @@ namespace Lumina
     class CWorld;
 
     /**
-     * Base for a script attached to a single entity -- in EITHER language.
-     *
-     * This is the unification the rewrite was aimed at (Docs/CSharpScriptingRewrite.md, Phase 5). A C++ script
-     * subclasses this directly. A C# script subclasses it too: REFLECT(Scriptable) means the Reflector emits a
-     * shim whose overrides dispatch into a C# subclass of the generated wrapper, and the host mints a real
-     * CClass for that subclass. Both end up as ordinary CObjects of a CClass deriving CEntityScript, so the
-     * driver below just walks the component and calls virtuals -- it contains no language-specific code at all,
-     * and gains none when a second language is added.
-     *
-     * Lifecycle: OnAttach on creation, OnReady before the first update, OnUpdate every frame, OnFixedUpdate at
-     * the physics rate, OnDetach before destruction.
+     * Base for a script attached to a single entity.
      */
     REFLECT(Scriptable)
     class RUNTIME_API CEntityScript : public CObject
@@ -136,17 +126,7 @@ namespace Lumina
         SEntityScriptComponent& operator=(const SEntityScriptComponent& Other);
 
         TVector<TObjectPtr<CEntityScript>> Scripts;
-
-        /**
-         * Custom serializer, because a script is a per-entity SUBOBJECT rather than an asset reference: a
-         * TObjectPtr property would serialize a path and fail to round-trip. Each script writes its class name
-         * followed by its own tagged properties, so the values ride the SAME stock serializer every reflected
-         * type uses (that is what Phase 4's appended FPropertys bought) and no parallel value store is needed.
-         *
-         * Load reconstructs the objects but cannot set their owning entity -- the entity is not known inside a
-         * component's Serialize. The driver closes that: EntityScripts::Tick adopts any script whose owner is
-         * null, which is the one place both the entity and the registry are in hand.
-         */
+        
         bool Serialize(FArchive& Ar);
     };
 
@@ -174,17 +154,7 @@ namespace Lumina
         RUNTIME_API void DetachAllInRegistry(FEntityRegistry& Registry);
 
         /**
-         * One entity's scripts, serialized, while its script classes are rebuilt underneath it.
-         *
-         * Hot reload cannot change a minted class's property layout while instances of it are alive: an
-         * object's size is baked in at allocation, so the block has to be torn down with nothing attached.
-         * That makes a reload a round trip -- write every affected entity's scripts out, drop them, rebuild
-         * the classes, read them back.
-         *
-         * The carrier is SEntityScriptComponent::Serialize, unchanged and already load-bearing for scenes:
-         * class name plus tagged properties per script. Being name-keyed is what makes the round trip a
-         * MIGRATION rather than a copy -- a property that still exists replays, a removed one is dropped,
-         * and an added one lands on its default instead of reading someone else's bytes.
+         * One entity's scripts, serialized
          */
         struct FEvacuatedScripts
         {

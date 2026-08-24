@@ -155,6 +155,58 @@ namespace Lumina
         return P * ViewMatrix;
     }
 
+    // NDC is Vulkan here, so +y already points down the screen and depth is reversed (1 near, 0 far).
+    bool FViewVolume::WorldToScreen(const FVector3& WorldLocation, const FVector2& ViewportSize,
+        FVector2& OutScreen, float& OutViewDepth) const
+    {
+        // Tested in view space because clip.w is a constant 1 under ortho and could not answer it.
+        const FVector4 ViewPos = ViewMatrix * FVector4(WorldLocation, 1.0f);
+        OutViewDepth = ViewPos.z;
+
+        const FVector4 Clip = ViewProjectionMatrix * FVector4(WorldLocation, 1.0f);
+        const float W = IsOrthographic() ? 1.0f : Clip.w;
+        if (Math::Abs(W) < 1e-6f)
+        {
+            OutScreen = FVector2(0.0f);
+            return false;
+        }
+
+        const FVector2 Ndc(Clip.x / W, Clip.y / W);
+        OutScreen = FVector2((Ndc.x * 0.5f + 0.5f) * ViewportSize.x,
+                             (Ndc.y * 0.5f + 0.5f) * ViewportSize.y);
+        return OutViewDepth > Near;
+    }
+
+    void FViewVolume::ScreenToWorldRay(const FVector2& ScreenPosition, const FVector2& ViewportSize,
+        FVector3& OutOrigin, FVector3& OutDirection) const
+    {
+        const float SafeWidth  = Math::Max(ViewportSize.x, 1.0f);
+        const float SafeHeight = Math::Max(ViewportSize.y, 1.0f);
+        const float NdcX = (ScreenPosition.x / SafeWidth)  * 2.0f - 1.0f;
+        const float NdcY = (ScreenPosition.y / SafeHeight) * 2.0f - 1.0f;
+
+        const FMatrix4 InverseViewProjection = Math::Inverse(ViewProjectionMatrix);
+
+        // Reverse-Z, so 1 unprojects to the near plane and 0 to the far one.
+        const FVector4 NearH = InverseViewProjection * FVector4(NdcX, NdcY, 1.0f, 1.0f);
+        const FVector4 FarH  = InverseViewProjection * FVector4(NdcX, NdcY, 0.0f, 1.0f);
+
+        const FVector3 NearWorld = FVector3(NearH.x, NearH.y, NearH.z) / NearH.w;
+        const FVector3 FarWorld  = FVector3(FarH.x, FarH.y, FarH.z) / FarH.w;
+
+        OutOrigin = NearWorld;
+        OutDirection = Math::Normalize(FarWorld - NearWorld);
+    }
+
+    FVector3 FViewVolume::DeprojectScreenToWorld(const FVector2& ScreenPosition, const FVector2& ViewportSize,
+        float WorldDistance) const
+    {
+        FVector3 Origin;
+        FVector3 Direction;
+        ScreenToWorldRay(ScreenPosition, ViewportSize, Origin, Direction);
+        return Origin + Direction * WorldDistance;
+    }
+
     FFrustum FViewVolume::GetFrustum() const
     {
         return FFrustum::FromViewProjection(ViewProjectionMatrix);

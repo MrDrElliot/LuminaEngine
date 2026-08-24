@@ -27,6 +27,44 @@ namespace Lumina
     /** Maps normalized blend time [0..1] through Function to an eased [0..1] alpha. */
     RUNTIME_API float EvaluateCameraBlend(ECameraBlendFunction Function, float Alpha);
 
+    // Result of CWorld::WorldToScreen. Blittable so C# receives it by value.
+    REFLECT()
+    struct RUNTIME_API FScreenProjection
+    {
+        GENERATED_BODY()
+
+        /** Pixel coordinates, origin top-left, +Y down. Meaningless unless bOnScreen. */
+        PROPERTY()
+        FVector2 Position;
+
+        /** View-space forward distance in world units, positive in front. Valid even when off screen. */
+        PROPERTY()
+        float Depth = 0.0f;
+
+        /** False when the point is at or behind the near plane, where a projected point mirrors. */
+        PROPERTY()
+        bool bOnScreen = false;
+    };
+
+    // Result of CWorld::ScreenToWorldRay. Blittable so C# receives it by value.
+    REFLECT()
+    struct RUNTIME_API FWorldRay
+    {
+        GENERATED_BODY()
+
+        /** On the near plane, not at the camera position. */
+        PROPERTY()
+        FVector3 Origin;
+
+        /** Normalized. */
+        PROPERTY()
+        FVector3 Direction;
+
+        /** False when the world has no rendered view to deproject through. */
+        PROPERTY()
+        bool bValid = false;
+    };
+
     REFLECT(Component, Category = "Camera")
     struct RUNTIME_API SCameraComponent
     {

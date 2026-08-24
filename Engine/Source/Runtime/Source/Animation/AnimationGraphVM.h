@@ -105,6 +105,12 @@ namespace Lumina
         EaseAlpha,
 
         GroundTrace,            // footIdx:uint16, up:vec3, traceUp/traceDown/maxOffset/soleHeight:float, layerMask:uint16, gate:sReg, 9 dst:sReg (offset xyz, normal xyz, up xyz)
+
+        // Signed angle from the forward axis to the entity's own velocity, measured about the turn axis.
+        LoadMoveAngle,          // axis:vec3, forward:vec3, minSpeed:float, dst:sReg
+
+        // Turns one bone about a component-space axis by a runtime angle, as a BoneTransform task.
+        AxisRotateBone,         // src:pReg, alpha:sReg, angle:sReg, axis:vec3, boneIdx:uint16, dst:pReg
     };
 
     // MakeAdditiveEx base operand meaning "no base pose supplied".
@@ -176,7 +182,7 @@ namespace Lumina
     // AdvanceClock operand value for "not in a sync group".
     inline constexpr uint16 kAnimNoSyncGroup = 0xFFFFu;
     
-    inline constexpr uint16 kAnimBytecodeVersion = 6;
+    inline constexpr uint16 kAnimBytecodeVersion = 7;
     
     struct FAnimSyncGroup
     {
@@ -226,6 +232,9 @@ namespace Lumina
 
         // Ignored by every trace, so a foot never lands on the character it belongs to.
         uint32 SelfBodyID = ~0u;
+
+        // World-space movement this frame, which is what LoadMoveAngle measures its angle against.
+        FVector3 Velocity = FVector3(0.0f);
 
         bool IsValid() const { return Scene != nullptr && BoneTransforms != nullptr; }
     };

@@ -640,6 +640,31 @@ namespace Lumina
         return Dst;
     }
 
+    uint16 FAnimationGraphCompiler::EmitLoadMoveAngle(const FVector3& Axis, const FVector3& Forward, float MinSpeed)
+    {
+        const uint16 Dst = AllocScalarReg();
+        WriteOp(EAnimOp::LoadMoveAngle);
+        Write(Axis);
+        Write(Forward);
+        Write(MinSpeed);
+        Write(Dst);
+        return Dst;
+    }
+
+    uint16 FAnimationGraphCompiler::EmitAxisRotateBone(uint16 SrcPoseReg, uint16 AlphaReg, uint16 AngleReg,
+                                                       const FVector3& Axis, uint16 BoneIndex)
+    {
+        const uint16 Dst = AllocPoseReg();
+        WriteOp(EAnimOp::AxisRotateBone);
+        Write(SrcPoseReg);
+        Write(AlphaReg);
+        Write(AngleReg);
+        Write(Axis);
+        Write(BoneIndex);
+        Write(Dst);
+        return Dst;
+    }
+
     FAnimationGraphCompiler::FGroundTraceRegisters FAnimationGraphCompiler::EmitGroundTrace(
         uint16 FootBoneIndex, const FVector3& WorldUp,
         float TraceUpDistance, float TraceDownDistance,

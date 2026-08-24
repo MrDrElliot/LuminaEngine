@@ -6,7 +6,7 @@ namespace Lumina
 {
     namespace
     {
-        void ReportError(FAnimationGraphCompiler& Compiler, CEdGraphNode* Node, const char* Name, const FString& Description)
+        void ReportPlacementError(FAnimationGraphCompiler& Compiler, CEdGraphNode* Node, const char* Name, const FString& Description)
         {
             EdNodeGraph::FError NodeError;
             NodeError.Name        = Name;
@@ -47,7 +47,7 @@ namespace Lumina
         const int32 PelvisIndex = Compiler.ResolveBoneIndex(PelvisBone);
         if (PelvisIndex == INDEX_NONE)
         {
-            ReportError(Compiler, this, "Unknown Pelvis Bone",
+            ReportPlacementError(Compiler, this, "Unknown Pelvis Bone",
                         FString("Foot Placement references '") + PelvisBone.ToString() +
                         "', which is not a bone on the graph's skeleton.");
             return;
@@ -55,7 +55,7 @@ namespace Lumina
 
         if (Legs.empty())
         {
-            ReportError(Compiler, this, "No Legs",
+            ReportPlacementError(Compiler, this, "No Legs",
                         "Foot Placement has no legs, so it would trace nothing. Add one leg per foot.");
             return;
         }
@@ -76,7 +76,7 @@ namespace Lumina
                 const FName& Missing = ThighIndex == INDEX_NONE ? Leg.ThighBone
                                      : CalfIndex == INDEX_NONE  ? Leg.CalfBone
                                                                 : Leg.FootBone;
-                ReportError(Compiler, this, "Unknown Leg Bone",
+                ReportPlacementError(Compiler, this, "Unknown Leg Bone",
                             FString("Foot Placement references '") + Missing.ToString() +
                             "', which is not a bone on the graph's skeleton.");
                 return;
@@ -87,7 +87,7 @@ namespace Lumina
                 (Skeleton->GetBone(CalfIndex).ParentIndex != ThighIndex ||
                  Skeleton->GetBone(FootIndex).ParentIndex != CalfIndex))
             {
-                ReportError(Compiler, this, "Bad Leg Chain",
+                ReportPlacementError(Compiler, this, "Bad Leg Chain",
                             FString("'") + Leg.ThighBone.ToString() + "' -> '" + Leg.CalfBone.ToString() +
                             "' -> '" + Leg.FootBone.ToString() + "' is not a parent chain on the skeleton.");
                 return;

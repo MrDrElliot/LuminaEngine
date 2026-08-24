@@ -228,6 +228,13 @@ namespace Lumina
             uint16 UpX = 0, UpY = 0, UpZ = 0;
         };
 
+        // Signed radians from Forward to the entity's own velocity about Axis; below MinSpeed it reads zero.
+        uint16 EmitLoadMoveAngle(const FVector3& Axis, const FVector3& Forward, float MinSpeed);
+
+        // Turns one bone about a component-space axis by however many radians AngleReg holds.
+        uint16 EmitAxisRotateBone(uint16 SrcPoseReg, uint16 AlphaReg, uint16 AngleReg,
+                                  const FVector3& Axis, uint16 BoneIndex);
+
         // GateReg at or below zero skips the query entirely, so a faded-out node costs no raycast.
         FGroundTraceRegisters EmitGroundTrace(uint16 FootBoneIndex, const FVector3& WorldUp,
                                               float TraceUpDistance, float TraceDownDistance,

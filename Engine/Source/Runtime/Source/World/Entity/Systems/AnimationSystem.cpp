@@ -11,10 +11,12 @@
 #include "Assets/AssetTypes/Mesh/Animation/Animation.h"
 #include "Assets/AssetTypes/Mesh/SkeletalMesh/SkeletalMesh.h"
 #include "Assets/AssetTypes/Mesh/Skeleton/Skeleton.h"
+#include "Physics/PhysicsScene.h"
 #include "Renderer/MeshData.h"
 #include "TaskSystem/TaskGraph.h"
 #include "World/Entity/Components/EntityTags.h"
 #include "World/Entity/Components/AnimationGraphComponent.h"
+#include "World/Entity/Components/CharacterComponent.h"
 #include "World/Entity/Components/FollowerPoseComponent.h"
 #include "World/Entity/Components/SimpleAnimationComponent.h"
 #include "World/Entity/Components/SkeletalMeshComponent.h"
@@ -104,7 +106,8 @@ namespace Lumina
     // Time advance, VM state and lazy init all mutate these, so they are declared Write, not Read.
     FSystemAccess SAnimationSystem::Access = FSystemAccess{}
         .Write<SSkeletalMeshComponent, STransformComponent, SSimpleAnimationComponent, SAnimationGraphComponent,
-               SFollowerPoseComponent>();
+               SFollowerPoseComponent>()
+        .Read<SCharacterMovementComponent>();
 
     // Slack so brief occlusion or culling flicker does not stutter the pose.
     static constexpr double kAnimVisibilityGrace = 0.25;
@@ -511,6 +514,15 @@ namespace Lumina
                 SceneContext.WorldScale     = World.GetScale();
                 SceneContext.WorldRotation  = World.GetRotation();
                 SceneContext.SelfBodyID     = SystemContext.GetEntityBodyID(Entity);
+
+                if (const SCharacterMovementComponent* Movement = SystemContext.TryGet<SCharacterMovementComponent>(Entity))
+                {
+                    SceneContext.Velocity = Movement->Velocity;
+                }
+                else if (Physics::IPhysicsScene* Scene = SceneContext.Scene)
+                {
+                    SceneContext.Velocity = Scene->GetLinearVelocity(Entity);
+                }
             }
 
             FAnimationGraphVM::BuildTasks(Graph, Skeleton, StepTime, AnimGraph.VMState, Mesh.AnimTasks,
