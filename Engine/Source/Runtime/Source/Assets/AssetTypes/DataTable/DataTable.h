@@ -71,11 +71,24 @@ namespace Lumina
          *  old struct, and reinterpreting those bytes as a different layout is not a conversion. */
         RUNTIME_API void SetRowStruct(CStruct* InStruct);
 
+        FUNCTION()
         RUNTIME_API NODISCARD int32 GetRowCount() const { return (int32)Rows.size(); }
 
         /** Index of RowName, or INDEX_NONE. Linear: tables are authored small and read by name rarely
          *  enough that an index would cost more to keep coherent than it saves. */
+        FUNCTION()
         RUNTIME_API NODISCARD int32 FindRowIndex(const FName& RowName) const;
+
+        FUNCTION()
+        RUNTIME_API NODISCARD bool HasRow(const FName& RowName) const { return FindRowIndex(RowName) != INDEX_NONE; }
+
+        /** Row name at Index, or None when out of range. Lets a caller walk a table without the row memory. */
+        FUNCTION()
+        RUNTIME_API NODISCARD FName GetRowNameAt(int32 Index) const;
+
+        /** Byte size of one row instance, 0 without a resolved row type. Guards a value-type read. */
+        FUNCTION()
+        RUNTIME_API NODISCARD int32 GetRowStructSize() const;
 
         /** Row memory as RowStruct, or null when the name is unknown. */
         RUNTIME_API NODISCARD const void* FindRow(const FName& RowName) const;

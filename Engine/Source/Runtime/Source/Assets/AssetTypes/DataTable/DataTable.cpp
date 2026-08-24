@@ -32,6 +32,17 @@ namespace Lumina
         return INDEX_NONE;
     }
 
+    FName CDataTable::GetRowNameAt(int32 Index) const
+    {
+        return (Index >= 0 && Index < (int32)Rows.size()) ? Rows[Index].Name : FName();
+    }
+
+    int32 CDataTable::GetRowStructSize() const
+    {
+        const CStruct* Struct = GetRowStruct();
+        return Struct ? (int32)Struct->GetSize() : 0;
+    }
+
     const void* CDataTable::FindRow(const FName& RowName) const
     {
         const int32 Index = FindRowIndex(RowName);

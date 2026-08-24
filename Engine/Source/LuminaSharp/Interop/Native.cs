@@ -46,6 +46,11 @@ public static unsafe partial class Native
     // Returns the true total whether or not the buffer fits, so an under-sized one is retried like FindEntityScripts.
     [NativeCall(EntryPoint = "LuminaSharp_World_GetEntitiesByTag")] public static partial int WorldGetEntitiesByTag(ulong World, string Tag, uint* OutIds, int Capacity);
 
+    // Row memory as a raw pointer, since the row type is only known at runtime; CDataTable gates the reads.
+    [NativeCall(EntryPoint = "LuminaSharp_DataTable_FindRow")] public static partial IntPtr DataTableFindRow(IntPtr Table, string RowName);
+    [NativeCall(EntryPoint = "LuminaSharp_DataTable_GetRowAt")] public static partial IntPtr DataTableGetRowAt(IntPtr Table, int Index);
+    [NativeCall(EntryPoint = "LuminaSharp_DataTableHandle_GetRowMemory")] public static partial IntPtr DataTableHandleGetRowMemory(IntPtr Handle);
+
     // Component op-table access. The token returned by FindComponentOps is resolved once per type and
     // reused; the get/has/emplace/remove calls take it plus the world + entity.
 
