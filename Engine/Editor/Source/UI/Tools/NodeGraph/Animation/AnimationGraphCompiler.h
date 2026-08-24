@@ -66,6 +66,14 @@ namespace Lumina
         uint16 AllocObjectReg() { return NextObjectReg++; }
         uint16 AllocStateSlot() { return NextStateSlot++; }
 
+        // Reserves Count adjacent slots and returns the first, for an opcode that reads a block.
+        uint16 AllocStateSlotRun(uint16 Count)
+        {
+            const uint16 First = NextStateSlot;
+            NextStateSlot = (uint16)(NextStateSlot + Count);
+            return First;
+        }
+
         // Records the first clip player Finished register emitted while a state's blend tree compiles,
         // which is what a Clip Finished transition term reads. 0xFFFF when the state plays no clip.
         void BeginStateCapture() { CapturedFinishedReg = 0xFFFFu; }
@@ -211,6 +219,20 @@ namespace Lumina
 
         uint16 EmitTranslateBone(uint16 SrcPoseReg, uint16 AlphaReg,
                                  uint16 XReg, uint16 YReg, uint16 ZReg, uint16 BoneIndex);
+
+        // One trace's component-space results, Up being the trace axis rotated into that same space.
+        struct FGroundTraceRegisters
+        {
+            uint16 OffsetX = 0, OffsetY = 0, OffsetZ = 0;
+            uint16 NormalX = 0, NormalY = 0, NormalZ = 0;
+            uint16 UpX = 0, UpY = 0, UpZ = 0;
+        };
+
+        // GateReg at or below zero skips the query entirely, so a faded-out node costs no raycast.
+        FGroundTraceRegisters EmitGroundTrace(uint16 FootBoneIndex, const FVector3& WorldUp,
+                                              float TraceUpDistance, float TraceDownDistance,
+                                              float MaxOffset, float SoleHeight,
+                                              uint16 LayerMask, uint16 GateReg);
 
         uint16 EmitTwoBoneIK(uint16 SrcPoseReg, uint16 AlphaReg,
                              uint16 TargetXReg, uint16 TargetYReg, uint16 TargetZReg,

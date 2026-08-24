@@ -50,10 +50,40 @@ LE_REGISTER_LAYOUT("RaycastHitWire", FLmRayHit);
 
 // Only the not-yet-reflectable surface lives here, the rest is generated from CWorld's declarations.
 
+// The world's own FSystemContext, so a managed system can be handed a valid context outside a tick.
+LUMINA_DOTNET_EXPORT(const void*, World_GetSystemContext)(uint64 World)
+{
+    CWorld* W = AsWorld(World);
+    return W ? &W->GetSystemContext() : nullptr;
+}
+
 LUMINA_DOTNET_EXPORT(int32, World_IsValidEntity)(uint64 World, uint32 Entity)
 {
     CWorld* W = AsWorld(World);
     return (W != nullptr && W->IsValidEntity(AsEntity(Entity))) ? 1 : 0;
+}
+
+// Fills OutIds up to Max and returns the TRUE total, so an under-sized buffer is retried, not truncated.
+LUMINA_DOTNET_EXPORT(int32, World_GetEntitiesByTag)(uint64 World, const char* Tag, int32 TagLen, uint32* OutIds, int32 Max)
+{
+    CWorld* W = AsWorld(World);
+    if (W == nullptr || Tag == nullptr || TagLen <= 0)
+    {
+        return 0;
+    }
+
+    TVector<entt::entity> Found;
+    W->GetEntitiesByTag(FName(FStringView(Tag, (size_t)TagLen)), Found);
+
+    const int32 Count = (int32)Found.size();
+    if (OutIds != nullptr)
+    {
+        for (int32 Index = 0; Index < Count && Index < Max; ++Index)
+        {
+            OutIds[Index] = ToId(Found[Index]);
+        }
+    }
+    return Count;
 }
 
 LUMINA_DOTNET_EXPORT(FQuat, World_GetRotation)(uint64 World, uint32 Entity)

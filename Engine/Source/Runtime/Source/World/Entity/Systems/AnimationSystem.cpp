@@ -499,8 +499,23 @@ namespace Lumina
 
             AnimGraph.Montages.Update(StepTime, &AnimGraph.NotifyEvents);
 
+            // Ground traces are read-only and PrePhysics never overlaps the step, so querying here is safe.
+            FAnimGraphSceneContext SceneContext;
+            if (const STransformComponent* Transform = SystemContext.TryGet<STransformComponent>(Entity))
+            {
+                const VTransform World = Transform->GetWorldTransformCached();
+
+                SceneContext.Scene          = SystemContext.GetPhysicsScene();
+                SceneContext.BoneTransforms = &Mesh.BoneTransforms;
+                SceneContext.WorldLocation  = World.GetLocation();
+                SceneContext.WorldScale     = World.GetScale();
+                SceneContext.WorldRotation  = World.GetRotation();
+                SceneContext.SelfBodyID     = SystemContext.GetEntityBodyID(Entity);
+            }
+
             FAnimationGraphVM::BuildTasks(Graph, Skeleton, StepTime, AnimGraph.VMState, Mesh.AnimTasks,
-                                          GraphRootMotion, &AnimGraph.NotifyEvents, &AnimGraph.Montages);
+                                          GraphRootMotion, &AnimGraph.NotifyEvents, &AnimGraph.Montages,
+                                          &SceneContext);
             Mesh.AnimTasks.ActiveBoneCount = ComputeActiveBoneCount(Mesh, Skeleton);
 
             if (CVarDumpGraphTasks.GetValue())

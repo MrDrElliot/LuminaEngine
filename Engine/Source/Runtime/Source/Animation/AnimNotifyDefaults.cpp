@@ -87,31 +87,22 @@ namespace Lumina
             return;
         }
 
+        if (bAttachToSocket && !Socket.empty())
+        {
+            World->SpawnParticleSystemAttached(ParticleSystem, Entity, FName(Socket.c_str()), Offset, Lifetime);
+            return;
+        }
+
         FTransform SpawnTransform;
         if (!ResolveNotifyWorldTransform(Registry, Entity, Socket, SpawnTransform))
         {
             return;
         }
 
-        const bool bAttach = bAttachToSocket && !Socket.empty();
-
-        // Attaching snaps the child onto the socket, so spawning at the world point first would be undone.
-        const entt::entity Spawned = World->ConstructEntity("AnimNotifyParticle", bAttach ? FTransform() : SpawnTransform);
-
-        SParticleSystemComponent& Effect = World->EmplaceComponent<SParticleSystemComponent>(Spawned);
-        Effect.ParticleSystem = ParticleSystem;
-        Effect.EmitterOffset  = Offset;
-        Effect.bBurstOnSpawn  = true;
-        Effect.Activate(true);
-
-        if (Lifetime > 0.0f)
+        const entt::entity Spawned = World->SpawnParticleSystem(ParticleSystem, SpawnTransform, Lifetime);
+        if (Spawned != entt::null)
         {
-            World->EmplaceComponent<SLifetimeComponent>(Spawned).Lifetime = Lifetime;
-        }
-
-        if (bAttach)
-        {
-            World->AttachEntityToSocket(Spawned, Entity, FName(Socket.c_str()));
+            World->GetComponent<SParticleSystemComponent>(Spawned).EmitterOffset = Offset;
         }
     }
 

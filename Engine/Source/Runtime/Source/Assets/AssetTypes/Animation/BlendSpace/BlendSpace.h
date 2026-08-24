@@ -22,6 +22,19 @@ namespace Lumina
     };
 
     REFLECT()
+    enum class EBlendSpaceSmoothing : uint8
+    {
+        // The raw input drives the blend, so it moves the instant the input does.
+        None,
+        // Constant speed, covering the whole axis range in SmoothingTime.
+        Linear,
+        // Exponential approach, within a few percent of the input after SmoothingTime.
+        ExponentialDecay,
+        // Damped spring, so DampingRatio decides whether it settles in or overshoots and rings.
+        SpringDamper,
+    };
+
+    REFLECT()
     struct RUNTIME_API SBlendSpaceAxis
     {
         GENERATED_BODY()
@@ -36,8 +49,35 @@ namespace Lumina
         PROPERTY(Editable, Category = "Axis")
         float Max = 1.0f;
 
+        PROPERTY(Editable, Category = "Smoothing",
+                 ToolTip = "How the input follows the value driving this axis, so a stick flick ramps instead of popping.")
+        EBlendSpaceSmoothing Smoothing = EBlendSpaceSmoothing::None;
+
+        PROPERTY(Editable, Category = "Smoothing", ClampMin = 0.0f, Delta = 0.005f, Units = "s",
+                 EditCondition = "Smoothing != None", EditConditionHides,
+                 ToolTip = "Seconds for the smoothed value to settle on a new input.")
+        float SmoothingTime = 0.1f;
+
+        PROPERTY(Editable, Category = "Smoothing", ClampMin = 0.0f, Delta = 0.01f,
+                 EditCondition = "Smoothing == SpringDamper", EditConditionHides,
+                 ToolTip = "Below 1 overshoots and rings, 1 settles without overshoot, above 1 crawls in.")
+        float DampingRatio = 1.0f;
+
+        PROPERTY(Editable, Category = "Smoothing", ClampMin = 0.0f,
+                 EditCondition = "Smoothing != None", EditConditionHides,
+                 ToolTip = "Ceiling on how fast the smoothed value travels, in axis units per second. 0 is unlimited.")
+        float MaxSpeed = 0.0f;
+
         /** Normalized 0..1 position of Value within the axis range, clamped at both ends. */
         float Normalize(float Value) const;
+
+        // Advances a follower one frame toward Target and returns it. Value and Velocity are per-instance.
+        float Smooth(float Target, float DeltaTime, float& InOutValue, float& InOutVelocity) const;
+
+        // Drops the follower onto Target, so a fresh instance starts where it is instead of easing up from zero.
+        void SnapSmoothing(float Target, float& OutValue, float& OutVelocity) const;
+
+        bool IsSmoothed() const { return Smoothing != EBlendSpaceSmoothing::None && SmoothingTime > 1e-4f; }
     };
 
     REFLECT()

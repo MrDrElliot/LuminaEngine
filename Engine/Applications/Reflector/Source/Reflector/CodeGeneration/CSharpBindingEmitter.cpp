@@ -211,13 +211,19 @@ namespace Lumina::Reflection
             return ComputeBlittableLayout(Struct, Db, OutSize, OutAlign, 0) && OutSize > 0;
         }
 
+        std::string StripQualifiers(const std::string& T);
+
+        // Exact spellings only, so FEntityRegistry and friends are not swept up by a substring match.
+        bool IsEntitySpelling(const std::string& Type)
+        {
+            const std::string Bare = StripQualifiers(Type);
+            return Bare == "entt::entity" || Bare == "FEntity" || Bare == "Lumina::FEntity";
+        }
+
         // An entt::entity field classifies as Int32, so it stays blittable and surfaces as the C# Entity.
         bool IsEntityField(const FReflectedProperty& Prop)
         {
-            return Prop.RawTypeName.find("entt::entity") != std::string::npos
-                || Prop.TypeName.find("entt::entity")    != std::string::npos
-                || Prop.RawTypeName.find("FEntity")      != std::string::npos
-                || Prop.TypeName.find("FEntity")         != std::string::npos;
+            return IsEntitySpelling(Prop.RawTypeName) || IsEntitySpelling(Prop.TypeName);
         }
 
         // The C# field type for a blittable struct member.
@@ -497,6 +503,14 @@ namespace Lumina::Reflection
             const std::string Kind = KindPtr;
             B.bReadOnly = IsReadOnlyProp(Prop);
 
+            // Checked before the numeric table, which would otherwise bind an entity handle as a bare int.
+            if (IsEntityField(Prop))
+            {
+                B.Kind = EBind::Number;
+                B.CSharp = "global::LuminaSharp.Entity";
+                B.Cpp = "uint32";
+                return true;
+            }
             if (NumericCpp(Kind, B.CSharp, B.Cpp))
             {
                 B.Kind = EBind::Number;
@@ -986,7 +1000,7 @@ namespace Lumina::Reflection
             const std::string Bare = StripQualifiers(F.RawFieldType);
 
             // Checked before the numeric path, where entt::entity classifies as an int and would be skipped.
-            if (Bare == "entt::entity")
+            if (IsEntitySpelling(F.RawFieldType) || IsEntitySpelling(F.TypeName))
             {
                 B.Kind = EBind::Number;
                 B.CSharp = "global::LuminaSharp.Entity";

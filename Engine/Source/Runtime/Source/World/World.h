@@ -34,6 +34,7 @@ namespace Lumina
     class CTexture;
     class CTextureRenderTarget;
     class CEntityScript;
+    class CParticleSystem;
     class CWorld;
     class FImmediateLineRenderer;
     enum class ENetMode : uint8;
@@ -128,6 +129,7 @@ namespace Lumina
             EUpdateStage Stage = EUpdateStage::PrePhysics;
             int32        Priority = 128;
             int32        Generation = -1;
+            bool         bStarted = false;
         };
 
         CWorld();
@@ -174,7 +176,26 @@ namespace Lumina
 
         /** Like SpawnPrefab(Path), but positions the spawned root at SpawnTransform and
          *  optionally reparents under Parent (entt::null = world root). */
-        entt::entity SpawnPrefabAt(const FAssetRef& Prefab, const FTransform& SpawnTransform, entt::entity Parent = entt::null);
+        FUNCTION()
+        entt::entity SpawnPrefabAt(const FAssetRef& Prefab, const FTransform& SpawnTransform, entt::entity Parent);
+
+        entt::entity SpawnPrefabAt(const FAssetRef& Prefab, const FTransform& SpawnTransform)
+        {
+            return SpawnPrefabAt(Prefab, SpawnTransform, entt::null);
+        }
+
+        /** A one-shot effect bursting at SpawnTransform, destroyed after Lifetime seconds (0 = caller owns it). */
+        FUNCTION()
+        entt::entity SpawnParticleSystem(CParticleSystem* ParticleSystem, const FTransform& SpawnTransform, float Lifetime);
+
+        /** SpawnParticleSystem parented to Parent, on a named socket or bone (none = the entity origin). */
+        FUNCTION()
+        entt::entity SpawnParticleSystemAttached(CParticleSystem* ParticleSystem, entt::entity Parent,
+            const FName& Socket, FVector3 Offset, float Lifetime);
+
+        /** Destroys Entity after Seconds (0 = never). Idempotent; a second call retimes the countdown. */
+        FUNCTION()
+        void SetEntityLifetime(entt::entity Entity, float Seconds);
 
         // Shatter a destructible entity into physics-driven fragments. Origin = blast point;
         // Strength = outward launch m/s (0 uses ExplosionStrength). No-op without an unbroken SDestructibleComponent.
@@ -232,6 +253,9 @@ namespace Lumina
 
         FUNCTION()
         entt::entity GetEntityByTag(const FName& Tag);
+
+        /** Appends every entity carrying Tag to Out. Tags are named storages, so this is a pool walk. */
+        void GetEntitiesByTag(const FName& Tag, TVector<entt::entity>& Out);
 
         FUNCTION()
         entt::entity GetEntityByName(const FName& Name);
@@ -435,6 +459,9 @@ namespace Lumina
 
         // Convenience that forwards to AddEntityScript.
         void SetEntityScript(entt::entity Entity, FStringView ScriptClass);
+
+        // Starts managed systems that have not started yet, and only once the world's own startup pass has run.
+        void StartupManagedSystems();
 
         void RegisterSystems();
 
@@ -685,6 +712,9 @@ namespace Lumina
         // C#-authored systems created for this world (one managed instance each), scheduled into the
         // stage lists via the shared ManagedSystemUpdate shim. Destroyed on teardown / rebuild.
         TVector<FManagedSystem>                            ManagedSystems;
+
+        // Set once the world has run its startup pass; gates StartupManagedSystems.
+        bool                                               bSystemsStarted = false;
 
         // C# script generation the ManagedSystems were created under; a change (hot reload) triggers a
         // RegisterSystems rebuild so stale GCHandle slots are never ticked. -1 = none created yet.

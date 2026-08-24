@@ -92,6 +92,11 @@ namespace Lumina
         entt::entity                LightEntity = entt::null;
 
         FVector2                    PreviewPosition = FVector2(0.0f, 0.0f);
+
+        // Where the axes' smoothing has actually got to, which is what the pose and the cursor read.
+        FVector2                    SmoothedPosition = FVector2(0.0f, 0.0f);
+        FVector2                    SmoothVelocity = FVector2(0.0f, 0.0f);
+
         float                       PreviewPhase = 0.0f;
         float                       PlayRate = 1.0f;
 
@@ -108,5 +113,6 @@ namespace Lumina
         uint8                       bShowTriangulation:1 = true;
         uint8                       bShowWeights:1 = true;
         uint8                       bDragTransactionOpen:1 = false;
+        uint8                       bPreviewSmoothSeeded:1 = false;
     };
 }

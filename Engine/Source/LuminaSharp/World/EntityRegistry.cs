@@ -22,6 +22,12 @@ public readonly struct EntityRegistry
 
     public bool IsValid => WorldHandle != 0;
 
+    /// True while the entity still exists (mirrors registry.valid). A destroyed or recycled id reads false.
+    public bool Valid(Entity Entity)
+    {
+        return Native.WorldIsValidEntity(WorldHandle, Entity.Id) != 0;
+    }
+
     /// The component of type T on the entity, or null if absent (mirrors registry.try_get).
     public T? TryGet<T>(Entity Entity) where T : NativeStruct
     {
@@ -200,7 +206,7 @@ public readonly struct EntityRegistry
         return GetScript<T>(Entity) != null;
     }
 
-    // entt-style typed views (mirrors registry.view<...>); pass an Exclude<...>() filter as the optional argument. Arity 1..4.
+    // entt-style typed views (mirrors registry.view<...>); pass an Exclude.Of<...>() filter as the optional argument. Arity 1..4.
 
     public View<T1> View<T1>(Exclude Filter = default)
         where T1 : NativeStruct
@@ -233,28 +239,5 @@ public readonly struct EntityRegistry
         where T4 : NativeStruct
     {
         return new View<T1, T2, T3, T4>(WorldHandle, ComponentOps<T1>.Token, ComponentOps<T2>.Token, ComponentOps<T3>.Token, ComponentOps<T4>.Token, Filter);
-    }
-
-    // Exclude-filter builders for a View (mirrors entt::exclude<...>). Arity 1..3.
-
-    public static Exclude Exclude<T1>()
-        where T1 : NativeStruct
-    {
-        return new Exclude(ComponentOps<T1>.Token, IntPtr.Zero, IntPtr.Zero, 1);
-    }
-
-    public static Exclude Exclude<T1, T2>()
-        where T1 : NativeStruct
-        where T2 : NativeStruct
-    {
-        return new Exclude(ComponentOps<T1>.Token, ComponentOps<T2>.Token, IntPtr.Zero, 2);
-    }
-
-    public static Exclude Exclude<T1, T2, T3>()
-        where T1 : NativeStruct
-        where T2 : NativeStruct
-        where T3 : NativeStruct
-    {
-        return new Exclude(ComponentOps<T1>.Token, ComponentOps<T2>.Token, ComponentOps<T3>.Token, 3);
     }
 }

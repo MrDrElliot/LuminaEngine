@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using LuminaSharp;
 
 namespace Lumina;
@@ -8,7 +9,7 @@ namespace Lumina;
 /// </summary>
 public unsafe partial class CWorld
 {
-    private ulong WorldHandle => (ulong)Handle.ToInt64();
+    internal ulong WorldHandle => (ulong)Handle.ToInt64();
     
     public EntityRegistry Registry => new(WorldHandle);
     public Physics Physics => new(WorldHandle);
@@ -44,112 +45,92 @@ public unsafe partial class CWorld
         set => SetTimeDilation(value);
     }
 
-    /// <summary>
-    /// Spawns the prefab at <paramref name="Path"/> and places its root at <paramref name="Location"/>
-    /// (optionally rotated, optionally parented) in one call -- composes the generated
-    /// <see cref="SpawnPrefab(string)"/> with SetEntityLocation/SetEntityRotation/SetParent. Returns the
-    /// spawned root entity, or <see cref="Entity.Null"/> if the prefab couldn't be spawned.
-    /// </summary>
+    /// Spawns a prefab already placed, in one native call. Null entity if the prefab could not be spawned.
     public Entity SpawnPrefab(string Path, FVector3 Location, FQuat? Rotation = null, Entity? Parent = null)
+        => SpawnPrefab(Path, new FTransform(Location, Rotation ?? FQuat.Identity, FVector3.One), Parent);
+
+    /// Spawns a prefab at a full transform, so an authored scale survives the spawn.
+    public Entity SpawnPrefab(string Path, FTransform Transform, Entity? Parent = null)
+        => SpawnPrefabAt(Path, Transform, Parent ?? Entity.Null);
+
+    /// Spawns a prefab and runs Configure on the root before the next frame, so the values are in place for OnReady.
+    public Entity SpawnPrefab(string Path, FTransform Transform, Action<Entity> Configure, Entity? Parent = null)
     {
-        Entity Spawned = SpawnPrefab(Path);
-        if (Spawned.IsNull)
+        Entity Spawned = SpawnPrefabAt(Path, Transform, Parent ?? Entity.Null);
+        if (!Spawned.IsNull)
         {
-            return Spawned;
-        }
-        SetEntityLocation(Spawned, Location);
-        if (Rotation.HasValue)
-        {
-            SetEntityRotation(Spawned, Rotation.Value);
-        }
-        if (Parent.HasValue)
-        {
-            SetParent(Spawned, Parent.Value);
+            Configure(Spawned);
         }
         return Spawned;
     }
 
-    /// <summary>
-    /// Creates a new named entity with a transform and no other components. Add what it needs with
-    /// <see cref="Emplace{T}"/> -- e.g. a mesh: <c>World.Emplace&lt;SDynamicMeshComponent&gt;(E)</c>.
-    /// Destroy it with <see cref="DestroyEntity(Entity)"/>.
-    ///
-    /// This is the world-level counterpart to SystemContext.Create, so an EntityScript can spawn
-    /// entities without needing to be an ECS system.
-    /// </summary>
+    // Prefabs are authored as an asset reference, so the reference types spawn without unwrapping to a path.
+
+    public Entity SpawnPrefab(TSoftObjectPtr<CPrefab> Prefab) => SpawnPrefab(Prefab.Path.Path);
+
+    public Entity SpawnPrefab(TSoftObjectPtr<CPrefab> Prefab, FVector3 Location, FQuat? Rotation = null, Entity? Parent = null)
+        => SpawnPrefab(Prefab.Path.Path, Location, Rotation, Parent);
+
+    public Entity SpawnPrefab(TSoftObjectPtr<CPrefab> Prefab, FTransform Transform, Entity? Parent = null)
+        => SpawnPrefab(Prefab.Path.Path, Transform, Parent);
+
+    public Entity SpawnPrefab(TSoftObjectPtr<CPrefab> Prefab, FTransform Transform, Action<Entity> Configure, Entity? Parent = null)
+        => SpawnPrefab(Prefab.Path.Path, Transform, Configure, Parent);
+
+    public Entity SpawnPrefab(FSoftObjectPath Prefab) => SpawnPrefab(Prefab.Path);
+
+    public Entity SpawnPrefab(FSoftObjectPath Prefab, FVector3 Location, FQuat? Rotation = null, Entity? Parent = null)
+        => SpawnPrefab(Prefab.Path, Location, Rotation, Parent);
+
+    public Entity SpawnPrefab(FSoftObjectPath Prefab, FTransform Transform, Entity? Parent = null)
+        => SpawnPrefab(Prefab.Path, Transform, Parent);
+
+    public Entity SpawnPrefab(FSoftObjectPath Prefab, FTransform Transform, Action<Entity> Configure, Entity? Parent = null)
+        => SpawnPrefab(Prefab.Path, Transform, Configure, Parent);
+
+    /// True while the entity still exists in this world; false once it has been destroyed and its id recycled.
+    public bool IsValidEntity(Entity Entity) => Native.WorldIsValidEntity(WorldHandle, Entity.Id) != 0;
+
+    /// Destroys the entity after Seconds. Zero or less leaves it alone; a second call retimes the countdown.
+    public void SetLifetime(Entity Entity, float Seconds) => SetEntityLifetime(Entity, Seconds);
+
+    /// The first entity carrying Tag, or the null entity. Order is unspecified when several share the tag.
+    public Entity FindByTag(string Tag) => GetEntityByTag(Tag);
+
+    /// Every entity carrying Tag. A fresh list per call; empty when nothing carries it.
+    public unsafe List<Entity> FindAllByTag(string Tag)
+    {
+        // Size first, then fill, so a tag that grew between the calls is retried rather than truncated.
+        int Count = Native.WorldGetEntitiesByTag(WorldHandle, Tag, null, 0);
+        var Result = new List<Entity>(Count);
+        if (Count <= 0)
+        {
+            return Result;
+        }
+
+        uint[] Ids = new uint[Count];
+        fixed (uint* Buffer = Ids)
+        {
+            Count = Native.WorldGetEntitiesByTag(WorldHandle, Tag, Buffer, Count);
+        }
+
+        for (int Index = 0; Index < Count && Index < Ids.Length; ++Index)
+        {
+            Result.Add(new Entity(Ids[Index]));
+        }
+        return Result;
+    }
+
+    /// A new named entity with a transform and nothing else; add components through <see cref="Registry"/>, destroy it with <see cref="DestroyEntity(Entity)"/>.
     public Entity CreateEntity(string Name, FVector3 Location = default, FQuat? Rotation = null, FVector3? Scale = null)
         => ConstructEntity(Name, new FTransform(Location, Rotation ?? FQuat.Identity, Scale ?? FVector3.One));
 
-    /// <summary>Creates a new named entity at the origin.</summary>
+    /// A new named entity at the given transform.
     public Entity CreateEntity(string Name, FTransform Transform)
         => ConstructEntity(Name, Transform);
 
-    /// <summary>Spawn a projectile at <paramref name="position"/> moving at <paramref name="velocity"/>
-    /// (world m/s). It sweeps forward each frame, reports its first hit, and auto-despawns after
-    /// <paramref name="lifetime"/> seconds. Read or bind its hit via
-    /// <c>Registry.Get&lt;ProjectileComponent&gt;(entity).OnHit</c>.</summary>
+    /// A projectile that sweeps forward each frame, reports its first hit through its component's OnHit, and despawns after lifetime seconds.
     public Entity SpawnProjectile(FVector3 position, FVector3 velocity, float damage = 0.0f, float lifetime = 5.0f)
         => SpawnProjectile(position, velocity, damage, lifetime, Entity.Null);
 
-    // Mirrors the C++ CWorld wrappers so scripts reach components straight off the world (or an
-    // EntityScript) instead of an entity-registry object. Each forwards to the per-world component store.
-
-    /// <summary>The component of type T on the entity, or null if absent (mirrors C++ TryGetComponent).</summary>
-    public T? TryGet<T>(Entity Entity) where T : NativeStruct => Registry.TryGet<T>(Entity);
-
-    /// <summary>The component of type T on the entity; throws if absent (mirrors C++ GetComponent).</summary>
-    public T Get<T>(Entity Entity) where T : NativeStruct => Registry.Get<T>(Entity);
-
-    /// <summary>True if the entity has a T component.</summary>
-    public bool Has<T>(Entity Entity) where T : NativeStruct => Registry.Has<T>(Entity);
-
-    /// <summary>Get-or-emplace a default T and return the live wrapper (null for a tag).</summary>
-    public T? Emplace<T>(Entity Entity) where T : NativeStruct => Registry.Emplace<T>(Entity);
-
-    /// <summary>Alias of <see cref="Emplace{T}"/>.</summary>
-    public T? Add<T>(Entity Entity) where T : NativeStruct => Registry.Add<T>(Entity);
-
-    /// <summary>The T component, adding a default one first if absent.</summary>
-    public T? GetOrAdd<T>(Entity Entity) where T : NativeStruct => Registry.GetOrAdd<T>(Entity);
-
-    /// <summary>Remove the T component; returns true if one was present.</summary>
-    public bool Remove<T>(Entity Entity) where T : NativeStruct => Registry.Remove<T>(Entity);
-
-    /// <summary>Pulse on_update for the entity's T component (mutate via Get first, then Patch).</summary>
-    public void Patch<T>(Entity Entity) where T : NativeStruct => Registry.Patch<T>(Entity);
-
-    /// <summary>Fires when a T component is added to an entity.</summary>
-    public RegistrySubscription OnConstruct<T>(Action<Entity> Callback) where T : NativeStruct => Registry.OnConstruct<T>(Callback);
-
-    /// <summary>Fires when a T component is removed (or its entity destroyed).</summary>
-    public RegistrySubscription OnDestroy<T>(Action<Entity> Callback) where T : NativeStruct => Registry.OnDestroy<T>(Callback);
-
-    /// <summary>Fires when a T component is patched/replaced.</summary>
-    public RegistrySubscription OnUpdate<T>(Action<Entity> Callback) where T : NativeStruct => Registry.OnUpdate<T>(Callback);
-
-    // entt-style typed views (mirror registry.view<...>); pass World.Exclude<...>() to filter. Arity 1..4.
-    public View<T1> View<T1>(Exclude Filter = default)
-        where T1 : NativeStruct => Registry.View<T1>(Filter);
-
-    public View<T1, T2> View<T1, T2>(Exclude Filter = default)
-        where T1 : NativeStruct where T2 : NativeStruct => Registry.View<T1, T2>(Filter);
-
-    public View<T1, T2, T3> View<T1, T2, T3>(Exclude Filter = default)
-        where T1 : NativeStruct where T2 : NativeStruct where T3 : NativeStruct => Registry.View<T1, T2, T3>(Filter);
-
-    public View<T1, T2, T3, T4> View<T1, T2, T3, T4>(Exclude Filter = default)
-        where T1 : NativeStruct where T2 : NativeStruct where T3 : NativeStruct where T4 : NativeStruct => Registry.View<T1, T2, T3, T4>(Filter);
-
-    /// <summary>Shorthand for <see cref="View{T1}(Exclude)"/>: iterate every entity that has a T component.</summary>
-    public View<T1> All<T1>(Exclude Filter = default) where T1 : NativeStruct => Registry.All<T1>(Filter);
-
-    // Exclude-filter builders for a View (mirror entt::exclude<...>). Arity 1..3.
-    public static Exclude Exclude<T1>()
-        where T1 : NativeStruct => EntityRegistry.Exclude<T1>();
-
-    public static Exclude Exclude<T1, T2>()
-        where T1 : NativeStruct where T2 : NativeStruct => EntityRegistry.Exclude<T1, T2>();
-
-    public static Exclude Exclude<T1, T2, T3>()
-        where T1 : NativeStruct where T2 : NativeStruct where T3 : NativeStruct => EntityRegistry.Exclude<T1, T2, T3>();
 }

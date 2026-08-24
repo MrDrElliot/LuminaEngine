@@ -56,6 +56,74 @@ namespace Lumina
         return Math::Clamp((Value - Min) / Range, 0.0f, 1.0f);
     }
 
+    void SBlendSpaceAxis::SnapSmoothing(float Target, float& OutValue, float& OutVelocity) const
+    {
+        OutValue = Target;
+        OutVelocity = 0.0f;
+    }
+
+    float SBlendSpaceAxis::Smooth(float Target, float DeltaTime, float& InOutValue, float& InOutVelocity) const
+    {
+        if (!IsSmoothed() || DeltaTime <= 0.0f)
+        {
+            SnapSmoothing(Target, InOutValue, InOutVelocity);
+            return InOutValue;
+        }
+
+        // Chasing a target off the end of the axis would spend the whole smoothing time out of sight.
+        const float Low  = Math::Min(Min, Max);
+        const float High = Math::Max(Min, Max);
+        Target = Math::Clamp(Target, Low, High);
+
+        const float Previous = InOutValue;
+
+        switch (Smoothing)
+        {
+        case EBlendSpaceSmoothing::Linear:
+            {
+                const float Step = ((High - Low) / SmoothingTime) * DeltaTime;
+                const float Remaining = Target - Previous;
+                InOutValue = Math::Abs(Remaining) <= Step ? Target : Previous + Math::Sign(Remaining) * Step;
+                break;
+            }
+
+        case EBlendSpaceSmoothing::ExponentialDecay:
+            {
+                // Three decay constants leaves 5% of the gap after SmoothingTime, matching how the other modes read.
+                InOutValue = Previous + (Target - Previous) * (1.0f - Math::Exp(-DeltaTime * 3.0f / SmoothingTime));
+                break;
+            }
+
+        case EBlendSpaceSmoothing::SpringDamper:
+            {
+                // Implicit Euler, so a long frame decays toward the target instead of exploding away from it.
+                const float Omega = 4.75f / SmoothingTime;
+                const float Zeta  = Math::Max(DampingRatio, 0.0f);
+                const float F     = 1.0f + 2.0f * DeltaTime * Zeta * Omega;
+                const float HHOO  = DeltaTime * DeltaTime * Omega * Omega;
+
+                InOutValue = (F * Previous + DeltaTime * InOutVelocity + HHOO * Target) / (F + HHOO);
+                break;
+            }
+
+        default:
+            InOutValue = Target;
+            break;
+        }
+
+        if (MaxSpeed > 0.0f)
+        {
+            const float Step = MaxSpeed * DeltaTime;
+            InOutValue = Math::Clamp(InOutValue, Previous - Step, Previous + Step);
+        }
+
+        InOutValue = Math::Clamp(InOutValue, Low, High);
+
+        // Implicit Euler puts the new velocity exactly here, so the clamps above stay consistent with it.
+        InOutVelocity = (InOutValue - Previous) / DeltaTime;
+        return InOutValue;
+    }
+
     void FBlendSpaceWeights::Add(int32 SampleIndex, float Weight)
     {
         if (Count >= MaxContributions || Weight <= 1e-5f || SampleIndex == INDEX_NONE)

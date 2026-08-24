@@ -36,6 +36,7 @@
 #include "Entity/Components/DirtyComponent.h"
 #include "Entity/Components/EditorComponent.h"
 #include "Entity/Components/LifetimeComponent.h"
+#include "Entity/Components/ParticleSystemComponent.h"
 #include "Entity/Components/StaticMeshComponent.h"
 #include "Entity/Components/DynamicMeshComponent.h"
 #include "Entity/Components/FoliageComponent.h"
@@ -375,6 +376,9 @@ namespace Lumina
                 System.Startup(System.Self, SystemContext);
             }
         });
+
+        bSystemsStarted = true;
+        StartupManagedSystems();
 
         EntityRegistry.on_destroy   <FRelationshipComponent>()      .connect<&ThisClass::OnRelationshipComponentDestroyed>(this);
         EntityRegistry.on_construct <STransformComponent>()         .connect<&ThisClass::OnTransformComponentConstruct>(this);
@@ -949,6 +953,61 @@ namespace Lumina
         }
 
         return PrefabObject->Instantiate(this, SpawnTransform, Parent);
+    }
+
+    entt::entity CWorld::SpawnParticleSystem(CParticleSystem* ParticleSystem, const FTransform& SpawnTransform, float Lifetime)
+    {
+        if (ParticleSystem == nullptr)
+        {
+            return entt::null;
+        }
+
+        const entt::entity Spawned = ConstructEntity("ParticleEffect", SpawnTransform);
+        SParticleSystemComponent& Effect = EmplaceComponent<SParticleSystemComponent>(Spawned);
+        Effect.ParticleSystem = ParticleSystem;
+        Effect.bBurstOnSpawn = true;
+        Effect.Activate(true);
+
+        SetEntityLifetime(Spawned, Lifetime);
+        return Spawned;
+    }
+
+    entt::entity CWorld::SpawnParticleSystemAttached(CParticleSystem* ParticleSystem, entt::entity Parent,
+        const FName& Socket, FVector3 Offset, float Lifetime)
+    {
+        if (ParticleSystem == nullptr || !IsValidEntity(Parent))
+        {
+            return entt::null;
+        }
+
+        // Attaching snaps the child onto the socket, so spawning at a world point first would be undone.
+        const entt::entity Spawned = ConstructEntity("ParticleEffect", FTransform());
+        SParticleSystemComponent& Effect = EmplaceComponent<SParticleSystemComponent>(Spawned);
+        Effect.ParticleSystem = ParticleSystem;
+        Effect.EmitterOffset = Offset;
+        Effect.bBurstOnSpawn = true;
+        Effect.Activate(true);
+
+        // A managed caller spells "no socket" as an empty string, which does not intern to NAME_None.
+        if (Socket.IsNone() || FStringView(Socket.c_str()).empty())
+        {
+            SetParent(Spawned, Parent);
+        }
+        else
+        {
+            AttachEntityToSocket(Spawned, Parent, Socket);
+        }
+
+        SetEntityLifetime(Spawned, Lifetime);
+        return Spawned;
+    }
+
+    void CWorld::SetEntityLifetime(entt::entity Entity, float Seconds)
+    {
+        if (Seconds > 0.0f && IsValidEntity(Entity))
+        {
+            GetOrEmplaceComponent<SLifetimeComponent>(Entity).Lifetime = Seconds;
+        }
     }
 
     void CWorld::SpawnPrefabAsync(const FName& Path, const TFunction<void(entt::entity)>& Callback)
@@ -1683,6 +1742,25 @@ namespace Lumina
         {
             SystemBatches[i] = ComputeSystemBatches(SystemUpdateList[i]);
         }
+
+        StartupManagedSystems();
+    }
+
+    void CWorld::StartupManagedSystems()
+    {
+        if (!bSystemsStarted)
+        {
+            return;
+        }
+
+        for (FManagedSystem& Managed : ManagedSystems)
+        {
+            if (Managed.Instance != nullptr && !Managed.bStarted)
+            {
+                Managed.bStarted = true;
+                DotNet::StartupManagedSystem(Managed.Instance, &SystemContext);
+            }
+        }
     }
 
     // Read-only snapshot of the per-stage batch layout for the Gameplay Insights tool.
@@ -1977,6 +2055,20 @@ namespace Lumina
         }
         
         return *Storage.data();
+    }
+
+    void CWorld::GetEntitiesByTag(const FName& Tag, TVector<entt::entity>& Out)
+    {
+        // Iterating the storage yields components; the sparse-set base is what yields the entities.
+        const entt::basic_sparse_set<>& Storage = EntityRegistry.storage<STagComponent>(entt::hashed_string(Tag.c_str()));
+        Out.reserve(Out.size() + Storage.size());
+        for (const entt::entity Entity : Storage)
+        {
+            if (Entity != entt::tombstone)
+            {
+                Out.push_back(Entity);
+            }
+        }
     }
 
     entt::entity CWorld::GetEntityByName(const FName& Name)

@@ -184,8 +184,26 @@ namespace Lumina
 
         CBlendSpace* BlendSpace = GetAsset<CBlendSpace>();
 
+        if (!bPreviewSmoothSeeded)
+        {
+            bPreviewSmoothSeeded = true;
+            BlendSpace->AxisX.SnapSmoothing(PreviewPosition.x, SmoothedPosition.x, SmoothVelocity.x);
+            BlendSpace->AxisY.SnapSmoothing(PreviewPosition.y, SmoothedPosition.y, SmoothVelocity.y);
+        }
+
+        BlendSpace->AxisX.Smooth(PreviewPosition.x, DeltaTime, SmoothedPosition.x, SmoothVelocity.x);
+
+        if (BlendSpace->AxisCount == EBlendSpaceAxes::Two)
+        {
+            BlendSpace->AxisY.Smooth(PreviewPosition.y, DeltaTime, SmoothedPosition.y, SmoothVelocity.y);
+        }
+        else
+        {
+            SmoothedPosition.y = PreviewPosition.y;
+        }
+
         FBlendSpaceWeights Weights;
-        BlendSpace->Evaluate(PreviewPosition, Weights);
+        BlendSpace->Evaluate(SmoothedPosition, Weights);
 
         if (Weights.Count == 0)
         {
@@ -597,9 +615,9 @@ namespace Lumina
 
         // Contribution lines from the cursor, so it is obvious which clips are feeding the pose.
         FBlendSpaceWeights Weights;
-        BlendSpace->Evaluate(PreviewPosition, Weights);
+        BlendSpace->Evaluate(SmoothedPosition, Weights);
 
-        const ImVec2 CursorScreen = AxisToCanvas(PreviewPosition);
+        const ImVec2 CursorScreen = AxisToCanvas(SmoothedPosition);
 
         for (int32 i = 0; i < Weights.Count; ++i)
         {
@@ -639,6 +657,17 @@ namespace Lumina
         }
 
         // Cursor last so it is never buried under a sample.
+        const bool bSmoothingX = BlendSpace->AxisX.IsSmoothed();
+        const bool bSmoothingY = bTwoAxis && BlendSpace->AxisY.IsSmoothed();
+
+        // The raw input trails a hollow ring, so how far the smoothing lags is visible while authoring.
+        if (bSmoothingX || bSmoothingY)
+        {
+            const ImVec2 TargetScreen = AxisToCanvas(PreviewPosition);
+            DrawList->AddLine(TargetScreen, CursorScreen, IM_COL32(120, 255, 150, 90), 1.0f);
+            DrawList->AddCircle(TargetScreen, 5.0f, IM_COL32(120, 255, 150, 130), 0, 1.5f);
+        }
+
         DrawList->AddCircleFilled(CursorScreen, 5.0f, CursorColor);
         DrawList->AddCircle(CursorScreen, 10.0f, CursorColor, 0, 2.0f);
 
@@ -657,11 +686,11 @@ namespace Lumina
         if (bTwoAxis)
         {
             snprintf(CursorLabel, sizeof(CursorLabel), "%s %.1f    %s %.1f",
-                AxisXName.c_str(), PreviewPosition.x, AxisYName.c_str(), PreviewPosition.y);
+                AxisXName.c_str(), SmoothedPosition.x, AxisYName.c_str(), SmoothedPosition.y);
         }
         else
         {
-            snprintf(CursorLabel, sizeof(CursorLabel), "%s %.1f", AxisXName.c_str(), PreviewPosition.x);
+            snprintf(CursorLabel, sizeof(CursorLabel), "%s %.1f", AxisXName.c_str(), SmoothedPosition.x);
         }
 
         const ImVec2 LabelSize = ImGui::CalcTextSize(CursorLabel);

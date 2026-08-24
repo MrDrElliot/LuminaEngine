@@ -52,20 +52,13 @@ namespace Lumina
         const uint16 SpeedReg    = ResolveValueInput(SpeedPin, Compiler);
         const uint16 StartPosReg = ResolveValueInput(StartPositionPin, Compiler);
 
-        uint16 XReg = ResolveValueInput(XPin, Compiler);
-        if (XSmoothingHalfLife > 0.0f)
-        {
-            XReg = Compiler.EmitSmoothScalar(XReg, Compiler.EmitLoadConst(XSmoothingHalfLife));
-        }
+        // Smoothing lives on the blend space asset, so it applies wherever the asset is sampled from.
+        const uint16 XReg = ResolveValueInput(XPin, Compiler);
 
         // A one-axis blend space ignores Y, so an unconnected pin costs nothing to bake as a constant.
-        uint16 YReg = YPin->HasConnection()
+        const uint16 YReg = YPin->HasConnection()
             ? ResolveValueInput(YPin, Compiler)
             : Compiler.EmitLoadConst(0.0f);
-        if (YSmoothingHalfLife > 0.0f)
-        {
-            YReg = Compiler.EmitSmoothScalar(YReg, Compiler.EmitLoadConst(YSmoothingHalfLife));
-        }
 
         const uint16 PoseReg = Compiler.EmitSampleBlendSpace(BlendSpaceIndex, XReg, YReg, SpeedReg, PhaseSlot, StartPosReg, bDynamicBlendSpace);
 

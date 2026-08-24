@@ -26,14 +26,6 @@ namespace Lumina
         PROPERTY(Editable, Category = "Animation")
         TObjectPtr<CBlendSpace> BlendSpace;
 
-        /** Seconds for X to cover half the distance to its input. 0 feeds the raw value, which pops
-         *  whenever the input jumps (a speed that steps from 0 to 600 on the frame the stick moves). */
-        PROPERTY(Editable, Category = "Smoothing", ClampMin = 0.0f)
-        float XSmoothingHalfLife = 0.0f;
-
-        PROPERTY(Editable, Category = "Smoothing", ClampMin = 0.0f)
-        float YSmoothingHalfLife = 0.0f;
-
         CAnimGraphPin* BlendSpacePin = nullptr;
         CAnimGraphPin* XPin = nullptr;
         CAnimGraphPin* YPin = nullptr;

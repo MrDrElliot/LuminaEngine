@@ -269,6 +269,9 @@ namespace Lumina
         // A clock slot, so a state machine winds it back with the phase it guards and re-entry re-seeds.
         const uint16 SeededSlot = AllocClockSlot();
 
+        // Not clock slots; the seed flag above already re-snaps the smoothers, and zeroing them would pop.
+        const uint16 SmoothSlot = AllocStateSlotRun(4);
+
         WriteOp(bDynamicBlendSpace ? EAnimOp::SampleBlendSpaceDyn : EAnimOp::SampleBlendSpace);
         Write(BlendSpaceIndex);
         Write(XReg);
@@ -277,6 +280,7 @@ namespace Lumina
         Write(PhaseSlot);
         Write(StartPosReg);
         Write(SeededSlot);
+        Write(SmoothSlot);
         Write(Dst);
         return Dst;
     }
@@ -634,6 +638,42 @@ namespace Lumina
         Write(BoneIndex);
         Write(Dst);
         return Dst;
+    }
+
+    FAnimationGraphCompiler::FGroundTraceRegisters FAnimationGraphCompiler::EmitGroundTrace(
+        uint16 FootBoneIndex, const FVector3& WorldUp,
+        float TraceUpDistance, float TraceDownDistance,
+        float MaxOffset, float SoleHeight,
+        uint16 LayerMask, uint16 GateReg)
+    {
+        FGroundTraceRegisters Out;
+        uint16* Registers[9] =
+        {
+            &Out.OffsetX, &Out.OffsetY, &Out.OffsetZ,
+            &Out.NormalX, &Out.NormalY, &Out.NormalZ,
+            &Out.UpX, &Out.UpY, &Out.UpZ,
+        };
+
+        for (uint16* Register : Registers)
+        {
+            *Register = AllocScalarReg();
+        }
+
+        WriteOp(EAnimOp::GroundTrace);
+        Write(FootBoneIndex);
+        Write(WorldUp);
+        Write(TraceUpDistance);
+        Write(TraceDownDistance);
+        Write(MaxOffset);
+        Write(SoleHeight);
+        Write(LayerMask);
+        Write(GateReg);
+        for (const uint16* Register : Registers)
+        {
+            Write(*Register);
+        }
+
+        return Out;
     }
 
     uint16 FAnimationGraphCompiler::EmitTwoBoneIK(uint16 SrcPoseReg, uint16 AlphaReg,

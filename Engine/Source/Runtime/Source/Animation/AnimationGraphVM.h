@@ -13,6 +13,8 @@
 
 namespace Lumina
 {
+    namespace Physics { class IPhysicsScene; }
+
     class CAnimationGraph;
     struct FSkeletonResource;
     struct FAnimMontagePlayer;
@@ -58,7 +60,7 @@ namespace Lumina
         ScalarOp,        // op:uint8, a:sReg, b:sReg, dst:sReg
         AdvanceClock,    // stateIdx:uint16, speed:sReg, clipIdx:uint16, loopMode:sReg, startPos:sReg, seededSlot:uint16, dstClock:sReg, dstFinished:sReg, syncGroup:uint16
         SampleAnim,      // clipIdx:uint16, time:sReg, dst:pReg
-        SampleBlendSpace,// bsIdx:uint16, x:sReg, y:sReg, speed:sReg, phaseSlot:uint16, startPos:sReg, seededSlot:uint16, dst:pReg
+        SampleBlendSpace,// bsIdx:uint16, x:sReg, y:sReg, speed:sReg, phaseSlot:uint16, startPos:sReg, seededSlot:uint16, smoothSlot:uint16, dst:pReg
         RefPose,         // dst:pReg
         Blend,           // a:pReg, b:pReg, alpha:sReg, dst:pReg
         BlendMasked,     // a:pReg, b:pReg, alpha:sReg, maskIdx:uint16, dst:pReg
@@ -77,7 +79,7 @@ namespace Lumina
         LoadObjectConst,        // constIdx:uint16, dst:oReg
         SampleAnimDyn,          // clip:oReg, time:sReg, dst:pReg
         AdvanceClockDyn,        // stateIdx:uint16, speed:sReg, clip:oReg, loopMode:sReg, startPos:sReg, seededSlot:uint16, dstClock:sReg, dstFinished:sReg, syncGroup:uint16
-        SampleBlendSpaceDyn,    // bs:oReg, x:sReg, y:sReg, speed:sReg, phaseSlot:uint16, startPos:sReg, seededSlot:uint16, dst:pReg
+        SampleBlendSpaceDyn,    // bs:oReg, x:sReg, y:sReg, speed:sReg, phaseSlot:uint16, startPos:sReg, seededSlot:uint16, smoothSlot:uint16, dst:pReg
 
         //~ MakeAdditive with an explicit base pose and space. Appended, so old programs stay valid.
         MakeAdditiveEx,         // src:pReg, base:pReg (kAnimNoPoseRegister = bind pose), space:uint8, dst:pReg
@@ -101,6 +103,8 @@ namespace Lumina
 
         // Reshapes an alpha through an easing curve. Operands are easing uint8, value sReg, dst sReg.
         EaseAlpha,
+
+        GroundTrace,            // footIdx:uint16, up:vec3, traceUp/traceDown/maxOffset/soleHeight:float, layerMask:uint16, gate:sReg, 9 dst:sReg (offset xyz, normal xyz, up xyz)
     };
 
     // MakeAdditiveEx base operand meaning "no base pose supplied".
@@ -172,7 +176,7 @@ namespace Lumina
     // AdvanceClock operand value for "not in a sync group".
     inline constexpr uint16 kAnimNoSyncGroup = 0xFFFFu;
     
-    inline constexpr uint16 kAnimBytecodeVersion = 5;
+    inline constexpr uint16 kAnimBytecodeVersion = 6;
     
     struct FAnimSyncGroup
     {
@@ -208,6 +212,24 @@ namespace Lumina
         bool bInitialized = false;
     };
 
+    // Per-entity scene state a GroundTrace queries; left invalid when there is no world, which traces flat.
+    struct FAnimGraphSceneContext
+    {
+        Physics::IPhysicsScene* Scene = nullptr;
+
+        // Last update's skinning matrices, since this update's pose is what the graph is still building.
+        const TVector<FMatrix4>* BoneTransforms = nullptr;
+
+        FVector3 WorldLocation = FVector3(0.0f);
+        FVector3 WorldScale    = FVector3(1.0f);
+        FQuat    WorldRotation = FQuat::Identity();
+
+        // Ignored by every trace, so a foot never lands on the character it belongs to.
+        uint32 SelfBodyID = ~0u;
+
+        bool IsValid() const { return Scene != nullptr && BoneTransforms != nullptr; }
+    };
+
     struct FAnimGraphRootMotion
     {
         ERootMotionLockMode Mode = ERootMotionLockMode::FromAsset;
@@ -231,6 +253,7 @@ namespace Lumina
                                FAnimTaskList& OutTasks,
                                FAnimGraphRootMotion& RootMotionInOut,
                                TVector<FAnimNotifyEvent>* OutEvents = nullptr,
-                               const FAnimMontagePlayer* Montages = nullptr);
+                               const FAnimMontagePlayer* Montages = nullptr,
+                               const FAnimGraphSceneContext* SceneContext = nullptr);
     };
 }

@@ -8,6 +8,8 @@
 #include "Assets/AssetTypes/Mesh/Animation/Animation.h"
 #include "Core/Console/ConsoleVariable.h"
 #include "Memory/Memcpy.h"
+#include "Physics/PhysicsScene.h"
+#include "Physics/Ray/RayCast.h"
 #include "Renderer/MeshData.h"
 #include "Log/Log.h"
 #include "Renderer/SkeletonResource.h"
@@ -301,7 +303,7 @@ namespace Lumina
         State.bInitialized = true;
     }
 
-    void FAnimationGraphVM::BuildTasks(const CAnimationGraph* Graph, FSkeletonResource* Skeleton, float DeltaTime, FAnimGraphVMState& State, FAnimTaskList& OutTasks, FAnimGraphRootMotion& RootMotionInOut, TVector<FAnimNotifyEvent>* OutEvents, const FAnimMontagePlayer* Montages)
+    void FAnimationGraphVM::BuildTasks(const CAnimationGraph* Graph, FSkeletonResource* Skeleton, float DeltaTime, FAnimGraphVMState& State, FAnimTaskList& OutTasks, FAnimGraphRootMotion& RootMotionInOut, TVector<FAnimNotifyEvent>* OutEvents, const FAnimMontagePlayer* Montages, const FAnimGraphSceneContext* SceneContext)
     {
         LUMINA_PROFILE_SCOPE();
 
@@ -946,17 +948,59 @@ namespace Lumina
                 const uint16 PhaseSlot     = Reader.Read<uint16>();
                 const uint16 StartPosReg   = Reader.Read<uint16>();
                 const uint16 SeededSlot    = Reader.Read<uint16>();
+                const uint16 SmoothSlot    = Reader.Read<uint16>();
                 const uint16 Dst           = Reader.Read<uint16>();
 
                 const CBlendSpace* BlendSpace = bDynamicBlendSpace
                     ? Cast<CBlendSpace>(ReadObjectReg(BlendSpaceIdx))
                     : ((BlendSpaceIdx < (uint16)Graph->BlendSpaces.size()) ? Graph->BlendSpaces[BlendSpaceIdx].Get() : nullptr);
 
-                FBlendSpaceWeights Weights;
-                if (BlendSpace != nullptr)
+                if (BlendSpace == nullptr)
                 {
-                    BlendSpace->Evaluate(FVector2(ReadScalar(XReg, 0.0f), ReadScalar(YReg, 0.0f)), Weights);
+                    FAnimTask Task;
+                    Task.Type = EAnimTaskType::ReferencePose;
+                    SetPoseTask(Dst, OutTasks.Add(Task));
+                    ZeroCurves(Dst);
+                    break;
                 }
+
+                const float RawX = ReadScalar(XReg, 0.0f);
+                const float RawY = ReadScalar(YReg, 0.0f);
+
+                // Four consecutive slots the compiler reserved as a block, x value and velocity then y.
+                float* SmoothState = ((SIZE_T)SmoothSlot + 3 < NumState)
+                    ? &State.StateSlots[SmoothSlot] : nullptr;
+
+                // Seeding waits for a resolved blend space, so a dynamic asset that arrives late still starts on phase.
+                if (SeededSlot < NumState && State.StateSlots[SeededSlot] < 0.5f)
+                {
+                    State.StateSlots[SeededSlot] = 1.0f;
+                    if (PhaseSlot < NumState)
+                    {
+                        State.StateSlots[PhaseSlot] = Math::Clamp(ReadScalar(StartPosReg, 0.0f), 0.0f, 1.0f);
+                    }
+
+                    if (SmoothState != nullptr)
+                    {
+                        BlendSpace->AxisX.SnapSmoothing(RawX, SmoothState[0], SmoothState[1]);
+                        BlendSpace->AxisY.SnapSmoothing(RawY, SmoothState[2], SmoothState[3]);
+                    }
+                }
+
+                float InputX = RawX;
+                float InputY = RawY;
+                if (SmoothState != nullptr)
+                {
+                    InputX = BlendSpace->AxisX.Smooth(RawX, DeltaTime, SmoothState[0], SmoothState[1]);
+
+                    if (BlendSpace->AxisCount == EBlendSpaceAxes::Two)
+                    {
+                        InputY = BlendSpace->AxisY.Smooth(RawY, DeltaTime, SmoothState[2], SmoothState[3]);
+                    }
+                }
+
+                FBlendSpaceWeights Weights;
+                BlendSpace->Evaluate(FVector2(InputX, InputY), Weights);
 
                 if (Weights.Count == 0)
                 {
@@ -971,16 +1015,6 @@ namespace Lumina
                     (!bDynamicBlendSpace && BlendSpaceIdx < Graph->BlendSpaceCurveMaps.size())
                     ? &Graph->BlendSpaceCurveMaps[BlendSpaceIdx] : nullptr;
                 float* DstCurves = CurvesOf(Dst);
-
-                // Seeding waits for a resolved blend space, so a dynamic asset that arrives late still starts on phase.
-                if (SeededSlot < NumState && State.StateSlots[SeededSlot] < 0.5f)
-                {
-                    State.StateSlots[SeededSlot] = 1.0f;
-                    if (PhaseSlot < NumState)
-                    {
-                        State.StateSlots[PhaseSlot] = Math::Clamp(ReadScalar(StartPosReg, 0.0f), 0.0f, 1.0f);
-                    }
-                }
 
                 // The phase speed comes from the weighted duration, so it retimes as the blend moves.
                 const float PrevPhase = (PhaseSlot < (uint16)State.StateSlots.size()) ? State.StateSlots[PhaseSlot] : 0.0f;
@@ -1346,6 +1380,87 @@ namespace Lumina
                 SetPoseTags(Dst, DeltaOf(Src), EventsOf(Src));
                 SetPoseSync(Dst, SyncOf(Src));
                 CopyCurves(Dst, Src);
+                break;
+            }
+
+            case EAnimOp::GroundTrace:
+            {
+                const uint16   FootIdx    = Reader.Read<uint16>();
+                const FVector3 WorldUpRaw = Reader.Read<FVector3>();
+                const float    TraceUp    = Reader.Read<float>();
+                const float    TraceDown  = Reader.Read<float>();
+                const float    MaxOffset  = Reader.Read<float>();
+                const float    SoleHeight = Reader.Read<float>();
+                const uint16   LayerMask  = Reader.Read<uint16>();
+                const uint16   GateReg    = Reader.Read<uint16>();
+
+                uint16 Dst[9];
+                for (uint16& Register : Dst)
+                {
+                    Register = Reader.Read<uint16>();
+                }
+
+                const float UpLength = Math::Length(WorldUpRaw);
+                const FVector3 WorldUp = UpLength > 1e-5f ? WorldUpRaw / UpLength : FVector3(0.0f, 1.0f, 0.0f);
+
+                const FQuat InverseRotation = SceneContext != nullptr
+                    ? Math::Conjugate(SceneContext->WorldRotation)
+                    : FQuat::Identity();
+
+                const FVector3 ComponentUp = InverseRotation * WorldUp;
+
+                FVector3 Offset(0.0f);
+                FVector3 Normal = ComponentUp;
+
+                const bool bTrace = SceneContext != nullptr &&
+                    SceneContext->IsValid() &&
+                    ReadScalar(GateReg, 1.0f) > 0.0f &&
+                    FootIdx < SceneContext->BoneTransforms->size() &&
+                    (int32)FootIdx < Skeleton->GetNumBones();
+
+                if (bTrace)
+                {
+                    const FMatrix4 FootGlobal = (*SceneContext->BoneTransforms)[FootIdx] *
+                        Math::Inverse(Skeleton->GetBone(FootIdx).InvBindMatrix);
+
+                    const FVector3 FootWorld = SceneContext->WorldLocation +
+                        SceneContext->WorldRotation * (FVector3(FootGlobal[3]) * SceneContext->WorldScale);
+
+                    SRayCastSettings Ray;
+                    Ray.Start     = FootWorld + WorldUp * TraceUp;
+                    Ray.End       = FootWorld - WorldUp * TraceDown;
+                    Ray.LayerMask = (ECollisionProfiles)LayerMask;
+                    Ray.IgnoreBodies.push_back(SceneContext->SelfBodyID);
+
+                    if (const TOptional<SRayResult> Hit = SceneContext->Scene->CastRay(Ray))
+                    {
+                        FVector3 WorldOffset = (Hit->Location + WorldUp * SoleHeight) - FootWorld;
+
+                        const float OffsetLength = Math::Length(WorldOffset);
+                        if (OffsetLength > MaxOffset && OffsetLength > 1e-5f)
+                        {
+                            WorldOffset = WorldOffset * (MaxOffset / OffsetLength);
+                        }
+
+                        Offset = InverseRotation * WorldOffset;
+                        Normal = Math::Normalize(InverseRotation * Hit->Normal);
+                    }
+                }
+
+                const float Values[9] =
+                {
+                    Offset.x, Offset.y, Offset.z,
+                    Normal.x, Normal.y, Normal.z,
+                    ComponentUp.x, ComponentUp.y, ComponentUp.z,
+                };
+
+                for (int32 i = 0; i < 9; ++i)
+                {
+                    if (Dst[i] < NumScalar)
+                    {
+                        Scalars[Dst[i]] = Values[i];
+                    }
+                }
                 break;
             }
 

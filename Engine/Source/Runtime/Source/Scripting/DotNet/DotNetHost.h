@@ -168,6 +168,8 @@ namespace Lumina::DotNet
 
     RUNTIME_API void* CreateManagedSystem(FStringView TypeName, uint64 World);
 
+    RUNTIME_API void StartupManagedSystem(void* Handle, const FSystemContext* Context);
+
     RUNTIME_API void DestroyManagedSystem(void* Handle);
 
     RUNTIME_API void TickManagedSystem(void* Handle, const FSystemContext* Context);

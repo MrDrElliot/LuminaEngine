@@ -14,16 +14,21 @@ public readonly unsafe partial struct SystemContext
 {
     internal readonly IntPtr Handle;
 
+    // Resolved once per context rather than on every Registry access.
+    private readonly ulong World;
+
     internal SystemContext(IntPtr Handle)
     {
         this.Handle = Handle;
+        World = 0; // GetWorld reads Handle through this, so every field must be assigned before the call
+        World = Handle != IntPtr.Zero ? GetWorld() : 0;
     }
 
     public bool IsValid => Handle != IntPtr.Zero;
 
     /// <summary>The world's component store (mirrors C++ FEntityRegistry / entt::registry), reached from
     /// the context's bound world. Use it to author entt-style typed views: <c>Registry.View&lt;...&gt;()</c>.</summary>
-    public EntityRegistry Registry => new(GetWorld());
+    public EntityRegistry Registry => new(World);
 
     /// <summary>Seconds since the previous frame.</summary>
     public float DeltaTime => GetDeltaTime();

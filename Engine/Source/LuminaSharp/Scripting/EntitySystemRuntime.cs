@@ -129,6 +129,27 @@ internal sealed class EntitySystemRuntime
         return GCHandle.ToIntPtr(Handle);
     }
 
+    /// Runs OnStartup on one instance, once, where native starts its own systems, so both see the same world state.
+    public void Startup(IntPtr Handle, IntPtr Context)
+    {
+        if (Resolve(Handle) is not EntitySystem System)
+        {
+            return;
+        }
+
+        try
+        {
+            using (Game.PushWorld(System.World))
+            {
+                System.OnStartup(new SystemContext(Context));
+            }
+        }
+        catch (Exception Exception)
+        {
+            Native.Log(ELogLevel.Error, $"EntitySystem.OnStartup threw: {Exception}");
+        }
+    }
+
     public unsafe void Tick(IntPtr Handle, IntPtr Context)
     {
         if (Resolve(Handle) is not EntitySystem System)
@@ -174,17 +195,7 @@ internal sealed class EntitySystemRuntime
         GCHandle Handle = GCHandle.FromIntPtr(Pointer);
         if (Handle.Target is EntitySystem System)
         {
-            try
-            {
-                using (Game.PushWorld(System.World))
-                {
-                    System.OnTeardown(default);
-                }
-            }
-            catch (Exception Exception)
-            {
-                Native.Log(ELogLevel.Error, $"EntitySystem.OnTeardown threw: {Exception}");
-            }
+            Teardown(System, "teardown");
         }
 
         LiveHandles.Remove(Handle);
@@ -201,17 +212,7 @@ internal sealed class EntitySystemRuntime
         {
             if (Handle.Target is EntitySystem System)
             {
-                try
-                {
-                    using (Game.PushWorld(System.World))
-                    {
-                        System.OnTeardown(default);
-                    }
-                }
-                catch (Exception Exception)
-                {
-                    Native.Log(ELogLevel.Error, $"EntitySystem.OnTeardown threw during unload: {Exception}");
-                }
+                Teardown(System, "unload");
             }
             if (Handle.IsAllocated)
             {
@@ -219,6 +220,25 @@ internal sealed class EntitySystemRuntime
             }
         }
         LiveHandles.Clear();
+    }
+
+    // Teardown runs from world teardown or a script unload, never the scheduler, so the world supplies the context.
+    private static void Teardown(EntitySystem System, string Reason)
+    {
+        try
+        {
+            using (Game.PushWorld(System.World))
+            {
+                // A world already torn down has no context left to hand over; the callback still runs.
+                System.OnTeardown(System.World.IsValid
+                    ? new SystemContext(Native.WorldGetSystemContext(System.World.WorldHandle))
+                    : default);
+            }
+        }
+        catch (Exception Exception)
+        {
+            Native.Log(ELogLevel.Error, $"EntitySystem.OnTeardown threw during {Reason}: {Exception}");
+        }
     }
 
     private static EntitySystem? Resolve(IntPtr Pointer)

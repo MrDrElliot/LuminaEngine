@@ -526,6 +526,21 @@ public static unsafe partial class Host
         }
     }
 
+    /// Starts one EntitySystem instance once, forwarding to OnStartup with the native FSystemContext*.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static void StartupEntitySystem(IntPtr Handle, IntPtr SystemContext)
+    {
+        try
+        {
+            Scripts?.EntitySystems?.Startup(Handle, SystemContext);
+        }
+        catch (Exception Exception)
+        {
+            Interop.LogException(Exception);
+        }
+    }
+
     /// Ticks one EntitySystem instance: forwards to OnUpdate with the native FSystemContext*.
     [ManagedExport]
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]

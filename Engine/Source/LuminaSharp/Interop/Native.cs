@@ -37,6 +37,15 @@ public static unsafe partial class Native
         }
     }
 
+    // The world's own FSystemContext*, so OnTeardown gets a valid context outside a scheduler tick.
+    [NativeCall(EntryPoint = "LuminaSharp_World_GetSystemContext")] public static partial IntPtr WorldGetSystemContext(ulong World);
+
+    // Registry-backed validity, so a recycled id reads back invalid rather than merely component-less.
+    [NativeCall(EntryPoint = "LuminaSharp_World_IsValidEntity", SuppressGCTransition = true)] public static partial int WorldIsValidEntity(ulong World, uint Entity);
+
+    // Returns the true total whether or not the buffer fits, so an under-sized one is retried like FindEntityScripts.
+    [NativeCall(EntryPoint = "LuminaSharp_World_GetEntitiesByTag")] public static partial int WorldGetEntitiesByTag(ulong World, string Tag, uint* OutIds, int Capacity);
+
     // Component op-table access. The token returned by FindComponentOps is resolved once per type and
     // reused; the get/has/emplace/remove calls take it plus the world + entity.
 

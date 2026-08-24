@@ -178,6 +178,7 @@ namespace Lumina::DotNet
         typedef void  (CORECLR_DELEGATE_CALLTYPE* EnumerateScriptStructsFn)(void*, void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* GetScriptStructSchemaFn)(const char*, int32, void*, void*);
         typedef void* (CORECLR_DELEGATE_CALLTYPE* CreateEntitySystemFn)(const char*, int32, uint64);
+        typedef void  (CORECLR_DELEGATE_CALLTYPE* StartupEntitySystemFn)(void*, void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* TickEntitySystemFn)(void*, void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* DestroyEntitySystemFn)(void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* EnumerateRenderScenesFn)(void*, void*);
@@ -222,6 +223,7 @@ namespace Lumina::DotNet
             LoadScriptsFn               LoadScripts;
             ShutdownFn                  Shutdown;
             TickFn                      Tick;
+            StartupEntitySystemFn       StartupEntitySystem;
             TickEntitySystemFn          TickEntitySystem;
 
             EnumerateRenderScenesFn             EnumerateRenderScenes;
@@ -1003,6 +1005,7 @@ namespace Lumina::DotNet
         LM_RESOLVE(OnNativeDelegateDestroyed, OnNativeDelegateDestroyedFn);
         LM_RESOLVE(Shutdown,               ShutdownFn);
         LM_RESOLVE(Tick,                   TickFn);
+        LM_RESOLVE(StartupEntitySystem,    StartupEntitySystemFn);
         LM_RESOLVE(TickEntitySystem,       TickEntitySystemFn);
         LM_RESOLVE(EnumerateRenderScenes,  EnumerateRenderScenesFn);
         LM_RESOLVE(CreateRenderScene,      CreateRenderSceneFn);
@@ -1422,6 +1425,14 @@ namespace Lumina::DotNet
         if (bInitialized && GManaged.DestroyEntitySystem && Handle)
         {
             GManaged.DestroyEntitySystem(Handle);
+        }
+    }
+
+    void StartupManagedSystem(void* Handle, const FSystemContext* Context)
+    {
+        if (bInitialized && GManaged.StartupEntitySystem && Handle)
+        {
+            GManaged.StartupEntitySystem(Handle, const_cast<void*>(reinterpret_cast<const void*>(Context)));
         }
     }
 
