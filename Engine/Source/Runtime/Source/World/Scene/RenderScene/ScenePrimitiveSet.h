@@ -115,6 +115,8 @@ namespace Lumina
             FShaderH             VisBufferMeshShader = {};
             FShaderH             VisBufferMeshShaderMasked = {};
             FShaderH             MaskedVisBufferPixelShader = {};
+            FShaderH             MeshShaderShadowMasked = {};
+            FShaderH             ShadowMaskedPixelShader = {};
             FShaderH             MomentPixelShader = {};
             // No material identity here on purpose: a batch is a PIPELINE, and one pipeline serves every
             // material that compiles to it. The material is carried per instance

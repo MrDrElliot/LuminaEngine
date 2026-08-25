@@ -4,7 +4,8 @@
 // ONE workgroup per meshlet. Compiled TWICE via MESHLET_MESH_BASE: the two cases need different OUTPUT
 // TYPES, which a spec constant cannot change. The load and transform run in full either way, for WPO.
 
-#ifdef MESHLET_MESH_BASE
+// Masked shadow casters need the interpolant set too, but rastered from the light rather than the camera.
+#if defined(MESHLET_MESH_BASE) || defined(MESHLET_MESH_MASKED_SHADOW)
 typedef FBaseVertexOutput      FMeshVertexOutput;
 #else
 typedef FDepthOnlyVertexOutput FMeshVertexOutput;
@@ -91,6 +92,13 @@ void MeshMain(
 #ifdef MESHLET_MESH_BASE
             FMeshVertexOutput VOut = MakeBaseVertexOutput(Ref, W, FinalWorldPos, GetCameraView(), GetCameraProjection());
             Clip[v] = VOut.Position;   // taken from the output so the two cannot drift
+#elif defined(MESHLET_MESH_MASKED_SHADOW)
+            // Interpolants come from the camera basis because the opacity graph reads view-space values;
+            // only the clip position is the light's, and it overwrites what MakeBaseVertexOutput wrote.
+            FMeshVertexOutput VOut = MakeBaseVertexOutput(Ref, W, FinalWorldPos, GetCameraView(), GetCameraProjection());
+            Clip[v] = mul(GetShadowViewProjection(MeshletPass().ShadowDataIndex, (uint)MeshletPass().ViewIndex),
+                          float4(FinalWorldPos, 1.0));
+            VOut.Position = Clip[v];
 #else
             FMeshVertexOutput VOut = (FMeshVertexOutput)0;
             Clip[v] = mul(GetShadowViewProjection(MeshletPass().ShadowDataIndex, (uint)MeshletPass().ViewIndex),

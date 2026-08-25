@@ -40,6 +40,8 @@ namespace Lumina
         MaskedVisBufferPixel,       // VisBufferMaskedPixel.slang + VISBUFFER_PRIMID; masked materials only
         Deferred,                   // DeferredMaterial.slang
         MomentPixel,                // BasePixelPass.slang + TRANSLUCENT + MOMENT_GENERATION; PBR translucent only
+        MeshShadowMasked,           // MeshletMesh.slang + MESHLET_MESH_MASKED_SHADOW; masked materials only
+        ShadowMaskedPixel,          // ShadowMaskedPixel.slang; masked materials only
 
         Count,
     };
@@ -86,6 +88,8 @@ namespace Lumina
         // Masked-only VisBuffer PIXEL shader: runs the opacity graph and alpha-clips cut-out texels BEFORE
         // they write VisID/depth, so they cannot stamp occluding depth. Null for non-masked materials.
         FShaderH GetMaskedVisBufferPixelShader() const { return MaskedVisBufferPixelShader; }
+        FShaderH GetMeshShaderShadowMasked() const { return MeshShaderShadowMasked; }
+        FShaderH GetShadowMaskedPixelShader() const { return ShadowMaskedPixelShader; }
 
         // Deferred material pixel shader (DeferredMaterial.slang): reconstructs surface from the VisBuffer
         // triangle ID and shades. The deferred pass binds it per opaque material.
@@ -235,6 +239,8 @@ namespace Lumina
         /** Masked-only VisBuffer pixel stage (VisBufferMaskedPixel.slang + VISBUFFER_PRIMID). */
         PROPERTY()
         TVector<uint32>                         MaskedVisBufferPixelShaderBinaries;
+        TVector<uint32>                         MeshShaderShadowMaskedBinaries;
+        TVector<uint32>                         ShadowMaskedPixelShaderBinaries;
 
         /** Deferred material pixel stage (DeferredMaterial.slang); empty if not compiled. */
         PROPERTY()
@@ -263,6 +269,8 @@ namespace Lumina
         FShaderH                     VisBufferMeshShader = {};
         FShaderH                     VisBufferMeshShaderMasked = {};
         FShaderH                     MaskedVisBufferPixelShader = {};
+        FShaderH                     MeshShaderShadowMasked = {};
+        FShaderH                     ShadowMaskedPixelShader = {};
         FShaderH                     DeferredShader = {};
         FShaderH                     MomentPixelShader = {};
 

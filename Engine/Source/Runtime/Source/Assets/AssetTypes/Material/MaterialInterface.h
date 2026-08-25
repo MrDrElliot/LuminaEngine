@@ -56,6 +56,9 @@ namespace Lumina
 
         /** Adds a clear dielectric layer over the base: car paint, lacquer, varnish. */
         Clearcoat = 2,
+
+        /** Thin two-sided translucency for leaves and grass. Costs the emissive channels. */
+        Foliage   = 3,
     };
 
     REFLECT()

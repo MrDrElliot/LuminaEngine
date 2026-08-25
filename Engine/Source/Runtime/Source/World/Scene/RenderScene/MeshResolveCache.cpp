@@ -336,6 +336,8 @@ namespace Lumina
         R.VisBufferMeshShader        = ConcreteMaterial ? ConcreteMaterial->GetVisBufferMeshShader() : FShaderH{};
         R.VisBufferMeshShaderMasked  = ConcreteMaterial ? ConcreteMaterial->GetVisBufferMeshShaderMasked() : FShaderH{};
         R.MaskedVisBufferPixelShader = ConcreteMaterial ? ConcreteMaterial->GetMaskedVisBufferPixelShader() : FShaderH{};
+        R.MeshShaderShadowMasked     = ConcreteMaterial ? ConcreteMaterial->GetMeshShaderShadowMasked() : FShaderH{};
+        R.ShadowMaskedPixelShader    = ConcreteMaterial ? ConcreteMaterial->GetShadowMaskedPixelShader() : FShaderH{};
         R.DeferredShader             = ConcreteMaterial ? ConcreteMaterial->GetDeferredShader() : FShaderH{};
         R.MomentPixelShader          = ConcreteMaterial ? ConcreteMaterial->GetMomentPixelShader() : FShaderH{};
 
@@ -366,6 +368,8 @@ namespace Lumina
             .MaskedVisBufferPixelShader = bMasked        ? R.MaskedVisBufferPixelShader : FShaderH{},
             .MeshShaderBase             = bForwardShaded ? R.MeshShaderBase             : FShaderH{},
             .MeshShaderShadow           = R.MeshShaderShadow,
+            .MeshShaderShadowMasked     = bMasked        ? R.MeshShaderShadowMasked     : FShaderH{},
+            .ShadowMaskedPixelShader    = bMasked        ? R.ShadowMaskedPixelShader    : FShaderH{},
             .PixelShader                = bForwardShaded  ? R.PixelShader                : FShaderH{},
             .MomentPixelShader          = bMomentGenerated ? R.MomentPixelShader         : FShaderH{},
             .bTranslucent = (bTranslucent ? 1u : 0u),

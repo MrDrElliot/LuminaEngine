@@ -172,6 +172,15 @@ namespace Lumina
         PROPERTY(Editable, Category = "Cascaded Shadows|Tuning", ClampMin = 0.0f, ClampMax = 0.5f, Delta = 0.01f)
         float ShadowDistanceFade = 0.15f;
 
+        /** World-space reach of the screen-space contact shadow, which fills in occlusion below a cascade
+        texel. 0 = off. Too large and the march leaves the depth buffer's near field and streaks. */
+        PROPERTY(Editable, Category = "Cascaded Shadows|Contact", ClampMin = 0.0f, ClampMax = 2.0f, Delta = 0.01f, Units = "m")
+        float ContactShadowLength = 0.15f;
+
+        /** Depth-buffer taps along the contact ray; more resolves thinner occluders at a linear cost. */
+        PROPERTY(Editable, Category = "Cascaded Shadows|Contact", ClampMin = 0, ClampMax = 32)
+        int32 ContactShadowSamples = 8;
+
         /** Drop casters whose bounds cover fewer than this many texels of the cascade doing the rejecting
         (0 = off). Trades shadow detail for geometry throughput. Thin geometry (railings, grates, wires)
         loses its shadow entirely above 0, since its bounds are sub-texel in the coarser cascades. */

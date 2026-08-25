@@ -106,6 +106,8 @@ namespace Lumina
 
             Material->ClearShaderStage(EMaterialShaderStage::MaskedVisBufferPixel);
             Material->ClearShaderStage(EMaterialShaderStage::VisBufferMeshMasked);
+            Material->ClearShaderStage(EMaterialShaderStage::MeshShadowMasked);
+            Material->ClearShaderStage(EMaterialShaderStage::ShadowMaskedPixel);
             if (Material->GetBlendMode() == EBlendMode::Masked)
             {
                 // Masked geometry widens the output back to the full interpolant set its pixel shader reads.
@@ -117,6 +119,15 @@ namespace Lumina
                 FShaderCompileOptions MaskedPSOptions; MaskedPSOptions.DebugName = MatName + " [MVBP]";
                 MaskedPSOptions.MacroDefinitions.emplace_back("VISBUFFER_PRIMID");
                 ShaderCompiler->CompilerShaderRaw(MaskedPSSource, Move(MaskedPSOptions), CommitStage(EMaterialShaderStage::MaskedVisBufferPixel));
+
+                // Same widening for the shadow lane, so a cut-out casts its own silhouette and not its quad.
+                FShaderCompileOptions ShadowMaskedOptions; ShadowMaskedOptions.DebugName = MatName + " [MSSM]";
+                ShadowMaskedOptions.MacroDefinitions.emplace_back("MESHLET_MESH_MASKED_SHADOW");
+                ShaderCompiler->CompilerShaderRaw(MeshSource, Move(ShadowMaskedOptions), CommitStage(EMaterialShaderStage::MeshShadowMasked));
+
+                const FString ShadowPSSource = Compiler.BuildPixelShaderFromTemplate(MeshShaderDir + "ShadowMaskedPixel.slang");
+                FShaderCompileOptions ShadowPSOptions; ShadowPSOptions.DebugName = MatName + " [SMP]";
+                ShaderCompiler->CompilerShaderRaw(ShadowPSSource, Move(ShadowPSOptions), CommitStage(EMaterialShaderStage::ShadowMaskedPixel));
             }
 
             const FString DeferredSource = Compiler.BuildDeferredShaderFromTemplate(MeshShaderDir + "DeferredMaterial.slang", EMaterialType::PBR);
@@ -188,6 +199,8 @@ namespace Lumina
             {
                 bStageFailed |= StageEmpty(Material->MaskedVisBufferPixelShaderBinaries, "Masked VisBuffer Pixel");
                 bStageFailed |= StageEmpty(Material->VisBufferMeshShaderMaskedBinaries, "Masked VisBuffer Geometry");
+                bStageFailed |= StageEmpty(Material->MeshShaderShadowMaskedBinaries, "Masked Shadow Geometry");
+                bStageFailed |= StageEmpty(Material->ShadowMaskedPixelShaderBinaries, "Masked Shadow Pixel");
             }
         }
         else

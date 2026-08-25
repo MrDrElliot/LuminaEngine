@@ -180,6 +180,10 @@ struct FMaterialPixelInputs
     // Ignored entirely by every other model, and the GBuffer does not carry them for those.
     float  Clearcoat;
     float  ClearcoatRoughness;
+
+    // Foliage shading model only, and it costs the emissive channels when that model is selected.
+    float3 Transmission;
+    float  Thickness;
 };
 
 // EVERY producer of FMaterialPixelInputs must start from this and then override: the struct has
@@ -198,6 +202,8 @@ FMaterialPixelInputs DefaultMaterialInputs()
     M.SelfShadow         = 1.0;
     M.Clearcoat          = 0.0;
     M.ClearcoatRoughness = 0.03;
+    M.Transmission       = float3(0.0, 0.0, 0.0);
+    M.Thickness          = 0.0;
     return M;
 }
 
@@ -788,7 +794,8 @@ struct FLightData
     // Directional shadow tuning (mirror FSceneLightData::ShadowParams).
     // x = normal-bias scale, y = constant depth bias, z = PCSS softness, w = cascade blend fraction.
     float4 ShadowParams;
-    // x = far-cascade distance-fade fraction; y = directional PCF tap count; zw reserved.
+    // x = far-cascade distance-fade fraction, y = directional PCF tap count,
+    // z = contact-shadow world length (0 = off), w = contact-shadow tap count.
     float4 ShadowParams2;
     float4 AmbientLight;
     FLight Lights[MAX_LIGHTS];

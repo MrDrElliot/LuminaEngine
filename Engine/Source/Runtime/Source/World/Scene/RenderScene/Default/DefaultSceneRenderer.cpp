@@ -4264,6 +4264,8 @@ namespace Lumina
             Cmd.VisBufferMeshShader            = Batch.VisBufferMeshShader;
             Cmd.VisBufferMeshShaderMasked      = Batch.VisBufferMeshShaderMasked;
             Cmd.MaskedVisBufferPixelShader     = Batch.MaskedVisBufferPixelShader;
+            Cmd.MeshShaderShadowMasked         = Batch.MeshShaderShadowMasked;
+            Cmd.ShadowMaskedPixelShader        = Batch.ShadowMaskedPixelShader;
             Cmd.MomentPixelShader              = Batch.MomentPixelShader;
             Cmd.IndirectDrawOffset             = b;
             Cmd.DrawCount                      = 1u;
@@ -5085,7 +5087,8 @@ namespace Lumina
                                             DirectionalLight.CascadeBlend);
         LightData.ShadowParams2 = FVector4(DirectionalLight.ShadowDistanceFade,
                                             float(DirectionalLight.ShadowSampleCount),
-                                            0.0f, 0.0f);
+                                            DirectionalLight.ContactShadowLength,
+                                            float(DirectionalLight.ContactShadowSamples));
 
         const float CascadeSplitLambda = Math::Clamp(DirectionalLight.CascadeSplitLambda, 0.0f, 1.0f);
 
@@ -6116,14 +6119,24 @@ namespace Lumina
     bool FDefaultSceneRenderer::BindShadowBatchPipeline(RHI::FCmdListH CL, const FMeshDrawCommand& Batch,
                                                       FShaderH PixelShader)
     {
+        // A masked caster needs the interpolant-carrying geometry and a PS that can clip, or its shadow is
+        // the silhouette of the whole quad instead of the leaf.
+        const bool bMaskedClip = Batch.bMasked
+                              && Batch.MeshShaderShadowMasked  != nullptr
+                              && Batch.ShadowMaskedPixelShader != nullptr;
+
         FGraphicsPipelineKey Key;
-        Key.MS          = Batch.MeshShaderShadow;
-        Key.PS          = PixelShader;
+        Key.MS          = bMaskedClip ? Batch.MeshShaderShadowMasked  : Batch.MeshShaderShadow;
+        Key.PS          = bMaskedClip ? Batch.ShadowMaskedPixelShader : PixelShader;
         Key.DepthFormat = EFormat::D32;
         // SPEC_SKINNED dead-strips the unused vertex-load path; a mixed batch takes a runtime branch.
         Key.SkinnedMode = (Batch.bAnySkinned && Batch.bAnyStatic) ? 2u : (Batch.bAnySkinned ? 1u : 0u);
-        Key.TriCullMode = (uint8)(TriCull_Backface | TriCull_SmallPrim);
+        // A two-sided caster has no back face to reject, and culling one costs it half its shadow.
+        Key.TriCullMode = (uint8)((Batch.bTwoSided ? 0u : (uint32)TriCull_Backface) | (uint32)TriCull_SmallPrim);
         RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
+
+        // Set here, not hoisted out of the caller's loop, so it cannot disagree with the bit above.
+        RHI::CmdSetCullMode(CL, Batch.bTwoSided ? RHI::ECullMode::None : RHI::ECullMode::Back);
         return Key.MS != nullptr;
     }
 
@@ -6186,7 +6199,6 @@ namespace Lumina
         DepthDesc.DepthBias            = 1.0f;
         DepthDesc.DepthBiasSlopeFactor = 1.5f;
         RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(DepthDesc));
-        RHI::CmdSetCullMode(CL, RHI::ECullMode::Back);
 
         for (uint32 OpaqueIdx : OpaqueDrawList)
         {
@@ -6265,7 +6277,6 @@ namespace Lumina
         DepthDesc.DepthBias            = 1.0f;
         DepthDesc.DepthBiasSlopeFactor = 1.5f;
         RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(DepthDesc));
-        RHI::CmdSetCullMode(CL, RHI::ECullMode::Back);
 
         const TVector<FLightShadow>& SpotShadows = PackedShadows[(uint32)ELightType::Spot];
 
@@ -6340,7 +6351,6 @@ namespace Lumina
         DepthDesc.DepthBias            = 25.0f;
         DepthDesc.DepthBiasSlopeFactor = 0.75f;
         RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(DepthDesc));
-        RHI::CmdSetCullMode(CL, RHI::ECullMode::Back);
 
         const int32 SunShadowDataIndex = LightData.Lights[0].ShadowDataIndex;
 

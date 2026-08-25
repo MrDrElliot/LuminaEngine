@@ -52,6 +52,8 @@ namespace Lumina
         // Clearcoat also needs the Shading Model set, so an enabled pin is necessary but not sufficient.
         if (ClearcoatPin)            ClearcoatPin->SetDisabled(bFullscreen || bDecal);
         if (ClearcoatRoughnessPin)   ClearcoatRoughnessPin->SetDisabled(bFullscreen || bDecal);
+        if (TransmissionPin)         TransmissionPin->SetDisabled(bFullscreen || bDecal);
+        if (ThicknessPin)            ThicknessPin->SetDisabled(bFullscreen || bDecal);
         if (WorldPositionOffsetPin)  WorldPositionOffsetPin->SetDisabled(bFullscreen || bDecal);
 
         // Emissive is the fullscreen output color (PostProcess/UI); decals have no emissive DBuffer slot in v1.
@@ -104,6 +106,12 @@ namespace Lumina
 
         ClearcoatRoughnessPin = CreatePin(CMaterialInput::StaticClass(), "Clearcoat Roughness", ENodePinDirection::Input);
         ClearcoatRoughnessPin->SetPinName("Clearcoat Roughness");
+
+        TransmissionPin = CreatePin(CMaterialInput::StaticClass(), "Transmission", ENodePinDirection::Input);
+        TransmissionPin->SetPinName("Transmission");
+
+        ThicknessPin = CreatePin(CMaterialInput::StaticClass(), "Thickness", ENodePinDirection::Input);
+        ThicknessPin->SetPinName("Thickness");
 
         // When connected, the vertex shader adds the graph emission to WorldPos before view and projection.
         WorldPositionOffsetPin = CreatePin(CMaterialInput::StaticClass(), "World Position Offset (WPO)", ENodePinDirection::Input);
@@ -169,7 +177,7 @@ namespace Lumina
         {
             BaseColorPin, MetallicPin, RoughnessPin, SpecularPin,
             EmissivePin,  AOPin,       NormalPin,    OpacityPin,
-            SelfShadowPin, ClearcoatPin, ClearcoatRoughnessPin,
+            SelfShadowPin, ClearcoatPin, ClearcoatRoughnessPin, TransmissionPin, ThicknessPin,
         };
 
         OutPins.reserve(OutPins.size() + std::size(Pins));
@@ -201,6 +209,8 @@ namespace Lumina
         PixelOut += EmitMaterialAssignment("SelfShadow",       SelfShadowPin, "1.0",                   1);
         PixelOut += EmitMaterialAssignment("Clearcoat",        ClearcoatPin,  "0.0",                   1);
         PixelOut += EmitMaterialAssignment("ClearcoatRoughness", ClearcoatRoughnessPin, "0.03",        1);
+        PixelOut += EmitMaterialAssignment("Transmission",     TransmissionPin, "float3(0.0, 0.0, 0.0)", 3);
+        PixelOut += EmitMaterialAssignment("Thickness",        ThicknessPin,  "0.0",                    1);
 
         // Must match what EmitMaterialAssignment wrote, or a dead-end reroute default gets corrupted.
         if (NormalPin->HasConnection()

@@ -45,6 +45,8 @@ namespace Lumina
             { &CMaterial::MaskedVisBufferPixelShaderBinaries, &CMaterial::MaskedVisBufferPixelShader, "_MVBP", ERHIShaderType::Fragment },
             { &CMaterial::DeferredShaderBinaries,             &CMaterial::DeferredShader,             "_DM",   ERHIShaderType::Compute  },
             { &CMaterial::MomentPixelShaderBinaries,          &CMaterial::MomentPixelShader,          "_MOM",  ERHIShaderType::Fragment },
+            { &CMaterial::MeshShaderShadowMaskedBinaries,     &CMaterial::MeshShaderShadowMasked,     "_MSSM", ERHIShaderType::Mesh     },
+            { &CMaterial::ShadowMaskedPixelShaderBinaries,    &CMaterial::ShadowMaskedPixelShader,    "_SMP",  ERHIShaderType::Fragment },
         };
         static_assert(std::size(GMaterialStages) == (size_t)EMaterialShaderStage::Count,
             "GMaterialStages must cover every EMaterialShaderStage");
@@ -622,6 +624,7 @@ namespace Lumina
                 { "MeshletMesh.slang",      "MESHLET_MESH_BASE",     &CMaterial::MeshShaderBaseBinaries            },
                 { "MeshletVisBuffer.slang", nullptr,                 &CMaterial::VisBufferMeshShaderBinaries       },
                 { "MeshletVisBuffer.slang", "VISBUFFER_MASKED_GEOM", &CMaterial::VisBufferMeshShaderMaskedBinaries },
+                { "MeshletMesh.slang",      "MESHLET_MESH_MASKED_SHADOW", &CMaterial::MeshShaderShadowMaskedBinaries },
             };
 
             for (const FGeometryStage& Stage : GeometryStages)

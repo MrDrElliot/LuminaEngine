@@ -5,6 +5,7 @@
 #include "Includes/IBLRuntime.slang"
 #include "Includes/ShadowSampling.slang"
 #include "Includes/ParallaxOcclusion.slang"
+#include "Includes/HashedAlpha.slang"
 #include "Includes/DistanceField.slang"
 
 // Two halves so the deferred lanes can run them in separate passes: BuildGBufferData (material) and
@@ -442,6 +443,22 @@ float EvaluateClearcoatLobe(float3 N, float3 V, float3 L, float ClearcoatRoughne
     return D * Vis * OutFresnel * NdotL;
 }
 
+// Thin-surface translucency (Barre-Brisebois and Bouchard, GDC 2011). Not a subsurface diffusion model,
+// it is the view-dependent forward-scatter lobe that makes a backlit leaf glow. Peaks when the eye looks
+// straight into the light through the surface, which is the only time real foliage does this.
+float3 EvaluateTransmission(FShadingContext S, float3 L, float3 Radiance, float3 Transmission, float Thickness)
+{
+    // Bending the sampled direction by the normal keeps the lobe from being a perfect mirror of the light,
+    // which is what gives a curved leaf a soft gradient instead of one hot spot.
+    const float Distortion = 0.2;
+    const float Power      = 6.0;
+
+    const float3 BackLight = normalize(L + S.N * Distortion);
+    const float  Forward   = pow(saturate(dot(S.V, -BackLight)), Power);
+
+    return Transmission * Thickness * Forward * Radiance;
+}
+
 // L is supplied by the caller for every light type, so the directional normalize happens once at the
 // call site. Diffuse and specular return separately so translucency keeps reflections un-premultiplied.
 void EvaluateLightContributionSplit(FLight Light, FShadingContext S, float3 L, float Distance,
@@ -554,6 +571,8 @@ FGBufferData BuildGBufferData(FBaseVertexOutput Input, FMaterialPixelInputs Mate
 
     G.Clearcoat          = Material.Clearcoat;
     G.ClearcoatRoughness = Material.ClearcoatRoughness;
+    G.Transmission       = Material.Transmission;
+    G.Thickness          = Material.Thickness;
 
     // Read at RUNTIME from the material flags, not a #define: models that only reinterpret GBuffer
     // channels do not justify a shader variant each.
@@ -649,6 +668,9 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
     const float Coat       = bClearcoat ? saturate(G.Clearcoat) : 0.0;
     float3      LoCoat     = float3(0.0);
 
+    // Gates the back-facing light paths below; every other model keeps its early-out intact.
+    const bool  bFoliage   = (G.ShadingModel == ShadingModel_Foliage) && (G.Thickness > 0.0);
+
     float3 Lo = float3(0.0);
 #ifdef TRANSLUCENT
     // Reflected specular is accumulated apart from transmission-modulated terms; the extra live
@@ -664,12 +686,30 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
         // expensive cascade PCSS for them (~half a typical scene). SunL is reused by the BRDF below.
         float3 SunL    = normalize(Light.Direction.xyz);
         float  SunNdotL = dot(N, SunL);
+
+        // Backlit foliage, which the lit path below early-outs on. A thin leaf is its own occluder, so the
+        // normal-offset bias is flipped to the face the light actually reaches or the lobe shadows itself.
+        if (bFoliage && SunNdotL <= 0.0)
+        {
+            const float BackShadow = ComputeShadowFactor(Light, WorldPosition, -N, ViewPosition, ScreenPos,
+                                                         bReceiveShadow) * G.SelfShadow;
+            Lo += EvaluateTransmission(Ctx, SunL, ComputeLightRadiance(Light, SunL, 0.0),
+                                       G.Transmission, G.Thickness) * BackShadow;
+        }
+
         if (SunNdotL > 0.0)
         {
             // Cascade shadow, then the material's own height-field self-occlusion. Applied here and not
             // to the whole light loop because the parallax trace only ever ran against the sun.
             float Shadow = ComputeShadowFactor(Light, WorldPosition, N, ViewPosition, ScreenPos, bReceiveShadow);
             Shadow *= G.SelfShadow;
+
+            // A leaf lit from the front still passes some light forward at grazing view angles.
+            if (bFoliage)
+            {
+                Lo += EvaluateTransmission(Ctx, SunL, ComputeLightRadiance(Light, SunL, 0.0),
+                                           G.Transmission, G.Thickness) * Shadow;
+            }
 #ifdef TRANSLUCENT
             float3 SunDiffuse, SunSpec;
             EvaluateLightContributionSplit(Light, Ctx, SunL, 0.0, SunDiffuse, SunSpec);
@@ -724,7 +764,9 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
 
         // Cluster membership is conservative: a listed light may light only this pixel's back face,
         // which contributes zero, so skip the shadow + BRDF work (and the full light fetch) for it.
-        if (dot(N, L) <= 0.0)
+        // Foliage is the exception, since a light behind a leaf is exactly what the transmitted lobe wants.
+        const bool bBackFacing = dot(N, L) <= 0.0;
+        if (bBackFacing && !bFoliage)
         {
             continue;
         }
@@ -735,7 +777,13 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
         float Shadow = 1.0;
         if (Light.ShadowDataIndex != INDEX_NONE)
         {
-            Shadow = ComputeShadowFactor(Light, WorldPosition, N, ViewPosition, ScreenPos, bReceiveShadow);
+            Shadow = ComputeShadowFactor(Light, WorldPosition, bBackFacing ? -N : N, ViewPosition, ScreenPos, bReceiveShadow);
+        }
+
+        if (bFoliage)
+        {
+            Lo += EvaluateTransmission(Ctx, L, ComputeLightRadiance(Light, L, DistToLight),
+                                       G.Transmission, G.Thickness) * Shadow;
         }
 
 #ifdef TRANSLUCENT
@@ -1039,7 +1087,10 @@ FShadedSurface ShadeSurface(FBaseVertexOutput Input, FMaterialPixelInputs Materi
     uint MatFlags = Materials()[Input.MaterialIndex].Flags;
     if (HasFlag(MatFlags, MatFlag_Masked))
     {
-        if (Material.Opacity < Materials()[Input.MaterialIndex].OpacityClipValue)
+        const float3 ClipAnchor = mul(GetInverseCameraView(), float4(Input.FragPos.xyz, 1.0)).xyz;
+        const float  ClipCutoff = HashedAlphaThreshold(ClipAnchor, length(Input.FragPos.xyz),
+                                                       Materials()[Input.MaterialIndex].OpacityClipValue);
+        if (Material.Opacity < ClipCutoff)
         {
             discard;
         }

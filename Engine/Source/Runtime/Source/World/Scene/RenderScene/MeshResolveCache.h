@@ -28,6 +28,8 @@ namespace Lumina
         FShaderH VisBufferMeshShader = {};
         FShaderH VisBufferMeshShaderMasked = {};
         FShaderH MaskedVisBufferPixelShader = {};
+        FShaderH MeshShaderShadowMasked = {};
+        FShaderH ShadowMaskedPixelShader = {};
         FShaderH DeferredShader = {};
         FShaderH MomentPixelShader = {};
 

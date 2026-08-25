@@ -21,6 +21,58 @@ float SampleDepth(uint DepthIndex, float2 UV)
     return gTextures2D[DepthIndex].SampleLevel(gSamplers[SAMPLER_POINT_CLAMP], UV, 0.0).r;
 }
 
+
+// Screen-space fill for occlusion below one cascade texel, which is what makes contact points float. 1 = lit.
+float ContactShadow(uint DepthIndex, float4x4 InvProj, float3 ViewPos, float3 ViewN, float3 ViewL, float Jitter)
+{
+    const float  Reach = LightData().ShadowParams2.z;
+    const uint   Steps = (uint)LightData().ShadowParams2.w;
+    if (Reach <= 0.0 || Steps == 0u)
+    {
+        return 1.0;
+    }
+
+    const float3 Step = ViewL * (Reach / float(Steps));
+
+    // Half-step jittered start plus a normal offset, or a grazing surface reports its own ray as occluding.
+    float3 RayPos = ViewPos + ViewN * (Reach / float(Steps)) + Step * (0.5 + Jitter);
+
+    // A hit farther behind the ray than this is a separate surface, not an occluder in contact.
+    const float Thickness = Reach;
+
+    for (uint i = 0u; i < Steps; ++i)
+    {
+        const float4 Clip = mul(GetCameraProjection(), float4(RayPos, 1.0));
+        if (Clip.w <= 0.0)
+        {
+            break;
+        }
+
+        const float2 UV = (Clip.xy / Clip.w) * 0.5 + 0.5;
+        if (any(saturate(UV) != UV))
+        {
+            break;   // left the depth buffer, and off-screen occluders are not knowable here
+        }
+
+        const float Raw = SampleDepth(DepthIndex, UV);
+        if (Raw > 0.0)
+        {
+            const float SceneZ = ReconstructViewPos(UV, Raw, InvProj).z;
+            const float Delta  = RayPos.z - SceneZ;   // positive = the ray is behind the depth buffer
+
+            if (Delta > 0.0 && Delta < Thickness)
+            {
+                // Fade out along the ray so the far end of the reach does not cut a hard line.
+                return saturate(float(i) / float(Steps));
+            }
+        }
+
+        RayPos += Step;
+    }
+
+    return 1.0;
+}
+
 [shader("fragment")]
 float4 FragmentMain(FragmentInput Input) : SV_Target0
 {
@@ -91,6 +143,11 @@ float4 FragmentMain(FragmentInput Input) : SV_Target0
     // skipped pixel writes 1.0 -- a bright speckle on a shadowed edge is worse than doing the work.
     FLight Sun  = GetLightAt(0);
     float  Mask = ComputeDirectionalShadow(Sun, WorldPos, NWorld, P, Input.Position.xy);
+
+    // min rather than a multiply, which would darken a PCSS penumbra twice for the one occluder.
+    const float3 ViewL  = normalize(NormalWorldToView(normalize(Sun.Direction.xyz)));
+    const float  Jitter = frac(52.9829189 * frac(dot(Input.Position.xy, float2(0.06711056, 0.00583715))));
+    Mask = min(Mask, ContactShadow(Data.DepthIndex, InvProj, P, NView, ViewL, Jitter));
 
     // Per-instance ReceiveShadow and the material's parallax SelfShadow are NOT folded in: this pass
     // cannot see them from depth, and both stay a cheap multiply in ShadeSurface where they are live.

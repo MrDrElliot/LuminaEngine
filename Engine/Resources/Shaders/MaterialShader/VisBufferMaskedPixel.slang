@@ -34,7 +34,12 @@ bool MaskedVisKeep(FBaseVertexOutput Input)
 
     $MATERIAL_INPUTS
 
-    return Material.Opacity >= Materials()[MaterialIndex].OpacityClipValue;
+    // Anchored in world space, so the verdict for a surface point is the same every frame and the
+    // dithered edge holds still instead of crawling as the camera moves.
+    const float3 ClipAnchor = mul(GetInverseCameraView(), float4(Input.FragPos.xyz, 1.0)).xyz;
+    const float  ClipCutoff = HashedAlphaThreshold(ClipAnchor, length(Input.FragPos.xyz),
+                                                   Materials()[MaterialIndex].OpacityClipValue);
+    return Material.Opacity >= ClipCutoff;
 }
 
 
