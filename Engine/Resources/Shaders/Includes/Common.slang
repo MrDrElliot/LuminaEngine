@@ -160,6 +160,7 @@ struct FCameraView
     float4x4 InverseCameraView;
     float4x4 CameraProjection;
     float4x4 InverseCameraProjection;
+    float4x4 PrevViewProjection;
 };
 
 struct FMaterialPixelInputs
@@ -926,6 +927,7 @@ struct FCullData
 // The one mode that COMPOSITES instead of replacing: the lit shading stays and the wire is drawn on
 // top of it. Deferred lane only -- the wire needs the VisBuffer's triangle barycentrics.
 #define DEBUG_MODE_WIREFRAME_OVERLAY    29u
+#define DEBUG_MODE_VELOCITY             30u
 
 // Global scaling applied on top of every material's authored POM settings, so a weaker GPU can dial the
 // whole feature back without recompiling materials. Matches FParallaxSettings in SceneRenderTypes.h.

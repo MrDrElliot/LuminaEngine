@@ -99,10 +99,21 @@ namespace Lumina
         constexpr uint32 GMaxPreSkinnedVertices = (21 * 1024 * 1024) / 2;
 
         // Read live from the project settings CDO, like SSR and the froxel grid; there is no per-world copy.
+        ESMAAMode GetSMAAMode()
+        {
+            const CRendererSettings* Settings = GetDefault<CRendererSettings>();
+            return Settings != nullptr ? Settings->SMAAMode : ESMAAMode::Off;
+        }
+
+        // Quality is only the edge-detection preset now, so a legacy Off here means the default, not disabled.
         ESMAAQuality GetSMAAQuality()
         {
             const CRendererSettings* Settings = GetDefault<CRendererSettings>();
-            return Settings != nullptr ? Settings->SMAAQuality : ESMAAQuality::Off;
+            if (Settings == nullptr || Settings->SMAAQuality == ESMAAQuality::Off)
+            {
+                return ESMAAQuality::High;
+            }
+            return Settings->SMAAQuality;
         }
 
         bool IsGTAOEnabled()
@@ -528,6 +539,30 @@ namespace Lumina
         SceneGlobalData.CameraData.InverseView          = ViewVolume.GetInverseViewMatrix();
         SceneGlobalData.CameraData.Projection           = ViewVolume.GetProjectionMatrix();
         SceneGlobalData.CameraData.InverseProjection    = ViewVolume.GetInverseProjectionMatrix();
+
+        {
+            FSceneView& PrimaryView = SceneViews[0];
+            if (IsTemporalAAEnabledFor(PrimaryView))
+            {
+                // A bailed extract must not flip parity, or the resolve blends a slot against itself.
+                PrimaryView.PendingTemporalFrameIndex = PrimaryView.TemporalFrameIndex + 1;
+
+                // Column-major, so the mathematical row-0/row-1 of column 2 are these two elements.
+                const FVector2 Jitter = GetTemporalJitterNDC(PrimaryView, PrimaryView.PendingTemporalFrameIndex);
+                SceneGlobalData.CameraData.Projection[2][0] += Jitter.x;
+                SceneGlobalData.CameraData.Projection[2][1] += Jitter.y;
+
+                // Every depth-reconstructing pass reads this, so it has to match the jitter that was rendered.
+                SceneGlobalData.CameraData.InverseProjection = Math::Inverse(SceneGlobalData.CameraData.Projection);
+            }
+            else
+            {
+                PrimaryView.bTemporalHistoryValid = false;
+            }
+
+            SceneGlobalData.CameraData.PrevViewProjection = PrimaryView.PrevViewProjection;
+            PrimaryView.PrevViewProjection = SceneGlobalData.CameraData.Projection * SceneGlobalData.CameraData.View;
+        }
         SceneGlobalData.ScreenSize                      = FUIntVector4(PrimarySize.x, PrimarySize.y, 0, 0);
         SceneGlobalData.GridSize                        = FUIntVector4(ClusterGridSizeX, ClusterGridSizeY, ClusterGridSizeZ, 0);
         SceneGlobalData.Time                            = (float)World->GetTimeSinceWorldCreation();
@@ -646,6 +681,7 @@ namespace Lumina
         }
 
         Frame.bExtractedThisFrame = true;
+        SceneViews[0].TemporalFrameIndex = SceneViews[0].PendingTemporalFrameIndex;
 
         ExtractFrame = nullptr;
     }
@@ -1189,6 +1225,13 @@ namespace Lumina
                     EnvironmentPass(CL);
                 }
 
+                // Camera-only base for terrain and sky; the material pass then overwrites its own pixels.
+                if (IsVelocityWanted())
+                {
+                    SCENE_GPU_SCOPE(CL, "Velocity");
+                    VelocityPass(CL);
+                }
+
                 {
                     VisBufferClassifyPass(CL);
                     MaterialGBufferPass(CL);
@@ -1206,6 +1249,10 @@ namespace Lumina
                     SCENE_GPU_SCOPE(CL, "Terrain Render");
                     TerrainRenderPass(CL);
                 }
+
+                #if !defined(LE_SHIPPING)
+                VelocityDebugPass(CL);
+                #endif
                 
                 if (!RenderSettings.bFreezeCulling)
                 {
@@ -1336,12 +1383,19 @@ namespace Lumina
                     PostProcessMaterialPass(CL);
                 }
 
-                if (GetSMAAQuality() != ESMAAQuality::Off)
+                if (GetSMAAMode() != ESMAAMode::Off)
                 {
                     SCENE_GPU_SCOPE(CL, "SMAA");
                     SMAAEdgeDetectionPass(CL);
                     SMAABlendWeightPass(CL);
                     SMAANeighborhoodBlendPass(CL);
+                }
+
+                // Before the outline and the widgets, which own the resolved output and must not be blended.
+                if (IsTemporalAAEnabled())
+                {
+                    SCENE_GPU_SCOPE(CL, "Temporal Resolve");
+                    TemporalResolvePass(CL);
                 }
 
                 #if USING(WITH_EDITOR)
@@ -1400,6 +1454,9 @@ namespace Lumina
 
         // After every material lane has run, so the accumulated mask is this frame's complete demand.
         CollectStreamingFeedback(CL);
+
+        // Last, so the copy captures the fully uploaded state and next frame reads it as the past.
+        SnapshotMotionState(CL);
 
         RHI::Core::Submit(CL);
 
@@ -1639,7 +1696,8 @@ namespace Lumina
         ToneMappingPass(CL);
         PostProcessMaterialPass(CL);
 
-        if (GetSMAAQuality() != ESMAAQuality::Off)
+        // No T2x on a capture; it has no jitter sequence of its own and would resolve against another view.
+        if (GetSMAAMode() != ESMAAMode::Off)
         {
             SMAAEdgeDetectionPass(CL);
             SMAABlendWeightPass(CL);
@@ -3703,6 +3761,20 @@ namespace Lumina
             if (BoneArenaBuffer)
             {
                 SceneRootShared.Bones = BoneArenaBuffer.GetAddress();
+            }
+
+            // Last frame's snapshot, so this publishes what SnapshotMotionState left at the end of it.
+            if (bPrevMotionStateValid && PrevRetainedTransformBuffer)
+            {
+                SceneRootShared.PrevRetainedTransforms     = PrevRetainedTransformBuffer.GetAddress();
+                SceneRootShared.PrevRetainedTransformCount =
+                    (uint32)(PrevRetainedTransformBuffer.GetSize() / sizeof(FTransform3x4));
+
+                if (PrevBoneArenaBuffer)
+                {
+                    SceneRootShared.PrevBones     = PrevBoneArenaBuffer.GetAddress();
+                    SceneRootShared.PrevBoneCount = (uint32)(PrevBoneArenaBuffer.GetSize() / sizeof(FBoneTransform));
+                }
             }
             if (!BillboardInstances.empty())
             {
@@ -6762,8 +6834,10 @@ namespace Lumina
             RHI::GPUPtr PixelListAddr;
             RHI::GPUPtr StartsAddr;
             RHI::GPUPtr CountsAddr;
+            uint32      VelocityUAV;
+            uint32      _PadVelocity;
         } PC = {};
-        static_assert(sizeof(FDeferredMaterialPC) == 72, "FDeferredMaterialPC must match DeferredMaterial.slang FDeferredMaterialArgs.");
+        static_assert(sizeof(FDeferredMaterialPC) == 80, "FDeferredMaterialPC must match DeferredMaterial.slang FDeferredMaterialArgs.");
 
         PC.VisBufferIndex = (uint32)VisRT.GetResourceID();
         if (Frame.Primitives.DecalExtracts.empty())
@@ -6799,6 +6873,17 @@ namespace Lumina
         PC.PixelListAddr = PixelList.GetAddress();
         PC.StartsAddr    = Base + offsetof(FMaterialClassifyBlock, Starts);
         PC.CountsAddr    = Base + offsetof(FMaterialClassifyBlock, Counts);
+
+        // Invalid disables the write, which leaves the camera-only base the fullscreen pass laid down.
+        PC.VelocityUAV = 0xFFFFFFFFu;
+        if (IsVelocityWanted())
+        {
+            const int32 UAVVel = GetNamedImage(ENamedImage::Velocity).GetMipUAVIndex(0);
+            if (UAVVel >= 0)
+            {
+                PC.VelocityUAV = (uint32)UAVVel;
+            }
+        }
 
         for (uint32 Slot = 0; Slot < Layout.NumSlots; ++Slot)
         {
@@ -10867,7 +10952,7 @@ namespace Lumina
             return;
         }
 
-        const bool bSMAAEnabled = GetSMAAQuality() != ESMAAQuality::Off;
+        const bool bSMAAEnabled = GetSMAAMode() != ESMAAMode::Off;
         const bool bPPMaterials = !ActivePostProcessMaterials.empty();
         const FSceneImage& Output = (bSMAAEnabled || bPPMaterials) ? GetNamedImage(ENamedImage::LDR) : CurrentView->Output;
 
@@ -10946,7 +11031,7 @@ namespace Lumina
         const FSceneImage& DepthTex = GetNamedImage(ENamedImage::DepthAttachment);
         const FSceneImage& HDRTex   = GetNamedImage(ENamedImage::HDR);
 
-        const bool bSMAAEnabled = GetSMAAQuality() != ESMAAQuality::Off;
+        const bool bSMAAEnabled = GetSMAAMode() != ESMAAMode::Off;
 
         const FSceneImage* Source = &GetNamedImage(ENamedImage::LDR);
         const FSceneImage* Dest   = &GetNamedImage(ENamedImage::PostProcessScratch);
@@ -11167,7 +11252,9 @@ namespace Lumina
             return;
         }
 
-        const FSceneImage& Output     = CurrentView->Output;
+        // Under T2x this lands in the history slot instead, and the resolve is what writes the view output.
+        const bool bTemporal          = IsTemporalAAEnabled() && GetNamedImage(GetTemporalCurrentImage()).IsValid();
+        const FSceneImage& Output     = bTemporal ? GetNamedImage(GetTemporalCurrentImage()) : CurrentView->Output;
         const FSceneImage& InputColor = GetNamedImage(ENamedImage::LDR);
         const FSceneImage& BlendTex   = GetNamedImage(ENamedImage::SMAABlend);
 
@@ -11199,7 +11286,299 @@ namespace Lumina
         RHI::CmdEndRenderPass(CL);
         Barriers::RasterToRead(CL);
     }
-    
+
+#if !defined(LE_SHIPPING)
+    // Its own pass, because SceneDebugView runs before terrain and only owns the deferred lane's pixels.
+    void FDefaultSceneRenderer::VelocityDebugPass(RHI::FCmdListH CL)
+    {
+        if (RenderFrame == nullptr ||
+            RenderFrame->SceneGlobalData.CullData.DebugMode != (uint32)ERenderSceneDebugFlags::Velocity)
+        {
+            return;
+        }
+
+        const FSceneImage& Velocity = GetNamedImage(ENamedImage::Velocity);
+        if (!Velocity.IsValid())
+        {
+            return;
+        }
+
+        static const FShaderH VertexShader = FShaderLibrary::Get("FullscreenQuad.slang");
+        static const FShaderH PixelShader  = FShaderLibrary::Get("VelocityDebugPixel.slang");
+        if (!VertexShader || !PixelShader)
+        {
+            return;
+        }
+
+        LUMINA_PROFILE_SECTION_COLORED("Velocity Debug", tracy::Color::Magenta);
+        SCENE_GPU_SCOPE(CL, "Velocity Debug");
+
+        const FSceneImage& Output = GetNamedImage(ENamedImage::HDR);
+
+        RHI::FRenderAttachment Color;
+        Color.Texture = Output.Texture;
+        Color.LoadOp  = RHI::ELoadOp::Undefined;
+        Color.StoreOp = RHI::EStoreOp::Store;
+
+        RHI::FRenderPassDesc Pass;
+        Pass.ColorAttachments = TSpan<const RHI::FRenderAttachment>(&Color, 1);
+        Pass.RenderArea       = Output.GetExtent();
+
+        RHI::CmdBeginRenderPass(CL, Pass);
+        SetViewportScissor(CL, Output.GetExtent());
+        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(RHI::FDepthStencilDesc{}));
+        RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
+
+        FGraphicsPipelineKey Key;
+        Key.VS = VertexShader;
+        Key.PS = PixelShader;
+        Key.ColorTargets.push_back({ Output.Desc.Format, {} });
+        RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
+
+        struct FData
+        {
+            uint32 VelocityIndex;
+        } PC;
+
+        PC.VelocityIndex = (uint32)Velocity.GetResourceID();
+
+        RHI::CmdDraw(CL, MakeArgs(PC), 3, 1, 0, 0);
+        RHI::CmdEndRenderPass(CL);
+        Barriers::RasterToRead(CL);
+    }
+#endif
+
+    void FDefaultSceneRenderer::SnapshotMotionState(RHI::FCmdListH CL)
+    {
+        if (!IsTemporalAAEnabledFor(SceneViews[0]))
+        {
+            if (PrevBoneArenaBuffer)         { DeferFree(PrevBoneArenaBuffer.Ptr); PrevBoneArenaBuffer = {}; }
+            if (PrevRetainedTransformBuffer) { DeferFree(PrevRetainedTransformBuffer.Ptr); PrevRetainedTransformBuffer = {}; }
+            bPrevMotionStateValid = false;
+            return;
+        }
+
+        auto Mirror = [this, CL](const FSceneBuffer& Source, FSceneBuffer& Dest, const char* DebugName)
+        {
+            if (!Source || Source.GetSize() == 0)
+            {
+                return false;
+            }
+
+            const uint64 Bytes = Source.GetSize();
+            if (!Dest || Dest.GetSize() != Bytes)
+            {
+                if (Dest)
+                {
+                    DeferFree(Dest.Ptr);
+                }
+                Dest = CreateSceneBuffer(Bytes, DebugName);
+            }
+
+            if (!Dest)
+            {
+                return false;
+            }
+
+            RHI::CmdMemcpy(CL, Dest.GetAddress(), Source.GetAddress(), Bytes);
+            return true;
+        };
+
+        const bool bTransforms = Mirror(RetainedTransformBuffer, PrevRetainedTransformBuffer,
+                                        "Motion.PrevRetainedTransforms");
+        Mirror(BoneArenaBuffer, PrevBoneArenaBuffer, "Motion.PrevBoneArena");
+
+        // Without a previous transform there is no object motion to read, so the pass stays camera-only.
+        bPrevMotionStateValid = bTransforms;
+    }
+
+    bool FDefaultSceneRenderer::IsTemporalAARequested()
+    {
+        return GetSMAAMode() == ESMAAMode::SMAAT2x;
+    }
+
+    bool FDefaultSceneRenderer::IsTemporalAAEnabledFor(const FSceneView& View)
+    {
+        // Captures and probe bakes carry no jitter sequence, so they would resolve against another view's frame.
+        return IsTemporalAARequested() && View.bIsPrimary;
+    }
+
+    bool FDefaultSceneRenderer::IsTemporalAAEnabled() const
+    {
+        return CurrentView != nullptr && IsTemporalAAEnabledFor(*CurrentView);
+    }
+
+    bool FDefaultSceneRenderer::IsVelocityDebugActive() const
+    {
+        #if !defined(LE_SHIPPING)
+        return RenderFrame != nullptr
+            && RenderFrame->SceneGlobalData.CullData.DebugMode == (uint32)ERenderSceneDebugFlags::Velocity;
+        #else
+        return false;
+        #endif
+    }
+
+    // The debug view is the only way to see whether motion vectors are sane, so it must not need T2x on.
+    bool FDefaultSceneRenderer::IsVelocityWanted() const
+    {
+        return IsTemporalAAEnabled() || (CurrentView != nullptr && CurrentView->bIsPrimary && IsVelocityDebugActive());
+    }
+
+    FDefaultSceneRenderer::ENamedImage FDefaultSceneRenderer::GetTemporalCurrentImage() const
+    {
+        const uint32 Parity = CurrentView != nullptr ? (CurrentView->TemporalFrameIndex & 1u) : 0u;
+        return Parity == 0u ? ENamedImage::TemporalHistoryA : ENamedImage::TemporalHistoryB;
+    }
+
+    FDefaultSceneRenderer::ENamedImage FDefaultSceneRenderer::GetTemporalHistoryImage() const
+    {
+        const uint32 Parity = CurrentView != nullptr ? (CurrentView->TemporalFrameIndex & 1u) : 0u;
+        return Parity == 0u ? ENamedImage::TemporalHistoryB : ENamedImage::TemporalHistoryA;
+    }
+
+    FVector2 FDefaultSceneRenderer::GetTemporalJitterNDC(const FSceneView& View, uint32 FrameIndex)
+    {
+        if (View.Size.x == 0 || View.Size.y == 0)
+        {
+            return FVector2(0.0f);
+        }
+
+        // The two SMAA T2x subsample positions, in pixels.
+        const FVector2 kSubsamples[2] = { FVector2(-0.25f, 0.25f), FVector2(0.25f, -0.25f) };
+
+        const CRendererSettings* Settings = GetDefault<CRendererSettings>();
+        const float Scale = Settings != nullptr ? Math::Clamp(Settings->TemporalJitterScale, 0.0f, 1.0f) : 1.0f;
+
+        const FVector2 Offset = kSubsamples[FrameIndex & 1u] * Scale;
+        return FVector2((Offset.x * 2.0f) / (float)View.Size.x,
+                        (Offset.y * 2.0f) / (float)View.Size.y);
+    }
+
+    void FDefaultSceneRenderer::VelocityPass(RHI::FCmdListH CL)
+    {
+        LUMINA_PROFILE_SECTION_COLORED("Velocity", tracy::Color::Orange2);
+
+        static const FShaderH VertexShader = FShaderLibrary::Get("FullscreenQuad.slang");
+        static const FShaderH PixelShader  = FShaderLibrary::Get("Velocity.slang");
+        if (!VertexShader || !PixelShader)
+        {
+            return;
+        }
+
+        const FSceneImage& Output = GetNamedImage(ENamedImage::Velocity);
+        const FSceneImage& Depth  = GetNamedImage(ENamedImage::DepthAttachment);
+        if (!Output.IsValid() || !Depth.IsValid())
+        {
+            return;
+        }
+
+        RHI::FRenderAttachment Color;
+        Color.Texture = Output.Texture;
+        Color.LoadOp  = RHI::ELoadOp::Undefined;
+        Color.StoreOp = RHI::EStoreOp::Store;
+
+        RHI::FRenderPassDesc Pass;
+        Pass.ColorAttachments = TSpan<const RHI::FRenderAttachment>(&Color, 1);
+        Pass.RenderArea       = Output.GetExtent();
+
+        RHI::CmdBeginRenderPass(CL, Pass);
+        SetViewportScissor(CL, Output.GetExtent());
+        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(RHI::FDepthStencilDesc{}));
+        RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
+
+        FGraphicsPipelineKey Key;
+        Key.VS = VertexShader;
+        Key.PS = PixelShader;
+        Key.ColorTargets.push_back({ Output.Desc.Format, {} });
+        RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
+
+        struct FData
+        {
+            uint32 DepthIndex;
+        } PC;
+
+        PC.DepthIndex = (uint32)Depth.GetResourceID();
+
+        RHI::CmdDraw(CL, MakeArgs(PC), 3, 1, 0, 0);
+        RHI::CmdEndRenderPass(CL);
+        Barriers::RasterToRead(CL);
+    }
+
+    void FDefaultSceneRenderer::TemporalResolvePass(RHI::FCmdListH CL)
+    {
+        LUMINA_PROFILE_SECTION_COLORED("Temporal Resolve", tracy::Color::Orange3);
+
+        static const FShaderH VertexShader = FShaderLibrary::Get("FullscreenQuad.slang");
+        static const FShaderH PixelShader  = FShaderLibrary::Get("TemporalResolve.slang");
+        if (!VertexShader || !PixelShader)
+        {
+            return;
+        }
+
+        const FSceneImage& Output   = CurrentView->Output;
+        const FSceneImage& Current  = GetNamedImage(GetTemporalCurrentImage());
+        const FSceneImage& History  = GetNamedImage(GetTemporalHistoryImage());
+        const FSceneImage& Velocity = GetNamedImage(ENamedImage::Velocity);
+        if (!Current.IsValid() || !History.IsValid() || !Velocity.IsValid())
+        {
+            return;
+        }
+
+        RHI::FRenderAttachment Color;
+        Color.Texture = Output.Texture;
+        Color.LoadOp  = RHI::ELoadOp::Undefined;
+        Color.StoreOp = RHI::EStoreOp::Store;
+
+        RHI::FRenderPassDesc Pass;
+        Pass.ColorAttachments = TSpan<const RHI::FRenderAttachment>(&Color, 1);
+        Pass.RenderArea       = Output.GetExtent();
+
+        RHI::CmdBeginRenderPass(CL, Pass);
+        SetViewportScissor(CL, Output.GetExtent());
+        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(RHI::FDepthStencilDesc{}));
+        RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
+
+        FGraphicsPipelineKey Key;
+        Key.VS = VertexShader;
+        Key.PS = PixelShader;
+        Key.ColorTargets.push_back({ Output.Desc.Format, {} });
+        RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
+
+        struct FData
+        {
+            uint32 CurrentIndex;
+            uint32 HistoryIndex;
+            uint32 VelocityIndex;
+            float  HistoryWeight;
+            float  ClampGamma;
+            float  MaxReprojection;
+            uint32 bNeighborhoodClamp;
+            uint32 _Pad0;
+        } PC;
+        static_assert(sizeof(FData) == 32, "FData must match TemporalResolve.slang FData.");
+
+        const CRendererSettings* Settings = GetDefault<CRendererSettings>();
+
+        PC.CurrentIndex  = (uint32)Current.GetResourceID();
+        PC.HistoryIndex  = (uint32)History.GetResourceID();
+        PC.VelocityIndex = (uint32)Velocity.GetResourceID();
+
+        // The first frame after a resize or a toggle has nothing behind it, so it resolves to itself.
+        const float Weight = Settings != nullptr ? Math::Clamp(Settings->TemporalHistoryWeight, 0.0f, 0.5f) : 0.5f;
+        PC.HistoryWeight  = CurrentView->bTemporalHistoryValid ? Weight : 0.0f;
+
+        PC.ClampGamma         = Settings != nullptr ? Math::Max(Settings->TemporalClampGamma, 0.25f) : 1.0f;
+        PC.MaxReprojection    = Settings != nullptr ? Math::Max(Settings->TemporalMaxReprojection, 0.01f) : 0.25f;
+        PC.bNeighborhoodClamp = (Settings == nullptr || Settings->bTemporalNeighborhoodClamp) ? 1u : 0u;
+        PC._Pad0              = 0u;
+
+        RHI::CmdDraw(CL, MakeArgs(PC), 3, 1, 0, 0);
+        RHI::CmdEndRenderPass(CL);
+        Barriers::RasterToRead(CL);
+
+        CurrentView->bTemporalHistoryValid = true;
+    }
+
     void FDefaultSceneRenderer::InitBuffers()
     {
 
@@ -11675,6 +12054,9 @@ namespace Lumina
         case ENamedImage::SkyPrefilter:       return "Scene.SkyPrefilter";
         case ENamedImage::ProbeCaptureCube:   return "Scene.ProbeCaptureCube";
         case ENamedImage::ProbePrefiltered:   return "Scene.ProbePrefiltered";
+        case ENamedImage::Velocity:           return "Scene.Velocity";
+        case ENamedImage::TemporalHistoryA:   return "Scene.TemporalHistoryA";
+        case ENamedImage::TemporalHistoryB:   return "Scene.TemporalHistoryB";
 
         #if USING(WITH_EDITOR)
         case ENamedImage::PointLightIcon:       return "Scene.PointLightIcon";
@@ -11713,6 +12095,9 @@ namespace Lumina
         case ENamedImage::DBufferA:
         case ENamedImage::DBufferB:
         case ENamedImage::DBufferC:
+        case ENamedImage::Velocity:
+        case ENamedImage::TemporalHistoryA:
+        case ENamedImage::TemporalHistoryB:
             return true;
         default:
             return false;
@@ -11750,6 +12135,20 @@ namespace Lumina
         case ENamedImage::DBufferA:
         case ENamedImage::DBufferB:
         case ENamedImage::DBufferC:
+            OutDesc.Format = EFormat::RGBA8_UNORM;
+            return true;
+
+        // Signed screen-space offset in UV units, so it needs float rather than the usual unorm.
+        case ENamedImage::Velocity:
+            OutDesc.Format = EFormat::RG16_FLOAT;
+            // Storage as well, because the material pass overwrites its own pixels from compute.
+            OutDesc.Usage  = RHI::EImageUsageFlags::ColorAttachment | RHI::EImageUsageFlags::Sampled |
+                             RHI::EImageUsageFlags::Storage;
+            return true;
+
+        // Post-tonemap display-referred color, matching the view output the resolve writes.
+        case ENamedImage::TemporalHistoryA:
+        case ENamedImage::TemporalHistoryB:
             OutDesc.Format = EFormat::RGBA8_UNORM;
             return true;
 
@@ -11807,6 +12206,19 @@ namespace Lumina
         Want(ENamedImage::DBufferA,        bDecals);
         Want(ENamedImage::DBufferB,        bDecals);
         Want(ENamedImage::DBufferC,        bDecals);
+
+        const bool bTemporal = IsTemporalAAEnabledFor(View);
+        const bool bHadTemporalTargets = View.Images[(int)ENamedImage::TemporalHistoryA].IsValid()
+                                      && View.Images[(int)ENamedImage::TemporalHistoryB].IsValid();
+        Want(ENamedImage::Velocity,         bTemporal || (View.bIsPrimary && IsVelocityDebugActive()));
+        Want(ENamedImage::TemporalHistoryA, bTemporal);
+        Want(ENamedImage::TemporalHistoryB, bTemporal);
+
+        // A freshly created pair holds whatever the allocator handed back, which is not a previous frame.
+        if (bTemporal && !bHadTemporalTargets)
+        {
+            View.bTemporalHistoryValid = false;
+        }
 
         ReleaseIdleOptionalImages(View);
     }

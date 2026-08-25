@@ -454,6 +454,9 @@ namespace Lumina
             SkyPrefilter,
             ProbeCaptureCube,
             ProbePrefiltered,
+            Velocity,
+            TemporalHistoryA,
+            TemporalHistoryB,
 
             #if USING(WITH_EDITOR)
             PointLightIcon,
@@ -489,6 +492,11 @@ namespace Lumina
             FVector2                                        LastClusterNearFar       = FVector2(0.0f);
             FUIntVector2                                    LastClusterScreenSize    = FUIntVector2(0);
             bool                                            bClusterGridDirty        = true;
+            // Drives both the jitter parity and the history ping-pong, so the two cannot disagree.
+            uint32                                          TemporalFrameIndex       = 0;
+            uint32                                          PendingTemporalFrameIndex = 0;
+            bool                                            bTemporalHistoryValid    = false;
+            FMatrix4                                        PrevViewProjection       = FMatrix4(1.0f);
         };
 
         void Init() override;
@@ -695,7 +703,22 @@ namespace Lumina
         void SMAAEdgeDetectionPass(RHI::FCmdListH CL);
         void SMAABlendWeightPass(RHI::FCmdListH CL);
         void SMAANeighborhoodBlendPass(RHI::FCmdListH CL);
+        void VelocityPass(RHI::FCmdListH CL);
+        void TemporalResolvePass(RHI::FCmdListH CL);
+        #if !defined(LE_SHIPPING)
+        void VelocityDebugPass(RHI::FCmdListH CL);
+        #endif
         //~ End Render Passes
+
+        static bool IsTemporalAARequested();
+        static bool IsTemporalAAEnabledFor(const FSceneView& View);
+        bool IsTemporalAAEnabled() const;
+        bool IsVelocityDebugActive() const;
+        bool IsVelocityWanted() const;
+        // Slot the neighborhood blend writes this frame; the resolve reads the other one as history.
+        ENamedImage GetTemporalCurrentImage() const;
+        ENamedImage GetTemporalHistoryImage() const;
+        static FVector2 GetTemporalJitterNDC(const FSceneView& View, uint32 FrameIndex);
 
         // Extract-phase half: ECS reads + parallel Process* tasks + cull/shadow setup.
         void CompileDrawCommands_Extract();
@@ -1065,6 +1088,11 @@ namespace Lumina
         FSceneBuffer                                        SurfaceDescBuffer;
         FSceneBuffer                                        BoneArenaBuffer;
         uint32                                              BoneArenaLowUsage = 0;
+        // Snapshots taken before each frame's incremental uploads land, so motion vectors have a past.
+        FSceneBuffer                                        PrevBoneArenaBuffer;
+        FSceneBuffer                                        PrevRetainedTransformBuffer;
+        bool                                                bPrevMotionStateValid = false;
+        void SnapshotMotionState(RHI::FCmdListH CL);
         FSceneBuffer                                        SkinnedFrameDataBuffer;
         uint32                                              SkinnedFrameDataLowUsage = 0;
         FSceneBuffer                                        SkinnedSlotListBuffer;

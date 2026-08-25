@@ -99,7 +99,8 @@ namespace Lumina
         ClearcoatRoughness  = 27,
         SelfShadow          = 28,
         WireframeOverlay    = 29,
-        Num                 = 30,
+        Velocity            = 30,
+        Num                 = 31,
     };
 
     constexpr FStringView RenderFlagsAsString(ERenderSceneDebugFlags Flags)
@@ -136,6 +137,7 @@ namespace Lumina
             case ERenderSceneDebugFlags::ClearcoatRoughness:return "Clearcoat Roughness";
             case ERenderSceneDebugFlags::SelfShadow:        return "Self Shadow";
             case ERenderSceneDebugFlags::WireframeOverlay:  return "Wireframe Overlay";
+            case ERenderSceneDebugFlags::Velocity:          return "Velocity";
             default:                                        return "Lit";
         }
     }
@@ -186,6 +188,8 @@ namespace Lumina
         FMatrix4 InverseView       = {};
         FMatrix4 Projection        = {};
         FMatrix4 InverseProjection = {};
+        // Last frame's jittered view-projection, so reprojection lands on the pixel the history actually holds.
+        FMatrix4 PrevViewProjection = {};
     };
 
     constexpr uint32 LIGHT_TYPE_MASK      = 0x0000FFFF; // lower 16 bits
@@ -1135,6 +1139,9 @@ namespace Lumina
     struct FSceneRoot
     {
         uint64 Bones                 = 0;
+        // Last frame's pose and transform, copied before this frame's incremental uploads overwrite them.
+        uint64 PrevBones             = 0;
+        uint64 PrevRetainedTransforms = 0;
         uint64 Clusters              = 0;  // per-view, GPU-written
         uint64 Materials             = 0;  // non-dynamic
         uint64 Billboards            = 0;
@@ -1171,10 +1178,12 @@ namespace Lumina
         /** Entries in StreamingFeedback. Shaders bounds-check against this before indexing it or the
          *  bindless heap -- an unvalidated ResourceID is a device loss, not an artifact. */
         uint32 StreamingFeedbackCount = 0;
+        // Entries in the snapshots above, which lag a frame and can be shorter than the live arrays.
+        uint32 PrevBoneCount          = 0;
+        uint32 PrevRetainedTransformCount = 0;
     };
-    // 14 pointers + 10 indices. SceneData, Lights and Instances moved into push constants, where reaching
-    // them costs no load at all; RHI::FSceneBindings is their only home now.
-    static_assert(sizeof(FSceneRoot) == 152, "FSceneRoot must match SceneGlobals.slang");
+    // 16 pointers + 12 indices; RHI::FSceneBindings is the only home for SceneData, Lights and Instances.
+    static_assert(sizeof(FSceneRoot) == 176, "FSceneRoot must match SceneGlobals.slang");
 
     struct FParallaxSettings
     {

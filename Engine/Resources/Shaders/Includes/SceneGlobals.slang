@@ -8,6 +8,9 @@
 struct FSceneRoot
 {
     FBoneTransform*      Bones;
+    // Last frame's pose and transform, copied before this frame's incremental uploads overwrite them.
+    FBoneTransform*      PrevBones;
+    FTransform3x4*       PrevRetainedTransforms;
     FCluster*            Clusters;
     FMaterialUniforms*   Materials;
     FBillboardInstance*  Billboards;
@@ -38,6 +41,9 @@ struct FSceneRoot
     uint  NumReflectionProbes;
     uint  NumSplines;
     uint  StreamingFeedbackCount;
+    // Entries in the snapshots above, which lag a frame and can be shorter than the live arrays.
+    uint  PrevBoneCount;
+    uint  PrevRetainedTransformCount;
 };
 
 // gRHI.Args (GlobalRHI's single 8-byte push-constant pointer) points to this transient block.
@@ -56,6 +62,8 @@ FSceneGlobalData*   Scene()                 { return (FSceneGlobalData*)gRHI.Sce
 FLightData*         LightData()             { return (FLightData*)gRHI.Lights; }
 FGPUInstance*       Instances()             { return (FGPUInstance*)gRHI.Instances; }
 FBoneTransform*     Bones()                 { return GetSceneRoot().Bones; }
+FBoneTransform*     PrevBones()             { return GetSceneRoot().PrevBones; }
+FTransform3x4*      PrevRetainedTransforms(){ return GetSceneRoot().PrevRetainedTransforms; }
 FCluster*           Clusters()              { return GetSceneRoot().Clusters; }
 FMaterialUniforms*  Materials()             { return GetSceneRoot().Materials; }
 FBillboardInstance* Billboards()            { return GetSceneRoot().Billboards; }
@@ -335,10 +343,15 @@ uint ResolvePaletteBone(FMeshletHeader* Header, FMeshletBonePalette Palette, uin
 }
 
 // True when the bone arena and this meshlet's palette can both actually be read.
+bool CanSkinMeshletWith(FBoneTransform* BoneArray, FMeshletBonePalette Palette, uint BoneOffset)
+{
+    return (BoneArray != nullptr) && (Scene().CullData.BoneNum != 0u) && (Palette.Count != 0u)
+        && (BoneOffset != kNoBoneSlice);
+}
+
 bool CanSkinMeshlet(FMeshletBonePalette Palette, uint BoneOffset)
 {
-    return (Bones() != nullptr) && (Scene().CullData.BoneNum != 0u) && (Palette.Count != 0u)
-        && (BoneOffset != kNoBoneSlice);
+    return CanSkinMeshletWith(Bones(), Palette, BoneOffset);
 }
 
 FPreSkinnedVertex SkinWithRows(FSkinSource S, FSkinRows Rows)
@@ -361,24 +374,30 @@ FPreSkinnedVertex SkinWithRows(FSkinSource S, FSkinRows Rows)
 }
 
 // The per-pass overflow path, where there is no workgroup to share a staged palette across.
-FPreSkinnedVertex SkinVertex(FMeshletHeader* Header, FMeshlet M, uint MeshletIndex, uint VertexLocalIdx,
-                             uint BoneOffset)
+FPreSkinnedVertex SkinVertexWith(FBoneTransform* BoneArray, FMeshletHeader* Header, FMeshlet M,
+                                 uint MeshletIndex, uint VertexLocalIdx, uint BoneOffset)
 {
     const FSkinSource S = LoadSkinSource(Header, M, VertexLocalIdx);
     const FMeshletBonePalette Palette = GetBonePalette(Header, MeshletIndex);
 
     FSkinRows Rows = IdentitySkinRows();
-    if (CanSkinMeshlet(Palette, BoneOffset))
+    if (CanSkinMeshletWith(BoneArray, Palette, BoneOffset))
     {
         Rows = BlendSkinRows(
-            Bones()[ResolvePaletteBone(Header, Palette, S.Slots.x, BoneOffset)],
-            Bones()[ResolvePaletteBone(Header, Palette, S.Slots.y, BoneOffset)],
-            Bones()[ResolvePaletteBone(Header, Palette, S.Slots.z, BoneOffset)],
-            Bones()[ResolvePaletteBone(Header, Palette, S.Slots.w, BoneOffset)],
+            BoneArray[ResolvePaletteBone(Header, Palette, S.Slots.x, BoneOffset)],
+            BoneArray[ResolvePaletteBone(Header, Palette, S.Slots.y, BoneOffset)],
+            BoneArray[ResolvePaletteBone(Header, Palette, S.Slots.z, BoneOffset)],
+            BoneArray[ResolvePaletteBone(Header, Palette, S.Slots.w, BoneOffset)],
             S.Weights);
     }
 
     return SkinWithRows(S, Rows);
+}
+
+FPreSkinnedVertex SkinVertex(FMeshletHeader* Header, FMeshlet M, uint MeshletIndex, uint VertexLocalIdx,
+                             uint BoneOffset)
+{
+    return SkinVertexWith(Bones(), Header, M, MeshletIndex, VertexLocalIdx, BoneOffset);
 }
 
 float  GetMaterialScalar (uint MatIndex, uint Index) { return Materials()[MatIndex].Scalars[Index];  }
@@ -449,6 +468,7 @@ float4x4 GetCullCameraProjection()  { return Scene().CullData.CullCameraProjecti
 float4x4 GetInverseCameraView()     { return Scene().CameraView.InverseCameraView;  }
 float4x4 GetCameraProjection()      { return Scene().CameraView.CameraProjection;   }
 float4x4 GetInverseCameraProjection(){ return Scene().CameraView.InverseCameraProjection; }
+float4x4 GetPrevViewProjection()    { return Scene().CameraView.PrevViewProjection;    }
 
 // [3][3] is 0 for a perspective projection and 1 for an orthographic one, so the mode needs no
 // extra plumbing in the scene struct. Diagonal, so it reads the same under either matrix convention.

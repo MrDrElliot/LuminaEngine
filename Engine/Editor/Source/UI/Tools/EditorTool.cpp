@@ -1070,6 +1070,7 @@ namespace Lumina
                     { ERenderSceneDebugFlags::Specular,          "Specular"          },
                     { ERenderSceneDebugFlags::SelfShadow,        "Self Shadow"       },
                     { ERenderSceneDebugFlags::UV,                "UV"                },
+                    { ERenderSceneDebugFlags::Velocity,          "Velocity"          },
                 };
                 // Clearcoat borrows SelfShadow and Specular, so each view marks pixels with no stored value.
                 static const FViewModeEntry ShadingModels[] =

@@ -219,6 +219,15 @@ namespace Lumina
         Ultra,
     };
 
+    // S2x and 4x are absent because both add 2x MSAA, which a visibility-buffer deferred path does not run.
+    REFLECT()
+    enum class ESMAAMode : uint8
+    {
+        Off,
+        SMAA1x,
+        SMAAT2x,
+    };
+
     REFLECT()
     enum class EVariableRateShading : uint8
     {
@@ -276,9 +285,33 @@ namespace Lumina
         PROPERTY(Editable, Category = "Screen Space Reflections", ClampMin = 0.0f, ClampMax = 1.0f)
         float SSRIntensity = 1.0f;
 
-        /** Antialiasing quality. Off disables SMAA; higher qualities detect more edges at higher GPU cost. */
+        // SMAA1x is morphological only; SMAAT2x adds a second jittered subsample resolved against a reprojected history.
+        PROPERTY(Editable, Category = "Anti-Aliasing")
+        ESMAAMode SMAAMode = ESMAAMode::SMAA1x;
+
+        /** Edge-detection quality. Higher qualities detect more edges at higher GPU cost. */
         PROPERTY(Editable, Category = "Anti-Aliasing")
         ESMAAQuality SMAAQuality = ESMAAQuality::High;
+
+        // T2x history contribution. 0.5 is the true two-sample average; lower trades aliasing for less ghosting.
+        PROPERTY(Editable, Category = "Anti-Aliasing", ClampMin = 0.0f, ClampMax = 0.5f)
+        float TemporalHistoryWeight = 0.5f;
+
+        // Clamps the reprojected history into the local color range, which is what stops bad motion ghosting.
+        PROPERTY(Editable, Category = "Anti-Aliasing")
+        bool bTemporalNeighborhoodClamp = true;
+
+        // Widens the clamp box in standard deviations. Larger keeps more history and ghosts more.
+        PROPERTY(Editable, Category = "Anti-Aliasing", ClampMin = 0.25f, ClampMax = 4.0f)
+        float TemporalClampGamma = 1.0f;
+
+        // Scales the subpixel offset. 0 pins both subsamples to the pixel center, which isolates the resolve.
+        PROPERTY(Editable, Category = "Anti-Aliasing", ClampMin = 0.0f, ClampMax = 1.0f)
+        float TemporalJitterScale = 1.0f;
+
+        // Screen fraction a pixel may reproject across before its history is refused outright.
+        PROPERTY(Editable, Category = "Anti-Aliasing", ClampMin = 0.01f, ClampMax = 1.0f)
+        float TemporalMaxReprojection = 0.25f;
 
         // VRS rate for opted-in passes; coarser is fewer PS invocations but softer, and a no-op without pipeline FSR.
         PROPERTY(ReadOnly, Category = "Variable Rate Shading")

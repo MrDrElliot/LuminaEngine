@@ -28,8 +28,43 @@ struct FDeferredMaterialArgs
     uint* PixelList;        // 48  packed screen positions, one contiguous run per slot
     uint* Starts;           // 56  uint[MATERIAL_MAX_SLOTS]
     uint* Counts;           // 64  uint[MATERIAL_MAX_SLOTS]
+    uint  VelocityUAV;      // 72  0xFFFFFFFF when temporal AA is off
+    uint  _PadVelocity;     // 76
 };
 FDeferredMaterialArgs* Pass() { return GetPassArgs<FDeferredMaterialArgs>(); }
+
+// Object space at the previous frame's pose, so the caller only has to apply the previous model matrix.
+float3 PrevObjectPosition(FMeshletRef Ref, uint LocalVertIdx, FVertexData Current)
+{
+    bool bSkinned;
+    if      (SPEC_SKINNED == 0u) { bSkinned = false; }
+    else if (SPEC_SKINNED == 1u) { bSkinned = true;  }
+    else                         { bSkinned = Ref.Inst.HasFlag(EInstanceFlags::Skinned); }
+
+    // A shorter snapshot cannot be indexed safely, because ResolvePaletteBone clamps against the live count.
+    const bool bPrevPoseUsable = (PrevBones() != nullptr)
+                              && (GetSceneRoot().PrevBoneCount >= Scene().CullData.BoneNum);
+
+    if (bSkinned && bPrevPoseUsable)
+    {
+        const FPreSkinnedVertex Prev = SkinVertexWith(PrevBones(), Ref.Inst.MeshletHeader, Ref.M,
+                                                      Ref.GlobalMeshletIdx, LocalVertIdx, Ref.Inst.BoneOffset);
+        return float3(Prev.Px, Prev.Py, Prev.Pz);
+    }
+
+    return Current.Position;
+}
+
+float4x4 PrevModelMatrixOf(FGPUInstance* Inst, float4x4 Fallback)
+{
+    FTransform3x4* Prev = PrevRetainedTransforms();
+    const uint Slot = Inst.RetainedSlot;
+    if (Prev == nullptr || Slot >= GetSceneRoot().PrevRetainedTransformCount)
+    {
+        return Fallback;
+    }
+    return Prev[Slot].ToMatrix();
+}
 
 [shader("compute")]
 [numthreads(MATERIAL_PIXEL_GROUP_SIZE, 1, 1)]
@@ -62,13 +97,22 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
         // Re-apply WorldPositionOffset per corner so the rebuilt triangle matches what the geometry pass
         // rasterized. Load and transform are FUSED so only one corner's FVertexData (48 VGPRs) is live.
         FGPUInstance* Inst = T.Ref.Inst;   // reached, not stored -- see FMeshletRef
+        const bool bWantVelocity = Pass().VelocityUAV != 0xFFFFFFFFu;
+        const float4x4 PrevModel = bWantVelocity ? PrevModelMatrixOf(T.Ref.Inst, ModelMatrix) : ModelMatrix;
+
         FMeshletWorldVertex W[3];
         float3 FinalWorldPos[3];
+        float3 PrevWorldPos[3];
         [unroll]
         for (int k = 0; k < 3; ++k)
         {
             FVertexData VertexData = LoadMeshletVertexData(T.Ref, T.Tri[k]);
             W[k] = TransformMeshletVertex(VertexData, ModelMatrix, NormalMatrixWS);
+
+            // World position offset is deliberately not re-evaluated at the previous time; wind does not move here.
+            PrevWorldPos[k] = bWantVelocity
+                            ? mul(PrevModel, float4(PrevObjectPosition(T.Ref, T.Tri[k], VertexData), 1.0)).xyz
+                            : float3(0.0);
 
             float4 WorldPos      = float4(W[k].WorldPos, 1.0);
             float3 NormalWS      = W[k].NormalWS;
@@ -82,6 +126,21 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
 
         const float2 ScreenSize = float2(Pass().ScreenW, Pass().ScreenH);
         FVisSurface  S          = InterpolateVisSurface(W, FinalWorldPos, VisPixelNdc(Texel, ScreenSize), ScreenSize);
+
+        if (bWantVelocity)
+        {
+            const float3 PrevWorld = InterpBary(S.Bary, PrevWorldPos[0], PrevWorldPos[1], PrevWorldPos[2]);
+            const float4 PrevClip  = mul(GetPrevViewProjection(), float4(PrevWorld, 1.0));
+
+            float2 Motion = float2(0.0, 0.0);
+            if (PrevClip.w > 0.0)
+            {
+                const float2 PrevUV = (PrevClip.xy / PrevClip.w) * 0.5 + 0.5;
+                Motion = PrevUV - ((float2(Texel) + 0.5) / ScreenSize);
+            }
+
+            gRWTextures2D[Pass().VelocityUAV][int2(Texel)] = float4(Motion, 0.0, 0.0);
+        }
 
         const float3 OrientedNormalWS = OrientVisNormal(T.Ref, S.NormalWS, S.WorldPosition);
         const float4 ViewPos          = CameraViewPosition(S.WorldPosition);
