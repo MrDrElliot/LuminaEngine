@@ -78,7 +78,7 @@ FWindResult ComputeWind(
         return Result;
     }
 
-    float T = GetTime() * Speed;
+    float T = MaterialTime() * Speed;
 
     // Flatten into the horizontal plane: a vertical component drives vertices through the surface the
     // mesh is planted on rather than bending it. Purely vertical input falls back to +X.

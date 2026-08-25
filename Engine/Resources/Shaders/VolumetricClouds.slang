@@ -101,7 +101,7 @@ float Cloud_SampleDensity(float3 WorldPos, float HeightFrac, bool bCheap)
 // Interleaved gradient noise: offsetting the first sample hides the march's step banding.
 float Cloud_IGN(float2 PixelPos)
 {
-    return frac(52.9829189 * frac(dot(PixelPos, float2(0.06711056, 0.00583715))));
+    return InterleavedGradientNoise(PixelPos);
 }
 
 [shader("compute")]

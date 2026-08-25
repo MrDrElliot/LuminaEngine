@@ -4803,8 +4803,14 @@ namespace Lumina::RHI
 
     // Push constants are undefined at command-buffer begin. Seeding null makes a missed CmdSetSceneRoot
     // a null deref at the first scene read instead of a wild pointer into a previous frame's memory.
-    static void SeedSceneRoot(VkCommandBuffer Buffer)
+    // Push constants are illegal on a transfer-only pool, and nothing recorded there reads the scene root.
+    static void SeedSceneRoot(VkCommandBuffer Buffer, EQueueType Type)
     {
+        if (Type == EQueueType::Transfer)
+        {
+            return;
+        }
+
         const VkDeviceAddress Null[4] { 0, 0, 0, 0 };
         vkCmdPushConstants(Buffer, GDevice->PipelineLayout, VK_SHADER_STAGE_ALL,
                            sizeof(VkDeviceAddress), sizeof(Null), Null);
@@ -4841,7 +4847,7 @@ namespace Lumina::RHI
 
                 // ResetCommandList already reset the pool when it recycled the list.
                 vkBeginCommandBuffer(CommandList.CommandBuffer, &BeginInfo);
-                SeedSceneRoot(CommandList.CommandBuffer);
+                SeedSceneRoot(CommandList.CommandBuffer, Type);
 
                 return Reused;
             }
@@ -4868,7 +4874,7 @@ namespace Lumina::RHI
         VK_CHECK(vkAllocateCommandBuffers(*GDevice, &BufferInfo, &Buffer));
 
         vkBeginCommandBuffer(Buffer, &BeginInfo);
-        SeedSceneRoot(Buffer);
+        SeedSceneRoot(Buffer, Type);
 
         GDevice->OpenCommandLists[(uint32)Type].fetch_add(1, std::memory_order_release);
 

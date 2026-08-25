@@ -126,7 +126,7 @@ float SampleDirectionalCascade(FLight Light, int CascadeIndex, float3 FragmentPo
         return 1.0;
     }
 
-    float IGN   = frac(52.9829189 * frac(dot(ScreenPos, float2(0.06711056, 0.00583715))));
+    float IGN   = InterleavedGradientNoise(ScreenPos);
     float Angle = IGN * TWO_PI;
 
     float RefDepth = CurrentDepth - Bias;

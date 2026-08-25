@@ -554,10 +554,14 @@ namespace Lumina
 
                 // Every depth-reconstructing pass reads this, so it has to match the jitter that was rendered.
                 SceneGlobalData.CameraData.InverseProjection = Math::Inverse(SceneGlobalData.CameraData.Projection);
+
+                // Only while a resolve is averaging the frames, or screen-space noise just flickers.
+                SceneGlobalData.TemporalPhase = PrimaryView.PendingTemporalFrameIndex;
             }
             else
             {
                 PrimaryView.bTemporalHistoryValid = false;
+                SceneGlobalData.TemporalPhase    = 0u;
             }
 
             SceneGlobalData.CameraData.PrevViewProjection = PrimaryView.PrevViewProjection;
@@ -567,6 +571,8 @@ namespace Lumina
         SceneGlobalData.GridSize                        = FUIntVector4(ClusterGridSizeX, ClusterGridSizeY, ClusterGridSizeZ, 0);
         SceneGlobalData.Time                            = (float)World->GetTimeSinceWorldCreation();
         SceneGlobalData.DeltaTime                       = Frame.CachedWorldDeltaTime;
+        // Derived rather than remembered, so it cannot drift out of step with the clock the graph reads.
+        SceneGlobalData.PrevTime                        = SceneGlobalData.Time - SceneGlobalData.DeltaTime;
         SceneGlobalData.FarPlane                        = ViewVolume.GetFar();
         SceneGlobalData.NearPlane                       = ViewVolume.GetNear();
         SceneGlobalData.GTAOSettings                    = FGTAOSettings{};

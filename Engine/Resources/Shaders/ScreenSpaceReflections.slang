@@ -37,7 +37,7 @@ FSSRArgs* Pass() { return GetPassArgs<FSSRArgs>(); }
 // Spatially stable per-pixel hash; jitters the ray start so step banding breaks into fine grain.
 float SSR_IGN(float2 PixelPos)
 {
-    return frac(52.9829189 * frac(dot(PixelPos, float2(0.06711056, 0.00583715))));
+    return InterleavedGradientNoise(PixelPos);
 }
 
 float SSR_ViewDepthAt(float2 UV)

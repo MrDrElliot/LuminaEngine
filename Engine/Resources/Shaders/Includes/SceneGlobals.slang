@@ -2,9 +2,7 @@
 #include "Common.slang"
 #include "GlobalRHI.slang"
 
-// Device addresses of every scene buffer + bindless indices for the IBL/shadow textures. Must match
-// FSceneRoot in SceneRenderTypes.h (152 B, scalar layout). The three hottest pointers are not here,
-// they ride in push constants; see FRHIRoot.
+// Must match FSceneRoot in SceneRenderTypes.h (176 B, scalar layout); the hottest pointers ride in FRHIRoot.
 struct FSceneRoot
 {
     FBoneTransform*      Bones;
@@ -442,6 +440,11 @@ FLightShadow GetShadowTile(int ShadowDataIndex, uint Face)
 }
 
 float    GetTime()                  { return Scene().Time;       }
+float    GetPrevTime()              { return Scene().PrevTime;   }
+
+// Negative means "use this frame's clock"; the motion-vector lane sets it to re-evaluate WPO at t-1.
+static float gMaterialVertexTime = -1.0;
+float MaterialTime() { return gMaterialVertexTime >= 0.0 ? gMaterialVertexTime : Scene().Time; }
 float    GetDeltaTime()             { return Scene().DeltaTime;  }
 float    GetNearPlane()             { return Scene().NearPlane;  }
 float    GetFarPlane()              { return Scene().FarPlane;   }
@@ -496,7 +499,7 @@ float4 WorldToClip(float3 WorldPos)
 
 float SineWave(float Speed, float Amplitude)
 {
-    return Amplitude * sin(GetTime() * Speed);
+    return Amplitude * sin(MaterialTime() * Speed);
 }
 
 float3 ReconstructWorldPos(float2 UV, float Depth, float4x4 InvProj, float4x4 InvView)
@@ -506,6 +509,14 @@ float3 ReconstructWorldPos(float2 UV, float Depth, float4x4 InvProj, float4x4 In
     View        /= View.w;
     float4 World = mul(InvView, View);
     return World.xyz;
+}
+
+// Jimenez's interleaved gradient noise, shifted per frame so two subsamples see decorrelated patterns.
+float InterleavedGradientNoise(float2 PixelPos)
+{
+    // Zero phase reproduces the fixed screen-space pattern exactly, which is what a lone frame wants.
+    const float2 Shifted = PixelPos + 5.588238 * float(Scene().TemporalPhase);
+    return frac(52.9829189 * frac(dot(Shifted, float2(0.06711056, 0.00583715))));
 }
 
 float3 ReconstructViewPos(float2 UV, float Depth, float4x4 InvProj)

@@ -1200,9 +1200,14 @@ namespace Lumina
         FUIntVector4      GridSize;
 
         float           Time;
+        float           PrevTime;
         float           DeltaTime;
         float           NearPlane;
         float           FarPlane;
+        // Rounds the scalar run back to a 16-byte boundary, which the buffer layout rules require.
+        float           _TimePad0 = 0.0f;
+        float           _TimePad1 = 0.0f;
+        float           _TimePad2 = 0.0f;
 
         FGTAOSettings   GTAOSettings;
         FCullData       CullData;
@@ -1211,7 +1216,8 @@ namespace Lumina
         uint32          ShadowMaskIndex   = ~0u;
         uint32          MomentZerothIndex = ~0u;
         uint32          MomentsIndex      = ~0u;
-        uint32          _ShadowPad2       = 0;
+        // Frame counter that drives per-subsample noise decorrelation. Stays 0 unless T2x is resolving.
+        uint32          TemporalPhase     = 0;
     };
 
     struct FMeshPass

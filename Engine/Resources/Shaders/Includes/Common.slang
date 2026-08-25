@@ -945,9 +945,14 @@ struct FSceneGlobalData
     uint4             ScreenSize;
     uint4             GridSize;
     float             Time;
+    float             PrevTime;
     float             DeltaTime;
     float             NearPlane;
     float             FarPlane;
+    // Rounds the scalar run back to a 16-byte boundary, which the buffer layout rules require.
+    float             _TimePad0;
+    float             _TimePad1;
+    float             _TimePad2;
     FGTAOSettings     GTAOSettings;
     FCullData         CullData;
     FParallaxSettings ParallaxSettings;
@@ -960,7 +965,9 @@ struct FSceneGlobalData
     // ~0u = not published; see the sentinel guard in BasePixelPass.slang.
     uint              MomentZerothIndex;
     uint              MomentsIndex;
-    uint              _ShadowPad2;
+
+    // Frame counter that drives per-subsample noise decorrelation. Stays 0 unless T2x is resolving.
+    uint              TemporalPhase;
 };
 
 // Octahedral 15-15 tangent direction + 1-bit handedness sign, matching Lumina::PackTangent. Returns

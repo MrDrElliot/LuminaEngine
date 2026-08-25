@@ -146,7 +146,7 @@ float4 FragmentMain(FragmentInput Input) : SV_Target0
 
     // min rather than a multiply, which would darken a PCSS penumbra twice for the one occluder.
     const float3 ViewL  = normalize(NormalWorldToView(normalize(Sun.Direction.xyz)));
-    const float  Jitter = frac(52.9829189 * frac(dot(Input.Position.xy, float2(0.06711056, 0.00583715))));
+    const float  Jitter = InterleavedGradientNoise(Input.Position.xy);
     Mask = min(Mask, ContactShadow(Data.DepthIndex, InvProj, P, NView, ViewL, Jitter));
 
     // Per-instance ReceiveShadow and the material's parallax SelfShadow are NOT folded in: this pass

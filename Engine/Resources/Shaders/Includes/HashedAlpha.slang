@@ -1,4 +1,5 @@
 #pragma once
+#include "SceneGlobals.slang"
 
 // Hashed alpha testing (Wyman and McGuire, I3D 2017). A hard cutoff makes a leaf's coverage a step
 // function, so sub-pixel foliage pops in and out and its edges crawl. A per-pixel stochastic cutoff turns
@@ -21,7 +22,9 @@ float HashedAlpha_Hash1D(float2 V)
 
 float HashedAlpha_Hash3D(float3 V)
 {
-    return HashedAlpha_Hash1D(float2(HashedAlpha_Hash1D(V.xy), V.z));
+    // Phase re-rolls the cell per frame, so a two-frame resolve averages two coverage samples per leaf.
+    const float Phase = float(Scene().TemporalPhase) * 0.7548776662;
+    return HashedAlpha_Hash1D(float2(HashedAlpha_Hash1D(V.xy + Phase), V.z + Phase));
 }
 
 // The cutoff this pixel compares Opacity against. Pixel lanes only, since it needs a quad.

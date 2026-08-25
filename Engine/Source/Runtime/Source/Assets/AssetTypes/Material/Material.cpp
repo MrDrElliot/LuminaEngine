@@ -557,6 +557,18 @@ namespace Lumina
         return DefaultTerrainMaterial;
     }
 
+    // Every occurrence, because DeferredMaterial evaluates the vertex graph twice, at t and at t-1.
+    static void ReplaceAllTokens(FString& Source, const char* Token, const FString& Replacement)
+    {
+        const size_t TokenLen = strlen(Token);
+        size_t Pos = Source.find(Token);
+        while (Pos != FString::npos)
+        {
+            Source.replace(Pos, TokenLen, Replacement);
+            Pos = Source.find(Token, Pos + Replacement.size());
+        }
+    }
+
     void CMaterial::CreateDefaultMaterial()
     {
         IShaderCompiler* ShaderCompiler = GShaderCompiler;
@@ -604,7 +616,7 @@ namespace Lumina
         
         if (PixelPos != FString::npos)
         {
-            LoadedPixelString.replace(PixelPos, strlen(Token), PixelReplacement);
+            ReplaceAllTokens(LoadedPixelString, Token, PixelReplacement);
         }
         else
         {
@@ -635,12 +647,11 @@ namespace Lumina
                     continue;
                 }
 
-                const size_t Pos = Source.find(VertexToken);
-                if (Pos == FString::npos)
+                if (Source.find(VertexToken) == FString::npos)
                 {
                     continue;
                 }
-                Source.replace(Pos, strlen(VertexToken), VertexReplacement);
+                ReplaceAllTokens(Source, VertexToken, VertexReplacement);
 
                 FShaderCompileOptions Options;
                 if (Stage.Define != nullptr)
@@ -661,15 +672,11 @@ namespace Lumina
             FString LoadedDeferredString;
             if (VFS::ReadFile(LoadedDeferredString, "/Engine/Resources/Shaders/MaterialShader/DeferredMaterial.slang"))
             {
-                size_t DefVPos = LoadedDeferredString.find(VertexToken);
-                if (DefVPos != FString::npos)
-                {
-                    LoadedDeferredString.replace(DefVPos, strlen(VertexToken), VertexReplacement);
-                }
+                ReplaceAllTokens(LoadedDeferredString, VertexToken, VertexReplacement);
                 size_t DefPPos = LoadedDeferredString.find(Token);
                 if (DefPPos != FString::npos)
                 {
-                    LoadedDeferredString.replace(DefPPos, strlen(Token), PixelReplacement);
+                    ReplaceAllTokens(LoadedDeferredString, Token, PixelReplacement);
                     ShaderCompiler->CompilerShaderRaw(Move(LoadedDeferredString), {}, [](const FShaderHeader& Header) mutable
                     {
                         DefaultMaterial->DeferredShaderBinaries.assign(Header.Binaries.begin(), Header.Binaries.end());
@@ -736,7 +743,7 @@ namespace Lumina
 
         if (PixelPos != FString::npos)
         {
-            LoadedPixelString.replace(PixelPos, strlen(Token), PixelReplacement);
+            ReplaceAllTokens(LoadedPixelString, Token, PixelReplacement);
         }
         else
         {
@@ -756,7 +763,7 @@ namespace Lumina
         FString VertexReplacement = "Material.WorldPositionOffset = float3(0.0);\n";
         if (VertexPos != FString::npos)
         {
-            LoadedVertexString.replace(VertexPos, strlen(VertexToken), VertexReplacement);
+            ReplaceAllTokens(LoadedVertexString, VertexToken, VertexReplacement);
         }
         else
         {

@@ -31,7 +31,7 @@ struct PSInput
 // breaking exponential-Z banding into fine full-resolution grain.
 float IGN(float2 PixelPos)
 {
-    return frac(52.9829189 * frac(dot(PixelPos, float2(0.06711056, 0.00583715))));
+    return InterleavedGradientNoise(PixelPos);
 }
 
 [shader("fragment")]

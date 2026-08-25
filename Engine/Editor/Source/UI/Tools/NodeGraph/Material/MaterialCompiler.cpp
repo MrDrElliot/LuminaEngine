@@ -57,13 +57,20 @@ namespace Lumina
 	// Substitute a single token; logs and returns false if the token is missing.
 	static bool SubstituteToken(FString& Source, const char* Token, const FString& Replacement)
 	{
+		const size_t TokenLen = strlen(Token);
 		size_t Pos = Source.find(Token);
 		if (Pos == FString::npos)
 		{
 			LOG_ERROR("Missing [{}] in base shader!", Token);
 			return false;
 		}
-		Source.replace(Pos, strlen(Token), Replacement);
+
+		// Every occurrence, because a template may evaluate the same graph twice at different times.
+		while (Pos != FString::npos)
+		{
+			Source.replace(Pos, TokenLen, Replacement);
+			Pos = Source.find(Token, Pos + Replacement.size());
+		}
 		return true;
 	}
 

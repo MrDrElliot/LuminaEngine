@@ -183,6 +183,7 @@ int main(int argc, char* argv[])
     for (int i = 2; i < argc; ++i)
     {
         Parser.bStrictParse |= std::string(argv[i]) == "-strict-parse";
+        Parser.bVerboseDiagnostics |= std::string(argv[i]) == "-verbose-diagnostics";
     }
 
     bool bParseResult = Parser.Parse(&Workspace);

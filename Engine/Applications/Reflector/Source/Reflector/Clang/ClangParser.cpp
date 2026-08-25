@@ -3,6 +3,8 @@
 #include <fstream>
 #include <clang-c/Index.h>
 #include <vector>
+#include <algorithm>
+#include <cstring>
 #include <unordered_set>
 #include "Reflector/Clang/Utils.h"
 #include "Reflector/Diagnostics/LRTDiagnostics.h"
@@ -56,7 +58,7 @@ namespace Lumina::Reflection
         }
 
         // CXError_Success only means an AST came back, so a bad header still reflects as garbage without this.
-        bool ReportClangDiagnostics(CXTranslationUnit TranslationUnit, const FClangParserContext& Context, bool bStrict)
+        bool ReportClangDiagnostics(CXTranslationUnit TranslationUnit, const FClangParserContext& Context, bool bStrict, bool bVerbose)
         {
             constexpr uint32_t MaxReported = 25;
 
@@ -70,6 +72,16 @@ namespace Lumina::Reflection
 
                 const FDiagLocation Loc = MakeLocationFromDiagnostic(Diagnostic);
                 const bool bSevere = Severity == CXDiagnostic_Error || Severity == CXDiagnostic_Fatal;
+
+                // The root cause often sits in a system or third-party header, where it is dropped below.
+                if (bSevere && bVerbose && !IsReflectedHeader(Context, Loc))
+                {
+                    CXString VerboseSpelling = clang_getDiagnosticSpelling(Diagnostic);
+                    const char* VerboseRaw = clang_getCString(VerboseSpelling);
+                    FDiagnostics::Get().Warningf(Loc, EDiagId::DriverClangDiagnostic, "%s",
+                        VerboseRaw != nullptr ? VerboseRaw : "clang reported an error with no message");
+                    clang_disposeString(VerboseSpelling);
+                }
 
                 if (bSevere && IsReflectedHeader(Context, Loc))
                 {
@@ -182,10 +194,25 @@ namespace Lumina::Reflection
                 AppendArg("-I" + IncludeDir);
             }
 
+            // Sorted, or unspecified map order reshuffles the amalgamation and a bad parse comes and goes.
+            std::vector<std::pair<FStringHash, FReflectedHeader*>> OrderedHeaders;
+            OrderedHeaders.reserve(Project->Headers.size());
+
             for (auto& [Path, Header] : Project->Headers)
             {
+                OrderedHeaders.emplace_back(Path, Header.get());
+            }
+
+            std::sort(OrderedHeaders.begin(), OrderedHeaders.end(),
+                [](const auto& A, const auto& B)
+                {
+                    return std::strcmp(A.first.c_str(), B.first.c_str()) < 0;
+                });
+
+            for (const auto& [Path, Header] : OrderedHeaders)
+            {
                 AmalgamationFile << "#include \"" << Path.c_str() << "\"\n";
-                ParsingContext.AllHeaders.emplace(Path, Header.get());
+                ParsingContext.AllHeaders.emplace(Path, Header);
                 ParsingContext.NumHeadersReflected++;
             }
         }
@@ -213,6 +240,9 @@ namespace Lumina::Reflection
         AppendArg("-D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH");
         // MSVC's offsetof is a reinterpret_cast that is never constexpr; this selects __builtin_offsetof.
         AppendArg("-D_CRT_USE_BUILTIN_OFFSETOF");
+        // A Debug target's _STL_VERIFY calls builtins this libclang lacks, breaking the STL types it guards.
+        AppendArg("-D_ITERATOR_DEBUG_LEVEL=0");
+        AppendArg("-D_CONTAINER_DEBUG_LEVEL=0");
         AppendArg("-fms-extensions");
         AppendArg("-fms-compatibility");
         AppendArg("-Wfatal-errors=0");
@@ -253,7 +283,7 @@ namespace Lumina::Reflection
             &TranslationUnit);
         
         // Walking a broken AST would emit confident, wrong reflection data, so stop before it.
-        if (!ReportClangDiagnostics(TranslationUnit, ParsingContext, bStrictParse))
+        if (!ReportClangDiagnostics(TranslationUnit, ParsingContext, bStrictParse, bVerboseDiagnostics))
         {
             std::filesystem::remove(AmalgamationPath.c_str());
             clang_disposeIndex(ClangIndex);

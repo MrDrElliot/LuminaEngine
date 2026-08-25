@@ -122,6 +122,23 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
             FMaterialVertexInputs Material;
             $MATERIAL_VERTEX_INPUTS
             FinalWorldPos[k] = W[k].WorldPos + Material.WorldPositionOffset;
+
+            // A constant offset folds away here, so only a graph with real WPO pays for this second pass.
+            if (bWantVelocity)
+            {
+                gMaterialVertexTime = GetPrevTime();
+
+                WorldPos      = float4(PrevWorldPos[k], 1.0);
+                NormalWS      = W[k].NormalWS;
+                TangentWS     = W[k].TangentWS.xyz;
+                TangentSignWS = W[k].TangentWS.w;
+
+                FMaterialVertexInputs Material;
+                $MATERIAL_VERTEX_INPUTS
+                PrevWorldPos[k] += Material.WorldPositionOffset;
+
+                gMaterialVertexTime = -1.0;
+            }
         }
 
         const float2 ScreenSize = float2(Pass().ScreenW, Pass().ScreenH);
