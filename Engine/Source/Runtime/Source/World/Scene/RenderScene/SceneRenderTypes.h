@@ -13,6 +13,7 @@
 #include "Renderer/ViewVolume.h"
 #include "Renderer/RHI.h"
 #include "Renderer/RHICore.h"
+#include "World/Scene/RenderScene/EnvironmentRenderTypes.h"
 #include "Shared/SharedConstants.h"
 
 #define SCENE_MAX_BOUNDS UINT64_MAX
@@ -941,7 +942,19 @@ namespace Lumina
     // 32 B lands every element on a sector boundary, so a warp's skinned writes fill whole sectors.
     static_assert(sizeof(FPreSkinnedVertex) == 32, "FPreSkinnedVertex must match shader");
 
+    // Mirror of the shader FSkinnedMeshletCone, one per skinned meshlet per frame.
+    struct FSkinnedMeshletCone
+    {
+        FVector3 Apex;
+        float    Cutoff;
+        FVector3 Axis;
+        float    ApexSpread;
+    };
+    static_assert(sizeof(FSkinnedMeshletCone) == 32, "FSkinnedMeshletCone must match shader");
+
     constexpr uint32 kNoPreSkinBase = 0xFFFFFFFFu;
+    // No per-frame skinned meshlet bounds, so the cull falls back to bind-pose spheres and distrusts them.
+    constexpr uint32 kNoSkinnedBounds = 0xFFFFFFFFu;
 
     // No slice in the per-frame bone arena; the blend falls back to identity rather than reading garbage.
     constexpr uint32 kNoBoneSlice = 0xFFFFFFFFu;
@@ -961,8 +974,10 @@ namespace Lumina
         uint32      ShadowSkinnedVertexBase;
         // Slice in the COMPACTED per-frame bone arena; kNoBoneSlice when the gather assigned none.
         uint32      BoneOffset;
+        // Folds in the range start, so it indexes the bounds arena by a mesh-global meshlet index.
+        uint32      SkinnedBoundsBase;
     };
-    static_assert(sizeof(FSkinnedFrameData) == 36, "FSkinnedFrameData must match shader");
+    static_assert(sizeof(FSkinnedFrameData) == 40, "FSkinnedFrameData must match shader");
 
     constexpr uint32 PackDrawIDAndFlags(uint32 DrawID, EInstanceFlags Flags)
     {
@@ -1165,6 +1180,12 @@ namespace Lumina
          *  This replaces guessing the requirement on the CPU from bounds, distance and texel density --
          *  the GPU already computes the exact LOD it samples, so ask it. 0 disables the write. */
         uint64 StreamingFeedback     = 0;
+        // Object-space meshlet spheres for this frame's poses, written by SkinnedMeshletBounds.slang.
+        uint64 SkinnedMeshletBounds  = 0;
+        // Indexed by retained slot, and the cull reads only SkinnedBoundsBase out of it.
+        uint64 SkinnedFrameData      = 0;
+        // Same index space as SkinnedMeshletBounds, so one base addresses both.
+        uint64 SkinnedMeshletCones   = 0;
 
         uint32 BRDFLutIndex          = 0;
         uint32 SkyIrradianceIndex    = 0;
@@ -1182,8 +1203,8 @@ namespace Lumina
         uint32 PrevBoneCount          = 0;
         uint32 PrevRetainedTransformCount = 0;
     };
-    // 16 pointers + 12 indices; RHI::FSceneBindings is the only home for SceneData, Lights and Instances.
-    static_assert(sizeof(FSceneRoot) == 176, "FSceneRoot must match SceneGlobals.slang");
+    // 19 pointers + 12 indices; RHI::FSceneBindings is the only home for SceneData, Lights and Instances.
+    static_assert(sizeof(FSceneRoot) == 200, "FSceneRoot must match SceneGlobals.slang");
 
     struct FParallaxSettings
     {
@@ -1218,7 +1239,27 @@ namespace Lumina
         uint32          MomentsIndex      = ~0u;
         // Subsample index 0 or 1 that decorrelates screen-space noise. Stays 0 unless T2x is resolving.
         uint32          TemporalPhase     = 0;
+
+        // The translucent passes fog themselves, since the composite runs first and sees only opaque depth.
+        FExponentialHeightFogParams FogParams = {};
+
+        uint32          FogIntegratedIndex   = ~0u;
+        uint32          FogGridZ             = 0;
+        float           FogNearPlane         = 0.05f;
+        float           FogRange             = 200.0f;
+
+        uint32          bFogEnabled          = 0;
+        uint32          FogFarShaftSteps     = 0;
+        float           FogFarShaftDistance  = 4000.0f;
+        uint32          FogCloudShadowIndex  = ~0u;
+
+        FVector2        FogCloudShadowCenter = FVector2(0.0f, 0.0f);
+        float           FogCloudShadowExtent = 0.0f;
+        float           _FogPad0             = 0.0f;
     };
+    // alignas(16) here but 4-byte aligned in scalar layout, so they agree only with no C++ padding.
+    static_assert(offsetof(FSceneGlobalData, FogParams) % 16 == 0,
+                  "FogParams must land on 16 in FSceneGlobalData or C++ pads where the shader does not.");
 
     struct FMeshPass
     {

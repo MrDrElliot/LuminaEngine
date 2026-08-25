@@ -1,4 +1,5 @@
 #include "Includes/SurfaceShading.slang"
+#include "Includes/Fog.slang"
 #ifdef TRANSLUCENT
 #include "Includes/MomentOIT.slang"
 #endif
@@ -119,6 +120,12 @@ PSOutput FragmentMain(FBaseVertexOutput Input)
     // behind it, not its own specular). Sanitize before the additive accumulation, where one bad fragment
     // takes the whole pixel. The clamp bounds 63 layers under fp16 max by construction.
     float3 Premultiplied = SanitizeRadiance(Shaded.Color.rgb * Shaded.Alpha + Shaded.Reflection);
+
+    // Coverage-weighted since the rest of the pixel was fogged already, and additive takes attenuation alone.
+    float4 FogTerm   = Fog_EvaluateForTranslucent(Input.FragPos.xyz, Input.Position.xy);
+    bool   bAdditive = (Materials()[MaterialIndex].Flags & MatFlag_Additive) != 0u;
+    Premultiplied    = Premultiplied * FogTerm.a + (bAdditive ? float3(0.0) : FogTerm.rgb * Coverage);
+
     float3 Weighted      = min(Premultiplied * Transmittance, 1024.0);
 
     Output.Accum = float4(Weighted, Coverage);

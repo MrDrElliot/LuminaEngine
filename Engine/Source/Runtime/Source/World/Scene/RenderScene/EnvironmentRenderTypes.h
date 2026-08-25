@@ -69,6 +69,26 @@ namespace Lumina
         // scattering attenuation, z = per-octave shadow attenuation, w = per-octave phase attenuation.
         // x = 1 is single scattering and is a bit-exact no-op, so this is the default.
         FVector4   MultiScatterParams = FVector4(1.0f, 0.5f, 0.5f, 0.5f);
+        // x = noise strength (0 disables), y = inverse world scale, z = octave count, w = per-octave gain
+        FVector4   NoiseParams        = FVector4(0.0f, 1.0f / 40.0f, 3.0f, 0.5f);
+        // xyz = wind velocity in world units per second, w = distance the noise has faded out by
+        FVector4   NoiseWind          = FVector4(0.0f, 0.0f, 0.0f, 200.0f);
     };
     VERIFY_SSBO_ALIGNMENT(FExponentialHeightFogParams);
+
+    // One artist-placed density volume. WorldToVolume maps world space into the unit cube or sphere.
+    struct alignas(16) FGPUFogVolume
+    {
+        FMatrix4 WorldToVolume = FMatrix4(1.0f);
+        // rgb = albedo, w = extinction added at full strength
+        FVector4 Albedo        = FVector4(0.5f, 0.6f, 0.7f, 0.02f);
+        // rgb = emissive in-scatter, w unused
+        FVector4 Emissive      = FVector4(0.0f, 0.0f, 0.0f, 0.0f);
+        // x = shape (0 box, 1 sphere), y = edge softness, z = scatter intensity, w unused
+        FVector4 Params        = FVector4(0.0f, 0.2f, 1.0f, 0.0f);
+    };
+    VERIFY_SSBO_ALIGNMENT(FGPUFogVolume);
+
+    // Mirrors FOG_MAX_VOLUMES in Fog.slang.
+    inline constexpr uint32 GFogMaxVolumes = 32;
 }

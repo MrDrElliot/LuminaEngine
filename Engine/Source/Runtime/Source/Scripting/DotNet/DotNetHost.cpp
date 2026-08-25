@@ -168,6 +168,7 @@ namespace Lumina::DotNet
         typedef void  (CORECLR_DELEGATE_CALLTYPE* TickFn)();
         typedef void  (CORECLR_DELEGATE_CALLTYPE* ShutdownFn)();
         typedef int32 (CORECLR_DELEGATE_CALLTYPE* GetGenerationFn)();
+        typedef void  (CORECLR_DELEGATE_CALLTYPE* OnWorldTeardownFn)(uint64);
         typedef int32 (CORECLR_DELEGATE_CALLTYPE* GetRuntimeDiagnosticsFn)(void*, int32);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* EnumerateEntityScriptsFn)(void*, void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* EnumerateEntitySystemsFn)(void*, void*);
@@ -215,6 +216,7 @@ namespace Lumina::DotNet
             ManagedFreeHandleFn         FreeHandle;
             InvokeScriptButtonFn        InvokeScriptButton;
             GetGenerationFn             GetGeneration;
+            OnWorldTeardownFn           OnWorldTeardown;
             GetRuntimeDiagnosticsFn     GetRuntimeDiagnostics;
             GetScriptSchemaFn           GetScriptSchema;
             GetScriptButtonsFn          GetScriptButtons;
@@ -241,6 +243,9 @@ namespace Lumina::DotNet
 
         // Set by a UI trigger, serviced at frame start; see RequestScriptReload.
         bool                                        GScriptReloadRequested = false;
+
+        // Signal listeners per world, since nothing else would destroy one the script never disposed.
+        THashMap<CWorld*, TVector<void*>>           GSignalListeners;
 
         hostfxr_get_runtime_delegate_fn             GGetDelegate = nullptr;
         FExporterTable                              GExports{};
@@ -1000,6 +1005,7 @@ namespace Lumina::DotNet
         LM_RESOLVE(FreeHandle,             ManagedFreeHandleFn);
         LM_RESOLVE(InvokeScriptButton,     InvokeScriptButtonFn);   // optional, for editor button support
         LM_RESOLVE(GetGeneration,          GetGenerationFn);
+        LM_RESOLVE(OnWorldTeardown,        OnWorldTeardownFn);
         LM_RESOLVE(GetRuntimeDiagnostics,  GetRuntimeDiagnosticsFn);
         LM_RESOLVE(GetScriptSchema,        GetScriptSchemaFn);
         LM_RESOLVE(GetScriptButtons,       GetScriptButtonsFn);
@@ -1241,6 +1247,70 @@ namespace Lumina::DotNet
     void ReloadScripts()
     {
         LoadScriptUnitsCore(BuildScriptUnits(), /*bEditorFollowups*/true);
+    }
+
+    void TrackSignalListener(CWorld* World, void* Listener)
+    {
+        if (World != nullptr && Listener != nullptr)
+        {
+            GSignalListeners[World].push_back(Listener);
+        }
+    }
+
+    void ForgetSignalListener(CWorld* World, void* Listener)
+    {
+        auto It = GSignalListeners.find(World);
+        if (It == GSignalListeners.end())
+        {
+            return;
+        }
+
+        TVector<void*>& Listeners = It->second;
+        for (size_t Index = 0; Index < Listeners.size(); ++Index)
+        {
+            if (Listeners[Index] == Listener)
+            {
+                Listeners[Index] = Listeners.back();
+                Listeners.pop_back();
+                break;
+            }
+        }
+
+        if (Listeners.empty())
+        {
+            GSignalListeners.erase(It);
+        }
+    }
+
+    void NotifyWorldTeardown(CWorld* World)
+    {
+        if (World == nullptr)
+        {
+            return;
+        }
+
+        // Destroying each listener runs its delegate's destructor, which is what tells managed to release
+        // the binding. The registry is still alive here, so the disconnect is valid too.
+        auto It = GSignalListeners.find(World);
+        if (It != GSignalListeners.end())
+        {
+            TVector<void*> Listeners = Move(It->second);
+            GSignalListeners.erase(It);
+
+            for (void* Handle : Listeners)
+            {
+                auto* Listener = static_cast<FManagedSignalListener*>(Handle);
+                Listener->Connection.release();
+                delete Listener;
+            }
+        }
+
+        if (!bInitialized || GManaged.OnWorldTeardown == nullptr)
+        {
+            return;
+        }
+
+        GManaged.OnWorldTeardown(reinterpret_cast<uint64>(World));
     }
 
     void RequestScriptReload()
@@ -2079,17 +2149,28 @@ LUMINA_DOTNET_EXPORT(int, RemoveComponent)(uint64 World, uint32 Entity, const vo
 }
 
 // Allocates the listener, whose address is the disconnect key, and returns it as an opaque handle.
-LUMINA_DOTNET_EXPORT(void*, RegistryConnect)(uint64 World, const void* Ops, int32 Kind, void* Thunk, void* Context)
+LUMINA_DOTNET_EXPORT(void*, RegistryConnect)(uint64 World, const void* Ops, int32 Kind)
 {
     Lumina::FEntityRegistry* R = LmRegistryFromWorld(World);
     const auto* O = static_cast<const Lumina::FComponentOps*>(Ops);
-    if (R == nullptr || O == nullptr || O->ConnectSignal == nullptr || Thunk == nullptr)
+    if (R == nullptr || O == nullptr || O->ConnectSignal == nullptr)
     {
         return nullptr;
     }
-    auto* Listener = new Lumina::FManagedSignalListener{ reinterpret_cast<Lumina::FManagedSignalThunk>(Thunk), Context };
+
+    auto* Listener = new Lumina::FManagedSignalListener();
     O->ConnectSignal(*R, static_cast<Lumina::EComponentSignal>(Kind), Listener);
+
+    // Tracked per world, because a torn down world takes its registry with it and nothing else would
+    // ever destroy the listener, which is what releases the script binding on it.
+    Lumina::DotNet::TrackSignalListener(reinterpret_cast<Lumina::CWorld*>(World), Listener);
     return Listener;
+}
+
+LUMINA_DOTNET_EXPORT(void*, RegistryGetSignalDelegate)(void* Handle)
+{
+    auto* Listener = static_cast<Lumina::FManagedSignalListener*>(Handle);
+    return Listener != nullptr ? static_cast<Lumina::FScriptDelegateBase*>(&Listener->Signal) : nullptr;
 }
 
 // Disconnect a listener returned by Connect and free it. Safe with a null handle / torn-down world.
@@ -2105,6 +2186,8 @@ LUMINA_DOTNET_EXPORT(void, RegistryDisconnect)(uint64 World, const void* Ops, in
     {
         O->DisconnectSignal(*R, static_cast<Lumina::EComponentSignal>(Kind), static_cast<Lumina::FManagedSignalListener*>(Handle));
     }
+
+    Lumina::DotNet::ForgetSignalListener(reinterpret_cast<Lumina::CWorld*>(World), Handle);
     delete static_cast<Lumina::FManagedSignalListener*>(Handle);
 }
 

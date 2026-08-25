@@ -435,7 +435,7 @@ namespace Lumina
                 ProcessPendingOpenLevel();
                 ProcessPendingTravel();
 
-                // Unloads assemblies and destroys objects, so it runs here rather than inside a UI draw.
+                // Unloads assemblies and destroys objects.
                 DotNet::ProcessPendingScriptReload();
 
                 if (!GIsHeadless)

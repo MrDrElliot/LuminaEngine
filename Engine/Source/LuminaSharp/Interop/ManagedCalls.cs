@@ -19,6 +19,8 @@ public static unsafe class ManagedCalls
         {
             if (Handle != IntPtr.Zero)
             {
+                // Before the free, so the live set can never hold a value the runtime may recycle.
+                Host.ForgetScriptHandle(Handle);
                 GCHandle.FromIntPtr(Handle).Free();
             }
         }

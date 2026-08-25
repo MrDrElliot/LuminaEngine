@@ -11,6 +11,7 @@ namespace Lumina
     struct FInputActionState;
     class CObject;
     class CScriptStruct;
+    class CWorld;
     enum class EUpdateStage : uint8;
     namespace Scripting { struct FScriptExportSchema; struct FScriptPropertyEntry; struct FScriptButton; }
 }
@@ -35,6 +36,13 @@ namespace Lumina::DotNet
     RUNTIME_API void Tick();
     
     RUNTIME_API void ReloadScripts();
+
+    //~ Registry signal listeners, tracked per world so teardown destroys the ones script never disposed.
+    RUNTIME_API void TrackSignalListener(CWorld* World, void* Listener);
+    RUNTIME_API void ForgetSignalListener(CWorld* World, void* Listener);
+
+    // Drops managed state keyed on a world, early enough that its disconnects still reach a live world.
+    RUNTIME_API void NotifyWorldTeardown(CWorld* World);
 
     // Latches a reload for the next frame start, since a reload destroys objects the frame may be using.
     RUNTIME_API void RequestScriptReload();

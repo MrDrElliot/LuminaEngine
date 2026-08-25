@@ -149,6 +149,18 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
                      && (Pass().PrevVisibility[RetainedSlot] != 0u);
     }
 
+    // Late only, because the early phase is a replay and an instance dropped there is dropped for good.
+    bool bInstanceOccluded = false;
+
+    if (bInstanceOK && bLate && bTwoPhase && !Inst.HasFlag(EInstanceFlags::NoCull))
+    {
+        // The one occlusion test a skinned instance can take, since its sphere is re-fed every frame.
+        const FCullSphereProjection Proj = ProjectCullSphere(Inst.BoundsCenter, Inst.BoundsRadius);
+
+        // Uniform across the group, and it leaves every lane invisible so the flag clears for next frame.
+        bInstanceOccluded = Proj.bValid && IsHiZOccluded(Proj);
+    }
+
     // EARLY emits exactly last frame's visible set; LATE emits exactly its complement. Disjoint, so no
     // instance rasterizes twice and none is missed by both. A single-phase view emits from EARLY always.
     const bool bEmitPhase = !bTwoPhase || (bLate != bWasVisible);
@@ -156,7 +168,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
     // LATE tests everything, including instances EARLY already drew and it will not emit: that test is
     // what rewrites the flag for next frame. EARLY only tests what it can emit -- an instance it is not
     // going to draw costs it nothing.
-    const bool bTest = bInstanceOK && (ThreadID < Block.Count) && (bLate || bEmitPhase);
+    const bool bTest = bInstanceOK && !bInstanceOccluded && (ThreadID < Block.Count) && (bLate || bEmitPhase);
     bool       bKeep = bTest && bEmitPhase;
     bool       bLaneVisible = false;
 

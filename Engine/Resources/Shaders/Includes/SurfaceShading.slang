@@ -41,12 +41,6 @@ float3 MeshletDebugColor(uint Index)
     );
 }
 
-struct FCubemapCoord
-{
-    int Face;
-    float2 UV;
-};
-
 float3 FresnelSchlick(float CosTheta, float3 F0)
 {
     float x = saturate(1.0 - CosTheta);
@@ -91,34 +85,6 @@ float ApplyGeometricSpecularAA(float Roughness, float3 dNdx, float3 dNdy)
     // Roughness squared is the GGX alpha the variance adds into; the widening is not linear in roughness.
     const float Alpha = Roughness * Roughness;
     return sqrt(saturate(Alpha + Kernel));
-}
-
-FCubemapCoord DirectionToCubemapCoord(float3 Dir)
-{
-    FCubemapCoord Result;
-
-    float3 AbsDir = abs(Dir);
-
-    float IsXMax = step(AbsDir.y, AbsDir.x) * step(AbsDir.z, AbsDir.x);
-    float IsYMax = step(AbsDir.x, AbsDir.y) * step(AbsDir.z, AbsDir.y);
-    float IsZMax = 1.0 - IsXMax - IsYMax;
-
-    float3 FaceIndex = float3(
-        lerp(1.0, 0.0, step(0.0, Dir.x)),
-        lerp(3.0, 2.0, step(0.0, Dir.y)),
-        lerp(5.0, 4.0, step(0.0, Dir.z))
-    );
-
-    Result.Face = int(IsXMax * FaceIndex.x + IsYMax * FaceIndex.y + IsZMax * FaceIndex.z);
-
-    float2 UVX = float2( sign(Dir.x) * Dir.z,  Dir.y)                / AbsDir.x;
-    float2 UVY = float2(-Dir.x,                -sign(Dir.y) * Dir.z) / AbsDir.y;
-    float2 UVZ = float2(-sign(Dir.z) * Dir.x,   Dir.y)                / AbsDir.z;
-
-    Result.UV = IsXMax * UVX + IsYMax * UVY + IsZMax * UVZ;
-    Result.UV = Result.UV * 0.5 + 0.5;
-
-    return Result;
 }
 
 float ComputeShadowFactor(FLight Light, float3 FragmentPos, float3 Normal, float3 ViewPosition, float2 ScreenPos, bool ReceiveShadow)

@@ -2,6 +2,7 @@
 #include "Includes/SceneGlobals.slang"
 #include "Includes/GlobalRHIStorage.slang"
 #include "Includes/Sky.slang"
+#include "Includes/CloudCommon.slang"
 
 // Shell march between two spheres about the same planet the atmosphere uses, so the horizon curves.
 
@@ -41,61 +42,34 @@ struct FPushConstants
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
-float Cloud_Remap(float V, float InMin, float InMax, float OutMin, float OutMax)
-{
-    return OutMin + (V - InMin) * (OutMax - OutMin) / max(InMax - InMin, 1e-5);
-}
-
 // Two lobes: a forward one alone leaves cloud away from the sun unnaturally flat.
 float Cloud_Phase(float CosTheta, float G1, float G2)
 {
     return lerp(Sky_MiePhase(CosTheta, G1), Sky_MiePhase(CosTheta, G2), 0.35);
 }
 
-// Thin bases should not lose their vertical shape the way a full billow profile would.
-float Cloud_HeightGradient(float H, float Billow)
+FCloudMedium Cloud_Medium()
 {
-    float Base = saturate(Cloud_Remap(H, 0.0, 0.15, 0.0, 1.0));
-    float Top  = saturate(Cloud_Remap(H, 0.45, 1.0, 1.0, 0.0));
-    float Flat = Base * Top;
-
-    float Round = saturate(Cloud_Remap(H, 0.0, 0.25, 0.0, 1.0))
-                * saturate(Cloud_Remap(H, 0.7, 1.0, 1.0, 0.0));
-    return lerp(Flat, Round, Billow);
+    FCloudMedium M;
+    M.NoiseIndex       = Pass().NoiseIndex;
+    M.ShapeScale       = Pass().ShapeScale;
+    M.DetailScale      = Pass().DetailScale;
+    M.DetailStrength   = Pass().DetailStrength;
+    M.Billow           = Pass().Billow;
+    M.Coverage         = Pass().Coverage;
+    M.Density          = Pass().Density;
+    M.LayerBottom      = Pass().LayerBottom;
+    M.LayerTop         = Pass().LayerTop;
+    M._Pad0            = 0.0;
+    M.WindOffset       = Pass().WindOffset;
+    M.DetailWindOffset = Pass().DetailWindOffset;
+    M._Pad1            = float2(0.0);
+    return M;
 }
 
 float Cloud_SampleDensity(float3 WorldPos, float HeightFrac, bool bCheap)
 {
-    float3 ShapeUVW = (WorldPos + float3(Pass().WindOffset.x, 0.0, Pass().WindOffset.y))
-                    / max(Pass().ShapeScale, 1.0);
-
-    float4 Shape = SampleTexture3D(Pass().NoiseIndex, SAMPLER_LINEAR_WRAP, ShapeUVW);
-
-    // The Worley octaves ride on the base as a noise floor, which is what carves the billows.
-    float LowFreq = Shape.g * 0.625 + Shape.b * 0.25 + Shape.a * 0.125;
-    float Base    = saturate(Cloud_Remap(Shape.r, LowFreq - 1.0, 1.0, 0.0, 1.0));
-
-    Base *= Cloud_HeightGradient(HeightFrac, Pass().Billow);
-
-    // Coverage as the remap floor erodes inward, so puffs shrink rather than uniformly fading out.
-    float Cov     = saturate(Pass().Coverage);
-    float Density = saturate(Cloud_Remap(Base, 1.0 - Cov, 1.0, 0.0, 1.0));
-    if (Density <= 0.0 || bCheap)
-    {
-        return Density * Pass().Density;
-    }
-
-    float3 DetailUVW = (WorldPos + float3(Pass().DetailWindOffset.x, 0.0, Pass().DetailWindOffset.y))
-                     / max(Pass().DetailScale, 1.0);
-
-    float4 Detail    = SampleTexture3D(Pass().NoiseIndex, SAMPLER_LINEAR_WRAP, DetailUVW);
-    float  DetailFBM = Detail.g * 0.625 + Detail.b * 0.25 + Detail.a * 0.125;
-
-    // Wispy at the base and billowed aloft, which is the direction real erosion runs.
-    float Erosion = lerp(1.0 - DetailFBM, DetailFBM, saturate(HeightFrac * 2.0));
-    Density = saturate(Cloud_Remap(Density, Erosion * Pass().DetailStrength, 1.0, 0.0, 1.0));
-
-    return Density * Pass().Density;
+    return Cloud_SampleDensityM(Cloud_Medium(), WorldPos, HeightFrac, bCheap);
 }
 
 // Interleaved gradient noise: offsetting the first sample hides the march's step banding.

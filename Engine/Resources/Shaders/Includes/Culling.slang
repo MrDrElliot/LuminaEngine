@@ -145,47 +145,65 @@ uint2 SelectCascadeShadowMeshletRange(FSurfaceDesc Desc, float3 CamPos, float4 S
     return uint2(Desc.LODMeshletOffset[LOD], Desc.LODMeshletCount[LOD]);
 }
 
-// Tests a world-space sphere against the camera depth pyramid.
-// Returns true if the sphere is fully occluded and can be skipped.
-bool IsHiZOccluded(float3 CenterWS, float RadiusWS)
+// Keeps the projected bounds conservative against the pyramid's own quantization.
+static const float kCullSphereDilation = 1.02;
+
+// One projection of a cull sphere, shared so the sub-pixel and Hi-Z tests stop repeating each other.
+struct FCullSphereProjection
 {
-    float  ZNear = Scene().NearPlane;
-    float  ZFar  = Scene().FarPlane;
-
-    float3 ViewCenter = mul(Scene().CameraView.CameraView, float4(CenterWS, 1.0)).xyz;
-    float  ViewRadius = RadiusWS * 1.02; // Tiny dilation for conservatism.
-
+    float3 ViewCenter;
+    float  ViewRadius;
     float4 ClipAABB;
-    if (!ProjectSphereClip(ViewCenter, ViewRadius, ZNear,
-                           Scene().CameraView.CameraProjection[0][0],
-                           Scene().CameraView.CameraProjection[1][1],
-                           ClipAABB))
-    {
-        // Sphere straddles the near plane: treat as visible.
-        return false;
-    }
+    bool   bValid;      // false when the sphere straddles the near plane, which both tests read as visible
+};
 
-    // Clip [-1,1] -> Vulkan UV [0,1]. The camera projection bakes Vulkan
-    // +Y-down NDC, so this is a direct mapping with no per-axis swap.
-    float4 UvAABB = saturate(ClipAABB * 0.5 + 0.5);
+// The cull camera, not the live one, is what the pyramid was rendered from while culling is frozen.
+FCullSphereProjection ProjectCullSphere(float3 CenterWS, float RadiusWS)
+{
+    const float4x4 CullProj = GetCullCameraProjection();
 
-    float Width  = (UvAABB.z - UvAABB.x) * Scene().CullData.PyramidWidth;
-    float Height = (UvAABB.w - UvAABB.y) * Scene().CullData.PyramidHeight;
+    FCullSphereProjection P;
+    P.ViewCenter = mul(GetCullCameraView(), float4(CenterWS, 1.0)).xyz;
+    P.ViewRadius = RadiusWS * kCullSphereDilation;
+    P.bValid     = ProjectSphereClip(P.ViewCenter, P.ViewRadius, Scene().NearPlane,
+                                     CullProj[0][0], CullProj[1][1], P.ClipAABB);
+    return P;
+}
 
-    // Pick a mip where a single bilinear tap (2x2) covers the AABB.
-    float Level = max(ceil(log2(max(Width, Height) * 0.5)), 0.0);
+// A sphere whose screen AABB lands on one pixel center in either axis rasterizes nothing.
+bool IsSubPixel(FCullSphereProjection P)
+{
+    const float2 ScreenSize = float2(Scene().ScreenSize.xy);
+    const int2   MinI = int2(floor((P.ClipAABB.xy * 0.5 + 0.5) * ScreenSize - 0.5));
+    const int2   MaxI = int2(floor((P.ClipAABB.zw * 0.5 + 0.5) * ScreenSize - 0.5));
 
-    float2 SampleUV = (UvAABB.xy + UvAABB.zw) * 0.5;
+    return (MinI.x == MaxI.x) || (MinI.y == MaxI.y);
+}
 
-    // Bindless Hi-Z tap with the MIN-reduction sampler returns the minimum
-    // depth of the 2x2 footprint. In reverse-Z, min == farthest.
-    float PyramidDepth = SampleTexture2DLevel(Scene().CullData.DepthPyramidIndex, SAMPLER_MIN_REDUCTION, SampleUV, Level).x;
+// Returns true if the sphere is fully occluded by the camera depth pyramid and can be skipped.
+bool IsHiZOccluded(FCullSphereProjection P)
+{
+    const float ZNear = Scene().NearPlane;
+    const float ZFar  = Scene().FarPlane;
 
-    float FrontZ      = ViewCenter.z - ViewRadius;
-    float DepthSphere = SphereFrontDepth(FrontZ, ZNear, ZFar);
+    // Clip [-1,1] to Vulkan UV [0,1], direct because the projection already bakes +Y-down NDC.
+    const float4 UvAABB = saturate(P.ClipAABB * 0.5 + 0.5);
 
-    // Reverse-Z: occluded iff the sphere's nearest depth is farther than the
-    // farthest occluder in its footprint.
+    const float Width  = (UvAABB.z - UvAABB.x) * Scene().CullData.PyramidWidth;
+    const float Height = (UvAABB.w - UvAABB.y) * Scene().CullData.PyramidHeight;
+
+    // Mip where a single bilinear tap (2x2) covers the AABB.
+    const float Level = max(ceil(log2(max(Width, Height) * 0.5)), 0.0);
+
+    const float2 SampleUV = (UvAABB.xy + UvAABB.zw) * 0.5;
+
+    // The min-reduction sampler returns the 2x2 minimum, which under reverse-Z is the farthest occluder.
+    const float PyramidDepth = SampleTexture2DLevel(Scene().CullData.DepthPyramidIndex, SAMPLER_MIN_REDUCTION, SampleUV, Level).x;
+
+    const float FrontZ      = P.ViewCenter.z - P.ViewRadius;
+    const float DepthSphere = SphereFrontDepth(FrontZ, ZNear, ZFar);
+
+    // Reverse-Z, so occluded means the sphere's nearest depth sits behind that occluder.
     return DepthSphere < PyramidDepth;
 }
 

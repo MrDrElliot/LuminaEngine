@@ -99,7 +99,8 @@ public static unsafe partial class Native
     // on_construct/on_destroy/on_update sink and returns an opaque subscription handle; Disconnect releases
     // it. Patch fires on_update for an entity's component (the manual signal pulse). Kind: 0/1/2.
 
-    [NativeCall] public static partial IntPtr RegistryConnect(ulong World, IntPtr Ops, int Kind, IntPtr Thunk, IntPtr Context);
+    [NativeCall] public static partial IntPtr RegistryConnect(ulong World, IntPtr Ops, int Kind);
+    [NativeCall] public static partial IntPtr RegistryGetSignalDelegate(IntPtr Listener);
     [NativeCall] public static partial void RegistryDisconnect(ulong World, IntPtr Ops, int Kind, IntPtr Handle);
     [NativeCall] public static partial void RegistryPatch(ulong World, uint Entity, IntPtr Ops);
 

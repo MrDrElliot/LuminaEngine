@@ -370,6 +370,18 @@ public sealed unsafe class UIDataModel : IDisposable
     /// <summary>Disposes every registered data model. Called before a script ALC unload as a safety net: a
     /// model whose owner forgot to Dispose() in OnDetach holds the user ViewModel (and PropertyAccessor
     /// delegates over user types), which would pin the collectible generation and leak the native model.</summary>
+    // Drops the models belonging to one world as it tears down, since its Rml context goes with it.
+    internal static void RemoveForWorld(ulong World)
+    {
+        foreach (UIDataModel Model in new List<UIDataModel>(Registry.Values))
+        {
+            if (Model._world == World)
+            {
+                Model.Dispose();
+            }
+        }
+    }
+
     public static void DisposeAll()
     {
         foreach (UIDataModel Model in new List<UIDataModel>(Registry.Values))

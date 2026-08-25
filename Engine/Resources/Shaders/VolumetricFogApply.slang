@@ -1,23 +1,26 @@
 #include "Includes/SceneGlobals.slang"
 #include "Includes/Fog.slang"
 #include "Includes/Froxel.slang"
+#include "Includes/ShadowSampling.slang"
+#include "Includes/CloudCommon.slang"
 
-// Unified fog composite: the shadowed froxel volume covers the near range (when volumetrics are
-// on), then the same exp-height medium continues analytically to the scene depth -- or to infinity
-// for sky pixels, which is what ties distant terrain and the horizon together. Both halves share
-// one density profile, albedo, and lighting model (ambient + phase-weighted sun, unshadowed in the
-// far field), so the hand-off at the froxel far plane is continuous. Composited via
-// (One, InvSrcAlpha) blend (alpha = opacity), so the scene HDR is never read back.
+// Froxel volume, then a shadowed march, then the closed form, all on one medium so hand-offs match.
 
 struct FPushConstants
 {
-    uint64_t Fog;         // FExponentialHeightFogParams, see LoadBlock
     uint  DepthIndex;        // bindless 2D SRV: scene depth
     uint  IntegratedIndex;   // bindless 3D SRV: integrated froxel volume
     uint  GridZ;
     float NearPlane;
+
     float FogRange;
     uint  bVolumetric;       // froxel volume valid this frame (volumetrics enabled)
+    uint  FarShaftSteps;     // 0 = far field stays closed-form and unshadowed
+    float FarShaftDistance;
+
+    uint  CloudShadowIndex;  // bindless 2D SRV, 0xFFFFFFFF when no cloud shadow was built
+    float CloudShadowExtent;
+    float2 CloudShadowCenter;
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
@@ -37,7 +40,7 @@ float IGN(float2 PixelPos)
 [shader("fragment")]
 float4 FragmentMain(PSInput Input) : SV_Target0
 {
-    FExponentialHeightFogParams uFog = LoadBlock<FExponentialHeightFogParams>(Pass().Fog);
+    FExponentialHeightFogParams uFog = Scene().FogParams;
 
     float2 UV    = Input.UV;
     float  Depth = gTextures2D[Pass().DepthIndex].SampleLevel(gSamplers[SAMPLER_POINT_CLAMP], UV, 0.0).r;
@@ -78,46 +81,87 @@ float4 FragmentMain(PSInput Input) : SV_Target0
         Trans     = saturate(Froxel.a);
     }
 
-    // 2) Analytic segment: from the froxel far plane (or the camera + start distance when
-    // volumetrics are off) to the surface, or to infinity for sky. Same medium, unshadowed.
-    float VolEndZ = Pass().bVolumetric != 0 ? Pass().FogRange : 0.0;
-    float T0      = max(VolEndZ / ZPerT, uFog.HeightParams.z);      // ray-space segment start
-    float T1      = bSky ? 0.0 : ViewDist / ZPerT;                  // ray-space distance to surface
-
-    if (bSky || T1 > T0)
+    // Shared lighting for the far field, so its hand-off with the froxel volume stays continuous.
+    float3 ToCam   = -RayDir;
+    float3 Ambient = GetVolumetricAmbientRadiance();
+    bool   bHasSun = GetNumLights() > 0 && HasFlag(GetLightAt(0).Flags, ELightFlags::Directional);
+    FLight Sun     = GetLightAt(0);
+    float  CosSun  = -1.0;
+    bool   bSunVolumetric = false;
+    if (bHasSun)
     {
-        float3 P0 = CamPos + RayDir * T0;
+        // Sun.Direction points toward the sun, so negate it for the travel-direction phase convention.
+        CosSun = dot(-normalize(Sun.Direction), ToCam);
+        bSunVolumetric = HasFlag(Sun.Flags, ELightFlags::Volumetric);
+    }
+    float3 SunRadiance = bSunVolumetric ? UnpackColor(Sun.Color).rgb * Sun.Intensity * Sun.VolumetricIntensity
+                                        : float3(0.0);
+
+    // Far field runs from the froxel far plane to the surface, or to infinity for sky.
+    float VolEndZ = Pass().bVolumetric != 0 ? Pass().FogRange : 0.0;
+    float T0      = VolEndZ / ZPerT;
+    float T1      = bSky ? 0.0 : ViewDist / ZPerT;
+
+    // Marched because the closed form cannot carry a shadow term, and shafts would stop at the volume.
+    uint MarchSteps = (bSunVolumetric && Pass().FarShaftSteps > 0u) ? Pass().FarShaftSteps : 0u;
+    float TMarchEnd = T0;
+    if (MarchSteps != 0u)
+    {
+        float Reach = T0 + Pass().FarShaftDistance;
+        TMarchEnd   = bSky ? Reach : min(T1, Reach);
+
+        if (TMarchEnd > T0)
+        {
+            float StepLen  = (TMarchEnd - T0) / float(MarchSteps);
+            // Same per-pixel hash the froxel lookup uses, so step banding lands as grain, not arcs.
+            float Jitter   = IGN(Input.Position.xy);
+
+            for (uint i = 0u; i < MarchSteps; ++i)
+            {
+                float  T = T0 + StepLen * (float(i) + Jitter);
+                float3 P = CamPos + RayDir * T;
+
+                float Density = Fog_DensityAt(uFog, P) * Fog_StartRamp(uFog, T);
+                if (Density <= 0.0)
+                {
+                    continue;
+                }
+
+                float Shadow = SampleSunCascadeByContainment(Sun, P)
+                             * CloudShadow_Sample(Pass().CloudShadowIndex, P, Pass().CloudShadowCenter, Pass().CloudShadowExtent);
+
+                float3 Light = Ambient + SunRadiance * Fog_MultiScatterPhaseShadow(uFog, CosSun, uFog.VolumetricParams.y, Shadow);
+                float3 Albedo = Fog_Albedo(uFog, CosSun, T);
+
+                float  StepTrans = exp(-Density * StepLen);
+                // Analytic integral of in-scatter across the step, matching the froxel integrate pass.
+                float3 StepInt   = Albedo * Light * uFog.VolumetricParams.x * (1.0 - StepTrans);
+
+                InScatter += Trans * StepInt;
+                Trans     *= StepTrans;
+            }
+        }
+    }
+
+    // Shadow = 1 makes the octave shadow-leak term identity, which is what the march converges to.
+    float TRest = max(TMarchEnd, uFog.HeightParams.z);
+    if (bSky || T1 > TRest)
+    {
+        float3 P0 = CamPos + RayDir * TRest;
         float  OD = bSky ? Fog_OpticalDepthToInfinity(uFog, P0, RayDir)
-                         : Fog_OpticalDepth(uFog, P0, RayDir, T1 - T0);
+                         : Fog_OpticalDepth(uFog, P0, RayDir, T1 - TRest);
+        // Ramped at the mid distance so the near half's soft front does not become a hard one here.
+        OD *= Fog_StartRamp(uFog, bSky ? 1e9 : 0.5 * (TRest + T1));
         float TransA = exp(-OD);
 
-        // Same lighting model as the froxel inject with Shadow = 1: ambient skylight plus the
-        // phase-weighted sun when it opted into volumetrics. Keeps the seam continuous and makes
-        // fog track time of day automatically.
-        float3 ToCam   = -RayDir;
-        float3 Light   = GetVolumetricAmbientRadiance();
-        bool   bHasSun = GetNumLights() > 0 && HasFlag(GetLightAt(0).Flags, ELightFlags::Directional);
-        float  CosSun  = -1.0;
-        if (bHasSun)
+        float3 Light = Ambient;
+        if (bSunVolumetric)
         {
-            FLight Sun = GetLightAt(0);
-            // Sun.Direction points toward the sun; negate for the travel-direction phase
-            // convention so CosSun = +1 when looking straight at the sun.
-            CosSun = dot(-normalize(Sun.Direction), ToCam);
-            if (HasFlag(Sun.Flags, ELightFlags::Volumetric))
-            {
-                // Shadow = 1: the far field is unshadowed, which also makes the octaves' shadow-leak
-                // term identity, leaving only their energy and phase contributions -- the same thing
-                // the froxel volume converges to in lit regions, so the hand-off at the froxel far
-                // plane stays continuous no matter how the octave count is tuned.
-                Light += UnpackColor(Sun.Color).rgb * Sun.Intensity
-                       * Fog_MultiScatterPhaseShadow(uFog, CosSun, uFog.VolumetricParams.y, 1.0)
-                       * Sun.VolumetricIntensity;
-            }
+            Light += SunRadiance * Fog_MultiScatterPhaseShadow(uFog, CosSun, uFog.VolumetricParams.y, 1.0);
         }
 
         // Ramp the directional tint by the segment's mid distance; sky is at infinity (fully ramped).
-        float3 Albedo = Fog_Albedo(uFog, CosSun, bSky ? 1e9 : 0.5 * (T0 + T1));
+        float3 Albedo = Fog_Albedo(uFog, CosSun, bSky ? 1e9 : 0.5 * (TRest + T1));
         InScatter += Trans * Albedo * Light * uFog.VolumetricParams.x * (1.0 - TransA);
         Trans     *= TransA;
     }

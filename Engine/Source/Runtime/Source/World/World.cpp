@@ -454,6 +454,9 @@ namespace Lumina
     
     void CWorld::TeardownWorld()
     {
+        // First, so every subscription the managed side drops still disconnects against a live world.
+        DotNet::NotifyWorldTeardown(this);
+
         // No render phase / RHI / audio device in a headless process.
         if (!GIsHeadless)
         {

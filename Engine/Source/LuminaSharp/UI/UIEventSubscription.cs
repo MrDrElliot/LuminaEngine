@@ -1,38 +1,30 @@
 using System;
-using System.Collections.Generic;
-using System.Runtime.InteropServices;
 
 namespace LuminaSharp;
 
 /// <summary>
 /// A live UI event listener, returned by <see cref="UIElement.On"/> / <see cref="UIElement.OnClick(System.Action{UIEvent})"/>.
-/// Dispose it to unsubscribe and release the callback. World-scoped: dispose before the world is destroyed
-/// (e.g. in <see cref="EntityScript.OnDetach"/>). A subscription whose element/world is already gone is inert;
-/// leaving it undisposed leaks only the managed callback (mirrors <see cref="RegistrySubscription"/>).
+/// Dispose it to unsubscribe. Undisposed is safe: the native listener owns the binding, so destroying the
+/// element, the world or the script generation releases the callback on its own.
 /// </summary>
 public sealed class UIEventSubscription : IDisposable
 {
     /// <summary>An inert subscription (returned when the element was invalid or the connect failed).</summary>
     internal static readonly UIEventSubscription Empty = new();
 
-    // An untracked subscription pins the whole generation, since Handle is strong and holds the callback.
-    private static readonly HashSet<UIEventSubscription> Live = new();
-
     private readonly ulong World;
     private IntPtr Listener;
-    private GCHandle Handle;
+    private DelegateBinding Binding;
 
     private UIEventSubscription()
     {
     }
 
-    internal UIEventSubscription(ulong World, IntPtr Listener, GCHandle Handle)
+    internal UIEventSubscription(ulong World, IntPtr Listener, DelegateBinding Binding)
     {
         this.World = World;
         this.Listener = Listener;
-        this.Handle = Handle;
-
-        Live.Add(this);
+        this.Binding = Binding;
     }
 
     /// <summary>True while connected; false for an inert subscription or after <see cref="Dispose"/>.</summary>
@@ -40,33 +32,16 @@ public sealed class UIEventSubscription : IDisposable
 
     public void Dispose()
     {
-        Live.Remove(this);
-        Disconnect();
-    }
-
-    // Drops every subscription this generation opened, for the hot reload teardown.
-    internal static void ClearAll()
-    {
-        var Snapshot = new List<UIEventSubscription>(Live);
-        Live.Clear();
-
-        foreach (UIEventSubscription Subscription in Snapshot)
+        if (Listener == IntPtr.Zero)
         {
-            Subscription.Disconnect();
+            return;
         }
-    }
 
-    // The native listener goes first, so the thunk can never resolve a handle this already freed.
-    private void Disconnect()
-    {
-        if (Listener != IntPtr.Zero)
-        {
-            Native.UI_RemoveEventListener(World, Listener);
-            Listener = IntPtr.Zero;
-        }
-        if (Handle.IsAllocated)
-        {
-            Handle.Free();
-        }
+        // Unbind first, so the listener's destructor has nothing left to report to the managed registry.
+        Binding.Dispose();
+        Binding = default;
+
+        Native.UI_RemoveEventListener(World, Listener);
+        Listener = IntPtr.Zero;
     }
 }

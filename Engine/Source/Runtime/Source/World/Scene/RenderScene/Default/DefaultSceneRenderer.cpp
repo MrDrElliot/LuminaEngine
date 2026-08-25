@@ -35,6 +35,8 @@
 #include "World/Entity/Components/EntityTags.h"
 #include "World/Entity/Components/EnvironmentComponent.h"
 #include "World/Entity/Components/ExponentialHeightFogComponent.h"
+#include "World/Entity/Components/LocalFogVolumeComponent.h"
+#include "World/Entity/Components/LocalFogVolumeComponent.h"
 #include "World/Entity/Components/LightComponent.h"
 #include "World/Entity/Components/LineBatcherComponent.h"
 #include "World/Entity/Components/TriangleBatcherComponent.h"
@@ -68,9 +70,6 @@ namespace Lumina
         constexpr uint32 GFroxelGridX = 160;
         constexpr uint32 GFroxelGridY = 90;
         constexpr uint32 GFroxelGridZ = 128;
-
-        // Hard cap on non-sun volumetric lights per frame; packed into the inject push constants.
-        constexpr uint32 GFroxelMaxLocalLights = 16;
 
 
         static TAtomic<uint32> GReflectionProbeRebakeRequests{0};
@@ -390,6 +389,8 @@ namespace Lumina
         FreeBuffer(RetainedCullEntryBuffer);
         FreeBuffer(RetainedTransformBuffer);
         FreeBuffer(RetainedStaticBuffer);
+        FreeBuffer(SkinnedMeshletBoundsBuffer);
+        FreeBuffer(SkinnedMeshletConeBuffer);
         FreeBuffer(SurfaceDescBuffer);
         FreeBuffer(BoneArenaBuffer);
         FreeBuffer(SkinnedFrameDataBuffer);
@@ -1281,6 +1282,37 @@ namespace Lumina
                 }
                 
                 {
+                    SCENE_GPU_SCOPE(CL, "Aerial Perspective");
+                    AerialPerspectivePass(CL);
+                }
+
+                {
+                    SCENE_GPU_SCOPE(CL, "Volumetric Clouds");
+                    VolumetricCloudPass(CL);
+                }
+
+                {
+                    SCENE_GPU_SCOPE(CL, "Cloud Shadow Map");
+                    CloudShadowMapPass(CL);
+                }
+
+                {
+                    SCENE_GPU_SCOPE(CL, "Froxel Fog Inject");
+                    FroxelInjectPass(CL);
+                }
+
+                {
+                    SCENE_GPU_SCOPE(CL, "Froxel Fog Integrate");
+                    FroxelIntegratePass(CL);
+                }
+
+                // Before translucency, which fogs itself in BasePixelPass; this pass sees only opaque depth.
+                {
+                    SCENE_GPU_SCOPE(CL, "Froxel Fog Apply");
+                    FroxelApplyPass(CL);
+                }
+
+                {
                     SCENE_GPU_SCOPE(CL, "Moment Generation");
                     MomentGenerationPass(CL);
                 }
@@ -1298,31 +1330,6 @@ namespace Lumina
                 {
                     SCENE_GPU_SCOPE(CL, "Additive Translucent");
                     AdditiveTranslucentPass(CL);
-                }
-
-                {
-                    SCENE_GPU_SCOPE(CL, "Aerial Perspective");
-                    AerialPerspectivePass(CL);
-                }
-
-                {
-                    SCENE_GPU_SCOPE(CL, "Volumetric Clouds");
-                    VolumetricCloudPass(CL);
-                }
-
-                {
-                    SCENE_GPU_SCOPE(CL, "Froxel Fog Inject");
-                    FroxelInjectPass(CL);
-                }
-
-                {
-                    SCENE_GPU_SCOPE(CL, "Froxel Fog Integrate");
-                    FroxelIntegratePass(CL);
-                }
-
-                {
-                    SCENE_GPU_SCOPE(CL, "Froxel Fog Apply");
-                    FroxelApplyPass(CL);
                 }
 
                 {
@@ -1665,6 +1672,8 @@ namespace Lumina
         Globals.MomentZerothIndex = (uint32)CurrentView->Images[(int)ENamedImage::MomentZeroth].GetResourceID();
         Globals.MomentsIndex      = (uint32)CurrentView->Images[(int)ENamedImage::Moments].GetResourceID();
 
+        PublishFogGlobals(Globals);
+
         return Globals;
     }
 
@@ -1693,15 +1702,16 @@ namespace Lumina
         TerrainRenderPass(CL);
         ScreenSpaceReflectionsPass(CL);
         WaterPass(CL);
+        AerialPerspectivePass(CL);
+        VolumetricCloudPass(CL);
+        CloudShadowMapPass(CL);
+        FroxelInjectPass(CL);
+        FroxelIntegratePass(CL);
+        FroxelApplyPass(CL);
         MomentGenerationPass(CL);
         TransparentPass(CL);
         OITResolvePass(CL);
         AdditiveTranslucentPass(CL);
-        AerialPerspectivePass(CL);
-        VolumetricCloudPass(CL);
-        FroxelInjectPass(CL);
-        FroxelIntegratePass(CL);
-        FroxelApplyPass(CL);
         BloomPass(CL);
         AutoExposurePass(CL);
         ToneMappingPass(CL);
@@ -2316,6 +2326,7 @@ namespace Lumina
             auto EnvironmentView     = Registry.view<SEnvironmentComponent>(entt::exclude<SDisabledTag>);
             auto SkyLightView        = Registry.view<SSkyLightComponent>(entt::exclude<SDisabledTag>);
             auto FogView             = Registry.view<SExponentialHeightFogComponent>(entt::exclude<SDisabledTag>);
+            auto FogVolumeView       = Registry.view<SLocalFogVolumeComponent>(entt::exclude<SDisabledTag>);
             auto CloudView           = Registry.view<SCloudComponent>(entt::exclude<SDisabledTag>);
             auto TerrainAllView      = Registry.view<STerrainComponent>();
             auto TerrainView         = Registry.view<STerrainComponent>(entt::exclude<SDisabledTag>);
@@ -3305,9 +3316,64 @@ namespace Lumina
                                                     Fog.MultiScatterShadowLeak,
                                                     Fog.MultiScatterFalloff);
 
+                    const float NoiseStrength = Fog.bDensityNoise ? Math::Clamp(Fog.NoiseStrength, 0.0f, 1.0f) : 0.0f;
+                    P.NoiseParams = FVector4(NoiseStrength,
+                                             1.0f / Math::Max(Fog.NoiseScale, 1.0f),
+                                             (float)Math::Clamp(Fog.NoiseOctaves, 1, 4),
+                                             Math::Clamp(Fog.NoiseDetailGain, 0.0f, 1.0f));
+
+                    FVector3 NoiseWind = Fog.NoiseWindDirection;
+                    const float WindLen = Math::Length(NoiseWind);
+                    NoiseWind = WindLen > 1e-4f ? (NoiseWind / WindLen) * Math::Max(Fog.NoiseWindSpeed, 0.0f)
+                                                : FVector3(0.0f);
+                    // Capped at the froxel range, since noise still fading at the hand-off reads as a seam.
+                    const float NoiseFade = Math::Min(Math::Max(Fog.NoiseFadeDistance, 1.0f),
+                                                      Math::Max(Fog.VolumetricMaxDistance, 1.0f));
+                    P.NoiseWind = FVector4(NoiseWind, NoiseFade);
+
+                    Frame.Volumetrics.FarShaftSteps    = (uint32)Math::Clamp(Fog.FarShaftSteps, 0, 64);
+                    Frame.Volumetrics.FarShaftDistance = Math::Max(Fog.FarShaftDistance, 1.0f);
+
                     Frame.Volumetrics.bHasFog        = true;
                     Frame.Volumetrics.bVolumetricFog = Fog.bVolumetricFog;
                 });
+
+                Frame.Volumetrics.FogVolumes.clear();
+                if (Frame.Volumetrics.bHasFog && Frame.Volumetrics.bVolumetricFog)
+                {
+                    FogVolumeView.each([&](entt::entity Entity, const SLocalFogVolumeComponent& Volume)
+                    {
+                        if (!Volume.bEnabled || Frame.Volumetrics.FogVolumes.size() >= GFogMaxVolumes)
+                        {
+                            return;
+                        }
+
+                        FVector3 Extent = FVector3(Math::Max(Volume.Extent.x, 0.01f),
+                                                   Math::Max(Volume.Extent.y, 0.01f),
+                                                   Math::Max(Volume.Extent.z, 0.01f));
+                        if (Volume.bSphere)
+                        {
+                            // A sphere is a uniform scale, so the shader's radial test stays a plain length.
+                            const float R = Math::Max(Extent.x, Math::Max(Extent.y, Extent.z));
+                            Extent = FVector3(R, R, R);
+                        }
+
+                        FGPUFogVolume Item;
+                        Item.WorldToVolume = Math::Inverse(Math::Scale(TransformStorage.get(Entity).GetWorldMatrix(), Extent));
+
+                        constexpr float ContrastThreshold = 3.912f;
+                        const float Density = ContrastThreshold / Math::Max(Volume.VisibilityDistance, 1.0f);
+
+                        Item.Albedo   = FVector4(Volume.Albedo, Density);
+                        Item.Emissive = FVector4(Volume.EmissiveColor * Math::Max(Volume.EmissiveIntensity, 0.0f), 0.0f);
+                        Item.Params   = FVector4(Volume.bSphere ? 1.0f : 0.0f,
+                                                 Math::Clamp(Volume.EdgeSoftness, 0.001f, 1.0f),
+                                                 Math::Max(Volume.ScatteringIntensity, 0.0f),
+                                                 0.0f);
+
+                        Frame.Volumetrics.FogVolumes.push_back(Item);
+                    });
+                }
             }
         }
 
@@ -3487,6 +3553,9 @@ namespace Lumina
         Flush(RunStart, RunEnd);
     }
 
+    // Vulkan guarantees at least this on maxComputeWorkGroupCount[1], and the bounds dispatch uses y per slot.
+    static constexpr uint32 kMaxSkinnedBoundsDispatchY = 65535u;
+
     void FDefaultSceneRenderer::UploadSkinnedFrameData(RHI::FCmdListH CL, FFrameData& Frame)
     {
         TVector<FSkinnedFrameData>& Data  = Frame.Geometry.SkinnedFrameData;
@@ -3513,13 +3582,78 @@ namespace Lumina
 
         WriteBuffer(CL, SkinnedSlotListBuffer.GetAddress(), Slots.data(), Slots.size() * sizeof(uint32));
 
-        // Stamped on the render thread, since the merge ran against a different FFrameData.
+        //~ Bounds arena layout, assigned before the upload below carries the bases to the GPU.
+        SkinnedBoundsMaxRange = 0;
+        uint64 BoundsTotal    = 0;
+
         for (uint32 Slot : Slots)
         {
-            if (Slot < (uint32)Data.size())
+            if (Slot >= (uint32)Data.size())
             {
-                Data[Slot].FrameTag = CurrentSkinnedFrameTag;
+                continue;
             }
+
+            const FSkinnedFrameData& D = Data[Slot];
+            const uint32 Begin = Math::Min(D.SurfaceMeshletOffset, D.ShadowMeshletOffset);
+            const uint32 End   = Math::Max(D.SurfaceMeshletOffset + D.SurfaceMeshletCount,
+                                           D.ShadowMeshletOffset + D.ShadowMeshletCount);
+            const uint32 Len   = (End > Begin) ? (End - Begin) : 0u;
+
+            SkinnedBoundsMaxRange = Math::Max(SkinnedBoundsMaxRange, Len);
+            BoundsTotal += Len;
+        }
+
+        ResizeBufferIfNeeded(CL, SkinnedMeshletBoundsBuffer,
+                             Math::Max<SIZE_T>(sizeof(FMeshletSphere), (SIZE_T)BoundsTotal * sizeof(FMeshletSphere)),
+                             1.25f, SkinnedMeshletBoundsLowUsage, true, EBufferInit::Zeroed, "Skinning.MeshletBounds");
+
+        ResizeBufferIfNeeded(CL, SkinnedMeshletConeBuffer,
+                             Math::Max<SIZE_T>(sizeof(FSkinnedMeshletCone), (SIZE_T)BoundsTotal * sizeof(FSkinnedMeshletCone)),
+                             1.25f, SkinnedMeshletConeLowUsage, true, EBufferInit::Zeroed, "Skinning.MeshletCones");
+
+        // The smaller of the two, since one base indexes both and a slot must fit in each.
+        const uint32 SphereCap = SkinnedMeshletBoundsBuffer
+            ? (uint32)Math::Min<uint64>(SkinnedMeshletBoundsBuffer.GetSize() / sizeof(FMeshletSphere), 0xFFFFFFFFull)
+            : 0u;
+        const uint32 ConeCap = SkinnedMeshletConeBuffer
+            ? (uint32)Math::Min<uint64>(SkinnedMeshletConeBuffer.GetSize() / sizeof(FSkinnedMeshletCone), 0xFFFFFFFFull)
+            : 0u;
+
+        SkinnedMeshletBoundsCapacity = Math::Min(SphereCap, ConeCap);
+
+        // Stamped on the render thread, since the merge ran against a different FFrameData.
+        uint32 BoundsCursor  = 0;
+        uint32 DispatchIndex = 0;
+
+        for (uint32 Slot : Slots)
+        {
+            if (Slot >= (uint32)Data.size())
+            {
+                continue;
+            }
+
+            // Position in this list is the bounds dispatch's y index, which cannot exceed the grid limit.
+            const bool bDispatchable = DispatchIndex < kMaxSkinnedBoundsDispatchY;
+            DispatchIndex++;
+
+            FSkinnedFrameData& D = Data[Slot];
+            D.FrameTag = CurrentSkinnedFrameTag;
+
+            const uint32 Begin = Math::Min(D.SurfaceMeshletOffset, D.ShadowMeshletOffset);
+            const uint32 End   = Math::Max(D.SurfaceMeshletOffset + D.SurfaceMeshletCount,
+                                           D.ShadowMeshletOffset + D.ShadowMeshletCount);
+            const uint32 Len   = (End > Begin) ? (End - Begin) : 0u;
+
+            // All or nothing, because a partly written slice leaves the cull rejecting against stale data.
+            if (Len == 0u || !bDispatchable || (uint64)BoundsCursor + Len > SkinnedMeshletBoundsCapacity)
+            {
+                D.SkinnedBoundsBase = kNoSkinnedBounds;
+                continue;
+            }
+
+            // Folded so the shader indexes by a mesh-global meshlet index, same trick as the pre-skin slice.
+            D.SkinnedBoundsBase = BoundsCursor - Begin;
+            BoundsCursor += Len;
         }
 
         // Only the gathered slots, coalesced; ungathered slots are rejected by their frame tag.
@@ -3566,6 +3700,62 @@ namespace Lumina
             RunEnd   = End;
         }
         Flush(RunStart, RunEnd);
+    }
+
+    void FDefaultSceneRenderer::SkinnedMeshletBoundsPass(RHI::FCmdListH CL, const FFrameData& Frame)
+    {
+        const uint32 NumSkinned = (uint32)Frame.Geometry.SkinnedSlots.size();
+        if (NumSkinned == 0 || SkinnedBoundsMaxRange == 0 || SkinnedMeshletBoundsCapacity == 0
+            || RetainedStaticCapacity == 0)
+        {
+            return;
+        }
+
+        static const FShaderH BoundsShader = FShaderLibrary::Get("SkinnedMeshletBounds.slang");
+        if (!BoundsShader || !SkinnedSlotListBuffer || !SkinnedFrameDataBuffer
+            || !RetainedStaticBuffer || !SkinnedMeshletBoundsBuffer || !SkinnedMeshletConeBuffer)
+        {
+            return;
+        }
+
+        LUMINA_PROFILE_SECTION_COLORED("Skinned Meshlet Bounds", tracy::Color::SkyBlue3);
+        SCENE_GPU_SCOPE(CL, "Skinned Meshlet Bounds");
+
+        struct FSkinnedBoundsPC
+        {
+            uint32 NumSlots;
+            uint32 MaxRange;
+            uint32 BoundsCapacity;
+            uint32 RetainedCapacity;
+            uint64 SlotListAddr;
+            uint64 SkinnedDataAddr;
+            uint64 RetainedStaticAddr;
+            uint64 OutBoundsAddr;
+            uint64 OutConesAddr;
+        } PC = {};
+        static_assert(sizeof(FSkinnedBoundsPC) == 56, "FSkinnedBoundsPC must match SkinnedMeshletBounds.slang.");
+
+        PC.NumSlots           = NumSkinned;
+        PC.MaxRange           = SkinnedBoundsMaxRange;
+        PC.BoundsCapacity     = SkinnedMeshletBoundsCapacity;
+        PC.RetainedCapacity   = RetainedStaticCapacity;
+        PC.SlotListAddr       = SkinnedSlotListBuffer.GetAddress();
+        PC.SkinnedDataAddr    = SkinnedFrameDataBuffer.GetAddress();
+        PC.RetainedStaticAddr = RetainedStaticBuffer.GetAddress();
+        PC.OutBoundsAddr      = SkinnedMeshletBoundsBuffer.GetAddress();
+        PC.OutConesAddr       = SkinnedMeshletConeBuffer.GetAddress();
+
+        constexpr uint32 kBoundsGroupSize = 64;
+        const uint32 GroupsX = (SkinnedBoundsMaxRange + kBoundsGroupSize - 1u) / kBoundsGroupSize;
+
+        // Slots past the grid limit were given kNoSkinnedBounds above, so dropping them here loses nothing.
+        const uint32 GroupsY = Math::Min(NumSkinned, kMaxSkinnedBoundsDispatchY);
+
+        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(BoundsShader));
+        RHI::CmdDispatch(CL, MakeArgs(PC), GroupsX, GroupsY, 1u);
+
+        // Read by the cull, which is the next thing to run.
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute);
     }
 
     void FDefaultSceneRenderer::CompileDrawCommands_Render(RHI::FCmdListH CL)
@@ -3840,6 +4030,9 @@ namespace Lumina
             SceneRootShared.Materials          = Render().GetMaterialManager().GetMaterialBuffer();
             SceneRootShared.MeshletDrawList    = GetMeshletDrawList().GetAddress();
             SceneRootShared.PreSkinnedVertices = GetPreSkinnedVerticesBuffer().GetAddress();
+            SceneRootShared.SkinnedMeshletBounds = SkinnedMeshletBoundsBuffer.GetAddress();
+            SceneRootShared.SkinnedFrameData     = SkinnedFrameDataBuffer.GetAddress();
+            SceneRootShared.SkinnedMeshletCones  = SkinnedMeshletConeBuffer.GetAddress();
             if (IsGTAOEnabled())
             {
                 SceneGlobalData.GTAOSettings.AOTextureIndex = (uint32)CurrentView->Images[(int)ENamedImage::GTAOBlur].GetResourceID();
@@ -3859,6 +4052,8 @@ namespace Lumina
             // Published unconditionally, since the images outlive the pass and nothing else reads them.
             SceneGlobalData.MomentZerothIndex = (uint32)CurrentView->Images[(int)ENamedImage::MomentZeroth].GetResourceID();
             SceneGlobalData.MomentsIndex      = (uint32)CurrentView->Images[(int)ENamedImage::Moments].GetResourceID();
+
+            PublishFogGlobals(SceneGlobalData);
 
             SetSceneRoot(CL, *CurrentView, RHI::Core::CopyTransient(SceneGlobalData));
 
@@ -9304,19 +9499,60 @@ namespace Lumina
         // Mirrors the FPushConstants in the three VolumetricFog*.slang shaders.
         struct FFroxelInjectPushConstants
         {
-            uint32 GridSize[3];
-            float  NearPlane;
-            float  FogRange;            // froxel far plane (max fog distance, view units)
-            uint32 bSunVolumetric;      // 1 if light 0 (sun) opted into volumetrics
-            uint32 NumLocalVolumetric;  // <= GFroxelMaxLocalLights
-            float  Time;
-            uint32 LocalLightIndices[GFroxelMaxLocalLights];
-            uint64 FogAddr;             // fog params UBO, offset 96, 8-aligned
-            uint32 ScatterUAV;          // bindless 3D UAV index of the scatter volume
-            uint32 bSupersampleLocal;   // 1 = 4x supersample local light in-scatter per froxel
+            uint32   GridSize[3];
+            float    NearPlane;
 
+            float    FogRange;            // froxel far plane (max fog distance, view units)
+            uint32   bSunVolumetric;      // 1 if light 0 (sun) opted into volumetrics
+            float    Time;
+            uint32   ScatterUAV;          // bindless 3D UAV index of the scatter volume
+
+            uint32   bSupersampleLocal;   // 1 = 4x supersample local light in-scatter per froxel
+            uint32   NumFogVolumes;
+            uint32   CloudShadowIndex;    // bindless 2D SRV, ~0u when no cloud shadow was built
+            float    CloudShadowExtent;
+
+            float    CloudShadowCenter[2];
+            float    _Pad0[2];
+
+            uint64   FogVolumesAddr;      // FGPUFogVolume[NumFogVolumes], offset 64, 8-aligned
         };
         static_assert(sizeof(FFroxelInjectPushConstants) <= 128, "Froxel inject PC must fit 128B");
+        static_assert(offsetof(FFroxelInjectPushConstants, FogVolumesAddr) % 8 == 0, "PC pointer must be 8-aligned");
+
+        struct FCloudShadowPushConstants
+        {
+            // Mirrors FCloudMedium in Includes/CloudCommon.slang.
+            uint32 NoiseIndex;
+            float  ShapeScale;
+            float  DetailScale;
+            float  DetailStrength;
+
+            float  Billow;
+            float  Coverage;
+            float  Density;
+            float  LayerBottom;
+
+            float  LayerTop;
+            float  _MediumPad0;
+            float  WindOffset[2];
+
+            float  DetailWindOffset[2];
+            float  _MediumPad1[2];
+
+            uint32 ShadowUAV;
+            uint32 Resolution;
+            uint32 MarchSteps;
+            float  HalfExtent;
+
+            float  Center[2];
+            float  Absorption;
+            float  _Pad0;
+
+            float  SunDirection[3];
+            float  _Pad1;
+        };
+        static_assert(sizeof(FCloudShadowPushConstants) <= 128, "Cloud shadow PC must fit 128B");
 
         struct FFroxelIntegratePushConstants
         {
@@ -9330,15 +9566,151 @@ namespace Lumina
 
         struct FFroxelApplyPushConstants
         {
-            uint64 FogAddr;          // device address of the fog-params UBO (transient)
             uint32 DepthIndex;       // bindless 2D SRV of scene depth
             uint32 IntegratedIndex;  // bindless 3D SRV of the integrated froxel volume
             uint32 GridZ;
             float  NearPlane;
+
             float  FogRange;
             uint32 bVolumetric;      // froxel volume valid this frame; 0 = analytic height fog only
+            uint32 FarShaftSteps;    // 0 = far field stays closed-form and unshadowed
+            float  FarShaftDistance;
+
+            uint32 CloudShadowIndex; // bindless 2D SRV, ~0u when no cloud shadow was built
+            float  CloudShadowExtent;
+            float  CloudShadowCenter[2];
         };
-        static_assert(sizeof(FFroxelApplyPushConstants) == 32, "Froxel apply PC must match the slang push block.");
+        static_assert(sizeof(FFroxelApplyPushConstants) == 48, "Froxel apply PC must match the slang push block.");
+    }
+
+    void FDefaultSceneRenderer::PublishFogGlobals(FSceneGlobalData& Globals) const
+    {
+        const FFrameData& Frame = *RenderFrame;
+        const bool bHasFog      = Frame.Volumetrics.bHasFog;
+        const bool bVolumetric  = bHasFog && Frame.Volumetrics.bVolumetricFog;
+
+        Globals.FogParams           = Frame.Volumetrics.FogParams;
+        Globals.bFogEnabled         = bHasFog ? 1u : 0u;
+        Globals.FogGridZ            = FroxelGridSize.z;
+        Globals.FogNearPlane        = Math::Max(Globals.NearPlane, 0.05f);
+        Globals.FogRange            = Math::Clamp(Frame.Volumetrics.FogParams.VolumetricParams.z, 1.0f, Globals.FarPlane);
+        Globals.FogFarShaftSteps    = Frame.Volumetrics.FarShaftSteps;
+        Globals.FogFarShaftDistance = Frame.Volumetrics.FarShaftDistance;
+
+        Globals.FogIntegratedIndex = bVolumetric
+            ? (uint32)CurrentView->Images[(int)ENamedImage::FroxelIntegrated].GetResourceID()
+            : ~0u;
+
+        Globals.FogCloudShadowIndex  = ~0u;
+        Globals.FogCloudShadowExtent = 0.0f;
+        Globals.FogCloudShadowCenter = FVector2(0.0f, 0.0f);
+
+        bool  bCloudShadows = true;
+        float Extent        = 4000.0f;
+        if (const CRendererSettings* RS = GetDefault<CRendererSettings>())
+        {
+            bCloudShadows = RS->bCloudShadows;
+            Extent        = Math::Max(RS->CloudShadowExtent, 100.0f);
+        }
+        if (!bCloudShadows || !bHasFog || !Frame.Volumetrics.bClouds)
+        {
+            return;
+        }
+
+        const FSceneImage& Shadow = CurrentView->Images[(int)ENamedImage::CloudShadow];
+        if (!Shadow.IsValid())
+        {
+            return;
+        }
+
+        // Snapped to its own texel grid, or every camera step reshuffles the integral and the fog crawls.
+        const float Texel = (2.0f * Extent) / (float)Math::Max(Shadow.GetSizeX(), 1u);
+        const FVector3 Cam = FVector3(Globals.CameraData.Location);
+
+        Globals.FogCloudShadowIndex  = (uint32)Shadow.GetResourceID();
+        Globals.FogCloudShadowExtent = Extent;
+        Globals.FogCloudShadowCenter = FVector2(Math::Floor(Cam.x / Texel) * Texel,
+                                                Math::Floor(Cam.z / Texel) * Texel);
+    }
+
+    void FDefaultSceneRenderer::CloudShadowMapPass(RHI::FCmdListH CL)
+    {
+        const FFrameData& Frame = *RenderFrame;
+        if (Frame.SceneGlobalData.FogCloudShadowIndex == ~0u)
+        {
+            return;
+        }
+
+        static const FShaderH CS = FShaderLibrary::Get("CloudShadowMap.slang");
+        if (!CS)
+        {
+            return;
+        }
+
+        const FSceneImage& Noise  = GetNamedImage(ENamedImage::CloudNoise);
+        const FSceneImage& Shadow = GetNamedImage(ENamedImage::CloudShadow);
+        if (!Noise.IsValid() || !Shadow.IsValid() || !CurrentView->bCloudNoiseBaked)
+        {
+            return;
+        }
+
+        const int32 ShadowUAV = Shadow.GetMipUAVIndex(0);
+        if (ShadowUAV < 0)
+        {
+            return;
+        }
+
+        LUMINA_PROFILE_SECTION_COLORED("Cloud Shadow Map", tracy::Color::LightSlateGray);
+
+        const SCloudComponent& C = Frame.Volumetrics.Clouds;
+        const auto& LightData    = Frame.Lighting.LightData;
+
+        const FVector3 SunDir = LightData.bHasSun
+            ? Math::Normalize(LightData.SunDirection)
+            : Math::Normalize(FVector3(0.3f, 0.8f, 0.4f));
+
+        FVector2 Wind       = C.WindDirection;
+        const float WindLen = Math::Sqrt(Wind.x * Wind.x + Wind.y * Wind.y);
+        Wind = (WindLen > 1e-4f) ? FVector2(Wind.x / WindLen, Wind.y / WindLen) : FVector2(1.0f, 0.0f);
+        const float Drift = C.WindSpeed * Frame.SceneGlobalData.Time;
+
+        int32 Steps = 8;
+        if (const CRendererSettings* RS = GetDefault<CRendererSettings>())
+        {
+            Steps = Math::Clamp(RS->CloudShadowSteps, 1, 32);
+        }
+
+        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CS));
+
+        FCloudShadowPushConstants PC = {};
+        PC.NoiseIndex          = (uint32)Noise.GetResourceID();
+        PC.ShapeScale          = Math::Max(C.ShapeScale, 100.0f);
+        PC.DetailScale         = Math::Max(C.DetailScale, 10.0f);
+        PC.DetailStrength      = Math::Clamp(C.DetailStrength, 0.0f, 1.0f);
+        PC.Billow              = Math::Clamp(C.Billow, 0.0f, 1.0f);
+        PC.Coverage            = Math::Clamp(C.Coverage, 0.0f, 1.0f);
+        PC.Density             = Math::Max(C.Density, 0.0f);
+        PC.LayerBottom         = Math::Max(C.LayerBottom, 100.0f);
+        PC.LayerTop            = Math::Max(C.LayerTop, C.LayerBottom + 1.0f);
+        PC.WindOffset[0]       = Wind.x * Drift;
+        PC.WindOffset[1]       = Wind.y * Drift;
+        PC.DetailWindOffset[0] = Wind.x * Drift * 2.0f;
+        PC.DetailWindOffset[1] = Wind.y * Drift * 2.0f;
+
+        PC.ShadowUAV       = (uint32)ShadowUAV;
+        PC.Resolution      = Shadow.GetSizeX();
+        PC.MarchSteps      = (uint32)Steps;
+        PC.HalfExtent      = Frame.SceneGlobalData.FogCloudShadowExtent;
+        PC.Center[0]       = Frame.SceneGlobalData.FogCloudShadowCenter.x;
+        PC.Center[1]       = Frame.SceneGlobalData.FogCloudShadowCenter.y;
+        PC.Absorption      = 1.0f;
+        PC.SunDirection[0] = SunDir.x;
+        PC.SunDirection[1] = SunDir.y;
+        PC.SunDirection[2] = SunDir.z;
+
+        const uint32 Groups = RenderUtils::GetGroupCount(Shadow.GetSizeX(), 8);
+        RHI::CmdDispatch(CL, MakeArgs(PC), Groups, Groups, 1u);
+        Barriers::ComputeToAll(CL);
     }
 
     void FDefaultSceneRenderer::FroxelInjectPass(RHI::FCmdListH CL)
@@ -9352,28 +9724,9 @@ namespace Lumina
         const auto& LightData       = Frame.Lighting.LightData;
         const auto& SceneGlobalData = Frame.SceneGlobalData;
 
-        bool   bSunVolumetric = false;
-        uint32 LocalIndices[GFroxelMaxLocalLights];
-        uint32 NumLocal = 0;
-
-        if (LightData.NumLights > 0
+        const bool bSunVolumetric = LightData.NumLights > 0
             && EnumHasAnyFlags(LightData.Lights[0].Flags, ELightFlags::Directional)
-            && EnumHasAnyFlags(LightData.Lights[0].Flags, ELightFlags::Volumetric))
-        {
-            bSunVolumetric = true;
-        }
-        for (uint32 i = 1; i < LightData.NumLights; ++i)
-        {
-            if (!EnumHasAnyFlags(LightData.Lights[i].Flags, ELightFlags::Volumetric))
-            {
-                continue;
-            }
-            if (NumLocal >= GFroxelMaxLocalLights)
-            {
-                break;
-            }
-            LocalIndices[NumLocal++] = i;
-        }
+            && EnumHasAnyFlags(LightData.Lights[0].Flags, ELightFlags::Volumetric);
 
         LUMINA_PROFILE_SECTION_COLORED("Froxel Inject Pass", tracy::Color::SlateBlue);
 
@@ -9388,26 +9741,30 @@ namespace Lumina
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CS));
 
         const float FogRange = Math::Clamp(Frame.Volumetrics.FogParams.VolumetricParams.z, 1.0f, SceneGlobalData.FarPlane);
+        const uint32 NumVolumes = Math::Min((uint32)Frame.Volumetrics.FogVolumes.size(), GFogMaxVolumes);
 
         FFroxelInjectPushConstants PC = {};
-        PC.FogAddr            = RHI::Core::CopyTransient(Frame.Volumetrics.FogParams);
-        PC.ScatterUAV         = (uint32)Scatter.GetMipUAVIndex(0);
-        PC.GridSize[0]        = FroxelGridSize.x;
-        PC.GridSize[1]        = FroxelGridSize.y;
-        PC.GridSize[2]        = FroxelGridSize.z;
-        PC.NearPlane          = Math::Max(SceneGlobalData.NearPlane, 0.05f);
-        PC.FogRange           = FogRange;
-        PC.bSunVolumetric     = bSunVolumetric ? 1u : 0u;
-        PC.NumLocalVolumetric = NumLocal;
-        PC.Time               = SceneGlobalData.Time;
-        PC.bSupersampleLocal  = 1u;
+        PC.ScatterUAV           = (uint32)Scatter.GetMipUAVIndex(0);
+        PC.GridSize[0]          = FroxelGridSize.x;
+        PC.GridSize[1]          = FroxelGridSize.y;
+        PC.GridSize[2]          = FroxelGridSize.z;
+        PC.NearPlane            = Math::Max(SceneGlobalData.NearPlane, 0.05f);
+        PC.FogRange             = FogRange;
+        PC.bSunVolumetric       = bSunVolumetric ? 1u : 0u;
+        PC.Time                 = SceneGlobalData.Time;
+        PC.NumFogVolumes        = NumVolumes;
+        PC.CloudShadowIndex     = SceneGlobalData.FogCloudShadowIndex;
+        PC.CloudShadowExtent    = SceneGlobalData.FogCloudShadowExtent;
+        PC.CloudShadowCenter[0] = SceneGlobalData.FogCloudShadowCenter.x;
+        PC.CloudShadowCenter[1] = SceneGlobalData.FogCloudShadowCenter.y;
+        PC.bSupersampleLocal    = 1u;
         if (const CRendererSettings* RS = GetDefault<CRendererSettings>())
         {
             PC.bSupersampleLocal = RS->bSupersampleVolumetricLights ? 1u : 0u;
         }
-        for (uint32 i = 0; i < NumLocal; ++i)
+        if (NumVolumes > 0)
         {
-            PC.LocalLightIndices[i] = LocalIndices[i];
+            PC.FogVolumesAddr = RHI::Core::CopyTransientArray(Frame.Volumetrics.FogVolumes.data(), NumVolumes);
         }
 
         RHI::CmdDispatch(CL, MakeArgs(PC),
@@ -9509,13 +9866,18 @@ namespace Lumina
         RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
         FFroxelApplyPushConstants PC = {};
-        PC.FogAddr         = RHI::Core::CopyTransient(Frame.Volumetrics.FogParams);
         PC.DepthIndex      = (uint32)SceneDepth.GetResourceID();
         PC.IntegratedIndex = (uint32)Integrated.GetResourceID();
         PC.GridZ           = FroxelGridSize.z;
         PC.NearPlane       = Math::Max(Frame.SceneGlobalData.NearPlane, 0.05f);
         PC.FogRange        = Math::Clamp(Frame.Volumetrics.FogParams.VolumetricParams.z, 1.0f, Frame.SceneGlobalData.FarPlane);
         PC.bVolumetric     = Frame.Volumetrics.bVolumetricFog ? 1u : 0u;
+        PC.FarShaftSteps        = Frame.Volumetrics.FarShaftSteps;
+        PC.FarShaftDistance     = Frame.Volumetrics.FarShaftDistance;
+        PC.CloudShadowIndex     = Frame.SceneGlobalData.FogCloudShadowIndex;
+        PC.CloudShadowExtent    = Frame.SceneGlobalData.FogCloudShadowExtent;
+        PC.CloudShadowCenter[0] = Frame.SceneGlobalData.FogCloudShadowCenter.x;
+        PC.CloudShadowCenter[1] = Frame.SceneGlobalData.FogCloudShadowCenter.y;
 
         RHI::CmdDraw(CL, MakeArgs(PC), 3, 1, 0, 0);
         RHI::CmdEndRenderPass(CL);
@@ -11816,6 +12178,7 @@ namespace Lumina
             const uint32 TransformCap = (uint32)Math::Min<uint64>(RetainedTransformBuffer.GetSize() / sizeof(FTransform3x4), 0xFFFFFFFFull);
             const uint32 StaticCap    = (uint32)Math::Min<uint64>(RetainedStaticBuffer.GetSize() / sizeof(FInstanceStatic), 0xFFFFFFFFull);
             RetainedDeviceCapacity.store(Math::Min(CullCap, Math::Min(TransformCap, StaticCap)), std::memory_order_release);
+            RetainedStaticCapacity = StaticCap;
         }
 
         // Surface descriptors are interned, so this moves only when a new distinct LOD table appears.
@@ -11869,6 +12232,9 @@ namespace Lumina
         }
 
         Barriers::TransferToCompute(CL);
+
+        // Reads RetainedStatic, so it has to sit after that upload and after the barrier publishing it.
+        SkinnedMeshletBoundsPass(CL, Frame);
 
         //~ Cull + LOD + compaction.
         if (RetainedSlots > 0 && NumCullViews > 0 && NumDescs > 0 && VisibleInstanceRing[Slot])
@@ -12094,6 +12460,7 @@ namespace Lumina
         case ENamedImage::AerialTransmittance: return "Scene.AerialTransmittance";
         case ENamedImage::CloudNoise:         return "Scene.CloudNoise";
         case ENamedImage::CloudScatter:       return "Scene.CloudScatter";
+        case ENamedImage::CloudShadow:        return "Scene.CloudShadow";
         case ENamedImage::BRDFLut:            return "Scene.BRDFLut";
         case ENamedImage::SkyCube:            return "Scene.SkyCube";
         case ENamedImage::SkyIrradiance:      return "Scene.SkyIrradiance";
@@ -12447,6 +12814,18 @@ namespace Lumina
             ScatterDesc.Format    = EFormat::RGBA16_FLOAT;
             ScatterDesc.Usage     = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
             View.Images[(int)ENamedImage::CloudScatter] = CreateSceneImage(ScatterDesc, true, true);
+
+            int32 CloudShadowRes = 512;
+            if (const CRendererSettings* RS = GetDefault<CRendererSettings>())
+            {
+                CloudShadowRes = Math::Clamp(RS->CloudShadowResolution, 128, 2048);
+            }
+            RHI::FTextureDesc CloudShadowDesc;
+            CloudShadowDesc.Type      = RHI::ETextureType::Tex2D;
+            CloudShadowDesc.Dimension = FUIntVector3((uint32)CloudShadowRes, (uint32)CloudShadowRes, 1);
+            CloudShadowDesc.Format    = EFormat::R16_FLOAT;
+            CloudShadowDesc.Usage     = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
+            View.Images[(int)ENamedImage::CloudShadow] = CreateSceneImage(CloudShadowDesc, true, true);
         }
 
         {

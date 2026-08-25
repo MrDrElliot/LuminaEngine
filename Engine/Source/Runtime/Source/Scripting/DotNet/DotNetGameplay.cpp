@@ -1358,10 +1358,14 @@ LUMINA_DOTNET_EXPORT(void, UI_ElementFocus)(void* Element) { RmlUi::ElementFocus
 LUMINA_DOTNET_EXPORT(void, UI_ElementBlur)(void* Element)  { RmlUi::ElementBlur(Element); }
 LUMINA_DOTNET_EXPORT(void, UI_ElementClick)(void* Element) { RmlUi::ElementClick(Element); }
 
-LUMINA_DOTNET_EXPORT(void*, UI_AddEventListener)(uint64 World, void* Element, const char* Type, int32 Len, void* Thunk, void* Context)
+LUMINA_DOTNET_EXPORT(void*, UI_AddEventListener)(uint64 World, void* Element, const char* Type, int32 Len)
 {
-    return RmlUi::AddElementEventListener(AsWorld(World), Element, UIView(Type, Len),
-        reinterpret_cast<RmlUi::FManagedUIEventThunk>(Thunk), Context);
+    return RmlUi::AddElementEventListener(AsWorld(World), Element, UIView(Type, Len));
+}
+
+LUMINA_DOTNET_EXPORT(void*, UI_GetEventListenerDelegate)(void* Listener)
+{
+    return RmlUi::GetElementEventListenerDelegate(Listener);
 }
 
 LUMINA_DOTNET_EXPORT(void, UI_RemoveEventListener)(uint64 World, void* Listener)

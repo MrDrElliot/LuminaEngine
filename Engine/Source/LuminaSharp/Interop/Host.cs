@@ -147,6 +147,28 @@ public static unsafe partial class Host
         }
     }
 
+    // Called as a native object releases its managed handle, from every destruction path there is.
+    internal static void ForgetScriptHandle(IntPtr Handle)
+    {
+        Scripts?.EntityScripts?.Forget(Handle);
+    }
+
+    // The generation outlives a world, so state keyed on one accumulates every PIE session without this.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static void OnWorldTeardown(ulong World)
+    {
+        try
+        {
+            BusRegistry.Remove(World);
+            UIDataModel.RemoveForWorld(World);
+        }
+        catch (Exception Exception)
+        {
+            Native.Log(ELogLevel.Error, $"OnWorldTeardown threw: {Exception}");
+        }
+    }
+
     [ManagedExport]
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
     public static int GetGeneration()

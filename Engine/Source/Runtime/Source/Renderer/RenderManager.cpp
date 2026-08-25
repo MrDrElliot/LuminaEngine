@@ -295,6 +295,8 @@ namespace Lumina
         {
             return;
         }
+        
+        LUMINA_PROFILE_SCOPE();
 
         RHI::RecreateSwapchain(Swapchain, Extent);
         OnSwapchainResized.Broadcast(FVector2(Extent));

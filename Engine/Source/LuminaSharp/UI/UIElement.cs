@@ -163,18 +163,26 @@ public readonly unsafe struct UIElement
 
         // A struct can't be captured by a lambda, so copy the world handle into a local first.
         ulong WorldId = World;
-        // Wrap so the native thunk's type-erased context resolves back to this handler, fed a friendly
-        // UIEvent (carrying the world so Target/Current can be wrapped as UIElement).
-        Action<UIEventData> Trampoline = Data => Handler(new UIEvent(WorldId, Data));
-        GCHandle Handle = GCHandle.Alloc(Trampoline);
 
-        IntPtr Listener = Native.UI_AddEventListener(WorldId, Ptr, EventType, EventThunkPtr, GCHandle.ToIntPtr(Handle));
+        IntPtr Listener = Native.UI_AddEventListener(WorldId, Ptr, EventType);
         if (Listener == IntPtr.Zero)
         {
-            Handle.Free();
             return UIEventSubscription.Empty;
         }
-        return new UIEventSubscription(WorldId, Listener, Handle);
+
+        // Binding through the listener's own delegate is what lets its destructor release this handle,
+        // whether the element, the world or the script generation is what goes away first.
+        IntPtr Event = Native.UI_GetEventListenerDelegate(Listener);
+        DelegateBinding Binding = DelegateBindings.Bind((void*)Event,
+            new PayloadInvoker<UIEventData> { Handler = Data => Handler(new UIEvent(WorldId, Data)) });
+
+        if (!Binding.IsValid)
+        {
+            Native.UI_RemoveEventListener(WorldId, Listener);
+            return UIEventSubscription.Empty;
+        }
+
+        return new UIEventSubscription(WorldId, Listener, Binding);
     }
 
     /// <summary>Subscribe to "click" on this element.</summary>
@@ -182,27 +190,6 @@ public readonly unsafe struct UIElement
 
     /// <summary>Subscribe to "click" with a no-argument handler.</summary>
     public UIEventSubscription OnClick(Action Handler) => On("click", _ => Handler());
-
-    // Native event trampoline: resolve the GCHandle back to the managed callback and invoke it. Never lets
-    // a managed exception unwind into native (it is called from inside RmlUi's update).
-    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
-    private static void EventThunk(IntPtr Context, UIEventData* Data)
-    {
-        try
-        {
-            if (GCHandle.FromIntPtr(Context).Target is Action<UIEventData> Body)
-            {
-                Body(*Data);
-            }
-        }
-        catch (Exception Exception)
-        {
-            Interop.LogException(Exception);
-        }
-    }
-
-    private static readonly IntPtr EventThunkPtr =
-        (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, UIEventData*, void>)&EventThunk;
 
     private static readonly char[] MarkupChars = { '&', '<', '>' };
 

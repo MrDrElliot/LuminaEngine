@@ -37,8 +37,9 @@ public static unsafe partial class Native
     [NativeCall] public static partial void   UI_ElementClick(IntPtr Element);
 
     // Event listeners (managed thunk + GCHandle context, like the registry signals).
-    [NativeCall] public static partial IntPtr UI_AddEventListener(ulong World, IntPtr Element, string Type, IntPtr Thunk, IntPtr Context);
+    [NativeCall] public static partial IntPtr UI_AddEventListener(ulong World, IntPtr Element, string Type);
     [NativeCall] public static partial void   UI_RemoveEventListener(ulong World, IntPtr Listener);
+    [NativeCall] public static partial IntPtr UI_GetEventListenerDelegate(IntPtr Listener);
 
     // Data binding (MVVM). A named data model on the world context (Model is an opaque FManagedDataModel*).
     // SetThunk/EventThunk are managed function pointers; Context is the GCHandle handed back to them.

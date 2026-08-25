@@ -1,6 +1,7 @@
 ﻿#include "Platform/Time/PlatformTime.h"
 #include "RuntimePCH.h"
 #include "RmlUiBridge.h"
+#include "Core/Delegates/ScriptDelegate.h"
 
 #include "RmlUiFileInterface.h"
 #include "RmlUiRenderer.h"
@@ -227,12 +228,12 @@ namespace Lumina::RmlUi
         class FManagedUIListener final : public Rml::EventListener
         {
         public:
-            FManagedUIListener(FManagedUIEventThunk InThunk, void* InContext, CWorld* InWorld, Rml::String InType)
-                : Thunk(InThunk), Context(InContext), World(InWorld), Type(Move(InType)) {}
+            FManagedUIListener(CWorld* InWorld, Rml::String InType)
+                : World(InWorld), Type(Move(InType)) {}
 
             void ProcessEvent(Rml::Event& Event) override
             {
-                if (Thunk == nullptr)
+                if (!Event_.IsBound())
                 {
                     return;
                 }
@@ -252,14 +253,15 @@ namespace Lumina::RmlUi
                 if (Event.GetParameter<bool>("meta_key",  false)) Mods |= 0x8;
                 Data.Modifiers = Mods;
 
-                Thunk(Context, &Data);
+                Event_.Broadcast(Data);
             }
 
             void OnAttach(Rml::Element* InElement) override { Element = InElement; bAttached = true; }
             void OnDetach(Rml::Element*) override           { bAttached = false; }
 
-            FManagedUIEventThunk Thunk     = nullptr;
-            void*                Context   = nullptr;
+            // Destroying this listener destroys the delegate, which is what releases every script binding.
+            TScriptDelegate<FUIEventData> Event_;
+
             CWorld*              World     = nullptr;
             Rml::String          Type;
             Rml::Element*        Element   = nullptr;
@@ -1889,18 +1891,23 @@ namespace Lumina::RmlUi
         }
     }
 
-    void* AddElementEventListener(CWorld* World, void* Element, FStringView EventType, FManagedUIEventThunk Thunk, void* Context)
+    void* AddElementEventListener(CWorld* World, void* Element, FStringView EventType)
     {
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
-        if (!State.bInitialized || Element == nullptr || Thunk == nullptr || EventType.empty())
+        if (!State.bInitialized || Element == nullptr || EventType.empty())
         {
             return nullptr;
         }
-        FManagedUIListener* Listener = new FManagedUIListener(Thunk, Context, World, ToRml(EventType));
+        FManagedUIListener* Listener = new FManagedUIListener(World, ToRml(EventType));
         AsElement(Element)->AddEventListener(Listener->Type, Listener, false);
         State.UIListeners.push_back(Listener);
         return Listener;
+    }
+
+    void* GetElementEventListenerDelegate(void* Listener)
+    {
+        return Listener != nullptr ? static_cast<FScriptDelegateBase*>(&static_cast<FManagedUIListener*>(Listener)->Event_) : nullptr;
     }
 
     void RemoveElementEventListener(CWorld* World, void* Listener)

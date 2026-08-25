@@ -205,8 +205,11 @@ namespace Lumina::RmlUi
     // an opaque listener handle (null on failure); Remove detaches + frees it. Listeners are owned by the
     // bridge and reaped when the world's UI is destroyed, so a missed Remove never dangles -- it leaks the
     // managed GCHandle, exactly like a registry signal.
-    RUNTIME_API void* AddElementEventListener(CWorld* World, void* Element, FStringView EventType, FManagedUIEventThunk Thunk, void* Context);
+    RUNTIME_API void* AddElementEventListener(CWorld* World, void* Element, FStringView EventType);
     RUNTIME_API void  RemoveElementEventListener(CWorld* World, void* Listener);
+
+    // The listener's FScriptDelegateBase, which script binds to and whose destructor releases those binds.
+    RUNTIME_API void* GetElementEventListenerDelegate(void* Listener);
     
     // Scalar wire type for a bound variable. Mirrors LuminaSharp's EUIVarType. Numbers cross as double and
     // are coerced to the registered type in the cache (so {{ Health }} formats as int, not "100.000000").

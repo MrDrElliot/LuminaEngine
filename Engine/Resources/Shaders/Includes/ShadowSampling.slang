@@ -28,6 +28,67 @@ FShadowTex MakeShadowTex(uint Index)
 FShadowTex ShadowCascade() { return MakeShadowTex(GetSceneRoot().ShadowCascadeIndex); }
 FShadowTex ShadowAtlas()   { return MakeShadowTex(GetSceneRoot().ShadowAtlasIndex); }
 
+struct FCubemapCoord
+{
+    int Face;
+    float2 UV;
+};
+
+// Face of the point-light shadow cube a direction falls in, and its UV within that face.
+FCubemapCoord DirectionToCubemapCoord(float3 Dir)
+{
+    FCubemapCoord Result;
+
+    float3 AbsDir = abs(Dir);
+
+    float IsXMax = step(AbsDir.y, AbsDir.x) * step(AbsDir.z, AbsDir.x);
+    float IsYMax = step(AbsDir.x, AbsDir.y) * step(AbsDir.z, AbsDir.y);
+    float IsZMax = 1.0 - IsXMax - IsYMax;
+
+    float3 FaceIndex = float3(
+        lerp(1.0, 0.0, step(0.0, Dir.x)),
+        lerp(3.0, 2.0, step(0.0, Dir.y)),
+        lerp(5.0, 4.0, step(0.0, Dir.z))
+    );
+
+    Result.Face = int(IsXMax * FaceIndex.x + IsYMax * FaceIndex.y + IsZMax * FaceIndex.z);
+
+    float2 UVX = float2( sign(Dir.x) * Dir.z,  Dir.y)                / AbsDir.x;
+    float2 UVY = float2(-Dir.x,                -sign(Dir.y) * Dir.z) / AbsDir.y;
+    float2 UVZ = float2(-sign(Dir.z) * Dir.x,   Dir.y)                / AbsDir.z;
+
+    Result.UV = IsXMax * UVX + IsYMax * UVY + IsZMax * UVZ;
+    Result.UV = Result.UV * 0.5 + 0.5;
+
+    return Result;
+}
+
+// Containment is independent of the view-Z sign convention, unlike the lit pass's split-distance test.
+float SampleSunCascadeByContainment(FLight Light, float3 WorldPos)
+{
+    if (Light.ShadowDataIndex == INDEX_NONE)
+    {
+        return 1.0;
+    }
+
+    [unroll]
+    for (int c = 0; c < NUM_CASCADES; ++c)
+    {
+        float4x4 VP = GetShadowViewProjection(Light.ShadowDataIndex, c);
+        float4   SC = mul(VP, float4(WorldPos, 1.0));
+        float3   P  = SC.xyz / max(SC.w, 1e-6);
+        float2   UV = P.xy * 0.5 + 0.5;
+
+        if (all(UV >= 0.0) && all(UV <= 1.0) && P.z >= 0.0 && P.z <= 1.0)
+        {
+            FLightShadow Tile = GetShadowTile(Light.ShadowDataIndex, c);
+            float2 AUV = UV * Tile.AtlasUVScale + Tile.AtlasUVOffset;
+            return ShadowCascade().SampleCmpLevelZero(AUV, P.z - 0.0005);
+        }
+    }
+    return 1.0;
+}
+
 // Load, not Sample: the mask is full-res and screen-aligned, so the fetch is an exact 1:1 texel read.
 // Guarded on the sentinel so a specialized view whose pass did not run reads fully lit, not texture 0.
 float SampleShadowMask(float2 PixelPos)

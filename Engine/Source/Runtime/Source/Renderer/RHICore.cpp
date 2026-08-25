@@ -443,6 +443,8 @@ namespace Lumina::RHI::Core
             return;
         }
 
+        LUMINA_PROFILE_SCOPE();
+        
         const uint32 Slot = SlotIndex % kFramesInFlight;
 
         // Every queue that submitted into this slot, not just the last one to do so.
@@ -576,7 +578,6 @@ namespace Lumina::RHI::Core
         Upload::BeginSlot(Slot);
 
         // A retire landing on the previous slot would be gated by a value older than this frame's work.
-        LUMINA_PROFILE_SECTION("Textures::TickPendingSwaps");
         Textures::TickPendingSwaps();
     }
 

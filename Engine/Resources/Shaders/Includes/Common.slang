@@ -380,6 +380,26 @@ struct FMeshletCone
     float3 Axis;
 };
 
+// cos(A - B) from the two cosines, which keeps the cone widening off the trig units entirely.
+float WidenCutoff(float Cutoff, float CosSpread)
+{
+    const float SinCutoff = sqrt(saturate(1.0 - Cutoff * Cutoff));
+    const float SinSpread = sqrt(saturate(1.0 - CosSpread * CosSpread));
+
+    return Cutoff * CosSpread + SinCutoff * SinSpread;
+}
+
+// One meshlet's cone after skinning, widened to cover every axis the palette can produce.
+struct FSkinnedMeshletCone
+{
+    float3 Apex;
+    // Larger rejects less, and 1.0 is the no-cone gate every reader already honors.
+    float  Cutoff;
+    float3 Axis;
+    // How far the per-bone apexes spread, folded into the cutoff at cull time since it is view-dependent.
+    float  ApexSpread;
+};
+
 // Mirror of Lumina::FMeshletHeaderGPU. The distance-field block is loose floats, not a float3: scalar
 // layout aligns float3 to 4 bytes while the C++ side may over-align FVector3 to 16.
 // Mirror of Lumina::FMeshletBonePalette. One meshlet's slice of FMeshletHeader::BoneIndices.
@@ -462,6 +482,8 @@ struct FInstanceStatic
 // the draw path blends bones inline. The CPU reserves the value, so a wrapped base cannot collide.
 static const uint kNoPreSkinBase = 0xFFFFFFFFu;
 static const uint kNoBoneSlice   = 0xFFFFFFFFu;
+// No per-frame skinned meshlet bounds, so the cull falls back to bind-pose spheres and stops trusting them.
+static const uint kNoSkinnedBounds = 0xFFFFFFFFu;
 
 // Mirror of Lumina::FSkinnedFrameData. Per-frame values for one SKINNED instance slot, indexed by RETAINED
 // slot: what FInstanceStatic cannot hold because it re-uploads only on a re-bind. The LOD ranges travel with
@@ -481,6 +503,8 @@ struct FSkinnedFrameData
     uint ShadowSkinnedVertexBase;
     // Slice in the COMPACTED per-frame arena; kNoBoneSlice falls the blend back to identity.
     uint BoneOffset;
+    // Folds in the range start, so SkinnedMeshletBounds() is indexed by a mesh-global meshlet index.
+    uint SkinnedBoundsBase;
 
     bool IsFromFrame(uint ExpectedTag) { return FrameTag == ExpectedTag && ExpectedTag != 0u; }
 };
@@ -939,6 +963,36 @@ struct FParallaxSettings
     float _Pad0;
 };
 
+// One medium definition shared by the froxel passes and the analytic composite.
+struct FExponentialHeightFogParams
+{
+    float4 InscatteringColor;   // rgb = fog albedo, w = density at base height
+    float4 HeightParams;        // x = falloff, y = baseHeight, z = startDistance, w = maxOpacity
+    float4 DirectionalColor;    // rgb = sun inscatter tint, w = exponent
+    float4 VolumetricParams;    // x = scatterIntensity, y = anisotropy, z = froxel range, w = dirStartDistance
+    // See Fog_MultiScatterPhaseShadow for what the four channels drive.
+    float4 MultiScatterParams;
+    // x = noise strength (0 disables), y = inverse world scale, z = octave count, w = per-octave gain.
+    float4 NoiseParams;
+    // xyz = wind velocity in world units per second, w = distance the noise has faded out by.
+    float4 NoiseWind;
+};
+
+// One artist-placed density volume. WorldToVolume maps world space into the unit cube or sphere.
+struct FFogVolume
+{
+    float4x4 WorldToVolume;
+    float4   Albedo;      // rgb = albedo, w = extinction added at full strength
+    float4   Emissive;    // rgb = emissive in-scatter, w = unused
+    float4   Params;      // x = shape (0 box, 1 sphere), y = edge softness, z = scatter intensity, w unused
+};
+
+// Matches GFogMaxVolumes on the CPU side; the loop is bounded so a malformed count cannot run away.
+static const uint FOG_MAX_VOLUMES = 32;
+
+// Repeated here so a malformed upload cannot run the octave loop unbounded in the per-light path.
+static const int FOG_MAX_MULTISCATTER_OCTAVES = 4;
+
 struct FSceneGlobalData
 {
     FCameraView       CameraView;
@@ -968,6 +1022,23 @@ struct FSceneGlobalData
 
     // Subsample index 0 or 1 that decorrelates screen-space noise. Stays 0 unless T2x is resolving.
     uint              TemporalPhase;
+
+    // The translucent passes fog themselves, since the composite runs first and sees only opaque depth.
+    FExponentialHeightFogParams FogParams;
+
+    uint              FogIntegratedIndex;    // bindless 3D SRV, ~0u = no froxel volume this frame
+    uint              FogGridZ;
+    float             FogNearPlane;
+    float             FogRange;
+
+    uint              bFogEnabled;
+    uint              FogFarShaftSteps;
+    float             FogFarShaftDistance;
+    uint              FogCloudShadowIndex;   // bindless 2D SRV, ~0u = no cloud shadow this frame
+
+    float2            FogCloudShadowCenter;
+    float             FogCloudShadowExtent;
+    float             _FogPad0;
 };
 
 // Octahedral 15-15 tangent direction + 1-bit handedness sign, matching Lumina::PackTangent. Returns

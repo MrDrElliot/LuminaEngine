@@ -420,6 +420,8 @@ namespace Lumina::RHI::Textures
         {
             return;
         }
+        
+        LUMINA_PROFILE_SCOPE();
 
         // Retired outside the lock, since Core::Retire re-enters the upload system's own locks.
         TVector<FTextureH> Superseded;

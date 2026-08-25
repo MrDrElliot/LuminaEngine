@@ -21,6 +21,15 @@ internal sealed class EntityScriptRuntime
         LiveHandles.Add(Handle);
     }
 
+    // Called before the free, since a kept value gets recycled into an unrelated object's handle.
+    internal void Forget(IntPtr Pointer)
+    {
+        if (Pointer != IntPtr.Zero)
+        {
+            LiveHandles.Remove(GCHandle.FromIntPtr(Pointer));
+        }
+    }
+
     public IReadOnlyCollection<string> TypeNames => Library.EntityScriptTypeNames;
 
     /// <summary>The canonical current full name for a script reference, or null if it resolves to no live type.</summary>
@@ -62,8 +71,7 @@ internal sealed class EntityScriptRuntime
         return Description != null ? Serializer.WriteButtons(Description) : null;
     }
 
-    /// <summary>Frees every live handle (running OnDetach) so the collectible ALC can unload. Called on
-    /// reload/shutdown before the old generation's context is torn down.</summary>
+    // Detaches every live script and drops the index, ahead of the collectible ALC unload.
     public void FreeAll()
     {
         // Detach every managed delegate binding before this collectible generation unloads.
@@ -94,16 +102,13 @@ internal sealed class EntityScriptRuntime
                 Script.CancelDestroyToken();
             }
 
-            // Remove returns false when an earlier OnDetach already pulled it, guarding a double-free.
-            if (LiveHandles.Remove(Handle) && Handle.IsAllocated)
-            {
-                Handle.Free();
-            }
+            // Not freed here; the native instance table owns these handles and frees them as it drains.
+            LiveHandles.Remove(Handle);
         }
         LiveHandles.Clear();
     }
 
-    // LiveHandles membership is the liveness test: GCHandle hashes on the raw value without touching the target, so an already-freed pointer is rejected rather than dereferenced.
+    // Membership is the liveness test, which holds only because Forget runs before every free.
     private EntityScript? Resolve(IntPtr Pointer)
     {
         if (Pointer == IntPtr.Zero)

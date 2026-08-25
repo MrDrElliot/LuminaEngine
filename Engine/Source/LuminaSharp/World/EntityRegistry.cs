@@ -104,35 +104,30 @@ public readonly struct EntityRegistry
             return RegistrySubscription.Empty;
         }
 
-        GCHandle Handle = GCHandle.Alloc(Callback);
-        IntPtr Listener = Native.RegistryConnect(WorldHandle, Token, Kind, SignalThunkPtr, GCHandle.ToIntPtr(Handle));
+        IntPtr Listener = Native.RegistryConnect(WorldHandle, Token, Kind);
         if (Listener == IntPtr.Zero)
         {
-            Handle.Free();
             return RegistrySubscription.Empty;
         }
-        return new RegistrySubscription(WorldHandle, Token, Kind, Listener, Handle);
-    }
 
-    // Native signal trampoline: resolve the GCHandle context back to the managed callback and invoke it.
-    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
-    private static void SignalThunk(IntPtr Context, uint Entity)
-    {
-        try
+        // Binding through the listener's own delegate is what lets its destructor release this handle,
+        // whether the subscription, the world or the script generation goes away first.
+        IntPtr Signal = Native.RegistryGetSignalDelegate(Listener);
+        DelegateBinding Binding;
+        unsafe
         {
-            if (GCHandle.FromIntPtr(Context).Target is Action<Entity> Body)
-            {
-                Body(new Entity(Entity));
-            }
+            Binding = DelegateBindings.Bind((void*)Signal,
+                new PayloadInvoker<uint> { Handler = Id => Callback(new Entity(Id)) });
         }
-        catch (Exception Exception)
-        {
-            Interop.LogException(Exception);
-        }
-    }
 
-    private static readonly unsafe IntPtr SignalThunkPtr =
-        (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, uint, void>)&SignalThunk;
+        if (!Binding.IsValid)
+        {
+            Native.RegistryDisconnect(WorldHandle, Token, Kind, Listener);
+            return RegistrySubscription.Empty;
+        }
+
+        return new RegistrySubscription(WorldHandle, Token, Kind, Listener, Binding);
+    }
 
     // Script lookup goes through the native CEntityScript component: one store, one answer, and the SAME call
     // finds a C++ script (which no managed-side index could ever have known about). Wrapper<T>.ForObject hands

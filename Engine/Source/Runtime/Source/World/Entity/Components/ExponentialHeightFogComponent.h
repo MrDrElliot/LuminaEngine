@@ -93,5 +93,45 @@ namespace Lumina
         shadowing entirely and fill shafts with soft light, as multiply-scattered light really does. */
         PROPERTY(Editable, Category = "Multiple Scattering", ClampMin = 0.0f, ClampMax = 1.0f, Delta = 0.01f)
         float MultiScatterShadowLeak = 0.5f;
+
+        /** Break the fog into drifting banks instead of a perfectly smooth exponential profile. */
+        PROPERTY(Editable, Category = "Density Noise")
+        bool bDensityNoise = false;
+
+        /** Contrast between thin and thick patches. Average density is unchanged, so this is free to tune. */
+        PROPERTY(Editable, Category = "Density Noise", ClampMin = 0.0f, ClampMax = 1.0f, Delta = 0.01f)
+        float NoiseStrength = 0.6f;
+
+        /** World size of the largest noise feature. Larger reads as weather, smaller as haze. */
+        PROPERTY(Editable, Category = "Density Noise", ClampMin = 1.0f, Delta = 1.0f, Units = "m")
+        float NoiseScale = 40.0f;
+
+        /** Layers of detail. Each one doubles the frequency at NoiseDetailGain of the amplitude. */
+        PROPERTY(Editable, Category = "Density Noise", ClampMin = 1, ClampMax = 4)
+        int32 NoiseOctaves = 3;
+
+        /** Amplitude each successive octave keeps. Low is smooth and billowy, high is wispy. */
+        PROPERTY(Editable, Category = "Density Noise", ClampMin = 0.0f, ClampMax = 1.0f, Delta = 0.01f)
+        float NoiseDetailGain = 0.5f;
+
+        /** Direction the fog banks drift. Normalized on extraction; zero means no drift. */
+        PROPERTY(Editable, Category = "Density Noise")
+        FVector3 NoiseWindDirection = FVector3(1.0f, 0.0f, 0.0f);
+
+        /** How fast the banks drift along NoiseWindDirection. */
+        PROPERTY(Editable, Category = "Density Noise", ClampMin = 0.0f, Delta = 0.1f, Units = "m")
+        float NoiseWindSpeed = 2.0f;
+
+        /** Noise fades out by this distance so it never reaches the closed-form far field and seams. */
+        PROPERTY(Editable, Category = "Density Noise", ClampMin = 1.0f, Delta = 10.0f, Units = "m")
+        float NoiseFadeDistance = 200.0f;
+
+        /** Shadowed steps taken through the fog beyond VolumetricMaxDistance. 0 leaves it unshadowed. */
+        PROPERTY(Editable, Category = "Volumetric", ClampMin = 0, ClampMax = 64)
+        int32 FarShaftSteps = 16;
+
+        /** How far the far-field shadow march reaches before the fog is treated as unshadowed again. */
+        PROPERTY(Editable, Category = "Volumetric", ClampMin = 1.0f, Delta = 100.0f, Units = "m")
+        float FarShaftDistance = 4000.0f;
     };
 }

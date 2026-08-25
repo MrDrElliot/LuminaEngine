@@ -350,6 +350,10 @@ namespace Lumina
 
                 bool                             bClouds              = false;
                 SCloudComponent                  Clouds               = {};
+
+                TVector<FGPUFogVolume>           FogVolumes;
+                uint32                           FarShaftSteps        = 0;
+                float                            FarShaftDistance     = 4000.0f;
             } Volumetrics;
 
             // Splines uploaded this frame. Headers index into the two shared arrays; everything is world
@@ -448,6 +452,7 @@ namespace Lumina
             AerialTransmittance,
             CloudNoise,
             CloudScatter,
+            CloudShadow,
             BRDFLut,
             SkyCube,
             SkyIrradiance,
@@ -684,6 +689,9 @@ namespace Lumina
         void TransparentPass(RHI::FCmdListH CL);
         void OITResolvePass(RHI::FCmdListH CL);
         void AdditiveTranslucentPass(RHI::FCmdListH CL);
+        // Single source of truth for every fog consumer, including the translucent material pass.
+        void PublishFogGlobals(FSceneGlobalData& Globals) const;
+        void CloudShadowMapPass(RHI::FCmdListH CL);
         void FroxelInjectPass(RHI::FCmdListH CL);
         void FroxelIntegratePass(RHI::FCmdListH CL);
         void FroxelApplyPass(RHI::FCmdListH CL);
@@ -1104,6 +1112,17 @@ namespace Lumina
         uint32                                              SkinnedSlotListLowUsage = 0;
         TVector<FUIntVector2>                               SkinnedUploadScratch;
         uint32                                              CurrentSkinnedFrameTag = 0;
+        // Per-frame posed meshlet spheres, so the cull can reject skinned geometry per meshlet.
+        FSceneBuffer                                        SkinnedMeshletBoundsBuffer;
+        uint32                                              SkinnedMeshletBoundsLowUsage = 0;
+        // Same index space and same base as the bounds arena, so the two are sized together.
+        FSceneBuffer                                        SkinnedMeshletConeBuffer;
+        uint32                                              SkinnedMeshletConeLowUsage = 0;
+        uint32                                              SkinnedMeshletBoundsCapacity = 0;
+        // Longest per-slot meshlet range, which is the x extent of the bounds dispatch.
+        uint32                                              SkinnedBoundsMaxRange = 0;
+        // Slots the retained static buffer actually holds, which bounds the header lookup in that pass.
+        uint32                                              RetainedStaticCapacity = 0;
         uint32                                              RetainedCullEntryLowUsage = 0;
         uint32                                              RetainedTransformLowUsage = 0;
         uint32                                              RetainedStaticLowUsage = 0;
@@ -1130,6 +1149,7 @@ namespace Lumina
         // Ships the per-frame half of every gathered skinned slot's payload, plus the compact slot list the
         // skinning passes iterate. Must run before CullInstances and before the skinning dispatch.
         void UploadSkinnedFrameData(RHI::FCmdListH CL, FFrameData& Frame);
+        void SkinnedMeshletBoundsPass(RHI::FCmdListH CL, const FFrameData& Frame);
 
         void DispatchGPUSceneCull(RHI::FCmdListH CL, const FFrameData& Frame);
 

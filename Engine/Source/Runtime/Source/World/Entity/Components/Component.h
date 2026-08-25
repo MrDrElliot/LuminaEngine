@@ -2,6 +2,7 @@
 
 #include <new>
 
+#include "Core/Delegates/ScriptDelegate.h"
 #include "Core/Engine/Engine.h"
 #include "Core/Engine/EngineMetaContext.h"
 #include "Core/Object/Class.h"
@@ -13,24 +14,20 @@
 
 namespace Lumina
 {
-    // A managed listener bound to a registry signal: the C# UnmanagedCallersOnly thunk + its GCHandle
-    // context (a pinned Action<Entity>). Heap-owned by the bridge; the listener's ADDRESS is both the entt
-    // connection payload and the disconnect key, so one allocation == one subscription.
-    using FManagedSignalThunk = void (*)(void* Ctx, uint32 Entity);
+    // A managed listener bound to a registry signal. Heap-owned by the bridge; the listener's address is
+    // both the entt connection payload and the disconnect key, so one allocation is one subscription.
     struct FManagedSignalListener
     {
-        FManagedSignalThunk Thunk = nullptr;
-        void*               Ctx   = nullptr;
-        entt::connection    Connection;   // the live sink connection; release() disconnects (type-erased).
+        // Script binds here, and destroying this listener is what releases those binds.
+        TScriptDelegate<uint32> Signal;
+
+        entt::connection        Connection;   // the live sink connection; release() disconnects (type-erased).
     };
 
     // entt connects a free function whose first parameter is the payload instance; forward to managed.
     inline void ManagedSignalTrampoline(FManagedSignalListener& Listener, entt::registry&, entt::entity Entity)
     {
-        if (Listener.Thunk)
-        {
-            Listener.Thunk(Listener.Ctx, static_cast<uint32>(Entity));
-        }
+        Listener.Signal.Broadcast(static_cast<uint32>(Entity));
     }
 
     // Signal kinds shared with the C# Registry.On* API.

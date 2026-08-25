@@ -261,6 +261,22 @@ namespace Lumina
         PROPERTY(Editable, Category = "Volumetric Fog")
         bool bSupersampleVolumetricLights = true;
 
+        /** Shadow the fog with the cloud layer overhead, so god rays weaken under an overcast sky. */
+        PROPERTY(Editable, Category = "Volumetric Fog")
+        bool bCloudShadows = true;
+
+        /** Resolution of the square top-down cloud shadow map. */
+        PROPERTY(Editable, Category = "Volumetric Fog", ClampMin = 128, ClampMax = 2048)
+        int32 CloudShadowResolution = 512;
+
+        /** World size the cloud shadow map covers around the camera. Larger trades detail for reach. */
+        PROPERTY(Editable, Category = "Volumetric Fog", ClampMin = 100.0f, Delta = 100.0f, Units = "m")
+        float CloudShadowExtent = 4000.0f;
+
+        /** Steps taken through the cloud layer per shadow texel. */
+        PROPERTY(Editable, Category = "Volumetric Fog", ClampMin = 1, ClampMax = 32)
+        int32 CloudShadowSteps = 8;
+
         /** Trace reflections against the depth buffer, falling back to the prefiltered cube off-screen. */
         PROPERTY(Editable, Category = "Screen Space Reflections")
         bool bScreenSpaceReflections = true;

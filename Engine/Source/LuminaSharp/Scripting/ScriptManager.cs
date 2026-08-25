@@ -265,16 +265,13 @@ internal sealed class ScriptManager
         // Same rationale for the other process-static holders of script-side state: each roots user types, or
         // GCHandles over user delegates, that would otherwise pin the collectible generation across the unload.
         // The next generation rebuilds them lazily / re-subscribes.
-        RegistrySubscription.ClearAll();      // entt signal listeners (on_construct/on_destroy/on_update)
         Native.ClearAllManagedTimers();       // world timers whose Action captures a script instance
         UIDataModel.DisposeAll();             // MVVM bindings (user ViewModel + native data model)
-        UIEventSubscription.ClearAll();       // element event handlers capturing a script instance
         Asset.PurgePending();                 // in-flight async asset-load callbacks
         PropertyAccessor.ClearScriptCaches(); // cached get/set delegates over user property types
 
-        // Free every live script + system GCHandle BEFORE unloading: a strong handle is a GC root that
-        // would otherwise pin the old generation and stop the collectible ALC from unloading.
-        EntityScripts?.FreeAll();
+        // Every strong handle has to go before the unload, or it roots the generation the ALC is dropping.
+        EntityScripts?.FreeAll();  // detaches only; the table drain below owns the script handles
         EntityScripts = null;
         EntitySystems?.FreeAll();
         EntitySystems = null;
