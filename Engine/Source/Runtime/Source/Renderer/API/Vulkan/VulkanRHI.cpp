@@ -1656,6 +1656,7 @@ namespace Lumina::RHI
         bool bBufferMarker   = false;
         bool bMemoryPriority = false;
         bool bPipelineStats  = false;   // editor-only; see FDevice::bPipelineStats
+        bool bComputeDerivatives = false;
         {
             uint32 ExtCount = 0;
             vkEnumerateDeviceExtensionProperties(GDevice->PhysicsDevice, nullptr, &ExtCount, nullptr);
@@ -1703,6 +1704,9 @@ namespace Lumina::RHI
                 EnableIfPresent(VK_EXT_PAGEABLE_DEVICE_LOCAL_MEMORY_EXTENSION_NAME);
             }
 
+            // Aerial perspective and the cloud march take ddx/ddy from compute, which needs quad groups.
+            bComputeDerivatives = EnableIfPresent(VK_KHR_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME);
+
             // Presence, feature and limits were all required to pass selection, so only the enable remains.
             EnableIfPresent(VK_EXT_MESH_SHADER_EXTENSION_NAME);
 
@@ -1735,7 +1739,9 @@ namespace Lumina::RHI
         VkPhysicalDeviceVulkan13Features Supported13{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, .pNext = &Supported14 };
         VkPhysicalDeviceVulkan12Features Supported12{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, .pNext = &Supported13 };
         VkPhysicalDeviceVulkan11Features Supported11{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, .pNext = &Supported12 };
-        VkPhysicalDeviceFeatures2        Supported2 { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,          .pNext = &Supported11 };
+        VkPhysicalDeviceComputeShaderDerivativesFeaturesKHR SupportedDerivatives
+            { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COMPUTE_SHADER_DERIVATIVES_FEATURES_KHR, .pNext = &Supported11 };
+        VkPhysicalDeviceFeatures2        Supported2 { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,          .pNext = &SupportedDerivatives };
         vkGetPhysicalDeviceFeatures2(GDevice->PhysicsDevice, &Supported2);
 
         // All settled during selection, so nothing is re-queried here.
@@ -1815,6 +1821,14 @@ namespace Lumina::RHI
             Chain(UnifiedLayoutFeatures);
         }
         
+        VkPhysicalDeviceComputeShaderDerivativesFeaturesKHR DerivativeFeatures
+            { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COMPUTE_SHADER_DERIVATIVES_FEATURES_KHR };
+        if (bComputeDerivatives && SupportedDerivatives.computeDerivativeGroupQuads)
+        {
+            DerivativeFeatures.computeDerivativeGroupQuads = VK_TRUE;
+            Chain(DerivativeFeatures);
+        }
+
         VkPhysicalDeviceFaultFeaturesEXT DeviceFaultFeatures{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT };
         if (bDeviceFault)
         {
