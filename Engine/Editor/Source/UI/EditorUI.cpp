@@ -772,7 +772,7 @@ namespace Lumina
 
                 if (ImGui::IsKeyChordPressed(Chord))
                 {
-                    DotNet::ReloadScripts();
+                    DotNet::RequestScriptReload();
                 }
             }
         }
@@ -3354,7 +3354,7 @@ namespace Lumina
 
         if (ImGui::MenuItem(LE_ICON_LANGUAGE_CSHARP " Recompile C# Assemblies", "Shift+F11"))
         {
-            DotNet::ReloadScripts();
+            DotNet::RequestScriptReload();
         }
 
         ImGui::Separator();

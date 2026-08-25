@@ -2353,7 +2353,7 @@ namespace Lumina
                         MainThread::Enqueue([]
                         {
                             GScriptReloadQueued.store(false);
-                            DotNet::ReloadScripts();
+                            DotNet::RequestScriptReload();
                         });
                     }
                 }

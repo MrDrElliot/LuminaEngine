@@ -238,6 +238,10 @@ namespace Lumina::DotNet
         };
 
         bool                                        bInitialized = false;
+
+        // Set by a UI trigger, serviced at frame start; see RequestScriptReload.
+        bool                                        GScriptReloadRequested = false;
+
         hostfxr_get_runtime_delegate_fn             GGetDelegate = nullptr;
         FExporterTable                              GExports{};
         int32                                       GCachedGeneration = 0;
@@ -1175,6 +1179,7 @@ namespace Lumina::DotNet
         ManagedRenderScenes::PreScriptUnload();
 
         const int32 Result = GManaged.LoadScripts(Units.empty() ? nullptr : Units.data(), (int32)Units.size());
+
         // The compile is synchronous, so the outcome is reported as a toast rather than a progress modal.
         if (Result != 0)
         {
@@ -1183,26 +1188,28 @@ namespace Lumina::DotNet
             {
                 ImGuiX::Notifications::NotifyError("Script compile failed ({} file(s)) -- see the Output Log.", TotalFiles);
             }
+
+            // A failed compile keeps the previous generation, so only the renderers need putting back.
+            ManagedRenderScenes::PostScriptLoad();
+            return Result;
         }
-        else if (bEditorFollowups)
+
+        if (bEditorFollowups)
         {
             ImGuiX::Notifications::NotifySuccess("Recompiled {} C# script file(s).", TotalFiles);
         }
 
-        if (Result == 0)
+        // So a later reload tells our emitted DLL apart from an authored prebuilt assembly.
+        for (const FSourceBucket& Bucket : Buckets)
         {
-            // So a later reload tells our emitted DLL apart from an authored prebuilt assembly.
-            for (const FSourceBucket& Bucket : Buckets)
+            if (!Bucket.Sources.empty() && !Bucket.DllPath.empty())
             {
-                if (!Bucket.Sources.empty() && !Bucket.DllPath.empty())
+                const FString Marker = CompiledMarkerPath(Bucket.DllPath);
+                if (!Filesystem::Exists(Marker))
                 {
-                    const FString Marker = CompiledMarkerPath(Bucket.DllPath);
-                    if (!Filesystem::Exists(Marker))
-                    {
-                        static constexpr const char Text[] =
-                            "Compiled from this unit's C# sources by the engine. Both this marker and the DLL are deleted when the sources are removed.\n";
-                        Filesystem::WriteFile(Marker, TSpan<const uint8>(reinterpret_cast<const uint8*>(Text), sizeof(Text) - 1));
-                    }
+                    static constexpr const char Text[] =
+                        "Compiled from this unit's C# sources by the engine. Both this marker and the DLL are deleted when the sources are removed.\n";
+                    Filesystem::WriteFile(Marker, TSpan<const uint8>(reinterpret_cast<const uint8*>(Text), sizeof(Text) - 1));
                 }
             }
         }
@@ -1221,7 +1228,6 @@ namespace Lumina::DotNet
         // Ordered after the class minting, since both read the generation that just loaded.
         FScriptDataStructRegistry::Get().Refresh();
 
-        // Runs even on a failed load, so those worlds fall back to the engine renderer instead of black.
         ManagedRenderScenes::PostScriptLoad();
 
         // Idempotent and editor-only, so an absent project self-heals on any reload.
@@ -1235,6 +1241,22 @@ namespace Lumina::DotNet
     void ReloadScripts()
     {
         LoadScriptUnitsCore(BuildScriptUnits(), /*bEditorFollowups*/true);
+    }
+
+    void RequestScriptReload()
+    {
+        GScriptReloadRequested = true;
+    }
+
+    void ProcessPendingScriptReload()
+    {
+        if (!GScriptReloadRequested)
+        {
+            return;
+        }
+
+        GScriptReloadRequested = false;
+        ReloadScripts();
     }
 
     void LoadCookedScripts()
@@ -1989,11 +2011,11 @@ namespace Lumina::DotNet
 
     namespace
     {
-        // Manual reload trigger (the editor's "Reload Scripts" button calls DotNet::ReloadScripts too).
+        // Manual reload trigger; latched like every other one, so it never runs inside a draw.
         FAutoConsoleCommand GReloadScriptsCommand(
             "dotnet.reload",
             "Recompile and hot-reload all C# scripts across every mounted Scripts/ folder.",
-            []() { Lumina::DotNet::ReloadScripts(); });
+            []() { Lumina::DotNet::RequestScriptReload(); });
 
         FAutoConsoleCommand GGenProjectsCommand(
             "dotnet.genprojects",

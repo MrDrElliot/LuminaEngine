@@ -104,7 +104,7 @@ namespace Lumina
         ImGui::SameLine();
         if (ImGui::Button(LE_ICON_REFRESH " Reload Scripts"))
         {
-            DotNet::ReloadScripts();
+            DotNet::RequestScriptReload();
         }
 
         // ---- Throttled poll -----------------------------------------------------------------------

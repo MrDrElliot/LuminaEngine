@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
 namespace LuminaSharp;
@@ -14,6 +15,9 @@ public sealed class UIEventSubscription : IDisposable
     /// <summary>An inert subscription (returned when the element was invalid or the connect failed).</summary>
     internal static readonly UIEventSubscription Empty = new();
 
+    // An untracked subscription pins the whole generation, since Handle is strong and holds the callback.
+    private static readonly HashSet<UIEventSubscription> Live = new();
+
     private readonly ulong World;
     private IntPtr Listener;
     private GCHandle Handle;
@@ -27,12 +31,33 @@ public sealed class UIEventSubscription : IDisposable
         this.World = World;
         this.Listener = Listener;
         this.Handle = Handle;
+
+        Live.Add(this);
     }
 
     /// <summary>True while connected; false for an inert subscription or after <see cref="Dispose"/>.</summary>
     public bool IsActive => Listener != IntPtr.Zero;
 
     public void Dispose()
+    {
+        Live.Remove(this);
+        Disconnect();
+    }
+
+    // Drops every subscription this generation opened, for the hot reload teardown.
+    internal static void ClearAll()
+    {
+        var Snapshot = new List<UIEventSubscription>(Live);
+        Live.Clear();
+
+        foreach (UIEventSubscription Subscription in Snapshot)
+        {
+            Subscription.Disconnect();
+        }
+    }
+
+    // The native listener goes first, so the thunk can never resolve a handle this already freed.
+    private void Disconnect()
     {
         if (Listener != IntPtr.Zero)
         {

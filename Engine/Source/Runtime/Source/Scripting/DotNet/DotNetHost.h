@@ -36,6 +36,12 @@ namespace Lumina::DotNet
     
     RUNTIME_API void ReloadScripts();
 
+    // Latches a reload for the next frame start, since a reload destroys objects the frame may be using.
+    RUNTIME_API void RequestScriptReload();
+
+    // Services a latched request. Called from the engine's frame start, never from inside a draw.
+    RUNTIME_API void ProcessPendingScriptReload();
+
     // Cooked-game variant of ReloadScripts: loads the prebuilt script DLLs the packager staged under
     // <exeDir>/DotNet/Scripts/ (driven by scripts.manifest.json) instead of compiling .cs from disk. No
     // Roslyn, no .csproj generation. Safe to call when no manifest exists (no-op).

@@ -1438,19 +1438,40 @@ namespace Lumina::Scripting
         }
 
         // The caller evacuates first and repopulates after, so refusing here keeps the failure loud.
-        int32 LiveInstances = 0;
+        int32   LiveInstances = 0;
+        FString Blockers;
         GObjectArray.ForEachObject([&](CObjectBase* Base, int32)
         {
-            if (Base != nullptr && Base->GetClass() == Target
-                && !Base->HasAnyFlag(OF_MarkedDestroy) && !Base->HasAnyFlag(OF_DefaultObject))
+            if (Base == nullptr || Base->GetClass() != Target
+                || Base->HasAnyFlag(OF_MarkedDestroy) || Base->HasAnyFlag(OF_DefaultObject))
             {
-                ++LiveInstances;
+                return;
+            }
+
+            ++LiveInstances;
+
+            // Named, because evacuation covers the known holders and only a stray strong reference is left.
+            if (LiveInstances <= 4)
+            {
+                if (!Blockers.empty())
+                {
+                    Blockers += ", ";
+                }
+                Blockers += Base->GetName().c_str();
             }
         });
+
         if (LiveInstances > 0)
         {
-            LOG_WARN("Scriptable: '{}' changed its property set but {} live instance(s) remain; "
-                     "the layout was not rebuilt.", Target->GetName().c_str(), LiveInstances);
+            if (LiveInstances > 4)
+            {
+                Blockers += Format(", and {} more", LiveInstances - 4);
+            }
+
+            LOG_WARN("Scriptable: '{}' changed its property set but {} live instance(s) remain ({}); the layout "
+                     "was NOT rebuilt, so this edit has not taken. Something outside the world, prefab and game "
+                     "instance holders still holds a strong reference.",
+                     Target->GetName().c_str(), LiveInstances, Blockers.c_str());
             return false;
         }
 
