@@ -1188,6 +1188,7 @@ namespace Lumina
 
         FDemandWindow                                       BlockListDemand;
         FDemandWindow                                       PreSkinDemand;
+        FDemandWindow                                       VisibleInstanceDemand;
         uint32                                              PreSkinnedVertexCapacity = 0;
         uint32                                              MeshSubDrawsPerSlice = 1;
         uint32                                              LastBlocksRequested = 0;

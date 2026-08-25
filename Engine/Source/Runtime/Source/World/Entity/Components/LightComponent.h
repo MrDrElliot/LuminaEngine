@@ -184,8 +184,8 @@ namespace Lumina
         /** Drop casters whose bounds cover fewer than this many texels of the cascade doing the rejecting
         (0 = off). Trades shadow detail for geometry throughput. Thin geometry (railings, grates, wires)
         loses its shadow entirely above 0, since its bounds are sub-texel in the coarser cascades. */
-        PROPERTY(Editable, Category = "Cascaded Shadows|Culling", ClampMin = 0.0f, ClampMax = 8.0f, Delta = 0.1f)
-        float CascadeMinTexels = 1.0f;
+        PROPERTY(Editable, Category = "Cascaded Shadows|Culling", ClampMin = 0.0f, ClampMax = 16.0f, Delta = 0.1f)
+        float CascadeMinTexels = 8.0f;
 
         /** Reject casters hidden behind other casters, tested against last frame's cascade Hi-Z. The test
         is one frame stale and has no late re-test, so a caster exposed this frame casts a frame late. */

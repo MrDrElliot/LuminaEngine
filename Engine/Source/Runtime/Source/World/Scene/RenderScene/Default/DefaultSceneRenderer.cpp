@@ -3637,7 +3637,10 @@ namespace Lumina
                                  true, EBufferInit::Zeroed, "Cull.MeshletDrawList");
             DrawListCapacity = (uint32)Math::Min<uint64>(MeshletDrawListRing[Slot].GetSize() / (sizeof(uint32) * 2), 0xFFFFFFFFull);
             
-            const uint32 PredictedVisible = LastVisibleInstances + LastVisibleInstances / 2u;
+            // Windowed peak, not the last readback: that count lags kFramesInFlight and collapses the
+            // allocation the moment the camera looks at something empty.
+            const uint32 VisibleDemand    = VisibleInstanceDemand.Observe(LastVisibleInstances);
+            const uint32 PredictedVisible = VisibleDemand + VisibleDemand / 2u;
             uint32 VisibleCapacityWanted = Math::Max(PredictedVisible, 4096u);
 
             const uint32 VisibleCapacityMax = Math::Max(Frame.Geometry.RetainedUpload.SlotCount, 1u);
@@ -3647,11 +3650,16 @@ namespace Lumina
                 VisibleCapacityWanted = VisibleCapacityMax;
             }
 
-            FrameVisibleInstanceCapacity = Math::Min(VisibleCapacityWanted, VisibleCapacityMax);
+            VisibleCapacityWanted = Math::Min(VisibleCapacityWanted, VisibleCapacityMax);
 
             ResizeBufferIfNeeded(CL, VisibleInstanceRing[Slot],
-                                 (SIZE_T)FrameVisibleInstanceCapacity * sizeof(FGPUInstance), 1.25f,
+                                 (SIZE_T)VisibleCapacityWanted * sizeof(FGPUInstance), 1.25f,
                                  VisibleInstanceLowUsage[Slot], true, EBufferInit::Zeroed, "Cull.VisibleInstances");
+
+            // From the allocation rather than the request, so a grow that failed cannot hand the cull
+            // room it does not have, and the slack the grow already paid for is not thrown away.
+            FrameVisibleInstanceCapacity = (uint32)Math::Min<uint64>(
+                VisibleInstanceRing[Slot].GetSize() / sizeof(FGPUInstance), VisibleCapacityMax);
 
             const SIZE_T InstanceViewRangeSize = Math::Max<SIZE_T>(
                 sizeof(uint32) * 2,

@@ -307,7 +307,7 @@ namespace Lumina
 
         // Scales the subpixel offset. 0 pins both subsamples to the pixel center, which isolates the resolve.
         PROPERTY(Editable, Category = "Anti-Aliasing", ClampMin = 0.0f, ClampMax = 1.0f)
-        float TemporalJitterScale = 1.0f;
+        float TemporalJitterScale = 0.4f;
 
         // Screen fraction a pixel may reproject across before its history is refused outright.
         PROPERTY(Editable, Category = "Anti-Aliasing", ClampMin = 0.01f, ClampMax = 1.0f)
