@@ -446,6 +446,11 @@ float EvaluateClearcoatLobe(float3 N, float3 V, float3 L, float ClearcoatRoughne
 // Thin-surface translucency (Barre-Brisebois and Bouchard, GDC 2011). Not a subsurface diffusion model,
 // it is the view-dependent forward-scatter lobe that makes a backlit leaf glow. Peaks when the eye looks
 // straight into the light through the surface, which is the only time real foliage does this.
+// The sun's shadow reaches the deferred lane only as the screen-space mask, which counts a leaf's own
+// front face as an occluder and would extinguish the very lobe it is meant to feed. This floors it.
+static const float kTransmissionShadowFloor = 0.25;
+float TransmissionShadow(float Shadow) { return lerp(kTransmissionShadowFloor, 1.0, saturate(Shadow)); }
+
 float3 EvaluateTransmission(FShadingContext S, float3 L, float3 Radiance, float3 Transmission, float Thickness)
 {
     // Bending the sampled direction by the normal keeps the lobe from being a perfect mirror of the light,
@@ -563,12 +568,6 @@ FGBufferData BuildGBufferData(FBaseVertexOutput Input, FMaterialPixelInputs Mate
     G.Emissive         = Material.Emissive;
     G.bReceiveShadow   = (Input.InstanceFlags & (uint)EInstanceFlags::ReceiveShadow) != 0u;
 
-#ifndef SHADING_COMPUTE
-    // Quad derivatives here see the mapped normal, so this covers normal-map detail as well as curvature.
-    // The deferred lane has no quad and widens from the interpolated normal at its own call site.
-    G.Roughness = ApplyGeometricSpecularAA(G.Roughness, ddx(G.WorldNormal), ddy(G.WorldNormal));
-#endif
-
     G.Clearcoat          = Material.Clearcoat;
     G.ClearcoatRoughness = Material.ClearcoatRoughness;
     G.Transmission       = Material.Transmission;
@@ -586,6 +585,12 @@ FGBufferData BuildGBufferData(FBaseVertexOutput Input, FMaterialPixelInputs Mate
         float2 DBufferUV = Input.Position.xy / float2(Scene().ScreenSize.xy);
         ApplyDBuffer(G.BaseColor, G.WorldNormal, G.Roughness, G.Metallic, G.AmbientOcclusion, DBufferUV);
     }
+#endif
+
+#ifndef SHADING_COMPUTE
+    // After the decals, which rewrite roughness and would otherwise blend the widening back out. Quad
+    // derivatives see the mapped normal here, so this covers normal-map detail as well as curvature.
+    G.Roughness = ApplyGeometricSpecularAA(G.Roughness, ddx(G.WorldNormal), ddy(G.WorldNormal));
 #endif
 
     return G;
@@ -687,14 +692,14 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
         float3 SunL    = normalize(Light.Direction.xyz);
         float  SunNdotL = dot(N, SunL);
 
-        // Backlit foliage, which the lit path below early-outs on. A thin leaf is its own occluder, so the
-        // normal-offset bias is flipped to the face the light actually reaches or the lobe shadows itself.
+        // Backlit foliage, which the lit path below early-outs on. The flipped normal biases toward the face
+        // the light reaches; only the forward lane honours it, since the deferred one resolves from the mask.
         if (bFoliage && SunNdotL <= 0.0)
         {
             const float BackShadow = ComputeShadowFactor(Light, WorldPosition, -N, ViewPosition, ScreenPos,
                                                          bReceiveShadow) * G.SelfShadow;
             Lo += EvaluateTransmission(Ctx, SunL, ComputeLightRadiance(Light, SunL, 0.0),
-                                       G.Transmission, G.Thickness) * BackShadow;
+                                       G.Transmission, G.Thickness) * TransmissionShadow(BackShadow);
         }
 
         if (SunNdotL > 0.0)
@@ -708,7 +713,7 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
             if (bFoliage)
             {
                 Lo += EvaluateTransmission(Ctx, SunL, ComputeLightRadiance(Light, SunL, 0.0),
-                                           G.Transmission, G.Thickness) * Shadow;
+                                           G.Transmission, G.Thickness) * TransmissionShadow(Shadow);
             }
 #ifdef TRANSLUCENT
             float3 SunDiffuse, SunSpec;
