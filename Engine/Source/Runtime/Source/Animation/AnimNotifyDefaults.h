@@ -10,7 +10,7 @@
 
 namespace Lumina
 {
-    class CAudioStream;
+    class CSoundBase;
     class CParticleSystem;
 
     // Nothing includes this header: the picker finds these by reflection, exactly as it finds a game's own.
@@ -20,8 +20,9 @@ namespace Lumina
     {
         GENERATED_BODY()
 
+        /** Wave or audio graph to play. */
         PROPERTY(Editable, Category = "Sound")
-        TObjectPtr<CAudioStream> Sound;
+        TObjectPtr<CSoundBase> Sound;
 
         /** Socket or bone to play at. Empty plays at the entity's origin. */
         PROPERTY(Editable, Category = "Sound", Picker = "Socket")

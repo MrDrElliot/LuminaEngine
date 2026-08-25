@@ -2307,6 +2307,13 @@ namespace Lumina
 
     void FPropertyTable::SetObject(void* InObject, CStruct* StructType)
     {
+        // RebuildTree drops every row, its expansion state and its customization, so repointing the table
+        // at what it already holds is a visible rebuild rather than a no-op.
+        if (Object == InObject && Struct == StructType)
+        {
+            return;
+        }
+
         Object = InObject;
         Struct = StructType;
         // Kept in lockstep with the object; a stale Type here would type-pun the edit hooks.
@@ -2327,6 +2334,11 @@ namespace Lumina
 
     void FPropertyTable::SetObject(void* InObject, CStruct* StructType, void* InDefaultObject)
     {
+        if (Object == InObject && Struct == StructType && DefaultObject == InDefaultObject)
+        {
+            return;
+        }
+
         Object = InObject;
         Struct = StructType;
         ChangeEventCallbacks.Type = StructType;

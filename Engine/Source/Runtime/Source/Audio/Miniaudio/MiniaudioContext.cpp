@@ -230,6 +230,9 @@ namespace Lumina
 
 	void FMiniaudioContext::Update()
 	{
+		// Runs on the game thread, which is the only toucher of the graph instance table.
+		SweepGraphInstances();
+
 		if (!bRunning.load(Atomic::MemoryOrderAcquire) || !Jobs::IsInitialized())
 		{
 			return;
@@ -489,6 +492,106 @@ namespace Lumina
 		return Handle;
 	}
 
+	FAudioHandle FMiniaudioContext::PlayAudioGraph(TSharedPtr<FAudioGraphInstance> Instance, const FAudioPlayParams& Params)
+	{
+		if (!Instance || Instance->GetDataSource() == nullptr)
+		{
+			return FAudioHandle::Invalid();
+		}
+
+		FAudioHandle Handle;
+		if (!AcquireVoiceSlot(Params.Priority, Handle))
+		{
+			return FAudioHandle::Invalid();
+		}
+
+		{
+			FScopeLock Lock(GraphInstanceLock);
+			GraphInstances[MakeGraphKey(Handle)] = Instance;
+		}
+
+		FPendingPlay Play;
+		Play.Handle    = Handle;
+		Play.Params    = Params;
+		Play.Graph     = std::move(Instance);
+		Play.StopEpoch = StopEpoch.load(Atomic::MemoryOrderRelaxed);
+
+		PendingPlays.enqueue(std::move(Play));
+		return Handle;
+	}
+
+	TSharedPtr<FAudioGraphInstance> FMiniaudioContext::FindGraphInstance(FAudioHandle Handle) const
+	{
+		if (!Handle.IsValid())
+		{
+			return nullptr;
+		}
+
+		FScopeLock Lock(GraphInstanceLock);
+		auto Found = GraphInstances.find(MakeGraphKey(Handle));
+		return Found != GraphInstances.end() ? Found->second : nullptr;
+	}
+
+	void FMiniaudioContext::ForgetGraphInstance(FAudioHandle Handle)
+	{
+		FScopeLock Lock(GraphInstanceLock);
+		GraphInstances.erase(MakeGraphKey(Handle));
+	}
+
+	void FMiniaudioContext::SweepGraphInstances()
+	{
+		FScopeLock Lock(GraphInstanceLock);
+
+		for (auto It = GraphInstances.begin(); It != GraphInstances.end();)
+		{
+			const uint32 Slot       = (uint32)(It->first & 0xFFFFFFFFu);
+			const uint32 Generation = (uint32)(It->first >> 32);
+
+			// The slot moving on is what retires the entry; the pump owns the voice, this table only mirrors it.
+			const bool bStale = Slot >= MaxVoiceSlots
+				|| SlotGeneration[Slot].load(Atomic::MemoryOrderAcquire) != Generation
+				|| SlotState[Slot].load(Atomic::MemoryOrderAcquire) == (uint8)EAudioVoiceState::Free;
+
+			It = bStale ? GraphInstances.erase(It) : ++It;
+		}
+	}
+
+	bool FMiniaudioContext::SetGraphFloatParameter(FAudioHandle Handle, const FName& Name, float Value)
+	{
+		TSharedPtr<FAudioGraphInstance> Instance = FindGraphInstance(Handle);
+		return Instance ? Instance->SetFloatParameter(Name, Value) : false;
+	}
+
+	bool FMiniaudioContext::SetGraphIntParameter(FAudioHandle Handle, const FName& Name, int32 Value)
+	{
+		TSharedPtr<FAudioGraphInstance> Instance = FindGraphInstance(Handle);
+		return Instance ? Instance->SetIntParameter(Name, Value) : false;
+	}
+
+	bool FMiniaudioContext::SetGraphBoolParameter(FAudioHandle Handle, const FName& Name, bool Value)
+	{
+		TSharedPtr<FAudioGraphInstance> Instance = FindGraphInstance(Handle);
+		return Instance ? Instance->SetBoolParameter(Name, Value) : false;
+	}
+
+	bool FMiniaudioContext::TriggerGraphParameter(FAudioHandle Handle, const FName& Name)
+	{
+		TSharedPtr<FAudioGraphInstance> Instance = FindGraphInstance(Handle);
+		return Instance ? Instance->TriggerParameter(Name) : false;
+	}
+
+	float FMiniaudioContext::GetGraphFloatOutput(FAudioHandle Handle, const FName& Name) const
+	{
+		TSharedPtr<FAudioGraphInstance> Instance = FindGraphInstance(Handle);
+		return Instance ? Instance->GetFloatOutput(Name) : 0.0f;
+	}
+
+	uint32 FMiniaudioContext::GetGraphTriggerOutputCount(FAudioHandle Handle, const FName& Name) const
+	{
+		TSharedPtr<FAudioGraphInstance> Instance = FindGraphInstance(Handle);
+		return Instance ? Instance->GetTriggerOutputCount(Name) : 0;
+	}
+
 	void FMiniaudioContext::ProcessPendingPlay(FPendingPlay& Play)
 	{
 		const uint32 Slot = Play.Handle.Index;
@@ -515,11 +618,16 @@ namespace Lumina
 		NewSound->BaseVolume    = Play.Params.Volume;
 		NewSound->Source        = Play.Data;
 		NewSound->Procedural    = Play.Stream;
+		NewSound->Graph         = Play.Graph;
 		NewSound->DopplerFactor = Play.Params.Attenuation.DopplerFactor;
 
 		ma_data_source* DataSource = nullptr;
 
-		if (NewSound->Procedural)
+		if (NewSound->Graph)
+		{
+			DataSource = (ma_data_source*)NewSound->Graph->GetDataSource();
+		}
+		else if (NewSound->Procedural)
 		{
 			DataSource = NewSound->Procedural->GetDataSource();
 		}
@@ -578,7 +686,7 @@ namespace Lumina
 		NewSound->bInitialized = true;
 
 		ma_sound_set_pitch(&NewSound->Sound, Play.Params.Pitch);
-		ma_sound_set_looping(&NewSound->Sound, (Play.Params.bLooping && !NewSound->Procedural) ? MA_TRUE : MA_FALSE);
+		ma_sound_set_looping(&NewSound->Sound, (Play.Params.bLooping && !NewSound->IsGenerated()) ? MA_TRUE : MA_FALSE);
 		ma_sound_set_spatialization_enabled(&NewSound->Sound, Play.Params.bSpatialized ? MA_TRUE : MA_FALSE);
 
 		if (Play.Params.bSpatialized)
@@ -703,7 +811,7 @@ namespace Lumina
 			break;
 
 		case EAudioCommandType::SetLooping:
-			if (!Sound->Procedural)
+			if (!Sound->IsGenerated())
 			{
 				ma_sound_set_looping(&Sound->Sound, Cmd.bValue ? MA_TRUE : MA_FALSE);
 			}
@@ -784,7 +892,7 @@ namespace Lumina
 			break;
 
 		case EAudioCommandType::SeekToFrame:
-			if (!Sound->Procedural)
+			if (!Sound->IsGenerated())
 			{
 				ma_sound_seek_to_pcm_frame(&Sound->Sound, Cmd.FrameValue);
 			}
@@ -901,7 +1009,7 @@ namespace Lumina
 			}
 			else if (!Sound.Procedural && !Sound.bPaused)
 			{
-				// Procedural voices stay alive even when their ring buffer momentarily runs dry.
+				// A graph voice does end, once its own OnFinished output reports the sound is over.
 				bFinished = ma_sound_at_end(&Sound.Sound) == MA_TRUE;
 			}
 
@@ -961,6 +1069,8 @@ namespace Lumina
 
 	void FMiniaudioContext::StopSound(FAudioHandle Handle, EAudioStopMode Mode, float FadeSeconds)
 	{
+		ForgetGraphInstance(Handle);
+
 		if (Handle.IsValid() && Handle.Index < MaxVoiceSlots &&
 			SlotGeneration[Handle.Index].load(Atomic::MemoryOrderRelaxed) == Handle.Generation)
 		{
@@ -972,6 +1082,11 @@ namespace Lumina
 
 	void FMiniaudioContext::StopAllSounds(EAudioStopMode Mode, float FadeSeconds)
 	{
+		{
+			FScopeLock Lock(GraphInstanceLock);
+			GraphInstances.clear();
+		}
+
 		StopEpoch.fetch_add(1, Atomic::MemoryOrderRelaxed);
 		CommandQueue.enqueue(FAudioCommand::MakeStopAll(Mode, FadeSeconds));
 	}

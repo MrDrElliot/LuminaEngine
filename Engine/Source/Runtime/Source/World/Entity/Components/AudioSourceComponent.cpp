@@ -1,8 +1,12 @@
-﻿#include "RuntimePCH.h"
+#include "RuntimePCH.h"
 #include "AudioSourceComponent.h"
 
+#include "Assets/AssetTypes/Audio/AudioGraph.h"
 #include "Assets/AssetTypes/Audio/AudioStream.h"
 #include "Audio/AudioGlobals.h"
+#include "Audio/Graph/AudioGraphInstance.h"
+#include "Audio/SoundPlayback.h"
+#include "Core/Object/Cast.h"
 
 namespace Lumina
 {
@@ -18,7 +22,9 @@ namespace Lumina
 			Audio::Context().StopSound(ActiveHandle);
 		}
 
-		if (Sound == nullptr || !Sound->IsValid())
+		GraphInstance.reset();
+
+		if (Sound == nullptr || !Sound->IsPlayable())
 		{
 			return;
 		}
@@ -35,7 +41,9 @@ namespace Lumina
 		Params.FadeInSeconds     = FadeInTime;
 		Params.bUseOcclusion     = Occlusion.bEnabled;
 
-		ActiveHandle = Audio::Context().PlayAudio(Sound->GetAudioData(), Params);
+		const FSoundPlayResult Started = Audio::PlaySound(Sound.Get(), Params);
+		ActiveHandle  = Started.Handle;
+		GraphInstance = Started.GraphInstance;
 
 		bPlaying = ActiveHandle.IsValid();
 		bPaused  = false;
@@ -65,6 +73,8 @@ namespace Lumina
 		ActiveHandle = FAudioHandle::Invalid();
 		bPlaying = false;
 		bPaused  = false;
+		GraphInstance.reset();
+		TriggerOutputCursors.clear();
 	}
 
 	void SAudioSourceComponent::SetPaused(bool bInPaused)
@@ -84,29 +94,113 @@ namespace Lumina
 		return Audio::Context().GetVoiceState(ActiveHandle) != EAudioVoiceState::Free;
 	}
 
+	bool SAudioSourceComponent::IsPersistent() const
+	{
+		// A graph decides its own lifetime, so bLooping never speaks for one.
+		if (const CAudioGraph* Graph = Cast<CAudioGraph>(Sound.Get()))
+		{
+			return Graph->IsEndless();
+		}
+
+		return bLooping;
+	}
+
 	float SAudioSourceComponent::GetPlaybackTime() const
 	{
-		if (!Audio::HasDevice() || Sound == nullptr || !Sound->IsValid())
+		if (!Audio::HasDevice())
 		{
 			return 0.0f;
 		}
 
-		const uint32 SampleRate = Sound->SampleRate;
-		if (SampleRate == 0)
+		if (GraphInstance)
+		{
+			return (float)((double)GraphInstance->GetRenderedFrames() / (double)GraphInstance->GetSampleRate());
+		}
+
+		const CAudioStream* Stream = Cast<CAudioStream>(Sound.Get());
+		if (Stream == nullptr || Stream->SampleRate == 0)
 		{
 			return 0.0f;
 		}
 
-		return (float)((double)Audio::Context().GetPlaybackFrame(ActiveHandle) / (double)SampleRate);
+		return (float)((double)Audio::Context().GetPlaybackFrame(ActiveHandle) / (double)Stream->SampleRate);
 	}
 
 	void SAudioSourceComponent::SeekToTime(float Seconds)
 	{
-		if (!Audio::HasDevice() || Sound == nullptr || !Sound->IsValid())
+		if (!Audio::HasDevice())
 		{
 			return;
 		}
 
-		Audio::Context().SeekToFrame(ActiveHandle, (uint64)(Math::Max(Seconds, 0.0f) * Sound->SampleRate));
+		// A graph has no timeline to seek along, only a rewind, which Play already covers.
+		const CAudioStream* Stream = Cast<CAudioStream>(Sound.Get());
+		if (Stream == nullptr || !Stream->IsValid())
+		{
+			return;
+		}
+
+		Audio::Context().SeekToFrame(ActiveHandle, (uint64)(Math::Max(Seconds, 0.0f) * Stream->SampleRate));
+	}
+
+	void SAudioSourceComponent::SetFloatParameter(FName Name, float Value)
+	{
+		if (GraphInstance)
+		{
+			GraphInstance->SetFloatParameter(Name, Value);
+		}
+	}
+
+	void SAudioSourceComponent::SetIntParameter(FName Name, int32 Value)
+	{
+		if (GraphInstance)
+		{
+			GraphInstance->SetIntParameter(Name, Value);
+		}
+	}
+
+	void SAudioSourceComponent::SetBoolParameter(FName Name, bool Value)
+	{
+		if (GraphInstance)
+		{
+			GraphInstance->SetBoolParameter(Name, Value);
+		}
+	}
+
+	void SAudioSourceComponent::TriggerParameter(FName Name)
+	{
+		if (GraphInstance)
+		{
+			GraphInstance->TriggerParameter(Name);
+		}
+	}
+
+	float SAudioSourceComponent::GetFloatOutput(FName Name) const
+	{
+		return GraphInstance ? GraphInstance->GetFloatOutput(Name) : 0.0f;
+	}
+
+	int32 SAudioSourceComponent::ConsumeTriggerOutput(FName Name)
+	{
+		if (!GraphInstance)
+		{
+			return 0;
+		}
+
+		const uint32 Total = GraphInstance->GetTriggerOutputCount(Name);
+
+		for (TPair<FName, uint32>& Seen : TriggerOutputCursors)
+		{
+			if (Seen.first == Name)
+			{
+				const uint32 Fired = Total - Seen.second;
+				Seen.second = Total;
+				return (int32)Fired;
+			}
+		}
+
+		// First ask reports nothing, so a script that starts watching midway does not get a backlog.
+		TriggerOutputCursors.push_back(TPair<FName, uint32>(Name, Total));
+		return 0;
 	}
 }

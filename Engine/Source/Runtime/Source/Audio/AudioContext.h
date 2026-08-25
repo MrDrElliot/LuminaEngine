@@ -3,6 +3,7 @@
 #include "AudioTypes.h"
 #include "AudioCommand.h"
 #include "AudioReverb.h"
+#include "Containers/Name.h"
 #include "Containers/String.h"
 #include "Memory/SmartPtr.h"
 #include "Platform/Platform.h"
@@ -10,6 +11,7 @@
 namespace Lumina
 {
     class FProceduralAudioStream;
+    class FAudioGraphInstance;
 
 	namespace Audio
 	{
@@ -50,6 +52,20 @@ namespace Lumina
 		NODISCARD virtual FAudioHandle PlayFile(FStringView File, const FAudioPlayParams& Params) = 0;
 
 		NODISCARD virtual FAudioHandle PlayProceduralStream(TSharedPtr<FProceduralAudioStream> Stream, const FAudioPlayParams& Params) = 0;
+
+		// Renders a compiled audio graph in the mixer, pulled on the device thread.
+		NODISCARD virtual FAudioHandle PlayAudioGraph(TSharedPtr<FAudioGraphInstance> Instance, const FAudioPlayParams& Params) = 0;
+
+		//~ Parameters on a graph voice addressed by its handle, so a one shot needs no held instance.
+		virtual bool SetGraphFloatParameter(FAudioHandle Handle, const FName& Name, float Value) = 0;
+		virtual bool SetGraphIntParameter(FAudioHandle Handle, const FName& Name, int32 Value) = 0;
+		virtual bool SetGraphBoolParameter(FAudioHandle Handle, const FName& Name, bool Value) = 0;
+		virtual bool TriggerGraphParameter(FAudioHandle Handle, const FName& Name) = 0;
+
+		NODISCARD virtual float GetGraphFloatOutput(FAudioHandle Handle, const FName& Name) const = 0;
+
+		// Monotonic count of times a graph raised the named trigger output. Compare against a previous read.
+		NODISCARD virtual uint32 GetGraphTriggerOutputCount(FAudioHandle Handle, const FName& Name) const = 0;
 
 		virtual void StopSound(FAudioHandle Handle, EAudioStopMode Mode = EAudioStopMode::Immediate, float FadeSeconds = 0.5f) = 0;
 		virtual void StopAllSounds(EAudioStopMode Mode = EAudioStopMode::Immediate, float FadeSeconds = 0.5f) = 0;

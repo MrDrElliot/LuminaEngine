@@ -111,7 +111,7 @@ public struct FSoundPlayParams
 }
 
 /// <summary>
-/// A world's audio interface (<c>World.Audio</c>). Plays <see cref="CAudioStream"/> assets as 2D (UI/music)
+/// A world's audio interface (<c>World.Audio</c>). Plays <see cref="CSoundBase"/> assets (a wave or an audio graph) as 2D (UI/music)
 /// or spatialized 3D sounds and controls them through the returned <see cref="AudioHandle"/>. Also owns the
 /// mix: per-bus volumes and mutes, the reverb return, doppler scale and global suspend. The engine audio
 /// context is process-global, so the World handle is currently unused; the facade hangs off the world for
@@ -128,17 +128,33 @@ public readonly unsafe partial struct Audio
     }
 
     /// <summary>Play a non-spatialized sound (UI, music, 2D SFX). Returns the controlling handle.</summary>
-    public AudioHandle Play2D(CAudioStream? Sound, float Volume = 1.0f, float Pitch = 1.0f, bool Loop = false)
+    public AudioHandle Play2D(CSoundBase? Sound, float Volume = 1.0f, float Pitch = 1.0f, bool Loop = false)
         => Sound is null ? default : PlaySound2DRaw(Sound.Handle, Volume, Pitch, Loop ? 1 : 0);
 
     /// <summary>Play a spatialized sound at a world location, attenuated between Min and Max distance (meters).</summary>
-    public AudioHandle PlayAtLocation(CAudioStream? Sound, FVector3 Location, float Volume = 1.0f, float Pitch = 1.0f,
+    public AudioHandle PlayAtLocation(CSoundBase? Sound, FVector3 Location, float Volume = 1.0f, float Pitch = 1.0f,
         float MinDistance = 1.0f, float MaxDistance = 50.0f, bool Loop = false)
         => Sound is null ? default : PlaySoundAtLocationRaw(Sound.Handle, Location, Volume, Pitch, MinDistance, MaxDistance, Loop ? 1 : 0);
 
     /// <summary>Play with the full parameter set: bus, attenuation, cone, priority, fade in, start delay.</summary>
-    public AudioHandle Play(CAudioStream? Sound, FSoundPlayParams Params)
+    public AudioHandle Play(CSoundBase? Sound, FSoundPlayParams Params)
         => Sound is null ? default : PlaySoundExRaw(Sound.Handle, Params);
+
+    /// <summary>Write a graph input on a playing voice. False when the voice is gone or names no such input.</summary>
+    public bool SetGraphFloat(AudioHandle Handle, string Name, float Value) => SetGraphFloatRaw(Handle, Name, Value) != 0;
+
+    public bool SetGraphInt(AudioHandle Handle, string Name, int Value) => SetGraphIntRaw(Handle, Name, Value) != 0;
+
+    public bool SetGraphBool(AudioHandle Handle, string Name, bool Value) => SetGraphBoolRaw(Handle, Name, Value ? 1 : 0) != 0;
+
+    /// <summary>Fire a graph trigger input, raised at the start of the next rendered block.</summary>
+    public bool TriggerGraph(AudioHandle Handle, string Name) => TriggerGraphRaw(Handle, Name) != 0;
+
+    /// <summary>Last rendered block's value of a graph float output.</summary>
+    public float GetGraphFloatOutput(AudioHandle Handle, string Name) => GetGraphFloatOutputRaw(Handle, Name);
+
+    /// <summary>Monotonic count of times a graph raised the named trigger output. Compare against your last read.</summary>
+    public uint GetGraphTriggerCount(AudioHandle Handle, string Name) => GetGraphTriggerCountRaw(Handle, Name);
 
     /// <summary>Stop a playing sound. <paramref name="FadeOut"/> ramps it down over <paramref name="FadeSeconds"/>.</summary>
     public void Stop(AudioHandle Handle, bool FadeOut = false, float FadeSeconds = 0.5f)
@@ -213,7 +229,25 @@ public readonly unsafe partial struct Audio
     /// <summary>Persists the current bus volumes to the project's AudioSettings.json. Call after an options menu applies.</summary>
     public void SaveMixSettings() => SaveMixSettingsRaw();
 
-    // Flat shims (Runtime module). The world Handle is injected first; the CAudioStream crosses as its native pointer.
+    // Flat shims (Runtime module). The world Handle is injected first; the sound crosses as its native pointer.
+    [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Audio_SetGraphFloat")]
+    private partial int SetGraphFloatRaw(AudioHandle Voice, string Name, float Value);
+
+    [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Audio_SetGraphInt")]
+    private partial int SetGraphIntRaw(AudioHandle Voice, string Name, int Value);
+
+    [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Audio_SetGraphBool")]
+    private partial int SetGraphBoolRaw(AudioHandle Voice, string Name, int Value);
+
+    [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Audio_TriggerGraph")]
+    private partial int TriggerGraphRaw(AudioHandle Voice, string Name);
+
+    [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Audio_GetGraphFloatOutput")]
+    private partial float GetGraphFloatOutputRaw(AudioHandle Voice, string Name);
+
+    [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Audio_GetGraphTriggerCount")]
+    private partial uint GetGraphTriggerCountRaw(AudioHandle Voice, string Name);
+
     [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Audio_PlaySound2D")]
     private partial AudioHandle PlaySound2DRaw(IntPtr Stream, float Volume, float Pitch, int Loop);
 

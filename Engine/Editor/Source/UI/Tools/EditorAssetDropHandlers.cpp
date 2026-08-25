@@ -1,6 +1,8 @@
 #include "EditorAssetDropHandlers.h"
 
+#include "Assets/AssetTypes/Audio/AudioGraph.h"
 #include "Assets/AssetTypes/Audio/AudioStream.h"
+#include "Assets/AssetTypes/Audio/SoundBase.h"
 #include "Assets/AssetTypes/Material/MaterialInterface.h"
 #include "Assets/AssetTypes/Mesh/Animation/Animation.h"
 #include "Assets/AssetTypes/Mesh/SkeletalMesh/SkeletalMesh.h"
@@ -160,39 +162,42 @@ namespace Lumina
                 });
 
             // Plays immediately so the placement can be heard, and swaps rather than stacking on an emitter.
-            Instance.Register(CAudioStream::StaticClass()->GetName(),
-                [](CWorld* World, CObject* Asset, const FTransform& SpawnTransform, entt::entity DropTarget, bool bAttachToTarget) -> entt::entity
+            auto DropSound = [](CWorld* World, CObject* Asset, const FTransform& SpawnTransform,
+                entt::entity DropTarget, bool bAttachToTarget) -> entt::entity
+            {
+                CSoundBase* Sound = Cast<CSoundBase>(Asset);
+                if (Sound == nullptr || World == nullptr)
                 {
-                    CAudioStream* Sound = Cast<CAudioStream>(Asset);
-                    if (Sound == nullptr || World == nullptr)
+                    return entt::null;
+                }
+
+                entt::registry& Registry = ECS::GetWorldRegistry(*World);
+                if (DropTarget != entt::null && Registry.valid(DropTarget))
+                {
+                    if (SAudioSourceComponent* Existing = Registry.try_get<SAudioSourceComponent>(DropTarget))
                     {
-                        return entt::null;
+                        Existing->Sound = Sound;
+                        return DropTarget;
                     }
+                }
 
-                    entt::registry& Registry = ECS::GetWorldRegistry(*World);
-                    if (DropTarget != entt::null && Registry.valid(DropTarget))
-                    {
-                        if (SAudioSourceComponent* Existing = Registry.try_get<SAudioSourceComponent>(DropTarget))
-                        {
-                            Existing->Sound = Sound;
-                            return DropTarget;
-                        }
-                    }
+                entt::entity Entity = World->ConstructEntity(Sound->GetName(), SpawnTransform);
+                SAudioSourceComponent& Source = Registry.emplace<SAudioSourceComponent>(Entity);
+                Source.Sound        = Sound;
+                Source.bPlayOnReady = true;
+                // Looping by default, since a one-shot that plays once on spawn reads as the drop not working.
+                Source.bLooping     = true;
 
-                    entt::entity Entity = World->ConstructEntity(Sound->GetName(), SpawnTransform);
-                    SAudioSourceComponent& Source = Registry.emplace<SAudioSourceComponent>(Entity);
-                    Source.Sound        = Sound;
-                    Source.bPlayOnReady = true;
-                    // Looping by default, since a one-shot that plays once on spawn reads as the drop not working.
-                    Source.bLooping     = true;
+                if (bAttachToTarget && DropTarget != entt::null && Registry.valid(DropTarget))
+                {
+                    ECS::Utils::ReparentEntity(Registry, Entity, DropTarget);
+                }
 
-                    if (bAttachToTarget && DropTarget != entt::null && Registry.valid(DropTarget))
-                    {
-                        ECS::Utils::ReparentEntity(Registry, Entity, DropTarget);
-                    }
+                return Entity;
+            };
 
-                    return Entity;
-                });
+            Instance.Register(CAudioStream::StaticClass()->GetName(), DropSound);
+            Instance.Register(CAudioGraph::StaticClass()->GetName(), DropSound);
 
             // The component bursts on spawn, so the effect plays as soon as it lands and can be judged.
             Instance.Register(CParticleSystem::StaticClass()->GetName(),

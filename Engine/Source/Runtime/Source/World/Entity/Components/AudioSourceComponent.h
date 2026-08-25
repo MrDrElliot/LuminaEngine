@@ -2,22 +2,27 @@
 
 #include "Assets/AssetTypes/Audio/SoundAttenuation.h"
 #include "Audio/AudioTypes.h"
+#include "Containers/Name.h"
+#include "Containers/Pair.h"
+#include "Containers/Vector.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Object/ObjectHandleTyped.h"
+#include "Memory/SmartPtr.h"
 #include "AudioSourceComponent.generated.h"
 
 namespace Lumina
 {
-	class CAudioStream;
+	class CSoundBase;
+	class FAudioGraphInstance;
 
 	REFLECT(Component, Category = "Audio")
 	struct RUNTIME_API SAudioSourceComponent
 	{
 		GENERATED_BODY()
 
-		/** Audio asset to play. */
+		/** Sound to play. Accepts a wave asset or a compiled audio graph. */
 		PROPERTY(Editable)
-		TObjectPtr<CAudioStream> Sound;
+		TObjectPtr<CSoundBase> Sound;
 
 		/** Mix group this source routes through. */
 		PROPERTY(Editable)
@@ -55,7 +60,7 @@ namespace Lumina
 		PROPERTY(Editable, ClampMin = 0.0f)
 		float FadeOutTime = 0.5f;
 
-		/** When true, the sound restarts automatically upon completion. */
+		/** Restarts a wave asset when it reaches its end. An audio graph loops by its own construction. */
 		PROPERTY(Editable)
 		bool bLooping = false;
 
@@ -69,6 +74,9 @@ namespace Lumina
 
 		// Handle to the currently playing sound instance.
 		FAudioHandle ActiveHandle;
+
+		// Live graph, when Sound is a CAudioGraph. Shared with the mixer for the life of the voice.
+		TSharedPtr<FAudioGraphInstance> GraphInstance;
 
 		// Set once the component has been initialized by the audio system.
 		bool bReady = false;
@@ -90,6 +98,9 @@ namespace Lumina
 		float OcclusionTraceTimer = 0.0f;
 
 		// World position sampled last tick; drives the emitter velocity used for doppler.
+		// Last count this component observed per watched trigger output, so a fire is reported once.
+		TVector<TPair<FName, uint32>> TriggerOutputCursors;
+
 		FVector3 LastPosition = FVector3(0.0f);
 		bool bHasLastPosition = false;
 
@@ -110,12 +121,37 @@ namespace Lumina
 		FUNCTION()
 		bool IsPlaying() const;
 
+		/** True for a sound that plays until stopped, which is what makes a source worth virtualizing. */
+		FUNCTION()
+		bool IsPersistent() const;
+
 		/** Current playback position in seconds, 0 when not playing. */
 		FUNCTION()
 		float GetPlaybackTime() const;
 
 		FUNCTION()
 		void SeekToTime(float Seconds);
+
+		/** Writes a graph input. No-op unless Sound is an audio graph declaring that parameter. */
+		FUNCTION()
+		void SetFloatParameter(FName Name, float Value);
+
+		FUNCTION()
+		void SetIntParameter(FName Name, int32 Value);
+
+		FUNCTION()
+		void SetBoolParameter(FName Name, bool Value);
+
+		FUNCTION()
+		void TriggerParameter(FName Name);
+
+		/** Last rendered block's value of a graph float output, for driving gameplay off the sound. */
+		FUNCTION()
+		float GetFloatOutput(FName Name) const;
+
+		/** Times a graph trigger output fired since the last call, so a graph can drive gameplay events. */
+		FUNCTION()
+		int32 ConsumeTriggerOutput(FName Name);
 
 		void StopWithMode(EAudioStopMode Mode);
 	};

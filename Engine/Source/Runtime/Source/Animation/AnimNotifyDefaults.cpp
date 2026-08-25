@@ -4,6 +4,7 @@
 #include "Animation/SkeletalMeshUtils.h"
 #include "Assets/AssetTypes/Audio/AudioStream.h"
 #include "Audio/AudioGlobals.h"
+#include "Audio/SoundPlayback.h"
 #include "Log/Log.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/World.h"
@@ -51,7 +52,7 @@ namespace Lumina
 
     void SAnimNotify_PlaySound::Notify(FEntityRegistry& Registry, FEntity Entity) const
     {
-        if (!Audio::HasDevice() || Sound == nullptr || !Sound->IsValid())
+        if (!Audio::HasDevice() || Sound == nullptr || !Sound->IsPlayable())
         {
             return;
         }
@@ -69,7 +70,7 @@ namespace Lumina
             Params.bSpatialized = false;
         }
 
-        (void)Audio::Context().PlayAudio(Sound->GetAudioData(), Params);
+        (void)Audio::PlaySound(Sound.Get(), Params);
     }
 
     void SAnimNotify_PlayParticleSystem::Notify(FEntityRegistry& Registry, FEntity Entity) const

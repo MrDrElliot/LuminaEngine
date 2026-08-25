@@ -7,7 +7,10 @@
 #include "Audio/AudioContext.h"
 #include "Audio/AudioSettings.h"
 #include "Audio/AudioTypes.h"
+#include "Assets/AssetTypes/Audio/AudioGraph.h"
 #include "Assets/AssetTypes/Audio/AudioStream.h"
+#include "Assets/AssetTypes/Audio/SoundBase.h"
+#include "Core/Object/Cast.h"
 #include "Config/Config.h"
 #include "Scripting/DotNet/DotNetExport.h"
 
@@ -18,12 +21,9 @@ using namespace Lumina::DotNet;
 
 namespace
 {
-    // A null handle makes the play calls return an invalid handle.
-    const TSharedPtr<FAudioData>& AudioDataOf(void* StreamPtr)
+    CSoundBase* SoundOf(void* SoundPtr)
     {
-        static const TSharedPtr<FAudioData> None;
-        const CAudioStream* Stream = reinterpret_cast<const CAudioStream*>(StreamPtr);
-        return (Stream != nullptr && Stream->IsValid()) ? Stream->GetAudioData() : None;
+        return Cast<CSoundBase>(reinterpret_cast<CObject*>(SoundPtr));
     }
 }
 
@@ -64,41 +64,106 @@ static FAudioPlayParams ToNative(const FScriptAudioPlayParams& In)
     return Out;
 }
 
-// Play a 2D (non-spatialized) sound, e.g. UI or music. Returns the controlling handle (invalid on failure).
-LUMINA_DOTNET_EXPORT(FAudioHandle, Audio_PlaySound2D)(uint64 World, void* Stream, float Volume, float Pitch, int32 bLoop)
+namespace
 {
-    (void)World;
-    const TSharedPtr<FAudioData>& Data = AudioDataOf(Stream);
-    if (Data.get() == nullptr)
+    // Scripts get a voice handle but no graph instance, so a graph played this way takes no parameters.
+    FAudioHandle PlaySound(void* SoundPtr, const FAudioPlayParams& Params)
     {
+        CSoundBase* Sound = SoundOf(SoundPtr);
+        if (Sound == nullptr || !Sound->IsPlayable())
+        {
+            return FAudioHandle::Invalid();
+        }
+
+        if (CAudioGraph* Graph = Cast<CAudioGraph>(Sound))
+        {
+            const FAudioDeviceInfo DeviceInfo = Audio::Context().GetDeviceInfo();
+            const uint32 SampleRate = DeviceInfo.SampleRate != 0 ? DeviceInfo.SampleRate : 48000;
+
+            TSharedPtr<FAudioGraphInstance> Instance = Graph->CreateInstance(SampleRate, 2);
+            return Instance ? Audio::Context().PlayAudioGraph(Instance, Params) : FAudioHandle::Invalid();
+        }
+
+        if (CAudioStream* Stream = Cast<CAudioStream>(Sound))
+        {
+            return Audio::Context().PlayAudio(Stream->GetAudioData(), Params);
+        }
+
         return FAudioHandle::Invalid();
     }
-    return Audio::Context().PlayAudio2D(Data, Volume, Pitch, bLoop != 0);
+}
+
+// Play a 2D (non-spatialized) sound, e.g. UI or music. Returns the controlling handle (invalid on failure).
+LUMINA_DOTNET_EXPORT(FAudioHandle, Audio_PlaySound2D)(uint64 World, void* Sound, float Volume, float Pitch, int32 bLoop)
+{
+    (void)World;
+
+    FAudioPlayParams Params;
+    Params.Volume   = Volume;
+    Params.Pitch    = Pitch;
+    Params.bLooping = bLoop != 0;
+    return PlaySound(Sound, Params);
 }
 
 // Play a 3D sound attenuated between MinDistance and MaxDistance around Location.
-LUMINA_DOTNET_EXPORT(FAudioHandle, Audio_PlaySoundAtLocation)(uint64 World, void* Stream, FVector3 Location,
+LUMINA_DOTNET_EXPORT(FAudioHandle, Audio_PlaySoundAtLocation)(uint64 World, void* Sound, FVector3 Location,
     float Volume, float Pitch, float MinDistance, float MaxDistance, int32 bLoop)
 {
     (void)World;
-    const TSharedPtr<FAudioData>& Data = AudioDataOf(Stream);
-    if (Data.get() == nullptr)
-    {
-        return FAudioHandle::Invalid();
-    }
-    return Audio::Context().PlayAudioAtLocation(Data, Location, Volume, Pitch, MinDistance, MaxDistance, bLoop != 0);
+
+    FAudioPlayParams Params;
+    Params.Volume                  = Volume;
+    Params.Pitch                   = Pitch;
+    Params.bLooping                = bLoop != 0;
+    Params.bSpatialized            = true;
+    Params.Position                = Location;
+    Params.Attenuation.MinDistance = MinDistance;
+    Params.Attenuation.MaxDistance = MaxDistance;
+    return PlaySound(Sound, Params);
 }
 
 // Full-control playback covering bus, attenuation, priority, fades and occlusion.
-LUMINA_DOTNET_EXPORT(FAudioHandle, Audio_PlaySoundEx)(uint64 World, void* Stream, FScriptAudioPlayParams Params)
+LUMINA_DOTNET_EXPORT(FAudioHandle, Audio_PlaySoundEx)(uint64 World, void* Sound, FScriptAudioPlayParams Params)
 {
     (void)World;
-    const TSharedPtr<FAudioData>& Data = AudioDataOf(Stream);
-    if (Data.get() == nullptr)
-    {
-        return FAudioHandle::Invalid();
-    }
-    return Audio::Context().PlayAudio(Data, ToNative(Params));
+    return PlaySound(Sound, ToNative(Params));
+}
+
+// Graph parameters by voice handle, so a one shot fired without a component can still be driven.
+LUMINA_DOTNET_EXPORT(int32, Audio_SetGraphFloat)(uint64 World, FAudioHandle Handle, const char* Name, float Value)
+{
+    (void)World;
+    return Audio::Context().SetGraphFloatParameter(Handle, FName(Name), Value) ? 1 : 0;
+}
+
+LUMINA_DOTNET_EXPORT(int32, Audio_SetGraphInt)(uint64 World, FAudioHandle Handle, const char* Name, int32 Value)
+{
+    (void)World;
+    return Audio::Context().SetGraphIntParameter(Handle, FName(Name), Value) ? 1 : 0;
+}
+
+LUMINA_DOTNET_EXPORT(int32, Audio_SetGraphBool)(uint64 World, FAudioHandle Handle, const char* Name, int32 Value)
+{
+    (void)World;
+    return Audio::Context().SetGraphBoolParameter(Handle, FName(Name), Value != 0) ? 1 : 0;
+}
+
+LUMINA_DOTNET_EXPORT(int32, Audio_TriggerGraph)(uint64 World, FAudioHandle Handle, const char* Name)
+{
+    (void)World;
+    return Audio::Context().TriggerGraphParameter(Handle, FName(Name)) ? 1 : 0;
+}
+
+LUMINA_DOTNET_EXPORT(float, Audio_GetGraphFloatOutput)(uint64 World, FAudioHandle Handle, const char* Name)
+{
+    (void)World;
+    return Audio::Context().GetGraphFloatOutput(Handle, FName(Name));
+}
+
+LUMINA_DOTNET_EXPORT(uint32, Audio_GetGraphTriggerCount)(uint64 World, FAudioHandle Handle, const char* Name)
+{
+    (void)World;
+    return Audio::Context().GetGraphTriggerOutputCount(Handle, FName(Name));
 }
 
 LUMINA_DOTNET_EXPORT(void, Audio_Stop)(uint64 World, FAudioHandle Handle, int32 bAllowFadeOut, float FadeSeconds)

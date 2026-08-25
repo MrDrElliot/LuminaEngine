@@ -2,7 +2,9 @@
 
 #include "Audio/AudioContext.h"
 #include "Audio/AudioReverb.h"
+#include "Audio/Graph/AudioGraphInstance.h"
 #include "Audio/ProceduralAudioStream.h"
+#include "Containers/HashTable.h"
 #include "Containers/Vector.h"
 #include "Memory/MemoryConcurrentQueue.h"
 #include "Containers/String.h"
@@ -30,6 +32,14 @@ namespace Lumina
 		FAudioHandle PlayAudio(const TSharedPtr<FAudioData>& Data, const FAudioPlayParams& Params) override;
 		FAudioHandle PlayFile(FStringView File, const FAudioPlayParams& Params) override;
 		FAudioHandle PlayProceduralStream(TSharedPtr<FProceduralAudioStream> Stream, const FAudioPlayParams& Params) override;
+		FAudioHandle PlayAudioGraph(TSharedPtr<FAudioGraphInstance> Instance, const FAudioPlayParams& Params) override;
+
+		bool SetGraphFloatParameter(FAudioHandle Handle, const FName& Name, float Value) override;
+		bool SetGraphIntParameter(FAudioHandle Handle, const FName& Name, int32 Value) override;
+		bool SetGraphBoolParameter(FAudioHandle Handle, const FName& Name, bool Value) override;
+		bool TriggerGraphParameter(FAudioHandle Handle, const FName& Name) override;
+		float GetGraphFloatOutput(FAudioHandle Handle, const FName& Name) const override;
+		uint32 GetGraphTriggerOutputCount(FAudioHandle Handle, const FName& Name) const override;
 
 		void StopSound(FAudioHandle Handle, EAudioStopMode Mode, float FadeSeconds) override;
 		void StopAllSounds(EAudioStopMode Mode, float FadeSeconds) override;
@@ -116,6 +126,12 @@ namespace Lumina
 
 			// Non-null for procedural voices; they are never auto-collected on end of data.
 			TSharedPtr<FProceduralAudioStream> Procedural;
+
+			// Non-null for audio graph voices, which the device thread renders on demand.
+			TSharedPtr<FAudioGraphInstance> Graph;
+
+			// True when the voice generates its samples rather than decoding a fixed timeline.
+			bool IsGenerated() const { return Procedural || Graph; }
 		};
 
 		// Play requests carry shared pointers and a settings struct, so they ride a side queue rather
@@ -127,6 +143,7 @@ namespace Lumina
 			FString Path;
 			TSharedPtr<FAudioData> Data;
 			TSharedPtr<FProceduralAudioStream> Stream;
+			TSharedPtr<FAudioGraphInstance> Graph;
 			uint32 StopEpoch = 0;
 		};
 
@@ -194,6 +211,15 @@ namespace Lumina
 		TAtomic<bool>   SlotCanceled[MaxVoiceSlots];
 		TConcurrentQueue<uint32> FreeSlots;
 		FMutex SlotLock;
+
+		// Swept in Update rather than by the pump, since every reader and writer of it is the game thread.
+		mutable FMutex GraphInstanceLock;
+		THashMap<uint64, TSharedPtr<FAudioGraphInstance>> GraphInstances;
+
+		static uint64 MakeGraphKey(FAudioHandle Handle) { return ((uint64)Handle.Generation << 32) | Handle.Index; }
+		TSharedPtr<FAudioGraphInstance> FindGraphInstance(FAudioHandle Handle) const;
+		void ForgetGraphInstance(FAudioHandle Handle);
+		void SweepGraphInstances();
 
 		TAtomic<uint32> ActiveVoices{0};
 		TAtomic<uint32> MaxActiveVoices{128};

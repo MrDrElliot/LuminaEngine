@@ -6,19 +6,19 @@ namespace LuminaSharp;
 /// audio facade and returns a <see cref="PlayingSound"/> you can adjust or stop.</summary>
 public static class Sound
 {
-    public static PlayingSound Play(CAudioStream Clip, float Volume = 1.0f, float Pitch = 1.0f, bool Loop = false)
+    public static PlayingSound Play(CSoundBase Clip, float Volume = 1.0f, float Pitch = 1.0f, bool Loop = false)
         => new(Game.World, Game.World.Audio.Play2D(Clip, Volume, Pitch, Loop));
 
-    public static PlayingSound PlayAt(CAudioStream Clip, FVector3 Location, float Volume = 1.0f, float Pitch = 1.0f,
+    public static PlayingSound PlayAt(CSoundBase Clip, FVector3 Location, float Volume = 1.0f, float Pitch = 1.0f,
         float MinDistance = 1.0f, float MaxDistance = 50.0f, bool Loop = false)
         => new(Game.World, Game.World.Audio.PlayAtLocation(Clip, Location, Volume, Pitch, MinDistance, MaxDistance, Loop));
 
     /// <summary>Play with the full parameter set (bus, attenuation, cone, priority, fades).</summary>
-    public static PlayingSound PlayEx(CAudioStream Clip, FSoundPlayParams Params)
+    public static PlayingSound PlayEx(CSoundBase Clip, FSoundPlayParams Params)
         => new(Game.World, Game.World.Audio.Play(Clip, Params));
 
     /// <summary>Play a one-shot on a specific mix group without building a full parameter set.</summary>
-    public static PlayingSound PlayOnBus(CAudioStream Clip, EAudioBus Bus, float Volume = 1.0f, float Pitch = 1.0f)
+    public static PlayingSound PlayOnBus(CSoundBase Clip, EAudioBus Bus, float Volume = 1.0f, float Pitch = 1.0f)
     {
         FSoundPlayParams Params = FSoundPlayParams.Default();
         Params.Bus = Bus;
@@ -78,4 +78,16 @@ public readonly struct PlayingSound
     public void FadeTo(float Volume, float Seconds) => World.Audio.FadeTo(Handle, Volume, Seconds);
 
     public void Stop(bool FadeOut = false, float FadeSeconds = 0.5f) => World.Audio.Stop(Handle, FadeOut, FadeSeconds);
+
+    //~ Graph parameters, for a one shot played from a CAudioGraph rather than a wave.
+
+    public bool SetFloat(string Name, float Value) => World.Audio.SetGraphFloat(Handle, Name, Value);
+    public bool SetInt(string Name, int Value) => World.Audio.SetGraphInt(Handle, Name, Value);
+    public bool SetBool(string Name, bool Value) => World.Audio.SetGraphBool(Handle, Name, Value);
+    public bool Trigger(string Name) => World.Audio.TriggerGraph(Handle, Name);
+
+    public float GetFloatOutput(string Name) => World.Audio.GetGraphFloatOutput(Handle, Name);
+
+    /// <summary>Monotonic fire count of a graph trigger output. Compare against your own last read.</summary>
+    public uint GetTriggerCount(string Name) => World.Audio.GetGraphTriggerCount(Handle, Name);
 }

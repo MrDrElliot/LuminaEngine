@@ -19,6 +19,13 @@ namespace Lumina
             FAudioHandle PlayAudio(const TSharedPtr<FAudioData>&, const FAudioPlayParams&) override { return {}; }
             FAudioHandle PlayFile(FStringView, const FAudioPlayParams&) override { return {}; }
             FAudioHandle PlayProceduralStream(TSharedPtr<FProceduralAudioStream>, const FAudioPlayParams&) override { return {}; }
+            FAudioHandle PlayAudioGraph(TSharedPtr<FAudioGraphInstance>, const FAudioPlayParams&) override { return {}; }
+            bool SetGraphFloatParameter(FAudioHandle, const FName&, float) override { return false; }
+            bool SetGraphIntParameter(FAudioHandle, const FName&, int32) override { return false; }
+            bool SetGraphBoolParameter(FAudioHandle, const FName&, bool) override { return false; }
+            bool TriggerGraphParameter(FAudioHandle, const FName&) override { return false; }
+            float GetGraphFloatOutput(FAudioHandle, const FName&) const override { return 0.0f; }
+            uint32 GetGraphTriggerOutputCount(FAudioHandle, const FName&) const override { return 0; }
 
             void StopSound(FAudioHandle, EAudioStopMode, float) override {}
             void StopAllSounds(EAudioStopMode, float) override {}

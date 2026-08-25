@@ -156,15 +156,16 @@ namespace Lumina
 					Audio.LastPosition = Position;
 					Audio.bHasLastPosition = true;
 
-					if (Audio.bPlayOnReady && Audio.Sound != nullptr && Audio.Sound->IsValid() && bInRange)
+					if (Audio.bPlayOnReady && Audio.Sound != nullptr && Audio.Sound->IsPlayable() && bInRange)
 					{
 						Audio.Play();
 					}
 					return;
 				}
 
-				// Looping sources virtualize, dropping their voice out of range and taking a new one back.
-				if (Audio.bLooping && Audio.bPlayOnReady && Audio.Sound != nullptr && Audio.Sound->IsValid())
+				// A sound that plays until stopped virtualizes, dropping its voice out of range and taking
+				// a new one back. A one shot must not, or it would restart every time it finished.
+				if (Audio.bPlayOnReady && Audio.Sound != nullptr && Audio.Sound->IsPlayable() && Audio.IsPersistent())
 				{
 					if (!Audio.bPlaying && bInRange)
 					{
