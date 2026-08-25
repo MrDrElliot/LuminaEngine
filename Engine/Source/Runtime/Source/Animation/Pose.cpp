@@ -15,10 +15,12 @@ namespace Lumina
         BindLocalTranslations.resize(NumBones);
         BindLocalRotations.resize(NumBones);
         BindLocalScales.resize(NumBones);
+        BindGlobalMatrices.resize(NumBones);
 
         for (int32 i = 0; i < NumBones; ++i)
         {
             AnimPose::DecomposeTRS(Bones[i].LocalTransform, BindLocalTranslations[i], BindLocalRotations[i], BindLocalScales[i]);
+            BindGlobalMatrices[i] = Math::Inverse(Bones[i].InvBindMatrix);
         }
 
         ++BindPoseGeneration;

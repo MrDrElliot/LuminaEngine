@@ -1378,7 +1378,7 @@ namespace Lumina
 
                     CurrentCameraEarlyView = Capture.CameraViewIndex;
 
-                    CurrentSceneRootAddr = BuildViewSceneRoot(View,
+                    SetSceneRoot(CL, View,
                         RHI::Core::CopyTransient(MakeSecondaryViewGlobals(Capture.SceneGlobalData)));
 
                     RenderCaptureView(CL);
@@ -1467,7 +1467,7 @@ namespace Lumina
             PointAtView(View);
             CurrentCameraEarlyView = Bake.FaceCullViews[Face];
 
-            CurrentSceneRootAddr = BuildViewSceneRoot(View,
+            SetSceneRoot(CL, View,
                 RHI::Core::CopyTransient(MakeSecondaryViewGlobals(Bake.FaceGlobals[Face])));
 
             if (Frame.Geometry.DrawCommands.empty())
@@ -3694,10 +3694,10 @@ namespace Lumina
                 bIBLConvolutionValid = false;
             }
             SceneRootShared = FSceneRoot{};
-            SceneRootShared.Lights = RHI::Core::CopyTransient(LightData);
+            SceneBindings.Lights = RHI::Core::CopyTransient(LightData);
             if (VisibleInstanceRing[CurrentFrameSlot])
             {
-                SceneRootShared.Instances = VisibleInstanceRing[CurrentFrameSlot].GetAddress();
+                SceneBindings.Instances = VisibleInstanceRing[CurrentFrameSlot].GetAddress();
             }
             // Persistent and slot-addressed, so this is just the arena's address.
             if (BoneArenaBuffer)
@@ -3769,7 +3769,7 @@ namespace Lumina
             SceneGlobalData.MomentZerothIndex = (uint32)CurrentView->Images[(int)ENamedImage::MomentZeroth].GetResourceID();
             SceneGlobalData.MomentsIndex      = (uint32)CurrentView->Images[(int)ENamedImage::Moments].GetResourceID();
 
-            CurrentSceneRootAddr = BuildViewSceneRoot(*CurrentView, RHI::Core::CopyTransient(SceneGlobalData));
+            SetSceneRoot(CL, *CurrentView, RHI::Core::CopyTransient(SceneGlobalData));
 
             DispatchGPUSceneCull(CL, Frame);
         }
@@ -5840,7 +5840,7 @@ namespace Lumina
 
         {
             const RHI::GPUPtr DrawListAddr  = GetMeshletDrawList().GetAddress();
-            const RHI::GPUPtr InstancesAddr = SceneRootShared.Instances;
+            const RHI::GPUPtr InstancesAddr = SceneBindings.Instances;
             const RHI::GPUPtr BucketsAddr   = GetRenderBuckets().GetAddress();
             const char* MissingBuffer = DrawListAddr == 0  ? "MeshletDrawList"
                                       : InstancesAddr == 0 ? "Instances (visible-instance ring)"
@@ -12038,7 +12038,7 @@ namespace Lumina
 
         struct FBRDFArgs { uint32 OutUAV; uint32 Width; uint32 Height; uint32 _Pad0; };
         const FBRDFArgs Args{ Shared.BRDFLutUAV, BRDFLutSize, BRDFLutSize, 0 };
-        const RHI::GPUPtr ArgsPtr = RHI::Core::CopyTransient(FRootConstants{ 0, RHI::Core::CopyTransient(Args) });
+        const RHI::GPUPtr ArgsPtr = RHI::Core::CopyTransient(Args);
 
         constexpr uint32 BRDFLutTile = 8u;
         const uint32 Groups = RenderUtils::GetGroupCount(BRDFLutSize, BRDFLutTile);
@@ -12253,13 +12253,12 @@ namespace Lumina
         Streaming->SubmitMaterialFeedback(Masks, StreamingFeedbackSlots);
     }
 
-    uint64 FDefaultSceneRenderer::BuildViewSceneRoot(FSceneView& View, uint64 SceneDataAddr)
+    uint64 FDefaultSceneRenderer::BuildViewSceneRoot(FSceneView& View)
     {
         RHI::FTransientAlloc Alloc = RHI::Core::AllocTransient(sizeof(FSceneRoot), alignof(FSceneRoot));
         FSceneRoot* Root = static_cast<FSceneRoot*>(Alloc.Cpu);
 
         *Root = SceneRootShared;
-        Root->SceneData          = SceneDataAddr;
         Root->Clusters           = View.ClusterBuffer.GetAddress();
         Root->BRDFLutIndex       = (uint32)View.Images[(int)ENamedImage::BRDFLut].GetResourceID();
         Root->SkyIrradianceIndex = (uint32)View.Images[(int)ENamedImage::SkyIrradiance].GetResourceID();

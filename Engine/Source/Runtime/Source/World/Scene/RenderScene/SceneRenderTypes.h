@@ -1134,9 +1134,6 @@ namespace Lumina
 
     struct FSceneRoot
     {
-        uint64 SceneData             = 0;  // FSceneGlobalData (per-view camera/scene)
-        uint64 Lights                = 0;
-        uint64 Instances             = 0;
         uint64 Bones                 = 0;
         uint64 Clusters              = 0;  // per-view, GPU-written
         uint64 Materials             = 0;  // non-dynamic
@@ -1175,16 +1172,9 @@ namespace Lumina
          *  bindless heap -- an unvalidated ResourceID is a device loss, not an artifact. */
         uint32 StreamingFeedbackCount = 0;
     };
-    // 17 pointers + 10 indices. Was 136 while SkinDescriptors lived here; the skinning dispatch derives its
-    // work from the instances now, so nothing ships a descriptor array. The streaming-feedback pointer took
-    // 8 bytes out of the trailing pad rather than growing the block.
-    static_assert(sizeof(FSceneRoot) == 176, "FSceneRoot must match SceneGlobals.slang");
-
-    struct FRootConstants
-    {
-        uint64 RootAddr = 0;
-        uint64 PassAddr = 0;
-    };
+    // 14 pointers + 10 indices. SceneData, Lights and Instances moved into push constants, where reaching
+    // them costs no load at all; RHI::FSceneBindings is their only home now.
+    static_assert(sizeof(FSceneRoot) == 152, "FSceneRoot must match SceneGlobals.slang");
 
     struct FParallaxSettings
     {

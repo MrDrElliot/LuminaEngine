@@ -107,7 +107,7 @@ namespace Lumina
     FSystemAccess SAnimationSystem::Access = FSystemAccess{}
         .Write<SSkeletalMeshComponent, STransformComponent, SSimpleAnimationComponent, SAnimationGraphComponent,
                SFollowerPoseComponent>()
-        .Read<SCharacterMovementComponent>();
+        .Read<SCharacterMovementComponent, SystemResource::PhysicsQuery>();
 
     // Slack so brief occlusion or culling flicker does not stutter the pose.
     static constexpr double kAnimVisibilityGrace = 0.25;

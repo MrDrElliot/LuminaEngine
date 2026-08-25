@@ -23,8 +23,11 @@ struct FMeshletRef
 // bShadow selects the instance's shadow meshlet range instead of the surface (base/depth) range.
 FMeshletRef ResolveMeshlet(uint MeshletSlot, bool bShadow)
 {
+    // Held in a local because every accessor call re-emits the root load instead of reusing it.
+    FMeshletDraw* DrawList = GetSceneRoot().MeshletDrawListPtr;
+
     // A pass that draws without these page-faults the device rather than producing a wrong pixel.
-    if (MeshletDrawList() == nullptr || Instances() == nullptr)
+    if (DrawList == nullptr || Instances() == nullptr)
     {
         FMeshletRef Empty;
         Empty.SkinnedVertexBase = kNoPreSkinBase;
@@ -34,7 +37,10 @@ FMeshletRef ResolveMeshlet(uint MeshletSlot, bool bShadow)
         return Empty;
     }
 
-    FMeshletDraw Draw = MeshletDrawList()[MeshletSlot];
+    // Issued before the draw fetch so the two independent chains overlap instead of serializing.
+    const uint ExpectedTag = Scene().CullData.MeshletDrawTag;
+
+    FMeshletDraw Draw = DrawList[MeshletSlot];
 
     // InstanceID first: every Ref.Inst read below goes through it.
     FMeshletRef Ref;
@@ -42,7 +48,7 @@ FMeshletRef ResolveMeshlet(uint MeshletSlot, bool bShadow)
 
     // A slot this frame never wrote resolves to a plausible instance from an earlier one. Unreachable
     // now, kept so that if that changes the result is missing geometry rather than wrong geometry.
-    if (!Draw.IsFromFrame(Scene().CullData.MeshletDrawTag))
+    if (!Draw.IsFromFrame(ExpectedTag))
     {
         Ref.SkinnedVertexBase = kNoPreSkinBase;
         Ref.GlobalMeshletIdx  = 0u;

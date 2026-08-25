@@ -3,12 +3,10 @@
 #include "GlobalRHI.slang"
 
 // Device addresses of every scene buffer + bindless indices for the IBL/shadow textures. Must match
-// FSceneRoot in SceneRenderTypes.h (160 B, scalar layout).
+// FSceneRoot in SceneRenderTypes.h (152 B, scalar layout). The three hottest pointers are not here,
+// they ride in push constants; see FRHIRoot.
 struct FSceneRoot
 {
-    FSceneGlobalData*    SceneData;
-    FLightData*          Lights;
-    FGPUInstance*        Instances;
     FBoneTransform*      Bones;
     FCluster*            Clusters;
     FMaterialUniforms*   Materials;
@@ -43,26 +41,20 @@ struct FSceneRoot
 };
 
 // gRHI.Args (GlobalRHI's single 8-byte push-constant pointer) points to this transient block.
-struct FRootConstants
-{
-    FSceneRoot* Root;     // per-frame scene root (transient)
-    uint64_t    PassAddr; // per-pass args block (transient), 0 if none
-};
-
-// Never load FSceneRoot by value (PhysicalStorageBuffer pointer fields trip spirv-val); return the
-// pointer and let field access auto-deref. Slang CSEs this to one root load per function.
-FSceneRoot* GetSceneRoot() { return ((FRootConstants*)gRHI.Args).Root; }
+// Straight from the push constant, so this is free. Field access auto-derefs, which keeps FSceneRoot
+// from being loaded by value (PhysicalStorageBuffer pointer fields trip spirv-val).
+FSceneRoot* GetSceneRoot() { return (FSceneRoot*)gRHI.SceneRoot; }
 
 // Per-pass args for scene passes; each pass declares its struct and wraps this in a file-local Pass().
 Ptr<T> GetPassArgs<T>()
 {
-    return (T*)((FRootConstants*)gRHI.Args).PassAddr;
+    return (T*)gRHI.Args;
 }
 
 // Scene buffer accessors (pointers; field/index access auto-derefs).
-FSceneGlobalData*   Scene()                 { return GetSceneRoot().SceneData; }
-FLightData*         LightData()             { return GetSceneRoot().Lights; }
-FGPUInstance*       Instances()             { return GetSceneRoot().Instances; }
+FSceneGlobalData*   Scene()                 { return (FSceneGlobalData*)gRHI.SceneData; }
+FLightData*         LightData()             { return (FLightData*)gRHI.Lights; }
+FGPUInstance*       Instances()             { return (FGPUInstance*)gRHI.Instances; }
 FBoneTransform*     Bones()                 { return GetSceneRoot().Bones; }
 FCluster*           Clusters()              { return GetSceneRoot().Clusters; }
 FMaterialUniforms*  Materials()             { return GetSceneRoot().Materials; }

@@ -55,6 +55,8 @@ namespace Lumina
         static TConsoleVar<bool>  CVarSkeletonAxes     ("Editor.Debug.SkeletonAxes",    false, "Draw a per-bone local X/Y/Z axis triad.");
         static TConsoleVar<bool>  CVarSkeletonXRay     ("Editor.Debug.SkeletonXRay",    true,  "Draw bones without depth testing so they show through the mesh.");
         static TConsoleVar<float> CVarSkeletonNameDist ("Editor.Debug.SkeletonNameDist", 10.0f, "Max camera distance (meters) at which bone names are drawn.");
+        static TConsoleVar<float> CVarSkeletonJointDist("Editor.Debug.SkeletonJointDist", 20.0f, "Max camera distance (meters) at which joint spheres and axes are drawn.");
+        static TConsoleVar<float> CVarSkeletonShapeDist("Editor.Debug.SkeletonShapeDist", 75.0f, "Max camera distance (meters) at which bones keep their octahedral shape instead of collapsing to a line.");
     }
 
     FEditorTool::FEditorTool(IEditorToolContext* Context, const FString& DisplayName, CWorld* InWorld)
@@ -197,8 +199,10 @@ namespace Lumina
         }
 
         SkeletonDebugDraw::FOptions Options;
-        Options.bAxes      = CVarSkeletonAxes.GetValue();
-        Options.bDepthTest = !CVarSkeletonXRay.GetValue();
+        Options.bAxes          = CVarSkeletonAxes.GetValue();
+        Options.bDepthTest     = !CVarSkeletonXRay.GetValue();
+        Options.JointDistance  = CVarSkeletonJointDist.GetValue();
+        Options.ShapeDistance  = CVarSkeletonShapeDist.GetValue();
 
         // CWorld implements IPrimitiveDrawInterface, so it is the draw target.
         SkeletonDebugDraw::DrawWorldSkeletons(World, World, Options);
@@ -217,21 +221,21 @@ namespace Lumina
             return;
         }
 
-        TVector<SkeletonDebugDraw::FBoneLabel> Labels;
-        SkeletonDebugDraw::GatherWorldBoneLabels(World, Labels);
-        if (Labels.empty())
-        {
-            return;
-        }
-
         // The same convention the world editor uses, flipping projection Y then mapping to panel pixels.
         FMatrix4 Proj = Camera->GetProjectionMatrix();
         Proj[1][1] *= -1.0f;
         const FMatrix4 ViewProj = Proj * Camera->GetViewMatrix();
         const FVector3 CameraPos = FVector3(Math::Inverse(Camera->GetViewMatrix())[3]);
 
-        const float MaxDist     = CVarSkeletonNameDist.GetValue();
-        const float MaxDistSq   = MaxDist * MaxDist;
+        const float MaxDist = CVarSkeletonNameDist.GetValue();
+
+        TVector<SkeletonDebugDraw::FBoneLabel> Labels;
+        SkeletonDebugDraw::GatherWorldBoneLabels(World, CameraPos, MaxDist, Labels);
+        if (Labels.empty())
+        {
+            return;
+        }
+
         ImDrawList* DrawList    = ImGui::GetWindowDrawList();
         const ImU32 TextColor   = IM_COL32(245, 248, 255, 255);
         const ImU32 PillColor   = IM_COL32(18, 19, 24, 190);
@@ -242,12 +246,6 @@ namespace Lumina
         DrawList->PushClipRect(ViewportOrigin, ImVec2(ViewportOrigin.x + ViewportSize.x, ViewportOrigin.y + ViewportSize.y), true);
         for (const SkeletonDebugDraw::FBoneLabel& Label : Labels)
         {
-            const FVector3 Delta = Label.WorldPosition - CameraPos;
-            if (Math::Dot(Delta, Delta) > MaxDistSq)
-            {
-                continue;
-            }
-
             const FVector4 Clip = ViewProj * FVector4(Label.WorldPosition, 1.0f);
             if (Clip.w <= 1e-4f)
             {
@@ -304,15 +302,26 @@ namespace Lumina
         ToggleBool("Editor.Debug.SkeletonAxes",  "Bone Axes",  "Draw a per-bone local axis triad.");
         ToggleBool("Editor.Debug.SkeletonXRay",  "X-Ray",      "Draw bones through the mesh (no depth test).");
 
-        if (const float* Dist = Console.TryGetAs<float>("Editor.Debug.SkeletonNameDist"))
+        auto DragDistance = [&](const char* Name, const char* Label, float MaxValue, const char* Tooltip)
         {
-            ImGui::SetNextItemWidth(120.0f);
-            float Proxy = *Dist;
-            if (ImGui::DragFloat("Name Distance", &Proxy, 0.25f, 1.0f, 100.0f, "%.0f m"))
+            if (const float* Value = Console.TryGetAs<float>(Name))
             {
-                Console.SetAs("Editor.Debug.SkeletonNameDist", Proxy);
+                ImGui::SetNextItemWidth(120.0f);
+                float Proxy = *Value;
+                if (ImGui::DragFloat(Label, &Proxy, 0.25f, 1.0f, MaxValue, "%.0f m"))
+                {
+                    Console.SetAs(Name, Proxy);
+                }
+                if (Tooltip && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                {
+                    ImGui::SetTooltip("%s", Tooltip);
+                }
             }
-        }
+        };
+
+        DragDistance("Editor.Debug.SkeletonNameDist",  "Name Distance",  100.0f,  nullptr);
+        DragDistance("Editor.Debug.SkeletonJointDist", "Joint Distance", 500.0f,  "Past this, joint spheres and axes are dropped.");
+        DragDistance("Editor.Debug.SkeletonShapeDist", "Shape Distance", 2000.0f, "Past this, every bone collapses to a single line.");
         ImGui::EndDisabled();
     }
 

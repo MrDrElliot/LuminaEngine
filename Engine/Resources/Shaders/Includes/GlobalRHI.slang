@@ -6,6 +6,11 @@
 struct FRHIRoot
 {
     uint64_t Args;
+    // Written at offset 8 by CmdSetSceneRoot, so reaching the scene costs no load at all.
+    uint64_t SceneRoot;
+    uint64_t SceneData;
+    uint64_t Instances;
+    uint64_t Lights;
 };
 [[vk::push_constant]] FRHIRoot gRHI;
 

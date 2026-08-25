@@ -2179,11 +2179,13 @@ namespace Lumina::RHI
         vkCreateDescriptorSetLayout(*GDevice, &LayoutInfo, nullptr, &GDevice->DescriptorLayout);
         vkCreateDescriptorPool(*GDevice, &PoolInfo, nullptr, &GDevice->DescriptorPool);
         
+        // Two slots, written independently. Offset 0 is the per-draw args block; offset 8 is the scene
+        // root, which only CmdSetSceneRoot touches. Mirrors FRHIRoot in GlobalRHI.slang.
         VkPushConstantRange PushConstantRanges
         {
             .stageFlags = VK_SHADER_STAGE_ALL,
             .offset = 0,
-            .size = sizeof(VkDeviceAddress)
+            .size = 5 * sizeof(VkDeviceAddress)
         };
         
         VkPipelineLayoutCreateInfo CreateInfo
@@ -4789,6 +4791,15 @@ namespace Lumina::RHI
         return Result == VK_SUCCESS;
     }
 
+    // Push constants are undefined at command-buffer begin. Seeding null makes a missed CmdSetSceneRoot
+    // a null deref at the first scene read instead of a wild pointer into a previous frame's memory.
+    static void SeedSceneRoot(VkCommandBuffer Buffer)
+    {
+        const VkDeviceAddress Null[4] { 0, 0, 0, 0 };
+        vkCmdPushConstants(Buffer, GDevice->PipelineLayout, VK_SHADER_STAGE_ALL,
+                           sizeof(VkDeviceAddress), sizeof(Null), Null);
+    }
+
     FCmdListH OpenCommandList(EQueueType Type)
     {
         LUMINA_MEMORY_SCOPE("RHI");
@@ -4820,6 +4831,7 @@ namespace Lumina::RHI
 
                 // ResetCommandList already reset the pool when it recycled the list.
                 vkBeginCommandBuffer(CommandList.CommandBuffer, &BeginInfo);
+                SeedSceneRoot(CommandList.CommandBuffer);
 
                 return Reused;
             }
@@ -4846,6 +4858,7 @@ namespace Lumina::RHI
         VK_CHECK(vkAllocateCommandBuffers(*GDevice, &BufferInfo, &Buffer));
 
         vkBeginCommandBuffer(Buffer, &BeginInfo);
+        SeedSceneRoot(Buffer);
 
         GDevice->OpenCommandLists[(uint32)Type].fetch_add(1, std::memory_order_release);
 
@@ -5898,6 +5911,17 @@ namespace Lumina::RHI
     void CmdSetIndexBuffer(FCmdListH CL, GPUPtr IndexBuffer, uint32 Offset, EIndexType IndexType)
     {
         BindIndexBuffer(GDevice->CommandLists[CL], IndexBuffer, Offset, IndexType);
+    }
+
+    void CmdSetSceneRoot(FCmdListH CL, const FSceneBindings& Bindings)
+    {
+        const VkDeviceAddress Addresses[4]
+        {
+            (VkDeviceAddress)Bindings.Root,      (VkDeviceAddress)Bindings.SceneData,
+            (VkDeviceAddress)Bindings.Instances, (VkDeviceAddress)Bindings.Lights
+        };
+        vkCmdPushConstants(GDevice->CommandLists[CL].CommandBuffer, GDevice->PipelineLayout,
+                           VK_SHADER_STAGE_ALL, sizeof(VkDeviceAddress), sizeof(Addresses), Addresses);
     }
 
     void CmdDispatch(FCmdListH CL, GPUPtr DrawArgs, uint32 GroupX, uint32 GroupY, uint32 GroupZ)

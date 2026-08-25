@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Lumina.h"
 #include "Containers/HashTable.h"
@@ -35,6 +35,10 @@ namespace Lumina
         TVector<FVector3>       BindLocalTranslations;
         TVector<FQuat>          BindLocalRotations;
         TVector<FVector3>       BindLocalScales;
+
+        // Global bind pose per bone, the inverse of InvBindMatrix. Derived, never serialized.
+        TVector<FMatrix4>       BindGlobalMatrices;
+
         uint32                  BindPoseGeneration = 0;
 
         // Transient import-dialog flag; not serialized.
@@ -44,7 +48,12 @@ namespace Lumina
 
         FORCEINLINE bool HasBindPoseCache() const
         {
-            return !Bones.empty() && BindLocalRotations.size() == Bones.size();
+            return !Bones.empty() && BindLocalRotations.size() == Bones.size() && HasBindGlobalMatrices();
+        }
+
+        FORCEINLINE bool HasBindGlobalMatrices() const
+        {
+            return !Bones.empty() && BindGlobalMatrices.size() == Bones.size();
         }
 
         void BuildBindPoseCache();

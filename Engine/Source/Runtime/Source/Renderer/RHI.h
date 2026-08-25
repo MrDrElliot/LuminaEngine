@@ -749,7 +749,16 @@ namespace Lumina::RHI
     RUNTIME_API void        CmdSetViewport(FCmdListH CL, const FRect& Rect);
 
     RUNTIME_API void        CmdSetIndexBuffer(FCmdListH CL, GPUPtr IndexBuffer, uint32 Offset = 0, EIndexType IndexType = EIndexType::Uint32);
-
+    
+    // Held in push constants rather than chased through memory. Re-issue whenever the view changes.
+    struct FSceneBindings
+    {
+        GPUPtr Root      = 0;
+        GPUPtr SceneData = 0;
+        GPUPtr Instances = 0;
+        GPUPtr Lights    = 0;
+    };
+    RUNTIME_API void        CmdSetSceneRoot(FCmdListH CL, const FSceneBindings& Bindings);
     RUNTIME_API void        CmdDispatch(FCmdListH CL, GPUPtr DrawArgs, uint32 GroupX, uint32 GroupY, uint32 GroupZ);
     RUNTIME_API void        CmdDispatchIndirect(FCmdListH CL, GPUPtr DrawArgs, uint32 Offset = 0);
 

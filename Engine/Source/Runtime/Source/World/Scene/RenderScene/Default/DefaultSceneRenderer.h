@@ -853,18 +853,28 @@ namespace Lumina
                                  TSpan<const RHI::FSpecializationConstant> Constants = {});
         RHI::FDepthStencilH  GetOrCreateDepthState(const RHI::FDepthStencilDesc& Desc);
 
+        // Build and publish together, or the next view draws against the previous view's bindings.
+        void SetSceneRoot(RHI::FCmdListH CL, FSceneView& View, uint64 SceneDataAddr)
+        {
+            SceneBindings.Root      = BuildViewSceneRoot(View);
+            SceneBindings.SceneData = SceneDataAddr;
+            CurrentSceneRootAddr    = SceneBindings.Root;
+            RHI::CmdSetSceneRoot(CL, SceneBindings);
+        }
+
         // Engine-wide per-draw args.
         template<typename T>
         RHI::GPUPtr MakeArgs(const T& PassData)
         {
             DEBUG_ASSERT(CurrentSceneRootAddr != 0);   // null root = GPU page fault at first scene-buffer read
-            return RHI::Core::CopyTransient(FRootConstants{ CurrentSceneRootAddr, RHI::Core::CopyTransient(PassData) });
+            return RHI::Core::CopyTransient(PassData);
         }
-        
+
+        // Zero leaves the args slot alone, which is safe only because no caller's shader reads a pass block.
         RHI::GPUPtr MakeArgs()
         {
             DEBUG_ASSERT(CurrentSceneRootAddr != 0);
-            return RHI::Core::CopyTransient(FRootConstants{ CurrentSceneRootAddr, 0 });
+            return 0;
         }
 
         // Sets the full-extent viewport + scissor for the current render area.
@@ -1007,9 +1017,10 @@ namespace Lumina
         TVector<CMaterialInterface*>            PendingPostProcessMaterials;
         
         FSceneRoot                                                      SceneRootShared = {};
+        RHI::FSceneBindings                                             SceneBindings = {};
         uint64                                                          CurrentSceneRootAddr = 0;
         // Builds the per-view FSceneRoot transient (shared addrs + view camera/clusters/IBL) -> address.
-        uint64 BuildViewSceneRoot(FSceneView& View, uint64 SceneDataAddr);
+        uint64 BuildViewSceneRoot(FSceneView& View);
 
         /** Texture-streaming feedback (see RequestTextureResolution in SceneGlobals.slang). One uint per
          *  bindless slot, OR-accumulated by the material lanes, copied to a readback slot and zeroed each
