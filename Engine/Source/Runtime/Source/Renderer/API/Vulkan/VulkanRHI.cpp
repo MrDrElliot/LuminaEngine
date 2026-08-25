@@ -2361,6 +2361,18 @@ namespace Lumina::RHI
 
             Surface->~FSurface();
         });
+
+#if defined(LUMINA_WITH_GPU_PROFILING)
+        GDevice->QueryPools.SetDtor([](FQueryPool* QueryPool)
+        {
+            if (QueryPool->Pool != VK_NULL_HANDLE)
+            {
+                vkDestroyQueryPool(*GDevice, QueryPool->Pool, nullptr);
+            }
+
+            QueryPool->~FQueryPool();
+        });
+#endif
     }
 
     void FreeDevice()
@@ -2398,6 +2410,9 @@ namespace Lumina::RHI
         GDevice->TextureHeaps.Clear();
         GDevice->DepthStates.Clear();
         GDevice->CommandLists.Clear();
+#if defined(LUMINA_WITH_GPU_PROFILING)
+        GDevice->QueryPools.Clear();
+#endif
 
         for (FMemoryBlock& Block : GDevice->MemoryBlocks)
         {
@@ -3310,11 +3325,6 @@ namespace Lumina::RHI
             return;
         }
 
-        FQueryPool& Query = GDevice->QueryPools[Pool];
-        if (Query.Pool != VK_NULL_HANDLE)
-        {
-            vkDestroyQueryPool(*GDevice, Query.Pool, nullptr);
-        }
         GDevice->QueryPools.Erase(Pool);
     }
 
@@ -5171,6 +5181,59 @@ namespace Lumina::RHI
         }
 
         vkCmdCopyBuffer(VkCmdBuf, SourceBuffer, DestBuffer, 1, &Region);
+    }
+
+    void CmdMemcpyBatch(FCmdListH CL, TSpan<const FBufferCopy> Copies)
+    {
+        if (Copies.empty())
+        {
+            return;
+        }
+
+        FMemMark Mark;
+        auto* Regions = Mark.AllocArray<VkBufferCopy>(Copies.size());
+        auto* Sources = Mark.AllocArray<VkBuffer>(Copies.size());
+        auto* Dests   = Mark.AllocArray<VkBuffer>(Copies.size());
+
+        SIZE_T Resolved = 0;
+        {
+            // One lock for the whole batch; the per-copy entry point takes it once each.
+            FReadScopeLock Lock(GDevice->MemoryMutex);
+            for (const FBufferCopy& Copy : Copies)
+            {
+                const FMemoryBlock* DestIt   = FindMemory(Copy.Dest);
+                const FMemoryBlock* SourceIt = FindMemory(Copy.Source);
+                if (DestIt == nullptr || SourceIt == nullptr || Copy.Size == 0)
+                {
+                    continue;
+                }
+
+                Sources[Resolved] = SourceIt->Buffer;
+                Dests[Resolved]   = DestIt->Buffer;
+                Regions[Resolved] = VkBufferCopy
+                {
+                    .srcOffset = Copy.Source - SourceIt->Device,
+                    .dstOffset = Copy.Dest - DestIt->Device,
+                    .size      = Copy.Size
+                };
+                ++Resolved;
+            }
+        }
+
+        auto* VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
+
+        // A run is the maximal span sharing both buffers, which is what vkCmdCopyBuffer can take at once.
+        for (SIZE_T First = 0; First < Resolved; )
+        {
+            SIZE_T Last = First + 1;
+            while (Last < Resolved && Sources[Last] == Sources[First] && Dests[Last] == Dests[First])
+            {
+                ++Last;
+            }
+
+            vkCmdCopyBuffer(VkCmdBuf, Sources[First], Dests[First], (uint32)(Last - First), Regions + First);
+            First = Last;
+        }
     }
 
     void CmdMemset(FCmdListH CL, GPUPtr Dest, uint64 Size, uint32 Value)

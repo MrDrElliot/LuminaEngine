@@ -487,12 +487,7 @@ namespace Lumina::RHI
     RUNTIME_API FGPUDeviceInfo GetDeviceInfo();
 
 #if USING(WITH_EDITOR)
-
-    // Heap totals say how much VRAM is gone, never what took it. The ledger below is the other half:
-    // one row per live allocation, carrying the debug name the creating site gave it, which the Memory
-    // tool groups into categories the same way the CPU side groups by allocation category.
-    //
-    // Editor only. Game builds keep neither the names nor the texture ledger.
+    
     enum class EGPUAllocationKind : uint8
     {
         Buffer,     // RHI::Malloc -- reached from a shader by device address
@@ -646,6 +641,16 @@ namespace Lumina::RHI
     RUNTIME_API void        SubmitAndWait(FCmdListH CommandList);
 
     RUNTIME_API void        CmdMemcpy(FCmdListH CL, GPUPtr Dest, GPUPtr Source, size_t Size);
+
+    struct FBufferCopy
+    {
+        GPUPtr Dest   = 0;
+        GPUPtr Source = 0;
+        uint64 Size   = 0;
+    };
+    // Copies sharing a source and destination buffer collapse into one command, so keep entries that
+    // target the same buffer adjacent.
+    RUNTIME_API void        CmdMemcpyBatch(FCmdListH CL, TSpan<const FBufferCopy> Copies);
     RUNTIME_API void        CmdMemset(FCmdListH CL, GPUPtr Dest, uint64 Size, uint32 Value);
     RUNTIME_API void        CmdMemzero(FCmdListH CL, GPUPtr Dest, uint64 Size);
     RUNTIME_API void        CmdWriteMemory(FCmdListH CL, GPUPtr Dest, const void* Data, uint64 Size);

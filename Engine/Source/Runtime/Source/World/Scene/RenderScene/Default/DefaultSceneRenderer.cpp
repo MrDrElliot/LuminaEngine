@@ -11330,12 +11330,13 @@ namespace Lumina
                 {
                     LUMINA_PROFILE_SECTION_COLORED("FULL resend", tracy::Color::Red3);
 
-                    WriteBuffer(CL, RetainedCullEntryBuffer.GetAddress(),
-                                SrcCullEntries, (SIZE_T)RetainedSlots * sizeof(FInstanceCullEntry));
-                    WriteBuffer(CL, RetainedTransformBuffer.GetAddress(),
-                                SrcTransforms, (SIZE_T)RetainedSlots * sizeof(FTransform3x4));
-                    WriteBuffer(CL, RetainedStaticBuffer.GetAddress(),
-                                SrcStatic, (SIZE_T)RetainedSlots * sizeof(FInstanceStatic));
+                    StageWrite(RetainedCullEntryBuffer.GetAddress(),
+                               SrcCullEntries, (SIZE_T)RetainedSlots * sizeof(FInstanceCullEntry));
+                    StageWrite(RetainedTransformBuffer.GetAddress(),
+                               SrcTransforms, (SIZE_T)RetainedSlots * sizeof(FTransform3x4));
+                    StageWrite(RetainedStaticBuffer.GetAddress(),
+                               SrcStatic, (SIZE_T)RetainedSlots * sizeof(FInstanceStatic));
+                    FlushStagedWrites(CL);
                 }
                 else
                 {
@@ -11357,17 +11358,23 @@ namespace Lumina
 
                     WriteRuns(Upload.DirtySlots, [&](uint32 First, SIZE_T Run)
                     {
-                        WriteBuffer(CL, RetainedCullEntryBuffer.GetAddress() + (uint64)First * sizeof(FInstanceCullEntry),
-                                    &SrcCullEntries[First], Run * sizeof(FInstanceCullEntry));
-                        WriteBuffer(CL, RetainedTransformBuffer.GetAddress() + (uint64)First * sizeof(FTransform3x4),
-                                    &SrcTransforms[First], Run * sizeof(FTransform3x4));
+                        StageWrite(RetainedCullEntryBuffer.GetAddress() + (uint64)First * sizeof(FInstanceCullEntry),
+                                   &SrcCullEntries[First], Run * sizeof(FInstanceCullEntry));
+                    });
+
+                    WriteRuns(Upload.DirtySlots, [&](uint32 First, SIZE_T Run)
+                    {
+                        StageWrite(RetainedTransformBuffer.GetAddress() + (uint64)First * sizeof(FTransform3x4),
+                                   &SrcTransforms[First], Run * sizeof(FTransform3x4));
                     });
 
                     WriteRuns(Upload.DirtyStaticSlots, [&](uint32 First, SIZE_T Run)
                     {
-                        WriteBuffer(CL, RetainedStaticBuffer.GetAddress() + (uint64)First * sizeof(FInstanceStatic),
-                                    &SrcStatic[First], Run * sizeof(FInstanceStatic));
+                        StageWrite(RetainedStaticBuffer.GetAddress() + (uint64)First * sizeof(FInstanceStatic),
+                                   &SrcStatic[First], Run * sizeof(FInstanceStatic));
                     });
+
+                    FlushStagedWrites(CL);
                 }
             }
             const uint32 CullCap      = (uint32)Math::Min<uint64>(RetainedCullEntryBuffer.GetSize() / sizeof(FInstanceCullEntry), 0xFFFFFFFFull);
@@ -12639,6 +12646,24 @@ namespace Lumina
         RHI::FTransientAlloc Staging = RHI::Core::AllocTransient(Size);
         Memory::Memcpy(Staging.Cpu, Data, Size);
         RHI::CmdMemcpy(CL, Dst, Staging.Gpu, Size);
+    }
+
+    void FDefaultSceneRenderer::StageWrite(RHI::GPUPtr Dst, const void* Data, uint64 Size)
+    {
+        if (Size == 0)
+        {
+            return;
+        }
+
+        RHI::FTransientAlloc Staging = RHI::Core::AllocTransient(Size);
+        Memory::Memcpy(Staging.Cpu, Data, Size);
+        StagedWrites.push_back(RHI::FBufferCopy{ Dst, Staging.Gpu, Size });
+    }
+
+    void FDefaultSceneRenderer::FlushStagedWrites(RHI::FCmdListH CL)
+    {
+        RHI::CmdMemcpyBatch(CL, TSpan<const RHI::FBufferCopy>(StagedWrites.data(), StagedWrites.size()));
+        StagedWrites.clear();
     }
 
     void FDefaultSceneRenderer::ResizeBufferIfNeeded(RHI::FCmdListH CL, FSceneBuffer& Buffer, uint64 NeededSize,

@@ -882,6 +882,11 @@ namespace Lumina
 
         static void WriteBuffer(RHI::FCmdListH CL, RHI::GPUPtr Dst, const void* Data, uint64 Size);
 
+        // Same staging as WriteBuffer, deferred so writes sharing a destination collapse into one copy
+        // command. Stage all of one buffer's runs before starting the next, or nothing groups.
+        void StageWrite(RHI::GPUPtr Dst, const void* Data, uint64 Size);
+        void FlushStagedWrites(RHI::FCmdListH CL);
+
         /** What a freshly (re)allocated scene buffer holds. Undefined is the honest description of what
          *  RHI::Malloc returns -- a recycling pool hands back the previous tenant's bytes. Only pick it for
          *  a buffer that is provably rewritten in full before anything reads it. */
@@ -1018,6 +1023,7 @@ namespace Lumina
         
         FSceneRoot                                                      SceneRootShared = {};
         RHI::FSceneBindings                                             SceneBindings = {};
+        TVector<RHI::FBufferCopy>                                       StagedWrites;
         uint64                                                          CurrentSceneRootAddr = 0;
         // Builds the per-view FSceneRoot transient (shared addrs + view camera/clusters/IBL) -> address.
         uint64 BuildViewSceneRoot(FSceneView& View);
