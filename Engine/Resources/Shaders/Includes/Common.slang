@@ -966,7 +966,7 @@ struct FSceneGlobalData
     uint              MomentZerothIndex;
     uint              MomentsIndex;
 
-    // Frame counter that drives per-subsample noise decorrelation. Stays 0 unless T2x is resolving.
+    // Subsample index 0 or 1 that decorrelates screen-space noise. Stays 0 unless T2x is resolving.
     uint              TemporalPhase;
 };
 

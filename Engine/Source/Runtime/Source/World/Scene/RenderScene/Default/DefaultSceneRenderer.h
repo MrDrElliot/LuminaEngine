@@ -497,6 +497,8 @@ namespace Lumina
             uint32                                          PendingTemporalFrameIndex = 0;
             bool                                            bTemporalHistoryValid    = false;
             FMatrix4                                        PrevViewProjection       = FMatrix4(1.0f);
+            // Committed with the frame index, so a bailed extract cannot leave the two describing different frames.
+            FMatrix4                                        PendingViewProjection    = FMatrix4(1.0f);
         };
 
         void Init() override;
@@ -720,6 +722,8 @@ namespace Lumina
         ENamedImage GetTemporalCurrentImage() const;
         ENamedImage GetTemporalHistoryImage() const;
         static FVector2 GetTemporalJitterNDC(const FSceneView& View, uint32 FrameIndex);
+        // AreaTex slice the blend-weight pass resolves against, matched to the jitter this frame rendered.
+        FVector4 GetSMAASubsampleIndices() const;
 
         // Extract-phase half: ECS reads + parallel Process* tasks + cull/shadow setup.
         void CompileDrawCommands_Extract();

@@ -16,6 +16,7 @@ struct FPushConstants
     float  MaxSearchSteps;     // driven by ESMAAQuality, not a compile-time preset
     float  MaxSearchStepsDiag;
     uint   _Pad2;
+    float4 SubsampleIndices;
 };
 
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
@@ -56,5 +57,5 @@ float4 FragmentMain(VSOutput Input) : SV_Target0
         edgesTex,
         areaTex,
         searchTex,
-        float4(0.0, 0.0, 0.0, 0.0));
+        Pass().SubsampleIndices);
 }

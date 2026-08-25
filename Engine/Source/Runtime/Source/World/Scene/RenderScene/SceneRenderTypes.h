@@ -1216,7 +1216,7 @@ namespace Lumina
         uint32          ShadowMaskIndex   = ~0u;
         uint32          MomentZerothIndex = ~0u;
         uint32          MomentsIndex      = ~0u;
-        // Frame counter that drives per-subsample noise decorrelation. Stays 0 unless T2x is resolving.
+        // Subsample index 0 or 1 that decorrelates screen-space noise. Stays 0 unless T2x is resolving.
         uint32          TemporalPhase     = 0;
     };
 

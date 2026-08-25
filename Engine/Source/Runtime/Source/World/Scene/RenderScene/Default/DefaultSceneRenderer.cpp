@@ -555,8 +555,8 @@ namespace Lumina
                 // Every depth-reconstructing pass reads this, so it has to match the jitter that was rendered.
                 SceneGlobalData.CameraData.InverseProjection = Math::Inverse(SceneGlobalData.CameraData.Projection);
 
-                // Only while a resolve is averaging the frames, or screen-space noise just flickers.
-                SceneGlobalData.TemporalPhase = PrimaryView.PendingTemporalFrameIndex;
+                // Same period as the jitter, or the pair the resolve averages never repeats and never settles.
+                SceneGlobalData.TemporalPhase = PrimaryView.PendingTemporalFrameIndex & 1u;
             }
             else
             {
@@ -565,7 +565,7 @@ namespace Lumina
             }
 
             SceneGlobalData.CameraData.PrevViewProjection = PrimaryView.PrevViewProjection;
-            PrimaryView.PrevViewProjection = SceneGlobalData.CameraData.Projection * SceneGlobalData.CameraData.View;
+            PrimaryView.PendingViewProjection = SceneGlobalData.CameraData.Projection * SceneGlobalData.CameraData.View;
         }
         SceneGlobalData.ScreenSize                      = FUIntVector4(PrimarySize.x, PrimarySize.y, 0, 0);
         SceneGlobalData.GridSize                        = FUIntVector4(ClusterGridSizeX, ClusterGridSizeY, ClusterGridSizeZ, 0);
@@ -691,6 +691,7 @@ namespace Lumina
 
         Frame.bExtractedThisFrame = true;
         SceneViews[0].TemporalFrameIndex = SceneViews[0].PendingTemporalFrameIndex;
+        SceneViews[0].PrevViewProjection = SceneViews[0].PendingViewProjection;
 
         ExtractFrame = nullptr;
     }
@@ -11118,8 +11119,10 @@ namespace Lumina
         float     MaxSearchSteps;      // blend-weight pass only; the other two ignore these
         float     MaxSearchStepsDiag;
         uint32    _Pad2;
+        // AreaTex slice per axis; 0 is the SMAA 1x pattern and 1 and 2 are the T2x subsample pair.
+        FVector4  SubsampleIndices;
     };
-    static_assert(sizeof(FSMAAPushConstants) == 48, "FSMAAPushConstants must match the slang push block.");
+    static_assert(sizeof(FSMAAPushConstants) == 64, "FSMAAPushConstants must match the slang push block.");
 
     static float GetSMAAEdgeThreshold(ESMAAQuality Quality)
     {
@@ -11160,6 +11163,7 @@ namespace Lumina
         PC.MaxSearchSteps     = Steps.x;
         PC.MaxSearchStepsDiag = Steps.y;
         PC._Pad2 = 0;
+        PC.SubsampleIndices = FVector4(0.0f);
         return PC;
     }
 
@@ -11245,6 +11249,7 @@ namespace Lumina
         PC.TexIndex0 = (uint32)EdgesTex.GetResourceID();
         PC.TexIndex1 = (uint32)AreaTex.GetResourceID();
         PC.TexIndex2 = (uint32)SearchTex.GetResourceID();
+        PC.SubsampleIndices = GetSMAASubsampleIndices();
 
         RHI::CmdDraw(CL, MakeArgs(PC), 3, 1, 0, 0);
         RHI::CmdEndRenderPass(CL);
@@ -11462,8 +11467,8 @@ namespace Lumina
             return FVector2(0.0f);
         }
 
-        // The two SMAA T2x subsample positions, in pixels.
-        const FVector2 kSubsamples[2] = { FVector2(-0.25f, 0.25f), FVector2(0.25f, -0.25f) };
+        // Main diagonal in screen space, which is the pair the AreaTex T2x slices were generated against.
+        const FVector2 kSubsamples[2] = { FVector2(-0.25f, -0.25f), FVector2(0.25f, 0.25f) };
 
         const CRendererSettings* Settings = GetDefault<CRendererSettings>();
         const float Scale = Settings != nullptr ? Math::Clamp(Settings->TemporalJitterScale, 0.0f, 1.0f) : 1.0f;
@@ -11471,6 +11476,19 @@ namespace Lumina
         const FVector2 Offset = kSubsamples[FrameIndex & 1u] * Scale;
         return FVector2((Offset.x * 2.0f) / (float)View.Size.x,
                         (Offset.y * 2.0f) / (float)View.Size.y);
+    }
+
+    FVector4 FDefaultSceneRenderer::GetSMAASubsampleIndices() const
+    {
+        // A lone frame with no resolve behind it wants the unbiased 1x pattern, which is slice zero.
+        if (!IsTemporalResolveReady())
+        {
+            return FVector4(0.0f);
+        }
+
+        // Parity 1 is the +0.25 px subsample, which is the slice the reference calls pass zero.
+        const float Slice = (CurrentView->TemporalFrameIndex & 1u) == 1u ? 1.0f : 2.0f;
+        return FVector4(Slice, Slice, Slice, 0.0f);
     }
 
     void FDefaultSceneRenderer::VelocityPass(RHI::FCmdListH CL)

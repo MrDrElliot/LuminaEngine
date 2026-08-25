@@ -16,6 +16,7 @@ struct FPushConstants
     uint   _Pad0;
     uint   _Pad1;
     uint   _Pad2;
+    float4 SubsampleIndices;
 };
 
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
