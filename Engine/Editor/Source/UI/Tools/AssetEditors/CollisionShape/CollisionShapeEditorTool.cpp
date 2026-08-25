@@ -778,8 +778,7 @@ namespace Lumina
 
     void FCollisionShapeEditorTool::DrawViewportOverlayElements(const FUpdateContext& UpdateContext, ImTextureRef ViewportTexture, ImVec2 ViewportSize)
     {
-        // Read before the base call, since the base submits a Dummy that advances the cursor.
-        const ImVec2 ViewportOrigin = ImGui::GetCursorScreenPos();
+        const ImVec2 ViewportOrigin = ViewportScreenMin;
 
         FAssetEditorTool::DrawViewportOverlayElements(UpdateContext, ViewportTexture, ViewportSize);
 

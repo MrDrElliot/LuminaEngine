@@ -1061,8 +1061,7 @@ namespace Lumina
 
     void FPhysicsAssetEditorTool::DrawViewportOverlayElements(const FUpdateContext& UpdateContext, ImTextureRef ViewportTexture, ImVec2 ViewportSize)
     {
-        // Read BEFORE the base call, since its Dummy advances the cursor off the overlay origin.
-        const ImVec2 ViewportOrigin = ImGui::GetCursorScreenPos();
+        const ImVec2 ViewportOrigin = ViewportScreenMin;
 
         FAssetEditorTool::DrawViewportOverlayElements(UpdateContext, ViewportTexture, ViewportSize);
 

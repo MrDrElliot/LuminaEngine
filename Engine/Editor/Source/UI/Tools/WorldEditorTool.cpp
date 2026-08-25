@@ -1549,7 +1549,7 @@ namespace Lumina
         // Camera projection bakes Vulkan +Y-down NDC; ImGuizmo expects GL convention.
         ProjectionMatrix[1][1] *= -1.0f;
 
-        const ImVec2 ViewportOrigin = ImGui::GetCursorScreenPos();
+        const ImVec2 ViewportOrigin = ViewportScreenMin;
 
         ImGuizmo::SetDrawlist(ImGui::GetCurrentWindow()->DrawList);
         ImGuizmo::SetRect(ViewportOrigin.x, ViewportOrigin.y, ViewportSize.x, ViewportSize.y);

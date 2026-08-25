@@ -158,7 +158,7 @@ namespace Lumina
         NODISCARD bool HasWorld() const { return World != nullptr; }
         NODISCARD ImGuiID GetCurrentDockspaceID() const { return CurrDockspaceID; }
 
-        // Screen-space rect of the viewport image, refreshed each frame by UpdateViewportInput.
+        // Screen-space rect of the viewport image, refreshed each frame by UpdateViewportInput. Overlay code must use it rather than the inset ImGui cursor.
         ImVec2 ViewportScreenMin  = ImVec2(0.0f, 0.0f);
         ImVec2 ViewportScreenSize = ImVec2(0.0f, 0.0f);
 
