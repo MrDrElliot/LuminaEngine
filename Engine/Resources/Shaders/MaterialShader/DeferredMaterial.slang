@@ -130,6 +130,11 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
         float4 VertexColor_DDX   = InterpWeights4(S.Bary.DDX, W[0].Color, W[1].Color, W[2].Color);
         float4 VertexColor_DDY   = InterpWeights4(S.Bary.DDY, W[0].Color, W[1].Color, W[2].Color);
 
+        // Not named WorldNormal_DDX on purpose: this is the INTERPOLATED normal's gradient, kept out of
+        // the material graph's alias set, and used only as the specular-AA variance estimate below.
+        const float3 GeoNormalDDX = InterpWeights(S.Bary.DDX, W[0].NormalWS, W[1].NormalWS, W[2].NormalWS);
+        const float3 GeoNormalDDY = InterpWeights(S.Bary.DDY, W[0].NormalWS, W[1].NormalWS, W[2].NormalWS);
+
         // One report per pixel, keyed by material slot -- see RequestMaterialResolution. This lane is where
         // residency demand comes from, because it is where the camera's view of a material is shaded, and
         // its gradients are the analytic barycentric ones (there is no quad here to take ddx/ddy from).
@@ -137,6 +142,9 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
         $MATERIAL_INPUTS
 
         G = BuildGBufferData(Input, Material);
+
+        // No quad in this lane, so the widening comes from surface curvature rather than the normal map.
+        G.Roughness = ApplyGeometricSpecularAA(G.Roughness, GeoNormalDDX, GeoNormalDDY);
     }
 
     const FGBufferPacked P = PackGBuffer(G);

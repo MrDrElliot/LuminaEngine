@@ -77,6 +77,21 @@ float3 GetWorldNormal(float3 FragNormal, float4 FragTangent, float3 TangentSpace
     return normalize(mul(TangentSpaceNormal, TBN));
 }
 
+// Geometric specular antialiasing (Kaplanyan 2016). Widens roughness by the pixel-footprint variance of
+// the shading normal, so a normal varying faster than one pixel stops sparkling and settles into a lobe.
+float ApplyGeometricSpecularAA(float Roughness, float3 dNdx, float3 dNdy)
+{
+    const float ScreenVariance = 0.25;
+    const float Threshold      = 0.18;
+
+    const float Variance = ScreenVariance * (dot(dNdx, dNdx) + dot(dNdy, dNdy));
+    const float Kernel   = min(2.0 * Variance, Threshold);
+
+    // Roughness squared is the GGX alpha the variance adds into; the widening is not linear in roughness.
+    const float Alpha = Roughness * Roughness;
+    return sqrt(saturate(Alpha + Kernel));
+}
+
 FCubemapCoord DirectionToCubemapCoord(float3 Dir)
 {
     FCubemapCoord Result;
@@ -531,6 +546,12 @@ FGBufferData BuildGBufferData(FBaseVertexOutput Input, FMaterialPixelInputs Mate
     G.Emissive         = Material.Emissive;
     G.bReceiveShadow   = (Input.InstanceFlags & (uint)EInstanceFlags::ReceiveShadow) != 0u;
 
+#ifndef SHADING_COMPUTE
+    // Quad derivatives here see the mapped normal, so this covers normal-map detail as well as curvature.
+    // The deferred lane has no quad and widens from the interpolated normal at its own call site.
+    G.Roughness = ApplyGeometricSpecularAA(G.Roughness, ddx(G.WorldNormal), ddy(G.WorldNormal));
+#endif
+
     G.Clearcoat          = Material.Clearcoat;
     G.ClearcoatRoughness = Material.ClearcoatRoughness;
 
@@ -760,6 +781,9 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
     }
 #endif
 
+    // Folded into the AO the ambient is evaluated with, so specular takes it through ComputeSpecularOcclusion.
+    const float AmbientAO = AO * GTAO;
+
     float3 Ambient;
     if (HasIBL())
     {
@@ -769,12 +793,12 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
         float2 DFG_IBL    = SampleBRDFLUT(NdotV_IBL, Roughness);
 #ifdef TRANSLUCENT
         float3 IBLDiffuse, IBLSpec;
-        EvaluateIBLAmbientSplit(WorldPosition, N, V, NdotV_IBL, DFG_IBL, Albedo, F0, Roughness, Metallic, AO, IBLDiffuse, IBLSpec);
-        Ambient = IBLDiffuse * GetAmbientLightIntensity() * GTAO;
-        LoSpec += IBLSpec * GetAmbientLightIntensity() * GTAO;
+        EvaluateIBLAmbientSplit(WorldPosition, N, V, NdotV_IBL, DFG_IBL, Albedo, F0, Roughness, Metallic, AmbientAO, IBLDiffuse, IBLSpec);
+        Ambient = IBLDiffuse * GetAmbientLightIntensity();
+        LoSpec += IBLSpec * GetAmbientLightIntensity();
 #else
-        float3 IBLAmbient = EvaluateIBLAmbient(WorldPosition, N, V, NdotV_IBL, DFG_IBL, Albedo, F0, Roughness, Metallic, AO);
-        Ambient = IBLAmbient * GetAmbientLightIntensity() * GTAO;
+        float3 IBLAmbient = EvaluateIBLAmbient(WorldPosition, N, V, NdotV_IBL, DFG_IBL, Albedo, F0, Roughness, Metallic, AmbientAO);
+        Ambient = IBLAmbient * GetAmbientLightIntensity();
 #endif
     }
     else
@@ -782,7 +806,7 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
         // No environment: a SkyLight alone still lights the scene via a flat diffuse ambient fill
         // (color * intensity from the SkyLight), occluded by material AO and GTAO. Metals carry no diffuse.
         float3 DiffuseColor = Albedo * (1.0 - Metallic);
-        Ambient = GetAmbientLightColor() * GetAmbientLightIntensity() * DiffuseColor * AO * GTAO;
+        Ambient = GetAmbientLightColor() * GetAmbientLightIntensity() * DiffuseColor * AmbientAO;
     }
     // The coat reflects the environment too -- most of the read on car paint. Same prefiltered cube at
     // the coat's roughness and fixed 0.04 F0, attenuating the ambient underneath for energy.
@@ -799,7 +823,8 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
 
         Ambient *= (1.0 - Coat * CoatF);
         Lo      *= (1.0 - Coat * CoatF);
-        LoCoat  += CoatIBL * Coat * GetAmbientLightIntensity() * GTAO;
+        LoCoat  += CoatIBL * Coat * GetAmbientLightIntensity()
+                 * ComputeSpecularOcclusion(CoatNdotV, AmbientAO, CoatRough);
     }
 
     Out.Color = Ambient + Lo + LoCoat + G.Emissive;

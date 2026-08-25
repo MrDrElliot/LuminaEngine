@@ -216,8 +216,6 @@ float4 FragmentMain(VSOutput Input) : SV_Target0
         Color = WhiteBalance(Color, Grading.WhiteTemp, Grading.WhiteTint);
     }
 
-    Color = LiftGammaGain(Color, Grading.Shadows.rgb, Grading.Midtones.rgb, Grading.Highlights.rgb);
-
     // Color filter, lerp by intensity so saturation is independent of strength.
     float3 Filtered = Color * Grading.ColorFilter.rgb;
     Color = lerp(Color, Filtered, saturate(Grading.ColorFilter.a));
@@ -227,12 +225,14 @@ float4 FragmentMain(VSOutput Input) : SV_Target0
         Color = lerp(Color, Filtered, Grading.ColorFilter.a - 1.0);
     }
 
+    Color = ApplyTonemap(Color, Grading.TonemapMode);
+
+    // Display-referred from here, which is the only range where lift/gamma/gain's pow is defined.
+    Color = LiftGammaGain(Color, Grading.Shadows.rgb, Grading.Midtones.rgb, Grading.Highlights.rgb);
     Color = ApplyContrast(Color, Grading.Contrast);
     Color = max(Color, 0.0);
     Color = ApplySaturation(Color, Grading.Saturation);
     Color = max(Color, 0.0);
-
-    Color = ApplyTonemap(Color, Grading.TonemapMode);
 
     Color = ApplyVignette(Color, Input.UV, Grading.VignetteIntensity, Grading.VignetteRoundness, Grading.VignetteSmoothness, Grading.VignetteColor.rgb);
 

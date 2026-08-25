@@ -218,7 +218,13 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
     float3 F0     = lerp(float3(0.08 * G.Specular), G.BaseColor, G.Metallic);
     float2 DFG    = SampleBRDFLUT(NdotV, Roughness);
     float3 FssEss = FresnelSchlickRoughness(NdotV, F0, Roughness) * DFG.x + DFG.y;
-    float  SpecAO = ComputeSpecularOcclusion(NdotV, G.AmbientOcclusion, Roughness);
+    // Same occlusion the base pass gave this lobe, or the SSR coverage edge reads as a brightness step.
+    float  AmbientAO = G.AmbientOcclusion;
+    if (Scene().GTAOSettings.AOTextureIndex != 0xFFFFFFFFu)
+    {
+        AmbientAO *= SampleTexture2DLevel(Scene().GTAOSettings.AOTextureIndex, SAMPLER_LINEAR_CLAMP, UV, 0.0).r;
+    }
+    float  SpecAO = ComputeSpecularOcclusion(NdotV, AmbientAO, Roughness);
 
     float3 PreFilt = SampleSpecularRadiance(WorldPosition, R, Roughness);
     float3 Delta   = FssEss * SpecAO * (HitColor - PreFilt) * Confidence;
