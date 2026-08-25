@@ -1306,10 +1306,10 @@ namespace Lumina
                     FroxelIntegratePass(CL);
                 }
 
-                // Before translucency, which fogs itself in BasePixelPass; this pass sees only opaque depth.
+                // Before translucency, which fogs itself in BasePixelPass; this sees only opaque depth.
                 {
-                    SCENE_GPU_SCOPE(CL, "Froxel Fog Apply");
-                    FroxelApplyPass(CL);
+                    SCENE_GPU_SCOPE(CL, "Atmosphere Composite");
+                    AtmosphereCompositePass(CL);
                 }
 
                 {
@@ -1707,7 +1707,7 @@ namespace Lumina
         CloudShadowMapPass(CL);
         FroxelInjectPass(CL);
         FroxelIntegratePass(CL);
-        FroxelApplyPass(CL);
+        AtmosphereCompositePass(CL);
         MomentGenerationPass(CL);
         TransparentPass(CL);
         OITResolvePass(CL);
@@ -9560,23 +9560,42 @@ namespace Lumina
             uint32 _Pad0;
         };
 
-        struct FFroxelApplyPushConstants
+        struct FAtmosphereCompositePushConstants
         {
+            uint32 HDRUAV;
             uint32 DepthIndex;       // bindless 2D SRV of scene depth
-            uint32 IntegratedIndex;  // bindless 3D SRV of the integrated froxel volume
-            uint32 GridZ;
-            float  NearPlane;
+            uint32 ScreenW;
+            uint32 ScreenH;
 
+            uint32 AerialInScatterIndex;      // ~0u disables aerial perspective
+            uint32 AerialTransmittanceIndex;
+            float  AerialRange;
+            float  AerialIntensity;
+
+            uint32 CloudScatterIndex;         // ~0u disables clouds
+            uint32 bFog;
+            uint32 FroxelIntegratedIndex;     // bindless 3D SRV of the integrated froxel volume
+            uint32 GridZ;
+
+            float  NearPlane;
             float  FogRange;
             uint32 bVolumetric;      // froxel volume valid this frame; 0 = analytic height fog only
             uint32 FarShaftSteps;    // 0 = far field stays closed-form and unshadowed
-            float  FarShaftDistance;
 
+            float  FarShaftDistance;
             uint32 CloudShadowIndex; // bindless 2D SRV, ~0u when no cloud shadow was built
             float  CloudShadowExtent;
-            float  CloudShadowCenter[2];
+            float  CloudShadowCenterX;
+
+            float  CloudShadowCenterY;
+            float  _Pad0;
+            float  _Pad1;
+            float  _Pad2;
         };
-        static_assert(sizeof(FFroxelApplyPushConstants) == 48, "Froxel apply PC must match the slang push block.");
+        static_assert(sizeof(FAtmosphereCompositePushConstants) == 96,
+            "FAtmosphereCompositePushConstants must match AtmosphereComposite.slang::FPushConstants.");
+
+        constexpr uint32 AtmosphereTileSize = 8;
     }
 
     void FDefaultSceneRenderer::PublishFogGlobals(FSceneGlobalData& Globals) const
@@ -9813,71 +9832,73 @@ namespace Lumina
         Barriers::ComputeToAll(CL);
     }
 
-    void FDefaultSceneRenderer::FroxelApplyPass(RHI::FCmdListH CL)
+    void FDefaultSceneRenderer::AtmosphereCompositePass(RHI::FCmdListH CL)
     {
         const FFrameData& Frame = *RenderFrame;
-        if (!Frame.Volumetrics.bHasFog)
+
+        const bool bFog    = Frame.Volumetrics.bHasFog;
+        const bool bAerial = AtmosphereTerms.AerialInScatterIndex != ~0u;
+        const bool bClouds = AtmosphereTerms.CloudScatterIndex != ~0u;
+
+        if (!bFog && !bAerial && !bClouds)
         {
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Froxel Apply Pass", tracy::Color::Orange3);
-
-        static const FShaderH VS = FShaderLibrary::Get("FullscreenQuad.slang");
-        static const FShaderH PS = FShaderLibrary::Get("VolumetricFogApply.slang");
-        if (!VS || !PS)
+        static const FShaderH CS = FShaderLibrary::Get("AtmosphereComposite.slang");
+        if (!CS)
         {
             return;
         }
+
+        LUMINA_PROFILE_SECTION_COLORED("Atmosphere Composite Pass", tracy::Color::Orange3);
 
         const FSceneImage& HDR        = GetNamedImage(ENamedImage::HDR);
         const FSceneImage& SceneDepth = GetNamedImage(ENamedImage::DepthAttachment);
         const FSceneImage& Integrated = GetNamedImage(ENamedImage::FroxelIntegrated);
 
-        RHI::FRenderAttachment Color;
-        Color.Texture = HDR.Texture;
-        Color.LoadOp  = RHI::ELoadOp::Load;
-        Color.StoreOp = RHI::EStoreOp::Store;
+        const int32 HDRUAV = HDR.GetMipUAVIndex(0);
+        if (HDRUAV < 0)
+        {
+            return;
+        }
 
-        RHI::FRenderPassDesc Pass;
-        Pass.ColorAttachments = TSpan<const RHI::FRenderAttachment>(&Color, 1);
-        Pass.RenderArea       = HDR.GetExtent();
+        const uint32 Width  = HDR.GetSizeX();
+        const uint32 Height = HDR.GetSizeY();
 
-        RHI::CmdBeginRenderPass(CL, Pass);
-        SetViewportScissor(CL, HDR.GetExtent());
-        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(RHI::FDepthStencilDesc{}));
-        RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
+        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CS));
 
-        RHI::FBlendDesc OverBlend;
-        OverBlend.bBlendEnable   = true;
-        OverBlend.SrcColorFactor = RHI::EFactor::One;
-        OverBlend.DstColorFactor = RHI::EFactor::OneMinusSrcAlpha;
-        OverBlend.SrcAlphaFactor = RHI::EFactor::Zero;
-        OverBlend.DstAlphaFactor = RHI::EFactor::One;
+        FAtmosphereCompositePushConstants PC = {};
+        PC.HDRUAV     = (uint32)HDRUAV;
+        PC.DepthIndex = (uint32)SceneDepth.GetResourceID();
+        PC.ScreenW    = Width;
+        PC.ScreenH    = Height;
 
-        FGraphicsPipelineKey Key;
-        Key.VS = VS;
-        Key.PS = PS;
-        Key.ColorTargets.push_back({ HDR.Desc.Format, OverBlend });
-        RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
+        PC.AerialInScatterIndex     = AtmosphereTerms.AerialInScatterIndex;
+        PC.AerialTransmittanceIndex = AtmosphereTerms.AerialTransmittanceIndex;
+        PC.AerialRange              = AtmosphereTerms.AerialRange;
+        PC.AerialIntensity          = AtmosphereTerms.AerialIntensity;
 
-        FFroxelApplyPushConstants PC = {};
-        PC.DepthIndex      = (uint32)SceneDepth.GetResourceID();
-        PC.IntegratedIndex = (uint32)Integrated.GetResourceID();
-        PC.GridZ           = FroxelGridSize.z;
-        PC.NearPlane       = Math::Max(Frame.SceneGlobalData.NearPlane, 0.05f);
-        PC.FogRange        = Math::Clamp(Frame.Volumetrics.FogParams.VolumetricParams.z, 1.0f, Frame.SceneGlobalData.FarPlane);
-        PC.bVolumetric     = Frame.Volumetrics.bVolumetricFog ? 1u : 0u;
-        PC.FarShaftSteps        = Frame.Volumetrics.FarShaftSteps;
-        PC.FarShaftDistance     = Frame.Volumetrics.FarShaftDistance;
-        PC.CloudShadowIndex     = Frame.SceneGlobalData.FogCloudShadowIndex;
-        PC.CloudShadowExtent    = Frame.SceneGlobalData.FogCloudShadowExtent;
-        PC.CloudShadowCenter[0] = Frame.SceneGlobalData.FogCloudShadowCenter.x;
-        PC.CloudShadowCenter[1] = Frame.SceneGlobalData.FogCloudShadowCenter.y;
+        PC.CloudScatterIndex     = AtmosphereTerms.CloudScatterIndex;
+        PC.bFog                  = bFog ? 1u : 0u;
+        PC.FroxelIntegratedIndex = (uint32)Integrated.GetResourceID();
+        PC.GridZ                 = FroxelGridSize.z;
 
-        RHI::CmdDraw(CL, MakeArgs(PC), 3, 1, 0, 0);
-        RHI::CmdEndRenderPass(CL);
-        Barriers::RasterToRead(CL);
+        PC.NearPlane          = Math::Max(Frame.SceneGlobalData.NearPlane, 0.05f);
+        PC.FogRange           = Math::Clamp(Frame.Volumetrics.FogParams.VolumetricParams.z, 1.0f, Frame.SceneGlobalData.FarPlane);
+        PC.bVolumetric        = Frame.Volumetrics.bVolumetricFog ? 1u : 0u;
+        PC.FarShaftSteps      = Frame.Volumetrics.FarShaftSteps;
+        PC.FarShaftDistance   = Frame.Volumetrics.FarShaftDistance;
+        PC.CloudShadowIndex   = Frame.SceneGlobalData.FogCloudShadowIndex;
+        PC.CloudShadowExtent  = Frame.SceneGlobalData.FogCloudShadowExtent;
+        PC.CloudShadowCenterX = Frame.SceneGlobalData.FogCloudShadowCenter.x;
+        PC.CloudShadowCenterY = Frame.SceneGlobalData.FogCloudShadowCenter.y;
+
+        RHI::CmdDispatch(CL, MakeArgs(PC),
+                         RenderUtils::GetGroupCount(Width,  AtmosphereTileSize),
+                         RenderUtils::GetGroupCount(Height, AtmosphereTileSize), 1);
+
+        Barriers::ComputeToAll(CL);
     }
 
     void FDefaultSceneRenderer::WaterPass(RHI::FCmdListH CL)
@@ -9901,11 +9922,11 @@ namespace Lumina
         const FSceneImage& HDR        = GetNamedImage(ENamedImage::HDR);
         const FSceneImage& SceneColor = GetNamedImage(ENamedImage::WaterRefraction);
         const FSceneImage& SceneDepth = GetNamedImage(ENamedImage::DepthAttachment);
-        
-        Barriers::AllToTransfer(CL);
+
+        Barriers::SceneToTransfer(CL);
         RHI::CmdCopyTexture(CL, HDR.Texture, RHI::FTextureSlice{}, SceneColor.Texture, RHI::FTextureSlice{});
-        Barriers::TransferToAll(CL);
-        
+        Barriers::TransferToShaders(CL);
+
         RHI::FRenderAttachment Color;
         Color.Texture = HDR.Texture;
         Color.LoadOp  = RHI::ELoadOp::Load;
@@ -9987,9 +10008,9 @@ namespace Lumina
         const FSceneImage& SceneColor = GetNamedImage(ENamedImage::WaterRefraction);
         const FSceneImage& SceneDepth = GetNamedImage(ENamedImage::DepthAttachment);
 
-        Barriers::AllToTransfer(CL);
+        Barriers::SceneToTransfer(CL);
         RHI::CmdCopyTexture(CL, HDR.Texture, RHI::FTextureSlice{}, SceneColor.Texture, RHI::FTextureSlice{});
-        Barriers::TransferToAll(CL);
+        Barriers::TransferToShaders(CL);
 
         RHI::FRenderAttachment Color;
         Color.Texture = HDR.Texture;
@@ -10868,20 +10889,6 @@ namespace Lumina
         static_assert(sizeof(FAerialLUTPushConstants) == 32,
             "FAerialLUTPushConstants must match AerialPerspectiveLUT.slang::FPushConstants.");
 
-        struct FAerialApplyPushConstants
-        {
-            uint32       HDRUAV;
-            uint32       DepthIndex;
-            uint32       InScatterIndex;
-            uint32       TransmittanceIndex;
-
-            FUIntVector2 Size;
-            float        Range;
-            float        Intensity;
-        };
-        static_assert(sizeof(FAerialApplyPushConstants) == 32,
-            "FAerialApplyPushConstants must match AerialPerspectiveApply.slang::FPushConstants.");
-
         constexpr uint32 AerialTileSize = 8;
     }
 
@@ -10896,16 +10903,6 @@ namespace Lumina
         };
         static_assert(sizeof(FCloudNoisePushConstants) == 16,
             "FCloudNoisePushConstants must match CloudNoiseBake.slang::FPushConstants.");
-
-        struct FCloudCompositePushConstants
-        {
-            uint32 HDRUAV;
-            uint32 ScatterIndex;
-            uint32 ScreenW;
-            uint32 ScreenH;
-        };
-        static_assert(sizeof(FCloudCompositePushConstants) == 16,
-            "FCloudCompositePushConstants must match CloudComposite.slang::FPushConstants.");
 
         struct FCloudPushConstants
         {
@@ -10951,30 +10948,25 @@ namespace Lumina
     void FDefaultSceneRenderer::VolumetricCloudPass(RHI::FCmdListH CL)
     {
         const FFrameData& Frame = *RenderFrame;
+
+        AtmosphereTerms.CloudScatterIndex = ~0u;
+
         if (!Frame.Volumetrics.bClouds)
         {
             return;
         }
 
-        static const FShaderH BakeCS      = FShaderLibrary::Get("CloudNoiseBake.slang");
-        static const FShaderH CloudCS     = FShaderLibrary::Get("VolumetricClouds.slang");
-        static const FShaderH CompositeCS = FShaderLibrary::Get("CloudComposite.slang");
-        if (!BakeCS || !CloudCS || !CompositeCS)
+        static const FShaderH BakeCS  = FShaderLibrary::Get("CloudNoiseBake.slang");
+        static const FShaderH CloudCS = FShaderLibrary::Get("VolumetricClouds.slang");
+        if (!BakeCS || !CloudCS)
         {
             return;
         }
 
         const FSceneImage& Noise   = GetNamedImage(ENamedImage::CloudNoise);
         const FSceneImage& Scatter = GetNamedImage(ENamedImage::CloudScatter);
-        const FSceneImage& HDR     = GetNamedImage(ENamedImage::HDR);
         const FSceneImage& Depth   = GetNamedImage(ENamedImage::DepthAttachment);
         if (!Noise.IsValid() || !Scatter.IsValid())
-        {
-            return;
-        }
-
-        const int32 HDRUAV = HDR.GetMipUAVIndex(0);
-        if (HDRUAV < 0)
         {
             return;
         }
@@ -11057,21 +11049,10 @@ namespace Lumina
                          RenderUtils::GetGroupCount(PC.ScreenW, CloudTileSize),
                          RenderUtils::GetGroupCount(PC.ScreenH, CloudTileSize), 1);
 
+        // The scatter volume feeds AtmosphereCompositePass and the cloud shadow map, both dispatches.
         RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute);
 
-        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CompositeCS));
-
-        FCloudCompositePushConstants CompPC = {};
-        CompPC.HDRUAV       = (uint32)HDRUAV;
-        CompPC.ScatterIndex = (uint32)Scatter.GetResourceID();
-        CompPC.ScreenW      = HDR.GetSizeX();
-        CompPC.ScreenH      = HDR.GetSizeY();
-
-        RHI::CmdDispatch(CL, MakeArgs(CompPC),
-                         RenderUtils::GetGroupCount(CompPC.ScreenW, CloudTileSize),
-                         RenderUtils::GetGroupCount(CompPC.ScreenH, CloudTileSize), 1);
-
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::AllCommands);
+        AtmosphereTerms.CloudScatterIndex = (uint32)Scatter.GetResourceID();
     }
 
     void FDefaultSceneRenderer::ScreenSpaceReflectionsPass(RHI::FCmdListH CL)
@@ -11112,9 +11093,9 @@ namespace Lumina
         }
 
         // The trace reads neighboring pixels while the composite writes this one, so it needs a snapshot.
-        Barriers::AllToTransfer(CL);
+        Barriers::SceneToTransfer(CL);
         RHI::CmdCopyTexture(CL, HDR.Texture, RHI::FTextureSlice{}, SceneColor.Texture, RHI::FTextureSlice{});
-        Barriers::TransferToAll(CL);
+        Barriers::TransferToShaders(CL);
 
         struct FSSRPushConstants
         {
@@ -11172,6 +11153,9 @@ namespace Lumina
     {
         const FFrameData& Frame = *RenderFrame;
 
+        AtmosphereTerms.AerialInScatterIndex     = ~0u;
+        AtmosphereTerms.AerialTransmittanceIndex = ~0u;
+
         if (!RenderSettings.bHasEnvironment
             || !Frame.Volumetrics.bAerialPerspective
             || Frame.Volumetrics.AerialIntensity <= 0.0f)
@@ -11179,9 +11163,8 @@ namespace Lumina
             return;
         }
 
-        static const FShaderH LutCS   = FShaderLibrary::Get("AerialPerspectiveLUT.slang");
-        static const FShaderH ApplyCS = FShaderLibrary::Get("AerialPerspectiveApply.slang");
-        if (!LutCS || !ApplyCS)
+        static const FShaderH LutCS = FShaderLibrary::Get("AerialPerspectiveLUT.slang");
+        if (!LutCS)
         {
             return;
         }
@@ -11190,8 +11173,6 @@ namespace Lumina
 
         const FSceneImage& InScatter     = GetNamedImage(ENamedImage::AerialInScatter);
         const FSceneImage& Transmittance = GetNamedImage(ENamedImage::AerialTransmittance);
-        const FSceneImage& HDR           = GetNamedImage(ENamedImage::HDR);
-        const FSceneImage& Depth         = GetNamedImage(ENamedImage::DepthAttachment);
 
         if (!InScatter.IsValid() || !Transmittance.IsValid())
         {
@@ -11220,27 +11201,13 @@ namespace Lumina
         const uint32 LutGroups = RenderUtils::GetGroupCount(kAerialLUTSize, AerialTileSize);
         RHI::CmdDispatch(CL, MakeArgs(LutPC), LutGroups, LutGroups, 1);
 
+        // Only AtmosphereCompositePass reads the LUT, and it is a dispatch.
         RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute);
 
-        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(ApplyCS));
-
-        const uint32 Width  = HDR.GetSizeX();
-        const uint32 Height = HDR.GetSizeY();
-
-        FAerialApplyPushConstants ApplyPC = {};
-        ApplyPC.HDRUAV             = (uint32)HDR.GetMipUAVIndex(0);
-        ApplyPC.DepthIndex         = (uint32)Depth.GetResourceID();
-        ApplyPC.InScatterIndex     = (uint32)InScatter.GetResourceID();
-        ApplyPC.TransmittanceIndex = (uint32)Transmittance.GetResourceID();
-        ApplyPC.Size               = FUIntVector2(Width, Height);
-        ApplyPC.Range              = Range;
-        ApplyPC.Intensity          = Frame.Volumetrics.AerialIntensity;
-
-        RHI::CmdDispatch(CL, MakeArgs(ApplyPC),
-                         RenderUtils::GetGroupCount(Width,  AerialTileSize),
-                         RenderUtils::GetGroupCount(Height, AerialTileSize), 1);
-
-        Barriers::ComputeToAll(CL);
+        AtmosphereTerms.AerialInScatterIndex     = (uint32)InScatter.GetResourceID();
+        AtmosphereTerms.AerialTransmittanceIndex = (uint32)Transmittance.GetResourceID();
+        AtmosphereTerms.AerialRange              = Range;
+        AtmosphereTerms.AerialIntensity          = Frame.Volumetrics.AerialIntensity;
     }
 
     void FDefaultSceneRenderer::AutoExposurePass(RHI::FCmdListH CL)

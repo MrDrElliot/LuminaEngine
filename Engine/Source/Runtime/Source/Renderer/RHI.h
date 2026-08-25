@@ -715,6 +715,22 @@ namespace Lumina::RHI
             CmdBarrier(CL, EStageFlags::AllCommands, EStageFlags::Transfer);
         }
 
+        /** Snapshotting a scene target into a scratch copy; only raster, shader and transfer writes reach one. */
+        inline void SceneToTransfer(FCmdListH CL)
+        {
+            CmdBarrier(CL,
+                EStageFlags::RasterColorOut | EStageFlags::PixelShader |
+                EStageFlags::Compute | EStageFlags::Transfer,
+                EStageFlags::Transfer);
+        }
+
+        /** Pairs with SceneToTransfer where the copy is only ever sampled, never fetched indirectly. */
+        inline void TransferToShaders(FCmdListH CL)
+        {
+            CmdBarrier(CL, EStageFlags::Transfer,
+                EStageFlags::PixelShader | EStageFlags::Compute);
+        }
+
         /** Uploads/clears feeding the GPU scene: consumed by the cull dispatches and the geometry front end. */
         // Narrow variants: use only where every reader of every buffer written is in the destination.
         inline void TransferToCompute(FCmdListH CL)

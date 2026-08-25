@@ -6,6 +6,7 @@
 #include "Box3DPhysicsScene.h"
 #include "Box3DUtils.h"
 #include "Core/Console/ConsoleVariable.h"
+#include "Core/Profiler/Profile.h"
 #include "Log/Log.h"
 #include "Memory/MemoryTracking.h"
 #include "Renderer/ImmediateLineRenderer.h"
@@ -36,6 +37,8 @@ namespace Lumina::Physics
     static TConsoleVar CVarPhysicsDebugContactFeatures("Physics.Debug.ContactFeatures", false, "Draw contact feature ids.");
     static TConsoleVar CVarPhysicsDebugGraphColors("Physics.Debug.GraphColors", false, "Tint bodies by constraint graph color.");
     static TConsoleVar CVarPhysicsDebugIslands("Physics.Debug.Islands", false, "Draw simulation islands.");
+    static TConsoleVar CVarPhysicsDebugDrawDistance("Physics.Debug.DrawDistance", 0.0f,
+        "Half extent of the box Box3D prunes its broad phase against, centered on the camera. 0 leaves it unbounded and culls per shape instead.");
 
     static void* Box3DAllocate(int32_t Size, int32_t Alignment)
     {
@@ -297,6 +300,13 @@ namespace Lumina::Physics
             default: break;
         }
 
+        float MaxLengthSq = 0.0f;
+        for (const FVector3& Point : Result->LinePoints)
+        {
+            MaxLengthSq = Math::Max(MaxLengthSq, Math::Dot(Point, Point));
+        }
+        Result->BoundingRadius = Math::Sqrt(MaxLengthSq);
+
         return Result;
     }
 
@@ -319,6 +329,87 @@ namespace Lumina::Physics
         World->DrawLine(From, To, Color, 1.0f, true, DrawDuration);
     }
 
+    void FBox3DDebugRenderer::Segments(const FVector3* Points, int32 PointCount, uint32 PackedColor)
+    {
+        const int32 VertexCount = (PointCount / 2) * 2;
+        if (VertexCount == 0)
+        {
+            return;
+        }
+
+        if (Lines != nullptr)
+        {
+            FSimpleElementVertex* Vertices = Lines->AllocLines((uint32)(VertexCount / 2));
+            if (Vertices == nullptr)
+            {
+                return;
+            }
+
+            for (int32 i = 0; i < VertexCount; ++i)
+            {
+                Vertices[i].Position = Points[i];
+                Vertices[i].Color    = PackedColor;
+            }
+            return;
+        }
+
+        for (int32 i = 0; i < VertexCount; i += 2)
+        {
+            Line(Points[i], Points[i + 1], PackedColor);
+        }
+    }
+
+    void FBox3DDebugRenderer::Segments(const FVector3* Points, int32 PointCount, const FVector3& Translation,
+                                       const FQuat& Rotation, uint32 PackedColor)
+    {
+        const int32 VertexCount = (PointCount / 2) * 2;
+        if (VertexCount == 0)
+        {
+            return;
+        }
+
+        // Rotating the basis once turns the per-point quaternion rotate into three multiply-adds.
+        const FVector3 AxisX = Math::Rotate(Rotation, FVector3(1.0f, 0.0f, 0.0f));
+        const FVector3 AxisY = Math::Rotate(Rotation, FVector3(0.0f, 1.0f, 0.0f));
+        const FVector3 AxisZ = Math::Rotate(Rotation, FVector3(0.0f, 0.0f, 1.0f));
+
+        if (Lines != nullptr)
+        {
+            FSimpleElementVertex* Vertices = Lines->AllocLines((uint32)(VertexCount / 2));
+            if (Vertices == nullptr)
+            {
+                return;
+            }
+
+            for (int32 i = 0; i < VertexCount; ++i)
+            {
+                const FVector3& Local = Points[i];
+                Vertices[i].Position = Translation + AxisX * Local.x + AxisY * Local.y + AxisZ * Local.z;
+                Vertices[i].Color    = PackedColor;
+            }
+            return;
+        }
+
+        for (int32 i = 0; i < VertexCount; i += 2)
+        {
+            const FVector3& A = Points[i];
+            const FVector3& B = Points[i + 1];
+            Line(Translation + AxisX * A.x + AxisY * A.y + AxisZ * A.z,
+                 Translation + AxisX * B.x + AxisY * B.y + AxisZ * B.z, PackedColor);
+        }
+    }
+
+    bool FBox3DDebugRenderer::ShouldDrawShape(const FVector3& Center, float Radius) const
+    {
+        return DrawState == nullptr || DebugDraw::ShouldDraw(*DrawState, Center, Radius);
+    }
+
+    TVector<FVector3>& FBox3DDebugRenderer::TakeScratch()
+    {
+        Scratch.clear();
+        return Scratch;
+    }
+
     namespace
     {
         FBox3DDebugRenderer& RendererFrom(void* Context)
@@ -335,17 +426,16 @@ namespace Lumina::Physics
             }
 
             FBox3DDebugRenderer& Renderer = RendererFrom(Context);
-            const uint32 Packed = PackDebugColor(Color);
-
             const FVector3 Translation = Box3DUtils::FromB3Vec3(Transform.p);
-            const FQuat Rotation = Box3DUtils::FromB3Quat(Transform.q);
 
-            for (size_t i = 0; i + 1 < Shape->LinePoints.size(); i += 2)
+            // Box3D only tested this body against an axis-aligned box, so the frustum test still prunes.
+            if (!Renderer.ShouldDrawShape(Translation, Shape->BoundingRadius))
             {
-                const FVector3 A = Translation + Math::Rotate(Rotation, Shape->LinePoints[i]);
-                const FVector3 B = Translation + Math::Rotate(Rotation, Shape->LinePoints[i + 1]);
-                Renderer.Line(A, B, Packed);
+                return;
             }
+
+            Renderer.Segments(Shape->LinePoints.data(), (int32)Shape->LinePoints.size(), Translation,
+                              Box3DUtils::FromB3Quat(Transform.q), PackDebugColor(Color));
         }
 
         void DebugDrawSegment(b3Pos P1, b3Pos P2, b3HexColor Color, void* Context)
@@ -367,40 +457,35 @@ namespace Lumina::Physics
 
         void DebugDrawPoint(b3Pos P, float Size, b3HexColor Color, void* Context)
         {
-            FBox3DDebugRenderer& Renderer = RendererFrom(Context);
             const FVector3 Center = Box3DUtils::FromB3Vec3(P);
             const float Extent = Math::Max(Size, 0.01f) * 0.5f;
-            const uint32 Packed = PackDebugColor(Color);
 
-            Renderer.Line(Center - FVector3(Extent, 0, 0), Center + FVector3(Extent, 0, 0), Packed);
-            Renderer.Line(Center - FVector3(0, Extent, 0), Center + FVector3(0, Extent, 0), Packed);
-            Renderer.Line(Center - FVector3(0, 0, Extent), Center + FVector3(0, 0, Extent), Packed);
+            const FVector3 Points[6] =
+            {
+                Center - FVector3(Extent, 0, 0), Center + FVector3(Extent, 0, 0),
+                Center - FVector3(0, Extent, 0), Center + FVector3(0, Extent, 0),
+                Center - FVector3(0, 0, Extent), Center + FVector3(0, 0, Extent),
+            };
+
+            RendererFrom(Context).Segments(Points, 6, PackDebugColor(Color));
         }
 
         void DebugDrawSphere(b3Pos P, float Radius, b3HexColor Color, float /*Alpha*/, void* Context)
         {
             FBox3DDebugRenderer& Renderer = RendererFrom(Context);
-            const uint32 Packed = PackDebugColor(Color);
 
-            TVector<FVector3> Points;
+            TVector<FVector3>& Points = Renderer.TakeScratch();
             AppendSphereLines(Points, b3Sphere{ P, Radius });
-            for (size_t i = 0; i + 1 < Points.size(); i += 2)
-            {
-                Renderer.Line(Points[i], Points[i + 1], Packed);
-            }
+            Renderer.Segments(Points.data(), (int32)Points.size(), PackDebugColor(Color));
         }
 
         void DebugDrawCapsule(b3Pos P1, b3Pos P2, float Radius, b3HexColor Color, float /*Alpha*/, void* Context)
         {
             FBox3DDebugRenderer& Renderer = RendererFrom(Context);
-            const uint32 Packed = PackDebugColor(Color);
 
-            TVector<FVector3> Points;
+            TVector<FVector3>& Points = Renderer.TakeScratch();
             AppendCapsuleLines(Points, b3Capsule{ P1, P2, Radius });
-            for (size_t i = 0; i + 1 < Points.size(); i += 2)
-            {
-                Renderer.Line(Points[i], Points[i + 1], Packed);
-            }
+            Renderer.Segments(Points.data(), (int32)Points.size(), PackDebugColor(Color));
         }
 
         void DrawBoxWireframe(FBox3DDebugRenderer& Renderer, const FVector3& Center, const FVector3& Extents, const FQuat& Rotation, uint32 Packed)
@@ -419,10 +504,14 @@ namespace Lumina::Physics
                 {0,4},{1,5},{2,6},{3,7},
             };
 
-            for (const auto& Edge : EdgeIndices)
+            FVector3 Points[24];
+            for (int32 i = 0; i < 12; ++i)
             {
-                Renderer.Line(Corners[Edge[0]], Corners[Edge[1]], Packed);
+                Points[i * 2 + 0] = Corners[EdgeIndices[i][0]];
+                Points[i * 2 + 1] = Corners[EdgeIndices[i][1]];
             }
+
+            Renderer.Segments(Points, 24, Packed);
         }
 
         void DebugDrawBounds(b3AABB Aabb, b3HexColor Color, void* Context)
@@ -481,6 +570,8 @@ namespace Lumina::Physics
 
     void FBox3DDebugRenderer::DrawWorld(b3WorldId WorldId, CWorld* InWorld)
     {
+        LUMINA_PROFILE_SCOPE();
+
         World = InWorld;
 
         const FDebugDrawState* State = DebugDraw::GetState(World);
@@ -489,23 +580,28 @@ namespace Lumina::Physics
             return;
         }
 
+        DrawState = State;
         SetImmediateSink(DebugDraw::GetLines(World));
 
         b3DebugDraw Draw = FBox3DPhysicsContext::MakeDebugDraw();
         Draw.context = this;
 
-        // Box3D culls against an AABB rather than a frustum, so the view's distance cap is what prunes here.
+        float Reach = Math::Max(CVarPhysicsDebugDrawDistance.GetValue(), 0.0f);
         if (State->MaxDistanceSq > 0.0f)
         {
-            const float Radius = Math::Sqrt(State->MaxDistanceSq);
-            const FVector3 Extent(Radius);
-            Draw.drawingBounds = b3AABB{ Box3DUtils::ToB3Vec3(State->ViewOrigin - Extent),
-                                         Box3DUtils::ToB3Vec3(State->ViewOrigin + Extent) };
+            const float ViewReach = Math::Sqrt(State->MaxDistanceSq);
+            Reach = Reach > 0.0f ? Math::Min(Reach, ViewReach) : ViewReach;
         }
+
+        // Box3D defaults this box to 100 units about the world origin, which silently drops a distant scene.
+        const FVector3 Extent(Reach > 0.0f ? Reach : B3_HUGE);
+        Draw.drawingBounds = b3AABB{ Box3DUtils::ToB3Vec3(State->ViewOrigin - Extent),
+                                     Box3DUtils::ToB3Vec3(State->ViewOrigin + Extent) };
 
         b3World_Draw(WorldId, &Draw, UINT64_MAX);
 
         SetImmediateSink(nullptr);
+        DrawState = nullptr;
     }
 
     void FBox3DPhysicsContext::Initialize()

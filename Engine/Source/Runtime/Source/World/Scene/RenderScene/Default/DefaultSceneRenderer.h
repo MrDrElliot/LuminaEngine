@@ -688,9 +688,10 @@ namespace Lumina
         void CloudShadowMapPass(RHI::FCmdListH CL);
         void FroxelInjectPass(RHI::FCmdListH CL);
         void FroxelIntegratePass(RHI::FCmdListH CL);
-        void FroxelApplyPass(RHI::FCmdListH CL);
         void AerialPerspectivePass(RHI::FCmdListH CL);
         void VolumetricCloudPass(RHI::FCmdListH CL);
+        // One HDR read-modify-write for every term the three passes above produced a volume for.
+        void AtmosphereCompositePass(RHI::FCmdListH CL);
         void ScreenSpaceReflectionsPass(RHI::FCmdListH CL);
         void WaterPass(RHI::FCmdListH CL);
         void UnderwaterPass(RHI::FCmdListH CL);
@@ -1043,6 +1044,17 @@ namespace Lumina
         
         FEnvironmentParams                      LastUploadedEnvironmentParams = {};
         bool                                    bEnvironmentParamsUploaded    = false;
+
+        // Off unless the pass filling the volume dispatched, so the composite cannot read a stale one.
+        struct FAtmosphereTerms
+        {
+            uint32 AerialInScatterIndex     = ~0u;
+            uint32 AerialTransmittanceIndex = ~0u;
+            float  AerialRange              = 0.0f;
+            float  AerialIntensity          = 0.0f;
+            uint32 CloudScatterIndex        = ~0u;
+        };
+        FAtmosphereTerms                        AtmosphereTerms = {};
         
         mutable FSharedMutex                    PipelineCacheMutex;
         THashMap<uint64, RHI::FPipelineH>       PipelineCache;
