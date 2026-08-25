@@ -654,6 +654,8 @@ namespace Lumina
             Data.FarPlane                     = VV.GetFar();
             Data.NearPlane                    = VV.GetNear();
             Data.CullData.Frustum             = AsGPU(VV.GetFrustum());
+            // No resolve runs here, so a varying phase would just boil the capture's screen-space noise.
+            Data.TemporalPhase                = 0u;
         }
 
         if (Frame.ReflectionProbes.BakingProbe >= 0)
@@ -676,6 +678,7 @@ namespace Lumina
                 Data.FarPlane                     = VV.GetFar();
                 Data.NearPlane                    = VV.GetNear();
                 Data.CullData.Frustum             = AsGPU(VV.GetFrustum());
+                Data.TemporalPhase                = 0u;
             }
         }
 
@@ -1462,6 +1465,7 @@ namespace Lumina
         CollectStreamingFeedback(CL);
 
         // Last, so the copy captures the fully uploaded state and next frame reads it as the past.
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute | RHI::EStageFlags::Transfer, RHI::EStageFlags::Transfer);
         SnapshotMotionState(CL);
 
         RHI::Core::Submit(CL);
@@ -11259,7 +11263,7 @@ namespace Lumina
         }
 
         // Under T2x this lands in the history slot instead, and the resolve is what writes the view output.
-        const bool bTemporal          = IsTemporalAAEnabled() && GetNamedImage(GetTemporalCurrentImage()).IsValid();
+        const bool bTemporal          = IsTemporalResolveReady();
         const FSceneImage& Output     = bTemporal ? GetNamedImage(GetTemporalCurrentImage()) : CurrentView->Output;
         const FSceneImage& InputColor = GetNamedImage(ENamedImage::LDR);
         const FSceneImage& BlendTex   = GetNamedImage(ENamedImage::SMAABlend);
@@ -11414,6 +11418,15 @@ namespace Lumina
         return CurrentView != nullptr && IsTemporalAAEnabledFor(*CurrentView);
     }
 
+    // One predicate for both the blend redirect and the resolve, or a half-allocated set strands the output.
+    bool FDefaultSceneRenderer::IsTemporalResolveReady() const
+    {
+        return IsTemporalAAEnabled()
+            && GetNamedImage(ENamedImage::Velocity).IsValid()
+            && GetNamedImage(ENamedImage::TemporalHistoryA).IsValid()
+            && GetNamedImage(ENamedImage::TemporalHistoryB).IsValid();
+    }
+
     bool FDefaultSceneRenderer::IsVelocityDebugActive() const
     {
         #if !defined(LE_SHIPPING)
@@ -11521,14 +11534,15 @@ namespace Lumina
             return;
         }
 
+        if (!IsTemporalResolveReady())
+        {
+            return;
+        }
+
         const FSceneImage& Output   = CurrentView->Output;
         const FSceneImage& Current  = GetNamedImage(GetTemporalCurrentImage());
         const FSceneImage& History  = GetNamedImage(GetTemporalHistoryImage());
         const FSceneImage& Velocity = GetNamedImage(ENamedImage::Velocity);
-        if (!Current.IsValid() || !History.IsValid() || !Velocity.IsValid())
-        {
-            return;
-        }
 
         RHI::FRenderAttachment Color;
         Color.Texture = Output.Texture;

@@ -109,7 +109,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
             FVertexData VertexData = LoadMeshletVertexData(T.Ref, T.Tri[k]);
             W[k] = TransformMeshletVertex(VertexData, ModelMatrix, NormalMatrixWS);
 
-            // World position offset is deliberately not re-evaluated at the previous time; wind does not move here.
+            // Pose only; the offset the graph adds is applied below, once it has been evaluated at t-1.
             PrevWorldPos[k] = bWantVelocity
                             ? mul(PrevModel, float4(PrevObjectPosition(T.Ref, T.Tri[k], VertexData), 1.0)).xyz
                             : float3(0.0);

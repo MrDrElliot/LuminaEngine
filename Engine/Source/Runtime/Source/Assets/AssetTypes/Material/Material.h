@@ -234,11 +234,13 @@ namespace Lumina
         TVector<uint32>                         VisBufferMeshShaderBinaries;
 
         /** VisBuffer geometry, masked variant (MeshletVisBuffer.slang + VISBUFFER_MASKED_GEOM); empty for non-masked. */
+        PROPERTY()
         TVector<uint32>                         VisBufferMeshShaderMaskedBinaries;
 
         /** Masked-only VisBuffer pixel stage (VisBufferMaskedPixel.slang + VISBUFFER_PRIMID). */
         PROPERTY()
         TVector<uint32>                         MaskedVisBufferPixelShaderBinaries;
+
         /** Masked shadow geometry stage (MeshletMesh.slang + MESHLET_MESH_MASKED_SHADOW). */
         PROPERTY()
         TVector<uint32>                         MeshShaderShadowMaskedBinaries;

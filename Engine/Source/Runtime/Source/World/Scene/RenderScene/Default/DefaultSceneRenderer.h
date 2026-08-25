@@ -713,6 +713,7 @@ namespace Lumina
         static bool IsTemporalAARequested();
         static bool IsTemporalAAEnabledFor(const FSceneView& View);
         bool IsTemporalAAEnabled() const;
+        bool IsTemporalResolveReady() const;
         bool IsVelocityDebugActive() const;
         bool IsVelocityWanted() const;
         // Slot the neighborhood blend writes this frame; the resolve reads the other one as history.
