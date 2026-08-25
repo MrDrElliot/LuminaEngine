@@ -22,11 +22,11 @@ namespace Lumina
         PROPERTY()
         FEntity Other = entt::null;
 
-        /** This body's Jolt body id. */
+        /** This body's physics body id. */
         PROPERTY()
         uint32 BodyID = 0;
 
-        /** The other body's Jolt body id. */
+        /** The other body's physics body id. */
         PROPERTY()
         uint32 OtherBodyID = 0;
 

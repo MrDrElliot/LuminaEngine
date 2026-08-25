@@ -439,7 +439,7 @@ namespace Lumina
 
     // Display-time world matrix, present only on entities the physics step interpolates. Render reads it in
     // preference to STransformComponent's own world pose; nothing else may. STransformComponent holds the
-    // simulated pose, so gameplay, queries and the body re-sync all agree with what Jolt believes, while the
+    // simulated pose, so gameplay, queries and the body re-sync all agree with the simulated pose, while the
     // visual is free to sit between two fixed steps. Not reflected: pure per-frame render state.
     struct FRenderTransform
     {

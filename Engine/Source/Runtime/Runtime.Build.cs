@@ -1,4 +1,4 @@
-using LuminaBuildTool.Configuration;
+﻿using LuminaBuildTool.Configuration;
 
 public class Runtime : LuminaModuleRules
 {
@@ -62,10 +62,9 @@ public class Runtime : LuminaModuleRules
             "Tracy",
         });
 
-        // Private: only Runtime's Physics/API/Jolt includes <Jolt/...>, and no public header exposes it.
-        // Jolt's defines change its struct layout, so keeping the dependency private stops them at this
-        // module instead of stamping them onto every dependent's command line.
-        PrivateDependencyModuleNames.Add("JoltPhysics");
+        // Private because only Runtime's Physics/API/Box3D includes <box3d/...>. A module that wants the
+        // backend headers (the test target) takes its own Box3D dependency rather than inheriting one.
+        PrivateDependencyModuleNames.Add("Box3D");
 
         if (LuminaFeatures.IsActive(Target, LuminaFeatures.Aftermath))
         {

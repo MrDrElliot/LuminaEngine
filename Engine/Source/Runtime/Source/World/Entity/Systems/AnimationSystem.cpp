@@ -739,8 +739,7 @@ namespace Lumina
                         }
                     }
 
-                    // Packed here so the render gather bulk-copies instead of converting per bone.
-                    SkeletalUtils::PackRenderBones(Mesh.BoneTransforms, Mesh.RenderBones);
+                    // No pack here; the gather packs into its arena slice, only for what survives culling.
                     Mesh.bRenderBonesDirty = false;
                     ++Mesh.PoseSerial;
                 }
@@ -787,13 +786,13 @@ namespace Lumina
                     }
 
                     const SSkeletalMeshComponent* LeaderMesh = Registry.try_get<SSkeletalMeshComponent>(LeaderEntity);
-                    if (LeaderMesh == nullptr || LeaderMesh->RenderBones.empty())
+                    if (LeaderMesh == nullptr || LeaderMesh->BoneTransforms.empty())
                     {
                         continue;
                     }
 
                     // The leader's pose has not moved, so the copy already on this mesh still stands.
-                    if (Follower.LastLeaderPoseSerial == LeaderMesh->PoseSerial && !Mesh.RenderBones.empty())
+                    if (Follower.LastLeaderPoseSerial == LeaderMesh->PoseSerial && !Mesh.BoneTransforms.empty())
                     {
                         continue;
                     }
@@ -816,7 +815,6 @@ namespace Lumina
                     if (LeaderSkeleton == FollowerSkeleton)
                     {
                         Mesh.BoneTransforms = LeaderMesh->BoneTransforms;
-                        Mesh.RenderBones    = LeaderMesh->RenderBones;
                     }
                     else
                     {
@@ -840,8 +838,6 @@ namespace Lumina
                                 ? LeaderMesh->BoneTransforms[LeaderBone] * Follower.BindFixups[Bone]
                                 : FMatrix4(1.0f);
                         }
-
-                        SkeletalUtils::PackRenderBones(Mesh.BoneTransforms, Mesh.RenderBones);
                     }
 
                     Mesh.bRenderBonesDirty = false;

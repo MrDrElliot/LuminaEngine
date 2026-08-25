@@ -41,29 +41,52 @@ namespace Lumina
         PostPhysics,
     };
 
-    // One channel of inertialization (Bollo 2018), where the offset decays along Dir from magnitude X0
-    // with initial velocity V0. Rotation reads Dir as an axis and X0 as radians; translation and scale
-    // read Dir as a unit offset and X0 as a length.
-    // Structure of arrays, with Dir interleaved exactly as the pose stores its vectors, so the decay
-    // evaluates 8 bones at a time and the translation apply is one flat pass over both.
+    // One decaying inertialization channel (Bollo 2018), split per component to match the pose streams.
+    // Six streams in one allocation, laid out like FPose so the decay and the apply both stride one block.
     struct FInertChannelSet
     {
-        TVector<float> Dir;    // 3 per bone
-        TVector<float> X0;     // 1 per bone
-        TVector<float> V0;     // 1 per bone
-        TVector<float> Eval;   // 1 per bone, this frame's decayed magnitude
-        TVector<float> Eval3;  // 3 per bone, Eval splatted for the flat vector pass
+        static constexpr int32 NumStreams = 6;
+
+        enum EStream : int32
+        {
+            StreamDirX = 0, StreamDirY, StreamDirZ,
+            StreamX0,       StreamV0,
+            StreamEval,     // this frame's decayed magnitude
+        };
 
         void Resize(int32 NumBones)
         {
-            Dir.assign((SIZE_T)NumBones * 3, 0.0f);
-            X0.assign((SIZE_T)NumBones, 0.0f);
-            V0.assign((SIZE_T)NumBones, 0.0f);
-            Eval.resize((SIZE_T)NumBones);
-            Eval3.resize((SIZE_T)NumBones * 3);
+            // Padded like a pose so the decay runs whole vectors; a zeroed pad lane decays to nothing.
+            Stride = FPose::StrideFor(NumBones);
+            Count  = NumBones;
+            Data.assign((SIZE_T)NumStreams * Stride, 0.0f);
         }
 
-        int32 Num() const { return (int32)X0.size(); }
+        FORCEINLINE float* Stream(int32 Index) { return Data.data() + (SIZE_T)Index * Stride; }
+        FORCEINLINE const float* Stream(int32 Index) const { return Data.data() + (SIZE_T)Index * Stride; }
+
+        FORCEINLINE float* DirX() { return Stream(StreamDirX); }
+        FORCEINLINE float* DirY() { return Stream(StreamDirY); }
+        FORCEINLINE float* DirZ() { return Stream(StreamDirZ); }
+        FORCEINLINE float* X0()   { return Stream(StreamX0); }
+        FORCEINLINE float* V0()   { return Stream(StreamV0); }
+        FORCEINLINE float* Eval() { return Stream(StreamEval); }
+
+        FORCEINLINE const float* DirX() const { return Stream(StreamDirX); }
+        FORCEINLINE const float* DirY() const { return Stream(StreamDirY); }
+        FORCEINLINE const float* DirZ() const { return Stream(StreamDirZ); }
+        FORCEINLINE const float* X0()   const { return Stream(StreamX0); }
+        FORCEINLINE const float* V0()   const { return Stream(StreamV0); }
+        FORCEINLINE const float* Eval() const { return Stream(StreamEval); }
+
+        int32 Num() const { return Count; }
+        int32 NumLanes() const { return Stride; }
+
+    private:
+
+        TVector<float> Data;
+        int32 Count  = 0;
+        int32 Stride = 0;
     };
 
     // One smoothing record, held per state machine and per Inertialization node. Control fields

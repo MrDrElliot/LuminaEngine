@@ -9,6 +9,6 @@ public class $PROJECTNAME : LuminaGameModuleRules
         CSharpBindingsDirectory = ModulePath("Game/Scripts/Generated");
 
         // Add extra engine or third-party modules here, for example:
-        // PrivateDependencyModuleNames.Add("JoltPhysics");
+        // PrivateDependencyModuleNames.Add("Box3D");
     }
 }

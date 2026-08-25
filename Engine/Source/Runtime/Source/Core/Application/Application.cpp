@@ -12,6 +12,7 @@
 #include "Input/InputViewport.h"
 #include "Paths/Paths.h"
 #include "Log/Log.h"
+#include "Renderer/RenderManager.h"
 
 namespace Lumina
 {
@@ -64,6 +65,13 @@ namespace Lumina
 
             if (!GIsHeadless)
             {
+                // Ahead of the event pump, so the mouse position this frame acts on is sampled after the
+                // block rather than before it. Waiting later costs a whole frame of input latency.
+                if (FRenderManager* RenderManager = TryRender())
+                {
+                    RenderManager->WaitForFrameSlot();
+                }
+
                 MainWindow->ProcessMessages();
             }
 

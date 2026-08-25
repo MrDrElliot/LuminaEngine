@@ -42,6 +42,7 @@ namespace Lumina
         PROPERTY(Editable)
         ECollisionProfiles Mask     = ECollisionProfiles::Static | ECollisionProfiles::Dynamic;
         
+        // Either side accepting is enough, which is the rule the engine's content was authored against.
         NODISCARD FORCEINLINE bool ShouldCollide(const FCollisionProfile& Other) const
         {
             return (Mask & Other.Layer) != (ECollisionProfiles)0 || (Other.Mask & Layer) != (ECollisionProfiles)0;

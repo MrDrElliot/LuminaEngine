@@ -78,7 +78,7 @@ CrashDumps/                    Minidumps and GPU crash dumps from runs with this
 engine or third-party module, name it there:
 
 ```csharp
-PrivateDependencyModuleNames.Add("JoltPhysics");
+PrivateDependencyModuleNames.Add("Box3D");
 ```
 
 Export a type from the module with the `$PROJECTNAMEUPPER_API` macro, as

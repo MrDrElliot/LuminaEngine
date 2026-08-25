@@ -1,7 +1,7 @@
 ﻿#include "RuntimePCH.h"
 #include "Physics.h"
 
-#include "API/Jolt/JoltPhysics.h"
+#include "API/Box3D/Box3DPhysics.h"
 
 namespace Lumina::Physics
 {
@@ -10,9 +10,9 @@ namespace Lumina::Physics
     
     void Initialize(EPhysicsAPI API)
     {
-        if (API == EPhysicsAPI::Jolt)
+        if (API == EPhysicsAPI::Box3D)
         {
-            GPhysicsContext = MakeUnique<FJoltPhysicsContext>();
+            GPhysicsContext = MakeUnique<FBox3DPhysicsContext>();
         }
 
         GPhysicsContext->Initialize();

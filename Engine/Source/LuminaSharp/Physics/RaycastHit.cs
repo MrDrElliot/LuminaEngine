@@ -12,7 +12,7 @@ public readonly struct RaycastHit
     /// <summary>The entity that owns the hit body.</summary>
     public readonly Entity Entity;
 
-    /// <summary>The hit body's native (Jolt) id.</summary>
+    /// <summary>The hit body's native physics id.</summary>
     public readonly long BodyId;
 
     /// <summary>World-space hit point.</summary>

@@ -139,7 +139,7 @@ namespace Lumina
          *  once per component, for as long as the component lives. Chunked geometry that keeps hundreds of
          *  components alive is where it adds up.
          *
-         *  On by default because SDynamicMeshColliderComponent builds its Jolt shape from these streams,
+         *  On by default because SDynamicMeshColliderComponent builds its collision shape from these streams,
          *  and it does so after the commit that produced them -- so defaulting off would silently cost
          *  colliders their bodies. With it off, that collider logs an error naming this flag rather than
          *  retrying forever. */

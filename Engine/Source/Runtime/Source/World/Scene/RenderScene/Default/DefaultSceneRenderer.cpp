@@ -4061,7 +4061,7 @@ namespace Lumina
         }
     }
 
-    static uint32 SelectLODIndex(const FResolvedSurface& Surface, float DistSq, float RadiusSq)
+    static uint32 SelectLODIndex(const FSurfaceDescGPU& Desc, float DistSq, float RadiusSq)
     {
         // A zero radius used to yield ratio 0; without this guard every threshold would pass.
         if (RadiusSq <= 0.0f)
@@ -4070,10 +4070,10 @@ namespace Lumina
         }
 
         uint32 Picked = 0;
-        const uint32 LastLOD = Surface.NumLODs > 0 ? Surface.NumLODs - 1u : 0u;
+        const uint32 LastLOD = Desc.NumLODs > 0 ? Desc.NumLODs - 1u : 0u;
         for (uint32 i = 1; i <= LastLOD; ++i)
         {
-            if (DistSq >= Surface.LODScreenThresholdSq[i] * RadiusSq)
+            if (DistSq >= Desc.LODScreenThresholdSq[i] * RadiusSq)
             {
                 Picked = i;
             }
@@ -4086,52 +4086,59 @@ namespace Lumina
     }
 
     // Component override beats global setting; both clamped to surface NumLODs.
-    static uint32 ResolveSurfaceLOD(const FResolvedSurface& Surface, int32 ForcedLODIndex, bool bUseLODs, float DistSq, float RadiusSq)
+    static uint32 ResolveSurfaceLOD(const FSurfaceDescGPU& Desc, int32 ForcedLODIndex, bool bUseLODs, float DistSq, float RadiusSq)
     {
-        if (Surface.NumLODs <= 1)
+        if (Desc.NumLODs <= 1)
         {
             return 0u;
         }
         if (ForcedLODIndex >= 0)
         {
-            return (uint32)Math::Min((int32)Surface.NumLODs - 1, ForcedLODIndex);
+            return (uint32)Math::Min((int32)Desc.NumLODs - 1, ForcedLODIndex);
         }
         if (bUseLODs)
         {
-            return SelectLODIndex(Surface, DistSq, RadiusSq);
+            return SelectLODIndex(Desc, DistSq, RadiusSq);
         }
         return 0u;
     }
 
-    static uint32 ResolveShadowLOD(const FResolvedSurface& Surface, uint32 CameraLOD, int32 ShadowLODBias,
+    static uint32 ResolveShadowLOD(const FSurfaceDescGPU& Desc, uint32 CameraLOD, int32 ShadowLODBias,
                                    float DistSq, float CoarseDistSq)
     {
-        if (Surface.NumLODs == 0)
+        if (Desc.NumLODs == 0)
         {
             return 0u;
         }
         const uint32 Cap   = (CoarseDistSq > 0.0f && DistSq >= CoarseDistSq) ? MAX_COARSE_SHADOW_LOD : MAX_SHADOW_LOD;
         const int32 Biased = (int32)CameraLOD + ShadowLODBias;
-        const int32 MaxLOD = (int32)Math::Min<uint32>(Surface.NumLODs - 1u, Cap);
+        const int32 MaxLOD = (int32)Math::Min<uint32>(Desc.NumLODs - 1u, Cap);
         return (uint32)Math::Clamp(Biased, 0, MaxLOD);
     }
 
+    // The LOD table comes from the interned FSurfaceDescGPU the binding already names, not from the
+    // 304-byte FResolvedSurface behind Prim.Surfaces. Identical tables collapse to one entry there, so many
+    // instances of few meshes read a handful of descs instead of one pointer chase per primitive.
     static void EmitPrimitiveSurfaces(FDefaultSceneRenderer::FThreadLocalDrawData& Local,
                                       const FScenePrimitive& Prim,
                                       const FSurfaceBinding* Bindings,
+                                      const FSurfaceDescGPU* SurfaceDescs,
+                                      uint32 NumSurfaceDescs,
                                       uint32 EntityRecordIdx,
                                       const FSceneRenderSettings& Settings,
                                       float DistSq,
                                       float RadiusSq)
     {
-        const TVector<FResolvedSurface>& Surfaces = *Prim.Surfaces;
         const uint32 MeshletHeaderSlot = Prim.MeshletHeaderSlot;
-        const uint32 NumSurfaces = Math::Min((uint32)Surfaces.size(), Prim.SurfaceCount);
 
-        for (uint32 s = 0; s < NumSurfaces; ++s)
+        for (uint32 s = 0; s < Prim.SurfaceCount; ++s)
         {
-            const FResolvedSurface& Surface = Surfaces[s];
-            const FSurfaceBinding&  Binding = Bindings[s];
+            const FSurfaceBinding& Binding = Bindings[s];
+            if (Binding.SurfaceDescIndex >= NumSurfaceDescs)
+            {
+                continue;
+            }
+            const FSurfaceDescGPU& Desc = SurfaceDescs[Binding.SurfaceDescIndex];
 
             EInstanceFlags Flags = Prim.BaseFlags | Binding.MaterialFlags;
             if (Prim.bCastShadow && Binding.bMaterialCastsShadows)
@@ -4140,19 +4147,19 @@ namespace Lumina
             }
 
             // CPU LOD pick replaces LOD 0; smaller ranges directly cut cull-pass cost.
-            const uint32 LODIndex       = ResolveSurfaceLOD(Surface, Prim.ForcedLODIndex, Settings.bUseLODs, DistSq, RadiusSq);
-            const uint32 ShadowLODIndex = ResolveShadowLOD(Surface, LODIndex, Settings.ShadowLODBias,
+            const uint32 LODIndex       = ResolveSurfaceLOD(Desc, Prim.ForcedLODIndex, Settings.bUseLODs, DistSq, RadiusSq);
+            const uint32 ShadowLODIndex = ResolveShadowLOD(Desc, LODIndex, Settings.ShadowLODBias,
                                                            DistSq, Settings.ShadowCoarseLODDistance * Settings.ShadowCoarseLODDistance);
 
             // Zero meshlet count gates the cull shader's MeshletHeader deref.
-            const uint32 SurfaceMeshletCount  = MeshletHeaderSlot ? Surface.LODMeshletCount[LODIndex]       : 0u;
-            const uint32 SurfaceMeshletOffset = Surface.LODMeshletOffset[LODIndex];
-            const uint32 ShadowMeshletCount   = MeshletHeaderSlot ? Surface.LODMeshletCount[ShadowLODIndex] : 0u;
-            const uint32 ShadowMeshletOffset  = Surface.LODMeshletOffset[ShadowLODIndex];
+            const uint32 SurfaceMeshletCount  = MeshletHeaderSlot ? Desc.LODMeshletCount[LODIndex]       : 0u;
+            const uint32 SurfaceMeshletOffset = Desc.LODMeshletOffset[LODIndex];
+            const uint32 ShadowMeshletCount   = MeshletHeaderSlot ? Desc.LODMeshletCount[ShadowLODIndex] : 0u;
+            const uint32 ShadowMeshletOffset  = Desc.LODMeshletOffset[ShadowLODIndex];
 
-            const uint32 LastLOD = Surface.NumLODs > 0u ? Math::Min(Surface.NumLODs, (uint32)MAX_MESH_LODS) - 1u : 0u;
+            const uint32 LastLOD = Desc.NumLODs > 0u ? Math::Min(Desc.NumLODs, (uint32)MAX_MESH_LODS) - 1u : 0u;
             const uint32 MeshletTotalCount = MeshletHeaderSlot
-                                           ? Surface.LODMeshletOffset[LastLOD] + Surface.LODMeshletCount[LastLOD]
+                                           ? Desc.LODMeshletOffset[LastLOD] + Desc.LODMeshletCount[LastLOD]
                                            : 0u;
 
             const uint32 BatchIndex = Binding.BatchIndex;
@@ -4162,9 +4169,6 @@ namespace Lumina
             {
                 Local.TouchedSlots.push_back(BatchIndex);
             }
-            Local.BatchSkinFlags[Binding.BatchIndex] |=
-                EnumHasAnyFlags(Flags, EInstanceFlags::Skinned) ? 1u : 2u;
-
             FDefaultSceneRenderer::FProcessedDrawItem& Item = Local.Items.emplace_back();
             Item.EntityRecordIndex    = EntityRecordIdx;
             Item.BatchIndex           = BatchIndex;
@@ -4354,6 +4358,8 @@ namespace Lumina
         const FVector4*             Spheres  = ScenePrimitives.GetBounds();
         const FPrimitiveCullData*   Culls    = ScenePrimitives.GetCullData();
         const FSurfaceBinding*      Bindings = ScenePrimitives.GetBindings();
+        const FSurfaceDescGPU*      SurfaceDescs     = ScenePrimitives.GetSurfaceDescs();
+        const uint32                NumSurfaceDescs  = ScenePrimitives.GetSurfaceDescCount();
         FScenePrimitive*            MutablePrims = ScenePrimitives.GetMutablePrimitives();
 
         FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
@@ -4442,13 +4448,13 @@ namespace Lumina
                 EntityRecord.BoneArenaBase  = BoneSlice;
                 EntityRecord.BoneArenaCount = SkeletonBoneCount;
 
-                // A partial pose would leave the size test true forever, repacking every single frame.
+                // A partial pose cannot be packed against this slice, so it falls through to identity.
                 const bool bHasFullPose = (uint32)MeshComponent.BoneTransforms.size() == SkeletonBoneCount;
 
-                if (bHasFullPose
-                    && (MeshComponent.bRenderBonesDirty || (uint32)MeshComponent.RenderBones.size() != SkeletonBoneCount))
+                // A writer that moved the pose without bumping the serial gets folded in here, so the
+                // residency test below is the single gate on whether this slice is already correct.
+                if (MeshComponent.bRenderBonesDirty)
                 {
-                    SkeletalUtils::PackRenderBones(MeshComponent.BoneTransforms, MeshComponent.RenderBones);
                     MeshComponent.bRenderBonesDirty = false;
                     ++MeshComponent.PoseSerial;
                 }
@@ -4462,10 +4468,9 @@ namespace Lumina
                 {
                     FBoneTransform* Dst = ArenaMirror.data() + BoneSlice;
 
-                    if (bHasFullPose && (uint32)MeshComponent.RenderBones.size() == SkeletonBoneCount)
+                    if (bHasFullPose)
                     {
-                        Memory::Memcpy(Dst, MeshComponent.RenderBones.data(),
-                                       (SIZE_T)SkeletonBoneCount * sizeof(FBoneTransform));
+                        SkeletalUtils::PackRenderBones(MeshComponent.BoneTransforms.data(), SkeletonBoneCount, Dst);
                     }
                     else
                     {
@@ -4486,6 +4491,7 @@ namespace Lumina
             MeshComponent.LastDistanceOverRadius = (Radius > 0.0f) ? (Math::Sqrt(DistSq) / Radius) : 0.0f;
 
             EmitPrimitiveSurfaces(Local, Prim, Bindings + Prim.BindingBase,
+                                  SurfaceDescs, NumSurfaceDescs,
                                   EntityRecordIdx, RenderSettings, DistSq, RadiusSq);
         }
     }
@@ -4529,19 +4535,6 @@ namespace Lumina
         {
             const FSceneBatchRegistry::FBatch& Batch = Registry.Get(b);
 
-            uint8 SkinFlags = 0u;
-            for (uint32 t = 0; t < NumThreads; ++t)
-            {
-                if (ThreadLocal[t].bTouched)
-                {
-                    SkinFlags |= ThreadLocal[t].BatchSkinFlags[b];
-                }
-            }
-            if (SkinFlags == 0u)
-            {
-                SkinFlags = 2u;
-            }
-
             FMeshDrawCommand& Cmd = DrawCommands.emplace_back();
             Cmd.VertexShader                   = Batch.VertexShader;
             Cmd.MeshShaderShadow               = Batch.MeshShaderShadow;
@@ -4559,8 +4552,11 @@ namespace Lumina
             Cmd.bMasked                        = Batch.Key.bMasked;
             Cmd.bAdditive                      = Batch.Key.bAdditive;
             Cmd.bTwoSided                      = Batch.Key.bTwoSided;
-            Cmd.bAnySkinned                    = (SkinFlags & 1u) ? 1u : 0u;
-            Cmd.bAnyStatic                     = (SkinFlags & 2u) ? 1u : 0u;
+            // From the bindings, not this frame's gather: the GPU cull emits from the retained set, which
+            // is a superset of what the CPU culled to, and a wrong variant reads skinned vertices at the
+            // static stride.
+            Cmd.bAnySkinned                    = (Batch.SkinnedRefCount != 0u) ? 1u : 0u;
+            Cmd.bAnyStatic                     = (Batch.StaticRefCount != 0u) ? 1u : 0u;
 
             if (!Batch.Key.bTranslucent)
             {
@@ -6416,7 +6412,7 @@ namespace Lumina
         Key.PS          = bMaskedClip ? Batch.ShadowMaskedPixelShader : PixelShader;
         Key.DepthFormat = EFormat::D32;
         // SPEC_SKINNED dead-strips the unused vertex-load path; a mixed batch takes a runtime branch.
-        Key.SkinnedMode = (Batch.bAnySkinned && Batch.bAnyStatic) ? 2u : (Batch.bAnySkinned ? 1u : 0u);
+        Key.SkinnedMode = SelectSkinnedMode(Batch);
         // A two-sided caster has no back face to reject, and culling one costs it half its shadow.
         Key.TriCullMode = (uint8)((Batch.bTwoSided ? 0u : (uint32)TriCull_Backface) | (uint32)TriCull_SmallPrim);
         RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));

@@ -12,10 +12,11 @@ namespace Lumina
 {
     namespace
     {
-        // A task list runs on one thread, so live buffers are bounded by chain depth, not entity count.
+        // A slot serves its own storage unless a task adopts a destination that outlives the frame.
         struct FPosePool
         {
-            TVector<FPose> Buffers;
+            TVector<TUniquePtr<FPose>> Storage;
+            TVector<FPose*> Slots;
             TVector<uint8> Used;
 
             // Buffers currently checked out. Only walked while a debug capture is armed.
@@ -31,18 +32,27 @@ namespace Lumina
 
             int16 Acquire()
             {
-                const int32 Num = (int32)Buffers.size();
+                const int32 Num = (int32)Slots.size();
                 for (int32 i = 0; i < Num; ++i)
                 {
                     if (!Used[i])
                     {
                         Used[i] = 1;
+                        Slots[i] = Storage[i].Get();
                         return (int16)i;
                     }
                 }
-                Buffers.emplace_back();
+                Storage.push_back(MakeUnique<FPose>());
+                Slots.push_back(Storage.back().Get());
                 Used.push_back(1);
                 return (int16)Num;
+            }
+
+            int16 Adopt(FPose& External)
+            {
+                const int16 Index = Acquire();
+                Slots[Index] = &External;
+                return Index;
             }
 
             void Release(int16 Index)
@@ -52,7 +62,7 @@ namespace Lumina
 
             FPose& Get(int16 Index)
             {
-                return Buffers[Index];
+                return *Slots[Index];
             }
         };
 
@@ -95,7 +105,7 @@ namespace Lumina
         {
             LUMINA_PROFILE_SCOPE();
 
-            const int32 N = Set.Num();
+            const int32 N = Set.NumLanes();
             if (N == 0)
             {
                 return;
@@ -110,14 +120,18 @@ namespace Lumina
             const VFloat8 VT        = VFloat8::Broadcast(T);
             const VFloat8 VNegFive  = VFloat8::Broadcast(-5.0f);
 
-            const float* RESTRICT X0Ptr = Set.X0.data();
-            const float* RESTRICT V0Ptr = Set.V0.data();
-            float* RESTRICT       Out   = Set.Eval.data();
+            const float* RESTRICT X0Ptr = Set.X0();
+            const float* RESTRICT V0Ptr = Set.V0();
+            float* RESTRICT       Out   = Set.Eval();
 
-            int32 i = 0;
-            if (Duration > 1e-5f)
+            if (Duration <= 1e-5f)
             {
-                for (; i + 8 <= N; i += 8)
+                Memory::Memset(Out, 0, (SIZE_T)N * sizeof(float));
+                return;
+            }
+
+            {
+                for (int32 i = 0; i + 8 <= N; i += 8)
                 {
                     const VFloat8 X0 = VFloat8::Load(X0Ptr + i);
                     const VFloat8 V0 = VFloat8::Load(V0Ptr + i);
@@ -147,21 +161,6 @@ namespace Lumina
                     X = Select(Alive, Max(X, Zero), Zero);
                     X.Store(Out + i);
                 }
-            }
-
-            for (; i < N; ++i)
-            {
-                Out[i] = InertEval(X0Ptr[i], V0Ptr[i], Duration, T);
-            }
-
-            // Splatted once so the vector and translation passes share one flat layout.
-            float* RESTRICT Out3 = Set.Eval3.data();
-            for (int32 Bone = 0; Bone < N; ++Bone)
-            {
-                const float Value = Out[Bone];
-                Out3[Bone * 3 + 0] = Value;
-                Out3[Bone * 3 + 1] = Value;
-                Out3[Bone * 3 + 2] = Value;
             }
         }
 
@@ -205,12 +204,31 @@ namespace Lumina
             const bool  bVel  = bHasVel && Dt > 1e-6f && bSrc && SourcePrev.GetNumBones() == N;
             const float InvDt = bVel ? 1.0f / Dt : 0.0f;
 
+            // SourcePrev is an empty pose until two frames of history exist, so bVel gates every read of it.
+            const FPose& Prev = bVel ? SourcePrev : Target;
+
+            const auto WriteVectorChannel = [](FInertChannelSet& Set, int32 i, const FVector3& Source,
+                                               const FVector3& Prev, const FVector3& Target, float InvDelta)
+            {
+                const FVector3 Off = Source - Target;
+                const float    X0  = Math::Length(Off);
+                const FVector3 Dir = X0 > 1e-6f ? Off * (1.0f / X0) : FVector3(0.0f);
+
+                Set.DirX()[i] = Dir.x;
+                Set.DirY()[i] = Dir.y;
+                Set.DirZ()[i] = Dir.z;
+                Set.X0()[i]   = X0;
+                Set.V0()[i]   = InvDelta > 0.0f ? (X0 - Math::Dot(Prev - Target, Dir)) * InvDelta : 0.0f;
+            };
+
             for (int32 i = 0; i < N; ++i)
             {
+                const FQuat TargetRot = Target.GetRotation(i);
+
                 // The rotation offset, Source relative to Target, expressed as an axis and angle.
                 {
-                    const FQuat Qs = bSrc ? Source.Rotations[i] : Target.Rotations[i];
-                    FQuat Q0 = Math::Normalize(Qs * Math::Inverse(Target.Rotations[i]));
+                    const FQuat Qs = bSrc ? Source.GetRotation(i) : TargetRot;
+                    FQuat Q0 = Math::Normalize(Qs * Math::Inverse(TargetRot));
                     if (Q0.w < 0.0f)
                     {
                         Q0 = Q0 * -1.0f; // shortest arc
@@ -220,9 +238,9 @@ namespace Lumina
                     const float X0   = 2.0f * Math::Atan2(Len, Q0.w);
                     const FVector3 Axis = Len > 1e-5f ? V * (1.0f / Len) : FVector3(0.0f, 0.0f, 1.0f);
                     float V0 = 0.0f;
-                    if (InvDt > 0.0f)
+                    if (bVel)
                     {
-                        FQuat Qp = Math::Normalize(SourcePrev.Rotations[i] * Math::Inverse(Target.Rotations[i]));
+                        FQuat Qp = Math::Normalize(Prev.GetRotation(i) * Math::Inverse(TargetRot));
                         if (Qp.w < 0.0f)
                         {
                             // Same shortest arc as X0; a full turn out here is fake velocity.
@@ -230,46 +248,20 @@ namespace Lumina
                         }
                         V0 = (X0 - QuatAngleAbout(Qp, Axis)) * InvDt;
                     }
-                    In.Rot.Dir[i * 3 + 0] = Axis.x;
-                    In.Rot.Dir[i * 3 + 1] = Axis.y;
-                    In.Rot.Dir[i * 3 + 2] = Axis.z;
-                    In.Rot.X0[i] = X0;
-                    In.Rot.V0[i] = V0;
+                    In.Rot.DirX()[i] = Axis.x;
+                    In.Rot.DirY()[i] = Axis.y;
+                    In.Rot.DirZ()[i] = Axis.z;
+                    In.Rot.X0()[i] = X0;
+                    In.Rot.V0()[i] = V0;
                 }
-                // Translation is a vector offset with a fixed direction and a decaying length.
-                {
-                    const FVector3 Ps  = bSrc ? Source.Translations[i] : Target.Translations[i];
-                    const FVector3 Off = Ps - Target.Translations[i];
-                    const float    X0  = Math::Length(Off);
-                    const FVector3 Dir = X0 > 1e-6f ? Off * (1.0f / X0) : FVector3(0.0f);
-                    float V0 = 0.0f;
-                    if (InvDt > 0.0f)
-                    {
-                        V0 = (X0 - Math::Dot(SourcePrev.Translations[i] - Target.Translations[i], Dir)) * InvDt;
-                    }
-                    In.Trans.Dir[i * 3 + 0] = Dir.x;
-                    In.Trans.Dir[i * 3 + 1] = Dir.y;
-                    In.Trans.Dir[i * 3 + 2] = Dir.z;
-                    In.Trans.X0[i] = X0;
-                    In.Trans.V0[i] = V0;
-                }
-                // Scale gets the same vector treatment as translation.
-                {
-                    const FVector3 Ss  = bSrc ? Source.Scales[i] : Target.Scales[i];
-                    const FVector3 Off = Ss - Target.Scales[i];
-                    const float    X0  = Math::Length(Off);
-                    const FVector3 Dir = X0 > 1e-6f ? Off * (1.0f / X0) : FVector3(0.0f);
-                    float V0 = 0.0f;
-                    if (InvDt > 0.0f)
-                    {
-                        V0 = (X0 - Math::Dot(SourcePrev.Scales[i] - Target.Scales[i], Dir)) * InvDt;
-                    }
-                    In.Scale.Dir[i * 3 + 0] = Dir.x;
-                    In.Scale.Dir[i * 3 + 1] = Dir.y;
-                    In.Scale.Dir[i * 3 + 2] = Dir.z;
-                    In.Scale.X0[i] = X0;
-                    In.Scale.V0[i] = V0;
-                }
+
+                const FVector3 TargetTrans = Target.GetTranslation(i);
+                const FVector3 TargetScale = Target.GetScale(i);
+
+                WriteVectorChannel(In.Trans, i, bSrc ? Source.GetTranslation(i) : TargetTrans,
+                                   Prev.GetTranslation(i), TargetTrans, InvDt);
+                WriteVectorChannel(In.Scale, i, bSrc ? Source.GetScale(i) : TargetScale,
+                                   Prev.GetScale(i), TargetScale, InvDt);
             }
         }
 
@@ -278,47 +270,48 @@ namespace Lumina
         {
             LUMINA_PROFILE_SCOPE();
 
-            const int32 N  = Target.GetNumBones();
-            const int32 NR = In.Rot.Num();
+            const int32 N = Target.GetNumBones();
             Out.SetNumBones(N);
+            Out.AdditiveSpace = Target.AdditiveSpace;
 
             InertEvalChannels(In.Rot,   In.Duration, T);
             InertEvalChannels(In.Trans, In.Duration, T);
             InertEvalChannels(In.Scale, In.Duration, T);
 
-            // Both are flat xyz streams in the same order, so the offset applies in one vector pass.
-            const int32 NumComponents = Math::Min(N, NR) * 3;
-            MulAddArray(reinterpret_cast<float*>(Out.Translations.data()),
-                        reinterpret_cast<const float*>(Target.Translations.data()),
-                        In.Trans.Dir.data(), In.Trans.Eval3.data(), NumComponents);
-            MulAddArray(reinterpret_cast<float*>(Out.Scales.data()),
-                        reinterpret_cast<const float*>(Target.Scales.data()),
-                        In.Scale.Dir.data(), In.Scale.Eval3.data(), NumComponents);
+            // A channel set shorter than the pose leaves zeroed lanes, which pass Target straight through.
+            const int32 Lanes = Math::Min(In.Trans.NumLanes(), Out.GetStride());
 
-            // Rotation stays scalar; the axis-angle build and the shortest-arc handling are worth more
-            // than the lanes, and a decayed bone skips the trig entirely.
-            const float* RESTRICT RotEval = In.Rot.Eval.data();
-            const float* RESTRICT RotDir  = In.Rot.Dir.data();
+            MulAddArray(Out.Tx(), Target.Tx(), In.Trans.DirX(), In.Trans.Eval(), Lanes);
+            MulAddArray(Out.Ty(), Target.Ty(), In.Trans.DirY(), In.Trans.Eval(), Lanes);
+            MulAddArray(Out.Tz(), Target.Tz(), In.Trans.DirZ(), In.Trans.Eval(), Lanes);
+            MulAddArray(Out.Sx(), Target.Sx(), In.Scale.DirX(), In.Scale.Eval(), Lanes);
+            MulAddArray(Out.Sy(), Target.Sy(), In.Scale.DirY(), In.Scale.Eval(), Lanes);
+            MulAddArray(Out.Sz(), Target.Sz(), In.Scale.DirZ(), In.Scale.Eval(), Lanes);
+
+            for (int32 i = Lanes; i < N; ++i)
+            {
+                Out.SetTranslation(i, Target.GetTranslation(i));
+                Out.SetScale(i, Target.GetScale(i));
+            }
+
+            // Rotation stays scalar, since a decayed bone skips the axis-angle build entirely.
+            const int32 RotLanes = In.Rot.NumLanes();
+            const float* RESTRICT RotEval = In.Rot.Eval();
+            const float* RESTRICT RotDirX = In.Rot.DirX();
+            const float* RESTRICT RotDirY = In.Rot.DirY();
+            const float* RESTRICT RotDirZ = In.Rot.DirZ();
 
             for (int32 i = 0; i < N; ++i)
             {
-                if (i >= NR)
-                {
-                    Out.Rotations[i]    = Target.Rotations[i];
-                    Out.Translations[i] = Target.Translations[i];
-                    Out.Scales[i]       = Target.Scales[i];
-                    continue;
-                }
-
-                const float Xr = RotEval[i];
+                const float Xr = i < RotLanes ? RotEval[i] : 0.0f;
                 if (Xr > 1e-6f)
                 {
-                    const FVector3 Axis(RotDir[i * 3 + 0], RotDir[i * 3 + 1], RotDir[i * 3 + 2]);
-                    Out.Rotations[i] = Math::Normalize(Math::AngleAxis(Xr, Axis) * Target.Rotations[i]);
+                    const FVector3 Axis(RotDirX[i], RotDirY[i], RotDirZ[i]);
+                    Out.SetRotation(i, Math::Normalize(Math::AngleAxis(Xr, Axis) * Target.GetRotation(i)));
                 }
                 else if (&Out != &Target)
                 {
-                    Out.Rotations[i] = Target.Rotations[i];
+                    Out.SetRotation(i, Target.GetRotation(i));
                 }
             }
         }
@@ -350,7 +343,7 @@ namespace Lumina
             for (int32 i = 0; i < N; ++i)
             {
                 // Rotation velocity as a scaled axis, from the shortest arc between the last two frames.
-                FQuat Delta = Math::Normalize(Source.Rotations[i] * Math::Inverse(SourcePrev.Rotations[i]));
+                FQuat Delta = Math::Normalize(Source.GetRotation(i) * Math::Inverse(SourcePrev.GetRotation(i)));
                 if (Delta.w < 0.0f)
                 {
                     Delta = Delta * -1.0f;
@@ -363,8 +356,8 @@ namespace Lumina
                     Dead.RotVel[i] = V * (Angle * InvDt / Len);
                 }
 
-                Dead.TransVel[i] = (Source.Translations[i] - SourcePrev.Translations[i]) * InvDt;
-                Dead.ScaleVel[i] = (Source.Scales[i] - SourcePrev.Scales[i]) * InvDt;
+                Dead.TransVel[i] = (Source.GetTranslation(i) - SourcePrev.GetTranslation(i)) * InvDt;
+                Dead.ScaleVel[i] = (Source.GetScale(i) - SourcePrev.GetScale(i)) * InvDt;
             }
         }
 
@@ -386,6 +379,7 @@ namespace Lumina
 
             const int32 NumBones = Target.GetNumBones();
             Out.SetNumBones(NumBones);
+            Out.AdditiveSpace = Target.AdditiveSpace;
 
             const int32 NumChannels = (int32)Dead.RotVel.size();
             const int32 N = Math::Min(NumBones, Math::Min(NumChannels, Dead.Source.GetNumBones()));
@@ -401,25 +395,25 @@ namespace Lumina
                 const FVector3 RotV = Dead.RotVel[i];
                 const float Speed = Math::Length(RotV);
 
-                FQuat SourceRot = Dead.Source.Rotations[i];
+                FQuat SourceRot = Dead.Source.GetRotation(i);
                 if (Speed > 1e-5f)
                 {
                     SourceRot = Math::Normalize(Math::AngleAxis(Speed * Travel, RotV * (1.0f / Speed)) * SourceRot);
                 }
 
-                const FVector3 SourceTrans = Dead.Source.Translations[i] + Dead.TransVel[i] * Travel;
-                const FVector3 SourceScale = Dead.Source.Scales[i] + Dead.ScaleVel[i] * Travel;
+                const FVector3 SourceTrans = Dead.Source.GetTranslation(i) + Dead.TransVel[i] * Travel;
+                const FVector3 SourceScale = Dead.Source.GetScale(i) + Dead.ScaleVel[i] * Travel;
+                const FVector3 TargetTrans = Target.GetTranslation(i);
+                const FVector3 TargetScale = Target.GetScale(i);
 
-                Out.Rotations[i]    = Math::Slerp(SourceRot, Target.Rotations[i], Alpha);
-                Out.Translations[i] = SourceTrans + (Target.Translations[i] - SourceTrans) * Alpha;
-                Out.Scales[i]       = SourceScale + (Target.Scales[i] - SourceScale) * Alpha;
+                Out.SetRotation(i, Math::Slerp(SourceRot, Target.GetRotation(i), Alpha));
+                Out.SetTranslation(i, SourceTrans + (TargetTrans - SourceTrans) * Alpha);
+                Out.SetScale(i, SourceScale + (TargetScale - SourceScale) * Alpha);
             }
 
             for (int32 i = N; i < NumBones; ++i)
             {
-                Out.Rotations[i]    = Target.Rotations[i];
-                Out.Translations[i] = Target.Translations[i];
-                Out.Scales[i]       = Target.Scales[i];
+                Out.CopyBoneFrom(Target, i);
             }
         }
     }
@@ -553,9 +547,13 @@ namespace Lumina
         thread_local TVector<uint8> UseCount;
         thread_local TVector<int16> ResultBuf;
 
+        // Result landed in storage the next frame still reads, so no consumer may work in place over it.
+        thread_local TVector<uint8> Retained;
+
         Needed.assign(NumTasks, 0);
         UseCount.assign(NumTasks, 0);
         ResultBuf.assign(NumTasks, FAnimTask::NoTask);
+        Retained.assign(NumTasks, 0);
 
         Needed[List.OutputTask] = 1;
         for (int32 i = List.OutputTask; i >= 0; --i)
@@ -600,7 +598,7 @@ namespace Lumina
             const int16 BufB = (Task.DepB >= 0 && Task.DepB < i) ? ResultBuf[Task.DepB] : FAnimTask::NoTask;
 
             // Stealing writes in place with zero copy, otherwise a fresh buffer leaves the shared result alone.
-            const bool bStealA = BufA != FAnimTask::NoTask && UseCount[Task.DepA] == 1;
+            const bool bStealA = BufA != FAnimTask::NoTask && UseCount[Task.DepA] == 1 && !Retained[Task.DepA];
             int16 Dst = FAnimTask::NoTask;
 
             switch (Task.Type)
@@ -720,32 +718,43 @@ namespace Lumina
                     break;
                 }
 
-                Dst = bStealA ? BufA : Pool.Acquire();
                 FAnimInertializer* Inert = Task.Inert;
+                if (Inert == nullptr)
+                {
+                    Dst = bStealA ? BufA : Pool.Acquire();
+                    if (Dst != BufA)
+                    {
+                        Pool.Get(Dst) = Pool.Get(BufA);
+                    }
+                    break;
+                }
 
-                if (Inert != nullptr && Task.bCapture)
+                if (Task.bCapture)
                 {
                     InertCapture(*Inert, Inert->PrevOutput, Inert->PrevPrevOutput, Pool.Get(BufA),
                                  Task.DeltaTime, Inert->HistoryCount >= 2, ActiveBones);
                 }
 
-                if (Inert != nullptr && Task.bApply)
+                // Nothing reads the frame-before-last past that capture, so its buffer takes this frame.
+                Inert->PrevPrevOutput.Swap(Inert->PrevOutput);
+                Dst = Pool.Adopt(Inert->PrevOutput);
+                Retained[i] = 1;
+
+                if (Task.bApply)
                 {
-                    InertApply(*Inert, Pool.Get(BufA), Pool.Get(Dst), Task.Time);
+                    InertApply(*Inert, Pool.Get(BufA), Inert->PrevOutput, Task.Time);
                 }
-                else if (Dst != BufA)
+                else if (bStealA)
                 {
-                    Pool.Get(Dst) = Pool.Get(BufA);
+                    // Last consumer of the input, so its storage can be traded for the dead history buffer.
+                    Inert->PrevOutput.Swap(Pool.Get(BufA));
+                }
+                else
+                {
+                    Inert->PrevOutput = Pool.Get(BufA);
                 }
 
-                // 2-frame output history for the next seam's velocity estimate.
-                if (Inert != nullptr)
-                {
-                    LUMINA_PROFILE_SECTION("Anim Inert History");
-                    std::swap(Inert->PrevPrevOutput, Inert->PrevOutput);
-                    Inert->PrevOutput   = Pool.Get(Dst);
-                    Inert->HistoryCount = Math::Min(Inert->HistoryCount + 1, 2);
-                }
+                Inert->HistoryCount = Math::Min(Inert->HistoryCount + 1, 2);
                 break;
             }
 
@@ -799,31 +808,41 @@ namespace Lumina
                     break;
                 }
 
-                Dst = bStealA ? BufA : Pool.Acquire();
                 FAnimDeadBlend* Dead = Task.Dead;
+                if (Dead == nullptr)
+                {
+                    Dst = bStealA ? BufA : Pool.Acquire();
+                    if (Dst != BufA)
+                    {
+                        Pool.Get(Dst) = Pool.Get(BufA);
+                    }
+                    break;
+                }
 
-                if (Dead != nullptr && Task.bCapture)
+                if (Task.bCapture)
                 {
                     DeadBlendCapture(*Dead, Dead->PrevOutput, Dead->PrevPrevOutput, Pool.Get(BufA),
                                      Task.DeltaTime, Dead->HistoryCount >= 2, ActiveBones);
                 }
 
-                if (Dead != nullptr && Task.bApply)
+                Dead->PrevPrevOutput.Swap(Dead->PrevOutput);
+                Dst = Pool.Adopt(Dead->PrevOutput);
+                Retained[i] = 1;
+
+                if (Task.bApply)
                 {
-                    DeadBlendApply(*Dead, Pool.Get(BufA), Pool.Get(Dst), Task.Time);
+                    DeadBlendApply(*Dead, Pool.Get(BufA), Dead->PrevOutput, Task.Time);
                 }
-                else if (Dst != BufA)
+                else if (bStealA)
                 {
-                    Pool.Get(Dst) = Pool.Get(BufA);
+                    Dead->PrevOutput.Swap(Pool.Get(BufA));
+                }
+                else
+                {
+                    Dead->PrevOutput = Pool.Get(BufA);
                 }
 
-                if (Dead != nullptr)
-                {
-                    LUMINA_PROFILE_SECTION("Anim DeadBlend History");
-                    std::swap(Dead->PrevPrevOutput, Dead->PrevOutput);
-                    Dead->PrevOutput   = Pool.Get(Dst);
-                    Dead->HistoryCount = Math::Min(Dead->HistoryCount + 1, 2);
-                }
+                Dead->HistoryCount = Math::Min(Dead->HistoryCount + 1, 2);
                 break;
             }
 
@@ -907,15 +926,22 @@ namespace Lumina
             }
         }
 
-        const int16 FinalBuf = ResultBuf[List.OutputTask];
-        FPose& Final = Pool.Get(FinalBuf);
+        int16 FinalBuf = ResultBuf[List.OutputTask];
 
         if (List.bLockRoot && List.RootBoneIndex != INDEX_NONE)
         {
-            RootMotion::PinRootToBindPose(Final, Skeleton, List.RootBoneIndex);
+            // Pinning rewrites the root, which would edit the history the output was written into.
+            if (Retained[List.OutputTask])
+            {
+                const int16 Pinned = Pool.Acquire();
+                Pool.Get(Pinned) = Pool.Get(FinalBuf);
+                Pool.Release(FinalBuf);
+                FinalBuf = Pinned;
+            }
+            RootMotion::PinRootToBindPose(Pool.Get(FinalBuf), Skeleton, List.RootBoneIndex);
         }
 
-        AnimPose::ToSkinningMatrices(Final, Skeleton, OutMatrices);
+        AnimPose::ToSkinningMatrices(Pool.Get(FinalBuf), Skeleton, OutMatrices);
         Pool.Release(FinalBuf);
         List.Reset();
     }

@@ -370,6 +370,17 @@ namespace Lumina::MeshletHeaderSlab
         }
     }
 
+    bool IsSkinnedSlot(uint32 Slot)
+    {
+        if (Slot == kNullSlot)
+        {
+            return false;
+        }
+
+        FScopeLock Lock(GMutex);
+        return Slot < (uint32)GMirror.size() && GMirror[Slot].BonePalettesAddress != 0;
+    }
+
     RHI::GPUPtr GetAddress()
     {
         FScopeLock Lock(GMutex);

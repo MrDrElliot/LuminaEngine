@@ -88,7 +88,6 @@ namespace Lumina
             TFrameVector<FEntityRecord>         EntityRecords;
 
             TVector<uint32>                     DrawInstanceCounts;
-            TVector<uint8>                      BatchSkinFlags;
             TVector<uint32>                     TouchedSlots;
             TVector<FUIntVector2>               BoneUploadRanges;
 
@@ -123,11 +122,6 @@ namespace Lumina
                 {
                     DrawInstanceCounts.resize(NumBatches, 0u);
                 }
-                if ((uint32)BatchSkinFlags.size() < NumBatches)
-                {
-                    BatchSkinFlags.resize(NumBatches, 0u);
-                }
-                Memory::Memzero(BatchSkinFlags.data(), BatchSkinFlags.size());
             }
 
             ~FThreadLocalDrawData()
@@ -862,7 +856,7 @@ namespace Lumina
                 const FMeshDrawCommand& Batch = DrawCommands[Idx];
 
                 FGraphicsPipelineKey Key;
-                Key.SkinnedMode = (Batch.bAnySkinned && Batch.bAnyStatic) ? 2u : (Batch.bAnySkinned ? 1u : 0u);
+                Key.SkinnedMode = SelectSkinnedMode(Batch);
 
                 if (!Setup(Key, Batch))
                 {

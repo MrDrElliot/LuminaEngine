@@ -214,11 +214,12 @@ namespace Lumina
         const SCharacterPhysicsComponent& Character = Registry.get<SCharacterPhysicsComponent>(Entity);
         const STransformComponent& Transform = Registry.get<STransformComponent>(Entity);
 
-        // Matches Jolt, where Start and End are the cylinder-axis endpoints and Radius scales by MaxScale.
-        const FVector3 Location = Transform.GetWorldLocationCached();
-        const FVector3 Axis = Transform.GetWorldRotationCached() * FVector3(0.0f, Character.HalfHeight, 0.0f);
-        const FVector3 Start = Location - Axis;
-        const FVector3 End   = Location + Axis;
+        // Matches Box3D, where Start and End are the cylinder-axis endpoints and Radius scales by MaxScale.
+        const FQuat Rotation = Transform.GetWorldRotationCached();
+        const FVector3 Center = Transform.GetWorldLocationCached() + Rotation * Character.TranslationOffset;
+        const FVector3 Axis = Rotation * FVector3(0.0f, Character.HalfHeight, 0.0f);
+        const FVector3 Start = Center - Axis;
+        const FVector3 End   = Center + Axis;
 
         PDI->DrawCapsule(Start, End, Character.Radius * Transform.MaxScale(), FColor::Blue, 12, 2.0f, true, 0.0f);
     }

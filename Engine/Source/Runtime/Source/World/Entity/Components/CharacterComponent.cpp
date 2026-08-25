@@ -1,8 +1,8 @@
 ﻿#include "RuntimePCH.h"
 #include "CharacterComponent.h"
 
-// Included only so TUniquePtr<FJoltCharacterHandle> has a complete type for its destructor.
-#include "Physics/API/Jolt/JoltCharacterHandle.h"
+// Included only so the handle is a complete type where these special members are defined.
+#include "Physics/API/Box3D/Box3DCharacterHandle.h"
 
 namespace Lumina
 {
@@ -15,10 +15,10 @@ namespace Lumina
 
     uint32 SCharacterPhysicsComponent::GetBodyID() const
     {
-        if (Character == nullptr || Character->Ref == nullptr)
+        if (Character == nullptr)
         {
             return 0xFFFFFFFF;
         }
-        return Character->Ref->GetInnerBodyID().GetIndexAndSequenceNumber();
+        return Character->ProxyBodyHandle;
     }
 }

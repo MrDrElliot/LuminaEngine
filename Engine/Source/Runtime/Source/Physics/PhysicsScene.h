@@ -16,12 +16,12 @@ namespace Lumina
     class CCollisionShape;
     class CPhysicsMaterial;
     struct FSkeletonResource;
-    struct FJoltRagdollHandle;
+    struct FPhysicsRagdollHandle;
 }
 
 namespace Lumina::Physics
 {
-    // Inputs to build one ragdoll. Jolt-free so gameplay/world code can drive it without leaking Jolt.
+    // Inputs to build one ragdoll. Backend neutral so gameplay and world code can drive it.
     struct FRagdollDesc
     {
         entt::entity                Entity = entt::null;            // Owning entity; written to each body's user data for contact mapping.
@@ -41,7 +41,7 @@ namespace Lumina::Physics
         Position = 2,   // Drive toward a target position (rad hinge, m slider) via the motor spring.
     };
 
-    // Jolt-free description of one constraint, built by gameplay/editor code and resolved by the scene.
+    // Backend-neutral description of one constraint, built by gameplay/editor code and resolved by the scene.
     // World-space frames; a body set to entt::null is treated as "fixed to the world".
     struct FConstraintDesc
     {
@@ -95,7 +95,7 @@ namespace Lumina::Physics
         virtual void ActivateBody(uint32 BodyID) = 0;
         virtual void ChangeBodyMotionType(uint32 BodyID, EBodyType NewType) = 0;
 
-        // Whether the body is awake (active) vs asleep (at rest). Default false so non-Jolt backends compile.
+        // Whether the body is awake (active) vs asleep (at rest). Default false.
         virtual bool IsBodyActive(uint32 BodyID) { return false; }
         
         virtual uint32 GetEntityBodyID(entt::entity Entity) = 0;
@@ -128,15 +128,15 @@ namespace Lumina::Physics
         virtual void OnAddForceAtPositionEvent(const SAddForceAtPositionEvent& Event) = 0;
         virtual void OnSetGravityFactorEvent(const SSetGravityFactorEvent& Event) = 0;
 
-        // Shape-accurate buoyancy: applies Jolt's submerged-volume buoyancy + linear/angular drag impulse for
+        // Shape-accurate buoyancy: applies submerged-volume buoyancy + linear/angular drag impulse for
         // this frame. The caller supplies the fluid surface point + normal (e.g. sampled from the rendered
         // Gerstner waves), so the fluid plane follows the wave surface instead of being flat. Buoyancy is the
-        // fluid/body density ratio: 1 = neutral, >1 floats. No-op without a dynamic body. Default: no backend.
+        // fluid/body density ratio: 1 = neutral, >1 floats. No-op without a dynamic body. Default is a no-op.
         virtual void ApplyBuoyancyImpulse(entt::entity Entity, const FVector3& SurfacePosition, const FVector3& SurfaceNormal,
             float Buoyancy, float LinearDrag, float AngularDrag, const FVector3& FluidVelocity, float DeltaTime) {}
 
         // Conveyor belt / moving surface: objects resting on this body's surface are dragged at this
-        // world-space velocity (linear m/s, angular rad/s). Zero clears it. Default: no backend.
+        // world-space velocity (linear m/s, angular rad/s). Zero clears it. Default is a no-op.
         virtual void SetSurfaceVelocity(entt::entity Entity, const FVector3& Linear, const FVector3& Angular) {}
 
         virtual FVector3 GetVelocityAtPoint(uint32 BodyID, const FVector3& Point) = 0;
@@ -145,14 +145,14 @@ namespace Lumina::Physics
         virtual FVector3 GetCenterOfMass(uint32 BodyID)= 0;
 
         /** Body mass in kg, or 0 for a body that cannot move (static/kinematic have infinite mass). Default
-         *  1 so non-Jolt backends compile; callers scaling a force by it get sane behavior either way. */
+         *  1 by default; callers scaling a force by it get sane behavior either way. */
         virtual float GetBodyMass(uint32 BodyID) { return 1.0f; }
 
         // Actual current body pose, NOT the interpolated render transform (STransformComponent is lagged).
         virtual FVector3 GetBodyPosition(uint32 BodyID) = 0;
         virtual FQuat GetBodyRotation(uint32 BodyID) = 0;
 
-        /** Current live body count and the configured ceiling. Lets bulk spawners (fracture) clamp to capacity instead of overflowing Jolt's body buffer. */
+        /** Current live body count and the configured ceiling. Lets bulk spawners (fracture) clamp to capacity instead of overflowing the body arrays. */
         virtual uint32 GetBodyCount() = 0;
         virtual uint32 GetMaxBodyCount() = 0;
 
@@ -168,24 +168,24 @@ namespace Lumina::Physics
 
         // Build a ragdoll's bodies + constraints and add them to the scene. Returns an opaque handle the
         // caller stores; null on failure. Must be called outside the physics step (PrePhysics is fine).
-        virtual TSharedPtr<FJoltRagdollHandle> CreateRagdoll(const FRagdollDesc& Desc) = 0;
+        virtual TSharedPtr<FPhysicsRagdollHandle> CreateRagdoll(const FRagdollDesc& Desc) = 0;
 
         // Read the simulated body transforms back into component-space GPU skinning matrices (Global*InvBind).
         // OutBoneTransforms is sized to the skeleton; unmapped bones are rebuilt from their parent + bind local.
-        virtual void ReadRagdollPose(const FJoltRagdollHandle& Handle, const FMatrix4& WorldToEntity, const FSkeletonResource* Skeleton, TVector<FMatrix4>& OutBoneTransforms) = 0;
+        virtual void ReadRagdollPose(const FPhysicsRagdollHandle& Handle, const FMatrix4& WorldToEntity, const FSkeletonResource* Skeleton, TVector<FMatrix4>& OutBoneTransforms) = 0;
 
         // Remove a ragdoll's bodies + constraints from the scene. Safe with a null/empty handle.
-        virtual void DestroyRagdoll(const TSharedPtr<FJoltRagdollHandle>& Handle) = 0;
+        virtual void DestroyRagdoll(const TSharedPtr<FPhysicsRagdollHandle>& Handle) = 0;
 
         // World-space transform of the ragdoll's root body (used to drive the owning entity so culling tracks it).
-        virtual void GetRagdollRootTransform(const FJoltRagdollHandle& Handle, FVector3& OutPosition, FQuat& OutRotation) = 0;
+        virtual void GetRagdollRootTransform(const FPhysicsRagdollHandle& Handle, FVector3& OutPosition, FQuat& OutRotation) = 0;
 
         // Monotonic unique id for the next ragdoll's self-collision group.
         virtual uint32 AllocateRagdollGroupID() = 0;
 
         // Constraints / joints. Create returns an opaque non-zero handle (0 == failure); the caller stores it
         // to drive motors, query break state, or destroy the joint. Must be called outside the physics step
-        // (gameplay/PrePhysics is fine), mirroring CreateRagdoll. Default no-op so non-Jolt backends compile.
+        // (gameplay/PrePhysics is fine), mirroring CreateRagdoll. Default no-op.
         virtual uint32 CreateConstraint(const FConstraintDesc& Desc) { return 0; }
         virtual void DestroyConstraint(uint32 ConstraintID) {}
         virtual void SetConstraintEnabled(uint32 ConstraintID, bool bEnabled) {}

@@ -43,6 +43,10 @@ namespace Lumina
         /** Publishes Header into Slot. Overwrites in place; the slot's identity never moves. */
         RUNTIME_API void Write(uint32 Slot, const FMeshletHeaderGPU& Header);
 
+        /** Whether Slot's header names skinned geometry, which is what decides the vertex stride the raster
+         *  reads it at. kNullSlot and an unwritten slot are both false. */
+        RUNTIME_API bool IsSkinnedSlot(uint32 Slot);
+
         /** Base address of the slab. Re-read every frame when the scene root is built: growth moves it,
          *  and nothing may cache it across frames. Never 0 once the RHI is up. */
         RUNTIME_API RHI::GPUPtr GetAddress();

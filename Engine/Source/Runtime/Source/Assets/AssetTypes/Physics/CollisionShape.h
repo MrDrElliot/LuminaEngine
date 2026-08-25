@@ -94,7 +94,7 @@ namespace Lumina
          *  otherwise, so callers check rather than assume. */
         bool HasCollision() const;
 
-        /** True when the asset would build a concave shape, which Jolt restricts to static/kinematic. */
+        /** True when the asset would build a concave shape, which is restricted to static and kinematic. */
         bool IsConcave() const { return bUseTriangleMesh && !TriangleIndices.empty(); }
 
         int32 NumTriangles() const { return (int32)(TriangleIndices.size() / 3); }

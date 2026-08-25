@@ -165,7 +165,7 @@ namespace Lumina
 
         for (auto&& [ID, SrcSet] : Source.storage())
         {
-            // Rigid bodies carry a runtime Jolt BodyID that must not be copied; handled below.
+            // Rigid bodies carry a runtime BodyID that must not be copied; handled below.
             if (IsNonReplicatedStorage(ID)
                 || ID == entt::type_hash<SRigidBodyComponent>::value()
                 || (ExtraSkipStorage != nullptr && ExtraSkipStorage(ID)))
@@ -196,7 +196,7 @@ namespace Lumina
             }
         }
 
-        // Copying the live Jolt id makes the physics scene skip creation as already existing.
+        // Copying the live body id makes the physics scene skip creation as already existing.
         for (auto& [SrcE, DestE] : OutMap)
         {
             if (const SRigidBodyComponent* SrcBody = Source.try_get<SRigidBodyComponent>(SrcE))

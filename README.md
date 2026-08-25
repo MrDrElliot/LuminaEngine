@@ -355,12 +355,17 @@ Optional engine features are controlled from a single file,
 `"auto"`, `"on"` (force into every configuration) or `"off"` (strip from every
 configuration), and the choices are baked in when you regenerate the solution.
 
-| Feature      | What it controls                          | `"auto"` default                         |
-| ------------ | ----------------------------------------- | ---------------------------------------- |
-| `Tracy`          | Tracy CPU/GPU profiler (`LUMINA_PROFILE_*`)        | Debug + Development; **off** in Shipping |
-| `Validation`     | Vulkan validation + sync layers                   | Debug only                               |
-| `Aftermath`      | NVIDIA Nsight Aftermath GPU crash dumps            | NVIDIA machines, Debug + Development      |
-| `VerboseLogging` | `LOG_TRACE` / `LOG_DEBUG` / `LOG_INFO` macros      | Debug + Development; **off** in Shipping |
+| Feature | What it controls | `"auto"` default |
+| -------------------- | ------------------------------------------ | ---------------------------------------- |
+| `Tracy` | Tracy CPU/GPU profiler (`LUMINA_PROFILE_*`) | Debug + Development; **off** in Shipping |
+| `GpuProfiling` | GPU timing query pools and their readback | Debug + Development; **off** in Shipping |
+| `Validation` | Vulkan validation + sync layers | Debug only |
+| `GpuValidation` | GPU-assisted validation inside every shader | **off** everywhere; `--gpuvalidation` toggles at runtime |
+| `Aftermath` | NVIDIA Nsight Aftermath GPU crash dumps | NVIDIA hosts, Debug + Development |
+| `RadeonGpuDetective` | AMD object naming and fault reporting for `.rgd` dumps | AMD hosts, Debug + Development |
+| `VerboseLogging` | `LOG_TRACE` / `LOG_DEBUG` / `LOG_INFO` macros | Debug + Development; **off** in Shipping |
+| `BugSplat` | Crash and minidump upload to the engine's database | Editor targets on Windows only |
+| `Box3DDebugChecks` | Box3D's own asserts and internal validation | Debug only |
 
 `"off"` is a true strip: e.g. `Tracy = "off"` drops the Tracy library from the
 build entirely and turns every profiling macro into a no-op, and
@@ -491,28 +496,37 @@ documentation improvements.
 Listed alphabetically.
 
 | Library | Purpose |
-|---------|---------|
+| --------- | --------- |
 | basis_universal | GPU texture compression with runtime transcoding to BC7/ETC/ASTC |
+| Box3D | Multi-threaded rigid body physics with a stateless capsule character mover |
+| BugSplat | Crash and minidump upload to the engine's crash database |
+| cgltf | glTF 2.0 parser behind the mesh and material importers |
 | ConcurrentQueue | Lock-free queue supporting multiple producers and consumers |
-| EASTL | EA Standard Template Library optimized for game development |
+| DPDK | Source of the vectorized memcpy in `Engine/Source/Runtime/Source/Memory/Memcpy.h`; vendored for its license only |
+| ENet | Reliable UDP transport behind the networking plugin |
 | EnTT | Fast entity component system with sparse-set storage and signals |
-| FastGLTF | High-performance glTF 2.0 parser with full specification support |
+| FreeType | Font rasterization for RmlUi, MSDFGen, and editor text |
 | GLFW | Multi-platform window and input library for OpenGL and Vulkan |
 | GoogleTest | C++ testing framework with assertions, fixtures, and test discovery |
 | ImGui | Immediate-mode GUI for rapid tool development |
-| JoltPhysics | Multi-threaded physics engine with continuous collision detection |
 | MeshOptimizer | Mesh optimization for vertex cache, overdraw, and buffer compression |
+| MikkTSpace | Reference tangent-space generation for imported meshes |
 | Miniaudio | Single-file audio playback and capture library |
+| Miniz | Deflate compression for package and pak archive serialization |
+| MSDFGen | Multi-channel signed distance fields for crisp world-space text |
 | .NET Runtime | CoreCLR (.NET 10) bundled as the host for C# (LuminaSharp) scripting |
 | Nlohmann JSON | Modern JSON library with STL compatibility |
 | NVIDIA Aftermath | GPU crash debugging and post-mortem dump analysis |
-| OpenFBX | Lightweight FBX loader for geometry, skeletons, and animation |
+| NVIDIA Nsight Perf | GPU counter collection behind the hardware profiler plugin |
+| Recast & Detour | Navigation mesh generation and pathfinding |
 | RenderDoc | Graphics debugger integration for frame capture and analysis |
+| RmlUi | Retained HTML/CSS-style UI used for game and editor interfaces |
 | RPMalloc | Lock-free, thread-caching memory allocator |
 | Slang | Modern shader language and compiler with SPIR-V / HLSL output |
 | stb_image | Single-header image loading library |
 | TinyObjLoader | Lightweight OBJ parser with MTL material support |
 | Tracy | Real-time frame profiler with sampling, GPU zones, and lock contention tracking |
+| ufbx | FBX loader for geometry, skeletons, and animation |
 | Volk | Vulkan meta-loader for runtime function loading |
 | Vulkan | Low-level graphics API providing explicit GPU control |
 | VulkanMemoryAllocator | Memory management library for Vulkan with defragmentation |

@@ -48,8 +48,7 @@ namespace Lumina::SkeletalUtils
     // physics body (per-bone hits only come from ragdoll bodies). INDEX_NONE without a skeleton.
     RUNTIME_API int32 FindClosestBone(FEntityRegistry& Registry, entt::entity Entity, const FVector3& WorldPoint);
 
-    // Packs skinning matrices into the GPU 3x4-row layout (FBoneTransform: 3 FVector4 rows per bone)
-    // consumed by the render gather. Writers of SSkeletalMeshComponent.BoneTransforms either call this
-    // into Mesh.RenderBones or set Mesh.bRenderBonesDirty so the gather repacks lazily.
-    RUNTIME_API void PackRenderBones(const TVector<FMatrix4>& BoneTransforms, TVector<FBoneTransform>& OutBones);
+    // Packs NumBones skinning matrices into the 32-byte GPU layout the skinning shaders read. OutBones is
+    // written straight through, so the render gather aims this at its own arena slice and stages nothing.
+    RUNTIME_API void PackRenderBones(const FMatrix4* BoneTransforms, uint32 NumBones, FBoneTransform* OutBones);
 }

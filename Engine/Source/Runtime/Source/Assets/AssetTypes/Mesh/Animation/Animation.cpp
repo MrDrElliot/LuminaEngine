@@ -371,9 +371,9 @@ namespace Lumina
             }
 
             const Detail::FDecodedBone Decoded = Detail::DecodeBone(Compressed, Compressed.Bones[b], Frame0, Frame1, Alpha);
-            if (Decoded.Touched & Detail::TouchedT) OutPose.Translations[BoneIdx] = Decoded.T;
-            if (Decoded.Touched & Detail::TouchedR) OutPose.Rotations[BoneIdx]    = Decoded.R;
-            if (Decoded.Touched & Detail::TouchedS) OutPose.Scales[BoneIdx]       = Decoded.S;
+            if (Decoded.Touched & Detail::TouchedT) OutPose.SetTranslation(BoneIdx, Decoded.T);
+            if (Decoded.Touched & Detail::TouchedR) OutPose.SetRotation(BoneIdx, Decoded.R);
+            if (Decoded.Touched & Detail::TouchedS) OutPose.SetScale(BoneIdx, Decoded.S);
         }
     }
 

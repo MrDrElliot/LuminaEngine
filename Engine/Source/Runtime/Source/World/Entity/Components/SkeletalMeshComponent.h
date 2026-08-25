@@ -89,14 +89,12 @@ namespace Lumina
         // execution phase consumes it into BoneTransforms. Transient, capacity reused across frames.
         FAnimTaskList AnimTasks;
 
-        // BoneTransforms packed into the GPU 3x4-row layout (3 FVector4 rows per bone, aliases
-        // FBoneTransform); the render gather bulk-copies this instead of converting per bone per
-        // frame. Repacked only when the pose changes: writers of BoneTransforms either call
-        // SkeletalUtils::PackRenderBones or set bRenderBonesDirty so the gather repacks lazily.
-        TVector<FBoneTransform> RenderBones;
+        // Raised by anything that writes BoneTransforms without bumping PoseSerial itself; the gather
+        // folds it into PoseSerial when it next reaches this mesh.
         bool bRenderBonesDirty = false;
 
-        // Bumped whenever RenderBones is rewritten; the gather uploads a pose only when this moved.
+        // Bumped whenever BoneTransforms is rewritten. The gather packs into the bone arena and uploads
+        // a pose only when this moved, so an off-screen mesh is never packed at all.
         uint32 PoseSerial = 0;
     };
 }

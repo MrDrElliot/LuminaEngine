@@ -219,7 +219,7 @@ namespace Lumina
 
         Physics::IPhysicsScene* GetPhysicsScene() const { return PhysicsScene.get(); }
 
-        // Creates the physics scene if this world has none. Editor worlds skip it at init because Jolt
+        // Creates the physics scene if this world has none. Editor worlds skip it at init because the scene
         // reserves hundreds of MB up front, so a tool that wants to actually simulate asks for one here.
         Physics::IPhysicsScene* EnsurePhysicsScene();
         

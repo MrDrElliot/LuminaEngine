@@ -40,7 +40,9 @@ namespace Lumina::SkeletalUtils
         }
 
         // The inverse of InvBind is also the bind-pose global, so the no-pose fallback is the same undo.
-        const FMatrix4 BindGlobal = Math::Inverse(Skeleton->GetBone(BoneIndex).InvBindMatrix);
+        const FMatrix4 BindGlobal = Skeleton->HasBindGlobalMatrices()
+            ? Skeleton->BindGlobalMatrices[BoneIndex]
+            : Math::Inverse(Skeleton->GetBone(BoneIndex).InvBindMatrix);
         if ((int32)Mesh.BoneTransforms.size() == Skeleton->GetNumBones())
         {
             OutTransform = Mesh.BoneTransforms[BoneIndex] * BindGlobal;
@@ -194,12 +196,15 @@ namespace Lumina::SkeletalUtils
         const FVector3 LocalPoint = FVector3(WorldToComponent * FVector4(WorldPoint, 1.0f));
 
         const bool bLivePose = (int32)Mesh->BoneTransforms.size() == Skeleton->GetNumBones();
+        const bool bCachedBind = Skeleton->HasBindGlobalMatrices();
 
         int32 Closest = INDEX_NONE;
         float BestDistSq = FLT_MAX;
         for (int32 i = 0; i < Skeleton->GetNumBones(); ++i)
         {
-            const FMatrix4 BindGlobal = Math::Inverse(Skeleton->GetBone(i).InvBindMatrix);
+            const FMatrix4 BindGlobal = bCachedBind
+                ? Skeleton->BindGlobalMatrices[i]
+                : Math::Inverse(Skeleton->GetBone(i).InvBindMatrix);
             const FMatrix4 Global = bLivePose ? Mesh->BoneTransforms[i] * BindGlobal : BindGlobal;
             const float DistSq = Math::LengthSquared(FVector3(Global[3]) - LocalPoint);
             if (DistSq < BestDistSq)
@@ -211,15 +216,12 @@ namespace Lumina::SkeletalUtils
         return Closest;
     }
 
-    void PackRenderBones(const TVector<FMatrix4>& BoneTransforms, TVector<FBoneTransform>& OutBones)
+    void PackRenderBones(const FMatrix4* BoneTransforms, uint32 NumBones, FBoneTransform* OutBones)
     {
         LUMINA_PROFILE_SCOPE();
 
-        const uint32 NumBones = (uint32)BoneTransforms.size();
-        OutBones.resize(NumBones);
-
-        FBoneTransform* RESTRICT Out = OutBones.data();
-        const FMatrix4* RESTRICT   Src = BoneTransforms.data();
+        FBoneTransform* RESTRICT Out = OutBones;
+        const FMatrix4* RESTRICT Src = BoneTransforms;
 
         // Chunked to keep the staging on the stack, and long enough for the wide half-conversion path.
         constexpr uint32 kChunk = 64;

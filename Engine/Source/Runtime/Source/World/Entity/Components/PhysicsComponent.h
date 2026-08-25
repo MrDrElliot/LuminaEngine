@@ -22,7 +22,7 @@ namespace Lumina
         FVector3 LastBodyPosition;
         FQuat LastBodyRotation;
         
-        /** Internal Jolt body ID, read-only, assigned by the physics system. */
+        /** Internal body ID, read-only, assigned by the physics system. */
         PROPERTY(ReadOnly, Category = "Physics")
         uint32 BodyID = 0xFFFFFFFF;
 
@@ -30,11 +30,11 @@ namespace Lumina
         PROPERTY(Editable, Category = "Physics")
         float Mass = 1.0f;
 
-        /** When true, Mass overrides the value Jolt would compute from shape density. */
+        /** When true, Mass overrides the value computed from shape density. */
         PROPERTY(Editable, Category = "Physics")
         bool bOverrideMass = false;
 
-        /** When true, InertiaTensor replaces Jolt's shape-derived inertia (top-heavy vehicles, hand-tuned
+        /** When true, InertiaTensor replaces the shape-derived inertia (top-heavy vehicles, hand-tuned
             spin resistance). Uses Mass for the body's mass. Dynamic bodies only. */
         PROPERTY(Editable, Category = "Physics")
         bool bOverrideInertia = false;
@@ -52,22 +52,6 @@ namespace Lumina
         PROPERTY(Editable, Category = "Physics")
         FCollisionProfile CollisionProfile;
 
-        /** Per-body override for global velocity solver iterations (0 = use world setting). */
-        PROPERTY(Editable, Category = "Physics")
-        uint32 NumVelocityStepsOverride = 0;
-
-        /** Per-body override for global position solver iterations (0 = use world setting). */
-        PROPERTY(Editable, Category = "Physics")
-        uint32 NumPositionStepsOverride = 0;
-
-        /** Maximum linear speed (m/s) this body can reach. */
-        PROPERTY(Editable, ClampMin = 0.001f, Category = "Physics")
-        float MaxLinearVelocity = 500.0f;
-
-        /** Maximum angular speed (rad/s) this body can reach. */
-        PROPERTY(Editable, ClampMin = 0.001f, Category = "Physics")
-        float MaxAngularVelocity = 0.25f * LE_PI_F * 60.0f;
-
         /** Bounciness override for this body (0 = no bounce, 1 = perfectly elastic). */
         PROPERTY(Editable, ClampMin = 0.001f, ClampMax = 1.0f, Category = "Physics")
         float RestitutionOverride = 0.5f;
@@ -84,9 +68,9 @@ namespace Lumina
         PROPERTY(Editable, ClampMin = 0.001f, ClampMax = 1.0f, Category = "Physics")
         float AngularDamping = 0.05f;
 
-        /** Motion quality level: 0 = Discrete, 1 = LinearCast. Higher is more expensive but prevents tunneling. */
+        /** Sweep this body against the world each step instead of testing it only at its new pose. */
         PROPERTY(Editable, Category = "Physics")
-        uint8 MotionQualityLevel = 0;
+        bool bUseContinuousCollision = false;
 
         /** Whether the body is Static, Kinematic, or Dynamic. */
         PROPERTY(Editable, Category = "Physics")
@@ -95,14 +79,6 @@ namespace Lumina
         /** When true, the body detects overlaps but does not produce contact responses. */
         PROPERTY(Editable, Category = "Physics")
         bool bIsSensor = false;
-
-        /** Merge similar contact manifolds to reduce solver work for this body. */
-        PROPERTY(Editable, Category = "Physics")
-        bool bUseManifoldReduction = true;
-
-        /** Apply gyroscopic torque to spinning bodies for more realistic angular motion. */
-        PROPERTY(Editable, Category = "Physics")
-        bool bApplyGyroscopicForce = false;
 
         /** Allow this body to enter sleep state when it comes to rest. */
         PROPERTY(Editable, Category = "Physics")
@@ -334,7 +310,7 @@ namespace Lumina
     };
 
     // Tapered cylinder: flat-ended cylinder with different top/bottom radii (funnels, barrels, tapered
-    // pillars), along local Y. Total height 2*HalfHeight; ConvexRadius rounds the rims.
+    // pillars), along local Y. Total height is 2*HalfHeight.
     REFLECT(Component, Category = "Physics")
     struct RUNTIME_API STaperedCylinderColliderComponent
     {
@@ -351,10 +327,6 @@ namespace Lumina
         /** Radius at the bottom (-Y). */
         PROPERTY(Editable, ClampMin = 0.001f)
         float BottomRadius = 0.5f;
-
-        /** Rounding of the top/bottom rim. Clamped to the smallest radius / half-height. */
-        PROPERTY(Editable, ClampMin = 0.0f)
-        float ConvexRadius = 0.05f;
 
         /** Local-space offset applied to the collider position relative to the entity. */
         PROPERTY(Editable)
@@ -403,7 +375,7 @@ namespace Lumina
         bool bAffectsNavigation = true;
     };
 
-    /** Static collider built from an STerrainComponent's heightmap (Jolt HeightFieldShape). Requires both components on the same entity. */
+    /** Static collider built from an STerrainComponent's heightmap (height field). Requires both components on the same entity. */
     // Collision built from an SDynamicMeshComponent's committed geometry on the same entity. The mesh has
     // no CMesh to point at (it owns its render data outright), so unlike SMeshColliderComponent there is no
     // asset reference -- the shape is rebuilt from whatever that component last committed.
@@ -429,8 +401,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Navigation")
         bool bAffectsNavigation = true;
 
-        /** Bumped by SDynamicMeshComponent::Commit so the physics scene knows the geometry changed and
-            rebuilds the body. Not authored. */
+        /** Render data version the collision body was built from, so a re-commit rebuilds it. Not authored. */
         PROPERTY(ReadOnly)
         uint32 GeometryVersion = 0;
     };
@@ -494,7 +465,7 @@ namespace Lumina
         float HalfHeight = 0.5f;
     };
 
-    // Custom collision shape built by merging several primitives into one body (Jolt StaticCompoundShape):
+    // Custom collision shape built by merging several primitives into one body (multi-shape body):
     // a table = box top + 4 box legs, an L-wall = two boxes, a barrel cluster = cylinders, etc. Concave
     // overall yet still usable on a dynamic body, and cheap (the children share the cached primitive shapes).
     // Needs at least 2 children to form a compound; with 1 it falls back to that single offset shape.
@@ -521,7 +492,7 @@ namespace Lumina
     };
 
     // Conveyor / moving surface. Bodies resting on this entity's collider are dragged along its surface at
-    // the given world-space velocity, without the body itself moving (Jolt feeds it into the contact solver).
+    // the given world-space velocity, without the body itself moving (it feeds the contact solver).
     // Requires an SRigidBodyComponent on the same entity. SurfaceVelocity is m/s; AngularSurfaceVelocity is
     // rad/s about the body's center (best for a body that is the conveyor itself). Runtime changes:
     // World.Physics.SetSurfaceVelocity.
@@ -540,7 +511,7 @@ namespace Lumina
     };
 
     // Joint connecting this entity's rigid body to another body (or the world). The system creates the live
-    // Jolt constraint once both bodies exist; removing the component (or the entity) tears it down. This
+    // joint once both bodies exist; removing the component (or the entity) tears it down. This
     // entity is body B (the child); TargetBody is body A (the parent / anchor).
     REFLECT(Component, Category = "Physics")
     struct RUNTIME_API SPhysicsConstraintComponent

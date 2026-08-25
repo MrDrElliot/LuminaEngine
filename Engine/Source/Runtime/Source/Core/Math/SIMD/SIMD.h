@@ -8,6 +8,7 @@
 #include "VFloat4.h"
 #include "VFloat8.h"
 #include "VQuat4.h"
+#include "VQuat8.h"
 
 namespace Lumina::SIMD
 {

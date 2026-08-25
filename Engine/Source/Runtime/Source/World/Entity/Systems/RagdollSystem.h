@@ -5,7 +5,7 @@
 
 namespace Lumina
 {
-    // Bridges SRagdollComponent to the physics scene: on PrePhysics it creates/destroys the Jolt ragdoll
+    // Bridges SRagdollComponent to the physics scene: on PrePhysics it creates and destroys the ragdoll
     // (seeded from the current animation pose, so it must run after SAnimationSystem); on PostPhysics it
     // reads the simulated bodies back into the skeletal mesh's bone transforms.
     REFLECT(System)

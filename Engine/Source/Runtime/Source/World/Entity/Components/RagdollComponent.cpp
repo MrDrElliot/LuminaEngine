@@ -1,8 +1,8 @@
 ﻿#include "RuntimePCH.h"
 #include "RagdollComponent.h"
 
-// Included here only so TSharedPtr<FJoltRagdollHandle> has a complete type for its special members;
-#include "Physics/API/Jolt/JoltRagdollHandle.h"
+// Included here only so TSharedPtr<FPhysicsRagdollHandle> has a complete type for its special members;
+#include "Physics/API/Box3D/Box3DRagdollHandle.h"
 
 namespace Lumina
 {

@@ -160,12 +160,14 @@ namespace Lumina
         return NewIndex;
     }
 
-    void FSceneBatchRegistry::AddBatchRef(uint32 BatchIndex)
+    void FSceneBatchRegistry::AddBatchRef(uint32 BatchIndex, bool bSkinned)
     {
-        ++Batches[BatchIndex].RefCount;
+        FBatch& Batch = Batches[BatchIndex];
+        ++Batch.RefCount;
+        ++(bSkinned ? Batch.SkinnedRefCount : Batch.StaticRefCount);
     }
 
-    void FSceneBatchRegistry::ReleaseBatchRef(uint32 BatchIndex)
+    void FSceneBatchRegistry::ReleaseBatchRef(uint32 BatchIndex, bool bSkinned)
     {
         if (BatchIndex >= (uint32)Batches.size())
         {
@@ -176,6 +178,12 @@ namespace Lumina
         if (Batch.RefCount > 0)
         {
             --Batch.RefCount;
+        }
+
+        uint32& Kind = bSkinned ? Batch.SkinnedRefCount : Batch.StaticRefCount;
+        if (Kind > 0)
+        {
+            --Kind;
         }
     }
 
@@ -191,13 +199,8 @@ namespace Lumina
         const entt::entity     Entity = (entt::entity)(uint32)(Key & 0xFFFFFFFFull);
         const EPrimitiveSource Source = (EPrimitiveSource)((Key >> 32) & 0xFFull);
 
-        if (Source != EPrimitiveSource::Foliage)
-        {
-            return FindLinked(Entity, Source);
-        }
-
-        auto It = IndexByKey.find(Key);
-        return It != IndexByKey.end() ? It->second : ~0u;
+        // Foliage owns no primitive; its instances live in FoliageByEntity. See FFoliageInstanceRef.
+        return FindLinked(Entity, Source);
     }
 
     //~ Flat entity-index link table. See FPrimitiveLink for why this exists instead of a hash probe.
@@ -296,14 +299,7 @@ namespace Lumina
 
         const entt::entity     Entity = (entt::entity)(uint32)(Key & 0xFFFFFFFFull);
         const EPrimitiveSource Source = (EPrimitiveSource)((Key >> 32) & 0xFFull);
-        if (Source != EPrimitiveSource::Foliage)
-        {
-            SetLink(Entity, Source, Index);
-        }
-        else
-        {
-            IndexByKey.emplace(Key, Index);
-        }
+        SetLink(Entity, Source, Index);
         if (Source == EPrimitiveSource::SkeletalMesh)
         {
             ++SkinnedCount;
@@ -341,14 +337,7 @@ namespace Lumina
 
             const entt::entity     MovedEntity = (entt::entity)(uint32)(Keys[Index] & 0xFFFFFFFFull);
             const EPrimitiveSource MovedSource = (EPrimitiveSource)((Keys[Index] >> 32) & 0xFFull);
-            if (MovedSource != EPrimitiveSource::Foliage)
-            {
-                SetLink(MovedEntity, MovedSource, Index);
-            }
-            else
-            {
-                IndexByKey[Keys[Index]] = Index;
-            }
+            SetLink(MovedEntity, MovedSource, Index);
         }
 
         Primitives.pop_back();
@@ -363,15 +352,7 @@ namespace Lumina
         {
             --SkinnedCount;
         }
-        if (Source != EPrimitiveSource::Foliage)
-        {
-            ClearLink(Entity, Source);
-        }
-        else
-        {
-            // By key rather than a held iterator, since the fixup above can rehash the map.
-            IndexByKey.erase(Key);
-        }
+        ClearLink(Entity, Source);
 
         ++StructureGeneration;
     }
@@ -380,17 +361,17 @@ namespace Lumina
     {
         if (Source == EPrimitiveSource::Foliage)
         {
-            auto It = FoliageInstanceCount.find(Entity);
-            if (It == FoliageInstanceCount.end())
+            auto It = FoliageByEntity.find(Entity);
+            if (It == FoliageByEntity.end())
             {
                 return;
             }
-            const uint32 Count = It->second;
-            for (uint32 i = 0; i < Count; ++i)
+            for (FFoliageInstanceRef& Ref : It->second.Instances)
             {
-                RemovePrimitive(MakeKey(Entity, EPrimitiveSource::Foliage, i));
+                ReleaseFoliageInstance(Ref);
             }
-            FoliageInstanceCount.erase(It);
+            FoliageByEntity.erase(It);
+            ++StructureGeneration;
             return;
         }
 
@@ -436,6 +417,25 @@ namespace Lumina
                           Bindings.begin() + Prim.BindingBase,
                           Bindings.begin() + Prim.BindingBase + Prim.SurfaceCount);
             Prim.BindingBase = NewBase;
+        }
+
+        // Foliage instances hold spans in the same array without owning a primitive, so they rebase here
+        // too. Miss this and a compaction drops every painted instance's bindings on the floor.
+        for (auto& [Entity, State] : FoliageByEntity)
+        {
+            for (FFoliageInstanceRef& Ref : State.Instances)
+            {
+                if (Ref.SurfaceCount == 0)
+                {
+                    Ref.BindingBase = 0;
+                    continue;
+                }
+                const uint32 NewBase = (uint32)Packed.size();
+                Packed.insert(Packed.end(),
+                              Bindings.begin() + Ref.BindingBase,
+                              Bindings.begin() + Ref.BindingBase + Ref.SurfaceCount);
+                Ref.BindingBase = NewBase;
+            }
         }
 
         Bindings.swap(Packed);
@@ -780,16 +780,35 @@ namespace Lumina
         }
     }
 
+    void FScenePrimitiveSet::ReleaseBindingSpan(uint32 Base, uint32 Count)
+    {
+        for (uint32 s = 0; s < Count; ++s)
+        {
+            const FSurfaceBinding& Binding = Bindings[Base + s];
+            Batches.ReleaseBatchRef(Binding.BatchIndex, Binding.bSkinned);
+            FreeInstanceSlot(Binding.InstanceSlot);
+        }
+        DeadBindings += Count;
+    }
+
+    uint32 FScenePrimitiveSet::AppendBindingSpan(const FBindingMemo& Memo, bool bSkinned)
+    {
+        const uint32 Base = (uint32)Bindings.size();
+        for (const FSurfaceBinding& Proto : Memo.Protos)
+        {
+            FSurfaceBinding& Binding = Bindings.emplace_back(Proto);
+            Binding.InstanceSlot = AllocateInstanceSlot();
+            Binding.bSkinned     = bSkinned;
+
+            Batches.AddBatchRef(Binding.BatchIndex, bSkinned);
+        }
+        return Base;
+    }
+
     void FScenePrimitiveSet::ReleaseBindings(uint32 Index)
     {
         FScenePrimitive& Prim = Primitives[Index];
-        for (uint32 s = 0; s < Prim.SurfaceCount; ++s)
-        {
-            const FSurfaceBinding& Binding = Bindings[Prim.BindingBase + s];
-            Batches.ReleaseBatchRef(Binding.BatchIndex);
-            FreeInstanceSlot(Binding.InstanceSlot);
-        }
-        DeadBindings += Prim.SurfaceCount;
+        ReleaseBindingSpan(Prim.BindingBase, Prim.SurfaceCount);
         Prim.SurfaceCount = 0;
         Prim.BindingBase  = 0;
     }
@@ -843,6 +862,8 @@ namespace Lumina
             return false;
         }
 
+        const bool bSkinned = EnumHasAnyFlags(Prim.BaseFlags, EInstanceFlags::Skinned);
+
         for (uint32 s = 0; s < Prim.SurfaceCount; ++s)
         {
             const FSurfaceBinding& Have = Bindings[Prim.BindingBase + s];
@@ -852,7 +873,8 @@ namespace Lumina
              || Have.SurfaceDescIndex      != Want.SurfaceDescIndex
              || Have.MaterialIndex         != Want.MaterialIndex
              || Have.MaterialFlags         != Want.MaterialFlags
-             || Have.bMaterialCastsShadows != Want.bMaterialCastsShadows)
+             || Have.bMaterialCastsShadows != Want.bMaterialCastsShadows
+             || Have.bSkinned              != bSkinned)
             {
                 return false;
             }
@@ -932,6 +954,8 @@ namespace Lumina
 
         const TVector<FResolvedSurface>& Surfaces = *Prim.Surfaces;
 
+        const bool bSkinned = EnumHasAnyFlags(Prim.BaseFlags, EInstanceFlags::Skinned);
+
         const FBindingMemo* Memo = EnsureBindingMemo(Prim.ResolveHandle, Prim.ResolveGeneration, Surfaces);
 
         Prim.BindingBase  = (uint32)Bindings.size();
@@ -939,20 +963,14 @@ namespace Lumina
 
         if (Memo != nullptr)
         {
-            for (const FSurfaceBinding& Proto : Memo->Protos)
-            {
-                FSurfaceBinding& Binding = Bindings.emplace_back(Proto);
-                Binding.InstanceSlot = AllocateInstanceSlot();
-
-                Batches.AddBatchRef(Binding.BatchIndex);
-            }
+            AppendBindingSpan(*Memo, bSkinned);
         }
         else
         {
             for (const FResolvedSurface& Surface : Surfaces)
             {
                 const uint32 BatchIndex = Batches.FindOrAddBatch(Surface);
-                Batches.AddBatchRef(BatchIndex);
+                Batches.AddBatchRef(BatchIndex, bSkinned);
 
                 FSurfaceBinding& Binding = Bindings.emplace_back();
                 Binding.BatchIndex            = BatchIndex;
@@ -961,6 +979,7 @@ namespace Lumina
                 Binding.MaterialIndex         = Surface.MaterialIdx;
                 Binding.MaterialFlags         = Surface.MaterialFlags;
                 Binding.bMaterialCastsShadows = Surface.bMaterialCastsShadows;
+                Binding.bSkinned              = bSkinned;
                 Binding.TexelFactor           = Surface.TexelFactor;
             }
         }
@@ -1018,6 +1037,37 @@ namespace Lumina
 
             Cull.MaxDrawDistance = Component.MaxDrawDistance;
             Cull.bCastShadow     = Component.bCastShadow ? 1u : 0u;
+        }
+    }
+
+    namespace
+    {
+        // The raster picks the vertex stride from EInstanceFlags::Skinned and the vertex DATA from the
+        // header slot. Disagreement reads 36-byte skinned vertices 28 bytes apart, which draws the mesh
+        // as a shattered version of itself rather than failing.
+        void WarnOnGeometryKindMismatch(uint32 HeaderSlot, EInstanceFlags Flags, uint32 EntityID,
+                                        EPrimitiveSource Source)
+        {
+#if USING(WITH_EDITOR)
+            if (HeaderSlot == MeshletHeaderSlab::kNullSlot)
+            {
+                return;
+            }
+
+            const bool bHeaderSkinned = MeshletHeaderSlab::IsSkinnedSlot(HeaderSlot);
+            const bool bFlagSkinned   = EnumHasAnyFlags(Flags, EInstanceFlags::Skinned);
+            if (bHeaderSkinned == bFlagSkinned)
+            {
+                return;
+            }
+
+            LOG_ERROR("ScenePrimitiveSet: entity {} source {} names header slot {} ({} geometry) but its "
+                      "instance flags say {}. It will rasterize at the wrong vertex stride.",
+                      EntityID, (uint32)Source, HeaderSlot,
+                      bHeaderSkinned ? "skinned" : "static", bFlagSkinned ? "skinned" : "static");
+#else
+            (void)HeaderSlot; (void)Flags; (void)EntityID; (void)Source;
+#endif
         }
     }
 
@@ -1152,6 +1202,8 @@ namespace Lumina
             BindSurfaces(Index);
         }
 
+        WarnOnGeometryKindMismatch(Prim.MeshletHeaderSlot, Prim.BaseFlags, Prim.EntityID, Prim.Source);
+
         // One of the two places a primitive's resolve identity settles; mirror it for the sweep.
         ResolveKeys[Index] = PackResolveKey(Prim.ResolveHandle, Prim.ResolveGeneration);
 
@@ -1240,6 +1292,68 @@ namespace Lumina
 
     }
 
+    void FScenePrimitiveSet::ReleaseFoliageInstance(FFoliageInstanceRef& Ref)
+    {
+        ReleaseBindingSpan(Ref.BindingBase, Ref.SurfaceCount);
+        Ref.BindingBase  = 0;
+        Ref.SurfaceCount = 0;
+        Ref.TypeRow      = 0xFFFFu;
+    }
+
+    // The foliage counterpart of RefreshInstances. Everything the primitive path reads off FScenePrimitive
+    // comes from the type row or the bake instead, so nothing per instance is stored to read it back.
+    void FScenePrimitiveSet::RefreshFoliageInstance(const FFoliageInstanceRef& Ref, const FFoliageTypeResolve& Type,
+                                                    const FFoliageBakedInstance& Instance, uint32 EntityID)
+    {
+        ++SyncStats.RefreshInstanceCalls;
+
+        for (uint32 s = 0; s < Ref.SurfaceCount; ++s)
+        {
+            const FSurfaceBinding& Binding = Bindings[Ref.BindingBase + s];
+            const uint32 Slot = Binding.InstanceSlot;
+            if (Slot >= (uint32)RetainedCullEntries.size())
+            {
+                continue;
+            }
+
+            EInstanceFlags Flags = Type.BaseFlags | Binding.MaterialFlags;
+            if (Type.bCastShadow && Binding.bMaterialCastsShadows)
+            {
+                Flags |= EInstanceFlags::CastShadow;
+            }
+            if (Type.Surfaces != nullptr)
+            {
+                Flags |= EInstanceFlags::Active;
+            }
+            if (Type.MeshletHeaderSlot != MeshletHeaderSlab::kNullSlot)
+            {
+                Flags |= EInstanceFlags::HasGeometry;
+            }
+
+            FInstanceCullEntry& OutCull = RetainedCullEntries[Slot];
+            // The bake already produced the world sphere; there is no local sphere to transform.
+            OutCull.SphereBounds     = Instance.SphereBounds;
+            OutCull.DrawIDAndFlags   = PackDrawIDAndFlags(Binding.BatchIndex, Flags);
+            OutCull.SurfaceDescIndex = Binding.SurfaceDescIndex;
+            OutCull.MaxDrawDistance  = Type.MaxDrawDistance;
+            OutCull.ForcedLODIndex   = -1;
+
+            RetainedTransforms[Slot] = PackTransform3x4(Instance.Transform);
+
+            FInstanceStatic& OutStatic = RetainedStatic[Slot];
+            OutStatic.MeshletHeaderSlot    = Type.MeshletHeaderSlot;
+            OutStatic.CustomData              = 0u;
+            OutStatic.MaterialIndex           = Binding.MaterialIndex;
+            OutStatic.EntityID                = EntityID;
+            OutStatic.BoneOffset              = 0u;
+            OutStatic.SkinnedVertexBase       = 0u;
+            OutStatic.ShadowSkinnedVertexBase = 0u;
+
+            MarkInstanceDirty(Slot);
+            MarkStaticDirty(Slot);
+        }
+    }
+
     void FScenePrimitiveSet::SyncFoliage(FEntityRegistry& Registry, const FSyncPools& Pools, entt::entity Entity,
                                          EPrimitiveDirty Flags)
     {
@@ -1264,17 +1378,19 @@ namespace Lumina
         const TVector<FFoliageBakedInstance>& Baked = Foliage->BakedInstances;
         const uint32 NewCount = (uint32)Baked.size();
 
-        uint32& OldCount = FoliageInstanceCount[Entity];
+        FFoliageEntityState& State = FoliageByEntity[Entity];
 
         // Shrink drops the tail; grow and overlap are handled by the write loop below.
-        for (uint32 i = NewCount; i < OldCount; ++i)
+        for (uint32 i = NewCount; i < (uint32)State.Instances.size(); ++i)
         {
-            RemovePrimitive(MakeKey(Entity, EPrimitiveSource::Foliage, i));
+            ReleaseFoliageInstance(State.Instances[i]);
         }
+        State.Instances.resize(NewCount);
 
         const uint32 TypeCount = (uint32)Foliage->Types.size();
         FoliageTypeScratch.clear();
         FoliageTypeScratch.resize(TypeCount);
+        State.TypeResolveKeys.assign(TypeCount, PackResolveKey(INVALID_MESH_RESOLVE_HANDLE, 0));
 
         FMeshResolveCache& Cache = *Pools.ResolveCache;
         for (uint32 t = 0; t < TypeCount; ++t)
@@ -1299,77 +1415,143 @@ namespace Lumina
                     Out.Generation = Entry.Generation;
                 }
             }
+
+            // Compared per type by the sweep, which is what the per-instance table could not express.
+            State.TypeResolveKeys[t] = PackResolveKey(Out.ResolveHandle, Out.Generation);
+
+            // Per type rather than per instance; every instance of a type carries the same pair.
+            WarnOnGeometryKindMismatch(Out.MeshletHeaderSlot, Out.BaseFlags, entt::to_integral(Entity),
+                                       EPrimitiveSource::Foliage);
         }
+
+        // Fetched once per type, not once per instance, since every instance of a type binds identical
+        // protos. This is what turns a field of foliage into a handful of memo lookups.
+        FoliageMemoScratch.clear();
+        FoliageMemoScratch.resize(TypeCount, nullptr);
+        for (uint32 t = 0; t < TypeCount; ++t)
+        {
+            const FFoliageTypeResolve& Type = FoliageTypeScratch[t];
+            if (Type.Surfaces != nullptr && !Type.Surfaces->empty())
+            {
+                EnsureBindingMemo(Type.ResolveHandle, Type.Generation, *Type.Surfaces);
+            }
+        }
+
+        // Addresses are taken only once every memo above exists, because EnsureBindingMemo grows the memo
+        // table by handle and a pointer captured before a later call can be left dangling by it.
+        for (uint32 t = 0; t < TypeCount; ++t)
+        {
+            const FFoliageTypeResolve& Type = FoliageTypeScratch[t];
+            if (Type.Surfaces != nullptr && !Type.Surfaces->empty()
+                && Type.ResolveHandle != INVALID_MESH_RESOLVE_HANDLE
+                && Type.ResolveHandle < (uint32)BindingMemoByHandle.size())
+            {
+                FoliageMemoScratch[t] = &BindingMemoByHandle[Type.ResolveHandle];
+            }
+        }
+
+        const uint32 EntityID = entt::to_integral(Entity);
+
+        // Stands in for an instance whose TypeIndex is out of range; it binds nothing, so the refresh below
+        // writes nothing for it.
+        const FFoliageTypeResolve UnresolvedType;
 
         for (uint32 i = 0; i < NewCount; ++i)
         {
             const FFoliageBakedInstance& Instance = Baked[i];
-            const uint64 Key = MakeKey(Entity, EPrimitiveSource::Foliage, i);
+            FFoliageInstanceRef&         Ref      = State.Instances[i];
 
-            uint32 Index = FindPrimitive(Key);
-            if (Index == ~0u)
+            const bool bValidType = Instance.TypeIndex >= 0 && (uint32)Instance.TypeIndex < TypeCount;
+            const uint16 TypeRow  = bValidType ? (uint16)Instance.TypeIndex : 0xFFFFu;
+
+            const FFoliageTypeResolve& Type = bValidType ? FoliageTypeScratch[TypeRow] : UnresolvedType;
+            const FBindingMemo*        Memo = bValidType ? FoliageMemoScratch[TypeRow] : nullptr;
+
+            const uint32 WantCount = (Memo != nullptr) ? (uint32)Memo->Protos.size() : 0u;
+
+            // A memo is rebuilt in place when its generation moves, so a span that still matches the type
+            // and the surface count is still bound to the right batches and needs no rebind.
+            if (Ref.TypeRow != TypeRow || Ref.SurfaceCount != WantCount || !FoliageBindingsMatchMemo(Ref, Memo))
             {
-                Index = AddPrimitive(Key);
-                Primitives[Index].Entity = Entity;
-                Primitives[Index].Source = EPrimitiveSource::Foliage;
-            }
-
-            FScenePrimitive&    Prim = Primitives[Index];
-            FPrimitiveCullData& Cull = CullData[Index];
-
-            const TVector<FResolvedSurface>* NewSurfaces = nullptr;
-            uint32 NewGeneration = 0;
-
-            // Same range test IsValidType makes; the scratch is sized from Types.
-            if (Instance.TypeIndex >= 0 && (uint32)Instance.TypeIndex < TypeCount)
-            {
-                const FFoliageTypeResolve& Type = FoliageTypeScratch[Instance.TypeIndex];
-
-                Prim.MeshletHeaderSlot = Type.MeshletHeaderSlot;
-                Prim.BaseFlags            = Type.BaseFlags;
-                Prim.ResolveHandle        = Type.ResolveHandle;
-                Prim.bCastShadow          = Type.bCastShadow;
-                Prim.ForcedLODIndex       = -1;
-                Cull.MaxDrawDistance      = Type.MaxDrawDistance;
-                Cull.bCastShadow          = Type.bCastShadow ? 1u : 0u;
-
-                NewSurfaces   = Type.Surfaces;
-                NewGeneration = Type.Generation;
-            }
-
-            const bool bSurfacesChanged = (NewSurfaces != Prim.Surfaces) || (NewGeneration != Prim.ResolveGeneration);
-            Prim.Surfaces          = NewSurfaces;
-            Prim.ResolveGeneration = NewGeneration;
-            if (bSurfacesChanged)
-            {
-                const FBindingMemo* Memo = (NewSurfaces != nullptr && !NewSurfaces->empty())
-                    ? EnsureBindingMemo(Prim.ResolveHandle, NewGeneration, *NewSurfaces)
-                    : nullptr;
-
-                if (Memo != nullptr && BindingsMatchMemo(Index, *Memo))
+                ReleaseFoliageInstance(Ref);
+                ++SyncStats.BindCalls;
+                if (Memo != nullptr)
                 {
-                    ++SyncStats.BindsSkipped;
+                    const bool bSkinned = EnumHasAnyFlags(Type.BaseFlags, EInstanceFlags::Skinned);
+                    Ref.BindingBase  = AppendBindingSpan(*Memo, bSkinned);
+                    Ref.SurfaceCount = (uint16)WantCount;
                 }
-                else
-                {
-                    BindSurfaces(Index);
-                }
+                Ref.TypeRow = TypeRow;
+            }
+            else
+            {
+                ++SyncStats.BindsSkipped;
             }
 
-            // The other place a resolve identity settles; mirror it for the sweep.
-            ResolveKeys[Index] = PackResolveKey(Prim.ResolveHandle, Prim.ResolveGeneration);
-
-            Prim.Transform = Instance.Transform;
-            Prim.EntityID  = entt::to_integral(Entity);
-            Prim.CustomData = 0u;
-
-            // The bake already produced the world sphere; there is no local sphere to transform.
-            Bounds[Index] = Instance.SphereBounds;
-            RefreshInstances(Index);
+            RefreshFoliageInstance(Ref, Type, Instance, EntityID);
         }
 
-        OldCount = NewCount;
+        if (DeadBindings > 1024 && DeadBindings * 4 > (uint32)Bindings.size())
+        {
+            CompactBindings();
+        }
+
         ++StructureGeneration;
+    }
+
+    bool FScenePrimitiveSet::FoliageBindingsMatchMemo(const FFoliageInstanceRef& Ref, const FBindingMemo* Memo) const
+    {
+        if (Memo == nullptr)
+        {
+            return Ref.SurfaceCount == 0u;
+        }
+
+        for (uint32 s = 0; s < Ref.SurfaceCount; ++s)
+        {
+            const FSurfaceBinding& Have = Bindings[Ref.BindingBase + s];
+            const FSurfaceBinding& Want = Memo->Protos[s];
+
+            if (Have.BatchIndex       != Want.BatchIndex
+             || Have.SurfaceDescIndex != Want.SurfaceDescIndex
+             || Have.MaterialIndex    != Want.MaterialIndex
+             || Have.MaterialFlags    != Want.MaterialFlags
+             || Have.bMaterialCastsShadows != Want.bMaterialCastsShadows)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // Foliage checks one key per TYPE rather than one per instance, so a field of it adds a handful of
+    // comparisons to the sweep instead of one per painted blade.
+    void FScenePrimitiveSet::SweepFoliageResolves(FMeshResolveCache& Cache)
+    {
+        for (const auto& Pair : FoliageByEntity)
+        {
+            for (const uint64 Packed : Pair.second.TypeResolveKeys)
+            {
+                const uint32 Handle = (uint32)(Packed & 0xFFFFFFFFull);
+                if (Handle >= (uint32)GenSnapshot.size())
+                {
+                    continue;
+                }
+
+                uint32 Generation = GenSnapshot[Handle];
+                if (Generation == ~0u)
+                {
+                    Generation = Cache.GetEntry(Handle).Generation;
+                    GenSnapshot[Handle] = Generation;
+                }
+
+                if (Generation != (uint32)(Packed >> 32))
+                {
+                    RetryScratch.push_back(MakeKey(Pair.first, EPrimitiveSource::Foliage));
+                    break;
+                }
+            }
+        }
     }
 
     void FScenePrimitiveSet::FullRescan(FEntityRegistry& Registry)
@@ -1384,7 +1566,6 @@ namespace Lumina
         CullData.clear();
         Keys.clear();
         ResolveKeys.clear();
-        IndexByKey.clear();
         Bindings.clear();
         // Every slice died with the primitives, so the arena restarts rather than leaking live bases.
         BoneSliceFreeLists.clear();
@@ -1405,7 +1586,7 @@ namespace Lumina
         SurfaceDescByHash.clear();
         bSurfaceDescsDirty = true;
         MaxSurfaceDescMeshlets = 0;
-        FoliageInstanceCount.clear();
+        FoliageByEntity.clear();
 
         const FSyncPools Pools(Registry);
 
@@ -1671,7 +1852,7 @@ namespace Lumina
             const EPrimitiveDirty FoliageFlags = Record.Flags[(uint32)EPrimitiveSource::Foliage];
             if (FoliageFlags != EPrimitiveDirty::None
                 && (Pools.Foliage->contains(Entity)
-                    || (!FoliageInstanceCount.empty() && FoliageInstanceCount.find(Entity) != FoliageInstanceCount.end())))
+                    || (!FoliageByEntity.empty() && FoliageByEntity.find(Entity) != FoliageByEntity.end())))
             {
                 SyncFoliage(Registry, Pools, Entity, FoliageFlags);
             }
@@ -1887,9 +2068,11 @@ namespace Lumina
 
                 if (Generation != (uint32)(Packed >> 32))
                 {
-                    RetryScratch.push_back(Keys[i] & kSyncTargetMask);
+                    RetryScratch.push_back(Keys[i]);
                 }
             }
+
+            SweepFoliageResolves(Cache);
 
             Algo::Sort(RetryScratch.begin(), RetryScratch.end());
             {
@@ -1945,7 +2128,6 @@ namespace Lumina
         CullData.clear();
         Keys.clear();
         ResolveKeys.clear();
-        IndexByKey.clear();
         Bindings.clear();
         // Every slice died with the primitives, so the arena restarts rather than leaking live bases.
         BoneSliceFreeLists.clear();
@@ -1966,7 +2148,7 @@ namespace Lumina
         SurfaceDescByHash.clear();
         bSurfaceDescsDirty = true;
         MaxSurfaceDescMeshlets = 0;
-        FoliageInstanceCount.clear();
+        FoliageByEntity.clear();
         Batches.Reset();
         // Always paired with Batches.Reset(), which renumbers every batch index the memo cached.
         BindingMemoByHandle.clear();

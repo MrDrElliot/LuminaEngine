@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using LuminaBuildTool.Configuration;
 
 /// <summary>Resolves the engine's optional features for a build.</summary>
@@ -20,7 +20,7 @@ public static class LuminaFeatures
 
     public const string BugSplat = "BugSplat";
 
-    public const string JoltDebugChecks = "JoltDebugChecks";
+    public const string Box3DDebugChecks = "Box3DDebugChecks";
 
     public static bool IsActive(TargetInfo Target, string Feature)
     {
@@ -49,8 +49,8 @@ public static class LuminaFeatures
             // Query pools and their readback are dead weight in a shipping build.
             GpuProfiling => bNonShipping,
 
-            // Debug only: on in Development these instrumented every physics measurement taken there.
-            JoltDebugChecks => Target.Configuration == BuildConfiguration.Debug,
+            // Debug only. On in Development these instrumented every physics measurement taken there.
+            Box3DDebugChecks => Target.Configuration == BuildConfiguration.Debug,
 
             // Debug only; too expensive elsewhere. Debug also enables robustBufferAccess (see CreateDevice).
             Validation => Target.Configuration == BuildConfiguration.Debug,

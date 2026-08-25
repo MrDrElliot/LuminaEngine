@@ -46,6 +46,11 @@ namespace Lumina
 
         void Initialize();
 
+        /** Blocks until the GPU has finished with the slot this frame is about to record into. Called at
+         *  the top of the application loop, BEFORE input is pumped: everything between sampling the mouse
+         *  and submitting is input latency, and this wait is the longest thing in that window. */
+        void WaitForFrameSlot();
+
         // ImGui::NewFrame (and any other backend per-frame init).
         void FrameStart(const FUpdateContext& UpdateContext);
 
@@ -99,6 +104,9 @@ namespace Lumina
         std::atomic<uint64>                 PendingResizeExtent = 0;
 
         uint8                               CurrentFrameIndex = 0;
+
+        // Set by WaitForFrameSlot, cleared by the FrameEnd that consumes it.
+        bool                                bFrameSlotWaited = false;
     };
     
     NODISCARD RUNTIME_API FRenderManager& Render();

@@ -16,6 +16,7 @@ namespace Lumina
 {
     class CWorld;
     struct SFoliageComponent;
+    struct FFoliageBakedInstance;
     struct FDynamicMeshRenderData;
 
     enum class EPrimitiveSource : uint8
@@ -124,14 +125,19 @@ namespace Lumina
 
             uint32                          RefCount = 0;
 
+            // Bound instances, not visible ones. The SPEC_SKINNED variant is a property of everything the
+            // GPU cull can emit into this batch, and the CPU gather sees only what it culled to.
+            uint32                          SkinnedRefCount = 0;
+            uint32                          StaticRefCount = 0;
+
             TVector<FDeferredMaterialSlot>  DeferredMaterials;
         };
 
         uint32 FindOrAddBatch(const FResolvedSurface& Surface);
 
-        void AddBatchRef(uint32 BatchIndex);
+        void AddBatchRef(uint32 BatchIndex, bool bSkinned);
 
-        void ReleaseBatchRef(uint32 BatchIndex);
+        void ReleaseBatchRef(uint32 BatchIndex, bool bSkinned);
 
         uint32          Num() const { return (uint32)Batches.size(); }
         FBatch&         Get(uint32 Index) { return Batches[Index]; }
@@ -157,6 +163,9 @@ namespace Lumina
         uint16          MaterialIndex;
         EInstanceFlags  MaterialFlags;
         bool            bMaterialCastsShadows;
+        // Held so the release decrements the same counter the bind incremented, whatever the primitive
+        // has become since. Not part of the memo proto; the primitive owns it, not the resolve.
+        bool            bSkinned = false;
 
         // Mesh-local world size of one UV tile; 0 = unknown. Read by the texture-streaming gather to turn
         // a distance into a required texture resolution. See FGeometrySurface::TexelFactor.
@@ -285,17 +294,12 @@ namespace Lumina
 
     private:
 
-        static constexpr uint32 kKeySourceShift   = 32;
-        static constexpr uint32 kKeySubIndexShift = 40;
+        static constexpr uint32 kKeySourceShift = 32;
 
-        static uint64 MakeKey(entt::entity Entity, EPrimitiveSource Source, uint32 SubIndex = 0)
+        static uint64 MakeKey(entt::entity Entity, EPrimitiveSource Source)
         {
-            return (uint64)entt::to_integral(Entity)
-                 | ((uint64)Source << kKeySourceShift)
-                 | ((uint64)SubIndex << kKeySubIndexShift);
+            return (uint64)entt::to_integral(Entity) | ((uint64)Source << kKeySourceShift);
         }
-
-        static constexpr uint64 kSyncTargetMask = (1ull << kKeySubIndexShift) - 1ull;
 
         uint32  FindPrimitive(uint64 Key) const;
         uint32  AddPrimitive(uint64 Key);
@@ -310,6 +314,9 @@ namespace Lumina
         // Binds one primitive's surfaces to the batch registry. Only called when its resolve changed.
         void    BindSurfaces(uint32 Index);
         void    ReleaseBindings(uint32 Index);
+        // The half of the two above that only needs the span, so foliage instances share it.
+        uint32  AppendBindingSpan(const FBindingMemo& Memo, bool bSkinned);
+        void    ReleaseBindingSpan(uint32 Base, uint32 Count);
 
         const FBindingMemo* EnsureBindingMemo(uint32 ResolveHandle, uint32 Generation,
                                               const TVector<FResolvedSurface>& Surfaces);
@@ -347,8 +354,6 @@ namespace Lumina
         TVector<FVector4>                   Bounds;
         TVector<FPrimitiveCullData>         CullData;
         TVector<uint64>                     Keys;           // parallel: index -> key, for swap-remove fixup
-
-        THashMap<uint64, uint32>            IndexByKey;
 
         TVector<uint64>                     ResolveKeys;
 
@@ -394,8 +399,6 @@ namespace Lumina
         void    SetLink(entt::entity Entity, EPrimitiveSource Source, uint32 Index);
         void    ClearLink(entt::entity Entity, EPrimitiveSource Source);
 
-        THashMap<entt::entity, uint32>      FoliageInstanceCount;
-
         struct FFoliageTypeResolve
         {
             const TVector<FResolvedSurface>*    Surfaces = nullptr;
@@ -407,6 +410,42 @@ namespace Lumina
             bool                                bCastShadow = true;
         };
         TVector<FFoliageTypeResolve>        FoliageTypeScratch;
+
+        /**
+         * A painted instance is NOT a primitive. Everything a FScenePrimitive would carry for one is
+         * either shared by every instance of its foliage type (surfaces, meshlet slot, flags, cull
+         * distance, resolve identity) or already sitting in the component's bake (world transform, world
+         * sphere). What is genuinely per instance is the span of instance slots it owns, so that is all
+         * this holds -- 8 bytes against the ~250 a primitive plus its parallel arrays and hash entry cost.
+         *
+         * The consequence that matters beyond the bytes: a field of foliage no longer lengthens any of the
+         * whole-table sweeps, that is the resolve-staleness walk, the bone-slice sweep, and the retry list.
+         */
+        struct FFoliageInstanceRef
+        {
+            uint32 BindingBase  = 0;
+            uint16 SurfaceCount = 0;
+            uint16 TypeRow      = 0xFFFFu;
+        };
+        static_assert(sizeof(FFoliageInstanceRef) == 8, "One instance per 8 bytes is the point of this table.");
+
+        struct FFoliageEntityState
+        {
+            TVector<FFoliageInstanceRef>    Instances;
+            // Resolve identity per TYPE, which is what the staleness sweep compares instead of per instance.
+            TVector<uint64>                 TypeResolveKeys;
+        };
+        THashMap<entt::entity, FFoliageEntityState> FoliageByEntity;
+
+        void    ReleaseFoliageInstance(FFoliageInstanceRef& Ref);
+        void    RefreshFoliageInstance(const FFoliageInstanceRef& Ref, const FFoliageTypeResolve& Type,
+                                       const FFoliageBakedInstance& Instance, uint32 EntityID);
+        bool    FoliageBindingsMatchMemo(const FFoliageInstanceRef& Ref, const FBindingMemo* Memo) const;
+        // Appends a retry target per foliage entity whose type resolve moved. Pairs with the primitive sweep.
+        void    SweepFoliageResolves(FMeshResolveCache& Cache);
+
+        // Memo per type for one SyncFoliage call; parallel to FoliageTypeScratch.
+        TVector<const FBindingMemo*>        FoliageMemoScratch;
 
         TVector<FRenderDirtyTracker::FEntry> DrainScratch;
         TVector<CMaterialInterface*>        OverrideScratch;

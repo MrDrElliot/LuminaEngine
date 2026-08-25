@@ -58,7 +58,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Body|Frame")
         FVector3 RotationOffset = FVector3(0.0f);
 
-        /** Body mass (kg) when bOverrideMass is set; otherwise Jolt computes it from shape + density. */
+        /** Body mass (kg) when bOverrideMass is set; otherwise it is computed from shape and density. */
         PROPERTY(Editable, ClampMin = 0.001f, Category = "Body")
         float Mass = 1.0f;
 

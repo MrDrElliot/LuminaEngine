@@ -157,6 +157,15 @@ namespace Lumina
         
     }
     
+    void FRenderManager::WaitForFrameSlot()
+    {
+        LUMINA_PROFILE_SECTION_COLORED("Frame Fence (GPU)", tracy::Color::Crimson);
+
+        // FrameEnd records into CurrentFrameIndex and advances afterwards, so this is that same slot.
+        RHI::Core::BeginFrame(CurrentFrameIndex);
+        bFrameSlotWaited = true;
+    }
+
     void FRenderManager::FrameStart(const FUpdateContext& UpdateContext)
     {
         LUMINA_PROFILE_SCOPE();
@@ -180,10 +189,14 @@ namespace Lumina
         #endif
 
         {
+            // Normally already done at the top of the frame; this covers a caller that drives FrameEnd
+            // directly, and a frame whose slot advanced past an early-out above.
+            if (!bFrameSlotWaited)
             {
                 LUMINA_PROFILE_SECTION_COLORED("Frame Fence (GPU)", tracy::Color::Crimson);
                 RHI::Core::BeginFrame(ThisFrameIndex);
             }
+            bFrameSlotWaited = false;
 
             ApplyPendingResize();
 

@@ -18,7 +18,7 @@ namespace Lumina
     };
 
     /** Per-collider surface properties (friction, restitution, density) + combine modes, consumed by
-     *  FJoltContactListener::OverrideFrictionAndRestitution. No material = rigid body *Override fallback / Jolt defaults. */
+     *  the world friction and restitution callbacks. No material falls back to the rigid body overrides. */
     REFLECT()
     class RUNTIME_API CPhysicsMaterial : public CObject
     {

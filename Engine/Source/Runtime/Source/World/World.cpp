@@ -333,7 +333,7 @@ namespace Lumina
         EntityRegistry.emplace<FSingletonEntityTag>(SingletonEntity);
         EntityRegistry.emplace<FHideInSceneOutliner>(SingletonEntity);
         
-        // Physics scene only for simulating worlds; Jolt reserves ~hundreds of MB up front.
+        // Physics scene only for simulating worlds; the world reserves its body arrays up front.
         if (WorldType == EWorldType::Game || WorldType == EWorldType::Simulation)
         {
             PhysicsScene = Physics::GetPhysicsContext()->CreatePhysicsScene(this);
@@ -749,7 +749,7 @@ namespace Lumina
         TVector<FPendingLaunch> PendingLaunches;
         PendingLaunches.reserve(Pieces.size());
 
-        // Cap fragments at physics body headroom, since overflowing Jolt's buffers trips a hard assert.
+        // Cap fragments at physics body headroom, since overflowing the body arrays trips a hard assert.
         uint32 MaxFragments = 0xFFFFFFFFu;
         if (PhysicsScene)
         {

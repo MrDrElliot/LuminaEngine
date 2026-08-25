@@ -93,7 +93,22 @@ namespace Lumina
 		uint32                      		bMasked : 1;
 		uint32                      		bAdditive : 1;
 		uint32                      		bTwoSided : 1;        // two-sided material: VisBuffer disables back-face cull
-		uint32                      		bAnySkinned : 1;      // batch has >=1 skinned instance (SPEC_SKINNED variant select)
-		uint32                      		bAnyStatic  : 1;      // batch has >=1 static instance; both set => mixed => dynamic
+		uint32                      		bAnySkinned : 1;      // batch has >=1 skinned binding (SPEC_SKINNED variant select)
+		uint32                      		bAnyStatic  : 1;      // batch has >=1 static binding; both set => mixed => dynamic
 	};
+
+	// SPEC_SKINNED: 0 static-only, 1 skinned-only, 2 runtime branch. Specializing away a path the batch
+	// turns out to contain reads that geometry at the other vertex stride, so anything unproven takes 2.
+	FORCEINLINE uint8 SelectSkinnedMode(const FMeshDrawCommand& Batch)
+	{
+		if (Batch.bAnySkinned && Batch.bAnyStatic)
+		{
+			return 2u;
+		}
+		if (Batch.bAnySkinned)
+		{
+			return 1u;
+		}
+		return Batch.bAnyStatic ? 0u : 2u;
+	}
 }

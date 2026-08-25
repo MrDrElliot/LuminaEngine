@@ -1008,12 +1008,12 @@ namespace Lumina
 
         if (ImGui::BeginMenu("Physics"))
         {
-            if (const bool* bValue = FConsoleRegistry::Get().TryGetAs<bool>("Jolt.Debug.Draw"))
+            if (const bool* bValue = FConsoleRegistry::Get().TryGetAs<bool>("Physics.Debug.Draw"))
             {
                 bool bProxy = *bValue;
                 if (ImGui::MenuItem("Toggle Collision", nullptr, &bProxy))
                 {
-                    FConsoleRegistry::Get().SetAs("Jolt.Debug.Draw", bProxy);
+                    FConsoleRegistry::Get().SetAs("Physics.Debug.Draw", bProxy);
                 }
             }
             ImGui::EndMenu();

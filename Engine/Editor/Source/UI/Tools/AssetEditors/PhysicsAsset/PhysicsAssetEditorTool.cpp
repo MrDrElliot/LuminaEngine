@@ -1603,7 +1603,7 @@ namespace Lumina
         FloorBodyEntity = World->ConstructEntity("Simulation Floor");
         World->GetComponent<STransformComponent>(FloorBodyEntity).SetLocation(FVector3(0.0f, -0.5f, 0.0f));
 
-        // The Jolt body is built from what the component holds at construction, so pass values in.
+        // The body is built from what the component holds at construction, so pass values in.
         SRigidBodyComponent BodyDesc;
         BodyDesc.BodyType = EBodyType::Static;
         BodyDesc.CollisionProfile.Layer = ECollisionProfiles::Static;

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "Memory/SmartPtr.h"
 #include "Platform/GenericPlatform.h"
 
@@ -27,10 +27,10 @@ namespace Lumina::Physics
     
     enum class EPhysicsAPI : uint8
     {
-        Jolt,
+        Box3D,
     };
     
-    void Initialize(EPhysicsAPI API = EPhysicsAPI::Jolt);
+    void Initialize(EPhysicsAPI API = EPhysicsAPI::Box3D);
     void Shutdown();
 
     IPhysicsContext* GetPhysicsContext();

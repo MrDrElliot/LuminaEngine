@@ -1,4 +1,4 @@
-using LuminaBuildTool.Configuration;
+﻿using LuminaBuildTool.Configuration;
 
 public class Tests : LuminaModuleRules
 {
@@ -16,6 +16,7 @@ public class Tests : LuminaModuleRules
         {
             "Runtime",
             "GoogleTest",
+            "Box3D",
             "ImGui",
             "RPMalloc",
             "Entt",

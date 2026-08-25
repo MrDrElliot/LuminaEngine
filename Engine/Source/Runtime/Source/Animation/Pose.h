@@ -3,6 +3,7 @@
 #include "Containers/Vector.h"
 #include "Core/Math/AABB.h"
 #include "Core/Math/Matrix/MatrixMath.h"
+#include "Core/Math/SIMD/SIMD.h"
 #include "Core/Serialization/Archiver.h"
 #include "Renderer/SkeletonResource.h"
 
@@ -18,30 +19,116 @@ namespace Lumina
         MeshSpace,
     };
 
-    // Local-space skeletal pose (per-bone TRS relative to parent); the VM blends in this space,
-    // FK + InvBind fold into skinning matrices once when the final pose is resolved.
+    // Local-space pose as ten component streams in one allocation, each padded to the vector width.
     struct RUNTIME_API FPose
     {
-        TVector<FVector3> Translations;
-        TVector<FQuat> Rotations;
-        TVector<FVector3> Scales;
+        static constexpr int32 LaneWidth  = 8;
+        static constexpr int32 NumStreams = 10;
+
+        // Translation and scale are adjacent so a component-wise blend covers both in one range.
+        enum EStream : int32
+        {
+            StreamTx = 0, StreamTy, StreamTz,
+            StreamSx,     StreamSy, StreamSz,
+            StreamRx,     StreamRy, StreamRz, StreamRw,
+        };
+
+        static FORCEINLINE int32 StrideFor(int32 InNumBones)
+        {
+            return (InNumBones + (LaneWidth - 1)) & ~(LaneWidth - 1);
+        }
+
+        FPose() = default;
+        FPose(const FPose& Other);
+        FPose(FPose&& Other) noexcept;
+        FPose& operator=(const FPose& Other);
+        FPose& operator=(FPose&& Other) noexcept;
+        ~FPose();
+
+        FORCEINLINE int32 GetNumBones() const { return NumBones; }
+        FORCEINLINE int32 GetStride() const { return Stride; }
+        FORCEINLINE bool IsValid() const { return NumBones > 0; }
+        FORCEINLINE bool IsAdditive() const { return AdditiveSpace != EPoseAdditiveSpace::None; }
+
+        FORCEINLINE float* Stream(int32 Index) { return Data + (SIZE_T)Index * Stride; }
+        FORCEINLINE const float* Stream(int32 Index) const { return Data + (SIZE_T)Index * Stride; }
+
+        FORCEINLINE float* Tx() { return Stream(StreamTx); }
+        FORCEINLINE float* Ty() { return Stream(StreamTy); }
+        FORCEINLINE float* Tz() { return Stream(StreamTz); }
+        FORCEINLINE float* Sx() { return Stream(StreamSx); }
+        FORCEINLINE float* Sy() { return Stream(StreamSy); }
+        FORCEINLINE float* Sz() { return Stream(StreamSz); }
+        FORCEINLINE float* Rx() { return Stream(StreamRx); }
+        FORCEINLINE float* Ry() { return Stream(StreamRy); }
+        FORCEINLINE float* Rz() { return Stream(StreamRz); }
+        FORCEINLINE float* Rw() { return Stream(StreamRw); }
+
+        FORCEINLINE const float* Tx() const { return Stream(StreamTx); }
+        FORCEINLINE const float* Ty() const { return Stream(StreamTy); }
+        FORCEINLINE const float* Tz() const { return Stream(StreamTz); }
+        FORCEINLINE const float* Sx() const { return Stream(StreamSx); }
+        FORCEINLINE const float* Sy() const { return Stream(StreamSy); }
+        FORCEINLINE const float* Sz() const { return Stream(StreamSz); }
+        FORCEINLINE const float* Rx() const { return Stream(StreamRx); }
+        FORCEINLINE const float* Ry() const { return Stream(StreamRy); }
+        FORCEINLINE const float* Rz() const { return Stream(StreamRz); }
+        FORCEINLINE const float* Rw() const { return Stream(StreamRw); }
+
+        FORCEINLINE SIMD::FQuatStreams Rotations() { return { Rx(), Ry(), Rz(), Rw() }; }
+        FORCEINLINE SIMD::FConstQuatStreams Rotations() const { return { Rx(), Ry(), Rz(), Rw() }; }
+
+        FORCEINLINE FVector3 GetTranslation(int32 i) const { return FVector3(Tx()[i], Ty()[i], Tz()[i]); }
+        FORCEINLINE FVector3 GetScale(int32 i) const { return FVector3(Sx()[i], Sy()[i], Sz()[i]); }
+        FORCEINLINE FQuat GetRotation(int32 i) const { return FQuat(Rw()[i], Rx()[i], Ry()[i], Rz()[i]); }
+
+        FORCEINLINE void SetTranslation(int32 i, const FVector3& V) { Tx()[i] = V.x; Ty()[i] = V.y; Tz()[i] = V.z; }
+        FORCEINLINE void SetScale(int32 i, const FVector3& V) { Sx()[i] = V.x; Sy()[i] = V.y; Sz()[i] = V.z; }
+        FORCEINLINE void SetRotation(int32 i, const FQuat& Q) { Rx()[i] = Q.x; Ry()[i] = Q.y; Rz()[i] = Q.z; Rw()[i] = Q.w; }
+
+        FORCEINLINE void GetBone(int32 i, FVector3& OutT, FQuat& OutR, FVector3& OutS) const
+        {
+            OutT = GetTranslation(i);
+            OutR = GetRotation(i);
+            OutS = GetScale(i);
+        }
+
+        FORCEINLINE void SetBone(int32 i, const FVector3& T, const FQuat& R, const FVector3& S)
+        {
+            SetTranslation(i, T);
+            SetRotation(i, R);
+            SetScale(i, S);
+        }
+
+        FORCEINLINE void CopyBoneFrom(const FPose& Other, int32 Index)
+        {
+            for (int32 s = 0; s < NumStreams; ++s)
+            {
+                Stream(s)[Index] = Other.Stream(s)[Index];
+            }
+        }
+
+        // Existing bones survive a resize; new bones and the pad past the last bone read identity.
+        void SetNumBones(int32 InNumBones);
+
+        // Exchanges storage with Other; the executor uses this where a copy would only be a hand-off.
+        void Swap(FPose& Other);
+
+        // Fills every bone with the skeleton's bind-pose local transform.
+        void ResetToBindPose(const FSkeletonResource* Skeleton);
 
         // Every kernel that writes a pose stamps this, since pose buffers are pooled and reused.
         EPoseAdditiveSpace AdditiveSpace = EPoseAdditiveSpace::None;
 
-        FORCEINLINE int32 GetNumBones() const { return (int32)Rotations.size(); }
-        FORCEINLINE bool IsValid() const { return !Rotations.empty(); }
-        FORCEINLINE bool IsAdditive() const { return AdditiveSpace != EPoseAdditiveSpace::None; }
+    private:
 
-        void SetNumBones(int32 NumBones)
-        {
-            Translations.resize(NumBones);
-            Rotations.resize(NumBones);
-            Scales.resize(NumBones);
-        }
+        void Relayout(int32 NewStride, int32 NewNumBones);
+        void FillIdentity(int32 First, int32 Last);
 
-        // Fills every bone with the skeleton's bind-pose local transform.
-        void ResetToBindPose(const FSkeletonResource* Skeleton);
+        float* Data     = nullptr;
+        int32  NumBones = 0;
+        int32  Stride   = 0;
+        int32  Capacity = 0;
     };
 
     namespace AnimPose

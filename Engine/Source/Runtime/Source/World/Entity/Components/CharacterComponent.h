@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Core/Object/ObjectMacros.h"
+#include "Core/Templates/LuminaTemplate.h"
 #include "Memory/SmartPtr.h"
 #include "Physics/Physics.h"
 #include "Physics/PhysicsTypes.h"
@@ -9,7 +10,26 @@
 
 namespace Lumina
 {
-    struct FJoltCharacterHandle;
+    struct FPhysicsCharacterHandle;
+
+    // Runtime ownership, so a copied component starts detached and the construct hook builds it a proxy.
+    struct FCharacterHandleRef
+    {
+        TSharedPtr<FPhysicsCharacterHandle> Handle;
+
+        FCharacterHandleRef() = default;
+        FCharacterHandleRef(const FCharacterHandleRef&) {}
+        FCharacterHandleRef(FCharacterHandleRef&&) noexcept = default;
+        FCharacterHandleRef& operator=(const FCharacterHandleRef&) { Handle.reset(); return *this; }
+        FCharacterHandleRef& operator=(FCharacterHandleRef&&) noexcept = default;
+        FCharacterHandleRef& operator=(TSharedPtr<FPhysicsCharacterHandle>&& In) { Handle = Move(In); return *this; }
+
+        explicit operator bool() const { return Handle != nullptr; }
+        bool operator==(std::nullptr_t) const { return Handle == nullptr; }
+        FPhysicsCharacterHandle* operator->() const { return Handle.get(); }
+        FPhysicsCharacterHandle& operator*() const { return *Handle; }
+        void reset() { Handle.reset(); }
+    };
     
     REFLECT(Component, Category = "Character")
     struct RUNTIME_API SCharacterPhysicsComponent
@@ -23,7 +43,7 @@ namespace Lumina
         SCharacterPhysicsComponent(SCharacterPhysicsComponent&&) noexcept;
         SCharacterPhysicsComponent& operator=(SCharacterPhysicsComponent&&) noexcept;
         
-        TSharedPtr<FJoltCharacterHandle> Character;
+        FCharacterHandleRef Character;
 
         // Snapshots for interpolation.
         FVector3 LastBodyPosition;
@@ -33,33 +53,25 @@ namespace Lumina
         PROPERTY(Editable, Category = "Physics")
         FCollisionProfile CollisionProfile;
 
-        /** Half-height of the character capsule in meters. */
+        /** Half-height of the capsule cylinder in meters, so total height is 2*(HalfHeight+Radius). */
         PROPERTY(Editable, Category = "Collision", Units = "m")
-        float HalfHeight = 1.8f;
+        float HalfHeight = 0.55f;
 
         /** Radius of the character capsule in meters. */
         PROPERTY(Editable, Category = "Collision", Units = "m")
-        float Radius = 1.0f;
+        float Radius = 0.35f;
 
-        /** Mass of the character body in kg, affects how much it is pushed by dynamic bodies. */
+        /** Offset of the capsule from the entity origin, to seat the origin at the feet rather than the waist. */
+        PROPERTY(Editable, Category = "Collision", Units = "m")
+        FVector3 TranslationOffset = FVector3(0.0f);
+
+        /** Mass of the character in kg, scaling how hard it shoves the dynamic bodies it walks into. */
         PROPERTY(Editable, Category = "Physics", Units = "kg")
         float Mass = 70.0f;
 
-        /** Small gap between the character shape and other surfaces to prevent tunneling. */
+        /** Skin on the swept capsule, keeping the character a fraction clear of the surfaces it rests on. */
         PROPERTY(Editable, Category = "Physics", Units = "m")
         float Padding = 0.02f;
-
-        /** Cosine of the maximum angle between hit normals to be merged for reduction. */
-        PROPERTY(Editable, Category = "Physics")
-        float HitReductionCosMaxAngle = 0.999f;
-
-        /** Fraction of penetration resolved per step, higher values snap out of geometry faster. */
-        PROPERTY(Editable, Category = "Physics")
-        float PenetrationRecoverySpeed = 1.0f;
-
-        /** Distance ahead of the character to search for contacts and prevent clipping. */
-        PROPERTY(Editable, Category = "Physics", Units = "m")
-        float PredictiveContactDistance = 0.1f;
 
         /** Maximum push force the character can exert against dynamic bodies. */
         PROPERTY(Editable, Category = "Physics")
@@ -73,41 +85,20 @@ namespace Lumina
         PROPERTY(Editable, Category = "Physics", Units = "m")
         float StepHeight = 0.4f;
 
-        /** Maximum collision resolution iterations per step. Higher = more accurate but slower. */
-        PROPERTY(Editable, Category = "Physics")
-        uint32 MaxCollisionIterations = 5;
-
-        /** Maximum constraint solver iterations per step. */
-        PROPERTY(Editable, Category = "Physics")
-        uint32 MaxConstraintIterations = 15;
-
-        /** Minimum time remaining in a step before the character stops moving. */
-        PROPERTY(Editable, Category = "Physics")
-        float MinTimeRemaining = 1.0e-4f;
-
-        /** Tolerance for merging overlapping contact points (meters). */
+        /** How far the character may drop to stay on the floor after walking off a lip or down a step. */
         PROPERTY(Editable, Category = "Physics", Units = "m")
-        float CollisionTolerance = 1.0e-3f;
+        float StickToFloorDistance = 0.5f;
 
-        /** Maximum number of contact hits processed per step before culling. */
+        /** Depenetration passes per step. Higher pushes out of deeper overlap but costs a world query each. */
         PROPERTY(Editable, Category = "Physics")
-        uint32 MaxNumHits = 256;
+        uint32 MaxCollisionIterations = 8;
 
         // When true, the capsule contributes to NavMesh bakes so agents path around it. Default false: a path-follower
         // that obstructs the navmesh carves out its own floor poly and can't query. On only for obstacle characters.
         PROPERTY(Editable, Category = "Navigation")
         bool bAffectsNavigation = false;
 
-        // Spend extra effort removing ghost collisions with internal edges of meshes, so the character glides
-        // over tiled terrain / multi-triangle floors instead of catching on seams. Slightly more expensive.
-        PROPERTY(Editable, Category = "Physics")
-        bool bEnhancedInternalEdgeRemoval = true;
-
-        // When true, this character collides with OTHER characters as a character -- smooth mutual
-        // pushing/sliding via Jolt's CharacterVsCharacterCollision, instead of merely being blocked by their
-        // inner bodies. Note: because that check isn't thread-safe, enabling it on ANY character makes the
-        // per-frame character update run serially, so very large crowds lose the parallel update. Set this
-        // consistently across characters that should interact.
+        /** When false, the mover passes through the capsules of other characters instead of being blocked. */
         PROPERTY(Editable, Category = "Physics")
         bool bCollideWithCharacters = true;
 
@@ -204,8 +195,8 @@ namespace Lumina
         bool      bLaunchOverrideHorizontal = false;
         bool      bLaunchOverrideVertical   = false;
 
-        // Staged Teleport (respawn) consumed in the physics step; moves the
-        // authoritative CharacterVirtual, which a plain transform write cannot.
+        // Staged teleport consumed in the physics step, since the mover owns the pose and a plain
+        // transform write would be overwritten by it.
         FVector3 PendingTeleportLocation = FVector3(0.0f);
         bool      bPendingTeleport        = false;
     };

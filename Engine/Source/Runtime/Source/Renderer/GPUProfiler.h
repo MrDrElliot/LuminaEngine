@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Core/LuminaMacros.h"
+#include "Lumina.h"
 
 #if defined(LUMINA_WITH_GPU_PROFILING)
 

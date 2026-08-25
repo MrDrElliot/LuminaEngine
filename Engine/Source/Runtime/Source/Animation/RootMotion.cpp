@@ -61,14 +61,17 @@ namespace Lumina::RootMotion
 
         if (Skeleton->HasBindPoseCache())
         {
-            Pose.Translations[RootIndex] = Skeleton->BindLocalTranslations[RootIndex];
-            Pose.Rotations[RootIndex]    = Skeleton->BindLocalRotations[RootIndex];
-            Pose.Scales[RootIndex]       = Skeleton->BindLocalScales[RootIndex];
+            Pose.SetBone(RootIndex,
+                         Skeleton->BindLocalTranslations[RootIndex],
+                         Skeleton->BindLocalRotations[RootIndex],
+                         Skeleton->BindLocalScales[RootIndex]);
             return;
         }
 
-        AnimPose::DecomposeTRS(Skeleton->GetBone(RootIndex).LocalTransform,
-                               Pose.Translations[RootIndex], Pose.Rotations[RootIndex], Pose.Scales[RootIndex]);
+        FVector3 T, S;
+        FQuat R;
+        AnimPose::DecomposeTRS(Skeleton->GetBone(RootIndex).LocalTransform, T, R, S);
+        Pose.SetBone(RootIndex, T, R, S);
     }
 
     FRootMotionDelta ExtractRootDelta(const CAnimation* Animation,

@@ -128,7 +128,7 @@ namespace Lumina
                     return;
                 }
 
-                // Jolt derives submerged volume from the real collider, so depth and self-righting stay accurate.
+                // Submerged volume comes from the body bounds against the fluid plane.
                 const float SurfaceY = Plane->SurfaceY + WaterGerstnerHeight(*Plane->W, BodyPos.x, BodyPos.z, Time);
                 const FVector3 SurfacePos(BodyPos.x, SurfaceY, BodyPos.z);
                 const FVector3 SurfaceNormal = WaterGerstnerNormal(*Plane->W, BodyPos.x, BodyPos.z, Time);

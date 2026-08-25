@@ -39,6 +39,14 @@ namespace Lumina
         // Global bind pose per bone, the inverse of InvBindMatrix. Derived, never serialized.
         TVector<FMatrix4>       BindGlobalMatrices;
 
+        // What the skinning pass reads, lifted out of FBoneInfo's stride. Derived, never serialized.
+        TVector<int32>          BoneParents;
+        TVector<FMatrix4>       BoneInvBind;
+
+        // The bind pose in FPose's stream layout, so ResetToBindPose is one memcpy. Never serialized.
+        TVector<float>          BindLocalStreams;
+        int32                   BindStreamStride = 0;
+
         uint32                  BindPoseGeneration = 0;
 
         // Transient import-dialog flag; not serialized.
@@ -54,6 +62,11 @@ namespace Lumina
         FORCEINLINE bool HasBindGlobalMatrices() const
         {
             return !Bones.empty() && BindGlobalMatrices.size() == Bones.size();
+        }
+
+        FORCEINLINE bool HasFlatBoneCache() const
+        {
+            return !Bones.empty() && BoneParents.size() == Bones.size() && BoneInvBind.size() == Bones.size();
         }
 
         void BuildBindPoseCache();

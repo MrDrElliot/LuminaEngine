@@ -219,7 +219,7 @@ namespace Lumina
             return ((uint64)SubIndex << 40) | ((uint64)(uint32)E << 8) | (uint64)T;
         }
 
-        // Matches Jolt body placement so nav geometry overlaps physics exactly.
+        // Matches body placement so nav geometry overlaps physics exactly.
         FORCEINLINE FMatrix4 ColliderToWorld(const STransformComponent& X, const FVector3& TransOffset, const FVector3& EulerOffset)
         {
             const FMatrix4 LocalOffset = Math::Translate(FMatrix4(1.0f), TransOffset)
@@ -300,7 +300,7 @@ namespace Lumina
             }
         }
 
-        // Cylinder + hemispheres along +Y (Jolt CapsuleShape). Total height = 2*HalfHeight + 2*Radius.
+        // Cylinder + hemispheres along +Y (capsule shape). Total height = 2*HalfHeight + 2*Radius.
         void EmitCapsuleGeometry(const FMatrix4& W, float HalfHeight, float Radius, const FVector3& BakeMin, const FVector3& BakeMax, FGatherAccumulator& Acc)
         {
             constexpr int Segments = 12;
@@ -352,7 +352,7 @@ namespace Lumina
             }
         }
 
-        // Flat-capped cylinder along +Y (Jolt CylinderShape). CapRadius rounding is ignored for nav.
+        // Flat-capped cylinder along +Y (cylinder hull). CapRadius rounding is ignored for nav.
         void EmitCylinderGeometry(const FMatrix4& W, float HalfHeight, float Radius, const FVector3& BakeMin, const FVector3& BakeMax, FGatherAccumulator& Acc)
         {
             constexpr int Segments = 16;
@@ -377,7 +377,7 @@ namespace Lumina
             }
         }
 
-        // Explicit Mesh wins; falls back to StaticMeshComponent. Mirrors Jolt's resolution.
+        // Explicit Mesh wins; falls back to StaticMeshComponent. Mirrors the collider resolution.
         CStaticMesh* ResolveMeshColliderAsset(const SMeshColliderComponent& MC, const SStaticMeshComponent* Fallback)
         {
             if (CStaticMesh* M = MC.Mesh.Get())
@@ -762,7 +762,9 @@ namespace Lumina
                 FNavSourceEntry Entry;
                 Entry.Key = PackSourceKey(E, ENavColliderType::CharacterCapsule);
                 Entry.Prim.Type = ENavColliderType::CharacterCapsule;
-                Entry.Prim.World = CharView.get<STransformComponent>(E).GetWorldMatrix();
+                FMatrix4 CapsuleWorld = CharView.get<STransformComponent>(E).GetWorldMatrix();
+                CapsuleWorld[3] = CapsuleWorld * FVector4(Cap.TranslationOffset.x, Cap.TranslationOffset.y, Cap.TranslationOffset.z, 1.0f);
+                Entry.Prim.World = CapsuleWorld;
                 Entry.Prim.Shape = FVector3(Cap.Radius, Cap.HalfHeight, 0.0f);
                 const FVector3 Top = FVector3(Entry.Prim.World * FVector4(0.0f,  Cap.HalfHeight, 0.0f, 1.0f));
                 const FVector3 Bot = FVector3(Entry.Prim.World * FVector4(0.0f, -Cap.HalfHeight, 0.0f, 1.0f));
