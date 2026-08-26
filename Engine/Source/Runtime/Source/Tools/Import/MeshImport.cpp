@@ -1,4 +1,5 @@
 ﻿#include "RuntimePCH.h"
+#include <cfloat>
 #include "ImportHelpers.h"
 #include "Assets/AssetTypes/Mesh/Animation/Animation.h"
 #include "Core/Progress/SlowTask.h"

@@ -1193,12 +1193,12 @@ namespace Lumina
         ImGui::BeginChild("CurvePlot", ImVec2(0, 0), true);
 
         const int32 SelectedBone = SelectedChannel / NumTrackKinds;
-        const int32 SelectedKind = SelectedChannel % NumTrackKinds;
-        const FCompressedAnimTrack* Track = SelectedChannel >= 0 ? TrackFor(SelectedBone, SelectedKind) : nullptr;
+        const int32 SelectedTrackKind = SelectedChannel % NumTrackKinds;
+        const FCompressedAnimTrack* Track = SelectedChannel >= 0 ? TrackFor(SelectedBone, SelectedTrackKind) : nullptr;
 
         if (Track != nullptr && Track->Format != EAnimTrackFormat::None)
         {
-            ImGui::Text("Channel: %s - (%s)", Compressed.Bones[SelectedBone].BoneName.c_str(), PathNames[SelectedKind]);
+            ImGui::Text("Channel: %s - (%s)", Compressed.Bones[SelectedBone].BoneName.c_str(), PathNames[SelectedTrackKind]);
 
             if (ImPlot::BeginPlot("##AnimCurves", ImVec2(-1, -1)))
             {
@@ -1232,11 +1232,11 @@ namespace Lumina
                     Times.push_back((float)Frame * FrameStep);
 
                     FVector3 Value;
-                    if (SelectedKind == 1)
+                    if (SelectedTrackKind == 1)
                     {
                         Value = Math::Degrees(Math::EulerAngles(Compressed.DecodeRotation(*Track, Frame, Frame, 0.0f)));
                     }
-                    else if (SelectedKind == 0)
+                    else if (SelectedTrackKind == 0)
                     {
                         Value = Compressed.DecodeTranslation(*Track, Frame, Frame, 0.0f);
                     }
@@ -1250,7 +1250,7 @@ namespace Lumina
                     ZVals.push_back(Value.z);
                 }
 
-                const char* Suffix = SelectedKind == 1 ? " (deg)" : "";
+                const char* Suffix = SelectedTrackKind == 1 ? " (deg)" : "";
                 ImPlot::PlotLine(FormatAs<FFixedString>("X{}", Suffix).c_str(),
                                  Times.data(), XVals.data(), (int)NumFrames);
                 ImPlot::PlotLine(FormatAs<FFixedString>("Y{}", Suffix).c_str(),

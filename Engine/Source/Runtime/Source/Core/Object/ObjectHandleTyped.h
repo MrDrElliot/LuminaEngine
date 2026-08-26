@@ -127,7 +127,7 @@ namespace Lumina
             return *this;
         }
 
-        TObjectPtr& operator=(nullptr_t)
+        TObjectPtr& operator=(std::nullptr_t)
         {
             ReleaseInternal();
             return *this;
@@ -176,8 +176,8 @@ namespace Lumina
         bool operator==(T* Other) const { return Object == Other; }
         bool operator!=(T* Other) const { return Object != Other; }
         // Routed through Get, so a null test and a later deref of the same handle cannot disagree.
-        bool operator==(nullptr_t) const { return Get() == nullptr; }
-        bool operator!=(nullptr_t) const { return Get() != nullptr; }
+        bool operator==(std::nullptr_t) const { return Get() == nullptr; }
+        bool operator!=(std::nullptr_t) const { return Get() != nullptr; }
 
         template<typename U> friend class TObjectPtr;
         template<typename U> friend class TWeakObjectPtr;
@@ -294,7 +294,7 @@ namespace Lumina
             return *this;
         }
 
-        TWeakObjectPtr& operator=(nullptr_t)
+        TWeakObjectPtr& operator=(std::nullptr_t)
         {
             ReleaseWeakRefInternal();
             return *this;
@@ -339,8 +339,8 @@ namespace Lumina
 
         bool operator==(const TWeakObjectPtr& Other) const { return Handle == Other.Handle; }
         bool operator!=(const TWeakObjectPtr& Other) const { return Handle != Other.Handle; }
-        bool operator==(nullptr_t) const { return !IsValid(); }
-        bool operator!=(nullptr_t) const { return IsValid(); }
+        bool operator==(std::nullptr_t) const { return !IsValid(); }
+        bool operator!=(std::nullptr_t) const { return IsValid(); }
 
         template<typename U> friend class TWeakObjectPtr;
     };

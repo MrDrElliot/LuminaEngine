@@ -12,12 +12,49 @@
 #include "Reflector/ReflectionCore/ReflectedProject.h"
 #include "Visitors/ClangTranslationUnit.h"
 
+#if !defined(_WIN32)
+    #include <dlfcn.h>
+#endif
+
 
 
 namespace Lumina::Reflection
 {
     namespace
     {
+        // libclang resolves its builtin headers relative to the host executable, which for the Reflector
+        // is Binaries/, never the bundle. Windows does not need them: clang takes stddef.h, float.h and
+        // the intrinsics from the MSVC headers it auto-detects, which is why only Linux breaks without this.
+        std::string FindClangResourceDir()
+        {
+#if defined(_WIN32)
+            return {};
+#else
+            // &clang_createIndex would resolve to this executable's PLT stub, naming Binaries again.
+            void* Symbol = dlsym(RTLD_DEFAULT, "clang_createIndex");
+
+            Dl_info Info;
+            if (Symbol == nullptr || dladdr(Symbol, &Info) == 0 || Info.dli_fname == nullptr)
+            {
+                return {};
+            }
+
+            std::error_code Error;
+            const std::filesystem::path ClangDir = std::filesystem::path(Info.dli_fname).parent_path() / "clang";
+
+            // Named by version, and which one is a property of the bundle rather than of this tool.
+            for (const auto& Entry : std::filesystem::directory_iterator(ClangDir, Error))
+            {
+                if (std::filesystem::exists(Entry.path() / "include" / "stddef.h"))
+                {
+                    return Entry.path().string();
+                }
+            }
+
+            return {};
+#endif
+        }
+
         FDiagLocation MakeLocationFromDiagnostic(CXDiagnostic Diagnostic)
         {
             FDiagLocation Result;
@@ -234,8 +271,13 @@ namespace Lumina::Reflection
         AppendArg("-x");
         AppendArg("c++");
         AppendArg("-std=c++23");
+        if (const std::string ResourceDir = FindClangResourceDir(); !ResourceDir.empty())
+        {
+            AppendArg("-resource-dir=" + ResourceDir);
+        }
         AppendArg("-O0");
         AppendArg("-DREFLECTION_PARSER");
+#if defined(_WIN32)
         // libclang trails the MSVC STL's supported-compiler floor, and its version assert poisons <type_traits>.
         AppendArg("-D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH");
         // MSVC's offsetof is a reinterpret_cast that is never constexpr; this selects __builtin_offsetof.
@@ -243,8 +285,11 @@ namespace Lumina::Reflection
         // A Debug target's _STL_VERIFY calls builtins this libclang lacks, breaking the STL types it guards.
         AppendArg("-D_ITERATOR_DEBUG_LEVEL=0");
         AppendArg("-D_CONTAINER_DEBUG_LEVEL=0");
+        // These exist to parse the MSVC STL. Elsewhere the standard library is libstdc++, and MS mode
+        // demotes char16_t/char32_t to the library typedefs only <vcruntime.h> supplies.
         AppendArg("-fms-extensions");
         AppendArg("-fms-compatibility");
+#endif
         AppendArg("-Wfatal-errors=0");
         AppendArg("-ferror-limit=1000000000");
         AppendArg("-Wno-multichar");

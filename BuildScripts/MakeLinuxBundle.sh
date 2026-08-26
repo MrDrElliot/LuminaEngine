@@ -162,6 +162,16 @@ done | sort -u | while read -r SoName; do
     fi
 done
 
+# Clang's own builtin headers -- stddef.h, float.h, the intrinsics. Nothing else supplies these on
+# Linux: glibc does not ship them, and libclang resolves its resource directory relative to the host
+# executable, so it finds nothing beside the Reflector either. Windows never needs them because clang
+# takes them from the MSVC headers it auto-detects, which is why omitting them breaks only this platform.
+ClangResourceDir="$(readlink -f "$LlvmRoot/lib/clang/$LLVM_MAJOR" 2>/dev/null || true)"
+[ -n "$ClangResourceDir" ] && [ -d "$ClangResourceDir/include" ] \
+    || Fail "$LlvmRoot/lib/clang/$LLVM_MAJOR/include is missing. Install libclang-common-$LLVM_MAJOR-dev."
+mkdir -p "$STAGE/LLVM/lib/clang/$LLVM_MAJOR"
+cp -RL "$ClangResourceDir/include" "$STAGE/LLVM/lib/clang/$LLVM_MAJOR/include"
+
 "$LlvmRoot/bin/llvm-config" --version > "$STAGE/LLVM/Version.txt" 2>/dev/null \
     || echo "$LLVM_MAJOR" > "$STAGE/LLVM/Version.txt"
 
@@ -259,6 +269,8 @@ Require "LLVM/lib/libclang.so"        "Reflector links -lclang and stages this; 
 Require "LLVM/include/clang-c/Index.h" "Reflector's parse headers"
 Require "LLVM/include/clang/AST/Decl.h" "Reflector's visitors use the C++ AST API, not just clang-c"
 Require "LLVM/include/llvm/Support/Casting.h" "pulled in by the clang C++ headers"
+Require "LLVM/lib/clang/$LLVM_MAJOR/include/stddef.h" "clang's builtin headers; the Reflector parse has no ptrdiff_t or NULL without them"
+Require "LLVM/lib/clang/$LLVM_MAJOR/include/immintrin.h" "clang's builtin headers; the engine's SIMD headers include these"
 Require "SLang/lib/libslang.so"       "linked as -lslang"
 Require "SLang/bin/slangc"            "shader compilation"
 Require "DotNet/runtime/linux-x64"    "DotNetHost resolves runtime/<rid> from RuntimeRid()"

@@ -49,9 +49,9 @@ namespace Lumina
         }
 
         // An enum member is as wide as its underlying type, so reading it as int32 would take neighbors.
-        if (FEnumProperty* EnumProperty = dynamic_cast<FEnumProperty*>(DefaultProperty))
+        if (DefaultProperty->GetType() == EPropertyTypeFlags::Enum)
         {
-            if (FNumericProperty* Inner = EnumProperty->GetInnerProperty())
+            if (FNumericProperty* Inner = static_cast<FEnumProperty*>(DefaultProperty)->GetInnerProperty())
             {
                 return (int32)Inner->GetSignedIntPropertyValue(Value);
             }
@@ -110,8 +110,9 @@ namespace Lumina
             return 90.0f;
 
         case EAudioGraphType::Int32:
-            if (FEnumProperty* EnumProperty = dynamic_cast<FEnumProperty*>(DefaultProperty))
+            if (DefaultProperty->GetType() == EPropertyTypeFlags::Enum)
             {
+                FEnumProperty* EnumProperty = static_cast<FEnumProperty*>(DefaultProperty);
                 CEnum* Enum = EnumProperty->GetEnum();
                 FNumericProperty* Inner = EnumProperty->GetInnerProperty();
 

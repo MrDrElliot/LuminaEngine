@@ -331,11 +331,11 @@ namespace Lumina
 
                     if (ConduitNodeIDs.find(Exit->ToStateNodeID) != ConduitNodeIDs.end())
                     {
-                        EdNodeGraph::FError Error;
-                        Error.Name        = "Chained Conduits";
-                        Error.Description = "A conduit wired into another conduit is not supported; wire it to a State.";
-                        Error.Node        = this;
-                        Compiler.AddError(Error);
+                        EdNodeGraph::FError CompileError;
+                        CompileError.Name        = "Chained Conduits";
+                        CompileError.Description = "A conduit wired into another conduit is not supported; wire it to a State.";
+                        CompileError.Node        = this;
+                        Compiler.AddError(CompileError);
                         continue;
                     }
                     Exits.push_back(Exit);
@@ -361,12 +361,12 @@ namespace Lumina
                 {
                     if (Exit != nullptr && (!CanCombine(Transition) || !CanCombine(Exit)))
                     {
-                        EdNodeGraph::FError Error;
-                        Error.Name        = "Conduit Rule Cannot Be Combined";
-                        Error.Description = "An edge through a conduit ANDs the two rules, so neither side may be an "
+                        EdNodeGraph::FError CompileError;
+                        CompileError.Name        = "Conduit Rule Cannot Be Combined";
+                        CompileError.Description = "An edge through a conduit ANDs the two rules, so neither side may be an "
                             "any-of rule with more than one condition. Split it into separate transitions.";
-                        Error.Node        = this;
-                        Compiler.AddError(Error);
+                        CompileError.Node        = this;
+                        Compiler.AddError(CompileError);
                         continue;
                     }
 

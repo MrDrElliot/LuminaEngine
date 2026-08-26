@@ -73,7 +73,7 @@ namespace Lumina
         }
 
         // Quintic offset-decay (Bollo 2018) with x(0)=X0, x'(0)=V0, x''(0)=0 and x(t1)=x'(t1)=x''(t1)=0.
-        float InertEval(float X0, float V0, float T1, float T)
+        [[maybe_unused]] float InertEval(float X0, float V0, float T1, float T)
         {
             if (T1 <= 1e-5f || X0 <= 1e-7f)
             {
@@ -207,10 +207,10 @@ namespace Lumina
             // SourcePrev is an empty pose until two frames of history exist, so bVel gates every read of it.
             const FPose& Prev = bVel ? SourcePrev : Target;
 
-            const auto WriteVectorChannel = [](FInertChannelSet& Set, int32 i, const FVector3& Source,
-                                               const FVector3& Prev, const FVector3& Target, float InvDelta)
+            const auto WriteVectorChannel = [](FInertChannelSet& Set, int32 i, const FVector3& Cur,
+                                               const FVector3& Previous, const FVector3& Dest, float InvDelta)
             {
-                const FVector3 Off = Source - Target;
+                const FVector3 Off = Cur - Dest;
                 const float    X0  = Math::Length(Off);
                 const FVector3 Dir = X0 > 1e-6f ? Off * (1.0f / X0) : FVector3(0.0f);
 
@@ -218,7 +218,7 @@ namespace Lumina
                 Set.DirY()[i] = Dir.y;
                 Set.DirZ()[i] = Dir.z;
                 Set.X0()[i]   = X0;
-                Set.V0()[i]   = InvDelta > 0.0f ? (X0 - Math::Dot(Prev - Target, Dir)) * InvDelta : 0.0f;
+                Set.V0()[i]   = InvDelta > 0.0f ? (X0 - Math::Dot(Previous - Dest, Dir)) * InvDelta : 0.0f;
             };
 
             for (int32 i = 0; i < N; ++i)
