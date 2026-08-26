@@ -11,6 +11,7 @@
 
 #include "ContainerAllocator.h"
 #include "ContainerTraits.h"
+#include "Core/Templates/IntegerCompare.h"
 #include "HashPrimitives.h"
 #include "Pair.h"
 
@@ -45,7 +46,14 @@ namespace Lumina::Containers
         template <typename TLeft, typename TRight>
         NODISCARD FORCEINLINE bool operator()(const TLeft& Left, const TRight& Right) const noexcept
         {
-            return Left == Right;
+            if constexpr (ValueComparableInteger<TLeft> && ValueComparableInteger<TRight>)
+            {
+                return Cmp::Equal(Left, Right);
+            }
+            else
+            {
+                return Left == Right;
+            }
         }
     };
 

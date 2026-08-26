@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cfloat>
 #include "AI/Navigation/NavTypes.h"
 
 class dtNavMesh;

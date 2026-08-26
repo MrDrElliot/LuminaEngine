@@ -137,6 +137,10 @@ namespace Lumina::Physics
                     b3Body_SetTargetTransform(BodyId, b3WorldTransform{ Position, Rotation }, FixedDt, Update.bActivate);
                     break;
                 }
+                case b3_bodyTypeCount:
+                {
+                    break;
+                }
                 case b3_dynamicBody:
                 {
                     switch (Update.MoveMode)

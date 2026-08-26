@@ -133,6 +133,10 @@ namespace Lumina
 
                 case EAnimTaskType::ReferencePose:
                     return FString("skeleton bind pose");
+
+                case EAnimTaskType::SavePoseSnapshot:
+                case EAnimTaskType::LoadPoseSnapshot:
+                    break;
                 }
                 return FString();
             }

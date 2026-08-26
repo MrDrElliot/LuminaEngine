@@ -253,8 +253,6 @@ namespace Lumina::Physics
                 return;
             }
 
-            constexpr b3Vec3 UnitScale{ 1.0f, 1.0f, 1.0f };
-
             for (int32 i = 0; i < Compound->hullCount; ++i)
             {
                 const b3CompoundHull Child = b3GetCompoundHull(Compound, i);
@@ -287,7 +285,6 @@ namespace Lumina::Physics
 
         FBox3DDebugShape* Result = Memory::New<FBox3DDebugShape>();
         constexpr b3Transform Identity{ { 0.0f, 0.0f, 0.0f }, { { 0.0f, 0.0f, 0.0f }, 1.0f } };
-        constexpr b3Vec3 UnitScale{ 1.0f, 1.0f, 1.0f };
 
         switch (Shape->type)
         {

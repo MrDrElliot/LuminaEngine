@@ -110,6 +110,19 @@ that an LLVM 19 built on 22.04 asks for, so no `apt-get` line can fix it.
 `Reflector.Build.cs` reaches them with `-Wl,-rpath-link` at link time and an `$ORIGIN`-relative
 `-Wl,-rpath` at load time. A plain `-L` does not apply to the transitive needs of a shared library.
 
+### Clang's builtin headers
+
+`lib/clang/<major>/include` holds the headers clang supplies itself -- `stddef.h`, `float.h` and the
+`*intrin.h` family. On Linux nothing else provides them: glibc does not ship them, and libclang
+resolves its resource directory relative to the *host executable*, so a copy sitting beside
+`libclang.so` is not found on its own either. The Reflector therefore passes `-resource-dir`
+explicitly, pointing at the directory it locates from the loaded `libclang.so`.
+
+Windows does not need them, which is why leaving them out breaks only Linux: clang takes `stddef.h`,
+`float.h` and the intrinsics from the MSVC and Windows SDK headers it auto-detects. Without them a
+Linux build fails in reflection generation with `ptrdiff_t`, `NULL` and `FLT_MAX` undeclared and
+`immintrin.h` not found -- errors that name engine headers rather than the missing bundle directory.
+
 The core runtime -- glibc, libstdc++, libgcc -- is deliberately NOT bundled. Shipping those next to a
 host toolchain is an ABI hazard, and every distribution has them.
 
@@ -127,6 +140,7 @@ Required:
 ```
 External/LLVM/include/clang-c/            Reflector's parse headers
 External/LLVM/{bin,lib}/libclang.{dll,so} Reflector links it and stages it (non-optional)
+External/LLVM/lib/clang/<major>/include/  clang's builtin headers (Linux only, see below)
 External/SLang/lib/                       libslang.so / import libs
 External/SLang/bin/                       slangc, and the .dll set on Windows
 External/DotNet/include/                  hostfxr.h, nethost.h, coreclr_delegates.h
