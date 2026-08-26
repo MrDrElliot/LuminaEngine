@@ -452,9 +452,25 @@ namespace Lumina
         return Count;
     }
 
-    void CStruct::NetSerializeReplicatedToBuffers(const FNetArchive& HookSource, void* Data, TVector<TVector<uint8>>& OutPerField) const
+    void CStruct::NetSerializeReplicatedFlat(const FNetArchive& HookSource, void* Data,
+                                             TVector<uint8>& OutBytes, TVector<uint32>& OutOffsets) const
     {
-        OutPerField.clear();
+        OutBytes.clear();
+        OutOffsets.clear();
+        OutOffsets.push_back(0u);
+
+        FNetArchive Tmp(OutBytes);
+
+        // Copied once for the whole struct so refs mint into the same maps as the live archive would.
+        Tmp.EntityToNetGUID    = HookSource.EntityToNetGUID;
+        Tmp.NetGUIDToEntity    = HookSource.NetGUIDToEntity;
+        Tmp.ObjectToNetIndex   = HookSource.ObjectToNetIndex;
+        Tmp.NetIndexToObject   = HookSource.NetIndexToObject;
+        Tmp.AssetRefToNetIndex = HookSource.AssetRefToNetIndex;
+        Tmp.NetIndexToAssetRef = HookSource.NetIndexToAssetRef;
+        Tmp.NameToNetIndex     = HookSource.NameToNetIndex;
+        Tmp.NetIndexToName     = HookSource.NetIndexToName;
+
         for (FProperty* Current = LinkedProperty; Current; Current = (FProperty*)Current->Next)
         {
             if (!IsNetReplicatedField(Current))
@@ -462,20 +478,11 @@ namespace Lumina
                 continue;
             }
 
-            TVector<uint8> FieldBytes;
-            FNetArchive Tmp(FieldBytes);
-            // Copy the net-index hooks so refs mint into the same maps as the live archive would.
-            Tmp.EntityToNetGUID    = HookSource.EntityToNetGUID;
-            Tmp.NetGUIDToEntity    = HookSource.NetGUIDToEntity;
-            Tmp.ObjectToNetIndex   = HookSource.ObjectToNetIndex;
-            Tmp.NetIndexToObject   = HookSource.NetIndexToObject;
-            Tmp.AssetRefToNetIndex = HookSource.AssetRefToNetIndex;
-            Tmp.NetIndexToAssetRef = HookSource.NetIndexToAssetRef;
-            Tmp.NameToNetIndex     = HookSource.NameToNetIndex;
-            Tmp.NetIndexToName     = HookSource.NetIndexToName;
-
             Current->NetSerialize(Tmp, Current->GetValuePtr<void>(Data));
-            OutPerField.push_back(std::move(FieldBytes));
+
+            // Each field ends whole-byte, which is exactly what NetReadReplicatedMasked skips to.
+            Tmp.AlignToByte();
+            OutOffsets.push_back(static_cast<uint32>(Tmp.Tell()));
         }
     }
 

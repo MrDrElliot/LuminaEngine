@@ -254,7 +254,8 @@ namespace Lumina::Physics
             b3Vec3      Impulse;
             b3Vec3      Point;
         };
-        TVector<FPendingPush> Pushes;
+        static thread_local TVector<FPendingPush> Pushes;
+        Pushes.clear();
 
         View.each([&](entt::entity Entity, SCharacterPhysicsComponent& Physics, SCharacterMovementComponent& Movement)
         {

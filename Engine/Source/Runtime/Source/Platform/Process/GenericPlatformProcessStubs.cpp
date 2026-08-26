@@ -32,9 +32,24 @@ namespace Lumina::Platform
         LUMINA_WARN_ONCE("Platform::OpenTerminalAt");
     }
 
+    FString GetEnvVariable(FStringView Variable)
+    {
+        const FString Name(Variable);
+        const char* Value = getenv(Name.c_str());
+        return Value ? FString(Value) : FString();
+    }
+
     bool SetEnvVariable(const FString& Name, const FString& Value)
     {
-        if (setenv(Name.c_str(), Value.c_str(), 1) == 0)
+        if (Name.empty() || Name.find('=') != FString::npos)
+        {
+            LOG_WARN("Refusing to set environment variable with invalid name '{}'", Name);
+            return false;
+        }
+
+        // Windows cannot store an empty variable, so removing on empty keeps the platforms observably equal.
+        const int Result = Value.empty() ? unsetenv(Name.c_str()) : setenv(Name.c_str(), Value.c_str(), 1);
+        if (Result == 0)
         {
             return true;
         }

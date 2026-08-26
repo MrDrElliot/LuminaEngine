@@ -142,7 +142,8 @@ namespace Lumina
             return;
         }
 
-        TVector<entt::entity> ToTick;
+        static thread_local TVector<entt::entity> ToTick;
+        ToTick.clear();
         {
             auto View = Registry.view<FTimer>();
             ToTick.reserve(View.size());

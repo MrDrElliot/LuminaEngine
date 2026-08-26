@@ -92,8 +92,7 @@ namespace Lumina
         }
 
         // A live preview keeps rendering the program it was built from, so an edit has to rebuild it.
-        const uint64 ContentVersion = NodeGraph->GetContentVersion();
-        if (!bHasCompiledOnce || ContentVersion != CompiledContentVersion)
+        if (NodeGraph->NeedsCompile())
         {
             const bool bWasPreviewing = PreviewHandle.IsValid();
 
@@ -258,9 +257,8 @@ namespace Lumina
             CompileMessages.push_back(Warning);
         }
 
-        bHasErrors             = !Result.bSuccess;
-        bHasCompiledOnce       = true;
-        CompiledContentVersion = NodeGraph->GetContentVersion();
+        bHasErrors = !Result.bSuccess;
+        NodeGraph->MarkCompiled();
 
         if (!Result.bSuccess)
         {

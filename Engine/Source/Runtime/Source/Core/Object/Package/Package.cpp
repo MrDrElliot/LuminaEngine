@@ -1530,7 +1530,7 @@ namespace Lumina
 
         if (ActualSize != ExpectedSize)
         {
-            LOG_WARN("Mismatched size when loading object {}: expected {}, got {}", Object->GetName().ToString(), ExpectedSize, ActualSize);
+            LOG_ERROR("Mismatched size when loading object {}: expected {}, got {}", Object->GetName().ToString(), ExpectedSize, ActualSize);
         }
 
         // This is what lets serialize and PostLoad split into phases.

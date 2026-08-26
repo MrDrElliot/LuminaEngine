@@ -13,19 +13,15 @@ public static unsafe partial class RHI
 
     // Memory.
 
-    /// Allocate device memory; Alignment defaults to 16 bytes and Type to Default.
+    /// Allocate device memory; the result carries the device address, the CPU mapping and the size.
     [NativeCall("LuminaSharp_RHI_Malloc")]
-    public static partial GPUPtr Malloc(ulong Size, ulong Alignment = 16, EMemoryType Type = EMemoryType.Default);
+    public static partial FGPUAllocation Malloc(ulong Size, ulong Alignment = 16, EMemoryType Type = EMemoryType.Default);
 
     /// Allocate device memory of the given type at default alignment.
-    public static GPUPtr Malloc(ulong Size, EMemoryType Type) => Malloc(Size, 16, Type);
-
-    /// Map a GPU pointer to a CPU-visible address (valid for CPU-visible memory types).
-    [NativeCall("LuminaSharp_RHI_ToHost", SuppressGCTransition = true)]
-    public static partial IntPtr ToHost(GPUPtr Gpu);
+    public static FGPUAllocation Malloc(ulong Size, EMemoryType Type) => Malloc(Size, 16, Type);
 
     [NativeCall("LuminaSharp_RHI_Free")]
-    public static partial void Free(GPUPtr Gpu);
+    public static partial void Free(FGPUAllocation Allocation);
 
     // Typed free thunks have unique names (the generator keys on method name); overloaded FreeH forwards to them.
     [NativeCall("LuminaSharp_RHI_FreeSemaphore")] private static partial void FreeSemaphore(FSemaphoreH H);
@@ -180,7 +176,7 @@ public static unsafe partial class RHICore
 
     /// Free GPU memory once every in-flight frame has retired.
     [NativeCall("LuminaSharp_RHI_CoreDeferredFree")]
-    public static partial void DeferredFree(GPUPtr Memory);
+    public static partial void DeferredFree(FGPUAllocation Memory);
 
     /// Build a graphics pipeline from named shaders in the engine shader library (compiles/caches).
     [NativeCall("LuminaSharp_RHI_CoreCreateGraphicsPipeline")]

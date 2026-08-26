@@ -7,31 +7,31 @@ namespace Lumina::RHITests
     namespace
     {
         // Copies Source into a fresh CPURead allocation so a test asserts on what the GPU actually wrote.
-        const uint32* ReadBack(FTestContext& Ctx, RHI::GPUPtr Source, uint64 Size)
+        const uint32* ReadBack(FTestContext& Ctx, const RHI::FGPUAllocation& Source, uint64 Size)
         {
-            const RHI::GPUPtr Readback = Ctx.Malloc(Size, RHI::EMemoryType::CPURead, "RHITests.Readback");
-            if (Readback == 0)
+            const RHI::FGPUAllocation Readback = Ctx.Malloc(Size, RHI::EMemoryType::CPURead, "RHITests.Readback");
+            if (Readback.Gpu == 0)
             {
                 return nullptr;
             }
 
             const RHI::FCmdListH CL = Ctx.OpenCL();
-            RHI::CmdMemcpy(CL, Readback, Source, Size);
+            RHI::CmdMemcpy(CL, Readback.Gpu, Source.Gpu, Size);
             RHI::Barriers::TransferToAll(CL);
             Ctx.SubmitAndWait(CL);
 
-            return static_cast<const uint32*>(RHI::ToHost(Readback));
+            return Readback.CpuAs<const uint32>();
         }
     }
 
     RHI_TEST(Commands, Memset)
     {
         constexpr uint64 Size = 4096;
-        const RHI::GPUPtr Buffer = Ctx.Malloc(Size, RHI::EMemoryType::GPUOnly, "RHITests.Memset");
-        RHI_REQUIRE(Buffer != 0);
+        const RHI::FGPUAllocation Buffer = Ctx.Malloc(Size, RHI::EMemoryType::GPUOnly, "RHITests.Memset");
+        RHI_REQUIRE(Buffer.Gpu != 0);
 
         const RHI::FCmdListH CL = Ctx.OpenCL();
-        RHI::CmdMemset(CL, Buffer, Size, 0xABCDEF01u);
+        RHI::CmdMemset(CL, Buffer.Gpu, Size, 0xABCDEF01u);
         RHI::Barriers::TransferToAll(CL);
         Ctx.SubmitAndWait(CL);
 
@@ -44,14 +44,14 @@ namespace Lumina::RHITests
     RHI_TEST(Commands, Memzero)
     {
         constexpr uint64 Size = 1024;
-        const RHI::GPUPtr Buffer = Ctx.Malloc(Size, RHI::EMemoryType::GPUOnly, "RHITests.Memzero");
-        RHI_REQUIRE(Buffer != 0);
+        const RHI::FGPUAllocation Buffer = Ctx.Malloc(Size, RHI::EMemoryType::GPUOnly, "RHITests.Memzero");
+        RHI_REQUIRE(Buffer.Gpu != 0);
 
         {
             const RHI::FCmdListH CL = Ctx.OpenCL();
-            RHI::CmdMemset(CL, Buffer, Size, 0xFFFFFFFFu);
+            RHI::CmdMemset(CL, Buffer.Gpu, Size, 0xFFFFFFFFu);
             RHI::Barriers::TransferToTransfer(CL);
-            RHI::CmdMemzero(CL, Buffer, Size);
+            RHI::CmdMemzero(CL, Buffer.Gpu, Size);
             RHI::Barriers::TransferToAll(CL);
             Ctx.SubmitAndWait(CL);
         }
@@ -65,15 +65,15 @@ namespace Lumina::RHITests
     RHI_TEST(Commands, MemcpyDeviceToDevice)
     {
         constexpr uint64 Size = 2048;
-        const RHI::GPUPtr Source = Ctx.Malloc(Size, RHI::EMemoryType::GPUOnly, "RHITests.CopySrc");
-        const RHI::GPUPtr Dest   = Ctx.Malloc(Size, RHI::EMemoryType::GPUOnly, "RHITests.CopyDst");
-        RHI_REQUIRE(Source != 0 && Dest != 0);
+        const RHI::FGPUAllocation Source = Ctx.Malloc(Size, RHI::EMemoryType::GPUOnly, "RHITests.CopySrc");
+        const RHI::FGPUAllocation Dest   = Ctx.Malloc(Size, RHI::EMemoryType::GPUOnly, "RHITests.CopyDst");
+        RHI_REQUIRE(Source.Gpu != 0 && Dest.Gpu != 0);
 
         {
             const RHI::FCmdListH CL = Ctx.OpenCL();
-            RHI::CmdMemset(CL, Source, Size, 0x11223344u);
+            RHI::CmdMemset(CL, Source.Gpu, Size, 0x11223344u);
             RHI::Barriers::TransferToTransfer(CL);
-            RHI::CmdMemcpy(CL, Dest, Source, Size);
+            RHI::CmdMemcpy(CL, Dest.Gpu, Source.Gpu, Size);
             RHI::Barriers::TransferToAll(CL);
             Ctx.SubmitAndWait(CL);
         }
@@ -92,12 +92,12 @@ namespace Lumina::RHITests
             Source[i] = i * 7u + 1u;
         }
 
-        const RHI::GPUPtr Buffer = Ctx.Malloc(sizeof(Source), RHI::EMemoryType::GPUOnly, "RHITests.WriteMemory");
-        RHI_REQUIRE(Buffer != 0);
+        const RHI::FGPUAllocation Buffer = Ctx.Malloc(sizeof(Source), RHI::EMemoryType::GPUOnly, "RHITests.WriteMemory");
+        RHI_REQUIRE(Buffer.Gpu != 0);
 
         {
             const RHI::FCmdListH CL = Ctx.OpenCL();
-            RHI::CmdWriteMemory(CL, Buffer, Source, sizeof(Source));
+            RHI::CmdWriteMemory(CL, Buffer.Gpu, Source, sizeof(Source));
             RHI::Barriers::TransferToAll(CL);
             Ctx.SubmitAndWait(CL);
         }
@@ -151,12 +151,12 @@ namespace Lumina::RHITests
         const RHI::GPUPtr Gpu = RHI::Core::CopyTransient(Payload);
         RHI_REQUIRE(Gpu != 0);
 
-        const RHI::GPUPtr Dest = Ctx.Malloc(sizeof(FPayload), RHI::EMemoryType::GPUOnly, "RHITests.TransientDst");
-        RHI_REQUIRE(Dest != 0);
+        const RHI::FGPUAllocation Dest = Ctx.Malloc(sizeof(FPayload), RHI::EMemoryType::GPUOnly, "RHITests.TransientDst");
+        RHI_REQUIRE(Dest.Gpu != 0);
 
         {
             const RHI::FCmdListH CL = Ctx.OpenCL();
-            RHI::CmdMemcpy(CL, Dest, Gpu, sizeof(FPayload));
+            RHI::CmdMemcpy(CL, Dest.Gpu, Gpu, sizeof(FPayload));
             RHI::Barriers::TransferToAll(CL);
             Ctx.SubmitAndWait(CL);
         }

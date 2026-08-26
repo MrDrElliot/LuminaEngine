@@ -461,7 +461,7 @@ namespace Lumina
         return true;
     }
 
-    void Anim::ExecuteTaskList(FAnimTaskList& List, TVector<FMatrix4>& OutMatrices, FAnimTaskSnapshot* OutSnapshot)
+    bool Anim::ExecuteTaskList(FAnimTaskList& List, TVector<FMatrix4>& OutMatrices, FAnimTaskSnapshot* OutSnapshot)
     {
         LUMINA_PROFILE_SCOPE();
 
@@ -469,7 +469,7 @@ namespace Lumina
         if (Skeleton == nullptr || Skeleton->GetNumBones() == 0)
         {
             List.Reset();
-            return;
+            return false;
         }
 
         FPosePool& Pool = GetThreadPosePool();
@@ -539,7 +539,7 @@ namespace Lumina
             AnimPose::ToSkinningMatrices(Bind, Skeleton, OutMatrices);
             Pool.Release(Buf);
             List.Reset();
-            return;
+            return true;
         }
 
         // Dependencies always precede consumers, so one reverse pass suffices and the rest is skipped.
@@ -944,5 +944,6 @@ namespace Lumina
         AnimPose::ToSkinningMatrices(Pool.Get(FinalBuf), Skeleton, OutMatrices);
         Pool.Release(FinalBuf);
         List.Reset();
+        return true;
     }
 }

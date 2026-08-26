@@ -32,7 +32,9 @@ namespace Lumina
         const float DeltaSeconds = (float)Context.GetDeltaTime();
 
         // Snapshot first, since a callback spawning an entity mutates the storage a live view walks.
-        TVector<entt::entity> Entities;
+        static thread_local TVector<entt::entity> Entities;
+        Entities.clear();
+
         auto View = Registry.view<SInputComponent>();
         Entities.reserve(View.size_hint());
         for (entt::entity Entity : View)

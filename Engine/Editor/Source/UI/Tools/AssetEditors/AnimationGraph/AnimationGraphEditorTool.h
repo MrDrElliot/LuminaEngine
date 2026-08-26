@@ -79,9 +79,6 @@ namespace Lumina
         // is skipped for the per-frame preview recompile so the asset isn't always unsaved.
         void Compile(bool bMarkPackageDirty = true);
 
-        // Content counter the auto-compile gate compares, covering the top graph and every nested canvas.
-        uint64 GetContentVersion() const;
-
         // Gates the auto-compile, so a graph nobody is editing is not recompiled every frame.
         bool NeedsCompile() const;
 
@@ -146,8 +143,6 @@ namespace Lumina
         CAnimStateTransition*                   SelectedTransition = nullptr;
         FString                                 CompilationLog;
         bool                                    bHasCompilationErrors = false;
-        uint64                                  CompiledContentVersion = 0;
-        bool                                    bHasCompiledOnce = false;
 
         // Graph navigation: GraphStack[0] is top-level, back() is the drawn canvas.
         // InitializedGraphs tracks graphs this tool created so they shut down on close.

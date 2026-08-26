@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "MeshComponent.h"
 #include "Animation/TaskSystem/AnimTask.h"
 #include "Core/Math/AABB.h"
@@ -96,5 +96,10 @@ namespace Lumina
         // Bumped whenever BoneTransforms is rewritten. The gather packs into the bone arena and uploads
         // a pose only when this moved, so an off-screen mesh is never packed at all.
         uint32 PoseSerial = 0;
+
+        // The recipe BoneTransforms was last built from. The executor reads nothing outside the task
+        // list, so an identical recipe reproduces the same pose and the whole execute is skipped.
+        FAnimTaskList LastRecipe;
+        bool bLastRecipeValid = false;
     };
 }

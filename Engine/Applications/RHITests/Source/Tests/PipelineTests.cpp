@@ -44,8 +44,8 @@ namespace Lumina::RHITests
             }
 
             const uint64 Bytes = (uint64)Size * Size * 4;
-            const RHI::GPUPtr Readback = Ctx.Malloc(Bytes, RHI::EMemoryType::CPURead, "RHITests.PixelReadback");
-            if (Readback == 0)
+            const RHI::FGPUAllocation Readback = Ctx.Malloc(Bytes, RHI::EMemoryType::CPURead, "RHITests.PixelReadback");
+            if (Readback.Gpu == 0)
             {
                 Ctx.Failf("%s: readback allocation failed", Name);
                 return;
@@ -84,7 +84,7 @@ namespace Lumina::RHITests
 
             RHI::FTextureSlice Slice;
             Slice.Extent = FUIntVector3(Size, Size, 1);
-            RHI::CmdCopyTextureToMemory(CL, Target, Slice, Readback, Size);
+            RHI::CmdCopyTextureToMemory(CL, Target, Slice, Readback.Gpu, Size);
             RHI::Barriers::TransferToAll(CL);
 
             Ctx.SubmitAndWait(CL);
@@ -92,7 +92,7 @@ namespace Lumina::RHITests
             // SubmitAndWait has already retired this submission, so the synchronous free is safe here.
             RHI::FreeH(DepthState);
 
-            const auto* Pixels = static_cast<const uint8*>(RHI::ToHost(Readback));
+            const auto* Pixels = Readback.CpuAs<const uint8>();
             if (Pixels == nullptr)
             {
                 Ctx.Failf("%s: readback is not host visible", Name);
@@ -140,22 +140,22 @@ namespace Lumina::RHITests
         RHI_REQUIRE(RHI::IsValid(Pipeline));
 
         const uint64 Bytes = Count * sizeof(uint32);
-        const RHI::GPUPtr Output   = Ctx.Malloc(Bytes, RHI::EMemoryType::GPUOnly, "RHITests.ComputeOutput");
-        const RHI::GPUPtr Readback = Ctx.Malloc(Bytes, RHI::EMemoryType::CPURead, "RHITests.ComputeReadback");
-        RHI_REQUIRE(Output != 0 && Readback != 0);
+        const RHI::FGPUAllocation Output   = Ctx.Malloc(Bytes, RHI::EMemoryType::GPUOnly, "RHITests.ComputeOutput");
+        const RHI::FGPUAllocation Readback = Ctx.Malloc(Bytes, RHI::EMemoryType::CPURead, "RHITests.ComputeReadback");
+        RHI_REQUIRE(Output.Gpu != 0 && Readback.Gpu != 0);
 
         struct FArgs { RHI::GPUPtr Output; uint32 Count; uint32 _Pad; };
-        const RHI::GPUPtr Args = RHI::Core::CopyTransient(FArgs{ Output, Count, 0 });
+        const RHI::GPUPtr Args = RHI::Core::CopyTransient(FArgs{ Output.Gpu, Count, 0 });
 
         const RHI::FCmdListH CL = Ctx.OpenCL();
         RHI::CmdSetPipeline(CL, Pipeline);
         RHI::CmdDispatch(CL, Args, Count / 64, 1, 1);
         RHI::Barriers::ComputeToAll(CL);
-        RHI::CmdMemcpy(CL, Readback, Output, Bytes);
+        RHI::CmdMemcpy(CL, Readback.Gpu, Output.Gpu, Bytes);
         RHI::Barriers::TransferToAll(CL);
         Ctx.SubmitAndWait(CL);
 
-        const auto* Words = static_cast<const uint32*>(RHI::ToHost(Readback));
+        const auto* Words = Readback.CpuAs<const uint32>();
         RHI_REQUIRE(Words != nullptr);
         RHI_CHECK_EQ(Words[0], 1u);
         RHI_CHECK_EQ(Words[1], 4u);
@@ -182,30 +182,30 @@ namespace Lumina::RHITests
         RHI_REQUIRE(RHI::IsValid(Pipeline));
 
         constexpr uint32 Groups = 8;
-        const RHI::GPUPtr IndirectArgs = Ctx.Malloc(sizeof(RHI::FDispatchIndirectArguments),
+        const RHI::FGPUAllocation IndirectArgs = Ctx.Malloc(sizeof(RHI::FDispatchIndirectArguments),
                                                     RHI::EMemoryType::GPUOnly, "RHITests.IndirectArgs");
-        const RHI::GPUPtr Output   = Ctx.Malloc(Groups * sizeof(uint32), RHI::EMemoryType::GPUOnly, "RHITests.IndirectOut");
-        const RHI::GPUPtr Readback = Ctx.Malloc(Groups * sizeof(uint32), RHI::EMemoryType::CPURead, "RHITests.IndirectReadback");
-        RHI_REQUIRE(IndirectArgs != 0 && Output != 0 && Readback != 0);
+        const RHI::FGPUAllocation Output   = Ctx.Malloc(Groups * sizeof(uint32), RHI::EMemoryType::GPUOnly, "RHITests.IndirectOut");
+        const RHI::FGPUAllocation Readback = Ctx.Malloc(Groups * sizeof(uint32), RHI::EMemoryType::CPURead, "RHITests.IndirectReadback");
+        RHI_REQUIRE(IndirectArgs.Gpu != 0 && Output.Gpu != 0 && Readback.Gpu != 0);
 
         const RHI::FDispatchIndirectArguments Dispatch{ Groups, 1, 1 };
 
         struct FArgs { RHI::GPUPtr Output; };
-        const RHI::GPUPtr Args = RHI::Core::CopyTransient(FArgs{ Output });
+        const RHI::GPUPtr Args = RHI::Core::CopyTransient(FArgs{ Output.Gpu });
 
         const RHI::FCmdListH CL = Ctx.OpenCL();
-        RHI::CmdWriteMemory(CL, IndirectArgs, &Dispatch, sizeof(Dispatch));
+        RHI::CmdWriteMemory(CL, IndirectArgs.Gpu, &Dispatch, sizeof(Dispatch));
         RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::IndirectArguments);
 
         RHI::CmdSetPipeline(CL, Pipeline);
-        RHI::CmdDispatchIndirect(CL, Args, IndirectArgs, 0);
+        RHI::CmdDispatchIndirect(CL, Args, IndirectArgs.Gpu, 0);
         RHI::Barriers::ComputeToAll(CL);
 
-        RHI::CmdMemcpy(CL, Readback, Output, Groups * sizeof(uint32));
+        RHI::CmdMemcpy(CL, Readback.Gpu, Output.Gpu, Groups * sizeof(uint32));
         RHI::Barriers::TransferToAll(CL);
         Ctx.SubmitAndWait(CL);
 
-        const auto* Words = static_cast<const uint32*>(RHI::ToHost(Readback));
+        const auto* Words = Readback.CpuAs<const uint32>();
         RHI_REQUIRE(Words != nullptr);
         RHI_CHECK_EQ(Words[0], 100u);
         RHI_CHECK_EQ(Words[Groups - 1], 100u + Groups - 1);
@@ -249,8 +249,8 @@ namespace Lumina::RHITests
         RHI_REQUIRE(UAV != RHI::kInvalidHeapSlot);
 
         const uint64 Bytes = (uint64)Size * Size * 4;
-        const RHI::GPUPtr Readback = Ctx.Malloc(Bytes, RHI::EMemoryType::CPURead, "RHITests.StorageReadback");
-        RHI_REQUIRE(Readback != 0);
+        const RHI::FGPUAllocation Readback = Ctx.Malloc(Bytes, RHI::EMemoryType::CPURead, "RHITests.StorageReadback");
+        RHI_REQUIRE(Readback.Gpu != 0);
 
         struct FArgs { uint32 OutUAV; uint32 Size; };
         const RHI::GPUPtr Args = RHI::Core::CopyTransient(FArgs{ UAV, Size });
@@ -262,11 +262,11 @@ namespace Lumina::RHITests
 
         RHI::FTextureSlice Slice;
         Slice.Extent = FUIntVector3(Size, Size, 1);
-        RHI::CmdCopyTextureToMemory(CL, Managed.Texture, Slice, Readback, Size);
+        RHI::CmdCopyTextureToMemory(CL, Managed.Texture, Slice, Readback.Gpu, Size);
         RHI::Barriers::TransferToAll(CL);
         Ctx.SubmitAndWait(CL);
 
-        const auto* Pixels = static_cast<const uint8*>(RHI::ToHost(Readback));
+        const auto* Pixels = Readback.CpuAs<const uint8>();
         RHI_REQUIRE(Pixels != nullptr);
         RHI_CHECK_EQ(Pixels[0], 0u);
         RHI_CHECK_EQ(Pixels[1], 255u);
@@ -290,12 +290,12 @@ namespace Lumina::RHITests
         )SLANG").c_str(), "RHITests.SpecConstant");
         RHI_REQUIRE(!Spirv.empty());
 
-        const RHI::GPUPtr Output   = Ctx.Malloc(sizeof(uint32), RHI::EMemoryType::GPUOnly, "RHITests.SpecOutput");
-        const RHI::GPUPtr Readback = Ctx.Malloc(sizeof(uint32), RHI::EMemoryType::CPURead, "RHITests.SpecReadback");
-        RHI_REQUIRE(Output != 0 && Readback != 0);
+        const RHI::FGPUAllocation Output   = Ctx.Malloc(sizeof(uint32), RHI::EMemoryType::GPUOnly, "RHITests.SpecOutput");
+        const RHI::FGPUAllocation Readback = Ctx.Malloc(sizeof(uint32), RHI::EMemoryType::CPURead, "RHITests.SpecReadback");
+        RHI_REQUIRE(Output.Gpu != 0 && Readback.Gpu != 0);
 
         struct FArgs { RHI::GPUPtr Output; };
-        const RHI::GPUPtr Args = RHI::Core::CopyTransient(FArgs{ Output });
+        const RHI::GPUPtr Args = RHI::Core::CopyTransient(FArgs{ Output.Gpu });
 
         auto RunWith = [&](uint32 Value) -> uint32
         {
@@ -316,11 +316,11 @@ namespace Lumina::RHITests
             RHI::CmdSetPipeline(CL, Pipeline);
             RHI::CmdDispatch(CL, Args, 1, 1, 1);
             RHI::Barriers::ComputeToAll(CL);
-            RHI::CmdMemcpy(CL, Readback, Output, sizeof(uint32));
+            RHI::CmdMemcpy(CL, Readback.Gpu, Output.Gpu, sizeof(uint32));
             RHI::Barriers::TransferToAll(CL);
             Ctx.SubmitAndWait(CL);
 
-            const auto* Word = static_cast<const uint32*>(RHI::ToHost(Readback));
+            const auto* Word = Readback.CpuAs<const uint32>();
             return Word != nullptr ? *Word : ~0u;
         };
 
@@ -438,22 +438,22 @@ namespace Lumina::RHITests
             RHI::FShaderSource{}, ShaderSource(MSSpirv), ShaderSource(PSSpirv), Raster));
         RHI_REQUIRE(RHI::IsValid(Pipeline));
 
-        const RHI::GPUPtr IndirectArgs = Ctx.Malloc(sizeof(RHI::FDrawMeshTasksIndirectArguments),
+        const RHI::FGPUAllocation IndirectArgs = Ctx.Malloc(sizeof(RHI::FDrawMeshTasksIndirectArguments),
                                                     RHI::EMemoryType::GPUOnly, "RHITests.MeshIndirectArgs");
-        RHI_REQUIRE(IndirectArgs != 0);
+        RHI_REQUIRE(IndirectArgs.Gpu != 0);
 
         const RHI::FDrawMeshTasksIndirectArguments DrawArgs{ 1, 1, 1 };
 
         // A transfer write is illegal inside a render pass, so this has to complete before one opens.
         const RHI::FCmdListH Stage = Ctx.OpenCL();
-        RHI::CmdWriteMemory(Stage, IndirectArgs, &DrawArgs, sizeof(DrawArgs));
+        RHI::CmdWriteMemory(Stage, IndirectArgs.Gpu, &DrawArgs, sizeof(DrawArgs));
         RHI::CmdBarrier(Stage, RHI::EStageFlags::Transfer, RHI::EStageFlags::IndirectArguments);
         Ctx.SubmitAndWait(Stage);
 
         RenderAndCheckPixel(Ctx, "RHITests.MeshIndirectTarget", [&](RHI::FCmdListH CL)
         {
             RHI::CmdSetPipeline(CL, Pipeline);
-            RHI::CmdDrawMeshTasksIndirect(CL, 0, IndirectArgs, 0, 1, sizeof(RHI::FDrawMeshTasksIndirectArguments));
+            RHI::CmdDrawMeshTasksIndirect(CL, 0, IndirectArgs.Gpu, 0, 1, sizeof(RHI::FDrawMeshTasksIndirectArguments));
         });
     }
 

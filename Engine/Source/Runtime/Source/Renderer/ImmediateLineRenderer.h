@@ -139,8 +139,7 @@ namespace Lumina
 
             TVector<FReservation>   Reservations;
 
-            RHI::GPUPtr             SlotGpu[kSlots]      = {};
-            FSimpleElementVertex*   SlotHost[kSlots]     = {};
+            RHI::FGPUAllocation     SlotMemory[kSlots]   = {};
             uint32                  SlotCapacity[kSlots] = {};
             uint32                  SlotLowUsage[kSlots] = {};
         };

@@ -286,6 +286,12 @@ namespace Lumina
             FinishMaterialGraphCompile(Material, Compiler, Result);
         }
 
+        // Stamped even on failure, since the compile ran against this exact graph.
+        if (Graph != nullptr)
+        {
+            Graph->MarkCompiled();
+        }
+
         return Result;
     }
 

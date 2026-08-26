@@ -30,7 +30,6 @@ namespace Lumina::RHI
         {
             EUploadOp   Type;
             GPUPtr      Staging        = 0;         // source for Buffer/Texture, 0 for Clear/TextureCopy
-            bool        bOwnedStaging  = false;     // true -> DeferredFree after the copy retires
             uint8       Slice          = kNoSlice;  // slice the staging was reserved from
             GPUPtr      BufferDest     = 0;         // Buffer
             FTextureH   TextureDest    = {};        // Texture/Clear/TextureCopy
@@ -45,14 +44,16 @@ namespace Lumina::RHI
             uint32      Height         = 0;
             uint32      OffsetY        = 0;         // first texel row this band writes
             float       ClearValue[4]  = {};        // Clear
+
+            // Set only when the op reserved dedicated staging, which it frees once the copy retires.
+            FGPUAllocation OwnedStaging = {};
         };
 
         static constexpr uint32 kNumUploadQueues = 3;
 
         struct FStagingSlice
         {
-            GPUPtr      Gpu      = 0;
-            std::byte*  Cpu      = nullptr;
+            FGPUAllocation Memory = {};
             uint64      Cursor   = 0;
             uint64      Capacity = 0;   // resolved slice size; 0 until Initialize runs
 
@@ -82,6 +83,8 @@ namespace Lumina::RHI
             FStagingSlice       Slices[kFramesInFlight];
             uint32              CurrentSlot = 0;
             TVector<FUploadOp>  Queue;
+            // Parked between flushes so the queue is handed a buffer that already has capacity.
+            TVector<FUploadOp>  QueueSpare;
             FMutex              Mutex;
 
             // Never held while taking the other locks, since the flush path already holds the core submit lock.
@@ -101,8 +104,10 @@ namespace Lumina::RHI
         {
             std::byte*  Cpu    = nullptr;
             GPUPtr      Gpu    = 0;
-            bool        bOwned = false;
             uint8       Slice  = kNoSlice;
+
+            // Non-null only on the overflow path, where the caller inherits the allocation.
+            FGPUAllocation Owned = {};
         };
 
         FStaging ReserveLocked(uint64 Size, uint64 Alignment)
@@ -114,16 +119,16 @@ namespace Lumina::RHI
             {
                 Slice.Cursor = Aligned + Size;
                 Slice.Writers.fetch_add(1, std::memory_order_relaxed);
-                return { Slice.Cpu + Aligned, Slice.Gpu + Aligned, false, (uint8)Slot };
+                return { Slice.Memory.Cpu + Aligned, Slice.Memory.Gpu + Aligned, (uint8)Slot, {} };
             }
 
             Slice.OverflowBytes += Size + Alignment;
 
             // A separate zone, since a fresh host-visible allocation is a different cost from a ring write.
             LUMINA_PROFILE_SECTION("Upload::StagingOverflowAlloc");
-            const GPUPtr Owned = Malloc(Size, Alignment, EMemoryType::CPUWrite);
-            SetDebugName(Owned, "Upload.Overflow");
-            return { static_cast<std::byte*>(ToHost(Owned)), Owned, true, kNoSlice };
+            const FGPUAllocation Owned = Malloc(Size, Alignment, EMemoryType::CPUWrite);
+            SetDebugName(Owned.Gpu, "Upload.Overflow");
+            return { Owned.Cpu, Owned.Gpu, kNoSlice, Owned };
         }
 
         void EndWrite(const FStaging& Staging)
@@ -135,17 +140,19 @@ namespace Lumina::RHI
         }
     }
 
-    bool UploadBuffer(GPUPtr Dest, const void* Data, uint64 Size)
+    bool UploadBuffer(const FGPUAllocation& Dest, const void* Data, uint64 Size, uint64 Offset)
     {
-        if (Dest == 0 || Data == nullptr || Size == 0)
+        if (Dest.Gpu == 0 || Data == nullptr || Size == 0)
         {
             return false;
         }
 
+        ASSERT(Offset <= Dest.Size && Size <= Dest.Size - Offset, "buffer upload runs past its allocation");
+
         // A host-visible destination writes through the mapping with nothing to stage.
-        if (void* Mapped = ToHost(Dest))
+        if (Dest.Cpu != nullptr)
         {
-            Memory::Memcpy(Mapped, Data, Size);
+            Memory::Memcpy(Dest.Cpu + Offset, Data, Size);
             return true;
         }
 
@@ -166,9 +173,9 @@ namespace Lumina::RHI
         FUploadOp Op;
         Op.Type          = EUploadOp::Buffer;
         Op.Staging       = S.Gpu;
-        Op.bOwnedStaging = S.bOwned;
+        Op.OwnedStaging  = S.Owned;
         Op.Slice         = S.Slice;
-        Op.BufferDest    = Dest;
+        Op.BufferDest    = Dest.Gpu + Offset;
         Op.Size          = Size;
 
         {
@@ -222,7 +229,7 @@ namespace Lumina::RHI
         FUploadOp Op;
         Op.Type           = EUploadOp::Texture;
         Op.Staging        = S.Gpu;
-        Op.bOwnedStaging  = S.bOwned;
+        Op.OwnedStaging   = S.Owned;
         Op.Slice          = S.Slice;
         Op.TextureDest    = Dest;
         Op.Size           = Size;
@@ -296,7 +303,7 @@ namespace Lumina::RHI
             return;
         }
 
-        TVector<GPUPtr> OwnedStaging;
+        TVector<FGPUAllocation> OwnedStaging;
 
         uint64 Batch = 0;
         const FCmdListH CL = OpenCommandList(EQueueType::Graphics);
@@ -312,7 +319,7 @@ namespace Lumina::RHI
 
         WaitSemaphore(Core::GetQueueTimeline(EQueueType::Graphics), Value);
 
-        for (GPUPtr Staging : OwnedStaging)
+        for (const FGPUAllocation& Staging : OwnedStaging)
         {
             Free(Staging);
         }
@@ -326,9 +333,8 @@ namespace Lumina::RHI
 
             for (FStagingSlice& Slice : GUpload.Slices)
             {
-                Slice.Gpu      = Malloc(GStagingSliceSize, kDefaultAlign, EMemoryType::CPUWrite);
-                SetDebugName(Slice.Gpu, "Upload.StagingSlice");
-                Slice.Cpu      = static_cast<std::byte*>(ToHost(Slice.Gpu));
+                Slice.Memory   = Malloc(GStagingSliceSize, kDefaultAlign, EMemoryType::CPUWrite);
+                SetDebugName(Slice.Memory.Gpu, "Upload.StagingSlice");
                 Slice.Cursor   = 0;
                 Slice.Capacity = GStagingSliceSize;
                 Slice.Writers.store(0, std::memory_order_relaxed);
@@ -355,9 +361,9 @@ namespace Lumina::RHI
                 FScopeLock Lock(GUpload.Mutex);
                 for (const FUploadOp& Op : GUpload.Queue)
                 {
-                    if (Op.bOwnedStaging)
+                    if (Op.OwnedStaging.Gpu != 0)
                     {
-                        Free(Op.Staging);
+                        Free(Op.OwnedStaging);
                     }
                 }
                 GUpload.Queue.clear();
@@ -365,9 +371,8 @@ namespace Lumina::RHI
 
             for (FStagingSlice& Slice : GUpload.Slices)
             {
-                Free(Slice.Gpu);
-                Slice.Gpu      = 0;
-                Slice.Cpu      = nullptr;
+                Free(Slice.Memory);
+                Slice.Memory   = {};
                 Slice.Cursor   = 0;
                 Slice.Capacity = 0;
                 Slice.Writers.store(0, std::memory_order_relaxed);
@@ -390,6 +395,9 @@ namespace Lumina::RHI
 
             GUpload.bInitialized = false;
         }
+
+        // Bounds the linear written-list scans; retiring a window early with a barrier is always safe.
+        constexpr SIZE_T kMaxWrittenTracked = 128;
 
         struct FFlushTarget
         {
@@ -428,7 +436,7 @@ namespace Lumina::RHI
 
         uint32 FlushSplit(FCmdListH BufferCL, FCmdListH ImageCL,
                           uint32* OutBufferSliceMask, uint32* OutImageSliceMask,
-                          TVector<GPUPtr>& OutOwnedStaging, uint64* OutBatch)
+                          TVector<FGPUAllocation>& OutOwnedStaging, uint64* OutBatch)
         {
             LUMINA_PROFILE_SECTION("Upload::FlushSplit");
 
@@ -441,6 +449,9 @@ namespace Lumina::RHI
                     return 0u;
                 }
                 Ops.swap(GUpload.Queue);
+
+                // Without this the queue restarts from zero capacity and regrows through every flush.
+                GUpload.Queue.swap(GUpload.QueueSpare);
                 GUpload.QueuedOps.store(0u, std::memory_order_relaxed);
 
                 // Under the queue lock, so BatchForQueuedOps cannot hand out a batch whose ops already went out.
@@ -476,7 +487,11 @@ namespace Lumina::RHI
                 // A copy reads as well as writes, so an earlier write to its source has to be ordered against.
                 const bool bReadsWritten = Op.Type == EUploadOp::TextureCopy && T.AlreadyWritten(Op.TextureSource);
 
-                if (bReadsWritten
+                const bool bWindowFull = T.WrittenTextures.size() >= kMaxWrittenTracked
+                                      || T.WrittenBuffers.size() >= kMaxWrittenTracked;
+
+                if (bWindowFull
+                 || bReadsWritten
                  || (bWritesTexture && T.AlreadyWritten(Op.TextureDest))
                  || (bWritesBuffer && T.OverlapsWritten(Op.BufferDest, Op.Size)))
                 {
@@ -547,9 +562,9 @@ namespace Lumina::RHI
             
             for (const FUploadOp& Op : Ops)
             {
-                if (Op.bOwnedStaging)
+                if (Op.OwnedStaging.Gpu != 0)
                 {
-                    OutOwnedStaging.push_back(Op.Staging);
+                    OutOwnedStaging.push_back(Op.OwnedStaging);
                 }
             }
 
@@ -561,10 +576,18 @@ namespace Lumina::RHI
             {
                 *OutImageSliceMask = Targets[1].SliceMask;
             }
+
+            // Hands the drained buffer back so the next flush swaps it in rather than allocating.
+            {
+                FScopeLock Lock(GUpload.Mutex);
+                Ops.clear();
+                GUpload.QueueSpare.swap(Ops);
+            }
+
             return Result;
         }
 
-        bool Flush(FCmdListH CL, TVector<GPUPtr>& OutOwnedStaging, uint32* OutSliceMask, uint64* OutBatch)
+        bool Flush(FCmdListH CL, TVector<FGPUAllocation>& OutOwnedStaging, uint32* OutSliceMask, uint64* OutBatch)
         {
             uint32 BufferSlices = 0;
             uint32 ImageSlices  = 0;
@@ -580,7 +603,7 @@ namespace Lumina::RHI
         template<typename TPredicate>
         static void CancelMatching(TPredicate&& Targets)
         {
-            TVector<GPUPtr> Orphaned;
+            TVector<FGPUAllocation> Orphaned;
             {
                 FScopeLock Lock(GUpload.Mutex);
 
@@ -590,9 +613,9 @@ namespace Lumina::RHI
                     FUploadOp& Op = GUpload.Queue[Read];
                     if (Targets(Op))
                     {
-                        if (Op.bOwnedStaging)
+                        if (Op.OwnedStaging.Gpu != 0)
                         {
-                            Orphaned.push_back(Op.Staging);
+                            Orphaned.push_back(Op.OwnedStaging);
                         }
                         continue;
                     }
@@ -608,7 +631,7 @@ namespace Lumina::RHI
                 GUpload.QueuedOps.store((uint32)Write, std::memory_order_relaxed);
             }
             
-            for (GPUPtr Staging : Orphaned)
+            for (const FGPUAllocation& Staging : Orphaned)
             {
                 Core::Retire(Staging);
             }
@@ -629,21 +652,15 @@ namespace Lumina::RHI
             });
         }
 
-        void CancelBuffer(GPUPtr Dest)
+        void CancelBuffer(const FGPUAllocation& Dest)
         {
-            if (!GUpload.bInitialized || Dest == 0 || GUpload.QueuedOps.load(std::memory_order_relaxed) == 0u)
-            {
-                return;
-            }
-            
-            GPUPtr Base = 0;
-            uint64 Size = 0;
-            if (!GetAllocationRange(Dest, Base, Size))
+            if (!GUpload.bInitialized || Dest.Gpu == 0 || GUpload.QueuedOps.load(std::memory_order_relaxed) == 0u)
             {
                 return;
             }
 
-            const GPUPtr End = Base + Size;
+            const GPUPtr Base = Dest.Gpu;
+            const GPUPtr End  = Base + Dest.Size;
             
             CancelMatching([Base, End](const FUploadOp& Op)
             {
@@ -779,7 +796,7 @@ namespace Lumina::RHI
                 Slice.ReadValue[QueueIndex] = 0;
             }
 
-            GPUPtr OldGpu = 0;
+            FGPUAllocation OldMemory = {};
             {
                 FScopeLock Lock(GUpload.Mutex);
 
@@ -806,13 +823,12 @@ namespace Lumina::RHI
 
                 if (NewCapacity != Slice.Capacity)
                 {
-                    const GPUPtr NewGpu = Malloc(NewCapacity, kDefaultAlign, EMemoryType::CPUWrite);
-                    if (NewGpu != 0)
+                    const FGPUAllocation NewMemory = Malloc(NewCapacity, kDefaultAlign, EMemoryType::CPUWrite);
+                    if (NewMemory.Gpu != 0)
                     {
-                        SetDebugName(NewGpu, "Upload.StagingSlice");
-                        OldGpu         = Slice.Gpu;
-                        Slice.Gpu      = NewGpu;
-                        Slice.Cpu      = static_cast<std::byte*>(ToHost(NewGpu));
+                        SetDebugName(NewMemory.Gpu, "Upload.StagingSlice");
+                        OldMemory      = Slice.Memory;
+                        Slice.Memory   = NewMemory;
                         Slice.Capacity = NewCapacity;
                         Slice.bWarnedGrowFailed = false;
                     }
@@ -837,7 +853,7 @@ namespace Lumina::RHI
             }
 
             // Outside the lock, since Core::Retire re-enters CancelBuffer, which takes the upload mutex.
-            Core::Retire(OldGpu);
+            Core::Retire(OldMemory);
         }
     }
 }

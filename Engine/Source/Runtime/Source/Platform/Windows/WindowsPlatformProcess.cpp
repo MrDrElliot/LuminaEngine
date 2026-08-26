@@ -211,28 +211,66 @@ namespace Lumina::Platform
         return Topo;
     }
 
+    FString GetEnvVariable(FStringView Variable)
+    {
+        const auto WideName = StringCast<WIDECHAR>(Variable.data(), static_cast<int32>(Variable.size()));
+
+        TVector<wchar_t, 512> Buffer(512);
+        for (;;)
+        {
+            const DWORD Length = ::GetEnvironmentVariableW(WideName.Get(), Buffer.data(), static_cast<DWORD>(Buffer.size()));
+            if (Length == 0)
+            {
+                return {};
+            }
+
+            if (Length < Buffer.size())
+            {
+                const auto Narrow = StringCast<ANSICHAR>(Buffer.data(), static_cast<int32>(Length));
+                return FString(Narrow.Get(), Narrow.Length());
+            }
+
+            // An overflowed call reports the size including the terminator, so resizing to it always fits.
+            Buffer.resize(Length);
+        }
+    }
+
     FString GetCurrentProcessPath()
     {
-        char buffer[MAX_PATH];
-        DWORD length = GetModuleFileNameA(nullptr, buffer, MAX_PATH);
-        if (length == 0)
+        char Buffer[MAX_PATH];
+        DWORD Length = GetModuleFileNameA(nullptr, Buffer, MAX_PATH);
+        if (Length == 0)
         {
             return "";
         }
         
-        return FString(buffer, length);
+        return FString(Buffer, Length);
     }
 
     bool SetEnvVariable(const FString& Name, const FString& Value)
     {
-        if (_putenv_s(Name.c_str(), Value.c_str()) == 0)
+        // An empty or '='-bearing name trips the CRT invalid-parameter handler, which aborts in debug.
+        if (Name.empty() || Name.find('=') != FString::npos)
         {
-            LOG_TRACE("Environment variable {} set to {}", Name, Value);
-            return true;
+            LOG_WARN("Refusing to set environment variable with invalid name '{}'", Name);
+            return false;
         }
 
-        LOG_WARN("Failed to set environment variable {}", Name);
-        return false;
+        const auto WideName = StringCast<WIDECHAR>(Name.c_str(), static_cast<int32>(Name.size()));
+        const auto WideValue = StringCast<WIDECHAR>(Value.c_str(), static_cast<int32>(Value.size()));
+
+        // The CRT block backs getenv in third-party code, the Win32 block is what a spawned child inherits.
+        const bool bCrtOk = _wputenv_s(WideName.Get(), WideValue.Get()) == 0;
+        const bool bWin32Ok = ::SetEnvironmentVariableW(WideName.Get(), WideValue.Get()) != 0;
+
+        if (!bCrtOk || !bWin32Ok)
+        {
+            LOG_WARN("Failed to set environment variable {} (crt={}, win32={})", Name, bCrtOk, bWin32Ok);
+            return false;
+        }
+
+        LOG_TRACE("Environment variable {} set to {}", Name, Value);
+        return true;
     }
 
     bool PersistUserEnvVariable(const FString& Name, const FString& Value)

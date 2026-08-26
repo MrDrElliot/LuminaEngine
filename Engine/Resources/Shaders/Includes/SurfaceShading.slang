@@ -711,8 +711,7 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
     for (uint i = 0; i < SafeLightCount; ++i)
     {
         uint LightIndex = Clusters()[TileIndex].LightIndices[i];
-        // Cluster contents can be stale after a scene switch; an index past the live count reads
-        // beyond Lights[MAX_LIGHTS] -> MMU fault in GetLightAt. Skip out-of-range indices.
+        // Cluster contents go stale across a scene switch and the array holds exactly NumLights entries.
         if (LightIndex >= NumLights)
         {
             continue;

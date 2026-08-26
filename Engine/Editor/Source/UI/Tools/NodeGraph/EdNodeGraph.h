@@ -20,9 +20,7 @@ namespace Lumina
 
 namespace Lumina
 {
-    // How AlignSelectedNodes arranges the selection. CenterX/CenterY are named for the coordinate they
-    // equalize, not the axis the nodes end up spread along: CenterX gives every node the same center X
-    // (a column), CenterY the same center Y (a row).
+    // CenterX and CenterY name the coordinate that gets equalized, so CenterX lands the nodes in a column.
     enum class ENodeAlignment : uint8
     {
         Left,
@@ -70,12 +68,10 @@ namespace Lumina
         // The node carrying this id, or null.
         CEdGraphNode* FindNode(int64 InNodeID) const;
 
-        // Picks a pin on NewNode to auto-connect to SourcePin after a drag-from-pin creates a node.
-        // Default returns the first opposite-direction pin the schema accepts; override for type-aware matching.
+        // Override for type-aware matching; the default takes the first opposite-direction pin the schema accepts.
         virtual CEdNodeGraphPin* FindAutoConnectPin(CEdGraphNode* NewNode, CEdNodeGraphPin* SourcePin) const;
 
-        // Connects SourcePin to TargetPin honoring the graph schema (breaks existing single-input links
-        // first). No-op if either pin is null or the schema rejects the connection.
+        // Breaks an existing single-input link first, and no-ops if either pin is null or the schema refuses.
         void TryAutoConnect(CEdNodeGraphPin* SourcePin, CEdNodeGraphPin* TargetPin);
 
         virtual CEdGraphNode* OnNodeRemoved(CEdGraphNode* Node) { return nullptr; }
@@ -84,103 +80,84 @@ namespace Lumina
         virtual void HandleQuickPlace(int Digit, ImVec2 CanvasPos) {}
         virtual void HandleQuickPlace(char Key, ImVec2 CanvasPos) {}
 
-        // Bumped whenever the graph's CONTENT changes -- nodes or links added or removed. Node moves and
-        // canvas pan/zoom deliberately do not count: they dirty the package but cannot invalidate
-        // compiled output. Tools compare it against the value at their last compile to know whether one
-        // is still needed.
+        // Bumped when nodes or links are added or removed, never for a node move or a canvas pan.
         NODISCARD uint64 GetContentVersion() const { return ContentVersion; }
-        void NotifyContentChanged() { ++ContentVersion; }
 
-        // Clones SourceNodes into this graph, offset by Delta from their current positions, and selects
-        // the clones. Links whose BOTH endpoints are in the set are rebuilt between the clones; links
-        // reaching outside it are dropped, so a paste never rewires the graph it lands in. Must run
-        // inside DrawGraph (node positions need the editor context).
+        // A load rebuilds every node through AddNode, which is not a content change.
+        void NotifyContentChanged() { if (!bIsPostLoading) { ++ContentVersion; } }
+
+        // Sums this graph with every sub-graph under it, so an edit inside a state's blend tree counts.
+        NODISCARD uint64 GetTreeContentVersion() const;
+
+        // Both versions are saved with the graph, so an asset that was saved compiled opens compiled.
+        NODISCARD bool NeedsCompile() const { return GetTreeContentVersion() != CompiledContentVersion; }
+        void MarkCompiled() { CompiledContentVersion = GetTreeContentVersion(); }
+
+        // Must run inside DrawGraph. Links with both endpoints in the set are rebuilt, the rest dropped.
         void CloneNodes(const TVector<CEdGraphNode*>& SourceNodes, ImVec2 Delta);
 
-        // Deletable selected nodes plus the canvas-space center of their boxes, for copy and duplicate.
-        // Must run inside DrawGraph (node geometry needs the editor context).
+        // Deletable selected nodes plus the canvas-space center of their boxes. Must run inside DrawGraph.
         void CollectSelectedNodesForClone(TVector<CEdGraphNode*>& OutNodes, ImVec2& OutPivot);
 
         // Deep-copies Source's nodes, links and layout into this empty graph, with no editor context.
         void CloneContentFrom(const CEdNodeGraph* Source);
 
-        // Hook for graph data keyed by node id: the map carries every source node to its clone.
+        // Hook for graph data keyed by node id, handed every source node mapped to its clone.
         virtual void PostCloneContent(const CEdNodeGraph* Source, const THashMap<CEdGraphNode*, CEdGraphNode*>& Clones) {}
 
         // Gives any sub-graph reached twice its own copy, repairing assets saved when clones aliased.
         uint32 UnaliasSubGraphs(THashSet<CEdNodeGraph*>& Visited);
 
-        // Moves the selected nodes into alignment. No-op below two selected nodes (and below three for
-        // the Distribute modes). Must run inside DrawGraph: node geometry and SetNodePosition both need
-        // the editor context current. The editor's own save hook marks the package dirty.
+        // Must run inside DrawGraph, and no-ops below two selected nodes (three for the Distribute modes).
         void AlignSelectedNodes(ENodeAlignment Alignment);
 
-        // Emits the "Alignment" menu items (assumes an open popup/menu). Shared by the node context
-        // menu and anything else that wants to offer them.
+        // Emits the "Alignment" menu items into an already-open popup.
         void DrawAlignmentMenuItems();
 
-        // Tidy / unused-node entries. Emitted at the tail of the node context menu; split out so a graph
-        // that builds its own menu can place them itself.
+        // Tidy and unused-node entries, split out so a graph building its own menu can place them.
         void DrawGraphToolsMenuItems();
 
-        // True for a node the graph's output flows out of. Everything reachable backwards from these is
-        // what the graph actually compiles; anything else is dead weight the compiler never sees. The
-        // base returns false, which disables the contribution features rather than guessing wrong.
+        // Everything reachable backwards from a root is what the graph compiles; the base returns false.
         virtual bool IsGraphRootNode(CEdGraphNode* Node) const { return false; }
 
-        // Nodes that reach a root through their outputs, i.e. the ones that actually affect the result.
-        // Empty when the graph declares no roots. Cheap enough to call per frame on editor-sized graphs.
+        // Nodes reaching a root through their outputs, empty when the graph declares no roots.
         void CollectContributingNodes(THashSet<CEdGraphNode*>& OutContributing) const;
 
-        // Nodes NOT in the contributing set, in graph order. These compile to nothing.
+        // Nodes outside the contributing set, in graph order. These compile to nothing.
         void CollectDeadNodes(TVector<CEdGraphNode*>& OutDead) const;
 
         void SelectDeadNodes();
         void DeleteDeadNodes();
 
-        // Layered auto-layout: columns by distance from the root, rows ordered to reduce wire crossings.
-        // Queued rather than applied directly, for the same reason as alignment -- it needs node SIZES,
-        // which only exist once the editor has drawn them.
+        // Queued rather than applied, since the layered layout needs sizes the editor has already drawn.
         void QueueTidyGraph() { bHasPendingTidy = true; }
 
-        // Dead nodes are drawn faded. Off by default in graphs with no declared root (nothing to measure
-        // "dead" against); the material graph turns it on.
+        // Meaningless in a graph with no declared root, since nothing there can be measured as dead.
         bool bFadeDeadNodes = true;
 
-        // Positions Node at a screen point on the next draw. Screen->canvas conversion needs the
-        // node-editor context, which is only current inside DrawGraph, so callers outside it (drop
-        // handlers, external spawners) queue the placement instead of computing it themselves.
+        // Screen to canvas conversion needs the editor context, so callers outside DrawGraph queue instead.
         void QueueNodePlacement(CEdGraphNode* Node, ImVec2 ScreenPos);
 
-        // Called at the tail of DrawGraph, after the node-editor pass has ended and the host window is
-        // current again, so an override can register a drag-drop target over the canvas and spawn nodes
-        // from what lands on it. The node editor owns the canvas region and leaves no ImGui item to hang
-        // a target on, which is why this is a hook rather than something a caller can bolt on outside.
-        // Default no-op.
+        // Runs at the tail of DrawGraph with the host window current, the only place a canvas-wide drop target works.
         virtual void DrawCanvasDropTarget() {}
 
-        // When non-null, instantiated on double-clicking a wire: inserted at the click and the wire
-        // reroutes through it. Default null; graphs wanting this UX (e.g. material) override.
+        // When non-null, double-clicking a wire inserts one of these and reroutes the wire through it.
         virtual CClass* GetRerouteNodeClass() const { return nullptr; }
 
-        // Splits OutputPin -> InputPin by inserting a reroute node at CanvasPos.
-        // No-op if GetRerouteNodeClass() returns null.
+        // Splits the link with a reroute node at CanvasPos, unless GetRerouteNodeClass returns null.
         CEdGraphNode* InsertRerouteOnLink(CEdNodeGraphPin* OutputPin, CEdNodeGraphPin* InputPin, ImVec2 CanvasPos);
 
         
         void SetNodeSelectedCallback(const TFunction<void(CEdGraphNode*)>& Callback) { NodeSelectedCallback = Callback; }
         void SetPreNodeDeletedCallback(const TFunction<void(CEdGraphNode*)>& Callback) { PreNodeDeletedCallback = Callback; }
 
-        // Fired when a node is double-clicked on the canvas. The animation graph
-        // editor uses this to descend into a node's sub-graph.
+        // The animation graph editor uses this to descend into a node's sub-graph.
         void SetNodeDoubleClickedCallback(const TFunction<void(CEdGraphNode*)>& Callback) { NodeDoubleClickedCallback = Callback; }
 
         // Fired every frame with the selected link's two pins, or (null, null) when none is selected.
-        // The state machine canvas uses it to surface the selected transition in the properties panel.
         void SetLinkSelectedCallback(const TFunction<void(CEdNodeGraphPin*, CEdNodeGraphPin*)>& Callback) { LinkSelectedCallback = Callback; }
 
-        // Transient per-frame debug overlay data, pushed by an asset editor while a graph is "running";
-        // the draw loop animates link flow, prints pin values, highlights active nodes. Caller-owned, frame-only.
+        // Caller-owned overlay data, valid for the one frame an asset editor pushes it.
         struct FGraphDebugContext
         {
             bool                                            bEnabled = false;
@@ -196,41 +173,33 @@ namespace Lumina
         // Schema that governs what connections are allowed in this graph.
         virtual const FEdGraphSchema& GetSchema() const { return GetDefaultEdGraphSchema(); }
 
-        // When true, the draw loop calls DrawPin() on each unconnected input pin so pins can render
-        // inline editors (default values, enum combos) on the node face.
+        // When true, unconnected input pins get a DrawPin call so they can render an inline editor.
         virtual bool ShouldDrawInlinePinEditors() const { return false; }
 
-        // Node-editor style pushed around the whole editor pass, popped by the matching hook. The
-        // state machine canvas straightens links and hides their default decoration here.
+        // Node-editor style pushed around the whole editor pass, popped by the matching hook.
         virtual void PushGraphStyle() const {}
         virtual void PopGraphStyle() const {}
 
-        // Draws Node's visual in place of the default header/pin builder. Return true when handled;
-        // link collection stays with the draw loop either way.
+        // Draws Node in place of the default builder. Return true when handled; links are collected either way.
         virtual bool DrawCustomNode(CEdGraphNode* Node) { return false; }
 
-        // Color and thickness of an emitted link. A graph that renders its own wires returns a
-        // transparent color and keeps the editor's link purely for hit-testing and deletion.
+        // A graph rendering its own wires returns a transparent color and keeps the link for hit-testing.
         virtual void GetLinkStyle(CEdNodeGraphPin* InputPin, CEdNodeGraphPin* OutputPin, ImVec4& OutColor, float& OutThickness) const
         {
             OutColor = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
             OutThickness = 1.0f;
         }
 
-        // Whether debug mode animates flow markers along the links. A graph drawing its own wires
-        // returns false, since the markers ignore the link's alpha and would bury them.
+        // A graph drawing its own wires returns false, since flow markers ignore the link's alpha.
         virtual bool WantsDebugLinkFlow() const { return true; }
 
-        // Draws the graph's wires itself. Called before any node is submitted, so coordinates are
-        // canvas space and the drawing lands under the nodes. Wire ids come from MakeLinkID.
-        // Suspend the editor around any ImGui window (tooltip, popup) opened from here.
+        // Called before any node is submitted, so coordinates are canvas space and wires land under the nodes.
         virtual void DrawGraphOverlay(const TVector<TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>>& Links) {}
 
         // A wire is identified by its two endpoints, so ids survive deleting some other wire.
         static uint64 MakeLinkID(const CEdNodeGraphPin* InputPin, const CEdNodeGraphPin* OutputPin);
 
-        // Package under which newly constructed nodes are allocated. Defaults to this graph's package,
-        // so nodes live alongside the asset that owns the graph.
+        // Package for newly constructed nodes, defaulting to this graph's own package.
         virtual CPackage* GetNodeOuter();
 
 
@@ -242,11 +211,13 @@ namespace Lumina
         // F2 on a single selected renamable node. Must run inside DrawGraph's suspended region.
         void HandleRenameShortcut();
 
+        // Guarded against the aliased sub-graphs UnaliasSubGraphs repairs, which would otherwise recurse forever.
+        uint64 AccumulateTreeContentVersion(THashSet<const CEdNodeGraph*>& Visited) const;
+
         // Compact reroute renderer (single dot, no header).
         void DrawRerouteNode(CEdGraphNode* Node);
 
-        // Draws a pin's live debug value (when the debug context supplies one) as a
-        // small colored token inline in the pin row. No-op when debug is off.
+        // Draws a pin's live debug value inline in the pin row when the debug context supplies one.
         void DrawPinDebugValue(CEdNodeGraphPin* Pin);
 
         // Placements requested outside the draw loop, applied (and cleared) on the next DrawGraph.
@@ -257,15 +228,11 @@ namespace Lumina
         };
         TVector<FPendingPlacement> PendingPlacements;
 
-        // Alignment picked from a context menu. Menus are drawn inside a Suspend block, so it is applied
-        // on the next draw instead -- same deferral as PendingPlacements, and one code path for moves.
-        uint64         ContentVersion = 0;
-
+        // Applied on the next draw, since menus are drawn inside a Suspend block.
         bool           bHasPendingAlignment = false;
         ENodeAlignment PendingAlignment     = ENodeAlignment::Left;
 
-        // Same deferral as alignment: TidyGraph reads NodeEditor::GetNodeSize, which is only valid for a
-        // node the editor has already laid out at least once.
+        // Same deferral as alignment, since NodeEditor::GetNodeSize needs a node the editor has laid out.
         bool           bHasPendingTidy      = false;
 
         // Applies the layered layout. Must run inside DrawGraph.
@@ -277,47 +244,45 @@ namespace Lumina
         // Set while PostLoad rebuilds, so AddNode does not reconcile against links that are not back yet.
         bool           bIsPostLoading = false;
 
-        // F2 rename box: opened a frame after the key, since the popup lives in the suspended region.
+        // F2 rename box, opened a frame after the key since the popup lives in the suspended region.
         bool           bOpenRenamePopup = false;
         int64          RenameNodeID     = 0;
         char           RenameBuffer[128] = {};
         
     public:
 
-        // Node classes this graph offers in its palette (and accepts on paste).
-        //
-        // Built on first use from reflection -- every CEdGraphNode subclass that names this graph's class
-        // in GetSupportedGraphClass -- so nothing has to be listed here. See FGraphNodeRegistry.
+        // Palette classes, built on first use from reflection so nothing is listed here. See FGraphNodeRegistry.
         const THashSet<CClass*>& GetSupportedNodes();
 
-        // Escape hatch for a node that discovery cannot reach: one whose supported graph is decided at
-        // runtime, or a one-off a tool wants in a single graph instance. Unioned with the discovered set,
-        // so it works called before or after the first GetSupportedNodes().
-        //
-        // Prefer GetSupportedGraphClass. This does not survive a cache rebuild for other graphs and, being
-        // per-instance, is invisible to anyone reading the node's declaration.
+        // Per-instance escape hatch for a node discovery cannot reach. Prefer GetSupportedGraphClass.
         void RegisterGraphNode(CClass* InClass);
 
         uint64 AddNode(CEdGraphNode* InNode);
 
-        // A free node ID, preferring PreferredID when it is usable. Node IDs must be unique within a
-        // graph and never zero; see the definition for why a duplicate is not merely cosmetic.
+        // A free node ID, preferring PreferredID. IDs must be unique within a graph and never zero.
         int64 GenerateUniqueNodeID(int64 PreferredID) const;
 
-        /** All nodes currently in this graph. */
+        // All nodes currently in this graph.
         PROPERTY()
         TVector<TObjectPtr<CEdGraphNode>>               Nodes;
 
-        /** Serialized connection data encoding pin-to-pin links (pairs of 32-bit pin ids). */
+        // Pin-to-pin links, stored as pairs of 32-bit pin ids.
         PROPERTY()
         TVector<uint32>                                 Connections;
 
-        /** Serialized node editor layout state (positions, zoom, etc.). */
+        // Node editor layout state, meaning node positions and group sizes.
         PROPERTY()
         FString GraphSaveData;
+
+        // Bumped by NotifyContentChanged. See GetContentVersion.
+        PROPERTY()
+        uint64 ContentVersion = 0;
+
+        // ContentVersion at the last compile. A legacy graph loads 0 for both and so reads as compiled.
+        PROPERTY()
+        uint64 CompiledContentVersion = 0;
         
-        // Reach this through GetSupportedNodes(), which fills it from reflection on first use. Touching
-        // it directly reads an empty set on a graph nobody has asked yet.
+        // Reach this through GetSupportedNodes(), which fills it from reflection on first use.
         THashSet<CClass*>                               SupportedNodes;
         bool                                            bSupportedNodesBuilt = false;
         uint32                                          SupportedNodesGeneration = 0;
@@ -331,12 +296,12 @@ namespace Lumina
 
         FGraphActionMenu                                ActionMenu;
 
-        // Pin the user dragged off when releasing on empty space. Consumed by the action menu
-        // popup to auto-connect the new node back to this pin. Cleared when the popup closes.
+        // Pin dragged off onto empty space, consumed by the action menu to auto-connect the new node.
         CEdNodeGraphPin*                                PendingSourcePin = nullptr;
         bool                                            bOpenCreateFromPin = false;
 
         bool                                            bFirstDraw = true;
+        bool                                            bNeedsInitialFraming = true;
         bool                                            bDebug = false;
         
         ax::NodeEditor::EditorContext* GetEditorContext() const { return Context; }

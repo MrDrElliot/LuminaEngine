@@ -8,10 +8,30 @@
 #include "Renderer/RenderManager.h"
 #include "World/Scene/RenderScene/MeshResolveCache.h"
 #include "Log/Log.h"
-
+#include "Containers/HashTable.h"
+#include "Core/Threading/Thread.h"
 
 namespace Lumina
 {
+    namespace
+    {
+        void WarnMissingParameterOnce(const char* Kind, const FName& Name)
+        {
+            static FMutex          Mutex;
+            static THashSet<FName> Reported;
+
+            {
+                FScopeLock Lock(Mutex);
+                if (!Reported.insert(Name).second)
+                {
+                    return;
+                }
+            }
+
+            LOG_WARN("Material instance: no parent {} parameter named '{}'.", Kind, Name);
+        }
+    }
+
     CMaterialInstance::CMaterialInstance()
     {
         Memory::Memzero(&MaterialUniforms, sizeof(FMaterialUniforms));
@@ -345,7 +365,7 @@ namespace Lumina
         FMaterialParameter Param;
         if (!GetParameterValue(EMaterialParameterType::Scalar, Name, Param))
         {
-            LOG_ERROR("Failed to find parent scalar parameter '{}'", Name);
+            WarnMissingParameterOnce("scalar", Name);
             return false;
         }
 
@@ -375,7 +395,7 @@ namespace Lumina
         FMaterialParameter Param;
         if (!GetParameterValue(EMaterialParameterType::Vector, Name, Param))
         {
-            LOG_WARN("Failed to find parent vector parameter '{}'", Name);
+            WarnMissingParameterOnce("vector", Name);
             return false;
         }
 
@@ -406,7 +426,7 @@ namespace Lumina
         FMaterialParameter Param;
         if (!GetParameterValue(EMaterialParameterType::Texture, Name, Param))
         {
-            LOG_ERROR("Failed to find parent texture parameter '{}'", Name);
+            WarnMissingParameterOnce("texture", Name);
             return false;
         }
 

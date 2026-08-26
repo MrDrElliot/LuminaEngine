@@ -316,27 +316,15 @@ namespace Lumina
         Image = {};
     }
 
-    // Plain device-local allocation reached only by GPU address (BDA).
-    struct FSceneBuffer
+    // Reached only by device address, so without a name a GPU fault in one is an unattributed number.
+    inline RHI::FGPUAllocation CreateSceneBuffer(uint64 Size, const char* DebugName = nullptr)
     {
-        RHI::GPUPtr Ptr  = 0;
-        uint64      Size = 0;
-
-        RHI::GPUPtr GetAddress() const { return Ptr; }
-        uint64      GetSize() const { return Size; }
-        explicit operator bool() const { return Ptr != 0; }
-    };
-
-    // DebugName is what a GPU fault address resolves to in the device-lost report -- these are reached
-    // only by device address, so without it a fault in one is an unattributed number.
-    inline FSceneBuffer CreateSceneBuffer(uint64 Size, const char* DebugName = nullptr)
-    {
-        const RHI::GPUPtr Ptr = RHI::Malloc(Size, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
-        if (Ptr != 0 && DebugName != nullptr)
+        const RHI::FGPUAllocation Allocation = RHI::Malloc(Size, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
+        if (Allocation.Gpu != 0 && DebugName != nullptr)
         {
-            RHI::SetDebugName(Ptr, DebugName);
+            RHI::SetDebugName(Allocation.Gpu, DebugName);
         }
-        return FSceneBuffer{ Ptr, Ptr != 0 ? Size : 0 };
+        return Allocation;
     }
 
     struct FShadowAtlasConfig
@@ -546,12 +534,15 @@ namespace Lumina
         FVector4 Color;
     };
 
+    // Header only; the arrays hang off it by address so a frame uploads the live prefix, not the cap.
     struct FSceneLightData
     {
         uint32              NumLights{};
         // 1 when the environment IBL cubes are valid; 0 means skylight-only -> shader adds a flat ambient.
         uint32              bHasIBL{};
-        uint32              Padding0[2];
+        // Bounds the Shadows allocation; every assigned ShadowDataIndex is below it.
+        uint32              NumShadows{};
+        uint32              Padding0{};
 
         FVector3           SunDirection{};   // to-light: FROM surface TOWARD the sun (== Lights[0].Direction)
         uint32              bHasSun{};
@@ -568,9 +559,14 @@ namespace Lumina
 
         FVector4           AmbientLight{};
 
-        FLight              Lights[MAX_LIGHTS]{};
-        FLightShadowData    Shadows[MAX_SHADOWS]{};
+        uint64              LightsAddress{};    // FLight[NumLights]
+        uint64              ShadowsAddress{};   // FLightShadowData[NumShadows]
     };
+
+    static_assert(sizeof(FSceneLightData) == 144, "FSceneLightData layout must match FLightData in Common.slang");
+    VERIFY_SSBO_ALIGNMENT(FSceneLightData);
+    // Relaxed block layout rejects a vector straddling 16, so the pointers must follow the last one.
+    static_assert(offsetof(FSceneLightData, LightsAddress) == 128, "LightsAddress must sit at 128");
     
     struct FLineBatch
     {
@@ -977,6 +973,7 @@ namespace Lumina
         // Folds in the range start, so it indexes the bounds arena by a mesh-global meshlet index.
         uint32      SkinnedBoundsBase;
     };
+    // Unpadded on purpose; 48 straddles a 64-byte line as often as 40, on a retained-slot-sized array.
     static_assert(sizeof(FSkinnedFrameData) == 40, "FSkinnedFrameData must match shader");
 
     constexpr uint32 PackDrawIDAndFlags(uint32 DrawID, EInstanceFlags Flags)

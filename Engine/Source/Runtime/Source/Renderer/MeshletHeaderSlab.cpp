@@ -23,11 +23,11 @@ namespace Lumina::MeshletHeaderSlab
         // 80 bytes per mesh, so a mirror that lets a grow repopulate without a GPU copy is worth keeping.
         TVector<FMeshletHeaderGPU> GMirror;
 
-        RHI::GPUPtr GSlab     = 0;
+        RHI::FGPUAllocation GSlab = {};
         uint32      GCapacity = 0;
 
         // A grown slab whose mirror upload has not run; publishing before it does reads recycled VRAM as headers.
-        RHI::GPUPtr GPendingSlab     = 0;
+        RHI::FGPUAllocation GPendingSlab = {};
         uint32      GPendingCapacity = 0;
         uint64      GPendingBatch    = 0;
 
@@ -46,18 +46,18 @@ namespace Lumina::MeshletHeaderSlab
 
         // Not null, since VisBufferSurface clamps its index and reaches element 0 of a zero-count array.
         constexpr uint64 kNullGeometryBytes = 4096;
-        RHI::GPUPtr GNullGeometry = 0;
+        RHI::FGPUAllocation GNullGeometry = {};
 
         /** Caller holds GMutex. */
         void EnsureNullGeometryLocked()
         {
-            if (GNullGeometry != 0)
+            if (GNullGeometry.Gpu != 0)
             {
                 return;
             }
 
             GNullGeometry = RHI::Malloc(kNullGeometryBytes, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
-            if (GNullGeometry == 0)
+            if (GNullGeometry.Gpu == 0)
             {
                 // Readers that clamp instead of rejecting would dereference address 0, so no slab is better than one.
                 LOG_ERROR("MeshletHeaderSlab: the {} B null-geometry page failed to allocate; no header slots "
@@ -65,7 +65,7 @@ namespace Lumina::MeshletHeaderSlab
                 return;
             }
 
-            RHI::SetDebugName(GNullGeometry, "Mesh.NullGeometry");
+            RHI::SetDebugName(GNullGeometry.Gpu, "Mesh.NullGeometry");
 
             const TVector<uint8> Zeroes((SIZE_T)kNullGeometryBytes, (uint8)0);
             RHI::UploadBuffer(GNullGeometry, Zeroes.data(), (SIZE_T)kNullGeometryBytes);
@@ -77,11 +77,11 @@ namespace Lumina::MeshletHeaderSlab
             FMeshletHeaderGPU Header = {};
 
             // MeshletCount stays 0, and these addresses exist only for readers that clamp instead.
-            Header.MeshletsAddress  = GNullGeometry;
-            Header.SpheresAddress   = GNullGeometry;
-            Header.VerticesAddress  = GNullGeometry;
-            Header.TrianglesAddress = GNullGeometry;
-            Header.ConesAddress     = GNullGeometry;
+            Header.MeshletsAddress  = GNullGeometry.Gpu;
+            Header.SpheresAddress   = GNullGeometry.Gpu;
+            Header.VerticesAddress  = GNullGeometry.Gpu;
+            Header.TrianglesAddress = GNullGeometry.Gpu;
+            Header.ConesAddress     = GNullGeometry.Gpu;
 
             // Zero is a VALID heap slot, so the sentinel has to be written explicitly.
             Header.DistanceFieldIndex = DistanceField::kInvalidIndex;
@@ -91,7 +91,7 @@ namespace Lumina::MeshletHeaderSlab
         // Swaps a staged slab in once its mirror copy has run on the GPU. Caller holds GMutex.
         void PublishPendingLocked()
         {
-            if (GPendingSlab == 0 || !RHI::Upload::IsBatchComplete(GPendingBatch))
+            if (GPendingSlab.Gpu == 0 || !RHI::Upload::IsBatchComplete(GPendingBatch))
             {
                 return;
             }
@@ -101,7 +101,7 @@ namespace Lumina::MeshletHeaderSlab
 
             GSlab            = GPendingSlab;
             GCapacity        = GPendingCapacity;
-            GPendingSlab     = 0;
+            GPendingSlab     = {};
             GPendingCapacity = 0;
             GPendingBatch    = 0;
         }
@@ -129,15 +129,15 @@ namespace Lumina::MeshletHeaderSlab
             }
 
             const uint64 Bytes = (uint64)NewCapacity * sizeof(FMeshletHeaderGPU);
-            const RHI::GPUPtr NewSlab = RHI::Malloc(Bytes, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
-            if (NewSlab == 0)
+            const RHI::FGPUAllocation NewSlab = RHI::Malloc(Bytes, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
+            if (NewSlab.Gpu == 0)
             {
                 LOG_ERROR("MeshletHeaderSlab: allocation of {} KiB failed; meshes acquiring a header slot "
                           "from here on will render as no geometry.", Bytes / 1024);
                 return;
             }
 
-            RHI::SetDebugName(NewSlab, "Mesh.MeshletHeaderSlab");
+            RHI::SetDebugName(NewSlab.Gpu, "Mesh.MeshletHeaderSlab");
 
             // The whole mirror, so the staged allocation is fully defined by the time it is published.
             GMirror.resize(NewCapacity, MakeNullHeader());
@@ -160,7 +160,7 @@ namespace Lumina::MeshletHeaderSlab
             GPendingBatch    = RHI::Upload::BatchForQueuedOps();
 
             // Nothing is published yet, so the first slab waits rather than hand out slots into undefined memory.
-            if (GSlab == 0)
+            if (GSlab.Gpu == 0)
             {
                 RHI::FlushUploadsAndWait();
                 PublishPendingLocked();
@@ -170,21 +170,21 @@ namespace Lumina::MeshletHeaderSlab
         /** Creates the slab and burns slot 0 on the null header. Caller holds GMutex. */
         void EnsureInitializedLocked()
         {
-            if (GSlab != 0)
+            if (GSlab.Gpu != 0)
             {
                 return;
             }
 
             // ReserveLocked fills the new allocation with null headers, and those name it.
             EnsureNullGeometryLocked();
-            if (GNullGeometry == 0)
+            if (GNullGeometry.Gpu == 0)
             {
                 // Every null header would name address 0, and a clamping reader dereferences it. No slab is safer.
                 return;
             }
 
             ReserveLocked(kInitialCapacity);
-            if (GSlab == 0)
+            if (GSlab.Gpu == 0)
             {
                 return;
             }
@@ -199,7 +199,7 @@ namespace Lumina::MeshletHeaderSlab
         FScopeLock Lock(GMutex);
         EnsureInitializedLocked();
 
-        if (GSlab == 0)
+        if (GSlab.Gpu == 0)
         {
             return kNullSlot;
         }
@@ -227,7 +227,7 @@ namespace Lumina::MeshletHeaderSlab
         if (Slot >= GCapacity)
         {
             // With nothing staged the wait is a GPU stall that cannot change the answer.
-            if (GPendingSlab != 0)
+            if (GPendingSlab.Gpu != 0)
             {
                 RHI::FlushUploadsAndWait();
                 PublishPendingLocked();
@@ -249,7 +249,7 @@ namespace Lumina::MeshletHeaderSlab
         /** Caller holds GMutex. Skips a slot rewritten since the retire was requested. */
         void WriteNullLocked(uint32 Slot, uint32 ExpectedVersion)
         {
-            if (Slot == kNullSlot || Slot >= GCapacity || GSlab == 0)
+            if (Slot == kNullSlot || Slot >= GCapacity || GSlab.Gpu == 0)
             {
                 return;
             }
@@ -261,12 +261,12 @@ namespace Lumina::MeshletHeaderSlab
 
             const FMeshletHeaderGPU Null = MakeNullHeader();
             GMirror[Slot] = Null;
-            RHI::UploadBuffer(GSlab + (uint64)Slot * sizeof(FMeshletHeaderGPU), &Null, sizeof(FMeshletHeaderGPU));
+            RHI::UploadBuffer(GSlab, &Null, sizeof(FMeshletHeaderGPU), (uint64)Slot * sizeof(FMeshletHeaderGPU));
 
             // The staged slab's mirror copy was queued before this write, so it has to be repeated there.
-            if (GPendingSlab != 0 && Slot < GPendingCapacity)
+            if (GPendingSlab.Gpu != 0 && Slot < GPendingCapacity)
             {
-                RHI::UploadBuffer(GPendingSlab + (uint64)Slot * sizeof(FMeshletHeaderGPU), &Null, sizeof(FMeshletHeaderGPU));
+                RHI::UploadBuffer(GPendingSlab, &Null, sizeof(FMeshletHeaderGPU), (uint64)Slot * sizeof(FMeshletHeaderGPU));
             }
         }
 
@@ -317,7 +317,7 @@ namespace Lumina::MeshletHeaderSlab
             FScopeLock Lock(GMutex);
             WriteNullLocked(Slot, Version);
 
-            if (Slot < GCapacity && GSlab != 0)
+            if (Slot < GCapacity && GSlab.Gpu != 0)
             {
                 GFreeList.push_back(Slot);
             }
@@ -342,7 +342,7 @@ namespace Lumina::MeshletHeaderSlab
                       Header.VerticesAddress, Header.TrianglesAddress, Header.ConesAddress);
 
             FScopeLock RejectLock(GMutex);
-            if (Slot < GCapacity && GSlab != 0)
+            if (Slot < GCapacity && GSlab.Gpu != 0)
             {
                 // Through the shared writer, so the staged slab is blanked too and a publish cannot resurrect this.
                 ++GSlotVersion[Slot];
@@ -352,7 +352,7 @@ namespace Lumina::MeshletHeaderSlab
         }
 
         FScopeLock Lock(GMutex);
-        if (Slot >= GCapacity || GSlab == 0)
+        if (Slot >= GCapacity || GSlab.Gpu == 0)
         {
             return;
         }
@@ -361,12 +361,12 @@ namespace Lumina::MeshletHeaderSlab
         ++GSlotVersion[Slot];
 
         GMirror[Slot] = Header;
-        RHI::UploadBuffer(GSlab + (uint64)Slot * sizeof(FMeshletHeaderGPU), &Header, sizeof(FMeshletHeaderGPU));
+        RHI::UploadBuffer(GSlab, &Header, sizeof(FMeshletHeaderGPU), (uint64)Slot * sizeof(FMeshletHeaderGPU));
 
         // The staged slab's mirror copy was queued before this write, so it has to be repeated there.
-        if (GPendingSlab != 0 && Slot < GPendingCapacity)
+        if (GPendingSlab.Gpu != 0 && Slot < GPendingCapacity)
         {
-            RHI::UploadBuffer(GPendingSlab + (uint64)Slot * sizeof(FMeshletHeaderGPU), &Header, sizeof(FMeshletHeaderGPU));
+            RHI::UploadBuffer(GPendingSlab, &Header, sizeof(FMeshletHeaderGPU), (uint64)Slot * sizeof(FMeshletHeaderGPU));
         }
     }
 
@@ -388,25 +388,25 @@ namespace Lumina::MeshletHeaderSlab
 
         // Once per frame per view, which is the natural place to notice a staged slab has landed.
         PublishPendingLocked();
-        return GSlab;
+        return GSlab.Gpu;
     }
 
     void Shutdown()
     {
-        RHI::GPUPtr Slab    = 0;
-        RHI::GPUPtr Pending = 0;
-        RHI::GPUPtr Null    = 0;
+        RHI::FGPUAllocation Slab    = {};
+        RHI::FGPUAllocation Pending = {};
+        RHI::FGPUAllocation Null    = {};
         {
             FScopeLock Lock(GMutex);
 
             Slab             = GSlab;
             Pending          = GPendingSlab;
             Null             = GNullGeometry;
-            GSlab            = 0;
-            GPendingSlab     = 0;
+            GSlab            = {};
+            GPendingSlab     = {};
             GPendingCapacity = 0;
             GPendingBatch    = 0;
-            GNullGeometry    = 0;
+            GNullGeometry    = {};
             GCapacity        = 0;
             GNextSlot     = kNullSlot + 1u;
             GMirror.clear();

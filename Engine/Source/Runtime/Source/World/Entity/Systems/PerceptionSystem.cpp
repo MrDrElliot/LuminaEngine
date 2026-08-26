@@ -230,7 +230,8 @@ namespace Lumina
             return;
         }
         
-        TVector<entt::entity> Perceivers;
+        static thread_local TVector<entt::entity> Perceivers;
+        Perceivers.clear();
         Perceivers.reserve(Handle->size());
         for (entt::entity E : *Handle)
         {

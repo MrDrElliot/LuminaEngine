@@ -261,10 +261,6 @@ namespace Lumina
         
         static constexpr HandleT ToHandle(uint32 Index, uint32 Generation)
         {
-            // Tag bit is 0x8000'0000 before the shift, not after. Or-ing it into a 64-bit value and
-            // then shifting left by 32 pushed it straight off the top, so the tag never survived and
-            // handles were non-zero only because Generation starts at 1. RHI::IsValid tests
-            // Handle != 0, so a slot whose generation ever wrapped to 0 would read as invalid.
             return {.Handle = (0x8000'0000ull | (uint64)Generation) << 32ull | Index};
         }
         

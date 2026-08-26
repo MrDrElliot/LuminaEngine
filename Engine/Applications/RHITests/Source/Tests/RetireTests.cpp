@@ -6,12 +6,12 @@ namespace Lumina::RHITests
 {
     RHI_TEST(Retire, BufferSurvivesUntilDrained)
     {
-        const RHI::GPUPtr Buffer = RHI::Malloc(4096, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
-        RHI_REQUIRE(Buffer != 0);
-        RHI::SetDebugName(Buffer, "RHITests.RetireBuffer");
+        const RHI::FGPUAllocation Buffer = RHI::Malloc(4096, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
+        RHI_REQUIRE(Buffer.Gpu != 0);
+        RHI::SetDebugName(Buffer.Gpu, "RHITests.RetireBuffer");
 
         const RHI::FCmdListH CL = Ctx.OpenCL();
-        RHI::CmdMemzero(CL, Buffer, 4096);
+        RHI::CmdMemzero(CL, Buffer.Gpu, 4096);
         Ctx.SubmitAndWait(CL);
 
         RHI::Core::Retire(Buffer);
@@ -50,9 +50,9 @@ namespace Lumina::RHITests
         const uint32 Slot = RHI::HeapWriteTexture(RHI::Core::GetGlobalHeap(), Texture);
         RHI_REQUIRE(Slot != RHI::kInvalidHeapSlot);
 
-        const RHI::GPUPtr Buffer = RHI::Malloc(4 * 1024 * 1024, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
-        RHI_REQUIRE(Buffer != 0);
-        RHI::SetDebugName(Buffer, "RHITests.InFlightBuffer");
+        const RHI::FGPUAllocation Buffer = RHI::Malloc(4 * 1024 * 1024, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
+        RHI_REQUIRE(Buffer.Gpu != 0);
+        RHI::SetDebugName(Buffer.Gpu, "RHITests.InFlightBuffer");
 
         const RHI::FCmdListH CL = Ctx.OpenCL();
 
@@ -61,7 +61,7 @@ namespace Lumina::RHITests
         RHI::Barriers::AllToTransfer(CL);
         for (uint32 i = 0; i < 64; ++i)
         {
-            RHI::CmdMemset(CL, Buffer, 4 * 1024 * 1024, i);
+            RHI::CmdMemset(CL, Buffer.Gpu, 4 * 1024 * 1024, i);
             RHI::Barriers::TransferToTransfer(CL);
         }
         RHI::CmdClearTexture(CL, Texture, Clear);
@@ -106,7 +106,7 @@ namespace Lumina::RHITests
 
     RHI_TEST(Retire, RetireOfInvalidHandlesIsIgnored)
     {
-        RHI::Core::Retire(RHI::GPUPtr{ 0 });
+        RHI::Core::Retire(RHI::FGPUAllocation{});
         RHI::Core::Retire(RHI::FTextureH{});
         RHI::Core::RetireSampledSlot(RHI::kInvalidHeapSlot);
         RHI::Core::RetireStorageSlot(RHI::kInvalidHeapSlot);
@@ -120,8 +120,8 @@ namespace Lumina::RHITests
 
         for (uint32 i = 0; i < Count; ++i)
         {
-            const RHI::GPUPtr Ptr = RHI::Malloc(1024, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
-            if (Ptr == 0)
+            const RHI::FGPUAllocation Ptr = RHI::Malloc(1024, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
+            if (Ptr.Gpu == 0)
             {
                 Ctx.Failf("allocation %u of %u failed", i, Count);
                 break;

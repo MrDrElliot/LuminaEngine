@@ -4,6 +4,7 @@
 #include "Core/Threading/Atomic.h"
 #include "Core/Threading/Thread.h"
 #include "Platform/Time/PlatformTime.h"
+#include "Platform/Process/PlatformProcess.h"
 #include "Log/Log.h"
 #include "Memory/Memory.h"
 #if USING(WITH_EDITOR)
@@ -195,9 +196,10 @@ namespace Lumina
             Jobs::FConfig Config;
             // Crossing the processor count turns an empty fan-out from nanoseconds into microseconds.
             Config.NumWorkerThreads   = Hardware > 4 ? Hardware - (Hardware / 4) - 1 : 1;
-            if (const char* WorkersEnv = std::getenv("LUMINA_JOB_WORKERS"))
+            const FString WorkersEnv = Platform::GetEnvVariable("LUMINA_JOB_WORKERS");
+            if (!WorkersEnv.empty())
             {
-                const int N = std::atoi(WorkersEnv);
+                const int N = std::atoi(WorkersEnv.c_str());
                 if (N > 0) Config.NumWorkerThreads = (uint32)N;
             }
             Config.NumExternalThreads = 8;

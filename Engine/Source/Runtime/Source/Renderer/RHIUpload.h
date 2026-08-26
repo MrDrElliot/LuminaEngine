@@ -5,7 +5,7 @@
 namespace Lumina::RHI
 {
     // False means the copy was NOT queued (staging exhausted), so no batch will ever name it.
-    RUNTIME_API bool UploadBuffer(GPUPtr Dest, const void* Data, uint64 Size);
+    RUNTIME_API bool UploadBuffer(const FGPUAllocation& Dest, const void* Data, uint64 Size, uint64 Offset = 0);
 
     // Width/Height are the mip's own dimensions, REQUIRED past mip 0 and whenever OffsetY is set. OffsetY
     // stages a horizontal band. False = the upload was DROPPED, so a banded caller must not advance.
@@ -32,11 +32,11 @@ namespace Lumina::RHI
         // retire. Releasing inside the flush retires against the PREVIOUS slot during BeginFrame.
         //
         // OutBatch names the flush the swept-out ops went into, for NoteFlushSubmitted and IsBatchComplete.
-        bool Flush(FCmdListH CL, TVector<GPUPtr>& OutOwnedStaging, uint32* OutSliceMask = nullptr, uint64* OutBatch = nullptr);
+        bool Flush(FCmdListH CL, TVector<FGPUAllocation>& OutOwnedStaging, uint32* OutSliceMask = nullptr, uint64* OutBatch = nullptr);
 
         uint32 FlushSplit(FCmdListH BufferCL, FCmdListH ImageCL,
                           uint32* OutBufferSliceMask, uint32* OutImageSliceMask,
-                          TVector<GPUPtr>& OutOwnedStaging, uint64* OutBatch = nullptr);
+                          TVector<FGPUAllocation>& OutOwnedStaging, uint64* OutBatch = nullptr);
 
         /** The flush that ops queued right now will leave in. Read it AFTER queueing the ops you care
          *  about: the answer is then either the batch they are in, or -- if a flush raced in between -- a
@@ -57,7 +57,7 @@ namespace Lumina::RHI
         // address is recycled, against a different LIVE one, which corrupts silently instead of faulting.
         // Both are cheap no-ops while nothing is queued, which is the common case on the release paths.
         void CancelTexture(FTextureH Texture);
-        void CancelBuffer(GPUPtr Dest);
+        void CancelBuffer(const FGPUAllocation& Dest);
 
         void DrainSliceWriters(uint32 Slot);
 

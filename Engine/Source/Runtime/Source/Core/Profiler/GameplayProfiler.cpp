@@ -56,6 +56,19 @@ namespace Lumina
         }
     }
 
+    // Fills to HistorySize, then overwrites the oldest sample and advances Offset onto the next oldest.
+    static void PushHistory(FProfilerHistory& History, float Value)
+    {
+        if (History.Values.size() < FGameplayProfiler::HistorySize)
+        {
+            History.Values.push_back(Value);
+            return;
+        }
+
+        History.Values[History.Offset] = Value;
+        History.Offset = (History.Offset + 1u) % FGameplayProfiler::HistorySize;
+    }
+
     void FGameplayProfiler::BeginFrame()
     {
         if (!IsEnabled())
@@ -84,35 +97,29 @@ namespace Lumina
             Total += E.ExclusiveMs;
         }
         Current.TotalMs = Total;
-        Latest = Current;
 
         // Frame-total history ring (for the header graph).
-        FrameTotalHistory.push_back(static_cast<float>(Total));
-        if (FrameTotalHistory.size() > HistorySize)
-        {
-            FrameTotalHistory.erase(FrameTotalHistory.begin());
-        }
+        PushHistory(FrameTotalHistory, static_cast<float>(Total));
 
         // Every known scope advances each frame, so the rings stay aligned for a stable sparkline.
         for (auto& Pair : EntryHistory)
         {
             const auto It = IndexOf.find(Pair.first);
             const float Value = (It != IndexOf.end()) ? static_cast<float>(Current.Entries[It->second].InclusiveMs) : 0.0f;
-            Pair.second.push_back(Value);
-            if (Pair.second.size() > HistorySize)
-            {
-                Pair.second.erase(Pair.second.begin());
-            }
+            PushHistory(Pair.second, Value);
         }
         for (const FGameplayProfileEntry& E : Current.Entries)
         {
             if (EntryHistory.find(E.Hash) == EntryHistory.end())
             {
-                TVector<float> Ring;
-                Ring.push_back(static_cast<float>(E.InclusiveMs));
-                EntryHistory[E.Hash] = std::move(Ring);
+                PushHistory(EntryHistory[E.Hash], static_cast<float>(E.InclusiveMs));
             }
         }
+
+        // Swapped rather than copied; BeginFrame clears whatever Latest hands back.
+        Latest.TotalMs     = Current.TotalMs;
+        Latest.FrameNumber = Current.FrameNumber;
+        Latest.Entries.swap(Current.Entries);
     }
 
     void FGameplayProfiler::BeginScope(FStringView Name)
@@ -175,7 +182,7 @@ namespace Lumina
         }
     }
 
-    const TVector<float>* FGameplayProfiler::GetEntryHistory(uint64 Hash) const
+    const FProfilerHistory* FGameplayProfiler::GetEntryHistory(uint64 Hash) const
     {
         const auto It = EntryHistory.find(Hash);
         return It != EntryHistory.end() ? &It->second : nullptr;

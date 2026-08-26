@@ -18,8 +18,8 @@ namespace Lumina::RHITests
         const RHI::FTextureH Target = Ctx.CreateTexture(Desc, "RHITests.SelfTestTarget");
         RHI_REQUIRE(RHI::IsValid(Target));
 
-        const RHI::GPUPtr Buffer = Ctx.Malloc(256, RHI::EMemoryType::GPUOnly, "RHITests.SelfTestBuffer");
-        RHI_REQUIRE(Buffer != 0);
+        const RHI::FGPUAllocation Buffer = Ctx.Malloc(256, RHI::EMemoryType::GPUOnly, "RHITests.SelfTestBuffer");
+        RHI_REQUIRE(Buffer.Gpu != 0);
 
         const RHI::FRenderAttachment Color
         {
@@ -35,7 +35,7 @@ namespace Lumina::RHITests
 
         const RHI::FCmdListH CL = Ctx.OpenCL();
         RHI::CmdBeginRenderPass(CL, Pass);
-        RHI::CmdMemzero(CL, Buffer, 256);   // illegal here
+        RHI::CmdMemzero(CL, Buffer.Gpu, 256);   // illegal here
         RHI::CmdEndRenderPass(CL);
         Ctx.SubmitAndWait(CL);
     }

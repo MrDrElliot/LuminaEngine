@@ -191,13 +191,23 @@ namespace Lumina::Net
         return (Encoded & 1u) ? (NetGUID_DynamicStart + (Encoded >> 1)) : (Encoded >> 1);
     }
 
-    TVector<FComponentRepOut> CollectComponentFields(entt::registry& Registry, entt::entity Entity, FNetWorldState& State, bool bBaseline, FComponentRepState* DiffState)
+    void CollectComponentFieldsInto(entt::registry& Registry, entt::entity Entity, FNetWorldState& State,
+                                    bool bBaseline, FComponentRepState* DiffState, TVector<FComponentRepOut>& Out)
     {
         LUMINA_PROFILE_SCOPE();
-        TVector<FComponentRepOut> Out;
+
+        // Elements are reused so each block keeps its capacity instead of being freed and remade.
+        SIZE_T Emitted = 0;
+
+        // Parked per thread; every buffer below is rebuilt from scratch on each call.
+        static thread_local TVector<uint8>  HookScratch;
+        static thread_local TVector<uint8>  CurBytes;
+        static thread_local TVector<uint32> CurOffsets;
+        static thread_local TVector<uint8>  Mask;
+
+        HookScratch.clear();
 
         // BindWriters sets the hooks so refs mint into the outgoing maps exactly as a live write would.
-        TVector<uint8> HookScratch;
         FNetArchive HookSrc(HookScratch);
         Net::BindWriters(HookSrc, State);
 
@@ -227,36 +237,43 @@ namespace Lumina::Net
             const uint32 WireIndex = It->second;
             void* Ptr = Set.value(Entity);
 
-            // Current per-field bytes; compare to the last-sent baseline to build the changed-field mask.
-            TVector<TVector<uint8>> Cur;
-            St->NetSerializeReplicatedToBuffers(HookSrc, Ptr, Cur);
-            const uint32 N = static_cast<uint32>(Cur.size());
+            // Current field bytes, flat; compare to the last-sent baseline to build the changed-field mask.
+            St->NetSerializeReplicatedFlat(HookSrc, Ptr, CurBytes, CurOffsets);
+            const uint32 N = CurOffsets.empty() ? 0u : (uint32)CurOffsets.size() - 1u;
 
-            TVector<TVector<uint8>>* Base = nullptr;
+            FRepFieldSnapshot* Base = nullptr;
             if (DiffState != nullptr)
             {
                 Base = &DiffState->LastSent[WireIndex];
-                if (static_cast<uint32>(Base->size()) != N)
-                {
-                    Base->assign(N, TVector<uint8>{}); // first sight / layout change -> all fields count as changed
-                }
             }
 
+            // A layout change makes the old snapshot meaningless, so every field counts as changed.
+            const bool bBaseUsable = Base != nullptr && Base->Num() == N;
+
             const uint32 MaskBytes = (N + 7) / 8;
-            TVector<uint8> Mask(MaskBytes, 0);
+            Mask.clear();
+            Mask.resize(MaskBytes, 0);
+
             bool bAny = false;
             for (uint32 i = 0; i < N; ++i)
             {
-                const bool bChanged = bBaseline || Base == nullptr || (*Base)[i] != Cur[i];
+                const uint32 Size = CurOffsets[i + 1] - CurOffsets[i];
+
+                const bool bChanged = bBaseline || !bBaseUsable
+                    || Base->FieldSize(i) != Size
+                    || Memory::Memcmp(Base->FieldData(i), CurBytes.data() + CurOffsets[i], Size) != 0;
+
                 if (bChanged)
                 {
                     Mask[i >> 3] |= static_cast<uint8>(1u << (i & 7));
                     bAny = true;
                 }
-                if (Base != nullptr)
-                {
-                    (*Base)[i] = Cur[i];
-                }
+            }
+
+            if (Base != nullptr)
+            {
+                Base->Bytes.assign(CurBytes.begin(), CurBytes.end());
+                Base->Offsets.assign(CurOffsets.begin(), CurOffsets.end());
             }
 
             // A baseline keeps a fieldless component so the client still emplaces the tag-only one.
@@ -265,19 +282,29 @@ namespace Lumina::Net
                 continue;
             }
 
-            FComponentRepOut C;
+            FComponentRepOut& C = (Emitted < Out.size()) ? Out[Emitted] : Out.emplace_back();
+            ++Emitted;
+
             C.WireIndex = WireIndex;
+            C.Block.clear();
             C.Block.insert(C.Block.end(), Mask.begin(), Mask.end());
             for (uint32 i = 0; i < N; ++i)
             {
                 if (Mask[i >> 3] & (1u << (i & 7)))
                 {
-                    C.Block.insert(C.Block.end(), Cur[i].begin(), Cur[i].end());
+                    const uint8* Field = CurBytes.data() + CurOffsets[i];
+                    C.Block.insert(C.Block.end(), Field, Field + (CurOffsets[i + 1] - CurOffsets[i]));
                 }
             }
-            Out.push_back(std::move(C));
         }
 
+        Out.resize(Emitted);
+    }
+
+    TVector<FComponentRepOut> CollectComponentFields(entt::registry& Registry, entt::entity Entity, FNetWorldState& State, bool bBaseline, FComponentRepState* DiffState)
+    {
+        TVector<FComponentRepOut> Out;
+        CollectComponentFieldsInto(Registry, Entity, State, bBaseline, DiffState, Out);
         return Out;
     }
 
@@ -411,14 +438,16 @@ namespace Lumina::Net
 
     void SendFramed(INetworkTransport& Transport, FConnectionHandle Connection, const uint8* Msg, SIZE_T MsgSize, uint8 Channel, ESendMode Mode)
     {
-        TVector<uint8> Framed;
+        static thread_local TVector<uint8> Framed;
+        Framed.clear();
         AppendFramedMessage(Framed, Msg, MsgSize);
         Transport.Send(Connection, Framed.data(), static_cast<SIZE_T>(Framed.size()), Channel, Mode);
     }
 
     void BroadcastFramed(INetworkTransport& Transport, const uint8* Msg, SIZE_T MsgSize, uint8 Channel, ESendMode Mode)
     {
-        TVector<uint8> Framed;
+        static thread_local TVector<uint8> Framed;
+        Framed.clear();
         AppendFramedMessage(Framed, Msg, MsgSize);
         Transport.Broadcast(Framed.data(), static_cast<SIZE_T>(Framed.size()), Channel, Mode);
     }

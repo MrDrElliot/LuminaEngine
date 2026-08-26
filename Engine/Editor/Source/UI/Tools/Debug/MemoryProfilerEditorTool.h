@@ -81,7 +81,7 @@ namespace Lumina
             uint32 Count() const { return TextureCount + BufferCount; }
         };
 
-        TVector<RHI::FGPUAllocation> GPUAllocations;   // one row per live RHI allocation
+        TVector<RHI::FGPUAllocationInfo> GPUAllocations;   // one row per live RHI allocation
         TVector<FGPUPurposeRow>      GPUPurposes;      // rolled up, sorted by total descending
         uint64                       GPUTextureBytes    = 0;
         uint64                       GPUBufferBytes     = 0;

@@ -102,7 +102,7 @@ namespace Lumina
 #endif
 
         // Every GPU allocation is named Subsystem.Thing, so the segment before the dot is the purpose.
-        FString GPUPurposeOf(const RHI::FGPUAllocation& Alloc)
+        FString GPUPurposeOf(const RHI::FGPUAllocationInfo& Alloc)
         {
             if (Alloc.Name[0] != '\0')
             {
@@ -157,7 +157,7 @@ namespace Lumina
         }
 
         // What the row is, past its size.
-        FString DescribeAllocation(const RHI::FGPUAllocation& Alloc)
+        FString DescribeAllocation(const RHI::FGPUAllocationInfo& Alloc)
         {
             if (Alloc.Kind != RHI::EGPUAllocationKind::Texture)
             {
@@ -543,7 +543,7 @@ namespace Lumina
             return GPUPurposes.back();
         };
 
-        for (const RHI::FGPUAllocation& Alloc : GPUAllocations)
+        for (const RHI::FGPUAllocationInfo& Alloc : GPUAllocations)
         {
             FGPUPurposeRow& Row = FindOrAdd(GPUPurposeOf(Alloc));
             if (Alloc.Kind == RHI::EGPUAllocationKind::Texture)
@@ -564,7 +564,7 @@ namespace Lumina
             [](const FGPUPurposeRow& A, const FGPUPurposeRow& B) { return A.Total() > B.Total(); });
 
         Algo::Sort(GPUAllocations.begin(), GPUAllocations.end(),
-            [](const RHI::FGPUAllocation& A, const RHI::FGPUAllocation& B) { return A.Size > B.Size; });
+            [](const RHI::FGPUAllocationInfo& A, const RHI::FGPUAllocationInfo& B) { return A.Size > B.Size; });
     }
 
     void FMemoryProfilerEditorTool::DrawGPUPurpose()
@@ -670,7 +670,7 @@ namespace Lumina
         ImGui::Checkbox("Buffers", &bShowBuffers);
 
         // The body runs through a clipper, so re-testing per visible row makes scrolling position-dependent.
-        TVector<const RHI::FGPUAllocation*> Visible;
+        TVector<const RHI::FGPUAllocationInfo*> Visible;
         Visible.reserve(GPUAllocations.size());
 
         char FilterLower[sizeof(GPUFilter)];
@@ -679,7 +679,7 @@ namespace Lumina
             FilterLower[i] = (char)std::tolower((unsigned char)GPUFilter[i]);
         }
 
-        for (const RHI::FGPUAllocation& Alloc : GPUAllocations)
+        for (const RHI::FGPUAllocationInfo& Alloc : GPUAllocations)
         {
             const bool bTexture = Alloc.Kind == RHI::EGPUAllocationKind::Texture;
             if ((bTexture && !bShowTextures) || (!bTexture && !bShowBuffers))
@@ -706,7 +706,7 @@ namespace Lumina
         }
 
         uint64 VisibleBytes = 0;
-        for (const RHI::FGPUAllocation* Alloc : Visible)
+        for (const RHI::FGPUAllocationInfo* Alloc : Visible)
         {
             VisibleBytes += Alloc->Size;
         }
@@ -731,7 +731,7 @@ namespace Lumina
             {
                 for (int i = Clipper.DisplayStart; i < Clipper.DisplayEnd; ++i)
                 {
-                    const RHI::FGPUAllocation& Alloc = *Visible[(size_t)i];
+                    const RHI::FGPUAllocationInfo& Alloc = *Visible[(size_t)i];
                     const bool bTexture = Alloc.Kind == RHI::EGPUAllocationKind::Texture;
 
                     ImGui::TableNextRow();
@@ -1663,7 +1663,7 @@ namespace Lumina
             R += "|------|------|------|--------|\n";
             for (size_t i = 0; i < Shown; ++i)
             {
-                const RHI::FGPUAllocation& Alloc = GPUAllocations[i];
+                const RHI::FGPUAllocationInfo& Alloc = GPUAllocations[i];
                 AppendFormat(R, "| {} | {} | {} | {} |\n",
                     Alloc.Name[0] ? Alloc.Name : "(unnamed)",
                     Alloc.Kind == RHI::EGPUAllocationKind::Texture ? "Texture" : "Buffer",

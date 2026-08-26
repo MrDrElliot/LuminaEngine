@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <atomic>
 
@@ -109,3 +109,20 @@ namespace Lumina::Logging
 	#define LOG_DEBUG(...)	((void)0)
 	#define LOG_INFO(...)	((void)0)
 #endif
+
+// A site that fires per entity, per chunk or per frame drowns the log in one restatement of a single
+// fact. These keep the first occurrence, which is the one that carries the diagnosis, and drop the rest.
+// The flag is per call site, so two sites logging the same text still report independently.
+#define LUMINA_LOG_ONCE(Macro, ...)                                      \
+	do {                                                                 \
+		static ::Lumina::TAtomic<bool> bLoggedOnce(false);                \
+		if (!bLoggedOnce.exchange(true, std::memory_order_relaxed))       \
+		{                                                                \
+			Macro(__VA_ARGS__);                                          \
+		}                                                                \
+	} while (false)
+
+#define LOG_WARN_ONCE(...)		LUMINA_LOG_ONCE(LOG_WARN,    __VA_ARGS__)
+#define LOG_ERROR_ONCE(...)		LUMINA_LOG_ONCE(LOG_ERROR,   __VA_ARGS__)
+#define LOG_DISPLAY_ONCE(...)	LUMINA_LOG_ONCE(LOG_DISPLAY, __VA_ARGS__)
+#define LOG_INFO_ONCE(...)		LUMINA_LOG_ONCE(LOG_INFO,    __VA_ARGS__)

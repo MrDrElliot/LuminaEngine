@@ -25,7 +25,8 @@ namespace Lumina::RHI
 
     void FRenderReleaseQueue::EndRender()
     {
-        TVector<FRenderRelease> Ready;
+        static thread_local TVector<FRenderRelease> Ready;
+        Ready.clear();
 
         {
             FScopeLock Lock(Mutex);
@@ -53,6 +54,9 @@ namespace Lumina::RHI
         {
             ReleaseNow(Item);
         }
+
+        // Parked storage keeps its capacity, but the released records must not outlive this call.
+        Ready.clear();
     }
 
     void FRenderReleaseQueue::FlushAll()

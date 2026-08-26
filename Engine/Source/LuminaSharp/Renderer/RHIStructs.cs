@@ -275,6 +275,19 @@ public struct FRenderAttachment
         => new() { Texture = Texture, LoadOp = ELoadOp.Load, StoreOp = EStoreOp.Store };
 }
 
+// One allocation from RHI::Malloc. Cpu is null for EMemoryType.GPUOnly; both pointers name the same first byte.
+[StructLayout(LayoutKind.Sequential)]
+[NativeLayout("RHI::FGPUAllocation")]
+public struct FGPUAllocation
+{
+    public IntPtr Cpu;   // std::byte*
+    public GPUPtr Gpu;
+    public ulong  Size;
+    public ulong  Handle;   // opaque backend token RHI.Free needs
+
+    public bool IsValid => Gpu.IsValid;
+}
+
 // Per-frame transient GPU allocation (RHI::Core::AllocTransient): a CPU pointer + its device address.
 [StructLayout(LayoutKind.Sequential)]
 [NativeLayout("RHI::FTransientAlloc")]

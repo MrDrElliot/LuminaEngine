@@ -200,8 +200,8 @@ namespace Lumina
         // which UI churn thrashes), re-uploaded only on draw-list change. Keyed by render-target handle.
         struct FTargetBatch
         {
-            RHI::GPUPtr       VertexBuffer = 0;
-            RHI::GPUPtr       IndexBuffer = 0;
+            RHI::FGPUAllocation VertexBuffer = {};
+            RHI::FGPUAllocation IndexBuffer = {};
             uint64            VertexCapacity = 0;
             uint64            IndexCapacity = 0;
             TVector<FUiDraw>      Draws;        // cached per-draw data; re-uploaded to transient each draw

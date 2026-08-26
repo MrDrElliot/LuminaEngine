@@ -117,12 +117,12 @@ namespace Lumina
         /** R8_UNORM array, one slice per layer. */
         FSceneImage     LayerWeightTexture;
 
-        FSceneBuffer    ChunkInfoBuffer;
-        FSceneBuffer    MeshletInfoBuffer;
-        FSceneBuffer    VisibleMeshletBuffer;
+        RHI::FGPUAllocation    ChunkInfoBuffer;
+        RHI::FGPUAllocation    MeshletInfoBuffer;
+        RHI::FGPUAllocation    VisibleMeshletBuffer;
 
         /** Single FDrawIndirectArguments slot; cull atomic-increments InstanceCount. */
-        FSceneBuffer    IndirectDrawBuffer;
+        RHI::FGPUAllocation    IndirectDrawBuffer;
 
         uint32  AllocatedResolution = 0;
         uint32  AllocatedLayerCount = 0;

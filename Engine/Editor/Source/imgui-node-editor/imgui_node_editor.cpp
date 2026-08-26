@@ -2840,18 +2840,7 @@ std::string ed::Settings::Serialize()
             nodes[serializeObjectId(node.m_ID)] = node.Serialize();
     }
 
-    auto& selection = result["selection"];
-    for (auto& id : m_Selection)
-        selection.push_back(serializeObjectId(id));
-
-    auto& view = result["view"];
-    view["scroll"]["x"] = m_ViewScroll.x;
-    view["scroll"]["y"] = m_ViewScroll.y;
-    view["zoom"]   = m_ViewZoom;
-    view["visible_rect"]["min"]["x"] = m_VisibleRect.Min.x;
-    view["visible_rect"]["min"]["y"] = m_VisibleRect.Min.y;
-    view["visible_rect"]["max"]["x"] = m_VisibleRect.Max.x;
-    view["visible_rect"]["max"]["y"] = m_VisibleRect.Max.y;
+    // Selection and view are session state, so persisting them would dirty the owning asset on every click and pan.
 
     return result.dump();
 }
@@ -2866,25 +2855,6 @@ bool ed::Settings::Parse(const std::string& string, Settings& settings)
 
     if (!settingsValue.is_object())
         return false;
-
-    auto tryParseVector = [](const json::value& v, ImVec2& result) -> bool
-    {
-        if (v.is_object() && v.contains("x") && v.contains("y"))
-        {
-            auto xValue = v["x"];
-            auto yValue = v["y"];
-
-            if (xValue.is_number() && yValue.is_number())
-            {
-                result.x = static_cast<float>(xValue.get<double>());
-                result.y = static_cast<float>(yValue.get<double>());
-
-                return true;
-            }
-        }
-
-        return false;
-    };
 
     auto deserializeObjectId = [](const std::string& str)
     {
@@ -2919,34 +2889,11 @@ bool ed::Settings::Parse(const std::string& string, Settings& settings)
         }
     }
 
-    auto& selectionValue = settingsValue["selection"];
-    if (selectionValue.is_array())
-    {
-        const auto selectionArray = selectionValue.get<json::array>();
-
-        result.m_Selection.reserve(selectionArray.size());
-        result.m_Selection.resize(0);
-        for (auto& selection : selectionArray)
-        {
-            if (selection.is_string())
-                result.m_Selection.push_back(deserializeObjectId(selection.get<json::string>()));
-        }
-    }
-
-    auto& viewValue = settingsValue["view"];
-    if (viewValue.is_object())
-    {
-        auto& viewScrollValue = viewValue["scroll"];
-        auto& viewZoomValue   = viewValue["zoom"];
-
-        if (!tryParseVector(viewScrollValue, result.m_ViewScroll))
-            result.m_ViewScroll = ImVec2(0, 0);
-
-        result.m_ViewZoom = viewZoomValue.is_number() ? static_cast<float>(viewZoomValue.get<double>()) : 1.0f;
-
-        if (!viewValue.contains("visible_rect") || !tryParseVector(viewValue["visible_rect"]["min"], result.m_VisibleRect.Min) || !tryParseVector(viewValue["visible_rect"]["max"], result.m_VisibleRect.Max))
-            result.m_VisibleRect = {};
-    }
+    // Selection and view blocks written by older saves are ignored, matching Serialize.
+    result.m_Selection.resize(0);
+    result.m_ViewScroll  = ImVec2(0, 0);
+    result.m_ViewZoom    = 1.0f;
+    result.m_VisibleRect = {};
 
     settings = std::move(result);
 

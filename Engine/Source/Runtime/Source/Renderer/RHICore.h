@@ -74,7 +74,7 @@ namespace Lumina::RHI
             return Alloc.Gpu;
         }
         
-        RUNTIME_API void Retire(GPUPtr Memory);
+        RUNTIME_API void Retire(const FGPUAllocation& Memory);
         RUNTIME_API void Retire(FTextureH Texture);
         RUNTIME_API void Retire(FPipelineH Pipeline);
         RUNTIME_API void RetireSampledSlot(uint32 HeapSlot);
@@ -90,5 +90,8 @@ namespace Lumina::RHI
 
         FPipelineH CreateGraphicsPipeline(const FName& VertexShader, const FName& PixelShader, const FRasterDesc& Desc);
         FPipelineH CreateComputePipeline(const FName& ComputeShader);
+
+        /** Writes the driver's disassembly for Pipeline beside the log, when -dumpshaderisa is set. */
+        RUNTIME_API void DumpPipelineISA(FPipelineH Pipeline, const FName& Name);
     }
 }

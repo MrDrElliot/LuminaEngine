@@ -59,6 +59,10 @@ namespace Lumina
         TVector<FComponentRepOut> CollectComponentFields(entt::registry& Registry, entt::entity Entity,
             FNetWorldState& State, bool bBaseline, FComponentRepState* DiffState);
 
+        // Same, into a caller-owned buffer whose elements and block storage are reused across calls.
+        void CollectComponentFieldsInto(entt::registry& Registry, entt::entity Entity, FNetWorldState& State,
+            bool bBaseline, FComponentRepState* DiffState, TVector<FComponentRepOut>& Out);
+
         // True when Parent is an entity that actually replicates to clients (SNetworkComponent + bReplicates +
         // bNetLoadOnClient + a NetGUID). A child of such a parent sends its LOCAL transform + the parent's NetGUID
         // (client reparents + composes, rigid); a child of a non-replicated parent must send WORLD instead, since

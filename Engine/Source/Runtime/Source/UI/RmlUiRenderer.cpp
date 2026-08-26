@@ -774,20 +774,20 @@ namespace Lumina
 
     void FRmlUiRenderer::EnsureBatchBuffers(FTargetBatch& Batch, uint64 VertexBytes, uint64 IndexBytes)
     {
-        if (Batch.VertexBuffer == 0 || Batch.VertexCapacity < VertexBytes)
+        if (Batch.VertexBuffer.Gpu == 0 || Batch.VertexCapacity < VertexBytes)
         {
             RHI::Core::Retire(Batch.VertexBuffer);
             Batch.VertexCapacity = Math::Max<uint64>(VertexBytes + VertexBytes / 2, 4096);
             Batch.VertexBuffer   = RHI::Malloc(Batch.VertexCapacity, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
-            RHI::SetDebugName(Batch.VertexBuffer, "RmlUi.BatchVertices");
+            RHI::SetDebugName(Batch.VertexBuffer.Gpu, "RmlUi.BatchVertices");
         }
 
-        if (Batch.IndexBuffer == 0 || Batch.IndexCapacity < IndexBytes)
+        if (Batch.IndexBuffer.Gpu == 0 || Batch.IndexCapacity < IndexBytes)
         {
             RHI::Core::Retire(Batch.IndexBuffer);
             Batch.IndexCapacity = Math::Max<uint64>(IndexBytes + IndexBytes / 2, 4096);
             Batch.IndexBuffer   = RHI::Malloc(Batch.IndexCapacity, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
-            RHI::SetDebugName(Batch.IndexBuffer, "RmlUi.BatchIndices");
+            RHI::SetDebugName(Batch.IndexBuffer.Gpu, "RmlUi.BatchIndices");
         }
     }
 
@@ -868,7 +868,7 @@ namespace Lumina
         const uint64 Hash   = bCachedFrameHashValid ? CachedFrameHash : ComputeDrawCallHash();
 
         const bool bRebuild = !Batch.bValid || Batch.LastHash != Hash
-            || Batch.VertexBuffer == 0 || Batch.IndexBuffer == 0;
+            || Batch.VertexBuffer.Gpu == 0 || Batch.IndexBuffer.Gpu == 0;
 
         const float FullW = float(CurrentSize.x);
         const float FullH = float(CurrentSize.y);
@@ -1022,8 +1022,8 @@ namespace Lumina
             Memory::Memcpy(IBStage.Cpu, BatchIndices.data(),  IBytes);
 
             RHI::CmdBarrier(CL, RHI::EStageFlags::AllCommands, RHI::EStageFlags::Transfer);
-            RHI::CmdMemcpy(CL, Batch.VertexBuffer, VBStage.Gpu, VBytes);
-            RHI::CmdMemcpy(CL, Batch.IndexBuffer,  IBStage.Gpu, IBytes);
+            RHI::CmdMemcpy(CL, Batch.VertexBuffer.Gpu, VBStage.Gpu, VBytes);
+            RHI::CmdMemcpy(CL, Batch.IndexBuffer.Gpu,  IBStage.Gpu, IBytes);
             RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::AllCommands);
 
             Batch.Draws      = Move(BatchDrawData);
@@ -1037,7 +1037,7 @@ namespace Lumina
             Batch.bValid     = true;
         }
 
-        if (Batch.IndexCount == 0 || Batch.Draws.empty() || Batch.VertexBuffer == 0 || Batch.IndexBuffer == 0)
+        if (Batch.IndexCount == 0 || Batch.Draws.empty() || Batch.VertexBuffer.Gpu == 0 || Batch.IndexBuffer.Gpu == 0)
         {
             Finish();
             return;
@@ -1070,7 +1070,7 @@ namespace Lumina
         // Composite passes read the same mask array the geometry batch does.
         PassClipMasksPtr = MasksPtr;
 
-        const FRmlUiArgs Args { DrawsPtr, Batch.VertexBuffer, StopsPtr, MasksPtr };
+        const FRmlUiArgs Args { DrawsPtr, Batch.VertexBuffer.Gpu, StopsPtr, MasksPtr };
         const RHI::GPUPtr ArgsPtr = RHI::Core::CopyTransient(Args);
 
         ReplayFrame(CL, Batch, Pipeline, ArgsPtr);
@@ -1260,7 +1260,9 @@ namespace Lumina
 
         RHI::FPipelineH LayerPipeline = GetPipelineForFormat(EFormat::RGBA8_UNORM);
 
-        TVector<uint32> Stack;
+        static thread_local TVector<uint32> Stack;
+        Stack.clear();
+
         uint32 Active = kNoLayer;
         uint32 NextDraw = 0;
         bool   bTargetClearPending = bClearTarget;
@@ -1298,7 +1300,7 @@ namespace Lumina
             }
 
             RHI::CmdSetPipeline(CL, bBase ? TargetPipeline : LayerPipeline);
-            RHI::CmdDrawIndexed(CL, Batch.IndexBuffer, 0, ArgsPtr, Count, 1, First, 0, 0, RHI::EIndexType::Uint32);
+            RHI::CmdDrawIndexed(CL, Batch.IndexBuffer.Gpu, 0, ArgsPtr, Count, 1, First, 0, 0, RHI::EIndexType::Uint32);
             RHI::CmdEndRenderPass(CL);
         };
 
@@ -2346,7 +2348,9 @@ namespace Lumina
         const float Time = static_cast<float>(PlatformTime::Seconds());
 
         // Brushes are shared across contexts, so scope the work to the drawing context and de-dup.
-        TVector<Rml::TextureHandle> Rendered;
+        static thread_local TVector<Rml::TextureHandle> Rendered;
+        Rendered.clear();
+
         bool bAnyWrites = false;
 
         // A brush RT is created undefined, so give it transparent black once before anything samples it.

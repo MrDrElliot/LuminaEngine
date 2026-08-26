@@ -112,11 +112,6 @@ namespace Lumina
         NODISCARD bool NeedsCompile() const;
 
         FMaterialCompiler::FShaderStats ShaderStats;
-        bool                            bHasCompiledOnce = false;
-
-        // Graph content version captured at the last Compile; compared against the live one by
-        // NeedsCompile. Property edits bump the graph's version too (see the post-edit callback).
-        uint64                          CompiledContentVersion = 0;
         size_t                          ReplacementStart = 0;
         size_t                          ReplacementEnd = 0;
         CEdGraphNode*                   SelectedNode = nullptr;

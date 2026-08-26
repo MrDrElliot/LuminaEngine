@@ -28,6 +28,13 @@ namespace Lumina
         uint64 FrameNumber = 0;
     };
 
+    // Circular once full, so advancing costs one store instead of a memmove of the whole window.
+    struct RUNTIME_API FProfilerHistory
+    {
+        TVector<float> Values;
+        uint32         Offset = 0;   // the oldest sample, which is what ImGui plots from
+    };
+
     // A lightweight CPU profiler for GAMEPLAY work: per-frame, name-aggregated scope timings with call counts
     // and inclusive/exclusive ms, plus rolling history for sparklines. Drives the editor "Gameplay Profiler"
     // tool and the C# Profiler API. Near-zero cost when disabled (one atomic check).
@@ -55,8 +62,8 @@ namespace Lumina
         void EndScope();
 
         const FGameplayProfileFrame& GetLatest() const { return Latest; }
-        const TVector<float>& GetFrameTotalHistory() const { return FrameTotalHistory; }
-        const TVector<float>* GetEntryHistory(uint64 Hash) const;
+        const FProfilerHistory& GetFrameTotalHistory() const { return FrameTotalHistory; }
+        const FProfilerHistory* GetEntryHistory(uint64 Hash) const;
 
     private:
 
@@ -65,8 +72,8 @@ namespace Lumina
         THashMap<uint64, int32>                 IndexOf;          // hash -> index into Current.Entries
         FGameplayProfileFrame                   Current;
         FGameplayProfileFrame                   Latest;
-        TVector<float>                          FrameTotalHistory;
-        THashMap<uint64, TVector<float>>        EntryHistory;     // hash -> rolling inclusive-ms ring
+        FProfilerHistory                        FrameTotalHistory;
+        THashMap<uint64, FProfilerHistory>      EntryHistory;     // hash -> rolling inclusive-ms ring
         uint64                                  FrameCounter = 0;
     };
 

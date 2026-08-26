@@ -378,6 +378,8 @@ struct FMeshletCone
     float3 Apex;
     float  Cutoff;
     float3 Axis;
+    // Pads the stride to vec4 so every element is 16-byte aligned; never read.
+    float  _Pad;
 };
 
 // cos(A - B) from the two cosines, which keeps the cone widening off the trig units entirely.
@@ -809,7 +811,8 @@ struct FLightData
 {
     uint   NumLights;
     uint   bHasIBL;       // 1 = environment IBL cubes valid; 0 = skylight-only flat ambient fallback
-    uint   Padding[2];
+    uint   NumShadows;    // bounds the Shadows allocation; every assigned ShadowDataIndex is below it
+    uint   Padding;
     float3 SunDirection;   // to-light: FROM surface TOWARD the sun (== Lights[0].Direction)
     uint   bHasSun;
     float4 CascadeSplits;
@@ -823,8 +826,9 @@ struct FLightData
     // z = contact-shadow world length (0 = off), w = contact-shadow tap count.
     float4 ShadowParams2;
     float4 AmbientLight;
-    FLight Lights[MAX_LIGHTS];
-    FLightShadowData Shadows[MAX_SHADOWS];
+    // Sized to the live count, so never index these past NumLights / NumShadows.
+    FLight*           Lights;
+    FLightShadowData* Shadows;
 };
 
 struct FCluster

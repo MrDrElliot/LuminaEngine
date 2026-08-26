@@ -2790,19 +2790,43 @@ namespace Lumina
         CComponentVisualizerRegistry& ComponentVisualizerRegistry = CComponentVisualizerRegistry::Get();
         FEntityRegistry& Registry = GetSceneRegistry();
 
-        // Resolve which component storages actually have a visualizer ONCE per frame.
+        // Memoized because a type's visualizer is fixed once registered; a new registration drops the table.
+        static thread_local THashMap<uint32, CComponentVisualizer*> VisualizerByType;
+        static thread_local SIZE_T CachedVisualizerCount = ~(SIZE_T)0;
+
+        const SIZE_T RegisteredVisualizers = ComponentVisualizerRegistry.GetVisualizers().size();
+        if (CachedVisualizerCount != RegisteredVisualizers)
+        {
+            VisualizerByType.clear();
+            CachedVisualizerCount = RegisteredVisualizers;
+        }
+
         TFixedVector<TPair<entt::sparse_set*, CComponentVisualizer*>, 16> VisualizerStorages;
         for (auto&& [ID, Storage] : Registry.storage())
         {
-            if (entt::meta_type MetaType = entt::resolve(Storage.info()))
+            const uint32 TypeHash = (uint32)Storage.info().hash();
+
+            CComponentVisualizer* Visualizer = nullptr;
+            const auto Cached = VisualizerByType.find(TypeHash);
+            if (Cached != VisualizerByType.end())
             {
-                if (entt::meta_any ReturnValue = ECS::Utils::InvokeMetaFunc(MetaType, "static_struct"_hs))
+                Visualizer = Cached->second;
+            }
+            else
+            {
+                if (entt::meta_type MetaType = entt::resolve(Storage.info()))
                 {
-                    if (CComponentVisualizer* Visualizer = ComponentVisualizerRegistry.GetComponentVisualizer(ReturnValue.cast<CStruct*>()))
+                    if (entt::meta_any ReturnValue = ECS::Utils::InvokeMetaFunc(MetaType, "static_struct"_hs))
                     {
-                        VisualizerStorages.emplace_back(&Storage, Visualizer);
+                        Visualizer = ComponentVisualizerRegistry.GetComponentVisualizer(ReturnValue.cast<CStruct*>());
                     }
                 }
+                VisualizerByType[TypeHash] = Visualizer;
+            }
+
+            if (Visualizer != nullptr)
+            {
+                VisualizerStorages.emplace_back(&Storage, Visualizer);
             }
         }
 
@@ -2812,7 +2836,9 @@ namespace Lumina
         }
 
         // Flattened from the view so the disabled-tag exclusion applies and workers can index it.
-        TVector<entt::entity> SelectedList;
+        static thread_local TVector<entt::entity> SelectedList;
+        SelectedList.clear();
+
         auto SelectedView = Registry.view<FSelectedInEditorComponent>(entt::exclude<SDisabledTag>);
         SelectedList.reserve(SelectedView.size_hint());
         SelectedView.each([&](entt::entity SelectedEntity)

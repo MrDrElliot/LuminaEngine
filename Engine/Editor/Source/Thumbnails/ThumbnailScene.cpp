@@ -137,7 +137,7 @@ namespace Lumina
     // GPU-side state of a capture that has been submitted but not yet read back.
     struct FThumbnailScene::FPendingCapture
     {
-        RHI::GPUPtr      Readback  = 0;
+        RHI::FGPUAllocation Readback = {};
         uint32           Width     = 0;
         uint32           Height    = 0;
         RHI::FSemaphoreH Semaphore = {};
@@ -175,15 +175,15 @@ namespace Lumina
             Out.Width  = Output.GetSizeX();
             Out.Height = Output.GetSizeY();
             Out.Readback = RHI::Malloc((uint64)Out.Width * Out.Height * 4u, RHI::kDefaultAlign, RHI::EMemoryType::CPURead);
-            if (Out.Readback == 0)
+            if (Out.Readback.Gpu == 0)
             {
                 return false;
             }
-            RHI::SetDebugName(Out.Readback, "Readback.Thumbnail");
+            RHI::SetDebugName(Out.Readback.Gpu, "Readback.Thumbnail");
 
             RHI::FCmdListH CL = RHI::OpenCommandList();
             RHI::CmdBarrier(CL, RHI::EStageFlags::AllCommands, RHI::EStageFlags::Transfer);
-            RHI::CmdCopyTextureToMemory(CL, Output.Texture, RHI::FTextureSlice{}, Out.Readback, Out.Width);
+            RHI::CmdCopyTextureToMemory(CL, Output.Texture, RHI::FTextureSlice{}, Out.Readback.Gpu, Out.Width);
             RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
 
             // Submits WITHOUT waiting and keeps the timeline value, so the caller can poll instead of blocking.
@@ -196,12 +196,12 @@ namespace Lumina
 
     bool FThumbnailScene::ResolveCapture(FPendingCapture& In, FPackageThumbnail& Thumbnail)
     {
-        if (In.Readback == 0)
+        if (In.Readback.Gpu == 0)
         {
             return false;
         }
 
-        const void* MappedMemory = RHI::ToHost(In.Readback);
+        const void* MappedMemory = In.Readback.Cpu;
         if (MappedMemory != nullptr)
         {
             ThumbnailUtils::StoreDownsampledRGBA(Thumbnail, static_cast<const uint8*>(MappedMemory),
@@ -209,7 +209,7 @@ namespace Lumina
         }
 
         RHI::Free(In.Readback);
-        In.Readback = 0;
+        In.Readback = {};
         return MappedMemory != nullptr;
     }
 
@@ -218,7 +218,7 @@ namespace Lumina
         FPendingCapture Local;
         if (!RecordCapture(Local))
         {
-            if (Local.Readback != 0)
+            if (Local.Readback.Gpu != 0)
             {
                 RHI::Free(Local.Readback);
             }
@@ -240,7 +240,7 @@ namespace Lumina
         TUniquePtr<FPendingCapture> New = MakeUnique<FPendingCapture>();
         if (!RecordCapture(*New))
         {
-            if (New->Readback != 0)
+            if (New->Readback.Gpu != 0)
             {
                 RHI::Free(New->Readback);
             }
@@ -288,7 +288,7 @@ namespace Lumina
 
         // Freeing the destination now would hand a live GPU write freed memory.
         RHI::WaitSemaphore(Pending->Semaphore, Pending->Value);
-        if (Pending->Readback != 0)
+        if (Pending->Readback.Gpu != 0)
         {
             RHI::Free(Pending->Readback);
         }

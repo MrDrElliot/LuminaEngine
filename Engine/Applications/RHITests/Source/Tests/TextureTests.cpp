@@ -71,8 +71,8 @@ namespace Lumina::RHITests
         RHI_REQUIRE(RHI::IsValid(Texture));
 
         const uint64 Bytes = (uint64)Size * Size * 4;
-        const RHI::GPUPtr Readback = Ctx.Malloc(Bytes, RHI::EMemoryType::CPURead, "RHITests.ClearReadback");
-        RHI_REQUIRE(Readback != 0);
+        const RHI::FGPUAllocation Readback = Ctx.Malloc(Bytes, RHI::EMemoryType::CPURead, "RHITests.ClearReadback");
+        RHI_REQUIRE(Readback.Gpu != 0);
 
         const RHI::FCmdListH CL = Ctx.OpenCL();
 
@@ -83,12 +83,12 @@ namespace Lumina::RHITests
 
         RHI::FTextureSlice Slice;
         Slice.Extent = FUIntVector3(Size, Size, 1);
-        RHI::CmdCopyTextureToMemory(CL, Texture, Slice, Readback, Size);
+        RHI::CmdCopyTextureToMemory(CL, Texture, Slice, Readback.Gpu, Size);
         RHI::Barriers::TransferToAll(CL);
 
         Ctx.SubmitAndWait(CL);
 
-        const auto* Pixels = static_cast<const uint8*>(RHI::ToHost(Readback));
+        const auto* Pixels = Readback.CpuAs<const uint8>();
         RHI_REQUIRE(Pixels != nullptr);
         RHI_CHECK_EQ(Pixels[0], 255u);   // R
         RHI_CHECK_EQ(Pixels[1], 0u);     // G
@@ -185,19 +185,19 @@ namespace Lumina::RHITests
         RHI::UploadTexture(Texture, 0, 0, Source, sizeof(Source), Size);
         RHI::FlushUploadsAndWait();
 
-        const RHI::GPUPtr Readback = Ctx.Malloc(sizeof(Source), RHI::EMemoryType::CPURead, "RHITests.UploadReadback");
-        RHI_REQUIRE(Readback != 0);
+        const RHI::FGPUAllocation Readback = Ctx.Malloc(sizeof(Source), RHI::EMemoryType::CPURead, "RHITests.UploadReadback");
+        RHI_REQUIRE(Readback.Gpu != 0);
 
         RHI::FTextureSlice Slice;
         Slice.Extent = FUIntVector3(Size, Size, 1);
 
         const RHI::FCmdListH CL = Ctx.OpenCL();
         RHI::Barriers::AllToTransfer(CL);
-        RHI::CmdCopyTextureToMemory(CL, Texture, Slice, Readback, Size);
+        RHI::CmdCopyTextureToMemory(CL, Texture, Slice, Readback.Gpu, Size);
         RHI::Barriers::TransferToAll(CL);
         Ctx.SubmitAndWait(CL);
 
-        const auto* Pixels = static_cast<const uint8*>(RHI::ToHost(Readback));
+        const auto* Pixels = Readback.CpuAs<const uint8>();
         RHI_REQUIRE(Pixels != nullptr);
         RHI_CHECK_EQ(Pixels[0], Source[0]);
         RHI_CHECK_EQ(Pixels[sizeof(Source) - 1], Source[sizeof(Source) - 1]);

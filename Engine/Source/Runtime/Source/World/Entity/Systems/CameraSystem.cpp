@@ -135,7 +135,8 @@ namespace Lumina
         SPostProcessSettings ResolvedPostProcess = Camera.PostProcess;
 
         struct FVolumeContribution { float Weight; const SPostProcessSettings* Settings; int32 Priority; };
-        TVector<FVolumeContribution> Contributions;
+        static thread_local TVector<FVolumeContribution> Contributions;
+        Contributions.clear();
 
         auto VolumeView = Registry.view<const SPostProcessComponent, const STransformComponent>(entt::exclude<SDisabledTag>);
         for (entt::entity VolEntity : VolumeView)

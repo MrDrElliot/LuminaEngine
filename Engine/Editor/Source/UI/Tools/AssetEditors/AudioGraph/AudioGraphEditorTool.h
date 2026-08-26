@@ -67,9 +67,5 @@ namespace Lumina
 
         TVector<FString>                CompileMessages;
         bool                            bHasErrors = false;
-
-        /** Content version the last compile ran at, so an idle graph is not recompiled every frame. */
-        uint64                          CompiledContentVersion = 0;
-        bool                            bHasCompiledOnce = false;
     };
 }

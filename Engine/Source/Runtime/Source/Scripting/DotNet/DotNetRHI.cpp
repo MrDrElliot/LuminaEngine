@@ -101,15 +101,14 @@ LUMINA_DOTNET_EXPORT(void, RHI_WaitSemaphore)(RHI::FSemaphoreH Semaphore, uint64
 
 // Memory.
 
-LUMINA_DOTNET_EXPORT(RHI::GPUPtr, RHI_Malloc)(uint64 Size, uint64 Alignment, int32 Type)
+LUMINA_DOTNET_EXPORT(RHI::FGPUAllocation, RHI_Malloc)(uint64 Size, uint64 Alignment, int32 Type)
 {
-    const RHI::GPUPtr Gpu = RHI::Malloc(Size, Alignment, (RHI::EMemoryType)Type);
-    RHI::SetDebugName(Gpu, "Script.Buffer");
-    return Gpu;
+    const RHI::FGPUAllocation Allocation = RHI::Malloc(Size, Alignment, (RHI::EMemoryType)Type);
+    RHI::SetDebugName(Allocation.Gpu, "Script.Buffer");
+    return Allocation;
 }
 
-LUMINA_DOTNET_EXPORT(void*, RHI_ToHost)(RHI::GPUPtr Gpu)   { return RHI::ToHost(Gpu); }
-LUMINA_DOTNET_EXPORT(void, RHI_Free)(RHI::GPUPtr Gpu)      { RHI::Free(Gpu); }
+LUMINA_DOTNET_EXPORT(void, RHI_Free)(RHI::FGPUAllocation Allocation) { RHI::Free(Allocation); }
 
 LUMINA_DOTNET_EXPORT(void, RHI_FreeSemaphore)(RHI::FSemaphoreH H)       { RHI::FreeH(H); }
 LUMINA_DOTNET_EXPORT(void, RHI_FreePipeline)(RHI::FPipelineH H)         { RHI::FreeH(H); }
@@ -299,7 +298,7 @@ LUMINA_DOTNET_EXPORT(RHI::FTransientAlloc, RHI_CoreAllocTransient)(uint64 Size, 
     return RHI::Core::AllocTransient(Size, Alignment);
 }
 
-LUMINA_DOTNET_EXPORT(void, RHI_CoreDeferredFree)(RHI::GPUPtr Memory)
+LUMINA_DOTNET_EXPORT(void, RHI_CoreDeferredFree)(RHI::FGPUAllocation Memory)
 {
     RHI::Core::Retire(Memory);
 }
@@ -481,6 +480,7 @@ static_assert(sizeof(RHI::FDispatchIndirectArguments) == 12,     "FDispatchIndir
 static_assert(sizeof(RHI::FRenderAttachment) == 40,              "FRenderAttachment mirror");   // 8-aligned (THandle uint64)
 static_assert(sizeof(RHI::FHeapTextureInfo) == 36,               "FHeapTextureInfo mirror");
 static_assert(sizeof(RHI::FTransientAlloc) == 16,                "FTransientAlloc mirror");
+static_assert(sizeof(RHI::FGPUAllocation) == 32,                 "FGPUAllocation mirror");
 static_assert(sizeof(RHI::FGPUMemoryHeapStats) == 48,            "FGPUMemoryHeapStats mirror");
 
 // Handles + GPUPtr must stay 8 bytes (the C# mirrors are readonly structs of a single ulong).
@@ -498,6 +498,7 @@ LE_REGISTER_LAYOUT("RHI::FSemaphoreH",                  RHI::FSemaphoreH);
 LE_REGISTER_LAYOUT("RHI::FDepthStencilH",               RHI::FDepthStencilH);
 LE_REGISTER_LAYOUT("RHI::FCmdListH",                    RHI::FCmdListH);
 LE_REGISTER_LAYOUT("RHI::GPUPtr",                       RHI::GPUPtr);
+LE_REGISTER_LAYOUT("RHI::FGPUAllocation",               RHI::FGPUAllocation);
 
 LE_REGISTER_LAYOUT("RHI::FRect",                        RHI::FRect);
 LE_REGISTER_LAYOUT("RHI::FTextureDesc",                 RHI::FTextureDesc);

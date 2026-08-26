@@ -94,14 +94,14 @@ namespace Lumina
         const RHI::FTextureDesc Desc = RHI::GetTextureDesc(RenderTarget);
         const uint32 SourceWidth  = Desc.Dimension.x;
         const uint32 SourceHeight = Desc.Dimension.y;
-        const RHI::GPUPtr Readback = RHI::Malloc((uint64)SourceWidth * SourceHeight * 4u, RHI::kDefaultAlign, RHI::EMemoryType::CPURead);
-        RHI::SetDebugName(Readback, "Readback.ToolPreview");
+        const RHI::FGPUAllocation Readback = RHI::Malloc((uint64)SourceWidth * SourceHeight * 4u, RHI::kDefaultAlign, RHI::EMemoryType::CPURead);
+        RHI::SetDebugName(Readback.Gpu, "Readback.ToolPreview");
 
         auto RecordCapture = [&]()
         {
             RHI::FCmdListH CL = RHI::OpenCommandList();
             RHI::CmdBarrier(CL, RHI::EStageFlags::AllCommands, RHI::EStageFlags::Transfer);
-            RHI::CmdCopyTextureToMemory(CL, RenderTarget, RHI::FTextureSlice{}, Readback, SourceWidth);
+            RHI::CmdCopyTextureToMemory(CL, RenderTarget, RHI::FTextureSlice{}, Readback.Gpu, SourceWidth);
             RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
             // Waits on this copy only, since a device-wide idle would stall unrelated in-flight frame work.
             RHI::SubmitAndWait(CL);
@@ -110,7 +110,7 @@ namespace Lumina
 
         RecordCapture();
 
-        if (const void* MappedMemory = RHI::ToHost(Readback))
+        if (const void* MappedMemory = Readback.Cpu)
         {
             ThumbnailUtils::StoreDownsampledRGBA(*Package->GetPackageThumbnail(),
                 static_cast<const uint8*>(MappedMemory), SourceWidth, SourceHeight, (size_t)SourceWidth * 4u);

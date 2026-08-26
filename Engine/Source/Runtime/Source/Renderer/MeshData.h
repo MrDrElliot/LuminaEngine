@@ -74,6 +74,8 @@ namespace Lumina
         FVector3 Apex;
         float    Cutoff;
         FVector3 Axis;
+        // Pads the stride to vec4 so the cull's whole-struct load can widen; not serialized.
+        float    _Pad = 0.0f;
 
         friend FArchive& operator<<(FArchive& Ar, FMeshletCone& Data)
         {
@@ -83,7 +85,8 @@ namespace Lumina
             return Ar;
         }
     };
-    static_assert(sizeof(FMeshletCone) == 28, "FMeshletCone must match the GPU mirror");
+    static_assert(sizeof(FMeshletCone) == 32, "FMeshletCone must match the GPU mirror");
+    static_assert(sizeof(FMeshletCone) % 16 == 0, "FMeshletCone stride must stay vec4 aligned");
 
     // A skinned vertex's 8-bit JointIndices address its OWNING MESHLET's slice of MeshletBoneIndices.
     struct FMeshletBonePalette
@@ -295,7 +298,7 @@ namespace Lumina
              *  sorted allocation ledger (an O(n) memmove each, under a global lock) and five lots of
              *  size rounding -- per mesh. A scene made of dynamic-mesh chunks pays that per chunk,
              *  every rebuild. The five addresses are now offsets into this block. */
-            RHI::GPUPtr GeometryBlock         = 0;
+            RHI::FGPUAllocation GeometryBlock = {};
 
             RHI::GPUPtr MeshletBuffer         = 0;
             RHI::GPUPtr MeshletSphereBuffer   = 0;
@@ -344,7 +347,7 @@ namespace Lumina
                 // of those would miss the allocation ledger's exact-address lookup and leak the block.
                 RHI::Core::Retire(GeometryBlock);
 
-                GeometryBlock         = 0;
+                GeometryBlock         = {};
                 MeshletBuffer         = 0;
                 MeshletSphereBuffer   = 0;
                 MeshletConeBuffer     = 0;
@@ -382,7 +385,7 @@ namespace Lumina
                 MeshletCount          = Other.MeshletCount;
                 DistanceFieldTexture  = Other.DistanceFieldTexture;
 
-                Other.GeometryBlock         = 0;
+                Other.GeometryBlock         = {};
                 Other.MeshletBuffer         = 0;
                 Other.MeshletSphereBuffer   = 0;
                 Other.MeshletConeBuffer     = 0;

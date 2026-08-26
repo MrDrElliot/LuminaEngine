@@ -41,8 +41,10 @@ namespace Lumina::Platform
 
     RUNTIME_API const FCpuTopology& GetCpuTopology();
 
-    // Set an environment variable for THIS process (and any child processes it
-    // spawns afterward). Does not persist beyond the process lifetime.
+    // Empty when the variable is unset, which this API cannot distinguish from an empty value.
+    RUNTIME_API FString GetEnvVariable(FStringView Variable);
+
+    // Applies to this process and children spawned afterward, and an empty value removes the variable.
     RUNTIME_API bool SetEnvVariable(const FString& Name, const FString& Value);
 
     // Persist an env var to the user environment so future processes inherit it; idempotent, returns true

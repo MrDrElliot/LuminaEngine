@@ -377,7 +377,7 @@ namespace Lumina
     
     bool FMaterialEditorTool::NeedsCompile() const
     {
-        return NodeGraph != nullptr && (!bHasCompiledOnce || NodeGraph->GetContentVersion() != CompiledContentVersion);
+        return NodeGraph != nullptr && NodeGraph->NeedsCompile();
     }
 
     void FMaterialEditorTool::DrawToolMenu(const FUpdateContext& UpdateContext)
@@ -789,8 +789,8 @@ namespace Lumina
             ImGui::PopStyleColor();
         };
 
-        const ImVec4 WarnColor(1.00f, 0.65f, 0.30f, 1.0f);
-        const ImVec4 MutedColor(0.55f, 0.55f, 0.60f, 1.0f);
+        constexpr ImVec4 WarnColor(1.00f, 0.65f, 0.30f, 1.0f);
+        constexpr ImVec4 MutedColor(0.55f, 0.55f, 0.60f, 1.0f);
 
         bool bAnyPipelineStats = false;
 
@@ -980,7 +980,8 @@ namespace Lumina
             return;
         }
 
-        if (!bHasCompiledOnce)
+        // Stats live only as long as the tool, so a material opened and not yet compiled has none to show.
+        if (ShaderStats.PixelCharacters == 0)
         {
             ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.13f, 0.13f, 0.16f, 1.0f));
             ImGui::BeginChild("##stats_empty", ImVec2(0, 0), true);
@@ -1153,11 +1154,7 @@ namespace Lumina
         const FMaterialGraphCompileResult CompileResult = CompileMaterialGraph(Material, NodeGraph);
 
         ShaderStats       = CompileResult.Stats;
-        bHasCompiledOnce  = true;
         bGLSLPreviewDirty = true;
-
-        // Stamped even on failure, since the compile ran against this exact graph.
-        CompiledContentVersion = NodeGraph != nullptr ? NodeGraph->GetContentVersion() : 0;
 
         // Before the failure branch, since warnings survive a failed compile and belong in the log.
         for (const EdNodeGraph::FError& Warning : CompileResult.Warnings)
@@ -1199,6 +1196,15 @@ namespace Lumina
         CompilationResult.bIsError = false;
 
         Material->GetPackage()->MarkDirty();
+
+        if (CompilationResult.Warnings.empty())
+        {
+            ImGuiX::Notifications::NotifySuccess("Material compiled.");
+        }
+        else
+        {
+            ImGuiX::Notifications::NotifyWarning("Material compiled with {} warnings.", (SIZE_T)CompilationResult.Warnings.size());
+        }
 
         // Re-route asset to preview in case MaterialType changed during compile.
         ApplyMaterialToPreview();

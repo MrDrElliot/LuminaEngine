@@ -312,10 +312,14 @@ namespace Lumina
 
                 // Diff the native replicated component fields once (recipient-independent); updates the snapshot.
                 FComponentRepState& CompDiff = Registry.get_or_emplace<FComponentRepState>(Entity);
-                TVector<Net::FComponentRepOut> Comps = Net::CollectComponentFields(Registry, Entity, State, /*bBaseline*/false, &CompDiff);
+
+                // Parked across entities so a tick's worth of updates reuses one set of buffers.
+                static thread_local TVector<Net::FComponentRepOut> Comps;
+                static thread_local TVector<uint8>                 Buffer;
+                Net::CollectComponentFieldsInto(Registry, Entity, State, /*bBaseline*/false, &CompDiff, Comps);
 
                 // Native component blocks are recipient-independent, so one reliable broadcast serves all clients.
-                TVector<uint8> Buffer;
+                Buffer.clear();
                 FNetArchive Writer(Buffer);
                 Net::BindWriters(Writer, State);
                 uint8 Type = static_cast<uint8>(ENetMessage::PropertyUpdate);

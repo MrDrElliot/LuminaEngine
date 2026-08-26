@@ -78,11 +78,11 @@ namespace Lumina::RHI
             GPU-side copy and its barriers; also what keeps freed slots reading as zero. */
         TVector<FMaterialUniforms>              Mirror;
 
-        GPUPtr                                  MaterialBuffer = 0;
+        FGPUAllocation                          MaterialBuffer = {};
         uint32                                  Capacity = 0;
 
         // A grown table whose mirror copy is still queued; publishing before it runs would read recycled VRAM as uniforms.
-        GPUPtr                                  PendingBuffer = 0;
+        FGPUAllocation                          PendingBuffer = {};
         uint32                                  PendingCapacity = 0;
         uint64                                  PendingBatch = 0;
 

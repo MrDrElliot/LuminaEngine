@@ -11,6 +11,9 @@
 #include "Core/Threading/Atomic.h"
 #include "Core/Threading/Thread.h"
 #include "Core/Profiler/Profile.h"
+#include "FileSystem/FileSystem.h"
+#include "Paths/Paths.h"
+#include "Platform/Filesystem/PlatformFilesystem.h"
 
 namespace Lumina::RHI::Core
 {
@@ -23,8 +26,7 @@ namespace Lumina::RHI::Core
 
     struct FTransientSlice
     {
-        GPUPtr          Gpu = 0;
-        std::byte*      Cpu = nullptr;
+        FGPUAllocation  Memory = {};
         uint64          Capacity = 0;
         uint32          LowStreak = 0;   // consecutive frames demand stayed below half capacity
         TAtomic<uint64> Cursor{0};
@@ -38,7 +40,7 @@ namespace Lumina::RHI::Core
         enum class EKind : uint8 { Buffer, Texture, SampledSlot, StorageSlot, Pipeline, Callback };
 
         EKind      Kind        = EKind::Buffer;
-        GPUPtr     Memory      = 0;
+        FGPUAllocation Memory  = {};
         FTextureH  Texture     = {};
         uint32     Slot        = kInvalidHeapSlot;
         FPipelineH Pipeline    = {};
@@ -92,9 +94,8 @@ namespace Lumina::RHI::Core
 
         for (FTransientSlice& Slice : GCore.Slices)
         {
-            Slice.Gpu = Malloc(GTransientSliceSize, kDefaultAlign, EMemoryType::CPUWrite);
-            SetDebugName(Slice.Gpu, "Transient.RingSlice");
-            Slice.Cpu = static_cast<std::byte*>(ToHost(Slice.Gpu));
+            Slice.Memory = Malloc(GTransientSliceSize, kDefaultAlign, EMemoryType::CPUWrite);
+            SetDebugName(Slice.Memory.Gpu, "Transient.RingSlice");
             Slice.Capacity = GTransientSliceSize;
             Slice.Cursor.store(0, std::memory_order_relaxed);
         }
@@ -191,9 +192,8 @@ namespace Lumina::RHI::Core
 
         for (FTransientSlice& Slice : GCore.Slices)
         {
-            Free(Slice.Gpu);
-            Slice.Gpu = 0;
-            Slice.Cpu = nullptr;
+            Free(Slice.Memory);
+            Slice.Memory = {};
             Slice.Cursor.store(0, std::memory_order_relaxed);
         }
 
@@ -260,7 +260,7 @@ namespace Lumina::RHI::Core
         const uint32 Slot = GCore.CurrentSlot.load(std::memory_order_acquire);
 
         FScopeLock Lock(GCore.RetireMutex);
-        GCore.RetireQueues[Slot].push_back(Item);
+        GCore.RetireQueues[Slot].push_back(std::move(Item));
     }
 
     // Metered, since a destroy can reach the driver free and a streaming burst retires hundreds.
@@ -310,7 +310,9 @@ namespace Lumina::RHI::Core
             return true;
         };
 
-        TVector<FRetireItem> Ready;
+        static thread_local TVector<FRetireItem> Ready;
+        Ready.clear();
+
         size_t Backlog = 0;
         {
             FScopeLock Lock(GCore.RetireMutex);
@@ -332,8 +334,9 @@ namespace Lumina::RHI::Core
                     ++i;
                     continue;
                 }
-                Ready.push_back(Queue[i]);
-                Queue[i] = Queue.back();
+                // Moved rather than copied, since the item carries a TFunction callback.
+                Ready.push_back(std::move(Queue[i]));
+                Queue[i] = std::move(Queue.back());
                 Queue.pop_back();
             }
 
@@ -349,11 +352,14 @@ namespace Lumina::RHI::Core
         {
             DestroyRetired(Item);
         }
+
+        // Parked storage keeps its capacity, but a callback's captures must die here rather than next drain.
+        Ready.clear();
     }
 
-    void Retire(GPUPtr Memory)
+    void Retire(const FGPUAllocation& Memory)
     {
-        if (Memory == 0)
+        if (Memory.Gpu == 0)
         {
             return;
         }
@@ -478,7 +484,8 @@ namespace Lumina::RHI::Core
         GCore.SlotCommandLists[Slot].clear();
 
         // Released after CurrentSlot advances, so they land on the slot gated by the upload's timeline.
-        TVector<GPUPtr> UploadStaging;
+        static thread_local TVector<FGPUAllocation> UploadStaging;
+        UploadStaging.clear();
 
         {
             GCore.PendingTransferWait = 0;
@@ -557,10 +564,9 @@ namespace Lumina::RHI::Core
 
             if (NewCapacity != Slice.Capacity)
             {
-                Retire(Slice.Gpu);
-                Slice.Gpu = Malloc(NewCapacity, kDefaultAlign, EMemoryType::CPUWrite);
-                SetDebugName(Slice.Gpu, "Transient.RingSlice");
-                Slice.Cpu = static_cast<std::byte*>(ToHost(Slice.Gpu));
+                Retire(Slice.Memory);
+                Slice.Memory = Malloc(NewCapacity, kDefaultAlign, EMemoryType::CPUWrite);
+                SetDebugName(Slice.Memory.Gpu, "Transient.RingSlice");
                 Slice.Capacity = NewCapacity;
             }
 
@@ -570,7 +576,7 @@ namespace Lumina::RHI::Core
         GCore.CurrentSlot.store(Slot, std::memory_order_release);
 
         // Retiring earlier queues on the previous slot, which waits a value older than that submit.
-        for (GPUPtr Staging : UploadStaging)
+        for (const FGPUAllocation& Staging : UploadStaging)
         {
             Retire(Staging);
         }
@@ -680,19 +686,19 @@ namespace Lumina::RHI::Core
         
         if (RawOffset + Padded > Slice.Capacity)
         {
-            const GPUPtr Mem = Malloc(Size, Alignment, EMemoryType::CPUWrite);
+            const FGPUAllocation Mem = Malloc(Size, Alignment, EMemoryType::CPUWrite);
             // An overflow visible in the memory tool signals an undersized ring slice, and naming is cheap.
-            SetDebugName(Mem, "Transient.Overflow");
+            SetDebugName(Mem.Gpu, "Transient.Overflow");
             Retire(Mem);
-            return FTransientAlloc{ .Cpu = ToHost(Mem), .Gpu = Mem };
+            return FTransientAlloc{ .Cpu = Mem.Cpu, .Gpu = Mem.Gpu };
         }
 
-        const uint64 AlignedGpu = Math::AlignUp(Slice.Gpu + RawOffset, Alignment);
-        const uint64 Skew = AlignedGpu - (Slice.Gpu + RawOffset);
+        const uint64 AlignedGpu = Math::AlignUp(Slice.Memory.Gpu + RawOffset, Alignment);
+        const uint64 Skew = AlignedGpu - (Slice.Memory.Gpu + RawOffset);
 
         return FTransientAlloc
         {
-            .Cpu = Slice.Cpu + RawOffset + Skew,
+            .Cpu = Slice.Memory.Cpu + RawOffset + Skew,
             .Gpu = AlignedGpu
         };
     }
@@ -711,6 +717,73 @@ namespace Lumina::RHI::Core
         return RHI::CreateGraphicsPipeline(Vertex->Source(), Pixel->Source(), Desc);
     }
 
+    // Written next to the log so a run with -dumpshaderisa leaves the driver's disassembly on disk.
+    void DumpPipelineISA(FPipelineH Pipeline, const FName& Name)
+    {
+        if (!RHI::IsShaderISACaptureEnabled())
+        {
+            return;
+        }
+
+        TVector<FString> Blocks;
+
+        // NVIDIA implements the statistics half of the extension but withholds the disassembly, so the
+        // per-executable counters are the most this facility can report there.
+        if (!RHI::GetPipelineDisassembly(Pipeline, Blocks))
+        {
+            TVector<FPipelineStat> Stats;
+            if (!RHI::GetPipelineStatistics(Pipeline, Stats) || Stats.empty())
+            {
+                LOG_WARN("ShaderISA: driver gave neither disassembly nor statistics for '{}'.", Name.c_str());
+                return;
+            }
+
+            FString StatText = "; no internal representation from this driver, statistics only\n";
+            for (const FPipelineStat& Stat : Stats)
+            {
+                StatText += Stat.bIsFloat ? Lumina::Format("{} / {} = {}\n", Stat.Stage, Stat.Name, Stat.Value)
+                                          : Lumina::Format("{} / {} = {}\n", Stat.Stage, Stat.Name, (int64)Stat.Value);
+            }
+            Blocks.push_back(Move(StatText));
+        }
+
+        // Beside the live log, which is already the per-project place diagnostics land.
+        FString Dir = Logging::GetLogFilePath();
+        Lumina::Paths::ReplaceFilename(Dir, "");
+        Dir += "ShaderISA";
+
+        // Platform filesystem, not the VFS, because this is an absolute OS path outside every mount.
+        Filesystem::MakeDirectoryTree(Dir);
+
+        FString Text;
+        for (const FString& Block : Blocks)
+        {
+            Text += Block;
+            Text += "\n";
+        }
+
+        // The shader name is a virtual path, so flatten the separators into one legal filename.
+        FString Leaf = Name.ToString().c_str();
+        for (char& C : Leaf)
+        {
+            if (C == '/' || C == '\\' || C == ':')
+            {
+                C = '_';
+            }
+        }
+
+        const FString Path = Dir + "/" + Leaf + ".isa.txt";
+        const TSpan<const uint8> Bytes(reinterpret_cast<const uint8*>(Text.data()), Text.size());
+        if (Filesystem::WriteFile(Path, Bytes))
+        {
+            LOG_DISPLAY("ShaderISA: wrote '{}' ({} bytes).", Path, (uint64)Text.size());
+        }
+        else
+        {
+            LOG_WARN("ShaderISA: could not write '{}'.", Path);
+        }
+    }
+
     FPipelineH CreateComputePipeline(const FName& ComputeShader)
     {
         const FShaderEntry* Compute = FShaderLibrary::Resolve(FShaderLibrary::Get(ComputeShader));
@@ -721,7 +794,9 @@ namespace Lumina::RHI::Core
             return {};
         }
         
-        return RHI::CreateComputePipeline(Compute->Source());
+        const FPipelineH Pipeline = RHI::CreateComputePipeline(Compute->Source());
+        DumpPipelineISA(Pipeline, ComputeShader);
+        return Pipeline;
     }
 }
 

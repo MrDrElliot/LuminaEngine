@@ -59,17 +59,17 @@ namespace Lumina
     {
         static const FString Path = []() -> FString
         {
-            const char* SDK = std::getenv("VULKAN_SDK");
-            if (SDK == nullptr || *SDK == '\0')
+            const FString SDK = Platform::GetEnvVariable("VULKAN_SDK");
+            if (SDK.empty())
             {
                 LOG_WARN("Shader validation was requested but VULKAN_SDK is unset, so spirv-val cannot run.");
                 return FString();
             }
 
             #if defined(_WIN32)
-            FString Candidate = FString(SDK) + "/Bin/spirv-val.exe";
+            FString Candidate = SDK + "/Bin/spirv-val.exe";
             #else
-            FString Candidate = FString(SDK) + "/bin/spirv-val";
+            FString Candidate = SDK + "/bin/spirv-val";
             #endif
 
             Paths::Normalize(Candidate);

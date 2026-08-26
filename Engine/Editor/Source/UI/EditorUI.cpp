@@ -1103,9 +1103,10 @@ namespace Lumina
         FString FindVSCode()
         {
             TVector<FString> Candidates;
-            if (const char* LocalAppData = std::getenv("LOCALAPPDATA"))
+            const FString LocalAppData = Platform::GetEnvVariable("LOCALAPPDATA");
+            if (!LocalAppData.empty())
             {
-                Candidates.emplace_back(FString(LocalAppData) + R"(\Programs\Microsoft VS Code\Code.exe)");
+                Candidates.emplace_back(LocalAppData + R"(\Programs\Microsoft VS Code\Code.exe)");
             }
             Candidates.emplace_back(R"(C:\Program Files\Microsoft VS Code\Code.exe)");
 
@@ -1122,9 +1123,10 @@ namespace Lumina
         FString FindRider()
         {
             // JetBrains Toolbox shim first, then classic installs (versioned folders) under Program Files.
-            if (const char* LocalAppData = std::getenv("LOCALAPPDATA"))
+            const FString LocalAppData = Platform::GetEnvVariable("LOCALAPPDATA");
+            if (!LocalAppData.empty())
             {
-                FString Toolbox = FString(LocalAppData) + R"(\Programs\Rider\bin\rider64.exe)";
+                FString Toolbox = LocalAppData + R"(\Programs\Rider\bin\rider64.exe)";
                 if (Filesystem::Exists(Toolbox))
                 {
                     return Toolbox;

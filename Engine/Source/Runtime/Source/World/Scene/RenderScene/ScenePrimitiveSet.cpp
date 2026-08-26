@@ -1654,10 +1654,13 @@ namespace Lumina
         const entt::storage_type_t<SSkeletalMeshComponent>* Storage =
             &Registry.storage<SSkeletalMeshComponent>();
 
-        for (const FScenePrimitive& Prim : Primitives)
+        // The cached skeletal list, so an unchanged scene costs O(skinned) rather than O(primitives).
+        for (uint32 Index : GetSkeletalIndices())
         {
-            // A live slice can only need resizing when the MESH changes, which marks the primitive itself.
-            if (Prim.Source != EPrimitiveSource::SkeletalMesh || Prim.BoneCount != 0u)
+            const FScenePrimitive& Prim = Primitives[Index];
+
+            // A live slice can only need resizing when the mesh changes, which marks the primitive itself.
+            if (Prim.BoneCount != 0u)
             {
                 continue;
             }

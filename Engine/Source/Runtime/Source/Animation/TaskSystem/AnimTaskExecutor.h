@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Animation/TaskSystem/AnimTask.h"
 #include "Core/Math/Matrix/MatrixMath.h"
@@ -15,7 +15,8 @@ namespace Lumina
         //
         // OutSnapshot (optional) records what actually happened -- reachability, execution order,
         // buffer ownership -- as the executor decides it, so tools never have to re-derive it.
-        RUNTIME_API void ExecuteTaskList(FAnimTaskList& List, TVector<FMatrix4>& OutMatrices,
+        // False when the list named no usable skeleton, in which case OutMatrices is left untouched.
+        RUNTIME_API bool ExecuteTaskList(FAnimTaskList& List, TVector<FMatrix4>& OutMatrices,
                                          FAnimTaskSnapshot* OutSnapshot = nullptr);
 
         // Debug capture. A tool arms one component (any stable pointer identifying the mesh); the

@@ -416,33 +416,33 @@ namespace Lumina
         }
 
         // One mip off many textures is both less visible and more stable than gutting one surface.
-        TVector<uint32> Order;
+        const uint64 FrameNow = FrameCounter;
+
+        TVector<TPair<float, uint32>>& Order = BudgetOrderScratch;
+        Order.clear();
         Order.reserve(Textures.size());
         for (uint32 i = 0; i < (uint32)Textures.size(); ++i)
         {
             if (Textures[i].PinCount == 0 && Textures[i].Texture.Get() != nullptr)
             {
-                Order.push_back(i);
+                Order.emplace_back(RetentionPriority(Textures[i], FrameNow), i);
             }
         }
 
-        const uint64 FrameNow = FrameCounter;
-        Algo::Sort(Order.begin(), Order.end(), [this, FrameNow](uint32 A, uint32 B)
-        {
-            return RetentionPriority(Textures[A], FrameNow) < RetentionPriority(Textures[B], FrameNow);
-        });
+        // Keyed pairs, so the comparator never reaches back into Textures for a scattered load.
+        Algo::Sort(Order.begin(), Order.end(),
+            [](const TPair<float, uint32>& A, const TPair<float, uint32>& B) { return A.first < B.first; });
 
-        bool bDroppedAny = true;
-        while (Total > Budget && bDroppedAny)
+        // Compacted as textures reach their floor, so a later pass never revisits one that cannot shed.
+        SIZE_T Live = Order.size();
+        while (Total > Budget && Live > 0)
         {
-            bDroppedAny = false;
+            SIZE_T Write = 0;
+            bool bDroppedAny = false;
 
-            for (uint32 Index : Order)
+            for (SIZE_T i = 0; i < Live; ++i)
             {
-                if (Total <= Budget)
-                {
-                    break;
-                }
+                const uint32 Index = Order[i].second;
 
                 FStreamingTexture& Entry   = Textures[Index];
                 const CTexture*    Texture = Entry.Texture.Get();
@@ -451,13 +451,24 @@ namespace Lumina
                     continue;   // already at its floor; the inline tail is never given up
                 }
 
-                const FTextureResource& Resource = Texture->GetTextureResource();
-                const uint64 Before = Resource.CalcSizeBytesFromMip(Entry.BudgetedFirstMip);
-                ++Entry.BudgetedFirstMip;
-                const uint64 After  = Resource.CalcSizeBytesFromMip(Entry.BudgetedFirstMip);
+                if (Total > Budget)
+                {
+                    const FTextureResource& Resource = Texture->GetTextureResource();
+                    const uint64 Before = Resource.CalcSizeBytesFromMip(Entry.BudgetedFirstMip);
+                    ++Entry.BudgetedFirstMip;
+                    const uint64 After  = Resource.CalcSizeBytesFromMip(Entry.BudgetedFirstMip);
 
-                Total -= (Before - After);
-                bDroppedAny = true;
+                    Total -= (Before - After);
+                    bDroppedAny = true;
+                }
+
+                Order[Write++] = Order[i];
+            }
+
+            Live = Write;
+            if (!bDroppedAny)
+            {
+                break;
             }
         }
 
@@ -581,7 +592,8 @@ namespace Lumina
         };
 
         // Priority is the mip deficit weighted by how big the thing is on screen.
-        TVector<uint32> Candidates;
+        TVector<TPair<float, uint32>>& Candidates = PromotionScratch;
+        Candidates.clear();
         Candidates.reserve(Textures.size());
 
         for (uint32 i = 0; i < (uint32)Textures.size(); ++i)
@@ -596,26 +608,21 @@ namespace Lumina
 
             if (Entry.BudgetedFirstMip < Texture->GetResidentFirstMip())
             {
-                Candidates.push_back(i);
+                const uint32 Deficit = Texture->GetResidentFirstMip() - Entry.BudgetedFirstMip;
+
+                // A pin is an explicit request such as an open editor tab, not a hint.
+                const float Score = (Entry.PinCount > 0 ? 1.0e9f : 0.0f) + (float)Deficit;
+                Candidates.emplace_back(Score, i);
             }
         }
 
-        Algo::Sort(Candidates.begin(), Candidates.end(), [this](uint32 A, uint32 B)
-        {
-            auto Score = [this](uint32 Index)
-            {
-                const FStreamingTexture& E = Textures[Index];
-                const CTexture* T = E.Texture.Get();
-                const uint32 Deficit = T ? (T->GetResidentFirstMip() - E.BudgetedFirstMip) : 0u;
+        // Scored once here rather than inside the comparator, which resolved the weak pointer per compare.
+        Algo::Sort(Candidates.begin(), Candidates.end(),
+            [](const TPair<float, uint32>& A, const TPair<float, uint32>& B) { return A.first > B.first; });
 
-                // A pin is an explicit request such as an open editor tab, not a hint.
-                return (E.PinCount > 0 ? 1.0e9f : 0.0f) + (float)Deficit;
-            };
-            return Score(A) > Score(B);
-        });
-
-        for (uint32 Index : Candidates)
+        for (const TPair<float, uint32>& Candidate : Candidates)
         {
+            const uint32 Index = Candidate.second;
             if ((int32)PendingLoads.size() >= MaxInFlight)
             {
                 break;

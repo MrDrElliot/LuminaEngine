@@ -514,11 +514,11 @@ namespace Lumina
      *  NOT on the component, so the render thread never touches a component the game thread may have destroyed. */
     struct FParticleGPUState
     {
-        RHI::GPUPtr     ParticleBuffer     = 0;  // RW structured buffer of FGPUParticle (64B stride)
+        RHI::FGPUAllocation ParticleBuffer = {};  // RW structured buffer of FGPUParticle (64B stride)
         uint64          ParticleBufferSize = 0;
-        RHI::GPUPtr     SpawnCounterBuffer = 0;  // Single uint, cleared per frame
+        RHI::FGPUAllocation SpawnCounterBuffer = {};  // Single uint, cleared per frame
         // Declared per-particle attributes, parallel to ParticleBuffer and indexed by the same index.
-        RHI::GPUPtr     AttributeBuffer     = 0;
+        RHI::FGPUAllocation AttributeBuffer = {};
         uint64          AttributeBufferSize = 0;
         uint32          AllocatedAttributeFloats = 0;
         uint32          AllocatedMax        = 0;

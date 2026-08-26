@@ -143,10 +143,12 @@ namespace Lumina
         /** Count of replicated fields (the bitmask width). Same walk/filter as NetSerializeProperties. */
         RUNTIME_API uint32 GetNetReplicatedPropertyCount() const;
 
-        /** Writer-side diff support: serialize each replicated field into its own whole-byte buffer so the
-         *  caller can compare against the last-sent baseline. Net-index hooks are copied from HookSource so
-         *  object/asset/name refs mint exactly as they would on the live archive. */
-        RUNTIME_API void NetSerializeReplicatedToBuffers(const FNetArchive& HookSource, void* Data, TVector<TVector<uint8>>& OutPerField) const;
+        /** Writer-side diff support: serialize every replicated field into one flat buffer, byte-aligned
+         *  between fields, with OutOffsets naming the boundaries so field i is [Offsets[i], Offsets[i+1]).
+         *  OutOffsets gets NumFields + 1 entries. Net-index hooks are copied from HookSource so object,
+         *  asset and name refs mint exactly as they would on the live archive. */
+        RUNTIME_API void NetSerializeReplicatedFlat(const FNetArchive& HookSource, void* Data,
+                                                    TVector<uint8>& OutBytes, TVector<uint32>& OutOffsets) const;
 
         /** Reader side: for each field whose Mask bit is set, deserialize it then byte-align (matching the
          *  whole-byte field buffers the writer emitted). Fields whose bit is clear keep their current value. */

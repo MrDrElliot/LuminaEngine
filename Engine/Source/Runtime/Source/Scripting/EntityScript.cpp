@@ -175,6 +175,41 @@ namespace Lumina
 
         using FScriptSnapshot = TVector<TObjectPtr<CEntityScript>>;
 
+        // Both tick passes rebuild these every call, so they are parked per thread rather than reallocated.
+        struct FTickScratch
+        {
+            TVector<entt::entity> Entities;
+            FScriptSnapshot       Scripts;
+        };
+
+        // A nested tick falls back to its own storage rather than walking the outer pass's buffers.
+        class FTickScratchGuard
+        {
+        public:
+
+            FTickScratchGuard()
+            {
+                if (Depth()++ == 0u)
+                {
+                    Parked = &ParkedStorage();
+                }
+            }
+
+            ~FTickScratchGuard() { --Depth(); }
+
+            LE_NO_COPYMOVE(FTickScratchGuard);
+
+            FTickScratch& Get() { return (Parked != nullptr) ? *Parked : Local; }
+
+        private:
+
+            static uint32& Depth()               { static thread_local uint32 Value = 0; return Value; }
+            static FTickScratch& ParkedStorage() { static thread_local FTickScratch Storage; return Storage; }
+
+            FTickScratch* Parked = nullptr;
+            FTickScratch  Local;
+        };
+
         void SnapshotScripts(FEntityRegistry& Registry, entt::entity Entity, FScriptSnapshot& Out)
         {
             Out.clear();
@@ -318,10 +353,13 @@ namespace Lumina
             CWorld** WorldPtr = Registry.ctx().find<CWorld*>();
             CWorld* World = WorldPtr != nullptr ? *WorldPtr : nullptr;
 
-            TVector<entt::entity> Entities;
+            FTickScratchGuard    ScratchGuard;
+            FTickScratch&        Scratch  = ScratchGuard.Get();
+            TVector<entt::entity>& Entities = Scratch.Entities;
+            FScriptSnapshot&       Scripts  = Scratch.Scripts;
+
             SnapshotScriptedEntities(Registry, Entities);
 
-            FScriptSnapshot Scripts;
             for (entt::entity Entity : Entities)
             {
                 SnapshotScripts(Registry, Entity, Scripts);
@@ -360,14 +398,20 @@ namespace Lumina
                     Script->OnUpdate(DeltaTime);
                 }
             }
+
+            // Parked storage would otherwise hold the last entity's scripts alive until the next tick.
+            Scripts.clear();
         }
 
         void TickFixed(FEntityRegistry& Registry, float FixedDeltaTime)
         {
-            TVector<entt::entity> Entities;
+            FTickScratchGuard    ScratchGuard;
+            FTickScratch&        Scratch  = ScratchGuard.Get();
+            TVector<entt::entity>& Entities = Scratch.Entities;
+            FScriptSnapshot&       Scripts  = Scratch.Scripts;
+
             SnapshotScriptedEntities(Registry, Entities);
 
-            FScriptSnapshot Scripts;
             for (entt::entity Entity : Entities)
             {
                 SnapshotScripts(Registry, Entity, Scripts);
@@ -382,6 +426,9 @@ namespace Lumina
                     }
                 }
             }
+
+            // Parked storage would otherwise hold the last entity's scripts alive until the next tick.
+            Scripts.clear();
         }
 
         CEntityScript* Find(FEntityRegistry& Registry, entt::entity Entity, const CClass* ScriptClass)

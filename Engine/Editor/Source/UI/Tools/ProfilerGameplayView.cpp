@@ -757,12 +757,12 @@ namespace Lumina
         InsightsDetail::StripSeparator();
         ImGui::TextColored(EditorColors::TextDim(), "%d calls", (int32)TotalCalls);
 
-        const TVector<float>& History = Prof.GetFrameTotalHistory();
-        if (!History.empty())
+        const FProfilerHistory& History = Prof.GetFrameTotalHistory();
+        if (!History.Values.empty())
         {
             ImGui::PushStyleColor(ImGuiCol_PlotLines, EditorColors::Accent());
             ImGui::PushStyleColor(ImGuiCol_FrameBg, EditorColors::WithAlpha(EditorColors::PanelBg(), 0.55f));
-            ImGui::PlotLines("##frametotals", History.data(), (int)History.size(), 0, nullptr, 0.0f, FLT_MAX, ImVec2(-1.0f, 44.0f));
+            ImGui::PlotLines("##frametotals", History.Values.data(), (int)History.Values.size(), (int)History.Offset, nullptr, 0.0f, FLT_MAX, ImVec2(-1.0f, 44.0f));
             ImGui::PopStyleColor(2);
         }
 
@@ -844,14 +844,14 @@ namespace Lumina
                 ImGui::Text("%.0f%%", RowShare * 100.0);
 
                 ImGui::TableNextColumn();
-                if (const TVector<float>* EntryHistory = Prof.GetEntryHistory(Entry->Hash))
+                if (const FProfilerHistory* EntryHistory = Prof.GetEntryHistory(Entry->Hash))
                 {
-                    if (!EntryHistory->empty())
+                    if (!EntryHistory->Values.empty())
                     {
                         ImGui::PushID(Entry);
                         ImGui::PushStyleColor(ImGuiCol_PlotLines, EditorColors::WithAlpha(RowColor, 0.9f));
                         ImGui::PushStyleColor(ImGuiCol_FrameBg, EditorColors::WithAlpha(EditorColors::PanelBg(), 0.45f));
-                        ImGui::PlotLines("##h", EntryHistory->data(), static_cast<int>(EntryHistory->size()), 0, nullptr, 0.0f, FLT_MAX, ImVec2(-1.0f, 18.0f));
+                        ImGui::PlotLines("##h", EntryHistory->Values.data(), static_cast<int>(EntryHistory->Values.size()), (int)EntryHistory->Offset, nullptr, 0.0f, FLT_MAX, ImVec2(-1.0f, 18.0f));
                         ImGui::PopStyleColor(2);
                         ImGui::PopID();
                     }

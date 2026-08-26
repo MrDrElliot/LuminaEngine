@@ -18,11 +18,11 @@ namespace Lumina::RHITests
         const RHI::FSemaphoreH Semaphore = RHI::CreateTimelineSemaphore(0);
         RHI_REQUIRE(RHI::IsValid(Semaphore));
 
-        const RHI::GPUPtr Buffer = Ctx.Malloc(256, RHI::EMemoryType::GPUOnly, "RHITests.SignalTarget");
-        RHI_REQUIRE(Buffer != 0);
+        const RHI::FGPUAllocation Buffer = Ctx.Malloc(256, RHI::EMemoryType::GPUOnly, "RHITests.SignalTarget");
+        RHI_REQUIRE(Buffer.Gpu != 0);
 
         const RHI::FCmdListH CL = Ctx.OpenCL();
-        RHI::CmdMemzero(CL, Buffer, 256);
+        RHI::CmdMemzero(CL, Buffer.Gpu, 256);
 
         const RHI::FSemaphoreInfo Signal{ Semaphore, 42, RHI::EStageFlags::AllCommands };
         RHI::Submit(RHI::EQueueType::Graphics, TSpan{ &CL, 1 }, {}, TSpan{ &Signal, 1 });
@@ -41,16 +41,16 @@ namespace Lumina::RHITests
         const RHI::FSemaphoreH Semaphore = RHI::CreateTimelineSemaphore(0);
         RHI_REQUIRE(RHI::IsValid(Semaphore));
 
-        const RHI::GPUPtr Buffer = Ctx.Malloc(256, RHI::EMemoryType::GPUOnly, "RHITests.ChainTarget");
-        RHI_REQUIRE(Buffer != 0);
+        const RHI::FGPUAllocation Buffer = Ctx.Malloc(256, RHI::EMemoryType::GPUOnly, "RHITests.ChainTarget");
+        RHI_REQUIRE(Buffer.Gpu != 0);
 
         const RHI::FCmdListH First = Ctx.OpenCL();
-        RHI::CmdMemset(First, Buffer, 256, 1u);
+        RHI::CmdMemset(First, Buffer.Gpu, 256, 1u);
         const RHI::FSemaphoreInfo FirstSignal{ Semaphore, 1, RHI::EStageFlags::AllCommands };
         RHI::Submit(RHI::EQueueType::Graphics, TSpan{ &First, 1 }, {}, TSpan{ &FirstSignal, 1 });
 
         const RHI::FCmdListH Second = Ctx.OpenCL();
-        RHI::CmdMemset(Second, Buffer, 256, 2u);
+        RHI::CmdMemset(Second, Buffer.Gpu, 256, 2u);
         const RHI::FSemaphoreInfo SecondWait{ Semaphore, 1, RHI::EStageFlags::AllCommands };
         const RHI::FSemaphoreInfo SecondSignal{ Semaphore, 2, RHI::EStageFlags::AllCommands };
         RHI::Submit(RHI::EQueueType::Graphics, TSpan{ &Second, 1 }, TSpan{ &SecondWait, 1 }, TSpan{ &SecondSignal, 1 });
@@ -67,17 +67,17 @@ namespace Lumina::RHITests
     RHI_TEST(Submission, SubmitOnReturnsRisingValues)
     {
         // Separate buffers on purpose, since this is about the returned timeline values, not hazards.
-        const RHI::GPUPtr FirstBuffer  = Ctx.Malloc(256, RHI::EMemoryType::GPUOnly, "RHITests.SubmitOnA");
-        const RHI::GPUPtr SecondBuffer = Ctx.Malloc(256, RHI::EMemoryType::GPUOnly, "RHITests.SubmitOnB");
-        RHI_REQUIRE(FirstBuffer != 0 && SecondBuffer != 0);
+        const RHI::FGPUAllocation FirstBuffer  = Ctx.Malloc(256, RHI::EMemoryType::GPUOnly, "RHITests.SubmitOnA");
+        const RHI::FGPUAllocation SecondBuffer = Ctx.Malloc(256, RHI::EMemoryType::GPUOnly, "RHITests.SubmitOnB");
+        RHI_REQUIRE(FirstBuffer.Gpu != 0 && SecondBuffer.Gpu != 0);
 
         const RHI::FCmdListH First = Ctx.OpenCL();
-        RHI::CmdMemzero(First, FirstBuffer, 256);
+        RHI::CmdMemzero(First, FirstBuffer.Gpu, 256);
         RHI::Barriers::TransferToAll(First);
         const uint64 FirstValue = RHI::Core::SubmitOn(RHI::EQueueType::Graphics, TSpan{ &First, 1 });
 
         const RHI::FCmdListH Second = Ctx.OpenCL();
-        RHI::CmdMemzero(Second, SecondBuffer, 256);
+        RHI::CmdMemzero(Second, SecondBuffer.Gpu, 256);
         RHI::Barriers::TransferToAll(Second);
         const uint64 SecondValue = RHI::Core::SubmitOn(RHI::EQueueType::Graphics, TSpan{ &Second, 1 });
 
@@ -94,11 +94,11 @@ namespace Lumina::RHITests
             return;
         }
 
-        const RHI::GPUPtr Buffer = Ctx.Malloc(256, RHI::EMemoryType::GPUOnly, "RHITests.AsyncCompute");
-        RHI_REQUIRE(Buffer != 0);
+        const RHI::FGPUAllocation Buffer = Ctx.Malloc(256, RHI::EMemoryType::GPUOnly, "RHITests.AsyncCompute");
+        RHI_REQUIRE(Buffer.Gpu != 0);
 
         const RHI::FCmdListH CL = RHI::OpenCommandList(RHI::EQueueType::Compute);
-        RHI::CmdMemzero(CL, Buffer, 256);
+        RHI::CmdMemzero(CL, Buffer.Gpu, 256);
         RHI::Barriers::TransferToCompute(CL);
 
         const uint64 Value = RHI::Core::SubmitOn(RHI::EQueueType::Compute, TSpan{ &CL, 1 });
@@ -114,12 +114,12 @@ namespace Lumina::RHITests
             return;
         }
 
-        const RHI::GPUPtr Source = Ctx.Malloc(1024, RHI::EMemoryType::GPUOnly, "RHITests.AsyncXferSrc");
-        const RHI::GPUPtr Dest   = Ctx.Malloc(1024, RHI::EMemoryType::GPUOnly, "RHITests.AsyncXferDst");
-        RHI_REQUIRE(Source != 0 && Dest != 0);
+        const RHI::FGPUAllocation Source = Ctx.Malloc(1024, RHI::EMemoryType::GPUOnly, "RHITests.AsyncXferSrc");
+        const RHI::FGPUAllocation Dest   = Ctx.Malloc(1024, RHI::EMemoryType::GPUOnly, "RHITests.AsyncXferDst");
+        RHI_REQUIRE(Source.Gpu != 0 && Dest.Gpu != 0);
 
         const RHI::FCmdListH CL = RHI::OpenCommandList(RHI::EQueueType::Transfer);
-        RHI::CmdMemcpy(CL, Dest, Source, 1024);
+        RHI::CmdMemcpy(CL, Dest.Gpu, Source.Gpu, 1024);
 
         const uint64 Value = RHI::Core::SubmitOn(RHI::EQueueType::Transfer, TSpan{ &CL, 1 });
         RHI::WaitSemaphore(RHI::Core::GetQueueTimeline(RHI::EQueueType::Transfer), Value);
@@ -135,13 +135,13 @@ namespace Lumina::RHITests
     // ResetCommandList recycles into the free pool, so recording without re-opening is a begin error.
     RHI_TEST(Submission, CommandListRecyclesThroughFreePool)
     {
-        const RHI::GPUPtr Buffer = Ctx.Malloc(256, RHI::EMemoryType::GPUOnly, "RHITests.Recycle");
-        RHI_REQUIRE(Buffer != 0);
+        const RHI::FGPUAllocation Buffer = Ctx.Malloc(256, RHI::EMemoryType::GPUOnly, "RHITests.Recycle");
+        RHI_REQUIRE(Buffer.Gpu != 0);
 
         for (uint32 i = 0; i < 8; ++i)
         {
             const RHI::FCmdListH CL = Ctx.OpenCL();
-            RHI::CmdMemset(CL, Buffer, 256, i);
+            RHI::CmdMemset(CL, Buffer.Gpu, 256, i);
             RHI::Barriers::TransferToAll(CL);
             Ctx.SubmitAndWait(CL);
         }

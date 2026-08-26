@@ -378,41 +378,41 @@ namespace Lumina
         const uint64 PaletteOffset  = Reserve(PaletteBytes);
         const uint64 BoneIdxOffset  = Reserve(BoneIdxBytes);
         
-        const RHI::GPUPtr Block = RHI::Malloc(Cursor, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
+        const RHI::FGPUAllocation Block = RHI::Malloc(Cursor, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
         
-        if (Block == 0)
+        if (Block.Gpu == 0)
         {
             LOG_ERROR("Mesh rebuild failed: {} KiB GPU allocation for {} meshlets. Previous geometry kept.",
                       Cursor / 1024, MData.Meshlets.size());
             return;
         }
         
-        RHI::SetDebugName(Block, bSkinned ? "Mesh.SkinnedGeometry" : "Mesh.Geometry");
+        RHI::SetDebugName(Block.Gpu, bSkinned ? "Mesh.SkinnedGeometry" : "Mesh.Geometry");
 
-        RHI::UploadBuffer(Block + MeshletOffset,  MData.Meshlets.data(),         MeshletBytes);
-        RHI::UploadBuffer(Block + SphereOffset,   MData.MeshletSpheres.data(),   SphereBytes);
-        RHI::UploadBuffer(Block + ConeOffset,     MData.MeshletCones.data(),     ConeBytes);
-        RHI::UploadBuffer(Block + VertexOffset,   VertSrc,                       VertexBytes);
-        RHI::UploadBuffer(Block + TriangleOffset, MData.MeshletTriangles.data(), TriangleBytes);
+        RHI::UploadBuffer(Block, MData.Meshlets.data(),         MeshletBytes,  MeshletOffset);
+        RHI::UploadBuffer(Block, MData.MeshletSpheres.data(),   SphereBytes,   SphereOffset);
+        RHI::UploadBuffer(Block, MData.MeshletCones.data(),     ConeBytes,     ConeOffset);
+        RHI::UploadBuffer(Block, VertSrc,                       VertexBytes,   VertexOffset);
+        RHI::UploadBuffer(Block, MData.MeshletTriangles.data(), TriangleBytes, TriangleOffset);
 
         if (PaletteBytes != 0 && BoneIdxBytes != 0)
         {
-            RHI::UploadBuffer(Block + PaletteOffset, MData.MeshletBonePalettes.data(), PaletteBytes);
-            RHI::UploadBuffer(Block + BoneIdxOffset, MData.MeshletBoneIndices.data(),  BoneIdxBytes);
+            RHI::UploadBuffer(Block, MData.MeshletBonePalettes.data(), PaletteBytes, PaletteOffset);
+            RHI::UploadBuffer(Block, MData.MeshletBoneIndices.data(),  BoneIdxBytes, BoneIdxOffset);
         }
         
         MB.ReleaseGeometryBuffers();
 
         MB.GeometryBlock         = Block;
-        MB.MeshletBuffer         = Block + MeshletOffset;
-        MB.MeshletSphereBuffer   = Block + SphereOffset;
-        MB.MeshletConeBuffer     = Block + ConeOffset;
-        MB.MeshletVertexBuffer   = Block + VertexOffset;
-        MB.MeshletTriangleBuffer = Block + TriangleOffset;
+        MB.MeshletBuffer         = Block.Gpu + MeshletOffset;
+        MB.MeshletSphereBuffer   = Block.Gpu + SphereOffset;
+        MB.MeshletConeBuffer     = Block.Gpu + ConeOffset;
+        MB.MeshletVertexBuffer   = Block.Gpu + VertexOffset;
+        MB.MeshletTriangleBuffer = Block.Gpu + TriangleOffset;
 
         // Null for a static mesh; SkinVertex reads that as bind pose rather than misreading the indices.
-        MB.MeshletBonePaletteBuffer = (PaletteBytes != 0 && BoneIdxBytes != 0) ? Block + PaletteOffset : 0;
-        MB.MeshletBoneIndexBuffer   = (PaletteBytes != 0 && BoneIdxBytes != 0) ? Block + BoneIdxOffset : 0;
+        MB.MeshletBonePaletteBuffer = (PaletteBytes != 0 && BoneIdxBytes != 0) ? Block.Gpu + PaletteOffset : 0;
+        MB.MeshletBoneIndexBuffer   = (PaletteBytes != 0 && BoneIdxBytes != 0) ? Block.Gpu + BoneIdxOffset : 0;
         MB.MeshletCount          = (uint32)MData.Meshlets.size();
 
         // The header publishes the heap slot, and a failed allocation leaves the sentinel every SDF path gates on.

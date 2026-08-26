@@ -25,8 +25,8 @@ namespace Lumina::RHI
     {
         Core::Retire(MaterialBuffer);
         Core::Retire(PendingBuffer);
-        MaterialBuffer = 0;
-        PendingBuffer  = 0;
+        MaterialBuffer = {};
+        PendingBuffer  = {};
     }
 
     GPUPtr FMaterialManager::GetMaterialBuffer()
@@ -34,7 +34,7 @@ namespace Lumina::RHI
         // Once per frame per view, which is the only place a staged table can be noticed to have landed.
         FWriteScopeLock Lock(Mutex);
         PublishPendingLocked();
-        return MaterialBuffer;
+        return MaterialBuffer.Gpu;
     }
 
     uint32 FMaterialManager::GetCapacity() const
@@ -90,7 +90,7 @@ namespace Lumina::RHI
 
     void FMaterialManager::PublishPendingLocked()
     {
-        if (PendingBuffer == 0 || !Upload::IsBatchComplete(PendingBatch))
+        if (PendingBuffer.Gpu == 0 || !Upload::IsBatchComplete(PendingBatch))
         {
             return;
         }
@@ -100,14 +100,14 @@ namespace Lumina::RHI
 
         MaterialBuffer  = PendingBuffer;
         Capacity        = PendingCapacity;
-        PendingBuffer   = 0;
+        PendingBuffer   = {};
         PendingCapacity = 0;
         PendingBatch    = 0;
     }
 
     void FMaterialManager::StageGrowLocked(uint32 MinSlots)
     {
-        if (PendingBuffer != 0 || Capacity >= kMaxMaterialSlots)
+        if (PendingBuffer.Gpu != 0 || Capacity >= kMaxMaterialSlots)
         {
             return;
         }
@@ -119,8 +119,8 @@ namespace Lumina::RHI
             return;
         }
 
-        const GPUPtr NewBuffer = Malloc(sizeof(FMaterialUniforms) * NewCapacity, kDefaultAlign, EMemoryType::GPUOnly);
-        if (NewBuffer == 0)
+        const FGPUAllocation NewBuffer = Malloc(sizeof(FMaterialUniforms) * NewCapacity, kDefaultAlign, EMemoryType::GPUOnly);
+        if (NewBuffer.Gpu == 0)
         {
             LOG_ERROR("MaterialManager: failed to allocate a {} slot material table ({} KiB).",
                 NewCapacity, (sizeof(FMaterialUniforms) * NewCapacity) / 1024);
@@ -162,7 +162,7 @@ namespace Lumina::RHI
         if (PendingCapacity < MinSlots)
         {
             Core::Retire(PendingBuffer);
-            PendingBuffer   = 0;
+            PendingBuffer   = {};
             PendingCapacity = 0;
             PendingBatch    = 0;
         }
@@ -170,7 +170,7 @@ namespace Lumina::RHI
         StageGrowLocked(MinSlots);
 
         // The slots are needed NOW, so this is the one path that waits. AddMaterial stages early to keep it rare.
-        if (PendingBuffer != 0)
+        if (PendingBuffer.Gpu != 0)
         {
             FlushUploadsAndWait();
             PublishPendingLocked();
@@ -272,12 +272,12 @@ namespace Lumina::RHI
 
         Memory::Memcpy(Slot, Data, ByteSize);
 
-        UploadBuffer(MaterialBuffer + Index * sizeof(FMaterialUniforms) + ByteOffset, Data, ByteSize);
+        UploadBuffer(MaterialBuffer, Data, ByteSize, Index * sizeof(FMaterialUniforms) + ByteOffset);
 
         // The staged table's mirror copy was queued before this write, so it has to be repeated there.
-        if (PendingBuffer != 0 && Index < PendingCapacity)
+        if (PendingBuffer.Gpu != 0 && Index < PendingCapacity)
         {
-            UploadBuffer(PendingBuffer + Index * sizeof(FMaterialUniforms) + ByteOffset, Data, ByteSize);
+            UploadBuffer(PendingBuffer, Data, ByteSize, Index * sizeof(FMaterialUniforms) + ByteOffset);
         }
     }
 
@@ -302,12 +302,12 @@ namespace Lumina::RHI
 
         Mirror[Index] = Copy;
 
-        UploadBuffer(MaterialBuffer + Index * sizeof(FMaterialUniforms), &Copy, sizeof(FMaterialUniforms));
+        UploadBuffer(MaterialBuffer, &Copy, sizeof(FMaterialUniforms), Index * sizeof(FMaterialUniforms));
 
         // The staged table's mirror copy was queued before this write, so it has to be repeated there.
-        if (PendingBuffer != 0 && Index < PendingCapacity)
+        if (PendingBuffer.Gpu != 0 && Index < PendingCapacity)
         {
-            UploadBuffer(PendingBuffer + Index * sizeof(FMaterialUniforms), &Copy, sizeof(FMaterialUniforms));
+            UploadBuffer(PendingBuffer, &Copy, sizeof(FMaterialUniforms), Index * sizeof(FMaterialUniforms));
         }
     }
 }

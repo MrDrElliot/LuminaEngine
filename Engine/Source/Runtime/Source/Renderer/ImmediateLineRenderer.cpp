@@ -37,8 +37,8 @@ namespace Lumina
 
             EnsureSlotCapacity(Channel, CurrentSlot, Needed);
 
-            Channel.Host     = Channel.SlotHost[CurrentSlot];
-            Channel.Gpu      = Channel.SlotGpu[CurrentSlot];
+            Channel.Host     = Channel.SlotMemory[CurrentSlot].CpuAs<FSimpleElementVertex>();
+            Channel.Gpu      = Channel.SlotMemory[CurrentSlot].Gpu;
             Channel.Capacity = Channel.SlotCapacity[CurrentSlot];
             Channel.Cursor.store(0, std::memory_order_relaxed);
 
@@ -267,16 +267,15 @@ namespace Lumina
             FreeSlot(Channel, Slot);
 
             const uint64 Bytes = (uint64)NeededVerts * sizeof(FSimpleElementVertex);
-            const RHI::GPUPtr Gpu = RHI::Malloc(Bytes, RHI::kDefaultAlign, RHI::EMemoryType::CPUWrite);
-            if (Gpu == 0)
+            const RHI::FGPUAllocation Memory = RHI::Malloc(Bytes, RHI::kDefaultAlign, RHI::EMemoryType::CPUWrite);
+            if (Memory.Gpu == 0)
             {
                 LOG_ERROR("ImmediateLines: {} KiB CPU-visible allocation failed; debug lines are off this frame.", Bytes / 1024);
                 return;
             }
 
-            RHI::SetDebugName(Gpu, "Lines.VertexSlot");
-            Channel.SlotGpu[Slot]      = Gpu;
-            Channel.SlotHost[Slot]     = static_cast<FSimpleElementVertex*>(RHI::ToHost(Gpu));
+            RHI::SetDebugName(Memory.Gpu, "Lines.VertexSlot");
+            Channel.SlotMemory[Slot]   = Memory;
             Channel.SlotCapacity[Slot] = NeededVerts;
             Channel.SlotLowUsage[Slot] = 0;
             Channel.bWarnedOverflow    = false;
@@ -290,12 +289,11 @@ namespace Lumina
                 const uint32 Target = Math::Max(NeededVerts, kMinVerts);
                 FreeSlot(Channel, Slot);
 
-                const RHI::GPUPtr Gpu = RHI::Malloc((uint64)Target * sizeof(FSimpleElementVertex), RHI::kDefaultAlign, RHI::EMemoryType::CPUWrite);
-                if (Gpu != 0)
+                const RHI::FGPUAllocation Memory = RHI::Malloc((uint64)Target * sizeof(FSimpleElementVertex), RHI::kDefaultAlign, RHI::EMemoryType::CPUWrite);
+                if (Memory.Gpu != 0)
                 {
-                    RHI::SetDebugName(Gpu, "Lines.VertexSlot");
-                    Channel.SlotGpu[Slot]      = Gpu;
-                    Channel.SlotHost[Slot]     = static_cast<FSimpleElementVertex*>(RHI::ToHost(Gpu));
+                    RHI::SetDebugName(Memory.Gpu, "Lines.VertexSlot");
+                    Channel.SlotMemory[Slot]   = Memory;
                     Channel.SlotCapacity[Slot] = Target;
                 }
                 Channel.SlotLowUsage[Slot] = 0;
@@ -310,12 +308,11 @@ namespace Lumina
     void FImmediateLineRenderer::FreeSlot(FChannel& Channel, uint32 Slot)
     {
         // This slot's last submission finished at the previous frame's fence, so no deferred free is needed.
-        if (Channel.SlotGpu[Slot] != 0)
+        if (Channel.SlotMemory[Slot].Gpu != 0)
         {
-            RHI::Free(Channel.SlotGpu[Slot]);
+            RHI::Free(Channel.SlotMemory[Slot]);
         }
-        Channel.SlotGpu[Slot]      = 0;
-        Channel.SlotHost[Slot]     = nullptr;
+        Channel.SlotMemory[Slot]   = {};
         Channel.SlotCapacity[Slot] = 0;
     }
 }

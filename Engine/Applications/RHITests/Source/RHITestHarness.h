@@ -37,7 +37,7 @@ namespace Lumina::RHITests
         //~ Resource helpers. Everything taken through these is released when the test returns, in
         //  reverse order of acquisition, whether it passed or failed.
 
-        RHI::GPUPtr    Malloc(uint64 Size, RHI::EMemoryType Type, const char* DebugName);
+        RHI::FGPUAllocation Malloc(uint64 Size, RHI::EMemoryType Type, const char* DebugName);
         RHI::FTextureH CreateTexture(const RHI::FTextureDesc& Desc, const char* DebugName);
 
         /** Command list with the global texture heap already bound. Not auto-submitted: a test that wants
@@ -70,7 +70,7 @@ namespace Lumina::RHITests
     private:
 
         TVector<FString>         Failures;
-        TVector<RHI::GPUPtr>     ScratchBuffers;
+        TVector<RHI::FGPUAllocation> ScratchBuffers;
         TVector<RHI::FTextureH>  ScratchTextures;
         TVector<RHI::FPipelineH> ScratchPipelines;
         uint32                   FrameIndex = 0;

@@ -102,15 +102,15 @@ namespace Lumina::RHITests
         Failures.push_back(FString(Buffer));
     }
 
-    RHI::GPUPtr FTestContext::Malloc(uint64 Size, RHI::EMemoryType Type, const char* DebugName)
+    RHI::FGPUAllocation FTestContext::Malloc(uint64 Size, RHI::EMemoryType Type, const char* DebugName)
     {
-        const RHI::GPUPtr Ptr = RHI::Malloc(Size, RHI::kDefaultAlign, Type);
-        if (Ptr != 0)
+        const RHI::FGPUAllocation Allocation = RHI::Malloc(Size, RHI::kDefaultAlign, Type);
+        if (Allocation.Gpu != 0)
         {
-            RHI::SetDebugName(Ptr, DebugName);
-            ScratchBuffers.push_back(Ptr);
+            RHI::SetDebugName(Allocation.Gpu, DebugName);
+            ScratchBuffers.push_back(Allocation);
         }
-        return Ptr;
+        return Allocation;
     }
 
     RHI::FTextureH FTestContext::CreateTexture(const RHI::FTextureDesc& Desc, const char* DebugName)

@@ -23,8 +23,7 @@ namespace Lumina::Paths
 
     void InitializePaths()
     {
-        const char* LuminaDirEnv = std::getenv("LUMINA_DIR");
-        FString LuminaDir = LuminaDirEnv ? FString(LuminaDirEnv) : FString();
+        FString LuminaDir = Platform::GetEnvVariable("LUMINA_DIR");
         Normalize(LuminaDir);
 
         // The exe lives two directories below the root, and without this every resource path is malformed.

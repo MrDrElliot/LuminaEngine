@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Object/SoftObjectPtr.h"
@@ -300,6 +300,14 @@ namespace Lumina
         /** Overall strength of the traced reflection against the prefiltered fallback. */
         PROPERTY(Editable, Category = "Screen Space Reflections", ClampMin = 0.0f, ClampMax = 1.0f)
         float SSRIntensity = 1.0f;
+
+        /** VRAM ceiling on the pre-skinned vertex buffer, which holds one skinned copy of every visible
+            skeletal mesh so passes read it instead of re-blending bones. Past it, the surplus meshes
+            blend inline in every pass they appear in. Zero scales the ceiling to the card. The buffer
+            is sized from measured demand either way, so a high ceiling costs nothing until a frame
+            asks for it. Takes effect on the next frame. */
+        PROPERTY(Editable, Category = "Skinning", ClampMin = 0, ClampMax = 4096, Units = "MiB")
+        int32 PreSkinnedVertexBudgetMiB = 0;
 
         // SMAA1x is morphological only; SMAAT2x adds a second jittered subsample resolved against a reprojected history.
         PROPERTY(Editable, Category = "Anti-Aliasing")

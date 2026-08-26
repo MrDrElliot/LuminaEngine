@@ -87,8 +87,8 @@ public readonly struct FCmdListH : IEquatable<FCmdListH>
 
 /// <summary>
 /// A device-addressable GPU memory pointer (the engine's <c>GPUPtr</c> = uint64). Allocate with
-/// <see cref="RHI.Malloc"/>, map to a CPU pointer with <see cref="RHI.ToHost"/>, free with
-/// <see cref="RHI.Free"/>. Supports byte-offset arithmetic. Zero is the null/invalid pointer.
+/// <see cref="RHI.Malloc"/>, which returns an <see cref="FGPUAllocation"/> carrying this pointer, its
+/// CPU mapping and its size. Supports byte-offset arithmetic. Zero is the null/invalid pointer.
 /// </summary>
 [StructLayout(LayoutKind.Sequential)]
 [NativeLayout("RHI::GPUPtr")]

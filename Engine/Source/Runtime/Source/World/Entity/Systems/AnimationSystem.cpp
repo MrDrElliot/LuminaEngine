@@ -179,6 +179,88 @@ namespace Lumina
             return true;
         }
 
+        // Field by field, since FAnimTask has padding the builder never writes and memcmp would read.
+        bool SameTask(const FAnimTask& A, const FAnimTask& B)
+        {
+            const bool bCommon =
+                   A.Type == B.Type
+                && A.Stage == B.Stage
+                && A.DepA == B.DepA
+                && A.DepB == B.DepB
+                && A.Clip == B.Clip
+                && A.Alpha == B.Alpha
+                && A.AdditiveSpace == B.AdditiveSpace
+                && A.MaskWeights == B.MaskWeights
+                && A.Inert == B.Inert
+                && A.Dead == B.Dead
+                && A.Snapshot == B.Snapshot
+                && A.bCapture == B.bCapture
+                && A.bApply == B.bApply
+                && A.T == B.T
+                && A.R == B.R
+                && A.S == B.S
+                && A.BoneA == B.BoneA
+                && A.BoneB == B.BoneB
+                && A.BoneC == B.BoneC
+                && A.Space == B.Space
+                && A.Mode == B.Mode;
+
+            if (!bCommon)
+            {
+                return false;
+            }
+
+            // On a smoothing task these two carry the blend clock, which the executor reads only on the
+            // frames it captures or applies. A frame doing neither ignores however far they have drifted.
+            if (A.Type == EAnimTaskType::Inertialize || A.Type == EAnimTaskType::DeadBlend)
+            {
+                return (!A.bCapture || A.DeltaTime == B.DeltaTime)
+                    && (!A.bApply || A.Time == B.Time);
+            }
+
+            return A.Time == B.Time && A.DeltaTime == B.DeltaTime;
+        }
+
+        // The executor is a pure function of this list plus the skeleton, so matching recipes match poses.
+        bool SameRecipe(const FAnimTaskList& A, const FAnimTaskList& B)
+        {
+            if (A.OutputTask != B.OutputTask
+                || A.Skeleton != B.Skeleton
+                || A.bLockRoot != B.bLockRoot
+                || A.RootBoneIndex != B.RootBoneIndex
+                || A.ActiveBoneCount != B.ActiveBoneCount
+                || A.Tasks.size() != B.Tasks.size())
+            {
+                return false;
+            }
+
+            for (SIZE_T i = 0; i < A.Tasks.size(); ++i)
+            {
+                if (!SameTask(A.Tasks[i], B.Tasks[i]))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // Skipped frames leave the smoothing history untouched, so its stored velocity is stale by however
+        // long the pose held. Reporting one frame of history makes the next capture start from rest.
+        void HoldSmoothingHistory(const FAnimTaskList& List)
+        {
+            for (const FAnimTask& Task : List.Tasks)
+            {
+                if (Task.Inert != nullptr)
+                {
+                    Task.Inert->HistoryCount = Math::Min(Task.Inert->HistoryCount, 1);
+                }
+                if (Task.Dead != nullptr)
+                {
+                    Task.Dead->HistoryCount = Math::Min(Task.Dead->HistoryCount, 1);
+                }
+            }
+        }
+
         // Frozen time deliberately does NOT accumulate, so an off-screen pose resumes where it left off.
         bool ShouldUpdatePose(SSkeletalMeshComponent& Mesh, entt::entity Entity, float DeltaTime,
                               double Now, bool bForce, float& OutStepTime)
@@ -669,6 +751,17 @@ namespace Lumina
                 SSkeletalMeshComponent& Mesh = MeshView.get<SSkeletalMeshComponent>(Entity);
                 if (Mesh.AnimTasks.HasWork())
                 {
+                    // Same recipe as the pose already on this mesh, so executing it would rebuild it byte
+                    // for byte. Skipping keeps the serial still, which keeps the gather off it too.
+                    // bRenderBonesDirty means something else wrote the pose, so it has to be rebuilt.
+                    if (Mesh.bLastRecipeValid && !Mesh.bRenderBonesDirty
+                        && SameRecipe(Mesh.AnimTasks, Mesh.LastRecipe))
+                    {
+                        HoldSmoothingHistory(Mesh.AnimTasks);
+                        Mesh.AnimTasks.Reset();
+                        continue;
+                    }
+
                     // Snapshot single-clip recipes before execution consumes the list (diagnostic).
                     CAnimation* ValidateClip = nullptr;
                     float  ValidateTime = 0.0f;
@@ -695,7 +788,13 @@ namespace Lumina
                         Snapshot = &CaptureScratch;
                     }
 
-                    Anim::ExecuteTaskList(Mesh.AnimTasks, Mesh.BoneTransforms, Snapshot);
+                    // Cached before execution, which consumes the list.
+                    Mesh.LastRecipe        = Mesh.AnimTasks;
+                    Mesh.bLastRecipeValid  = true;
+
+                    // Into scratch, so a pose identical to the one already there can leave the serial alone.
+                    thread_local TVector<FMatrix4> PoseScratch;
+                    const bool bProduced = Anim::ExecuteTaskList(Mesh.AnimTasks, PoseScratch, Snapshot);
 
                     if (Snapshot != nullptr)
                     {
@@ -716,14 +815,14 @@ namespace Lumina
 
                         float MaxDiff = 0.0f;
                         int32 WorstBone = INDEX_NONE;
-                        const SIZE_T Num = Math::Min(RefMatrices.size(), Mesh.BoneTransforms.size());
+                        const SIZE_T Num = Math::Min(RefMatrices.size(), PoseScratch.size());
                         for (SIZE_T b = 0; b < Num; ++b)
                         {
                             for (int32 c = 0; c < 4; ++c)
                             {
                                 for (int32 r = 0; r < 4; ++r)
                                 {
-                                    const float Diff = Math::Abs(RefMatrices[b][c][r] - Mesh.BoneTransforms[b][c][r]);
+                                    const float Diff = Math::Abs(RefMatrices[b][c][r] - PoseScratch[b][c][r]);
                                     if (Diff > MaxDiff)
                                     {
                                         MaxDiff   = Diff;
@@ -732,16 +831,31 @@ namespace Lumina
                                 }
                             }
                         }
-                        if (MaxDiff > 1e-4f || RefMatrices.size() != Mesh.BoneTransforms.size())
+                        if (MaxDiff > 1e-4f || RefMatrices.size() != PoseScratch.size())
                         {
                             LOG_ERROR("anim.ValidateTasks: executor diverges from direct sampling (max diff {} at bone {}, sizes {}/{})",
-                                      MaxDiff, WorstBone, Mesh.BoneTransforms.size(), RefMatrices.size());
+                                      MaxDiff, WorstBone, PoseScratch.size(), RefMatrices.size());
                         }
                     }
 
-                    // No pack here; the gather packs into its arena slice, only for what survives culling.
-                    Mesh.bRenderBonesDirty = false;
-                    ++Mesh.PoseSerial;
+                    // Bit-exact because the same recipe on the same inputs runs the same instructions.
+                    const bool bPoseChanged = bProduced
+                        && (PoseScratch.size() != Mesh.BoneTransforms.size()
+                        || (!PoseScratch.empty()
+                            && Memory::Memcmp(PoseScratch.data(), Mesh.BoneTransforms.data(),
+                                              PoseScratch.size() * sizeof(FMatrix4)) != 0));
+
+                    if (bPoseChanged)
+                    {
+                        // Swapped rather than copied, and the scratch inherits the old buffer to refill.
+                        Mesh.BoneTransforms.swap(PoseScratch);
+
+                        // A stale external write is superseded by the pose that just replaced it.
+                        Mesh.bRenderBonesDirty = false;
+
+                        // No pack here; the gather packs into its arena slice, only for what survives culling.
+                        ++Mesh.PoseSerial;
+                    }
                 }
             }
         });

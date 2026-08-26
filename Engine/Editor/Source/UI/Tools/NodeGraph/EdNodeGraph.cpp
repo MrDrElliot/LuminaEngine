@@ -75,16 +75,27 @@ namespace Lumina
     {
     }
 
-    bool CEdNodeGraph::GraphSaveSettings(const char* data, size_t size, ax::NodeEditor::SaveReasonFlags reason, void* userPointer)
+    bool CEdNodeGraph::GraphSaveSettings(const char* data, size_t size, ax::NodeEditor::SaveReasonFlags Reason, void* userPointer)
     {
         CEdNodeGraph* ThisGraph = (CEdNodeGraph*)userPointer;
         
-        if (reason != ax::NodeEditor::SaveReasonFlags::None && !ThisGraph->bFirstDraw)
+        if (    Reason == ax::NodeEditor::SaveReasonFlags::None 
+            ||  Reason == ax::NodeEditor::SaveReasonFlags::Navigation
+            ||  Reason == ax::NodeEditor::SaveReasonFlags::Selection
+            ||  ThisGraph->bFirstDraw)
         {
-            ThisGraph->GetPackage()->MarkDirty();
-            ThisGraph->GraphSaveData.assign(data, size);
+            return true;
         }
-        
+
+        // The graph is un-changed.
+        if (ThisGraph->GraphSaveData.size() == size && (size == 0 || Memory::Memcmp(ThisGraph->GraphSaveData.data(), data, size) == 0))
+        {
+            return true;
+        }
+
+        ThisGraph->GraphSaveData.assign(data, size);
+        ThisGraph->GetPackage()->MarkDirty();
+
         return true;
     }
     
@@ -351,7 +362,7 @@ namespace Lumina
     // Runs once every clone exists, since a link can point forwards in the list as easily as backwards.
     static void RelinkClones(const TVector<CEdGraphNode*>& SourceOrder, const THashMap<CEdGraphNode*, CEdGraphNode*>& Clones)
     {
-        // Walking INPUT pins only visits each link once, so nothing gets connected twice.
+        // Walking input pins only visits each link once, so nothing gets connected twice.
         for (CEdGraphNode* Source : SourceOrder)
         {
             const auto CloneItr = Clones.find(Source);
@@ -526,6 +537,37 @@ namespace Lumina
 
         ValidateGraph();
         PostCloneContent(Source, Clones);
+    }
+
+    uint64 CEdNodeGraph::GetTreeContentVersion() const
+    {
+        THashSet<const CEdNodeGraph*> Visited;
+        return AccumulateTreeContentVersion(Visited);
+    }
+
+    uint64 CEdNodeGraph::AccumulateTreeContentVersion(THashSet<const CEdNodeGraph*>& Visited) const
+    {
+        if (!Visited.insert(this).second)
+        {
+            return 0;
+        }
+
+        uint64 Version = ContentVersion;
+
+        for (const TObjectPtr<CEdGraphNode>& Node : Nodes)
+        {
+            if (!Node.IsValid())
+            {
+                continue;
+            }
+
+            if (const CEdNodeGraph* SubGraph = Node->GetOwnedSubGraph())
+            {
+                Version += SubGraph->AccumulateTreeContentVersion(Visited);
+            }
+        }
+
+        return Version;
     }
 
     uint32 CEdNodeGraph::UnaliasSubGraphs(THashSet<CEdNodeGraph*>& Visited)
@@ -917,6 +959,13 @@ namespace Lumina
         // Re-armed here so nobody has to remember to switch them back on after a node's text field.
         NodeEditor::EnableShortcuts(true);
 
+        // The view is no longer saved with the asset, so frame the content once the nodes have real bounds.
+        if (!bFirstDraw && bNeedsInitialFraming)
+        {
+            bNeedsInitialFraming = false;
+            NodeEditor::NavigateToContent(0.0f);
+        }
+
         PushGraphStyle();
 
         Graph::GraphNodeBuilder NodeBuilder;
@@ -1234,7 +1283,7 @@ namespace Lumina
                 && !NodeEditor::GetHoveredLink())
             {
                 
-                // IsKeyDown, since the CLICK is the trigger and the letter acts as a modifier.
+                // IsKeyDown, since the click is the trigger and the letter acts as a modifier.
                 for (int i = ImGuiKey_A; i <= ImGuiKey_Z; ++i)
                 {
                     if (ImGui::IsKeyDown((ImGuiKey)i))
@@ -1304,7 +1353,7 @@ namespace Lumina
 
                     ImVec2 PasteLocation = NodeEditor::ScreenToCanvas(ImGui::GetMousePos());
 
-                    // The clipboard is shared, so filter to what THIS graph's registered node classes accept.
+                    // The clipboard is shared, so filter to what this graph's registered node classes accept.
                     TVector<CEdGraphNode*> Pastable;
                     Pastable.reserve(GetNodeClipboard().size());
                     uint32 Rejected = 0;

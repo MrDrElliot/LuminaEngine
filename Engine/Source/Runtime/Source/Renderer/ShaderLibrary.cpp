@@ -117,9 +117,12 @@ namespace Lumina
             return;
         }
 
-        TVector<FShaderH> Ready;
+        static thread_local TVector<FShaderH> Ready;
+        Ready.clear();
         {
             FScopeLock Lock(Library->Mutex);
+
+            // Swapping a cleared buffer in keeps the pending list's capacity instead of dropping it.
             Ready.swap(Library->PendingRelease);
         }
 

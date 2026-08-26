@@ -2,6 +2,7 @@
 
 #include "RenderResource.h"   // EFormat
 #include "Containers/HashTable.h"
+#include "Containers/Pair.h"
 #include "Containers/Vector.h"
 #include "Containers/Name.h"
 #include "Containers/String.h"
@@ -242,6 +243,10 @@ namespace Lumina
         static float RetentionPriority(const FStreamingTexture& Entry, uint64 FrameCounter);
 
         uint64 GetBudgetBytes() const;
+
+        // Sort keys are precomputed into these so the comparator never reaches back into Textures.
+        TVector<TPair<float, uint32>>           BudgetOrderScratch;
+        TVector<TPair<float, uint32>>           PromotionScratch;
 
         TVector<FStreamingTexture>              Textures;
         THashMap<CTexture*, uint32>             TextureToIndex;

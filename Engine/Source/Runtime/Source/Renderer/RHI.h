@@ -10,6 +10,8 @@
 #include "Core/Math/Math.h"
 #include "Platform/GenericPlatform.h"
 
+#include <cstddef>
+
 namespace Lumina
 {
     enum class EPresentMode : uint8;
@@ -80,10 +82,26 @@ namespace Lumina::RHI
         CPUWrite,
         CPURead,
         GPUOnly,
-        
+
         Default = CPUWrite
     };
-    
+
+    // Cpu and Gpu name the same first byte, so one offset applies to either.
+    struct FGPUAllocation
+    {
+        std::byte*  Cpu     = nullptr;      // null for EMemoryType::GPUOnly
+        GPUPtr      Gpu     = 0;
+        uint64      Size    = 0;            // exactly the bytes asked for; the allocator reserves any rounding
+
+        // Opaque backend token Free needs. Zero when the allocation owns its whole buffer.
+        uint64      Handle  = 0;
+
+        template<typename T>
+        T* CpuAs() const { return reinterpret_cast<T*>(Cpu); }
+
+        explicit operator bool() const { return Gpu != 0; }
+    };
+
     enum class EQueueType : uint8
     {
         Graphics,
@@ -496,7 +514,7 @@ namespace Lumina::RHI
 
     static constexpr uint32 kMaxGPUAllocationName = 64;
 
-    struct FGPUAllocation
+    struct FGPUAllocationInfo
     {
         char                Name[kMaxGPUAllocationName] = {};   // empty when the site never named it
         uint64              Size    = 0;                        // bytes the allocator reserved
@@ -507,7 +525,7 @@ namespace Lumina::RHI
 
     /** Snapshot of every live RHI allocation. Takes the allocator locks and copies the whole ledger, so
      *  this is a tool-rate call -- never per frame. */
-    RUNTIME_API void GetGPUAllocations(TVector<FGPUAllocation>& Out);
+    RUNTIME_API void GetGPUAllocations(TVector<FGPUAllocationInfo>& Out);
 
 #endif
 
@@ -530,19 +548,15 @@ namespace Lumina::RHI
     class ICrashTracker;
     RUNTIME_API ICrashTracker& GetCrashTracker();
 
-    RUNTIME_API GPUPtr      Malloc(uint64 Size, uint64 Alignment = kDefaultAlign, EMemoryType Type = EMemoryType::Default);
-    RUNTIME_API GPUPtr      Malloc(uint64 Size, EMemoryType Type);
-    RUNTIME_API void*       ToHost(GPUPtr GPU);
+    RUNTIME_API FGPUAllocation Malloc(uint64 Size, uint64 Alignment = kDefaultAlign, EMemoryType Type = EMemoryType::Default);
+    RUNTIME_API FGPUAllocation Malloc(uint64 Size, EMemoryType Type);
 
     RUNTIME_API void        SetDebugName(GPUPtr GPU, const char* Name);
     RUNTIME_API void        SetDebugName(FTextureH Texture, const char* Name);
 
     RUNTIME_API FString     DescribeDeviceAddress(uint64 AddressLow, uint64 AddressHigh);
 
-    /** Resolve a (possibly interior) device address to the bounds of the allocation that owns it. False when
-     *  the address belongs to no live allocation. */
-    RUNTIME_API bool        GetAllocationRange(GPUPtr Ptr, GPUPtr& OutBase, uint64& OutSize);
-    RUNTIME_API void        Free(GPUPtr GPU);
+    RUNTIME_API void        Free(const FGPUAllocation& Allocation);
     RUNTIME_API void        FreeH(FSemaphoreH Semaphore);
     RUNTIME_API void        FreeH(FPipelineH Pipeline);
     RUNTIME_API void        FreeH(FTextureH Texture);
@@ -572,6 +586,13 @@ namespace Lumina::RHI
     };
 
     RUNTIME_API bool            GetPipelineStatistics(FPipelineH Pipeline, TVector<FPipelineStat>& Out);
+
+    /** The driver's own disassembly of each executable in the pipeline, when -dumpshaderisa armed capture
+     *  at creation. This is the only way to see what the load instructions actually became. */
+    RUNTIME_API bool            GetPipelineDisassembly(FPipelineH Pipeline, TVector<FString>& Out);
+
+    /** True when pipelines are being created with internal-representation capture (costs creation time). */
+    RUNTIME_API bool            IsShaderISACaptureEnabled();
 
 #if defined(LUMINA_WITH_GPU_PROFILING)
 
@@ -799,12 +820,11 @@ namespace Lumina::RHI
     RUNTIME_API void        CmdEndMarker(FCmdListH CL);
 
     template<typename T>
-    TTuple<T*, GPUPtr> New(uint64 Count = 1)
+    FGPUAllocation New(uint64 Count = 1)
     {
-        GPUPtr GPU = Malloc(Count * sizeof(T), alignof(T));
-        T* Host = static_cast<T*>(ToHost(GPU));
-        std::uninitialized_value_construct_n(Host, Count);
-        return {Host, GPU};
+        const FGPUAllocation Allocation = Malloc(Count * sizeof(T), alignof(T));
+        std::uninitialized_value_construct_n(Allocation.CpuAs<T>(), Count);
+        return Allocation;
     }
 
     template<typename T>
@@ -869,17 +889,17 @@ namespace Lumina::RHI
     using FSemaphoreUH      = TUniqueH<FSemaphore>;
     using FDepthStencilUH   = TUniqueH<FDepthStencilState>;
 
-    class FUniqueGPUPtr
+    class FUniqueGPUAlloc
     {
     public:
 
-        FUniqueGPUPtr() = default;
-        explicit FUniqueGPUPtr(GPUPtr InPtr) : Ptr(InPtr) {}
-        FUniqueGPUPtr(const FUniqueGPUPtr&) = delete;
-        FUniqueGPUPtr& operator=(const FUniqueGPUPtr&) = delete;
-        FUniqueGPUPtr(FUniqueGPUPtr&& Other) noexcept : Ptr(Other.Release()) {}
+        FUniqueGPUAlloc() = default;
+        explicit FUniqueGPUAlloc(const FGPUAllocation& InAllocation) : Allocation(InAllocation) {}
+        FUniqueGPUAlloc(const FUniqueGPUAlloc&) = delete;
+        FUniqueGPUAlloc& operator=(const FUniqueGPUAlloc&) = delete;
+        FUniqueGPUAlloc(FUniqueGPUAlloc&& Other) noexcept : Allocation(Other.Release()) {}
 
-        FUniqueGPUPtr& operator=(FUniqueGPUPtr&& Other) noexcept
+        FUniqueGPUAlloc& operator=(FUniqueGPUAlloc&& Other) noexcept
         {
             if (this != &Other)
             {
@@ -888,34 +908,34 @@ namespace Lumina::RHI
             return *this;
         }
 
-        ~FUniqueGPUPtr()
+        ~FUniqueGPUAlloc()
         {
             Reset();
         }
 
-        void Reset(GPUPtr InPtr = 0)
+        void Reset(const FGPUAllocation& InAllocation = {})
         {
-            if (Ptr != 0)
+            if (Allocation.Gpu != 0)
             {
-                Free(Ptr);
+                Free(Allocation);
             }
-            Ptr = InPtr;
+            Allocation = InAllocation;
         }
 
-        GPUPtr Release()
+        FGPUAllocation Release()
         {
-            GPUPtr Out = Ptr;
-            Ptr = 0;
+            const FGPUAllocation Out = Allocation;
+            Allocation = {};
             return Out;
         }
 
-        GPUPtr Get() const { return Ptr; }
-        operator GPUPtr() const { return Ptr; }
-        explicit operator bool() const { return Ptr != 0; }
+        const FGPUAllocation& Get() const { return Allocation; }
+        operator const FGPUAllocation&() const { return Allocation; }
+        explicit operator bool() const { return Allocation.Gpu != 0; }
 
     private:
 
-        GPUPtr Ptr = 0;
+        FGPUAllocation Allocation;
     };
 
 }

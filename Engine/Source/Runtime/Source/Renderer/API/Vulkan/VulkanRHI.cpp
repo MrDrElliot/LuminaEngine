@@ -172,7 +172,18 @@ namespace Lumina::RHI
         | VK_BUFFER_USAGE_TRANSFER_SRC_BIT
         | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
         | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
-    
+
+    // Indexed by EMemoryType. The host-visible classes stay small because a non-ReBAR aperture is ~256 MiB total.
+    constexpr uint64 kMemoryPageSize[3] =
+    {
+        64ull  * 1024 * 1024,   // CPUWrite
+        32ull  * 1024 * 1024,   // CPURead
+        256ull * 1024 * 1024,   // GPUOnly
+    };
+
+    constexpr uint64 kMinMemoryPageSize = 8ull * 1024 * 1024;
+
+
     static constexpr VkPipelineStageFlags2 ToVkPipelineState(EStageFlags Flags)
     {
         VkPipelineStageFlags2 Out = 0;
@@ -406,18 +417,28 @@ namespace Lumina::RHI
     
     static constexpr uint32 kMaxBlockNameLength = 64;
 
+    // One VkBuffer covering many allocations, or one dedicated allocation when Suballocator is null.
     struct FMemoryBlock
     {
         VkBuffer        Buffer;
         VmaAllocation   Allocation;
+        VmaVirtualBlock Suballocator;
         void*           Host;
         GPUPtr          Device;
         uint64          Size;
-        #if USING(WITH_EDITOR)
-        char            Name[kMaxBlockNameLength];
         EMemoryType     MemType;
-        #endif
     };
+
+#if USING(WITH_EDITOR)
+    // Per-allocation, because a page's VkBuffer name would describe every tenant at once.
+    struct FAllocationRecord
+    {
+        GPUPtr          Device;
+        uint64          Size;
+        EMemoryType     MemType;
+        char            Name[kMaxBlockNameLength];
+    };
+#endif
 
 #if USING(WITH_EDITOR)
     struct FFreedBlock
@@ -563,6 +584,10 @@ namespace Lumina::RHI
         // Non-zero when the mesh stage must be pinned at pipeline creation, see the shuffle note.
         uint32                          MeshRequiredSubgroupSize = 0;
         bool                            bPipelineStats = false;
+        // Commands can take a device address directly, so recording one needs no buffer lookup.
+        bool                            bDeviceAddressCommands = false;
+        // Capture the driver's internal representations too, which costs pipeline creation time.
+        bool                            bCaptureShaderISA = false;
         bool                            bTimestampsSupported = false;
         TUniquePtr<FVulkanCrashTracker> CrashTracker;
         FGpuBreadcrumbs                 Breadcrumbs;
@@ -603,10 +628,18 @@ namespace Lumina::RHI
         };
         TVector<FPendingHeapDestroy>    PendingHeapDestroys;
 
-        // All live allocations, sorted by device address for interior-pointer resolution.
+        // Pages and dedicated blocks, sorted by device address for interior-pointer resolution.
         TVector<FMemoryBlock>           MemoryBlocks;
 
+        // Peak live is what the buffer count would be without pooling, so the pair reports the win.
+        uint64                          MallocCount = 0;
+        uint32                          LiveAllocations = 0;
+        uint32                          PeakLiveAllocations = 0;
+
 #if USING(WITH_EDITOR)
+        // Keyed by base address, so the memory tool and the device-lost report name allocations, not pages.
+        THashMap<GPUPtr, FAllocationRecord> AllocationLedger;
+
         // Unsorted, since it is read once by the device-lost report where a linear scan is free.
         TVector<FFreedBlock>            FreedBlocks;
         uint32                          FreedBlockCursor = 0;
@@ -654,6 +687,9 @@ namespace Lumina::RHI
 
     static FDeviceImpl* GDevice;
 
+    static VkPipelineCreateFlags PipelineCaptureFlags();
+    static void LogShaderISACaptureState();
+
     static bool GLogCopies = false;
 
     // The mutex owning the VkQueue that Type resolves to. Aliased types share the owner's lock.
@@ -699,7 +735,19 @@ namespace Lumina::RHI
     static TVector<Native::FDeviceCreationRequest> GPendingDeviceRequests;
 
     // Resolve a GPUPtr (possibly interior) to its owning allocation. Caller holds MemoryMutex (shared).
-    static const FMemoryBlock* FindMemory(GPUPtr Ptr)
+    // Bumped under the write lock on every insert, erase and clear, which is what can move a cached block.
+    static TAtomic<uint64> GMemoryBlockGeneration{ 1 };
+
+    struct FBlockCacheEntry
+    {
+        const FMemoryBlock* Block      = nullptr;
+        uint64              Generation = 0;
+    };
+
+    // Indirect draws and staged copies resolve the same few buffers every call, so a tiny cache nearly always hits.
+    static constexpr uint32 kBlockCacheSize = 4;
+
+    static const FMemoryBlock* SearchMemory(GPUPtr Ptr)
     {
         const TVector<FMemoryBlock>& Blocks = GDevice->MemoryBlocks;
         auto It = std::ranges::upper_bound(Blocks, Ptr, {}, &FMemoryBlock::Device);
@@ -715,13 +763,56 @@ namespace Lumina::RHI
         return It;
     }
 
-#if USING(WITH_EDITOR)
-    // Same search, for the one caller that WRITES to the block. Caller holds MemoryMutex.
-    static FMemoryBlock* FindMemoryMutable(GPUPtr Ptr)
+    //~ Device-address command seam.
+
+    // Every engine buffer is non-sparse and carries STORAGE_BUFFER, so one constant covers every address.
+    static constexpr VkAddressCommandFlagsKHR kEngineAddressFlags =
+        VK_ADDRESS_COMMAND_FULLY_BOUND_BIT_KHR | VK_ADDRESS_COMMAND_STORAGE_BUFFER_USAGE_BIT_KHR;
+
+    FORCEINLINE bool UseAddressCommands()
     {
-        return const_cast<FMemoryBlock*>(FindMemory(Ptr));
+        return GDevice->bDeviceAddressCommands;
     }
 
+    FORCEINLINE VkDeviceAddressRangeKHR AddressRange(GPUPtr Ptr, uint64 Size)
+    {
+        return VkDeviceAddressRangeKHR{ .address = (VkDeviceAddress)Ptr, .size = Size };
+    }
+
+    FORCEINLINE VkStridedDeviceAddressRangeKHR StridedRange(GPUPtr Ptr, uint64 Size, uint64 Stride)
+    {
+        return VkStridedDeviceAddressRangeKHR{ .address = (VkDeviceAddress)Ptr, .size = Size, .stride = Stride };
+    }
+
+    static const FMemoryBlock* FindMemory(GPUPtr Ptr)
+    {
+        static thread_local FBlockCacheEntry Cache[kBlockCacheSize];
+        static thread_local uint32           NextSlot = 0;
+
+        // A matching generation is what makes the cached pointer safe to dereference at all.
+        const uint64 Generation = GMemoryBlockGeneration.load(std::memory_order_acquire);
+
+        for (const FBlockCacheEntry& Entry : Cache)
+        {
+            // Underflow when Ptr is below the base wraps past Size, so one compare covers both ends.
+            if (Entry.Generation == Generation && Entry.Block != nullptr
+                && Ptr - Entry.Block->Device < Entry.Block->Size)
+            {
+                return Entry.Block;
+            }
+        }
+
+        const FMemoryBlock* Found = SearchMemory(Ptr);
+        if (Found != nullptr)
+        {
+            Cache[NextSlot] = FBlockCacheEntry{ Found, Generation };
+            NextSlot = (NextSlot + 1u) % kBlockCacheSize;
+        }
+
+        return Found;
+    }
+
+#if USING(WITH_EDITOR)
     static void CopyBlockName(char (&Dest)[kMaxBlockNameLength], const char* Name)
     {
         if (Name == nullptr)
@@ -734,7 +825,7 @@ namespace Lumina::RHI
     }
 
     // Allocated once and overwritten forever after, since this runs on the free path.
-    static void RecordFreedBlockLocked(const FMemoryBlock& Block)
+    static void RecordFreedBlockLocked(GPUPtr Device, uint64 Size, const char* Name)
     {
         TVector<FFreedBlock>& Ring = GDevice->FreedBlocks;
         if (Ring.size() < kFreedBlockHistory)
@@ -748,10 +839,10 @@ namespace Lumina::RHI
         }
 
         FFreedBlock& Entry  = Ring[GDevice->FreedBlockCursor];
-        Entry.Device        = Block.Device;
-        Entry.Size          = Block.Size;
+        Entry.Device        = Device;
+        Entry.Size          = Size;
         Entry.SubmitOrdinal = GDevice->SubmitOrdinal.load(std::memory_order_relaxed);
-        CopyBlockName(Entry.Name, Block.Name);
+        CopyBlockName(Entry.Name, Name);
 
         GDevice->FreedBlockCursor = (GDevice->FreedBlockCursor + 1u) % kFreedBlockHistory;
     }
@@ -1123,7 +1214,7 @@ namespace Lumina::RHI
     }
 
 #if USING(WITH_EDITOR)
-    void GetGPUAllocations(TVector<FGPUAllocation>& Out)
+    void GetGPUAllocations(TVector<FGPUAllocationInfo>& Out)
     {
         Out.clear();
         if (GDevice == nullptr)
@@ -1133,15 +1224,15 @@ namespace Lumina::RHI
 
         {
             FReadScopeLock Lock(GDevice->MemoryMutex);
-            Out.reserve(GDevice->MemoryBlocks.size());
+            Out.reserve(GDevice->AllocationLedger.size());
 
-            for (const FMemoryBlock& Block : GDevice->MemoryBlocks)
+            for (const auto& [Address, Record] : GDevice->AllocationLedger)
             {
-                FGPUAllocation& Alloc = Out.push_back();
+                FGPUAllocationInfo& Alloc = Out.push_back();
                 Alloc.Kind   = EGPUAllocationKind::Buffer;
-                Alloc.Size   = Block.Size;
-                Alloc.Memory = Block.MemType;
-                std::snprintf(Alloc.Name, kMaxGPUAllocationName, "%s", Block.Name);
+                Alloc.Size   = Record.Size;
+                Alloc.Memory = Record.MemType;
+                std::snprintf(Alloc.Name, kMaxGPUAllocationName, "%s", Record.Name);
             }
         }
 
@@ -1151,7 +1242,7 @@ namespace Lumina::RHI
 
             for (const auto& [Handle, Record] : GDevice->TextureLedger)
             {
-                FGPUAllocation& Alloc = Out.push_back();
+                FGPUAllocationInfo& Alloc = Out.push_back();
                 Alloc.Kind = EGPUAllocationKind::Texture;
                 Alloc.Size = Record.Size;
                 Alloc.Desc = Record.Desc;
@@ -1403,7 +1494,8 @@ namespace Lumina::RHI
             {
                 .sType           = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
                 .pNext           = nullptr, 
-                .messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT,
+                .messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT 
+                                 | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT,
                 .messageType     = VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
                                  | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
                 .pfnUserCallback = VkDebugCallback,
@@ -1656,6 +1748,7 @@ namespace Lumina::RHI
         bool bBufferMarker   = false;
         bool bMemoryPriority = false;
         bool bPipelineStats  = false;   // editor-only; see FDevice::bPipelineStats
+        bool bDeviceAddressCommands = false;   // see FDevice::bDeviceAddressCommands
         bool bComputeDerivatives = false;
         {
             uint32 ExtCount = 0;
@@ -1709,6 +1802,8 @@ namespace Lumina::RHI
 
             // Presence, feature and limits were all required to pass selection, so only the enable remains.
             EnableIfPresent(VK_EXT_MESH_SHADER_EXTENSION_NAME);
+
+            bDeviceAddressCommands = EnableIfPresent(VK_KHR_DEVICE_ADDRESS_COMMANDS_EXTENSION_NAME);
 
 #if USING(WITH_EDITOR)
             bPipelineStats = EnableIfPresent(VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME);
@@ -1855,6 +1950,18 @@ namespace Lumina::RHI
             MeshShaderFeatures.taskShader = VK_FALSE;   // no amplification stage; see MeshletCull.slang
             Chain(MeshShaderFeatures);
         }
+
+        VkPhysicalDeviceDeviceAddressCommandsFeaturesKHR AddressCommandFeatures
+            { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEVICE_ADDRESS_COMMANDS_FEATURES_KHR };
+        if (bDeviceAddressCommands)
+        {
+            AddressCommandFeatures.deviceAddressCommands = VK_TRUE;
+            Chain(AddressCommandFeatures);
+            GDevice->bDeviceAddressCommands = true;
+        }
+        LOG_DISPLAY("RHI: device-address commands {}.",
+                    bDeviceAddressCommands ? "enabled, recording skips the buffer lookup"
+                                           : "unavailable, recording resolves addresses to buffers");
 
         VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR PipelineStatsFeatures
             { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_EXECUTABLE_PROPERTIES_FEATURES_KHR };
@@ -2428,11 +2535,29 @@ namespace Lumina::RHI
         GDevice->QueryPools.Clear();
 #endif
 
+        uint32 PageCount = 0;
+        for (const FMemoryBlock& Block : GDevice->MemoryBlocks)
+        {
+            PageCount += Block.Suballocator != nullptr ? 1u : 0u;
+        }
+        LOG_INFO("RHI: {} buffers at shutdown ({} pooled pages, {} dedicated). {} allocations over the session, {} live at peak.",
+                 GDevice->MemoryBlocks.size(), PageCount, GDevice->MemoryBlocks.size() - PageCount,
+                 GDevice->MallocCount, GDevice->PeakLiveAllocations);
+
         for (FMemoryBlock& Block : GDevice->MemoryBlocks)
         {
+            if (Block.Suballocator != nullptr)
+            {
+                vmaClearVirtualBlock(Block.Suballocator);
+                vmaDestroyVirtualBlock(Block.Suballocator);
+            }
             vmaDestroyBuffer(GDevice->Allocator, Block.Buffer, Block.Allocation);
         }
         GDevice->MemoryBlocks.clear();
+#if USING(WITH_EDITOR)
+        GDevice->AllocationLedger.clear();
+#endif
+        GMemoryBlockGeneration.fetch_add(1, std::memory_order_release);
 
         GDevice->Breadcrumbs.Shutdown(GDevice->Device);
 
@@ -2560,14 +2685,10 @@ namespace Lumina::RHI
         VK_CHECK(vkWaitSemaphores(*GDevice, &WaitInfo, UINT64_MAX));
     }
 
-    GPUPtr Malloc(uint64 Size, uint64 Alignment, EMemoryType Type)
-    {
-        LUMINA_MEMORY_SCOPE("RHI");
-        if (Size == 0)
-        {
-            return 0;
-        }
+    static void NameObject(VkObjectType Type, uint64 Handle, const char* Name);
 
+    static VmaAllocationCreateInfo MemoryTypeAllocationInfo(EMemoryType Type)
+    {
         VmaAllocationCreateInfo Info = {};
         Info.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
 
@@ -2586,43 +2707,46 @@ namespace Lumina::RHI
             Info.flags = 0;
             break;
         }
-        
-        const VkPhysicalDeviceLimits& Limits = GDevice->Properties.limits;
-        Alignment = Math::Max<uint64>(Alignment, Math::Max<uint64>(Limits.optimalBufferCopyOffsetAlignment, Limits.nonCoherentAtomSize));
-        Size = Math::AlignUp(Size, Alignment);
 
-        if (Size > kDedicatedMemoryThreshold)
+        return Info;
+    }
+
+    // Creates the buffer, binds its memory and resolves the device address. Leaves Suballocator null.
+    static bool CreateBackingBlock(uint64 Size, uint64 Alignment, EMemoryType Type, bool bDedicated, FMemoryBlock& Out)
+    {
+        VmaAllocationCreateInfo Info = MemoryTypeAllocationInfo(Type);
+        if (bDedicated)
         {
             Info.flags |= VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
         }
-        
-        VkBufferCreateInfo SampleInfo = {};
-        SampleInfo.sType  = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        SampleInfo.size   = Size;
-        SampleInfo.usage  = kDefaultBufferUsages;
+
+        VkBufferCreateInfo BufferInfo = {};
+        BufferInfo.sType  = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        BufferInfo.size   = Size;
+        BufferInfo.usage  = kDefaultBufferUsages;
 
         if (GDevice->NumSharedQueueFamilies > 1)
         {
-            SampleInfo.sharingMode           = VK_SHARING_MODE_CONCURRENT;
-            SampleInfo.queueFamilyIndexCount = GDevice->NumSharedQueueFamilies;
-            SampleInfo.pQueueFamilyIndices   = GDevice->SharedQueueFamilies.data();
+            BufferInfo.sharingMode           = VK_SHARING_MODE_CONCURRENT;
+            BufferInfo.queueFamilyIndexCount = GDevice->NumSharedQueueFamilies;
+            BufferInfo.pQueueFamilyIndices   = GDevice->SharedQueueFamilies.data();
         }
         else
         {
-            SampleInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            BufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         }
-        
-        VmaAllocation Allocation = nullptr;
+
+        VkBuffer          Buffer         = VK_NULL_HANDLE;
+        VmaAllocation     Allocation     = nullptr;
         VmaAllocationInfo AllocationInfo = {};
 
-        VkBuffer VulkanBuffer = VK_NULL_HANDLE;
-
-        const VkResult AllocResult = vmaCreateBufferWithAlignment(GDevice->Allocator, &SampleInfo, &Info, Alignment, &VulkanBuffer, &Allocation, &AllocationInfo);
-        if (AllocResult != VK_SUCCESS || VulkanBuffer == VK_NULL_HANDLE || Allocation == nullptr)
+        const VkResult Result = vmaCreateBufferWithAlignment(
+            GDevice->Allocator, &BufferInfo, &Info, Alignment, &Buffer, &Allocation, &AllocationInfo);
+        if (Result != VK_SUCCESS || Buffer == VK_NULL_HANDLE || Allocation == nullptr)
         {
-            PanicOutOfGPUMemory(::Lumina::Format("a {} KiB {} buffer", Size / 1024, MemoryTypeToString(Type)).c_str(), AllocResult);
+            return false;
         }
-        
+
         // GPU-read memory that fell out of the BAR means every shader/transfer read crosses PCIe.
         if (Type == EMemoryType::CPUWrite)
         {
@@ -2639,53 +2763,198 @@ namespace Lumina::RHI
             }
         }
 
-        VkBufferDeviceAddressInfo AddressInfo
+        const VkBufferDeviceAddressInfo AddressInfo
         {
             .sType  = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
             .pNext  = nullptr,
-            .buffer = VulkanBuffer,
+            .buffer = Buffer,
         };
 
-        GPUPtr Gpu = vkGetBufferDeviceAddress(*GDevice, &AddressInfo);
-
-        FMemoryBlock Block
+        Out = FMemoryBlock
         {
-            .Buffer     = VulkanBuffer,
-            .Allocation = Allocation,
-            .Host       = AllocationInfo.pMappedData,
-            .Device     = Gpu,
-            .Size       = Size
+            .Buffer       = Buffer,
+            .Allocation   = Allocation,
+            .Suballocator = nullptr,
+            .Host         = AllocationInfo.pMappedData,
+            .Device       = vkGetBufferDeviceAddress(*GDevice, &AddressInfo),
+            .Size         = Size,
+            .MemType      = Type
         };
 
-#if USING(WITH_EDITOR)
-        Block.Name[0] = '\0';
-        Block.MemType = Type;
-#endif
-
-        FWriteScopeLock Lock(GDevice->MemoryMutex);
-        auto It = std::ranges::lower_bound(GDevice->MemoryBlocks, Gpu, {}, &FMemoryBlock::Device);
-        GDevice->MemoryBlocks.insert(It, Block);
-
-        return Block.Device;
+        return true;
     }
 
-    GPUPtr Malloc(uint64 Size, EMemoryType Type)
+    // Caller holds MemoryMutex exclusively.
+    static FMemoryBlock* InsertBlockLocked(const FMemoryBlock& Block)
     {
-        return Malloc(Size, 16, Type);
+        const FMemoryBlock* Pos = std::ranges::lower_bound(GDevice->MemoryBlocks, Block.Device, {}, &FMemoryBlock::Device);
+        FMemoryBlock* Inserted = GDevice->MemoryBlocks.insert(Pos, Block);
+        GMemoryBlockGeneration.fetch_add(1, std::memory_order_release);
+        return Inserted;
     }
 
-    void* ToHost(GPUPtr GPU)
+    // Caller holds MemoryMutex exclusively. Null when even the smallest page could not be created.
+    static FMemoryBlock* CreatePageLocked(EMemoryType Type, uint64 MinimumSize)
     {
-        FReadScopeLock Lock(GDevice->MemoryMutex);
-        const FMemoryBlock* Block = FindMemory(GPU);
+        const uint64 Floor = Math::Max(MinimumSize, kMinMemoryPageSize);
+        uint64 PageSize = Math::Max(kMemoryPageSize[(uint32)Type], Floor);
 
-        // GPU-only memory has no mapping
-        if (Block != nullptr && Block->Host != nullptr)
+        FMemoryBlock Page = {};
+        while (!CreateBackingBlock(PageSize, kDefaultAlign, Type, false, Page))
         {
-            return static_cast<std::byte*>(Block->Host) + (GPU - Block->Device);
+            if (PageSize <= Floor)
+            {
+                return nullptr;
+            }
+            PageSize = Math::Max(PageSize / 2, Floor);
         }
 
-        return nullptr;
+        const VmaVirtualBlockCreateInfo VirtualInfo{ .size = PageSize, .flags = 0, .pAllocationCallbacks = nullptr };
+        if (vmaCreateVirtualBlock(&VirtualInfo, &Page.Suballocator) != VK_SUCCESS)
+        {
+            vmaDestroyBuffer(GDevice->Allocator, Page.Buffer, Page.Allocation);
+            return nullptr;
+        }
+
+        char PageName[kMaxBlockNameLength];
+        std::snprintf(PageName, kMaxBlockNameLength, "MemoryPage.%s.%llu",
+                      MemoryTypeToString(Type), (unsigned long long)GDevice->MemoryBlocks.size());
+        NameObject(VK_OBJECT_TYPE_BUFFER, (uint64)Page.Buffer, PageName);
+
+        LOG_INFO("RHI: new {} MiB {} memory page at {:#x}.", PageSize >> 20, MemoryTypeToString(Type), Page.Device);
+
+        return InsertBlockLocked(Page);
+    }
+
+    // Caller holds MemoryMutex exclusively.
+    static bool TrySuballocateLocked(FMemoryBlock& Page, uint64 Size, uint64 Reserved, uint64 Alignment, FGPUAllocation& Out)
+    {
+        const VmaVirtualAllocationCreateInfo Info
+        {
+            .size      = Reserved,
+            .alignment = Alignment,
+            .flags     = 0,
+            .pUserData = nullptr
+        };
+
+        VmaVirtualAllocation Handle = VK_NULL_HANDLE;
+        VkDeviceSize         Offset = 0;
+        if (vmaVirtualAllocate(Page.Suballocator, &Info, &Handle, &Offset) != VK_SUCCESS)
+        {
+            return false;
+        }
+
+        // An aligned offset only yields an aligned address when the page base is aligned too.
+        const GPUPtr Address = Page.Device + Offset;
+        if ((Address % Alignment) != 0)
+        {
+            vmaVirtualFree(Page.Suballocator, Handle);
+            return false;
+        }
+
+        Out = FGPUAllocation
+        {
+            .Cpu    = Page.Host != nullptr ? static_cast<std::byte*>(Page.Host) + Offset : nullptr,
+            .Gpu    = Address,
+            .Size   = Size,
+            .Handle = (uint64)Handle
+        };
+
+        return true;
+    }
+
+#if USING(WITH_EDITOR)
+    // Caller holds MemoryMutex exclusively.
+    static void RecordAllocationLocked(const FGPUAllocation& Allocation, EMemoryType Type)
+    {
+        FAllocationRecord& Record = GDevice->AllocationLedger[Allocation.Gpu];
+        Record.Device  = Allocation.Gpu;
+        Record.Size    = Allocation.Size;
+        Record.MemType = Type;
+        Record.Name[0] = 0;
+    }
+#endif
+
+    // Caller holds MemoryMutex exclusively.
+    static void CountAllocationLocked()
+    {
+        ++GDevice->MallocCount;
+        ++GDevice->LiveAllocations;
+        GDevice->PeakLiveAllocations = Math::Max(GDevice->PeakLiveAllocations, GDevice->LiveAllocations);
+    }
+
+    FGPUAllocation Malloc(uint64 Size, uint64 Alignment, EMemoryType Type)
+    {
+        LUMINA_MEMORY_SCOPE("RHI");
+        if (Size == 0)
+        {
+            return {};
+        }
+
+        const VkPhysicalDeviceLimits& Limits = GDevice->Properties.limits;
+        Alignment = Math::Max<uint64>(Alignment, Math::Max<uint64>(Limits.optimalBufferCopyOffsetAlignment, Limits.nonCoherentAtomSize));
+        const uint64 Reserved = Math::AlignUp(Size, Alignment);
+
+        FGPUAllocation Out = {};
+
+        FWriteScopeLock Lock(GDevice->MemoryMutex);
+
+        if (Reserved < kDedicatedMemoryThreshold)
+        {
+            for (FMemoryBlock& Page : GDevice->MemoryBlocks)
+            {
+                if (Page.Suballocator != nullptr && Page.MemType == Type
+                    && TrySuballocateLocked(Page, Size, Reserved, Alignment, Out))
+                {
+                    CountAllocationLocked();
+#if USING(WITH_EDITOR)
+                    RecordAllocationLocked(Out, Type);
+#endif
+                    return Out;
+                }
+            }
+
+            if (FMemoryBlock* Page = CreatePageLocked(Type, Reserved))
+            {
+                if (TrySuballocateLocked(*Page, Size, Reserved, Alignment, Out))
+                {
+                    CountAllocationLocked();
+#if USING(WITH_EDITOR)
+                    RecordAllocationLocked(Out, Type);
+#endif
+                    return Out;
+                }
+            }
+        }
+
+        // Too large to pool, or no page could be created for it.
+        FMemoryBlock Block = {};
+        if (!CreateBackingBlock(Reserved, Alignment, Type, true, Block))
+        {
+            PanicOutOfGPUMemory(::Lumina::Format("a {} KiB {} buffer", Reserved / 1024, MemoryTypeToString(Type)).c_str(), VK_ERROR_OUT_OF_DEVICE_MEMORY);
+        }
+
+        InsertBlockLocked(Block);
+
+        Out = FGPUAllocation
+        {
+            .Cpu    = static_cast<std::byte*>(Block.Host),
+            .Gpu    = Block.Device,
+            .Size   = Size,
+            .Handle = 0
+        };
+
+        CountAllocationLocked();
+#if USING(WITH_EDITOR)
+        RecordAllocationLocked(Out, Type);
+#endif
+
+        return Out;
+    }
+
+    FGPUAllocation Malloc(uint64 Size, EMemoryType Type)
+    {
+        return Malloc(Size, 16, Type);
     }
 
     static void NameObject(VkObjectType Type, uint64 Handle, const char* Name)
@@ -2714,21 +2983,19 @@ namespace Lumina::RHI
             return;
         }
 
-#if USING(WITH_EDITOR)
-        // Exclusive, since this branch writes the name back into the block.
         FWriteScopeLock Lock(GDevice->MemoryMutex);
 
-        if (FMemoryBlock* Block = FindMemoryMutable(GPU))
+        // A page's buffer is shared, so only a dedicated block's object name describes one allocation.
+        const FMemoryBlock* Block = FindMemory(GPU);
+        if (Block != nullptr && Block->Suballocator == nullptr)
         {
             NameObject(VK_OBJECT_TYPE_BUFFER, (uint64)Block->Buffer, Name);
-            CopyBlockName(Block->Name, Name);
         }
-#else
-        FReadScopeLock Lock(GDevice->MemoryMutex);
 
-        if (const FMemoryBlock* Block = FindMemory(GPU))
+#if USING(WITH_EDITOR)
+        if (auto It = GDevice->AllocationLedger.find(GPU); It != GDevice->AllocationLedger.end())
         {
-            NameObject(VK_OBJECT_TYPE_BUFFER, (uint64)Block->Buffer, Name);
+            CopyBlockName(It->second.Name, Name);
         }
 #endif
     }
@@ -2754,23 +3021,41 @@ namespace Lumina::RHI
 #endif
     }
 
-    void Free(GPUPtr GPU)
+    void Free(const FGPUAllocation& Allocation)
     {
-        if (GDevice == nullptr)
+        if (GDevice == nullptr || Allocation.Gpu == 0)
         {
             return;
         }
 
         FWriteScopeLock Lock(GDevice->MemoryMutex);
-        auto It = std::ranges::lower_bound(GDevice->MemoryBlocks, GPU, {}, &FMemoryBlock::Device);
 
-        if (It != GDevice->MemoryBlocks.end() && It->Device == GPU)
-        {
+        GDevice->LiveAllocations -= GDevice->LiveAllocations != 0 ? 1u : 0u;
+
 #if USING(WITH_EDITOR)
-            RecordFreedBlockLocked(*It);
+        if (auto It = GDevice->AllocationLedger.find(Allocation.Gpu); It != GDevice->AllocationLedger.end())
+        {
+            RecordFreedBlockLocked(It->second.Device, It->second.Size, It->second.Name);
+            GDevice->AllocationLedger.erase(It);
+        }
 #endif
+
+        if (Allocation.Handle != 0)
+        {
+            const FMemoryBlock* Page = SearchMemory(Allocation.Gpu);
+            if (Page != nullptr && Page->Suballocator != nullptr)
+            {
+                vmaVirtualFree(Page->Suballocator, (VmaVirtualAllocation)Allocation.Handle);
+            }
+            return;
+        }
+
+        auto It = std::ranges::lower_bound(GDevice->MemoryBlocks, Allocation.Gpu, {}, &FMemoryBlock::Device);
+        if (It != GDevice->MemoryBlocks.end() && It->Device == Allocation.Gpu && It->Suballocator == nullptr)
+        {
             vmaDestroyBuffer(GDevice->Allocator, It->Buffer, It->Allocation);
             GDevice->MemoryBlocks.erase(It);
+            GMemoryBlockGeneration.fetch_add(1, std::memory_order_release);
         }
     }
 
@@ -2850,16 +3135,16 @@ namespace Lumina::RHI
         };
 
         // This runs once on a dying device, so clarity beats a clever bound that a large block defeats.
-        for (const FMemoryBlock& Block : GDevice->MemoryBlocks)
+        for (const auto& [Address, Record] : GDevice->AllocationLedger)
         {
-            if (Overlaps(Block.Device, Block.Size))
+            if (Overlaps(Record.Device, Record.Size))
             {
                 return FString(::Lumina::Format("LIVE \"{}\" [{:#x} +{:#x}], fault {:#x} into it",
-                                           NameOf(Block.Name), Block.Device, Block.Size,
-                                           AddressLow - Block.Device).c_str());
+                                           NameOf(Record.Name), Record.Device, Record.Size,
+                                           AddressLow - Record.Device).c_str());
             }
 
-            ConsiderNeighbor(Block.Device, Block.Size, Block.Name, /*bFreed*/ false, 0ull);
+            ConsiderNeighbor(Record.Device, Record.Size, Record.Name, /*bFreed*/ false, 0ull);
         }
 
         for (const FFreedBlock& Entry : GDevice->FreedBlocks)
@@ -2898,26 +3183,6 @@ namespace Lumina::RHI
         (void)AddressHigh;
         return {};
         #endif
-    }
-
-    bool GetAllocationRange(GPUPtr Ptr, GPUPtr& OutBase, uint64& OutSize)
-    {
-        if (GDevice == nullptr || Ptr == 0)
-        {
-            return false;
-        }
-
-        FReadScopeLock Lock(GDevice->MemoryMutex);
-
-        const FMemoryBlock* Block = FindMemory(Ptr);
-        if (Block == nullptr)
-        {
-            return false;
-        }
-
-        OutBase = Block->Device;
-        OutSize = Block->Size;
-        return true;
     }
 
     // A free after the device teardown is a no-op, since everything went with the device.
@@ -3250,7 +3515,7 @@ namespace Lumina::RHI
         {
             .sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
             .pNext               = &PipelineCreate,
-            .flags               = GDevice->bPipelineStats ? VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR : 0u,
+            .flags               = GDevice->bPipelineStats ? PipelineCaptureFlags() : 0u,
             .stageCount          = FragModule != VK_NULL_HANDLE ? 2u : 1u,
             .pStages             = Stages,
             .pVertexInputState   = &VertexInputAssembly,
@@ -3403,6 +3668,115 @@ namespace Lumina::RHI
 
 #endif
 
+    // Internal representations are opt-in because capturing them makes every pipeline creation slower.
+    static VkPipelineCreateFlags PipelineCaptureFlags()
+    {
+        // Resolved on first use because the command line is not parsed yet when the device is created.
+        static const bool bArmOnce = [] {
+            GDevice->bCaptureShaderISA = GCommandLine != nullptr && GCommandLine->Has("dumpshaderisa");
+            LogShaderISACaptureState();
+            return true;
+        }();
+        (void)bArmOnce;
+
+        VkPipelineCreateFlags Flags = VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR;
+        if (GDevice->bCaptureShaderISA)
+        {
+            Flags |= VK_PIPELINE_CREATE_CAPTURE_INTERNAL_REPRESENTATIONS_BIT_KHR;
+        }
+        return Flags;
+    }
+
+    bool IsShaderISACaptureEnabled()
+    {
+        return GDevice != nullptr && GDevice->bPipelineStats && GDevice->bCaptureShaderISA;
+    }
+
+    // Reported once, since a silent no-op here is indistinguishable from a driver that returned nothing.
+    static void LogShaderISACaptureState()
+    {
+        LOG_DISPLAY("ShaderISA: capture {} (pipeline-executable-properties {}).",
+                    GDevice->bCaptureShaderISA ? "ARMED" : "off",
+                    GDevice->bPipelineStats ? "available" : "MISSING");
+    }
+
+    bool GetPipelineDisassembly(FPipelineH Pipeline, TVector<FString>& Out)
+    {
+        if (!IsShaderISACaptureEnabled() || Pipeline.Handle == 0)
+        {
+            return false;
+        }
+
+        const FPipeline Resolved = GDevice->Pipelines[Pipeline];
+        if (Resolved.Pipeline == VK_NULL_HANDLE)
+        {
+            return false;
+        }
+
+        VkPipelineInfoKHR Info{ .sType = VK_STRUCTURE_TYPE_PIPELINE_INFO_KHR, .pipeline = Resolved.Pipeline };
+
+        uint32 ExecutableCount = 0;
+        if (vkGetPipelineExecutablePropertiesKHR(*GDevice, &Info, &ExecutableCount, nullptr) != VK_SUCCESS || ExecutableCount == 0)
+        {
+            return false;
+        }
+
+        for (uint32 Index = 0; Index < ExecutableCount; ++Index)
+        {
+            VkPipelineExecutableInfoKHR ExecInfo
+            {
+                .sType           = VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_INFO_KHR,
+                .pipeline        = Resolved.Pipeline,
+                .executableIndex = Index,
+            };
+
+            uint32 ReprCount = 0;
+            if (vkGetPipelineExecutableInternalRepresentationsKHR(*GDevice, &ExecInfo, &ReprCount, nullptr) != VK_SUCCESS || ReprCount == 0)
+            {
+                continue;
+            }
+
+            TVector<VkPipelineExecutableInternalRepresentationKHR> Reprs(ReprCount,
+                VkPipelineExecutableInternalRepresentationKHR{ .sType = VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_INTERNAL_REPRESENTATION_KHR });
+
+            // First call fills the sizes; the second needs owned storage for each blob.
+            if (vkGetPipelineExecutableInternalRepresentationsKHR(*GDevice, &ExecInfo, &ReprCount, Reprs.data()) != VK_SUCCESS)
+            {
+                continue;
+            }
+
+            TVector<TVector<char>> Storage(ReprCount);
+            for (uint32 R = 0; R < ReprCount; ++R)
+            {
+                Storage[R].resize(Reprs[R].dataSize);
+                Reprs[R].pData = Storage[R].data();
+            }
+
+            if (vkGetPipelineExecutableInternalRepresentationsKHR(*GDevice, &ExecInfo, &ReprCount, Reprs.data()) != VK_SUCCESS)
+            {
+                continue;
+            }
+
+            for (uint32 R = 0; R < ReprCount; ++R)
+            {
+                FString Text = Lumina::Format("; ==== {} ====\n", Reprs[R].name);
+
+                if (Reprs[R].isText && !Storage[R].empty())
+                {
+                    Text += FString(Storage[R].data(), Storage[R].size());
+                }
+                else
+                {
+                    Text += Lumina::Format("; (binary representation, {} bytes)\n", (uint64)Reprs[R].dataSize);
+                }
+
+                Out.push_back(Move(Text));
+            }
+        }
+
+        return !Out.empty();
+    }
+
     bool GetPipelineStatistics(FPipelineH Pipeline, TVector<FPipelineStat>& Out)
     {
         if (GDevice == nullptr || !GDevice->bPipelineStats || Pipeline.Handle == 0)
@@ -3497,7 +3871,7 @@ namespace Lumina::RHI
         {
             .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
             .pNext = nullptr,
-            .flags = GDevice->bPipelineStats ? VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR : 0u,
+            .flags = GDevice->bPipelineStats ? PipelineCaptureFlags() : 0u,
             .stage =
                 {
                     .sType                  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
@@ -3753,7 +4127,7 @@ namespace Lumina::RHI
         {
             .sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
             .pNext               = &PipelineCreate,
-            .flags               = GDevice->bPipelineStats ? VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR : 0u,
+            .flags               = GDevice->bPipelineStats ? PipelineCaptureFlags() : 0u,
             .stageCount          = StageCount,
             .pStages             = Stages,
             .pVertexInputState   = nullptr,
@@ -5164,6 +5538,26 @@ namespace Lumina::RHI
 
     void CmdMemcpy(FCmdListH CL, GPUPtr Dest, GPUPtr Source, size_t Size)
     {
+        if (UseAddressCommands())
+        {
+            const VkDeviceMemoryCopyKHR Region
+            {
+                .sType    = VK_STRUCTURE_TYPE_DEVICE_MEMORY_COPY_KHR,
+                .srcRange = AddressRange(Source, Size),
+                .srcFlags = kEngineAddressFlags,
+                .dstRange = AddressRange(Dest, Size),
+                .dstFlags = kEngineAddressFlags,
+            };
+            const VkCopyDeviceMemoryInfoKHR Info
+            {
+                .sType       = VK_STRUCTURE_TYPE_COPY_DEVICE_MEMORY_INFO_KHR,
+                .regionCount = 1,
+                .pRegions    = &Region,
+            };
+            vkCmdCopyMemoryKHR(GDevice->CommandLists[CL].CommandBuffer, &Info);
+            return;
+        }
+
         VkBuffer DestBuffer;
         VkBuffer SourceBuffer;
         VkDeviceSize DestOffset;
@@ -5211,6 +5605,43 @@ namespace Lumina::RHI
         }
 
         FMemMark Mark;
+
+        if (UseAddressCommands())
+        {
+            // One region per copy, no per-copy resolve and no run merging; the addresses are the regions.
+            auto* AddressRegions = Mark.AllocArray<VkDeviceMemoryCopyKHR>(Copies.size());
+
+            uint32 Count = 0;
+            for (const FBufferCopy& Copy : Copies)
+            {
+                if (Copy.Size == 0)
+                {
+                    continue;
+                }
+
+                AddressRegions[Count++] = VkDeviceMemoryCopyKHR
+                {
+                    .sType    = VK_STRUCTURE_TYPE_DEVICE_MEMORY_COPY_KHR,
+                    .srcRange = AddressRange(Copy.Source, Copy.Size),
+                    .srcFlags = kEngineAddressFlags,
+                    .dstRange = AddressRange(Copy.Dest, Copy.Size),
+                    .dstFlags = kEngineAddressFlags,
+                };
+            }
+
+            if (Count != 0)
+            {
+                const VkCopyDeviceMemoryInfoKHR Info
+                {
+                    .sType       = VK_STRUCTURE_TYPE_COPY_DEVICE_MEMORY_INFO_KHR,
+                    .regionCount = Count,
+                    .pRegions    = AddressRegions,
+                };
+                vkCmdCopyMemoryKHR(GDevice->CommandLists[CL].CommandBuffer, &Info);
+            }
+            return;
+        }
+
         auto* Regions = Mark.AllocArray<VkBufferCopy>(Copies.size());
         auto* Sources = Mark.AllocArray<VkBuffer>(Copies.size());
         auto* Dests   = Mark.AllocArray<VkBuffer>(Copies.size());
@@ -5258,6 +5689,20 @@ namespace Lumina::RHI
 
     void CmdMemset(FCmdListH CL, GPUPtr Dest, uint64 Size, uint32 Value)
     {
+        // Same 4-multiple rule as vkCmdFillBuffer; the range must not name the tail bytes it cannot write.
+        const uint64 AddressFillSize = Size & ~3ull;
+        if (AddressFillSize == 0)
+        {
+            return;
+        }
+
+        if (UseAddressCommands())
+        {
+            const VkDeviceAddressRangeKHR Range = AddressRange(Dest, AddressFillSize);
+            vkCmdFillMemoryKHR(GDevice->CommandLists[CL].CommandBuffer, &Range, kEngineAddressFlags, Value);
+            return;
+        }
+
         VkBuffer DestBuffer;
         VkDeviceSize DestOffset;
 
@@ -5293,6 +5738,13 @@ namespace Lumina::RHI
     {
         ASSERT(Size <= kMaxInlineWrite, "CmdWriteMemory is for inline writes (<= 64 KiB); stage larger data through CmdMemcpy");
         ASSERT((Dest & 3) == 0 && (Size & 3) == 0, "vkCmdUpdateBuffer needs 4-byte aligned offset and size");
+
+        if (UseAddressCommands())
+        {
+            const VkDeviceAddressRangeKHR Range = AddressRange(Dest, Size);
+            vkCmdUpdateMemoryKHR(GDevice->CommandLists[CL].CommandBuffer, &Range, kEngineAddressFlags, Size, Data);
+            return;
+        }
 
         VkBuffer DestBuffer;
         VkDeviceSize DestOffset;
@@ -5362,6 +5814,7 @@ namespace Lumina::RHI
         vkCmdCopyImage(VkCmdBuf, SourceTexture.Image, VK_IMAGE_LAYOUT_GENERAL, DestTexture.Image, VK_IMAGE_LAYOUT_GENERAL, 1, &Region);
     }
 
+    // Legacy path only; the new command wants a byte range this signature does not carry.
     void CmdCopyMemoryToTexture(FCmdListH CL, GPUPtr Source, uint32 RowLength, FTextureH Dest, const FTextureSlice& Slice)
     {
         VkBuffer SourceBuffer;
@@ -5429,6 +5882,7 @@ namespace Lumina::RHI
         vkCmdCopyBufferToImage(VkCmdBuf, SourceBuffer, DestTexture.Image, VK_IMAGE_LAYOUT_GENERAL, 1, &Region);
     }
 
+    // Legacy path only, for the same missing-byte-range reason as CmdCopyMemoryToTexture.
     void CmdCopyTextureToMemory(FCmdListH CL, FTextureH Source, const FTextureSlice& Slice, GPUPtr Dest, uint32 RowLength)
     {
         VkBuffer DestBuffer;
@@ -5959,6 +6413,7 @@ namespace Lumina::RHI
         vkCmdSetViewportWithCount(VkCmdBuf, 1, &Viewport);
     }
 
+    // Legacy path only; the new command needs a range size, and the cache below already gates the resolve.
     static bool BindIndexBuffer(FCommandList& CommandList, GPUPtr IndexBuffer, uint32 IndexOffset, EIndexType IndexType)
     {
         const GPUPtr BindKey = IndexBuffer + IndexOffset;
@@ -6022,6 +6477,20 @@ namespace Lumina::RHI
     {
         VkCommandBuffer VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
 
+        if (UseAddressCommands())
+        {
+            vkCmdPushConstants(VkCmdBuf, GDevice->PipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(VkDeviceAddress), &DrawArgs);
+
+            const VkDispatchIndirect2InfoKHR Info
+            {
+                .sType        = VK_STRUCTURE_TYPE_DISPATCH_INDIRECT_2_INFO_KHR,
+                .addressRange = AddressRange(DrawArgs + Offset, sizeof(VkDispatchIndirectCommand)),
+                .addressFlags = kEngineAddressFlags,
+            };
+            vkCmdDispatchIndirect2KHR(VkCmdBuf, &Info);
+            return;
+        }
+
         VkBuffer ArgsBuffer;
         VkDeviceSize BufferOffset;
 
@@ -6074,6 +6543,21 @@ namespace Lumina::RHI
     {
         VkCommandBuffer VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
 
+        if (UseAddressCommands())
+        {
+            vkCmdPushConstants(VkCmdBuf, GDevice->PipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(VkDeviceAddress), &DrawArgs);
+
+            const VkDrawIndirect2InfoKHR Info
+            {
+                .sType        = VK_STRUCTURE_TYPE_DRAW_INDIRECT_2_INFO_KHR,
+                .addressRange = StridedRange(DrawArgs + Offset, (uint64)DrawCount * Stride, Stride),
+                .addressFlags = kEngineAddressFlags,
+                .drawCount    = DrawCount,
+            };
+            vkCmdDrawIndirect2KHR(VkCmdBuf, &Info);
+            return;
+        }
+
         VkBuffer ArgsBuffer;
         VkDeviceSize BufferOffset;
 
@@ -6096,6 +6580,24 @@ namespace Lumina::RHI
     void CmdDrawIndirect(FCmdListH CL, GPUPtr Args, GPUPtr IndirectBuffer, uint32 Offset, uint32 DrawCount, uint32 Stride)
     {
         VkCommandBuffer VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
+
+        if (UseAddressCommands())
+        {
+            if (Args != 0)
+            {
+                vkCmdPushConstants(VkCmdBuf, GDevice->PipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(VkDeviceAddress), &Args);
+            }
+
+            const VkDrawIndirect2InfoKHR Info
+            {
+                .sType        = VK_STRUCTURE_TYPE_DRAW_INDIRECT_2_INFO_KHR,
+                .addressRange = StridedRange(IndirectBuffer + Offset, (uint64)DrawCount * Stride, Stride),
+                .addressFlags = kEngineAddressFlags,
+                .drawCount    = DrawCount,
+            };
+            vkCmdDrawIndirect2KHR(VkCmdBuf, &Info);
+            return;
+        }
 
         VkBuffer ArgsBuffer;
         VkDeviceSize BufferOffset;
@@ -6123,6 +6625,23 @@ namespace Lumina::RHI
     {
         VkCommandBuffer VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
 
+        if (UseAddressCommands())
+        {
+            if (Args != 0)
+            {
+                vkCmdPushConstants(VkCmdBuf, GDevice->PipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(VkDeviceAddress), &Args);
+            }
+
+            const VkDispatchIndirect2InfoKHR Info
+            {
+                .sType        = VK_STRUCTURE_TYPE_DISPATCH_INDIRECT_2_INFO_KHR,
+                .addressRange = AddressRange(IndirectBuffer + Offset, sizeof(VkDispatchIndirectCommand)),
+                .addressFlags = kEngineAddressFlags,
+            };
+            vkCmdDispatchIndirect2KHR(VkCmdBuf, &Info);
+            return;
+        }
+
         VkBuffer ArgsBuffer;
         VkDeviceSize BufferOffset;
 
@@ -6148,6 +6667,21 @@ namespace Lumina::RHI
     void CmdDrawIndexedIndirect(FCmdListH CL, GPUPtr DrawArgs, uint32 Offset, uint32 DrawCount, uint32 Stride)
     {
         VkCommandBuffer VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
+
+        if (UseAddressCommands())
+        {
+            vkCmdPushConstants(VkCmdBuf, GDevice->PipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(VkDeviceAddress), &DrawArgs);
+
+            const VkDrawIndirect2InfoKHR Info
+            {
+                .sType        = VK_STRUCTURE_TYPE_DRAW_INDIRECT_2_INFO_KHR,
+                .addressRange = StridedRange(DrawArgs + Offset, (uint64)DrawCount * Stride, Stride),
+                .addressFlags = kEngineAddressFlags,
+                .drawCount    = DrawCount,
+            };
+            vkCmdDrawIndexedIndirect2KHR(VkCmdBuf, &Info);
+            return;
+        }
 
         VkBuffer ArgsBuffer;
         VkDeviceSize BufferOffset;
@@ -6183,6 +6717,24 @@ namespace Lumina::RHI
     {
         VkCommandBuffer VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
 
+        if (UseAddressCommands())
+        {
+            if (DrawArgs != 0)
+            {
+                vkCmdPushConstants(VkCmdBuf, GDevice->PipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(VkDeviceAddress), &DrawArgs);
+            }
+
+            const VkDrawIndirect2InfoKHR Info
+            {
+                .sType        = VK_STRUCTURE_TYPE_DRAW_INDIRECT_2_INFO_KHR,
+                .addressRange = StridedRange(IndirectBuffer + Offset, (uint64)DrawCount * Stride, Stride),
+                .addressFlags = kEngineAddressFlags,
+                .drawCount    = DrawCount,
+            };
+            vkCmdDrawMeshTasksIndirect2EXT(VkCmdBuf, &Info);
+            return;
+        }
+
         VkBuffer ArgsBuffer;
         VkDeviceSize BufferOffset;
 
@@ -6208,6 +6760,26 @@ namespace Lumina::RHI
     void CmdDrawMeshTasksIndirectCount(FCmdListH CL, GPUPtr DrawArgs, GPUPtr IndirectBuffer, uint32 Offset, GPUPtr CountBuffer, uint32 CountOffset, uint32 MaxDrawCount, uint32 Stride)
     {
         VkCommandBuffer VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
+
+        if (UseAddressCommands())
+        {
+            if (DrawArgs != 0)
+            {
+                vkCmdPushConstants(VkCmdBuf, GDevice->PipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(VkDeviceAddress), &DrawArgs);
+            }
+
+            const VkDrawIndirectCount2InfoKHR Info
+            {
+                .sType             = VK_STRUCTURE_TYPE_DRAW_INDIRECT_COUNT_2_INFO_KHR,
+                .addressRange      = StridedRange(IndirectBuffer + Offset, (uint64)MaxDrawCount * Stride, Stride),
+                .addressFlags      = kEngineAddressFlags,
+                .countAddressRange = AddressRange(CountBuffer + CountOffset, sizeof(uint32)),
+                .countAddressFlags = kEngineAddressFlags,
+                .maxDrawCount      = MaxDrawCount,
+            };
+            vkCmdDrawMeshTasksIndirectCount2EXT(VkCmdBuf, &Info);
+            return;
+        }
 
         VkBuffer ArgsBuffer;     VkDeviceSize ArgsOffset;
         VkBuffer CountVkBuffer;  VkDeviceSize CountVkOffset;
