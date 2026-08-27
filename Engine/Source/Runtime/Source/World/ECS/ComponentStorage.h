@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SparseSet.h"
+#include "Containers/Tuple.h"
 #include "Core/Assertions/Assert.h"
 
 #include <new>
@@ -58,7 +59,7 @@ namespace Lumina::ECS
 
             NODISCARD auto operator * () const
             {
-                return std::tuple<FEntity, T&>(Storage->GetDenseData()[Index],
+                return TTuple<FEntity, T&>(Storage->GetDenseData()[Index],
                     Storage->GetAtDense(static_cast<uint32>(Index)));
             }
 

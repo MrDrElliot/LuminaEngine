@@ -14,8 +14,6 @@ namespace Lumina
         {
         public:
 
-            void* GetNative() const override { return nullptr; }
-
             FAudioHandle PlayAudio(const TSharedPtr<FAudioData>&, const FAudioPlayParams&) override { return {}; }
             FAudioHandle PlayFile(FStringView, const FAudioPlayParams&) override { return {}; }
             FAudioHandle PlayProceduralStream(TSharedPtr<FProceduralAudioStream>, const FAudioPlayParams&) override { return {}; }

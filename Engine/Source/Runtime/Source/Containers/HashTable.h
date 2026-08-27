@@ -5,7 +5,6 @@
 #include <initializer_list>
 #include <iterator>
 #include <new>
-#include <tuple>
 #include <type_traits>
 #include <utility>
 
@@ -1387,8 +1386,8 @@ namespace Private
             {
                 TPolicy::Construct(this->SlotAt(Placed.first),
                     std::piecewise_construct,
-                    std::forward_as_tuple(std::forward<TKeyArg>(Key)),
-                    std::forward_as_tuple(std::forward<TArgs>(Args)...));
+                    ForwardAsTuple(std::forward<TKeyArg>(Key)),
+                    ForwardAsTuple(std::forward<TArgs>(Args)...));
             }
             return { this->IteratorAt(Placed.first), Placed.second };
         }
@@ -1401,8 +1400,8 @@ namespace Private
             {
                 TPolicy::Construct(this->SlotAt(Placed.first),
                     std::piecewise_construct,
-                    std::forward_as_tuple(std::forward<TKeyArg>(Key)),
-                    std::forward_as_tuple(std::forward<TValueArg>(Value)));
+                    ForwardAsTuple(std::forward<TKeyArg>(Key)),
+                    ForwardAsTuple(std::forward<TValueArg>(Value)));
             }
             else
             {

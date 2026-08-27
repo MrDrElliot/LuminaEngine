@@ -1,4 +1,4 @@
-﻿using LuminaBuildTool.Configuration;
+using LuminaBuildTool.Configuration;
 
 public class Runtime : LuminaModuleRules
 {
@@ -28,7 +28,6 @@ public class Runtime : LuminaModuleRules
             "NlohmannJson",
             "StbImage",
             "RenderDoc",
-            "ConcurrentQueue",
             "RPMalloc",
             "XXHash",
             "Miniz",
@@ -43,7 +42,6 @@ public class Runtime : LuminaModuleRules
             "VMA",
             "SLang",
 
-            "MiniAudio",
             "Recast",
             "DotNetHost",
 

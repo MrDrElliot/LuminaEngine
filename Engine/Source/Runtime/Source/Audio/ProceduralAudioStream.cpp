@@ -1,27 +1,16 @@
-﻿#include "RuntimePCH.h"
+#include "RuntimePCH.h"
 #include "ProceduralAudioStream.h"
 
-#include "MiniAudio/miniaudio.h"
+#include "Core/Math/Scalar.h"
 #include "Log/Log.h"
+#include "Memory/Memcpy.h"
 #include "Memory/Memory.h"
 #include "Memory/MemoryTracking.h"
-#include "Memory/Memcpy.h"
 
 namespace Lumina
 {
-    // Holds the miniaudio ring buffer so miniaudio.h never reaches the public header.
-    struct FProceduralAudioStreamImpl
-    {
-        ma_pcm_rb RingBuffer{};
-    };
-
-    static void* MAStreamMalloc(size_t Size, void*) { LUMINA_MEMORY_SCOPE("Audio"); return Memory::Malloc(Size); }
-    static void* MAStreamRealloc(void* P, size_t Size, void*) { LUMINA_MEMORY_SCOPE("Audio"); return Memory::Realloc(P, Size); }
-    static void  MAStreamFree(void* P, void*) { Memory::Free(P); }
-
     FProceduralAudioStream::FProceduralAudioStream(uint32 InSampleRate, uint32 InChannelCount, uint32 BufferFrames)
-        : Impl(MakeUnique<FProceduralAudioStreamImpl>())
-        , SampleRate(InSampleRate)
+        : SampleRate(InSampleRate)
         , ChannelCount(InChannelCount)
     {
         if (InSampleRate == 0 || InChannelCount == 0 || BufferFrames == 0)
@@ -31,30 +20,11 @@ namespace Lumina
             return;
         }
 
-        ma_allocation_callbacks Callbacks;
-        Callbacks.pUserData = nullptr;
-        Callbacks.onMalloc  = MAStreamMalloc;
-        Callbacks.onRealloc = MAStreamRealloc;
-        Callbacks.onFree    = MAStreamFree;
+        LUMINA_MEMORY_SCOPE("Audio");
+        Storage.assign((size_t)BufferFrames * InChannelCount, 0.0f);
 
-        ma_result Result = ma_pcm_rb_init(ma_format_f32, InChannelCount, BufferFrames, nullptr, &Callbacks, &Impl->RingBuffer);
-        if (Result != MA_SUCCESS)
-        {
-            LOG_ERROR("FProceduralAudioStream: ma_pcm_rb_init failed ({})", (int)Result);
-            return;
-        }
-
-        ma_pcm_rb_set_sample_rate(&Impl->RingBuffer, InSampleRate);
+        CapacityFrames = BufferFrames;
         bInitialized = true;
-    }
-
-    FProceduralAudioStream::~FProceduralAudioStream()
-    {
-        if (bInitialized)
-        {
-            ma_pcm_rb_uninit(&Impl->RingBuffer);
-            bInitialized = false;
-        }
     }
 
     uint32 FProceduralAudioStream::Write(const float* Samples, uint32 NumFrames)
@@ -64,49 +34,97 @@ namespace Lumina
             return 0;
         }
 
-        uint32 FramesRemaining = NumFrames;
-        uint32 FramesWritten   = 0;
-        const float* Src = Samples;
+        const uint64 Write = WriteCursor.load(Atomic::MemoryOrderRelaxed);
+        const uint64 Read  = ReadCursor.load(Atomic::MemoryOrderAcquire);
 
-        // Loop because ma_pcm_rb may give a smaller contiguous region near the wrap.
-        while (FramesRemaining > 0)
+        const uint32 Free = CapacityFrames - (uint32)(Write - Read);
+        const uint32 FrameCount = Math::Min(NumFrames, Free);
+        if (FrameCount == 0)
         {
-            ma_uint32 RegionFrames = FramesRemaining;
-            void* Region = nullptr;
-
-            if (ma_pcm_rb_acquire_write(&Impl->RingBuffer, &RegionFrames, &Region) != MA_SUCCESS || RegionFrames == 0)
-            {
-                break;
-            }
-
-            const size_t Bytes = (size_t)RegionFrames * ChannelCount * sizeof(float);
-            Memory::Memcpy(Region, Src, Bytes);
-
-            if (ma_pcm_rb_commit_write(&Impl->RingBuffer, RegionFrames) != MA_SUCCESS)
-            {
-                break;
-            }
-
-            Src           += (size_t)RegionFrames * ChannelCount;
-            FramesWritten += RegionFrames;
-            FramesRemaining -= RegionFrames;
+            return 0;
         }
 
-        return FramesWritten;
+        const uint32 Offset = (uint32)(Write % CapacityFrames);
+        const uint32 FirstRun = Math::Min(FrameCount, CapacityFrames - Offset);
+
+        Memory::Memcpy(Storage.data() + (size_t)Offset * ChannelCount, Samples, (size_t)FirstRun * ChannelCount * sizeof(float));
+
+        if (FrameCount > FirstRun)
+        {
+            Memory::Memcpy(Storage.data(), Samples + (size_t)FirstRun * ChannelCount,
+                (size_t)(FrameCount - FirstRun) * ChannelCount * sizeof(float));
+        }
+
+        WriteCursor.store(Write + FrameCount, Atomic::MemoryOrderRelease);
+        return FrameCount;
     }
 
-    uint32 FProceduralAudioStream::GetAvailableWriteFrames()
+    uint32 FProceduralAudioStream::Read(float* Out, uint32 NumFrames)
     {
-        return bInitialized ? ma_pcm_rb_available_write(&Impl->RingBuffer) : 0;
+        if (Out == nullptr || NumFrames == 0)
+        {
+            return 0;
+        }
+
+        if (!bInitialized)
+        {
+            Memory::Memzero(Out, (size_t)NumFrames * ChannelCount * sizeof(float));
+            return 0;
+        }
+
+        const uint64 Read  = ReadCursor.load(Atomic::MemoryOrderRelaxed);
+        const uint64 Write = WriteCursor.load(Atomic::MemoryOrderAcquire);
+
+        const uint32 Available = (uint32)(Write - Read);
+        const uint32 FrameCount = Math::Min(NumFrames, Available);
+
+        if (FrameCount != 0)
+        {
+            const uint32 Offset = (uint32)(Read % CapacityFrames);
+            const uint32 FirstRun = Math::Min(FrameCount, CapacityFrames - Offset);
+
+            Memory::Memcpy(Out, Storage.data() + (size_t)Offset * ChannelCount, (size_t)FirstRun * ChannelCount * sizeof(float));
+
+            if (FrameCount > FirstRun)
+            {
+                Memory::Memcpy(Out + (size_t)FirstRun * ChannelCount, Storage.data(),
+                    (size_t)(FrameCount - FirstRun) * ChannelCount * sizeof(float));
+            }
+
+            ReadCursor.store(Read + FrameCount, Atomic::MemoryOrderRelease);
+        }
+
+        // A live stream has no end, so an underrun is silence rather than a stopped voice.
+        if (FrameCount < NumFrames)
+        {
+            Memory::Memzero(Out + (size_t)FrameCount * ChannelCount,
+                (size_t)(NumFrames - FrameCount) * ChannelCount * sizeof(float));
+        }
+
+        return FrameCount;
     }
 
-    uint32 FProceduralAudioStream::GetAvailableReadFrames()
+    uint32 FProceduralAudioStream::GetAvailableWriteFrames() const
     {
-        return bInitialized ? ma_pcm_rb_available_read(&Impl->RingBuffer) : 0;
+        if (!bInitialized)
+        {
+            return 0;
+        }
+
+        const uint64 Write = WriteCursor.load(Atomic::MemoryOrderRelaxed);
+        const uint64 Read  = ReadCursor.load(Atomic::MemoryOrderAcquire);
+        return CapacityFrames - (uint32)(Write - Read);
     }
 
-    void* FProceduralAudioStream::GetDataSource()
+    uint32 FProceduralAudioStream::GetAvailableReadFrames() const
     {
-        return bInitialized ? (ma_data_source*)&Impl->RingBuffer : nullptr;
+        if (!bInitialized)
+        {
+            return 0;
+        }
+
+        const uint64 Read  = ReadCursor.load(Atomic::MemoryOrderRelaxed);
+        const uint64 Write = WriteCursor.load(Atomic::MemoryOrderAcquire);
+        return (uint32)(Write - Read);
     }
 }

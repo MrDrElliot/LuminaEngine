@@ -4,7 +4,7 @@
 #include "World/ECS/EventDispatcher.h"
 
 
-#include "Memory/MemoryConcurrentQueue.h"
+#include "Containers/BoundedQueue.h"
 #include "Core/Object/Object.h"
 #include "Core/UpdateContext.h"
 #include "Core/Delegates/Delegate.h"
@@ -146,6 +146,8 @@ namespace Lumina
         
         /** Initializes systems and renderer. Must be called before anything is done with the world. */
         void InitializeWorld(EWorldType InWorldType);
+
+        void EnqueueRenderTargetPaint(FTexturePaintOp&& Op);
 
         /** Shuts down the world; destroys systems, components, and entities. */
         void TeardownWorld();
@@ -759,7 +761,7 @@ namespace Lumina
         TVector<FDebugTextLine>                             DebugTextLines;
 
         // Render-target paint/clear requests; drained each Extract into the frame snapshot.
-        TConcurrentQueue<FTexturePaintOp>                   RenderTargetPaintQueue;
+        TBoundedMPSCQueue<FTexturePaintOp>                  RenderTargetPaintQueue;
 
         FWorldContext*                                      OwningContext = nullptr;
 

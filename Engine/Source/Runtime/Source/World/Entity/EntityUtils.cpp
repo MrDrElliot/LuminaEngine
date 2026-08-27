@@ -14,7 +14,7 @@
 #include "Systems/SystemAccess.h"
 #include "Systems/SystemResources.h"
 #include "Core/Assertions/Assert.h"
-#include "Memory/MemoryConcurrentQueue.h"
+#include "Containers/ConcurrentQueue.h"
 #include "TaskSystem/FiberSync.h"
 #include "TaskSystem/Scheduler/JobScheduler.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
@@ -801,15 +801,11 @@ namespace Lumina::ECS::Utils
     struct CACHE_ALIGN FTransformDirtyState : FTransformDirtyGate
     {
         // The lock-free queue lets setters on any thread enqueue and stay SuppressGCTransition-safe.
-        using FDirtyQueue = moodycamel::ConcurrentQueue<ECS::FEntity, Memory::FTrackedConcurrentQueueTraits>;
+        using FDirtyQueue = TConcurrentQueue<ECS::FEntity>;
 
         FDirtyQueue       DirtyTransforms;     // entities whose local transform changed (drained at resolve)
         FDirtyQueue       DirtyBodies;         // setter-moved entities to re-sync to physics (drained pre-sync)
         FFiberMutex       ResolveGuard;        // one resolver writes WorldTransform at a time (fiber-aware)
-
-        // Per-slot producer tokens skip the implicit-producer hash lookup on the hot setter path.
-        TVector<moodycamel::ProducerToken> TransformTokens;
-        TVector<moodycamel::ProducerToken> BodyTokens;
 
         // Resolve scratch reused across calls; HierBySlot lets the hierarchical filter parallelize.
         TVector<ECS::FEntity>          DrainScratch;
@@ -826,7 +822,7 @@ namespace Lumina::ECS::Utils
         {
             if (bPublishMoved.load(std::memory_order_relaxed))
             {
-                MovedTransforms.enqueue(Entity);
+                MovedTransforms.Enqueue(Entity);
             }
         }
 
@@ -835,17 +831,6 @@ namespace Lumina::ECS::Utils
             const uint32 Slots = Jobs::IsInitialized() ? Jobs::GetNumThreadSlots() : 1;
             HierBySlot.resize(Slots);
 
-            if (!Jobs::IsInitialized())
-            {
-                return;   // tokens stay empty -> implicit-producer fallback (always safe)
-            }
-            TransformTokens.reserve(Slots);
-            BodyTokens.reserve(Slots);
-            for (uint32 i = 0; i < Slots; ++i)
-            {
-                TransformTokens.emplace_back(DirtyTransforms);
-                BodyTokens.emplace_back(DirtyBodies);
-            }
         }
     };
     
@@ -856,13 +841,13 @@ namespace Lumina::ECS::Utils
             if (!Transform->bWorldDirty)
             {
                 Transform->bWorldDirty = true;
-                State->DirtyTransforms.enqueue(Entity);
+                State->DirtyTransforms.Enqueue(Entity);
             }
             
             if (!Transform->bBodyDirtyQueued && Registry.HasAny<SRigidBodyComponent, SCharacterPhysicsComponent>(Entity))
             {
                 Transform->bBodyDirtyQueued = true;
-                State->DirtyBodies.enqueue(Entity);
+                State->DirtyBodies.Enqueue(Entity);
             }
         }
         State->bAnyDirty.store(true, std::memory_order_release);
@@ -902,16 +887,7 @@ namespace Lumina::ECS::Utils
 
         if (bQueueBody)
         {
-            // Same per-slot token fast path as QueueDirtyTransform, with implicit enqueue as fallback.
-            const uint32 Slot = State->BodyTokens.empty() ? ~0u : Jobs::GetWorkerIndex();
-            if (Slot < State->BodyTokens.size())
-            {
-                State->DirtyBodies.enqueue(State->BodyTokens[Slot], Entity);
-            }
-            else
-            {
-                State->DirtyBodies.enqueue(Entity);
-            }
+            State->DirtyBodies.Enqueue(Entity);
         }
 
         if (bPublish)
@@ -929,32 +905,13 @@ namespace Lumina::ECS::Utils
 
         FTransformDirtyState* State = static_cast<FTransformDirtyState*>(Gate);
 
-        // This thread's slot token avoids the hash lookup; mixing explicit and implicit is allowed.
-        if (!State->TransformTokens.empty())
-        {
-            const uint32 Slot = Jobs::GetWorkerIndex();
-            if (Slot < State->TransformTokens.size())
-            {
-                if (bQueueTransform)
-                {
-                    State->DirtyTransforms.enqueue(State->TransformTokens[Slot], Entity);
-                }
-                if (bQueueBody)   // only bodied entities need the physics re-sync; skip the queue + drain otherwise
-                {
-                    State->DirtyBodies.enqueue(State->BodyTokens[Slot], Entity);
-                }
-                State->bAnyDirty.store(true, std::memory_order_relaxed);
-                return;
-            }
-        }
-
         if (bQueueTransform)
         {
-            State->DirtyTransforms.enqueue(Entity);
+            State->DirtyTransforms.Enqueue(Entity);
         }
         if (bQueueBody)
         {
-            State->DirtyBodies.enqueue(Entity);
+            State->DirtyBodies.Enqueue(Entity);
         }
         State->bAnyDirty.store(true, std::memory_order_relaxed);
     }
@@ -971,7 +928,7 @@ namespace Lumina::ECS::Utils
         // Single-threaded at the physics boundary; the emplace is the batched dirty-body mark.
         ECS::FEntity Batch[128];
         std::size_t Count;
-        while ((Count = State->DirtyBodies.try_dequeue_bulk(Batch, 128)) != 0)
+        while ((Count = State->DirtyBodies.DequeueBulk(Batch, 128)) != 0)
         {
             for (std::size_t i = 0; i < Count; ++i)
             {
@@ -1133,7 +1090,7 @@ namespace Lumina::ECS::Utils
 
         ECS::FEntity Batch[256];
         std::size_t Count;
-        while ((Count = State->MovedTransforms.try_dequeue_bulk(Batch, 256)) != 0)
+        while ((Count = State->MovedTransforms.DequeueBulk(Batch, 256)) != 0)
         {
             Out.insert(Out.end(), Batch, Batch + Count);
         }
@@ -1167,7 +1124,7 @@ namespace Lumina::ECS::Utils
                 if (!Xf.bWorldDirty)
                 {
                     Xf.bWorldDirty = true;
-                    DirtyState.DirtyTransforms.enqueue(Tagged);
+                    DirtyState.DirtyTransforms.Enqueue(Tagged);
                     DirtyState.bAnyDirty.store(true, std::memory_order_relaxed);  // ensure the drain runs
                 }
             }
@@ -1185,7 +1142,7 @@ namespace Lumina::ECS::Utils
         {
             ECS::FEntity Batch[256];
             std::size_t Count;
-            while ((Count = DirtyState.DirtyTransforms.try_dequeue_bulk(Batch, 256)) != 0)
+            while ((Count = DirtyState.DirtyTransforms.DequeueBulk(Batch, 256)) != 0)
             {
                 Raw.insert(Raw.end(), Batch, Batch + Count);
             }
@@ -1508,7 +1465,7 @@ namespace Lumina::ECS::Utils
             if (!Transform->bWorldDirty)
             {
                 Transform->bWorldDirty = true;
-                State->DirtyTransforms.enqueue(Entity);
+                State->DirtyTransforms.Enqueue(Entity);
             }
         }
         State->bAnyDirty.store(true, std::memory_order_release);

@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <type_traits>
 #include "Core/Utils/NonCopyable.h"
 #include "Platform/Platform.h"

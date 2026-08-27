@@ -4,7 +4,6 @@
 #include "Containers/Tuple.h"
 #include "Containers/Vector.h"
 
-#include <tuple>
 #include <utility>
 
 namespace Lumina::ECS
@@ -34,7 +33,7 @@ namespace Lumina::ECS
         static constexpr size_t ExcludeCount = sizeof...(TExcl);
 
         template<size_t Slot>
-        using TIncludeAt = std::tuple_element_t<Slot, TTuple<TInclude...>>;
+        using TIncludeAt = TTupleElementT<Slot, TTuple<TInclude...>>;
 
         // Tags carry membership only, so the callback sees the data components and nothing else.
         static constexpr size_t DataCount = ((CDataComponent<TInclude> ? 1u : 0u) + ... + 0u);
@@ -135,7 +134,7 @@ namespace Lumina::ECS
             NODISCARD auto operator * () const
             {
                 const FEntity Entity = View->GetDriver()->GetDenseData()[Index];
-                return std::tuple_cat(TTuple<FEntity>(Entity),
+                return TupleCat(TTuple<FEntity>(Entity),
                     View->RefTuple(Entity, std::index_sequence_for<TInclude...>{}));
             }
 
@@ -182,7 +181,7 @@ namespace Lumina::ECS
 
         NODISCARD FEachRange Each() const { return FEachRange{ this }; }
 
-        // Every included data component at once, so a caller can std::apply over the pack.
+        // Every included data component at once, so a caller can Apply over the pack.
         NODISCARD auto GetAll(FEntity Entity) const
         {
             return RefTuple(Entity, std::index_sequence_for<TInclude...>{});
@@ -268,13 +267,13 @@ namespace Lumina::ECS
                 // One lookup per data pool, reused as the callback argument, so membership is never tested twice.
                 auto Values = Gather(Entity, static_cast<uint32>(Index), std::index_sequence_for<TInclude...>{});
 
-                const bool bComplete = std::apply([](auto*... Value) { return ((Value != nullptr) && ... && true); }, Values);
+                const bool bComplete = Apply([](auto*... Value) { return ((Value != nullptr) && ... && true); }, Values);
                 if (!bComplete)
                 {
                     continue;
                 }
 
-                std::apply([&Func, Entity](auto*... Value) { InvokeEntityCallback(Func, Entity, *Value...); }, Values);
+                Apply([&Func, Entity](auto*... Value) { InvokeEntityCallback(Func, Entity, *Value...); }, Values);
             }
         }
 
@@ -323,7 +322,7 @@ namespace Lumina::ECS
         template<typename T>
         NODISCARD FORCEINLINE const TComponentStorage<T>& GetStorage() const
         {
-            return std::get<TComponentStorage<T>>(Includes);
+            return Lumina::Get<TComponentStorage<T>>(Includes);
         }
 
         void PickDriver()
@@ -332,13 +331,13 @@ namespace Lumina::ECS
             DriverSlot = 0;
 
             size_t Slot = 0;
-            std::apply([this, &Slot](const auto&... Storage)
+            Apply([this, &Slot](const auto&... Storage)
             {
                 ((Storage.IsValid() ? ConsiderDriver(Storage.GetSet(), Slot) : void(), ++Slot), ...);
             }, Includes);
 
             // A missing pool means the view can never match, so it stays empty rather than driving off another.
-            const bool bAnyMissing = std::apply([](const auto&... Storage) { return (!Storage.IsValid() || ...); }, Includes);
+            const bool bAnyMissing = Apply([](const auto&... Storage) { return (!Storage.IsValid() || ...); }, Includes);
             if (bAnyMissing)
             {
                 Driver = nullptr;
@@ -412,7 +411,7 @@ namespace Lumina::ECS
             using TSlot = TIncludeAt<Slot>;
             if constexpr (CDataComponent<TSlot>)
             {
-                return std::tuple<TSlot&>(Get<TSlot>(Entity));
+                return TTuple<TSlot&>(Get<TSlot>(Entity));
             }
             else
             {
@@ -423,12 +422,12 @@ namespace Lumina::ECS
         template<size_t... Slots>
         NODISCARD auto RefTuple(FEntity Entity, std::index_sequence<Slots...>) const
         {
-            return std::tuple_cat(RefSlot<Slots>(Entity)...);
+            return TupleCat(RefSlot<Slots>(Entity)...);
         }
 
         NODISCARD FORCEINLINE bool MatchesIncludes(FEntity Entity) const
         {
-            return std::apply([Entity](const auto&... Storage)
+            return Apply([Entity](const auto&... Storage)
             {
                 return ((Storage.IsValid() && Storage.Contains(Entity)) && ...);
             }, Includes);
@@ -439,7 +438,7 @@ namespace Lumina::ECS
         {
             if constexpr (IncludeCount > 1)
             {
-                const bool bAllPresent = std::apply([this, Entity](const auto&... Storage)
+                const bool bAllPresent = Apply([this, Entity](const auto&... Storage)
                 {
                     return ((Storage.GetSet() == Driver || Storage.Contains(Entity)) && ...);
                 }, Includes);
@@ -458,12 +457,12 @@ namespace Lumina::ECS
         {
             if constexpr (ExcludeCount == 0)
             {
-                std::get<0>(Includes).ForEachDense(Func);
+                Lumina::Get<0>(Includes).ForEachDense(Func);
             }
             else
             {
                 // The probes go in by value too, so the predicate carries its pages rather than a pointer.
-                std::get<0>(Includes).ForEachDenseWhere(
+                Lumina::Get<0>(Includes).ForEachDenseWhere(
                     [Probes = MakeExcludeProbes()](FEntity Entity) { return !Probes.Rejects(Entity); },
                     Func);
             }
@@ -474,7 +473,7 @@ namespace Lumina::ECS
         NODISCARD FORCEINLINE auto* GatherOne(FEntity Entity, uint32 DriverDenseIndex) const
             requires CDataComponent<TIncludeAt<Slot>>
         {
-            const auto& Storage = std::get<Slot>(Includes);
+            const auto& Storage = Lumina::Get<Slot>(Includes);
             if (Slot == DriverSlot)
             {
                 return &Storage.GetAtDense(DriverDenseIndex);
@@ -488,7 +487,7 @@ namespace Lumina::ECS
         {
             if constexpr (CDataComponent<TIncludeAt<Slot>>)
             {
-                return TTuple<TIncludeAt<Slot>*>{ GatherOne<Slot>(Entity, DriverDenseIndex) };
+                return TTuple<TIncludeAt<Slot>*>(GatherOne<Slot>(Entity, DriverDenseIndex));
             }
             else
             {
@@ -499,14 +498,14 @@ namespace Lumina::ECS
         template<size_t... Slots>
         NODISCARD FORCEINLINE auto Gather(FEntity Entity, uint32 DriverDenseIndex, std::index_sequence<Slots...>) const
         {
-            return std::tuple_cat(GatherSlot<Slots>(Entity, DriverDenseIndex)...);
+            return TupleCat(GatherSlot<Slots>(Entity, DriverDenseIndex)...);
         }
 
         // Membership for the tag includes, which the gather above deliberately leaves out.
         template<size_t... Slots>
         NODISCARD FORCEINLINE bool TagsPresent(FEntity Entity, std::index_sequence<Slots...>) const
         {
-            return ((CDataComponent<TIncludeAt<Slots>> || std::get<Slots>(Includes).Contains(Entity)) && ... && true);
+            return ((CDataComponent<TIncludeAt<Slots>> || Lumina::Get<Slots>(Includes).Contains(Entity)) && ... && true);
         }
 
         template<typename TFunc>

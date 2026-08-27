@@ -5,123 +5,11 @@
 #include "Log/Log.h"
 #include "Memory/Memory.h"
 #include "Memory/MemoryTracking.h"
-#include "MiniAudio/miniaudio.h"
 
 namespace Lumina
 {
-    // ma_data_source_base must lead the struct; miniaudio casts the data source pointer straight to it.
-    struct FAudioGraphDataSourceImpl
-    {
-        ma_data_source_base   Base{};
-        FAudioGraphInstance*  Owner = nullptr;
-        bool                  bInitialized = false;
-    };
-
-    namespace
-    {
-        FAudioGraphInstance* OwnerOf(ma_data_source* DataSource)
-        {
-            return DataSource != nullptr ? ((FAudioGraphDataSourceImpl*)DataSource)->Owner : nullptr;
-        }
-
-        ma_result AudioGraphSourceRead(ma_data_source* DataSource, void* FramesOut, ma_uint64 FrameCount, ma_uint64* FramesRead)
-        {
-            FAudioGraphInstance* Instance = OwnerOf(DataSource);
-            if (Instance == nullptr || FramesOut == nullptr)
-            {
-                if (FramesRead != nullptr)
-                {
-                    *FramesRead = 0;
-                }
-                return MA_INVALID_ARGS;
-            }
-
-            if (Instance->IsFinished())
-            {
-                if (FramesRead != nullptr)
-                {
-                    *FramesRead = 0;
-                }
-                return MA_AT_END;
-            }
-
-            Instance->Render((float*)FramesOut, (uint32)FrameCount);
-
-            if (FramesRead != nullptr)
-            {
-                *FramesRead = FrameCount;
-            }
-
-            return MA_SUCCESS;
-        }
-
-        ma_result AudioGraphSourceSeek(ma_data_source* DataSource, ma_uint64 FrameIndex)
-        {
-            FAudioGraphInstance* Instance = OwnerOf(DataSource);
-            if (Instance == nullptr)
-            {
-                return MA_INVALID_ARGS;
-            }
-
-            // A graph has no timeline to scrub, so only a rewind to the start is meaningful.
-            if (FrameIndex != 0)
-            {
-                return MA_NOT_IMPLEMENTED;
-            }
-
-            Instance->Rewind();
-            return MA_SUCCESS;
-        }
-
-        ma_result AudioGraphSourceGetDataFormat(ma_data_source* DataSource, ma_format* Format, ma_uint32* Channels,
-            ma_uint32* SampleRate, ma_channel* ChannelMap, size_t ChannelMapCap)
-        {
-            FAudioGraphInstance* Instance = OwnerOf(DataSource);
-            if (Instance == nullptr)
-            {
-                return MA_INVALID_ARGS;
-            }
-
-            if (Format != nullptr)     { *Format = ma_format_f32; }
-            if (Channels != nullptr)   { *Channels = Instance->GetChannelCount(); }
-            if (SampleRate != nullptr) { *SampleRate = Instance->GetSampleRate(); }
-
-            if (ChannelMap != nullptr)
-            {
-                ma_channel_map_init_standard(ma_standard_channel_map_default, ChannelMap, ChannelMapCap, Instance->GetChannelCount());
-            }
-
-            return MA_SUCCESS;
-        }
-
-        ma_result AudioGraphSourceGetCursor(ma_data_source* DataSource, ma_uint64* Cursor)
-        {
-            FAudioGraphInstance* Instance = OwnerOf(DataSource);
-            if (Instance == nullptr || Cursor == nullptr)
-            {
-                return MA_INVALID_ARGS;
-            }
-
-            *Cursor = Instance->GetRenderedFrames();
-            return MA_SUCCESS;
-        }
-
-        ma_result AudioGraphSourceGetLength(ma_data_source*, ma_uint64*)
-        {
-            return MA_NOT_IMPLEMENTED;
-        }
-
-        const ma_data_source_vtable GAudioGraphSourceVTable =
-        {
-            AudioGraphSourceRead,
-            AudioGraphSourceSeek,
-            AudioGraphSourceGetDataFormat,
-            AudioGraphSourceGetCursor,
-            AudioGraphSourceGetLength,
-            nullptr,
-            0
-        };
-    }
+    // Sized for a frame of parameter writes; the audio thread drains it at the start of every block.
+    static constexpr uint32 kParamQueueCapacity = 512;
 
     FAudioGraphInstance::FAudioGraphInstance()
     {
@@ -132,14 +20,7 @@ namespace Lumina
         }
     }
 
-    FAudioGraphInstance::~FAudioGraphInstance()
-    {
-        if (DataSourceImpl && DataSourceImpl->bInitialized)
-        {
-            ma_data_source_uninit(&DataSourceImpl->Base);
-            DataSourceImpl->bInitialized = false;
-        }
-    }
+    FAudioGraphInstance::~FAudioGraphInstance() = default;
 
     bool FAudioGraphInstance::Initialize(const FAudioGraphProgram& Program,
         const TVector<TSharedPtr<FAudioGraphWaveResource>>& InWaves,
@@ -195,21 +76,7 @@ namespace Lumina
             Operators.push_back(Move(Operator));
         }
 
-        DataSourceImpl = MakeUnique<FAudioGraphDataSourceImpl>();
-        DataSourceImpl->Owner = this;
-
-        ma_data_source_config SourceConfig = ma_data_source_config_init();
-        SourceConfig.vtable = &GAudioGraphSourceVTable;
-
-        if (ma_data_source_init(&SourceConfig, &DataSourceImpl->Base) != MA_SUCCESS)
-        {
-            LOG_ERROR("AudioGraph: ma_data_source_init failed");
-            DataSourceImpl.reset();
-            Operators.clear();
-            return false;
-        }
-
-        DataSourceImpl->bInitialized = true;
+        ParamQueue.Initialize(kParamQueueCapacity);
         bInitialized = true;
 
         ApplyInitialValues();
@@ -280,7 +147,7 @@ namespace Lumina
         // Bounded so a flood of writes cannot stretch one block past its deadline.
         constexpr uint32 MaxCommandsPerBlock = 64;
 
-        while (Applied < MaxCommandsPerBlock && ParamQueue.try_dequeue(Command))
+        while (Applied < MaxCommandsPerBlock && ParamQueue.TryDequeue(Command))
         {
             ++Applied;
 
@@ -462,7 +329,13 @@ namespace Lumina
         Command.IntValue   = IntValue;
         Command.BoolValue  = BoolValue;
 
-        ParamQueue.enqueue(Command);
+        // Dropped rather than spun on, because a stuck parameter write would stall the caller behind audio.
+        if (!ParamQueue.TryEnqueue(Command))
+        {
+            LOG_WARN_ONCE("AudioGraph: the parameter queue is full; dropping a parameter write");
+            return false;
+        }
+
         return true;
     }
 
@@ -514,10 +387,5 @@ namespace Lumina
         }
 
         return 0;
-    }
-
-    void* FAudioGraphInstance::GetDataSource()
-    {
-        return (bInitialized && DataSourceImpl) ? (void*)&DataSourceImpl->Base : nullptr;
     }
 }

@@ -1,4 +1,4 @@
-﻿#include "RuntimePCH.h"
+#include "RuntimePCH.h"
 #include "World.h"
 #include "World/ECS/Registry.h"
 #include "World/ECS/EventDispatcher.h"
@@ -79,6 +79,9 @@
 
 namespace Lumina
 {
+    // Generous for the handful of paint ops a frame issues, and drained every Extract.
+    static constexpr uint32 kRenderTargetPaintQueueCapacity = 1024;
+
     namespace ECS
     {
         // Routes through CWorld's private accessor so the registry stays off the public API.
@@ -207,6 +210,16 @@ namespace Lumina
         , TriangleBatcherComponent(nullptr)
     {
         DebugInterface.World = this;
+        RenderTargetPaintQueue.Initialize(kRenderTargetPaintQueueCapacity);
+    }
+
+    void CWorld::EnqueueRenderTargetPaint(FTexturePaintOp&& Op)
+    {
+        // Dropped rather than spun on, since the drain is a frame away and a lost op is a visual glitch.
+        if (!RenderTargetPaintQueue.TryEnqueue(Op))
+        {
+            LOG_WARN_ONCE("World: the render target paint queue is full; dropping paint operations");
+        }
     }
 
     void CWorld::PaintRenderTarget(CTextureRenderTarget* Target, const FVector2& UV, float RadiusUV, const FVector4& Color, float Strength, float Hardness, CTexture* BrushMask)
@@ -227,7 +240,7 @@ namespace Lumina
         Op.Strength     = Strength;
         Op.Hardness     = Hardness;
         Op.BrushIndex   = (BrushMask != nullptr) ? BrushMask->GetResourceID() : -1;
-        RenderTargetPaintQueue.enqueue(Move(Op));
+        EnqueueRenderTargetPaint(Move(Op));
     }
 
     void CWorld::ClearRenderTarget(CTextureRenderTarget* Target, const FVector4& Color)
@@ -242,13 +255,13 @@ namespace Lumina
         Op.TargetExtent = FUIntVector2(Target->GetWidth(), Target->GetHeight());
         Op.Mode         = FTexturePaintOp::EMode::Clear;
         Op.Color        = Color;
-        RenderTargetPaintQueue.enqueue(Move(Op));
+        EnqueueRenderTargetPaint(Move(Op));
     }
 
     void CWorld::DrainRenderTargetPaints(TVector<FTexturePaintOp>& OutOps)
     {
         FTexturePaintOp Op;
-        while (RenderTargetPaintQueue.try_dequeue(Op))
+        while (RenderTargetPaintQueue.TryDequeue(Op))
         {
             OutOps.push_back(Move(Op));
         }

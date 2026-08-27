@@ -1,4 +1,4 @@
-﻿#include "RuntimePCH.h"
+#include "RuntimePCH.h"
 #include "ScenePrimitiveSet.h"
 #include "World/ECS/Registry.h"
 
@@ -7,7 +7,7 @@
 #include "Assets/AssetTypes/Mesh/SkeletalMesh/SkeletalMesh.h"
 #include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
 #include "Renderer/MeshletHeaderSlab.h"
-#include "Memory/MemoryConcurrentQueue.h"
+#include "Containers/ConcurrentQueue.h"
 #include "TaskSystem/TaskSystem.h"
 #include "World/World.h"
 #include "World/Entity/EntityUtils.h"
@@ -28,7 +28,7 @@ namespace Lumina
 
     struct FRenderDirtyTracker::FImpl
     {
-        using FQueue = moodycamel::ConcurrentQueue<uint64, Memory::FTrackedConcurrentQueueTraits>;
+        using FQueue = TConcurrentQueue<uint64>;
         FQueue Queue;
     };
 
@@ -62,7 +62,7 @@ namespace Lumina
         {
             return;
         }
-        Impl->Queue.enqueue(PackDirty(Entity, Source, Flags));
+        Impl->Queue.Enqueue(PackDirty(Entity, Source, Flags));
         bAnyDirty.store(true, std::memory_order_release);
     }
 
@@ -82,7 +82,7 @@ namespace Lumina
 
         uint64 Batch[256];
         std::size_t Count;
-        while ((Count = Impl->Queue.try_dequeue_bulk(Batch, 256)) != 0)
+        while ((Count = Impl->Queue.DequeueBulk(Batch, 256)) != 0)
         {
             for (std::size_t i = 0; i < Count; ++i)
             {

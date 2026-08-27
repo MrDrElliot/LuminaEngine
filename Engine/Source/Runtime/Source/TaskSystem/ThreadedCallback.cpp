@@ -1,6 +1,6 @@
-﻿#include "RuntimePCH.h"
+#include "RuntimePCH.h"
 #include "ThreadedCallback.h"
-#include "Memory/MemoryConcurrentQueue.h"
+#include "Containers/ConcurrentQueue.h"
 #include "Core/Templates/LuminaTemplate.h"
 
 namespace Lumina::MainThread
@@ -10,7 +10,7 @@ namespace Lumina::MainThread
     void ProcessQueue()
     {
         TMoveOnlyFunction<void()> Callback;
-        while (Callbacks.try_dequeue(Callback))
+        while (Callbacks.TryDequeue(Callback))
         {
             Callback();
         }
@@ -18,6 +18,6 @@ namespace Lumina::MainThread
 
     void Enqueue(TMoveOnlyFunction<void()>&& Callback)
     {
-        Callbacks.enqueue(Move(Callback));
+        Callbacks.Enqueue(Move(Callback));
     }
 }

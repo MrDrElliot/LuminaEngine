@@ -1,6 +1,7 @@
 #pragma once
 #include "Containers/Vector.h"
-#include "Memory/MemoryConcurrentQueue.h"
+#include "Log/Log.h"
+#include "Containers/BoundedQueue.h"
 #include "Renderer/PrimitiveDrawInterface.h"
 #include "Renderer/Vertex.h"
 
@@ -11,6 +12,11 @@ namespace Lumina
     struct RUNTIME_API FTriangleBatcherComponent
     {
         static constexpr bool InPlaceDelete = true;
+
+        // Generous for a frame of debug batches, and drained once per render extraction.
+        static constexpr uint32 QueueCapacity = 1024;
+
+        FTriangleBatcherComponent() { Queue.Initialize(QueueCapacity); }
 
         struct FBatchInstance
         {
@@ -30,7 +36,7 @@ namespace Lumina
 
         TVector<FBatchInstance>             Batches;
 
-        TConcurrentQueue<FQueuedBatch>      Queue;
+        TBoundedMPSCQueue<FQueuedBatch>    Queue;
 
         // Thread-safe. Becomes visible the next time DrainQueue runs (once per render-extraction tick).
         void EnqueueTriangles(TVector<FSimpleElementVertex>&& Vertices, ESolidDrawMode Mode = ESolidDrawMode::Translucent, float Duration = -1.0f)
@@ -44,14 +50,17 @@ namespace Lumina
             Q.Duration      = Duration;
             Q.Mode          = Mode;
             Q.bSingleFrame  = (Duration == -1.0f) ? 1u : 0u;
-            Queue.enqueue(std::move(Q));
+            if (!Queue.TryEnqueue(Move(Q)))
+            {
+                LOG_WARN_ONCE("TriangleBatcher: the batch queue is full; dropping debug triangles");
+            }
         }
 
         // Single-threaded; call before reading Batches for render extraction.
         void DrainQueue()
         {
             FQueuedBatch Q;
-            while (Queue.try_dequeue(Q))
+            while (Queue.TryDequeue(Q))
             {
                 Batches.emplace_back(FBatchInstance
                 {

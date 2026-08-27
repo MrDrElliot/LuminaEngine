@@ -42,8 +42,6 @@ namespace Lumina
 		// Drain queued audio commands + housekeeping (kicked once per frame). Default no-op.
 		virtual void Update() {}
 
-		NODISCARD virtual void* GetNative() const = 0;
-
 		// Asset-backed playback: the shared bytes are decoded on the audio pump and kept alive for the
 		// lifetime of the voice, so the caller's asset can be unloaded mid-playback.
 		NODISCARD virtual FAudioHandle PlayAudio(const TSharedPtr<FAudioData>& Data, const FAudioPlayParams& Params) = 0;

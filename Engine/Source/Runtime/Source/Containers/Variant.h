@@ -1,7 +1,7 @@
 #pragma once
 
 #include <new>
-#include <tuple>
+#include "Containers/Tuple.h"
 #include <type_traits>
 #include <utility>
 
@@ -50,7 +50,7 @@ namespace Lumina::Containers
     template <size_t Index, typename... Ts>
     struct TVariantAlternative<Index, TVariant<Ts...>>
     {
-        using Type = std::tuple_element_t<Index, std::tuple<Ts...>>;
+        using Type = TTupleElementT<Index, TTuple<Ts...>>;
     };
 
     template <size_t Index, typename TVariantType>
@@ -67,7 +67,7 @@ namespace Lumina::Containers
         static constexpr size_t kAlign   = Private::MaxOf<alignof(Ts)...>();
 
         template <size_t Index>
-        using TAlternative = std::tuple_element_t<Index, std::tuple<Ts...>>;
+        using TAlternative = TTupleElementT<Index, TTuple<Ts...>>;
 
     public:
 

@@ -1,4 +1,4 @@
-﻿#include "RuntimePCH.h"
+#include "RuntimePCH.h"
 #include "AudioReverb.h"
 
 #include "Core/Math/Math.h"
@@ -19,12 +19,13 @@ namespace Lumina
 		constexpr float OffsetRoom = 0.7f;
 	}
 
-	ma_result FAudioReverbNode::Init(ma_node_graph* NodeGraph, uint32 Channels, uint32 SampleRate, const ma_allocation_callbacks* Callbacks)
+	bool FAudioReverb::Initialize(uint32 Channels, uint32 SampleRate)
 	{
 		ChannelCount = Math::Min(Channels, MaxChannels);
-		if (ChannelCount == 0)
+		if (ChannelCount == 0 || SampleRate == 0)
 		{
-			return MA_INVALID_ARGS;
+			ChannelCount = 0;
+			return false;
 		}
 
 		const double RateScale = (double)SampleRate / (double)TuningSampleRate;
@@ -50,39 +51,17 @@ namespace Lumina
 			}
 		}
 
-		// Function-local so the private OnProcess is reachable; the vtable is shared by every instance.
-		static ma_node_vtable VTable =
-		{
-			&FAudioReverbNode::OnProcess,
-			nullptr,
-			1,
-			1,
-			MA_NODE_FLAG_CONTINUOUS_PROCESSING | MA_NODE_FLAG_ALLOW_NULL_INPUT,
-		};
-
-		ma_node_config Config = ma_node_config_init();
-		Config.vtable          = &VTable;
-		Config.pInputChannels  = &ChannelCount;
-		Config.pOutputChannels = &ChannelCount;
-
-		const ma_result Result = ma_node_init(NodeGraph, &Config, Callbacks, &Base);
-		if (Result != MA_SUCCESS)
-		{
-			return Result;
-		}
-
 		bInitialized = true;
-		return MA_SUCCESS;
+		return true;
 	}
 
-	void FAudioReverbNode::Uninit(const ma_allocation_callbacks* Callbacks)
+	void FAudioReverb::Shutdown()
 	{
 		if (!bInitialized)
 		{
 			return;
 		}
 
-		ma_node_uninit(&Base, Callbacks);
 		bInitialized = false;
 
 		for (uint32 Channel = 0; Channel < ChannelCount; ++Channel)
@@ -96,9 +75,11 @@ namespace Lumina
 				Allpass.Buffer.clear();
 			}
 		}
+
+		ChannelCount = 0;
 	}
 
-	void FAudioReverbNode::SetParams(const FAudioReverbParams& InParams)
+	void FAudioReverb::SetParams(const FAudioReverbParams& InParams)
 	{
 		RoomSize.store(Math::Clamp(InParams.RoomSize, 0.0f, 1.0f), Atomic::MemoryOrderRelaxed);
 		Damping.store(Math::Clamp(InParams.Damping, 0.0f, 1.0f), Atomic::MemoryOrderRelaxed);
@@ -106,7 +87,7 @@ namespace Lumina
 		WetLevel.store(Math::Max(InParams.WetLevel, 0.0f), Atomic::MemoryOrderRelaxed);
 	}
 
-	FAudioReverbParams FAudioReverbNode::GetParams() const
+	FAudioReverbParams FAudioReverb::GetParams() const
 	{
 		FAudioReverbParams Out;
 		Out.RoomSize = RoomSize.load(Atomic::MemoryOrderRelaxed);
@@ -116,15 +97,13 @@ namespace Lumina
 		return Out;
 	}
 
-	void FAudioReverbNode::OnProcess(ma_node* Node, const float** FramesIn, uint32* FrameCountIn, float** FramesOut, uint32* FrameCountOut)
+	void FAudioReverb::Process(const float* In, float* Out, uint32 FrameCount)
 	{
-		FAudioReverbNode* Self = reinterpret_cast<FAudioReverbNode*>(Node);
-		Self->Process(FramesIn != nullptr ? FramesIn[0] : nullptr, FramesOut[0], *FrameCountOut);
-		*FrameCountIn = *FrameCountOut;
-	}
+		if (!bInitialized || Out == nullptr)
+		{
+			return;
+		}
 
-	void FAudioReverbNode::Process(const float* In, float* Out, uint32 FrameCount)
-	{
 		const uint32 Channels = ChannelCount;
 		const float Feedback  = (RoomSize.load(Atomic::MemoryOrderRelaxed) * ScaleRoom) + OffsetRoom;
 		const float Damp1     = Damping.load(Atomic::MemoryOrderRelaxed) * ScaleDamp;

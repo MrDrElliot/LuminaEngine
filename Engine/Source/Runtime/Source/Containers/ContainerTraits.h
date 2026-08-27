@@ -1,12 +1,12 @@
 #pragma once
 
 #include <optional>
-#include <tuple>
 #include <type_traits>
 #include <utility>
 
 #include "Core/Assertions/CheckFailure.h"
 #include "Platform/GenericPlatform.h"
+#include "Tuple.h"
 #include "Platform/Platform.h"
 
 #if defined(_MSC_VER)
@@ -59,7 +59,7 @@ namespace Lumina
     };
 
     template <typename... Ts>
-    struct TIsTriviallyRelocatable<std::tuple<Ts...>>
+    struct TIsTriviallyRelocatable<TTuple<Ts...>>
     {
         static constexpr bool Value = (TIsTriviallyRelocatable_V<Ts> && ...);
     };

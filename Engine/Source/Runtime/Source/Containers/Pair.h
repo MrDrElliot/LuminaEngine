@@ -1,7 +1,6 @@
 #pragma once
 
 #include <compare>
-#include <tuple>
 #include <type_traits>
 #include <utility>
 
@@ -67,7 +66,7 @@ namespace Lumina::Containers
 
         /** Builds both members in place from their own argument packs, which is what a map insert needs. */
         template <typename... TArgs1, typename... TArgs2>
-        constexpr TPair(std::piecewise_construct_t, std::tuple<TArgs1...> FirstArgs, std::tuple<TArgs2...> SecondArgs)
+        constexpr TPair(std::piecewise_construct_t, TTuple<TArgs1...> FirstArgs, TTuple<TArgs2...> SecondArgs)
             : TPair(FirstArgs, SecondArgs, std::index_sequence_for<TArgs1...>{}, std::index_sequence_for<TArgs2...>{})
         {}
 
@@ -106,8 +105,8 @@ namespace Lumina::Containers
         template <typename TFirstTuple, typename TSecondTuple, size_t... FirstIndices, size_t... SecondIndices>
         constexpr TPair(TFirstTuple& FirstArgs, TSecondTuple& SecondArgs,
                         std::index_sequence<FirstIndices...>, std::index_sequence<SecondIndices...>)
-            : first(std::get<FirstIndices>(std::move(FirstArgs))...)
-            , second(std::get<SecondIndices>(std::move(SecondArgs))...)
+            : first(Lumina::Get<FirstIndices>(Move(FirstArgs))...)
+            , second(Lumina::Get<SecondIndices>(Move(SecondArgs))...)
         {}
     };
 

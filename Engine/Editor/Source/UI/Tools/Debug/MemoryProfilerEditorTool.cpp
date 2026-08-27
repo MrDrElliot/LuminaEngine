@@ -55,7 +55,7 @@ namespace Lumina
         bool IsPlumbingFrame(const char* Fn)
         {
             static const char* const kPrefixes[] = {
-                "std::", "moodycamel::", "ImVector", "ImGui::MemAlloc",
+                "std::", "ImVector", "ImGui::MemAlloc",
                 "Lumina::Memory::", "Lumina::ImGuiX::ImGuiMemAlloc", "operator new", "malloc", "_malloc",
             };
             for (const char* P : kPrefixes)

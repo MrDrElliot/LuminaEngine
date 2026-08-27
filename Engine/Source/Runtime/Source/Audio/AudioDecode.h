@@ -14,7 +14,7 @@ namespace Lumina::Audio
 		double GetDuration() const { return SampleRate != 0 ? (double)NumFrames / (double)SampleRate : 0.0; }
 	};
 
-	// Reads format metadata from an encoded audio file image (wav/mp3/flac/ogg) without decoding samples.
+	// Reads format metadata from a RIFF/WAVE file image without decoding samples.
 	RUNTIME_API bool Probe(const void* Data, size_t Size, FAudioInfo& OutInfo);
 
 	// Decodes the full file into interleaved float32 PCM at the source rate/channel count.

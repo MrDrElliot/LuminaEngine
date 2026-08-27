@@ -6,13 +6,11 @@
 #include "Containers/Name.h"
 #include "Containers/Vector.h"
 #include "Core/Threading/Atomic.h"
-#include "Memory/MemoryConcurrentQueue.h"
+#include "Containers/BoundedQueue.h"
 #include "Memory/SmartPtr.h"
 
 namespace Lumina
 {
-    struct FAudioGraphDataSourceImpl;
-
     /** Name of the trigger input every graph gets, raised once at the start of the first block. */
     inline const char* kAudioGraphOnPlayInput = "OnPlay";
 
@@ -80,12 +78,7 @@ namespace Lumina
         const TVector<FAudioGraphParameterDecl>& GetInputs() const { return InputDecls; }
         const TVector<FAudioGraphParameterDecl>& GetOutputs() const { return OutputDecls; }
 
-        /** The ma_data_source the mixer pulls from; null until Initialize succeeds. */
-        void* GetDataSource();
-
     private:
-
-        friend struct FAudioGraphDataSourceImpl;
 
         void RenderBlock();
         void ApplyPendingParameters();
@@ -106,9 +99,7 @@ namespace Lumina
         /** Decoded PCM kept alive for the whole voice, so unloading the asset cannot pull it away. */
         TVector<TSharedPtr<FAudioGraphWaveResource>> Waves;
 
-        TConcurrentQueue<FAudioGraphParamCommand> ParamQueue;
-
-        TUniquePtr<FAudioGraphDataSourceImpl> DataSourceImpl;
+        TBoundedMPSCQueue<FAudioGraphParamCommand> ParamQueue;
 
         uint16 OutputLeftSlot  = kAudioGraphInvalidSlot;
         uint16 OutputRightSlot = kAudioGraphInvalidSlot;

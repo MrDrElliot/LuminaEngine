@@ -1,4 +1,4 @@
-﻿#include "Platform/Time/PlatformTime.h"
+#include "Platform/Time/PlatformTime.h"
 #include "RuntimePCH.h"
 #include "JobScheduler.h"
 
@@ -6,10 +6,10 @@
 #include "Core/Threading/Atomic.h"
 #include "Core/Threading/Fiber.h"
 #include "Memory/Memory.h"
-#include "Memory/MemoryConcurrentQueue.h"
+#include "Containers/ConcurrentQueue.h"
 #include "Platform/Process/PlatformProcess.h"
 #include "Containers/Vector.h"
-#include "Containers/BoundedMPMCQueue.h"
+#include "Containers/BoundedQueue.h"
 #include "Core/Diagnostics/HangWatchdog.h"
 #include "Core/LuminaMacros.h"
 #include "Core/Math/Math.h"
@@ -148,7 +148,7 @@ namespace Lumina::Jobs
 
     namespace
     {
-        using FJobQueue   = moodycamel::ConcurrentQueue<FQueuedJob, Memory::FTrackedConcurrentQueueTraits>;
+        using FJobQueue   = TConcurrentQueue<FQueuedJob>;
 
         // The job queues stay unbounded, since a submit burst has no such ceiling.
         using FIndexQueue = TBoundedMPMCQueue<uint16>;
@@ -192,27 +192,13 @@ namespace Lumina::Jobs
         struct alignas(64) FWorkerLocal
         {
             FJobQueue                  Queues[kNumJobPriorities];
-            moodycamel::ConsumerToken* Home[kNumJobPriorities] = {};
             TAtomic<uint32>            WakeSignal{0}; // bumped (with notify) to wake this worker from its wait
 
             TAtomic<uint8>             HasCachedFiber{0};
             // Nonempty-band hint, one bit per priority, set before enqueue so a failed victim probe is one load.
             TAtomic<uint8>             BandMask{0};
 
-            FWorkerLocal()
-            {
-                for (uint32 P = 0; P < kNumJobPriorities; ++P)
-                {
-                    Home[P] = Memory::New<moodycamel::ConsumerToken>(Queues[P]);
-                }
-            }
-            ~FWorkerLocal()
-            {
-                for (uint32 P = 0; P < kNumJobPriorities; ++P)
-                {
-                    Memory::Delete(Home[P]);
-                }
-            }
+            FWorkerLocal() = default;
         };
 
         struct FScheduler
@@ -513,7 +499,7 @@ namespace Lumina::Jobs
                 }
                 const uint32 Wk = (Start + i) % W;
                 // A thief that probes a set bit and finds it empty clears it, and nothing re-sets it after.
-                G->Workers[Wk].Queues[Prio].enqueue_bulk(Jobs + Idx, N);
+                G->Workers[Wk].Queues[Prio].EnqueueBulk(Jobs + Idx, N);
                 G->Workers[Wk].BandMask.fetch_or(static_cast<uint8>(1u << Prio), std::memory_order_release);
                 Idx += N;
                 ++Recipients;
@@ -539,7 +525,7 @@ namespace Lumina::Jobs
                 const uint32 Wk = (Start + i) % W;
                 for (uint32 j = 0; j < N; ++j)
                 {
-                    G->Workers[Wk].Queues[Prio].enqueue(Job);
+                    G->Workers[Wk].Queues[Prio].Enqueue(Job);
                 }
                 G->Workers[Wk].BandMask.fetch_or(static_cast<uint8>(1u << Prio), std::memory_order_release);
                 ++Recipients;
@@ -586,14 +572,14 @@ namespace Lumina::Jobs
             {
                 const uint32 P = (uint32)Math::CountTrailingZeros64(Mask);
                 Mask &= static_cast<uint8>(Mask - 1);
-                if (G->Workers[V].Queues[P].try_dequeue(Out))
+                if (G->Workers[V].Queues[P].TryDequeue(Out))
                 {
                     NoteJobDequeued(P);
                     return true;
                 }
                 // Empty despite the bit, so clear it, then re-set if an enqueue raced the clear.
                 G->Workers[V].BandMask.fetch_and(static_cast<uint8>(~(1u << P)), std::memory_order_relaxed);
-                if (G->Workers[V].Queues[P].size_approx() != 0)
+                if (G->Workers[V].Queues[P].SizeApprox() != 0)
                 {
                     G->Workers[V].BandMask.fetch_or(static_cast<uint8>(1u << P), std::memory_order_release);
                 }
@@ -609,7 +595,7 @@ namespace Lumina::Jobs
             // All bands including Background, since a real worker is exactly who should run it.
             for (uint32 P = 0; P < kNumJobPriorities; ++P)
             {
-                if (Self.Queues[P].try_dequeue(*Self.Home[P], Out))
+                if (Self.Queues[P].TryDequeue(Out))
                 {
                     NoteJobDequeued(P);
                     return true;
@@ -2101,7 +2087,7 @@ namespace Lumina::Jobs
             size_t Depth = 0;
             for (uint32 w = 0; w < G->NumWorkers; ++w)
             {
-                Depth += G->Workers[w].Queues[P].size_approx();
+                Depth += G->Workers[w].Queues[P].SizeApprox();
             }
             Out.QueueDepth[P] = static_cast<uint32>(Depth);
         }

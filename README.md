@@ -501,7 +501,6 @@ Listed alphabetically.
 | Box3D | Multi-threaded rigid body physics with a stateless capsule character mover |
 | BugSplat | Crash and minidump upload to the engine's crash database |
 | cgltf | glTF 2.0 parser behind the mesh and material importers |
-| ConcurrentQueue | Lock-free queue supporting multiple producers and consumers |
 | DPDK | Source of the vectorized memcpy in `Engine/Source/Runtime/Source/Memory/Memcpy.h`; vendored for its license only |
 | ENet | Reliable UDP transport behind the networking plugin |
 | FreeType | Font rasterization for RmlUi, MSDFGen, and editor text |
@@ -510,7 +509,6 @@ Listed alphabetically.
 | ImGui | Immediate-mode GUI for rapid tool development |
 | MeshOptimizer | Mesh optimization for vertex cache, overdraw, and buffer compression |
 | MikkTSpace | Reference tangent-space generation for imported meshes |
-| Miniaudio | Single-file audio playback and capture library |
 | Miniz | Deflate compression for package and pak archive serialization |
 | MSDFGen | Multi-channel signed distance fields for crisp world-space text |
 | .NET Runtime | CoreCLR (.NET 10) bundled as the host for C# (LuminaSharp) scripting |

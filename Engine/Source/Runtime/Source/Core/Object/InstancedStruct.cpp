@@ -5,6 +5,7 @@
 #include "Scripting/ScriptDataStruct.h"
 
 #include "Class.h"
+#include "Core/Object/ObjectIterator.h"
 #include "Memory/Memory.h"
 
 namespace Lumina

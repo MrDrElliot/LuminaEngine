@@ -3,7 +3,6 @@
 #include "Containers/Vector.h"
 #include "Core/Threading/Atomic.h"
 #include "Platform/GenericPlatform.h"
-#include "MiniAudio/miniaudio.h"
 
 namespace Lumina
 {
@@ -23,25 +22,27 @@ namespace Lumina
 		float WetLevel = 0.35f;
 	};
 
-	// Freeverb-style comb/allpass network exposed as a miniaudio node. Emits the wet signal only; the
-	// dry path is a separate branch of the splitter that feeds it, so wet/dry is a graph-level mix.
-	class FAudioReverbNode
+	/** Freeverb-style comb/allpass network emitting the wet signal only, so the caller owns the wet/dry mix. */
+	class RUNTIME_API FAudioReverb
 	{
 	public:
 
-		ma_result Init(ma_node_graph* NodeGraph, uint32 Channels, uint32 SampleRate, const ma_allocation_callbacks* Callbacks);
-		void Uninit(const ma_allocation_callbacks* Callbacks);
+		static constexpr uint32 MaxChannels = 8;
+
+		// Sizes every delay line for the device rate. Allocates, so keep it off the audio thread.
+		bool Initialize(uint32 Channels, uint32 SampleRate);
+		void Shutdown();
+
+		bool IsInitialized() const { return bInitialized; }
+		uint32 GetChannelCount() const { return ChannelCount; }
 
 		void SetParams(const FAudioReverbParams& InParams);
 		FAudioReverbParams GetParams() const;
 
-		ma_node* GetNode() { return &Base; }
-		bool IsInitialized() const { return bInitialized; }
+		// A null input decays the existing tail instead of feeding it.
+		void Process(const float* In, float* Out, uint32 FrameCount);
 
 	private:
-
-		static void OnProcess(ma_node* Node, const float** FramesIn, uint32* FrameCountIn, float** FramesOut, uint32* FrameCountOut);
-		void Process(const float* In, float* Out, uint32 FrameCount);
 
 		struct FCombFilter
 		{
@@ -82,7 +83,6 @@ namespace Lumina
 
 		static constexpr uint32 NumCombs   = 8;
 		static constexpr uint32 NumAllpass = 4;
-		static constexpr uint32 MaxChannels = 8;
 
 		struct FChannelNetwork
 		{
@@ -90,7 +90,6 @@ namespace Lumina
 			FAllpassFilter Allpass[NumAllpass];
 		};
 
-		ma_node_base Base{};
 		FChannelNetwork Networks[MaxChannels];
 
 		uint32 ChannelCount = 0;
