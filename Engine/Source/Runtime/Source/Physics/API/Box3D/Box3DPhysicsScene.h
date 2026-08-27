@@ -1,5 +1,8 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #include <box3d/box3d.h>
 
 #include "Box3DTaskBridge.h"
@@ -84,8 +87,8 @@ namespace Lumina::Physics
     struct FContactRecord
     {
         EContactEventType   Type;
-        entt::entity        EntityA;
-        entt::entity        EntityB;
+        ECS::FEntity        EntityA;
+        ECS::FEntity        EntityB;
         uint32              BodyIDA;
         uint32              BodyIDB;
         FVector3            Point;
@@ -125,29 +128,29 @@ namespace Lumina::Physics
         void BuildInterpolatedTransforms(float Alpha);
         void ApplyInterpolatedTransforms();
 
-        uint32 GetEntityBodyID(entt::entity Entity) override;
+        uint32 GetEntityBodyID(ECS::FEntity Entity) override;
 
         TOptional<SRayResult> CastRay(const SRayCastSettings& Settings) override;
         void CastSphere(const SSphereCastSettings& Settings, TVector<SRayResult>& OutHits) override;
         TOptional<SRayResult> CastSphereClosest(const SSphereCastSettings& Settings) override;
         void CastRayAll(const SRayCastSettings& Settings, TVector<SRayResult>& OutHits) override;
 
-        int32 ResolveHitBoneIndex(entt::entity Entity, b3BodyId BodyId) const;
-        int32 CollidePoint(const FVector3& Point, TSpan<const uint32> IgnoreBodies, TSpan<entt::entity> OutEntities) override;
-        int32 OverlapSphere(const FVector3& Center, float Radius, TSpan<const uint32> IgnoreBodies, TSpan<entt::entity> OutEntities) override;
-        int32 OverlapBox(const FVector3& Center, const FVector3& HalfExtents, const FQuat& Rotation, TSpan<const uint32> IgnoreBodies, TSpan<entt::entity> OutEntities) override;
+        int32 ResolveHitBoneIndex(ECS::FEntity Entity, b3BodyId BodyId) const;
+        int32 CollidePoint(const FVector3& Point, TSpan<const uint32> IgnoreBodies, TSpan<ECS::FEntity> OutEntities) override;
+        int32 OverlapSphere(const FVector3& Center, float Radius, TSpan<const uint32> IgnoreBodies, TSpan<ECS::FEntity> OutEntities) override;
+        int32 OverlapBox(const FVector3& Center, const FVector3& HalfExtents, const FQuat& Rotation, TSpan<const uint32> IgnoreBodies, TSpan<ECS::FEntity> OutEntities) override;
 
-        void OnCharacterComponentConstructed(entt::registry& Registry, entt::entity Entity);
-        void OnCharacterComponentDestroyed(entt::registry& Registry, entt::entity Entity);
+        void OnCharacterComponentConstructed(ECS::FRegistry& Registry, ECS::FEntity Entity);
+        void OnCharacterComponentDestroyed(ECS::FRegistry& Registry, ECS::FEntity Entity);
 
-        void OnRigidBodyComponentUpdated(entt::registry& Registry, entt::entity Entity);
-        void OnRigidBodyComponentConstructed(entt::registry& Registry, entt::entity Entity);
-        void OnRigidBodyComponentDestroyed(entt::registry& Registry, entt::entity Entity);
-        void OnColliderComponentAdded(entt::registry& Registry, entt::entity Entity);
-        void OnColliderComponentRemoved(entt::registry& Registry, entt::entity Entity);
+        void OnRigidBodyComponentUpdated(ECS::FRegistry& Registry, ECS::FEntity Entity);
+        void OnRigidBodyComponentConstructed(ECS::FRegistry& Registry, ECS::FEntity Entity);
+        void OnRigidBodyComponentDestroyed(ECS::FRegistry& Registry, ECS::FEntity Entity);
+        void OnColliderComponentAdded(ECS::FRegistry& Registry, ECS::FEntity Entity);
+        void OnColliderComponentRemoved(ECS::FRegistry& Registry, ECS::FEntity Entity);
 
-        void OnConstraintComponentConstructed(entt::registry& Registry, entt::entity Entity);
-        void OnConstraintComponentDestroyed(entt::registry& Registry, entt::entity Entity);
+        void OnConstraintComponentConstructed(ECS::FRegistry& Registry, ECS::FEntity Entity);
+        void OnConstraintComponentDestroyed(ECS::FRegistry& Registry, ECS::FEntity Entity);
 
         void OnImpulseEvent(const SImpulseEvent& Impulse) override;
         void OnForceEvent(const SForceEvent& Force) override;
@@ -159,7 +162,7 @@ namespace Lumina::Physics
         void OnAddForceAtPositionEvent(const SAddForceAtPositionEvent& Event) override;
         void OnSetGravityFactorEvent(const SSetGravityFactorEvent& Event) override;
 
-        void ApplyBuoyancyImpulse(entt::entity Entity, const FVector3& SurfacePosition, const FVector3& SurfaceNormal,
+        void ApplyBuoyancyImpulse(ECS::FEntity Entity, const FVector3& SurfacePosition, const FVector3& SurfaceNormal,
             float Buoyancy, float LinearDrag, float AngularDrag, const FVector3& FluidVelocity, float DeltaTime) override;
 
         FVector3 GetVelocityAtPoint(uint32 BodyID, const FVector3& Point) override;
@@ -176,7 +179,7 @@ namespace Lumina::Physics
         void BeginBodyBatch() override;
         void EndBodyBatch() override;
 
-        uint32 CreateStaticBodyGroup(entt::entity Owner, TSpan<const FStaticInstanceDesc> Instances) override;
+        uint32 CreateStaticBodyGroup(ECS::FEntity Owner, TSpan<const FStaticInstanceDesc> Instances) override;
         void DestroyStaticBodyGroup(uint32 GroupID) override;
 
         TSharedPtr<FPhysicsRagdollHandle> CreateRagdoll(const FRagdollDesc& Desc) override;
@@ -192,7 +195,7 @@ namespace Lumina::Physics
         bool IsConstraintBroken(uint32 ConstraintID) override;
         float GetConstraintValue(uint32 ConstraintID) override;
 
-        void SetSurfaceVelocity(entt::entity Entity, const FVector3& Linear, const FVector3& Angular) override;
+        void SetSurfaceVelocity(ECS::FEntity Entity, const FVector3& Linear, const FVector3& Angular) override;
 
         b3WorldId GetWorldId() const { return WorldId; }
 
@@ -233,15 +236,15 @@ namespace Lumina::Physics
         uint32 StageInterpSlot(uint32 BodyHandle, const FVector3& Position, const FQuat& Rotation);
         void ResetInterpStaging();
 
-        void BulkCreateRigidBodies(entt::registry& Registry);
-        void CreateRigidBodiesBatched(const TVector<entt::entity>& Entities);
-        void CreateRigidBodyImmediate(entt::registry& Registry, entt::entity Entity);
-        void RebuildStaleDynamicMeshBodies(entt::registry& Registry);
+        void BulkCreateRigidBodies(ECS::FRegistry& Registry);
+        void CreateRigidBodiesBatched(const TVector<ECS::FEntity>& Entities);
+        void CreateRigidBodyImmediate(ECS::FRegistry& Registry, ECS::FEntity Entity);
+        void RebuildStaleDynamicMeshBodies(ECS::FRegistry& Registry);
 
-        EBodyBuildStatus TryBuildRigidBody(entt::registry& Registry, entt::entity Entity, FRigidBodyBuildResult& OutResult);
-        uint32 CommitRigidBody(entt::entity Entity, FRigidBodyBuildResult& Build);
+        EBodyBuildStatus TryBuildRigidBody(ECS::FRegistry& Registry, ECS::FEntity Entity, FRigidBodyBuildResult& OutResult);
+        uint32 CommitRigidBody(ECS::FEntity Entity, FRigidBodyBuildResult& Build);
 
-        bool TryCreateComponentConstraint(entt::registry& Registry, entt::entity Entity);
+        bool TryCreateComponentConstraint(ECS::FRegistry& Registry, ECS::FEntity Entity);
         void DrainPendingConstraints();
         void MonitorBreakableConstraints(float Dt);
         void DestroyAllConstraints();
@@ -303,23 +306,23 @@ namespace Lumina::Physics
 
         struct FDeferredBodyUpdate
         {
-            entt::entity            Entity;
+            ECS::FEntity            Entity;
             FNeedsPhysicsBodyUpdate Update;
         };
         TVector<FDeferredBodyUpdate>            RetryBodyUpdates;
 
         FMutex                                  PendingRigidBodyMutex;
-        TQueue<entt::entity>                    PendingRigidBodyCreations;
+        TQueue<ECS::FEntity>                    PendingRigidBodyCreations;
 
         TAtomic<bool>                           bStepInProgress{ false };
 
         int32                                   BodyBatchDepth = 0;
-        TVector<entt::entity>                   BatchedBodyCreations;
-        TVector<entt::entity>                   BatchedCharacterCreations;
+        TVector<ECS::FEntity>                   BatchedBodyCreations;
+        TVector<ECS::FEntity>                   BatchedCharacterCreations;
 
         TVector<FRigidBodyBuildResult>          BatchBuildScratch;
         TVector<EBodyBuildStatus>               BatchStatusScratch;
-        TVector<entt::entity>                   PendingDrainScratch;
+        TVector<ECS::FEntity>                   PendingDrainScratch;
 
         FBox3DTaskBridge                        TaskBridge;
         b3WorldId                               WorldId{};
@@ -333,7 +336,7 @@ namespace Lumina::Physics
 
         struct FActivationRecord
         {
-            entt::entity    Entity;
+            ECS::FEntity    Entity;
             bool            bActivated;
         };
         TVector<FActivationRecord>              ActivationDrainScratch;
@@ -367,7 +370,7 @@ namespace Lumina::Physics
         uint32                                  NextConstraintID = 1;
 
         FMutex                                  PendingConstraintMutex;
-        TVector<entt::entity>                   PendingConstraintCreations;
+        TVector<ECS::FEntity>                   PendingConstraintCreations;
 
         enum class EInterpFlag : uint8 { Interpolate = 0, Skip = 1, BelowKill = 2 };
 
@@ -375,7 +378,7 @@ namespace Lumina::Physics
         // to x/y/z/w so the nlerp vectorizes.
         struct FInterpStaging
         {
-            TVector<entt::entity>   Entities;
+            TVector<ECS::FEntity>   Entities;
             TVector<EInterpFlag>    Flags;
 
             TVector<FVector3>       PrevPos;

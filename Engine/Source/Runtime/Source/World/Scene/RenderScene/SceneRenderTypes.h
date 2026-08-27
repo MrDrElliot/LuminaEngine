@@ -938,16 +938,6 @@ namespace Lumina
     // 32 B lands every element on a sector boundary, so a warp's skinned writes fill whole sectors.
     static_assert(sizeof(FPreSkinnedVertex) == 32, "FPreSkinnedVertex must match shader");
 
-    // Mirror of the shader FSkinnedMeshletCone, one per skinned meshlet per frame.
-    struct FSkinnedMeshletCone
-    {
-        FVector3 Apex;
-        float    Cutoff;
-        FVector3 Axis;
-        float    ApexSpread;
-    };
-    static_assert(sizeof(FSkinnedMeshletCone) == 32, "FSkinnedMeshletCone must match shader");
-
     constexpr uint32 kNoPreSkinBase = 0xFFFFFFFFu;
     // No per-frame skinned meshlet bounds, so the cull falls back to bind-pose spheres and distrusts them.
     constexpr uint32 kNoSkinnedBounds = 0xFFFFFFFFu;
@@ -1049,8 +1039,11 @@ namespace Lumina
 
         int32  ShadowLODBias;
         float  ShadowCoarseLODDistSq;
-        uint32 _CullPad2;
-        uint32 _CullPad3;
+
+        // The cull camera clip range, so the sphere projection and the Hi-Z tap agree with CullCameraProjection.
+        float  CullNearPlane;
+        float  CullFarPlane;
+
         uint32 _CullPad4;
     };
 

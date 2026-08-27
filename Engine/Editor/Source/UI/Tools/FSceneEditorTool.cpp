@@ -1,5 +1,6 @@
 ﻿#include "TaskSystem/ParallelSort.h"
 #include "FSceneEditorTool.h"
+#include "World/ECS/Registry.h"
 #include <algorithm>
 #include "Scripting/DotNet/DotNetHost.h"
 
@@ -22,7 +23,6 @@
 #include "World/Scene/RenderScene/SceneRenderTypes.h"
 #include "World/Entity/Components/StaticMeshComponent.h"
 #include "World/Entity/Components/SkeletalMeshComponent.h"
-#include "World/Entity/Traits.h"
 #include "Animation/SkeletalMeshUtils.h"
 #include "Assets/AssetTypes/Mesh/SkeletalMesh/SkeletalMesh.h"
 #include "Assets/AssetTypes/Mesh/Skeleton/Skeleton.h"
@@ -45,6 +45,7 @@
 #include "Scripting/EntityScript.h"
 #include "World/Entity/Components/TagComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
+#include "World/Entity/Components/Component.h"
 #include "World/Entity/EntityUtils.h"
 #include "World/World.h"
 #include "World/Entity/Components/LightComponent.h"
@@ -102,40 +103,40 @@ namespace Lumina
         }
     }
 
-    void FSceneEditorTool::SetSingleSelectedEntity(entt::entity Entity)
+    void FSceneEditorTool::SetSingleSelectedEntity(ECS::FEntity Entity)
     {
-        FEntityRegistry& Registry = GetSceneRegistry();
-        if (Entity != entt::null && !Registry.valid(Entity))
+        ECS::FRegistry& Registry = GetSceneRegistry();
+        if (Entity != ECS::NullEntity && !Registry.IsValid(Entity))
         {
-            Entity = entt::null;
+            Entity = ECS::NullEntity;
         }
 
         // Clicking the already-singularly-selected entity is a no-op.
-        if (Entity == LastSelectedEntity && SelectedEntities.size() == (Entity == entt::null ? 0 : 1)
-            && (Entity == entt::null || SelectedEntities.find(Entity) != SelectedEntities.end()))
+        if (Entity == LastSelectedEntity && SelectedEntities.size() == (Entity == ECS::NullEntity ? 0 : 1)
+            && (Entity == ECS::NullEntity || SelectedEntities.find(Entity) != SelectedEntities.end()))
         {
             return;
         }
 
         // Drop tags from entities no longer selected so render highlighting matches the canonical set.
-        for (entt::entity Old : SelectedEntities)
+        for (ECS::FEntity Old : SelectedEntities)
         {
-            if (Old != Entity && Registry.valid(Old))
+            if (Old != Entity && Registry.IsValid(Old))
             {
-                Registry.remove<FSelectedInEditorComponent>(Old);
+                Registry.Remove<FSelectedInEditorComponent>(Old);
                 SyncOutlinerRowSelection(Old, false);
             }
         }
         SelectedEntities.clear();
 
         // Clear last-selected tag unconditionally; re-emplace below if new selection isn't empty.
-        Registry.clear<FLastSelectedTag>();
+        Registry.ClearComponent<FLastSelectedTag>();
 
-        if (Entity != entt::null)
+        if (Entity != ECS::NullEntity)
         {
             SelectedEntities.insert(Entity);
-            Registry.emplace_or_replace<FSelectedInEditorComponent>(Entity);
-            Registry.emplace_or_replace<FLastSelectedTag>(Entity);
+            Registry.EmplaceOrReplace<FSelectedInEditorComponent>(Entity);
+            Registry.EmplaceOrReplace<FLastSelectedTag>(Entity);
             SyncOutlinerRowSelection(Entity, true);
         }
 
@@ -146,10 +147,10 @@ namespace Lumina
         }
     }
 
-    void FSceneEditorTool::AddSelectedEntity(entt::entity Entity, bool /*bRebuild*/)
+    void FSceneEditorTool::AddSelectedEntity(ECS::FEntity Entity, bool /*bRebuild*/)
     {
-        FEntityRegistry& Registry = GetSceneRegistry();
-        if (Entity == entt::null || !Registry.valid(Entity))
+        ECS::FRegistry& Registry = GetSceneRegistry();
+        if (Entity == ECS::NullEntity || !Registry.IsValid(Entity))
         {
             return;
         }
@@ -158,23 +159,23 @@ namespace Lumina
         if (!bWasAlreadySelected)
         {
             SelectedEntities.insert(Entity);
-            Registry.emplace_or_replace<FSelectedInEditorComponent>(Entity);
+            Registry.EmplaceOrReplace<FSelectedInEditorComponent>(Entity);
             SyncOutlinerRowSelection(Entity, true);
         }
 
         // Always promote to last-selected so clicking a row in a multi-select focuses details.
         if (LastSelectedEntity != Entity)
         {
-            Registry.clear<FLastSelectedTag>();
-            Registry.emplace_or_replace<FLastSelectedTag>(Entity);
+            Registry.ClearComponent<FLastSelectedTag>();
+            Registry.EmplaceOrReplace<FLastSelectedTag>(Entity);
             LastSelectedEntity = Entity;
             OnSelectionChanged();
         }
     }
 
-    void FSceneEditorTool::RemoveSelectedEntity(entt::entity Entity, bool /*bRebuild*/)
+    void FSceneEditorTool::RemoveSelectedEntity(ECS::FEntity Entity, bool /*bRebuild*/)
     {
-        if (Entity == entt::null)
+        if (Entity == ECS::NullEntity)
         {
             return;
         }
@@ -187,10 +188,10 @@ namespace Lumina
 
         SelectedEntities.erase(SetIt);
 
-        FEntityRegistry& Registry = GetSceneRegistry();
-        if (Registry.valid(Entity))
+        ECS::FRegistry& Registry = GetSceneRegistry();
+        if (Registry.IsValid(Entity))
         {
-            Registry.remove<FSelectedInEditorComponent>(Entity);
+            Registry.Remove<FSelectedInEditorComponent>(Entity);
         }
 
         SyncOutlinerRowSelection(Entity, false);
@@ -198,29 +199,29 @@ namespace Lumina
         // If the deselected entity was the focus, pick a new one so "last" isn't stale.
         if (LastSelectedEntity == Entity)
         {
-            Registry.clear<FLastSelectedTag>();
-            entt::entity NewLast = entt::null;
-            for (entt::entity Candidate : SelectedEntities)
+            Registry.ClearComponent<FLastSelectedTag>();
+            ECS::FEntity NewLast = ECS::NullEntity;
+            for (ECS::FEntity Candidate : SelectedEntities)
             {
-                if (Registry.valid(Candidate))
+                if (Registry.IsValid(Candidate))
                 {
                     NewLast = Candidate;
                     break;
                 }
             }
-            if (NewLast != entt::null)
+            if (NewLast != ECS::NullEntity)
             {
-                Registry.emplace_or_replace<FLastSelectedTag>(NewLast);
+                Registry.EmplaceOrReplace<FLastSelectedTag>(NewLast);
             }
             LastSelectedEntity = NewLast;
             OnSelectionChanged();
         }
     }
 
-    void FSceneEditorTool::ToggleSelectedEntity(entt::entity Entity)
+    void FSceneEditorTool::ToggleSelectedEntity(ECS::FEntity Entity)
     {
-        FEntityRegistry& Registry = GetSceneRegistry();
-        if (Entity == entt::null || !Registry.valid(Entity))
+        ECS::FRegistry& Registry = GetSceneRegistry();
+        if (Entity == ECS::NullEntity || !Registry.IsValid(Entity))
         {
             return;
         }
@@ -238,32 +239,32 @@ namespace Lumina
     void FSceneEditorTool::ResyncSelectionFromRegistry()
     {
         // Clear old outliner row state; re-mark below from the post-resync set.
-        for (entt::entity Old : SelectedEntities)
+        for (ECS::FEntity Old : SelectedEntities)
         {
             SyncOutlinerRowSelection(Old, false);
         }
         SelectedEntities.clear();
-        LastSelectedEntity = entt::null;
+        LastSelectedEntity = ECS::NullEntity;
 
-        FEntityRegistry& Registry = GetSceneRegistry();
+        ECS::FRegistry& Registry = GetSceneRegistry();
 
-        Registry.view<FSelectedInEditorComponent>().each([&](entt::entity Entity)
+        Registry.View<FSelectedInEditorComponent>().ForEach([&](ECS::FEntity Entity)
         {
             SelectedEntities.insert(Entity);
             SyncOutlinerRowSelection(Entity, true);
         });
 
         // FLastSelectedTag should be serialized; fall back to first selected if it's missing.
-        Registry.view<FLastSelectedTag>().each([&](entt::entity Entity)
+        Registry.View<FLastSelectedTag>().ForEach([&](ECS::FEntity Entity)
         {
             LastSelectedEntity = Entity;
         });
 
-        if (LastSelectedEntity == entt::null && !SelectedEntities.empty())
+        if (LastSelectedEntity == ECS::NullEntity && !SelectedEntities.empty())
         {
-            entt::entity First = *SelectedEntities.begin();
+            ECS::FEntity First = *SelectedEntities.begin();
             LastSelectedEntity = First;
-            Registry.emplace_or_replace<FLastSelectedTag>(First);
+            Registry.EmplaceOrReplace<FLastSelectedTag>(First);
         }
 
         OnSelectionChanged();
@@ -271,25 +272,25 @@ namespace Lumina
 
     void FSceneEditorTool::ReapplySelectionTags()
     {
-        FEntityRegistry& Registry = GetSceneRegistry();
-        for (entt::entity Entity : SelectedEntities)
+        ECS::FRegistry& Registry = GetSceneRegistry();
+        for (ECS::FEntity Entity : SelectedEntities)
         {
-            if (Registry.valid(Entity))
+            if (Registry.IsValid(Entity))
             {
-                Registry.emplace_or_replace<FSelectedInEditorComponent>(Entity);
+                Registry.EmplaceOrReplace<FSelectedInEditorComponent>(Entity);
             }
         }
-        if (LastSelectedEntity != entt::null && Registry.valid(LastSelectedEntity))
+        if (LastSelectedEntity != ECS::NullEntity && Registry.IsValid(LastSelectedEntity))
         {
-            Registry.emplace_or_replace<FLastSelectedTag>(LastSelectedEntity);
+            Registry.EmplaceOrReplace<FLastSelectedTag>(LastSelectedEntity);
         }
     }
 
     void FSceneEditorTool::ClearSelectedEntities()
     {
-        FEntityRegistry& Registry = GetSceneRegistry();
+        ECS::FRegistry& Registry = GetSceneRegistry();
 
-        for (entt::entity Entity : SelectedEntities)
+        for (ECS::FEntity Entity : SelectedEntities)
         {
             SyncOutlinerRowSelection(Entity, false);
         }
@@ -297,13 +298,26 @@ namespace Lumina
         SelectedEntities.clear();
 
         // Bulk-erase via registry clear<>(); cheaper than walking SelectedEntities.
-        Registry.clear<FSelectedInEditorComponent>();
-        Registry.clear<FLastSelectedTag>();
+        Registry.ClearComponent<FSelectedInEditorComponent>();
+        Registry.ClearComponent<FLastSelectedTag>();
 
-        if (LastSelectedEntity != entt::null)
+        if (LastSelectedEntity != ECS::NullEntity)
         {
-            LastSelectedEntity = entt::null;
+            LastSelectedEntity = ECS::NullEntity;
             OnSelectionChanged();
+        }
+    }
+
+    void FSceneEditorTool::ResetSelectionState()
+    {
+        SelectedEntities.clear();
+        LastSelectedEntity = ECS::NullEntity;
+
+        if (CWorld* Observed = GetObservedWorld())
+        {
+            ECS::FRegistry& Registry = ECS::GetWorldRegistry(*Observed);
+            Registry.ClearComponent<FSelectedInEditorComponent>();
+            Registry.ClearComponent<FLastSelectedTag>();
         }
     }
 
@@ -321,7 +335,7 @@ namespace Lumina
         ImGui::Spacing();
     }
 
-    void FSceneEditorTool::DrawComponentList(entt::entity Entity)
+    void FSceneEditorTool::DrawComponentList(ECS::FEntity Entity)
     {
         const bool bFiltering = DetailsFilter.IsActive();
         uint32 VisibleCount = 0;
@@ -365,9 +379,8 @@ namespace Lumina
         }
     }
 
-    void FSceneEditorTool::DrawComponentHeader(FComponentTableEntry& Entry, entt::entity Entity)
+    void FSceneEditorTool::DrawComponentHeader(FComponentTableEntry& Entry, ECS::FEntity Entity)
     {
-        using namespace entt::literals;
 
         // Existence check via meta; drop this row if the entity no longer holds the component.
         if (IsComponentHiddenInDetails(Entry.ReflectedType))
@@ -375,8 +388,7 @@ namespace Lumina
             return;
         }
 
-        entt::meta_type MetaType = entt::resolve(entt::hashed_string(Entry.ReflectedType->GetName().c_str()));
-        if (!ECS::Utils::HasComponent(GetSceneRegistry(), Entity, MetaType))
+        if (!ECS::Utils::HasComponent(GetSceneRegistry(), Entity, Entry.ReflectedType))
         {
             return;
         }
@@ -454,7 +466,7 @@ namespace Lumina
             WorldCtx.World = World;
 
             // Lets a parameter picker on a component list the graph that entity actually runs.
-            const SAnimationGraphComponent* AnimGraph = GetSceneRegistry().try_get<SAnimationGraphComponent>(Entity);
+            const SAnimationGraphComponent* AnimGraph = GetSceneRegistry().TryGet<SAnimationGraphComponent>(Entity);
             AnimGraphCtx.Graph = (AnimGraph != nullptr) ? AnimGraph->Graph.Get() : nullptr;
 
             Entry.Table->SetContext(&PropertyContext);
@@ -471,17 +483,17 @@ namespace Lumina
         ImGui::PopID();
     }
 
-    void FSceneEditorTool::BuildSocketPickerData(entt::entity Entity, FSocketEditContext& Out)
+    void FSceneEditorTool::BuildSocketPickerData(ECS::FEntity Entity, FSocketEditContext& Out)
     {
-        FEntityRegistry& Registry = GetSceneRegistry();
+        ECS::FRegistry& Registry = GetSceneRegistry();
 
-        const FRelationshipComponent* Relationship = Registry.try_get<FRelationshipComponent>(Entity);
-        if (Relationship == nullptr || Relationship->Parent == entt::null || !Registry.valid(Relationship->Parent))
+        const FRelationshipComponent* Relationship = Registry.TryGet<FRelationshipComponent>(Entity);
+        if (Relationship == nullptr || Relationship->Parent == ECS::NullEntity || !Registry.IsValid(Relationship->Parent))
         {
             return;
         }
 
-        if (const SSkeletalMeshComponent* SkeletalMesh = Registry.try_get<SSkeletalMeshComponent>(Relationship->Parent))
+        if (const SSkeletalMeshComponent* SkeletalMesh = Registry.TryGet<SSkeletalMeshComponent>(Relationship->Parent))
         {
             if (CSkeleton* Skeleton = SkeletalUtils::GetSkeletonAsset(*SkeletalMesh))
             {
@@ -492,7 +504,7 @@ namespace Lumina
                 Out.Skeleton = Skeleton->GetSkeletonResource();
             }
         }
-        else if (const SStaticMeshComponent* StaticMesh = Registry.try_get<SStaticMeshComponent>(Relationship->Parent))
+        else if (const SStaticMeshComponent* StaticMesh = Registry.TryGet<SStaticMeshComponent>(Relationship->Parent))
         {
             if (StaticMesh->StaticMesh.IsValid())
             {
@@ -504,7 +516,7 @@ namespace Lumina
         }
     }
 
-    void FSceneEditorTool::RemoveComponent(entt::entity Entity, const CStruct* ComponentType)
+    void FSceneEditorTool::RemoveComponent(ECS::FEntity Entity, const CStruct* ComponentType)
     {
         bool bWasRemoved = false;
 
@@ -513,19 +525,12 @@ namespace Lumina
             return;
         }
 
-        ECS::Utils::ForEachComponent(GetSceneRegistry(), Entity, [&](void* Component, entt::basic_sparse_set<>& Set, const entt::meta_type& Type)
+        ECS::Utils::ForEachComponent(GetSceneRegistry(), Entity, [&](void*, ECS::FSparseSet& Set, CStruct* StructType)
         {
-            using namespace entt::literals;
-
-            if (entt::meta_any ReturnValue = ECS::Utils::InvokeMetaFunc(Type, "static_struct"_hs))
+            if (StructType == ComponentType)
             {
-                CStruct* StructType = ReturnValue.cast<CStruct*>();
-
-                if (StructType == ComponentType)
-                {
-                    Set.remove(Entity);
-                    bWasRemoved = true;
-                }
+                Set.RemoveEntity(Entity);
+                bWasRemoved = true;
             }
         });
 
@@ -564,7 +569,7 @@ namespace Lumina
         }
 
         TVector<const CStruct*> Types;
-        TVector<entt::entity>   AllEntities;
+        TVector<ECS::FEntity>   AllEntities;
         for (const FComponentDestroyRequest& Request : Requests)
         {
             if (Request.Type != nullptr)
@@ -578,7 +583,7 @@ namespace Lumina
         bool bOpened = false;
         for (const CStruct* Type : Types)
         {
-            TVector<entt::entity> Targets;
+            TVector<ECS::FEntity> Targets;
             for (const FComponentDestroyRequest& Request : Requests)
             {
                 if (Request.Type == Type)
@@ -619,16 +624,16 @@ namespace Lumina
 
     void FSceneEditorTool::BeginPropertyEditTransaction(CStruct* ComponentType)
     {
-        FEntityRegistry& Registry = GetSceneRegistry();
+        ECS::FRegistry& Registry = GetSceneRegistry();
 
         // Exactly the set OnPostPropertyChangeEvent writes, the focus plus the selection it replicates to.
-        TVector<entt::entity> Targets;
-        if (Registry.valid(DetailsEntity))
+        TVector<ECS::FEntity> Targets;
+        if (Registry.IsValid(DetailsEntity))
         {
             Targets.push_back(DetailsEntity);
         }
 
-        Registry.view<FSelectedInEditorComponent>().each([&](entt::entity Entity)
+        Registry.View<FSelectedInEditorComponent>().ForEach([&](ECS::FEntity Entity)
         {
             if (Entity != DetailsEntity)
             {
@@ -641,7 +646,6 @@ namespace Lumina
 
     void FSceneEditorTool::OnPostPropertyChangeEvent(const FPropertyChangedEvent& Event)
     {
-        using namespace entt::literals;
 
         // A reset can fire with no outer component type, so bail before dereferencing it.
         if (Event.OuterType == nullptr)
@@ -649,10 +653,10 @@ namespace Lumina
             return;
         }
 
-        FEntityRegistry& Registry = GetSceneRegistry();
-        entt::id_type TypeID = ECS::Utils::GetTypeID(Event.OuterType->GetName().c_str());
-        entt::meta_type WantType = entt::resolve(TypeID);
-        if (!WantType)
+        ECS::FRegistry& Registry = GetSceneRegistry();
+        CStruct* WantType = Event.OuterType;
+        const FComponentOps* WantOps = WantType->GetComponentOps();
+        if (WantOps == nullptr)
         {
             return;
         }
@@ -665,22 +669,15 @@ namespace Lumina
 
         // The focus entity is what the bound table edited, so locate its instance to replicate from.
         void* FocusInstance = nullptr;
-        if (Event.Property != nullptr && Registry.valid(DetailsEntity))
+        if (Event.Property != nullptr && Registry.IsValid(DetailsEntity))
         {
-            ECS::Utils::ForEachComponent(Registry, DetailsEntity, [&](void* Component, entt::basic_sparse_set<>&, const entt::meta_type& Type)
-            {
-                if (FocusInstance == nullptr && Type == WantType)
-                {
-                    FocusInstance = Component;
-                }
-            });
+            FocusInstance = WantOps->Get(Registry, DetailsEntity);
         }
 
-        auto View = Registry.view<FSelectedInEditorComponent>();
-        View.each([&](entt::entity Entity)
+        auto View = Registry.View<FSelectedInEditorComponent>();
+        View.ForEach([&](ECS::FEntity Entity)
         {
-            entt::meta_any Has = ECS::Utils::InvokeMetaFunc(TypeID, "has"_hs, entt::forward_as_meta(Registry), Entity);
-            if (!Has || !Has.cast<bool>())
+            if (WantOps->Has(Registry, Entity) == 0)
             {
                 return;
             }
@@ -688,14 +685,7 @@ namespace Lumina
             // Copy the edited property from the focus instance onto this one.
             if (FocusInstance != nullptr && Entity != DetailsEntity)
             {
-                void* DestInstance = nullptr;
-                ECS::Utils::ForEachComponent(Registry, Entity, [&](void* Component, entt::basic_sparse_set<>&, const entt::meta_type& Type)
-                {
-                    if (DestInstance == nullptr && Type == WantType)
-                    {
-                        DestInstance = Component;
-                    }
-                });
+                void* DestInstance = WantOps->Get(Registry, Entity);
 
                 // Offset-addressed, since a nested row's property is offset within its own struct.
                 if (DestInstance != nullptr && DestInstance != FocusInstance && Event.ValueOffset >= 0)
@@ -714,7 +704,7 @@ namespace Lumina
             // The same bypass as the focus instance, since the copy above is a raw property store.
             if (bTransformEdited)
             {
-                Registry.emplace_or_replace<FNeedsTransformUpdate>(Entity);
+                Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Entity);
             }
 
             // A back-to-prefab edit leaves zero divergent leaves, which clears the override record.
@@ -722,19 +712,18 @@ namespace Lumina
         });
     }
 
-    void FSceneEditorTool::RebuildPropertyTables(entt::entity Entity)
+    void FSceneEditorTool::RebuildPropertyTables(ECS::FEntity Entity)
     {
-        using namespace entt::literals;
 
         PropertyTables.clear();
 
         // Track owning entity so the details panel can detect staleness; null on invalid input forces a rebuild next time.
-        DetailsEntity = (Entity != entt::null && GetSceneRegistry().valid(Entity)) ? Entity : entt::null;
+        DetailsEntity = (Entity != ECS::NullEntity && GetSceneRegistry().IsValid(Entity)) ? Entity : ECS::NullEntity;
         bDetailsDirty = false;
 
-        if (GetSceneRegistry().valid(Entity))
+        if (GetSceneRegistry().IsValid(Entity))
         {
-            FEntityRegistry& Registry = GetSceneRegistry();
+            ECS::FRegistry& Registry = GetSceneRegistry();
 
             // One intermediate row per reflected component.
             struct FPendingRow
@@ -749,26 +738,22 @@ namespace Lumina
             // Shows the intersection of components and compares each value across the whole selection.
             const bool bMultiSelect = SelectedEntities.size() > 1 && IsEntitySelected(Entity);
 
-            TVector<entt::entity> OtherTargets;
+            TVector<ECS::FEntity> OtherTargets;
             TVector<THashMap<const CStruct*, void*>> OtherReflected;
             if (bMultiSelect)
             {
-                for (entt::entity Selected : SelectedEntities)
+                for (ECS::FEntity Selected : SelectedEntities)
                 {
-                    if (Selected == Entity || !Registry.valid(Selected))
+                    if (Selected == Entity || !Registry.IsValid(Selected))
                     {
                         continue;
                     }
                     OtherTargets.push_back(Selected);
 
                     THashMap<const CStruct*, void*> ReflectedMap;
-                    ECS::Utils::ForEachComponent(Registry, Selected, [&](void* Component, entt::basic_sparse_set<>&, const entt::meta_type& Type)
+                    ECS::Utils::ForEachComponent(Registry, Selected, [&](void* Component, ECS::FSparseSet&, CStruct* Struct)
                     {
-                        entt::meta_any MetaAny = ECS::Utils::InvokeMetaFunc(Type, "static_struct"_hs);
-                        if (MetaAny)
-                        {
-                            ReflectedMap[MetaAny.cast<CStruct*>()] = Component;
-                        }
+                        ReflectedMap[Struct] = Component;
                     });
                     OtherReflected.push_back(Move(ReflectedMap));
                 }
@@ -776,16 +761,8 @@ namespace Lumina
 
             TVector<FPendingRow> Pending;
 
-            ECS::Utils::ForEachComponent(Registry, Entity, [&](void* Component, entt::basic_sparse_set<>& Set, const entt::meta_type& Type)
+            ECS::Utils::ForEachComponent(Registry, Entity, [&](void* Component, ECS::FSparseSet& Set, CStruct* Struct)
             {
-                entt::meta_any MetaAny = ECS::Utils::InvokeMetaFunc(Type, "static_struct"_hs);
-                if (!MetaAny)
-                {
-                    return;
-                }
-
-                CStruct* Struct = MetaAny.cast<CStruct*>();
-
                 // Components that never show in the details panel (tags, prefab bookkeeping).
                 if (IsComponentHiddenInDetails(Struct))
                 {
@@ -827,7 +804,7 @@ namespace Lumina
             });
 
             // A prefab instance compares against the prefab baseline rather than the class CDO.
-            SPrefabInstanceComponent* FocusPrefabInstance = Registry.try_get<SPrefabInstanceComponent>(Entity);
+            SPrefabInstanceComponent* FocusPrefabInstance = Registry.TryGet<SPrefabInstanceComponent>(Entity);
 
             // A source prefab can be a marked-destroy zombie, which a plain null test does not catch.
             CPrefab* FocusSourcePrefab = FocusPrefabInstance != nullptr ? FocusPrefabInstance->SourcePrefab.Get() : nullptr;
@@ -883,15 +860,15 @@ namespace Lumina
         }
     }
 
-    bool FSceneEditorTool::IsOutlinerEntityVisible(entt::entity Entity) const
+    bool FSceneEditorTool::IsOutlinerEntityVisible(ECS::FEntity Entity) const
     {
-        FEntityRegistry& Registry = GetSceneRegistry();
-        return Registry.valid(Entity)
-            && Registry.all_of<SNameComponent>(Entity)
-            && !Registry.any_of<FHideInSceneOutliner>(Entity);
+        ECS::FRegistry& Registry = GetSceneRegistry();
+        return Registry.IsValid(Entity)
+            && Registry.HasAll<SNameComponent>(Entity)
+            && !Registry.HasAny<FHideInSceneOutliner>(Entity);
     }
 
-    void FSceneEditorTool::SyncOutlinerRowSelection(entt::entity Entity, bool bSelected)
+    void FSceneEditorTool::SyncOutlinerRowSelection(ECS::FEntity Entity, bool bSelected)
     {
         auto It = EntityToTreeNode.find(Entity);
         if (It != EntityToTreeNode.end() && OutlinerListView.IsValid(It->second))
@@ -909,20 +886,20 @@ namespace Lumina
 
         BuildFolderNodes(Tree);
 
-        FEntityRegistry& Registry = GetSceneRegistry();
-        auto View = Registry.view<SNameComponent>(entt::exclude<FHideInSceneOutliner>);
+        ECS::FRegistry& Registry = GetSceneRegistry();
+        auto View = Registry.View<SNameComponent>(ECS::TExclude<FHideInSceneOutliner>{});
         
-        TVector<entt::entity> Roots;
-        Roots.reserve(View.size_hint());
-        for (entt::entity Entity : View)
+        TVector<ECS::FEntity> Roots;
+        Roots.reserve(View.Num());
+        for (ECS::FEntity Entity : View)
         {
             if (!IsOutlinerEntityVisible(Entity))
             {
                 continue;
             }
-            if (FRelationshipComponent* Rel = Registry.try_get<FRelationshipComponent>(Entity))
+            if (FRelationshipComponent* Rel = Registry.TryGet<FRelationshipComponent>(Entity))
             {
-                if (Rel->Parent != entt::null)
+                if (Rel->Parent != ECS::NullEntity)
                 {
                     continue;
                 }
@@ -931,10 +908,10 @@ namespace Lumina
             Roots.push_back(Entity);
         }
 
-        Task::ParallelSort(Roots.begin(), Roots.end(), [&](entt::entity LHS, entt::entity RHS)
+        Task::ParallelSort(Roots.begin(), Roots.end(), [&](ECS::FEntity LHS, ECS::FEntity RHS)
         {
-            const FName& A = View.get<SNameComponent>(LHS).Name;
-            const FName& B = View.get<SNameComponent>(RHS).Name;
+            const FName& A = View.Get<SNameComponent>(LHS).Name;
+            const FName& B = View.Get<SNameComponent>(RHS).Name;
 
             if (A != B)
             {
@@ -944,15 +921,15 @@ namespace Lumina
             return LHS < RHS;
         });
 
-        for (entt::entity Root : Roots)
+        for (ECS::FEntity Root : Roots)
         {
             AddEntityToOutliner(Root);
         }
     }
 
-    FTreeNodeID FSceneEditorTool::AddEntityToOutliner(entt::entity Entity)
+    FTreeNodeID FSceneEditorTool::AddEntityToOutliner(ECS::FEntity Entity)
     {
-        FEntityRegistry& Registry = GetSceneRegistry();
+        ECS::FRegistry& Registry = GetSceneRegistry();
         if (!IsOutlinerEntityVisible(Entity))
         {
             return InvalidTreeNode;
@@ -967,9 +944,9 @@ namespace Lumina
         // Attach under parent if it's already in the tree.
         FTreeNodeID ParentNode = InvalidTreeNode;
         bool bHasEntityParent = false;
-        if (FRelationshipComponent* Rel = Registry.try_get<FRelationshipComponent>(Entity))
+        if (FRelationshipComponent* Rel = Registry.TryGet<FRelationshipComponent>(Entity))
         {
-            if (Rel->Parent != entt::null)
+            if (Rel->Parent != ECS::NullEntity)
             {
                 bHasEntityParent = true;
 
@@ -997,8 +974,8 @@ namespace Lumina
             }
         }
 
-        SNameComponent& NameComponent = Registry.get<SNameComponent>(Entity);
-        const SPrefabInstanceComponent* PrefabInstance = Registry.try_get<SPrefabInstanceComponent>(Entity);
+        SNameComponent& NameComponent = Registry.Get<SNameComponent>(Entity);
+        const SPrefabInstanceComponent* PrefabInstance = Registry.TryGet<SPrefabInstanceComponent>(Entity);
         const bool bIsPrefabInstanceRoot = PrefabInstance != nullptr && PrefabInstance->bIsRoot;
         const bool bIsLockedPrefabChild = PrefabInstance != nullptr && !PrefabInstance->bIsRoot;
 
@@ -1015,7 +992,7 @@ namespace Lumina
         {
             Name.append(LE_ICON_CUBE).append(" ");
         }
-        Name.append(NameComponent.Name.c_str()).append(" (").append(Format("{}", entt::to_integral(Entity)) + ")");
+        Name.append(NameComponent.Name.c_str()).append(" (").append(Format("{}", (Entity).Value) + ")");
 
         FTreeNodeID ItemEntity = OutlinerListView.CreateNode(ParentNode, FStringView(Name.data(), Name.length()));
         EntityToTreeNode[Entity] = ItemEntity;
@@ -1035,7 +1012,7 @@ namespace Lumina
         Display.bAllowRenaming = !bIsLockedPrefabChild;
 
         // The per-entity script toggle is only shown when the entity carries a script.
-        if (Registry.any_of<SEntityScriptComponent>(Entity))
+        if (Registry.HasAny<SEntityScriptComponent>(Entity))
         {
             Display.bShowSecondaryIcon = true;
             Display.SecondaryIconOn    = LE_ICON_SCRIPT_TEXT;
@@ -1045,44 +1022,44 @@ namespace Lumina
 
         OutlinerListView.EmplaceUserData<FEntityListViewItemData>(ItemEntity).Entity = Entity;
 
-        if (Registry.any_of<FSelectedInEditorComponent>(Entity))
+        if (Registry.HasAny<FSelectedInEditorComponent>(Entity))
         {
             OutlinerListView.Get<FTreeNodeState>(ItemEntity).bSelected = true;
         }
 
-        if (Registry.any_of<SDisabledTag>(Entity))
+        if (Registry.HasAny<SDisabledTag>(Entity))
         {
             OutlinerListView.Get<FTreeNodeState>(ItemEntity).bDisabled = true;
         }
 
-        if (Registry.any_of<SScriptDisabledTag>(Entity))
+        if (Registry.HasAny<SScriptDisabledTag>(Entity))
         {
             OutlinerListView.Get<FTreeNodeState>(ItemEntity).bSecondaryToggled = true;
         }
 
         // Only show an expander if the entity actually has child entities; lazy expansion populates them.
-        const FRelationshipComponent* RelForChildren = Registry.try_get<FRelationshipComponent>(Entity);
+        const FRelationshipComponent* RelForChildren = Registry.TryGet<FRelationshipComponent>(Entity);
         const bool bHasChildren = RelForChildren != nullptr && RelForChildren->Children > 0;
         OutlinerListView.MarkHasLazyChildren(ItemEntity, bHasChildren);
 
         return ItemEntity;
     }
 
-    void FSceneEditorTool::BuildEntityTooltip(entt::entity Entity, FTreeNodeDisplay& Display)
+    void FSceneEditorTool::BuildEntityTooltip(ECS::FEntity Entity, FTreeNodeDisplay& Display)
     {
         if (Display.bTooltipBuilt)
         {
             return;
         }
 
-        FEntityRegistry& Registry = GetSceneRegistry();
-        if (!Registry.valid(Entity) || !Registry.all_of<SNameComponent>(Entity))
+        ECS::FRegistry& Registry = GetSceneRegistry();
+        if (!Registry.IsValid(Entity) || !Registry.HasAll<SNameComponent>(Entity))
         {
             return;
         }
 
-        const SNameComponent& NameComponent = Registry.get<SNameComponent>(Entity);
-        const SPrefabInstanceComponent* PrefabInstance = Registry.try_get<SPrefabInstanceComponent>(Entity);
+        const SNameComponent& NameComponent = Registry.Get<SNameComponent>(Entity);
+        const SPrefabInstanceComponent* PrefabInstance = Registry.TryGet<SPrefabInstanceComponent>(Entity);
         const bool bIsPrefabInstanceRoot = PrefabInstance != nullptr && PrefabInstance->bIsRoot;
         const bool bIsLockedPrefabChild = PrefabInstance != nullptr && !PrefabInstance->bIsRoot;
 
@@ -1094,33 +1071,23 @@ namespace Lumina
 
         if (bIsLockedPrefabChild)
         {
-            Display.TooltipSubtitle = FString("Prefab child #" + Format("{}", entt::to_integral(Entity)) + ", hierarchy locked");
+            Display.TooltipSubtitle = FString("Prefab child #" + Format("{}", (Entity).Value) + ", hierarchy locked");
         }
         else if (bIsPrefabInstanceRoot)
         {
-            Display.TooltipSubtitle = FString("Prefab instance #" + Format("{}", entt::to_integral(Entity)));
+            Display.TooltipSubtitle = FString("Prefab instance #" + Format("{}", (Entity).Value));
         }
         else
         {
-            Display.TooltipSubtitle = FString("Entity #" + Format("{}", entt::to_integral(Entity)));
+            Display.TooltipSubtitle = FString("Entity #" + Format("{}", (Entity).Value));
         }
 
         Display.TooltipChipHeader = "COMPONENTS";
         Display.TooltipChips.clear();
-        ECS::Utils::ForEachComponent(Registry, Entity, [&](void*, const entt::basic_sparse_set<>& /*Set*/, entt::meta_type Meta)
+        ECS::Utils::ForEachComponent(Registry, Entity, [&](void*, const ECS::FSparseSet&, CStruct* StructType)
         {
-            using namespace entt::literals;
             FString Chip = LE_ICON_PUZZLE " ";
-            if (entt::meta_any Resolved = ECS::Utils::InvokeMetaFunc(Meta, "static_struct"_hs))
-            {
-                if (CStruct* StructType = Resolved.cast<CStruct*>())
-                {
-                    Chip += StructType->MakeDisplayName().c_str();
-                    Display.TooltipChips.emplace_back(std::move(Chip));
-                    return;
-                }
-            }
-            Chip += Meta.name();
+            Chip += StructType->MakeDisplayName().c_str();
             Display.TooltipChips.emplace_back(std::move(Chip));
         });
         if (Display.TooltipChips.empty())
@@ -1131,7 +1098,7 @@ namespace Lumina
         Display.bTooltipBuilt = true;
     }
 
-    void FSceneEditorTool::RemoveEntityFromOutliner(entt::entity Entity)
+    void FSceneEditorTool::RemoveEntityFromOutliner(ECS::FEntity Entity)
     {
         auto It = EntityToTreeNode.find(Entity);
         if (It == EntityToTreeNode.end())
@@ -1140,10 +1107,10 @@ namespace Lumina
         }
 
         // RemoveNode tears down the subtree; walk hierarchy first to clear EntityToTreeNode for descendants.
-        FEntityRegistry& Registry = GetSceneRegistry();
-        if (Registry.valid(Entity))
+        ECS::FRegistry& Registry = GetSceneRegistry();
+        if (Registry.IsValid(Entity))
         {
-            ECS::Utils::ForEachChild(Registry, Entity, [&](entt::entity Child)
+            ECS::Utils::ForEachChild(Registry, Entity, [&](ECS::FEntity Child)
             {
                 RemoveEntityFromOutliner(Child);
             });
@@ -1153,10 +1120,10 @@ namespace Lumina
         EntityToTreeNode.erase(It);
     }
 
-    void FSceneEditorTool::ReparentEntityInOutliner(entt::entity Entity)
+    void FSceneEditorTool::ReparentEntityInOutliner(ECS::FEntity Entity)
     {
         // Remember the old tree parent before the move; it may lose its last child here.
-        entt::entity OldParent = entt::null;
+        ECS::FEntity OldParent = ECS::NullEntity;
         if (auto It = EntityToTreeNode.find(Entity); It != EntityToTreeNode.end())
         {
             FTreeNodeID ParentNode = OutlinerListView.GetParentNode(It->second);
@@ -1174,9 +1141,9 @@ namespace Lumina
         RefreshOutlinerExpander(OldParent);
     }
 
-    void FSceneEditorTool::RefreshOutlinerExpander(entt::entity Entity)
+    void FSceneEditorTool::RefreshOutlinerExpander(ECS::FEntity Entity)
     {
-        if (Entity == entt::null)
+        if (Entity == ECS::NullEntity)
         {
             return;
         }
@@ -1186,21 +1153,21 @@ namespace Lumina
             return;
         }
 
-        FEntityRegistry& Registry = GetSceneRegistry();
-        const FRelationshipComponent* Rel = Registry.try_get<FRelationshipComponent>(Entity);
+        ECS::FRegistry& Registry = GetSceneRegistry();
+        const FRelationshipComponent* Rel = Registry.TryGet<FRelationshipComponent>(Entity);
         const bool bHasChildren = Rel != nullptr && Rel->Children > 0;
         OutlinerListView.MarkHasLazyChildren(It->second, bHasChildren);
     }
 
-    void FSceneEditorTool::RevealEntityInOutliner(entt::entity Entity)
+    void FSceneEditorTool::RevealEntityInOutliner(ECS::FEntity Entity)
     {
-        if (Entity == entt::null)
+        if (Entity == ECS::NullEntity)
         {
             return;
         }
 
-        FEntityRegistry& Registry = GetSceneRegistry();
-        if (!Registry.valid(Entity) || !IsOutlinerEntityVisible(Entity))
+        ECS::FRegistry& Registry = GetSceneRegistry();
+        if (!Registry.IsValid(Entity) || !IsOutlinerEntityVisible(Entity))
         {
             return;
         }
@@ -1209,14 +1176,14 @@ namespace Lumina
         FlushOutlinerPending();
 
         // Children are lazy, so each level has to be opened top-down before the next has a node.
-        TVector<entt::entity> Chain;
-        for (entt::entity Cursor = Entity; Cursor != entt::null && Chain.size() < 64; )
+        TVector<ECS::FEntity> Chain;
+        for (ECS::FEntity Cursor = Entity; Cursor != ECS::NullEntity && Chain.size() < 64; )
         {
             Chain.push_back(Cursor);
 
-            const FRelationshipComponent* Rel = Registry.try_get<FRelationshipComponent>(Cursor);
-            Cursor = (Rel != nullptr) ? Rel->Parent : entt::null;
-            if (Cursor != entt::null && !Registry.valid(Cursor))
+            const FRelationshipComponent* Rel = Registry.TryGet<FRelationshipComponent>(Cursor);
+            Cursor = (Rel != nullptr) ? Rel->Parent : ECS::NullEntity;
+            if (Cursor != ECS::NullEntity && !Registry.IsValid(Cursor))
             {
                 break;
             }
@@ -1242,14 +1209,14 @@ namespace Lumina
     void FSceneEditorTool::BuildEntityChildren(FTreeListView& Tree, FTreeNodeID Item)
     {
         FEntityListViewItemData& Data = Tree.Get<FEntityListViewItemData>(Item);
-        FEntityRegistry& Registry = GetSceneRegistry();
-        if (!Registry.valid(Data.Entity))
+        ECS::FRegistry& Registry = GetSceneRegistry();
+        if (!Registry.IsValid(Data.Entity))
         {
             return;
         }
 
         // Skips filtered-out children and ones already present from an on_construct race.
-        ECS::Utils::ForEachChild(Registry, Data.Entity, [&](entt::entity Child)
+        ECS::Utils::ForEachChild(Registry, Data.Entity, [&](ECS::FEntity Child)
         {
             if (!IsOutlinerEntityVisible(Child))
             {
@@ -1264,9 +1231,9 @@ namespace Lumina
         });
     }
 
-    void FSceneEditorTool::OnOutlinerEntityConstructed(entt::registry& Registry, entt::entity Entity)
+    void FSceneEditorTool::OnOutlinerEntityConstructed(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        if (Registry.any_of<FHideInSceneOutliner>(Entity))
+        if (Registry.HasAny<FHideInSceneOutliner>(Entity))
         {
             return;
         }
@@ -1274,12 +1241,12 @@ namespace Lumina
         PendingOutlinerAdds.push_back(Entity);
     }
 
-    void FSceneEditorTool::OnOutlinerEntityDestroyed(entt::registry& Registry, entt::entity Entity)
+    void FSceneEditorTool::OnOutlinerEntityDestroyed(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
         (void)Registry;
 
         // Deleting the last child must drop the parent's twisty, and the parent link is still intact here.
-        entt::entity ParentEntity = entt::null;
+        ECS::FEntity ParentEntity = ECS::NullEntity;
         if (auto It = EntityToTreeNode.find(Entity); It != EntityToTreeNode.end())
         {
             FTreeNodeID ParentNode = OutlinerListView.GetParentNode(It->second);
@@ -1288,7 +1255,7 @@ namespace Lumina
                 ParentEntity = OutlinerListView.Get<FEntityListViewItemData>(ParentNode).Entity;
             }
         }
-        else if (const FRelationshipComponent* Rel = GetSceneRegistry().try_get<FRelationshipComponent>(Entity))
+        else if (const FRelationshipComponent* Rel = GetSceneRegistry().TryGet<FRelationshipComponent>(Entity))
         {
             ParentEntity = Rel->Parent;
         }
@@ -1306,7 +1273,7 @@ namespace Lumina
             EntityFolderCache.erase(Entity);
         }
 
-        if (ParentEntity != entt::null)
+        if (ParentEntity != ECS::NullEntity)
         {
             PendingExpanderRefresh.push_back(ParentEntity);
         }
@@ -1322,7 +1289,7 @@ namespace Lumina
         PendingOutlinerAdds.clear();
 
         // The destroy has settled by now, and the refresh no-ops for parents that were removed too.
-        for (entt::entity Parent : PendingExpanderRefresh)
+        for (ECS::FEntity Parent : PendingExpanderRefresh)
         {
             RefreshOutlinerExpander(Parent);
         }
@@ -1382,7 +1349,7 @@ namespace Lumina
         return World->FindSceneFolders();
     }
 
-    uint32 FSceneEditorTool::GetEntityFolderID(entt::entity Entity) const
+    uint32 FSceneEditorTool::GetEntityFolderID(ECS::FEntity Entity) const
     {
         auto It = EntityFolderCache.find(Entity);
         if (It != EntityFolderCache.end())
@@ -1454,7 +1421,7 @@ namespace Lumina
             return;
         }
 
-        FEntityRegistry& Registry = GetSceneRegistry();
+        ECS::FRegistry& Registry = GetSceneRegistry();
 
         // Dead handles are dropped here rather than on every read; a foreign world is only inspected.
         if (SSceneFolderComponent* Editable = GetEditableSceneFolders())
@@ -1463,7 +1430,7 @@ namespace Lumina
             {
                 for (int32 i = (int32)Folder.Entities.size() - 1; i >= 0; --i)
                 {
-                    if (!Registry.valid(static_cast<entt::entity>(Folder.Entities[i])))
+                    if (!Registry.IsValid(static_cast<ECS::FEntity>(Folder.Entities[i])))
                     {
                         Folder.Entities.erase(Folder.Entities.begin() + i);
                     }
@@ -1519,8 +1486,8 @@ namespace Lumina
 
             for (uint32 Handle : Folder->Entities)
             {
-                const entt::entity Member = static_cast<entt::entity>(Handle);
-                if (Registry.valid(Member))
+                const ECS::FEntity Member = static_cast<ECS::FEntity>(Handle);
+                if (Registry.IsValid(Member))
                 {
                     EntityFolderCache[Member] = Folder->ID;
                 }
@@ -1530,7 +1497,7 @@ namespace Lumina
         // A folder reads as hidden only when everything inside it is.
         for (const FSceneFolder* Folder : Ordered)
         {
-            TVector<entt::entity> Contents;
+            TVector<ECS::FEntity> Contents;
             CollectFolderEntities(Folder->ID, Contents, true);
             if (Contents.empty())
             {
@@ -1538,9 +1505,9 @@ namespace Lumina
             }
 
             bool bAllHidden = true;
-            for (entt::entity Member : Contents)
+            for (ECS::FEntity Member : Contents)
             {
-                if (!Registry.any_of<SDisabledTag>(Member))
+                if (!Registry.HasAny<SDisabledTag>(Member))
                 {
                     bAllHidden = false;
                     break;
@@ -1551,7 +1518,7 @@ namespace Lumina
         }
     }
 
-    void FSceneEditorTool::CollectFolderEntities(uint32 FolderID, TVector<entt::entity>& OutEntities, bool bRecursive) const
+    void FSceneEditorTool::CollectFolderEntities(uint32 FolderID, TVector<ECS::FEntity>& OutEntities, bool bRecursive) const
     {
         const SSceneFolderComponent* Folders = GetSceneFolders();
         if (Folders == nullptr)
@@ -1566,7 +1533,7 @@ namespace Lumina
             Folders->CollectDescendants(FolderID, FolderIDs);
         }
 
-        FEntityRegistry& Registry = GetSceneRegistry();
+        ECS::FRegistry& Registry = GetSceneRegistry();
         for (uint32 ID : FolderIDs)
         {
             const FSceneFolder* Folder = Folders->Find(ID);
@@ -1577,8 +1544,8 @@ namespace Lumina
 
             for (uint32 Handle : Folder->Entities)
             {
-                const entt::entity Member = static_cast<entt::entity>(Handle);
-                if (Registry.valid(Member))
+                const ECS::FEntity Member = static_cast<ECS::FEntity>(Handle);
+                if (Registry.IsValid(Member))
                 {
                     OutEntities.push_back(Member);
                 }
@@ -1586,51 +1553,51 @@ namespace Lumina
         }
     }
 
-    entt::entity FSceneEditorTool::GetSceneFolderOwner() const
+    ECS::FEntity FSceneEditorTool::GetSceneFolderOwner() const
     {
         if (World == nullptr)
         {
-            return entt::null;
+            return ECS::NullEntity;
         }
 
         // The folder table lives on the world's singleton entity, which has no public accessor.
-        for (entt::entity Entity : ECS::GetWorldRegistry(*World).view<FSingletonEntityTag>())
+        for (ECS::FEntity Entity : ECS::GetWorldRegistry(*World).View<FSingletonEntityTag>())
         {
             return Entity;
         }
 
-        return entt::null;
+        return ECS::NullEntity;
     }
 
     void FSceneEditorTool::BeginFolderTransaction()
     {
-        const entt::entity Owner = GetSceneFolderOwner();
-        if (Owner == entt::null)
+        const ECS::FEntity Owner = GetSceneFolderOwner();
+        if (Owner == ECS::NullEntity)
         {
             BeginTransaction();
             return;
         }
 
-        TVector<entt::entity> Targets;
+        TVector<ECS::FEntity> Targets;
         Targets.push_back(Owner);
         BeginComponentTransaction(Targets, SSceneFolderComponent::StaticStruct());
     }
 
-    void FSceneEditorTool::RecordPrefabOverrideSnapshot(const TVector<entt::entity>& Entities)
+    void FSceneEditorTool::RecordPrefabOverrideSnapshot(const TVector<ECS::FEntity>& Entities)
     {
-        FEntityRegistry& Registry = GetSceneRegistry();
+        ECS::FRegistry& Registry = GetSceneRegistry();
 
         // The ledger sits on the instance root, an ancestor, so the whole chain up is recorded.
-        TVector<entt::entity> Chain;
-        for (entt::entity Entity : Entities)
+        TVector<ECS::FEntity> Chain;
+        for (ECS::FEntity Entity : Entities)
         {
-            entt::entity Cursor = Entity;
-            for (uint32 Guard = 0; Cursor != entt::null && Registry.valid(Cursor) && Guard < 64; ++Guard)
+            ECS::FEntity Cursor = Entity;
+            for (uint32 Guard = 0; Cursor != ECS::NullEntity && Registry.IsValid(Cursor) && Guard < 64; ++Guard)
             {
                 Chain.AddUnique(Cursor);
 
-                const FRelationshipComponent* Link = Registry.try_get<FRelationshipComponent>(Cursor);
-                Cursor = Link != nullptr ? Link->Parent : entt::null;
+                const FRelationshipComponent* Link = Registry.TryGet<FRelationshipComponent>(Cursor);
+                Cursor = Link != nullptr ? Link->Parent : ECS::NullEntity;
             }
         }
 
@@ -1639,13 +1606,13 @@ namespace Lumina
 
     void FSceneEditorTool::RecordSceneFolderSnapshot()
     {
-        const entt::entity Owner = GetSceneFolderOwner();
-        if (Owner == entt::null)
+        const ECS::FEntity Owner = GetSceneFolderOwner();
+        if (Owner == ECS::NullEntity)
         {
             return;
         }
 
-        TVector<entt::entity> Targets;
+        TVector<ECS::FEntity> Targets;
         Targets.push_back(Owner);
         RecordComponentSnapshot(Targets, SSceneFolderComponent::StaticStruct());
     }
@@ -1691,9 +1658,9 @@ namespace Lumina
 
         if (bDeleteContents)
         {
-            TVector<entt::entity> Contents;
+            TVector<ECS::FEntity> Contents;
             CollectFolderEntities(FolderID, Contents, true);
-            for (entt::entity Entity : Contents)
+            for (ECS::FEntity Entity : Contents)
             {
                 EntityDestroyRequests.push(Entity);
             }
@@ -1735,7 +1702,7 @@ namespace Lumina
         MarkSceneDirty();
     }
 
-    void FSceneEditorTool::MoveEntitiesToFolder(const TVector<entt::entity>& Entities, uint32 FolderID)
+    void FSceneEditorTool::MoveEntitiesToFolder(const TVector<ECS::FEntity>& Entities, uint32 FolderID)
     {
         if (!SupportsSceneFolders() || IsInspectingForeignWorld())
         {
@@ -1749,23 +1716,23 @@ namespace Lumina
             return;
         }
 
-        FEntityRegistry& Registry = GetSceneRegistry();
+        ECS::FRegistry& Registry = GetSceneRegistry();
 
-        TVector<entt::entity> Moved;
+        TVector<ECS::FEntity> Moved;
         Moved.reserve(Entities.size());
 
         // Filing a parented entity detaches it, so the links travel with the folder table.
         BeginRelationshipTransaction(Entities);
         RecordSceneFolderSnapshot();
 
-        for (entt::entity Entity : Entities)
+        for (ECS::FEntity Entity : Entities)
         {
             if (!IsOutlinerEntityVisible(Entity))
             {
                 continue;
             }
 
-            const SPrefabInstanceComponent* PrefabInstance = Registry.try_get<SPrefabInstanceComponent>(Entity);
+            const SPrefabInstanceComponent* PrefabInstance = Registry.TryGet<SPrefabInstanceComponent>(Entity);
             if (PrefabInstance != nullptr && !PrefabInstance->bIsRoot)
             {
                 continue;
@@ -1801,7 +1768,7 @@ namespace Lumina
         }
         EndTransaction("Move To Folder");
 
-        for (entt::entity Entity : Moved)
+        for (ECS::FEntity Entity : Moved)
         {
             ReparentEntityInOutliner(Entity);
         }
@@ -1811,11 +1778,11 @@ namespace Lumina
 
     void FSceneEditorTool::SelectFolderContents(uint32 FolderID)
     {
-        TVector<entt::entity> Contents;
+        TVector<ECS::FEntity> Contents;
         CollectFolderEntities(FolderID, Contents, true);
 
         ClearSelectedEntities();
-        for (entt::entity Entity : Contents)
+        for (ECS::FEntity Entity : Contents)
         {
             AddSelectedEntity(Entity);
         }
@@ -1823,7 +1790,7 @@ namespace Lumina
 
     void FSceneEditorTool::SetFolderContentsHidden(uint32 FolderID, bool bHidden)
     {
-        TVector<entt::entity> Contents;
+        TVector<ECS::FEntity> Contents;
         CollectFolderEntities(FolderID, Contents, true);
         if (Contents.empty())
         {
@@ -1833,18 +1800,18 @@ namespace Lumina
         // A pending rebuild re-derives every row's state from the registry, so stale ids are left alone.
         const bool bRowsCurrent = !OutlinerListView.IsDirty();
 
-        FEntityRegistry& Registry = GetSceneRegistry();
-        for (entt::entity Entity : Contents)
+        ECS::FRegistry& Registry = GetSceneRegistry();
+        for (ECS::FEntity Entity : Contents)
         {
             // Recorded in the prefab ledger, or the next refresh prunes the tag and unhides the instance.
             if (bHidden)
             {
-                Registry.emplace_or_replace<SDisabledTag>(Entity);
+                Registry.EmplaceOrReplace<SDisabledTag>(Entity);
                 CPrefab::NoteComponentAdded(Registry, Entity, SDisabledTag::StaticStruct());
             }
             else
             {
-                Registry.remove<SDisabledTag>(Entity);
+                Registry.Remove<SDisabledTag>(Entity);
                 CPrefab::NoteComponentRemoved(Registry, Entity, SDisabledTag::StaticStruct());
             }
 
@@ -1881,7 +1848,7 @@ namespace Lumina
             return;
         }
 
-        TVector<entt::entity> Contents;
+        TVector<ECS::FEntity> Contents;
         CollectFolderEntities(FolderID, Contents, true);
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
@@ -1970,7 +1937,7 @@ namespace Lumina
         ImGui::PopStyleVar(3);
     }
 
-    void FSceneEditorTool::DrawMoveToFolderMenuItems(const TVector<entt::entity>& Entities)
+    void FSceneEditorTool::DrawMoveToFolderMenuItems(const TVector<ECS::FEntity>& Entities)
     {
         if (!SupportsSceneFolders() || IsInspectingForeignWorld() || Entities.empty())
         {
@@ -2073,13 +2040,13 @@ namespace Lumina
         bDetailsDirty = true;
     }
 
-    entt::entity FSceneEditorTool::SpawnEntityTransacted(FName Name, FName TransactionLabel,
-        const TFunction<void(entt::entity)>& Decorate)
+    ECS::FEntity FSceneEditorTool::SpawnEntityTransacted(FName Name, FName TransactionLabel,
+        const TFunction<void(ECS::FEntity)>& Decorate)
     {
         BeginCreationTransaction();
 
-        const entt::entity Created = World->ConstructEntity(Name, GetNewEntitySpawnTransform());
-        if (Created != entt::null)
+        const ECS::FEntity Created = World->ConstructEntity(Name, GetNewEntitySpawnTransform());
+        if (Created != ECS::NullEntity)
         {
             if (Decorate)
             {
@@ -2091,7 +2058,7 @@ namespace Lumina
 
         EndTransaction(TransactionLabel);
 
-        if (Created != entt::null)
+        if (Created != ECS::NullEntity)
         {
             SetSingleSelectedEntity(Created);
             MarkSceneDirty();
@@ -2112,14 +2079,17 @@ namespace Lumina
             return;
         }
 
-        const entt::meta_type MetaType = SceneOps::ResolveComponentType(FStringView(Component->GetName().c_str()));
+        CStruct* ComponentType = SceneOps::ResolveComponentType(FStringView(Component->GetName().c_str()));
+        const FComponentOps* Ops = ComponentType != nullptr ? ComponentType->GetComponentOps() : nullptr;
+        if (Ops == nullptr)
+        {
+            return;
+        }
 
         // A bare emplace, matching what this path has always done. It records no prefab override note.
-        SpawnEntityTransacted(Component->MakeDisplayName(), "New Entity", [this, MetaType](entt::entity Created)
+        SpawnEntityTransacted(Component->MakeDisplayName(), "New Entity", [this, Ops](ECS::FEntity Created)
         {
-            using namespace entt::literals;
-            ECS::Utils::InvokeMetaFunc(MetaType, "emplace"_hs, entt::forward_as_meta(GetSceneRegistry()),
-                Created, entt::forward_as_meta(entt::meta_any{}));
+            Ops->EmplaceDefault(GetSceneRegistry(), Created);
         });
     }
 
@@ -2130,18 +2100,18 @@ namespace Lumina
             return;
         }
 
-        SpawnEntityTransacted(DisplayName, "New Primitive", [this, PrimitiveMesh](entt::entity Created)
+        SpawnEntityTransacted(DisplayName, "New Primitive", [this, PrimitiveMesh](ECS::FEntity Created)
         {
-            GetSceneRegistry().emplace<SStaticMeshComponent>(Created).SetStaticMesh(PrimitiveMesh);
+            GetSceneRegistry().Emplace<SStaticMeshComponent>(Created).SetStaticMesh(PrimitiveMesh);
         });
     }
 
-    TVector<entt::entity> FSceneEditorTool::GetComponentEditTargets(entt::entity Entity)
+    TVector<ECS::FEntity> FSceneEditorTool::GetComponentEditTargets(ECS::FEntity Entity)
     {
-        TVector<entt::entity> Targets;
+        TVector<ECS::FEntity> Targets;
 
-        FEntityRegistry& Registry = GetSceneRegistry();
-        if (!Registry.valid(Entity))
+        ECS::FRegistry& Registry = GetSceneRegistry();
+        if (!Registry.IsValid(Entity))
         {
             return Targets;
         }
@@ -2150,9 +2120,9 @@ namespace Lumina
         if (SelectedEntities.size() > 1 && IsEntitySelected(Entity))
         {
             Targets.reserve(SelectedEntities.size());
-            for (entt::entity Selected : SelectedEntities)
+            for (ECS::FEntity Selected : SelectedEntities)
             {
-                if (Registry.valid(Selected))
+                if (Registry.IsValid(Selected))
                 {
                     Targets.push_back(Selected);
                 }
@@ -2166,14 +2136,14 @@ namespace Lumina
         return Targets;
     }
 
-    void FSceneEditorTool::ApplyAddComponentToTargets(const TVector<entt::entity>& Targets, entt::meta_type PickedMetaType)
+    void FSceneEditorTool::ApplyAddComponentToTargets(const TVector<ECS::FEntity>& Targets, CStruct* PickedMetaType)
     {
         if (Targets.empty())
         {
             return;
         }
 
-        FEntityRegistry& Registry = GetSceneRegistry();
+        ECS::FRegistry& Registry = GetSceneRegistry();
 
         // Planned before the transaction, because opening one snapshots the whole registry.
         const SceneOps::FAddComponentPlan Plan = SceneOps::PlanAddComponent(Registry, Targets, PickedMetaType);
@@ -2290,12 +2260,12 @@ namespace Lumina
         }
     }
 
-    bool FSceneEditorTool::DrawAddableComponentList(const ImGuiTextFilter& Filter, const TVector<entt::entity>& Targets, entt::meta_type& OutMetaType, CStruct*& OutStruct)
+    bool FSceneEditorTool::DrawAddableComponentList(const ImGuiTextFilter& Filter, const TVector<ECS::FEntity>& Targets, CStruct*& OutMetaType, CStruct*& OutStruct)
     {
         struct FComponentEntry
         {
-            entt::meta_type MetaType;
-            CStruct*        Struct = nullptr;   // reflected component
+            CStruct* MetaType = nullptr;
+            CStruct* Struct   = nullptr;   // reflected component
         };
 
         struct FComponentCategory
@@ -2321,28 +2291,19 @@ namespace Lumina
 
         static const FString DefaultCategoryName = "General";
 
-        for(auto &&[ID, MetaType]: entt::resolve())
+        ForEachComponentStruct([&](CStruct* Struct)
         {
-            ECS::ETraits Traits = MetaType.traits<ECS::ETraits>();
-            if (!EnumHasAllFlags(Traits, ECS::ETraits::Component))
-            {
-                continue;
-            }
-
-            using namespace entt::literals;
-            entt::meta_any MetaAny = ECS::Utils::InvokeMetaFunc(MetaType, "static_struct"_hs);
-            CStruct* Struct = MetaAny.cast<CStruct*>();
-            ASSERT(Struct);
+            CStruct* MetaType = Struct;
 
             if (Struct->HasMeta("HideInComponentList"))
             {
-                continue;
+                return;
             }
 
             FFixedString DisplayName = Struct->MakeDisplayName();
             if (!ImGuiX::PassSearchFilter(Filter, DisplayName.c_str()))
             {
-                continue;
+                return;
             }
 
             FString CategoryName = Struct->HasMeta("Category")
@@ -2353,7 +2314,7 @@ namespace Lumina
             NewEntry.MetaType = MetaType;
             NewEntry.Struct   = Struct;
             FindOrAddCategory(CategoryName).Entries.push_back(NewEntry);
-        }
+        });
 
         Algo::Sort(Categories.begin(), Categories.end(), [](const FComponentCategory& LHS, const FComponentCategory& RHS)
         {
@@ -2370,7 +2331,7 @@ namespace Lumina
         bool bPicked = false;
         const bool bFiltering = Filter.IsActive();
 
-        FEntityRegistry& Registry = GetSceneRegistry();
+        ECS::FRegistry& Registry = GetSceneRegistry();
 
         ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(6.0f, 3.0f));
         for (FComponentCategory& Category : Categories)
@@ -2398,7 +2359,7 @@ namespace Lumina
                     {
                         // The add skips targets that already hold it, so offering it would be offering a no-op.
                         bool bEveryTargetHasIt = !Targets.empty();
-                        for (entt::entity Target : Targets)
+                        for (ECS::FEntity Target : Targets)
                         {
                             if (!ECS::Utils::HasComponent(Registry, Target, Entry.MetaType))
                             {
@@ -2440,22 +2401,22 @@ namespace Lumina
         return bPicked;
     }
 
-    void FSceneEditorTool::AddEntityToCopies(entt::entity Entity)
+    void FSceneEditorTool::AddEntityToCopies(ECS::FEntity Entity)
     {
-        GetSceneRegistry().emplace_or_replace<FCopiedTag>(Entity);
+        GetSceneRegistry().EmplaceOrReplace<FCopiedTag>(Entity);
     }
 
-    void FSceneEditorTool::RemoveEntityFromCopies(entt::entity Entity)
+    void FSceneEditorTool::RemoveEntityFromCopies(ECS::FEntity Entity)
     {
-        GetSceneRegistry().remove<FCopiedTag>(Entity);
+        GetSceneRegistry().Remove<FCopiedTag>(Entity);
     }
 
     void FSceneEditorTool::ClearCopies() const
     {
-        GetSceneRegistry().clear<FCopiedTag>();
+        GetSceneRegistry().ClearComponent<FCopiedTag>();
     }
 
-    void FSceneEditorTool::CopyEntity(entt::entity& To, entt::entity From)
+    void FSceneEditorTool::CopyEntity(ECS::FEntity& To, ECS::FEntity From)
     {
         World->DuplicateEntity(To, From, &EditorEntityUtils::DefaultDuplicateFilter);
     }
@@ -2800,13 +2761,13 @@ namespace Lumina
         }
 
         // A foreign observed world's selection has nothing to render, and a running game never previews.
-        entt::registry& Registry = ECS::GetWorldRegistry(*World);
-        const entt::entity Selected = GetLastSelectedEntity();
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
+        const ECS::FEntity Selected = GetLastSelectedEntity();
         const bool bWantPreview =
             AllowCameraPreview() &&
             !World->IsGameWorld() && !IsInspectingForeignWorld() &&
-            Registry.valid(Selected) &&
-            Registry.all_of<SCameraComponent, STransformComponent>(Selected);
+            Registry.IsValid(Selected) &&
+            Registry.HasAll<SCameraComponent, STransformComponent>(Selected);
 
         if (!bWantPreview)
         {
@@ -2818,8 +2779,8 @@ namespace Lumina
         }
 
         // A non-active camera has no resolved ViewVolume, so the view is built from its transform.
-        const SCameraComponent& Camera = Registry.get<SCameraComponent>(Selected);
-        STransformComponent& Transform = Registry.get<STransformComponent>(Selected);
+        const SCameraComponent& Camera = Registry.Get<SCameraComponent>(Selected);
+        STransformComponent& Transform = Registry.Get<STransformComponent>(Selected);
         (void)Transform.GetWorldMatrix();   // ensure the world transform is current
 
         const FVector3 Position = Transform.GetWorldLocation();
@@ -2923,7 +2884,6 @@ namespace Lumina
 
     void FSceneEditorTool::EndFrame()
     {
-        using namespace entt::literals;
 
         if (!bShowComponentVisualizers)
         {
@@ -2931,7 +2891,7 @@ namespace Lumina
         }
 
         CComponentVisualizerRegistry& ComponentVisualizerRegistry = CComponentVisualizerRegistry::Get();
-        FEntityRegistry& Registry = GetSceneRegistry();
+        ECS::FRegistry& Registry = GetSceneRegistry();
 
         // Memoized because a type's visualizer is fixed once registered; a new registration drops the table.
         static thread_local THashMap<uint32, CComponentVisualizer*> VisualizerByType;
@@ -2944,10 +2904,12 @@ namespace Lumina
             CachedVisualizerCount = RegisteredVisualizers;
         }
 
-        TFixedVector<TPair<entt::sparse_set*, CComponentVisualizer*>, 16> VisualizerStorages;
-        for (auto&& [ID, Storage] : Registry.storage())
+        TFixedVector<TPair<ECS::FSparseSet*, CComponentVisualizer*>, 16> VisualizerStorages;
+        for (Lumina::ECS::FSparseSet* StoragePtr : Registry.GetActiveStorages())
         {
-            const uint32 TypeHash = (uint32)Storage.info().hash();
+            const Lumina::ECS::FComponentTypeID ID = StoragePtr->GetTypeInfo().TypeID;
+            Lumina::ECS::FSparseSet& Storage = *StoragePtr;
+            const uint32 TypeHash = (uint32)ID;
 
             CComponentVisualizer* Visualizer = nullptr;
             const auto Cached = VisualizerByType.find(TypeHash);
@@ -2957,12 +2919,9 @@ namespace Lumina
             }
             else
             {
-                if (entt::meta_type MetaType = entt::resolve(Storage.info()))
+                if (CStruct* StructType = FindComponentStructByTypeId(ID))
                 {
-                    if (entt::meta_any ReturnValue = ECS::Utils::InvokeMetaFunc(MetaType, "static_struct"_hs))
-                    {
-                        Visualizer = ComponentVisualizerRegistry.GetComponentVisualizer(ReturnValue.cast<CStruct*>());
-                    }
+                    Visualizer = ComponentVisualizerRegistry.GetComponentVisualizer(StructType);
                 }
                 VisualizerByType[TypeHash] = Visualizer;
             }
@@ -2979,12 +2938,12 @@ namespace Lumina
         }
 
         // Flattened from the view so the disabled-tag exclusion applies and workers can index it.
-        static thread_local TVector<entt::entity> SelectedList;
+        static thread_local TVector<ECS::FEntity> SelectedList;
         SelectedList.clear();
 
-        auto SelectedView = Registry.view<FSelectedInEditorComponent>(entt::exclude<SDisabledTag>);
-        SelectedList.reserve(SelectedView.size_hint());
-        SelectedView.each([&](entt::entity SelectedEntity)
+        auto SelectedView = Registry.View<FSelectedInEditorComponent>(ECS::TExclude<SDisabledTag>{});
+        SelectedList.reserve(SelectedView.Num());
+        SelectedView.ForEach([&](ECS::FEntity SelectedEntity)
         {
             SelectedList.push_back(SelectedEntity);
         });
@@ -2996,11 +2955,11 @@ namespace Lumina
         
         ECS::Utils::ResolveAllDirtyTransforms(Registry);
 
-        auto DrawFor = [&](entt::entity Entity)
+        auto DrawFor = [&](ECS::FEntity Entity)
         {
             for (auto& [Storage, Visualizer] : VisualizerStorages)
             {
-                if (Storage->contains(Entity))
+                if (Storage->Contains(Entity))
                 {
                     Visualizer->Draw(World, Registry, Entity);
                 }
@@ -3009,9 +2968,9 @@ namespace Lumina
         
         Task::ParallelFor((uint32)SelectedList.size(), [&](uint32 Index)
         {
-            const entt::entity SelectedEntity = SelectedList[Index];
+            const ECS::FEntity SelectedEntity = SelectedList[Index];
             DrawFor(SelectedEntity);
-            ECS::Utils::ForEachChild(Registry, SelectedEntity, [&](entt::entity Child)
+            ECS::Utils::ForEachChild(Registry, SelectedEntity, [&](ECS::FEntity Child)
             {
                 DrawFor(Child);
             });
@@ -3020,10 +2979,10 @@ namespace Lumina
 
     void FSceneEditorTool::DrawDetailsPanel(bool bFocused)
     {
-        const entt::entity Entity = GetLastSelectedEntity();
+        const ECS::FEntity Entity = GetLastSelectedEntity();
 
         // PropertyTables hold raw component pointers; rebuild before drawing on focus change, invalidation, or dirty mark.
-        const bool bEntityValid = (Entity != entt::null) && GetSceneRegistry().valid(Entity);
+        const bool bEntityValid = (Entity != ECS::NullEntity) && GetSceneRegistry().IsValid(Entity);
         if (bEntityValid)
         {
             DrawComponentSearchBar();
@@ -3044,16 +3003,16 @@ namespace Lumina
 
             // Dropped rather than rebuilt, since the old tables must not be touched again.
             PropertyTables.clear();
-            DetailsEntity = entt::null;
+            DetailsEntity = ECS::NullEntity;
             bDetailsDirty = true;
         }
 
         if (!bEntityValid)
         {
-            if (DetailsEntity != entt::null || !PropertyTables.empty())
+            if (DetailsEntity != ECS::NullEntity || !PropertyTables.empty())
             {
                 PropertyTables.clear();
-                DetailsEntity = entt::null;
+                DetailsEntity = ECS::NullEntity;
             }
             bDetailsDirty = false;
         }
@@ -3080,11 +3039,11 @@ namespace Lumina
     }
 
     // On the base, since the prefab editor's preview world is what GetSceneRegistry resolves.
-    void FSceneEditorTool::PushRenameEntityModal(entt::entity Entity)
+    void FSceneEditorTool::PushRenameEntityModal(ECS::FEntity Entity)
     {
         ToolContext->PushModal("Rename Entity", ImVec2(450.0f, 250.0f), [this, Entity]() -> bool
         {
-            auto& NameComponent = GetSceneRegistry().get<SNameComponent>(Entity);
+            auto& NameComponent = GetSceneRegistry().Get<SNameComponent>(Entity);
 
             // Per modal rather than process-wide, so two rename dialogs cannot share a buffer.
             FFixedString& InputBuffer = RenameModalBuffer;
@@ -3124,7 +3083,7 @@ namespace Lumina
                     FFixedString Label;
                     Label.append(LE_ICON_CUBE).append(" ")
                         .append(NameComponent.Name.c_str())
-                        .append(FString(" - (" + Format("{}", entt::to_integral(Entity)) + ")"));
+                        .append(FString(" - (" + Format("{}", (Entity).Value) + ")"));
                     OutlinerListView.Get<FTreeNodeDisplay>(It->second).DisplayName.assign(Label.data(), Label.length());
                 }
                 return true;
@@ -3141,11 +3100,11 @@ namespace Lumina
         });
     }
 
-    void FSceneEditorTool::DrawEntityProperties(entt::entity Entity)
+    void FSceneEditorTool::DrawEntityProperties(ECS::FEntity Entity)
     {
         const bool bMultiSelect = SelectedEntities.size() > 1 && IsEntitySelected(Entity);
 
-        SNameComponent* NameComponent = GetSceneRegistry().try_get<SNameComponent>(Entity);
+        SNameComponent* NameComponent = GetSceneRegistry().TryGet<SNameComponent>(Entity);
         FName EntityName = NameComponent ? NameComponent->Name : Format("{}", (uint32)Entity);
 
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 4.0f));
@@ -3186,7 +3145,7 @@ namespace Lumina
             }
             else
             {
-                ImGuiX::Text("ID {}", entt::to_integral(Entity));
+                ImGuiX::Text("ID {}", (Entity).Value);
             }
             ImGui::PopStyleColor();
 
@@ -3245,7 +3204,7 @@ namespace Lumina
                         "Are you sure you want to delete {0} selected entities?\n\nThis action cannot be undone.",
                         (uint32)SelectedEntities.size()))
                     {
-                        for (entt::entity Selected : SelectedEntities)
+                        for (ECS::FEntity Selected : SelectedEntities)
                         {
                             if (CanDeleteEntity(Selected))
                             {
@@ -3335,13 +3294,13 @@ namespace Lumina
 
     size_t FSceneEditorTool::CountOutlinerEntities() const
     {
-        FEntityRegistry& Registry = GetSceneRegistry();
-        const auto& NameStorage = Registry.storage<SNameComponent>();
+        ECS::FRegistry& Registry = GetSceneRegistry();
+        const auto NameStorage = Registry.GetStorage<SNameComponent>();
         
-        size_t Count = NameStorage.size();
-        for (entt::entity Hidden : Registry.view<FHideInSceneOutliner>())
+        size_t Count = NameStorage.GetDenseSize();
+        for (ECS::FEntity Hidden : Registry.View<FHideInSceneOutliner>())
         {
-            if (NameStorage.contains(Hidden))
+            if (NameStorage.Contains(Hidden))
             {
                 --Count;
             }
@@ -3351,7 +3310,6 @@ namespace Lumina
 
     void FSceneEditorTool::DrawFilterOptions()
     {
-        using namespace entt::literals;
 
         if (ImGui::Button("Reset Filters", ImVec2(ImGui::GetContentRegionAvail().x, 0.0f)))
         {
@@ -3367,14 +3325,13 @@ namespace Lumina
             ImGui::TableSetupColumn("Component Type");
             ImGui::TableHeadersRow();
 
-            for (auto&& [ID, Storage] : GetSceneRegistry().storage())
+            for (Lumina::ECS::FSparseSet* StoragePtr : GetSceneRegistry().GetActiveStorages())
             {
-                if (entt::meta_type MetaType = entt::resolve(Storage.info()))
+                const Lumina::ECS::FComponentTypeID ID = StoragePtr->GetTypeInfo().TypeID;
+                Lumina::ECS::FSparseSet& Storage = *StoragePtr;
+                if (CStruct* StructType = FindComponentStructByTypeId(ID))
                 {
-                    if (entt::meta_any ReturnValue = ECS::Utils::InvokeMetaFunc(MetaType, "static_struct"_hs))
                     {
-                        CStruct* StructType = ReturnValue.cast<CStruct*>();
-
                         if (StructType->HasMeta("HideInComponentList"))
                         {
                             continue;
@@ -3491,7 +3448,7 @@ namespace Lumina
             ImGui::Text(LE_ICON_FORMAT_LIST_NUMBERED " Total Entities: %zu", CountOutlinerEntities());
             const float RefreshButtonOffset = ImGui::GetContentRegionAvail().x - 24 - ImGui::GetStyle().FramePadding.x;
             ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
-            ImGui::TextDisabled("(%zu)", (size_t)GetSceneRegistry().view<entt::entity>().size());
+            ImGui::TextDisabled("(%zu)", (size_t)GetSceneRegistry().NumEntities());
             ImGui::SetItemTooltip("Entities listed below, parentheses include those hidden from the outliner.");
             ImGui::SameLine(RefreshButtonOffset);
             if (ImGui::Button(LE_ICON_REFRESH))
@@ -3532,16 +3489,15 @@ namespace Lumina
         }
     }
 
-    void FSceneEditorTool::DrawAddToEntityOrWorldPopup(entt::entity Entity)
+    void FSceneEditorTool::DrawAddToEntityOrWorldPopup(ECS::FEntity Entity)
     {
-        using namespace entt::literals;
         
         ImGui::SetNextWindowViewport(ImGui::GetWindowViewport()->ID);
         ImGui::SetNextWindowSize(ImVec2(450.0f, 550.0f), ImGuiCond_Always);
 
         if (ImGui::BeginPopup("AddToEntityMenu", ImGuiWindowFlags_NoMove))
         {
-            if (Entity == entt::null)
+            if (Entity == ECS::NullEntity)
             {
                 ImGui::TextColored(EditorColors::SectionHeader(), LE_ICON_PLUS " Create New Entity");
                 ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
@@ -3581,7 +3537,7 @@ namespace Lumina
             {
                 const bool bFiltering = AddEntityComponentFilter.IsActive();
 
-                if (Entity == entt::null)
+                if (Entity == ECS::NullEntity)
                 {
                     static const FName PrefabClassName = FName("CPrefab");
                     TVector<FAssetData*> PrefabAssets = FAssetRegistry::Get().FindByPredicate([](const FAssetData& Data)
@@ -3619,7 +3575,7 @@ namespace Lumina
                                 {
                                     if (DrawPickerRow(Data, LE_ICON_PACKAGE_VARIANT_CLOSED, Data->AssetName.c_str()))
                                     {
-                                        HandlePrefabContentDrop(FStringView(Data->Path.c_str()), entt::null, /*bAttachToTarget*/ false);
+                                        HandlePrefabContentDrop(FStringView(Data->Path.c_str()), ECS::NullEntity, /*bAttachToTarget*/ false);
                                         ImGui::CloseCurrentPopup();
                                         AddEntityComponentFilter.Clear();
                                     }
@@ -3674,12 +3630,12 @@ namespace Lumina
                                 if (DrawPickerRow(Entry, Entry->Icon, Entry->Name))
                                 {
                                     CStaticMesh* PrimitiveMesh = Entry->GetMesh();
-                                    if (GetSceneRegistry().valid(Entity))
+                                    if (GetSceneRegistry().IsValid(Entity))
                                     {
                                         if (PrimitiveMesh != nullptr)
                                         {
                                             BeginComponentTransaction({ Entity }, SStaticMeshComponent::StaticStruct());
-                                            SStaticMeshComponent& MeshComp = GetSceneRegistry().emplace_or_replace<SStaticMeshComponent>(Entity);
+                                            SStaticMeshComponent& MeshComp = GetSceneRegistry().EmplaceOrReplace<SStaticMeshComponent>(Entity);
                                             MeshComp.SetStaticMesh(PrimitiveMesh);
                                             EndTransaction("Set Primitive Mesh");
 
@@ -3706,11 +3662,11 @@ namespace Lumina
                     }
                 }
 
-                entt::meta_type       PickedMetaType;
+                CStruct*              PickedMetaType = nullptr;
                 CStruct*              PickedStruct = nullptr;
 
                 // Resolved before the list is drawn so it can gray out what these targets already have.
-                TVector<entt::entity> Targets = GetComponentEditTargets(Entity);
+                TVector<ECS::FEntity> Targets = GetComponentEditTargets(Entity);
 
                 if (DrawAddableComponentList(AddEntityComponentFilter, Targets, PickedMetaType, PickedStruct))
                 {
@@ -3742,7 +3698,7 @@ namespace Lumina
                 }
                 ImGui::PopStyleColor();
 
-                if (Entity == entt::null)
+                if (Entity == ECS::NullEntity)
                 {
                     ImGui::SameLine();
                     ImGui::PushStyleColor(ImGuiCol_Button, EditorColors::Button());

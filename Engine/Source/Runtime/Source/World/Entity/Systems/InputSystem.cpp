@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "InputSystem.h"
+#include "World/ECS/Registry.h"
 #include "World/Entity/Components/InputComponent.h"
 #include "Input/InputContext.h"
 #include "Input/InputQuery.h"
@@ -15,9 +16,9 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        FEntityRegistry& Registry = Context.GetRegistry();
+        ECS::FRegistry& Registry = Context.GetRegistry();
         
-        CWorld** WorldPtr = Registry.ctx().find<CWorld*>();
+        CWorld** WorldPtr = Registry.Ctx().Find<CWorld*>();
         CWorld* World = WorldPtr != nullptr ? *WorldPtr : nullptr;
         
         const FInputContext* Ctx = Input::GetReceivingContext(World);
@@ -32,25 +33,25 @@ namespace Lumina
         const float DeltaSeconds = (float)Context.GetDeltaTime();
 
         // Snapshot first, since a callback spawning an entity mutates the storage a live view walks.
-        static thread_local TVector<entt::entity> Entities;
+        static thread_local TVector<ECS::FEntity> Entities;
         Entities.clear();
 
-        auto View = Registry.view<SInputComponent>();
-        Entities.reserve(View.size_hint());
-        for (entt::entity Entity : View)
+        auto View = Registry.View<SInputComponent>();
+        Entities.reserve(View.Num());
+        for (ECS::FEntity Entity : View)
         {
             Entities.push_back(Entity);
         }
 
-        for (entt::entity Entity : Entities)
+        for (ECS::FEntity Entity : Entities)
         {
-            if (!Registry.valid(Entity))
+            if (!Registry.IsValid(Entity))
             {
                 continue;
             }
 
             // Re-resolved per entity, since an earlier callback may have removed or disabled it.
-            const SInputComponent* InputComp = Registry.try_get<SInputComponent>(Entity);
+            const SInputComponent* InputComp = Registry.TryGet<SInputComponent>(Entity);
             if (InputComp == nullptr || !InputComp->bEnabled)
             {
                 continue;

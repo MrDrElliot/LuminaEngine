@@ -1,9 +1,11 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #include "Containers/Vector.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "EditorTransaction.h"
-#include "World/Entity/Registry/EntityRegistry.h"
 
 namespace Lumina
 {
@@ -41,17 +43,17 @@ namespace Lumina
 
     private:
 
-        void CaptureLiveEntities(TVector<entt::entity>& Out) const;
+        void CaptureLiveEntities(TVector<ECS::FEntity>& Out) const;
 
         // Weak, since a strong ref would keep a torn-down world alive and stop a stale undo from no-opping.
         TWeakObjectPtr<CWorld>  World;
 
         // Sorted live handles at the moment the transaction opened.
-        TVector<entt::entity>   LiveBefore;
+        TVector<ECS::FEntity>   LiveBefore;
 
         // What the operation added. Sorted (it is built by walking the sorted after-set), which is what
         // lets Finalize binary-search it when classifying parent links as internal or external.
-        TVector<entt::entity>   Created;
+        TVector<ECS::FEntity>   Created;
 
         // Serialized image of every entity in Created, for Redo.
         TVector<uint8>          CreatedData;
@@ -61,8 +63,8 @@ namespace Lumina
         // child list belongs to an entity this command never captured.
         struct FExternalParent
         {
-            entt::entity Child;
-            entt::entity Parent;
+            ECS::FEntity Child;
+            ECS::FEntity Parent;
         };
         TVector<FExternalParent> ExternalParents;
     };

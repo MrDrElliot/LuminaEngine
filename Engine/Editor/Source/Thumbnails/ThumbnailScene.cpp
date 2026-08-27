@@ -1,4 +1,5 @@
 #include "ThumbnailScene.h"
+#include "World/ECS/Registry.h"
 #include "ThumbnailUtils.h"
 
 #include "Core/Math/Math.h"
@@ -73,18 +74,18 @@ namespace Lumina
         }
         // Dropping the only strong ref frees the world, unlike ForceDestroyNow which would dangle this.
         World        = nullptr;
-        CameraEntity = entt::null;
+        CameraEntity = ECS::NullEntity;
         bInitialized = false;
     }
 
-    entt::entity FThumbnailScene::SpawnEntity(FName Name)
+    ECS::FEntity FThumbnailScene::SpawnEntity(FName Name)
     {
         if (!bInitialized || !World.IsValid())
         {
-            return entt::null;
+            return ECS::NullEntity;
         }
 
-        const entt::entity Entity = World->ConstructEntity(Name);
+        const ECS::FEntity Entity = World->ConstructEntity(Name);
         SpawnedEntities.push_back(Entity);
         return Entity;
     }
@@ -97,7 +98,7 @@ namespace Lumina
             return;
         }
 
-        for (entt::entity Entity : SpawnedEntities)
+        for (ECS::FEntity Entity : SpawnedEntities)
         {
             World->DestroyEntity(Entity);
         }
@@ -106,7 +107,7 @@ namespace Lumina
 
     void FThumbnailScene::SetCameraTransform(const FVector3& Position, const FVector3& Target, float FOVDegrees)
     {
-        if (!bInitialized || CameraEntity == entt::null)
+        if (!bInitialized || CameraEntity == ECS::NullEntity)
         {
             return;
         }
@@ -127,7 +128,7 @@ namespace Lumina
         Camera.SetView(Position, Forward, Up);
 
         // Extract reads FResolvedSceneView, and an unticked world leaves it default, culling the subject.
-        FResolvedSceneView& Resolved = ECS::GetWorldRegistry(*World).ctx().get<FResolvedSceneView>();
+        FResolvedSceneView& Resolved = ECS::GetWorldRegistry(*World).Ctx().Get<FResolvedSceneView>();
         Resolved.ViewVolume      = Camera.GetViewVolume();
         Resolved.bHasView        = true;
         Resolved.bHasPostProcess = false;

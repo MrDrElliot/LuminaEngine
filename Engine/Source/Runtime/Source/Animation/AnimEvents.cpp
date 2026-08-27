@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "AnimEvents.h"
+#include "World/ECS/Registry.h"
 
 #include "AnimNotify.h"
 #include "Assets/AssetTypes/Mesh/Animation/Animation.h"
@@ -44,7 +45,7 @@ namespace Lumina
         }
     }
 
-    void AnimEvents::DispatchTypedNotifies(const TVector<FAnimNotifyEvent>& Events, FEntityRegistry& Registry, entt::entity Entity)
+    void AnimEvents::DispatchTypedNotifies(const TVector<FAnimNotifyEvent>& Events, ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
         for (const FAnimNotifyEvent& Event : Events)
         {

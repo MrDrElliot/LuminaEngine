@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include "World/ECS/Registry.h"
 
 #include "Assets/AssetTypes/Prefabs/PrefabOverride.h"
 #include "Core/Object/Cast.h"
@@ -10,7 +11,6 @@
 #include "Scripting/ScriptableTest.h"
 #include "Scripting/ScriptStruct.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
-#include "World/Entity/Registry/EntityRegistry.h"
 #include "Core/Serialization/MemoryArchiver.h"
 #include "Core/Serialization/ObjectArchiver.h"
 
@@ -20,7 +20,7 @@ using namespace Lumina;
 
 namespace
 {
-    CEntityScriptTest* AttachTestScript(FEntityRegistry& Registry, entt::entity Entity)
+    CEntityScriptTest* AttachTestScript(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
         return static_cast<CEntityScriptTest*>(
             EntityScripts::Attach(Registry, Entity, CEntityScriptTest::StaticClass()));
@@ -30,8 +30,8 @@ namespace
 // The native half, a C++ subclass through the same driver a C# script uses.
 TEST(EntityScriptUnification, CppScriptRunsThroughTheDriver)
 {
-    FEntityRegistry Registry{};
-    const entt::entity Entity = Registry.create();
+    ECS::FRegistry Registry{};
+    const ECS::FEntity Entity = Registry.Create();
 
     CEntityScriptTest* Script = AttachTestScript(Registry, Entity);
     ASSERT_NE(Script, nullptr);
@@ -57,29 +57,29 @@ TEST(EntityScriptUnification, CppScriptRunsThroughTheDriver)
     TObjectPtr<CEntityScript> Pinned(Script);
     EntityScripts::DetachAll(Registry, Entity);
     EXPECT_EQ(Script->DetachCount, 1);
-    EXPECT_TRUE(Registry.get<SEntityScriptComponent>(Entity).Scripts.empty());
+    EXPECT_TRUE(Registry.Get<SEntityScriptComponent>(Entity).Scripts.empty());
 }
 
 // A component copy (prefab stamp, entity duplicate) clones its scripts rather than sharing one object.
 TEST(EntityScriptUnification, CopyingTheComponentClonesItsScripts)
 {
-    FEntityRegistry Registry{};
-    const entt::entity Source = Registry.create();
+    ECS::FRegistry Registry{};
+    const ECS::FEntity Source = Registry.Create();
 
     CEntityScriptTest* Script = AttachTestScript(Registry, Source);
     ASSERT_NE(Script, nullptr);
 
-    SEntityScriptComponent Copied = Registry.get<SEntityScriptComponent>(Source);
-    const entt::entity Destination = Registry.create();
-    Registry.emplace_or_replace<SEntityScriptComponent>(Destination, std::move(Copied));
+    SEntityScriptComponent Copied = Registry.Get<SEntityScriptComponent>(Source);
+    const ECS::FEntity Destination = Registry.Create();
+    Registry.EmplaceOrReplace<SEntityScriptComponent>(Destination, std::move(Copied));
 
-    SEntityScriptComponent& Placed = Registry.get<SEntityScriptComponent>(Destination);
+    SEntityScriptComponent& Placed = Registry.Get<SEntityScriptComponent>(Destination);
     ASSERT_EQ(Placed.Scripts.size(), size_t(1));
 
     CEntityScript* Clone = Placed.Scripts[0].Get();
     ASSERT_NE(Clone, nullptr);
     EXPECT_NE(Clone, Script) << "the copy must own its own script object, not the source's";
-    EXPECT_TRUE(Clone->GetOwningEntity() == entt::null) << "a clone is unowned until the driver adopts it";
+    EXPECT_TRUE(Clone->GetOwningEntity() == ECS::NullEntity) << "a clone is unowned until the driver adopts it";
 
     EntityScripts::Tick(Registry, 0.1f);
     EXPECT_EQ(Clone->GetOwningEntity(), Destination) << "the clone adopts the entity it was copied onto";
@@ -93,20 +93,20 @@ TEST(EntityScriptUnification, CloningAScriptCopiesContainerPropertiesWithoutSmas
     ProcessNewlyLoadedCObjects();
     CEntityScriptTest::StaticClass()->GetDefaultObject();
 
-    FEntityRegistry Registry{};
-    const entt::entity Source = Registry.create();
+    ECS::FRegistry Registry{};
+    const ECS::FEntity Source = Registry.Create();
 
     CEntityScriptTest* Script = AttachTestScript(Registry, Source);
     ASSERT_NE(Script, nullptr);
     Script->Values.push_back(FName("Alpha"));
     Script->Values.push_back(FName("Beta"));
 
-    SEntityScriptComponent Copied = Registry.get<SEntityScriptComponent>(Source);
-    const entt::entity Destination = Registry.create();
-    Registry.emplace_or_replace<SEntityScriptComponent>(Destination, std::move(Copied));
+    SEntityScriptComponent Copied = Registry.Get<SEntityScriptComponent>(Source);
+    const ECS::FEntity Destination = Registry.Create();
+    Registry.EmplaceOrReplace<SEntityScriptComponent>(Destination, std::move(Copied));
 
-    ASSERT_EQ(Registry.get<SEntityScriptComponent>(Destination).Scripts.size(), size_t(1));
-    CEntityScript* Cloned = Registry.get<SEntityScriptComponent>(Destination).Scripts[0].Get();
+    ASSERT_EQ(Registry.Get<SEntityScriptComponent>(Destination).Scripts.size(), size_t(1));
+    CEntityScript* Cloned = Registry.Get<SEntityScriptComponent>(Destination).Scripts[0].Get();
     ASSERT_NE(Cloned, nullptr);
 
     // Read through the class rather than a static_cast, so a smashed header shows up here.
@@ -170,13 +170,13 @@ TEST(EntityScriptUnification, PrefabOverridesTrackAScriptComponentAsOneAtomicVal
 // A script that never attached must not receive OnDetach, which would mint an instance.
 TEST(EntityScriptUnification, DetachSkipsAScriptThatNeverAttached)
 {
-    FEntityRegistry Registry{};
-    const entt::entity Entity = Registry.create();
+    ECS::FRegistry Registry{};
+    const ECS::FEntity Entity = Registry.Create();
 
     CObject* Created = NewObject(CEntityScriptTest::StaticClass(), nullptr, NAME_None, FGuid::New(), OF_Transient);
     CEntityScriptTest* Unadopted = static_cast<CEntityScriptTest*>(Created);
     ASSERT_NE(Unadopted, nullptr);
-    Registry.get_or_emplace<SEntityScriptComponent>(Entity).Scripts.push_back(Unadopted);
+    Registry.GetOrEmplace<SEntityScriptComponent>(Entity).Scripts.push_back(Unadopted);
 
     EXPECT_FALSE(Unadopted->IsAttached());
 
@@ -186,7 +186,7 @@ TEST(EntityScriptUnification, DetachSkipsAScriptThatNeverAttached)
     EXPECT_EQ(Unadopted->DetachCount, 0) << "no OnAttach ran, so no OnDetach is owed";
 
     // And the paired case still fires.
-    const entt::entity Adopted = Registry.create();
+    const ECS::FEntity Adopted = Registry.Create();
     CEntityScriptTest* Attached = AttachTestScript(Registry, Adopted);
     ASSERT_NE(Attached, nullptr);
     TObjectPtr<CEntityScript> PinnedAttached(Attached);
@@ -197,8 +197,8 @@ TEST(EntityScriptUnification, DetachSkipsAScriptThatNeverAttached)
 // Fixed update must not reach a script that has not readied yet.
 TEST(EntityScriptUnification, FixedUpdateWaitsForReady)
 {
-    FEntityRegistry Registry{};
-    const entt::entity Entity = Registry.create();
+    ECS::FRegistry Registry{};
+    const ECS::FEntity Entity = Registry.Create();
 
     CEntityScriptTest* Script = AttachTestScript(Registry, Entity);
     ASSERT_NE(Script, nullptr);
@@ -215,9 +215,9 @@ TEST(EntityScriptUnification, FixedUpdateWaitsForReady)
 // Several scripts on one entity, and several scripted entities, all driven by the one loop.
 TEST(EntityScriptUnification, ManyScriptsAndEntitiesTickThroughOneLoop)
 {
-    FEntityRegistry Registry{};
-    const entt::entity First = Registry.create();
-    const entt::entity Second = Registry.create();
+    ECS::FRegistry Registry{};
+    const ECS::FEntity First = Registry.Create();
+    const ECS::FEntity Second = Registry.Create();
 
     CEntityScriptTest* A = AttachTestScript(Registry, First);
     CEntityScriptTest* B = AttachTestScript(Registry, First);   // two scripts on one entity
@@ -247,8 +247,8 @@ TEST(EntityScriptUnification, MintedScriptClassTicksThroughTheSameDriver)
     EXPECT_TRUE(Minted->IsChildOf(CEntityScript::StaticClass()))
         << "a minted C# script class must BE a CEntityScript, or the driver could not hold it";
 
-    FEntityRegistry Registry{};
-    const entt::entity Entity = Registry.create();
+    ECS::FRegistry Registry{};
+    const ECS::FEntity Entity = Registry.Create();
 
     CEntityScript* Managed = EntityScripts::Attach(Registry, Entity, Minted);
     ASSERT_NE(Managed, nullptr);
@@ -259,7 +259,7 @@ TEST(EntityScriptUnification, MintedScriptClassTicksThroughTheSameDriver)
     EntityScripts::Tick(Registry, 0.1f);
     EntityScripts::Tick(Registry, 0.1f);
 
-    EXPECT_EQ(Registry.get<SEntityScriptComponent>(Entity).Scripts.size(), 2u);
+    EXPECT_EQ(Registry.Get<SEntityScriptComponent>(Entity).Scripts.size(), 2u);
     EXPECT_TRUE(Managed->IsReady()) << "the minted script was readied by the same pass as the C++ one";
     EXPECT_EQ(Native->UpdateCount, 2);
     EXPECT_EQ(Managed->GetClass(), Minted);
@@ -273,8 +273,8 @@ TEST(EntityScriptUnification, MintedScriptClassTicksThroughTheSameDriver)
 // A class that is not a CEntityScript must be refused rather than attached and later dispatched to.
 TEST(EntityScriptUnification, AttachRefusesANonScriptClass)
 {
-    FEntityRegistry Registry{};
-    const entt::entity Entity = Registry.create();
+    ECS::FRegistry Registry{};
+    const ECS::FEntity Entity = Registry.Create();
 
     EXPECT_EQ(EntityScripts::Attach(Registry, Entity, CScriptableTest::StaticClass()), nullptr);
     EXPECT_EQ(EntityScripts::Attach(Registry, Entity, nullptr), nullptr);
@@ -283,8 +283,8 @@ TEST(EntityScriptUnification, AttachRefusesANonScriptClass)
 // A script is a per-entity SUBOBJECT, serialized by class name plus its tagged properties.
 TEST(EntityScriptUnification, ComponentSerializationRoundTripsScriptsAndAdoptsThemOnTick)
 {
-    FEntityRegistry Source{};
-    const entt::entity Entity = Source.create();
+    ECS::FRegistry Source{};
+    const ECS::FEntity Entity = Source.Create();
 
     CEntityScriptTest* A = AttachTestScript(Source, Entity);
     CEntityScriptTest* B = AttachTestScript(Source, Entity);
@@ -295,14 +295,14 @@ TEST(EntityScriptUnification, ComponentSerializationRoundTripsScriptsAndAdoptsTh
     {
         FMemoryWriter Writer(Bytes);
         FObjectProxyArchiver Ar(Writer, /*bLoadIfFindFails*/ false);
-        Source.get<SEntityScriptComponent>(Entity).Serialize(Ar);
+        Source.Get<SEntityScriptComponent>(Entity).Serialize(Ar);
     }
     ASSERT_FALSE(Bytes.empty());
 
     // Load into a fresh registry + entity, exactly as scene load would.
-    FEntityRegistry Loaded{};
-    const entt::entity LoadedEntity = Loaded.create();
-    SEntityScriptComponent& Restored = Loaded.emplace<SEntityScriptComponent>(LoadedEntity);
+    ECS::FRegistry Loaded{};
+    const ECS::FEntity LoadedEntity = Loaded.Create();
+    SEntityScriptComponent& Restored = Loaded.Emplace<SEntityScriptComponent>(LoadedEntity);
     {
         FMemoryReader Reader(Bytes);
         FObjectProxyArchiver Ar(Reader, /*bLoadIfFindFails*/ true);
@@ -315,12 +315,12 @@ TEST(EntityScriptUnification, ComponentSerializationRoundTripsScriptsAndAdoptsTh
         << "the script's concrete class must round-trip, not its base";
 
     // Freshly loaded, so no owner yet and no lifecycle has run.
-    EXPECT_EQ(Restored.Scripts[0].Get()->GetOwningEntity(), entt::entity{entt::null});
+    EXPECT_EQ(Restored.Scripts[0].Get()->GetOwningEntity(), ECS::FEntity{ECS::NullEntity});
     EXPECT_FALSE(Restored.Scripts[0].Get()->IsReady());
 
     EntityScripts::Tick(Loaded, 0.1f);
 
-    for (TObjectPtr<CEntityScript>& Held : Loaded.get<SEntityScriptComponent>(LoadedEntity).Scripts)
+    for (TObjectPtr<CEntityScript>& Held : Loaded.Get<SEntityScriptComponent>(LoadedEntity).Scripts)
     {
         CEntityScriptTest* Script = static_cast<CEntityScriptTest*>(Held.Get());
         ASSERT_NE(Script, nullptr);
@@ -358,8 +358,8 @@ TEST(EntityScriptUnification, ScriptPropertyValuesSurviveTheComponentRoundTrip)
     ASSERT_NE(Speed, nullptr);
     ASSERT_NE(Label, nullptr);
 
-    FEntityRegistry Source{};
-    const entt::entity Entity = Source.create();
+    ECS::FRegistry Source{};
+    const ECS::FEntity Entity = Source.Create();
     CEntityScript* Script = EntityScripts::Attach(Source, Entity, Minted);
     ASSERT_NE(Script, nullptr);
 
@@ -371,13 +371,13 @@ TEST(EntityScriptUnification, ScriptPropertyValuesSurviveTheComponentRoundTrip)
     {
         FMemoryWriter Writer(Bytes);
         FObjectProxyArchiver Ar(Writer, /*bLoadIfFindFails*/ false);
-        Source.get<SEntityScriptComponent>(Entity).Serialize(Ar);
+        Source.Get<SEntityScriptComponent>(Entity).Serialize(Ar);
     }
     ASSERT_FALSE(Bytes.empty());
 
-    FEntityRegistry Loaded{};
-    const entt::entity LoadedEntity = Loaded.create();
-    SEntityScriptComponent& Restored = Loaded.emplace<SEntityScriptComponent>(LoadedEntity);
+    ECS::FRegistry Loaded{};
+    const ECS::FEntity LoadedEntity = Loaded.Create();
+    SEntityScriptComponent& Restored = Loaded.Emplace<SEntityScriptComponent>(LoadedEntity);
     {
         FMemoryReader Reader(Bytes);
         FObjectProxyArchiver Ar(Reader, /*bLoadIfFindFails*/ true);
@@ -404,8 +404,8 @@ TEST(EntityScriptUnification, ScriptPropertyValuesSurviveTheComponentRoundTrip)
 // Class-based lookup, so a C++ script is found by exactly the same call a C# one is.
 TEST(EntityScriptUnification, FindAndRemoveByClass)
 {
-    FEntityRegistry Registry{};
-    const entt::entity Entity = Registry.create();
+    ECS::FRegistry Registry{};
+    const ECS::FEntity Entity = Registry.Create();
 
     CEntityScriptTest* First = AttachTestScript(Registry, Entity);
     CEntityScriptTest* Second = AttachTestScript(Registry, Entity);
@@ -423,7 +423,7 @@ TEST(EntityScriptUnification, FindAndRemoveByClass)
 
     EXPECT_TRUE(EntityScripts::Remove(Registry, Entity, First));
     EXPECT_EQ(First->DetachCount, 1) << "Remove must run OnDetach";
-    EXPECT_EQ(Registry.get<SEntityScriptComponent>(Entity).Scripts.size(), 1u);
+    EXPECT_EQ(Registry.Get<SEntityScriptComponent>(Entity).Scripts.size(), 1u);
     EXPECT_EQ(EntityScripts::Find(Registry, Entity, CEntityScriptTest::StaticClass()), Second);
 
     EXPECT_FALSE(EntityScripts::Remove(Registry, Entity, First)) << "removing twice must be refused";
@@ -432,7 +432,7 @@ TEST(EntityScriptUnification, FindAndRemoveByClass)
 // The reload evacuates first, since a class rebuild cannot happen with instances alive.
 TEST(EntityScriptUnification, ScriptsSurviveAClassLayoutRebuild)
 {
-    FEntityRegistry Registry{};
+    ECS::FRegistry Registry{};
 
     Scripting::FScriptExportSchema Before;
     {
@@ -449,7 +449,7 @@ TEST(EntityScriptUnification, ScriptsSurviveAClassLayoutRebuild)
     ProcessNewlyLoadedCObjects();
     Minted->GetDefaultObject();
 
-    entt::entity Entity = Registry.create();
+    ECS::FEntity Entity = Registry.Create();
     CEntityScript* Attached = EntityScripts::Attach(Registry, Entity, Minted);
     ASSERT_NE(Attached, nullptr);
 
@@ -480,7 +480,7 @@ TEST(EntityScriptUnification, ScriptsSurviveAClassLayoutRebuild)
     // Evacuated by hand, since a unit test has no world contexts for ForEachWorld to walk.
     TVector<uint8> Bytes;
     {
-        SEntityScriptComponent* Component = Registry.try_get<SEntityScriptComponent>(Entity);
+        SEntityScriptComponent* Component = Registry.TryGet<SEntityScriptComponent>(Entity);
         ASSERT_NE(Component, nullptr);
         FMemoryWriter Writer(Bytes);
         FObjectProxyArchiver Ar(Writer, /*bLoadIfFindFails*/ false);
@@ -493,13 +493,13 @@ TEST(EntityScriptUnification, ScriptsSurviveAClassLayoutRebuild)
     ASSERT_TRUE(Scripting::MigrateMintedClassLayout(Minted, After));
 
     {
-        SEntityScriptComponent& Component = Registry.get_or_emplace<SEntityScriptComponent>(Entity);
+        SEntityScriptComponent& Component = Registry.GetOrEmplace<SEntityScriptComponent>(Entity);
         FMemoryReader Reader(Bytes);
         FObjectProxyArchiver Ar(Reader, /*bLoadIfFindFails*/ true);
         Component.Serialize(Ar);
     }
 
-    SEntityScriptComponent* Component = Registry.try_get<SEntityScriptComponent>(Entity);
+    SEntityScriptComponent* Component = Registry.TryGet<SEntityScriptComponent>(Entity);
     ASSERT_NE(Component, nullptr);
     ASSERT_EQ(Component->Scripts.size(), 1u) << "the script did not come back";
 
@@ -544,7 +544,7 @@ namespace
 // The replay is name-keyed, so [Alias] is what carries the old name across a rename.
 TEST(EntityScriptUnification, RenamingAPropertyKeepsItsValueViaAlias)
 {
-    FEntityRegistry Registry{};
+    ECS::FRegistry Registry{};
 
     Scripting::FScriptExportSchema Before;
     Before.Fields.push_back(MakeReloadField("Speed", EPropertyTypeFlags::Float));
@@ -555,14 +555,14 @@ TEST(EntityScriptUnification, RenamingAPropertyKeepsItsValueViaAlias)
     ProcessNewlyLoadedCObjects();
     Minted->GetDefaultObject();
 
-    const entt::entity Entity = Registry.create();
+    const ECS::FEntity Entity = Registry.Create();
     CEntityScript* Attached = EntityScripts::Attach(Registry, Entity, Minted);
     ASSERT_NE(Attached, nullptr);
     Minted->GetProperty(FName("Speed"))->SetValue<float>(Attached, 9.75f);
 
     TVector<uint8> Bytes;
     {
-        SEntityScriptComponent* Component = Registry.try_get<SEntityScriptComponent>(Entity);
+        SEntityScriptComponent* Component = Registry.TryGet<SEntityScriptComponent>(Entity);
         ASSERT_NE(Component, nullptr);
         FMemoryWriter Writer(Bytes);
         FObjectProxyArchiver Ar(Writer, /*bLoadIfFindFails*/ false);
@@ -577,13 +577,13 @@ TEST(EntityScriptUnification, RenamingAPropertyKeepsItsValueViaAlias)
     ASSERT_EQ(Minted->GetProperty(FName("Speed")), nullptr);
 
     {
-        SEntityScriptComponent& Component = Registry.get_or_emplace<SEntityScriptComponent>(Entity);
+        SEntityScriptComponent& Component = Registry.GetOrEmplace<SEntityScriptComponent>(Entity);
         FMemoryReader Reader(Bytes);
         FObjectProxyArchiver Ar(Reader, /*bLoadIfFindFails*/ true);
         Component.Serialize(Ar);
     }
 
-    SEntityScriptComponent* Component = Registry.try_get<SEntityScriptComponent>(Entity);
+    SEntityScriptComponent* Component = Registry.TryGet<SEntityScriptComponent>(Entity);
     ASSERT_NE(Component, nullptr);
     ASSERT_EQ(Component->Scripts.size(), 1u);
     CEntityScript* Restored = Component->Scripts[0].Get();
@@ -602,7 +602,7 @@ TEST(EntityScriptUnification, RenamingAPropertyKeepsItsValueViaAlias)
 // Silently keeping the value would mean the replay was matching by OFFSET.
 TEST(EntityScriptUnification, RenamingWithoutAnAliasResetsToDefault)
 {
-    FEntityRegistry Registry{};
+    ECS::FRegistry Registry{};
 
     Scripting::FScriptExportSchema Before;
     Before.Fields.push_back(MakeReloadField("Speed", EPropertyTypeFlags::Float));
@@ -613,14 +613,14 @@ TEST(EntityScriptUnification, RenamingWithoutAnAliasResetsToDefault)
     ProcessNewlyLoadedCObjects();
     Minted->GetDefaultObject();
 
-    const entt::entity Entity = Registry.create();
+    const ECS::FEntity Entity = Registry.Create();
     CEntityScript* Attached = EntityScripts::Attach(Registry, Entity, Minted);
     ASSERT_NE(Attached, nullptr);
     Minted->GetProperty(FName("Speed"))->SetValue<float>(Attached, 9.75f);
 
     TVector<uint8> Bytes;
     {
-        SEntityScriptComponent* Component = Registry.try_get<SEntityScriptComponent>(Entity);
+        SEntityScriptComponent* Component = Registry.TryGet<SEntityScriptComponent>(Entity);
         FMemoryWriter Writer(Bytes);
         FObjectProxyArchiver Ar(Writer, /*bLoadIfFindFails*/ false);
         Component->Serialize(Ar);
@@ -632,13 +632,13 @@ TEST(EntityScriptUnification, RenamingWithoutAnAliasResetsToDefault)
     ASSERT_TRUE(Scripting::MigrateMintedClassLayout(Minted, After));
 
     {
-        SEntityScriptComponent& Component = Registry.get_or_emplace<SEntityScriptComponent>(Entity);
+        SEntityScriptComponent& Component = Registry.GetOrEmplace<SEntityScriptComponent>(Entity);
         FMemoryReader Reader(Bytes);
         FObjectProxyArchiver Ar(Reader, /*bLoadIfFindFails*/ true);
         Component.Serialize(Ar);
     }
 
-    CEntityScript* Restored = Registry.get<SEntityScriptComponent>(Entity).Scripts[0].Get();
+    CEntityScript* Restored = Registry.Get<SEntityScriptComponent>(Entity).Scripts[0].Get();
     ASSERT_NE(Restored, nullptr);
     EXPECT_FLOAT_EQ(*Minted->GetProperty(FName("Velocity"))->GetValuePtr<float>(Restored), 0.0f);
 
@@ -648,7 +648,7 @@ TEST(EntityScriptUnification, RenamingWithoutAnAliasResetsToDefault)
 // The instances are the wrong class, so a class-name redirect joins the evacuate round trip.
 TEST(EntityScriptUnification, RenamingAScriptClassMovesItsInstances)
 {
-    FEntityRegistry Registry{};
+    ECS::FRegistry Registry{};
 
     Scripting::FScriptExportSchema Schema;
     Schema.Fields.push_back(MakeReloadField("Speed", EPropertyTypeFlags::Float));
@@ -659,7 +659,7 @@ TEST(EntityScriptUnification, RenamingAScriptClassMovesItsInstances)
     ProcessNewlyLoadedCObjects();
     Old->GetDefaultObject();
 
-    const entt::entity Entity = Registry.create();
+    const ECS::FEntity Entity = Registry.Create();
     CEntityScript* Attached = EntityScripts::Attach(Registry, Entity, Old);
     ASSERT_NE(Attached, nullptr);
     Old->GetProperty(FName("Speed"))->SetValue<float>(Attached, 4.25f);
@@ -667,7 +667,7 @@ TEST(EntityScriptUnification, RenamingAScriptClassMovesItsInstances)
     // Evacuate, where the buffer records the OLD class name.
     TVector<uint8> Bytes;
     {
-        SEntityScriptComponent* Component = Registry.try_get<SEntityScriptComponent>(Entity);
+        SEntityScriptComponent* Component = Registry.TryGet<SEntityScriptComponent>(Entity);
         FMemoryWriter Writer(Bytes);
         FObjectProxyArchiver Ar(Writer, /*bLoadIfFindFails*/ false);
         Component->Serialize(Ar);
@@ -692,13 +692,13 @@ TEST(EntityScriptUnification, RenamingAScriptClassMovesItsInstances)
     EXPECT_NE(Renamed.find(Old), Renamed.end()) << "the renamed class was not offered for evacuation";
 
     {
-        SEntityScriptComponent& Component = Registry.get_or_emplace<SEntityScriptComponent>(Entity);
+        SEntityScriptComponent& Component = Registry.GetOrEmplace<SEntityScriptComponent>(Entity);
         FMemoryReader Reader(Bytes);
         FObjectProxyArchiver Ar(Reader, /*bLoadIfFindFails*/ true);
         Component.Serialize(Ar);
     }
 
-    SEntityScriptComponent* Component = Registry.try_get<SEntityScriptComponent>(Entity);
+    SEntityScriptComponent* Component = Registry.TryGet<SEntityScriptComponent>(Entity);
     ASSERT_NE(Component, nullptr);
     ASSERT_EQ(Component->Scripts.size(), 1u) << "the renamed script did not come back";
 
@@ -716,7 +716,7 @@ TEST(EntityScriptUnification, RenamingAScriptClassMovesItsInstances)
 // [SkipHotReload] sends the value back to the class default instead of carrying it across.
 TEST(EntityScriptUnification, SkipHotReloadFieldsResetOnRestore)
 {
-    FEntityRegistry Registry{};
+    ECS::FRegistry Registry{};
 
     Scripting::FScriptExportSchema Schema;
     Schema.Fields.push_back(MakeReloadField("Kept", EPropertyTypeFlags::Float));
@@ -732,7 +732,7 @@ TEST(EntityScriptUnification, SkipHotReloadFieldsResetOnRestore)
     ProcessNewlyLoadedCObjects();
     Minted->GetDefaultObject();
 
-    const entt::entity Entity = Registry.create();
+    const ECS::FEntity Entity = Registry.Create();
     CEntityScript* Attached = EntityScripts::Attach(Registry, Entity, Minted);
     ASSERT_NE(Attached, nullptr);
     Minted->GetProperty(FName("Kept"))->SetValue<float>(Attached, 3.5f);
@@ -740,7 +740,7 @@ TEST(EntityScriptUnification, SkipHotReloadFieldsResetOnRestore)
 
     TVector<uint8> Bytes;
     {
-        SEntityScriptComponent* Component = Registry.try_get<SEntityScriptComponent>(Entity);
+        SEntityScriptComponent* Component = Registry.TryGet<SEntityScriptComponent>(Entity);
         FMemoryWriter Writer(Bytes);
         FObjectProxyArchiver Ar(Writer, /*bLoadIfFindFails*/ false);
         Component->Serialize(Ar);
@@ -749,7 +749,7 @@ TEST(EntityScriptUnification, SkipHotReloadFieldsResetOnRestore)
 
     // A unit test has no world contexts to walk, so replay and reset are driven directly.
     {
-        SEntityScriptComponent& Component = Registry.get_or_emplace<SEntityScriptComponent>(Entity);
+        SEntityScriptComponent& Component = Registry.GetOrEmplace<SEntityScriptComponent>(Entity);
         FMemoryReader Reader(Bytes);
         FObjectProxyArchiver Ar(Reader, /*bLoadIfFindFails*/ true);
         Component.Serialize(Ar);
@@ -759,7 +759,7 @@ TEST(EntityScriptUnification, SkipHotReloadFieldsResetOnRestore)
         }
     }
 
-    CEntityScript* Restored = Registry.get<SEntityScriptComponent>(Entity).Scripts[0].Get();
+    CEntityScript* Restored = Registry.Get<SEntityScriptComponent>(Entity).Scripts[0].Get();
     ASSERT_NE(Restored, nullptr);
 
     EXPECT_FLOAT_EQ(*Minted->GetProperty(FName("Kept"))->GetValuePtr<float>(Restored), 3.5f)
@@ -774,19 +774,19 @@ namespace
 {
     struct FDetachMutationContext
     {
-        FEntityRegistry* Registry = nullptr;
-        entt::entity     Spawned  = entt::null;
+        ECS::FRegistry* Registry = nullptr;
+        ECS::FEntity     Spawned  = ECS::NullEntity;
     };
 }
 
 // World teardown detaches over a snapshot, so an OnDetach touching the pool cannot invalidate the walk.
 TEST(EntityScriptUnification, DetachAllInRegistrySurvivesAnOnDetachThatAttachesScripts)
 {
-    FEntityRegistry Registry{};
+    ECS::FRegistry Registry{};
 
-    const entt::entity First  = Registry.create();
-    const entt::entity Second = Registry.create();
-    const entt::entity Third  = Registry.create();
+    const ECS::FEntity First  = Registry.Create();
+    const ECS::FEntity Second = Registry.Create();
+    const ECS::FEntity Third  = Registry.Create();
 
     CEntityScriptTest* FirstScript  = AttachTestScript(Registry, First);
     CEntityScriptTest* SecondScript = AttachTestScript(Registry, Second);
@@ -808,7 +808,7 @@ TEST(EntityScriptUnification, DetachAllInRegistrySurvivesAnOnDetachThatAttachesS
     FirstScript->DetachHook = [](CEntityScriptTest&, void* Ctx)
     {
         FDetachMutationContext& Mutation = *static_cast<FDetachMutationContext*>(Ctx);
-        Mutation.Spawned = Mutation.Registry->create();
+        Mutation.Spawned = Mutation.Registry->Create();
         EntityScripts::Attach(*Mutation.Registry, Mutation.Spawned, CEntityScriptTest::StaticClass());
     };
 
@@ -818,12 +818,12 @@ TEST(EntityScriptUnification, DetachAllInRegistrySurvivesAnOnDetachThatAttachesS
     EXPECT_EQ(SecondScript->DetachCount, 1) << "every entity in the snapshot is detached";
     EXPECT_EQ(ThirdScript->DetachCount, 1) << "a mutation mid-walk must not cut the pass short";
 
-    EXPECT_TRUE(Registry.get<SEntityScriptComponent>(First).Scripts.empty());
-    EXPECT_TRUE(Registry.get<SEntityScriptComponent>(Second).Scripts.empty());
-    EXPECT_TRUE(Registry.get<SEntityScriptComponent>(Third).Scripts.empty());
+    EXPECT_TRUE(Registry.Get<SEntityScriptComponent>(First).Scripts.empty());
+    EXPECT_TRUE(Registry.Get<SEntityScriptComponent>(Second).Scripts.empty());
+    EXPECT_TRUE(Registry.Get<SEntityScriptComponent>(Third).Scripts.empty());
 
-    ASSERT_TRUE(Context.Spawned != entt::null);
-    EXPECT_FALSE(Registry.get<SEntityScriptComponent>(Context.Spawned).Scripts.empty())
+    ASSERT_TRUE(Context.Spawned != ECS::NullEntity);
+    EXPECT_FALSE(Registry.Get<SEntityScriptComponent>(Context.Spawned).Scripts.empty())
         << "a script attached during the pass is outside the snapshot; the clear that follows drops it";
 }
 
@@ -834,8 +834,8 @@ TEST(EntityScriptUnification, AnUnresolvableScriptClassSkipsOnlyItself)
     ProcessNewlyLoadedCObjects();
     CEntityScriptTest::StaticClass()->GetDefaultObject();
 
-    FEntityRegistry Registry{};
-    const entt::entity Entity = Registry.create();
+    ECS::FRegistry Registry{};
+    const ECS::FEntity Entity = Registry.Create();
 
     CEntityScriptTest* First = AttachTestScript(Registry, Entity);
     ASSERT_NE(First, nullptr);
@@ -848,7 +848,7 @@ TEST(EntityScriptUnification, AnUnresolvableScriptClassSkipsOnlyItself)
     // A real two-script payload, so the bogus record below sits between two well-formed ones.
     TVector<uint8> Good;
     {
-        SEntityScriptComponent& Live = Registry.get<SEntityScriptComponent>(Entity);
+        SEntityScriptComponent& Live = Registry.Get<SEntityScriptComponent>(Entity);
         FMemoryWriter Writer(Good);
         FObjectProxyArchiver Ar(Writer, /*bLoadIfFindFails*/ false);
         Live.Serialize(Ar);
@@ -873,7 +873,7 @@ TEST(EntityScriptUnification, AnUnresolvableScriptClassSkipsOnlyItself)
         // The two real scripts, appended verbatim after the count they were written with.
         TVector<uint8> Tail;
         {
-            SEntityScriptComponent& Live = Registry.get<SEntityScriptComponent>(Entity);
+            SEntityScriptComponent& Live = Registry.Get<SEntityScriptComponent>(Entity);
             FMemoryWriter TailWriter(Tail);
             FObjectProxyArchiver TailAr(TailWriter, /*bLoadIfFindFails*/ false);
             int32 Ignored = 0;

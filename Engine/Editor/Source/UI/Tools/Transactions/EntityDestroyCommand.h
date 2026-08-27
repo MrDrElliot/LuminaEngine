@@ -1,9 +1,11 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #include "Containers/Vector.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "EditorTransaction.h"
-#include "World/Entity/Registry/EntityRegistry.h"
 
 namespace Lumina
 {
@@ -15,7 +17,7 @@ namespace Lumina
     public:
 
         // Serializes every candidate up front, since none of them can be read back once they are gone.
-        FEntityDestroyCommand(CWorld* InWorld, const TVector<entt::entity>& InCandidates);
+        FEntityDestroyCommand(CWorld* InWorld, const TVector<ECS::FEntity>& InCandidates);
 
         void Undo() override;
         void Redo() override;
@@ -26,14 +28,14 @@ namespace Lumina
         bool IsNoOp() const override { return Entries.empty(); }
 
         // The candidates plus their descendants, which is the widest set a delete can reach.
-        static void CollectCandidates(FEntityRegistry& Registry, const TVector<entt::entity>& Roots,
-                                      TVector<entt::entity>& Out);
+        static void CollectCandidates(ECS::FRegistry& Registry, const TVector<ECS::FEntity>& Roots,
+                                      TVector<ECS::FEntity>& Out);
 
     private:
 
         struct FEntry
         {
-            entt::entity Entity = entt::null;
+            ECS::FEntity Entity = ECS::NullEntity;
             int64        Offset = 0;
             int64        Size = 0;
         };

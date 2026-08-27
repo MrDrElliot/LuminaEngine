@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "DefaultSceneRenderer.h"
+#include "World/ECS/Registry.h"
 #include <algorithm>
 #include "Animation/SkeletalMeshUtils.h"
 #include "Assets/AssetTypes/Material/Material.h"
@@ -235,7 +236,7 @@ namespace Lumina
 
         if (World != nullptr)
         {
-            FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
+            ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
 
             ECS::Utils::SetPublishMovedTransforms(Registry, true);
 
@@ -385,7 +386,7 @@ namespace Lumina
 
         if (World != nullptr)
         {
-            FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
+            ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
             ECS::Utils::SetPublishMovedTransforms(Registry, false);
             MovedTransformScratch.clear();
             ECS::Utils::DrainMovedTransforms(Registry, MovedTransformScratch);
@@ -644,6 +645,8 @@ namespace Lumina
         SceneGlobalData.CullData.CullCameraPosition     = SceneGlobalData.CameraData.Location;
         SceneGlobalData.CullData.CullCameraView         = SceneGlobalData.CameraData.View;
         SceneGlobalData.CullData.CullCameraProjection   = SceneGlobalData.CameraData.Projection;
+        SceneGlobalData.CullData.CullNearPlane          = SceneGlobalData.NearPlane;
+        SceneGlobalData.CullData.CullFarPlane           = SceneGlobalData.FarPlane;
         SceneGlobalData.CullData.ShadowMaxDistance      = 5000.0f;
         SceneGlobalData.CullData.bShadowOcclusionCull   = RenderSettings.bShadowOcclusionCull;
         SceneGlobalData.CullData.ShadowLODBias          = RenderSettings.ShadowLODBias;
@@ -744,7 +747,7 @@ namespace Lumina
         ExtractFrame = nullptr;
     }
 
-    void FDefaultSceneRenderer::ExtractSplines(FEntityRegistry& Registry, FFrameData& Frame)
+    void FDefaultSceneRenderer::ExtractSplines(ECS::FRegistry& Registry, FFrameData& Frame)
     {
         LUMINA_PROFILE_SECTION("Extract Splines");
 
@@ -755,12 +758,12 @@ namespace Lumina
         Points.clear();
         Samples.clear();
 
-        auto SplineView = Registry.view<SSplineComponent, STransformComponent>(entt::exclude<SDisabledTag>);
+        auto SplineView = Registry.View<SSplineComponent, STransformComponent>(ECS::TExclude<SDisabledTag>{});
 
         static thread_local TVector<FSplineSample> ScratchSamples;
         ScratchSamples.clear();
 
-        SplineView.each([&](entt::entity Entity, const SSplineComponent& Spline, const STransformComponent& Transform)
+        SplineView.ForEach([&](ECS::FEntity Entity, const SSplineComponent& Spline, const STransformComponent& Transform)
         {
             // The opt-in is the whole point, since pure authoring data must cost no upload.
             if (!Spline.bSendToGPU || Spline.Points.empty())
@@ -782,7 +785,7 @@ namespace Lumina
             Header.SampleCount  = (uint32)ScratchSamples.size();
             Header.TotalLength  = TotalLength;
             Header.Flags        = Spline.bClosedLoop ? SPLINE_FLAG_CLOSED_LOOP : 0u;
-            Header.EntityID     = (uint32)entt::to_integral(Entity);
+            Header.EntityID     = (uint32)(Entity).Value;
             Header._Pad         = 0u;
 
             // Control points go up in WORLD space to match the samples, so no shader needs to know which.
@@ -819,7 +822,7 @@ namespace Lumina
         });
     }
 
-    void FDefaultSceneRenderer::ExtractReflectionProbes(FEntityRegistry& Registry, FFrameData& Frame)
+    void FDefaultSceneRenderer::ExtractReflectionProbes(ECS::FRegistry& Registry, FFrameData& Frame)
     {
         LUMINA_PROFILE_SECTION("Extract Reflection Probes");
 
@@ -829,7 +832,7 @@ namespace Lumina
         Captures.clear();
         Frame.ReflectionProbes.bNeedsRebake = false;
 
-        auto ProbeView = Registry.view<SReflectionProbeComponent, STransformComponent>(entt::exclude<SDisabledTag>);
+        auto ProbeView = Registry.View<SReflectionProbeComponent, STransformComponent>(ECS::TExclude<SDisabledTag>{});
 
         struct FProbeSortEntry
         {
@@ -840,7 +843,7 @@ namespace Lumina
         static thread_local TVector<FProbeSortEntry> Sorted;
         Sorted.clear();
 
-        ProbeView.each([&](entt::entity Entity, const SReflectionProbeComponent& Probe, const STransformComponent& Transform)
+        ProbeView.ForEach([&](ECS::FEntity Entity, const SReflectionProbeComponent& Probe, const STransformComponent& Transform)
         {
             if (!Probe.bEnabled || Sorted.size() >= MaxReflectionProbes)
             {
@@ -1139,11 +1142,16 @@ namespace Lumina
             }
         }
 
+        DropStaleFrozenOcclusion(Frame);
+
         // Publish this frame's stats for the editor-side GetRenderStats() reader.
         RenderStats = Frame.FrameStats;
 
-        // From here the frame is submitted, so the pyramid this frame builds is usable next frame.
-        bDepthPyramidValid.store(true, std::memory_order_release);
+        // Published here, because a frozen cull skips both DepthPyramidPass calls and rebuilds nothing.
+        if (!RenderSettings.bFreezeCulling)
+        {
+            bDepthPyramidValid.store(true, std::memory_order_release);
+        }
 
         RHI::FCmdListH CL = RHI::OpenCommandList();
         RHI::CmdSetTextureHeap(CL, RHI::Core::GetGlobalHeap());
@@ -1709,6 +1717,8 @@ namespace Lumina
         Globals.CullData.CullCameraPosition        = Globals.CameraData.Location;
         Globals.CullData.CullCameraView            = Globals.CameraData.View;
         Globals.CullData.CullCameraProjection      = Globals.CameraData.Projection;
+        Globals.CullData.CullNearPlane             = Globals.NearPlane;
+        Globals.CullData.CullFarPlane              = Globals.FarPlane;
 
         // This view's OWN sun-shadow mask, or a skipped mask pass shades every pixel fully lit.
         const FSceneLightData& Lights   = RenderFrame->Lighting.LightData;
@@ -1886,13 +1896,13 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
 
         MovedTransformScratch.clear();
         if (ECS::Utils::DrainMovedTransforms(Registry, MovedTransformScratch))
         {
             FRenderDirtyTracker& Tracker = FRenderDirtyTracker::Ensure(Registry);
-            for (entt::entity Entity : MovedTransformScratch)
+            for (ECS::FEntity Entity : MovedTransformScratch)
             {
                 Tracker.MarkAllSources(Entity, EPrimitiveDirty::Transform);
             }
@@ -1968,8 +1978,7 @@ namespace Lumina
         template <typename TStorage>
         FORCEINLINE auto& PackedPayloadAt(TStorage& Storage, uint32 Index)
         {
-            constexpr size_t PageSize = entt::component_traits<typename TStorage::value_type, entt::entity>::page_size;
-            return Storage.raw()[Index / PageSize][Index % PageSize];
+            return Storage.GetAtDense(Index);
         }
         
     }
@@ -2071,21 +2080,21 @@ namespace Lumina
         }
 
         template <typename TStorage, typename TGetMesh>
-        uint32 ResolveMeshPool(TStorage& Storage, EInstanceFlags SeedFlags,
+        uint32 ResolveMeshPool(TStorage Storage, EInstanceFlags SeedFlags,
                                TVector<CMaterialInterface*>& OverrideScratch, TGetMesh&& GetMesh,
                                FRenderDirtyTracker& Tracker, EPrimitiveSource Source)
         {
-            using TComponent = typename TStorage::value_type;
+            using TComponent = typename TStorage::ValueType;
 
             const FMeshResolveCache& Cache = FMeshResolveCache::Get();
 
             uint32 Refreshed = 0;
 
-            const uint32 Count = (uint32)Storage.size();
+            const uint32 Count = (uint32)Storage.GetDenseSize();
             for (uint32 i = 0; i < Count; ++i)
             {
-                const entt::entity Entity = Storage.data()[i];
-                if (Entity == entt::tombstone)
+                const ECS::FEntity Entity = Storage.GetDenseData()[i];
+                if (Entity.IsTombstone())
                 {
                     continue;
                 }
@@ -2109,17 +2118,17 @@ namespace Lumina
         }
     }
 
-    void FDefaultSceneRenderer::ResolveDynamicMeshMaterials(FEntityRegistry& Registry, FRenderDirtyTracker& Tracker)
+    void FDefaultSceneRenderer::ResolveDynamicMeshMaterials(ECS::FRegistry& Registry, FRenderDirtyTracker& Tracker)
     {
         LUMINA_PROFILE_SCOPE();
 
-        auto& Storage = Registry.storage<SDynamicMeshComponent>();
-        const uint32 Count = (uint32)Storage.size();
+        auto Storage = Registry.GetStorage<SDynamicMeshComponent>();
+        const uint32 Count = (uint32)Storage.GetDenseSize();
 
         for (uint32 i = 0; i < Count; ++i)
         {
-            const entt::entity Entity = Storage.data()[i];
-            if (Entity == entt::tombstone)
+            const ECS::FEntity Entity = Storage.GetDenseData()[i];
+            if (Entity.IsTombstone())
             {
                 continue;
             }
@@ -2184,7 +2193,7 @@ namespace Lumina
     }
 
     // Tripwire that turns a silently missed re-resolve gate into a log line; editor-only.
-    void FDefaultSceneRenderer::ValidateNoStaleResolves(FEntityRegistry& Registry)
+    void FDefaultSceneRenderer::ValidateNoStaleResolves(ECS::FRegistry& Registry)
     {
 #if USING(WITH_EDITOR)
         // Anything still stale after the re-resolve pass is a gate that did not fire.
@@ -2198,10 +2207,10 @@ namespace Lumina
         uint32 StaleSurfaces = 0;
         uint32 StaleEntities = 0;
 
-        auto& Storage = Registry.storage<SDynamicMeshComponent>();
-        for (uint32 i = 0, Count = (uint32)Storage.size(); i < Count; ++i)
+        auto Storage = Registry.GetStorage<SDynamicMeshComponent>();
+        for (uint32 i = 0, Count = (uint32)Storage.GetDenseSize(); i < Count; ++i)
         {
-            if (Storage.data()[i] == entt::tombstone)
+            if (Storage.GetDenseData()[i].IsTombstone())
             {
                 continue;
             }
@@ -2265,22 +2274,22 @@ namespace Lumina
 
         const uint32 TableGenerationBefore = Cache.GetTableGeneration();
 
-        FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
 
         TVector<CMaterialInterface*>& Scratch = ResolveOverrideScratch;
         FRenderDirtyTracker& Tracker = FRenderDirtyTracker::Ensure(Registry);
 
-        uint32 Refreshed = ResolveMeshPool(Registry.storage<SStaticMeshComponent>(), EInstanceFlags::None, Scratch,
+        uint32 Refreshed = ResolveMeshPool(Registry.GetStorage<SStaticMeshComponent>(), EInstanceFlags::None, Scratch,
             [](const SStaticMeshComponent& C) -> CMesh* { return C.StaticMesh; },
             Tracker, EPrimitiveSource::StaticMesh);
 
         // Skeletal assets always carry FMeshletSkinnedVertex, so Skinned is unconditional here.
-        Refreshed += ResolveMeshPool(Registry.storage<SSkeletalMeshComponent>(), EInstanceFlags::Skinned, Scratch,
+        Refreshed += ResolveMeshPool(Registry.GetStorage<SSkeletalMeshComponent>(), EInstanceFlags::Skinned, Scratch,
             [](const SSkeletalMeshComponent& C) -> CMesh* { return C.SkeletalMesh; },
             Tracker, EPrimitiveSource::SkeletalMesh);
 
         // Foliage types carry no material overrides.
-        for (auto&& [Entity, Foliage] : Registry.view<SFoliageComponent>().each())
+        for (auto&& [Entity, Foliage] : Registry.View<SFoliageComponent>().Each())
         {
             for (SFoliageType& Type : Foliage.Types)
             {
@@ -2360,36 +2369,36 @@ namespace Lumina
 
         {
             LUMINA_PROFILE_SECTION("Compile Draw Commands");
-            FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
+            ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
             TAtomic<uint32> LightCount{0};
             
-            auto DirectionalView     = Registry.view<SDirectionalLightComponent>(entt::exclude<SDisabledTag>);
-            auto SpotLightView       = Registry.view<SSpotLightComponent>(entt::exclude<SDisabledTag>);
-            auto PointLightView      = Registry.view<SPointLightComponent>(entt::exclude<SDisabledTag>);
-            auto CharacterView       = Registry.view<SCharacterControllerComponent>(entt::exclude<SDisabledTag>);
-            auto CameraView          = Registry.view<SCameraComponent>(entt::exclude<SDisabledTag>);
-            auto BillboardView       = Registry.view<SBillboardComponent>(entt::exclude<SDisabledTag>);
-            auto WidgetView          = Registry.view<SWidgetComponent>(entt::exclude<SDisabledTag>);
-            auto TextView            = Registry.view<STextComponent>(entt::exclude<SDisabledTag>);
-            auto LineBatcherView     = Registry.view<FLineBatcherComponent>();
-            auto TriangleBatcherView = Registry.view<FTriangleBatcherComponent>();
-            auto EnvironmentView     = Registry.view<SEnvironmentComponent>(entt::exclude<SDisabledTag>);
-            auto SkyLightView        = Registry.view<SSkyLightComponent>(entt::exclude<SDisabledTag>);
-            auto FogView             = Registry.view<SExponentialHeightFogComponent>(entt::exclude<SDisabledTag>);
-            auto FogVolumeView       = Registry.view<SLocalFogVolumeComponent>(entt::exclude<SDisabledTag>);
-            auto CloudView           = Registry.view<SCloudComponent>(entt::exclude<SDisabledTag>);
-            auto TerrainAllView      = Registry.view<STerrainComponent>();
-            auto TerrainView         = Registry.view<STerrainComponent>(entt::exclude<SDisabledTag>);
-            auto ParticleAllView     = Registry.view<SParticleSystemComponent>();
-            auto ParticleView        = Registry.view<SParticleSystemComponent>(entt::exclude<SDisabledTag>);
-            auto DecalView           = Registry.view<SDecalComponent>(entt::exclude<SDisabledTag>);
-            auto WaterView           = Registry.view<SWaterComponent>(entt::exclude<SDisabledTag>);
-            auto& TransformStorage  = Registry.storage<STransformComponent>();
+            auto DirectionalView     = Registry.View<SDirectionalLightComponent>(ECS::TExclude<SDisabledTag>{});
+            auto SpotLightView       = Registry.View<SSpotLightComponent>(ECS::TExclude<SDisabledTag>{});
+            auto PointLightView      = Registry.View<SPointLightComponent>(ECS::TExclude<SDisabledTag>{});
+            auto CharacterView       = Registry.View<SCharacterControllerComponent>(ECS::TExclude<SDisabledTag>{});
+            auto CameraView          = Registry.View<SCameraComponent>(ECS::TExclude<SDisabledTag>{});
+            auto BillboardView       = Registry.View<SBillboardComponent>(ECS::TExclude<SDisabledTag>{});
+            auto WidgetView          = Registry.View<SWidgetComponent>(ECS::TExclude<SDisabledTag>{});
+            auto TextView            = Registry.View<STextComponent>(ECS::TExclude<SDisabledTag>{});
+            auto LineBatcherView     = Registry.View<FLineBatcherComponent>();
+            auto TriangleBatcherView = Registry.View<FTriangleBatcherComponent>();
+            auto EnvironmentView     = Registry.View<SEnvironmentComponent>(ECS::TExclude<SDisabledTag>{});
+            auto SkyLightView        = Registry.View<SSkyLightComponent>(ECS::TExclude<SDisabledTag>{});
+            auto FogView             = Registry.View<SExponentialHeightFogComponent>(ECS::TExclude<SDisabledTag>{});
+            auto FogVolumeView       = Registry.View<SLocalFogVolumeComponent>(ECS::TExclude<SDisabledTag>{});
+            auto CloudView           = Registry.View<SCloudComponent>(ECS::TExclude<SDisabledTag>{});
+            auto TerrainAllView      = Registry.View<STerrainComponent>();
+            auto TerrainView         = Registry.View<STerrainComponent>(ECS::TExclude<SDisabledTag>{});
+            auto ParticleAllView     = Registry.View<SParticleSystemComponent>();
+            auto ParticleView        = Registry.View<SParticleSystemComponent>(ECS::TExclude<SDisabledTag>{});
+            auto DecalView           = Registry.View<SDecalComponent>(ECS::TExclude<SDisabledTag>{});
+            auto WaterView           = Registry.View<SWaterComponent>(ECS::TExclude<SDisabledTag>{});
+            auto TransformStorage  = Registry.GetStorage<STransformComponent>();
 
             ECS::Utils::ResolveAllDirtyTransforms(Registry);
 
         {
-            FEntityRegistry& DynRegistry = ECS::GetWorldRegistry(*World);
+            ECS::FRegistry& DynRegistry = ECS::GetWorldRegistry(*World);
             ResolveDynamicMeshMaterials(DynRegistry, FRenderDirtyTracker::Ensure(DynRegistry));
         }
 
@@ -2499,7 +2508,7 @@ namespace Lumina
             FTaskGraph& EmitGraph = EmitTaskGraph;
 
             FLineBatcherComponent* LineBatcher = nullptr;
-            LineBatcherView.each([&](FLineBatcherComponent& C) { if (LineBatcher == nullptr)
+            LineBatcherView.ForEach([&](FLineBatcherComponent& C) { if (LineBatcher == nullptr)
                     {
                         LineBatcher = &C;
                     }
@@ -2523,7 +2532,7 @@ namespace Lumina
             {
                 LUMINA_PROFILE_SECTION("Batched Triangle Processing");
 
-                TriangleBatcherView.each([&](FTriangleBatcherComponent& TriangleBatcherComponent)
+                TriangleBatcherView.ForEach([&](FTriangleBatcherComponent& TriangleBatcherComponent)
                 {
                     ProcessBatchedTriangles(TriangleBatcherComponent);
                 });
@@ -2536,11 +2545,11 @@ namespace Lumina
                 const FFrustum& WidgetFrustum = Frame.CameraFrustum;
                 const bool      bCullWidgets   = SceneGlobalData.CullData.bFrustumCull != 0u;
 
-                WidgetView.each([&](entt::entity Entity, SWidgetComponent& WidgetComponent)
+                WidgetView.ForEach([&](ECS::FEntity Entity, SWidgetComponent& WidgetComponent)
                 {
                     FWidgetRuntime& Runtime = WidgetComponent.Runtime;
 
-                    const FMatrix4 WorldMatrix = TransformStorage.get(Entity).GetWorldMatrix();
+                    const FMatrix4 WorldMatrix = TransformStorage.Get(Entity).GetWorldMatrix();
                     const FVector3 Center = FVector3(WorldMatrix[3]);
                     const float ScaleXY = Math::Max(Math::Length(FVector3(WorldMatrix[0])), Math::Length(FVector3(WorldMatrix[1])));
                     const float Radius  = 0.5f * Math::Length(WidgetComponent.WorldSize) * Math::Max(1.0f, ScaleXY);
@@ -2558,7 +2567,7 @@ namespace Lumina
                     Inst.TextureIndex = (uint32)Runtime.ResourceID;
                     Inst.Flags        = WidgetComponent.bBillboard ? WIDGET_FLAG_BILLBOARD : 0u;
                     Inst.ColorPack    = PackColor(WidgetComponent.Tint);
-                    Inst.EntityID     = entt::to_integral(Entity);
+                    Inst.EntityID     = (Entity).Value;
                     Inst.Pad0         = 0u;
                     Inst.Pad1         = 0u;
                 });
@@ -2573,7 +2582,7 @@ namespace Lumina
                 const FVector3  CamRight    = FVector3(SceneGlobalData.CameraData.Right);
                 const FVector3  CamUp       = FVector3(SceneGlobalData.CameraData.Up);
 
-                TextView.each([&](entt::entity Entity, STextComponent& TextComponent)
+                TextView.ForEach([&](ECS::FEntity Entity, STextComponent& TextComponent)
                 {
                     if (TextComponent.Text.empty())
                     {
@@ -2597,7 +2606,7 @@ namespace Lumina
                         return;
                     }
 
-                    const FMatrix4 WorldMatrix = TransformStorage.get(Entity).GetWorldMatrix();
+                    const FMatrix4 WorldMatrix = TransformStorage.Get(Entity).GetWorldMatrix();
                     const FVector3 Origin = FVector3(WorldMatrix[3]);
 
                     const float HAlign = (TextComponent.HorizontalAlign == ETextHorizontalAlign::Left)   ? 0.0f
@@ -2685,7 +2694,7 @@ namespace Lumina
                         G.PlaneMin  = S.Min;
                         G.PlaneMax  = S.Max;
                         G.ColorPack = Color;
-                        G.EntityID  = entt::to_integral(Entity);
+                        G.EntityID  = (Entity).Value;
                     }
 
                     const uint32 GlyphCount = (uint32)GlyphInstances.size() - First;
@@ -2718,7 +2727,7 @@ namespace Lumina
             {
                 LUMINA_PROFILE_SECTION("Process Billboard Primitives");
 
-                BillboardView.each([this, &BillboardInstances, &TransformStorage](entt::entity Entity, const SBillboardComponent& BillboardComponent)
+                BillboardView.ForEach([this, &BillboardInstances, &TransformStorage](ECS::FEntity Entity, const SBillboardComponent& BillboardComponent)
                 {
                     if (!BillboardComponent.Texture.IsValid() || BillboardComponent.Texture->GetResourceID() < 0)
                     {
@@ -2727,65 +2736,65 @@ namespace Lumina
 
                     FBillboardInstance& Billboard   = BillboardInstances.emplace_back();
                     Billboard.TextureIndex          = BillboardComponent.Texture->GetResourceID();
-                    Billboard.Position              = TransformStorage.get(Entity).GetWorldLocationCached();
+                    Billboard.Position              = TransformStorage.Get(Entity).GetWorldLocationCached();
                     Billboard.Size                  = BillboardComponent.Scale;
-                    Billboard.EntityID              = entt::to_integral(Entity);
+                    Billboard.EntityID              = (Entity).Value;
                 });
                 
                 #if USING(WITH_EDITOR)
                 // Editor visualizer billboards, skipped in game and thumbnail worlds.
                 if (!World->IsGameWorld())
                 {
-                    auto EmplaceVisualizer = [this, &BillboardInstances](entt::entity Entity, const FVector3& Position, ENamedImage Icon, const FVector4& Color, float Size = 0.20f)
+                    auto EmplaceVisualizer = [this, &BillboardInstances](ECS::FEntity Entity, const FVector3& Position, ENamedImage Icon, const FVector4& Color, float Size = 0.20f)
                     {
                         FBillboardInstance& Billboard = BillboardInstances.emplace_back();
                         Billboard.TextureIndex        = (uint32)GetNamedImage(Icon).GetResourceID();
                         Billboard.ColorPack           = PackColor(Color);
                         Billboard.Position            = Position;
                         Billboard.Size                = Size;
-                        Billboard.EntityID            = entt::to_integral(Entity);
+                        Billboard.EntityID            = (Entity).Value;
                     };
 
                     // Skip editor viewport camera so the billboard doesn't sit on the user's view.
-                    CameraView.each([&](entt::entity Entity, SCameraComponent&)
+                    CameraView.ForEach([&](ECS::FEntity Entity, SCameraComponent&)
                     {
-                        if (Registry.all_of<FEditorComponent>(Entity))
+                        if (Registry.HasAll<FEditorComponent>(Entity))
                         {
                             return;
                         }
-                        EmplaceVisualizer(Entity, TransformStorage.get(Entity).GetWorldLocationCached(), ENamedImage::CameraIcon, FColor::White);
+                        EmplaceVisualizer(Entity, TransformStorage.Get(Entity).GetWorldLocationCached(), ENamedImage::CameraIcon, FColor::White);
                     });
 
-                    CharacterView.each([&](entt::entity Entity, SCharacterControllerComponent&)
+                    CharacterView.ForEach([&](ECS::FEntity Entity, SCharacterControllerComponent&)
                     {
-                        EmplaceVisualizer(Entity, TransformStorage.get(Entity).GetWorldLocationCached(), ENamedImage::CharacterIcon, FColor::White);
+                        EmplaceVisualizer(Entity, TransformStorage.Get(Entity).GetWorldLocationCached(), ENamedImage::CharacterIcon, FColor::White);
                     });
 
-                    PointLightView.each([&](entt::entity Entity, const SPointLightComponent& Light)
+                    PointLightView.ForEach([&](ECS::FEntity Entity, const SPointLightComponent& Light)
                     {
-                        EmplaceVisualizer(Entity, TransformStorage.get(Entity).GetWorldLocationCached(), ENamedImage::PointLightIcon, FVector4(Light.LightColor, 1.0f));
+                        EmplaceVisualizer(Entity, TransformStorage.Get(Entity).GetWorldLocationCached(), ENamedImage::PointLightIcon, FVector4(Light.LightColor, 1.0f));
                     });
 
-                    SpotLightView.each([&](entt::entity Entity, const SSpotLightComponent& Light)
+                    SpotLightView.ForEach([&](ECS::FEntity Entity, const SSpotLightComponent& Light)
                     {
-                        EmplaceVisualizer(Entity, TransformStorage.get(Entity).GetWorldLocationCached(), ENamedImage::SpotLightIcon, FVector4(Light.LightColor, 1.0f));
+                        EmplaceVisualizer(Entity, TransformStorage.Get(Entity).GetWorldLocationCached(), ENamedImage::SpotLightIcon, FVector4(Light.LightColor, 1.0f));
                     });
 
-                    DirectionalView.each([&](entt::entity Entity, const SDirectionalLightComponent& Light)
+                    DirectionalView.ForEach([&](ECS::FEntity Entity, const SDirectionalLightComponent& Light)
                     {
-                        const auto& Transform = Registry.get<STransformComponent>(Entity);
+                        const auto& Transform = Registry.Get<STransformComponent>(Entity);
                         EmplaceVisualizer(Entity, Transform.GetWorldLocationCached(), ENamedImage::DirectionalLightIcon, FVector4(Light.Color, 1.0f));
                     });
 
-                    SkyLightView.each([&](entt::entity Entity, const SSkyLightComponent&)
+                    SkyLightView.ForEach([&](ECS::FEntity Entity, const SSkyLightComponent&)
                     {
-                        const auto& Transform = Registry.get<STransformComponent>(Entity);
+                        const auto& Transform = Registry.Get<STransformComponent>(Entity);
                         EmplaceVisualizer(Entity, Transform.GetWorldLocationCached(), ENamedImage::SkyLightIcon, FVector4(1.0f));
                     });
 
-                    ParticleView.each([&](entt::entity Entity, const SParticleSystemComponent&)
+                    ParticleView.ForEach([&](ECS::FEntity Entity, const SParticleSystemComponent&)
                     {
-                        EmplaceVisualizer(Entity, TransformStorage.get(Entity).GetWorldLocationCached(), ENamedImage::ParticleSystemIcon, FVector4(1.0f));
+                        EmplaceVisualizer(Entity, TransformStorage.Get(Entity).GetWorldLocationCached(), ENamedImage::ParticleSystemIcon, FVector4(1.0f));
                     });
                 }
                 #endif
@@ -2802,10 +2811,10 @@ namespace Lumina
                 // Sized to the highest selected slot, since an entity above the top bit reads as unselected.
                 uint32 HighestWord = 0u;
                 bool   bAnySelected = false;
-                auto   Selected = Registry.view<FSelectedInEditorComponent>();
-                Selected.each([&](entt::entity Entity)
+                auto   Selected = Registry.View<FSelectedInEditorComponent>();
+                Selected.ForEach([&](ECS::FEntity Entity)
                 {
-                    HighestWord  = Math::Max(HighestWord, (uint32)entt::to_entity(Entity) >> 5u);
+                    HighestWord  = Math::Max(HighestWord, (uint32)(Entity).GetIndex() >> 5u);
                     bAnySelected = true;
                 });
 
@@ -2813,62 +2822,45 @@ namespace Lumina
                 if (bAnySelected)
                 {
                     Bits.resize(HighestWord + 1u, 0u);
-                    Selected.each([&](entt::entity Entity)
+                    Selected.ForEach([&](ECS::FEntity Entity)
                     {
-                        const uint32 Index = (uint32)entt::to_entity(Entity);
+                        const uint32 Index = (uint32)(Entity).GetIndex();
                         Bits[Index >> 5u] |= (1u << (Index & 31u));
                     });
                 }
             }, ETaskPriority::Medium);
             #endif
 
-            auto DLightTask = EmitGraph.AddParallelFor((uint32)DirectionalView.handle()->size(), 32, [&](Task::FParallelRange Range)
+            auto DLightTask = EmitGraph.AddParallelFor((uint32)DirectionalView.NumDenseSlots(), 32, [&](Task::FParallelRange Range)
             {
                 LUMINA_PROFILE_SECTION("Process Directional Light");
-                auto Handle = DirectionalView.handle();
-                for (uint32 i = Range.Start; i < Range.End; ++i)
+                DirectionalView.ForEachInRange(Range.Start, Range.End,
+                    [&](ECS::FEntity, SDirectionalLightComponent& DirectionalLight)
                 {
-                    entt::entity Entity = (*Handle)[i];
-                    if (DirectionalView.contains(Entity))
-                    {
-                        auto& DirectionalLight = DirectionalView.get<SDirectionalLightComponent>(Entity);
-                        ProcessDirectionalLight(DirectionalLight, LightCount);
-                    }
-                }
+                    ProcessDirectionalLight(DirectionalLight, LightCount);
+                });
             });
             
-            auto PointLightTask = EmitGraph.AddParallelFor((uint32)PointLightView.handle()->size(), 32, [&](Task::FParallelRange Range)
+            auto PointLightTask = EmitGraph.AddParallelFor((uint32)PointLightView.NumDenseSlots(), 32, [&](Task::FParallelRange Range)
             {
                 LUMINA_PROFILE_SECTION("Process Point Light Range");
 
-                auto Handle = PointLightView.handle();
-                for (uint32 i = Range.Start; i < Range.End; ++i)
+                PointLightView.ForEachInRange(Range.Start, Range.End,
+                    [&](ECS::FEntity Entity, SPointLightComponent& PointLight)
                 {
-                    entt::entity Entity = (*Handle)[i];
-                    if (PointLightView.contains(Entity))
-                    {
-                        auto& PointLight = PointLightView.get<SPointLightComponent>(Entity);
-                        auto& Transform = TransformStorage.get(Entity);
-                        ProcessPointLight(PointLight, Transform, LightCount);
-                    }
-                }
+                    ProcessPointLight(PointLight, TransformStorage.Get(Entity), LightCount);
+                });
             });
             
-            auto SpotLightTask = EmitGraph.AddParallelFor((uint32)SpotLightView.handle()->size(), 32, [&](Task::FParallelRange Range)
+            auto SpotLightTask = EmitGraph.AddParallelFor((uint32)SpotLightView.NumDenseSlots(), 32, [&](Task::FParallelRange Range)
             {
                 LUMINA_PROFILE_SECTION("Process Spot Light Range");
 
-                auto Handle = SpotLightView.handle();
-                for (uint32 i = Range.Start; i < Range.End; ++i)
+                SpotLightView.ForEachInRange(Range.Start, Range.End,
+                    [&](ECS::FEntity Entity, SSpotLightComponent& SpotLight)
                 {
-                    entt::entity Entity = (*Handle)[i];
-                    if (SpotLightView.contains(Entity))
-                    {
-                        auto& SpotLight = SpotLightView.get<SSpotLightComponent>(Entity);
-                        auto& Transform = TransformStorage.get(Entity);
-                        ProcessSpotLight(SpotLight, Transform, LightCount);
-                    }
-                }
+                    ProcessSpotLight(SpotLight, TransformStorage.Get(Entity), LightCount);
+                });
             });
             
             EmitGraph.Add([&]
@@ -2877,19 +2869,19 @@ namespace Lumina
 
                 Frame.Extracts.LiveTerrainEntities.clear();
 
-                for (entt::entity Entity : TerrainAllView)
+                for (ECS::FEntity Entity : TerrainAllView)
                 {
                     Frame.Extracts.LiveTerrainEntities.push_back(Entity);
                 }
 
                 SIZE_T TerrainCount = 0;
-                for (entt::entity Entity : TerrainView)
+                for (ECS::FEntity Entity : TerrainView)
                 {
-                    STerrainComponent& Terrain = TerrainView.get<STerrainComponent>(Entity);
+                    STerrainComponent& Terrain = TerrainView.Get<STerrainComponent>(Entity);
 
                     FFrameData::FTerrainExtract& Item = ReuseAt(Frame.Extracts.TerrainExtracts, TerrainCount++);
                     Item.Entity      = Entity;
-                    Item.WorldMatrix = TransformStorage.get(Entity).GetWorldMatrix();
+                    Item.WorldMatrix = TransformStorage.Get(Entity).GetWorldMatrix();
                     PrepareTerrainExtract(Terrain, Item.WorldMatrix, Item);
                 }
                 Frame.Extracts.TerrainExtracts.resize(TerrainCount);
@@ -2902,12 +2894,12 @@ namespace Lumina
                 Frame.Extracts.LiveParticleEntities.clear();
                 SIZE_T ParticleCount = 0;
 
-                for (entt::entity Entity : ParticleAllView)
+                for (ECS::FEntity Entity : ParticleAllView)
                 {
                     Frame.Extracts.LiveParticleEntities.push_back(Entity);
                 }
 
-                ParticleView.each([&](entt::entity Entity, SParticleSystemComponent& Component)
+                ParticleView.ForEach([&](ECS::FEntity Entity, SParticleSystemComponent& Component)
                 {
                     CParticleSystem* PS = Component.ParticleSystem.Get();
 
@@ -2921,7 +2913,7 @@ namespace Lumina
                         return;
                     }
 
-                    const FMatrix4 WorldMatrix = TransformStorage.get(Entity).GetWorldMatrix();
+                    const FMatrix4 WorldMatrix = TransformStorage.Get(Entity).GetWorldMatrix();
                     const int32    EmitterCount = (int32)PS->Emitters.size();
 
                     for (int32 EmitterIdx = 0; EmitterIdx < EmitterCount; ++EmitterIdx)
@@ -2999,7 +2991,7 @@ namespace Lumina
                 DecalSortScratch.clear();
                 DecalGroupMinSort.clear();
 
-                DecalView.each([&](entt::entity Entity, const SDecalComponent& Decal)
+                DecalView.ForEach([&](ECS::FEntity Entity, const SDecalComponent& Decal)
                 {
                     CMaterialInterface* Material = Decal.DecalMaterial.Get();
                     if (Material == nullptr || !Material->IsReadyForRender())
@@ -3018,7 +3010,7 @@ namespace Lumina
                     }
 
                     FGPUDecal Item;
-                    Item.DecalToWorld  = Math::Scale(TransformStorage.get(Entity).GetWorldMatrix(), Decal.Size);
+                    Item.DecalToWorld  = Math::Scale(TransformStorage.Get(Entity).GetWorldMatrix(), Decal.Size);
                     Item.WorldToDecal  = Math::Inverse(Item.DecalToWorld);
                     Item.FadeAngleCos  = Math::Cos(Math::Radians(Math::Clamp(Decal.FadeAngle, 0.0f, 89.9f)));
                     Item.Opacity       = Math::Clamp(Decal.Opacity, 0.0f, 1.0f);
@@ -3094,9 +3086,9 @@ namespace Lumina
                     return ID >= 0 ? (uint32)ID : ~0u;
                 };
 
-                WaterView.each([&](entt::entity Entity, const SWaterComponent& Water)
+                WaterView.ForEach([&](ECS::FEntity Entity, const SWaterComponent& Water)
                 {
-                    const FMatrix4 WorldMatrix = TransformStorage.get(Entity).GetWorldMatrix();
+                    const FMatrix4 WorldMatrix = TransformStorage.Get(Entity).GetWorldMatrix();
                     const float ExtentX = Math::Max(Water.Extent.x, 0.01f);
                     const float ExtentZ = Math::Max(Water.Extent.y, 0.01f);
 
@@ -3146,7 +3138,7 @@ namespace Lumina
                     {
                         BestUnderwaterLocalY = LocalCam.y;
 
-                        const FVector3 SurfaceCenter = TransformStorage.get(Entity).GetWorldLocation();
+                        const FVector3 SurfaceCenter = TransformStorage.Get(Entity).GetWorldLocation();
                         Frame.Water.bUnderwaterActive = true;
                         Frame.Water.Underwater.PlaneNormalAndHeight = FVector4(0.0f, 1.0f, 0.0f, SurfaceCenter.y);
                         Frame.Water.Underwater.FogColorDensity      = FVector4(Water.UnderwaterFogColor, Math::Max(Water.UnderwaterFogDensity, 0.0f));
@@ -3254,7 +3246,7 @@ namespace Lumina
                 Frame.Volumetrics.bIBLDirty                = false;
                 Frame.Volumetrics.bIBLConvolutionDirty     = false;
 
-                EnvironmentView.each([&bHasEnvironment, &Frame, &EnvironmentParams, &ActiveEnv] (const SEnvironmentComponent& Env)
+                EnvironmentView.ForEach([&bHasEnvironment, &Frame, &EnvironmentParams, &ActiveEnv] (const SEnvironmentComponent& Env)
                 {
                     ActiveEnv = &Env;
 
@@ -3329,7 +3321,7 @@ namespace Lumina
 
                 LightData.AmbientLight = FVector4(0.0f);
 
-                SkyLightView.each([&LightData, ActiveEnv] (const SSkyLightComponent& Sky)
+                SkyLightView.ForEach([&LightData, ActiveEnv] (const SSkyLightComponent& Sky)
                 {
                     if (!Sky.bAffectsWorld)
                     {
@@ -3362,7 +3354,7 @@ namespace Lumina
 
                 Frame.Volumetrics.bHasFog        = false;
                 Frame.Volumetrics.bClouds = false;
-                CloudView.each([&Frame] (const SCloudComponent& Cloud)
+                CloudView.ForEach([&Frame] (const SCloudComponent& Cloud)
                 {
                     if (!Cloud.bEnabled || Cloud.Coverage <= 0.0f || Cloud.Density <= 0.0f)
                     {
@@ -3375,7 +3367,7 @@ namespace Lumina
                 Frame.Volumetrics.bVolumetricFog = false;
                 Frame.Volumetrics.FogParams      = FExponentialHeightFogParams{};
 
-                FogView.each([&Frame, &Registry] (entt::entity Entity, const SExponentialHeightFogComponent& Fog)
+                FogView.ForEach([&Frame, &Registry] (ECS::FEntity Entity, const SExponentialHeightFogComponent& Fog)
                 {
                     if (!Fog.bEnabled || Fog.FogVisibilityDistance <= 0.0f)
                     {
@@ -3387,7 +3379,7 @@ namespace Lumina
                     const float FogDensity = ContrastThreshold / Math::Max(Fog.FogVisibilityDistance, 1.0f);
 
                     float BaseHeight = Fog.FogBaseHeight;
-                    if (const STransformComponent* Transform = Registry.try_get<STransformComponent>(Entity))
+                    if (const STransformComponent* Transform = Registry.TryGet<STransformComponent>(Entity))
                     {
                         BaseHeight += Transform->GetWorldLocationCached().y;
                     }
@@ -3433,7 +3425,7 @@ namespace Lumina
                 Frame.Volumetrics.FogVolumes.clear();
                 if (Frame.Volumetrics.bHasFog && Frame.Volumetrics.bVolumetricFog)
                 {
-                    FogVolumeView.each([&](entt::entity Entity, const SLocalFogVolumeComponent& Volume)
+                    FogVolumeView.ForEach([&](ECS::FEntity Entity, const SLocalFogVolumeComponent& Volume)
                     {
                         if (!Volume.bEnabled || Frame.Volumetrics.FogVolumes.size() >= GFogMaxVolumes)
                         {
@@ -3451,7 +3443,7 @@ namespace Lumina
                         }
 
                         FGPUFogVolume Item;
-                        Item.WorldToVolume = Math::Inverse(Math::Scale(TransformStorage.get(Entity).GetWorldMatrix(), Extent));
+                        Item.WorldToVolume = Math::Inverse(Math::Scale(TransformStorage.Get(Entity).GetWorldMatrix(), Extent));
 
                         constexpr float ContrastThreshold = 3.912f;
                         const float Density = ContrastThreshold / Math::Max(Volume.VisibilityDistance, 1.0f);
@@ -3483,9 +3475,11 @@ namespace Lumina
         }
 
         BuildCullViews(ExtractFrame->ViewVolume);
+
+        // Last extract write, and on this thread, because Extract snapshots ImmediateLines a few lines later.
+        ApplyCullFreeze(Frame);
     }
 
-    // Runs after every extract write, so the toggle frame still culls live and freezes next.
     void FDefaultSceneRenderer::ApplyCullFreeze(FFrameData& Frame)
     {
         FCullData& Cull = Frame.SceneGlobalData.CullData;
@@ -3502,14 +3496,22 @@ namespace Lumina
             FrozenCull.CameraPosition   = Cull.CullCameraPosition;
             FrozenCull.CameraView       = Cull.CullCameraView;
             FrozenCull.CameraProjection = Cull.CullCameraProjection;
+            FrozenCull.NearPlane        = Cull.CullNearPlane;
+            FrozenCull.FarPlane         = Cull.CullFarPlane;
             FrozenCull.Frustum          = Cull.Frustum;
             FrozenCull.ShadowFrustum    = Cull.ShadowFrustum;
             for (int32 c = 0; c < NumCascades; ++c)
             {
-                FrozenCull.CascadeFrustum[c] = Cull.CascadeFrustum[c];
+                FrozenCull.CascadeFrustum[c]              = Cull.CascadeFrustum[c];
+                FrozenCull.CascadeHZBViewProjection[c]    = Cull.CascadeHZBViewProjection[c];
+                FrozenCull.CascadeHZBNdcScale[c]          = Cull.CascadeHZBNdcScale[c];
+                FrozenCull.CascadeHZBViewProjectionMid[c] = Cull.CascadeHZBViewProjectionMid[c];
+                FrozenCull.CascadeHZBNdcScaleMid[c]       = Cull.CascadeHZBNdcScaleMid[c];
             }
-            FrozenCull.CascadeViewBase = Frame.Views.CascadeViewBase;
-            FrozenCull.bValid          = true;
+
+            FrozenCull.bHasCascadeShadow = CaptureCascadeShadowFit(Frame);
+            FrozenCull.CascadeViewBase   = Frame.Views.CascadeViewBase;
+            FrozenCull.bValid            = true;
             return;
         }
 
@@ -3528,14 +3530,77 @@ namespace Lumina
         Cull.CullCameraPosition   = FrozenCull.CameraPosition;
         Cull.CullCameraView       = FrozenCull.CameraView;
         Cull.CullCameraProjection = FrozenCull.CameraProjection;
+        Cull.CullNearPlane        = FrozenCull.NearPlane;
+        Cull.CullFarPlane         = FrozenCull.FarPlane;
         Cull.Frustum              = FrozenCull.Frustum;
         Cull.ShadowFrustum        = FrozenCull.ShadowFrustum;
         for (int32 c = 0; c < NumCascades; ++c)
         {
-            Cull.CascadeFrustum[c] = FrozenCull.CascadeFrustum[c];
+            Cull.CascadeFrustum[c]              = FrozenCull.CascadeFrustum[c];
+            Cull.CascadeHZBViewProjection[c]    = FrozenCull.CascadeHZBViewProjection[c];
+            Cull.CascadeHZBNdcScale[c]          = FrozenCull.CascadeHZBNdcScale[c];
+            Cull.CascadeHZBViewProjectionMid[c] = FrozenCull.CascadeHZBViewProjectionMid[c];
+            Cull.CascadeHZBNdcScaleMid[c]       = FrozenCull.CascadeHZBNdcScaleMid[c];
         }
 
+        RestoreCascadeShadowFit(Frame);
+
         DrawFrozenCullFrustum(Frame);
+    }
+
+    // The sun's cascade fit, which the shadow raster and the shading both read but the freeze did not reach.
+    bool FDefaultSceneRenderer::CaptureCascadeShadowFit(const FFrameData& Frame)
+    {
+        // Same two gates CascadedShowPass uses, since the sun is what owns slot 0 and the cascade tiles.
+        const int32 Slot = Frame.Lighting.LightData.bHasSun ? Frame.Lighting.Lights[0].ShadowDataIndex : INDEX_NONE;
+        if (Slot == INDEX_NONE || Slot >= (int32)MAX_SHADOWS)
+        {
+            return false;
+        }
+
+        const FLightShadowData& Sun = Frame.Lighting.Shadows[Slot];
+        for (int32 c = 0; c < NumCascades; ++c)
+        {
+            FrozenCull.CascadeShadowViewProjection[c] = Sun.ViewProjection[c];
+        }
+
+        FrozenCull.CascadeRadii = Frame.Lighting.LightData.CascadeRadii;
+        return true;
+    }
+
+    // Written into whatever slot this frame assigned the sun, since the slot order is not itself frozen.
+    void FDefaultSceneRenderer::RestoreCascadeShadowFit(FFrameData& Frame) const
+    {
+        const int32 Slot = Frame.Lighting.LightData.bHasSun ? Frame.Lighting.Lights[0].ShadowDataIndex : INDEX_NONE;
+        if (!FrozenCull.bHasCascadeShadow || Slot == INDEX_NONE || Slot >= (int32)MAX_SHADOWS)
+        {
+            return;
+        }
+
+        FLightShadowData& Sun = Frame.Lighting.Shadows[Slot];
+        for (int32 c = 0; c < NumCascades; ++c)
+        {
+            Sun.ViewProjection[c] = FrozenCull.CascadeShadowViewProjection[c];
+        }
+
+        Frame.Lighting.LightData.CascadeRadii = FrozenCull.CascadeRadii;
+    }
+
+    // Retracted here, because a resize discarding the pyramid is only known after the render thread rebuilds.
+    void FDefaultSceneRenderer::DropStaleFrozenOcclusion(FFrameData& Frame) const
+    {
+        if (!RenderSettings.bFreezeCulling || bDepthPyramidValid.load(std::memory_order_acquire))
+        {
+            return;
+        }
+
+        constexpr uint32 HiZFlags = (uint32)ECullViewFlags::Occlusion | (uint32)ECullViewFlags::MeshletHiZ;
+
+        for (FCullView& View : Frame.Views.CullViews)
+        {
+            const uint32 Flags = GetCullViewFlags(View) & ~HiZFlags;
+            std::memcpy(&View.ViewOriginAndFlags.w, &Flags, sizeof(Flags));
+        }
     }
 
     // Without it a frozen cull is indistinguishable from geometry going missing for a real reason.
@@ -3700,7 +3765,7 @@ namespace Lumina
                              1.25f, SkinnedMeshletBoundsLowUsage, true, EBufferInit::Zeroed, "Skinning.MeshletBounds");
 
         ResizeBufferIfNeeded(CL, SkinnedMeshletConeBuffer,
-                             Math::Max<SIZE_T>(sizeof(FSkinnedMeshletCone), (SIZE_T)BoundsTotal * sizeof(FSkinnedMeshletCone)),
+                             Math::Max<SIZE_T>(sizeof(FMeshletCone), (SIZE_T)BoundsTotal * sizeof(FMeshletCone)),
                              1.25f, SkinnedMeshletConeLowUsage, true, EBufferInit::Zeroed, "Skinning.MeshletCones");
 
         // The smaller of the two, since one base indexes both and a slot must fit in each.
@@ -3708,7 +3773,7 @@ namespace Lumina
             ? (uint32)Math::Min<uint64>(SkinnedMeshletBoundsBuffer.Size / sizeof(FMeshletSphere), 0xFFFFFFFFull)
             : 0u;
         const uint32 ConeCap = SkinnedMeshletConeBuffer
-            ? (uint32)Math::Min<uint64>(SkinnedMeshletConeBuffer.Size / sizeof(FSkinnedMeshletCone), 0xFFFFFFFFull)
+            ? (uint32)Math::Min<uint64>(SkinnedMeshletConeBuffer.Size / sizeof(FMeshletCone), 0xFFFFFFFFull)
             : 0u;
 
         SkinnedMeshletBoundsCapacity = Math::Min(SphereCap, ConeCap);
@@ -3750,43 +3815,54 @@ namespace Lumina
 
         // Only the gathered slots, coalesced; ungathered slots are rejected by their frame tag.
         // Every run is one slot wide, so this sorts the bare indices rather than (base, count) pairs.
-        TVector<uint32>& Ranges = SkinnedUploadScratch;
-        Ranges.assign(Slots.begin(), Slots.end());
+        TVector<uint32>& Sorted = SkinnedUploadScratch;
+        Sorted.assign(Slots.begin(), Slots.end());
 
-        Algo::Sort(Ranges.begin(), Ranges.end());
+        Algo::Sort(Sorted.begin(), Sorted.end());
 
-        // Re-sending an ungathered slot is free, since its older frame tag is rejected anyway.
-        constexpr uint32 kSkinnedMergeGap = 2048;
+        // A merged gap is still staged and copied, so this trades one copy region against ~1 KiB of bytes.
+        constexpr uint32 kSkinnedMergeGap = 24;
 
         const uint32 Count = (uint32)Data.size();
 
-        const auto Flush = [&](uint32 Start, uint32 End)
+        TVector<FUIntVector2>& Runs = SkinnedRunScratch;
+        Runs.clear();
+
+        const auto AddRun = [&](uint32 Start, uint32 End)
         {
             End = Math::Min(End, Count);
-            if (Start >= End)
+            if (Start < End)
             {
-                return;
+                Runs.push_back(FUIntVector2(Start, End - Start));
             }
-            WriteBuffer(CL, SkinnedFrameDataBuffer.Gpu + (uint64)Start * sizeof(FSkinnedFrameData),
-                        Data.data() + Start, (uint64)(End - Start) * sizeof(FSkinnedFrameData));
         };
 
-        uint32 RunStart = Ranges[0];
-        uint32 RunEnd   = Ranges[0] + 1u;
-        for (SIZE_T i = 1; i < Ranges.size(); ++i)
+        uint32 RunStart = Sorted[0];
+        uint32 RunEnd   = Sorted[0] + 1u;
+        for (SIZE_T i = 1; i < Sorted.size(); ++i)
         {
-            const uint32 Start = Ranges[i];
-            const uint32 End   = Ranges[i] + 1u;
+            const uint32 Start = Sorted[i];
+            const uint32 End   = Sorted[i] + 1u;
             if (Start <= RunEnd + kSkinnedMergeGap)
             {
                 RunEnd = Math::Max(RunEnd, End);
                 continue;
             }
-            Flush(RunStart, RunEnd);
+            AddRun(RunStart, RunEnd);
             RunStart = Start;
             RunEnd   = End;
         }
-        Flush(RunStart, RunEnd);
+        AddRun(RunStart, RunEnd);
+
+        WriteBufferRuns(CL, SkinnedFrameDataBuffer.Gpu, Data.data(), sizeof(FSkinnedFrameData), Runs);
+
+        uint64 StagedSlots = 0;
+        for (const FUIntVector2& Run : Runs)
+        {
+            StagedSlots += Run.y;
+        }
+        LUMINA_PROFILE_VALUE("Skinning/FrameDataRegions", (int64)Runs.size());
+        LUMINA_PROFILE_VALUE("Skinning/FrameDataKiB", (int64)(StagedSlots * sizeof(FSkinnedFrameData) / 1024));
     }
 
     void FDefaultSceneRenderer::SkinnedMeshletBoundsPass(RHI::FCmdListH CL, const FFrameData& Frame)
@@ -3851,7 +3927,6 @@ namespace Lumina
         LUMINA_MEMORY_SCOPE("Render Scene");
 
         FFrameData& Frame = *RenderFrame;
-        ApplyCullFreeze(Frame);
         auto& SceneGlobalData            = Frame.SceneGlobalData;
         const auto& CullViews            = Frame.Views.CullViews;
         auto& LightData                  = Frame.Lighting.LightData;
@@ -4460,8 +4535,8 @@ namespace Lumina
         const uint32                NumSurfaceDescs  = ScenePrimitives.GetSurfaceDescCount();
         FScenePrimitive*            MutablePrims = ScenePrimitives.GetMutablePrimitives();
 
-        FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
-        auto& SkeletalStorage = Registry.storage<SSkeletalMeshComponent>();
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
+        auto SkeletalStorage = Registry.GetStorage<SSkeletalMeshComponent>();
 
         // Sized by LayoutSkinnedBoneSlices before this pass runs, and every slice below is disjoint.
         TVector<FBoneTransform>& ArenaMirror = ExtractFrame->Geometry.BonesData;
@@ -4502,11 +4577,11 @@ namespace Lumina
 
             //~ Everything below needs the live component.
 
-            if (!SkeletalStorage.contains(Prim.Entity))
+            if (!SkeletalStorage.Contains(Prim.Entity))
             {
                 continue;
             }
-            SSkeletalMeshComponent& MeshComponent = SkeletalStorage.get(Prim.Entity);
+            SSkeletalMeshComponent& MeshComponent = SkeletalStorage.Get(Prim.Entity);
 
             if (SceneCull.IsCameraVisible(Center, Radius, Cull.MaxDrawDistance, CameraPos))
             {
@@ -4769,13 +4844,13 @@ namespace Lumina
             }
         }
 
-        FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
 
         // First enabled directional light wins (matches ProcessDirectionalLight).
-        auto DirectionalView = Registry.view<SDirectionalLightComponent>(entt::exclude<SDisabledTag>);
-        for (entt::entity Entity : DirectionalView)
+        auto DirectionalView = Registry.View<SDirectionalLightComponent>(ECS::TExclude<SDisabledTag>{});
+        for (ECS::FEntity Entity : DirectionalView)
         {
-            const SDirectionalLightComponent& Light = DirectionalView.get<SDirectionalLightComponent>(Entity);
+            const SDirectionalLightComponent& Light = DirectionalView.Get<SDirectionalLightComponent>(Entity);
             const float DirLenSq = Math::Dot(Light.Direction, Light.Direction);
             if (DirLenSq > 0.0001f)
             {
@@ -4792,15 +4867,15 @@ namespace Lumina
         }
 
         // Shadow-casting locals, keeping only lights whose attenuation sphere meets the frustum.
-        auto PointView = Registry.view<SPointLightComponent, STransformComponent>(entt::exclude<SDisabledTag>);
-        for (entt::entity Entity : PointView)
+        auto PointView = Registry.View<SPointLightComponent, STransformComponent>(ECS::TExclude<SDisabledTag>{});
+        for (ECS::FEntity Entity : PointView)
         {
-            const SPointLightComponent& Light = PointView.get<SPointLightComponent>(Entity);
+            const SPointLightComponent& Light = PointView.Get<SPointLightComponent>(Entity);
             if (!Light.bCastShadows)
             {
                 continue;
             }
-            const STransformComponent&  Transform = PointView.get<STransformComponent>(Entity);
+            const STransformComponent&  Transform = PointView.Get<STransformComponent>(Entity);
             const float     Radius   = Light.Attenuation;
             // Test with the location already resident in the transform's SIMD lanes (no scalar round-trip).
             if (!SceneCullContext.Frustum.IntersectsSphere(Transform.GetWorldTransformCached().Location, Radius))
@@ -4810,15 +4885,15 @@ namespace Lumina
             SceneCullContext.ShadowLights.push_back({ Transform.GetWorldLocationCached(), Radius });
         }
 
-        auto SpotView = Registry.view<SSpotLightComponent, STransformComponent>(entt::exclude<SDisabledTag>);
-        for (entt::entity Entity : SpotView)
+        auto SpotView = Registry.View<SSpotLightComponent, STransformComponent>(ECS::TExclude<SDisabledTag>{});
+        for (ECS::FEntity Entity : SpotView)
         {
-            const SSpotLightComponent& Light    = SpotView.get<SSpotLightComponent>(Entity);
+            const SSpotLightComponent& Light    = SpotView.Get<SSpotLightComponent>(Entity);
             if (!Light.bCastShadows)
             {
                 continue;
             }
-            const STransformComponent& Transform = SpotView.get<STransformComponent>(Entity);
+            const STransformComponent& Transform = SpotView.Get<STransformComponent>(Entity);
             const float     Radius   = Light.Attenuation;
             if (!SceneCullContext.Frustum.IntersectsSphere(Transform.GetWorldTransformCached().Location, Radius))
             {
@@ -5937,7 +6012,7 @@ namespace Lumina
         Billboard.TextureIndex          = (uint32)ResourceID;
         Billboard.Position              = Location;
         Billboard.Size                  = Scale;
-        Billboard.EntityID              = entt::null;
+        Billboard.EntityID              = ECS::NullEntity.Value;
     }
 
     void FDefaultSceneRenderer::ResetPass_Extract()
@@ -7459,8 +7534,8 @@ namespace Lumina
         PC.SelectionBits     = RHI::Core::CopyTransientArray(SelectionBits.data(), SelectionBits.size());
         PC.PickerIndex       = (uint32)PickerSlot;
         PC.SelectionBitWords = (uint32)SelectionBits.size();
-        // From entt rather than a literal, so a traits change cannot mask off real index bits.
-        PC.EntityIndexMask   = (uint32)entt::entt_traits<entt::entity>::entity_mask;
+        // From the handle traits rather than a literal, so a change there cannot mask off real index bits.
+        PC.EntityIndexMask   = ECS::FEntity::IndexMask;
         PC.Thickness         = 2.0f;
         PC.OutlineColor      = FVector4(1.0f, 0.42f, 0.05f, 1.0f);
 
@@ -7483,8 +7558,8 @@ namespace Lumina
         
         if (!ParticleGPUStates.empty())
         {
-            const TVector<entt::entity>& Live = Frame.Extracts.LiveParticleEntities;
-            auto IsLive = [&](entt::entity E)
+            const TVector<ECS::FEntity>& Live = Frame.Extracts.LiveParticleEntities;
+            auto IsLive = [&](ECS::FEntity E)
             {
                 return Algo::Find(Live.begin(), Live.end(), E) != Live.end();
             };
@@ -8169,8 +8244,8 @@ namespace Lumina
 
         if (!TerrainGPUStates.empty())
         {
-            const TVector<entt::entity>& Live = Frame.Extracts.LiveTerrainEntities;
-            auto IsLive = [&](entt::entity E)
+            const TVector<ECS::FEntity>& Live = Frame.Extracts.LiveTerrainEntities;
+            auto IsLive = [&](ECS::FEntity E)
             {
                 return Algo::Find(Live.begin(), Live.end(), E) != Live.end();
             };
@@ -8480,7 +8555,7 @@ namespace Lumina
                 continue;
             }
 
-            const entt::entity Entity = TerrainItem.Entity;
+            const ECS::FEntity Entity = TerrainItem.Entity;
             const uint32 Res = (uint32)TerrainItem.Resolution;
 
             const FMatrix4 WorldMat    = TerrainItem.WorldMatrix;
@@ -8573,7 +8648,7 @@ namespace Lumina
 
         for (const FFrameData::FTerrainExtract& TerrainItem : Frame.Extracts.TerrainExtracts)
         {
-            const entt::entity Entity  = TerrainItem.Entity;
+            const ECS::FEntity Entity  = TerrainItem.Entity;
             if (TerrainItem.Resolution < 2 || TerrainItem.ChunkResolution < 2)
             {
                 continue;
@@ -13558,6 +13633,49 @@ namespace Lumina
         RHI::CmdMemcpy(CL, Dst, Staging.Gpu, Size);
     }
 
+    void FDefaultSceneRenderer::WriteBufferRuns(RHI::FCmdListH CL, RHI::GPUPtr Dst, const void* Src, uint64 Stride,
+                                               const TVector<FUIntVector2>& Runs)
+    {
+        uint64 Total = 0;
+        for (const FUIntVector2& Run : Runs)
+        {
+            Total += (uint64)Run.y * Stride;
+        }
+
+        if (Total == 0)
+        {
+            return;
+        }
+
+        const RHI::FTransientAlloc Staging = RHI::Core::AllocTransient(Total);
+        uint8* const StagingBytes = (uint8*)Staging.Cpu;
+        if (StagingBytes == nullptr)
+        {
+            return;
+        }
+
+        TVector<RHI::FBufferCopy>& Copies = UploadCopyScratch;
+        Copies.clear();
+        Copies.reserve(Runs.size());
+
+        uint64 Cursor = 0;
+        for (const FUIntVector2& Run : Runs)
+        {
+            const uint64 Bytes = (uint64)Run.y * Stride;
+            if (Bytes == 0)
+            {
+                continue;
+            }
+
+            const uint64 SrcOffset = (uint64)Run.x * Stride;
+            Memory::Memcpy(StagingBytes + Cursor, (const uint8*)Src + SrcOffset, Bytes);
+            Copies.push_back(RHI::FBufferCopy{ Dst + SrcOffset, Staging.Gpu + Cursor, Bytes });
+            Cursor += Bytes;
+        }
+
+        RHI::CmdMemcpyBatch(CL, TSpan<const RHI::FBufferCopy>(Copies.data(), Copies.size()));
+    }
+
     void FDefaultSceneRenderer::StageWrite(RHI::GPUPtr Dst, const void* Data, uint64 Size)
     {
         if (Size == 0)
@@ -13658,7 +13776,7 @@ namespace Lumina
         return SceneViews.empty() ? FUIntVector2(0) : SceneViews[0].Size;
     }
 
-    entt::entity FDefaultSceneRenderer::GetEntityAtPixel(uint32 X, uint32 Y) const
+    ECS::FEntity FDefaultSceneRenderer::GetEntityAtPixel(uint32 X, uint32 Y) const
     {
     #if USING(WITH_EDITOR)
         int32 BestSlotIdx = -1;
@@ -13688,7 +13806,7 @@ namespace Lumina
 
         if (BestSlotIdx == -1)
         {
-            return entt::null;
+            return ECS::NullEntity;
         }
 
         const FPickerReadbackSlot& Slot = PickerReadbackRing[BestSlotIdx];
@@ -13699,21 +13817,21 @@ namespace Lumina
         const uint32* Pixels = Slot.Readback.CpuAs<const uint32>();
         if (Pixels == nullptr)
         {
-            return entt::null;
+            return ECS::NullEntity;
         }
 
         const uint32 PixelValue = Pixels[LocalY * Slot.Width + LocalX];
 
         if (PixelValue == 0)
         {
-            return entt::null;
+            return ECS::NullEntity;
         }
 
-        return static_cast<entt::entity>(PixelValue);
+        return static_cast<ECS::FEntity>(PixelValue);
     #else
         (void)X;
         (void)Y;
-        return entt::null;
+        return ECS::NullEntity;
     #endif
     }
 

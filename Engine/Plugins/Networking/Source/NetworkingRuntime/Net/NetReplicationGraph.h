@@ -1,10 +1,11 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
 #include "Core/Math/Math.h"
 #include "Core/Serialization/NetQuantize.h"
 #include "Containers/HashTable.h"
 #include "Containers/Vector.h"
-#include "World/Entity/EntityHandle.h"
 
 namespace Lumina
 {
@@ -128,7 +129,7 @@ namespace Lumina
         // O(1) viewpoint lookup. Server-owned entities use their STransformComponent local pose; client-owned
         // relay the newest received ring sample. Also updates each entity's FRepTransform global send baseline
         // and flags whether it changed (the "did it move at all" gate that applies to every client).
-        void BuildExtract(entt::registry& Registry, FNetExtract& OutExtract, THashMap<uint32, uint32>& OutOwnerToRecord);
+        void BuildExtract(ECS::FRegistry& Registry, FNetExtract& OutExtract, THashMap<uint32, uint32>& OutOwnerToRecord);
 
         // Build the CSR grid from the extract (counting sort) using the settings' world extent + cell size.
         void BuildGrid(const FNetExtract& Extract, const SDefaultWorldSettings& Settings, FNetGrid& OutGrid);

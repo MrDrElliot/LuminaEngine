@@ -4,7 +4,6 @@
 #include "Platform/Filesystem/PlatformFilesystem.h"
 #include <fstream>
 #include <Core/Engine/Engine.h>
-#include <Core/Engine/EngineMetaContext.h>
 #include <Core/Plugin/PluginManager.h>
 #include <Core/Progress/SlowTask.h>
 #include <Memory/Memory.h>
@@ -44,7 +43,6 @@ namespace Lumina
         // Project settings under /Config load on a later pass, once a project mounts it.
         GConfig->DiscoverAndLoadSettings();
 
-        entt::locator<entt::meta_ctx>::reset(Lumina::GetEngineMetaService());
 
         return bSuccess;
     }

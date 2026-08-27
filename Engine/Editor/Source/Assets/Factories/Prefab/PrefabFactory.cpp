@@ -1,5 +1,6 @@
 ﻿#include "EditorPCH.h"
 #include "PrefabFactory.h"
+#include "World/ECS/Registry.h"
 
 #include "Assets/AssetTypes/Prefabs/Prefab.h"
 #include "Assets/AssetTypes/Prefabs/PrefabComponents.h"
@@ -19,10 +20,10 @@ namespace Lumina
         CPrefab* Prefab = NewObject<CPrefab>(Package, Name);
 
         // Seeded with one root so a new prefab is instantiable, since Instantiate refuses an empty registry.
-        entt::entity Root = Prefab->Registry.create();
-        Prefab->Registry.emplace<SNameComponent>(Root).Name = FName("Root");
-        Prefab->Registry.emplace<STransformComponent>(Root);
-        Prefab->Registry.emplace<SPrefabComponent>(Root).StableID = FName(FGuid::New().ToShortString());
+        ECS::FEntity Root = Prefab->Registry.Create();
+        Prefab->Registry.Emplace<SNameComponent>(Root).Name = FName("Root");
+        Prefab->Registry.Emplace<STransformComponent>(Root);
+        Prefab->Registry.Emplace<SPrefabComponent>(Root).StableID = FName(FGuid::New().ToShortString());
 
         return Prefab;
     }

@@ -39,7 +39,7 @@ namespace Lumina
         int32 NumTerrains = 0;
         uint32 CombinedVersion = 0;
 
-        Context.CreateView<STerrainComponent, STransformComponent>().each(
+        Context.CreateView<STerrainComponent, STransformComponent>().ForEach(
             [&](STerrainComponent& Terrain, const STransformComponent& Transform)
             {
                 CombinedVersion += Terrain.CPUState.HeightmapVersion;
@@ -74,7 +74,7 @@ namespace Lumina
         }
 
         // Re-project each foliage component whose synced version is stale.
-        Context.CreateView<SFoliageComponent>().each(
+        Context.CreateView<SFoliageComponent>().ForEach(
             [&](SFoliageComponent& Foliage)
             {
                 if (Foliage.LastTerrainVersion == CombinedVersion || Foliage.Instances.empty())

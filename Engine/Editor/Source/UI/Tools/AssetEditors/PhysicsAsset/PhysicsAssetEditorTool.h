@@ -1,5 +1,8 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #define USE_IMGUI_API
 #include <imgui.h>
 #include "ImGuizmo.h"
@@ -162,9 +165,9 @@ namespace Lumina
         // Per bone: this bone or a descendant owns a body. Drives the "bodies only" tree filter.
         TVector<uint8>              BodySubtreeMask;
 
-        entt::entity                MeshEntity = entt::null;
-        entt::entity                LightEntity = entt::null;
-        entt::entity                FloorBodyEntity = entt::null;
+        ECS::FEntity                MeshEntity = ECS::NullEntity;
+        ECS::FEntity                LightEntity = ECS::NullEntity;
+        ECS::FEntity                FloorBodyEntity = ECS::NullEntity;
 
         EPhysicsAssetSelection      SelectionMode = EPhysicsAssetSelection::None;
         int32                       SelectedBodyIndex = INDEX_NONE;

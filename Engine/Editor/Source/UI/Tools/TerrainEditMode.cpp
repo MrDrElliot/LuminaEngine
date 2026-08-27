@@ -1,4 +1,5 @@
 #include "TerrainEditMode.h"
+#include "World/ECS/Registry.h"
 
 #include <algorithm>
 #include <cmath>
@@ -47,28 +48,28 @@ namespace Lumina
         }
     }
 
-    entt::entity FTerrainEditMode::FindPreferredTerrain(CWorld* World) const
+    ECS::FEntity FTerrainEditMode::FindPreferredTerrain(CWorld* World) const
     {
         if (!World)
         {
-            return entt::null;
+            return ECS::NullEntity;
         }
         auto View = World->View<STerrainComponent>();
         for (auto Entity : View)
         {
             return Entity;
         }
-        return entt::null;
+        return ECS::NullEntity;
     }
 
-    entt::entity FTerrainEditMode::CreateDefaultTerrain(CWorld* World)
+    ECS::FEntity FTerrainEditMode::CreateDefaultTerrain(CWorld* World)
     {
         if (!World)
         {
-            return entt::null;
+            return ECS::NullEntity;
         }
 
-        entt::entity Entity = World->ConstructEntity("Terrain");
+        ECS::FEntity Entity = World->ConstructEntity("Terrain");
         STerrainComponent& Terrain = World->EmplaceComponent<STerrainComponent>(Entity);
         Terrain.Resolution      = 513;
         Terrain.ChunkResolution = 64;
@@ -212,7 +213,7 @@ namespace Lumina
     void FTerrainEditMode::OnEnter(CWorld* World)
     {
         // Spawning a default terrain makes the mode self-bootstrapping, with something to paint on.
-        if (World && FindPreferredTerrain(World) == entt::null)
+        if (World && FindPreferredTerrain(World) == ECS::NullEntity)
         {
             CreateDefaultTerrain(World);
         }
@@ -247,8 +248,8 @@ namespace Lumina
         if (ImGui::Button(LE_ICON_IMPORT " Heightmap", ImVec2(0, ButtonSize)))
         {
             // Import a heightmap image onto the active terrain (creating a default one first if none exists).
-            entt::entity TerrainEntity = FindPreferredTerrain(World);
-            if (TerrainEntity == entt::null)
+            ECS::FEntity TerrainEntity = FindPreferredTerrain(World);
+            if (TerrainEntity == ECS::NullEntity)
             {
                 TerrainEntity = CreateDefaultTerrain(World);
             }
@@ -258,7 +259,7 @@ namespace Lumina
                 "Heightmap (*.png;*.tga;*.hdr;*.jpg)\0*.png;*.tga;*.hdr;*.jpg\0"
                 "PNG (*.png)\0*.png\0"
                 "All Files (*.*)\0*.*\0";
-            if (TerrainEntity != entt::null && Platform::OpenFileDialogue(File, "Select Heightmap Image", Filter))
+            if (TerrainEntity != ECS::NullEntity && Platform::OpenFileDialogue(File, "Select Heightmap Image", Filter))
             {
                 STerrainComponent& Terrain = World->GetComponent<STerrainComponent>(TerrainEntity);
 
@@ -377,8 +378,8 @@ namespace Lumina
 
         if (Mode == ETerrainBrushMode::Paint)
         {
-            entt::entity TerrainEntity = FindPreferredTerrain(World);
-            STerrainComponent* Terrain = (TerrainEntity != entt::null)
+            ECS::FEntity TerrainEntity = FindPreferredTerrain(World);
+            STerrainComponent* Terrain = (TerrainEntity != ECS::NullEntity)
                 ? &World->GetComponent<STerrainComponent>(TerrainEntity)
                 : nullptr;
             if (Terrain)
@@ -576,8 +577,8 @@ namespace Lumina
             return;
         }
 
-        entt::entity TerrainEntity = FindPreferredTerrain(World);
-        if (TerrainEntity == entt::null)
+        ECS::FEntity TerrainEntity = FindPreferredTerrain(World);
+        if (TerrainEntity == ECS::NullEntity)
         {
             return;
         }

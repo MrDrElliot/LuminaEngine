@@ -1,11 +1,12 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
 #include "Core/Threading/Thread.h"
 #include "Core/Math/Math.h"
 #include "Containers/Vector.h"
 #include "AI/Perception/PerceptionTypes.h"
 #include "GameplayTags/GameplayTag.h"
-#include "World/Entity/EntityHandle.h"
 
 namespace Lumina
 {
@@ -13,7 +14,7 @@ namespace Lumina
     // SAIStimuliSourceComponent (valid only for the tick the grid was built).
     struct FPerceptionSource
     {
-        entt::entity                    Entity              = entt::null;
+        ECS::FEntity                    Entity              = ECS::NullEntity;
         FVector3                        AimPoint            = FVector3(0.0f);   // sight target point (origin + SightTargetOffset).
         const FGameplayTagContainer*    AffiliationTags     = nullptr;
         uint32                          BodyID              = ~0u;
@@ -125,8 +126,7 @@ namespace Lumina
         }
     };
 
-    // Per-world perception scratch, stored in the entt registry context. Holds the per-tick source grid and
-    // the queue of event-driven hearing/damage reports. Stored out-of-line by entt (FMutex is non-movable).
+    // Per-world perception scratch in the registry context, out-of-line because FMutex is non-movable.
     struct FPerceptionWorldState
     {
         FPerceptionGrid             SourceGrid;
@@ -137,14 +137,14 @@ namespace Lumina
     namespace Perception
     {
         // Get the per-world perception state, creating it on first use (ReportNoise can run before the system ticks).
-        inline FPerceptionWorldState& GetOrCreateState(entt::registry& Registry)
+        inline FPerceptionWorldState& GetOrCreateState(ECS::FRegistry& Registry)
         {
-            auto& Ctx = Registry.ctx();
-            if (FPerceptionWorldState* State = Ctx.find<FPerceptionWorldState>())
+            auto& Ctx = Registry.Ctx();
+            if (FPerceptionWorldState* State = Ctx.Find<FPerceptionWorldState>())
             {
                 return *State;
             }
-            return Ctx.emplace<FPerceptionWorldState>();
+            return Ctx.Emplace<FPerceptionWorldState>();
         }
 
         // Thread-safe enqueue of a hearing/damage report.

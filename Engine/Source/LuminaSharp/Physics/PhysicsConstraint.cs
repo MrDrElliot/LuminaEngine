@@ -95,7 +95,7 @@ public readonly struct FPhysicsConstraint
 internal struct FConstraintDescWire
 {
     public int Type;            // FPhysicsConstraint.Type* constant.
-    public uint BodyA;          // entt id, 0xFFFFFFFF == world anchor.
+    public uint BodyA;          // entity id, 0xFFFFFFFF == world anchor.
     public uint BodyB;
     public FVector3 Anchor;     // World pivot (Point/Hinge/Slider/Cone) or first attach point (Distance).
     public FVector3 Axis;       // Hinge/Cone axis or Slider direction (world).

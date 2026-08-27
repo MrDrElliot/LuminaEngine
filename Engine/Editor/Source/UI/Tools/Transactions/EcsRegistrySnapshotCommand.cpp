@@ -1,4 +1,5 @@
 #include "EcsRegistrySnapshotCommand.h"
+#include "World/ECS/Registry.h"
 
 #include "Core/Object/Package/Package.h"
 #include "Core/Serialization/MemoryArchiver.h"
@@ -48,14 +49,14 @@ namespace Lumina
             return;
         }
 
-        FEntityRegistry& Registry = ECS::GetWorldRegistry(*W);
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*W);
 
         // Editor entities and the settings singleton stay, since their unreflected components would dangle.
-        TVector<entt::entity> ToDestroy;
-        Registry.view<entt::entity>(entt::exclude<FEditorComponent, FSingletonEntityTag>).each([&](entt::entity E) { ToDestroy.push_back(E); });
-        for (entt::entity E : ToDestroy)
+        TVector<ECS::FEntity> ToDestroy;
+        Registry.ForEachEntityExcept<FEditorComponent, FSingletonEntityTag>([&](ECS::FEntity E) { ToDestroy.push_back(E); });
+        for (ECS::FEntity E : ToDestroy)
         {
-            Registry.destroy(E);
+            Registry.Destroy(E);
         }
 
         FMemoryReader Reader(In);

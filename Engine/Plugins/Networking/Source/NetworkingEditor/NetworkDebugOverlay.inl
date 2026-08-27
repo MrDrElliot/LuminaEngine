@@ -4,7 +4,7 @@
         {
             return;
         }
-        FNetWorldState* Net = ECS::GetWorldRegistry(*World).ctx().find<FNetWorldState>();
+        FNetWorldState* Net = ECS::GetWorldRegistry(*World).Ctx().Find<FNetWorldState>();
         if (Net == nullptr)
         {
             return; // world isn't networked
@@ -69,15 +69,15 @@
             FVector4(0.30f, 1.0f, 0.45f, 1.0f), // Far
             FVector4(0.5f,  0.5f,  0.5f,  1.0f), // Cull (shouldn't appear)
         };
-        FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
         for (const auto& CVKV : Net->ClientViews)
         {
             const FNetClientView& CV = CVKV.second;
             for (const auto& RKV : CV.Relevant)
             {
-                const entt::entity E = Net->GuidTable.Find(FNetGUID{ RKV.first });
-                if (E == entt::null || !Registry.valid(E)) { continue; }
-                STransformComponent* T = Registry.try_get<STransformComponent>(E);
+                const ECS::FEntity E = Net->GuidTable.Find(FNetGUID{ RKV.first });
+                if (E == ECS::NullEntity || !Registry.IsValid(E)) { continue; }
+                STransformComponent* T = Registry.TryGet<STransformComponent>(E);
                 if (T == nullptr) { continue; }
                 const FVector3  P   = T->GetWorldLocationCached();
                 const FVector4& Col = TierCol[static_cast<int>(RKV.second.Tier) & 3];

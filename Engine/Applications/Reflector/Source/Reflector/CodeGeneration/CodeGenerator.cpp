@@ -638,7 +638,6 @@ namespace Lumina::Reflection
 
         Writer.Linef("#include \"%s\"", ComputeSourceHeaderInclude(*Header).c_str());
         Writer.Line("#include \"World/Entity/Components/Component.h\"");
-        Writer.Line("#include \"World/Entity/Events/ECSEvent.h\"");
         // Engine modules get this through their PCH, but a game project's chain does not reach it.
         Writer.Line("#include \"World/Entity/Systems/EntitySystem.h\"");
         Writer.Line("#include \"Core/Profiler/Profile.h\"");
@@ -674,7 +673,6 @@ namespace Lumina::Reflection
                 }
             }
         }();
-        Writer.Line("using namespace entt::literals;");
         Writer.BlankLines(2);
 
         EmitCrossModuleReferences(Writer, *ReflectionDatabase, Header, Types);

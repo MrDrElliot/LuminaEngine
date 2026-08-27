@@ -1,4 +1,5 @@
 #include "EntityTransformCommand.h"
+#include "World/ECS/Registry.h"
 
 #include "Core/Object/Package/Package.h"
 #include "World/World.h"
@@ -7,7 +8,7 @@
 
 namespace Lumina
 {
-    FEntityTransformCommand::FEntityTransformCommand(CWorld* InWorld, TVector<entt::entity> InEntities)
+    FEntityTransformCommand::FEntityTransformCommand(CWorld* InWorld, TVector<ECS::FEntity> InEntities)
         : World(InWorld)
         , Entities(Move(InEntities))
     {
@@ -30,13 +31,15 @@ namespace Lumina
             return;
         }
 
-        FEntityRegistry& Registry = ECS::GetWorldRegistry(*W);
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*W);
         for (SIZE_T i = 0; i < Entities.size(); ++i)
         {
-            const entt::entity Entity = Entities[i];
-            if (Registry.valid(Entity) && Registry.all_of<STransformComponent>(Entity))
+            const ECS::FEntity Entity = Entities[i];
+            const STransformComponent* Transform =
+                Registry.IsValid(Entity) ? Registry.TryGet<STransformComponent>(Entity) : nullptr;
+            if (Transform != nullptr)
             {
-                Out[i] = Registry.get<STransformComponent>(Entity).LocalTransform;
+                Out[i] = Transform->LocalTransform;
             }
         }
     }
@@ -49,20 +52,20 @@ namespace Lumina
             return;
         }
 
-        FEntityRegistry& Registry = ECS::GetWorldRegistry(*W);
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*W);
         for (SIZE_T i = 0; i < Entities.size(); ++i)
         {
-            const entt::entity Entity = Entities[i];
-            if (!Registry.valid(Entity) || !Registry.all_of<STransformComponent>(Entity))
+            const ECS::FEntity Entity = Entities[i];
+            if (!Registry.IsValid(Entity) || !Registry.HasAll<STransformComponent>(Entity))
             {
                 continue;   // destroyed since the drag; its own transaction owns bringing it back
             }
 
-            STransformComponent& Transform = Registry.get<STransformComponent>(Entity);
+            STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
             Transform.SetLocalTransform(In[i]);
 
             // The cached dirty signal can fail to raise bAnyDirty, leaving the render primitive pre-undo.
-            Registry.emplace_or_replace<FNeedsTransformUpdate>(Entity);
+            Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Entity);
         }
 
         if (W->GetPackage())

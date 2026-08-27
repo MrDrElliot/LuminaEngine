@@ -73,10 +73,7 @@ struct FMeshletBoundsCache
     float          ConeCutoff;
     float3         WorldCenter;
     float          WorldRadius;
-    float3         WorldApex;
     float3         WorldAxis;
-    // Nonzero only for skinned, where the palette's apexes disagree and the widening is view-dependent.
-    float          ApexSpread;
     bool           bHasCone;
     bool           bConeReady;
 };
@@ -88,9 +85,7 @@ FMeshletBoundsCache MakeMeshletBoundsCache()
     C.ConeCutoff  = 1.0;
     C.WorldCenter = float3(0.0, 0.0, 0.0);
     C.WorldRadius = 0.0;
-    C.WorldApex   = float3(0.0, 0.0, 0.0);
     C.WorldAxis   = float3(0.0, 0.0, 1.0);
-    C.ApexSpread  = 0.0;
     C.bHasCone    = false;
     C.bConeReady  = false;
     return C;
@@ -121,6 +116,16 @@ void RefreshMeshletBounds(FGPUInstance* Inst, FMeshletCullContext Ctx, uint Mesh
     }
 }
 
+// Kept out of the branches below so neither loads through the other branch's pointer.
+void ApplyMeshletCone(FMeshletCullContext Ctx, FMeshletCone Packed, inout FMeshletBoundsCache C)
+{
+    const float4 Cone = DecodeMeshletCone(Packed);
+
+    C.WorldAxis  = normalize(mul((float3x3)Ctx.Model, Cone.xyz));
+    C.ConeCutoff = Cone.w;
+    C.bHasCone   = Cone.w < 1.0;
+}
+
 // Split from the sphere because every meshlet of every view pays that load, while this one needs a
 // non-skinned, non-two-sided, cone-bearing meshlet in a cone-enabled view.
 void EnsureMeshletCone(FGPUInstance* Inst, FMeshletCullContext Ctx, inout FMeshletBoundsCache C)
@@ -140,13 +145,8 @@ void EnsureMeshletCone(FGPUInstance* Inst, FMeshletCullContext Ctx, inout FMeshl
             return;
         }
 
-        const FSkinnedMeshletCone Cone = SkinnedMeshletCones()[Ctx.SkinnedBoundsBase + C.MeshletIdx];
-
-        C.WorldApex   = mul(Ctx.Model, float4(Cone.Apex, 1.0)).xyz;
-        C.WorldAxis   = normalize(mul((float3x3)Ctx.Model, Cone.Axis));
-        C.ConeCutoff  = Cone.Cutoff;
-        C.ApexSpread  = Cone.ApexSpread * Ctx.MaxScale;
-        C.bHasCone    = Cone.Cutoff < 1.0;
+        // Rewritten per frame against this pose, and packed exactly like the baked one.
+        ApplyMeshletCone(Ctx, SkinnedMeshletCones()[Ctx.SkinnedBoundsBase + C.MeshletIdx], C);
         return;
     }
 
@@ -156,13 +156,7 @@ void EnsureMeshletCone(FGPUInstance* Inst, FMeshletCullContext Ctx, inout FMeshl
         return;
     }
 
-    const FMeshletCone Cone = Inst.MeshletHeader.Cones[C.MeshletIdx];
-
-    C.WorldApex   = mul(Ctx.Model, float4(Cone.Apex, 1.0)).xyz;
-    C.WorldAxis   = normalize(mul((float3x3)Ctx.Model, Cone.Axis));
-    C.ConeCutoff  = Cone.Cutoff;
-    C.ApexSpread  = 0.0;
-    C.bHasCone    = Cone.Cutoff < 1.0;
+    ApplyMeshletCone(Ctx, Inst.MeshletHeader.Cones[C.MeshletIdx], C);
 }
 
 // A pure function of (meshlet, view) apart from bApplyHiZ, which is the caller's phase decision: the
@@ -216,7 +210,7 @@ bool TestMeshletAgainstView(FMeshletCullContext Ctx, FGPUInstance* Inst, FCullVi
                 }
             }
 
-            // Sun views test against the sun direction; everything else against apex-to-origin.
+            // Sun views test against the sun direction, everything else against the meshlet's own sphere.
             if (bKeep && Ctx.bPosedBounds && !Ctx.bNoCull && !Ctx.bTwoSided && View.HasFlag(CULL_VIEW_FLAG_CONE))
             {
                 EnsureMeshletCone(Inst, Ctx, Cache);
@@ -225,24 +219,18 @@ bool TestMeshletAgainstView(FMeshletCullContext Ctx, FGPUInstance* Inst, FCullVi
                 {
                     if (View.HasFlag(CULL_VIEW_FLAG_SUN_ALIGNED))
                     {
-                        // Direction only, so a spread apex cannot affect this one.
+                        // Orthographic, so the sphere term the perspective branch needs drops out here.
                         bKeep = dot(GetSunDirection(), Cache.WorldAxis) > -Cache.ConeCutoff;
                     }
                     else
                     {
-                        const float3 ApexToOrigin    = Cache.WorldApex - View.ViewOrigin;
-                        const float  ApexToOriginLen = length(ApexToOrigin);
+                        // No apex is stored, so this is meshoptimizer's sphere form of the same reject.
+                        const float3 ToCenter    = Cache.WorldCenter - View.ViewOrigin;
+                        const float  ToCenterLen = length(ToCenter);
 
-                        // A spread apex subtends an angle that shrinks with distance, so it widens here.
-                        const float SinSpread = (Cache.ApexSpread > 0.0 && ApexToOriginLen > 1e-6)
-                                              ? saturate(Cache.ApexSpread / ApexToOriginLen) : 0.0;
-
-                        const float Cutoff = (SinSpread > 0.0)
-                                           ? WidenCutoff(Cache.ConeCutoff, sqrt(saturate(1.0 - SinSpread * SinSpread)))
-                                           : Cache.ConeCutoff;
-
-                        bKeep = (Cutoff >= 1.0)
-                              || (dot(ApexToOrigin, Cache.WorldAxis) < Cutoff * ApexToOriginLen);
+                        // The radius term is what replaces the apex, so it needs the meshlet's own sphere.
+                        bKeep = dot(ToCenter, Cache.WorldAxis)
+                              < Cache.ConeCutoff * ToCenterLen + Cache.WorldRadius;
                     }
                 }
             }

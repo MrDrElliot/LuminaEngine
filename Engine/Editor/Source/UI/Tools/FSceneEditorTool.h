@@ -1,5 +1,8 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #include "Containers/Queue.h"
 #include "AssetEditors/AssetEditorTool.h"
 #include "ImGuizmo.h"
@@ -53,23 +56,26 @@ namespace Lumina
         
 
         // Replace the selection with a single entity (implicit clear); the common "click" path.
-        void SetSingleSelectedEntity(entt::entity Entity);
+        void SetSingleSelectedEntity(ECS::FEntity Entity);
         // Add to the selection and promote to last-selected. bRebuild is vestigial.
-        void AddSelectedEntity(entt::entity Entity, bool bRebuild = false);
+        void AddSelectedEntity(ECS::FEntity Entity, bool bRebuild = false);
         // Remove from the selection; picks a new last-selected if the focus was removed.
-        void RemoveSelectedEntity(entt::entity Entity, bool bRebuild = false);
+        void RemoveSelectedEntity(ECS::FEntity Entity, bool bRebuild = false);
         // Ctrl-click semantics.
-        void ToggleSelectedEntity(entt::entity Entity);
+        void ToggleSelectedEntity(ECS::FEntity Entity);
         void ClearSelectedEntities();
+
+        // Drops the selection and its mirror tags, null-safe because teardown runs after the world is gone.
+        void ResetSelectionState();
         // Rebuild the cached set + last-selected from the registry tags (after undo/redo/world swap).
         void ResyncSelectionFromRegistry();
 
         // Re-stamp the non-serialized selection tags from the surviving CPU set (a true-restore keeps handles but drops tags).
         void ReapplySelectionTags();
 
-        NODISCARD bool IsEntitySelected(entt::entity Entity) const { return SelectedEntities.find(Entity) != SelectedEntities.end(); }
-        NODISCARD const THashSet<entt::entity>& GetSelectedEntities() const { return SelectedEntities; }
-        NODISCARD entt::entity GetLastSelectedEntity() const { return LastSelectedEntity; }
+        NODISCARD bool IsEntitySelected(ECS::FEntity Entity) const { return SelectedEntities.find(Entity) != SelectedEntities.end(); }
+        NODISCARD const THashSet<ECS::FEntity>& GetSelectedEntities() const { return SelectedEntities; }
+        NODISCARD ECS::FEntity GetLastSelectedEntity() const { return LastSelectedEntity; }
 
         // The world whose scene the outliner/details/selection currently inspect. Defaults to the
         // tool's own World; the world editor can repoint it at another live world (e.g. a networked
@@ -79,14 +85,14 @@ namespace Lumina
         NODISCARD bool IsInspectingForeignWorld() const { return ObservedWorld != nullptr && ObservedWorld != World.Get(); }
 
         // The registry holding the scene's entities (the observed world's registry).
-        NODISCARD FEntityRegistry& GetSceneRegistry() const { return ECS::GetWorldRegistry(*GetObservedWorld()); }
+        NODISCARD ECS::FRegistry& GetSceneRegistry() const { return ECS::GetWorldRegistry(*GetObservedWorld()); }
 
     public:
 
         // Read access to the scene this tool is showing, for callers outside it such as an agent endpoint.
         NODISCARD CWorld* GetSceneWorld() const { return GetObservedWorld(); }
 
-        NODISCARD FEntityRegistry& GetSceneEntityRegistry() const { return GetSceneRegistry(); }
+        NODISCARD ECS::FRegistry& GetSceneEntityRegistry() const { return GetSceneRegistry(); }
 
         // Brackets a mutation from outside the tool, so an agent edit lands on the same undo stack.
         void RunTransacted(FName Label, const TFunction<void()>& Mutate);
@@ -102,24 +108,24 @@ namespace Lumina
         CWorld*                 ObservedWorld = nullptr;
 
         // Mirror a row's selected visual into the outliner tree.
-        void SyncOutlinerRowSelection(entt::entity Entity, bool bSelected);
+        void SyncOutlinerRowSelection(ECS::FEntity Entity, bool bSelected);
 
     public:
 
         // Scrolls the outliner to Entity's row.
-        void RevealEntityInOutliner(entt::entity Entity);
+        void RevealEntityInOutliner(ECS::FEntity Entity);
 
     protected:
 
         // Hook: the selection focus changed. The world editor marks its details panel dirty.
         virtual void OnSelectionChanged() {}
 
-        THashSet<entt::entity>  SelectedEntities;
-        entt::entity            LastSelectedEntity = entt::null;
+        THashSet<ECS::FEntity>  SelectedEntities;
+        ECS::FEntity            LastSelectedEntity = ECS::NullEntity;
 
         struct FEntityListViewItemData
         {
-            entt::entity Entity = entt::null;
+            ECS::FEntity Entity = ECS::NullEntity;
             // Non-zero on a folder row, in which case Entity is null.
             uint32       FolderID = 0;
         };
@@ -127,23 +133,23 @@ namespace Lumina
         // Repopulate roots (children fill lazily on expand). Wire as the tree's RebuildTreeFunction.
         void RebuildSceneOutliner(FTreeListView& Tree);
         // Add an entity row (under its parent if present). Returns the node or InvalidTreeNode.
-        FTreeNodeID AddEntityToOutliner(entt::entity Entity);
+        FTreeNodeID AddEntityToOutliner(ECS::FEntity Entity);
         // Populate a row's rich hover tooltip (title, subtitle, component chips). Deferred to first
         // hover because the component scan is expensive; no-op once Display.bTooltipBuilt is set.
-        void BuildEntityTooltip(entt::entity Entity, FTreeNodeDisplay& Display);
-        void RemoveEntityFromOutliner(entt::entity Entity);
-        void ReparentEntityInOutliner(entt::entity Entity);
-        void RefreshOutlinerExpander(entt::entity Entity);
+        void BuildEntityTooltip(ECS::FEntity Entity, FTreeNodeDisplay& Display);
+        void RemoveEntityFromOutliner(ECS::FEntity Entity);
+        void ReparentEntityInOutliner(ECS::FEntity Entity);
+        void RefreshOutlinerExpander(ECS::FEntity Entity);
         // Lazily build child rows for a node on first expand. Wire as BuildChildrenFunction.
         void BuildEntityChildren(FTreeListView& Tree, FTreeNodeID Item);
         // Drain PendingOutlinerAdds before the tree draws (signal-driven path).
         void FlushOutlinerPending();
 
     public:
-        // EnTT SNameComponent observers (signal-driven world path). Public so subclasses can
+        // SNameComponent observers (signal-driven world path). Public so subclasses can
         // connect them on their registry via &FSceneEditorTool::On... (protected access would block it).
-        void OnOutlinerEntityConstructed(entt::registry& Registry, entt::entity Entity);
-        void OnOutlinerEntityDestroyed(entt::registry& Registry, entt::entity Entity);
+        void OnOutlinerEntityConstructed(ECS::FRegistry& Registry, ECS::FEntity Entity);
+        void OnOutlinerEntityDestroyed(ECS::FRegistry& Registry, ECS::FEntity Entity);
 
     protected:
 
@@ -157,7 +163,7 @@ namespace Lumina
         // Same table for writing. Null while inspecting a foreign world, or before the first folder exists.
         NODISCARD SSceneFolderComponent* GetEditableSceneFolders() const;
 
-        NODISCARD uint32 GetEntityFolderID(entt::entity Entity) const;
+        NODISCARD uint32 GetEntityFolderID(ECS::FEntity Entity) const;
         NODISCARD FTreeNodeID FindFolderNode(uint32 FolderID) const;
         // "Lighting/Sky" style path, for menu labels.
         NODISCARD FString GetFolderPath(uint32 FolderID) const;
@@ -166,31 +172,31 @@ namespace Lumina
         // Materialize every folder row and refresh the entity->folder cache. Runs before the entity rows.
         void BuildFolderNodes(FTreeListView& Tree);
         // Entities filed under a folder, optionally including its subfolders'.
-        void CollectFolderEntities(uint32 FolderID, TVector<entt::entity>& OutEntities, bool bRecursive) const;
+        void CollectFolderEntities(uint32 FolderID, TVector<ECS::FEntity>& OutEntities, bool bRecursive) const;
 
         uint32 CreateSceneFolder(const FName& Name, uint32 ParentID);
         void RenameSceneFolder(uint32 FolderID, FStringView NewName);
         void DeleteSceneFolder(uint32 FolderID, bool bDeleteContents);
         void MoveFolderIntoFolder(uint32 FolderID, uint32 NewParentID);
         // Files entities under FolderID (0 unfiles them), detaching any that are parented to another entity.
-        void MoveEntitiesToFolder(const TVector<entt::entity>& Entities, uint32 FolderID);
+        void MoveEntitiesToFolder(const TVector<ECS::FEntity>& Entities, uint32 FolderID);
         void SelectFolderContents(uint32 FolderID);
         void SetFolderContentsHidden(uint32 FolderID, bool bHidden);
 
         // Context-menu bodies, shared by both outliner menus.
         void DrawFolderContextMenu(uint32 FolderID);
-        void DrawMoveToFolderMenuItems(const TVector<entt::entity>& Entities);
+        void DrawMoveToFolderMenuItems(const TVector<ECS::FEntity>& Entities);
         // "New Folder" toolbar button next to the Scene Graph "+".
         void DrawNewFolderButton(float ButtonSize);
 
         THashMap<uint32, FTreeNodeID>  FolderToTreeNode;
-        THashMap<entt::entity, uint32> EntityFolderCache;
+        THashMap<ECS::FEntity, uint32> EntityFolderCache;
         // Folder whose row should enter inline rename on the next draw (a freshly created one).
         uint32                         PendingFolderRename = 0;
 
         // Hook: which entities appear in the outliner. Base = named + not FHideInSceneOutliner;
         // the prefab editor also requires SPrefabComponent so preview fixtures stay hidden.
-        virtual bool IsOutlinerEntityVisible(entt::entity Entity) const;
+        virtual bool IsOutlinerEntityVisible(ECS::FEntity Entity) const;
 
         // The whole "Scene Graph" panel (add button + search + filter + count + tree) is shared.
         void DrawOutliner(bool bFocused);
@@ -204,11 +210,11 @@ namespace Lumina
 
         // The shared "Add" menu opened by the Scene Graph "+" button (and reusable for a focused
         // entity): empty entity, primitives, components, and instantiable prefabs. Identical in both tools.
-        void DrawAddToEntityOrWorldPopup(entt::entity Entity = entt::null);
+        void DrawAddToEntityOrWorldPopup(ECS::FEntity Entity = ECS::NullEntity);
         ImGuiTextFilter AddEntityComponentFilter;
 
         virtual void HandleOutlinerEmptyAreaDrop() {}
-        virtual void HandlePrefabContentDrop(FStringView VirtualPath, entt::entity DropTarget, bool bAttachToTarget) {}
+        virtual void HandlePrefabContentDrop(FStringView VirtualPath, ECS::FEntity DropTarget, bool bAttachToTarget) {}
 
         struct FEntityListFilterState
         {
@@ -222,14 +228,14 @@ namespace Lumina
 
         FTreeListView                       OutlinerListView;
         FTreeListViewContext                OutlinerContext;
-        THashMap<entt::entity, FTreeNodeID> EntityToTreeNode;
-        TVector<entt::entity>               PendingOutlinerAdds;
-        TVector<entt::entity>               PendingExpanderRefresh;
+        THashMap<ECS::FEntity, FTreeNodeID> EntityToTreeNode;
+        TVector<ECS::FEntity>               PendingOutlinerAdds;
+        TVector<ECS::FEntity>               PendingExpanderRefresh;
 
         struct FComponentDestroyRequest
         {
             const CStruct* Type = nullptr;
-            entt::entity   EntityID = entt::null;
+            ECS::FEntity   EntityID = ECS::NullEntity;
         };
 
         struct FComponentTableEntry
@@ -240,9 +246,9 @@ namespace Lumina
         };
 
         // Rebuild PropertyTables for Entity (component intersection + multi-edit across the selection).
-        void RebuildPropertyTables(entt::entity Entity);
+        void RebuildPropertyTables(ECS::FEntity Entity);
         // Draw every component row for Entity.
-        void DrawComponentList(entt::entity Entity);
+        void DrawComponentList(ECS::FEntity Entity);
 
         // One search box over the whole details panel. Matches a component by its title, and otherwise
         // filters INTO each component's property table, so searching a property name shows only the
@@ -250,9 +256,9 @@ namespace Lumina
         void DrawComponentSearchBar();
 
         ImGuiTextFilter DetailsFilter;
-        void DrawComponentHeader(FComponentTableEntry& Entry, entt::entity Entity);
+        void DrawComponentHeader(FComponentTableEntry& Entry, ECS::FEntity Entity);
         // Sockets/bones on Entity's parent's mesh, for SocketPicker FName properties in the details.
-        void BuildSocketPickerData(entt::entity Entity, FSocketEditContext& Out);
+        void BuildSocketPickerData(ECS::FEntity Entity, FSocketEditContext& Out);
 
         // Provided to every details table this tool draws, refreshed per entity as the panel walks them.
         FPropertyEditContext  PropertyContext;
@@ -261,7 +267,7 @@ namespace Lumina
         FWorldEditContext    WorldCtx;
         FEntityPickContext   PickCtx;
         // Remove a reflected component from Entity (marks details dirty for rebuild).
-        void RemoveComponent(entt::entity Entity, const CStruct* ComponentType);
+        void RemoveComponent(ECS::FEntity Entity, const CStruct* ComponentType);
         // Drain queued reflected-component removals inside one transaction. Call from Update.
         void ProcessComponentEditRequests();
 
@@ -278,18 +284,18 @@ namespace Lumina
         void RecordSceneFolderSnapshot();
 
         // Adds the prefab override ledger to an open transaction, for a component add or remove.
-        void RecordPrefabOverrideSnapshot(const TVector<entt::entity>& Entities);
+        void RecordPrefabOverrideSnapshot(const TVector<ECS::FEntity>& Entities);
 
         // The singleton entity carrying SSceneFolderComponent, or null before the world has one.
-        NODISCARD entt::entity GetSceneFolderOwner() const;
+        NODISCARD ECS::FEntity GetSceneFolderOwner() const;
 
         // Hook: components that should never appear in the details panel. Base hides STagComponent
         // (rendered separately as chips); the prefab editor also hides its SPrefabComponent.
         virtual bool IsComponentHiddenInDetails(const CStruct* Type) const;
         
         // Wraps the transaction, the creation hook, selection and dirty marking that every spawn shares.
-        entt::entity SpawnEntityTransacted(FName Name, FName TransactionLabel,
-            const TFunction<void(entt::entity)>& Decorate);
+        ECS::FEntity SpawnEntityTransacted(FName Name, FName TransactionLabel,
+            const TFunction<void(ECS::FEntity)>& Decorate);
 
         void CreateEntity();
         void CreateEntityWithComponent(const CStruct* Component);
@@ -297,22 +303,22 @@ namespace Lumina
 
         // Entities a component-add targets: the whole selection when Entity is part of a
         // multi-selection, otherwise just Entity.
-        TVector<entt::entity> GetComponentEditTargets(entt::entity Entity);
+        TVector<ECS::FEntity> GetComponentEditTargets(ECS::FEntity Entity);
         // Add the picked reflected component to every target (skips ones already holding it).
-        void ApplyAddComponentToTargets(const TVector<entt::entity>& Targets, entt::meta_type PickedMetaType);
+        void ApplyAddComponentToTargets(const TVector<ECS::FEntity>& Targets, CStruct* PickedMetaType);
         // Filterable, categorized list of addable reflected components.
         // Fills OutMetaType/OutStruct and returns true on click.
-        bool DrawAddableComponentList(const ImGuiTextFilter& Filter, const TVector<entt::entity>& Targets, entt::meta_type& OutMetaType, CStruct*& OutStruct);
+        bool DrawAddableComponentList(const ImGuiTextFilter& Filter, const TVector<ECS::FEntity>& Targets, CStruct*& OutMetaType, CStruct*& OutStruct);
         
-        virtual void OnEntityCreatedInScene(entt::entity Entity) {}
+        virtual void OnEntityCreatedInScene(ECS::FEntity Entity) {}
         virtual FTransform GetNewEntitySpawnTransform() const;
         
         // Entity clipboard (mirrored on the registry as FCopiedTag).
-        void AddEntityToCopies(entt::entity Entity);
-        void RemoveEntityFromCopies(entt::entity Entity);
+        void AddEntityToCopies(ECS::FEntity Entity);
+        void RemoveEntityFromCopies(ECS::FEntity Entity);
         void ClearCopies() const;
         // Deep-copy From into a new entity To (component duplicate via the editor's default filter).
-        void CopyEntity(entt::entity& To, entt::entity From);
+        void CopyEntity(ECS::FEntity& To, ECS::FEntity From);
 
         // Draws component visualizers for the current selection (+ their children). Shared EndFrame body.
         void EndFrame() override;
@@ -369,23 +375,23 @@ namespace Lumina
         // Tool-window body: resolves the last-selected entity, rebuilds tables, draws the panel.
         void DrawDetailsPanel(bool bFocused);
         // The panel header (name + add-component + delete) and component list for one entity.
-        void DrawEntityProperties(entt::entity Entity);
+        void DrawEntityProperties(ECS::FEntity Entity);
         void DrawEmptyState();
 
         // Hook: whether Entity may be deleted from the panel (prefab forbids the root).
-        virtual bool CanDeleteEntity(entt::entity Entity) const { return true; }
+        virtual bool CanDeleteEntity(ECS::FEntity Entity) const { return true; }
         // Hook: extra header buttons next to Add-Component/Delete (world: Add Tag).
         // Modal name prompt for one entity. Also reached from the outliner context menu.
-        void PushRenameEntityModal(entt::entity Entity);
+        void PushRenameEntityModal(ECS::FEntity Entity);
 
         // Owned by the tool rather than the modal lambda, which cannot hold state across frames.
         FFixedString RenameModalBuffer;
 
-        virtual void DrawDetailsHeaderExtraButtons(entt::entity Entity) {}
+        virtual void DrawDetailsHeaderExtraButtons(ECS::FEntity Entity) {}
         // Hook: extra sections above the component list (world: the Tags chip section).
-        virtual void DrawDetailsExtraSections(entt::entity Entity) {}
+        virtual void DrawDetailsExtraSections(ECS::FEntity Entity) {}
 
-        TQueue<entt::entity> EntityDestroyRequests;
+        TQueue<ECS::FEntity> EntityDestroyRequests;
         bool                bImGuizmoUsedOnce = false;
         bool                bGuizmoSnapEnabled = true;
         float               GuizmoSnapTranslate = 0.1f;
@@ -394,7 +400,7 @@ namespace Lumina
 
         TVector<FComponentTableEntry>    PropertyTables;
         TQueue<FComponentDestroyRequest> ComponentDestroyRequests;
-        entt::entity                     DetailsEntity = entt::null;
+        ECS::FEntity                     DetailsEntity = ECS::NullEntity;
         bool                             bDetailsDirty = false;
 
         // One-shot: arm a transform resolve for the newly selected entities on the next tick. Set from

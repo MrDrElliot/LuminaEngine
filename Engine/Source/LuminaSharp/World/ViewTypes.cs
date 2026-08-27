@@ -3,7 +3,7 @@ using System.Buffers;
 
 namespace LuminaSharp;
 
-// entt-style typed views authored in C#; native gathers entities + live component pointers in chunks (one crossing per chunk).
+// typed typed views authored in C#; native gathers entities + live component pointers in chunks (one crossing per chunk).
 // WRAPPER LIFETIME: wrappers handed back are valid only for the current iteration step; do not store them, copy out fields you need.
 
 internal static class ViewConst
@@ -11,7 +11,7 @@ internal static class ViewConst
     public const int ChunkSize = 1024; // entities gathered per native crossing
 }
 
-/// A typed entt-style view over one component type. Each + foreach.
+/// A typed typed view over one component type. Each + foreach.
 public readonly unsafe struct View<T1>
     where T1 : NativeStruct
 {
@@ -138,7 +138,7 @@ public readonly unsafe struct View<T1>
     }
 }
 
-/// A typed entt-style view over two component types. Each + foreach.
+/// A typed typed view over two component types. Each + foreach.
 public readonly unsafe struct View<T1, T2>
     where T1 : NativeStruct
     where T2 : NativeStruct
@@ -273,7 +273,7 @@ public readonly unsafe struct View<T1, T2>
     }
 }
 
-/// A typed entt-style view over three component types. Each + foreach.
+/// A typed typed view over three component types. Each + foreach.
 public readonly unsafe struct View<T1, T2, T3>
     where T1 : NativeStruct
     where T2 : NativeStruct
@@ -416,7 +416,7 @@ public readonly unsafe struct View<T1, T2, T3>
     }
 }
 
-/// A typed entt-style view over four component types. Each + foreach.
+/// A typed typed view over four component types. Each + foreach.
 public readonly unsafe struct View<T1, T2, T3, T4>
     where T1 : NativeStruct
     where T2 : NativeStruct

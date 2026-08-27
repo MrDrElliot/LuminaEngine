@@ -333,7 +333,7 @@ namespace LuminaVocabularyTests
         EXPECT_EQ(Value.GetIndex(), 0u);
         EXPECT_TRUE(Value.Is<int>());
         EXPECT_TRUE(Value.IsValid());
-        EXPECT_EQ(Value.Get<int>(), 0);
+        EXPECT_EQ(Value.get<int>(), 0);
     }
 
     TEST(VariantBasics, ConstructAndAssignFromAnAlternative)
@@ -345,7 +345,7 @@ namespace LuminaVocabularyTests
 
         Value = 42;
         EXPECT_TRUE(Value.Is<int>());
-        EXPECT_EQ(Value.Get<int>(), 42);
+        EXPECT_EQ(Value.get<int>(), 42);
     }
 
     TEST(VariantBasics, GetIfReportsTheHeldAlternative)
@@ -366,7 +366,7 @@ namespace LuminaVocabularyTests
         EXPECT_EQ(Value.Get<Lumina::FString>(), Lumina::FString("qqq"));
 
         Value.Emplace<0>(11);
-        EXPECT_EQ(Value.Get<int>(), 11);
+        EXPECT_EQ(Value.get<int>(), 11);
     }
 
     TEST(VariantVisit, DispatchesOnTheHeldAlternative)
@@ -395,7 +395,7 @@ namespace LuminaVocabularyTests
     {
         TVariant<int, float> Value(3);
         Lumina::Containers::Visit([](auto& Held) { Held += 1; }, Value);
-        EXPECT_EQ(Value.Get<int>(), 4);
+        EXPECT_EQ(Value.get<int>(), 4);
     }
 
     TEST(VariantLifetime, DestroysTheHeldAlternativeExactlyOnce)
@@ -471,6 +471,6 @@ namespace LuminaVocabularyTests
         EXPECT_TRUE(Left.Is<Lumina::FString>());
         EXPECT_EQ(Left.Get<Lumina::FString>(), Lumina::FString("right"));
         EXPECT_TRUE(Right.Is<int>());
-        EXPECT_EQ(Right.Get<int>(), 1);
+        EXPECT_EQ(Right.get<int>(), 1);
     }
 }

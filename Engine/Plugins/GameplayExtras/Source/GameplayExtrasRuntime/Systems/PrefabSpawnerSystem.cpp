@@ -1,6 +1,7 @@
 ﻿#include "PrefabSpawnerSystem.h"
 
 #include "Assets/AssetTypes/Prefabs/Prefab.h"
+#include "World/ECS/Registry.h"
 #include "Assets/AssetTypes/Prefabs/PrefabComponents.h"
 #include "Components/PrefabSpawnerComponent.h"
 #include "Core/Math/Math.h"
@@ -20,11 +21,11 @@ namespace Lumina
         }
 
         // Instantiate creates entities and components, so a live view can be reallocated under the loop.
-        void GatherSpawners(const FSystemContext& Context, TVector<entt::entity>& Out)
+        void GatherSpawners(const FSystemContext& Context, TVector<ECS::FEntity>& Out)
         {
             auto View = Context.CreateView<SPrefabSpawnerComponent, STransformComponent>();
-            Out.reserve(View.size_hint());
-            for (entt::entity Entity : View)
+            Out.reserve(View.Num());
+            for (ECS::FEntity Entity : View)
             {
                 Out.push_back(Entity);
             }
@@ -41,21 +42,21 @@ namespace Lumina
             return;
         }
 
-        FEntityRegistry& Registry = Context.GetRegistry();
+        ECS::FRegistry& Registry = Context.GetRegistry();
 
-        TVector<entt::entity> Spawners;
+        TVector<ECS::FEntity> Spawners;
         GatherSpawners(Context, Spawners);
 
-        for (entt::entity Entity : Spawners)
+        for (ECS::FEntity Entity : Spawners)
         {
-            if (!Registry.valid(Entity))
+            if (!Registry.IsValid(Entity))
             {
                 continue;
             }
 
             // Re-resolved per entity, since an earlier spawn may have moved or removed these components.
-            const SPrefabSpawnerComponent* SpawnComponent = Registry.try_get<SPrefabSpawnerComponent>(Entity);
-            const STransformComponent* Transform = Registry.try_get<STransformComponent>(Entity);
+            const SPrefabSpawnerComponent* SpawnComponent = Registry.TryGet<SPrefabSpawnerComponent>(Entity);
+            const STransformComponent* Transform = Registry.TryGet<STransformComponent>(Entity);
             if (SpawnComponent == nullptr || Transform == nullptr || !SpawnComponent->bSpawnOnStartup)
             {
                 continue;
@@ -69,20 +70,20 @@ namespace Lumina
     {
         const float DeltaTime = static_cast<float>(Context.GetDeltaTime());
 
-        FEntityRegistry& Registry = Context.GetRegistry();
+        ECS::FRegistry& Registry = Context.GetRegistry();
 
-        TVector<entt::entity> Spawners;
+        TVector<ECS::FEntity> Spawners;
         GatherSpawners(Context, Spawners);
 
-        for (entt::entity Entity : Spawners)
+        for (ECS::FEntity Entity : Spawners)
         {
-            if (!Registry.valid(Entity))
+            if (!Registry.IsValid(Entity))
             {
                 continue;
             }
 
-            SPrefabSpawnerComponent* SpawnComponent = Registry.try_get<SPrefabSpawnerComponent>(Entity);
-            const STransformComponent* Transform = Registry.try_get<STransformComponent>(Entity);
+            SPrefabSpawnerComponent* SpawnComponent = Registry.TryGet<SPrefabSpawnerComponent>(Entity);
+            const STransformComponent* Transform = Registry.TryGet<STransformComponent>(Entity);
             if (SpawnComponent == nullptr || Transform == nullptr)
             {
                 continue;
@@ -112,7 +113,7 @@ namespace Lumina
             SpawnComponent->Spawn(Context.GetWorld(), Transform->GetWorldTransform());
 
             // Re-resolved, since the spawn may have reallocated the spawner pool.
-            SpawnComponent = Registry.try_get<SPrefabSpawnerComponent>(Entity);
+            SpawnComponent = Registry.TryGet<SPrefabSpawnerComponent>(Entity);
             if (SpawnComponent != nullptr)
             {
                 SpawnComponent->TimeUntilNextSpawn = Math::Max(DrawSpawnInterval(Range) + Remainder, 0.0001f);

@@ -1,4 +1,5 @@
 #include "Platform/GenericPlatform.h"
+#include "World/ECS/Registry.h"
 #include "Containers/Name.h"
 #include "Containers/String.h"
 #include "World/World.h"
@@ -18,7 +19,7 @@ using namespace Lumina::DotNet;
 namespace
 {
     // Parameters live in the graph component's own struct instance; a name resolves to a field on it.
-    void* ResolveParameterField(CWorld* World, entt::entity Entity, const FName& Name, EAnimParamValueType& OutType)
+    void* ResolveParameterField(CWorld* World, ECS::FEntity Entity, const FName& Name, EAnimParamValueType& OutType)
     {
         OutType = EAnimParamValueType::Unresolved;
 

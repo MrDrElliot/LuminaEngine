@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "NavMeshSystem.h"
+#include "World/ECS/Registry.h"
 
 #include "AI/Navigation/NavMesh.h"
 #include "AI/Navigation/NavMeshBuilder.h"
@@ -208,13 +209,13 @@ namespace Lumina
         // Tag-bit packed into cache key so one entity may track one collider of each type.
         enum class ENavColliderType : uint8 { Box = 0, Sphere = 1, Mesh = 2, CharacterCapsule = 3, Capsule = 4, Cylinder = 5, Terrain = 6, TriangleSoup = 7 };
 
-        FORCEINLINE uint64 PackSourceKey(entt::entity E, ENavColliderType T)
+        FORCEINLINE uint64 PackSourceKey(ECS::FEntity E, ENavColliderType T)
         {
             return ((uint64)(uint32)E << 8) | (uint64)T;
         }
 
         // SubIndex 0 is byte-identical to the plain key, which the change detector relies on.
-        FORCEINLINE uint64 PackSourceKey(entt::entity E, ENavColliderType T, uint32 SubIndex)
+        FORCEINLINE uint64 PackSourceKey(ECS::FEntity E, ENavColliderType T, uint32 SubIndex)
         {
             return ((uint64)SubIndex << 40) | ((uint64)(uint32)E << 8) | (uint64)T;
         }
@@ -538,14 +539,14 @@ namespace Lumina
             };
 
             auto BoxView = Context.CreateView<SBoxColliderComponent, STransformComponent>();
-            for (entt::entity E : BoxView)
+            for (ECS::FEntity E : BoxView)
             {
-                SBoxColliderComponent& Box = BoxView.get<SBoxColliderComponent>(E);
+                SBoxColliderComponent& Box = BoxView.Get<SBoxColliderComponent>(E);
                 if (!Box.bAffectsNavigation) continue;
                 FNavSourceEntry Entry;
                 Entry.Key = PackSourceKey(E, ENavColliderType::Box);
                 Entry.Prim.Type = ENavColliderType::Box;
-                Entry.Prim.World = ColliderToWorld(BoxView.get<STransformComponent>(E), Box.TranslationOffset, Box.RotationOffset);
+                Entry.Prim.World = ColliderToWorld(BoxView.Get<STransformComponent>(E), Box.TranslationOffset, Box.RotationOffset);
                 Entry.Prim.Shape = Box.HalfExtent;
                 const FVector3 H = Box.HalfExtent;
                 const FVector3 Corners[8] = {
@@ -557,14 +558,14 @@ namespace Lumina
             }
 
             auto SphereView = Context.CreateView<SSphereColliderComponent, STransformComponent>();
-            for (entt::entity E : SphereView)
+            for (ECS::FEntity E : SphereView)
             {
-                SSphereColliderComponent& Sphere = SphereView.get<SSphereColliderComponent>(E);
+                SSphereColliderComponent& Sphere = SphereView.Get<SSphereColliderComponent>(E);
                 if (!Sphere.bAffectsNavigation) continue;
                 FNavSourceEntry Entry;
                 Entry.Key = PackSourceKey(E, ENavColliderType::Sphere);
                 Entry.Prim.Type = ENavColliderType::Sphere;
-                Entry.Prim.World = ColliderToWorld(SphereView.get<STransformComponent>(E), Sphere.TranslationOffset, FVector3(0.0f));
+                Entry.Prim.World = ColliderToWorld(SphereView.Get<STransformComponent>(E), Sphere.TranslationOffset, FVector3(0.0f));
                 Entry.Prim.Shape = FVector3(Sphere.Radius, 0.0f, 0.0f);
                 const FVector3 Center = FVector3(Entry.Prim.World * FVector4(0.0f, 0.0f, 0.0f, 1.0f));
                 const float R = ScaledRadius(Entry.Prim.World, Sphere.Radius);
@@ -575,9 +576,9 @@ namespace Lumina
 
             // One source per collision piece, so nav sees the same decomposed shape physics does.
             auto ShapeAssetView = Context.CreateView<SCollisionShapeComponent, STransformComponent>();
-            for (entt::entity E : ShapeAssetView)
+            for (ECS::FEntity E : ShapeAssetView)
             {
-                SCollisionShapeComponent& CSC = ShapeAssetView.get<SCollisionShapeComponent>(E);
+                SCollisionShapeComponent& CSC = ShapeAssetView.Get<SCollisionShapeComponent>(E);
                 if (!CSC.bAffectsNavigation)
                 {
                     continue;
@@ -589,7 +590,7 @@ namespace Lumina
                     continue;
                 }
 
-                const FMatrix4 ColliderWorld = ColliderToWorld(ShapeAssetView.get<STransformComponent>(E),
+                const FMatrix4 ColliderWorld = ColliderToWorld(ShapeAssetView.Get<STransformComponent>(E),
                                                                CSC.TranslationOffset, CSC.RotationOffset);
 
                 if (Asset->IsConcave())
@@ -694,17 +695,17 @@ namespace Lumina
             }
 
             auto MeshView = Context.CreateView<SMeshColliderComponent, STransformComponent>();
-            for (entt::entity E : MeshView)
+            for (ECS::FEntity E : MeshView)
             {
-                SMeshColliderComponent& MC = MeshView.get<SMeshColliderComponent>(E);
+                SMeshColliderComponent& MC = MeshView.Get<SMeshColliderComponent>(E);
                 if (!MC.bAffectsNavigation) continue;
-                const SStaticMeshComponent* Fallback = Context.GetRegistry().try_get<SStaticMeshComponent>(E);
+                const SStaticMeshComponent* Fallback = Context.GetRegistry().TryGet<SStaticMeshComponent>(E);
                 CStaticMesh* Mesh = ResolveMeshColliderAsset(MC, Fallback);
                 if (!Mesh || Mesh->GetMeshResource().bSkinnedMesh) continue;
                 FNavSourceEntry Entry;
                 Entry.Key = PackSourceKey(E, ENavColliderType::Mesh);
                 Entry.Prim.Type = ENavColliderType::Mesh;
-                Entry.Prim.World = ColliderToWorld(MeshView.get<STransformComponent>(E), MC.TranslationOffset, MC.RotationOffset);
+                Entry.Prim.World = ColliderToWorld(MeshView.Get<STransformComponent>(E), MC.TranslationOffset, MC.RotationOffset);
                 Entry.Prim.Mesh = Mesh;
                 const FAABB& Local = Mesh->GetAABB();
                 const FVector3 Corners[8] = {
@@ -718,14 +719,14 @@ namespace Lumina
             }
 
             auto CapsuleView = Context.CreateView<SCapsuleColliderComponent, STransformComponent>();
-            for (entt::entity E : CapsuleView)
+            for (ECS::FEntity E : CapsuleView)
             {
-                SCapsuleColliderComponent& Cap = CapsuleView.get<SCapsuleColliderComponent>(E);
+                SCapsuleColliderComponent& Cap = CapsuleView.Get<SCapsuleColliderComponent>(E);
                 if (!Cap.bAffectsNavigation) continue;
                 FNavSourceEntry Entry;
                 Entry.Key = PackSourceKey(E, ENavColliderType::Capsule);
                 Entry.Prim.Type = ENavColliderType::Capsule;
-                Entry.Prim.World = ColliderToWorld(CapsuleView.get<STransformComponent>(E), Cap.TranslationOffset, Cap.RotationOffset);
+                Entry.Prim.World = ColliderToWorld(CapsuleView.Get<STransformComponent>(E), Cap.TranslationOffset, Cap.RotationOffset);
                 Entry.Prim.Shape = FVector3(Cap.Radius, Cap.HalfHeight, 0.0f);
                 const FVector3 Top = FVector3(Entry.Prim.World * FVector4(0.0f,  Cap.HalfHeight, 0.0f, 1.0f));
                 const FVector3 Bot = FVector3(Entry.Prim.World * FVector4(0.0f, -Cap.HalfHeight, 0.0f, 1.0f));
@@ -736,14 +737,14 @@ namespace Lumina
             }
 
             auto CylinderView = Context.CreateView<SCylinderColliderComponent, STransformComponent>();
-            for (entt::entity E : CylinderView)
+            for (ECS::FEntity E : CylinderView)
             {
-                SCylinderColliderComponent& Cyl = CylinderView.get<SCylinderColliderComponent>(E);
+                SCylinderColliderComponent& Cyl = CylinderView.Get<SCylinderColliderComponent>(E);
                 if (!Cyl.bAffectsNavigation) continue;
                 FNavSourceEntry Entry;
                 Entry.Key = PackSourceKey(E, ENavColliderType::Cylinder);
                 Entry.Prim.Type = ENavColliderType::Cylinder;
-                Entry.Prim.World = ColliderToWorld(CylinderView.get<STransformComponent>(E), Cyl.TranslationOffset, Cyl.RotationOffset);
+                Entry.Prim.World = ColliderToWorld(CylinderView.Get<STransformComponent>(E), Cyl.TranslationOffset, Cyl.RotationOffset);
                 Entry.Prim.Shape = FVector3(Cyl.Radius, Cyl.HalfHeight, 0.0f);
                 const FVector3 Top = FVector3(Entry.Prim.World * FVector4(0.0f,  Cyl.HalfHeight, 0.0f, 1.0f));
                 const FVector3 Bot = FVector3(Entry.Prim.World * FVector4(0.0f, -Cyl.HalfHeight, 0.0f, 1.0f));
@@ -755,14 +756,14 @@ namespace Lumina
 
             // Character capsules are opt-in, since agents should not normally carve the navmesh.
             auto CharView = Context.CreateView<SCharacterPhysicsComponent, STransformComponent>();
-            for (entt::entity E : CharView)
+            for (ECS::FEntity E : CharView)
             {
-                SCharacterPhysicsComponent& Cap = CharView.get<SCharacterPhysicsComponent>(E);
+                SCharacterPhysicsComponent& Cap = CharView.Get<SCharacterPhysicsComponent>(E);
                 if (!Cap.bAffectsNavigation) continue;
                 FNavSourceEntry Entry;
                 Entry.Key = PackSourceKey(E, ENavColliderType::CharacterCapsule);
                 Entry.Prim.Type = ENavColliderType::CharacterCapsule;
-                FMatrix4 CapsuleWorld = CharView.get<STransformComponent>(E).GetWorldMatrix();
+                FMatrix4 CapsuleWorld = CharView.Get<STransformComponent>(E).GetWorldMatrix();
                 CapsuleWorld[3] = CapsuleWorld * FVector4(Cap.TranslationOffset.x, Cap.TranslationOffset.y, Cap.TranslationOffset.z, 1.0f);
                 Entry.Prim.World = CapsuleWorld;
                 Entry.Prim.Shape = FVector3(Cap.Radius, Cap.HalfHeight, 0.0f);
@@ -776,16 +777,16 @@ namespace Lumina
 
             // Terrain heightfield needs both the collider and the source component.
             auto TerrainView = Context.CreateView<STerrainColliderComponent, STransformComponent>();
-            for (entt::entity E : TerrainView)
+            for (ECS::FEntity E : TerrainView)
             {
-                STerrainColliderComponent& TC = TerrainView.get<STerrainColliderComponent>(E);
+                STerrainColliderComponent& TC = TerrainView.Get<STerrainColliderComponent>(E);
                 if (!TC.bAffectsNavigation) continue;
-                const STerrainComponent* Terrain = Context.GetRegistry().try_get<STerrainComponent>(E);
+                const STerrainComponent* Terrain = Context.GetRegistry().TryGet<STerrainComponent>(E);
                 if (!Terrain || Terrain->Heightmap.empty()) continue;
                 FNavSourceEntry Entry;
                 Entry.Key = PackSourceKey(E, ENavColliderType::Terrain);
                 Entry.Prim.Type = ENavColliderType::Terrain;
-                Entry.Prim.World = TerrainView.get<STransformComponent>(E).GetWorldMatrix();
+                Entry.Prim.World = TerrainView.Get<STransformComponent>(E).GetWorldMatrix();
                 const float Half = Terrain->TileWorldSize * 0.5f;
                 const FVector3 Corners[8] = {
                     {-Half, 0.0f, -Half}, { Half, 0.0f, -Half}, { Half, 0.0f,  Half}, {-Half, 0.0f,  Half},
@@ -847,10 +848,10 @@ namespace Lumina
             Out.Indices  = std::move(Acc.Indices);
         }
 
-        void TickComponent(const FSystemContext& Context, entt::entity Entity, SNavMeshComponent& Comp)
+        void TickComponent(const FSystemContext& Context, ECS::FEntity Entity, SNavMeshComponent& Comp)
         {
             // Scale always mirrors, location only in the editor, since runtime keeps the serialized Center.
-            if (const STransformComponent* X = Context.GetRegistry().try_get<STransformComponent>(Entity))
+            if (const STransformComponent* X = Context.GetRegistry().TryGet<STransformComponent>(Entity))
             {
                 const FTransform& WT = X->GetWorldTransform();
                 const FVector3 WS = WT.GetScale();
@@ -1201,9 +1202,9 @@ namespace Lumina
         FNavMesh* FirstReadyNavMesh(const FSystemContext& Context)
         {
             auto View = Context.CreateView<SNavMeshComponent>();
-            for (entt::entity Entity : View)
+            for (ECS::FEntity Entity : View)
             {
-                SNavMeshComponent& Comp = View.get<SNavMeshComponent>(Entity);
+                SNavMeshComponent& Comp = View.Get<SNavMeshComponent>(Entity);
                 if (Comp.Runtime.Mesh && Comp.Runtime.Mesh->IsReady())
                 {
                     return Comp.Runtime.Mesh.get();
@@ -1216,10 +1217,10 @@ namespace Lumina
     namespace
     {
         // Initializes Center from entity transform so bake volume defaults at entity location.
-        void OnNavMeshConstructed(entt::registry& Reg, entt::entity Entity)
+        void OnNavMeshConstructed(ECS::FRegistry& Reg, ECS::FEntity Entity)
         {
-            SNavMeshComponent& Nav = Reg.get<SNavMeshComponent>(Entity);
-            if (auto* Xform = Reg.try_get<STransformComponent>(Entity))
+            SNavMeshComponent& Nav = Reg.Get<SNavMeshComponent>(Entity);
+            if (auto* Xform = Reg.TryGet<STransformComponent>(Entity))
             {
                 Nav.Center = Xform->GetWorldTransform().GetLocation();
             }
@@ -1230,13 +1231,13 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        // entt sinks dedupe on the same function pointer, so reconnect is a no-op.
-        Context.GetRegistry().on_construct<SNavMeshComponent>().connect<&OnNavMeshConstructed>();
+        // A sink binds by handler identity, so reconnecting the same one is a no-op.
+        Context.GetRegistry().GetSignals<SNavMeshComponent>().OnConstruct.Connect<&OnNavMeshConstructed>();
 
         auto View = Context.CreateView<SNavMeshComponent>();
-        for (entt::entity Entity : View)
+        for (ECS::FEntity Entity : View)
         {
-            TickComponent(Context, Entity, View.get<SNavMeshComponent>(Entity));
+            TickComponent(Context, Entity, View.Get<SNavMeshComponent>(Entity));
         }
     }
 
@@ -1244,9 +1245,9 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
         auto View = Context.CreateView<SNavMeshComponent>();
-        for (entt::entity Entity : View)
+        for (ECS::FEntity Entity : View)
         {
-            TickComponent(Context, Entity, View.get<SNavMeshComponent>(Entity));
+            TickComponent(Context, Entity, View.Get<SNavMeshComponent>(Entity));
         }
     }
 
@@ -1254,9 +1255,9 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
         auto View = Context.CreateView<SNavMeshComponent>();
-        for (entt::entity Entity : View)
+        for (ECS::FEntity Entity : View)
         {
-            SNavMeshComponent& Comp = View.get<SNavMeshComponent>(Entity);
+            SNavMeshComponent& Comp = View.Get<SNavMeshComponent>(Entity);
             if (Comp.Runtime.ActiveBake)
             {
                 Comp.Runtime.ActiveBake->bCancelRequested.store(true, std::memory_order_release);
@@ -1349,9 +1350,9 @@ namespace Lumina
             {
                 if (!World) return nullptr;
                 auto View = World->View<SNavMeshComponent>();
-                for (entt::entity E : View)
+                for (ECS::FEntity E : View)
                 {
-                    SNavMeshComponent& Comp = View.get<SNavMeshComponent>(E);
+                    SNavMeshComponent& Comp = View.Get<SNavMeshComponent>(E);
                     if (Comp.Runtime.Mesh && Comp.Runtime.Mesh->IsReady())
                     {
                         return Comp.Runtime.Mesh.get();
@@ -1374,9 +1375,9 @@ namespace Lumina
             }
             int32 Count = 0;
             auto View = World->View<SNavMeshComponent>();
-            for (entt::entity E : View)
+            for (ECS::FEntity E : View)
             {
-                View.get<SNavMeshComponent>(E).bBakeRequested = true;
+                View.Get<SNavMeshComponent>(E).bBakeRequested = true;
                 ++Count;
             }
             return Count;

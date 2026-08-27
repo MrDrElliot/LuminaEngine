@@ -1,4 +1,5 @@
 #include "RuntimePCH.h"
+#include "World/ECS/Registry.h"
 #include "Box3DPhysicsScene.h"
 
 #include <box3d/collision.h>
@@ -122,19 +123,19 @@ namespace Lumina::Physics
 
         ApplyWorldSettings(InitSettings);
 
-        FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
 
-        Registry.on_construct<SSphereColliderComponent>().connect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
-        Registry.on_construct<SBoxColliderComponent>().connect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
-        Registry.on_construct<SCapsuleColliderComponent>().connect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
-        Registry.on_construct<SCylinderColliderComponent>().connect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
-        Registry.on_construct<STaperedCapsuleColliderComponent>().connect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
-        Registry.on_construct<STaperedCylinderColliderComponent>().connect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
-        Registry.on_construct<SPlaneColliderComponent>().connect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
-        Registry.on_construct<SCollisionShapeComponent>().connect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
-        Registry.on_construct<SCompoundColliderComponent>().connect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
-        Registry.on_construct<SMeshColliderComponent>().connect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
-        Registry.on_construct<STerrainColliderComponent>().connect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
+        Registry.GetSignals<SSphereColliderComponent>().OnConstruct.Connect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
+        Registry.GetSignals<SBoxColliderComponent>().OnConstruct.Connect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
+        Registry.GetSignals<SCapsuleColliderComponent>().OnConstruct.Connect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
+        Registry.GetSignals<SCylinderColliderComponent>().OnConstruct.Connect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
+        Registry.GetSignals<STaperedCapsuleColliderComponent>().OnConstruct.Connect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
+        Registry.GetSignals<STaperedCylinderColliderComponent>().OnConstruct.Connect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
+        Registry.GetSignals<SPlaneColliderComponent>().OnConstruct.Connect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
+        Registry.GetSignals<SCollisionShapeComponent>().OnConstruct.Connect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
+        Registry.GetSignals<SCompoundColliderComponent>().OnConstruct.Connect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
+        Registry.GetSignals<SMeshColliderComponent>().OnConstruct.Connect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
+        Registry.GetSignals<STerrainColliderComponent>().OnConstruct.Connect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
     }
 
     FBox3DPhysicsScene::~FBox3DPhysicsScene()
@@ -142,19 +143,19 @@ namespace Lumina::Physics
         DestroyAllConstraints();
         DestroyAllStaticBodyGroups();
 
-        FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
 
-        Registry.on_construct<SSphereColliderComponent>().disconnect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
-        Registry.on_construct<SBoxColliderComponent>().disconnect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
-        Registry.on_construct<SCapsuleColliderComponent>().disconnect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
-        Registry.on_construct<SCylinderColliderComponent>().disconnect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
-        Registry.on_construct<STaperedCapsuleColliderComponent>().disconnect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
-        Registry.on_construct<STaperedCylinderColliderComponent>().disconnect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
-        Registry.on_construct<SPlaneColliderComponent>().disconnect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
-        Registry.on_construct<SCollisionShapeComponent>().disconnect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
-        Registry.on_construct<SCompoundColliderComponent>().disconnect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
-        Registry.on_construct<SMeshColliderComponent>().disconnect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
-        Registry.on_construct<STerrainColliderComponent>().disconnect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
+        Registry.GetSignals<SSphereColliderComponent>().OnConstruct.Disconnect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
+        Registry.GetSignals<SBoxColliderComponent>().OnConstruct.Disconnect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
+        Registry.GetSignals<SCapsuleColliderComponent>().OnConstruct.Disconnect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
+        Registry.GetSignals<SCylinderColliderComponent>().OnConstruct.Disconnect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
+        Registry.GetSignals<STaperedCapsuleColliderComponent>().OnConstruct.Disconnect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
+        Registry.GetSignals<STaperedCylinderColliderComponent>().OnConstruct.Disconnect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
+        Registry.GetSignals<SPlaneColliderComponent>().OnConstruct.Disconnect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
+        Registry.GetSignals<SCollisionShapeComponent>().OnConstruct.Disconnect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
+        Registry.GetSignals<SCompoundColliderComponent>().OnConstruct.Disconnect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
+        Registry.GetSignals<SMeshColliderComponent>().OnConstruct.Disconnect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
+        Registry.GetSignals<STerrainColliderComponent>().OnConstruct.Disconnect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
 
         if (b3World_IsValid(WorldId))
         {
@@ -318,16 +319,16 @@ namespace Lumina::Physics
     {
     }
 
-    uint32 FBox3DPhysicsScene::GetEntityBodyID(entt::entity Entity)
+    uint32 FBox3DPhysicsScene::GetEntityBodyID(ECS::FEntity Entity)
     {
-        entt::registry& Registry = ECS::GetWorldRegistry(*World);
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
 
-        if (const SRigidBodyComponent* Body = Registry.try_get<SRigidBodyComponent>(Entity))
+        if (const SRigidBodyComponent* Body = Registry.TryGet<SRigidBodyComponent>(Entity))
         {
             return Body->BodyID;
         }
 
-        if (const SCharacterPhysicsComponent* Character = Registry.try_get<SCharacterPhysicsComponent>(Entity))
+        if (const SCharacterPhysicsComponent* Character = Registry.TryGet<SCharacterPhysicsComponent>(Entity))
         {
             if (Character->Character)
             {
@@ -531,7 +532,7 @@ namespace Lumina::Physics
         }
     }
 
-    void FBox3DPhysicsScene::SetSurfaceVelocity(entt::entity Entity, const FVector3& Linear, const FVector3& Angular)
+    void FBox3DPhysicsScene::SetSurfaceVelocity(ECS::FEntity Entity, const FVector3& Linear, const FVector3& Angular)
     {
         const b3BodyId Body = ResolveBody(GetEntityBodyID(Entity));
         if (!b3Body_IsValid(Body))

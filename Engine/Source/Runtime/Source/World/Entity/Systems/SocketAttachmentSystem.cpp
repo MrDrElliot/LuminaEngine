@@ -1,4 +1,5 @@
 #include "RuntimePCH.h"
+#include "World/ECS/Registry.h"
 #include "SocketAttachmentSystem.h"
 
 #include "Animation/SkeletalMeshUtils.h"
@@ -19,17 +20,17 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        auto View = SystemContext.CreateView<SSocketAttachmentComponent, STransformComponent>(entt::exclude<SDisabledTag>);
+        auto View = SystemContext.CreateView<SSocketAttachmentComponent, STransformComponent>(ECS::TExclude<SDisabledTag>{});
 
-        for (entt::entity Entity : View)
+        for (ECS::FEntity Entity : View)
         {
             const FRelationshipComponent* Relationship = SystemContext.TryGet<FRelationshipComponent>(Entity);
-            if (Relationship == nullptr || Relationship->Parent == entt::null)
+            if (Relationship == nullptr || Relationship->Parent == ECS::NullEntity)
             {
                 continue;
             }
 
-            const SSocketAttachmentComponent& Attachment = View.get<SSocketAttachmentComponent>(Entity);
+            const SSocketAttachmentComponent& Attachment = View.Get<SSocketAttachmentComponent>(Entity);
 
             FMatrix4 SocketTransform;
             bool bResolved = false;
@@ -49,7 +50,7 @@ namespace Lumina
 
             // The equality check keeps static sockets and frozen poses from re-dirtying every frame.
             const FTransform NewLocal(SocketTransform * Attachment.RelativeTransform.GetMatrix());
-            STransformComponent& Transform = View.get<STransformComponent>(Entity);
+            STransformComponent& Transform = View.Get<STransformComponent>(Entity);
             if (NewLocal != Transform.LocalTransform)
             {
                 Transform.SetLocalTransform(NewLocal);

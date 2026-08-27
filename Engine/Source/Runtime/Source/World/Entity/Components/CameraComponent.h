@@ -1,4 +1,7 @@
 #pragma once
+
+#include "World/ECS/Registry.h"
+
 #include "Containers/Vector.h"
 #include "Core/Engine/Engine.h"
 #include "Core/Object/ObjectHandleTyped.h"
@@ -177,6 +180,6 @@ namespace Lumina
 
     struct RUNTIME_API FSwitchActiveCameraEvent
     {
-        entt::entity NewActiveEntity;
+        ECS::FEntity NewActiveEntity;
     };
 }

@@ -1,5 +1,8 @@
 ﻿#pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #include "AnimNotify.h"
 #include "Assets/AssetTypes/Audio/SoundAttenuation.h"
 #include "Audio/AudioTypes.h"
@@ -48,7 +51,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Sound")
         SAudioAttenuationSettings Attenuation;
 
-        void Notify(FEntityRegistry& Registry, FEntity Entity) const override;
+        void Notify(ECS::FRegistry& Registry, ECS::FEntity Entity) const override;
     };
 
     REFLECT()
@@ -75,7 +78,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Particle System", Units = "s", ClampMin = 0.0f)
         float Lifetime = 2.0f;
 
-        void Notify(FEntityRegistry& Registry, FEntity Entity) const override;
+        void Notify(ECS::FRegistry& Registry, ECS::FEntity Entity) const override;
     };
 
     // Debug aid, and it keeps the point picker from ever being empty.
@@ -87,7 +90,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Log")
         FString Message = "AnimNotify";
 
-        void Notify(FEntityRegistry& Registry, FEntity Entity) const override;
+        void Notify(ECS::FRegistry& Registry, ECS::FEntity Entity) const override;
     };
 
     // The ranged equivalent: logs the window's edges so notify-state timing can be eyeballed.
@@ -103,8 +106,8 @@ namespace Lumina
         PROPERTY(Editable, Category = "Log")
         bool bLogTick = false;
 
-        void NotifyBegin(FEntityRegistry& Registry, FEntity Entity) const override;
-        void NotifyTick(FEntityRegistry& Registry, FEntity Entity, float Alpha) const override;
-        void NotifyEnd(FEntityRegistry& Registry, FEntity Entity) const override;
+        void NotifyBegin(ECS::FRegistry& Registry, ECS::FEntity Entity) const override;
+        void NotifyTick(ECS::FRegistry& Registry, ECS::FEntity Entity, float Alpha) const override;
+        void NotifyEnd(ECS::FRegistry& Registry, ECS::FEntity Entity) const override;
     };
 }

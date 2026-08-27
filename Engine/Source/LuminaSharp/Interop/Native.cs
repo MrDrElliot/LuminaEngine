@@ -117,7 +117,7 @@ public static unsafe partial class Native
     // Removes the slot holding the given instance handle, destroying the managed instance.
     [NativeCall] public static partial void RemoveEntityScript(ulong World, uint Entity, IntPtr Instance);
 
-    // entt::runtime_view iteration for the C# View<...>. Native gathers a CHUNK of entities + parallel
+    // runtime view iteration for the C# View<...>. Native gathers a CHUNK of entities + parallel
     // component pointers per call (one crossing per chunk). Hand-written delegate* binds: the chunk
     // pointers (uint*, void**) aren't shapes the [NativeCall] generator covers. See DotNetView.cpp.
 

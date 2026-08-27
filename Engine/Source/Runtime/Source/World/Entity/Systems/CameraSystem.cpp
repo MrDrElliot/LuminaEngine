@@ -1,5 +1,7 @@
 ﻿#include "RuntimePCH.h"
 #include "CameraSystem.h"
+#include "World/ECS/Registry.h"
+#include "World/ECS/EventDispatcher.h"
 #include "SystemSingletons.h"
 #include "World/World.h"
 #include "World/Entity/Components/CameraComponent.h"
@@ -27,19 +29,19 @@ namespace Lumina
 
     namespace Detail
     {
-        static void NewCameraConstructed(entt::registry& Registry, entt::entity Entity)
+        static void NewCameraConstructed(ECS::FRegistry& Registry, ECS::FEntity Entity)
         {
             // Play-mode only, since auto-activate in the editor hijacks the viewport with no way back.
-            const CWorld* World = Registry.ctx().get<CWorld*>();
+            const CWorld* World = Registry.Ctx().Get<CWorld*>();
             if (World == nullptr || World->GetWorldType() == EWorldType::Editor)
             {
                 return;
             }
 
-            SCameraComponent& Camera = Registry.get<SCameraComponent>(Entity);
+            SCameraComponent& Camera = Registry.Get<SCameraComponent>(Entity);
             if (Camera.bAutoActivate)
             {
-                Registry.ctx().get<entt::dispatcher&>().trigger<FSwitchActiveCameraEvent>(FSwitchActiveCameraEvent{Entity});
+                Registry.Ctx().Get<ECS::FEventDispatcher*>()->Trigger<FSwitchActiveCameraEvent>(FSwitchActiveCameraEvent{Entity});
             }
         }
 
@@ -101,18 +103,18 @@ namespace Lumina
         }
 
         // Advances no clock, so calling it a second time inside one frame is free of side effects.
-        static bool StampResolvedView(entt::registry& Registry, FVector3& OutPosition, FQuat& OutRotation, float& OutFOV)
+        static bool StampResolvedView(ECS::FRegistry& Registry, FVector3& OutPosition, FQuat& OutRotation, float& OutFOV)
         {
-            FCameraGlobalState& CameraState = Registry.ctx().get<FCameraGlobalState>();
+            FCameraGlobalState& CameraState = Registry.Ctx().Get<FCameraGlobalState>();
 
-            const entt::entity CameraEntity = CameraState.ActiveCameraEntity;
-            if (!Registry.valid(CameraEntity) || !Registry.all_of<SCameraComponent, STransformComponent>(CameraEntity))
+            const ECS::FEntity CameraEntity = CameraState.ActiveCameraEntity;
+            if (!Registry.IsValid(CameraEntity) || !Registry.HasAll<SCameraComponent, STransformComponent>(CameraEntity))
             {
                 return false;
             }
 
-            const STransformComponent& CameraTransform = Registry.get<STransformComponent>(CameraEntity);
-            SCameraComponent& Camera = Registry.get<SCameraComponent>(CameraEntity);
+            const STransformComponent& CameraTransform = Registry.Get<STransformComponent>(CameraEntity);
+            SCameraComponent& Camera = Registry.Get<SCameraComponent>(CameraEntity);
 
             OutPosition = CameraTransform.GetWorldLocation();
             OutRotation = CameraTransform.GetWorldRotation();
@@ -157,7 +159,7 @@ namespace Lumina
 
     void SCameraSystem::Startup(const FSystemContext& Context) noexcept
     {
-        Context.GetRegistry().on_construct<SCameraComponent>().connect<&Detail::NewCameraConstructed>();
+        Context.GetRegistry().GetSignals<SCameraComponent>().OnConstruct.Connect<&Detail::NewCameraConstructed>();
     }
 
     void SCameraSystem::Teardown(const FSystemContext& Context) noexcept
@@ -168,24 +170,24 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        entt::registry& Registry = Context.GetRegistry();
-        FResolvedSceneView& Resolved = Registry.ctx().get<FResolvedSceneView>();
+        ECS::FRegistry& Registry = Context.GetRegistry();
+        FResolvedSceneView& Resolved = Registry.Ctx().Get<FResolvedSceneView>();
 
         Resolved.bHasView = false;
         Resolved.bHasPostProcess = false;
         Resolved.PostProcessMaterials.clear();
 
-        FCameraGlobalState& CameraState = Registry.ctx().get<FCameraGlobalState>();
-        const entt::entity CameraEntity = CameraState.ActiveCameraEntity;
-        if (!Registry.valid(CameraEntity) || !Registry.all_of<SCameraComponent, STransformComponent>(CameraEntity))
+        FCameraGlobalState& CameraState = Registry.Ctx().Get<FCameraGlobalState>();
+        const ECS::FEntity CameraEntity = CameraState.ActiveCameraEntity;
+        if (!Registry.IsValid(CameraEntity) || !Registry.HasAll<SCameraComponent, STransformComponent>(CameraEntity))
         {
             return;
         }
 
-        const STransformComponent& CameraTransform = Registry.get<STransformComponent>(CameraEntity);
+        const STransformComponent& CameraTransform = Registry.Get<STransformComponent>(CameraEntity);
         (void)CameraTransform.GetWorldMatrix();
 
-        SCameraComponent& Camera = Registry.get<SCameraComponent>(CameraEntity);
+        SCameraComponent& Camera = Registry.Get<SCameraComponent>(CameraEntity);
 
         // Live pose of the active camera; the blend (if any) eases toward this.
         const FVector3 TargetPosition   = CameraTransform.GetWorldLocation();
@@ -199,10 +201,10 @@ namespace Lumina
         static thread_local TVector<FVolumeContribution> Contributions;
         Contributions.clear();
 
-        auto VolumeView = Registry.view<const SPostProcessComponent, const STransformComponent>(entt::exclude<SDisabledTag>);
-        for (entt::entity VolEntity : VolumeView)
+        auto VolumeView = Registry.View<SPostProcessComponent, STransformComponent>(ECS::TExclude<SDisabledTag>{});
+        for (ECS::FEntity VolEntity : VolumeView)
         {
-            const SPostProcessComponent& Volume = VolumeView.get<const SPostProcessComponent>(VolEntity);
+            const SPostProcessComponent& Volume = VolumeView.Get<SPostProcessComponent>(VolEntity);
             if (!Volume.bEnabled || Volume.BlendWeight <= 0.0f)
             {
                 continue;
@@ -212,7 +214,7 @@ namespace Lumina
 
             if (!Volume.bInfiniteExtent)
             {
-                const STransformComponent& VolXform = VolumeView.get<const STransformComponent>(VolEntity);
+                const STransformComponent& VolXform = VolumeView.Get<STransformComponent>(VolEntity);
                 const FMatrix4 InvWorld = Math::Inverse(VolXform.GetWorldMatrix());
                 const FVector3 LocalCam = FVector3(InvWorld * FVector4(CameraWorldPos, 1.0f));
                 const FVector3 D = Math::Abs(LocalCam) - Volume.BoxExtent;
@@ -253,18 +255,18 @@ namespace Lumina
             }
         }
 
-        struct FMaterialVolumeRef { entt::entity Entity; int32 Priority; };
+        struct FMaterialVolumeRef { ECS::FEntity Entity; int32 Priority; };
         TVector<FMaterialVolumeRef> MaterialVolumes;
-        for (entt::entity VolEntity : VolumeView)
+        for (ECS::FEntity VolEntity : VolumeView)
         {
-            const SPostProcessComponent& Volume = VolumeView.get<const SPostProcessComponent>(VolEntity);
+            const SPostProcessComponent& Volume = VolumeView.Get<SPostProcessComponent>(VolEntity);
             if (!Volume.bEnabled || Volume.PostProcessMaterials.empty())
             {
                 continue;
             }
             if (!Volume.bInfiniteExtent)
             {
-                const STransformComponent& VolXform = VolumeView.get<const STransformComponent>(VolEntity);
+                const STransformComponent& VolXform = VolumeView.Get<STransformComponent>(VolEntity);
                 const FMatrix4 InvWorld = Math::Inverse(VolXform.GetWorldMatrix());
                 const FVector3 LocalCam = FVector3(InvWorld * FVector4(CameraWorldPos, 1.0f));
                 const FVector3 D = Math::Abs(LocalCam) - Volume.BoxExtent;
@@ -284,7 +286,7 @@ namespace Lumina
         
         for (const FMaterialVolumeRef& Ref : MaterialVolumes)
         {
-            const SPostProcessComponent& Volume = VolumeView.get<const SPostProcessComponent>(Ref.Entity);
+            const SPostProcessComponent& Volume = VolumeView.Get<SPostProcessComponent>(Ref.Entity);
             for (const TObjectPtr<CMaterialInterface>& M : Volume.PostProcessMaterials)
             {
                 if (M.IsValid())
@@ -337,7 +339,7 @@ namespace Lumina
         CameraState.bHasResolvedView = true;
     }
 
-    void SCameraSystem::ResolveActiveCameraView(entt::registry& Registry)
+    void SCameraSystem::ResolveActiveCameraView(ECS::FRegistry& Registry)
     {
         LUMINA_PROFILE_SCOPE();
 
@@ -350,17 +352,17 @@ namespace Lumina
         }
 
         // Only refreshed once Update has published a view, so this never invents one before the first tick.
-        FResolvedSceneView& Resolved = Registry.ctx().get<FResolvedSceneView>();
+        FResolvedSceneView& Resolved = Registry.Ctx().Get<FResolvedSceneView>();
         if (Resolved.bHasView)
         {
-            const entt::entity CameraEntity = Registry.ctx().get<FCameraGlobalState>().ActiveCameraEntity;
-            Resolved.ViewVolume = Registry.get<SCameraComponent>(CameraEntity).GetViewVolume();
+            const ECS::FEntity CameraEntity = Registry.Ctx().Get<FCameraGlobalState>().ActiveCameraEntity;
+            Resolved.ViewVolume = Registry.Get<SCameraComponent>(CameraEntity).GetViewVolume();
         }
     }
 
-    void SCameraSystem::SetActiveCamera(entt::registry& Registry, entt::entity Entity, float BlendTime, ECameraBlendFunction Function)
+    void SCameraSystem::SetActiveCamera(ECS::FRegistry& Registry, ECS::FEntity Entity, float BlendTime, ECameraBlendFunction Function)
     {
-        FCameraGlobalState& State = Registry.ctx().get<FCameraGlobalState>();
+        FCameraGlobalState& State = Registry.Ctx().Get<FCameraGlobalState>();
 
         // No-op switches keep any running blend intact.
         if (Entity == State.ActiveCameraEntity)
@@ -388,19 +390,19 @@ namespace Lumina
         State.ActiveCameraEntity = Entity;
     }
 
-    entt::entity SCameraSystem::GetActiveCameraEntity(entt::registry& Registry)
+    ECS::FEntity SCameraSystem::GetActiveCameraEntity(ECS::FRegistry& Registry)
     {
-        return Registry.ctx().get<FCameraGlobalState>().ActiveCameraEntity;
+        return Registry.Ctx().Get<FCameraGlobalState>().ActiveCameraEntity;
     }
 
-    SCameraComponent* SCameraSystem::GetActiveCamera(entt::registry& Registry)
+    SCameraComponent* SCameraSystem::GetActiveCamera(ECS::FRegistry& Registry)
     {
-        return Registry.try_get<SCameraComponent>(GetActiveCameraEntity(Registry));
+        return Registry.TryGet<SCameraComponent>(GetActiveCameraEntity(Registry));
     }
 
-    uint32 SCameraSystem::PlayCameraShake(entt::registry& Registry, const FCameraShakeParams& Params)
+    uint32 SCameraSystem::PlayCameraShake(ECS::FRegistry& Registry, const FCameraShakeParams& Params)
     {
-        FCameraGlobalState& State = Registry.ctx().get<FCameraGlobalState>();
+        FCameraGlobalState& State = Registry.Ctx().Get<FCameraGlobalState>();
 
         FCameraShakeInstance S;
         S.LocationAmplitude = Params.LocationAmplitude;
@@ -426,13 +428,13 @@ namespace Lumina
         return S.Handle;
     }
 
-    void SCameraSystem::StopCameraShake(entt::registry& Registry, uint32 Handle)
+    void SCameraSystem::StopCameraShake(ECS::FRegistry& Registry, uint32 Handle)
     {
         if (Handle == 0)
         {
             return;
         }
-        FCameraGlobalState& State = Registry.ctx().get<FCameraGlobalState>();
+        FCameraGlobalState& State = Registry.Ctx().Get<FCameraGlobalState>();
         for (FCameraShakeInstance& S : State.Shakes)
         {
             if (S.Handle == Handle)
@@ -444,8 +446,8 @@ namespace Lumina
         }
     }
 
-    void SCameraSystem::StopAllCameraShakes(entt::registry& Registry)
+    void SCameraSystem::StopAllCameraShakes(ECS::FRegistry& Registry)
     {
-        Registry.ctx().get<FCameraGlobalState>().Shakes.clear();
+        Registry.Ctx().Get<FCameraGlobalState>().Shakes.clear();
     }
 }

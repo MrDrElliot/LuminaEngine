@@ -1,4 +1,5 @@
 #include "HealthSystem.h"
+#include "World/ECS/Registry.h"
 
 #include "Components/HealthComponent.h"
 #include "Core/Math/Math.h"
@@ -23,12 +24,12 @@ namespace Lumina
         }
 
         // Snapshotted because Heal broadcasts into script code that can add or destroy entities.
-        TVector<entt::entity> Regenerating;
+        TVector<ECS::FEntity> Regenerating;
         {
             auto View = Context.CreateView<SHealthComponent>();
-            for (entt::entity Entity : View)
+            for (ECS::FEntity Entity : View)
             {
-                const SHealthComponent& Health = View.get<SHealthComponent>(Entity);
+                const SHealthComponent& Health = View.Get<SHealthComponent>(Entity);
                 if (!Health.bDead && Health.RegenPerSecond.IsSet())
                 {
                     Regenerating.push_back(Entity);
@@ -36,10 +37,10 @@ namespace Lumina
             }
         }
 
-        FEntityRegistry& Registry = Context.GetRegistry();
-        for (const entt::entity Entity : Regenerating)
+        ECS::FRegistry& Registry = Context.GetRegistry();
+        for (const ECS::FEntity Entity : Regenerating)
         {
-            SHealthComponent* Health = Registry.try_get<SHealthComponent>(Entity);
+            SHealthComponent* Health = Registry.TryGet<SHealthComponent>(Entity);
             if (Health == nullptr || Health->bDead || !Health->RegenPerSecond.IsSet())
             {
                 continue;
@@ -51,7 +52,7 @@ namespace Lumina
                 continue;
             }
 
-            Health->Heal(Health->RegenPerSecond.GetValue() * DeltaTime, entt::null);
+            Health->Heal(Health->RegenPerSecond.GetValue() * DeltaTime, ECS::NullEntity);
         }
     }
 }

@@ -19,7 +19,6 @@ public class Tests : LuminaModuleRules
             "Box3D",
             "ImGui",
             "RPMalloc",
-            "Entt",
         });
 
         if (Target.bWithEditor)

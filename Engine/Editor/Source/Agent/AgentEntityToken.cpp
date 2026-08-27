@@ -1,4 +1,5 @@
 #include "EditorPCH.h"
+#include "World/ECS/Registry.h"
 #include "Agent/AgentEntityToken.h"
 
 #include "Containers/StringFormat.h"
@@ -47,9 +48,9 @@ namespace Lumina::Agent
         GEpoch.fetch_add(1, std::memory_order_acq_rel);
     }
 
-    FString FEntityTokens::Mint(const FEntityRegistry& Registry, FEntity Entity)
+    FString FEntityTokens::Mint(const ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        if (Entity == entt::null || !Registry.valid(Entity))
+        if (Entity == ECS::NullEntity || !Registry.IsValid(Entity))
         {
             return FString();
         }
@@ -60,10 +61,10 @@ namespace Lumina::Agent
         return Lumina::Format("{}{}{:x}{}{:x}", GPrefix, GSeparator, GetEpoch(), GSeparator, Bits);
     }
 
-    bool FEntityTokens::Resolve(const FEntityRegistry& Registry, FStringView Token,
-        FEntity& OutEntity, FString& OutError)
+    bool FEntityTokens::Resolve(const ECS::FRegistry& Registry, FStringView Token,
+        ECS::FEntity& OutEntity, FString& OutError)
     {
-        OutEntity = entt::null;
+        OutEntity = ECS::NullEntity;
 
         const auto Reject = [&OutError](FStringView Reason)
         {
@@ -108,9 +109,9 @@ namespace Lumina::Agent
             return Reject("That is not an entity id.");
         }
 
-        const FEntity Candidate = static_cast<FEntity>(static_cast<uint32>(Bits));
+        const ECS::FEntity Candidate = static_cast<ECS::FEntity>(static_cast<uint32>(Bits));
 
-        if (Candidate == entt::null || !Registry.valid(Candidate))
+        if (Candidate == ECS::NullEntity || !Registry.IsValid(Candidate))
         {
             return Reject("That entity no longer exists.");
         }

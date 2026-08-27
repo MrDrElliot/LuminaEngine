@@ -1,4 +1,5 @@
 #include "RuntimePCH.h"
+#include "World/ECS/Registry.h"
 #include "Box3DPhysicsScene.h"
 
 #include <box3d/collision.h>
@@ -450,7 +451,7 @@ namespace Lumina::Physics
         OutRotation = Box3DUtils::FromB3Quat(b3Body_GetRotation(Handle.Bodies[0]));
     }
 
-    void FBox3DPhysicsScene::ApplyBuoyancyImpulse(entt::entity Entity, const FVector3& SurfacePosition, const FVector3& SurfaceNormal,
+    void FBox3DPhysicsScene::ApplyBuoyancyImpulse(ECS::FEntity Entity, const FVector3& SurfacePosition, const FVector3& SurfaceNormal,
         float Buoyancy, float LinearDrag, float AngularDrag, const FVector3& FluidVelocity, float DeltaTime)
     {
         const b3BodyId BodyId = ResolveBody(GetEntityBodyID(Entity));

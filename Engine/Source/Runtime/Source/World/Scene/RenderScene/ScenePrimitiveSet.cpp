@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "ScenePrimitiveSet.h"
+#include "World/ECS/Registry.h"
 
 #include "Assets/AssetTypes/Mesh/Mesh.h"
 #include "Assets/AssetTypes/Mesh/Skeleton/Skeleton.h"
@@ -20,9 +21,9 @@
 namespace Lumina
 {
 
-    static FORCEINLINE uint64 PackDirty(entt::entity Entity, EPrimitiveSource Source, EPrimitiveDirty Flags)
+    static FORCEINLINE uint64 PackDirty(ECS::FEntity Entity, EPrimitiveSource Source, EPrimitiveDirty Flags)
     {
-        return (uint64)entt::to_integral(Entity) | ((uint64)Source << 32) | ((uint64)Flags  << 40);
+        return (uint64)(Entity).Value | ((uint64)Source << 32) | ((uint64)Flags  << 40);
     }
 
     struct FRenderDirtyTracker::FImpl
@@ -40,24 +41,24 @@ namespace Lumina
         Memory::Delete(Impl);
     }
 
-    FRenderDirtyTracker* FRenderDirtyTracker::Find(FEntityRegistry& Registry)
+    FRenderDirtyTracker* FRenderDirtyTracker::Find(ECS::FRegistry& Registry)
     {
-        TUniquePtr<FRenderDirtyTracker>* Holder = Registry.ctx().find<TUniquePtr<FRenderDirtyTracker>>();
+        TUniquePtr<FRenderDirtyTracker>* Holder = Registry.Ctx().Find<TUniquePtr<FRenderDirtyTracker>>();
         return Holder ? Holder->get() : nullptr;
     }
 
-    FRenderDirtyTracker& FRenderDirtyTracker::Ensure(FEntityRegistry& Registry)
+    FRenderDirtyTracker& FRenderDirtyTracker::Ensure(ECS::FRegistry& Registry)
     {
-        if (TUniquePtr<FRenderDirtyTracker>* Holder = Registry.ctx().find<TUniquePtr<FRenderDirtyTracker>>())
+        if (TUniquePtr<FRenderDirtyTracker>* Holder = Registry.Ctx().Find<TUniquePtr<FRenderDirtyTracker>>())
         {
             return *Holder->get();
         }
-        return *Registry.ctx().emplace<TUniquePtr<FRenderDirtyTracker>>(MakeUnique<FRenderDirtyTracker>());
+        return *Registry.Ctx().Emplace<TUniquePtr<FRenderDirtyTracker>>(MakeUnique<FRenderDirtyTracker>());
     }
 
-    void FRenderDirtyTracker::Mark(entt::entity Entity, EPrimitiveSource Source, EPrimitiveDirty Flags)
+    void FRenderDirtyTracker::Mark(ECS::FEntity Entity, EPrimitiveSource Source, EPrimitiveDirty Flags)
     {
-        if (Entity == entt::null || Flags == EPrimitiveDirty::None)
+        if (Entity == ECS::NullEntity || Flags == EPrimitiveDirty::None)
         {
             return;
         }
@@ -65,7 +66,7 @@ namespace Lumina
         bAnyDirty.store(true, std::memory_order_release);
     }
 
-    void FRenderDirtyTracker::MarkAllSources(entt::entity Entity, EPrimitiveDirty Flags)
+    void FRenderDirtyTracker::MarkAllSources(ECS::FEntity Entity, EPrimitiveDirty Flags)
     {
         Mark(Entity, EPrimitiveSource::AnySource, Flags);
     }
@@ -87,7 +88,7 @@ namespace Lumina
             {
                 const uint64 Packed = Batch[i];
                 FEntry& Entry  = Out.emplace_back();
-                Entry.Entity = (entt::entity)(uint32)(Packed & 0xFFFFFFFFull);
+                Entry.Entity = (ECS::FEntity)(uint32)(Packed & 0xFFFFFFFFull);
                 Entry.Source = (EPrimitiveSource)((Packed >> 32) & 0xFFull);
                 Entry.Flags  = (EPrimitiveDirty)((Packed >> 40) & 0xFFull);
             }
@@ -196,7 +197,7 @@ namespace Lumina
 
     uint32 FScenePrimitiveSet::FindPrimitive(uint64 Key) const
     {
-        const entt::entity     Entity = (entt::entity)(uint32)(Key & 0xFFFFFFFFull);
+        const ECS::FEntity     Entity = (ECS::FEntity)(uint32)(Key & 0xFFFFFFFFull);
         const EPrimitiveSource Source = (EPrimitiveSource)((Key >> 32) & 0xFFull);
 
         // Foliage owns no primitive; its instances live in FoliageByEntity. See FFoliageInstanceRef.
@@ -205,30 +206,30 @@ namespace Lumina
 
     //~ Flat entity-index link table. See FPrimitiveLink for why this exists instead of a hash probe.
 
-    uint32 FScenePrimitiveSet::FindLinked(entt::entity Entity, EPrimitiveSource Source) const
+    uint32 FScenePrimitiveSet::FindLinked(ECS::FEntity Entity, EPrimitiveSource Source) const
     {
         DEBUG_ASSERT((uint32)Source < kLinkedSources);
 
-        const uint32 Slot = (uint32)entt::to_entity(Entity);
+        const uint32 Slot = (uint32)(Entity).GetIndex();
         if (Slot >= (uint32)LinksByEntityIndex.size())
         {
             return ~0u;
         }
 
         const FPrimitiveLink& Link = LinksByEntityIndex[Slot];
-        return Link.Entity == entt::to_integral(Entity) ? Link.Index[(uint32)Source] : ~0u;
+        return Link.Entity == (Entity).Value ? Link.Index[(uint32)Source] : ~0u;
     }
 
-    uint8 FScenePrimitiveSet::GetSourceMask(entt::entity Entity) const
+    uint8 FScenePrimitiveSet::GetSourceMask(ECS::FEntity Entity) const
     {
-        const uint32 Slot = (uint32)entt::to_entity(Entity);
+        const uint32 Slot = (uint32)(Entity).GetIndex();
         if (Slot >= (uint32)LinksByEntityIndex.size())
         {
             return 0u;
         }
 
         const FPrimitiveLink& Link = LinksByEntityIndex[Slot];
-        if (Link.Entity != entt::to_integral(Entity))
+        if (Link.Entity != (Entity).Value)
         {
             return 0u;
         }
@@ -241,37 +242,37 @@ namespace Lumina
         return Mask;
     }
 
-    void FScenePrimitiveSet::SetLink(entt::entity Entity, EPrimitiveSource Source, uint32 Index)
+    void FScenePrimitiveSet::SetLink(ECS::FEntity Entity, EPrimitiveSource Source, uint32 Index)
     {
         DEBUG_ASSERT((uint32)Source < kLinkedSources);
 
-        const uint32 Slot = (uint32)entt::to_entity(Entity);
+        const uint32 Slot = (uint32)(Entity).GetIndex();
         if (Slot >= (uint32)LinksByEntityIndex.size())
         {
             LinksByEntityIndex.resize(Slot + 1u);
         }
 
         FPrimitiveLink& Link = LinksByEntityIndex[Slot];
-        if (Link.Entity != entt::to_integral(Entity))
+        if (Link.Entity != (Entity).Value)
         {
             Link = FPrimitiveLink{};
-            Link.Entity = entt::to_integral(Entity);
+            Link.Entity = (Entity).Value;
         }
         Link.Index[(uint32)Source] = Index;
     }
 
-    void FScenePrimitiveSet::ClearLink(entt::entity Entity, EPrimitiveSource Source)
+    void FScenePrimitiveSet::ClearLink(ECS::FEntity Entity, EPrimitiveSource Source)
     {
         DEBUG_ASSERT((uint32)Source < kLinkedSources);
 
-        const uint32 Slot = (uint32)entt::to_entity(Entity);
+        const uint32 Slot = (uint32)(Entity).GetIndex();
         if (Slot >= (uint32)LinksByEntityIndex.size())
         {
             return;
         }
 
         FPrimitiveLink& Link = LinksByEntityIndex[Slot];
-        if (Link.Entity != entt::to_integral(Entity))
+        if (Link.Entity != (Entity).Value)
         {
             return;
         }
@@ -297,7 +298,7 @@ namespace Lumina
         Keys.push_back(Key);
         ResolveKeys.push_back(PackResolveKey(INVALID_MESH_RESOLVE_HANDLE, 0));
 
-        const entt::entity     Entity = (entt::entity)(uint32)(Key & 0xFFFFFFFFull);
+        const ECS::FEntity     Entity = (ECS::FEntity)(uint32)(Key & 0xFFFFFFFFull);
         const EPrimitiveSource Source = (EPrimitiveSource)((Key >> 32) & 0xFFull);
         SetLink(Entity, Source, Index);
         if (Source == EPrimitiveSource::SkeletalMesh)
@@ -335,7 +336,7 @@ namespace Lumina
             Keys[Index]        = Keys[Last];
             ResolveKeys[Index] = ResolveKeys[Last];
 
-            const entt::entity     MovedEntity = (entt::entity)(uint32)(Keys[Index] & 0xFFFFFFFFull);
+            const ECS::FEntity     MovedEntity = (ECS::FEntity)(uint32)(Keys[Index] & 0xFFFFFFFFull);
             const EPrimitiveSource MovedSource = (EPrimitiveSource)((Keys[Index] >> 32) & 0xFFull);
             SetLink(MovedEntity, MovedSource, Index);
         }
@@ -346,7 +347,7 @@ namespace Lumina
         Keys.pop_back();
         ResolveKeys.pop_back();
 
-        const entt::entity     Entity = (entt::entity)(uint32)(Key & 0xFFFFFFFFull);
+        const ECS::FEntity     Entity = (ECS::FEntity)(uint32)(Key & 0xFFFFFFFFull);
         const EPrimitiveSource Source = (EPrimitiveSource)((Key >> 32) & 0xFFull);
         if (Source == EPrimitiveSource::SkeletalMesh && SkinnedCount > 0)
         {
@@ -357,7 +358,7 @@ namespace Lumina
         ++StructureGeneration;
     }
 
-    void FScenePrimitiveSet::RemoveEntity(FEntityRegistry& Registry, entt::entity Entity, EPrimitiveSource Source)
+    void FScenePrimitiveSet::RemoveEntity(ECS::FRegistry& Registry, ECS::FEntity Entity, EPrimitiveSource Source)
     {
         if (Source == EPrimitiveSource::Foliage)
         {
@@ -992,36 +993,36 @@ namespace Lumina
 
     struct FScenePrimitiveSet::FSyncPools
     {
-        entt::storage_type_t<STransformComponent>*          Transform    = nullptr;
-        const entt::storage_type_t<FRenderTransform>*       RenderXform  = nullptr;
-        const entt::storage_type_t<SStaticMeshComponent>*   StaticMesh   = nullptr;
-        const entt::storage_type_t<SSkeletalMeshComponent>* SkeletalMesh = nullptr;
-        entt::storage_type_t<SDynamicMeshComponent>*        DynamicMesh  = nullptr;
-        entt::storage_type_t<SFoliageComponent>*            Foliage      = nullptr;
-        const entt::sparse_set*                             Disabled     = nullptr;
-        const entt::sparse_set*                             Sources[kLinkedSources] = {};
+        ECS::TComponentStorage<STransformComponent>          Transform    = {};
+        ECS::TComponentStorage<FRenderTransform>       RenderXform  = {};
+        ECS::TComponentStorage<SStaticMeshComponent>   StaticMesh   = {};
+        ECS::TComponentStorage<SSkeletalMeshComponent> SkeletalMesh = {};
+        ECS::TComponentStorage<SDynamicMeshComponent>        DynamicMesh  = {};
+        ECS::TComponentStorage<SFoliageComponent>            Foliage      = {};
+        const ECS::FSparseSet*                             Disabled     = nullptr;
+        const ECS::FSparseSet*                             Sources[kLinkedSources] = {};
 
         FMeshResolveCache*                                  ResolveCache = &FMeshResolveCache::Get();
 
-        explicit FSyncPools(FEntityRegistry& Registry)
-            : Transform(&Registry.storage<STransformComponent>())
-            , RenderXform(&Registry.storage<FRenderTransform>())
-            , StaticMesh(&Registry.storage<SStaticMeshComponent>())
-            , SkeletalMesh(&Registry.storage<SSkeletalMeshComponent>())
-            , DynamicMesh(&Registry.storage<SDynamicMeshComponent>())
-            , Foliage(&Registry.storage<SFoliageComponent>())
-            , Disabled(&Registry.storage<SDisabledTag>())
+        explicit FSyncPools(ECS::FRegistry& Registry)
+            : Transform(Registry.GetStorage<STransformComponent>())
+            , RenderXform(Registry.GetStorage<FRenderTransform>())
+            , StaticMesh(Registry.GetStorage<SStaticMeshComponent>())
+            , SkeletalMesh(Registry.GetStorage<SSkeletalMeshComponent>())
+            , DynamicMesh(Registry.GetStorage<SDynamicMeshComponent>())
+            , Foliage(Registry.GetStorage<SFoliageComponent>())
+            , Disabled(Registry.GetStorage<SDisabledTag>().GetSet())
         {
-            Sources[(uint32)EPrimitiveSource::StaticMesh]   = StaticMesh;
-            Sources[(uint32)EPrimitiveSource::DynamicMesh]  = DynamicMesh;
-            Sources[(uint32)EPrimitiveSource::SkeletalMesh] = SkeletalMesh;
+            Sources[(uint32)EPrimitiveSource::StaticMesh]   = StaticMesh.GetSet();
+            Sources[(uint32)EPrimitiveSource::DynamicMesh]  = DynamicMesh.GetSet();
+            Sources[(uint32)EPrimitiveSource::SkeletalMesh] = SkeletalMesh.GetSet();
         }
     };
 
-    static FORCEINLINE FMatrix4 ReadRenderMatrix(const entt::storage_type_t<FRenderTransform>* RenderStorage,
-                                                 entt::entity Entity, const STransformComponent& Transform)
+    static FORCEINLINE FMatrix4 ReadRenderMatrix(ECS::TComponentStorage<FRenderTransform> RenderStorage,
+                                                 ECS::FEntity Entity, const STransformComponent& Transform)
     {
-        return RenderStorage->contains(Entity) ? RenderStorage->get(Entity).Matrix
+        return RenderStorage->Contains(Entity) ? RenderStorage->Get(Entity).Matrix
                                                : Transform.GetWorldMatrixCached();
     }
 
@@ -1081,7 +1082,7 @@ namespace Lumina
         const uint32                     OldGen      = Prim.ResolveGeneration;
 
         Prim.Surfaces = nullptr;
-        Prim.EntityID = entt::to_integral(Prim.Entity);
+        Prim.EntityID = (Prim.Entity).Value;
 
         bool bResolved = false;
         // Set by sources whose (Surfaces, Handle, Generation) triple cannot report their own change.
@@ -1097,16 +1098,16 @@ namespace Lumina
 
                 if (Prim.Source == EPrimitiveSource::StaticMesh)
                 {
-                    if (!Pools.StaticMesh->contains(Prim.Entity)) { return false; }
-                    const SStaticMeshComponent* C = &Pools.StaticMesh->get(Prim.Entity);
+                    if (!Pools.StaticMesh->Contains(Prim.Entity)) { return false; }
+                    const SStaticMeshComponent* C = &Pools.StaticMesh->Get(Prim.Entity);
                     ReadCommonMeshState(Prim, Cull, *C);
                     Base     = C;
                     LiveMesh = (const void*)C->StaticMesh.Get();
                 }
                 else
                 {
-                    if (!Pools.SkeletalMesh->contains(Prim.Entity)) { return false; }
-                    const SSkeletalMeshComponent* C = &Pools.SkeletalMesh->get(Prim.Entity);
+                    if (!Pools.SkeletalMesh->Contains(Prim.Entity)) { return false; }
+                    const SSkeletalMeshComponent* C = &Pools.SkeletalMesh->Get(Prim.Entity);
                     ReadCommonMeshState(Prim, Cull, *C);
                     Base     = C;
                     LiveMesh = (const void*)C->SkeletalMesh.Get();
@@ -1155,8 +1156,8 @@ namespace Lumina
 
         case EPrimitiveSource::DynamicMesh:
             {
-                if (!Pools.DynamicMesh->contains(Prim.Entity)) { return false; }
-                SDynamicMeshComponent* C = &Pools.DynamicMesh->get(Prim.Entity);
+                if (!Pools.DynamicMesh->Contains(Prim.Entity)) { return false; }
+                SDynamicMeshComponent* C = &Pools.DynamicMesh->Get(Prim.Entity);
                 ReadCommonMeshState(Prim, Cull, *C);
 
                 C->SyncedRenderDataVersion = C->LoadRenderDataVersion();
@@ -1214,7 +1215,7 @@ namespace Lumina
         return bResolved;
     }
 
-    void FScenePrimitiveSet::SyncEntity(FEntityRegistry& Registry, const FSyncPools& Pools, entt::entity Entity,
+    void FScenePrimitiveSet::SyncEntity(ECS::FRegistry& Registry, const FSyncPools& Pools, ECS::FEntity Entity,
                                         EPrimitiveSource Source, EPrimitiveDirty Flags)
     {
         ++SyncStats.SyncEntityCalls;
@@ -1230,12 +1231,12 @@ namespace Lumina
         // move on a primitive that already exists. 
         if (Index != ~0u && Flags == EPrimitiveDirty::Transform)
         {
-            if (!Pools.Transform->contains(Entity))
+            if (!Pools.Transform->Contains(Entity))
             {
                 return;
             }
 
-            Primitives[Index].Transform = ReadRenderMatrix(Pools.RenderXform, Entity, Pools.Transform->get(Entity));
+            Primitives[Index].Transform = ReadRenderMatrix(Pools.RenderXform, Entity, Pools.Transform->Get(Entity));
             RebuildWorldBounds(Index);
             RefreshInstances(Index);
             ++StructureGeneration;
@@ -1243,14 +1244,14 @@ namespace Lumina
         }
 
         // Does the entity still carry this source, and is it enabled?
-        bool bShouldExist = Registry.valid(Entity) && !Pools.Disabled->contains(Entity);
+        bool bShouldExist = Registry.IsValid(Entity) && !Pools.Disabled->Contains(Entity);
         if (bShouldExist)
         {
             const uint32 SourceIdx = (uint32)Source;
-            bShouldExist = (SourceIdx < kLinkedSources) && Pools.Sources[SourceIdx]->contains(Entity);
+            bShouldExist = (SourceIdx < kLinkedSources) && Pools.Sources[SourceIdx]->Contains(Entity);
         }
         // A transform component is required to place it.
-        if (bShouldExist && !Pools.Transform->contains(Entity))
+        if (bShouldExist && !Pools.Transform->Contains(Entity))
         {
             bShouldExist = false;
         }
@@ -1275,7 +1276,7 @@ namespace Lumina
 
         if (EnumHasAnyFlags(Flags, EPrimitiveDirty::Transform))
         {
-            Primitives[Index].Transform = ReadRenderMatrix(Pools.RenderXform, Entity, Pools.Transform->get(Entity));
+            Primitives[Index].Transform = ReadRenderMatrix(Pools.RenderXform, Entity, Pools.Transform->Get(Entity));
         }
 
         if (EnumHasAnyFlags(Flags, EPrimitiveDirty::Data | EPrimitiveDirty::Membership | EPrimitiveDirty::Visibility))
@@ -1354,7 +1355,7 @@ namespace Lumina
         }
     }
 
-    void FScenePrimitiveSet::SyncFoliage(FEntityRegistry& Registry, const FSyncPools& Pools, entt::entity Entity,
+    void FScenePrimitiveSet::SyncFoliage(ECS::FRegistry& Registry, const FSyncPools& Pools, ECS::FEntity Entity,
                                          EPrimitiveDirty Flags)
     {
         (void)Flags;
@@ -1362,10 +1363,10 @@ namespace Lumina
         // Counted, not scoped; see SyncEntity.
         ++SyncStats.SyncFoliageCalls;
 
-        SFoliageComponent* Foliage = (Registry.valid(Entity) && Pools.Foliage->contains(Entity))
-                                   ? &Pools.Foliage->get(Entity)
+        SFoliageComponent* Foliage = (Registry.IsValid(Entity) && Pools.Foliage->Contains(Entity))
+                                   ? &Pools.Foliage->Get(Entity)
                                    : nullptr;
-        const bool bEnabled = Foliage != nullptr && !Pools.Disabled->contains(Entity);
+        const bool bEnabled = Foliage != nullptr && !Pools.Disabled->Contains(Entity);
 
         if (!bEnabled)
         {
@@ -1420,7 +1421,7 @@ namespace Lumina
             State.TypeResolveKeys[t] = PackResolveKey(Out.ResolveHandle, Out.Generation);
 
             // Per type rather than per instance; every instance of a type carries the same pair.
-            WarnOnGeometryKindMismatch(Out.MeshletHeaderSlot, Out.BaseFlags, entt::to_integral(Entity),
+            WarnOnGeometryKindMismatch(Out.MeshletHeaderSlot, Out.BaseFlags, (Entity).Value,
                                        EPrimitiveSource::Foliage);
         }
 
@@ -1450,7 +1451,7 @@ namespace Lumina
             }
         }
 
-        const uint32 EntityID = entt::to_integral(Entity);
+        const uint32 EntityID = (Entity).Value;
 
         // Stands in for an instance whose TypeIndex is out of range; it binds nothing, so the refresh below
         // writes nothing for it.
@@ -1554,7 +1555,7 @@ namespace Lumina
         }
     }
 
-    void FScenePrimitiveSet::FullRescan(FEntityRegistry& Registry)
+    void FScenePrimitiveSet::FullRescan(ECS::FRegistry& Registry)
     {
         LUMINA_PROFILE_SCOPE();
 
@@ -1591,7 +1592,7 @@ namespace Lumina
         const FSyncPools Pools(Registry);
 
         // Level load rebuilds from nothing, so unlike the incremental path the counts here are exact.
-        const SIZE_T MeshCount = Pools.StaticMesh->size() + Pools.SkeletalMesh->size() + Pools.DynamicMesh->size();
+        const SIZE_T MeshCount = Pools.StaticMesh->GetDenseSize() + Pools.SkeletalMesh->GetDenseSize() + Pools.DynamicMesh->GetDenseSize();
         Primitives.reserve(MeshCount);
         Bounds.reserve(MeshCount);
         CullData.reserve(MeshCount);
@@ -1602,19 +1603,19 @@ namespace Lumina
         RetainedTransforms.reserve(MeshCount);
         RetainedStatic.reserve(MeshCount);
 
-        for (entt::entity Entity : Registry.view<SStaticMeshComponent>())
+        for (ECS::FEntity Entity : Registry.View<SStaticMeshComponent>())
         {
             SyncEntity(Registry, Pools, Entity, EPrimitiveSource::StaticMesh, EPrimitiveDirty::All);
         }
-        for (entt::entity Entity : Registry.view<SDynamicMeshComponent>())
+        for (ECS::FEntity Entity : Registry.View<SDynamicMeshComponent>())
         {
             SyncEntity(Registry, Pools, Entity, EPrimitiveSource::DynamicMesh, EPrimitiveDirty::All);
         }
-        for (entt::entity Entity : Registry.view<SSkeletalMeshComponent>())
+        for (ECS::FEntity Entity : Registry.View<SSkeletalMeshComponent>())
         {
             SyncEntity(Registry, Pools, Entity, EPrimitiveSource::SkeletalMesh, EPrimitiveDirty::All);
         }
-        for (entt::entity Entity : Registry.view<SFoliageComponent>())
+        for (ECS::FEntity Entity : Registry.View<SFoliageComponent>())
         {
             SyncFoliage(Registry, Pools, Entity, EPrimitiveDirty::All);
         }
@@ -1622,9 +1623,9 @@ namespace Lumina
         ++StructureGeneration;
     }
 
-    void FScenePrimitiveSet::PollUnhookedSources(FEntityRegistry& Registry, FRenderDirtyTracker& Tracker)
+    void FScenePrimitiveSet::PollUnhookedSources(ECS::FRegistry& Registry, FRenderDirtyTracker& Tracker)
     {
-        for (auto&& [Entity, Foliage] : Registry.view<SFoliageComponent>().each())
+        for (auto&& [Entity, Foliage] : Registry.View<SFoliageComponent>().Each())
         {
             if (Foliage.BakedVersion != Foliage.InstancesVersion || Foliage.bBakeIncomplete)
             {
@@ -1632,7 +1633,7 @@ namespace Lumina
             }
         }
         
-        for (auto&& [Entity, Mesh] : Registry.view<SDynamicMeshComponent>().each())
+        for (auto&& [Entity, Mesh] : Registry.View<SDynamicMeshComponent>().Each())
         {
             if (Mesh.SyncedRenderDataVersion != Mesh.LoadRenderDataVersion())
             {
@@ -1644,15 +1645,15 @@ namespace Lumina
     }
 
     // A skeleton finishing its load marks nothing dirty, so a primitive that synced mid-load stays boneless.
-    void FScenePrimitiveSet::PollSkeletalBoneRanges(FEntityRegistry& Registry, FRenderDirtyTracker& Tracker)
+    void FScenePrimitiveSet::PollSkeletalBoneRanges(ECS::FRegistry& Registry, FRenderDirtyTracker& Tracker)
     {
         if (SkinnedCount == 0u)
         {
             return;
         }
 
-        const entt::storage_type_t<SSkeletalMeshComponent>* Storage =
-            &Registry.storage<SSkeletalMeshComponent>();
+        const ECS::TComponentStorage<SSkeletalMeshComponent> Storage =
+            Registry.GetStorage<SSkeletalMeshComponent>();
 
         // The cached skeletal list, so an unchanged scene costs O(skinned) rather than O(primitives).
         for (uint32 Index : GetSkeletalIndices())
@@ -1665,12 +1666,12 @@ namespace Lumina
                 continue;
             }
 
-            if (!Storage->contains(Prim.Entity))
+            if (!Storage->Contains(Prim.Entity))
             {
                 continue;
             }
 
-            const CSkeletalMesh* SkelMesh = Storage->get(Prim.Entity).SkeletalMesh.Get();
+            const CSkeletalMesh* SkelMesh = Storage->Get(Prim.Entity).SkeletalMesh.Get();
             const FSkeletonResource* SkelRes = (SkelMesh != nullptr && SkelMesh->Skeleton.IsValid())
                                              ? SkelMesh->Skeleton->GetSkeletonResource()
                                              : nullptr;
@@ -1694,7 +1695,7 @@ namespace Lumina
 
         for (const FRenderDirtyTracker::FEntry& Entry : DrainScratch)
         {
-            const uint32 Slot = (uint32)entt::to_entity(Entry.Entity);
+            const uint32 Slot = (uint32)(Entry.Entity).GetIndex();
             if (Slot >= (uint32)CoalesceByEntityIndex.size())
             {
                 CoalesceByEntityIndex.resize(Slot + 1u);
@@ -1705,7 +1706,7 @@ namespace Lumina
             uint32 RecordIndex = ~0u;
             if (Mapped.Stamp == CoalesceStamp
                 && Mapped.Index < (uint32)CoalescedScratch.size()
-                && CoalescedScratch[Mapped.Index].Entity == entt::to_integral(Entry.Entity))
+                && CoalescedScratch[Mapped.Index].Entity == (Entry.Entity).Value)
             {
                 RecordIndex = Mapped.Index;
             }
@@ -1713,7 +1714,7 @@ namespace Lumina
             if (RecordIndex == ~0u)
             {
                 RecordIndex = (uint32)CoalescedScratch.size();
-                CoalescedScratch.emplace_back().Entity = entt::to_integral(Entry.Entity);
+                CoalescedScratch.emplace_back().Entity = (Entry.Entity).Value;
                 Mapped.Stamp = CoalesceStamp;
                 Mapped.Index = RecordIndex;
             }
@@ -1760,7 +1761,7 @@ namespace Lumina
         uint32 NewPrimitives = 0;
         for (const FCoalescedEntity& Record : CoalescedScratch)
         {
-            const entt::entity Entity = (entt::entity)Record.Entity;
+            const ECS::FEntity Entity = (ECS::FEntity)Record.Entity;
             for (uint32 s = 0; s < kLinkedSources; ++s)
             {
                 const EPrimitiveDirty Flags = Record.Flags[s];
@@ -1835,14 +1836,14 @@ namespace Lumina
         SyncStats.StructuralRecords = (uint32)StructuralRecords.size();
     }
 
-    void FScenePrimitiveSet::ApplyStructuralRecords(FEntityRegistry& Registry, const FSyncPools& Pools)
+    void FScenePrimitiveSet::ApplyStructuralRecords(ECS::FRegistry& Registry, const FSyncPools& Pools)
     {
         LUMINA_PROFILE_SECTION("Sync/Apply/Structural");
 
         for (uint32 RecordIndex : StructuralRecords)
         {
             const FCoalescedEntity& Record = CoalescedScratch[RecordIndex];
-            const entt::entity      Entity = (entt::entity)Record.Entity;
+            const ECS::FEntity      Entity = (ECS::FEntity)Record.Entity;
 
             for (uint32 s = 0; s < kLinkedSources; ++s)
             {
@@ -1854,7 +1855,7 @@ namespace Lumina
 
             const EPrimitiveDirty FoliageFlags = Record.Flags[(uint32)EPrimitiveSource::Foliage];
             if (FoliageFlags != EPrimitiveDirty::None
-                && (Pools.Foliage->contains(Entity)
+                && (Pools.Foliage->Contains(Entity)
                     || (!FoliageByEntity.empty() && FoliageByEntity.find(Entity) != FoliageByEntity.end())))
             {
                 SyncFoliage(Registry, Pools, Entity, FoliageFlags);
@@ -1871,7 +1872,7 @@ namespace Lumina
                                                   TVector<uint32>* OutDirty)
     {
         const FCoalescedEntity& Record = CoalescedScratch[RecordIndex];
-        const entt::entity      Entity = (entt::entity)Record.Entity;
+        const ECS::FEntity      Entity = (ECS::FEntity)Record.Entity;
 
         const uint8 Mask = GetSourceMask(Entity);
         if (Mask == 0)
@@ -1879,12 +1880,12 @@ namespace Lumina
             return;
         }
 
-        if (!Pools.Transform->contains(Entity))
+        if (!Pools.Transform->Contains(Entity))
         {
             return;
         }
 
-        const FMatrix4 Matrix = ReadRenderMatrix(Pools.RenderXform, Entity, Pools.Transform->get(Entity));
+        const FMatrix4 Matrix = ReadRenderMatrix(Pools.RenderXform, Entity, Pools.Transform->Get(Entity));
 
         for (uint32 s = 0; s < kLinkedSources; ++s)
         {
@@ -1987,7 +1988,7 @@ namespace Lumina
 
     void FScenePrimitiveSet::Sync(CWorld& World)
     {
-        FEntityRegistry&     Registry = ECS::GetWorldRegistry(World);
+        ECS::FRegistry&     Registry = ECS::GetWorldRegistry(World);
         FRenderDirtyTracker& Tracker  = FRenderDirtyTracker::Ensure(Registry);
 
         SyncStats = FSyncStats{};
@@ -2092,7 +2093,7 @@ namespace Lumina
 
             for (uint64 Target : RetryScratch)
             {
-                const entt::entity     Entity = (entt::entity)(uint32)(Target & 0xFFFFFFFFull);
+                const ECS::FEntity     Entity = (ECS::FEntity)(uint32)(Target & 0xFFFFFFFFull);
                 const EPrimitiveSource Source = (EPrimitiveSource)((Target >> kKeySourceShift) & 0xFFull);
                 if (Source == EPrimitiveSource::Foliage)
                 {
@@ -2124,7 +2125,7 @@ namespace Lumina
     }
 
     // Every active slot contributes its surface's LARGEST LOD, a true bound on one view's appends.
-    void FScenePrimitiveSet::Reset(FEntityRegistry* Registry)
+    void FScenePrimitiveSet::Reset(ECS::FRegistry* Registry)
     {
         Primitives.clear();
         Bounds.clear();

@@ -1,0 +1,303 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+
+  <!-- Containers -->
+
+  <Type Name="Lumina::Containers::TVector&lt;*,*,*&gt;">
+    <DisplayString Condition="Count == 0">empty</DisplayString>
+    <DisplayString>{{ size={Count} }}</DisplayString>
+    <Expand>
+      <Item Name="[size]" ExcludeView="simple">Count</Item>
+      <Item Name="[capacity]" ExcludeView="simple">Cap</Item>
+      <ArrayItems>
+        <Size>Count</Size>
+        <ValuePointer>Data</ValuePointer>
+      </ArrayItems>
+    </Expand>
+  </Type>
+
+  <!-- Char strings at the default 15-byte small buffer; the mode byte sits at index 15. -->
+  <Type Name="Lumina::Containers::TBasicString&lt;char,15,*&gt;">
+    <DisplayString Condition="(Store.Bytes[15] &amp; 0x80) != 0">{Store.Heap.Data,s}</DisplayString>
+    <DisplayString>{Store.Inline,s}</DisplayString>
+    <StringView Condition="(Store.Bytes[15] &amp; 0x80) != 0">Store.Heap.Data,s</StringView>
+    <StringView>Store.Inline,s</StringView>
+    <Expand>
+      <Item Name="[size]" Condition="(Store.Bytes[15] &amp; 0x80) != 0">Store.Heap.Size</Item>
+      <Item Name="[size]" Condition="(Store.Bytes[15] &amp; 0x80) == 0">15 - Store.Bytes[15]</Item>
+      <Item Name="[capacity]" Condition="(Store.Bytes[15] &amp; 0x80) != 0">Store.Heap.Capacity &amp; 0x7FFFFFFF</Item>
+      <Item Name="[capacity]" Condition="(Store.Bytes[15] &amp; 0x80) == 0">15</Item>
+      <Item Name="[heap]">(Store.Bytes[15] &amp; 0x80) != 0</Item>
+      <ArrayItems Condition="(Store.Bytes[15] &amp; 0x80) != 0">
+        <Size>Store.Heap.Size</Size>
+        <ValuePointer>Store.Heap.Data</ValuePointer>
+      </ArrayItems>
+      <ArrayItems Condition="(Store.Bytes[15] &amp; 0x80) == 0">
+        <Size>15 - Store.Bytes[15]</Size>
+        <ValuePointer>Store.Inline</ValuePointer>
+      </ArrayItems>
+    </Expand>
+  </Type>
+
+  <Type Name="Lumina::Containers::TStringView&lt;*&gt;">
+    <DisplayString Condition="Size == 0">empty</DisplayString>
+    <DisplayString>{Data,[Size]s}</DisplayString>
+    <StringView>Data,[Size]s</StringView>
+    <Expand>
+      <Item Name="[size]">Size</Item>
+      <ArrayItems>
+        <Size>Size</Size>
+        <ValuePointer>Data</ValuePointer>
+      </ArrayItems>
+    </Expand>
+  </Type>
+
+  <!-- One control byte per slot; a non-negative byte means the slot is live. -->
+  <Type Name="Lumina::Containers::TRawHashTable&lt;*,*,*,*,*&gt;">
+    <DisplayString Condition="Size == 0">empty</DisplayString>
+    <DisplayString>{{ size={Size} }}</DisplayString>
+    <Expand>
+      <Item Name="[size]" ExcludeView="simple">Size</Item>
+      <Item Name="[capacity]" ExcludeView="simple">Capacity</Item>
+      <Item Name="[growth left]" ExcludeView="simple">GrowthLeft</Item>
+      <CustomListItems MaxItemsPerView="512">
+        <Variable Name="Slot" InitialValue="0" />
+        <Size>Size</Size>
+        <Loop Condition="Slot &lt; (int)Capacity">
+          <If Condition="Ctrl[Slot] &gt;= 0">
+            <Item>Slots[Slot]</Item>
+          </If>
+          <Exec>Slot = Slot + 1</Exec>
+        </Loop>
+      </CustomListItems>
+    </Expand>
+  </Type>
+
+  <Type Name="Lumina::Containers::TPair&lt;*,*&gt;">
+    <DisplayString>({first}, {second})</DisplayString>
+    <Expand>
+      <Item Name="first">first</Item>
+      <Item Name="second">second</Item>
+    </Expand>
+  </Type>
+
+  <!-- Ring buffer; First is the read cursor and the slots wrap at Capacity. -->
+  <Type Name="Lumina::Containers::TDeque&lt;*&gt;">
+    <DisplayString Condition="Count == 0">empty</DisplayString>
+    <DisplayString>{{ size={Count} }}</DisplayString>
+    <Expand>
+      <Item Name="[size]" ExcludeView="simple">Count</Item>
+      <Item Name="[capacity]" ExcludeView="simple">Capacity</Item>
+      <CustomListItems MaxItemsPerView="512">
+        <Variable Name="Index" InitialValue="0" />
+        <Size>Count</Size>
+        <Loop Condition="Index &lt; (int)Count">
+          <Item>Storage[(First + Index) % Capacity]</Item>
+          <Exec>Index = Index + 1</Exec>
+        </Loop>
+      </CustomListItems>
+    </Expand>
+  </Type>
+
+  <Type Name="Lumina::Containers::TOptional&lt;*&gt;">
+    <DisplayString Condition="!bEngaged">unset</DisplayString>
+    <DisplayString>{Value}</DisplayString>
+    <Expand>
+      <Item Name="[engaged]">bEngaged</Item>
+      <ExpandedItem Condition="bEngaged">Value</ExpandedItem>
+    </Expand>
+  </Type>
+
+
+  <!-- Smart pointers -->
+
+  <Type Name="Lumina::TUniquePtr&lt;*,*&gt;">
+    <SmartPointer Usage="Minimal">Value</SmartPointer>
+    <DisplayString Condition="Value == nullptr">null</DisplayString>
+    <DisplayString>unique {*Value}</DisplayString>
+    <Expand>
+      <Item Name="[ptr]">Value</Item>
+      <ExpandedItem Condition="Value != nullptr">*Value</ExpandedItem>
+    </Expand>
+  </Type>
+
+  <Type Name="Lumina::TSharedPtr&lt;*&gt;">
+    <SmartPointer Usage="Minimal">Value</SmartPointer>
+    <DisplayString Condition="Value == nullptr">null</DisplayString>
+    <DisplayString>shared {*Value}</DisplayString>
+    <Expand>
+      <Item Name="[ptr]">Value</Item>
+      <Item Name="[control]" ExcludeView="simple">Block</Item>
+      <ExpandedItem Condition="Value != nullptr">*Value</ExpandedItem>
+    </Expand>
+  </Type>
+
+  <Type Name="Lumina::TWeakPtr&lt;*&gt;">
+    <DisplayString Condition="Value == nullptr">null</DisplayString>
+    <DisplayString>weak {*Value}</DisplayString>
+    <Expand>
+      <Item Name="[ptr]">Value</Item>
+      <Item Name="[control]" ExcludeView="simple">Block</Item>
+    </Expand>
+  </Type>
+
+
+  <!-- Object model -->
+
+  <!-- The string lives in a .cpp-local intern table natvis cannot reach. Use Name.c_str() in a watch. -->
+  <Type Name="Lumina::FName">
+    <DisplayString Condition="ID == 0 &amp;&amp; Number == 0">NAME_None</DisplayString>
+    <DisplayString Condition="Number == 0">FName(id={ID,x})</DisplayString>
+    <DisplayString>FName(id={ID,x}, _{Number - 1})</DisplayString>
+    <Expand>
+      <Item Name="ID">ID,x</Item>
+      <Item Name="Number">Number == 0 ? -1 : (int)Number - 1</Item>
+    </Expand>
+  </Type>
+
+  <Type Name="Lumina::TObjectPtr&lt;*&gt;">
+    <SmartPointer Usage="Minimal">Object</SmartPointer>
+    <DisplayString Condition="Object == nullptr">null</DisplayString>
+    <DisplayString>{*Object}</DisplayString>
+    <Expand>
+      <Item Name="[ptr]">Object</Item>
+      <ExpandedItem Condition="Object != nullptr">*Object</ExpandedItem>
+    </Expand>
+  </Type>
+
+  <Type Name="Lumina::TWeakObjectPtr&lt;*&gt;">
+    <DisplayString Condition="Handle.Index &lt; 0">null</DisplayString>
+    <DisplayString>weak [{Handle.Index}:{Handle.Generation}]</DisplayString>
+    <Expand>
+      <Item Name="Handle">Handle</Item>
+    </Expand>
+  </Type>
+
+  <Type Name="Lumina::FObjectHandle">
+    <DisplayString Condition="Index &lt; 0">null</DisplayString>
+    <DisplayString>[{Index}:{Generation}]</DisplayString>
+  </Type>
+
+
+  <!-- ECS -->
+
+  <!-- 20-bit index, 12-bit version packed into Value. -->
+  <Type Name="Lumina::ECS::FEntity">
+    <DisplayString Condition="(Value &amp; 0xFFFFF) == 0xFFFFF">null_entity</DisplayString>
+    <DisplayString Condition="(Value >> 20) == 0xFFF">tombstone -&gt; {Value &amp; 0xFFFFF}</DisplayString>
+    <DisplayString>entity {Value &amp; 0xFFFFF} (v{Value >> 20})</DisplayString>
+    <Expand>
+      <Item Name="Index">Value &amp; 0xFFFFF</Item>
+      <Item Name="Version">Value >> 20</Item>
+    </Expand>
+  </Type>
+
+  <Type Name="Lumina::ECS::FSparseSet">
+    <DisplayString Condition="ElementSize == 0">tag pool, {LiveCount} entities</DisplayString>
+    <DisplayString>pool of {ElementSize} bytes, {LiveCount} entities</DisplayString>
+    <Expand>
+      <Item Name="[live]">LiveCount</Item>
+      <Item Name="[dense]" ExcludeView="simple">Dense</Item>
+      <Item Name="[paged]" ExcludeView="simple">bPaged</Item>
+      <Item Name="[in-place delete]" ExcludeView="simple">bInPlaceDelete</Item>
+      <Item Name="[has tombstones]" ExcludeView="simple">FreeDenseHead != 0xFFFFFFFF</Item>
+      <Item Name="[type]" ExcludeView="simple">TypeInfo.Name</Item>
+      <Item Name="[element size]" ExcludeView="simple">ElementSize</Item>
+    </Expand>
+  </Type>
+
+  <Type Name="Lumina::ECS::TComponentStorage&lt;*&gt;">
+    <DisplayString Condition="Set == nullptr">unbound</DisplayString>
+    <DisplayString>{*Set}</DisplayString>
+    <Expand>
+      <ExpandedItem Condition="Set != nullptr">*Set</ExpandedItem>
+    </Expand>
+  </Type>
+
+
+  <!-- Math -->
+
+  <Type Name="Lumina::TVec&lt;*,2&gt;">
+    <DisplayString>({x}, {y})</DisplayString>
+    <Expand>
+      <Item Name="x">x</Item>
+      <Item Name="y">y</Item>
+    </Expand>
+  </Type>
+
+  <Type Name="Lumina::TVec&lt;*,3&gt;">
+    <DisplayString>({x}, {y}, {z})</DisplayString>
+    <Expand>
+      <Item Name="x">x</Item>
+      <Item Name="y">y</Item>
+      <Item Name="z">z</Item>
+    </Expand>
+  </Type>
+
+  <Type Name="Lumina::TVec&lt;*,4&gt;">
+    <DisplayString>({x}, {y}, {z}, {w})</DisplayString>
+    <Expand>
+      <Item Name="x">x</Item>
+      <Item Name="y">y</Item>
+      <Item Name="z">z</Item>
+      <Item Name="w">w</Item>
+    </Expand>
+  </Type>
+
+  <Type Name="Lumina::TVec&lt;*,*&gt;">
+    <DisplayString>[{$T2}] {Data}</DisplayString>
+    <Expand>
+      <ArrayItems>
+        <Size>$T2</Size>
+        <ValuePointer>Data</ValuePointer>
+      </ArrayItems>
+    </Expand>
+  </Type>
+
+  <Type Name="Lumina::TQuat&lt;*&gt;">
+    <DisplayString>(w={w}, x={x}, y={y}, z={z})</DisplayString>
+    <Expand>
+      <Item Name="w">w</Item>
+      <Item Name="x">x</Item>
+      <Item Name="y">y</Item>
+      <Item Name="z">z</Item>
+    </Expand>
+  </Type>
+
+  <Type Name="Lumina::SIMD::VFloat4">
+    <DisplayString>({V.m128_f32[0]}, {V.m128_f32[1]}, {V.m128_f32[2]}, {V.m128_f32[3]})</DisplayString>
+    <Expand>
+      <Item Name="[0]">V.m128_f32[0]</Item>
+      <Item Name="[1]">V.m128_f32[1]</Item>
+      <Item Name="[2]">V.m128_f32[2]</Item>
+      <Item Name="[3]">V.m128_f32[3]</Item>
+    </Expand>
+  </Type>
+
+  <Type Name="Lumina::SIMD::VFloat8">
+    <DisplayString>({V.m256_f32[0]}, {V.m256_f32[1]}, {V.m256_f32[2]}, {V.m256_f32[3]}, {V.m256_f32[4]}, {V.m256_f32[5]}, {V.m256_f32[6]}, {V.m256_f32[7]})</DisplayString>
+    <Expand>
+      <ArrayItems>
+        <Size>8</Size>
+        <ValuePointer>V.m256_f32</ValuePointer>
+      </ArrayItems>
+    </Expand>
+  </Type>
+
+  <Type Name="Lumina::VTransform">
+    <DisplayString>L=({Location.V.m128_f32[0]}, {Location.V.m128_f32[1]}, {Location.V.m128_f32[2]}) S=({Scale.V.m128_f32[0]}, {Scale.V.m128_f32[1]}, {Scale.V.m128_f32[2]})</DisplayString>
+    <Expand>
+      <Synthetic Name="Location">
+        <DisplayString>({Location.V.m128_f32[0]}, {Location.V.m128_f32[1]}, {Location.V.m128_f32[2]})</DisplayString>
+      </Synthetic>
+      <Synthetic Name="Rotation">
+        <DisplayString>(w={Rotation.V.m128_f32[3]}, x={Rotation.V.m128_f32[0]}, y={Rotation.V.m128_f32[1]}, z={Rotation.V.m128_f32[2]})</DisplayString>
+      </Synthetic>
+      <Synthetic Name="Scale">
+        <DisplayString>({Scale.V.m128_f32[0]}, {Scale.V.m128_f32[1]}, {Scale.V.m128_f32[2]})</DisplayString>
+      </Synthetic>
+      <Item Name="[raw]">*this,!</Item>
+    </Expand>
+  </Type>
+
+</AutoVisualizer>

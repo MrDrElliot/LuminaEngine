@@ -18,7 +18,7 @@ namespace LuminaSharp.Generators;
 ///
 /// Marshalling (mirrors the Reflector's C++ thunk ABI): string arg -&gt; (byte*, int) UTF-8; bool -&gt; byte
 /// (the thunk uses unsigned char; reading the low byte is also correct for int-returning hand exports);
-/// enum -&gt; int; LuminaSharp.Entity -&gt; uint (the entt id); Span&lt;T&gt;/ReadOnlySpan&lt;T&gt; arg -&gt;
+/// enum -&gt; int; LuminaSharp.Entity -&gt; uint (the entity id); Span&lt;T&gt;/ReadOnlySpan&lt;T&gt; arg -&gt;
 /// (T* pinned, int Length); everything else (numerics, blittable value structs) passes by value. A `string`
 /// RETURN uses the engine two-pass buffer ABI: the native export takes a trailing (byte* buffer, int capacity)
 /// and returns the byte length (the generator calls it once with (null, 0) to size, then into an exact buffer).

@@ -1,4 +1,5 @@
 #include "Core/Threading/Thread.h"
+#include "World/ECS/Registry.h"
 #include "ThumbnailManager.h"
 #include "Memory/MemoryTracking.h"
 #include "ThumbnailCache.h"
@@ -63,7 +64,7 @@ namespace Lumina
         auto SetupStudioLighting = [](FThumbnailScene& Scene)
         {
             CWorld* World = Scene.GetWorld();
-            entt::entity Light = Scene.SpawnEntity("StudioLight");
+            ECS::FEntity Light = Scene.SpawnEntity("StudioLight");
             World->EmplaceComponent<SDirectionalLightComponent>(Light);
             World->EmplaceComponent<SEnvironmentComponent>(Light);
             World->EmplaceComponent<SSkyLightComponent>(Light);
@@ -91,7 +92,7 @@ namespace Lumina
 
             SetupStudioLighting(Scene);
 
-            entt::entity MeshEntity = Scene.SpawnEntity("SkeletalMesh");
+            ECS::FEntity MeshEntity = Scene.SpawnEntity("SkeletalMesh");
             World->EmplaceComponent<SSkeletalMeshComponent>(MeshEntity).SetSkeletalMesh(Mesh);
 
             FrameBounds(Scene, Mesh->GetAABB());
@@ -109,7 +110,7 @@ namespace Lumina
 
                 SetupStudioLighting(Scene);
 
-                entt::entity MeshEntity = Scene.SpawnEntity("Mesh");
+                ECS::FEntity MeshEntity = Scene.SpawnEntity("Mesh");
                 World->EmplaceComponent<SStaticMeshComponent>(MeshEntity).SetStaticMesh(Mesh);
 
                 FrameBounds(Scene, Mesh->GetAABB());
@@ -158,7 +159,7 @@ namespace Lumina
                 CMaterial* BaseMaterial = Material->GetMaterial();
                 const bool bIsPostProcess = BaseMaterial != nullptr && BaseMaterial->GetMaterialType() == EMaterialType::PostProcess;
 
-                entt::entity MeshEntity = Scene.SpawnEntity("PreviewSphere");
+                ECS::FEntity MeshEntity = Scene.SpawnEntity("PreviewSphere");
                 SStaticMeshComponent& MeshComp = World->EmplaceComponent<SStaticMeshComponent>(MeshEntity);
                 MeshComp.SetStaticMesh(CPrimitiveManager::Get().SphereMesh);
                 if (!bIsPostProcess)
@@ -168,7 +169,7 @@ namespace Lumina
 
                 if (bIsPostProcess)
                 {
-                    entt::entity VolumeEntity = Scene.SpawnEntity("PreviewPostProcessVolume");
+                    ECS::FEntity VolumeEntity = Scene.SpawnEntity("PreviewPostProcessVolume");
                     SPostProcessComponent& Volume = World->EmplaceComponent<SPostProcessComponent>(VolumeEntity);
                     Volume.bInfiniteExtent = true;
                     Volume.PostProcessMaterials.push_back(Material);
@@ -191,7 +192,7 @@ namespace Lumina
 
                 SetupStudioLighting(Scene);
 
-                entt::entity ParticleEntity = Scene.SpawnEntity("ParticleSystem");
+                ECS::FEntity ParticleEntity = Scene.SpawnEntity("ParticleSystem");
                 World->EmplaceComponent<SParticleSystemComponent>(ParticleEntity).ParticleSystem = PS;
 
                 // No AABB on a particle system; fixed pull-back for typical spawn radius.

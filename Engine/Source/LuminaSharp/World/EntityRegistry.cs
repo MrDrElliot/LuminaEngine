@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
@@ -10,7 +10,7 @@ internal static class ComponentOps<T> where T : NativeStruct
     public static readonly IntPtr Token = Native.FindComponentOps(typeof(T).Name);
 }
 
-/// The component store for a world, the C# mirror of entt::registry / FEntityRegistry. Returned wrappers point at the live component, so writes persist.
+/// The component store for a world, the C# mirror of ECS::FRegistry / FEntityRegistry. Returned wrappers point at the live component, so writes persist.
 public readonly struct EntityRegistry
 {
     internal readonly ulong WorldHandle; // CWorld* the native helpers resolve the registry from
@@ -72,13 +72,13 @@ public readonly struct EntityRegistry
     /// The component of type T, adding a default one first if absent.
     public T? GetOrAdd<T>(Entity Entity) where T : NativeStruct => TryGet<T>(Entity) ?? Emplace<T>(Entity);
 
-    /// Get-or-emplace by a pre-resolved op-table token (zero on failure); for the [RequireComponent] injector.
+    /// Get-or-emplace by a pre-resolved op-table token (zero on failure); for the non-generic script paths.
     internal IntPtr EmplaceRaw(Entity Entity, IntPtr Token)
     {
         return Token == IntPtr.Zero ? IntPtr.Zero : Native.EmplaceComponent(WorldHandle, Entity.Id, Token);
     }
 
-    // Registry signals (entt on_construct/on_destroy/on_update hooks); Dispose the returned subscription to unsubscribe.
+    // Registry signals (OnConstruct/OnDestroy/OnUpdate); Dispose the returned subscription to unsubscribe.
     // Build your own events by treating a component as a signal channel (Emplace/Remove/Patch it).
 
     /// Fires when a T component is added to an entity.
@@ -201,7 +201,7 @@ public readonly struct EntityRegistry
         return GetScript<T>(Entity) != null;
     }
 
-    // entt-style typed views (mirrors registry.view<...>); pass an Exclude.Of<...>() filter as the optional argument. Arity 1..4.
+    // typed typed views (mirrors registry.view<...>); pass an Exclude.Of<...>() filter as the optional argument. Arity 1..4.
 
     public View<T1> View<T1>(Exclude Filter = default)
         where T1 : NativeStruct

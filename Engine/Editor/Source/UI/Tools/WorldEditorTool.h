@@ -1,5 +1,8 @@
 ﻿#pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #define USE_IMGUI_API
 #include <imgui.h>
 #include "EditorTool.h"
@@ -47,7 +50,7 @@ namespace Lumina
 
         bool OnEvent(FEvent& Event) override;
         
-        void OnEntityCreated(entt::registry& Registry, entt::entity Entity);
+        void OnEntityCreated(ECS::FRegistry& Registry, ECS::FEntity Entity);
 
         FName GetToolName() const override;
         const char* GetTitlebarIcon() const override;
@@ -65,27 +68,27 @@ namespace Lumina
         void DrawViewportToolbarModeSelector(float ButtonSize) override;
         void DrawViewModeExtraItems() override;
 
-        void PushAddTagModal(entt::entity Entity);
-        void PushAddComponentModal(entt::entity Entity);
+        void PushAddTagModal(ECS::FEntity Entity);
+        void PushAddComponentModal(ECS::FEntity Entity);
 
         // GetComponentEditTargets / ApplyAddComponentToTargets / DrawAddableComponentList and the
         // CreateEntity* helpers now live in FSceneEditorTool.
         void PushSaveAsAssetModal();
         void PushCreatePrefabFromSelectionModal();
-        void PushCreatePrefabModalForEntity(entt::entity Entity);
+        void PushCreatePrefabModalForEntity(ECS::FEntity Entity);
 
         // Prefab instance context-menu actions, shared between the outliner and viewport menus.
-        void ResyncPrefabInstance(entt::entity InstanceRoot);
-        void DetachPrefabInstance(entt::entity InstanceRoot);
+        void ResyncPrefabInstance(ECS::FEntity InstanceRoot);
+        void DetachPrefabInstance(ECS::FEntity InstanceRoot);
 
         // Script context-menu helpers, shared between the outliner and viewport menus. The inline
         // assign/change dropdown is always offered; "Remove Script" only when one is present.
-        void DrawScriptAttachMenuItems(entt::entity Entity);
-        void AttachScriptToEntity(entt::entity Entity, const FString& ScriptClass);  // C# class name; attaches or swaps
-        void RemoveScriptFromEntity(entt::entity Entity);
+        void DrawScriptAttachMenuItems(ECS::FEntity Entity);
+        void AttachScriptToEntity(ECS::FEntity Entity, const FString& ScriptClass);  // C# class name; attaches or swaps
+        void RemoveScriptFromEntity(ECS::FEntity Entity);
 
         // Refreshes the outliner when a script component is added/removed (the row's script toggle).
-        void OnEntityScriptChanged(entt::registry& Registry, entt::entity Entity);
+        void OnEntityScriptChanged(ECS::FRegistry& Registry, ECS::FEntity Entity);
 
 		void OnSave() override;
 
@@ -109,7 +112,7 @@ namespace Lumina
 
         void SetWorld(CWorld* InWorld) override;
         
-        void OnEntityDestroyed(entt::registry& Registry, entt::entity Entity);
+        void OnEntityDestroyed(ECS::FRegistry& Registry, ECS::FEntity Entity);
         
         void DrawSimulationControls(float ButtonSize);
 
@@ -202,31 +205,31 @@ namespace Lumina
         void OnGameQuitRequested() { bGameQuitRequested = true; }
 
         /** Accept a content-browser drag payload in the current scope and, if it's a prefab, instantiate it under DropTarget. */
-        void AcceptContentBrowserPrefabPayload(entt::entity DropTarget, bool bAttachToTarget);
+        void AcceptContentBrowserPrefabPayload(ECS::FEntity DropTarget, bool bAttachToTarget);
 
         // The Scene Graph panel + shared Add menu + filter UI + the incremental outliner engine now
         // live in FSceneEditorTool. The world editor supplies the empty-area drop + prefab instantiation
         // hooks and drives the tree via its registry observers below.
         void HandleOutlinerEmptyAreaDrop() override;
 
-        void HandleEntityEditorDragDrop(FTreeListView& Tree, entt::entity DropItem);
+        void HandleEntityEditorDragDrop(FTreeListView& Tree, ECS::FEntity DropItem);
 
         /** Outliner folders are a world-editor feature; the prefab editor's rows stay pure entities. */
         NODISCARD bool SupportsSceneFolders() const override { return true; }
 
         /** Drop onto a folder row: file entities, reparent a folder, or spawn a dropped asset into it. */
         void HandleFolderDragDrop(uint32 FolderID);
-        void HandlePrefabContentDrop(FStringView VirtualPath, entt::entity DropTarget, bool bAttachToTarget) override;
+        void HandlePrefabContentDrop(FStringView VirtualPath, ECS::FEntity DropTarget, bool bAttachToTarget) override;
 
         void DrawWorldSettings(bool bFocused);
         void DrawSystemsPanel(bool bFocused);
-        void DrawEntityActionButtons(entt::entity Entity);
-        void DrawTagList(entt::entity Entity);
+        void DrawEntityActionButtons(ECS::FEntity Entity);
+        void DrawTagList(ECS::FEntity Entity);
 
         // The shared details panel lives in FSceneEditorTool; the world editor adds the Tags UI
         // through these hooks (the add-tag header button + the tag-chip section).
-        void DrawDetailsHeaderExtraButtons(entt::entity Entity) override;
-        void DrawDetailsExtraSections(entt::entity Entity) override;
+        void DrawDetailsHeaderExtraButtons(ECS::FEntity Entity) override;
+        void DrawDetailsExtraSections(ECS::FEntity Entity) override;
 
         /** Toggle the editor's "game view": hide grid, billboards, AABBs, gizmos so the
          *  viewport shows only what a runtime camera would. Bound to G by default. */
@@ -266,12 +269,12 @@ namespace Lumina
 
         // Editor entity in ProxyWorld, tracked separately from EditorEntity (active World) so
         // PIE/Simulate can restore the editor world even if Travel swaps it mid-session.
-        entt::entity                            ProxyEditorEntity = entt::null;
+        ECS::FEntity                            ProxyEditorEntity = ECS::NullEntity;
 
         // Eject: a free-fly editor camera spawned INTO the running PIE world. The game keeps ticking;
         // only the view and the input focus change. Possess reverses it.
         bool                                    bEjectedFromPlay = false;
-        entt::entity                            PossessedCameraEntity = entt::null;   // game camera to hand back to
+        ECS::FEntity                            PossessedCameraEntity = ECS::NullEntity;   // game camera to hand back to
         bool                                    bRestoreGameViewOnPossess = false;
 
         // Play-in-editor session config, edited via the play-controls dropdown.
@@ -294,10 +297,10 @@ namespace Lumina
         // Gizmo op/mode/snap state + OutlinerListView/OutlinerContext/EntityToTreeNode/PendingOutlinerAdds
         // + EntityDestroyRequests now live in FSceneEditorTool.
 
-        // The registry our entt observers are currently connected to. RebindToWorld swaps World without
+        // The registry our observers are currently connected to. RebindToWorld swaps World without
         // touching observers, so we can't rely on World to find the old registry -- track it explicitly
         // and always unbind THIS one (else entering PIE leaves the editor world observed -> teardown crash).
-        FEntityRegistry*                        ObservedRegistry = nullptr;
+        ECS::FRegistry*                        ObservedRegistry = nullptr;
 
         TUniquePtr<FPropertyTable>              WorldSettingsPropertyTable;
 

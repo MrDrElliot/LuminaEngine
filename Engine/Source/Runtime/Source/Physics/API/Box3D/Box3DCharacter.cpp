@@ -1,4 +1,5 @@
 #include "RuntimePCH.h"
+#include "World/ECS/Registry.h"
 #include "Box3DPhysicsScene.h"
 
 #include <box3d/collision.h>
@@ -88,7 +89,7 @@ namespace Lumina::Physics
     }
 
 
-    void FBox3DPhysicsScene::OnCharacterComponentConstructed(entt::registry& Registry, entt::entity Entity)
+    void FBox3DPhysicsScene::OnCharacterComponentConstructed(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
         if (BodyBatchDepth > 0)
         {
@@ -96,13 +97,13 @@ namespace Lumina::Physics
             return;
         }
 
-        SCharacterPhysicsComponent* Component = Registry.try_get<SCharacterPhysicsComponent>(Entity);
+        SCharacterPhysicsComponent* Component = Registry.TryGet<SCharacterPhysicsComponent>(Entity);
         if (Component == nullptr || Component->Character)
         {
             return;
         }
 
-        const STransformComponent* Transform = Registry.try_get<STransformComponent>(Entity);
+        const STransformComponent* Transform = Registry.TryGet<STransformComponent>(Entity);
         if (Transform == nullptr)
         {
             return;
@@ -159,9 +160,9 @@ namespace Lumina::Physics
         Component->LastBodyRotation = Component->Character->Rotation;
     }
 
-    void FBox3DPhysicsScene::OnCharacterComponentDestroyed(entt::registry& Registry, entt::entity Entity)
+    void FBox3DPhysicsScene::OnCharacterComponentDestroyed(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        SCharacterPhysicsComponent* Component = Registry.try_get<SCharacterPhysicsComponent>(Entity);
+        SCharacterPhysicsComponent* Component = Registry.TryGet<SCharacterPhysicsComponent>(Entity);
         if (Component == nullptr || !Component->Character)
         {
             return;
@@ -182,9 +183,9 @@ namespace Lumina::Physics
     {
         LUMINA_PROFILE_SCOPE();
 
-        entt::registry& Registry = ECS::GetWorldRegistry(*World);
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
 
-        Registry.view<SCharacterControllerComponent, SCharacterMovementComponent>().each(
+        Registry.View<SCharacterControllerComponent, SCharacterMovementComponent>().ForEach(
             [&](SCharacterControllerComponent& Controller, SCharacterMovementComponent& Movement)
         {
             if (Math::LengthSquared(Controller.MoveInput) > LE_SMALL_NUMBER)
@@ -244,8 +245,8 @@ namespace Lumina::Physics
     {
         LUMINA_PROFILE_SCOPE();
 
-        entt::registry& Registry = ECS::GetWorldRegistry(*World);
-        auto View = Registry.view<SCharacterPhysicsComponent, SCharacterMovementComponent>();
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
+        auto View = Registry.View<SCharacterPhysicsComponent, SCharacterMovementComponent>();
 
         // Impulses are staged here so the collide-and-solve pass stays a read-only world query.
         struct FPendingPush
@@ -257,7 +258,7 @@ namespace Lumina::Physics
         static thread_local TVector<FPendingPush> Pushes;
         Pushes.clear();
 
-        View.each([&](entt::entity Entity, SCharacterPhysicsComponent& Physics, SCharacterMovementComponent& Movement)
+        View.ForEach([&](ECS::FEntity Entity, SCharacterPhysicsComponent& Physics, SCharacterMovementComponent& Movement)
         {
             if (!Physics.Character)
             {
@@ -310,7 +311,7 @@ namespace Lumina::Physics
                     {
                         LOG_WARN("Character on entity {} has found nothing to stand on below y {:.2f} after {} steps; "
                                  "it is held at its spawn until a collider its profile can see appears.",
-                            entt::to_integral(Entity), Character.SpawnPosition.y, kAwaitingGroundWarnSteps);
+                            (Entity).Value, Character.SpawnPosition.y, kAwaitingGroundWarnSteps);
                     }
 
                     Character.Position = Character.SpawnPosition;
@@ -330,7 +331,7 @@ namespace Lumina::Physics
                     const FVector3 SeatedPosition = Box3DUtils::FromB3Vec3(Seated);
                     LOG_DISPLAY("Character on entity {} spawned inside geometry and was seated from y {:.2f} to {:.2f} "
                              "after {} step(s) waiting for ground.",
-                        entt::to_integral(Entity), Character.Position.y, SeatedPosition.y, Character.AwaitingGroundSteps);
+                        (Entity).Value, Character.Position.y, SeatedPosition.y, Character.AwaitingGroundSteps);
 
                     Character.Position = SeatedPosition;
                     Character.Velocity = FVector3(0.0f);
@@ -339,7 +340,7 @@ namespace Lumina::Physics
                 else
                 {
                     LOG_DISPLAY("Character on entity {} starts airborne at y {:.2f} after {} step(s) waiting for ground.",
-                        entt::to_integral(Entity), Character.SpawnPosition.y, Character.AwaitingGroundSteps);
+                        (Entity).Value, Character.SpawnPosition.y, Character.AwaitingGroundSteps);
                 }
 
                 Character.bAwaitingGround = false;
@@ -598,7 +599,7 @@ namespace Lumina::Physics
 
                 const b3BodyId GroundBody = b3Shape_GetBody(Gathered.Shapes[GroundPlane]);
                 void* GroundUserData = b3Body_IsValid(GroundBody) ? b3Body_GetUserData(GroundBody) : nullptr;
-                Character.GroundEntity = GroundUserData != nullptr ? entt::to_integral(UnpackEntity(GroundUserData)) : 0xFFFFFFFFu;
+                Character.GroundEntity = GroundUserData != nullptr ? (UnpackEntity(GroundUserData)).Value : 0xFFFFFFFFu;
                 Character.GroundVelocity = b3Body_IsValid(GroundBody)
                     ? Box3DUtils::FromB3Vec3(b3Body_GetWorldPointVelocity(GroundBody, Gathered.Points[GroundPlane]))
                     : FVector3(0.0f);

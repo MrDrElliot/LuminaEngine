@@ -1,9 +1,10 @@
 #pragma once
+
+#include "World/ECS/Registry.h"
 #include "SceneRenderTypes.h"
 #include "Platform/GenericPlatform.h"
 #include "Renderer/PrimitiveDrawInterface.h"
 #include "Renderer/RHIFwd.h"
-#include "World/Entity/EntityHandle.h"
 
 namespace Lumina
 {
@@ -56,7 +57,7 @@ namespace Lumina
 
         //~ Entity picking (editor) ---------------------------------------------------------
 
-        virtual entt::entity GetEntityAtPixel(uint32 X, uint32 Y) const { return entt::null; }
+        virtual ECS::FEntity GetEntityAtPixel(uint32 X, uint32 Y) const { return ECS::NullEntity; }
 
         virtual void SetPickerCursor(uint32 X, uint32 Y, bool bOverViewport) {}
 

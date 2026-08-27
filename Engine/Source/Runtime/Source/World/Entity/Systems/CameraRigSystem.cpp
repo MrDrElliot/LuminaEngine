@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "CameraRigSystem.h"
+#include "World/ECS/Registry.h"
 #include "Core/Math/Math.h"
 #include "Core/Math/Transform.h"
 #include "Physics/Ray/RayCast.h"
@@ -48,7 +49,7 @@ namespace Lumina
             return Math::ToQuat(FMatrix3(R, U, F));
         }
 
-        static void ApplyWorldPose(entt::registry& Registry, entt::entity Entity, const STransformComponent& Xform, const FVector3& Location, const FQuat& Rotation)
+        static void ApplyWorldPose(ECS::FRegistry& Registry, ECS::FEntity Entity, const STransformComponent& Xform, const FVector3& Location, const FQuat& Rotation)
         {
             FTransform World;
             World.SetLocation(Location);
@@ -62,22 +63,22 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        entt::registry& Registry = Context.GetRegistry();
+        ECS::FRegistry& Registry = Context.GetRegistry();
         const float Dt = (float)Context.GetDeltaTime();
 
         //~ Follow eases toward Target + Offset, optionally facing the target.
-        auto FollowView = Registry.view<SCameraFollowComponent, STransformComponent>(entt::exclude<SDisabledTag, SSpringArmComponent>);
-        for (entt::entity Entity : FollowView)
+        auto FollowView = Registry.View<SCameraFollowComponent, STransformComponent>(ECS::TExclude<SDisabledTag, SSpringArmComponent>{});
+        for (ECS::FEntity Entity : FollowView)
         {
-            SCameraFollowComponent& Follow = FollowView.get<SCameraFollowComponent>(Entity);
-            const entt::entity Target = (entt::entity)Follow.Target;
-            if (!Registry.valid(Target) || !Registry.all_of<STransformComponent>(Target))
+            SCameraFollowComponent& Follow = FollowView.Get<SCameraFollowComponent>(Entity);
+            const ECS::FEntity Target = (ECS::FEntity)Follow.Target;
+            if (!Registry.IsValid(Target) || !Registry.HasAll<STransformComponent>(Target))
             {
                 continue;
             }
 
-            const STransformComponent& Xform       = FollowView.get<STransformComponent>(Entity);
-            const STransformComponent& TargetXform = Registry.get<STransformComponent>(Target);
+            const STransformComponent& Xform       = FollowView.Get<STransformComponent>(Entity);
+            const STransformComponent& TargetXform = Registry.Get<STransformComponent>(Target);
 
             const FVector3 TargetPos = TargetXform.GetWorldLocation();
             const FQuat TargetRot = TargetXform.GetWorldRotation();
@@ -125,20 +126,20 @@ namespace Lumina
         }
 
         //~ Spring arm places the camera a collision-shortened distance behind the pivot.
-        auto ArmView = Registry.view<SSpringArmComponent, STransformComponent>(entt::exclude<SDisabledTag>);
-        for (entt::entity Entity : ArmView)
+        auto ArmView = Registry.View<SSpringArmComponent, STransformComponent>(ECS::TExclude<SDisabledTag>{});
+        for (ECS::FEntity Entity : ArmView)
         {
-            SSpringArmComponent&        Arm   = ArmView.get<SSpringArmComponent>(Entity);
-            const STransformComponent&  Xform = ArmView.get<STransformComponent>(Entity);
+            SSpringArmComponent&        Arm   = ArmView.Get<SSpringArmComponent>(Entity);
+            const STransformComponent&  Xform = ArmView.Get<STransformComponent>(Entity);
 
-            const entt::entity Target = (entt::entity)Arm.Target;
-            const bool bHasTarget = Registry.valid(Target) && Registry.all_of<STransformComponent>(Target);
+            const ECS::FEntity Target = (ECS::FEntity)Arm.Target;
+            const bool bHasTarget = Registry.IsValid(Target) && Registry.HasAll<STransformComponent>(Target);
 
             FVector3 PivotBase;
             FQuat ControlRot;
             if (bHasTarget)
             {
-                const STransformComponent& TargetXform = Registry.get<STransformComponent>(Target);
+                const STransformComponent& TargetXform = Registry.Get<STransformComponent>(Target);
                 PivotBase  = TargetXform.GetWorldLocation();
                 ControlRot = Arm.bUseControlRotation ? Xform.GetWorldRotation() : TargetXform.GetWorldRotation();
             }

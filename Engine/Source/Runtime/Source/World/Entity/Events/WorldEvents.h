@@ -1,9 +1,12 @@
 ﻿#pragma once
 
+#include "World/ECS/Registry.h"
+
+
 namespace Lumina
 {
     struct FScriptComponentPendingReady
     {
-        entt::entity Entity;
+        ECS::FEntity Entity;
     };
 }

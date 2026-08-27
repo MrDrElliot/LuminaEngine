@@ -1,11 +1,12 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #include "SystemContext.h"
 #include "SystemAccess.h"
 #include "Core/Engine/Engine.h"
-#include "Core/Engine/EngineMetaContext.h"
 #include "Core/UpdateStage.h"
-#include "World/Entity/Traits.h"
 
 
 namespace Lumina
@@ -45,9 +46,7 @@ namespace Lumina
         concept HasAccess = requires { { TSystem::Access } -> std::convertible_to<const FSystemAccess&>; };
     }
 
-    // One natively-reflected system resolved to raw function pointers once, at reflection-registration
-    // time. The per-frame dispatch is then a direct call through Update -- no entt::meta lookup, no
-    // meta_any boxing, no variant visit.
+    // One system resolved to raw function pointers once, so the per-frame dispatch is a direct call.
     struct FNativeSystemDesc
     {
         FName               Name;
@@ -59,8 +58,7 @@ namespace Lumina
         FSystemFn           Teardown = nullptr;
     };
 
-    // Process-wide table of native systems, populated by RegisterECSSystem<T>() during startup. Replaces
-    // the per-world entt::resolve() scan and the per-frame entt::meta dispatch.
+    // Process-wide table of native systems, populated by RegisterECSSystem<T>() during startup.
     class FSystemRegistry
     {
     public:
@@ -80,36 +78,9 @@ namespace Lumina
         template<typename TSystem>
         void RegisterECSSystem()
         {
-            using namespace entt::literals;
-
-            // Keep the system reflected (traits + data + funcs) for any meta-driven consumer; it is a
-            // one-time startup cost and not on the per-frame path.
-            auto Meta = entt::meta_factory<TSystem>(GetEngineMetaContext())
-                .type(TSystem::StaticStruct()->GetName().c_str())
-                .traits(ECS::ETraits::System)
-                .template data<&TSystem::PriorityList, entt::as_is_t>("PriorityList"_hs);
-
-            if constexpr (HasAccess<TSystem>)
-            {
-                Meta.template data<&TSystem::Access, entt::as_is_t>("Access"_hs);
-            }
-            if constexpr (HasStartup<TSystem>)
-            {
-                Meta.template func<&TSystem::Startup>("Startup"_hs);
-            }
-            if constexpr (HasUpdate<TSystem>)
-            {
-                Meta.template func<&TSystem::Update>("Update"_hs);
-            }
-            if constexpr (HasTeardown<TSystem>)
-            {
-                Meta.template func<&TSystem::Teardown>("Teardown"_hs);
-            }
-
-            // Resolve the hot-path callables once.
             FNativeSystemDesc Desc;
             Desc.Name = FName(TSystem::StaticStruct()->GetName().c_str());
-            Desc.Hash = static_cast<uint64>(entt::type_hash<TSystem>::value());
+            Desc.Hash = static_cast<uint64>(ECS::GetComponentTypeID<TSystem>());
 
             // Stateless system: a throwaway instance reads the in-class PriorityList initializer.
             TSystem Temp{};

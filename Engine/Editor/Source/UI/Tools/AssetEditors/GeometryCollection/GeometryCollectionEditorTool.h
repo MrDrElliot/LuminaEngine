@@ -1,5 +1,8 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #define USE_IMGUI_API
 #include <imgui.h>
 
@@ -41,8 +44,8 @@ namespace Lumina
         void ApplyExplode();            // offset each piece outward by ExplodeAmount
 
         TVector<TObjectPtr<CStaticMesh>> PieceMeshes;     // aligned with piece index (null = build failed)
-        TVector<entt::entity>            PieceEntities;    // aligned with piece index (null = no entity)
-        entt::entity                     LightEntity = entt::null;
+        TVector<ECS::FEntity>            PieceEntities;    // aligned with piece index (null = no entity)
+        ECS::FEntity                     LightEntity = ECS::NullEntity;
         float                            ExplodeAmount = 0.0f;
         bool                             bPreviewDirty = true;
     };

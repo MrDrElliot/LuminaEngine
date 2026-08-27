@@ -1,4 +1,5 @@
 #include "SkeletonEditorTool.h"
+#include "World/ECS/Registry.h"
 #include "ImGuiDrawUtils.h"
 #include "Assets/AssetTypes/Mesh/Skeleton/Skeleton.h"
 #include "Core/Math/Math.h"
@@ -240,7 +241,7 @@ namespace Lumina
 
         // Bind-pose world transforms; shared by the selected-bone overlay and the socket markers.
         FMatrix4 EntityMatrix = FMatrix4(1.0f);
-        if (MeshEntity != entt::null)
+        if (MeshEntity != ECS::NullEntity)
         {
             EntityMatrix = World->GetComponent<STransformComponent>(MeshEntity).GetWorldMatrix();
         }

@@ -1,5 +1,6 @@
 ﻿#include "LayoutRegistry.h"
 #include "DotNetHost.h"
+#include "World/ECS/Registry.h"
 #include "ManagedRenderScene.h"
 
 #include "Platform/Filesystem/PlatformFilesystem.h"
@@ -334,7 +335,7 @@ namespace Lumina::DotNet
             }
         }
 
-        // Reads the entt::type_hash ids off an array of FComponentOps* access tokens into Out.
+        // Reads the component type ids off an array of FComponentOps* access tokens into Out.
         void LmCollectAccessIds(const void* const* Tokens, int Count, TVector<uint32>& Out)
         {
             if (Tokens == nullptr || Count <= 0)
@@ -1300,7 +1301,7 @@ namespace Lumina::DotNet
             for (void* Handle : Listeners)
             {
                 auto* Listener = static_cast<FManagedSignalListener*>(Handle);
-                Listener->Connection.release();
+                Listener->Connection.Release();
                 delete Listener;
             }
         }
@@ -2102,7 +2103,7 @@ LUMINA_DOTNET_EXPORT(int, NativeSelfTest)(int A, int B)
 
 namespace
 {
-    Lumina::FEntityRegistry* LmRegistryFromWorld(uint64 World)
+    Lumina::ECS::FRegistry* LmRegistryFromWorld(uint64 World)
     {
         Lumina::CWorld* W = reinterpret_cast<Lumina::CWorld*>(World);
         return W ? &Lumina::ECS::GetWorldRegistry(*W) : nullptr;
@@ -2121,37 +2122,37 @@ LUMINA_DOTNET_EXPORT(const void*, FindComponentOps)(const char* Name, int Len)
 
 LUMINA_DOTNET_EXPORT(void*, GetComponent)(uint64 World, uint32 Entity, const void* Ops)
 {
-    Lumina::FEntityRegistry* R = LmRegistryFromWorld(World);
+    Lumina::ECS::FRegistry* R = LmRegistryFromWorld(World);
     const auto* O = static_cast<const Lumina::FComponentOps*>(Ops);
-    return (R && O) ? O->Get(*R, static_cast<entt::entity>(Entity)) : nullptr;
+    return (R && O) ? O->Get(*R, static_cast<Lumina::ECS::FEntity>(Entity)) : nullptr;
 }
 
 LUMINA_DOTNET_EXPORT(int, HasComponent)(uint64 World, uint32 Entity, const void* Ops)
 {
-    Lumina::FEntityRegistry* R = LmRegistryFromWorld(World);
+    Lumina::ECS::FRegistry* R = LmRegistryFromWorld(World);
     const auto* O = static_cast<const Lumina::FComponentOps*>(Ops);
-    return (R && O) ? O->Has(*R, static_cast<entt::entity>(Entity)) : 0;
+    return (R && O) ? O->Has(*R, static_cast<Lumina::ECS::FEntity>(Entity)) : 0;
 }
 
 // Get-or-emplace a default component, returning the live pointer to configure in place.
 LUMINA_DOTNET_EXPORT(void*, EmplaceComponent)(uint64 World, uint32 Entity, const void* Ops)
 {
-    Lumina::FEntityRegistry* R = LmRegistryFromWorld(World);
+    Lumina::ECS::FRegistry* R = LmRegistryFromWorld(World);
     const auto* O = static_cast<const Lumina::FComponentOps*>(Ops);
-    return (R && O) ? O->Emplace(*R, static_cast<entt::entity>(Entity)) : nullptr;
+    return (R && O) ? O->Emplace(*R, static_cast<Lumina::ECS::FEntity>(Entity)) : nullptr;
 }
 
 LUMINA_DOTNET_EXPORT(int, RemoveComponent)(uint64 World, uint32 Entity, const void* Ops)
 {
-    Lumina::FEntityRegistry* R = LmRegistryFromWorld(World);
+    Lumina::ECS::FRegistry* R = LmRegistryFromWorld(World);
     const auto* O = static_cast<const Lumina::FComponentOps*>(Ops);
-    return (R && O) ? O->Remove(*R, static_cast<entt::entity>(Entity)) : 0;
+    return (R && O) ? O->Remove(*R, static_cast<Lumina::ECS::FEntity>(Entity)) : 0;
 }
 
 // Allocates the listener, whose address is the disconnect key, and returns it as an opaque handle.
 LUMINA_DOTNET_EXPORT(void*, RegistryConnect)(uint64 World, const void* Ops, int32 Kind)
 {
-    Lumina::FEntityRegistry* R = LmRegistryFromWorld(World);
+    Lumina::ECS::FRegistry* R = LmRegistryFromWorld(World);
     const auto* O = static_cast<const Lumina::FComponentOps*>(Ops);
     if (R == nullptr || O == nullptr || O->ConnectSignal == nullptr)
     {
@@ -2180,7 +2181,7 @@ LUMINA_DOTNET_EXPORT(void, RegistryDisconnect)(uint64 World, const void* Ops, in
     {
         return;
     }
-    Lumina::FEntityRegistry* R = LmRegistryFromWorld(World);
+    Lumina::ECS::FRegistry* R = LmRegistryFromWorld(World);
     const auto* O = static_cast<const Lumina::FComponentOps*>(Ops);
     if (R != nullptr && O != nullptr && O->DisconnectSignal != nullptr)
     {
@@ -2194,11 +2195,11 @@ LUMINA_DOTNET_EXPORT(void, RegistryDisconnect)(uint64 World, const void* Ops, in
 // Fire on_update<T> for an entity's component (the manual "signal" pulse). No-op for tags or if absent.
 LUMINA_DOTNET_EXPORT(void, RegistryPatch)(uint64 World, uint32 Entity, const void* Ops)
 {
-    Lumina::FEntityRegistry* R = LmRegistryFromWorld(World);
+    Lumina::ECS::FRegistry* R = LmRegistryFromWorld(World);
     const auto* O = static_cast<const Lumina::FComponentOps*>(Ops);
     if (R != nullptr && O != nullptr && O->Patch != nullptr)
     {
-        O->Patch(*R, static_cast<entt::entity>(Entity));
+        O->Patch(*R, static_cast<Lumina::ECS::FEntity>(Entity));
     }
 }
 

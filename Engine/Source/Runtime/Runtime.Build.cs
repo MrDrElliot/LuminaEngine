@@ -25,7 +25,6 @@ public class Runtime : LuminaModuleRules
         // dependent compiling against those headers needs the same third-party declarations.
         PublicDependencyModuleNames.AddRange(new[]
         {
-            "Entt",
             "NlohmannJson",
             "StbImage",
             "RenderDoc",

@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-// Editor PCH. Includes Runtime's PCH (which carries the standard library, our containers, entt and xxhash)
+// Editor PCH. Includes Runtime's PCH (which carries the standard library, our containers and xxhash)
 // plus the editor-only heavies (ImGui).
 //
 // Keep this lean: anything pulled in here is paid by all 95 Editor TUs every

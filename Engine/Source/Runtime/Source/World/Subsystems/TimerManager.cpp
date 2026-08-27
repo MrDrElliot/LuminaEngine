@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "TimerManager.h"
+#include "World/ECS/Registry.h"
 
 #include <algorithm>
 
@@ -16,11 +17,11 @@ namespace Lumina
     FTimerHandle FTimerManager::SetTimer(float Rate, FTimerCallback Callback, bool bLoop, float FirstDelay)
     {
         FTimerHandle Out;
-        Out.Handle = CreateTimer(Rate, bLoop, FirstDelay, entt::null, std::move(Callback));
+        Out.Handle = CreateTimer(Rate, bLoop, FirstDelay, ECS::NullEntity, std::move(Callback));
         return Out;
     }
 
-    FTimerHandle FTimerManager::SetTimerForEntity(entt::entity Owner, float Rate, FTimerCallback Callback, bool bLoop, float FirstDelay)
+    FTimerHandle FTimerManager::SetTimerForEntity(ECS::FEntity Owner, float Rate, FTimerCallback Callback, bool bLoop, float FirstDelay)
     {
         FTimerHandle Out;
         Out.Handle = CreateTimer(Rate, bLoop, FirstDelay, Owner, std::move(Callback));
@@ -29,7 +30,7 @@ namespace Lumina
 
     void FTimerManager::ClearTimer(FTimerHandle& Handle)
     {
-        if (!Handle.IsValid() || !Registry.valid(Handle.Handle))
+        if (!Handle.IsValid() || !Registry.IsValid(Handle.Handle))
         {
             Handle.Invalidate();
             return;
@@ -37,26 +38,26 @@ namespace Lumina
 
         if (bTicking)
         {
-            Registry.get<FTimer>(Handle.Handle).bPendingDestroy = true;
+            Registry.Get<FTimer>(Handle.Handle).bPendingDestroy = true;
         }
         else
         {
-            Registry.destroy(Handle.Handle);
+            Registry.Destroy(Handle.Handle);
         }
         Handle.Invalidate();
     }
 
-    void FTimerManager::ClearTimersForEntity(entt::entity Owner)
+    void FTimerManager::ClearTimersForEntity(ECS::FEntity Owner)
     {
-        if (Owner == entt::null)
+        if (Owner == ECS::NullEntity)
         {
             return;
         }
 
-        auto View = Registry.view<FTimer>();
-        for (entt::entity Entity : View)
+        auto View = Registry.View<FTimer>();
+        for (ECS::FEntity Entity : View)
         {
-            FTimer& Timer = View.get<FTimer>(Entity);
+            FTimer& Timer = View.Get<FTimer>(Entity);
             if (Timer.Owner == Owner)
             {
                 if (bTicking)
@@ -65,7 +66,7 @@ namespace Lumina
                 }
                 else
                 {
-                    Registry.destroy(Entity);
+                    Registry.Destroy(Entity);
                 }
             }
         }
@@ -73,64 +74,64 @@ namespace Lumina
 
     void FTimerManager::Clear()
     {
-        Registry.clear<>();
+        Registry.Clear();
     }
 
     bool FTimerManager::IsTimerActive(FTimerHandle Handle) const
     {
-        if (!Handle.IsValid() || !Registry.valid(Handle.Handle))
+        if (!Handle.IsValid() || !Registry.IsValid(Handle.Handle))
         {
             return false;
         }
 
-        const FTimer& Timer = Registry.get<FTimer>(Handle.Handle);
+        const FTimer& Timer = Registry.Get<FTimer>(Handle.Handle);
         return !Timer.bPendingDestroy;
     }
 
     bool FTimerManager::IsTimerPaused(FTimerHandle Handle) const
     {
-        if (!Handle.IsValid() || !Registry.valid(Handle.Handle))
+        if (!Handle.IsValid() || !Registry.IsValid(Handle.Handle))
         {
             return false;
         }
-        return Registry.get<FTimer>(Handle.Handle).bPaused;
+        return Registry.Get<FTimer>(Handle.Handle).bPaused;
     }
 
     float FTimerManager::GetTimerRate(FTimerHandle Handle) const
     {
-        if (!Handle.IsValid() || !Registry.valid(Handle.Handle))
+        if (!Handle.IsValid() || !Registry.IsValid(Handle.Handle))
         {
             return 0.0f;
         }
-        return Registry.get<FTimer>(Handle.Handle).Rate;
+        return Registry.Get<FTimer>(Handle.Handle).Rate;
     }
 
     float FTimerManager::GetTimerRemaining(FTimerHandle Handle) const
     {
-        if (!Handle.IsValid() || !Registry.valid(Handle.Handle))
+        if (!Handle.IsValid() || !Registry.IsValid(Handle.Handle))
         {
             return 0.0f;
         }
-        return Registry.get<FTimer>(Handle.Handle).Remaining;
+        return Registry.Get<FTimer>(Handle.Handle).Remaining;
     }
 
     float FTimerManager::GetTimerElapsed(FTimerHandle Handle) const
     {
-        if (!Handle.IsValid() || !Registry.valid(Handle.Handle))
+        if (!Handle.IsValid() || !Registry.IsValid(Handle.Handle))
         {
             return 0.0f;
         }
-        const FTimer& Timer = Registry.get<FTimer>(Handle.Handle);
+        const FTimer& Timer = Registry.Get<FTimer>(Handle.Handle);
         return Timer.Rate - Timer.Remaining;
     }
 
     void FTimerManager::SetTimerPaused(FTimerHandle Handle, bool bPause)
     {
-        if (!Handle.IsValid() || !Registry.valid(Handle.Handle))
+        if (!Handle.IsValid() || !Registry.IsValid(Handle.Handle))
         {
             return;
         }
-        Registry.get<FTimer>(Handle.Handle).bPaused = bPause;
+        Registry.Get<FTimer>(Handle.Handle).bPaused = bPause;
     }
 
     void FTimerManager::Tick(float DeltaTime)
@@ -142,12 +143,12 @@ namespace Lumina
             return;
         }
 
-        static thread_local TVector<entt::entity> ToTick;
+        static thread_local TVector<ECS::FEntity> ToTick;
         ToTick.clear();
         {
-            auto View = Registry.view<FTimer>();
-            ToTick.reserve(View.size());
-            for (entt::entity Entity : View)
+            auto View = Registry.View<FTimer>();
+            ToTick.reserve(View.Num());
+            for (ECS::FEntity Entity : View)
             {
                 ToTick.push_back(Entity);
             }
@@ -155,14 +156,14 @@ namespace Lumina
 
         bTicking = true;
 
-        for (entt::entity Entity : ToTick)
+        for (ECS::FEntity Entity : ToTick)
         {
-            if (!Registry.valid(Entity))
+            if (!Registry.IsValid(Entity))
             {
                 continue;
             }
 
-            FTimer& Timer = Registry.get<FTimer>(Entity);
+            FTimer& Timer = Registry.Get<FTimer>(Entity);
             if (Timer.bPaused || Timer.bPendingDestroy)
             {
                 continue;
@@ -189,9 +190,9 @@ namespace Lumina
                 NativeCallback();
             }
 
-            if (bLoop && Registry.valid(Entity))
+            if (bLoop && Registry.IsValid(Entity))
             {
-                FTimer& Live = Registry.get<FTimer>(Entity);
+                FTimer& Live = Registry.Get<FTimer>(Entity);
                 if (!Live.bPendingDestroy)
                 {
                     Live.NativeCallback = std::move(NativeCallback);
@@ -206,28 +207,28 @@ namespace Lumina
 
         bTicking = false;
 
-        auto DestroyView = Registry.view<FTimer>();
-        for (entt::entity Entity : DestroyView)
+        auto DestroyView = Registry.View<FTimer>();
+        for (ECS::FEntity Entity : DestroyView)
         {
-            if (DestroyView.get<FTimer>(Entity).bPendingDestroy)
+            if (DestroyView.Get<FTimer>(Entity).bPendingDestroy)
             {
-                Registry.destroy(Entity);
+                Registry.Destroy(Entity);
             }
         }
     }
 
-    entt::entity FTimerManager::CreateTimer(float Rate, bool bLoop, float FirstDelay, entt::entity Owner, FTimerCallback NativeCallback)
+    ECS::FEntity FTimerManager::CreateTimer(float Rate, bool bLoop, float FirstDelay, ECS::FEntity Owner, FTimerCallback NativeCallback)
     {
         Rate = Math::Max(Rate, 0.0f);
 
         if (!static_cast<bool>(NativeCallback))
         {
             LOG_WARN("[TimerManager] SetTimer called with no invokable callback - ignored.");
-            return entt::null;
+            return ECS::NullEntity;
         }
 
-        entt::entity Entity = Registry.create();
-        FTimer& Timer = Registry.emplace<FTimer>(Entity);
+        ECS::FEntity Entity = Registry.Create();
+        FTimer& Timer = Registry.Emplace<FTimer>(Entity);
         Timer.Rate           = Rate;
         Timer.Remaining      = (FirstDelay >= 0.0f) ? FirstDelay : Rate;
         Timer.bLoop          = bLoop;

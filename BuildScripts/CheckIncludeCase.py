@@ -24,10 +24,7 @@ SEARCH_ROOTS = [
     "Editor/Source",
     "Applications/Reflector/Source",
     "Source/ThirdParty",
-    "Source/ThirdParty/EA/EASTL/include",
-    "Source/ThirdParty/EA/EABase/include/Common",
     "Source/ThirdParty/imgui",
-    "Source/ThirdParty/entt",
     "Source/ThirdParty/json",
 ]
 
@@ -36,8 +33,7 @@ SCAN_DIRS = ["Source/Runtime", "Editor", "Applications", "Plugins"]
 SKIP = ("ThirdParty", "imgui-node-editor", "/generated/", "\\Generated\\")
 
 # Both quote forms. Angle-bracket includes are just as case-sensitive on Linux, and the engine
-# uses them for the vendored trees (<EASTL/...>, <imgui.h>), which is exactly where the
-# lowercase <eastl/...> spellings had accumulated.
+# uses them for the vendored trees such as <imgui.h>.
 INCLUDE_RE = re.compile(r'^\s*#\s*include\s*(?:"([^"]+)"|<([^>]+)>)', re.MULTILINE)
 
 

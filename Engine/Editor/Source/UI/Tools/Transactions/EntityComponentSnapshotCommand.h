@@ -1,9 +1,11 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #include "Containers/Vector.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "EditorTransaction.h"
-#include "World/Entity/Registry/EntityRegistry.h"
 
 namespace Lumina
 {
@@ -17,7 +19,7 @@ namespace Lumina
     public:
 
         // Captures the before-image immediately, matching FEcsRegistrySnapshotCommand's contract.
-        FEntityComponentSnapshotCommand(CWorld* InWorld, TVector<entt::entity> InEntities, CStruct* InComponentType);
+        FEntityComponentSnapshotCommand(CWorld* InWorld, TVector<ECS::FEntity> InEntities, CStruct* InComponentType);
 
         // False for a type with no registered component ops, which has to fall back to the registry form.
         static bool CanSnapshotComponent(const CStruct* ComponentType);
@@ -39,7 +41,7 @@ namespace Lumina
         // Weak, since a strong ref would keep a torn-down world alive and stop a stale undo from no-opping.
         TWeakObjectPtr<CWorld>  World;
 
-        TVector<entt::entity>   Entities;
+        TVector<ECS::FEntity>   Entities;
         CStruct*                ComponentType = nullptr;
 
         // Null for a type with no registered ops, which disables the command rather than half-applying it.

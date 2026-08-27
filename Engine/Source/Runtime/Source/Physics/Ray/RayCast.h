@@ -1,6 +1,8 @@
 ﻿#pragma once
 
-#include <entt/entt.hpp>
+#include "World/ECS/Registry.h"
+
+
 
 #include "Platform/GenericPlatform.h"
 #include "Containers/Vector.h"
@@ -24,7 +26,7 @@ namespace Lumina
         int64 BodyID;
 
         PROPERTY()
-        uint32 Entity = entt::null;
+        uint32 Entity = ECS::NullEntity.Value;
 
         PROPERTY()
         FVector3 Start;

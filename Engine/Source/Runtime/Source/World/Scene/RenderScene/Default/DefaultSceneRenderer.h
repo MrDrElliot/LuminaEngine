@@ -1,5 +1,8 @@
 ﻿#pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #include "Renderer/ShaderHandle.h"
 #include "Core/Delegates/Delegate.h"
 #include "Memory/Allocators/Allocator.h"
@@ -167,7 +170,7 @@ namespace Lumina
 
             struct FTerrainExtract
             {
-                entt::entity        Entity;
+                ECS::FEntity        Entity;
                 FMatrix4            WorldMatrix;
 
                 int32               Resolution      = 0;
@@ -201,7 +204,7 @@ namespace Lumina
 
             struct FParticleExtract
             {
-                entt::entity            Entity;
+                ECS::FEntity            Entity;
                 int32                   EmitterIndex        = 0;
                 int32                   EmitterCount        = 1;
                 FMatrix4                WorldMatrix;
@@ -394,9 +397,9 @@ namespace Lumina
             struct FExtracts
             {
                 TVector<FTerrainExtract>         TerrainExtracts;
-                TVector<entt::entity>            LiveTerrainEntities;
+                TVector<ECS::FEntity>            LiveTerrainEntities;
                 TVector<FParticleExtract>        ParticleExtracts;
-                TVector<entt::entity>            LiveParticleEntities;
+                TVector<ECS::FEntity>            LiveParticleEntities;
                 TVector<FTexturePaintOp>         PaintOps;
 
                 #if USING(WITH_EDITOR)
@@ -554,12 +557,12 @@ namespace Lumina
 
         /** Editor-only tripwire: warns if any dynamic-mesh surface is STILL resolved against superseded
             shaders after a full resolve pass, i.e. a resolve gate is missing an input. */
-        void ValidateNoStaleResolves(FEntityRegistry& Registry);
+        void ValidateNoStaleResolves(ECS::FRegistry& Registry);
         RHI::FTextureH GetDisplayTexture() const override { return SceneViews[0].Output.Texture; }
         const FSceneImage& GetDisplayImage() const { return SceneViews[0].Output; }
         const FSceneImage& GetPrimaryNamedImage(ENamedImage Image) const { return SceneViews[0].Images[(int)Image]; }
         FUIntVector2 GetRenderExtent() const override;
-        entt::entity GetEntityAtPixel(uint32 X, uint32 Y) const override;
+        ECS::FEntity GetEntityAtPixel(uint32 X, uint32 Y) const override;
         #if USING(WITH_EDITOR)
         void SetPickerCursor(uint32 X, uint32 Y, bool bOverViewport) override;
         #endif
@@ -666,6 +669,9 @@ namespace Lumina
 
         void ApplyCullFreeze(FFrameData& Frame);
         void DrawFrozenCullFrustum(const FFrameData& Frame);
+        void DropStaleFrozenOcclusion(FFrameData& Frame) const;
+        bool CaptureCascadeShadowFit(const FFrameData& Frame);
+        void RestoreCascadeShadowFit(FFrameData& Frame) const;
 
         void BillboardPass(RHI::FCmdListH CL);
         void WidgetPass(RHI::FCmdListH CL);
@@ -740,7 +746,7 @@ namespace Lumina
         // Serial pre-pass so the parallel gather is pure reads; skipped when nothing changed.
         void ResolveDirtyMeshComponents();
 
-        void ResolveDynamicMeshMaterials(FEntityRegistry& Registry, FRenderDirtyTracker& Tracker);
+        void ResolveDynamicMeshMaterials(ECS::FRegistry& Registry, FRenderDirtyTracker& Tracker);
 
         uint32 LastResolvedPendingGeneration = 0;
 
@@ -921,6 +927,10 @@ namespace Lumina
         void StageWrite(RHI::GPUPtr Dst, const void* Data, uint64 Size);
         void FlushStagedWrites(RHI::FCmdListH CL);
 
+        // Scattered (Start, Count) runs of one array, into a single ring block and one copy command.
+        void WriteBufferRuns(RHI::FCmdListH CL, RHI::GPUPtr Dst, const void* Src, uint64 Stride,
+                             const TVector<FUIntVector2>& Runs);
+
         /** What a freshly (re)allocated scene buffer holds. Undefined is the honest description of what
          *  RHI::Malloc returns -- a recycling pool hands back the previous tenant's bytes. Only pick it for
          *  a buffer that is provably rewritten in full before anything reads it. */
@@ -948,9 +958,23 @@ namespace Lumina
             FVector4           CameraPosition   = {};
             FMatrix4           CameraView       = {};
             FMatrix4           CameraProjection = {};
+            float              NearPlane        = 0.0f;
+            float              FarPlane         = 0.0f;
             FGPUFrustum        Frustum          = {};
             FGPUFrustum        ShadowFrustum    = {};
             FGPUFrustum        CascadeFrustum[NumCascades] = {};
+
+            // The cascade pyramid stops rebuilding under freeze, so the transforms that tap it must stop too.
+            FMatrix4           CascadeHZBViewProjection[NumCascades]    = {};
+            FVector4           CascadeHZBNdcScale[NumCascades]          = {};
+            FMatrix4           CascadeHZBViewProjectionMid[NumCascades] = {};
+            FVector4           CascadeHZBNdcScaleMid[NumCascades]       = {};
+
+            // The cascade fit itself, so the shadow raster covers the region the frozen cull selected for.
+            FMatrix4           CascadeShadowViewProjection[NumCascades] = {};
+            FVector4           CascadeRadii       = {};
+            bool               bHasCascadeShadow  = false;
+
             uint32             CascadeViewBase  = ~0u;
             bool               bValid           = false;
         };
@@ -1036,11 +1060,11 @@ namespace Lumina
         uint64                                  SplineSampleBufferAddr = 0;
         uint32                                  NumActiveSplines       = 0;
 
-        void ExtractSplines(FEntityRegistry& Registry, FFrameData& Frame);
+        void ExtractSplines(ECS::FRegistry& Registry, FFrameData& Frame);
 
         void InitReflectionProbeTargets();
         void SyncProbeCaptureCube(uint32 FaceSize);
-        void ExtractReflectionProbes(FEntityRegistry& Registry, FFrameData& Frame);
+        void ExtractReflectionProbes(ECS::FRegistry& Registry, FFrameData& Frame);
         void ScheduleReflectionProbeBake(FFrameData& Frame);
         // Renders the six faces, copies each into the scratch cube, prefilters into the probe's slice.
         void ReflectionProbeBakePass(RHI::FCmdListH CL);
@@ -1069,6 +1093,7 @@ namespace Lumina
         FSceneRoot                                                      SceneRootShared = {};
         RHI::FSceneBindings                                             SceneBindings = {};
         TVector<RHI::FBufferCopy>                                       StagedWrites;
+        TVector<RHI::FBufferCopy>                                       UploadCopyScratch;
         uint64                                                          CurrentSceneRootAddr = 0;
         // Builds the per-view FSceneRoot transient (shared addrs + view camera/clusters/IBL) -> address.
         uint64 BuildViewSceneRoot(FSceneView& View);
@@ -1120,6 +1145,7 @@ namespace Lumina
         RHI::FGPUAllocation                                        SkinnedSlotListBuffer;
         uint32                                              SkinnedSlotListLowUsage = 0;
         TVector<uint32>                                     SkinnedUploadScratch;
+        TVector<FUIntVector2>                               SkinnedRunScratch;
         uint32                                              CurrentSkinnedFrameTag = 0;
         // Per-frame posed meshlet spheres, so the cull can reject skinned geometry per meshlet.
         RHI::FGPUAllocation                                        SkinnedMeshletBoundsBuffer;
@@ -1238,12 +1264,12 @@ namespace Lumina
 
         FShadowAtlas                            ShadowAtlas;
         
-        THashMap<entt::entity, FTerrainGPUState> TerrainGPUStates;
+        THashMap<ECS::FEntity, FTerrainGPUState> TerrainGPUStates;
         
-        THashMap<entt::entity, TVector<FParticleGPUState>> ParticleGPUStates;
+        THashMap<ECS::FEntity, TVector<FParticleGPUState>> ParticleGPUStates;
 
         FScenePrimitiveSet                      ScenePrimitives;
-        TVector<entt::entity>                   MovedTransformScratch;
+        TVector<ECS::FEntity>                   MovedTransformScratch;
 
         // Merge scratch, sized by draw slots (not by entities). Members so capacity survives frames.
 

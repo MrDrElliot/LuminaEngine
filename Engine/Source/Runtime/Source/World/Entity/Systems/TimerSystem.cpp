@@ -7,6 +7,6 @@ namespace Lumina
     void STimerSystem::Update(const FSystemContext& Context) noexcept
     {
         LUMINA_PROFILE_SCOPE();
-        Context.GetRegistry().ctx().get<FTimerManager>().Tick((float)Context.GetDeltaTime());
+        Context.GetRegistry().Ctx().Get<FTimerManager>().Tick((float)Context.GetDeltaTime());
     }
 }

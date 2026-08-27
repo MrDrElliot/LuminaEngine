@@ -1,4 +1,5 @@
 #include "MCPSceneTools.h"
+#include "World/ECS/Registry.h"
 
 #include "Agent/AgentEntityToken.h"
 #include "Agent/AgentPropertyPath.h"
@@ -6,7 +7,6 @@
 #include "Agent/AgentToolRegistry.h"
 #include "MCPTextMatch.h"
 #include "Core/Engine/Engine.h"
-#include "Core/Engine/EngineMetaContext.h"
 #include "LuminaEditor.h"
 #include "Scene/SceneOps.h"
 #include "UI/EditorUI.h"
@@ -33,38 +33,25 @@ namespace Lumina::MCP
             return UI != nullptr ? UI->FindTool<FWorldEditorTool>() : nullptr;
         }
 
-        FString NameOf(const FEntityRegistry& Registry, FEntity Entity)
+        FString NameOf(const ECS::FRegistry& Registry, ECS::FEntity Entity)
         {
-            const SNameComponent* Name = Registry.try_get<SNameComponent>(Entity);
+            const SNameComponent* Name = Registry.TryGet<SNameComponent>(Entity);
             return Name != nullptr ? FString(Name->Name.ToString().c_str()) : FString("Entity");
         }
 
         // Values come back as text because a free-form component tree has no fixed reflected shape.
-        FString DescribeComponentValues(FEntityRegistry& Registry, FEntity Entity)
+        FString DescribeComponentValues(ECS::FRegistry& Registry, ECS::FEntity Entity)
         {
-            using namespace entt::literals;
 
             nlohmann::json Components = nlohmann::json::object();
 
-            for (auto&& [Id, Type] : entt::resolve(GetEngineMetaContext()))
+            ForEachComponentStruct([&](CStruct* Reflected)
             {
-                if (!EnumHasAllFlags(Type.traits<ECS::ETraits>(), ECS::ETraits::Component))
+                if (!ECS::Utils::HasComponent(Registry, Entity, Reflected))
                 {
-                    continue;
+                    return;
                 }
 
-                if (!ECS::Utils::HasComponent(Registry, Entity, Type))
-                {
-                    continue;
-                }
-
-                entt::meta_any Struct = ECS::Utils::InvokeMetaFunc(Type, "static_struct"_hs);
-                if (!Struct)
-                {
-                    continue;
-                }
-
-                CStruct* Reflected = Struct.cast<CStruct*>();
                 const std::string Key(Reflected->GetName().ToString().c_str());
 
                 // The direct op table hands back the live pointer, which the meta trampoline will not.
@@ -74,14 +61,14 @@ namespace Lumina::MCP
                 if (Data == nullptr)
                 {
                     Components[Key] = nlohmann::json::object();
-                    continue;
+                    return;
                 }
 
                 nlohmann::json Written;
                 Components[Key] = Agent::WriteStruct(Reflected, Data, Written).IsValid()
                     ? Written
                     : nlohmann::json::object();
-            }
+            });
 
             return FString(Components.dump(2).c_str());
         }
@@ -94,33 +81,19 @@ namespace Lumina::MCP
                 Agent::EToolEffect::ReadOnly, Agent::EToolThread::GameThread,
                 [](const SListComponentTypesParams& In, SListComponentTypesResult& Out)
                 {
-                    using namespace entt::literals;
 
-                    for (auto&& [Id, Type] : entt::resolve(GetEngineMetaContext()))
+                    ForEachComponentStruct([&](CStruct* Reflected)
                     {
-                        if (!EnumHasAllFlags(Type.traits<ECS::ETraits>(), ECS::ETraits::Component))
-                        {
-                            continue;
-                        }
-
-                        entt::meta_any Struct = ECS::Utils::InvokeMetaFunc(Type, "static_struct"_hs);
-                        if (!Struct)
-                        {
-                            continue;
-                        }
-
-                        CStruct* Reflected = Struct.cast<CStruct*>();
-
                         // The editor hides these from its own picker, so an agent should not see them either.
                         if (Reflected->HasMeta("HideInComponentList"))
                         {
-                            continue;
+                            return;
                         }
 
                         const FString Name(Reflected->GetName().ToString().c_str());
                         if (!ContainsText(FStringView(Name), In.Contains))
                         {
-                            continue;
+                            return;
                         }
 
                         SComponentTypeInfo Info;
@@ -129,7 +102,7 @@ namespace Lumina::MCP
                         Info.Category    = Reflected->HasMeta("Category") ? Reflected->GetMeta("Category") : FString("General");
 
                         Out.Types.push_back(Move(Info));
-                    }
+                    });
 
                     return Agent::FToolResult::Ok(Lumina::Format("{} component type(s).", Out.Types.size()));
                 });
@@ -149,10 +122,10 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(GNoWorldEditor);
                     }
 
-                    FEntityRegistry& Registry = Tool->GetSceneEntityRegistry();
+                    ECS::FRegistry& Registry = Tool->GetSceneEntityRegistry();
                     const int32 Limit = In.Limit > 0 ? In.Limit : 100;
 
-                    for (auto Entity : Registry.view<SNameComponent>())
+                    for (auto Entity : Registry.View<SNameComponent>())
                     {
                         const FString Name = NameOf(Registry, Entity);
                         if (!ContainsText(FStringView(Name), In.Contains))
@@ -193,9 +166,9 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(GNoWorldEditor);
                     }
 
-                    FEntityRegistry& Registry = Tool->GetSceneEntityRegistry();
+                    ECS::FRegistry& Registry = Tool->GetSceneEntityRegistry();
 
-                    FEntity Entity = entt::null;
+                    ECS::FEntity Entity = ECS::NullEntity;
                     FString Error;
                     if (!Agent::FEntityTokens::Resolve(Registry, FStringView(In.Entity), Entity, Error))
                     {
@@ -204,20 +177,13 @@ namespace Lumina::MCP
 
                     Out.Name = NameOf(Registry, Entity);
 
-                    using namespace entt::literals;
-                    for (auto&& [Id, Type] : entt::resolve(GetEngineMetaContext()))
+                    ForEachComponentStruct([&](CStruct* Reflected)
                     {
-                        if (!EnumHasAllFlags(Type.traits<ECS::ETraits>(), ECS::ETraits::Component)
-                            || !ECS::Utils::HasComponent(Registry, Entity, Type))
+                        if (ECS::Utils::HasComponent(Registry, Entity, Reflected))
                         {
-                            continue;
+                            Out.Components.push_back(FString(Reflected->GetName().ToString().c_str()));
                         }
-
-                        if (entt::meta_any Struct = ECS::Utils::InvokeMetaFunc(Type, "static_struct"_hs))
-                        {
-                            Out.Components.push_back(FString(Struct.cast<CStruct*>()->GetName().ToString().c_str()));
-                        }
-                    }
+                    });
 
                     return Agent::FToolResult::Ok(Lumina::Format("{} has {} component(s).\n{}",
                         Out.Name, Out.Components.size(), DescribeComponentValues(Registry, Entity)));
@@ -245,11 +211,11 @@ namespace Lumina::MCP
                     }
 
                     // Resolved before the transaction opens, so an unknown name costs no snapshot.
-                    TVector<entt::meta_type> Types;
+                    TVector<CStruct*> Types;
                     for (const FString& Name : In.Components)
                     {
-                        const entt::meta_type Type = SceneOps::ResolveComponentType(FStringView(Name));
-                        if (Type)
+                        CStruct* Type = SceneOps::ResolveComponentType(FStringView(Name));
+                        if (Type != nullptr)
                         {
                             Types.push_back(Type);
                             Out.Attached.push_back(Name);
@@ -260,29 +226,29 @@ namespace Lumina::MCP
                         }
                     }
 
-                    FEntityRegistry& Registry = Tool->GetSceneEntityRegistry();
+                    ECS::FRegistry& Registry = Tool->GetSceneEntityRegistry();
                     const FName EntityName(In.Name.empty() ? "Entity" : In.Name.c_str());
 
-                    FEntity Created = entt::null;
+                    ECS::FEntity Created = ECS::NullEntity;
 
                     Tool->RunCreationTransacted("Create Entity (agent)", [&]()
                     {
                         Created = World->ConstructEntity(EntityName);
-                        if (Created == entt::null)
+                        if (Created == ECS::NullEntity)
                         {
                             return;
                         }
 
-                        for (const entt::meta_type& Type : Types)
+                        for (CStruct* Type : Types)
                         {
                             const SceneOps::FAddComponentPlan Plan =
-                                SceneOps::PlanAddComponent(Registry, TVector<FEntity>{ Created }, Type);
+                                SceneOps::PlanAddComponent(Registry, TVector<ECS::FEntity>{ Created }, Type);
 
                             SceneOps::ApplyAddComponent(Registry, Plan, Type);
                         }
                     });
 
-                    if (Created == entt::null)
+                    if (Created == ECS::NullEntity)
                     {
                         return Agent::FToolResult::Error("The world refused to create the entity.");
                     }
@@ -310,16 +276,16 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(GNoWorldEditor);
                     }
 
-                    FEntityRegistry& Registry = Tool->GetSceneEntityRegistry();
+                    ECS::FRegistry& Registry = Tool->GetSceneEntityRegistry();
 
-                    FEntity Entity = entt::null;
+                    ECS::FEntity Entity = ECS::NullEntity;
                     FString Error;
                     if (!Agent::FEntityTokens::Resolve(Registry, FStringView(In.Entity), Entity, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    const entt::meta_type Type = SceneOps::ResolveComponentType(FStringView(In.Component));
+                    CStruct* Type = SceneOps::ResolveComponentType(FStringView(In.Component));
                     if (!Type)
                     {
                         return Agent::FToolResult::Error(Lumina::Format(
@@ -327,7 +293,7 @@ namespace Lumina::MCP
                     }
 
                     const SceneOps::FAddComponentPlan Plan =
-                        SceneOps::PlanAddComponent(Registry, TVector<FEntity>{ Entity }, Type);
+                        SceneOps::PlanAddComponent(Registry, TVector<ECS::FEntity>{ Entity }, Type);
 
                     if (!Plan.HasWork())
                     {
@@ -362,25 +328,23 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(GNoWorldEditor);
                     }
 
-                    FEntityRegistry& Registry = Tool->GetSceneEntityRegistry();
+                    ECS::FRegistry& Registry = Tool->GetSceneEntityRegistry();
 
-                    FEntity Entity = entt::null;
+                    ECS::FEntity Entity = ECS::NullEntity;
                     FString Error;
                     if (!Agent::FEntityTokens::Resolve(Registry, FStringView(In.Entity), Entity, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    const entt::meta_type Type = SceneOps::ResolveComponentType(FStringView(In.Component));
+                    CStruct* Type = SceneOps::ResolveComponentType(FStringView(In.Component));
                     if (!Type || !ECS::Utils::HasComponent(Registry, Entity, Type))
                     {
                         return Agent::FToolResult::Error(Lumina::Format(
                             "'{}' has no component named '{}'.", NameOf(Registry, Entity), In.Component));
                     }
 
-                    using namespace entt::literals;
-                    entt::meta_any Struct = ECS::Utils::InvokeMetaFunc(Type, "static_struct"_hs);
-                    CStruct* Reflected = Struct ? Struct.cast<CStruct*>() : nullptr;
+                    CStruct* Reflected = Type;
 
                     const FComponentOps* Ops = Reflected != nullptr
                         ? FindComponentOps(FStringView(Reflected->GetName().ToString()))

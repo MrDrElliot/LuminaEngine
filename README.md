@@ -97,7 +97,7 @@ through the work of motivated contributors who help push the engine forward.
 
 ### Architecture
 
-- Entity Component System (ECS) built on EnTT for high-performance gameplay code
+- In-house sparse-set Entity Component System with per-type storage layouts, typed views, and lifecycle signals
 - Reflection system driving automatic serialization and editor integration
 - Modular design with clean separation of concerns
 
@@ -504,7 +504,6 @@ Listed alphabetically.
 | ConcurrentQueue | Lock-free queue supporting multiple producers and consumers |
 | DPDK | Source of the vectorized memcpy in `Engine/Source/Runtime/Source/Memory/Memcpy.h`; vendored for its license only |
 | ENet | Reliable UDP transport behind the networking plugin |
-| EnTT | Fast entity component system with sparse-set storage and signals |
 | FreeType | Font rasterization for RmlUi, MSDFGen, and editor text |
 | GLFW | Multi-platform window and input library for OpenGL and Vulkan |
 | GoogleTest | C++ testing framework with assertions, fixtures, and test discovery |

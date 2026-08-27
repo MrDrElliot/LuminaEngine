@@ -1,4 +1,5 @@
 #include "RuntimePCH.h"
+#include "World/ECS/Registry.h"
 #include "Box3DPhysicsScene.h"
 
 #include <box3d/collision.h>
@@ -53,8 +54,8 @@ namespace Lumina::Physics
     {
         LUMINA_PROFILE_SCOPE();
 
-        const b3BodyId BodyA = Desc.BodyA == entt::null ? b3_nullBodyId : ResolveBody(GetEntityBodyID(Desc.BodyA));
-        const b3BodyId BodyB = Desc.BodyB == entt::null ? b3_nullBodyId : ResolveBody(GetEntityBodyID(Desc.BodyB));
+        const b3BodyId BodyA = Desc.BodyA == ECS::NullEntity ? b3_nullBodyId : ResolveBody(GetEntityBodyID(Desc.BodyA));
+        const b3BodyId BodyB = Desc.BodyB == ECS::NullEntity ? b3_nullBodyId : ResolveBody(GetEntityBodyID(Desc.BodyB));
 
         // Box3D has no world anchor body, so the constrained side must at least exist.
         if (!b3Body_IsValid(BodyB))
@@ -361,15 +362,15 @@ namespace Lumina::Physics
         Constraints.clear();
     }
 
-    void FBox3DPhysicsScene::OnConstraintComponentConstructed(entt::registry& Registry, entt::entity Entity)
+    void FBox3DPhysicsScene::OnConstraintComponentConstructed(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
         FScopeLock Lock(PendingConstraintMutex);
         PendingConstraintCreations.push_back(Entity);
     }
 
-    void FBox3DPhysicsScene::OnConstraintComponentDestroyed(entt::registry& Registry, entt::entity Entity)
+    void FBox3DPhysicsScene::OnConstraintComponentDestroyed(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        if (SPhysicsConstraintComponent* Component = Registry.try_get<SPhysicsConstraintComponent>(Entity))
+        if (SPhysicsConstraintComponent* Component = Registry.TryGet<SPhysicsConstraintComponent>(Entity))
         {
             if (Component->ConstraintID != 0)
             {
@@ -379,9 +380,9 @@ namespace Lumina::Physics
         }
     }
 
-    bool FBox3DPhysicsScene::TryCreateComponentConstraint(entt::registry& Registry, entt::entity Entity)
+    bool FBox3DPhysicsScene::TryCreateComponentConstraint(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        SPhysicsConstraintComponent* Component = Registry.try_get<SPhysicsConstraintComponent>(Entity);
+        SPhysicsConstraintComponent* Component = Registry.TryGet<SPhysicsConstraintComponent>(Entity);
         if (Component == nullptr)
         {
             return true;
@@ -399,13 +400,13 @@ namespace Lumina::Physics
             return false;
         }
 
-        const STransformComponent* Transform = Registry.try_get<STransformComponent>(Entity);
+        const STransformComponent* Transform = Registry.TryGet<STransformComponent>(Entity);
         if (Transform == nullptr)
         {
             return false;
         }
 
-        entt::entity TargetEntity = entt::null;
+        ECS::FEntity TargetEntity = ECS::NullEntity;
         if (Component->TargetBody != 0xFFFFFFFFu)
         {
             const b3BodyId TargetBody = ResolveBody(Component->TargetBody);
@@ -443,14 +444,14 @@ namespace Lumina::Physics
             return;
         }
 
-        entt::registry& Registry = ECS::GetWorldRegistry(*World);
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
 
         // Compacted in place, so an entity whose bodies are not ready is retried next frame without a copy.
         size_t Write = 0;
         for (size_t Read = 0; Read < PendingConstraintCreations.size(); ++Read)
         {
-            const entt::entity Entity = PendingConstraintCreations[Read];
-            if (!Registry.valid(Entity))
+            const ECS::FEntity Entity = PendingConstraintCreations[Read];
+            if (!Registry.IsValid(Entity))
             {
                 continue;
             }
@@ -464,7 +465,7 @@ namespace Lumina::Physics
         PendingConstraintCreations.resize(Write);
     }
 
-    uint32 FBox3DPhysicsScene::CreateStaticBodyGroup(entt::entity Owner, TSpan<const FStaticInstanceDesc> Instances)
+    uint32 FBox3DPhysicsScene::CreateStaticBodyGroup(ECS::FEntity Owner, TSpan<const FStaticInstanceDesc> Instances)
     {
         LUMINA_PROFILE_SCOPE();
 

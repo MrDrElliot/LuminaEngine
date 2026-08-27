@@ -508,7 +508,7 @@ namespace Lumina::Import::Mesh
                 }
 
                 FMeshletSphere Sphere{};
-                FMeshletCone   Cone{};
+                FMeshletCone   Cone = kDisabledMeshletCone;
                 if (bConeCulling)
                 {
                     const meshopt_Bounds B = meshopt_computeMeshletBounds(
@@ -517,11 +517,14 @@ namespace Lumina::Import::Mesh
                         M.triangle_count,
                         VertexPositions, NumVertices, VertexSize);
 
-                    Sphere.Center = FVector3(B.center[0],    B.center[1],    B.center[2]);
+                    Sphere.Center = FVector3(B.center[0], B.center[1], B.center[2]);
                     Sphere.Radius = B.radius;
-                    Cone.Apex     = FVector3(B.cone_apex[0], B.cone_apex[1], B.cone_apex[2]);
-                    Cone.Axis     = FVector3(B.cone_axis[0], B.cone_axis[1], B.cone_axis[2]);
-                    Cone.Cutoff   = B.cone_cutoff;
+
+                    // meshopt already quantized these conservatively, so re-encoding would only lose ground.
+                    Cone.Axis[0] = (int8)B.cone_axis_s8[0];
+                    Cone.Axis[1] = (int8)B.cone_axis_s8[1];
+                    Cone.Axis[2] = (int8)B.cone_axis_s8[2];
+                    Cone.Cutoff  = (int8)B.cone_cutoff_s8;
                 }
                 else
                 {
@@ -532,8 +535,6 @@ namespace Lumina::Import::Mesh
 
                     Sphere.Center = FVector3(B.center[0], B.center[1], B.center[2]);
                     Sphere.Radius = B.radius;
-                    Cone.Axis     = FVector3(0.0f, 0.0f, 1.0f);
-                    Cone.Cutoff   = 1.0f;
                 }
                 Result.Spheres.push_back(Sphere);
                 Result.Cones.push_back(Cone);

@@ -26,9 +26,9 @@
 #include <cmath>
 #include <atomic>
 
-// entt is reached directly by 48+ files; keeping it here parses it once instead of per-TU.
-#include <entt/entt.hpp>
 #include <xxhash.h>
+
+// The ECS facade is reached by most world and component headers, so it is parsed once here.
 
 // Math types used nearly everywhere; headers also carry REFLECTION_PARSER stubs the reflector walks.
 #include "Core/Math/Vector/Vector.h"

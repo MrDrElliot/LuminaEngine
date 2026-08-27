@@ -1,4 +1,5 @@
 #include "RuntimePCH.h"
+#include "World/ECS/Registry.h"
 #include "Box3DPhysicsScene.h"
 
 #include <box3d/collision.h>
@@ -58,11 +59,11 @@ namespace Lumina::Physics
         }
     }
 
-    EBodyBuildStatus FBox3DPhysicsScene::TryBuildRigidBody(entt::registry& Registry, entt::entity Entity, FRigidBodyBuildResult& Out)
+    EBodyBuildStatus FBox3DPhysicsScene::TryBuildRigidBody(ECS::FRegistry& Registry, ECS::FEntity Entity, FRigidBodyBuildResult& Out)
     {
         LUMINA_PROFILE_SCOPE();
 
-        const SRigidBodyComponent* RigidBody = Registry.try_get<SRigidBodyComponent>(Entity);
+        const SRigidBodyComponent* RigidBody = Registry.TryGet<SRigidBodyComponent>(Entity);
         if (RigidBody == nullptr)
         {
             return EBodyBuildStatus::Error;
@@ -73,7 +74,7 @@ namespace Lumina::Physics
             return EBodyBuildStatus::AlreadyExists;
         }
 
-        const STransformComponent* Transform = Registry.try_get<STransformComponent>(Entity);
+        const STransformComponent* Transform = Registry.TryGet<STransformComponent>(Entity);
         if (Transform == nullptr)
         {
             return EBodyBuildStatus::Defer;
@@ -90,7 +91,7 @@ namespace Lumina::Physics
         const FVector3 Scale = Transform->GetScale();
         const float UniformScale = Transform->MaxScale();
 
-        if (const SBoxColliderComponent* BC = Registry.try_get<SBoxColliderComponent>(Entity))
+        if (const SBoxColliderComponent* BC = Registry.TryGet<SBoxColliderComponent>(Entity))
         {
             ColliderTranslationOffset = BC->TranslationOffset;
             ColliderRotationOffset = BC->RotationOffset;
@@ -100,12 +101,12 @@ namespace Lumina::Physics
             const b3HullData* Hull = GetOrCreateBoxHull(BC->HalfExtent * Scale);
             if (Hull == nullptr)
             {
-                LOG_ERROR("Failed to create BoxCollider shape for Entity: {}", entt::to_integral(Entity));
+                LOG_ERROR("Failed to create BoxCollider shape for Entity: {}", (Entity).Value);
                 return EBodyBuildStatus::Error;
             }
             Out.Shapes.push_back(MakeHullShape(Hull, FVector3(0.0f), FQuat::Identity()));
         }
-        else if (const SSphereColliderComponent* SC = Registry.try_get<SSphereColliderComponent>(Entity))
+        else if (const SSphereColliderComponent* SC = Registry.TryGet<SSphereColliderComponent>(Entity))
         {
             ColliderTranslationOffset = SC->TranslationOffset;
             bColliderIsTrigger = SC->bIsTrigger;
@@ -113,7 +114,7 @@ namespace Lumina::Physics
 
             Out.Shapes.push_back(MakeSphereShape(FVector3(0.0f), SC->Radius * UniformScale));
         }
-        else if (const SCapsuleColliderComponent* CC = Registry.try_get<SCapsuleColliderComponent>(Entity))
+        else if (const SCapsuleColliderComponent* CC = Registry.TryGet<SCapsuleColliderComponent>(Entity))
         {
             ColliderTranslationOffset = CC->TranslationOffset;
             ColliderRotationOffset = CC->RotationOffset;
@@ -122,7 +123,7 @@ namespace Lumina::Physics
 
             Out.Shapes.push_back(MakeCapsuleShape(FVector3(0.0f), FQuat::Identity(), CC->Radius * UniformScale, CC->HalfHeight * UniformScale));
         }
-        else if (const SCylinderColliderComponent* CyC = Registry.try_get<SCylinderColliderComponent>(Entity))
+        else if (const SCylinderColliderComponent* CyC = Registry.TryGet<SCylinderColliderComponent>(Entity))
         {
             ColliderTranslationOffset = CyC->TranslationOffset;
             ColliderRotationOffset = CyC->RotationOffset;
@@ -132,12 +133,12 @@ namespace Lumina::Physics
             const b3HullData* Hull = GetOrCreateCylinderHull(CyC->Radius * UniformScale, CyC->HalfHeight * UniformScale);
             if (Hull == nullptr)
             {
-                LOG_ERROR("Failed to create CylinderCollider shape for Entity: {}", entt::to_integral(Entity));
+                LOG_ERROR("Failed to create CylinderCollider shape for Entity: {}", (Entity).Value);
                 return EBodyBuildStatus::Error;
             }
             Out.Shapes.push_back(MakeHullShape(Hull, FVector3(0.0f), FQuat::Identity()));
         }
-        else if (const STaperedCapsuleColliderComponent* TCC = Registry.try_get<STaperedCapsuleColliderComponent>(Entity))
+        else if (const STaperedCapsuleColliderComponent* TCC = Registry.TryGet<STaperedCapsuleColliderComponent>(Entity))
         {
             ColliderTranslationOffset = TCC->TranslationOffset;
             ColliderRotationOffset = TCC->RotationOffset;
@@ -149,12 +150,12 @@ namespace Lumina::Physics
             const b3HullData* Hull = GetOrCreateTaperedCylinderHull(TCC->HalfHeight * UniformScale, TCC->TopRadius * UniformScale, TCC->BottomRadius * UniformScale);
             if (Hull == nullptr)
             {
-                LOG_ERROR("Failed to create TaperedCapsuleCollider shape for Entity: {}", entt::to_integral(Entity));
+                LOG_ERROR("Failed to create TaperedCapsuleCollider shape for Entity: {}", (Entity).Value);
                 return EBodyBuildStatus::Error;
             }
             Out.Shapes.push_back(MakeHullShape(Hull, FVector3(0.0f), FQuat::Identity()));
         }
-        else if (const STaperedCylinderColliderComponent* TCyC = Registry.try_get<STaperedCylinderColliderComponent>(Entity))
+        else if (const STaperedCylinderColliderComponent* TCyC = Registry.TryGet<STaperedCylinderColliderComponent>(Entity))
         {
             ColliderTranslationOffset = TCyC->TranslationOffset;
             ColliderRotationOffset = TCyC->RotationOffset;
@@ -164,12 +165,12 @@ namespace Lumina::Physics
             const b3HullData* Hull = GetOrCreateTaperedCylinderHull(TCyC->HalfHeight * UniformScale, TCyC->TopRadius * UniformScale, TCyC->BottomRadius * UniformScale);
             if (Hull == nullptr)
             {
-                LOG_ERROR("Failed to create TaperedCylinderCollider shape for Entity: {}", entt::to_integral(Entity));
+                LOG_ERROR("Failed to create TaperedCylinderCollider shape for Entity: {}", (Entity).Value);
                 return EBodyBuildStatus::Error;
             }
             Out.Shapes.push_back(MakeHullShape(Hull, FVector3(0.0f), FQuat::Identity()));
         }
-        else if (const SPlaneColliderComponent* PC = Registry.try_get<SPlaneColliderComponent>(Entity))
+        else if (const SPlaneColliderComponent* PC = Registry.TryGet<SPlaneColliderComponent>(Entity))
         {
             bColliderIsTrigger = PC->bIsTrigger;
             ResolvedMaterial = PC->PhysicsMaterial.Get();
@@ -180,13 +181,13 @@ namespace Lumina::Physics
             const b3HullData* Hull = GetOrCreateBoxHull(FVector3(Extent, PlaneThickness, Extent));
             if (Hull == nullptr)
             {
-                LOG_ERROR("Failed to create PlaneCollider shape for Entity: {}", entt::to_integral(Entity));
+                LOG_ERROR("Failed to create PlaneCollider shape for Entity: {}", (Entity).Value);
                 return EBodyBuildStatus::Error;
             }
             Out.Shapes.push_back(MakeHullShape(Hull, FVector3(0.0f, -PlaneThickness, 0.0f), FQuat::Identity()));
             bMustBeStatic = true;
         }
-        else if (const SCollisionShapeComponent* CSC = Registry.try_get<SCollisionShapeComponent>(Entity))
+        else if (const SCollisionShapeComponent* CSC = Registry.TryGet<SCollisionShapeComponent>(Entity))
         {
             ColliderTranslationOffset = CSC->TranslationOffset;
             ColliderRotationOffset = CSC->RotationOffset;
@@ -195,7 +196,7 @@ namespace Lumina::Physics
             const CCollisionShape* Asset = CSC->CollisionShape.Get();
             if (Asset == nullptr || !Asset->HasCollision())
             {
-                LOG_WARN("CollisionShape on Entity {} is missing or empty; no body was built.", entt::to_integral(Entity));
+                LOG_WARN("CollisionShape on Entity {} is missing or empty; no body was built.", (Entity).Value);
                 return EBodyBuildStatus::Error;
             }
 
@@ -203,24 +204,24 @@ namespace Lumina::Physics
 
             if (!BuildCollisionShapeAsset(*Asset, Scale, Out.Shapes))
             {
-                LOG_ERROR("Failed to build collision shape for Entity: {}", entt::to_integral(Entity));
+                LOG_ERROR("Failed to build collision shape for Entity: {}", (Entity).Value);
                 return EBodyBuildStatus::Error;
             }
 
             bMustBeStatic = Asset->IsConcave();
         }
-        else if (const SCompoundColliderComponent* CompC = Registry.try_get<SCompoundColliderComponent>(Entity))
+        else if (const SCompoundColliderComponent* CompC = Registry.TryGet<SCompoundColliderComponent>(Entity))
         {
             bColliderIsTrigger = CompC->bIsTrigger;
             ResolvedMaterial = CompC->PhysicsMaterial.Get();
 
             if (!BuildCompoundShapes(*CompC, *Transform, Out.Shapes))
             {
-                LOG_ERROR("Failed to create CompoundCollider shape for Entity: {}", entt::to_integral(Entity));
+                LOG_ERROR("Failed to create CompoundCollider shape for Entity: {}", (Entity).Value);
                 return EBodyBuildStatus::Error;
             }
         }
-        else if (const SMeshColliderComponent* MC = Registry.try_get<SMeshColliderComponent>(Entity))
+        else if (const SMeshColliderComponent* MC = Registry.TryGet<SMeshColliderComponent>(Entity))
         {
             ColliderTranslationOffset = MC->TranslationOffset;
             ColliderRotationOffset = MC->RotationOffset;
@@ -230,7 +231,7 @@ namespace Lumina::Physics
             CStaticMesh* Mesh = MC->Mesh.Get();
             if (Mesh == nullptr)
             {
-                if (const SStaticMeshComponent* SMC = Registry.try_get<SStaticMeshComponent>(Entity))
+                if (const SStaticMeshComponent* SMC = Registry.TryGet<SStaticMeshComponent>(Entity))
                 {
                     Mesh = SMC->StaticMesh.Get();
                 }
@@ -246,7 +247,7 @@ namespace Lumina::Physics
                 const b3HullData* Hull = GetOrCreateMeshHull(Mesh);
                 if (Hull == nullptr)
                 {
-                    LOG_ERROR("Failed to create convex MeshCollider shape for Entity: {}", entt::to_integral(Entity));
+                    LOG_ERROR("Failed to create convex MeshCollider shape for Entity: {}", (Entity).Value);
                     return EBodyBuildStatus::Error;
                 }
 
@@ -259,7 +260,7 @@ namespace Lumina::Physics
                 const b3MeshData* MeshData = GetOrCreateTriangleMesh(Mesh);
                 if (MeshData == nullptr)
                 {
-                    LOG_ERROR("Failed to create MeshCollider shape for Entity: {}", entt::to_integral(Entity));
+                    LOG_ERROR("Failed to create MeshCollider shape for Entity: {}", (Entity).Value);
                     return EBodyBuildStatus::Error;
                 }
 
@@ -271,19 +272,19 @@ namespace Lumina::Physics
                 bMustBeStatic = true;
             }
         }
-        else if (const SDynamicMeshColliderComponent* DMC = Registry.try_get<SDynamicMeshColliderComponent>(Entity))
+        else if (const SDynamicMeshColliderComponent* DMC = Registry.TryGet<SDynamicMeshColliderComponent>(Entity))
         {
             bColliderIsTrigger = DMC->bIsTrigger;
             ResolvedMaterial = DMC->PhysicsMaterial.Get();
 
-            const SDynamicMeshComponent* DM = Registry.try_get<SDynamicMeshComponent>(Entity);
+            const SDynamicMeshComponent* DM = Registry.TryGet<SDynamicMeshComponent>(Entity);
             const TSharedPtr<FDynamicMeshRenderData> MeshData = DM ? DM->LoadRenderData() : nullptr;
             if (!MeshData || MeshData->Resource.MeshletData.IsEmpty())
             {
                 if (MeshData && MeshData->MeshletHeaderSlot != 0)
                 {
                     LOG_ERROR("Entity {} needs the dynamic mesh CPU meshlet data, which was dropped after upload. "
-                              "Set bKeepCPUMeshletData on the SDynamicMeshComponent.", entt::to_integral(Entity));
+                              "Set bKeepCPUMeshletData on the SDynamicMeshComponent.", (Entity).Value);
                     return EBodyBuildStatus::Error;
                 }
                 return EBodyBuildStatus::Defer;
@@ -293,7 +294,7 @@ namespace Lumina::Physics
             TVector<int32> Indices;
             if (!GatherMeshResourceGeometry(MeshData->Resource, Scale, Positions, DMC->bConvex ? nullptr : &Indices))
             {
-                LOG_ERROR("Failed to create DynamicMeshCollider shape for Entity: {}", entt::to_integral(Entity));
+                LOG_ERROR("Failed to create DynamicMeshCollider shape for Entity: {}", (Entity).Value);
                 return EBodyBuildStatus::Error;
             }
 
@@ -332,12 +333,12 @@ namespace Lumina::Physics
                 bMustBeStatic = true;
             }
         }
-        else if (const STerrainColliderComponent* TC = Registry.try_get<STerrainColliderComponent>(Entity))
+        else if (const STerrainColliderComponent* TC = Registry.TryGet<STerrainColliderComponent>(Entity))
         {
             bColliderIsTrigger = TC->bIsTrigger;
             ResolvedMaterial = TC->PhysicsMaterial.Get();
 
-            const STerrainComponent* Terrain = Registry.try_get<STerrainComponent>(Entity);
+            const STerrainComponent* Terrain = Registry.TryGet<STerrainComponent>(Entity);
             if (Terrain == nullptr || Terrain->Heightmap.empty())
             {
                 return EBodyBuildStatus::Defer;
@@ -346,7 +347,7 @@ namespace Lumina::Physics
             b3HeightFieldData* Field = BuildTerrainHeightField(*Terrain);
             if (Field == nullptr)
             {
-                LOG_ERROR("Failed to create TerrainCollider shape for Entity: {}", entt::to_integral(Entity));
+                LOG_ERROR("Failed to create TerrainCollider shape for Entity: {}", (Entity).Value);
                 return EBodyBuildStatus::Error;
             }
             TrackOwnedHeightField(Field);
@@ -367,7 +368,7 @@ namespace Lumina::Physics
         EBodyType BodyType = RigidBody->BodyType;
         if (bMustBeStatic && BodyType == EBodyType::Dynamic)
         {
-            LOG_WARN("Collider on Entity {} is concave; forcing motion type to Static.", entt::to_integral(Entity));
+            LOG_WARN("Collider on Entity {} is concave; forcing motion type to Static.", (Entity).Value);
             BodyType = EBodyType::Static;
         }
 
@@ -445,7 +446,7 @@ namespace Lumina::Physics
             Out.ShapeDef.baseMaterial.restitution = RigidBody->RestitutionOverride;
         }
 
-        if (const SConveyorComponent* Conveyor = Registry.try_get<SConveyorComponent>(Entity))
+        if (const SConveyorComponent* Conveyor = Registry.TryGet<SConveyorComponent>(Entity))
         {
             Out.SurfaceLinearVelocity = Conveyor->SurfaceVelocity;
             Out.SurfaceAngularVelocity = Conveyor->AngularSurfaceVelocity;
@@ -469,7 +470,7 @@ namespace Lumina::Physics
         return EBodyBuildStatus::Success;
     }
 
-    uint32 FBox3DPhysicsScene::CommitRigidBody(entt::entity Entity, FRigidBodyBuildResult& Build)
+    uint32 FBox3DPhysicsScene::CommitRigidBody(ECS::FEntity Entity, FRigidBodyBuildResult& Build)
     {
         LUMINA_PROFILE_SCOPE();
 

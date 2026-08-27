@@ -1,11 +1,11 @@
 ﻿#include "RuntimePCH.h"
 #include "AudioSystem.h"
+#include "World/ECS/Registry.h"
 #include "Assets/AssetTypes/Audio/AudioStream.h"
 #include "Audio/AudioGlobals.h"
 #include "Audio/AudioSettings.h"
 #include "Core/Object/ObjectCore.h"
 #include "Physics/PhysicsScene.h"
-#include "World/Entity/EntityHandle.h"
 #include "World/Entity/Components/AudioSourceComponent.h"
 #include "World/Entity/Components/ProceduralAudioComponent.h"
 #include "SystemResources.h"
@@ -55,7 +55,7 @@ namespace Lumina
 
 		// Stop all sounds owned by audio source components in this world.
 		auto View = Context.CreateView<SAudioSourceComponent>();
-		View.each([](SAudioSourceComponent& Audio)
+		View.ForEach([](SAudioSourceComponent& Audio)
 		{
 			if (Audio.bPlaying && Audio.ActiveHandle.IsValid())
 			{
@@ -66,7 +66,7 @@ namespace Lumina
 		});
 
 		auto ProceduralView = Context.CreateView<SProceduralAudioComponent>();
-		ProceduralView.each([](SProceduralAudioComponent& Audio)
+		ProceduralView.ForEach([](SProceduralAudioComponent& Audio)
 		{
 			if (Audio.bPlaying && Audio.ActiveHandle.IsValid())
 			{
@@ -90,7 +90,7 @@ namespace Lumina
 		const CAudioSettings* Settings = GetDefault<CAudioSettings>();
 		const float DeltaTime = (float)SystemContext.GetDeltaTime();
 
-		auto&& XFormStorage = SystemContext.GetStorage<STransformComponent>();
+		auto XFormStorage = SystemContext.GetStorage<STransformComponent>();
 
 		FVector3 ListenerPosition(0.0f);
 		bool bHasListener = false;
@@ -98,10 +98,10 @@ namespace Lumina
 
 		{
 			auto ListenerView = SystemContext.CreateView<SAudioListenerComponent>();
-			ListenerView.each([&](FEntity Entity, SAudioListenerComponent& Listener)
+			ListenerView.ForEach([&](ECS::FEntity Entity, SAudioListenerComponent& Listener)
 			{
 				const uint32 Index = (uint32)Math::Clamp(Listener.ListenerIndex, 0, 3);
-				const STransformComponent& Transform = XFormStorage.get(Entity);
+				const STransformComponent& Transform = XFormStorage.Get(Entity);
 				const FVector3 Position = Transform.GetWorldLocation();
 
 				const FVector3 Velocity = ComputeVelocity(Position, Listener.LastPosition, Listener.bHasLastPosition, DeltaTime);
@@ -134,9 +134,9 @@ namespace Lumina
 
 		{
 			auto SourceView = SystemContext.CreateView<SAudioSourceComponent>();
-			SourceView.each([&](FEntity Entity, SAudioSourceComponent& Audio)
+			SourceView.ForEach([&](ECS::FEntity Entity, SAudioSourceComponent& Audio)
 			{
-				const STransformComponent& Transform = XFormStorage.get(Entity);
+				const STransformComponent& Transform = XFormStorage.Get(Entity);
 				const FVector3 Position = Transform.GetWorldLocation();
 
 				// The mixer may have retired the voice (one-shot ended, evicted by a higher priority).
@@ -260,7 +260,7 @@ namespace Lumina
 
 		{
 			auto ProceduralView = SystemContext.CreateView<SProceduralAudioComponent>();
-			ProceduralView.each([&](FEntity Entity, SProceduralAudioComponent& Audio)
+			ProceduralView.ForEach([&](ECS::FEntity Entity, SProceduralAudioComponent& Audio)
 			{
 				if (!Audio.bReady)
 				{
@@ -282,7 +282,7 @@ namespace Lumina
 				{
 					if (Audio.bSpatialized)
 					{
-						const STransformComponent& Transform = XFormStorage.get(Entity);
+						const STransformComponent& Transform = XFormStorage.Get(Entity);
 						Audio::Context().SetPosition(Audio.ActiveHandle, Transform.GetWorldLocation());
 					}
 

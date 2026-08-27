@@ -1,11 +1,13 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
 #include "Containers/Vector.h"
 #include "Core/Math/Math.h"
 #include "Core/Math/Transform.h"
 #include "Core/Object/ObjectHandleTyped.h"
-#include "World/Entity/Registry/EntityRegistry.h"
 #include "World/Scene/RenderScene/SceneRenderTypes.h"
 #include "FoliageComponent.generated.h"
 
@@ -194,5 +196,5 @@ namespace Lumina
      *  Doing only (1) bakes instances nothing ever draws. That was the painting bug: newly painted foliage
      *  stayed invisible until some unrelated change happened to force a scene sync. Always use this rather
      *  than calling MarkInstancesChanged() directly. */
-    RUNTIME_API void MarkFoliageChanged(CWorld& World, entt::entity Entity, SFoliageComponent& Foliage);
+    RUNTIME_API void MarkFoliageChanged(CWorld& World, ECS::FEntity Entity, SFoliageComponent& Foliage);
 }

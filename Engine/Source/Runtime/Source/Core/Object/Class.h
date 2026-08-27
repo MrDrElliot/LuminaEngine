@@ -17,6 +17,7 @@ namespace Lumina
 {
     class FProperty;
     class FNetArchive;
+    struct FComponentOps;
 }
 
 namespace Lumina
@@ -110,6 +111,10 @@ namespace Lumina
         RUNTIME_API virtual void AddProperty(FProperty* Property);
 
         RUNTIME_API FStructOps* GetStructOps() const { return StructOps.get(); }
+
+        /** The type-erased ECS operations for this struct, or null when it is not a reflected component. */
+        RUNTIME_API const FComponentOps* GetComponentOps() const { return ComponentOps; }
+        RUNTIME_API void SetComponentOps(const FComponentOps* InOps) { ComponentOps = InOps; }
 
         /** Lazy default-constructed instance for property-editor diff/reset. Null if not default-constructible. Never destructed. */
         RUNTIME_API virtual void* GetDefaultInstance();
@@ -240,6 +245,10 @@ namespace Lumina
 
         TVector<CStruct*> BaseChain;
         TUniquePtr<FStructOps> StructOps;
+
+        // Points at a function-local static owned by Meta::GetComponentOps, so this never owns it.
+        const FComponentOps* ComponentOps = nullptr;
+
         CStruct* SuperStruct = nullptr;
         bool bLinked = false;
 

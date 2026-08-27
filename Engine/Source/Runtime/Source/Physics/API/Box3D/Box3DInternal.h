@@ -1,5 +1,8 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #include <box3d/box3d.h>
 #include <box3d/collision.h>
 
@@ -16,15 +19,15 @@ namespace Lumina::Physics
     inline constexpr b3Vec3 UnitScale{ 1.0f, 1.0f, 1.0f };
 
     // Body user data carries the owning entity and the engine's stable body handle in one pointer-sized word.
-    FORCEINLINE void* PackBodyUserData(entt::entity Entity, uint32 Handle)
+    FORCEINLINE void* PackBodyUserData(ECS::FEntity Entity, uint32 Handle)
     {
-        const uint64 Packed = (uint64)entt::to_integral(Entity) | ((uint64)Handle << 32);
+        const uint64 Packed = (uint64)(Entity).Value | ((uint64)Handle << 32);
         return reinterpret_cast<void*>((uintptr_t)Packed);
     }
 
-    FORCEINLINE entt::entity UnpackEntity(void* UserData)
+    FORCEINLINE ECS::FEntity UnpackEntity(void* UserData)
     {
-        return (entt::entity)(uint32)((uint64)reinterpret_cast<uintptr_t>(UserData) & 0xFFFFFFFFu);
+        return (ECS::FEntity)(uint32)((uint64)reinterpret_cast<uintptr_t>(UserData) & 0xFFFFFFFFu);
     }
 
     FORCEINLINE uint32 UnpackHandle(void* UserData)
@@ -32,9 +35,9 @@ namespace Lumina::Physics
         return (uint32)((uint64)reinterpret_cast<uintptr_t>(UserData) >> 32);
     }
 
-    FORCEINLINE entt::entity EntityOfBody(b3BodyId Body)
+    FORCEINLINE ECS::FEntity EntityOfBody(b3BodyId Body)
     {
-        return b3Body_IsValid(Body) ? UnpackEntity(b3Body_GetUserData(Body)) : entt::null;
+        return b3Body_IsValid(Body) ? UnpackEntity(b3Body_GetUserData(Body)) : ECS::NullEntity;
     }
 
     FORCEINLINE uint32 HandleOfBody(b3BodyId Body)
@@ -42,9 +45,9 @@ namespace Lumina::Physics
         return b3Body_IsValid(Body) ? UnpackHandle(b3Body_GetUserData(Body)) : InvalidBodyHandle;
     }
 
-    FORCEINLINE entt::entity EntityOfShape(b3ShapeId Shape)
+    FORCEINLINE ECS::FEntity EntityOfShape(b3ShapeId Shape)
     {
-        return b3Shape_IsValid(Shape) ? EntityOfBody(b3Shape_GetBody(Shape)) : entt::null;
+        return b3Shape_IsValid(Shape) ? EntityOfBody(b3Shape_GetBody(Shape)) : ECS::NullEntity;
     }
 
     FORCEINLINE FPendingShape MakeSphereShape(const FVector3& Center, float Radius)

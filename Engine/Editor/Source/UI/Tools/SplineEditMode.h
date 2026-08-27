@@ -1,10 +1,11 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
 #define USE_IMGUI_API
 #include <imgui.h>
 
 #include "WorldEditorMode.h"
-#include "World/Entity/EntityHandle.h"
 
 namespace Lumina
 {
@@ -55,8 +56,8 @@ namespace Lumina
             LeaveTangent,
         };
 
-        /** The selected entity that has a spline, or entt::null. */
-        entt::entity FindSplineEntity(CWorld* World) const;
+        /** The selected entity that has a spline, or ECS::NullEntity. */
+        ECS::FEntity FindSplineEntity(CWorld* World) const;
 
         /** World-space position of a handle. */
         FVector3 GetHandleWorldPosition(const SSplineComponent& Spline, const FMatrix4& LocalToWorld, int32 PointIndex, EHandle Handle) const;
@@ -73,7 +74,7 @@ namespace Lumina
                         int32& OutPointIndex,
                         EHandle& OutHandle) const;
 
-        entt::entity ActiveEntity      = entt::null;
+        ECS::FEntity ActiveEntity      = ECS::NullEntity;
         int32        SelectedPoint     = INDEX_NONE;
         EHandle      SelectedHandle    = EHandle::Point;
 

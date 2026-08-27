@@ -1,4 +1,5 @@
 #include "SequencerEditMode.h"
+#include "World/ECS/Registry.h"
 
 #include "Assets/AssetTypes/Prefabs/Prefab.h"
 #include "Core/Object/Cast.h"
@@ -75,7 +76,7 @@ namespace Lumina
             return;
         }
 
-        BoundEntities.assign(Sequence->Bindings.size(), entt::null);
+        BoundEntities.assign(Sequence->Bindings.size(), ECS::NullEntity);
 
         for (int32 i = 0; i < (int32)Sequence->Bindings.size(); ++i)
         {
@@ -88,8 +89,8 @@ namespace Lumina
                     continue;
                 }
 
-                const entt::entity Spawned = Binding.SpawnPrefab->Instantiate(World);
-                if (Spawned != entt::null)
+                const ECS::FEntity Spawned = Binding.SpawnPrefab->Instantiate(World);
+                if (Spawned != ECS::NullEntity)
                 {
                     BoundEntities[i] = Spawned;
                     SpawnedEntities.push_back(Spawned);
@@ -99,9 +100,9 @@ namespace Lumina
 
             // Possess matches on the entity's name, which is what the binding stores.
             auto View = World->View<SNameComponent>();
-            for (entt::entity Entity : View)
+            for (ECS::FEntity Entity : View)
             {
-                if (View.get<SNameComponent>(Entity).Name == Binding.Name)
+                if (View.Get<SNameComponent>(Entity).Name == Binding.Name)
                 {
                     BoundEntities[i] = Entity;
                     break;
@@ -123,7 +124,7 @@ namespace Lumina
 
         if (World != nullptr)
         {
-            for (entt::entity Spawned : SpawnedEntities)
+            for (ECS::FEntity Spawned : SpawnedEntities)
             {
                 if (World->IsValidEntity(Spawned))
                 {
@@ -147,16 +148,16 @@ namespace Lumina
             return;
         }
 
-        for (entt::entity Entity : BoundEntities)
+        for (ECS::FEntity Entity : BoundEntities)
         {
             // Spawned entities are destroyed on exit, so there is nothing to put back for them.
-            if (Entity == entt::null || !World->IsValidEntity(Entity))
+            if (Entity == ECS::NullEntity || !World->IsValidEntity(Entity))
             {
                 continue;
             }
 
             bool bSpawned = false;
-            for (entt::entity Other : SpawnedEntities)
+            for (ECS::FEntity Other : SpawnedEntities)
             {
                 if (Other == Entity)
                 {
@@ -239,8 +240,8 @@ namespace Lumina
 
         for (int32 i = 0; i < (int32)BoundEntities.size(); ++i)
         {
-            const entt::entity Entity = BoundEntities[i];
-            if (Entity == entt::null || !World->IsValidEntity(Entity))
+            const ECS::FEntity Entity = BoundEntities[i];
+            if (Entity == ECS::NullEntity || !World->IsValidEntity(Entity))
             {
                 continue;
             }
@@ -269,8 +270,8 @@ namespace Lumina
 
         for (int32 i = 0; i < (int32)BoundEntities.size(); ++i)
         {
-            const entt::entity Entity = BoundEntities[i];
-            if (Entity == entt::null || !World->IsValidEntity(Entity) || AutoKeyWatch[i].Entity != Entity)
+            const ECS::FEntity Entity = BoundEntities[i];
+            if (Entity == ECS::NullEntity || !World->IsValidEntity(Entity) || AutoKeyWatch[i].Entity != Entity)
             {
                 continue;
             }
@@ -299,26 +300,26 @@ namespace Lumina
         RefreshAutoKeyWatch(World);
     }
 
-    entt::entity FSequencerEditMode::FindSelectedEntity(CWorld* World) const
+    ECS::FEntity FSequencerEditMode::FindSelectedEntity(CWorld* World) const
     {
         if (World == nullptr)
         {
-            return entt::null;
+            return ECS::NullEntity;
         }
 
         auto View = World->View<FSelectedInEditorComponent>();
-        for (entt::entity Entity : View)
+        for (ECS::FEntity Entity : View)
         {
             return Entity;
         }
 
-        return entt::null;
+        return ECS::NullEntity;
     }
 
     int32 FSequencerEditMode::AddBindingFromSelection(CWorld* World)
     {
-        const entt::entity Selected = FindSelectedEntity(World);
-        if (Selected == entt::null || !Sequence.IsValid())
+        const ECS::FEntity Selected = FindSelectedEntity(World);
+        if (Selected == ECS::NullEntity || !Sequence.IsValid())
         {
             ImGuiX::Notifications::NotifyWarning("Select an entity in the world to bind it.");
             return INDEX_NONE;
@@ -384,8 +385,8 @@ namespace Lumina
             return;
         }
 
-        const entt::entity Entity = BoundEntities[BindingIndex];
-        if (Entity == entt::null || !World->IsValidEntity(Entity))
+        const ECS::FEntity Entity = BoundEntities[BindingIndex];
+        if (Entity == ECS::NullEntity || !World->IsValidEntity(Entity))
         {
             ImGuiX::Notifications::NotifyWarning("That binding did not resolve to an entity in this world.");
             return;
@@ -615,8 +616,8 @@ namespace Lumina
         // A binding with no camera would produce a cut that silently does nothing at runtime.
         if (SelectedBinding < (int32)BoundEntities.size())
         {
-            const entt::entity Entity = BoundEntities[SelectedBinding];
-            if (Entity != entt::null && World->IsValidEntity(Entity)
+            const ECS::FEntity Entity = BoundEntities[SelectedBinding];
+            if (Entity != ECS::NullEntity && World->IsValidEntity(Entity)
                 && World->TryGetComponent<SCameraComponent>(Entity) == nullptr)
             {
                 ImGuiX::Notifications::NotifyWarning("'{0}' has no camera component.",

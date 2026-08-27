@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "RagdollSystem.h"
+#include "World/ECS/Registry.h"
 #include "Physics/PhysicsScene.h"
 #include "Core/Math/Math.h"
 #include "Core/Math/Transform.h"
@@ -40,15 +41,15 @@ namespace Lumina
 
         if (Stage == EUpdateStage::PrePhysics)
         {
-            for (entt::entity Entity : View)
+            for (ECS::FEntity Entity : View)
             {
-                SRagdollComponent& Ragdoll = View.get<SRagdollComponent>(Entity);
+                SRagdollComponent& Ragdoll = View.Get<SRagdollComponent>(Entity);
 
                 // Inactive to Simulated, so build the ragdoll from the current animated pose.
                 if (Ragdoll.State == ERagdollState::Simulated && Ragdoll.RealizedState != ERagdollState::Simulated)
                 {
-                    const SSkeletalMeshComponent& Mesh = View.get<SSkeletalMeshComponent>(Entity);
-                    const STransformComponent& Transform = View.get<STransformComponent>(Entity);
+                    const SSkeletalMeshComponent& Mesh = View.Get<SSkeletalMeshComponent>(Entity);
+                    const STransformComponent& Transform = View.Get<STransformComponent>(Entity);
 
                     CSkeleton* SkeletonAsset = ResolveSkeletonAsset(Mesh);
                     FSkeletonResource* Skeleton = SkeletonAsset ? SkeletonAsset->GetSkeletonResource() : nullptr;
@@ -97,16 +98,16 @@ namespace Lumina
         }
         else if (Stage == EUpdateStage::PostPhysics)
         {
-            for (entt::entity Entity : View)
+            for (ECS::FEntity Entity : View)
             {
-                SRagdollComponent& Ragdoll = View.get<SRagdollComponent>(Entity);
+                SRagdollComponent& Ragdoll = View.Get<SRagdollComponent>(Entity);
                 if (Ragdoll.RealizedState != ERagdollState::Simulated || !Ragdoll.Ragdoll)
                 {
                     continue;
                 }
 
-                SSkeletalMeshComponent& Mesh = View.get<SSkeletalMeshComponent>(Entity);
-                const STransformComponent& Transform = View.get<STransformComponent>(Entity);
+                SSkeletalMeshComponent& Mesh = View.Get<SSkeletalMeshComponent>(Entity);
+                const STransformComponent& Transform = View.Get<STransformComponent>(Entity);
 
                 CSkeleton* SkeletonAsset = ResolveSkeletonAsset(Mesh);
                 FSkeletonResource* Skeleton = SkeletonAsset ? SkeletonAsset->GetSkeletonResource() : nullptr;

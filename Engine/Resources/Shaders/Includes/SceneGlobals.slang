@@ -31,7 +31,7 @@ struct FSceneRoot
     // Indexed by retained slot, and the cull reads only SkinnedBoundsBase out of it.
     FSkinnedFrameData*   SkinnedFrameDataPtr;
     // Same index space as SkinnedMeshletBoundsPtr, so one base addresses both.
-    FSkinnedMeshletCone* SkinnedMeshletConesPtr;
+    FMeshletCone*        SkinnedMeshletConesPtr;
     uint  BRDFLutIndex;          // bindless 2D SRV
     uint  SkyIrradianceIndex;    // bindless cube SRV
     // [31:24] = prefilter cube mip count (see SamplePrefilter), [23:0] = bindless cube SRV index.
@@ -94,7 +94,7 @@ FMeshletDraw*       MeshletDrawList()       { return GetSceneRoot().MeshletDrawL
 FPreSkinnedVertex*  PreSkinnedVertices()    { return GetSceneRoot().PreSkinnedVerticesPtr; }
 FMeshletSphere*     SkinnedMeshletBounds()  { return GetSceneRoot().SkinnedMeshletBoundsPtr; }
 FSkinnedFrameData*  SkinnedFrameData()      { return GetSceneRoot().SkinnedFrameDataPtr; }
-FSkinnedMeshletCone* SkinnedMeshletCones() { return GetSceneRoot().SkinnedMeshletConesPtr; }
+FMeshletCone*       SkinnedMeshletCones()   { return GetSceneRoot().SkinnedMeshletConesPtr; }
 FWidgetInstance*    Widgets()               { return GetSceneRoot().WidgetsPtr; }
 FGPUSpline*         Splines()               { return GetSceneRoot().SplinesPtr; }
 FGPUSplinePoint*    SplinePoints()          { return GetSceneRoot().SplinePointsPtr; }

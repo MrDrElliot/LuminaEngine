@@ -173,8 +173,8 @@ namespace Lumina::DotNet
         FString         TypeName;
         EUpdateStage    Stage = EUpdateStage::PrePhysics;
         int32           Priority = 128;
-        TVector<uint32> Writes;   // entt::type_hash ids of written components (empty => exclusive system)
-        TVector<uint32> Reads;    // entt::type_hash ids of read components
+        TVector<uint32> Writes;   // Component type ids written (empty => exclusive system)
+        TVector<uint32> Reads;    // Component type ids read
     };
 
     RUNTIME_API void GatherManagedSystemDescs(TVector<FManagedSystemDesc>& Out);

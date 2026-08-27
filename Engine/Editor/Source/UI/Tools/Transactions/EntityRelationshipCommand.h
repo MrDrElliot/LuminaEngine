@@ -1,10 +1,12 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #include "Containers/Vector.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "EditorTransaction.h"
 #include "World/Entity/Components/RelationshipComponent.h"
-#include "World/Entity/Registry/EntityRegistry.h"
 
 namespace Lumina
 {
@@ -16,7 +18,7 @@ namespace Lumina
     public:
 
         // Captures the before-image immediately, matching FEcsRegistrySnapshotCommand's contract.
-        FEntityRelationshipCommand(CWorld* InWorld, TVector<entt::entity> InEntities);
+        FEntityRelationshipCommand(CWorld* InWorld, TVector<ECS::FEntity> InEntities);
 
         void Undo() override;
         void Redo() override;
@@ -27,8 +29,8 @@ namespace Lumina
         bool IsNoOp() const override;
 
         // Every entity whose links an edit on Seeds can rewrite, siblings of both parents included.
-        static void CollectAffected(FEntityRegistry& Registry, const TVector<entt::entity>& Seeds,
-                                    entt::entity NewParent, TVector<entt::entity>& Out);
+        static void CollectAffected(ECS::FRegistry& Registry, const TVector<ECS::FEntity>& Seeds,
+                                    ECS::FEntity NewParent, TVector<ECS::FEntity>& Out);
 
     private:
 
@@ -44,7 +46,7 @@ namespace Lumina
         // Weak, since a strong ref would keep a torn-down world alive and stop a stale undo from no-opping.
         TWeakObjectPtr<CWorld>  World;
 
-        TVector<entt::entity>   Entities;
+        TVector<ECS::FEntity>   Entities;
         TVector<FRecord>        Before;
         TVector<FRecord>        After;
     };

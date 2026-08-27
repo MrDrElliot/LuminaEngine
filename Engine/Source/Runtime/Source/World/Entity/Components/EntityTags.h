@@ -15,7 +15,7 @@ namespace Lumina
     // Present = this entity's Lua script is suppressed (does not tick) while the entity itself
     // stays active. Toggled from the outliner's per-row script button; the script system excludes it.
     REFLECT(Component, HideInComponentList)
-    struct SScriptDisabledTag
+    struct RUNTIME_API SScriptDisabledTag
     {
         GENERATED_BODY()
     };

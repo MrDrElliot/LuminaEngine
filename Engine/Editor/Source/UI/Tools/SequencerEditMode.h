@@ -1,5 +1,8 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #include "Assets/AssetTypes/Sequence/Sequence.h"
 #include "Containers/Vector.h"
 #include "Containers/Function.h"
@@ -68,7 +71,7 @@ namespace Lumina
         void ApplyRestoreState(CWorld* World);
 
         int32 AddBindingFromSelection(CWorld* World);
-        entt::entity FindSelectedEntity(CWorld* World) const;
+        ECS::FEntity FindSelectedEntity(CWorld* World) const;
 
         CSequenceTrack_Transform* FindOrCreateTransformTrack(int32 BindingIndex);
         void KeyTransform(CWorld* World, int32 BindingIndex);
@@ -97,12 +100,12 @@ namespace Lumina
         TObjectPtr<CSequence>    Sequence;
 
         // Parallel to Sequence->Bindings.
-        TVector<entt::entity>    BoundEntities;
-        TVector<entt::entity>    SpawnedEntities;
+        TVector<ECS::FEntity>    BoundEntities;
+        TVector<ECS::FEntity>    SpawnedEntities;
 
         struct FRestoreEntry
         {
-            entt::entity Entity = entt::null;
+            ECS::FEntity Entity = ECS::NullEntity;
             FVector3     Location;
             FVector3     Rotation;
             FVector3     Scale = FVector3(1.0f);

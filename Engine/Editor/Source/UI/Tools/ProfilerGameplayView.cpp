@@ -44,18 +44,25 @@ namespace Lumina
                 return ImVec4(0.47f, 0.47f, 0.50f, 1.0f);
             }
 
-            // Comma-joined display names for a set of access ids (entt::type_hash), resolved via the runtime registry.
+            // Comma-joined display names for a set of access ids (component type ids), resolved via the runtime registry.
             FString AccessList(const TVector<uint32>& Ids)
             {
                 FString Out;
                 for (uint32 Id : Ids)
                 {
-                    const char* Name = GetAccessTypeName(Id);
+                    const FName Name = GetAccessTypeName(Id);
                     if (!Out.empty())
                     {
                         Out += ", ";
                     }
-                    Out += Name ? Name : "<unknown>";
+                    if (Name.IsNone())
+                    {
+                        Out += "<unknown>";
+                    }
+                    else
+                    {
+                        Name.AppendString(Out);
+                    }
                 }
                 return Out;
             }

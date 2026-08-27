@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "BuoyancySystem.h"
+#include "World/ECS/Registry.h"
 #include "SystemContext.h"
 #include "SystemResources.h"
 #include "World/Entity/Components/BuoyancyComponent.h"
@@ -84,7 +85,7 @@ namespace Lumina
         struct FWaterPlane { const SWaterComponent* W; float Cx; float Cz; float HalfX; float HalfZ; float SurfaceY; };
         FWaterPlane Planes[16];
         int NumPlanes = 0;
-        Context.CreateView<SWaterComponent, STransformComponent>().each(
+        Context.CreateView<SWaterComponent, STransformComponent>().ForEach(
             [&](const SWaterComponent& W, const STransformComponent& T)
             {
                 if (!W.bBuoyancy || NumPlanes >= 16)
@@ -100,8 +101,8 @@ namespace Lumina
             return;
         }
 
-        Context.CreateView<SBuoyancyComponent, SRigidBodyComponent>().each(
-            [&](entt::entity Entity, const SBuoyancyComponent& B, const SRigidBodyComponent& RB)
+        Context.CreateView<SBuoyancyComponent, SRigidBodyComponent>().ForEach(
+            [&](ECS::FEntity Entity, const SBuoyancyComponent& B, const SRigidBodyComponent& RB)
             {
                 if (RB.BodyID == 0xFFFFFFFFu)
                 {

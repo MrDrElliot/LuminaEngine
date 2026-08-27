@@ -1,8 +1,8 @@
 #include "DotNetExport.h"
+#include "World/ECS/Registry.h"
 #include "Containers/Vector.h"
 #include "Memory/Memory.h"
 #include "World/World.h"
-#include "World/Entity/Registry/EntityRegistry.h"
 #include "World/Entity/Components/Component.h"
 #include "World/Entity/Systems/SystemContext.h"
 
@@ -12,7 +12,7 @@ using namespace Lumina;
 
 namespace
 {
-    FEntityRegistry* LmViewRegistryFromWorld(uint64 World)
+    ECS::FRegistry* LmViewRegistryFromWorld(uint64 World)
     {
         CWorld* W = DotNet::AsWorld(World);
         return W ? &ECS::GetWorldRegistry(*W) : nullptr;
@@ -21,17 +21,17 @@ namespace
     // Snapshotting rather than holding a live iterator is what makes the view mutation-safe.
     struct FViewState
     {
-        TVector<entt::entity>               Entities;
+        TVector<ECS::FEntity>               Entities;
         size_t                              Cursor = 0;
-        TVector<entt::basic_sparse_set<>*>  IncludeStorages;
-        TVector<entt::basic_sparse_set<>*>  ExcludeStorages;
+        TVector<ECS::FSparseSet*>  IncludeStorages;
+        TVector<ECS::FSparseSet*>  ExcludeStorages;
     };
 }
 
 // The runtime view is consumed here, and only the snapshot and storages live on.
 LUMINA_DOTNET_EXPORT(void*, ViewBegin)(uint64 World, const void* const* IncludeOps, int NInc, const void* const* ExcludeOps, int NExc)
 {
-    FEntityRegistry* Registry = LmViewRegistryFromWorld(World);
+    ECS::FRegistry* Registry = LmViewRegistryFromWorld(World);
     if (Registry == nullptr || IncludeOps == nullptr || NInc <= 0)
     {
         return nullptr;
@@ -40,11 +40,11 @@ LUMINA_DOTNET_EXPORT(void*, ViewBegin)(uint64 World, const void* const* IncludeO
     FViewState* State = new (Memory::Malloc(sizeof(FViewState), alignof(FViewState))) FViewState();
     State->IncludeStorages.reserve(NInc);
 
-    entt::runtime_view View;
+    ECS::FRuntimeView View;
     for (int i = 0; i < NInc; ++i)
     {
         const FComponentOps* Ops = static_cast<const FComponentOps*>(IncludeOps[i]);
-        entt::basic_sparse_set<>* Storage = Ops ? Registry->storage(static_cast<entt::id_type>(Ops->TypeId)) : nullptr;
+        ECS::FSparseSet* Storage = Ops ? Registry->FindStorage(static_cast<uint32>(Ops->TypeId)) : nullptr;
         if (Storage == nullptr)
         {
             // A never-emplaced (or unknown) include type -> the view is empty (no snapshot).
@@ -52,7 +52,7 @@ LUMINA_DOTNET_EXPORT(void*, ViewBegin)(uint64 World, const void* const* IncludeO
             return State;
         }
         State->IncludeStorages.push_back(Storage);
-        View.iterate(*Storage);
+        View.AddInclude(*Storage);
     }
 
     for (int i = 0; i < NExc; ++i)
@@ -60,16 +60,16 @@ LUMINA_DOTNET_EXPORT(void*, ViewBegin)(uint64 World, const void* const* IncludeO
         const FComponentOps* Ops = ExcludeOps ? static_cast<const FComponentOps*>(ExcludeOps[i]) : nullptr;
         if (Ops != nullptr)
         {
-            if (entt::basic_sparse_set<>* Storage = Registry->storage(static_cast<entt::id_type>(Ops->TypeId)))
+            if (ECS::FSparseSet* Storage = Registry->FindStorage(static_cast<uint32>(Ops->TypeId)))
             {
                 State->ExcludeStorages.push_back(Storage);
-                View.exclude(*Storage);
+                View.AddExclude(*Storage);
             }
         }
     }
 
     // Additions during iteration are intentionally not visited, and removals are re-validated per chunk.
-    for (const entt::entity Entity : View)
+    for (const ECS::FEntity Entity : View)
     {
         State->Entities.push_back(Entity);
     }
@@ -92,27 +92,27 @@ LUMINA_DOTNET_EXPORT(int, ViewNextChunk)(void* StatePtr, uint32* OutEntities, vo
     int Count = 0;
     while (Count < MaxCount && State->Cursor < Total)
     {
-        const entt::entity Entity = State->Entities[State->Cursor++];
+        const ECS::FEntity Entity = State->Entities[State->Cursor++];
 
         bool bMatches = true;
         for (int k = 0; k < N && bMatches; ++k)
         {
-            if (!State->IncludeStorages[k]->contains(Entity)) { bMatches = false; }
+            if (!State->IncludeStorages[k]->Contains(Entity)) { bMatches = false; }
         }
         for (size_t e = 0; e < State->ExcludeStorages.size() && bMatches; ++e)
         {
-            if (State->ExcludeStorages[e]->contains(Entity)) { bMatches = false; }
+            if (State->ExcludeStorages[e]->Contains(Entity)) { bMatches = false; }
         }
         if (!bMatches)
         {
             continue; // removed from an include / added to an exclude since the snapshot -> skip
         }
 
-        OutEntities[Count] = static_cast<uint32>(entt::to_integral(Entity));
+        OutEntities[Count] = static_cast<uint32>((Entity).Value);
         void** Row = OutPtrs + (size_t)Count * (size_t)NInclude;
         for (int k = 0; k < K; ++k)
         {
-            Row[k] = State->IncludeStorages[k]->value(Entity);
+            Row[k] = State->IncludeStorages[k]->GetRaw(Entity);
         }
         ++Count;
     }
@@ -138,6 +138,6 @@ LUMINA_DOTNET_EXPORT(uint64, SystemContext_GetWorld)(const FSystemContext* Ctx)
     {
         return 0;
     }
-    CWorld* W = Ctx->GetRegistry().ctx().get<CWorld*>();
+    CWorld* W = Ctx->GetRegistry().Ctx().Get<CWorld*>();
     return reinterpret_cast<uint64>(W);
 }

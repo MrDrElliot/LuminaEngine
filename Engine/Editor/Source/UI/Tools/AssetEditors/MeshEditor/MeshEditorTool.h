@@ -1,5 +1,8 @@
 ﻿#pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #define USE_IMGUI_API
 #include <imgui.h>
 
@@ -51,8 +54,8 @@ namespace Lumina
         int32 PreviewLODIndex = -1;
 
         ImGuizmo::OPERATION GuizmoOp = ImGuizmo::TRANSLATE;
-        entt::entity DirectionalLightEntity = entt::null;
-        entt::entity MeshEntity = entt::null;
+        ECS::FEntity DirectionalLightEntity = ECS::NullEntity;
+        ECS::FEntity MeshEntity = ECS::NullEntity;
 
         // Unwrapped-UV inspector; owns its own view state (zoom/pan/LOD) across frames.
         FMeshUVViewer UVViewer;

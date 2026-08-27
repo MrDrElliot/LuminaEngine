@@ -1,5 +1,8 @@
 ﻿#pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #include "Animation/TaskSystem/AnimTask.h"
 #include "Containers/HashTable.h"
 #include "Containers/Vector.h"
@@ -109,7 +112,7 @@ namespace Lumina
 
         // Resolves the debug target (dropdown selection, or the editor preview when unset) to a
         // live world + entity. False when neither is valid.
-        bool ResolveDebugTarget(CWorld*& OutWorld, entt::entity& OutEntity) const;
+        bool ResolveDebugTarget(CWorld*& OutWorld, ECS::FEntity& OutEntity) const;
 
         // One level of the graph navigation stack: the graph being drawn and the
         // label shown for it in the breadcrumb bar.
@@ -181,7 +184,7 @@ namespace Lumina
         // Which instance the debug overlay reads from. Null world = the editor
         // preview (MeshEntity); otherwise a live entity in another world.
         TWeakObjectPtr<CWorld>                  DebugTargetWorld;
-        entt::entity                            DebugTargetEntity = entt::null;
+        ECS::FEntity                            DebugTargetEntity = ECS::NullEntity;
 
         // Captured per compile: maps editor pins to VM registers and State nodes to runtime
         // slots. Refreshed every frame by auto-compile, so pin pointers stay valid.
@@ -216,7 +219,7 @@ namespace Lumina
         float                                   TaskGraphZoom = 1.0f;
         bool                                    bTaskGraphShowSkipped = true;
 
-        entt::entity                            MeshEntity = entt::null;
-        entt::entity                            DirectionalLightEntity = entt::null;
+        ECS::FEntity                            MeshEntity = ECS::NullEntity;
+        ECS::FEntity                            DirectionalLightEntity = ECS::NullEntity;
     };
 }

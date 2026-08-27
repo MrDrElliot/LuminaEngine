@@ -1,8 +1,10 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #include "Containers/Vector.h"
 #include "Containers/Name.h"
-#include "World/Entity/Registry/EntityRegistry.h"
 
 namespace Lumina
 {
@@ -50,6 +52,6 @@ namespace Lumina
                                                   bool bLooping, float Weight, TVector<FAnimNotifyEvent>& Out);
 
         // Runs the typed notify on every event that carries one. Serial pass only: these call user code.
-        RUNTIME_API void DispatchTypedNotifies(const TVector<FAnimNotifyEvent>& Events, FEntityRegistry& Registry, entt::entity Entity);
+        RUNTIME_API void DispatchTypedNotifies(const TVector<FAnimNotifyEvent>& Events, ECS::FRegistry& Registry, ECS::FEntity Entity);
     }
 }

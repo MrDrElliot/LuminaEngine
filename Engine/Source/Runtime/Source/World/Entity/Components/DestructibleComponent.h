@@ -1,5 +1,8 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "DestructibleComponent.generated.h"
@@ -56,6 +59,6 @@ namespace Lumina
         GENERATED_BODY()
 
         /** Entity id of the destructible this fragment originated from. */
-        uint32 Source = entt::null;
+        uint32 Source = ECS::NullEntity.Value;
     };
 }

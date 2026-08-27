@@ -1,4 +1,5 @@
 #include "RuntimePCH.h"
+#include "World/ECS/Registry.h"
 #include "Box3DPhysicsScene.h"
 
 #include <box3d/collision.h>
@@ -21,7 +22,7 @@ namespace Lumina::Physics
             TSpan<const uint32>     IgnoreBodies;
             TVector<SRayResult>*    Hits = nullptr;
             SRayResult*             Closest = nullptr;
-            TSpan<entt::entity>     OutEntities;
+            TSpan<ECS::FEntity>     OutEntities;
             int32                   EntityCount = 0;
             FVector3                Start;
             FVector3                End;
@@ -57,10 +58,10 @@ namespace Lumina::Physics
             const b3BodyId BodyId = b3Shape_GetBody(ShapeId);
             void* UserData = b3Body_IsValid(BodyId) ? b3Body_GetUserData(BodyId) : nullptr;
 
-            const entt::entity Entity = UnpackEntity(UserData);
+            const ECS::FEntity Entity = UnpackEntity(UserData);
 
             Result.BodyID = (int64)UnpackHandle(UserData);
-            Result.Entity = entt::to_integral(Entity);
+            Result.Entity = (Entity).Value;
             Result.Start = Start;
             Result.End = End;
             Result.Location = Box3DUtils::FromB3Vec3(Point);
@@ -120,7 +121,7 @@ namespace Lumina::Physics
                 return true;
             }
 
-            const entt::entity Entity = UnpackEntity(UserData);
+            const ECS::FEntity Entity = UnpackEntity(UserData);
 
             // Several shapes can share one body, so the last few entities are checked before appending.
             const int32 Written = Query.EntityCount;
@@ -144,15 +145,15 @@ namespace Lumina::Physics
         }
     }
 
-    int32 FBox3DPhysicsScene::ResolveHitBoneIndex(entt::entity Entity, b3BodyId BodyId) const
+    int32 FBox3DPhysicsScene::ResolveHitBoneIndex(ECS::FEntity Entity, b3BodyId BodyId) const
     {
-        if (Entity == entt::null)
+        if (Entity == ECS::NullEntity)
         {
             return INDEX_NONE;
         }
 
-        entt::registry& Registry = ECS::GetWorldRegistry(*World);
-        const SRagdollComponent* RagdollComp = Registry.try_get<SRagdollComponent>(Entity);
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
+        const SRagdollComponent* RagdollComp = Registry.TryGet<SRagdollComponent>(Entity);
         if (RagdollComp == nullptr || !RagdollComp->Ragdoll)
         {
             return INDEX_NONE;
@@ -316,7 +317,7 @@ namespace Lumina::Physics
         return Result;
     }
 
-    int32 FBox3DPhysicsScene::OverlapSphere(const FVector3& Center, float Radius, TSpan<const uint32> IgnoreBodies, TSpan<entt::entity> OutEntities)
+    int32 FBox3DPhysicsScene::OverlapSphere(const FVector3& Center, float Radius, TSpan<const uint32> IgnoreBodies, TSpan<ECS::FEntity> OutEntities)
     {
         LUMINA_PROFILE_SCOPE();
 
@@ -333,7 +334,7 @@ namespace Lumina::Physics
         return Query.EntityCount;
     }
 
-    int32 FBox3DPhysicsScene::OverlapBox(const FVector3& Center, const FVector3& HalfExtents, const FQuat& Rotation, TSpan<const uint32> IgnoreBodies, TSpan<entt::entity> OutEntities)
+    int32 FBox3DPhysicsScene::OverlapBox(const FVector3& Center, const FVector3& HalfExtents, const FQuat& Rotation, TSpan<const uint32> IgnoreBodies, TSpan<ECS::FEntity> OutEntities)
     {
         LUMINA_PROFILE_SCOPE();
 
@@ -356,7 +357,7 @@ namespace Lumina::Physics
         return Query.EntityCount;
     }
 
-    int32 FBox3DPhysicsScene::CollidePoint(const FVector3& Point, TSpan<const uint32> IgnoreBodies, TSpan<entt::entity> OutEntities)
+    int32 FBox3DPhysicsScene::CollidePoint(const FVector3& Point, TSpan<const uint32> IgnoreBodies, TSpan<ECS::FEntity> OutEntities)
     {
         LUMINA_PROFILE_SCOPE();
 

@@ -518,6 +518,23 @@ public sealed class MsvcToolchain : IToolchain
         return Action;
     }
 
+    private static IEnumerable<string> CollectNatvisFiles(BuildTarget Target)
+    {
+        HashSet<string> Seen = new(StringComparer.OrdinalIgnoreCase);
+
+        foreach (BuildModule Candidate in Target.Modules)
+        {
+            foreach (FileItem Resource in Candidate.Sources.ResourceFiles)
+            {
+                if (Resource.Extension.Equals(".natvis", StringComparison.OrdinalIgnoreCase)
+                    && Seen.Add(Resource.Location))
+                {
+                    yield return Resource.Location;
+                }
+            }
+        }
+    }
+
     private BuildAction CreateBinaryLinkAction(
         BuildTarget Target,
         BuildModule Module,
@@ -553,6 +570,12 @@ public sealed class MsvcToolchain : IToolchain
         {
             Arguments.Add("/DEBUG");
             Arguments.Add($"/PDB:{PathUtils.Quote(Path.ChangeExtension(Module.OutputFile, ".pdb"))}");
+
+            // Embedded in the PDB, so any debugger that loads it gets the visualizers with no solution setup.
+            foreach (string NatvisFile in CollectNatvisFiles(Target))
+            {
+                Arguments.Add($"/NATVIS:{PathUtils.Quote(NatvisFile)}");
+            }
         }
 
         if (Target.Info.Configuration == BuildConfiguration.Shipping)
@@ -609,6 +632,15 @@ public sealed class MsvcToolchain : IToolchain
         };
 
         Action.PrerequisiteItems.AddRange(ObjectFiles);
+
+        // Editing a visualizer has to relink, because the linker bakes it into the PDB.
+        if (Target.Rules.bDebugSymbols)
+        {
+            foreach (string NatvisFile in CollectNatvisFiles(Target))
+            {
+                Action.PrerequisiteItems.Add(FileItem.Get(NatvisFile));
+            }
+        }
 
         // The import libraries this binary links are inputs; a dependency relink must relink us.
         foreach (string Library in Module.LinkLibraries.Where(Path.IsPathRooted))

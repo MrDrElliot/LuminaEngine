@@ -1,31 +1,33 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #include <new>
 
+#include "Containers/Function.h"
 #include "Core/Delegates/ScriptDelegate.h"
 #include "Core/Engine/Engine.h"
-#include "Core/Engine/EngineMetaContext.h"
 #include "Core/Object/Class.h"
 #include "Core/Serialization/Archiver.h"
 #include "Memory/Memory.h"
 #include "Traits/ComponentTraits.h"
-#include "World/Entity/Traits.h"
 #include "World/Entity/Systems/SystemAccess.h"
 
 namespace Lumina
 {
     // A managed listener bound to a registry signal. Heap-owned by the bridge; the listener's address is
-    // both the entt connection payload and the disconnect key, so one allocation is one subscription.
+    // both the signal payload and the disconnect key, so one allocation is one subscription.
     struct FManagedSignalListener
     {
         // Script binds here, and destroying this listener is what releases those binds.
         TScriptDelegate<uint32> Signal;
 
-        entt::connection        Connection;   // the live sink connection; release() disconnects (type-erased).
+        ECS::FSignalConnection        Connection;   // the live sink connection; release() disconnects (type-erased).
     };
 
-    // entt connects a free function whose first parameter is the payload instance; forward to managed.
-    inline void ManagedSignalTrampoline(FManagedSignalListener& Listener, entt::registry&, entt::entity Entity)
+    // A signal binds a free function whose first parameter is the payload instance; forward to managed.
+    inline void ManagedSignalTrampoline(FManagedSignalListener& Listener, ECS::FRegistry&, ECS::FEntity Entity)
     {
         Listener.Signal.Broadcast(static_cast<uint32>(Entity));
     }
@@ -33,120 +35,66 @@ namespace Lumina
     // Signal kinds shared with the C# Registry.On* API.
     enum class EComponentSignal : int32 { Construct = 0, Destroy = 1, Update = 2 };
 
-    // Direct per-component-type functions for the C# bridge's registry ops, bypassing entt::meta's
-    // type-erased trampoline. Resolved once per type via FindComponentOps, then called directly.
+    // Every type-erased operation the engine performs on one component type, resolved once via a Find helper.
     struct FComponentOps
     {
-        void* (*Get)(entt::registry&, entt::entity);     // try_get -> ptr or null
-        int32 (*Has)(entt::registry&, entt::entity);     // 0/1
-        void* (*Emplace)(entt::registry&, entt::entity); // get-or-emplace -> live ptr (null for tags)
-        int32 (*Remove)(entt::registry&, entt::entity);  // 0/1
+        void* (*Get)(ECS::FRegistry&, ECS::FEntity);     // try_get -> ptr or null
+        int32 (*Has)(ECS::FRegistry&, ECS::FEntity);     // 0/1
+        void* (*Emplace)(ECS::FRegistry&, ECS::FEntity); // get-or-emplace -> live ptr (null for tags)
+        int32 (*Remove)(ECS::FRegistry&, ECS::FEntity);  // 0/1
         void* (*New)();                                  // detached engine-allocated default instance
         void  (*Delete)(void*);                          // free a New() instance
-        void* (*EmplaceCopy)(entt::registry&, entt::entity, const void*); // emplace a COPY of *src -> live ptr
-        uint64 TypeId;                                   // entt::type_hash<T>::value() -> registry.storage(id) for the View
+        void* (*EmplaceCopy)(ECS::FRegistry&, ECS::FEntity, const void*); // emplace a COPY of *src -> live ptr
+        uint64 TypeId;                                   // ECS::GetComponentTypeID<T>() -> registry.FindStorage(id) for the View
 
-        // Registry-signal bridge for C# listeners (on_construct/on_destroy/on_update). The listener pointer
-        // is the connection payload + disconnect key. Patch fires on_update<T> on demand (no-op for tags).
-        void (*ConnectSignal)(entt::registry&, EComponentSignal, FManagedSignalListener*);
-        void (*DisconnectSignal)(entt::registry&, EComponentSignal, FManagedSignalListener*);
-        void (*Patch)(entt::registry&, entt::entity);
+        // The listener pointer is both the connection payload and the disconnect key.
+        void (*ConnectSignal)(ECS::FRegistry&, EComponentSignal, FManagedSignalListener*);
+        void (*DisconnectSignal)(ECS::FRegistry&, EComponentSignal, FManagedSignalListener*);
+        void (*Patch)(ECS::FRegistry&, ECS::FEntity);    // fires on_update<T> on demand (no-op for tags)
+
+        CStruct* (*StaticStruct)();
+        void* (*EmplaceDefault)(ECS::FRegistry&, ECS::FEntity);   // emplace_or_replace a default instance
+        void* (*EmplaceSerialized)(ECS::FRegistry&, ECS::FEntity, FArchive&); // read one, then emplace_or_replace
+
     };
 
-    RUNTIME_API void RegisterComponentOps(FStringView Name, const FComponentOps* Ops);
+    // The ops live on the CStruct; reach them with CStruct::GetComponentOps once you have the type.
+    RUNTIME_API void RegisterComponentOps(CStruct* Struct, const FComponentOps* Ops);
+
+    // Null when the name is unknown or names a struct that is not a component.
+    RUNTIME_API CStruct* FindComponentStruct(FStringView Name);
+
+    // Inverts the id that registry.GetActiveStorages() iteration hands back.
+    RUNTIME_API CStruct* FindComponentStructByTypeId(uint64 TypeId);
+
     RUNTIME_API const FComponentOps* FindComponentOps(FStringView Name);
+
+    // Visits every reflected component type, in unspecified order.
+    RUNTIME_API void ForEachComponentStruct(const TFunction<void(CStruct*)>& Function);
 
     namespace Meta
     {
-        template<typename T>
-        concept EmptyComponent = std::is_empty_v<T>;
-        
-        template<typename T>
-        concept NonEmptyComponent = !std::is_empty_v<T>;
-        
-        template<typename TComponent>
-        bool HasComponent(entt::registry& Registry, entt::entity Entity)
-        {
-            return Registry.any_of<TComponent>(Entity);
-        }
-
-        template<typename TComponent>
-        auto RemoveComponent(entt::registry& Registry, entt::entity Entity)
-        {
-            return Registry.remove<TComponent>(Entity);
-        }
-
-        template<typename TComponent>
-        void ClearComponent(entt::registry& Registry)
-        {
-            Registry.clear<TComponent>();
-        }
-
-        template<NonEmptyComponent TComponent>
-        TComponent& EmplaceComponent(entt::registry& Registry, entt::entity Entity, const entt::meta_any& Any)
-        {
-            return Registry.emplace_or_replace<TComponent>(Entity, Any ? Any.cast<const TComponent&>() : TComponent{});
-        }
-        
-        template<EmptyComponent TComponent>
-        void EmplaceComponent(entt::registry& Registry, entt::entity Entity, const entt::meta_any&)
-        {
-            Registry.emplace<TComponent>(Entity);
-        }
-        
-        template<typename TComponent>
-        TComponent& PatchComponent(entt::registry& Registry, entt::entity Entity, const entt::meta_any& Any)
-        {
-            return Registry.patch<TComponent>(Entity, [&](TComponent& Type)
-            {
-                if (Any)
-                {
-                    Type = Any.cast<const TComponent&>();
-                }
-            });
-        }
-
-        template<typename TComponent>
-        TComponent& GetComponent(entt::registry& Registry, entt::entity Entity)
-        {
-            return Registry.get<TComponent>(Entity);
-        }
-        
-        template<typename TComponent>
-        void Serialize(FArchive& Ar, entt::meta_any& Any)
-        {
-            CStruct* Struct = TComponent::StaticStruct();
-            TComponent& Instance = Any.cast<TComponent&>();
-            Struct->SerializeTaggedProperties(Ar, &Instance);
-        }
-        
-        template<typename TComponent>
-        CStruct* GetStructType()
-        {
-            return TComponent::StaticStruct();
-        }
-
         // The direct-call op table for one component type (captureless lambdas -> plain fn ptrs).
         template<typename TComponent>
         const FComponentOps& GetComponentOps()
         {
             static const FComponentOps Ops = {
-                +[](entt::registry& R, entt::entity E) -> void*
+                +[](ECS::FRegistry& R, ECS::FEntity E) -> void*
                 {
                     if constexpr (std::is_empty_v<TComponent>) { return nullptr; }
-                    else { return R.try_get<TComponent>(E); }
+                    else { return R.TryGet<TComponent>(E); }
                 },
-                +[](entt::registry& R, entt::entity E) -> int32 { return R.any_of<TComponent>(E) ? 1 : 0; },
-                +[](entt::registry& R, entt::entity E) -> void*
+                +[](ECS::FRegistry& R, ECS::FEntity E) -> int32 { return R.HasAny<TComponent>(E) ? 1 : 0; },
+                +[](ECS::FRegistry& R, ECS::FEntity E) -> void*
                 {
                     if constexpr (std::is_empty_v<TComponent>)
                     {
-                        if (!R.any_of<TComponent>(E)) { R.emplace<TComponent>(E); }
+                        if (!R.HasAny<TComponent>(E)) { R.Emplace<TComponent>(E); }
                         return nullptr;
                     }
-                    else { return &R.get_or_emplace<TComponent>(E); } // idempotent: never clobbers an existing one
+                    else { return &R.GetOrEmplace<TComponent>(E); } // idempotent, never clobbering an existing one
                 },
-                +[](entt::registry& R, entt::entity E) -> int32 { return R.remove<TComponent>(E) > 0 ? 1 : 0; },
+                +[](ECS::FRegistry& R, ECS::FEntity E) -> int32 { return R.Remove<TComponent>(E) ? 1 : 0; },
                 +[]() -> void*
                 {
                     void* Mem = Memory::Malloc(sizeof(TComponent), alignof(TComponent));
@@ -158,41 +106,66 @@ namespace Lumina
                     void* Mem = Ptr;
                     Memory::Free(Mem);
                 },
-                +[](entt::registry& R, entt::entity E, const void* Src) -> void*
+                +[](ECS::FRegistry& R, ECS::FEntity E, const void* Src) -> void*
                 {
                     // emplace_or_replace from a configured instance: on the ADD path this constructs the
                     // component from *Src and THEN fires on_construct, so hooks see the configured value.
                     if constexpr (std::is_empty_v<TComponent>)
                     {
-                        if (!R.any_of<TComponent>(E)) { R.emplace<TComponent>(E); }
+                        if (!R.HasAny<TComponent>(E)) { R.Emplace<TComponent>(E); }
                         return nullptr;
                     }
                     else
                     {
-                        return &R.emplace_or_replace<TComponent>(E, *static_cast<const TComponent*>(Src));
+                        return &R.EmplaceOrReplace<TComponent>(E, *static_cast<const TComponent*>(Src));
                     }
                 },
-                (uint64)entt::type_hash<TComponent>::value(),
-                +[](entt::registry& R, EComponentSignal Kind, FManagedSignalListener* L)
+                (uint64)ECS::GetComponentTypeID<TComponent>(),
+                +[](ECS::FRegistry& R, EComponentSignal Kind, FManagedSignalListener* L)
                 {
                     switch (Kind)
                     {
-                        case EComponentSignal::Construct: L->Connection = R.on_construct<TComponent>().template connect<&ManagedSignalTrampoline>(*L); break;
-                        case EComponentSignal::Destroy:   L->Connection = R.on_destroy<TComponent>()  .template connect<&ManagedSignalTrampoline>(*L); break;
-                        case EComponentSignal::Update:    L->Connection = R.on_update<TComponent>()   .template connect<&ManagedSignalTrampoline>(*L); break;
+                        case EComponentSignal::Construct: L->Connection = R.GetSignals<TComponent>().OnConstruct.template Connect<&ManagedSignalTrampoline>(L); break;
+                        case EComponentSignal::Destroy:   L->Connection = R.GetSignals<TComponent>().OnDestroy  .template Connect<&ManagedSignalTrampoline>(L); break;
+                        case EComponentSignal::Update:    L->Connection = R.GetSignals<TComponent>().OnUpdate   .template Connect<&ManagedSignalTrampoline>(L); break;
                     }
                 },
-                +[](entt::registry&, EComponentSignal, FManagedSignalListener* L)
+                +[](ECS::FRegistry&, EComponentSignal, FManagedSignalListener* L)
                 {
-                    // entt::connection is type-erased, so release() disconnects without re-resolving the type.
-                    L->Connection.release();
+                    // ECS::FSignalConnection is type-erased, so release() disconnects without re-resolving the type.
+                    L->Connection.Release();
                 },
-                +[](entt::registry& R, entt::entity E)
+                +[](ECS::FRegistry& R, ECS::FEntity E)
                 {
                     // patch fires on_update<T>; meaningful only for data components (tags carry no value).
                     if constexpr (!std::is_empty_v<TComponent>)
                     {
-                        if (R.any_of<TComponent>(E)) { R.patch<TComponent>(E); }
+                        if (R.HasAny<TComponent>(E)) { R.Patch<TComponent>(E); }
+                    }
+                },
+                +[]() -> CStruct* { return TComponent::StaticStruct(); },
+                +[](ECS::FRegistry& R, ECS::FEntity E) -> void*
+                {
+                    if constexpr (std::is_empty_v<TComponent>)
+                    {
+                        if (!R.HasAny<TComponent>(E)) { R.Emplace<TComponent>(E); }
+                        return nullptr;
+                    }
+                    else { return &R.EmplaceOrReplace<TComponent>(E, TComponent{}); }
+                },
+                +[](ECS::FRegistry& R, ECS::FEntity E, FArchive& Ar) -> void*
+                {
+                    if constexpr (std::is_empty_v<TComponent>)
+                    {
+                        if (!R.HasAny<TComponent>(E)) { R.Emplace<TComponent>(E); }
+                        return nullptr;
+                    }
+                    else
+                    {
+                        // Read into a temporary first, so a corrupt archive cannot leave a live component half-written.
+                        TComponent Value{};
+                        TComponent::StaticStruct()->SerializeTaggedProperties(Ar, &Value);
+                        return &R.EmplaceOrReplace<TComponent>(E, Move(Value));
                     }
                 },
             };
@@ -200,50 +173,30 @@ namespace Lumina
         }
 
 #if !defined(LE_SHIPPING)
-        // entt hands the listener (registry, entity); the type is what the executing system had to declare.
+        // A signal hands the listener the registry and the entity; the type is what the executing system had to declare.
         template<typename TComponent>
-        void ValidateComponentStructuralWrite(entt::registry&, entt::entity)
+        void ValidateComponentStructuralWrite(ECS::FRegistry&, ECS::FEntity)
         {
-            ValidateSystemAccess(static_cast<uint32>(entt::type_hash<TComponent>::value()), true,
+            ValidateSystemAccess(static_cast<uint32>(ECS::GetComponentTypeID<TComponent>()), true,
                 "a Write<> of the component being added or removed");
         }
 
         template<typename TComponent>
-        void ConnectComponentAccessValidator(entt::registry& Registry)
+        void ConnectComponentAccessValidator(ECS::FRegistry& Registry)
         {
-            Registry.on_construct<TComponent>().template connect<&ValidateComponentStructuralWrite<TComponent>>();
-            Registry.on_destroy<TComponent>().template connect<&ValidateComponentStructuralWrite<TComponent>>();
+            Registry.GetSignals<TComponent>().OnConstruct.template Connect<&ValidateComponentStructuralWrite<TComponent>>();
+            Registry.GetSignals<TComponent>().OnDestroy.template Connect<&ValidateComponentStructuralWrite<TComponent>>();
         }
 #endif
 
         template<typename TComponent>
         void RegisterComponentMeta()
         {
-            using namespace entt::literals;
-            auto Meta = entt::meta_factory<TComponent>(GetEngineMetaContext())
-                .type(TComponent::StaticStruct()->GetName().c_str())
-                .traits(ECS::ETraits::Component)
-                .template func<&GetStructType<TComponent>>("static_struct"_hs);
-
-            Meta
-            .template func<&RemoveComponent<TComponent>>("remove"_hs)
-            .template func<&ClearComponent<TComponent>>("clear"_hs)
-            .template func<&EmplaceComponent<TComponent>>("emplace"_hs)
-            .template func<&HasComponent<TComponent>>("has"_hs);
-
-            // Direct-call op table for the C# bridge (bypasses the meta trampoline above on the hot path).
-            RegisterComponentOps(TComponent::StaticStruct()->GetName().c_str(), &GetComponentOps<TComponent>());
+            RegisterComponentOps(TComponent::StaticStruct(), &GetComponentOps<TComponent>());
 
 #if !defined(LE_SHIPPING)
             RegisterComponentAccessValidator(&ConnectComponentAccessValidator<TComponent>);
 #endif
-            
-            if constexpr (!std::is_empty_v<TComponent>)
-            {
-                Meta.template func<&GetComponent<TComponent>>("get"_hs);
-                Meta.template func<&PatchComponent<TComponent>>("patch"_hs);
-                Meta.template func<&Serialize<TComponent>>("serialize"_hs);
-            }
         }
     }
 }

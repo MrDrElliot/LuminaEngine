@@ -8,7 +8,7 @@
 // covers every one of those without a single extra draw. There is no selection geometry pass here.
 //
 // Membership is a bitset over the entity INDEX rather than a list to search: the Picker stores the whole
-// entt handle (index | version), so the shader masks off the version and tests one bit. O(1) per pixel,
+// entity handle (index | version), so the shader masks off the version and tests one bit. O(1) per pixel,
 // and no cap on how much can be selected.
 
 // Field order here is LAYOUT-driven, not readability-driven, and must stay in step with FSelectionOutlinePC
@@ -31,14 +31,14 @@ struct FSelectionOutlineArgs
     uint*  SelectionBits;          // one bit per entity slot, indexed by entity INDEX
     uint   PickerIndex;
     uint   SelectionBitWords;      // 0 = nothing selected; the pass is skipped before it gets here
-    uint   EntityIndexMask;        // entt entity_mask, supplied by the CPU rather than hardcoded
+    uint   EntityIndexMask;        // FEntity::IndexMask, supplied by the CPU rather than hardcoded
     float  Thickness;              // outline half-width in pixels
 };
 FSelectionOutlineArgs* Pass() { return GetPassArgs<FSelectionOutlineArgs>(); }
 
 bool IsEntitySelected(uint PickerValue)
 {
-    // 0 is the Picker's cleared/background value, and entt's null handle is all-ones; neither is a slot.
+    // 0 is the Picker's cleared/background value, and the null handle is all-ones; neither is a slot.
     if (PickerValue == 0u || PickerValue == 0xFFFFFFFFu)
     {
         return false;

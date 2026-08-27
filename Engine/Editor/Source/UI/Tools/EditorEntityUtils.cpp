@@ -1,4 +1,5 @@
 #include "EditorEntityUtils.h"
+#include "World/ECS/Registry.h"
 
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Assets/AssetTypes/Material/MaterialInterface.h"
@@ -32,30 +33,30 @@
 
 namespace Lumina::EditorEntityUtils
 {
-    bool IsEditorOnlyComponent(const entt::type_info& Type)
+    bool IsEditorOnlyComponent(const ECS::FComponentTypeInfo& Type)
     {
-        return IsEditorOnlyComponent(Type.hash());
+        return IsEditorOnlyComponent(Type.TypeID);
     }
 
-    bool IsEditorOnlyComponent(entt::id_type TypeHash)
+    bool IsEditorOnlyComponent(uint32 TypeHash)
     {
         // Mirror this list in the prefab commit and duplicate filters, so editor-only state has one source.
-        return TypeHash == entt::type_hash<FRelationshipComponent>::value()
-            || TypeHash == entt::type_hash<FSelectedInEditorComponent>::value()
-            || TypeHash == entt::type_hash<FHideInSceneOutliner>::value()
-            || TypeHash == entt::type_hash<FEditorComponent>::value()
-            || TypeHash == entt::type_hash<FLastSelectedTag>::value()
-            || TypeHash == entt::type_hash<FCopiedTag>::value()
-            || TypeHash == entt::type_hash<FNeedsTransformUpdate>::value();
+        return TypeHash == ECS::GetComponentTypeID<FRelationshipComponent>()
+            || TypeHash == ECS::GetComponentTypeID<FSelectedInEditorComponent>()
+            || TypeHash == ECS::GetComponentTypeID<FHideInSceneOutliner>()
+            || TypeHash == ECS::GetComponentTypeID<FEditorComponent>()
+            || TypeHash == ECS::GetComponentTypeID<FLastSelectedTag>()
+            || TypeHash == ECS::GetComponentTypeID<FCopiedTag>()
+            || TypeHash == ECS::GetComponentTypeID<FNeedsTransformUpdate>();
     }
 
-    bool DefaultDuplicateFilter(const entt::type_info& Type)
+    bool DefaultDuplicateFilter(const ECS::FComponentTypeInfo& Type)
     {
         // CWorld::DuplicateEntity rebuilds parent links and re-emits the dirty flag itself.
-        const entt::id_type Hash = Type.hash();
-        return !(Hash == entt::type_hash<FSelectedInEditorComponent>::value()
-              || Hash == entt::type_hash<FCopiedTag>::value()
-              || Hash == entt::type_hash<FLastSelectedTag>::value());
+        const uint32 Hash = Type.TypeID;
+        return !(Hash == ECS::GetComponentTypeID<FSelectedInEditorComponent>()
+              || Hash == ECS::GetComponentTypeID<FCopiedTag>()
+              || Hash == ECS::GetComponentTypeID<FLastSelectedTag>());
     }
 
     void CycleGizmoOp(ImGuizmo::OPERATION& InOutOp)
@@ -74,25 +75,25 @@ namespace Lumina::EditorEntityUtils
         InOutMode = (InOutMode == ImGuizmo::WORLD) ? ImGuizmo::LOCAL : ImGuizmo::WORLD;
     }
 
-    void ApplyWorldMatrixToTransform(FEntityRegistry& Registry, entt::entity Entity, const FMatrix4& WorldMatrix)
+    void ApplyWorldMatrixToTransform(ECS::FRegistry& Registry, ECS::FEntity Entity, const FMatrix4& WorldMatrix)
     {
-        if (!Registry.valid(Entity))
+        if (!Registry.IsValid(Entity))
         {
             return;
         }
 
-        STransformComponent* Transform = Registry.try_get<STransformComponent>(Entity);
+        STransformComponent* Transform = Registry.TryGet<STransformComponent>(Entity);
         if (Transform == nullptr)
         {
             return;
         }
 
         FMatrix4 LocalMatrix = WorldMatrix;
-        if (FRelationshipComponent* Rel = Registry.try_get<FRelationshipComponent>(Entity))
+        if (FRelationshipComponent* Rel = Registry.TryGet<FRelationshipComponent>(Entity))
         {
-            if (Rel->Parent != entt::null && Registry.valid(Rel->Parent))
+            if (Rel->Parent != ECS::NullEntity && Registry.IsValid(Rel->Parent))
             {
-                if (STransformComponent* ParentTransform = Registry.try_get<STransformComponent>(Rel->Parent))
+                if (STransformComponent* ParentTransform = Registry.TryGet<STransformComponent>(Rel->Parent))
                 {
                     LocalMatrix = Math::Inverse(ParentTransform->GetWorldMatrix()) * WorldMatrix;
                 }
@@ -109,18 +110,18 @@ namespace Lumina::EditorEntityUtils
         Transform->SetLocalScale(LocalScale);
     }
 
-    FFixedString MakeOutlinerDisplayName(const SNameComponent* Name, entt::entity Entity, const char* Icon)
+    FFixedString MakeOutlinerDisplayName(const SNameComponent* Name, ECS::FEntity Entity, const char* Icon)
     {
         FFixedString Out;
         Out.append(Icon).append(" ");
         Out.append(Name ? Name->Name.c_str() : "<unnamed>");
-        Out.append(FString(" - (" + Format("{}", entt::to_integral(Entity)) + ")"));
+        Out.append(FString(" - (" + Format("{}", (Entity).Value) + ")"));
         return Out;
     }
 
-    bool ComputeFocusBoundsForEntity(FEntityRegistry& Registry, entt::entity Entity, FVector3& OutCenter, float& OutRadius)
+    bool ComputeFocusBoundsForEntity(ECS::FRegistry& Registry, ECS::FEntity Entity, FVector3& OutCenter, float& OutRadius)
     {
-        if (!Registry.valid(Entity))
+        if (!Registry.IsValid(Entity))
         {
             return false;
         }
@@ -132,14 +133,14 @@ namespace Lumina::EditorEntityUtils
         FVector3 Max(-FLT_MAX);
         bool bAny = false;
 
-        auto Accumulate = [&](entt::entity E)
+        auto Accumulate = [&](ECS::FEntity E)
         {
-            if (!Registry.valid(E))
+            if (!Registry.IsValid(E))
             {
                 return;
             }
 
-            const STransformComponent* Transform = Registry.try_get<STransformComponent>(E);
+            const STransformComponent* Transform = Registry.TryGet<STransformComponent>(E);
             if (Transform == nullptr)
             {
                 return;
@@ -147,7 +148,7 @@ namespace Lumina::EditorEntityUtils
 
             const FMatrix4 WorldMatrix = Transform->GetWorldMatrix();
 
-            if (const SStaticMeshComponent* Mesh = Registry.try_get<SStaticMeshComponent>(E))
+            if (const SStaticMeshComponent* Mesh = Registry.TryGet<SStaticMeshComponent>(E))
             {
                 if (Mesh->StaticMesh)
                 {
@@ -159,7 +160,7 @@ namespace Lumina::EditorEntityUtils
                 }
             }
 
-            if (const SSkeletalMeshComponent* Skinned = Registry.try_get<SSkeletalMeshComponent>(E))
+            if (const SSkeletalMeshComponent* Skinned = Registry.TryGet<SSkeletalMeshComponent>(E))
             {
                 if (Skinned->SkeletalMesh)
                 {
@@ -178,7 +179,7 @@ namespace Lumina::EditorEntityUtils
         };
 
         Accumulate(Entity);
-        ECS::Utils::ForEachDescendant(Registry, Entity, [&](entt::entity Desc)
+        ECS::Utils::ForEachDescendant(Registry, Entity, [&](ECS::FEntity Desc)
         {
             Accumulate(Desc);
         });
@@ -193,14 +194,14 @@ namespace Lumina::EditorEntityUtils
         return true;
     }
 
-    bool GetEntityDrawBox(FEntityRegistry& Registry, entt::entity Entity, FVector3& OutCenter, FVector3& OutHalfExtents, FQuat& OutRotation)
+    bool GetEntityDrawBox(ECS::FRegistry& Registry, ECS::FEntity Entity, FVector3& OutCenter, FVector3& OutHalfExtents, FQuat& OutRotation)
     {
-        if (!Registry.valid(Entity))
+        if (!Registry.IsValid(Entity))
         {
             return false;
         }
 
-        const STransformComponent* Transform = Registry.try_get<STransformComponent>(Entity);
+        const STransformComponent* Transform = Registry.TryGet<STransformComponent>(Entity);
         if (Transform == nullptr)
         {
             return false;
@@ -224,8 +225,8 @@ namespace Lumina::EditorEntityUtils
         };
 
         // A renderable mesh contributes its local-space AABB scaled by the transform.
-        const SStaticMeshComponent*   Mesh    = Registry.try_get<SStaticMeshComponent>(Entity);
-        const SSkeletalMeshComponent* Skinned = Registry.try_get<SSkeletalMeshComponent>(Entity);
+        const SStaticMeshComponent*   Mesh    = Registry.TryGet<SStaticMeshComponent>(Entity);
+        const SSkeletalMeshComponent* Skinned = Registry.TryGet<SSkeletalMeshComponent>(Entity);
         if (Mesh && Mesh->StaticMesh)
         {
             const FAABB Local = Mesh->GetAABB();
@@ -238,7 +239,7 @@ namespace Lumina::EditorEntityUtils
         }
 
         // The shaped glyph extent gives a label entity a box around its text rather than a unit cube.
-        if (const STextComponent* Text = Registry.try_get<STextComponent>(Entity); Text && !Text->Text.empty())
+        if (const STextComponent* Text = Registry.TryGet<STextComponent>(Entity); Text && !Text->Text.empty())
         {
             CFont* Font = Text->Font.Get();
             if (Font == nullptr || !Font->HasAtlas())
@@ -289,7 +290,7 @@ namespace Lumina::EditorEntityUtils
         return true;
     }
 
-    void DrawEntityBounds(CWorld* World, entt::entity Entity, const FVector4& Color, float Thickness, bool bDepthTest)
+    void DrawEntityBounds(CWorld* World, ECS::FEntity Entity, const FVector4& Color, float Thickness, bool bDepthTest)
     {
         FVector3 Center, HalfExtents;
         FQuat Rotation;
@@ -299,7 +300,7 @@ namespace Lumina::EditorEntityUtils
         }
     }
 
-    void DrawEntitySelectionBox(CWorld* World, entt::entity Entity, const FVector4& Color, float CornerFraction, float Thickness, bool bDepthTest)
+    void DrawEntitySelectionBox(CWorld* World, ECS::FEntity Entity, const FVector4& Color, float CornerFraction, float Thickness, bool bDepthTest)
     {
         FVector3 Center, HalfExtents;
         FQuat Rotation;
@@ -341,7 +342,7 @@ namespace Lumina::EditorEntityUtils
             return;
         }
 
-        entt::entity Entity = World->ConstructEntity("Environment");
+        ECS::FEntity Entity = World->ConstructEntity("Environment");
         World->EmplaceComponent<SEnvironmentComponent>(Entity);
 
         // A light pointing where the camera looks flattens everything, so the key rakes from the side.

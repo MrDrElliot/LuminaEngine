@@ -1,4 +1,5 @@
 #include "Platform/GenericPlatform.h"
+#include "World/ECS/Registry.h"
 #include "Scripting/DotNet/LayoutRegistry.h"
 #include "Containers/String.h"
 #include "Containers/Name.h"
@@ -30,7 +31,7 @@
 #include "Input/InputMode.h"
 #include "Events/MouseCodes.h"
 
-// World is an opaque pointer and Entity an entt id, matching the component ops convention.
+// World is an opaque pointer and Entity an entity id, matching the component ops convention.
 
 using namespace Lumina;
 using namespace Lumina::DotNet;   // AsWorld / AsEntity / ToId
@@ -73,7 +74,7 @@ LUMINA_DOTNET_EXPORT(int32, World_GetEntitiesByTag)(uint64 World, const char* Ta
         return 0;
     }
 
-    TVector<entt::entity> Found;
+    TVector<ECS::FEntity> Found;
     W->GetEntitiesByTag(FName(FStringView(Tag, (size_t)TagLen)), Found);
 
     const int32 Count = (int32)Found.size();
@@ -209,10 +210,10 @@ LUMINA_DOTNET_EXPORT(uint32, World_GetParentEntity)(uint64 World, uint32 Entity)
     CWorld* W = AsWorld(World);
     if (W == nullptr)
     {
-        return ToId(entt::null);
+        return ToId(ECS::NullEntity);
     }
     const FRelationshipComponent* Rel = W->TryGetComponent<FRelationshipComponent>(AsEntity(Entity));
-    return ToId(Rel ? Rel->Parent : entt::null);
+    return ToId(Rel ? Rel->Parent : ECS::NullEntity);
 }
 
 LUMINA_DOTNET_EXPORT(uint32, World_GetFirstChildEntity)(uint64 World, uint32 Entity)
@@ -220,10 +221,10 @@ LUMINA_DOTNET_EXPORT(uint32, World_GetFirstChildEntity)(uint64 World, uint32 Ent
     CWorld* W = AsWorld(World);
     if (W == nullptr)
     {
-        return ToId(entt::null);
+        return ToId(ECS::NullEntity);
     }
     const FRelationshipComponent* Rel = W->TryGetComponent<FRelationshipComponent>(AsEntity(Entity));
-    return ToId(Rel ? Rel->First : entt::null);
+    return ToId(Rel ? Rel->First : ECS::NullEntity);
 }
 
 LUMINA_DOTNET_EXPORT(uint32, World_GetNextSiblingEntity)(uint64 World, uint32 Entity)
@@ -231,10 +232,10 @@ LUMINA_DOTNET_EXPORT(uint32, World_GetNextSiblingEntity)(uint64 World, uint32 En
     CWorld* W = AsWorld(World);
     if (W == nullptr)
     {
-        return ToId(entt::null);
+        return ToId(ECS::NullEntity);
     }
     const FRelationshipComponent* Rel = W->TryGetComponent<FRelationshipComponent>(AsEntity(Entity));
-    return ToId(Rel ? Rel->Next : entt::null);
+    return ToId(Rel ? Rel->Next : ECS::NullEntity);
 }
 
 // One crossing returns the whole chain instead of a call per hop, and the graph is acyclic.
@@ -246,7 +247,7 @@ LUMINA_DOTNET_EXPORT(int32, World_GetAncestorChain)(uint64 World, uint32 Entity,
         return 0;
     }
     int32 Count = 0;
-    for (entt::entity Cur = AsEntity(Entity); Cur != entt::null; )
+    for (ECS::FEntity Cur = AsEntity(Entity); Cur != ECS::NullEntity; )
     {
         if (Count < Max)
         {
@@ -254,7 +255,7 @@ LUMINA_DOTNET_EXPORT(int32, World_GetAncestorChain)(uint64 World, uint32 Entity,
         }
         ++Count;
         const FRelationshipComponent* Rel = W->TryGetComponent<FRelationshipComponent>(Cur);
-        Cur = Rel ? Rel->Parent : entt::null;
+        Cur = Rel ? Rel->Parent : ECS::NullEntity;
     }
     return Count;
 }
@@ -267,11 +268,11 @@ LUMINA_DOTNET_EXPORT(int32, World_GetSubtree)(uint64 World, uint32 Entity, uint3
         return 0;
     }
     int32 Count = 0;
-    TVector<entt::entity> Stack;
+    TVector<ECS::FEntity> Stack;
     Stack.push_back(AsEntity(Entity));
     while (!Stack.empty())
     {
-        entt::entity Node = Stack.back();
+        ECS::FEntity Node = Stack.back();
         Stack.pop_back();
         if (Count < Max)
         {
@@ -279,11 +280,11 @@ LUMINA_DOTNET_EXPORT(int32, World_GetSubtree)(uint64 World, uint32 Entity, uint3
         }
         ++Count;
         const FRelationshipComponent* Rel = W->TryGetComponent<FRelationshipComponent>(Node);
-        for (entt::entity Child = Rel ? Rel->First : entt::null; Child != entt::null; )
+        for (ECS::FEntity Child = Rel ? Rel->First : ECS::NullEntity; Child != ECS::NullEntity; )
         {
             Stack.push_back(Child);
             const FRelationshipComponent* CRel = W->TryGetComponent<FRelationshipComponent>(Child);
-            Child = CRel ? CRel->Next : entt::null;
+            Child = CRel ? CRel->Next : ECS::NullEntity;
         }
     }
     return Count;
@@ -328,7 +329,7 @@ LUMINA_DOTNET_EXPORT(float, Camera_GetFOV)(uint64 World)
 LUMINA_DOTNET_EXPORT(uint32, Camera_GetActiveEntity)(uint64 World)
 {
     CWorld* W = AsWorld(World);
-    return ToId(W ? W->GetActiveCameraEntity() : entt::null);
+    return ToId(W ? W->GetActiveCameraEntity() : ECS::NullEntity);
 }
 
 // Blend time <= 0 cuts; anything larger runs the cinematic blend.
@@ -403,7 +404,7 @@ LUMINA_DOTNET_EXPORT(FLmRayHit, Physics_Raycast)(uint64 World, FVector3 Start, F
     SRayCastSettings Settings;
     Settings.Start = Start;
     Settings.End = End;
-    if (IgnoreEntity != ToId(entt::null))
+    if (IgnoreEntity != ToId(ECS::NullEntity))
     {
         if (Physics::IPhysicsScene* Scene = W->GetPhysicsScene())
         {
@@ -558,18 +559,18 @@ LUMINA_DOTNET_EXPORT(void, Physics_EndBodyBatch)(uint64 World)
 
 namespace
 {
-    // entt::entity is a uint32-backed enum, so a C# entity-id buffer IS the query's output buffer.
-    static_assert(sizeof(entt::entity) == sizeof(uint32), "Entity id buffers are aliased for overlap queries");
-    FORCEINLINE TSpan<entt::entity> AsEntitySpan(uint32* Entities, int32 Count)
+    // ECS::FEntity is a uint32-backed enum, so a C# entity-id buffer IS the query's output buffer.
+    static_assert(sizeof(ECS::FEntity) == sizeof(uint32), "Entity id buffers are aliased for overlap queries");
+    FORCEINLINE TSpan<ECS::FEntity> AsEntitySpan(uint32* Entities, int32 Count)
     {
-        return TSpan<entt::entity>(reinterpret_cast<entt::entity*>(Entities), (size_t)Count);
+        return TSpan<ECS::FEntity>(reinterpret_cast<ECS::FEntity*>(Entities), (size_t)Count);
     }
 
     // Resolve one entity to its body id and stage it as an ignore list (empty if it has no body).
     template<typename TContainer>
     FORCEINLINE void StageIgnore(Physics::IPhysicsScene* Scene, uint32 IgnoreEntity, TContainer& Out)
     {
-        if (Scene && IgnoreEntity != ToId(entt::null))
+        if (Scene && IgnoreEntity != ToId(ECS::NullEntity))
         {
             const uint32 BodyID = Scene->GetEntityBodyID(AsEntity(IgnoreEntity));
             if (BodyID != 0xFFFFFFFFu) { Out.push_back(BodyID); }
@@ -674,8 +675,8 @@ LUMINA_DOTNET_EXPORT(uint32, Physics_CreateConstraint)(uint64 World, FLmConstrai
 
     Physics::FConstraintDesc D;
     D.Type             = (Lumina::EPhysicsConstraintType)Desc.Type;
-    D.BodyA            = Desc.BodyA == ToId(entt::null) ? entt::null : AsEntity(Desc.BodyA);
-    D.BodyB            = Desc.BodyB == ToId(entt::null) ? entt::null : AsEntity(Desc.BodyB);
+    D.BodyA            = Desc.BodyA == ToId(ECS::NullEntity) ? ECS::NullEntity : AsEntity(Desc.BodyA);
+    D.BodyB            = Desc.BodyB == ToId(ECS::NullEntity) ? ECS::NullEntity : AsEntity(Desc.BodyB);
     D.Anchor           = Desc.Anchor;
     D.Axis             = Desc.Axis;
     D.AnchorB          = Desc.AnchorB;
@@ -918,7 +919,7 @@ LUMINA_DOTNET_EXPORT(double, SystemContext_GetTime)(const FSystemContext* Ctx)
 
 LUMINA_DOTNET_EXPORT(uint32, SystemContext_Create)(const FSystemContext* Ctx)
 {
-    return Ctx ? ToId(Ctx->Create()) : ToId(entt::null);
+    return Ctx ? ToId(Ctx->Create()) : ToId(ECS::NullEntity);
 }
 
 LUMINA_DOTNET_EXPORT(void, SystemContext_Destroy)(const FSystemContext* Ctx, uint32 Entity)

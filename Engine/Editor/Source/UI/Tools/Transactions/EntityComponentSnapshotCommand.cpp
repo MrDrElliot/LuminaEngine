@@ -1,4 +1,5 @@
 #include "EntityComponentSnapshotCommand.h"
+#include "World/ECS/Registry.h"
 
 #include "Assets/AssetTypes/Prefabs/Prefab.h"
 #include "Core/Object/Class.h"
@@ -23,7 +24,7 @@ namespace Lumina
         return ComponentType != nullptr && FindComponentOps(ComponentType->GetName().c_str()) != nullptr;
     }
 
-    FEntityComponentSnapshotCommand::FEntityComponentSnapshotCommand(CWorld* InWorld, TVector<entt::entity> InEntities, CStruct* InComponentType)
+    FEntityComponentSnapshotCommand::FEntityComponentSnapshotCommand(CWorld* InWorld, TVector<ECS::FEntity> InEntities, CStruct* InComponentType)
         : World(InWorld)
         , Entities(Move(InEntities))
         , ComponentType(InComponentType)
@@ -53,14 +54,14 @@ namespace Lumina
             return;
         }
 
-        FEntityRegistry& Registry = ECS::GetWorldRegistry(*W);
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*W);
 
         FMemoryWriter Writer(Out);
         FObjectProxyArchiver Ar(Writer, false);
 
-        for (entt::entity Entity : Entities)
+        for (ECS::FEntity Entity : Entities)
         {
-            const bool bPresent = Registry.valid(Entity) && Ops->Has(Registry, Entity) != 0;
+            const bool bPresent = Registry.IsValid(Entity) && Ops->Has(Registry, Entity) != 0;
 
             int32 Size = AbsentComponent;
             const int64 SizePosition = Ar.Tell();
@@ -98,7 +99,7 @@ namespace Lumina
             return;
         }
 
-        FEntityRegistry& Registry = ECS::GetWorldRegistry(*W);
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*W);
 
         FMemoryReader Reader(In);
         FObjectProxyArchiver Ar(Reader, true);
@@ -106,13 +107,13 @@ namespace Lumina
         // Same reason FEntityTransformCommand re-tags, a restored local transform needs a resolve.
         const bool bTransformRestored = (ComponentType == STransformComponent::StaticStruct());
 
-        for (entt::entity Entity : Entities)
+        for (ECS::FEntity Entity : Entities)
         {
             int32 Size = AbsentComponent;
             Ar << Size;
 
             const int64 DataStart = Ar.Tell();
-            const bool bValid = Registry.valid(Entity);
+            const bool bValid = Registry.IsValid(Entity);
 
             if (Size < 0)
             {
@@ -137,7 +138,7 @@ namespace Lumina
 
                     if (bTransformRestored)
                     {
-                        Registry.emplace_or_replace<FNeedsTransformUpdate>(Entity);
+                        Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Entity);
                     }
 
                     // An undo back to the prefab value leaves zero divergent leaves, clearing the override.

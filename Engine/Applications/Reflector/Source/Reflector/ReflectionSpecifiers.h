@@ -40,9 +40,9 @@ namespace Lumina::Reflection
 #define LUMINA_REFLECT_SPECIFIERS(X) \
     X(ReflectedName,        Value,  Reflector, "Registers the type under this name instead of its C++ spelling. Required on a REFLECT'd alias or template instantiation.") \
     X(MinimalAPI,           Flag,   Reflector, "Exports only StaticStruct()/StaticClass() across the module boundary instead of force-exporting every member.") \
-    X(Component,            Flag,   Runtime,   "Marks the struct as an ECS component. Registers component meta and opts the EnTT pool into in_place_delete.") \
+    X(Component,            Flag,   Runtime,   "Marks the struct as an ECS component. Registers component meta.") \
     X(System,               Flag,   Runtime,   "Marks the struct as an ECS system and registers it with the system registry.") \
-    X(Event,                Flag,   Runtime,   "Marks the struct as an ECS event and registers it with the event registry.") \
+    X(Event,                Flag,   Runtime,   "Documents the struct as an ECS event. The dispatcher is type-driven, so this emits no registration.") \
     X(BitMask,              Flag,   Runtime,   "Marks an enum as a set of bit flags. CEnum::IsBitmaskEnum() reports it and the editor draws checkboxes.") \
     X(ConfigFile,           Value,  Runtime,   "Backs the class with the named config file. The config system loads and saves its properties there.") \
     X(Category,             Value,  Editor,    "Groups the type under a named heading in the component picker and the settings list.") \

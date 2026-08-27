@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "ImGuiDragDrop.h"
+#include "World/ECS/Registry.h"
 
 #include <cctype>
 #include "imgui.h"
@@ -81,7 +82,7 @@ namespace Lumina::DragDrop
         SetAssetPayload(ClassName, FStringView(PathStr.c_str(), PathStr.size()), Asset);
     }
 
-    void SetEntityPayload(CWorld* World, entt::entity Entity)
+    void SetEntityPayload(CWorld* World, ECS::FEntity Entity)
     {
         Reset();
         GPayload.Kind = EPayloadKind::Entity;
@@ -159,7 +160,7 @@ namespace Lumina::DragDrop
         return nullptr;
     }
 
-    bool AcceptEntity(CWorld** OutWorld, entt::entity* OutEntity)
+    bool AcceptEntity(CWorld** OutWorld, ECS::FEntity* OutEntity)
     {
         const ImGuiPayload* P = ImGui::AcceptDragDropPayload(GImGuiPayloadType, ImGuiDragDropFlags_AcceptBeforeDelivery);
         if (!P)

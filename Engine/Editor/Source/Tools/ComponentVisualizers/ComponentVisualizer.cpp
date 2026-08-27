@@ -1,4 +1,5 @@
 #include "Core/Threading/Thread.h"
+#include "World/ECS/Registry.h"
 #include "EditorPCH.h"
 #include "ComponentVisualizer.h"
 #include "Core/Math/Color.h"
@@ -100,10 +101,10 @@ namespace Lumina
         return SPointLightComponent::StaticStruct();
     }
 
-    void CComponentVisualizer_PointLight::Draw(IPrimitiveDrawInterface* PDI, entt::registry& Registry, entt::entity Entity)
+    void CComponentVisualizer_PointLight::Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        const SPointLightComponent& PointLight = Registry.get<SPointLightComponent>(Entity);
-        const STransformComponent& Transform = Registry.get<STransformComponent>(Entity);
+        const SPointLightComponent& PointLight = Registry.Get<SPointLightComponent>(Entity);
+        const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
         
         PDI->DrawSphere(Transform.GetWorldLocationCached(), PointLight.Attenuation, 
             FVector4(PointLight.LightColor, 1.0f), 32, 1.0f, true, 0.0f);
@@ -114,10 +115,10 @@ namespace Lumina
         return SSpotLightComponent::StaticStruct();
     }
 
-    void CComponentVisualizer_SpotLight::Draw(IPrimitiveDrawInterface* PDI, entt::registry& Registry, entt::entity Entity)
+    void CComponentVisualizer_SpotLight::Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        const SSpotLightComponent& SpotLight    = Registry.get<SSpotLightComponent>(Entity);
-        const STransformComponent& Transform    = Registry.get<STransformComponent>(Entity);
+        const SSpotLightComponent& SpotLight    = Registry.Get<SSpotLightComponent>(Entity);
+        const STransformComponent& Transform    = Registry.Get<STransformComponent>(Entity);
         FVector3 Forward                       = Transform.GetWorldRotationCached() * FViewVolume::ForwardAxis;
 
         // The cone opens along the transform forward, which is the direction it lights.
@@ -130,10 +131,10 @@ namespace Lumina
         return SDirectionalLightComponent::StaticStruct();
     }
 
-    void CComponentVisualizer_DirectionalLight::Draw(IPrimitiveDrawInterface* PDI, entt::registry& Registry, entt::entity Entity)
+    void CComponentVisualizer_DirectionalLight::Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        const auto& Light       = Registry.get<SDirectionalLightComponent>(Entity);
-        const auto& Transform   = Registry.get<STransformComponent>(Entity);
+        const auto& Light       = Registry.Get<SDirectionalLightComponent>(Entity);
+        const auto& Transform   = Registry.Get<STransformComponent>(Entity);
         
         PDI->DrawArrow(Transform.GetWorldLocationCached(), -Light.Direction, 1.5f, FColor::Yellow, 4.0f);
     }
@@ -143,10 +144,10 @@ namespace Lumina
         return SSphereColliderComponent::StaticStruct();
     }
 
-    void CComponentVisualizer_SphereCollider::Draw(IPrimitiveDrawInterface* PDI, entt::registry& Registry, entt::entity Entity)
+    void CComponentVisualizer_SphereCollider::Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        const SSphereColliderComponent& Sphere = Registry.get<SSphereColliderComponent>(Entity);
-        const STransformComponent& Transform = Registry.get<STransformComponent>(Entity);
+        const SSphereColliderComponent& Sphere = Registry.Get<SSphereColliderComponent>(Entity);
+        const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
 
         const FVector3 Center = Transform.GetWorldLocationCached() + Transform.GetWorldRotationCached() * Sphere.TranslationOffset;
         PDI->DrawSphere(Center, Sphere.Radius * Transform.MaxScale(), ColliderColor(Sphere.bIsTrigger), 8, 3.5f, true, 0.0f);
@@ -157,10 +158,10 @@ namespace Lumina
         return SBoxColliderComponent::StaticStruct();
     }
 
-    void CComponentVisualizer_BoxCollider::Draw(IPrimitiveDrawInterface* PDI, entt::registry& Registry, entt::entity Entity)
+    void CComponentVisualizer_BoxCollider::Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        const SBoxColliderComponent& Box = Registry.get<SBoxColliderComponent>(Entity);
-        const STransformComponent& Transform = Registry.get<STransformComponent>(Entity);
+        const SBoxColliderComponent& Box = Registry.Get<SBoxColliderComponent>(Entity);
+        const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
 
         const FVector3 Center  = Transform.GetWorldLocationCached() + Transform.GetWorldRotationCached() * Box.TranslationOffset;
         const FQuat    WorldRot = Transform.GetWorldRotationCached() * FQuat(Box.RotationOffset);
@@ -172,10 +173,10 @@ namespace Lumina
         return SCapsuleColliderComponent::StaticStruct();
     }
 
-    void CComponentVisualizer_CapsuleCollider::Draw(IPrimitiveDrawInterface* PDI, entt::registry& Registry, entt::entity Entity)
+    void CComponentVisualizer_CapsuleCollider::Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        const SCapsuleColliderComponent& Capsule = Registry.get<SCapsuleColliderComponent>(Entity);
-        const STransformComponent& Transform     = Registry.get<STransformComponent>(Entity);
+        const SCapsuleColliderComponent& Capsule = Registry.Get<SCapsuleColliderComponent>(Entity);
+        const STransformComponent& Transform     = Registry.Get<STransformComponent>(Entity);
 
         // DrawCapsule wants the two cylinder-axis endpoints (caps tangent there), Y-aligned in local space.
         const float Scale     = Transform.MaxScale();
@@ -191,10 +192,10 @@ namespace Lumina
         return SCylinderColliderComponent::StaticStruct();
     }
 
-    void CComponentVisualizer_CylinderCollider::Draw(IPrimitiveDrawInterface* PDI, entt::registry& Registry, entt::entity Entity)
+    void CComponentVisualizer_CylinderCollider::Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        const SCylinderColliderComponent& Cyl = Registry.get<SCylinderColliderComponent>(Entity);
-        const STransformComponent& Transform  = Registry.get<STransformComponent>(Entity);
+        const SCylinderColliderComponent& Cyl = Registry.Get<SCylinderColliderComponent>(Entity);
+        const STransformComponent& Transform  = Registry.Get<STransformComponent>(Entity);
 
         const float Scale     = Transform.MaxScale();
         const FQuat WorldRot  = Transform.GetWorldRotationCached() * FQuat(Cyl.RotationOffset);
@@ -209,10 +210,10 @@ namespace Lumina
         return SCharacterPhysicsComponent::StaticStruct();
     }
 
-    void CComponentVisualizer_CharacterPhysics::Draw(IPrimitiveDrawInterface* PDI, entt::registry& Registry, entt::entity Entity)
+    void CComponentVisualizer_CharacterPhysics::Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        const SCharacterPhysicsComponent& Character = Registry.get<SCharacterPhysicsComponent>(Entity);
-        const STransformComponent& Transform = Registry.get<STransformComponent>(Entity);
+        const SCharacterPhysicsComponent& Character = Registry.Get<SCharacterPhysicsComponent>(Entity);
+        const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
 
         // Matches Box3D, where Start and End are the cylinder-axis endpoints and Radius scales by MaxScale.
         const FQuat Rotation = Transform.GetWorldRotationCached();
@@ -229,10 +230,10 @@ namespace Lumina
         return SRigidBodyComponent::StaticStruct();
     }
 
-    void CComponentVisualizer_RigidBody::Draw(IPrimitiveDrawInterface* PDI, entt::registry& Registry, entt::entity Entity)
+    void CComponentVisualizer_RigidBody::Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        const SRigidBodyComponent& Body      = Registry.get<SRigidBodyComponent>(Entity);
-        const STransformComponent& Transform = Registry.get<STransformComponent>(Entity);
+        const SRigidBodyComponent& Body      = Registry.Get<SRigidBodyComponent>(Entity);
+        const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
 
         if (Math::Dot(Body.CenterOfMassOffset, Body.CenterOfMassOffset) <= 0.0f)
         {
@@ -250,10 +251,10 @@ namespace Lumina
         return SCameraComponent::StaticStruct();
     }
 
-    void CComponentVisualizer_Camera::Draw(IPrimitiveDrawInterface* PDI, entt::registry& Registry, entt::entity Entity)
+    void CComponentVisualizer_Camera::Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        const auto& Transform   = Registry.get<STransformComponent>(Entity);
-        const auto& Camera      = Registry.get<SCameraComponent>(Entity);
+        const auto& Transform   = Registry.Get<STransformComponent>(Entity);
+        const auto& Camera      = Registry.Get<SCameraComponent>(Entity);
 
         // The cached ViewVolume only refreshes at runtime, so rebuild the view-projection from the transform.
         constexpr float GizmoFar = 25.0f;
@@ -275,10 +276,10 @@ namespace Lumina
         return SDecalComponent::StaticStruct();
     }
 
-    void CComponentVisualizer_Decal::Draw(IPrimitiveDrawInterface* PDI, entt::registry& Registry, entt::entity Entity)
+    void CComponentVisualizer_Decal::Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        const SDecalComponent& Decal         = Registry.get<SDecalComponent>(Entity);
-        const STransformComponent& Transform = Registry.get<STransformComponent>(Entity);
+        const SDecalComponent& Decal         = Registry.Get<SDecalComponent>(Entity);
+        const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
 
         const FVector3 Location  = Transform.GetWorldLocationCached();
         const FQuat    Rotation  = Transform.GetWorldRotationCached();
@@ -297,10 +298,10 @@ namespace Lumina
         return SReflectionProbeComponent::StaticStruct();
     }
 
-    void CComponentVisualizer_ReflectionProbe::Draw(IPrimitiveDrawInterface* PDI, entt::registry& Registry, entt::entity Entity)
+    void CComponentVisualizer_ReflectionProbe::Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        const SReflectionProbeComponent& Probe = Registry.get<SReflectionProbeComponent>(Entity);
-        const STransformComponent& Transform   = Registry.get<STransformComponent>(Entity);
+        const SReflectionProbeComponent& Probe = Registry.Get<SReflectionProbeComponent>(Entity);
+        const STransformComponent& Transform   = Registry.Get<STransformComponent>(Entity);
 
         const FVector3 Location = Transform.GetWorldLocationCached();
         const FQuat    Rotation = Transform.GetWorldRotationCached();
@@ -358,10 +359,10 @@ namespace Lumina
         return STaperedCapsuleColliderComponent::StaticStruct();
     }
 
-    void CComponentVisualizer_TaperedCapsuleCollider::Draw(IPrimitiveDrawInterface* PDI, entt::registry& Registry, entt::entity Entity)
+    void CComponentVisualizer_TaperedCapsuleCollider::Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        const STaperedCapsuleColliderComponent& TC = Registry.get<STaperedCapsuleColliderComponent>(Entity);
-        const STransformComponent& Transform = Registry.get<STransformComponent>(Entity);
+        const STaperedCapsuleColliderComponent& TC = Registry.Get<STaperedCapsuleColliderComponent>(Entity);
+        const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
 
         const float Scale     = Transform.MaxScale();
         const FQuat WorldRot  = Transform.GetWorldRotationCached() * FQuat(TC.RotationOffset);
@@ -382,10 +383,10 @@ namespace Lumina
         return STaperedCylinderColliderComponent::StaticStruct();
     }
 
-    void CComponentVisualizer_TaperedCylinderCollider::Draw(IPrimitiveDrawInterface* PDI, entt::registry& Registry, entt::entity Entity)
+    void CComponentVisualizer_TaperedCylinderCollider::Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        const STaperedCylinderColliderComponent& TC = Registry.get<STaperedCylinderColliderComponent>(Entity);
-        const STransformComponent& Transform = Registry.get<STransformComponent>(Entity);
+        const STaperedCylinderColliderComponent& TC = Registry.Get<STaperedCylinderColliderComponent>(Entity);
+        const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
 
         const float Scale     = Transform.MaxScale();
         const FQuat WorldRot  = Transform.GetWorldRotationCached() * FQuat(TC.RotationOffset);
@@ -399,10 +400,10 @@ namespace Lumina
         return SPlaneColliderComponent::StaticStruct();
     }
 
-    void CComponentVisualizer_PlaneCollider::Draw(IPrimitiveDrawInterface* PDI, entt::registry& Registry, entt::entity Entity)
+    void CComponentVisualizer_PlaneCollider::Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        const SPlaneColliderComponent& Plane = Registry.get<SPlaneColliderComponent>(Entity);
-        const STransformComponent& Transform = Registry.get<STransformComponent>(Entity);
+        const SPlaneColliderComponent& Plane = Registry.Get<SPlaneColliderComponent>(Entity);
+        const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
 
         const FVector3 Center = Transform.GetWorldLocationCached();
         const FQuat    Rot    = Transform.GetWorldRotationCached();
@@ -434,10 +435,10 @@ namespace Lumina
         return SCompoundColliderComponent::StaticStruct();
     }
 
-    void CComponentVisualizer_CompoundCollider::Draw(IPrimitiveDrawInterface* PDI, entt::registry& Registry, entt::entity Entity)
+    void CComponentVisualizer_CompoundCollider::Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        const SCompoundColliderComponent& Comp = Registry.get<SCompoundColliderComponent>(Entity);
-        const STransformComponent& Transform   = Registry.get<STransformComponent>(Entity);
+        const SCompoundColliderComponent& Comp = Registry.Get<SCompoundColliderComponent>(Entity);
+        const STransformComponent& Transform   = Registry.Get<STransformComponent>(Entity);
 
         const FVector3 WorldLoc = Transform.GetWorldLocationCached();
         const FQuat    WorldRot = Transform.GetWorldRotationCached();
@@ -475,10 +476,10 @@ namespace Lumina
         return SConveyorComponent::StaticStruct();
     }
 
-    void CComponentVisualizer_Conveyor::Draw(IPrimitiveDrawInterface* PDI, entt::registry& Registry, entt::entity Entity)
+    void CComponentVisualizer_Conveyor::Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        const SConveyorComponent& Conveyor   = Registry.get<SConveyorComponent>(Entity);
-        const STransformComponent& Transform = Registry.get<STransformComponent>(Entity);
+        const SConveyorComponent& Conveyor   = Registry.Get<SConveyorComponent>(Entity);
+        const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
 
         // SurfaceVelocity is world space; draw it as an arrow whose length scales (clamped) with speed.
         const FVector3 Center = Transform.GetWorldLocationCached();
@@ -496,10 +497,10 @@ namespace Lumina
         return SPhysicsConstraintComponent::StaticStruct();
     }
 
-    void CComponentVisualizer_PhysicsConstraint::Draw(IPrimitiveDrawInterface* PDI, entt::registry& Registry, entt::entity Entity)
+    void CComponentVisualizer_PhysicsConstraint::Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        const SPhysicsConstraintComponent& Con = Registry.get<SPhysicsConstraintComponent>(Entity);
-        const STransformComponent& Transform   = Registry.get<STransformComponent>(Entity);
+        const SPhysicsConstraintComponent& Con = Registry.Get<SPhysicsConstraintComponent>(Entity);
+        const STransformComponent& Transform   = Registry.Get<STransformComponent>(Entity);
 
         const FVector3 WorldLoc = Transform.GetWorldLocationCached();
         const FQuat    WorldRot = Transform.GetWorldRotationCached();
@@ -524,10 +525,12 @@ namespace Lumina
         // Line to the connected body (nothing drawn when anchored to the world).
         if (Con.TargetBody != 0xFFFFFFFFu)
         {
-            const entt::entity Target = static_cast<entt::entity>(Con.TargetBody);
-            if (Registry.valid(Target) && Registry.any_of<STransformComponent>(Target))
+            const ECS::FEntity Target = static_cast<ECS::FEntity>(Con.TargetBody);
+            const STransformComponent* TargetTransform =
+                Registry.IsValid(Target) ? Registry.TryGet<STransformComponent>(Target) : nullptr;
+            if (TargetTransform != nullptr)
             {
-                const FVector3 TargetLoc = Registry.get<STransformComponent>(Target).GetWorldLocationCached();
+                const FVector3 TargetLoc = TargetTransform->GetWorldLocationCached();
                 PDI->DrawLine(Pivot, TargetLoc, FVector4(1.0f, 0.4f, 0.4f, 1.0f), 2.0f, false, 0.0f);
             }
         }
@@ -538,10 +541,10 @@ namespace Lumina
         return SPerceptionComponent::StaticStruct();
     }
 
-    void CComponentVisualizer_AIPerception::Draw(IPrimitiveDrawInterface* PDI, entt::registry& Registry, entt::entity Entity)
+    void CComponentVisualizer_AIPerception::Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        const SPerceptionComponent& Perception = Registry.get<SPerceptionComponent>(Entity);
-        const STransformComponent& Transform = Registry.get<STransformComponent>(Entity);
+        const SPerceptionComponent& Perception = Registry.Get<SPerceptionComponent>(Entity);
+        const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
 
         const FVector3 Location = Transform.GetWorldLocationCached();
         const FVector3 Eye      = Location + Perception.EyeOffset;
@@ -564,10 +567,10 @@ namespace Lumina
         return SSplineComponent::StaticStruct();
     }
 
-    void CComponentVisualizer_Spline::Draw(IPrimitiveDrawInterface* PDI, entt::registry& Registry, entt::entity Entity)
+    void CComponentVisualizer_Spline::Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        const SSplineComponent&    Spline    = Registry.get<SSplineComponent>(Entity);
-        const STransformComponent& Transform = Registry.get<STransformComponent>(Entity);
+        const SSplineComponent&    Spline    = Registry.Get<SSplineComponent>(Entity);
+        const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
 
         if (!Spline.bDrawDebug || Spline.Points.empty())
         {

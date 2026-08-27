@@ -18,8 +18,6 @@ public class $RUNTIMEMODULE : LuminaModuleRules
         {
             "ImGui",
             "RPMalloc",
-            "EA",
-            "Entt",
             "Tracy",
         });
     }

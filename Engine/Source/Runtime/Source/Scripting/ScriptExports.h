@@ -105,7 +105,7 @@ namespace Lumina::Scripting
     struct FScriptExportType
     {
         EPropertyTypeFlags            Kind = EPropertyTypeFlags::None;
-        bool                          bEntity = false;  ///< A UInt32 that is really an entt entity handle.
+        bool                          bEntity = false;  ///< A UInt32 that is really an entity handle.
         bool                          bInputAction = false;  ///< A String that is really an input action name.
 
         // Enum kind.

@@ -1,4 +1,5 @@
 #include "HealthComponent.h"
+#include "World/ECS/Registry.h"
 
 #include "Core/Math/Math.h"
 
@@ -6,7 +7,7 @@ namespace Lumina
 {
     namespace
     {
-        SHealthChangedEvent MakeHealthEvent(const SHealthComponent& Health, float Delta, FEntity Instigator)
+        SHealthChangedEvent MakeHealthEvent(const SHealthComponent& Health, float Delta, ECS::FEntity Instigator)
         {
             SHealthChangedEvent Event;
             Event.Instigator = Instigator;
@@ -17,7 +18,7 @@ namespace Lumina
         }
     }
 
-    float SHealthComponent::ApplyDamage(float Damage, FEntity Instigator)
+    float SHealthComponent::ApplyDamage(float Damage, ECS::FEntity Instigator)
     {
         if (bDead || Damage <= 0.0f)
         {
@@ -40,7 +41,7 @@ namespace Lumina
         return Health;
     }
 
-    float SHealthComponent::Heal(float Amount, FEntity Instigator)
+    float SHealthComponent::Heal(float Amount, ECS::FEntity Instigator)
     {
         if (bDead || Amount <= 0.0f)
         {
@@ -56,7 +57,7 @@ namespace Lumina
         return Health;
     }
 
-    void SHealthComponent::Kill(FEntity Instigator)
+    void SHealthComponent::Kill(ECS::FEntity Instigator)
     {
         if (bDead)
         {
@@ -79,6 +80,6 @@ namespace Lumina
         bDead = false;
         RegenCooldown = 0.0f;
         Health = NewHealth > 0.0f ? Math::Min(NewHealth, MaxHealth) : MaxHealth;
-        OnHealthChanged.Broadcast(MakeHealthEvent(*this, Health - Before, entt::null));
+        OnHealthChanged.Broadcast(MakeHealthEvent(*this, Health - Before, ECS::NullEntity));
     }
 }

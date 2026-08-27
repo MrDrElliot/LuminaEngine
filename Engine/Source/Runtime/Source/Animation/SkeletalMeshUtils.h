@@ -1,10 +1,12 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #include "Containers/Vector.h"
 #include "Containers/Name.h"
 #include "Core/Math/Math.h"
 #include "Platform/GenericPlatform.h"
-#include "World/Entity/Registry/EntityRegistry.h"
 #include "Renderer/SkeletonResource.h"
 #include "World/Scene/RenderScene/SceneRenderTypes.h"
 
@@ -37,16 +39,16 @@ namespace Lumina::SkeletalUtils
 
     // Component-space socket transform on an entity with either mesh component type
     // (skeletal: animated bone or socket; static: authored socket).
-    RUNTIME_API bool GetEntitySocketTransform(FEntityRegistry& Registry, entt::entity Entity, const FName& SocketOrBone, FMatrix4& OutTransform);
+    RUNTIME_API bool GetEntitySocketTransform(ECS::FRegistry& Registry, ECS::FEntity Entity, const FName& SocketOrBone, FMatrix4& OutTransform);
 
-    RUNTIME_API bool EntityHasSocket(FEntityRegistry& Registry, entt::entity Entity, const FName& SocketOrBone);
+    RUNTIME_API bool EntityHasSocket(ECS::FRegistry& Registry, ECS::FEntity Entity, const FName& SocketOrBone);
 
     // World-space socket-or-bone transform on Entity (folds in the entity's world matrix).
-    RUNTIME_API bool GetSocketWorldTransform(FEntityRegistry& Registry, entt::entity Entity, const FName& SocketOrBone, FMatrix4& OutTransform);
+    RUNTIME_API bool GetSocketWorldTransform(ECS::FRegistry& Registry, ECS::FEntity Entity, const FName& SocketOrBone, FMatrix4& OutTransform);
 
     // Bone whose origin lies nearest WorldPoint; approximates the hit bone for meshes with a single
     // physics body (per-bone hits only come from ragdoll bodies). INDEX_NONE without a skeleton.
-    RUNTIME_API int32 FindClosestBone(FEntityRegistry& Registry, entt::entity Entity, const FVector3& WorldPoint);
+    RUNTIME_API int32 FindClosestBone(ECS::FRegistry& Registry, ECS::FEntity Entity, const FVector3& WorldPoint);
 
     // Packs NumBones skinning matrices into the 32-byte GPU layout the skinning shaders read. OutBones is
     // written straight through, so the render gather aims this at its own arena slice and stages nothing.

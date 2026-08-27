@@ -26,8 +26,7 @@ public readonly unsafe partial struct SystemContext
 
     public bool IsValid => Handle != IntPtr.Zero;
 
-    /// <summary>The world's component store (mirrors C++ FEntityRegistry / entt::registry), reached from
-    /// the context's bound world. Use it to author entt-style typed views: <c>Registry.View&lt;...&gt;()</c>.</summary>
+    // The world's component store, mirroring C++ ECS::FRegistry. Author typed views with Registry.View.
     public EntityRegistry Registry => new(World);
 
     /// <summary>Seconds since the previous frame.</summary>
@@ -48,7 +47,7 @@ public readonly unsafe partial struct SystemContext
     /// <summary>Draws a debug line for one frame (Dev/Debug only; a no-op in Shipping).</summary>
     public void DrawDebugLine(FVector3 Start, FVector3 End, FVector4 Color) => DrawLine(Start, End, Color);
 
-    // Flat shims (Runtime module). The context Handle is the first native argument; entities are entt
+    // Flat shims (Runtime module). The context Handle is the first native argument; entities are the ECS
     // ids (uint); FVector3/FVector4 pass by value. See DotNetGameplay.cpp / DotNetView.cpp.
 
     [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_SystemContext_GetWorld")]

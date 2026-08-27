@@ -1,15 +1,16 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Math/Math.h"
 #include "AI/Perception/PerceptionTypes.h"
-#include "World/Entity/EntityHandle.h"
 #include "PerceptionEvent.generated.h"
 
 namespace Lumina
 {
     // Payload for the OnTargetPerceived / OnTargetLost EntityScript callbacks. Self-oriented: Perceiver is
-    // this entity, Target is the sensed/lost entity. Every field is blittable (entt::entity surfaces as the
+    // this entity, Target is the sensed/lost entity. Every field is blittable (ECS::FEntity surfaces as the
     // C# Entity handle), so the Reflector auto-generates the LuminaSharp SPerceptionEvent value mirror + a
     // native size assert, no hand-written mirror.
     REFLECT(Event)
@@ -19,11 +20,11 @@ namespace Lumina
 
         /** This perceiving entity. */
         PROPERTY()
-        FEntity Perceiver = entt::null;
+        ECS::FEntity Perceiver = ECS::NullEntity;
 
         /** The perceived (or lost) entity. */
         PROPERTY()
-        FEntity Target = entt::null;
+        ECS::FEntity Target = ECS::NullEntity;
 
         /** Last known / stimulus world location of the target. */
         PROPERTY()

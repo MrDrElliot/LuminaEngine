@@ -1,6 +1,8 @@
 #pragma once
 
-#include <entt/entt.hpp>
+#include "World/ECS/Registry.h"
+
+
 
 #include "Containers/Vector.h"
 #include "Containers/Name.h"
@@ -175,9 +177,9 @@ namespace Lumina
             }
         }
 
-        NODISCARD uint32 FindEntityFolder(entt::entity Entity) const
+        NODISCARD uint32 FindEntityFolder(ECS::FEntity Entity) const
         {
-            const uint32 Handle = static_cast<uint32>(entt::to_integral(Entity));
+            const uint32 Handle = static_cast<uint32>((Entity).Value);
             for (const FSceneFolder& Folder : Folders)
             {
                 for (uint32 Member : Folder.Entities)
@@ -194,7 +196,7 @@ namespace Lumina
         /** Files an entity under FolderName, creating it if it does not already exist,
          * removing it from whichever folder held it. NoFolder unfiles it.
          */
-        void AssignEntity(entt::entity Entity, FName FolderName)
+        void AssignEntity(ECS::FEntity Entity, FName FolderName)
         {
             if (uint32 FolderID = FindOrCreateFolder(FolderName))
             {
@@ -203,19 +205,19 @@ namespace Lumina
         }
         
         /** Files an entity under FolderID, removing it from whichever folder held it. NoFolder unfiles it. */
-        void AssignEntity(entt::entity Entity, uint32 FolderID)
+        void AssignEntity(ECS::FEntity Entity, uint32 FolderID)
         {
             RemoveEntity(Entity);
 
             if (FSceneFolder* Folder = Find(FolderID))
             {
-                Folder->Entities.push_back(static_cast<uint32>(entt::to_integral(Entity)));
+                Folder->Entities.push_back(static_cast<uint32>((Entity).Value));
             }
         }
 
-        void RemoveEntity(entt::entity Entity)
+        void RemoveEntity(ECS::FEntity Entity)
         {
-            const uint32 Handle = static_cast<uint32>(entt::to_integral(Entity));
+            const uint32 Handle = static_cast<uint32>((Entity).Value);
             for (FSceneFolder& Folder : Folders)
             {
                 for (auto It = Folder.Entities.begin(); It != Folder.Entities.end(); ++It)

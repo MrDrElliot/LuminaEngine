@@ -1,4 +1,5 @@
 #include "RuntimePCH.h"
+#include "World/ECS/Registry.h"
 #include "Box3DPhysicsScene.h"
 
 #include "Box3DCharacterHandle.h"
@@ -20,7 +21,7 @@ namespace Lumina::Physics
     namespace
     {
         // Orient a contact record for one receiving side; POD fill, no per-event table built downstream.
-        SCollisionEvent BuildCollisionEvent(entt::entity SelfEntity, entt::entity OtherEntity,
+        SCollisionEvent BuildCollisionEvent(ECS::FEntity SelfEntity, ECS::FEntity OtherEntity,
                                            uint32 SelfBodyID, uint32 OtherBodyID,
                                            const FContactRecord& Record, bool bFlipNormal)
         {
@@ -47,23 +48,23 @@ namespace Lumina::Physics
     {
         LUMINA_PROFILE_SCOPE();
 
-        entt::registry& Registry = ECS::GetWorldRegistry(*World);
-        auto& RigidStorage = Registry.storage<SRigidBodyComponent>();
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
+        auto RigidStorage = Registry.GetStorage<SRigidBodyComponent>();
 
         // Only an entity that can actually receive the event is worth resolving a manifold for.
-        auto WantsContactEvents = [&](entt::entity Entity, bool bAdded, bool bOverlap)
+        auto WantsContactEvents = [&](ECS::FEntity Entity, bool bAdded, bool bOverlap)
         {
-            if (Entity == entt::null || !RigidStorage.contains(Entity))
+            if (Entity == ECS::NullEntity || !RigidStorage.Contains(Entity))
             {
                 return false;
             }
 
-            if (Registry.all_of<SEntityScriptComponent>(Entity))
+            if (Registry.HasAll<SEntityScriptComponent>(Entity))
             {
                 return true;
             }
 
-            const SRigidBodyComponent& Body = RigidStorage.get(Entity);
+            const SRigidBodyComponent& Body = RigidStorage.Get(Entity);
             const TScriptDelegate<SCollisionEvent>& Delegate = bOverlap
                 ? (bAdded ? Body.OnOverlapBegin : Body.OnOverlapEnd)
                 : (bAdded ? Body.OnContactBegin : Body.OnContactEnd);
@@ -205,17 +206,17 @@ namespace Lumina::Physics
             return;
         }
 
-        FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
 
-        auto Deliver = [&](entt::entity Self, entt::entity Other, uint32 SelfBody, uint32 OtherBody,
+        auto Deliver = [&](ECS::FEntity Self, ECS::FEntity Other, uint32 SelfBody, uint32 OtherBody,
                            const FContactRecord& Record, bool bFlipNormal, bool bIsAdded, bool bIsOverlap)
         {
-            if (Self == entt::null || !Registry.valid(Self))
+            if (Self == ECS::NullEntity || !Registry.IsValid(Self))
             {
                 return;
             }
 
-            SRigidBodyComponent* Body = Registry.try_get<SRigidBodyComponent>(Self);
+            SRigidBodyComponent* Body = Registry.TryGet<SRigidBodyComponent>(Self);
             if (Body == nullptr)
             {
                 return;
@@ -225,7 +226,7 @@ namespace Lumina::Physics
                 ? (bIsAdded ? Body->OnOverlapBegin : Body->OnOverlapEnd)
                 : (bIsAdded ? Body->OnContactBegin : Body->OnContactEnd);
 
-            const bool bHasScripts = Registry.all_of<SEntityScriptComponent>(Self);
+            const bool bHasScripts = Registry.HasAll<SEntityScriptComponent>(Self);
             if (!Delegate.IsBound() && !bHasScripts)
             {
                 return;
@@ -239,7 +240,7 @@ namespace Lumina::Physics
             }
 
             // Re-checked, since a handler above is free to have destroyed the entity it fired for.
-            if (bHasScripts && Registry.valid(Self))
+            if (bHasScripts && Registry.IsValid(Self))
             {
                 using ECallback = EntityScripts::ECollisionCallback;
                 const ECallback Callback = bIsOverlap
@@ -268,15 +269,15 @@ namespace Lumina::Physics
             return;
         }
 
-        FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
         for (const FActivationRecord& Record : ActivationDrainScratch)
         {
-            if (Record.Entity == entt::null || !Registry.valid(Record.Entity))
+            if (Record.Entity == ECS::NullEntity || !Registry.IsValid(Record.Entity))
             {
                 continue;
             }
 
-            SRigidBodyComponent* Body = Registry.try_get<SRigidBodyComponent>(Record.Entity);
+            SRigidBodyComponent* Body = Registry.TryGet<SRigidBodyComponent>(Record.Entity);
             if (Body == nullptr)
             {
                 continue;
@@ -290,11 +291,11 @@ namespace Lumina::Physics
         ActivationDrainScratch.clear();
     }
 
-    void FBox3DPhysicsScene::OnRigidBodyComponentConstructed(entt::registry& Registry, entt::entity Entity)
+    void FBox3DPhysicsScene::OnRigidBodyComponentConstructed(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
         LUMINA_PROFILE_SCOPE();
 
-        if (STransformComponent* Transform = Registry.try_get<STransformComponent>(Entity))
+        if (STransformComponent* Transform = Registry.TryGet<STransformComponent>(Entity))
         {
             Transform->SetHasPhysicsBody(true);
         }
@@ -315,13 +316,13 @@ namespace Lumina::Physics
         CreateRigidBodyImmediate(Registry, Entity);
     }
 
-    void FBox3DPhysicsScene::OnRigidBodyComponentUpdated(entt::registry& Registry, entt::entity Entity)
+    void FBox3DPhysicsScene::OnRigidBodyComponentUpdated(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
     }
 
-    void FBox3DPhysicsScene::OnRigidBodyComponentDestroyed(entt::registry& Registry, entt::entity Entity)
+    void FBox3DPhysicsScene::OnRigidBodyComponentDestroyed(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        SRigidBodyComponent* Body = Registry.try_get<SRigidBodyComponent>(Entity);
+        SRigidBodyComponent* Body = Registry.TryGet<SRigidBodyComponent>(Entity);
         if (Body == nullptr || Body->BodyID == InvalidBodyHandle)
         {
             return;
@@ -345,15 +346,15 @@ namespace Lumina::Physics
         Body->BodyID = InvalidBodyHandle;
     }
 
-    void FBox3DPhysicsScene::OnColliderComponentAdded(entt::registry& Registry, entt::entity Entity)
+    void FBox3DPhysicsScene::OnColliderComponentAdded(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
     }
 
-    void FBox3DPhysicsScene::OnColliderComponentRemoved(entt::registry& Registry, entt::entity Entity)
+    void FBox3DPhysicsScene::OnColliderComponentRemoved(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
     }
 
-    void FBox3DPhysicsScene::CreateRigidBodyImmediate(entt::registry& Registry, entt::entity Entity)
+    void FBox3DPhysicsScene::CreateRigidBodyImmediate(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
         FRigidBodyBuildResult Build;
         const EBodyBuildStatus Status = TryBuildRigidBody(Registry, Entity, Build);
@@ -368,7 +369,7 @@ namespace Lumina::Physics
                     return;
                 }
 
-                SRigidBodyComponent& Body = Registry.get<SRigidBodyComponent>(Entity);
+                SRigidBodyComponent& Body = Registry.Get<SRigidBodyComponent>(Entity);
                 Body.BodyID = Handle;
                 Body.LastBodyPosition = Build.LastBodyPosition;
                 Body.LastBodyRotation = Build.LastBodyRotation;
@@ -391,12 +392,12 @@ namespace Lumina::Physics
         }
     }
 
-    void FBox3DPhysicsScene::RebuildStaleDynamicMeshBodies(entt::registry& Registry)
+    void FBox3DPhysicsScene::RebuildStaleDynamicMeshBodies(ECS::FRegistry& Registry)
     {
         LUMINA_PROFILE_SCOPE();
 
-        auto View = Registry.view<SDynamicMeshColliderComponent, SDynamicMeshComponent, SRigidBodyComponent>();
-        for (auto [Entity, Collider, Mesh, Body] : View.each())
+        auto View = Registry.View<SDynamicMeshColliderComponent, SDynamicMeshComponent, SRigidBodyComponent>();
+        for (auto [Entity, Collider, Mesh, Body] : View.Each())
         {
             const uint32 Version = Mesh.LoadRenderDataVersion();
             if (Version == Collider.GeometryVersion)
@@ -416,7 +417,7 @@ namespace Lumina::Physics
         }
     }
 
-    void FBox3DPhysicsScene::CreateRigidBodiesBatched(const TVector<entt::entity>& Entities)
+    void FBox3DPhysicsScene::CreateRigidBodiesBatched(const TVector<ECS::FEntity>& Entities)
     {
         LUMINA_PROFILE_SCOPE();
 
@@ -426,7 +427,7 @@ namespace Lumina::Physics
             return;
         }
 
-        entt::registry& Registry = ECS::GetWorldRegistry(*World);
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
 
         if (BatchBuildScratch.size() < Count)
         {
@@ -444,7 +445,7 @@ namespace Lumina::Physics
 
         for (uint32 Index = 0; Index < Count; ++Index)
         {
-            const entt::entity Entity = Entities[Index];
+            const ECS::FEntity Entity = Entities[Index];
 
             switch (BatchStatusScratch[Index])
             {
@@ -457,7 +458,7 @@ namespace Lumina::Physics
                         break;
                     }
 
-                    SRigidBodyComponent& Body = Registry.get<SRigidBodyComponent>(Entity);
+                    SRigidBodyComponent& Body = Registry.Get<SRigidBodyComponent>(Entity);
                     Body.BodyID = Handle;
                     Body.LastBodyPosition = Build.LastBodyPosition;
                     Body.LastBodyRotation = Build.LastBodyRotation;
@@ -489,10 +490,10 @@ namespace Lumina::Physics
         }
     }
 
-    void FBox3DPhysicsScene::BulkCreateRigidBodies(entt::registry& Registry)
+    void FBox3DPhysicsScene::BulkCreateRigidBodies(ECS::FRegistry& Registry)
     {
-        TVector<entt::entity> Candidates;
-        Registry.view<SRigidBodyComponent>().each([&](entt::entity Entity, SRigidBodyComponent&)
+        TVector<ECS::FEntity> Candidates;
+        Registry.View<SRigidBodyComponent>().ForEach([&](ECS::FEntity Entity, SRigidBodyComponent&)
         {
             Candidates.push_back(Entity);
         });
@@ -526,10 +527,10 @@ namespace Lumina::Physics
 
         if (!BatchedCharacterCreations.empty())
         {
-            entt::registry& Registry = ECS::GetWorldRegistry(*World);
-            for (entt::entity Entity : BatchedCharacterCreations)
+            ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
+            for (ECS::FEntity Entity : BatchedCharacterCreations)
             {
-                if (Registry.valid(Entity))
+                if (Registry.IsValid(Entity))
                 {
                     OnCharacterComponentConstructed(Registry, Entity);
                 }

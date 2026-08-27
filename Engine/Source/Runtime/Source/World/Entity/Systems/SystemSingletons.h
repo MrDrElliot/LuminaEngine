@@ -1,5 +1,7 @@
 #pragma once
-#include <entt/entt.hpp>
+
+#include "World/ECS/Registry.h"
+
 #include "Containers/Vector.h"
 #include "Renderer/ViewVolume.h"
 #include "World/Entity/Components/PostProcessSettings.h"
@@ -61,7 +63,7 @@ namespace Lumina
             SPostProcessSettings    FromPostProcess;
         };
 
-        entt::entity            ActiveCameraEntity = entt::null;
+        ECS::FEntity            ActiveCameraEntity = ECS::NullEntity;
         FBlendState             Blend;
 
         // Live additive shakes summed into the rendered view each frame; handles let callers stop them.

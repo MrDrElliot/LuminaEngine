@@ -1,7 +1,7 @@
 #include "PrefabSpawnerComponent.h"
+#include "World/ECS/Registry.h"
 
-// Prefab.h names entt::entity without including the ECS facade itself, so it has to come first.
-#include "World/Entity/EntityHandle.h"
+// Prefab.h names ECS::FEntity without including the ECS facade itself, so it has to come first.
 #include "Assets/AssetTypes/Prefabs/Prefab.h"
 
 namespace Lumina
@@ -20,6 +20,6 @@ namespace Lumina
             return false;
         }
 
-        return Prefab->Instantiate(World, Transform) != entt::null;
+        return Prefab->Instantiate(World, Transform) != ECS::NullEntity;
     }
 }

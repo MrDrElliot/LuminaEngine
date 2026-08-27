@@ -1,5 +1,8 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #include "AI/Navigation/NavTypes.h"
 #include "Core/Object/ObjectMacros.h"
 #include "PathFollowComponent.generated.h"
@@ -32,7 +35,7 @@ namespace Lumina
         void SetTargetLocation(const FVector3& World)
         {
             TargetLocation = World;
-            TargetEntity   = entt::null;
+            TargetEntity   = ECS::NullEntity;
             bHasTarget     = true;
             bPathDirty     = true;
             Status         = EPathFollowStatus::Searching;
@@ -41,10 +44,10 @@ namespace Lumina
 
         /** Track an entity. The system re-projects the entity's current location each tick. */
         FUNCTION()
-        void SetTargetEntity(entt::entity Entity)
+        void SetTargetEntity(ECS::FEntity Entity)
         {
             TargetEntity = Entity;
-            bHasTarget   = (Entity != entt::null);
+            bHasTarget   = (Entity != ECS::NullEntity);
             bPathDirty   = true;
             Status       = bHasTarget ? EPathFollowStatus::Searching : EPathFollowStatus::None;
             ConsecutiveFailures = 0;
@@ -55,7 +58,7 @@ namespace Lumina
         void Stop()
         {
             bHasTarget = false;
-            TargetEntity = entt::null;
+            TargetEntity = ECS::NullEntity;
             CornerCount = 0;
             CurrentCorner = 0;
             bPathDirty = false;
@@ -121,7 +124,7 @@ namespace Lumina
 
         /** World location of the active goal (latched from entity if tracking one). */
         FVector3   TargetLocation = FVector3(0.0f);
-        entt::entity TargetEntity = entt::null;
+        ECS::FEntity TargetEntity = ECS::NullEntity;
         FVector3   PathSourceTarget = FVector3(0.0f); // target location at the moment the cached path was generated
         float       TimeSinceLastPath = 0.0f;
         bool        bHasTarget = false;

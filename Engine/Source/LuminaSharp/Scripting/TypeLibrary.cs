@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -649,7 +649,6 @@ internal sealed class TypeDescription
     public IReadOnlyList<ScriptButton> Buttons { get; private set; } = Array.Empty<ScriptButton>();
     private IReadOnlyList<ScriptProperty> InputBindings = Array.Empty<ScriptProperty>();
     public bool HasInputBindings { get; private set; }
-    private IReadOnlyList<RequiredComponent> RequiredComponents = Array.Empty<RequiredComponent>();
 
     public TypeDescription(Type Type)
     {
@@ -662,7 +661,6 @@ internal sealed class TypeDescription
         Buttons = ComputeButtons(Type);
         InputBindings = ComputeInputBindings(Properties);
         HasInputBindings = InputBindings.Count > 0;
-        RequiredComponents = ComputeRequiredComponents(Type);
     }
 
     // The [Property] members that are input bindings, gathered once per type so the per-frame poll is a
@@ -681,7 +679,7 @@ internal sealed class TypeDescription
     }
 
     /// <summary>Gives a script that declares input bindings the component that feeds them, so declaring an
-    /// SInputAction field is enough on its own. Same idea as [RequireComponent], and idempotent, so a script
+    /// SInputAction field is enough on its own. Idempotent, so a script
     /// that also calls EnableInput() is unaffected.</summary>
     public void EnsureInputComponent(EntityScript Script)
     {
@@ -740,82 +738,6 @@ internal sealed class TypeDescription
         return (IReadOnlyList<ScriptButton>?)Result ?? Array.Empty<ScriptButton>();
     }
 
-    /// <summary>Resolves each [RequireComponent] member (adding the component if missing) and assigns the
-    /// wrapper before OnReady. Reflection-free per instance, the member set is precomputed.</summary>
-    public void InjectRequiredComponents(EntityScript Script)
-    {
-        if (RequiredComponents.Count == 0)
-        {
-            return;
-        }
-
-        EntityRegistry Registry = Script.Registry;
-        foreach (RequiredComponent Required in RequiredComponents)
-        {
-            IntPtr Pointer = Registry.EmplaceRaw(Script.Entity, Required.Token);
-            if (Pointer == IntPtr.Zero)
-            {
-                Native.Log(ELogLevel.Warn,
-                    $"[RequireComponent] {Type.Name}.{Required.MemberName}: '{Required.ComponentName}' is not a registered component.");
-                continue;
-            }
-
-            // Bind the stored wrapper to the entity so it re-resolves the live component on each access. The
-            // field outlives the entt pointer captured here: any later add/remove of this component type can
-            // relocate or free the backing slot, so caching the raw pointer would silently dangle (UAF).
-            object? View = Required.Factory(Pointer);
-            if (View is NativeStruct Component)
-            {
-                Component.BindToEntity(Registry.WorldHandle, Script.Entity.Id, Required.Token);
-            }
-            Required.Setter(Script, View);
-        }
-    }
-
-    // Precompute the [RequireComponent] members: ops token, a compiled (IntPtr)->wrapper factory (over the
-    // core-assembly type, so it can't pin the collectible script ALC), and a reflection setter.
-    private static IReadOnlyList<RequiredComponent> ComputeRequiredComponents(Type Type)
-    {
-        const BindingFlags Flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.FlattenHierarchy;
-        List<RequiredComponent>? Result = null;
-
-        void Consider(MemberInfo Member, Type MemberType, Action<object, object?> Setter)
-        {
-            if (Member.GetCustomAttribute<RequireComponentAttribute>() == null)
-            {
-                return;
-            }
-            if (!typeof(NativeStruct).IsAssignableFrom(MemberType))
-            {
-                Native.Log(ELogLevel.Warn,
-                    $"[RequireComponent] {Type.Name}.{Member.Name}: type '{MemberType.Name}' is not a component wrapper.");
-                return;
-            }
-            (Result ??= new List<RequiredComponent>()).Add(new RequiredComponent
-            {
-                MemberName = Member.Name,
-                ComponentName = MemberType.Name,
-                Token = Native.FindComponentOps(MemberType.Name),
-                Factory = BuildWrapperFactory(MemberType),
-                Setter = Setter,
-            });
-        }
-
-        foreach (FieldInfo Field in Type.GetFields(Flags))
-        {
-            Consider(Field, Field.FieldType, Field.SetValue);
-        }
-        foreach (PropertyInfo Property in Type.GetProperties(Flags))
-        {
-            if (Property.CanWrite && Property.GetIndexParameters().Length == 0)
-            {
-                Consider(Property, Property.PropertyType, Property.SetValue);
-            }
-        }
-
-        return (IReadOnlyList<RequiredComponent>?)Result ?? Array.Empty<RequiredComponent>();
-    }
-
     private static Func<IntPtr, object?> BuildWrapperFactory(Type WrapperType)
     {
         ConstructorInfo? Constructor = WrapperType.GetConstructor(
@@ -848,16 +770,6 @@ internal sealed class TypeDescription
         }
     }
 
-}
-
-/// <summary>One precomputed [RequireComponent] member: ops token, wrapper factory, and the setter.</summary>
-internal sealed class RequiredComponent
-{
-    public required string MemberName;
-    public required string ComponentName;
-    public required IntPtr Token;
-    public required Func<IntPtr, object?> Factory;
-    public required Action<object, object?> Setter;
 }
 
 /// <summary>A discovered data type: its member description plus the native struct it derives from.</summary>

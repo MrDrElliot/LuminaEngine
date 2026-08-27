@@ -23,7 +23,6 @@ public class NsightPerfEditor : LuminaModuleRules
             "ImGui",
             "RPMalloc",
             "Volk",
-            "Entt",
             "NsightPerf",
         });
 
@@ -31,9 +30,7 @@ public class NsightPerfEditor : LuminaModuleRules
         // translation unit with anything else.
         ExcludeFromUnity.Add("RymlImpl.cpp");
 
-        // Engine modules prime the entt facade through Runtime's PCH, so world and component
-        // headers can use entt:: and FEntity without including the facade. This module has no
-        // engine PCH, so the facade is force-included ahead of any world header it pulls in.
-        ForceIncludeFiles.Add("World/Entity/EntityHandle.h");
+        // Force-included because this module has no engine PCH to prime the ECS headers.
+        ForceIncludeFiles.Add("World/ECS/Registry.h");
     }
 }

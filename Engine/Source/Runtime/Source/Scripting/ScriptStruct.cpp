@@ -56,14 +56,14 @@ namespace Lumina
         FFieldOwner OwnerOf(CStruct* Owner)
         {
             FFieldOwner FieldOwner;
-            FieldOwner.emplace<CStruct*>(Owner);
+            FieldOwner.Emplace<CStruct*>(Owner);
             return FieldOwner;
         }
 
         FFieldOwner OwnerOf(FField* Owner)
         {
             FFieldOwner FieldOwner;
-            FieldOwner.emplace<FField*>(Owner);
+            FieldOwner.Emplace<FField*>(Owner);
             return FieldOwner;
         }
 

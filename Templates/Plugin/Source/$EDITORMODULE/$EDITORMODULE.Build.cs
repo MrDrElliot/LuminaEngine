@@ -19,8 +19,6 @@ public class $EDITORMODULE : LuminaModuleRules
         {
             "ImGui",
             "RPMalloc",
-            "EA",
-            "Entt",
             "Tracy",
         });
     }

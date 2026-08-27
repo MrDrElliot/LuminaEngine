@@ -1,4 +1,7 @@
 #pragma once
+
+#include "World/ECS/Registry.h"
+
 #include "EntitySystem.h"
 #include "World/Entity/Components/CameraComponent.h"
 #include "CameraSystem.generated.h"
@@ -36,22 +39,22 @@ namespace Lumina
         static void Teardown(const FSystemContext& Context) noexcept;
 
         /** Restamps the active camera's ViewVolume from its live transform, advancing no blend or shake clock. */
-        RUNTIME_API static void ResolveActiveCameraView(entt::registry& Registry);
+        RUNTIME_API static void ResolveActiveCameraView(ECS::FRegistry& Registry);
 
         //~ Active-camera management on the FCameraGlobalState singleton.
 
         /** Switch the active camera. BlendTime > 0 eases from the current view; 0 snaps. */
-        static void SetActiveCamera(entt::registry& Registry, entt::entity Entity, float BlendTime = 0.0f, ECameraBlendFunction Function = ECameraBlendFunction::EaseInOut);
-        static entt::entity GetActiveCameraEntity(entt::registry& Registry);
-        static SCameraComponent* GetActiveCamera(entt::registry& Registry);
+        static void SetActiveCamera(ECS::FRegistry& Registry, ECS::FEntity Entity, float BlendTime = 0.0f, ECameraBlendFunction Function = ECameraBlendFunction::EaseInOut);
+        static ECS::FEntity GetActiveCameraEntity(ECS::FRegistry& Registry);
+        static SCameraComponent* GetActiveCamera(ECS::FRegistry& Registry);
 
         //~ Camera shake on the FCameraGlobalState singleton. Additive on the rendered view; multiple shakes sum.
 
         /** Start a shake; returns a non-zero handle to stop it (0 on failure). */
-        static uint32 PlayCameraShake(entt::registry& Registry, const FCameraShakeParams& Params);
+        static uint32 PlayCameraShake(ECS::FRegistry& Registry, const FCameraShakeParams& Params);
         /** Stop one shake by handle; it fades out over its BlendOutTime rather than cutting abruptly. */
-        static void StopCameraShake(entt::registry& Registry, uint32 Handle);
+        static void StopCameraShake(ECS::FRegistry& Registry, uint32 Handle);
         /** Immediately clear every active shake. */
-        static void StopAllCameraShakes(entt::registry& Registry);
+        static void StopAllCameraShakes(ECS::FRegistry& Registry);
     };
 }

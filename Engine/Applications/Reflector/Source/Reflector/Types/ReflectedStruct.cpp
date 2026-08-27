@@ -163,12 +163,6 @@ namespace Lumina::Reflection
             Writer.Macrof("using Super = %s::%s;", Namespace.c_str(), Parent.c_str());
         }
 
-        // Registered with in_place_delete so handles survive pool rearrangement.
-        if (HasMetadata("Component"))
-        {
-            Writer.Macro("static constexpr auto in_place_delete = true;");
-        }
-
         Writer.FinalizeMacro();
         Writer.BlankLines(2);
     }
@@ -186,10 +180,6 @@ namespace Lumina::Reflection
                 else if (Data.Key == "System")
                 {
                     Writer.Linef("::Lumina::Meta::RegisterECSSystem<%s>();", Struct.EmittedCppQualifiedName().c_str());
-                }
-                else if (Data.Key == "Event")
-                {
-                    Writer.Linef("::Lumina::Meta::RegisterECSEvent<%s>();", Struct.EmittedCppQualifiedName().c_str());
                 }
             }
         }

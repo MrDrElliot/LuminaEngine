@@ -2,7 +2,7 @@ using System;
 
 namespace LuminaSharp;
 
-/// Exclude filter for a View, mirroring <c>entt::exclude&lt;...&gt;</c>; build one with <c>Exclude.Of&lt;...&gt;()</c>.
+/// Exclude filter for a View, mirroring <c>ECS::TExclude&lt;...&gt;</c>; build one with <c>Exclude.Of&lt;...&gt;()</c>.
 public readonly struct Exclude
 {
     internal readonly IntPtr Token0;

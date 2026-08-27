@@ -1,7 +1,6 @@
 #include "NetworkingEditorModule.h"
 
-// Engine headers reach for entt; the Runtime PCH supplies it there, not here.
-#include <entt/entt.hpp>
+// Engine headers reach for the ECS; the Runtime PCH supplies it there, not here.
 
 #include "NetworkEditorTool.h"
 #include "Core/Engine/Engine.h"

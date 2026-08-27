@@ -1,5 +1,8 @@
 ﻿#pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #include "UI/Properties/PropertyEditContexts.h"
 #include "Core/Reflection/PropertyCustomization/PropertyCustomization.h"
 #include "Memory/SmartPtr.h"
@@ -8,7 +11,7 @@
 namespace Lumina
 {
     // PROPERTY(Entity) uint32: a searchable picker over the active world context's entities.
-    // Stored value is the entity's integral id; unset is entt::null's integral.
+    // Stored value is the entity's integral id; unset is ECS::NullEntity's integral.
     class FEntityPropertyCustomization : public IPropertyTypeCustomization
     {
     public:

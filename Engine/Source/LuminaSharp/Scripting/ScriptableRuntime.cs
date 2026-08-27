@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -152,7 +152,6 @@ internal sealed class ScriptableRuntime
 
         try
         {
-            Script.Description.InjectRequiredComponents(Script);
             Script.Description.EnsureInputComponent(Script);
         }
         catch (Exception Exception)

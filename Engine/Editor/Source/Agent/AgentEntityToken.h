@@ -1,8 +1,9 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
 #include "Containers/String.h"
 #include "Containers/StringView.h"
-#include "World/Entity/EntityHandle.h"
 
 namespace Lumina::Agent
 {
@@ -12,11 +13,11 @@ namespace Lumina::Agent
     public:
 
         // Names one entity in one world. Empty for an entity that does not exist.
-        NODISCARD static FString Mint(const FEntityRegistry& Registry, FEntity Entity);
+        NODISCARD static FString Mint(const ECS::FRegistry& Registry, ECS::FEntity Entity);
 
         // False with a reason when the token is malformed, from an older world, or names a dead entity.
-        NODISCARD static bool Resolve(const FEntityRegistry& Registry, FStringView Token,
-            FEntity& OutEntity, FString& OutError);
+        NODISCARD static bool Resolve(const ECS::FRegistry& Registry, FStringView Token,
+            ECS::FEntity& OutEntity, FString& OutError);
 
         // Retires every token minted so far, which is what a world swap has to do to them.
         static void InvalidateAll();

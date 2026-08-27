@@ -13,7 +13,7 @@ namespace Lumina
     class CAnimation;
 
     REFLECT(Component, Category = "Animation")
-    struct SSimpleAnimationComponent
+    struct RUNTIME_API SSimpleAnimationComponent
     {
         GENERATED_BODY()
 

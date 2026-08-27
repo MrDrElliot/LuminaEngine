@@ -1,12 +1,14 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #include <atomic>
 #include "Core/Math/Math.h"
 #include "Core/Threading/Thread.h"
 #include "DirtyComponent.h"
 #include "Core/Math/Transform.h"
 #include "World/Entity/EntityUtils.h"
-#include "World/Entity/Registry/EntityRegistry.h"
 #include "TransformComponent.generated.h"
 
 namespace Lumina
@@ -285,7 +287,7 @@ namespace Lumina
 
         // Bind this component to its owning entity. Called after duplication or post-load to rewire the
         // self-referential pointers used by MarkDirty/ResolveIfDirty. World init also does this directly via friend access.
-        void Bind(FEntityRegistry& InRegistry, entt::entity InEntity)
+        void Bind(ECS::FRegistry& InRegistry, ECS::FEntity InEntity)
         {
             Registry = &InRegistry;
             Entity = InEntity;
@@ -421,8 +423,8 @@ namespace Lumina
             }
         }
 
-        FEntityRegistry*                 Registry = nullptr;
-        entt::entity                     Entity   = entt::null;
+        ECS::FRegistry*                 Registry = nullptr;
+        ECS::FEntity                     Entity   = ECS::NullEntity;
         ECS::Utils::FTransformDirtyGate* DirtyState = nullptr;
     };
 

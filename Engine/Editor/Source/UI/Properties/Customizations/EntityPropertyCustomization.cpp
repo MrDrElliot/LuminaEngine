@@ -1,6 +1,7 @@
 ﻿#include "EntityPropertyCustomization.h"
 
 #include "imgui.h"
+#include "World/ECS/Registry.h"
 #include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "Core/Reflection/PropertyCustomization/PropertyCustomization.h"
@@ -12,7 +13,6 @@
 #include "World/World.h"
 #include "World/Entity/Components/EditorComponent.h"
 #include "World/Entity/Components/NameComponent.h"
-#include "World/Entity/Registry/EntityRegistry.h"
 #include "Containers/StringFormat.h"
 
 namespace Lumina
@@ -20,12 +20,12 @@ namespace Lumina
     namespace
     {
         // Integral id of an unset entity reference.
-        const uint32 GNoneEntityId = static_cast<uint32>(entt::to_integral(static_cast<entt::entity>(entt::null)));
+        const uint32 GNoneEntityId = static_cast<uint32>((static_cast<ECS::FEntity>(ECS::NullEntity)).Value);
 
-        FFixedString MakeEntityLabel(FEntityRegistry& Registry, entt::entity Entity)
+        FFixedString MakeEntityLabel(ECS::FRegistry& Registry, ECS::FEntity Entity)
         {
             FFixedString Label;
-            if (const SNameComponent* Name = Registry.try_get<SNameComponent>(Entity))
+            if (const SNameComponent* Name = Registry.TryGet<SNameComponent>(Entity))
             {
                 Label.append(Name->Name.c_str());
             }
@@ -33,7 +33,7 @@ namespace Lumina
             {
                 Label.append("Entity");
             }
-            AppendFormat(Label, " ({})", static_cast<uint32>(entt::to_integral(Entity)));
+            AppendFormat(Label, " ({})", static_cast<uint32>((Entity).Value));
             return Label;
         }
     }
@@ -78,17 +78,17 @@ namespace Lumina
             bChanged = true;
         }
 
-        FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
 
         // Index 0 is always "None"; the rest are the same named entities the outliner shows.
-        TVector<entt::entity> Candidates;
-        Candidates.push_back(entt::null);
+        TVector<ECS::FEntity> Candidates;
+        Candidates.push_back(ECS::NullEntity);
 
-        const entt::entity CurrentEntity = static_cast<entt::entity>(CachedValue);
-        const bool bHasCurrent = (CachedValue != GNoneEntityId) && Registry.valid(CurrentEntity);
+        const ECS::FEntity CurrentEntity = static_cast<ECS::FEntity>(CachedValue);
+        const bool bHasCurrent = (CachedValue != GNoneEntityId) && Registry.IsValid(CurrentEntity);
 
         int32 CurrentIndex = 0; // default to None
-        for (entt::entity Entity : Registry.view<SNameComponent>(entt::exclude<FHideInSceneOutliner>))
+        for (ECS::FEntity Entity : Registry.View<SNameComponent>(ECS::TExclude<FHideInSceneOutliner>{}))
         {
             if (bHasCurrent && Entity == CurrentEntity)
             {
@@ -118,7 +118,7 @@ namespace Lumina
 
         if (Picked != INDEX_NONE)
         {
-            CachedValue = (Picked == 0) ? GNoneEntityId : static_cast<uint32>(entt::to_integral(Candidates[Picked]));
+            CachedValue = (Picked == 0) ? GNoneEntityId : static_cast<uint32>((Candidates[Picked]).Value);
             bChanged = true;
         }
 

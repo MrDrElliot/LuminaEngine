@@ -1,4 +1,5 @@
 #include "RuntimePCH.h"
+#include "World/ECS/Registry.h"
 #include "FoliageCollisionSystem.h"
 #include "SystemContext.h"
 #include "Assets/AssetTypes/Physics/CollisionShape.h"
@@ -22,7 +23,7 @@ namespace Lumina
             return;
         }
 
-        Context.CreateView<SFoliageComponent>().each([&](entt::entity Entity, SFoliageComponent& Foliage)
+        Context.CreateView<SFoliageComponent>().ForEach([&](ECS::FEntity Entity, SFoliageComponent& Foliage)
         {
             if (Foliage.CollisionBakedVersion == Foliage.InstancesVersion)
             {
@@ -96,7 +97,7 @@ namespace Lumina
     {
         Physics::IPhysicsScene* Scene = Context.GetPhysicsScene();
 
-        Context.CreateView<SFoliageComponent>().each([&](SFoliageComponent& Foliage)
+        Context.CreateView<SFoliageComponent>().ForEach([&](SFoliageComponent& Foliage)
         {
             if (Scene != nullptr && Foliage.CollisionGroupID != 0)
             {

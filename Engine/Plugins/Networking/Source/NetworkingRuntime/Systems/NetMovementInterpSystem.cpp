@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "Systems/NetMovementInterpSystem.h"
+#include "World/ECS/Registry.h"
 
 #include "World/Entity/Systems/SystemContext.h"
 #include "TaskSystem/TaskSystem.h"
@@ -24,18 +25,18 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        entt::registry& Registry = Context.GetRegistry();
+        ECS::FRegistry& Registry = Context.GetRegistry();
 
         // No net state => not a networked world; nothing to interpolate.
-        FNetWorldState* State = Registry.ctx().find<FNetWorldState>();
+        FNetWorldState* State = Registry.Ctx().Find<FNetWorldState>();
         if (State == nullptr)
         {
             return;
         }
 
-        auto View   = Registry.view<FRepTransform>();
-        auto Handle = View.handle();
-        const uint32 Count = static_cast<uint32>(Handle->size());
+        auto View   = Registry.View<FRepTransform>();
+        auto Handle = View.GetDriver();
+        const uint32 Count = static_cast<uint32>(Handle->GetDenseSize());
         if (Count == 0)
         {
             return;
@@ -72,36 +73,38 @@ namespace Lumina
         // The per-entity interp delay is subtracted in the parallel body so each proxy stays behind its OWN rate.
         const double ServerRenderNow = State->ServerPlaybackTime;
 
-        auto&& RepStorage       = Registry.storage<FRepTransform>();
-        auto&& NetStorage       = Registry.storage<SNetworkComponent>();
-        auto&& TransformStorage = Registry.storage<STransformComponent>();
+        auto RepStorage       = Registry.GetStorage<FRepTransform>();
+        auto NetStorage       = Registry.GetStorage<SNetworkComponent>();
+        auto TransformStorage = Registry.GetStorage<STransformComponent>();
 
         // An AutonomousProxy is locally controlled, and an empty ring has no data yet.
-        auto ShouldInterp = [&](entt::entity Entity) -> bool
+        auto ShouldInterp = [&](ECS::FEntity Entity) -> bool
         {
-            if (!RepStorage.contains(Entity) || !NetStorage.contains(Entity) || !TransformStorage.contains(Entity))
+            const FRepTransform* Rep = RepStorage.TryGet(Entity);
+            const SNetworkComponent* Net = NetStorage.TryGet(Entity);
+            if (Rep == nullptr || Net == nullptr || !TransformStorage.Contains(Entity))
             {
                 return false;
             }
-            if (RepStorage.get(Entity).Ring.Count == 0)
+            if (Rep->Ring.Count == 0)
             {
                 return false;
             }
-            return NetStorage.get(Entity).LocalRole != ENetRole::AutonomousProxy;
+            return Net->LocalRole != ENetRole::AutonomousProxy;
         };
         
         Task::ParallelFor(Count, [&](const Task::FParallelRange& Range)
         {
             for (uint32 i = Range.Start; i < Range.End; ++i)
             {
-                const entt::entity Entity = (*Handle)[i];
+                const ECS::FEntity Entity = Handle->GetDenseData()[i];
                 if (!ShouldInterp(Entity))
                 {
                     continue;
                 }
 
-                FRepTransform&       Rep = RepStorage.get(Entity);
-                STransformComponent& T   = TransformStorage.get(Entity);
+                FRepTransform&       Rep = RepStorage.Get(Entity);
+                STransformComponent& T   = TransformStorage.Get(Entity);
 
                 // Eased per tick, so a tier change ramps the delay rather than rewinding the render clock.
                 const double Interval = Rep.Ring.AverageInterval();
@@ -134,10 +137,10 @@ namespace Lumina
         //~ Tagging a different pool does not invalidate the FRepTransform handle.
         for (uint32 i = 0; i < Count; ++i)
         {
-            const entt::entity Entity = (*Handle)[i];
+            const ECS::FEntity Entity = Handle->GetDenseData()[i];
             if (ShouldInterp(Entity))
             {
-                Registry.emplace_or_replace<FNeedsTransformUpdate>(Entity);
+                Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Entity);
             }
         }
         ECS::Utils::ResolveAllDirtyTransforms(Registry);

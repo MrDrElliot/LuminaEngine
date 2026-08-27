@@ -1,5 +1,8 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #include "Renderer/ShaderHandle.h"
 #include "Containers/HashTable.h"
 #include "Containers/Vector.h"
@@ -7,7 +10,6 @@
 #include "Core/Math/Math.h"
 #include "Memory/Memory.h"
 #include "Platform/GenericPlatform.h"
-#include "World/Entity/Registry/EntityRegistry.h"
 #include "World/Scene/RenderScene/MeshDrawCommand.h"
 #include "World/Scene/RenderScene/MeshResolveCache.h"
 #include "World/Scene/RenderScene/SceneRenderTypes.h"
@@ -51,23 +53,23 @@ namespace Lumina
 
         struct FEntry
         {
-            entt::entity        Entity;
+            ECS::FEntity        Entity;
             EPrimitiveSource    Source;
             EPrimitiveDirty     Flags;
         };
 
         // Creates the tracker in the registry context on first call. Game thread.
-        static FRenderDirtyTracker& Ensure(FEntityRegistry& Registry);
-        static FRenderDirtyTracker* Find(FEntityRegistry& Registry);
+        static FRenderDirtyTracker& Ensure(ECS::FRegistry& Registry);
+        static FRenderDirtyTracker* Find(ECS::FRegistry& Registry);
 
         FRenderDirtyTracker();
         ~FRenderDirtyTracker();
         LE_NO_COPYMOVE(FRenderDirtyTracker);
 
         // Any thread.
-        void Mark(entt::entity Entity, EPrimitiveSource Source, EPrimitiveDirty Flags);
+        void Mark(ECS::FEntity Entity, EPrimitiveSource Source, EPrimitiveDirty Flags);
 
-        void MarkAllSources(entt::entity Entity, EPrimitiveDirty Flags);
+        void MarkAllSources(ECS::FEntity Entity, EPrimitiveDirty Flags);
 
         // One relaxed load on a frame where nothing changed.
         bool HasPending() const { return bAnyDirty.load(std::memory_order_acquire) || bFullRescan; }
@@ -186,7 +188,7 @@ namespace Lumina
         uint32                              BindingBase = 0;    // span into FScenePrimitiveSet::Bindings
         uint32                              SurfaceCount = 0;
 
-        entt::entity                        Entity = entt::null;
+        ECS::FEntity                        Entity = ECS::NullEntity;
         uint32                              EntityID = 0;
         uint32                              CustomData = 0;
 
@@ -235,7 +237,7 @@ namespace Lumina
         void Sync(CWorld& World);
 
         // Drops every primitive and re-arms a full rescan. World teardown / scene rebuild.
-        void Reset(FEntityRegistry* Registry);
+        void Reset(ECS::FRegistry* Registry);
 
         uint32                              Num() const { return (uint32)Primitives.size(); }
         const FScenePrimitive*              GetPrimitives() const { return Primitives.data(); }
@@ -296,15 +298,15 @@ namespace Lumina
 
         static constexpr uint32 kKeySourceShift = 32;
 
-        static uint64 MakeKey(entt::entity Entity, EPrimitiveSource Source)
+        static uint64 MakeKey(ECS::FEntity Entity, EPrimitiveSource Source)
         {
-            return (uint64)entt::to_integral(Entity) | ((uint64)Source << kKeySourceShift);
+            return (uint64)(Entity).Value | ((uint64)Source << kKeySourceShift);
         }
 
         uint32  FindPrimitive(uint64 Key) const;
         uint32  AddPrimitive(uint64 Key);
         void    RemovePrimitive(uint64 Key);
-        void    RemoveEntity(FEntityRegistry& Registry, entt::entity Entity, EPrimitiveSource Source);
+        void    RemoveEntity(ECS::FRegistry& Registry, ECS::FEntity Entity, EPrimitiveSource Source);
 
         struct FSyncPools;
         struct FBindingMemo;
@@ -340,13 +342,13 @@ namespace Lumina
         // Interns a surface's LOD table; identical tables collapse to one entry.
         uint32  InternSurfaceDesc(const FResolvedSurface& Surface);
 
-        void    SyncEntity(FEntityRegistry& Registry, const FSyncPools& Pools, entt::entity Entity,
+        void    SyncEntity(ECS::FRegistry& Registry, const FSyncPools& Pools, ECS::FEntity Entity,
                            EPrimitiveSource Source, EPrimitiveDirty Flags);
-        void    SyncFoliage(FEntityRegistry& Registry, const FSyncPools& Pools, entt::entity Entity,
+        void    SyncFoliage(ECS::FRegistry& Registry, const FSyncPools& Pools, ECS::FEntity Entity,
                             EPrimitiveDirty Flags);
-        void    FullRescan(FEntityRegistry& Registry);
-        void    PollUnhookedSources(FEntityRegistry& Registry, FRenderDirtyTracker& Tracker);
-        void    PollSkeletalBoneRanges(FEntityRegistry& Registry, FRenderDirtyTracker& Tracker);
+        void    FullRescan(ECS::FRegistry& Registry);
+        void    PollUnhookedSources(ECS::FRegistry& Registry, FRenderDirtyTracker& Tracker);
+        void    PollSkeletalBoneRanges(ECS::FRegistry& Registry, FRenderDirtyTracker& Tracker);
 
         void    RebuildWorldBounds(uint32 Index);
 
@@ -393,11 +395,11 @@ namespace Lumina
         TVector<FPrimitiveLink>             LinksByEntityIndex;
 
         // ~0u when this entity owns no primitive for that source. Source must not be Foliage.
-        uint32  FindLinked(entt::entity Entity, EPrimitiveSource Source) const;
+        uint32  FindLinked(ECS::FEntity Entity, EPrimitiveSource Source) const;
         // Bitmask of sources this entity owns a primitive for; 0 when it is not renderable at all.
-        uint8   GetSourceMask(entt::entity Entity) const;
-        void    SetLink(entt::entity Entity, EPrimitiveSource Source, uint32 Index);
-        void    ClearLink(entt::entity Entity, EPrimitiveSource Source);
+        uint8   GetSourceMask(ECS::FEntity Entity) const;
+        void    SetLink(ECS::FEntity Entity, EPrimitiveSource Source, uint32 Index);
+        void    ClearLink(ECS::FEntity Entity, EPrimitiveSource Source);
 
         struct FFoliageTypeResolve
         {
@@ -435,7 +437,7 @@ namespace Lumina
             // Resolve identity per TYPE, which is what the staleness sweep compares instead of per instance.
             TVector<uint64>                 TypeResolveKeys;
         };
-        THashMap<entt::entity, FFoliageEntityState> FoliageByEntity;
+        THashMap<ECS::FEntity, FFoliageEntityState> FoliageByEntity;
 
         void    ReleaseFoliageInstance(FFoliageInstanceRef& Ref);
         void    RefreshFoliageInstance(const FFoliageInstanceRef& Ref, const FFoliageTypeResolve& Type,
@@ -473,7 +475,7 @@ namespace Lumina
         void ReserveForDrain();
 
         void PartitionDrain();
-        void ApplyStructuralRecords(FEntityRegistry& Registry, const FSyncPools& Pools);
+        void ApplyStructuralRecords(ECS::FRegistry& Registry, const FSyncPools& Pools);
         void ApplyTransformRecords(const FSyncPools& Pools);
 
         void ApplyTransformRecord(const FSyncPools& Pools, uint32 RecordIndex, TVector<uint32>* OutDirty);

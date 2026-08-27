@@ -1,4 +1,7 @@
 #pragma once
+
+#include "World/ECS/Registry.h"
+
 #include "Core/Object/ObjectMacros.h"
 #include "CameraFollowComponent.generated.h"
 
@@ -13,7 +16,7 @@ namespace Lumina
 
         /** Entity the camera follows. Unset = component idles. */
         PROPERTY(Editable, Entity, Category = "Camera|Follow")
-        uint32 Target = static_cast<uint32>(entt::to_integral(static_cast<entt::entity>(entt::null)));
+        uint32 Target = static_cast<uint32>((static_cast<ECS::FEntity>(ECS::NullEntity)).Value);
 
         /** Offset from the target. Local to the target's orientation unless bWorldSpaceOffset. */
         PROPERTY(Editable, Category = "Camera|Follow")
@@ -41,9 +44,9 @@ namespace Lumina
 
         /** Set the followed entity and re-seat the camera on the next tick (no lag for the first frame). */
         FUNCTION()
-        void SetTarget(entt::entity Entity)
+        void SetTarget(ECS::FEntity Entity)
         {
-            Target = static_cast<uint32>(entt::to_integral(Entity));
+            Target = static_cast<uint32>((Entity).Value);
             bInitialized = false;
         }
 
@@ -51,7 +54,7 @@ namespace Lumina
         FUNCTION()
         void ClearTarget()
         {
-            Target = static_cast<uint32>(entt::to_integral(static_cast<entt::entity>(entt::null)));
+            Target = static_cast<uint32>((static_cast<ECS::FEntity>(ECS::NullEntity)).Value);
             bInitialized = false;
         }
 

@@ -1,8 +1,10 @@
 #pragma once
+
+#include "World/ECS/Registry.h"
+
 #include "Assets/AssetTypes/Material/MaterialInstance.h"
 #include "Core/Reflection/PropertyCustomization/PropertyCustomization.h"
 #include "UI/Tools/AssetEditors/AssetEditorTool.h"
-#include <entt/entt.hpp>
 
 namespace Lumina
 {
@@ -50,8 +52,8 @@ namespace Lumina
 
         void SetDebugMesh(EDebugMesh Mesh);
 
-        entt::entity MeshEntity;
-        entt::entity DirectionalLightEntity;
+        ECS::FEntity MeshEntity;
+        ECS::FEntity DirectionalLightEntity;
         EDebugMesh   DebugMesh = EDebugMesh::Sphere;
 
         // Standard object picker, shared across every texture row. The parameter table only exposes each

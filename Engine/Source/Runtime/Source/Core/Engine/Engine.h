@@ -70,7 +70,6 @@ namespace Lumina
         RUNTIME_API IDevelopmentToolUI* GetDevelopmentToolsUI() const { return DeveloperToolUI; }
         #endif
 
-        // Meta-context accessors live in EngineMetaContext.h to avoid pulling <entt/entt.hpp> into Engine.h.
 
         RUNTIME_API void SetReadyToClose(bool bReadyToClose) { bEngineReadyToClose = bReadyToClose; }
         

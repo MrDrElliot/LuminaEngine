@@ -1474,7 +1474,7 @@ namespace Lumina
         // FinalizeNewTool puts it into EditorTools, which is what DestroyTool later frees.
         FEditorToolPtr CreatedTool = FEditorToolRegistry::Get().CreateAssetEditor(this, Asset);
 
-        if (FEditorTool* NewTool = FinalizeNewTool(CreatedTool.release()))
+        if (FEditorTool* NewTool = FinalizeNewTool(CreatedTool.Release()))
         {
             ActiveAssetTools.insert_or_assign(Asset, NewTool);
             RecordSessionTab(NewTool, FString(GSessionAssetPrefix) + AssetGUID.ToString());
@@ -1591,7 +1591,7 @@ namespace Lumina
         }
 
         FEditorToolPtr CreatedTool = FEditorToolRegistry::Get().CreateFileEditor(this, VirtualPath);
-        FEditorTool* NewTool = FinalizeNewTool(CreatedTool.release());
+        FEditorTool* NewTool = FinalizeNewTool(CreatedTool.Release());
 
         if (NewTool == nullptr)
         {

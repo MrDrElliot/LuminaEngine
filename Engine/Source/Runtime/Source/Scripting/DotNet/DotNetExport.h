@@ -1,7 +1,8 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
 #include "Platform/GenericPlatform.h"
-#include "World/Entity/EntityHandle.h"   // entt::entity - the engine's single entt include site.
 
 namespace Lumina { class CWorld; }
 
@@ -17,7 +18,7 @@ namespace Lumina { class CWorld; }
 //
 // The macro stamps the `LuminaSharp_` prefix and the `extern "C" LUMINA_SCRIPT_API` linkage the C# side
 // resolves by name: bind it with [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Physics_GetLinearVelocity")].
-// Convention: `World` is an opaque CWorld* (uint64); `Entity` is an entt id (uint32). Game thread only.
+// Convention: `World` is an opaque CWorld* (uint64); `Entity` is an entity id (uint32). Game thread only.
 //
 // LUMINA_SCRIPT_API is always dllexport (see ModuleAPI.h) so these thunks land in the exe's export table in
 // monolithic Shipping just as they do in their module DLL in modular builds; C# resolves them by name either way.
@@ -38,6 +39,6 @@ namespace Lumina::DotNet
 {
     // Opaque-handle <-> engine-type conversions shared by every gameplay export.
     FORCEINLINE CWorld*      AsWorld (uint64 Handle)        { return reinterpret_cast<CWorld*>(Handle); }
-    FORCEINLINE entt::entity AsEntity(uint32 Entity)        { return static_cast<entt::entity>(Entity); }
-    FORCEINLINE uint32       ToId    (entt::entity Entity)  { return static_cast<uint32>(Entity); }
+    FORCEINLINE ECS::FEntity AsEntity(uint32 Entity)        { return static_cast<ECS::FEntity>(Entity); }
+    FORCEINLINE uint32       ToId    (ECS::FEntity Entity)  { return static_cast<uint32>(Entity); }
 }

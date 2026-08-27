@@ -1,5 +1,6 @@
 ﻿#include "Platform/Time/PlatformTime.h"
 #include "RuntimePCH.h"
+#include "World/ECS/Registry.h"
 #include "RmlUiBridge.h"
 #include "Core/Delegates/ScriptDelegate.h"
 
@@ -543,13 +544,13 @@ namespace Lumina::RmlUi
             E.LoadedPath.clear();
         }
 
-        void EnsureWidgetResources(FWidgetRuntime& E, CWorld* World, entt::entity Entity, uint32 Width, uint32 Height)
+        void EnsureWidgetResources(FWidgetRuntime& E, CWorld* World, ECS::FEntity Entity, uint32 Width, uint32 Height)
         {
             DestroyWidgetRuntime(E);
 
             char NameBuf[80];
             std::snprintf(NameBuf, sizeof(NameBuf), "widget_%p_%u",
-                static_cast<void*>(World), entt::to_integral(Entity));
+                static_cast<void*>(World), (Entity).Value);
 
             E.Context = Rml::CreateContext(NameBuf, Rml::Vector2i(int(Width), int(Height)));
             if (E.Context == nullptr)
@@ -1014,7 +1015,7 @@ namespace Lumina::RmlUi
 
         UI->WidgetJobs.clear();
 
-        World->View<SWidgetComponent>().each([&](entt::entity Entity, SWidgetComponent& Comp)
+        World->View<SWidgetComponent>().ForEach([&](ECS::FEntity Entity, SWidgetComponent& Comp)
         {
             FWidgetRuntime& R = Comp.Runtime;
 

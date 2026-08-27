@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "SystemContext.h"
+#include "World/ECS/Registry.h"
 #include "World/World.h"
 #include "World/Entity/Components/DirtyComponent.h"
 #include "World/Entity/Components/LifetimeComponent.h"
@@ -12,16 +13,16 @@ namespace Lumina
         // Honest-access checks for the access-implying context helpers (no-op in Shipping / outside a system).
         void CheckTransformWrite()
         {
-            ValidateSystemAccess(static_cast<uint32>(entt::type_hash<STransformComponent>::value()), true, "Write<STransformComponent>");
+            ValidateSystemAccess(static_cast<uint32>(ECS::GetComponentTypeID<STransformComponent>()), true, "Write<STransformComponent>");
         }
         void CheckPhysics(bool bWrite)
         {
-            ValidateSystemAccess(static_cast<uint32>(entt::type_hash<SystemResource::PhysicsQuery>::value()), bWrite,
+            ValidateSystemAccess(static_cast<uint32>(ECS::GetComponentTypeID<SystemResource::PhysicsQuery>()), bWrite,
                 bWrite ? "Write<SystemResource::PhysicsQuery>" : "Read<SystemResource::PhysicsQuery>");
         }
         void CheckStructure()
         {
-            ValidateSystemAccess(static_cast<uint32>(entt::type_hash<SystemResource::EntityStructure>::value()), true, "Write<SystemResource::EntityStructure>");
+            ValidateSystemAccess(static_cast<uint32>(ECS::GetComponentTypeID<SystemResource::EntityStructure>()), true, "Write<SystemResource::EntityStructure>");
         }
     }
 
@@ -32,32 +33,9 @@ namespace Lumina
     {}
 
 
-    void FSystemContext::SetEntityLifetime(entt::entity Entity, float Lifetime) const
+    void FSystemContext::SetEntityLifetime(ECS::FEntity Entity, float Lifetime) const
     {
-        Registry.get_or_emplace<SLifetimeComponent>(Entity).Lifetime = Lifetime;
-    }
-
-    entt::runtime_view FSystemContext::CreateRuntimeView(const THashSet<entt::id_type>& Components) const
-    {
-        entt::runtime_view RuntimeView;
-        
-        for (entt::id_type Type : Components)
-        {
-            entt::meta_type Meta = entt::resolve(Type);
-            if (!Meta)
-            {
-                if (entt::basic_sparse_set<>* Storage = Registry.storage(Type))
-                {
-                    RuntimeView.iterate(*Storage);
-                }
-            }
-            else if (entt::basic_sparse_set<>* Storage = Registry.storage(Meta.info().hash()))
-            {
-                RuntimeView.iterate(*Storage);
-            }
-        }
-
-        return RuntimeView;
+        Registry.GetOrEmplace<SLifetimeComponent>(Entity).Lifetime = Lifetime;
     }
 
     // Read, not write, since a declared Write satisfies it and only a total absence is caught.
@@ -85,31 +63,31 @@ namespace Lumina
         World->PhysicsScene->ChangeBodyMotionType(BodyID, NewType);
     }
 
-    uint32 FSystemContext::GetEntityBodyID(entt::entity Entity) const
+    uint32 FSystemContext::GetEntityBodyID(ECS::FEntity Entity) const
     {
         CheckPhysics(false);
         return World->PhysicsScene ? World->PhysicsScene->GetEntityBodyID(Entity) : ~0u;
     }
 
-    FVector3 FSystemContext::GetBodyPosition(entt::entity Entity) const
+    FVector3 FSystemContext::GetBodyPosition(ECS::FEntity Entity) const
     {
         CheckPhysics(false);
         return World->PhysicsScene ? World->PhysicsScene->GetBodyPosition(Entity) : FVector3(0.0f);
     }
 
-    FQuat FSystemContext::GetBodyRotation(entt::entity Entity) const
+    FQuat FSystemContext::GetBodyRotation(ECS::FEntity Entity) const
     {
         CheckPhysics(false);
         return World->PhysicsScene ? World->PhysicsScene->GetBodyRotation(Entity) : FQuat();
     }
 
-    FVector3 FSystemContext::GetVelocityAtPoint(entt::entity Entity, const FVector3& Point) const
+    FVector3 FSystemContext::GetVelocityAtPoint(ECS::FEntity Entity, const FVector3& Point) const
     {
         CheckPhysics(false);
         return World->PhysicsScene ? World->PhysicsScene->GetVelocityAtPoint(Entity, Point) : FVector3(0.0f);
     }
 
-    void FSystemContext::AddForceAtPosition(entt::entity Entity, const FVector3& Force, const FVector3& Position) const
+    void FSystemContext::AddForceAtPosition(ECS::FEntity Entity, const FVector3& Force, const FVector3& Position) const
     {
         CheckPhysics(true);
         if (World->PhysicsScene)
@@ -118,7 +96,7 @@ namespace Lumina
         }
     }
 
-    void FSystemContext::ApplyBuoyancyImpulse(entt::entity Entity, const FVector3& SurfacePosition, const FVector3& SurfaceNormal,
+    void FSystemContext::ApplyBuoyancyImpulse(ECS::FEntity Entity, const FVector3& SurfacePosition, const FVector3& SurfaceNormal,
         float Buoyancy, float LinearDrag, float AngularDrag, const FVector3& FluidVelocity, float InDeltaTime) const
     {
         CheckPhysics(true);
@@ -141,35 +119,35 @@ namespace Lumina
         return World->CastSphereClosest(Settings);
     }
 
-    STransformComponent& FSystemContext::GetEntityTransform(entt::entity Entity) const
+    STransformComponent& FSystemContext::GetEntityTransform(ECS::FEntity Entity) const
     {
         CheckTransformWrite(); // returns a mutable ref -> caller may write
         return Get<STransformComponent>(Entity);
     }
 
-    FVector3 FSystemContext::TranslateEntity(entt::entity Entity, const FVector3& Translation)
+    FVector3 FSystemContext::TranslateEntity(ECS::FEntity Entity, const FVector3& Translation)
     {
         CheckTransformWrite();
-        FVector3 NewLocation = Registry.get<STransformComponent>(Entity).Translate(Translation);
+        FVector3 NewLocation = Registry.Get<STransformComponent>(Entity).Translate(Translation);
         return NewLocation;
     }
 
-    void FSystemContext::SetEntityLocation(entt::entity Entity, const FVector3& Location)
+    void FSystemContext::SetEntityLocation(ECS::FEntity Entity, const FVector3& Location)
     {
         CheckTransformWrite();
-        Registry.get<STransformComponent>(Entity).SetLocation(Location);
+        Registry.Get<STransformComponent>(Entity).SetLocation(Location);
     }
 
-    void FSystemContext::SetEntityRotation(entt::entity Entity, const FQuat& Rotation)
+    void FSystemContext::SetEntityRotation(ECS::FEntity Entity, const FQuat& Rotation)
     {
         CheckTransformWrite();
-        Registry.get<STransformComponent>(Entity).SetRotation(Rotation);
+        Registry.Get<STransformComponent>(Entity).SetRotation(Rotation);
     }
 
-    void FSystemContext::SetEntityScale(entt::entity Entity, const FVector3& Scale)
+    void FSystemContext::SetEntityScale(ECS::FEntity Entity, const FVector3& Scale)
     {
         CheckTransformWrite();
-        Registry.get<STransformComponent>(Entity).SetScale(Scale);
+        Registry.Get<STransformComponent>(Entity).SetScale(Scale);
     }
 
     void FSystemContext::DrawDebugLine(const FVector3& Start, const FVector3& End, const FVector4& Color, float Thickness, float Duration) const
@@ -207,50 +185,50 @@ namespace Lumina
         World->DrawSolidTriangles(std::move(Vertices), Mode, Duration);
     }
 
-    entt::entity FSystemContext::Create(const FTransform& Transform, FName EntityName) const
+    ECS::FEntity FSystemContext::Create(const FTransform& Transform, FName EntityName) const
     {
         LUMINA_PROFILE_SCOPE();
         CheckStructure();
 
-        entt::entity EntityID = Registry.create();
-        Registry.emplace<STransformComponent>(EntityID).SetWorldTransform(Transform);
-        Registry.emplace<SNameComponent>(EntityID, EntityName);
-        Registry.emplace_or_replace<FNeedsTransformUpdate>(EntityID);
+        ECS::FEntity EntityID = Registry.Create();
+        Registry.Emplace<STransformComponent>(EntityID).SetWorldTransform(Transform);
+        Registry.Emplace<SNameComponent>(EntityID, EntityName);
+        Registry.EmplaceOrReplace<FNeedsTransformUpdate>(EntityID);
         return EntityID;
     }
     
-    entt::entity FSystemContext::Create(FVector3 Location, FName EntityName) const
+    ECS::FEntity FSystemContext::Create(FVector3 Location, FName EntityName) const
     {
         LUMINA_PROFILE_SCOPE();
         CheckStructure();
 
-        entt::entity EntityID = Registry.create();
-        Registry.emplace<STransformComponent>(EntityID).SetLocation(Location);
-        Registry.emplace<SNameComponent>(EntityID, EntityName);
-        Registry.emplace_or_replace<FNeedsTransformUpdate>(EntityID);
+        ECS::FEntity EntityID = Registry.Create();
+        Registry.Emplace<STransformComponent>(EntityID).SetLocation(Location);
+        Registry.Emplace<SNameComponent>(EntityID, EntityName);
+        Registry.EmplaceOrReplace<FNeedsTransformUpdate>(EntityID);
         return EntityID;
     }
     
-    entt::entity FSystemContext::Create(FName EntityName) const
+    ECS::FEntity FSystemContext::Create(FName EntityName) const
     {
         LUMINA_PROFILE_SCOPE();
         CheckStructure();
 
-        entt::entity EntityID = Registry.create();
-        Registry.emplace<STransformComponent>(EntityID);
-        Registry.emplace<SNameComponent>(EntityID, EntityName);
-        Registry.emplace_or_replace<FNeedsTransformUpdate>(EntityID);
+        ECS::FEntity EntityID = Registry.Create();
+        Registry.Emplace<STransformComponent>(EntityID);
+        Registry.Emplace<SNameComponent>(EntityID, EntityName);
+        Registry.EmplaceOrReplace<FNeedsTransformUpdate>(EntityID);
         return EntityID;
     }
 
     size_t FSystemContext::GetNumEntities() const
     {
-        return Registry.storage<entt::entity>().size();
+        return Registry.NumEntities();
     }
 
-    bool FSystemContext::IsValidEntity(entt::entity Entity) const
+    bool FSystemContext::IsValidEntity(ECS::FEntity Entity) const
     {
-        return Registry.valid(Entity);
+        return Registry.IsValid(Entity);
     }
 
     EWorldType FSystemContext::GetWorldType() const

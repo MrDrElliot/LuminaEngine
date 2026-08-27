@@ -68,25 +68,90 @@ namespace Lumina
     };
     static_assert(sizeof(FMeshletSphere) == 16, "FMeshletSphere must match the GPU mirror");
 
-    // Backface cluster culling. Cutoff = cos(angle / 2); 1.0 means the meshlet has no usable cone.
+    // Backface cluster culling, carrying no apex, so readers owe it meshoptimizer's approximate test.
     struct FMeshletCone
     {
-        FVector3 Apex;
-        float    Cutoff;
-        FVector3 Axis;
-        // Pads the stride to vec4 so the cull's whole-struct load can widen; not serialized.
-        float    _Pad = 0.0f;
+        int8 Axis[3];
+        // cos(angle / 2) as SNORM8, rounded up by the encoder so a decoded cone rejects less, never more.
+        int8 Cutoff;
 
         friend FArchive& operator<<(FArchive& Ar, FMeshletCone& Data)
         {
-            Ar << Data.Apex;
+            Ar << Data.Axis[0];
+            Ar << Data.Axis[1];
+            Ar << Data.Axis[2];
             Ar << Data.Cutoff;
-            Ar << Data.Axis;
             return Ar;
         }
     };
-    static_assert(sizeof(FMeshletCone) == 32, "FMeshletCone must match the GPU mirror");
-    static_assert(sizeof(FMeshletCone) % 16 == 0, "FMeshletCone stride must stay vec4 aligned");
+    static_assert(sizeof(FMeshletCone) == 4, "FMeshletCone must match the GPU mirror (Common.slang)");
+
+    // The cone every meshlet without a usable one carries, and what a decode failure must fall back to.
+    inline constexpr FMeshletCone kDisabledMeshletCone = { { 0, 0, (int8)MESHLET_CONE_SNORM_SCALE },
+                                                           (int8)MESHLET_CONE_DISABLED };
+
+    // Mirrors meshopt_quantizeSnorm(v, 8), which rounds away from zero rather than to even.
+    FORCEINLINE int8 QuantizeMeshletConeSnorm(float Value)
+    {
+        const float Clamped = Math::Clamp(Value, -1.0f, 1.0f);
+        return (int8)(int32)(Clamped * (float)MESHLET_CONE_SNORM_SCALE + (Clamped >= 0.0f ? 0.5f : -0.5f));
+    }
+
+    // Folds the axis quantization error into the cutoff and rounds up, which is what keeps the test conservative.
+    inline FMeshletCone EncodeMeshletCone(const FVector3& Axis, float Cutoff)
+    {
+        FMeshletCone Out;
+        Out.Axis[0] = QuantizeMeshletConeSnorm(Axis.x);
+        Out.Axis[1] = QuantizeMeshletConeSnorm(Axis.y);
+        Out.Axis[2] = QuantizeMeshletConeSnorm(Axis.z);
+
+        const float Scale = (float)MESHLET_CONE_SNORM_SCALE;
+        const float ErrorX = Math::Abs((float)Out.Axis[0] / Scale - Axis.x);
+        const float ErrorY = Math::Abs((float)Out.Axis[1] / Scale - Axis.y);
+        const float ErrorZ = Math::Abs((float)Out.Axis[2] / Scale - Axis.z);
+
+        const int32 Quantized = (int32)(Scale * (Cutoff + ErrorX + ErrorY + ErrorZ) + 1.0f);
+        Out.Cutoff = (int8)Math::Clamp(Quantized, -(int32)MESHLET_CONE_SNORM_SCALE, (int32)MESHLET_CONE_DISABLED);
+        return Out;
+    }
+
+    // Pre-MESHLET_CONE_SNORM8 cones, 28 bytes of float apex, cutoff and axis. The apex is read and dropped.
+    inline void LoadLegacyMeshletCones(FArchive& Ar, TVector<FMeshletCone>& Cones)
+    {
+        uint64 Count = 0;
+        Ar << Count;
+
+        Cones.clear();
+
+        if (Ar.HasError() || Count == 0)
+        {
+            return;
+        }
+
+        // The same bound TVector's operator applies, which this hand-rolled loop would otherwise skip.
+        if (Count > Ar.GetMaxSerializeSize())
+        {
+            Ar.SetHasError(true);
+            LOG_ERROR("Archiver is corrupted, attempted to serialize {} legacy meshlet cones. Max is: {}",
+                      Count, Ar.GetMaxSerializeSize());
+            return;
+        }
+
+        Cones.reserve((SIZE_T)Count);
+
+        for (uint64 i = 0; i < Count; ++i)
+        {
+            FVector3 Apex;
+            float    Cutoff = 1.0f;
+            FVector3 Axis;
+
+            Ar << Apex;
+            Ar << Cutoff;
+            Ar << Axis;
+
+            Cones.push_back(Cutoff < 1.0f ? EncodeMeshletCone(Axis, Cutoff) : kDisabledMeshletCone);
+        }
+    }
 
     // A skinned vertex's 8-bit JointIndices address its OWNING MESHLET's slice of MeshletBoneIndices.
     struct FMeshletBonePalette
@@ -150,7 +215,15 @@ namespace Lumina
             Ar << Data.MeshletSkinnedVertices;
             Ar << Data.MeshletTriangles;
             Ar << Data.MeshletSpheres;
-            Ar << Data.MeshletCones;
+
+            if (Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::MESHLET_CONE_SNORM8)
+            {
+                Ar << Data.MeshletCones;
+            }
+            else
+            {
+                LoadLegacyMeshletCones(Ar, Data.MeshletCones);
+            }
 
             if (Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::MESHLET_BONE_PALETTES)
             {

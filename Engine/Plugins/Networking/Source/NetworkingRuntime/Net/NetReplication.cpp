@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "NetReplication.h"
+#include "World/ECS/Registry.h"
 #include "NetWorldState.h"
 #include "ScriptRepState.h"
 #include "Core/Profiler/Profile.h"
@@ -11,12 +12,12 @@
 #include "Containers/HashTable.h"
 #include "Containers/Vector.h"
 #include "Assets/AssetRef.h"
+#include "World/Entity/Components/Component.h"
 #include "World/Entity/EntityUtils.h"
 #include "World/Entity/Components/RelationshipComponent.h"
 #include "Components/NetworkComponent.h"
 #include "Networking/INetworkTransport.h"
 #include "Log/Log.h"
-#include "entt/entt.hpp"
 
 namespace Lumina::Net
 {
@@ -27,20 +28,19 @@ namespace Lumina::Net
             return Hash::GetHash32(Name.c_str());
         }
 
-        CStruct* StructFromMeta(const entt::meta_type& Type)
+        // Constant time, since the storage is keyed by type id rather than scanned.
+        void* FindComponentPtr(ECS::FRegistry& Registry, ECS::FEntity Entity, const CStruct* Type)
         {
-            entt::meta_any S = ECS::Utils::InvokeMetaFunc(Type, entt::hashed_string("static_struct"));
-            return S ? S.cast<CStruct*>() : nullptr;
-        }
-
-        // Constant time, since the storage is keyed by type-info hash rather than scanned.
-        void* FindComponentPtr(entt::registry& Registry, entt::entity Entity, const entt::meta_type& Type)
-        {
-            if (auto* Set = Registry.storage(Type.info().hash()))
+            const FComponentOps* Ops = Type != nullptr ? Type->GetComponentOps() : nullptr;
+            if (Ops == nullptr)
             {
-                if (Set->contains(Entity))
+                return nullptr;
+            }
+            if (auto* Set = Registry.FindStorage(static_cast<ECS::FComponentTypeID>(Ops->TypeId)))
+            {
+                if (Set->Contains(Entity))
                 {
-                    return Set->value(Entity);
+                    return Set->GetRaw(Entity);
                 }
             }
             return nullptr;
@@ -48,9 +48,8 @@ namespace Lumina::Net
 
         struct FReplType
         {
-            uint32          Hash;
-            entt::meta_type Type;
-            CStruct*        Struct;
+            uint32   Hash;
+            CStruct* Struct;
         };
 
         // The same build gives an identical order, so the wire carries a 1-byte index, not the hash.
@@ -65,13 +64,10 @@ namespace Lumina::Net
             static const FReplTypeTable Table = []
             {
                 FReplTypeTable T;
-                for (auto&& [Id, Type] : entt::resolve())
+                ForEachComponentStruct([&T](CStruct* St)
                 {
-                    if (CStruct* St = StructFromMeta(Type))
-                    {
-                        T.ByIndex.push_back({ HashStructName(St->GetName()), Type, St });
-                    }
-                }
+                    T.ByIndex.push_back({ HashStructName(St->GetName()), St });
+                });
                 Algo::Sort(T.ByIndex.begin(), T.ByIndex.end(),[](const FReplType& A, const FReplType& B)
                 {
                     return A.Hash < B.Hash;
@@ -87,24 +83,24 @@ namespace Lumina::Net
         }
 
         // A parent guid of 0 detaches, and an unspawned parent is retried when it spawns.
-        void ApplyReplicatedParent(entt::registry& Registry, entt::entity Child, uint32 ParentGuid)
+        void ApplyReplicatedParent(ECS::FRegistry& Registry, ECS::FEntity Child, uint32 ParentGuid)
         {
-            FNetWorldState* State = Registry.ctx().find<FNetWorldState>();
-            if (State == nullptr || !Registry.valid(Child))
+            FNetWorldState* State = Registry.Ctx().Find<FNetWorldState>();
+            if (State == nullptr || !Registry.IsValid(Child))
             {
                 return;
             }
 
             uint32 CurParentGuid = 0;
-            if (const FRelationshipComponent* Rel = Registry.try_get<FRelationshipComponent>(Child); Rel && Rel->Parent != entt::null)
+            if (const FRelationshipComponent* Rel = Registry.TryGet<FRelationshipComponent>(Child); Rel && Rel->Parent != ECS::NullEntity)
             {
-                if (const SNetworkComponent* PNet = Registry.try_get<SNetworkComponent>(Rel->Parent))
+                if (const SNetworkComponent* PNet = Registry.TryGet<SNetworkComponent>(Rel->Parent))
                 {
                     CurParentGuid = PNet->NetGUID.Value;
                 }
             }
 
-            const uint32 ChildKey = static_cast<uint32>(entt::to_integral(Child));
+            const uint32 ChildKey = static_cast<uint32>((Child).Value);
             if (CurParentGuid == ParentGuid)
             {
                 State->PendingAttach.erase(ChildKey); // already attached as desired
@@ -113,13 +109,13 @@ namespace Lumina::Net
 
             if (ParentGuid == 0)
             {
-                ECS::Utils::ReparentEntity(Registry, Child, entt::null, /*bPreserveWorld*/ false);
+                ECS::Utils::ReparentEntity(Registry, Child, ECS::NullEntity, /*bPreserveWorld*/ false);
                 State->PendingAttach.erase(ChildKey);
                 return;
             }
 
-            const entt::entity Parent = State->GuidTable.Find(FNetGUID{ ParentGuid });
-            if (Parent != entt::null && Registry.valid(Parent))
+            const ECS::FEntity Parent = State->GuidTable.Find(FNetGUID{ ParentGuid });
+            if (Parent != ECS::NullEntity && Registry.IsValid(Parent))
             {
                 ECS::Utils::ReparentEntity(Registry, Child, Parent, /*bPreserveWorld*/ false);
                 State->PendingAttach.erase(ChildKey);
@@ -131,14 +127,14 @@ namespace Lumina::Net
         }
     }
 
-    void DrainPendingAttach(entt::registry& Registry, FNetWorldState& State, uint32 NewGuid, entt::entity NewEntity)
+    void DrainPendingAttach(ECS::FRegistry& Registry, FNetWorldState& State, uint32 NewGuid, ECS::FEntity NewEntity)
     {
         for (auto It = State.PendingAttach.begin(); It != State.PendingAttach.end(); )
         {
             if (It->second == NewGuid)
             {
-                const entt::entity Child = static_cast<entt::entity>(It->first);
-                if (Registry.valid(Child))
+                const ECS::FEntity Child = static_cast<ECS::FEntity>(It->first);
+                if (Registry.IsValid(Child))
                 {
                     ECS::Utils::ReparentEntity(Registry, Child, NewEntity, /*bPreserveWorld*/ false);
                 }
@@ -151,13 +147,13 @@ namespace Lumina::Net
         }
     }
 
-    bool ParentReplicates(entt::registry& Registry, entt::entity Parent)
+    bool ParentReplicates(ECS::FRegistry& Registry, ECS::FEntity Parent)
     {
-        if (Parent == entt::null)
+        if (Parent == ECS::NullEntity)
         {
             return false;
         }
-        const SNetworkComponent* PNet = Registry.try_get<SNetworkComponent>(Parent);
+        const SNetworkComponent* PNet = Registry.TryGet<SNetworkComponent>(Parent);
         return PNet != nullptr && PNet->bReplicates && PNet->bNetLoadOnClient && PNet->NetGUID.Value != 0;
     }
 
@@ -191,7 +187,7 @@ namespace Lumina::Net
         return (Encoded & 1u) ? (NetGUID_DynamicStart + (Encoded >> 1)) : (Encoded >> 1);
     }
 
-    void CollectComponentFieldsInto(entt::registry& Registry, entt::entity Entity, FNetWorldState& State,
+    void CollectComponentFieldsInto(ECS::FRegistry& Registry, ECS::FEntity Entity, FNetWorldState& State,
                                     bool bBaseline, FComponentRepState* DiffState, TVector<FComponentRepOut>& Out)
     {
         LUMINA_PROFILE_SCOPE();
@@ -212,18 +208,15 @@ namespace Lumina::Net
         Net::BindWriters(HookSrc, State);
 
         const FReplTypeTable& Types = ReplTypes();
-        for (auto [Id, Set] : Registry.storage())
+        for (Lumina::ECS::FSparseSet* SetPtr : Registry.GetActiveStorages())
         {
-            if (!Set.contains(Entity))
+            const Lumina::ECS::FComponentTypeID Id = SetPtr->GetTypeInfo().TypeID;
+            Lumina::ECS::FSparseSet& Set = *SetPtr;
+            if (!Set.Contains(Entity))
             {
                 continue;
             }
-            entt::meta_type Type = entt::resolve(Set.info());
-            if (!Type)
-            {
-                continue;
-            }
-            CStruct* St = StructFromMeta(Type);
+            CStruct* St = FindComponentStructByTypeId(Id);
             if (St == nullptr)
             {
                 continue;
@@ -235,7 +228,7 @@ namespace Lumina::Net
             }
 
             const uint32 WireIndex = It->second;
-            void* Ptr = Set.value(Entity);
+            void* Ptr = Set.GetRaw(Entity);
 
             // Current field bytes, flat; compare to the last-sent baseline to build the changed-field mask.
             St->NetSerializeReplicatedFlat(HookSrc, Ptr, CurBytes, CurOffsets);
@@ -301,14 +294,14 @@ namespace Lumina::Net
         Out.resize(Emitted);
     }
 
-    TVector<FComponentRepOut> CollectComponentFields(entt::registry& Registry, entt::entity Entity, FNetWorldState& State, bool bBaseline, FComponentRepState* DiffState)
+    TVector<FComponentRepOut> CollectComponentFields(ECS::FRegistry& Registry, ECS::FEntity Entity, FNetWorldState& State, bool bBaseline, FComponentRepState* DiffState)
     {
         TVector<FComponentRepOut> Out;
         CollectComponentFieldsInto(Registry, Entity, State, bBaseline, DiffState, Out);
         return Out;
     }
 
-    void WriteEntityComponents(FNetArchive& Ar, entt::registry& Registry, entt::entity Entity, const TVector<FComponentRepOut>* Components)
+    void WriteEntityComponents(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity, const TVector<FComponentRepOut>* Components)
     {
         LUMINA_PROFILE_SCOPE();
         // Recipient-independent, so the same precomputed blocks serve every recipient.
@@ -327,22 +320,22 @@ namespace Lumina::Net
         }
 
         uint32 ParentGuid = 0;
-        if (const FRelationshipComponent* Rel = Registry.try_get<FRelationshipComponent>(Entity);
-            Rel && Rel->Parent != entt::null && ParentReplicates(Registry, Rel->Parent))
+        if (const FRelationshipComponent* Rel = Registry.TryGet<FRelationshipComponent>(Entity);
+            Rel && Rel->Parent != ECS::NullEntity && ParentReplicates(Registry, Rel->Parent))
         {
-            ParentGuid = Registry.get<SNetworkComponent>(Rel->Parent).NetGUID.Value;
+            ParentGuid = Registry.Get<SNetworkComponent>(Rel->Parent).NetGUID.Value;
         }
         WriteNetGuid(Ar, ParentGuid);
     }
 
-    void ReadEntityComponents(FNetArchive& Ar, entt::registry& Registry, entt::entity Entity)
+    void ReadEntityComponents(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
         LUMINA_PROFILE_SCOPE();
         uint16 Count = 0;
         Ar << Count;
 
         // Patched after the loop so an OnRep handler sees every other component already applied.
-        TVector<entt::meta_type> Applied;
+        TVector<CStruct*> Applied;
 
         const FReplTypeTable& Types = ReplTypes();
         for (uint16 i = 0; i < Count; ++i)
@@ -361,7 +354,6 @@ namespace Lumina::Net
                 return;
             }
 
-            entt::meta_type Type = Types.ByIndex[Index].Type;
             CStruct* St = Types.ByIndex[Index].Struct;
             if (St == nullptr)
             {
@@ -383,18 +375,20 @@ namespace Lumina::Net
             }
 
             // Applies only the changed fields into the live component, emplacing a default first if absent.
-            void* Ptr = FindComponentPtr(Registry, Entity, Type);
+            void* Ptr = FindComponentPtr(Registry, Entity, St);
             if (Ptr == nullptr)
             {
-                entt::meta_any Default{};
-                ECS::Utils::InvokeMetaFunc(Type, entt::hashed_string("emplace"), entt::forward_as_meta(Registry), Entity, entt::forward_as_meta(Default));
-                Ptr = FindComponentPtr(Registry, Entity, Type);
+                if (const FComponentOps* Ops = St->GetComponentOps())
+                {
+                    Ops->EmplaceDefault(Registry, Entity);
+                }
+                Ptr = FindComponentPtr(Registry, Entity, St);
             }
 
             if (Ptr != nullptr)
             {
                 St->NetReadReplicatedMasked(Ar, Ptr, Mask.data());
-                Applied.push_back(Type);
+                Applied.push_back(St);
             }
             else
             {
@@ -404,14 +398,16 @@ namespace Lumina::Net
         }
 
         // Fire on_update<T> for each applied component
-        entt::meta_any Signal{};
-        for (const entt::meta_type& Type : Applied)
+        for (CStruct* Type : Applied)
         {
-            if (!Registry.valid(Entity))
+            if (!Registry.IsValid(Entity))
             {
                 break; // a prior handler's script logic destroyed the entity
             }
-            ECS::Utils::InvokeMetaFunc(Type, entt::hashed_string("patch"), entt::forward_as_meta(Registry), Entity, entt::forward_as_meta(Signal));
+            if (const FComponentOps* Ops = Type->GetComponentOps())
+            {
+                Ops->Patch(Registry, Entity);
+            }
         }
 
         // Always read to stay aligned, then resolved and reparented.

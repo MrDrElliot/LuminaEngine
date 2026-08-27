@@ -1,4 +1,5 @@
 #include "Platform/GenericPlatform.h"
+#include "World/ECS/Registry.h"
 #include "Containers/HashTable.h"
 #include "Containers/Vector.h"
 #include "Core/Object/ObjectHandleTyped.h"
@@ -80,13 +81,13 @@ namespace
         return [Ctx]() { Ctx->Invoke(); };
     }
 
-    uint32 SetManagedTimer(uint64 World, entt::entity Owner, bool bHasOwner, float Rate, int32 bLoop,
+    uint32 SetManagedTimer(uint64 World, ECS::FEntity Owner, bool bHasOwner, float Rate, int32 bLoop,
         float FirstDelay, void* Thunk, void* FreeThunk, void* Context)
     {
         CWorld* W = AsWorld(World);
         if (W == nullptr || Thunk == nullptr)
         {
-            return ToId(entt::null);
+            return ToId(ECS::NullEntity);
         }
 
         TSharedPtr<FManagedTimerContext> Ctx = MakeShared<FManagedTimerContext>(Thunk, FreeThunk, Context, W);
@@ -96,10 +97,10 @@ namespace
             : W->GetTimerManager().SetTimer(Rate, MakeCallback(Ctx), bLoop != 0, FirstDelay);
 
         // Native owns the context only when a real id comes back, which is exactly what the caller frees on.
-        if (Handle.Handle == entt::null)
+        if (Handle.Handle == ECS::NullEntity)
         {
             Ctx->Detach();
-            return ToId(entt::null);
+            return ToId(ECS::NullEntity);
         }
 
         Ctx->Handle = Handle;
@@ -109,7 +110,7 @@ namespace
 
 LUMINA_DOTNET_EXPORT(uint32, Timer_Set)(uint64 World, float Rate, int32 bLoop, float FirstDelay, void* Thunk, void* FreeThunk, void* Context)
 {
-    return SetManagedTimer(World, entt::null, false, Rate, bLoop, FirstDelay, Thunk, FreeThunk, Context);
+    return SetManagedTimer(World, ECS::NullEntity, false, Rate, bLoop, FirstDelay, Thunk, FreeThunk, Context);
 }
 
 // As the plain setter, but owned by an entity so the timer clears when that entity is destroyed.

@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "ProjectileSystem.h"
+#include "World/ECS/Registry.h"
 
 #include "Physics/PhysicsScene.h"
 #include "World/World.h"
@@ -24,14 +25,14 @@ namespace Lumina
 
         // World gravity vector, for arced projectiles (GravityScale != 0).
         FVector3 Gravity(0.0f);
-        if (CWorld* CW = Context.GetRegistry().ctx().get<CWorld*>())
+        if (CWorld* CW = Context.GetRegistry().Ctx().Get<CWorld*>())
         {
             const SDefaultWorldSettings& Settings = CW->GetDefaultWorldSettings();
             Gravity = Settings.GravityDirection * (9.81f * Settings.GravityScale);
         }
 
         auto View = Context.CreateView<SProjectileComponent, STransformComponent>();
-        View.each([&](entt::entity Entity, SProjectileComponent& Projectile, STransformComponent& Transform)
+        View.ForEach([&](ECS::FEntity Entity, SProjectileComponent& Projectile, STransformComponent& Transform)
         {
             if (Projectile.bHasHit)
             {
@@ -52,7 +53,7 @@ namespace Lumina
             if (Scene != nullptr)
             {
                 const uint32 SelfBody = Context.GetEntityBodyID(Entity);
-                const uint32 InstigatorBody = (Projectile.Instigator != entt::null)
+                const uint32 InstigatorBody = (Projectile.Instigator != ECS::NullEntity)
                     ? Context.GetEntityBodyID(Projectile.Instigator) : ~0u;
 
                 if (Projectile.Radius > 0.0f)
@@ -86,7 +87,7 @@ namespace Lumina
 
                 SProjectileHitEvent Event;
                 Event.Projectile = Entity;
-                Event.HitEntity = static_cast<entt::entity>(Hit->Entity);
+                Event.HitEntity = static_cast<ECS::FEntity>(Hit->Entity);
                 Event.Point = Hit->Location;
                 Event.Normal = Hit->Normal;
                 Event.Damage = Projectile.Damage;

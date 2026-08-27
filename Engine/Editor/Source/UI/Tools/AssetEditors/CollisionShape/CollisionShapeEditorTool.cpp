@@ -1,4 +1,5 @@
 #include "CollisionShapeEditorTool.h"
+#include "World/ECS/Registry.h"
 
 #include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
 #include "Physics/CollisionShapeGen.h"
@@ -173,10 +174,10 @@ namespace Lumina
             return;
         }
 
-        if (MeshEntity != entt::null)
+        if (MeshEntity != ECS::NullEntity)
         {
             World->DestroyEntity(MeshEntity);
-            MeshEntity = entt::null;
+            MeshEntity = ECS::NullEntity;
         }
 
         CStaticMesh* Mesh = CachedSourceMesh.Get();

@@ -1,5 +1,6 @@
 ﻿#include "Containers/StringFormat.h"
 #include "AnimationEditorTool.h"
+#include "World/ECS/Registry.h"
 
 #include <string>
 #include "Core/Math/Math.h"
@@ -155,7 +156,7 @@ namespace Lumina
 
     SSimpleAnimationComponent* FAnimationEditorTool::GetPreviewComponent() const
     {
-        if (!World.IsValid() || MeshEntity == entt::null)
+        if (!World.IsValid() || MeshEntity == ECS::NullEntity)
         {
             return nullptr;
         }

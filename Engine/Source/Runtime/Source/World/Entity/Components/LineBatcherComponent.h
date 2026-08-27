@@ -7,7 +7,7 @@ namespace Lumina
 {
     struct RUNTIME_API FLineBatcherComponent
     {
-        static constexpr auto in_place_delete = true;
+        static constexpr bool InPlaceDelete = true;
 
         struct FLineInstance
         {

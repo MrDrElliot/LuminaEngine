@@ -1,5 +1,8 @@
 ﻿#pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "EditorAction.h"
@@ -168,10 +171,10 @@ namespace Lumina
         // front of the camera, so it always produces something usable. Returns false only when there is
         // no camera to build a ray from.
         /** Cursor ray against terrain, then mesh bounds, then the ground plane; always yields a location.
-         *  OutHitEntity (optional) receives the mesh entity that was hit, or entt::null when the location
+         *  OutHitEntity (optional) receives the mesh entity that was hit, or ECS::NullEntity when the location
          *  came from terrain, the ground plane, or the fallback distance -- which is what lets a drop know
          *  whether it landed ON something. */
-        bool TraceViewportPlacement(ImVec2 ScreenPos, FVector3& OutLocation, entt::entity* OutHitEntity = nullptr) const;
+        bool TraceViewportPlacement(ImVec2 ScreenPos, FVector3& OutLocation, ECS::FEntity* OutHitEntity = nullptr) const;
 
         /** Cursor -> world ray through the tool's viewport rect. False when there is no camera. */
         bool BuildViewportRay(ImVec2 ScreenPos, FVector3& OutOrigin, FVector3& OutDirection) const;
@@ -209,7 +212,7 @@ namespace Lumina
         virtual void GetDefaultCameraPose(FVector3& OutLocation, FVector3& OutTarget) const;
         
         /** Creates a plane at world 0 */
-        virtual entt::entity CreateFloorPlane(float YOffset = 0.0f, float ScaleX = 10.0f, float ScaleY = 10.0f);
+        virtual ECS::FEntity CreateFloorPlane(float YOffset = 0.0f, float ScaleX = 10.0f, float ScaleY = 10.0f);
         
         /** Called just before updating the world at each stage */
         virtual void WorldUpdate(const FUpdateContext& UpdateContext) { }
@@ -307,7 +310,7 @@ namespace Lumina
         void DrawGameFocusIndicator(ImVec2 ViewportSize);
         
         /** Moves the viewport to focus on the desired entity */
-        virtual void FocusViewportToEntity(entt::entity Entity);
+        virtual void FocusViewportToEntity(ECS::FEntity Entity);
         
         /** Draws an editor viewport grid if a world exists. Extent, spacing and color come from CViewportGridSettings. */
         virtual void DrawWorldGrid();
@@ -395,11 +398,11 @@ namespace Lumina
         /** Returns a transform placed in front of the active editor camera by the given distance. */
         FTransform GetCameraSpawnTransform(float DistanceForward = 5.0f) const;
 
-        /** Dispatches a content-browser asset drop by asset class. Returns the spawned entity (or entt::null). */
+        /** Dispatches a content-browser asset drop by asset class. Returns the spawned entity (or ECS::NullEntity). */
         /** DropTarget is the entity the drop landed on (outliner row, or the viewport ray hit).
          *  bAttachToTarget is the separate question of whether the gesture meant to PARENT under it --
          *  true only for an outliner row drop; viewport placement acts on the target without adopting it. */
-        entt::entity HandleContentBrowserAssetDrop(FStringView VirtualPath, entt::entity DropTarget, bool bAttachToTarget = false);
+        ECS::FEntity HandleContentBrowserAssetDrop(FStringView VirtualPath, ECS::FEntity DropTarget, bool bAttachToTarget = false);
 
     protected:
 
@@ -420,7 +423,7 @@ namespace Lumina
          * component with hundreds of thousands of reflected instances that landed as a multi-hundred-
          * millisecond stall the moment the user grabbed something.
          */
-        void BeginTransformTransaction(const TVector<entt::entity>& Entities);
+        void BeginTransformTransaction(const TVector<ECS::FEntity>& Entities);
 
         /**
          * Begin a transaction for an operation that only ADDS entities (duplicate, paste, new entity).
@@ -432,16 +435,16 @@ namespace Lumina
         void BeginCreationTransaction();
 
         /** Records one component type on these entities; falls back to whole-registry for an ops-less type. */
-        void BeginComponentTransaction(const TVector<entt::entity>& Entities, CStruct* ComponentType);
+        void BeginComponentTransaction(const TVector<ECS::FEntity>& Entities, CStruct* ComponentType);
 
         /** Records the links, transforms and attachment state a hierarchy edit on Seeds can rewrite. */
-        void BeginRelationshipTransaction(const TVector<entt::entity>& Seeds, entt::entity NewParent = entt::null);
+        void BeginRelationshipTransaction(const TVector<ECS::FEntity>& Seeds, ECS::FEntity NewParent = ECS::NullEntity);
 
         /** Records the entities Doomed reaches, plus the links their surviving parents keep. */
-        void BeginDestroyTransaction(const TVector<entt::entity>& Doomed);
+        void BeginDestroyTransaction(const TVector<ECS::FEntity>& Doomed);
 
         /** Adds one component type to the transaction already open, for an edit that spans several. */
-        void RecordComponentSnapshot(const TVector<entt::entity>& Entities, CStruct* ComponentType);
+        void RecordComponentSnapshot(const TVector<ECS::FEntity>& Entities, CStruct* ComponentType);
 
         /** End a transaction; captures after-state and pushes onto the undo stack. */
         virtual void EndTransaction(FName Name);
@@ -524,7 +527,7 @@ namespace Lumina
         TVector<TUniquePtr<FToolWindow>>    ToolWindows;
         
         TObjectPtr<CWorld>                  World;
-        entt::entity                        EditorEntity;
+        ECS::FEntity                        EditorEntity;
         FEditorCameraState                  CameraState;
         // Per-tool so a second visible viewport can't inherit this one's drag or snap animation.
         ImViewGuizmo::Context               ViewGizmoContext;

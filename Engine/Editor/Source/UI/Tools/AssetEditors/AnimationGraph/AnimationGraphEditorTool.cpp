@@ -1,6 +1,7 @@
 ﻿#include "AnimationGraphEditorTool.h"
 
 #include <cfloat>
+#include "World/ECS/Registry.h"
 #include "Animation/TaskSystem/AnimTaskExecutor.h"
 #include "Assets/AssetRegistry/AssetData.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
@@ -496,7 +497,7 @@ namespace Lumina
             && Graph->Skeleton.IsValid()
             && Graph->Skeleton->PreviewMesh.IsValid();
 
-        const bool bMeshEntityValid = MeshEntity != entt::null && World->IsValidEntity(MeshEntity);
+        const bool bMeshEntityValid = MeshEntity != ECS::NullEntity && World->IsValidEntity(MeshEntity);
 
         // Skeleton cleared while the tool is open -> tear the preview down.
         if (!bHasPreview)
@@ -505,7 +506,7 @@ namespace Lumina
             {
                 World->DestroyEntity(MeshEntity);
             }
-            MeshEntity = entt::null;
+            MeshEntity = ECS::NullEntity;
             return;
         }
 
@@ -871,7 +872,7 @@ namespace Lumina
 
         const FAnimGraphVMState* VMState = nullptr;
         CWorld* TargetWorld = nullptr;
-        entt::entity TargetEntity = entt::null;
+        ECS::FEntity TargetEntity = ECS::NullEntity;
         if (ResolveDebugTarget(TargetWorld, TargetEntity))
         {
             if (SAnimationGraphComponent* Comp = TargetWorld->TryGetComponent<SAnimationGraphComponent>(TargetEntity))
@@ -912,7 +913,7 @@ namespace Lumina
             return;
         }
 
-        SAnimationGraphComponent* Comp = (World.IsValid() && MeshEntity != entt::null && World->IsValidEntity(MeshEntity))
+        SAnimationGraphComponent* Comp = (World.IsValid() && MeshEntity != ECS::NullEntity && World->IsValidEntity(MeshEntity))
             ? World->TryGetComponent<SAnimationGraphComponent>(MeshEntity)
             : nullptr;
 
@@ -1037,7 +1038,7 @@ namespace Lumina
         }
 
         CWorld* TargetWorld = nullptr;
-        entt::entity TargetEntity = entt::null;
+        ECS::FEntity TargetEntity = ECS::NullEntity;
 
         const FAnimGraphVMState* VMState = nullptr;
         if (ResolveDebugTarget(TargetWorld, TargetEntity))
@@ -1176,15 +1177,15 @@ namespace Lumina
             else
             {
                 DebugTargetWorld  = nullptr;
-                DebugTargetEntity = entt::null;
+                DebugTargetEntity = ECS::NullEntity;
             }
         }
 
         // Flattened into one indexable list so the searchable picker can select by index.
         TVector<FString> Labels;
-        TVector<TPair<CWorld*, entt::entity>> Targets;
+        TVector<TPair<CWorld*, ECS::FEntity>> Targets;
         Labels.push_back("Preview");
-        Targets.push_back({ nullptr, static_cast<entt::entity>(entt::null) });
+        Targets.push_back({ nullptr, static_cast<ECS::FEntity>(ECS::NullEntity) });
 
         int32 CurrentIndex = DebugTargetWorld.IsValid() ? INDEX_NONE : 0;
 
@@ -1198,7 +1199,7 @@ namespace Lumina
                     continue;
                 }
 
-                for (entt::entity Entity : CandidateWorld->View<SAnimationGraphComponent>())
+                for (ECS::FEntity Entity : CandidateWorld->View<SAnimationGraphComponent>())
                 {
                     if (CandidateWorld->GetComponent<SAnimationGraphComponent>(Entity).Graph.Get() != AssetGraph)
                     {
@@ -1400,7 +1401,7 @@ namespace Lumina
         ImGui::EndChild();
     }
 
-    bool FAnimationGraphEditorTool::ResolveDebugTarget(CWorld*& OutWorld, entt::entity& OutEntity) const
+    bool FAnimationGraphEditorTool::ResolveDebugTarget(CWorld*& OutWorld, ECS::FEntity& OutEntity) const
     {
         // A null world means the editor preview, and a stale selection falls back to it too.
         OutWorld  = DebugTargetWorld.Get();
@@ -1412,13 +1413,13 @@ namespace Lumina
             OutEntity = MeshEntity;
         }
 
-        return OutWorld != nullptr && OutEntity != entt::null && OutWorld->IsValidEntity(OutEntity);
+        return OutWorld != nullptr && OutEntity != ECS::NullEntity && OutWorld->IsValidEntity(OutEntity);
     }
 
     void FAnimationGraphEditorTool::DrawTaskGraphWindow()
     {
         CWorld* TargetWorld = nullptr;
-        entt::entity TargetEntity = entt::null;
+        ECS::FEntity TargetEntity = ECS::NullEntity;
         SSkeletalMeshComponent* MeshComp = nullptr;
         if (ResolveDebugTarget(TargetWorld, TargetEntity))
         {

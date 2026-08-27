@@ -1,4 +1,5 @@
 #include "GeometryCollectionEditorTool.h"
+#include "World/ECS/Registry.h"
 
 #include "Assets/AssetTypes/GeometryCollection/GeometryCollection.h"
 #include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
@@ -71,9 +72,9 @@ namespace Lumina
     {
         if (World.IsValid())
         {
-            for (entt::entity Entity : PieceEntities)
+            for (ECS::FEntity Entity : PieceEntities)
             {
-                if (Entity != entt::null && World->IsValidEntity(Entity))
+                if (Entity != ECS::NullEntity && World->IsValidEntity(Entity))
                 {
                     World->DestroyEntity(Entity);
                 }
@@ -106,11 +107,11 @@ namespace Lumina
 
             if (PieceMesh == nullptr)
             {
-                PieceEntities.push_back(entt::null);
+                PieceEntities.push_back(ECS::NullEntity);
                 continue;
             }
 
-            entt::entity Entity = World->ConstructEntity("Piece");
+            ECS::FEntity Entity = World->ConstructEntity("Piece");
             World->EmplaceComponent<SStaticMeshComponent>(Entity).SetStaticMesh(PieceMesh);
             PieceEntities.push_back(Entity);
         }
@@ -131,8 +132,8 @@ namespace Lumina
 
         for (int32 i = 0; i < Count; ++i)
         {
-            const entt::entity Entity = PieceEntities[i];
-            if (Entity == entt::null || !World->IsValidEntity(Entity))
+            const ECS::FEntity Entity = PieceEntities[i];
+            if (Entity == ECS::NullEntity || !World->IsValidEntity(Entity))
             {
                 continue;
             }

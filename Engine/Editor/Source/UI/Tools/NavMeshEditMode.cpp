@@ -1,4 +1,5 @@
 #include "NavMeshEditMode.h"
+#include "World/ECS/Registry.h"
 
 #include "AI/Navigation/NavMesh.h"
 #include "Core/Console/ConsoleVariable.h"
@@ -23,9 +24,9 @@ namespace Lumina
         }
 
         auto View = World->View<SNavMeshComponent>();
-        for (entt::entity Entity : View)
+        for (ECS::FEntity Entity : View)
         {
-            const SNavMeshComponent& Nav = View.get<SNavMeshComponent>(Entity);
+            const SNavMeshComponent& Nav = View.Get<SNavMeshComponent>(Entity);
             const bool bBaking = Nav.Runtime.State == ENavBakeState::Building || Nav.Runtime.State == ENavBakeState::Initializing;
             const FVector4 Color = bBaking ? kBakingColor : (Nav.HasBakedData() ? kBakedColor : kVolumeColor);
             // Duration -1 = single frame; the overlay re-emits each tick so the wireframe is always present.
@@ -63,9 +64,9 @@ namespace Lumina
         if (ImGui::Button(LE_ICON_REFRESH, ImVec2(ButtonSize, ButtonSize)))
         {
             auto View = World->View<SNavMeshComponent>();
-            for (entt::entity Entity : View)
+            for (ECS::FEntity Entity : View)
             {
-                View.get<SNavMeshComponent>(Entity).bBakeRequested = true;
+                View.Get<SNavMeshComponent>(Entity).bBakeRequested = true;
             }
         }
         if (ImGui::IsItemHovered())
@@ -75,9 +76,9 @@ namespace Lumina
 
         // Compact state readout for the first nav volume.
         auto View = World->View<SNavMeshComponent>();
-        for (entt::entity Entity : View)
+        for (ECS::FEntity Entity : View)
         {
-            const SNavMeshComponent& Nav = View.get<SNavMeshComponent>(Entity);
+            const SNavMeshComponent& Nav = View.Get<SNavMeshComponent>(Entity);
             const bool bBaking = Nav.Runtime.State == ENavBakeState::Building || Nav.Runtime.State == ENavBakeState::Initializing;
             ImGui::SameLine();
             if (bBaking)

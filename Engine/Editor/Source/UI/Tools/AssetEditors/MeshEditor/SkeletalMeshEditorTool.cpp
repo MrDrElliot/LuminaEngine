@@ -1,4 +1,5 @@
 #include "SkeletalMeshEditorTool.h"
+#include "World/ECS/Registry.h"
 
 #include "Assets/AssetTypes/Mesh/SkeletalMesh/SkeletalMesh.h"
 #include "Assets/AssetTypes/Mesh/Skeleton/Skeleton.h"
@@ -244,7 +245,7 @@ namespace Lumina
         OutTransforms.clear();
 
         CSkeletalMesh* SkeletalMesh = Cast<CSkeletalMesh>(Asset.Get());
-        if (SkeletalMesh == nullptr || !SkeletalMesh->Skeleton.IsValid() || MeshEntity == entt::null)
+        if (SkeletalMesh == nullptr || !SkeletalMesh->Skeleton.IsValid() || MeshEntity == ECS::NullEntity)
         {
             return;
         }
@@ -851,7 +852,7 @@ namespace Lumina
     {
         FAssetEditorTool::Update(UpdateContext);
 
-        if (!World.IsValid() || MeshEntity == entt::null)
+        if (!World.IsValid() || MeshEntity == ECS::NullEntity)
         {
             return;
         }

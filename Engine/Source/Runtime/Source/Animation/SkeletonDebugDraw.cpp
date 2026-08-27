@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "SkeletonDebugDraw.h"
+#include "World/ECS/Registry.h"
 
 #include "Assets/AssetTypes/Mesh/Skeleton/Skeleton.h"
 #include "Assets/AssetTypes/Mesh/SkeletalMesh/SkeletalMesh.h"
@@ -360,9 +361,9 @@ namespace Lumina::SkeletonDebugDraw
         {
             auto View = World->View<SSkeletalMeshComponent, STransformComponent>();
 
-            for (entt::entity Entity : View)
+            for (ECS::FEntity Entity : View)
             {
-                const SSkeletalMeshComponent& Mesh = View.get<SSkeletalMeshComponent>(Entity);
+                const SSkeletalMeshComponent& Mesh = View.Get<SSkeletalMeshComponent>(Entity);
                 if (!Mesh.SkeletalMesh.IsValid())
                 {
                     continue;
@@ -381,7 +382,7 @@ namespace Lumina::SkeletonDebugDraw
                 }
 
                 FSkeletonJob Job;
-                Job.MeshWorld = View.get<STransformComponent>(Entity).GetWorldMatrix();
+                Job.MeshWorld = View.Get<STransformComponent>(Entity).GetWorldMatrix();
                 Job.Skeleton  = Skeleton;
                 Job.Pose      = ((int32)Mesh.BoneTransforms.size() == Skeleton->GetNumBones()) ? &Mesh.BoneTransforms : nullptr;
 

@@ -1,4 +1,8 @@
 ﻿#pragma once
+
+#include "World/ECS/Registry.h"
+#include "World/ECS/EventDispatcher.h"
+
 #include "Core/UpdateStage.h"
 #include "Physics/PhysicsTypes.h"
 #include "Physics/Ray/RayCast.h"
@@ -38,57 +42,52 @@ namespace Lumina
         RUNTIME_API FORCEINLINE double GetTime() const { return Time; }
         RUNTIME_API FORCEINLINE EUpdateStage GetUpdateStage() const { return UpdateStage; }
         
-        RUNTIME_API void SetEntityLifetime(entt::entity Entity, float Lifetime) const;
+        RUNTIME_API void SetEntityLifetime(ECS::FEntity Entity, float Lifetime) const;
 
 
         template<typename T>
         NODISCARD auto EventSink() const
         {
-            return Dispatcher.sink<T>();
+            return Dispatcher.Sink<T>();
         }
 
         template<typename T, typename ... TArgs>
         void DispatchEvent(TArgs&&... Args) const
         {
-            Dispatcher.trigger<T>(Forward<TArgs>(Args)...);
+            Dispatcher.Trigger<T>(Forward<TArgs>(Args)...);
         }
         
         template<typename... Ts, typename... TArgs>
-        NODISCARD auto CreateView(TArgs&&... Args) const -> decltype(std::declval<entt::registry>().view<Ts...>(std::forward<TArgs>(Args)...))
+        NODISCARD auto CreateView(TArgs&&... Args) const -> decltype(std::declval<ECS::FRegistry>().View<Ts...>(std::forward<TArgs>(Args)...))
         {
-            return Registry.view<Ts...>(std::forward<TArgs>(Args)...);
+            return Registry.View<Ts...>(std::forward<TArgs>(Args)...);
         }
         
         template<typename... Ts, typename TFunc, typename... TArgs>
         void ForEach(TFunc&& Function, TArgs&&... Args)
         {
-            auto View = Registry.view<Ts...>(std::forward<TArgs>(Args)...);
-            View.each(Forward<TFunc>(Function));
+            auto View = Registry.View<Ts...>(std::forward<TArgs>(Args)...);
+            View.ForEach(Forward<TFunc>(Function));
         }
 
         template<typename... Ts, typename TFunc, typename... TArgs>
         void ParallelForEach(TFunc&& Function, TArgs&&... Args)
         {
-            auto View = Registry.view<Ts...>(std::forward<TArgs>(Args)...);
-            auto Entities = View.handle();
-    
-            Task::ParallelFor(Entities.size(), [&](uint32 Index)
+            auto View = Registry.View<Ts...>(std::forward<TArgs>(Args)...);
+
+            // Chunked, and the range walk reuses the driver's dense index rather than probing twice.
+            Task::ParallelFor(static_cast<uint32>(View.NumDenseSlots()), [&](const Task::FParallelRange& Range)
             {
-                entt::entity EntityID = (*Entities)[Index];
-                
-                if (View.contains(EntityID))
-                {
-                    std::apply(Function, View.get(EntityID));
-                }
-            });
+                View.ForEachInRange(Range.Start, Range.End, Function);
+            }, 64);
         }
 
-        NODISCARD auto GetRegistryContext() const
+        NODISCARD auto& GetRegistryContext() const
         {
-            return Registry.ctx();
+            return Registry.Ctx();
         }
 
-        NODISCARD entt::registry& GetRegistry() const
+        NODISCARD ECS::FRegistry& GetRegistry() const
         {
             return Registry;
         }
@@ -96,58 +95,58 @@ namespace Lumina
         template<typename... Ts, typename ... TArgs>
         NODISCARD auto CreateGroup(TArgs&&... Args) const
         {
-            return Registry.group<Ts...>(std::forward<TArgs>(Args)...);
+            return Registry.View<Ts...>(std::forward<TArgs>(Args)...);
         }
 
         template<typename... Ts>
-        NODISCARD decltype(auto) Get(entt::entity entity) const
+        NODISCARD decltype(auto) Get(ECS::FEntity entity) const
         {
-            return Registry.get<Ts...>(entity);
+            return Registry.Get<Ts...>(entity);
         }
 
         template<typename... Ts>
-        NODISCARD decltype(auto) TryGet(entt::entity entity) const
+        NODISCARD decltype(auto) TryGet(ECS::FEntity entity) const
         {
-            return Registry.try_get<Ts...>(entity);
+            return Registry.TryGet<Ts...>(entity);
         }
         
         template<typename... Ts>
         void Clear() const
         {
-            (ValidateSystemAccess(static_cast<uint32>(entt::type_hash<Ts>::value()), true, "Write<> of the cleared component"), ...);
-            Registry.clear<Ts...>();
+            (ValidateSystemAccess(static_cast<uint32>(ECS::GetComponentTypeID<Ts>()), true, "Write<> of the cleared component"), ...);
+            Registry.ClearComponent<Ts...>();
         }
 
         template<typename... Ts>
-        NODISCARD bool HasAnyOf(entt::entity EntityID) const
+        NODISCARD bool HasAnyOf(ECS::FEntity EntityID) const
         {
-            return Registry.any_of<Ts...>(EntityID);
+            return Registry.HasAny<Ts...>(EntityID);
         }
 
         template<typename ... Ts>
-        NODISCARD bool HasAllOf(entt::entity EntityID) const
+        NODISCARD bool HasAllOf(ECS::FEntity EntityID) const
         {
-            return Registry.all_of<Ts...>(EntityID);
+            return Registry.HasAll<Ts...>(EntityID);
         }
 
         template<typename T, typename ... TArgs>
-        T& Emplace(entt::entity entity, TArgs&& ... Args)
+        T& Emplace(ECS::FEntity entity, TArgs&& ... Args)
         {
-            ValidateSystemAccess(static_cast<uint32>(entt::type_hash<T>::value()), true, "Write<> of the emplaced component");
-            return Registry.emplace<T>(entity, std::forward<TArgs>(Args)...);
+            ValidateSystemAccess(static_cast<uint32>(ECS::GetComponentTypeID<T>()), true, "Write<> of the emplaced component");
+            return Registry.Emplace<T>(entity, std::forward<TArgs>(Args)...);
         }
 
         template<typename T, typename ... TArgs>
-        T& EmplaceOrReplace(entt::entity entity, TArgs&& ... Args) const
+        T& EmplaceOrReplace(ECS::FEntity entity, TArgs&& ... Args) const
         {
-            ValidateSystemAccess(static_cast<uint32>(entt::type_hash<T>::value()), true, "Write<> of the emplaced component");
-            return Registry.emplace_or_replace<T>(entity, std::forward<TArgs>(Args)...);
+            ValidateSystemAccess(static_cast<uint32>(ECS::GetComponentTypeID<T>()), true, "Write<> of the emplaced component");
+            return Registry.EmplaceOrReplace<T>(entity, std::forward<TArgs>(Args)...);
         }
         
         template<typename T>
         decltype(auto) GetStorage() const
         {
-            return Registry.storage<T>();
+            return Registry.GetStorage<T>();
         }
         
         /** The world's physics scene, or null when the world has none. */
@@ -158,19 +157,19 @@ namespace Lumina
         RUNTIME_API void ChangeBodyMotionType(uint32 BodyID, EBodyType NewType);
 
         /** Physics body id for an entity, or ~0u when it has no body / no physics scene. */
-        RUNTIME_API uint32 GetEntityBodyID(entt::entity Entity) const;
+        RUNTIME_API uint32 GetEntityBodyID(ECS::FEntity Entity) const;
 
         /** Live physics-body pose (NOT the lagged STransformComponent) and velocity, for physics-stage systems. */
-        RUNTIME_API FVector3 GetBodyPosition(entt::entity Entity) const;
-        RUNTIME_API FQuat    GetBodyRotation(entt::entity Entity) const;
-        RUNTIME_API FVector3 GetVelocityAtPoint(entt::entity Entity, const FVector3& Point) const;
+        RUNTIME_API FVector3 GetBodyPosition(ECS::FEntity Entity) const;
+        RUNTIME_API FQuat    GetBodyRotation(ECS::FEntity Entity) const;
+        RUNTIME_API FVector3 GetVelocityAtPoint(ECS::FEntity Entity, const FVector3& Point) const;
 
         /** Apply a world-space force at a world-space point (adds torque too). Safe from PrePhysics. */
-        RUNTIME_API void AddForceAtPosition(entt::entity Entity, const FVector3& Force, const FVector3& Position) const;
+        RUNTIME_API void AddForceAtPosition(ECS::FEntity Entity, const FVector3& Force, const FVector3& Position) const;
 
         /** Shape-accurate buoyancy for one frame: pass the fluid surface point + normal (e.g. sampled wave
             surface). Buoyancy 1 = neutral density, >1 floats. Submersion is derived from the body bounds. */
-        RUNTIME_API void ApplyBuoyancyImpulse(entt::entity Entity, const FVector3& SurfacePosition, const FVector3& SurfaceNormal,
+        RUNTIME_API void ApplyBuoyancyImpulse(ECS::FEntity Entity, const FVector3& SurfacePosition, const FVector3& SurfaceNormal,
             float Buoyancy, float LinearDrag, float AngularDrag, const FVector3& FluidVelocity, float InDeltaTime) const;
 
         /** Sweep hits near-to-far; OutHits is cleared first, so one reused buffer keeps the sweep alloc-free. */
@@ -179,12 +178,12 @@ namespace Lumina
         /** Nearest sweep hit only; cheaper than CastSphere because the backend stops at the blocking hit. */
         RUNTIME_API TOptional<SRayResult> CastSphereClosest(const SSphereCastSettings& Settings) const;
 
-        RUNTIME_API STransformComponent& GetEntityTransform(entt::entity Entity) const;
+        RUNTIME_API STransformComponent& GetEntityTransform(ECS::FEntity Entity) const;
         
-        RUNTIME_API FVector3 TranslateEntity(entt::entity Entity, const FVector3& Translation);
-        RUNTIME_API void SetEntityLocation(entt::entity Entity, const FVector3& Location);
-        RUNTIME_API void SetEntityRotation(entt::entity Entity, const FQuat& Rotation);
-        RUNTIME_API void SetEntityScale(entt::entity Entity, const FVector3& Scale);
+        RUNTIME_API FVector3 TranslateEntity(ECS::FEntity Entity, const FVector3& Translation);
+        RUNTIME_API void SetEntityLocation(ECS::FEntity Entity, const FVector3& Location);
+        RUNTIME_API void SetEntityRotation(ECS::FEntity Entity, const FQuat& Rotation);
+        RUNTIME_API void SetEntityScale(ECS::FEntity Entity, const FVector3& Scale);
         
         //~ Begin Debug Drawing
         RUNTIME_API void DrawDebugLine(const FVector3& Start, const FVector3& End, const FVector4& Color, float Thickness = 1.0f, float Duration = 1.0f) const;
@@ -196,19 +195,17 @@ namespace Lumina
         RUNTIME_API void DrawDebugSolidTriangles(TVector<FSimpleElementVertex>&& Vertices, ESolidDrawMode Mode = ESolidDrawMode::Translucent, float Duration = 1.0f) const;
         //~ End Debug Drawing
         
-        RUNTIME_API entt::runtime_view CreateRuntimeView(const THashSet<entt::id_type>& Components) const;
-        
-        RUNTIME_API entt::entity Create(const FTransform& Transform, FName EntityName = "Entity") const;
-        RUNTIME_API entt::entity Create(FVector3 Location, FName EntityName = "Entity") const;
-        RUNTIME_API entt::entity Create(FName EntityName = "Entity") const;
-        void Destroy(entt::entity Entity) const
+        RUNTIME_API ECS::FEntity Create(const FTransform& Transform, FName EntityName = "Entity") const;
+        RUNTIME_API ECS::FEntity Create(FVector3 Location, FName EntityName = "Entity") const;
+        RUNTIME_API ECS::FEntity Create(FName EntityName = "Entity") const;
+        void Destroy(ECS::FEntity Entity) const
         {
-            ValidateSystemAccess(static_cast<uint32>(entt::type_hash<SystemResource::EntityStructure>::value()), true, "Write<SystemResource::EntityStructure>");
-            Registry.destroy(Entity);
+            ValidateSystemAccess(static_cast<uint32>(ECS::GetComponentTypeID<SystemResource::EntityStructure>()), true, "Write<SystemResource::EntityStructure>");
+            Registry.Destroy(Entity);
         }
 
         RUNTIME_API size_t GetNumEntities() const;
-        RUNTIME_API bool IsValidEntity(entt::entity Entity) const;
+        RUNTIME_API bool IsValidEntity(ECS::FEntity Entity) const;
         
         RUNTIME_API EWorldType GetWorldType() const;
     
@@ -219,8 +216,8 @@ namespace Lumina
         double                  DeltaTime = 0.0;
         double                  Time = 0.0;
         CWorld*                 World = nullptr;
-        entt::registry&         Registry;
-        entt::dispatcher&       Dispatcher;
+        ECS::FRegistry&         Registry;
+        ECS::FEventDispatcher&       Dispatcher;
         EUpdateStage            UpdateStage = EUpdateStage::FrameStart;
     };
     

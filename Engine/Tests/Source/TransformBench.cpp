@@ -1,5 +1,5 @@
 #include <gtest/gtest.h>
-#include <entt/entt.hpp>
+#include "World/ECS/Registry.h"
 #include "Platform/Time/PlatformTime.h"
 #include "TaskSystem/TaskSystem.h"
 #include "World/Entity/EntityUtils.h"
@@ -18,34 +18,34 @@ namespace
         return Ops > 0 ? Total / (double)Ops : 0.0;
     }
 
-    void MakeFlat(FEntityRegistry& Registry, TVector<entt::entity>& Out, uint32 Count)
+    void MakeFlat(ECS::FRegistry& Registry, TVector<ECS::FEntity>& Out, uint32 Count)
     {
         Out.reserve(Count);
         for (uint32 i = 0; i < Count; ++i)
         {
-            const entt::entity E = Registry.create();
-            Registry.emplace<STransformComponent>(E).Bind(Registry, E);
+            const ECS::FEntity E = Registry.Create();
+            Registry.Emplace<STransformComponent>(E).Bind(Registry, E);
             Out.push_back(E);
         }
     }
 
     // Children of one root, so every setter takes the hierarchical QueueDirtyTransform path.
-    void MakeHierarchical(FEntityRegistry& Registry, TVector<entt::entity>& Out, uint32 Count)
+    void MakeHierarchical(ECS::FRegistry& Registry, TVector<ECS::FEntity>& Out, uint32 Count)
     {
-        const entt::entity Root = Registry.create();
-        Registry.emplace<STransformComponent>(Root).Bind(Registry, Root);
+        const ECS::FEntity Root = Registry.Create();
+        Registry.Emplace<STransformComponent>(Root).Bind(Registry, Root);
 
         Out.reserve(Count);
         for (uint32 i = 0; i < Count; ++i)
         {
-            const entt::entity E = Registry.create();
-            Registry.emplace<STransformComponent>(E);
+            const ECS::FEntity E = Registry.Create();
+            Registry.Emplace<STransformComponent>(E);
             ECS::Utils::AddToParent(Registry, E, Root);
-            Registry.get<STransformComponent>(E).Bind(Registry, E);
+            Registry.Get<STransformComponent>(E).Bind(Registry, E);
             Out.push_back(E);
         }
 
-        Registry.get<STransformComponent>(Root).Bind(Registry, Root);
+        Registry.Get<STransformComponent>(Root).Bind(Registry, Root);
     }
 
     struct FPhaseTiming
@@ -54,9 +54,9 @@ namespace
         double ResolveNs = 0.0;
     };
 
-    FPhaseTiming RunFrames(FEntityRegistry& Registry, const TVector<entt::entity>& Entities, int32 Frames)
+    FPhaseTiming RunFrames(ECS::FRegistry& Registry, const TVector<ECS::FEntity>& Entities, int32 Frames)
     {
-        auto& Storage = Registry.storage<STransformComponent>();
+        auto Storage = Registry.GetStorage<STransformComponent>();
 
         double SetTotal = 0.0;
         double ResolveTotal = 0.0;
@@ -64,9 +64,9 @@ namespace
         for (int32 Frame = 0; Frame < Frames; ++Frame)
         {
             const auto SetStart = Lumina::PlatformTime::Cycles();
-            for (entt::entity E : Entities)
+            for (ECS::FEntity E : Entities)
             {
-                Storage.get(E).SetLocalLocation(FVector3((float)Frame, 0.0f, 0.0f));
+                Storage.Get(E).SetLocalLocation(FVector3((float)Frame, 0.0f, 0.0f));
             }
             const auto SetEnd = Lumina::PlatformTime::Cycles();
 
@@ -90,8 +90,8 @@ TEST(TransformBench, DISABLED_FlatSetterFrameCost)
     constexpr uint32 Count  = 100000;
     constexpr int32  Frames = 20;
 
-    FEntityRegistry Registry{};
-    TVector<entt::entity> Entities;
+    ECS::FRegistry Registry{};
+    TVector<ECS::FEntity> Entities;
     MakeFlat(Registry, Entities, Count);
 
     const FPhaseTiming T = RunFrames(Registry, Entities, Frames);
@@ -105,8 +105,8 @@ TEST(TransformBench, DISABLED_HierarchicalSetterFrameCost)
     constexpr uint32 Count  = 100000;
     constexpr int32  Frames = 20;
 
-    FEntityRegistry Registry{};
-    TVector<entt::entity> Entities;
+    ECS::FRegistry Registry{};
+    TVector<ECS::FEntity> Entities;
     MakeHierarchical(Registry, Entities, Count);
 
     const FPhaseTiming T = RunFrames(Registry, Entities, Frames);
@@ -121,8 +121,8 @@ TEST(TransformBench, DISABLED_HierarchicalWithPublishMoved)
     constexpr uint32 Count  = 100000;
     constexpr int32  Frames = 20;
 
-    FEntityRegistry Registry{};
-    TVector<entt::entity> Entities;
+    ECS::FRegistry Registry{};
+    TVector<ECS::FEntity> Entities;
     MakeHierarchical(Registry, Entities, Count);
 
     ECS::Utils::SetPublishMovedTransforms(Registry, true);
@@ -131,15 +131,15 @@ TEST(TransformBench, DISABLED_HierarchicalWithPublishMoved)
     double ResolveTotal = 0.0;
     double DrainTotal = 0.0;
 
-    auto& Storage = Registry.storage<STransformComponent>();
-    TVector<entt::entity> Drained;
+    auto Storage = Registry.GetStorage<STransformComponent>();
+    TVector<ECS::FEntity> Drained;
 
     for (int32 Frame = 0; Frame < Frames; ++Frame)
     {
         const auto SetStart = Lumina::PlatformTime::Cycles();
-        for (entt::entity E : Entities)
+        for (ECS::FEntity E : Entities)
         {
-            Storage.get(E).SetLocalLocation(FVector3((float)Frame, 0.0f, 0.0f));
+            Storage.Get(E).SetLocalLocation(FVector3((float)Frame, 0.0f, 0.0f));
         }
         const auto SetEnd = Lumina::PlatformTime::Cycles();
 
@@ -166,11 +166,11 @@ TEST(TransformBench, DISABLED_ParallelFlatSetters)
     constexpr uint32 Count  = 200000;
     constexpr int32  Frames = 20;
 
-    FEntityRegistry Registry{};
-    TVector<entt::entity> Entities;
+    ECS::FRegistry Registry{};
+    TVector<ECS::FEntity> Entities;
     MakeFlat(Registry, Entities, Count);
 
-    auto& Storage = Registry.storage<STransformComponent>();
+    auto Storage = Registry.GetStorage<STransformComponent>();
 
     double Total = 0.0;
     for (int32 Frame = 0; Frame < Frames; ++Frame)
@@ -178,7 +178,7 @@ TEST(TransformBench, DISABLED_ParallelFlatSetters)
         const auto Start = Lumina::PlatformTime::Cycles();
         Task::ParallelFor(Count, [&](uint32 Index)
         {
-            Storage.get(Entities[Index]).SetLocalLocation(FVector3((float)Frame, 0.0f, 0.0f));
+            Storage.Get(Entities[Index]).SetLocalLocation(FVector3((float)Frame, 0.0f, 0.0f));
         }, 2048);
         const auto End = Lumina::PlatformTime::Cycles();
 
@@ -197,19 +197,19 @@ TEST(TransformBench, DISABLED_FlatWorldCopyCost)
     constexpr uint32 Count  = 100000;
     constexpr int32  Frames = 40;
 
-    FEntityRegistry Registry{};
-    TVector<entt::entity> Entities;
+    ECS::FRegistry Registry{};
+    TVector<ECS::FEntity> Entities;
     MakeFlat(Registry, Entities, Count);
 
-    auto& Storage = Registry.storage<STransformComponent>();
+    auto Storage = Registry.GetStorage<STransformComponent>();
 
     double LocalOnly = 0.0;
     for (int32 Frame = 0; Frame < Frames; ++Frame)
     {
         const auto Start = Lumina::PlatformTime::Cycles();
-        for (entt::entity E : Entities)
+        for (ECS::FEntity E : Entities)
         {
-            Storage.get(E).LocalTransform.SetLocation(FVector3((float)Frame, 0.0f, 0.0f));
+            Storage.Get(E).LocalTransform.SetLocation(FVector3((float)Frame, 0.0f, 0.0f));
         }
         LocalOnly += (Lumina::PlatformTime::ToSeconds(Lumina::PlatformTime::Cycles() - Start) * 1e9);
     }
@@ -218,9 +218,9 @@ TEST(TransformBench, DISABLED_FlatWorldCopyCost)
     for (int32 Frame = 0; Frame < Frames; ++Frame)
     {
         const auto Start = Lumina::PlatformTime::Cycles();
-        for (entt::entity E : Entities)
+        for (ECS::FEntity E : Entities)
         {
-            Storage.get(E).SetLocalLocation(FVector3((float)Frame, 0.0f, 0.0f));
+            Storage.Get(E).SetLocalLocation(FVector3((float)Frame, 0.0f, 0.0f));
         }
         FullSetter += (Lumina::PlatformTime::ToSeconds(Lumina::PlatformTime::Cycles() - Start) * 1e9);
         ECS::Utils::ResolveAllDirtyTransforms(Registry);

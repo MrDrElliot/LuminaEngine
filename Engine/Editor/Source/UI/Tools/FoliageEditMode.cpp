@@ -1,4 +1,5 @@
 #include "FoliageEditMode.h"
+#include "World/ECS/Registry.h"
 #include "World/Scene/RenderScene/ScenePrimitiveSet.h"
 
 #include <algorithm>
@@ -97,12 +98,12 @@ namespace Lumina
         auto View = World->View<SFoliageComponent>();
         for (auto Entity : View)
         {
-            return &View.get<SFoliageComponent>(Entity);
+            return &View.Get<SFoliageComponent>(Entity);
         }
         return nullptr;
     }
 
-    SFoliageComponent* FFoliageEditMode::FindOrCreateFoliage(CWorld* World, entt::entity* OutEntity)
+    SFoliageComponent* FFoliageEditMode::FindOrCreateFoliage(CWorld* World, ECS::FEntity* OutEntity)
     {
         if (!World)
         {
@@ -116,10 +117,10 @@ namespace Lumina
             {
                 *OutEntity = Entity;
             }
-            return &View.get<SFoliageComponent>(Entity);
+            return &View.Get<SFoliageComponent>(Entity);
         }
 
-        entt::entity Entity = World->ConstructEntity("Foliage");
+        ECS::FEntity Entity = World->ConstructEntity("Foliage");
         if (OutEntity != nullptr)
         {
             *OutEntity = Entity;
@@ -134,8 +135,8 @@ namespace Lumina
             return;
         }
 
-        entt::entity Entity = entt::null;
-        if (FindOrCreateFoliage(World, &Entity) != nullptr && Entity != entt::null)
+        ECS::FEntity Entity = ECS::NullEntity;
+        if (FindOrCreateFoliage(World, &Entity) != nullptr && Entity != ECS::NullEntity)
         {
             MarkFoliageChanged(*World, Entity, Foliage);
         }
@@ -150,8 +151,8 @@ namespace Lumina
         auto View = World->View<STerrainComponent, STransformComponent>();
         for (auto Entity : View)
         {
-            OutOrigin = View.get<STransformComponent>(Entity).GetWorldLocation();
-            return &View.get<STerrainComponent>(Entity);
+            OutOrigin = View.Get<STransformComponent>(Entity).GetWorldLocation();
+            return &View.Get<STerrainComponent>(Entity);
         }
         return nullptr;
     }
@@ -541,7 +542,7 @@ namespace Lumina
             return;
         }
 
-        entt::entity FoliageEntity = entt::null;
+        ECS::FEntity FoliageEntity = ECS::NullEntity;
         SFoliageComponent* Foliage = FindOrCreateFoliage(World, &FoliageEntity);
         if (!Foliage)
         {
@@ -568,7 +569,7 @@ namespace Lumina
         }
 
         // Gated on the version, so a dab that placed nothing does not resync every held frame.
-        if (Foliage->InstancesVersion != VersionBefore && FoliageEntity != entt::null)
+        if (Foliage->InstancesVersion != VersionBefore && FoliageEntity != ECS::NullEntity)
         {
             MarkFoliageChanged(*World, FoliageEntity, *Foliage);
         }

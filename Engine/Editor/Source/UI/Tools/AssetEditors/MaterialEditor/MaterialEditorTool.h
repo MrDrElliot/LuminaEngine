@@ -1,5 +1,8 @@
 ﻿#pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #include "Core/Object/ObjectHandleTyped.h"
 #include "UI/ColorTextEdit/TextEditor.h"
 #include "UI/Tools/AssetEditors/AssetEditorTool.h"
@@ -102,8 +105,8 @@ namespace Lumina
         
     private:
         
-        entt::entity                    MeshEntity;
-        entt::entity                    DirectionalLightEntity;
+        ECS::FEntity                    MeshEntity;
+        ECS::FEntity                    DirectionalLightEntity;
         
         FString                         Tree;
         FString                         VertexTree;

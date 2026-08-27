@@ -44,6 +44,11 @@
 #define MESHLET_ANCHOR_SIGN             0x00800000u
 #define MESHLET_EXPONENT_SHIFT          24u
 
+// meshoptimizer's 8-bit SNORM cone, axis in bytes 0..2 and cutoff in byte 3, each decoded as x / 127.
+#define MESHLET_CONE_SNORM_SCALE        127
+// A cutoff of 127 decodes to 1.0, the value every cone reader already treats as no usable cone.
+#define MESHLET_CONE_DISABLED           127
+
 // Bone palette entries staged into groupshared memory (48 B each); a wider palette reads the arena direct.
 #define SKIN_GROUP_PALETTE_BONES        64
 

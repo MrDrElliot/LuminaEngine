@@ -1,5 +1,8 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #define USE_IMGUI_API
 #include <imgui.h>
 #include "ImGuizmo.h"
@@ -108,8 +111,8 @@ namespace Lumina
         };
         TVector<FHullWireframe>     HullWireframes;
 
-        entt::entity                MeshEntity = entt::null;
-        entt::entity                LightEntity = entt::null;
+        ECS::FEntity                MeshEntity = ECS::NullEntity;
+        ECS::FEntity                LightEntity = ECS::NullEntity;
 
         int32                       SelectedPrimitive = INDEX_NONE;
         ECollisionHandle            ActiveHandle = ECollisionHandle::None;

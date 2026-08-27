@@ -272,7 +272,7 @@ public readonly unsafe partial struct Physics
         };
     }
 
-    // Flat shims (Runtime module). The world Handle is the first native argument; entities are entt ids (uint); vectors pass by value.
+    // Flat shims (Runtime module). The world Handle is the first native argument; entities are entity ids (uint); vectors pass by value.
 
     [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Physics_Raycast")]
     private partial RaycastHitWire RaycastWire(FVector3 Origin, FVector3 End, uint IgnoreId);

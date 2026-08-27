@@ -1,6 +1,8 @@
 #pragma once
 
-#include <entt/entt.hpp>
+#include "World/ECS/Registry.h"
+
+
 
 #include "Core/Serialization/Archiver.h"
 
@@ -10,10 +12,10 @@ namespace Lumina
     struct RUNTIME_API FRelationshipComponent
     {
         size_t          Children{};
-        entt::entity    First{entt::null};
-        entt::entity    Prev{entt::null};
-        entt::entity    Next{entt::null};
-        entt::entity    Parent{entt::null};
+        ECS::FEntity    First{ECS::NullEntity};
+        ECS::FEntity    Prev{ECS::NullEntity};
+        ECS::FEntity    Next{ECS::NullEntity};
+        ECS::FEntity    Parent{ECS::NullEntity};
         
         friend FArchive& operator << (FArchive& Ar, FRelationshipComponent& Data)
         {

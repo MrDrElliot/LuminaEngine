@@ -1,4 +1,5 @@
 #include "PhysicsAssetEditorTool.h"
+#include "World/ECS/Registry.h"
 
 #include "Assets/AssetTypes/Mesh/Skeleton/Skeleton.h"
 #include "Assets/AssetTypes/Mesh/SkeletalMesh/SkeletalMesh.h"
@@ -479,10 +480,10 @@ namespace Lumina
             return;
         }
 
-        if (MeshEntity != entt::null)
+        if (MeshEntity != ECS::NullEntity)
         {
             World->DestroyEntity(MeshEntity);
-            MeshEntity = entt::null;
+            MeshEntity = ECS::NullEntity;
         }
 
         CSkeleton* Skeleton = GetSkeleton();
@@ -601,7 +602,7 @@ namespace Lumina
         }
 
         FMatrix4 EntityMatrix = FMatrix4(1.0f);
-        if (MeshEntity != entt::null)
+        if (MeshEntity != ECS::NullEntity)
         {
             EntityMatrix = World->GetComponent<STransformComponent>(MeshEntity).GetWorldMatrix();
         }
@@ -1029,7 +1030,7 @@ namespace Lumina
             const TOptional<SRayResult> Hit = Scene->CastRay(Settings);
 
             // The floor is static, so grabbing it would latch the drag onto something that can never move.
-            if (!Hit.has_value() || (entt::entity)Hit->Entity == FloorBodyEntity)
+            if (!Hit.has_value() || (ECS::FEntity)Hit->Entity == FloorBodyEntity)
             {
                 return;
             }
@@ -1529,7 +1530,7 @@ namespace Lumina
     {
         ++SimulationFrames;
 
-        if (FloorBodyEntity != entt::null)
+        if (FloorBodyEntity != ECS::NullEntity)
         {
             const STransformComponent& FloorTransform = World->GetComponent<STransformComponent>(FloorBodyEntity);
             if (const SBoxColliderComponent* FloorBox = World->TryGetComponent<SBoxColliderComponent>(FloorBodyEntity))
@@ -1554,7 +1555,7 @@ namespace Lumina
 
         // Recovered from the skinning matrices, since Global is Skin times the inverse of InvBind.
         FSkeletonResource* Resource = GetSkeletonResource();
-        const SSkeletalMeshComponent* MeshComponent = (MeshEntity != entt::null)
+        const SSkeletalMeshComponent* MeshComponent = (MeshEntity != ECS::NullEntity)
             ? World->TryGetComponent<SSkeletalMeshComponent>(MeshEntity) : nullptr;
 
         if (Resource == nullptr || MeshComponent == nullptr
@@ -1585,7 +1586,7 @@ namespace Lumina
 
     void FPhysicsAssetEditorTool::StartSimulation()
     {
-        if (bSimulating || !World.IsValid() || MeshEntity == entt::null)
+        if (bSimulating || !World.IsValid() || MeshEntity == ECS::NullEntity)
         {
             return;
         }
@@ -1638,7 +1639,7 @@ namespace Lumina
         World->SetPaused(true);
         GrabbedBodyID = 0xFFFFFFFF;
 
-        if (MeshEntity != entt::null)
+        if (MeshEntity != ECS::NullEntity)
         {
             World->RemoveComponent<SRagdollComponent>(MeshEntity);
 
@@ -1653,10 +1654,10 @@ namespace Lumina
             World->GetComponent<STransformComponent>(MeshEntity).SetLocation(FVector3(0.0f));
         }
 
-        if (FloorBodyEntity != entt::null)
+        if (FloorBodyEntity != ECS::NullEntity)
         {
             World->DestroyEntity(FloorBodyEntity);
-            FloorBodyEntity = entt::null;
+            FloorBodyEntity = ECS::NullEntity;
         }
 
         bSimulating = false;
@@ -1719,14 +1720,14 @@ namespace Lumina
         }
         else
         {
-            ImGui::BeginDisabled(PhysicsAsset->Bodies.empty() || MeshEntity == entt::null);
+            ImGui::BeginDisabled(PhysicsAsset->Bodies.empty() || MeshEntity == ECS::NullEntity);
             if (ImGui::Button(LE_ICON_PLAY " Simulate"))
             {
                 StartSimulation();
             }
             ImGui::EndDisabled();
 
-            if (MeshEntity == entt::null)
+            if (MeshEntity == ECS::NullEntity)
             {
                 ImGuiX::TextTooltip("The Skeleton needs a Preview Mesh before the ragdoll can be simulated.");
             }

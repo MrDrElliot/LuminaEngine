@@ -373,14 +373,55 @@ struct FMeshletSphere
     float  Radius;
 };
 
+// Mirror of Lumina::FMeshletCone, four SNORM8 bytes in one word since shaders here have no 8-bit types.
 struct FMeshletCone
 {
-    float3 Apex;
-    float  Cutoff;
-    float3 Axis;
-    // Pads the stride to vec4 so every element is 16-byte aligned; never read.
-    float  _Pad;
+    uint Packed;
 };
+
+int SignExtendConeByte(uint Packed, uint ByteIndex)
+{
+    return int(Packed << (24u - 8u * ByteIndex)) >> 24;
+}
+
+// xyz is the axis and w the cutoff. Neither is renormalized, the encoder folded that error into w.
+float4 DecodeMeshletCone(FMeshletCone C)
+{
+    const float Scale = 1.0 / float(MESHLET_CONE_SNORM_SCALE);
+
+    return float4(float(SignExtendConeByte(C.Packed, 0u)) * Scale,
+                  float(SignExtendConeByte(C.Packed, 1u)) * Scale,
+                  float(SignExtendConeByte(C.Packed, 2u)) * Scale,
+                  float(SignExtendConeByte(C.Packed, 3u)) * Scale);
+}
+
+// Mirrors Lumina::EncodeMeshletCone, rounding the cutoff up so a re-encoded cone never rejects more.
+FMeshletCone EncodeMeshletCone(float3 Axis, float Cutoff)
+{
+    const float Scale = float(MESHLET_CONE_SNORM_SCALE);
+
+    const float3 Clamped   = clamp(Axis, -1.0, 1.0);
+    const int3   Quantized = int3(Clamped * Scale + sign(Clamped) * 0.5);
+    const float3 Error     = abs(float3(Quantized) / Scale - Clamped);
+
+    const int QCutoff = clamp(int(Scale * (Cutoff + Error.x + Error.y + Error.z) + 1.0),
+                              -MESHLET_CONE_SNORM_SCALE, MESHLET_CONE_DISABLED);
+
+    FMeshletCone Out;
+    Out.Packed = (asuint(Quantized.x) & 0xFFu)
+               | ((asuint(Quantized.y) & 0xFFu) << 8)
+               | ((asuint(Quantized.z) & 0xFFu) << 16)
+               | ((asuint(QCutoff)     & 0xFFu) << 24);
+    return Out;
+}
+
+// The cone a meshlet without a usable one carries, matching Lumina::kDisabledMeshletCone.
+FMeshletCone DisabledMeshletCone()
+{
+    FMeshletCone Out;
+    Out.Packed = (uint(MESHLET_CONE_SNORM_SCALE) << 16) | (uint(MESHLET_CONE_DISABLED) << 24);
+    return Out;
+}
 
 // cos(A - B) from the two cosines, which keeps the cone widening off the trig units entirely.
 float WidenCutoff(float Cutoff, float CosSpread)
@@ -390,17 +431,6 @@ float WidenCutoff(float Cutoff, float CosSpread)
 
     return Cutoff * CosSpread + SinCutoff * SinSpread;
 }
-
-// One meshlet's cone after skinning, widened to cover every axis the palette can produce.
-struct FSkinnedMeshletCone
-{
-    float3 Apex;
-    // Larger rejects less, and 1.0 is the no-cone gate every reader already honors.
-    float  Cutoff;
-    float3 Axis;
-    // How far the per-bone apexes spread, folded into the cutoff at cull time since it is view-dependent.
-    float  ApexSpread;
-};
 
 // Mirror of Lumina::FMeshletHeaderGPU. The distance-field block is loose floats, not a float3: scalar
 // layout aligns float3 to 4 bytes while the C++ side may over-align FVector3 to 16.
@@ -910,8 +940,9 @@ struct FCullData
     // and the meshlet cull make the per-cascade pick, and a disagreement drops meshlets.
     int      ShadowLODBias;
     float    ShadowCoarseLODDistSq;     // past this, shadow LOD caps at MESHLET_MAX_COARSE_SHADOW_LOD; 0 = never
-    uint     _CullPad2;
-    uint     _CullPad3;
+    // The cull camera's clip range, which under a frozen cull is not the live view's.
+    float    CullNearPlane;
+    float    CullFarPlane;
     uint     _CullPad4;
 };
 

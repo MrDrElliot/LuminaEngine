@@ -1,9 +1,10 @@
 #pragma once
+
+#include "World/ECS/Registry.h"
 #include "Containers/Name.h"
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Math/Transform.h"
-#include "World/Entity/EntityHandle.h"
 #include "Assets/AssetTypes/Prefabs/PrefabComponents.h"
 #include "Prefab.generated.h"
 
@@ -26,12 +27,12 @@ namespace Lumina
         static uint32 GetDataGeneration();
         static void   BumpDataGeneration();
 
-        /** Returns root entity of new instance (entt::null on failure). OffsetTransform applied to root. */
-        entt::entity Instantiate(CWorld* TargetWorld, const FTransform& OffsetTransform = FTransform(), entt::entity Parent = entt::null);
+        /** Returns root entity of new instance (ECS::NullEntity on failure). OffsetTransform applied to root. */
+        ECS::FEntity Instantiate(CWorld* TargetWorld, const FTransform& OffsetTransform = FTransform(), ECS::FEntity Parent = ECS::NullEntity);
 
         /** Diff-applies prefab data to one instance (matched by StableID): adds missing, removes
          *  extra. Root's world transform is preserved (placed location wins). */
-        void RefreshInstance(CWorld* World, entt::entity InstanceRoot);
+        void RefreshInstance(CWorld* World, ECS::FEntity InstanceRoot);
 
         /** Refreshes every prefab instance in World; called from CWorld::InitializeWorld after registry swap. */
         static void RefreshAllInstancesInWorld(CWorld* World);
@@ -39,7 +40,7 @@ namespace Lumina
         /** Destroys instances whose source prefab is gone (SourcePrefab resolved to null / marked-destroy)
          *  from Registry, with clean hierarchy unlink. Run on the pending set before it goes live so a
          *  deleted prefab's placed copies never spawn into the world. */
-        static void CullOrphanedInstances(entt::registry& Registry);
+        static void CullOrphanedInstances(ECS::FRegistry& Registry);
 
         /** Re-syncs every live instance of THIS prefab across all loaded worlds (GWorldManager contexts).
          *  Call after the prefab's data changes (e.g. on save) so open levels reflect the edit immediately. */
@@ -50,41 +51,41 @@ namespace Lumina
 
         /** Strips SPrefabInstanceComponent from the subtree, unpairing it from this prefab.
          *  Returns false if InstanceRoot is not an instance root sourced from this prefab. */
-        static bool DetachInstance(CWorld* World, entt::entity InstanceRoot);
+        static bool DetachInstance(CWorld* World, ECS::FEntity InstanceRoot);
 
         /** Replaces this prefab with a deep copy of RootEntity and descendants from SourceWorld. */
-        void CaptureFromWorld(CWorld* SourceWorld, entt::entity RootEntity);
+        void CaptureFromWorld(CWorld* SourceWorld, ECS::FEntity RootEntity);
 
         /** Pointer to the StableID-matched prefab entity's reflected component of the given type, or
          *  null if that entity/component is absent. The per-leaf override baseline + reset-to-prefab default. */
         void* ResolvePrefabComponentPtr(const FName& StableID, CStruct* Struct);
 
-        /** Prefab entity carrying StableID, or entt::null. Backed by a lookup rebuilt only when the
+        /** Prefab entity carrying StableID, or ECS::NullEntity. Backed by a lookup rebuilt only when the
          *  prefab data generation moves, so the details panel can ask per property without rescanning
          *  every entity each time. */
-        entt::entity FindEntityByStableID(const FName& StableID);
+        ECS::FEntity FindEntityByStableID(const FName& StableID);
 
-        /** Instance root (bIsRoot node) at or above Entity, or entt::null if Entity is not a prefab instance. */
-        static entt::entity FindInstanceRoot(entt::registry& Registry, entt::entity Entity);
+        /** Instance root (bIsRoot node) at or above Entity, or ECS::NullEntity if Entity is not a prefab instance. */
+        static ECS::FEntity FindInstanceRoot(ECS::FRegistry& Registry, ECS::FEntity Entity);
 
         /** Recomputes the override leaf set for (Entity, ComponentType) by diffing the live component against
          *  its prefab baseline, rewriting the instance root's ledger entries for that pair (lazy-created).
          *  When the component matches the prefab again the entries are cleared. */
-        static void RecaptureComponentOverrides(entt::registry& Registry, entt::entity Entity, CStruct* ComponentType);
+        static void RecaptureComponentOverrides(ECS::FRegistry& Registry, ECS::FEntity Entity, CStruct* ComponentType);
 
         /** Records that ComponentType was added to an instance node (so refresh never prunes it), or, if the
          *  prefab actually ships it, just clears any prior "removed" mark so it inherits again. */
-        static void NoteComponentAdded(entt::registry& Registry, entt::entity Entity, CStruct* ComponentType);
+        static void NoteComponentAdded(ECS::FRegistry& Registry, ECS::FEntity Entity, CStruct* ComponentType);
 
         /** Records that an inherited ComponentType was deleted from an instance node (so refresh never re-adds
          *  it); for an instance-added component, simply drops it from the added set. */
-        static void NoteComponentRemoved(entt::registry& Registry, entt::entity Entity, CStruct* ComponentType);
+        static void NoteComponentRemoved(ECS::FRegistry& Registry, ECS::FEntity Entity, CStruct* ComponentType);
 
         /** Deep-copies entities Source->Dest (OutMap = src->dest ids); remaps relationships + entity-handle
          *  props (escaping refs cleared). SourceEntities limits the set; ExtraSkipStorage skips more types by id. */
-        static void CopyRegistry(entt::registry& Source, entt::registry& Dest, THashMap<entt::entity, entt::entity>& OutMap,
-            const TVector<entt::entity>* SourceEntities = nullptr,
-            bool(*ExtraSkipStorage)(entt::id_type) = nullptr);
+        static void CopyRegistry(ECS::FRegistry& Source, ECS::FRegistry& Dest, THashMap<ECS::FEntity, ECS::FEntity>& OutMap,
+            const TVector<ECS::FEntity>* SourceEntities = nullptr,
+            bool(*ExtraSkipStorage)(uint32) = nullptr);
 
         // A variant owns no authored registry: Registry is RESOLVED from ParentPrefab plus the delta
         // below, so a parent edit reaches every descendant without anything being copied forward.
@@ -120,11 +121,11 @@ namespace Lumina
         // A variant serializes only its delta, so an unresolved Registry is empty rather than authoritative.
         NODISCARD bool IsUnresolvedVariant() const { return bVariantResolveFailed; }
 
-        entt::registry Registry;
+        ECS::FRegistry Registry;
 
         /** Entities the variant diverges on. Only these are serialized; everything else comes from the
          *  parent. Each carries SPrefabComponent so its StableID pairs it with a parent node. */
-        entt::registry VariantDelta;
+        ECS::FRegistry VariantDelta;
 
         // The ledger. Public because the reflector's generated code takes offsetof on every PROPERTY;
         // nothing outside the variant paths should write these.
@@ -151,7 +152,7 @@ namespace Lumina
 
         void RebuildStableIDLookup();
 
-        THashMap<FName, entt::entity> StableIDLookup;
+        THashMap<FName, ECS::FEntity> StableIDLookup;
         uint32                        StableIDLookupGeneration = 0;
         bool                          bStableIDLookupBuilt     = false;
         uint32                        VariantResolveCount      = 0;

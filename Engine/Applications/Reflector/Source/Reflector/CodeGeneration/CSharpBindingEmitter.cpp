@@ -219,10 +219,11 @@ namespace Lumina::Reflection
         bool IsEntitySpelling(const std::string& Type)
         {
             const std::string Bare = StripQualifiers(Type);
-            return Bare == "entt::entity" || Bare == "FEntity" || Bare == "Lumina::FEntity";
+            return Bare == "FEntity" || Bare == "Lumina::FEntity"
+                || Bare == "ECS::FEntity" || Bare == "Lumina::ECS::FEntity";
         }
 
-        // An entt::entity field classifies as Int32, so it stays blittable and surfaces as the C# Entity.
+        // An ECS::FEntity field classifies as Int32, so it stays blittable and surfaces as the C# Entity.
         bool IsEntityField(const FReflectedProperty& Prop)
         {
             return IsEntitySpelling(Prop.RawTypeName) || IsEntitySpelling(Prop.TypeName);
@@ -1145,7 +1146,7 @@ namespace Lumina::Reflection
             std::string CSharp;
             std::string Cpp;
             std::string TargetCpp;
-            bool          bEntity = false; // entt::entity, ABI-marshalled as uint32 and surfaced as the C# Entity.
+            bool          bEntity = false; // An entity handle, ABI-marshalled as uint32 and surfaced as the C# Entity.
             // Only a CObject has a managed-instance slot, so only a CObject may be rebuilt through ForObject.
             bool          bCObject = false;
             bool          bIsName = false; // EBind::Str arg, FName (true) vs FString (false), for the native ctor.
@@ -1262,7 +1263,7 @@ namespace Lumina::Reflection
 
             const std::string Bare = StripQualifiers(F.RawFieldType);
 
-            // Checked before the numeric path, where entt::entity classifies as an int and would be skipped.
+            // Checked before the numeric path, where ECS::FEntity classifies as an int and would be skipped.
             if (IsEntitySpelling(F.RawFieldType) || IsEntitySpelling(F.TypeName))
             {
                 B.Kind = EBind::Number;
@@ -1483,7 +1484,7 @@ namespace Lumina::Reflection
                 
                 if (A.bEntity)
                 {
-                    Params += "uint32 " + An; CallArgs += "static_cast<entt::entity>(" + An + ")";
+                    Params += "uint32 " + An; CallArgs += "static_cast<Lumina::ECS::FEntity>(" + An + ")";
                 }
                 else if (A.Kind == EBind::Str)
                 {
@@ -1696,7 +1697,7 @@ namespace Lumina::Reflection
         //~ Native shim ABI mapping (real C++ type <-> reverse-thunk ABI type).
         std::string SeArgCppParam(const FArg& A)
         {
-            if (A.bEntity) { return "entt::entity"; }
+            if (A.bEntity) { return "Lumina::ECS::FEntity"; }
             switch (A.Kind) { case EBind::Bool: return "bool"; case EBind::Enum: return A.TargetCpp; case EBind::StructValue: return A.TargetCpp; case EBind::Object: return A.TargetCpp + "*"; default: return A.Cpp; }
         }
         std::string SeArgAbiCpp(const FArg& A)
@@ -1712,7 +1713,7 @@ namespace Lumina::Reflection
         std::string SeRetCpp(const FFnBinding& FB)
         {
             if (FB.bVoid) { return "void"; }
-            if (FB.Ret.bEntity) { return "entt::entity"; }
+            if (FB.Ret.bEntity) { return "Lumina::ECS::FEntity"; }
             switch (FB.Ret.Kind) { case EBind::Bool: return "bool"; case EBind::Enum: return FB.Ret.TargetCpp; case EBind::StructValue: return FB.Ret.TargetCpp; case EBind::Object: return FB.Ret.TargetCpp + "*"; default: return FB.Ret.Cpp; }
         }
         std::string SeRetAbiCpp(const FFnBinding& FB)
@@ -1723,7 +1724,7 @@ namespace Lumina::Reflection
         }
         std::string SeRetAbiToCpp(const FFnBinding& FB, const std::string& Expr)
         {
-            if (FB.Ret.bEntity) { return "static_cast<entt::entity>(" + Expr + ")"; }
+            if (FB.Ret.bEntity) { return "static_cast<Lumina::ECS::FEntity>(" + Expr + ")"; }
             switch (FB.Ret.Kind) { case EBind::Bool: return "(" + Expr + " != 0)"; case EBind::Enum: return "(" + FB.Ret.TargetCpp + ")(" + Expr + ")"; case EBind::Object: return "static_cast<" + FB.Ret.TargetCpp + "*>(" + Expr + ")"; default: return Expr; }
         }
 
@@ -1807,7 +1808,7 @@ namespace Lumina::Reflection
                     // ABI param -> the C++ base call argument (inverse of SeArgCppToAbi).
                     const FArg& A = FB.Args[i];
                     const std::string An = ArgIndexName('A', i);
-                    if (A.bEntity)                   { CallArgs += "static_cast<entt::entity>(" + An + ")"; }
+                    if (A.bEntity)                   { CallArgs += "static_cast<Lumina::ECS::FEntity>(" + An + ")"; }
                     else if (A.Kind == EBind::Bool)  { CallArgs += "(" + An + " != 0)"; }
                     else if (A.Kind == EBind::Enum)  { CallArgs += "(" + A.TargetCpp + ")" + An; }
                     else if (A.Kind == EBind::Object){ CallArgs += "static_cast<" + A.TargetCpp + "*>(" + An + ")"; }
@@ -2009,7 +2010,7 @@ namespace Lumina::Reflection
 
                 if (A.bEntity)
                 {
-                    Params += "uint32 " + An; CallArgs += "static_cast<entt::entity>(" + An + ")";
+                    Params += "uint32 " + An; CallArgs += "static_cast<Lumina::ECS::FEntity>(" + An + ")";
                 }
                 else if (A.Kind == EBind::Str)
                 {

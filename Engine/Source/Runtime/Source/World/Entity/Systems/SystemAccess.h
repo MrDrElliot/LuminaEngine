@@ -1,6 +1,8 @@
 #pragma once
 
-#include <entt/entt.hpp>
+#include "World/ECS/Registry.h"
+
+
 
 #include "ModuleAPI.h"
 #include "Containers/Vector.h"
@@ -11,7 +13,7 @@ namespace Lumina
 {
     // Declared component/resource access for an ECS system, used to decide which systems may run
     // concurrently. Two systems conflict (must serialize) if their writes overlap, or one writes what
-    // the other reads. IDs are entt::type_hash values for the component or SystemResource:: tag types.
+    // the other reads. IDs are component type id values for the component or SystemResource:: tag types.
     //
     // A system opts in by adding a static member `Access`, e.g.:
     //     static inline FSystemAccess Access = FSystemAccess{}.Write<SSkeletalMeshComponent>()
@@ -24,19 +26,19 @@ namespace Lumina
         TVector<uint32> Reads;
 
         // One per declared component type. Creating a component pool MUTATES the registry's pool map, and
-        // entt does it lazily inside view()/get()/storage() -- for reads as much as writes. So two systems
+        // the registry does it lazily inside View(), Get() and GetStorage(), for reads as much as writes, so two systems
         // in the same parallel batch can be inside that dense_map at once, one of them rehashing it, and
         // the reader walks a reallocated bucket array. It does not matter whether the two want the same
         // component: the map is shared. The scheduler runs these on the tick thread before the batch, so
         // every assure() inside the batch is a pure lookup. See CWorld::TickSystems.
-        TVector<void(*)(entt::registry&)> PoolAssurers;
+        TVector<void(*)(ECS::FRegistry&)> PoolAssurers;
 
         bool            bExclusive = false;
 
         template<typename... Ts>
         FSystemAccess& Write()
         {
-            (Writes.push_back(static_cast<uint32>(entt::type_hash<Ts>::value())), ...);
+            (Writes.push_back(static_cast<uint32>(ECS::GetComponentTypeID<Ts>())), ...);
             (AddPoolAssurer<Ts>(), ...);
             return *this;
         }
@@ -44,7 +46,7 @@ namespace Lumina
         template<typename... Ts>
         FSystemAccess& Read()
         {
-            (Reads.push_back(static_cast<uint32>(entt::type_hash<Ts>::value())), ...);
+            (Reads.push_back(static_cast<uint32>(ECS::GetComponentTypeID<Ts>())), ...);
             (AddPoolAssurer<Ts>(), ...);
             return *this;
         }
@@ -54,7 +56,7 @@ namespace Lumina
         {
             if constexpr (!TIsSystemResource<T>)
             {
-                PoolAssurers.push_back(+[](entt::registry& Registry) { (void)Registry.storage<T>(); });
+                PoolAssurers.push_back(+[](ECS::FRegistry& Registry) { (void)Registry.GetStorage<T>(); });
             }
         }
 
@@ -135,26 +137,22 @@ namespace Lumina
     // bWrite picks the required access kind. What is a human label naming the access to add (e.g.
     // "Write<STransformComponent>"). No-op when no system access is bound (i.e. called outside the scheduler,
     // such as gameplay code or editor tools) or when the bound system is exclusive (declares everything).
-    // ConnectComponentAccessValidators hooks entt's own signals, catching a structural write through the raw
+    // ConnectComponentAccessValidators hooks the pool signals, catching a structural write through the raw
     // registry that never reaches an FSystemContext helper.
 #if defined(LE_SHIPPING)
     inline void SetExecutingSystemAccess(const FSystemAccess*) {}
     inline const FSystemAccess* GetExecutingSystemAccess() { return nullptr; }
     inline void ValidateSystemAccess(uint32, bool, const char*) {}
-    inline void RegisterComponentAccessValidator(void (*)(entt::registry&)) {}
-    inline void ConnectComponentAccessValidators(entt::registry&) {}
+    inline void RegisterComponentAccessValidator(void (*)(ECS::FRegistry&)) {}
+    inline void ConnectComponentAccessValidators(ECS::FRegistry&) {}
 #else
     RUNTIME_API void SetExecutingSystemAccess(const FSystemAccess* Access);
     RUNTIME_API const FSystemAccess* GetExecutingSystemAccess();
     RUNTIME_API void ValidateSystemAccess(uint32 ComponentId, bool bWrite, const char* What);
-    RUNTIME_API void RegisterComponentAccessValidator(void (*Connect)(entt::registry&));
-    RUNTIME_API void ConnectComponentAccessValidators(entt::registry& Registry);
+    RUNTIME_API void RegisterComponentAccessValidator(void (*Connect)(ECS::FRegistry&));
+    RUNTIME_API void ConnectComponentAccessValidators(ECS::FRegistry& Registry);
 #endif
 
-    // Reverse map from an access id (entt::type_hash, what FSystemAccess stores) to a display name, so editor
-    // tooling can render a system's declared reads/writes as "STransformComponent" / "PhysicsQuery" rather than
-    // an opaque hash. Components self-register at op-table registration; the SystemResource:: tags are seeded.
-    // Returns nullptr for an unknown id.
-    RUNTIME_API void RegisterAccessTypeName(uint32 Id, FStringView Name);
-    RUNTIME_API const char* GetAccessTypeName(uint32 Id);
+    // A component type id rendered for editor tooling, or NAME_None when the id is unknown.
+    RUNTIME_API FName GetAccessTypeName(uint32 Id);
 }

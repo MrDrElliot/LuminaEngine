@@ -1,6 +1,8 @@
 #pragma once
 
-#include <entt/entt.hpp>
+#include "World/ECS/Registry.h"
+
+
 
 #include "Containers/HashTable.h"
 #include "Containers/Vector.h"
@@ -10,7 +12,6 @@
 #include "Input/InputEvent.h"
 #include "World/Entity/Events/CollisionEvent.h"
 #include "World/Entity/Events/PerceptionEvent.h"
-#include "World/Entity/Registry/EntityRegistry.h"
 #include "EntityScript.generated.h"
 
 namespace Lumina
@@ -79,7 +80,7 @@ namespace Lumina
          *  one owner for the value in both languages. Non-virtual, so it binds as an ordinary call, not a
          *  ScriptEvent. */
         FUNCTION()
-        entt::entity GetOwningEntity() const { return OwningEntity; }
+        ECS::FEntity GetOwningEntity() const { return OwningEntity; }
 
         /** The world this script's entity lives in, or null when the registry has no world (a bare registry
          *  in a test). Resolved once at attach from the registry's CWorld* context singleton. */
@@ -87,7 +88,7 @@ namespace Lumina
         CWorld* GetWorld() const { return OwningWorld; }
 
         /** Set once by the driver at attach, before OnAttach runs. */
-        void SetOwner(entt::entity InEntity, CWorld* InWorld)
+        void SetOwner(ECS::FEntity InEntity, CWorld* InWorld)
         {
             OwningEntity = InEntity;
             OwningWorld  = InWorld;
@@ -95,14 +96,14 @@ namespace Lumina
 
         /** OnAttach has run. The driver sets the owner immediately before it, so this is the exact pairing
          *  test: a script that was loaded or stamped but never adopted must not receive OnDetach. */
-        bool IsAttached() const { return OwningEntity != entt::null; }
+        bool IsAttached() const { return OwningEntity != ECS::NullEntity; }
 
         bool IsReady() const { return bReady; }
         void MarkReady() { bReady = true; }
 
     private:
 
-        entt::entity OwningEntity = entt::null;
+        ECS::FEntity OwningEntity = ECS::NullEntity;
         CWorld*      OwningWorld = nullptr;
 
         // Transient: OnReady has run. Not serialized -- a loaded script re-readies on its first tick.
@@ -139,19 +140,19 @@ namespace Lumina
         /** Creates a script of ScriptClass on Entity, runs OnAttach, and returns it (null if the class is not
          *  a CEntityScript). OnReady is deferred to the first Tick, so a script can rely on every sibling
          *  script on the entity existing by the time it runs. */
-        RUNTIME_API CEntityScript* Attach(FEntityRegistry& Registry, entt::entity Entity, CClass* ScriptClass);
+        RUNTIME_API CEntityScript* Attach(ECS::FRegistry& Registry, ECS::FEntity Entity, CClass* ScriptClass);
 
         /** Drains pending OnReady, then runs OnUpdate on every attached script in the registry. */
-        RUNTIME_API void Tick(FEntityRegistry& Registry, float DeltaTime);
+        RUNTIME_API void Tick(ECS::FRegistry& Registry, float DeltaTime);
 
         /** Runs OnFixedUpdate on every ready script. Driven at the physics rate. */
-        RUNTIME_API void TickFixed(FEntityRegistry& Registry, float FixedDeltaTime);
+        RUNTIME_API void TickFixed(ECS::FRegistry& Registry, float FixedDeltaTime);
 
         /** Runs OnDetach and drops every script on Entity. */
-        RUNTIME_API void DetachAll(FEntityRegistry& Registry, entt::entity Entity);
+        RUNTIME_API void DetachAll(ECS::FRegistry& Registry, ECS::FEntity Entity);
 
         // Walks a snapshot, so an OnDetach that adds or removes scripts cannot invalidate the pool underneath.
-        RUNTIME_API void DetachAllInRegistry(FEntityRegistry& Registry);
+        RUNTIME_API void DetachAllInRegistry(ECS::FRegistry& Registry);
 
         /**
          * One entity's scripts, serialized
@@ -161,7 +162,7 @@ namespace Lumina
             // The CWorld or CPrefab owning the registry Entity lives in. A prefab asset holds script objects
             // of its own, and one of those blocks a layout rebuild exactly as a world's does.
             TWeakObjectPtr<CObject> Owner;
-            entt::entity            Entity = entt::null;
+            ECS::FEntity            Entity = ECS::NullEntity;
             // CPrefab only: the variant delta registry rather than the resolved one.
             bool                    bVariantDelta = false;
             TVector<uint8>          Bytes;
@@ -186,14 +187,14 @@ namespace Lumina
         //~ rather than C# type: a C++ script is found by exactly the same call.
 
         /** The first script on Entity whose class IS-A ScriptClass, or null. */
-        RUNTIME_API CEntityScript* Find(FEntityRegistry& Registry, entt::entity Entity, const CClass* ScriptClass);
+        RUNTIME_API CEntityScript* Find(ECS::FRegistry& Registry, ECS::FEntity Entity, const CClass* ScriptClass);
 
         /** Appends every script on Entity whose class IS-A ScriptClass. */
-        RUNTIME_API void FindAll(FEntityRegistry& Registry, entt::entity Entity, const CClass* ScriptClass,
+        RUNTIME_API void FindAll(ECS::FRegistry& Registry, ECS::FEntity Entity, const CClass* ScriptClass,
             TVector<CEntityScript*>& Out);
 
         /** Runs OnDetach on Script and removes it from its entity. Returns false if it was not attached. */
-        RUNTIME_API bool Remove(FEntityRegistry& Registry, entt::entity Entity, CEntityScript* Script);
+        RUNTIME_API bool Remove(ECS::FRegistry& Registry, ECS::FEntity Entity, CEntityScript* Script);
 
         /** Which physics callback a DispatchCollision call delivers. */
         enum class ECollisionCallback : uint8
@@ -206,18 +207,18 @@ namespace Lumina
 
         /** Delivers a collision event to every script on Entity. No-op when the entity has none, so the
          *  physics drain pays one lookup rather than knowing anything about scripts. */
-        RUNTIME_API void DispatchCollision(FEntityRegistry& Registry, entt::entity Entity,
+        RUNTIME_API void DispatchCollision(ECS::FRegistry& Registry, ECS::FEntity Entity,
             ECollisionCallback Callback, const SCollisionEvent& Event);
 
         /** Delivers one input event to every script on Entity. */
-        RUNTIME_API void DispatchInput(FEntityRegistry& Registry, entt::entity Entity, const SInputEvent& Event);
+        RUNTIME_API void DispatchInput(ECS::FRegistry& Registry, ECS::FEntity Entity, const SInputEvent& Event);
 
         // Hands every script on Entity this frame's action states so C# InputAction / InputAxis bindings raise their events. Native scripts have no bindings and cost one null check.
-        RUNTIME_API void PollInputBindings(FEntityRegistry& Registry, entt::entity Entity, const FInputActionState* States, int32 Count, uint32 Serial, float DeltaTime);
+        RUNTIME_API void PollInputBindings(ECS::FRegistry& Registry, ECS::FEntity Entity, const FInputActionState* States, int32 Count, uint32 Serial, float DeltaTime);
 
         /** Delivers a perception event to every script on the PERCEIVER entity. bSensed picks
          *  OnTargetPerceived vs OnTargetLost. */
-        RUNTIME_API void DispatchPerception(FEntityRegistry& Registry, entt::entity Perceiver,
+        RUNTIME_API void DispatchPerception(ECS::FRegistry& Registry, ECS::FEntity Perceiver,
             bool bSensed, const SPerceptionEvent& Event);
     }
 }

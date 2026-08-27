@@ -16,7 +16,7 @@ namespace Lumina
 
     // Drives a skeletal mesh from a compiled animation graph.
     REFLECT(Component, Category = "Animation")
-    struct SAnimationGraphComponent
+    struct RUNTIME_API SAnimationGraphComponent
     {
         GENERATED_BODY()
 
@@ -44,10 +44,10 @@ namespace Lumina
         }
 
         /** Raw parameter memory, for the anim system's offset reads. Null when no struct is assigned. */
-        RUNTIME_API void* GetParameterMemory();
+        void* GetParameterMemory();
 
         // Brings Parameters up as an instance of the graph's struct, copying the graph's authored values.
-        RUNTIME_API void EnsureParametersInitialized() const;
+        void EnsureParametersInitialized() const;
 
         /**
          * Root-motion policy for the graph's final pose. FromAsset extracts motion from clips with

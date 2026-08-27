@@ -1,12 +1,14 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #include "ModuleAPI.h"
 #include "Memory/SmartPtr.h"
 #include "Networking/NetworkTypes.h"
 
-// entt ships as one amalgamated header with no forward-declaration header, and it is already in the
+// The ECS registry is reached through its own header, and it is already in the
 // Runtime PCH, so this costs nothing here.
-#include <entt/entt.hpp>
 
 namespace Lumina
 {
@@ -55,7 +57,7 @@ namespace Lumina
 
         // An entity's parent changed. Replication may need to observe it; the engine does not know
         // whether it does.
-        virtual void OnEntityAttachmentChanged(CWorld* World, entt::entity Entity) {}
+        virtual void OnEntityAttachmentChanged(CWorld* World, ECS::FEntity Entity) {}
     };
 
     // Null until something installs one, which is a supported state and not an error.

@@ -1,9 +1,10 @@
 #pragma once
+
+#include "World/ECS/Registry.h"
 #include "Core/Delegates/ScriptDelegate.h"
 #include "Core/Math/Math.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Physics/PhysicsTypes.h"
-#include "World/Entity/EntityHandle.h"
 #include "ProjectileComponent.generated.h"
 
 namespace Lumina
@@ -16,10 +17,10 @@ namespace Lumina
         GENERATED_BODY()
 
         PROPERTY()
-        FEntity Projectile = entt::null;
+        ECS::FEntity Projectile = ECS::NullEntity;
 
         PROPERTY()
-        FEntity HitEntity = entt::null;
+        ECS::FEntity HitEntity = ECS::NullEntity;
 
         PROPERTY()
         FVector3 Point;
@@ -65,7 +66,7 @@ namespace Lumina
 
         /** Entity that fired this projectile; the sweep ignores it so it never hits its own shooter. */
         PROPERTY(Editable, Entity, Category = "Projectile")
-        FEntity Instigator = entt::null;
+        ECS::FEntity Instigator = ECS::NullEntity;
 
         /** Fired once when the projectile hits something. */
         PROPERTY()

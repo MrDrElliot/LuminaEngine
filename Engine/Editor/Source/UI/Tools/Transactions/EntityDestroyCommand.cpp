@@ -1,4 +1,5 @@
 #include "EntityDestroyCommand.h"
+#include "World/ECS/Registry.h"
 
 #include "Core/Object/Package/Package.h"
 #include "Core/Serialization/MemoryArchiver.h"
@@ -8,12 +9,12 @@
 
 namespace Lumina
 {
-    void FEntityDestroyCommand::CollectCandidates(FEntityRegistry& Registry, const TVector<entt::entity>& Roots,
-                                                  TVector<entt::entity>& Out)
+    void FEntityDestroyCommand::CollectCandidates(ECS::FRegistry& Registry, const TVector<ECS::FEntity>& Roots,
+                                                  TVector<ECS::FEntity>& Out)
     {
-        for (entt::entity Root : Roots)
+        for (ECS::FEntity Root : Roots)
         {
-            if (!Registry.valid(Root))
+            if (!Registry.IsValid(Root))
             {
                 continue;
             }
@@ -21,11 +22,11 @@ namespace Lumina
             // Ancestors first, so a restore recreates a parent before the child that points at it.
             Out.AddUnique(Root);
 
-            TVector<entt::entity> Descendants;
+            TVector<ECS::FEntity> Descendants;
             ECS::Utils::CollectDescendants(Registry, Root, Descendants);
-            for (entt::entity Descendant : Descendants)
+            for (ECS::FEntity Descendant : Descendants)
             {
-                if (Registry.valid(Descendant))
+                if (Registry.IsValid(Descendant))
                 {
                     Out.AddUnique(Descendant);
                 }
@@ -33,7 +34,7 @@ namespace Lumina
         }
     }
 
-    FEntityDestroyCommand::FEntityDestroyCommand(CWorld* InWorld, const TVector<entt::entity>& InCandidates)
+    FEntityDestroyCommand::FEntityDestroyCommand(CWorld* InWorld, const TVector<ECS::FEntity>& InCandidates)
         : World(InWorld)
     {
         LUMINA_PROFILE_SCOPE();
@@ -44,14 +45,14 @@ namespace Lumina
             return;
         }
 
-        FEntityRegistry& Registry = ECS::GetWorldRegistry(*W);
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*W);
 
         FMemoryWriter Writer(Data);
         FObjectProxyArchiver Ar(Writer, false);
 
-        for (entt::entity Candidate : InCandidates)
+        for (ECS::FEntity Candidate : InCandidates)
         {
-            if (!Registry.valid(Candidate))
+            if (!Registry.IsValid(Candidate))
             {
                 continue;
             }
@@ -60,7 +61,7 @@ namespace Lumina
             Entry.Entity = Candidate;
             Entry.Offset = Ar.Tell();
 
-            entt::entity Mutable = Candidate;
+            ECS::FEntity Mutable = Candidate;
             ECS::Utils::SerializeEntity(Ar, Registry, Mutable);
 
             Entry.Size = Ar.Tell() - Entry.Offset;
@@ -77,14 +78,14 @@ namespace Lumina
             return;
         }
 
-        FEntityRegistry& Registry = ECS::GetWorldRegistry(*W);
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*W);
 
         // A candidate still alive was never part of the delete, so it owes no undo step.
         TVector<FEntry> Kept;
         Kept.reserve(Entries.size());
         for (const FEntry& Entry : Entries)
         {
-            if (!Registry.valid(Entry.Entity))
+            if (!Registry.IsValid(Entry.Entity))
             {
                 Kept.push_back(Entry);
             }
@@ -103,7 +104,7 @@ namespace Lumina
             return;
         }
 
-        FEntityRegistry& Registry = ECS::GetWorldRegistry(*W);
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*W);
 
         FMemoryReader Reader(Data);
         FObjectProxyArchiver Ar(Reader, true);
@@ -112,7 +113,7 @@ namespace Lumina
         {
             Ar.Seek(Entry.Offset);
 
-            entt::entity Restored = entt::null;
+            ECS::FEntity Restored = ECS::NullEntity;
             ECS::Utils::SerializeEntity(Ar, Registry, Restored);
         }
 
@@ -132,14 +133,14 @@ namespace Lumina
             return;
         }
 
-        FEntityRegistry& Registry = ECS::GetWorldRegistry(*W);
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*W);
 
         // Reverse, so a child goes before the parent whose link list would otherwise still name it.
         for (auto It = Entries.rbegin(); It != Entries.rend(); ++It)
         {
-            if (Registry.valid(It->Entity))
+            if (Registry.IsValid(It->Entity))
             {
-                Registry.destroy(It->Entity);
+                Registry.Destroy(It->Entity);
             }
         }
 

@@ -1,50 +1,39 @@
 #include "EditorPCH.h"
+#include "World/ECS/Registry.h"
 #include "Scene/SceneOps.h"
 
 #include "Assets/AssetTypes/Prefabs/Prefab.h"
 #include "Containers/String.h"
-#include "Core/Engine/EngineMetaContext.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/Class/StructTraits.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "World/Entity/Components/DirtyComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
+#include "World/Entity/Components/Component.h"
 #include "World/Entity/EntityUtils.h"
 
 namespace Lumina::SceneOps
 {
-    entt::meta_type ResolveComponentType(FStringView TypeName)
+    CStruct* ResolveComponentType(FStringView TypeName)
     {
-        if (TypeName.empty())
-        {
-            return entt::meta_type();
-        }
-
-        // hashed_string reads to a terminator, so a view has to be copied before it can be hashed.
-        const FString Name(TypeName.data(), TypeName.size());
-        return entt::resolve(GetEngineMetaContext(), entt::hashed_string(Name.c_str()));
+        return TypeName.empty() ? nullptr : FindComponentStruct(TypeName);
     }
 
-    FAddComponentPlan PlanAddComponent(FEntityRegistry& Registry, const TVector<FEntity>& Targets, entt::meta_type Type)
+    FAddComponentPlan PlanAddComponent(ECS::FRegistry& Registry, const TVector<ECS::FEntity>& Targets, CStruct* Type)
     {
-        using namespace entt::literals;
-
         FAddComponentPlan Plan;
 
-        if (Targets.empty())
+        if (Targets.empty() || Type == nullptr)
         {
             return Plan;
         }
 
         // The reflected struct is what lets an instance record the add in its override ledger.
-        if (entt::meta_any Resolved = ECS::Utils::InvokeMetaFunc(Type, "static_struct"_hs))
-        {
-            Plan.Component = Resolved.cast<CStruct*>();
-        }
+        Plan.Component = Type;
 
         Plan.Missing.reserve(Targets.size());
 
-        for (FEntity Target : Targets)
+        for (ECS::FEntity Target : Targets)
         {
             if (ECS::Utils::HasComponent(Registry, Target, Type))
             {
@@ -59,20 +48,17 @@ namespace Lumina::SceneOps
         return Plan;
     }
 
-    void ApplyAddComponent(FEntityRegistry& Registry, const FAddComponentPlan& Plan, entt::meta_type Type)
+    void ApplyAddComponent(ECS::FRegistry& Registry, const FAddComponentPlan& Plan, CStruct* Type)
     {
-        using namespace entt::literals;
-
-        if (!Type)
+        const FComponentOps* Ops = Type != nullptr ? Type->GetComponentOps() : nullptr;
+        if (Ops == nullptr)
         {
             return;
         }
 
-        for (FEntity Target : Plan.Missing)
+        for (ECS::FEntity Target : Plan.Missing)
         {
-            // The reflected emplace replaces data components, so only targets known to lack it come here.
-            ECS::Utils::InvokeMetaFunc(Type, "emplace"_hs, entt::forward_as_meta(Registry), Target,
-                entt::forward_as_meta(entt::meta_any{}));
+            Ops->EmplaceDefault(Registry, Target);
 
             if (Plan.Component != nullptr)
             {
@@ -99,7 +85,7 @@ namespace Lumina::SceneOps
         }
     }
 
-    FPropertyEditScope::FPropertyEditScope(FEntityRegistry& InRegistry, FEntity InEntity, CStruct* OuterType,
+    FPropertyEditScope::FPropertyEditScope(ECS::FRegistry& InRegistry, ECS::FEntity InEntity, CStruct* OuterType,
         void* InOuterInstance, FProperty* Property, const void* ValuePtr)
         : Registry(InRegistry)
         , Entity(InEntity)
@@ -129,7 +115,7 @@ namespace Lumina::SceneOps
             Ops->PostEdit(OuterInstance, Event);
         }
 
-        if (!Registry.valid(Entity))
+        if (!Registry.IsValid(Entity))
         {
             return;
         }
@@ -137,7 +123,7 @@ namespace Lumina::SceneOps
         // A raw store leaves none of the flags the transform setters would have raised.
         if (Event.OuterType == STransformComponent::StaticStruct())
         {
-            Registry.emplace_or_replace<FNeedsTransformUpdate>(Entity);
+            Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Entity);
         }
 
         CPrefab::RecaptureComponentOverrides(Registry, Entity, Event.OuterType);

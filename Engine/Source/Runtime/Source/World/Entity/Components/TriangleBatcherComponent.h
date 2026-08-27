@@ -10,7 +10,7 @@ namespace Lumina
     // large surface (e.g. a navmesh overlay) is a single enqueue, not thousands of per-triangle ones.
     struct RUNTIME_API FTriangleBatcherComponent
     {
-        static constexpr auto in_place_delete = true;
+        static constexpr bool InPlaceDelete = true;
 
         struct FBatchInstance
         {

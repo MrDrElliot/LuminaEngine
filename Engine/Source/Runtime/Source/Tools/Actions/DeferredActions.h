@@ -1,6 +1,8 @@
 #pragma once
 
-#include <entt/entt.hpp>
+#include "World/ECS/Registry.h"
+
+
 #include <Core/Templates/LuminaTemplate.h>
 
 namespace Lumina
@@ -12,20 +14,20 @@ namespace Lumina
 		template<typename T, typename ... TArgs>
 		T& EnqueueAction(TArgs&&... Args)
 		{
-			entt::entity Entity = Registry.create();
-			return Registry.emplace<T>(Entity, Forward<TArgs>(Args)...);
+			ECS::FEntity Entity = Registry.Create();
+			return Registry.Emplace<T>(Entity, Forward<TArgs>(Args)...);
 		}
 
 		template<typename ... Ts, typename TFunc>
 		void ProcessAllOf(TFunc&& Func)
 		{
-			Registry.view<Ts...>().each(Forward<TFunc>(Func));
-			Registry.clear<Ts...>();
+			Registry.View<Ts...>().ForEach(Forward<TFunc>(Func));
+			Registry.ClearComponent<Ts...>();
 		}
 
 
 	private:
 
-		entt::registry Registry;
+		ECS::FRegistry Registry;
 	};
 }

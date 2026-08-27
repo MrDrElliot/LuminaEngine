@@ -8,7 +8,7 @@ namespace Lumina
 {
     // Server-only, transient (non-reflected). Last-sent serialized bytes of each PROPERTY(Replicated) field,
     // keyed by replicated component wire-index -> per-field bytes. Drives native field-granular diffing in
-    // WriteEntityComponents so an unchanged component field isn't resent. Auto-removed with the entity by entt;
+    // WriteEntityComponents so an unchanged component field isn't resent. Auto-removed with the entity by the ECS;
     // re-seeded on the spawn baseline.
     // Flat last-sent fields; two allocations per component rather than one per field.
     struct FRepFieldSnapshot

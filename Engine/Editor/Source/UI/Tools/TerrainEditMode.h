@@ -1,8 +1,10 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #define USE_IMGUI_API
 #include <imgui.h>
-#include <entt/entt.hpp>
 #include "Core/Math/Math.h"
 
 #include "WorldEditorMode.h"
@@ -41,7 +43,7 @@ namespace Lumina
         void Tick(CWorld* World, const SCameraComponent& Camera, bool bViewportHovered, ImVec2 ViewportScreenOrigin, ImVec2 ViewportSize) override;
 
         /** Drop a fresh flat terrain entity at the world origin. */
-        static entt::entity CreateDefaultTerrain(CWorld* World);
+        static ECS::FEntity CreateDefaultTerrain(CWorld* World);
 
         /** Decode an image file (PNG/TGA/HDR/16-bit) and resample its luminance into the terrain's heightmap
          *  grid. Returns false with a human-readable reason in OutError; on success OutSrcW/H report the source
@@ -92,7 +94,7 @@ namespace Lumina
         bool      bTransactionOpen = false;
 
         // Reused so we act on whatever terrain entity is currently in the world.
-        entt::entity FindPreferredTerrain(CWorld* World) const;
+        ECS::FEntity FindPreferredTerrain(CWorld* World) const;
 
         void DrawLayerPanel(STerrainComponent& Terrain);
         static void EnsureLayerWeightStorage(STerrainComponent& Terrain);

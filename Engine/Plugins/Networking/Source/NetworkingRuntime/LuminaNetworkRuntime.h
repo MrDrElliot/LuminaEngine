@@ -1,5 +1,8 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #include "Networking/INetworkRuntime.h"
 
 namespace Lumina
@@ -18,6 +21,6 @@ namespace Lumina
 
 
         void OnWorldEntitiesLoaded(CWorld* World) override;
-        void OnEntityAttachmentChanged(CWorld* World, entt::entity Entity) override;
+        void OnEntityAttachmentChanged(CWorld* World, ECS::FEntity Entity) override;
     };
 }

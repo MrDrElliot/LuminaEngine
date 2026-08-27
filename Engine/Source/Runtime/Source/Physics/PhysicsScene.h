@@ -1,4 +1,8 @@
 #pragma once
+
+#include "World/ECS/Registry.h"
+#include "World/ECS/EventDispatcher.h"
+
 #include "PhysicsTypes.h"
 #include "Core/Templates/Optional.h"
 #include "Containers/Span.h"
@@ -24,7 +28,7 @@ namespace Lumina::Physics
     // Inputs to build one ragdoll. Backend neutral so gameplay and world code can drive it.
     struct FRagdollDesc
     {
-        entt::entity                Entity = entt::null;            // Owning entity; written to each body's user data for contact mapping.
+        ECS::FEntity                Entity = ECS::NullEntity;            // Owning entity; written to each body's user data for contact mapping.
         CPhysicsAsset*              Asset = nullptr;                 // Authored bodies/constraints; null => auto-generate from Skeleton.
         const FSkeletonResource*    Skeleton = nullptr;             // Source skeleton (bone hierarchy + bind pose).
         const TVector<FMatrix4>*    ComponentBoneGlobals = nullptr; // Component-space bone global transforms to spawn at (size == bone count).
@@ -42,12 +46,12 @@ namespace Lumina::Physics
     };
 
     // Backend-neutral description of one constraint, built by gameplay/editor code and resolved by the scene.
-    // World-space frames; a body set to entt::null is treated as "fixed to the world".
+    // World-space frames; a body set to ECS::NullEntity is treated as "fixed to the world".
     struct FConstraintDesc
     {
         EPhysicsConstraintType  Type        = EPhysicsConstraintType::Point;
-        entt::entity            BodyA       = entt::null;            // entt::null => world anchor (parent).
-        entt::entity            BodyB       = entt::null;            // The constrained (child) body.
+        ECS::FEntity            BodyA       = ECS::NullEntity;            // ECS::NullEntity => world anchor (parent).
+        ECS::FEntity            BodyB       = ECS::NullEntity;            // The constrained (child) body.
         FVector3                Anchor      = FVector3(0.0f);        // World pivot (Point/Hinge/Slider/Cone).
         FVector3                Axis        = FVector3(0.0f, 1.0f, 0.0f); // Hinge/Cone axis or Slider direction (world).
         FVector3                AnchorB     = FVector3(0.0f);        // Distance: second attach point (Anchor is the first).
@@ -88,7 +92,7 @@ namespace Lumina::Physics
         virtual void Simulate() = 0;
         virtual void StopSimulate() = 0;
 
-        // Game-thread drain of step-side events (Lua, entt::dispatcher). Pair with Update.
+        // Game-thread drain of step-side events (Lua, ECS::FEventDispatcher). Pair with Update.
         virtual void DispatchPendingEvents() {}
         
         virtual void DeactivateBody(uint32 BodyID) = 0;
@@ -98,7 +102,7 @@ namespace Lumina::Physics
         // Whether the body is awake (active) vs asleep (at rest). Default false.
         virtual bool IsBodyActive(uint32 BodyID) { return false; }
         
-        virtual uint32 GetEntityBodyID(entt::entity Entity) = 0;
+        virtual uint32 GetEntityBodyID(ECS::FEntity Entity) = 0;
         
         virtual TOptional<SRayResult> CastRay(const SRayCastSettings& Settings) = 0;
 
@@ -112,11 +116,11 @@ namespace Lumina::Physics
         virtual void CastRayAll(const SRayCastSettings& Settings, TVector<SRayResult>& OutHits) { OutHits.clear(); }
 
         // Distinct entities whose bodies CONTAIN the world point (volume containment, no sweep).
-        virtual int32 CollidePoint(const FVector3& Point, TSpan<const uint32> IgnoreBodies, TSpan<entt::entity> OutEntities) { return 0; }
+        virtual int32 CollidePoint(const FVector3& Point, TSpan<const uint32> IgnoreBodies, TSpan<ECS::FEntity> OutEntities) { return 0; }
 
         // Distinct entities intersecting the shape; returns the count written, == size() means possibly more.
-        virtual int32 OverlapSphere(const FVector3& Center, float Radius, TSpan<const uint32> IgnoreBodies, TSpan<entt::entity> OutEntities) = 0;
-        virtual int32 OverlapBox(const FVector3& Center, const FVector3& HalfExtents, const FQuat& Rotation, TSpan<const uint32> IgnoreBodies, TSpan<entt::entity> OutEntities) = 0;
+        virtual int32 OverlapSphere(const FVector3& Center, float Radius, TSpan<const uint32> IgnoreBodies, TSpan<ECS::FEntity> OutEntities) = 0;
+        virtual int32 OverlapBox(const FVector3& Center, const FVector3& HalfExtents, const FQuat& Rotation, TSpan<const uint32> IgnoreBodies, TSpan<ECS::FEntity> OutEntities) = 0;
         
         virtual void OnImpulseEvent(const SImpulseEvent& Impulse) = 0;
         virtual void OnForceEvent(const SForceEvent& Force) = 0;
@@ -132,12 +136,12 @@ namespace Lumina::Physics
         // this frame. The caller supplies the fluid surface point + normal (e.g. sampled from the rendered
         // Gerstner waves), so the fluid plane follows the wave surface instead of being flat. Buoyancy is the
         // fluid/body density ratio: 1 = neutral, >1 floats. No-op without a dynamic body. Default is a no-op.
-        virtual void ApplyBuoyancyImpulse(entt::entity Entity, const FVector3& SurfacePosition, const FVector3& SurfaceNormal,
+        virtual void ApplyBuoyancyImpulse(ECS::FEntity Entity, const FVector3& SurfacePosition, const FVector3& SurfaceNormal,
             float Buoyancy, float LinearDrag, float AngularDrag, const FVector3& FluidVelocity, float DeltaTime) {}
 
         // Conveyor belt / moving surface: objects resting on this body's surface are dragged at this
         // world-space velocity (linear m/s, angular rad/s). Zero clears it. Default is a no-op.
-        virtual void SetSurfaceVelocity(entt::entity Entity, const FVector3& Linear, const FVector3& Angular) {}
+        virtual void SetSurfaceVelocity(ECS::FEntity Entity, const FVector3& Linear, const FVector3& Angular) {}
 
         virtual FVector3 GetVelocityAtPoint(uint32 BodyID, const FVector3& Point) = 0;
         virtual FVector3 GetLinearVelocity(uint32 BodyID) = 0;
@@ -163,7 +167,7 @@ namespace Lumina::Physics
         virtual void EndBodyBatch() = 0;
 
         // Static bodies for instanced geometry (foliage), merged per material and cell into compound bodies; hits report Owner. 0 = nothing built.
-        virtual uint32 CreateStaticBodyGroup(entt::entity Owner, TSpan<const FStaticInstanceDesc> Instances) { return 0; }
+        virtual uint32 CreateStaticBodyGroup(ECS::FEntity Owner, TSpan<const FStaticInstanceDesc> Instances) { return 0; }
         virtual void DestroyStaticBodyGroup(uint32 GroupID) {}
 
         // Build a ragdoll's bodies + constraints and add them to the scene. Returns an opaque handle the
@@ -197,21 +201,21 @@ namespace Lumina::Physics
         // joints without a single driven scalar (Fixed/Point/Distance/Cone).
         virtual float GetConstraintValue(uint32 ConstraintID) { return 0.0f; }
 
-        void AddForce(entt::entity E, const FVector3& Force)                   { SForceEvent Ev; Ev.BodyID = GetEntityBodyID(E); Ev.Force = Force; OnForceEvent(Ev); }
-        void AddImpulse(entt::entity E, const FVector3& Impulse)               { SImpulseEvent Ev; Ev.BodyID = GetEntityBodyID(E); Ev.Impulse = Impulse; OnImpulseEvent(Ev); }
-        void AddTorque(entt::entity E, const FVector3& Torque)                 { STorqueEvent Ev; Ev.BodyID = GetEntityBodyID(E); Ev.Torque = Torque; OnTorqueEvent(Ev); }
-        void AddAngularImpulse(entt::entity E, const FVector3& AngularImpulse) { SAngularImpulseEvent Ev; Ev.BodyID = GetEntityBodyID(E); Ev.AngularImpulse = AngularImpulse; OnAngularImpulseEvent(Ev); }
-        void AddForceAtPosition(entt::entity E, const FVector3& Force, const FVector3& Position)     { SAddForceAtPositionEvent Ev; Ev.BodyID = GetEntityBodyID(E); Ev.Force = Force; Ev.Position = Position; OnAddForceAtPositionEvent(Ev); }
-        void AddImpulseAtPosition(entt::entity E, const FVector3& Impulse, const FVector3& Position) { SAddImpulseAtPositionEvent Ev; Ev.BodyID = GetEntityBodyID(E); Ev.Impulse = Impulse; Ev.Position = Position; OnAddImpulseAtPositionEvent(Ev); }
-        void SetLinearVelocity(entt::entity E, const FVector3& Velocity)         { SSetVelocityEvent Ev; Ev.BodyID = GetEntityBodyID(E); Ev.Velocity = Velocity; OnSetVelocityEvent(Ev); }
-        void SetAngularVelocity(entt::entity E, const FVector3& AngularVelocity) { SSetAngularVelocityEvent Ev; Ev.BodyID = GetEntityBodyID(E); Ev.AngularVelocity = AngularVelocity; OnSetAngularVelocityEvent(Ev); }
-        void SetGravityFactor(entt::entity E, float Factor)                     { SSetGravityFactorEvent Ev; Ev.BodyID = GetEntityBodyID(E); Ev.GravityFactor = Factor; OnSetGravityFactorEvent(Ev); }
+        void AddForce(ECS::FEntity E, const FVector3& Force)                   { SForceEvent Ev; Ev.BodyID = GetEntityBodyID(E); Ev.Force = Force; OnForceEvent(Ev); }
+        void AddImpulse(ECS::FEntity E, const FVector3& Impulse)               { SImpulseEvent Ev; Ev.BodyID = GetEntityBodyID(E); Ev.Impulse = Impulse; OnImpulseEvent(Ev); }
+        void AddTorque(ECS::FEntity E, const FVector3& Torque)                 { STorqueEvent Ev; Ev.BodyID = GetEntityBodyID(E); Ev.Torque = Torque; OnTorqueEvent(Ev); }
+        void AddAngularImpulse(ECS::FEntity E, const FVector3& AngularImpulse) { SAngularImpulseEvent Ev; Ev.BodyID = GetEntityBodyID(E); Ev.AngularImpulse = AngularImpulse; OnAngularImpulseEvent(Ev); }
+        void AddForceAtPosition(ECS::FEntity E, const FVector3& Force, const FVector3& Position)     { SAddForceAtPositionEvent Ev; Ev.BodyID = GetEntityBodyID(E); Ev.Force = Force; Ev.Position = Position; OnAddForceAtPositionEvent(Ev); }
+        void AddImpulseAtPosition(ECS::FEntity E, const FVector3& Impulse, const FVector3& Position) { SAddImpulseAtPositionEvent Ev; Ev.BodyID = GetEntityBodyID(E); Ev.Impulse = Impulse; Ev.Position = Position; OnAddImpulseAtPositionEvent(Ev); }
+        void SetLinearVelocity(ECS::FEntity E, const FVector3& Velocity)         { SSetVelocityEvent Ev; Ev.BodyID = GetEntityBodyID(E); Ev.Velocity = Velocity; OnSetVelocityEvent(Ev); }
+        void SetAngularVelocity(ECS::FEntity E, const FVector3& AngularVelocity) { SSetAngularVelocityEvent Ev; Ev.BodyID = GetEntityBodyID(E); Ev.AngularVelocity = AngularVelocity; OnSetAngularVelocityEvent(Ev); }
+        void SetGravityFactor(ECS::FEntity E, float Factor)                     { SSetGravityFactorEvent Ev; Ev.BodyID = GetEntityBodyID(E); Ev.GravityFactor = Factor; OnSetGravityFactorEvent(Ev); }
 
-        FVector3 GetLinearVelocity(entt::entity E)                         { return GetLinearVelocity(GetEntityBodyID(E)); }
-        FVector3 GetAngularVelocity(entt::entity E)                        { return GetAngularVelocity(GetEntityBodyID(E)); }
-        FVector3 GetVelocityAtPoint(entt::entity E, const FVector3& Point) { return GetVelocityAtPoint(GetEntityBodyID(E), Point); }
-        FVector3 GetCenterOfMass(entt::entity E)                           { return GetCenterOfMass(GetEntityBodyID(E)); }
-        FVector3 GetBodyPosition(entt::entity E)                           { return GetBodyPosition(GetEntityBodyID(E)); }
-        FQuat    GetBodyRotation(entt::entity E)                           { return GetBodyRotation(GetEntityBodyID(E)); }
+        FVector3 GetLinearVelocity(ECS::FEntity E)                         { return GetLinearVelocity(GetEntityBodyID(E)); }
+        FVector3 GetAngularVelocity(ECS::FEntity E)                        { return GetAngularVelocity(GetEntityBodyID(E)); }
+        FVector3 GetVelocityAtPoint(ECS::FEntity E, const FVector3& Point) { return GetVelocityAtPoint(GetEntityBodyID(E), Point); }
+        FVector3 GetCenterOfMass(ECS::FEntity E)                           { return GetCenterOfMass(GetEntityBodyID(E)); }
+        FVector3 GetBodyPosition(ECS::FEntity E)                           { return GetBodyPosition(GetEntityBodyID(E)); }
+        FQuat    GetBodyRotation(ECS::FEntity E)                           { return GetBodyRotation(GetEntityBodyID(E)); }
     };
 }

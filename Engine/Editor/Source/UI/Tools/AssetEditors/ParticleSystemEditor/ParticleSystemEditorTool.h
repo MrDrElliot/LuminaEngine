@@ -1,5 +1,8 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Particles/ParticleModule.h"
 #include "UI/Tools/AssetEditors/AssetEditorTool.h"
@@ -80,8 +83,8 @@ namespace Lumina
 
     private:
 
-        entt::entity            ParticleEntity;
-        entt::entity            DirectionalLightEntity;
+        ECS::FEntity            ParticleEntity;
+        ECS::FEntity            DirectionalLightEntity;
 
         // The object the Details panel edits. Raw, not a TObjectPtr: modules and emitters are owned by the
         // stack and the asset, and a strong ref here would keep a deleted one alive behind the panel.

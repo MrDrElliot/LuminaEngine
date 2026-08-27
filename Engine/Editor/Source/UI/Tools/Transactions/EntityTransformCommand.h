@@ -1,10 +1,12 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #include "Containers/Vector.h"
 #include "Core/Math/Transform.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "EditorTransaction.h"
-#include "World/Entity/Registry/EntityRegistry.h"
 
 namespace Lumina
 {
@@ -32,7 +34,7 @@ namespace Lumina
     public:
 
         // Captures the before-image immediately, matching FEcsRegistrySnapshotCommand's contract.
-        FEntityTransformCommand(CWorld* InWorld, TVector<entt::entity> InEntities);
+        FEntityTransformCommand(CWorld* InWorld, TVector<ECS::FEntity> InEntities);
 
         void Undo() override;
         void Redo() override;
@@ -50,7 +52,7 @@ namespace Lumina
 
         // Weak, since a strong ref would keep a torn-down world alive and stop a stale undo from no-opping.
         TWeakObjectPtr<CWorld>  World;
-        TVector<entt::entity>   Entities;
+        TVector<ECS::FEntity>   Entities;
         TVector<FTransform>     Before;
         TVector<FTransform>     After;
     };

@@ -1,4 +1,5 @@
 #include "RuntimePCH.h"
+#include "World/ECS/Registry.h"
 #include "Sequence.h"
 
 #include "Assets/AssetTypes/Prefabs/Prefab.h"
@@ -8,11 +9,11 @@
 
 namespace Lumina
 {
-    entt::entity FSequenceEvalContext::Resolve(int32 BindingIndex) const
+    ECS::FEntity FSequenceEvalContext::Resolve(int32 BindingIndex) const
     {
         if (BoundEntities == nullptr || BindingIndex < 0 || BindingIndex >= (int32)BoundEntities->size())
         {
-            return entt::null;
+            return ECS::NullEntity;
         }
 
         return (*BoundEntities)[BindingIndex];
@@ -25,8 +26,8 @@ namespace Lumina
 
     void CSequenceTrack_Transform::Evaluate(const FSequenceEvalContext& Context) const
     {
-        const entt::entity Entity = Context.Resolve(BindingIndex);
-        if (Entity == entt::null || Context.World == nullptr || !Context.World->IsValidEntity(Entity))
+        const ECS::FEntity Entity = Context.Resolve(BindingIndex);
+        if (Entity == ECS::NullEntity || Context.World == nullptr || !Context.World->IsValidEntity(Entity))
         {
             return;
         }
@@ -81,8 +82,8 @@ namespace Lumina
             return;
         }
 
-        const entt::entity Camera = Context.Resolve(Cuts[CutIndex].BindingIndex);
-        if (Camera == entt::null || !Context.World->IsValidEntity(Camera))
+        const ECS::FEntity Camera = Context.Resolve(Cuts[CutIndex].BindingIndex);
+        if (Camera == ECS::NullEntity || !Context.World->IsValidEntity(Camera))
         {
             return;
         }
@@ -103,7 +104,7 @@ namespace Lumina
             return;
         }
 
-        BoundEntities.assign(Sequence->Bindings.size(), entt::null);
+        BoundEntities.assign(Sequence->Bindings.size(), ECS::NullEntity);
 
         for (int32 i = 0; i < (int32)Sequence->Bindings.size(); ++i)
         {
@@ -116,8 +117,8 @@ namespace Lumina
                     continue;
                 }
 
-                const entt::entity Spawned = Binding.SpawnPrefab->Instantiate(World);
-                if (Spawned != entt::null)
+                const ECS::FEntity Spawned = Binding.SpawnPrefab->Instantiate(World);
+                if (Spawned != ECS::NullEntity)
                 {
                     BoundEntities[i] = Spawned;
                     SpawnedEntities.push_back(Spawned);
@@ -126,9 +127,9 @@ namespace Lumina
             }
 
             auto View = World->View<SNameComponent>();
-            for (entt::entity Entity : View)
+            for (ECS::FEntity Entity : View)
             {
-                if (View.get<SNameComponent>(Entity).Name == Binding.Name)
+                if (View.Get<SNameComponent>(Entity).Name == Binding.Name)
                 {
                     BoundEntities[i] = Entity;
                     break;
@@ -137,15 +138,15 @@ namespace Lumina
         }
 
         // Spawned entities are destroyed outright, so there is nothing to put back for them.
-        for (entt::entity Entity : BoundEntities)
+        for (ECS::FEntity Entity : BoundEntities)
         {
-            if (Entity == entt::null || !World->IsValidEntity(Entity))
+            if (Entity == ECS::NullEntity || !World->IsValidEntity(Entity))
             {
                 continue;
             }
 
             bool bSpawned = false;
-            for (entt::entity Other : SpawnedEntities)
+            for (ECS::FEntity Other : SpawnedEntities)
             {
                 if (Other == Entity)
                 {
@@ -195,7 +196,7 @@ namespace Lumina
                 }
             }
 
-            for (entt::entity Spawned : SpawnedEntities)
+            for (ECS::FEntity Spawned : SpawnedEntities)
             {
                 if (World->IsValidEntity(Spawned))
                 {

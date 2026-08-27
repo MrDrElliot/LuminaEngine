@@ -22,12 +22,12 @@ namespace Lumina
 
     void SDebugDrawSystem::Startup(const FSystemContext& Context) noexcept
     {
-        Context.GetRegistry().ctx().emplace<FDebugDrawState>();
+        Context.GetRegistry().Ctx().Emplace<FDebugDrawState>();
     }
 
     void SDebugDrawSystem::Update(const FSystemContext& Context) noexcept
     {
-        FDebugDrawState& State = Context.GetRegistry().ctx().get<FDebugDrawState>();
+        FDebugDrawState& State = Context.GetRegistry().Ctx().Get<FDebugDrawState>();
 
         CWorld* World = Context.GetWorld();
 
@@ -44,7 +44,7 @@ namespace Lumina
         }
 
         // The resolved view is one frame old, which is fine for a broad-phase cull.
-        const FResolvedSceneView* Resolved = Context.GetRegistry().ctx().find<FResolvedSceneView>();
+        const FResolvedSceneView* Resolved = Context.GetRegistry().Ctx().Find<FResolvedSceneView>();
         if (Resolved != nullptr && Resolved->bHasView)
         {
             State.Frustum    = Resolved->ViewVolume.GetFrustum();
@@ -64,7 +64,7 @@ namespace Lumina
 
     void SDebugDrawSystem::Teardown(const FSystemContext& Context) noexcept
     {
-        Context.GetRegistry().ctx().erase<FDebugDrawState>();
+        Context.GetRegistry().Ctx().Erase<FDebugDrawState>();
     }
 
     namespace DebugDraw
@@ -76,7 +76,7 @@ namespace Lumina
                 return nullptr;
             }
 
-            return ECS::GetWorldRegistry(*World).ctx().find<FDebugDrawState>();
+            return ECS::GetWorldRegistry(*World).Ctx().Find<FDebugDrawState>();
         }
 
         FImmediateLineRenderer* GetLines(CWorld* World)

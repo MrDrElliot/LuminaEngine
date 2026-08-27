@@ -1,4 +1,5 @@
 #include <algorithm>
+#include "World/ECS/Registry.h"
 
 #include "Platform/GenericPlatform.h"
 #include "Scripting/DotNet/LayoutRegistry.h"
@@ -35,7 +36,7 @@ namespace
 }
 LE_REGISTER_LAYOUT("PerceptionPointWire", FLmPerceptionPoint);
 
-// Fills OutEntities (entt ids) with the perceiver's currently-tracked targets; returns the count (<= Max).
+// Fills OutEntities (entity ids) with the perceiver's currently-tracked targets; returns the count (<= Max).
 LUMINA_DOTNET_EXPORT(int32, Perception_GetPerceivedTargets)(uint64 World, uint32 Perceiver, uint32* OutEntities, int32 Max)
 {
     CWorld* W = AsWorld(World);
@@ -97,16 +98,16 @@ LUMINA_DOTNET_EXPORT(FLmPerceptionPoint, Perception_GetLastKnownLocation)(uint64
     return Result;
 }
 
-// Nearest perceived target to the perceiver's eye, or entt::null (0xFFFFFFFF) when nothing is perceived.
+// Nearest perceived target to the perceiver's eye, or ECS::NullEntity (0xFFFFFFFF) when nothing is perceived.
 LUMINA_DOTNET_EXPORT(uint32, Perception_GetClosest)(uint64 World, uint32 Perceiver)
 {
     CWorld* W = AsWorld(World);
     if (W == nullptr)
     {
-        return ToId(entt::null);
+        return ToId(ECS::NullEntity);
     }
     const SPerceptionComponent* C = W->TryGetComponent<SPerceptionComponent>(AsEntity(Perceiver));
-    return C != nullptr ? ToId(C->GetClosestPerceivedTarget()) : ToId(entt::null);
+    return C != nullptr ? ToId(C->GetClosestPerceivedTarget()) : ToId(ECS::NullEntity);
 }
 
 // One-shot line-of-sight test between two entities (eye/aim offsets applied when the components exist).
@@ -119,10 +120,10 @@ LUMINA_DOTNET_EXPORT(int32, Perception_HasLineOfSight)(uint64 World, uint32 From
     }
     Physics::IPhysicsScene* Scene = W->GetPhysicsScene();
     auto& Registry = ECS::GetWorldRegistry(*W);
-    const entt::entity From = AsEntity(FromEntity);
-    const entt::entity To = AsEntity(ToEntity);
-    const STransformComponent* FromXf = Registry.try_get<STransformComponent>(From);
-    const STransformComponent* ToXf = Registry.try_get<STransformComponent>(To);
+    const ECS::FEntity From = AsEntity(FromEntity);
+    const ECS::FEntity To = AsEntity(ToEntity);
+    const STransformComponent* FromXf = Registry.TryGet<STransformComponent>(From);
+    const STransformComponent* ToXf = Registry.TryGet<STransformComponent>(To);
     if (Scene == nullptr || FromXf == nullptr || ToXf == nullptr)
     {
         return 0;
@@ -130,11 +131,11 @@ LUMINA_DOTNET_EXPORT(int32, Perception_HasLineOfSight)(uint64 World, uint32 From
 
     FVector3 Start = FromXf->GetWorldLocation();
     FVector3 End = ToXf->GetWorldLocation();
-    if (const SPerceptionComponent* PC = Registry.try_get<SPerceptionComponent>(From))
+    if (const SPerceptionComponent* PC = Registry.TryGet<SPerceptionComponent>(From))
     {
         Start = Start + PC->EyeOffset;
     }
-    if (const SAIStimuliSourceComponent* SC = Registry.try_get<SAIStimuliSourceComponent>(To))
+    if (const SAIStimuliSourceComponent* SC = Registry.TryGet<SAIStimuliSourceComponent>(To))
     {
         End = End + SC->SightTargetOffset;
     }
@@ -163,7 +164,7 @@ LUMINA_DOTNET_EXPORT(void, Perception_ReportNoise)(uint64 World, FVector3 Locati
     FAIStimulusEvent Event;
     Event.Sense = Lumina::EAISenseChannel::Hearing;
     Event.Instigator = AsEntity(Instigator);
-    Event.Target = entt::null;
+    Event.Target = ECS::NullEntity;
     Event.Location = Location;
     Event.Strength = Loudness;
     Perception::EnqueueStimulus(Perception::GetOrCreateState(ECS::GetWorldRegistry(*W)), Event);

@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "FoliageComponent.h"
+#include "World/ECS/Registry.h"
 #include "TaskSystem/TaskSystem.h"
 #include "World/Scene/RenderScene/ScenePrimitiveSet.h"
 #include "World/World.h"
@@ -146,7 +147,7 @@ namespace Lumina
         BakedVersion    = InstancesVersion;
     }
 
-    void MarkFoliageChanged(CWorld& World, entt::entity Entity, SFoliageComponent& Foliage)
+    void MarkFoliageChanged(CWorld& World, ECS::FEntity Entity, SFoliageComponent& Foliage)
     {
         Foliage.MarkInstancesChanged();
 
@@ -154,7 +155,7 @@ namespace Lumina
         FMeshResolveCache::MarkPendingWork();
 
         // ECS::GetWorldRegistry is the sanctioned accessor, so callers never need a registry.
-        FEntityRegistry& Registry = ECS::GetWorldRegistry(World);
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(World);
 
         // Membership as well as Data, because painting changes the instance COUNT the set keys on.
         FRenderDirtyTracker::Ensure(Registry).Mark(Entity, EPrimitiveSource::Foliage,

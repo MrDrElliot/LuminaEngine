@@ -1,5 +1,7 @@
 ﻿#include "RuntimePCH.h"
 #include "World.h"
+#include "World/ECS/Registry.h"
+#include "World/ECS/EventDispatcher.h"
 #include <cmath>
 #include <utility>
 #include "WorldManager.h"
@@ -80,7 +82,7 @@ namespace Lumina
     namespace ECS
     {
         // Routes through CWorld's private accessor so the registry stays off the public API.
-        FEntityRegistry& GetWorldRegistry(CWorld& World)
+        ECS::FRegistry& GetWorldRegistry(CWorld& World)
         {
             return World.GetEntityRegistry();
         }
@@ -95,24 +97,24 @@ namespace Lumina
 
         // Both are needed, since one fixes the shared resolve and the other this entity's state.
         template <typename TComponent>
-        void MarkMeshResolveDirty(FEntityRegistry& Registry, entt::entity Entity)
+        void MarkMeshResolveDirty(ECS::FRegistry& Registry, ECS::FEntity Entity)
         {
-            Registry.get<TComponent>(Entity).InvalidateRenderResolve();
+            Registry.Get<TComponent>(Entity).InvalidateRenderResolve();
             FRenderDirtyTracker::Ensure(Registry).Mark(Entity, PrimitiveSourceFor<TComponent>(),
                                                        EPrimitiveDirty::Data | EPrimitiveDirty::Membership);
         }
 
         // The resolve stamp is irrelevant now; only the render scene needs telling.
         template <typename TComponent>
-        void MarkMeshRemoved(FEntityRegistry& Registry, entt::entity Entity)
+        void MarkMeshRemoved(ECS::FRegistry& Registry, ECS::FEntity Entity)
         {
             FRenderDirtyTracker::Ensure(Registry).Mark(Entity, PrimitiveSourceFor<TComponent>(),
                                                        EPrimitiveDirty::Membership);
         }
 
-        void MarkFoliageResolveDirty(FEntityRegistry& Registry, entt::entity Entity)
+        void MarkFoliageResolveDirty(ECS::FRegistry& Registry, ECS::FEntity Entity)
         {
-            for (SFoliageType& Type : Registry.get<SFoliageComponent>(Entity).Types)
+            for (SFoliageType& Type : Registry.Get<SFoliageComponent>(Entity).Types)
             {
                 Type.CachedEntryState = MESH_RESOLVE_STATE_STALE;
             }
@@ -121,13 +123,13 @@ namespace Lumina
                                                        EPrimitiveDirty::Data | EPrimitiveDirty::Membership);
         }
 
-        void MarkFoliageRemoved(FEntityRegistry& Registry, entt::entity Entity)
+        void MarkFoliageRemoved(ECS::FRegistry& Registry, ECS::FEntity Entity)
         {
             FRenderDirtyTracker::Ensure(Registry).Mark(Entity, EPrimitiveSource::Foliage, EPrimitiveDirty::Membership);
         }
 
         // The sync pass drops the sources the entity does not actually have.
-        void MarkRenderVisibilityDirty(FEntityRegistry& Registry, entt::entity Entity)
+        void MarkRenderVisibilityDirty(ECS::FRegistry& Registry, ECS::FEntity Entity)
         {
             FRenderDirtyTracker::Ensure(Registry).MarkAllSources(Entity, EPrimitiveDirty::Visibility | EPrimitiveDirty::Membership);
         }
@@ -199,7 +201,7 @@ namespace Lumina
     }
 
     CWorld::CWorld()
-        : SingletonEntity(entt::null)
+        : SingletonEntity(ECS::NullEntity)
         , SystemContext(this)
         , LineBatcherComponent(nullptr)
         , TriangleBatcherComponent(nullptr)
@@ -259,13 +261,13 @@ namespace Lumina
 
         if (Ar.IsReading())
         {
-            RegistryPending.clear<>();
+            RegistryPending.Clear();
             ECS::Utils::SerializeRegistry(Ar, RegistryPending);
         }
         else
         {
             // DuplicateWorld serializes pre-init, so write from whichever registry holds the data.
-            FEntityRegistry& Source = (!EntityRegistry.storage<entt::entity>().empty())
+            ECS::FRegistry& Source = (EntityRegistry.NumEntities() != 0)
                 ? EntityRegistry
                 : RegistryPending;
             ECS::Utils::SerializeRegistry(Ar, Source);
@@ -283,21 +285,19 @@ namespace Lumina
     void CWorld::InitializeWorld(EWorldType InWorldType)
     {
         LUMINA_MEMORY_SCOPE("World");
-        using namespace entt::literals;
-        
         WorldType = InWorldType;
         
         CPrefab::CullOrphanedInstances(RegistryPending);
         
-        if (!RegistryPending.storage<entt::entity>().empty())
+        if (RegistryPending.NumEntities() != 0)
         {
-            EntityRegistry.swap(RegistryPending);
+            EntityRegistry.Swap(RegistryPending);
         }
         RegistryPending = {};
 
         CPrefab::RefreshAllInstancesInWorld(this);
         
-        EntityRegistry.compact();
+        EntityRegistry.Compact();
         
         // Which entities a client may hold is a netcode question, so it is reported not decided.
         if (INetworkRuntime* NetRuntime = GetNetworkRuntime())
@@ -305,16 +305,16 @@ namespace Lumina
             NetRuntime->OnWorldEntitiesLoaded(this);
         }
 
-        EntityRegistry.ctx().emplace<entt::dispatcher&>(SingletonDispatcher);
+        EntityRegistry.Ctx().Emplace<ECS::FEventDispatcher*>(&SingletonDispatcher);
 
         ConnectComponentAccessValidators(EntityRegistry);
 
-        auto WorldSettingsView = EntityRegistry.view<SDefaultWorldSettings>();
+        auto WorldSettingsView = EntityRegistry.View<SDefaultWorldSettings>();
         for (auto Entity : WorldSettingsView)
         {
-            if (!ALERT_IF_NOT(WorldSettingsView->size() == 1, "Multiple world settings were detected in the world! {}", WorldSettingsView->size()))
+            if (!ALERT_IF_NOT(WorldSettingsView.Num() == 1, "Multiple world settings were detected in the world! {}", WorldSettingsView.Num()))
             {
-                EntityRegistry.clear<SDefaultWorldSettings>();
+                EntityRegistry.ClearComponent<SDefaultWorldSettings>();
                 break;
             }
             
@@ -322,16 +322,16 @@ namespace Lumina
             break;
         }
         
-        if (!EntityRegistry.valid(SingletonEntity))
+        if (!EntityRegistry.IsValid(SingletonEntity))
         {
-            SingletonEntity = EntityRegistry.create();
-            EntityRegistry.emplace<SDefaultWorldSettings>(SingletonEntity);
+            SingletonEntity = EntityRegistry.Create();
+            EntityRegistry.Emplace<SDefaultWorldSettings>(SingletonEntity);
         }
         
-        LineBatcherComponent = &EntityRegistry.emplace<FLineBatcherComponent>(SingletonEntity);
-        TriangleBatcherComponent = &EntityRegistry.emplace<FTriangleBatcherComponent>(SingletonEntity);
-        EntityRegistry.emplace<FSingletonEntityTag>(SingletonEntity);
-        EntityRegistry.emplace<FHideInSceneOutliner>(SingletonEntity);
+        LineBatcherComponent = &EntityRegistry.Emplace<FLineBatcherComponent>(SingletonEntity);
+        TriangleBatcherComponent = &EntityRegistry.Emplace<FTriangleBatcherComponent>(SingletonEntity);
+        EntityRegistry.Emplace<FSingletonEntityTag>(SingletonEntity);
+        EntityRegistry.Emplace<FHideInSceneOutliner>(SingletonEntity);
         
         // Physics scene only for simulating worlds; the world reserves its body arrays up front.
         if (WorldType == EWorldType::Game || WorldType == EWorldType::Simulation)
@@ -339,16 +339,16 @@ namespace Lumina
             PhysicsScene = Physics::GetPhysicsContext()->CreatePhysicsScene(this);
         }
         // Emplaced even when null so ctx().get consumers find the key and null-check it.
-        EntityRegistry.ctx().emplace<Physics::IPhysicsScene*>(PhysicsScene.get());
-        EntityRegistry.ctx().emplace<FSystemContext&>(SystemContext);
-        EntityRegistry.ctx().emplace<CWorld*>(this);
+        EntityRegistry.Ctx().Emplace<Physics::IPhysicsScene*>(PhysicsScene.get());
+        EntityRegistry.Ctx().Emplace<FSystemContext*>(&SystemContext);
+        EntityRegistry.Ctx().Emplace<CWorld*>(this);
 
         // Per-world subsystem singleton ticked by STimerSystem and reached by ctx address.
-        EntityRegistry.ctx().emplace<FTimerManager>();
+        EntityRegistry.Ctx().Emplace<FTimerManager>();
 
         // SCameraSystem owns FCameraGlobalState and writes FResolvedSceneView for Extract.
-        EntityRegistry.ctx().emplace<FCameraGlobalState>();
-        EntityRegistry.ctx().emplace<FResolvedSceneView>();
+        EntityRegistry.Ctx().Emplace<FCameraGlobalState>();
+        EntityRegistry.Ctx().Emplace<FResolvedSceneView>();
 
         CreateRenderer();
         UIContext = RmlUi::CreateWorldUI(this);
@@ -379,28 +379,28 @@ namespace Lumina
         bSystemsStarted = true;
         StartupManagedSystems();
 
-        EntityRegistry.on_destroy   <FRelationshipComponent>()      .connect<&ThisClass::OnRelationshipComponentDestroyed>(this);
-        EntityRegistry.on_construct <STransformComponent>()         .connect<&ThisClass::OnTransformComponentConstruct>(this);
-        EntityRegistry.on_construct <FRelationshipComponent>()      .connect<&ThisClass::OnRelationshipComponentConstruct>(this);
-        EntityRegistry.on_destroy   <SEntityScriptComponent>()      .connect<&ThisClass::OnCSharpScriptComponentDestroyed>(this);
-        EntityRegistry.on_destroy   <SWidgetComponent>()            .connect<&ThisClass::OnWidgetComponentDestroyed>(this);
-        SystemContext.EventSink     <FSwitchActiveCameraEvent>()    .connect<&ThisClass::OnChangeCameraEvent>(this);
+        EntityRegistry.GetSignals<FRelationshipComponent>().OnDestroy      .Connect<&ThisClass::OnRelationshipComponentDestroyed>(this);
+        EntityRegistry.GetSignals<STransformComponent>().OnConstruct         .Connect<&ThisClass::OnTransformComponentConstruct>(this);
+        EntityRegistry.GetSignals<FRelationshipComponent>().OnConstruct      .Connect<&ThisClass::OnRelationshipComponentConstruct>(this);
+        EntityRegistry.GetSignals<SEntityScriptComponent>().OnDestroy      .Connect<&ThisClass::OnCSharpScriptComponentDestroyed>(this);
+        EntityRegistry.GetSignals<SWidgetComponent>().OnDestroy            .Connect<&ThisClass::OnWidgetComponentDestroyed>(this);
+        SystemContext.EventSink     <FSwitchActiveCameraEvent>()    .Connect<&ThisClass::OnChangeCameraEvent>(this);
 
         // on_destroy is what keeps the persistent primitive table from outliving its source.
-        EntityRegistry.on_construct <SStaticMeshComponent>()  .connect<&MarkMeshResolveDirty<SStaticMeshComponent>>();
-        EntityRegistry.on_update    <SStaticMeshComponent>()  .connect<&MarkMeshResolveDirty<SStaticMeshComponent>>();
-        EntityRegistry.on_destroy   <SStaticMeshComponent>()  .connect<&MarkMeshRemoved<SStaticMeshComponent>>();
-        EntityRegistry.on_construct <SDynamicMeshComponent>() .connect<&MarkMeshResolveDirty<SDynamicMeshComponent>>();
-        EntityRegistry.on_update    <SDynamicMeshComponent>() .connect<&MarkMeshResolveDirty<SDynamicMeshComponent>>();
-        EntityRegistry.on_destroy   <SDynamicMeshComponent>() .connect<&MarkMeshRemoved<SDynamicMeshComponent>>();
-        EntityRegistry.on_construct <SSkeletalMeshComponent>().connect<&MarkMeshResolveDirty<SSkeletalMeshComponent>>();
-        EntityRegistry.on_update    <SSkeletalMeshComponent>().connect<&MarkMeshResolveDirty<SSkeletalMeshComponent>>();
-        EntityRegistry.on_destroy   <SSkeletalMeshComponent>().connect<&MarkMeshRemoved<SSkeletalMeshComponent>>();
-        EntityRegistry.on_construct <SFoliageComponent>()     .connect<&MarkFoliageResolveDirty>();
-        EntityRegistry.on_update    <SFoliageComponent>()     .connect<&MarkFoliageResolveDirty>();
-        EntityRegistry.on_destroy   <SFoliageComponent>()     .connect<&MarkFoliageRemoved>();
-        EntityRegistry.on_construct <SDisabledTag>()          .connect<&MarkRenderVisibilityDirty>();
-        EntityRegistry.on_destroy   <SDisabledTag>()          .connect<&MarkRenderVisibilityDirty>();
+        EntityRegistry.GetSignals<SStaticMeshComponent>().OnConstruct  .Connect<&MarkMeshResolveDirty<SStaticMeshComponent>>();
+        EntityRegistry.GetSignals<SStaticMeshComponent>().OnUpdate  .Connect<&MarkMeshResolveDirty<SStaticMeshComponent>>();
+        EntityRegistry.GetSignals<SStaticMeshComponent>().OnDestroy  .Connect<&MarkMeshRemoved<SStaticMeshComponent>>();
+        EntityRegistry.GetSignals<SDynamicMeshComponent>().OnConstruct .Connect<&MarkMeshResolveDirty<SDynamicMeshComponent>>();
+        EntityRegistry.GetSignals<SDynamicMeshComponent>().OnUpdate .Connect<&MarkMeshResolveDirty<SDynamicMeshComponent>>();
+        EntityRegistry.GetSignals<SDynamicMeshComponent>().OnDestroy .Connect<&MarkMeshRemoved<SDynamicMeshComponent>>();
+        EntityRegistry.GetSignals<SSkeletalMeshComponent>().OnConstruct.Connect<&MarkMeshResolveDirty<SSkeletalMeshComponent>>();
+        EntityRegistry.GetSignals<SSkeletalMeshComponent>().OnUpdate.Connect<&MarkMeshResolveDirty<SSkeletalMeshComponent>>();
+        EntityRegistry.GetSignals<SSkeletalMeshComponent>().OnDestroy.Connect<&MarkMeshRemoved<SSkeletalMeshComponent>>();
+        EntityRegistry.GetSignals<SFoliageComponent>().OnConstruct     .Connect<&MarkFoliageResolveDirty>();
+        EntityRegistry.GetSignals<SFoliageComponent>().OnUpdate     .Connect<&MarkFoliageResolveDirty>();
+        EntityRegistry.GetSignals<SFoliageComponent>().OnDestroy     .Connect<&MarkFoliageRemoved>();
+        EntityRegistry.GetSignals<SDisabledTag>().OnConstruct          .Connect<&MarkRenderVisibilityDirty>();
+        EntityRegistry.GetSignals<SDisabledTag>().OnDestroy          .Connect<&MarkRenderVisibilityDirty>();
 
         // Components loaded before these hooks connected never saw on_construct.
         FMeshResolveCache::MarkPendingWork();
@@ -408,8 +408,8 @@ namespace Lumina
         FRenderDirtyTracker::Ensure(EntityRegistry).RequestFullRescan();
 
         ECS::Utils::FTransformDirtyGate* DirtyState = ECS::Utils::EnsureTransformDirtyGate(EntityRegistry);
-        auto TransformView = EntityRegistry.view<STransformComponent>();
-        TransformView.each([&](entt::entity Entity, STransformComponent& TransformComponent)
+        auto TransformView = EntityRegistry.View<STransformComponent>();
+        TransformView.ForEach([&](ECS::FEntity Entity, STransformComponent& TransformComponent)
         {
             TransformComponent.Registry = &EntityRegistry;
             TransformComponent.Entity = Entity;
@@ -418,29 +418,29 @@ namespace Lumina
 
         if (WorldType == EWorldType::Game || WorldType == EWorldType::Simulation)
         {
-            const auto AnyCameraView = EntityRegistry.view<SCameraComponent>();
+            const auto AnyCameraView = EntityRegistry.View<SCameraComponent>();
             if (AnyCameraView.begin() == AnyCameraView.end())
             {
                 LOG_WARN("CWorld::Initialize: world '{}' has no camera entity; spawning a fallback at (0, 2, 5) looking at origin. Add a camera entity for proper gameplay.", GetName());
 
                 constexpr FVector3 FallbackPos(0.0f, 2.0f, 5.0f);
 
-                const entt::entity Fallback = EntityRegistry.create();
-                STransformComponent& Xf = EntityRegistry.emplace<STransformComponent>(Fallback);
+                const ECS::FEntity Fallback = EntityRegistry.Create();
+                STransformComponent& Xf = EntityRegistry.Emplace<STransformComponent>(Fallback);
                 Xf.LocalTransform.SetLocation(FallbackPos);
                 Xf.LocalTransform.SetRotation(Math::FindLookAtRotation(FVector3(0.0f), FallbackPos));
 
-                SCameraComponent& Cam = EntityRegistry.emplace<SCameraComponent>(Fallback);
+                SCameraComponent& Cam = EntityRegistry.Emplace<SCameraComponent>(Fallback);
                 Cam.bAutoActivate = true;
             }
         }
 
-        auto CameraView = EntityRegistry.view<SCameraComponent>(entt::exclude<SDisabledTag>);
-        CameraView.each([&](entt::entity Entity, const SCameraComponent& Camera)
+        auto CameraView = EntityRegistry.View<SCameraComponent>(ECS::TExclude<SDisabledTag>{});
+        CameraView.ForEach([&](ECS::FEntity Entity, const SCameraComponent& Camera)
         {
            if (Camera.bAutoActivate)
            {
-               SingletonDispatcher.trigger<FSwitchActiveCameraEvent>(FSwitchActiveCameraEvent{Entity});
+               SingletonDispatcher.Trigger<FSwitchActiveCameraEvent>(FSwitchActiveCameraEvent{Entity});
            }
         });
 
@@ -468,7 +468,7 @@ namespace Lumina
 
         Audio::Context().StopAllSounds();
 
-        EntityRegistry.on_destroy<FRelationshipComponent>().disconnect<&ThisClass::OnRelationshipComponentDestroyed>(this);
+        EntityRegistry.GetSignals<FRelationshipComponent>().OnDestroy.Disconnect<&ThisClass::OnRelationshipComponentDestroyed>(this);
 
         ForEachUniqueSystem([&](const FActiveSystem& System)
         {
@@ -487,14 +487,14 @@ namespace Lumina
             PhysicsScene->StopSimulate();
         }
 
-        EntityRegistry.ctx().get<FTimerManager>().Clear();
+        EntityRegistry.Ctx().Get<FTimerManager>().Clear();
 
-        // Detached up front, since entt publishes on_destroy while iterating the pool it is about to empty.
-        EntityRegistry.on_destroy<SEntityScriptComponent>().disconnect<&ThisClass::OnCSharpScriptComponentDestroyed>(this);
+        // Detached up front, since OnDestroy publishes while iterating the pool it is about to empty.
+        EntityRegistry.GetSignals<SEntityScriptComponent>().OnDestroy.Disconnect<&ThisClass::OnCSharpScriptComponentDestroyed>(this);
         EntityScripts::DetachAllInRegistry(EntityRegistry);
 
-        RegistryPending.clear<>();
-        EntityRegistry.clear<>();
+        RegistryPending.Clear();
+        EntityRegistry.Clear();
 
         // After the registry, since clearing it runs OnDetach on the context this destroys.
         RmlUi::DestroyWorldUI(this);
@@ -589,7 +589,7 @@ namespace Lumina
             return;
         }
         
-        const FResolvedSceneView& View = EntityRegistry.ctx().get<FResolvedSceneView>();
+        const FResolvedSceneView& View = EntityRegistry.Ctx().Get<FResolvedSceneView>();
 
         if (View.bHasView)
         {
@@ -602,30 +602,30 @@ namespace Lumina
         RenderScene->Extract(FViewVolume{}, nullptr);
     }
 
-    entt::entity CWorld::ConstructEntity(FName Name, const FTransform& Transform)
+    ECS::FEntity CWorld::ConstructEntity(FName Name, const FTransform& Transform)
     {
         DEBUG_ASSERT(Threading::IsMainThread(), "You may only construct entities on the main thread.");
         
-        entt::entity NewEntity = GetEntityRegistry().create();
+        ECS::FEntity NewEntity = GetEntityRegistry().Create();
         
         if (Name == NAME_None)
         {
-            Name = FName("Entity", entt::to_integral(NewEntity));
+            Name = FName("Entity", (NewEntity).Value);
         }
      
-        EntityRegistry.emplace<SNameComponent>(NewEntity, Name);
-        EntityRegistry.emplace<STransformComponent>(NewEntity, Transform);
+        EntityRegistry.Emplace<SNameComponent>(NewEntity, Name);
+        EntityRegistry.Emplace<STransformComponent>(NewEntity, Transform);
 
         return NewEntity;
     }
 
-    entt::entity CWorld::SpawnProjectile(FVector3 Position, FVector3 Velocity, float Damage, float Lifetime, entt::entity Instigator)
+    ECS::FEntity CWorld::SpawnProjectile(FVector3 Position, FVector3 Velocity, float Damage, float Lifetime, ECS::FEntity Instigator)
     {
         FTransform SpawnTransform;
         SpawnTransform.SetLocation(Position);
-        entt::entity Entity = ConstructEntity("Projectile", SpawnTransform);
+        ECS::FEntity Entity = ConstructEntity("Projectile", SpawnTransform);
 
-        SProjectileComponent& Projectile = EntityRegistry.emplace<SProjectileComponent>(Entity);
+        SProjectileComponent& Projectile = EntityRegistry.Emplace<SProjectileComponent>(Entity);
         Projectile.Velocity = Velocity;
         Projectile.Damage = Damage;
         Projectile.Instigator = Instigator;
@@ -633,28 +633,28 @@ namespace Lumina
         // Reuse the engine lifetime system for auto-despawn.
         if (Lifetime > 0.0f)
         {
-            EntityRegistry.emplace<SLifetimeComponent>(Entity).Lifetime = Lifetime;
+            EntityRegistry.Emplace<SLifetimeComponent>(Entity).Lifetime = Lifetime;
         }
         return Entity;
     }
 
-    bool CWorld::FractureEntity(entt::entity Entity, const FVector3& Origin, float Strength)
+    bool CWorld::FractureEntity(ECS::FEntity Entity, const FVector3& Origin, float Strength)
     {
         LUMINA_PROFILE_SCOPE();
 
-        if (!EntityRegistry.valid(Entity))
+        if (!EntityRegistry.IsValid(Entity))
         {
             return false;
         }
 
-        SDestructibleComponent* Destructible = EntityRegistry.try_get<SDestructibleComponent>(Entity);
+        SDestructibleComponent* Destructible = EntityRegistry.TryGet<SDestructibleComponent>(Entity);
         if (Destructible == nullptr || Destructible->bFractured)
         {
             return false;
         }
 
         // Resolve the mesh to shatter, taking an explicit override before the entity's own mesh.
-        SStaticMeshComponent* MeshComp = EntityRegistry.try_get<SStaticMeshComponent>(Entity);
+        SStaticMeshComponent* MeshComp = EntityRegistry.TryGet<SStaticMeshComponent>(Entity);
         CStaticMesh* SourceMesh = Destructible->FragmentMesh.Get();
         if (SourceMesh == nullptr && MeshComp != nullptr)
         {
@@ -663,16 +663,16 @@ namespace Lumina
 
         if (SourceMesh == nullptr)
         {
-            LOG_WARN("FractureEntity: entity {} has no mesh to fracture", entt::to_integral(Entity));
+            LOG_WARN("FractureEntity: entity {} has no mesh to fracture", (Entity).Value);
             return false;
         }
 
-        FTransform OwnerTransform = EntityRegistry.get<STransformComponent>(Entity).GetWorldTransform();
+        FTransform OwnerTransform = EntityRegistry.Get<STransformComponent>(Entity).GetWorldTransform();
         
         FVector3 InheritedVelocity(0.0f);
         if (PhysicsScene)
         {
-            if (const SRigidBodyComponent* RB = EntityRegistry.try_get<SRigidBodyComponent>(Entity))
+            if (const SRigidBodyComponent* RB = EntityRegistry.TryGet<SRigidBodyComponent>(Entity))
             {
                 if (RB->BodyID != 0xFFFFFFFFu)
                 {
@@ -738,14 +738,14 @@ namespace Lumina
         {
             FFractureSettings Settings;
             Settings.NumPieces = Destructible->FragmentCount;
-            Settings.Seed      = entt::to_integral(Entity) * 2654435761U + 1u;
+            Settings.Seed      = (Entity).Value * 2654435761U + 1u;
             Fracture::GenerateConvexFracture(SourceMesh, Settings, GeneratedPieces);
         }
 
         const TVector<FFracturePiece>& Pieces = CollectionData ? CollectionData->Pieces : GeneratedPieces;
 
         // BodyIDs are valid only after EndBodyBatch, so impulses are collected and applied then.
-        struct FPendingLaunch { entt::entity Fragment; FVector3 Center; uint32 Seed; };
+        struct FPendingLaunch { ECS::FEntity Fragment; FVector3 Center; uint32 Seed; };
         TVector<FPendingLaunch> PendingLaunches;
         PendingLaunches.reserve(Pieces.size());
 
@@ -803,21 +803,21 @@ namespace Lumina
                 PieceTransform.SetRotation(OwnerTransform.GetRotation());
                 PieceTransform.SetScale(OwnerTransform.GetScale());
 
-                const entt::entity Fragment = ConstructEntity("Fragment", PieceTransform);
-                EntityRegistry.emplace_or_replace<FNeedsTransformUpdate>(Fragment);
+                const ECS::FEntity Fragment = ConstructEntity("Fragment", PieceTransform);
+                EntityRegistry.EmplaceOrReplace<FNeedsTransformUpdate>(Fragment);
 
-                EntityRegistry.emplace<SStaticMeshComponent>(Fragment).SetStaticMesh(PieceMesh);
+                EntityRegistry.Emplace<SStaticMeshComponent>(Fragment).SetStaticMesh(PieceMesh);
 
                 // The collider's on_construct builds the shape synchronously, so set Mesh and bConvex first.
                 SMeshColliderComponent ColliderDesc;
                 ColliderDesc.Mesh    = PieceMesh;
                 ColliderDesc.bConvex = true;
-                EntityRegistry.emplace<SMeshColliderComponent>(Fragment, std::move(ColliderDesc));
+                EntityRegistry.Emplace<SMeshColliderComponent>(Fragment, std::move(ColliderDesc));
 
-                EntityRegistry.emplace<SLifetimeComponent>(Fragment).Lifetime = Destructible->FragmentLifetime;
-                EntityRegistry.emplace<SFragmentComponent>(Fragment).Source   = entt::to_integral(Entity);
+                EntityRegistry.Emplace<SLifetimeComponent>(Fragment).Lifetime = Destructible->FragmentLifetime;
+                EntityRegistry.Emplace<SFragmentComponent>(Fragment).Source   = (Entity).Value;
                 
-                PendingLaunches.push_back({ Fragment, WorldCenter, entt::to_integral(Fragment) + static_cast<uint32>(Spawned) });
+                PendingLaunches.push_back({ Fragment, WorldCenter, (Fragment).Value + static_cast<uint32>(Spawned) });
 
                 ++Spawned;
             }
@@ -847,10 +847,10 @@ namespace Lumina
                 FragmentTransform.SetRotation(OwnerTransform.GetRotation());
                 FragmentTransform.SetScale(FragScale);
 
-                const entt::entity Fragment = ConstructEntity("Fragment", FragmentTransform);
-                EntityRegistry.emplace_or_replace<FNeedsTransformUpdate>(Fragment);
+                const ECS::FEntity Fragment = ConstructEntity("Fragment", FragmentTransform);
+                EntityRegistry.EmplaceOrReplace<FNeedsTransformUpdate>(Fragment);
 
-                SStaticMeshComponent& FragmentMeshComp = EntityRegistry.emplace<SStaticMeshComponent>(Fragment);
+                SStaticMeshComponent& FragmentMeshComp = EntityRegistry.Emplace<SStaticMeshComponent>(Fragment);
                 FragmentMeshComp.SetStaticMesh(GridMesh);
                 if (MeshComp != nullptr)
                 {
@@ -860,12 +860,12 @@ namespace Lumina
                 // The box collider builds a Dynamic body synchronously, so set HalfExtent up front.
                 SBoxColliderComponent BoxDesc;
                 BoxDesc.HalfExtent = ColliderHalf;
-                EntityRegistry.emplace<SBoxColliderComponent>(Fragment, std::move(BoxDesc));
+                EntityRegistry.Emplace<SBoxColliderComponent>(Fragment, std::move(BoxDesc));
 
-                EntityRegistry.emplace<SLifetimeComponent>(Fragment).Lifetime = Destructible->FragmentLifetime;
-                EntityRegistry.emplace<SFragmentComponent>(Fragment).Source   = entt::to_integral(Entity);
+                EntityRegistry.Emplace<SLifetimeComponent>(Fragment).Lifetime = Destructible->FragmentLifetime;
+                EntityRegistry.Emplace<SFragmentComponent>(Fragment).Source   = (Entity).Value;
 
-                PendingLaunches.push_back({ Fragment, CellWorldCenter, entt::to_integral(Fragment) + static_cast<uint32>(Spawned) });
+                PendingLaunches.push_back({ Fragment, CellWorldCenter, (Fragment).Value + static_cast<uint32>(Spawned) });
 
                 ++Spawned;
             }
@@ -878,7 +878,7 @@ namespace Lumina
         }
         for (const FPendingLaunch& Launch : PendingLaunches)
         {
-            LaunchBody(EntityRegistry.get<SRigidBodyComponent>(Launch.Fragment).BodyID, Launch.Center, Launch.Seed);
+            LaunchBody(EntityRegistry.Get<SRigidBodyComponent>(Launch.Fragment).BodyID, Launch.Center, Launch.Seed);
         }
 
         Destructible->bFractured = true;
@@ -886,30 +886,30 @@ namespace Lumina
         // Strip render and physics now so it vanishes this frame; the lifetime system reaps it.
         if (Destructible->bDestroyOriginal)
         {
-            EntityRegistry.remove<SStaticMeshComponent>(Entity);
-            EntityRegistry.remove<SRigidBodyComponent>(Entity);
-            EntityRegistry.remove<SBoxColliderComponent>(Entity);
-            EntityRegistry.remove<SSphereColliderComponent>(Entity);
-            EntityRegistry.remove<SMeshColliderComponent>(Entity);
-            EntityRegistry.emplace_or_replace<SLifetimeComponent>(Entity).Lifetime = 0.01f;
+            EntityRegistry.Remove<SStaticMeshComponent>(Entity);
+            EntityRegistry.Remove<SRigidBodyComponent>(Entity);
+            EntityRegistry.Remove<SBoxColliderComponent>(Entity);
+            EntityRegistry.Remove<SSphereColliderComponent>(Entity);
+            EntityRegistry.Remove<SMeshColliderComponent>(Entity);
+            EntityRegistry.EmplaceOrReplace<SLifetimeComponent>(Entity).Lifetime = 0.01f;
         }
 
         return Spawned > 0;
     }
 
-    entt::entity CWorld::SpawnPrefab(const FAssetRef& Prefab)
+    ECS::FEntity CWorld::SpawnPrefab(const FAssetRef& Prefab)
     {
-        return SpawnPrefabAt(Prefab, FTransform(), entt::null);
+        return SpawnPrefabAt(Prefab, FTransform(), ECS::NullEntity);
     }
 
-    entt::entity CWorld::SpawnPrefabAt(const FAssetRef& Prefab, const FTransform& SpawnTransform, entt::entity Parent)
+    ECS::FEntity CWorld::SpawnPrefabAt(const FAssetRef& Prefab, const FTransform& SpawnTransform, ECS::FEntity Parent)
     {
         FStringView Path = Prefab.GetPath();
         FAssetData* AssetData = FAssetRegistry::Get().GetAssetByPath(Path);
         if (AssetData == nullptr)
         {
             LOG_WARN("SpawnPrefab: no asset found at path '{}'", Path);
-            return entt::null;
+            return ECS::NullEntity;
         }
 
         // A cold spawn fans the prefab's closure across the swarm; a resident one takes the lookup.
@@ -921,20 +921,20 @@ namespace Lumina
         if (PrefabObject == nullptr)
         {
             LOG_WARN("SpawnPrefab: asset '{}' is not a CPrefab", Path);
-            return entt::null;
+            return ECS::NullEntity;
         }
 
         return PrefabObject->Instantiate(this, SpawnTransform, Parent);
     }
 
-    entt::entity CWorld::SpawnParticleSystem(CParticleSystem* ParticleSystem, const FTransform& SpawnTransform, float Lifetime)
+    ECS::FEntity CWorld::SpawnParticleSystem(CParticleSystem* ParticleSystem, const FTransform& SpawnTransform, float Lifetime)
     {
         if (ParticleSystem == nullptr)
         {
-            return entt::null;
+            return ECS::NullEntity;
         }
 
-        const entt::entity Spawned = ConstructEntity("ParticleEffect", SpawnTransform);
+        const ECS::FEntity Spawned = ConstructEntity("ParticleEffect", SpawnTransform);
         SParticleSystemComponent& Effect = EmplaceComponent<SParticleSystemComponent>(Spawned);
         Effect.ParticleSystem = ParticleSystem;
         Effect.bBurstOnSpawn = true;
@@ -944,16 +944,16 @@ namespace Lumina
         return Spawned;
     }
 
-    entt::entity CWorld::SpawnParticleSystemAttached(CParticleSystem* ParticleSystem, entt::entity Parent,
+    ECS::FEntity CWorld::SpawnParticleSystemAttached(CParticleSystem* ParticleSystem, ECS::FEntity Parent,
         const FName& Socket, FVector3 Offset, float Lifetime)
     {
         if (ParticleSystem == nullptr || !IsValidEntity(Parent))
         {
-            return entt::null;
+            return ECS::NullEntity;
         }
 
         // Attaching snaps the child onto the socket, so spawning at a world point first would be undone.
-        const entt::entity Spawned = ConstructEntity("ParticleEffect", FTransform());
+        const ECS::FEntity Spawned = ConstructEntity("ParticleEffect", FTransform());
         SParticleSystemComponent& Effect = EmplaceComponent<SParticleSystemComponent>(Spawned);
         Effect.ParticleSystem = ParticleSystem;
         Effect.EmitterOffset = Offset;
@@ -974,7 +974,7 @@ namespace Lumina
         return Spawned;
     }
 
-    void CWorld::SetEntityLifetime(entt::entity Entity, float Seconds)
+    void CWorld::SetEntityLifetime(ECS::FEntity Entity, float Seconds)
     {
         if (Seconds > 0.0f && IsValidEntity(Entity))
         {
@@ -982,7 +982,7 @@ namespace Lumina
         }
     }
 
-    void CWorld::SpawnPrefabAsync(const FName& Path, const TFunction<void(entt::entity)>& Callback)
+    void CWorld::SpawnPrefabAsync(const FName& Path, const TFunction<void(ECS::FEntity)>& Callback)
     {
         AsyncLoadObject(Path, [this, Callback, Path](CObject* Object)
         {
@@ -990,81 +990,83 @@ namespace Lumina
             if (Prefab == nullptr)
             {
                 LOG_WARN("SpawnPrefab: asset '{}' is not a CPrefab", Path.c_str());
-                Callback(entt::null);
+                Callback(ECS::NullEntity);
                 return;
             }
 
-            Callback(Prefab->Instantiate(this, FTransform(), entt::null));
+            Callback(Prefab->Instantiate(this, FTransform(), ECS::NullEntity));
         });
     }
 
-    void CWorld::DuplicateEntity(entt::entity& To, entt::entity From, const TFunctionRef<bool(entt::type_info)>& Callback)
+    void CWorld::DuplicateEntity(ECS::FEntity& To, ECS::FEntity From, const TFunctionRef<bool(const ECS::FComponentTypeInfo&)>& Callback)
     {
         LUMINA_MEMORY_SCOPE("World");
         ASSERT(To != From);
 
-        THashMap<entt::entity, entt::entity> SourceToDuplicate;
+        THashMap<ECS::FEntity, ECS::FEntity> SourceToDuplicate;
 
-        auto DuplicateRecursive = [&](auto& Self, entt::entity Source, entt::entity NewParent) -> entt::entity
+        auto DuplicateRecursive = [&](auto& Self, ECS::FEntity Source, ECS::FEntity NewParent) -> ECS::FEntity
         {
-            entt::entity NewEntity = EntityRegistry.create();
+            ECS::FEntity NewEntity = EntityRegistry.Create();
             SourceToDuplicate[Source] = NewEntity;
 
-            for (auto&& [ID, Storage] : EntityRegistry.storage())
+            for (Lumina::ECS::FSparseSet* StoragePtr : EntityRegistry.GetActiveStorages())
             {
+                const Lumina::ECS::FComponentTypeID ID = StoragePtr->GetTypeInfo().TypeID;
+                Lumina::ECS::FSparseSet& Storage = *StoragePtr;
                 if (Callback)
                 {
-                    if (!Callback(Storage.info()))
+                    if (!Callback(Storage.GetTypeInfo()))
                     {
                         continue;
                     }
                 }
 
                 // Rigid bodies can't be bit-copied; re-emplaced below so on_construct fires fresh.
-                if (ID == entt::type_hash<FRelationshipComponent>::value()
-                    || ID == entt::type_hash<SRigidBodyComponent>::value())
+                if (ID == ECS::GetComponentTypeID<FRelationshipComponent>()
+                    || ID == ECS::GetComponentTypeID<SRigidBodyComponent>())
                 {
                     continue;
                 }
 
-                if (Storage.contains(Source) && !Storage.contains(NewEntity))
+                if (Storage.Contains(Source) && !Storage.Contains(NewEntity))
                 {
-                    Storage.push(NewEntity, Storage.value(Source));
+                    Storage.EmplaceCopyRaw(NewEntity, Storage.GetRaw(Source));
                 }
             }
 
             // Rebind, since a bit-copy carries the source's self-references.
-            if (STransformComponent* NewTransform = EntityRegistry.try_get<STransformComponent>(NewEntity))
+            if (STransformComponent* NewTransform = EntityRegistry.TryGet<STransformComponent>(NewEntity))
             {
                 NewTransform->Bind(EntityRegistry, NewEntity);
                 // The duplicate is in neither queue, so a copied dirty guard would suppress its enqueues.
                 NewTransform->ResetDirtyState();
-                EntityRegistry.emplace_or_replace<FNeedsTransformUpdate>(NewEntity);
+                EntityRegistry.EmplaceOrReplace<FNeedsTransformUpdate>(NewEntity);
             }
 
             // Remove auto-emplaced default first; emplace_or_replace would fire on_update (no-op), not on_construct.
-            if (const SRigidBodyComponent* SourceBody = EntityRegistry.try_get<SRigidBodyComponent>(Source))
+            if (const SRigidBodyComponent* SourceBody = EntityRegistry.TryGet<SRigidBodyComponent>(Source))
             {
                 SRigidBodyComponent NewBody = *SourceBody;
                 NewBody.BodyID = 0xFFFFFFFF;
 
-                EntityRegistry.remove<SRigidBodyComponent>(NewEntity);
-                EntityRegistry.emplace<SRigidBodyComponent>(NewEntity, std::move(NewBody));
+                EntityRegistry.Remove<SRigidBodyComponent>(NewEntity);
+                EntityRegistry.Emplace<SRigidBodyComponent>(NewEntity, std::move(NewBody));
             }
 
-            if (NewParent != entt::null)
+            if (NewParent != ECS::NullEntity)
             {
                 ECS::Utils::ReparentEntity(EntityRegistry, NewEntity, NewParent, false);
             }
-            else if (FRelationshipComponent* Rel = EntityRegistry.try_get<FRelationshipComponent>(Source))
+            else if (FRelationshipComponent* Rel = EntityRegistry.TryGet<FRelationshipComponent>(Source))
             {
-                if (Rel->Parent != entt::null)
+                if (Rel->Parent != ECS::NullEntity)
                 {
                     ECS::Utils::ReparentEntity(EntityRegistry, NewEntity, Rel->Parent, false);
                 }
             }
 
-            ECS::Utils::ForEachChild(EntityRegistry, Source, [&](entt::entity Child)
+            ECS::Utils::ForEachChild(EntityRegistry, Source, [&](ECS::FEntity Child)
             {
                 Self(Self, Child, NewEntity);
             });
@@ -1072,7 +1074,7 @@ namespace Lumina
             return NewEntity;
         };
 
-        To = DuplicateRecursive(DuplicateRecursive, From, entt::null);
+        To = DuplicateRecursive(DuplicateRecursive, From, ECS::NullEntity);
 
         for (auto& [Source, Dup] : SourceToDuplicate)
         {
@@ -1080,42 +1082,42 @@ namespace Lumina
         }
     }
 
-    entt::entity CWorld::DuplicateEntity(entt::entity Source)
+    ECS::FEntity CWorld::DuplicateEntity(ECS::FEntity Source)
     {
-        if (Source == entt::null || !EntityRegistry.valid(Source))
+        if (Source == ECS::NullEntity || !EntityRegistry.IsValid(Source))
         {
-            return entt::null;
+            return ECS::NullEntity;
         }
 
-        entt::entity New = entt::null;
-        DuplicateEntity(New, Source, [](entt::type_info) { return true; });
+        ECS::FEntity New = ECS::NullEntity;
+        DuplicateEntity(New, Source, [](ECS::FComponentTypeInfo) { return true; });
         return New;
     }
 
-    void CWorld::SetParent(entt::entity Child, entt::entity Parent)
+    void CWorld::SetParent(ECS::FEntity Child, ECS::FEntity Parent)
     {
         ECS::Utils::ReparentEntity(EntityRegistry, Child, Parent, /*bPreserveWorld*/ true);
     }
 
-    void CWorld::DetachFromParent(entt::entity Entity)
+    void CWorld::DetachFromParent(ECS::FEntity Entity)
     {
-        ECS::Utils::ReparentEntity(EntityRegistry, Entity, entt::null, /*bPreserveWorld*/ true);
+        ECS::Utils::ReparentEntity(EntityRegistry, Entity, ECS::NullEntity, /*bPreserveWorld*/ true);
     }
 
-    entt::entity CWorld::GetParent(entt::entity Entity)
+    ECS::FEntity CWorld::GetParent(ECS::FEntity Entity)
     {
-        const FRelationshipComponent* Relationship = EntityRegistry.try_get<FRelationshipComponent>(Entity);
-        return Relationship ? Relationship->Parent : entt::null;
+        const FRelationshipComponent* Relationship = EntityRegistry.TryGet<FRelationshipComponent>(Entity);
+        return Relationship ? Relationship->Parent : ECS::NullEntity;
     }
 
-    entt::entity CWorld::GetRootEntity(entt::entity Entity)
+    ECS::FEntity CWorld::GetRootEntity(ECS::FEntity Entity)
     {
         return ECS::Utils::GetRootEntity(EntityRegistry, Entity);
     }
 
-    void CWorld::AttachEntityToSocket(entt::entity Child, entt::entity Parent, const FName& SocketOrBone)
+    void CWorld::AttachEntityToSocket(ECS::FEntity Child, ECS::FEntity Parent, const FName& SocketOrBone)
     {
-        if (!EntityRegistry.valid(Child) || !EntityRegistry.valid(Parent) || Child == Parent)
+        if (!EntityRegistry.IsValid(Child) || !EntityRegistry.IsValid(Parent) || Child == Parent)
         {
             return;
         }
@@ -1123,34 +1125,34 @@ namespace Lumina
         // The socket system overwrites the local transform anyway, and the snap avoids a stale frame.
         ECS::Utils::ReparentEntity(EntityRegistry, Child, Parent, /*bPreserveWorld*/ false);
 
-        SSocketAttachmentComponent& Attachment = EntityRegistry.emplace_or_replace<SSocketAttachmentComponent>(Child);
+        SSocketAttachmentComponent& Attachment = EntityRegistry.EmplaceOrReplace<SSocketAttachmentComponent>(Child);
         Attachment.SocketName = SocketOrBone;
 
         FMatrix4 SocketTransform;
-        STransformComponent* Transform = EntityRegistry.try_get<STransformComponent>(Child);
+        STransformComponent* Transform = EntityRegistry.TryGet<STransformComponent>(Child);
         if (Transform && SkeletalUtils::GetEntitySocketTransform(EntityRegistry, Parent, SocketOrBone, SocketTransform))
         {
             Transform->SetLocalTransform(FTransform(SocketTransform * Attachment.RelativeTransform.GetMatrix()));
         }
     }
 
-    void CWorld::DetachEntityFromSocket(entt::entity Entity)
+    void CWorld::DetachEntityFromSocket(ECS::FEntity Entity)
     {
-        if (!EntityRegistry.valid(Entity))
+        if (!EntityRegistry.IsValid(Entity))
         {
             return;
         }
 
-        EntityRegistry.remove<SSocketAttachmentComponent>(Entity);
-        ECS::Utils::ReparentEntity(EntityRegistry, Entity, entt::null, /*bPreserveWorld*/ true);
+        EntityRegistry.Remove<SSocketAttachmentComponent>(Entity);
+        ECS::Utils::ReparentEntity(EntityRegistry, Entity, ECS::NullEntity, /*bPreserveWorld*/ true);
     }
 
-    bool CWorld::HasSocket(entt::entity Entity, const FName& SocketOrBone)
+    bool CWorld::HasSocket(ECS::FEntity Entity, const FName& SocketOrBone)
     {
         return SkeletalUtils::EntityHasSocket(EntityRegistry, Entity, SocketOrBone);
     }
 
-    FVector3 CWorld::GetSocketLocation(entt::entity Entity, const FName& SocketOrBone)
+    FVector3 CWorld::GetSocketLocation(ECS::FEntity Entity, const FName& SocketOrBone)
     {
         FMatrix4 SocketTransform;
         if (!SkeletalUtils::GetSocketWorldTransform(EntityRegistry, Entity, SocketOrBone, SocketTransform))
@@ -1160,7 +1162,7 @@ namespace Lumina
         return FVector3(SocketTransform[3]);
     }
 
-    FQuat CWorld::GetSocketRotation(entt::entity Entity, const FName& SocketOrBone)
+    FQuat CWorld::GetSocketRotation(ECS::FEntity Entity, const FName& SocketOrBone)
     {
         FMatrix4 SocketTransform;
         if (!SkeletalUtils::GetSocketWorldTransform(EntityRegistry, Entity, SocketOrBone, SocketTransform))
@@ -1173,14 +1175,14 @@ namespace Lumina
         return Rotation;
     }
 
-    FName CWorld::GetBoneName(entt::entity Entity, int32 BoneIndex)
+    FName CWorld::GetBoneName(ECS::FEntity Entity, int32 BoneIndex)
     {
-        if (!EntityRegistry.valid(Entity))
+        if (!EntityRegistry.IsValid(Entity))
         {
             return FName();
         }
 
-        const SSkeletalMeshComponent* Mesh = EntityRegistry.try_get<SSkeletalMeshComponent>(Entity);
+        const SSkeletalMeshComponent* Mesh = EntityRegistry.TryGet<SSkeletalMeshComponent>(Entity);
         if (Mesh == nullptr)
         {
             return FName();
@@ -1194,14 +1196,14 @@ namespace Lumina
         return Skeleton->GetBone(BoneIndex).Name;
     }
 
-    int32 CWorld::GetBoneIndex(entt::entity Entity, const FName& BoneName)
+    int32 CWorld::GetBoneIndex(ECS::FEntity Entity, const FName& BoneName)
     {
-        if (!EntityRegistry.valid(Entity))
+        if (!EntityRegistry.IsValid(Entity))
         {
             return INDEX_NONE;
         }
 
-        const SSkeletalMeshComponent* Mesh = EntityRegistry.try_get<SSkeletalMeshComponent>(Entity);
+        const SSkeletalMeshComponent* Mesh = EntityRegistry.TryGet<SSkeletalMeshComponent>(Entity);
         if (Mesh == nullptr)
         {
             return INDEX_NONE;
@@ -1211,73 +1213,73 @@ namespace Lumina
         return Skeleton ? Skeleton->FindBoneIndex(BoneName) : INDEX_NONE;
     }
 
-    FName CWorld::FindClosestBone(entt::entity Entity, FVector3 WorldLocation)
+    FName CWorld::FindClosestBone(ECS::FEntity Entity, FVector3 WorldLocation)
     {
         const int32 BoneIndex = SkeletalUtils::FindClosestBone(EntityRegistry, Entity, WorldLocation);
         return GetBoneName(Entity, BoneIndex);
     }
 
-    void CWorld::DestroyEntity(entt::entity Entity)
+    void CWorld::DestroyEntity(ECS::FEntity Entity)
     {
-        EntityRegistry.destroy(Entity);
+        EntityRegistry.Destroy(Entity);
     }
 
-    STransformComponent& CWorld::GetEntityTransform(entt::entity Entity)
+    STransformComponent& CWorld::GetEntityTransform(ECS::FEntity Entity)
     {
-        return EntityRegistry.get<STransformComponent>(Entity);
+        return EntityRegistry.Get<STransformComponent>(Entity);
     }
 
-    FVector3 CWorld::GetEntityLocation(entt::entity Entity)
+    FVector3 CWorld::GetEntityLocation(ECS::FEntity Entity)
     {
         return GetEntityTransform(Entity).GetWorldLocation();
     }
 
-    void CWorld::SetEntityLocation(entt::entity Entity, FVector3 Location)
+    void CWorld::SetEntityLocation(ECS::FEntity Entity, FVector3 Location)
     {
         GetEntityTransform(Entity).SetLocation(Location);
     }
 
-    void CWorld::SetEntityRotation(entt::entity Entity, FQuat Rotation)
+    void CWorld::SetEntityRotation(ECS::FEntity Entity, FQuat Rotation)
     {
         GetEntityTransform(Entity).SetRotation(Rotation);
     }
 
-    FVector3 CWorld::TranslateEntity(entt::entity Entity, FVector3 Translation)
+    FVector3 CWorld::TranslateEntity(ECS::FEntity Entity, FVector3 Translation)
     {
         return GetEntityTransform(Entity).Translate(Translation);
     }
 
     uint32 CWorld::GetNumEntities() const
     {
-        return (uint32)EntityRegistry.view<entt::entity>().size();
+        return (uint32)EntityRegistry.NumEntities();
     }
 
-    void CWorld::SetActiveCamera(entt::entity InEntity) const
+    void CWorld::SetActiveCamera(ECS::FEntity InEntity) const
     {
         SetActiveCamera(InEntity, 0.0f);
     }
 
-    void CWorld::SetActiveCamera(entt::entity InEntity, float BlendTime, ECameraBlendFunction Function) const
+    void CWorld::SetActiveCamera(ECS::FEntity InEntity, float BlendTime, ECameraBlendFunction Function) const
     {
-        if (!EntityRegistry.valid(InEntity))
+        if (!EntityRegistry.IsValid(InEntity))
         {
             return;
         }
 
-        if (EntityRegistry.all_of<SCameraComponent>(InEntity))
+        if (EntityRegistry.HasAll<SCameraComponent>(InEntity))
         {
-            SCameraSystem::SetActiveCamera(const_cast<FEntityRegistry&>(EntityRegistry), InEntity, BlendTime, Function);
+            SCameraSystem::SetActiveCamera(const_cast<ECS::FRegistry&>(EntityRegistry), InEntity, BlendTime, Function);
         }
     }
 
     SCameraComponent* CWorld::GetActiveCamera() const
     {
-        return SCameraSystem::GetActiveCamera(const_cast<FEntityRegistry&>(EntityRegistry));
+        return SCameraSystem::GetActiveCamera(const_cast<ECS::FRegistry&>(EntityRegistry));
     }
 
-    entt::entity CWorld::GetActiveCameraEntity() const
+    ECS::FEntity CWorld::GetActiveCameraEntity() const
     {
-        return SCameraSystem::GetActiveCameraEntity(const_cast<FEntityRegistry&>(EntityRegistry));
+        return SCameraSystem::GetActiveCameraEntity(const_cast<ECS::FRegistry&>(EntityRegistry));
     }
 
     void CWorld::OnChangeCameraEvent(const FSwitchActiveCameraEvent& Event)
@@ -1297,51 +1299,51 @@ namespace Lumina
 
     SDefaultWorldSettings& CWorld::GetDefaultWorldSettings()
     {
-        if (!EntityRegistry.valid(SingletonEntity))
+        if (!EntityRegistry.IsValid(SingletonEntity))
         {
             static SDefaultWorldSettings Defaults{};
             return Defaults;
         }
 
-        return EntityRegistry.get_or_emplace<SDefaultWorldSettings>(SingletonEntity);
+        return EntityRegistry.GetOrEmplace<SDefaultWorldSettings>(SingletonEntity);
     }
 
     SSceneFolderComponent& CWorld::GetSceneFolders()
     {
-        if (!EntityRegistry.valid(SingletonEntity))
+        if (!EntityRegistry.IsValid(SingletonEntity))
         {
             static SSceneFolderComponent Empty{};
             return Empty;
         }
 
-        return EntityRegistry.get_or_emplace<SSceneFolderComponent>(SingletonEntity);
+        return EntityRegistry.GetOrEmplace<SSceneFolderComponent>(SingletonEntity);
     }
 
     SSceneFolderComponent* CWorld::FindSceneFolders()
     {
-        if (!EntityRegistry.valid(SingletonEntity))
+        if (!EntityRegistry.IsValid(SingletonEntity))
         {
             return nullptr;
         }
 
-        return EntityRegistry.try_get<SSceneFolderComponent>(SingletonEntity);
+        return EntityRegistry.TryGet<SSceneFolderComponent>(SingletonEntity);
     }
 
     const SSceneFolderComponent* CWorld::FindSceneFolders() const
     {
-        if (!EntityRegistry.valid(SingletonEntity))
+        if (!EntityRegistry.IsValid(SingletonEntity))
         {
             return nullptr;
         }
 
-        return EntityRegistry.try_get<SSceneFolderComponent>(SingletonEntity);
+        return EntityRegistry.TryGet<SSceneFolderComponent>(SingletonEntity);
     }
 
-    bool CWorld::EntityHasTag(entt::entity Entity, const FName& Tag)
+    bool CWorld::EntityHasTag(ECS::FEntity Entity, const FName& Tag)
     {
-        if (auto Storage = EntityRegistry.storage(entt::hashed_string(Tag.c_str())))
+        if (const ECS::FSparseSet* Storage = EntityRegistry.FindNamedStorage(ECS::GetComponentTypeID<STagComponent>(), Tag))
         {
-            return Storage->contains(Entity);
+            return Storage->Contains(Entity);
         }
         
         return false;
@@ -1359,7 +1361,7 @@ namespace Lumina
         {
             RenderScene = RenderSceneFactory::Create(this);
             RenderScene->Init();
-            EntityRegistry.ctx().emplace<IRenderScene*>(RenderScene.get());
+            EntityRegistry.Ctx().Emplace<IRenderScene*>(RenderScene.get());
         }
     }
 
@@ -1501,16 +1503,16 @@ namespace Lumina
         return SystemUpdateList[static_cast<uint32>(Stage)];
     }
 
-    void CWorld::OnRelationshipComponentDestroyed(entt::registry& Registry, entt::entity Entity)
+    void CWorld::OnRelationshipComponentDestroyed(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        Registry.on_destroy<FRelationshipComponent>().disconnect<&CWorld::OnRelationshipComponentDestroyed>(this);
+        Registry.GetSignals<FRelationshipComponent>().OnDestroy.Disconnect<&CWorld::OnRelationshipComponentDestroyed>(this);
         ECS::Utils::RemoveFromParent(Registry, Entity);
 
-        TVector<entt::entity> SubTree;
+        TVector<ECS::FEntity> SubTree;
     
-        auto CollectRecursive = [&](auto& Self, entt::entity Current) -> void
+        auto CollectRecursive = [&](auto& Self, ECS::FEntity Current) -> void
         {
-            ECS::Utils::ForEachChild(Registry, Current, [&](entt::entity Child)
+            ECS::Utils::ForEachChild(Registry, Current, [&](ECS::FEntity Child)
             {
                 Self(Self, Child);
                 SubTree.push_back(Child);
@@ -1521,27 +1523,27 @@ namespace Lumina
 
         for (int32 i = (int32)SubTree.size() - 1; i >= 0; i--)
         {
-            if (Registry.valid(SubTree[i]))
+            if (Registry.IsValid(SubTree[i]))
             {
-                Registry.destroy(SubTree[i]);
+                Registry.Destroy(SubTree[i]);
             }
         }
         
-        Registry.on_destroy<FRelationshipComponent>().connect<&CWorld::OnRelationshipComponentDestroyed>(this);
+        Registry.GetSignals<FRelationshipComponent>().OnDestroy.Connect<&CWorld::OnRelationshipComponentDestroyed>(this);
     }
 
-    void CWorld::OnRelationshipComponentConstruct(entt::registry& Registry, entt::entity Entity)
+    void CWorld::OnRelationshipComponentConstruct(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
         // Only ever CLEARS the bit, since the reverse transition means the entity is being torn down.
-        if (STransformComponent* Transform = Registry.try_get<STransformComponent>(Entity))
+        if (STransformComponent* Transform = Registry.TryGet<STransformComponent>(Entity))
         {
             Transform->bIsFlat = false;
         }
     }
 
-    void CWorld::OnTransformComponentConstruct(entt::registry& Registry, entt::entity Entity)
+    void CWorld::OnTransformComponentConstruct(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        STransformComponent& TransformComponent = Registry.get<STransformComponent>(Entity);
+        STransformComponent& TransformComponent = Registry.Get<STransformComponent>(Entity);
         TransformComponent.Registry = &EntityRegistry;
         TransformComponent.Entity = Entity;
         TransformComponent.DirtyState = ECS::Utils::EnsureTransformDirtyGate(EntityRegistry);
@@ -1549,23 +1551,23 @@ namespace Lumina
         // Checked rather than assumed, since nothing orders the two components.
         TransformComponent.bIsFlat = ECS::Utils::IsEntityTransformFlat(EntityRegistry, Entity);
 
-        Registry.emplace_or_replace<FNeedsTransformUpdate>(Entity);
+        Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Entity);
     }
 
-    void CWorld::OnWidgetComponentDestroyed(entt::registry& Registry, entt::entity Entity)
+    void CWorld::OnWidgetComponentDestroyed(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        RmlUi::ReleaseWidget(this, Registry.get<SWidgetComponent>(Entity));
+        RmlUi::ReleaseWidget(this, Registry.Get<SWidgetComponent>(Entity));
     }
 
-    void CWorld::OnCSharpScriptComponentDestroyed(entt::registry& Registry, entt::entity Entity)
+    void CWorld::OnCSharpScriptComponentDestroyed(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
         // Routed through the driver, since OnDetach is user code and may attach or detach scripts.
         EntityScripts::DetachAll(Registry, Entity);
     }
 
-    CEntityScript* CWorld::AddEntityScript(entt::entity Entity, FStringView ScriptClass)
+    CEntityScript* CWorld::AddEntityScript(ECS::FEntity Entity, FStringView ScriptClass)
     {
-        if (!EntityRegistry.valid(Entity) || ScriptClass.empty())
+        if (!EntityRegistry.IsValid(Entity) || ScriptClass.empty())
         {
             return nullptr;
         }
@@ -1575,7 +1577,7 @@ namespace Lumina
         return EntityScripts::Attach(EntityRegistry, Entity, Class);
     }
 
-    void CWorld::SetEntityScript(entt::entity Entity, FStringView ScriptClass)
+    void CWorld::SetEntityScript(ECS::FEntity Entity, FStringView ScriptClass)
     {
         AddEntityScript(Entity, ScriptClass);
     }
@@ -2018,21 +2020,23 @@ namespace Lumina
         return SystemContext.GetUpdateStage();
     }
 
-    entt::entity CWorld::GetEntityByTag(const FName& Tag)
+    ECS::FEntity CWorld::GetEntityByTag(const FName& Tag)
     {
-        auto& Storage = EntityRegistry.storage<STagComponent>(entt::hashed_string(Tag.c_str()));
-        if (Storage.empty())
+        const ECS::FSparseSet* Storage =
+            EntityRegistry.FindNamedStorage(ECS::GetComponentTypeID<STagComponent>(), Tag);
+
+        if (Storage == nullptr || Storage->IsEmpty())
         {
-            return entt::null;
+            return ECS::NullEntity;
         }
-        
-        return *Storage.data();
+
+        return *Storage->begin();
     }
 
     // The resolved view, not the camera component, so shake and blends are already folded in.
     const FResolvedSceneView* CWorld::GetResolvedView() const
     {
-        const FResolvedSceneView* View = EntityRegistry.ctx().find<FResolvedSceneView>();
+        const FResolvedSceneView* View = EntityRegistry.Ctx().Find<FResolvedSceneView>();
         return (View != nullptr && View->bHasView) ? View : nullptr;
     }
 
@@ -2087,61 +2091,68 @@ namespace Lumina
         return Ray.bValid ? (Ray.Origin + Ray.Direction * WorldDistance) : FVector3(0.0f);
     }
 
-    void CWorld::GetEntitiesByTag(const FName& Tag, TVector<entt::entity>& Out)
+    void CWorld::GetEntitiesByTag(const FName& Tag, TVector<ECS::FEntity>& Out)
     {
         // Iterating the storage yields components; the sparse-set base is what yields the entities.
-        const entt::basic_sparse_set<>& Storage = EntityRegistry.storage<STagComponent>(entt::hashed_string(Tag.c_str()));
-        Out.reserve(Out.size() + Storage.size());
-        for (const entt::entity Entity : Storage)
+        const ECS::FSparseSet* TagStorage =
+            EntityRegistry.FindNamedStorage(ECS::GetComponentTypeID<STagComponent>(), Tag);
+
+        if (TagStorage == nullptr)
         {
-            if (Entity != entt::tombstone)
+            return;
+        }
+
+        Out.reserve(Out.size() + TagStorage->Num());
+        for (const ECS::FEntity Entity : *TagStorage)
+        {
+            if (!Entity.IsTombstone())
             {
                 Out.push_back(Entity);
             }
         }
     }
 
-    entt::entity CWorld::GetEntityByName(const FName& Name)
+    ECS::FEntity CWorld::GetEntityByName(const FName& Name)
     {
-        auto View = EntityRegistry.view<SNameComponent>();
-        for (entt::entity Entity : View)
+        auto View = EntityRegistry.View<SNameComponent>();
+        for (ECS::FEntity Entity : View)
         {
-            SNameComponent& NameComponent = View.get<SNameComponent>(Entity);
+            SNameComponent& NameComponent = View.Get<SNameComponent>(Entity);
             if (NameComponent.Name == Name)
             {
                 return Entity;
             }
         }
         
-        return entt::null;
+        return ECS::NullEntity;
     }
 
-    FName CWorld::GetEntityName(entt::entity Entity)
+    FName CWorld::GetEntityName(ECS::FEntity Entity)
     {
-        const SNameComponent* Name = EntityRegistry.try_get<SNameComponent>(Entity);
+        const SNameComponent* Name = EntityRegistry.TryGet<SNameComponent>(Entity);
         return Name ? Name->Name : FName();
     }
 
-    entt::entity CWorld::GetFirstEntityWith(entt::id_type Type)
+    ECS::FEntity CWorld::GetFirstEntityWith(uint32 Type)
     {
-        if (!EntityRegistry.storage(Type))
+        if (!EntityRegistry.FindStorage(Type))
         {
-            return entt::null;
+            return ECS::NullEntity;
         }
 
-        auto storage = EntityRegistry.storage(Type);
+        const ECS::FSparseSet* storage = EntityRegistry.FindStorage(static_cast<ECS::FComponentTypeID>(Type));
 
-        if (storage->empty())
+        if (storage == nullptr || storage->IsEmpty())
         {
-            return entt::null;
+            return ECS::NullEntity;
         }
-        return *storage->data();
+        return *storage->begin();
     }
 
-    void CWorld::SetEntityTransform(entt::entity Entity, const FTransform& NewTransform)
+    void CWorld::SetEntityTransform(ECS::FEntity Entity, const FTransform& NewTransform)
     {
-        EntityRegistry.emplace_or_replace<STransformComponent>(Entity, NewTransform);
-        EntityRegistry.emplace_or_replace<FNeedsTransformUpdate>(Entity);
+        EntityRegistry.EmplaceOrReplace<STransformComponent>(Entity, NewTransform);
+        EntityRegistry.EmplaceOrReplace<FNeedsTransformUpdate>(Entity);
     }
 
     void CWorld::TickSystems(FSystemContext& Context)
@@ -2174,7 +2185,7 @@ namespace Lumina
                 // Create every declared pool before going wide, since view() writes the shared pool map.
                 for (uint16 Index : Batch)
                 {
-                    for (void (*Assure)(entt::registry&) : Systems[Index].Access.PoolAssurers)
+                    for (void (*Assure)(ECS::FRegistry&) : Systems[Index].Access.PoolAssurers)
                     {
                         Assure(EntityRegistry);
                     }

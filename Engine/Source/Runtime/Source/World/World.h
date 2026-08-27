@@ -1,11 +1,14 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+#include "World/ECS/EventDispatcher.h"
+
+
 #include "Memory/MemoryConcurrentQueue.h"
 #include "Core/Object/Object.h"
 #include "Core/UpdateContext.h"
 #include "Core/Delegates/Delegate.h"
 #include "World/Entity/Components/CameraComponent.h"
-#include "Entity/Registry/EntityRegistry.h"
 #include "Memory/SmartPtr.h"
 #include "Physics/PhysicsScene.h"
 #include "Entity/Systems/SystemContext.h"
@@ -18,7 +21,6 @@
 #include "WorldTypes.h"
 #include "Containers/FunctionRef.h"
 #include "Entity/Systems/EntitySystem.h"
-#include "Entity/EntityHandle.h"
 #include "World.generated.h"
 
 
@@ -45,7 +47,7 @@ namespace Lumina
         // Engine-internal raw registry access for whole-registry operations that have no per-op wrapper
         // (serialization, net replication, reflection meta-invoke). Gameplay, tooling, and C# go through
         // CWorld's typed component/entity/singleton wrappers instead -- the registry is not public API.
-        RUNTIME_API FEntityRegistry& GetWorldRegistry(CWorld& World);
+        RUNTIME_API ECS::FRegistry& GetWorldRegistry(CWorld& World);
     }
 }
 
@@ -59,7 +61,7 @@ namespace Lumina
     };
     
     // One system as scheduled in a stage, with its declared access, the snapshot CWorld::GetSystemSchedule
-    // hands the Gameplay Insights editor tool. Reads/Writes are entt::type_hash ids; resolve names with
+    // hands the Gameplay Insights editor tool. Reads/Writes are component type ids; resolve names with
     // GetAccessTypeName (SystemAccess.h).
     struct FSystemScheduleEntry
     {
@@ -95,7 +97,7 @@ namespace Lumina
         friend class FWorldManager;
         friend struct FSystemContext;
         friend struct SRenderComponent;
-        friend FEntityRegistry& ECS::GetWorldRegistry(CWorld&);
+        friend ECS::FRegistry& ECS::GetWorldRegistry(CWorld&);
 
     public:
         
@@ -154,7 +156,7 @@ namespace Lumina
         // Steps physics. Game thread, between the DuringPhysics and PostPhysics stages.
         void TickPhysics();
 
-        // Drains the contact events the step queued (entt::dispatcher). Called by
+        // Drains the contact events the step queued (ECS::FEventDispatcher). Called by
         // FWorldManager::TickPhysics right after the step; not a separate frame phase.
         void DispatchPhysicsEvents();
 
@@ -169,52 +171,52 @@ namespace Lumina
          * @return a newly created entity.
          */
         FUNCTION()
-        entt::entity ConstructEntity(FName Name, const FTransform& Transform = FTransform());
+        ECS::FEntity ConstructEntity(FName Name, const FTransform& Transform = FTransform());
 
 
         FUNCTION()
-        entt::entity SpawnPrefab(const FAssetRef& Prefab);
+        ECS::FEntity SpawnPrefab(const FAssetRef& Prefab);
 
         /** Like SpawnPrefab(Path), but positions the spawned root at SpawnTransform and
-         *  optionally reparents under Parent (entt::null = world root). */
+         *  optionally reparents under Parent (ECS::NullEntity = world root). */
         FUNCTION()
-        entt::entity SpawnPrefabAt(const FAssetRef& Prefab, const FTransform& SpawnTransform, entt::entity Parent);
+        ECS::FEntity SpawnPrefabAt(const FAssetRef& Prefab, const FTransform& SpawnTransform, ECS::FEntity Parent);
 
-        entt::entity SpawnPrefabAt(const FAssetRef& Prefab, const FTransform& SpawnTransform)
+        ECS::FEntity SpawnPrefabAt(const FAssetRef& Prefab, const FTransform& SpawnTransform)
         {
-            return SpawnPrefabAt(Prefab, SpawnTransform, entt::null);
+            return SpawnPrefabAt(Prefab, SpawnTransform, ECS::NullEntity);
         }
 
         /** A one-shot effect bursting at SpawnTransform, destroyed after Lifetime seconds (0 = caller owns it). */
         FUNCTION()
-        entt::entity SpawnParticleSystem(CParticleSystem* ParticleSystem, const FTransform& SpawnTransform, float Lifetime);
+        ECS::FEntity SpawnParticleSystem(CParticleSystem* ParticleSystem, const FTransform& SpawnTransform, float Lifetime);
 
         /** SpawnParticleSystem parented to Parent, on a named socket or bone (none = the entity origin). */
         FUNCTION()
-        entt::entity SpawnParticleSystemAttached(CParticleSystem* ParticleSystem, entt::entity Parent,
+        ECS::FEntity SpawnParticleSystemAttached(CParticleSystem* ParticleSystem, ECS::FEntity Parent,
             const FName& Socket, FVector3 Offset, float Lifetime);
 
         /** Destroys Entity after Seconds (0 = never). Idempotent; a second call retimes the countdown. */
         FUNCTION()
-        void SetEntityLifetime(entt::entity Entity, float Seconds);
+        void SetEntityLifetime(ECS::FEntity Entity, float Seconds);
 
         // Shatter a destructible entity into physics-driven fragments. Origin = blast point;
         // Strength = outward launch m/s (0 uses ExplosionStrength). No-op without an unbroken SDestructibleComponent.
-        bool FractureEntity(entt::entity Entity, const FVector3& Origin, float Strength = 0.0f);
+        bool FractureEntity(ECS::FEntity Entity, const FVector3& Origin, float Strength = 0.0f);
         
-        void SpawnPrefabAsync(const FName& Path, const TFunction<void(entt::entity)>& Callback);
+        void SpawnPrefabAsync(const FName& Path, const TFunction<void(ECS::FEntity)>& Callback);
 
         /** Spawns a projectile entity at Position moving at Velocity (world m/s). Damage rides along in
          *  the hit event; the entity auto-despawns after Lifetime seconds (0 = never); Instigator is
          *  ignored by the sweep so the shooter is never hit. Returns the new entity. Bind its hit with
-         *  GetEntityRegistry().get<SProjectileComponent>(e).OnHit, or set more fields on that component. */
+         *  GetEntityRegistry().Get<SProjectileComponent>(e).OnHit, or set more fields on that component. */
         FUNCTION()
-        entt::entity SpawnProjectile(FVector3 Position, FVector3 Velocity, float Damage, float Lifetime, entt::entity Instigator);
+        ECS::FEntity SpawnProjectile(FVector3 Position, FVector3 Velocity, float Damage, float Lifetime, ECS::FEntity Instigator);
 
         // C++ convenience with defaults.
-        entt::entity SpawnProjectile(FVector3 Position, FVector3 Velocity, float Damage = 0.0f, float Lifetime = 5.0f)
+        ECS::FEntity SpawnProjectile(FVector3 Position, FVector3 Velocity, float Damage = 0.0f, float Lifetime = 5.0f)
         {
-            return SpawnProjectile(Position, Velocity, Damage, Lifetime, entt::null);
+            return SpawnProjectile(Position, Velocity, Damage, Lifetime, ECS::NullEntity);
         }
 
         Physics::IPhysicsScene* GetPhysicsScene() const { return PhysicsScene.get(); }
@@ -223,19 +225,19 @@ namespace Lumina
         // reserves hundreds of MB up front, so a tool that wants to actually simulate asks for one here.
         Physics::IPhysicsScene* EnsurePhysicsScene();
         
-        STransformComponent& GetEntityTransform(entt::entity Entity);
+        STransformComponent& GetEntityTransform(ECS::FEntity Entity);
 
         FUNCTION()
-        FVector3 GetEntityLocation(entt::entity Entity);
+        FVector3 GetEntityLocation(ECS::FEntity Entity);
 
         FUNCTION()
-        void SetEntityLocation(entt::entity Entity, FVector3 Location);
+        void SetEntityLocation(ECS::FEntity Entity, FVector3 Location);
 
         FUNCTION()
-        void SetEntityRotation(entt::entity Entity, FQuat Rotation);
+        void SetEntityRotation(ECS::FEntity Entity, FQuat Rotation);
 
         FUNCTION()
-        FVector3 TranslateEntity(entt::entity Entity, FVector3 Translation);
+        FVector3 TranslateEntity(ECS::FEntity Entity, FVector3 Translation);
 
         FUNCTION()
         uint32 GetNumEntities() const;
@@ -250,7 +252,7 @@ namespace Lumina
         const SSceneFolderComponent* FindSceneFolders() const;
         
         FUNCTION()
-        bool EntityHasTag(entt::entity Entity, const FName& Tag);
+        bool EntityHasTag(ECS::FEntity Entity, const FName& Tag);
 
         //~ Screen and world projection, through the rendered view and this world's render extent.
 
@@ -278,16 +280,16 @@ namespace Lumina
         FVector3 DeprojectScreenToWorld(FVector2 ScreenPosition, float WorldDistance) const;
 
         FUNCTION()
-        entt::entity GetEntityByTag(const FName& Tag);
+        ECS::FEntity GetEntityByTag(const FName& Tag);
 
         /** Appends every entity carrying Tag to Out. Tags are named storages, so this is a pool walk. */
-        void GetEntitiesByTag(const FName& Tag, TVector<entt::entity>& Out);
+        void GetEntitiesByTag(const FName& Tag, TVector<ECS::FEntity>& Out);
 
         FUNCTION()
-        entt::entity GetEntityByName(const FName& Name);
+        ECS::FEntity GetEntityByName(const FName& Name);
 
         FUNCTION()
-        FName GetEntityName(entt::entity Entity);
+        FName GetEntityName(ECS::FEntity Entity);
 
         TOptional<SRayResult> CastRay(const SRayCastSettings& Settings);
 
@@ -298,8 +300,8 @@ namespace Lumina
         
         EUpdateStage GetUpdateStage() const;
 
-        FTimerManager& GetTimerManager() { return EntityRegistry.ctx().get<FTimerManager>(); }
-        const FTimerManager& GetTimerManager() const { return EntityRegistry.ctx().get<FTimerManager>(); }
+        FTimerManager& GetTimerManager() { return EntityRegistry.Ctx().Get<FTimerManager>(); }
+        const FTimerManager& GetTimerManager() const { return EntityRegistry.Ctx().Get<FTimerManager>(); }
 
         NODISCARD EWorldType GetWorldType() const { return WorldType; }
 
@@ -318,27 +320,27 @@ namespace Lumina
         /** C#-facing debug-draw facade (World.Debug). */
         NODISCARD FWorldDebugInterface* GetDebugInterface() { return &DebugInterface; }
         
-        entt::entity GetFirstEntityWith(entt::id_type Type);
+        ECS::FEntity GetFirstEntityWith(uint32 Type);
         
-        void DuplicateEntity(entt::entity& To, entt::entity From, const TFunctionRef<bool(entt::type_info)>& Callback);
+        void DuplicateEntity(ECS::FEntity& To, ECS::FEntity From, const TFunctionRef<bool(const ECS::FComponentTypeInfo&)>& Callback);
 
         // Deep-copy Source and its children (components copy-constructed, transient handles rebuilt); returns the new root.
         FUNCTION()
-        entt::entity DuplicateEntity(entt::entity Source);
+        ECS::FEntity DuplicateEntity(ECS::FEntity Source);
 
         // Reparent Child under Parent (Parent = null detaches to the world root), preserving world transform.
         FUNCTION()
-        void SetParent(entt::entity Child, entt::entity Parent);
+        void SetParent(ECS::FEntity Child, ECS::FEntity Parent);
 
         // Detach from the current parent, preserving world transform.
         FUNCTION()
-        void DetachFromParent(entt::entity Entity);
+        void DetachFromParent(ECS::FEntity Entity);
 
         FUNCTION()
-        entt::entity GetParent(entt::entity Entity);
+        ECS::FEntity GetParent(ECS::FEntity Entity);
 
         FUNCTION()
-        entt::entity GetRootEntity(entt::entity Entity);
+        ECS::FEntity GetRootEntity(ECS::FEntity Entity);
 
         // --- Mesh sockets / bones. SocketOrBone accepts a socket name authored on the skeleton or
         // --- static mesh asset, or (skeletal only) a raw bone name.
@@ -346,46 +348,46 @@ namespace Lumina
         // Parent Child under Parent and keep it glued to the named socket/bone each frame
         // (adds an SSocketAttachmentComponent; the socket attachment system drives the transform).
         FUNCTION()
-        void AttachEntityToSocket(entt::entity Child, entt::entity Parent, const FName& SocketOrBone);
+        void AttachEntityToSocket(ECS::FEntity Child, ECS::FEntity Parent, const FName& SocketOrBone);
 
         // Stop following the socket and detach to the world root, preserving world transform.
         FUNCTION()
-        void DetachEntityFromSocket(entt::entity Entity);
+        void DetachEntityFromSocket(ECS::FEntity Entity);
 
         FUNCTION()
-        bool HasSocket(entt::entity Entity, const FName& SocketOrBone);
+        bool HasSocket(ECS::FEntity Entity, const FName& SocketOrBone);
 
         /** World-space socket/bone location on the entity's skeletal mesh; zero when it doesn't resolve. */
         FUNCTION()
-        FVector3 GetSocketLocation(entt::entity Entity, const FName& SocketOrBone);
+        FVector3 GetSocketLocation(ECS::FEntity Entity, const FName& SocketOrBone);
 
         /** World-space socket/bone rotation on the entity's skeletal mesh; identity when it doesn't resolve. */
         FUNCTION()
-        FQuat GetSocketRotation(entt::entity Entity, const FName& SocketOrBone);
+        FQuat GetSocketRotation(ECS::FEntity Entity, const FName& SocketOrBone);
 
         /** Bone name for a skeleton bone index (e.g. a hit result's BoneIndex); NAME_None when out of range. */
         FUNCTION()
-        FName GetBoneName(entt::entity Entity, int32 BoneIndex);
+        FName GetBoneName(ECS::FEntity Entity, int32 BoneIndex);
 
         FUNCTION()
-        int32 GetBoneIndex(entt::entity Entity, const FName& BoneName);
+        int32 GetBoneIndex(ECS::FEntity Entity, const FName& BoneName);
 
         /** Bone origin nearest WorldLocation; approximates the hit bone on single-body skeletal meshes. */
         FUNCTION()
-        FName FindClosestBone(entt::entity Entity, FVector3 WorldLocation);
+        FName FindClosestBone(ECS::FEntity Entity, FVector3 WorldLocation);
 
         FUNCTION()
-        void DestroyEntity(entt::entity Entity);
+        void DestroyEntity(ECS::FEntity Entity);
         
-        void SetActiveCamera(entt::entity InEntity) const;
+        void SetActiveCamera(ECS::FEntity InEntity) const;
 
         /** Switch the active camera, easing from the current view over BlendTime seconds (0 = snap). */
-        void SetActiveCamera(entt::entity InEntity, float BlendTime, ECameraBlendFunction Function = ECameraBlendFunction::EaseInOut) const;
+        void SetActiveCamera(ECS::FEntity InEntity, float BlendTime, ECameraBlendFunction Function = ECameraBlendFunction::EaseInOut) const;
 
         FUNCTION()
         SCameraComponent* GetActiveCamera() const;
 
-        entt::entity GetActiveCameraEntity() const;
+        ECS::FEntity GetActiveCameraEntity() const;
         
         void OnChangeCameraEvent(const FSwitchActiveCameraEvent& Event);
         
@@ -473,18 +475,18 @@ namespace Lumina
         // so it is safe to call mid-frame. Applies to native systems only.
         void SetSystemEnabled(FName System, bool bEnabled);
 
-        void OnRelationshipComponentDestroyed(entt::registry& Registry, entt::entity Entity);
-        void OnRelationshipComponentConstruct(entt::registry& Registry, entt::entity Entity);
-        void OnTransformComponentConstruct(entt::registry& Registry, entt::entity Entity);
-        void OnCSharpScriptComponentDestroyed(entt::registry& Registry, entt::entity Entity);
-        void OnWidgetComponentDestroyed(entt::registry& Registry, entt::entity Entity);
+        void OnRelationshipComponentDestroyed(ECS::FRegistry& Registry, ECS::FEntity Entity);
+        void OnRelationshipComponentConstruct(ECS::FRegistry& Registry, ECS::FEntity Entity);
+        void OnTransformComponentConstruct(ECS::FRegistry& Registry, ECS::FEntity Entity);
+        void OnCSharpScriptComponentDestroyed(ECS::FRegistry& Registry, ECS::FEntity Entity);
+        void OnWidgetComponentDestroyed(ECS::FRegistry& Registry, ECS::FEntity Entity);
 
         // Attaches a script of the given class to an entity (emplacing SEntityScriptComponent if needed) and
         // binds it immediately. Returns the managed instance handle, or null on failure.
-        CEntityScript* AddEntityScript(entt::entity Entity, FStringView ScriptClass);
+        CEntityScript* AddEntityScript(ECS::FEntity Entity, FStringView ScriptClass);
 
         // Convenience that forwards to AddEntityScript.
-        void SetEntityScript(entt::entity Entity, FStringView ScriptClass);
+        void SetEntityScript(ECS::FEntity Entity, FStringView ScriptClass);
 
         // Starts managed systems that have not started yet, and only once the world's own startup pass has run.
         void StartupManagedSystems();
@@ -530,7 +532,7 @@ namespace Lumina
         
         FORCEINLINE bool IsGameWorld() const { return WorldType == EWorldType::Game; }
         
-        void SetEntityTransform(entt::entity Entity, const FTransform& NewTransform);
+        void SetEntityTransform(ECS::FEntity Entity, const FTransform& NewTransform);
 
         const FSystemContext& GetSystemContext() const { return SystemContext; }
         
@@ -539,165 +541,162 @@ namespace Lumina
         void ForEachUniqueSystem(TFunc&& Func);
         
         template<typename T, typename... TArgs>
-        decltype(auto) EmplaceComponent(FEntity Entity, TArgs&&... Args);
+        decltype(auto) EmplaceComponent(ECS::FEntity Entity, TArgs&&... Args);
         
         template<typename T>
         requires(!std::is_empty_v<T>)
-        T& GetComponent(FEntity Entity);
+        T& GetComponent(ECS::FEntity Entity);
         
         template<typename T>
-        T* TryGetComponent(FEntity Entity);
+        T* TryGetComponent(ECS::FEntity Entity);
 
-        // --- Entity-registry wrappers ---------------------------------------------------------------
-        // The registry object is intentionally not exposed publicly; gameplay (C++ and C#) and tooling go
-        // through these. entt views / entities / signal sinks are still surfaced -- we hide the registry
-        // handle, not entt itself.
+        // The registry handle stays private; views, entities and signal sinks are reached through these.
 
         template<typename T, typename... TArgs>
-        decltype(auto) EmplaceOrReplaceComponent(FEntity Entity, TArgs&&... Args)
+        decltype(auto) EmplaceOrReplaceComponent(ECS::FEntity Entity, TArgs&&... Args)
         {
-            return EntityRegistry.emplace_or_replace<T>(Entity, std::forward<TArgs>(Args)...);
+            return EntityRegistry.EmplaceOrReplace<T>(Entity, std::forward<TArgs>(Args)...);
         }
 
         template<typename T, typename... TArgs>
-        T& GetOrEmplaceComponent(FEntity Entity, TArgs&&... Args)
+        T& GetOrEmplaceComponent(ECS::FEntity Entity, TArgs&&... Args)
         {
-            return EntityRegistry.get_or_emplace<T>(Entity, std::forward<TArgs>(Args)...);
+            return EntityRegistry.GetOrEmplace<T>(Entity, std::forward<TArgs>(Args)...);
         }
 
         template<typename T, typename... TArgs>
-        T& ReplaceComponent(FEntity Entity, TArgs&&... Args)
+        T& ReplaceComponent(ECS::FEntity Entity, TArgs&&... Args)
         {
-            return EntityRegistry.replace<T>(Entity, std::forward<TArgs>(Args)...);
+            return EntityRegistry.EmplaceOrReplace<T>(Entity, std::forward<TArgs>(Args)...);
         }
 
         template<typename T, typename TFunc>
-        T& PatchComponent(FEntity Entity, TFunc&& Func)
+        T& PatchComponent(ECS::FEntity Entity, TFunc&& Func)
         {
-            return EntityRegistry.patch<T>(Entity, std::forward<TFunc>(Func));
+            return EntityRegistry.Patch<T>(Entity, std::forward<TFunc>(Func));
         }
 
         template<typename... T>
-        void RemoveComponent(FEntity Entity)
+        void RemoveComponent(ECS::FEntity Entity)
         {
-            EntityRegistry.remove<T...>(Entity);
+            EntityRegistry.Remove<T...>(Entity);
         }
 
         template<typename... T>
-        NODISCARD bool HasComponent(FEntity Entity) const
+        NODISCARD bool HasComponent(ECS::FEntity Entity) const
         {
-            return EntityRegistry.all_of<T...>(Entity);
+            return EntityRegistry.HasAll<T...>(Entity);
         }
 
         template<typename... T>
-        NODISCARD bool HasAnyComponent(FEntity Entity) const
+        NODISCARD bool HasAnyComponent(ECS::FEntity Entity) const
         {
-            return EntityRegistry.any_of<T...>(Entity);
+            return EntityRegistry.HasAny<T...>(Entity);
         }
 
         template<typename T>
-        const T& GetComponent(FEntity Entity) const
+        const T& GetComponent(ECS::FEntity Entity) const
         {
-            return EntityRegistry.get<T>(Entity);
+            return EntityRegistry.Get<T>(Entity);
         }
 
         template<typename T>
-        const T* TryGetComponent(FEntity Entity) const
+        const T* TryGetComponent(ECS::FEntity Entity) const
         {
-            return EntityRegistry.try_get<T>(Entity);
+            return EntityRegistry.TryGet<T>(Entity);
         }
 
         template<typename T>
         void ClearComponents()
         {
-            EntityRegistry.clear<T>();
+            EntityRegistry.ClearComponent<T>();
         }
 
-        NODISCARD bool IsValidEntity(FEntity Entity) const
+        NODISCARD bool IsValidEntity(ECS::FEntity Entity) const
         {
-            return EntityRegistry.valid(Entity);
+            return EntityRegistry.IsValid(Entity);
         }
 
-        // Iteration. Returns the entt view directly; pass entt::exclude<...> for an exclusion set.
+        // Iteration. Returns the view directly; pass ECS::TExclude<...>{} for an exclusion set.
         template<typename... Get>
         NODISCARD auto View()
         {
-            return EntityRegistry.view<Get...>();
+            return EntityRegistry.View<Get...>();
         }
 
         template<typename... Get, typename... Exclude>
-        NODISCARD auto View(entt::exclude_t<Exclude...> ExcludeSet)
+        NODISCARD auto View(ECS::TExclude<Exclude...> ExcludeSet)
         {
-            return EntityRegistry.view<Get...>(ExcludeSet);
+            return EntityRegistry.View<Get...>(ExcludeSet);
         }
 
         // Per-world singletons stored in the registry context.
         template<typename T, typename... TArgs>
         T& EmplaceSingleton(TArgs&&... Args)
         {
-            return EntityRegistry.ctx().emplace<T>(std::forward<TArgs>(Args)...);
+            return EntityRegistry.Ctx().Emplace<T>(std::forward<TArgs>(Args)...);
         }
 
         template<typename T>
         NODISCARD T& GetSingleton()
         {
-            return EntityRegistry.ctx().get<T>();
+            return EntityRegistry.Ctx().Get<T>();
         }
 
         template<typename T>
         NODISCARD const T& GetSingleton() const
         {
-            return EntityRegistry.ctx().get<T>();
+            return EntityRegistry.Ctx().Get<T>();
         }
 
         template<typename T>
         NODISCARD T* TryGetSingleton()
         {
-            return EntityRegistry.ctx().find<T>();
+            return EntityRegistry.Ctx().Find<T>();
         }
 
         template<typename T>
         NODISCARD const T* TryGetSingleton() const
         {
-            return EntityRegistry.ctx().find<T>();
+            return EntityRegistry.Ctx().Find<T>();
         }
 
-        // Component lifecycle observers (entt signal sinks); connect member fns exactly as with entt.
+        // Component lifecycle observers (pool signals); connect member functions by naming them.
         // The using-declaration keeps CObject's destroy hook visible alongside the component sink.
         using CObject::OnDestroy;
-        template<typename T> NODISCARD auto OnConstruct() { return EntityRegistry.on_construct<T>(); }
-        template<typename T> NODISCARD auto OnDestroy()   { return EntityRegistry.on_destroy<T>(); }
-        template<typename T> NODISCARD auto OnUpdate()    { return EntityRegistry.on_update<T>(); }
-        NODISCARD auto OnEntityConstruct() { return EntityRegistry.on_construct<entt::entity>(); }
-        NODISCARD auto OnEntityDestroy()   { return EntityRegistry.on_destroy<entt::entity>(); }
+        template<typename T> NODISCARD auto OnConstruct() { return EntityRegistry.GetSignals<T>().OnConstruct; }
+        template<typename T> NODISCARD auto OnDestroy()   { return EntityRegistry.GetSignals<T>().OnDestroy; }
+        template<typename T> NODISCARD auto OnUpdate()    { return EntityRegistry.GetSignals<T>().OnUpdate; }
+        NODISCARD auto OnEntityConstruct() { return EntityRegistry.OnEntityCreated(); }
+        NODISCARD auto OnEntityDestroy()   { return EntityRegistry.OnEntityDestroyed(); }
 
         // Low-level storage access for reflection-style passes (all storages) and named/tag storages.
-        NODISCARD auto ComponentStorages() { return EntityRegistry.storage(); }
+        NODISCARD auto ComponentStorages() { return EntityRegistry.GetActiveStorages(); }
 
         template<typename T>
-        NODISCARD auto& ComponentStorage() { return EntityRegistry.storage<T>(); }
+        NODISCARD auto& ComponentStorage() { return EntityRegistry.GetStorage<T>(); }
 
         template<typename T>
-        NODISCARD auto& NamedStorage(FEntityID Id) { return EntityRegistry.storage<T>(Id); }
+        NODISCARD auto& NamedStorage(uint32 Id) { return EntityRegistry.GetStorage<T>(Id); }
 
         // Bare entity (no components); prefer ConstructEntity for a named/transformed entity.
-        NODISCARD FEntity CreateEntity() { return EntityRegistry.create(); }
+        NODISCARD ECS::FEntity CreateEntity() { return EntityRegistry.Create(); }
 
         // Destroys every entity in the world (component storages retain their types).
-        void ClearAllEntities() { EntityRegistry.clear(); }
+        void ClearAllEntities() { EntityRegistry.Clear(); }
 
         template<typename T>
-        NODISCARD bool HasSingleton() const { return EntityRegistry.ctx().contains<T>(); }
+        NODISCARD bool HasSingleton() const { return EntityRegistry.Ctx().Contains<T>(); }
 
         template<typename T>
-        void EraseSingleton() { EntityRegistry.ctx().erase<T>(); }
+        void EraseSingleton() { EntityRegistry.Ctx().Erase<T>(); }
 
     private:
 
         // Raw registry handle. Intentionally private -- gameplay (C++/C#) and tooling use the typed wrappers
         // above; engine internals reach it through friendship (FSystemContext, FWorldManager, ...).
-        FEntityRegistry& GetEntityRegistry() { return EntityRegistry; }
-        const FEntityRegistry& GetEntityRegistry() const { return EntityRegistry; }
+        ECS::FRegistry& GetEntityRegistry() { return EntityRegistry; }
+        const ECS::FRegistry& GetEntityRegistry() const { return EntityRegistry; }
 
     private:
 
@@ -714,10 +713,10 @@ namespace Lumina
 
     private:
         
-        FEntityRegistry                                     RegistryPending;
-        FEntityRegistry                                     EntityRegistry;
-        entt::dispatcher                                    SingletonDispatcher;
-        entt::entity                                        SingletonEntity;
+        ECS::FRegistry                                     RegistryPending;
+        ECS::FRegistry                                     EntityRegistry;
+        ECS::FEventDispatcher                                    SingletonDispatcher;
+        ECS::FEntity                                        SingletonEntity;
 
         FSystemContext                                      SystemContext;
         
@@ -809,22 +808,22 @@ namespace Lumina
     }
 
     template <typename T, typename ... TArgs>
-    decltype(auto) CWorld::EmplaceComponent(FEntity Entity, TArgs&&... Args)
+    decltype(auto) CWorld::EmplaceComponent(ECS::FEntity Entity, TArgs&&... Args)
     {
-        return EntityRegistry.emplace<T>(Entity, std::forward<TArgs>(Args)...);
+        return EntityRegistry.Emplace<T>(Entity, std::forward<TArgs>(Args)...);
     }
 
     template <typename T>
     requires(!std::is_empty_v<T>)
-    T& CWorld::GetComponent(FEntity Entity)
+    T& CWorld::GetComponent(ECS::FEntity Entity)
     {
-        return EntityRegistry.get<T>(Entity);
+        return EntityRegistry.Get<T>(Entity);
     }
 
     template <typename T>
-    T* CWorld::TryGetComponent(FEntity Entity)
+    T* CWorld::TryGetComponent(ECS::FEntity Entity)
     {
-        return EntityRegistry.try_get<T>(Entity);
+        return EntityRegistry.TryGet<T>(Entity);
     }
 }
 

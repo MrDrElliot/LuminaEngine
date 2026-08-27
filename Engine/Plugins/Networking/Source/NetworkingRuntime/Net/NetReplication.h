@@ -1,10 +1,12 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #include "Platform/GenericPlatform.h"
 #include "Containers/Vector.h"
 #include "Containers/Function.h"
 #include "Networking/NetworkTypes.h"
-#include "entt/entt.hpp"
 
 namespace Lumina
 {
@@ -56,11 +58,11 @@ namespace Lumina
         // bBaseline emits ALL components + ALL fields (mask all-ones) and seeds DiffState; otherwise emits only
         // components with >=1 changed field, each carrying a changed-field bitmask, and updates DiffState.
         // Object/asset/name refs mint into State's outgoing maps.
-        TVector<FComponentRepOut> CollectComponentFields(entt::registry& Registry, entt::entity Entity,
+        TVector<FComponentRepOut> CollectComponentFields(ECS::FRegistry& Registry, ECS::FEntity Entity,
             FNetWorldState& State, bool bBaseline, FComponentRepState* DiffState);
 
         // Same, into a caller-owned buffer whose elements and block storage are reused across calls.
-        void CollectComponentFieldsInto(entt::registry& Registry, entt::entity Entity, FNetWorldState& State,
+        void CollectComponentFieldsInto(ECS::FRegistry& Registry, ECS::FEntity Entity, FNetWorldState& State,
             bool bBaseline, FComponentRepState* DiffState, TVector<FComponentRepOut>& Out);
 
         // True when Parent is an entity that actually replicates to clients (SNetworkComponent + bReplicates +
@@ -68,20 +70,20 @@ namespace Lumina
         // (client reparents + composes, rigid); a child of a non-replicated parent must send WORLD instead, since
         // the client has no parent to compose against. Both the transform extract and the attachment-link write
         // gate on this so they stay consistent.
-        bool ParentReplicates(entt::registry& Registry, entt::entity Parent);
+        bool ParentReplicates(ECS::FRegistry& Registry, ECS::FEntity Parent);
 
         // Server, write one entity's replicated component blocks (from Components, precomputed by
         // CollectComponentFields). Used for both Spawn (baseline) and PropertyUpdate (diff). Null Components
         // writes an empty component block. Recipient-independent.
-        void WriteEntityComponents(FNetArchive& Ar, entt::registry& Registry, entt::entity Entity,
+        void WriteEntityComponents(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity,
             const TVector<FComponentRepOut>* Components = nullptr);
 
         // Client, recreate/refresh components on Entity, then apply the replicated attachment link.
-        void ReadEntityComponents(FNetArchive& Ar, entt::registry& Registry, entt::entity Entity);
+        void ReadEntityComponents(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity);
 
         // Client, reparent any children that were deferred waiting on NewEntity (NetGUID NewGuid) to spawn.
         // Call right after registering a freshly-spawned entity's NetGUID in the GuidTable.
-        void DrainPendingAttach(entt::registry& Registry, FNetWorldState& State, uint32 NewGuid, entt::entity NewEntity);
+        void DrainPendingAttach(ECS::FRegistry& Registry, FNetWorldState& State, uint32 NewGuid, ECS::FEntity NewEntity);
 
         //~ Packet batching. Many small messages per tick are concatenated into one length-prefixed datagram,
         //~ one ENet header and ack instead of N. Every packet on the wire is a batch.

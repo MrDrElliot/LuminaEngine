@@ -1,9 +1,10 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Math/Math.h"
 #include "GameplayTags/GameplayTag.h"
-#include "World/Entity/EntityHandle.h"
 #include "PerceptionTypes.generated.h"
 
 namespace Lumina
@@ -24,7 +25,7 @@ namespace Lumina
     // recomputed by SPerceptionSystem every tick, so it lives as a plain array on SPerceptionComponent.
     struct FPerceivedTarget
     {
-        entt::entity    Target              = entt::null;
+        ECS::FEntity    Target              = ECS::NullEntity;
         FVector3        LastKnownLocation   = FVector3(0.0f);
         uint8           ActiveSenses        = 0;       // EAISenseChannel bits sensing it (Sight sticky; Hearing/Damage momentary).
         float           TimeSinceLastSensed = 0.0f;    // 0 while sensed; counts up after; > ForgetTime => dropped.
@@ -37,8 +38,8 @@ namespace Lumina
     struct FAIStimulusEvent
     {
         EAISenseChannel         Sense       = EAISenseChannel::Hearing;
-        entt::entity            Instigator  = entt::null;   // who made the noise / dealt the damage.
-        entt::entity            Target      = entt::null;   // damage victim; entt::null for area noise.
+        ECS::FEntity            Instigator  = ECS::NullEntity;   // who made the noise / dealt the damage.
+        ECS::FEntity            Target      = ECS::NullEntity;   // damage victim; ECS::NullEntity for area noise.
         FVector3                Location    = FVector3(0.0f);
         float                   Strength    = 1.0f;         // noise loudness (radius scale) or damage amount.
         FGameplayTagContainer   Tags;                       // optional affiliation override (empty => look up Instigator).
@@ -48,8 +49,8 @@ namespace Lumina
     // Context.EventSink<FPerceptionUpdatedEvent>() without coupling to the perception system's delegates.
     struct FPerceptionUpdatedEvent
     {
-        entt::entity    Perceiver = entt::null;
-        entt::entity    Target    = entt::null;
+        ECS::FEntity    Perceiver = ECS::NullEntity;
+        ECS::FEntity    Target    = ECS::NullEntity;
         EAISenseChannel Sense     = EAISenseChannel::Sight;
         FVector3        Location  = FVector3(0.0f);
         bool            bSensed   = true;   // true = perceived, false = lost.

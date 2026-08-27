@@ -84,6 +84,9 @@ enum class ELuminaEngineVersion : uint32
 	// SEntityScriptComponent length-prefixes each script, so an unresolvable one is skipped, not fatal.
 	ENTITY_SCRIPT_LENGTH_PREFIX,
 
+	// FMeshletCone is a 4-byte SNORM8 axis + cutoff with no apex. Older files hold floats and are quantized on load.
+	MESHLET_CONE_SNORM8,
+
 	AUTOMATIC_VERSION_PLUS_ONE,
 	AUTOMATIC_VERSION = AUTOMATIC_VERSION_PLUS_ONE - 1
 };

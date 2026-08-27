@@ -1,4 +1,5 @@
 #include "EntityRelationshipCommand.h"
+#include "World/ECS/Registry.h"
 
 #include "Core/Object/Package/Package.h"
 #include "World/World.h"
@@ -20,23 +21,23 @@ namespace Lumina
 
     }
 
-    void FEntityRelationshipCommand::CollectAffected(FEntityRegistry& Registry, const TVector<entt::entity>& Seeds,
-                                                     entt::entity NewParent, TVector<entt::entity>& Out)
+    void FEntityRelationshipCommand::CollectAffected(ECS::FRegistry& Registry, const TVector<ECS::FEntity>& Seeds,
+                                                     ECS::FEntity NewParent, TVector<ECS::FEntity>& Out)
     {
-        auto AddWithChildren = [&](entt::entity Entity)
+        auto AddWithChildren = [&](ECS::FEntity Entity)
         {
-            if (Entity == entt::null || !Registry.valid(Entity))
+            if (Entity == ECS::NullEntity || !Registry.IsValid(Entity))
             {
                 return;
             }
 
             Out.AddUnique(Entity);
-            ECS::Utils::ForEachChild(Registry, Entity, [&](entt::entity Child) { Out.AddUnique(Child); });
+            ECS::Utils::ForEachChild(Registry, Entity, [&](ECS::FEntity Child) { Out.AddUnique(Child); });
         };
 
-        for (entt::entity Seed : Seeds)
+        for (ECS::FEntity Seed : Seeds)
         {
-            if (!Registry.valid(Seed))
+            if (!Registry.IsValid(Seed))
             {
                 continue;
             }
@@ -44,7 +45,7 @@ namespace Lumina
             AddWithChildren(Seed);
 
             // The old parent's whole child list, since unlinking rewrites First and the Prev/Next neighbors.
-            if (const FRelationshipComponent* Link = Registry.try_get<FRelationshipComponent>(Seed))
+            if (const FRelationshipComponent* Link = Registry.TryGet<FRelationshipComponent>(Seed))
             {
                 AddWithChildren(Link->Parent);
             }
@@ -53,7 +54,7 @@ namespace Lumina
         AddWithChildren(NewParent);
     }
 
-    FEntityRelationshipCommand::FEntityRelationshipCommand(CWorld* InWorld, TVector<entt::entity> InEntities)
+    FEntityRelationshipCommand::FEntityRelationshipCommand(CWorld* InWorld, TVector<ECS::FEntity> InEntities)
         : World(InWorld)
         , Entities(Move(InEntities))
     {
@@ -101,17 +102,17 @@ namespace Lumina
             return;
         }
 
-        FEntityRegistry& Registry = ECS::GetWorldRegistry(*W);
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*W);
 
         for (SIZE_T i = 0; i < Entities.size(); ++i)
         {
-            const entt::entity Entity = Entities[i];
-            if (!Registry.valid(Entity))
+            const ECS::FEntity Entity = Entities[i];
+            if (!Registry.IsValid(Entity))
             {
                 continue;
             }
 
-            if (const FRelationshipComponent* Link = Registry.try_get<FRelationshipComponent>(Entity))
+            if (const FRelationshipComponent* Link = Registry.TryGet<FRelationshipComponent>(Entity))
             {
                 Out[i].bPresent = true;
                 Out[i].Link = *Link;
@@ -129,29 +130,29 @@ namespace Lumina
             return;
         }
 
-        FEntityRegistry& Registry = ECS::GetWorldRegistry(*W);
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*W);
 
         for (SIZE_T i = 0; i < Entities.size(); ++i)
         {
-            const entt::entity Entity = Entities[i];
-            if (!Registry.valid(Entity))
+            const ECS::FEntity Entity = Entities[i];
+            if (!Registry.IsValid(Entity))
             {
                 continue;   // destroyed since the edit; its own transaction owns bringing it back
             }
 
             if (In[i].bPresent)
             {
-                Registry.emplace_or_replace<FRelationshipComponent>(Entity, In[i].Link);
+                Registry.EmplaceOrReplace<FRelationshipComponent>(Entity, In[i].Link);
             }
-            else if (Registry.all_of<FRelationshipComponent>(Entity))
+            else if (Registry.HasAll<FRelationshipComponent>(Entity))
             {
-                Registry.remove<FRelationshipComponent>(Entity);
+                Registry.Remove<FRelationshipComponent>(Entity);
             }
 
             // The parent chain moved, so every restored entity owes a world-matrix recompute.
-            if (Registry.all_of<STransformComponent>(Entity))
+            if (Registry.HasAll<STransformComponent>(Entity))
             {
-                Registry.emplace_or_replace<FNeedsTransformUpdate>(Entity);
+                Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Entity);
             }
         }
 

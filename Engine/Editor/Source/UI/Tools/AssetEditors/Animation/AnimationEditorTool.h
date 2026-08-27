@@ -1,5 +1,8 @@
 ﻿#pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #define USE_IMGUI_API
 #include <imgui.h>
 
@@ -110,7 +113,7 @@ namespace Lumina
         FPropertyTable NotifyDetails;
 
         ImGuizmo::OPERATION GuizmoOp = ImGuizmo::TRANSLATE;
-        entt::entity DirectionalLightEntity = entt::null;
-        entt::entity MeshEntity = entt::null;
+        ECS::FEntity DirectionalLightEntity = ECS::NullEntity;
+        ECS::FEntity MeshEntity = ECS::NullEntity;
     };
 }

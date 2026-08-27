@@ -1,4 +1,7 @@
 #pragma once
+
+#include "World/ECS/Registry.h"
+
 #include "Core/Object/ObjectMacros.h"
 #include "SpringArmComponent.generated.h"
 
@@ -22,7 +25,7 @@ namespace Lumina
 
         /** Pivot the arm orbits. Unset = orbit the camera entity's own location. */
         PROPERTY(Editable, Entity, Category = "Camera|Spring Arm")
-        uint32 Target = entt::to_integral(static_cast<entt::entity>(entt::null));
+        uint32 Target = (static_cast<ECS::FEntity>(ECS::NullEntity)).Value;
 
         /** World-space offset added to the pivot (e.g. raise the focus to head height). */
         PROPERTY(Editable, Category = "Camera|Spring Arm")
@@ -58,9 +61,9 @@ namespace Lumina
 
         /** Set the pivot entity and re-seat the camera on the next tick. */
         FUNCTION()
-        void SetTarget(entt::entity Entity)
+        void SetTarget(ECS::FEntity Entity)
         {
-            Target = entt::to_integral(Entity);
+            Target = (Entity).Value;
             bInitialized = false;
         }
 

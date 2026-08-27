@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "NetReplicationGraph.h"
+#include "World/ECS/Registry.h"
 
 #include "Core/Profiler/Profile.h"
 #include "TaskSystem/TaskSystem.h"
@@ -15,16 +16,16 @@
 
 namespace Lumina::NetGraph
 {
-    void BuildExtract(entt::registry& Registry, FNetExtract& Out, THashMap<uint32, uint32>& OutOwnerToRecord)
+    void BuildExtract(ECS::FRegistry& Registry, FNetExtract& Out, THashMap<uint32, uint32>& OutOwnerToRecord)
     {
         LUMINA_PROFILE_SCOPE();
         Out.Reset();
         OutOwnerToRecord.clear();
 
         // Every replicating entity needs a record whether or not it streams a transform.
-        auto View   = Registry.view<SNetworkComponent>();
-        auto Handle = View.handle();
-        const uint32 N = static_cast<uint32>(Handle->size());
+        auto View   = Registry.View<SNetworkComponent>();
+        auto Handle = View.GetDriver();
+        const uint32 N = static_cast<uint32>(Handle->GetDenseSize());
 
         const uint32 NumThreads = (GTaskSystem != nullptr) ? GTaskSystem->GetNumTaskThreads() : 1u;
         if (static_cast<uint32>(Out.Threads.size()) < NumThreads)
@@ -36,10 +37,10 @@ namespace Lumina::NetGraph
             T.Reset();
         }
 
-        auto&& NetStorage   = Registry.storage<SNetworkComponent>();
-        auto&& RepStorage   = Registry.storage<FRepTransform>();
+        auto NetStorage   = Registry.GetStorage<SNetworkComponent>();
+        auto RepStorage   = Registry.GetStorage<FRepTransform>();
         // Every entity has a transform, so joining the universal pool would be a regression.
-        auto&& TformStorage = Registry.storage<STransformComponent>();
+        auto TformStorage = Registry.GetStorage<STransformComponent>();
 
         if (N > 0)
         {
@@ -49,8 +50,8 @@ namespace Lumina::NetGraph
                 FNetExtractThread& L = Out.Threads[Range.Thread];
                 for (uint32 i = Range.Start; i < Range.End; ++i)
                 {
-                    const entt::entity E = (*Handle)[i];
-                    SNetworkComponent& Net = NetStorage.get(E);
+                    const ECS::FEntity E = Handle->GetDenseData()[i];
+                    SNetworkComponent& Net = NetStorage.Get(E);
 
                     // A static-but-stateful or purely logical entity must still spawn and replicate.
                     if (!Net.bReplicates || !Net.bNetLoadOnClient)
@@ -58,14 +59,14 @@ namespace Lumina::NetGraph
                         continue;
                     }
 
-                    const bool bMovement = Net.bReplicatesMovement && RepStorage.contains(E);
+                    const bool bMovement = Net.bReplicatesMovement && RepStorage.Contains(E);
 
                     uint8 Flags = NETREC_None;
                     if (Net.bAlwaysRelevant)                       { Flags |= NETREC_AlwaysRelevant; }
                     if (Net.NetGUID.Value >= NetGUID_DynamicStart) { Flags |= NETREC_Dynamic; }
 
                     // With no transform it cannot be placed in the AOI grid, so it must be always relevant.
-                    if (!TformStorage.contains(E))
+                    if (!TformStorage.Contains(E))
                     {
                         if (!Net.bAlwaysRelevant)
                         {
@@ -81,11 +82,11 @@ namespace Lumina::NetGraph
                         continue;
                     }
 
-                    STransformComponent& T = TformStorage.get(E);
+                    STransformComponent& T = TformStorage.Get(E);
 
                     // Must match the parent-NetGUID gate in WriteEntityComponents.
-                    const FRelationshipComponent* Rel = Registry.try_get<FRelationshipComponent>(E);
-                    const bool bNetParent = (Rel != nullptr && Rel->Parent != entt::null && Net::ParentReplicates(Registry, Rel->Parent));
+                    const FRelationshipComponent* Rel = Registry.TryGet<FRelationshipComponent>(E);
+                    const bool bNetParent = (Rel != nullptr && Rel->Parent != ECS::NullEntity && Net::ParentReplicates(Registry, Rel->Parent));
                     FVector3 Pos;
                     FQuat    Rot;
                     FVector3 Scale;
@@ -109,7 +110,7 @@ namespace Lumina::NetGraph
                     // A non-movement entity's pose only ever rides the spawn baseline, so it skips this gate.
                     if (bMovement)
                     {
-                        FRepTransform& Rep = RepStorage.get(E);
+                        FRepTransform& Rep = RepStorage.Get(E);
                         if (!Rep.bSendCacheValid || QPos != Rep.LastSentPos || QRot != Rep.LastSentRot) { Flags |= NETREC_Changed; }
                         if (!Rep.bSendCacheValid || QScale != Rep.LastSentScale)                        { Flags |= NETREC_ScaleChanged; }
                         Rep.LastSentPos     = QPos;

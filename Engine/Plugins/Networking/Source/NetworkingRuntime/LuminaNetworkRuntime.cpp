@@ -1,4 +1,5 @@
 #include "LuminaNetworkRuntime.h"
+#include "World/ECS/Registry.h"
 
 #include "NetworkGlobals.h"
 #include "Components/NetworkComponent.h"
@@ -36,25 +37,25 @@ namespace Lumina
             return;
         }
 
-        FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
 
         // Collected first, since destroying while iterating the view it came from is the hazard.
-        TVector<entt::entity> ServerOnly;
-        for (entt::entity Entity : Registry.view<SNetworkComponent>())
+        TVector<ECS::FEntity> ServerOnly;
+        for (ECS::FEntity Entity : Registry.View<SNetworkComponent>())
         {
-            if (!Registry.get<SNetworkComponent>(Entity).bNetLoadOnClient)
+            if (!Registry.Get<SNetworkComponent>(Entity).bNetLoadOnClient)
             {
                 ServerOnly.push_back(Entity);
             }
         }
 
-        for (entt::entity Entity : ServerOnly)
+        for (ECS::FEntity Entity : ServerOnly)
         {
-            Registry.destroy(Entity);
+            Registry.Destroy(Entity);
         }
     }
 
-    void FLuminaNetworkRuntime::OnEntityAttachmentChanged(CWorld* World, entt::entity Entity)
+    void FLuminaNetworkRuntime::OnEntityAttachmentChanged(CWorld* World, ECS::FEntity Entity)
     {
         if (World == nullptr)
         {
@@ -67,10 +68,10 @@ namespace Lumina
             return;
         }
 
-        FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
-        if (Registry.all_of<SNetworkComponent>(Entity))
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
+        if (Registry.HasAll<SNetworkComponent>(Entity))
         {
-            Registry.emplace_or_replace<FNetDirty>(Entity);
+            Registry.EmplaceOrReplace<FNetDirty>(Entity);
         }
     }
 }

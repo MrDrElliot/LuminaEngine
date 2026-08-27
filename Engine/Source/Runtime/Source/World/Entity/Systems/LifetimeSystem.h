@@ -1,4 +1,7 @@
 ﻿#pragma once
+
+#include "World/ECS/Registry.h"
+
 #include "EntitySystem.h"
 #include "Core/Object/ObjectMacros.h"
 #include "SystemContext.h"
@@ -17,7 +20,7 @@ namespace Lumina
         {
             LUMINA_PROFILE_SCOPE();
             
-            Context.CreateView<SLifetimeComponent>().each([&](entt::entity Entity, SLifetimeComponent& Component)
+            Context.CreateView<SLifetimeComponent>().ForEach([&](ECS::FEntity Entity, SLifetimeComponent& Component)
             {
                 Component.Lifetime -= static_cast<float>(Context.GetDeltaTime());
                 if (Component.Lifetime <= 0.0f)

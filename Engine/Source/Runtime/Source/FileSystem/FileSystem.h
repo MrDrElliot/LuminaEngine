@@ -23,7 +23,7 @@ namespace Lumina::VFS
     {
         TUniquePtr<T> Owned = MakeUnique<T>(Alias, Forward<TArgs>(Args)...);
         T& Result = *Owned;
-        Detail::AddFileSystemImpl(Alias, TUniquePtr<IFileSystem>(Owned.release()));
+        Detail::AddFileSystemImpl(Alias, TUniquePtr<IFileSystem>(Owned.Release()));
         return Result;
     }
 

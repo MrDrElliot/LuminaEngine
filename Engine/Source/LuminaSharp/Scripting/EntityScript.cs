@@ -1,4 +1,4 @@
-namespace LuminaSharp;
+﻿namespace LuminaSharp;
 
 /// <summary>The physics phase an <see cref="EntityScript"/>'s OnUpdate runs in: PrePhysics (default) before the
 /// physics step, PostPhysics after (read settled results, e.g. follow cameras).</summary>
@@ -35,14 +35,14 @@ public abstract class EntityScript : Lumina.CEntityScript
 {
     internal TypeDescription Description = null!; // set at Create; cached labels + callback flags, no per-frame reflection
 
-    /// <summary>This script's entity (mirrors C++ entt::entity). Read from the native object, which is the
+    /// <summary>This script's entity (mirrors C++ ECS::FEntity). Read from the native object, which is the
     /// single owner of the value for both languages.</summary>
     public Entity Entity => GetOwningEntity();
 
     /// <summary>The world this script lives in. Also read from the native object.</summary>
     public Lumina.CWorld World => GetWorld();
 
-    /// <summary>The world's component store (mirrors C++ FEntityRegistry / entt::registry).</summary>
+    /// <summary>The world's component store (mirrors C++ ECS::FRegistry).</summary>
     public EntityRegistry Registry => World.Registry;
 
     private System.Threading.CancellationTokenSource? DestroyCts;
@@ -61,10 +61,8 @@ public abstract class EntityScript : Lumina.CEntityScript
         }
     }
 
-    private Lumina.STransformComponent? CachedTransform;
-
-    /// <summary>This entity's transform, resolved once and cached (avoids a per-frame Get crossing + alloc).</summary>
-    public Lumina.STransformComponent Transform => CachedTransform ??= Registry.Get<Lumina.STransformComponent>(Entity);
+    // This entity's transform, resolved on each access because a view dies at the next structural change.
+    public Lumina.STransformComponent Transform => Registry.Get<Lumina.STransformComponent>(Entity);
 
 
     /// <summary>Get the script of type T on another entity (or this one), or null.</summary>

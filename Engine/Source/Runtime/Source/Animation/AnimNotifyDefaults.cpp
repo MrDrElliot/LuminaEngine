@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "AnimNotifyDefaults.h"
+#include "World/ECS/Registry.h"
 
 #include "Animation/SkeletalMeshUtils.h"
 #include "Assets/AssetTypes/Audio/AudioStream.h"
@@ -16,7 +17,7 @@ namespace Lumina
     namespace
     {
         // Socket space when one resolves, else the entity's world transform, else nothing to place it on.
-        bool ResolveNotifyWorldTransform(FEntityRegistry& Registry, FEntity Entity, const FString& Socket, FTransform& OutTransform)
+        bool ResolveNotifyWorldTransform(ECS::FRegistry& Registry, ECS::FEntity Entity, const FString& Socket, FTransform& OutTransform)
         {
             FMatrix4 SocketTransform;
             if (!Socket.empty() && SkeletalUtils::GetSocketWorldTransform(Registry, Entity, FName(Socket.c_str()), SocketTransform))
@@ -25,7 +26,7 @@ namespace Lumina
                 return true;
             }
 
-            STransformComponent* Transform = Registry.try_get<STransformComponent>(Entity);
+            STransformComponent* Transform = Registry.TryGet<STransformComponent>(Entity);
             if (Transform == nullptr)
             {
                 return false;
@@ -36,7 +37,7 @@ namespace Lumina
         }
 
         // The offset rides in the socket's space, so it follows the bone's orientation.
-        bool ResolveNotifyWorldPoint(FEntityRegistry& Registry, FEntity Entity, const FString& Socket,
+        bool ResolveNotifyWorldPoint(ECS::FRegistry& Registry, ECS::FEntity Entity, const FString& Socket,
                                      const FVector3& Offset, FVector3& OutPoint)
         {
             FTransform Placement;
@@ -50,7 +51,7 @@ namespace Lumina
         }
     }
 
-    void SAnimNotify_PlaySound::Notify(FEntityRegistry& Registry, FEntity Entity) const
+    void SAnimNotify_PlaySound::Notify(ECS::FRegistry& Registry, ECS::FEntity Entity) const
     {
         if (!Audio::HasDevice() || Sound == nullptr || !Sound->IsPlayable())
         {
@@ -73,7 +74,7 @@ namespace Lumina
         (void)Audio::PlaySound(Sound.Get(), Params);
     }
 
-    void SAnimNotify_PlayParticleSystem::Notify(FEntityRegistry& Registry, FEntity Entity) const
+    void SAnimNotify_PlayParticleSystem::Notify(ECS::FRegistry& Registry, ECS::FEntity Entity) const
     {
         if (ParticleSystem == nullptr)
         {
@@ -81,7 +82,7 @@ namespace Lumina
         }
 
         // The world lives in the registry's context singleton, which is how the script driver reaches it too.
-        CWorld** WorldPtr = Registry.ctx().find<CWorld*>();
+        CWorld** WorldPtr = Registry.Ctx().Find<CWorld*>();
         CWorld* World = WorldPtr != nullptr ? *WorldPtr : nullptr;
         if (World == nullptr)
         {
@@ -100,33 +101,33 @@ namespace Lumina
             return;
         }
 
-        const entt::entity Spawned = World->SpawnParticleSystem(ParticleSystem, SpawnTransform, Lifetime);
-        if (Spawned != entt::null)
+        const ECS::FEntity Spawned = World->SpawnParticleSystem(ParticleSystem, SpawnTransform, Lifetime);
+        if (Spawned != ECS::NullEntity)
         {
             World->GetComponent<SParticleSystemComponent>(Spawned).EmitterOffset = Offset;
         }
     }
 
-    void SAnimNotify_Log::Notify(FEntityRegistry& Registry, FEntity Entity) const
+    void SAnimNotify_Log::Notify(ECS::FRegistry& Registry, ECS::FEntity Entity) const
     {
-        LOG_INFO("AnimNotify '{}' on entity {}", Message, (uint32)entt::to_integral(Entity));
+        LOG_INFO("AnimNotify '{}' on entity {}", Message, (uint32)(Entity).Value);
     }
 
-    void SAnimNotifyState_Log::NotifyBegin(FEntityRegistry& Registry, FEntity Entity) const
+    void SAnimNotifyState_Log::NotifyBegin(ECS::FRegistry& Registry, ECS::FEntity Entity) const
     {
-        LOG_INFO("AnimNotifyState '{}' BEGIN on entity {}", Message, (uint32)entt::to_integral(Entity));
+        LOG_INFO("AnimNotifyState '{}' BEGIN on entity {}", Message, (uint32)(Entity).Value);
     }
 
-    void SAnimNotifyState_Log::NotifyTick(FEntityRegistry& Registry, FEntity Entity, float Alpha) const
+    void SAnimNotifyState_Log::NotifyTick(ECS::FRegistry& Registry, ECS::FEntity Entity, float Alpha) const
     {
         if (bLogTick)
         {
-            LOG_INFO("AnimNotifyState '{}' TICK {:.3f} on entity {}", Message, Alpha, (uint32)entt::to_integral(Entity));
+            LOG_INFO("AnimNotifyState '{}' TICK {:.3f} on entity {}", Message, Alpha, (uint32)(Entity).Value);
         }
     }
 
-    void SAnimNotifyState_Log::NotifyEnd(FEntityRegistry& Registry, FEntity Entity) const
+    void SAnimNotifyState_Log::NotifyEnd(ECS::FRegistry& Registry, ECS::FEntity Entity) const
     {
-        LOG_INFO("AnimNotifyState '{}' END on entity {}", Message, (uint32)entt::to_integral(Entity));
+        LOG_INFO("AnimNotifyState '{}' END on entity {}", Message, (uint32)(Entity).Value);
     }
 }

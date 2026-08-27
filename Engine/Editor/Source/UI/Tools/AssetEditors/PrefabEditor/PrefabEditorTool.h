@@ -1,5 +1,8 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #define USE_IMGUI_API
 #include <imgui.h>
 #include "ImGuizmo.h"
@@ -47,7 +50,7 @@ namespace Lumina
         bool bShowAABB = false;
 
         // GuizmoOp/GuizmoMode + snap state now live in FSceneEditorTool.
-        entt::entity DirectionalLightEntity = entt::null;
+        ECS::FEntity DirectionalLightEntity = ECS::NullEntity;
 
         /** Whether the preview studio rig is active. Auto-derived on load, then user-owned. */
         bool bStudioLighting = true;
@@ -67,29 +70,29 @@ namespace Lumina
 
         // The details panel is shared (FSceneEditorTool::DrawDetailsPanel); the prefab only guards
         // root deletion and hides its internal SPrefabComponent.
-        bool CanDeleteEntity(entt::entity Entity) const override;
+        bool CanDeleteEntity(ECS::FEntity Entity) const override;
         bool IsComponentHiddenInDetails(const CStruct* Type) const override;
 
         // Restrict the shared outliner to prefab-owned entities (hides preview lights/floor/camera).
-        bool IsOutlinerEntityVisible(entt::entity Entity) const override;
+        bool IsOutlinerEntityVisible(ECS::FEntity Entity) const override;
 
         // Header above the Scene Graph naming the parent, when this prefab is a variant.
         void DrawVariantBanner();
 
-        void HandleOutlinerDragDrop(FTreeListView& Tree, entt::entity DropItem);
-        void HandlePrefabContentDrop(FStringView VirtualPath, entt::entity DropTarget, bool bAttachToTarget) override;
+        void HandleOutlinerDragDrop(FTreeListView& Tree, ECS::FEntity DropItem);
+        void HandlePrefabContentDrop(FStringView VirtualPath, ECS::FEntity DropTarget, bool bAttachToTarget) override;
 
         // Base CreateEntity*/component-add path; the prefab supplies these hooks: tag new entities
         // with SPrefabComponent + parent them under the root, and spawn at identity (not the camera).
-        void OnEntityCreatedInScene(entt::entity Entity) override;
+        void OnEntityCreatedInScene(ECS::FEntity Entity) override;
         FTransform GetNewEntitySpawnTransform() const override;
 
-        void RequestDestroyEntity(entt::entity Entity);
+        void RequestDestroyEntity(ECS::FEntity Entity);
         void ProcessDestroyRequests();
         void ResetSelectionTransform();
 
         // Hierarchy / multi-select shortcuts.
-        entt::entity DuplicatePrefabEntity(entt::entity Source);
+        ECS::FEntity DuplicatePrefabEntity(ECS::FEntity Source);
         void ProcessClipboardShortcuts();
 
         // Selection model (SetSingleSelectedEntity/Add/Remove/Toggle/Clear/Resync, the cached
@@ -110,7 +113,7 @@ namespace Lumina
          */
         void SyncPreviewLighting(bool bResetToAuto);
 
-        entt::entity FindPrefabRoot() const;
+        ECS::FEntity FindPrefabRoot() const;
 
         CPrefab* GetPrefab() const;
 

@@ -1,5 +1,8 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #include "Core/Delegates/ScriptDelegate.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Math/Math.h"
@@ -25,20 +28,20 @@ namespace Lumina
         int32 GetPerceivedTargetCount() const { return PerceivedCount; }
 
         /** Perceived entity at Index in [0, GetPerceivedTargetCount), or null. (C++; use World.Perception in C#.) */
-        entt::entity GetPerceivedTarget(int32 Index) const
+        ECS::FEntity GetPerceivedTarget(int32 Index) const
         {
-            if (Index < 0 || Index >= PerceivedCount) return entt::null;
+            if (Index < 0 || Index >= PerceivedCount) return ECS::NullEntity;
             return PerceivedTargets[Index].Target;
         }
 
         FUNCTION()
-        bool HasPerceivedTarget(entt::entity Target) const
+        bool HasPerceivedTarget(ECS::FEntity Target) const
         {
             return Find(Target) >= 0;
         }
 
         /** True if Target is sensed THIS tick via the given sense channel. (C++; use World.Perception.CanSense in C#.) */
-        bool CanCurrentlySense(entt::entity Target, EAISenseChannel Channel) const
+        bool CanCurrentlySense(ECS::FEntity Target, EAISenseChannel Channel) const
         {
             const int32 Index = Find(Target);
             return Index >= 0 && (PerceivedTargets[Index].ActiveSenses & (uint8)Channel) != 0;
@@ -46,7 +49,7 @@ namespace Lumina
 
         /** Last sensed world location of Target (held during the forget window), or origin if unknown. */
         FUNCTION()
-        FVector3 GetLastKnownLocation(entt::entity Target) const
+        FVector3 GetLastKnownLocation(ECS::FEntity Target) const
         {
             const int32 Index = Find(Target);
             return Index >= 0 ? PerceivedTargets[Index].LastKnownLocation : FVector3(0.0f);
@@ -54,9 +57,9 @@ namespace Lumina
 
         /** Nearest perceived target to this perceiver's eye, or null when nothing is perceived.
             (C++; use World.Perception.GetClosestPerceivedTarget in C#.) */
-        entt::entity GetClosestPerceivedTarget() const
+        ECS::FEntity GetClosestPerceivedTarget() const
         {
-            entt::entity Best = entt::null;
+            ECS::FEntity Best = ECS::NullEntity;
             float BestSq = 3.4e38f;
             for (int32 i = 0; i < PerceivedCount; ++i)
             {
@@ -142,7 +145,7 @@ namespace Lumina
         FVector3            LastEyeLocation     = FVector3(0.0f); // for GetClosestPerceivedTarget without the registry.
 
         /** Index of Target in PerceivedTargets, or -1. */
-        int32 Find(entt::entity Target) const
+        int32 Find(ECS::FEntity Target) const
         {
             for (int32 i = 0; i < PerceivedCount; ++i)
             {

@@ -1,5 +1,8 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #include "Containers/Vector.h"
 #include "Containers/Function.h"
 #include "Core/Object/ObjectHandleTyped.h"
@@ -32,14 +35,14 @@ namespace Lumina
 
         // Constructs an entity and tracks it so ResetContents can remove it. Renderers must spawn
         // their preview entities through this (not World->ConstructEntity) so the scene can be reused.
-        entt::entity SpawnEntity(FName Name);
+        ECS::FEntity SpawnEntity(FName Name);
 
         // Destroys every entity spawned via SpawnEntity, leaving the camera intact, so one long-lived
         // scene can be repopulated for the next asset instead of rebuilding the whole world each time.
         void ResetContents();
 
         CWorld* GetWorld() const { return World; }
-        entt::entity GetCameraEntity() const { return CameraEntity; }
+        ECS::FEntity GetCameraEntity() const { return CameraEntity; }
 
         // Place the thumbnail camera. Recomputes the view matrix immediately
         // so render results are deterministic without ticking the world.
@@ -80,8 +83,8 @@ namespace Lumina
         bool ResolveCapture(FPendingCapture& In, FPackageThumbnail& Thumbnail);
 
         TObjectPtr<CWorld>          World;
-        entt::entity                CameraEntity = entt::null;
-        TVector<entt::entity>       SpawnedEntities;
+        ECS::FEntity                CameraEntity = ECS::NullEntity;
+        TVector<ECS::FEntity>       SpawnedEntities;
         TUniquePtr<FPendingCapture> Pending;
         uint32                      RTSize       = 512;
         bool                        bInitialized = false;

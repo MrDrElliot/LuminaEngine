@@ -1,4 +1,5 @@
 #include "BlendSpaceEditorTool.h"
+#include "World/ECS/Registry.h"
 
 #include "Animation/TaskSystem/AnimTaskExecutor.h"
 #include "Assets/AssetTypes/Mesh/Animation/Animation.h"
@@ -98,10 +99,10 @@ namespace Lumina
             return;
         }
 
-        if (MeshEntity != entt::null)
+        if (MeshEntity != ECS::NullEntity)
         {
             World->DestroyEntity(MeshEntity);
-            MeshEntity = entt::null;
+            MeshEntity = ECS::NullEntity;
         }
 
         CSkeleton* Skeleton = GetSkeleton();
@@ -171,7 +172,7 @@ namespace Lumina
     void FBlendSpaceEditorTool::EvaluatePreviewPose(float DeltaTime)
     {
         FSkeletonResource* Resource = GetSkeletonResource();
-        if (Resource == nullptr || MeshEntity == entt::null)
+        if (Resource == nullptr || MeshEntity == ECS::NullEntity)
         {
             return;
         }

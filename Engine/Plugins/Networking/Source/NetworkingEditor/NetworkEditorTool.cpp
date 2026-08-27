@@ -1,6 +1,6 @@
-// Engine headers reach for entt; the Runtime PCH supplies it there, not here.
-#include <entt/entt.hpp>
+// Engine headers reach for the ECS; the Runtime PCH supplies it there, not here.
 #include "NetworkEditorTool.h"
+#include "World/ECS/Registry.h"
 
 
 #include "World/WorldManager.h"
@@ -188,7 +188,7 @@ namespace Lumina
             return;
         }
 
-        FEntityRegistry& Registry = ECS::GetWorldRegistry(*SelectedWorld);
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*SelectedWorld);
         const bool bIsServer = SelectedWorld->GetNetMode() == ENetMode::ListenServer
                             || SelectedWorld->GetNetMode() == ENetMode::DedicatedServer;
 
@@ -201,9 +201,9 @@ namespace Lumina
         // A low average means the buffer is starving, which shows up as visible stutter.
         int RingCount = 0, RingSampleSum = 0, RingMin = 0;
         bool bRingMinSet = false;
-        for (entt::entity E : Registry.view<FRepTransform>())
+        for (ECS::FEntity E : Registry.View<FRepTransform>())
         {
-            const FRepTransform& Rep = Registry.get<FRepTransform>(E);
+            const FRepTransform& Rep = Registry.Get<FRepTransform>(E);
             if (Rep.Ring.Count > 0)
             {
                 ++RingCount;
@@ -280,7 +280,7 @@ namespace Lumina
         if (ImGui::CollapsingHeader("Overview", ImGuiTreeNodeFlags_DefaultOpen))
         {
             int NetworkedEntities = 0;
-            for (auto E : Registry.view<SNetworkComponent>()) { (void)E; ++NetworkedEntities; }
+            for (auto E : Registry.View<SNetworkComponent>()) { (void)E; ++NetworkedEntities; }
 
             ImGui::BulletText("Role: %s", NetModeName(SelectedWorld->GetNetMode()));
             ImGui::BulletText("Local Peer Id: %u%s", State->LocalPeerId, bIsServer ? " (server)" : "");
@@ -337,9 +337,9 @@ namespace Lumina
         if (ImGui::CollapsingHeader("Replication", ImGuiTreeNodeFlags_DefaultOpen))
         {
             int MoveRepl = 0, RoleAuth = 0, RoleSim = 0, RoleAuto = 0, RoleNone = 0;
-            for (entt::entity E : Registry.view<SNetworkComponent>())
+            for (ECS::FEntity E : Registry.View<SNetworkComponent>())
             {
-                const SNetworkComponent& N = Registry.get<SNetworkComponent>(E);
+                const SNetworkComponent& N = Registry.Get<SNetworkComponent>(E);
                 if (N.bReplicates && N.bReplicatesMovement && N.bNetLoadOnClient) { ++MoveRepl; }
                 switch (N.LocalRole)
                 {
@@ -474,19 +474,19 @@ namespace Lumina
                 ImGui::TableSetupColumn("Ring");
                 ImGui::TableHeadersRow();
 
-                for (entt::entity E : Registry.view<SNetworkComponent>())
+                for (ECS::FEntity E : Registry.View<SNetworkComponent>())
                 {
                     ++Total;
-                    const SNetworkComponent& N = Registry.get<SNetworkComponent>(E);
+                    const SNetworkComponent& N = Registry.Get<SNetworkComponent>(E);
 
                     const char* Name = "";
-                    if (const SNameComponent* NC = Registry.try_get<SNameComponent>(E)) { Name = NC->Name.c_str(); }
+                    if (const SNameComponent* NC = Registry.TryGet<SNameComponent>(E)) { Name = NC->Name.c_str(); }
                     if (!ImGuiX::PassSearchFilter(Filter, Name)) { continue; }
                     if (Shown >= MaxRows) { continue; }
                     ++Shown;
 
                     int Ring = 0;
-                    if (const FRepTransform* R = Registry.try_get<FRepTransform>(E)) { Ring = R->Ring.Count; }
+                    if (const FRepTransform* R = Registry.TryGet<FRepTransform>(E)) { Ring = R->Ring.Count; }
 
                     ImGui::TableNextRow();
                     ImGui::TableNextColumn(); ImGui::Text("%u", N.NetGUID.Value);

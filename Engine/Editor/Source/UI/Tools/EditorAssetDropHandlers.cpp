@@ -1,4 +1,5 @@
 #include "EditorAssetDropHandlers.h"
+#include "World/ECS/Registry.h"
 
 #include "Assets/AssetTypes/Audio/AudioGraph.h"
 #include "Assets/AssetTypes/Audio/AudioStream.h"
@@ -32,28 +33,28 @@ namespace Lumina
     namespace
     {
         // Retargets an existing component, otherwise spawns, mirroring the static-mesh handler.
-        entt::entity DropSkeletalMesh(CWorld* World, CSkeletalMesh* Mesh, const FTransform& SpawnTransform, entt::entity DropTarget, bool bAttachToTarget)
+        ECS::FEntity DropSkeletalMesh(CWorld* World, CSkeletalMesh* Mesh, const FTransform& SpawnTransform, ECS::FEntity DropTarget, bool bAttachToTarget)
         {
             if (Mesh == nullptr || World == nullptr)
             {
-                return entt::null;
+                return ECS::NullEntity;
             }
 
-            entt::registry& Registry = ECS::GetWorldRegistry(*World);
-            if (DropTarget != entt::null && Registry.valid(DropTarget))
+            ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
+            if (DropTarget != ECS::NullEntity && Registry.IsValid(DropTarget))
             {
-                if (SSkeletalMeshComponent* Existing = Registry.try_get<SSkeletalMeshComponent>(DropTarget))
+                if (SSkeletalMeshComponent* Existing = Registry.TryGet<SSkeletalMeshComponent>(DropTarget))
                 {
                     Existing->SetSkeletalMesh(Mesh);
                     return DropTarget;
                 }
             }
 
-            entt::entity Entity = World->ConstructEntity(Mesh->GetName(), SpawnTransform);
-            SSkeletalMeshComponent& MeshComponent = Registry.emplace<SSkeletalMeshComponent>(Entity);
+            ECS::FEntity Entity = World->ConstructEntity(Mesh->GetName(), SpawnTransform);
+            SSkeletalMeshComponent& MeshComponent = Registry.Emplace<SSkeletalMeshComponent>(Entity);
             MeshComponent.SetSkeletalMesh(Mesh);
 
-            if (bAttachToTarget && DropTarget != entt::null && Registry.valid(DropTarget))
+            if (bAttachToTarget && DropTarget != ECS::NullEntity && Registry.IsValid(DropTarget))
             {
                 ECS::Utils::ReparentEntity(Registry, Entity, DropTarget);
             }
@@ -72,29 +73,29 @@ namespace Lumina
 
             // Dropped on an existing mesh entity it just replaces that entity's mesh asset.
             Instance.Register(CStaticMesh::StaticClass()->GetName(),
-                [](CWorld* World, CObject* Asset, const FTransform& SpawnTransform, entt::entity DropTarget, bool bAttachToTarget) -> entt::entity
+                [](CWorld* World, CObject* Asset, const FTransform& SpawnTransform, ECS::FEntity DropTarget, bool bAttachToTarget) -> ECS::FEntity
                 {
                     CStaticMesh* Mesh = Cast<CStaticMesh>(Asset);
                     if (Mesh == nullptr || World == nullptr)
                     {
-                        return entt::null;
+                        return ECS::NullEntity;
                     }
 
-                    entt::registry& Registry = ECS::GetWorldRegistry(*World);
-                    if (DropTarget != entt::null && Registry.valid(DropTarget))
+                    ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
+                    if (DropTarget != ECS::NullEntity && Registry.IsValid(DropTarget))
                     {
-                        if (SStaticMeshComponent* Existing = Registry.try_get<SStaticMeshComponent>(DropTarget))
+                        if (SStaticMeshComponent* Existing = Registry.TryGet<SStaticMeshComponent>(DropTarget))
                         {
                             Existing->SetStaticMesh(Mesh);
                             return DropTarget;
                         }
                     }
 
-                    entt::entity Entity = World->ConstructEntity(Mesh->GetName(), SpawnTransform);
-                    SStaticMeshComponent& MeshComponent = Registry.emplace<SStaticMeshComponent>(Entity);
+                    ECS::FEntity Entity = World->ConstructEntity(Mesh->GetName(), SpawnTransform);
+                    SStaticMeshComponent& MeshComponent = Registry.Emplace<SStaticMeshComponent>(Entity);
                     MeshComponent.SetStaticMesh(Mesh);
 
-                    if (bAttachToTarget && DropTarget != entt::null && Registry.valid(DropTarget))
+                    if (bAttachToTarget && DropTarget != ECS::NullEntity && Registry.IsValid(DropTarget))
                     {
                         ECS::Utils::ReparentEntity(Registry, Entity, DropTarget);
                     }
@@ -104,24 +105,24 @@ namespace Lumina
 
             // A material is only meaningful on an existing mesh entity, and sets slot 0.
             Instance.Register(CMaterialInterface::StaticClass()->GetName(),
-                [](CWorld* World, CObject* Asset, const FTransform& /*SpawnTransform*/, entt::entity DropTarget, bool /*bAttachToTarget*/) -> entt::entity
+                [](CWorld* World, CObject* Asset, const FTransform& /*SpawnTransform*/, ECS::FEntity DropTarget, bool /*bAttachToTarget*/) -> ECS::FEntity
                 {
                     CMaterialInterface* Material = Cast<CMaterialInterface>(Asset);
-                    if (Material == nullptr || World == nullptr || DropTarget == entt::null)
+                    if (Material == nullptr || World == nullptr || DropTarget == ECS::NullEntity)
                     {
-                        return entt::null;
+                        return ECS::NullEntity;
                     }
 
-                    entt::registry& Registry = ECS::GetWorldRegistry(*World);
-                    if (!Registry.valid(DropTarget))
+                    ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
+                    if (!Registry.IsValid(DropTarget))
                     {
-                        return entt::null;
+                        return ECS::NullEntity;
                     }
 
-                    SStaticMeshComponent* MeshComponent = Registry.try_get<SStaticMeshComponent>(DropTarget);
+                    SStaticMeshComponent* MeshComponent = Registry.TryGet<SStaticMeshComponent>(DropTarget);
                     if (MeshComponent == nullptr)
                     {
-                        return entt::null;
+                        return ECS::NullEntity;
                     }
 
                     if (MeshComponent->MaterialOverrides.empty())
@@ -134,19 +135,19 @@ namespace Lumina
 
             // A skeletal mesh takes the same shape as the static-mesh handler.
             Instance.Register(CSkeletalMesh::StaticClass()->GetName(),
-                [](CWorld* World, CObject* Asset, const FTransform& SpawnTransform, entt::entity DropTarget, bool bAttachToTarget) -> entt::entity
+                [](CWorld* World, CObject* Asset, const FTransform& SpawnTransform, ECS::FEntity DropTarget, bool bAttachToTarget) -> ECS::FEntity
                 {
                     return DropSkeletalMesh(World, Cast<CSkeletalMesh>(Asset), SpawnTransform, DropTarget, bAttachToTarget);
                 });
 
             // A skeleton has no geometry, so dropping it spawns the preview mesh it carries.
             Instance.Register(CSkeleton::StaticClass()->GetName(),
-                [](CWorld* World, CObject* Asset, const FTransform& SpawnTransform, entt::entity DropTarget, bool bAttachToTarget) -> entt::entity
+                [](CWorld* World, CObject* Asset, const FTransform& SpawnTransform, ECS::FEntity DropTarget, bool bAttachToTarget) -> ECS::FEntity
                 {
                     CSkeleton* Skeleton = Cast<CSkeleton>(Asset);
                     if (Skeleton == nullptr || World == nullptr)
                     {
-                        return entt::null;
+                        return ECS::NullEntity;
                     }
 
                     CSkeletalMesh* PreviewMesh = Skeleton->PreviewMesh.Get();
@@ -155,7 +156,7 @@ namespace Lumina
                         LOG_WARN("Skeleton drop: '{}' has no Preview Mesh set, so there is nothing to spawn. "
                                  "Set one on the skeleton asset, or drop a skeletal mesh instead.",
                                  Skeleton->GetName());
-                        return entt::null;
+                        return ECS::NullEntity;
                     }
 
                     return DropSkeletalMesh(World, PreviewMesh, SpawnTransform, DropTarget, bAttachToTarget);
@@ -163,32 +164,32 @@ namespace Lumina
 
             // Plays immediately so the placement can be heard, and swaps rather than stacking on an emitter.
             auto DropSound = [](CWorld* World, CObject* Asset, const FTransform& SpawnTransform,
-                entt::entity DropTarget, bool bAttachToTarget) -> entt::entity
+                ECS::FEntity DropTarget, bool bAttachToTarget) -> ECS::FEntity
             {
                 CSoundBase* Sound = Cast<CSoundBase>(Asset);
                 if (Sound == nullptr || World == nullptr)
                 {
-                    return entt::null;
+                    return ECS::NullEntity;
                 }
 
-                entt::registry& Registry = ECS::GetWorldRegistry(*World);
-                if (DropTarget != entt::null && Registry.valid(DropTarget))
+                ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
+                if (DropTarget != ECS::NullEntity && Registry.IsValid(DropTarget))
                 {
-                    if (SAudioSourceComponent* Existing = Registry.try_get<SAudioSourceComponent>(DropTarget))
+                    if (SAudioSourceComponent* Existing = Registry.TryGet<SAudioSourceComponent>(DropTarget))
                     {
                         Existing->Sound = Sound;
                         return DropTarget;
                     }
                 }
 
-                entt::entity Entity = World->ConstructEntity(Sound->GetName(), SpawnTransform);
-                SAudioSourceComponent& Source = Registry.emplace<SAudioSourceComponent>(Entity);
+                ECS::FEntity Entity = World->ConstructEntity(Sound->GetName(), SpawnTransform);
+                SAudioSourceComponent& Source = Registry.Emplace<SAudioSourceComponent>(Entity);
                 Source.Sound        = Sound;
                 Source.bPlayOnReady = true;
                 // Looping by default, since a one-shot that plays once on spawn reads as the drop not working.
                 Source.bLooping     = true;
 
-                if (bAttachToTarget && DropTarget != entt::null && Registry.valid(DropTarget))
+                if (bAttachToTarget && DropTarget != ECS::NullEntity && Registry.IsValid(DropTarget))
                 {
                     ECS::Utils::ReparentEntity(Registry, Entity, DropTarget);
                 }
@@ -201,18 +202,18 @@ namespace Lumina
 
             // The component bursts on spawn, so the effect plays as soon as it lands and can be judged.
             Instance.Register(CParticleSystem::StaticClass()->GetName(),
-                [](CWorld* World, CObject* Asset, const FTransform& SpawnTransform, entt::entity DropTarget, bool bAttachToTarget) -> entt::entity
+                [](CWorld* World, CObject* Asset, const FTransform& SpawnTransform, ECS::FEntity DropTarget, bool bAttachToTarget) -> ECS::FEntity
                 {
                     CParticleSystem* System = Cast<CParticleSystem>(Asset);
                     if (System == nullptr || World == nullptr)
                     {
-                        return entt::null;
+                        return ECS::NullEntity;
                     }
 
-                    entt::registry& Registry = ECS::GetWorldRegistry(*World);
-                    if (DropTarget != entt::null && Registry.valid(DropTarget))
+                    ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
+                    if (DropTarget != ECS::NullEntity && Registry.IsValid(DropTarget))
                     {
-                        if (SParticleSystemComponent* Existing = Registry.try_get<SParticleSystemComponent>(DropTarget))
+                        if (SParticleSystemComponent* Existing = Registry.TryGet<SParticleSystemComponent>(DropTarget))
                         {
                             // The extract re-reads ParticleSystem every frame, unlike the meshes that need an invalidate.
                             Existing->ParticleSystem = System;
@@ -221,11 +222,11 @@ namespace Lumina
                         }
                     }
 
-                    entt::entity Entity = World->ConstructEntity(System->GetName(), SpawnTransform);
-                    SParticleSystemComponent& Component = Registry.emplace<SParticleSystemComponent>(Entity);
+                    ECS::FEntity Entity = World->ConstructEntity(System->GetName(), SpawnTransform);
+                    SParticleSystemComponent& Component = Registry.Emplace<SParticleSystemComponent>(Entity);
                     Component.ParticleSystem = System;
 
-                    if (bAttachToTarget && DropTarget != entt::null && Registry.valid(DropTarget))
+                    if (bAttachToTarget && DropTarget != ECS::NullEntity && Registry.IsValid(DropTarget))
                     {
                         ECS::Utils::ReparentEntity(Registry, Entity, DropTarget);
                     }
@@ -235,25 +236,25 @@ namespace Lumina
 
             // Lands Simulated deliberately, since an Inactive ragdoll looks identical to no ragdoll at all.
             Instance.Register(CPhysicsAsset::StaticClass()->GetName(),
-                [](CWorld* World, CObject* Asset, const FTransform& SpawnTransform, entt::entity DropTarget, bool bAttachToTarget) -> entt::entity
+                [](CWorld* World, CObject* Asset, const FTransform& SpawnTransform, ECS::FEntity DropTarget, bool bAttachToTarget) -> ECS::FEntity
                 {
                     CPhysicsAsset* PhysicsAsset = Cast<CPhysicsAsset>(Asset);
                     if (PhysicsAsset == nullptr || World == nullptr)
                     {
-                        return entt::null;
+                        return ECS::NullEntity;
                     }
 
-                    entt::registry& Registry = ECS::GetWorldRegistry(*World);
+                    ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
 
                     // Attach to the drop target when it can actually wear a ragdoll.
-                    entt::entity Target = entt::null;
-                    if (DropTarget != entt::null && Registry.valid(DropTarget)
-                        && Registry.try_get<SSkeletalMeshComponent>(DropTarget) != nullptr)
+                    ECS::FEntity Target = ECS::NullEntity;
+                    if (DropTarget != ECS::NullEntity && Registry.IsValid(DropTarget)
+                        && Registry.TryGet<SSkeletalMeshComponent>(DropTarget) != nullptr)
                     {
                         Target = DropTarget;
                     }
 
-                    if (Target == entt::null)
+                    if (Target == ECS::NullEntity)
                     {
                         CSkeleton* Skeleton = PhysicsAsset->Skeleton.Get();
                         CSkeletalMesh* PreviewMesh = (Skeleton != nullptr) ? Skeleton->PreviewMesh.Get() : nullptr;
@@ -262,29 +263,29 @@ namespace Lumina
                             LOG_WARN("Physics asset drop: '{}' has no skeleton preview mesh to spawn. Set a "
                                      "Preview Mesh on its skeleton, or drop it onto a skeletal mesh entity.",
                                      PhysicsAsset->GetName());
-                            return entt::null;
+                            return ECS::NullEntity;
                         }
 
                         Target = DropSkeletalMesh(World, PreviewMesh, SpawnTransform, DropTarget, bAttachToTarget);
-                        if (Target == entt::null)
+                        if (Target == ECS::NullEntity)
                         {
-                            return entt::null;
+                            return ECS::NullEntity;
                         }
                     }
                     else
                     {
                         // Bodies are authored against one skeleton's bone indices and would silently attach wrong.
-                        CSkeletalMesh* Mesh = Registry.get<SSkeletalMeshComponent>(Target).GetSkeletalMesh();
+                        CSkeletalMesh* Mesh = Registry.Get<SSkeletalMeshComponent>(Target).GetSkeletalMesh();
                         if (Mesh != nullptr && Mesh->Skeleton.IsValid() && PhysicsAsset->Skeleton.IsValid()
                             && Mesh->Skeleton.Get() != PhysicsAsset->Skeleton.Get())
                         {
                             LOG_WARN("Physics asset drop: '{}' is authored for skeleton '{}' but the mesh uses '{}'.",
                                      PhysicsAsset->GetName(), PhysicsAsset->Skeleton->GetName(), Mesh->Skeleton->GetName());
-                            return entt::null;
+                            return ECS::NullEntity;
                         }
                     }
 
-                    SRagdollComponent& Ragdoll = Registry.get_or_emplace<SRagdollComponent>(Target);
+                    SRagdollComponent& Ragdoll = Registry.GetOrEmplace<SRagdollComponent>(Target);
                     Ragdoll.PhysicsAsset = PhysicsAsset;
                     Ragdoll.State        = ERagdollState::Simulated;
                     return Target;
@@ -292,26 +293,26 @@ namespace Lumina
 
             // A clip names a skeleton but not a mesh, so there is nothing sensible to spawn from one alone.
             Instance.Register(CAnimation::StaticClass()->GetName(),
-                [](CWorld* World, CObject* Asset, const FTransform& /*SpawnTransform*/, entt::entity DropTarget, bool /*bAttachToTarget*/) -> entt::entity
+                [](CWorld* World, CObject* Asset, const FTransform& /*SpawnTransform*/, ECS::FEntity DropTarget, bool /*bAttachToTarget*/) -> ECS::FEntity
                 {
                     CAnimation* Animation = Cast<CAnimation>(Asset);
-                    if (Animation == nullptr || World == nullptr || DropTarget == entt::null)
+                    if (Animation == nullptr || World == nullptr || DropTarget == ECS::NullEntity)
                     {
-                        return entt::null;
+                        return ECS::NullEntity;
                     }
 
-                    entt::registry& Registry = ECS::GetWorldRegistry(*World);
-                    if (!Registry.valid(DropTarget))
+                    ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
+                    if (!Registry.IsValid(DropTarget))
                     {
-                        return entt::null;
+                        return ECS::NullEntity;
                     }
 
-                    SSkeletalMeshComponent* MeshComponent = Registry.try_get<SSkeletalMeshComponent>(DropTarget);
+                    SSkeletalMeshComponent* MeshComponent = Registry.TryGet<SSkeletalMeshComponent>(DropTarget);
                     if (MeshComponent == nullptr)
                     {
                         LOG_WARN("Animation drop: '{}' needs a skeletal mesh to play on; the target entity has none.",
                                  Animation->GetName());
-                        return entt::null;
+                        return ECS::NullEntity;
                     }
 
                     // Mismatched skeletons sample garbage rather than failing, so the pose breaks with no explanation.
@@ -321,25 +322,25 @@ namespace Lumina
                     {
                         LOG_WARN("Animation drop: '{}' targets skeleton '{}' but the mesh uses '{}'.",
                                  Animation->GetName(), Animation->Skeleton->GetName(), Mesh->Skeleton->GetName());
-                        return entt::null;
+                        return ECS::NullEntity;
                     }
 
-                    SSimpleAnimationComponent& AnimComponent = Registry.get_or_emplace<SSimpleAnimationComponent>(DropTarget);
+                    SSimpleAnimationComponent& AnimComponent = Registry.GetOrEmplace<SSimpleAnimationComponent>(DropTarget);
                     AnimComponent.PlayAnimation(Animation, /*bLoop*/ true);
                     return DropTarget;
                 });
 
             // A prefab instantiates at SpawnTransform under DropTarget, or as a root.
             Instance.Register(CPrefab::StaticClass()->GetName(),
-                [](CWorld* World, CObject* Asset, const FTransform& SpawnTransform, entt::entity DropTarget, bool bAttachToTarget) -> entt::entity
+                [](CWorld* World, CObject* Asset, const FTransform& SpawnTransform, ECS::FEntity DropTarget, bool bAttachToTarget) -> ECS::FEntity
                 {
                     CPrefab* Prefab = Cast<CPrefab>(Asset);
                     if (Prefab == nullptr || World == nullptr)
                     {
-                        return entt::null;
+                        return ECS::NullEntity;
                     }
                     // Instantiate takes a PARENT, so the entity under the cursor only passes on when attaching.
-                    const entt::entity Parent = bAttachToTarget ? DropTarget : entt::null;
+                    const ECS::FEntity Parent = bAttachToTarget ? DropTarget : ECS::NullEntity;
                     return Prefab->Instantiate(World, SpawnTransform, Parent);
                 });
         }

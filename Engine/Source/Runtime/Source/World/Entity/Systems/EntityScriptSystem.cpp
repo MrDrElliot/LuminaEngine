@@ -1,4 +1,5 @@
 #include "RuntimePCH.h"
+#include "World/ECS/Registry.h"
 #include "EntityScriptSystem.h"
 
 #include "Core/Math/Math.h"
@@ -6,7 +7,6 @@
 #include "Scripting/EntityScript.h"
 #include "World/World.h"
 #include "World/Subsystems/WorldSettings.h"
-#include "World/Entity/Registry/EntityRegistry.h"
 #include "World/Entity/Systems/SystemContext.h"
 #include "World/Entity/Systems/SystemSingletons.h"
 
@@ -15,13 +15,13 @@ namespace Lumina
     namespace
     {
         // OnFixedUpdate is a fixed 1/PhysicsHz step, dispatched 0..MaxPhysicsSteps times per frame.
-        void DispatchFixedUpdates(FEntityRegistry& Registry, float DeltaSeconds)
+        void DispatchFixedUpdates(ECS::FRegistry& Registry, float DeltaSeconds)
         {
             float FixedDt  = 1.0f / 60.0f;
             int32 MaxSteps = 8;
 
             // find, not get, because a bare registry has no world and the defaults above stand.
-            if (CWorld** WorldPtr = Registry.ctx().find<CWorld*>(); WorldPtr != nullptr && *WorldPtr != nullptr)
+            if (CWorld** WorldPtr = Registry.Ctx().Find<CWorld*>(); WorldPtr != nullptr && *WorldPtr != nullptr)
             {
                 const SDefaultWorldSettings& Settings = (*WorldPtr)->GetDefaultWorldSettings();
                 FixedDt  = 1.0f / Math::Max(10.0f, Settings.PhysicsHz);
@@ -33,9 +33,9 @@ namespace Lumina
                 return;
             }
 
-            auto& Ctx = Registry.ctx();
-            FScriptFixedUpdateState* StatePtr = Ctx.find<FScriptFixedUpdateState>();
-            FScriptFixedUpdateState& FixedState = StatePtr ? *StatePtr : Ctx.emplace<FScriptFixedUpdateState>();
+            auto& Ctx = Registry.Ctx();
+            FScriptFixedUpdateState* StatePtr = Ctx.Find<FScriptFixedUpdateState>();
+            FScriptFixedUpdateState& FixedState = StatePtr ? *StatePtr : Ctx.Emplace<FScriptFixedUpdateState>();
 
             // Clamped as a spiral-of-death guard, so a long hitch cannot queue a hundred steps.
             FixedState.Accumulator = Math::Min(FixedState.Accumulator + DeltaSeconds, (float)MaxSteps * FixedDt);
@@ -62,7 +62,7 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        FEntityRegistry& Registry = Context.GetRegistry();
+        ECS::FRegistry& Registry = Context.GetRegistry();
 
         if (Context.GetUpdateStage() == EUpdateStage::PrePhysics)
         {

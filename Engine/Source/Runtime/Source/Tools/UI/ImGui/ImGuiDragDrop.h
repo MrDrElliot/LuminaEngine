@@ -1,10 +1,12 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #include "Containers/Name.h"
 #include "Containers/String.h"
 #include "ModuleAPI.h"
 #include "Platform/GenericPlatform.h"
-#include "entt/entt.hpp"
 
 namespace Lumina
 {
@@ -36,7 +38,7 @@ namespace Lumina::DragDrop
         CObject*        AssetObject = nullptr;
 
         CWorld*         World = nullptr;
-        entt::entity    Entity = entt::null;
+        ECS::FEntity    Entity = ECS::NullEntity;
         uint32          SceneFolderID = 0;
 
         FFixedString    FilePath;
@@ -49,7 +51,7 @@ namespace Lumina::DragDrop
     RUNTIME_API void SetAssetPayload(FName ClassName, FStringView Path, CObject* Object = nullptr);
     RUNTIME_API void SetAssetPayload(const FAssetData& Asset);
     RUNTIME_API void SetAssetPayload(CObject* Asset);
-    RUNTIME_API void SetEntityPayload(CWorld* World, entt::entity Entity);
+    RUNTIME_API void SetEntityPayload(CWorld* World, ECS::FEntity Entity);
     RUNTIME_API void SetSceneFolderPayload(CWorld* World, uint32 FolderID);
     RUNTIME_API void SetFilePayload(FStringView VirtualPath);
 
@@ -72,7 +74,7 @@ namespace Lumina::DragDrop
     }
 
     // Entity drop. On delivery, writes outputs and returns true.
-    RUNTIME_API bool AcceptEntity(CWorld** OutWorld, entt::entity* OutEntity);
+    RUNTIME_API bool AcceptEntity(CWorld** OutWorld, ECS::FEntity* OutEntity);
 
     // Outliner folder drop. On delivery, writes outputs and returns true.
     RUNTIME_API bool AcceptSceneFolder(CWorld** OutWorld, uint32* OutFolderID);

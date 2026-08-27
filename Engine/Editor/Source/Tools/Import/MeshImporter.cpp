@@ -1,5 +1,6 @@
 ﻿#include "EditorPCH.h"
 #include "MeshImporter.h"
+#include "World/ECS/Registry.h"
 
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Assets/AssetTypes/Material/MaterialInstance.h"
@@ -544,25 +545,25 @@ namespace Lumina
             return (LengthSq > Math::Epsilon<float>()) ? Math::Normalize(Light.LocalDirection) : FVector3(0.0f, 0.0f, -1.0f);
         }
 
-        // File-local so the importer header does not have to pull in entt or the component headers.
-        void AddSceneEnvironment(entt::registry& Registry, entt::entity Root, const FVector3& WorldColor)
+        // File-local so the importer header does not have to pull in the component headers.
+        void AddSceneEnvironment(ECS::FRegistry& Registry, ECS::FEntity Root, const FVector3& WorldColor)
         {
             // A flat fill, since a procedural atmosphere would add a sun and sky gradient nobody asked for.
-            SEnvironmentComponent& Environment = Registry.emplace<SEnvironmentComponent>(Root);
+            SEnvironmentComponent& Environment = Registry.Emplace<SEnvironmentComponent>(Root);
             Environment.bRenderSky   = true;
             Environment.SkyMode      = ESkyMode::SolidColor;
             Environment.SolidSkyColor = WorldColor;
 
             // Intensity carries the magnitude so the color stays a hue, and the component clamps it.
             const float Ambient = Math::Max(WorldColor.x, Math::Max(WorldColor.y, WorldColor.z));
-            SSkyLightComponent& SkyLight = Registry.emplace<SSkyLightComponent>(Root);
+            SSkyLightComponent& SkyLight = Registry.Emplace<SSkyLightComponent>(Root);
             SkyLight.bAffectsWorld  = true;
             SkyLight.bAmbientFromSky = false;
             SkyLight.AmbientColor   = (Ambient > 0.0f) ? (WorldColor / Ambient) : FVector3(1.0f);
             SkyLight.Intensity      = Math::Clamp(Ambient, 0.0f, 1.0f);
 
             // Without this the prefab inherits the host world's grade, which Lumina art-directs by default.
-            SPostProcessComponent& PostProcess = Registry.emplace<SPostProcessComponent>(Root);
+            SPostProcessComponent& PostProcess = Registry.Emplace<SPostProcessComponent>(Root);
             PostProcess.bEnabled        = true;
             PostProcess.bInfiniteExtent = true;
             // A default world ships a volume at priority 0 and ties resolve by iteration order, so outrank it.
@@ -669,14 +670,14 @@ namespace Lumina
         }
         Prefab->SetFlag(OF_NeedsPostLoad);
 
-        entt::registry& Registry = Prefab->Registry;
+        ECS::FRegistry& Registry = Prefab->Registry;
 
-        auto MakeEntity = [&Registry](const FName& Name, const FTransform& Transform) -> entt::entity
+        auto MakeEntity = [&Registry](const FName& Name, const FTransform& Transform) -> ECS::FEntity
         {
-            const entt::entity Entity = Registry.create();
-            Registry.emplace<SNameComponent>(Entity, Name);
-            Registry.emplace<STransformComponent>(Entity, Transform);
-            Registry.emplace<SPrefabComponent>(Entity).StableID = FName(FGuid::New().ToShortString());
+            const ECS::FEntity Entity = Registry.Create();
+            Registry.Emplace<SNameComponent>(Entity, Name);
+            Registry.Emplace<STransformComponent>(Entity, Transform);
+            Registry.Emplace<SPrefabComponent>(Entity).StableID = FName(FGuid::New().ToShortString());
             return Entity;
         };
 
@@ -690,14 +691,14 @@ namespace Lumina
             }
         }
 
-        entt::entity SharedRoot = entt::null;
+        ECS::FEntity SharedRoot = ECS::NullEntity;
         if (RootCount != 1)
         {
             SharedRoot = MakeEntity(FName(FFixedString(PrefabName.data(), PrefabName.size())), FTransform());
         }
 
-        TVector<entt::entity> NodeEntities;
-        NodeEntities.resize(Nodes.size(), entt::null);
+        TVector<ECS::FEntity> NodeEntities;
+        NodeEntities.resize(Nodes.size(), ECS::NullEntity);
 
         // A directional light stores a world vector rather than deriving one from its transform.
         TVector<FQuat> WorldRotations(Nodes.size(), FQuat(1.0f, 0.0f, 0.0f, 0.0f));
@@ -756,11 +757,11 @@ namespace Lumina
                 Transform.SetRotation(Node.Rotation);
             }
 
-            const entt::entity Entity = MakeEntity(Node.Name, Transform);
+            const ECS::FEntity Entity = MakeEntity(Node.Name, Transform);
             NodeEntities[i] = Entity;
 
-            const entt::entity Parent = (Node.ParentIndex != INDEX_NONE) ? NodeEntities[Node.ParentIndex] : SharedRoot;
-            if (Parent != entt::null)
+            const ECS::FEntity Parent = (Node.ParentIndex != INDEX_NONE) ? NodeEntities[Node.ParentIndex] : SharedRoot;
+            if (Parent != ECS::NullEntity)
             {
                 ECS::Utils::AddToParent(Registry, Entity, Parent);
             }
@@ -782,11 +783,11 @@ namespace Lumina
 
                     if (CStaticMesh* Static = Cast<CStaticMesh>(MeshAt(Slot.StaticResource)))
                     {
-                        Registry.emplace<SStaticMeshComponent>(Entity).StaticMesh = Static;
+                        Registry.Emplace<SStaticMeshComponent>(Entity).StaticMesh = Static;
                     }
                     if (CSkeletalMesh* Skinned = Cast<CSkeletalMesh>(MeshAt(Slot.SkinnedResource)))
                     {
-                        Registry.emplace<SSkeletalMeshComponent>(Entity).SkeletalMesh = Skinned;
+                        Registry.Emplace<SSkeletalMeshComponent>(Entity).SkeletalMesh = Skinned;
                     }
                     break;
                 }
@@ -798,7 +799,7 @@ namespace Lumina
                         break;
                     }
 
-                    SPointLightComponent& Light = Registry.emplace<SPointLightComponent>(Entity);
+                    SPointLightComponent& Light = Registry.Emplace<SPointLightComponent>(Entity);
                     Light.LightColor = Node.Light.Color;
                     Light.Intensity  = ConvertPunctualIntensity(Node.Light, BrightestPunctual);
                     // glTF range 0 means unbounded, which a clustered renderer cannot express.
@@ -817,7 +818,7 @@ namespace Lumina
                         break;
                     }
 
-                    SSpotLightComponent& Light = Registry.emplace<SSpotLightComponent>(Entity);
+                    SSpotLightComponent& Light = Registry.Emplace<SSpotLightComponent>(Entity);
                     Light.LightColor      = Node.Light.Color;
                     Light.Intensity       = ConvertPunctualIntensity(Node.Light, BrightestPunctual);
                     Light.InnerConeAngle  = Math::Degrees(Node.Light.InnerConeAngle);
@@ -837,7 +838,7 @@ namespace Lumina
                         break;
                     }
 
-                    SDirectionalLightComponent& Light = Registry.emplace<SDirectionalLightComponent>(Entity);
+                    SDirectionalLightComponent& Light = Registry.Emplace<SDirectionalLightComponent>(Entity);
                     Light.Color     = Node.Light.Color;
                     Light.Intensity = ConvertDirectionalIntensity(Node.Light, BrightestDirectional);
                     // The engine stores the TO-LIGHT vector, which is the reverse of where the source emits.
@@ -854,7 +855,7 @@ namespace Lumina
                         break;
                     }
 
-                    SCameraComponent& Camera = Registry.emplace<SCameraComponent>(Entity);
+                    SCameraComponent& Camera = Registry.Emplace<SCameraComponent>(Entity);
                     Camera.FOV       = Math::Degrees(Node.Camera.YFov);
                     Camera.NearPlane = Node.Camera.ZNear;
                     if (Node.Camera.ZFar > Node.Camera.ZNear)
@@ -886,12 +887,12 @@ namespace Lumina
         if (bCreateSceneEnvironment)
         {
             // The instantiation root is the one entity guaranteed to exist for the life of the instance.
-            entt::entity EnvironmentRoot = SharedRoot;
-            if (EnvironmentRoot == entt::null)
+            ECS::FEntity EnvironmentRoot = SharedRoot;
+            if (EnvironmentRoot == ECS::NullEntity)
             {
                 for (size_t i = 0; i < Nodes.size(); ++i)
                 {
-                    if (NodeEntities[i] != entt::null && Nodes[i].ParentIndex == INDEX_NONE)
+                    if (NodeEntities[i] != ECS::NullEntity && Nodes[i].ParentIndex == INDEX_NONE)
                     {
                         EnvironmentRoot = NodeEntities[i];
                         break;
@@ -899,14 +900,14 @@ namespace Lumina
                 }
             }
 
-            if (EnvironmentRoot != entt::null)
+            if (EnvironmentRoot != ECS::NullEntity)
             {
                 AddSceneEnvironment(Registry, EnvironmentRoot, WorldColor);
             }
         }
 
         LOG_INFO("[Import] scene prefab '{}': {} entities from {} source nodes, {} light(s); relative anchors sun={} punctual={}",
-                 PackagePath.c_str(), KeptCount + (SharedRoot != entt::null ? 1 : 0), Nodes.size(), LightsImported,
+                 PackagePath.c_str(), KeptCount + (SharedRoot != ECS::NullEntity ? 1 : 0), Nodes.size(), LightsImported,
                  BrightestDirectional, BrightestPunctual);
 
         return Prefab;

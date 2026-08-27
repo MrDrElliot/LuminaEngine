@@ -1,5 +1,8 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #include "Assets/AssetTypes/Curve/CurveAsset.h"
 #include "Containers/Vector.h"
 #include "Containers/Name.h"
@@ -50,14 +53,14 @@ namespace Lumina
         float                        Time = 0.0f;
         float                        PreviousTime = 0.0f;
 
-        // Indexed by binding index; entt::null where a binding did not resolve.
-        const TVector<entt::entity>* BoundEntities = nullptr;
+        // Indexed by binding index; ECS::NullEntity where a binding did not resolve.
+        const TVector<ECS::FEntity>* BoundEntities = nullptr;
 
         // True on the frame playback started or jumped, so tracks that latch state (camera cuts) can
         // re-apply rather than assuming continuity.
         bool                         bJumped = false;
 
-        entt::entity Resolve(int32 BindingIndex) const;
+        ECS::FEntity Resolve(int32 BindingIndex) const;
     };
 
     // Base for everything that drives something over time. A new track type is a new subclass with an
@@ -176,15 +179,15 @@ namespace Lumina
     {
         struct FRestoreEntry
         {
-            entt::entity Entity = entt::null;
+            ECS::FEntity Entity = ECS::NullEntity;
             FVector3     Location;
             FVector3     Rotation;
             FVector3     Scale = FVector3(1.0f);
         };
 
-        // Indexed by binding index; entt::null where a binding did not resolve.
-        TVector<entt::entity>  BoundEntities;
-        TVector<entt::entity>  SpawnedEntities;
+        // Indexed by binding index; ECS::NullEntity where a binding did not resolve.
+        TVector<ECS::FEntity>  BoundEntities;
+        TVector<ECS::FEntity>  SpawnedEntities;
         TVector<FRestoreEntry> RestoreState;
 
         bool bBound = false;

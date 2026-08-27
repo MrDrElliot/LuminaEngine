@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 
 namespace LuminaSharp;
 
@@ -97,51 +97,15 @@ public class NativeStruct
 {
     private IntPtr RawHandle;
 
-    // When bound, Handle re-resolves the live component each access via the registry op-table instead of
-    // returning the cached pointer (see BindToEntity).
-    private bool Bound;
-    private ulong BoundWorld;
-    private uint BoundEntity;
-    private IntPtr BoundToken;
-
     protected internal NativeStruct(IntPtr Handle)
     {
         RawHandle = Handle;
     }
 
-    /// <summary>The live native component pointer every generated accessor reads/writes through. A bound
-    /// wrapper re-resolves it per access (throwing if the component was removed); an unbound view returns
-    /// the pointer it was created with. The setter feeds the view-reuse path (one wrapper, reassigned per
-    /// iteration).</summary>
+    // A borrow, not a reference. Fetch through Registry.Get where you use it and never store one.
     protected internal IntPtr Handle
     {
-        get
-        {
-            if (!Bound)
-            {
-                return RawHandle;
-            }
-            IntPtr Pointer = Native.GetComponent(BoundWorld, BoundEntity, BoundToken);
-            if (Pointer == IntPtr.Zero)
-            {
-                throw new InvalidOperationException(
-                    "Use of a [RequireComponent] view whose component is no longer on the entity " +
-                    "(it was removed). Re-add it, or guard with Registry.Has<T>.");
-            }
-            return Pointer;
-        }
+        get => RawHandle;
         set => RawHandle = value;
-    }
-
-    /// <summary>Binds this wrapper to an entity so <see cref="Handle"/> re-resolves the live component on
-    /// each access instead of caching a pointer that a later structural change could dangle. Used by the
-    /// [RequireComponent] injector, which must store the wrapper in a script field for its whole lifetime.
-    /// Token is the component's native op-table token.</summary>
-    internal void BindToEntity(ulong World, uint Entity, IntPtr Token)
-    {
-        Bound = true;
-        BoundWorld = World;
-        BoundEntity = Entity;
-        BoundToken = Token;
     }
 }

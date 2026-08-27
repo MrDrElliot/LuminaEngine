@@ -1,5 +1,6 @@
 ﻿
 #include "Containers/StringFormat.h"
+#include "World/ECS/Registry.h"
 #include "EditorTool.h"
 
 #include <Tools/PrimitiveManager/PrimitiveManager.h>
@@ -68,7 +69,7 @@ namespace Lumina
         : ToolContext(Context)
         , ToolName(DisplayName)
         , World(InWorld)
-        , EditorEntity(entt::null)
+        , EditorEntity(ECS::NullEntity)
     {
         ToolFlags |= EEditorToolFlags::Tool_WantsToolbar;
 
@@ -460,14 +461,14 @@ namespace Lumina
         OutTarget = OutLocation - FVector3(0.0f, 0.0f, 1.0f);
     }
 
-    entt::entity FEditorTool::CreateFloorPlane(float YOffset, float ScaleX, float ScaleY)
+    ECS::FEntity FEditorTool::CreateFloorPlane(float YOffset, float ScaleX, float ScaleY)
     {
         FTransform Transform;
         Transform.Rotate({-90.0f, 0.0f, 0.0f});
         Transform.SetScale(FVector3(ScaleX, ScaleY, 1.0f));
         Transform.Translate(FVector3(0.0f, YOffset, 0.0f));
         
-        entt::entity FloorEntity = World->ConstructEntity("FloorPlane", Transform);
+        ECS::FEntity FloorEntity = World->ConstructEntity("FloorPlane", Transform);
         World->EmplaceComponent<FHideInSceneOutliner>(FloorEntity);
         SStaticMeshComponent& MeshComponent = World->EmplaceComponent<SStaticMeshComponent>(FloorEntity);
         MeshComponent.SetStaticMesh(CPrimitiveManager::Get().PlaneMesh);
@@ -611,7 +612,7 @@ namespace Lumina
     void FEditorTool::DrawViewGizmo(const ImVec2& ViewportOrigin, const ImVec2& ViewportSize)
     {
         const bool bHasEditorCamera = ShouldDrawViewGizmo() && HasEditorCameraControl()
-            && EditorEntity != entt::null && World->IsValidEntity(EditorEntity)
+            && EditorEntity != ECS::NullEntity && World->IsValidEntity(EditorEntity)
             && World->HasComponent<STransformComponent>(EditorEntity);
 
         const float UIScale = ImGuiX::GetUIScale();
@@ -1307,7 +1308,7 @@ namespace Lumina
         DL->AddText(ImVec2(BgMin.x + Pad, BgMin.y + Pad * 0.75f), IM_COL32(235, 235, 235, 120), Hint);
     }
 
-    void FEditorTool::FocusViewportToEntity(entt::entity Entity)
+    void FEditorTool::FocusViewportToEntity(ECS::FEntity Entity)
     {
         if (!HasEditorCameraControl())
         {
@@ -1354,7 +1355,7 @@ namespace Lumina
         }
 
         // Derive orbit yaw/pitch/distance from current camera so the first frame doesn't snap.
-        if (Mode == EEditorCameraMode::Orbit && HasWorld() && EditorEntity != entt::null
+        if (Mode == EEditorCameraMode::Orbit && HasWorld() && EditorEntity != ECS::NullEntity
             && World->IsValidEntity(EditorEntity))
         {
             const STransformComponent& Transform = World->GetComponent<STransformComponent>(EditorEntity);
@@ -1411,7 +1412,7 @@ namespace Lumina
         }
 
         if (CameraState.bHasLastFocusPoint && World != nullptr
-            && EditorEntity != entt::null && World->IsValidEntity(EditorEntity)
+            && EditorEntity != ECS::NullEntity && World->IsValidEntity(EditorEntity)
             && World->HasComponent<STransformComponent>(EditorEntity))
         {
             const FVector3 Location = World->GetComponent<STransformComponent>(EditorEntity).GetLocation();
@@ -1451,7 +1452,7 @@ namespace Lumina
 
     void FEditorTool::ApplyOrbitTransform()
     {
-        if (!HasWorld() || EditorEntity == entt::null)
+        if (!HasWorld() || EditorEntity == ECS::NullEntity)
         {
             return;
         }
@@ -1517,7 +1518,7 @@ namespace Lumina
         // Cleared first, so a tool that early-outs never leaves the gesture flag latched for later readers.
         CameraState.bLeftDragGesture = false;
 
-        if (!HasWorld() || EditorEntity == entt::null)
+        if (!HasWorld() || EditorEntity == ECS::NullEntity)
         {
             return;
         }
@@ -2090,7 +2091,7 @@ namespace Lumina
         TransactionManager.Record(MakeUnique<FEcsRegistrySnapshotCommand>(World));
     }
 
-    void FEditorTool::BeginTransformTransaction(const TVector<entt::entity>& Entities)
+    void FEditorTool::BeginTransformTransaction(const TVector<ECS::FEntity>& Entities)
     {
         if (!CanTransact())
         {
@@ -2112,7 +2113,7 @@ namespace Lumina
         TransactionManager.Record(MakeUnique<FEntityCreationCommand>(World));
     }
 
-    void FEditorTool::BeginComponentTransaction(const TVector<entt::entity>& Entities, CStruct* ComponentType)
+    void FEditorTool::BeginComponentTransaction(const TVector<ECS::FEntity>& Entities, CStruct* ComponentType)
     {
         if (!CanTransact())
         {
@@ -2129,7 +2130,7 @@ namespace Lumina
         TransactionManager.Record(MakeUnique<FEntityComponentSnapshotCommand>(World, Entities, ComponentType));
     }
 
-    void FEditorTool::RecordComponentSnapshot(const TVector<entt::entity>& Entities, CStruct* ComponentType)
+    void FEditorTool::RecordComponentSnapshot(const TVector<ECS::FEntity>& Entities, CStruct* ComponentType)
     {
         if (!CanTransact() || !TransactionManager.IsRecording())
         {
@@ -2144,16 +2145,16 @@ namespace Lumina
         TransactionManager.Record(MakeUnique<FEntityComponentSnapshotCommand>(World, Entities, ComponentType));
     }
 
-    void FEditorTool::BeginRelationshipTransaction(const TVector<entt::entity>& Seeds, entt::entity NewParent)
+    void FEditorTool::BeginRelationshipTransaction(const TVector<ECS::FEntity>& Seeds, ECS::FEntity NewParent)
     {
         if (!CanTransact())
         {
             return;
         }
 
-        FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
 
-        TVector<entt::entity> Affected;
+        TVector<ECS::FEntity> Affected;
         FEntityRelationshipCommand::CollectAffected(Registry, Seeds, NewParent, Affected);
 
         TransactionManager.BeginTransaction(FName());
@@ -2167,21 +2168,21 @@ namespace Lumina
         TransactionManager.Record(MakeUnique<FEntityComponentSnapshotCommand>(World, Affected, SSocketAttachmentComponent::StaticStruct()));
     }
 
-    void FEditorTool::BeginDestroyTransaction(const TVector<entt::entity>& Doomed)
+    void FEditorTool::BeginDestroyTransaction(const TVector<ECS::FEntity>& Doomed)
     {
         if (!CanTransact())
         {
             return;
         }
 
-        FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
 
-        TVector<entt::entity> Candidates;
+        TVector<ECS::FEntity> Candidates;
         FEntityDestroyCommand::CollectCandidates(Registry, Doomed, Candidates);
 
         // A surviving parent keeps a child list the dead entities were threaded through.
-        TVector<entt::entity> Neighbors;
-        FEntityRelationshipCommand::CollectAffected(Registry, Candidates, entt::null, Neighbors);
+        TVector<ECS::FEntity> Neighbors;
+        FEntityRelationshipCommand::CollectAffected(Registry, Candidates, ECS::NullEntity, Neighbors);
 
         TransactionManager.BeginTransaction(FName());
 
@@ -2255,7 +2256,7 @@ namespace Lumina
 
         // Falls back to the EditorEntity, since asset editors often own the camera there directly.
         const SCameraComponent* Camera = World->GetActiveCamera();
-        if (Camera == nullptr && EditorEntity != entt::null && World->IsValidEntity(EditorEntity))
+        if (Camera == nullptr && EditorEntity != ECS::NullEntity && World->IsValidEntity(EditorEntity))
         {
             Camera = World->TryGetComponent<SCameraComponent>(EditorEntity);
         }
@@ -2278,7 +2279,7 @@ namespace Lumina
         }
 
         const SCameraComponent* Camera = World->GetActiveCamera();
-        if (Camera == nullptr && EditorEntity != entt::null && World->IsValidEntity(EditorEntity))
+        if (Camera == nullptr && EditorEntity != ECS::NullEntity && World->IsValidEntity(EditorEntity))
         {
             Camera = World->TryGetComponent<SCameraComponent>(EditorEntity);
         }
@@ -2319,11 +2320,11 @@ namespace Lumina
         return true;
     }
 
-    bool FEditorTool::TraceViewportPlacement(ImVec2 ScreenPos, FVector3& OutLocation, entt::entity* OutHitEntity) const
+    bool FEditorTool::TraceViewportPlacement(ImVec2 ScreenPos, FVector3& OutLocation, ECS::FEntity* OutHitEntity) const
     {
         if (OutHitEntity != nullptr)
         {
-            *OutHitEntity = entt::null;
+            *OutHitEntity = ECS::NullEntity;
         }
 
         if (World == nullptr)
@@ -2332,7 +2333,7 @@ namespace Lumina
         }
 
         const SCameraComponent* Camera = World->GetActiveCamera();
-        if (Camera == nullptr && EditorEntity != entt::null && World->IsValidEntity(EditorEntity))
+        if (Camera == nullptr && EditorEntity != ECS::NullEntity && World->IsValidEntity(EditorEntity))
         {
             Camera = World->TryGetComponent<SCameraComponent>(EditorEntity);
         }
@@ -2352,11 +2353,11 @@ namespace Lumina
         bool  bHit         = false;
 
         // The case that matters most, since a landscape has no collision for anything else to hit.
-        FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
-        for (auto&& [Entity, Terrain] : Registry.view<STerrainComponent>().each())
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
+        for (auto&& [Entity, Terrain] : Registry.View<STerrainComponent>().Each())
         {
             FVector3 TerrainOrigin(0.0f);
-            if (const STransformComponent* TerrainTransform = Registry.try_get<STransformComponent>(Entity))
+            if (const STransformComponent* TerrainTransform = Registry.TryGet<STransformComponent>(Entity))
             {
                 TerrainOrigin = TerrainTransform->GetLocation();
             }
@@ -2377,7 +2378,7 @@ namespace Lumina
         // Static and skeletal both, since an animation drop has to hit a character to mean anything.
         auto TraceMeshView = [&](auto View)
         {
-            for (auto&& [Entity, Mesh, Transform] : View.each())
+            for (auto&& [Entity, Mesh, Transform] : View.Each())
             {
                 if (Mesh.CachedLocalRadius <= 0.0f)
                 {
@@ -2421,8 +2422,8 @@ namespace Lumina
             }
         };
 
-        TraceMeshView(Registry.view<SStaticMeshComponent, STransformComponent>());
-        TraceMeshView(Registry.view<SSkeletalMeshComponent, STransformComponent>());
+        TraceMeshView(Registry.View<SStaticMeshComponent, STransformComponent>());
+        TraceMeshView(Registry.View<SSkeletalMeshComponent, STransformComponent>());
 
         if (bHit)
         {
@@ -2445,25 +2446,25 @@ namespace Lumina
         return true;
     }
 
-    entt::entity FEditorTool::HandleContentBrowserAssetDrop(FStringView VirtualPath, entt::entity DropTarget, bool bAttachToTarget)
+    ECS::FEntity FEditorTool::HandleContentBrowserAssetDrop(FStringView VirtualPath, ECS::FEntity DropTarget, bool bAttachToTarget)
     {
         if (World == nullptr || VirtualPath.empty())
         {
-            return entt::null;
+            return ECS::NullEntity;
         }
 
         FAssetData* AssetData = FAssetRegistry::Get().GetAssetByPath(VirtualPath);
         if (AssetData == nullptr)
         {
             LOG_WARN("Asset drop: no registry entry for '{}'", FString(VirtualPath.data(), VirtualPath.size()).c_str());
-            return entt::null;
+            return ECS::NullEntity;
         }
 
         const FEditorAssetDropHandler* Handler = FEditorAssetDropRegistry::Get().FindHandler(AssetData->AssetClass);
         if (Handler == nullptr || !*Handler)
         {
             LOG_WARN("Asset drop: no drop handler for class '{}' ('{}')", AssetData->AssetClass.c_str(), FString(VirtualPath.data(), VirtualPath.size()).c_str());
-            return entt::null;
+            return ECS::NullEntity;
         }
 
         // A dropped prefab pulls in its whole closure, which the inline path resolves depth-first here.
@@ -2475,7 +2476,7 @@ namespace Lumina
         if (Loaded == nullptr)
         {
             LOG_WARN("Asset drop: failed to load '{}'", FString(VirtualPath.data(), VirtualPath.size()).c_str());
-            return entt::null;
+            return ECS::NullEntity;
         }
 
         // TraceViewportPlacement always yields a point, so this is only for the no-camera case.

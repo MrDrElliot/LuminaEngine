@@ -1,8 +1,10 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #define USE_IMGUI_API
 #include <imgui.h>
-#include <entt/entt.hpp>
 #include "Core/Math/Math.h"
 
 #include "UI/Properties/PropertyTable.h"
@@ -39,7 +41,7 @@ namespace Lumina
 
         /** Get the world's foliage component, creating the singleton foliage entity if needed.
          *  OutEntity receives the owning entity, which callers need to route render dirty marks. */
-        static SFoliageComponent* FindOrCreateFoliage(CWorld* World, entt::entity* OutEntity = nullptr);
+        static SFoliageComponent* FindOrCreateFoliage(CWorld* World, ECS::FEntity* OutEntity = nullptr);
 
     private:
         enum class EFoliageBrushMode : int32 { Paint = 0, Erase = 1 };

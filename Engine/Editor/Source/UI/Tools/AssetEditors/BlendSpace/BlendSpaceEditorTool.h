@@ -1,5 +1,8 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #define USE_IMGUI_API
 #include <imgui.h>
 
@@ -88,8 +91,8 @@ namespace Lumina
         ImVec2                      CanvasMin = ImVec2(0.0f, 0.0f);
         ImVec2                      CanvasSize = ImVec2(1.0f, 1.0f);
 
-        entt::entity                MeshEntity = entt::null;
-        entt::entity                LightEntity = entt::null;
+        ECS::FEntity                MeshEntity = ECS::NullEntity;
+        ECS::FEntity                LightEntity = ECS::NullEntity;
 
         FVector2                    PreviewPosition = FVector2(0.0f, 0.0f);
 

@@ -1,9 +1,10 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
 #include "Core/Delegates/ScriptDelegate.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Templates/Optional.h"
-#include "World/Entity/EntityHandle.h"
 #include "HealthComponent.generated.h"
 
 namespace Lumina
@@ -16,7 +17,7 @@ namespace Lumina
 
         /** Who caused the change, or null for regeneration and script changes with no source. */
         PROPERTY()
-        FEntity Instigator = entt::null;
+        ECS::FEntity Instigator = ECS::NullEntity;
 
         /** Signed change actually applied after clamping, negative for damage. */
         PROPERTY()
@@ -38,15 +39,15 @@ namespace Lumina
 
         /** Applies Damage (negative values are ignored) and returns the health left. */
         FUNCTION()
-        float ApplyDamage(float Damage, FEntity Instigator);
+        float ApplyDamage(float Damage, ECS::FEntity Instigator);
 
         /** Restores health up to MaxHealth and returns the health left. Does nothing while dead. */
         FUNCTION()
-        float Heal(float Amount, FEntity Instigator);
+        float Heal(float Amount, ECS::FEntity Instigator);
 
         /** Drops health to zero and fires OnDied, whatever the current value. */
         FUNCTION()
-        void Kill(FEntity Instigator);
+        void Kill(ECS::FEntity Instigator);
 
         /** Clears the death latch and sets health (0 or less means full). Fires OnHealthChanged, not OnDied. */
         FUNCTION()

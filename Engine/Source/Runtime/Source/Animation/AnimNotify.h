@@ -1,8 +1,8 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
 #include "Core/Object/ObjectMacros.h"
-#include "World/Entity/EntityHandle.h"
-#include "World/Entity/Registry/EntityRegistry.h"
 #include "AnimNotify.generated.h"
 
 namespace Lumina
@@ -15,7 +15,7 @@ namespace Lumina
 
         virtual ~SAnimNotify() = default;
 
-        virtual void Notify(FEntityRegistry& Registry, FEntity Entity) const {}
+        virtual void Notify(ECS::FRegistry& Registry, ECS::FEntity Entity) const {}
     };
 
     // Ranged notify, same sharing rule as SAnimNotify.
@@ -26,11 +26,11 @@ namespace Lumina
 
         virtual ~SAnimNotifyState() = default;
 
-        virtual void NotifyBegin(FEntityRegistry& Registry, FEntity Entity) const {}
+        virtual void NotifyBegin(ECS::FRegistry& Registry, ECS::FEntity Entity) const {}
 
         // Alpha is 0..1 across the window.
-        virtual void NotifyTick(FEntityRegistry& Registry, FEntity Entity, float Alpha) const {}
+        virtual void NotifyTick(ECS::FRegistry& Registry, ECS::FEntity Entity, float Alpha) const {}
 
-        virtual void NotifyEnd(FEntityRegistry& Registry, FEntity Entity) const {}
+        virtual void NotifyEnd(ECS::FRegistry& Registry, ECS::FEntity Entity) const {}
     };
 }

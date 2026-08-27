@@ -1,4 +1,5 @@
 #include "RuntimePCH.h"
+#include "World/ECS/Registry.h"
 #include "EntityScript.h"
 
 #include "Assets/AssetTypes/Prefabs/Prefab.h"
@@ -178,7 +179,7 @@ namespace Lumina
         // Both tick passes rebuild these every call, so they are parked per thread rather than reallocated.
         struct FTickScratch
         {
-            TVector<entt::entity> Entities;
+            TVector<ECS::FEntity> Entities;
             FScriptSnapshot       Scripts;
         };
 
@@ -210,17 +211,17 @@ namespace Lumina
             FTickScratch  Local;
         };
 
-        void SnapshotScripts(FEntityRegistry& Registry, entt::entity Entity, FScriptSnapshot& Out)
+        void SnapshotScripts(ECS::FRegistry& Registry, ECS::FEntity Entity, FScriptSnapshot& Out)
         {
             Out.clear();
 
             // try_get on a dead entity indexes the sparse set out of bounds rather than returning null.
-            if (Entity == entt::null || !Registry.valid(Entity))
+            if (Entity == ECS::NullEntity || !Registry.IsValid(Entity))
             {
                 return;
             }
 
-            SEntityScriptComponent* Component = Registry.try_get<SEntityScriptComponent>(Entity);
+            SEntityScriptComponent* Component = Registry.TryGet<SEntityScriptComponent>(Entity);
             if (Component == nullptr)
             {
                 return;
@@ -237,14 +238,14 @@ namespace Lumina
         }
 
         // Re-resolved per dispatch, since an earlier callback may have removed this script or its entity.
-        bool IsStillAttached(FEntityRegistry& Registry, entt::entity Entity, const CEntityScript* Script)
+        bool IsStillAttached(ECS::FRegistry& Registry, ECS::FEntity Entity, const CEntityScript* Script)
         {
-            if (Script == nullptr || !Registry.valid(Entity))
+            if (Script == nullptr || !Registry.IsValid(Entity))
             {
                 return false;
             }
 
-            const SEntityScriptComponent* Component = Registry.try_get<SEntityScriptComponent>(Entity);
+            const SEntityScriptComponent* Component = Registry.TryGet<SEntityScriptComponent>(Entity);
             if (Component == nullptr)
             {
                 return false;
@@ -264,7 +265,7 @@ namespace Lumina
         struct FScriptRegistryRef
         {
             CObject*         Owner = nullptr;
-            FEntityRegistry* Registry = nullptr;
+            ECS::FRegistry* Registry = nullptr;
             bool             bVariantDelta = false;
         };
 
@@ -290,7 +291,7 @@ namespace Lumina
             }
         }
 
-        FEntityRegistry* ResolveScriptRegistry(CObject* Owner, bool bVariantDelta)
+        ECS::FRegistry* ResolveScriptRegistry(CObject* Owner, bool bVariantDelta)
         {
             if (CWorld* World = Cast<CWorld>(Owner))
             {
@@ -304,13 +305,13 @@ namespace Lumina
         }
 
         // A script attached to a new entity during the pass readies on the next tick like any other.
-        void SnapshotScriptedEntities(FEntityRegistry& Registry, TVector<entt::entity>& Out)
+        void SnapshotScriptedEntities(ECS::FRegistry& Registry, TVector<ECS::FEntity>& Out)
         {
             Out.clear();
 
-            auto View = Registry.view<SEntityScriptComponent>(entt::exclude<SDisabledTag, SScriptDisabledTag>);
-            Out.reserve(View.size_hint());
-            for (entt::entity Entity : View)
+            auto View = Registry.View<SEntityScriptComponent>(ECS::TExclude<SDisabledTag, SScriptDisabledTag>{});
+            Out.reserve(View.Num());
+            for (ECS::FEntity Entity : View)
             {
                 Out.push_back(Entity);
             }
@@ -319,7 +320,7 @@ namespace Lumina
 
     namespace EntityScripts
     {
-        CEntityScript* Attach(FEntityRegistry& Registry, entt::entity Entity, CClass* ScriptClass)
+        CEntityScript* Attach(ECS::FRegistry& Registry, ECS::FEntity Entity, CClass* ScriptClass)
         {
             if (ScriptClass == nullptr || !ScriptClass->IsChildOf(CEntityScript::StaticClass()))
             {
@@ -336,10 +337,10 @@ namespace Lumina
             }
 
             // find, not get, since a bare registry in a test or tool has no world and its scripts have none.
-            CWorld** WorldPtr = Registry.ctx().find<CWorld*>();
+            CWorld** WorldPtr = Registry.Ctx().Find<CWorld*>();
             Script->SetOwner(Entity, WorldPtr != nullptr ? *WorldPtr : nullptr);
 
-            SEntityScriptComponent& Component = Registry.get_or_emplace<SEntityScriptComponent>(Entity);
+            SEntityScriptComponent& Component = Registry.GetOrEmplace<SEntityScriptComponent>(Entity);
             Component.Scripts.push_back(Script);
 
             // By the first tick every sibling script added the same frame exists, so OnReady can reference them.
@@ -347,20 +348,20 @@ namespace Lumina
             return Script;
         }
 
-        void Tick(FEntityRegistry& Registry, float DeltaTime)
+        void Tick(ECS::FRegistry& Registry, float DeltaTime)
         {
             // A C++ subclass runs its own override and a C# one runs the generated shim, indistinguishably.
-            CWorld** WorldPtr = Registry.ctx().find<CWorld*>();
+            CWorld** WorldPtr = Registry.Ctx().Find<CWorld*>();
             CWorld* World = WorldPtr != nullptr ? *WorldPtr : nullptr;
 
             FTickScratchGuard    ScratchGuard;
             FTickScratch&        Scratch  = ScratchGuard.Get();
-            TVector<entt::entity>& Entities = Scratch.Entities;
+            TVector<ECS::FEntity>& Entities = Scratch.Entities;
             FScriptSnapshot&       Scripts  = Scratch.Scripts;
 
             SnapshotScriptedEntities(Registry, Entities);
 
-            for (entt::entity Entity : Entities)
+            for (ECS::FEntity Entity : Entities)
             {
                 SnapshotScripts(Registry, Entity, Scripts);
 
@@ -373,7 +374,7 @@ namespace Lumina
                     }
 
                     // The one place entity and registry are both in hand, and it runs before OnReady.
-                    if (Script->GetOwningEntity() == entt::null)
+                    if (Script->GetOwningEntity() == ECS::NullEntity)
                     {
                         Script->SetOwner(Entity, World);
                         Script->OnAttach();
@@ -403,16 +404,16 @@ namespace Lumina
             Scripts.clear();
         }
 
-        void TickFixed(FEntityRegistry& Registry, float FixedDeltaTime)
+        void TickFixed(ECS::FRegistry& Registry, float FixedDeltaTime)
         {
             FTickScratchGuard    ScratchGuard;
             FTickScratch&        Scratch  = ScratchGuard.Get();
-            TVector<entt::entity>& Entities = Scratch.Entities;
+            TVector<ECS::FEntity>& Entities = Scratch.Entities;
             FScriptSnapshot&       Scripts  = Scratch.Scripts;
 
             SnapshotScriptedEntities(Registry, Entities);
 
-            for (entt::entity Entity : Entities)
+            for (ECS::FEntity Entity : Entities)
             {
                 SnapshotScripts(Registry, Entity, Scripts);
 
@@ -431,13 +432,13 @@ namespace Lumina
             Scripts.clear();
         }
 
-        CEntityScript* Find(FEntityRegistry& Registry, entt::entity Entity, const CClass* ScriptClass)
+        CEntityScript* Find(ECS::FRegistry& Registry, ECS::FEntity Entity, const CClass* ScriptClass)
         {
             if (ScriptClass == nullptr)
             {
                 return nullptr;
             }
-            SEntityScriptComponent* Component = Registry.try_get<SEntityScriptComponent>(Entity);
+            SEntityScriptComponent* Component = Registry.TryGet<SEntityScriptComponent>(Entity);
             if (Component == nullptr)
             {
                 return nullptr;
@@ -453,14 +454,14 @@ namespace Lumina
             return nullptr;
         }
 
-        void FindAll(FEntityRegistry& Registry, entt::entity Entity, const CClass* ScriptClass,
+        void FindAll(ECS::FRegistry& Registry, ECS::FEntity Entity, const CClass* ScriptClass,
             TVector<CEntityScript*>& Out)
         {
             if (ScriptClass == nullptr)
             {
                 return;
             }
-            SEntityScriptComponent* Component = Registry.try_get<SEntityScriptComponent>(Entity);
+            SEntityScriptComponent* Component = Registry.TryGet<SEntityScriptComponent>(Entity);
             if (Component == nullptr)
             {
                 return;
@@ -475,7 +476,7 @@ namespace Lumina
             }
         }
 
-        bool Remove(FEntityRegistry& Registry, entt::entity Entity, CEntityScript* Script)
+        bool Remove(ECS::FRegistry& Registry, ECS::FEntity Entity, CEntityScript* Script)
         {
             if (Script == nullptr || !IsStillAttached(Registry, Entity, Script))
             {
@@ -489,7 +490,7 @@ namespace Lumina
                 Script->OnDetach();
             }
             
-            SEntityScriptComponent* Component = Registry.try_get<SEntityScriptComponent>(Entity);
+            SEntityScriptComponent* Component = Registry.TryGet<SEntityScriptComponent>(Entity);
             if (Component == nullptr)
             {
                 return true;   // OnDetach tore the component down; the script is gone either way
@@ -506,7 +507,7 @@ namespace Lumina
             return true;
         }
 
-        void DispatchCollision(FEntityRegistry& Registry, entt::entity Entity,
+        void DispatchCollision(ECS::FRegistry& Registry, ECS::FEntity Entity,
             ECollisionCallback Callback, const SCollisionEvent& Event)
         {
             FScriptSnapshot Scripts;
@@ -529,7 +530,7 @@ namespace Lumina
             }
         }
 
-        void DispatchInput(FEntityRegistry& Registry, entt::entity Entity, const SInputEvent& Event)
+        void DispatchInput(ECS::FRegistry& Registry, ECS::FEntity Entity, const SInputEvent& Event)
         {
             FScriptSnapshot Scripts;
             SnapshotScripts(Registry, Entity, Scripts);
@@ -544,7 +545,7 @@ namespace Lumina
             }
         }
 
-        void PollInputBindings(FEntityRegistry& Registry, entt::entity Entity, const FInputActionState* States,
+        void PollInputBindings(ECS::FRegistry& Registry, ECS::FEntity Entity, const FInputActionState* States,
             int32 Count, uint32 Serial, float DeltaTime)
         {
             FScriptSnapshot Scripts;
@@ -560,7 +561,7 @@ namespace Lumina
             }
         }
 
-        void DispatchPerception(FEntityRegistry& Registry, entt::entity Perceiver,
+        void DispatchPerception(ECS::FRegistry& Registry, ECS::FEntity Perceiver,
             bool bSensed, const SPerceptionEvent& Event)
         {
             FScriptSnapshot Scripts;
@@ -591,14 +592,14 @@ namespace Lumina
             int32 Evacuated = 0;
             for (const FScriptRegistryRef& Ref : Registries)
             {
-                FEntityRegistry& Registry = *Ref.Registry;
+                ECS::FRegistry& Registry = *Ref.Registry;
 
                 // Serialize does not touch the registry, but clearing Scripts destroys user-reachable objects.
-                TVector<entt::entity> Affected;
-                auto View = Registry.view<SEntityScriptComponent>();
-                for (entt::entity Entity : View)
+                TVector<ECS::FEntity> Affected;
+                auto View = Registry.View<SEntityScriptComponent>();
+                for (ECS::FEntity Entity : View)
                 {
-                    const SEntityScriptComponent& Component = View.get<SEntityScriptComponent>(Entity);
+                    const SEntityScriptComponent& Component = View.Get<SEntityScriptComponent>(Entity);
                     for (const TObjectPtr<CEntityScript>& Held : Component.Scripts)
                     {
                         CEntityScript* Script = Held.Get();
@@ -610,9 +611,9 @@ namespace Lumina
                     }
                 }
 
-                for (entt::entity Entity : Affected)
+                for (ECS::FEntity Entity : Affected)
                 {
-                    SEntityScriptComponent* Component = Registry.try_get<SEntityScriptComponent>(Entity);
+                    SEntityScriptComponent* Component = Registry.TryGet<SEntityScriptComponent>(Entity);
                     if (Component == nullptr)
                     {
                         continue;
@@ -643,18 +644,18 @@ namespace Lumina
             int32 Restored = 0;
             for (const FEvacuatedScripts& Entry : Saved)
             {
-                FEntityRegistry* RegistryPtr = ResolveScriptRegistry(Entry.Owner.Get(), Entry.bVariantDelta);
+                ECS::FRegistry* RegistryPtr = ResolveScriptRegistry(Entry.Owner.Get(), Entry.bVariantDelta);
                 if (RegistryPtr == nullptr)
                 {
                     continue;   // the world or prefab went away mid-reload
                 }
-                FEntityRegistry& Registry = *RegistryPtr;
-                if (!Registry.valid(Entry.Entity))
+                ECS::FRegistry& Registry = *RegistryPtr;
+                if (!Registry.IsValid(Entry.Entity))
                 {
                     continue;   // so did the entity
                 }
 
-                SEntityScriptComponent& Component = Registry.get_or_emplace<SEntityScriptComponent>(Entry.Entity);
+                SEntityScriptComponent& Component = Registry.GetOrEmplace<SEntityScriptComponent>(Entry.Entity);
                 {
                     FMemoryReader Reader(const_cast<TVector<uint8>&>(Entry.Bytes));
                     FObjectProxyArchiver Ar(Reader, /*bLoadIfFindFails*/ true);
@@ -671,7 +672,7 @@ namespace Lumina
             return Restored;
         }
 
-        void DetachAll(FEntityRegistry& Registry, entt::entity Entity)
+        void DetachAll(ECS::FRegistry& Registry, ECS::FEntity Entity)
         {
             FScriptSnapshot Scripts;
             SnapshotScripts(Registry, Entity, Scripts);
@@ -689,26 +690,26 @@ namespace Lumina
                 }
             }
             
-            if (SEntityScriptComponent* Component = Registry.try_get<SEntityScriptComponent>(Entity))
+            if (SEntityScriptComponent* Component = Registry.TryGet<SEntityScriptComponent>(Entity))
             {
                 Component->Scripts.clear();
             }
         }
 
-        void DetachAllInRegistry(FEntityRegistry& Registry)
+        void DetachAllInRegistry(ECS::FRegistry& Registry)
         {
             // Disabled entities are included, since a disabled script still ran OnAttach and is owed its OnDetach.
-            TVector<entt::entity> Entities;
-            auto View = Registry.view<SEntityScriptComponent>();
-            Entities.reserve(View.size_hint());
-            for (entt::entity Entity : View)
+            TVector<ECS::FEntity> Entities;
+            auto View = Registry.View<SEntityScriptComponent>();
+            Entities.reserve(View.Num());
+            for (ECS::FEntity Entity : View)
             {
                 Entities.push_back(Entity);
             }
 
-            for (entt::entity Entity : Entities)
+            for (ECS::FEntity Entity : Entities)
             {
-                if (Registry.valid(Entity))
+                if (Registry.IsValid(Entity))
                 {
                     DetachAll(Registry, Entity);
                 }

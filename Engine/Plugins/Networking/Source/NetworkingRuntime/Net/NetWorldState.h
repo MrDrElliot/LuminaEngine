@@ -179,7 +179,7 @@ namespace Lumina
         THashMap<uint32, TVector<uint8>> PendingClientReliable;
 
         // Client: replicated children whose parent hasn't spawned yet. Key = child entity (integral id, so the
-        // map needs no entt hasher), value = desired parent NetGUID. Drained when that parent spawns
+        // map needs no custom hasher), value = desired parent NetGUID. Drained when that parent spawns
         // (ApplySpawnEntity), since relevancy spawn order isn't guaranteed.
         THashMap<uint32, uint32> PendingAttach;
     };

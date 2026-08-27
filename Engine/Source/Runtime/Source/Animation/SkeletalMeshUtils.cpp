@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "SkeletalMeshUtils.h"
+#include "World/ECS/Registry.h"
 
 #include "Core/Math/SIMD/PackHalf.h"
 #include "Core/Math/SIMD/SIMD.h"
@@ -115,45 +116,45 @@ namespace Lumina::SkeletalUtils
         return true;
     }
 
-    bool GetEntitySocketTransform(FEntityRegistry& Registry, entt::entity Entity, const FName& SocketOrBone, FMatrix4& OutTransform)
+    bool GetEntitySocketTransform(ECS::FRegistry& Registry, ECS::FEntity Entity, const FName& SocketOrBone, FMatrix4& OutTransform)
     {
-        if (!Registry.valid(Entity))
+        if (!Registry.IsValid(Entity))
         {
             return false;
         }
 
-        if (const SSkeletalMeshComponent* SkeletalMesh = Registry.try_get<SSkeletalMeshComponent>(Entity))
+        if (const SSkeletalMeshComponent* SkeletalMesh = Registry.TryGet<SSkeletalMeshComponent>(Entity))
         {
             return GetSocketComponentTransform(*SkeletalMesh, SocketOrBone, OutTransform);
         }
-        if (const SStaticMeshComponent* StaticMesh = Registry.try_get<SStaticMeshComponent>(Entity))
+        if (const SStaticMeshComponent* StaticMesh = Registry.TryGet<SStaticMeshComponent>(Entity))
         {
             return GetStaticSocketTransform(*StaticMesh, SocketOrBone, OutTransform);
         }
         return false;
     }
 
-    bool EntityHasSocket(FEntityRegistry& Registry, entt::entity Entity, const FName& SocketOrBone)
+    bool EntityHasSocket(ECS::FRegistry& Registry, ECS::FEntity Entity, const FName& SocketOrBone)
     {
-        if (!Registry.valid(Entity))
+        if (!Registry.IsValid(Entity))
         {
             return false;
         }
 
-        if (const SSkeletalMeshComponent* SkeletalMesh = Registry.try_get<SSkeletalMeshComponent>(Entity))
+        if (const SSkeletalMeshComponent* SkeletalMesh = Registry.TryGet<SSkeletalMeshComponent>(Entity))
         {
             int32 BoneIndex = INDEX_NONE;
             FMatrix4 SocketOffset;
             return ResolveSocket(*SkeletalMesh, SocketOrBone, BoneIndex, SocketOffset);
         }
-        if (const SStaticMeshComponent* StaticMesh = Registry.try_get<SStaticMeshComponent>(Entity))
+        if (const SStaticMeshComponent* StaticMesh = Registry.TryGet<SStaticMeshComponent>(Entity))
         {
             return StaticMesh->StaticMesh.IsValid() && StaticMesh->StaticMesh->FindSocket(SocketOrBone) != nullptr;
         }
         return false;
     }
 
-    bool GetSocketWorldTransform(FEntityRegistry& Registry, entt::entity Entity, const FName& SocketOrBone, FMatrix4& OutTransform)
+    bool GetSocketWorldTransform(ECS::FRegistry& Registry, ECS::FEntity Entity, const FName& SocketOrBone, FMatrix4& OutTransform)
     {
         FMatrix4 ComponentTransform;
         if (!GetEntitySocketTransform(Registry, Entity, SocketOrBone, ComponentTransform))
@@ -161,7 +162,7 @@ namespace Lumina::SkeletalUtils
             return false;
         }
 
-        STransformComponent* Transform = Registry.try_get<STransformComponent>(Entity);
+        STransformComponent* Transform = Registry.TryGet<STransformComponent>(Entity);
         if (Transform == nullptr)
         {
             return false;
@@ -171,15 +172,15 @@ namespace Lumina::SkeletalUtils
         return true;
     }
 
-    int32 FindClosestBone(FEntityRegistry& Registry, entt::entity Entity, const FVector3& WorldPoint)
+    int32 FindClosestBone(ECS::FRegistry& Registry, ECS::FEntity Entity, const FVector3& WorldPoint)
     {
-        if (!Registry.valid(Entity))
+        if (!Registry.IsValid(Entity))
         {
             return INDEX_NONE;
         }
 
-        const SSkeletalMeshComponent* Mesh = Registry.try_get<SSkeletalMeshComponent>(Entity);
-        STransformComponent* Transform = Registry.try_get<STransformComponent>(Entity);
+        const SSkeletalMeshComponent* Mesh = Registry.TryGet<SSkeletalMeshComponent>(Entity);
+        STransformComponent* Transform = Registry.TryGet<STransformComponent>(Entity);
         if (Mesh == nullptr || Transform == nullptr)
         {
             return INDEX_NONE;

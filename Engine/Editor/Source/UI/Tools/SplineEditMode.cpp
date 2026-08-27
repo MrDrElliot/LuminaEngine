@@ -1,4 +1,5 @@
 #include "EditorPCH.h"
+#include "World/ECS/Registry.h"
 #include "SplineEditMode.h"
 
 #include "ImGuizmo.h"
@@ -54,7 +55,7 @@ namespace Lumina
 
     void FSplineEditMode::OnEnter(CWorld*)
     {
-        ActiveEntity   = entt::null;
+        ActiveEntity   = ECS::NullEntity;
         SelectedPoint  = INDEX_NONE;
         SelectedHandle = EHandle::Point;
         bGizmoUsedOnce = false;
@@ -68,25 +69,25 @@ namespace Lumina
             Context->EndModeTransaction("Edit Spline");
         }
 
-        ActiveEntity   = entt::null;
+        ActiveEntity   = ECS::NullEntity;
         SelectedPoint  = INDEX_NONE;
         bGizmoUsedOnce = false;
     }
 
-    entt::entity FSplineEditMode::FindSplineEntity(CWorld* World) const
+    ECS::FEntity FSplineEditMode::FindSplineEntity(CWorld* World) const
     {
         if (World == nullptr)
         {
-            return entt::null;
+            return ECS::NullEntity;
         }
 
         auto View = World->View<FSelectedInEditorComponent, SSplineComponent>();
-        for (entt::entity Entity : View)
+        for (ECS::FEntity Entity : View)
         {
             return Entity;
         }
 
-        return entt::null;
+        return ECS::NullEntity;
     }
 
     FVector3 FSplineEditMode::GetHandleWorldPosition(const SSplineComponent& Spline, const FMatrix4& LocalToWorld, int32 PointIndex, EHandle Handle) const
@@ -178,7 +179,7 @@ namespace Lumina
             return;
         }
 
-        const entt::entity Entity = FindSplineEntity(World);
+        const ECS::FEntity Entity = FindSplineEntity(World);
         if (Entity != ActiveEntity)
         {
             ActiveEntity   = Entity;
@@ -186,7 +187,7 @@ namespace Lumina
             bGizmoUsedOnce = false;
         }
 
-        if (ActiveEntity == entt::null)
+        if (ActiveEntity == ECS::NullEntity)
         {
             return;
         }
@@ -345,7 +346,7 @@ namespace Lumina
 
     void FSplineEditMode::DrawOverlay(CWorld* World, ImVec2 ViewportScreenOrigin, ImVec2 ViewportSize, const SCameraComponent& Camera)
     {
-        if (World == nullptr || ActiveEntity == entt::null)
+        if (World == nullptr || ActiveEntity == ECS::NullEntity)
         {
             return;
         }
@@ -435,7 +436,7 @@ namespace Lumina
         ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
         ImGui::SameLine();
 
-        SSplineComponent* Spline = (ActiveEntity != entt::null) ? World->TryGetComponent<SSplineComponent>(ActiveEntity) : nullptr;
+        SSplineComponent* Spline = (ActiveEntity != ECS::NullEntity) ? World->TryGetComponent<SSplineComponent>(ActiveEntity) : nullptr;
         if (Spline == nullptr)
         {
             ImGui::TextDisabled("Select an entity with a Spline component");

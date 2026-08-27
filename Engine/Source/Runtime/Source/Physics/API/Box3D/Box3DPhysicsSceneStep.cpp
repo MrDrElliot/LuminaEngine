@@ -1,4 +1,6 @@
 #include "RuntimePCH.h"
+#include "World/ECS/Registry.h"
+#include "World/ECS/EventDispatcher.h"
 #include "Box3DPhysicsScene.h"
 
 #include "Box3DCharacterHandle.h"
@@ -21,80 +23,80 @@ namespace Lumina::Physics
 {
     void FBox3DPhysicsScene::Simulate()
     {
-        entt::registry& Registry = ECS::GetWorldRegistry(*World);
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
 
         BulkCreateRigidBodies(Registry);
 
-        Registry.view<SCharacterPhysicsComponent>().each([&](entt::entity EntityID, SCharacterPhysicsComponent&)
+        Registry.View<SCharacterPhysicsComponent>().ForEach([&](ECS::FEntity EntityID, SCharacterPhysicsComponent&)
         {
             OnCharacterComponentConstructed(Registry, EntityID);
         });
 
-        Registry.view<SRigidBodyComponent, STransformComponent>().each([](SRigidBodyComponent&, STransformComponent& T) { T.SetHasPhysicsBody(true); });
+        Registry.View<SRigidBodyComponent, STransformComponent>().ForEach([](SRigidBodyComponent&, STransformComponent& T) { T.SetHasPhysicsBody(true); });
 
         // One rebuild after the bulk spawn beats the incremental inserts each static shape would have done.
         b3World_RebuildStaticTree(WorldId);
 
-        Registry.on_construct<SCharacterPhysicsComponent>().connect<&FBox3DPhysicsScene::OnCharacterComponentConstructed>(this);
-        Registry.on_destroy<SCharacterPhysicsComponent>().connect<&FBox3DPhysicsScene::OnCharacterComponentDestroyed>(this);
+        Registry.GetSignals<SCharacterPhysicsComponent>().OnConstruct.Connect<&FBox3DPhysicsScene::OnCharacterComponentConstructed>(this);
+        Registry.GetSignals<SCharacterPhysicsComponent>().OnDestroy.Connect<&FBox3DPhysicsScene::OnCharacterComponentDestroyed>(this);
 
-        Registry.on_update<SRigidBodyComponent>().connect<&FBox3DPhysicsScene::OnRigidBodyComponentUpdated>(this);
-        Registry.on_construct<SRigidBodyComponent>().connect<&FBox3DPhysicsScene::OnRigidBodyComponentConstructed>(this);
-        Registry.on_destroy<SRigidBodyComponent>().connect<&FBox3DPhysicsScene::OnRigidBodyComponentDestroyed>(this);
+        Registry.GetSignals<SRigidBodyComponent>().OnUpdate.Connect<&FBox3DPhysicsScene::OnRigidBodyComponentUpdated>(this);
+        Registry.GetSignals<SRigidBodyComponent>().OnConstruct.Connect<&FBox3DPhysicsScene::OnRigidBodyComponentConstructed>(this);
+        Registry.GetSignals<SRigidBodyComponent>().OnDestroy.Connect<&FBox3DPhysicsScene::OnRigidBodyComponentDestroyed>(this);
 
-        Registry.on_construct<SPhysicsConstraintComponent>().connect<&FBox3DPhysicsScene::OnConstraintComponentConstructed>(this);
-        Registry.on_destroy<SPhysicsConstraintComponent>().connect<&FBox3DPhysicsScene::OnConstraintComponentDestroyed>(this);
+        Registry.GetSignals<SPhysicsConstraintComponent>().OnConstruct.Connect<&FBox3DPhysicsScene::OnConstraintComponentConstructed>(this);
+        Registry.GetSignals<SPhysicsConstraintComponent>().OnDestroy.Connect<&FBox3DPhysicsScene::OnConstraintComponentDestroyed>(this);
 
-        Registry.view<SPhysicsConstraintComponent>().each([&](entt::entity E, SPhysicsConstraintComponent& C)
+        Registry.View<SPhysicsConstraintComponent>().ForEach([&](ECS::FEntity E, SPhysicsConstraintComponent& C)
         {
             C.ConstraintID = 0;
             PendingConstraintCreations.push_back(E);
         });
 
-        entt::dispatcher& Dispatcher = World->GetSingleton<entt::dispatcher&>();
-        Dispatcher.sink<SImpulseEvent>().connect<&FBox3DPhysicsScene::OnImpulseEvent>(this);
-        Dispatcher.sink<SForceEvent>().connect<&FBox3DPhysicsScene::OnForceEvent>(this);
-        Dispatcher.sink<STorqueEvent>().connect<&FBox3DPhysicsScene::OnTorqueEvent>(this);
-        Dispatcher.sink<SAngularImpulseEvent>().connect<&FBox3DPhysicsScene::OnAngularImpulseEvent>(this);
-        Dispatcher.sink<SSetVelocityEvent>().connect<&FBox3DPhysicsScene::OnSetVelocityEvent>(this);
-        Dispatcher.sink<SSetAngularVelocityEvent>().connect<&FBox3DPhysicsScene::OnSetAngularVelocityEvent>(this);
-        Dispatcher.sink<SAddImpulseAtPositionEvent>().connect<&FBox3DPhysicsScene::OnAddImpulseAtPositionEvent>(this);
-        Dispatcher.sink<SAddForceAtPositionEvent>().connect<&FBox3DPhysicsScene::OnAddForceAtPositionEvent>(this);
-        Dispatcher.sink<SSetGravityFactorEvent>().connect<&FBox3DPhysicsScene::OnSetGravityFactorEvent>(this);
+        ECS::FEventDispatcher& Dispatcher = *World->GetSingleton<ECS::FEventDispatcher*>();
+        Dispatcher.Sink<SImpulseEvent>().Connect<&FBox3DPhysicsScene::OnImpulseEvent>(this);
+        Dispatcher.Sink<SForceEvent>().Connect<&FBox3DPhysicsScene::OnForceEvent>(this);
+        Dispatcher.Sink<STorqueEvent>().Connect<&FBox3DPhysicsScene::OnTorqueEvent>(this);
+        Dispatcher.Sink<SAngularImpulseEvent>().Connect<&FBox3DPhysicsScene::OnAngularImpulseEvent>(this);
+        Dispatcher.Sink<SSetVelocityEvent>().Connect<&FBox3DPhysicsScene::OnSetVelocityEvent>(this);
+        Dispatcher.Sink<SSetAngularVelocityEvent>().Connect<&FBox3DPhysicsScene::OnSetAngularVelocityEvent>(this);
+        Dispatcher.Sink<SAddImpulseAtPositionEvent>().Connect<&FBox3DPhysicsScene::OnAddImpulseAtPositionEvent>(this);
+        Dispatcher.Sink<SAddForceAtPositionEvent>().Connect<&FBox3DPhysicsScene::OnAddForceAtPositionEvent>(this);
+        Dispatcher.Sink<SSetGravityFactorEvent>().Connect<&FBox3DPhysicsScene::OnSetGravityFactorEvent>(this);
     }
 
     void FBox3DPhysicsScene::StopSimulate()
     {
-        entt::registry& Registry = ECS::GetWorldRegistry(*World);
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
 
-        Registry.on_construct<SCharacterPhysicsComponent>().disconnect<&FBox3DPhysicsScene::OnCharacterComponentConstructed>(this);
-        Registry.on_destroy<SCharacterPhysicsComponent>().disconnect<&FBox3DPhysicsScene::OnCharacterComponentDestroyed>(this);
+        Registry.GetSignals<SCharacterPhysicsComponent>().OnConstruct.Disconnect<&FBox3DPhysicsScene::OnCharacterComponentConstructed>(this);
+        Registry.GetSignals<SCharacterPhysicsComponent>().OnDestroy.Disconnect<&FBox3DPhysicsScene::OnCharacterComponentDestroyed>(this);
 
-        Registry.on_update<SRigidBodyComponent>().disconnect<&FBox3DPhysicsScene::OnRigidBodyComponentUpdated>(this);
-        Registry.on_construct<SRigidBodyComponent>().disconnect<&FBox3DPhysicsScene::OnRigidBodyComponentConstructed>(this);
-        Registry.on_destroy<SRigidBodyComponent>().disconnect<&FBox3DPhysicsScene::OnRigidBodyComponentDestroyed>(this);
+        Registry.GetSignals<SRigidBodyComponent>().OnUpdate.Disconnect<&FBox3DPhysicsScene::OnRigidBodyComponentUpdated>(this);
+        Registry.GetSignals<SRigidBodyComponent>().OnConstruct.Disconnect<&FBox3DPhysicsScene::OnRigidBodyComponentConstructed>(this);
+        Registry.GetSignals<SRigidBodyComponent>().OnDestroy.Disconnect<&FBox3DPhysicsScene::OnRigidBodyComponentDestroyed>(this);
 
-        Registry.on_construct<SPhysicsConstraintComponent>().disconnect<&FBox3DPhysicsScene::OnConstraintComponentConstructed>(this);
-        Registry.on_destroy<SPhysicsConstraintComponent>().disconnect<&FBox3DPhysicsScene::OnConstraintComponentDestroyed>(this);
+        Registry.GetSignals<SPhysicsConstraintComponent>().OnConstruct.Disconnect<&FBox3DPhysicsScene::OnConstraintComponentConstructed>(this);
+        Registry.GetSignals<SPhysicsConstraintComponent>().OnDestroy.Disconnect<&FBox3DPhysicsScene::OnConstraintComponentDestroyed>(this);
 
-        entt::dispatcher& Dispatcher = World->GetSingleton<entt::dispatcher&>();
-        Dispatcher.sink<SImpulseEvent>().disconnect<&FBox3DPhysicsScene::OnImpulseEvent>(this);
-        Dispatcher.sink<SForceEvent>().disconnect<&FBox3DPhysicsScene::OnForceEvent>(this);
-        Dispatcher.sink<STorqueEvent>().disconnect<&FBox3DPhysicsScene::OnTorqueEvent>(this);
-        Dispatcher.sink<SAngularImpulseEvent>().disconnect<&FBox3DPhysicsScene::OnAngularImpulseEvent>(this);
-        Dispatcher.sink<SSetVelocityEvent>().disconnect<&FBox3DPhysicsScene::OnSetVelocityEvent>(this);
-        Dispatcher.sink<SSetAngularVelocityEvent>().disconnect<&FBox3DPhysicsScene::OnSetAngularVelocityEvent>(this);
-        Dispatcher.sink<SAddImpulseAtPositionEvent>().disconnect<&FBox3DPhysicsScene::OnAddImpulseAtPositionEvent>(this);
-        Dispatcher.sink<SAddForceAtPositionEvent>().disconnect<&FBox3DPhysicsScene::OnAddForceAtPositionEvent>(this);
-        Dispatcher.sink<SSetGravityFactorEvent>().disconnect<&FBox3DPhysicsScene::OnSetGravityFactorEvent>(this);
+        ECS::FEventDispatcher& Dispatcher = *World->GetSingleton<ECS::FEventDispatcher*>();
+        Dispatcher.Sink<SImpulseEvent>().Disconnect<&FBox3DPhysicsScene::OnImpulseEvent>(this);
+        Dispatcher.Sink<SForceEvent>().Disconnect<&FBox3DPhysicsScene::OnForceEvent>(this);
+        Dispatcher.Sink<STorqueEvent>().Disconnect<&FBox3DPhysicsScene::OnTorqueEvent>(this);
+        Dispatcher.Sink<SAngularImpulseEvent>().Disconnect<&FBox3DPhysicsScene::OnAngularImpulseEvent>(this);
+        Dispatcher.Sink<SSetVelocityEvent>().Disconnect<&FBox3DPhysicsScene::OnSetVelocityEvent>(this);
+        Dispatcher.Sink<SSetAngularVelocityEvent>().Disconnect<&FBox3DPhysicsScene::OnSetAngularVelocityEvent>(this);
+        Dispatcher.Sink<SAddImpulseAtPositionEvent>().Disconnect<&FBox3DPhysicsScene::OnAddImpulseAtPositionEvent>(this);
+        Dispatcher.Sink<SAddForceAtPositionEvent>().Disconnect<&FBox3DPhysicsScene::OnAddForceAtPositionEvent>(this);
+        Dispatcher.Sink<SSetGravityFactorEvent>().Disconnect<&FBox3DPhysicsScene::OnSetGravityFactorEvent>(this);
 
-        Registry.view<SRigidBodyComponent>().each([&](entt::entity EntityID, SRigidBodyComponent&)
+        Registry.View<SRigidBodyComponent>().ForEach([&](ECS::FEntity EntityID, SRigidBodyComponent&)
         {
             OnRigidBodyComponentDestroyed(Registry, EntityID);
         });
 
         // The hook is already disconnected above, so the proxies have to be released by hand like the bodies.
-        Registry.view<SCharacterPhysicsComponent>().each([&](entt::entity EntityID, SCharacterPhysicsComponent&)
+        Registry.View<SCharacterPhysicsComponent>().ForEach([&](ECS::FEntity EntityID, SCharacterPhysicsComponent&)
         {
             OnCharacterComponentDestroyed(Registry, EntityID);
         });
@@ -106,13 +108,13 @@ namespace Lumina::Physics
     {
         LUMINA_PROFILE_SCOPE();
 
-        entt::registry& Registry = ECS::GetWorldRegistry(*World);
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
         ECS::Utils::FlushDirtyPhysicsBodies(Registry);
 
-        auto BodySyncView = Registry.view<SRigidBodyComponent, FNeedsPhysicsBodyUpdate>();
+        auto BodySyncView = Registry.View<SRigidBodyComponent, FNeedsPhysicsBodyUpdate>();
 
         // Box3D body writes touch shared world arrays, so this stays serial rather than a ParallelFor.
-        for (auto [Entity, BodyComponent, Update] : BodySyncView.each())
+        for (auto [Entity, BodyComponent, Update] : BodySyncView.Each())
         {
             const b3BodyId BodyId = ResolveBody(BodyComponent.BodyID);
             if (!b3Body_IsValid(BodyId))
@@ -120,7 +122,7 @@ namespace Lumina::Physics
                 continue;
             }
 
-            const STransformComponent& Transform = Registry.get<STransformComponent>(Entity);
+            const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
             const b3Vec3 Position = Box3DUtils::ToB3Vec3(Transform.GetLocation());
             const b3Quat Rotation = Box3DUtils::ToB3Quat(Transform.GetRotation());
 
@@ -172,7 +174,7 @@ namespace Lumina::Physics
 
         // Carried forward with the payload intact, since a blanket clear lost a spawn-then-SetLocation.
         RetryBodyUpdates.clear();
-        for (auto [Entity, BodyComponent, Update] : BodySyncView.each())
+        for (auto [Entity, BodyComponent, Update] : BodySyncView.Each())
         {
             if (BodyComponent.BodyID == InvalidBodyHandle)
             {
@@ -180,13 +182,13 @@ namespace Lumina::Physics
             }
         }
 
-        Registry.clear<FNeedsPhysicsBodyUpdate>();
+        Registry.ClearComponent<FNeedsPhysicsBodyUpdate>();
 
         for (const FDeferredBodyUpdate& Retry : RetryBodyUpdates)
         {
-            if (Registry.valid(Retry.Entity))
+            if (Registry.IsValid(Retry.Entity))
             {
-                Registry.emplace<FNeedsPhysicsBodyUpdate>(Retry.Entity, Retry.Update);
+                Registry.Emplace<FNeedsPhysicsBodyUpdate>(Retry.Entity, Retry.Update);
             }
         }
     }
@@ -229,8 +231,8 @@ namespace Lumina::Physics
             return;
         }
 
-        entt::registry& Registry = ECS::GetWorldRegistry(*World);
-        auto& RigidStorage = Registry.storage<SRigidBodyComponent>();
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
+        auto RigidStorage = Registry.GetStorage<SRigidBodyComponent>();
         const float KillHeight = World->GetDefaultWorldSettings().WorldKillHeight;
 
         for (int32 i = 0; i < Events.moveCount; ++i)
@@ -238,14 +240,14 @@ namespace Lumina::Physics
             const b3BodyMoveEvent& Event = Events.moveEvents[i];
 
             // The event carries the user data, so resolving the entity costs no body lookup.
-            const entt::entity Entity = UnpackEntity(Event.userData);
+            const ECS::FEntity Entity = UnpackEntity(Event.userData);
             const uint32 Handle = UnpackHandle(Event.userData);
-            if (!RigidStorage.contains(Entity))
+            if (!RigidStorage.Contains(Entity))
             {
                 continue;
             }
 
-            SRigidBodyComponent& BodyComponent = RigidStorage.get(Entity);
+            SRigidBodyComponent& BodyComponent = RigidStorage.Get(Entity);
             const FVector3 NewPosition = Box3DUtils::FromB3Vec3(Event.transform.p);
             const FQuat NewRotation = Box3DUtils::FromB3Quat(Event.transform.q);
 
@@ -351,11 +353,11 @@ namespace Lumina::Physics
     {
         LUMINA_PROFILE_SCOPE();
 
-        entt::registry& Registry = ECS::GetWorldRegistry(*World);
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
         const float KillHeight = World->GetDefaultWorldSettings().WorldKillHeight;
 
         // Characters are driven by the mover rather than the solver, so they never raise move events.
-        Registry.view<SCharacterPhysicsComponent>().each([&](entt::entity Entity, SCharacterPhysicsComponent& Component)
+        Registry.View<SCharacterPhysicsComponent>().ForEach([&](ECS::FEntity Entity, SCharacterPhysicsComponent& Component)
         {
             if (!Component.Character)
             {
@@ -417,13 +419,13 @@ namespace Lumina::Physics
             return;
         }
 
-        entt::registry& Registry = ECS::GetWorldRegistry(*World);
-        auto& TransformStorage = Registry.storage<STransformComponent>();
-        auto& RenderStorage = Registry.storage<FRenderTransform>();
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
+        auto TransformStorage = Registry.GetStorage<STransformComponent>();
+        auto RenderStorage = Registry.GetStorage<FRenderTransform>();
 
         ECS::Utils::FlushDirtyPhysicsBodies(Registry);
 
-        const auto& PendingTeleport = Registry.storage<FNeedsPhysicsBodyUpdate>();
+        const auto PendingTeleport = Registry.GetStorage<FNeedsPhysicsBodyUpdate>();
 
         InterpApplied.clear();
         InterpApplied.reserve(Count);
@@ -431,35 +433,35 @@ namespace Lumina::Physics
         for (uint32 i = 0; i < Count; ++i)
         {
             const EInterpFlag Flag = InterpStaging.Flags[i];
-            const entt::entity Entity = InterpStaging.Entities[i];
+            const ECS::FEntity Entity = InterpStaging.Entities[i];
 
-            if (Flag == EInterpFlag::Skip || !Registry.valid(Entity))
+            if (Flag == EInterpFlag::Skip || !Registry.IsValid(Entity))
             {
                 continue;
             }
 
             if (Flag == EInterpFlag::BelowKill)
             {
-                Registry.destroy(Entity);
+                Registry.Destroy(Entity);
                 continue;
             }
 
-            if (!TransformStorage.contains(Entity))
+            if (!TransformStorage.Contains(Entity))
             {
                 continue;
             }
 
             // An authored move outranks the body pose, so drop the override and show the target.
-            if (PendingTeleport.contains(Entity))
+            if (PendingTeleport.Contains(Entity))
             {
-                if (RenderStorage.contains(Entity))
+                if (RenderStorage.Contains(Entity))
                 {
-                    RenderStorage.erase(Entity);
+                    RenderStorage.RemoveEntity(Entity);
                 }
                 continue;
             }
 
-            STransformComponent& TransformComponent = TransformStorage.get(Entity);
+            STransformComponent& TransformComponent = TransformStorage.Get(Entity);
             TransformComponent.SetRaw(InterpStaging.CurrPos[i],
                 FQuat(InterpStaging.CurrQw[i], InterpStaging.CurrQx[i], InterpStaging.CurrQy[i], InterpStaging.CurrQz[i]));
 
@@ -472,20 +474,20 @@ namespace Lumina::Physics
 
         for (uint32 i : InterpApplied)
         {
-            const entt::entity Entity = InterpStaging.Entities[i];
+            const ECS::FEntity Entity = InterpStaging.Entities[i];
 
-            FTransform RenderPose = TransformStorage.get(Entity).GetWorldTransformCached();
+            FTransform RenderPose = TransformStorage.Get(Entity).GetWorldTransformCached();
             RenderPose.SetLocation(InterpStaging.LerpPos[i]);
             RenderPose.SetRotation(FQuat(InterpStaging.LerpQw[i], InterpStaging.LerpQx[i],
                                          InterpStaging.LerpQy[i], InterpStaging.LerpQz[i]));
 
-            if (RenderStorage.contains(Entity))
+            if (FRenderTransform* Render = RenderStorage.TryGet(Entity))
             {
-                RenderStorage.get(Entity).Matrix = RenderPose.GetMatrix();
+                Render->Matrix = RenderPose.GetMatrix();
             }
             else
             {
-                RenderStorage.emplace(Entity, FRenderTransform{ RenderPose.GetMatrix() });
+                RenderStorage.Emplace(Entity, FRenderTransform{ RenderPose.GetMatrix() });
             }
         }
     }
@@ -500,7 +502,7 @@ namespace Lumina::Physics
         RebuildStaleDynamicMeshBodies(ECS::GetWorldRegistry(*World));
 
         {
-            TQueue<entt::entity> PendingThisStep;
+            TQueue<ECS::FEntity> PendingThisStep;
             {
                 FScopeLock Lock(PendingRigidBodyMutex);
                 PendingThisStep.swap(PendingRigidBodyCreations);
@@ -509,7 +511,7 @@ namespace Lumina::Physics
             PendingDrainScratch.clear();
             while (!PendingThisStep.empty())
             {
-                const entt::entity Entity = PendingThisStep.front();
+                const ECS::FEntity Entity = PendingThisStep.front();
                 PendingThisStep.pop();
 
                 if (World->IsValidEntity(Entity))

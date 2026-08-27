@@ -1,19 +1,21 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #include "Containers/Function.h"
 #include "Core/LuminaMacros.h"
-#include "entt/entt.hpp"
 
 namespace Lumina
 {
-    // Opaque handle from FTimerManager::SetTimer; safe across frames. The underlying entt::entity is
+    // Opaque handle from FTimerManager::SetTimer; safe across frames. The underlying ECS::FEntity is
     // generational, so a stale handle reports invalid via IsTimerActive even after the slot is recycled.
     struct FTimerHandle
     {
-        entt::entity Handle = entt::null;
+        ECS::FEntity Handle = ECS::NullEntity;
 
-        bool IsValid() const { return Handle != entt::null; }
-        void Invalidate()    { Handle = entt::null; }
+        bool IsValid() const { return Handle != ECS::NullEntity; }
+        void Invalidate()    { Handle = ECS::NullEntity; }
 
         bool operator==(const FTimerHandle& Other) const { return Handle == Other.Handle; }
     };
@@ -31,10 +33,10 @@ namespace Lumina
         LE_NO_COPYMOVE(FTimerManager);
 
         FTimerHandle SetTimer(float Rate, FTimerCallback Callback, bool bLoop = false, float FirstDelay = -1.0f);
-        FTimerHandle SetTimerForEntity(entt::entity Owner, float Rate, FTimerCallback Callback, bool bLoop = false, float FirstDelay = -1.0f);
+        FTimerHandle SetTimerForEntity(ECS::FEntity Owner, float Rate, FTimerCallback Callback, bool bLoop = false, float FirstDelay = -1.0f);
 
         void ClearTimer(FTimerHandle& Handle);
-        void ClearTimersForEntity(entt::entity Owner);
+        void ClearTimersForEntity(ECS::FEntity Owner);
         void Clear();
 
         bool  IsTimerActive(FTimerHandle Handle) const;
@@ -56,13 +58,13 @@ namespace Lumina
             bool                bLoop           = false;
             bool                bPaused         = false;
             bool                bPendingDestroy = false;
-            entt::entity        Owner           = entt::null;
+            ECS::FEntity        Owner           = ECS::NullEntity;
             FTimerCallback      NativeCallback;
         };
 
-        entt::entity CreateTimer(float Rate, bool bLoop, float FirstDelay, entt::entity Owner, FTimerCallback NativeCallback);
+        ECS::FEntity CreateTimer(float Rate, bool bLoop, float FirstDelay, ECS::FEntity Owner, FTimerCallback NativeCallback);
 
-        mutable entt::registry  Registry;
+        mutable ECS::FRegistry  Registry;
         bool                    bTicking = false;
     };
 }

@@ -1,4 +1,5 @@
 #include "RuntimePCH.h"
+#include "World/ECS/Registry.h"
 #include "SequencerSystem.h"
 
 #include "World/World.h"
@@ -19,9 +20,9 @@ namespace Lumina
         const float DeltaTime = (float)SystemContext.GetDeltaTime();
 
         auto View = SystemContext.CreateView<SSequencePlayerComponent>();
-        for (entt::entity Entity : View)
+        for (ECS::FEntity Entity : View)
         {
-            SSequencePlayerComponent& Player = View.get<SSequencePlayerComponent>(Entity);
+            SSequencePlayerComponent& Player = View.Get<SSequencePlayerComponent>(Entity);
 
             CSequence* Sequence = Player.Sequence.Get();
 

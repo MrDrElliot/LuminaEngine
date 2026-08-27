@@ -148,7 +148,7 @@ namespace Lumina
                 return false;
             }
 
-            ConsoleVar->ValuePtr->emplace<T>(Value);
+            ConsoleVar->ValuePtr->Emplace<T>(Value);
 
             if (ConsoleVar->OnChange != nullptr)
             {

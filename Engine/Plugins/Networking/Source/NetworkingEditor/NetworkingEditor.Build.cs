@@ -20,7 +20,6 @@ public class NetworkingEditor : LuminaModuleRules
         {
             "ImGui",
             "RPMalloc",
-            "Entt",
             "Tracy",
         });
     }

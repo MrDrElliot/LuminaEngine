@@ -165,7 +165,7 @@ FCullSphereProjection ProjectCullSphere(float3 CenterWS, float RadiusWS)
     FCullSphereProjection P;
     P.ViewCenter = mul(GetCullCameraView(), float4(CenterWS, 1.0)).xyz;
     P.ViewRadius = RadiusWS * kCullSphereDilation;
-    P.bValid     = ProjectSphereClip(P.ViewCenter, P.ViewRadius, Scene().NearPlane,
+    P.bValid     = ProjectSphereClip(P.ViewCenter, P.ViewRadius, Scene().CullData.CullNearPlane,
                                      CullProj[0][0], CullProj[1][1], P.ClipAABB);
     return P;
 }
@@ -183,8 +183,8 @@ bool IsSubPixel(FCullSphereProjection P)
 // Returns true if the sphere is fully occluded by the camera depth pyramid and can be skipped.
 bool IsHiZOccluded(FCullSphereProjection P)
 {
-    const float ZNear = Scene().NearPlane;
-    const float ZFar  = Scene().FarPlane;
+    const float ZNear = Scene().CullData.CullNearPlane;
+    const float ZFar  = Scene().CullData.CullFarPlane;
 
     // Clip [-1,1] to Vulkan UV [0,1], direct because the projection already bakes +Y-down NDC.
     const float4 UvAABB = saturate(P.ClipAABB * 0.5 + 0.5);

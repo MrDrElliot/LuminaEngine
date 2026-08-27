@@ -1,9 +1,10 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
 #include "Platform/GenericPlatform.h"
 #include "Containers/HashTable.h"
 #include "Core/Object/ObjectMacros.h"
-#include "World/Entity/EntityHandle.h"
 #include "NetGUID.generated.h"
 
 namespace Lumina
@@ -36,10 +37,10 @@ namespace Lumina
     // replicated via spawn records (later phase).
     struct FNetGUIDTable
     {
-        THashMap<uint32, FEntity> GuidToEntity;
+        THashMap<uint32, ECS::FEntity> GuidToEntity;
         uint32                    NextDynamic = NetGUID_DynamicStart;
 
-        void Register(FNetGUID Guid, FEntity Entity)
+        void Register(FNetGUID Guid, ECS::FEntity Entity)
         {
             if (Guid.IsValid())
             {
@@ -55,10 +56,10 @@ namespace Lumina
             }
         }
 
-        NODISCARD FEntity Find(FNetGUID Guid) const
+        NODISCARD ECS::FEntity Find(FNetGUID Guid) const
         {
             auto It = GuidToEntity.find(Guid.Value);
-            return It != GuidToEntity.end() ? It->second : entt::null;
+            return It != GuidToEntity.end() ? It->second : ECS::NullEntity;
         }
 
         NODISCARD FNetGUID AllocateDynamic() { return FNetGUID{ NextDynamic++ }; }

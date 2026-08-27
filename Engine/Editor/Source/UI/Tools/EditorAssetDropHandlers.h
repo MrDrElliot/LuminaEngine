@@ -1,17 +1,19 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
+
 #include "Containers/HashTable.h"
 #include "Containers/Function.h"
 #include "Containers/Name.h"
 #include "Core/Math/Transform.h"
-#include "entt/entt.hpp"
 
 namespace Lumina
 {
     class CWorld;
     class CObject;
 
-    // Spawns/applies a dropped asset. Returns the affected entity (created or DropTarget); entt::null
+    // Spawns/applies a dropped asset. Returns the affected entity (created or DropTarget); ECS::NullEntity
     // on failure.
     //
     // DropTarget is the entity the drop LANDED ON -- the outliner row, or whatever the viewport ray hit.
@@ -22,7 +24,7 @@ namespace Lumina
     // Only an outliner row drop does; placing into the viewport does not, or dropping a crate onto the
     // floor would parent the crate to the floor. Handlers that spawn consult it before reparenting;
     // handlers that only modify DropTarget ignore it.
-    using FEditorAssetDropHandler = TFunction<entt::entity(CWorld* World, CObject* Asset, const FTransform& SpawnTransform, entt::entity DropTarget, bool bAttachToTarget)>;
+    using FEditorAssetDropHandler = TFunction<ECS::FEntity(CWorld* World, CObject* Asset, const FTransform& SpawnTransform, ECS::FEntity DropTarget, bool bAttachToTarget)>;
 
     class FEditorAssetDropRegistry
     {

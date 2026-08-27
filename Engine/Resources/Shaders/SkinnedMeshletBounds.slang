@@ -24,20 +24,9 @@ struct FSkinnedBoundsArgs
     FInstanceStatic*   RetainedStatic;
     FMeshletSphere*    OutBounds;
     // Same index space as OutBounds, so one base addresses both.
-    FSkinnedMeshletCone* OutCones;
+    FMeshletCone*      OutCones;
 };
 FSkinnedBoundsArgs* Pass() { return GetPassArgs<FSkinnedBoundsArgs>(); }
-
-// 1.0 is the gate every cone reader already checks, so this is how a meshlet opts out of the test.
-FSkinnedMeshletCone DisabledCone()
-{
-    FSkinnedMeshletCone Out;
-    Out.Apex       = float3(0.0, 0.0, 0.0);
-    Out.Cutoff     = 1.0;
-    Out.Axis       = float3(0.0, 0.0, 1.0);
-    Out.ApexSpread = 0.0;
-    return Out;
-}
 
 [shader("compute")]
 [numthreads(LOCAL_SIZE_X, 1, 1)]
@@ -107,16 +96,13 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID)
     {
         Pass().OutBounds[OutIdx] = Bind;
 
-        // Bind pose is exact here, so the authored cone carries over with no widening.
+        // Bind pose is exact here, so the authored cone carries over verbatim with no widening.
         if (Pass().OutCones != nullptr)
         {
-            FSkinnedMeshletCone Out = DisabledCone();
+            FMeshletCone Out = DisabledMeshletCone();
             if (Header.Cones != nullptr)
             {
-                const FMeshletCone C = Header.Cones[MeshletIdx];
-                Out.Apex   = C.Apex;
-                Out.Cutoff = C.Cutoff;
-                Out.Axis   = C.Axis;
+                Out = Header.Cones[MeshletIdx];
             }
             Pass().OutCones[OutIdx] = Out;
         }
@@ -128,15 +114,19 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID)
     const bool bWantCone = Pass().OutCones != nullptr;
     const bool bHasCone  = bWantCone && Header.Cones != nullptr;
 
-    const FMeshletCone BindCone = bHasCone ? Header.Cones[MeshletIdx] : (FMeshletCone)0;
-    const float4 BindApex       = float4(BindCone.Apex, 1.0);
+    // Loaded under a branch rather than a ternary, so a null Cones is never dereferenced to feed a select.
+    float4 BindCone = float4(0.0, 0.0, 1.0, 1.0);
+    if (bHasCone)
+    {
+        BindCone = DecodeMeshletCone(Header.Cones[MeshletIdx]);
+    }
+    const float3 BindAxis = BindCone.xyz;
 
     float3 Lo = float3( 3.4e38,  3.4e38,  3.4e38);
     float3 Hi = float3(-3.4e38, -3.4e38, -3.4e38);
     float  MaxScaledRadius = 0.0;
 
-    float3 AxisSum  = float3(0.0, 0.0, 0.0);
-    float3 ApexSum  = float3(0.0, 0.0, 0.0);
+    float3 AxisSum = float3(0.0, 0.0, 0.0);
 
     for (uint i = 0; i < Palette.Count; ++i)
     {
@@ -156,11 +146,9 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID)
 
         if (bHasCone)
         {
-            AxisSum += normalize(float3(dot(Rows.R0.xyz, BindCone.Axis),
-                                        dot(Rows.R1.xyz, BindCone.Axis),
-                                        dot(Rows.R2.xyz, BindCone.Axis)));
-
-            ApexSum += float3(dot(Rows.R0, BindApex), dot(Rows.R1, BindApex), dot(Rows.R2, BindApex));
+            AxisSum += normalize(float3(dot(Rows.R0.xyz, BindAxis),
+                                        dot(Rows.R1.xyz, BindAxis),
+                                        dot(Rows.R2.xyz, BindAxis)));
         }
     }
 
@@ -180,45 +168,31 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID)
     }
 
     // An authored cutoff of 1.0 already means no cone, so nothing here can make it reject.
-    if (!bHasCone || BindCone.Cutoff >= 1.0 || dot(AxisSum, AxisSum) <= 1e-12)
+    if (!bHasCone || BindCone.w >= 1.0 || dot(AxisSum, AxisSum) <= 1e-12)
     {
-        Pass().OutCones[OutIdx] = DisabledCone();
+        Pass().OutCones[OutIdx] = DisabledMeshletCone();
         return;
     }
 
     const float3 MeanAxis = normalize(AxisSum);
-    const float3 MeanApex = ApexSum / (float)Palette.Count;
 
     // Second pass over the palette, since the mean is only known once the first one finished.
-    float CosSpread  = 1.0;
-    float ApexSpread = 0.0;
+    float CosSpread = 1.0;
 
     for (uint j = 0; j < Palette.Count; ++j)
     {
         const FSkinRows Rows = UnpackBoneRows(Bones()[ResolvePaletteBone(Header, Palette, j, Skin.BoneOffset)]);
 
-        const float3 Axis = normalize(float3(dot(Rows.R0.xyz, BindCone.Axis),
-                                             dot(Rows.R1.xyz, BindCone.Axis),
-                                             dot(Rows.R2.xyz, BindCone.Axis)));
+        const float3 Axis = normalize(float3(dot(Rows.R0.xyz, BindAxis),
+                                             dot(Rows.R1.xyz, BindAxis),
+                                             dot(Rows.R2.xyz, BindAxis)));
 
-        const float3 Apex = float3(dot(Rows.R0, BindApex), dot(Rows.R1, BindApex), dot(Rows.R2, BindApex));
-
-        CosSpread  = min(CosSpread, dot(MeanAxis, Axis));
-        ApexSpread = max(ApexSpread, length(Apex - MeanApex));
+        CosSpread = min(CosSpread, dot(MeanAxis, Axis));
     }
 
-    const float Widened = WidenCutoff(BindCone.Cutoff, CosSpread);
-
-    FSkinnedMeshletCone Cone = DisabledCone();
+    const float Widened = WidenCutoff(BindCone.w, CosSpread);
 
     // Past this the reject cone has been widened away to nothing, so the test is pure cost.
-    if (Widened < 0.9999)
-    {
-        Cone.Apex       = MeanApex;
-        Cone.Cutoff     = Widened;
-        Cone.Axis       = MeanAxis;
-        Cone.ApexSpread = ApexSpread;
-    }
-
-    Pass().OutCones[OutIdx] = Cone;
+    Pass().OutCones[OutIdx] = (Widened < 0.9999) ? EncodeMeshletCone(MeanAxis, Widened)
+                                                 : DisabledMeshletCone();
 }

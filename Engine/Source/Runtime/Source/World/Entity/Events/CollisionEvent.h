@@ -1,13 +1,14 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
 #include "Core/Object/ObjectMacros.h"
-#include "World/Entity/EntityHandle.h"
 #include "CollisionEvent.generated.h"
 
 namespace Lumina
 {
     // Payload for OnContact/OnOverlap. Fields are self-oriented: Entity/Velocity = self, Normal away from self.
-    // Every field is blittable (entt::entity surfaces as the C# Entity handle), so the Reflector auto-generates
+    // Every field is blittable (ECS::FEntity surfaces as the C# Entity handle), so the Reflector auto-generates
     // the LuminaSharp SCollisionEvent value mirror + a native size assert, no hand-written mirror.
     REFLECT(Event)
     struct SCollisionEvent
@@ -16,11 +17,11 @@ namespace Lumina
 
         /** This script's entity. */
         PROPERTY()
-        FEntity Entity = entt::null;
+        ECS::FEntity Entity = ECS::NullEntity;
 
         /** The other body's entity. */
         PROPERTY()
-        FEntity Other = entt::null;
+        ECS::FEntity Other = ECS::NullEntity;
 
         /** This body's physics body id. */
         PROPERTY()
