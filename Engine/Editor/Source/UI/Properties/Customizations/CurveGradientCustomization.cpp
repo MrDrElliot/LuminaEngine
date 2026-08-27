@@ -116,7 +116,6 @@ namespace Lumina
     EPropertyChangeOp FCurvePropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args)
     {
         bDirty = false;
-        EPropertyChangeOp Result = EPropertyChangeOp::None;
 
         const bool bAssetMode = Value.IsUsingAsset();
         const SKeyedCurve& Shown = Value.Resolve();
@@ -178,11 +177,8 @@ namespace Lumina
 
         ImGui::PopID();
 
-        if (bDirty)
-        {
-            Result = EPropertyChangeOp::Updated;
-        }
-        return Result;
+        // Editing inside the popup is one session, so a drag in the curve editor commits once on close.
+        return EditSession.Advance(bDirty, bEditorOpen);
     }
 
     void FCurvePropertyCustomization::UpdatePropertyValue(const TSharedPtr<FPropertyHandle>& Property)
@@ -331,7 +327,8 @@ namespace Lumina
         ImGui::SameLine();
         ImGui::TextDisabled("%d", Value.NumKeys());
 
-        if (ImGui::BeginPopup("GradientEditorPopup"))
+        const bool bPopupOpen = ImGui::BeginPopup("GradientEditorPopup");
+        if (bPopupOpen)
         {
             constexpr float EditorWidth = 420.0f;
             const ImVec2 PopupRampMin = ImGui::GetCursorScreenPos();
@@ -400,7 +397,9 @@ namespace Lumina
         }
 
         ImGui::PopID();
-        return bDirty ? EPropertyChangeOp::Updated : EPropertyChangeOp::None;
+
+        // Every stop mutation happens inside the popup, so that whole editing session commits once on close.
+        return EditSession.Advance(bDirty, bPopupOpen);
     }
 
     void FGradientPropertyCustomization::UpdatePropertyValue(const TSharedPtr<FPropertyHandle>& Property)

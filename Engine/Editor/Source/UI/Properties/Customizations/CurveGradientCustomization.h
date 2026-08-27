@@ -51,6 +51,8 @@ namespace Lumina
         // that replaces Value.
         bool                bEditorOpen = false;
         bool                bDirty      = false;
+
+        FPropertyEditSession EditSession;
     };
 
     /** Draws an SGradient row as the ramp itself, opening a stop editor in a popup: click a stop to select,
@@ -81,5 +83,7 @@ namespace Lumina
         SGradient   CachedValue;
         int32       SelectedStop = INDEX_NONE;
         bool        bDirty       = false;
+
+        FPropertyEditSession EditSession;
     };
 }

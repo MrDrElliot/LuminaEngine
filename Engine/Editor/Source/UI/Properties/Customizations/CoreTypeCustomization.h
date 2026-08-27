@@ -374,6 +374,7 @@ namespace Lumina
     private:
 
         int64 CachedValue = 0;
+        FPropertyEditSession EditSession;
     };
 
     class FNamePropertyCustomization : public IPropertyTypeCustomization

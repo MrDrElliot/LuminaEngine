@@ -4856,8 +4856,9 @@ namespace Lumina::RHI
 
         const VkPresentModeKHR PresentMode = ChoosePresentMode(SC.Surface);
 
-        // Mailbox needs a spare image to swap into, or the queue blocks and it degrades to FIFO pacing.
-        const uint32 DesiredImages = PresentMode == VK_PRESENT_MODE_MAILBOX_KHR ? 3u : (uint32)kFramesInFlight;
+        // An uncapped mode needs a spare image, or the acquire blocks on the one still being scanned out.
+        const bool bUncapped = PresentMode == VK_PRESENT_MODE_MAILBOX_KHR || PresentMode == VK_PRESENT_MODE_IMMEDIATE_KHR;
+        const uint32 DesiredImages = bUncapped ? (uint32)kFramesInFlight + 1u : (uint32)kFramesInFlight;
 
         uint32 ImageCount = Math::Max(DesiredImages, Caps.minImageCount);
         if (Caps.maxImageCount != 0)

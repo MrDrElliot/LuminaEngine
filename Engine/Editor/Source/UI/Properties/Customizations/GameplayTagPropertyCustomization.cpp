@@ -149,7 +149,8 @@ namespace Lumina
             ImGui::EndPopup();
         }
 
-        return bChanged ? EPropertyChangeOp::Updated : EPropertyChangeOp::None;
+        // Selecting a tag closes the picker, and authoring one applies it, so both are atomic.
+        return EditSession.Advance(bChanged, false);
     }
 
     void FGameplayTagPropertyCustomization::BuildTagTree(FTreeListView& Tree)

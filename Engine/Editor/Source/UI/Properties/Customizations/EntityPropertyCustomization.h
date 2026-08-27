@@ -32,6 +32,7 @@ namespace Lumina
     private:
 
         uint32                        CachedValue = 0;
+        FPropertyEditSession          EditSession;
         TSharedPtr<FEntityPickBroker> PickBroker;
     };
 }

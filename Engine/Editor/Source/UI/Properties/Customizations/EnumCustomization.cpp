@@ -99,8 +99,9 @@ namespace Lumina
         }
     
         ImGui::PopItemWidth();
-    
-        return bWasChanged ? EPropertyChangeOp::Updated : EPropertyChangeOp::None;
+
+        // A pick is atomic, so the session it opens closes on the next frame.
+        return EditSession.Advance(bWasChanged, false);
     }
 
     void FEnumPropertyCustomization::UpdatePropertyValue(const TSharedPtr<FPropertyHandle>& Property)

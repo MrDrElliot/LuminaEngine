@@ -10,6 +10,7 @@ Engine/*/Build/
 
 # Crash and log artifacts
 /CrashDumps/
+/Saved/
 /*.log
 /newworld_cooked.bin
 /newworld_decomp.bin

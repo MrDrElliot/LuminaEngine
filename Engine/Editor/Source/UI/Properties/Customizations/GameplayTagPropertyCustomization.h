@@ -30,10 +30,11 @@ namespace Lumina
         // full dotted path as user data so selection can read it back.
         void BuildTagTree(FTreeListView& Tree);
 
-        FGameplayTag    Value;
-        FTreeListView   TagTree;
-        ImGuiTextFilter TagFilter;
-        int32           LastBuiltCount = 0;
-        char            NewTagBuffer[128] = {};
+        FGameplayTag         Value;
+        FPropertyEditSession EditSession;
+        FTreeListView        TagTree;
+        ImGuiTextFilter      TagFilter;
+        int32                LastBuiltCount = 0;
+        char                 NewTagBuffer[128] = {};
     };
 }

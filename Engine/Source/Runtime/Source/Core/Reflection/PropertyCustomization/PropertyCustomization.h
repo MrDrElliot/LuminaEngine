@@ -92,6 +92,38 @@ namespace Lumina
         Started,
         Finished,
     };
+
+    // Brackets dirty frames into one edit session, since only Finished reaches FinishChangeCallback.
+    class FPropertyEditSession
+    {
+    public:
+
+        // bInteractionActive is a held drag or an open popup; false closes the session on the next frame.
+        EPropertyChangeOp Advance(bool bDirty, bool bInteractionActive)
+        {
+            if (bDirty)
+            {
+                if (bOpen)
+                {
+                    return EPropertyChangeOp::Updated;
+                }
+                bOpen = true;
+                return EPropertyChangeOp::Started;
+            }
+
+            if (bOpen && !bInteractionActive)
+            {
+                bOpen = false;
+                return EPropertyChangeOp::Finished;
+            }
+
+            return EPropertyChangeOp::None;
+        }
+
+    private:
+
+        bool bOpen = false;
+    };
     
     struct RUNTIME_API IPropertyTypeCustomization : TSharedFromThis<IPropertyTypeCustomization>
     {

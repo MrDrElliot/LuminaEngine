@@ -145,7 +145,8 @@ namespace Lumina
             ImGui::SetTooltip(bPicking ? "Click an entity in the viewport (Esc to cancel)" : "Pick an entity from the viewport");
         }
 
-        return bChanged ? EPropertyChangeOp::Updated : EPropertyChangeOp::None;
+        // Both a combo pick and a consumed eyedropper result are atomic.
+        return EditSession.Advance(bChanged, false);
     }
 
     void FEntityPropertyCustomization::UpdatePropertyValue(const TSharedPtr<FPropertyHandle>& Property)
