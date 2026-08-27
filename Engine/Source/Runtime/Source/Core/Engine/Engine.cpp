@@ -123,8 +123,43 @@ namespace Lumina
         }
     }
 
-    static void PreloadProjectPluginOverrides(FStringView LprojPath)
+    // Accepts either the .lproject itself or the directory holding it, since both spellings reach here.
+    static FString ResolveProjectDescriptor(FStringView PathOrDirectory)
     {
+        if (PathOrDirectory.empty())
+        {
+            return FString();
+        }
+
+        if (!Filesystem::IsDirectory(PathOrDirectory))
+        {
+            return FString(PathOrDirectory.data(), PathOrDirectory.size());
+        }
+
+        FString Found;
+        Filesystem::IterateDirectory(PathOrDirectory, [&Found](const Filesystem::FDirectoryEntry& Entry)
+        {
+            if (Entry.IsFile() && Entry.GetExtension() == ".lproject")
+            {
+                Found.assign(Entry.FullPath.data(), Entry.FullPath.size());
+                return Filesystem::EVisit::Stop;
+            }
+
+            return Filesystem::EVisit::Continue;
+        });
+
+        if (Found.empty())
+        {
+            LOG_WARN("No .lproject file was found in '{}'.", PathOrDirectory);
+        }
+
+        return Found;
+    }
+
+    static void PreloadProjectPluginOverrides(FStringView PathOrDirectory)
+    {
+        const FString LprojPath = ResolveProjectDescriptor(PathOrDirectory);
+
         if (LprojPath.empty())
         {
             LOG_INFO("[PluginManager] No startup project; project plugin overrides not applied.");
@@ -394,14 +429,17 @@ namespace Lumina
         return false;
     }
 
+    void FEngine::MarkLoopStart()
+    {
+        UpdateContext.MarkFrameStart(PlatformTime::Seconds());
+    }
+
     bool FEngine::Update(bool bApplicationWantsExit)
     {
         LUMINA_PROFILE_SCOPE();
 
         bEngineReadyToClose = true;
         bCloseRequested = bApplicationWantsExit;
-
-        UpdateContext.MarkFrameStart(PlatformTime::Seconds());
 
         // The hang watchdog dumps every thread's stack if this stops advancing.
         HangWatchdog::Heartbeat();
@@ -656,10 +694,12 @@ namespace Lumina
     {
         using Json = nlohmann::json;
         
+        const FString Descriptor = ResolveProjectDescriptor(Path);
+
         FString JsonData;
-        if (!FileHelper::LoadFileIntoString(JsonData, Path))
+        if (Descriptor.empty() || !FileHelper::LoadFileIntoString(JsonData, Descriptor))
         {
-            LOG_ERROR("Invalid project path");
+            LOG_ERROR("Could not read a project descriptor at '{}'.", Path);
             return;
         }
         
@@ -680,7 +720,7 @@ namespace Lumina
             return;
         }
 
-        ProjectPath                     .assign(VFS::Parent(Paths::Normalize(Path)));
+        ProjectPath                     .assign(VFS::Parent(Paths::Normalize(Descriptor)));
         ProjectName                     = Data["Name"].get<std::string>().c_str();
 
         FFixedString ConfigDir          = Paths::Combine(ProjectPath, "Config");

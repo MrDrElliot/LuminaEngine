@@ -35,6 +35,9 @@ namespace Lumina
         static void Update(const FSystemContext& Context) noexcept;
         static void Teardown(const FSystemContext& Context) noexcept;
 
+        /** Restamps the active camera's ViewVolume from its live transform, advancing no blend or shake clock. */
+        RUNTIME_API static void ResolveActiveCameraView(entt::registry& Registry);
+
         //~ Active-camera management on the FCameraGlobalState singleton.
 
         /** Switch the active camera. BlendTime > 0 eases from the current view; 0 snaps. */

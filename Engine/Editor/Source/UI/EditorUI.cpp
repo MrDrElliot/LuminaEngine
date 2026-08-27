@@ -36,6 +36,7 @@
 #include <TaskSystem/ThreadedCallback.h>
 #include <Tools/Screenshot/ScreenshotCapture.h>
 #include <World/World.h>
+#include <World/Entity/Systems/CameraSystem.h>
 #include "UI/Tools/NodeGraph/Material/MaterialGraphCompile.h"
 #include "Config/EngineSettings.h"
 #include "Input/Key.h"
@@ -110,6 +111,7 @@
 #include "Tools/ProfilerEditorTool.h"
 #include "Tools/PluginBrowserEditorTool.h"
 #include "Tools/ShadowAtlasEditorTool.h"
+#include "Tools/Terminal/TerminalEditorTool.h"
 #include "Tools/EditorToolModal.h"
 #include "Tools/GamePreviewTool.h"
 #include "Tools/ToolFlags.h"
@@ -780,32 +782,29 @@ namespace Lumina
 
         if (!FocusTargetWindowName.empty())
         {
+            // An unresolvable target only drops the focus request; returning here dropped the whole UI frame.
             ImGuiWindow* Window = ImGui::FindWindowByName(FocusTargetWindowName.c_str());
-            if (Window == nullptr || Window->DockNode == nullptr || Window->DockNode->TabBar == nullptr)
+            if (Window != nullptr && Window->DockNode != nullptr && Window->DockNode->TabBar != nullptr)
             {
-                FocusTargetWindowName.clear();
-                return;
-            }
-
-            ImGuiID TabID = 0;
-            for (int i = 0; i < Window->DockNode->TabBar->Tabs.size(); ++i)
-            {
-                ImGuiTabItem* pTab = &Window->DockNode->TabBar->Tabs[i];
-                if (pTab->Window->ID == Window->ID)
+                ImGuiID TabID = 0;
+                for (int i = 0; i < Window->DockNode->TabBar->Tabs.size(); ++i)
                 {
-                    TabID = pTab->ID;
-                    break;
+                    ImGuiTabItem* pTab = &Window->DockNode->TabBar->Tabs[i];
+                    if (pTab->Window->ID == Window->ID)
+                    {
+                        TabID = pTab->ID;
+                        break;
+                    }
+                }
+
+                if (TabID != 0)
+                {
+                    Window->DockNode->TabBar->NextSelectedTabId = TabID;
+                    ImGui::SetWindowFocus(FocusTargetWindowName.c_str());
                 }
             }
 
-            if (TabID != 0)
-            {
-                Window->DockNode->TabBar->NextSelectedTabId = TabID;
-                ImGui::SetWindowFocus(FocusTargetWindowName.c_str());
-            }
-
             FocusTargetWindowName.clear();
-            
         }
         
         if (bShowDearImGuiDemoWindow)
@@ -913,11 +912,6 @@ namespace Lumina
             PendingDialogAction = nullptr;
             Action();
         }
-    }
-
-    void FEditorUI::OnUpdate(const FUpdateContext& UpdateContext)
-    {
-        LUMINA_PROFILE_SCOPE();
 
         // A standalone launch waiting on its build finishes here, on the thread that may spawn it.
         FStandaloneLauncher::Tick();
@@ -947,7 +941,13 @@ namespace Lumina
 
         // Queued in CMaterial::PostLoad when an asset's baked shaders predate the current templates.
         ProcessStaleMaterialRecompiles();
+    }
 
+    void FEditorUI::OnUpdate(const FUpdateContext& UpdateContext)
+    {
+        LUMINA_PROFILE_SCOPE();
+
+        // Per-frame work belongs in OnStartFrame; the engine calls this once per update stage.
         for (FEditorTool* Tool : EditorTools)
         {
             if (Tool->HasWorld())
@@ -1415,6 +1415,17 @@ namespace Lumina
 
         // File editors, keyed by extension (CObject-less, raw content).
         Registry.RegisterFileEditor<FRmlUiEditorTool>({ ".rml", ".rcss" }, Owner);
+    }
+
+    FEditorTool* FEditorUI::FindAssetEditor(CObject* Asset) const
+    {
+        if (Asset == nullptr)
+        {
+            return nullptr;
+        }
+
+        const auto Itr = ActiveAssetTools.find(Asset);
+        return Itr != ActiveAssetTools.end() ? Itr->second : nullptr;
     }
 
     void FEditorUI::OpenAssetEditor(const FGuid& AssetGUID)
@@ -2375,6 +2386,9 @@ namespace Lumina
             ToolWorld->SetActive(bKeepAlive);
 
             ToolWorld->SetUpdateInterval(GetToolWorldUpdateInterval(ToolWorld, bIsLastFocusedTool));
+
+            // Tool->Update just flew the camera, and SCameraSystem runs a stage too late for the overlays below.
+            SCameraSystem::ResolveActiveCameraView(ECS::GetWorldRegistry(*ToolWorld));
         }
         
         if (!bVisible)
@@ -3447,6 +3461,13 @@ namespace Lumina
         {
             return;
         }
+
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.62f, 1.0f), "Workspace");
+        ImGui::Separator();
+
+        DrawToolMenuItem<FTerminalEditorTool>(LE_ICON_CONSOLE_LINE " Terminal", this);
+
+        ImGui::Spacing();
 
         ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.62f, 1.0f), "Debug Windows");
         ImGui::Separator();

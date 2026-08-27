@@ -34,12 +34,14 @@
 #include "Tools/UI/ImGui/EditorColors.h"
 #include "UI/Properties/PropertyEditContexts.h"
 #include "World/Entity/Components/AnimationGraphComponent.h"
+#include "Scene/SceneOps.h"
 #include "UI/Tools/EditorEntityUtils.h"
 #include "World/Entity/Components/EditorComponent.h"
 #include "World/Entity/Components/EntityTags.h"
 #include "World/Entity/Components/NameComponent.h"
 #include "World/Entity/Components/RelationshipComponent.h"
 #include "World/Entity/Components/SceneFolderComponent.h"
+#include "World/Entity/Components/SingletonEntityComponent.h"
 #include "Scripting/EntityScript.h"
 #include "World/Entity/Components/TagComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
@@ -548,22 +550,93 @@ namespace Lumina
 
     void FSceneEditorTool::ProcessComponentEditRequests()
     {
-        if (!ComponentDestroyRequests.empty())
+        if (ComponentDestroyRequests.empty())
+        {
+            return;
+        }
+
+        // Drained first, since the commands have to read the components while they are still attached.
+        TVector<FComponentDestroyRequest> Requests;
+        while (!ComponentDestroyRequests.empty())
+        {
+            Requests.push_back(ComponentDestroyRequests.front());
+            ComponentDestroyRequests.pop();
+        }
+
+        TVector<const CStruct*> Types;
+        TVector<entt::entity>   AllEntities;
+        for (const FComponentDestroyRequest& Request : Requests)
+        {
+            if (Request.Type != nullptr)
+            {
+                Types.AddUnique(Request.Type);
+            }
+            AllEntities.AddUnique(Request.EntityID);
+        }
+
+        // One command per distinct type, since each records a different component.
+        bool bOpened = false;
+        for (const CStruct* Type : Types)
+        {
+            TVector<entt::entity> Targets;
+            for (const FComponentDestroyRequest& Request : Requests)
+            {
+                if (Request.Type == Type)
+                {
+                    Targets.AddUnique(Request.EntityID);
+                }
+            }
+
+            if (bOpened)
+            {
+                RecordComponentSnapshot(Targets, const_cast<CStruct*>(Type));
+            }
+            else
+            {
+                BeginComponentTransaction(Targets, const_cast<CStruct*>(Type));
+                bOpened = true;
+            }
+        }
+
+        if (!bOpened)
         {
             BeginTransaction();
-            while (!ComponentDestroyRequests.empty())
-            {
-                FComponentDestroyRequest Request = ComponentDestroyRequests.front();
-                ComponentDestroyRequests.pop();
-
-                RemoveComponent(Request.EntityID, Request.Type);
-            }
-            EndTransaction("Remove Component");
         }
+
+        RecordPrefabOverrideSnapshot(AllEntities);
+
+        for (const FComponentDestroyRequest& Request : Requests)
+        {
+            RemoveComponent(Request.EntityID, Request.Type);
+        }
+
+        EndTransaction("Remove Component");
     }
 
     void FSceneEditorTool::OnPrePropertyChangeEvent(const FPropertyChangedEvent& Event)
     {
+    }
+
+    void FSceneEditorTool::BeginPropertyEditTransaction(CStruct* ComponentType)
+    {
+        FEntityRegistry& Registry = GetSceneRegistry();
+
+        // Exactly the set OnPostPropertyChangeEvent writes, the focus plus the selection it replicates to.
+        TVector<entt::entity> Targets;
+        if (Registry.valid(DetailsEntity))
+        {
+            Targets.push_back(DetailsEntity);
+        }
+
+        Registry.view<FSelectedInEditorComponent>().each([&](entt::entity Entity)
+        {
+            if (Entity != DetailsEntity)
+            {
+                Targets.push_back(Entity);
+            }
+        });
+
+        BeginComponentTransaction(Targets, ComponentType);
     }
 
     void FSceneEditorTool::OnPostPropertyChangeEvent(const FPropertyChangedEvent& Event)
@@ -783,7 +856,7 @@ namespace Lumina
                 Entry.Table->SetShowSearchBar(false);
                 Entry.Table->SetPreEditCallback([&](const FPropertyChangedEvent& Event)    { OnPrePropertyChangeEvent(Event); });
                 Entry.Table->SetPostEditCallback([&](const FPropertyChangedEvent& Event)   { OnPostPropertyChangeEvent(Event); MarkSceneDirty(); });
-                Entry.Table->SetStartEditCallback([&](const FPropertyChangedEvent& Event)  { BeginTransaction(); });
+                Entry.Table->SetStartEditCallback([this, Layout = Row.Layout](const FPropertyChangedEvent& Event) { BeginPropertyEditTransaction(Layout); });
                 Entry.Table->SetFinishEditCallback([&](const FPropertyChangedEvent& Event) { EndTransaction(Event.PropertyName); });
 
                 // Multi-edit value compare; propagation handled in OnPostPropertyChangeEvent.
@@ -1513,6 +1586,70 @@ namespace Lumina
         }
     }
 
+    entt::entity FSceneEditorTool::GetSceneFolderOwner() const
+    {
+        if (World == nullptr)
+        {
+            return entt::null;
+        }
+
+        // The folder table lives on the world's singleton entity, which has no public accessor.
+        for (entt::entity Entity : ECS::GetWorldRegistry(*World).view<FSingletonEntityTag>())
+        {
+            return Entity;
+        }
+
+        return entt::null;
+    }
+
+    void FSceneEditorTool::BeginFolderTransaction()
+    {
+        const entt::entity Owner = GetSceneFolderOwner();
+        if (Owner == entt::null)
+        {
+            BeginTransaction();
+            return;
+        }
+
+        TVector<entt::entity> Targets;
+        Targets.push_back(Owner);
+        BeginComponentTransaction(Targets, SSceneFolderComponent::StaticStruct());
+    }
+
+    void FSceneEditorTool::RecordPrefabOverrideSnapshot(const TVector<entt::entity>& Entities)
+    {
+        FEntityRegistry& Registry = GetSceneRegistry();
+
+        // The ledger sits on the instance root, an ancestor, so the whole chain up is recorded.
+        TVector<entt::entity> Chain;
+        for (entt::entity Entity : Entities)
+        {
+            entt::entity Cursor = Entity;
+            for (uint32 Guard = 0; Cursor != entt::null && Registry.valid(Cursor) && Guard < 64; ++Guard)
+            {
+                Chain.AddUnique(Cursor);
+
+                const FRelationshipComponent* Link = Registry.try_get<FRelationshipComponent>(Cursor);
+                Cursor = Link != nullptr ? Link->Parent : entt::null;
+            }
+        }
+
+        RecordComponentSnapshot(Chain, SPrefabOverrideComponent::StaticStruct());
+    }
+
+    void FSceneEditorTool::RecordSceneFolderSnapshot()
+    {
+        const entt::entity Owner = GetSceneFolderOwner();
+        if (Owner == entt::null)
+        {
+            return;
+        }
+
+        TVector<entt::entity> Targets;
+        Targets.push_back(Owner);
+        RecordComponentSnapshot(Targets, SSceneFolderComponent::StaticStruct());
+    }
+
     uint32 FSceneEditorTool::CreateSceneFolder(const FName& Name, uint32 ParentID)
     {
         if (!SupportsSceneFolders() || IsInspectingForeignWorld() || World == nullptr)
@@ -1520,7 +1657,7 @@ namespace Lumina
             return SSceneFolderComponent::NoFolder;
         }
 
-        BeginTransaction();
+        BeginFolderTransaction();
         const uint32 NewFolder = World->GetSceneFolders().CreateFolder(Name, ParentID);
         EndTransaction("Create Folder");
 
@@ -1537,7 +1674,7 @@ namespace Lumina
             return;
         }
 
-        BeginTransaction();
+        BeginFolderTransaction();
         Folders->RenameFolder(FolderID, FName(FString(NewName.data(), NewName.size()).c_str()));
         EndTransaction("Rename Folder");
 
@@ -1566,7 +1703,7 @@ namespace Lumina
         Doomed.push_back(FolderID);
         Folders->CollectDescendants(FolderID, Doomed);
 
-        BeginTransaction();
+        BeginFolderTransaction();
         // Deepest first, so each folder's survivors land in a parent that is still there.
         for (int32 i = (int32)Doomed.size() - 1; i >= 0; --i)
         {
@@ -1586,7 +1723,7 @@ namespace Lumina
             return;
         }
 
-        BeginTransaction();
+        BeginFolderTransaction();
         if (!Folders->SetFolderParent(FolderID, NewParentID))
         {
             AbortTransaction();
@@ -1617,7 +1754,10 @@ namespace Lumina
         TVector<entt::entity> Moved;
         Moved.reserve(Entities.size());
 
-        BeginTransaction();
+        // Filing a parented entity detaches it, so the links travel with the folder table.
+        BeginRelationshipTransaction(Entities);
+        RecordSceneFolderSnapshot();
+
         for (entt::entity Entity : Entities)
         {
             if (!IsOutlinerEntityVisible(Entity))
@@ -1901,43 +2041,86 @@ namespace Lumina
         return GetCameraSpawnTransform();
     }
 
-    void FSceneEditorTool::CreateEntity()
+    void FSceneEditorTool::RunTransacted(FName Label, const TFunction<void()>& Mutate)
+    {
+        if (!Mutate)
+        {
+            return;
+        }
+
+        BeginTransaction();
+        Mutate();
+        EndTransaction(Label);
+
+        MarkSceneDirty();
+        OutlinerListView.MarkTreeDirty();
+        bDetailsDirty = true;
+    }
+
+    void FSceneEditorTool::RunCreationTransacted(FName Label, const TFunction<void()>& Mutate)
+    {
+        if (!Mutate)
+        {
+            return;
+        }
+
+        BeginCreationTransaction();
+        Mutate();
+        EndTransaction(Label);
+
+        MarkSceneDirty();
+        OutlinerListView.MarkTreeDirty();
+        bDetailsDirty = true;
+    }
+
+    entt::entity FSceneEditorTool::SpawnEntityTransacted(FName Name, FName TransactionLabel,
+        const TFunction<void(entt::entity)>& Decorate)
     {
         BeginCreationTransaction();
-        entt::entity NewEntity = World->ConstructEntity("Entity", GetNewEntitySpawnTransform());
-        if (NewEntity != entt::null)
-        {
-            OnEntityCreatedInScene(NewEntity);
-        }
-        EndTransaction("New Entity");
 
-        if (NewEntity != entt::null)
+        const entt::entity Created = World->ConstructEntity(Name, GetNewEntitySpawnTransform());
+        if (Created != entt::null)
         {
-            SetSingleSelectedEntity(NewEntity);
+            if (Decorate)
+            {
+                Decorate(Created);
+            }
+
+            OnEntityCreatedInScene(Created);
+        }
+
+        EndTransaction(TransactionLabel);
+
+        if (Created != entt::null)
+        {
+            SetSingleSelectedEntity(Created);
             MarkSceneDirty();
         }
+
+        return Created;
+    }
+
+    void FSceneEditorTool::CreateEntity()
+    {
+        SpawnEntityTransacted("Entity", "New Entity", nullptr);
     }
 
     void FSceneEditorTool::CreateEntityWithComponent(const CStruct* Component)
     {
-        using namespace entt::literals;
-
-        entt::meta_type MetaType = entt::resolve(entt::hashed_string(Component->GetName().c_str()));
-
-        BeginCreationTransaction();
-        entt::entity CreatedEntity = World->ConstructEntity(Component->MakeDisplayName(), GetNewEntitySpawnTransform());
-        if (CreatedEntity != entt::null)
+        if (Component == nullptr)
         {
-            ECS::Utils::InvokeMetaFunc(MetaType, "emplace"_hs, entt::forward_as_meta(GetSceneRegistry()), CreatedEntity, entt::forward_as_meta(entt::meta_any{}));
-            OnEntityCreatedInScene(CreatedEntity);
+            return;
         }
-        EndTransaction("New Entity");
 
-        if (CreatedEntity != entt::null)
+        const entt::meta_type MetaType = SceneOps::ResolveComponentType(FStringView(Component->GetName().c_str()));
+
+        // A bare emplace, matching what this path has always done. It records no prefab override note.
+        SpawnEntityTransacted(Component->MakeDisplayName(), "New Entity", [this, MetaType](entt::entity Created)
         {
-            SetSingleSelectedEntity(CreatedEntity);
-            MarkSceneDirty();
-        }
+            using namespace entt::literals;
+            ECS::Utils::InvokeMetaFunc(MetaType, "emplace"_hs, entt::forward_as_meta(GetSceneRegistry()),
+                Created, entt::forward_as_meta(entt::meta_any{}));
+        });
     }
 
     void FSceneEditorTool::CreatePrimitiveEntity(CStaticMesh* PrimitiveMesh, const char* DisplayName)
@@ -1947,20 +2130,10 @@ namespace Lumina
             return;
         }
 
-        BeginCreationTransaction();
-        entt::entity CreatedEntity = World->ConstructEntity(DisplayName, GetNewEntitySpawnTransform());
-        if (CreatedEntity != entt::null)
+        SpawnEntityTransacted(DisplayName, "New Primitive", [this, PrimitiveMesh](entt::entity Created)
         {
-            GetSceneRegistry().emplace<SStaticMeshComponent>(CreatedEntity).SetStaticMesh(PrimitiveMesh);
-            OnEntityCreatedInScene(CreatedEntity);
-        }
-        EndTransaction("New Primitive");
-
-        if (CreatedEntity != entt::null)
-        {
-            SetSingleSelectedEntity(CreatedEntity);
-            MarkSceneDirty();
-        }
+            GetSceneRegistry().emplace<SStaticMeshComponent>(Created).SetStaticMesh(PrimitiveMesh);
+        });
     }
 
     TVector<entt::entity> FSceneEditorTool::GetComponentEditTargets(entt::entity Entity)
@@ -1995,8 +2168,6 @@ namespace Lumina
 
     void FSceneEditorTool::ApplyAddComponentToTargets(const TVector<entt::entity>& Targets, entt::meta_type PickedMetaType)
     {
-        using namespace entt::literals;
-
         if (Targets.empty())
         {
             return;
@@ -2004,65 +2175,37 @@ namespace Lumina
 
         FEntityRegistry& Registry = GetSceneRegistry();
 
-        // Resolve the reflected CStruct so an instance can record the add in its override ledger.
-        CStruct* AddedStruct = nullptr;
-        if (PickedMetaType)
-        {
-            if (entt::meta_any S = ECS::Utils::InvokeMetaFunc(PickedMetaType, "static_struct"_hs))
-            {
-                AddedStruct = S.cast<CStruct*>();
-            }
-        }
+        // Planned before the transaction, because opening one snapshots the whole registry.
+        const SceneOps::FAddComponentPlan Plan = SceneOps::PlanAddComponent(Registry, Targets, PickedMetaType);
 
-        // Partitioned before the transaction, so a no-op add leaves no empty step on the undo stack.
-        TVector<entt::entity> Missing;
-        Missing.reserve(Targets.size());
+        const char* ComponentName = Plan.Component ? Plan.Component->GetName().c_str() : "that component";
 
-        uint32 AlreadyPresent = 0;
-
-        for (entt::entity Target : Targets)
-        {
-            if (ECS::Utils::HasComponent(Registry, Target, PickedMetaType))
-            {
-                ++AlreadyPresent;
-            }
-            else
-            {
-                Missing.push_back(Target);
-            }
-        }
-
-        if (Missing.empty())
+        if (!Plan.HasWork())
         {
             // Saying nothing is indistinguishable from the click not registering.
             if (Targets.size() == 1)
             {
-                ImGuiX::Notifications::NotifyWarning("This entity already has {0}.", AddedStruct ? AddedStruct->GetName().c_str() : "that component");
+                ImGuiX::Notifications::NotifyWarning("This entity already has {0}.", ComponentName);
             }
             else
             {
                 ImGuiX::Notifications::NotifyWarning("All {0} selected entities already have {1}.",
-                    (uint32)Targets.size(), AddedStruct ? AddedStruct->GetName().c_str() : "that component");
+                    (uint32)Targets.size(), ComponentName);
             }
 
             return;
         }
 
-        BeginTransaction();
-        for (entt::entity Target : Missing)
-        {
-            ECS::Utils::InvokeMetaFunc(PickedMetaType, "emplace"_hs, entt::forward_as_meta(Registry), Target, entt::forward_as_meta(entt::meta_any{}));
-            if (AddedStruct != nullptr)
-            {
-                CPrefab::NoteComponentAdded(Registry, Target, AddedStruct);
-            }
-        }
+        BeginComponentTransaction(Plan.Missing, Plan.Component);
+        RecordPrefabOverrideSnapshot(Plan.Missing);
+        SceneOps::ApplyAddComponent(Registry, Plan, PickedMetaType);
         EndTransaction("Add Component");
 
-        if (AlreadyPresent > 0)
+        if (Plan.AlreadyPresent > 0)
         {
             ImGuiX::Notifications::NotifyInfo("Added {0} to {1} entities; {2} already had it.",
-                AddedStruct ? AddedStruct->GetName().c_str() : "component", (uint32)Missing.size(), AlreadyPresent);
+                Plan.Component ? Plan.Component->GetName().c_str() : "component",
+                (uint32)Plan.Missing.size(), Plan.AlreadyPresent);
         }
 
         MarkSceneDirty();
@@ -3535,7 +3678,7 @@ namespace Lumina
                                     {
                                         if (PrimitiveMesh != nullptr)
                                         {
-                                            BeginTransaction();
+                                            BeginComponentTransaction({ Entity }, SStaticMeshComponent::StaticStruct());
                                             SStaticMeshComponent& MeshComp = GetSceneRegistry().emplace_or_replace<SStaticMeshComponent>(Entity);
                                             MeshComp.SetStaticMesh(PrimitiveMesh);
                                             EndTransaction("Set Primitive Mesh");

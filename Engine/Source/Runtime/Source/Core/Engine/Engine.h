@@ -42,6 +42,10 @@ namespace Lumina
         
         RUNTIME_API virtual bool Init();
         RUNTIME_API virtual bool Shutdown();
+
+        /** Opens the frame clock at the true top of the loop, so the frame-rate cap absorbs the GPU wait. */
+        RUNTIME_API void MarkLoopStart();
+
         RUNTIME_API bool Update(bool bApplicationWantsExit);
         RUNTIME_API virtual void OnUpdateStage(const FUpdateContext& Context);
 

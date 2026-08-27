@@ -406,10 +406,8 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
+        // DisplaySize is not set here; NewFrame already consumed it and the GLFW backend restamps it.
         ImGuiIO& Io = ImGui::GetIO();
-        const FUIntVector2 ViewportSize = FEngine::GetEngineViewportSize();
-        Io.DisplaySize.x = static_cast<float>(ViewportSize.x);
-        Io.DisplaySize.y = static_cast<float>(ViewportSize.y);
 
         ImGuiX::Notifications::Render();
         ImGui::Render();

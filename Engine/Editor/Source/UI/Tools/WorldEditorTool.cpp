@@ -463,7 +463,7 @@ namespace Lumina
             {
                 if (ImGui::MenuItem(LE_ICON_ARROW_UP_BOLD " Unparent"))
                 {
-                    BeginTransaction();
+                    BeginRelationshipTransaction({ Data.Entity });
                     ECS::Utils::RemoveFromParent(Registry, Data.Entity);
                     EndTransaction("Unparent");
                     ReparentEntityInOutliner(Data.Entity);
@@ -482,7 +482,7 @@ namespace Lumina
                         if (ImGui::MenuItem(Socket.c_str(), nullptr, bCurrent))
                         {
                             const FRelationshipComponent* Relationship = Registry.try_get<FRelationshipComponent>(Data.Entity);
-                            BeginTransaction();
+                            BeginRelationshipTransaction({ Data.Entity }, Relationship->Parent);
                             World->AttachEntityToSocket(Data.Entity, Relationship->Parent, Socket);
                             EndTransaction("Attach to Socket");
                             if (Data.Entity == DetailsEntity)
@@ -496,7 +496,7 @@ namespace Lumina
 
                 if (Attachment != nullptr && ImGui::MenuItem(LE_ICON_LINK_OFF " Clear Socket Attachment"))
                 {
-                    BeginTransaction();
+                    BeginComponentTransaction({ Data.Entity }, SSocketAttachmentComponent::StaticStruct());
                     Registry.remove<SSocketAttachmentComponent>(Data.Entity);
                     EndTransaction("Clear Socket Attachment");
                     if (Data.Entity == DetailsEntity)
@@ -513,7 +513,7 @@ namespace Lumina
                     // Snapshot child IDs before mutating relationships, then move each in the tree.
                     TFixedVector<entt::entity, 20> Children;
                     ECS::Utils::ForEachChild(Registry, Data.Entity, [&](entt::entity Child) { Children.push_back(Child); });
-                    BeginTransaction();
+                    BeginRelationshipTransaction({ Data.Entity });
                     ECS::Utils::DetachImmediateChildren(Registry, Data.Entity);
                     EndTransaction("Detach Children");
                     for (entt::entity Child : Children)
@@ -865,14 +865,19 @@ namespace Lumina
 
         if (!EntityDestroyRequests.empty())
         {
-            // Snapshot once so a Delete that queues several entities is one undo step.
-            BeginTransaction();
-            bool bDestroyed = false;
+            // Drained to a list first, since the command has to read them while they are still alive.
+            TVector<entt::entity> Doomed;
             while (!EntityDestroyRequests.empty())
             {
-                entt::entity Entity = EntityDestroyRequests.front();
+                Doomed.push_back(EntityDestroyRequests.front());
                 EntityDestroyRequests.pop();
+            }
 
+            // Recorded once, so a Delete that queues several entities is one undo step.
+            BeginDestroyTransaction(Doomed);
+            bool bDestroyed = false;
+            for (entt::entity Entity : Doomed)
+            {
                 if (!ECS::GetWorldRegistry(*World).valid(Entity))
                 {
                     LOG_WARN("Attempted to delete an invalid entity! {}", entt::to_integral(Entity));
@@ -2373,7 +2378,7 @@ namespace Lumina
                 {
                     if (ImGui::MenuItem("Unparent"))
                     {
-                        BeginTransaction();
+                        BeginRelationshipTransaction({ LastSelected });
                         ECS::Utils::RemoveFromParent(Registry, LastSelected);
                         EndTransaction("Unparent");
                         ReparentEntityInOutliner(LastSelected);
@@ -2387,7 +2392,7 @@ namespace Lumina
                     {
                         TVector<entt::entity> Children;
                         ECS::Utils::ForEachChild(Registry, LastSelected, [&](entt::entity Child) { Children.push_back(Child); });
-                        BeginTransaction();
+                        BeginRelationshipTransaction({ LastSelected });
                         ECS::Utils::DetachImmediateChildren(Registry, LastSelected);
                         EndTransaction("Detach Children");
                         for (entt::entity Child : Children)
@@ -2841,7 +2846,7 @@ namespace Lumina
 
         const bool bHad = Registry.all_of<SEntityScriptComponent>(Entity);
 
-        BeginTransaction();
+        BeginComponentTransaction({ Entity }, SEntityScriptComponent::StaticStruct());
         // Attaches by class, the same call for a C++ script and a C# one, with OnReady on the next tick.
         EntityScripts::Attach(Registry, Entity, FindObject<CClass>(FName(ScriptClass)));
         EndTransaction(bHad ? "Add Script" : "Attach Script");
@@ -2863,7 +2868,7 @@ namespace Lumina
             return;
         }
 
-        BeginTransaction();
+        BeginComponentTransaction({ Entity }, SEntityScriptComponent::StaticStruct());
         Registry.remove<SEntityScriptComponent>(Entity); // on_destroy refreshes the outliner
         EndTransaction("Remove Script");
 
@@ -4442,7 +4447,8 @@ namespace Lumina
                     return;
                 }
 
-                BeginTransaction();
+                BeginRelationshipTransaction({ SourceEntity }, DropItem);
+                RecordSceneFolderSnapshot();
                 ECS::Utils::ReparentEntity(Registry, SourceEntity, DropItem);
 
                 // An attached entity is shown under its parent, so its folder would be a hidden second home.
@@ -5123,7 +5129,8 @@ namespace Lumina
             Candidates.push_back({ Mesh.GetAABB().ToWorld(Transform.GetWorldMatrix()) });
         });
 
-        BeginTransaction();
+        TVector<entt::entity, 0> TransactionTargets(Targets.begin(), Targets.end());
+        BeginTransformTransaction(TransactionTargets);
 
         bool bAnyMoved = false;
         const FVector3 Down(0.0f, -1.0f, 0.0f);
@@ -5283,7 +5290,8 @@ namespace Lumina
             return;
         }
 
-        BeginTransaction();
+        TVector<entt::entity, 0> TransactionTargets(Targets.begin(), Targets.end());
+        BeginTransformTransaction(TransactionTargets);
 
         for (entt::entity Entity : Targets)
         {

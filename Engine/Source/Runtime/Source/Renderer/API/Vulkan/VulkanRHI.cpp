@@ -4854,7 +4854,12 @@ namespace Lumina::RHI
             return false;
         }
 
-        uint32 ImageCount = Math::Max((uint32)kFramesInFlight, Caps.minImageCount);
+        const VkPresentModeKHR PresentMode = ChoosePresentMode(SC.Surface);
+
+        // Mailbox needs a spare image to swap into, or the queue blocks and it degrades to FIFO pacing.
+        const uint32 DesiredImages = PresentMode == VK_PRESENT_MODE_MAILBOX_KHR ? 3u : (uint32)kFramesInFlight;
+
+        uint32 ImageCount = Math::Max(DesiredImages, Caps.minImageCount);
         if (Caps.maxImageCount != 0)
         {
             ImageCount = Math::Min(ImageCount, Caps.maxImageCount);
@@ -4875,7 +4880,7 @@ namespace Lumina::RHI
             .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
             .preTransform     = Caps.currentTransform,
             .compositeAlpha   = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
-            .presentMode      = ChoosePresentMode(SC.Surface),
+            .presentMode      = PresentMode,
             .clipped          = VK_TRUE,
             .oldSwapchain     = OldSwapchain,
         };

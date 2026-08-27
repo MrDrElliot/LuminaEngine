@@ -73,6 +73,9 @@ namespace Lumina
         requires std::is_base_of_v<FEditorTool, T> && std::is_constructible_v<T, Args...>
         T* CreateTool(Args&&... args);
 
+        // The tool editing this asset, or null when nothing has it open.
+        NODISCARD FEditorTool* FindAssetEditor(CObject* Asset) const;
+
         // Find an active tool by its singleton-style unique type id, or nullptr if not present.
         template<typename T>
         requires std::is_base_of_v<FEditorTool, T>

@@ -145,7 +145,7 @@ namespace Lumina
             {
                 if (ImGui::MenuItem("Unparent"))
                 {
-                    BeginTransaction();
+                    BeginRelationshipTransaction({ Data.Entity });
                     ECS::Utils::RemoveFromParent(Registry, Data.Entity);
                     EndTransaction("Unparent");
                     OutlinerListView.MarkTreeDirty();
@@ -158,7 +158,7 @@ namespace Lumina
                 {
                     TVector<entt::entity> Children;
                     ECS::Utils::ForEachChild(Registry, Data.Entity, [&](entt::entity Child) { Children.push_back(Child); });
-                    BeginTransaction();
+                    BeginRelationshipTransaction({ Data.Entity });
                     ECS::Utils::DetachImmediateChildren(Registry, Data.Entity);
                     EndTransaction("Detach Children");
                     OutlinerListView.MarkTreeDirty();
@@ -207,7 +207,7 @@ namespace Lumina
                 return;
             }
 
-            BeginTransaction();
+            BeginComponentTransaction({ Data.Entity }, SNameComponent::StaticStruct());
             if (SNameComponent* NameComp = Registry.try_get<SNameComponent>(Data.Entity))
             {
                 NameComp->Name = NewName;
@@ -633,15 +633,21 @@ namespace Lumina
             return;
         }
 
-        BeginTransaction();
         bool bDestroyed = false;
         const entt::entity Root = FindPrefabRoot();
 
+        // Drained to a list first, since the command has to read them while they are still alive.
+        TVector<entt::entity> Doomed;
         while (!EntityDestroyRequests.empty())
         {
-            entt::entity Entity = EntityDestroyRequests.back();
+            Doomed.push_back(EntityDestroyRequests.back());
             EntityDestroyRequests.pop();
+        }
 
+        BeginDestroyTransaction(Doomed);
+
+        for (entt::entity Entity : Doomed)
+        {
             if (Entity == entt::null || !World->IsValidEntity(Entity))
             {
                 continue;
@@ -768,7 +774,8 @@ namespace Lumina
             return;
         }
 
-        BeginTransaction();
+        TVector<entt::entity, 0> TransactionTargets(Targets.begin(), Targets.end());
+        BeginTransformTransaction(TransactionTargets);
         for (entt::entity Entity : Targets)
         {
             if (STransformComponent* Transform = Registry.try_get<STransformComponent>(Entity))
@@ -863,7 +870,7 @@ namespace Lumina
                     return;
                 }
 
-                BeginTransaction();
+                BeginRelationshipTransaction({ Source }, DropItem);
                 ECS::Utils::ReparentEntity(Registry, Source, DropItem);
                 EndTransaction("Reparent");
                 OutlinerListView.MarkTreeDirty();

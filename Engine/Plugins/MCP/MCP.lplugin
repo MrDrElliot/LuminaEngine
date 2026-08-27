@@ -1,0 +1,21 @@
+{
+    "FormatVersion": 1,
+    "Name": "MCP",
+    "Version": 1,
+    "VersionName": "0.1.0",
+    "Author": "Lumina Team",
+    "Description": "Exposes the editor to Model Context Protocol clients over a loopback HTTP endpoint, so an external agent can list and call engine tools. Opt in per project by listing it in your .lproject, or per build with -EnablePlugin=MCP. The endpoint opens on load, and mcp.AutoStart turns it off. The listener is bound to 127.0.0.1 and never reachable off the machine.",
+    "Category": "Scripting",
+    "EnabledByDefault": false,
+    "EditorOnly": true,
+    "ContainsContent": false,
+    "SupportedPlatforms": [ "Windows", "Linux" ],
+    "Dependencies": [],
+    "Modules": [
+        {
+            "Name": "MCPEditor",
+            "Type": "Editor",
+            "LoadingPhase": "EditorInit"
+        }
+    ]
+}

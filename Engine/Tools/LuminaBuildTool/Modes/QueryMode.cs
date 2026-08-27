@@ -36,12 +36,23 @@ public static class QueryMode
 
             Log.Info("Plugins ({0}):", Assembly.Plugins.Count);
 
+            BuildOptions Listing = BuildOptions.Load(Directories, Arguments);
+
             foreach (PluginDescriptor Plugin in Assembly.Plugins)
             {
+                bool? Override = Listing.GetPluginOverride(Plugin.Name);
+
+                string State = Override switch
+                {
+                    true  => "turned on by name",
+                    false => "turned off by name",
+                    null  => Plugin.EnabledByDefault ? "enabled by default" : "opt in",
+                };
+
                 Log.Info(
                     "  {0} ({1}, {2})",
                     Plugin.Name,
-                    Plugin.EnabledByDefault ? "enabled by default" : "opt in",
+                    State,
                     string.Join(", ", Plugin.Modules.Select(M => M.Name)));
             }
 

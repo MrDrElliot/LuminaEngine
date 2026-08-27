@@ -63,6 +63,8 @@ namespace Lumina
         {
             LUMINA_PROFILE_FRAME();
 
+            GEngine->MarkLoopStart();
+
             if (!GIsHeadless)
             {
                 // Ahead of the event pump, so the mouse position this frame acts on is sampled after the

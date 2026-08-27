@@ -2678,6 +2678,12 @@ namespace IMGUIZMO_NAMESPACE
          }
       }
 
+      // Restamped from the manipulated matrix, or the gizmo below draws a frame behind the object it moved.
+      if (manipulated || gContext.mbUsing)
+      {
+         ComputeContext(view, projection, matrix, (operation & SCALE) ? LOCAL : mode);
+      }
+
       if (localBounds && !gContext.mbUsing)
       {
          HandleAndDrawLocalBounds(localBounds, (matrix_t*)matrix, boundsSnap, operation);

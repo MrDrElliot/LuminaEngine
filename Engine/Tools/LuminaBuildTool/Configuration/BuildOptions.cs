@@ -16,6 +16,8 @@ public sealed class BuildOptions
 {
     private readonly Dictionary<string, FeatureMode> Modes = new(StringComparer.OrdinalIgnoreCase);
 
+    private readonly Dictionary<string, bool> PluginOverrides = new(StringComparer.OrdinalIgnoreCase);
+
     public static BuildOptions Empty { get; } = new();
 
     /// <summary>Compile every source as its own translation unit regardless of what the rules say.</summary>
@@ -27,6 +29,15 @@ public sealed class BuildOptions
     }
 
     public IReadOnlyDictionary<string, FeatureMode> All => Modes;
+
+    /// <summary>Plugins someone asked for by name, which is what lets an opt-in plugin compile at all.</summary>
+    public IReadOnlyDictionary<string, bool> PluginSettings => PluginOverrides;
+
+    /// <summary>Null when nothing named this plugin, leaving its own EnabledByDefault to decide.</summary>
+    public bool? GetPluginOverride(string Name)
+    {
+        return PluginOverrides.TryGetValue(Name, out bool bEnabled) ? bEnabled : null;
+    }
 
     /// <summary>Loads the config file, then applies matching command line switches such as -Tracy=off.</summary>
     public static BuildOptions Load(BuildDirectories Directories, CommandLine? Arguments)
@@ -57,12 +68,27 @@ public sealed class BuildOptions
                         }
                     }
                 }
+
+                if (Document.RootElement.TryGetProperty("Plugins", out JsonElement Plugins)
+                    && Plugins.ValueKind == JsonValueKind.Object)
+                {
+                    foreach (JsonProperty Plugin in Plugins.EnumerateObject())
+                    {
+                        if (Plugin.Value.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                        {
+                            Options.PluginOverrides[Plugin.Name] = Plugin.Value.GetBoolean();
+                        }
+                    }
+                }
             }
         }
         catch (Exception Ex) when (Ex is IOException or JsonException)
         {
             Log.Warning("Could not read '{0}': {1}. Using automatic feature defaults.", ConfigFile, Ex.Message);
         }
+
+        // The runtime reads the same list, so a plugin the project enables is also one that gets built.
+        Options.LoadProjectPlugins(Directories);
 
         if (Arguments is not null)
         {
@@ -77,9 +103,87 @@ public sealed class BuildOptions
                     Options.Modes[Feature] = Mode;
                 }
             }
+
+            Options.ApplyPluginArguments(Arguments.GetString("EnablePlugin"), true);
+            Options.ApplyPluginArguments(Arguments.GetString("DisablePlugin"), false);
         }
 
         return Options;
+    }
+
+    /// <summary>Reads the project's .lproject plugin list, the same one the runtime honors at load.</summary>
+    private void LoadProjectPlugins(BuildDirectories Directories)
+    {
+        if (Directories.ProjectRoot is null)
+        {
+            return;
+        }
+
+        string[] Descriptors;
+        try
+        {
+            Descriptors = Directory.GetFiles(Directories.ProjectRoot, "*.lproject", SearchOption.TopDirectoryOnly);
+        }
+        catch (Exception Ex) when (Ex is IOException or UnauthorizedAccessException)
+        {
+            Log.Warning("Could not scan '{0}' for a project descriptor: {1}", Directories.ProjectRoot, Ex.Message);
+            return;
+        }
+
+        foreach (string Descriptor in Descriptors)
+        {
+            try
+            {
+                using JsonDocument Document = JsonDocument.Parse(File.ReadAllText(Descriptor));
+
+                if (!Document.RootElement.TryGetProperty("Plugins", out JsonElement Plugins)
+                    || Plugins.ValueKind != JsonValueKind.Array)
+                {
+                    continue;
+                }
+
+                foreach (JsonElement Entry in Plugins.EnumerateArray())
+                {
+                    if (!Entry.TryGetProperty("Name", out JsonElement Name) || Name.ValueKind != JsonValueKind.String)
+                    {
+                        continue;
+                    }
+
+                    string? PluginName = Name.GetString();
+                    if (string.IsNullOrWhiteSpace(PluginName))
+                    {
+                        continue;
+                    }
+
+                    // An entry with no Enabled member is taken as asking for the plugin.
+                    bool bEnabled = !Entry.TryGetProperty("Enabled", out JsonElement Enabled)
+                        || Enabled.ValueKind != JsonValueKind.False;
+
+                    PluginOverrides[PluginName] = bEnabled;
+                }
+            }
+            catch (Exception Ex) when (Ex is IOException or JsonException)
+            {
+                Log.Warning("Could not read '{0}': {1}. Its plugin list is ignored.", Descriptor, Ex.Message);
+            }
+        }
+    }
+
+    private void ApplyPluginArguments(string? Names, bool bEnabled)
+    {
+        if (string.IsNullOrWhiteSpace(Names))
+        {
+            return;
+        }
+
+        foreach (string Name in Names.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            string Trimmed = Name.Trim();
+            if (Trimmed.Length > 0)
+            {
+                PluginOverrides[Trimmed] = bEnabled;
+            }
+        }
     }
 
     private static bool TryParseMode(string? Value, out FeatureMode Mode)

@@ -15,7 +15,10 @@
 #include "Core/Serialization/MemoryArchiver.h"
 #include "Core/Serialization/ObjectArchiver.h"
 #include "Transactions/EcsRegistrySnapshotCommand.h"
+#include "Transactions/EntityComponentSnapshotCommand.h"
 #include "Transactions/EntityCreationCommand.h"
+#include "Transactions/EntityDestroyCommand.h"
+#include "Transactions/EntityRelationshipCommand.h"
 #include "Transactions/EntityTransformCommand.h"
 #include "Settings/EditorSettings.h"
 #include "Thumbnails/ThumbnailManager.h"
@@ -35,7 +38,9 @@
 #include "World/Entity/EntityUtils.h"
 #include "World/Entity/Components/CameraComponent.h"
 #include "World/Entity/Components/EditorComponent.h"
+#include "World/Entity/Components/EntityTags.h"
 #include "World/Entity/Components/InputComponent.h"
+#include "World/Entity/Components/SocketAttachmentComponent.h"
 #include "World/Entity/Components/SkeletalMeshComponent.h"
 #include "World/Entity/Components/StaticMeshComponent.h"
 #include "World/Entity/Components/TerrainComponent.h"
@@ -2105,6 +2110,84 @@ namespace Lumina
 
         TransactionManager.BeginTransaction(FName());
         TransactionManager.Record(MakeUnique<FEntityCreationCommand>(World));
+    }
+
+    void FEditorTool::BeginComponentTransaction(const TVector<entt::entity>& Entities, CStruct* ComponentType)
+    {
+        if (!CanTransact())
+        {
+            return;
+        }
+
+        if (!FEntityComponentSnapshotCommand::CanSnapshotComponent(ComponentType))
+        {
+            BeginTransaction();
+            return;
+        }
+
+        TransactionManager.BeginTransaction(FName());
+        TransactionManager.Record(MakeUnique<FEntityComponentSnapshotCommand>(World, Entities, ComponentType));
+    }
+
+    void FEditorTool::RecordComponentSnapshot(const TVector<entt::entity>& Entities, CStruct* ComponentType)
+    {
+        if (!CanTransact() || !TransactionManager.IsRecording())
+        {
+            return;
+        }
+
+        if (!FEntityComponentSnapshotCommand::CanSnapshotComponent(ComponentType))
+        {
+            return;
+        }
+
+        TransactionManager.Record(MakeUnique<FEntityComponentSnapshotCommand>(World, Entities, ComponentType));
+    }
+
+    void FEditorTool::BeginRelationshipTransaction(const TVector<entt::entity>& Seeds, entt::entity NewParent)
+    {
+        if (!CanTransact())
+        {
+            return;
+        }
+
+        FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
+
+        TVector<entt::entity> Affected;
+        FEntityRelationshipCommand::CollectAffected(Registry, Seeds, NewParent, Affected);
+
+        TransactionManager.BeginTransaction(FName());
+
+        // Order between these is free, since each only writes and re-tags; the resolve runs after both.
+        TransactionManager.Record(MakeUnique<FEntityRelationshipCommand>(World, Affected));
+        TransactionManager.Record(MakeUnique<FEntityTransformCommand>(World, Affected));
+
+        // Reparenting under a disabled entity propagates the tag, which is a presence change.
+        TransactionManager.Record(MakeUnique<FEntityComponentSnapshotCommand>(World, Affected, SDisabledTag::StaticStruct()));
+        TransactionManager.Record(MakeUnique<FEntityComponentSnapshotCommand>(World, Affected, SSocketAttachmentComponent::StaticStruct()));
+    }
+
+    void FEditorTool::BeginDestroyTransaction(const TVector<entt::entity>& Doomed)
+    {
+        if (!CanTransact())
+        {
+            return;
+        }
+
+        FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
+
+        TVector<entt::entity> Candidates;
+        FEntityDestroyCommand::CollectCandidates(Registry, Doomed, Candidates);
+
+        // A surviving parent keeps a child list the dead entities were threaded through.
+        TVector<entt::entity> Neighbors;
+        FEntityRelationshipCommand::CollectAffected(Registry, Candidates, entt::null, Neighbors);
+
+        TransactionManager.BeginTransaction(FName());
+
+        // Recorded before the destroy so undo runs it after, once the entities are back to link to.
+        TransactionManager.Record(MakeUnique<FEntityRelationshipCommand>(World, Neighbors));
+        TransactionManager.Record(MakeUnique<FEntityDestroyCommand>(World, Candidates));
     }
 
     void FEditorTool::EndTransaction(FName Name)

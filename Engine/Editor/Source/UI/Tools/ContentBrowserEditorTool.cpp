@@ -1,6 +1,7 @@
 ﻿#include "ContentBrowserEditorTool.h"
 #include "Core/CoreEditorDelegates.h"
 
+#include "Asset/AssetOps.h"
 #include "EditorAssetActions.h"
 #include "EditorToolContext.h"
 #include "ReplaceReferencesModal.h"
@@ -409,32 +410,6 @@ namespace Lumina
         }
 
         // Each project root and its core Content and Scripts subdirs are protected and undeletable.
-        bool IsProtectedRoot(FStringView VirtualPath)
-        {
-            return IEquals(VirtualPath, "/Game")
-                || IEquals(VirtualPath, "/Game/Content")
-                || IEquals(VirtualPath, "/Game/Scripts")
-                || IEquals(VirtualPath, "/Engine/Resources")
-                || IEquals(VirtualPath, "/Engine/Resources/Content")
-                || IEquals(VirtualPath, "/Engine/Resources/Scripts");
-        }
-
-        // A mount root holds Content and Scripts, so creating into it puts the asset where nothing scans.
-        bool IsAssetCreationAllowed(FStringView VirtualPath)
-        {
-            auto IsAtOrUnder = [VirtualPath](const char* RootLiteral)
-            {
-                const FStringView Root(RootLiteral);
-                if (VirtualPath.size() < Root.size() || !IEquals(VirtualPath.substr(0, Root.size()), RootLiteral))
-                {
-                    return false;
-                }
-                // A prefix match is only real on a path boundary, or "/Game/ContentPacks" would pass.
-                return VirtualPath.size() == Root.size() || VirtualPath[Root.size()] == '/';
-            };
-
-            return IsAtOrUnder("/Game/Content") || IsAtOrUnder("/Engine/Resources/Content");
-        }
 
         // True if VirtualPath is a mount's "Scripts" subdir or anything beneath it.
         bool IsScriptDirectory(FStringView VirtualPath)
@@ -1348,7 +1323,7 @@ namespace Lumina
             for (const FBrowseEntry& Entry : SortedPaths)
             {
                 const VFS::FFileInfo& Info = Entry.Info;
-                const bool bProtected = IsProtectedRoot(FStringView(Info.VirtualPath.c_str(), Info.VirtualPath.size()));
+                const bool bProtected = AssetOps::IsProtectedRoot(FStringView(Info.VirtualPath.c_str(), Info.VirtualPath.size()));
                 FContentBrowserTileViewItem* NewItem = ContentBrowserTileView.AddItemToTree<FContentBrowserTileViewItem>(nullptr, Info, bProtected);
                 NewItem->SetTypeLabel(Entry.TypeLabel);
 
@@ -1796,91 +1771,16 @@ namespace Lumina
         
         ActionRegistry.ProcessAllOf<FPendingRename>([&](FPendingRename& Rename)
         {
-            FStringView Extension = VFS::Extension(Rename.OldName);
+            const AssetOps::FPathOpResult Result = AssetOps::MovePath(Rename.OldName, Rename.NewName);
 
-            if (Extension == ".lasset")
+            if (!Result.bSucceeded)
             {
-                // RenamePackage owns the disk move + in-memory rename; only update registry on success.
-                if (!CPackage::RenamePackage(Rename.OldName, Rename.NewName))
-                {
-                    ImGuiX::Notifications::NotifyError("Rename Failed: {0}", Rename.OldName);
-                    return;
-                }
-
-                FAssetRegistry::Get().AssetRenamed(Rename.OldName, Rename.NewName);
-                FCoreEditorDelegates::OnAssetRenamed.Broadcast(Rename.OldName, Rename.NewName);
-                ImGuiX::Notifications::NotifySuccess("Rename Success");
-                bWroteSomething = true;
+                ImGuiX::Notifications::NotifyError("Rename Failed: {0}", Result.Error);
+                return;
             }
-            else if (Extension.empty())
-            {
-                // Snapshot contained .lasset files before touching the filesystem to map old→new paths.
-                struct FFolderRenameEntry
-                {
-                    FFixedString OldPath;
-                    FFixedString NewPath;
-                };
-                TVector<FFolderRenameEntry> Entries;
 
-                FStringView OldFolder(Rename.OldName.data(), Rename.OldName.size());
-                FStringView NewFolder(Rename.NewName.data(), Rename.NewName.size());
-
-                VFS::RecursiveDirectoryIterator(Rename.OldName, [&](const VFS::FFileInfo& FileInfo)
-                {
-                    if (FileInfo.IsDirectory() || !FileInfo.IsLAsset())
-                    {
-                        return;
-                    }
-
-                    FStringView Old(FileInfo.VirtualPath.data(), FileInfo.VirtualPath.size());
-                    if (!Old.starts_with(OldFolder))
-                    {
-                        return;
-                    }
-
-                    FFixedString NewPath(NewFolder.data(), NewFolder.size());
-                    NewPath.append(Old.data() + OldFolder.size(), Old.size() - OldFolder.size());
-
-                    Entries.push_back({ FFixedString(Old.data(), Old.size()), Move(NewPath) });
-                });
-
-                if (!VFS::Rename(Rename.OldName, Rename.NewName))
-                {
-                    ImGuiX::Notifications::NotifyError("Folder Rename Failed: {0}", Rename.OldName);
-                    return;
-                }
-
-                // File names unchanged (only directory portion); no content rewrite needed.
-                for (const FFolderRenameEntry& Entry : Entries)
-                {
-                    CPackage::OnPackageMovedExternally(Entry.OldPath, Entry.NewPath);
-                    FAssetRegistry::Get().AssetRenamed(Entry.OldPath, Entry.NewPath);
-                    FCoreEditorDelegates::OnAssetRenamed.Broadcast(Entry.OldPath, Entry.NewPath);
-                }
-
-                // Relocate the identities (and sidecars) of every contained text asset.
-                FAssetRegistry::Get().TextAssetFolderRenamed(OldFolder, NewFolder);
-
-                ImGuiX::Notifications::NotifySuccess("Folder Rename Success");
-                bWroteSomething = true;
-            }
-            else
-            {
-                // Plain file (non-asset)
-                if (!VFS::Rename(Rename.OldName, Rename.NewName))
-                {
-                    ImGuiX::Notifications::NotifyError("Rename Failed: {0}", Rename.OldName);
-                    return;
-                }
-                // Carry the text-asset identity (sidecar) across the rename so references survive.
-                if (TextAsset::IsTextAssetPath(Rename.OldName) || TextAsset::IsTextAssetPath(Rename.NewName))
-                {
-                    FAssetRegistry::Get().TextAssetRenamed(Rename.OldName, Rename.NewName);
-                    FCoreEditorDelegates::OnAssetRenamed.Broadcast(Rename.OldName, Rename.NewName);
-                }
-                ImGuiX::Notifications::NotifySuccess("Rename Success");
-                bWroteSomething = true;
-            }
+            ImGuiX::Notifications::NotifySuccess("Rename Success");
+            bWroteSomething = true;
         });
 
 
@@ -3726,7 +3626,7 @@ namespace Lumina
         {
             auto CreateFromFactory = [this](CFactory* Factory)
             {
-                if (!IsAssetCreationAllowed(FStringView(SelectedPath.c_str(), SelectedPath.size())))
+                if (!AssetOps::IsAssetLocation(FStringView(SelectedPath.c_str(), SelectedPath.size())))
                 {
                     ImGuiX::Notifications::NotifyWarning(
                         "Cannot create assets in \"{0}\". Assets have to live under a Content folder.",

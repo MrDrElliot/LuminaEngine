@@ -25,10 +25,12 @@ namespace Lumina
     class FWorldEditorTool : public FSceneEditorTool, public IEditorModeContext
     {
         using Super = FSceneEditorTool;
-        LUMINA_SINGLETON_EDITOR_TOOL(FWorldEditorTool)
-
 
     public:
+
+        // Public so FEditorUI::FindTool can reach the type id from outside, as other tools declare it.
+        LUMINA_SINGLETON_EDITOR_TOOL(FWorldEditorTool)
+
         
         FWorldEditorTool(IEditorToolContext* Context, CWorld* InWorld);
         ~FWorldEditorTool() noexcept override = default;

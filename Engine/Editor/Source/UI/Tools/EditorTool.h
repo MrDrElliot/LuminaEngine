@@ -21,6 +21,7 @@ namespace Lumina
     class IEditorToolContext;
     class FUpdateContext;
     class FInputViewport;
+    class CStruct;
 }
 
 namespace Lumina
@@ -429,6 +430,18 @@ namespace Lumina
          * one of these cannot be restored, and the command logs an error if it sees that happen.
          */
         void BeginCreationTransaction();
+
+        /** Records one component type on these entities; falls back to whole-registry for an ops-less type. */
+        void BeginComponentTransaction(const TVector<entt::entity>& Entities, CStruct* ComponentType);
+
+        /** Records the links, transforms and attachment state a hierarchy edit on Seeds can rewrite. */
+        void BeginRelationshipTransaction(const TVector<entt::entity>& Seeds, entt::entity NewParent = entt::null);
+
+        /** Records the entities Doomed reaches, plus the links their surviving parents keep. */
+        void BeginDestroyTransaction(const TVector<entt::entity>& Doomed);
+
+        /** Adds one component type to the transaction already open, for an edit that spans several. */
+        void RecordComponentSnapshot(const TVector<entt::entity>& Entities, CStruct* ComponentType);
 
         /** End a transaction; captures after-state and pushes onto the undo stack. */
         virtual void EndTransaction(FName Name);

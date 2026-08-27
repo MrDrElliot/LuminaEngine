@@ -126,12 +126,26 @@ public sealed class TargetAssembler
                 continue;
             }
 
-            bool bEnabled = Plugin.EnabledByDefault
-                || TargetRules.EnabledPlugins.Contains(Plugin.Name, StringComparer.OrdinalIgnoreCase);
+            // An explicit ask outranks the descriptor, which is what makes an opt-in plugin buildable.
+            bool? Override = Info.Options.GetPluginOverride(Plugin.Name);
+
+            bool bEnabled = Override
+                ?? (Plugin.EnabledByDefault
+                    || TargetRules.EnabledPlugins.Contains(Plugin.Name, StringComparer.OrdinalIgnoreCase));
 
             if (!bEnabled)
             {
+                if (Override is false)
+                {
+                    Log.Verbose("Plugin '{0}' was turned off by name", Plugin.Name);
+                }
+
                 continue;
+            }
+
+            if (Override is true && !Plugin.EnabledByDefault)
+            {
+                Log.Verbose("Plugin '{0}' is opt in and was turned on by name", Plugin.Name);
             }
 
             if (!Plugin.SupportsPlatform(Info.Platform))

@@ -43,18 +43,34 @@ namespace Lumina
             }
         }
 
-        // OutLocation is a local-space offset in world units; OutRotationDeg is pitch, yaw and roll.
-        static void EvaluateCameraShakes(FCameraGlobalState& State, float Dt, FVector3& OutLocation, FVector3& OutRotationDeg)
+        // Split from the sample below so a same-frame re-resolve can read the shakes without advancing them.
+        static void AdvanceCameraShakes(FCameraGlobalState& State, float Dt)
         {
-            OutLocation    = FVector3(0.0f);
-            OutRotationDeg = FVector3(0.0f);
-
-            constexpr float TwoPi = Math::TwoPi<float>();
             for (int32 i = 0; i < (int32)State.Shakes.size(); )
             {
                 FCameraShakeInstance& S = State.Shakes[i];
                 S.Elapsed += Dt;
 
+                if (S.Duration > 0.0f && S.Elapsed >= S.Duration)
+                {
+                    State.Shakes.erase(State.Shakes.begin() + i);
+                }
+                else
+                {
+                    ++i;
+                }
+            }
+        }
+
+        // OutLocation is a local-space offset in world units; OutRotationDeg is pitch, yaw and roll.
+        static void SampleCameraShakes(const FCameraGlobalState& State, FVector3& OutLocation, FVector3& OutRotationDeg)
+        {
+            OutLocation    = FVector3(0.0f);
+            OutRotationDeg = FVector3(0.0f);
+
+            constexpr float TwoPi = Math::TwoPi<float>();
+            for (const FCameraShakeInstance& S : State.Shakes)
+            {
                 // Envelope ramps up over BlendInTime and down over BlendOutTime before Duration ends.
                 float Env = 1.0f;
                 if (S.BlendInTime > 0.0f && S.Elapsed < S.BlendInTime)
@@ -81,16 +97,61 @@ namespace Lumina
                 OutRotationDeg.x += S.RotationAmplitude.x * Osc(S.RotPhase[0], S.RotFreqMul[0]) * Env;
                 OutRotationDeg.y += S.RotationAmplitude.y * Osc(S.RotPhase[1], S.RotFreqMul[1]) * Env;
                 OutRotationDeg.z += S.RotationAmplitude.z * Osc(S.RotPhase[2], S.RotFreqMul[2]) * Env;
-
-                if (S.Duration > 0.0f && S.Elapsed >= S.Duration)
-                {
-                    State.Shakes.erase(State.Shakes.begin() + i);
-                }
-                else
-                {
-                    ++i;
-                }
             }
+        }
+
+        // Advances no clock, so calling it a second time inside one frame is free of side effects.
+        static bool StampResolvedView(entt::registry& Registry, FVector3& OutPosition, FQuat& OutRotation, float& OutFOV)
+        {
+            FCameraGlobalState& CameraState = Registry.ctx().get<FCameraGlobalState>();
+
+            const entt::entity CameraEntity = CameraState.ActiveCameraEntity;
+            if (!Registry.valid(CameraEntity) || !Registry.all_of<SCameraComponent, STransformComponent>(CameraEntity))
+            {
+                return false;
+            }
+
+            const STransformComponent& CameraTransform = Registry.get<STransformComponent>(CameraEntity);
+            SCameraComponent& Camera = Registry.get<SCameraComponent>(CameraEntity);
+
+            OutPosition = CameraTransform.GetWorldLocation();
+            OutRotation = CameraTransform.GetWorldRotation();
+            OutFOV      = Camera.FOV;
+
+            const FCameraGlobalState::FBlendState& Blend = CameraState.Blend;
+            if (Blend.bActive)
+            {
+                const float Alpha = EvaluateCameraBlend(Blend.Function, Blend.Duration > 0.0f ? Blend.Elapsed / Blend.Duration : 1.0f);
+
+                FQuat To = OutRotation;
+                if (Math::Dot(Blend.FromRotation, To) < 0.0f)
+                {
+                    To = -To; // Shortest-arc slerp.
+                }
+
+                OutPosition = Math::Mix(Blend.FromPosition, OutPosition, Alpha);
+                OutRotation = Math::Slerp(Blend.FromRotation, To, Alpha);
+                OutFOV      = Math::Mix(Blend.FromFOV, OutFOV, Alpha);
+            }
+
+            FVector3 ShakeLocation(0.0f);
+            FVector3 ShakeRotationDeg(0.0f);
+            SampleCameraShakes(CameraState, ShakeLocation, ShakeRotationDeg);
+
+            const FVector3 ShakenPosition = OutPosition + OutRotation * ShakeLocation;
+            const FQuat    ShakenRotation = OutRotation * FQuat(FVector3(
+                Math::Radians(ShakeRotationDeg.x),
+                Math::Radians(ShakeRotationDeg.y),
+                Math::Radians(ShakeRotationDeg.z)));
+
+            // Baked so direct matrix consumers match the rendered view; the authored FOV stays intact.
+            Camera.SetResolvedView(
+                ShakenPosition,
+                ShakenRotation * FVector3(0.0f, 0.0f, 1.0f),
+                ShakenRotation * FVector3(0.0f, 1.0f, 0.0f),
+                OutFOV);
+
+            return true;
         }
     }
 
@@ -244,46 +305,24 @@ namespace Lumina
             }
         }
 
-        FVector3            FinalPosition    = TargetPosition;
-        FQuat            FinalRotation    = TargetRotation;
-        float                FinalFOV         = TargetFOV;
-        SPostProcessSettings FinalPostProcess = ResolvedPostProcess;
+        Detail::AdvanceCameraShakes(CameraState, (float)Context.GetDeltaTime());
 
+        SPostProcessSettings FinalPostProcess = ResolvedPostProcess;
         if (Blend.bActive)
         {
-            const FCameraGlobalState::FBlendState& B = Blend;
-            const float Alpha = EvaluateCameraBlend(B.Function, B.Duration > 0.0f ? B.Elapsed / B.Duration : 1.0f);
+            const float Alpha = EvaluateCameraBlend(Blend.Function, Blend.Duration > 0.0f ? Blend.Elapsed / Blend.Duration : 1.0f);
 
-            FQuat To = TargetRotation;
-            if (Math::Dot(B.FromRotation, To) < 0.0f)
-            {
-                To = -To; // Shortest-arc slerp.
-            }
-
-            FinalPosition = Math::Mix(B.FromPosition, TargetPosition, Alpha);
-            FinalRotation = Math::Slerp(B.FromRotation, To, Alpha);
-            FinalFOV      = Math::Mix(B.FromFOV, TargetFOV, Alpha);
-
-            FinalPostProcess = B.FromPostProcess;
+            FinalPostProcess = Blend.FromPostProcess;
             BlendPostProcessSettings(FinalPostProcess, ResolvedPostProcess, Alpha);
         }
-        
-        FVector3 ShakeLocation(0.0f);
-        FVector3 ShakeRotationDeg(0.0f);
-        Detail::EvaluateCameraShakes(CameraState, (float)Context.GetDeltaTime(), ShakeLocation, ShakeRotationDeg);
 
-        const FVector3 ShakenPosition = FinalPosition + FinalRotation * ShakeLocation;
-        const FQuat    ShakenRotation = FinalRotation * FQuat(FVector3(
-            Math::Radians(ShakeRotationDeg.x),
-            Math::Radians(ShakeRotationDeg.y),
-            Math::Radians(ShakeRotationDeg.z)));
-
-        // Baked so direct matrix consumers match the rendered view; the authored FOV stays intact.
-        Camera.SetResolvedView(
-            ShakenPosition,
-            ShakenRotation * FVector3(0.0f, 0.0f, 1.0f),
-            ShakenRotation * FVector3(0.0f, 1.0f, 0.0f),
-            FinalFOV);
+        FVector3 FinalPosition = TargetPosition;
+        FQuat    FinalRotation = TargetRotation;
+        float    FinalFOV      = TargetFOV;
+        if (!Detail::StampResolvedView(Registry, FinalPosition, FinalRotation, FinalFOV))
+        {
+            return;
+        }
 
         Resolved.ViewVolume      = Camera.GetViewVolume();
         Resolved.PostProcess     = FinalPostProcess;
@@ -296,6 +335,27 @@ namespace Lumina
         CameraState.LastViewFOV      = FinalFOV;
         CameraState.LastPostProcess  = FinalPostProcess;
         CameraState.bHasResolvedView = true;
+    }
+
+    void SCameraSystem::ResolveActiveCameraView(entt::registry& Registry)
+    {
+        LUMINA_PROFILE_SCOPE();
+
+        FVector3 Position(0.0f);
+        FQuat    Rotation;
+        float    FOV = 0.0f;
+        if (!Detail::StampResolvedView(Registry, Position, Rotation, FOV))
+        {
+            return;
+        }
+
+        // Only refreshed once Update has published a view, so this never invents one before the first tick.
+        FResolvedSceneView& Resolved = Registry.ctx().get<FResolvedSceneView>();
+        if (Resolved.bHasView)
+        {
+            const entt::entity CameraEntity = Registry.ctx().get<FCameraGlobalState>().ActiveCameraEntity;
+            Resolved.ViewVolume = Registry.get<SCameraComponent>(CameraEntity).GetViewVolume();
+        }
     }
 
     void SCameraSystem::SetActiveCamera(entt::registry& Registry, entt::entity Entity, float BlendTime, ECameraBlendFunction Function)

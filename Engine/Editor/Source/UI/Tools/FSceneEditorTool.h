@@ -81,6 +81,22 @@ namespace Lumina
         // The registry holding the scene's entities (the observed world's registry).
         NODISCARD FEntityRegistry& GetSceneRegistry() const { return ECS::GetWorldRegistry(*GetObservedWorld()); }
 
+    public:
+
+        // Read access to the scene this tool is showing, for callers outside it such as an agent endpoint.
+        NODISCARD CWorld* GetSceneWorld() const { return GetObservedWorld(); }
+
+        NODISCARD FEntityRegistry& GetSceneEntityRegistry() const { return GetSceneRegistry(); }
+
+        // Brackets a mutation from outside the tool, so an agent edit lands on the same undo stack.
+        void RunTransacted(FName Label, const TFunction<void()>& Mutate);
+
+        // The same for an edit that only adds entities, which records far less than a full snapshot.
+        void RunCreationTransacted(FName Label, const TFunction<void()>& Mutate);
+
+    protected:
+
+
         // Outliner observes this world instead of World (null/own-world = follow World). Subclasses
         // that switch worlds set it; the base only reads it through GetObservedWorld/GetSceneRegistry.
         CWorld*                 ObservedWorld = nullptr;
@@ -252,10 +268,29 @@ namespace Lumina
         void OnPrePropertyChangeEvent(const FPropertyChangedEvent& Event);
         void OnPostPropertyChangeEvent(const FPropertyChangedEvent& Event);
 
+        // Opens a transaction over just the component the details panel is about to write.
+        void BeginPropertyEditTransaction(CStruct* ComponentType);
+
+        // Opens a transaction over just the folder table; for edits that touch nothing else.
+        void BeginFolderTransaction();
+
+        // Adds the folder table to an open transaction, for an edit that also rewires the hierarchy.
+        void RecordSceneFolderSnapshot();
+
+        // Adds the prefab override ledger to an open transaction, for a component add or remove.
+        void RecordPrefabOverrideSnapshot(const TVector<entt::entity>& Entities);
+
+        // The singleton entity carrying SSceneFolderComponent, or null before the world has one.
+        NODISCARD entt::entity GetSceneFolderOwner() const;
+
         // Hook: components that should never appear in the details panel. Base hides STagComponent
         // (rendered separately as chips); the prefab editor also hides its SPrefabComponent.
         virtual bool IsComponentHiddenInDetails(const CStruct* Type) const;
         
+        // Wraps the transaction, the creation hook, selection and dirty marking that every spawn shares.
+        entt::entity SpawnEntityTransacted(FName Name, FName TransactionLabel,
+            const TFunction<void(entt::entity)>& Decorate);
+
         void CreateEntity();
         void CreateEntityWithComponent(const CStruct* Component);
         void CreatePrimitiveEntity(CStaticMesh* PrimitiveMesh, const char* DisplayName);
