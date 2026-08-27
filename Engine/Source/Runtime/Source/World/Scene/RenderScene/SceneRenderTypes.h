@@ -1289,6 +1289,8 @@ namespace Lumina
         uint8 bWireframe:1              = false;
         uint8 bDrawBillboards:1         = true;
         uint8 bCPUInstanceCull:1        = true;
+        // Rejects a local light whose attenuation sphere reaches no shading volume, before it takes a slot.
+        uint8 bCullLights:1             = true;
         uint8 bUseLODs:1                = true;
         uint8 bShadowMaskValid:1        = false;
         // Debug: keep culling against the inputs captured when this went on, so the selected set holds

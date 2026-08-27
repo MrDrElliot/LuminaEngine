@@ -307,6 +307,8 @@ namespace Lumina
                 TArray<FLightShadowData, MAX_SHADOWS> Shadows = {};
                 TArray<TVector<FLightShadow>, (uint32)ELightType::Num> PackedShadows = {};
                 TAtomic<uint32>                  ShadowDataCount = 0;
+                // Camera, captures and the baking probe's faces. Rebuilt each extract before the light tasks.
+                TVector<FFrustum>                RelevanceFrusta;
                 TVector<FShadowRequest>          ShadowRequests;
                 FMutex                           ShadowRequestMutex;
                 TVector<FShadowTile>             AtlasTiles;
@@ -784,7 +786,7 @@ namespace Lumina
 
         void ProcessPointLight(const SPointLightComponent& PointLight, const STransformComponent& TransformComponent, TAtomic<uint32>& LightCount);
         void ProcessSpotLight(const SSpotLightComponent& SpotLight, const STransformComponent& TransformComponent, TAtomic<uint32>& LightCount);
-        void ProcessDirectionalLight(const SDirectionalLightComponent& DirectionalLight, TAtomic<uint32>& LightCount);
+        void ProcessDirectionalLight(const SDirectionalLightComponent& DirectionalLight);
 
         void AllocateShadowTiles();
         
@@ -798,6 +800,11 @@ namespace Lumina
         void NotifyMaxLightsHit();
         
         bool ShouldRequestShadow(const FVector3& LightPosition, float LightRadius) const;
+
+        void BuildLightRelevanceVolumes();
+
+        // Every volume that shades from the shared light buffer, so a light rejected here reaches nothing.
+        bool IsLightRelevant(const FVector3& LightPosition, float LightRadius) const;
         
         enum EShadingFeature : uint32
         {

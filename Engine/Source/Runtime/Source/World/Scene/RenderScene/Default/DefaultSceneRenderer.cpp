@@ -2371,7 +2371,7 @@ namespace Lumina
             LUMINA_PROFILE_SECTION("Compile Draw Commands");
             ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
             TAtomic<uint32> LightCount{0};
-            
+
             auto DirectionalView     = Registry.View<SDirectionalLightComponent>(ECS::TExclude<SDisabledTag>{});
             auto SpotLightView       = Registry.View<SSpotLightComponent>(ECS::TExclude<SDisabledTag>{});
             auto PointLightView      = Registry.View<SPointLightComponent>(ECS::TExclude<SDisabledTag>{});
@@ -2408,6 +2408,15 @@ namespace Lumina
 
             // Per-frame CPU reject volumes built before parallel gather so workers query lock-free.
             BuildSceneCullContext();
+
+            // Needs the captures and the baking probe, both already extracted, and the light tasks below.
+            BuildLightRelevanceVolumes();
+
+            // Ten passes read Lights[0] as the sun, so a local light must never win that slot.
+            if (DirectionalView.begin() != DirectionalView.end())
+            {
+                LightCount.store(1, std::memory_order_relaxed);
+            }
 
             ResetGeometry_Extract();
 
@@ -2837,7 +2846,7 @@ namespace Lumina
                 DirectionalView.ForEachInRange(Range.Start, Range.End,
                     [&](ECS::FEntity, SDirectionalLightComponent& DirectionalLight)
                 {
-                    ProcessDirectionalLight(DirectionalLight, LightCount);
+                    ProcessDirectionalLight(DirectionalLight);
                 });
             });
             
@@ -3224,6 +3233,7 @@ namespace Lumina
 
             // LightCount can overshoot MAX_LIGHTS; clamp to match what Process*Light wrote.
             LightData.NumLights = Math::Min(LightCount.load(std::memory_order_acquire), (uint32)MAX_LIGHTS);
+
 
             // Serial fit/allocate after parallel light pass; shrinks when sum(area) exceeds atlas budget.
             AllocateShadowTiles();
@@ -4815,6 +4825,58 @@ namespace Lumina
         return ExtractFrame->CameraFrustum.IntersectsSphere(LightPosition, LightRadius);
     }
 
+    void FDefaultSceneRenderer::BuildLightRelevanceVolumes()
+    {
+        FFrameData& Frame = *ExtractFrame;
+        TVector<FFrustum>& Volumes = Frame.Lighting.RelevanceFrusta;
+
+        Volumes.clear();
+
+        if (!RenderSettings.bCullLights)
+        {
+            return;
+        }
+
+        Volumes.push_back(Frame.CameraFrustum);
+
+        // Captures shade through the same light buffer via MakeSecondaryViewGlobals, so they vote too.
+        for (const FFrameData::FCaptureViewData& Capture : Frame.Views.CaptureViews)
+        {
+            Volumes.push_back(Capture.ViewVolume.GetFrustum());
+        }
+
+        if (Frame.ReflectionProbes.BakingProbe >= 0)
+        {
+            for (int32 Face = 0; Face < 6; ++Face)
+            {
+                Volumes.push_back(Frame.ReflectionProbes.FaceVolumes[Face].GetFrustum());
+            }
+        }
+    }
+
+    bool FDefaultSceneRenderer::IsLightRelevant(const FVector3& LightPosition, float LightRadius) const
+    {
+        if (!RenderSettings.bCullLights)
+        {
+            return true;
+        }
+
+        if (LightRadius <= 0.0f)
+        {
+            return false;
+        }
+
+        for (const FFrustum& Volume : ExtractFrame->Lighting.RelevanceFrusta)
+        {
+            if (Volume.IntersectsSphere(LightPosition, LightRadius))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     void FDefaultSceneRenderer::BuildSceneCullContext()
     {
         LUMINA_PROFILE_SCOPE();
@@ -4909,6 +4971,14 @@ namespace Lumina
         TVector<FShadowRequest>& ShadowRequests = Frame.Lighting.ShadowRequests;
         FMutex& ShadowRequestMutex              = Frame.Lighting.ShadowRequestMutex;
 
+        const FVector3 Position = TransformComponent.GetWorldLocationCached();
+
+        // Ahead of the slot handout, so an unreachable light costs neither a light index nor a cluster test.
+        if (!IsLightRelevant(Position, PointLight.Attenuation))
+        {
+            return;
+        }
+
         auto Lights = LightCount.fetch_add(1, std::memory_order_acquire);
         if (Lights >= MAX_LIGHTS)
         {
@@ -4922,7 +4992,7 @@ namespace Lumina
         Light.Color                 = PackColor(FVector4(PointLight.LightColor, 1.0));
         Light.Intensity             = PointLight.Intensity;
         Light.Radius                = PointLight.Attenuation;
-        Light.Position              = TransformComponent.GetWorldLocationCached();
+        Light.Position              = Position;
         Light.ShadowDataIndex       = INDEX_NONE;
         if (PointLight.bVolumetric)
         {
@@ -4963,6 +5033,14 @@ namespace Lumina
         auto& ShadowRequests    = Frame.Lighting.ShadowRequests;
         auto& ShadowRequestMutex= Frame.Lighting.ShadowRequestMutex;
 
+        const FVector3 Position = TransformComponent.GetWorldLocationCached();
+
+        // Tested as the full attenuation sphere; the cone would reject more but needs the rotation first.
+        if (!IsLightRelevant(Position, SpotLight.Attenuation))
+        {
+            return;
+        }
+
         auto Lights = LightCount.fetch_add(1, std::memory_order_acquire);
         if (Lights >= MAX_LIGHTS)
         {
@@ -4982,7 +5060,7 @@ namespace Lumina
 
         FLight Light                = {};
         Light.Flags                 = ELightFlags::Spot;
-        Light.Position              = TransformComponent.GetWorldLocationCached();
+        Light.Position              = Position;
         Light.Direction             = Math::Normalize(-UpdatedForward);
         Light.Falloff               = SpotLight.Falloff;
         Light.Color                 = PackColor(FVector4(SpotLight.LightColor, 1.0));
@@ -5480,7 +5558,7 @@ namespace Lumina
         return MaxC > 1e-4f ? RGB / MaxC : FVector3(1.0f);
     }
 
-    void FDefaultSceneRenderer::ProcessDirectionalLight(const SDirectionalLightComponent& DirectionalLight, TAtomic<uint32>& LightCount)
+    void FDefaultSceneRenderer::ProcessDirectionalLight(const SDirectionalLightComponent& DirectionalLight)
     {
         FFrameData& Frame          = *ExtractFrame;
         auto& LightData            = Frame.Lighting.LightData;
@@ -5686,7 +5764,7 @@ namespace Lumina
 
         SceneGlobalData.CullData.bCascadeHZBMidValid = 1u;
 
-        LightCount.fetch_add(1, std::memory_order_acquire);
+        // Slot 0 is reserved for the sun by CompileDrawCommands_Extract, which is why no index is taken here.
         Frame.Lighting.Lights[0] = Light;
     }
 
