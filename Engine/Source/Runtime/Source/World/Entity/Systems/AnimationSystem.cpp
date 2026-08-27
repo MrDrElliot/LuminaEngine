@@ -22,6 +22,8 @@
 #include "World/Entity/Components/SimpleAnimationComponent.h"
 #include "World/Entity/Components/SkeletalMeshComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
+#include "World/Entity/Systems/KinematicsSystem.h"
+#include "World/Entity/Systems/SignificanceSystem.h"
 #include "World/Entity/Systems/SystemResources.h"
 #include "Log/Log.h"
 #include "Renderer/SkeletonResource.h"
@@ -108,7 +110,7 @@ namespace Lumina
     FSystemAccess SAnimationSystem::Access = FSystemAccess{}
         .Write<SSkeletalMeshComponent, STransformComponent, SSimpleAnimationComponent, SAnimationGraphComponent,
                SFollowerPoseComponent>()
-        .Read<SCharacterMovementComponent, SystemResource::PhysicsQuery>();
+        .Read<SCharacterMovementComponent, SystemResource::PhysicsQuery, SystemResource::Kinematics>();
 
     // Slack so brief occlusion or culling flicker does not stutter the pose.
     static constexpr double kAnimVisibilityGrace = 0.25;
@@ -138,20 +140,8 @@ namespace Lumina
                 return true;
             }
 
-            const float DoR = Mesh.LastDistanceOverRadius;
-            int16 Interval = 1;
-            if (DoR > 120.0f)
-            {
-                Interval = 4;
-            }
-            else if (DoR > 60.0f)
-            {
-                Interval = 3;
-            }
-            else if (DoR > 30.0f)
-            {
-                Interval = 2;
-            }
+            // The gather's metric rather than SSignificanceSystem's, since it sees the real culled bounds.
+            const int16 Interval = (int16)Significance::IntervalForDistanceOverRadius(Mesh.LastDistanceOverRadius);
 
             if (Interval <= 1)
             {
@@ -545,7 +535,7 @@ namespace Lumina
         // One entity's graph update, parallel-safe; pose math happens in the execute phase.
         void UpdateGraph(const FSystemContext& SystemContext, ECS::FEntity Entity,
                          SAnimationGraphComponent& AnimGraph, SSkeletalMeshComponent& Mesh,
-                         float DeltaTime, double Now)
+                         float DeltaTime, double Now, const FKinematicsState* KinematicsState)
         {
             AnimGraph.NotifyEvents.clear();
             AnimGraph.PendingRootMotion = FRootMotionDelta();
@@ -598,14 +588,7 @@ namespace Lumina
                 SceneContext.WorldRotation  = World.GetRotation();
                 SceneContext.SelfBodyID     = SystemContext.GetEntityBodyID(Entity);
 
-                if (const SCharacterMovementComponent* Movement = SystemContext.TryGet<SCharacterMovementComponent>(Entity))
-                {
-                    SceneContext.Velocity = Movement->Velocity;
-                }
-                else if (Physics::IPhysicsScene* Scene = SceneContext.Scene)
-                {
-                    SceneContext.Velocity = Scene->GetLinearVelocity(Entity);
-                }
+                SceneContext.Velocity = Kinematics::GetVelocity(KinematicsState, Entity);
             }
 
             FAnimationGraphVM::BuildTasks(Graph, Skeleton, StepTime, AnimGraph.VMState, Mesh.AnimTasks,
@@ -676,6 +659,9 @@ namespace Lumina
             return;
         }
 
+        // Hoisted, since the graph bodies run in parallel and the context lookup is a per-type hash probe.
+        const FKinematicsState* KinematicsState = Kinematics::GetState(SystemContext);
+
         const float  DeltaTime = (float)SystemContext.GetDeltaTime();
         const double Now       = SystemContext.GetTime();
 
@@ -713,7 +699,7 @@ namespace Lumina
                 GraphView.ForEachInRange(Range.Start, Range.End,
                     [&](ECS::FEntity Entity, SAnimationGraphComponent& AnimGraph, SSkeletalMeshComponent& Mesh)
                 {
-                    UpdateGraph(SystemContext, Entity, AnimGraph, Mesh, DeltaTime, Now);
+                    UpdateGraph(SystemContext, Entity, AnimGraph, Mesh, DeltaTime, Now, KinematicsState);
 
                     if (AnimGraph.PendingRootMotion.bHasMotion)
                     {

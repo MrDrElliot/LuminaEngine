@@ -10,17 +10,13 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** Current velocity vector in world space (meters/second). */
+        /** Current velocity vector in world space (meters/second). Written by SKinematicsSystem. */
         PROPERTY(ReadOnly)
-        FVector3 Velocity;
+        FVector3 Velocity = FVector3(0.0f);
 
-        /** Magnitude of the velocity (meters/second). */
-        PROPERTY(Editable)
-        float Speed;
-
-        /** Uniform scale applied to the velocity vector. */
-        PROPERTY(Editable)
-        float Scale; 
+        /** Magnitude of the velocity (meters/second). Written by SKinematicsSystem. */
+        PROPERTY(ReadOnly)
+        float Speed = 0.0f;
     };
     
 }

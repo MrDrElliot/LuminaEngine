@@ -11,13 +11,14 @@
 #include "World/Entity/Components/RelationshipComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/Entity/Systems/NavMeshSystem.h"
+#include "World/Entity/Systems/SignificanceSystem.h"
 
 namespace Lumina
 {
     // STransformComponent is READ-only here, so this batches in parallel with other readers.
     FSystemAccess SPathFollowSystem::Access = FSystemAccess{}
         .Write<SPathFollowComponent, SCharacterControllerComponent>()
-        .Read<STransformComponent, FRelationshipComponent, SNavMeshComponent>();
+        .Read<STransformComponent, FRelationshipComponent, SNavMeshComponent, SystemResource::Significance>();
 
     namespace
     {
@@ -73,6 +74,7 @@ namespace Lumina
         FNavMesh* const NavMesh = Nav::GetReadyNavMesh(Context);
 
         auto TransformStorage = Context.GetRegistry().GetStorage<STransformComponent>();
+        const FSignificanceState* SignificanceState = Significance::GetState(Context);
         // Chunked, so the scheduler is not asked to dispatch one job per follower.
         Task::ParallelFor((uint32)View.NumDenseSlots(), [&](const Task::FParallelRange& Range)
         {
@@ -100,7 +102,8 @@ namespace Lumina
                 const FVector3 AgentPos = Xform.GetWorldLocationCached();
 
                 const bool bMovedTarget = Math::Length(Goal - Comp.PathSourceTarget) > Comp.RepathDistance;
-                const bool bIntervalElapsed = Comp.TimeSinceLastPath > Comp.RepathInterval;
+                const float RepathInterval = Significance::ScaleInterval(SignificanceState, Entity, Comp.RepathInterval);
+                const bool bIntervalElapsed = Comp.TimeSinceLastPath > RepathInterval;
                 // No CornerCount==0 trigger, or an unreachable goal would re-query every tick.
                 const bool bNeedRepath = Comp.bPathDirty || bMovedTarget || bIntervalElapsed;
 

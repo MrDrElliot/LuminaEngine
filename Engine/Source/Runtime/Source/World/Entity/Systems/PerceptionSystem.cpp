@@ -17,6 +17,7 @@
 #include "World/Entity/Components/PerceptionComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/Entity/Events/PerceptionEvent.h"
+#include "World/Entity/Systems/SignificanceSystem.h"
 
 namespace Lumina
 {
@@ -290,6 +291,9 @@ namespace Lumina
 
         const bool bDebugAll = CVarPerceptionDebug.GetValue();
         const FPerceptionGrid& Grid = State.SourceGrid;
+
+        // Read-only for the whole parallel body, so the workers share one pointer without synchronizing.
+        const FSignificanceState* SignificanceState = Significance::GetState(Context);
         Task::ParallelFor((uint32)NumPerceivers, [&](uint32 Index)
         {
             const ECS::FEntity E = Perceivers[Index];
@@ -311,7 +315,7 @@ namespace Lumina
             {
                 return;
             }
-            if (Comp.UpdateAccumulator < Comp.UpdateInterval)
+            if (Comp.UpdateAccumulator < Significance::ScaleInterval(SignificanceState, E, Comp.UpdateInterval))
             {
                 return;
             }

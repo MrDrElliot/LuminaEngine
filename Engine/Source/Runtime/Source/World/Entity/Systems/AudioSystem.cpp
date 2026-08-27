@@ -8,6 +8,8 @@
 #include "Physics/PhysicsScene.h"
 #include "World/Entity/Components/AudioSourceComponent.h"
 #include "World/Entity/Components/ProceduralAudioComponent.h"
+#include "KinematicsSystem.h"
+#include "SignificanceSystem.h"
 #include "SystemResources.h"
 
 namespace Lumina
@@ -15,22 +17,11 @@ namespace Lumina
 	// PhysicsQuery is needed because occlusion casts rays against the live scene.
 	FSystemAccess SAudioSystem::Access = FSystemAccess{}
 		.Write<SAudioSourceComponent, SProceduralAudioComponent, SAudioListenerComponent>()
-		.Read<STransformComponent, SystemResource::PhysicsQuery>();
+		.Read<STransformComponent, SystemResource::PhysicsQuery, SystemResource::Significance,
+		      SystemResource::Kinematics>();
 
 	namespace
 	{
-		FVector3 ComputeVelocity(const FVector3& Current, FVector3& LastPosition, bool& bHasLastPosition, float DeltaTime)
-		{
-			FVector3 Velocity(0.0f);
-			if (bHasLastPosition && DeltaTime > 0.0f)
-			{
-				Velocity = (Current - LastPosition) * (1.0f / DeltaTime);
-			}
-			LastPosition = Current;
-			bHasLastPosition = true;
-			return Velocity;
-		}
-
 		float MoveTowards(float Current, float Target, float MaxDelta)
 		{
 			if (Math::Abs(Target - Current) <= MaxDelta)
@@ -91,6 +82,7 @@ namespace Lumina
 		const float DeltaTime = (float)SystemContext.GetDeltaTime();
 
 		auto XFormStorage = SystemContext.GetStorage<STransformComponent>();
+		const FKinematicsState* KinematicsState = Kinematics::GetState(SystemContext);
 
 		FVector3 ListenerPosition(0.0f);
 		bool bHasListener = false;
@@ -104,7 +96,7 @@ namespace Lumina
 				const STransformComponent& Transform = XFormStorage.Get(Entity);
 				const FVector3 Position = Transform.GetWorldLocation();
 
-				const FVector3 Velocity = ComputeVelocity(Position, Listener.LastPosition, Listener.bHasLastPosition, DeltaTime);
+				const FVector3 Velocity = Kinematics::GetVelocity(KinematicsState, Entity);
 
 				Audio::Context().UpdateListener(Index, Position, Transform.GetWorldRotation(),
 					Listener.bApplyDoppler ? Velocity : FVector3(0.0f));
@@ -131,6 +123,7 @@ namespace Lumina
 		const bool bOcclusionAllowed = bHasListener && Settings != nullptr && Settings->bOcclusionEnabled;
 		Physics::IPhysicsScene* PhysicsScene = bOcclusionAllowed ? SystemContext.GetPhysicsScene() : nullptr;
 		uint32 TraceBudget = (Settings != nullptr) ? Settings->MaxOcclusionTracesPerTick : 0;
+		const FSignificanceState* SignificanceState = Significance::GetState(SystemContext);
 
 		{
 			auto SourceView = SystemContext.CreateView<SAudioSourceComponent>();
@@ -138,6 +131,7 @@ namespace Lumina
 			{
 				const STransformComponent& Transform = XFormStorage.Get(Entity);
 				const FVector3 Position = Transform.GetWorldLocation();
+				Audio.LastPosition = Position;
 
 				// The mixer may have retired the voice (one-shot ended, evicted by a higher priority).
 				if (Audio.bPlaying && Audio::Context().GetVoiceState(Audio.ActiveHandle) == EAudioVoiceState::Free)
@@ -153,8 +147,6 @@ namespace Lumina
 				if (!Audio.bReady)
 				{
 					Audio.bReady = true;
-					Audio.LastPosition = Position;
-					Audio.bHasLastPosition = true;
 
 					if (Audio.bPlayOnReady && Audio.Sound != nullptr && Audio.Sound->IsPlayable() && bInRange)
 					{
@@ -169,7 +161,6 @@ namespace Lumina
 				{
 					if (!Audio.bPlaying && bInRange)
 					{
-						Audio.LastPosition = Position;
 						Audio.Play();
 					}
 					else if (Audio.bPlaying && Audio.bSpatialized && Audio.bCullBeyondMaxDistance && bHasListener &&
@@ -181,11 +172,10 @@ namespace Lumina
 
 				if (!Audio.bPlaying || !Audio.ActiveHandle.IsValid())
 				{
-					Audio.LastPosition = Position;
 					return;
 				}
 
-				const FVector3 Velocity = ComputeVelocity(Position, Audio.LastPosition, Audio.bHasLastPosition, DeltaTime);
+				const FVector3 Velocity = Kinematics::GetVelocity(KinematicsState, Entity);
 
 				if (Audio.bSpatialized)
 				{
@@ -230,7 +220,7 @@ namespace Lumina
 				if (Audio.OcclusionTraceTimer <= 0.0f && PhysicsScene != nullptr && TraceBudget > 0)
 				{
 					--TraceBudget;
-					Audio.OcclusionTraceTimer = Audio.Occlusion.TraceInterval;
+					Audio.OcclusionTraceTimer = Significance::ScaleInterval(SignificanceState, Entity, Audio.Occlusion.TraceInterval);
 
 					SRayCastSettings Trace;
 					Trace.Start     = ListenerPosition;

@@ -9,6 +9,8 @@ namespace Lumina::SystemResource
     struct EntityStructure {};  // does structural ECS changes (create/destroy/add/remove component)
     struct PhysicsQuery {};     // issues physics queries against the live scene
     struct Input {};            // mutates shared input state (layer stack, mouse/input mode)
+    struct Significance {};     // publishes the per-entity significance scores
+    struct Kinematics {};       // publishes the per-entity velocities
 }
 
 namespace Lumina
@@ -22,4 +24,6 @@ namespace Lumina
     template<> inline constexpr bool TIsSystemResource<SystemResource::EntityStructure> = true;
     template<> inline constexpr bool TIsSystemResource<SystemResource::PhysicsQuery>    = true;
     template<> inline constexpr bool TIsSystemResource<SystemResource::Input>           = true;
+    template<> inline constexpr bool TIsSystemResource<SystemResource::Significance>    = true;
+    template<> inline constexpr bool TIsSystemResource<SystemResource::Kinematics>      = true;
 }

@@ -101,8 +101,9 @@ namespace Lumina
 		// Last count this component observed per watched trigger output, so a fire is reported once.
 		TVector<TPair<FName, uint32>> TriggerOutputCursors;
 
+		// Refreshed by SAudioSystem, since a deferred Play needs somewhere to spawn the voice.
 		FVector3 LastPosition = FVector3(0.0f);
-		bool bHasLastPosition = false;
+
 
 		FUNCTION()
 		void Play();
@@ -169,7 +170,5 @@ namespace Lumina
 		PROPERTY(Editable)
 		bool bApplyDoppler = true;
 
-		FVector3 LastPosition = FVector3(0.0f);
-		bool bHasLastPosition = false;
 	};
 }
