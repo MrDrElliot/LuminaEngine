@@ -21,6 +21,9 @@
 
 namespace Lumina::Physics
 {
+    // Matches the transform resolve's own fan-out point, below which a job costs more than the work.
+    static constexpr uint32 InterpParallelThreshold = 1000;
+
     void FBox3DPhysicsScene::Simulate()
     {
         ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
@@ -123,14 +126,24 @@ namespace Lumina::Physics
             }
 
             const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
-            const b3Vec3 Position = Box3DUtils::ToB3Vec3(Transform.GetLocation());
-            const b3Quat Rotation = Box3DUtils::ToB3Quat(Transform.GetRotation());
+            const FVector3 TargetLocation = Transform.GetLocation();
+            const FQuat TargetRotation = Transform.GetRotation();
+            const b3Vec3 Position = Box3DUtils::ToB3Vec3(TargetLocation);
+            const b3Quat Rotation = Box3DUtils::ToB3Quat(TargetRotation);
+
+            // A teleport has no previous pose to blend from, so the interpolator must not span the jump.
+            auto AdoptTeleportedPose = [&]
+            {
+                BodyComponent.LastBodyPosition = TargetLocation;
+                BodyComponent.LastBodyRotation = TargetRotation;
+            };
 
             switch (b3Body_GetType(BodyId))
             {
                 case b3_staticBody:
                 {
                     b3Body_SetTransform(BodyId, Position, Rotation);
+                    AdoptTeleportedPose();
                     break;
                 }
                 case b3_kinematicBody:
@@ -150,6 +163,7 @@ namespace Lumina::Physics
                         case EMoveMode::Teleport:
                         {
                             b3Body_SetTransform(BodyId, Position, Rotation);
+                            AdoptTeleportedPose();
                             if (Update.bActivate)
                             {
                                 b3Body_SetAwake(BodyId, true);
@@ -430,6 +444,8 @@ namespace Lumina::Physics
         InterpApplied.clear();
         InterpApplied.reserve(Count);
 
+        bool bAnyParented = false;
+
         for (uint32 i = 0; i < Count; ++i)
         {
             const EInterpFlag Flag = InterpStaging.Flags[i];
@@ -462,18 +478,33 @@ namespace Lumina::Physics
             }
 
             STransformComponent& TransformComponent = TransformStorage.Get(Entity);
-            TransformComponent.SetRaw(InterpStaging.CurrPos[i],
+            TransformComponent.SetFromPhysics(InterpStaging.CurrPos[i],
                 FQuat(InterpStaging.CurrQw[i], InterpStaging.CurrQx[i], InterpStaging.CurrQy[i], InterpStaging.CurrQz[i]));
 
-            ECS::Utils::MarkTransformDirtyNoBody(Registry, Entity);
+            bAnyParented |= !TransformComponent.bIsFlat;
 
             InterpApplied.push_back(i);
         }
 
-        ECS::Utils::ResolveAllDirtyTransforms(Registry);
+        // A flat body resolved itself in the write above, so the whole registry sweep is owed to nobody.
+        if (bAnyParented)
+        {
+            ECS::Utils::ResolveAllDirtyTransforms(Registry);
+        }
 
+        // The override has to exist before the writes below, which may run on workers and cannot grow a pool.
         for (uint32 i : InterpApplied)
         {
+            const ECS::FEntity Entity = InterpStaging.Entities[i];
+            if (!RenderStorage.Contains(Entity))
+            {
+                RenderStorage.Emplace(Entity, FRenderTransform{});
+            }
+        }
+
+        auto WriteRenderPose = [&](uint32 Index)
+        {
+            const uint32 i = InterpApplied[Index];
             const ECS::FEntity Entity = InterpStaging.Entities[i];
 
             FTransform RenderPose = TransformStorage.Get(Entity).GetWorldTransformCached();
@@ -481,13 +512,19 @@ namespace Lumina::Physics
             RenderPose.SetRotation(FQuat(InterpStaging.LerpQw[i], InterpStaging.LerpQx[i],
                                          InterpStaging.LerpQy[i], InterpStaging.LerpQz[i]));
 
-            if (FRenderTransform* Render = RenderStorage.TryGet(Entity))
+            RenderStorage.Get(Entity).Matrix = RenderPose.GetMatrix();
+        };
+
+        const uint32 AppliedCount = (uint32)InterpApplied.size();
+        if (AppliedCount > InterpParallelThreshold)
+        {
+            Task::ParallelFor(AppliedCount, WriteRenderPose);
+        }
+        else
+        {
+            for (uint32 Index = 0; Index < AppliedCount; ++Index)
             {
-                Render->Matrix = RenderPose.GetMatrix();
-            }
-            else
-            {
-                RenderStorage.Emplace(Entity, FRenderTransform{ RenderPose.GetMatrix() });
+                WriteRenderPose(Index);
             }
         }
     }

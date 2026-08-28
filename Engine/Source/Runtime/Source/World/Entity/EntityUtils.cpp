@@ -1455,19 +1455,4 @@ namespace Lumina::ECS::Utils
         Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Entity);
         MarkPhysicsBodyDirtyIfBodied(Registry, Entity);
     }
-
-    void MarkTransformDirtyNoBody(ECS::FRegistry& Registry, ECS::FEntity Entity)
-    {
-        FTransformDirtyState* State = EnsureTransformDirtyState(Registry);
-
-        if (STransformComponent* Transform = Registry.TryGet<STransformComponent>(Entity))
-        {
-            if (!Transform->bWorldDirty)
-            {
-                Transform->bWorldDirty = true;
-                State->DirtyTransforms.Enqueue(Entity);
-            }
-        }
-        State->bAnyDirty.store(true, std::memory_order_release);
-    }
 }

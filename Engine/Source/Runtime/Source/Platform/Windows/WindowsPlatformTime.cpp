@@ -37,6 +37,31 @@ namespace Lumina::PlatformTime
             return State;
         }
 
+        // Sub-millisecond waits without raising the whole process's scheduler tick. Windows 10 1803+;
+        // an older kernel refuses the flag and leaves a null handle for the caller to fall back on.
+        #ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+        #define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+        #endif
+
+        struct FHighResolutionTimer
+        {
+            HANDLE Handle = nullptr;
+
+            FHighResolutionTimer() noexcept
+            {
+                Handle = CreateWaitableTimerExW(nullptr, nullptr,
+                    CREATE_WAITABLE_TIMER_MANUAL_RESET | CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+            }
+
+            ~FHighResolutionTimer()
+            {
+                if (Handle != nullptr)
+                {
+                    CloseHandle(Handle);
+                }
+            }
+        };
+
         FDateTime FromBrokenDown(const tm& Parts, int64 UnixNanoseconds) noexcept
         {
             FDateTime Result;
@@ -133,6 +158,35 @@ namespace Lumina::PlatformTime
         // Rounded up, because a sleep that returns early is a busier spin loop than the caller asked for.
         const double Milliseconds = InSeconds * 1000.0;
         ::Sleep(static_cast<DWORD>(Milliseconds + 0.999));
+    }
+
+    void SleepPrecise(double InSeconds) noexcept
+    {
+        if (InSeconds <= 0.0)
+        {
+            YieldThread();
+            return;
+        }
+
+        static thread_local FHighResolutionTimer Timer;
+        if (Timer.Handle != nullptr)
+        {
+            LARGE_INTEGER DueTime{};
+            DueTime.QuadPart = -static_cast<LONGLONG>(InSeconds * 1e7);   // negative is relative, in 100ns ticks
+            if (DueTime.QuadPart == 0)
+            {
+                DueTime.QuadPart = -1;
+            }
+
+            if (SetWaitableTimerEx(Timer.Handle, &DueTime, 0, nullptr, nullptr, nullptr, 0))
+            {
+                WaitForSingleObject(Timer.Handle, INFINITE);
+                return;
+            }
+        }
+
+        // Truncated, not rounded up: the caller spins off the remainder and an early return costs it nothing.
+        ::Sleep(static_cast<DWORD>(InSeconds * 1000.0));
     }
 
     void SleepMilliseconds(uint32 Milliseconds) noexcept

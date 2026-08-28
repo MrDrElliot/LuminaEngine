@@ -675,6 +675,9 @@ namespace Lumina::RHI
                 return;
             }
 
+            // Blocks the frame on worker threads, not on the GPU, and it sits inside Core::BeginFrame.
+            LUMINA_PROFILE_SECTION_COLORED("Upload::DrainSliceWriters (Workers)", tracy::Color::Goldenrod);
+
             const FStagingSlice& Slice = GUpload.Slices[Slot];
             for (;;)
             {

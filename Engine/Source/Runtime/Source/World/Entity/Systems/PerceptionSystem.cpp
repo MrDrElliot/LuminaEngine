@@ -232,8 +232,8 @@ namespace Lumina
             return;
         }
         
-        static thread_local TVector<ECS::FEntity> Perceivers;
-        Perceivers.clear();
+        // Worker-visible storage, since a lambda never captures a thread_local and workers index this.
+        TVector<ECS::FEntity> Perceivers;
         Perceivers.reserve(Handle->GetDenseSize());
         for (ECS::FEntity E : *Handle)
         {

@@ -618,21 +618,35 @@ namespace Lumina
         {
             LUMINA_PROFILE_SECTION_COLORED("Frame-Rate-Limiter", tracy::Color::Gray);
             const double TargetFrameTime = 1.0 / static_cast<double>(MaxFrameRate);
-            const double FrameStartTime  = UpdateContext.GetFrameStartTime();
-            const double TargetEndTime   = FrameStartTime + TargetFrameTime;
+
+            // Paced against a running target rather than this frame's own start. Anchoring to the start
+            // hands every scheduler overshoot to the frame period permanently, and refuses a short frame
+            // the chance to make up for the long one before it, which is what turns a cap into a stutter.
+            FrameTargetTime += TargetFrameTime;
 
             // Sleep the bulk, leaving margin for OS scheduler overshoot, then spin for precision.
-            constexpr double SpinMargin = 0.001;
-            double Remaining = TargetEndTime - PlatformTime::Seconds();
+            constexpr double SpinMargin = 0.0005;
+            const double Remaining = FrameTargetTime - PlatformTime::Seconds();
             if (Remaining > SpinMargin)
             {
-                PlatformTime::Sleep(Remaining - SpinMargin);
+                PlatformTime::SleepPrecise(Remaining - SpinMargin);
             }
 
-            while (PlatformTime::Seconds() < TargetEndTime)
+            while (PlatformTime::Seconds() < FrameTargetTime)
             {
                 PlatformTime::YieldThread();
             }
+
+            // One frame of credit in either direction. A long frame is made up by the next one alone, and a
+            // stall banks no burst of uncapped frames on the way out.
+            const double Now = PlatformTime::Seconds();
+            FrameTargetTime = (FrameTargetTime < Now - TargetFrameTime) ? Now - TargetFrameTime : FrameTargetTime;
+            FrameTargetTime = (FrameTargetTime > Now + TargetFrameTime) ? Now + TargetFrameTime : FrameTargetTime;
+        }
+        else
+        {
+            // Nothing to make up while uncapped; re-arm from now so re-enabling a cap cannot bank credit.
+            FrameTargetTime = PlatformTime::Seconds();
         }
         
         if (bApplicationWantsExit)

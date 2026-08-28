@@ -149,6 +149,9 @@ namespace Lumina
 
         FUpdateContext          UpdateContext;
 
+        // Ideal wake time for the frame-rate cap, advanced by one frame budget per frame.
+        double                  FrameTargetTime = 0.0;
+
         FString                 PendingTravelPath;
         bool                    bHasPendingTravel = false;
 

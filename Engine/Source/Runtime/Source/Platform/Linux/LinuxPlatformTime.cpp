@@ -128,6 +128,11 @@ namespace Lumina::PlatformTime
         SleepNanoseconds(static_cast<int64>(InSeconds * 1e9));
     }
 
+    void SleepPrecise(double InSeconds) noexcept
+    {
+        Sleep(InSeconds);
+    }
+
     void SleepMilliseconds(uint32 Milliseconds) noexcept
     {
         SleepNanoseconds(static_cast<int64>(Milliseconds) * 1000000ll);

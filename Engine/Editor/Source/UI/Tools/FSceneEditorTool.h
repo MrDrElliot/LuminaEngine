@@ -17,6 +17,7 @@ namespace Lumina
     class CStaticMesh;
     class CPackage;
     class IRenderScene;
+    class CComponentVisualizer;
     struct SSceneFolderComponent;
     struct FPropertyChangedEvent;
 
@@ -122,6 +123,10 @@ namespace Lumina
 
         THashSet<ECS::FEntity>  SelectedEntities;
         ECS::FEntity            LastSelectedEntity = ECS::NullEntity;
+
+        THashMap<uint32, CComponentVisualizer*> VisualizerCache;
+        SIZE_T                                  CachedVisualizerCount = ~(SIZE_T)0;
+        TVector<ECS::FEntity>                   VisualizerEntityScratch;
 
         struct FEntityListViewItemData
         {

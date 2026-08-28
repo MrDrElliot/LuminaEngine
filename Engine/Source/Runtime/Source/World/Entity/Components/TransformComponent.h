@@ -304,6 +304,14 @@ namespace Lumina
             LocalTransform.SetRotation(Rotation);
         }
 
+        // The simulated pose coming back from the solver. The body is already there, so it is not re-queued.
+        void SetFromPhysics(const FVector3& Location, const FQuat& Rotation)
+        {
+            LocalTransform.SetLocation(Location);
+            LocalTransform.SetRotation(Rotation);
+            MarkMoved(false);
+        }
+
         void SetRaw(const FVector3& Location, const FQuat& Rotation, const FVector3& Scale)
         {
             LocalTransform.SetLocation(Location);
@@ -367,8 +375,11 @@ namespace Lumina
         
         void MarkDirty()
         {
-            const bool bQueueBody = bHasPhysicsBody && !bBodyDirtyQueued;
+            MarkMoved(bHasPhysicsBody && !bBodyDirtyQueued);
+        }
 
+        void MarkMoved(bool bQueueBody)
+        {
             // Flat fast path. For an entity with no relationship component the resolve's whole job is
             // "world = local", so doing it here -- with the transform still in registers -- skips the dirty
             // enqueue, the drain, and the random-access get the resolve would have paid to come back for it.

@@ -1023,6 +1023,8 @@ namespace Lumina
             ECS::FEntity NewEntity = EntityRegistry.Create();
             SourceToDuplicate[Source] = NewEntity;
 
+            TVector<Lumina::ECS::FSparseSet*> CopiedStorages;
+
             for (Lumina::ECS::FSparseSet* StoragePtr : EntityRegistry.GetActiveStorages())
             {
                 const Lumina::ECS::FComponentTypeID ID = StoragePtr->GetTypeInfo().TypeID;
@@ -1045,6 +1047,7 @@ namespace Lumina
                 if (Storage.Contains(Source) && !Storage.Contains(NewEntity))
                 {
                     Storage.EmplaceCopyRaw(NewEntity, Storage.GetRaw(Source));
+                    CopiedStorages.push_back(&Storage);
                 }
             }
 
@@ -1065,6 +1068,12 @@ namespace Lumina
 
                 EntityRegistry.Remove<SRigidBodyComponent>(NewEntity);
                 EntityRegistry.Emplace<SRigidBodyComponent>(NewEntity, std::move(NewBody));
+            }
+
+            // The raw copy writes straight into the pool, so nothing observing on_construct saw the duplicate.
+            for (Lumina::ECS::FSparseSet* Copied : CopiedStorages)
+            {
+                Copied->Signals.OnConstruct.Broadcast(EntityRegistry, NewEntity);
             }
 
             if (NewParent != ECS::NullEntity)

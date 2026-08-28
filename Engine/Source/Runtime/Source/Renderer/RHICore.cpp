@@ -453,14 +453,19 @@ namespace Lumina::RHI::Core
         
         const uint32 Slot = SlotIndex % kFramesInFlight;
 
-        // Every queue that submitted into this slot, not just the last one to do so.
-        for (uint32 QueueIndex = 0; QueueIndex < kNumQueues; ++QueueIndex)
         {
-            const uint64 WaitValue = GCore.SlotWaitValue[Slot][QueueIndex];
-            if (WaitValue != 0)
+            // Present writes this slot's last value, so the wait absorbs display pacing too.
+            LUMINA_PROFILE_SECTION_COLORED("RHI::SlotFence (GPU/Present)", tracy::Color::Crimson);
+
+            // Every queue that submitted into this slot, not just the last one to do so.
+            for (uint32 QueueIndex = 0; QueueIndex < kNumQueues; ++QueueIndex)
             {
-                WaitSemaphore(GCore.QueueTimeline[QueueIndex], WaitValue);
-                GCore.SlotWaitValue[Slot][QueueIndex] = 0;
+                const uint64 WaitValue = GCore.SlotWaitValue[Slot][QueueIndex];
+                if (WaitValue != 0)
+                {
+                    WaitSemaphore(GCore.QueueTimeline[QueueIndex], WaitValue);
+                    GCore.SlotWaitValue[Slot][QueueIndex] = 0;
+                }
             }
         }
         

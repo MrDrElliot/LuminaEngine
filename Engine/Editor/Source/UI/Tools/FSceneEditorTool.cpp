@@ -2894,8 +2894,7 @@ namespace Lumina
         ECS::FRegistry& Registry = GetSceneRegistry();
 
         // Memoized because a type's visualizer is fixed once registered; a new registration drops the table.
-        static thread_local THashMap<uint32, CComponentVisualizer*> VisualizerByType;
-        static thread_local SIZE_T CachedVisualizerCount = ~(SIZE_T)0;
+        THashMap<uint32, CComponentVisualizer*>& VisualizerByType = VisualizerCache;
 
         const SIZE_T RegisteredVisualizers = ComponentVisualizerRegistry.GetVisualizers().size();
         if (CachedVisualizerCount != RegisteredVisualizers)
@@ -2937,8 +2936,8 @@ namespace Lumina
             return;
         }
 
-        // Flattened from the view so the disabled-tag exclusion applies and workers can index it.
-        static thread_local TVector<ECS::FEntity> SelectedList;
+        // Worker-visible storage, since a lambda never captures a thread_local and workers index this.
+        TVector<ECS::FEntity>& SelectedList = VisualizerEntityScratch;
         SelectedList.clear();
 
         auto SelectedView = Registry.View<FSelectedInEditorComponent>(ECS::TExclude<SDisabledTag>{});

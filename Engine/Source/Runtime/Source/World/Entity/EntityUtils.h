@@ -145,11 +145,6 @@ namespace Lumina::ECS::Utils
 	// Per-frame gameplay uses the component setters instead (ParallelFor-safe).
 	RUNTIME_API void MarkTransformDirty(ECS::FRegistry& Registry, ECS::FEntity Entity);
 
-	// Transform-only dirty: queues the resolve, never the physics body re-sync. For the physics writeback,
-	// whose pose came out of the body -- the ordinary paths would queue every simulated body for a teleport
-	// back onto its own interpolated (one-step-stale) transform, which drags the simulation backwards.
-	RUNTIME_API void MarkTransformDirtyNoBody(ECS::FRegistry& Registry, ECS::FEntity Entity);
-
 	//-------------------------------------------------------------------------
 	// Entity transform accessors
 	//-------------------------------------------------------------------------
