@@ -473,6 +473,8 @@ namespace Lumina
             CameraIcon,
             CharacterIcon,
             ParticleSystemIcon,
+            AudioSourceIcon,
+            AudioListenerIcon,
             #endif
 
             Num,

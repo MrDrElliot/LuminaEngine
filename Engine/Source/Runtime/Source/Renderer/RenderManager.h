@@ -26,8 +26,9 @@ namespace Lumina
         RHI::FManagedTexture    SMAASearch;
 
         #if WITH_EDITOR
-        // PointLight, DirectionalLight, SkyLight, SpotLight, Camera, Character, ParticleSystem.
-        RHI::FManagedTexture    EditorIcons[7];
+        // Indices match the IconFiles and IconSlots tables in DefaultSceneRenderer.
+        static constexpr int32  kEditorIconCount = 9;
+        RHI::FManagedTexture    EditorIcons[kEditorIconCount];
         #endif
 
         bool            bInitialized = false;

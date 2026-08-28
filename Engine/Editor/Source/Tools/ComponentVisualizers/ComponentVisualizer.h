@@ -276,6 +276,39 @@ namespace Lumina
     };
 
     REFLECT()
+    class EDITOR_API CComponentVisualizer_AudioSource : public CComponentVisualizer
+    {
+        GENERATED_BODY()
+    public:
+        CStruct* GetSupportedComponentType() const override;
+        void Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity) override;
+        void DrawVisualization(FComponentVisualizerContext& Context) override;
+        bool HasVisualization() const override { return true; }
+    };
+
+    REFLECT()
+    class EDITOR_API CComponentVisualizer_ProceduralAudio : public CComponentVisualizer
+    {
+        GENERATED_BODY()
+    public:
+        CStruct* GetSupportedComponentType() const override;
+        void Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity) override;
+        void DrawVisualization(FComponentVisualizerContext& Context) override;
+        bool HasVisualization() const override { return true; }
+    };
+
+    REFLECT()
+    class EDITOR_API CComponentVisualizer_AudioListener : public CComponentVisualizer
+    {
+        GENERATED_BODY()
+    public:
+        CStruct* GetSupportedComponentType() const override;
+        void Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity) override;
+        void DrawVisualization(FComponentVisualizerContext& Context) override;
+        bool HasVisualization() const override { return true; }
+    };
+
+    REFLECT()
     class EDITOR_API CComponentVisualizer_Spline : public CComponentVisualizer
     {
         GENERATED_BODY()

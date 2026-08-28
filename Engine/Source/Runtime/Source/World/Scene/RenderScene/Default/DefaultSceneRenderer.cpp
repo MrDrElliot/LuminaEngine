@@ -41,6 +41,7 @@
 #include "World/Entity/Components/LightComponent.h"
 #include "World/Entity/Components/LineBatcherComponent.h"
 #include "World/Entity/Components/TriangleBatcherComponent.h"
+#include "World/Entity/Components/AudioSourceComponent.h"
 #include "World/Entity/Components/ParticleSystemComponent.h"
 #include "World/Entity/Components/DecalComponent.h"
 #include "World/Entity/Components/WaterComponent.h"
@@ -319,13 +320,13 @@ namespace Lumina
 
             #if USING(WITH_EDITOR)
             const FString Dir = Paths::GetEngineResourceDirectory();
-            const char* IconFiles[7] =
+            const char* IconFiles[FSharedRenderResources::kEditorIconCount] =
             {
                 "/Textures/PointLight.png", "/Textures/DirectionalLight.png", "/Textures/SkyLight.png",
                 "/Textures/SpotLight.png", "/Textures/CameraIcon.png", "/Textures/PersonIcon.png",
-                "/Textures/Molecule.png"
+                "/Textures/Molecule.png", "/Textures/AudioSource.png", "/Textures/AudioListener.png"
             };
-            for (int i = 0; i < 7; ++i)
+            for (int i = 0; i < FSharedRenderResources::kEditorIconCount; ++i)
             {
                 if (auto Imported = Import::Textures::ImportTexture(Dir + IconFiles[i], false))
                 {
@@ -338,6 +339,10 @@ namespace Lumina
                         .DebugName = IconName.c_str()
                     });
                     RHI::Textures::Upload(Shared.EditorIcons[i], 0, Imported->Pixels.data(), Imported->Pixels.size(), Imported->Dimensions.x);
+                }
+                else
+                {
+                    LOG_WARN("Editor icon '{}' failed to import; its billboard draws blank.", IconFiles[i]);
                 }
             }
             #endif
@@ -363,13 +368,13 @@ namespace Lumina
         NamedImages[(int)ENamedImage::SMAASearch] = Alias(SharedNow.SMAASearch, EFormat::R8_UNORM, FUIntVector2(SEARCHTEX_WIDTH, SEARCHTEX_HEIGHT));
 
         #if USING(WITH_EDITOR)
-        const ENamedImage IconSlots[7] =
+        const ENamedImage IconSlots[FSharedRenderResources::kEditorIconCount] =
         {
             ENamedImage::PointLightIcon, ENamedImage::DirectionalLightIcon, ENamedImage::SkyLightIcon,
             ENamedImage::SpotLightIcon, ENamedImage::CameraIcon, ENamedImage::CharacterIcon,
-            ENamedImage::ParticleSystemIcon
+            ENamedImage::ParticleSystemIcon, ENamedImage::AudioSourceIcon, ENamedImage::AudioListenerIcon
         };
-        for (int i = 0; i < 7; ++i)
+        for (int i = 0; i < FSharedRenderResources::kEditorIconCount; ++i)
         {
             NamedImages[(int)IconSlots[i]] = Alias(SharedNow.EditorIcons[i], EFormat::RGBA8_UNORM, FUIntVector2(1, 1));
         }
@@ -2392,6 +2397,8 @@ namespace Lumina
             auto ParticleAllView     = Registry.View<SParticleSystemComponent>();
             auto ParticleView        = Registry.View<SParticleSystemComponent>(ECS::TExclude<SDisabledTag>{});
             auto DecalView           = Registry.View<SDecalComponent>(ECS::TExclude<SDisabledTag>{});
+            auto AudioSourceView     = Registry.View<SAudioSourceComponent>(ECS::TExclude<SDisabledTag>{});
+            auto AudioListenerView   = Registry.View<SAudioListenerComponent>(ECS::TExclude<SDisabledTag>{});
             auto WaterView           = Registry.View<SWaterComponent>(ECS::TExclude<SDisabledTag>{});
             auto TransformStorage  = Registry.GetStorage<STransformComponent>();
 
@@ -2804,6 +2811,18 @@ namespace Lumina
                     ParticleView.ForEach([&](ECS::FEntity Entity, const SParticleSystemComponent&)
                     {
                         EmplaceVisualizer(Entity, TransformStorage.Get(Entity).GetWorldLocationCached(), ENamedImage::ParticleSystemIcon, FVector4(1.0f));
+                    });
+
+                    AudioSourceView.ForEach([&](ECS::FEntity Entity, const SAudioSourceComponent& Source)
+                    {
+                        // A live voice tints cyan, so an audible emitter is obvious without selecting it.
+                        const FVector4 Tint = Source.bPlaying ? FVector4(0.35f, 0.95f, 1.0f, 1.0f) : FVector4(1.0f);
+                        EmplaceVisualizer(Entity, TransformStorage.Get(Entity).GetWorldLocationCached(), ENamedImage::AudioSourceIcon, Tint);
+                    });
+
+                    AudioListenerView.ForEach([&](ECS::FEntity Entity, const SAudioListenerComponent&)
+                    {
+                        EmplaceVisualizer(Entity, TransformStorage.Get(Entity).GetWorldLocationCached(), ENamedImage::AudioListenerIcon, FVector4(1.0f));
                     });
                 }
                 #endif
@@ -12693,6 +12712,8 @@ namespace Lumina
         case ENamedImage::CameraIcon:           return "Scene.CameraIcon";
         case ENamedImage::CharacterIcon:        return "Scene.CharacterIcon";
         case ENamedImage::ParticleSystemIcon:   return "Scene.ParticleSystemIcon";
+        case ENamedImage::AudioSourceIcon:      return "Scene.AudioSourceIcon";
+        case ENamedImage::AudioListenerIcon:    return "Scene.AudioListenerIcon";
         #endif
 
         case ENamedImage::Num:                break;

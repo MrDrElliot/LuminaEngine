@@ -6,6 +6,10 @@
 #include "Core/Math/Color.h"
 #include "Renderer/PrimitiveDrawInterface.h"
 #include "Tools/Import/ImportHelpers.h"
+#include "Audio/AudioTypes.h"
+#include "Assets/AssetTypes/Audio/SoundBase.h"
+#include "World/Entity/Components/AudioSourceComponent.h"
+#include "World/Entity/Components/ProceduralAudioComponent.h"
 #include "World/Entity/Components/CameraComponent.h"
 #include "World/Entity/Components/CharacterComponent.h"
 #include "World/Entity/Components/DecalComponent.h"
@@ -147,6 +151,162 @@ namespace Lumina
             const FVector3 ToCamera = View.DirectionToCamera(Point);
             const FVector3 Right = Math::Cross(View.CameraUp, ToCamera);
             return Math::LengthSquared(Right) > 1e-8f ? Math::Normalize(Right) : View.CameraRight;
+        }
+
+        constexpr FVector4 kAudioInner(0.25f, 0.85f, 1.00f, 1.0f);
+        constexpr FVector4 kAudioOuter(0.20f, 0.45f, 0.85f, 1.0f);
+        constexpr FVector4 kAudioFlat(0.75f, 0.75f, 0.80f, 1.0f);
+        constexpr FVector4 kAudioActive(0.40f, 1.00f, 0.80f, 1.0f);
+        constexpr FVector4 kAudioAsset(1.00f, 0.78f, 0.30f, 1.0f);
+
+        void DrawAudioAttenuation(IPrimitiveDrawInterface* PDI, const FVector3& Center, const FQuat& Rotation,
+            const SAudioAttenuation& Attenuation, bool bSpatialized, bool bPlaying)
+        {
+            if (!bSpatialized || Attenuation.Model == EAudioAttenuationModel::None)
+            {
+                PDI->DrawSphere(Center, 0.3f, kAudioFlat, 12, 2.0f, true, 0.0f);
+                return;
+            }
+
+            const FVector4 Inner = bPlaying ? kAudioActive : kAudioInner;
+            const FVector4 Outer = bPlaying ? kAudioActive : kAudioOuter;
+
+            PDI->DrawSphere(Center, Attenuation.MinDistance, Inner, 24, 1.5f, true, 0.0f);
+            PDI->DrawSphere(Center, Attenuation.MaxDistance, Outer, 32, 2.0f, true, 0.0f);
+
+            if (Attenuation.ConeOuterAngle >= 360.0f)
+            {
+                return;
+            }
+
+            // Cone angles are full widths, while DrawCone takes the half angle from the axis.
+            const FVector3 Forward = Rotation * FViewVolume::ForwardAxis;
+            PDI->DrawCone(Center, Forward, Math::Radians(Attenuation.ConeOuterAngle * 0.5f), Attenuation.MaxDistance, Outer, 20, 3, 1.5f, true, 0.0f);
+
+            if (Attenuation.ConeInnerAngle < Attenuation.ConeOuterAngle)
+            {
+                PDI->DrawCone(Center, Forward, Math::Radians(Attenuation.ConeInnerAngle * 0.5f), Attenuation.MaxDistance, Inner, 20, 3, 1.5f, true, 0.0f);
+            }
+        }
+
+        void DrawAudioAttenuationHandles(FComponentVisualizerContext& Context, SAudioAttenuationSettings& Settings,
+            const FVector3& Center, const FQuat& Rotation, bool bSpatialized, FName EditLabel)
+        {
+            if (!bSpatialized)
+            {
+                return;
+            }
+
+            const SAudioAttenuation& Resolved = Settings.Resolve();
+            if (Resolved.Model == EAudioAttenuationModel::None)
+            {
+                return;
+            }
+
+            const FVector3 Axis = ScreenRightAt(Context.View, Center);
+
+            // Editing a shared asset through one emitter would silently retune every other user of it.
+            if (Settings.AttenuationSettings != nullptr && !Settings.bOverrideAttenuation)
+            {
+                const FString AssetName = Settings.AttenuationSettings->GetName().ToString();
+                Context.Label(Center + Axis * Resolved.MaxDistance, kAudioAsset, "%s", AssetName.c_str());
+                return;
+            }
+
+            SAudioAttenuation& Editable = Settings.Overrides;
+
+            const FVisualizerHandleResult MinResult = Context.AxisHandle(0, Center + Axis * Editable.MinDistance, Axis,
+                ScalarStyle("Drag to set the full-gain distance."));
+
+            if (MinResult.bChanged)
+            {
+                Context.NameEdit(EditLabel);
+                Editable.MinDistance = Math::Clamp(Editable.MinDistance + MinResult.ScalarDelta, 0.0f, Editable.MaxDistance);
+                Context.MarkDirty();
+            }
+
+            const FVisualizerHandleResult MaxResult = Context.AxisHandle(1, Center + Axis * Editable.MaxDistance, Axis,
+                ScalarStyle("Drag to set the distance the falloff reaches silence."));
+
+            if (MaxResult.bChanged)
+            {
+                Context.NameEdit(EditLabel);
+                Editable.MaxDistance = Math::Max(Editable.MaxDistance + MaxResult.ScalarDelta, Editable.MinDistance);
+                Context.MarkDirty();
+            }
+
+            if (MinResult.bHovered || MinResult.bActive)
+            {
+                Context.Measurement(Center, Center + Axis * Editable.MinDistance, kAudioInner, "min %.2f m", Editable.MinDistance);
+            }
+            else if (MaxResult.bHovered || MaxResult.bActive)
+            {
+                Context.Measurement(Center, Center + Axis * Editable.MaxDistance, kAudioOuter, "max %.2f m", Editable.MaxDistance);
+            }
+
+            if (Editable.ConeOuterAngle >= 360.0f)
+            {
+                return;
+            }
+
+            const FVector3 Forward = Rotation * FViewVolume::ForwardAxis;
+
+            FVector3 Side = Math::Cross(Forward, Context.View.DirectionToCamera(Center));
+            if (Math::LengthSquared(Side) < 1e-8f)
+            {
+                Side = Math::Cross(Forward, Context.View.CameraUp);
+            }
+            Side = Math::Normalize(Side);
+
+            const FVector3 PlaneNormal = Math::Normalize(Math::Cross(Forward, Side));
+
+            auto ConeHandle = [&](uint32 ID, float& FullAngle, float SideSign, const char* Tooltip)
+            {
+                const float Half = Math::Radians(FullAngle * 0.5f);
+                const FVector3 Rim = Center
+                                   + Forward * (Editable.MaxDistance * Math::Cos(Half))
+                                   + Side * (SideSign * Editable.MaxDistance * Math::Sin(Half));
+
+                const FVisualizerHandleResult Result = Context.PlaneHandle(ID, Rim, PlaneNormal, ScalarStyle(Tooltip));
+                if (Result.bChanged)
+                {
+                    const FVector3 Local = Result.Position - Center;
+                    const float Across = Math::Abs(Math::Dot(Local, Side));
+                    const float Along = Math::Dot(Local, Forward);
+
+                    Context.NameEdit(EditLabel);
+                    FullAngle = Math::Clamp(Math::Degrees(std::atan2(Across, Along)) * 2.0f, 1.0f, 360.0f);
+                    Context.MarkDirty();
+                }
+
+                return Result;
+            };
+
+            const FVisualizerHandleResult Outer = ConeHandle(2, Editable.ConeOuterAngle, 1.0f, "Drag to set the outer cone angle.");
+            const FVisualizerHandleResult Inner = ConeHandle(3, Editable.ConeInnerAngle, -1.0f, "Drag to set the inner cone angle.");
+
+            if (Editable.ConeInnerAngle > Editable.ConeOuterAngle)
+            {
+                Editable.ConeInnerAngle = Editable.ConeOuterAngle;
+            }
+
+            if (Outer.bHovered || Outer.bActive)
+            {
+                Context.Label(Center + Forward * (Editable.MaxDistance * 0.55f), kAudioOuter, "outer %.0f deg", Editable.ConeOuterAngle);
+            }
+            else if (Inner.bHovered || Inner.bActive)
+            {
+                Context.Label(Center + Forward * (Editable.MaxDistance * 0.55f), kAudioInner, "inner %.0f deg", Editable.ConeInnerAngle);
+            }
+        }
+
+        void LabelAudioEmitter(FComponentVisualizerContext& Context, const FVector3& Center, const char* Name,
+            EAudioBus Bus, float Volume, bool bSpatialized, bool bPlaying)
+        {
+            const FVector4 Color = bPlaying ? kAudioActive : kAudioFlat;
+            const FVector3 Anchor = Center + Context.View.CameraUp * (Context.View.WorldPerPixelAt(Center) * 30.0f);
+
+            Context.Label(Anchor, Color, "%s   %s   x%.2f%s", Name, ToString(Bus), Volume, bSpatialized ? "" : "   2D");
         }
 
         // Two rings joined by vertical spokes, optionally tapered, shared by the cylinder visualizers.
@@ -1067,5 +1227,112 @@ namespace Lumina
                 PDI->DrawSphere(Leave, MarkerRadius * 0.6f, LeaveColor, 8, 1.5f, false, 0.0f);
             }
         }
+    }
+
+    CStruct* CComponentVisualizer_AudioSource::GetSupportedComponentType() const
+    {
+        return SAudioSourceComponent::StaticStruct();
+    }
+
+    void CComponentVisualizer_AudioSource::Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity)
+    {
+        const SAudioSourceComponent& Source = Registry.Get<SAudioSourceComponent>(Entity);
+        const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
+
+        DrawAudioAttenuation(PDI, Transform.GetWorldLocationCached(), Transform.GetWorldRotationCached(),
+            Source.Attenuation.Resolve(), Source.bSpatialized, Source.bPlaying);
+    }
+
+    void CComponentVisualizer_AudioSource::DrawVisualization(FComponentVisualizerContext& Context)
+    {
+        SAudioSourceComponent& Source = Context.Get<SAudioSourceComponent>();
+        const STransformComponent& Transform = Context.Get<STransformComponent>();
+
+        const FVector3 Center = Transform.GetWorldLocationCached();
+
+        DrawAudioAttenuationHandles(Context, Source.Attenuation, Center, Transform.GetWorldRotationCached(),
+            Source.bSpatialized, "Edit Audio Attenuation");
+
+        const FString SoundName = Source.Sound.IsValid() ? Source.Sound->GetName().ToString() : FString("No Sound");
+        LabelAudioEmitter(Context, Center, SoundName.c_str(), Source.Bus, Source.Volume, Source.bSpatialized, Source.bPlaying);
+    }
+
+    CStruct* CComponentVisualizer_ProceduralAudio::GetSupportedComponentType() const
+    {
+        return SProceduralAudioComponent::StaticStruct();
+    }
+
+    void CComponentVisualizer_ProceduralAudio::Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity)
+    {
+        const SProceduralAudioComponent& Source = Registry.Get<SProceduralAudioComponent>(Entity);
+        const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
+
+        DrawAudioAttenuation(PDI, Transform.GetWorldLocationCached(), Transform.GetWorldRotationCached(),
+            Source.Attenuation.Resolve(), Source.bSpatialized, Source.bPlaying);
+    }
+
+    void CComponentVisualizer_ProceduralAudio::DrawVisualization(FComponentVisualizerContext& Context)
+    {
+        SProceduralAudioComponent& Source = Context.Get<SProceduralAudioComponent>();
+        const STransformComponent& Transform = Context.Get<STransformComponent>();
+
+        const FVector3 Center = Transform.GetWorldLocationCached();
+
+        DrawAudioAttenuationHandles(Context, Source.Attenuation, Center, Transform.GetWorldRotationCached(),
+            Source.bSpatialized, "Edit Audio Attenuation");
+
+        const FFixedString Name = FormatAs<FFixedString>("Procedural {} Hz", Source.SampleRate);
+        LabelAudioEmitter(Context, Center, Name.c_str(), Source.Bus, Source.Volume, Source.bSpatialized, Source.bPlaying);
+    }
+
+    CStruct* CComponentVisualizer_AudioListener::GetSupportedComponentType() const
+    {
+        return SAudioListenerComponent::StaticStruct();
+    }
+
+    void CComponentVisualizer_AudioListener::Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity)
+    {
+        const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
+
+        const FVector3 Location = Transform.GetWorldLocationCached();
+        const FQuat    Rotation = Transform.GetWorldRotationCached();
+        const FVector3 Forward  = Rotation * FViewVolume::ForwardAxis;
+        const FVector3 Right    = Rotation * FViewVolume::RightAxis;
+
+        constexpr float EarOffset = 0.32f;
+
+        PDI->DrawSphere(Location, 0.22f, kAudioFlat, 14, 1.5f, true, 0.0f);
+        PDI->DrawArrow(Location, Forward, 1.1f, kAudioInner, 3.0f);
+        PDI->DrawLine(Location - Right * EarOffset, Location + Right * EarOffset, kAudioOuter, 2.5f, true, 0.0f);
+        PDI->DrawSphere(Location + Right * EarOffset, 0.09f, kAudioOuter, 10, 2.0f, true, 0.0f);
+        PDI->DrawSphere(Location - Right * EarOffset, 0.09f, kAudioOuter, 10, 2.0f, true, 0.0f);
+    }
+
+    void CComponentVisualizer_AudioListener::DrawVisualization(FComponentVisualizerContext& Context)
+    {
+        const SAudioListenerComponent& Listener = Context.Get<SAudioListenerComponent>();
+        const STransformComponent& Transform = Context.Get<STransformComponent>();
+
+        const FVector3 Center = Transform.GetWorldLocationCached();
+        const FVector3 Anchor = Center + Context.View.CameraUp * (Context.View.WorldPerPixelAt(Center) * 30.0f);
+
+        // Two components on one slot means the second silently wins, which is worth flagging in place.
+        int32 SharingSlot = 0;
+        Context.GetRegistry().View<SAudioListenerComponent>().ForEach(
+            [&](ECS::FEntity Other, const SAudioListenerComponent& OtherListener)
+        {
+            if (Other != Context.GetEntity() && OtherListener.ListenerIndex == Listener.ListenerIndex)
+            {
+                ++SharingSlot;
+            }
+        });
+
+        if (SharingSlot > 0)
+        {
+            Context.Label(Anchor, FVector4(1.0f, 0.35f, 0.35f, 1.0f), "Listener %d   shared with %d other", Listener.ListenerIndex, SharingSlot);
+            return;
+        }
+
+        Context.Label(Anchor, kAudioInner, "Listener %d%s", Listener.ListenerIndex, Listener.bApplyDoppler ? "   doppler" : "");
     }
 }
