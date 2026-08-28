@@ -66,7 +66,7 @@ namespace Lumina
         float       Sigma;
         uint32      ClipMaskRange;
         RHI::GPUPtr ClipMasks;
-        FVector2    ClipScale;
+        FVector2    Pad1;
         FVector2    Pad2;
         FVector2    Pad3;
     };
@@ -137,7 +137,7 @@ namespace Lumina
         static_assert(sizeof(FUiDraw) == 128,  "FUiDraw must match RmlUiCommon.slang::FUiDraw (std430).");
         static_assert(offsetof(FUiDraw, ShaderParams) == 96, "ShaderParams must not straddle a 16-byte boundary.");
         static_assert(sizeof(FUiColorStop) == 32, "FUiColorStop must match RmlUiCommon.slang::FUiColorStop.");
-        static_assert(sizeof(FUiClipMask) == 48, "FUiClipMask must match RmlUiCommon.slang::FUiClipMask.");
+        static_assert(sizeof(FUiClipMask) == 64, "FUiClipMask must match RmlUiCommon.slang::FUiClipMask.");
 
         DepthState = RHI::CreateDepthStencil(RHI::FDepthStencilDesc{});
 
@@ -1310,8 +1310,6 @@ namespace Lumina
                                       Math::Max(MinY, 0), Math::Min(MaxY, (int32)CurrentSize.y) };
         };
 
-        PassClipScale = FVector2(ScissorScaleX, ScissorScaleY);
-
         for (const FLayerCommand& Cmd : LayerCommands)
         {
             FlushDraws(Cmd.DrawsBefore);
@@ -1476,7 +1474,6 @@ namespace Lumina
         Args.SamplerIndex = GRmlUiSamplerIndex;
         Args.ClipMaskRange = PassClipMaskRange;
         Args.ClipMasks     = PassClipMasksPtr;
-        Args.ClipScale     = PassClipScale;
 
         const EFormat DestFormat = (DestLayer == kNoLayer)
             ? RHI::GetTextureDesc(CurrentTarget).Format
@@ -1833,6 +1830,77 @@ namespace Lumina
         return true;
     }
 
+    FVector2 FRmlUiRenderer::GetClipScale() const
+    {
+        return FVector2(
+            (CurrentLogicalSize.x > 0) ? float(CurrentSize.x) / float(CurrentLogicalSize.x) : 1.0f,
+            (CurrentLogicalSize.y > 0) ? float(CurrentSize.y) / float(CurrentLogicalSize.y) : 1.0f);
+    }
+
+    bool FRmlUiRenderer::BuildClipTransform(FUiClipMask& Mask) const
+    {
+        const FMatrix4& M = UserTransform;
+
+        // Anything feeding z into x or y, or any perspective row, has no exact axis-aligned form.
+        constexpr float Epsilon = 1e-4f;
+        const bool bAffine2D = Math::Abs(M[0][3]) < Epsilon && Math::Abs(M[1][3]) < Epsilon
+                            && Math::Abs(M[2][3]) < Epsilon && Math::Abs(M[3][3] - 1.0f) < Epsilon
+                            && Math::Abs(M[2][0]) < Epsilon && Math::Abs(M[2][1]) < Epsilon;
+
+        const float Determinant = M[0][0] * M[1][1] - M[1][0] * M[0][1];
+        if (!bAffine2D || Math::Abs(Determinant) < 1e-8f)
+        {
+            return false;
+        }
+
+        const float A00 =  M[1][1] / Determinant;
+        const float A01 = -M[1][0] / Determinant;
+        const float A10 = -M[0][1] / Determinant;
+        const float A11 =  M[0][0] / Determinant;
+
+        // The framebuffer-to-document scale folds into the same matrix, so the shader needs nothing else.
+        const FVector2 Scale = GetClipScale();
+        const float InvScaleX = 1.0f / Math::Max(Scale.x, 1e-5f);
+        const float InvScaleY = 1.0f / Math::Max(Scale.y, 1e-5f);
+
+        Mask.InvTransform = FVector4(A00 * InvScaleX, A01 * InvScaleY, A10 * InvScaleX, A11 * InvScaleY);
+        Mask.Params.y = -(A00 * M[3][0] + A01 * M[3][1]);
+        Mask.Params.z = -(A10 * M[3][0] + A11 * M[3][1]);
+        return true;
+    }
+
+    void FRmlUiRenderer::BuildClipBounds(FUiClipMask& Mask) const
+    {
+        const FVector2 Center(Mask.Rect.x, Mask.Rect.y);
+        const FVector2 Half(Mask.Rect.z, Mask.Rect.w);
+
+        float MinX = FLT_MAX, MinY = FLT_MAX;
+        float MaxX = -FLT_MAX, MaxY = -FLT_MAX;
+
+        for (int32 Corner = 0; Corner < 4; ++Corner)
+        {
+            const float LocalX = Center.x + ((Corner & 1) ? Half.x : -Half.x);
+            const float LocalY = Center.y + ((Corner & 2) ? Half.y : -Half.y);
+
+            const FVector4 Projected = UserTransform * FVector4(LocalX, LocalY, 0.0f, 1.0f);
+            const float InvW = (Math::Abs(Projected.w) > 1e-6f) ? (1.0f / Projected.w) : 1.0f;
+            const float X = Projected.x * InvW;
+            const float Y = Projected.y * InvW;
+
+            MinX = Math::Min(MinX, X); MaxX = Math::Max(MaxX, X);
+            MinY = Math::Min(MinY, Y); MaxY = Math::Max(MaxY, Y);
+        }
+
+        Mask.Rect  = FVector4((MinX + MaxX) * 0.5f, (MinY + MaxY) * 0.5f,
+                              (MaxX - MinX) * 0.5f, (MaxY - MinY) * 0.5f);
+        Mask.Radii = FVector4(0.0f);
+
+        const FVector2 Scale = GetClipScale();
+        Mask.InvTransform = FVector4(1.0f / Math::Max(Scale.x, 1e-5f), 0.0f, 0.0f, 1.0f / Math::Max(Scale.y, 1e-5f));
+        Mask.Params.y = 0.0f;
+        Mask.Params.z = 0.0f;
+    }
+
     void FRmlUiRenderer::EnableClipMask(bool bEnable)
     {
         // RmlUi enables the mask and then re-issues every layer of it, so this always starts fresh.
@@ -1859,12 +1927,18 @@ namespace Lumina
             return;
         }
 
-        FUiClipMask Mask;
+        FUiClipMask Mask = {};
         if (!InferRoundedRect(It->second, FVector2(Translation.x, Translation.y), Mask))
         {
             return;
         }
         Mask.Params = FVector4(bInvert ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f);
+
+        // RmlUi sets the clip element's own transform before this call, so the mask has to carry it.
+        if (!BuildClipTransform(Mask))
+        {
+            BuildClipBounds(Mask);
+        }
 
         // An intersection must stay contiguous, so a new list always starts at the current end.
         if (!bIntersect)

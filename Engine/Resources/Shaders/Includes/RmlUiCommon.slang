@@ -29,15 +29,20 @@ struct FUiDraw
 #define UI_CLIP_COUNT(Range)  ((Range) & 0xFFu)
 #define UI_CLIP_OFFSET(Range) ((Range) >> 8u)
 
-// Analytic stand-in for RmlUi's clip mask. The mask is always an axis-aligned rounded rect in
-// document space, so an SDF costs one varying instead of a stencil attachment. A draw carries a
-// range of them because RmlUi intersects nested clips.
+// An axis-aligned rounded rect in the clip element's own space, so an SDF replaces a stencil attachment.
 struct FUiClipMask
 {
-    float4 Rect;   // centre.xy, half-extent.zw in document space
-    float4 Radii;  // top-left, top-right, bottom-right, bottom-left
-    float4 Params; // .x nonzero keeps the area outside the shape instead of inside
+    float4 Rect;         // center.xy, half-extent.zw in the mask's own space
+    float4 Radii;        // top-left, top-right, bottom-right, bottom-left
+    float4 Params;       // .x nonzero keeps the area outside the shape, .yz translate InvTransform
+    float4 InvTransform; // row-major 2x2 taking a framebuffer pixel into the mask's own space
 };
+
+// RmlUi transforms each clip element separately, so the fragment moves into the mask rather than the reverse.
+float2 UiClipLocal(FUiClipMask Mask, float2 FragCoord)
+{
+    return float2(dot(Mask.InvTransform.xy, FragCoord), dot(Mask.InvTransform.zw, FragCoord)) + Mask.Params.yz;
+}
 
 // Position rides a float4 so both members stay 16-byte aligned under PhysicalStorageBuffer rules.
 struct FUiColorStop

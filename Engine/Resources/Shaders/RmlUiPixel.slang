@@ -9,7 +9,6 @@ struct PSInput
     float4 Colour   : COLOR;
     float2 UV       : TEXCOORD0;
     nointerpolation uint DrawIndex : TEXCOORD1;
-    float2 DocPos   : TEXCOORD2;
 };
 
 // Progressive lerp with a saturated segment weight: stops before the one containing T resolve to
@@ -76,7 +75,7 @@ float SdRoundedBox(float2 P, float2 HalfExtent, float4 Radii)
 
 // Coverage rather than a hard discard, so the curve stays smooth at the corners. Nested clips
 // intersect, and multiplying coverage is what intersection means once it is antialiased.
-float ClipMaskCoverage(FUiDraw Draw, float2 DocPos)
+float ClipMaskCoverage(FUiDraw Draw, float2 FragCoord)
 {
     const uint Count  = UI_CLIP_COUNT(Draw.ClipMaskRange);
     const uint Offset = UI_CLIP_OFFSET(Draw.ClipMaskRange);
@@ -85,9 +84,9 @@ float ClipMaskCoverage(FUiDraw Draw, float2 DocPos)
     for (uint i = 0u; i < Count; ++i)
     {
         FUiClipMask Mask = Pass().ClipMasks[Offset + i];
-        float Distance   = SdRoundedBox(DocPos - Mask.Rect.xy, Mask.Rect.zw, Mask.Radii);
+        float Distance   = SdRoundedBox(UiClipLocal(Mask, FragCoord) - Mask.Rect.xy, Mask.Rect.zw, Mask.Radii);
 
-        // Document space, so the derivative also converts the distance into target pixels.
+        // Distance is in mask space, so the screen-space derivative still converts it into target pixels.
         float Width = max(fwidth(Distance), 1e-5);
         float Cover = saturate(0.5 - Distance / Width);
         Coverage *= (Mask.Params.x != 0.0) ? (1.0 - Cover) : Cover;
@@ -101,7 +100,7 @@ float4 FragmentMain(PSInput Input) : SV_Target0
     FUiDraw Draw = Pass().Draws[Input.DrawIndex];
 
     // Ahead of any discard, because killing a lane leaves the quad's derivatives undefined.
-    float Coverage = ClipMaskCoverage(Draw, Input.DocPos);
+    float Coverage = ClipMaskCoverage(Draw, Input.Position.xy);
 
     // Shader-side scissor (axis-aligned, framebuffer pixels).
     float2 P = Input.Position.xy;

@@ -167,9 +167,10 @@ namespace Lumina
         // Matches RmlUiCommon.slang::FUiClipMask.
         struct FUiClipMask
         {
-            FVector4 Rect;    // center.xy, half-extent.zw in document space
-            FVector4 Radii;   // top-left, top-right, bottom-right, bottom-left
-            FVector4 Params;  // .x nonzero keeps the area outside the shape instead of inside
+            FVector4 Rect;          // center.xy, half-extent.zw in the mask's own space
+            FVector4 Radii;         // top-left, top-right, bottom-right, bottom-left
+            FVector4 Params;        // .x nonzero keeps the area outside the shape, .yz translate InvTransform
+            FVector4 InvTransform;  // row-major 2x2 taking a framebuffer pixel into the mask's own space
         };
 
         // Matches RmlUiCommon.slang::FUiColorStop.
@@ -297,6 +298,14 @@ namespace Lumina
         uint64                      ComputeDrawCallHash() const;
         void                        ResolveBatchTextures(FTargetBatch& Batch) const;
         static bool                 InferRoundedRect(const FGeometry& Geom, FVector2 Translation, FUiClipMask& Out);
+
+        // Fills InvTransform from the transform RmlUi set for this clip element. False when it is not 2D affine.
+        NODISCARD bool              BuildClipTransform(FUiClipMask& Mask) const;
+
+        // Fallback for a projective or 3D clip transform, replacing the shape with its projected bounds.
+        void                        BuildClipBounds(FUiClipMask& Mask) const;
+
+        NODISCARD FVector2          GetClipScale() const;
         void                        EnsureBatchBuffers(FTargetBatch& Batch, uint64 VertexBytes, uint64 IndexBytes);
         void                        EvictStaleBatches();
         void                        ResetFrameState();   // clears the pending draw list + current frame target/cmdlist
@@ -389,7 +398,6 @@ namespace Lumina
         bool                        bPassScissorSet = false;
 
         uint32                      PassClipMaskRange = 0;
-        FVector2                    PassClipScale = {1.0f, 1.0f};
         RHI::GPUPtr                 PassClipMasksPtr = 0;
 
         RHI::FCmdListH              CurrentCmdList = {};

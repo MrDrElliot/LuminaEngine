@@ -16,7 +16,13 @@ struct FUiClipMask
     float4 Rect;
     float4 Radii;
     float4 Params;
+    float4 InvTransform;
 };
+
+float2 UiClipLocal(FUiClipMask Mask, float2 FragCoord)
+{
+    return float2(dot(Mask.InvTransform.xy, FragCoord), dot(Mask.InvTransform.zw, FragCoord)) + Mask.Params.yz;
+}
 
 // Matches FUiFilterArgs in RmlUiRenderer.cpp.
 struct FUiFilterArgs
@@ -34,9 +40,9 @@ struct FUiFilterArgs
     float    Sigma;         // @136
     uint     ClipMaskRange; // @140 count in the low 8 bits, first ClipMasks[] index above them
     uint64_t ClipMaskAddress; // @144
-    float2   ClipScale;     // @152 document to target pixels
-    float2   _Pad0;         // @160
-    float2   _Pad1;         // @168
+    float2   _Pad0;         // @152
+    float2   _Pad1;         // @160
+    float2   _Pad2;         // @168
 
     // Reached, never stored; a typed pointer field lands in an undecorated Function variable.
     property FUiClipMask* ClipMasks { get { return (FUiClipMask*)ClipMaskAddress; } }
@@ -64,13 +70,11 @@ float ClipCoverage(FUiFilterArgs Args, float2 FragCoord)
     const uint Count  = Args.ClipMaskRange & 0xFFu;
     const uint Offset = Args.ClipMaskRange >> 8u;
 
-    const float2 DocPos = FragCoord / max(Args.ClipScale, float2(1e-5));
-
     float Coverage = 1.0;
     for (uint i = 0u; i < Count; ++i)
     {
         FUiClipMask Mask = Args.ClipMasks[Offset + i];
-        const float Dist  = SdRoundedBox(DocPos - Mask.Rect.xy, Mask.Rect.zw, Mask.Radii);
+        const float Dist  = SdRoundedBox(UiClipLocal(Mask, FragCoord) - Mask.Rect.xy, Mask.Rect.zw, Mask.Radii);
         const float Width = max(fwidth(Dist), 1e-5);
         const float Cover = saturate(0.5 - Dist / Width);
         Coverage *= (Mask.Params.x != 0.0) ? (1.0 - Cover) : Cover;
