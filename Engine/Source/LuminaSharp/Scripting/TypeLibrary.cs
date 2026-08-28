@@ -398,7 +398,13 @@ internal sealed class TypeLibrary
                 List<ScriptProperty> Fields = BuildMembers(Type, Depth, Visiting);
                 if (Fields.Count > 0)
                 {
-                    return new ScriptType { Kind = EPropertyType.Struct, Clr = Type, Fields = Fields };
+                    return new ScriptType
+                    {
+                        Kind = EPropertyType.Struct,
+                        Clr = Type,
+                        Fields = Fields,
+                        ManagedSize = ManagedSizeOf(Type),
+                    };
                 }
             }
             finally
@@ -451,6 +457,29 @@ internal sealed class TypeLibrary
     // The round-trip key for an instanced candidate; must match on both serialize and deserialize.
     private static string StableTypeName(Type Type) => Type.FullName ?? Type.Name;
 
+    private static readonly MethodInfo UnsafeSizeOf =
+        typeof(System.Runtime.CompilerServices.Unsafe).GetMethod(
+            nameof(System.Runtime.CompilerServices.Unsafe.SizeOf),
+            BindingFlags.Public | BindingFlags.Static)!;
+
+    // The managed size, which is what the generated accessor reads, not the marshalled one Marshal.SizeOf gives.
+    private static int ManagedSizeOf(Type Type)
+    {
+        if (!Type.IsValueType)
+        {
+            return 0;
+        }
+        try
+        {
+            return (int)UnsafeSizeOf.MakeGenericMethod(Type).Invoke(null, null)!;
+        }
+        catch (Exception Ex)
+        {
+            Native.Log(ELogLevel.Warn, $"Could not size script struct '{Type.FullName}': {Ex.Message}");
+            return 0;
+        }
+    }
+
     private static EPropertyType MapNumeric(Type Type)
     {
         if (Type == typeof(sbyte))  return EPropertyType.Int8;
@@ -464,7 +493,7 @@ internal sealed class TypeLibrary
         return EPropertyType.None;
     }
 
-    /// <summary>Builds the serializable members of a C#-defined type, every field or property carrying [Property] and not [Hide].</summary>
+    // Every field or property carrying [Property] or [Serialize] and not [Hide]. [Serialize] is stored but not drawn.
     internal List<ScriptProperty> BuildMembers(Type Type, int Depth, HashSet<Type> Visiting)
     {
         var Members = new List<ScriptProperty>();
@@ -474,7 +503,8 @@ internal sealed class TypeLibrary
         foreach (FieldInfo Field in Type.GetFields(Flags))
         {
             PropertyAttribute? Meta = Field.GetCustomAttribute<PropertyAttribute>();
-            if (Meta == null || Field.GetCustomAttribute<HideAttribute>() != null)
+            bool bSerializeOnly = Meta == null && Field.GetCustomAttribute<SerializeAttribute>() != null;
+            if ((Meta == null && !bSerializeOnly) || Field.GetCustomAttribute<HideAttribute>() != null)
             {
                 continue;
             }
@@ -487,9 +517,10 @@ internal sealed class TypeLibrary
 
             Members.Add(new ScriptProperty
             {
-                Name = Meta.Name ?? Field.Name,
+                Name = Meta?.Name ?? Field.Name,
                 Type = Resolved,
                 Meta = Meta,
+                Hidden = bSerializeOnly,
                 Aliases = GatherAliases(Field),
                 SkipHotReload = bClassSkip || Field.GetCustomAttribute<SkipHotReloadAttribute>() != null,
                 Get = Field.GetValue,
@@ -505,7 +536,8 @@ internal sealed class TypeLibrary
             }
 
             PropertyAttribute? Meta = Property.GetCustomAttribute<PropertyAttribute>();
-            if (Meta == null || Property.GetCustomAttribute<HideAttribute>() != null)
+            bool bSerializeOnly = Meta == null && Property.GetCustomAttribute<SerializeAttribute>() != null;
+            if ((Meta == null && !bSerializeOnly) || Property.GetCustomAttribute<HideAttribute>() != null)
             {
                 continue;
             }
@@ -529,9 +561,10 @@ internal sealed class TypeLibrary
 
             Members.Add(new ScriptProperty
             {
-                Name = Meta.Name ?? Property.Name,
+                Name = Meta?.Name ?? Property.Name,
                 Type = Resolved,
                 Meta = Meta,
+                Hidden = bSerializeOnly,
                 Aliases = GatherAliases(Property),
                 SkipHotReload = bClassSkip || Property.GetCustomAttribute<SkipHotReloadAttribute>() != null,
                 Get = Property.GetValue,

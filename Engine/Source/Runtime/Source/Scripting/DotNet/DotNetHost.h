@@ -26,7 +26,7 @@ namespace Lumina::DotNet
     // v6: managed system-descriptor sink carries declared read/write component-ops tokens (parallel C# systems).
     // v7: delegate properties replace hardcoded collision/perception dispatch; adds OnNativeDelegateDestroyed.
     // v8: managed RenderScene bridge (C# world renderers via RenderSceneFactory).
-    inline constexpr int32 GAbiVersion = 8;
+    inline constexpr int32 GAbiVersion = 10;
 
     // Boots the embedded runtime and runs the managed handshake.
     RUNTIME_API void Initialize();
@@ -124,6 +124,8 @@ namespace Lumina::DotNet
         // Which ScriptEvents the C# subclass overrides. Type-uniform, so it is carried on the minted CClass
         // rather than per instance (CClass::ScriptOverrides); bit i == the wrapper's [ScriptEvent(i)].
         uint64  OverrideFlags = 0;
+        // EScriptUpdatePhase from the class's [UpdatePhase]; type-uniform, so it rides on the minted CClass.
+        uint8   UpdatePhase = 0;
     };
 
     // One `[Alias]` on a C# script class: the name it used to have, and the name it has now.

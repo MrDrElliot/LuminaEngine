@@ -57,6 +57,7 @@ int LuminaMain(int ArgC, char** ArgV)  // NOLINT(misc-use-internal-linkage)
     GEngine = GEditorEngine;
     #else
     GIsHeadless = Parsed.Has("server");
+    CrashHandler::SetAllowModalDialog(!GIsHeadless);
 
     FEngine Engine{};
     GEngine = &Engine;

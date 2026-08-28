@@ -396,6 +396,13 @@ namespace Lumina
     {
         LUMINA_MEMORY_SCOPE("Shaders");
         FShaderLibrary* Library = GShaderLibrary;
+
+        // A headless process never built one, and materials still post-load there.
+        if (Library == nullptr)
+        {
+            return FShaderH();
+        }
+
         FScopeLock Lock(Library->Mutex);
 
         // Content keying collapses identical geometry stages and stays safe across a recompile.

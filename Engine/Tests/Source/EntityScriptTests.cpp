@@ -60,6 +60,36 @@ TEST(EntityScriptUnification, CppScriptRunsThroughTheDriver)
     EXPECT_TRUE(Registry.Get<SEntityScriptComponent>(Entity).Scripts.empty());
 }
 
+// [UpdatePhase(PostPhysics)] moves OnUpdate to the pass after the physics step, keeping OnReady where it was.
+TEST(EntityScriptUnification, UpdatePhaseSelectsWhichPassRunsOnUpdate)
+{
+    ECS::FRegistry Registry{};
+    const ECS::FEntity Entity = Registry.Create();
+
+    CEntityScriptTest* Script = AttachTestScript(Registry, Entity);
+    ASSERT_NE(Script, nullptr);
+
+    CClass* Class = Script->GetClass();
+    ASSERT_NE(Class, nullptr);
+    const uint8 PriorPhase = Class->ScriptUpdatePhase;
+    Class->ScriptUpdatePhase = (uint8)EScriptUpdatePhase::PostPhysics;
+
+    EntityScripts::Tick(Registry, 0.5f, EScriptUpdatePhase::PrePhysics);
+    EXPECT_EQ(Script->ReadyCount, 1) << "OnReady still drains in the PrePhysics pass whatever the phase";
+    EXPECT_EQ(Script->UpdateCount, 0) << "a PostPhysics script must not update before the physics step";
+
+    EntityScripts::Tick(Registry, 0.5f, EScriptUpdatePhase::PostPhysics);
+    EXPECT_EQ(Script->UpdateCount, 1) << "it updates in the pass its class declares";
+
+    Class->ScriptUpdatePhase = PriorPhase;
+
+    EntityScripts::Tick(Registry, 0.5f, EScriptUpdatePhase::PrePhysics);
+    EXPECT_EQ(Script->UpdateCount, 2) << "the default phase is PrePhysics, exactly as before";
+
+    EntityScripts::Tick(Registry, 0.5f, EScriptUpdatePhase::PostPhysics);
+    EXPECT_EQ(Script->UpdateCount, 2) << "and it must not also run in the second pass";
+}
+
 // A component copy (prefab stamp, entity duplicate) clones its scripts rather than sharing one object.
 TEST(EntityScriptUnification, CopyingTheComponentClonesItsScripts)
 {

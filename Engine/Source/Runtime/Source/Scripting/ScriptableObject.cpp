@@ -397,6 +397,7 @@ namespace Lumina
             {
                 // Minted classes are REUSED by name, so an added or removed override must update the mask.
                 Minted->ScriptOverrides = Desc.OverrideFlags;
+                Minted->ScriptUpdatePhase = Desc.UpdatePhase;
 
                 // Re-appending would duplicate properties, so a changed schema tears the block down and rebuilds.
                 Scripting::FScriptExportSchema Schema;

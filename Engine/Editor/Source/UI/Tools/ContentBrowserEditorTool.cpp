@@ -3751,7 +3751,8 @@ namespace Lumina
             FString Contents;
             Contents += "using LuminaSharp;\n";
             Contents += "using Lumina;\n\n";
-            Contents += "namespace Game;\n\n";
+            // Not "Game", which would shadow LuminaSharp.Game and break Game.OpenLevel in every script.
+            Contents += "namespace GameScripts;\n\n";
             Contents += "public sealed class ";
             Contents += ClassName.c_str();
             Contents += " : EntityScript\n";

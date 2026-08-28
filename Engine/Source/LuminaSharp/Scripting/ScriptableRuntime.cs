@@ -45,7 +45,7 @@ internal sealed class ScriptableRuntime
             return;
         }
 
-        var Add = (delegate* unmanaged[Stdcall]<IntPtr, byte*, int, byte*, int, ulong, void>)Sink;
+        var Add = (delegate* unmanaged[Stdcall]<IntPtr, byte*, int, byte*, int, ulong, byte, void>)Sink;
         Span<byte> NameScratch = stackalloc byte[256];
         Span<byte> BaseScratch = stackalloc byte[256];
         foreach (Type Type in Library.ScriptableTypes)
@@ -64,7 +64,8 @@ internal sealed class ScriptableRuntime
             Interop.FInteropString Base = new(NativeBase, BaseScratch);
             try
             {
-                Add(Context, Name.Pointer, Name.Length, Base.Pointer, Base.Length, (ulong)GetOverrideFlags(Type));
+                Add(Context, Name.Pointer, Name.Length, Base.Pointer, Base.Length, (ulong)GetOverrideFlags(Type),
+                    GetUpdatePhase(Type));
             }
             finally
             {
@@ -210,6 +211,13 @@ internal sealed class ScriptableRuntime
 
         OverrideFlagsByType[Type] = Flags;
         return Flags;
+    }
+
+    // Which physics phase this class's OnUpdate runs in, from [UpdatePhase]; PrePhysics when unmarked.
+    private static byte GetUpdatePhase(Type Type)
+    {
+        UpdatePhaseAttribute? Marker = Type.GetCustomAttribute<UpdatePhaseAttribute>(inherit: true);
+        return (byte)(Marker?.Phase ?? EScriptPhase.PrePhysics);
     }
 
     // The [NativeType] name of the nearest [ScriptableType]-marked wrapper above Type, or null if none.

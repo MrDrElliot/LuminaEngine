@@ -10,7 +10,7 @@ namespace LuminaSharp;
 public static unsafe partial class Host
 {
     // Must equal Lumina::DotNet::GAbiVersion. Bump on ABI breaks.
-    private const int AbiVersion = 8;
+    private const int AbiVersion = 10;
 
     // Logical name for the engine module hosting this assembly (Runtime); resolved to a native handle via ModuleHandle.
     public const string NativeLibrary = "LuminaNative";

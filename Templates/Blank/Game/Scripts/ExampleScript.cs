@@ -2,7 +2,7 @@ using System;
 using LuminaSharp;
 using Lumina;
 
-namespace Game;
+namespace GameScripts;
 
 /// <summary>
 /// Starter C# entity script. Add a "C# Script" component to an entity in your scene and select this

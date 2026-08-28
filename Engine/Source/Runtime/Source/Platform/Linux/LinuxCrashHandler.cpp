@@ -299,6 +299,12 @@ namespace Lumina::CrashHandler
         }
     }
 
+    // Nothing here is modal; the report already goes to stderr and the log.
+    void SetAllowModalDialog(bool bAllow)
+    {
+        (void)bAllow;
+    }
+
     void AddDiagnosticProvider(FDiagnosticProvider Provider)
     {
         if (Provider == nullptr)

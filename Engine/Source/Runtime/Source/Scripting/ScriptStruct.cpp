@@ -99,6 +99,15 @@ namespace Lumina
             Property->OnMetadataFinalized();
         }
 
+        // Serialization only gates on NoSerialize, so dropping Editable saves the value and draws nothing.
+        void ApplyHidden(FProperty* Property, const FScriptExportMeta& Meta)
+        {
+            if (Meta.Has("ScriptHidden"))
+            {
+                EnumRemoveFlags(Property->Flags, EPropertyFlags::Editable);
+            }
+        }
+
         // Shared so a field and a container element of the same kind are tagged identically.
         FKindTag KindTag(const FScriptExportType& Type)
         {
@@ -197,7 +206,11 @@ namespace Lumina
             return Property;
         }
 
-        FProperty* MakeEnum(const FFieldOwner& Owner, const FName& Name, uint32 Offset, CEnum* Resolved)
+        bool ScalarSizeAlign(EPropertyTypeFlags Kind, uint32& Size, uint32& Align);
+
+        // The slot is the C# underlying type's width, so a script enum lines up with the managed value.
+        FProperty* MakeEnum(const FFieldOwner& Owner, const FName& Name, uint32 Offset, CEnum* Resolved,
+            EPropertyTypeFlags Underlying)
         {
             GPendingEnum = Resolved;
             const FString NameStr = Name.ToString();
@@ -209,10 +222,16 @@ namespace Lumina
             FEnumProperty* Property = Memory::New<FEnumProperty>(Owner, &Params);
             GPendingEnum = nullptr;
 
-            Property->SetElementSize(sizeof(int64));
-            FPropertyParams InnerParams{};
-            FillBaseParams(InnerParams, EPropertyTypeFlags::Int64, Offset, NameStr.c_str());
-            (void)Memory::New<FInt64Property>(OwnerOf(static_cast<FField*>(Property)), &InnerParams);
+            uint32 InnerSize = 0;
+            uint32 InnerAlign = 0;
+            if (!ScalarSizeAlign(Underlying, InnerSize, InnerAlign))
+            {
+                Underlying = EPropertyTypeFlags::Int64;
+                InnerSize = sizeof(int64);
+            }
+
+            Property->SetElementSize(InnerSize);
+            (void)MakeScalar(Underlying, OwnerOf(static_cast<FField*>(Property)), Name, Offset);
             return Property;
         }
 
@@ -245,7 +264,6 @@ namespace Lumina
             case EPropertyTypeFlags::UInt64: Size = sizeof(uint64); Align = alignof(uint64); return true;
             case EPropertyTypeFlags::Float:  Size = sizeof(float);  Align = alignof(float);  return true;
             case EPropertyTypeFlags::Double: Size = sizeof(double); Align = alignof(double); return true;
-            case EPropertyTypeFlags::Enum:   Size = sizeof(int64);  Align = alignof(int64);  return true;
             default: return false;
             }
         }
@@ -625,6 +643,16 @@ namespace Lumina
         {
             return nullptr;
         }
+
+        // The accessor reads the managed struct's size at this offset, so a differing layout reads past the end.
+        if (Type.ManagedSize != 0 && Sub->GetAlignedSize() != Type.ManagedSize)
+        {
+            LOG_ERROR("Script struct layout mismatch: C# is {} bytes over {} field(s), the minted layout is {}. "
+                      "The property is dropped rather than read out of bounds.",
+                      Type.ManagedSize, Type.Fields.size(), Sub->GetAlignedSize());
+            return nullptr;
+        }
+
         CScriptStruct* Raw = Sub.Get();
         SubStructs.push_back(std::move(Sub));
         return Raw;
@@ -705,6 +733,20 @@ namespace Lumina
         // A statement about SIZE only, since MakeForKind still builds a real enum property.
         uint32 ScalarSize = 0;
         uint32 ScalarAlign = 0;
+
+        // An enum occupies its underlying type's width, which is what the managed value is.
+        if (Type.Kind == EPropertyTypeFlags::Enum)
+        {
+            if (!ScalarSizeAlign(Type.EnumUnderlying, ScalarSize, ScalarAlign))
+            {
+                ScalarSize = sizeof(int64);
+                ScalarAlign = alignof(int64);
+            }
+            Out.Size = ScalarSize;
+            Out.Align = ScalarAlign;
+            return true;
+        }
+
         if (ScalarSizeAlign(Type.Kind, ScalarSize, ScalarAlign))
         {
             Out.Size = ScalarSize;
@@ -775,10 +817,10 @@ namespace Lumina
     FProperty* CScriptStruct::MakeForKind(const FFieldOwner& Owner, const FName& FieldName, uint32 Offset,
         const FScriptExportType& Type, CStruct* Resolved)
     {
-        // An enum property wraps an int64 inner rather than being the bare scalar its size suggests.
+        // An enum property wraps a numeric inner rather than being the bare scalar its size suggests.
         if (Type.Kind == EPropertyTypeFlags::Enum)
         {
-            return MakeEnum(Owner, FieldName, Offset, MintEnum(Type));
+            return MakeEnum(Owner, FieldName, Offset, MintEnum(Type), Type.EnumUnderlying);
         }
 
         uint32 ScalarSize = 0;
@@ -914,6 +956,7 @@ namespace Lumina
             FProperty* Inner = CreateElement(Array, *Type.ElementType, *Plan.ArrayDesc);
             Plan.ArrayDesc->Inner = Inner;
             ApplyMeta(Array, &Field.Meta, FKindTag{});
+            ApplyHidden(Array, Field.Meta);
             return Array;
         }
         if (Plan.bMap)
@@ -925,6 +968,7 @@ namespace Lumina
             Plan.MapDesc->Key.Inner   = KeyInner;
             Plan.MapDesc->Value.Inner = ValueInner;
             ApplyMeta(Map, &Field.Meta, FKindTag{});
+            ApplyHidden(Map, Field.Meta);
             return Map;
         }
         CStruct* Resolved = Plan.Native != nullptr ? Plan.Native
@@ -938,6 +982,7 @@ namespace Lumina
 
         // The tag is what makes the editor draw a picker instead of the raw value.
         ApplyMeta(Property, &Field.Meta, KindTag(Type));
+        ApplyHidden(Property, Field.Meta);
         return Property;
     }
 

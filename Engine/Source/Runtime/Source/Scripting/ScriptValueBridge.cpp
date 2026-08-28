@@ -7,6 +7,7 @@
 #include "Core/Object/SoftObjectPtr.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Reflection/Type/Properties/ArrayProperty.h"
+#include "Core/Reflection/Type/Properties/EnumProperty.h"
 #include "Core/Reflection/Type/Properties/InstancedStructProperty.h"
 #include "Core/Reflection/Type/Properties/MapProperty.h"
 #include "Core/Reflection/Type/Properties/StructProperty.h"
@@ -126,10 +127,14 @@ namespace Lumina::Scripting
                 Value.Kind = EScriptValueKind::Double;
                 Value.AsDouble = *static_cast<const double*>(ValuePtr);
                 break;
+            // Through the inner numeric property, whose width is the C# underlying type's, not always 8.
             case EPropertyTypeFlags::Enum:
+            {
                 Value.Kind = EScriptValueKind::Int;
-                Value.AsInt = *static_cast<const int64*>(ValuePtr);
+                const FNumericProperty* Inner = static_cast<FEnumProperty*>(Property)->GetInnerProperty();
+                Value.AsInt = Inner != nullptr ? Inner->GetSignedIntPropertyValue(ValuePtr) : 0;
                 break;
+            }
             case EPropertyTypeFlags::String:
                 Value.Kind = EScriptValueKind::String;
                 Value.AsString = *static_cast<const FString*>(ValuePtr);
@@ -225,8 +230,13 @@ namespace Lumina::Scripting
                 *static_cast<double*>(ValuePtr) = Value.AsDouble;
                 break;
             case EPropertyTypeFlags::Enum:
-                *static_cast<int64*>(ValuePtr) = Value.AsInt;
+            {
+                if (FNumericProperty* Inner = static_cast<FEnumProperty*>(Property)->GetInnerProperty())
+                {
+                    Inner->SetIntPropertyValue(ValuePtr, Value.AsInt);
+                }
                 break;
+            }
             case EPropertyTypeFlags::String:
                 *static_cast<FString*>(ValuePtr) = Value.AsString;
                 break;

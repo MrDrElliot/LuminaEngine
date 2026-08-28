@@ -237,6 +237,14 @@ namespace Lumina
             }
         }
 
+        // Type-uniform, so it is one class-level byte rather than anything stored per script instance.
+        EScriptUpdatePhase ScriptPhase(const CEntityScript* Script)
+        {
+            const CClass* Class = Script != nullptr ? Script->GetClass() : nullptr;
+            return Class != nullptr ? static_cast<EScriptUpdatePhase>(Class->ScriptUpdatePhase)
+                                    : EScriptUpdatePhase::PrePhysics;
+        }
+
         // Re-resolved per dispatch, since an earlier callback may have removed this script or its entity.
         bool IsStillAttached(ECS::FRegistry& Registry, ECS::FEntity Entity, const CEntityScript* Script)
         {
@@ -348,8 +356,11 @@ namespace Lumina
             return Script;
         }
 
-        void Tick(ECS::FRegistry& Registry, float DeltaTime)
+        void Tick(ECS::FRegistry& Registry, float DeltaTime, EScriptUpdatePhase Phase)
         {
+            // Attach and OnReady are phase-independent, so a PostPhysics script is built in the same pass.
+            const bool bDrainLifecycle = Phase == EScriptUpdatePhase::PrePhysics;
+
             // A C++ subclass runs its own override and a C# one runs the generated shim, indistinguishably.
             CWorld** WorldPtr = Registry.Ctx().Find<CWorld*>();
             CWorld* World = WorldPtr != nullptr ? *WorldPtr : nullptr;
@@ -374,7 +385,7 @@ namespace Lumina
                     }
 
                     // The one place entity and registry are both in hand, and it runs before OnReady.
-                    if (Script->GetOwningEntity() == ECS::NullEntity)
+                    if (bDrainLifecycle && Script->GetOwningEntity() == ECS::NullEntity)
                     {
                         Script->SetOwner(Entity, World);
                         Script->OnAttach();
@@ -386,7 +397,7 @@ namespace Lumina
                         }
                     }
 
-                    if (!Script->IsReady())
+                    if (bDrainLifecycle && !Script->IsReady())
                     {
                         Script->MarkReady();
                         Script->OnReady();
@@ -396,7 +407,11 @@ namespace Lumina
                             continue;
                         }
                     }
-                    Script->OnUpdate(DeltaTime);
+
+                    if (Script->IsReady() && ScriptPhase(Script) == Phase)
+                    {
+                        Script->OnUpdate(DeltaTime);
+                    }
                 }
             }
 

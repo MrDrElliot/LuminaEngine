@@ -2,6 +2,7 @@
 #include "Mesh.h"
 #include "Assets/AssetTypes/Material/Material.h"
 #include "Assets/AssetTypes/Material/MaterialInstance.h"
+#include "Core/Engine/Engine.h"
 #include "Core/Object/Cast.h"
 #include "Memory/MemoryTracking.h"
 #include "Renderer/MeshletHeaderSlab.h"
@@ -455,6 +456,12 @@ namespace Lumina
 
     void CMesh::GenerateGPUBuffers()
     {
+        // A headless process has no RHI, and it keeps the CPU streams a mesh collider still reads.
+        if (GIsHeadless)
+        {
+            return;
+        }
+
         MeshBuffers::CreateForResource(*MeshResources);
 
         // Bumping the global epoch here made loading one mesh re-resolve every component in the world.

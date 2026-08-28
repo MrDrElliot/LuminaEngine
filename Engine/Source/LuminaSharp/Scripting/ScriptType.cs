@@ -82,6 +82,9 @@ public sealed class ScriptType
     /// <summary>Native CStruct name the editor resolves via FindObject.</summary>
     public string? NativeName { get; init; }
 
+    // sizeof the managed value for a script-declared struct, which native checks its minted layout against.
+    public int ManagedSize { get; init; }
+
     /// <summary>Asset class filter for an AssetRef; empty means any.</summary>
     public string? TargetClass { get; init; }
 
@@ -118,6 +121,10 @@ public sealed class ScriptProperty
     public string Name { get; init; } = "";
     public ScriptType Type { get; init; } = new();
     public PropertyAttribute? Meta { get; init; }
+
+    // Marked [Serialize] rather than [Property], so it gets storage and saving but no inspector row.
+    public bool Hidden { get; init; }
+
     /// <summary>Prior member names so a renamed field's saved value still replays.</summary>
     public IReadOnlyList<string>? Aliases { get; init; }
     /// <summary>Reset to default on a hot reload instead of carrying the previous value.</summary>

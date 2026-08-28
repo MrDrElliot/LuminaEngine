@@ -104,9 +104,98 @@ internal static class ScriptPropertyClassifier
 
         // Everything blittable -- numbers, bool, and the struct mirrors like FVector3/FTransform -- is read in
         // place at the property's offset. Checked last so every special case above wins.
-        return Type.IsUnmanagedType
-            ? FScriptPropertyClassification.Of(EScriptAccess.Blittable)
-            : FScriptPropertyClassification.Reject(SupportedTypesHelp);
+        if (!Type.IsUnmanagedType)
+        {
+            return FScriptPropertyClassification.Reject(SupportedTypesHelp);
+        }
+        if (IsEngineMirror(Type))
+        {
+            return FScriptPropertyClassification.Of(EScriptAccess.Blittable);
+        }
+
+        string? Why = ScriptStructRejection(Type);
+        return Why != null
+            ? FScriptPropertyClassification.Reject(Why)
+            : FScriptPropertyClassification.Of(EScriptAccess.Blittable);
+    }
+
+    // A primitive is its bytes everywhere, and a mirror's size is checked against native at startup.
+    private static bool IsEngineMirror(ITypeSymbol Type)
+    {
+        if (Type.SpecialType != SpecialType.None || Type.TypeKind == TypeKind.Enum)
+        {
+            return true;
+        }
+        if (Type.ToDisplayString() == ScriptPropertyTypeNames.Entity)
+        {
+            return true;
+        }
+
+        foreach (AttributeData Attribute in Type.GetAttributes())
+        {
+            string? Name = Attribute.AttributeClass?.ToDisplayString();
+            if (Name == ScriptPropertyTypeNames.NativeTypeAttribute
+                || Name == ScriptPropertyTypeNames.NativeLayoutAttribute)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Native packs members at their own alignment in declaration order, which a sequential C# struct also does.
+    private static string? ScriptStructRejection(ITypeSymbol Type)
+    {
+        if (Type.TypeKind != TypeKind.Struct)
+        {
+            return $"'{Display(Type)}' cannot back a property. {SupportedTypesHelp}";
+        }
+
+        bool bAnyField = false;
+        foreach (ISymbol Member in Type.GetMembers())
+        {
+            if (Member is not IFieldSymbol Field || Field.IsStatic || Field.IsConst || Field.IsImplicitlyDeclared)
+            {
+                continue;
+            }
+            bAnyField = true;
+
+            if (!HasPropertyOrSerialize(Field))
+            {
+                return $"'{Display(Type)}' is a struct declared in script, so every one of its fields is part "
+                     + $"of the value native stores, but '{Field.Name}' is marked neither [Property] nor "
+                     + "[Serialize]. Native would leave it out of the layout while C# still reads it, so the "
+                     + "accessor would run off the end of the storage. Mark it, or move it out of the struct.";
+            }
+
+            EScriptAccess MemberAccess = Classify(Field.Type).Access;
+            if (MemberAccess != EScriptAccess.Blittable && MemberAccess != EScriptAccess.Enum)
+            {
+                return $"'{Display(Type)}' has the field '{Field.Name}' of type "
+                     + $"'{Display(Field.Type)}', which cannot live in native storage as raw bytes. A struct "
+                     + "declared in script may hold only numbers, bool, engine math types, and structs of those.";
+            }
+        }
+
+        if (!bAnyField)
+        {
+            return $"'{Display(Type)}' has no fields, so there is nothing for native to store.";
+        }
+        return null;
+    }
+
+    private static bool HasPropertyOrSerialize(IFieldSymbol Field)
+    {
+        foreach (AttributeData Attribute in Field.GetAttributes())
+        {
+            string? Name = Attribute.AttributeClass?.ToDisplayString();
+            if (Name == ScriptPropertyTypeNames.PropertyAttribute
+                || Name == ScriptPropertyTypeNames.SerializeAttribute)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static FScriptPropertyClassification ClassifyList(EScriptAccess Access, ITypeSymbol Element)
@@ -147,6 +236,12 @@ internal static class ScriptPropertyClassifier
             return null;
         }
 
+        // An enum slot is its underlying type's width now, so the stride matches and it packs like a number.
+        if (Classification.Access == EScriptAccess.Enum)
+        {
+            return null;
+        }
+
         // A marshalled container reads and writes each slot through the element's own accessors, so it can
         // carry the two kinds whose managed value is not their native bytes.
         if (bMarshalled && Type.ToDisplayString() == ScriptPropertyTypeNames.FString)
@@ -168,14 +263,6 @@ internal static class ScriptPropertyClassifier
 
             EScriptAccess.String =>
                 Prefix + "it is a managed reference, which cannot live in native memory.",
-
-            // Native mints an enum property as a 64-bit slot whatever the C# underlying type is (see the
-            // rewriter's Enum accessor). A member survives that because its accessor reads the whole slot,
-            // but an element cannot: the span would walk 4-byte strides over 8-byte elements. Give the
-            // element an explicitly-sized integer and cast, or a struct wrapping one.
-            EScriptAccess.Enum =>
-                Prefix + "native stores an enum property in a 64-bit slot, so its stride would not match the "
-                       + "C# underlying type. Use a TVector<long> and cast, or a struct element.",
 
             // A bare wrapper is not a storable reference -- TObjectPtr is what a native object slot holds.
             EScriptAccess.Object when bMarshalled =>
@@ -264,9 +351,10 @@ internal static class ScriptPropertyClassifier
 
     /// <summary>The fallback explanation, for a type that matches nothing at all.</summary>
     public const string SupportedTypesHelp =
-        "it cannot be viewed over native storage. Supported: numbers, bool, enums, blittable struct mirrors, "
-        + "string, Lumina.FString, Lumina.FName, asset references, object references, TVector<T> (of a plain value, an "
-        + "FString, or a TObjectPtr<T>), and THashMap<K, V> of plain values.";
+        "it cannot be viewed over native storage. Supported: numbers, bool, enums, engine struct mirrors, "
+        + "a struct you declare whose every field is marked and blittable, string, Lumina.FString, "
+        + "Lumina.FName, asset references, object references, TVector<T> (of a plain value, an FString, or a "
+        + "TObjectPtr<T>), and THashMap<K, V> of plain values.";
 }
 
 /// <summary>How one member's value is reached. Mirrors the native property kinds; see the rewriter's emitter.</summary>
@@ -347,6 +435,14 @@ internal static class ScriptPropertyTypeNames
     public const string NativeObject = "LuminaSharp.NativeObject";
     public const string AssetRef = "LuminaSharp.IAssetRef";
     public const string InputBinding = "LuminaSharp.SInputBinding";
+    public const string Entity = "LuminaSharp.Entity";
+
+    // What marks a struct as an engine mirror of a native type, so reading it as raw bytes is sound.
+    public const string NativeTypeAttribute = "LuminaSharp.NativeTypeAttribute";
+    public const string NativeLayoutAttribute = "LuminaSharp.NativeLayoutAttribute";
+
+    public const string PropertyAttribute = "LuminaSharp.PropertyAttribute";
+    public const string SerializeAttribute = "LuminaSharp.SerializeAttribute";
 
     public const string FString = "Lumina.FString";
     public const string TVector = "Lumina.TVector<T>";

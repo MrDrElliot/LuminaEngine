@@ -291,7 +291,8 @@ namespace Lumina::DotNet
         }
 
         // Sink the managed EnumerateScriptables calls once per Scriptable C# type; Ctx is the out desc vector.
-        void LmScriptableSink(void* Ctx, const char* Name, int NameLen, const char* Base, int BaseLen, uint64 OverrideFlags)
+        void LmScriptableSink(void* Ctx, const char* Name, int NameLen, const char* Base, int BaseLen, uint64 OverrideFlags,
+            uint8 UpdatePhase)
         {
             auto* Out = static_cast<TVector<FScriptableTypeDesc>*>(Ctx);
             if (Out == nullptr || Name == nullptr || NameLen <= 0)
@@ -305,6 +306,7 @@ namespace Lumina::DotNet
                 Desc.NativeBaseName = FString(Base, static_cast<size_t>(BaseLen));
             }
             Desc.OverrideFlags = OverrideFlags;
+            Desc.UpdatePhase = UpdatePhase;
             Out->emplace_back(std::move(Desc));
         }
 
@@ -1699,6 +1701,8 @@ namespace Lumina::DotNet
             if (R.U8()) { Meta.Set("ClampMin", NumberToString(R.F64())); }
             if (R.U8()) { Meta.Set("ClampMax", NumberToString(R.F64())); }
             if (R.U8()) { Meta.Set("Color", FString()); }
+            // [Serialize] rather than [Property]; the field gets storage and saving but no inspector row.
+            if (R.U8()) { Meta.Set("ScriptHidden", FString()); }
         }
 
         void ReadValue(FBlobReader& R, Scripting::FScriptPropertyValue& Out);
@@ -1733,6 +1737,7 @@ namespace Lumina::DotNet
                     {
                         Type->NativeName = FName(NativeName.c_str());
                     }
+                    Type->ManagedSize = (uint32)R.I32();
                     const int32 N = R.I32();
                     for (int32 i = 0; i < N; ++i)
                     {

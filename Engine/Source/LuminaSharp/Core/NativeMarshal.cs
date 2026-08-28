@@ -76,12 +76,14 @@ public static unsafe class NativeMarshal
             return;
         }
         byte* Begin = *(byte**)Header;
-        uint Length = *(uint*)(Header + sizeof(void*));
-        if (Begin == null || Length == 0)
+
+        // The backing store is a byte vector, so its length is bytes and the count is that over the stride.
+        uint Bytes = *(uint*)(Header + sizeof(void*));
+        if (Begin == null || Bytes == 0)
         {
             return;
         }
         Data = Begin;
-        Count = (int)Length;
+        Count = (int)(Bytes / (uint)ElementSize);
     }
 }

@@ -34,11 +34,11 @@ namespace LuminaSharp;
 internal static class ScriptPropertyRewriter
 {
     /// <summary>Rewrites one tree against a compilation used only to classify member types. Returns the tree
-    /// unchanged when it declares no [Property] fields.</summary>
+    /// unchanged when it declares no fields needing native storage.</summary>
     public static SyntaxTree Rewrite(CSharpCompilation Probe, SyntaxTree Tree, List<string> OutErrors)
     {
         SyntaxNode Root = Tree.GetRoot();
-        if (!Root.DescendantNodes().OfType<FieldDeclarationSyntax>().Any(HasPropertyAttribute))
+        if (!Root.DescendantNodes().OfType<FieldDeclarationSyntax>().Any(NeedsNativeStorage))
         {
             return Tree;
         }
@@ -55,7 +55,8 @@ internal static class ScriptPropertyRewriter
         return CSharpSyntaxTree.Create((CSharpSyntaxNode)Rewritten, (CSharpParseOptions?)Tree.Options, Tree.FilePath, Encoding.UTF8);
     }
 
-    private static bool HasPropertyAttribute(FieldDeclarationSyntax Field)
+    // [Serialize] is [Property] minus the inspector row, so it needs the same native-backed storage.
+    private static bool NeedsNativeStorage(FieldDeclarationSyntax Field)
     {
         return Field.AttributeLists
             .SelectMany(List => List.Attributes)
@@ -67,7 +68,7 @@ internal static class ScriptPropertyRewriter
                 {
                     Name = Name.Substring(Dot + 1);
                 }
-                return Name == "Property" || Name == "PropertyAttribute";
+                return Name is "Property" or "PropertyAttribute" or "Serialize" or "SerializeAttribute";
             });
     }
 
@@ -87,7 +88,7 @@ internal static class ScriptPropertyRewriter
         public override SyntaxNode? VisitClassDeclaration(ClassDeclarationSyntax Node)
         {
             List<FieldDeclarationSyntax> Fields = Node.Members.OfType<FieldDeclarationSyntax>()
-                .Where(HasPropertyAttribute).ToList();
+                .Where(NeedsNativeStorage).ToList();
             if (Fields.Count == 0)
             {
                 return base.VisitClassDeclaration(Node);
@@ -201,11 +202,10 @@ internal static class ScriptPropertyRewriter
                     Set = $"global::System.Runtime.CompilerServices.Unsafe.WriteUnaligned((void*)((nint)Handle + {Offset}), value)";
                     break;
 
-                // The minted enum property is int64-wide whatever the C# underlying type is, so the whole slot
-                // is read and written as a long -- a 4-byte access would leave the top half stale on writes.
+                // The minted enum property is its underlying type's width, so the enum is read in place.
                 case EScriptAccess.Enum:
-                    Get = $"({Type})global::System.Runtime.CompilerServices.Unsafe.ReadUnaligned<long>((void*)((nint)Handle + {Offset}))";
-                    Set = $"global::System.Runtime.CompilerServices.Unsafe.WriteUnaligned<long>((void*)((nint)Handle + {Offset}), (long)value)";
+                    Get = $"global::System.Runtime.CompilerServices.Unsafe.ReadUnaligned<{Type}>((void*)((nint)Handle + {Offset}))";
+                    Set = $"global::System.Runtime.CompilerServices.Unsafe.WriteUnaligned((void*)((nint)Handle + {Offset}), value)";
                     break;
 
                 case EScriptAccess.String:

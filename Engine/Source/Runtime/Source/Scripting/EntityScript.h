@@ -20,6 +20,13 @@ namespace Lumina
 
     class CWorld;
 
+    // Which side of the physics step a script's OnUpdate runs on. Mirrors LuminaSharp.EScriptPhase.
+    enum class EScriptUpdatePhase : uint8
+    {
+        PrePhysics = 0,
+        PostPhysics = 1,
+    };
+
     /**
      * Base for a script attached to a single entity.
      */
@@ -142,8 +149,9 @@ namespace Lumina
          *  script on the entity existing by the time it runs. */
         RUNTIME_API CEntityScript* Attach(ECS::FRegistry& Registry, ECS::FEntity Entity, CClass* ScriptClass);
 
-        /** Drains pending OnReady, then runs OnUpdate on every attached script in the registry. */
-        RUNTIME_API void Tick(ECS::FRegistry& Registry, float DeltaTime);
+        /** Drains pending OnReady (PrePhysics only), then runs OnUpdate on the scripts declaring Phase. */
+        RUNTIME_API void Tick(ECS::FRegistry& Registry, float DeltaTime,
+            EScriptUpdatePhase Phase = EScriptUpdatePhase::PrePhysics);
 
         /** Runs OnFixedUpdate on every ready script. Driven at the physics rate. */
         RUNTIME_API void TickFixed(ECS::FRegistry& Registry, float FixedDeltaTime);

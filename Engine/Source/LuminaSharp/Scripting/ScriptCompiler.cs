@@ -131,6 +131,7 @@ internal static class ScriptCompiler
             {
                 bHadError = true;
                 Native.Log(ELogLevel.Error, "C# compile: " + Diagnostic);
+                ExplainShadowedGameNamespace(Diagnostic);
             }
             else if (Diagnostic.Severity == DiagnosticSeverity.Warning)
             {
@@ -143,6 +144,19 @@ internal static class ScriptCompiler
             return PeStream.ToArray();
         }
         return null;
+    }
+
+    // CS0234 names the missing member, never the shadowing namespace that actually caused it.
+    private static void ExplainShadowedGameNamespace(Diagnostic Diagnostic)
+    {
+        if (Diagnostic.Id != "CS0234" || !Diagnostic.GetMessage().Contains("namespace 'Game'"))
+        {
+            return;
+        }
+
+        Native.Log(ELogLevel.Error,
+            "C# compile: 'Game' here is your own namespace, which hides LuminaSharp.Game. Rename the "
+            + "namespace (the template uses GameScripts), or write global::LuminaSharp.Game.");
     }
 
     private static ImmutableArray<ISourceGenerator>? CachedGenerators;

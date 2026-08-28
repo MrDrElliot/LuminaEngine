@@ -66,12 +66,15 @@ namespace Lumina
 
         if (Context.GetUpdateStage() == EUpdateStage::PrePhysics)
         {
-            EntityScripts::Tick(Registry, (float)Context.GetDeltaTime());
+            EntityScripts::Tick(Registry, (float)Context.GetDeltaTime(), EScriptUpdatePhase::PrePhysics);
         }
         else
         {
             // The frame delta feeds the accumulator, so each frame is counted exactly once.
             DispatchFixedUpdates(Registry, (float)Context.GetDeltaTime());
+
+            // After the step, so an [UpdatePhase(PostPhysics)] script reads settled transforms.
+            EntityScripts::Tick(Registry, (float)Context.GetDeltaTime(), EScriptUpdatePhase::PostPhysics);
         }
     }
 }

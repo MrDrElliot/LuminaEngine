@@ -30,7 +30,7 @@ internal static class Serializer
         {
             WriteString(Writer, Property.Name);
             WriteAliases(Writer, Property.Aliases);
-            WriteMeta(Writer, Property.Meta);
+            WriteMeta(Writer, Property.Meta, Property.Hidden);
             Writer.Write((byte)(Property.SkipHotReload ? 1 : 0));
             WriteType(Writer, Property.Type);
 
@@ -64,7 +64,7 @@ internal static class Serializer
         return Stream.ToArray();
     }
 
-    private static void WriteMeta(BinaryWriter Writer, PropertyAttribute? Meta)
+    private static void WriteMeta(BinaryWriter Writer, PropertyAttribute? Meta, bool bHidden = false)
     {
         WriteString(Writer, Meta?.Category ?? "");
         WriteString(Writer, Meta?.Tooltip ?? "");
@@ -85,6 +85,7 @@ internal static class Serializer
         }
 
         Writer.Write((byte)((Meta?.Color ?? false) ? 1 : 0));
+        Writer.Write((byte)(bHidden ? 1 : 0));
     }
 
     // Type descriptor; parsed in lockstep by the native ReadType. The kind is the shared reflected taxonomy
@@ -114,6 +115,8 @@ internal static class Serializer
             case EPropertyType.Struct:
             {
                 WriteString(Writer, Type.NativeName ?? "");
+                // Zero for a native mirror, which native sizes from the CStruct it resolves by name.
+                Writer.Write(Type.NativeName == null ? Type.ManagedSize : 0);
                 WriteFields(Writer, Type.Fields, Type.Clr);
                 break;
             }
@@ -161,7 +164,7 @@ internal static class Serializer
         {
             WriteString(Writer, Field.Name);
             WriteAliases(Writer, Field.Aliases);
-            WriteMeta(Writer, Field.Meta);
+            WriteMeta(Writer, Field.Meta, Field.Hidden);
             WriteType(Writer, Field.Type);
             WriteValue(Writer, Field.Type, Defaults != null ? Field.Get(Defaults) : null);
         }

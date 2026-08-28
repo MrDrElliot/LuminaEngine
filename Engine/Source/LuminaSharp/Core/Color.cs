@@ -1,9 +1,12 @@
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using Lumina;
 
 namespace LuminaSharp;
 
 // An RGBA color (0..1). Converts implicitly to FVector4, so it drops into every engine API that takes a color.
+[StructLayout(LayoutKind.Sequential)]
+[NativeLayout("FVector4")]
 public readonly struct Color
 {
     public readonly float R;

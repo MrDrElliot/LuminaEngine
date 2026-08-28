@@ -119,6 +119,7 @@ namespace Lumina::Scripting
         TSharedPtr<FScriptExportType> KeyType;        ///< Map kind, the key shape.
         TSharedPtr<FScriptExportType> ValueType;      ///< Map kind, the value shape.
         TVector<FScriptExportField>   Fields;         ///< Struct kind (native or script).
+        uint32                        ManagedSize = 0; ///< Script struct kind, sizeof the managed value (0 = unknown).
 
         FName                                       BaseName;    ///< InstancedStruct kind, the C# base type's display name.
         TVector<FScriptExportInstanceCandidate>     Candidates;  ///< InstancedStruct kind, the selectable concrete types.

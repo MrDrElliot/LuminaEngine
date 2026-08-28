@@ -9,6 +9,9 @@ namespace Lumina::CrashHandler
     // Call once, as early in main as possible.
     RUNTIME_API void Install();
 
+    // Clear on a process with no interactive desktop, where nothing dismisses the modal and the crash hangs.
+    RUNTIME_API void SetAllowModalDialog(bool bAllow);
+
     RUNTIME_API void Shutdown();
 
     // What kind of failure produced the crash. Only affects how the dump is named -- a GPU device

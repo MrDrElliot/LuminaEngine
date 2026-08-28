@@ -32,6 +32,9 @@ namespace Lumina::CrashHandler
 
         std::atomic<bool> GInsideHandler{false};
 
+        // Nothing dismisses a modal on a server, so the crash would block instead of exiting.
+        std::atomic<bool> GAllowModalDialog{true};
+
         // The crash path walks these with the heap already suspect, so nothing here allocates or locks.
         constexpr uint32 GMaxDiagnosticProviders = 8;
         FDiagnosticProvider GDiagnosticProviders[GMaxDiagnosticProviders] = {};
@@ -430,8 +433,17 @@ namespace Lumina::CrashHandler
                 return GPreviousFilter(ExceptionInfo);
             }
 
-            MessageBoxA(nullptr, ModalBody, "Lumina - Fatal Error",
-                MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SYSTEMMODAL);
+            if (GAllowModalDialog.load(std::memory_order_relaxed))
+            {
+                MessageBoxA(nullptr, ModalBody, "Lumina - Fatal Error",
+                    MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SYSTEMMODAL);
+            }
+            else
+            {
+                std::fputs(ModalBody, stderr);
+                std::fputc('\n', stderr);
+                std::fflush(stderr);
+            }
 
             // Let WER / attached debugger see it too.
             return EXCEPTION_CONTINUE_SEARCH;
@@ -475,6 +487,11 @@ namespace Lumina::CrashHandler
         }
     }
 
+
+    void SetAllowModalDialog(bool bAllow)
+    {
+        GAllowModalDialog.store(bAllow, std::memory_order_relaxed);
+    }
 
     void AddDiagnosticProvider(FDiagnosticProvider Provider)
     {

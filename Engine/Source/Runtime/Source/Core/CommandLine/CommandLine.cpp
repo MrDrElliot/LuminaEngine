@@ -22,16 +22,33 @@ namespace Lumina
         Parse(argc, argv);
     }
 
+    namespace Detail
+    {
+        // A negative number is a value, so "--offset -5" reads -5 rather than an option named "5".
+        static bool IsOptionToken(FStringView Token)
+        {
+            if (Token.size() < 2 || Token[0] != '-')
+            {
+                return false;
+            }
+            const char After = Token[1];
+            return After != '.' && (After < '0' || After > '9');
+        }
+    }
+
+    // One dash reads the same as two; expanding "-server" per character left multi-character options false.
     void FCommandLine::Parse(int argc, char* argv[])
     {
         for (int i = 1; i < argc; ++i)
         {
             FStringView Arg(argv[i], strlen(argv[i]));
 
-            if (Arg.starts_with("--"))
+            if (Detail::IsOptionToken(Arg))
             {
+                const size_t Dashes = Arg.starts_with("--") ? 2 : 1;
+
                 // Lowercase the key but preserve the value's case (paths/identifiers).
-                const FStringView Raw = Arg.substr(2);
+                const FStringView Raw = Arg.substr(Dashes);
                 FFixedString Key;
                 FFixedString Value;
 
@@ -49,7 +66,7 @@ namespace Lumina
                     if (i + 1 < argc)
                     {
                         FStringView NextArg(argv[i + 1]);
-                        if (!NextArg.starts_with("--"))
+                        if (!Detail::IsOptionToken(NextArg))
                         {
                             Value = argv[++i];
                         }
@@ -57,14 +74,6 @@ namespace Lumina
                 }
 
                 Args[Key] = Value;
-            }
-            else if (Arg.starts_with('-') && Arg.size() > 1)
-            {
-                for (size_t j = 1; j < Arg.size(); ++j)
-                {
-                    FFixedString Key(1, Arg[j]);
-                    Args[Detail::Normalize(Key)] = "true";
-                }
             }
             else
             {

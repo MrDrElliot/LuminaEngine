@@ -273,6 +273,9 @@ namespace Lumina
          *  generated shim instead of a per-instance lookup. Set once at mint (FScriptableRegistry). */
         uint64 ScriptOverrides = 0;
 
+        /** EScriptUpdatePhase for a minted entity-script class, from its C# [UpdatePhase]. Zero elsewhere. */
+        uint8 ScriptUpdatePhase = 0;
+
         /** Every property appended to this class from a script type's schema, in layout order. They live past
          *  the C++ shim the class was minted from. Empty for every native class. */
         TVector<FProperty*> ScriptProperties;
