@@ -346,12 +346,13 @@ namespace Lumina
             InitState(Graph, State);
         }
 
-        // Latch last update's blended durations and re-arm the shared phases for this update.
+        // Latch last update's blended durations and tracks, and re-arm the shared playheads.
         for (FAnimSyncGroup& Group : State.SyncGroups)
         {
             if (Group.bAdvanced)
             {
                 Group.Duration  = Group.NextDuration;
+                Group.Track     = Group.NextTrack;
                 Group.bAdvanced = false;
             }
         }
@@ -450,11 +451,12 @@ namespace Lumina
             }
         };
 
-        // Lets a blend refine the group's blended duration from its alpha, consumed next update.
+        // Lets a blend refine the group's blended duration and track from its alpha, consumed next update.
         struct FSyncTag
         {
             int32 Group = -1;
             float ClipDuration = 0.0f;
+            const FSyncTrack* Track = nullptr;
         };
 
         thread_local TVector<FSyncTag> ClockSync;
@@ -473,6 +475,19 @@ namespace Lumina
             {
                 PoseSync[Reg] = Tag;
             }
+        };
+
+        // A missing clip still has to answer, and the default track makes it a plain phase.
+        static const FSyncTrack DefaultSyncTrack;
+
+        const auto SyncTrackOf = [](const CAnimation* Clip) -> const FSyncTrack&
+        {
+            return Clip != nullptr ? Clip->GetSyncTrack() : DefaultSyncTrack;
+        };
+
+        const auto DurationOf = [](const CAnimation* Clip)
+        {
+            return Clip != nullptr ? Clip->GetDuration() : 0.0f;
         };
 
         // Every op that blends poses blends the curves identically, so a value tracks its branch weight.
@@ -807,23 +822,34 @@ namespace Lumina
                     float Finished = 0.0f;
                     bool bSynced = false;
 
-                    // The phase advances once per update at the group's blended-duration rate, and synced clips loop.
+                    // The playhead advances once per update at the group's blended rate, and synced clips loop.
                     if (SyncGroup != kAnimNoSyncGroup && SyncGroup < State.SyncGroups.size() && Duration > 0.0f)
                     {
                         FAnimSyncGroup& Group = State.SyncGroups[SyncGroup];
+                        const FSyncTrack& ClipTrack = Clip->GetSyncTrack();
+
                         if (!Group.bAdvanced)
                         {
                             Group.bAdvanced    = true;
-                            Group.PrevPhase    = Group.Phase;
                             Group.NextDuration = Duration;
+                            Group.NextTrack    = ClipTrack;
+
+                            if (!Group.bHasTrack)
+                            {
+                                Group.bHasTrack = true;
+                                Group.Track     = ClipTrack;
+                                Group.Position  = Group.Track.GetPosition(0.0f);
+                            }
+
+                            Group.PrevPosition = Group.Position;
 
                             const float GroupDuration = Group.Duration > 1e-4f ? Group.Duration : Duration;
-                            Group.Phase += (DeltaTime * Speed) / GroupDuration;
-                            Group.Phase -= Math::Floor(Group.Phase); // wrap 0..1, negative-safe
+                            Group.Position = Group.Track.Advance(Group.Position, (DeltaTime * Speed) / GroupDuration);
                         }
 
-                        PrevSampleTime = Group.PrevPhase * Duration;
-                        Clock          = Group.Phase * Duration;
+                        // The shared position lands on each clip's own markers, so the cycles line up.
+                        PrevSampleTime = ClipTrack.GetPercentThrough(Group.PrevPosition) * Duration;
+                        Clock          = ClipTrack.GetPercentThrough(Group.Position) * Duration;
                         bSynced        = true;
                     }
                     else if (Duration > 0.0f)
@@ -867,7 +893,7 @@ namespace Lumina
 
                         if (bSynced)
                         {
-                            ClockSync[DstClock] = FSyncTag{ (int32)SyncGroup, Duration };
+                            ClockSync[DstClock] = FSyncTag{ (int32)SyncGroup, Duration, &Clip->GetSyncTrack() };
                         }
 
                         // bHasMotion stays set even on a paused frame, so the branch keeps reading as root-motion driven.
@@ -972,13 +998,11 @@ namespace Lumina
                     ? &State.StateSlots[SmoothSlot] : nullptr;
 
                 // Seeding waits for a resolved blend space, so a dynamic asset that arrives late still starts on phase.
+                bool bSeededThisUpdate = false;
                 if (SeededSlot < NumState && State.StateSlots[SeededSlot] < 0.5f)
                 {
                     State.StateSlots[SeededSlot] = 1.0f;
-                    if (PhaseSlot < NumState)
-                    {
-                        State.StateSlots[PhaseSlot] = Math::Clamp(ReadScalar(StartPosReg, 0.0f), 0.0f, 1.0f);
-                    }
+                    bSeededThisUpdate = true;
 
                     if (SmoothState != nullptr)
                     {
@@ -1016,20 +1040,56 @@ namespace Lumina
                     ? &Graph->BlendSpaceCurveMaps[BlendSpaceIdx] : nullptr;
                 float* DstCurves = CurvesOf(Dst);
 
-                // The phase speed comes from the weighted duration, so it retimes as the blend moves.
-                const float PrevPhase = (PhaseSlot < (uint16)State.StateSlots.size()) ? State.StateSlots[PhaseSlot] : 0.0f;
-                float Phase = PrevPhase;
+                // The samples' sync tracks fold together the same way their poses do, carrying the weights.
+                thread_local FSyncTrack BlendSpaceTrack;
+                BlendSpaceTrack = FSyncTrack();
 
-                const float BlendedDuration = BlendSpace->GetBlendedDuration(Weights);
+                float BlendedDuration = 0.0f;
+                float FoldWeight = 0.0f;
+
+                for (int32 i = 0; i < Weights.Count; ++i)
+                {
+                    const int32 FoldSample = Weights.SampleIndices[i];
+                    CAnimation* FoldClip = (FoldSample >= 0 && FoldSample < (int32)BlendSpace->Samples.size())
+                        ? BlendSpace->Samples[FoldSample].Animation.Get() : nullptr;
+
+                    // An unassigned sample has no cycle, so it must not drag the blended duration toward zero.
+                    if (FoldClip == nullptr)
+                    {
+                        continue;
+                    }
+
+                    const FSyncTrack& FoldTrack = SyncTrackOf(FoldClip);
+
+                    FoldWeight += Weights.Weights[i];
+                    const float FoldAlpha = FoldWeight > 1e-5f ? (Weights.Weights[i] / FoldWeight) : 0.0f;
+
+                    BlendedDuration = FSyncTrack::BlendDuration(BlendedDuration, DurationOf(FoldClip),
+                                                                BlendSpaceTrack.NumEvents(), FoldTrack.NumEvents(),
+                                                                FoldAlpha);
+
+                    BlendSpaceTrack.BuildBlended(BlendSpaceTrack, FoldTrack, FoldAlpha);
+                }
+
+                // The start position is a fraction of the clip, which only the blended track can place.
+                if (bSeededThisUpdate && PhaseSlot < NumState)
+                {
+                    State.StateSlots[PhaseSlot] = BlendSpaceTrack.GetPosition(Math::Saturate(ReadScalar(StartPosReg, 0.0f))).ToFloat();
+                }
+
+                // The playhead speed comes from the blended duration, so it retimes as the blend moves.
+                const float PrevSlotValue = (PhaseSlot < (uint16)State.StateSlots.size()) ? State.StateSlots[PhaseSlot] : 0.0f;
+                const FSyncPosition PrevPosition = FSyncPosition::FromFloat(PrevSlotValue);
+                FSyncPosition Position = PrevPosition;
+
                 if (BlendedDuration > 1e-4f)
                 {
-                    Phase += (DeltaTime * ReadScalar(SpeedReg, 1.0f)) / BlendedDuration;
-                    Phase -= Math::Floor(Phase);
+                    Position = BlendSpaceTrack.Advance(PrevPosition, (DeltaTime * ReadScalar(SpeedReg, 1.0f)) / BlendedDuration);
                 }
 
                 if (PhaseSlot < (uint16)State.StateSlots.size())
                 {
-                    State.StateSlots[PhaseSlot] = Phase;
+                    State.StateSlots[PhaseSlot] = Position.ToFloat();
                 }
 
                 int16 Accumulated = FAnimTask::NoTask;
@@ -1044,12 +1104,18 @@ namespace Lumina
                     const SBlendSpaceSample& Sample = BlendSpace->Samples[Weights.SampleIndices[i]];
                     CAnimation* SampleClip = Sample.Animation.Get();
 
+                    // The shared position lands on each sample's own markers, so the cycles line up.
+                    const FSyncTrack& SampleTrack = SyncTrackOf(SampleClip);
+                    const float SampleDuration = DurationOf(SampleClip);
+                    const float PrevSampleTime = SampleTrack.GetPercentThrough(PrevPosition) * SampleDuration;
+                    const float SampleTime     = SampleTrack.GetPercentThrough(Position) * SampleDuration;
+
                     FAnimTask Task;
                     if (SampleClip != nullptr)
                     {
                         Task.Type = EAnimTaskType::SampleClip;
                         Task.Clip = SampleClip;
-                        Task.Time = Phase * SampleClip->GetDuration();
+                        Task.Time = SampleTime;
                     }
                     else
                     {
@@ -1057,11 +1123,6 @@ namespace Lumina
                     }
 
                     const int16 SampleTask = OutTasks.Add(Task);
-
-                    // Each sample walks the same normalized phase across its own duration.
-                    const float SampleDuration = SampleClip != nullptr ? SampleClip->GetDuration() : 0.0f;
-                    const float PrevSampleTime = PrevPhase * SampleDuration;
-                    const float SampleTime     = Phase * SampleDuration;
 
                     FRootMotionDelta SampleDelta;
                     if (bExtractRootMotion && SampleClip != nullptr
@@ -1164,11 +1225,17 @@ namespace Lumina
                 // Consumed next update, so the weights are one frame latent.
                 const FSyncTag SyncA = SyncOf(A);
                 const FSyncTag SyncB = SyncOf(B);
-                if (SyncA.Group >= 0 && SyncA.Group == SyncB.Group && SyncA.Group < (int32)State.SyncGroups.size())
+                if (SyncA.Group >= 0 && SyncA.Group == SyncB.Group && SyncA.Group < (int32)State.SyncGroups.size()
+                    && SyncA.Track != nullptr && SyncB.Track != nullptr)
                 {
-                    const float Blended = SyncA.ClipDuration + (SyncB.ClipDuration - SyncA.ClipDuration) * BlendAlpha;
-                    State.SyncGroups[SyncA.Group].NextDuration = Blended;
-                    SetPoseSync(Dst, FSyncTag{ SyncA.Group, Blended });
+                    FAnimSyncGroup& Group = State.SyncGroups[SyncA.Group];
+                    const float Blended = FSyncTrack::BlendDuration(SyncA.ClipDuration, SyncB.ClipDuration,
+                                                                    SyncA.Track->NumEvents(), SyncB.Track->NumEvents(),
+                                                                    BlendAlpha);
+
+                    Group.NextDuration = Blended;
+                    Group.NextTrack.BuildBlended(*SyncA.Track, *SyncB.Track, BlendAlpha);
+                    SetPoseSync(Dst, FSyncTag{ SyncA.Group, Blended, &Group.NextTrack });
                 }
                 else
                 {

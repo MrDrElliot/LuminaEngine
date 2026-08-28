@@ -2,6 +2,7 @@
 
 #include "Animation/AnimCompression.h"
 #include "Animation/AnimNotify.h"
+#include "Animation/AnimSyncTrack.h"
 #include "Assets/AssetTypes/Curve/CurveAsset.h"
 #include "Core/Math/AABB.h"
 #include "Core/Object/InstancedStruct.h"
@@ -156,6 +157,14 @@ namespace Lumina
         // save/reload. A notify references its lane by name (NotifyTrack).
         TVector<FName> NotifyTracks;
 
+        // Notify lane whose entries mark the cycle points a synchronized blend lines up on.
+        FName SyncTrackName;
+
+        // Reflected from the named lane, never serialized.
+        FSyncTrack SyncTrack;
+
+        RUNTIME_API void RebuildSyncTrack();
+
         // Resolved once per (skeleton, bind generation) and never mutated after, so sampling inside ParallelFor needs no lock.
         struct FResolvedSkeleton
         {
@@ -196,6 +205,12 @@ namespace Lumina
                 Ar << Data.Compressed;
             }
 
+            if (Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::ANIM_SYNC_TRACK)
+            {
+                Ar << Data.SyncTrackName;
+            }
+
+            Data.RebuildSyncTrack();
             Data.InvalidateResolvedSkeletons();
 
             return Ar;
@@ -259,6 +274,8 @@ namespace Lumina
         const TVector<FAnimationNotify>& GetNotifies() const { return AnimationResource->Notifies; }
         const TVector<FAnimationNotifyState>& GetNotifyStates() const { return AnimationResource->NotifyStates; }
         bool HasNotifies() const { return !AnimationResource->Notifies.empty() || !AnimationResource->NotifyStates.empty(); }
+
+        const FSyncTrack& GetSyncTrack() const { return AnimationResource->SyncTrack; }
 
         const TVector<FAnimationCurve>& GetCurves() const { return AnimationResource->Curves; }
         bool HasCurves() const { return !AnimationResource->Curves.empty(); }

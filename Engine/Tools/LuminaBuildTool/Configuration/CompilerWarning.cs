@@ -161,7 +161,7 @@ public static class CompilerWarnings
             new() { Warning = CompilerWarning.Format,                GccName = "format",                  MsvcCode = "4477" },
             new() { Warning = CompilerWarning.FormatTruncation,      GccName = "format-truncation" },
             new() { Warning = CompilerWarning.Uninitialized,         GccName = "uninitialized",           MsvcCode = "4700" },
-            new() { Warning = CompilerWarning.MaybeUninitialized,    GccName = "maybe-uninitialized" },
+            new() { Warning = CompilerWarning.MaybeUninitialized,    GccName = "maybe-uninitialized",     MsvcCode = "4701", bOffByDefault = true },
             new() { Warning = CompilerWarning.SubobjectLinkage,      GccName = "subobject-linkage" },
             new() { Warning = CompilerWarning.DanglingReference,     GccName = "dangling-reference" },
 

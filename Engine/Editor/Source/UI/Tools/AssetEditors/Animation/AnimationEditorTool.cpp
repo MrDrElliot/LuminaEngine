@@ -165,6 +165,12 @@ namespace Lumina
 
     void FAnimationEditorTool::MarkAnimationDirty()
     {
+        if (CAnimation* Animation = GetAsset<CAnimation>())
+        {
+            // Markers are reflected from notifies, so any timeline edit can move them.
+            Animation->GetAnimationResource()->RebuildSyncTrack();
+        }
+
         if (Asset.IsValid() && Asset->GetPackage())
         {
             Asset->GetPackage()->MarkDirty();
@@ -559,10 +565,16 @@ namespace Lumina
             const FVector4 TrackColor = PaletteColor(t);
             DrawList->AddRectFilled(ImVec2(CanvasPos.x + 6, RowY0 + 7), ImVec2(CanvasPos.x + 16, RowY0 + kTrackHeight - 7), ToU32(TrackColor), 2.0f);
 
+            const bool bIsSyncTrack = !Resource->SyncTrackName.IsNone() && Resource->NotifyTracks[t] == Resource->SyncTrackName;
+
             ImGui::SetCursorScreenPos(ImVec2(CanvasPos.x + 22, RowY0 + 5));
             ImGui::PushID(t);
             const bool bTrackSelected = (SelectedTrack == t);
-            if (ImGui::Selectable(Resource->NotifyTracks[t].c_str(), bTrackSelected, ImGuiSelectableFlags_None, ImVec2(kHeaderWidth - 30, kTrackHeight - 10)))
+            const FString HeaderLabel = bIsSyncTrack
+                ? FString(LE_ICON_SYNC " ") + Resource->NotifyTracks[t].c_str()
+                : FString(Resource->NotifyTracks[t].c_str());
+
+            if (ImGui::Selectable(HeaderLabel.c_str(), bTrackSelected, ImGuiSelectableFlags_None, ImVec2(kHeaderWidth - 30, kTrackHeight - 10)))
             {
                 SelectedTrack = t;
             }
@@ -577,8 +589,35 @@ namespace Lumina
                 ImGui::SetNextItemWidth(160);
                 if (ImGui::InputText("Name", RenameBuf, sizeof(RenameBuf), ImGuiInputTextFlags_EnterReturnsTrue))
                 {
-                    Resource->NotifyTracks[t] = FName(RenameBuf);
+                    // A lane owns its entries by name, so they have to be re-tagged or they orphan.
+                    const FName PreviousName = Resource->NotifyTracks[t];
+                    const FName NewName = FName(RenameBuf);
+
+                    Resource->NotifyTracks[t] = NewName;
+                    for (FAnimationNotify& N : Resource->Notifies)
+                    {
+                        if (N.NotifyTrack == PreviousName) { N.NotifyTrack = NewName; }
+                    }
+                    for (FAnimationNotifyState& N : Resource->NotifyStates)
+                    {
+                        if (N.NotifyTrack == PreviousName) { N.NotifyTrack = NewName; }
+                    }
+                    if (bIsSyncTrack)
+                    {
+                        Resource->SyncTrackName = NewName;
+                    }
                     MarkAnimationDirty();
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem(LE_ICON_SYNC " Sync Track", nullptr, bIsSyncTrack))
+                {
+                    // One lane at a time, since a clip has a single cycle to line blends up on.
+                    Resource->SyncTrackName = bIsSyncTrack ? FName() : Resource->NotifyTracks[t];
+                    MarkAnimationDirty();
+                }
+                if (bIsSyncTrack)
+                {
+                    ImGui::TextDisabled("%d sync event(s)", Animation->GetSyncTrack().NumEvents());
                 }
                 ImGui::Separator();
                 if (ImGui::MenuItem(LE_ICON_PLUS " Add Notify"))      { AddNotifyAt(Resource, Resource->NotifyTracks[t], AnimComp->CurrentTime, false); }
@@ -586,6 +625,10 @@ namespace Lumina
                 ImGui::Separator();
                 if (NumTracks > 1 && ImGui::MenuItem(LE_ICON_DELETE " Delete Track"))
                 {
+                    if (bIsSyncTrack)
+                    {
+                        Resource->SyncTrackName = FName();
+                    }
                     Resource->NotifyTracks.erase(Resource->NotifyTracks.begin() + t);
                     MarkAnimationDirty();
                     ImGui::EndPopup();

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Animation/AnimEvents.h"
+#include "Animation/AnimSyncTrack.h"
 #include "Animation/RootMotion.h"
 #include "Animation/RootMotionTypes.h"
 #include "Animation/TaskSystem/AnimTask.h"
@@ -186,11 +187,18 @@ namespace Lumina
     
     struct FAnimSyncGroup
     {
-        float Phase        = 0.0f; // shared normalized playhead, wraps 0..1
-        float PrevPhase    = 0.0f; // phase before this update's advance
-        float Duration     = 0.0f; // blended seconds driving the phase speed
+        FSyncPosition Position;     // shared playhead on the group's blended sync track
+        FSyncPosition PrevPosition; // position before this update's advance
+
+        float Duration     = 0.0f; // blended seconds one cycle of the track takes
         float NextDuration = 0.0f; // accumulated from this update's blend provenance
-        bool  bAdvanced    = false;
+
+        FSyncTrack Track;     // the track this update's clips map their playheads through
+        FSyncTrack NextTrack; // accumulated from this update's blend provenance
+
+        // Until a clip has run, the group holds the default track and behaves as a plain phase.
+        bool bHasTrack = false;
+        bool bAdvanced = false;
     };
     
     struct FAnimGraphVMState

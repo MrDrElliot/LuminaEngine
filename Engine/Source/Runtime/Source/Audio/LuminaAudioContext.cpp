@@ -19,7 +19,7 @@ namespace Lumina
 		// A source is freed once the device thread has started a later block than the one that retired it.
 		constexpr uint64 kRetireRenderDelay = 2;
 
-		constexpr uint32 kCommandQueueCapacity = 4096;
+		constexpr uint32 kContextCommandQueueCapacity = 4096;
 		constexpr uint32 kPendingPlayCapacity  = 256;
 	}
 
@@ -27,7 +27,7 @@ namespace Lumina
 	{
 		LUMINA_MEMORY_SCOPE("Audio");
 
-		CommandQueue.Initialize(kCommandQueueCapacity);
+		CommandQueue.Initialize(kContextCommandQueueCapacity);
 		PendingPlays.Initialize(kPendingPlayCapacity);
 		FreeSlots.Initialize(MaxVoiceSlots);
 

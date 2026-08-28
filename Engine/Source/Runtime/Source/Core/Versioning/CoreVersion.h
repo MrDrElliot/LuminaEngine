@@ -87,6 +87,9 @@ enum class ELuminaEngineVersion : uint32
 	// FMeshletCone is a 4-byte SNORM8 axis + cutoff with no apex. Older files hold floats and are quantized on load.
 	MESHLET_CONE_SNORM8,
 
+	// FAnimationResource names the notify track whose entries are its sync markers.
+	ANIM_SYNC_TRACK,
+
 	AUTOMATIC_VERSION_PLUS_ONE,
 	AUTOMATIC_VERSION = AUTOMATIC_VERSION_PLUS_ONE - 1
 };

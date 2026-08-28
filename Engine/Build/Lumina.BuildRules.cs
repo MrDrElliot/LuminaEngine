@@ -116,7 +116,8 @@ public abstract class LuminaTargetRules : TargetRules
             CompilerWarning.TautologicalCompare,    // a comparison whose result is fixed at compile time
             CompilerWarning.Parentheses,            // assignment or precedence that reads as something else
             CompilerWarning.Format,                 // printf-family arguments that do not match the format
-            CompilerWarning.FormatTruncation);      // a formatted write the destination cannot hold
+            CompilerWarning.FormatTruncation,       // a formatted write the destination cannot hold
+            CompilerWarning.MaybeUninitialized);    // a local read on a path that never wrote it
 
         Warnings.Set(WarningSeverity.Off,
             // The reflection generator takes offsetof of reflected types, which are rarely standard
@@ -129,9 +130,7 @@ public abstract class LuminaTargetRules : TargetRules
             CompilerWarning.InterferenceSize,
 
             // Third-party headers arrive through -isystem, which silences their front-end diagnostics
-            // but not the ones GCC raises after inlining. swap over the string's union layout
-            // trips these in every unit that moves a string, with nothing to fix on our side.
-            CompilerWarning.MaybeUninitialized,
+            // but not the ones GCC raises after inlining, with nothing to fix on our side.
             CompilerWarning.DanglingPointer);
 
         // Real defects, but the analysis behind them is flow-sensitive, so what they find moves with

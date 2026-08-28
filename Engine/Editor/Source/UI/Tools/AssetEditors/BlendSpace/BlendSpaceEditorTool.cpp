@@ -211,12 +211,41 @@ namespace Lumina
             return;
         }
 
-        const float BlendedDuration = BlendSpace->GetBlendedDuration(Weights);
+        // Mirrors the graph VM, so the preview shows the same marker alignment the runtime will.
+        auto SyncTrackOf = [](const CAnimation* Clip) -> const FSyncTrack&
+        {
+            static const FSyncTrack DefaultTrack;
+            return Clip != nullptr ? Clip->GetSyncTrack() : DefaultTrack;
+        };
+        auto DurationOf = [](const CAnimation* Clip)
+        {
+            return Clip != nullptr ? Clip->GetDuration() : 0.0f;
+        };
+
+        FSyncTrack SyncTrack = SyncTrackOf(BlendSpace->Samples[Weights.SampleIndices[0]].Animation.Get());
+        float BlendedDuration = DurationOf(BlendSpace->Samples[Weights.SampleIndices[0]].Animation.Get());
+        float FoldWeight = Weights.Weights[0];
+
+        for (int32 i = 1; i < Weights.Count; ++i)
+        {
+            const CAnimation* FoldClip = BlendSpace->Samples[Weights.SampleIndices[i]].Animation.Get();
+            const FSyncTrack& FoldTrack = SyncTrackOf(FoldClip);
+
+            FoldWeight += Weights.Weights[i];
+            const float FoldAlpha = FoldWeight > 1e-5f ? (Weights.Weights[i] / FoldWeight) : 0.0f;
+
+            BlendedDuration = FSyncTrack::BlendDuration(BlendedDuration, DurationOf(FoldClip),
+                                                        SyncTrack.NumEvents(), FoldTrack.NumEvents(), FoldAlpha);
+            SyncTrack.BuildBlended(SyncTrack, FoldTrack, FoldAlpha);
+        }
+
         if (bPlaying && BlendedDuration > 1e-4f)
         {
             PreviewPhase += (DeltaTime * PlayRate) / BlendedDuration;
             PreviewPhase -= Math::Floor(PreviewPhase);
         }
+
+        const FSyncPosition PreviewSyncPosition = SyncTrack.GetPosition(PreviewPhase);
 
         FAnimTaskList Tasks;
         Tasks.Skeleton = Resource;
@@ -233,7 +262,7 @@ namespace Lumina
             {
                 Task.Type = EAnimTaskType::SampleClip;
                 Task.Clip = Sample.Animation.Get();
-                Task.Time = PreviewPhase * Sample.Animation->GetDuration();
+                Task.Time = SyncTrackOf(Sample.Animation.Get()).GetPercentThrough(PreviewSyncPosition) * Sample.Animation->GetDuration();
             }
             else
             {
