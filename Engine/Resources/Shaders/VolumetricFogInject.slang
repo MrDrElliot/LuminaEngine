@@ -93,16 +93,24 @@ float SampleLocalShadow(FLight Light, float3 WorldPos)
     return ShadowAtlas().SampleCmpLevelZero(AUV, P.z - 0.0005);
 }
 
-// Lights come from the cluster grid, so the bound is LIGHTS_PER_CLUSTER locally, not a global cap.
+// Lights come from the cluster grid, so both the local count and each index need their own bound.
 float3 LocalLightsInScatter(FExponentialHeightFogParams Fog, uint ClusterIndex, float3 WorldPos, float3 ToCam)
 {
     float  G         = Fog.VolumetricParams.y;
     float3 InScatter = float3(0.0);
 
-    uint NumLocal = min(Clusters()[ClusterIndex].Count, (uint)LIGHTS_PER_CLUSTER);
+    uint NumLocal   = min(Clusters()[ClusterIndex].Count, (uint)LIGHTS_PER_CLUSTER);
+    uint NumLights  = GetNumLights();   // loop-invariant; hoisted out of the per-light test
     for (uint li = 0; li < NumLocal; ++li)
     {
-        FLight L = GetLightAt(Clusters()[ClusterIndex].LightIndices[li]);
+        uint LightIndex = Clusters()[ClusterIndex].LightIndices[li];
+        // Cluster contents go stale across a scene switch and the array holds exactly NumLights entries.
+        if (LightIndex >= NumLights)
+        {
+            continue;
+        }
+
+        FLight L = GetLightAt(LightIndex);
         if (!HasFlag(L.Flags, ELightFlags::Volumetric))
         {
             continue;
