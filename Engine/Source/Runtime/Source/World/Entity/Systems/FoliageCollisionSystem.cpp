@@ -3,7 +3,6 @@
 #include "FoliageCollisionSystem.h"
 #include "SystemContext.h"
 #include "Assets/AssetTypes/Physics/CollisionShape.h"
-#include "Memory/Allocators/Allocator.h"
 #include "Physics/PhysicsScene.h"
 #include "World/Entity/Components/FoliageComponent.h"
 
@@ -30,9 +29,8 @@ namespace Lumina
                 return;
             }
 
-            // Scratch-stack backed and consumed inside this call; no heap traffic per rebake.
-            FMemMark Mark;
-            TScratchVector<Physics::FStaticInstanceDesc> Descs;
+            // Heap, not scratch: the instance count is unbounded and one block cannot hold a large foliage set.
+            TVector<Physics::FStaticInstanceDesc> Descs;
             Descs.reserve(Foliage.Instances.size());
             bool bSourcesReady = true;
 
