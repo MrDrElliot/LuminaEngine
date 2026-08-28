@@ -356,6 +356,12 @@ namespace Lumina
         /** Master toggle for component visualizers; read by the scene tool's EndFrame draw pass. */
         bool bShowComponentVisualizers = true;
 
+        /** Toggle for the interactive pass, so face and radius handles can be muted without hiding the wireframe. */
+        bool bVisualizerHandlesEnabled = true;
+
+        /** Component types whose visualizer the user switched off in the Visualizations menu. */
+        THashSet<const CStruct*> HiddenVisualizerTypes;
+
         /** Is this editor tool for editing assets? */
         NODISCARD virtual bool IsAssetEditorTool() const { return false; }
 

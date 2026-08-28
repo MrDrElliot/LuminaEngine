@@ -2,6 +2,7 @@
 #include "World/ECS/Registry.h"
 #include "EditorPCH.h"
 #include "ComponentVisualizer.h"
+#include "ComponentVisualizerContext.h"
 #include "Core/Math/Color.h"
 #include "Renderer/PrimitiveDrawInterface.h"
 #include "Tools/Import/ImportHelpers.h"
@@ -63,6 +64,91 @@ namespace Lumina
             return bIsTrigger ? FColor::Green : FColor::Blue;
         }
 
+        struct FBoxFace
+        {
+            FVector3 Center;
+            FVector3 Normal;
+            FVector3 HalfU;
+            FVector3 HalfV;
+            int32    Axis = 0;
+            float    Sign = 1.0f;
+        };
+
+        void BuildBoxFaces(const FVector3& Center, const FQuat& Rotation, const FVector3& HalfExtent, FBoxFace (&OutFaces)[6])
+        {
+            const FVector3 Axes[3] =
+            {
+                Rotation * FVector3(1.0f, 0.0f, 0.0f),
+                Rotation * FVector3(0.0f, 1.0f, 0.0f),
+                Rotation * FVector3(0.0f, 0.0f, 1.0f),
+            };
+
+            int32 Index = 0;
+            for (int32 Axis = 0; Axis < 3; ++Axis)
+            {
+                const int32 U = (Axis + 1) % 3;
+                const int32 V = (Axis + 2) % 3;
+
+                for (int32 Side = 0; Side < 2; ++Side)
+                {
+                    const float Sign = (Side == 0) ? 1.0f : -1.0f;
+
+                    FBoxFace& Face = OutFaces[Index++];
+                    Face.Axis   = Axis;
+                    Face.Sign   = Sign;
+                    Face.Normal = Axes[Axis] * Sign;
+                    Face.Center = Center + Face.Normal * HalfExtent[Axis];
+                    Face.HalfU  = Axes[U] * HalfExtent[U];
+                    Face.HalfV  = Axes[V] * HalfExtent[V];
+                }
+            }
+        }
+
+        constexpr float kMinColliderExtent = 0.001f;
+
+        FVector3 UnitAxis(int32 Axis)
+        {
+            FVector3 Result(0.0f);
+            Result[Axis] = 1.0f;
+            return Result;
+        }
+
+        const char* BoxFaceName(int32 Axis, float Sign)
+        {
+            static const char* Names[6] = { "-X", "+X", "-Y", "+Y", "-Z", "+Z" };
+            return Names[Axis * 2 + (Sign > 0.0f ? 1 : 0)];
+        }
+
+        FVisualizerHandleStyle FaceStyle(bool bIsTrigger)
+        {
+            FVisualizerHandleStyle Style;
+            Style.Color = bIsTrigger ? FVector4(0.25f, 0.90f, 0.45f, 1.0f) : FVector4(0.30f, 0.62f, 1.00f, 1.0f);
+            Style.Shape = EVisualizerHandleShape::Square;
+            Style.PixelRadius = 4.5f;
+            Style.GrabPixelRadius = 9.0f;
+            Style.SurfaceOpacity = 0.07f;
+            Style.Tooltip = "Drag to move this face; the opposite face stays put.";
+            return Style;
+        }
+
+        FVisualizerHandleStyle ScalarStyle(const char* Tooltip)
+        {
+            FVisualizerHandleStyle Style;
+            Style.Shape = EVisualizerHandleShape::Diamond;
+            Style.PixelRadius = 6.0f;
+            Style.GrabPixelRadius = 12.0f;
+            Style.Tooltip = Tooltip;
+            return Style;
+        }
+
+        // Screen-right at the point, so a radius handle stays grabbable from any camera angle.
+        FVector3 ScreenRightAt(const FVisualizerView& View, const FVector3& Point)
+        {
+            const FVector3 ToCamera = View.DirectionToCamera(Point);
+            const FVector3 Right = Math::Cross(View.CameraUp, ToCamera);
+            return Math::LengthSquared(Right) > 1e-8f ? Math::Normalize(Right) : View.CameraRight;
+        }
+
         // Two rings joined by vertical spokes, optionally tapered, shared by the cylinder visualizers.
         void DrawWireCylinder(IPrimitiveDrawInterface* PDI, const FVector3& Center, const FQuat& Rot,
             float TopRadius, float BottomRadius, float HalfHeight, const FVector4& Color, float Thickness)
@@ -110,6 +196,37 @@ namespace Lumina
             FVector4(PointLight.LightColor, 1.0f), 32, 1.0f, true, 0.0f);
     }
 
+    void CComponentVisualizer_PointLight::DrawVisualization(FComponentVisualizerContext& Context)
+    {
+        SPointLightComponent& Light = Context.Get<SPointLightComponent>();
+        const STransformComponent& Transform = Context.Get<STransformComponent>();
+
+        const FVector3 Center = Transform.GetWorldLocationCached();
+        const FVector4 Color(Light.LightColor, 1.0f);
+        const FVector3 Axis = ScreenRightAt(Context.View, Center);
+
+        const FVisualizerHandleResult Result = Context.AxisHandle(0, Center + Axis * Light.Attenuation, Axis,
+            ScalarStyle("Drag to set the light radius."));
+
+        if (Result.bChanged)
+        {
+            Context.NameEdit("Set Light Radius");
+            Light.Attenuation = Math::Max(Light.Attenuation + Result.ScalarDelta, 0.01f);
+            Context.MarkDirty();
+        }
+
+        if (Result.bHovered || Result.bActive)
+        {
+            Context.Measurement(Center, Center + Axis * Light.Attenuation, Color, "%.2f m", Light.Attenuation);
+        }
+        else
+        {
+            Context.Label(Center + Context.View.CameraUp * (Context.View.WorldPerPixelAt(Center) * 24.0f), Color,
+                "%.1f m   %.0f lm", Light.Attenuation, Light.Intensity);
+        }
+    }
+
+
     CStruct* CComponentVisualizer_SpotLight::GetSupportedComponentType() const
     {
         return SSpotLightComponent::StaticStruct();
@@ -125,6 +242,79 @@ namespace Lumina
         PDI->DrawCone(Transform.GetWorldLocationCached(), Forward, Math::Radians(SpotLight.OuterConeAngle), SpotLight.Attenuation, FVector4(SpotLight.LightColor, 1.0f));
         PDI->DrawCone(Transform.GetWorldLocationCached(), Forward, Math::Radians(SpotLight.InnerConeAngle), SpotLight.Attenuation, FVector4(SpotLight.LightColor, 1.0f));
     }
+
+    void CComponentVisualizer_SpotLight::DrawVisualization(FComponentVisualizerContext& Context)
+    {
+        SSpotLightComponent& Light = Context.Get<SSpotLightComponent>();
+        const STransformComponent& Transform = Context.Get<STransformComponent>();
+
+        const FVector3 Apex = Transform.GetWorldLocationCached();
+        const FVector3 Forward = Transform.GetWorldRotationCached() * FViewVolume::ForwardAxis;
+        const FVector4 Color(Light.LightColor, 1.0f);
+
+        FVector3 Side = Math::Cross(Forward, Context.View.DirectionToCamera(Apex));
+        if (Math::LengthSquared(Side) < 1e-8f)
+        {
+            Side = Math::Cross(Forward, Context.View.CameraUp);
+        }
+        Side = Math::Normalize(Side);
+
+        const FVector3 PlaneNormal = Math::Normalize(Math::Cross(Forward, Side));
+
+        auto ConeHandle = [&](uint32 ID, float& AngleDegrees, float SideSign, const char* Tooltip)
+        {
+            const float Radians = Math::Radians(AngleDegrees);
+            const FVector3 Rim = Apex
+                               + Forward * (Light.Attenuation * Math::Cos(Radians))
+                               + Side * (SideSign * Light.Attenuation * Math::Sin(Radians));
+
+            const FVisualizerHandleResult Result = Context.PlaneHandle(ID, Rim, PlaneNormal, ScalarStyle(Tooltip));
+            if (Result.bChanged)
+            {
+                const FVector3 Local = Result.Position - Apex;
+                const float Along = Math::Dot(Local, Forward);
+                const float Across = Math::Abs(Math::Dot(Local, Side));
+
+                Context.NameEdit("Set Cone Angle");
+                AngleDegrees = Math::Clamp(Math::Degrees(std::atan2(Across, Along)), 1.0f, 89.0f);
+                Context.MarkDirty();
+            }
+
+            return Result;
+        };
+
+        const FVisualizerHandleResult Outer = ConeHandle(0, Light.OuterConeAngle, 1.0f, "Drag to set the outer cone angle.");
+        const FVisualizerHandleResult Inner = ConeHandle(1, Light.InnerConeAngle, -1.0f, "Drag to set the inner cone angle.");
+
+        if (Light.InnerConeAngle > Light.OuterConeAngle)
+        {
+            Light.InnerConeAngle = Light.OuterConeAngle;
+        }
+
+        const FVisualizerHandleResult Range = Context.AxisHandle(2, Apex + Forward * Light.Attenuation, Forward,
+            ScalarStyle("Drag to set the light range."));
+
+        if (Range.bChanged)
+        {
+            Context.NameEdit("Set Light Range");
+            Light.Attenuation = Math::Max(Light.Attenuation + Range.ScalarDelta, 0.01f);
+            Context.MarkDirty();
+        }
+
+        if (Outer.bHovered || Outer.bActive)
+        {
+            Context.Label(Apex + Forward * (Light.Attenuation * 0.5f), Color, "outer %.1f deg", Light.OuterConeAngle);
+        }
+        else if (Inner.bHovered || Inner.bActive)
+        {
+            Context.Label(Apex + Forward * (Light.Attenuation * 0.5f), Color, "inner %.1f deg", Light.InnerConeAngle);
+        }
+        else if (Range.bHovered || Range.bActive)
+        {
+            Context.Measurement(Apex, Apex + Forward * Light.Attenuation, Color, "%.2f m", Light.Attenuation);
+        }
+    }
+
 
     CStruct* CComponentVisualizer_DirectionalLight::GetSupportedComponentType() const
     {
@@ -153,6 +343,33 @@ namespace Lumina
         PDI->DrawSphere(Center, Sphere.Radius * Transform.MaxScale(), ColliderColor(Sphere.bIsTrigger), 8, 3.5f, true, 0.0f);
     }
 
+    void CComponentVisualizer_SphereCollider::DrawVisualization(FComponentVisualizerContext& Context)
+    {
+        SSphereColliderComponent& Sphere = Context.Get<SSphereColliderComponent>();
+        const STransformComponent& Transform = Context.Get<STransformComponent>();
+
+        const float Scale = Math::Max(Transform.MaxScale(), 1e-4f);
+        const FVector3 Center = Transform.GetWorldLocationCached() + Transform.GetWorldRotationCached() * Sphere.TranslationOffset;
+        const FVector3 Axis = ScreenRightAt(Context.View, Center);
+
+        const FVisualizerHandleResult Result = Context.AxisHandle(0, Center + Axis * (Sphere.Radius * Scale), Axis,
+            ScalarStyle("Drag to set the collider radius."));
+
+        if (Result.bChanged)
+        {
+            Context.NameEdit("Resize Sphere Collider");
+            Sphere.Radius = Math::Max(Sphere.Radius + Result.ScalarDelta / Scale, kMinColliderExtent);
+            Context.MarkDirty();
+        }
+
+        if (Result.bHovered || Result.bActive)
+        {
+            Context.Measurement(Center, Center + Axis * (Sphere.Radius * Scale), ColliderColor(Sphere.bIsTrigger),
+                "r %.3f m", Sphere.Radius);
+        }
+    }
+
+
     CStruct* CComponentVisualizer_BoxCollider::GetSupportedComponentType() const
     {
         return SBoxColliderComponent::StaticStruct();
@@ -167,6 +384,117 @@ namespace Lumina
         const FQuat    WorldRot = Transform.GetWorldRotationCached() * FQuat(Box.RotationOffset);
         PDI->DrawBox(Center, Box.HalfExtent * Transform.GetWorldScaleCached(), WorldRot, ColliderColor(Box.bIsTrigger), 3.5f, true, 0.0f);
     }
+
+    void CComponentVisualizer_BoxCollider::DrawVisualization(FComponentVisualizerContext& Context)
+    {
+        SBoxColliderComponent& Box = Context.Get<SBoxColliderComponent>();
+        const STransformComponent& Transform = Context.Get<STransformComponent>();
+
+        const FQuat EntityRotation = Transform.GetWorldRotationCached();
+        const FQuat LocalRotation = FQuat(Box.RotationOffset);
+        const FVector3 Scale = Transform.GetWorldScaleCached();
+        const FVector3 Center = Transform.GetWorldLocationCached() + EntityRotation * Box.TranslationOffset;
+
+        FBoxFace Faces[6];
+        BuildBoxFaces(Center, EntityRotation * LocalRotation, Box.HalfExtent * Scale, Faces);
+
+        const FVisualizerHandleStyle Style = FaceStyle(Box.bIsTrigger);
+
+        for (int32 FaceIndex = 0; FaceIndex < 6; ++FaceIndex)
+        {
+            const FBoxFace& Face = Faces[FaceIndex];
+            const FVisualizerHandleResult Result =
+                Context.FaceHandle((uint32)FaceIndex, Face.Center, Face.Normal, Face.HalfU, Face.HalfV, Style);
+
+            if (!Result.bChanged)
+            {
+                continue;
+            }
+
+            Context.NameEdit("Resize Box Collider");
+
+            const float AxisScale = Math::Max(Math::Abs(Scale[Face.Axis]), 1e-4f);
+            const float Desired = Box.HalfExtent[Face.Axis] + (Result.ScalarDelta * 0.5f) / AxisScale;
+            const float Clamped = Math::Max(Desired, kMinColliderExtent);
+            const float HalfDelta = Clamped - Box.HalfExtent[Face.Axis];
+
+            Box.HalfExtent[Face.Axis] = Clamped;
+
+            // Shift the box by half of what the face moved, so the opposite face stays where it was.
+            Box.TranslationOffset += (LocalRotation * (UnitAxis(Face.Axis) * Face.Sign)) * (HalfDelta * AxisScale);
+
+            Context.MarkDirty();
+        }
+
+        const int32 SelectedFace = Context.GetSelectedSubElement();
+        if (SelectedFace < 0 || SelectedFace >= 6)
+        {
+            return;
+        }
+
+        FBoxFace Current[6];
+        BuildBoxFaces(Transform.GetWorldLocationCached() + EntityRotation * Box.TranslationOffset,
+            EntityRotation * LocalRotation, Box.HalfExtent * Scale, Current);
+
+        const FBoxFace& Face = Current[SelectedFace];
+        const float WorldSize = Box.HalfExtent[Face.Axis] * Math::Abs(Scale[Face.Axis]) * 2.0f;
+
+        Context.Measurement(Face.Center - Face.Normal * WorldSize, Face.Center,
+            FVector4(1.0f, 0.85f, 0.35f, 1.0f), "%s  %.3f m", BoxFaceName(Face.Axis, Face.Sign), WorldSize);
+
+        ImGui::PushID((int)Context.GetEntity().GetPacked());
+        if (Context.BeginPanel("##BoxColliderFace", Face.Center))
+        {
+            ImGui::TextUnformatted(BoxFaceName(Face.Axis, Face.Sign));
+            ImGui::SameLine();
+            ImGui::TextDisabled("face");
+            ImGui::Separator();
+
+            float LocalSize = Box.HalfExtent[Face.Axis] * 2.0f;
+            ImGui::SetNextItemWidth(120.0f);
+            const bool bSizeEdited = ImGui::DragFloat("##Size", &LocalSize, 0.01f, kMinColliderExtent * 2.0f, 100000.0f, "%.3f m");
+            if (ImGui::IsItemActivated())
+            {
+                Context.BeginEdit("Resize Box Collider");
+            }
+            if (bSizeEdited)
+            {
+                Box.HalfExtent[Face.Axis] = Math::Max(LocalSize * 0.5f, kMinColliderExtent);
+                Context.MarkDirty();
+            }
+            if (ImGui::IsItemDeactivatedAfterEdit())
+            {
+                Context.EndEdit();
+            }
+
+            bool bTrigger = Box.bIsTrigger;
+            if (ImGui::Checkbox("Trigger", &bTrigger))
+            {
+                Context.BeginEdit("Toggle Collider Trigger");
+                Box.bIsTrigger = bTrigger;
+                Context.MarkDirty();
+                Context.EndEdit();
+            }
+
+            if (ImGui::SmallButton("Center"))
+            {
+                Context.BeginEdit("Center Box Collider");
+                Box.TranslationOffset = FVector3(0.0f);
+                Context.MarkDirty();
+                Context.EndEdit();
+            }
+
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Done"))
+            {
+                Context.ClearSubElementSelection();
+            }
+
+            Context.EndPanel();
+        }
+        ImGui::PopID();
+    }
+
 
     CStruct* CComponentVisualizer_CapsuleCollider::GetSupportedComponentType() const
     {
@@ -186,6 +514,68 @@ namespace Lumina
 
         PDI->DrawCapsule(Center - Axis, Center + Axis, Capsule.Radius * Scale, ColliderColor(Capsule.bIsTrigger), 12, 3.5f, true, 0.0f);
     }
+
+    void CComponentVisualizer_CapsuleCollider::DrawVisualization(FComponentVisualizerContext& Context)
+    {
+        SCapsuleColliderComponent& Capsule = Context.Get<SCapsuleColliderComponent>();
+        const STransformComponent& Transform = Context.Get<STransformComponent>();
+
+        const float Scale = Math::Max(Transform.MaxScale(), 1e-4f);
+        const FQuat EntityRotation = Transform.GetWorldRotationCached();
+        const FQuat LocalRotation = FQuat(Capsule.RotationOffset);
+        const FQuat WorldRotation = EntityRotation * LocalRotation;
+
+        const FVector3 Center = Transform.GetWorldLocationCached() + EntityRotation * Capsule.TranslationOffset;
+        const FVector3 Up = WorldRotation * FVector3(0.0f, 1.0f, 0.0f);
+        const FVector4 Color = ColliderColor(Capsule.bIsTrigger);
+
+        const FVector3 RadiusAxis = ScreenRightAt(Context.View, Center);
+        const FVisualizerHandleResult RadiusResult = Context.AxisHandle(0, Center + RadiusAxis * (Capsule.Radius * Scale),
+            RadiusAxis, ScalarStyle("Drag to set the capsule radius."));
+
+        if (RadiusResult.bChanged)
+        {
+            Context.NameEdit("Resize Capsule Collider");
+            Capsule.Radius = Math::Max(Capsule.Radius + RadiusResult.ScalarDelta / Scale, kMinColliderExtent);
+            Context.MarkDirty();
+        }
+
+        for (int32 Side = 0; Side < 2; ++Side)
+        {
+            const float Sign = (Side == 0) ? 1.0f : -1.0f;
+            const FVector3 Cap = Center + Up * (Sign * Capsule.HalfHeight * Scale);
+
+            const FVisualizerHandleResult Result = Context.AxisHandle((uint32)(1 + Side), Cap, Up * Sign,
+                ScalarStyle("Drag to move this end; the other end stays put."));
+
+            if (!Result.bChanged)
+            {
+                continue;
+            }
+
+            Context.NameEdit("Resize Capsule Collider");
+
+            const float Desired = Capsule.HalfHeight + (Result.ScalarDelta * 0.5f) / Scale;
+            const float Clamped = Math::Max(Desired, kMinColliderExtent);
+            const float HalfDelta = Clamped - Capsule.HalfHeight;
+
+            Capsule.HalfHeight = Clamped;
+            Capsule.TranslationOffset += (LocalRotation * FVector3(0.0f, Sign, 0.0f)) * (HalfDelta * Scale);
+
+            Context.MarkDirty();
+        }
+
+        if (RadiusResult.bHovered || RadiusResult.bActive)
+        {
+            Context.Measurement(Center, Center + RadiusAxis * (Capsule.Radius * Scale), Color, "r %.3f m", Capsule.Radius);
+        }
+        else
+        {
+            const float Total = (Capsule.HalfHeight + Capsule.Radius) * 2.0f * Scale;
+            Context.Measurement(Center - Up * (Total * 0.5f), Center + Up * (Total * 0.5f), Color, "h %.3f m", Total);
+        }
+    }
+
 
     CStruct* CComponentVisualizer_CylinderCollider::GetSupportedComponentType() const
     {
@@ -292,6 +682,55 @@ namespace Lumina
         const FVector3 ProjectDir = Rotation * FVector3(0.0f, 0.0f, -1.0f);
         PDI->DrawArrow(Location, ProjectDir, HalfExtent.z, FVector4(1.0f, 0.85f, 0.2f, 1.0f), 3.0f);
     }
+
+    void CComponentVisualizer_Decal::DrawVisualization(FComponentVisualizerContext& Context)
+    {
+        SDecalComponent& Decal = Context.Get<SDecalComponent>();
+        const STransformComponent& Transform = Context.Get<STransformComponent>();
+
+        const FVector3 Scale = Transform.GetWorldScaleCached();
+        const FVector3 Center = Transform.GetWorldLocationCached();
+        const FQuat Rotation = Transform.GetWorldRotationCached();
+
+        FBoxFace Faces[6];
+        BuildBoxFaces(Center, Rotation, Decal.Size * 0.5f * Scale, Faces);
+
+        FVisualizerHandleStyle Style;
+        Style.Color = FVector4(1.0f, 0.35f, 0.85f, 1.0f);
+        Style.Shape = EVisualizerHandleShape::Square;
+        Style.PixelRadius = 4.5f;
+        Style.GrabPixelRadius = 9.0f;
+        Style.SurfaceOpacity = 0.07f;
+        Style.Tooltip = "Drag to resize the projection volume.";
+
+        for (int32 FaceIndex = 0; FaceIndex < 6; ++FaceIndex)
+        {
+            const FBoxFace& Face = Faces[FaceIndex];
+            const FVisualizerHandleResult Result =
+                Context.FaceHandle((uint32)FaceIndex, Face.Center, Face.Normal, Face.HalfU, Face.HalfV, Style);
+
+            if (!Result.bChanged)
+            {
+                continue;
+            }
+
+            Context.NameEdit("Resize Decal");
+
+            // A decal has no local offset, so both faces move and the volume stays centered on the entity.
+            const float AxisScale = Math::Max(Math::Abs(Scale[Face.Axis]), 1e-4f);
+            Decal.Size[Face.Axis] = Math::Max(Decal.Size[Face.Axis] + (Result.ScalarDelta * 2.0f) / AxisScale, kMinColliderExtent);
+
+            Context.MarkDirty();
+        }
+
+        const int32 SelectedFace = Context.GetSelectedSubElement();
+        if (SelectedFace >= 0 && SelectedFace < 6)
+        {
+            const FBoxFace& Face = Faces[SelectedFace];
+            Context.Label(Face.Center, Style.Color, "%s  %.3f m", BoxFaceName(Face.Axis, Face.Sign), Decal.Size[Face.Axis]);
+        }
+    }
+
 
     CStruct* CComponentVisualizer_ReflectionProbe::GetSupportedComponentType() const
     {

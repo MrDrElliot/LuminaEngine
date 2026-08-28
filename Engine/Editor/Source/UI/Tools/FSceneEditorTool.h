@@ -6,6 +6,7 @@
 #include "Containers/Queue.h"
 #include "AssetEditors/AssetEditorTool.h"
 #include "ImGuizmo.h"
+#include "Tools/ComponentVisualizers/ComponentVisualizerContext.h"
 #include "Tools/UI/ImGui/Widgets/TreeListView.h"
 #include "UI/Properties/PropertyEditContexts.h"
 
@@ -21,7 +22,7 @@ namespace Lumina
     struct SSceneFolderComponent;
     struct FPropertyChangedEvent;
 
-    class EDITOR_API FSceneEditorTool : public FAssetEditorTool
+    class EDITOR_API FSceneEditorTool : public FAssetEditorTool, public IComponentVisualizerHost
     {
         using Super = FAssetEditorTool;
 
@@ -127,6 +128,37 @@ namespace Lumina
         THashMap<uint32, CComponentVisualizer*> VisualizerCache;
         SIZE_T                                  CachedVisualizerCount = ~(SIZE_T)0;
         TVector<ECS::FEntity>                   VisualizerEntityScratch;
+
+        struct FVisualizerBinding
+        {
+            ECS::FSparseSet*      Storage = nullptr;
+            CComponentVisualizer* Visualizer = nullptr;
+            CStruct*              ComponentType = nullptr;
+        };
+
+        // bInteractiveOnly drops the visualizers that have no main-thread pass.
+        void GatherVisualizerBindings(TVector<FVisualizerBinding>& OutBindings, bool bInteractiveOnly);
+
+        // Selected entities plus their children, the set both visualizer passes run over.
+        void GatherVisualizerEntities(TVector<ECS::FEntity>& OutEntities);
+
+        TVector<FVisualizerBinding> VisualizerBindingScratch;
+        FVisualizerInteractionState VisualizerInteraction;
+
+    public:
+
+        // Main-thread visualizer pass, called from the viewport overlay once the gizmo has had the mouse.
+        void DrawComponentVisualizerOverlay(const ImVec2& ViewportOrigin, const ImVec2& ViewportSize,
+            const SCameraComponent& Camera, bool bAllowInput);
+
+        // True while a visualizer handle or panel owns the mouse; the host must not pick or gizmo then.
+        NODISCARD bool AreVisualizersCapturingInput() const { return VisualizerInteraction.bCapturedInput; }
+
+        void BeginVisualizerTransaction(ECS::FEntity Entity, CStruct* ComponentType) override;
+        void EndVisualizerTransaction(FName Label) override;
+        void MarkVisualizerSceneDirty() override;
+
+    protected:
 
         struct FEntityListViewItemData
         {

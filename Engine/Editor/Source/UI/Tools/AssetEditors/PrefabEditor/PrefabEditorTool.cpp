@@ -1111,6 +1111,7 @@ namespace Lumina
         // Selected-camera PiP (shared with the world editor); before the gizmo's early returns.
         DrawCameraPreviewOverlay(ViewportOrigin, ViewportSize);
 
+
         // ImGuizmo only raises IsUsing() inside Manipulate, so picking that ran first stole the click.
         [&]
         {
@@ -1269,6 +1270,10 @@ namespace Lumina
             }
         }();
 
+        // After the gizmo, which owns the mouse first whenever it is hovered or being dragged.
+        DrawComponentVisualizerOverlay(ViewportOrigin, ViewportSize, *CameraComponent,
+            !ShouldSuppressViewportClickInput() && !bCameraPreviewMouseOver && !ImGuizmo::IsOver() && !ImGuizmo::IsUsing());
+
         // Selects the clicked entity itself, children included, with no instance-root resolution.
         if (bViewportHovered)
         {
@@ -1291,6 +1296,7 @@ namespace Lumina
                 // IsOver() is only trusted mid-drag, since an undrawn gizmo hands back a stale hover forever.
                 const bool bOverGizmo = (bImGuizmoUsedOnce && ImGuizmo::IsOver()) || ImGuizmo::IsUsing();
                 if (!bOverGizmo && !bCameraPreviewMouseOver && !ShouldSuppressViewportClickInput()
+                    && !AreVisualizersCapturingInput()
                     && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
                 {
                     ECS::FEntity Hit = Renderer->GetEntityAtPixel(TexX, TexY);

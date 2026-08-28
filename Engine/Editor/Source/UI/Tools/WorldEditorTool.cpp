@@ -2021,14 +2021,18 @@ namespace Lumina
             }
         }
 
+        // After the gizmo, which owns the mouse first whenever it is hovered or being dragged.
+        DrawComponentVisualizerOverlay(ViewportOrigin, ViewportSize, CameraComponent,
+            !bModeOwnsInput && !bCameraOwnsInput && !bCameraPreviewMouseOver && !ImGuizmo::IsOver() && !ImGuizmo::IsUsing());
+
         // Drops any armed marquee, so releasing cannot commit a box selection nobody asked for.
-        if (bCameraOwnsInput)
+        if (bCameraOwnsInput || AreVisualizersCapturingInput())
         {
             SelectionBox.bActive = false;
         }
 
         // The camera-preview grip flag is set by the overlay below, so it lags one frame.
-        if (!bModeOwnsInput && !bCameraOwnsInput && !bCameraPreviewMouseOver && ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows) && !RmlUi::WorldUIWantsMouse(World))
+        if (!bModeOwnsInput && !bCameraOwnsInput && !bCameraPreviewMouseOver && !AreVisualizersCapturingInput() && ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows) && !RmlUi::WorldUIWantsMouse(World))
         {
             uint32 PickerWidth = World->GetRenderer()->GetRenderExtent().x;
             uint32 PickerHeight = World->GetRenderer()->GetRenderExtent().y;

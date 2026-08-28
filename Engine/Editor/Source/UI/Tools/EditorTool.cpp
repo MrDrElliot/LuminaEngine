@@ -1003,11 +1003,27 @@ namespace Lumina
         {
             ImGui::Checkbox("Show All", &bShowComponentVisualizers);
             ImGui::BeginDisabled(!bShowComponentVisualizers);
+
+            ImGui::Checkbox("Interactive Handles", &bVisualizerHandlesEnabled);
+            ImGui::SetItemTooltip("Face, radius and cone handles you can drag in the viewport.");
+            ImGui::Separator();
+
             for (auto&& [Struct, Visualizer] : CComponentVisualizerRegistry::Get().GetVisualizers())
             {
-                bool bFoobar = false;
-                ImGui::Checkbox(Struct->MakeDisplayName().c_str(), &bFoobar);
+                bool bVisible = HiddenVisualizerTypes.find(Struct) == HiddenVisualizerTypes.end();
+                if (ImGui::Checkbox(Struct->MakeDisplayName().c_str(), &bVisible))
+                {
+                    if (bVisible)
+                    {
+                        HiddenVisualizerTypes.erase(Struct);
+                    }
+                    else
+                    {
+                        HiddenVisualizerTypes.insert(Struct);
+                    }
+                }
             }
+
             ImGui::EndDisabled();
             ImGui::EndMenu();
         }

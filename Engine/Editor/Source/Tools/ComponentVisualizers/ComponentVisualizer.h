@@ -9,6 +9,7 @@ namespace Lumina
 {
     class IPrimitiveDrawInterface;
     class CComponentVisualizer;
+    class FComponentVisualizerContext;
 
     REFLECT()
     class EDITOR_API CComponentVisualizerRegistry : public CObject
@@ -39,7 +40,14 @@ namespace Lumina
         
         virtual CStruct* GetSupportedComponentType() const { return nullptr; }
         
+        // Worker-thread pass. World-space primitives only, no ImGui and no input.
         virtual void Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity) { }
+
+        // Main-thread pass inside the viewport window, where ImGui drawing and handles are legal.
+        virtual void DrawVisualization(FComponentVisualizerContext& Context) { }
+
+        // Skips the main-thread pass for visualizers that only draw wireframe.
+        NODISCARD virtual bool HasVisualization() const { return false; }
     };
     
     REFLECT()
@@ -51,6 +59,10 @@ namespace Lumina
         CStruct* GetSupportedComponentType() const override;
         
         void Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity) override;
+
+        void DrawVisualization(FComponentVisualizerContext& Context) override;
+
+        bool HasVisualization() const override { return true; }
         
     };
     
@@ -63,6 +75,10 @@ namespace Lumina
         CStruct* GetSupportedComponentType() const override;
         
         void Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity) override;
+
+        void DrawVisualization(FComponentVisualizerContext& Context) override;
+
+        bool HasVisualization() const override { return true; }
     };
     
     REFLECT()
@@ -85,6 +101,10 @@ namespace Lumina
         CStruct* GetSupportedComponentType() const override;
         
         void Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity) override;
+
+        void DrawVisualization(FComponentVisualizerContext& Context) override;
+
+        bool HasVisualization() const override { return true; }
         
     };
     
@@ -97,6 +117,10 @@ namespace Lumina
         CStruct* GetSupportedComponentType() const override;
         
         void Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity) override;
+
+        void DrawVisualization(FComponentVisualizerContext& Context) override;
+
+        bool HasVisualization() const override { return true; }
         
     };
     
@@ -109,6 +133,10 @@ namespace Lumina
         CStruct* GetSupportedComponentType() const override;
 
         void Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity) override;
+
+        void DrawVisualization(FComponentVisualizerContext& Context) override;
+
+        bool HasVisualization() const override { return true; }
     };
 
     REFLECT()
@@ -167,6 +195,10 @@ namespace Lumina
         CStruct* GetSupportedComponentType() const override;
 
         void Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity) override;
+
+        void DrawVisualization(FComponentVisualizerContext& Context) override;
+
+        bool HasVisualization() const override { return true; }
     };
 
     REFLECT()

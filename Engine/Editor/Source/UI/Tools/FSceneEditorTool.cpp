@@ -2882,13 +2882,9 @@ namespace Lumina
         DL->AddLine(ImVec2(Min.x + 2.0f, Min.y + 14.0f), ImVec2(Min.x + 14.0f, Min.y + 2.0f), GripCol, 2.0f);
     }
 
-    void FSceneEditorTool::EndFrame()
+    void FSceneEditorTool::GatherVisualizerBindings(TVector<FVisualizerBinding>& OutBindings, bool bInteractiveOnly)
     {
-
-        if (!bShowComponentVisualizers)
-        {
-            return;
-        }
+        OutBindings.clear();
 
         CComponentVisualizerRegistry& ComponentVisualizerRegistry = CComponentVisualizerRegistry::Get();
         ECS::FRegistry& Registry = GetSceneRegistry();
@@ -2903,11 +2899,9 @@ namespace Lumina
             CachedVisualizerCount = RegisteredVisualizers;
         }
 
-        TFixedVector<TPair<ECS::FSparseSet*, CComponentVisualizer*>, 16> VisualizerStorages;
-        for (Lumina::ECS::FSparseSet* StoragePtr : Registry.GetActiveStorages())
+        for (ECS::FSparseSet* StoragePtr : Registry.GetActiveStorages())
         {
-            const Lumina::ECS::FComponentTypeID ID = StoragePtr->GetTypeInfo().TypeID;
-            Lumina::ECS::FSparseSet& Storage = *StoragePtr;
+            const ECS::FComponentTypeID ID = StoragePtr->GetTypeInfo().TypeID;
             const uint32 TypeHash = (uint32)ID;
 
             CComponentVisualizer* Visualizer = nullptr;
@@ -2925,46 +2919,172 @@ namespace Lumina
                 VisualizerByType[TypeHash] = Visualizer;
             }
 
-            if (Visualizer != nullptr)
+            if (Visualizer == nullptr)
             {
-                VisualizerStorages.emplace_back(&Storage, Visualizer);
+                continue;
             }
+
+            if (bInteractiveOnly && !Visualizer->HasVisualization())
+            {
+                continue;
+            }
+
+            CStruct* SupportedType = Visualizer->GetSupportedComponentType();
+            if (HiddenVisualizerTypes.find(SupportedType) != HiddenVisualizerTypes.end())
+            {
+                continue;
+            }
+
+            OutBindings.push_back({ StoragePtr, Visualizer, SupportedType });
+        }
+    }
+
+    void FSceneEditorTool::GatherVisualizerEntities(TVector<ECS::FEntity>& OutEntities)
+    {
+        OutEntities.clear();
+
+        ECS::FRegistry& Registry = GetSceneRegistry();
+
+        auto SelectedView = Registry.View<FSelectedInEditorComponent>(ECS::TExclude<SDisabledTag>{});
+        OutEntities.reserve(SelectedView.Num());
+        SelectedView.ForEach([&](ECS::FEntity SelectedEntity)
+        {
+            OutEntities.push_back(SelectedEntity);
+        });
+    }
+
+    void FSceneEditorTool::BeginVisualizerTransaction(ECS::FEntity Entity, CStruct* ComponentType)
+    {
+        if (ComponentType == nullptr)
+        {
+            BeginTransaction();
+            return;
         }
 
-        if (VisualizerStorages.empty())
+        const TVector<ECS::FEntity> Entities = { Entity };
+        BeginComponentTransaction(Entities, ComponentType);
+    }
+
+    void FSceneEditorTool::EndVisualizerTransaction(FName Label)
+    {
+        EndTransaction(Label);
+    }
+
+    void FSceneEditorTool::MarkVisualizerSceneDirty()
+    {
+        MarkSceneDirty();
+    }
+
+    void FSceneEditorTool::DrawComponentVisualizerOverlay(const ImVec2& ViewportOrigin, const ImVec2& ViewportSize,
+        const SCameraComponent& Camera, bool bAllowInput)
+    {
+        VisualizerInteraction.BeginPass();
+
+        ECS::FRegistry& Registry = GetSceneRegistry();
+
+        FComponentVisualizerContext Context(VisualizerInteraction, this);
+        Context.World = GetObservedWorld();
+        Context.Registry = &Registry;
+        Context.PDI = GetObservedWorld();
+        Context.DrawList = ImGui::GetWindowDrawList();
+        Context.View.SetFromCamera(Camera, ViewportOrigin, ViewportSize);
+        Context.bViewportHovered = bViewportHovered;
+        Context.bInputEnabled = bAllowInput && bViewportHovered;
+
+        const bool bEnabled = bShowComponentVisualizers && bVisualizerHandlesEnabled && !IsInspectingForeignWorld();
+        if (bEnabled)
+        {
+            GatherVisualizerBindings(VisualizerBindingScratch, true);
+
+            TVector<ECS::FEntity>& Selected = VisualizerEntityScratch;
+            GatherVisualizerEntities(Selected);
+
+            if (Selected.empty())
+            {
+                VisualizerInteraction.ClearSelection();
+            }
+            else if (!VisualizerBindingScratch.empty())
+            {
+                ECS::Utils::ResolveAllDirtyTransforms(Registry);
+
+                auto DrawFor = [&](ECS::FEntity Entity)
+                {
+                    for (const FVisualizerBinding& Binding : VisualizerBindingScratch)
+                    {
+                        if (!Binding.Storage->Contains(Entity))
+                        {
+                            continue;
+                        }
+
+                        Context.SetTarget(Entity, Binding.ComponentType);
+                        Binding.Visualizer->DrawVisualization(Context);
+                    }
+                };
+
+                // Serial and main-thread, so a huge selection is capped rather than stalling the frame.
+                constexpr SIZE_T kMaxInteractiveEntities = 64;
+                const SIZE_T Count = Math::Min(Selected.size(), kMaxInteractiveEntities);
+
+                for (SIZE_T Index = 0; Index < Count; ++Index)
+                {
+                    const ECS::FEntity SelectedEntity = Selected[Index];
+                    DrawFor(SelectedEntity);
+                    ECS::Utils::ForEachChild(Registry, SelectedEntity, [&](ECS::FEntity Child)
+                    {
+                        DrawFor(Child);
+                    });
+                }
+
+                if (Context.bInputEnabled && ImGui::IsKeyPressed(ImGuiKey_Escape))
+                {
+                    VisualizerInteraction.ClearSelection();
+                }
+            }
+        }
+        else
+        {
+            VisualizerInteraction.ClearSelection();
+        }
+
+        Context.FinishPass();
+    }
+
+    void FSceneEditorTool::EndFrame()
+    {
+        if (!bShowComponentVisualizers)
+        {
+            return;
+        }
+
+        GatherVisualizerBindings(VisualizerBindingScratch, false);
+        if (VisualizerBindingScratch.empty())
         {
             return;
         }
 
         // Worker-visible storage, since a lambda never captures a thread_local and workers index this.
         TVector<ECS::FEntity>& SelectedList = VisualizerEntityScratch;
-        SelectedList.clear();
-
-        auto SelectedView = Registry.View<FSelectedInEditorComponent>(ECS::TExclude<SDisabledTag>{});
-        SelectedList.reserve(SelectedView.Num());
-        SelectedView.ForEach([&](ECS::FEntity SelectedEntity)
-        {
-            SelectedList.push_back(SelectedEntity);
-        });
+        GatherVisualizerEntities(SelectedList);
 
         if (SelectedList.empty())
         {
             return;
         }
-        
+
+        ECS::FRegistry& Registry = GetSceneRegistry();
         ECS::Utils::ResolveAllDirtyTransforms(Registry);
 
         auto DrawFor = [&](ECS::FEntity Entity)
         {
-            for (auto& [Storage, Visualizer] : VisualizerStorages)
+            for (const FVisualizerBinding& Binding : VisualizerBindingScratch)
             {
-                if (Storage->Contains(Entity))
+                if (Binding.Storage->Contains(Entity))
                 {
-                    Visualizer->Draw(World, Registry, Entity);
+                    Binding.Visualizer->Draw(World, Registry, Entity);
                 }
             }
         };
-        
+
         Task::ParallelFor((uint32)SelectedList.size(), [&](uint32 Index)
         {
             const ECS::FEntity SelectedEntity = SelectedList[Index];
