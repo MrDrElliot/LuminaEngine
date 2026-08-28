@@ -71,11 +71,7 @@ namespace Lumina
         void InsertSnippet(const char* Snippet);
         void PersistSettings() const;
 
-        // --- Composition designer ---
-        // A "slot" is any live-DOM element with an id; a "widget" is a <template>-rooted .rml in the
-        // project. Assigning a widget to a slot writes <link type="text/template"> + <template src> into
-        // the buffer (the single source of truth), which the normal reload re-parses. Assignment state is
-        // read back from the buffer text since a <template src> directive leaves no DOM element.
+        // A read-only view of the document, since editing happens by typing in the code editor.
         struct FCompSlot
         {
             FString Id;
@@ -86,43 +82,21 @@ namespace Lumina
             int32   ChildCount = 0;
             FString AssignedSrc;            // src of the slotted <template>, parsed from the buffer
         };
-        struct FCompWidget
-        {
-            FString DisplayName;            // file name without extension
-            FString VirtualPath;            // full virtual path (backs the <link href>)
-            FString TemplateName;           // <template name="..."> -> the value in <template src="...">
-            FString ContentSlotId;          // <template content="..."> (informational)
-        };
 
         void RefreshCompositionSlots();     // pull live-DOM slots, then stamp buffer-parsed assignments
-        void RefreshWidgetLibrary();        // scan the document's folder tree for <template> widgets
 
-        // The designer is three docked panels rather than one stacked column: selecting in the tree used to
-        // reflow everything below it, because the inspector was drawn inline between the hierarchy and the
-        // palette. Hierarchy and Inspector are visible together; the Palette tabs alongside the Hierarchy.
         void DrawHierarchyPanel();
 
         // Rebuilds HierarchyTree from the current source text. Wired to RebuildTreeFunction, so the widget
         // calls it whenever the tree is marked dirty rather than the panel rebuilding every frame.
         void RebuildHierarchyTree(FTreeListView& Tree);
         void DrawInspectorPanel();
-        void DrawPalettePanel();
         void DrawSlotOverlays(const ImVec2& CanvasMin, float ScalePx);
-
-        // Right-click menu for a tree row. Takes the element's source facts directly so it doesn't depend on
-        // the .cpp-local parse node type.
-        void DrawElementContextMenu(const std::string& Tag, const std::string& Id, size_t OpenLt, bool bAssigned);
-
-        void AssignWidgetToSlot(const FString& SlotId, int WidgetIndex);
-        void ClearSlotAssignment(const FString& SlotId);
 
         const FCompSlot* FindSlot(const FString& Id) const;
 
-        // UMG-style authoring: insert a new building block (kElementPrimitives) as the last child of
-        // TargetSlotId (empty = the document body), auto-id'd so it's immediately a manipulable slot;
-        // RemoveElement deletes a slot's element (open..close) from the buffer entirely.
-        void AddElement(const FString& TargetSlotId, int PrimitiveIndex);
-        void RemoveElement(const FString& SlotId);
+        // Moves the code editor's caret to the selected element's open tag.
+        void RevealSelectionInCode();
 
         // Surfaces what RmlUi complained about during the last reload as an editor notification. Silent
         // when the outcome is unchanged, so the debounced auto reload does not toast on a loop.
@@ -131,43 +105,22 @@ namespace Lumina
         void ReportReloadDiagnostics(bool bLoaded, const TVector<RmlUi::FRmlDiagnostic>& Diagnostics,
                                      bool bAlwaysReport);
 
-        // True when this document can host elements at all. False for .rcss, which has no DOM -- the
-        // designer panels explain that instead of offering authoring controls that can only fail.
-        bool SupportsElementAuthoring() const { return !bIsStylesheet; }
-
-        // Makes sure the buffer has a `</body>` to insert before, writing the scaffold when the document
-        // lacks one (new/empty file) or expanding a self-closed `<body/>`. False = can't author here.
-        bool EnsureDocumentBody();
-        // Reorder: swap a slot's element with its previous/next sibling. Inline text: replace a text-leaf
-        // element's inner text (no child elements) from the inspector.
-        void MoveElement(const FString& SlotId, bool bUp);
-        void SetElementInnerText(const FString& SlotId, const std::string& NewText);
-        // Returns the element's id, assigning a fresh one (written into its open tag) if it had none -- so any
-        // element in the hierarchy, id'd or not, becomes addressable the moment the user acts on it.
-        FString EnsureElementId(const std::string& Tag, size_t OpenLt, const std::string& ExistingId);
-
-        // Repositioning writes a `transform: translate(...)` to the slot element's inline style -- a relative
-        // nudge that never changes the element's position mode or anchoring, so it stays responsive on resize
-        // (unlike position:absolute + left/top, which pins it). CommitSlotVisual sets the transform so the
-        // element's rendered top-left lands at TargetVisualPx; CommitSlotMove is the drag-delta wrapper.
-        // SetSlotInlineStyle merges arbitrary props into the element's style="" attribute in the buffer.
-        void CommitSlotMove(const FString& SlotId, ImVec2 DeltaPx);
-        void CommitSlotVisual(const FString& SlotId, ImVec2 TargetVisualPx, bool bSnapToGrid);
-        void SetSlotInlineStyle(const FString& SlotId, const std::vector<std::pair<std::string, std::string>>& Sets);
+        // False for .rcss, which has no DOM; the panels explain that rather than showing an empty tree.
+        bool HasElementTree() const { return !bIsStylesheet; }
 
         // Canvas overlay density. Drawing a filled, labeled box for every slot buries a real document in
         // overlapping rectangles, so the default keeps context slots as thin outlines.
         enum class EOverlayDetail : uint8 { All, Assigned, SelectionOnly };
 
         TVector<FCompSlot>   CompSlots;
-        TVector<FCompWidget> CompWidgets;
         FString              SelectedSlotId;
+        FString              SelectedTag;
+        // Byte offset of the selection's open tag, so an element without an id is still addressable.
+        size_t               SelectedOpenLt = ~size_t(0);
         FString              HoveredSlotId;          // what the overlay draws; promoted from Pending each frame
         FString              PendingHoveredSlotId;   // written by the tree/canvas producers, expires every frame
         bool                 bShowSlotOverlays = true;
         EOverlayDetail       OverlayDetail = EOverlayDetail::Assigned;
-        bool                 bWidgetLibraryDirty = true;
-        char                 WidgetSearch[64] = {};
         char                 HierarchySearch[64] = {};
 
         // The document tree. Expansion, filtering, indentation and row hit-testing all live in the widget;
@@ -177,21 +130,6 @@ namespace Lumina
 
         // Rebuilt from the source text, so any edit that changes the markup has to invalidate it.
         bool                 bHierarchyDirty = true;
-
-        bool                 bDraggingSlot = false;
-        FString              DraggingSlotId;
-        ImVec2               DragDeltaPx{0.0f, 0.0f}; // accumulated drag, context px
-
-        // Inspector field caches: DragFloat owns these while being scrubbed/typed; we snap them back to
-        // the live DOM value whenever the field isn't active (so canvas drags + reloads flow in).
-        float                InspLeft = 0.0f;
-        float                InspTop = 0.0f;
-        float                InspWidth = 0.0f;
-        float                InspHeight = 0.0f;
-        char                 InspText[256] = {}; // inline inner-text edit buffer for text-leaf slots
-        float                InspFontSize = 16.0f;
-        ImVec4               InspColor{1.0f, 1.0f, 1.0f, 1.0f};
-        FString              InspColorSyncId;    // re-pull InspColor only when the selection changes
 
         // Assignment parse is keyed on the undo index so the buffer is copied only when it actually
         // changed; slot geometry still refreshes every frame (cheap DOM walk, no text copy).

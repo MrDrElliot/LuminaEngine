@@ -38,7 +38,6 @@ namespace Lumina
         const char* RmlPreviewWindowName   = "RmlPreview";
         const char* RmlHierarchyWindowName = "RmlHierarchy";
         const char* RmlInspectorWindowName = "RmlInspector";
-        const char* RmlPaletteWindowName   = "RmlPalette";
 
         // Section headings were an ImVec4 literal repeated at every call site.
         constexpr ImVec4 kSectionHeader{0.60f, 0.85f, 1.00f, 1.00f};
@@ -308,7 +307,7 @@ namespace Lumina
             return Loc;
         }
 
-        // Mirrors how AssignWidgetToSlot splices it in, and returns empty when the slot is unassigned.
+        // Reads a slotted template's src back out of the buffer, since the directive leaves no DOM element.
         std::string ParseSlotAssignment(const std::string& Text, const std::string& Id)
         {
             const FSlotTagLoc Loc = LocateSlotTag(Text, Id);
@@ -352,79 +351,6 @@ namespace Lumina
             return Tag.substr(ValStart, ValEnd - ValStart);
         }
 
-        // Pull name= and content= off the <template ...> root tag of a widget file.
-        void ParseTemplateAttrs(const std::string& Body, FString& OutName, FString& OutContent)
-        {
-            const size_t Open = Body.find("<template");
-            if (Open == std::string::npos)
-            {
-                return;
-            }
-            const size_t End = Body.find('>', Open);
-            if (End == std::string::npos)
-            {
-                return;
-            }
-            const std::string Tag = Body.substr(Open, End - Open);
-            auto ReadAttr = [&Tag](const char* Key) -> FString
-            {
-                const size_t P = Tag.find(Key);
-                if (P == std::string::npos)
-                {
-                    return {};
-                }
-                const size_t Eq = Tag.find('=', P);
-                if (Eq == std::string::npos || Eq + 1 >= Tag.size())
-                {
-                    return {};
-                }
-                size_t V = Eq + 1;
-                while (V < Tag.size() && (unsigned char)Tag[V] <= ' ') ++V;
-                if (V >= Tag.size() || (Tag[V] != '"' && Tag[V] != '\'')) return {};
-                const char Q = Tag[V];
-                const size_t S = V + 1;
-                const size_t E = Tag.find(Q, S);
-                if (E == std::string::npos) return {};
-                return FString(Tag.c_str() + S, E - S);
-            };
-            OutName    = ReadAttr("name=");
-            OutContent = ReadAttr("content=");
-        }
-
-        // Columns are tab-expanded to match TextEditor coordinates.
-        std::string LineIndentAt(const std::string& Text, size_t Offset)
-        {
-            if (Offset > Text.size())
-            {
-                Offset = Text.size();
-            }
-            const size_t Prev = (Offset == 0) ? std::string::npos : Text.rfind('\n', Offset - 1);
-            const size_t LineStart = (Prev == std::string::npos) ? 0 : Prev + 1;
-
-            size_t i = LineStart;
-            while (i < Text.size() && (Text[i] == ' ' || Text[i] == '\t'))
-            {
-                ++i;
-            }
-            return Text.substr(LineStart, i - LineStart);
-        }
-
-        // Insertions swallow the run and re-emit their own, so a child lands on its own line either way.
-        size_t TrimWhitespaceBefore(const std::string& Text, size_t Offset)
-        {
-            size_t i = Math::Min(Offset, Text.size());
-            while (i > 0)
-            {
-                const char C = Text[i - 1];
-                if (C != ' ' && C != '\t' && C != '\n' && C != '\r')
-                {
-                    break;
-                }
-                --i;
-            }
-            return i;
-        }
-
         void OffsetToLineCol(const std::string& Text, size_t Offset, int TabSize, int& OutLine, int& OutCol)
         {
             if (TabSize < 1) TabSize = 4;
@@ -443,18 +369,6 @@ namespace Lumina
             }
             OutLine = Line;
             OutCol = Col;
-        }
-
-        // Offset just past the <head> open tag, where the template <link> is inserted. npos if no head.
-        size_t FindHeadInsertOffset(const std::string& Text)
-        {
-            const size_t Head = Text.find("<head");
-            if (Head == std::string::npos)
-            {
-                return std::string::npos;
-            }
-            const size_t Gt = Text.find('>', Head);
-            return (Gt == std::string::npos) ? std::string::npos : Gt + 1;
         }
 
         bool ContainsCI(const FString& Haystack, const char* Needle)
@@ -501,54 +415,6 @@ namespace Lumina
                 i = Semi + 1;
             }
             return Out;
-        }
-
-        std::string SerializeStyle(const std::vector<std::pair<std::string, std::string>>& Props)
-        {
-            std::string Out;
-            for (const auto& KV : Props)
-            {
-                if (!Out.empty()) Out += " ";
-                Out += KV.first + ": " + KV.second + ";";
-            }
-            return Out;
-        }
-
-        // #RGB / #RGBA / #RRGGBB / #RRGGBBAA -> RGBA float (defaults to opaque white on parse miss).
-        ImVec4 ParseHexColor(const std::string& S)
-        {
-            auto Hx = [](char C) -> int
-            {
-                if (C >= '0' && C <= '9') return C - '0';
-                if (C >= 'a' && C <= 'f') return 10 + (C - 'a');
-                if (C >= 'A' && C <= 'F') return 10 + (C - 'A');
-                return -1;
-            };
-            const size_t H = S.find('#');
-            std::string D;
-            for (size_t i = (H == std::string::npos ? 0 : H + 1); i < S.size(); ++i)
-            {
-                if (Hx(S[i]) < 0) break;
-                D.push_back(S[i]);
-            }
-            int R = 255, G = 255, B = 255, A = 255;
-            if (D.size() == 3)      { R = Hx(D[0]) * 17; G = Hx(D[1]) * 17; B = Hx(D[2]) * 17; }
-            else if (D.size() == 4) { R = Hx(D[0]) * 17; G = Hx(D[1]) * 17; B = Hx(D[2]) * 17; A = Hx(D[3]) * 17; }
-            else if (D.size() >= 6)
-            {
-                R = Hx(D[0]) * 16 + Hx(D[1]); G = Hx(D[2]) * 16 + Hx(D[3]); B = Hx(D[4]) * 16 + Hx(D[5]);
-                if (D.size() >= 8) A = Hx(D[6]) * 16 + Hx(D[7]);
-            }
-            return ImVec4(R / 255.0f, G / 255.0f, B / 255.0f, A / 255.0f);
-        }
-
-        std::string FormatHexColor(const ImVec4& C)
-        {
-            auto B = [](float V) { return (int)(Math::Clamp(V, 0.0f, 1.0f) * 255.0f + 0.5f); };
-            char Buf[16];
-            if (C.w >= 0.999f) std::snprintf(Buf, sizeof(Buf), "#%02X%02X%02X", B(C.x), B(C.y), B(C.z));
-            else               std::snprintf(Buf, sizeof(Buf), "#%02X%02X%02X%02X", B(C.x), B(C.y), B(C.z), B(C.w));
-            return Buf;
         }
 
         // Value of one inline style property on a slot element ("" if absent).
@@ -666,54 +532,7 @@ namespace Lumina
             return Out;
         }
 
-        // A unique id not already in the buffer, so Base, then Base1, Base2, and so on.
-        std::string GenerateUniqueId(const std::string& Text, const char* Base)
-        {
-            auto Exists = [&](const std::string& Id)
-            {
-                return Text.find("id=\"" + Id + "\"") != std::string::npos
-                    || Text.find("id='" + Id + "'") != std::string::npos;
-            };
-            if (!Exists(Base)) return Base;
-            for (int i = 1; i < 100000; ++i)
-            {
-                std::string Cand = std::string(Base) + std::to_string(i);
-                if (!Exists(Cand)) return Cand;
-            }
-            return std::string(Base) + "_new";
-        }
         
-        struct FElementPrimitive
-        {
-            const char* Category;
-            const char* Label;
-            const char* IdBase;
-            const char* Markup;
-        };
-        const char* const kElementCategories[] = { "Panels", "Common", "Input" };
-        const FElementPrimitive kElementPrimitives[] =
-        {
-            // Panels -------------------------------------------------------------------------------------
-            { "Panels", "Canvas Panel",   "canvas",   "<div id=\"%s\" style=\"position: relative; width: 100%%; height: 100%%; min-height: 80dp;\"></div>" },
-            { "Panels", "Horizontal Box", "hbox",     "<div id=\"%s\" style=\"display: flex; flex-direction: row; gap: 8dp; min-width: 140dp; min-height: 48dp;\"></div>" },
-            { "Panels", "Vertical Box",   "vbox",     "<div id=\"%s\" style=\"display: flex; flex-direction: column; gap: 8dp; min-width: 140dp; min-height: 48dp;\"></div>" },
-            { "Panels", "Overlay",        "overlay",  "<div id=\"%s\" style=\"position: relative; min-width: 120dp; min-height: 80dp;\"></div>" },
-            { "Panels", "Wrap Box",       "wrap",     "<div id=\"%s\" style=\"display: flex; flex-wrap: wrap; gap: 8dp; min-width: 140dp; min-height: 60dp;\"></div>" },
-            { "Panels", "Border",         "border",   "<div id=\"%s\" style=\"padding: 10dp; border: 1dp #45475a; border-radius: 6dp; min-width: 100dp; min-height: 48dp;\"></div>" },
-            { "Panels", "Size Box",       "sizebox",  "<div id=\"%s\" style=\"width: 200dp; height: 120dp;\"></div>" },
-            { "Panels", "Scroll Box",     "scroll",   "<div id=\"%s\" style=\"overflow-y: auto; max-height: 240dp; min-width: 120dp; min-height: 80dp;\"></div>" },
-            { "Panels", "Panel",          "panel",    "<div id=\"%s\" style=\"padding: 12dp; background-color: #1e1e2e; border: 1dp #45475a; border-radius: 8dp; min-width: 140dp; min-height: 70dp;\"></div>" },
-            // Common -------------------------------------------------------------------------------------
-            { "Common", "Text",           "text",     "<span id=\"%s\">Text</span>" },
-            { "Common", "Button",         "button",   "<button id=\"%s\" style=\"padding: 8dp 16dp; background-color: #585b70; color: #fff; border-radius: 6dp;\">Button</button>" },
-            { "Common", "Image",          "image",    "<img id=\"%s\" style=\"width: 64dp; height: 64dp;\" src=\"\"/>" },
-            { "Common", "Progress Bar",   "progress", "<progress id=\"%s\" value=\"0.5\" style=\"width: 200dp; height: 16dp; background-color: #313244; border-radius: 4dp;\"/>" },
-            // Input --------------------------------------------------------------------------------------
-            { "Input",  "Text Field",     "field",    "<input id=\"%s\" type=\"text\" style=\"width: 160dp;\"/>" },
-            { "Input",  "Check Box",      "check",    "<input id=\"%s\" type=\"checkbox\"/>" },
-            { "Input",  "Slider",         "slider",   "<input id=\"%s\" type=\"range\" min=\"0\" max=\"100\" value=\"50\" style=\"width: 160dp;\"/>" },
-        };
-
         // Position-keyed rather than id-keyed, for walking siblings that may carry no id.
         FSlotTagLoc ParseElementAt(const std::string& Text, size_t Lt)
         {
@@ -748,52 +567,6 @@ namespace Lumina
             }
             Loc.TagName = Text.substr(Lt + 1, N - (Lt + 1));
             return Loc;
-        }
-
-        // Full source [OutStart, OutEnd) of an element given its open-tag loc (open tag .. matching close).
-        bool ElementRange(const std::string& Text, const FSlotTagLoc& Open, size_t& OutStart, size_t& OutEnd)
-        {
-            if (!Open.bFound)
-            {
-                return false;
-            }
-            OutStart = Open.TagStart;
-            if (Open.bSelfClosing)
-            {
-                OutEnd = Open.TagEnd + 1;
-                return true;
-            }
-            const FCloseTagLoc Close = FindMatchingClose(Text, Open);
-            if (Close.End == std::string::npos)
-            {
-                return false;
-            }
-            OutEnd = Close.End;
-            return true;
-        }
-
-        // Backward depth-match the open tag <Name ...> for a close tag </Name> at CloseLt.
-        size_t FindMatchingOpenBackward(const std::string& Text, const std::string& Name, size_t CloseLt)
-        {
-            auto Boundary = [&](size_t A) { return A >= Text.size() || Text[A] == '>' || Text[A] == '/' || std::isspace((unsigned char)Text[A]); };
-            int Depth = 1;
-            size_t Pos = CloseLt;
-            while (Pos > 0)
-            {
-                const size_t Lt = Text.rfind('<', Pos - 1);
-                if (Lt == std::string::npos) break;
-                if (Lt + 1 < Text.size() && Text[Lt + 1] == '/')
-                {
-                    if (Text.compare(Lt + 2, Name.size(), Name) == 0 && Boundary(Lt + 2 + Name.size())) ++Depth;
-                }
-                else if (Text.compare(Lt + 1, Name.size(), Name) == 0 && Boundary(Lt + 1 + Name.size()))
-                {
-                    const FSlotTagLoc T = ParseElementAt(Text, Lt);
-                    if (T.bFound && !T.bSelfClosing && --Depth == 0) return Lt;
-                }
-                Pos = Lt;
-            }
-            return std::string::npos;
         }
 
         // Not self-closing, no child elements, and either a text-ish tag or already holding text.
@@ -849,7 +622,7 @@ namespace Lumina
         struct FRmlHierarchyItem
         {
             std::string Tag;
-            std::string Id;      // "" until the element is acted on and EnsureElementId assigns one
+            std::string Id;      // empty when the element has no id, which keeps it out of the live DOM
             size_t      OpenLt = 0;
             bool        bIsBody = false;
         };
@@ -1228,19 +1001,12 @@ namespace Lumina
                 return;
             }
 
-            FRmlHierarchyItem& Data = Tree.Get<FRmlHierarchyItem>(Item);
+            const FRmlHierarchyItem& Data = Tree.Get<FRmlHierarchyItem>(Item);
 
-            // Selecting the body means "no slot selected", which is what makes new elements land there.
-            SelectedSlotId = Data.bIsBody
-                ? FString()
-                : (!Data.Id.empty() ? FString(Data.Id.c_str(), Data.Id.size())
-                                    : EnsureElementId(Data.Tag, Data.OpenLt, Data.Id));
-
-            // EnsureElementId rewrites the buffer, which moves every later element's offsets.
-            if (!Data.bIsBody && Data.Id.empty())
-            {
-                bHierarchyDirty = true;
-            }
+            // The open-tag offset addresses an element the live DOM cannot, since only ids reach a slot.
+            SelectedSlotId = Data.bIsBody ? FString() : FString(Data.Id.c_str(), Data.Id.size());
+            SelectedTag    = Data.bIsBody ? FString("body") : FString(Data.Tag.c_str(), Data.Tag.size());
+            SelectedOpenLt = Data.bIsBody ? ~size_t(0) : Data.OpenLt;
         };
 
         HierarchyContext.HoveredFunction = [this](FTreeListView& Tree, FTreeNodeID Item)
@@ -1249,33 +1015,6 @@ namespace Lumina
             if (!Data.bIsBody && !Data.Id.empty())
             {
                 PendingHoveredSlotId = FString(Data.Id.c_str(), Data.Id.size());
-            }
-        };
-
-        HierarchyContext.ItemContextMenuFunction = [this](FTreeListView& Tree, FTreeNodeID Item)
-        {
-            FRmlHierarchyItem& Data = Tree.Get<FRmlHierarchyItem>(Item);
-            if (Data.bIsBody)
-            {
-                return;
-            }
-
-            const bool bAssigned = !Data.Id.empty() && !ParseSlotAssignment(CompAssignText, Data.Id).empty();
-            DrawElementContextMenu(Data.Tag, Data.Id, Data.OpenLt, bAssigned);
-        };
-
-        HierarchyContext.DragDropFunction = [this](FTreeListView& Tree, FTreeNodeID Item)
-        {
-            FRmlHierarchyItem& Data = Tree.Get<FRmlHierarchyItem>(Item);
-            if (Data.bIsBody)
-            {
-                return;
-            }
-
-            if (const ImGuiPayload* Payload = ImGui::AcceptDragDropPayload("RML_WIDGET"))
-            {
-                AssignWidgetToSlot(EnsureElementId(Data.Tag, Data.OpenLt, Data.Id), *(const int*)Payload->Data);
-                bHierarchyDirty = true;
             }
         };
 
@@ -1288,13 +1027,6 @@ namespace Lumina
         {
             DrawInspectorPanel();
         });
-
-        CreateToolWindow(RmlPaletteWindowName, [this](bool bFocused)
-        {
-            DrawPalettePanel();
-        });
-
-        RefreshWidgetLibrary();
     }
 
     void FRmlUiEditorTool::OnDeinitialize(const FUpdateContext& UpdateContext)
@@ -1380,14 +1112,12 @@ namespace Lumina
         ImGuiID DesignerDockID = 0, PreviewDockID = 0;
         ImGui::DockBuilderSplitNode(RightDockID, ImGuiDir_Right, 0.34f, &DesignerDockID, &PreviewDockID);
 
-        // The Palette tabs behind the Hierarchy, since it is used in bursts rather than continuously.
         ImGuiID HierarchyDockID = 0, InspectorDockID = 0;
         ImGui::DockBuilderSplitNode(DesignerDockID, ImGuiDir_Down, 0.45f, &InspectorDockID, &HierarchyDockID);
 
         ImGui::DockBuilderDockWindow(GetToolWindowName(RmlEditorWindowName).c_str(), LeftDockID);
         ImGui::DockBuilderDockWindow(GetToolWindowName(RmlPreviewWindowName).c_str(), PreviewDockID);
         ImGui::DockBuilderDockWindow(GetToolWindowName(RmlHierarchyWindowName).c_str(), HierarchyDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(RmlPaletteWindowName).c_str(), HierarchyDockID);
         ImGui::DockBuilderDockWindow(GetToolWindowName(RmlInspectorWindowName).c_str(), InspectorDockID);
     }
 
@@ -2658,56 +2388,6 @@ namespace Lumina
         }
     }
 
-    void FRmlUiEditorTool::RefreshWidgetLibrary()
-    {
-        CompWidgets.clear();
-        bWidgetLibraryDirty = false;
-        if (ParentDir.empty())
-        {
-            return;
-        }
-
-        VFS::RecursiveDirectoryIterator(FStringView(ParentDir.c_str(), ParentDir.size()),
-            [&](const VFS::FFileInfo& Info)
-            {
-                if (Info.IsDirectory() || Info.GetExt() != ".rml")
-                {
-                    return;
-                }
-
-                const FString WidgetPath(Info.VirtualPath.c_str(), Info.VirtualPath.size());
-                if (WidgetPath == VirtualPath)
-                {
-                    return; // never list the document being edited
-                }
-
-                FString Body;
-                if (!VFS::ReadFile(Body, FStringView(WidgetPath.c_str(), WidgetPath.size())))
-                {
-                    return;
-                }
-                const std::string B(Body.c_str(), Body.size());
-                if (!IsTemplateDocument(B))
-                {
-                    return; // only <template>-rooted files are reusable widgets
-                }
-
-                FCompWidget Widget;
-                Widget.VirtualPath = WidgetPath;
-                const FStringView NameView = VFS::FileName(FStringView(WidgetPath.c_str(), WidgetPath.size()), true);
-                Widget.DisplayName = FString(NameView.data(), NameView.size());
-                ParseTemplateAttrs(B, Widget.TemplateName, Widget.ContentSlotId);
-                if (Widget.TemplateName.empty())
-                {
-                    Widget.TemplateName = Widget.DisplayName; // fall back to the file name as src
-                }
-                CompWidgets.push_back(std::move(Widget));
-            });
-
-        Algo::Sort(CompWidgets.begin(), CompWidgets.end(),
-            [](const FCompWidget& A, const FCompWidget& B) { return A.DisplayName < B.DisplayName; });
-    }
-
     const FRmlUiEditorTool::FCompSlot* FRmlUiEditorTool::FindSlot(const FString& Id) const
     {
         for (const FCompSlot& Slot : CompSlots)
@@ -2718,67 +2398,6 @@ namespace Lumina
             }
         }
         return nullptr;
-    }
-
-    void FRmlUiEditorTool::DrawElementContextMenu(const std::string& Tag, const std::string& Id, size_t OpenLt, bool bAssigned)
-    {
-        if (!ImGui::BeginPopupContextItem())
-        {
-            return;
-        }
-
-        if (!Id.empty()) ImGui::TextDisabled("#%s  <%s>", Id.c_str(), Tag.c_str());
-        else             ImGui::TextDisabled("<%s>", Tag.c_str());
-        ImGui::Separator();
-
-        if (ImGui::BeginMenu(LE_ICON_PLUS_BOX " Add child"))
-        {
-            const int Count = (int)(sizeof(kElementPrimitives) / sizeof(kElementPrimitives[0]));
-            for (const char* Cat : kElementCategories)
-            {
-                if (!ImGui::BeginMenu(Cat))
-                {
-                    continue;
-                }
-                for (int p = 0; p < Count; ++p)
-                {
-                    if (std::strcmp(kElementPrimitives[p].Category, Cat) != 0)
-                    {
-                        continue;
-                    }
-                    if (ImGui::MenuItem(kElementPrimitives[p].Label))
-                    {
-                        AddElement(EnsureElementId(Tag, OpenLt, Id), p);
-                    }
-                }
-                ImGui::EndMenu();
-            }
-            ImGui::EndMenu();
-        }
-
-        ImGui::BeginDisabled(!bAssigned);
-        if (ImGui::MenuItem(LE_ICON_CLOSE " Clear widget"))
-        {
-            ClearSlotAssignment(FString(Id.c_str(), Id.size()));
-        }
-        ImGui::EndDisabled();
-
-        ImGui::Separator();
-        if (ImGui::MenuItem(LE_ICON_ARROW_UP " Move up"))
-        {
-            MoveElement(EnsureElementId(Tag, OpenLt, Id), true);
-        }
-        if (ImGui::MenuItem(LE_ICON_ARROW_DOWN " Move down"))
-        {
-            MoveElement(EnsureElementId(Tag, OpenLt, Id), false);
-        }
-
-        ImGui::Separator();
-        if (ImGui::MenuItem(LE_ICON_TRASH_CAN_OUTLINE " Delete element"))
-        {
-            RemoveElement(EnsureElementId(Tag, OpenLt, Id));
-        }
-        ImGui::EndPopup();
     }
 
     void FRmlUiEditorTool::RebuildHierarchyTree(FTreeListView& Tree)
@@ -2868,22 +2487,15 @@ namespace Lumina
 
     void FRmlUiEditorTool::DrawHierarchyPanel()
     {
-        if (!SupportsElementAuthoring())
+        if (!HasElementTree())
         {
             ImGui::TextWrapped(LE_ICON_INFORMATION_OUTLINE
                 " Stylesheets have no document tree. Open the .rml that links this sheet to author elements.");
             return;
         }
 
-        if (ImGui::Button(LE_ICON_REFRESH " Rescan"))
-        {
-            bWidgetLibraryDirty = true;
-        }
-        ImGuiX::TextTooltip("Re-scan this document's folder for <template> widgets.");
-
-        ImGui::SameLine();
         ImGui::Checkbox("Overlays", &bShowSlotOverlays);
-        ImGuiX::TextTooltip("Draw slot outlines over the preview canvas. Ctrl+drag a slot to position it.");
+        ImGuiX::TextTooltip("Outline the document's id'd elements over the preview canvas.");
 
         ImGui::SameLine();
         ImGui::BeginDisabled(!bShowSlotOverlays);
@@ -2908,113 +2520,104 @@ namespace Lumina
         }
 
         HierarchyTree.Draw(HierarchyContext);
-
-        // Delete clears the selected slot's widget (ignored while typing in a field).
-        if (!SelectedSlotId.empty() && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)
-            && !ImGui::IsAnyItemActive() && ImGui::IsKeyPressed(ImGuiKey_Delete))
-        {
-            ClearSlotAssignment(SelectedSlotId);
-        }
     }
 
-    void FRmlUiEditorTool::DrawPalettePanel()
+    void FRmlUiEditorTool::RevealSelectionInCode()
     {
-        if (!SupportsElementAuthoring())
+        if (SelectedOpenLt == ~size_t(0) || SelectedOpenLt >= CompAssignText.size())
         {
-            ImGui::TextWrapped(LE_ICON_INFORMATION_OUTLINE
-                " Stylesheets have no elements to place. Open the .rml that links this sheet.");
             return;
         }
 
-        if (bWidgetLibraryDirty)
+        int Line = 1, Col = 1;
+        OffsetToLineCol(CompAssignText, SelectedOpenLt, EditorTabSize, Line, Col);
+
+        const int Target = Math::Max(0, Math::Min(CodeEditor.GetLineCount() - 1, Line - 1));
+        CodeEditor.SetCursor(Target, Math::Max(0, Col - 1));
+        CodeEditor.ScrollToLine(Target, TextEditor::Scroll::alignMiddle);
+    }
+
+    void FRmlUiEditorTool::DrawInspectorPanel()
+    {
+        if (!HasElementTree())
         {
-            RefreshWidgetLibrary();
+            ImGui::TextWrapped(LE_ICON_INFORMATION_OUTLINE " Stylesheets have no elements to inspect.");
+            return;
         }
 
-        SectionHeader(LE_ICON_PLUS_BOX, "Add element");
+        if (SelectedOpenLt == ~size_t(0))
+        {
+            ImGui::TextDisabled("Select an element in the Hierarchy.");
+            return;
+        }
+
+        SectionHeader(LE_ICON_COG, "Inspector");
+
         if (SelectedSlotId.empty())
         {
-            ImGui::TextDisabled("Into: body  (select a container to nest)");
+            ImGui::Text("<%s>", SelectedTag.c_str());
         }
         else
         {
-            ImGui::TextDisabled("Into: #%s", SelectedSlotId.c_str());
+            ImGui::Text("#%s  <%s>", SelectedSlotId.c_str(), SelectedTag.c_str());
         }
 
+        int Line = 1, Col = 1;
+        if (SelectedOpenLt < CompAssignText.size())
         {
-            const int Count = (int)(sizeof(kElementPrimitives) / sizeof(kElementPrimitives[0]));
-            const float BtnW = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
-            for (const char* Cat : kElementCategories)
+            OffsetToLineCol(CompAssignText, SelectedOpenLt, EditorTabSize, Line, Col);
+        }
+
+        ImGui::TextDisabled("Line %d", Line);
+        ImGui::SameLine();
+        if (ImGui::SmallButton(LE_ICON_TARGET " Reveal in code"))
+        {
+            RevealSelectionInCode();
+        }
+        ImGuiX::TextTooltip("Jump the code editor to this element's open tag.");
+
+        ImGui::Separator();
+
+        const std::string Sel(SelectedSlotId.c_str(), SelectedSlotId.size());
+
+        std::string Inner;
+        if (!Sel.empty() && GetEditableInnerText(CompAssignText, Sel, Inner) && !Inner.empty())
+        {
+            ImGui::TextDisabled(LE_ICON_FORMAT_TEXT " Text");
+            ImGui::TextWrapped("%s", Inner.c_str());
+            ImGui::Spacing();
+        }
+
+        const FCompSlot* Slot = FindSlot(SelectedSlotId);
+        if (Slot != nullptr)
+        {
+            const float Dpi = Math::Max(0.01f, PreviewDpiScale);
+
+            ImGui::TextDisabled(LE_ICON_RULER " Layout");
+            ImGui::Text("Position   %.0f, %.0f dp", std::round(Slot->OffsetPx.x / Dpi), std::round(Slot->OffsetPx.y / Dpi));
+            ImGui::Text("Size       %.0f x %.0f dp", std::round(Slot->SizePx.x / Dpi), std::round(Slot->SizePx.y / Dpi));
+            ImGui::Text("Depth      %d", Slot->Depth);
+            ImGui::Text("Children   %d", Slot->ChildCount);
+
+            if (!Slot->AssignedSrc.empty())
             {
-                if (!ImGui::CollapsingHeader(Cat, ImGuiTreeNodeFlags_DefaultOpen))
-                {
-                    continue;
-                }
-                int Col = 0;
-                for (int i = 0; i < Count; ++i)
-                {
-                    if (std::strcmp(kElementPrimitives[i].Category, Cat) != 0)
-                    {
-                        continue;
-                    }
-                    if (Col % 2 != 0)
-                    {
-                        ImGui::SameLine();
-                    }
-                    if (ImGui::Button(kElementPrimitives[i].Label, ImVec2(BtnW, 0.0f)))
-                    {
-                        AddElement(SelectedSlotId, i);
-                    }
-                    ++Col;
-                }
+                ImGui::Spacing();
+                ImGui::TextDisabled(LE_ICON_PUZZLE " Widget");
+                ImGui::TextWrapped("%s", Slot->AssignedSrc.c_str());
             }
+        }
+        else if (Sel.empty())
+        {
+            ImGui::TextDisabled("No id, so the live preview cannot report its layout.");
+        }
+        else
+        {
+            ImGui::TextDisabled("Not in the live preview yet. It appears once the document reloads.");
         }
 
         ImGui::Spacing();
-        ImGui::Separator();
-
-        SectionHeader(LE_ICON_CARDS, "Widgets");
-        ImGui::SetNextItemWidth(-1.0f);
-        ImGui::InputTextWithHint("##widget_search", LE_ICON_MAGNIFY " Filter", WidgetSearch, sizeof(WidgetSearch));
-
-        if (CompWidgets.empty())
-        {
-            ImGui::TextWrapped("No <template> widgets found beside this document.");
-        }
-
-        for (int i = 0; i < (int)CompWidgets.size(); ++i)
-        {
-            const FCompWidget& Widget = CompWidgets[i];
-            if (!ContainsCI(Widget.DisplayName, WidgetSearch))
-            {
-                continue;
-            }
-
-            ImGui::PushID(i);
-            char Card[160];
-            std::snprintf(Card, sizeof(Card), LE_ICON_SHAPE_OUTLINE "  %s", Widget.DisplayName.c_str());
-            ImGui::Selectable(Card);
-
-            if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None))
-            {
-                ImGui::SetDragDropPayload("RML_WIDGET", &i, sizeof(int));
-                ImGui::Text(LE_ICON_DRAG_VARIANT " %s", Widget.DisplayName.c_str());
-                ImGui::EndDragDropSource();
-            }
-            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !SelectedSlotId.empty())
-            {
-                AssignWidgetToSlot(SelectedSlotId, i);
-            }
-            ImGui::SameLine();
-            ImGui::TextDisabled("src=\"%s\"", Widget.TemplateName.c_str());
-            ImGui::PopID();
-        }
-
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::TextDisabled("Drag a widget onto a slot, or select a slot then double-click a widget.");
+        ImGui::TextDisabled("Read only. Edit the document in the code editor.");
     }
-
 
     void FRmlUiEditorTool::DrawSlotOverlays(const ImVec2& CanvasMin, float ScalePx)
     {
@@ -3038,8 +2641,8 @@ namespace Lumina
             HitMax = ImVec2(Math::Max(TrueMax.x, TrueMin.x + MinHit), Math::Max(TrueMax.y, TrueMin.y + MinHit));
         };
 
-        // Hovered slot = smallest-area hit rect under the cursor (innermost wins). Suspended mid-drag.
-        if (bWindowHovered && !bDraggingSlot)
+        // Hovered slot = smallest-area hit rect under the cursor, so the innermost wins.
+        if (bWindowHovered)
         {
             FString NewHover;
             float Best = FLT_MAX;
@@ -3113,33 +2716,6 @@ namespace Lumina
                 if (TagPos.y < CanvasMin.y) TagPos = ImVec2(TMin.x + 3.0f, TMin.y + 3.0f);
                 DL->AddRectFilled(TagPos, ImVec2(TagPos.x + Ts.x + 6.0f, TagPos.y + Ts.y + 3.0f), IM_COL32(18, 18, 26, 220), 2.0f);
                 DL->AddText(ImVec2(TagPos.x + 3.0f, TagPos.y + 1.0f), Line, Label);
-
-                if (!bAssigned)
-                {
-                    const char* Hint = "drop widget";
-                    const ImVec2 Hs = ImGui::CalcTextSize(Hint);
-                    if (Hs.x < (TMax.x - TMin.x) && Hs.y < (TMax.y - TMin.y))
-                    {
-                        DL->AddText(ImVec2((TMin.x + TMax.x - Hs.x) * 0.5f, (TMin.y + TMax.y - Hs.y) * 0.5f),
-                                    IM_COL32(159, 225, 203, 210), Hint);
-                    }
-                }
-            }
-
-            // Snapped to the grid when shown, so the preview matches what CommitSlotMove will write.
-            if (bDraggingSlot && Slot.Id == DraggingSlotId)
-            {
-                float NewX = Slot.OffsetPx.x + DragDeltaPx.x;
-                float NewY = Slot.OffsetPx.y + DragDeltaPx.y;
-                if (bShowGrid && GridSize > 0.0f)
-                {
-                    NewX = std::round(NewX / GridSize) * GridSize;
-                    NewY = std::round(NewY / GridSize) * GridSize;
-                }
-                const ImVec2 GMin(CanvasMin.x + NewX * ScalePx, CanvasMin.y + NewY * ScalePx);
-                const ImVec2 GMax(GMin.x + (TMax.x - TMin.x), GMin.y + (TMax.y - TMin.y));
-                DL->AddRect(GMin, GMax, IM_COL32(250, 210, 90, 255), 3.0f, 0, 2.0f);
-                DL->AddRectFilled(GMin, GMax, IM_COL32(250, 210, 90, 30), 3.0f);
             }
         }
         DL->PopClipRect();
@@ -3161,826 +2737,26 @@ namespace Lumina
             ImGui::SetCursorScreenPos(HMin);
             ImGui::PushID(i); // index, not the id string, since duplicate DOM ids from a reused widget would collide
             ImGui::InvisibleButton("##slot_hit", ImVec2(HMax.x - HMin.x, HMax.y - HMin.y));
-            const bool bThis = (DraggingSlotId == Slot.Id);
 
             if (ImGui::IsItemClicked())
             {
                 SelectedSlotId = Slot.Id;
-            }
-
-            // Ctrl and drag nudges a slot via a transform translate, while a plain click selects.
-            if (Io.KeyCtrl && ImGui::IsItemHovered())
-            {
-                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
-            }
-            if (ImGui::IsItemActivated() && Io.KeyCtrl)
-            {
-                SelectedSlotId = Slot.Id;
-                DraggingSlotId = Slot.Id;
-                DragDeltaPx = ImVec2(0.0f, 0.0f);
-                bDraggingSlot = false;
-            }
-            if (ImGui::IsItemActive() && bThis && ScalePx > 0.0f)
-            {
-                const ImVec2 D = Io.MouseDelta;
-                if (D.x != 0.0f || D.y != 0.0f) bDraggingSlot = true;
-                DragDeltaPx.x += D.x / ScalePx;
-                DragDeltaPx.y += D.y / ScalePx;
-            }
-            if (bThis && ImGui::IsMouseReleased(ImGuiMouseButton_Left))
-            {
-                if (bDraggingSlot)
-                {
-                    CommitSlotMove(Slot.Id, DragDeltaPx);
-                }
-                bDraggingSlot = false;
-                DraggingSlotId.clear();
-                DragDeltaPx = ImVec2(0.0f, 0.0f);
-            }
-
-            if (ImGui::BeginDragDropTarget())
-            {
-                if (const ImGuiPayload* Payload = ImGui::AcceptDragDropPayload("RML_WIDGET"))
-                {
-                    AssignWidgetToSlot(Slot.Id, *(const int*)Payload->Data);
-                }
-                ImGui::EndDragDropTarget();
+                SelectedTag    = Slot.Tag;
+                SelectedOpenLt = LocateSlotTag(CompAssignText, std::string(Slot.Id.c_str(), Slot.Id.size())).TagStart;
             }
             ImGui::PopID();
         }
+
+        ImGui::SetCursorScreenPos(CursorRestore);
 
         // Applied after the slot pass, so a backdrop click cannot race a slot that also took it.
         if (bBackdropClicked
             || (bWindowHovered && !ImGui::IsAnyItemActive() && ImGui::IsKeyPressed(ImGuiKey_Escape, false)))
         {
             SelectedSlotId.clear();
-        }
-
-        // Delete clears the selected slot's widget while the canvas is in use (ignored while editing a field).
-        if (!SelectedSlotId.empty() && bWindowHovered && !ImGui::IsAnyItemActive()
-            && ImGui::IsKeyPressed(ImGuiKey_Delete))
-        {
-            ClearSlotAssignment(SelectedSlotId);
+            SelectedTag.clear();
+            SelectedOpenLt = ~size_t(0);
         }
     }
 
-    void FRmlUiEditorTool::AssignWidgetToSlot(const FString& SlotId, int WidgetIndex)
-    {
-        if (WidgetIndex < 0 || WidgetIndex >= (int)CompWidgets.size())
-        {
-            return;
-        }
-        const FCompWidget Widget = CompWidgets[WidgetIndex]; // copied, since a clear below may rescan the library
-        const std::string Id(SlotId.c_str(), SlotId.size());
-
-        std::string Text = CodeEditor.GetText();
-        if (!LocateSlotTag(Text, Id).bFound)
-        {
-            ImGuiX::Notifications::NotifyError("Slot '#{0}' not found in the source.", SlotId.c_str());
-            return;
-        }
-
-        // Replace rather than stack if the slot already holds a widget.
-        if (!ParseSlotAssignment(Text, Id).empty())
-        {
-            ClearSlotAssignment(SlotId);
-            Text = CodeEditor.GetText();
-        }
-
-        const FSlotTagLoc Loc = LocateSlotTag(Text, Id);
-        if (!Loc.bFound)
-        {
-            return;
-        }
-
-        // A bare file name when the widget sits in the document's folder, else the absolute virtual path.
-        FString Href;
-        {
-            const FStringView DocDir = VFS::Parent(FStringView(VirtualPath.c_str(), VirtualPath.size()), true);
-            const FStringView WgtDir = VFS::Parent(FStringView(Widget.VirtualPath.c_str(), Widget.VirtualPath.size()), true);
-            if (DocDir == WgtDir)
-            {
-                const FStringView Name = VFS::FileName(FStringView(Widget.VirtualPath.c_str(), Widget.VirtualPath.size()));
-                Href = FString(Name.data(), Name.size());
-            }
-            else
-            {
-                Href = Widget.VirtualPath;
-            }
-        }
-        const std::string HrefStd(Href.c_str(), Href.size());
-        const std::string NameStd(Widget.TemplateName.c_str(), Widget.TemplateName.size());
-
-        struct FEdit { size_t Start; size_t End; std::string Text; };
-        std::vector<FEdit> Edits;
-
-        // 1) Ensure the template <link> in <head>.
-        if (Text.find("href=\"" + HrefStd + "\"") == std::string::npos)
-        {
-            const size_t HeadAt = FindHeadInsertOffset(Text);
-            if (HeadAt == std::string::npos)
-            {
-                ImGuiX::Notifications::NotifyError("Document has no <head> for the template <link>.");
-                return;
-            }
-            Edits.push_back({ HeadAt, HeadAt, "\n    <link type=\"text/template\" href=\"" + HrefStd + "\"/>" });
-        }
-
-        // 2) Splice <template src> as the slot's first child.
-        const std::string Tpl = "\n        <template src=\"" + NameStd + "\"/>";
-        if (Loc.bSelfClosing)
-        {
-            // <div id=.../>  ->  <div id=...><template/></div>
-            Edits.push_back({ Loc.TagEnd - 1, Loc.TagEnd + 1, ">" + Tpl + "\n    </" + Loc.TagName + ">" });
-        }
-        else
-        {
-            Edits.push_back({ Loc.TagEnd + 1, Loc.TagEnd + 1, Tpl });
-        }
-
-        // Apply highest-offset-first so earlier coordinates stay valid across edits.
-        Algo::Sort(Edits.begin(), Edits.end(), [](const FEdit& A, const FEdit& B) { return A.Start > B.Start; });
-        const int TabSize = CodeEditor.GetTabSize();
-        for (const FEdit& E : Edits)
-        {
-            int L0, C0, L1, C1;
-            OffsetToLineCol(Text, E.Start, TabSize, L0, C0);
-            OffsetToLineCol(Text, E.End,   TabSize, L1, C1);
-            CodeEditor.ReplaceSectionText(L0, C0, L1, C1, E.Text);
-        }
-
-        bBufferDirty = true;
-        bCompAssignDirty = true;
-        ReloadDocument();
-        ImGuiX::Notifications::NotifySuccess("Assigned '{0}' to #{1}.", Widget.DisplayName.c_str(), SlotId.c_str());
-    }
-
-    void FRmlUiEditorTool::ClearSlotAssignment(const FString& SlotId)
-    {
-        const std::string Id(SlotId.c_str(), SlotId.size());
-        const std::string Text = CodeEditor.GetText();
-
-        const FSlotTagLoc Loc = LocateSlotTag(Text, Id);
-        if (!Loc.bFound || Loc.bSelfClosing)
-        {
-            return;
-        }
-
-        // Excise the slotted <template ...> (first child) and the whitespace before it.
-        const size_t WsStart = Loc.TagEnd + 1;
-        size_t i = WsStart;
-        while (i < Text.size() && (unsigned char)Text[i] <= ' ')
-        {
-            ++i;
-        }
-        static const char* Tpl = "<template";
-        const size_t TplLen = std::strlen(Tpl);
-        if (i + TplLen > Text.size() || Text.compare(i, TplLen, Tpl) != 0)
-        {
-            return;
-        }
-        const size_t TagClose = Text.find('>', i);
-        if (TagClose == std::string::npos)
-        {
-            return;
-        }
-        const size_t RemoveEnd = TagClose + 1;
-
-        const int TabSize = CodeEditor.GetTabSize();
-        int L0, C0, L1, C1;
-        OffsetToLineCol(Text, WsStart,   TabSize, L0, C0);
-        OffsetToLineCol(Text, RemoveEnd, TabSize, L1, C1);
-        CodeEditor.ReplaceSectionText(L0, C0, L1, C1, "");
-
-        // The link stays, since an unused registration is harmless and a widget is usually shared.
-        bBufferDirty = true;
-        bCompAssignDirty = true;
-        ReloadDocument();
-    }
-
-    bool FRmlUiEditorTool::EnsureDocumentBody()
-    {
-        if (!SupportsElementAuthoring())
-        {
-            ImGuiX::Notifications::NotifyError("Stylesheets have no document body -- open the .rml that uses this sheet.");
-            return false;
-        }
-
-        std::string Text = CodeEditor.GetText();
-        if (Text.rfind("</body>") != std::string::npos)
-        {
-            return true;
-        }
-
-        const int TabSize = CodeEditor.GetTabSize();
-        int L0, C0, L1, C1;
-
-        // Locate the open tag the same way the rest of the file does, then look at how it terminates.
-        const size_t BodyOpen = Text.find("<body");
-        const size_t BodyGt   = (BodyOpen == std::string::npos) ? std::string::npos : Text.find('>', BodyOpen);
-        const bool   bFound   = (BodyGt != std::string::npos);
-        const bool   bSelfClosing = bFound && BodyGt > 0 && Text[BodyGt - 1] == '/';
-
-        // A self-closed <body/> parses fine but gives nothing to insert into; widen it into a real pair.
-        if (bSelfClosing)
-        {
-            OffsetToLineCol(Text, BodyGt - 1, TabSize, L0, C0);
-            OffsetToLineCol(Text, BodyGt + 1, TabSize, L1, C1);
-            CodeEditor.ReplaceSectionText(L0, C0, L1, C1, ">\n</body>");
-            bBufferDirty = true;
-            bCompAssignDirty = true;
-            return true;
-        }
-
-        if (bFound)
-        {
-            // Blind repair could land the close tag in the wrong place, so leave it to the text editor.
-            ImGuiX::Notifications::NotifyError("<body> is never closed -- fix the markup, then add elements.");
-            return false;
-        }
-
-        // Scaffolds a body inside the document root so authoring works instead of dead-ending.
-        static const char* kRoots[] = { "</rml>", "</template>" };
-        size_t InsertAt = std::string::npos;
-        for (const char* Root : kRoots)
-        {
-            const size_t At = Text.rfind(Root);
-            if (At != std::string::npos)
-            {
-                InsertAt = At;
-                break;
-            }
-        }
-        if (InsertAt == std::string::npos)
-        {
-            InsertAt = Text.size();
-        }
-
-        OffsetToLineCol(Text, InsertAt, TabSize, L0, C0);
-        CodeEditor.ReplaceSectionText(L0, C0, L0, C0, "<body>\n</body>\n");
-        bBufferDirty = true;
-        bCompAssignDirty = true;
-        ImGuiX::Notifications::NotifyInfo("Added a <body> to host elements.");
-        return true;
-    }
-
-    void FRmlUiEditorTool::AddElement(const FString& TargetSlotId, int PrimitiveIndex)
-    {
-        if (PrimitiveIndex < 0 || PrimitiveIndex >= (int)(sizeof(kElementPrimitives) / sizeof(kElementPrimitives[0])))
-        {
-            return;
-        }
-        const FElementPrimitive& Prim = kElementPrimitives[PrimitiveIndex];
-        std::string Text = CodeEditor.GetText();
-
-        const std::string NewId = GenerateUniqueId(Text, Prim.IdBase);
-        char Markup[640];
-        std::snprintf(Markup, sizeof(Markup), Prim.Markup, NewId.c_str());
-
-        size_t EditStart, EditEnd;
-        std::string Replacement;
-        const std::string TargetId(TargetSlotId.c_str(), TargetSlotId.size());
-
-        // Spaces rather than tabs, to match the authored content and sized to the tab setting.
-        const std::string IndentUnit((size_t)Math::Max(1, CodeEditor.GetTabSize()), ' ');
-
-        if (TargetId.empty())
-        {
-            // With no container selected this appends to the body, scaffolding one when the file lacks it.
-            if (Text.rfind("</body>") == std::string::npos)
-            {
-                if (!EnsureDocumentBody())
-                {
-                    return;
-                }
-                // The scaffold was a buffer edit, so re-read and re-derive the insertion point.
-                Text = CodeEditor.GetText();
-            }
-
-            const size_t BodyClose = Text.rfind("</body>");
-            if (BodyClose == std::string::npos)
-            {
-                return;
-            }
-            const std::string BodyIndent  = LineIndentAt(Text, BodyClose);
-            const std::string ChildIndent = BodyIndent + IndentUnit;
-
-            EditStart   = TrimWhitespaceBefore(Text, BodyClose);
-            EditEnd     = BodyClose;
-            Replacement = "\n" + ChildIndent + Markup + "\n" + BodyIndent;
-        }
-        else
-        {
-            const FSlotTagLoc Open = LocateSlotTag(Text, TargetId);
-            if (!Open.bFound)
-            {
-                ImGuiX::Notifications::NotifyError("Container '#{0}' not found.", TargetSlotId.c_str());
-                return;
-            }
-            const std::string ContainerIndent = LineIndentAt(Text, Open.TagStart);
-            const std::string ChildIndent     = ContainerIndent + IndentUnit;
-
-            if (Open.bSelfClosing)
-            {
-                // <div id=.../>  ->  <div id=...>\n  markup\n</div>
-                EditStart   = Open.TagEnd - 1;
-                EditEnd     = Open.TagEnd + 1;
-                Replacement = ">\n" + ChildIndent + Markup + "\n" + ContainerIndent + "</" + Open.TagName + ">";
-            }
-            else
-            {
-                const FCloseTagLoc Close = FindMatchingClose(Text, Open);
-                if (Close.Start == std::string::npos)
-                {
-                    ImGuiX::Notifications::NotifyError("Couldn't find the end of '#{0}'.", TargetSlotId.c_str());
-                    return;
-                }
-                // Inserting at the close tag alone left the child glued to the parent's open tag.
-                EditStart   = TrimWhitespaceBefore(Text, Close.Start);
-                EditEnd     = Close.Start;
-                Replacement = "\n" + ChildIndent + Markup + "\n" + ContainerIndent;
-            }
-        }
-
-        const int TabSize = CodeEditor.GetTabSize();
-        int L0, C0, L1, C1;
-        OffsetToLineCol(Text, EditStart, TabSize, L0, C0);
-        OffsetToLineCol(Text, EditEnd,   TabSize, L1, C1);
-        CodeEditor.ReplaceSectionText(L0, C0, L1, C1, Replacement);
-
-        SelectedSlotId = FString(NewId.c_str(), NewId.size());
-        bBufferDirty = true;
-        bCompAssignDirty = true;
-        ReloadDocument();
-        ImGuiX::Notifications::NotifySuccess("Added {0} (#{1}).", Prim.Label, NewId.c_str());
-    }
-
-    void FRmlUiEditorTool::RemoveElement(const FString& SlotId)
-    {
-        std::string Text = CodeEditor.GetText();
-        const std::string Id(SlotId.c_str(), SlotId.size());
-        const FSlotTagLoc Open = LocateSlotTag(Text, Id);
-        if (!Open.bFound)
-        {
-            return;
-        }
-
-        size_t RemoveStart = Open.TagStart;
-        size_t RemoveEnd;
-        if (Open.bSelfClosing)
-        {
-            RemoveEnd = Open.TagEnd + 1;
-        }
-        else
-        {
-            const FCloseTagLoc Close = FindMatchingClose(Text, Open);
-            if (Close.End == std::string::npos)
-            {
-                ImGuiX::Notifications::NotifyError("Couldn't find the end of '#{0}'.", SlotId.c_str());
-                return;
-            }
-            RemoveEnd = Close.End;
-        }
-
-        // Swallow the line's leading indentation + one trailing newline so no blank line is left behind.
-        while (RemoveStart > 0 && (Text[RemoveStart - 1] == ' ' || Text[RemoveStart - 1] == '\t')) --RemoveStart;
-        if (RemoveEnd < Text.size() && Text[RemoveEnd] == '\n') ++RemoveEnd;
-
-        const int TabSize = CodeEditor.GetTabSize();
-        int L0, C0, L1, C1;
-        OffsetToLineCol(Text, RemoveStart, TabSize, L0, C0);
-        OffsetToLineCol(Text, RemoveEnd,   TabSize, L1, C1);
-        CodeEditor.ReplaceSectionText(L0, C0, L1, C1, "");
-
-        if (SelectedSlotId == SlotId) SelectedSlotId.clear();
-        bBufferDirty = true;
-        bCompAssignDirty = true;
-        ReloadDocument();
-    }
-
-    void FRmlUiEditorTool::MoveElement(const FString& SlotId, bool bUp)
-    {
-        std::string Text = CodeEditor.GetText();
-        const std::string Id(SlotId.c_str(), SlotId.size());
-        const FSlotTagLoc Open = LocateSlotTag(Text, Id);
-
-        size_t EStart, EEnd;
-        if (!ElementRange(Text, Open, EStart, EEnd))
-        {
-            return;
-        }
-        const std::string EText = Text.substr(EStart, EEnd - EStart);
-        const int TabSize = CodeEditor.GetTabSize();
-
-        if (!bUp)
-        {
-            // Swap with the next sibling element (skip the whitespace between them).
-            size_t P = EEnd;
-            while (P < Text.size() && std::isspace((unsigned char)Text[P])) ++P;
-            if (P >= Text.size() || Text[P] != '<' || (P + 1 < Text.size() && Text[P + 1] == '/'))
-            {
-                return; // no next sibling (end of parent)
-            }
-            size_t NSStart, NSEnd;
-            if (!ElementRange(Text, ParseElementAt(Text, P), NSStart, NSEnd))
-            {
-                return;
-            }
-            const std::string Sep = Text.substr(EEnd, P - EEnd);
-            const std::string New = Text.substr(NSStart, NSEnd - NSStart) + Sep + EText;
-            int L0, C0, L1, C1;
-            OffsetToLineCol(Text, EStart, TabSize, L0, C0);
-            OffsetToLineCol(Text, NSEnd,  TabSize, L1, C1);
-            CodeEditor.ReplaceSectionText(L0, C0, L1, C1, New);
-        }
-        else
-        {
-            // Swap with the previous sibling element (find its source range walking backwards).
-            size_t P = EStart;
-            while (P > 0 && std::isspace((unsigned char)Text[P - 1])) --P;
-            if (P == 0 || Text[P - 1] != '>')
-            {
-                return; // no previous sibling element
-            }
-            const size_t PrevEnd = P;
-            size_t PrevStart = std::string::npos;
-            if (PrevEnd >= 2 && Text[PrevEnd - 2] == '/')
-            {
-                PrevStart = Text.rfind('<', PrevEnd - 1); // self-closing sibling
-            }
-            else
-            {
-                const size_t Lt = Text.rfind('<', PrevEnd - 1); // '<' of the '</name>'
-                if (Lt == std::string::npos || Lt + 1 >= Text.size() || Text[Lt + 1] != '/')
-                {
-                    return;
-                }
-                size_t N = Lt + 2, E = N;
-                while (E < PrevEnd && !std::isspace((unsigned char)Text[E]) && Text[E] != '>') ++E;
-                PrevStart = FindMatchingOpenBackward(Text, Text.substr(N, E - N), Lt);
-            }
-            if (PrevStart == std::string::npos)
-            {
-                return;
-            }
-            const std::string Sep = Text.substr(PrevEnd, EStart - PrevEnd);
-            const std::string New = EText + Sep + Text.substr(PrevStart, PrevEnd - PrevStart);
-            int L0, C0, L1, C1;
-            OffsetToLineCol(Text, PrevStart, TabSize, L0, C0);
-            OffsetToLineCol(Text, EEnd,      TabSize, L1, C1);
-            CodeEditor.ReplaceSectionText(L0, C0, L1, C1, New);
-        }
-
-        bBufferDirty = true;
-        bCompAssignDirty = true;
-        ReloadDocument();
-    }
-
-    void FRmlUiEditorTool::SetElementInnerText(const FString& SlotId, const std::string& NewText)
-    {
-        std::string Text = CodeEditor.GetText();
-        const std::string Id(SlotId.c_str(), SlotId.size());
-        const FSlotTagLoc Open = LocateSlotTag(Text, Id);
-        if (!Open.bFound || Open.bSelfClosing)
-        {
-            return;
-        }
-        const FCloseTagLoc Close = FindMatchingClose(Text, Open);
-        if (Close.Start == std::string::npos)
-        {
-            return;
-        }
-        const int TabSize = CodeEditor.GetTabSize();
-        int L0, C0, L1, C1;
-        OffsetToLineCol(Text, Open.TagEnd + 1, TabSize, L0, C0);
-        OffsetToLineCol(Text, Close.Start,     TabSize, L1, C1);
-        CodeEditor.ReplaceSectionText(L0, C0, L1, C1, NewText);
-
-        bBufferDirty = true;
-        bCompAssignDirty = true;
-        ReloadDocument();
-    }
-
-    FString FRmlUiEditorTool::EnsureElementId(const std::string& Tag, size_t OpenLt, const std::string& ExistingId)
-    {
-        if (!ExistingId.empty())
-        {
-            return FString(ExistingId.c_str(), ExistingId.size());
-        }
-        std::string Text = CodeEditor.GetText();
-        const FSlotTagLoc T = ParseElementAt(Text, OpenLt);
-        if (!T.bFound)
-        {
-            return FString();
-        }
-        const std::string NewId = GenerateUniqueId(Text, Tag.empty() ? "node" : Tag.c_str());
-        const size_t InsertAt = OpenLt + 1 + T.TagName.size();   // just after "<tagname"
-        const std::string Attr = " id=\"" + NewId + "\"";
-
-        const int TabSize = CodeEditor.GetTabSize();
-        int L0, C0;
-        OffsetToLineCol(Text, InsertAt, TabSize, L0, C0);
-        CodeEditor.ReplaceSectionText(L0, C0, L0, C0, Attr);
-
-        bBufferDirty = true;
-        bCompAssignDirty = true;
-        ReloadDocument();
-        return FString(NewId.c_str(), NewId.size());
-    }
-
-    void FRmlUiEditorTool::SetSlotInlineStyle(const FString& SlotId, const std::vector<std::pair<std::string, std::string>>& Sets)
-    {
-        if (Sets.empty())
-        {
-            return;
-        }
-        const std::string Id(SlotId.c_str(), SlotId.size());
-        std::string Text = CodeEditor.GetText();
-        const FSlotTagLoc Loc = LocateSlotTag(Text, Id);
-        if (!Loc.bFound)
-        {
-            return;
-        }
-
-        // Find an existing style="" / style='' inside the open tag.
-        size_t ValStart = std::string::npos, ValEnd = std::string::npos;
-        for (const char* Key : { "style=\"", "style='" })
-        {
-            const size_t P = Text.find(Key, Loc.TagStart);
-            if (P != std::string::npos && P < Loc.TagEnd)
-            {
-                const char Quote = Key[6];
-                const size_t VS = P + 7;
-                const size_t VE = Text.find(Quote, VS);
-                if (VE != std::string::npos && VE <= Loc.TagEnd)
-                {
-                    ValStart = VS;
-                    ValEnd = VE;
-                    break;
-                }
-            }
-        }
-
-        std::vector<std::pair<std::string, std::string>> Props;
-        if (ValStart != std::string::npos)
-        {
-            Props = ParseStyle(Text.substr(ValStart, ValEnd - ValStart));
-        }
-        for (const auto& Set : Sets)
-        {
-            if (Set.second.empty())
-            {
-                // Empty value = remove the property (used by "Reset position").
-                for (size_t k = 0; k < Props.size(); )
-                {
-                    if (Props[k].first == Set.first) Props.erase(Props.begin() + k);
-                    else ++k;
-                }
-                continue;
-            }
-            bool bFound = false;
-            for (auto& P : Props)
-            {
-                if (P.first == Set.first) { P.second = Set.second; bFound = true; break; }
-            }
-            if (!bFound)
-            {
-                Props.push_back(Set);
-            }
-        }
-        const std::string NewStyle = SerializeStyle(Props);
-
-        // No existing style attribute and everything resolved to removals, so there is nothing to do.
-        if (ValStart == std::string::npos && NewStyle.empty())
-        {
-            return;
-        }
-
-        const int TabSize = CodeEditor.GetTabSize();
-        int L0, C0, L1, C1;
-        if (ValStart != std::string::npos)
-        {
-            OffsetToLineCol(Text, ValStart, TabSize, L0, C0);
-            OffsetToLineCol(Text, ValEnd,   TabSize, L1, C1);
-            CodeEditor.ReplaceSectionText(L0, C0, L1, C1, NewStyle);
-        }
-        else
-        {
-            // With no style attribute yet, splice one in just before the tag's closing bracket.
-            const size_t InsertAt = Loc.bSelfClosing ? (Loc.TagEnd - 1) : Loc.TagEnd;
-            const std::string Attr = " style=\"" + NewStyle + "\"";
-            OffsetToLineCol(Text, InsertAt, TabSize, L0, C0);
-            CodeEditor.ReplaceSectionText(L0, C0, L0, C0, Attr);
-        }
-
-        bBufferDirty = true;
-        bCompAssignDirty = true;
-        ReloadDocument();
-    }
-
-    void FRmlUiEditorTool::CommitSlotMove(const FString& SlotId, ImVec2 DeltaPx)
-    {
-        const FCompSlot* Slot = FindSlot(SlotId);
-        if (Slot == nullptr)
-        {
-            return;
-        }
-        // Slot.OffsetPx is the current rendered top-left (layout + existing transform); add the drag delta.
-        CommitSlotVisual(SlotId, ImVec2(Slot->OffsetPx.x + DeltaPx.x, Slot->OffsetPx.y + DeltaPx.y), bShowGrid);
-    }
-
-    void FRmlUiEditorTool::CommitSlotVisual(const FString& SlotId, ImVec2 TargetVisualPx, bool bSnapToGrid)
-    {
-        const FCompSlot* Slot = FindSlot(SlotId);
-        if (Slot == nullptr)
-        {
-            return;
-        }
-
-        const float Dpi = Math::Max(0.01f, PreviewDpiScale);
-
-        if (bSnapToGrid && GridSize > 0.0f)
-        {
-            // Snap the rendered position to the canvas grid (grid units are context px, canvas-origin-aligned).
-            TargetVisualPx.x = std::round(TargetVisualPx.x / GridSize) * GridSize;
-            TargetVisualPx.y = std::round(TargetVisualPx.y / GridSize) * GridSize;
-        }
-
-        // A relative nudge, so the element keeps its flow and anchor behavior and stays put on resize.
-        const ImVec2 CurTransDp = ParseTranslateDp(GetInlineStyleProp(CodeEditor.GetText(),
-            std::string(SlotId.c_str(), SlotId.size()), "transform"));
-        const ImVec2 LayoutPx(Slot->OffsetPx.x - CurTransDp.x * Dpi, Slot->OffsetPx.y - CurTransDp.y * Dpi);
-
-        const float TransDpX = std::round((TargetVisualPx.x - LayoutPx.x) / Dpi);
-        const float TransDpY = std::round((TargetVisualPx.y - LayoutPx.y) / Dpi);
-
-        char Buf[64];
-        std::snprintf(Buf, sizeof(Buf), "translate(%gdp, %gdp)", TransDpX, TransDpY);
-        SetSlotInlineStyle(SlotId, { { "transform", Buf } });
-    }
-
-    void FRmlUiEditorTool::DrawInspectorPanel()
-    {
-        if (!SupportsElementAuthoring())
-        {
-            ImGui::TextWrapped(LE_ICON_INFORMATION_OUTLINE " Stylesheets have no elements to inspect.");
-            return;
-        }
-
-        if (SelectedSlotId.empty())
-        {
-            ImGui::TextDisabled("Select an element in the Hierarchy.");
-            return;
-        }
-
-        const FCompSlot* Slot = FindSlot(SelectedSlotId);
-        if (Slot == nullptr)
-        {
-            // Selected in the source tree but not yet in the live DOM, so say so rather than draw nothing.
-            ImGui::TextDisabled("#%s", SelectedSlotId.c_str());
-            ImGui::TextWrapped("Not present in the live preview yet. It will appear once the document reloads.");
-            return;
-        }
-
-        SectionHeader(LE_ICON_COG, "Inspector");
-        ImGui::Text("#%s  <%s>", Slot->Id.c_str(), Slot->Tag.c_str());
-        ImGui::Separator();
-
-        // Caches are owned by their widget while active and synced to the live value otherwise.
-        {
-            const std::string Sel(SelectedSlotId.c_str(), SelectedSlotId.size());
-            std::string Inner;
-            if (GetEditableInnerText(CompAssignText, Sel, Inner))
-            {
-                ImGui::TextDisabled(LE_ICON_FORMAT_TEXT " Text");
-
-                ImGui::SetNextItemWidth(-1.0f);
-                ImGui::InputText("##slot_inner_text", InspText, sizeof(InspText));
-                if (ImGui::IsItemDeactivatedAfterEdit())
-                {
-                    SetElementInnerText(SelectedSlotId, InspText);
-                }
-                if (!ImGui::IsItemActive())
-                {
-                    std::snprintf(InspText, sizeof(InspText), "%s", Inner.c_str());
-                }
-
-                // Font size (font-size, dp).
-                const std::string FsStr = GetInlineStyleProp(CompAssignText, Sel, "font-size");
-                float CurFs = 16.0f;
-                if (!FsStr.empty()) std::sscanf(FsStr.c_str(), "%f", &CurFs);
-                ImGui::SetNextItemWidth(110.0f);
-                ImGui::DragFloat("Size", &InspFontSize, 0.5f, 1.0f, 300.0f, "%.0f dp");
-                if (ImGui::IsItemDeactivatedAfterEdit())
-                {
-                    char Buf[32];
-                    std::snprintf(Buf, sizeof(Buf), "%gdp", std::round(InspFontSize));
-                    SetSlotInlineStyle(SelectedSlotId, { { "font-size", Buf } });
-                }
-                if (!ImGui::IsItemActive())
-                {
-                    InspFontSize = std::round(CurFs);
-                }
-
-                // Synced on selection change, since a ColorEdit popup leaves the item inactive and would fight.
-                const std::string ColStr = GetInlineStyleProp(CompAssignText, Sel, "color");
-                if (SelectedSlotId != InspColorSyncId)
-                {
-                    InspColor = ColStr.empty() ? ImVec4(1.0f, 1.0f, 1.0f, 1.0f) : ParseHexColor(ColStr);
-                    InspColorSyncId = SelectedSlotId;
-                }
-                ImGui::ColorEdit4("Color", &InspColor.x, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar);
-                if (ImGui::IsItemDeactivatedAfterEdit())
-                {
-                    SetSlotInlineStyle(SelectedSlotId, { { "color", FormatHexColor(InspColor) } });
-                }
-            }
-        }
-
-        const float Dpi = Math::Max(0.01f, PreviewDpiScale);
-        const float CurX = std::round(Slot->OffsetPx.x / Dpi);
-        const float CurY = std::round(Slot->OffsetPx.y / Dpi);
-        const float CurW = std::round(Slot->SizePx.x / Dpi);
-        const float CurH = std::round(Slot->SizePx.y / Dpi);
-
-        // X and Y nudge the RENDERED position via transform, so the element keeps its layout and anchor.
-        auto SizeField = [&](const char* Label, float* Cached, float Current, const char* Prop)
-        {
-            ImGui::SetNextItemWidth(110.0f);
-            ImGui::DragFloat(Label, Cached, 0.5f, 0.0f, 0.0f, "%.0f dp");
-            if (ImGui::IsItemDeactivatedAfterEdit())
-            {
-                char Buf[32];
-                std::snprintf(Buf, sizeof(Buf), "%gdp", std::round(*Cached));
-                SetSlotInlineStyle(SelectedSlotId, { { Prop, Buf } });
-            }
-            if (!ImGui::IsItemActive())
-            {
-                *Cached = Current;
-            }
-        };
-
-        auto PosField = [&](const char* Label, float* Cached, float Current, bool bAxisX)
-        {
-            ImGui::SetNextItemWidth(110.0f);
-            ImGui::DragFloat(Label, Cached, 0.5f, 0.0f, 0.0f, "%.0f dp");
-            if (ImGui::IsItemDeactivatedAfterEdit())
-            {
-                const ImVec2 Target(
-                    bAxisX ? std::round(*Cached) * Dpi : Slot->OffsetPx.x,
-                    bAxisX ? Slot->OffsetPx.y          : std::round(*Cached) * Dpi);
-                CommitSlotVisual(SelectedSlotId, Target, false);
-            }
-            if (!ImGui::IsItemActive())
-            {
-                *Cached = Current;
-            }
-        };
-
-        PosField ("X",      &InspLeft,   CurX, true);
-        PosField ("Y",      &InspTop,    CurY, false);
-        SizeField("Width",  &InspWidth,  CurW, "width");
-        SizeField("Height", &InspHeight, CurH, "height");
-
-        ImGui::Spacing();
-        if (ImGui::Button(LE_ICON_ARROW_UP " Up"))
-        {
-            MoveElement(SelectedSlotId, true);
-        }
-        ImGui::SameLine();
-        if (ImGui::Button(LE_ICON_ARROW_DOWN " Down"))
-        {
-            MoveElement(SelectedSlotId, false);
-        }
-        ImGuiX::TextTooltip("Reorder this element among its siblings.");
-
-        ImGui::Spacing();
-        if (ImGui::Button(LE_ICON_BACKUP_RESTORE " Reset position"))
-        {
-            // Also clears a stale absolute position an earlier build's drag may have left behind.
-            SetSlotInlineStyle(SelectedSlotId, {
-                { "transform", "" }, { "position", "" },
-                { "left", "" }, { "top", "" }, { "right", "" }, { "bottom", "" } });
-        }
-        ImGuiX::TextTooltip("Clear inline position/transform and return the element to its stylesheet layout.");
-
-        if (!Slot->AssignedSrc.empty())
-        {
-            ImGui::Spacing();
-            if (ImGui::Button(LE_ICON_CLOSE " Clear widget"))
-            {
-                ClearSlotAssignment(SelectedSlotId);
-            }
-            ImGuiX::TextTooltip("Remove the assigned widget (or select the slot and press Delete).");
-        }
-
-        ImGui::Spacing();
-        if (ImGui::Button(LE_ICON_TRASH_CAN_OUTLINE " Delete element"))
-        {
-            RemoveElement(SelectedSlotId);
-        }
-        ImGuiX::TextTooltip("Delete this element (and its children) from the document.");
-
-        ImGui::TextDisabled("Drag to scrub, Ctrl+click to type. Writes inline style.");
-    }
 }
