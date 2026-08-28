@@ -83,17 +83,13 @@ namespace Lumina
         MaskImage = 5,
     };
 
-    // A ceiling on live layer targets, so a pathological document degrades instead of exhausting the
-    // device. Steady state is roughly the per-frame peak times GFramesInFlight, since a layer cannot be
-    // reused until the frames that read it have retired.
+    // Steady state is roughly the per-frame peak times GFramesInFlight, since a layer waits for its readers.
     static constexpr uint32 GMaxLiveLayers = 48;
 
-    // BeginFrame waits on the fence for the slot it is about to reuse, so a resource last touched
-    // this many engine frames ago has already retired on the GPU.
+    // BeginFrame fences the slot it reuses, so a resource this many engine frames old has already retired.
     static constexpr uint64 GFramesInFlight = RHI::kFramesInFlight;
 
-    // A dropped draw renders nothing and says nothing, which is the hardest failure to chase in this
-    // renderer. Every skip reports itself once so the next one names itself instead.
+    // A dropped draw is silent and the hardest failure to chase here, so every distinct skip reports once.
     static void WarnDroppedDrawOnce(const char* Reason)
     {
         static const char* Reported[8] = {};
@@ -303,8 +299,7 @@ namespace Lumina
                 continue;
             }
 
-            // Reuse inside one frame is ordered by the command list, so it is always safe. Reuse across
-            // frames is not, because the GPU may still be reading the layer for a frame already submitted.
+            // Reuse within a frame is command-list ordered and safe; across frames the GPU may still be reading it.
             const bool bSameFrame = (Candidate.LastUsedFrame == EngineFrameCounter);
             if (!bSameFrame && Candidate.LastUsedFrame + GFramesInFlight > EngineFrameCounter)
             {
@@ -317,9 +312,7 @@ namespace Lumina
             return Index;
         }
 
-        // A resize gives every frame a new extent, so stale-size layers are dropped rather than
-        // lingering; holding them turned a drag into hundreds of live targets. Releasing one unbinds
-        // its heap slot immediately though, so a layer a submitted frame may still sample has to wait.
+        // Stale-size layers are dropped, since a resize drag otherwise builds hundreds, but only once their readers retire.
         for (size_t i = 0; i < FreeLayers.size();)
         {
             FLayer& Stale = OwnedLayers[FreeLayers[i]];
@@ -586,8 +579,7 @@ namespace Lumina
         uint64 Hash = Hash::XXHash::GetHash64(HashKeyScratch.data(), HashKeyScratch.size() * sizeof(FDrawKey));
         Hash = Hash::XXHash::GetHash64(PendingClipMasks.data(), PendingClipMasks.size() * sizeof(FUiClipMask), Hash);
 
-        // Layer and filter work is invisible to the draw list, so a filter-only change must still
-        // land in the hash or the frame gets gated away as unchanged.
+        // Layer and filter work is invisible to the draw list, so a filter-only change must still reach the hash.
         for (const FLayerCommand& Cmd : LayerCommands)
         {
             const uint64 OpKey[4] = { uint64(Cmd.Op), uint64(Cmd.DrawsBefore),
@@ -695,8 +687,7 @@ namespace Lumina
         }
         DeferredShaderReleases.clear();
 
-        // Held past the frames-in-flight window; unbinding sooner repoints a slot an already
-        // recorded draw still samples, which reads as the magenta fallback for a frame.
+        // Unbinding inside the frames-in-flight window repoints a slot a recorded draw still samples, showing magenta.
         for (size_t i = 0; i < DeferredTextureReleases.size();)
         {
             const FRetiredTexture& Retired = DeferredTextureReleases[i];
@@ -1050,8 +1041,7 @@ namespace Lumina
             return;
         }
 
-        // Only the small per-draw data is transient; bulk vertex and index data is resident.
-        // Resolved every frame, never from the cache, so a released texture cannot leave a dead slot.
+        // Resolved every frame rather than from the cache, so a released texture cannot leave a dead slot.
         ResolveBatchTextures(Batch);
 
         const RHI::GPUPtr DrawsPtr = RHI::Core::CopyTransientArray(Batch.Draws.data(), Batch.Draws.size());
@@ -1231,9 +1221,7 @@ namespace Lumina
 
     void FRmlUiRenderer::ReplayFrame(RHI::FCmdListH CL, const FTargetBatch& Batch, RHI::FPipelineH TargetPipeline, RHI::GPUPtr ArgsPtr)
     {
-        // PopLayer hands a layer back at record time, but the replay still reads it, and the scratch
-        // AcquireLayer calls below are not part of record order. Anything the stream names is withheld
-        // for the whole replay, or a composite scratch lands on the layer it is compositing into.
+        // Anything the stream names is withheld for the whole replay, or a composite scratch lands on its own source.
         auto Withhold = [&](uint32 Index)
         {
             if (Index == kNoLayer)
@@ -1546,8 +1534,7 @@ namespace Lumina
 
     void FRmlUiRenderer::ReleaseGeometry(Rml::CompiledGeometryHandle Geometry)
     {
-        // Draws are built at EndFrame, but RmlUi frees temporary geometry as soon as it goes out of
-        // scope during Context::Render. Box shadows do exactly that, and the draw read freed data.
+        // RmlUi frees temporary geometry during Context::Render, and box shadows did exactly that mid-frame.
         if (RHI::IsValid(CurrentCmdList))
         {
             DeferredGeometryReleases.push_back(Geometry);
@@ -1790,8 +1777,7 @@ namespace Lumina
         CurrentScissor = Region;
     }
 
-    // RmlUi builds every clip mask with MeshUtilities::GenerateBackground, so the mesh is an
-    // axis-aligned rounded rect and its shape is recoverable from the vertex positions alone.
+    // Every clip mask comes from MeshUtilities::GenerateBackground, so its shape is recoverable from the vertices.
     bool FRmlUiRenderer::InferRoundedRect(const FGeometry& Geom, FVector2 Translation, FUiClipMask& Out)
     {
         const uint32 Count = uint32(Geom.VertexData.size() / sizeof(Rml::Vertex));
@@ -2056,8 +2042,7 @@ namespace Lumina
 
         if (!LayerStack.empty())
         {
-            // Replay runs in record order, so a layer freed here is only reused by a later push that
-            // also replays later. Holding it for the whole frame instead cost one target per push.
+            // Replay runs in record order, so a layer freed here is only reused by a push that also replays later.
             const uint32 Popped = LayerStack.back();
             LayerStack.pop_back();
             ReleaseLayerToPool(Popped);
@@ -2066,9 +2051,7 @@ namespace Lumina
 
     Rml::TextureHandle FRmlUiRenderer::SaveLayerAsTexture()
     {
-        // Owned outright rather than taken from the layer pool. Sharing one FManagedTexture between the
-        // pool and the texture map let a pool eviction and ReleaseTexture retire the same handle twice.
-        // RmlUi sets the scissor to the texture it wants, so the result must be exactly that region.
+        // RmlUi sets the scissor to the region it wants saved, so the result must cover exactly that.
         const float ScaleX = (CurrentLogicalSize.x > 0) ? float(CurrentSize.x) / float(CurrentLogicalSize.x) : 1.0f;
         const float ScaleY = (CurrentLogicalSize.y > 0) ? float(CurrentSize.y) / float(CurrentLogicalSize.y) : 1.0f;
 
@@ -2083,6 +2066,7 @@ namespace Lumina
         const uint32 RegionW = Math::Max(uint32(RegionSize.x + 0.5f), 1u);
         const uint32 RegionH = Math::Max(uint32(RegionSize.y + 0.5f), 1u);
 
+        // Owned outright, since sharing an FManagedTexture with the layer pool retired the same handle twice.
         RHI::FManagedTexture Image = RHI::Textures::Create(RHI::FTexture2DDesc
         {
             .Width  = RegionW,

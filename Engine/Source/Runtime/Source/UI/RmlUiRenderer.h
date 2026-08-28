@@ -2,9 +2,6 @@
 
 #include "Renderer/ShaderHandle.h"
 
-// Rml::RenderInterface on the new RHI. Frame: BeginFrame -> Context::Render (defers draws) -> EndFrame (uploads + replay).
-// Draws are deferred so texture uploads can run outside the render pass.
-
 #include "Containers/HashTable.h"
 #include "Containers/Vector.h"
 #include "Containers/String.h"
@@ -18,6 +15,7 @@
 
 namespace Lumina
 {
+    // Draws are deferred from Context::Render to EndFrame so texture uploads run outside the render pass.
     class FRmlUiRenderer final : public Rml::RenderInterface
     {
     public:
@@ -25,18 +23,18 @@ namespace Lumina
         ~FRmlUiRenderer() override;
         FRmlUiRenderer(const FRmlUiRenderer&) = delete;
         FRmlUiRenderer& operator = (const FRmlUiRenderer&) = delete;
+        FRmlUiRenderer(FRmlUiRenderer&&) = delete;
+        FRmlUiRenderer& operator = (FRmlUiRenderer&&) = delete;
 
         bool Initialize();
         void Shutdown();
 
-        // LogicalSize=0 mirrors ViewportSize; nonzero decouples projection (layout pixels) from RT pixels.
-        // ClearColor non-null folds the target clear into the pass load op instead of a separate transfer clear.
+        // LogicalSize 0 mirrors ViewportSize, and a non-null ClearColor folds the clear into the pass load op.
         void BeginFrame(RHI::FCmdListH CmdList, RHI::FTextureH Target, const FUIntVector2& ViewportSize,
                         const FUIntVector2& LogicalSize = FUIntVector2(0), const FVector4* ClearColor = nullptr);
         void EndFrame();
 
-        // Content-change gating: PeekFrameHash hashes the draw list; IsTargetUpToDate is true when the target's
-        // batch already holds it (persistent RTs skip the pass). AbortFrame discards pending draws without recording.
+        // A target whose cached batch already holds this hash skips its pass entirely.
         uint64                      PeekFrameHash() const;
         bool                        IsTargetUpToDate(RHI::FTextureH Target, uint64 Hash) const;
         void                        AbortFrame();
@@ -44,8 +42,7 @@ namespace Lumina
         // Drop a target's cached batch buffers (called when a widget RT is destroyed).
         RUNTIME_API void            ReleaseTargetBatch(RHI::FTextureH Target);
 
-        // Consecutive-stable-frame count (bStable increments, change resets) so the game thread can stop
-        // ticking a settled widget; 0 for unknown targets.
+        // Consecutive unchanged frames, so the game thread can stop ticking a settled widget. Unknown targets read 0.
         void                        NoteTargetStable(RHI::FTextureH Target, bool bStable);
         uint32                      GetTargetStableFrames(RHI::FTextureH Target);
 
@@ -87,8 +84,7 @@ namespace Lumina
         static constexpr uint32 kMaxClipMasksPerDraw = 8;
         static constexpr uint32 kNoLayer    = 0xFFFFFFFFu;
 
-        // RmlUi compiles geometry once per element; we cache the CPU bytes and concatenate them at EndFrame
-        // into the target's resident VB/IB (rebuilt only on draw-list change).
+        // CPU bytes cached per element, concatenated at EndFrame into the target's resident vertex and index buffers.
         struct FGeometry
         {
             TVector<uint8> VertexData;
@@ -142,8 +138,7 @@ namespace Lumina
         };
         static_assert(sizeof(FDrawKey) == 120, "FDrawKey must stay padding-free");
 
-        // GPU vertex for the batched path (pos/uv/color + per-draw index); matches RmlUiCommon.slang (stride 24).
-        // The two float2s stay adjacent so neither straddles a 16-byte boundary under BDA layout rules.
+        // Matches RmlUiCommon.slang, and the two float2s stay adjacent so neither straddles a 16-byte BDA boundary.
         struct FUiVertex
         {
             float  Position[2];
@@ -152,8 +147,7 @@ namespace Lumina
             uint32 DrawIndex;
         };
 
-        // Per-draw data read in-shader via device address (std430). Matches
-        // RmlUiCommon.slang::FUiDraw.
+        // Matches RmlUiCommon.slang::FUiDraw, read in-shader through a device address with std430 layout.
         struct FUiDraw
         {
             FMatrix4 MVP;
@@ -185,8 +179,7 @@ namespace Lumina
             FVector4 Position;
         };
 
-        // A compiled RmlUi gradient decorator. RmlUi recompiles one whenever the element box changes,
-        // so the handle doubles as the change token the frame hash keys off.
+        // RmlUi recompiles a gradient decorator whenever its element box changes, so the handle doubles as a change token.
         struct FShader
         {
             uint32                 Type = 0;
@@ -196,8 +189,7 @@ namespace Lumina
             TVector<FUiColorStop>  Stops;
         };
 
-        // Persistent per-target geometry: the VB/IB batch lives in grown device buffers (not the transient ring,
-        // which UI churn thrashes), re-uploaded only on draw-list change. Keyed by render-target handle.
+        // Grown device buffers rather than the transient ring, which UI churn thrashes, re-uploaded only on change.
         struct FTargetBatch
         {
             RHI::FGPUAllocation VertexBuffer = {};
@@ -210,8 +202,7 @@ namespace Lumina
             TVector<uint32>       DrawFirstIndex;  // per draw call, so layer ops can split the batch
             TVector<uint32>       DrawIndexCount;
 
-            // RmlUi handles rather than heap slots. A slot baked into a cached batch goes stale the
-            // moment its texture is released, and the heap answers a dead slot with magenta.
+            // Handles not heap slots, since a slot baked into a cached batch reads magenta once its texture is released.
             TVector<Rml::TextureHandle> DrawTextures;
             uint32            IndexCount = 0;
             uint64            LastHash = 0;
@@ -336,13 +327,11 @@ namespace Lumina
         Rml::TextureHandle                                  NextTextureHandle = 1;
         Rml::CompiledShaderHandle                           NextShaderHandle = 1;
 
-        // Bumped each BeginFrame; salts the draw-call hash when a UI-material brush is referenced
-        // so animated brushes never get gated away as "unchanged".
+        // Salts the draw-call hash while a material brush is live, so an animated brush is never gated away.
         uint64                      FrameCounter = 0;
         uint64                      LastEvictFrame = 0;
 
-        // FrameCounter counts BeginFrame calls, one per UI target, so several land in one engine frame.
-        // Resource lifetimes have to be measured against engine frames, which is what the GPU retires.
+        // Resource lifetimes measure against this, not FrameCounter, which ticks once per UI target.
         uint64                      EngineFrameCounter = 0;
         uint32                      LastRenderFrameSlot = 0xFFFFFFFFu;
 
@@ -353,8 +342,7 @@ namespace Lumina
         TVector<Rml::CompiledGeometryHandle> DeferredGeometryReleases;
         TVector<Rml::CompiledFilterHandle>   DeferredFilterReleases;
         TVector<Rml::CompiledShaderHandle>   DeferredShaderReleases;
-        // Releasing a texture unbinds its heap slot immediately, so a handle has to outlive every
-        // frame still in flight that might sample it, not just the frame that dropped it.
+        // Unbinding a heap slot is immediate, so a handle must outlive every frame in flight that samples it.
         struct FRetiredTexture
         {
             Rml::TextureHandle Handle = 0;
@@ -412,8 +400,7 @@ namespace Lumina
         bool                        bClearTarget = false;
         bool                        bInitialized = false;
 
-        // PeekFrameHash (caller-side dormancy check) and EndFrame both need the draw-list hash;
-        // cache it across the pair so we hash once per frame. Invalidated each BeginFrame.
+        // PeekFrameHash and EndFrame both need the draw-list hash, so it is computed once and reset each BeginFrame.
         mutable uint64              CachedFrameHash = 0;
         mutable bool                bCachedFrameHashValid = false;
 
