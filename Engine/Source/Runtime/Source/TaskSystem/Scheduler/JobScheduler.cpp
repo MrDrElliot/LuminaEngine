@@ -1068,6 +1068,10 @@ namespace Lumina::Jobs
         // Failed steals before a waiter stops burning its core and sleeps on the counter instead.
         constexpr uint32 kAssistSpinsBeforePark = 256;
 
+        // How long WaitForCounterBusy spins before it gives up and parks. Sized well above the tens of
+        // microseconds a fork/join task runs for, and well under anything a frame would notice.
+        constexpr double kBusyWaitSeconds = 0.002;
+
         // Every wake is advisory, since the sleeper re-checks its counter and re-tries on each return.
         constexpr uint32 kParkTimeoutMs = 1;
 
@@ -1817,6 +1821,51 @@ namespace Lumina::Jobs
             return;
         }
         DecrementAndRelease(Counter, By, GetWorkerIndex());
+    }
+
+    void WaitForCounterBusy(FCounter* Counter, int32 Value)
+    {
+        if (Counter == nullptr)
+        {
+            return;
+        }
+
+        // A fiber parks for free and hands its thread back, so it never wants the spin.
+        if (TLS.CurrentFiber != nullptr && GNoParkGuardName == nullptr)
+        {
+            WaitForCounter(Counter, Value);
+            return;
+        }
+
+        const uint32 Slot = GetWorkerIndex();
+        const double Deadline = PlatformTime::Seconds() + kBusyWaitSeconds;
+        uint32 Spins = 0;
+
+        while (Counter->Value.load(std::memory_order_acquire) > Value)
+        {
+            FQueuedJob Job;
+            if (TryStealAny(Job, AssistMaxPriority()))
+            {
+                RunAdoptedJob(Job, Slot);
+                OnJobComplete(Job.GetCounter(), Slot);
+                Spins = 0;
+                continue;
+            }
+
+            if (++Spins >= kAssistSpinsBeforePark)
+            {
+                Spins = 0;
+
+                // Past the budget this stopped being a short wait, so hand it to the path that can park.
+                if (PlatformTime::Seconds() >= Deadline)
+                {
+                    WaitForCounter(Counter, Value);
+                    return;
+                }
+            }
+
+            CpuPause();
+        }
     }
 
     void WaitForCounter(FCounter* Counter, int32 Value)

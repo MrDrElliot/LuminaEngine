@@ -95,6 +95,10 @@ namespace Lumina::Jobs
     // on an external thread it assist-waits (runs queued jobs inline) until satisfied.
     RUNTIME_API void WaitForCounter(FCounter* Counter, int32 Value = 0);
 
+    // The same wait for a job already running and expected back in microseconds. An external thread
+    // assists and spins rather than parking, because the syscall pair costs more than the wait.
+    RUNTIME_API void WaitForCounterBusy(FCounter* Counter, int32 Value = 0);
+
     // Block the calling thread until every job submitted so far has completed.
     RUNTIME_API void WaitForAll();
 

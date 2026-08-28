@@ -7,64 +7,12 @@
 
 namespace Lumina::Physics
 {
-    static TConsoleVar CVarPhysicsWorkerCount("Physics.WorkerCount", 0,
-        "Box3D solver worker count. 0 auto-picks the physical cores of one cache group, which is what Box3D wants.");
-
     namespace
     {
-        // A step splits into workerCount tasks that spin on each other, so oversubscription costs throughput.
         uint32 ResolvePhysicsWorkerCount()
         {
-            const int32 Override = CVarPhysicsWorkerCount.GetValue();
-            if (Override > 0)
-            {
-                return Math::Clamp((uint32)Override, 1u, (uint32)B3_MAX_WORKERS);
-            }
-
             const uint32 LogicalCount = Threading::GetNumThreads();
-
-            TFixedVector<Threading::FCpuTopology, 256> Topology;
-            Topology.resize(Math::Min(LogicalCount, 256u));
-
-            const uint32 Described = Threading::GetCpuTopology(Topology.data(), (uint32)Topology.size());
-            if (Described == 0)
-            {
-                // No topology means every processor is equidistant, so half the logical count approximates cores.
-                return Math::Clamp(LogicalCount / 2u, 1u, (uint32)B3_MAX_WORKERS);
-            }
-
-            uint32 GroupSizes[64] = {};
-            uint32 MaxGroup = 0;
-            for (uint32 i = 0; i < Described; ++i)
-            {
-                const uint16 Group = Topology[i].CacheGroup;
-                if (Group < 64)
-                {
-                    ++GroupSizes[Group];
-                    MaxGroup = GroupSizes[Group] > GroupSizes[MaxGroup] ? Group : MaxGroup;
-                }
-            }
-
-            // Distinct physical cores inside the largest cache group, so SMT siblings count once.
-            uint64 SeenCores = 0;
-            uint32 PhysicalCores = 0;
-            for (uint32 i = 0; i < Described; ++i)
-            {
-                if (Topology[i].CacheGroup != MaxGroup)
-                {
-                    continue;
-                }
-
-                const uint16 Core = Topology[i].PhysicalCore;
-                if (Core < 64 && (SeenCores & (1ull << Core)) == 0)
-                {
-                    SeenCores |= (1ull << Core);
-                    ++PhysicalCores;
-                }
-            }
-
-            // One core is left for the thread driving the step, which enters the solver as worker 0 anyway.
-            return Math::Clamp(PhysicalCores > 1 ? PhysicalCores - 1 : 1, 1u, (uint32)B3_MAX_WORKERS);
+            return Math::Clamp(LogicalCount > 1 ? LogicalCount - 1 : 1, 1u, (uint32)B3_MAX_WORKERS);
         }
     }
 
@@ -123,7 +71,9 @@ namespace Lumina::Physics
     void FBox3DTaskBridge::FinishTask(void* UserTask, void* /*UserContext*/)
     {
         FTaskSlot* Slot = static_cast<FTaskSlot*>(UserTask);
-        Jobs::WaitForCounter(Slot->Counter);
+
+        // Box3D's tasks spin on each other inside one step, so this wait is microseconds and parking loses.
+        Jobs::WaitForCounterBusy(Slot->Counter);
         Slot->bInUse.store(false, std::memory_order_release);
     }
 }

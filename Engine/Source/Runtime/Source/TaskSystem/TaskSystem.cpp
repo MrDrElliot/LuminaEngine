@@ -194,8 +194,8 @@ namespace Lumina
             const uint32 Hardware = Threading::GetNumThreads();
 
             Jobs::FConfig Config;
-            // Crossing the processor count turns an empty fan-out from nanoseconds into microseconds.
-            Config.NumWorkerThreads   = Hardware > 4 ? Hardware - (Hardware / 4) - 1 : 1;
+            // One per processor bar the one submitting, so a solver asking for that many gets a thread each.
+            Config.NumWorkerThreads   = Hardware > 1 ? Hardware - 1 : 1;
             const FString WorkersEnv = Platform::GetEnvVariable("LUMINA_JOB_WORKERS");
             if (!WorkersEnv.empty())
             {
