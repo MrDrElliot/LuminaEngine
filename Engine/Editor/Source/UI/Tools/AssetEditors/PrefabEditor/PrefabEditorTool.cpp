@@ -600,7 +600,7 @@ namespace Lumina
         if (bViewportHovered)
         {
             // Delete every selected entity (root is filtered out inside the destroy queue).
-            if (ImGui::IsKeyPressed(ImGuiKey_Delete))
+            if (ImGui::IsKeyPressed(ImGuiKey_Delete) && !HasVisualizerSubSelection())
             {
                 Registry.View<FSelectedInEditorComponent>().ForEach([&](ECS::FEntity Entity)
                 {

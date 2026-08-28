@@ -10,6 +10,7 @@ namespace Lumina
     class IPrimitiveDrawInterface;
     class CComponentVisualizer;
     class FComponentVisualizerContext;
+    struct SSplineComponent;
 
     REFLECT()
     class EDITOR_API CComponentVisualizerRegistry : public CObject
@@ -48,6 +49,9 @@ namespace Lumina
 
         // Skips the main-thread pass for visualizers that only draw wireframe.
         NODISCARD virtual bool HasVisualization() const { return false; }
+
+        // Takes Delete away from the host while this visualizer owns a sub-element selection.
+        NODISCARD virtual bool ClaimsDeleteKey() const { return false; }
     };
     
     REFLECT()
@@ -315,5 +319,14 @@ namespace Lumina
     public:
         CStruct* GetSupportedComponentType() const override;
         void Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity) override;
+        void DrawVisualization(FComponentVisualizerContext& Context) override;
+        bool HasVisualization() const override { return true; }
+        bool ClaimsDeleteKey() const override { return true; }
+
+    private:
+
+        void DrawPointPanel(FComponentVisualizerContext& Context, SSplineComponent& Spline, const FVector3& Anchor, int32 PointIndex);
+
+        bool bShowPointIndices = true;
     };
 }

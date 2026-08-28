@@ -203,6 +203,12 @@ namespace Lumina
         // Dot at the center of a quad that drags the quad along its own normal. Back faces are skipped.
         FVisualizerHandleResult FaceHandle(uint32 ID, const FVector3& Center, const FVector3& Normal, const FVector3& HalfU, const FVector3& HalfV, const FVisualizerHandleStyle& Style = FVisualizerHandleStyle());
 
+        // Three axis arms plus a center dot, giving axis-constrained translation without ImGuizmo.
+        FVisualizerHandleResult TranslateHandle(uint32 ID, const FVector3& World, const FVisualizerHandleStyle& Style = FVisualizerHandleStyle());
+
+        // True once any handle this pass reported hover or drag, so a click can fall through when it is false.
+        NODISCARD bool IsInteracting() const;
+
         // Floating ImGui panel anchored to a world position; hosts real widgets. False when off screen.
         bool BeginPanel(const char* ID, const FVector3& WorldAnchor, ImVec2 PixelOffset = ImVec2(18.0f, -10.0f));
         void EndPanel();
@@ -238,12 +244,15 @@ namespace Lumina
             FVector3 HalfV = FVector3(0.0f);
             EHandleConstraint Constraint = EHandleConstraint::Screen;
             bool bFaceSurface = false;
+
+            // Separates the sub-handles of a compound widget from a plain handle sharing the same ID.
+            uint32 Salt = 0;
             const FVisualizerHandleStyle* Style = nullptr;
         };
 
         FVisualizerHandleResult ProcessHandle(const FHandleDesc& Desc);
 
-        NODISCARD uint64 MakeKey(uint32 ID) const;
+        NODISCARD uint64 MakeKey(uint32 ID, uint32 Salt) const;
 
         NODISCARD bool SolveConstraint(const FHandleDesc& Desc, FVector3& OutPosition) const;
 

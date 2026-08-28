@@ -154,6 +154,9 @@ namespace Lumina
         // True while a visualizer handle or panel owns the mouse; the host must not pick or gizmo then.
         NODISCARD bool AreVisualizersCapturingInput() const { return VisualizerInteraction.bCapturedInput; }
 
+        // True while the selected sub-element's visualizer wants Delete for itself.
+        NODISCARD bool HasVisualizerSubSelection() const;
+
         void BeginVisualizerTransaction(ECS::FEntity Entity, CStruct* ComponentType) override;
         void EndVisualizerTransaction(FName Label) override;
         void MarkVisualizerSceneDirty() override;

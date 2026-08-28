@@ -2953,6 +2953,19 @@ namespace Lumina
         });
     }
 
+    bool FSceneEditorTool::HasVisualizerSubSelection() const
+    {
+        if (VisualizerInteraction.SelectedSubElement == INDEX_NONE || VisualizerInteraction.SelectedComponentType == nullptr)
+        {
+            return false;
+        }
+
+        const CComponentVisualizer* Visualizer =
+            CComponentVisualizerRegistry::Get().GetComponentVisualizer(VisualizerInteraction.SelectedComponentType);
+
+        return Visualizer != nullptr && Visualizer->ClaimsDeleteKey();
+    }
+
     void FSceneEditorTool::BeginVisualizerTransaction(ECS::FEntity Entity, CStruct* ComponentType)
     {
         if (ComponentType == nullptr)

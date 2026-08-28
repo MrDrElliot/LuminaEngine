@@ -309,6 +309,69 @@ namespace Lumina
             Context.Label(Anchor, Color, "%s   %s   x%.2f%s", Name, ToString(Bus), Volume, bSpatialized ? "" : "   2D");
         }
 
+        // A spline sub-element packs the point index and which of its three handles is meant.
+        enum class ESplineHandle : int32
+        {
+            Point = 0,
+            Arrive = 1,
+            Leave = 2,
+        };
+
+        constexpr int32 kSplineHandleKinds = 3;
+
+        // Hermite tangents are three times the chord they produce, so handles sit at a third of one.
+        constexpr float kTangentHandleScale = 1.0f / 3.0f;
+
+        constexpr FVector4 kSplinePoint(1.00f, 0.80f, 0.31f, 1.0f);
+        constexpr FVector4 kSplineArrive(0.35f, 0.75f, 1.00f, 1.0f);
+        constexpr FVector4 kSplineLeave(0.35f, 1.00f, 0.55f, 1.0f);
+
+        int32 PackSplineHandle(int32 PointIndex, ESplineHandle Handle)
+        {
+            return PointIndex * kSplineHandleKinds + (int32)Handle;
+        }
+
+        FVector3 SplineHandleLocal(const SSplinePoint& Point, ESplineHandle Handle)
+        {
+            switch (Handle)
+            {
+            case ESplineHandle::Arrive: return Point.Location - Point.ArriveTangent * kTangentHandleScale;
+            case ESplineHandle::Leave:  return Point.Location + Point.LeaveTangent * kTangentHandleScale;
+            default:                    return Point.Location;
+            }
+        }
+
+        void ApplySplineHandleLocal(SSplinePoint& Point, ESplineHandle Handle, const FVector3& Local)
+        {
+            switch (Handle)
+            {
+            case ESplineHandle::Arrive:
+                // Flipping to User is what stops UpdateTangents overwriting the drag on the next frame.
+                Point.TangentMode = ESplineTangentMode::User;
+                Point.ArriveTangent = (Point.Location - Local) / kTangentHandleScale;
+                break;
+
+            case ESplineHandle::Leave:
+                Point.TangentMode = ESplineTangentMode::User;
+                Point.LeaveTangent = (Local - Point.Location) / kTangentHandleScale;
+                break;
+
+            default:
+                Point.Location = Local;
+                break;
+            }
+        }
+
+        FVector4 SplineHandleColor(ESplineHandle Handle)
+        {
+            switch (Handle)
+            {
+            case ESplineHandle::Arrive: return kSplineArrive;
+            case ESplineHandle::Leave:  return kSplineLeave;
+            default:                    return kSplinePoint;
+            }
+        }
+
         // Two rings joined by vertical spokes, optionally tapered, shared by the cylinder visualizers.
         void DrawWireCylinder(IPrimitiveDrawInterface* PDI, const FVector3& Center, const FQuat& Rot,
             float TopRadius, float BottomRadius, float HalfHeight, const FVector4& Color, float Thickness)
@@ -1334,5 +1397,311 @@ namespace Lumina
         }
 
         Context.Label(Anchor, kAudioInner, "Listener %d%s", Listener.ListenerIndex, Listener.bApplyDoppler ? "   doppler" : "");
+    }
+
+    void CComponentVisualizer_Spline::DrawPointPanel(FComponentVisualizerContext& Context, SSplineComponent& Spline,
+        const FVector3& Anchor, int32 PointIndex)
+    {
+        ImGui::PushID((int)Context.GetEntity().GetPacked());
+
+        if (Context.BeginPanel("##SplinePoint", Anchor))
+        {
+            const bool bHasPoint = PointIndex >= 0 && PointIndex < (int32)Spline.Points.size();
+
+            if (bHasPoint)
+            {
+                ImGui::Text("Point %d", PointIndex);
+            }
+            else
+            {
+                ImGui::TextDisabled("Spline");
+            }
+
+            ImGui::SameLine();
+            ImGui::TextDisabled("of %d", (int32)Spline.Points.size());
+            ImGui::Separator();
+
+            if (ImGui::SmallButton(LE_ICON_VECTOR_POINT_PLUS " Add"))
+            {
+                Context.BeginEdit("Add Spline Point");
+
+                SSplinePoint NewPoint;
+                if (!Spline.Points.empty())
+                {
+                    // Continues the curve so a new point lands somewhere visible rather than on the last.
+                    const SSplinePoint& Last = Spline.Points.back();
+                    FVector3 Direction = Last.LeaveTangent;
+                    if (Math::LengthSquared(Direction) <= 1.0e-6f)
+                    {
+                        Direction = (Spline.Points.size() >= 2)
+                                  ? (Last.Location - Spline.Points[Spline.Points.size() - 2].Location)
+                                  : FVector3(0.0f, 0.0f, 1.0f);
+                    }
+                    if (Math::LengthSquared(Direction) <= 1.0e-6f)
+                    {
+                        Direction = FVector3(0.0f, 0.0f, 1.0f);
+                    }
+
+                    NewPoint.Location = Last.Location + Math::Normalize(Direction);
+                    NewPoint.Scale = Last.Scale;
+                    NewPoint.Roll = Last.Roll;
+                }
+
+                Spline.Points.push_back(NewPoint);
+                Spline.UpdateTangents();
+                Context.SelectSubElement(PackSplineHandle((int32)Spline.Points.size() - 1, ESplineHandle::Point));
+
+                Context.MarkDirty();
+                Context.EndEdit();
+            }
+            ImGui::SetItemTooltip("Add a point at the end of the spline");
+
+            ImGui::SameLine();
+            ImGui::BeginDisabled(!bHasPoint);
+            if (ImGui::SmallButton(LE_ICON_VECTOR_POINT_MINUS " Delete"))
+            {
+                Context.BeginEdit("Delete Spline Point");
+
+                Spline.Points.erase(Spline.Points.begin() + PointIndex);
+                Spline.UpdateTangents();
+                Context.ClearSubElementSelection();
+
+                Context.MarkDirty();
+                Context.EndEdit();
+            }
+            ImGui::EndDisabled();
+            ImGui::SetItemTooltip("Delete the selected point (Del)");
+
+            ImGui::BeginDisabled(!bHasPoint);
+            {
+                static const char* ModeNames[] = { "Auto", "Linear", "User" };
+                int32 Mode = bHasPoint ? (int32)Spline.Points[PointIndex].TangentMode : 0;
+
+                ImGui::SetNextItemWidth(90.0f);
+                if (ImGui::Combo("Tangent", &Mode, ModeNames, IM_ARRAYSIZE(ModeNames)) && bHasPoint)
+                {
+                    Context.BeginEdit("Set Tangent Mode");
+
+                    Spline.Points[PointIndex].TangentMode = (ESplineTangentMode)Mode;
+                    Spline.UpdateTangents();
+
+                    Context.MarkDirty();
+                    Context.EndEdit();
+                }
+            }
+            ImGui::EndDisabled();
+
+            bool bClosedLoop = Spline.bClosedLoop;
+            if (ImGui::Checkbox("Closed", &bClosedLoop))
+            {
+                Context.BeginEdit("Toggle Spline Loop");
+
+                Spline.bClosedLoop = bClosedLoop;
+                Spline.UpdateTangents();
+
+                Context.MarkDirty();
+                Context.EndEdit();
+            }
+
+            ImGui::SameLine();
+            ImGui::Checkbox("Indices", &bShowPointIndices);
+
+            if (ImGui::SmallButton("Reset Tangents"))
+            {
+                Context.BeginEdit("Reset Spline Tangents");
+
+                for (SSplinePoint& Point : Spline.Points)
+                {
+                    if (Point.TangentMode == ESplineTangentMode::User)
+                    {
+                        Point.TangentMode = ESplineTangentMode::Auto;
+                    }
+                }
+                Spline.UpdateTangents();
+
+                Context.MarkDirty();
+                Context.EndEdit();
+            }
+            ImGui::SetItemTooltip("Return every hand-authored tangent to Auto");
+
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Done"))
+            {
+                Context.ClearSubElementSelection();
+            }
+
+            ImGui::TextDisabled("Ctrl+Click the curve to insert");
+
+            Context.EndPanel();
+        }
+
+        ImGui::PopID();
+    }
+
+    void CComponentVisualizer_Spline::DrawVisualization(FComponentVisualizerContext& Context)
+    {
+        SSplineComponent& Spline = Context.Get<SSplineComponent>();
+        const STransformComponent& Transform = Context.Get<STransformComponent>();
+
+        if (!Spline.bDrawDebug)
+        {
+            return;
+        }
+
+        const FMatrix4 LocalToWorld = Transform.GetWorldMatrix();
+        const FMatrix4 WorldToLocal = Math::Inverse(LocalToWorld);
+
+        auto ToWorld = [&](const FVector3& Local) { return FVector3(LocalToWorld * FVector4(Local, 1.0f)); };
+        auto ToLocal = [&](const FVector3& World) { return FVector3(WorldToLocal * FVector4(World, 1.0f)); };
+
+        const int32 NumPoints = (int32)Spline.Points.size();
+
+        // A point removed from the details panel or by undo can leave the selection past the end.
+        int32 Selected = Context.GetSelectedSubElement();
+        if (Selected >= NumPoints * kSplineHandleKinds)
+        {
+            Context.ClearSubElementSelection();
+            Selected = INDEX_NONE;
+        }
+
+        const int32 SelectedPoint = (Selected >= 0) ? (Selected / kSplineHandleKinds) : INDEX_NONE;
+        const ESplineHandle SelectedHandle = (Selected >= 0) ? (ESplineHandle)(Selected % kSplineHandleKinds) : ESplineHandle::Point;
+
+        if (NumPoints == 0)
+        {
+            DrawPointPanel(Context, Spline, Transform.GetWorldLocationCached(), INDEX_NONE);
+            return;
+        }
+
+        for (int32 Index = 0; Index < NumPoints; ++Index)
+        {
+            const bool bPointSelected = (Index == SelectedPoint);
+
+            // Every point showing two extra handles turns a dense spline into an unpickable cloud.
+            const int32 NumHandles = bPointSelected ? kSplineHandleKinds : 1;
+
+            if (bPointSelected)
+            {
+                const FVector3 PointWorld = ToWorld(Spline.Points[Index].Location);
+                Context.Line(PointWorld, ToWorld(SplineHandleLocal(Spline.Points[Index], ESplineHandle::Arrive)), kSplineArrive, 2.0f);
+                Context.Line(PointWorld, ToWorld(SplineHandleLocal(Spline.Points[Index], ESplineHandle::Leave)), kSplineLeave, 2.0f);
+            }
+
+            for (int32 Kind = 0; Kind < NumHandles; ++Kind)
+            {
+                const ESplineHandle Handle = (ESplineHandle)Kind;
+                const int32 SubElement = PackSplineHandle(Index, Handle);
+                const FVector3 World = ToWorld(SplineHandleLocal(Spline.Points[Index], Handle));
+
+                FVisualizerHandleStyle Style;
+                Style.Color = SplineHandleColor(Handle);
+                Style.PixelRadius = (Handle == ESplineHandle::Point) ? 5.5f : 4.5f;
+                Style.GrabPixelRadius = 11.0f;
+                Style.Tooltip = (Handle == ESplineHandle::Point) ? "Drag to move this point." : "Drag to shape the tangent.";
+
+                const bool bIsActiveHandle = bPointSelected && (Handle == SelectedHandle);
+
+                const FVisualizerHandleResult Result = bIsActiveHandle
+                    ? Context.TranslateHandle((uint32)SubElement, World, Style)
+                    : Context.PointHandle((uint32)SubElement, World, Style);
+
+                if (Result.bPressed)
+                {
+                    Context.SelectSubElement(SubElement);
+                }
+
+                if (Result.bChanged)
+                {
+                    Context.NameEdit("Edit Spline");
+                    ApplySplineHandleLocal(Spline.Points[Index], Handle, ToLocal(Result.Position));
+
+                    // Auto and Linear neighbors re-derive, so the curve updates live rather than on release.
+                    Spline.UpdateTangents();
+                    Context.MarkDirty();
+                }
+
+                if (bShowPointIndices && Handle == ESplineHandle::Point && !bIsActiveHandle)
+                {
+                    const FVector3 LabelAt = World + Context.View.CameraRight * (Context.View.WorldPerPixelAt(World) * 9.0f);
+                    Context.Text(LabelAt, FVector4(1.0f, 1.0f, 1.0f, 0.92f), "%d", Index);
+                }
+            }
+        }
+
+        // Ctrl and click on the curve inserts a point there, splitting that segment.
+        const int32 NumSegments = Spline.GetNumSegments();
+        if (Context.bInputEnabled && !Context.IsInteracting() && NumSegments > 0
+            && ImGui::GetIO().KeyCtrl && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+        {
+            constexpr int32 kStepsPerSegment = 24;
+            constexpr float kInsertPixelRadius = 28.0f;
+
+            const ImVec2 Mouse = ImGui::GetMousePos();
+            float BestDistanceSquared = kInsertPixelRadius * kInsertPixelRadius;
+            float BestKey = -1.0f;
+
+            for (int32 Step = 0; Step <= NumSegments * kStepsPerSegment; ++Step)
+            {
+                const float Key = (float)Step / (float)kStepsPerSegment;
+
+                ImVec2 Screen;
+                if (!Context.View.WorldToScreen(ToWorld(Spline.EvaluatePosition(Key)), Screen))
+                {
+                    continue;
+                }
+
+                const float DX = Mouse.x - Screen.x;
+                const float DY = Mouse.y - Screen.y;
+                const float DistanceSquared = DX * DX + DY * DY;
+                if (DistanceSquared < BestDistanceSquared)
+                {
+                    BestDistanceSquared = DistanceSquared;
+                    BestKey = Key;
+                }
+            }
+
+            if (BestKey >= 0.0f)
+            {
+                Context.BeginEdit("Insert Spline Point");
+
+                SSplinePoint NewPoint;
+                NewPoint.Location = Spline.EvaluatePosition(BestKey);
+                NewPoint.Scale = Spline.EvaluateScale(BestKey);
+                NewPoint.Roll = Spline.EvaluateRoll(BestKey);
+                NewPoint.TangentMode = ESplineTangentMode::Auto;
+
+                const int32 Segment = Math::Clamp((int32)Math::Floor(BestKey), 0, NumSegments - 1);
+                const int32 InsertAt = Segment + 1;
+
+                Spline.Points.insert(Spline.Points.begin() + InsertAt, NewPoint);
+                Spline.UpdateTangents();
+                Context.SelectSubElement(PackSplineHandle(InsertAt, ESplineHandle::Point));
+
+                Context.MarkDirty();
+                Context.EndEdit();
+                return;
+            }
+        }
+
+        if (SelectedPoint == INDEX_NONE)
+        {
+            return;
+        }
+
+        if (Context.bInputEnabled && !ImGui::GetIO().WantTextInput
+            && (ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace)))
+        {
+            Context.BeginEdit("Delete Spline Point");
+
+            Spline.Points.erase(Spline.Points.begin() + SelectedPoint);
+            Spline.UpdateTangents();
+            Context.ClearSubElementSelection();
+
+            Context.MarkDirty();
+            Context.EndEdit();
+            return;
+        }
+
+        DrawPointPanel(Context, Spline, ToWorld(Spline.Points[SelectedPoint].Location), SelectedPoint);
     }
 }

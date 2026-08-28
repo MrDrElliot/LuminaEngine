@@ -174,11 +174,12 @@ namespace Lumina
         ComponentType = InComponentType;
     }
 
-    uint64 FComponentVisualizerContext::MakeKey(uint32 ID) const
+    uint64 FComponentVisualizerContext::MakeKey(uint32 ID, uint32 Salt) const
     {
         uint64 Key = (uint64)Entity.GetPacked();
         Key = (Key * 0x9E3779B97F4A7C15ull) ^ (uint64)(uintptr_t)ComponentType;
         Key = (Key * 0x9E3779B97F4A7C15ull) ^ (uint64)ID;
+        Key = (Key * 0x9E3779B97F4A7C15ull) ^ (uint64)Salt;
 
         // Zero is the no-handle sentinel, so no key may land on it.
         return Key | 1ull;
@@ -589,7 +590,7 @@ namespace Lumina
         }
 
         const FVisualizerHandleStyle& Style = *Desc.Style;
-        const uint64 Key = MakeKey(Desc.ID);
+        const uint64 Key = MakeKey(Desc.ID, Desc.Salt);
         const bool bWasActive = (State.ActiveKey == Key);
 
         // A face pointing away from the camera offers neither a surface nor a grab dot.
@@ -765,6 +766,80 @@ namespace Lumina
         }
 
         State.EndPass();
+    }
+
+    FVisualizerHandleResult FComponentVisualizerContext::TranslateHandle(uint32 ID, const FVector3& World, const FVisualizerHandleStyle& Style)
+    {
+        constexpr float kArmPixels = 46.0f;
+
+        static const FVector3 Axes[3] =
+        {
+            FVector3(1.0f, 0.0f, 0.0f),
+            FVector3(0.0f, 1.0f, 0.0f),
+            FVector3(0.0f, 0.0f, 1.0f),
+        };
+
+        static const FVector4 AxisColors[3] =
+        {
+            FVector4(0.94f, 0.31f, 0.33f, 1.0f),
+            FVector4(0.44f, 0.87f, 0.33f, 1.0f),
+            FVector4(0.31f, 0.56f, 0.98f, 1.0f),
+        };
+
+        const float ArmLength = View.WorldPerPixelAt(World) * kArmPixels;
+
+        FVisualizerHandleResult Combined;
+        Combined.Position = World;
+
+        for (int32 Index = 0; Index < 3; ++Index)
+        {
+            const FVector3 Tip = World + Axes[Index] * ArmLength;
+
+            FVisualizerHandleStyle AxisStyle;
+            AxisStyle.Color = AxisColors[Index];
+            AxisStyle.HoverColor = Style.HoverColor;
+            AxisStyle.ActiveColor = Style.ActiveColor;
+            AxisStyle.PixelRadius = 4.0f;
+            AxisStyle.GrabPixelRadius = 9.0f;
+
+            Line(World, Tip, WithAlpha(AxisColors[Index], 0.85f), 2.0f);
+
+            FHandleDesc Desc;
+            Desc.ID = ID;
+            Desc.Salt = (uint32)(Index + 1);
+            Desc.Position = Tip;
+            Desc.Axis = Axes[Index];
+            Desc.Constraint = EHandleConstraint::Axis;
+            Desc.Style = &AxisStyle;
+
+            const FVisualizerHandleResult Result = ProcessHandle(Desc);
+            if (Result.bHovered || Result.bActive || Result.bPressed || Result.bReleased)
+            {
+                Combined = Result;
+            }
+        }
+
+        FHandleDesc Center;
+        Center.ID = ID;
+        Center.Salt = 0;
+        Center.Position = World;
+        Center.Constraint = EHandleConstraint::Screen;
+        Center.Style = &Style;
+
+        const FVisualizerHandleResult CenterResult = ProcessHandle(Center);
+        if (CenterResult.bHovered || CenterResult.bActive || CenterResult.bPressed || CenterResult.bReleased)
+        {
+            Combined = CenterResult;
+        }
+
+        // Callers move a point, not the arm tip, so report the anchor advanced by this frame's delta.
+        Combined.Position = World + Combined.Delta;
+        return Combined;
+    }
+
+    bool FComponentVisualizerContext::IsInteracting() const
+    {
+        return State.bCapturedInput;
     }
 
     bool FComponentVisualizerContext::BeginPanel(const char* ID, const FVector3& WorldAnchor, ImVec2 PixelOffset)
