@@ -124,6 +124,11 @@ namespace Lumina::ECS
         // Does the lookup itself rather than through GetRaw, so the layout branches fold away at compile time.
         NODISCARD FORCEINLINE T* TryGet(FEntity Entity) const requires CDataComponent<T>
         {
+            // An empty slot is memset to the null handle, so a null query would match one and index out of bounds.
+            if (Entity.IsNull())
+            {
+                return nullptr;
+            }
             const FEntity Slot = Set->FindSlot(Entity.GetIndex());
             if (Slot.GetVersion() != Entity.GetVersion())
             {

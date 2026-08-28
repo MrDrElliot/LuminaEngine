@@ -69,9 +69,10 @@ namespace Lumina::ECS
 
         //~ Queries
 
+        // An empty slot is memset to the null handle, so a null query has to be rejected before the version test.
         NODISCARD FORCEINLINE bool Contains(FEntity Entity) const
         {
-            return FindSlot(Entity.GetIndex()).GetVersion() == Entity.GetVersion();
+            return !Entity.IsNull() && FindSlot(Entity.GetIndex()).GetVersion() == Entity.GetVersion();
         }
 
         // Undefined unless Contains, so the hot path can skip the double lookup.
@@ -173,6 +174,10 @@ namespace Lumina::ECS
 
         NODISCARD FORCEINLINE void* GetRaw(FEntity Entity) const
         {
+            if (Entity.IsNull())
+            {
+                return nullptr;
+            }
             const FEntity Slot = FindSlot(Entity.GetIndex());
             if (Slot.GetVersion() != Entity.GetVersion())
             {

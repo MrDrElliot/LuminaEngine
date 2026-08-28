@@ -201,7 +201,7 @@ namespace Lumina::ECS
     {
         const uint32 EntityIndex = Entity.GetIndex();
         const FEntity Slot = FindSlot(EntityIndex);
-        if (Slot.GetVersion() != Entity.GetVersion())
+        if (Entity.IsNull() || Slot.GetVersion() != Entity.GetVersion())
         {
             return InvalidDenseIndex;
         }
@@ -270,6 +270,11 @@ namespace Lumina::ECS
 
     void* FSparseSet::EmplaceDefaultRaw(FEntity Entity)
     {
+        if (Entity.IsNull())
+        {
+            return nullptr;
+        }
+
         const FEntity ExistingSlot = FindSlot(Entity.GetIndex());
         if (ExistingSlot.GetVersion() == Entity.GetVersion())
         {
@@ -300,7 +305,7 @@ namespace Lumina::ECS
 
     void* FSparseSet::EmplaceCopyRaw(FEntity Entity, const void* Source)
     {
-        if (Source == nullptr || ElementSize == 0)
+        if (Source == nullptr || ElementSize == 0 || Entity.IsNull())
         {
             return EmplaceDefaultRaw(Entity);
         }

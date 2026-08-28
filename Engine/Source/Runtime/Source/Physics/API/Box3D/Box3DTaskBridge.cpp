@@ -1,7 +1,5 @@
 #include "RuntimePCH.h"
 #include "Box3DTaskBridge.h"
-
-#include "Core/Console/ConsoleVariable.h"
 #include "Core/Threading/Thread.h"
 #include "Log/Log.h"
 
