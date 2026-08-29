@@ -1852,6 +1852,8 @@ namespace Lumina::RHI
         Features10.shaderStorageImageWriteWithoutFormat = VK_TRUE;
         Features10.shaderStorageImageReadWithoutFormat  = VK_TRUE;
         Features10.shaderStorageImageExtendedFormats    = VK_TRUE;
+        // Gathers carrying a constant offset, which is how the GTAO passes read a whole quad in one tap.
+        Features10.shaderImageGatherExtended            = VK_TRUE;
         Features10.drawIndirectFirstInstance            = VK_TRUE;
         Features10.vertexPipelineStoresAndAtomics       = VK_TRUE;
         Features10.shaderInt16                          = VK_TRUE;

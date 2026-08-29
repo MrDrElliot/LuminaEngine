@@ -73,6 +73,17 @@ namespace Lumina
         constexpr uint32 GFroxelGridY = 90;
         constexpr uint32 GFroxelGridZ = 128;
 
+        // Fixed by XeGTAO; the prefilter writes exactly these mips and the main pass clamps its lookup to them.
+        constexpr uint32 GTAODepthMipLevels = 5;
+
+        // Slices and steps per slice for quality levels low, medium, high and ultra.
+        constexpr uint32 GGTAOSliceCounts[4]   = { 1, 2, 3, 9 };
+        constexpr uint32 GGTAOStepsPerSlice[4] = { 2, 2, 3, 3 };
+
+        // A value this large collapses the denoise weights onto the center tap, which is how it is disabled.
+        constexpr float GGTAODenoiseDisabledBeta = 1e4f;
+        constexpr float GGTAODenoiseBeta         = 1.2f;
+
 
         static TAtomic<uint32> GReflectionProbeRebakeRequests{0};
 
@@ -630,12 +641,6 @@ namespace Lumina
         SceneGlobalData.FarPlane                        = ViewVolume.GetFar();
         SceneGlobalData.NearPlane                       = ViewVolume.GetNear();
         SceneGlobalData.GTAOSettings                    = FGTAOSettings{};
-        if (const CRendererSettings* RendererSettings = GetDefault<CRendererSettings>())
-        {
-            SceneGlobalData.GTAOSettings.Radius         = RendererSettings->GTAORadius;
-            SceneGlobalData.GTAOSettings.Intensity      = RendererSettings->GTAOIntensity;
-            SceneGlobalData.GTAOSettings.Power          = RendererSettings->GTAOPower;
-        }
         SceneGlobalData.ParallaxSettings.SampleScale       = 1.0f;
         SceneGlobalData.ParallaxSettings.LODBias           = 0.0f;
         SceneGlobalData.ParallaxSettings.ShadowSampleScale = 1.0f;
@@ -1285,7 +1290,6 @@ namespace Lumina
                 {
                     SCENE_GPU_SCOPE(CL, "GTAO");
                     GTAOPass(CL);
-                    GTAOBlurPass(CL);
                 }
 
                 {
@@ -8874,117 +8878,212 @@ namespace Lumina
 
         LUMINA_PROFILE_SECTION_COLORED("GTAO Pass", tracy::Color::Red);
 
-        static const FShaderH VertexShader = FShaderLibrary::Get("FullscreenQuad.slang");
-        static const FShaderH PixelShader = FShaderLibrary::Get("GTAOPixel.slang");
-        if (!VertexShader || !PixelShader)
+        static const FShaderH PrefilterCS = FShaderLibrary::Get("GTAOPrefilterDepth.slang");
+        static const FShaderH MainCS      = FShaderLibrary::Get("GTAOMain.slang");
+        static const FShaderH DenoiseCS   = FShaderLibrary::Get("GTAODenoise.slang");
+        if (!PrefilterCS || !MainCS || !DenoiseCS)
         {
             return;
         }
 
-        const FSceneImage& Output = GetNamedImage(ENamedImage::GTAO);
-        const FSceneImage& Depth  = GetNamedImage(ENamedImage::DepthAttachment);
+        const FSceneImage& Depth        = GetNamedImage(ENamedImage::DepthAttachment);
+        const FSceneImage& WorkingDepth = GetNamedImage(ENamedImage::GTAOWorkingDepth);
+        const FSceneImage& Edges        = GetNamedImage(ENamedImage::GTAOEdges);
+        const FSceneImage& TermA        = GetNamedImage(ENamedImage::GTAO);
+        const FSceneImage& TermB        = GetNamedImage(ENamedImage::GTAODenoise);
+        const FSceneImage& Output       = GetNamedImage(ENamedImage::GTAOBlur);
 
-        RHI::FRenderAttachment Color;
-        Color.Texture = Output.Texture;
-        Color.LoadOp  = RHI::ELoadOp::Undefined;
-        Color.StoreOp = RHI::EStoreOp::Store;
-
-        RHI::FRenderPassDesc Pass;
-        Pass.ColorAttachments = TSpan<const RHI::FRenderAttachment>(&Color, 1);
-        Pass.RenderArea       = Output.GetExtent();
-
-        RHI::CmdBeginRenderPass(CL, Pass);
-        SetViewportScissor(CL, Output.GetExtent());
-        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(RHI::FDepthStencilDesc{}));
-        RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
-
-        FGraphicsPipelineKey Key;
-        Key.VS = VertexShader;
-        Key.PS = PixelShader;
-        Key.ColorTargets.push_back({ Output.Desc.Format, {} });
-        RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
-
-        struct FData
+        const int32 DepthSlot = Depth.GetResourceID();
+        if (DepthSlot < 0 || !WorkingDepth.IsValid() || WorkingDepth.GetNumMips() < GTAODepthMipLevels)
         {
-            uint32 DepthIndex;
-        } PC;
-
-        PC.DepthIndex = (uint32)Depth.GetResourceID();
-
-        RHI::CmdDraw(CL, MakeArgs(PC), 3, 1, 0, 0);
-        RHI::CmdEndRenderPass(CL);
-        Barriers::RasterToRead(CL);
-    }
-
-    void FDefaultSceneRenderer::GTAOBlurPass(RHI::FCmdListH CL)
-    {
-        FFrameData& Frame = *RenderFrame;
-        if (Frame.Geometry.DrawCommands.empty() || !IsGTAOEnabled())
-        {
+            LOG_ERROR("GTAO working depth pyramid is missing or too shallow; skipping the pass.");
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("GTAO Blur", tracy::Color::Red);
+        const uint32 Width  = Output.GetSizeX();
+        const uint32 Height = Output.GetSizeY();
 
-        static const FShaderH VertexShader = FShaderLibrary::Get("FullscreenQuad.slang");
-        static const FShaderH DenoisePS = FShaderLibrary::Get("GTAOBlurPixel.slang");
-        static const FShaderH UpsamplePS = FShaderLibrary::Get("GTAOUpsamplePixel.slang");
-        if (!VertexShader || !DenoisePS || !UpsamplePS)
+        float Radius                   = 0.5f;
+        float Intensity                = 1.0f;
+        float FinalValuePower          = 2.2f;
+        float RadiusMultiplier         = 1.457f;
+        float FalloffRange             = 0.615f;
+        float SampleDistributionPower  = 2.0f;
+        float ThinOccluderCompensation = 0.0f;
+        float DepthMipSamplingOffset   = 3.3f;
+        int32 QualityLevel             = 3;
+        int32 DenoisePasses            = 1;
+
+        if (const CRendererSettings* Settings = GetDefault<CRendererSettings>())
         {
-            return;
+            Radius                   = Settings->GTAORadius;
+            Intensity                = Settings->GTAOIntensity;
+            FinalValuePower          = Settings->GTAOPower;
+            RadiusMultiplier         = Settings->GTAORadiusMultiplier;
+            FalloffRange             = Settings->GTAOFalloffRange;
+            SampleDistributionPower  = Settings->GTAOSampleDistributionPower;
+            ThinOccluderCompensation = Settings->GTAOThinOccluderCompensation;
+            DepthMipSamplingOffset   = Settings->GTAODepthMipSamplingOffset;
+            QualityLevel             = Math::Clamp(Settings->GTAOQualityLevel, 0, 3);
+            DenoisePasses            = Math::Clamp(Settings->GTAODenoisePasses, 0, 3);
         }
 
-        const FSceneImage& Raw      = GetNamedImage(ENamedImage::GTAO);
-        const FSceneImage& Denoised = GetNamedImage(ENamedImage::GTAODenoise);
-        const FSceneImage& Output   = GetNamedImage(ENamedImage::GTAOBlur);
-        const FSceneImage& Depth    = GetNamedImage(ENamedImage::DepthAttachment);
+        // Every heuristic in the reference is tuned against this pre-multiplied radius, never the raw one.
+        const float EffectRadius = Radius * RadiusMultiplier;
 
-        struct FData
         {
-            uint32 AOIndex;
-            uint32 DepthIndex;
-        };
+            SCENE_GPU_SCOPE(CL, "GTAO Prefilter Depth");
 
-        const struct
+            struct FPrefilterConstants
+            {
+                uint32 ViewportSize[2];
+                uint32 SrcDepthIndex;
+                uint32 MipUAV[GTAODepthMipLevels];
+                float  EffectRadius;
+                float  EffectFalloffRange;
+            } PC = {};
+
+            PC.ViewportSize[0]    = Width;
+            PC.ViewportSize[1]    = Height;
+            PC.SrcDepthIndex      = (uint32)DepthSlot;
+            PC.EffectRadius       = EffectRadius;
+            PC.EffectFalloffRange = FalloffRange;
+
+            for (uint32 Mip = 0; Mip < GTAODepthMipLevels; ++Mip)
+            {
+                const int32 Slot = WorkingDepth.GetMipUAVIndex(Mip);
+                if (Slot < 0)
+                {
+                    LOG_ERROR("GTAO working depth mip {} has no storage heap slot; skipping the pass.", Mip);
+                    return;
+                }
+                PC.MipUAV[Mip] = (uint32)Slot;
+            }
+
+            RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(PrefilterCS));
+
+            // One group covers a 16x16 tile, which reduces to exactly one texel of the last mip.
+            constexpr uint32 PrefilterTile = 16u;
+            RHI::CmdDispatch(CL, MakeArgs(PC),
+                RenderUtils::GetGroupCount(Width, PrefilterTile),
+                RenderUtils::GetGroupCount(Height, PrefilterTile), 1);
+
+            Barriers::ComputeToAll(CL);
+        }
+
         {
-            FShaderH PS;
-            const FSceneImage*  Src;
-            const FSceneImage*  Dst;
-        } Stages[2] =
+            SCENE_GPU_SCOPE(CL, "GTAO Main");
+
+            struct FMainConstants
+            {
+                uint32 ViewportSize[2];
+                uint32 WorkingDepthIndex;
+                uint32 AOTermUAV;
+                uint32 EdgesUAV;
+                uint32 SliceCount;
+                uint32 StepsPerSlice;
+                uint32 NoiseIndex;
+                float  EffectRadius;
+                float  EffectFalloffRange;
+                float  SampleDistributionPower;
+                float  ThinOccluderCompensation;
+                float  FinalValuePower;
+                float  DepthMIPSamplingOffset;
+            } PC = {};
+
+            const int32 WorkingDepthSlot = WorkingDepth.GetResourceID();
+            const int32 TermSlot         = TermA.GetMipUAVIndex(0);
+            const int32 EdgesSlot        = Edges.GetMipUAVIndex(0);
+            if (WorkingDepthSlot < 0 || TermSlot < 0 || EdgesSlot < 0)
+            {
+                LOG_ERROR("GTAO main pass is missing a heap slot; skipping the pass.");
+                return;
+            }
+
+            // Rotating the noise only pays off once something downstream accumulates across frames.
+            const uint32 FrameIndex = (CurrentView != nullptr) ? CurrentView->TemporalFrameIndex : 0u;
+
+            PC.ViewportSize[0]          = Width;
+            PC.ViewportSize[1]          = Height;
+            PC.WorkingDepthIndex        = (uint32)WorkingDepthSlot;
+            PC.AOTermUAV                = (uint32)TermSlot;
+            PC.EdgesUAV                 = (uint32)EdgesSlot;
+            PC.SliceCount               = GGTAOSliceCounts[QualityLevel];
+            PC.StepsPerSlice            = GGTAOStepsPerSlice[QualityLevel];
+            PC.NoiseIndex               = (DenoisePasses > 0) ? (FrameIndex % 64u) : 0u;
+            PC.EffectRadius             = EffectRadius;
+            PC.EffectFalloffRange       = FalloffRange;
+            PC.SampleDistributionPower  = SampleDistributionPower;
+            PC.ThinOccluderCompensation = ThinOccluderCompensation;
+            PC.FinalValuePower          = FinalValuePower;
+            PC.DepthMIPSamplingOffset   = DepthMipSamplingOffset;
+
+            RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(MainCS));
+            RHI::CmdDispatch(CL, MakeArgs(PC),
+                RenderUtils::GetGroupCount(Width, 8u),
+                RenderUtils::GetGroupCount(Height, 8u), 1);
+
+            Barriers::ComputeToAll(CL);
+        }
+
         {
-            { DenoisePS,  &Raw,      &Denoised },
-            { UpsamplePS, &Denoised, &Output   },
-        };
+            SCENE_GPU_SCOPE(CL, "GTAO Denoise");
 
-        for (const auto& Stage : Stages)
-        {
-            RHI::FRenderAttachment Color;
-            Color.Texture = Stage.Dst->Texture;
-            Color.LoadOp  = RHI::ELoadOp::Undefined;
-            Color.StoreOp = RHI::EStoreOp::Store;
+            struct FDenoiseConstants
+            {
+                uint32 ViewportSize[2];
+                uint32 AOTermIndex;
+                uint32 EdgesIndex;
+                uint32 OutputUAV;
+                uint32 FinalApply;
+                float  DenoiseBlurBeta;
+                float  Intensity;
+            } PC = {};
 
-            RHI::FRenderPassDesc Pass;
-            Pass.ColorAttachments = TSpan<const RHI::FRenderAttachment>(&Color, 1);
-            Pass.RenderArea       = Stage.Dst->GetExtent();
+            const int32 EdgesSlot = Edges.GetResourceID();
+            if (EdgesSlot < 0)
+            {
+                LOG_ERROR("GTAO edge texture has no sampled heap slot; skipping the denoise.");
+                return;
+            }
 
-            RHI::CmdBeginRenderPass(CL, Pass);
-            SetViewportScissor(CL, Stage.Dst->GetExtent());
-            RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(RHI::FDepthStencilDesc{}));
-            RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
+            PC.ViewportSize[0] = Width;
+            PC.ViewportSize[1] = Height;
+            PC.EdgesIndex      = (uint32)EdgesSlot;
+            PC.DenoiseBlurBeta = (DenoisePasses == 0) ? GGTAODenoiseDisabledBeta : GGTAODenoiseBeta;
+            PC.Intensity       = Intensity;
 
-            FGraphicsPipelineKey Key;
-            Key.VS = VertexShader;
-            Key.PS = Stage.PS;
-            Key.ColorTargets.push_back({ Stage.Dst->Desc.Format, {} });
-            RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
+            RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(DenoiseCS));
 
-            FData PC;
-            PC.AOIndex    = (uint32)Stage.Src->GetResourceID();
-            PC.DepthIndex = (uint32)Depth.GetResourceID();
+            // A disabled denoise still runs one pass, because the final apply is what undoes the packing scale.
+            const uint32 NumPasses = (uint32)Math::Max(DenoisePasses, 1);
+            for (uint32 PassIndex = 0; PassIndex < NumPasses; ++PassIndex)
+            {
+                const bool bFinal = (PassIndex + 1u) == NumPasses;
+                const bool bEven  = (PassIndex & 1u) == 0u;
 
-            RHI::CmdDraw(CL, MakeArgs(PC), 3, 1, 0, 0);
-            RHI::CmdEndRenderPass(CL);
-            Barriers::RasterToRead(CL);
+                const FSceneImage& Src = bEven ? TermA : TermB;
+                const FSceneImage& Dst = bFinal ? Output : (bEven ? TermB : TermA);
+
+                const int32 SrcSlot = Src.GetResourceID();
+                const int32 DstSlot = Dst.GetMipUAVIndex(0);
+                if (SrcSlot < 0 || DstSlot < 0)
+                {
+                    LOG_ERROR("GTAO denoise pass {} is missing a heap slot; stopping the chain.", PassIndex);
+                    return;
+                }
+
+                PC.AOTermIndex = (uint32)SrcSlot;
+                PC.OutputUAV   = (uint32)DstSlot;
+                PC.FinalApply  = bFinal ? 1u : 0u;
+
+                // Each thread denoises two horizontal pixels, so a group spans 16 across and 8 down.
+                RHI::CmdDispatch(CL, MakeArgs(PC),
+                    RenderUtils::GetGroupCount(Width, 16u),
+                    RenderUtils::GetGroupCount(Height, 8u), 1);
+
+                Barriers::ComputeToAll(CL);
+            }
         }
     }
 
@@ -12665,6 +12764,8 @@ namespace Lumina
         case ENamedImage::SMAABlend:          return "Scene.SMAABlend";
         case ENamedImage::SMAAArea:           return "Scene.SMAAArea";
         case ENamedImage::SMAASearch:         return "Scene.SMAASearch";
+        case ENamedImage::GTAOWorkingDepth:   return "Scene.GTAOWorkingDepth";
+        case ENamedImage::GTAOEdges:          return "Scene.GTAOEdges";
         case ENamedImage::GTAO:               return "Scene.GTAO";
         case ENamedImage::GTAODenoise:        return "Scene.GTAODenoise";
         case ENamedImage::GTAOBlur:           return "Scene.GTAOBlur";
@@ -12950,13 +13051,27 @@ namespace Lumina
         Desc.Format = EFormat::RGBA8_UNORM;
         View.Images[(int)ENamedImage::SMAABlend] = CreateSceneImage(Desc);
 
+        // XeGTAO runs entirely in compute at full resolution, so every stage target needs a storage view.
         Desc.Format    = EFormat::R8_UNORM;
-        Desc.Dimension = FUIntVector3(Math::Max(Extent.x / 2, 1u), Math::Max(Extent.y / 2, 1u), 1);
-        View.Images[(int)ENamedImage::GTAO]        = CreateSceneImage(Desc);
-        View.Images[(int)ENamedImage::GTAODenoise] = CreateSceneImage(Desc);
         Desc.Dimension = FUIntVector3(Extent.x, Extent.y, 1);
-        View.Images[(int)ENamedImage::GTAOBlur]    = CreateSceneImage(Desc);
+        Desc.Usage     = RHI::EImageUsageFlags::ColorAttachment | RHI::EImageUsageFlags::Sampled |
+                         RHI::EImageUsageFlags::Storage;
+        View.Images[(int)ENamedImage::GTAOEdges]   = CreateSceneImage(Desc, /*bSampled*/ true, /*bMipUAVs*/ true);
+        View.Images[(int)ENamedImage::GTAO]        = CreateSceneImage(Desc, /*bSampled*/ true, /*bMipUAVs*/ true);
+        View.Images[(int)ENamedImage::GTAODenoise] = CreateSceneImage(Desc, /*bSampled*/ true, /*bMipUAVs*/ true);
+        View.Images[(int)ENamedImage::GTAOBlur]    = CreateSceneImage(Desc, /*bSampled*/ true, /*bMipUAVs*/ true);
 
+        {
+            RHI::FTextureDesc WorkingDepthDesc;
+            WorkingDepthDesc.Type      = RHI::ETextureType::Tex2D;
+            WorkingDepthDesc.Dimension = FUIntVector3(Extent.x, Extent.y, 1);
+            WorkingDepthDesc.Format    = EFormat::R32_FLOAT;
+            WorkingDepthDesc.MipCount  = GTAODepthMipLevels;
+            WorkingDepthDesc.Usage     = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
+            View.Images[(int)ENamedImage::GTAOWorkingDepth] = CreateSceneImage(WorkingDepthDesc, true, /*bMipUAVs*/ true);
+        }
+
+        Desc.Usage = RHI::EImageUsageFlags::ColorAttachment | RHI::EImageUsageFlags::Sampled;
         View.Images[(int)ENamedImage::ShadowMask]  = CreateSceneImage(Desc);
 
         // Scene depth; transfer-dst for the no-occluder clear.

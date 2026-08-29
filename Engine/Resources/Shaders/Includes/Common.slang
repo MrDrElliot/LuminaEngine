@@ -222,14 +222,9 @@ struct FEntityAABB
     float MaxY;
 };
 
-// GTAO tuning; matches C++ FGTAOSettings (SceneRenderTypes.h). Slice directions come from
-// per-pixel interleaved gradient noise in the shader, no CPU kernel.
+// Tuning reaches the GTAO passes through their own push constants, so only the result lands here.
 struct FGTAOSettings
 {
-    float  Radius;
-    float  Intensity;
-    float  Power;
-    float  Bias;             // reserved (unused by GTAO)
     uint   AOTextureIndex;    // bindless SRV the base pass samples; ~0u = no GTAO for this view
     uint   _Pad0;
     uint   _Pad1;

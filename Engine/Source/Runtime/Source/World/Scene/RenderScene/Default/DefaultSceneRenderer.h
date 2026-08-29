@@ -426,6 +426,8 @@ namespace Lumina
             SMAABlend,
             SMAAArea,
             SMAASearch,
+            GTAOWorkingDepth,
+            GTAOEdges,
             GTAO,
             GTAODenoise,
             GTAOBlur,
@@ -689,7 +691,6 @@ namespace Lumina
         void TerrainDepthPrePass(RHI::FCmdListH CL);
         void TerrainRenderPass(RHI::FCmdListH CL);
         void GTAOPass(RHI::FCmdListH CL);
-        void GTAOBlurPass(RHI::FCmdListH CL);
         void ShadowMaskPass(RHI::FCmdListH CL);
         /** MBOIT pass 1: accumulate absorbance moments over the translucent draw list, opacity only. */
         void MomentGenerationPass(RHI::FCmdListH CL);

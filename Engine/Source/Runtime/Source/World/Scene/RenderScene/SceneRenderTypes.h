@@ -583,13 +583,9 @@ namespace Lumina
         ESolidDrawMode  Mode;
     };
 
+    // Tuning reaches the GTAO passes through their own push constants, so only the result lands here.
     struct FGTAOSettings
     {
-        float  Radius    = 0.5f;
-        float  Intensity = 1.0f;
-        float  Power     = 2.0f;
-        float  Bias      = 0.025f;   // reserved (unused by GTAO)
-
         uint32 AOTextureIndex = ~0u;
         uint32 _Pad0 = 0;
         uint32 _Pad1 = 0;

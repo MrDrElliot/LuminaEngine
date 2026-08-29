@@ -704,39 +704,62 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
         }
     }
 
-    // Hard upper bound mirrors LightCull's write cap; protects against any path
-    // (e.g. uninitialised cluster memory) that leaves Count outside [0, LIGHTS_PER_CLUSTER].
+    // Hard upper bound mirrors LightCull's write cap, so uninitialized cluster memory cannot walk past the array.
     uint SafeLightCount = min(LightCount, (uint)LIGHTS_PER_CLUSTER);
     uint NumLights      = GetNumLights();   // loop-invariant; hoisted out of the per-light test
-    for (uint i = 0; i < SafeLightCount; ++i)
+
+    // LightCull appends in ascending order, so one cursor per lane walks the cluster list as a merge.
+    [loop]
+    for (uint Cursor = 0u; ; )
     {
-        uint LightIndex = Clusters()[TileIndex].LightIndices[i];
-        // Cluster contents go stale across a scene switch and the array holds exactly NumLights entries.
+        // Index the array only in range; Count sits right after it, and would read as a real light.
+        const bool bLaneDone = (Cursor >= SafeLightCount);
+        const uint ReadSlot  = bLaneDone ? 0u : Cursor;
+        const uint LaneNext  = bLaneDone ? 0xFFFFFFFFu : Clusters()[TileIndex].LightIndices[ReadSlot];
+
+#ifdef SHADING_COMPUTE
+        // The wave walks the union of its lanes' lists, which is what puts each light fetch in scalar registers.
+        const uint LightIndex = WaveReadLaneFirst(WaveActiveMin(LaneNext));
+        const bool bWaveDone  = (LightIndex == 0xFFFFFFFFu);
+#else
+        const uint LightIndex = LaneNext;
+        const bool bWaveDone  = bLaneDone;
+#endif
+        if (bWaveDone)
+        {
+            break;
+        }
+
+        // Advance before any skip below, or a rejected index would pin the cursor and hang the loop.
+        const bool bLaneListed = (LaneNext == LightIndex);
+        Cursor += bLaneListed ? 1u : 0u;
+
+        // Wave-uniform on the scalar path, so rejecting a stale index never splits the wave.
         if (LightIndex >= NumLights)
         {
             continue;
         }
 
-        // Cheap culls read only Position/Radius; the full 64B light is fetched only for survivors, so every
-        // distance- or back-face-culled light skips ~48B of global load and never becomes live here.
+        // Cheap culls read only Position/Radius; the full 64B light is fetched only once some lane wants it.
         float3 LightPos = LightData().Lights[LightIndex].Position;
         float  Radius   = LightData().Lights[LightIndex].Radius;
 
         float3 LightToFrag = LightPos - WorldPosition;
         float  DistSq      = dot(LightToFrag, LightToFrag);
-        if (DistSq >= Radius * Radius)
-        {
-            continue;
-        }
+        float  InvDist     = rsqrt(max(DistSq, 1e-8));
+        float3 L           = LightToFrag * InvDist;
 
-        float  InvDist = rsqrt(max(DistSq, 1e-8));
-        float3 L       = LightToFrag * InvDist;
-
-        // Cluster membership is conservative: a listed light may light only this pixel's back face,
-        // which contributes zero, so skip the shadow + BRDF work (and the full light fetch) for it.
-        // Foliage is the exception, since a light behind a leaf is exactly what the transmitted lobe wants.
+        // A listed light may reach only this pixel's back face, which contributes nothing except through foliage.
         const bool bBackFacing = dot(N, L) <= 0.0;
-        if (bBackFacing && !bFoliage)
+        const bool bLit        = bLaneListed
+                              && (DistSq < Radius * Radius)
+                              && (!bBackFacing || bFoliage);
+
+#ifdef SHADING_COMPUTE
+        if (!WaveActiveAnyTrue(bLit))
+#else
+        if (!bLit)
+#endif
         {
             continue;
         }
@@ -744,36 +767,39 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
         FLight Light       = GetLightAt(LightIndex);
         float  DistToLight = DistSq * InvDist;
 
-        float Shadow = 1.0;
-        if (Light.ShadowDataIndex != INDEX_NONE)
+        if (bLit)
         {
-            Shadow = ComputeShadowFactor(Light, WorldPosition, bBackFacing ? -N : N, ViewPosition, ScreenPos, bReceiveShadow);
-        }
+            float Shadow = 1.0;
+            if (Light.ShadowDataIndex != INDEX_NONE)
+            {
+                Shadow = ComputeShadowFactor(Light, WorldPosition, bBackFacing ? -N : N, ViewPosition, ScreenPos, bReceiveShadow);
+            }
 
-        if (bFoliage)
-        {
-            Lo += EvaluateTransmission(Ctx, L, ComputeLightRadiance(Light, L, DistToLight),
-                                       G.Transmission, G.Thickness) * Shadow;
-        }
+            if (bFoliage)
+            {
+                Lo += EvaluateTransmission(Ctx, L, ComputeLightRadiance(Light, L, DistToLight),
+                                           G.Transmission, G.Thickness) * Shadow;
+            }
 
 #ifdef TRANSLUCENT
-        float3 LightDiffuse, LightSpec;
-        EvaluateLightContributionSplit(Light, Ctx, L, DistToLight, LightDiffuse, LightSpec);
-        Lo     += LightDiffuse * Shadow;
-        LoSpec += LightSpec * Shadow;
+            float3 LightDiffuse, LightSpec;
+            EvaluateLightContributionSplit(Light, Ctx, L, DistToLight, LightDiffuse, LightSpec);
+            Lo     += LightDiffuse * Shadow;
+            LoSpec += LightSpec * Shadow;
 #else
-        float3 LightBase = EvaluateLightContribution(Light, Ctx, L, DistToLight);
+            float3 LightBase = EvaluateLightContribution(Light, Ctx, L, DistToLight);
 
-        if (Coat > 0.0)
-        {
-            float CoatF;
-            const float CoatSpec = EvaluateClearcoatLobe(N, V, L, G.ClearcoatRoughness, CoatF);
-            LightBase *= (1.0 - Coat * CoatF);
-            LoCoat    += ComputeLightRadiance(Light, L, DistToLight) * (CoatSpec * Coat) * Shadow;
-        }
+            if (Coat > 0.0)
+            {
+                float CoatF;
+                const float CoatSpec = EvaluateClearcoatLobe(N, V, L, G.ClearcoatRoughness, CoatF);
+                LightBase *= (1.0 - Coat * CoatF);
+                LoCoat    += ComputeLightRadiance(Light, L, DistToLight) * (CoatSpec * Coat) * Shadow;
+            }
 
-        Lo += LightBase * Shadow;
+            Lo += LightBase * Shadow;
 #endif
+        }
     }
 
     // Attenuates ambient/IBL only; direct light has its own occlusion. TRANSLUCENT skips it entirely --

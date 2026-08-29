@@ -355,6 +355,34 @@ namespace Lumina
 
         /** GTAO contrast exponent applied to the AO factor. Higher = darker, tighter contact shadows. */
         PROPERTY(Editable, Category = "Ambient Occlusion", ClampMin = 0.1f)
-        float GTAOPower = 2.0f;
+        float GTAOPower = 2.2f;
+
+        /** Slices and steps per pixel. 0 low, 1 medium, 2 high, 3 ultra. */
+        PROPERTY(Editable, Category = "Ambient Occlusion", ClampMin = 0, ClampMax = 3)
+        int32 GTAOQualityLevel = 3;
+
+        /** Edge-aware denoise passes. 0 disabled, 1 sharp, 2 medium, 3 soft. */
+        PROPERTY(Editable, Category = "Ambient Occlusion", ClampMin = 0, ClampMax = 3)
+        int32 GTAODenoisePasses = 1;
+
+        /** Scales the sampled radius against the ground-truth radius to counter screen-space bias. */
+        PROPERTY(Editable, Category = "Ambient Occlusion|Heuristics", ClampMin = 0.3f, ClampMax = 3.0f)
+        float GTAORadiusMultiplier = 1.457f;
+
+        /** Fraction of the radius over which a sample's contribution fades to nothing. */
+        PROPERTY(Editable, Category = "Ambient Occlusion|Heuristics", ClampMin = 0.0f, ClampMax = 1.0f)
+        float GTAOFalloffRange = 0.615f;
+
+        /** 1 spaces samples evenly along a slice, higher pulls them toward the center where crevices are. */
+        PROPERTY(Editable, Category = "Ambient Occlusion|Heuristics", ClampMin = 1.0f, ClampMax = 3.0f)
+        float GTAOSampleDistributionPower = 2.0f;
+
+        /** Discards samples behind the center sooner, countering over-darkening behind thin geometry. */
+        PROPERTY(Editable, Category = "Ambient Occlusion|Heuristics", ClampMin = 0.0f, ClampMax = 0.7f)
+        float GTAOThinOccluderCompensation = 0.0f;
+
+        /** Trades depth-pyramid bandwidth against thin-object accuracy and temporal stability. */
+        PROPERTY(Editable, Category = "Ambient Occlusion|Heuristics", ClampMin = 0.0f, ClampMax = 30.0f)
+        float GTAODepthMipSamplingOffset = 3.3f;
     };
 }

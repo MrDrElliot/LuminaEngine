@@ -385,7 +385,8 @@ namespace Lumina
         uint32 TargetOptionCount = 2;
 
         // Declaring the capability silences warning 41012, and the emitted SPIR-V is identical.
-        const char* const WaveCapabilities[] = { "spvGroupNonUniformShuffle", "spvGroupNonUniformVote" };
+        const char* const WaveCapabilities[] = { "spvGroupNonUniformShuffle", "spvGroupNonUniformVote",
+                                                 "spvGroupNonUniformBallot", "spvGroupNonUniformArithmetic" };
         for (const char* CapabilityName : WaveCapabilities)
         {
             const SlangCapabilityID Capability = GlobalSession->findCapability(CapabilityName);
