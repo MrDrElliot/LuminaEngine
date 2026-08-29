@@ -51,7 +51,7 @@ namespace
         FQuat Result = FQuat::Identity();
         for (int32 i = Length - 1; i >= 0; --i)
         {
-            Result = Result * Pose.Rotations[Chain[i]];
+            Result = Result * Pose.GetRotation(Chain[i]);
         }
         return Result;
     }
@@ -61,9 +61,9 @@ namespace
         ASSERT_EQ(Actual.GetNumBones(), Expected.GetNumBones());
         for (int32 i = 0; i < Actual.GetNumBones(); ++i)
         {
-            EXPECT_NEAR(Math::Length(Actual.Translations[i] - Expected.Translations[i]), 0.0f, AdditivePositionTolerance) << "bone " << i;
-            EXPECT_NEAR(Math::Length(Actual.Scales[i] - Expected.Scales[i]), 0.0f, AdditiveScaleTolerance) << "bone " << i;
-            EXPECT_NEAR(AdditiveAngleDegrees(Actual.Rotations[i], Expected.Rotations[i]), 0.0f, AdditiveAngleTolerance) << "bone " << i;
+            EXPECT_NEAR(Math::Length(Actual.GetTranslation(i) - Expected.GetTranslation(i)), 0.0f, AdditivePositionTolerance) << "bone " << i;
+            EXPECT_NEAR(Math::Length(Actual.GetScale(i) - Expected.GetScale(i)), 0.0f, AdditiveScaleTolerance) << "bone " << i;
+            EXPECT_NEAR(AdditiveAngleDegrees(Actual.GetRotation(i), Expected.GetRotation(i)), 0.0f, AdditiveAngleTolerance) << "bone " << i;
         }
     }
 
@@ -75,11 +75,11 @@ namespace
         for (int32 i = 0; i < Pose.GetNumBones(); ++i)
         {
             const float Scaled = Seed * (float)(i + 1);
-            Pose.Translations[i] += FVector3(0.11f * Scaled, -0.07f * Scaled, 0.19f * Scaled);
-            Pose.Rotations[i]     = Math::Normalize(FQuat(FVector3(Math::Radians(17.0f * Scaled),
-                                                                   Math::Radians(-23.0f * Scaled),
-                                                                   Math::Radians(9.0f * Scaled))) * Pose.Rotations[i]);
-            Pose.Scales[i]       *= FVector3(1.0f + 0.05f * Scaled, 1.0f - 0.03f * Scaled, 1.0f + 0.08f * Scaled);
+            Pose.SetTranslation(i, Pose.GetTranslation(i) + FVector3(0.11f * Scaled, -0.07f * Scaled, 0.19f * Scaled));
+            Pose.SetRotation(i, Math::Normalize(FQuat(FVector3(Math::Radians(17.0f * Scaled),
+                                                               Math::Radians(-23.0f * Scaled),
+                                                               Math::Radians(9.0f * Scaled))) * Pose.GetRotation(i)));
+            Pose.SetScale(i, Pose.GetScale(i) * FVector3(1.0f + 0.05f * Scaled, 1.0f - 0.03f * Scaled, 1.0f + 0.08f * Scaled));
         }
         return Pose;
     }
@@ -198,10 +198,10 @@ TEST(AnimAdditive, MeshSpaceDeltaIsIndependentOfTheBaseParentChain)
     BaseA.ResetToBindPose(&Skeleton);
 
     FPose BaseB = BaseA;
-    BaseB.Rotations[0] = FQuat(FVector3(0.0f, 0.0f, Math::Radians(50.0f))) * BaseB.Rotations[0];
+    BaseB.SetRotation(0, FQuat(FVector3(0.0f, 0.0f, Math::Radians(50.0f))) * BaseB.GetRotation(0));
 
     FPose Aimed = BaseA;
-    Aimed.Rotations[Hand] = FQuat(FVector3(Math::Radians(30.0f), 0.0f, 0.0f)) * Aimed.Rotations[Hand];
+    Aimed.SetRotation(Hand, FQuat(FVector3(Math::Radians(30.0f), 0.0f, 0.0f)) * Aimed.GetRotation(Hand));
 
     FPose MeshDelta;
     AnimPose::MakeAdditiveMeshSpace(Aimed, BaseA, &Skeleton, MeshDelta);
@@ -281,13 +281,13 @@ TEST(AnimAdditive, BonesPastTheLODCutCarryAnIdentityDelta)
     FPose Delta;
     AnimPose::MakeAdditiveFromBase(Source, Base, Delta, 2);
 
-    EXPECT_NEAR(Math::Length(Delta.Translations[2]), 0.0f, AdditivePositionTolerance);
-    EXPECT_NEAR(AdditiveAngleDegrees(Delta.Rotations[2], FQuat::Identity()), 0.0f, AdditiveAngleTolerance);
-    EXPECT_NEAR(Math::Length(Delta.Scales[2] - FVector3(1.0f)), 0.0f, AdditiveScaleTolerance);
+    EXPECT_NEAR(Math::Length(Delta.GetTranslation(2)), 0.0f, AdditivePositionTolerance);
+    EXPECT_NEAR(AdditiveAngleDegrees(Delta.GetRotation(2), FQuat::Identity()), 0.0f, AdditiveAngleTolerance);
+    EXPECT_NEAR(Math::Length(Delta.GetScale(2) - FVector3(1.0f)), 0.0f, AdditiveScaleTolerance);
 
     FPose Result;
     AnimPose::ApplyAdditive(Base, Delta, 1.0f, Result);
-    EXPECT_NEAR(AdditiveAngleDegrees(Result.Rotations[2], Base.Rotations[2]), 0.0f, AdditiveAngleTolerance);
+    EXPECT_NEAR(AdditiveAngleDegrees(Result.GetRotation(2), Base.GetRotation(2)), 0.0f, AdditiveAngleTolerance);
 }
 
 TEST(AnimAdditiveSampling, RefPoseBaseSamplesTheDeltaAgainstBind)

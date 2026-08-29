@@ -47,6 +47,9 @@ namespace LuminaHashMapBench
     template <typename K, typename V>
     using TBaselineMap = std::unordered_map<K, V, FBaselineHash>;
 
+    template <typename T>
+    using TBaselineSet = std::unordered_set<T, FBaselineHash>;
+
     volatile uint64 GBenchSink = 0;
 
     constexpr int kElementCount = 200'000;
@@ -1044,7 +1047,7 @@ namespace LuminaHashMapBench
 
         const double BaselineInsert = BestMillisOf(kRepeats, [&Keys]
         {
-            THashSet<uint32> Set;
+            TBaselineSet<uint32> Set;
             for (uint32 Key : Keys)
             {
                 Set.insert(Key);
@@ -1062,7 +1065,7 @@ namespace LuminaHashMapBench
             GBenchSink += Set.size();
         });
 
-        THashSet<uint32> BaselineSet;
+        TBaselineSet<uint32> BaselineSet;
         TLuminaSet<uint32> LuminaSet;
         for (uint32 Key : Keys)
         {

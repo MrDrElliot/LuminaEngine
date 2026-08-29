@@ -3,6 +3,7 @@
 #include "Assets/AssetTypes/Audio/AudioGraph.h"
 #include "Assets/AssetTypes/Audio/AudioStream.h"
 #include "Assets/AssetTypes/Audio/SoundBase.h"
+#include "Core/Object/Class.h"
 #include "Core/Object/ObjectCore.h"
 #include "World/Entity/Components/AudioSourceComponent.h"
 

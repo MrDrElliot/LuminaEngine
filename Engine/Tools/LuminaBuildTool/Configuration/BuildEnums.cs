@@ -55,6 +55,31 @@ public enum ModuleHostType
     Program,
 }
 
+/// <summary>Which half of a profile guided optimization cycle a build is.</summary>
+public enum PgoMode
+{
+    Off,
+
+    /// <summary>Instrumented, so running the binary writes a profile. Slower than an ordinary build.</summary>
+    Instrument,
+
+    /// <summary>Optimized against a profile an instrumented run already collected.</summary>
+    Optimize,
+}
+
+/// <summary>What LUMINA_FORCEINLINE_HINT expands to for a target.</summary>
+public enum ForceInlineHintPolicy
+{
+    /// <summary>Decided by configuration in the engine's target rules.</summary>
+    Default,
+
+    /// <summary>Forced, matching plain FORCEINLINE.</summary>
+    Force,
+
+    /// <summary>Demoted to inline, leaving the choice to the optimizer and to PGO.</summary>
+    Hint,
+}
+
 /// <summary>How a module participates in precompiled headers.</summary>
 public enum PrecompiledHeaderMode
 {

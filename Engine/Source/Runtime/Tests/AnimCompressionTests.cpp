@@ -308,19 +308,19 @@ TEST(AnimCompressionSampler, LocalPoseMatchesSourceKeys)
             if (const FAnimationChannel* Channel = FindChannel(Resource, Bone, FAnimationChannel::ETargetPath::Translation))
             {
                 const FVector3 Reference = AnimCompression::SampleKeysVec3(Channel->Timestamps, Channel->Translations, Time);
-                EXPECT_LT(Math::Length(Pose.Translations[b] - Reference), TranslationBudget) << "bone " << b;
+                EXPECT_LT(Math::Length(Pose.GetTranslation(b) - Reference), TranslationBudget) << "bone " << b;
             }
 
             if (const FAnimationChannel* Channel = FindChannel(Resource, Bone, FAnimationChannel::ETargetPath::Scale))
             {
                 const FVector3 Reference = AnimCompression::SampleKeysVec3(Channel->Timestamps, Channel->Scales, Time);
-                EXPECT_LT(Math::Length(Pose.Scales[b] - Reference), ScaleBudget) << "bone " << b;
+                EXPECT_LT(Math::Length(Pose.GetScale(b) - Reference), ScaleBudget) << "bone " << b;
             }
 
             if (const FAnimationChannel* Channel = FindChannel(Resource, Bone, FAnimationChannel::ETargetPath::Rotation))
             {
                 const FQuat Reference = AnimCompression::SampleKeysQuat(Channel->Timestamps, Channel->Rotations, Time);
-                EXPECT_LT(AngleBetweenDegrees(Pose.Rotations[b], Reference), RotationBudgetDegrees) << "bone " << b;
+                EXPECT_LT(AngleBetweenDegrees(Pose.GetRotation(b), Reference), RotationBudgetDegrees) << "bone " << b;
             }
         }
     }
@@ -346,9 +346,9 @@ TEST(AnimCompressionSampler, BoneLocalMatchesFullPose)
             FQuat R;
             Clip->SampleBoneLocal(Time, &Skeleton, b, T, R, S);
 
-            EXPECT_LT(Math::Length(T - Reference.Translations[b]), 1e-6f) << "bone " << b;
-            EXPECT_LT(Math::Length(S - Reference.Scales[b]), 1e-6f) << "bone " << b;
-            EXPECT_GT(Math::Abs(Math::Dot(R, Reference.Rotations[b])), 1.0f - 1e-6f) << "bone " << b;
+            EXPECT_LT(Math::Length(T - Reference.GetTranslation(b)), 1e-6f) << "bone " << b;
+            EXPECT_LT(Math::Length(S - Reference.GetScale(b)), 1e-6f) << "bone " << b;
+            EXPECT_GT(Math::Abs(Math::Dot(R, Reference.GetRotation(b))), 1.0f - 1e-6f) << "bone " << b;
         }
     }
 }
@@ -367,9 +367,9 @@ TEST(AnimCompressionSampler, BonesWithoutTracksKeepBindPose)
     FPose Pose;
     Clip->SampleLocalPose(0.5f, &Skeleton, Pose);
 
-    EXPECT_LT(Math::Length(Pose.Translations[3] - BindT), 1e-6f);
-    EXPECT_LT(Math::Length(Pose.Scales[3] - BindS), 1e-6f);
-    EXPECT_GT(Math::Abs(Math::Dot(Pose.Rotations[3], BindR)), 1.0f - 1e-6f);
+    EXPECT_LT(Math::Length(Pose.GetTranslation(3) - BindT), 1e-6f);
+    EXPECT_LT(Math::Length(Pose.GetScale(3) - BindS), 1e-6f);
+    EXPECT_GT(Math::Abs(Math::Dot(Pose.GetRotation(3), BindR)), 1.0f - 1e-6f);
 }
 
 TEST(AnimCompressionSampler, LodCutLeavesTrailingBonesAtBindPose)
@@ -386,8 +386,8 @@ TEST(AnimCompressionSampler, LodCutLeavesTrailingBonesAtBindPose)
     FPose Pose;
     Clip->SampleLocalPose(0.5f, &Skeleton, Pose, 2);
 
-    EXPECT_GT(Math::Abs(Math::Dot(Pose.Rotations[2], BindR)), 1.0f - 1e-6f);
-    EXPECT_LT(Math::Length(Pose.Translations[2] - BindT), 1e-6f);
+    EXPECT_GT(Math::Abs(Math::Dot(Pose.GetRotation(2), BindR)), 1.0f - 1e-6f);
+    EXPECT_LT(Math::Length(Pose.GetTranslation(2) - BindT), 1e-6f);
 }
 
 // SamplePose fuses gather, FK and InvBind; it has to agree with SampleLocalPose run through the same chain.
@@ -411,7 +411,7 @@ TEST(AnimCompressionSampler, SkinningMatricesMatchPoseChain)
         TVector<FMatrix4> Expected(Skeleton.GetNumBones());
         for (int32 b = 0; b < Skeleton.GetNumBones(); ++b)
         {
-            const FMatrix4 Local = AnimPose::ComposeTRS(Pose.Translations[b], Pose.Rotations[b], Pose.Scales[b]);
+            const FMatrix4 Local = AnimPose::ComposeTRS(Pose.GetTranslation(b), Pose.GetRotation(b), Pose.GetScale(b));
             const int32 Parent = Skeleton.GetBone(b).ParentIndex;
             Expected[b] = Parent != INDEX_NONE ? Expected[Parent] * Local : Local;
         }

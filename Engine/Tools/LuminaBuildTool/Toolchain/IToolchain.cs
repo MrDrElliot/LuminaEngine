@@ -22,4 +22,7 @@ public interface IToolchain
 
     /// <summary>Archive or link action for one module, or null when it has no linked output.</summary>
     BuildAction? CreateLinkAction(BuildTarget Target, BuildModule Module, IReadOnlyList<BuildAction> CompileActions);
+
+    /// <summary>Files an instrumented PGO binary needs beside it to start. Empty when Pgo is off.</summary>
+    IEnumerable<string> GetProfileRuntimeFiles(BuildTarget Target) => Array.Empty<string>();
 }

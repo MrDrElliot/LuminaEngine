@@ -2,6 +2,7 @@
 #include "Containers/Span.h"
 #include "Containers/Vector.h"
 #include "Containers/String.h"
+#include "Containers/StringFormat.h"
 #include "Platform/Filesystem/PlatformFilesystem.h"
 
 using namespace Lumina;

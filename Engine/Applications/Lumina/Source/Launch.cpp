@@ -10,6 +10,7 @@
 #include "Core/Delegates/CoreDelegates.h"
 #include "Core/Engine/Engine.h"
 #include "Memory/Memory.h"
+#include "Core/Diagnostics/BenchmarkRun.h"
 #include "Core/Diagnostics/HangWatchdog.h"
 #include "Log/Log.h"
 #include "Platform/CrashHandler.h"
@@ -39,6 +40,8 @@ int LuminaMain(int ArgC, char** ArgV)  // NOLINT(misc-use-internal-linkage)
 
     FCommandLine Parsed{ArgC, ArgV};
     GCommandLine = &Parsed;
+
+    Benchmark::ParseCommandLine(Parsed);
 
 #if LUMINA_MEMORY_TRACKING
     // Steady-state memory predates the profiler window, so naming it needs capture from allocation one.

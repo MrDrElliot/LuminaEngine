@@ -14,6 +14,11 @@
 #include "imgui.h"
 #include "Tools/UI/ImGui/EditorColors.h"
 
+#include "Containers/String.h"
+#include "Core/CommandLine/CommandLine.h"
+#include "Paths/Paths.h"
+#include "Platform/Filesystem/PlatformFilesystem.h"
+
 #include <string>
 
 namespace Lumina
@@ -30,6 +35,11 @@ namespace Lumina
         bool  bShowPlots      = true;
         bool  bShowMetrics    = false;
         char  MetricFilter[128] = {};
+
+        // A HUD cannot be read by anything but a person, so the counters also go to a file.
+        bool        bAutoExport       = false;
+        double      NextExportSeconds = 0.0;
+        std::string ExportStatus;
 
         // Kept so the session panel reports what the numbers mean rather than restating constants.
         double SamplingIntervalSeconds = 0.0;
@@ -104,6 +114,13 @@ namespace Lumina
     void FNsightPerfTool::OnInitialize()
     {
         State = new FNsightPerfState();
+
+        if (GCommandLine != nullptr && GCommandLine->Has("nsightexport"))
+        {
+            State->bShowMetrics = true;
+            State->bAutoExport  = true;
+        }
+
         CreateToolWindow("Nsight Perf", [this](bool bFocused) { DrawWindow(bFocused); });
 
         const RHI::Native::FNativeDeviceHandles H = RHI::Native::GetNativeDeviceHandles();
@@ -254,6 +271,29 @@ namespace Lumina
         ImGui::Checkbox("Plots", &State->bShowPlots);
         ImGui::SameLine();
         ImGui::Checkbox("Metric Values", &State->bShowMetrics);
+        ImGui::SameLine();
+        if (ImGui::Button("Export CSV"))
+        {
+            ExportMetrics();
+        }
+        ImGui::SameLine();
+        ImGui::Checkbox("Auto", &State->bAutoExport);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Rewrite the CSV once a second while this window is open.");
+        }
+
+        if (State->bAutoExport && ImGui::GetTime() >= State->NextExportSeconds)
+        {
+            State->NextExportSeconds = ImGui::GetTime() + 1.0;
+            ExportMetrics();
+        }
+
+        if (!State->ExportStatus.empty())
+        {
+            ImGui::TextColored(EditorColors::TextDim(), "%s", State->ExportStatus.c_str());
+        }
+
         ImGui::Separator();
 
         DrawSessionInfo();
@@ -321,6 +361,83 @@ namespace Lumina
         ImGui::TextUnformatted(State->StatusMessage.c_str());
         ImGui::Unindent(12.0f);
         ImGui::Spacing();
+    }
+
+    void FNsightPerfTool::ExportMetrics()
+    {
+        if (!State->bSessionActive)
+        {
+            State->ExportStatus = "No active session, so there are no counters to write.";
+            return;
+        }
+
+        std::string Csv = "panel,metric,label,unit,current,min,avg,max,samples\n";
+        size_t Rows = 0;
+
+        auto Append = [&Csv, &Rows](const std::string& PanelName, const nv::perf::hud::MetricSignal& Signal)
+        {
+            const FSignalStats Stats = ReadSignal(Signal);
+            if (!Stats.bValid)
+            {
+                return;
+            }
+
+            char Line[512];
+            (void)snprintf(Line, sizeof(Line), "\"%s\",\"%s\",\"%s\",\"%s\",%.6g,%.6g,%.6g,%.6g,%zu\n",
+                PanelName.c_str(), Signal.metric.c_str(), Signal.label.text.c_str(), Signal.unit.c_str(),
+                Stats.Current, Stats.Min, Stats.Avg, Stats.Max, Stats.Samples);
+
+            Csv += Line;
+            ++Rows;
+        };
+
+        for (const auto& Config : State->HudDataModel.GetConfigurations())
+        {
+            for (const auto& Panel : Config.panels)
+            {
+                const std::string& PanelName = Panel.label.text.empty() ? Panel.name : Panel.label.text;
+
+                for (const auto& pWidget : Panel.widgets)
+                {
+                    if (pWidget->type == nv::perf::hud::Widget::Type::ScalarText)
+                    {
+                        Append(PanelName, static_cast<const nv::perf::hud::ScalarText&>(*pWidget).signal);
+                    }
+                    else if (pWidget->type == nv::perf::hud::Widget::Type::TimePlot)
+                    {
+                        const auto& Plot = static_cast<const nv::perf::hud::TimePlot&>(*pWidget);
+                        for (const auto& Signal : Plot.signals)
+                        {
+                            Append(PanelName, Signal);
+                        }
+                        for (const auto& Signal : Plot.stackedSignals)
+                        {
+                            Append(PanelName, Signal);
+                        }
+                    }
+                }
+            }
+        }
+
+        FString Directory = Paths::GetEngineDirectory() + "/Saved/Profiling";
+        Paths::CreateDirectories(FStringView(Directory.c_str(), Directory.size()));
+
+        FString Path = Directory + "/NsightPerf.csv";
+        const bool bWritten = Filesystem::WriteFile(
+            FStringView(Path.c_str(), Path.size()),
+            TSpan<const uint8>(reinterpret_cast<const uint8*>(Csv.data()), Csv.size()));
+
+        char Status[512];
+        if (bWritten)
+        {
+            (void)snprintf(Status, sizeof(Status), "Wrote %zu metrics to %s", Rows, Path.c_str());
+        }
+        else
+        {
+            (void)snprintf(Status, sizeof(Status), "Could not write %s", Path.c_str());
+        }
+
+        State->ExportStatus = Status;
     }
 
     void FNsightPerfTool::DrawMetricTable()

@@ -20,6 +20,8 @@
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"      // LE_ICON_*
 #include "Tools/UI/ImGui/ImGuiModule.h"           // LUMINA_MODULE_IMGUI
 #include "NsightPerfTool.h"
+#include "Core/CommandLine/CommandLine.h"
+#include "Core/Delegates/CoreDelegates.h"
 
 #include <vector>
 
@@ -86,6 +88,20 @@ void FNsightPerfEditorModule::StartupModule()
         }
     };
     ToolsMenuHandle = FToolsMenuRegistry::Get().Register(Move(Entry));
+
+    // The editor UI does not exist yet, so the tool can only be opened once the engine is up.
+    if (GCommandLine != nullptr && GCommandLine->Has("nsightexport"))
+    {
+        FCoreDelegates::OnPostEngineInit.AddLambda([]
+        {
+            FEditorUI* UI = GetEditorUI();
+            if (UI != nullptr && !UI->IsToolActive<FNsightPerfTool>())
+            {
+                UI->ToggleTool<FNsightPerfTool>(UI);
+                LOG_INFO("[NsightPerf] -nsightexport opened the HUD and armed the CSV dump.");
+            }
+        });
+    }
 
     LOG_INFO("[NsightPerf] Editor module ready");
 }

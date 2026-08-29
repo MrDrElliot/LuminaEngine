@@ -4,21 +4,39 @@
 
 /** Branch prediction hints */
 #ifndef LIKELY						/* Hints compiler that expression is likely to be true */
-    #if ( defined(__clang__) || defined(__GNUC__) ) && (PLATFORM_UNIX)	// effect of these on non-Linux platform has not been analyzed as of 2016-03-21
+    #if defined(__clang__) || defined(__GNUC__)
         #define LIKELY(x)			__builtin_expect(!!(x), 1)
     #else
-        // the additional "!!" is added to silence "warning: equality comparison with extraneous parenthesis" messages on android
+        // MSVC has no expression form; LUMINA_LIKELY_IF below is what carries the hint there.
         #define LIKELY(x)			(!!(x))
     #endif
 #endif
 
 #ifndef UNLIKELY					/* Hints compiler that expression is unlikely to be true, allows (penalized by worse performance) expression to be true */
-    #if ( defined(__clang__) || defined(__GNUC__) ) && (PLATFORM_UNIX)	// effect of these on non-Linux platform has not been analyzed as of 2016-03-21
+    #if defined(__clang__) || defined(__GNUC__)
         #define UNLIKELY(x)			__builtin_expect(!!(x), 0)
     #else
-        // the additional "!!" is added to silence "warning: equality comparison with exteraneous parenthese" messages on android
         #define UNLIKELY(x)			(!!(x))
     #endif
+#endif
+
+// The statement form, which is the only branch hint MSVC understands. Takes an else like a plain if.
+#if defined(__has_cpp_attribute)
+    #if __has_cpp_attribute(likely) >= 201803L
+        #define LUMINA_HAS_BRANCH_ATTRIBUTES 1
+    #endif
+#endif
+
+#ifndef LUMINA_HAS_BRANCH_ATTRIBUTES
+    #define LUMINA_HAS_BRANCH_ATTRIBUTES 0
+#endif
+
+#if LUMINA_HAS_BRANCH_ATTRIBUTES
+    #define LUMINA_LIKELY_IF(Condition)   if (Condition) [[likely]]
+    #define LUMINA_UNLIKELY_IF(Condition) if (Condition) [[unlikely]]
+#else
+    #define LUMINA_LIKELY_IF(Condition)   if (LIKELY(Condition))
+    #define LUMINA_UNLIKELY_IF(Condition) if (UNLIKELY(Condition))
 #endif
 
 /* Macro wrapper for the consteval keyword which isn't yet present on all compilers - constexpr
@@ -70,6 +88,66 @@
     #define FORCENOINLINE
 #endif
 
+// A forced inline the target may demote, for code too big to be worth forcing everywhere.
+#ifndef LUMINA_FORCEINLINE_HINTS_FORCED
+    #define LUMINA_FORCEINLINE_HINTS_FORCED 1
+#endif
+
+#if LUMINA_FORCEINLINE_HINTS_FORCED
+    #define LUMINA_FORCEINLINE_HINT FORCEINLINE
+#else
+    #define LUMINA_FORCEINLINE_HINT inline
+#endif
+
+// Forced everywhere but Debug, where the debugger steps over a forced inline rather than into it.
+#if defined(LE_DEBUG)
+    #define LUMINA_FORCEINLINE_DEBUGGABLE inline
+#else
+    #define LUMINA_FORCEINLINE_DEBUGGABLE FORCEINLINE
+#endif
+
+// Credits an allocation to its caller in the heap profiler, claiming nothing about aliasing.
+#if defined(_MSC_VER)
+    #define LUMINA_ALLOCATION __declspec(allocator)
+    #define LUMINA_NOALIAS    __declspec(noalias)
+#else
+    #define LUMINA_ALLOCATION
+    #define LUMINA_NOALIAS
+#endif
+
+// The returned pointer aliases nothing already live, which a reallocation cannot promise.
+#if defined(_MSC_VER)
+    #define LUMINA_RESTRICT_RETURN __declspec(restrict)
+#elif defined(__GNUC__) || defined(__clang__)
+    #define LUMINA_RESTRICT_RETURN __attribute__((malloc))
+#else
+    #define LUMINA_RESTRICT_RETURN
+#endif
+
+// Argument indices are 1 based, and count the implicit this on a member function.
+#if defined(__GNUC__) || defined(__clang__)
+    #define LUMINA_ALLOC_SIZE(SizeArg)                __attribute__((alloc_size(SizeArg)))
+    #define LUMINA_ALLOC_SIZE_2(CountArg, SizeArg)    __attribute__((alloc_size(CountArg, SizeArg)))
+    #define LUMINA_ASSUME_ALIGNED(Alignment)          __attribute__((assume_aligned(Alignment)))
+    #define LUMINA_RETURNS_NONNULL                    __attribute__((returns_nonnull))
+    #define LUMINA_HOT                                __attribute__((hot))
+    #define LUMINA_COLD                               __attribute__((cold))
+#else
+    #define LUMINA_ALLOC_SIZE(SizeArg)
+    #define LUMINA_ALLOC_SIZE_2(CountArg, SizeArg)
+    #define LUMINA_ASSUME_ALIGNED(Alignment)
+    #define LUMINA_RETURNS_NONNULL
+    #define LUMINA_HOT
+    #define LUMINA_COLD
+#endif
+
+// Diagnoses a returned reference or view that outlives the temporary it was taken from.
+#if defined(__clang__)
+    #define LUMINA_LIFETIMEBOUND [[clang::lifetimebound]]
+#else
+    #define LUMINA_LIFETIMEBOUND
+#endif
+
 #define UTF8TEXT_PASTE(x)  u8 ## x
 #define UTF16TEXT_PASTE(x) u ## x
 
@@ -94,6 +172,9 @@
 
 #define LIKELY(x)   (x)
 #define UNLIKELY(x) (x)
+#define LUMINA_HAS_BRANCH_ATTRIBUTES 0
+#define LUMINA_LIKELY_IF(Condition)   if (Condition)
+#define LUMINA_UNLIKELY_IF(Condition) if (Condition)
 #define LE_CONSTEVAL constexpr
 #define NODISCARD
 #define ALIGNOF(type) alignof(type)
@@ -102,6 +183,20 @@
 #define LUMINA_NOVTABLE
 #define FORCEINLINE inline
 #define FORCENOINLINE
+
+#define LUMINA_FORCEINLINE_HINTS_FORCED 1
+#define LUMINA_FORCEINLINE_HINT inline
+#define LUMINA_FORCEINLINE_DEBUGGABLE inline
+#define LUMINA_ALLOCATION
+#define LUMINA_NOALIAS
+#define LUMINA_RESTRICT_RETURN
+#define LUMINA_ALLOC_SIZE(SizeArg)
+#define LUMINA_ALLOC_SIZE_2(CountArg, SizeArg)
+#define LUMINA_ASSUME_ALIGNED(Alignment)
+#define LUMINA_RETURNS_NONNULL
+#define LUMINA_HOT
+#define LUMINA_COLD
+#define LUMINA_LIFETIMEBOUND
 
 #define UTF8TEXT_PASTE(x)  u8 ## x
 #define UTF16TEXT_PASTE(x) u ## x

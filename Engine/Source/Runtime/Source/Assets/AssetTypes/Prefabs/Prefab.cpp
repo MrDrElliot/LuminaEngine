@@ -61,8 +61,7 @@ namespace Lumina
         // Nested instance tracking must not leak into the new prefab, which gets fresh tags instead.
         bool ShouldSkipInstanceComponent(uint32 ID)
         {
-            return ID == ECS::GetComponentTypeID<SPrefabInstanceComponent>()
-                || ID == ECS::GetComponentTypeID<SPrefabOverrideComponent>();
+            return CPrefab::IsInstanceTrackingComponent(ID);
         }
         
         void* FindReflectedComponentPtr(ECS::FRegistry& Registry, ECS::FEntity Entity, CStruct* Struct)
@@ -101,6 +100,12 @@ namespace Lumina
         }
     }
 
+    bool CPrefab::IsInstanceTrackingComponent(uint32 ID)
+    {
+        return ID == ECS::GetComponentTypeID<SPrefabInstanceComponent>()
+            || ID == ECS::GetComponentTypeID<SPrefabOverrideComponent>();
+    }
+
     uint32 CPrefab::GetDataGeneration()
     {
         return GDataGeneration;
@@ -117,7 +122,7 @@ namespace Lumina
         CObject::Serialize(Ar);
 
         // Resolved data would go stale the moment the parent changed, which a variant must never do.
-        bool bVariantPayload = IsVariant();
+        bool bVariantPayload = HoldsVariantPayload();
         if (Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::PREFAB_VARIANTS)
         {
             Ar << bVariantPayload;
@@ -125,6 +130,11 @@ namespace Lumina
         else
         {
             bVariantPayload = false;
+        }
+
+        if (Ar.IsReading())
+        {
+            bVariantPayloadOnDisk = bVariantPayload;
         }
 
         ECS::Utils::SerializeRegistry(Ar, bVariantPayload ? VariantDelta : Registry);
@@ -139,6 +149,13 @@ namespace Lumina
         if (IsVariant())
         {
             ResolveVariant();
+        }
+        else if (bVariantPayloadOnDisk)
+        {
+            // Registry holds nothing to resolve onto, and unflagged that reads as a prefab shipping no entities.
+            LOG_ERROR("Prefab '{}' is a variant whose parent could not be loaded; leaving it unresolved.",
+                GetName().c_str());
+            bVariantResolveFailed = true;
         }
     }
 
@@ -378,6 +395,14 @@ namespace Lumina
             return;
         }
 
+        // Same hazard from any other cause, and a refusal costs a stale instance where a diff costs the placement.
+        if (Registry.NumEntities() == 0)
+        {
+            LOG_WARN("Prefab '{}' has no entities; leaving its instances untouched rather than emptying them.",
+                GetName().c_str());
+            return;
+        }
+
         ECS::FRegistry& WorldRegistry = ECS::GetWorldRegistry(*World);
         if (!WorldRegistry.IsValid(InstanceRoot))
         {
@@ -462,16 +487,24 @@ namespace Lumina
 
         for (ECS::FEntity E : ToDestroy)
         {
-            const auto It = Algo::FindIf(InstanceByStableID.begin(), InstanceByStableID.end(),
-                [&](const auto& Pair) { return Pair.second == E; });
-            if (It != InstanceByStableID.end())
-            {
-                InstanceByStableID.erase(It);
-            }
             if (WorldRegistry.IsValid(E))
             {
                 ECS::Utils::DestroyEntityHierarchy(WorldRegistry, E);
             }
+        }
+
+        // A node taken down with its parent leaves an entry that would remap a handle onto a dead entity.
+        TVector<FName> StaleIDs;
+        for (auto& [StableID, WorldE] : InstanceByStableID)
+        {
+            if (!WorldRegistry.IsValid(WorldE))
+            {
+                StaleIDs.push_back(StableID);
+            }
+        }
+        for (const FName& StaleID : StaleIDs)
+        {
+            InstanceByStableID.erase(StaleID);
         }
 
         // Spawn instance entities for new prefab entries.
@@ -881,13 +914,16 @@ namespace Lumina
             return false;
         }
 
-        // Leaves plain entities behind, so world load no longer refreshes them against the source asset.
+        // Matched on the source, so another prefab's instance parented under this one stays linked to its own.
+        CPrefab* const Source = RootInstance->SourcePrefab.Get();
+
         TVector<ECS::FEntity> ToStrip;
         ToStrip.reserve(16);
         ToStrip.push_back(InstanceRoot);
         ECS::Utils::ForEachDescendant(WorldRegistry, InstanceRoot, [&](ECS::FEntity Desc)
         {
-            if (WorldRegistry.HasAny<SPrefabInstanceComponent>(Desc))
+            const SPrefabInstanceComponent* Inst = WorldRegistry.TryGet<SPrefabInstanceComponent>(Desc);
+            if (Inst != nullptr && !Inst->bIsRoot && Inst->SourcePrefab.Get() == Source)
             {
                 ToStrip.push_back(Desc);
             }
@@ -998,6 +1034,51 @@ namespace Lumina
         {
             return ID == ECS::GetComponentTypeID<SPrefabComponent>()
                 || ID == ECS::GetComponentTypeID<FRelationshipComponent>();
+        }
+
+        void RemapAllHandles(ECS::FRegistry& Registry, const THashMap<ECS::FEntity, ECS::FEntity>& Map)
+        {
+            Registry.ForEachEntity([&](ECS::FEntity E)
+            {
+                ECS::Utils::RemapEntityReferences(Registry, E, Map, /*bClearUnmapped*/ false);
+            });
+        }
+
+        THashMap<ECS::FEntity, ECS::FEntity> InvertEntityMap(const THashMap<ECS::FEntity, ECS::FEntity>& Map)
+        {
+            THashMap<ECS::FEntity, ECS::FEntity> Out;
+            for (const auto& [Key, Value] : Map)
+            {
+                Out[Value] = Key;
+            }
+            return Out;
+        }
+
+        // CopyRegistry nulls a handle whose target sits outside the copied set, so the targets join it.
+        void AppendReferencedEntities(ECS::FRegistry& Registry, TVector<ECS::FEntity>& Entities)
+        {
+            THashSet<ECS::FEntity> Present;
+            Present.reserve(Entities.size());
+            for (ECS::FEntity E : Entities)
+            {
+                Present.insert(E);
+            }
+
+            // Only the entities the caller supplied are walked, so an anchor cannot drag in a further one.
+            TVector<ECS::FEntity> Referenced;
+            const size_t OriginalCount = Entities.size();
+            for (size_t i = 0; i < OriginalCount; ++i)
+            {
+                Referenced.clear();
+                ECS::Utils::CollectEntityReferences(Registry, Entities[i], Referenced);
+                for (ECS::FEntity Target : Referenced)
+                {
+                    if (Registry.IsValid(Target) && Present.insert(Target).second)
+                    {
+                        Entities.push_back(Target);
+                    }
+                }
+            }
         }
     }
 
@@ -1161,6 +1242,9 @@ namespace Lumina
             DeltaToResolved[DeltaE] = NewE;
         });
 
+        // A delta id means nothing in the resolved registry, which recycles the same small integers.
+        RemapAllHandles(VariantDelta, DeltaToResolved);
+
         // A component absent from the resolved data is emplaced wholesale, otherwise only its leaves land.
         VariantDelta.View<SPrefabComponent>().ForEach([&](ECS::FEntity DeltaE, const SPrefabComponent& Comp)
         {
@@ -1216,6 +1300,9 @@ namespace Lumina
                 }
             }
         });
+
+        // The delta is the persisted authority, and the next resolve builds a registry with different ids.
+        RemapAllHandles(VariantDelta, InvertEntityMap(DeltaToResolved));
 
         // Components the variant deletes from an inherited node.
         for (auto& [NodeID, CompNames] : RemovedByNode)
@@ -1401,6 +1488,9 @@ namespace Lumina
         {
             return;
         }
+
+        // The strip pass below leaves an anchor bare, so it costs an id and nothing else.
+        AppendReferencedEntities(Registry, DivergedEntities);
 
         THashMap<ECS::FEntity, ECS::FEntity> Map;
         CopyRegistry(Registry, VariantDelta, Map, &DivergedEntities);

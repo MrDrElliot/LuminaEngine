@@ -38,16 +38,6 @@ namespace Lumina::Box3DUtils
         return reinterpret_cast<void*>((uintptr_t)Packed);
     }
 
-    FCollisionProfile UnpackProfileUserData(void* UserData)
-    {
-        const uint64 Packed = (uint64)reinterpret_cast<uintptr_t>(UserData);
-
-        FCollisionProfile Profile;
-        Profile.Layer = (ECollisionProfiles)(uint16)(Packed & 0xFFFFull);
-        Profile.Mask = (ECollisionProfiles)(uint16)((Packed >> 16) & 0xFFFFull);
-        return Profile;
-    }
-
     bool IsCharacterProxyUserData(void* UserData)
     {
         return ((uint64)reinterpret_cast<uintptr_t>(UserData) & CharacterProxyBit) != 0;
@@ -61,14 +51,6 @@ namespace Lumina::Box3DUtils
         // A narrow mask would hide every pair that only the other side accepts, which contacts still take.
         Filter.maskBits = UsesPermissiveCollisionFilter() ? B3_DEFAULT_MASK_BITS : (uint64)Profile.Mask;
         return Filter;
-    }
-
-    bool ShouldProfileCollideWithShape(const FCollisionProfile& Profile, b3ShapeId ShapeId, bool bPermissive)
-    {
-        const FCollisionProfile Other = UnpackProfileUserData(b3Shape_GetUserData(ShapeId));
-
-        // Strict mode already applied the other half of the pair test through the query filter itself.
-        return bPermissive ? Profile.ShouldCollide(Other) : (Profile.Mask & Other.Layer) != (ECollisionProfiles)0;
     }
 
     b3BodyType ToBox3DBodyType(EBodyType Type)

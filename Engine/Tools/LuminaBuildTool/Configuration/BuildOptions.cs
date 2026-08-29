@@ -20,8 +20,29 @@ public sealed class BuildOptions
 
     public static BuildOptions Empty { get; } = new();
 
+    /// <summary>A copy with the PGO request dropped, for a target being built only as a prerequisite.</summary>
+    public BuildOptions WithoutPgo()
+    {
+        BuildOptions Copy = new() { bDisableUnityBuild = bDisableUnityBuild };
+
+        foreach (KeyValuePair<string, FeatureMode> Mode in Modes)
+        {
+            Copy.Modes[Mode.Key] = Mode.Value;
+        }
+
+        foreach (KeyValuePair<string, bool> Plugin in PluginOverrides)
+        {
+            Copy.PluginOverrides[Plugin.Key] = Plugin.Value;
+        }
+
+        return Copy;
+    }
+
     /// <summary>Compile every source as its own translation unit regardless of what the rules say.</summary>
     public bool bDisableUnityBuild { get; set; }
+
+    /// <summary>Which half of a PGO cycle was asked for, or null to leave the target rules alone.</summary>
+    public PgoMode? Pgo { get; set; }
 
     public FeatureMode GetMode(string Feature)
     {
@@ -93,6 +114,16 @@ public sealed class BuildOptions
         if (Arguments is not null)
         {
             Options.bDisableUnityBuild = Arguments.HasFlag("NoUnity");
+
+            if (Arguments.GetString("Pgo") is { Length: > 0 } PgoArgument)
+            {
+                if (!Enum.TryParse(PgoArgument, ignoreCase: true, out PgoMode PgoValue))
+                {
+                    throw new BuildException($"-Pgo={PgoArgument} is not one of off, instrument or optimize.");
+                }
+
+                Options.Pgo = PgoValue;
+            }
 
             // A feature is overridable by name, so -Tracy=off works without the tool knowing what
             // Tracy is. Only names already present in the config file, plus any explicitly passed.

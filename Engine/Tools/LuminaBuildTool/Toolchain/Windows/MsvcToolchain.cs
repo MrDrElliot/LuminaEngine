@@ -210,6 +210,7 @@ public sealed class MsvcToolchain : IToolchain
         }
 
         AddConfigurationFlags(Target, Arguments);
+        AddProfileGuidedCompileFlags(Target, Module, Arguments);
 
         // /Z7 keeps debug info in the object file, which avoids serializing every compile
         // through a single mspdbsrv instance.
@@ -358,6 +359,102 @@ public sealed class MsvcToolchain : IToolchain
 
                 break;
         }
+
+    }
+
+    /// <summary>Both halves of a PGO cycle are whole program optimization, whatever the configuration set.</summary>
+    private static void AddProfileGuidedCompileFlags(BuildTarget Target, BuildModule Module, List<string> Arguments)
+    {
+        if (Target.Rules.Pgo == PgoMode.Off || Arguments.Contains("/GL"))
+        {
+            return;
+        }
+
+        // Deferring codegen to link time re-runs the flow analysis there, where a vendored source's
+        // warnings are reported against the link and the module's own /W0 no longer covers them.
+        if (Module.Rules.bIsThirdParty)
+        {
+            return;
+        }
+
+        Arguments.Add("/GL");
+    }
+
+    /// <summary>The instrumented image imports this by name, so it will not start without it beside the exe.</summary>
+    public IEnumerable<string> GetProfileRuntimeFiles(BuildTarget Target)
+    {
+        if (Target.Rules.Pgo != PgoMode.Instrument)
+        {
+            yield break;
+        }
+
+        foreach (string Name in Directory.EnumerateFiles(Compiler.BinDirectory, "pgort*.dll"))
+        {
+            yield return Name;
+        }
+    }
+
+    /// <summary>The .pgd for one linked image. Beside it, because that is the only place LINK looks for
+    /// the .pgc run files the instrumented binary drops next to itself.</summary>
+    private static string GetProfileDatabase(BuildModule Module)
+    {
+        return Path.ChangeExtension(Module.OutputFile, ".pgd");
+    }
+
+    /// <summary>Adds the link side of a PGO cycle, which subsumes the plain /LTCG a Shipping link asks for.</summary>
+    private static void AddProfileGuidedArguments(BuildTarget Target, BuildModule Module, List<string> Arguments)
+    {
+        if (Target.Rules.Pgo == PgoMode.Off)
+        {
+            return;
+        }
+
+        // Mirrors the compile side. An image built entirely from objects that skipped /GL has nothing to
+        // instrument, and LINK rejects /GENPROFILE with LNK1264 rather than ignoring it.
+        if (Module.Rules.bIsThirdParty)
+        {
+            return;
+        }
+
+        // /GENPROFILE and /USEPROFILE both imply whole program optimization, and a second /LTCG conflicts.
+        Arguments.Remove("/LTCG");
+        Arguments.Add("/LTCG");
+
+        // The instrumented image writes counters, which incremental linking cannot patch in place.
+        Arguments.Remove("/INCREMENTAL");
+        Arguments.Add("/INCREMENTAL:NO");
+
+        string Database = GetProfileDatabase(Module);
+
+        if (Target.Rules.Pgo == PgoMode.Instrument)
+        {
+            Arguments.Add($"/GENPROFILE:PGD={PathUtils.Quote(Database)}");
+            return;
+        }
+
+        if (!File.Exists(Database))
+        {
+            throw new BuildException(
+                $"No profile database at '{Database}'. Build with -Pgo=instrument, run the binary through a "
+                + "representative workload, then build again with -Pgo=optimize.");
+        }
+
+        // LINK merges these itself, but only warns when it finds none, and the image then quietly ships
+        // with no profile applied. A workload that never loaded this DLL is normal, so this is not fatal,
+        // but it has to be loud enough that nobody reads the result as a profiled build.
+        string RunPattern = Path.GetFileNameWithoutExtension(Database) + "!*.pgc";
+        string SearchDirectory = Path.GetDirectoryName(Database) ?? Target.BinariesDirectory;
+
+        if (!Directory.EnumerateFiles(SearchDirectory, RunPattern).Any())
+        {
+            Log.Warning(
+                "{0} has no .pgc run data, so it links with LTCG but no profile. The instrumented workload "
+                + "never exercised it; run something that does if it is meant to be optimized.",
+                Path.GetFileName(Module.OutputFile));
+            return;
+        }
+
+        Arguments.Add($"/USEPROFILE:PGD={PathUtils.Quote(Database)}");
     }
 
     /// <summary>The set MSBuild's C++ rules put on every link line by default.</summary>
@@ -595,6 +692,8 @@ public sealed class MsvcToolchain : IToolchain
             Arguments.Add("/OPT:NOREF");
             Arguments.Add("/OPT:NOICF");
         }
+
+        AddProfileGuidedArguments(Target, Module, Arguments);
 
         foreach (string LibraryPath in Module.LinkLibraryPaths)
         {

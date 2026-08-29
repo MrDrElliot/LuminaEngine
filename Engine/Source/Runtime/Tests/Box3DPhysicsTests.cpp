@@ -58,6 +58,18 @@ namespace
         return b3CreateHull(Points, 8, B3_MAX_HULL_VERTICES);
     }
 
+    // The seat probe filters by profile, so a raw box3d shape needs the user data the engine stamps.
+    b3ShapeDef StaticGroundShapeDef()
+    {
+        FCollisionProfile Ground;
+        Ground.Layer = ECollisionProfiles::Static;
+        Ground.Mask = ECollisionProfiles::Static | ECollisionProfiles::Dynamic;
+
+        b3ShapeDef Def = b3DefaultShapeDef();
+        Def.userData = Box3DUtils::PackProfileUserData(Ground);
+        return Def;
+    }
+
     b3BodyId AddGround(b3WorldId WorldId, b3HullData* Hull)
     {
         b3BodyDef BodyDef = b3DefaultBodyDef();
@@ -65,7 +77,7 @@ namespace
         BodyDef.position = b3Vec3{ 0.0f, 0.0f, 0.0f };
 
         const b3BodyId Body = b3CreateBody(WorldId, &BodyDef);
-        b3ShapeDef ShapeDef = b3DefaultShapeDef();
+        b3ShapeDef ShapeDef = StaticGroundShapeDef();
         b3CreateHullShape(Body, &ShapeDef, Hull);
         return Body;
     }
@@ -580,7 +592,7 @@ TEST(Box3DCharacter, MoverLandsOnTriangleMeshGround)
     BodyDef.position = b3Vec3{ 0.0f, 0.0f, 0.0f };
 
     const b3BodyId Body = b3CreateBody(World.WorldId, &BodyDef);
-    b3ShapeDef ShapeDef = b3DefaultShapeDef();
+    b3ShapeDef ShapeDef = StaticGroundShapeDef();
     b3CreateMeshShape(Body, &ShapeDef, Grid, b3Vec3{ 1.0f, 1.0f, 1.0f });
 
     b3World_Step(World.WorldId, 1.0f / 60.0f, 4);
@@ -623,7 +635,7 @@ TEST(Box3DCharacter, SpawnInsideMeshGroundIsSeatedOnTheSurface)
     BodyDef.position = b3Vec3{ 0.0f, 0.0f, 0.0f };
 
     const b3BodyId Body = b3CreateBody(World.WorldId, &BodyDef);
-    b3ShapeDef ShapeDef = b3DefaultShapeDef();
+    b3ShapeDef ShapeDef = StaticGroundShapeDef();
     b3CreateMeshShape(Body, &ShapeDef, Grid, b3Vec3{ 1.0f, 1.0f, 1.0f });
 
     b3World_Step(World.WorldId, 1.0f / 60.0f, 4);
@@ -640,7 +652,7 @@ TEST(Box3DCharacter, SpawnInsideMeshGroundIsSeatedOnTheSurface)
     const b3Vec3 Buried{ 0.0f, SurfaceY, 0.0f };
     b3Vec3 Seated;
     const Physics::EMoverSeatResult Result = Physics::TrySeatMoverOnGround(World.WorldId, Mover, Buried,
-                                                                          b3DefaultQueryFilter(), 0.5f, Seated);
+                                                                          b3DefaultQueryFilter(), FCollisionProfile{}, 0.5f, b3_nullBodyId, Seated);
 
     EXPECT_EQ(Result, Physics::EMoverSeatResult::Seated);
     EXPECT_NEAR(Seated.y, SurfaceY + HalfHeight + Radius, 0.01f) << "spawn was not seated on the surface";
@@ -672,7 +684,7 @@ TEST(Box3DCharacter, SeatingReportsNoGeometryBeforeTheGroundBodyExists)
 
     b3Vec3 Seated;
     const Physics::EMoverSeatResult Empty = Physics::TrySeatMoverOnGround(World.WorldId, Mover,
-        b3Vec3{ 0.0f, 0.0f, 0.0f }, b3DefaultQueryFilter(), 0.5f, Seated);
+        b3Vec3{ 0.0f, 0.0f, 0.0f }, b3DefaultQueryFilter(), FCollisionProfile{}, 0.5f, b3_nullBodyId, Seated);
 
     EXPECT_EQ(Empty, Physics::EMoverSeatResult::NoGeometry);
 
@@ -683,7 +695,7 @@ TEST(Box3DCharacter, SeatingReportsNoGeometryBeforeTheGroundBodyExists)
     b3World_Step(World.WorldId, 1.0f / 60.0f, 4);
 
     const Physics::EMoverSeatResult High = Physics::TrySeatMoverOnGround(World.WorldId, Mover,
-        b3Vec3{ 0.0f, 200.0f, 0.0f }, b3DefaultQueryFilter(), 0.5f, Seated);
+        b3Vec3{ 0.0f, 200.0f, 0.0f }, b3DefaultQueryFilter(), FCollisionProfile{}, 0.5f, b3_nullBodyId, Seated);
 
     EXPECT_EQ(High, Physics::EMoverSeatResult::Airborne);
 

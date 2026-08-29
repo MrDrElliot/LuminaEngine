@@ -358,14 +358,14 @@ namespace Lumina
             }
         }
 
-        // Rounded up to the vector width so the kernels below never need a scalar remainder.
+        // The logical cut, which LaneCount rounds up on its own; rounding twice started the identity tail late.
         static FORCEINLINE int32 ResolveActiveBones(int32 NumActiveBones, int32 NumBones)
         {
             if (NumActiveBones < 0 || NumActiveBones >= NumBones)
             {
                 return NumBones;
             }
-            return Math::Min(FPose::StrideFor(NumActiveBones), NumBones);
+            return NumActiveBones;
         }
 
         // Bones past the cut are restored afterwards, and the pad past the last bone holds identity.

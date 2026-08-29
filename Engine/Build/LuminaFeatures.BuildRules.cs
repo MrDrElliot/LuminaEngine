@@ -22,6 +22,8 @@ public static class LuminaFeatures
 
     public const string Box3DDebugChecks = "Box3DDebugChecks";
 
+    public const string ForceInlineHint = "ForceInlineHint";
+
     public static bool IsActive(TargetInfo Target, string Feature)
     {
         switch (Target.Options.GetMode(Feature))

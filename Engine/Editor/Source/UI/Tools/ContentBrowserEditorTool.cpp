@@ -2050,6 +2050,16 @@ namespace Lumina
                 continue;
             }
 
+            // FindDirectVariants iterates loaded objects, so a variant nobody opened has to be brought in first.
+            for (const FAssetData* Referencer : FAssetRegistry::Get().GetReferencersOf(Data->AssetGUID))
+            {
+                CClass* ReferencerClass = Referencer != nullptr ? FindObject<CClass>(Referencer->AssetClass) : nullptr;
+                if (ReferencerClass != nullptr && ReferencerClass->IsChildOf(CPrefab::StaticClass()))
+                {
+                    LoadObject<CPrefab>(Referencer->AssetGUID);
+                }
+            }
+
             for (CPrefab* Variant : Prefab->FindDirectVariants())
             {
                 if (!DependentVariants.empty())

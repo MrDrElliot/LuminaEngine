@@ -155,6 +155,9 @@ public abstract class ModuleRules
     /// <summary>Path fragments that exclude a discovered source file when contained in its path.</summary>
     public List<string> ExcludedSourcePathFragments { get; } = new();
 
+    // Directories the source walk skips whole, by absolute path. A module's own test suite lives in one.
+    public List<string> ExcludedSourceDirectories { get; } = new();
+
     // Compilation.
 
     /// <summary>Headers force-included ahead of every translation unit.</summary>
@@ -209,6 +212,15 @@ public abstract class ModuleRules
     {
         RuntimeDependencies.Add(new RuntimeDependency(ModulePath(SourcePath), bOptional));
     }
+
+    // Tests. A Tests directory beside the Build.cs becomes a console binary of its own, linking this
+    // module with its private include paths visible, so a test can reach an internal header.
+
+    // Modules the test binary links on top of this one and its own dependencies.
+    public List<string> TestDependencyModuleNames { get; } = new();
+
+    // Run the reflection generator over the test sources, for tests declaring reflected types.
+    public bool bEnableTestReflection { get; set; }
 
     /// <summary>Third-party code. Suppresses warnings-as-errors and skips the engine-wide force includes.</summary>
     public bool bIsThirdParty { get; set; }

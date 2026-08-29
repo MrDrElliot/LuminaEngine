@@ -3679,10 +3679,18 @@ namespace Lumina
 
                     if (!PrefabAssets.empty())
                     {
+                        // A prefab editor's own asset would place a stale copy of itself inside itself.
+                        const CObject* EditedAsset = Asset.Get();
+
                         TVector<FAssetData*> FilteredPrefabs;
                         FilteredPrefabs.reserve(PrefabAssets.size());
                         for (FAssetData* Data : PrefabAssets)
                         {
+                            if (EditedAsset != nullptr && Data->AssetGUID == EditedAsset->GetGUID())
+                            {
+                                continue;
+                            }
+
                             if (ImGuiX::PassSearchFilter(AddEntityComponentFilter, Data->AssetName.c_str()))
                             {
                                 FilteredPrefabs.push_back(Data);

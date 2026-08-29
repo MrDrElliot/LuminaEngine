@@ -175,6 +175,7 @@ namespace Lumina::Jobs
             FWorkFiber*    CurrentFiber   = nullptr; // work fiber currently switched in on this worker
             FPendingSwitch Pending;
             uint32         StealCursor    = 0;       // rotating victim offset for work-stealing
+            uint32         FruitlessWaits = 0;       // consecutive waits that spun and then parked anyway
             bool           bOwnsExternalSlot = false; // this thread holds an external slot to give back
             bool           bNativeJob        = false; // running a job on the scheduler fiber, with no work fiber
 
@@ -1046,6 +1047,9 @@ namespace Lumina::Jobs
         constexpr int kHotPauseSpins = 1024; // a tight pause spin, catching the next wave without a syscall
         constexpr int kHotYieldSpins = 128;  // OS-friendly tail; near-free when idle, holds hot when busy
 
+        // A spin that parks anyway was a losing bet, so each consecutive loss halves the next one.
+        constexpr uint32 kMaxSpinBackoffShift = 6;
+
         // Pauses spent waiting for another worker to hand a fiber back, before the pool grows a fresh stack.
         constexpr uint32 kFiberAcquireSpins = 256;
         // Wall-clock gap between pool-wedged reports.
@@ -1172,7 +1176,12 @@ namespace Lumina::Jobs
 
         void WaitForWork()
         {
-            for (int Spin = 0; Spin < kHotPauseSpins; ++Spin)
+            const uint32 Shift = TLS.FruitlessWaits < kMaxSpinBackoffShift ? TLS.FruitlessWaits
+                                                                           : kMaxSpinBackoffShift;
+            const int PauseSpins = kHotPauseSpins >> Shift;
+            const int YieldSpins = kHotYieldSpins >> Shift;
+
+            for (int Spin = 0; Spin < PauseSpins; ++Spin)
             {
                 if (HasWork())
                 {
@@ -1180,7 +1189,7 @@ namespace Lumina::Jobs
                 }
                 CpuPause();
             }
-            for (int Spin = 0; Spin < kHotYieldSpins; ++Spin)
+            for (int Spin = 0; Spin < YieldSpins; ++Spin)
             {
                 if (HasWork())
                 {
@@ -1188,7 +1197,9 @@ namespace Lumina::Jobs
                 }
                 Threading::ThreadYield();
             }
-            
+
+            ++TLS.FruitlessWaits;
+
             const uint32 W   = TLS.WorkerIndex;
             const uint32 Sig = G->Workers[W].WakeSignal.load(std::memory_order_acquire);
             SetWorkerIdle(W);
@@ -1227,6 +1238,7 @@ namespace Lumina::Jobs
                 if (G->ReadyFibers.TryDequeue(Ready))
                 {
                     G->ReadyCount.fetch_sub(1, std::memory_order_relaxed);
+                    TLS.FruitlessWaits = 0; // work is flowing again, so the next spin is worth its full budget
                     CascadeWake(Slot); // before the switch, since a releasing counter can dump many at once
                     TLS.CurrentFiber = Ready;
 #if USING(WITH_EDITOR)
@@ -1242,6 +1254,7 @@ namespace Lumina::Jobs
                 FQueuedJob Job;
                 if (TryGetJobWorker(Job, Slot))
                 {
+                    TLS.FruitlessWaits = 0;
                     CascadeWake(Slot); // relay the ramp before running, so the two overlap
 
                     if (!Job.MayPark())

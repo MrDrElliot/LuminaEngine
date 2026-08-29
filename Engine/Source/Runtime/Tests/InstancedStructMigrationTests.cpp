@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "Core/Object/Class.h"
+#include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Object/InstancedStruct.h"
 #include "Core/Object/ObjectCore.h"
 #include "Scripting/ScriptStruct.h"

@@ -63,16 +63,18 @@ FCubemapCoord DirectionToCubemapCoord(float3 Dir)
     return Result;
 }
 
-// Containment is independent of the view-Z sign convention, unlike the lit pass's split-distance test.
-float SampleSunCascadeByContainment(FLight Light, float3 WorldPos)
+// Cascades are nested by distance, so a ray marching away from the camera never falls back to a nearer
+// one. FirstCascade carries the last hit forward and skips the transforms that cannot match.
+float SampleSunCascadeFrom(FLight Light, float3 WorldPos, inout int FirstCascade)
 {
     if (Light.ShadowDataIndex == INDEX_NONE)
     {
         return 1.0;
     }
 
-    [unroll]
-    for (int c = 0; c < NUM_CASCADES; ++c)
+    // Unrolling holds all four cascade matrices live at once, and a volumetric march calls this per step.
+    [loop]
+    for (int c = FirstCascade; c < NUM_CASCADES; ++c)
     {
         float4x4 VP = GetShadowViewProjection(Light.ShadowDataIndex, c);
         float4   SC = mul(VP, float4(WorldPos, 1.0));
@@ -83,10 +85,18 @@ float SampleSunCascadeByContainment(FLight Light, float3 WorldPos)
         {
             FLightShadow Tile = GetShadowTile(Light.ShadowDataIndex, c);
             float2 AUV = UV * Tile.AtlasUVScale + Tile.AtlasUVOffset;
+            FirstCascade = c;
             return ShadowCascade().SampleCmpLevelZero(AUV, P.z - 0.0005);
         }
     }
     return 1.0;
+}
+
+// Containment is independent of the view-Z sign convention, unlike the lit pass's split-distance test.
+float SampleSunCascadeByContainment(FLight Light, float3 WorldPos)
+{
+    int FirstCascade = 0;
+    return SampleSunCascadeFrom(Light, WorldPos, FirstCascade);
 }
 
 // Load, not Sample: the mask is full-res and screen-aligned, so the fetch is an exact 1:1 texel read.

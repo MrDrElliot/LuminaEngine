@@ -42,6 +42,19 @@ public sealed class BuildTarget
     public string IntermediateDirectory =>
         Directories.ObjectDirectory(Name, Info.Platform, Info.Configuration, Info.Type);
 
+    // Keyed like the binaries, since a profile collected from one configuration does not describe another.
+    public string PgoDirectory => Rules.PgoProfileDirectory.Length > 0
+        ? Rules.PgoProfileDirectory
+        : Path.Combine(Directories.IntermediatesDirectory, "PGO", Info.PlatformName);
+
+    public string PgoProfileName => $"{Name}-{Info.Type}-{Info.Configuration}";
+
+    /// <summary>Where an instrumented Clang binary drops its raw profiles.</summary>
+    public string ClangRawProfileDirectory => Path.Combine(PgoDirectory, PgoProfileName + ".raw");
+
+    /// <summary>The merged profile llvm-profdata produces and the optimize pass consumes.</summary>
+    public string ClangProfileFile => Path.Combine(PgoDirectory, PgoProfileName + ".profdata");
+
     public BuildModule? FindModule(string ModuleName)
     {
         return Modules.FirstOrDefault(M => string.Equals(M.Name, ModuleName, StringComparison.OrdinalIgnoreCase));

@@ -34,6 +34,16 @@ public abstract class LuminaTargetRules : TargetRules
         bLinkTimeCodeGeneration = Target.Configuration == BuildConfiguration.Shipping;
         bIncrementalLinking = Target.Configuration != BuildConfiguration.Shipping;
 
+        // Nobody measures performance in Debug, and forcing these there costs build time and step-through.
+        ForceInlineHint = Target.Options.GetMode(LuminaFeatures.ForceInlineHint) switch
+        {
+            FeatureMode.On => ForceInlineHintPolicy.Force,
+            FeatureMode.Off => ForceInlineHintPolicy.Hint,
+            _ => Target.Configuration == BuildConfiguration.Debug
+                ? ForceInlineHintPolicy.Hint
+                : ForceInlineHintPolicy.Force,
+        };
+
         GlobalDefinitions.AddRange(new[]
         {
             "_SILENCE_CXX23_ALIGNED_UNION_DEPRECATION_WARNING",

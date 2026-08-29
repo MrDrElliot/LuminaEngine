@@ -168,6 +168,9 @@ namespace Lumina::ECS::Utils
 	// links are NOT touched here. Unmapped ids stay put when bClearUnmapped is false, else reset to null.
 	RUNTIME_API void RemapEntityReferences(ECS::FRegistry& Registry, ECS::FEntity Entity, const THashMap<ECS::FEntity, ECS::FEntity>& Map, bool bClearUnmapped);
 
+	// Appends every non-null entity RemapEntityReferences would rewrite, duplicates included.
+	RUNTIME_API void CollectEntityReferences(ECS::FRegistry& Registry, ECS::FEntity Entity, TVector<ECS::FEntity>& Out);
+
 	template<typename TFunc>
 	requires(std::is_invocable_v<TFunc, void*, ECS::FSparseSet&, CStruct*>)
 	void ForEachComponent(ECS::FRegistry& Registry, ECS::FEntity Entity, TFunc&& Func)

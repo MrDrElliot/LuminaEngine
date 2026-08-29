@@ -38,6 +38,9 @@ namespace Lumina
         // these answer "what is it", which is what you need to write a number down or compare two runs.
         void DrawMetricTable();
 
+        // Writes every live counter to Saved/Profiling/NsightPerf.csv, since the HUD has no other output.
+        void ExportMetrics();
+
         // Session/config facts that make the numbers above interpretable (chip, sample rate, how much
         // history a plot actually covers, how many metrics are live).
         void DrawSessionInfo();

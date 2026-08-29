@@ -108,9 +108,10 @@ namespace Lumina::Memory
     RUNTIME_API NODISCARD size_t GetTotalMappedMemory();
     RUNTIME_API NODISCARD size_t GetTotalUnmappedMemory();
     
-    RUNTIME_API NODISCARD void* Malloc(size_t Size, size_t Alignment = DEFAULT_ALIGNMENT);
+    RUNTIME_API LUMINA_ALLOCATION LUMINA_RESTRICT_RETURN NODISCARD void* Malloc(size_t Size, size_t Alignment = DEFAULT_ALIGNMENT) LUMINA_ALLOC_SIZE(1);
 
-    RUNTIME_API NODISCARD void* Realloc(void* Memory, size_t NewSize, size_t OriginalAlignment = DEFAULT_ALIGNMENT);
+    // No restrict here, since a reallocation is allowed to hand back the pointer it was given.
+    RUNTIME_API LUMINA_ALLOCATION NODISCARD void* Realloc(void* Memory, size_t NewSize, size_t OriginalAlignment = DEFAULT_ALIGNMENT) LUMINA_ALLOC_SIZE(2);
 
     // Bytes the allocator actually reserved, which is the requested size rounded up to a size class.
     RUNTIME_API NODISCARD size_t GetAllocationSize(void* Memory);
@@ -121,7 +122,7 @@ namespace Lumina::Memory
     RUNTIME_API void Free(void*& Memory);
 
     // The calling thread's scratch arena, reachable without Allocator.h, which the containers cannot include.
-    RUNTIME_API NODISCARD void* ScratchAllocate(size_t Size, size_t Alignment);
+    RUNTIME_API LUMINA_ALLOCATION LUMINA_RESTRICT_RETURN NODISCARD void* ScratchAllocate(size_t Size, size_t Alignment) LUMINA_ALLOC_SIZE(1);
 
     // The calling thread's frame arena, reset once per frame rather than per FMemMark scope.
     RUNTIME_API NODISCARD void* FrameAllocate(size_t Size, size_t Alignment);

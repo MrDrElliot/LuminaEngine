@@ -13,6 +13,7 @@
 #include "Paths/Paths.h"
 #include "Log/Log.h"
 #include "Renderer/RenderManager.h"
+#include "Core/Diagnostics/BenchmarkRun.h"
 
 namespace Lumina
 {
@@ -58,6 +59,8 @@ namespace Lumina
 
         GEngine->Init();
 
+        Benchmark::Start();
+
         bool bEngineWantsExit = false;
         while(!bEngineWantsExit)
         {
@@ -86,6 +89,12 @@ namespace Lumina
             }
 
             bEngineWantsExit = !GEngine->Update(bApplicationWantsExit);
+
+            // A timed run ends itself, so the loop exits on the frame count rather than on a kill.
+            if (Benchmark::IsActive() && !Benchmark::Tick(GEngine->GetDeltaTime()))
+            {
+                bEngineWantsExit = true;
+            }
 
             if (!GIsHeadless)
             {

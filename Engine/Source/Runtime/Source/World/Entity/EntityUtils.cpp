@@ -1310,23 +1310,30 @@ namespace Lumina::ECS::Utils
             }
         }
 
+        // The reflector types a raw uint32 handle UInt32 and an ECS::FEntity one Int32, both 4 bytes wide.
+        bool IsPackedEntityHandle(const FProperty* Property)
+        {
+            return Property->IsA(EPropertyTypeFlags::UInt32) || Property->IsA(EPropertyTypeFlags::Int32);
+        }
+
         // One pass over LinkedProperty, NOT one per super, since Link splices the super chain onto it.
-        void RemapEntityRefsInStruct(CStruct* Struct, void* Data, const THashMap<ECS::FEntity, ECS::FEntity>& Map, bool bClearUnmapped)
+        template<typename Visitor>
+        void ForEachEntityRefInStruct(CStruct* Struct, void* Data, Visitor& Visit)
         {
             for (FProperty* Property = Struct->LinkedProperty; Property != nullptr; Property = static_cast<FProperty*>(Property->Next))
             {
-                if (Property->IsA(EPropertyTypeFlags::UInt32) && Property->IsEntityHandle())
+                if (IsPackedEntityHandle(Property) && Property->IsEntityHandle())
                 {
                     uint32 Value = 0;
                     Property->GetValue(Data, &Value);
-                    RemapEntityHandle(Value, Map, bClearUnmapped);
+                    Visit(Value);
                     Property->SetValue(Data, Value);
                 }
                 else if (Property->IsA(EPropertyTypeFlags::Struct))
                 {
                     if (CStruct* Inner = static_cast<FStructProperty*>(Property)->GetStruct())
                     {
-                        RemapEntityRefsInStruct(Inner, Property->GetValuePtr<void>(Data), Map, bClearUnmapped);
+                        ForEachEntityRefInStruct(Inner, Property->GetValuePtr<void>(Data), Visit);
                     }
                 }
                 else if (Property->IsA(EPropertyTypeFlags::Vector))
@@ -1340,11 +1347,11 @@ namespace Lumina::ECS::Utils
 
                     void* ArrayPtr = Property->GetValuePtr<void>(Data);
 
-                    if (Inner->IsA(EPropertyTypeFlags::UInt32) && Property->IsEntityHandle())
+                    if (IsPackedEntityHandle(Inner) && Property->IsEntityHandle())
                     {
                         ArrayProperty->ForEach<uint32>(ArrayPtr, [&](uint32* Elem, SIZE_T)
                         {
-                            RemapEntityHandle(*Elem, Map, bClearUnmapped);
+                            Visit(*Elem);
                         });
                     }
                     else if (Inner->IsA(EPropertyTypeFlags::Struct))
@@ -1353,9 +1360,41 @@ namespace Lumina::ECS::Utils
                         {
                             ArrayProperty->ForEach(ArrayPtr, [&](void* Elem, SIZE_T)
                             {
-                                RemapEntityRefsInStruct(ElemStruct, Elem, Map, bClearUnmapped);
+                                ForEachEntityRefInStruct(ElemStruct, Elem, Visit);
                             });
                         }
+                    }
+                }
+            }
+        }
+
+        template<typename Visitor>
+        void ForEachEntityRefOnEntity(ECS::FRegistry& Registry, ECS::FEntity Entity, Visitor& Visit)
+        {
+            for (Lumina::ECS::FSparseSet* StoragePtr : Registry.GetActiveStorages())
+            {
+                const Lumina::ECS::FComponentTypeID ID = StoragePtr->GetTypeInfo().TypeID;
+                Lumina::ECS::FSparseSet& Storage = *StoragePtr;
+                if (!Storage.Contains(Entity))
+                {
+                    continue;
+                }
+
+                if (CStruct* Struct = FindComponentStructByTypeId(ID))
+                {
+                    ForEachEntityRefInStruct(Struct, Storage.GetRaw(Entity), Visit);
+                }
+            }
+
+            // A script is held BY a component, so its reflected properties are invisible to the storage walk.
+            if (SEntityScriptComponent* Scripts = Registry.TryGet<SEntityScriptComponent>(Entity))
+            {
+                for (const TObjectPtr<CEntityScript>& Held : Scripts->Scripts)
+                {
+                    CEntityScript* Script = Held.Get();
+                    if (Script != nullptr && Script->GetClass() != nullptr)
+                    {
+                        ForEachEntityRefInStruct(Script->GetClass(), Script, Visit);
                     }
                 }
             }
@@ -1366,33 +1405,24 @@ namespace Lumina::ECS::Utils
 
     void RemapEntityReferences(ECS::FRegistry& Registry, ECS::FEntity Entity, const THashMap<ECS::FEntity, ECS::FEntity>& Map, bool bClearUnmapped)
     {
-        for (Lumina::ECS::FSparseSet* StoragePtr : Registry.GetActiveStorages())
+        auto Visit = [&](uint32& Value)
         {
-            const Lumina::ECS::FComponentTypeID ID = StoragePtr->GetTypeInfo().TypeID;
-            Lumina::ECS::FSparseSet& Storage = *StoragePtr;
-            if (!Storage.Contains(Entity))
-            {
-                continue;
-            }
+            RemapEntityHandle(Value, Map, bClearUnmapped);
+        };
+        ForEachEntityRefOnEntity(Registry, Entity, Visit);
+    }
 
-            if (CStruct* Struct = FindComponentStructByTypeId(ID))
-            {
-                RemapEntityRefsInStruct(Struct, Storage.GetRaw(Entity), Map, bClearUnmapped);
-            }
-        }
-
-        // A script is held BY a component, so its reflected properties are invisible to the storage walk.
-        if (SEntityScriptComponent* Scripts = Registry.TryGet<SEntityScriptComponent>(Entity))
+    void CollectEntityReferences(ECS::FRegistry& Registry, ECS::FEntity Entity, TVector<ECS::FEntity>& Out)
+    {
+        auto Visit = [&](uint32& Value)
         {
-            for (const TObjectPtr<CEntityScript>& Held : Scripts->Scripts)
+            const ECS::FEntity Referenced = static_cast<ECS::FEntity>(Value);
+            if (Referenced != ECS::NullEntity)
             {
-                CEntityScript* Script = Held.Get();
-                if (Script != nullptr && Script->GetClass() != nullptr)
-                {
-                    RemapEntityRefsInStruct(Script->GetClass(), Script, Map, bClearUnmapped);
-                }
+                Out.push_back(Referenced);
             }
-        }
+        };
+        ForEachEntityRefOnEntity(Registry, Entity, Visit);
     }
 
     void SetEntityWorldTransform(ECS::FRegistry& Registry, ECS::FEntity Entity, const FTransform& WorldTransform)

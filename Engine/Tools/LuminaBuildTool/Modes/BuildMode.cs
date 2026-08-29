@@ -29,18 +29,16 @@ public static class BuildMode
         Stopwatch Timer = Stopwatch.StartNew();
 
         RulesAssembly Assembly = RulesAssembly.Create(Directories, Arguments.HasFlag("RecompileRules"));
-        IBuildPlatform PlatformSupport = BuildPlatformRegistry.Get(PlatformValue);
-        BuildOptions Options = BuildOptions.Load(Directories, Arguments);
 
-        IToolchain Toolchain = PlatformSupport.CreateToolchain(
-            new TargetInfo(TargetName, TypeValue, PlatformValue, ConfigurationValue, Directories, Options));
-
-        Log.Info("Using {0}", Toolchain.Description);
-        Log.Verbose("Build features: {0}", Options);
-
-        BuildSession Session = new(Arguments, Directories, Assembly, PlatformSupport, Toolchain, Options);
-        int Result = await Session.BuildAsync(TargetName, TypeValue, PlatformValue, ConfigurationValue, Cancellation)
-            .ConfigureAwait(false);
+        int Result = await BuildTargetsAsync(
+            new[] { TargetName },
+            Arguments,
+            Directories,
+            Assembly,
+            TypeValue,
+            PlatformValue,
+            ConfigurationValue,
+            Cancellation).ConfigureAwait(false);
 
         if (Result == 0)
         {
@@ -50,6 +48,43 @@ public static class BuildMode
         }
 
         return Result;
+    }
+
+    // Builds several targets through one session, so shared prerequisites are built once.
+    public static async Task<int> BuildTargetsAsync(
+        IReadOnlyList<string> TargetNames,
+        CommandLine Arguments,
+        BuildDirectories Directories,
+        RulesAssembly Assembly,
+        TargetType TypeValue,
+        BuildPlatform PlatformValue,
+        BuildConfiguration ConfigurationValue,
+        CancellationToken Cancellation)
+    {
+        IBuildPlatform PlatformSupport = BuildPlatformRegistry.Get(PlatformValue);
+        BuildOptions Options = BuildOptions.Load(Directories, Arguments);
+
+        IToolchain Toolchain = PlatformSupport.CreateToolchain(
+            new TargetInfo(TargetNames[0], TypeValue, PlatformValue, ConfigurationValue, Directories, Options));
+
+        Log.Info("Using {0}", Toolchain.Description);
+        Log.Verbose("Build features: {0}", Options);
+
+        BuildSession Session = new(Arguments, Directories, Assembly, PlatformSupport, Toolchain, Options);
+
+        foreach (string TargetName in TargetNames)
+        {
+            int Result = await Session
+                .BuildAsync(TargetName, TypeValue, PlatformValue, ConfigurationValue, Cancellation, bIsPrimary: true)
+                .ConfigureAwait(false);
+
+            if (Result != 0)
+            {
+                return Result;
+            }
+        }
+
+        return 0;
     }
 
     /// <summary>Default parallelism: core count less one, capped to what the machine's memory holds.</summary>
@@ -159,7 +194,8 @@ public static class BuildMode
             TargetType TypeValue,
             BuildPlatform PlatformValue,
             BuildConfiguration ConfigurationValue,
-            CancellationToken Cancellation)
+            CancellationToken Cancellation,
+            bool bIsPrimary = false)
         {
             string Key = $"{TargetName}|{TypeValue}|{PlatformValue}|{ConfigurationValue}";
 
@@ -178,7 +214,11 @@ public static class BuildMode
 
             try
             {
-                TargetInfo Info = new(TargetName, TypeValue, PlatformValue, ConfigurationValue, Directories, Options);
+                // A reflection generator or other host tool is built to produce this target, not shipped
+                // with it, so the profile the caller asked for is not its to collect.
+                TargetInfo Info = new(
+                    TargetName, TypeValue, PlatformValue, ConfigurationValue, Directories,
+                    bIsPrimary ? Options : Options.WithoutPgo());
                 BuildTarget Target = new TargetAssembler(Assembly, Directories, PlatformSupport).Assemble(TargetName, Info);
 
                 // Prerequisite tools, such as the reflection generator, must exist before this

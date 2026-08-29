@@ -58,6 +58,20 @@ public sealed class TargetAssembler
 
         TargetRules = Assembly.CreateTargetRules(TargetName, Info);
 
+        // Read after construction, so a Target.cs body can override what its base class chose.
+        if (Info.Options.Pgo is PgoMode Requested)
+        {
+            TargetRules.Pgo = Requested;
+        }
+
+        TargetRules.GlobalDefinitions.Add(
+            TargetRules.ForceInlineHint == ForceInlineHintPolicy.Hint
+                ? "LUMINA_FORCEINLINE_HINTS_FORCED=0"
+                : "LUMINA_FORCEINLINE_HINTS_FORCED=1");
+
+        TargetRules.GlobalDefinitions.Add(
+            TargetRules.Pgo == PgoMode.Off ? "LUMINA_WITH_PGO=0" : "LUMINA_WITH_PGO=1");
+
         // Computed once so every module in the target lands on the same answer.
         SharedEngineEnvironmentKey = new Lazy<string>(ComputeSharedEngineEnvironmentKey);
 
@@ -333,6 +347,8 @@ public sealed class TargetAssembler
             TargetRules.bWarningsAsErrors.ToString(),
             TargetRules.WarningLevel.ToString(),
             TargetRules.bLinkTimeCodeGeneration.ToString(),
+            TargetRules.Pgo.ToString(),
+            TargetRules.ForceInlineHint.ToString(),
             TargetRules.bUseUnityBuild.ToString(),
             TargetRules.UnityBuildBytesPerFile.ToString(),
             TargetRules.MinFilesForUnityBuild.ToString(),

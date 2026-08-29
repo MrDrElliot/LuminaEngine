@@ -232,6 +232,15 @@ public abstract class TargetRules
     /// <summary>Instruction set baseline. AVX2 crashes on CPUs without it; see the engine target.</summary>
     public string VectorExtensions { get; set; } = "AVX";
 
+    /// <summary>What LUMINA_FORCEINLINE_HINT expands to. A PGO or size-tuned target picks Hint.</summary>
+    public ForceInlineHintPolicy ForceInlineHint { get; set; } = ForceInlineHintPolicy.Default;
+
+    /// <summary>Which half of a profile guided optimization cycle this build is. Set by -Pgo.</summary>
+    public PgoMode Pgo { get; set; } = PgoMode.Off;
+
+    /// <summary>Where the profile is written and read. Empty resolves to Intermediates/PGO.</summary>
+    public string PgoProfileDirectory { get; set; } = string.Empty;
+
     public bool bEnableExceptions { get; set; } = true;
 
     public bool bEnableRtti { get; set; }

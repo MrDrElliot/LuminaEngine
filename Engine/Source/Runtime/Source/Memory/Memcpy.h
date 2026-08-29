@@ -204,7 +204,7 @@ namespace Lumina::Memory
             CopyTailUpTo127(Dest, Src, Size);
         }
 
-        FORCEINLINE void CopyDispatch(void* RESTRICT Destination, const void* RESTRICT Source, size_t Size)
+        LUMINA_FORCEINLINE_HINT void CopyDispatch(void* RESTRICT Destination, const void* RESTRICT Source, size_t Size)
         {
             uint8* RESTRICT       Dest = static_cast<uint8*>(Destination);
             const uint8* RESTRICT Src  = static_cast<const uint8*>(Source);
@@ -321,7 +321,7 @@ namespace Lumina::Memory
             }
         }
 
-        FORCEINLINE void SetDispatch(void* RESTRICT Destination, int32 Value, size_t Size)
+        LUMINA_FORCEINLINE_HINT void SetDispatch(void* RESTRICT Destination, int32 Value, size_t Size)
         {
             uint8* RESTRICT Dest = static_cast<uint8*>(Destination);
 
@@ -417,7 +417,7 @@ namespace Lumina::Memory
         }
     #endif
 
-        FORCEINLINE int32 CompareDispatch(const void* A, const void* B, size_t Size)
+        LUMINA_FORCEINLINE_HINT int32 CompareDispatch(const void* A, const void* B, size_t Size)
         {
             const uint8* Left  = static_cast<const uint8*>(A);
             const uint8* Right = static_cast<const uint8*>(B);

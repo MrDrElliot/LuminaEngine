@@ -15,6 +15,13 @@ public sealed class RulesAssembly
 
     private readonly Dictionary<string, RulesFile> TargetFiles = new(StringComparer.OrdinalIgnoreCase);
 
+    private readonly Dictionary<string, TestSuite> TestSuites = new(StringComparer.OrdinalIgnoreCase);
+
+    // Supply the tree's engine-wide defaults, which a synthesized suite cannot inherit by deriving.
+    private readonly Type? TestSuiteTargetTemplate;
+
+    private readonly Type? TestSuiteModuleTemplate;
+
     private RulesAssembly(Assembly Compiled, IReadOnlyList<RulesFile> Files, IReadOnlyList<PluginDescriptor> Plugins)
     {
         this.Compiled = Compiled;
@@ -31,6 +38,16 @@ public sealed class RulesAssembly
             }
 
             DeclaredTypes[Candidate.Name] = Candidate;
+
+            if (Candidate.GetCustomAttributes(typeof(TestSuiteTargetTemplateAttribute), false).Length > 0)
+            {
+                TestSuiteTargetTemplate = Candidate;
+            }
+
+            if (Candidate.GetCustomAttributes(typeof(TestSuiteModuleTemplateAttribute), false).Length > 0)
+            {
+                TestSuiteModuleTemplate = Candidate;
+            }
         }
 
         foreach (RulesFile File in Files)
@@ -44,6 +61,15 @@ public sealed class RulesAssembly
                 case RulesFileKind.Module:
                     Register(File, DeclaredTypes, typeof(ModuleRules), ModuleTypes, ModuleFiles, "Module");
                     break;
+            }
+        }
+
+        foreach (RulesFile File in ModuleFiles.Values)
+        {
+            foreach (TestSuite Suite in TestSuite.Discover(File))
+            {
+                TestSuites[Suite.SuiteName] = Suite;
+                Log.Trace("Discovered {0} suite '{1}' at {2}", Suite.Kind, Suite.SuiteName, Suite.SourceDirectory);
             }
         }
     }
@@ -64,6 +90,9 @@ public sealed class RulesAssembly
 
     public IReadOnlyCollection<string> ModuleNames => ModuleTypes.Keys;
 
+    // Suites synthesized from a Tests directory beside a module's Build.cs, keyed by suite name.
+    public IReadOnlyDictionary<string, TestSuite> DiscoveredTestSuites => TestSuites;
+
     public static RulesAssembly Create(BuildDirectories Directories, bool bForceRecompile)
     {
         RulesScanner Scanner = new(Directories);
@@ -79,9 +108,9 @@ public sealed class RulesAssembly
         return new RulesAssembly(Compiled, Files, Scanner.DiscoveredPlugins);
     }
 
-    public bool HasModule(string Name) => ModuleTypes.ContainsKey(Name);
+    public bool HasModule(string Name) => ModuleTypes.ContainsKey(Name) || TestSuites.ContainsKey(Name);
 
-    public bool HasTarget(string Name) => TargetTypes.ContainsKey(Name);
+    public bool HasTarget(string Name) => TargetTypes.ContainsKey(Name) || TestSuites.ContainsKey(Name);
 
     /// <summary>Absolute path of the rules file a module was declared in.</summary>
     public string GetModuleRulesFile(string Name)
@@ -104,6 +133,11 @@ public sealed class RulesAssembly
 
     public TargetRules CreateTargetRules(string Name, TargetInfo Info)
     {
+        if (TestSuites.TryGetValue(Name, out TestSuite? Suite))
+        {
+            return CreateTestSuiteTargetRules(Suite, Info);
+        }
+
         if (!TargetTypes.TryGetValue(Name, out Type? RulesType))
         {
             throw new BuildException(
@@ -137,6 +171,11 @@ public sealed class RulesAssembly
 
     public ModuleRules CreateModuleRules(string Name, TargetInfo Info)
     {
+        if (TestSuites.TryGetValue(Name, out TestSuite? Suite))
+        {
+            return CreateTestSuiteModuleRules(Suite, Info);
+        }
+
         if (!ModuleTypes.TryGetValue(Name, out Type? RulesType))
         {
             throw new BuildException($"No module named '{Name}' was found in any Build.cs file.");
@@ -154,11 +193,74 @@ public sealed class RulesAssembly
 
         try
         {
-            return (ModuleRules)Instantiate(RulesType, Info, File);
+            ModuleRules Rules = (ModuleRules)Instantiate(RulesType, Info, File);
+
+            // A Build.cs sitting at its own source root would otherwise walk its suites back into itself.
+            foreach (TestSuite OwnSuite in TestSuites.Values)
+            {
+                if (OwnSuite.ModuleName.Equals(Name, StringComparison.OrdinalIgnoreCase))
+                {
+                    Rules.ExcludedSourceDirectories.Add(OwnSuite.SourceDirectory);
+                }
+            }
+
+            return Rules;
         }
         finally
         {
             ModuleRules.PendingConstruction = null;
+        }
+    }
+
+    private ModuleRules CreateTestSuiteModuleRules(TestSuite Suite, TargetInfo Info)
+    {
+        ModuleRules Tested = CreateModuleRules(Suite.ModuleName, Info);
+
+        ModuleRules.PendingConstruction = new ModuleRules.ConstructionContext
+        {
+            Name = Suite.SuiteName,
+
+            // Borrowed from the module under test, so a rules edit still invalidates the suite.
+            RulesFile = Suite.ModuleRulesFile.Location,
+            ModuleDirectory = Suite.SourceDirectory,
+            PluginName = Suite.ModuleRulesFile.PluginName ?? string.Empty,
+        };
+
+        try
+        {
+            ModuleRules Rules = TestSuiteModuleTemplate is not null
+                ? (ModuleRules)Activator.CreateInstance(TestSuiteModuleTemplate, Info)!
+                : new TestSuiteModuleRules(Info);
+
+            Suite.ApplyTo(Rules, Tested);
+            return Rules;
+        }
+        finally
+        {
+            ModuleRules.PendingConstruction = null;
+        }
+    }
+
+    private TargetRules CreateTestSuiteTargetRules(TestSuite Suite, TargetInfo Info)
+    {
+        TargetRules.PendingConstruction = new TargetRules.ConstructionContext
+        {
+            RulesFile = Suite.ModuleRulesFile.Location,
+            RulesDirectory = Suite.SourceDirectory,
+        };
+
+        try
+        {
+            TargetRules Rules = TestSuiteTargetTemplate is not null
+                ? (TargetRules)Activator.CreateInstance(TestSuiteTargetTemplate, Info)!
+                : new TestSuiteTargetRules(Info);
+
+            Suite.ApplyTo(Rules);
+            return Rules;
+        }
+        finally
+        {
+            TargetRules.PendingConstruction = null;
         }
     }
 

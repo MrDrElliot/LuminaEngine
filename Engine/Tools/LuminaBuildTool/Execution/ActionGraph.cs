@@ -103,12 +103,39 @@ public sealed class ActionGraph
         }
 
         Actions.AddRange(CreateRuntimeDependencyCopies(Target));
+        Actions.AddRange(CreateProfileRuntimeCopies(Target, Toolchain));
         Actions.AddRange(ManagedProjectStep.CreateActions(Target, GenerateReflection));
 
         ActionGraph Graph = new(Actions);
         Graph.Wire();
 
         return Graph;
+    }
+
+    /// <summary>Stages the profiling runtime, without which an instrumented binary will not start.</summary>
+    private static IEnumerable<BuildAction> CreateProfileRuntimeCopies(BuildTarget Target, IToolchain Toolchain)
+    {
+        foreach (string SourcePath in Toolchain.GetProfileRuntimeFiles(Target))
+        {
+            if (!File.Exists(SourcePath))
+            {
+                Log.Warning("Profiling runtime '{0}' was not found; the instrumented binary will not run.", SourcePath);
+                continue;
+            }
+
+            string Destination = Path.Combine(Target.BinariesDirectory, Path.GetFileName(SourcePath));
+
+            BuildAction Copy = new(ActionType.Copy, "ProfileRuntime")
+            {
+                StatusText = Path.GetFileName(SourcePath),
+                Operation = new CopyFileOperation(SourcePath, Destination),
+            };
+
+            Copy.PrerequisiteItems.Add(FileItem.Get(SourcePath));
+            Copy.ProducedItems.Add(FileItem.Get(Destination));
+
+            yield return Copy;
+        }
     }
 
     /// <summary>Stages prebuilt files beside the target's binaries.</summary>

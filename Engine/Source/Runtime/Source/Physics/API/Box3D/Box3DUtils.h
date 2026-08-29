@@ -11,15 +11,30 @@ namespace Lumina::Box3DUtils
 
     // Shape user data carries the authored profile, since the broad-phase mask is widened for the callback.
     RUNTIME_API void* PackProfileUserData(const FCollisionProfile& Profile, bool bCharacterProxy = false);
-    RUNTIME_API FCollisionProfile UnpackProfileUserData(void* UserData);
     RUNTIME_API bool IsCharacterProxyUserData(void* UserData);
 
     // True when the engine's historical rule applies, where either side accepting is enough.
     RUNTIME_API bool UsesPermissiveCollisionFilter();
     RUNTIME_API b3QueryFilter MakeQueryFilter(const FCollisionProfile& Profile);
 
-    // Contacts decide a widened pair in a callback, so a profile-driven query has to run the same rule there.
-    RUNTIME_API bool ShouldProfileCollideWithShape(const FCollisionProfile& Profile, b3ShapeId ShapeId, bool bPermissive);
+    FORCEINLINE FCollisionProfile UnpackProfileUserData(void* UserData)
+    {
+        const uint64 Packed = (uint64)reinterpret_cast<uintptr_t>(UserData);
+
+        FCollisionProfile Profile;
+        Profile.Layer = (ECollisionProfiles)(uint16)(Packed & 0xFFFFull);
+        Profile.Mask = (ECollisionProfiles)(uint16)((Packed >> 16) & 0xFFFFull);
+        return Profile;
+    }
+
+    // Inline, since a shape id only means something to the image holding the box3d copy that made it.
+    FORCEINLINE bool ShouldProfileCollideWithShape(const FCollisionProfile& Profile, b3ShapeId ShapeId, bool bPermissive)
+    {
+        const FCollisionProfile Other = UnpackProfileUserData(b3Shape_GetUserData(ShapeId));
+
+        // Strict mode already applied the other half of the pair test through the query filter itself.
+        return bPermissive ? Profile.ShouldCollide(Other) : (Profile.Mask & Other.Layer) != (ECollisionProfiles)0;
+    }
 
     RUNTIME_API b3BodyType ToBox3DBodyType(EBodyType Type);
     RUNTIME_API EBodyType FromBox3DBodyType(b3BodyType Type);

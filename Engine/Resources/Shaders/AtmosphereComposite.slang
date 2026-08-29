@@ -137,9 +137,17 @@ float4 IntegrateFog(float2 UV, float2 PixelPos, float Depth)
             // Same per-pixel hash the froxel lookup uses, so step banding lands as grain, not arcs.
             float  Jitter       = InterleavedGradientNoise(PixelPos);
             float2 ShadowCenter = float2(Pass().CloudShadowCenterX, Pass().CloudShadowCenterY);
+            // The march only recedes, so each step resumes the cascade search where the last one hit.
+            int    CascadeCursor = 0;
 
             for (uint i = 0u; i < MarchSteps; ++i)
             {
+                // Later steps all scale by Trans, so below this nothing further can still be seen.
+                if (Trans < 1.0e-6)
+                {
+                    break;
+                }
+
                 float  T = T0 + StepLen * (float(i) + Jitter);
                 float3 P = CamPos + RayDir * T;
 
@@ -149,7 +157,7 @@ float4 IntegrateFog(float2 UV, float2 PixelPos, float Depth)
                     continue;
                 }
 
-                float Shadow = SampleSunCascadeByContainment(Sun, P)
+                float Shadow = SampleSunCascadeFrom(Sun, P, CascadeCursor)
                              * CloudShadow_Sample(Pass().CloudShadowIndex, P, ShadowCenter, Pass().CloudShadowExtent);
 
                 float3 Light  = Ambient + SunRadiance * Fog_MultiScatterPhaseShadow(uFog, CosSun, uFog.VolumetricParams.y, Shadow);

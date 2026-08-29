@@ -269,6 +269,14 @@ public static class SourceFileScanner
 
     private static bool IsExcluded(FileItem Item, ModuleRules Rules)
     {
+        foreach (string Directory in Rules.ExcludedSourceDirectories)
+        {
+            if (PathUtils.IsUnder(Item.Location, Directory))
+            {
+                return true;
+            }
+        }
+
         if (Rules.ExcludedSourcePathFragments.Count == 0)
         {
             return false;

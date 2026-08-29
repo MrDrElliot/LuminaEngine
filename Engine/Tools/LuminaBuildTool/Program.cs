@@ -49,6 +49,8 @@ public static class Program
             {
                 "build" => await BuildMode.RunAsync(Arguments, Directories, Cancellation.Token).ConfigureAwait(false),
                 "run" => RunMode.Run(Arguments, Directories),
+                "test" => await TestMode.RunAsync(Arguments, Directories, Cancellation.Token).ConfigureAwait(false),
+                "profile" => await ProfileMode.RunAsync(Arguments, Directories, Cancellation.Token).ConfigureAwait(false),
                 "clean" => CleanMode.Run(Arguments, Directories),
                 "query" => QueryMode.Run(Arguments, Directories),
                 "includes" => AnalyzeMode.RunIncludes(Arguments, Directories),
@@ -95,11 +97,36 @@ public static class Program
               Setup                     Fetch external dependencies and configure the environment
               Build <Target>            Compile and link a target
               Run <Target>              Launch a target's executable, located from its own rules
+              Test [Module]             Build and run test suites; a module with a Tests or Benchmarks
+                                        directory beside its Build.cs gets one binary per directory
+              Profile <Target>          Run a target under Tracy and rank its zones by self time
               Clean [Target]            Delete a target's outputs, or all intermediates
               Query [Target]            List targets, modules and plugins, or describe one target
               Includes <Target>         Rank headers by how many translation units include them
               Deps <Target>             Compare declared module dependencies against reached ones
               GenerateProjectFiles      Write IDE project and solution files
+
+            Profile options:
+              -Seconds=<n>              Capture window, default 15
+              -Delay=<n>                Wait n seconds before connecting, to skip startup and load
+              -Repeat=<n>               Capture n times and report the median, with a noise floor
+              -Top=<n>                  Hotspots to print, default 25
+              -Baseline                 Store this run as the one later runs are compared against
+              -Gpu                      Rank GPU passes instead of CPU zones, nesting resolved
+              -Filter=<pattern>         Only zones whose name matches
+              -NoBuild                  Profile what is already built
+              -Benchmark=<map>          Drive a deterministic run, capturing only measured frames
+              -Warmup=<n>               Frames to settle before capturing, default 900
+              -Frames=<n>               Measured frames, must outlive every capture, default 4000
+              -ClearShaderCache         Delete the shader cache first, so compiles are paid in warmup
+            Traces and CSVs land in Intermediates/Profiling. Only instrumented zones are visible, so a
+            path with no LUMINA_PROFILE_SCOPE will not appear however hot it is.
+
+            Test options:
+              -List                     List the discovered suites and where they live
+              -Filter=<pattern>         Passed on as --gtest_filter
+              -BuildOnly                Compile the suites without running them
+              -Benchmarks               Run the Benchmarks suites instead of the Tests ones
 
             Includes options (reads the graph the last build recorded):
               -Top=<n>                  How many headers to list (default: 40)
@@ -121,6 +148,17 @@ public static class Program
               -RecompileRules           Force the Target.cs and Build.cs assembly to rebuild
               -NoProjectFileUpdate      Do not refresh IDE project files when a Build.cs changed
               -Timeline                 Write a Perfetto / chrome://tracing trace of the build
+              -Pgo=<mode>               off | instrument | optimize
+
+            Profile guided optimization (two passes, Shipping is the one worth profiling):
+              1. Build with -Pgo=instrument
+              2. Run the binary through a representative workload, then exit it cleanly
+              3. Build again with -Pgo=optimize
+            On Windows the .pgd sits beside the binary, because that is the only place LINK looks for
+            the .pgc run files, and pgort140.dll is staged next to it so the instrumented build starts.
+            On Linux the raw profiles land in Intermediates/PGO/<Platform> and must be merged first:
+              llvm-profdata merge -output=<name>.profdata <name>.raw/*.profraw
+            A profile is stale once the source moves; rerun the cycle rather than trusting it.
               -Verbose / -Trace         More diagnostic output
 
             Feature switches (default in Engine/Build/BuildConfiguration.json):
@@ -129,6 +167,7 @@ public static class Program
               -Aftermath=<mode>         auto | on | off   (NVIDIA crash dumps)
               -RadeonGpuDetective=<mode> auto | on | off  (AMD crash analysis)
               -VerboseLogging=<mode>    auto | on | off
+              -ForceInlineHint=<mode>   auto | on | off   (off lets the optimizer decide)
 
             Setup options:
               -Force                    Re-download the dependency bundle even if External/ exists

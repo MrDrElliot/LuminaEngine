@@ -81,6 +81,9 @@ namespace Lumina
          *  it); for an instance-added component, simply drops it from the added set. */
         static void NoteComponentRemoved(ECS::FRegistry& Registry, ECS::FEntity Entity, CStruct* ComponentType);
 
+        // Per-instance tracking, which belongs to a placed copy and must never be captured into an asset.
+        NODISCARD static bool IsInstanceTrackingComponent(uint32 ID);
+
         /** Deep-copies entities Source->Dest (OutMap = src->dest ids); remaps relationships + entity-handle
          *  props (escaping refs cleared). SourceEntities limits the set; ExtraSkipStorage skips more types by id. */
         static void CopyRegistry(ECS::FRegistry& Source, ECS::FRegistry& Dest, THashMap<ECS::FEntity, ECS::FEntity>& OutMap,
@@ -95,6 +98,9 @@ namespace Lumina
         TObjectPtr<CPrefab> ParentPrefab;
 
         NODISCARD bool IsVariant() const { return ParentPrefab != nullptr; }
+
+        // Still true when the parent asset went missing, so a save cannot write an empty Registry over the delta.
+        NODISCARD bool HoldsVariantPayload() const { return IsVariant() || bVariantPayloadOnDisk; }
 
         /** True if Candidate is this prefab or anywhere up its parent chain. Guards cycles. */
         NODISCARD bool IsDescendantOf(const CPrefab* Candidate) const;
@@ -159,5 +165,8 @@ namespace Lumina
 
         // Transient, since it describes this session's parent chain rather than anything on disk.
         bool                          bVariantResolveFailed    = false;
+
+        // What the file said its payload was, which outlives a ParentPrefab that failed to resolve.
+        bool                          bVariantPayloadOnDisk    = false;
     };
 }

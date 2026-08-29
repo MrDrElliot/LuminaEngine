@@ -316,6 +316,42 @@ public sealed class ClangToolchain : IToolchain
 
                 break;
         }
+
+        AddProfileGuidedArguments(Target, Arguments, bCompiling: true);
+    }
+
+    /// <summary>The profile flags, which have to appear on both the compile and the link line.</summary>
+    private static void AddProfileGuidedArguments(BuildTarget Target, List<string> Arguments, bool bCompiling)
+    {
+        if (Target.Rules.Pgo == PgoMode.Off)
+        {
+            return;
+        }
+
+        if (Target.Rules.Pgo == PgoMode.Instrument)
+        {
+            Directory.CreateDirectory(Target.ClangRawProfileDirectory);
+
+            // A directory rather than a file, so the raw profiles of concurrent runs do not collide.
+            Arguments.Add("-fprofile-generate=" + PathUtils.QuoteUnix(Target.ClangRawProfileDirectory));
+            return;
+        }
+
+        if (!File.Exists(Target.ClangProfileFile))
+        {
+            throw new BuildException(
+                $"No profile at '{Target.ClangProfileFile}'. Build with -Pgo=instrument, run the binary, then "
+                + $"merge with: llvm-profdata merge -output={Target.ClangProfileFile} {Target.ClangRawProfileDirectory}/*.profraw");
+        }
+
+        Arguments.Add("-fprofile-use=" + PathUtils.QuoteUnix(Target.ClangProfileFile));
+
+        // A profile goes stale as the source moves, and the warning is per function across the whole build.
+        if (bCompiling)
+        {
+            Arguments.Add("-Wno-profile-instr-out-of-date");
+            Arguments.Add("-Wno-profile-instr-unprofiled");
+        }
     }
 
     private string GetLinkTimeOptimizationFlag()
@@ -571,6 +607,9 @@ public sealed class ClangToolchain : IToolchain
                 Arguments.Add(GetLinkTimeOptimizationFlag());
             }
         }
+
+        // The instrumented runtime that writes the profile is pulled in by the same flag at link time.
+        AddProfileGuidedArguments(Target, Arguments, bCompiling: false);
 
         foreach (string LibraryPath in Module.LinkLibraryPaths)
         {

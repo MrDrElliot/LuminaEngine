@@ -1,0 +1,50 @@
+panel,metric,label,unit,current,min,avg,max,samples
+"Frame Level Stats","gpu__time_duration.sum","","ms",8.72169,8.72169,8.72169,8.72169,1
+"Frame Level Stats","FE_B.TriageAC.gr__cycles_active.avg.pct_of_peak_sustained_elapsed","","%",94.2961,94.2961,94.2961,94.2961,1
+"Frame Level Stats","SM_A.TriageAC.sm__cycles_active.avg.pct_of_peak_sustained_elapsed","","%",75.6112,75.6112,75.6112,75.6112,1
+"Frame Level Stats","PCI.TriageAC.pcie__throughput.avg.pct_of_peak_sustained_elapsed","","%",3.58408,3.58408,3.58408,3.58408,1
+"Frame Level Stats","FBSP.TriageAC.dramc__throughput.avg.pct_of_peak_sustained_elapsed","","%",12.2247,12.2247,12.2247,12.2247,1
+"Engine Active (%)","FE_B.TriageAC.gr__cycles_active.avg.pct_of_peak_sustained_elapsed","GR Active","%",94.4512,89.5941,92.787,97.2771,240
+"Engine Active (%)","gpu__engine_cycles_active_any_syncce.avg.pct_of_peak_sustained_elapsed","Sync CE","%",4.59066,1.72159,6.05035,8.99858,240
+"Engine Active (%)","gpu__engine_cycles_active_any_asyncce.avg.pct_of_peak_sustained_elapsed","Async CE","%",0.0191535,0,0.00913394,0.0800482,240
+"GPU Clock Frequencies (GHz)","gpc__cycles_elapsed.avg.per_second","GPC","gpc_cycles / second",2.74418,2.74084,2.74627,2.75071,240
+"GPU Clock Frequencies (GHz)","sys__cycles_elapsed.avg.per_second","SYS","sys_cycles / second",2.15303,2.15004,2.15295,2.15439,240
+"GPU Clock Frequencies (GHz)","lts__cycles_elapsed.avg.per_second","L2","fbp_cycles / second",2.24303,2.24003,2.24295,2.24439,240
+"PCI Bandwidth (GB/s)","PCI.TriageAC.pcie__read_bytes.sum.per_second","Read","bytes / second",1.10054,0.429834,1.41895,2.08976,240
+"PCI Bandwidth (GB/s)","PCI.TriageAC.pcie__write_bytes.sum.per_second","Write","bytes / second",0.119532,0.0452813,0.159607,0.241306,240
+"VRAM Throughput (%)","FBSP.TriageAC.dramc__read_throughput.avg.pct_of_peak_sustained_elapsed","Read","%",6.81681,5.90839,7.09018,8.01073,240
+"VRAM Throughput (%)","FBSP.TriageAC.dramc__write_throughput.avg.pct_of_peak_sustained_elapsed","Write","%",5.35175,5.34405,6.25287,7.7678,240
+"VRAM Throughput (%)","FBSP.TriageAC.dramc__read_throughput.avg.pct_of_peak_sustained_elapsed","Read","",12.1686,11.3335,13.3431,15.7785,240
+"VRAM Throughput (%)","FBSP.TriageAC.dramc__write_throughput.avg.pct_of_peak_sustained_elapsed","Write","",5.35175,5.34405,6.25287,7.7678,240
+"L2 Hit-Rates (%)","LTS.TriageAC.lts__average_t_sector_hit_rate_realtime.pct","Total","%",94.3896,92.7249,93.6376,94.54,240
+"L2 Hit-Rates (%)","LTS.TriageAC.lts__average_t_sector_hit_rate_srcunit_tex_realtime.pct","Tex","%",94.2739,92.5029,93.6558,94.809,240
+"Shader Activity (%)","SM_A.TriageAC.sm__cycles_active.avg.pct_of_peak_sustained_elapsed","SM Active","%",76.0614,67.0628,70.9617,77.9903,240
+"Shader Activity (%)","SM_A.TriageAC.sm__inst_executed_realtime.avg.pct_of_peak_sustained_elapsed","Instructions","%",34.956,28.7153,31.6811,35.428,240
+"Shader Activity (%)","SM_A.TriageAC.sm__inst_executed_pipe_alu_realtime.avg.pct_of_peak_sustained_elapsed","ALU Instructions","%",19.0834,15.2031,17.1433,19.408,240
+"Shader Activity (%)","sm__inst_executed_pipe_fmaheavy_realtime.avg.pct_of_peak_sustained_elapsed","FMA-Heavy Instructions","%",9.77102,8.12655,8.84157,9.90142,240
+"Warp Occupancy (warps)","tpc__warps_inactive_sm_active_realtime.avg.per_cycle_elapsed","Unused, SM Active","warps",17.3707,14.0381,15.7072,17.7456,240
+"Warp Occupancy (warps)","tpc__warps_active_shader_ps_realtime.avg.per_cycle_elapsed","Pixel","warps",3.25439,3.06143,4.00997,5.91034,240
+"Warp Occupancy (warps)","tpc__warps_active_shader_vtg_realtime.avg.per_cycle_elapsed","Vertex/Tess/Geometry","warps",3.50224,1.74476,3.00533,3.51067,240
+"Warp Occupancy (warps)","tpc__warps_active_shader_cs_realtime.avg.per_cycle_elapsed","Compute","warps",12.3822,8.77824,11.3391,12.8688,240
+"Warp Occupancy (warps)","tpc__warps_inactive_sm_active_realtime.avg.per_cycle_elapsed","Unused, SM Active","",36.5095,32.1902,34.0616,37.4354,240
+"Warp Occupancy (warps)","tpc__warps_active_shader_ps_realtime.avg.per_cycle_elapsed","Pixel","",19.1388,16.5507,18.3544,20.2016,240
+"Warp Occupancy (warps)","tpc__warps_active_shader_vtg_realtime.avg.per_cycle_elapsed","Vertex/Tess/Geometry","",15.8844,12.2612,14.3444,16.3224,240
+"Warp Occupancy (warps)","tpc__warps_active_shader_cs_realtime.avg.per_cycle_elapsed","Compute","",12.3822,8.77824,11.3391,12.8688,240
+"TRAM Allocation Stalls (%)","tpc__pe2sm_ps_tram_allocation_cycles_stalled.avg.pct_of_peak_sustained_elapsed","TRAM Allocation Stalls","%",0,0,0,0,240
+"ROP Throughput (%)","crop__read_throughput.avg.pct_of_peak_sustained_elapsed","CROP Read","%",0.0876462,0.066384,0.121253,0.205878,240
+"ROP Throughput (%)","crop__write_throughput.avg.pct_of_peak_sustained_elapsed","CROP Write","%",1.62369,1.39673,1.93811,2.90507,240
+"ROP Throughput (%)","zrop__read_throughput.avg.pct_of_peak_sustained_elapsed","ZROP Read","%",0.664734,0.331129,0.573484,0.680655,240
+"ROP Throughput (%)","zrop__write_throughput.avg.pct_of_peak_sustained_elapsed","ZROP Write","%",0.924698,0.461931,0.797629,0.947547,240
+"Raster Data Flow","raster__zcull_input_samples_realtime.sum","","-",7.25971e+08,7.25971e+08,7.25971e+08,7.25971e+08,1
+"Raster Data Flow","prop__prop2zrop_pixels_stage_earlyz_realtime.sum","","-",1.5943e+07,1.5943e+07,1.5943e+07,1.5943e+07,1
+"Raster Data Flow","prop__prop2zrop_pixels_stage_latez_realtime.sum","","-",0,0,0,0,1
+"Raster Data Flow","prop__prop2crop_pixels_realtime.sum","","-",7.59659e+07,7.59659e+07,7.59659e+07,7.59659e+07,1
+"Raster Data Flow","raster__zcull_input_samples_realtime.sum","ZCULL Input Pixels per Cycle","samples",1.41036e+09,9.5361e+08,1.35232e+09,1.64175e+09,240
+"Raster Data Flow","prop__prop2zrop_pixels_stage_earlyz_realtime.sum","Early-Z Input Pixels per Cycle","pixels",3.13478e+07,1.55991e+07,2.70637e+07,3.20433e+07,240
+"Raster Data Flow","prop__prop2zrop_pixels_stage_latez_realtime.sum","Late-Z Input Pixels per Cycle","pixels",0,0,0,0,240
+"Raster Data Flow","prop__prop2crop_pixels_realtime.sum","Color Pixels per Cycle","pixels",1.42246e+08,1.33107e+08,1.84447e+08,2.77587e+08,240
+"Workload Launches","FE_B.TriageAC.fe__draw_count.sum","","-",86,86,86,86,1
+"Workload Launches","HUB_B.TriageAC.pda__input_prims_realtime.sum","","-",1.06882e+06,1.06882e+06,1.06882e+06,1.06882e+06,1
+"Workload Launches","HUB_B.TriageAC.pda__input_verts_realtime.sum","","-",1.08106e+06,1.08106e+06,1.08106e+06,1.08106e+06,1
+"Workload Launches","FE_A.TriageAC.gr__dispatch_count.sum","","-",59,59,59,59,1
+"Workload Launches","FE_B.TriageAC.gr__ctas_launched.sum","","-",998698,998698,998698,998698,1

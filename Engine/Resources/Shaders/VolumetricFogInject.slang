@@ -59,7 +59,8 @@ float SampleSunShadowAA(FLight Sun, uint3 Coord)
     const float3 Offs[4] = { float3(0.25, 0.25, 0.2), float3(0.75, 0.25, 0.4),
                              float3(0.25, 0.75, 0.6), float3(0.75, 0.75, 0.8) };
     float S = 0.0;
-    [unroll]
+    // Each copy holds a whole cascade search plus a cloud shadow tap live.
+    [loop]
     for (int i = 0; i < 4; ++i)
     {
         float3 P = FroxelToWorld(Coord, Offs[i]);

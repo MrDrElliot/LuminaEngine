@@ -100,5 +100,13 @@ public class Runtime : LuminaModuleRules
         // Defines stb's implementation macros, so it must be the only translation unit that does.
         // Sharing one with any other source would compile stb twice into the same object.
         ExcludeFromUnity.Add("StbImageImpl.cpp");
+
+        // Reached directly by the Tests directory rather than through Runtime's own headers.
+        TestDependencyModuleNames.AddRange(new[]
+        {
+            "Box3D",
+            "ImGui",
+            "RPMalloc",
+        });
     }
 }

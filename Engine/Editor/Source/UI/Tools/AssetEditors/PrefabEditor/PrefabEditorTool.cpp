@@ -514,8 +514,12 @@ namespace Lumina
         CPrefab::BumpDataGeneration();
         Prefab->Registry = ECS::FRegistry{};
         THashMap<ECS::FEntity, ECS::FEntity> SrcToDst;
+        // Instance tracking belongs to a placed copy; captured into the asset it would spawn as an instance.
         CPrefab::CopyRegistry(WorldRegistry, Prefab->Registry, SrcToDst, &PrefabEntities,
-            +[](uint32 ID) { return EditorEntityUtils::IsEditorOnlyComponent(ID); });
+            +[](uint32 ID)
+            {
+                return EditorEntityUtils::IsEditorOnlyComponent(ID) || CPrefab::IsInstanceTrackingComponent(ID);
+            });
 
         // A variant persists only its divergence, so the registry is reduced to a delta before writing.
         Prefab->CaptureVariantDelta();
@@ -886,6 +890,24 @@ namespace Lumina
         }
     }
 
+    void FPrefabEditorTool::AdoptIntoPrefab(ECS::FEntity Entity)
+    {
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
+        if (!Registry.IsValid(Entity))
+        {
+            return;
+        }
+
+        if (!Registry.HasAny<SPrefabComponent>(Entity))
+        {
+            Registry.Emplace<SPrefabComponent>(Entity).StableID = FName(FGuid::New().ToShortString());
+        }
+
+        // Authored data, not a placed copy. Captured as-is these would spawn an instance of another prefab.
+        Registry.Remove<SPrefabInstanceComponent>(Entity);
+        Registry.Remove<SPrefabOverrideComponent>(Entity);
+    }
+
     void FPrefabEditorTool::HandlePrefabContentDrop(FStringView VirtualPath, ECS::FEntity DropTarget, bool bAttachToTarget)
     {
         // Default drop target is the prefab root so dropped meshes become prefab-owned children.
@@ -898,15 +920,24 @@ namespace Lumina
         ECS::FEntity Spawned = HandleContentBrowserAssetDrop(VirtualPath, DropTarget, bAttachToTarget);
         if (Spawned != ECS::NullEntity && Spawned != DropTarget)
         {
-            // Mark the freshly created entity as part of the prefab so it round-trips on save.
+            // A dropped prefab arrives as a whole subtree, and only what carries SPrefabComponent is saved.
             ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
-            if (!Registry.HasAny<SPrefabComponent>(Spawned))
+            const bool bWasInstance = Registry.HasAny<SPrefabInstanceComponent>(Spawned);
+
+            AdoptIntoPrefab(Spawned);
+            ECS::Utils::ForEachDescendant(Registry, Spawned, [this](ECS::FEntity Descendant)
             {
-                Registry.Emplace<SPrefabComponent>(Spawned).StableID = FName(FGuid::New().ToShortString());
-            }
+                AdoptIntoPrefab(Descendant);
+            });
+
             EndTransaction("Drop Asset");
             OutlinerListView.MarkTreeDirty();
             Asset->GetPackage()->MarkDirty();
+
+            if (bWasInstance)
+            {
+                ImGuiX::Notifications::NotifyInfo("Copied the prefab's entities in. A prefab cannot nest, so they are no longer linked to it.");
+            }
         }
         else if (Spawned == DropTarget && Spawned != ECS::NullEntity)
         {

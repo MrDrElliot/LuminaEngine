@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include <vector>
 #include "Memory/Memcpy.h"
+#include "Memory/Memory.h"
 
 using namespace Lumina;
 
