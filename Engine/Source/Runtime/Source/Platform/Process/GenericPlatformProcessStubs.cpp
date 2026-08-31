@@ -32,6 +32,11 @@ namespace Lumina::Platform
         LUMINA_WARN_ONCE("Platform::OpenTerminalAt");
     }
 
+    void OpenSourceFile(const TCHAR* /*Path*/, int32 /*Line*/)
+    {
+        LUMINA_WARN_ONCE("Platform::OpenSourceFile");
+    }
+
     FString GetEnvVariable(FStringView Variable)
     {
         const FString Name(Variable);

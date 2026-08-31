@@ -69,4 +69,6 @@ public unsafe struct FSourceAssembly
     public int SourceCount;
     public byte* DllPath;       // optional prebuilt managed DLL (used when SourceCount == 0); "" otherwise
     public int DllPathLength;
+    public byte* References;    // ';'-joined absolute paths to third-party assemblies ("" if none)
+    public int ReferencesLength;
 }

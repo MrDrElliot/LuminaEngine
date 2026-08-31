@@ -5,9 +5,75 @@
 #include "Core/Console/ConsoleVariable.h"
 #include "Log/LogMessage.h"
 #include "Log/Log.h"
+#include "Platform/Process/PlatformProcess.h"
 
 namespace Lumina
 {
+    namespace
+    {
+        // Recognizes both a managed stack frame and a Roslyn diagnostic, which spell the line number differently.
+        bool TryParseSourceLocation(FStringView Text, FString& OutPath, int32& OutLine)
+        {
+            const FStringView Extension(".cs");
+            for (size_t Dot = Text.find(Extension); Dot != FStringView::npos; Dot = Text.find(Extension, Dot + 1))
+            {
+                const size_t PathEnd = Dot + Extension.size();
+
+                size_t LineStart = FStringView::npos;
+                if (Text.substr(PathEnd).starts_with(FStringView(":line ")))
+                {
+                    LineStart = PathEnd + 6;
+                }
+                else if (Text.substr(PathEnd).starts_with('('))
+                {
+                    LineStart = PathEnd + 1;
+                }
+                if (LineStart == FStringView::npos)
+                {
+                    continue;
+                }
+
+                int32 Line = 0;
+                size_t Digit = LineStart;
+                for (; Digit < Text.size() && Text[Digit] >= '0' && Text[Digit] <= '9'; ++Digit)
+                {
+                    Line = Line * 10 + (Text[Digit] - '0');
+                }
+                if (Digit == LineStart)
+                {
+                    continue;
+                }
+
+                const size_t Newline = Text.rfind('\n', Dot);
+                const size_t LineBegin = Newline == FStringView::npos ? 0 : Newline + 1;
+
+                // Script paths are absolute, so the start is a drive anchor or the first separator on the line.
+                size_t PathStart = FStringView::npos;
+                for (size_t Index = Dot; Index-- > LineBegin && Index + 2 < Text.size(); )
+                {
+                    if (Text[Index + 1] == ':' && (Text[Index + 2] == '\\' || Text[Index + 2] == '/'))
+                    {
+                        PathStart = Index;
+                        break;
+                    }
+                }
+                if (PathStart == FStringView::npos)
+                {
+                    PathStart = Text.find('/', LineBegin);
+                }
+                if (PathStart == FStringView::npos || PathStart > Dot)
+                {
+                    continue;
+                }
+
+                const FStringView Path = Text.substr(PathStart, PathEnd - PathStart);
+                OutPath.assign(Path.data(), Path.size());
+                OutLine = Line;
+                return true;
+            }
+            return false;
+        }
+    }
     void FConsoleLogEditorTool::OnInitialize()
     {
         CreateToolWindow("Console", [&] (bool bIsFocused)
@@ -242,7 +308,21 @@ namespace Lumina
 
             if (bLogHovered && ImGui::IsMouseHoveringRect(RowMin, RowMax))
             {
-                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                FString SourcePath;
+                int32   SourceLine = 0;
+                const bool bHasSource = TryParseSourceLocation(Message.Message, SourcePath, SourceLine);
+
+                if (bHasSource)
+                {
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                    ImGui::SetTooltip("Double-click to open %s at line %d", SourcePath.c_str(), SourceLine);
+                }
+
+                if (bHasSource && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+                {
+                    Platform::OpenSourceFile(UTF8_TO_TCHAR(SourcePath.c_str()), SourceLine);
+                }
+                else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
                 {
                     HandleRowClick(Index, VisibleIndices);
                 }
@@ -316,6 +396,21 @@ namespace Lumina
             if (ImGui::MenuItem("Copy All Visible"))
             {
                 CopyToClipboard(VisibleIndices, false);
+            }
+
+            FString SourcePath;
+            int32   SourceLine = 0;
+            for (uint32 Selected : SelectedMessages)
+            {
+                if (Selected < Messages.size() && TryParseSourceLocation(Messages[Selected].Message, SourcePath, SourceLine))
+                {
+                    break;
+                }
+            }
+
+            if (ImGui::MenuItem("Open Source", nullptr, false, SourceLine > 0))
+            {
+                Platform::OpenSourceFile(UTF8_TO_TCHAR(SourcePath.c_str()), SourceLine);
             }
 
             ImGui::Separator();

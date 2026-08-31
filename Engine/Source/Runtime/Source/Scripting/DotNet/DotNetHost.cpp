@@ -30,6 +30,7 @@
 #include "World/Entity/EntityUtils.h"
 #include "World/Entity/Components/Component.h"
 #include "Scripting/DotNet/DotNetExport.h"
+#include "Scripting/DotNet/ScriptReferences.h"
 #include "Scripting/ScriptExports.h"
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectCore.h"
@@ -102,6 +103,16 @@ namespace Lumina::DotNet
             return Slash == FStringView::npos ? FString() : FString(Path.data(), Slash);
         }
 
+        // File name without directory or extension, which for a managed assembly is also its simple name.
+        FString StemOf(FStringView Path)
+        {
+            const size_t Slash = Path.find_last_of("/\\");
+            const size_t Start = Slash == FStringView::npos ? 0 : Slash + 1;
+            const size_t Dot   = Path.rfind('.');
+            const size_t End   = (Dot == FStringView::npos || Dot < Start) ? Path.size() : Dot;
+            return FString(Path.data() + Start, End - Start);
+        }
+
         // hostfxr takes wchar_t paths on Windows and char elsewhere, so they cross the boundary here.
         class FHostString
         {
@@ -160,6 +171,8 @@ namespace Lumina::DotNet
             int32              SourceCount;
             const char*        DllPath;
             int32              DllPathLen;
+            const char*        References;    // ';'-joined absolute paths to third-party assemblies
+            int32              ReferencesLen;
         };
 
         typedef int32 (CORECLR_DELEGATE_CALLTYPE* BootstrapFn)(const FBootstrapArgs*);
@@ -426,7 +439,47 @@ namespace Lumina::DotNet
             FString          IntermediateDir; // <root>/Intermediates/DotNet/<Name>  (IDE obj dir)
             FString          AssemblyPath;    // <BinaryDir>/<Name>.dll (emit target when sources exist; load source otherwise)
             TVector<FString> Deps;            // sibling unit names this one references
+            TVector<FString> References;      // absolute paths to third-party assemblies (packages + declared DLLs)
+            FScriptReferenceSet Declared;     // kept so the generated project can name the packages rather than their DLLs
         };
+
+        // Descriptor-declared references, resolved (restoring packages when the declaration changed).
+        void ApplyScriptReferences(FScriptUnit& Unit, FStringView DescriptorPath, FStringView RootDir)
+        {
+            if (DescriptorPath.empty() || !Filesystem::Exists(DescriptorPath))
+            {
+                return;
+            }
+            if (!ParseScriptReferences(DescriptorPath, RootDir, Unit.Declared))
+            {
+                return;
+            }
+
+            const FString RestoreDir = Unit.IntermediateDir.empty()
+                ? FString()
+                : Unit.IntermediateDir + "/Packages";
+
+            if (!ResolveScriptReferences(Unit.Name, RestoreDir, Unit.Declared, Unit.References))
+            {
+                LOG_ERROR("C#: unit '{}' will compile without its declared references.", Unit.Name);
+            }
+        }
+
+        // The engine convention is one descriptor named for the project beside its content.
+        FString FindProjectDescriptor(FStringView ProjectDir)
+        {
+            FString Found;
+            Filesystem::IterateDirectory(ProjectDir, [&Found](const Filesystem::FDirectoryEntry& Entry)
+            {
+                if (Entry.IsFile() && Entry.GetExtension() == ".lproject")
+                {
+                    Found.assign(Entry.FullPath.data(), Entry.FullPath.size());
+                    return Filesystem::EVisit::Stop;
+                }
+                return Filesystem::EVisit::Continue;
+            });
+            return Found;
+        }
 
         // Each unit compiles into its OWN DLL, and a disabled plugin produces no unit at all.
         TVector<FScriptUnit> BuildScriptUnits()
@@ -453,6 +506,8 @@ namespace Lumina::DotNet
                     Unit.Deps.push_back(Dep.Name);
                 }
 
+                ApplyScriptReferences(Unit, Plugin->GetDescriptorPath(), PluginDir);
+
                 PluginNames.push_back(Unit.Name);
                 Units.push_back(std::move(Unit));
             }
@@ -472,6 +527,8 @@ namespace Lumina::DotNet
                         Game.BinaryDir       = Root + "/Binaries/DotNet";
                         Game.IntermediateDir = Root + "/Intermediates/DotNet/Game";
                         Game.AssemblyPath    = Game.BinaryDir + "/Game.dll";
+
+                        ApplyScriptReferences(Game, FindProjectDescriptor(Root), Root);
                     }
                 }
                 Game.Deps = PluginNames;
@@ -549,6 +606,19 @@ namespace Lumina::DotNet
                         if (Dep.is_string())
                         {
                             Unit.Deps.push_back(FString(Dep.get<std::string>().c_str()));
+                        }
+                    }
+                }
+
+                // Staged beside the unit DLLs, so the cooked game never needs the NuGet cache.
+                if (Entry.contains("References") && Entry["References"].is_array())
+                {
+                    for (const nlohmann::json& Reference : Entry["References"])
+                    {
+                        if (Reference.is_string())
+                        {
+                            const std::string ReferenceName = Reference.get<std::string>();
+                            Unit.References.push_back(Join(ScriptsDir, FStringView(ReferenceName.c_str(), ReferenceName.size())));
                         }
                     }
                 }
@@ -653,6 +723,25 @@ namespace Lumina::DotNet
                 + std::string(NativePath(Join(ParentOf(LuminaSharpDll), "LuminaSharp.Generators.dll")).c_str())
                 + "\" />\n";
             Xml += "  </ItemGroup>\n";
+
+            // Named as packages rather than as their restored DLLs, so the IDE restores them the usual way.
+            if (!Unit.Declared.Packages.empty() || !Unit.Declared.Assemblies.empty())
+            {
+                Xml += "  <ItemGroup>\n";
+                for (const FScriptPackageRef& Package : Unit.Declared.Packages)
+                {
+                    Xml += "    <PackageReference Include=\"" + std::string(Package.Name.c_str())
+                        + "\" Version=\"" + std::string(Package.Version.c_str()) + "\" />\n";
+                }
+                for (const FString& Assembly : Unit.Declared.Assemblies)
+                {
+                    const FString Stem = StemOf(Assembly);
+                    Xml += "    <Reference Include=\"" + std::string(Stem.c_str()) + "\">\n";
+                    Xml += "      <HintPath>" + std::string(NativePath(Assembly).c_str()) + "</HintPath>\n";
+                    Xml += "    </Reference>\n";
+                }
+                Xml += "  </ItemGroup>\n";
+            }
 
             std::string Refs;
             for (const FString& DepName : Unit.Deps)
@@ -1101,6 +1190,7 @@ namespace Lumina::DotNet
             FString                  Deps;     // ';'-joined sibling unit names
             TVector<FGatheredSource> Sources;  // owns the path/text strings the marshaled views point at
             FString                  DllPath;  // emit target, or load source
+            FString                  References; // ';'-joined third-party assembly paths
         };
 
         TVector<FSourceBucket> Buckets;
@@ -1143,6 +1233,15 @@ namespace Lumina::DotNet
                 Bucket.Deps += Unit.Deps[Index];
             }
 
+            for (size_t Index = 0; Index < Unit.References.size(); ++Index)
+            {
+                if (Index != 0)
+                {
+                    Bucket.References += ";";
+                }
+                Bucket.References += Unit.References[Index];
+            }
+
             Buckets.push_back(std::move(Bucket));
         }
 
@@ -1177,6 +1276,8 @@ namespace Lumina::DotNet
             Unit.SourceCount = (int32)Files.size();
             Unit.DllPath     = Bucket.DllPath.c_str();
             Unit.DllPathLen  = (int32)Bucket.DllPath.size();
+            Unit.References    = Bucket.References.c_str();
+            Unit.ReferencesLen = (int32)Bucket.References.size();
             Units.push_back(Unit);
             TotalFiles += Files.size();
         }
@@ -1376,6 +1477,7 @@ namespace Lumina::DotNet
             Packaged.Name          = Unit.Name;
             Packaged.DllSourcePath = Unit.AssemblyPath;
             Packaged.Deps          = Unit.Deps;
+            Packaged.References    = Unit.References;
             Out.push_back(std::move(Packaged));
         }
 

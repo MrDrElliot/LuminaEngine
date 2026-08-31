@@ -121,6 +121,9 @@ namespace Lumina::Platform
     // Open the preferred terminal at the directory; no-op (one-shot warning) if none found.
     RUNTIME_API void OpenTerminalAt(const TCHAR* Directory);
 
+    // Open a source file in the user's code editor. Line is honored only by editors that take one, and 0 means the file alone.
+    RUNTIME_API void OpenSourceFile(const TCHAR* Path, int32 Line);
+
     template<typename TCall>
     requires(std::is_pointer_v<TCall> && std::is_function_v<std::remove_pointer_t<TCall>>)
     TCall LumGetProcAddress(void* Handle, const char* Procedure)

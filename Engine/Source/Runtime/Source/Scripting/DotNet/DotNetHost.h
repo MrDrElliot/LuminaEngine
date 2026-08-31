@@ -26,7 +26,7 @@ namespace Lumina::DotNet
     // v6: managed system-descriptor sink carries declared read/write component-ops tokens (parallel C# systems).
     // v7: delegate properties replace hardcoded collision/perception dispatch; adds OnNativeDelegateDestroyed.
     // v8: managed RenderScene bridge (C# world renderers via RenderSceneFactory).
-    inline constexpr int32 GAbiVersion = 10;
+    inline constexpr int32 GAbiVersion = 11;
 
     // Boots the embedded runtime and runs the managed handshake.
     RUNTIME_API void Initialize();
@@ -63,6 +63,7 @@ namespace Lumina::DotNet
         FString          Name;           // assembly / unit name
         FString          DllSourcePath;  // the freshly-emitted DLL on disk (may be absent if the unit had no .cs)
         TVector<FString> Deps;           // sibling units this one references (drives managed load order)
+        TVector<FString> References;     // absolute third-party assemblies to stage beside the unit DLL
     };
 
     // Recompiles scripts (so every unit's DLL is freshly emitted) and returns the unit graph for the packager

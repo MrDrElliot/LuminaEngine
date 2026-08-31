@@ -75,6 +75,16 @@ internal static class ScriptCompiler
     /// Set only for the packaging compile, whose output ships; every editor compile stays unoptimized so the debugger can read locals.
     public static bool bOptimize { get; set; }
 
+    // Null for a reference built from an image (a sibling unit), which can never shadow a framework assembly.
+    private static string? SimpleName(MetadataReference Reference)
+    {
+        if (Reference is PortableExecutableReference Pe && !string.IsNullOrEmpty(Pe.FilePath))
+        {
+            return Path.GetFileNameWithoutExtension(Pe.FilePath);
+        }
+        return null;
+    }
+
     /// Compiles all sources into a PE plus its PDB, or null on error (diagnostics logged). ExtraReferences are the dependency units' emitted images.
     public static FScriptImage? Compile(string AssemblyName, IReadOnlyList<(string Path, string Text)> Sources,
         IReadOnlyList<MetadataReference>? ExtraReferences = null)
@@ -88,7 +98,20 @@ internal static class ScriptCompiler
         MetadataReference[] AllReferences = References;
         if (ExtraReferences != null && ExtraReferences.Count > 0)
         {
-            AllReferences = References.Concat(ExtraReferences).ToArray();
+            // A package shipping its own copy of a framework assembly has to win, or Roslyn sees two of one identity.
+            var Shadowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (MetadataReference Reference in ExtraReferences)
+            {
+                if (SimpleName(Reference) is { } Name)
+                {
+                    Shadowed.Add(Name);
+                }
+            }
+
+            AllReferences = References
+                .Where(Reference => SimpleName(Reference) is not { } Name || !Shadowed.Contains(Name))
+                .Concat(ExtraReferences)
+                .ToArray();
         }
 
         // Turn each [Property] field into the native-backed property it has to be. This is the one thing a

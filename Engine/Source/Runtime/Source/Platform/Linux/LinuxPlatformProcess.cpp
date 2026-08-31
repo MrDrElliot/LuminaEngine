@@ -887,6 +887,32 @@ namespace Lumina::Platform
         }
     }
 
+    void OpenSourceFile(const TCHAR* Path, int32 Line)
+    {
+        if (Path == nullptr)
+        {
+            return;
+        }
+
+        if (Line > 0)
+        {
+            const FString LineText = Format("{0}", Line);
+            if (LaunchDesktopHelper("rider", { FString("--line"), LineText, FString(Path) }))
+            {
+                return;
+            }
+            if (LaunchDesktopHelper("code", { FString("--goto"), FString(Path) + ":" + LineText }))
+            {
+                return;
+            }
+        }
+
+        if (!LaunchDesktopHelper("xdg-open", { FString(Path) }))
+        {
+            LOG_WARN("Could not open '{0}': xdg-open is not installed.", Path);
+        }
+    }
+
     void OpenTerminalAt(const TCHAR* Directory)
     {
         if (Directory == nullptr)

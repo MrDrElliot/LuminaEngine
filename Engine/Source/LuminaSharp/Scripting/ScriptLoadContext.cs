@@ -16,6 +16,9 @@ internal sealed class ScriptLoadContext : AssemblyLoadContext
     // Script units in THIS generation, keyed by simple name; lets a dependent unit resolve a sibling dependency to the in-ALC assembly.
     private readonly Dictionary<string, Assembly> ScriptAssemblies = new(StringComparer.OrdinalIgnoreCase);
 
+    // Third-party assemblies the units reference, keyed by simple name, loaded on first bind.
+    private readonly Dictionary<string, string> ReferencePaths = new(StringComparer.OrdinalIgnoreCase);
+
     public ScriptLoadContext(string Name) : base(Name, isCollectible: true)
     {
     }
@@ -38,15 +41,33 @@ internal sealed class ScriptLoadContext : AssemblyLoadContext
         return Loaded;
     }
 
+    /// Registers a third-party assembly path so a script binding to it resolves here instead of falling through to the framework.
+    public void RegisterReference(string Path)
+    {
+        string Simple = System.IO.Path.GetFileNameWithoutExtension(Path);
+        if (Simple.Length != 0)
+        {
+            ReferencePaths.TryAdd(Simple, Path);
+        }
+    }
+
     protected override Assembly? Load(AssemblyName Name)
     {
         if (Name.Name == EngineAssemblyName)
         {
             return EngineAssembly;
         }
-        if (Name.Name is { } Simple && ScriptAssemblies.TryGetValue(Simple, out Assembly? Sibling))
+        if (Name.Name is not { } Simple)
+        {
+            return null;
+        }
+        if (ScriptAssemblies.TryGetValue(Simple, out Assembly? Sibling))
         {
             return Sibling;
+        }
+        if (ReferencePaths.TryGetValue(Simple, out string? ReferencePath))
+        {
+            return LoadFromAssemblyPath(ReferencePath);
         }
         return null;
     }

@@ -43,6 +43,13 @@ namespace Lumina
             return Dot == FStringView::npos ? Name : Name.substr(0, Dot);
         }
 
+        FString FileNameOf(FStringView Path)
+        {
+            const size_t Slash = Path.find_last_of("/\\");
+            const size_t Start = Slash == FStringView::npos ? 0 : Slash + 1;
+            return FString(Path.data() + Start, Path.size() - Start);
+        }
+
         bool CopyFileTo(FStringView Src, FStringView Dst)
         {
             Filesystem::MakeParentDirectoryTree(Dst);
@@ -380,6 +387,23 @@ namespace Lumina
                     }
                 }
 
+                // Flattened beside the unit DLLs so the cooked game resolves them without the NuGet cache.
+                TVector<FString> StagedReferences;
+                for (const FString& Reference : Unit.References)
+                {
+                    const FString FileName = FileNameOf(Reference);
+                    if (FileName.empty() || !Filesystem::Exists(Reference))
+                    {
+                        continue;
+                    }
+                    if (!CopyFileTo(Reference, Join(ScriptsDst, FileName)))
+                    {
+                        LogPackager(LogFunc, Format("DotNet: [warn] failed to stage script reference {}", FileName.c_str()).c_str());
+                        continue;
+                    }
+                    StagedReferences.push_back(FileName);
+                }
+
                 if (Staged > 0)
                 {
                     Manifest += ",\n";
@@ -389,6 +413,11 @@ namespace Lumina
                 for (size_t i = 0; i < Unit.Deps.size(); ++i)
                 {
                     AppendFormat(Manifest, "{}\"{}\"", (i == 0 ? "" : ", "), Unit.Deps[i].c_str());
+                }
+                Manifest += "], \"References\": [";
+                for (size_t i = 0; i < StagedReferences.size(); ++i)
+                {
+                    AppendFormat(Manifest, "{}\"{}\"", (i == 0 ? "" : ", "), StagedReferences[i].c_str());
                 }
                 Manifest += "] }";
                 ++Staged;

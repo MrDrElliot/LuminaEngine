@@ -10,7 +10,7 @@ namespace LuminaSharp;
 public static unsafe partial class Host
 {
     // Must equal Lumina::DotNet::GAbiVersion. Bump on ABI breaks.
-    private const int AbiVersion = 10;
+    private const int AbiVersion = 11;
 
     // Logical name for the engine module hosting this assembly (Runtime); resolved to a native handle via ModuleHandle.
     public const string NativeLibrary = "LuminaNative";
@@ -766,6 +766,11 @@ public static unsafe partial class Host
                     Sources.Add((Interop.GetString(Source.Path, Source.PathLength), Interop.GetString(Source.Text, Source.TextLength)));
                 }
 
+                string ReferencesJoined = Interop.GetString(Unit.References, Unit.ReferencesLength);
+                string[] References = ReferencesJoined.Length == 0
+                    ? Array.Empty<string>()
+                    : ReferencesJoined.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
                 string DllPath = Interop.GetString(Unit.DllPath, Unit.DllPathLength);
                 List.Add(new ScriptAssemblyUnit
                 {
@@ -773,6 +778,7 @@ public static unsafe partial class Host
                     Dependencies = Deps,
                     Sources = Sources,
                     DllPath = DllPath.Length == 0 ? null : DllPath,
+                    References = References,
                 });
             }
             return Scripts.LoadOrReload(List) ? 0 : 4;

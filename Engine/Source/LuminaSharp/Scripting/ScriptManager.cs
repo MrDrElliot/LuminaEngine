@@ -19,6 +19,9 @@ internal sealed class ScriptAssemblyUnit
     public required IReadOnlyList<string> Dependencies;
     public required IReadOnlyList<(string Path, string Text)> Sources;
 
+    // Absolute paths to third-party assemblies this unit references (restored packages and declared DLLs).
+    public IReadOnlyList<string> References = Array.Empty<string>();
+
     /// <summary>A prebuilt managed assembly to load as-is (when there are no <see cref="Sources"/>); null/empty
     /// for a compile-from-source unit.</summary>
     public string? DllPath;
@@ -80,6 +83,19 @@ internal sealed class ScriptManager
                     }
                 }
 
+                foreach (string Reference in Unit.References)
+                {
+                    try
+                    {
+                        Refs.Add(MetadataReference.CreateFromFile(Reference));
+                    }
+                    catch (Exception Exception)
+                    {
+                        Native.Log(ELogLevel.Error,
+                            $"Script reference '{Reference}' could not be read for '{Unit.Name}': {Exception.Message}");
+                    }
+                }
+
                 FScriptImage? Compiled = ScriptCompiler.Compile(Unit.Name, Unit.Sources, Refs);
                 if (Compiled == null)
                 {
@@ -131,6 +147,15 @@ internal sealed class ScriptManager
         }
 
         var NewContext = new ScriptLoadContext($"GameScripts.Gen{Generation}");
+
+        // Registered before any unit loads, so a script's first bind to a package assembly resolves in this context.
+        foreach ((ScriptAssemblyUnit Unit, FScriptImage _) in Pending)
+        {
+            foreach (string Reference in Unit.References)
+            {
+                NewContext.RegisterReference(Reference);
+            }
+        }
 
         // Load in dependency order: each unit is registered before any dependent loads, so a dependent's
         // sibling reference resolves to the in-ALC assembly (see ScriptLoadContext.Load). LoadFromStream

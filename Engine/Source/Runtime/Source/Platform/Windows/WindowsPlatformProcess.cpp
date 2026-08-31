@@ -953,6 +953,45 @@ namespace Lumina::Platform
         ShellExecuteW(nullptr, L"open", Normalized.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     }
 
+    namespace
+    {
+        // ShellExecute reports anything above 32 as launched, which is how a missing editor is detected.
+        bool LaunchCodeEditor(const wchar_t* Program, const FWString& Arguments)
+        {
+            const HINSTANCE Result = ShellExecuteW(nullptr, L"open", Program, Arguments.c_str(), nullptr, SW_SHOWNORMAL);
+            return reinterpret_cast<INT_PTR>(Result) > 32;
+        }
+    }
+
+    void OpenSourceFile(const TCHAR* Path, int32 Line)
+    {
+        if (!Path || !Path[0])
+        {
+            return;
+        }
+
+        FWString Normalized(Path);
+        Algo::Replace(Normalized, L'/', L'\\');
+
+        if (Line > 0)
+        {
+            wchar_t LineText[16];
+            _snwprintf_s(LineText, _TRUNCATE, L"%d", Line);
+
+            if (LaunchCodeEditor(L"rider64.exe", FWString(L"--line ") + LineText + L" \"" + Normalized + L"\""))
+            {
+                return;
+            }
+            if (LaunchCodeEditor(L"code.cmd", FWString(L"--goto \"") + Normalized + L":" + LineText + L"\""))
+            {
+                return;
+            }
+        }
+
+        // Whatever is registered for the extension, which lands on the file but not the line.
+        ShellExecuteW(nullptr, L"open", Normalized.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    }
+
     void OpenTerminalAt(const TCHAR* Directory)
     {
         if (!Directory || !Directory[0])
