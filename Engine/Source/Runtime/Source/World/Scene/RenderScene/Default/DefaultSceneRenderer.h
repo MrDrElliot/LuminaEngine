@@ -21,6 +21,7 @@
 #include "World/Scene/RenderScene/ScenePrimitiveSet.h"
 #include "World/Scene/RenderScene/TerrainRenderTypes.h"
 #include "World/Scene/RenderScene/TexturePaintTypes.h"
+#include "Assets/AssetTypes/Material/MaterialInterface.h"
 #include "Assets/AssetTypes/ParticleSystem/ParticleSystem.h"
 #include "TaskSystem/FiberSync.h"
 #include "World/Entity/Components/PostProcessSettings.h"
@@ -226,6 +227,15 @@ namespace Lumina
                 bool                    bUsesCustomShader   = false;
                 FShaderH     CustomComputeShader = {};  // set iff bUsesCustomShader
                 uint32                  TextureIndex        = 0u;     // heap ResourceID, resolved game-side
+
+                // Particle-domain material stages; both null leaves the emitter on the built-in sprite pair.
+                FShaderH                MaterialVertexShader = {};
+                FShaderH                MaterialPixelShader  = {};
+                // Materials() slot the stages read, or -1 when this emitter has no material.
+                int32                   MaterialIndex        = -1;
+                // Authored on the material, so a Particle material draws the same way from every emitter.
+                EBlendMode              MaterialBlendMode    = EBlendMode::Translucent;
+                bool                    bMaterialWritesDepth = false;
 
                 TVector<FVector4>       ModuleParamValues;
 
@@ -685,6 +695,7 @@ namespace Lumina
         void DebugTextPass(RHI::FCmdListH CL);
         void WidgetPickerPass(RHI::FCmdListH CL);
         void ParticleSimulatePass(RHI::FCmdListH CL);
+        void ParticleSortPass(RHI::FCmdListH CL);
         void ParticleRenderPass(RHI::FCmdListH CL);
         void TerrainUpdatePass(RHI::FCmdListH CL);
         void TerrainCullPass(RHI::FCmdListH CL);
@@ -696,7 +707,7 @@ namespace Lumina
         void MomentGenerationPass(RHI::FCmdListH CL);
         void TransparentPass(RHI::FCmdListH CL);
         void OITResolvePass(RHI::FCmdListH CL);
-        void AdditiveTranslucentPass(RHI::FCmdListH CL);
+        void UnorderedTranslucentPass(RHI::FCmdListH CL);
         // Single source of truth for every fog consumer, including the translucent material pass.
         void PublishFogGlobals(FSceneGlobalData& Globals) const;
         void CloudShadowMapPass(RHI::FCmdListH CL);
@@ -1285,6 +1296,8 @@ namespace Lumina
 
         TVector<FShaderH>            BinnedDeferredSlotShaders;
         TVector<uint32>                         BinnedDeferredSlotByMaterial;
+        // Shader handle -> its dense bin, so binning stays linear in the visible material count.
+        THashMap<uint64, uint32>                BinnedDeferredSlotLookup;
 
         struct FMaterialClassifyLayout
         {
@@ -1292,6 +1305,15 @@ namespace Lumina
             uint32 ScreenW       = 0;
             uint32 ScreenH       = 0;
             uint32 PixelCapacity = 0;   // entries the pixel list holds, taken from the allocation
+
+            // Byte offsets, packed to the live slot count; the shaders take each region by its own address.
+            uint32 CountsOffset       = 0;
+            uint32 StartsOffset       = 0;
+            uint32 CursorsOffset      = 0;
+            uint32 TotalOffset        = 0;
+            uint32 MaterialArgsOffset = 0;
+            uint32 LightArgsOffset    = 0;
+            uint32 BlockSize          = 0;
         };
         // Derived once by VisBufferClassifyPass and read by the material and lighting passes. Zeroed at
         // the top of the classify pass before any early return, so a bail-out frame cannot leave the

@@ -19,6 +19,7 @@ struct FMeshletCullContext
     uint     SkinnedBoundsBase;
     bool     bNoCull;
     bool     bCaster;
+    bool     bShadowOnly;
     bool     bTwoSided;
     float4x4 Model;
     float    MaxScale;
@@ -42,6 +43,7 @@ FMeshletCullContext MakeMeshletCullContext(FGPUInstance* Inst)
     Ctx.bSkinned    = I.HasFlag(EInstanceFlags::Skinned);
     Ctx.bNoCull     = I.HasFlag(EInstanceFlags::NoCull);
     Ctx.bCaster     = I.HasFlag(EInstanceFlags::CastShadow);
+    Ctx.bShadowOnly = I.HasFlag(EInstanceFlags::ShadowOnly);
     Ctx.bTwoSided   = I.HasFlag(EInstanceFlags::TwoSided);
 
     Ctx.Model = I.ModelMatrix;
@@ -171,7 +173,11 @@ bool TestMeshletAgainstView(FMeshletCullContext Ctx, FCullView View,
 {
     FMeshletHeader* Header = MeshletHeaders() + Ctx.HeaderSlot;
 
-    bool bKeep = !(View.HasFlag(CULL_VIEW_FLAG_CAST_SHADOW_ONLY) && !Ctx.bCaster)
+    // Must agree with IsInstanceVisibleToView, which sized the bucket these appends fill.
+    const bool bShadowView = View.HasFlag(CULL_VIEW_FLAG_CAST_SHADOW_ONLY);
+
+    bool bKeep = !(bShadowView && !Ctx.bCaster)
+              && !(!bShadowView && Ctx.bShadowOnly)
               && !(View.HasFlag(CULL_VIEW_FLAG_DISTANCE) && (Ctx.DistToCamera - Ctx.InstRadius > Ctx.MaxShadowDist));
 
     if (bKeep)

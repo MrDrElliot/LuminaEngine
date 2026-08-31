@@ -497,6 +497,9 @@ namespace Lumina
     private:
         
         bool                                                bDirty = true;
+
+        // A C# reload rebuilds a minted class's property block, so rows built against the old one must go.
+        int32                                               BuiltScriptGeneration = -1;
         TSharedPtr<IPropertyTypeCustomization>              Customization;
         TSharedPtr<FPropertyHandle>                         PropertyHandle;
         CStruct*                                            Struct = nullptr;

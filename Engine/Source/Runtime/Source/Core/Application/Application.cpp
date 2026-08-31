@@ -138,11 +138,19 @@ namespace Lumina
 
     void FApplication::RequestExit()
     {
-        GApp->bExitRequested = true;
+        if (GApp != nullptr)
+        {
+            GApp->bExitRequested = true;
+        }
     }
 
     void FApplication::CancelExit()
     {
+        if (GApp == nullptr)
+        {
+            return;
+        }
+
         GApp->bExitRequested = false;
         if (GApp->MainWindow)
         {
@@ -161,7 +169,8 @@ namespace Lumina
     {
         (void)FWindow::OnWindowResized.AddMember(this, &FApplication::WindowResized);
 
-        MainWindow = new FWindow(FWindowSpecs{});
+        // The editor draws its own title bar, so it asks for a window without one.
+        MainWindow = new FWindow(FWindowSpecs{ .bShowTitlebar = !WITH_EDITOR });
 
         Windowing::SetPrimaryWindowHandle(MainWindow);
 

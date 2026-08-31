@@ -1,8 +1,62 @@
 ﻿#include "RuntimePCH.h"
 #include "ParticleSystemComponent.h"
 
+#include "Assets/AssetTypes/Material/MaterialInstance.h"
+#include "World/Entity/Components/MeshComponent.h"
+
 namespace Lumina
 {
+    CMaterialInterface* SParticleSystemComponent::GetMaterialForEmitter(int32 EmitterIndex) const
+    {
+        if (EmitterIndex < 0)
+        {
+            return nullptr;
+        }
+
+        if ((size_t)EmitterIndex < MaterialOverrides.size())
+        {
+            if (CMaterialInterface* Override = MaterialOverrides[(size_t)EmitterIndex])
+            {
+                return Override;
+            }
+        }
+
+        CParticleSystem* System = ParticleSystem.Get();
+        if (System == nullptr || EmitterIndex >= (int32)System->Emitters.size())
+        {
+            return nullptr;
+        }
+
+        CParticleEmitter* Emitter = System->Emitters[(size_t)EmitterIndex].Get();
+        return Emitter != nullptr ? Emitter->Material.Get() : nullptr;
+    }
+
+    void SParticleSystemComponent::SetMaterialForEmitter(CMaterialInterface* Material, int32 EmitterIndex)
+    {
+        if (EmitterIndex < 0)
+        {
+            return;
+        }
+
+        // Grown to cover the index rather than appended, so the material lands on the emitter asked for.
+        if (MaterialOverrides.size() <= (size_t)EmitterIndex)
+        {
+            MaterialOverrides.resize((size_t)EmitterIndex + 1);
+        }
+
+        MaterialOverrides[(size_t)EmitterIndex] = Material;
+    }
+
+    CMaterialInstance* SParticleSystemComponent::CreateDynamicMaterialInstance(int32 EmitterIndex)
+    {
+        CMaterialInstance* Dynamic = MeshComponentUtils::MakeDynamicMaterialInstance(GetMaterialForEmitter(EmitterIndex));
+        if (Dynamic != nullptr)
+        {
+            SetMaterialForEmitter(Dynamic, EmitterIndex);
+        }
+        return Dynamic;
+    }
+
     static FVector4 PromoteToVec4(const FVector2& V) { return FVector4(V, 0.0f, 0.0f); }
     static FVector4 PromoteToVec4(const FVector3& V) { return FVector4(V, 0.0f); }
     [[maybe_unused]] static FVector4 PromoteToVec4(const FVector4& V) { return V; }

@@ -2,12 +2,67 @@
 #include "MaterialInterface.h"
 
 #include "Core/Engine/Engine.h"
+#include "Renderer/MaterialTypes.h"
 #include "Renderer/RenderManager.h"
 #include "Renderer/RHITexture.h"
 #include "Log/Log.h"
 
 namespace Lumina
 {
+    float CMaterialInterface::GetScalarValue(const FName& Name, float Default)
+    {
+        FMaterialParameter Param;
+        if (!GetParameterValue(EMaterialParameterType::Scalar, Name, Param) || Param.Index >= MAX_SCALARS)
+        {
+            return Default;
+        }
+
+        // This level's block, so a chained instance reports the value it actually draws with.
+        const FMaterialUniforms* Uniforms = GetMaterialUniforms();
+        return Uniforms != nullptr ? Uniforms->Scalars[Param.Index] : Default;
+    }
+
+    FVector4 CMaterialInterface::GetVectorValue(const FName& Name, FVector4 Default)
+    {
+        FMaterialParameter Param;
+        if (!GetParameterValue(EMaterialParameterType::Vector, Name, Param) || Param.Index >= MAX_VECTORS)
+        {
+            return Default;
+        }
+
+        const FMaterialUniforms* Uniforms = GetMaterialUniforms();
+        return Uniforms != nullptr ? Uniforms->Vectors[Param.Index] : Default;
+    }
+
+    CTexture* CMaterialInterface::GetTextureValue(const FName& Name)
+    {
+        FMaterialParameter Param;
+        if (!GetParameterValue(EMaterialParameterType::Texture, Name, Param))
+        {
+            return nullptr;
+        }
+
+        return GetTextureParameterTexture(Name, Param.Index);
+    }
+
+    bool CMaterialInterface::HasScalarParameter(const FName& Name)
+    {
+        FMaterialParameter Param;
+        return GetParameterValue(EMaterialParameterType::Scalar, Name, Param);
+    }
+
+    bool CMaterialInterface::HasVectorParameter(const FName& Name)
+    {
+        FMaterialParameter Param;
+        return GetParameterValue(EMaterialParameterType::Vector, Name, Param);
+    }
+
+    bool CMaterialInterface::HasTextureParameter(const FName& Name)
+    {
+        FMaterialParameter Param;
+        return GetParameterValue(EMaterialParameterType::Texture, Name, Param);
+    }
+
     void CMaterialInterface::RegisterChild(CMaterialInterface* Child)
     {
         if (Child == nullptr || Child == this)

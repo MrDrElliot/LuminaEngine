@@ -42,6 +42,10 @@ namespace Lumina
     private:
 
         void DrawParameterEditor(bool bFocused);
+
+        /** The root's static switches, with a per-switch override toggle. Flipping one selects a different
+            permutation of the root's shaders, which the editor compiles in the background. */
+        void DrawStaticSwitchSection(class CMaterialInstance* Instance);
         void DrawTextureParameterColumn(class CMaterialInstance* Instance, const struct FMaterialParameter& Param, bool bEnabled);
 
         /** Parent picker plus the root-to-here chain, so it is clear which level a value comes from. */

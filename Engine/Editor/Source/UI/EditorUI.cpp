@@ -132,6 +132,7 @@
 #include "Tools/AssetEditors/Animation/AnimationEditorTool.h"
 #include "Tools/AssetEditors/AnimationGraph/AnimationGraphEditorTool.h"
 #include "Tools/AssetEditors/CurveEditor/CurveAssetEditorTool.h"
+#include "Assets/AssetTypes/Material/MaterialParameterCollection.h"
 #include "Tools/AssetEditors/DataAsset/DataAssetEditorTool.h"
 #include "Assets/AssetTypes/DataTable/DataTable.h"
 #include "Tools/AssetEditors/DataTable/DataTableEditorTool.h"
@@ -941,6 +942,7 @@ namespace Lumina
 
         // Queued in CMaterial::PostLoad when an asset's baked shaders predate the current templates.
         ProcessStaleMaterialRecompiles();
+        ProcessMaterialPermutationRequests();
     }
 
     void FEditorUI::OnUpdate(const FUpdateContext& UpdateContext)
@@ -1385,6 +1387,7 @@ namespace Lumina
         Registry.RegisterAssetEditor<CMaterialFunction,   FMaterialFunctionEditorTool>(Owner);
         Registry.RegisterAssetEditor<CAnimationGraph,     FAnimationGraphEditorTool>(Owner);
         Registry.RegisterAssetEditor<CDataAsset,          FDataAssetEditorTool>(Owner);
+        Registry.RegisterAssetEditor<CMaterialParameterCollection, FDataAssetEditorTool>(Owner);
         Registry.RegisterAssetEditor<CDataTable,          FDataTableEditorTool>(Owner);
         Registry.RegisterAssetEditor<CPhysicsMaterial,    FPhysicsMaterialEditorTool>(Owner);
         Registry.RegisterAssetEditor<CPhysicsAsset,       FPhysicsAssetEditorTool>(Owner);

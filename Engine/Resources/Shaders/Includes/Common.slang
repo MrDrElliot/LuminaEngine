@@ -61,6 +61,8 @@ enum EInstanceFlags
     // Retained cull entries only; meaningless on a compacted output instance.
     Active          = BIT(8),   // 0 = free slot; the cull skips it without reading its payload
     HasGeometry     = BIT(9),   // the mesh's meshlet header is resident
+
+    ShadowOnly      = BIT(10),  // survives shadow views only; every camera view rejects it
 }
 
 // Mirror of Lumina::FMeshletVertex. Position is three 16-bit offsets from the meshlet anchor -- decode
@@ -238,6 +240,8 @@ static const uint MatFlag_Additive    = BIT(2);
 // Bits 3-5 are a 3-bit shading model field (EMaterialGPUFlags in MaterialTypes.h), not one flag per
 // model. MatFlag_Unlit is the legacy spelling of ShadingModel_Unlit sitting in that field.
 static const uint MatFlag_Unlit       = BIT(3);
+// Inverted, so a material saved before the flag existed still reads as receiving decals.
+static const uint MatFlag_NoDecals    = BIT(6);
 
 #define MATERIAL_SHADING_MODEL_SHIFT 3u
 #define MATERIAL_SHADING_MODEL_MASK  7u
@@ -255,7 +259,15 @@ struct FMaterialUniforms
     uint    Textures[MAX_TEXTURES];
     uint    Flags;
     float   OpacityClipValue;
-    uint    Padding[2];
+    // Slot 0 is the reserved zero collection, so an unbound entry reads zeros without a sentinel test.
+    uint    CollectionIndices[MAX_MATERIAL_COLLECTIONS];
+};
+
+// Mirror of Lumina::FMaterialCollectionUniforms; one block per parameter collection, shared by materials.
+struct FMaterialCollection
+{
+    float4  Vectors[MAX_COLLECTION_VECTORS];
+    float   Scalars[MAX_COLLECTION_SCALARS];
 };
 
 struct FCustomPrimitiveData

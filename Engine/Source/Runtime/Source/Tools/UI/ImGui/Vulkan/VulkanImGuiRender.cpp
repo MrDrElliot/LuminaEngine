@@ -296,8 +296,8 @@ namespace Lumina
 
         // The surface is created here because the window-system calls are main-thread only.
         FImGuiViewportData* Data = IM_NEW(FImGuiViewportData)();
-        Data->Window  = Viewport->PlatformHandle;
-        Data->Surface = RHI::CreateSurface(Data->Window);
+        Data->Window = Viewport->PlatformHandle;
+        Data->Target.Initialize(RHI::CreateSurface(Data->Window));
         Viewport->RendererUserData = Data;
     }
 
@@ -309,17 +309,7 @@ namespace Lumina
             return;
         }
 
-        // Recording is synchronous, so only submitted GPU work can still reference the swapchain.
-        if (RHI::IsValid(Data->Swapchain))
-        {
-            RHI::WaitDeviceIdle();
-            RHI::FreeH(Data->Swapchain);
-        }
-        else
-        {
-            // CreateSwapchain consumes the handle, so this must not run once a swapchain exists.
-            RHI::FreeH(Data->Surface);
-        }
+        Data->Target.Shutdown();
 
         IM_DELETE(Data);
         Viewport->RendererUserData = nullptr;
@@ -351,46 +341,19 @@ namespace Lumina
             return;
         }
 
-        const FUIntVector2 RequestedExtent((uint32)ReqW, (uint32)ReqH);
+        Data->Target.Resize(FUIntVector2((uint32)ReqW, (uint32)ReqH));
 
-        // Tracks the built extent, so a clamped surface does not thrash recreation every frame.
-        if (!RHI::IsValid(Data->Swapchain))
-        {
-            if (!RHI::IsValid(Data->Surface))
-            {
-                return;
-            }
-            Data->Swapchain   = RHI::CreateSwapchain(Data->Surface, RequestedExtent);
-            Data->Surface     = RHI::FSurfaceH{};
-            Data->BuiltExtent = RequestedExtent;
-        }
-        else if (Data->BuiltExtent != RequestedExtent)
-        {
-            RHI::RecreateSwapchain(Data->Swapchain, RequestedExtent);
-            Data->BuiltExtent = RequestedExtent;
-        }
-
-        // Surface collapsed to zero area (minimized / mid-drag) so the swapchain did not build; retry next frame.
-        const FUIntVector2 BuiltExtent = RHI::GetSwapchainExtent(Data->Swapchain);
-        if (BuiltExtent.x == 0 || BuiltExtent.y == 0)
-        {
-            Data->BuiltExtent = FUIntVector2(0, 0);
-            return;
-        }
-
-        RHI::FTextureH Img = RHI::AcquireNextImage(Data->Swapchain);
+        RHI::FTextureH Img = Data->Target.Acquire();
         if (!RHI::IsValid(Img))
         {
-            RHI::RecreateSwapchain(Data->Swapchain, RequestedExtent);
-            Data->BuiltExtent = RequestedExtent;
-            return;   // retry next frame
+            return;   // minimized, mid-drag or stale; the retry is already armed
         }
 
-        const FUIntVector2 ImgExtent = RHI::GetSwapchainExtent(Data->Swapchain);
+        const FUIntVector2 ImgExtent = Data->Target.GetExtent();
 
         RHI::FCmdListH CL = RHI::OpenCommandList();
         RHI::CmdSetTextureHeap(CL, RHI::Core::GetGlobalHeap());
-        RHI::CmdSwapchainBarrierToRender(CL, Data->Swapchain);
+        Data->Target.BarrierToRender(CL);
 
         RHI::FRenderAttachment Color;
         Color.Texture  = Img;
@@ -408,7 +371,7 @@ namespace Lumina
         RecordDrawLists(CL, DrawData, (float)ImgExtent.x, (float)ImgExtent.y);
 
         RHI::CmdEndRenderPass(CL);
-        RHI::Core::Present(Data->Swapchain, CL);
+        Data->Target.Present(CL);
     }
 
     ImTextureID FVulkanImGuiRender::GetOrCreateImTexture(FStringView Path)

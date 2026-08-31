@@ -250,8 +250,7 @@ namespace Lumina
                 return false;
             }
 
-            const EBlendMode Blend = Material->GetBlendMode();
-            if (Blend == EBlendMode::Translucent || Blend == EBlendMode::Additive)
+            if (Material->IsMomentResolved() || Material->IsUnorderedBlend())
             {
                 return true;
             }
@@ -323,23 +322,32 @@ namespace Lumina
         CMaterial* ConcreteMaterial = Material->GetMaterial();
 
         const EBlendMode BlendMode    = Material->GetBlendMode();
-        const bool       bTranslucent = BlendMode == EBlendMode::Translucent || BlendMode == EBlendMode::Additive;
         const bool       bMasked      = BlendMode == EBlendMode::Masked;
         const bool       bAdditive    = BlendMode == EBlendMode::Additive;
+        const bool       bModulate    = BlendMode == EBlendMode::Modulate;
+        // Everything the forward lane draws, whether the moments resolve it or a blend composites it.
+        const bool       bTranslucent = Material->IsMomentResolved() || Material->IsUnorderedBlend();
         // Translucency forces two-sided, or a translucent surface reads as a hole from behind.
         const bool       bTwoSided    = bTranslucent || Material->IsTwoSided();
 
-        R.PixelShader                = Material->GetPixelShader();
-        R.VertexShader               = Material->GetVertexShader();
-        R.MeshShaderShadow           = ConcreteMaterial ? ConcreteMaterial->GetMeshShaderShadow() : FShaderH{};
-        R.MeshShaderBase             = ConcreteMaterial ? ConcreteMaterial->GetMeshShaderBase() : FShaderH{};
-        R.VisBufferMeshShader        = ConcreteMaterial ? ConcreteMaterial->GetVisBufferMeshShader() : FShaderH{};
-        R.VisBufferMeshShaderMasked  = ConcreteMaterial ? ConcreteMaterial->GetVisBufferMeshShaderMasked() : FShaderH{};
-        R.MaskedVisBufferPixelShader = ConcreteMaterial ? ConcreteMaterial->GetMaskedVisBufferPixelShader() : FShaderH{};
-        R.MeshShaderShadowMasked     = ConcreteMaterial ? ConcreteMaterial->GetMeshShaderShadowMasked() : FShaderH{};
-        R.ShadowMaskedPixelShader    = ConcreteMaterial ? ConcreteMaterial->GetShadowMaskedPixelShader() : FShaderH{};
-        R.DeferredShader             = ConcreteMaterial ? ConcreteMaterial->GetDeferredShader() : FShaderH{};
-        R.MomentPixelShader          = ConcreteMaterial ? ConcreteMaterial->GetMomentPixelShader() : FShaderH{};
+        // The default key resolves to the master's own stage, so a switchless material pays nothing.
+        const uint64 SwitchKey = Material->GetStaticSwitchKey();
+        auto Stage = [ConcreteMaterial, SwitchKey](EMaterialShaderStage InStage)
+        {
+            return ConcreteMaterial ? ConcreteMaterial->GetStageForKey(InStage, SwitchKey) : FShaderH{};
+        };
+
+        R.PixelShader                = Stage(EMaterialShaderStage::Pixel);
+        R.VertexShader               = Stage(EMaterialShaderStage::Vertex);
+        R.MeshShaderShadow           = Stage(EMaterialShaderStage::MeshShadow);
+        R.MeshShaderBase             = Stage(EMaterialShaderStage::MeshBase);
+        R.VisBufferMeshShader        = Stage(EMaterialShaderStage::VisBufferMesh);
+        R.VisBufferMeshShaderMasked  = Stage(EMaterialShaderStage::VisBufferMeshMasked);
+        R.MaskedVisBufferPixelShader = Stage(EMaterialShaderStage::MaskedVisBufferPixel);
+        R.MeshShaderShadowMasked     = Stage(EMaterialShaderStage::MeshShadowMasked);
+        R.ShadowMaskedPixelShader    = Stage(EMaterialShaderStage::ShadowMaskedPixel);
+        R.DeferredShader             = Stage(EMaterialShaderStage::Deferred);
+        R.MomentPixelShader          = Stage(EMaterialShaderStage::MomentPixel);
 
         // Recorded from the RAW request, so a not-ready material that later compiles is noticed.
         MeshResolve::StampSurfaceSource(R, RawMaterial);
@@ -348,17 +356,24 @@ namespace Lumina
         R.MaterialIdx           = (uint16)Material->GetMaterialIndex();
         R.bMaterialCastsShadows = Material->DoesCastShadows();
 
+        // Casting is what shadow-only draws, so the two together are the only useful combination.
+        const bool bShadowOnly = Material->IsShadowOnly() && R.bMaterialCastsShadows;
+
         EInstanceFlags MaterialFlags = EInstanceFlags::None;
         if (bTranslucent) { MaterialFlags |= EInstanceFlags::Translucent; }
         if (bMasked)      { MaterialFlags |= EInstanceFlags::Masked; }
         if (bTwoSided)    { MaterialFlags |= EInstanceFlags::TwoSided; }
+        if (bShadowOnly)  { MaterialFlags |= EInstanceFlags::ShadowOnly; }
         R.MaterialFlags = MaterialFlags;
 
-        // The MBOIT passes and the additive pass are the only ones that bind MeshShaderBase / PixelShader.
-        const bool bForwardShaded = bTranslucent || bAdditive;
+        // The MBOIT passes and the unordered blend pass are the only binders of MeshShaderBase / PixelShader.
+        const bool bForwardShaded = bTranslucent;
 
-        // Additive blending is already order-independent, so those batches skip the moments.
-        const bool bMomentGenerated = bTranslucent && !bAdditive;
+        // A commutative blend is already order-independent, so those batches skip the moments.
+        const bool bMomentGenerated = Material->IsMomentResolved();
+
+        // Only the unordered lane can honour it; the MBOIT lane reads depth and never writes.
+        const bool bWriteDepth = Material->WritesDepth() && Material->IsUnorderedBlend();
 
         R.BatchKey = FDrawBatchKey
         {
@@ -375,6 +390,8 @@ namespace Lumina
             .bTranslucent = (bTranslucent ? 1u : 0u),
             .bMasked      = (bMasked      ? 1u : 0u),
             .bAdditive    = (bAdditive    ? 1u : 0u),
+            .bModulate    = (bModulate    ? 1u : 0u),
+            .bWriteDepth  = (bWriteDepth  ? 1u : 0u),
             .bTwoSided    = (bTwoSided    ? 1u : 0u),
         };
 

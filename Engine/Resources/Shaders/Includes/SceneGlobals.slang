@@ -11,6 +11,7 @@ struct FSceneRoot
     FTransform3x4*       PrevRetainedTransforms;
     FCluster*            Clusters;
     FMaterialUniforms*   Materials;
+    FMaterialCollection* Collections;
     FBillboardInstance*  Billboards;
     FCullView*           CullViews;
     FMeshletDraw*        MeshletDrawListPtr;
@@ -70,6 +71,7 @@ FBoneTransform*     PrevBones()             { return GetSceneRoot().PrevBones; }
 FTransform3x4*      PrevRetainedTransforms(){ return GetSceneRoot().PrevRetainedTransforms; }
 FCluster*           Clusters()              { return GetSceneRoot().Clusters; }
 FMaterialUniforms*  Materials()             { return GetSceneRoot().Materials; }
+FMaterialCollection* Collections()           { return GetSceneRoot().Collections; }
 FBillboardInstance* Billboards()            { return GetSceneRoot().Billboards; }
 FCullView*          CullViews()             { return GetSceneRoot().CullViews; }
 FMeshletHeader*     MeshletHeaders()        { return GetSceneRoot().MeshletHeadersPtr; }
@@ -410,6 +412,17 @@ FPreSkinnedVertex SkinVertex(FMeshletHeader* Header, FMeshlet M, uint MeshletInd
 float  GetMaterialScalar (uint MatIndex, uint Index) { return Materials()[MatIndex].Scalars[Index];  }
 float4 GetMaterialVec4   (uint MatIndex, uint Index) { return loadAligned<16>(&Materials()[MatIndex].Vectors[Index]); }
 uint   GetMaterialTexture(uint MatIndex, uint Index) { return Materials()[MatIndex].Textures[Index]; }
+
+// Slot is which of the material's own bindings (0 or 1), not the collection's index in the table.
+float GetCollectionScalar(uint MatIndex, uint Slot, uint Index)
+{
+    return Collections()[Materials()[MatIndex].CollectionIndices[Slot]].Scalars[Index];
+}
+
+float4 GetCollectionVec4(uint MatIndex, uint Slot, uint Index)
+{
+    return loadAligned<16>(&Collections()[Materials()[MatIndex].CollectionIndices[Slot]].Vectors[Index]);
+}
 
 FGPUInstance GetInstance(uint InstanceID) { return Instances()[InstanceID]; }
 

@@ -216,7 +216,8 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
 
     // Per-view visibility AND per-(view, draw) reservation in one pass. No early break: every view the
     // instance is visible to has to reserve room, which is what buys an exactly sized draw list.
-    const bool bCaster  = Cull.HasFlag(EInstanceFlags::CastShadow);
+    const bool bCaster     = Cull.HasFlag(EInstanceFlags::CastShadow);
+    const bool bShadowOnly = Cull.HasFlag(EInstanceFlags::ShadowOnly);
     const uint DrawID   = Cull.DrawID;
     const bool bInRange = DrawID < Pass().NumBatches;
     bool bAnyView = false;
@@ -235,7 +236,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     // Needed before the compacted slot is claimed, because that slot is what indexes the range slab.
     for (uint v = 0; v < Pass().NumViews; ++v)
     {
-        if (IsInstanceVisibleToView(CullViews()[v], Center, Radius, bNoCull, bCaster))
+        if (IsInstanceVisibleToView(CullViews()[v], Center, Radius, bNoCull, bCaster, bShadowOnly))
         {
             bAnyView = true;
             break;
@@ -274,7 +275,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
         uint2 Range   = uint2(0u, 0u);
         uint  Emitted = 0u;
 
-        if (IsInstanceVisibleToView(View, Center, Radius, bNoCull, bCaster))
+        if (IsInstanceVisibleToView(View, Center, Radius, bNoCull, bCaster, bShadowOnly))
         {
             const bool bShadowView = View.HasFlag(CULL_VIEW_FLAG_CAST_SHADOW_ONLY);
 

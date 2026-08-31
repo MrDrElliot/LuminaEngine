@@ -228,7 +228,180 @@ namespace Lumina
         RebuildUniformsFromOverrides();
         UpdateMaterialUniforms();
 
+        // The parent may have just recompiled, which drops every permutation and renumbers the bits.
+        RequestStaticSwitchPermutation();
+
         // No invalidate, since a resolve stamps the slot INDEX and a value change never moves it.
+    }
+
+    void CMaterialInstance::GatherStaticSwitchValues(THashMap<FName, bool>& OutValues, uint32 Depth) const
+    {
+        if (Depth >= MaxChainDepth)
+        {
+            return;
+        }
+
+        // Parent first, so this level's overrides land on top of everything it inherits.
+        if (const CMaterialInstance* ParentInstance = Cast<CMaterialInstance>(Material.Get()))
+        {
+            ParentInstance->GatherStaticSwitchValues(OutValues, Depth + 1);
+        }
+
+        for (const FMaterialStaticSwitchOverride& Override : StaticSwitchOverrides)
+        {
+            OutValues[Override.ParameterName] = Override.bValue;
+        }
+    }
+
+    uint64 CMaterialInstance::GetStaticSwitchKey() const
+    {
+        CMaterial* Root = GetMaterial();
+        if (Root == nullptr || Root->StaticSwitches.empty())
+        {
+            return 0;
+        }
+
+        // Cheap out before the map allocation for the common chain that overrides no switch at all.
+        THashMap<FName, bool> Values;
+        GatherStaticSwitchValues(Values);
+        if (Values.empty())
+        {
+            return Root->GetDefaultStaticSwitchKey();
+        }
+
+        return Root->MakeStaticSwitchKey(Values);
+    }
+
+    bool CMaterialInstance::HasStaticSwitchOverride(const FName& Name) const
+    {
+        return Algo::AnyOf(StaticSwitchOverrides,
+            [&Name](const FMaterialStaticSwitchOverride& O) { return O.ParameterName == Name; });
+    }
+
+    bool CMaterialInstance::GetStaticSwitchValue(const FName& Name) const
+    {
+        for (const FMaterialStaticSwitchOverride& Override : StaticSwitchOverrides)
+        {
+            if (Override.ParameterName == Name)
+            {
+                return Override.bValue;
+            }
+        }
+
+        if (const CMaterialInstance* ParentInstance = Cast<CMaterialInstance>(Material.Get()))
+        {
+            return ParentInstance->GetStaticSwitchValue(Name);
+        }
+
+        if (CMaterial* Root = GetMaterial())
+        {
+            for (const FMaterialStaticSwitch& Switch : Root->StaticSwitches)
+            {
+                if (Switch.ParameterName == Name)
+                {
+                    return Switch.bDefaultValue;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    bool CMaterialInstance::SetStaticSwitchValue(const FName& Name, bool bValue)
+    {
+        CMaterial* Root = GetMaterial();
+        if (Root == nullptr || Root->FindStaticSwitchBit(Name) == INDEX_NONE)
+        {
+            WarnMissingParameterOnce("static switch", Name);
+            return false;
+        }
+
+        for (FMaterialStaticSwitchOverride& Override : StaticSwitchOverrides)
+        {
+            if (Override.ParameterName != Name)
+            {
+                continue;
+            }
+            if (Override.bValue == bValue)
+            {
+                return true;
+            }
+            Override.bValue = bValue;
+            OnStaticSwitchesChanged();
+            return true;
+        }
+
+        FMaterialStaticSwitchOverride Override;
+        Override.ParameterName = Name;
+        Override.bValue        = bValue;
+        StaticSwitchOverrides.push_back(Override);
+        OnStaticSwitchesChanged();
+        return true;
+    }
+
+    void CMaterialInstance::RemoveStaticSwitchOverride(const FName& Name)
+    {
+        auto NewEnd = Algo::RemoveIf(StaticSwitchOverrides, [Name](const FMaterialStaticSwitchOverride& O)
+        {
+            return O.ParameterName == Name;
+        });
+
+        if (NewEnd == StaticSwitchOverrides.end())
+        {
+            return;
+        }
+
+        StaticSwitchOverrides.erase(NewEnd, StaticSwitchOverrides.end());
+        OnStaticSwitchesChanged();
+    }
+
+    void CMaterialInstance::OnStaticSwitchesChanged()
+    {
+        RequestStaticSwitchPermutation();
+
+        // A switch change swaps the shader set every resolved surface below here caches by handle.
+        FMeshResolveCache::InvalidateDependency(this);
+        PropagateStaticSwitchChange();
+    }
+
+    void CMaterialInstance::PropagateStaticSwitchChange(uint32 Depth)
+    {
+        if (Depth >= MaxChainDepth)
+        {
+            return;
+        }
+
+        // Snapshotted rather than held, the same way every other propagation down this chain works.
+        TVector<CMaterialInterface*> Snapshot;
+        {
+            FScopeLock Lock(ChildrenMutex);
+            Snapshot = Children;
+        }
+
+        for (CMaterialInterface* Child : Snapshot)
+        {
+            CMaterialInstance* ChildInstance = Cast<CMaterialInstance>(Child);
+            if (ChildInstance == nullptr || ChildInstance->GetParentMaterial() != this)
+            {
+                continue;
+            }
+
+            ChildInstance->RequestStaticSwitchPermutation();
+            FMeshResolveCache::InvalidateDependency(ChildInstance);
+            ChildInstance->PropagateStaticSwitchChange(Depth + 1);
+        }
+    }
+
+    void CMaterialInstance::RequestStaticSwitchPermutation()
+    {
+#if USING(WITH_EDITOR)
+        CMaterial* Root = GetMaterial();
+        if (Root == nullptr || Root->StaticSwitches.empty())
+        {
+            return;
+        }
+        CMaterial::RequestPermutation(Root, GetStaticSwitchKey());
+#endif
     }
 
     void CMaterialInstance::PostPropertyChange(FProperty* ChangedProperty)
@@ -734,12 +907,14 @@ namespace Lumina
 
     FShaderH CMaterialInstance::GetVertexShader() const
     {
-        return Material ? Material->GetVertexShader() : FShaderH{};
+        CMaterial* Root = GetMaterial();
+        return Root ? Root->GetStageForKey(EMaterialShaderStage::Vertex, GetStaticSwitchKey()) : FShaderH{};
     }
 
     FShaderH CMaterialInstance::GetPixelShader() const
     {
-        return Material ? Material->GetPixelShader() : FShaderH{};
+        CMaterial* Root = GetMaterial();
+        return Root ? Root->GetStageForKey(EMaterialShaderStage::Pixel, GetStaticSwitchKey()) : FShaderH{};
     }
 
     EMaterialType CMaterialInstance::GetMaterialType() const
@@ -775,6 +950,31 @@ namespace Lumina
     bool CMaterialInstance::IsOpaque()
     {
         return Material ? Material->IsOpaque() : true;
+    }
+
+    bool CMaterialInstance::IsMomentResolved()
+    {
+        return Material ? Material->IsMomentResolved() : false;
+    }
+
+    bool CMaterialInstance::IsUnorderedBlend()
+    {
+        return Material ? Material->IsUnorderedBlend() : false;
+    }
+
+    bool CMaterialInstance::ReceivesDecals() const
+    {
+        return Material ? Material->ReceivesDecals() : true;
+    }
+
+    bool CMaterialInstance::WritesDepth() const
+    {
+        return Material ? Material->WritesDepth() : false;
+    }
+
+    bool CMaterialInstance::IsShadowOnly() const
+    {
+        return Material ? Material->IsShadowOnly() : false;
     }
 
     bool CMaterialInstance::IsUnlit()
@@ -841,6 +1041,9 @@ namespace Lumina
         }
 
         SetReadyForRender(true);
+
+        // A loaded instance may name a permutation the master has never built, and nothing else asks.
+        RequestStaticSwitchPermutation();
 
         // Surfaces that fell back to the default still record this as a dependency, so they wake here.
         FMeshResolveCache::InvalidateDependency(this);

@@ -55,16 +55,25 @@
 // FGPUInstance::SurfaceDescIndex when the instance's LOD is fixed and no view may re-select it.
 #define NO_SURFACE_DESC_INDEX           0xFFFFFFFFu
 
-// Classification aggregates through groupshared before the global counters: one atomic per (tile,
-// material) rather than per pixel, ~50K instead of ~2M onto the same 64 addresses at 1080p.
 #define MATERIAL_CLASSIFY_TILE          8
 #define MATERIAL_PIXEL_GROUP_SIZE       64
-#define MATERIAL_MAX_SLOTS              64u
+// Distinct deferred shaders one frame may bin. A backstop, not a knob; costs are linear in the live count.
+#define MATERIAL_MAX_SLOTS              1024u
 
 // FMaterialUniforms layout. Changing one side reinterprets every field after it.
 #define MAX_SCALARS                     24
 #define MAX_VECTORS                     24
 #define MAX_TEXTURES                    24
+
+// Collections one material may bind. Their indices sit in words FMaterialUniforms already reserved.
+#define MAX_MATERIAL_COLLECTIONS        2
+
+// FMaterialCollectionUniforms layout, mirrored by FMaterialCollection in Common.slang.
+#define MAX_COLLECTION_VECTORS          16
+#define MAX_COLLECTION_SCALARS          16
+
+// Slot 0 is a reserved all-zero collection, so a material binding none reads zeros without a sentinel.
+#define MAX_PARAMETER_COLLECTIONS       64
 
 #define MAX_LIGHTS                      8192
 #define MAX_SHADOWS                     256
@@ -83,3 +92,10 @@
 #define COL_B_SHIFT                     16
 #define COL_A_SHIFT                     24
 #define COL_A_MASK                      0xFF000000
+
+// Emitter slots one workgroup can sort in groupshared; a larger emitter draws unsorted and uncompacted.
+#define PARTICLE_SORT_CAPACITY          2048u
+#define PARTICLE_SORT_INDEX_BITS        11u
+#define PARTICLE_SORT_INDEX_MASK        0x7FFu
+#define PARTICLE_SORT_DEPTH_BITS        21u
+#define PARTICLE_SORT_THREADS           256

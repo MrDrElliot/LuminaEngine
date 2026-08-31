@@ -52,6 +52,7 @@ namespace Lumina::RHI
 
         void SubmitAndWait(FCmdListH CommandList);
 
+        // Unexported on purpose, since FSwapchainTarget is what handles a rejected present.
         bool Present(FSwapchainH Swapchain, FCmdListH FinalCommandList);
 
         RUNTIME_API FTextureHeapH GetGlobalHeap();

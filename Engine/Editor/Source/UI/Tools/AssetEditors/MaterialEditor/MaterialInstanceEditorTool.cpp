@@ -271,6 +271,12 @@ namespace Lumina
             return;
         }
 
+        ImGui::PushStyleColor(ImGuiCol_Header, 0);
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, 0);
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, 0);
+        DrawStaticSwitchSection(Instance);
+        ImGui::PopStyleColor(3);
+
         if (Instance->GetMaterialParams().empty())
         {
             ImGui::TextUnformatted("Parent material exposes no parameters.");
@@ -392,6 +398,96 @@ namespace Lumina
         }
 
         ImGui::PopStyleColor(3);
+    }
+
+    void FMaterialInstanceEditorTool::DrawStaticSwitchSection(CMaterialInstance* Instance)
+    {
+        CMaterial* Root = Instance->GetMaterial();
+        if (Root == nullptr || Root->StaticSwitches.empty())
+        {
+            return;
+        }
+
+        if (!ImGui::CollapsingHeader("Static Switches", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            return;
+        }
+
+        const uint64 Key       = Instance->GetStaticSwitchKey();
+        const bool   bCompiled = Root->HasPermutation(Key);
+
+        constexpr ImGuiTableFlags TableFlags =
+            ImGuiTableFlags_BordersOuter |
+            ImGuiTableFlags_BordersInnerH |
+            ImGuiTableFlags_NoBordersInBodyUntilResize |
+            ImGuiTableFlags_SizingFixedFit;
+
+        ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(4, 8));
+        if (ImGui::BeginTable("MaterialInstanceSwitchTable", 3, TableFlags))
+        {
+            ImGui::TableSetupColumn("##Override", ImGuiTableColumnFlags_WidthFixed, 24);
+            ImGui::TableSetupColumn("##Name", ImGuiTableColumnFlags_WidthFixed, 175);
+            ImGui::TableSetupColumn("##Editor", ImGuiTableColumnFlags_WidthStretch);
+
+            for (const FMaterialStaticSwitch& Switch : Root->StaticSwitches)
+            {
+                ImGui::PushID(Switch.ParameterName.c_str());
+                ImGui::TableNextRow();
+
+                ImGui::TableNextColumn();
+                bool bOverridden = Instance->HasStaticSwitchOverride(Switch.ParameterName);
+                if (ImGui::Checkbox("##Override", &bOverridden))
+                {
+                    if (bOverridden)
+                    {
+                        Instance->SetStaticSwitchValue(Switch.ParameterName, Instance->GetStaticSwitchValue(Switch.ParameterName));
+                    }
+                    else
+                    {
+                        Instance->RemoveStaticSwitchOverride(Switch.ParameterName);
+                    }
+                    Asset->GetPackage()->MarkDirty();
+                }
+
+                ImGui::TableNextColumn();
+                ImGui::AlignTextToFramePadding();
+                if (bOverridden)
+                {
+                    ImGui::TextUnformatted(Switch.ParameterName.c_str());
+                }
+                else
+                {
+                    ImGui::TextDisabled("%s", Switch.ParameterName.c_str());
+                }
+
+                ImGui::TableNextColumn();
+                ImGui::AlignTextToFramePadding();
+                ImGui::BeginDisabled(!bOverridden);
+
+                bool bValue = Instance->GetStaticSwitchValue(Switch.ParameterName);
+                if (ImGui::Checkbox("##Value", &bValue) && bOverridden)
+                {
+                    Instance->SetStaticSwitchValue(Switch.ParameterName, bValue);
+                    Asset->GetPackage()->MarkDirty();
+                }
+
+                ImGui::EndDisabled();
+                ImGui::PopID();
+            }
+
+            ImGui::EndTable();
+        }
+        ImGui::PopStyleVar();
+
+        // Until the drain builds it, the surface falls back to the master's switch defaults.
+        if (!bCompiled)
+        {
+            ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.25f, 1.0f),
+                "Compiling this switch combination; drawing with the base material's switches for now.");
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
     }
 
     void FMaterialInstanceEditorTool::DrawTextureParameterColumn(CMaterialInstance* Instance, const FMaterialParameter& Param, bool bEnabled)

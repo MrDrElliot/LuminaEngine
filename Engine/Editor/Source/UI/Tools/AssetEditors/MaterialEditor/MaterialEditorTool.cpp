@@ -1,4 +1,4 @@
-#include <string>
+﻿#include <string>
 #include <string_view>
 #include "MaterialEditorTool.h"
 #include "imgui-node-editor/imgui_node_editor.h"
@@ -31,6 +31,7 @@
 #include "World/Entity/Components/EnvironmentComponent.h"
 #include "World/Entity/Components/SkyLightComponent.h"
 #include "World/Entity/Components/LightComponent.h"
+#include "World/Entity/Components/ParticleSystemComponent.h"
 #include "World/Entity/Components/StaticMeshComponent.h"
 #include "Log/Log.h"
 #include "Containers/StringFormat.h"
@@ -164,6 +165,10 @@ namespace Lumina
         SStaticMeshComponent& StaticMeshComponent = World->EmplaceComponent<SStaticMeshComponent>(MeshEntity);
         StaticMeshComponent.SetStaticMesh(CPrimitiveManager::Get().SphereMesh);
 
+        // Kept alongside the mesh rather than created on demand, so switching domains never rebuilds it.
+        ParticleEntity = World->ConstructEntity("ParticlePreview");
+        World->EmplaceComponent<SParticleSystemComponent>(ParticleEntity);
+
         const STransformComponent& MeshTransform = World->GetComponent<STransformComponent>(MeshEntity);
         SetOrbitTarget(MeshTransform.GetLocation(), 4.0f);
         SetCameraMode(EEditorCameraMode::Orbit);
@@ -185,14 +190,24 @@ namespace Lumina
             Camera->PostProcessMaterials.clear();
         }
         
+        // Both preview through something other than the mesh, so restoring it would occlude them.
+        const bool bHidesPreviewMesh = (MaterialType == EMaterialType::UI)
+                                    || (MaterialType == EMaterialType::Particle);
+
         if (MaterialType != EMaterialType::UI)
         {
             RmlUi::SetWorldInlineDocument(World, FStringView(), FStringView());
-            if (StaticMeshComponent.GetStaticMesh() == nullptr)
-            {
-                StaticMeshComponent.SetStaticMesh(CPrimitiveManager::Get().SphereMesh);
-            }
         }
+        if (!bHidesPreviewMesh && StaticMeshComponent.GetStaticMesh() == nullptr)
+        {
+            StaticMeshComponent.SetStaticMesh(CPrimitiveManager::Get().SphereMesh);
+        }
+
+        // Null leaves the emitter out of the extract entirely, so no other domain pays for this entity.
+        SParticleSystemComponent& ParticlePreview = World->GetComponent<SParticleSystemComponent>(ParticleEntity);
+        ParticlePreview.ParticleSystem = (MaterialType == EMaterialType::Particle)
+                                       ? GetOrCreatePreviewParticleSystem(MaterialInterface)
+                                       : nullptr;
 
         if (MaterialType == EMaterialType::PostProcess)
         {
@@ -226,7 +241,7 @@ namespace Lumina
                 LOG_WARN("[MaterialEditor] UI material preview: no registry path (save the asset first).");
             }
         }
-        else if (MaterialType == EMaterialType::Decal)
+        else if (MaterialType == EMaterialType::Decal || MaterialType == EMaterialType::Particle)
         {
             StaticMeshComponent.MaterialOverrides.clear();
         }
@@ -234,6 +249,33 @@ namespace Lumina
         {
             StaticMeshComponent.MaterialOverrides.push_back(MaterialInterface);
         }
+    }
+
+    CParticleSystem* FMaterialEditorTool::GetOrCreatePreviewParticleSystem(CMaterialInterface* PreviewMaterial)
+    {
+        if (PreviewParticleSystem == nullptr)
+        {
+            PreviewParticleSystem = NewObject<CParticleSystem>();
+            CParticleEmitter* Emitter = PreviewParticleSystem->AddEmitter();
+
+            Emitter->MaxParticles   = 512;
+            Emitter->SpawnRate      = 60.0f;
+            Emitter->LifetimeRange  = FVector2(1.5f, 2.5f);
+            Emitter->Shape          = EParticleEmitterShape::Sphere;
+            Emitter->ShapeSize      = FVector3(0.15f);
+            Emitter->VelocityMin    = FVector3(-0.4f, 1.2f, -0.4f);
+            Emitter->VelocityMax    = FVector3(0.4f, 2.0f, 0.4f);
+            Emitter->Gravity        = FVector3(0.0f, -1.2f, 0.0f);
+            // White at both ends so the graph's own color is what the viewport shows.
+            Emitter->StartColor     = FVector4(1.0f);
+            Emitter->EndColor       = FVector4(1.0f);
+            Emitter->StartSizeRange = FVector2(0.28f, 0.36f);
+            Emitter->EndSizeRange   = FVector2(0.28f, 0.36f);
+        }
+
+        // Re-pointed every call, since the tool can outlive a recompile that swapped the material object.
+        PreviewParticleSystem->Emitters[0]->Material = PreviewMaterial;
+        return PreviewParticleSystem;
     }
 
     void FMaterialEditorTool::DrawHelpMenu()

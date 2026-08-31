@@ -10,6 +10,7 @@
 #include "UI/Tools/NodeGraph/Material/MaterialFunctionGraph.h"
 #include "UI/Tools/NodeGraph/Material/MaterialInput.h"
 #include "UI/Tools/NodeGraph/Material/MaterialOutput.h"
+#include "MaterialNode_StaticSwitch.h"
 #include "Containers/StringFormat.h"
 
 namespace Lumina
@@ -338,6 +339,16 @@ namespace Lumina
             InNode->Output->SetInputType(T);
             InNode->Output->SetComponentMask(FullMaskForType(T));
             BoundInputOutputs.push_back(InNode->Output);
+        }
+
+        // A function body's switches answer to the calling material's permutation, before the sort below.
+        for (CEdGraphNode* BodyNode : FnGraph->Nodes)
+        {
+            if (CMaterialExpression_StaticSwitch* Switch = Cast<CMaterialExpression_StaticSwitch>(BodyNode))
+            {
+                const FName Param = Switch->bDynamic ? Switch->ParameterName : NAME_None;
+                Switch->SetResolvedValue(Compiler.ResolveStaticSwitch(Param, Switch->bDefaultValue, Switch));
+            }
         }
 
         // Topologically order the body and emit interior nodes with prefixed variable names.

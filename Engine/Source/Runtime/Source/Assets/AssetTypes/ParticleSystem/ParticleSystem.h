@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Renderer/ShaderHandle.h"
 
@@ -12,6 +12,7 @@
 namespace Lumina
 {
     class CTexture;
+    class CMaterialInterface;
 
     REFLECT()
     enum class EParticleEmitterShape : uint8
@@ -245,6 +246,9 @@ namespace Lumina
 
     struct SParticleSystemComponent;
 
+    /** Candidate itself when it can shade sprites, or null when the texture path applies instead. */
+    RUNTIME_API CMaterialInterface* ResolveParticleSpriteMaterial(CMaterialInterface* Candidate);
+
     /** One emitter within a CParticleSystem: its own particle budget, module-compiled simulation shader,
      *  and render settings.
      *
@@ -265,6 +269,9 @@ namespace Lumina
 
         void PostLoad() override;
         void OnDestroy() override;
+
+        /** The Particle-domain material to shade sprites with, or null when the texture path applies. */
+        CMaterialInterface* GetRenderMaterial() const;
 
         FShaderH GetCustomComputeShader() const { return ComputeShader; }
         bool HasCustomComputeShader() const { return ComputeShader != nullptr; }
@@ -424,10 +431,16 @@ namespace Lumina
         PROPERTY()
         float NoiseSpeed = 1.0f;
 
-        PROPERTY(Editable, Category = "Render")
+        /** Superseded by Material, which carries the blend its graph was authored against. */
+        PROPERTY(Editable, Category = "Render", EditCondition = "!Material")
         EParticleBlendMode BlendMode = EParticleBlendMode::Additive;
 
+        /** Sprite shading; null, or any domain but Particle, leaves this emitter on the texture path. */
         PROPERTY(Editable, Category = "Render")
+        TObjectPtr<CMaterialInterface> Material;
+
+        /** Sampled only on the texture path; a Particle material samples whatever its graph binds. */
+        PROPERTY(Editable, Category = "Render", EditCondition = "!Material")
         TObjectPtr<CTexture> Texture;
 
         PROPERTY(Editable, Category = "Render")
@@ -452,7 +465,8 @@ namespace Lumina
         PROPERTY()
         bool bBillboardToCamera = true;
 
-        PROPERTY(Editable, Category = "Render")
+        /** Superseded by Material, which declares its own depth write. */
+        PROPERTY(Editable, Category = "Render", EditCondition = "!Material")
         bool bWriteDepth = false;
 
         FShaderH ComputeShader = {};
@@ -522,6 +536,13 @@ namespace Lumina
         uint64          AttributeBufferSize = 0;
         uint32          AllocatedAttributeFloats = 0;
         uint32          AllocatedMax        = 0;
+        // Live slots back-to-front, null past PARTICLE_SORT_CAPACITY, which selects the unsorted draw.
+        RHI::FGPUAllocation SortIndexBuffer = {};
+        RHI::FGPUAllocation SortDrawArgsBuffer = {};
+        // Power-of-two span ParticleSortCompact bitonic-sorts, zero when the emitter is too large.
+        uint32          SortCount           = 0;
+        // Cleared each frame; false means the sim was skipped and the draw args describe a past frame.
+        bool            bSimulatedThisFrame = false;
         float           SpawnAccumulator    = 0.0f;
         float           TotalTime           = 0.0f;
         float           SystemAge           = 0.0f;

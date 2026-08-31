@@ -1,6 +1,7 @@
 ﻿#include "RuntimePCH.h"
 #include "Material.h"
 #include "Assets/AssetTypes/Material/MaterialInstance.h"
+#include "Assets/AssetTypes/Material/MaterialParameterCollection.h"
 #include "Assets/AssetTypes/Textures/Texture.h"
 #include "Core/Object/ObjectIterator.h"
 #include "FileSystem/FileSystem.h"
@@ -51,6 +52,16 @@ namespace Lumina
         static_assert(std::size(GMaterialStages) == (size_t)EMaterialShaderStage::Count,
             "GMaterialStages must cover every EMaterialShaderStage");
 
+        // Only reachable from an asset saved before the graph compiler started refusing over-budget slots.
+        void ReportParameterOverBudget(const CMaterial* Material, const FName& ParameterName,
+                                       const char* SlotKind, uint16 Index, uint32 Capacity)
+        {
+            LOG_ERROR("Material '{}' declares {} parameter '{}' at index {}, past the {} slot budget of {}. "
+                      "Its value is dropped and the shader samples an unrelated field. Recompile the material "
+                      "and remove a {} parameter.",
+                      Material->GetName(), SlotKind, ParameterName, Index, SlotKind, Capacity, SlotKind);
+        }
+
 #if USING(WITH_EDITOR)
         // Filled during the parallel PostLoad wave and drained on the game thread, hence the mutex.
         FMutex                        StaleTemplateMutex;
@@ -61,6 +72,16 @@ namespace Lumina
             FScopeLock Lock(StaleTemplateMutex);
             StaleTemplateMaterials.push_back(Material);
         }
+
+        struct FPermutationRequest
+        {
+            TObjectPtr<CMaterial> Material;
+            uint64                Key = 0;
+        };
+
+        // Same threading story as the stale queue, since instances request from the parallel PostLoad wave.
+        FMutex                      PermutationRequestMutex;
+        TVector<FPermutationRequest> PermutationRequests;
 #endif
     }
 
@@ -355,6 +376,22 @@ namespace Lumina
                         CommitShaderStage((EMaterialShaderStage)i, TSpan<const uint32>(Binaries.data(), Binaries.size()));
                     }
                 }
+
+                // Iterated by index, since CommitPermutationStage may grow the vector it reads from.
+                for (size_t p = 0; p < Permutations.size(); ++p)
+                {
+                    const uint64 Key = Permutations[p].Key;
+                    for (size_t s = 0; s < Permutations[p].Stages.size(); ++s)
+                    {
+                        const FMaterialStageBlob& Blob = Permutations[p].Stages[s];
+                        if (Blob.Spirv.empty() || Blob.Stage >= (uint8)EMaterialShaderStage::Count)
+                        {
+                            continue;
+                        }
+                        CommitPermutationStage(Key, (EMaterialShaderStage)Blob.Stage,
+                            TSpan<const uint32>(Blob.Spirv.data(), Blob.Spirv.size()));
+                    }
+                }
             }
 
             // FMaterialUniforms isn't serialized; replay defaults from Parameters so authored values survive load.
@@ -367,14 +404,26 @@ namespace Lumina
                     {
                         MaterialUniforms.Scalars[Param.Index] = Param.ScalarDefault;
                     }
+                    else
+                    {
+                        ReportParameterOverBudget(this, Param.ParameterName, "scalar", Param.Index, MAX_SCALARS);
+                    }
                     break;
                 case EMaterialParameterType::Vector:
                     if (Param.Index < MAX_VECTORS)
                     {
                         MaterialUniforms.Vectors[Param.Index] = Param.VectorDefault;
                     }
+                    else
+                    {
+                        ReportParameterOverBudget(this, Param.ParameterName, "vector", Param.Index, MAX_VECTORS);
+                    }
                     break;
                 case EMaterialParameterType::Texture:
+                    if (Param.Index >= MAX_TEXTURES)
+                    {
+                        ReportParameterOverBudget(this, Param.ParameterName, "texture", Param.Index, MAX_TEXTURES);
+                    }
                     break;
                 }
             }
@@ -407,12 +456,31 @@ namespace Lumina
             {
                 GPUFlags |= EMaterialGPUFlags::Additive;
             }
+            if (!bReceivesDecals)
+            {
+                GPUFlags |= EMaterialGPUFlags::NoDecals;
+            }
             // A 3-bit field so the GBuffer stamps the model at RUNTIME rather than specializing the shader.
             const uint32 ShadingModelBits =
                 ((uint32)ShadingModel & kMaterialShadingModelMask) << kMaterialShadingModelShift;
 
             MaterialUniforms.Flags = (uint32)GPUFlags | ShadingModelBits;
             MaterialUniforms.OpacityClipValue = OpacityMaskClipValue;
+
+            // Slot 0 is the reserved zero collection, so an unbound entry reads zeros without a sentinel.
+            for (uint32 i = 0; i < MAX_MATERIAL_COLLECTIONS; ++i)
+            {
+                CMaterialParameterCollection* Collection = (i < (uint32)ParameterCollections.size())
+                                                         ? ParameterCollections[i].Get() : nullptr;
+                int32 Slot = 0;
+                if (IsValid(Collection))
+                {
+                    // Its own PostLoad may not have run, and the slot is what the shader indexes with.
+                    Collection->PostLoad();
+                    Slot = Math::Max(Collection->GetCollectionIndex(), 0);
+                }
+                MaterialUniforms.CollectionIndices[i] = (uint32)Slot;
+            }
 
             RebuildParameterLookup();
 
@@ -441,6 +509,16 @@ namespace Lumina
                 Blob.clear();
                 Blob.shrink_to_fit();
             }
+
+            // The library holds the bytecode now, and a cooked build never recompiles a permutation.
+            for (FMaterialShaderPermutation& Permutation : Permutations)
+            {
+                for (FMaterialStageBlob& Blob : Permutation.Stages)
+                {
+                    Blob.Spirv.clear();
+                    Blob.Spirv.shrink_to_fit();
+                }
+            }
 #endif
         }
 
@@ -459,6 +537,8 @@ namespace Lumina
             FShaderLibrary::Release(this->*Desc.Entry);
             this->*Desc.Entry = {};
         }
+
+        ClearPermutations();
 
         // Resolves are keyed partly on this pointer; drop them before it can be recycled.
         FMeshResolveCache::InvalidateDependency(this);
@@ -539,6 +619,38 @@ namespace Lumina
     FShaderH CMaterial::GetPixelShader() const
     {
         return PixelShader;
+    }
+
+    int32 CMaterial::FindStaticSwitchBit(const FName& ParameterName) const
+    {
+        for (const FMaterialStaticSwitch& Switch : StaticSwitches)
+        {
+            if (Switch.ParameterName == ParameterName)
+            {
+                return (int32)Switch.BitIndex;
+            }
+        }
+        return INDEX_NONE;
+    }
+
+    uint64 CMaterial::MakeStaticSwitchKey(const THashMap<FName, bool>& Overrides) const
+    {
+        uint64 Key = 0;
+        for (const FMaterialStaticSwitch& Switch : StaticSwitches)
+        {
+            const auto Override = Overrides.find(Switch.ParameterName);
+            const bool bValue = Override != Overrides.end() ? Override->second : Switch.bDefaultValue;
+            if (bValue)
+            {
+                Key |= (1ull << Switch.BitIndex);
+            }
+        }
+        return Key;
+    }
+
+    uint64 CMaterial::GetDefaultStaticSwitchKey() const
+    {
+        return MakeStaticSwitchKey({});
     }
 
     CMaterial* CMaterial::GetDefaultMaterial()
@@ -810,6 +922,158 @@ namespace Lumina
         }
     }
 
+    FShaderH CMaterial::GetStageForKey(EMaterialShaderStage Stage, uint64 Key) const
+    {
+        if (Key != GetDefaultStaticSwitchKey())
+        {
+            for (const FMaterialShaderPermutation& Permutation : Permutations)
+            {
+                if (Permutation.Key != Key)
+                {
+                    continue;
+                }
+
+                // A switch can gate a stage's only content, and null would draw nothing at all.
+                if (Permutation.Entries[(size_t)Stage] != FShaderH{})
+                {
+                    return Permutation.Entries[(size_t)Stage];
+                }
+                break;
+            }
+        }
+
+        return this->*GMaterialStages[(size_t)Stage].Entry;
+    }
+
+    bool CMaterial::HasPermutation(uint64 Key) const
+    {
+        if (Key == GetDefaultStaticSwitchKey())
+        {
+            return true;
+        }
+
+        return Algo::AnyOf(Permutations, [Key](const FMaterialShaderPermutation& P) { return P.Key == Key; });
+    }
+
+    void CMaterial::CommitPermutationStage(uint64 Key, EMaterialShaderStage Stage, TSpan<const uint32> Spirv)
+    {
+        auto Found = Algo::FindIf(Permutations, [Key](const FMaterialShaderPermutation& P) { return P.Key == Key; });
+        if (Found == Permutations.end())
+        {
+            Permutations.emplace_back();
+            Permutations.back().Key = Key;
+            Found = Permutations.end() - 1;
+        }
+        FMaterialShaderPermutation& Permutation = *Found;
+
+        auto FoundBlob = Algo::FindIf(Permutation.Stages,
+            [Stage](const FMaterialStageBlob& B) { return B.Stage == (uint8)Stage; });
+        if (FoundBlob == Permutation.Stages.end())
+        {
+            Permutation.Stages.emplace_back();
+            Permutation.Stages.back().Stage = (uint8)Stage;
+            FoundBlob = Permutation.Stages.end() - 1;
+        }
+        FMaterialStageBlob& Blob = *FoundBlob;
+
+        if (Blob.Spirv.data() != Spirv.data())
+        {
+            Blob.Spirv.assign(Spirv.data(), Spirv.data() + Spirv.size());
+        }
+
+        const FMaterialStageDesc& Desc = GMaterialStages[(size_t)Stage];
+
+        // Keyed by permutation too, or two permutations of one material collide on the library name.
+        const FName EntryName = FName(Format("{}{}_P{:016X}", GetGUID().ToString(), Desc.Suffix, Key).c_str());
+
+        const FShaderH Previous  = Permutation.Entries[(size_t)Stage];
+        const FShaderH Committed = FShaderLibrary::Commit(EntryName, Desc.Type, Spirv);
+        Permutation.Entries[(size_t)Stage] = Committed;
+
+        if (Previous != Committed)
+        {
+            FShaderLibrary::Release(Previous);
+            ++ShaderRevision;
+        }
+        else
+        {
+            FShaderLibrary::Release(Committed);
+        }
+    }
+
+    const TVector<uint32>& CMaterial::GetPermutationStageBinaries(uint64 Key, EMaterialShaderStage Stage) const
+    {
+        static const TVector<uint32> Empty;
+
+        for (const FMaterialShaderPermutation& Permutation : Permutations)
+        {
+            if (Permutation.Key != Key)
+            {
+                continue;
+            }
+            for (const FMaterialStageBlob& Blob : Permutation.Stages)
+            {
+                if (Blob.Stage == (uint8)Stage)
+                {
+                    return Blob.Spirv;
+                }
+            }
+            break;
+        }
+
+        return Empty;
+    }
+
+    void CMaterial::ClearPermutation(uint64 Key)
+    {
+        auto Found = Algo::FindIf(Permutations, [Key](const FMaterialShaderPermutation& P) { return P.Key == Key; });
+        if (Found == Permutations.end())
+        {
+            return;
+        }
+
+        for (FShaderH& Entry : Found->Entries)
+        {
+            FShaderLibrary::Release(Entry);
+        }
+
+        Permutations.erase(Found);
+        ++ShaderRevision;
+    }
+
+    bool CMaterial::CommitPermutationStageIfCurrent(uint64 Key, uint32 Generation, EMaterialShaderStage Stage,
+        TSpan<const uint32> Spirv)
+    {
+        if (Generation != PermutationGeneration)
+        {
+            return false;
+        }
+
+        CommitPermutationStage(Key, Stage, Spirv);
+        return true;
+    }
+
+    void CMaterial::ClearPermutations()
+    {
+        // Moved unconditionally, since a compile in flight was dispatched against the outgoing numbering.
+        ++PermutationGeneration;
+
+        for (FMaterialShaderPermutation& Permutation : Permutations)
+        {
+            for (FShaderH& Entry : Permutation.Entries)
+            {
+                FShaderLibrary::Release(Entry);
+                Entry = {};
+            }
+        }
+
+        if (!Permutations.empty())
+        {
+            Permutations.clear();
+            ++ShaderRevision;
+        }
+    }
+
     void CMaterial::ClearShaderStage(EMaterialShaderStage Stage)
     {
         const FMaterialStageDesc& Desc = GMaterialStages[(size_t)Stage];
@@ -885,6 +1149,38 @@ namespace Lumina
         TObjectPtr<CMaterial> Material = StaleTemplateMaterials.back();
         StaleTemplateMaterials.pop_back();
         return Material;
+    }
+
+    void CMaterial::RequestPermutation(CMaterial* Material, uint64 Key)
+    {
+        // A cooked material has no graph to compile from, and the default permutation always exists.
+        if (!IsValid(Material) || Material->GetPackage() == nullptr || Material->HasPermutation(Key))
+        {
+            return;
+        }
+
+        FScopeLock Lock(PermutationRequestMutex);
+        for (const FPermutationRequest& Request : PermutationRequests)
+        {
+            if (Request.Material == Material && Request.Key == Key)
+            {
+                return;
+            }
+        }
+        PermutationRequests.push_back({ Material, Key });
+    }
+
+    bool CMaterial::PopPermutationRequest(TObjectPtr<CMaterial>& OutMaterial, uint64& OutKey)
+    {
+        FScopeLock Lock(PermutationRequestMutex);
+        if (PermutationRequests.empty())
+        {
+            return false;
+        }
+        OutMaterial = PermutationRequests.back().Material;
+        OutKey      = PermutationRequests.back().Key;
+        PermutationRequests.pop_back();
+        return true;
     }
 #endif
 }

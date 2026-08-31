@@ -365,6 +365,16 @@ namespace Lumina
             Node->ClearError();
         }
 
+        // Every walk below resolves a switch through whichever branch is stamped here, so this runs first.
+        for (CEdGraphNode* Node : Nodes)
+        {
+            if (CMaterialExpression_StaticSwitch* Switch = Cast<CMaterialExpression_StaticSwitch>(Node))
+            {
+                const FName Param = Switch->bDynamic ? Switch->ParameterName : NAME_None;
+                Switch->SetResolvedValue(Compiler.ResolveStaticSwitch(Param, Switch->bDefaultValue, Switch));
+            }
+        }
+
         TVector<CEdGraphNode*> SortedNodes;
         CEdGraphNode* CyclicNode = GraphAlgorithms::TopologicalSortFromRoot(Nodes, SortedNodes, [](CEdGraphNode* Node)
         {

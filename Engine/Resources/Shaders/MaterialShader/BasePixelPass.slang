@@ -119,7 +119,12 @@ PSOutput FragmentMain(FBaseVertexOutput Input)
     // Transmission is premultiplied by alpha; Reflection stays full strength (glass attenuates what is
     // behind it, not its own specular). Sanitize before the additive accumulation, where one bad fragment
     // takes the whole pixel. The clamp bounds 63 layers under fp16 max by construction.
+#ifdef ALPHA_COMPOSITE
+    // The graph already emitted premultiplied color, so weighting it again would darken it twice.
+    float3 Premultiplied = SanitizeRadiance(Shaded.Color.rgb + Shaded.Reflection);
+#else
     float3 Premultiplied = SanitizeRadiance(Shaded.Color.rgb * Shaded.Alpha + Shaded.Reflection);
+#endif
 
     // Coverage-weighted since the rest of the pixel was fogged already, and additive takes attenuation alone.
     float4 FogTerm   = Fog_EvaluateForTranslucent(Input.FragPos.xyz, Input.Position.xy);
@@ -142,7 +147,12 @@ PSOutput FragmentMain(FBaseVertexOutput Input)
 
 #else
 
+#ifdef MODULATE
+    // Blended as DstColor * Src, so opacity has to fade the color toward the multiplicative identity.
+    Output.Color = float4(lerp(float3(1.0), SanitizeRadiance(Shaded.Color), saturate(Shaded.Alpha)), 1.0);
+#else
     Output.Color  = float4(Shaded.Color, Shaded.Alpha);
+#endif
     Output.Picker = EntityID;
     return Output;
 

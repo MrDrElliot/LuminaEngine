@@ -19,6 +19,7 @@ namespace Lumina
 {
     class CTexture;
     class CMaterialInstance;
+    class CMaterialParameterCollection;
 }
 
 namespace Lumina
@@ -44,6 +45,35 @@ namespace Lumina
         ShadowMaskedPixel,          // ShadowMaskedPixel.slang; masked materials only
 
         Count,
+    };
+
+    /** One compiled stage of a permutation; only stages that produced output are stored. */
+    REFLECT()
+    struct RUNTIME_API FMaterialStageBlob
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        uint8 Stage = 0;
+
+        PROPERTY()
+        TVector<uint32> Spirv;
+    };
+
+    /** One switch combination's shader set, owned by the master so two instances selecting it share one. */
+    REFLECT()
+    struct RUNTIME_API FMaterialShaderPermutation
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        uint64 Key = 0;
+
+        PROPERTY()
+        TVector<FMaterialStageBlob> Stages;
+
+        // Minted from Stages by PostLoad, so never serialized.
+        FShaderH Entries[(size_t)EMaterialShaderStage::Count] = {};
     };
 
     REFLECT()
@@ -122,6 +152,30 @@ namespace Lumina
 
         const TVector<uint32>& GetShaderStageBinaries(EMaterialShaderStage Stage) const;
 
+        /** Shader for Stage at permutation Key, falling back to this master's own stage when Key has none. */
+        NODISCARD FShaderH GetStageForKey(EMaterialShaderStage Stage, uint64 Key) const;
+
+        /** Whether Key is either the default permutation or one that has been compiled. */
+        NODISCARD bool HasPermutation(uint64 Key) const;
+
+        /** CommitShaderStage for one permutation, adding the permutation when Key is new. */
+        void CommitPermutationStage(uint64 Key, EMaterialShaderStage Stage, TSpan<const uint32> Spirv);
+
+        /** CommitPermutationStage, dropped when Generation is no longer the one the key was minted under. */
+        bool CommitPermutationStageIfCurrent(uint64 Key, uint32 Generation, EMaterialShaderStage Stage, TSpan<const uint32> Spirv);
+
+        /** Bumped by ClearPermutations, so a compile dispatched before a recompile can refuse to land. */
+        NODISCARD uint32 GetPermutationGeneration() const { return PermutationGeneration; }
+
+        /** Permutation Key's own bytecode for Stage, with no fallback, so an unbuilt stage reads empty. */
+        NODISCARD const TVector<uint32>& GetPermutationStageBinaries(uint64 Key, EMaterialShaderStage Stage) const;
+
+        /** Drops one permutation, so a recompile of it cannot leave a stage the new graph no longer emits. */
+        void ClearPermutation(uint64 Key);
+
+        /** Drops every permutation, which a recompile must do because it renumbers switch bits by name. */
+        void ClearPermutations();
+
         /** Content hash of the material shader template sources (Shaders/MaterialShader + Shaders/Includes),
             computed once per run. Serialized per material as CompiledTemplateHash so stale binaries are
             detectable after template edits. */
@@ -131,6 +185,12 @@ namespace Lumina
         /** Next asset material whose serialized stages predate the current shader templates (queued during
             PostLoad); null when none remain. The editor drains this and recompiles from the saved graph. */
         static TObjectPtr<CMaterial> PopStaleTemplateMaterial();
+
+        /** Ask the editor to compile Key's permutation; idempotent, so an instance may call it freely. */
+        static void RequestPermutation(CMaterial* Material, uint64 Key);
+
+        /** Next queued permutation request, or false when none remain. */
+        static bool PopPermutationRequest(TObjectPtr<CMaterial>& OutMaterial, uint64& OutKey);
 #endif
 
         EMaterialType GetMaterialType() const override { return MaterialType; }
@@ -140,6 +200,11 @@ namespace Lumina
         bool IsMasked() override { return BlendMode == EBlendMode::Masked; }
         bool IsAdditive() override { return BlendMode == EBlendMode::Additive; }
         bool IsOpaque() override { return BlendMode == EBlendMode::Opaque; }
+        bool IsMomentResolved() override { return BlendMode == EBlendMode::Translucent || BlendMode == EBlendMode::AlphaComposite; }
+        bool IsUnorderedBlend() override { return BlendMode == EBlendMode::Additive || BlendMode == EBlendMode::Modulate; }
+        bool ReceivesDecals() const override { return bReceivesDecals; }
+        bool WritesDepth() const override { return bWriteDepth; }
+        bool IsShadowOnly() const override { return bShadowOnly; }
         bool IsUnlit() override { return ShadingModel == EMaterialShadingModel::Unlit; }
         bool DisableDepthTest() override { return bDisableDepthTest; }
         EBlendMode GetBlendMode() override { return BlendMode; }
@@ -158,11 +223,23 @@ namespace Lumina
         PROPERTY(Editable)
         bool bCastShadows = true;
 
+        /** Drawn into shadow maps only; every camera view culls it. Needs bCastShadows to do anything. */
+        PROPERTY(Editable)
+        bool bShadowOnly = false;
+
         PROPERTY(Editable)
         bool bTwoSided = false;
 
         PROPERTY(Editable)
         bool bDisableDepthTest = false;
+
+        /** Whether DBuffer decals composite onto this surface before it is lit. */
+        PROPERTY(Editable)
+        bool bReceivesDecals = true;
+
+        /** Depth write for Additive and Modulate. Ignored by the MBOIT lane, which accumulates instead. */
+        PROPERTY(Editable)
+        bool bWriteDepth = false;
 
         /** Masked blend threshold; pixels below are discarded. */
         PROPERTY(Editable)
@@ -261,6 +338,30 @@ namespace Lumina
         PROPERTY()
         TVector<FMaterialParameter>             Parameters;
 
+        /** Collections this graph reads, in the slot order the shader compiled. Hard refs, since a
+            collection is tiny and a material that samples one is useless without it. */
+        PROPERTY()
+        TVector<TObjectPtr<CMaterialParameterCollection>> ParameterCollections;
+
+        /** Named static switches this graph declares, ordered by name with BitIndex assigned. */
+        PROPERTY()
+        TVector<FMaterialStaticSwitch>          StaticSwitches;
+
+        /** Compiled non-default permutations, keyed by MakeStaticSwitchKey; empty unless switches exist. */
+        PROPERTY()
+        TVector<FMaterialShaderPermutation>     Permutations;
+
+        /** Bit ParameterName owns in a permutation key, or INDEX_NONE when this material has no such switch. */
+        NODISCARD int32 FindStaticSwitchBit(const FName& ParameterName) const;
+
+        /** Permutation key for Overrides; a switch absent from it contributes its authored default. */
+        NODISCARD uint64 MakeStaticSwitchKey(const THashMap<FName, bool>& Overrides) const;
+
+        /** The key this master's own shaders were compiled at, which is every switch at its default. */
+        NODISCARD uint64 GetDefaultStaticSwitchKey() const;
+
+        uint64 GetStaticSwitchKey() const override { return GetDefaultStaticSwitchKey(); }
+
         /** GetShaderTemplateHash() value the stage binaries were last compiled against. 0 = legacy asset
             (predates hashing) -> treated as stale, so it auto-recompiles once in the editor and heals on save. */
         PROPERTY()
@@ -283,6 +384,9 @@ namespace Lumina
 
         // See GetShaderRevision. Starts at 1 so a zeroed cached copy always reads as "never seen".
         uint32                                  ShaderRevision = 1;
+
+        // See GetPermutationGeneration. Runtime only, since a load starts every permutation current.
+        uint32                                  PermutationGeneration = 1;
 
         bool RefreshTextureBindings(const CTexture* ChangedTexture) override;
 

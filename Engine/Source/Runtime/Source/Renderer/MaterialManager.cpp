@@ -310,4 +310,109 @@ namespace Lumina::RHI
             UploadBuffer(PendingBuffer, &Copy, sizeof(FMaterialUniforms), Index * sizeof(FMaterialUniforms));
         }
     }
+
+    FMaterialCollectionManager::FMaterialCollectionManager()
+    {
+        Mirror.resize(MAX_PARAMETER_COLLECTIONS);
+
+        constexpr uint64 ByteSize = sizeof(FMaterialCollectionUniforms) * MAX_PARAMETER_COLLECTIONS;
+        CollectionBuffer = Malloc(ByteSize, kDefaultAlign, EMemoryType::GPUOnly);
+        if (CollectionBuffer.Gpu == 0)
+        {
+            LOG_ERROR("MaterialCollectionManager: failed to allocate the {} slot collection table ({} bytes).",
+                MAX_PARAMETER_COLLECTIONS, ByteSize);
+            return;
+        }
+
+        // Zeroed up front, which is also what makes reserved slot 0 read as an absent collection.
+        UploadBuffer(CollectionBuffer, Mirror.data(), ByteSize);
+    }
+
+    FMaterialCollectionManager::~FMaterialCollectionManager()
+    {
+        Core::Retire(CollectionBuffer);
+        CollectionBuffer = {};
+    }
+
+    int32 FMaterialCollectionManager::Acquire()
+    {
+        FWriteScopeLock Lock(Mutex);
+
+        if (!FreeList.empty())
+        {
+            const int32 Reused = FreeList.back();
+            FreeList.pop_back();
+            return Reused;
+        }
+
+        if (HighWater >= (int32)MAX_PARAMETER_COLLECTIONS)
+        {
+            LOG_ERROR("MaterialCollectionManager: the {} slot collection table is full; this collection "
+                      "reads zeros for every parameter.", MAX_PARAMETER_COLLECTIONS);
+            return INDEX_NONE;
+        }
+
+        return HighWater++;
+    }
+
+    void FMaterialCollectionManager::Release(int32 Index)
+    {
+        if (Index <= 0 || Index >= (int32)MAX_PARAMETER_COLLECTIONS)
+        {
+            return;
+        }
+
+        FWriteScopeLock Lock(Mutex);
+
+        // Zeroed before it goes back, or the next owner reads the previous collection's values.
+        Mirror[Index] = FMaterialCollectionUniforms{};
+        UploadBuffer(CollectionBuffer, &Mirror[Index], sizeof(FMaterialCollectionUniforms),
+            (uint64)Index * sizeof(FMaterialCollectionUniforms));
+
+        FreeList.push_back(Index);
+    }
+
+    void FMaterialCollectionManager::Update(int32 Index, const FMaterialCollectionUniforms& Uniforms)
+    {
+        if (Index <= 0 || Index >= (int32)MAX_PARAMETER_COLLECTIONS)
+        {
+            return;
+        }
+
+        FWriteScopeLock Lock(Mutex);
+
+        if (Memory::MemEqual(&Mirror[Index], &Uniforms))
+        {
+            return;
+        }
+
+        Mirror[Index] = Uniforms;
+        UploadBuffer(CollectionBuffer, &Mirror[Index], sizeof(FMaterialCollectionUniforms),
+            (uint64)Index * sizeof(FMaterialCollectionUniforms));
+    }
+
+    void FMaterialCollectionManager::UpdateRange(int32 Index, uint32 ByteOffset, const void* Data, uint32 ByteSize)
+    {
+        if (Index <= 0 || Index >= (int32)MAX_PARAMETER_COLLECTIONS || Data == nullptr || ByteSize == 0)
+        {
+            return;
+        }
+
+        if (ByteOffset + ByteSize > sizeof(FMaterialCollectionUniforms))
+        {
+            return;
+        }
+
+        FWriteScopeLock Lock(Mutex);
+
+        std::byte* Slot = reinterpret_cast<std::byte*>(&Mirror[Index]) + ByteOffset;
+        if (Memory::MemEqual(Slot, Data, ByteSize))
+        {
+            return;
+        }
+
+        Memory::Memcpy(Slot, Data, ByteSize);
+        UploadBuffer(CollectionBuffer, Slot, ByteSize,
+            (uint64)Index * sizeof(FMaterialCollectionUniforms) + ByteOffset);
+    }
 }

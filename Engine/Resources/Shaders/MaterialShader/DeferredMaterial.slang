@@ -26,8 +26,8 @@ struct FDeferredMaterialArgs
     uint  GBufferCUAV;      // 40
     uint  GBufferDUAV;      // 44
     uint* PixelList;        // 48  packed screen positions, one contiguous run per slot
-    uint* Starts;           // 56  uint[MATERIAL_MAX_SLOTS]
-    uint* Counts;           // 64  uint[MATERIAL_MAX_SLOTS]
+    uint* Starts;           // 56  uint[NumSlots]
+    uint* Counts;           // 64  uint[NumSlots]
     uint  VelocityUAV;      // 72  0xFFFFFFFF when temporal AA is off
     uint  _PadVelocity;     // 76
 };

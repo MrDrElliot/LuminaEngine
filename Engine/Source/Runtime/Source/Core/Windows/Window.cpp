@@ -4,6 +4,7 @@
 #include "Core/Windows/GLFWInclude.h"
 #include "stb_image.h"
 #include "Core/Application/Application.h"
+#include "Core/Templates/LuminaTemplate.h"
 #include "Events/Event.h"
 #include "Paths/Paths.h"
 #include "Platform/Platform.h"
@@ -72,6 +73,16 @@ namespace Lumina
 			return static_cast<FWindowImpl*>(glfwGetWindowUserPointer(Window));
 		}
 
+		// A window can outlive its application, or belong to a host that never built one.
+		template<typename TEvent, typename... TArgs>
+		void DispatchToApp(TArgs&&... Args)
+		{
+			if (GApp != nullptr)
+			{
+				GApp->GetEventProcessor().Dispatch<TEvent>(Forward<TArgs>(Args)...);
+			}
+		}
+
 		void MouseButtonCallback(GLFWwindow* Window, int Button, int Action, int /*Mods*/)
 		{
 			double xpos, ypos;
@@ -80,11 +91,11 @@ namespace Lumina
 			switch (Action)
 			{
 			case GLFW_PRESS:
-				GApp->GetEventProcessor().Dispatch<FMouseButtonPressedEvent>(static_cast<EMouseKey>(Button), (float)xpos, (float)ypos);
+				DispatchToApp<FMouseButtonPressedEvent>(static_cast<EMouseKey>(Button), (float)xpos, (float)ypos);
 				break;
 
 			case GLFW_RELEASE:
-				GApp->GetEventProcessor().Dispatch<FMouseButtonReleasedEvent>(static_cast<EMouseKey>(Button), (float)xpos, (float)ypos);
+				DispatchToApp<FMouseButtonReleasedEvent>(static_cast<EMouseKey>(Button), (float)xpos, (float)ypos);
 				break;
 			}
 		}
@@ -99,7 +110,7 @@ namespace Lumina
 				Impl->LastMouseY = ypos;
 				Impl->bFirstMouseUpdate = false;
 
-				GApp->GetEventProcessor().Dispatch<FMouseMovedEvent>((float)xpos, (float)ypos, 0.0f, 0.0f);
+				DispatchToApp<FMouseMovedEvent>((float)xpos, (float)ypos, 0.0f, 0.0f);
 				return;
 			}
 
@@ -109,13 +120,13 @@ namespace Lumina
 			Impl->LastMouseX = xpos;
 			Impl->LastMouseY = ypos;
 
-			GApp->GetEventProcessor().Dispatch<FMouseMovedEvent>((float)xpos, (float)ypos, (float)DeltaX, (float)DeltaY);
+			DispatchToApp<FMouseMovedEvent>((float)xpos, (float)ypos, (float)DeltaX, (float)DeltaY);
 		}
 
 		void MouseScrollCallback(GLFWwindow* /*Window*/, double /*xoffset*/, double yoffset)
 		{
 			// Vertical scroll only.
-			GApp->GetEventProcessor().Dispatch<FMouseScrolledEvent>(EMouseKey::Scroll, (float)yoffset);
+			DispatchToApp<FMouseScrolledEvent>(EMouseKey::Scroll, (float)yoffset);
 		}
 
 		void KeyCallback(GLFWwindow* /*Window*/, int Key, int /*Scancode*/, int Action, int Mods)
@@ -133,13 +144,13 @@ namespace Lumina
 			switch (Action)
 			{
 			case GLFW_RELEASE:
-				GApp->GetEventProcessor().Dispatch<FKeyReleasedEvent>(static_cast<EKey>(Key), Ctrl, Shift, Alt, Super);
+				DispatchToApp<FKeyReleasedEvent>(static_cast<EKey>(Key), Ctrl, Shift, Alt, Super);
 				break;
 			case GLFW_PRESS:
-				GApp->GetEventProcessor().Dispatch<FKeyPressedEvent>(static_cast<EKey>(Key), Ctrl, Shift, Alt, Super);
+				DispatchToApp<FKeyPressedEvent>(static_cast<EKey>(Key), Ctrl, Shift, Alt, Super);
 				break;
 			case GLFW_REPEAT:
-				GApp->GetEventProcessor().Dispatch<FKeyPressedEvent>(static_cast<EKey>(Key), Ctrl, Shift, Alt, Super, /* Repeat */ true);
+				DispatchToApp<FKeyPressedEvent>(static_cast<EKey>(Key), Ctrl, Shift, Alt, Super, /* Repeat */ true);
 				break;
 			}
 		}
@@ -150,7 +161,7 @@ namespace Lumina
 			Impl->Specs.Extent.x = width;
 			Impl->Specs.Extent.y = height;
 
-			GApp->GetEventProcessor().Dispatch<FWindowResizeEvent>(width, height);
+			DispatchToApp<FWindowResizeEvent>(width, height);
 
 			FWindow::OnWindowResized.Broadcast(Impl->Owner, Impl->Specs.Extent);
 		}
@@ -167,7 +178,7 @@ namespace Lumina
 				StringPaths.emplace_back(Paths[i]);
 			}
 
-			GApp->GetEventProcessor().Dispatch<FFileDropEvent>(StringPaths, static_cast<float>(xpos), static_cast<float>(ypos));
+			DispatchToApp<FFileDropEvent>(StringPaths, static_cast<float>(xpos), static_cast<float>(ypos));
 		}
 
 		void WindowCloseCallback(GLFWwindow* /*Window*/)
@@ -236,17 +247,16 @@ namespace Lumina
 			glfwSetErrorCallback(GLFWErrorCallback);
 
 			glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-#if WITH_EDITOR
-			glfwWindowHint(GLFW_TITLEBAR, GLFW_FALSE);
-#else
-			glfwWindowHint(GLFW_TITLEBAR, GLFW_TRUE);
+			glfwWindowHint(GLFW_TITLEBAR, Impl->Specs.bShowTitlebar ? GLFW_TRUE : GLFW_FALSE);
 
-#endif
 			GLFWmonitor* Monitor = glfwGetPrimaryMonitor();
 			const GLFWvidmode* Mode = glfwGetVideoMode(Monitor);
 
-			Impl->Specs.Extent.x = Mode->width - 300;
-			Impl->Specs.Extent.y = Mode->height - 300;
+			if (Impl->Specs.Extent.x == 0 || Impl->Specs.Extent.y == 0)
+			{
+				Impl->Specs.Extent.x = Mode->width - 300;
+				Impl->Specs.Extent.y = Mode->height - 300;
+			}
 
 			Impl->Window = glfwCreateWindow(Impl->Specs.Extent.x, Impl->Specs.Extent.y, Impl->Specs.Title.c_str(), nullptr, nullptr);
 			glfwSetWindowAttrib(Impl->Window, GLFW_RESIZABLE, GLFW_TRUE);
@@ -279,10 +289,11 @@ namespace Lumina
 			glfwSetDropCallback(Impl->Window, WindowDropCallback);
 			glfwSetWindowCloseCallback(Impl->Window, WindowCloseCallback);
 
-#if WITH_EDITOR
-			// Route title-bar hit-test through OS for native Aero Snap / drag-to-maximize.
-			glfwSetTitlebarHitTestCallback(Impl->Window, TitleBarHitTestCallback);
-#endif
+			if (!Impl->Specs.bShowTitlebar)
+			{
+				// Route title-bar hit-test through OS for native Aero Snap / drag-to-maximize.
+				glfwSetTitlebarHitTestCallback(Impl->Window, TitleBarHitTestCallback);
+			}
 		}
 	}
 

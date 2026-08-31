@@ -5,7 +5,8 @@
 
 namespace Lumina
 {
-    static const char* DataAssetWindowName = "Data Asset";
+    // Neutral, since this tool also serves assets that are not CDataAsset.
+    static const char* DataAssetWindowName = "Properties";
 
     FDataAssetEditorTool::FDataAssetEditorTool(IEditorToolContext* Context, CObject* InAsset)
         : FAssetEditorTool(Context, InAsset->GetName().c_str(), InAsset)

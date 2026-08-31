@@ -43,8 +43,7 @@ uint ResolveVisInstance(uint VisRaw, uint DrawListCount)
     return Draw.InstanceID;
 }
 
-// Dense deferred slot for the pixel, or ~0u when nothing shades it (background, terrain's 0 stamp, a
-// material with no deferred shader, or a slot past MATERIAL_MAX_SLOTS).
+// Dense deferred slot for the pixel, or ~0u for background, terrain's 0 stamp and unbinned materials.
 uint ResolveVisMaterialSlot(uint VisRaw, uint DrawListCount, uint* SlotByMaterial, uint SlotByMaterialCount)
 {
     const uint InstanceID = ResolveVisInstance(VisRaw, DrawListCount);
@@ -61,8 +60,8 @@ uint ResolveVisMaterialSlot(uint VisRaw, uint DrawListCount, uint* SlotByMateria
 
     // Every material instance of a master maps to the master's slot, so instances sharing a shader share
     // one dispatch; the shader still reads each pixel's own MaterialIndex for its uniforms.
-    const uint Slot = SlotByMaterial[MaterialIndex];
-    return (Slot < MATERIAL_MAX_SLOTS) ? Slot : ~0u;
+    // Unbinned materials read ~0u here, and callers bound the result against their own live slot count.
+    return SlotByMaterial[MaterialIndex];
 }
 
 // Every index is clamped rather than trusted: these feed buffer-device-address loads, and a

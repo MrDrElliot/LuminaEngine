@@ -4,6 +4,7 @@
 #include "RHI.h"
 #include "RHITexture.h"
 #include "RenderResource.h"
+#include "SwapchainTarget.h"
 #include "Core/Delegates/Delegate.h"
 #include "Memory/SmartPtr.h"
 
@@ -69,6 +70,7 @@ namespace Lumina
         uint32 GetCurrentFrameIndex() const { return CurrentFrameIndex; }
 
         NODISCARD RHI::FMaterialManager& GetMaterialManager() const { return *MaterialManager.get(); }
+        NODISCARD RHI::FMaterialCollectionManager& GetCollectionManager() const { return *CollectionManager.get(); }
 
         /** Deferred release of renderer-side state whose owner has gone away. See RenderRelease.h for
             why this exists and what it gates on. */
@@ -88,6 +90,7 @@ namespace Lumina
         #endif
 
         TUniquePtr<RHI::FMaterialManager>   MaterialManager;
+        TUniquePtr<RHI::FMaterialCollectionManager> CollectionManager;
 
         RHI::FRenderReleaseQueue            ReleaseQueue;
 
@@ -98,7 +101,7 @@ namespace Lumina
         FSharedRenderResources              SharedRenderResources;
 
         // New RHI owns presentation: the primary window swapchain.
-        RHI::FSwapchainH                    Swapchain;
+        RHI::FSwapchainTarget               SwapchainTarget;
 
         FDelegateHandle                     WindowResizedHandle;
 

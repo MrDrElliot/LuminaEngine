@@ -61,8 +61,8 @@ namespace Lumina
         if (HeightMap.IsValid() && HeightMap->GetResourceID() >= 0)
         {
             TextureIndex = bDynamic && !ParameterName.IsNone()
-                         ? Compiler.BindTextureParameter(ParameterName, HeightMap)
-                         : Compiler.BindTexture(HeightMap);
+                         ? Compiler.BindTextureParameter(ParameterName, HeightMap, this)
+                         : Compiler.BindTexture(HeightMap, this);
         }
 
         FMaterialCompiler::FParallaxInputs Inputs;

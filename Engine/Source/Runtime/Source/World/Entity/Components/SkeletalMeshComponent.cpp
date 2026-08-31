@@ -16,7 +16,7 @@ namespace Lumina
         return Dynamic;
     }
 
-    CMaterialInterface* SSkeletalMeshComponent::GetMaterialForSlot(size_t Slot) const
+    CMaterialInterface* SSkeletalMeshComponent::GetMaterialForSlot(uint32 Slot) const
     {
         if (Slot < MaterialOverrides.size())
         {

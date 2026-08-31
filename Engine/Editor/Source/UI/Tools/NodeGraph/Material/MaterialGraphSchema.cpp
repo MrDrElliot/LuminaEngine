@@ -26,7 +26,7 @@ namespace Lumina
         bool IsRerouteEndpoint(CEdNodeGraphPin* Pin)
         {
             CEdGraphNode* Owner = Pin != nullptr ? Pin->GetOwningNode() : nullptr;
-            return Owner != nullptr && Owner->IsRerouteNode();
+            return Owner != nullptr && Owner->IsUntypedPassthrough();
         }
     }
 

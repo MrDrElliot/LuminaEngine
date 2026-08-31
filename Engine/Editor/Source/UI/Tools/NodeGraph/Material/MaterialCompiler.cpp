@@ -1,5 +1,7 @@
+#include <cstring>
 #include <iterator>
 #include "MaterialCompiler.h"
+#include "Assets/AssetTypes/Material/MaterialParameterCollection.h"
 
 #include "Assets/AssetTypes/Curve/CurveAsset.h"
 #include "Assets/AssetTypes/Textures/Texture.h"
@@ -53,6 +55,17 @@ namespace Lumina
 		"\tuint   MaterialIndex = TerrainParams.MaterialIndex;\n"
 		"\tuint   EntityID      = TerrainParams.EntityID;\n"
 		"\tfloat3 ViewPosition  = float3(0.0);\n";
+
+	// The particle sprite template declares the alias names itself, having just placed the quad corner.
+	static const char* VertexStageAliasPreamble(EMaterialType MaterialType)
+	{
+		switch (MaterialType)
+		{
+		case EMaterialType::Terrain:  return GVertexStageAliasPreambleTerrain;
+		case EMaterialType::Particle: return "";
+		default:                      return GVertexStageAliasPreamble;
+		}
+	}
 
 	// Substitute a single token; logs and returns false if the token is missing.
 	static bool SubstituteToken(FString& Source, const char* Token, const FString& Replacement)
@@ -108,6 +121,20 @@ namespace Lumina
 		return LoadedString;
 	}
 
+	// The pixel template each domain rasterizes through; the vertex stage is picked separately below.
+	static const char* PixelTemplateName(EMaterialType MaterialType)
+	{
+		switch (MaterialType)
+		{
+		case EMaterialType::PostProcess: return "PostProcessPixelPass.slang";
+		case EMaterialType::UI:          return "UIPixelPass.slang";
+		case EMaterialType::Decal:       return "DecalPixelPass.slang";
+		case EMaterialType::Terrain:     return "TerrainBasePixelPass.slang";
+		case EMaterialType::Particle:    return "ParticlePixelPass.slang";
+		default:                         return "BasePixelPass.slang";
+		}
+	}
+
 	void FMaterialCompiler::BuildShaders(FString& OutPixelShader, FString& OutVertexShader, EMaterialType MaterialType) const
 	{
 		const FString BasePath = Paths::GetEngineResourceDirectory() + "/Shaders/MaterialShader/";
@@ -115,11 +142,8 @@ namespace Lumina
 		const bool bIsPostProcess = (MaterialType == EMaterialType::PostProcess);
 		const bool bIsUI          = (MaterialType == EMaterialType::UI);
 		const bool bIsDecal       = (MaterialType == EMaterialType::Decal);
-		const FString PixelPath  = bIsPostProcess ? (BasePath + "PostProcessPixelPass.slang")
-		                                          : (bIsUI ? BasePath + "UIPixelPass.slang"
-		                                                   : (bIsDecal ? BasePath + "DecalPixelPass.slang"
-		                                                   : (bIsTerrain ? BasePath + "TerrainBasePixelPass.slang"
-		                                                                 : BasePath + "BasePixelPass.slang")));
+		const bool bIsParticle    = (MaterialType == EMaterialType::Particle);
+		const FString PixelPath   = BasePath + PixelTemplateName(MaterialType);
 
 		// The output node declares the pixel input struct, so only the body and assignments are appended.
 		OutPixelShader.clear();
@@ -156,6 +180,13 @@ namespace Lumina
 			return;
 		}
 
+		// A sprite's corners come from the emitter's particle buffer, and the graph may still displace them.
+		if (bIsParticle)
+		{
+			OutVertexShader = BuildVertexShaderFromTemplate(BasePath + "ParticleVertexPass.slang", MaterialType);
+			return;
+		}
+
 		// Terrain is the only domain still rastering meshlet geometry through a vertex stage.
 		if (bIsTerrain)
 		{
@@ -173,10 +204,7 @@ namespace Lumina
 			return FString(kWPOStub);
 		}
 
-		const char* Preamble = (MaterialType == EMaterialType::Terrain)
-			? GVertexStageAliasPreambleTerrain
-			: GVertexStageAliasPreamble;
-		return FString(kWPOStub) + Preamble + VertexChunks + VertexOutputChunks;
+		return FString(kWPOStub) + VertexStageAliasPreamble(MaterialType) + VertexChunks + VertexOutputChunks;
 	}
 
 	FString FMaterialCompiler::BuildVertexShaderFromTemplate(const FString& TemplateAbsolutePath, EMaterialType MaterialType) const
@@ -719,10 +747,17 @@ namespace Lumina
 		return ResultType;
 	}
 
-	void FMaterialCompiler::DefineFloatParameter(const FString& NodeID, const FName& ParamID, float Value)
+	void FMaterialCompiler::DefineFloatParameter(const FString& NodeID, const FName& ParamID, float Value, CEdGraphNode* Node)
 	{
 		if (ScalarParameters.find(ParamID) == ScalarParameters.end())
 		{
+			if (!ClaimUniformSlot(NumScalarParams, MAX_SCALARS, "scalar", ParamID, Node))
+			{
+				DefineConstantFloat(NodeID, Value);
+				RegisterDeriv(NodeID, EDerivState::Zero);
+				return;
+			}
+
 			ScalarParameters[ParamID].Index = NumScalarParams++;
 			ScalarParameters[ParamID].Value = Value;
 		}
@@ -731,10 +766,17 @@ namespace Lumina
 		EmitDedupedParamFetch("float", NodeID, "GetMaterialScalar(MaterialIndex, " + IndexString + ")");
 	}
 
-	void FMaterialCompiler::DefineFloat2Parameter(const FString& NodeID, const FName& ParamID, float Value[2])
+	void FMaterialCompiler::DefineFloat2Parameter(const FString& NodeID, const FName& ParamID, float Value[2], CEdGraphNode* Node)
 	{
 		if (VectorParameters.find(ParamID) == VectorParameters.end())
 		{
+			if (!ClaimUniformSlot(NumVectorParams, MAX_VECTORS, "vector", ParamID, Node))
+			{
+				DefineConstantFloat2(NodeID, Value);
+				RegisterDeriv(NodeID, EDerivState::Zero);
+				return;
+			}
+
 			VectorParameters[ParamID].Index = NumVectorParams++;
 			VectorParameters[ParamID].Value = FVector4(Value[0], Value[1], 0.0f, 1.0f);
 		}
@@ -743,10 +785,17 @@ namespace Lumina
 		EmitDedupedParamFetch("float2", NodeID, "GetMaterialVec4(MaterialIndex, " + IndexString + ").xy");
 	}
 
-	void FMaterialCompiler::DefineFloat3Parameter(const FString& NodeID, const FName& ParamID, float Value[3])
+	void FMaterialCompiler::DefineFloat3Parameter(const FString& NodeID, const FName& ParamID, float Value[3], CEdGraphNode* Node)
 	{
 		if (VectorParameters.find(ParamID) == VectorParameters.end())
 		{
+			if (!ClaimUniformSlot(NumVectorParams, MAX_VECTORS, "vector", ParamID, Node))
+			{
+				DefineConstantFloat3(NodeID, Value);
+				RegisterDeriv(NodeID, EDerivState::Zero);
+				return;
+			}
+
 			VectorParameters[ParamID].Index = NumVectorParams++;
 			VectorParameters[ParamID].Value = FVector4(Value[0], Value[1], Value[2], 1.0f);
 		}
@@ -755,10 +804,17 @@ namespace Lumina
 		EmitDedupedParamFetch("float3", NodeID, "GetMaterialVec4(MaterialIndex, " + IndexString + ").xyz");
 	}
 
-	void FMaterialCompiler::DefineFloat4Parameter(const FString& NodeID, const FName& ParamID, float Value[4])
+	void FMaterialCompiler::DefineFloat4Parameter(const FString& NodeID, const FName& ParamID, float Value[4], CEdGraphNode* Node)
 	{
 		if (VectorParameters.find(ParamID) == VectorParameters.end())
 		{
+			if (!ClaimUniformSlot(NumVectorParams, MAX_VECTORS, "vector", ParamID, Node))
+			{
+				DefineConstantFloat4(NodeID, Value);
+				RegisterDeriv(NodeID, EDerivState::Zero);
+				return;
+			}
+
 			VectorParameters[ParamID].Index = NumVectorParams++;
 			VectorParameters[ParamID].Value = FVector4(Value[0], Value[1], Value[2], Value[3]);
 		}
@@ -1092,12 +1148,18 @@ namespace Lumina
 		return;
 	}
 
-	int32 FMaterialCompiler::BindTexture(CTexture* Texture)
+	int32 FMaterialCompiler::BindTexture(CTexture* Texture, CEdGraphNode* Node)
 	{
 		auto It = Algo::Find(BoundImages, Texture);
 		if (It != BoundImages.end())
 		{
 			return (int32)std::distance(BoundImages.begin(), It);
+		}
+
+		if (!ClaimUniformSlot((uint32)BoundImages.size(), MAX_TEXTURES, "texture",
+			Texture ? Texture->GetName() : NAME_None, Node))
+		{
+			return INDEX_NONE;
 		}
 
 		const int32 Index = (int32)BoundImages.size();
@@ -1106,7 +1168,7 @@ namespace Lumina
 		return Index;
 	}
 
-	int32 FMaterialCompiler::BindTextureParameter(const FName& ParamID, CTexture* Texture)
+	int32 FMaterialCompiler::BindTextureParameter(const FName& ParamID, CTexture* Texture, CEdGraphNode* Node)
 	{
 		auto Existing = TextureParameters.find(ParamID);
 		if (Existing != TextureParameters.end())
@@ -1114,11 +1176,236 @@ namespace Lumina
 			return (int32)Existing->second.Index;
 		}
 
+		if (!ClaimUniformSlot((uint32)BoundImages.size(), MAX_TEXTURES, "texture", ParamID, Node))
+		{
+			return INDEX_NONE;
+		}
+
 		const int32 Index = (int32)BoundImages.size();
 		BoundImages.push_back(Texture);
 		TextureParameters[ParamID] = FTextureParam{ (uint16)Index, Texture };
 		NumTextureParams++;
 		return Index;
+	}
+
+	int32 FMaterialCompiler::BindParameterCollection(CMaterialParameterCollection* Collection, CEdGraphNode* Node)
+	{
+		if (Collection == nullptr)
+		{
+			return INDEX_NONE;
+		}
+
+		auto It = Algo::Find(BoundCollections, Collection);
+		if (It != BoundCollections.end())
+		{
+			return (int32)std::distance(BoundCollections.begin(), It);
+		}
+
+		if (!ClaimUniformSlot((uint32)BoundCollections.size(), MAX_MATERIAL_COLLECTIONS, "parameter collection",
+			Collection->GetName(), Node))
+		{
+			return INDEX_NONE;
+		}
+
+		BoundCollections.push_back(Collection);
+		return (int32)BoundCollections.size() - 1;
+	}
+
+	void FMaterialCompiler::DefineCollectionScalar(const FString& NodeID, CMaterialParameterCollection* Collection,
+		const FName& ParamID, CEdGraphNode* Node)
+	{
+		const int32 Slot  = BindParameterCollection(Collection, Node);
+		const int32 Index = (Collection != nullptr) ? Collection->FindScalarIndex(ParamID) : INDEX_NONE;
+
+		if (Slot == INDEX_NONE || Index == INDEX_NONE)
+		{
+			if (Collection != nullptr && Index == INDEX_NONE)
+			{
+				EdNodeGraph::FError Error;
+				Error.Node        = Node;
+				Error.Name        = "Unknown Collection Parameter";
+				Error.Description = Format("Collection '{}' declares no scalar parameter named '{}'.",
+					Collection->GetName(), ParamID);
+				AddError(Error);
+			}
+			DefineConstantFloat(NodeID, 0.0f);
+			RegisterDeriv(NodeID, EDerivState::Zero);
+			return;
+		}
+
+		EmitDedupedParamFetch("float", NodeID,
+			Format("GetCollectionScalar(MaterialIndex, {}, {})", Slot, Index));
+		RegisterDeriv(NodeID, EDerivState::Zero);
+	}
+
+	void FMaterialCompiler::DefineCollectionVector(const FString& NodeID, CMaterialParameterCollection* Collection,
+		const FName& ParamID, CEdGraphNode* Node)
+	{
+		const int32 Slot  = BindParameterCollection(Collection, Node);
+		const int32 Index = (Collection != nullptr) ? Collection->FindVectorIndex(ParamID) : INDEX_NONE;
+
+		if (Slot == INDEX_NONE || Index == INDEX_NONE)
+		{
+			if (Collection != nullptr && Index == INDEX_NONE)
+			{
+				EdNodeGraph::FError Error;
+				Error.Node        = Node;
+				Error.Name        = "Unknown Collection Parameter";
+				Error.Description = Format("Collection '{}' declares no vector parameter named '{}'.",
+					Collection->GetName(), ParamID);
+				AddError(Error);
+			}
+			float Zero[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+			DefineConstantFloat4(NodeID, Zero);
+			RegisterDeriv(NodeID, EDerivState::Zero);
+			return;
+		}
+
+		EmitDedupedParamFetch("float4", NodeID,
+			Format("GetCollectionVec4(MaterialIndex, {}, {})", Slot, Index));
+		RegisterDeriv(NodeID, EDerivState::Zero);
+	}
+
+	void FMaterialCompiler::GetBoundCollections(TVector<TObjectPtr<CMaterialParameterCollection>>& Out) const
+	{
+		Out = BoundCollections;
+	}
+
+	void FMaterialCompiler::SeedManifest(const TVector<FMaterialParameter>& Params, const FMaterialUniforms& Uniforms,
+		const TVector<TObjectPtr<CTexture>>& Textures,
+		const TVector<TObjectPtr<CMaterialParameterCollection>>& Collections)
+	{
+		// Position here is the shader slot, so this has to be the material's order exactly.
+		BoundCollections = Collections;
+
+		// Interior nulls stay, because dropping one would renumber every slot after it.
+		size_t NumTextures = Textures.size();
+		while (NumTextures > 0 && Textures[NumTextures - 1] == nullptr)
+		{
+			--NumTextures;
+		}
+
+		BoundImages.assign(Textures.begin(), Textures.begin() + NumTextures);
+		NumTextureParams = (uint16)NumTextures;
+
+		for (const FMaterialParameter& Param : Params)
+		{
+			switch (Param.Type)
+			{
+			case EMaterialParameterType::Scalar:
+				if (Param.Index < MAX_SCALARS)
+				{
+					ScalarParameters[Param.ParameterName] = FScalarParam{ Param.Index, Uniforms.Scalars[Param.Index] };
+					NumScalarParams = Math::Max<uint16>(NumScalarParams, (uint16)(Param.Index + 1));
+				}
+				break;
+
+			case EMaterialParameterType::Vector:
+				if (Param.Index < MAX_VECTORS)
+				{
+					VectorParameters[Param.ParameterName] = FVectorParam{ Param.Index, Uniforms.Vectors[Param.Index] };
+					NumVectorParams = Math::Max<uint16>(NumVectorParams, (uint16)(Param.Index + 1));
+				}
+				break;
+
+			case EMaterialParameterType::Texture:
+				if (Param.Index < MAX_TEXTURES && Param.Index < NumTextures)
+				{
+					TextureParameters[Param.ParameterName] = FTextureParam{ Param.Index, Textures[Param.Index] };
+				}
+				break;
+			}
+		}
+	}
+
+	bool FMaterialCompiler::ResolveStaticSwitch(const FName& ParamID, bool bDefaultValue, CEdGraphNode* Node)
+	{
+		if (ParamID.IsNone())
+		{
+			return bDefaultValue;
+		}
+
+		auto Existing = Algo::FindIf(StaticSwitches,
+			[&ParamID](const FMaterialStaticSwitch& Switch) { return Switch.ParameterName == ParamID; });
+
+		if (Existing == StaticSwitches.end())
+		{
+			if ((uint32)StaticSwitches.size() >= kMaxStaticSwitches)
+			{
+				EdNodeGraph::FError Error;
+				Error.Node        = Node;
+				Error.Name        = "Static Switch Budget";
+				Error.Description = Format("'{}' would be static switch number {}, and a permutation key is a "
+					"uint64 with one bit per switch. Fold two switches into one, or fix one of them at the "
+					"master by clearing its parameter name.", ParamID, (uint32)StaticSwitches.size() + 1u);
+				AddError(Error);
+				return bDefaultValue;
+			}
+
+			FMaterialStaticSwitch Switch;
+			Switch.ParameterName = ParamID;
+			Switch.bDefaultValue = bDefaultValue;
+			StaticSwitches.push_back(Switch);
+			Existing = StaticSwitches.end() - 1;
+		}
+		else if (Existing->bDefaultValue != bDefaultValue)
+		{
+			// One name is one key bit, so two nodes disagreeing would make that bit mean two things.
+			EdNodeGraph::FError Error;
+			Error.Node        = Node;
+			Error.Name        = "Static Switch Conflict";
+			Error.Description = Format("Two static switches are named '{}' but default differently. They share "
+				"one bit in the permutation key, so they have to agree.", ParamID);
+			AddError(Error);
+		}
+
+		const auto Override = StaticSwitchOverrides.find(ParamID);
+		return Override != StaticSwitchOverrides.end() ? Override->second : Existing->bDefaultValue;
+	}
+
+	void FMaterialCompiler::GetStaticSwitches(TVector<FMaterialStaticSwitch>& OutSwitches) const
+	{
+		OutSwitches = StaticSwitches;
+
+		// By name, so adding a node above an existing one does not renumber every instance's key.
+		Algo::Sort(OutSwitches, [](const FMaterialStaticSwitch& A, const FMaterialStaticSwitch& B)
+		{
+			// Two c_str() calls per compare, well inside FName's 4-slot suffix buffer.
+			return std::strcmp(A.ParameterName.c_str(), B.ParameterName.c_str()) < 0;
+		});
+
+		for (uint32 i = 0; i < (uint32)OutSwitches.size(); ++i)
+		{
+			OutSwitches[i].BitIndex = (uint8)i;
+		}
+	}
+
+	bool FMaterialCompiler::HasErrorForNode(const CEdGraphNode* Node) const
+	{
+		if (Node == nullptr)
+		{
+			return false;
+		}
+
+		return Algo::AnyOf(Errors, [Node](const EdNodeGraph::FError& Error) { return Error.Node == Node; });
+	}
+
+	bool FMaterialCompiler::ClaimUniformSlot(uint32 Used, uint32 Capacity, FStringView SlotKind, const FName& Subject, CEdGraphNode* Node)
+	{
+		if (Used < Capacity)
+		{
+			return true;
+		}
+
+		EdNodeGraph::FError Error;
+		Error.Node        = Node;
+		Error.Name        = "Material Parameter Budget";
+		Error.Description = Format("'{}' needs a {} slot, but this material already uses all {} of them. "
+			"FMaterialUniforms holds a fixed-size array per kind, so an index past the end would read a "
+			"neighboring field at runtime; the slot is refused rather than clamped. Remove an unused {} "
+			"parameter to make room.", Subject, SlotKind, Capacity, SlotKind);
+		AddError(Error);
+		return false;
 	}
 
 	// A 32x-tiled UV on UV0's gradient picks a mip five levels too fine, so this warns in the editor.
@@ -1160,7 +1447,15 @@ namespace Lumina
 			UVStr = "float2(" + UVValue.Value + ")";
 		}
 
-		const int32 Index = BindTexture(Texture);
+		const int32 Index = BindTexture(Texture, Node);
+		if (Index == INDEX_NONE)
+		{
+			// Downstream nodes bind by name, so leaving it undeclared turns one error into a cascade.
+			GetActiveChunk().append("float4 " + ID + " = float4(0.0, 0.0, 0.0, 1.0);\n");
+			RegisterDeriv(ID, EDerivState::Zero);
+			return;
+		}
+
 		const FString SamplerStr(SamplerName.data(), SamplerName.size());
 
 		if (!LaneSamplesWithGradients())
@@ -1199,7 +1494,15 @@ namespace Lumina
 			UVStr = "float2(" + UVValue.Value + ")";
 		}
 
-		const int32 Index = BindTextureParameter(ParamID, Texture);
+		const int32 Index = BindTextureParameter(ParamID, Texture, Node);
+		if (Index == INDEX_NONE)
+		{
+			// Downstream nodes bind by name, so leaving it undeclared turns one error into a cascade.
+			GetActiveChunk().append("float4 " + ID + " = float4(0.0, 0.0, 0.0, 1.0);\n");
+			RegisterDeriv(ID, EDerivState::Zero);
+			return;
+		}
+
 		const FString SamplerStr(SamplerName.data(), SamplerName.size());
 
 		if (!LaneSamplesWithGradients())
@@ -1235,12 +1538,15 @@ namespace Lumina
 
 		if (TextureIndex < 0)
 		{
-			EdNodeGraph::FError Error;
-			Error.Node        = Node;
-			Error.Name        = "Texture Sample Array";
-			Error.Description = "TextureSampleArray needs a Texture Array asset assigned, and that asset must "
-			                    "have at least one built layer.";
-			AddError(Error);
+			if (!HasErrorForNode(Node))
+			{
+				EdNodeGraph::FError Error;
+				Error.Node        = Node;
+				Error.Name        = "Texture Sample Array";
+				Error.Description = "TextureSampleArray needs a Texture Array asset assigned, and that asset must "
+				                    "have at least one built layer.";
+				AddError(Error);
+			}
 			return;
 		}
 
@@ -1612,6 +1918,22 @@ namespace Lumina
 		return true;
 	}
 
+	bool FMaterialCompiler::RejectOutsideParticle(CMaterialGraphNode* Node, const char* NodeName)
+	{
+		if (CurrentMaterialType == EMaterialType::Particle)
+		{
+			return false;
+		}
+
+		EdNodeGraph::FError Error;
+		Error.Name        = NodeName;
+		Error.Description = FString(NodeName) + " is only available in Particle materials, where the sprite "
+		                    "stage supplies it. It reads as a neutral default here.";
+		Error.Node        = Node;
+		AddError(Error);
+		return true;
+	}
+
 	void FMaterialCompiler::NewLine()
 	{
 		GetActiveChunk().append("\n");
@@ -1913,11 +2235,14 @@ namespace Lumina
 
 		if (HeightTextureIndex < 0)
 		{
-			EdNodeGraph::FError Error;
-			Error.Node        = Node;
-			Error.Name        = "Parallax Occlusion Mapping";
-			Error.Description = "ParallaxOcclusionMapping needs a Height Map texture assigned.";
-			AddError(Error);
+			if (!HasErrorForNode(Node))
+			{
+				EdNodeGraph::FError Error;
+				Error.Node        = Node;
+				Error.Name        = "Parallax Occlusion Mapping";
+				Error.Description = "ParallaxOcclusionMapping needs a Height Map texture assigned.";
+				AddError(Error);
+			}
 			return;
 		}
 
@@ -3115,6 +3440,90 @@ namespace Lumina
 		GetActiveChunk().append("float3 " + N + "_B = (" + BV.Value + ").xyz * float3(-2.0, -2.0, 2.0) + float3(1.0, 1.0, -1.0);\n");
 		GetActiveChunk().append("float3 " + N + " = normalize(" + N + "_A * dot(" + N + "_A, " + N + "_B) - " + N + "_B * " + N + "_A.z) * 0.5 + 0.5;\n");
 		SetOwningOutputType(A, EMaterialInputType::Float3);
+	}
+
+	// Particle sprite
+
+	void FMaterialCompiler::ParticleColor(const FString& ID, CMaterialGraphNode* Node)
+	{
+		if (RejectOutsideParticle(Node, "Particle Color"))
+		{
+			GetActiveChunk().append("float4 " + ID + " = float4(1.0, 1.0, 1.0, 1.0);\n");
+			return;
+		}
+		GetActiveChunk().append("float4 " + ID + " = ParticleColor;\n");
+	}
+
+	void FMaterialCompiler::ParticlePosition(const FString& ID, CMaterialGraphNode* Node)
+	{
+		if (RejectOutsideParticle(Node, "Particle Position"))
+		{
+			GetActiveChunk().append("float3 " + ID + " = float3(0.0, 0.0, 0.0);\n");
+			return;
+		}
+		GetActiveChunk().append("float3 " + ID + " = ParticlePosition;\n");
+	}
+
+	void FMaterialCompiler::ParticleVelocity(const FString& ID, CMaterialGraphNode* Node)
+	{
+		if (RejectOutsideParticle(Node, "Particle Velocity"))
+		{
+			GetActiveChunk().append("float3 " + ID + " = float3(0.0, 0.0, 0.0);\n");
+			return;
+		}
+		GetActiveChunk().append("float3 " + ID + " = ParticleVelocity;\n");
+	}
+
+	void FMaterialCompiler::ParticleSize(const FString& ID, CMaterialGraphNode* Node)
+	{
+		if (RejectOutsideParticle(Node, "Particle Size"))
+		{
+			GetActiveChunk().append("float2 " + ID + " = float2(1.0, 1.0);\n");
+			return;
+		}
+		GetActiveChunk().append("float2 " + ID + " = ParticleSize;\n");
+	}
+
+	void FMaterialCompiler::ParticleRelativeTime(const FString& ID, CMaterialGraphNode* Node)
+	{
+		if (RejectOutsideParticle(Node, "Particle Relative Time"))
+		{
+			GetActiveChunk().append("float " + ID + " = 0.0;\n");
+			return;
+		}
+		GetActiveChunk().append("float " + ID + " = ParticleLife;\n");
+	}
+
+	void FMaterialCompiler::ParticleRandom(const FString& ID, CMaterialGraphNode* Node)
+	{
+		if (RejectOutsideParticle(Node, "Particle Random"))
+		{
+			GetActiveChunk().append("float " + ID + " = 0.0;\n");
+			return;
+		}
+		GetActiveChunk().append("float " + ID + " = ParticleSeedRandom;\n");
+	}
+
+	void FMaterialCompiler::ParticleSpeed(const FString& ID, CMaterialGraphNode* Node)
+	{
+		if (RejectOutsideParticle(Node, "Particle Speed"))
+		{
+			GetActiveChunk().append("float " + ID + " = 0.0;\n");
+			return;
+		}
+		GetActiveChunk().append("float " + ID + " = length(ParticleVelocity);\n");
+	}
+
+	void FMaterialCompiler::ParticleDirection(const FString& ID, CMaterialGraphNode* Node)
+	{
+		if (RejectOutsideParticle(Node, "Particle Direction"))
+		{
+			GetActiveChunk().append("float3 " + ID + " = float3(0.0, 1.0, 0.0);\n");
+			return;
+		}
+		// A particle that has not moved has no direction, and normalizing it would be a NaN.
+		GetActiveChunk().append("float3 " + ID + " = (dot(ParticleVelocity, ParticleVelocity) > 1e-8) ? "
+		                        "normalize(ParticleVelocity) : float3(0.0, 1.0, 0.0);\n");
 	}
 
 	// Terrain

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Assets/AssetTypes/ParticleSystem/ParticleSystem.h"
 #include "Core/Object/ObjectHandleTyped.h"
@@ -7,6 +7,9 @@
 
 namespace Lumina
 {
+    class CMaterialInterface;
+    class CMaterialInstance;
+
     REFLECT(Component, Category = "Effects")
     struct RUNTIME_API SParticleSystemComponent
     {
@@ -23,6 +26,7 @@ namespace Lumina
             , bEmit(Other.bEmit)
             , bBurstOnSpawn(Other.bBurstOnSpawn)
             , ParameterOverrides(Other.ParameterOverrides)
+            , MaterialOverrides(Other.MaterialOverrides)
         {
         }
 
@@ -37,6 +41,7 @@ namespace Lumina
                 bEmit               = Other.bEmit;
                 bBurstOnSpawn       = Other.bBurstOnSpawn;
                 ParameterOverrides  = Other.ParameterOverrides;
+                MaterialOverrides   = Other.MaterialOverrides;
                 // Transient activation intents never carry across a copy; the render scene
                 // allocates fresh GPU/sim state keyed by the new entity.
                 bForceBurst         = false;
@@ -76,6 +81,22 @@ namespace Lumina
         // fall back to the asset.
         PROPERTY()
         TVector<FParticleParameter> ParameterOverrides;
+
+        /** Per-emitter sprite material overrides applied on top of the asset's, indexed by emitter. */
+        PROPERTY(Editable, Category = "Particle System")
+        TVector<TObjectPtr<CMaterialInterface>> MaterialOverrides;
+
+        /** This component's material for EmitterIndex, falling back to the one the asset authored. */
+        FUNCTION()
+        CMaterialInterface* GetMaterialForEmitter(int32 EmitterIndex) const;
+
+        /** Diverges one emitter from the asset for this component alone. Null clears the override. */
+        FUNCTION()
+        void SetMaterialForEmitter(CMaterialInterface* Material, int32 EmitterIndex);
+
+        /** A transient instance over EmitterIndex, so its parameters diverge for this component alone. */
+        FUNCTION()
+        CMaterialInstance* CreateDynamicMaterialInstance(int32 EmitterIndex);
 
         // Game-thread activation intents consumed by Extract into ParticleGPUStates; transient. bForceBurst
         // re-arms the burst; bForceReset also clears live particles.

@@ -5,9 +5,7 @@
 
 namespace Lumina
 {
-    // Editor for CDataAsset and everything deriving from it: a property grid over the asset's reflected
-    // properties. Registered against the base class, and asset-editor lookup walks the hierarchy, so
-    // every subclass gets this without registering anything of its own.
+    // A property grid over an asset's reflected properties, registered per asset class that wants one.
     class FDataAssetEditorTool : public FAssetEditorTool
     {
     public:

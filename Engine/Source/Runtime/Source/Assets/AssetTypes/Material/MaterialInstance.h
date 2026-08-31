@@ -4,6 +4,7 @@
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "MaterialInterface.h"
+#include "Containers/HashTable.h"
 #include "Renderer/MaterialTypes.h"
 #include "MaterialInstance.generated.h"
 
@@ -41,6 +42,19 @@ namespace Lumina
         TObjectPtr<CTexture> Texture;
     };
 
+    /** A static switch an instance flips; absence is the inherit state, so no enabled flag is needed. */
+    REFLECT()
+    struct RUNTIME_API FMaterialStaticSwitchOverride
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        FName ParameterName;
+
+        PROPERTY()
+        bool bValue = false;
+    };
+
 
     REFLECT()
     class RUNTIME_API CMaterialInstance : public CMaterialInterface
@@ -64,7 +78,7 @@ namespace Lumina
         CMaterial* GetMaterial() const override;
         bool SetScalarValue(const FName& Name, const float Value) override;
         bool SetVectorValue(const FName& Name, const FVector4& Value) override;
-        bool SetTextureValue(const FName& Name, CTexture* TextureValue);
+        bool SetTextureValue(const FName& Name, CTexture* TextureValue) override;
         bool GetParameterValue(EMaterialParameterType Type, const FName& Name, FMaterialParameter& Param) override;
         FMaterialUniforms* GetMaterialUniforms() override { return &MaterialUniforms; }
 
@@ -83,6 +97,11 @@ namespace Lumina
         bool IsMasked() override;
         bool IsAdditive() override;
         bool IsOpaque() override;
+        bool IsMomentResolved() override;
+        bool IsUnorderedBlend() override;
+        bool ReceivesDecals() const override;
+        bool WritesDepth() const override;
+        bool IsShadowOnly() const override;
         bool IsUnlit() override;
         bool DisableDepthTest() override;
         EBlendMode GetBlendMode() override;
@@ -118,6 +137,22 @@ namespace Lumina
 
         bool InheritParameterValue(EMaterialParameterType Type, const FName& Name, uint16 Index) override;
 
+        uint64 GetStaticSwitchKey() const override;
+
+        /** Flips a named switch onto a different permutation; false when the root declares no such switch. */
+        bool SetStaticSwitchValue(const FName& Name, bool bValue);
+
+        /** This level's override, else the nearest ancestor's, else the root's authored default. */
+        NODISCARD bool GetStaticSwitchValue(const FName& Name) const;
+
+        NODISCARD bool HasStaticSwitchOverride(const FName& Name) const;
+
+        /** Drops the override so this level inherits the switch again. */
+        void RemoveStaticSwitchOverride(const FName& Name);
+
+        /** Switch values overridden anywhere up this chain, written root-first so a nearer level wins. */
+        void GatherStaticSwitchValues(THashMap<FName, bool>& OutValues, uint32 Depth = 0) const;
+
 
         /** Whether an enabled texture override supplies slot Index. False for a slot the parent binds without
             exposing a parameter for it (a plain Texture Sample node), which an instance can only inherit. */
@@ -152,12 +187,25 @@ namespace Lumina
 
         PROPERTY()
         TVector<FMaterialParameterOverride>     Overrides;
+
+        /** Switches this level diverges on, inherited down the chain like a parameter override. */
+        PROPERTY()
+        TVector<FMaterialStaticSwitchOverride>  StaticSwitchOverrides;
         
     protected:
 
         void UpdateMaterialUniforms() override;
 
     private:
+
+        /** Re-request, invalidate this level's resolves, and push both down the subtree. */
+        void OnStaticSwitchesChanged();
+
+        /** Depth-first re-request and invalidate over descendants, excluding this level. */
+        void PropagateStaticSwitchChange(uint32 Depth = 0);
+
+        /** Editor-only. Asks the root to build the permutation this level's key selects, if it has not. */
+        void RequestStaticSwitchPermutation();
 
         FMaterialUniforms                       MaterialUniforms;
     };

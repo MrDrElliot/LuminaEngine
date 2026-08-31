@@ -30,6 +30,9 @@ namespace Lumina
         UI,
         Terrain,
         Decal,
+
+        /** Sprite particles. Expands the emitter's billboard quads and shades them unlit into HDR. */
+        Particle,
     };
 
     REFLECT()
@@ -39,6 +42,12 @@ namespace Lumina
         Masked,
         Translucent,
         Additive,
+
+        /** Multiplies the scene by the material color. Commutative, so it needs no sorting and no OIT. */
+        Modulate,
+
+        /** Alpha blending over an already-premultiplied color, resolved through MBOIT like Translucent. */
+        AlphaComposite,
     };
 
     /**
@@ -68,12 +77,43 @@ namespace Lumina
     public:
 
         /** Immediate parent in the instance chain; null on a base material, which is always the root. */
+        FUNCTION()
         virtual CMaterialInterface* GetParentMaterial() const { return nullptr; }
 
         /** The root base material, which is the only level that DECLARES parameters, textures and stages. */
+        FUNCTION()
         virtual CMaterial* GetMaterial() const { return nullptr; }
+
+        FUNCTION()
         virtual bool SetVectorValue(const FName& Name, const FVector4& Value) { return false; }
+
+        FUNCTION()
         virtual bool SetScalarValue(const FName& Name, const float Value) { return false; }
+
+        /** Only an instance can diverge on a texture, so a base material refuses this. */
+        FUNCTION()
+        virtual bool SetTextureValue(const FName& Name, CTexture* Value) { return false; }
+
+        /** This level's effective value for Name, or Default when the root declares no such parameter. */
+        FUNCTION()
+        float GetScalarValue(const FName& Name, float Default = 0.0f);
+
+        FUNCTION()
+        FVector4 GetVectorValue(const FName& Name, FVector4 Default = FVector4(0.0f));
+
+        /** The texture bound at this level for Name, found by walking up the chain. */
+        FUNCTION()
+        CTexture* GetTextureValue(const FName& Name);
+
+        FUNCTION()
+        bool HasScalarParameter(const FName& Name);
+
+        FUNCTION()
+        bool HasVectorParameter(const FName& Name);
+
+        FUNCTION()
+        bool HasTextureParameter(const FName& Name);
+
         virtual bool GetParameterValue(EMaterialParameterType Type, const FName& Name, FMaterialParameter& Param) { return false; }
         virtual FMaterialUniforms* GetMaterialUniforms() { return nullptr; }
 
@@ -97,6 +137,24 @@ namespace Lumina
         virtual EBlendMode GetBlendMode() { return EBlendMode::Opaque; }
         virtual EMaterialShadingModel GetShadingModel() { return EMaterialShadingModel::Lit; }
         virtual float GetOpacityMaskClipValue() { return 0.333f; }
+
+        /** False keeps DBuffer decals off the surface, which skin, glass, foliage and water all want. */
+        virtual bool ReceivesDecals() const { return true; }
+
+        /** Depth write for the unordered blend passes; the MBOIT lane accumulates and cannot honour it. */
+        virtual bool WritesDepth() const { return false; }
+
+        /** Casts into shadow maps but is culled out of every camera view, for invisible shadow proxies. */
+        virtual bool IsShadowOnly() const { return false; }
+
+        /** Resolved through MBOIT, which is also what makes the moment stage required. */
+        virtual bool IsMomentResolved() { return false; }
+
+        /** Blends straight into scene color with a commutative operator, so no moments and no sorting. */
+        virtual bool IsUnorderedBlend() { return false; }
+
+        /** Permutation key this level selects, derived per call so a master recompile cannot stale it. */
+        virtual uint64 GetStaticSwitchKey() const { return 0; }
 
         void SetReadyForRender(bool bReady) { bReadyForRender.store(bReady, std::memory_order_release); }
         bool IsReadyForRender() const { return bReadyForRender.load(std::memory_order_acquire); }

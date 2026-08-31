@@ -134,15 +134,31 @@ namespace Lumina::GraphAlgorithms
             CEdGraphNode* Node = ReverseQueue.front();
             ReverseQueue.pop();
 
-            for (CEdNodeGraphPin* InputPin : Node->GetInputPins())
+            const auto Descend = [&ReachableNodes, &ReverseQueue](CEdNodeGraphPin* Pin)
             {
-                for (CEdNodeGraphPin* ConnectedPin : InputPin->GetConnections())
+                for (CEdNodeGraphPin* ConnectedPin : Pin->GetConnections())
                 {
                     CEdGraphNode* ConnectedNode = ConnectedPin->GetOwningNode();
                     if (ReachableNodes.insert(ConnectedNode).second)
                     {
                         ReverseQueue.push(ConnectedNode);
                     }
+                }
+            };
+
+            // Resolving a passthrough through its single source is what makes a dead branch unreachable.
+            if (Node->IsRerouteNode())
+            {
+                if (CEdNodeGraphPin* Source = Node->GetRerouteSourcePin())
+                {
+                    Descend(Source);
+                }
+            }
+            else
+            {
+                for (CEdNodeGraphPin* InputPin : Node->GetInputPins())
+                {
+                    Descend(InputPin);
                 }
             }
 

@@ -15,7 +15,28 @@
 
 namespace Lumina
 {
-    bool BeginMaterialGraphCompile(CMaterial* Material, CMaterialNodeGraph* Graph, FMaterialCompiler& Compiler, FMaterialGraphCompileResult& Result)
+    bool MakeMaterialPermutationTarget(const CMaterial* Material, uint64 Key, FMaterialCompileTarget& OutTarget)
+    {
+        if (Material == nullptr || Material->StaticSwitches.empty())
+        {
+            return false;
+        }
+
+        OutTarget.bPermutation = true;
+        OutTarget.Key          = Key;
+        OutTarget.Generation   = Material->GetPermutationGeneration();
+        OutTarget.StaticSwitchOverrides.clear();
+
+        for (const FMaterialStaticSwitch& Switch : Material->StaticSwitches)
+        {
+            OutTarget.StaticSwitchOverrides[Switch.ParameterName] = (Key & (1ull << Switch.BitIndex)) != 0;
+        }
+
+        return true;
+    }
+
+    bool BeginMaterialGraphCompile(CMaterial* Material, CMaterialNodeGraph* Graph, FMaterialCompiler& Compiler,
+        FMaterialGraphCompileResult& Result, const FMaterialCompileTarget& Target)
     {
         if (Material == nullptr || Graph == nullptr)
         {
@@ -24,8 +45,34 @@ namespace Lumina
 
         Compiler.SetMaterialType(Material->GetMaterialType());
         Compiler.SetMasked(Material->GetBlendMode() == EBlendMode::Masked);
+
+        if (Target.bPermutation)
+        {
+            Compiler.SetStaticSwitchOverrides(Target.StaticSwitchOverrides);
+
+            // Resolved first, or a null slot fails to dedupe and binds its texture a second time.
+            TVector<TObjectPtr<CTexture>> Resolved;
+            Resolved.reserve(Material->Textures.size());
+            for (uint32 i = 0; i < (uint32)Material->Textures.size(); ++i)
+            {
+                Material->ResolveTextureSlot(i);
+                Resolved.push_back(i < (uint32)Material->ResolvedTextures.size() ? Material->ResolvedTextures[i] : nullptr);
+            }
+            Compiler.SeedManifest(Material->Parameters, Material->MaterialUniforms, Resolved,
+                Material->ParameterCollections);
+
+            // Rebuilt from nothing, so a stage the new graph no longer emits cannot linger.
+            Material->ClearPermutation(Target.Key);
+        }
+
         Graph->CompileGraph(Compiler);
-        Material->SetReadyForRender(false);
+
+        if (!Target.bPermutation)
+        {
+            // A recompile renumbers switch bits, so every key minted against the old manifest is void.
+            Material->ClearPermutations();
+            Material->SetReadyForRender(false);
+        }
 
         // The failure path keeps warnings, so one does not vanish until the error beside it is fixed.
         Result.Warnings = Compiler.GetWarnings();
@@ -49,9 +96,17 @@ namespace Lumina
 
         FShaderCompileOptions Options;
         Options.DebugName = MatName + " [PS]";
-        if (Material->GetBlendMode() == EBlendMode::Translucent)
+        if (Material->IsMomentResolved())
         {
             Options.MacroDefinitions.emplace_back("TRANSLUCENT");
+        }
+        if (Material->GetBlendMode() == EBlendMode::AlphaComposite)
+        {
+            Options.MacroDefinitions.emplace_back("ALPHA_COMPOSITE");
+        }
+        if (Material->GetBlendMode() == EBlendMode::Modulate)
+        {
+            Options.MacroDefinitions.emplace_back("MODULATE");
         }
         if (Material->GetBlendMode() == EBlendMode::Masked)
         {
@@ -63,12 +118,32 @@ namespace Lumina
         VSOptions.DebugName = MatName + " [VS]";
 
         // CommitShaderStage owns the blob store and library commit, so this file repeats no suffixes.
-        auto CommitStage = [Material](EMaterialShaderStage Stage)
+        const bool   bPermutation = Target.bPermutation;
+        const uint64 TargetKey    = Target.Key;
+        const uint32 TargetGen    = Target.Generation;
+        auto CommitStage = [Material, bPermutation, TargetKey, TargetGen](EMaterialShaderStage Stage)
         {
-            return [Material, Stage](const FShaderHeader& Header)
+            return [Material, Stage, bPermutation, TargetKey, TargetGen](const FShaderHeader& Header)
             {
-                Material->CommitShaderStage(Stage, TSpan<const uint32>(Header.Binaries.data(), Header.Binaries.size()));
+                const TSpan<const uint32> Spirv(Header.Binaries.data(), Header.Binaries.size());
+                if (bPermutation)
+                {
+                    Material->CommitPermutationStageIfCurrent(TargetKey, TargetGen, Stage, Spirv);
+                }
+                else
+                {
+                    Material->CommitShaderStage(Stage, Spirv);
+                }
             };
+        };
+
+        // A permutation was dropped whole above, so per-stage clears would only touch the master's.
+        auto ClearStage = [Material, bPermutation](EMaterialShaderStage Stage)
+        {
+            if (!bPermutation)
+            {
+                Material->ClearShaderStage(Stage);
+            }
         };
 
         // PBR geometry is task and mesh, while UI, PostProcess, Decal and Terrain still raster a vertex stage.
@@ -104,10 +179,10 @@ namespace Lumina
                 ShaderCompiler->CompilerShaderRaw(*Geo.Source, Move(CompileOptions), CommitStage(Geo.Stage));
             }
 
-            Material->ClearShaderStage(EMaterialShaderStage::MaskedVisBufferPixel);
-            Material->ClearShaderStage(EMaterialShaderStage::VisBufferMeshMasked);
-            Material->ClearShaderStage(EMaterialShaderStage::MeshShadowMasked);
-            Material->ClearShaderStage(EMaterialShaderStage::ShadowMaskedPixel);
+            ClearStage(EMaterialShaderStage::MaskedVisBufferPixel);
+            ClearStage(EMaterialShaderStage::VisBufferMeshMasked);
+            ClearStage(EMaterialShaderStage::MeshShadowMasked);
+            ClearStage(EMaterialShaderStage::ShadowMaskedPixel);
             if (Material->GetBlendMode() == EBlendMode::Masked)
             {
                 // Masked geometry widens the output back to the full interpolant set its pixel shader reads.
@@ -140,9 +215,9 @@ namespace Lumina
         ShaderCompiler->CompilerShaderRaw(Result.PixelSource, Move(Options), CommitStage(EMaterialShaderStage::Pixel));
 
         // Cleared first, so a translucent to opaque recompile drops stale binaries.
-        Material->ClearShaderStage(EMaterialShaderStage::MomentPixel);
+        ClearStage(EMaterialShaderStage::MomentPixel);
         const bool bNeedsMomentStage = Material->GetMaterialType() == EMaterialType::PBR
-                                    && Material->GetBlendMode()   == EBlendMode::Translucent;
+                                    && Material->IsMomentResolved();
         if (bNeedsMomentStage)
         {
             FShaderCompileOptions MomentOptions;
@@ -156,20 +231,32 @@ namespace Lumina
         return true;
     }
 
-    void FinishMaterialGraphCompile(CMaterial* Material, FMaterialCompiler& Compiler, FMaterialGraphCompileResult& Result)
+    void FinishMaterialGraphCompile(CMaterial* Material, FMaterialCompiler& Compiler,
+        FMaterialGraphCompileResult& Result, const FMaterialCompileTarget& Target)
     {
         if (Material == nullptr)
         {
             return;
         }
 
+        // The master recompiled under this permutation, renumbering the bits its key was minted against.
+        if (Target.bPermutation && Target.Generation != Material->GetPermutationGeneration())
+        {
+            Material->ClearPermutation(Target.Key);
+            Result.bSuccess = false;
+            return;
+        }
+
         // A pure function of type and blend mode, neither of which can change while stages are in flight.
         const bool bNeedsMomentStage = Material->GetMaterialType() == EMaterialType::PBR
-                                    && Material->GetBlendMode()   == EBlendMode::Translucent;
+                                    && Material->IsMomentResolved();
 
-        // A failed stage only leaves its output empty, and committing anyway yields a depth-only ghost.
-        auto StageEmpty = [&](const TVector<uint32>& Binaries, const char* StageName) -> bool
+        // Checked against the permutation's own bytecode, since GetStageForKey would fall back and pass.
+        auto StageEmpty = [&](EMaterialShaderStage Stage, const char* StageName) -> bool
         {
+            const TVector<uint32>& Binaries = Target.bPermutation
+                                            ? Material->GetPermutationStageBinaries(Target.Key, Stage)
+                                            : Material->GetShaderStageBinaries(Stage);
             if (!Binaries.empty())
             {
                 return false;
@@ -182,33 +269,38 @@ namespace Lumina
         };
 
         bool bStageFailed = false;
-        bStageFailed |= StageEmpty(Material->PixelShaderBinaries, "Pixel");
+        bStageFailed |= StageEmpty(EMaterialShaderStage::Pixel, "Pixel");
         if (bNeedsMomentStage)
         {
             // Without it the moment pass skips this material and shading reconstructs from absent moments.
-            bStageFailed |= StageEmpty(Material->MomentPixelShaderBinaries, "Moment Pixel");
+            bStageFailed |= StageEmpty(EMaterialShaderStage::MomentPixel, "Moment Pixel");
         }
         if (Material->GetMaterialType() == EMaterialType::PBR)
         {
             // There is no fallback, so a material missing one renders nothing rather than taking another path.
-            bStageFailed |= StageEmpty(Material->DeferredShaderBinaries, "Deferred");
-            bStageFailed |= StageEmpty(Material->VisBufferMeshShaderBinaries, "VisBuffer Geometry");
-            bStageFailed |= StageEmpty(Material->MeshShaderShadowBinaries, "Shadow Geometry");
-            bStageFailed |= StageEmpty(Material->MeshShaderBaseBinaries, "Base Geometry");
+            bStageFailed |= StageEmpty(EMaterialShaderStage::Deferred, "Deferred");
+            bStageFailed |= StageEmpty(EMaterialShaderStage::VisBufferMesh, "VisBuffer Geometry");
+            bStageFailed |= StageEmpty(EMaterialShaderStage::MeshShadow, "Shadow Geometry");
+            bStageFailed |= StageEmpty(EMaterialShaderStage::MeshBase, "Base Geometry");
             if (Material->GetBlendMode() == EBlendMode::Masked)
             {
-                bStageFailed |= StageEmpty(Material->MaskedVisBufferPixelShaderBinaries, "Masked VisBuffer Pixel");
-                bStageFailed |= StageEmpty(Material->VisBufferMeshShaderMaskedBinaries, "Masked VisBuffer Geometry");
-                bStageFailed |= StageEmpty(Material->MeshShaderShadowMaskedBinaries, "Masked Shadow Geometry");
-                bStageFailed |= StageEmpty(Material->ShadowMaskedPixelShaderBinaries, "Masked Shadow Pixel");
+                bStageFailed |= StageEmpty(EMaterialShaderStage::MaskedVisBufferPixel, "Masked VisBuffer Pixel");
+                bStageFailed |= StageEmpty(EMaterialShaderStage::VisBufferMeshMasked, "Masked VisBuffer Geometry");
+                bStageFailed |= StageEmpty(EMaterialShaderStage::MeshShadowMasked, "Masked Shadow Geometry");
+                bStageFailed |= StageEmpty(EMaterialShaderStage::ShadowMaskedPixel, "Masked Shadow Pixel");
             }
         }
         else
         {
-            bStageFailed |= StageEmpty(Material->VertexShaderBinaries, "Vertex");
+            bStageFailed |= StageEmpty(EMaterialShaderStage::Vertex, "Vertex");
         }
         if (bStageFailed)
         {
+            if (Target.bPermutation)
+            {
+                // Half a permutation draws one surface out of two shader sets; keep the whole fallback.
+                Material->ClearPermutation(Target.Key);
+            }
             Result.Stats    = Compiler.GetStats();
             Result.bSuccess = false;
             return;   // leave the material not-ready; the caller skips it rather than saving a ghost.
@@ -263,9 +355,18 @@ namespace Lumina
             }
         }
 
+        // Slot order is what the shader compiled against, so this is an assign, never a merge.
+        Compiler.GetBoundCollections(Material->ParameterCollections);
+
         Memory::Memzero(&Material->MaterialUniforms, sizeof(FMaterialUniforms));
         Material->Parameters.clear();
         Compiler.GetParameters(Material->Parameters, Material->MaterialUniforms);
+
+        // A permutation never reaches a switch nested under a dropped branch, so it must not renumber.
+        if (!Target.bPermutation)
+        {
+            Compiler.GetStaticSwitches(Material->StaticSwitches);
+        }
 
         // Stamped before PostLoad, which compares it and queues stale materials for auto-recompile.
         Material->CompiledTemplateHash = CMaterial::GetShaderTemplateHash();
@@ -295,6 +396,27 @@ namespace Lumina
         return Result;
     }
 
+    FMaterialGraphCompileResult CompileMaterialPermutation(CMaterial* Material, CMaterialNodeGraph* Graph, uint64 Key)
+    {
+        FMaterialGraphCompileResult Result;
+        FMaterialCompileTarget      Target;
+
+        if (!MakeMaterialPermutationTarget(Material, Key, Target))
+        {
+            return Result;
+        }
+
+        FMaterialCompiler Compiler;
+        if (BeginMaterialGraphCompile(Material, Graph, Compiler, Result, Target))
+        {
+            GShaderCompiler->Flush();
+            FinishMaterialGraphCompile(Material, Compiler, Result, Target);
+        }
+
+        // Deliberately not MarkCompiled, since the graph is unchanged and its default stages still current.
+        return Result;
+    }
+
     namespace
     {
         // Dispatches then POLLS across frames, since Flush would park the game thread for the compile.
@@ -308,6 +430,117 @@ namespace Lumina
         };
 
         FPendingStaleRecompile GPendingStaleRecompile;
+
+        struct FPendingPermutationCompile
+        {
+            TObjectPtr<CMaterial>         Material;
+            TUniquePtr<FMaterialCompiler> Compiler;
+            FMaterialGraphCompileResult   Result;
+            FMaterialCompileTarget        Target;
+        };
+
+        FPendingPermutationCompile GPendingPermutation;
+
+        // The graph is saved beside the material in its own package, under a fixed name.
+        CMaterialNodeGraph* LoadMaterialGraph(CMaterial* Material)
+        {
+            CPackage* Package = (Material != nullptr) ? Material->GetPackage() : nullptr;
+            if (Package == nullptr)
+            {
+                return nullptr;
+            }
+
+            FString GraphName = "AssetMaterialGraph";
+            CMaterialNodeGraph* Graph = Cast<CMaterialNodeGraph>(Package->LoadObjectByName(GraphName));
+            if (Graph == nullptr)
+            {
+                return nullptr;
+            }
+
+            // The graph's PostLoad already restored wiring, and Initialize only creates the drawing context.
+            Graph->SetMaterial(Material);
+            Graph->ValidateGraph();
+            return Graph;
+        }
+    }
+
+    void ProcessMaterialPermutationRequests()
+    {
+        // One at a time, since a permutation is a full multi-stage compile like any other.
+        if (GPendingPermutation.Compiler != nullptr)
+        {
+            if (GShaderCompiler->HasPendingRequests())
+            {
+                return;
+            }
+
+            CMaterial* Material = GPendingPermutation.Material.Get();
+            FinishMaterialGraphCompile(Material, *GPendingPermutation.Compiler, GPendingPermutation.Result,
+                GPendingPermutation.Target);
+
+            CPackage* Package   = (Material != nullptr) ? Material->GetPackage() : nullptr;
+            const FString Name  = (Material != nullptr) ? FString(Material->GetName().c_str()) : FString("<destroyed>");
+            const bool bSuccess = GPendingPermutation.Result.bSuccess;
+
+            // A recompile that superseded this permutation fails it with no errors, and says so itself.
+            const bool bReportable = !GPendingPermutation.Result.Errors.empty();
+
+            GPendingPermutation = {};
+
+            if (bSuccess && Package != nullptr)
+            {
+                // The permutation is stored on the master, so it is the master that has to be saved.
+                Package->MarkDirty();
+            }
+            else if (!bSuccess && bReportable)
+            {
+                ImGuiX::Notifications::NotifyError("Material '{0}': a static switch permutation failed to compile", Name.c_str());
+            }
+            return;
+        }
+
+        TObjectPtr<CMaterial> Material;
+        uint64                Key = 0;
+        if (!CMaterial::PopPermutationRequest(Material, Key))
+        {
+            return;
+        }
+
+        // Requested before the material finished loading or recompiling, or satisfied while queued.
+        if (!Material.IsValid() || !Material->IsReadyForRender() || Material->HasPermutation(Key))
+        {
+            return;
+        }
+
+        FMaterialCompileTarget Target;
+        if (!MakeMaterialPermutationTarget(Material.Get(), Key, Target))
+        {
+            return;
+        }
+
+        CMaterialNodeGraph* Graph = LoadMaterialGraph(Material.Get());
+        if (Graph == nullptr)
+        {
+            LOG_WARN("Material '{0}': an instance selects a static switch permutation this material has not "
+                     "compiled, and it has no saved graph to compile it from. The instance draws with every "
+                     "switch at its default.", Material->GetName().c_str());
+            return;
+        }
+
+        TUniquePtr<FMaterialCompiler> Compiler = MakeUnique<FMaterialCompiler>();
+        FMaterialGraphCompileResult   Result;
+
+        if (!BeginMaterialGraphCompile(Material.Get(), Graph, *Compiler, Result, Target))
+        {
+            ImGuiX::Notifications::NotifyError("Material '{0}': a static switch permutation failed to compile",
+                Material->GetName().c_str());
+            return;
+        }
+
+        GPendingPermutation.Material = Material;
+        GPendingPermutation.Compiler = Move(Compiler);
+        GPendingPermutation.Result   = Move(Result);
+        GPendingPermutation.Target   = Move(Target);
     }
 
     void ProcessStaleMaterialRecompiles()
@@ -351,23 +584,12 @@ namespace Lumina
             return;
         }
 
-        CPackage* Package = Material->GetPackage();
-        if (Package == nullptr)
-        {
-            return;
-        }
-
-        FString GraphName = "AssetMaterialGraph";
-        CMaterialNodeGraph* Graph = Cast<CMaterialNodeGraph>(Package->LoadObjectByName(GraphName));
+        CMaterialNodeGraph* Graph = LoadMaterialGraph(Material.Get());
         if (Graph == nullptr)
         {
             LOG_WARN("Material '{0}' was compiled against older shader templates but has no saved graph to recompile from", Material->GetName().c_str());
             return;
         }
-
-        // The graph's PostLoad already restored wiring, and Initialize only creates the drawing context.
-        Graph->SetMaterial(Material.Get());
-        Graph->ValidateGraph();
 
         TUniquePtr<FMaterialCompiler> Compiler = MakeUnique<FMaterialCompiler>();
         FMaterialGraphCompileResult   Result;

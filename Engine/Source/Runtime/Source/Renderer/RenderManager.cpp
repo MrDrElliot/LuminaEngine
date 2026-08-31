@@ -61,7 +61,8 @@ namespace Lumina
         // There is no next frame to clear the extract gate, and slot writes need the manager alive.
         ReleaseQueue.FlushAll();
 
-        MaterialManager = nullptr;
+        MaterialManager   = nullptr;
+        CollectionManager = nullptr;
 
         if (SharedRenderResources.bInitialized)
         {
@@ -98,7 +99,7 @@ namespace Lumina
         // Before Shutdown, which drains the retire queues the slab hands its allocation to.
         MeshletHeaderSlab::Shutdown();
 
-        RHI::FreeH(Swapchain);
+        SwapchainTarget.Shutdown();
         RHI::Core::Shutdown();
         RHI::FreeDevice();
     }
@@ -144,11 +145,12 @@ namespace Lumina
         ShaderCompiler->Initialize();
 
         FWindow* Window = Windowing::GetPrimaryWindowHandle();
-        Swapchain = RHI::CreateSwapchain(RHI::CreateSurface(Window->GetWindow()), Window->GetExtent());
+        SwapchainTarget.Initialize(RHI::CreateSurface(Window->GetWindow()), Window->GetExtent());
 
         WindowResizedHandle = FWindow::OnWindowResized.AddMember(this, &FRenderManager::OnWindowResized);
 
-        MaterialManager = MakeUnique<RHI::FMaterialManager>();
+        MaterialManager   = MakeUnique<RHI::FMaterialManager>();
+        CollectionManager = MakeUnique<RHI::FMaterialCollectionManager>();
 
 #if WITH_EDITOR
         ImGuiRenderer = Memory::New<FVulkanImGuiRender>();
@@ -205,19 +207,18 @@ namespace Lumina
             RHI::FTextureH SwapImage;
             {
                 LUMINA_PROFILE_SECTION_COLORED("Acquire Swapchain", tracy::Color::Orange3);
-                SwapImage = RHI::AcquireNextImage(Swapchain);
+                SwapImage = SwapchainTarget.Acquire();
             }
             if (!RHI::IsValid(SwapImage))
             {
-                RHI::RecreateSwapchain(Swapchain, Windowing::GetPrimaryWindowHandle()->GetExtent());
-                return;
+                return;   // no drawable area this frame; Acquire already armed the retry
             }
 
-            const FUIntVector2 Extent = RHI::GetSwapchainExtent(Swapchain);
+            const FUIntVector2 Extent = SwapchainTarget.GetExtent();
 
             RHI::FCmdListH CL = RHI::OpenCommandList();
             RHI::CmdSetTextureHeap(CL, RHI::Core::GetGlobalHeap());
-            RHI::CmdSwapchainBarrierToRender(CL, Swapchain);
+            SwapchainTarget.BarrierToRender(CL);
 
             #if WITH_EDITOR
             {
@@ -256,7 +257,7 @@ namespace Lumina
 
             {
                 LUMINA_PROFILE_SECTION_COLORED("Present", tracy::Color::Orange4);
-                RHI::Core::Present(Swapchain, CL);
+                SwapchainTarget.Present(CL);
             }
 
             #if WITH_EDITOR
@@ -276,7 +277,7 @@ namespace Lumina
 
     void FRenderManager::RecreatePrimarySwapchain()
     {
-        RHI::RecreateSwapchain(Swapchain, Windowing::GetPrimaryWindowHandle()->GetExtent());
+        SwapchainTarget.Recreate();
     }
 
     void FRenderManager::OnWindowResized(FWindow* Window, const FUIntVector2& Extent)
@@ -303,15 +304,14 @@ namespace Lumina
         }
 
         const FUIntVector2 Extent((uint32)(Packed >> 32), (uint32)(Packed & 0xFFFFFFFFull));
-        const FUIntVector2 Current = RHI::GetSwapchainExtent(Swapchain);
-        if (Current.x == Extent.x && Current.y == Extent.y)
+        if (Extent == SwapchainTarget.GetExtent())
         {
             return;
         }
         
         LUMINA_PROFILE_SCOPE();
 
-        RHI::RecreateSwapchain(Swapchain, Extent);
+        SwapchainTarget.Resize(Extent);
         OnSwapchainResized.Broadcast(FVector2(Extent));
     }
 }

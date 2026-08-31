@@ -5,6 +5,7 @@
 #include "Core/Threading/Thread.h"
 #include "Renderer/RHI.h"
 #include "Renderer/RHITexture.h"
+#include "Renderer/SwapchainTarget.h"
 #include "Tools/UI/ImGui/ImGuiRenderer.h"
 
 struct ImDrawData;
@@ -55,12 +56,8 @@ namespace Lumina
         // Per-secondary-window renderer state, stored in ImGuiViewport::RendererUserData.
         struct FImGuiViewportData
         {
-            void*            Window = nullptr;       // GLFWwindow*
-            // Created alongside the window (GLFW window calls are main-thread only) and consumed
-            // when the swapchain is built.
-            RHI::FSurfaceH   Surface;
-            RHI::FSwapchainH Swapchain;              // built lazily on first render
-            FUIntVector2     BuiltExtent{0, 0};      // extent the swapchain was last built for
+            void*                 Window = nullptr;   // GLFWwindow*
+            RHI::FSwapchainTarget Target;
         };
 
         // Build/resize the window's swapchain, record its live draw data, present.

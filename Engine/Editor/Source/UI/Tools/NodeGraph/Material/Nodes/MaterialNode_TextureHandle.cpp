@@ -41,8 +41,16 @@ namespace Lumina
 
         // Deduped against the sample path, so a texture used by both still occupies one slot.
         const int32 Index = (bDynamic && !ParameterName.IsNone())
-                          ? Compiler.BindTextureParameter(ParameterName, Texture)
-                          : Compiler.BindTexture(Texture);
+                          ? Compiler.BindTextureParameter(ParameterName, Texture, this)
+                          : Compiler.BindTexture(Texture, this);
+
+        if (Index == INDEX_NONE)
+        {
+            // The budget error is already recorded; this only keeps downstream nodes resolvable.
+            Compiler.AddRaw("uint " + FullName + " = " + ZeroLiteral(EMaterialInputType::TextureHandle) + ";\n");
+            Compiler.RegisterDeriv(FullName, FMaterialCompiler::EDerivState::Zero);
+            return;
+        }
 
         // The descriptor ID is read at runtime, which lets a parameterized handle be re-pointed per instance.
         Compiler.AddRaw("uint " + FullName + " = GetMaterialTexture(MaterialIndex, " + Format("{}", Index) + ");\n");

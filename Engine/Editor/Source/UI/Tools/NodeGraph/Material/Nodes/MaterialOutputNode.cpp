@@ -36,24 +36,28 @@ namespace Lumina
         const bool bPostProcess = MaterialType == EMaterialType::PostProcess;
         const bool bUI          = MaterialType == EMaterialType::UI;
         const bool bDecal       = MaterialType == EMaterialType::Decal;
+        const bool bParticle    = MaterialType == EMaterialType::Particle;
 
         // UI keeps Opacity as its brush alpha, while PostProcess does not.
         const bool bFullscreen = bPostProcess || bUI;
+        // Sprites are never lit, so Emissive is their whole color and the surface pins have no consumer.
+        const bool bUnshaded = bFullscreen || bParticle;
         // There is no DBuffer slot for Specular, and WPO and Emissive do not apply to a projected decal.
-        if (BaseColorPin)            BaseColorPin->SetDisabled(bFullscreen);
-        if (MetallicPin)             MetallicPin->SetDisabled(bFullscreen);
-        if (RoughnessPin)            RoughnessPin->SetDisabled(bFullscreen);
-        if (SpecularPin)             SpecularPin->SetDisabled(bFullscreen || bDecal);
-        if (AOPin)                   AOPin->SetDisabled(bFullscreen);
-        if (NormalPin)               NormalPin->SetDisabled(bFullscreen);
+        if (BaseColorPin)            BaseColorPin->SetDisabled(bUnshaded);
+        if (MetallicPin)             MetallicPin->SetDisabled(bUnshaded);
+        if (RoughnessPin)            RoughnessPin->SetDisabled(bUnshaded);
+        if (SpecularPin)             SpecularPin->SetDisabled(bUnshaded || bDecal);
+        if (AOPin)                   AOPin->SetDisabled(bUnshaded);
+        if (NormalPin)               NormalPin->SetDisabled(bUnshaded);
         if (OpacityPin)              OpacityPin->SetDisabled(bPostProcess);
         // Self-shadowing modulates the sun's direct contribution, which only surface materials receive.
-        if (SelfShadowPin)           SelfShadowPin->SetDisabled(bFullscreen || bDecal);
+        if (SelfShadowPin)           SelfShadowPin->SetDisabled(bUnshaded || bDecal);
         // Clearcoat also needs the Shading Model set, so an enabled pin is necessary but not sufficient.
-        if (ClearcoatPin)            ClearcoatPin->SetDisabled(bFullscreen || bDecal);
-        if (ClearcoatRoughnessPin)   ClearcoatRoughnessPin->SetDisabled(bFullscreen || bDecal);
-        if (TransmissionPin)         TransmissionPin->SetDisabled(bFullscreen || bDecal);
-        if (ThicknessPin)            ThicknessPin->SetDisabled(bFullscreen || bDecal);
+        if (ClearcoatPin)            ClearcoatPin->SetDisabled(bUnshaded || bDecal);
+        if (ClearcoatRoughnessPin)   ClearcoatRoughnessPin->SetDisabled(bUnshaded || bDecal);
+        if (TransmissionPin)         TransmissionPin->SetDisabled(bUnshaded || bDecal);
+        if (ThicknessPin)            ThicknessPin->SetDisabled(bUnshaded || bDecal);
+        // A sprite corner is a real vertex, so a particle graph may still displace it.
         if (WorldPositionOffsetPin)  WorldPositionOffsetPin->SetDisabled(bFullscreen || bDecal);
 
         // Emissive is the fullscreen output color (PostProcess/UI); decals have no emissive DBuffer slot in v1.

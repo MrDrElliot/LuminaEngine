@@ -166,7 +166,7 @@ namespace Lumina
         return Dynamic;
     }
 
-    CMaterialInterface* SDynamicMeshComponent::GetMaterialForSlot(size_t Slot) const
+    CMaterialInterface* SDynamicMeshComponent::GetMaterialForSlot(uint32 Slot) const
     {
         if (Slot < MaterialOverrides.size())
         {
@@ -210,8 +210,8 @@ namespace Lumina
 
         for (size_t i = 0; i < Data.Surfaces.size() && i < Geometry.size(); ++i)
         {
-            // -1 means unassigned; widening keeps it out of range so it falls through to the default.
-            const size_t Slot = (size_t)Geometry[i].MaterialIndex;
+            // -1 means unassigned, and reading it unsigned keeps it out of range of any slot.
+            const uint32 Slot = (uint32)Geometry[i].MaterialIndex;
             if (!MeshResolve::ResolveSurfaceMaterial(Data.Surfaces[i], GetMaterialForSlot(Slot)))
             {
                 bAllReady = false;

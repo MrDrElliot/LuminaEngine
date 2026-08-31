@@ -18,15 +18,14 @@ namespace Lumina
 	{
 	public:
 
-		FWindow(const FWindowSpecs& InSpecs);
-		virtual ~FWindow();
+		RUNTIME_API FWindow(const FWindowSpecs& InSpecs);
+		RUNTIME_API virtual ~FWindow();
 		LE_NO_COPYMOVE(FWindow);
 
-		void Init();
-		void ProcessMessages();
+		RUNTIME_API void ProcessMessages();
 
 		// Native handle for code that genuinely needs it (Vulkan surface, ImGui GLFW backend).
-		GLFWwindow* GetWindow() const;
+		RUNTIME_API GLFWwindow* GetWindow() const;
 
 		RUNTIME_API FUIntVector2 GetExtent() const;
 		RUNTIME_API uint32 GetWidth() const;
@@ -61,6 +60,8 @@ namespace Lumina
 		RUNTIME_API static FWindowResizeDelegate OnWindowResized;
 
 	private:
+
+		void Init();
 
 		TUniquePtr<FWindowImpl> Impl;
 	};

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "MaterialInput.h"
 #include "UI/Tools/NodeGraph/EdGraphNode.h"
 #include "Assets/AssetTypes/Material/MaterialInterface.h"
@@ -12,6 +12,7 @@
 namespace Lumina
 {
     class CMaterialExpression_CustomPrimitiveData;
+    class CMaterialParameterCollection;
     class CTexture;
     class CMaterialFunction;
     class FMaterialNodePin;
@@ -34,7 +35,7 @@ namespace Lumina
         Vertex,
     };
 
-    class FMaterialCompiler
+    class EDITOR_API FMaterialCompiler
     {
     public:
 
@@ -175,11 +176,40 @@ namespace Lumina
         // true (and errors on Node) when the input node is unavailable in the UI domain; caller emits a default.
         bool RejectInUI(CMaterialGraphNode* Node, const char* NodeName);
 
-        // Parameter definitions
-        void DefineFloatParameter(const FString& NodeID, const FName& ParamID, float Value);
-        void DefineFloat2Parameter(const FString& NodeID, const FName& ParamID, float Value[2]);
-        void DefineFloat3Parameter(const FString& NodeID, const FName& ParamID, float Value[3]);
-        void DefineFloat4Parameter(const FString& NodeID, const FName& ParamID, float Value[4]);
+        // True (and errors on Node) outside the Particle domain, whose templates alone declare these locals.
+        bool RejectOutsideParticle(CMaterialGraphNode* Node, const char* NodeName);
+
+        // Values the permutation under compile assigns to named switches; absent means the node default.
+        void SetStaticSwitchOverrides(const THashMap<FName, bool>& InOverrides) { StaticSwitchOverrides = InOverrides; }
+
+        // Pins the slots Params, Textures and Collections already hold, so every permutation reads one layout.
+        void SeedManifest(const TVector<FMaterialParameter>& Params, const FMaterialUniforms& Uniforms,
+                          const TVector<TObjectPtr<CTexture>>& Textures,
+                          const TVector<TObjectPtr<CMaterialParameterCollection>>& Collections);
+
+        // Claims one of the material's collection binding slots, or INDEX_NONE past the budget.
+        int32 BindParameterCollection(CMaterialParameterCollection* Collection, CEdGraphNode* Node);
+
+        // Emits a read of one collection parameter, or its neutral value when the name is unknown.
+        void DefineCollectionScalar(const FString& NodeID, CMaterialParameterCollection* Collection,
+                                    const FName& ParamID, CEdGraphNode* Node);
+        void DefineCollectionVector(const FString& NodeID, CMaterialParameterCollection* Collection,
+                                    const FName& ParamID, CEdGraphNode* Node);
+
+        // The collections this graph bound, in the slot order their shader reads were compiled against.
+        void GetBoundCollections(TVector<TObjectPtr<CMaterialParameterCollection>>& Out) const;
+
+        // An unnamed switch resolves without registering, so it stays fixed at the master and has no bit.
+        bool ResolveStaticSwitch(const FName& ParamID, bool bDefaultValue, CEdGraphNode* Node);
+
+        // Every named switch the walk reached, ordered by name with BitIndex already assigned.
+        void GetStaticSwitches(TVector<FMaterialStaticSwitch>& OutSwitches) const;
+
+        // Node is carried only so an over-budget refusal can focus its error on the asking node.
+        void DefineFloatParameter(const FString& NodeID, const FName& ParamID, float Value, CEdGraphNode* Node = nullptr);
+        void DefineFloat2Parameter(const FString& NodeID, const FName& ParamID, float Value[2], CEdGraphNode* Node = nullptr);
+        void DefineFloat3Parameter(const FString& NodeID, const FName& ParamID, float Value[3], CEdGraphNode* Node = nullptr);
+        void DefineFloat4Parameter(const FString& NodeID, const FName& ParamID, float Value[4], CEdGraphNode* Node = nullptr);
 
         // Constant definitions
         void DefineConstantFloat(const FString& ID, float Value);
@@ -217,8 +247,9 @@ namespace Lumina
         // Claim a material texture slot WITHOUT emitting a sample, for nodes that need the bindless index
         // itself (a ray-march samples the same texture many times at its own UVs/mip). Deduped exactly
         // like TextureSample's binding, so a texture used by both paths still binds once.
-        int32 BindTexture(CTexture* Texture);
-        int32 BindTextureParameter(const FName& ParamID, CTexture* Texture);
+        // Returns -1 when every texture slot is already spoken for; the caller emits its neutral value.
+        int32 BindTexture(CTexture* Texture, CEdGraphNode* Node = nullptr);
+        int32 BindTextureParameter(const FName& ParamID, CTexture* Texture, CEdGraphNode* Node = nullptr);
 
         // Texture2DArray sample (Includes/GlobalRHI.slang). NumLayers is the asset's layer count, used
         // to clamp the Slice input at compile time; 0 means "unknown", which skips the clamp.
@@ -415,6 +446,16 @@ namespace Lumina
         void DeriveNormalZ(CMaterialInput* InputXY);
         void BlendNormals(CMaterialInput* A, CMaterialInput* B);
 
+        // Particle-only inputs (emit an error outside the Particle domain so the graph reports it).
+        void ParticleColor(const FString& ID, CMaterialGraphNode* Node);
+        void ParticlePosition(const FString& ID, CMaterialGraphNode* Node);
+        void ParticleVelocity(const FString& ID, CMaterialGraphNode* Node);
+        void ParticleDirection(const FString& ID, CMaterialGraphNode* Node);
+        void ParticleSpeed(const FString& ID, CMaterialGraphNode* Node);
+        void ParticleSize(const FString& ID, CMaterialGraphNode* Node);
+        void ParticleRelativeTime(const FString& ID, CMaterialGraphNode* Node);
+        void ParticleRandom(const FString& ID, CMaterialGraphNode* Node);
+
         // Terrain-only helpers (emit an error on non-terrain materials so the graph reports it).
         void TerrainLayerWeight(const FString& ID, uint32 LayerIndex, CMaterialGraphNode* Node);
         void TerrainLayerWeights(const FString& ID, CMaterialGraphNode* Node);
@@ -443,6 +484,9 @@ namespace Lumina
         FORCEINLINE bool HasErrors() const { return !Errors.empty(); }
         FORCEINLINE void AddError(const EdNodeGraph::FError& Error) { Errors.push_back(Error); }
         FORCEINLINE const TVector<EdNodeGraph::FError>& GetErrors() const { return Errors; }
+
+        // True when an error already names Node, so a vaguer follow-up error can stand down.
+        NODISCARD bool HasErrorForNode(const CEdGraphNode* Node) const;
 
         // Warnings: the graph compiled, but something about it will cost quality or performance at runtime.
         //
@@ -539,6 +583,9 @@ namespace Lumina
         // The vertex and pixel lanes reach the instance differently; see the definition.
         FString EmitInstanceModelMatrix(const FString& ID);
 
+        // False once Used reaches Capacity, having errored; the block is fixed-size, so nothing clamps.
+        bool ClaimUniformSlot(uint32 Used, uint32 Capacity, FStringView SlotKind, const FName& Subject, CEdGraphNode* Node);
+
     private:
 
         // Per-stage graph body chunks. The active chunk for general node
@@ -555,8 +602,15 @@ namespace Lumina
         bool bMasked = false;
 
         TVector<TObjectPtr<CTexture>> BoundImages;
+
+        // Parallel-indexed with FMaterialUniforms::CollectionIndices, so position here is the shader slot.
+        TVector<TObjectPtr<CMaterialParameterCollection>> BoundCollections;
         TVector<EdNodeGraph::FError> Errors;
         TVector<EdNodeGraph::FError> Warnings;   // non-fatal; see AddWarning
+
+        // Insertion-ordered; GetStaticSwitches sorts by name so the key survives a node reorder.
+        TVector<FMaterialStaticSwitch> StaticSwitches;
+        THashMap<FName, bool>          StaticSwitchOverrides;
 
         THashMap<FName, FScalarParam>  ScalarParameters;
         THashMap<FName, FVectorParam>  VectorParameters;

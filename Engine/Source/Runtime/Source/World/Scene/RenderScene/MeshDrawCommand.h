@@ -38,6 +38,8 @@ namespace Lumina
 		uint32 bTranslucent : 1;
 		uint32 bMasked : 1;
 		uint32 bAdditive : 1;
+		uint32 bModulate : 1;
+		uint32 bWriteDepth : 1;
 		uint32 bTwoSided : 1;
 
 		bool operator == (const FDrawBatchKey& Key) const
@@ -54,6 +56,8 @@ namespace Lumina
 				&& bTranslucent == Key.bTranslucent
 				&& bMasked      == Key.bMasked
 				&& bAdditive    == Key.bAdditive
+				&& bModulate    == Key.bModulate
+				&& bWriteDepth  == Key.bWriteDepth
 				&& bTwoSided    == Key.bTwoSided;
 		}
 	};
@@ -71,6 +75,8 @@ namespace Lumina
 		Hash::HashCombine(Seed, K.bTranslucent);
 		Hash::HashCombine(Seed, K.bMasked);
 		Hash::HashCombine(Seed, K.bAdditive);
+		Hash::HashCombine(Seed, K.bModulate);
+		Hash::HashCombine(Seed, K.bWriteDepth);
 		Hash::HashCombine(Seed, K.bTwoSided);
 		return Seed;
 	}
@@ -92,6 +98,8 @@ namespace Lumina
 		uint32                      		bTranslucent : 1;
 		uint32                      		bMasked : 1;
 		uint32                      		bAdditive : 1;
+		uint32                      		bModulate : 1;        // blends as DstColor * Src, so it skips the moments too
+		uint32                      		bWriteDepth : 1;      // unordered blend lane only; MBOIT reads depth and never writes
 		uint32                      		bTwoSided : 1;        // two-sided material: VisBuffer disables back-face cull
 		uint32                      		bAnySkinned : 1;      // batch has >=1 skinned binding (SPEC_SKINNED variant select)
 		uint32                      		bAnyStatic  : 1;      // batch has >=1 static binding; both set => mixed => dynamic

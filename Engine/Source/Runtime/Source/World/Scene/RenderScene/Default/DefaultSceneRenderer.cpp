@@ -504,6 +504,8 @@ namespace Lumina
                 if (State.ParticleBuffer)     { RHI::Free(State.ParticleBuffer); }
                 if (State.SpawnCounterBuffer) { RHI::Free(State.SpawnCounterBuffer); }
                 if (State.AttributeBuffer)    { RHI::Free(State.AttributeBuffer); }
+                if (State.SortIndexBuffer)    { RHI::Free(State.SortIndexBuffer); }
+                if (State.SortDrawArgsBuffer) { RHI::Free(State.SortDrawArgsBuffer); }
             }
         }
         ParticleGPUStates.clear();
@@ -1394,8 +1396,8 @@ namespace Lumina
                 }
 
                 {
-                    SCENE_GPU_SCOPE(CL, "Additive Translucent");
-                    AdditiveTranslucentPass(CL);
+                    SCENE_GPU_SCOPE(CL, "Unordered Translucent");
+                    UnorderedTranslucentPass(CL);
                 }
 
                 {
@@ -1411,6 +1413,11 @@ namespace Lumina
                 {
                     SCENE_GPU_SCOPE(CL, "Particles Simulate");
                     ParticleSimulatePass(CL);
+                }
+
+                {
+                    SCENE_GPU_SCOPE(CL, "Particles Sort");
+                    ParticleSortPass(CL);
                 }
 
                 {
@@ -1780,7 +1787,7 @@ namespace Lumina
         MomentGenerationPass(CL);
         TransparentPass(CL);
         OITResolvePass(CL);
-        AdditiveTranslucentPass(CL);
+        UnorderedTranslucentPass(CL);
         BloomPass(CL);
         AutoExposurePass(CL);
         ToneMappingPass(CL);
@@ -2155,7 +2162,7 @@ namespace Lumina
             uint32 Hash = 2166136261u;
             for (SIZE_T s = 0; s < Data->Surfaces.size() && s < Geometry.size(); ++s)
             {
-                const void* Material = Component.GetMaterialForSlot((size_t)Geometry[s].MaterialIndex);
+                const void* Material = Component.GetMaterialForSlot((uint32)Geometry[s].MaterialIndex);
                 const uint64 Bits    = (uint64)(uintptr_t)Material;
                 for (uint32 b = 0; b < 8u; ++b)
                 {
@@ -2964,6 +2971,9 @@ namespace Lumina
                         Item.bUsesCustomShader   = false;
                         Item.CustomComputeShader = {};
                         Item.TextureIndex        = 0u;
+                        Item.MaterialVertexShader = {};
+                        Item.MaterialPixelShader  = {};
+                        Item.MaterialIndex        = -1;
                         Item.AttributeFloatCount = 1u;
                         Item.Resolved            = FResolvedParticleParams{};
                         Item.ModuleParamValues.clear();
@@ -3006,6 +3016,27 @@ namespace Lumina
                                 if (CacheIdx > 0)
                                 {
                                     Item.TextureIndex = (uint32)CacheIdx;
+                                }
+                            }
+
+                            // Through the component, so a script's dynamic instance beats the asset's material.
+                            CMaterialInterface* Candidate = Component.GetMaterialForEmitter(EmitterIdx);
+                            if (CMaterialInterface* SpriteMaterial = ResolveParticleSpriteMaterial(Candidate))
+                            {
+                                CMaterial* ShaderOwner = SpriteMaterial->GetMaterial();
+                                const uint64 SwitchKey = SpriteMaterial->GetStaticSwitchKey();
+                                const FShaderH SpriteVS = ShaderOwner->GetStageForKey(EMaterialShaderStage::Vertex, SwitchKey);
+                                const FShaderH SpritePS = ShaderOwner->GetStageForKey(EMaterialShaderStage::Pixel, SwitchKey);
+                                if (SpriteVS != nullptr && SpritePS != nullptr)
+                                {
+                                    Item.MaterialVertexShader = SpriteVS;
+                                    Item.MaterialPixelShader  = SpritePS;
+                                    Item.MaterialIndex        = SpriteMaterial->GetMaterialIndex();
+                                    Item.MaterialBlendMode    = SpriteMaterial->GetBlendMode();
+                                    Item.bMaterialWritesDepth = SpriteMaterial->WritesDepth();
+
+                                    // Demand only; an unresolved slot reads the placeholder rather than popping paths.
+                                    SpriteMaterial->RequestTexturesResolved();
                                 }
                             }
                         }
@@ -4234,6 +4265,7 @@ namespace Lumina
             }
 
             SceneRootShared.Materials          = Render().GetMaterialManager().GetMaterialBuffer();
+            SceneRootShared.Collections        = Render().GetCollectionManager().GetBuffer();
             SceneRootShared.MeshletDrawList    = GetMeshletDrawList().Gpu;
             SceneRootShared.PreSkinnedVertices = GetPreSkinnedVerticesBuffer().Gpu;
             SceneRootShared.SkinnedMeshletBounds = SkinnedMeshletBoundsBuffer.Gpu;
@@ -4757,6 +4789,8 @@ namespace Lumina
             Cmd.bTranslucent                   = Batch.Key.bTranslucent;
             Cmd.bMasked                        = Batch.Key.bMasked;
             Cmd.bAdditive                      = Batch.Key.bAdditive;
+            Cmd.bModulate                      = Batch.Key.bModulate;
+            Cmd.bWriteDepth                    = Batch.Key.bWriteDepth;
             Cmd.bTwoSided                      = Batch.Key.bTwoSided;
             // From the bindings, not this frame's gather: the GPU cull emits from the retained set, which
             // is a superset of what the CPU culled to, and a wrong variant reads skinned vertices at the
@@ -7023,17 +7057,8 @@ namespace Lumina
     static constexpr uint32 GMaterialMaxSlots = MATERIAL_MAX_SLOTS;
 
     // One allocation means one barrier between the three classify dispatches instead of three.
-    struct FMaterialClassifyBlock
-    {
-        uint32                          Counts[GMaterialMaxSlots];
-        uint32                          Starts[GMaterialMaxSlots];
-        uint32                          Cursors[GMaterialMaxSlots];
-        uint32                          Total;
-        uint32                          _Pad0[3];
-        RHI::FDispatchIndirectArguments MaterialArgs[GMaterialMaxSlots];
-        RHI::FDispatchIndirectArguments LightArgs;
-        uint32                          _Pad1;
-    };
+    // Indirect-argument offsets need only 4-byte alignment; 16 costs nothing and keeps the triples tidy.
+    static uint32 AlignClassifyRegion(uint32 Offset) { return (Offset + 15u) & ~15u; }
 
     bool FDefaultSceneRenderer::BuildDeferredMaterialBinning(RHI::FCmdListH CL)
     {
@@ -7063,6 +7088,7 @@ namespace Lumina
         const auto& DeferredMaterials = Frame.Geometry.DeferredMaterials;
 
         BinnedDeferredSlotShaders.clear();
+        BinnedDeferredSlotLookup.clear();
         uint32 MaxMaterialIndex = 0u;
         for (const auto& M : DeferredMaterials)
         {
@@ -7072,6 +7098,14 @@ namespace Lumina
             }
         }
 
+        // Overflow shades through the default material rather than not at all. It reads the overflowed
+        // material's own uniforms, so the surface is wrong but lit, which reads as a bug instead of a hole.
+        CMaterial* DefaultMaterial = CMaterial::GetDefaultMaterial();
+        const FShaderH FallbackShader = IsValid(DefaultMaterial) ? DefaultMaterial->GetDeferredShader() : FShaderH{};
+
+        // One slot held back for the fallback, so a frame that fills the table can still claim it.
+        const uint32 SlotBudget = FallbackShader ? (GMaterialMaxSlots - 1u) : GMaterialMaxSlots;
+
         BinnedDeferredSlotByMaterial.assign((size_t)MaxMaterialIndex + 1u, 0xFFFFFFFFu);
         for (const auto& M : DeferredMaterials)
         {
@@ -7080,33 +7114,46 @@ namespace Lumina
                 continue;
             }
 
-            // Dense slot per distinct DeferredShader; distinct visible masters per frame are few.
+            // Looked up rather than scanned; a scan cost visible materials times distinct shaders.
             uint32 Slot = 0xFFFFFFFFu;
-            for (uint32 s = 0; s < (uint32)BinnedDeferredSlotShaders.size(); ++s)
+            if (auto It = BinnedDeferredSlotLookup.find(M.DeferredShader.Handle); It != BinnedDeferredSlotLookup.end())
             {
-                if (BinnedDeferredSlotShaders[s] == M.DeferredShader)
-                {
-                    Slot = s;
-                    break;
-                }
+                Slot = It->second;
             }
 
             if (Slot == 0xFFFFFFFFu)
             {
-                if ((uint32)BinnedDeferredSlotShaders.size() >= GMaterialMaxSlots)
+                const bool bFull = (uint32)BinnedDeferredSlotShaders.size() >= SlotBudget;
+                if (bFull)
                 {
                     static bool bWarnedSlotCap = false;
                     if (!bWarnedSlotCap)
                     {
                         bWarnedSlotCap = true;
-                        LOG_WARN("More than {} distinct deferred material shaders are visible; the excess will not shade.",
-                            GMaterialMaxSlots);
+                        LOG_WARN("More than {} distinct deferred material shaders are visible; the excess {}.",
+                            SlotBudget, FallbackShader ? "shades as the default material" : "will not shade");
                     }
-                    continue;
+
+                    if (!FallbackShader)
+                    {
+                        continue;
+                    }
                 }
 
-                Slot = (uint32)BinnedDeferredSlotShaders.size();
-                BinnedDeferredSlotShaders.push_back(M.DeferredShader);
+                const FShaderH BinShader = bFull ? FallbackShader : M.DeferredShader;
+
+                // The fallback may already own a bin, either from a visible default material or an
+                // earlier overflow, in which case it costs no extra slot.
+                if (auto Found = BinnedDeferredSlotLookup.find(BinShader.Handle); Found != BinnedDeferredSlotLookup.end())
+                {
+                    Slot = Found->second;
+                }
+                else
+                {
+                    Slot = (uint32)BinnedDeferredSlotShaders.size();
+                    BinnedDeferredSlotShaders.push_back(BinShader);
+                    BinnedDeferredSlotLookup.emplace(BinShader.Handle, Slot);
+                }
             }
 
             BinnedDeferredSlotByMaterial[M.MaterialIndex] = Slot;
@@ -7120,7 +7167,27 @@ namespace Lumina
 
         const uint64 PixelListSize = (uint64)Extent.x * (uint64)Extent.y * sizeof(uint32);
 
-        ResizeBufferIfNeeded(CL, MaterialClassifyRing[CurrentFrameSlot], sizeof(FMaterialClassifyBlock), 1.0f,
+        // Built into a local so a bail-out below leaves the member zeroed rather than half-filled.
+        FMaterialClassifyLayout Layout;
+        Layout.NumSlots = NumSlots;
+
+        uint32 Cursor = 0u;
+        Layout.CountsOffset  = Cursor; Cursor += NumSlots * (uint32)sizeof(uint32);
+        Layout.StartsOffset  = Cursor; Cursor += NumSlots * (uint32)sizeof(uint32);
+        Layout.CursorsOffset = Cursor; Cursor += NumSlots * (uint32)sizeof(uint32);
+        Layout.TotalOffset   = Cursor; Cursor += (uint32)sizeof(uint32);
+
+        Cursor = AlignClassifyRegion(Cursor);
+        Layout.MaterialArgsOffset = Cursor;
+        Cursor += NumSlots * (uint32)sizeof(RHI::FDispatchIndirectArguments);
+
+        Cursor = AlignClassifyRegion(Cursor);
+        Layout.LightArgsOffset = Cursor;
+        Cursor += (uint32)sizeof(RHI::FDispatchIndirectArguments);
+
+        Layout.BlockSize = AlignClassifyRegion(Cursor);
+
+        ResizeBufferIfNeeded(CL, MaterialClassifyRing[CurrentFrameSlot], Layout.BlockSize, 1.0f,
                              MaterialClassifyRingLowUsage[CurrentFrameSlot], /*bAllowShrink*/ false,
                              EBufferInit::Zeroed, "Material.ClassifyBlock");
         ResizeBufferIfNeeded(CL, MaterialPixelListRing[CurrentFrameSlot], PixelListSize, 1.2f,
@@ -7132,13 +7199,13 @@ namespace Lumina
             return false;
         }
 
-        MaterialClassifyLayout.NumSlots      = NumSlots;
-        MaterialClassifyLayout.ScreenW       = Extent.x;
-        MaterialClassifyLayout.ScreenH       = Extent.y;
+        Layout.ScreenW = Extent.x;
+        Layout.ScreenH = Extent.y;
         // From the allocation, not from what was asked for, since the scatter bounds writes on this.
-        MaterialClassifyLayout.PixelCapacity = (uint32)Math::Min<uint64>(
+        Layout.PixelCapacity = (uint32)Math::Min<uint64>(
             GetMaterialPixelList().Size / sizeof(uint32), 0xFFFFFFFFull);
 
+        MaterialClassifyLayout = Layout;
         return true;
     }
 
@@ -7176,19 +7243,19 @@ namespace Lumina
         const RHI::FGPUAllocation PixelList = GetMaterialPixelList();
 
         const RHI::GPUPtr Base        = Classify.Gpu;
-        const RHI::GPUPtr CountsAddr  = Base + offsetof(FMaterialClassifyBlock, Counts);
-        const RHI::GPUPtr StartsAddr  = Base + offsetof(FMaterialClassifyBlock, Starts);
-        const RHI::GPUPtr CursorsAddr = Base + offsetof(FMaterialClassifyBlock, Cursors);
-        const RHI::GPUPtr TotalAddr   = Base + offsetof(FMaterialClassifyBlock, Total);
-        const RHI::GPUPtr MatArgsAddr = Base + offsetof(FMaterialClassifyBlock, MaterialArgs);
-        const RHI::GPUPtr LitArgsAddr = Base + offsetof(FMaterialClassifyBlock, LightArgs);
+        const RHI::GPUPtr CountsAddr  = Base + Layout.CountsOffset;
+        const RHI::GPUPtr StartsAddr  = Base + Layout.StartsOffset;
+        const RHI::GPUPtr CursorsAddr = Base + Layout.CursorsOffset;
+        const RHI::GPUPtr TotalAddr   = Base + Layout.TotalOffset;
+        const RHI::GPUPtr MatArgsAddr = Base + Layout.MaterialArgsOffset;
+        const RHI::GPUPtr LitArgsAddr = Base + Layout.LightArgsOffset;
 
         // MaterialIndex -> dense slot; uploaded to the transient ring and read by device address.
         const RHI::GPUPtr SlotByMaterialAddr =
             RHI::Core::CopyTransientArray(BinnedDeferredSlotByMaterial.data(), BinnedDeferredSlotByMaterial.size());
 
         // Only the counters are cleared; the prefix sum below rewrites every other field.
-        RHI::CmdMemset(CL, CountsAddr, sizeof(uint32) * GMaterialMaxSlots, 0u);
+        RHI::CmdMemset(CL, CountsAddr, sizeof(uint32) * Layout.NumSlots, 0u);
         Barriers::TransferToCompute(CL);
 
         const uint32 GroupsX = RenderUtils::GetGroupCount(Layout.ScreenW, (uint32)MATERIAL_CLASSIFY_TILE);
@@ -7352,8 +7419,8 @@ namespace Lumina
         PC.GBufferDUAV = (uint32)UAVD;
 
         PC.PixelListAddr = PixelList.Gpu;
-        PC.StartsAddr    = Base + offsetof(FMaterialClassifyBlock, Starts);
-        PC.CountsAddr    = Base + offsetof(FMaterialClassifyBlock, Counts);
+        PC.StartsAddr    = Base + Layout.StartsOffset;
+        PC.CountsAddr    = Base + Layout.CountsOffset;
 
         // Invalid disables the write, which leaves the camera-only base the fullscreen pass laid down.
         PC.VelocityUAV = 0xFFFFFFFFu;
@@ -7366,13 +7433,28 @@ namespace Lumina
             }
         }
 
+        // One allocation written in place, since the blocks differ only in SlotIndex.
+        const RHI::FTransientAlloc ArgsAlloc =
+            RHI::Core::AllocTransient(sizeof(FDeferredMaterialPC) * Layout.NumSlots);
+        if (ArgsAlloc.Cpu == nullptr)
+        {
+            LOG_ERROR("Deferred material pass: could not stage {} argument blocks; skipping the pass.",
+                Layout.NumSlots);
+            return;
+        }
+
+        FDeferredMaterialPC* ArgsCpu = (FDeferredMaterialPC*)ArgsAlloc.Cpu;
+        for (uint32 Slot = 0; Slot < Layout.NumSlots; ++Slot)
+        {
+            ArgsCpu[Slot]           = PC;
+            ArgsCpu[Slot].SlotIndex = Slot;
+        }
+
         for (uint32 Slot = 0; Slot < Layout.NumSlots; ++Slot)
         {
             RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(BinnedDeferredSlotShaders[Slot]));
-
-            PC.SlotIndex = Slot;
-            RHI::CmdDispatchIndirect(CL, MakeArgs(PC), Classify.Gpu,
-                (uint32)(offsetof(FMaterialClassifyBlock, MaterialArgs) + Slot * sizeof(RHI::FDispatchIndirectArguments)));
+            RHI::CmdDispatchIndirect(CL, ArgsAlloc.Gpu + Slot * sizeof(FDeferredMaterialPC), Classify.Gpu,
+                Layout.MaterialArgsOffset + Slot * (uint32)sizeof(RHI::FDispatchIndirectArguments));
         }
 
         Barriers::ComputeToAll(CL);
@@ -7429,11 +7511,10 @@ namespace Lumina
         PC.ScreenW       = Layout.ScreenW;
         PC.ScreenH       = Layout.ScreenH;
         PC.PixelListAddr = GetMaterialPixelList().Gpu;
-        PC.TotalAddr     = Classify.Gpu + offsetof(FMaterialClassifyBlock, Total);
+        PC.TotalAddr     = Classify.Gpu + Layout.TotalOffset;
 
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(LightingCS));
-        RHI::CmdDispatchIndirect(CL, MakeArgs(PC), Classify.Gpu,
-            (uint32)offsetof(FMaterialClassifyBlock, LightArgs));
+        RHI::CmdDispatchIndirect(CL, MakeArgs(PC), Classify.Gpu, Layout.LightArgsOffset);
 
         // AllCommands, not ComputeToAll, whose destination set has no RasterColorOut.
         RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::AllCommands);
@@ -7674,6 +7755,8 @@ namespace Lumina
                         if (Dead.ParticleBuffer)     { DeferFree(Dead.ParticleBuffer); }
                         if (Dead.SpawnCounterBuffer) { DeferFree(Dead.SpawnCounterBuffer); }
                         if (Dead.AttributeBuffer)    { DeferFree(Dead.AttributeBuffer); }
+                        if (Dead.SortIndexBuffer)    { DeferFree(Dead.SortIndexBuffer); }
+                        if (Dead.SortDrawArgsBuffer) { DeferFree(Dead.SortDrawArgsBuffer); }
                     }
                     It = ParticleGPUStates.erase(It);
                 }
@@ -7710,10 +7793,15 @@ namespace Lumina
                     if (Dropped.ParticleBuffer)     { DeferFree(Dropped.ParticleBuffer); }
                     if (Dropped.SpawnCounterBuffer) { DeferFree(Dropped.SpawnCounterBuffer); }
                     if (Dropped.AttributeBuffer)    { DeferFree(Dropped.AttributeBuffer); }
+                    if (Dropped.SortIndexBuffer)    { DeferFree(Dropped.SortIndexBuffer); }
+                    if (Dropped.SortDrawArgsBuffer) { DeferFree(Dropped.SortDrawArgsBuffer); }
                 }
                 EntityStates.resize((size_t)Math::Max(Item.EmitterCount, 1));
             }
             FParticleGPUState& State = EntityStates[(size_t)Item.EmitterIndex];
+
+            // An emitter that reaches none of the dispatches below is fully dead, and draws nothing.
+            State.bSimulatedThisFrame = false;
 
             const bool bNeedsAlloc = (State.ParticleBuffer.Gpu == 0)
                                   || (State.AllocatedMax != MaxParticles)
@@ -7723,6 +7811,10 @@ namespace Lumina
                 if (State.ParticleBuffer)     { DeferFree(State.ParticleBuffer); }
                 if (State.SpawnCounterBuffer) { DeferFree(State.SpawnCounterBuffer); }
                 if (State.AttributeBuffer)    { DeferFree(State.AttributeBuffer); }
+                if (State.SortIndexBuffer)    { DeferFree(State.SortIndexBuffer); }
+                if (State.SortDrawArgsBuffer) { DeferFree(State.SortDrawArgsBuffer); }
+                State.SortIndexBuffer    = {};
+                State.SortDrawArgsBuffer = {};
 
                 State.ParticleBufferSize = (uint64)MaxParticles * 64ull;
                 State.ParticleBuffer     = RHI::Malloc(State.ParticleBufferSize, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
@@ -7733,6 +7825,21 @@ namespace Lumina
                 State.AttributeBufferSize = (uint64)MaxParticles * (uint64)Item.AttributeFloatCount * sizeof(float);
                 State.AttributeBuffer     = RHI::Malloc(State.AttributeBufferSize, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
                 RHI::SetDebugName(State.AttributeBuffer.Gpu,    "Particles.Attributes");
+
+                // Bitonic needs a power-of-two span, and one workgroup can only hold so much of it.
+                State.SortCount = (MaxParticles <= PARTICLE_SORT_CAPACITY)
+                    ? (uint32)Math::NextPowerOfTwo((int32)MaxParticles)
+                    : 0u;
+                if (State.SortCount > 0)
+                {
+                    State.SortIndexBuffer    = RHI::Malloc((uint64)MaxParticles * sizeof(uint32), RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
+                    State.SortDrawArgsBuffer = RHI::Malloc(sizeof(RHI::FDrawIndirectArguments),   RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
+                    RHI::SetDebugName(State.SortIndexBuffer.Gpu,    "Particles.SortIndices");
+                    RHI::SetDebugName(State.SortDrawArgsBuffer.Gpu, "Particles.SortDrawArgs");
+
+                    // A sort that never runs must draw nothing rather than an uninitialized count.
+                    RHI::CmdMemset(CL, State.SortDrawArgsBuffer.Gpu, sizeof(RHI::FDrawIndirectArguments), 0u);
+                }
 
                 // Zero-fill the particle buffer so all entries start dead.
                 RHI::CmdMemset(CL, State.ParticleBuffer.Gpu, State.ParticleBufferSize, 0u);
@@ -7896,11 +8003,81 @@ namespace Lumina
 
             RHI::CmdDispatch(CL, MakeArgs(SimArgs), RenderUtils::GetGroupCount(MaxParticles, 64u), 1u, 1u);
             bAnySimulated = true;
+            State.bSimulatedThisFrame = true;
         }
 
         if (bAnySimulated)
         {
-            // Simulated particles feed the render pass VS.
+            // Simulated particles feed the sort pass, then the render pass VS.
+            Barriers::ComputeToAll(CL);
+        }
+    }
+
+    // ParticleSortCompact packs a slot index into the low bits of every sort key.
+    static_assert((1u << PARTICLE_SORT_INDEX_BITS) == PARTICLE_SORT_CAPACITY,
+                  "The sort key's index field must address exactly the sortable capacity.");
+
+    void FDefaultSceneRenderer::ParticleSortPass(RHI::FCmdListH CL)
+    {
+        LUMINA_PROFILE_SECTION_COLORED("Particle Sort", tracy::Color::Orange);
+
+        const FFrameData& Frame = *RenderFrame;
+
+        static const FShaderH SortShader = FShaderLibrary::Get("ParticleSortCompact.slang");
+        const FShaderEntry* SortEntry = FShaderLibrary::Resolve(SortShader);
+        if (SortEntry == nullptr || !SortEntry->IsValid())
+        {
+            return;
+        }
+
+        bool bAnySorted = false;
+
+        for (const FFrameData::FParticleExtract& Item : Frame.Extracts.ParticleExtracts)
+        {
+            if (!Item.bReady)
+            {
+                continue;
+            }
+
+            auto ParticleStateIt = ParticleGPUStates.find(Item.Entity);
+            if (ParticleStateIt == ParticleGPUStates.end()
+                || Item.EmitterIndex >= (int32)ParticleStateIt->second.size())
+            {
+                continue;
+            }
+
+            FParticleGPUState& State = ParticleStateIt->second[(size_t)Item.EmitterIndex];
+            if (!State.bSimulatedThisFrame || State.SortCount == 0 || !State.SortIndexBuffer)
+            {
+                continue;
+            }
+
+            RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(SortShader));
+            bAnySorted = true;
+
+            // Mirrors FParticleSortArgs in ParticleSortCompact.slang, pointers first to stay 8-aligned.
+            struct FParticleSortArgs
+            {
+                uint64 ParticlesAddr;
+                uint64 OutIndicesAddr;
+                uint64 OutDrawArgsAddr;
+                uint32 ParticleCount;
+                uint32 SortCount;
+            };
+
+            FParticleSortArgs SortArgs;
+            SortArgs.ParticlesAddr   = State.ParticleBuffer.Gpu;
+            SortArgs.OutIndicesAddr  = State.SortIndexBuffer.Gpu;
+            SortArgs.OutDrawArgsAddr = State.SortDrawArgsBuffer.Gpu;
+            SortArgs.ParticleCount   = State.AllocatedMax;
+            SortArgs.SortCount       = State.SortCount;
+
+            RHI::CmdDispatch(CL, MakeArgs(SortArgs), 1u, 1u, 1u);
+        }
+
+        if (bAnySorted)
+        {
+            // ComputeToAll covers IndirectArguments, which is what the compacted draw reads.
             Barriers::ComputeToAll(CL);
         }
     }
@@ -7946,6 +8123,22 @@ namespace Lumina
         return Blend;
     }
 
+    // A Particle material carries its own blend, so the emitter's EParticleBlendMode is not consulted.
+    static RHI::FBlendDesc MakeParticleMaterialBlend(EBlendMode Mode)
+    {
+        switch (Mode)
+        {
+        case EBlendMode::Additive:       return MakeParticleBlend(EParticleBlendMode::Additive);
+        case EBlendMode::Modulate:       return MakeParticleBlend(EParticleBlendMode::Multiply);
+        case EBlendMode::AlphaComposite: return MakeParticleBlend(EParticleBlendMode::PreMultiplied);
+        case EBlendMode::Translucent:    return MakeParticleBlend(EParticleBlendMode::Alpha);
+
+        // Opaque and Masked write coverage rather than blending it; the pixel stage clips instead.
+        default:
+            return RHI::FBlendDesc{};
+        }
+    }
+
     void FDefaultSceneRenderer::ParticleRenderPass(RHI::FCmdListH CL)
     {
         LUMINA_PROFILE_SECTION_COLORED("Particle Render", tracy::Color::OrangeRed);
@@ -7958,9 +8151,9 @@ namespace Lumina
             return;
         }
 
-        static const FShaderH VertexShader = FShaderLibrary::Get("ParticleVertex.slang");
-        static const FShaderH PixelShader = FShaderLibrary::Get("ParticlePixel.slang");
-        if (!VertexShader || !PixelShader)
+        static const FShaderH SpriteVertexShader = FShaderLibrary::Get("ParticleVertex.slang");
+        static const FShaderH SpritePixelShader  = FShaderLibrary::Get("ParticlePixel.slang");
+        if (!SpriteVertexShader || !SpritePixelShader)
         {
             return;
         }
@@ -8005,9 +8198,10 @@ namespace Lumina
             int32    AttrSlotPrevPosX;
             int32    AttrSlotPrevPosY;
             int32    AttrSlotPrevPosZ;
-            uint32   Pad1;
+            uint32   MaterialIndex;      // Materials() slot; read only by the Particle material stages
+            uint64   SortedIndicesAddr;  // 0 when the emitter is drawn unsorted at full capacity
         };
-        static_assert(sizeof(FParticlePushConstants) == 80, "FParticlePushConstants must match the slang pass block.");
+        static_assert(sizeof(FParticlePushConstants) == 88, "FParticlePushConstants must match the slang pass block.");
 
         for (const FFrameData::FParticleExtract& Item : Frame.Extracts.ParticleExtracts)
         {
@@ -8024,25 +8218,31 @@ namespace Lumina
                 continue;
             }
             FParticleGPUState& State = ParticleStateIt->second[(size_t)Item.EmitterIndex];
-            if (!State.ParticleBuffer)
+            if (!State.ParticleBuffer || !State.bSimulatedThisFrame)
             {
                 continue;
             }
 
+            const bool bSorted = (State.SortCount > 0) && State.SortIndexBuffer && State.SortDrawArgsBuffer;
+
             const FResolvedParticleParams& Resolved = Item.Resolved;
+            const bool bMaterial = (Item.MaterialIndex >= 0);
 
             RHI::FDepthStencilDesc DepthDesc;
-            DepthDesc.DepthMode = Resolved.bWriteDepth
+            const bool bWriteDepth = bMaterial ? Item.bMaterialWritesDepth : Resolved.bWriteDepth;
+            DepthDesc.DepthMode = bWriteDepth
                 ? (RHI::EDepthFlags::Read | RHI::EDepthFlags::Write)
                 : RHI::EDepthFlags::Read;
             DepthDesc.DepthTest = RHI::EOp::GreaterEqual;
             RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(DepthDesc));
 
             FGraphicsPipelineKey Key;
-            Key.VS          = VertexShader;
-            Key.PS          = PixelShader;
+            Key.VS          = bMaterial ? Item.MaterialVertexShader : SpriteVertexShader;
+            Key.PS          = bMaterial ? Item.MaterialPixelShader  : SpritePixelShader;
             Key.DepthFormat = EFormat::D32;
-            Key.ColorTargets.push_back({ HDR.Desc.Format, MakeParticleBlend(Resolved.BlendMode) });
+            Key.ColorTargets.push_back({ HDR.Desc.Format, bMaterial
+                ? MakeParticleMaterialBlend(Item.MaterialBlendMode)
+                : MakeParticleBlend(Resolved.BlendMode) });
             RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
             FParticlePushConstants PC = {};
@@ -8060,9 +8260,18 @@ namespace Lumina
             PC.AttrSlotPrevPosX   = Item.RenderAttrSlots[ParticleRenderAttribute::PrevPosX];
             PC.AttrSlotPrevPosY   = Item.RenderAttrSlots[ParticleRenderAttribute::PrevPosY];
             PC.AttrSlotPrevPosZ   = Item.RenderAttrSlots[ParticleRenderAttribute::PrevPosZ];
-            PC.Pad1               = 0u;
+            PC.MaterialIndex      = bMaterial ? (uint32)Item.MaterialIndex : 0u;
+            PC.SortedIndicesAddr  = bSorted ? State.SortIndexBuffer.Gpu : 0ull;
 
-            RHI::CmdDraw(CL, MakeArgs(PC), 6u * State.AllocatedMax, 1u, 0u, 0u);
+            if (bSorted)
+            {
+                RHI::CmdDrawIndirect(CL, MakeArgs(PC), State.SortDrawArgsBuffer.Gpu, 0u, 1u,
+                                     sizeof(RHI::FDrawIndirectArguments));
+            }
+            else
+            {
+                RHI::CmdDraw(CL, MakeArgs(PC), 6u * State.AllocatedMax, 1u, 0u, 0u);
+            }
         }
 
         RHI::CmdEndRenderPass(CL);
@@ -9585,9 +9794,9 @@ namespace Lumina
         ForEachMeshletBatch(CL, TranslucentDrawList, Ctx,
             [&](FGraphicsPipelineKey& Key, const FMeshDrawCommand& Batch)
             {
-                if (Batch.bAdditive)
+                if (Batch.bAdditive || Batch.bModulate)
                 {
-                    return false;   // AdditiveTranslucentPass owns these; additive is already order-independent
+                    return false;   // UnorderedTranslucentPass owns these; a commutative blend needs no moments
                 }
 
                 // A null shader means the material fell back to a default, so skip it out of the moments.
@@ -9675,9 +9884,9 @@ namespace Lumina
         ForEachMeshletBatch(CL, TranslucentDrawList, Ctx,
             [&](FGraphicsPipelineKey& Key, const FMeshDrawCommand& Batch)
             {
-                if (Batch.bAdditive)
+                if (Batch.bAdditive || Batch.bModulate)
                 {
-                    return false;   // AdditiveTranslucentPass owns these
+                    return false;   // UnorderedTranslucentPass owns these
                 }
 
                 Key.MS          = Batch.MeshShaderBase;
@@ -9771,27 +9980,27 @@ namespace Lumina
         Barriers::RasterToRead(CL);
     }
 
-    void FDefaultSceneRenderer::AdditiveTranslucentPass(RHI::FCmdListH CL)
+    void FDefaultSceneRenderer::UnorderedTranslucentPass(RHI::FCmdListH CL)
     {
         const FFrameData& Frame = *RenderFrame;
         const auto& DrawCommands        = Frame.Geometry.DrawCommands;
         const auto& TranslucentDrawList = Frame.Geometry.TranslucentDrawList;
 
-        bool bHasAdditive = false;
+        bool bHasUnordered = false;
         for (uint32 Idx : TranslucentDrawList)
         {
-            if (DrawCommands[Idx].bAdditive)
+            if (DrawCommands[Idx].bAdditive || DrawCommands[Idx].bModulate)
             {
-                bHasAdditive = true;
+                bHasUnordered = true;
                 break;
             }
         }
-        if (!bHasAdditive)
+        if (!bHasUnordered)
         {
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Additive Translucent Pass", tracy::Color::CadetBlue3);
+        LUMINA_PROFILE_SECTION_COLORED("Unordered Translucent Pass", tracy::Color::CadetBlue3);
 
         const FSceneImage& HDR = GetNamedImage(ENamedImage::HDR);
         const FUIntVector2 Extent = HDR.GetExtent();
@@ -9820,17 +10029,20 @@ namespace Lumina
         SetViewportScissor(CL, HDR.GetExtent());
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
-        RHI::FDepthStencilDesc DepthDesc;
-        DepthDesc.DepthMode = RHI::EDepthFlags::Read;
-        DepthDesc.DepthTest = RHI::EOp::GreaterEqual;
-        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(DepthDesc));
-
         RHI::FBlendDesc AdditiveBlend;
         AdditiveBlend.bBlendEnable   = true;
         AdditiveBlend.SrcColorFactor = RHI::EFactor::SrcAlpha;
         AdditiveBlend.DstColorFactor = RHI::EFactor::One;
         AdditiveBlend.SrcAlphaFactor = RHI::EFactor::One;
         AdditiveBlend.DstAlphaFactor = RHI::EFactor::One;
+
+        // Src is the shader's lerp toward white, so this is scene color times the faded material color.
+        RHI::FBlendDesc ModulateBlend;
+        ModulateBlend.bBlendEnable   = true;
+        ModulateBlend.SrcColorFactor = RHI::EFactor::DstColor;
+        ModulateBlend.DstColorFactor = RHI::EFactor::Zero;
+        ModulateBlend.SrcAlphaFactor = RHI::EFactor::Zero;
+        ModulateBlend.DstAlphaFactor = RHI::EFactor::One;
 
         // Resolved for the same reason as the WBOIT pass above, after the mid pyramid rebuild.
         FMeshletPassContext Ctx;
@@ -9841,7 +10053,7 @@ namespace Lumina
         ForEachMeshletBatch(CL, TranslucentDrawList, Ctx,
             [&](FGraphicsPipelineKey& Key, const FMeshDrawCommand& Batch)
             {
-                if (!Batch.bAdditive)
+                if (!Batch.bAdditive && !Batch.bModulate)
                 {
                     return false;   // TranslucentPass owns these
                 }
@@ -9849,12 +10061,28 @@ namespace Lumina
                 Key.MS          = Batch.MeshShaderBase;
                 Key.PS          = Batch.PixelShader;
                 Key.DepthFormat = EFormat::D32;
-                Key.ColorTargets.push_back({ HDR.Desc.Format, AdditiveBlend });
+                Key.ColorTargets.push_back({ HDR.Desc.Format, Batch.bModulate ? ModulateBlend : AdditiveBlend });
                 #if USING(WITH_EDITOR)
                 Key.ColorTargets.push_back({ Picker.Desc.Format, {} });
                 #endif
                 return true;
+            },
+            [&](const FMeshDrawCommand& Batch)
+            {
+                // Per batch, since a depth-writing blend is a material choice and the pass mixes both.
+                RHI::FDepthStencilDesc DepthDesc;
+                DepthDesc.DepthMode = Batch.bWriteDepth
+                                    ? (RHI::EDepthFlags::Read | RHI::EDepthFlags::Write)
+                                    : RHI::EDepthFlags::Read;
+                DepthDesc.DepthTest = RHI::EOp::GreaterEqual;
+                RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(DepthDesc));
             });
+
+        // Depth write is dynamic state, so a writing batch would otherwise hand it to the next pass.
+        RHI::FDepthStencilDesc RestoreDepth;
+        RestoreDepth.DepthMode = RHI::EDepthFlags::Read;
+        RestoreDepth.DepthTest = RHI::EOp::GreaterEqual;
+        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(RestoreDepth));
 
         RHI::CmdEndRenderPass(CL);
         Barriers::RasterToRead(CL);
@@ -11456,6 +11684,13 @@ namespace Lumina
         const FSceneImage& Depth = GetNamedImage(ENamedImage::DepthAttachment);
         const RHI::FGPUAllocation Classify = GetMaterialClassify();
 
+        // This walks the classify block's pixel list, whose offsets only exist once the pass has run.
+        const FMaterialClassifyLayout Layout = MaterialClassifyLayout;
+        if (Layout.NumSlots == 0u)
+        {
+            return;
+        }
+
         const int32 HDRUAV = HDR.GetMipUAVIndex(0);
         if (HDRUAV < 0)
         {
@@ -11509,11 +11744,10 @@ namespace Lumina
         PC.Intensity       = Math::Clamp(RS->SSRIntensity, 0.0f, 1.0f);
         PC.RoughnessFade   = Math::Clamp(RS->SSRRoughnessFade, 0.0f, 1.0f);
         PC.PixelListAddr   = GetMaterialPixelList().Gpu;
-        PC.TotalAddr       = Classify.Gpu + offsetof(FMaterialClassifyBlock, Total);
+        PC.TotalAddr       = Classify.Gpu + Layout.TotalOffset;
 
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(SSRCS));
-        RHI::CmdDispatchIndirect(CL, MakeArgs(PC), Classify.Gpu,
-            (uint32)offsetof(FMaterialClassifyBlock, LightArgs));
+        RHI::CmdDispatchIndirect(CL, MakeArgs(PC), Classify.Gpu, Layout.LightArgsOffset);
 
         // HDR is a UAV write here and a color attachment for every pass after it.
         RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::AllCommands);

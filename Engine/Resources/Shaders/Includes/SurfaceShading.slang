@@ -546,7 +546,9 @@ FGBufferData BuildGBufferData(FBaseVertexOutput Input, FMaterialPixelInputs Mate
     // Opaque lit surfaces only, and only where the pipeline binds the decal push (terrain specializes it
     // off). Unlit is a runtime test, so an instance that overrode its model is honoured here too.
 #ifndef TRANSLUCENT
-    if (SPEC_ENABLE_DECALS != 0 && !IsUnlit(G))
+    // The flags word is already resident for the shading model above, so the opt-out costs one test.
+    const bool bReceivesDecals = (Materials()[Input.MaterialIndex].Flags & MatFlag_NoDecals) == 0u;
+    if (SPEC_ENABLE_DECALS != 0 && bReceivesDecals && !IsUnlit(G))
     {
         float2 DBufferUV = Input.Position.xy / float2(Scene().ScreenSize.xy);
         ApplyDBuffer(G.BaseColor, G.WorldNormal, G.Roughness, G.Metallic, G.AmbientOcclusion, DBufferUV);

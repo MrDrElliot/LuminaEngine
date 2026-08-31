@@ -13,6 +13,8 @@ namespace Lumina
 {
     class CEdGraphNode;
     class CMaterialExpression_CustomSlang;
+    class CMaterialInterface;
+    class CParticleSystem;
 }
 
 namespace Lumina
@@ -78,6 +80,9 @@ namespace Lumina
 
         void Compile();
         void ApplyMaterialToPreview();
+
+        // The transient spray the Particle domain previews through, pointed at PreviewMaterial.
+        CParticleSystem* GetOrCreatePreviewParticleSystem(CMaterialInterface* PreviewMaterial);
         void FocusGraphNode(CEdGraphNode* Node);
 
         // Syntax-highlighted editor for the selected Custom Slang node's body. Bound lazily to the
@@ -107,6 +112,11 @@ namespace Lumina
         
         ECS::FEntity                    MeshEntity;
         ECS::FEntity                    DirectionalLightEntity;
+        // Always present; its system is null unless the asset is a Particle material, which extract skips.
+        ECS::FEntity                    ParticleEntity;
+
+        // Transient spray the Particle domain previews through, built the first time one is opened.
+        TObjectPtr<CParticleSystem>     PreviewParticleSystem;
         
         FString                         Tree;
         FString                         VertexTree;

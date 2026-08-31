@@ -9,6 +9,7 @@
 #include "Core/Object/ObjectIterator.h"
 #include "Core/Reflection/PropertyCustomization/PropertyCustomization.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
+#include "Scripting/DotNet/DotNetHost.h"
 #include "Core/Reflection/Type/Properties/ArrayProperty.h"
 #include "Core/Reflection/Type/Properties/EnumProperty.h"
 #include "Core/Reflection/Type/Properties/MapProperty.h"
@@ -2219,6 +2220,16 @@ namespace Lumina
 
     void FPropertyTable::EnsureTreeBuilt()
     {
+        // Dropped rather than reused, since the properties the old rows point at belong to the previous block.
+        const int32 ScriptGeneration = DotNet::GetScriptGeneration();
+        if (ScriptGeneration != BuiltScriptGeneration)
+        {
+            BuiltScriptGeneration = ScriptGeneration;
+            CategoryMap.clear();
+            Customization = nullptr;
+            bDirty = true;
+        }
+
         if (!bDirty)
         {
             return;

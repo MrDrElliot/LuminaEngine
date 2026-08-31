@@ -8,6 +8,7 @@ namespace Lumina
 {
     class CMaterialInterface;
     struct FMaterialUniforms;
+    struct FMaterialCollectionUniforms;
 }
 
 namespace Lumina::RHI
@@ -89,5 +90,37 @@ namespace Lumina::RHI
         /** Highest slot ever handed out, +1. Slots below it are either live or in FreeList. */
         uint32                                  HighWater = 0;
         uint32                                  NumMaterials = 0;
+    };
+
+    /** The GPU table of parameter collections, capped and allocated once, with slot 0 reserved as zero. */
+    class FMaterialCollectionManager final
+    {
+    public:
+
+        FMaterialCollectionManager();
+        ~FMaterialCollectionManager();
+        LE_NO_COPYMOVE(FMaterialCollectionManager);
+
+        /** A free slot, or INDEX_NONE when the table is full. The slot reads zero until Update. */
+        RUNTIME_API int32 Acquire();
+
+        RUNTIME_API void Release(int32 Index);
+
+        RUNTIME_API void Update(int32 Index, const FMaterialCollectionUniforms& Uniforms);
+
+        /** Writes ByteSize bytes at ByteOffset inside slot Index, for a single changed parameter. */
+        RUNTIME_API void UpdateRange(int32 Index, uint32 ByteOffset, const void* Data, uint32 ByteSize);
+
+        RUNTIME_API GPUPtr GetBuffer() const { return CollectionBuffer.Gpu; }
+
+    private:
+
+        mutable FSharedMutex                        Mutex;
+        TVector<int32>                              FreeList;
+        TVector<FMaterialCollectionUniforms>        Mirror;
+        FGPUAllocation                              CollectionBuffer = {};
+
+        /** Starts at 1, since slot 0 is the reserved zero collection. */
+        int32                                       HighWater = 1;
     };
 }

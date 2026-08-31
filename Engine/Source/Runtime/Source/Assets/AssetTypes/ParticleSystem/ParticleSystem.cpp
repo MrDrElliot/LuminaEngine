@@ -1,6 +1,7 @@
 ﻿#include "RuntimePCH.h"
 #include "Memory/MemoryTracking.h"
 #include "ParticleSystem.h"
+#include "Assets/AssetTypes/Material/Material.h"
 #include "Renderer/ShaderLibrary.h"
 #include "World/Entity/Components/ParticleSystemComponent.h"
 #include "Containers/StringFormat.h"
@@ -24,6 +25,29 @@ namespace Lumina
         }
 
         return true;
+    }
+
+    CMaterialInterface* ResolveParticleSpriteMaterial(CMaterialInterface* Candidate)
+    {
+        if (Candidate == nullptr || !Candidate->IsReadyForRender())
+        {
+            return nullptr;
+        }
+
+        // The domain lives on the master, and it is the master that owns the compiled sprite stages.
+        CMaterial* Owner = Candidate->GetMaterial();
+        if (Owner == nullptr || Owner->GetMaterialType() != EMaterialType::Particle)
+        {
+            return nullptr;
+        }
+
+        // Without a table slot the shaders would read another material's uniforms.
+        return Candidate->GetMaterialIndex() >= 0 ? Candidate : nullptr;
+    }
+
+    CMaterialInterface* CParticleEmitter::GetRenderMaterial() const
+    {
+        return ResolveParticleSpriteMaterial(Material.Get());
     }
 
     void CParticleEmitter::PostLoad()

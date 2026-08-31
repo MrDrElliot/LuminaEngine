@@ -175,6 +175,8 @@ namespace Lumina
 
         Active                  = BIT(8),   // 0 = free slot; the cull skips it without reading its payload
         HasGeometry             = BIT(9),   // the mesh's meshlet header is resident
+
+        ShadowOnly              = BIT(10),  // survives shadow views only; every camera view rejects it
     };
 
     ENUM_CLASS_FLAGS(EInstanceFlags);
@@ -1160,6 +1162,7 @@ namespace Lumina
         uint64 PrevRetainedTransforms = 0;
         uint64 Clusters              = 0;  // per-view, GPU-written
         uint64 Materials             = 0;  // non-dynamic
+        uint64 Collections           = 0;  // parameter collection table; slot 0 is the reserved zero one
         uint64 Billboards            = 0;
         uint64 CullViews             = 0;
         uint64 MeshletDrawList       = 0;  // ring, GPU-written
@@ -1204,8 +1207,8 @@ namespace Lumina
         uint32 PrevBoneCount          = 0;
         uint32 PrevRetainedTransformCount = 0;
     };
-    // 19 pointers + 12 indices; RHI::FSceneBindings is the only home for SceneData, Lights and Instances.
-    static_assert(sizeof(FSceneRoot) == 200, "FSceneRoot must match SceneGlobals.slang");
+    // 20 pointers + 12 indices; RHI::FSceneBindings is the only home for SceneData, Lights and Instances.
+    static_assert(sizeof(FSceneRoot) == 208, "FSceneRoot must match SceneGlobals.slang");
 
     struct FParallaxSettings
     {

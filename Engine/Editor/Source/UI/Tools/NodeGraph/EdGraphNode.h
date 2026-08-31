@@ -104,6 +104,9 @@ namespace Lumina
         // named reroute passes through like one but still needs a titled body to show its name.
         virtual bool WantsRerouteDotRendering() const { return IsRerouteNode(); }
 
+        // False for a static switch, whose branch pins are typed inputs the schema still has to police.
+        virtual bool IsUntypedPassthrough() const { return IsRerouteNode(); }
+
         // The pin feeding a passthrough node. Defaults to the first input; a named reroute usage
         // returns its declaration's input instead, which is what lets a wireless link resolve through
         // every walk that already understands reroutes.

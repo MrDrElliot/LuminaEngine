@@ -43,8 +43,8 @@ namespace Lumina
         if (TextureArray.IsValid() && TextureArray->GetResourceID() >= 0)
         {
             TextureIndex = bDynamic && !ParameterName.IsNone()
-                         ? Compiler.BindTextureParameter(ParameterName, TextureArray)
-                         : Compiler.BindTexture(TextureArray);
+                         ? Compiler.BindTextureParameter(ParameterName, TextureArray, this)
+                         : Compiler.BindTexture(TextureArray, this);
         }
 
         const uint32 NumLayers = TextureArray.IsValid() ? TextureArray->GetNumLayers() : 0u;

@@ -125,7 +125,7 @@ namespace Lumina
 
     void CMaterialExpression_ConstantFloat::GenerateDefinition(FMaterialCompiler& Compiler)
     {
-        if (bDynamic) Compiler.DefineFloatParameter(FullName, ParameterName, Value.r);
+        if (bDynamic) Compiler.DefineFloatParameter(FullName, ParameterName, Value.r, this);
         else          Compiler.DefineConstantFloat(FullName, Value.r);
     }
     void CMaterialExpression_ConstantFloat::DrawNodeBody()
@@ -141,7 +141,7 @@ namespace Lumina
     {
         if (bDynamic)
         {
-            Compiler.DefineFloat2Parameter(FullName, ParameterName, &Value.r);
+            Compiler.DefineFloat2Parameter(FullName, ParameterName, &Value.r, this);
         }
         else
         {
@@ -161,7 +161,7 @@ namespace Lumina
     {
         if (bDynamic)
         {
-            Compiler.DefineFloat3Parameter(FullName, ParameterName, &Value.r);
+            Compiler.DefineFloat3Parameter(FullName, ParameterName, &Value.r, this);
         }
         else
         {
@@ -181,7 +181,7 @@ namespace Lumina
     {
         if (bDynamic)
         {
-            Compiler.DefineFloat4Parameter(FullName, ParameterName, &Value.r);
+            Compiler.DefineFloat4Parameter(FullName, ParameterName, &Value.r, this);
         }
         else
         {
