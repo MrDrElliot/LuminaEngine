@@ -100,7 +100,7 @@ FProbeSample SampleReflectionProbes(float3 WorldPos, float3 WorldR, float Roughn
 
     for (uint i = 0; i < NumProbes && Considered < kMaxProbesPerPixel; ++i)
     {
-        FGPUReflectionProbe Probe = GetSceneRoot().ReflectionProbesPtr[i];
+        FGPUReflectionProbe Probe = loadAligned<16>(GetSceneRoot().ReflectionProbesPtr + i);
         if (!Probe.IsBaked)
         {
             continue;
@@ -191,7 +191,7 @@ FProbeDebugInfo DebugReflectionProbes(float3 WorldPos)
 
     for (uint i = 0; i < NumProbes && Considered < kMaxProbesPerPixel; ++i)
     {
-        FGPUReflectionProbe Probe = GetSceneRoot().ReflectionProbesPtr[i];
+        FGPUReflectionProbe Probe = loadAligned<16>(GetSceneRoot().ReflectionProbesPtr + i);
         if (!Probe.IsBaked)
         {
             continue;

@@ -30,13 +30,13 @@ namespace Lumina
     template<typename T>
     inline typename TVector<T>::const_iterator VectorFind( TVector<T> const& vector, T const& value )
     {
-        return Algo::Find( vector.begin(), vector.end(), value );
+        return Algo::Find( vector, value );
     }
 
     template<typename T, typename V>
     inline void TVectorRemove(T& Vector, const V& Value)
     {
-        auto it = Algo::Find(Vector.begin(), Vector.end(), Value);
+        auto it = Algo::Find(Vector, Value);
         if (it != Vector.end())
         {
             Vector.erase(it);
@@ -52,47 +52,31 @@ namespace Lumina
     template<typename T>
     inline typename TVector<T>::iterator VectorFind( TVector<T>& vector, T const& value )
     {
-        return Algo::Find( vector.begin(), vector.end(), value );
+        return Algo::Find( vector, value );
     }
 
     template<typename T, typename V>
     inline bool VectorContains( TVector<T> const& vector, V const& value )
     {
-        return Algo::Find( vector.begin(), vector.end(), value ) != vector.end();
+        return Algo::Contains( vector, value );
     }
 
     template<typename T, typename V, typename Predicate>
     inline bool VectorContains( TVector<T> const& vector, Predicate predicate )
     {
-        return Algo::FindIf( vector.begin(), vector.end(), std::forward<Predicate>( predicate ) ) != vector.end();
+        return Algo::AnyOf( vector, std::forward<Predicate>( predicate ) );
     }
 
     template<typename T>
     inline int32_t VectorFindIndex( TVector<T> const& vector, T const& value )
     {
-        auto iter = Algo::Find( vector.begin(), vector.end(), value );
-        if ( iter == vector.end() )
-        {
-            return kInvalidVectorIndex;
-        }
-        else
-        {
-            return (int32_t) ( iter - vector.begin() );
-        }
+        return Algo::IndexOf( vector, value );
     }
 
     template<typename T, typename V, typename Predicate>
     inline int32_t VectorFindIndex( TVector<T> const& vector, Predicate predicate )
     {
-        auto iter = Algo::FindIf( vector.begin(), vector.end(), predicate );
-        if ( iter == vector.end() )
-        {
-            return kInvalidVectorIndex;
-        }
-        else
-        {
-            return (int32_t) (iter - vector.begin());
-        }
+        return Algo::IndexOfIf( vector, predicate );
     }
 
     template <typename T>
@@ -122,32 +106,32 @@ namespace Lumina
     template<typename T, typename V, size_t S>
     NODISCARD bool VectorContains(TFixedVector<T, S> const& vector, V const& value)
     {
-        return Algo::Find( vector.begin(), vector.end(), value ) != vector.end();
+        return Algo::Contains( vector, value );
     }
 
     template<typename T, size_t S, typename V, typename Predicate>
     NODISCARD bool VectorContains(TFixedVector<T, S> const& vector, V const& value, Predicate predicate)
     {
-        return Algo::Find( vector.begin(), vector.end(), value, std::forward<Predicate>( predicate ) ) != vector.end();
+        return Algo::Contains( vector, value, std::forward<Predicate>( predicate ) );
     }
 
     template<typename T, typename V, size_t S>
     NODISCARD typename TFixedVector<T, S>::const_iterator VectorFind(TFixedVector<T, S> const& vector, V const& value)
     {
-        return Algo::Find( vector.begin(), vector.end(), value );
+        return Algo::Find( vector, value );
     }
 
     // Find an element in a vector
     template<typename T, typename V, size_t S, typename Predicate>
     NODISCARD typename TFixedVector<T, S>::const_iterator VectorFind(TFixedVector<T, S> const& vector, V const& value, Predicate predicate)
     {
-        return Algo::Find( vector.begin(), vector.end(), value, std::forward<Predicate>( predicate ) );
+        return Algo::Find( vector, value, std::forward<Predicate>( predicate ) );
     }
 
     template<typename T, typename V, size_t S>
     NODISCARD typename TFixedVector<T, S>::iterator VectorFind(TFixedVector<T, S>& vector, V const& value)
     {
-        return Algo::Find( vector.begin(), vector.end(), value );
+        return Algo::Find( vector, value );
     }
 
     // Find an element in a vector
@@ -155,13 +139,13 @@ namespace Lumina
     template<typename T, typename V, size_t S, typename Predicate>
     NODISCARD typename TFixedVector<T, S>::iterator VectorFind(TFixedVector<T, S>& vector, V const& value, Predicate predicate )
     {
-        return Algo::Find( vector.begin(), vector.end(), value, std::forward<Predicate>( predicate ) );
+        return Algo::Find( vector, value, std::forward<Predicate>( predicate ) );
     }
 
     template<typename T, typename V, size_t S>
     NODISCARD int32 VectorFindIndex(TFixedVector<T, S> const& vector, V const& value )
     {
-        auto iter = Algo::Find( vector.begin(), vector.end(), value );
+        auto iter = Algo::Find( vector, value );
         if ( iter == vector.end() )
         {
             return kInvalidVectorIndex;
@@ -175,7 +159,7 @@ namespace Lumina
     template<typename T, typename V, size_t S, typename Predicate>
     NODISCARD int32 VectorFindIndex(TFixedVector<T, S> const& vector, V const& value, Predicate predicate )
     {
-        auto iter = Algo::Find( vector.begin(), vector.end(), value, predicate );
+        auto iter = Algo::Find( vector, value, predicate );
         if ( iter == vector.end() )
         {
             return kInvalidVectorIndex;

@@ -132,7 +132,7 @@ namespace Lumina
                 FGameplayTagRegistry::Get().RequestTag(FStringView(NewTag.c_str(), NewTag.size()));
 
                 CGameplayTagsSettings* Settings = GetMutableDefault<CGameplayTagsSettings>();
-                if (Settings != nullptr && Algo::Find(Settings->Tags.begin(), Settings->Tags.end(), NewTag) == Settings->Tags.end())
+                if (Settings != nullptr && !Algo::Contains(Settings->Tags, NewTag))
                 {
                     Settings->Tags.push_back(NewTag);
                     if (GConfig != nullptr)
@@ -159,7 +159,7 @@ namespace Lumina
 
         TVector<FString> Tags;
         FGameplayTagRegistry::Get().GetAllTags(Tags);
-        Algo::Sort(Tags.begin(), Tags.end());
+        Algo::Sort(Tags);
 
         // A path that is the ancestor of another tag is a "category" (folder); the rest are leaves.
         THashSet<FString> CategoryPaths;

@@ -30,15 +30,10 @@ namespace Lumina
 
     void CMaterialNodeGraph::EnsureRootNodes()
     {
-        bool bHasOutputNode = false;
-        for (const TObjectPtr<CEdGraphNode>& Node : Nodes)
+        const bool bHasOutputNode = Algo::AnyOf(Nodes, [](const TObjectPtr<CEdGraphNode>& Node)
         {
-            if (Node.IsValid() && Node->IsA<CMaterialOutputNode>())
-            {
-                bHasOutputNode = true;
-                break;
-            }
-        }
+            return Node.IsValid() && Node->IsA<CMaterialOutputNode>();
+        });
 
         if (!bHasOutputNode)
         {

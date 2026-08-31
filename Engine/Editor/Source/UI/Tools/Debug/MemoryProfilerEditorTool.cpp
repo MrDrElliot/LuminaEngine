@@ -560,10 +560,10 @@ namespace Lumina
             }
         }
 
-        Algo::Sort(GPUPurposes.begin(), GPUPurposes.end(),
+        Algo::Sort(GPUPurposes,
             [](const FGPUPurposeRow& A, const FGPUPurposeRow& B) { return A.Total() > B.Total(); });
 
-        Algo::Sort(GPUAllocations.begin(), GPUAllocations.end(),
+        Algo::Sort(GPUAllocations,
             [](const RHI::FGPUAllocationInfo& A, const RHI::FGPUAllocationInfo& B) { return A.Size > B.Size; });
     }
 
@@ -1156,7 +1156,7 @@ namespace Lumina
             Rows.push_back(Row);
         }
 
-        Algo::Sort(Rows.begin(), Rows.end(), [this](const FCategoryRow& A, const FCategoryRow& B)
+        Algo::Sort(Rows, [this](const FCategoryRow& A, const FCategoryRow& B)
         {
             if (bHasBaseline) { return A.DeltaBytes > B.DeltaBytes; }
             return A.S->LiveBytes > B.S->LiveBytes;
@@ -1698,7 +1698,7 @@ namespace Lumina
                     B ? (int64)S.LiveBytes - (int64)B->LiveBytes : 0,
                     B ? (int64)S.LiveCount - (int64)B->LiveCount : 0 });
             }
-            Algo::Sort(Rows.begin(), Rows.end(), [](const FRow& A, const FRow& B) { return A.S->LiveBytes > B.S->LiveBytes; });
+            Algo::Sort(Rows, [](const FRow& A, const FRow& B) { return A.S->LiveBytes > B.S->LiveBytes; });
 
             R += "## CPU memory by category (sorted by live bytes)\n";
             AppendFormat(R, "Baseline set: {}\n\n", bHasBaseline ? "yes (Delta = growth since baseline)" : "no");

@@ -412,8 +412,7 @@ namespace Lumina
 
                 for (int32 Idx : NowActive)
                 {
-                    if (Algo::Find(Anim.ActiveNotifyStates.begin(), Anim.ActiveNotifyStates.end(), Idx) ==
-                        Anim.ActiveNotifyStates.end())
+                    if (!Algo::Contains(Anim.ActiveNotifyStates, Idx))
                     {
                         EmitState(Idx, EAnimNotifyEventType::Begin);
                     }
@@ -422,7 +421,7 @@ namespace Lumina
                 for (int32 Idx : Anim.ActiveNotifyStates)
                 {
                     if (Idx >= 0 && Idx < (int32)States.size() &&
-                        Algo::Find(NowActive.begin(), NowActive.end(), Idx) == NowActive.end())
+                        !Algo::Contains(NowActive, Idx))
                     {
                         EmitState(Idx, EAnimNotifyEventType::End);
                     }

@@ -43,14 +43,10 @@ namespace Lumina
         TVector<FStringView> Extensions;
         GetSupportedExtensions(Extensions);
 
-        for (const FStringView& Supported : Extensions)
+        return Algo::AnyOf(Extensions, [&Ext](const FStringView& Supported)
         {
-            if (ExtensionsMatch(Supported, Ext))
-            {
-                return true;
-            }
-        }
-        return false;
+            return ExtensionsMatch(Supported, Ext);
+        });
     }
 
     CImporterRegistry& CImporterRegistry::Get()

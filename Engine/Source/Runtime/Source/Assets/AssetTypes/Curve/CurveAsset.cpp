@@ -304,7 +304,7 @@ namespace Lumina
 
     void SKeyedCurve::SortKeys()
     {
-        Algo::StableSort(Keys.begin(), Keys.end(), [](const SCurveKey& A, const SCurveKey& B)
+        Algo::StableSort(Keys, [](const SCurveKey& A, const SCurveKey& B)
         {
             return A.Time < B.Time;
         });

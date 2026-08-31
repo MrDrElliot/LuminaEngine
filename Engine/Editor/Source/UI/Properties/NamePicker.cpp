@@ -40,15 +40,9 @@ namespace Lumina::NamePicker
         // "None" occupies row 0, so every choice sits one slot further along.
         constexpr int32 NoneOffset = 1;
 
-        int32 CurrentIndex = Args.Current.IsNone() ? 0 : INDEX_NONE;
-        for (int32 i = 0; i < (int32)Choices.size(); ++i)
-        {
-            if (Choices[i] == Args.Current)
-            {
-                CurrentIndex = i + NoneOffset;
-                break;
-            }
-        }
+        const int32 Found = Algo::IndexOf(Choices, Args.Current);
+        const int32 CurrentIndex = Found != INDEX_NONE ? Found + NoneOffset
+                                 : (Args.Current.IsNone() ? 0 : INDEX_NONE);
 
         // A name the provider no longer offers still shows, flagged, rather than reading as None.
         const bool bStale = CurrentIndex == INDEX_NONE;

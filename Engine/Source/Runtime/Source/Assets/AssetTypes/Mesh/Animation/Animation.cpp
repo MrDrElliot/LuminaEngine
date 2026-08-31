@@ -120,13 +120,13 @@ namespace Lumina
                 }
             }
 
-            Algo::Sort(Markers.begin(), Markers.end(), [](const FSyncTrack::FMarker& A, const FSyncTrack::FMarker& B)
+            Algo::Sort(Markers, [](const FSyncTrack::FMarker& A, const FSyncTrack::FMarker& B)
             {
                 return A.StartTime < B.StartTime;
             });
 
             // Two markers on the same frame would leave a zero-length span, which no conversion survives.
-            Markers.erase(Algo::Unique(Markers.begin(), Markers.end(), [](const FSyncTrack::FMarker& A, const FSyncTrack::FMarker& B)
+            Markers.erase(Algo::Unique(Markers, [](const FSyncTrack::FMarker& A, const FSyncTrack::FMarker& B)
             {
                 return Math::Abs(A.StartTime - B.StartTime) < 1e-4f;
             }), Markers.end());

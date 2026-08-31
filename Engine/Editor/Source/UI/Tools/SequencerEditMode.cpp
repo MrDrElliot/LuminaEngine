@@ -331,12 +331,10 @@ namespace Lumina
             EntityName = NameComponent->Name;
         }
 
-        for (int32 i = 0; i < (int32)Sequence->Bindings.size(); ++i)
+        const int32 Existing = Algo::IndexOf(Sequence->Bindings, EntityName, &SSequenceBinding::Name);
+        if (Existing != INDEX_NONE)
         {
-            if (Sequence->Bindings[i].Name == EntityName)
-            {
-                return i;
-            }
+            return Existing;
         }
 
         SSequenceBinding& Binding = Sequence->Bindings.emplace_back();
@@ -468,13 +466,12 @@ namespace Lumina
                 continue;
             }
 
-            for (SCurveKey& Key : Channel->Curve.Keys)
+            const auto KeyItr = Algo::FindIf(Channel->Curve.Keys,
+                [&](const SCurveKey& Key) { return Math::Abs(Key.Time - FromTime) <= MatchEpsilon; });
+
+            if (KeyItr != Channel->Curve.Keys.end())
             {
-                if (Math::Abs(Key.Time - FromTime) <= MatchEpsilon)
-                {
-                    Key.Time = ToTime;
-                    break;
-                }
+                KeyItr->Time = ToTime;
             }
 
             Channel->Curve.SortKeys();
@@ -504,13 +501,12 @@ namespace Lumina
                 continue;
             }
 
-            for (SCurveKey& Key : Channel->Curve.Keys)
+            const auto KeyItr = Algo::FindIf(Channel->Curve.Keys,
+                [&](const SCurveKey& Key) { return Math::Abs(Key.Time - AtTime) <= MatchEpsilon; });
+
+            if (KeyItr != Channel->Curve.Keys.end())
             {
-                if (Math::Abs(Key.Time - AtTime) <= MatchEpsilon)
-                {
-                    Key.InterpMode = Mode;
-                    break;
-                }
+                KeyItr->InterpMode = Mode;
             }
 
             // Tangents are zero on a linear key, and a zero-slope Hermite is not the arc the mode is chosen for.
@@ -527,15 +523,11 @@ namespace Lumina
 
         constexpr float MatchEpsilon = 0.002f;
 
-        for (const SCurveKey& Key : Track->Location.X.Resolve().Keys)
-        {
-            if (Math::Abs(Key.Time - AtTime) <= MatchEpsilon)
-            {
-                return Key.InterpMode;
-            }
-        }
+        const TVector<SCurveKey>& Keys = Track->Location.X.Resolve().Keys;
+        const auto KeyItr = Algo::FindIf(Keys,
+            [&](const SCurveKey& Key) { return Math::Abs(Key.Time - AtTime) <= MatchEpsilon; });
 
-        return ECurveInterpMode::Linear;
+        return KeyItr != Keys.end() ? KeyItr->InterpMode : ECurveInterpMode::Linear;
     }
 
     void FSequencerEditMode::DeleteTransformKeys(CSequenceTrack_Transform* Track, float AtTime)
@@ -1100,8 +1092,8 @@ namespace Lumina
             }
         }
 
-        Algo::Sort(OutTimes.begin(), OutTimes.end());
-        OutTimes.erase(Algo::Unique(OutTimes.begin(), OutTimes.end()), OutTimes.end());
+        Algo::Sort(OutTimes);
+        OutTimes.erase(Algo::Unique(OutTimes), OutTimes.end());
     }
 
     void FSequencerEditMode::StepToAdjacentKey(CWorld* World, int32 Direction)

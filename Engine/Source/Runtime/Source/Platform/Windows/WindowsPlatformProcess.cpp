@@ -319,7 +319,7 @@ namespace Lumina::Platform
         }
 
         FWString URLString(URL);
-        Algo::Replace(URLString.begin(), URLString.end(), '/', '\\');
+        Algo::Replace(URLString, '/', '\\');
         
         STARTUPINFOW si{};
         PROCESS_INFORMATION pi{};
@@ -813,7 +813,7 @@ namespace Lumina::Platform
                     FWString wPath = pszPath;
 
                     OutFile = TCHAR_TO_UTF8(wPath.c_str());
-                    Algo::Replace(OutFile.begin(), OutFile.end(), '\\', '/');
+                    Algo::Replace(OutFile, '\\', '/');
 
                     CoTaskMemFree(pszPath);
                     bResult = true;
@@ -904,7 +904,7 @@ namespace Lumina::Platform
                     if (SUCCEEDED(Item->GetDisplayName(SIGDN_FILESYSPATH, &Raw)))
                     {
                         FFixedString Path = TCHAR_TO_UTF8(FWString(Raw).c_str());
-                        Algo::Replace(Path.begin(), Path.end(), '\\', '/');
+                        Algo::Replace(Path, '\\', '/');
                         OutFiles.push_back(Path);
                         CoTaskMemFree(Raw);
                     }
@@ -931,7 +931,7 @@ namespace Lumina::Platform
 
         // Normalize to backslashes and quote, explorer is picky about both.
         FWString Normalized(Path);
-        Algo::Replace(Normalized.begin(), Normalized.end(), L'/', L'\\');
+        Algo::Replace(Normalized, L'/', L'\\');
 
         FWString Args = L"/select,\"";
         Args += Normalized;
@@ -948,7 +948,7 @@ namespace Lumina::Platform
         }
 
         FWString Normalized(Directory);
-        Algo::Replace(Normalized.begin(), Normalized.end(), L'/', L'\\');
+        Algo::Replace(Normalized, L'/', L'\\');
 
         ShellExecuteW(nullptr, L"open", Normalized.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     }
@@ -961,7 +961,7 @@ namespace Lumina::Platform
         }
 
         FWString Normalized(Directory);
-        Algo::Replace(Normalized.begin(), Normalized.end(), L'/', L'\\');
+        Algo::Replace(Normalized, L'/', L'\\');
 
         // The -d flag sets the starting directory and the new tab gets the user's default profile.
         const HINSTANCE WtResult = ShellExecuteW(

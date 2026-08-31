@@ -1304,7 +1304,7 @@ namespace Lumina
                 SortedPaths.push_back(FBrowseEntry{ FileInfo, Move(TypeLabel) });
             });
             
-            Algo::Sort(SortedPaths.begin(), SortedPaths.end(), [&](const FBrowseEntry& LHS, const FBrowseEntry& RHS)
+            Algo::Sort(SortedPaths, [&](const FBrowseEntry& LHS, const FBrowseEntry& RHS)
             {
                 if (LHS.Info.IsDirectory() != RHS.Info.IsDirectory())
                 {
@@ -1975,7 +1975,7 @@ namespace Lumina
             {
                 Names.push_back(Name);
             }
-            Algo::Sort(Names.begin(), Names.end(), [](const FName& A, const FName& B)
+            Algo::Sort(Names, [](const FName& A, const FName& B)
             {
                 return strcmp(A.c_str(), B.c_str()) < 0;
             });
@@ -3705,7 +3705,7 @@ namespace Lumina
                 }
             }
 
-            Algo::Sort(Categories.begin(), Categories.end());
+            Algo::Sort(Categories);
 
             for (const FString& Category : Categories)
             {
@@ -3722,7 +3722,7 @@ namespace Lumina
                         InCategory.push_back(Factory);
                     }
                 }
-                Algo::Sort(InCategory.begin(), InCategory.end(), [](CFactory* A, CFactory* B)
+                Algo::Sort(InCategory, [](CFactory* A, CFactory* B)
                 {
                     return A->GetAssetName() < B->GetAssetName();
                 });

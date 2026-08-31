@@ -91,9 +91,9 @@ FVisTriangle ResolveVisTriangle(uint VisRaw, uint DrawListCount)
     // The header's own count bounds the array being indexed; the instance's bounds the LOD range. Taking
     // both means a stale instance -- one naming a mesh that has died, and so resolving to the null header
     // -- clamps to slot 0 of a header that describes no geometry instead of walking a live mesh's array.
-    const uint MeshletCount = max(min(Ref.Inst.MeshletTotalCount, Ref.Inst.MeshletHeader.MeshletCount), 1u);
+    const uint MeshletCount = max(min(Ref.Inst.MeshletTotalCount, Ref.Header.MeshletCount), 1u);
     Ref.GlobalMeshletIdx  = min(Draw.MeshletIndex, MeshletCount - 1u);
-    Ref.M                 = Ref.Inst.MeshletHeader.Meshlets[Ref.GlobalMeshletIdx];
+    Ref.M                 = loadAligned<16>(Ref.Header.Meshlets + Ref.GlobalMeshletIdx);
 
     Out.Ref      = Ref;
     Out.TriIndex = min(TriId, max(Ref.M.TriangleCount, 1u) - 1u);
@@ -250,7 +250,7 @@ float2 VisPixelNdc(uint2 Texel, float2 ScreenSize)
 // A material driving WPO displaces a triangle this does not, so barycentrics differ slightly.
 FVisSurface ReconstructVisSurfaceNoWPO(FVisTriangle T, uint2 Texel, float2 ScreenSize)
 {
-    const float4x4 ModelMatrix    = T.Ref.Inst.ModelMatrix;
+    const float4x4 ModelMatrix    = T.Ref.ModelMatrix;
     const float3x3 NormalMatrixWS = CalculateNormalMatrix(ModelMatrix);
 
     FMeshletWorldVertex W[3];
@@ -269,7 +269,7 @@ FVisSurface ReconstructVisSurfaceNoWPO(FVisTriangle T, uint2 Texel, float2 Scree
 // rasterizer, so flip the shading normal toward the camera. The tangent basis re-orthogonalizes.
 float3 OrientVisNormal(FMeshletRef Ref, float3 NormalWS, float3 WorldPosition)
 {
-    if (!Ref.Inst.HasFlag(EInstanceFlags::TwoSided))
+    if (!Ref.InstHasFlag(EInstanceFlags::TwoSided))
     {
         return NormalWS;
     }

@@ -117,15 +117,8 @@ namespace Lumina
             { "Cone",     EDebugMesh::Cone     },
         };
 
-        const char* PreviewString = "Sphere";
-        for (const FPreviewMeshEntry& Entry : Entries)
-        {
-            if (Entry.Value == DebugMesh)
-            {
-                PreviewString = Entry.Label;
-                break;
-            }
-        }
+        const auto Entry = Algo::Find(Entries, DebugMesh, &FPreviewMeshEntry::Value);
+        const char* PreviewString = Entry != std::end(Entries) ? Entry->Label : "Sphere";
 
         ImGui::PushItemWidth(95.0f);
         if (ImGui::BeginCombo("##PreviewMesh", PreviewString, ImGuiComboFlags_HeightLarge))

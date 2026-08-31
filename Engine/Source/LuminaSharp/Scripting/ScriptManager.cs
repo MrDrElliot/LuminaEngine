@@ -65,10 +65,10 @@ internal sealed class ScriptManager
         // Build every unit's PE image FIRST; never tear down working scripts for a broken edit. Compilation
         // and DLL reads are independent of any ALC, so a failure here leaves the live generation untouched.
         var Images = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
-        var Pending = new List<(ScriptAssemblyUnit Unit, byte[] Pe)>();
+        var Pending = new List<(ScriptAssemblyUnit Unit, FScriptImage Image)>();
         foreach (ScriptAssemblyUnit Unit in Ordered)
         {
-            byte[]? Pe;
+            FScriptImage Image;
             if (Unit.Sources.Count > 0)
             {
                 var Refs = new List<MetadataReference>();
@@ -80,25 +80,26 @@ internal sealed class ScriptManager
                     }
                 }
 
-                Pe = ScriptCompiler.Compile(Unit.Name, Unit.Sources, Refs);
-                if (Pe == null)
+                FScriptImage? Compiled = ScriptCompiler.Compile(Unit.Name, Unit.Sources, Refs);
+                if (Compiled == null)
                 {
                     Native.Log(ELogLevel.Error,
                         $"Script reload aborted: compilation of '{Unit.Name}' failed; keeping current scripts.");
                     return false;
                 }
+                Image = Compiled.Value;
 
                 // Emit this unit's DLL to its own <root>/Binaries/DotNet so it's a real on-disk artifact
                 // (alongside the plugin's C++ Binaries). Best-effort: a locked/unwritable target never fails
                 // the reload, the live generation loads from these in-memory bytes regardless.
-                EmitAssembly(Unit.Name, Unit.DllPath, Pe);
+                EmitAssembly(Unit.Name, Unit.DllPath, Image);
             }
             else if (!string.IsNullOrEmpty(Unit.DllPath) && File.Exists(Unit.DllPath))
             {
                 // No sources: load the unit's prebuilt managed DLL as-is (a code-only plugin).
                 try
                 {
-                    Pe = File.ReadAllBytes(Unit.DllPath!);
+                    Image = new FScriptImage(File.ReadAllBytes(Unit.DllPath!), ReadSymbols(Unit.DllPath!));
                 }
                 catch (Exception Exception)
                 {
@@ -112,8 +113,8 @@ internal sealed class ScriptManager
                 continue; // empty unit (no sources, no prebuilt DLL)
             }
 
-            Images[Unit.Name] = Pe;
-            Pending.Add((Unit, Pe));
+            Images[Unit.Name] = Image.Pe;
+            Pending.Add((Unit, Image));
         }
 
         UnloadCurrent();
@@ -135,9 +136,9 @@ internal sealed class ScriptManager
         // sibling reference resolves to the in-ALC assembly (see ScriptLoadContext.Load). LoadFromStream
         // (not a path) keeps the file unlocked so the collectible context unloads cleanly on reload.
         var AllTypes = new List<Type>();
-        foreach ((ScriptAssemblyUnit Unit, byte[] Pe) in Pending)
+        foreach ((ScriptAssemblyUnit Unit, FScriptImage Image) in Pending)
         {
-            Assembly Loaded = NewContext.LoadScriptAssembly(Unit.Name, Pe);
+            Assembly Loaded = NewContext.LoadScriptAssembly(Unit.Name, Image);
             // Run module initializers now (deterministically) so a plugin's [ModuleInitializer] export
             // registration into ManagedExportRegistry happens at load, not lazily on first type use.
             RuntimeHelpers.RunModuleConstructor(Loaded.ManifestModule.ModuleHandle);
@@ -206,7 +207,7 @@ internal sealed class ScriptManager
     // Writes a unit's compiled image to its on-disk DLL (creating <root>/Binaries/DotNet as needed). Purely an
     // artifact: the generation always loads from the in-memory bytes, so a failure here (locked file, read-only
     // path) is logged and ignored rather than aborting the reload.
-    private static void EmitAssembly(string UnitName, string? Path, byte[] Pe)
+    private static void EmitAssembly(string UnitName, string? Path, FScriptImage Image)
     {
         if (string.IsNullOrEmpty(Path))
         {
@@ -220,11 +221,34 @@ internal sealed class ScriptManager
             {
                 System.IO.Directory.CreateDirectory(Directory);
             }
-            File.WriteAllBytes(Path!, Pe);
+            File.WriteAllBytes(Path!, Image.Pe);
+            if (Image.Pdb != null)
+            {
+                File.WriteAllBytes(SymbolPath(Path!), Image.Pdb);
+            }
         }
         catch (Exception Exception)
         {
             Native.Log(ELogLevel.Warn, $"Could not write '{UnitName}' assembly to '{Path}': {Exception.Message}");
+        }
+    }
+
+    private static string SymbolPath(string DllPath)
+    {
+        return System.IO.Path.ChangeExtension(DllPath, ".pdb");
+    }
+
+    // A prebuilt unit keeps its symbols only if whoever built it shipped them, so this stays optional.
+    private static byte[]? ReadSymbols(string DllPath)
+    {
+        try
+        {
+            string Path = SymbolPath(DllPath);
+            return File.Exists(Path) ? File.ReadAllBytes(Path) : null;
+        }
+        catch (Exception)
+        {
+            return null;
         }
     }
 

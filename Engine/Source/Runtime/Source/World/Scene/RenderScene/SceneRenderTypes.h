@@ -756,9 +756,12 @@ namespace Lumina
         FVector4 MaxPoint;
         uint32 LightIndices[LIGHTS_PER_CLUSTER];
         uint32 Count;
+        // Explicit because alignas(16) adds them anyway and the Slang mirror has to spell them out to match.
+        uint32 _Pad[3];
     };
     
     VERIFY_SSBO_ALIGNMENT(FCluster);
+    static_assert(sizeof(FCluster) == 448, "FCluster layout must match FCluster in Common.slang");
     
     struct FLightClusterPC
     {
@@ -809,6 +812,9 @@ namespace Lumina
         uint32 SubDrawCount[kMeshletSliceCount];
     };
     static_assert(sizeof(FRenderBucketGPU) == 64, "FRenderBucketGPU layout must match FRenderBucket in Common.slang");
+    // Shaders reach this with loadAligned<16>, which needs every element 16-aligned.
+    static_assert(sizeof(FRenderBucketGPU) % 16 == 0, "FRenderBucketGPU stride must stay 16-byte aligned for loadAligned<16>");
+
     static_assert(offsetof(FRenderBucketGPU, SubDrawCount) % 4 == 0,
                   "SubDrawCount is used as a countBufferOffset, which must be 4-byte aligned");
 
@@ -830,6 +836,9 @@ namespace Lumina
         float  Tz;
     };
     static_assert(sizeof(FPackedBoneTransform) == 32, "FPackedBoneTransform must match shader");
+    // Shaders reach this with loadAligned<16>, which needs every element 16-aligned.
+    static_assert(sizeof(FPackedBoneTransform) % 16 == 0, "FPackedBoneTransform stride must stay 16-byte aligned for loadAligned<16>");
+
 
     using FBoneTransform = FPackedBoneTransform;
 
@@ -916,6 +925,9 @@ namespace Lumina
     };
 
     static_assert(sizeof(FGPUInstance) == 128, "FGPUInstance layout must match shader");
+    // Shaders reach this with loadAligned<16>, which needs every element 16-aligned.
+    static_assert(sizeof(FGPUInstance) % 16 == 0, "FGPUInstance stride must stay 16-byte aligned for loadAligned<16>");
+
     // No 8-byte member left now that the header is a slot rather than a pointer, so scalar layout puts
     // this at 4. The 128-byte stride is unchanged, which is what the shader mirror actually depends on.
     static_assert(alignof(FGPUInstance) == 4, "Scalar layout: FGPUInstance is all 4-byte members");
@@ -933,6 +945,9 @@ namespace Lumina
     };
     // 32 B lands every element on a sector boundary, so a warp's skinned writes fill whole sectors.
     static_assert(sizeof(FPreSkinnedVertex) == 32, "FPreSkinnedVertex must match shader");
+    // Shaders reach this with loadAligned<16>, which needs every element 16-aligned.
+    static_assert(sizeof(FPreSkinnedVertex) % 16 == 0, "FPreSkinnedVertex stride must stay 16-byte aligned for loadAligned<16>");
+
 
     constexpr uint32 kNoPreSkinBase = 0xFFFFFFFFu;
     // No per-frame skinned meshlet bounds, so the cull falls back to bind-pose spheres and distrusts them.

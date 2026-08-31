@@ -28,8 +28,8 @@ void ComputeMain(uint3 WorkGroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadI
     uint  NumClusters   = Grid.x * Grid.y * Grid.z;
     bool  bValidCluster = Index < NumClusters;
 
-    float3 ClusterMin = bValidCluster ? Clusters()[Index].MinPoint.xyz : float3(0.0);
-    float3 ClusterMax = bValidCluster ? Clusters()[Index].MaxPoint.xyz : float3(0.0);
+    float3 ClusterMin = bValidCluster ? loadAligned<16>(&Clusters()[Index].MinPoint).xyz : float3(0.0);
+    float3 ClusterMax = bValidCluster ? loadAligned<16>(&Clusters()[Index].MaxPoint).xyz : float3(0.0);
 
     uint LightCount = LightData().NumLights;
 

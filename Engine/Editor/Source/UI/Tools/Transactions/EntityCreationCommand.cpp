@@ -36,7 +36,7 @@ namespace Lumina
         Registry.ForEachEntityExcept<FEditorComponent>([&](ECS::FEntity E) { Out.push_back(E); });
 
         // Sorted so Finalize's diff is a binary search, and handles only with no component data touched.
-        Algo::Sort(Out.begin(), Out.end());
+        Algo::Sort(Out);
     }
 
     void FEntityCreationCommand::Finalize()
@@ -58,7 +58,7 @@ namespace Lumina
 
         for (ECS::FEntity E : LiveAfter)
         {
-            if (!Algo::BinarySearch(LiveBefore.begin(), LiveBefore.end(), E))
+            if (!Algo::BinarySearch(LiveBefore, E))
             {
                 Created.push_back(E);
             }
@@ -94,7 +94,7 @@ namespace Lumina
             if (const FRelationshipComponent* Rel = Registry.TryGet<FRelationshipComponent>(E))
             {
                 if (Rel->Parent != ECS::NullEntity
-                    && !Algo::BinarySearch(Created.begin(), Created.end(), Rel->Parent))
+                    && !Algo::BinarySearch(Created, Rel->Parent))
                 {
                     ExternalParents.push_back({ E, Rel->Parent });
                 }

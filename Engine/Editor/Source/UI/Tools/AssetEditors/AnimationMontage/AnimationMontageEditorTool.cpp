@@ -190,7 +190,7 @@ namespace Lumina
         }
 
         SAnimMontageSlotTrack& Track = Montage->SlotTracks[TrackIndex];
-        Algo::StableSort(Track.Segments.begin(), Track.Segments.end(),
+        Algo::StableSort(Track.Segments,
             [](const SAnimMontageSegment& A, const SAnimMontageSegment& B) { return A.StartTime < B.StartTime; });
 
         float Cursor = 0.0f;
@@ -845,7 +845,7 @@ namespace Lumina
             return;
         }
 
-        Algo::StableSort(Montage->Sections.begin(), Montage->Sections.end(),
+        Algo::StableSort(Montage->Sections,
             [](const SAnimMontageSection& A, const SAnimMontageSection& B) { return A.StartTime < B.StartTime; });
     }
 

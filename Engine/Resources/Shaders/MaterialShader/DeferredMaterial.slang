@@ -39,7 +39,7 @@ float3 PrevObjectPosition(FMeshletRef Ref, uint LocalVertIdx, FVertexData Curren
     bool bSkinned;
     if      (SPEC_SKINNED == 0u) { bSkinned = false; }
     else if (SPEC_SKINNED == 1u) { bSkinned = true;  }
-    else                         { bSkinned = Ref.Inst.HasFlag(EInstanceFlags::Skinned); }
+    else                         { bSkinned = Ref.InstHasFlag(EInstanceFlags::Skinned); }
 
     // A shorter snapshot cannot be indexed safely, because ResolvePaletteBone clamps against the live count.
     const bool bPrevPoseUsable = (PrevBones() != nullptr)
@@ -47,7 +47,7 @@ float3 PrevObjectPosition(FMeshletRef Ref, uint LocalVertIdx, FVertexData Curren
 
     if (bSkinned && bPrevPoseUsable)
     {
-        const FPreSkinnedVertex Prev = SkinVertexWith(PrevBones(), Ref.Inst.MeshletHeader, Ref.M,
+        const FPreSkinnedVertex Prev = SkinVertexWith(PrevBones(), Ref.Header, Ref.M,
                                                       Ref.GlobalMeshletIdx, LocalVertIdx, Ref.Inst.BoneOffset);
         return float3(Prev.Px, Prev.Py, Prev.Pz);
     }
@@ -91,7 +91,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
     {
         // The three corners share the instance's ModelMatrix, so load it ONCE. Reaching it through Ref.Inst
         // per corner is a fresh dependent PhysicalStorageBuffer fetch that SPIR-V LICM will not merge.
-        const float4x4 ModelMatrix    = T.Ref.Inst.ModelMatrix;
+        const float4x4 ModelMatrix    = T.Ref.ModelMatrix;
         float3x3       NormalMatrixWS = CalculateNormalMatrix(ModelMatrix);
 
         // Re-apply WorldPositionOffset per corner so the rebuilt triangle matches what the geometry pass
@@ -175,7 +175,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
         Input.InstanceIndex = T.Ref.InstanceID;
         Input.EntityID      = T.Ref.Inst.EntityID;
         Input.MaterialIndex = T.Ref.Inst.MaterialIndex;
-        Input.InstanceFlags = (uint)T.Ref.Inst.Flags;
+        Input.InstanceFlags = (uint)T.Ref.InstFlags;
         Input.MeshletIndex  = T.Ref.GlobalMeshletIdx;
         // What the rasterizer would have handed a pixel shader here: pixel center, NDC z, 1/w. Material
         // nodes read .xy for screen position/UV and .z for pixel depth.

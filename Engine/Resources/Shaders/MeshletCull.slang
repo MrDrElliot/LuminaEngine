@@ -107,7 +107,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
     {
         ArgIdx = FindBucketForWork(WorkIndex, NumBuckets);
 
-        const FRenderBucket Bucket = Pass().Buckets[ArgIdx];
+        const FRenderBucket Bucket = loadAligned<16>(Pass().Buckets + ArgIdx);
         const uint BlockSlot = WorkIndex - Bucket.CullWorkBase;
 
         // Bounded by what BuildMeshletBlocks APPENDED, not what CullInstances reserved: blocks above the
@@ -118,7 +118,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
     }
 
     // Workgroup-uniform: ArgIdx is, and the view is a pure function of it.
-    const FCullView View  = CullViews()[ArgIdx / NumDraws];
+    const FCullView View  = loadAligned<16>(CullViews() + (ArgIdx / NumDraws));
     const bool bTwoPhase  = View.HasFlag(CULL_VIEW_FLAG_MESHLET_HIZ);
 
     // A single-phase view belongs entirely to the early dispatch. Skipping it in the late one is what
@@ -152,10 +152,11 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
     // Late only, because the early phase is a replay and an instance dropped there is dropped for good.
     bool bInstanceOccluded = false;
 
-    if (bInstanceOK && bLate && bTwoPhase && !Inst.HasFlag(EInstanceFlags::NoCull))
+    if (bInstanceOK && bLate && bTwoPhase && !FGPUInstance::HasFlag(Inst, EInstanceFlags::NoCull))
     {
         // The one occlusion test a skinned instance can take, since its sphere is re-fed every frame.
-        const FCullSphereProjection Proj = ProjectCullSphere(Inst.BoundsCenter, Inst.BoundsRadius);
+        const float4 Sphere = loadAligned<16>(&Inst.SphereBounds);
+        const FCullSphereProjection Proj = ProjectCullSphere(Sphere.xyz, Sphere.w);
 
         // Uniform across the group, and it leaves every lane invisible so the flag clears for next frame.
         bInstanceOccluded = Proj.bValid && IsHiZOccluded(Proj);
@@ -179,7 +180,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
 
         // The early phase is a replay and must not Hi-Z cull: a meshlet dropped there is dropped for
         // good, because the late phase does not emit for instances the early phase drew.
-        const bool bVisible = TestMeshletAgainstView(Ctx, Inst, View, MeshletIdx, Cache, /*bApplyHiZ*/ bLate);
+        const bool bVisible = TestMeshletAgainstView(Ctx, View, MeshletIdx, Cache, /*bApplyHiZ*/ bLate);
 
         bKeep = bKeep && bVisible;
         bLaneVisible = bVisible;

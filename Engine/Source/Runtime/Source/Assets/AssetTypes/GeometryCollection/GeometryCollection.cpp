@@ -69,7 +69,7 @@ namespace Lumina
             const FVector3 U = Math::Normalize(Math::Cross(N, Ref));
             const FVector3 V = Math::Cross(N, U);
 
-            Algo::Sort(Unique.begin(), Unique.end(), [&](const FVector3& A, const FVector3& B)
+            Algo::Sort(Unique, [&](const FVector3& A, const FVector3& B)
             {
                 const float AngleA = std::atan2(Math::Dot(A - Center, V), Math::Dot(A - Center, U));
                 const float AngleB = std::atan2(Math::Dot(B - Center, V), Math::Dot(B - Center, U));
@@ -188,7 +188,7 @@ namespace Lumina
                 FVector3 Normal = Newell;
                 if (Math::Dot(Newell, FaceCenter - Centroid) < 0.0f)
                 {
-                    Algo::Reverse(Face.begin(), Face.end());
+                    Algo::Reverse(Face);
                     Normal = -Newell;
                 }
 

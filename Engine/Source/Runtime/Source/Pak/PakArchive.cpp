@@ -245,7 +245,7 @@ namespace Lumina
         for (const auto& [Key, Entry] : Entries)
         {
             FString Alias = TopLevelOf(FStringView(Key.data(), Key.size()));
-            if (!Alias.empty() && Algo::Find(Out.begin(), Out.end(), Alias) == Out.end())
+            if (!Alias.empty() && !Algo::Contains(Out, Alias))
             {
                 Out.push_back(Move(Alias));
             }

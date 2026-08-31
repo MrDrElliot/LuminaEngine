@@ -1264,7 +1264,7 @@ namespace Lumina
 
             PakPaths.emplace_back(Entry.FullPath.data(), Entry.FullPath.size());
         });
-        Algo::Sort(PakPaths.begin(), PakPaths.end());
+        Algo::Sort(PakPaths);
 
         if (PakPaths.empty())
         {

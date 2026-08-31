@@ -1002,7 +1002,7 @@ namespace Lumina
 
     void FEditorUI::DestroyTool(const FUpdateContext& UpdateContext, FEditorTool* Tool)
     {
-        auto Itr = Algo::Find(EditorTools.begin(), EditorTools.end(), Tool);
+        auto Itr = Algo::Find(EditorTools, Tool);
         ASSERT(Itr != EditorTools.end());
 
         EditorTools.erase(Itr);
@@ -1010,22 +1010,16 @@ namespace Lumina
         // Closing a tab is as much a session change as opening one, and is written through the same way.
         ForgetSessionTab(Tool);
 
-        for (auto MapItr = ActiveAssetTools.begin(); MapItr != ActiveAssetTools.end(); ++MapItr)
+        const auto AssetItr = Algo::FindIf(ActiveAssetTools, [Tool](const auto& Pair) { return Pair.second == Tool; });
+        if (AssetItr != ActiveAssetTools.end())
         {
-            if (MapItr->second == Tool)
-            {
-                ActiveAssetTools.erase(MapItr);
-                break;
-            }
+            ActiveAssetTools.erase(AssetItr);
         }
 
-        for (auto MapItr = ActiveFileTools.begin(); MapItr != ActiveFileTools.end(); ++MapItr)
+        const auto FileItr = Algo::FindIf(ActiveFileTools, [Tool](const auto& Pair) { return Pair.second == Tool; });
+        if (FileItr != ActiveFileTools.end())
         {
-            if (MapItr->second == Tool)
-            {
-                ActiveFileTools.erase(MapItr);
-                break;
-            }
+            ActiveFileTools.erase(FileItr);
         }
 
         if (Tool == GamePreviewTool)
@@ -1035,13 +1029,10 @@ namespace Lumina
         }
 
         // Keep extra-player preview bookkeeping consistent when a preview tab is closed directly.
-        for (auto PreviewItr = ExtraGamePreviews.begin(); PreviewItr != ExtraGamePreviews.end(); ++PreviewItr)
+        const auto PreviewItr = Algo::FindIf(ExtraGamePreviews, [Tool](const auto& Preview) { return Preview.Tool == Tool; });
+        if (PreviewItr != ExtraGamePreviews.end())
         {
-            if (PreviewItr->Tool == Tool)
-            {
-                ExtraGamePreviews.erase(PreviewItr);
-                break;
-            }
+            ExtraGamePreviews.erase(PreviewItr);
         }
 
         // Nothing else drops this, so a closed tool would leave Ctrl+S calling OnSave on freed memory.
@@ -1181,7 +1172,7 @@ namespace Lumina
         {
             FString NativeFile = File;
         #if defined(LE_PLATFORM_WINDOWS)
-            Algo::Replace(NativeFile.begin(), NativeFile.end(), '/', '\\');
+            Algo::Replace(NativeFile, '/', '\\');
         #endif
 
             // /Edit reuses a running Visual Studio instance instead of spawning a new one.
@@ -1240,7 +1231,7 @@ namespace Lumina
         }
 
         // Already listed means the restore is replaying, and saving would rewrite the file mid-read.
-        if (Algo::Find(Settings->OpenTabs.begin(), Settings->OpenTabs.end(), Key) != Settings->OpenTabs.end())
+        if (Algo::Contains(Settings->OpenTabs, Key))
         {
             return;
         }
@@ -1272,7 +1263,7 @@ namespace Lumina
             return;
         }
 
-        auto TabItr = Algo::Find(Settings->OpenTabs.begin(), Settings->OpenTabs.end(), Key);
+        auto TabItr = Algo::Find(Settings->OpenTabs, Key);
         if (TabItr == Settings->OpenTabs.end())
         {
             return;
@@ -2649,7 +2640,7 @@ namespace Lumina
             return;
         }
 
-        Algo::Sort(Entries.begin(), Entries.end(), [](const FEntry& A, const FEntry& B)
+        Algo::Sort(Entries, [](const FEntry& A, const FEntry& B)
         {
             return strcmp(A.Name.c_str(), B.Name.c_str()) < 0;
         });

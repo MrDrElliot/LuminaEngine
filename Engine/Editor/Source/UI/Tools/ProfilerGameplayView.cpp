@@ -267,14 +267,10 @@ namespace Lumina
         {
             return nullptr;
         }
-        for (const FGameplayProfileEntry& Entry : GameplayFrame.Entries)
-        {
-            if (strcmp(Entry.Name.c_str(), Name) == 0)
-            {
-                return &Entry;
-            }
-        }
-        return nullptr;
+        const auto Entry = Algo::FindIf(GameplayFrame.Entries,
+            [Name](const FGameplayProfileEntry& Candidate) { return strcmp(Candidate.Name.c_str(), Name) == 0; });
+
+        return Entry != GameplayFrame.Entries.end() ? &*Entry : nullptr;
     }
 
     void FProfilerEditorTool::DrawGameplay()
@@ -813,7 +809,7 @@ namespace Lumina
             }
 
             auto Avg = [](const FGameplayProfileEntry* E) { return E->Calls ? E->InclusiveMs / E->Calls : 0.0; };
-            Algo::Sort(Rows.begin(), Rows.end(), [&](const FGameplayProfileEntry* A, const FGameplayProfileEntry* B)
+            Algo::Sort(Rows, [&](const FGameplayProfileEntry* A, const FGameplayProfileEntry* B)
             {
                 double Cmp;
                 switch (SortCol)

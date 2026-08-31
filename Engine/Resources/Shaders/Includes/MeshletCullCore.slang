@@ -8,6 +8,8 @@
 struct FMeshletCullContext
 {
     uint     DrawID;
+    // Carried so the header is reached without a second whole-instance load.
+    uint     HeaderSlot;
 
     // Unpacked once rather than re-tested per view.
     bool     bSkinned;
@@ -27,21 +29,22 @@ struct FMeshletCullContext
     float    MaxShadowDist;
 };
 
-// Every FGPUInstance by POINTER, never by value. It no longer carries a FMeshletHeader* -- a header is a
-// slot now -- but MakeMeshletCullContext is still reached through one, and the rule is worth keeping:
-// a by-value struct holding a PhysicalStorageBuffer pointer makes Slang emit a Function OpVariable
-// without the Aliased/Restrict SPIR-V requires. DEVICE_LOST.
+// Read once into a local because each property or method call through the pointer loads all 128 bytes.
+// FGPUInstance holds no pointer of its own, so the by-value local cannot trip the rule in SceneGlobals.slang.
 FMeshletCullContext MakeMeshletCullContext(FGPUInstance* Inst)
 {
+    const FGPUInstance I = loadAligned<16>(Inst);
+
     FMeshletCullContext Ctx;
-    Ctx.DrawID = Inst.DrawID;
+    Ctx.DrawID     = I.DrawID;
+    Ctx.HeaderSlot = I.MeshletHeaderSlot;
 
-    Ctx.bSkinned    = Inst.HasFlag(EInstanceFlags::Skinned);
-    Ctx.bNoCull     = Inst.HasFlag(EInstanceFlags::NoCull);
-    Ctx.bCaster     = Inst.HasFlag(EInstanceFlags::CastShadow);
-    Ctx.bTwoSided   = Inst.HasFlag(EInstanceFlags::TwoSided);
+    Ctx.bSkinned    = I.HasFlag(EInstanceFlags::Skinned);
+    Ctx.bNoCull     = I.HasFlag(EInstanceFlags::NoCull);
+    Ctx.bCaster     = I.HasFlag(EInstanceFlags::CastShadow);
+    Ctx.bTwoSided   = I.HasFlag(EInstanceFlags::TwoSided);
 
-    Ctx.Model = Inst.ModelMatrix;
+    Ctx.Model = I.ModelMatrix;
 
     const float SqScaleX = dot(Ctx.Model[0].xyz, Ctx.Model[0].xyz);
     const float SqScaleY = dot(Ctx.Model[1].xyz, Ctx.Model[1].xyz);
@@ -52,13 +55,13 @@ FMeshletCullContext MakeMeshletCullContext(FGPUInstance* Inst)
     if (Ctx.bSkinned && SkinnedFrameData() != nullptr && SkinnedMeshletBounds() != nullptr)
     {
         // CullInstances already rejected any skinned slot whose frame tag was stale, so this is current.
-        Ctx.SkinnedBoundsBase = SkinnedFrameData()[Inst.RetainedSlot].SkinnedBoundsBase;
+        Ctx.SkinnedBoundsBase = SkinnedFrameData()[I.RetainedSlot].SkinnedBoundsBase;
     }
 
     Ctx.bPosedBounds = !Ctx.bSkinned || (Ctx.SkinnedBoundsBase != kNoSkinnedBounds);
 
-    Ctx.InstCenter    = Inst.BoundsCenter;
-    Ctx.InstRadius    = Inst.BoundsRadius;
+    Ctx.InstCenter    = I.BoundsCenter;
+    Ctx.InstRadius    = I.BoundsRadius;
     Ctx.DistToCamera  = length(Ctx.InstCenter - GetCullCameraPosition());
     Ctx.MaxShadowDist = Scene().CullData.ShadowMaxDistance;
 
@@ -92,21 +95,21 @@ FMeshletBoundsCache MakeMeshletBoundsCache()
 }
 
 // The posed sphere when this frame wrote one, and the bind-pose sphere otherwise.
-FMeshletSphere LoadMeshletSphere(FGPUInstance* Inst, uint SkinnedBoundsBase, uint MeshletIdx)
+FMeshletSphere LoadMeshletSphere(FMeshletHeader* Header, uint SkinnedBoundsBase, uint MeshletIdx)
 {
     if (SkinnedBoundsBase != kNoSkinnedBounds)
     {
-        return SkinnedMeshletBounds()[SkinnedBoundsBase + MeshletIdx];
+        return loadAligned<16>(SkinnedMeshletBounds() + (SkinnedBoundsBase + MeshletIdx));
     }
 
-    return Inst.MeshletHeader.Spheres[MeshletIdx];
+    return loadAligned<16>(Header.Spheres + MeshletIdx);
 }
 
-void RefreshMeshletBounds(FGPUInstance* Inst, FMeshletCullContext Ctx, uint MeshletIdx, inout FMeshletBoundsCache C)
+void RefreshMeshletBounds(FMeshletHeader* Header, FMeshletCullContext Ctx, uint MeshletIdx, inout FMeshletBoundsCache C)
 {
     if (MeshletIdx != C.MeshletIdx)
     {
-        const FMeshletSphere S = LoadMeshletSphere(Inst, Ctx.SkinnedBoundsBase, MeshletIdx);
+        const FMeshletSphere S = LoadMeshletSphere(Header, Ctx.SkinnedBoundsBase, MeshletIdx);
 
         C.MeshletIdx  = MeshletIdx;
         C.WorldCenter = mul(Ctx.Model, float4(S.Center, 1.0)).xyz;
@@ -128,7 +131,7 @@ void ApplyMeshletCone(FMeshletCullContext Ctx, FMeshletCone Packed, inout FMeshl
 
 // Split from the sphere because every meshlet of every view pays that load, while this one needs a
 // non-skinned, non-two-sided, cone-bearing meshlet in a cone-enabled view.
-void EnsureMeshletCone(FGPUInstance* Inst, FMeshletCullContext Ctx, inout FMeshletBoundsCache C)
+void EnsureMeshletCone(FMeshletHeader* Header, FMeshletCullContext Ctx, inout FMeshletBoundsCache C)
 {
     if (C.bConeReady)
     {
@@ -151,21 +154,23 @@ void EnsureMeshletCone(FGPUInstance* Inst, FMeshletCullContext Ctx, inout FMeshl
     }
 
     // Same reasoning as the sphere gate, a header without cones is a meshlet without one.
-    if (Inst.MeshletHeader.Cones == nullptr)
+    if (Header.Cones == nullptr)
     {
         return;
     }
 
-    ApplyMeshletCone(Ctx, Inst.MeshletHeader.Cones[C.MeshletIdx], C);
+    ApplyMeshletCone(Ctx, Header.Cones[C.MeshletIdx], C);
 }
 
 // A pure function of (meshlet, view) apart from bApplyHiZ, which is the caller's phase decision: the
 // early phase replays last frame's visible set and must NOT Hi-Z cull it (a meshlet dropped there is
 // dropped for good, because the late phase skips instances the early phase drew), while the late phase
 // tests against the pyramid just rebuilt from the early phase's depth.
-bool TestMeshletAgainstView(FMeshletCullContext Ctx, FGPUInstance* Inst, FCullView View,
+bool TestMeshletAgainstView(FMeshletCullContext Ctx, FCullView View,
                             uint MeshletIdx, inout FMeshletBoundsCache Cache, bool bApplyHiZ)
 {
+    FMeshletHeader* Header = MeshletHeaders() + Ctx.HeaderSlot;
+
     bool bKeep = !(View.HasFlag(CULL_VIEW_FLAG_CAST_SHADOW_ONLY) && !Ctx.bCaster)
               && !(View.HasFlag(CULL_VIEW_FLAG_DISTANCE) && (Ctx.DistToCamera - Ctx.InstRadius > Ctx.MaxShadowDist));
 
@@ -176,11 +181,11 @@ bool TestMeshletAgainstView(FMeshletCullContext Ctx, FGPUInstance* Inst, FCullVi
         // A mesh that has died leaves the instance naming the null header, whose count is 0, so this is
         // also what stops a stale instance from indexing geometry that is no longer there.
         // The count is the documented bound, but a GPU dump caught a count over a null Spheres.
-        bKeep = MeshletIdx < Inst.MeshletHeader.MeshletCount && Inst.MeshletHeader.Spheres != nullptr;
+        bKeep = MeshletIdx < Header.MeshletCount && Header.Spheres != nullptr;
 
         if (bKeep)
         {
-            RefreshMeshletBounds(Inst, Ctx, MeshletIdx, Cache);
+            RefreshMeshletBounds(Header, Ctx, MeshletIdx, Cache);
 
             // Ordered cheapest first, so each reject gates the loads and taps the next one would pay for.
             if (Ctx.bPosedBounds && !Ctx.bNoCull && View.HasFlag(CULL_VIEW_FLAG_FRUSTUM))
@@ -213,7 +218,7 @@ bool TestMeshletAgainstView(FMeshletCullContext Ctx, FGPUInstance* Inst, FCullVi
             // Sun views test against the sun direction, everything else against the meshlet's own sphere.
             if (bKeep && Ctx.bPosedBounds && !Ctx.bNoCull && !Ctx.bTwoSided && View.HasFlag(CULL_VIEW_FLAG_CONE))
             {
-                EnsureMeshletCone(Inst, Ctx, Cache);
+                EnsureMeshletCone(Header, Ctx, Cache);
 
                 if (Cache.bHasCone)
                 {

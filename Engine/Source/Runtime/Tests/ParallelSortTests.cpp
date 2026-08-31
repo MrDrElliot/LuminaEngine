@@ -64,7 +64,7 @@ namespace LuminaParallelSortTests
             TVector<int32> Reference = Ours;
 
             Lumina::Task::ParallelSort(Ours.begin(), Ours.end());
-            Algo::Sort(Reference.begin(), Reference.end());
+            Algo::Sort(Reference);
 
             ASSERT_EQ(Ours.size(), Reference.size()) << "count " << Count;
             for (size_t Index = 0; Index < Ours.size(); ++Index)
@@ -105,7 +105,7 @@ namespace LuminaParallelSortTests
         {
             TVector<int32> Reference = *Case;
             Lumina::Task::ParallelSort(Case->begin(), Case->end());
-            Algo::Sort(Reference.begin(), Reference.end());
+            Algo::Sort(Reference);
 
             for (size_t Index = 0; Index < Case->size(); ++Index)
             {
@@ -177,7 +177,7 @@ namespace LuminaParallelSortTests
         TVector<FString> Reference = Values;
 
         Lumina::Task::ParallelSort(Values.begin(), Values.end());
-        Algo::Sort(Reference.begin(), Reference.end());
+        Algo::Sort(Reference);
 
         ASSERT_EQ(Values.size(), Reference.size());
         for (size_t Index = 0; Index < Values.size(); ++Index)
@@ -192,7 +192,7 @@ namespace LuminaParallelSortTests
         TVector<int32> Reference = Values;
 
         Lumina::Task::ParallelSort(Values.begin(), Values.end());
-        Algo::Sort(Reference.begin(), Reference.end());
+        Algo::Sort(Reference);
 
         for (size_t Index = 0; Index < Values.size(); ++Index)
         {

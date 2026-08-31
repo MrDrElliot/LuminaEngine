@@ -196,24 +196,13 @@ namespace Lumina
         /** Bytes the GPU image would occupy fully resident. */
         uint64 CalcFullSizeBytes() const
         {
-            uint64 Total = 0;
-            for (const FMip& Mip : Mips)
-            {
-                Total += Mip.SizeBytes();
-            }
-            return Total;
+            return Algo::Sum(Mips, &FMip::SizeBytes);
         }
 
         uint64 CalcTotalSizeBytes() const
         {
-            uint64 TotalSize = 0;
-
-            for (const FMip& Mip : Mips)
-            {
-                TotalSize += (uint64)Mip.RowPitch * Mip.Height * Mip.Depth;
-            }
-
-            return TotalSize;
+            return Algo::Accumulate(Mips, uint64(0),
+                [](const FMip& Mip) { return (uint64)Mip.RowPitch * Mip.Height * Mip.Depth; });
         }
 
         /** Cook-time policy: index of the first mip small enough to keep inline.

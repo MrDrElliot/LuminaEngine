@@ -78,7 +78,7 @@ void MeshMain(
     {
         // Every workgroup-uniform matrix load is issued HERE, before the vertex fetch, so all four requests
         // are in flight together. Strung end to end, this pass sat at 93% long-scoreboard.
-        const float4x4 ModelMatrix  = Ref.Inst.ModelMatrix;
+        const float4x4 ModelMatrix  = Ref.ModelMatrix;
         const float3x3 NormalMatrix = CalculateNormalMatrix(ModelMatrix);
         const float4x4 CameraView   = GetCameraView();
         const float4x4 CameraProj   = GetCameraProjection();

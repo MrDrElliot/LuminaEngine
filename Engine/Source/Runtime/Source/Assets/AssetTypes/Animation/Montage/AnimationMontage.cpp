@@ -213,7 +213,7 @@ namespace Lumina
         for (const SAnimMontageSlotTrack& Track : SlotTracks)
         {
             if (!Track.SlotName.IsNone() &&
-                Algo::Find(OutNames.begin(), OutNames.end(), Track.SlotName) == OutNames.end())
+                !Algo::Contains(OutNames, Track.SlotName))
             {
                 OutNames.push_back(Track.SlotName);
             }
@@ -224,7 +224,7 @@ namespace Lumina
     {
         const auto AddTrack = [this](const FName& Track)
         {
-            if (!Track.IsNone() && Algo::Find(NotifyTracks.begin(), NotifyTracks.end(), Track) == NotifyTracks.end())
+            if (!Track.IsNone() && !Algo::Contains(NotifyTracks, Track))
             {
                 NotifyTracks.push_back(Track);
             }

@@ -216,7 +216,7 @@ namespace Lumina
                                 && MarqueeMin.y <= CellMax.y && MarqueeMax.y >= CellMin.y;
 
             const bool bInBase = bMarqueeAdditive
-                && Algo::Find(MarqueeBaseSelection.begin(), MarqueeBaseSelection.end(), Item) != MarqueeBaseSelection.end();
+                && Algo::Contains(MarqueeBaseSelection, Item);
 
             const bool bShouldSelect = bOverlaps || bInBase;
             if (bShouldSelect != Item->IsSelected())
@@ -627,14 +627,14 @@ namespace Lumina
         
         if (!bWasSelected)
         {
-            DEBUG_ASSERT(Algo::Find(Selections.begin(), Selections.end(), Item) == Selections.end());
+            DEBUG_ASSERT(!Algo::Contains(Selections, Item));
             Selections.push_back(Item);
             Context.ItemSelectedFunction(Item);
             Item->bSelected = true;
         }
         else
         {
-            auto It = Algo::Remove(Selections.begin(), Selections.end(), Item);
+            auto It = Algo::Remove(Selections, Item);
             Selections.erase(It);
             Item->bSelected = false;
         }
@@ -644,13 +644,13 @@ namespace Lumina
 
     void FTileViewWidget::SetSelectionAnchor(const FTileViewItem* Item)
     {
-        const auto Found = Algo::Find(ListItems.begin(), ListItems.end(), Item);
+        const auto Found = Algo::Find(ListItems, Item);
         SelectionAnchorIndex = Found == ListItems.end() ? -1 : (int32)std::distance(ListItems.begin(), Found);
     }
 
     void FTileViewWidget::SelectRangeTo(FTileViewItem* Item, const FTileViewContext& Context)
     {
-        const auto Found = Algo::Find(ListItems.begin(), ListItems.end(), Item);
+        const auto Found = Algo::Find(ListItems, Item);
         if (Found == ListItems.end())
         {
             return;

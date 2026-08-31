@@ -223,7 +223,7 @@ FVertexData DecodePreSkinnedVertex(FPreSkinnedVertex S)
 // -- a single structured load like the static path, no per-pass skinning.
 FVertexData LoadSkinnedVertex(FMeshlet M, uint VertexLocalIdx, uint SkinnedVertexBase)
 {
-    return DecodePreSkinnedVertex(PreSkinnedVertices()[SkinnedVertexBase + M.VertexOffset + VertexLocalIdx]);
+    return DecodePreSkinnedVertex(loadAligned<16>(PreSkinnedVertices() + (SkinnedVertexBase + M.VertexOffset + VertexLocalIdx)));
 }
 
 float3 LoadStaticPosition(FMeshletHeader* Header, FMeshlet M, uint VertexLocalIdx)
@@ -234,7 +234,7 @@ float3 LoadStaticPosition(FMeshletHeader* Header, FMeshlet M, uint VertexLocalId
 
 float3 LoadSkinnedPosition(FMeshletHeader* Header, FMeshlet M, uint VertexLocalIdx, uint SkinnedVertexBase)
 {
-    FPreSkinnedVertex S = PreSkinnedVertices()[SkinnedVertexBase + M.VertexOffset + VertexLocalIdx];
+    FPreSkinnedVertex S = loadAligned<16>(PreSkinnedVertices() + (SkinnedVertexBase + M.VertexOffset + VertexLocalIdx));
     return float3(S.Px, S.Py, S.Pz);
 }
 
@@ -391,10 +391,10 @@ FPreSkinnedVertex SkinVertexWith(FBoneTransform* BoneArray, FMeshletHeader* Head
     if (CanSkinMeshletWith(BoneArray, Palette, BoneOffset))
     {
         Rows = BlendSkinRows(
-            BoneArray[ResolvePaletteBone(Header, Palette, S.Slots.x, BoneOffset)],
-            BoneArray[ResolvePaletteBone(Header, Palette, S.Slots.y, BoneOffset)],
-            BoneArray[ResolvePaletteBone(Header, Palette, S.Slots.z, BoneOffset)],
-            BoneArray[ResolvePaletteBone(Header, Palette, S.Slots.w, BoneOffset)],
+            loadAligned<16>(BoneArray + ResolvePaletteBone(Header, Palette, S.Slots.x, BoneOffset)),
+            loadAligned<16>(BoneArray + ResolvePaletteBone(Header, Palette, S.Slots.y, BoneOffset)),
+            loadAligned<16>(BoneArray + ResolvePaletteBone(Header, Palette, S.Slots.z, BoneOffset)),
+            loadAligned<16>(BoneArray + ResolvePaletteBone(Header, Palette, S.Slots.w, BoneOffset)),
             S.Weights);
     }
 
@@ -408,12 +408,12 @@ FPreSkinnedVertex SkinVertex(FMeshletHeader* Header, FMeshlet M, uint MeshletInd
 }
 
 float  GetMaterialScalar (uint MatIndex, uint Index) { return Materials()[MatIndex].Scalars[Index];  }
-float4 GetMaterialVec4   (uint MatIndex, uint Index) { return Materials()[MatIndex].Vectors[Index];  }
+float4 GetMaterialVec4   (uint MatIndex, uint Index) { return loadAligned<16>(&Materials()[MatIndex].Vectors[Index]); }
 uint   GetMaterialTexture(uint MatIndex, uint Index) { return Materials()[MatIndex].Textures[Index]; }
 
 FGPUInstance GetInstance(uint InstanceID) { return Instances()[InstanceID]; }
 
-FLight GetLightAt(uint Index)       { return LightData().Lights[Index]; }
+FLight GetLightAt(uint Index)       { return loadAligned<16>(LightData().Lights + Index); }
 uint   GetNumLights()               { return LightData().NumLights;     }
 float3 GetSunDirection()            { return LightData().SunDirection;  }
 float3 GetAmbientLightColor()       { return LightData().AmbientLight.xyz; }
@@ -445,7 +445,7 @@ float4x4 GetShadowViewProjection(int ShadowDataIndex, uint ViewIndex)
 
 FLightShadow GetShadowTile(int ShadowDataIndex, uint Face)
 {
-    return LightData().Shadows[ShadowDataIndex].Shadow[Face];
+    return loadAligned<16>(&LightData().Shadows[ShadowDataIndex].Shadow[Face]);
 }
 
 float    GetTime()                  { return Scene().Time;       }

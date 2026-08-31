@@ -280,7 +280,7 @@ namespace ImViewGuizmo
         axes[4] = {4, 2, camBack.z, axisVectors[2]};
         axes[5] = {5, 2, -camBack.z, GizmoMath::multiply_vf(axisVectors[2], -1.0f)};
 
-        Lumina::Algo::Sort(axes.begin(), axes.end(), [](const GizmoAxis& a, const GizmoAxis& b)
+        Lumina::Algo::Sort(axes, [](const GizmoAxis& a, const GizmoAxis& b)
         {
             return a.depth < b.depth;
         });

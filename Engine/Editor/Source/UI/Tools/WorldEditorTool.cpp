@@ -4673,7 +4673,7 @@ namespace Lumina
 
         TVector<CWorld::FSystemInfo> Systems;
         World->GetAllSystems(Systems);
-        Algo::Sort(Systems.begin(), Systems.end(), [](const CWorld::FSystemInfo& A, const CWorld::FSystemInfo& B)
+        Algo::Sort(Systems, [](const CWorld::FSystemInfo& A, const CWorld::FSystemInfo& B)
         {
             return strcmp(A.Name.c_str(), B.Name.c_str()) < 0;
         });
@@ -5458,7 +5458,7 @@ namespace Lumina
         }
 
         // Front-to-back so closer labels claim space first.
-        Algo::Sort(Candidates.begin(), Candidates.end(), [](const FCandidate& A, const FCandidate& B)
+        Algo::Sort(Candidates, [](const FCandidate& A, const FCandidate& B)
         {
             return A.DepthSq < B.DepthSq;
         });

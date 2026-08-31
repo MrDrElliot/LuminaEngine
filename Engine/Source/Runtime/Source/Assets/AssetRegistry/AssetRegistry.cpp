@@ -149,7 +149,7 @@ namespace Lumina
         // Snapshotted so completion can reap cache entries whose files no longer exist under a walked root.
         LastDiscoveryWalkedRoots  = WalkedRoots;
         LastDiscoveryVisitedPaths = PackagePaths;
-        Algo::Sort(LastDiscoveryVisitedPaths.begin(), LastDiscoveryVisitedPaths.end());
+        Algo::Sort(LastDiscoveryVisitedPaths);
         
         RunTextAssetDiscovery();
 
@@ -197,16 +197,17 @@ namespace Lumina
     bool FAssetRegistry::NeedsReextract(FStringView Path, int64 MTimeNs, uint64 ContentHash) const
     {
         FReadScopeLock Lock(AssetsMutex);
-        for (const TUniquePtr<FAssetData>& Data : Assets)
+        const auto It = Algo::FindIf(Assets,
+            [Path](const TUniquePtr<FAssetData>& Data) { return Data->Path == Path; });
+
+        if (It == Assets.end())
         {
-            if (Data->Path == Path)
-            {
-                // Mtime is the cheap predicate and the content hash is the truth, with 0 forcing a re-extract.
-                if (MTimeNs == 0 || ContentHash == 0) return true;
-                return Data->SourceMTimeNs != MTimeNs || Data->ContentHash != ContentHash;
-            }
+            return true; // not yet in registry
         }
-        return true; // not yet in registry
+
+        // Mtime is the cheap predicate and the content hash is the truth, with 0 forcing a re-extract.
+        if (MTimeNs == 0 || ContentHash == 0) return true;
+        return (*It)->SourceMTimeNs != MTimeNs || (*It)->ContentHash != ContentHash;
     }
 
     void FAssetRegistry::SuspendBroadcasts()
@@ -314,7 +315,7 @@ namespace Lumina
         {
             FWriteScopeLock Lock(AssetsMutex);
 
-            auto It = Algo::FindIf(Assets.begin(), Assets.end(), [&OldPath](const TUniquePtr<FAssetData>& Asset)
+            auto It = Algo::FindIf(Assets, [&OldPath](const TUniquePtr<FAssetData>& Asset)
             {
                 return Asset->Path == OldPath;
             });
@@ -327,7 +328,7 @@ namespace Lumina
 
             // Drop any stale entry already at NewPath (different GUID), else GetAssetByPath is non-deterministic.
             const FGuid RenamedGuid = (*It)->AssetGUID;
-            auto Colliding = Algo::FindIf(Assets.begin(), Assets.end(), [&](const TUniquePtr<FAssetData>& Asset)
+            auto Colliding = Algo::FindIf(Assets, [&](const TUniquePtr<FAssetData>& Asset)
             {
                 return Asset->AssetGUID != RenamedGuid && Asset->Path == NewPath;
             });
@@ -336,7 +337,7 @@ namespace Lumina
                 LOG_WARN("AssetRegistry::AssetRenamed: dropping stale entry at {} colliding with rename {} -> {}", NewPath, OldPath, NewPath);
                 Assets.erase(Colliding);
                 // hash_set::erase can invalidate other iterators; re-find.
-                It = Algo::FindIf(Assets.begin(), Assets.end(), [&OldPath](const TUniquePtr<FAssetData>& Asset)
+                It = Algo::FindIf(Assets, [&OldPath](const TUniquePtr<FAssetData>& Asset)
                 {
                     return Asset->Path == OldPath;
                 });
@@ -370,7 +371,7 @@ namespace Lumina
     {
         FReadScopeLock Lock(AssetsMutex);
 
-        auto It = Algo::FindIf(Assets.begin(), Assets.end(), [&](const auto& Data)
+        auto It = Algo::FindIf(Assets, [&](const auto& Data)
         {
             return Data->AssetGUID == GUID;
         });
@@ -383,7 +384,7 @@ namespace Lumina
         FReadScopeLock Lock(AssetsMutex);
 
         FStringView PathNoExt = VFS::RemoveExtension(Path);
-        auto It = Algo::FindIf(Assets.begin(), Assets.end(), [&](const TUniquePtr<FAssetData>& Data)
+        auto It = Algo::FindIf(Assets, [&](const TUniquePtr<FAssetData>& Data)
         {
             return VFS::RemoveExtension(Data->Path) == PathNoExt;
         });
@@ -509,7 +510,7 @@ namespace Lumina
     {
         FReadScopeLock Lock(TextAssetsMutex);
         const FStringView PathNoExt = VFS::RemoveExtension(Path);
-        auto It = Algo::FindIf(TextAssets.begin(), TextAssets.end(), [&](const TUniquePtr<FTextAssetData>& Data)
+        auto It = Algo::FindIf(TextAssets, [&](const TUniquePtr<FTextAssetData>& Data)
         {
             return VFS::RemoveExtension(FStringView(Data->Path.c_str(), Data->Path.size())) == PathNoExt;
         });
@@ -545,7 +546,7 @@ namespace Lumina
         {
             FWriteScopeLock Lock(TextAssetsMutex);
 
-            auto It = Algo::FindIf(TextAssets.begin(), TextAssets.end(), [&](const TUniquePtr<FTextAssetData>& Data)
+            auto It = Algo::FindIf(TextAssets, [&](const TUniquePtr<FTextAssetData>& Data)
             {
                 return FStringView(Data->Path.c_str(), Data->Path.size()) == OldPath;
             });
@@ -556,14 +557,14 @@ namespace Lumina
 
             // Drop a stale entry already sitting at NewPath with a different GUID.
             const FGuid RenamedGuid = (*It)->Guid;
-            auto Colliding = Algo::FindIf(TextAssets.begin(), TextAssets.end(), [&](const TUniquePtr<FTextAssetData>& Data)
+            auto Colliding = Algo::FindIf(TextAssets, [&](const TUniquePtr<FTextAssetData>& Data)
             {
                 return Data->Guid != RenamedGuid && FStringView(Data->Path.c_str(), Data->Path.size()) == NewPath;
             });
             if (Colliding != TextAssets.end())
             {
                 TextAssets.erase(Colliding);
-                It = Algo::FindIf(TextAssets.begin(), TextAssets.end(), [&](const TUniquePtr<FTextAssetData>& Data)
+                It = Algo::FindIf(TextAssets, [&](const TUniquePtr<FTextAssetData>& Data)
                 {
                     return FStringView(Data->Path.c_str(), Data->Path.size()) == OldPath;
                 });
@@ -592,7 +593,7 @@ namespace Lumina
 
         {
             FWriteScopeLock Lock(TextAssetsMutex);
-            auto It = Algo::FindIf(TextAssets.begin(), TextAssets.end(), [&](const TUniquePtr<FTextAssetData>& Data)
+            auto It = Algo::FindIf(TextAssets, [&](const TUniquePtr<FTextAssetData>& Data)
             {
                 return FStringView(Data->Path.c_str(), Data->Path.size()) == Path;
             });
@@ -664,8 +665,7 @@ namespace Lumina
             }
 
             const bool bVisited = Algo::BinarySearch(
-                LastDiscoveryVisitedPaths.begin(),
-                LastDiscoveryVisitedPaths.end(),
+                LastDiscoveryVisitedPaths,
                 Path);
 
             if (!bVisited)
@@ -807,7 +807,7 @@ namespace Lumina
         TVector<FObjectExport> Exports;
         Reader << Exports;
 
-        FObjectExport* Export = Algo::FindIf(Exports.begin(), Exports.end(), [&](const FObjectExport& E)
+        FObjectExport* Export = Algo::FindIf(Exports, [&](const FObjectExport& E)
         {
             return E.ObjectName == PackageFileName;
         });
@@ -855,7 +855,7 @@ namespace Lumina
             Assets.erase(ExistingByGuid);
         }
         // Rare, a user dropping a .lasset with a fresh GUID over an old one.
-        auto ExistingByPath = Algo::FindIf(Assets.begin(), Assets.end(), [&](const TUniquePtr<FAssetData>& D)
+        auto ExistingByPath = Algo::FindIf(Assets, [&](const TUniquePtr<FAssetData>& D)
         {
             return D->Path == AssetData->Path;
         });

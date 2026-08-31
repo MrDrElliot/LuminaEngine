@@ -91,38 +91,17 @@ namespace Lumina
 
     int32 CAnimationGraph::FindCurveIndex(const FName& Name) const
     {
-        for (int32 i = 0; i < (int32)CurveNames.size(); ++i)
-        {
-            if (CurveNames[i] == Name)
-            {
-                return i;
-            }
-        }
-        return INDEX_NONE;
+        return Algo::IndexOf(CurveNames, Name);
     }
 
     int32 CAnimationGraph::FindParameterIndex(const FName& Name) const
     {
-        for (int32 i = 0; i < (int32)Parameters.size(); ++i)
-        {
-            if (Parameters[i].Name == Name)
-            {
-                return i;
-            }
-        }
-        return INDEX_NONE;
+        return Algo::IndexOf(Parameters, Name, &FAnimGraphParameter::Name);
     }
 
     int32 CAnimationGraph::FindObjectParameterIndex(const FName& Name) const
     {
-        for (int32 i = 0; i < (int32)ObjectParameters.size(); ++i)
-        {
-            if (ObjectParameters[i].Name == Name)
-            {
-                return i;
-            }
-        }
-        return INDEX_NONE;
+        return Algo::IndexOf(ObjectParameters, Name, &FAnimGraphObjectParameter::Name);
     }
 
     void CAnimationGraph::LinkParameters()

@@ -411,10 +411,10 @@ namespace Lumina::Physics
                         reinterpret_cast<const float*>(InterpStaging.CurrPos.data()),
                         int(Total) * 3, Alpha);
 
-        Algo::Copy(InterpStaging.CurrQx.begin(), InterpStaging.CurrQx.end(), InterpStaging.LerpQx.begin());
-        Algo::Copy(InterpStaging.CurrQy.begin(), InterpStaging.CurrQy.end(), InterpStaging.LerpQy.begin());
-        Algo::Copy(InterpStaging.CurrQz.begin(), InterpStaging.CurrQz.end(), InterpStaging.LerpQz.begin());
-        Algo::Copy(InterpStaging.CurrQw.begin(), InterpStaging.CurrQw.end(), InterpStaging.LerpQw.begin());
+        Algo::Copy(InterpStaging.CurrQx, InterpStaging.LerpQx.begin());
+        Algo::Copy(InterpStaging.CurrQy, InterpStaging.LerpQy.begin());
+        Algo::Copy(InterpStaging.CurrQz, InterpStaging.LerpQz.begin());
+        Algo::Copy(InterpStaging.CurrQw, InterpStaging.LerpQw.begin());
 
         NlerpQuatsSoA(InterpStaging.LerpQx.data(), InterpStaging.LerpQy.data(),
                       InterpStaging.LerpQz.data(), InterpStaging.LerpQw.data(),

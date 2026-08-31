@@ -88,7 +88,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID)
         return;
     }
 
-    const FMeshletSphere Bind = Header.Spheres[MeshletIdx];
+    const FMeshletSphere Bind = loadAligned<16>(Header.Spheres + MeshletIdx);
     const FMeshletBonePalette Palette = GetBonePalette(Header, MeshletIdx);
 
     // When this gate fails the vertices stay in bind pose, so the bind sphere is exact rather than a guess.
@@ -130,7 +130,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID)
 
     for (uint i = 0; i < Palette.Count; ++i)
     {
-        const FSkinRows Rows = UnpackBoneRows(Bones()[ResolvePaletteBone(Header, Palette, i, Skin.BoneOffset)]);
+        const FSkinRows Rows = UnpackBoneRows(loadAligned<16>(Bones() + ResolvePaletteBone(Header, Palette, i, Skin.BoneOffset)));
 
         const float3 Posed = float3(dot(Rows.R0, BindCenter), dot(Rows.R1, BindCenter), dot(Rows.R2, BindCenter));
 
@@ -181,7 +181,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID)
 
     for (uint j = 0; j < Palette.Count; ++j)
     {
-        const FSkinRows Rows = UnpackBoneRows(Bones()[ResolvePaletteBone(Header, Palette, j, Skin.BoneOffset)]);
+        const FSkinRows Rows = UnpackBoneRows(loadAligned<16>(Bones() + ResolvePaletteBone(Header, Palette, j, Skin.BoneOffset)));
 
         const float3 Axis = normalize(float3(dot(Rows.R0.xyz, BindAxis),
                                              dot(Rows.R1.xyz, BindAxis),

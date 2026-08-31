@@ -36,7 +36,7 @@ namespace Lumina
                 return DataClass != nullptr && DataClass->IsChildOf(CDataTable::StaticClass());
             });
 
-            Algo::Sort(Assets.begin(), Assets.end(), [](const FAssetData* A, const FAssetData* B)
+            Algo::Sort(Assets, [](const FAssetData* A, const FAssetData* B)
             {
                 return strcmp(A->AssetName.c_str(), B->AssetName.c_str()) < 0;
             });

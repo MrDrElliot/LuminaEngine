@@ -1675,7 +1675,7 @@ namespace Lumina
             }
         }
 
-        Algo::Sort(Candidates.begin(), Candidates.end(), [](CStruct* A, CStruct* B)
+        Algo::Sort(Candidates, [](CStruct* A, CStruct* B)
         {
             return strcmp(InstancedStructLabel(A), InstancedStructLabel(B)) < 0;
         });

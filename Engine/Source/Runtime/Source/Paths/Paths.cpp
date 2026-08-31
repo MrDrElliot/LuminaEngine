@@ -127,8 +127,8 @@ namespace Lumina::Paths
         FString NormalizedPath = Path;
         FString NormalizedBase = BasePath;
     
-        Algo::Replace(NormalizedPath.begin(), NormalizedPath.end(), '\\', '/');
-        Algo::Replace(NormalizedBase.begin(), NormalizedBase.end(), '\\', '/');
+        Algo::Replace(NormalizedPath, '\\', '/');
+        Algo::Replace(NormalizedBase, '\\', '/');
     
         if (!NormalizedBase.empty() && NormalizedBase.back() != '/')
         {

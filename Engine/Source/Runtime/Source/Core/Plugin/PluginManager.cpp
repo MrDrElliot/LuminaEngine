@@ -360,12 +360,15 @@ namespace Lumina
     bool FPluginManager::LoadPluginModule(FPlugin& Plugin, const FPluginModuleDescriptor& Module)
     {
         // Skip if already loaded (different phase pass, restart, etc.).
-        for (const FLoadedPluginModule& Existing : Plugin.GetLoadedModules())
-        {
-            if (Existing.Descriptor.Name == Module.Name && Existing.bStartupCalled)
+        const bool bAlreadyLoaded = Algo::AnyOf(Plugin.GetLoadedModules(),
+            [&Module](const FLoadedPluginModule& Existing)
             {
-                return true;
-            }
+                return Existing.Descriptor.Name == Module.Name && Existing.bStartupCalled;
+            });
+
+        if (bAlreadyLoaded)
+        {
+            return true;
         }
 
         // A monolithic build has no DLL on disk, and the static factory resolves by bare name.

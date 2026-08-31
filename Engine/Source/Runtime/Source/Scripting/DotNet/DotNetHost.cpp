@@ -166,6 +166,7 @@ namespace Lumina::DotNet
         // Native resolves this one entry by name, then uses it to look up every other managed entry.
         typedef void* (CORECLR_DELEGATE_CALLTYPE* ResolveManagedExportFn)(const char*, int32);
         typedef int32 (CORECLR_DELEGATE_CALLTYPE* LoadScriptsFn)(const FSourceAssembly*, int32);
+        typedef void  (CORECLR_DELEGATE_CALLTYPE* SetScriptCompileOptimizationFn)(int32);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* TickFn)();
         typedef void  (CORECLR_DELEGATE_CALLTYPE* ShutdownFn)();
         typedef int32 (CORECLR_DELEGATE_CALLTYPE* GetGenerationFn)();
@@ -224,6 +225,7 @@ namespace Lumina::DotNet
             ResolveEntityScriptNameFn   ResolveEntityScriptName;
             InvokeAssetCallbackFn       InvokeAssetCallback;
             LoadScriptsFn               LoadScripts;
+            SetScriptCompileOptimizationFn SetScriptCompileOptimization;
             ShutdownFn                  Shutdown;
             TickFn                      Tick;
             StartupEntitySystemFn       StartupEntitySystem;
@@ -756,7 +758,7 @@ namespace Lumina::DotNet
         {
             FString Result(P.data(), P.size());
         #if defined(_WIN32)
-            Algo::Replace(Result.begin(), Result.end(), '/', '\\');
+            Algo::Replace(Result, '/', '\\');
         #endif
             return Result;
         }
@@ -1015,6 +1017,7 @@ namespace Lumina::DotNet
         LM_RESOLVE(ResolveEntityScriptName, ResolveEntityScriptNameFn);
         LM_RESOLVE(InvokeAssetCallback,    InvokeAssetCallbackFn);
         LM_RESOLVE(LoadScripts,            LoadScriptsFn);
+        LM_RESOLVE(SetScriptCompileOptimization, SetScriptCompileOptimizationFn);   // optional, packaging only
         LM_RESOLVE(OnNativeDelegateDestroyed, OnNativeDelegateDestroyedFn);
         LM_RESOLVE(Shutdown,               ShutdownFn);
         LM_RESOLVE(Tick,                   TickFn);
@@ -1357,6 +1360,10 @@ namespace Lumina::DotNet
         }
 
         // The cooked game loads these prebuilt rather than running the compiler at boot.
+        if (GManaged.SetScriptCompileOptimization != nullptr)
+        {
+            GManaged.SetScriptCompileOptimization(1);
+        }
         ReloadScripts();
 
         for (const FScriptUnit& Unit : BuildScriptUnits())
@@ -1370,6 +1377,13 @@ namespace Lumina::DotNet
             Packaged.DllSourcePath = Unit.AssemblyPath;
             Packaged.Deps          = Unit.Deps;
             Out.push_back(std::move(Packaged));
+        }
+
+        // The live generation is the optimized one until this puts a debuggable build back in the editor.
+        if (GManaged.SetScriptCompileOptimization != nullptr)
+        {
+            GManaged.SetScriptCompileOptimization(0);
+            ReloadScripts();
         }
     }
 

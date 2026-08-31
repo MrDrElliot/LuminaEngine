@@ -59,13 +59,15 @@ namespace Lumina
         CWorld* TargetWorld = nullptr;
         if (GWorldManager != nullptr)
         {
-            for (const TUniquePtr<FWorldContext>& Context : GWorldManager->GetContexts())
+            const auto& Contexts = GWorldManager->GetContexts();
+            const auto EditorItr = Algo::FindIf(Contexts, [](const TUniquePtr<FWorldContext>& Context)
             {
-                if (Context && Context->Type == EWorldType::Editor && Context->World.IsValid())
-                {
-                    TargetWorld = Context->World.Get();
-                    break;
-                }
+                return Context && Context->Type == EWorldType::Editor && Context->World.IsValid();
+            });
+
+            if (EditorItr != Contexts.end())
+            {
+                TargetWorld = (*EditorItr)->World.Get();
             }
         }
 

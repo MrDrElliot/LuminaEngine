@@ -82,7 +82,7 @@ namespace LuminaParallelSortBench
 
         const double Serial = BestMillisOf(kRepeats, Source, [](TVector<int32>& Values)
         {
-            Algo::Sort(Values.begin(), Values.end());
+            Algo::Sort(Values);
         });
 
         const double StdPar = BestMillisOf(kRepeats, Source, [](TVector<int32>& Values)

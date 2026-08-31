@@ -149,14 +149,10 @@ namespace Lumina
                 if (!bMatched)
                 {
                     const void* RowMemory = Row.Value.GetMemory();
-                    for (FProperty* Property : Columns)
+                    bMatched = RowMemory != nullptr && Algo::AnyOf(Columns, [&](FProperty* Property)
                     {
-                        if (RowMemory != nullptr && ImGuiX::PassSearchFilter(Filter, Reflection::ToText(Property, RowMemory).c_str()))
-                        {
-                            bMatched = true;
-                            break;
-                        }
-                    }
+                        return ImGuiX::PassSearchFilter(Filter, Reflection::ToText(Property, RowMemory).c_str());
+                    });
                 }
 
                 if (!bMatched)
@@ -178,7 +174,7 @@ namespace Lumina
         const bool bNumeric = SortProperty != nullptr && IsNumericProperty(SortProperty);
         const bool bAscending = bSortAscending;
 
-        Algo::StableSort(DisplayOrder.begin(), DisplayOrder.end(),
+        Algo::StableSort(DisplayOrder,
             [Table, SortProperty, bNumeric, bAscending](int32 A, int32 B)
             {
                 const SDataTableRow& RowA = Table->Rows[A];

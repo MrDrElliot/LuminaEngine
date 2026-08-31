@@ -289,13 +289,13 @@ namespace Lumina
                 for (uint32 i = 0; i < MAX_MESH_LODS; ++i)
                 {
                     SharedThresholds[i] = (i == 0) ? 0.0f : FLT_MAX;
-                    for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
+
+                    const auto Surface = Algo::FindIf(Resource.GeometrySurfaces,
+                        [i](const FGeometrySurface& Candidate) { return i < Candidate.NumLODs; });
+
+                    if (Surface != Resource.GeometrySurfaces.end())
                     {
-                        if (i < Surface.NumLODs)
-                        {
-                            SharedThresholds[i] = Surface.LODScreenThreshold[i];
-                            break;
-                        }
+                        SharedThresholds[i] = Surface->LODScreenThreshold[i];
                     }
                 }
 

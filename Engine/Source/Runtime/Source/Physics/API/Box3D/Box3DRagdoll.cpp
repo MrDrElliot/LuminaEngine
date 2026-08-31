@@ -103,7 +103,7 @@ namespace Lumina::Physics
                 }
             }
 
-            Algo::Sort(Order.begin(), Order.end(), [&](int32 A, int32 B)
+            Algo::Sort(Order, [&](int32 A, int32 B)
             {
                 return Skeleton->FindBoneIndex(Desc.Asset->Bodies[A].BoneName) < Skeleton->FindBoneIndex(Desc.Asset->Bodies[B].BoneName);
             });

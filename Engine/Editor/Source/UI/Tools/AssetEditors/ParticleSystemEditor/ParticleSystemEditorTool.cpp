@@ -579,7 +579,7 @@ namespace Lumina
                 Entries.push_back(Entry);
             }
 
-            Algo::Sort(Entries.begin(), Entries.end(), [](const FPaletteEntry& A, const FPaletteEntry& B)
+            Algo::Sort(Entries, [](const FPaletteEntry& A, const FPaletteEntry& B)
             {
                 const int32 Cat = strcmp(A.Category.c_str(), B.Category.c_str());
                 return (Cat != 0) ? (Cat < 0) : (strcmp(A.Name.c_str(), B.Name.c_str()) < 0);

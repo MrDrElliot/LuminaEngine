@@ -35,7 +35,7 @@ namespace Lumina
         void ForgetClipboardNode(CEdGraphNode* Node)
         {
             TVector<CEdGraphNode*>& Clipboard = GetNodeClipboard();
-            Clipboard.erase(Algo::Remove(Clipboard.begin(), Clipboard.end(), Node), Clipboard.end());
+            Clipboard.erase(Algo::Remove(Clipboard, Node), Clipboard.end());
         }
     }
 
@@ -665,7 +665,7 @@ namespace Lumina
                 return;   // two nodes are already evenly spaced; nothing to solve
             }
 
-            Algo::Sort(Entries.begin(), Entries.end(), [bDistributeX](const FEntry& A, const FEntry& B)
+            Algo::Sort(Entries, [bDistributeX](const FEntry& A, const FEntry& B)
             {
                 return bDistributeX ? (A.Pos.x < B.Pos.x) : (A.Pos.y < B.Pos.y);
             });
@@ -834,7 +834,7 @@ namespace Lumina
         {
             TVector<CEdGraphNode*>& Column = Columns[D];
 
-            Algo::StableSort(Column.begin(), Column.end(), [&](CEdGraphNode* A, CEdGraphNode* B)
+            Algo::StableSort(Column, [&](CEdGraphNode* A, CEdGraphNode* B)
             {
                 auto Barycenter = [&](CEdGraphNode* Node)
                 {
@@ -1268,7 +1268,7 @@ namespace Lumina
             // The popup was opened and never begun, so every node's own context menu was unreachable.
             if (ImGui::BeginPopup("Node Context Menu"))
             {
-                auto NodeItr = Algo::FindIf(Nodes.begin(), Nodes.end(), [this](const TObjectPtr<CEdGraphNode>& A)
+                auto NodeItr = Algo::FindIf(Nodes, [this](const TObjectPtr<CEdGraphNode>& A)
                 {
                     return A.IsValid() && Cmp::Equal(A->GetNodeID(), ContextMenuNodeID);
                 });
@@ -1604,7 +1604,7 @@ namespace Lumina
             while (NodeEditor::QueryDeletedNode(&NodeId))
             {
                 // O(n^2) scan mirrors the approach from the imgui-node-editor examples; acceptable for typical graph sizes.
-                auto NodeItr = Algo::FindIf(Nodes.begin(), Nodes.end(), [NodeId] (const TObjectPtr<CEdGraphNode>& A)
+                auto NodeItr = Algo::FindIf(Nodes, [NodeId] (const TObjectPtr<CEdGraphNode>& A)
                 {
                     return Cmp::Equal(A->GetNodeID(), NodeId.Get()) && A->IsDeletable();
                 });

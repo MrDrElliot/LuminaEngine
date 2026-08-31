@@ -67,7 +67,7 @@ void MeshMain(
     {
         // Issued before the vertex fetch so the loads overlap rather than serialize; see the same
         // block in MeshletVisBuffer.slang.
-        const float4x4 ModelMatrix  = Ref.Inst.ModelMatrix;
+        const float4x4 ModelMatrix  = Ref.ModelMatrix;
         const float3x3 NormalMatrix = CalculateNormalMatrix(ModelMatrix);
 
         [ForceUnroll]

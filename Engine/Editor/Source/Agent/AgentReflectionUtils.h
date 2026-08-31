@@ -24,7 +24,7 @@ namespace Lumina::Agent::Detail
             Chain.push_back(Current);
         }
 
-        Algo::Reverse(Chain.begin(), Chain.end());
+        Algo::Reverse(Chain);
         return Chain;
     }
 }

@@ -63,15 +63,12 @@ namespace Lumina::MaterialOps
             return nullptr;
         }
 
-        for (CClass* Class : GetPlaceableNodeTypes())
-        {
-            if (FStringView(Class->GetName().ToString()) == TypeName)
-            {
-                return Class;
-            }
-        }
+        // Bound to a local because the getter returns by value, so end() must come from the same vector.
+        const TVector<CClass*> Types = GetPlaceableNodeTypes();
+        const auto It = Algo::FindIf(Types,
+            [TypeName](CClass* Class) { return FStringView(Class->GetName().ToString()) == TypeName; });
 
-        return nullptr;
+        return It != Types.end() ? *It : nullptr;
     }
 
     void NotifyNodeValuesChanged(CMaterialNodeGraph* Graph)

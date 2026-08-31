@@ -5,12 +5,26 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.Loader;
+using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Emit;
 using Microsoft.CodeAnalysis.Text;
 
 namespace LuminaSharp;
+
+/// One unit's compiled output. The PDB is what gives a script stack trace its file and line, and what lets a debugger bind a breakpoint.
+internal readonly struct FScriptImage
+{
+    public FScriptImage(byte[] Pe, byte[]? Pdb)
+    {
+        this.Pe = Pe;
+        this.Pdb = Pdb;
+    }
+
+    public readonly byte[] Pe;
+    public readonly byte[]? Pdb;
+}
 
 /// Compiles loose C# script sources into one in-memory assembly with Roslyn; scripts reference the TPA set plus this engine assembly.
 internal static class ScriptCompiler
@@ -58,13 +72,17 @@ internal static class ScriptCompiler
         }
     }
 
-    /// Compiles all sources into PE bytes, or null on error (diagnostics logged). ExtraReferences are the dependency units' emitted images.
-    public static byte[]? Compile(string AssemblyName, IReadOnlyList<(string Path, string Text)> Sources,
+    /// Set only for the packaging compile, whose output ships; every editor compile stays unoptimized so the debugger can read locals.
+    public static bool bOptimize { get; set; }
+
+    /// Compiles all sources into a PE plus its PDB, or null on error (diagnostics logged). ExtraReferences are the dependency units' emitted images.
+    public static FScriptImage? Compile(string AssemblyName, IReadOnlyList<(string Path, string Text)> Sources,
         IReadOnlyList<MetadataReference>? ExtraReferences = null)
     {
         var ParseOptions = new CSharpParseOptions(LanguageVersion.Latest);
+        // Roslyn refuses to emit debug info for source text with no encoding, because it cannot checksum it (CS8055).
         SyntaxTree[] Trees = Sources
-            .Select(Source => CSharpSyntaxTree.ParseText(SourceText.From(Source.Text), ParseOptions, path: Source.Path))
+            .Select(Source => CSharpSyntaxTree.ParseText(SourceText.From(Source.Text, Encoding.UTF8), ParseOptions, path: Source.Path))
             .ToArray();
 
         MetadataReference[] AllReferences = References;
@@ -101,7 +119,7 @@ internal static class ScriptCompiler
             AllReferences,
             new CSharpCompilationOptions(
                 OutputKind.DynamicallyLinkedLibrary,
-                optimizationLevel: OptimizationLevel.Release,
+                optimizationLevel: bOptimize ? OptimizationLevel.Release : OptimizationLevel.Debug,
                 allowUnsafe: true,
                 nullableContextOptions: NullableContextOptions.Enable));
 
@@ -122,7 +140,9 @@ internal static class ScriptCompiler
         }
 
         using var PeStream = new MemoryStream();
-        EmitResult Result = Compiled.Emit(PeStream);
+        using var PdbStream = new MemoryStream();
+        EmitResult Result = Compiled.Emit(PeStream, PdbStream,
+            options: new EmitOptions(debugInformationFormat: DebugInformationFormat.PortablePdb));
 
         bool bHadError = false;
         foreach (Diagnostic Diagnostic in Result.Diagnostics)
@@ -141,7 +161,7 @@ internal static class ScriptCompiler
 
         if (Result.Success && !bHadError)
         {
-            return PeStream.ToArray();
+            return new FScriptImage(PeStream.ToArray(), PdbStream.ToArray());
         }
         return null;
     }

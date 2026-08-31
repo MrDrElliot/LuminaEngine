@@ -348,4 +348,187 @@ namespace LuminaAlgorithmTests
         Algo::ForEach(Values.begin(), Values.end(), [&Sum](int32 V) { Sum += V; });
         EXPECT_EQ(Sum, 10);
     }
+
+    struct FNamed
+    {
+        FString Name;
+        int32   Cost = 0;
+
+        bool IsExpensive() const { return Cost > 10; }
+    };
+
+    TVector<FNamed> MakeNamed()
+    {
+        TVector<FNamed> Items;
+        Items.push_back(FNamed{ "alpha", 5 });
+        Items.push_back(FNamed{ "beta", 20 });
+        Items.push_back(FNamed{ "gamma", 15 });
+        return Items;
+    }
+
+    TEST(AlgoRange, MatchesTheIteratorOverloads)
+    {
+        const std::vector<int32> Values = { 4, 1, 3, 1, 5 };
+
+        EXPECT_EQ(Algo::Find(Values, 3), Algo::Find(Values.begin(), Values.end(), 3));
+        EXPECT_EQ(Algo::Count(Values, 1), Algo::Count(Values.begin(), Values.end(), 1));
+        EXPECT_TRUE(Algo::Contains(Values, 5));
+        EXPECT_FALSE(Algo::Contains(Values, 99));
+
+        auto IsOdd = [](int32 V) { return V % 2 != 0; };
+        EXPECT_EQ(Algo::CountIf(Values, IsOdd), 4);
+        EXPECT_TRUE(Algo::AnyOf(Values, IsOdd));
+        EXPECT_FALSE(Algo::AllOf(Values, IsOdd));
+        EXPECT_FALSE(Algo::NoneOf(Values, IsOdd));
+        EXPECT_EQ(*Algo::MinElement(Values), 1);
+        EXPECT_EQ(*Algo::MaxElement(Values), 5);
+    }
+
+    TEST(AlgoRange, SortsAndSearchesThroughTheRangeForm)
+    {
+        std::vector<int32> Values = MakeRandom(64, 100, 7);
+        std::vector<int32> Reference = Values;
+
+        Algo::Sort(Values);
+        std::sort(Reference.begin(), Reference.end());
+
+        EXPECT_EQ(Values, Reference);
+        EXPECT_TRUE(Algo::IsSorted(Values));
+        EXPECT_TRUE(Algo::BinarySearch(Values, Values[10]));
+
+        std::vector<int32> Reversed = Values;
+        Algo::Reverse(Reversed);
+        std::reverse(Reference.begin(), Reference.end());
+        EXPECT_EQ(Reversed, Reference);
+    }
+
+    TEST(AlgoRange, EqualComparesLengthAsWellAsElements)
+    {
+        const std::vector<int32> Left = { 1, 2, 3 };
+        const std::vector<int32> Same = { 1, 2, 3 };
+        const std::vector<int32> Shorter = { 1, 2 };
+
+        EXPECT_TRUE(Algo::Equal(Left, Same));
+        EXPECT_FALSE(Algo::Equal(Left, Shorter));
+    }
+
+    TEST(AlgoProjection, AcceptsMemberPointersInPlaceOfCallables)
+    {
+        const TVector<FNamed> Items = MakeNamed();
+
+        EXPECT_TRUE(Algo::AnyOf(Items, &FNamed::IsExpensive));
+        EXPECT_FALSE(Algo::AllOf(Items, &FNamed::IsExpensive));
+        EXPECT_EQ(Algo::CountIf(Items, &FNamed::IsExpensive), 2);
+
+        EXPECT_TRUE(Algo::Contains(Items, FString("beta"), &FNamed::Name));
+        EXPECT_FALSE(Algo::Contains(Items, FString("delta"), &FNamed::Name));
+        EXPECT_EQ(Algo::Count(Items, 15, &FNamed::Cost), 1);
+    }
+
+    TEST(AlgoProjection, ReachesThroughPointerElements)
+    {
+        TVector<FNamed> Storage = MakeNamed();
+
+        TVector<FNamed*> Pointers;
+        for (FNamed& Item : Storage)
+        {
+            Pointers.push_back(&Item);
+        }
+
+        EXPECT_TRUE(Algo::Contains(Pointers, FString("beta"), &FNamed::Name));
+        EXPECT_EQ(Algo::IndexOf(Pointers, 15, &FNamed::Cost), 2);
+        EXPECT_EQ(Algo::CountIf(Pointers, &FNamed::IsExpensive), 2);
+        EXPECT_EQ(Algo::Sum(Pointers, &FNamed::Cost), 40);
+    }
+
+    TEST(AlgoRange, AcceptsCArrays)
+    {
+        static const FNamed Table[] = { { "alpha", 5 }, { "beta", 20 }, { "gamma", 15 } };
+        const int32 Values[] = { 3, 1, 2 };
+
+        EXPECT_EQ(Algo::IndexOf(Table, FString("beta"), &FNamed::Name), 1);
+        EXPECT_TRUE(Algo::Contains(Values, 2));
+        EXPECT_EQ(Algo::Sum(Values), 6);
+        EXPECT_EQ(*Algo::MinElement(Values), 1);
+        EXPECT_EQ(Algo::CountIf(Table, &FNamed::IsExpensive), 2);
+    }
+
+    TEST(AlgoIndexOf, ReturnsThePositionOrIndexNone)
+    {
+        const TVector<FNamed> Items = MakeNamed();
+
+        EXPECT_EQ(Algo::IndexOf(Items, FString("gamma"), &FNamed::Name), 2);
+        EXPECT_EQ(Algo::IndexOf(Items, FString("missing"), &FNamed::Name), INDEX_NONE);
+        EXPECT_EQ(Algo::IndexOfIf(Items, &FNamed::IsExpensive), 1);
+
+        const std::vector<int32> Values = { 7, 8, 9 };
+        EXPECT_EQ(Algo::IndexOf(Values, 9), 2);
+        EXPECT_EQ(Algo::IndexOf(Values, 0), INDEX_NONE);
+
+        const std::vector<int32> Empty;
+        EXPECT_EQ(Algo::IndexOf(Empty, 1), INDEX_NONE);
+        EXPECT_EQ(Algo::IndexOfIf(Empty, [](int32 V) { return V > 0; }), INDEX_NONE);
+    }
+
+    TEST(AlgoAccumulate, FoldsWithAndWithoutAProjection)
+    {
+        const std::vector<int32> Values = { 1, 2, 3, 4 };
+        const TVector<FNamed> Items = MakeNamed();
+        const std::vector<int32> Empty;
+
+        EXPECT_EQ(Algo::Accumulate(Values, 0), 10);
+        EXPECT_EQ(Algo::Accumulate(Values, 100), 110);
+        EXPECT_EQ(Algo::Sum(Values), 10);
+        EXPECT_EQ(Algo::Sum(Empty), 0);
+        EXPECT_EQ(Algo::Sum(Items, &FNamed::Cost), 40);
+        EXPECT_EQ(Algo::Accumulate(Values.begin(), Values.end(), 0), 10);
+    }
+
+    TEST(AlgoRange, MutatesThroughTheRangeForm)
+    {
+        std::vector<int32> Values = { 1, 2, 3, 2, 1 };
+
+        Algo::Replace(Values, 2, 9);
+        EXPECT_EQ(Values, (std::vector<int32>{ 1, 9, 3, 9, 1 }));
+
+        Algo::ReplaceIf(Values, [](int32 V) { return V == 9; }, 0);
+        EXPECT_EQ(Values, (std::vector<int32>{ 1, 0, 3, 0, 1 }));
+
+        std::vector<int32> Filled(4);
+        Algo::Fill(Filled, 7);
+        EXPECT_EQ(Filled, (std::vector<int32>{ 7, 7, 7, 7 }));
+
+        std::vector<int32> Counted(4);
+        Algo::Iota(Counted, 1);
+        EXPECT_EQ(Counted, (std::vector<int32>{ 1, 2, 3, 4 }));
+
+        std::vector<int32> Source = { 1, 2, 3, 4 };
+        std::vector<int32> Doubled;
+        Algo::Transform(Source, std::back_inserter(Doubled), [](int32 V) { return V * 2; });
+        EXPECT_EQ(Doubled, (std::vector<int32>{ 2, 4, 6, 8 }));
+
+        std::vector<int32> Odds;
+        Algo::CopyIf(Source, std::back_inserter(Odds), [](int32 V) { return V % 2 != 0; });
+        EXPECT_EQ(Odds, (std::vector<int32>{ 1, 3 }));
+
+        TVector<FNamed> Items = MakeNamed();
+        std::vector<FString> Names;
+        Algo::Transform(Items, std::back_inserter(Names), &FNamed::Name);
+        EXPECT_EQ(Names.size(), 3u);
+        EXPECT_EQ(Names[1], FString("beta"));
+    }
+
+    TEST(AlgoRange, RemovesAndDedupesThroughTheRangeForm)
+    {
+        std::vector<int32> Values = { 1, 2, 2, 3, 3, 3 };
+
+        const auto UniqueEnd = Algo::Unique(Values);
+        Values.erase(UniqueEnd, Values.end());
+        EXPECT_EQ(Values, (std::vector<int32>{ 1, 2, 3 }));
+
+        std::vector<int32> Mixed = { 1, 2, 3, 4, 5 };
+        const auto RemovedEnd = Algo::RemoveIf(Mixed, [](int32 V) { return V % 2 == 0; });
+        Mixed.erase(RemovedEnd, Mixed.end());
+        EXPECT_EQ(Mixed, (std::vector<int32>{ 1, 3, 5 }));
+    }
 }

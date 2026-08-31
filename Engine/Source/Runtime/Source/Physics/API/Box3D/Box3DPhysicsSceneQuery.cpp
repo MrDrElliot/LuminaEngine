@@ -242,7 +242,7 @@ namespace Lumina::Physics
         b3World_CastRay(WorldId, Box3DUtils::ToB3Vec3(Settings.Start), Box3DUtils::ToB3Vec3(Delta),
                         MakeLayerFilter(Settings.LayerMask), &AllHitsCastCallback, &Query);
 
-        Algo::Sort(OutHits.begin(), OutHits.end(), [](const SRayResult& A, const SRayResult& B)
+        Algo::Sort(OutHits, [](const SRayResult& A, const SRayResult& B)
         {
             return A.Fraction < B.Fraction;
         });
@@ -276,7 +276,7 @@ namespace Lumina::Physics
         b3World_CastShape(WorldId, Box3DUtils::ToB3Vec3(Settings.Start), &Proxy, Box3DUtils::ToB3Vec3(Delta),
                           MakeLayerFilter(Settings.LayerMask), &AllHitsCastCallback, &Query);
 
-        Algo::Sort(OutHits.begin(), OutHits.end(), [](const SRayResult& A, const SRayResult& B)
+        Algo::Sort(OutHits, [](const SRayResult& A, const SRayResult& B)
         {
             return A.Fraction < B.Fraction;
         });

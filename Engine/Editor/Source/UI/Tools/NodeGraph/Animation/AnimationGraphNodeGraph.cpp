@@ -36,15 +36,10 @@ namespace Lumina
         }
         bSetupDone = true;
 
-        bool bHasOutputNode = false;
-        for (const TObjectPtr<CEdGraphNode>& Node : Nodes)
+        const bool bHasOutputNode = Algo::AnyOf(Nodes, [](const TObjectPtr<CEdGraphNode>& Node)
         {
-            if (Node.IsValid() && Node->IsA<CAnimGraphNode_Output>())
-            {
-                bHasOutputNode = true;
-                break;
-            }
-        }
+            return Node.IsValid() && Node->IsA<CAnimGraphNode_Output>();
+        });
 
         if (!bHasOutputNode)
         {

@@ -2895,6 +2895,9 @@ namespace Lumina::RHI
 
         const VkPhysicalDeviceLimits& Limits = GDevice->Properties.limits;
         Alignment = Math::Max<uint64>(Alignment, Math::Max<uint64>(Limits.optimalBufferCopyOffsetAlignment, Limits.nonCoherentAtomSize));
+        // Shaders reach these by device address and read them as float4, which needs 16 even when the
+        // device asks for less. See loadAligned use across Engine/Resources/Shaders.
+        Alignment = Math::Max<uint64>(Alignment, (uint64)kDefaultAlign);
         const uint64 Reserved = Math::AlignUp(Size, Alignment);
 
         FGPUAllocation Out = {};
@@ -2956,7 +2959,7 @@ namespace Lumina::RHI
 
     FGPUAllocation Malloc(uint64 Size, EMemoryType Type)
     {
-        return Malloc(Size, 16, Type);
+        return Malloc(Size, kDefaultAlign, Type);
     }
 
     static void NameObject(VkObjectType Type, uint64 Handle, const char* Name)

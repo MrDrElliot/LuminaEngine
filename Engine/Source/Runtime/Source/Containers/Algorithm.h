@@ -7,6 +7,8 @@
 
 #include "ContainerAllocator.h"
 #include "ContainerTraits.h"
+#include "Invoke.h"
+#include "Lumina.h"
 
 namespace Lumina::Algo
 {
@@ -19,8 +21,60 @@ namespace Lumina::Algo
         }
     };
 
+    /** Projection that leaves the element alone, so a call with no projection costs nothing. */
+    struct FIdentity
+    {
+        template <typename T>
+        NODISCARD constexpr T&& operator()(T&& Value) const
+        {
+            return static_cast<T&&>(Value);
+        }
+    };
+
     namespace Private
     {
+        /** Excludes iterators, which is what keeps two-argument calls off the iterator-pair overloads. */
+        template <typename T>
+        concept Range = requires(T& Container)
+        {
+            std::begin(Container);
+            std::end(Container);
+        };
+
+        /** Free begin and end so a C array of static table entries is a range like any container. */
+        template <typename TRange>
+        NODISCARD constexpr decltype(auto) Begin(TRange&& Range)
+        {
+            return std::begin(Range);
+        }
+
+        template <typename TRange>
+        NODISCARD constexpr decltype(auto) End(TRange&& Range)
+        {
+            return std::end(Range);
+        }
+
+        /** Routes through Invoke so &FThing::Field and &FThing::Method work wherever a callable does. */
+        template <typename TProj, typename TElem>
+        NODISCARD constexpr decltype(auto) Project(TProj& Proj, TElem&& Elem)
+        {
+            return Containers::Invoke(Proj, static_cast<TElem&&>(Elem));
+        }
+
+        /** Wraps a projection into the unary predicate the iterator overloads already take. */
+        template <typename TProj, typename T>
+        NODISCARD constexpr auto EqualsBy(TProj& Proj, const T& Value)
+        {
+            return [&Proj, &Value](auto&& Elem) -> bool { return Project(Proj, Elem) == Value; };
+        }
+
+        /** Wraps a caller's predicate so a member pointer is accepted in its place. */
+        template <typename TPred>
+        NODISCARD constexpr auto AsPredicate(TPred& Pred)
+        {
+            return [&Pred](auto&& Elem) -> bool { return static_cast<bool>(Project(Pred, Elem)); };
+        }
+
         template <typename TIt>
         using TValue = typename std::iterator_traits<TIt>::value_type;
 
@@ -784,5 +838,285 @@ namespace Lumina::Algo
 
         FHeapAllocator::Deallocate(Buffer, sizeof(FValue) * static_cast<size_t>(Count), alignof(FValue));
         return First + (Count - Rejected);
+    }
+
+    /** Range overloads, each taking a member pointer wherever it takes a predicate or projection. */
+
+    template <Private::Range TRange, typename T, typename TProj = FIdentity>
+    NODISCARD constexpr auto Find(TRange&& Range, const T& Value, TProj Proj = {})
+    {
+        return FindIf(Private::Begin(Range), Private::End(Range), Private::EqualsBy(Proj, Value));
+    }
+
+    template <Private::Range TRange, typename TPred>
+    NODISCARD constexpr auto FindIf(TRange&& Range, TPred Pred)
+    {
+        return FindIf(Private::Begin(Range), Private::End(Range), Private::AsPredicate(Pred));
+    }
+
+    template <Private::Range TRange, typename TPred>
+    NODISCARD constexpr auto FindIfNot(TRange&& Range, TPred Pred)
+    {
+        return FindIfNot(Private::Begin(Range), Private::End(Range), Private::AsPredicate(Pred));
+    }
+
+    template <Private::Range TRange, typename T, typename TProj = FIdentity>
+    NODISCARD constexpr bool Contains(TRange&& Range, const T& Value, TProj Proj = {})
+    {
+        return Find(Range, Value, Proj) != Private::End(Range);
+    }
+
+    template <Private::Range TRange, typename T, typename TProj = FIdentity>
+    NODISCARD constexpr auto Count(TRange&& Range, const T& Value, TProj Proj = {})
+    {
+        return CountIf(Private::Begin(Range), Private::End(Range), Private::EqualsBy(Proj, Value));
+    }
+
+    template <Private::Range TRange, typename TPred>
+    NODISCARD constexpr auto CountIf(TRange&& Range, TPred Pred)
+    {
+        return CountIf(Private::Begin(Range), Private::End(Range), Private::AsPredicate(Pred));
+    }
+
+    template <Private::Range TRange, typename TPred>
+    NODISCARD constexpr bool AllOf(TRange&& Range, TPred Pred)
+    {
+        return AllOf(Private::Begin(Range), Private::End(Range), Private::AsPredicate(Pred));
+    }
+
+    template <Private::Range TRange, typename TPred>
+    NODISCARD constexpr bool AnyOf(TRange&& Range, TPred Pred)
+    {
+        return AnyOf(Private::Begin(Range), Private::End(Range), Private::AsPredicate(Pred));
+    }
+
+    template <Private::Range TRange, typename TPred>
+    NODISCARD constexpr bool NoneOf(TRange&& Range, TPred Pred)
+    {
+        return NoneOf(Private::Begin(Range), Private::End(Range), Private::AsPredicate(Pred));
+    }
+
+    template <Private::Range TRange, typename TFunc>
+    constexpr TFunc ForEach(TRange&& Range, TFunc Func)
+    {
+        for (auto&& Element : Range)
+        {
+            Private::Project(Func, Element);
+        }
+
+        return Func;
+    }
+
+    template <Private::Range TRange, typename T>
+    constexpr void Fill(TRange&& Range, const T& Value)
+    {
+        Fill(Private::Begin(Range), Private::End(Range), Value);
+    }
+
+    template <Private::Range TRange, typename T>
+    constexpr void Iota(TRange&& Range, T Value)
+    {
+        Iota(Private::Begin(Range), Private::End(Range), Value);
+    }
+
+    template <Private::Range TRange, typename TOut>
+    constexpr TOut Copy(TRange&& Range, TOut Out)
+    {
+        return Copy(Private::Begin(Range), Private::End(Range), Out);
+    }
+
+    template <Private::Range TRange, typename TOut, typename TPred>
+    constexpr TOut CopyIf(TRange&& Range, TOut Out, TPred Pred)
+    {
+        return CopyIf(Private::Begin(Range), Private::End(Range), Out, Private::AsPredicate(Pred));
+    }
+
+    template <Private::Range TRange, typename TOut, typename TFunc>
+    constexpr TOut Transform(TRange&& Range, TOut Out, TFunc Func)
+    {
+        for (auto&& Element : Range)
+        {
+            *Out = Private::Project(Func, Element);
+            ++Out;
+        }
+
+        return Out;
+    }
+
+    template <Private::Range TRange, typename T>
+    constexpr void Replace(TRange&& Range, const T& Old, const T& New)
+    {
+        Replace(Private::Begin(Range), Private::End(Range), Old, New);
+    }
+
+    template <Private::Range TRange, typename TPred, typename T>
+    constexpr void ReplaceIf(TRange&& Range, TPred Pred, const T& New)
+    {
+        ReplaceIf(Private::Begin(Range), Private::End(Range), Private::AsPredicate(Pred), New);
+    }
+
+    template <Private::Range TRange>
+    constexpr void Reverse(TRange&& Range)
+    {
+        Reverse(Private::Begin(Range), Private::End(Range));
+    }
+
+    template <Private::Range TRange, typename T>
+    constexpr auto Remove(TRange&& Range, const T& Value)
+    {
+        return Remove(Private::Begin(Range), Private::End(Range), Value);
+    }
+
+    template <Private::Range TRange, typename TPred>
+    constexpr auto RemoveIf(TRange&& Range, TPred Pred)
+    {
+        return RemoveIf(Private::Begin(Range), Private::End(Range), Private::AsPredicate(Pred));
+    }
+
+    template <Private::Range TRange>
+    constexpr auto Unique(TRange&& Range)
+    {
+        return Unique(Private::Begin(Range), Private::End(Range));
+    }
+
+    template <Private::Range TRange, typename TEqual>
+    constexpr auto Unique(TRange&& Range, TEqual AreEqual)
+    {
+        return Unique(Private::Begin(Range), Private::End(Range), AreEqual);
+    }
+
+    template <Private::Range TRange, typename TPred = FLess>
+    NODISCARD constexpr auto MinElement(TRange&& Range, TPred Pred = {})
+    {
+        return MinElement(Private::Begin(Range), Private::End(Range), Pred);
+    }
+
+    template <Private::Range TRange, typename TPred = FLess>
+    NODISCARD constexpr auto MaxElement(TRange&& Range, TPred Pred = {})
+    {
+        return MaxElement(Private::Begin(Range), Private::End(Range), Pred);
+    }
+
+    template <Private::Range TRange, typename T, typename TPred = FLess>
+    NODISCARD constexpr auto LowerBound(TRange&& Range, const T& Value, TPred Pred = {})
+    {
+        return LowerBound(Private::Begin(Range), Private::End(Range), Value, Pred);
+    }
+
+    template <Private::Range TRange, typename T, typename TPred = FLess>
+    NODISCARD constexpr auto UpperBound(TRange&& Range, const T& Value, TPred Pred = {})
+    {
+        return UpperBound(Private::Begin(Range), Private::End(Range), Value, Pred);
+    }
+
+    template <Private::Range TRange, typename T, typename TPred = FLess>
+    NODISCARD constexpr bool BinarySearch(TRange&& Range, const T& Value, TPred Pred = {})
+    {
+        return BinarySearch(Private::Begin(Range), Private::End(Range), Value, Pred);
+    }
+
+    template <Private::Range TRange, typename TPred = FLess>
+    NODISCARD constexpr bool IsSorted(TRange&& Range, TPred Pred = {})
+    {
+        return IsSorted(Private::Begin(Range), Private::End(Range), Pred);
+    }
+
+    template <Private::Range TRange, typename TPred = FLess>
+    constexpr void Sort(TRange&& Range, TPred Pred = {})
+    {
+        Sort(Private::Begin(Range), Private::End(Range), Pred);
+    }
+
+    template <Private::Range TRange, typename TPred = FLess>
+    void StableSort(TRange&& Range, TPred Pred = {})
+    {
+        StableSort(Private::Begin(Range), Private::End(Range), Pred);
+    }
+
+    template <Private::Range TRange, typename TPred>
+    auto StablePartition(TRange&& Range, TPred Pred)
+    {
+        return StablePartition(Private::Begin(Range), Private::End(Range), Private::AsPredicate(Pred));
+    }
+
+    template <Private::Range TLeft, Private::Range TRight>
+    NODISCARD constexpr bool Equal(TLeft&& Left, TRight&& Right)
+    {
+        auto First1 = Private::Begin(Left);
+        auto First2 = Private::Begin(Right);
+        const auto Last1 = Private::End(Left);
+        const auto Last2 = Private::End(Right);
+
+        for (; First1 != Last1 && First2 != Last2; ++First1, ++First2)
+        {
+            if (!(*First1 == *First2))
+            {
+                return false;
+            }
+        }
+
+        return First1 == Last1 && First2 == Last2;
+    }
+
+    /** Position of the first element whose projection equals Value, or INDEX_NONE. */
+    template <Private::Range TRange, typename T, typename TProj = FIdentity>
+    NODISCARD constexpr int32 IndexOf(TRange&& Range, const T& Value, TProj Proj = {})
+    {
+        int32 Index = 0;
+        for (auto&& Element : Range)
+        {
+            if (Private::Project(Proj, Element) == Value)
+            {
+                return Index;
+            }
+
+            ++Index;
+        }
+
+        return INDEX_NONE;
+    }
+
+    /** Position of the first element satisfying Pred, or INDEX_NONE. */
+    template <Private::Range TRange, typename TPred>
+    NODISCARD constexpr int32 IndexOfIf(TRange&& Range, TPred Pred)
+    {
+        int32 Index = 0;
+        for (auto&& Element : Range)
+        {
+            if (Private::Project(Pred, Element))
+            {
+                return Index;
+            }
+
+            ++Index;
+        }
+
+        return INDEX_NONE;
+    }
+
+    /** Left fold over the projected elements, seeded with Init. */
+    template <typename TIt, typename T, typename TProj = FIdentity>
+    NODISCARD constexpr T Accumulate(TIt First, TIt Last, T Init, TProj Proj = {})
+    {
+        for (; First != Last; ++First)
+        {
+            Init = std::move(Init) + Private::Project(Proj, *First);
+        }
+
+        return Init;
+    }
+
+    template <Private::Range TRange, typename T, typename TProj = FIdentity>
+    NODISCARD constexpr T Accumulate(TRange&& Range, T Init, TProj Proj = {})
+    {
+        return Accumulate(Private::Begin(Range), Private::End(Range), std::move(Init), Proj);
+    }
+
+    /** Sum of the projected elements, from a value-initialized accumulator. */
+    template <Private::Range TRange, typename TProj = FIdentity>
+    NODISCARD constexpr auto Sum(TRange&& Range, TProj Proj = {})
+    {
+        using FAccumulator = std::decay_t<decltype(Private::Project(Proj, *Private::Begin(Range)))>;
+        return Accumulate(Range, FAccumulator{}, Proj);
     }
 }

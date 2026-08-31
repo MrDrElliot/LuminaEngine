@@ -30,20 +30,13 @@ namespace Lumina
                 }
             }
 
-            Algo::Sort(Candidates.begin(), Candidates.end(), [](TType* A, TType* B)
+            Algo::Sort(Candidates, [](TType* A, TType* B)
             {
                 return strcmp(A->GetName().c_str(), B->GetName().c_str()) < 0;
             });
 
-            int32 CurrentIndex = 0;
-            for (size_t i = 0; i < Candidates.size(); ++i)
-            {
-                if (Candidates[i] == Current)
-                {
-                    CurrentIndex = static_cast<int32>(i + 1);
-                    break;
-                }
-            }
+            const int32 Found = Algo::IndexOf(Candidates, Current);
+            const int32 CurrentIndex = Found != INDEX_NONE ? Found + 1 : 0;
 
             const char* Preview = Current ? Current->GetName().c_str() : "None";
 

@@ -60,7 +60,7 @@ namespace Lumina
                 Networked.push_back(Entity);
             }
 
-            Algo::Sort(Networked.begin(), Networked.end(), [](ECS::FEntity A, ECS::FEntity B)
+            Algo::Sort(Networked, [](ECS::FEntity A, ECS::FEntity B)
             {
                 return (A).Value < (B).Value;
             });
@@ -293,7 +293,7 @@ namespace Lumina
             }
 
             // Oldest first with a GUID tie-break, so a backlog spreads across ticks without starving one.
-            Algo::Sort(Dirty.begin(), Dirty.end(), [](const FDirtyEntry& A, const FDirtyEntry& B)
+            Algo::Sort(Dirty, [](const FDirtyEntry& A, const FDirtyEntry& B)
             {
                 return (A.LastTime != B.LastTime) ? (A.LastTime < B.LastTime) : (A.Guid < B.Guid);
             });
@@ -1192,7 +1192,7 @@ namespace Lumina
                 {
                     State->ConnectedClients = (State->ConnectedClients > 0) ? State->ConnectedClients - 1 : 0;
                     auto& Ids = State->ConnectedClientIds;
-                    Ids.erase(Algo::Remove(Ids.begin(), Ids.end(), Event.Connection.Value), Ids.end());
+                    Ids.erase(Algo::Remove(Ids, Event.Connection.Value), Ids.end());
                     State->ClientViews.erase(Event.Connection.Value); // drop its per-client relevancy state
 
                     // Release anything this connection owned so it doesn't stay stuck as an orphan proxy.

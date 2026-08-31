@@ -289,8 +289,7 @@ namespace Lumina
         Ctx.Name.assign(NewProjectName.data(), NewProjectName.size());
         Ctx.NameUpper = Ctx.Name;
         Algo::Transform(
-            Ctx.NameUpper.begin(),
-            Ctx.NameUpper.end(),
+            Ctx.NameUpper,
             Ctx.NameUpper.begin(),
             [](unsigned char c)
             {
@@ -299,9 +298,9 @@ namespace Lumina
         Ctx.Guid = FGuid::New().ToString(true, true);
         Ctx.Description = "A Lumina game project";
         Ctx.LuminaDir = EngineDir;
-        Algo::Replace(Ctx.LuminaDir.begin(), Ctx.LuminaDir.end(), '\\', '/');
+        Algo::Replace(Ctx.LuminaDir, '\\', '/');
         Ctx.LuminaDirBackslash = Ctx.LuminaDir;
-        Algo::Replace(Ctx.LuminaDirBackslash.begin(), Ctx.LuminaDirBackslash.end(), '/', '\\');
+        Algo::Replace(Ctx.LuminaDirBackslash, '/', '\\');
 
         if (!CopyTemplateTree(BlankProjectPath, Combined,
             [&Ctx](FString& Text) { ReplaceProjectTokens(Text, Ctx); },
@@ -368,7 +367,7 @@ namespace Lumina
 
         auto ToUpper = [](FString& S)
         {
-            Algo::Transform(S.begin(), S.end(), S.begin(),
+            Algo::Transform(S, S.begin(),
                 [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
         };
 

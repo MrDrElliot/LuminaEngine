@@ -230,7 +230,7 @@ namespace Lumina
                 SortedTransitions.push_back(Transition.Get());
             }
         }
-        Algo::StableSort(SortedTransitions.begin(), SortedTransitions.end(),
+        Algo::StableSort(SortedTransitions,
             [](const CAnimStateTransition* A, const CAnimStateTransition* B)
         {
             if (A->Priority != B->Priority)

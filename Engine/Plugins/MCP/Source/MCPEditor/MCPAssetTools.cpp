@@ -89,7 +89,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Lumina::Format("Nothing exists at {}.", Root));
                     }
 
-                    const size_t RootDepth = (size_t)Algo::Count(Root.begin(), Root.end(), '/');
+                    const size_t RootDepth = (size_t)Algo::Count(Root, '/');
 
                     THashMap<FString, int32> Counts;
 
@@ -105,7 +105,7 @@ namespace Lumina::MCP
 
                         const FStringView Folder = FileInfo.IsDirectory() ? Path : VFS::Parent(Path, true);
 
-                        const size_t FolderDepth = (size_t)Algo::Count(Folder.begin(), Folder.end(), '/');
+                        const size_t FolderDepth = (size_t)Algo::Count(Folder, '/');
                         if (FolderDepth > RootDepth + (size_t)Depth)
                         {
                             return;
@@ -134,7 +134,7 @@ namespace Lumina::MCP
                         Out.Folders.push_back(Move(Info));
                     }
 
-                    Algo::Sort(Out.Folders.begin(), Out.Folders.end(),
+                    Algo::Sort(Out.Folders,
                         [](const SFolderInfo& A, const SFolderInfo& B) { return A.Path < B.Path; });
 
                     return Agent::FToolResult::Ok(Lumina::Format("{} folder(s) under {}.",

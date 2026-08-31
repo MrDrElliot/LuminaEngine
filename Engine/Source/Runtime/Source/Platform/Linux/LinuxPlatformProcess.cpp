@@ -955,7 +955,7 @@ namespace Lumina::Platform
                 Cursor += Patterns.size() + 1;
 
                 FString Translated = Patterns;
-                Algo::Replace(Translated.begin(), Translated.end(), ';', ' ');
+                Algo::Replace(Translated, ';', ' ');
 
                 Arguments.push_back(FString("--file-filter=") + Description + " | " + Translated);
             }

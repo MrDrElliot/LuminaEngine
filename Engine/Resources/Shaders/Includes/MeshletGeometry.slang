@@ -15,9 +15,19 @@ struct FMeshletRef
     // meshlet range rather than at load time.
     uint            SkinnedVertexBase;
 
-    // The instance is REACHED, not stored: an FGPUInstance by value puts its MeshletHeader pointer in a
-    // returned struct, which Slang materializes without the Aliased/Restrict SPIR-V requires there.
+    // Reached rather than stored, since this struct is returned by value and the instance is 128 bytes.
+    // Field reads through the pointer compile to an access chain, property and method reads do not.
     property FGPUInstance* Inst { get { return Instances() + InstanceID; } }
+
+    // FGPUInstance::MeshletHeader returns the same pointer but loads the whole instance to reach the slot.
+    property FMeshletHeader* Header { get { return MeshletHeaders() + Inst.MeshletHeaderSlot; } }
+
+    // Transform is a field at offset 0 of a 16-aligned 128-byte stride, so 48 aligned bytes cover it.
+    property float4x4 ModelMatrix { get { return loadAligned<16>(&Inst.Transform).ToMatrix(); } }
+
+    // Pointer forms again, reading the one packed word instead of the whole instance.
+    property EInstanceFlags InstFlags { get { return FGPUInstance::GetFlags(Inst); } }
+    bool InstHasFlag(EInstanceFlags Flag) { return FGPUInstance::HasFlag(Inst, Flag); }
 };
 
 // bShadow selects the instance's shadow meshlet range instead of the surface (base/depth) range.
@@ -66,7 +76,7 @@ FMeshletRef ResolveMeshlet(uint MeshletSlot, bool bShadow)
     // Against the HEADER's count as well as the instance's: the arrays indexed below belong to the header
     // and only it knows their length. An instance naming a mesh that has died gets the null header, whose
     // count is 0, and takes this exit -- which is what replaced the null check above.
-    if (Draw.MeshletIndex >= min(Ref.Inst.MeshletTotalCount, Ref.Inst.MeshletHeader.MeshletCount))
+    if (Draw.MeshletIndex >= min(Ref.Inst.MeshletTotalCount, Ref.Header.MeshletCount))
     {
         Ref.SkinnedVertexBase = kNoPreSkinBase;
         Ref.GlobalMeshletIdx  = 0u;
@@ -75,7 +85,7 @@ FMeshletRef ResolveMeshlet(uint MeshletSlot, bool bShadow)
     }
 
     Ref.GlobalMeshletIdx     = Draw.MeshletIndex;
-    Ref.M                    = Ref.Inst.MeshletHeader.Meshlets[Ref.GlobalMeshletIdx];
+    Ref.M                    = loadAligned<16>(Ref.Header.Meshlets + Ref.GlobalMeshletIdx);
 
     // Where garbage stops propagating, not a clamp on legitimate data: past here the counts must be
     // within the DECLARED array sizes. Dropping the meshlet makes an overrun a hole, not a fault.
@@ -116,7 +126,7 @@ FMeshletPassArgs* MeshletPass() { return GetPassArgs<FMeshletPassArgs>(); }
 // already compacted the survivors, so a workgroup maps to one directly -- no payload, no second cull.
 uint MeshletSlotForWorkgroup(uint DrawIndex, uint GroupIndex)
 {
-    const FRenderBucket Bucket = MeshletPass().Buckets[MeshletPass().ArgBase];
+    const FRenderBucket Bucket = loadAligned<16>(MeshletPass().Buckets + MeshletPass().ArgBase);
     const uint Slice  = MeshletPass().Slice;
     const uint Local  = DrawIndex * MeshletPass().MaxMeshGroups + GroupIndex;
 
@@ -144,7 +154,7 @@ FMeshletRef ResolveMeshletForWorkgroup(uint DrawIndex, uint GroupIndex, out uint
         return Empty;
     }
 
-    const FCullView View = CullViews()[MeshletPass().CullViewIndex];
+    const FCullView View = loadAligned<16>(CullViews() + MeshletPass().CullViewIndex);
     return ResolveMeshlet(OutSlot, View.HasFlag(CULL_VIEW_FLAG_CAST_SHADOW_ONLY));
 }
 
@@ -158,25 +168,25 @@ FVertexData LoadMeshletVertexData(FMeshletRef Ref, uint LocalVertIdx)
     bool bSkinned;
     if      (SPEC_SKINNED == 0u) { bSkinned = false; }
     else if (SPEC_SKINNED == 1u) { bSkinned = true;  }
-    else                         { bSkinned = Ref.Inst.HasFlag(EInstanceFlags::Skinned); }
+    else                         { bSkinned = Ref.InstHasFlag(EInstanceFlags::Skinned); }
 
     if (bSkinned)
     {
         // Overflow path: entities the pre-skin budget could not cover blend per pass instead of once.
         if (Ref.SkinnedVertexBase == kNoPreSkinBase)
         {
-            return DecodePreSkinnedVertex(SkinVertex(Ref.Inst.MeshletHeader, Ref.M, Ref.GlobalMeshletIdx, LocalVertIdx, Ref.Inst.BoneOffset));
+            return DecodePreSkinnedVertex(SkinVertex(Ref.Header, Ref.M, Ref.GlobalMeshletIdx, LocalVertIdx, Ref.Inst.BoneOffset));
         }
         return LoadSkinnedVertex(Ref.M, LocalVertIdx, Ref.SkinnedVertexBase);
     }
-    return LoadStaticVertex(Ref.Inst.MeshletHeader, Ref.M, LocalVertIdx);
+    return LoadStaticVertex(Ref.Header, Ref.M, LocalVertIdx);
 }
 
 // One packed dword = three 8-bit local vertex indices. unpack_u8u32, not shift+mask: the hand-rolled
 // form measured 9.97% of shader-profiler samples in the VisBuffer pass. This is one instruction.
 uint3 UnpackMeshletTriangle(FMeshletRef Ref, uint TriIdx)
 {
-    uint Packed = Ref.Inst.MeshletHeader.Triangles[Ref.M.TriangleOffset + TriIdx];
+    uint Packed = Ref.Header.Triangles[Ref.M.TriangleOffset + TriIdx];
     return unpack_u8u32(Packed).xyz;
 }
 
@@ -196,7 +206,7 @@ uint3 UnpackMeshletTriangleSafe(FMeshletRef Ref, uint TriIdx)
 // VS-emulation single-corner decode: corner in [0,3) of triangle TriIdx -> local vertex index.
 uint MeshletCornerVertexIndex(FMeshletRef Ref, uint TriIdx, uint Corner)
 {
-    uint Packed = Ref.Inst.MeshletHeader.Triangles[Ref.M.TriangleOffset + TriIdx];
+    uint Packed = Ref.Header.Triangles[Ref.M.TriangleOffset + TriIdx];
     return (Packed >> (Corner * 8u)) & 0xFFu;
 }
 
@@ -336,12 +346,12 @@ FMeshletWorldVertex TransformMeshletVertex(FVertexData V, float4x4 ModelMatrix, 
 
 FMeshletWorldVertex TransformMeshletVertex(FMeshletRef Ref, FVertexData V, float3x3 NormalMatrixWS)
 {
-    return TransformMeshletVertex(V, Ref.Inst.ModelMatrix, NormalMatrixWS);
+    return TransformMeshletVertex(V, Ref.ModelMatrix, NormalMatrixWS);
 }
 
 FMeshletWorldVertex TransformMeshletVertex(FMeshletRef Ref, FVertexData V)
 {
-    const float4x4 ModelMatrix = Ref.Inst.ModelMatrix;
+    const float4x4 ModelMatrix = Ref.ModelMatrix;
     return TransformMeshletVertex(V, ModelMatrix, CalculateNormalMatrix(ModelMatrix));
 }
 
@@ -398,7 +408,7 @@ FBaseVertexOutput MakeBaseVertexOutput(FMeshletRef Ref, FMeshletWorldVertex W, f
     O.InstanceIndex = Ref.InstanceID;
     O.EntityID      = Ref.Inst.EntityID;
     O.MaterialIndex = Ref.Inst.MaterialIndex;
-    O.InstanceFlags = (uint)Ref.Inst.Flags;
+    O.InstanceFlags = (uint)Ref.InstFlags;
     O.MeshletIndex  = Ref.GlobalMeshletIdx;
     O.Position      = CameraClipPosition(ViewPos, CameraProj);
     return O;

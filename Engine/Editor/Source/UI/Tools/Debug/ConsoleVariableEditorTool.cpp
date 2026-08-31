@@ -132,7 +132,7 @@ namespace Lumina
             }
         }
 
-        Algo::Sort(Visible.begin(), Visible.end(), [](const FConsoleVariable* A, const FConsoleVariable* B)
+        Algo::Sort(Visible, [](const FConsoleVariable* A, const FConsoleVariable* B)
         {
             return A->Name < B->Name;
         });
@@ -271,7 +271,7 @@ namespace Lumina
             }
         }
 
-        Algo::Sort(Visible.begin(), Visible.end(), [](const FConsoleCommand* A, const FConsoleCommand* B)
+        Algo::Sort(Visible, [](const FConsoleCommand* A, const FConsoleCommand* B)
         {
             return A->Name < B->Name;
         });

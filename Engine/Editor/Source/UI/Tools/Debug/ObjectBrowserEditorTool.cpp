@@ -177,7 +177,7 @@ namespace Lumina
         const bool  bAscending = bSortAscending;
         const TVector<FObjectBrowserRow>& Source = Rows;
 
-        Algo::StableSort(VisibleRows.begin(), VisibleRows.end(), [&Source, Column, bAscending](int32 A, int32 B)
+        Algo::StableSort(VisibleRows, [&Source, Column, bAscending](int32 A, int32 B)
         {
             const FObjectBrowserRow& RowA = Source[A];
             const FObjectBrowserRow& RowB = Source[B];

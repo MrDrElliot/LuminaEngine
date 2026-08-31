@@ -48,7 +48,7 @@ namespace Lumina
         void SortStats(TVector<FAssetLoadStat>& Stats, const ImGuiTableColumnSortSpecs& Spec)
         {
             const bool bAscending = Spec.SortDirection == ImGuiSortDirection_Ascending;
-            Algo::Sort(Stats.begin(), Stats.end(),
+            Algo::Sort(Stats,
                 [&Spec, bAscending](const FAssetLoadStat& A, const FAssetLoadStat& B)
                 {
                     double LHS = 0.0;

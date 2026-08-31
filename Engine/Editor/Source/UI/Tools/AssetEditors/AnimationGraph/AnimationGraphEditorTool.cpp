@@ -763,7 +763,7 @@ namespace Lumina
         // Drop cached property tables whose backing transition was removed.
         for (auto It = TransitionTables.begin(); It != TransitionTables.end(); )
         {
-            const bool bAlive = Algo::Find(Outgoing.begin(), Outgoing.end(), It->first) != Outgoing.end();
+            const bool bAlive = Algo::Contains(Outgoing, It->first);
             if (!bAlive)
             {
                 It = TransitionTables.erase(It);
@@ -1331,7 +1331,7 @@ namespace Lumina
                 ClipEntries.push_back(Move(Entry));
             }
 
-            Algo::Sort(ClipEntries.begin(), ClipEntries.end(),
+            Algo::Sort(ClipEntries,
                         [](const FClipEntry& A, const FClipEntry& B) { return A.DisplayName < B.DisplayName; });
         }
 

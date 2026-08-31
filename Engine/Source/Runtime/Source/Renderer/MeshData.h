@@ -51,6 +51,9 @@ namespace Lumina
         }
     };
     static_assert(sizeof(FMeshlet) == 32, "FMeshlet must stay 32B to match the GPU mirror (Common.slang)");
+    // Shaders reach this with loadAligned<16>, which needs every element 16-aligned.
+    static_assert(sizeof(FMeshlet) % 16 == 0, "FMeshlet stride must stay 16-byte aligned for loadAligned<16>");
+
 
     // The cull's per-meshlet read, and the only one it always makes. Kept apart from the cone because
     // every meshlet of every view pays this while the cone test needs a much narrower set.
@@ -67,6 +70,9 @@ namespace Lumina
         }
     };
     static_assert(sizeof(FMeshletSphere) == 16, "FMeshletSphere must match the GPU mirror");
+    // Shaders reach this with loadAligned<16>, which needs every element 16-aligned.
+    static_assert(sizeof(FMeshletSphere) % 16 == 0, "FMeshletSphere stride must stay 16-byte aligned for loadAligned<16>");
+
 
     // Backface cluster culling, carrying no apex, so readers owe it meshoptimizer's approximate test.
     struct FMeshletCone

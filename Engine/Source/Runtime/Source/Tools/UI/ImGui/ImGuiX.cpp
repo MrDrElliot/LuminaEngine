@@ -724,7 +724,7 @@ namespace Lumina::ImGuiX
             return DataClass != nullptr && DataClass->IsChildOf(FilterClass);
         });
 
-        Algo::Sort(Assets.begin(), Assets.end(), [](const FAssetData* A, const FAssetData* B)
+        Algo::Sort(Assets, [](const FAssetData* A, const FAssetData* B)
         {
             return A->AssetName.ToString() < B->AssetName.ToString();
         });
@@ -764,7 +764,7 @@ namespace Lumina::ImGuiX
             }
         }
 
-        Algo::Sort(Candidates.begin(), Candidates.end(), [](CClass* A, CClass* B)
+        Algo::Sort(Candidates, [](CClass* A, CClass* B)
         {
             return strcmp(A->GetName().c_str(), B->GetName().c_str()) < 0;
         });
@@ -816,7 +816,7 @@ namespace Lumina::ImGuiX
             }
         }
 
-        Algo::Sort(Candidates.begin(), Candidates.end(), [](CStruct* A, CStruct* B)
+        Algo::Sort(Candidates, [](CStruct* A, CStruct* B)
         {
             return strcmp(A->GetName().c_str(), B->GetName().c_str()) < 0;
         });

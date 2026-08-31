@@ -61,7 +61,7 @@ namespace Lumina
                 return 0.0f;
             }
 
-            Algo::Sort(Deltas.begin(), Deltas.end());
+            Algo::Sort(Deltas);
             return Deltas[Deltas.size() / 2];
         }
 
@@ -389,7 +389,7 @@ FQuat AnimCompression::SampleKeysQuat(const TVector<float>& Times, const TVector
             return 0.0f;
         }
 
-        Algo::Sort(ChannelDeltas.begin(), ChannelDeltas.end());
+        Algo::Sort(ChannelDeltas);
         const float Delta = ChannelDeltas[ChannelDeltas.size() / 2];
 
         // Authoring rates are whole numbers, so rounding absorbs the float drift in the source timestamps.

@@ -82,7 +82,7 @@ uint ClaimPreSkinSlice(FMeshletHeader* Header, uint MeshletOffset, uint MeshletC
     }
 
     const uint FirstVertex = Header.Meshlets[MeshletOffset].VertexOffset;
-    const FMeshlet Last    = Header.Meshlets[MeshletOffset + MeshletCount - 1u];
+    const FMeshlet Last    = loadAligned<16>(Header.Meshlets + (MeshletOffset + MeshletCount - 1u));
     const uint EndVertex   = Last.VertexOffset + Last.VertexCount;
 
     if (EndVertex <= FirstVertex)
@@ -269,7 +269,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     // bucket room nobody uses, starve the next, and drop the newest mesh with no error anywhere.
     for (uint v = 0; v < Pass().NumViews; ++v)
     {
-        FCullView View = CullViews()[v];
+        FCullView View = loadAligned<16>(CullViews() + v);
 
         uint2 Range   = uint2(0u, 0u);
         uint  Emitted = 0u;

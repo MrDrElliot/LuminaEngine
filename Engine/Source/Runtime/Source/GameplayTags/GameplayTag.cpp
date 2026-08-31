@@ -57,49 +57,21 @@ namespace Lumina
 
     bool FGameplayTagContainer::HasTag(const FGameplayTag& Tag) const
     {
-        for (const FGameplayTag& Owned : Tags)
-        {
-            if (Owned.MatchesTag(Tag))
-            {
-                return true;
-            }
-        }
-        return false;
+        return Algo::AnyOf(Tags, [&Tag](const FGameplayTag& Owned) { return Owned.MatchesTag(Tag); });
     }
 
     bool FGameplayTagContainer::HasTagExact(const FGameplayTag& Tag) const
     {
-        for (const FGameplayTag& Owned : Tags)
-        {
-            if (Owned == Tag)
-            {
-                return true;
-            }
-        }
-        return false;
+        return Algo::Contains(Tags, Tag);
     }
 
     bool FGameplayTagContainer::HasAny(const FGameplayTagContainer& Other) const
     {
-        for (const FGameplayTag& Tag : Other.Tags)
-        {
-            if (HasTag(Tag))
-            {
-                return true;
-            }
-        }
-        return false;
+        return Algo::AnyOf(Other.Tags, [this](const FGameplayTag& Tag) { return HasTag(Tag); });
     }
 
     bool FGameplayTagContainer::HasAll(const FGameplayTagContainer& Other) const
     {
-        for (const FGameplayTag& Tag : Other.Tags)
-        {
-            if (!HasTag(Tag))
-            {
-                return false;
-            }
-        }
-        return true;
+        return Algo::AllOf(Other.Tags, [this](const FGameplayTag& Tag) { return HasTag(Tag); });
     }
 }

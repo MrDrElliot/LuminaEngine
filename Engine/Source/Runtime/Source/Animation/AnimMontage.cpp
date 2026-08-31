@@ -37,7 +37,7 @@ namespace Lumina
             bool bOverlaps = false;
             for (const FName& Slot : ExistingSlots)
             {
-                bOverlaps = bOverlaps || Algo::Find(Slots.begin(), Slots.end(), Slot) != Slots.end();
+                bOverlaps = bOverlaps || Algo::Contains(Slots, Slot);
             }
 
             if (bOverlaps)
@@ -246,7 +246,7 @@ namespace Lumina
             }
         }
 
-        Instances.erase(Algo::RemoveIf(Instances.begin(), Instances.end(), [](const FAnimMontageInstance& Instance)
+        Instances.erase(Algo::RemoveIf(Instances, [](const FAnimMontageInstance& Instance)
         {
             return !Instance.IsActive();
         }), Instances.end());
@@ -388,14 +388,13 @@ namespace Lumina
 
         for (int32 Index : NowActive)
         {
-            const bool bWasActive = Algo::Find(Instance.ActiveNotifyStates.begin(),
-                                                Instance.ActiveNotifyStates.end(), Index) != Instance.ActiveNotifyStates.end();
+            const bool bWasActive = Algo::Contains(Instance.ActiveNotifyStates, Index);
             Emit(Index, bWasActive ? EAnimNotifyEventType::Tick : EAnimNotifyEventType::Begin);
         }
 
         for (int32 Index : Instance.ActiveNotifyStates)
         {
-            if (Algo::Find(NowActive.begin(), NowActive.end(), Index) == NowActive.end())
+            if (!Algo::Contains(NowActive, Index))
             {
                 Emit(Index, EAnimNotifyEventType::End);
             }

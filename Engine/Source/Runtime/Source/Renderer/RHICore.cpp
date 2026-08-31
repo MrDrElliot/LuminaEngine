@@ -686,6 +686,8 @@ namespace Lumina::RHI::Core
     {
         FTransientSlice& Slice = GCore.Slices[GCore.CurrentSlot.load(std::memory_order_acquire)];
 
+        Alignment = Math::Max<uint64>(Alignment, (uint64)kDefaultAlign);
+
         const uint64 Padded = Size + Alignment;
         const uint64 RawOffset = Slice.Cursor.fetch_add(Padded, std::memory_order_relaxed);
         

@@ -236,7 +236,7 @@ namespace Lumina
             }
         }
 
-        Algo::Sort(Contributions.begin(), Contributions.end(), [](const FVolumeContribution& A, const FVolumeContribution& B)
+        Algo::Sort(Contributions, [](const FVolumeContribution& A, const FVolumeContribution& B)
         {
             return A.Priority < B.Priority;
         });
@@ -279,7 +279,7 @@ namespace Lumina
             MaterialVolumes.push_back({VolEntity, Volume.Priority});
         }
         
-        Algo::Sort(MaterialVolumes.begin(), MaterialVolumes.end(), [](const FMaterialVolumeRef& A, const FMaterialVolumeRef& B)
+        Algo::Sort(MaterialVolumes, [](const FMaterialVolumeRef& A, const FMaterialVolumeRef& B)
         {
             return A.Priority < B.Priority;
         });

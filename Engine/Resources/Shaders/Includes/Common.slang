@@ -696,6 +696,16 @@ struct FGPUInstance
 
     property float3 BoundsCenter { get { return SphereBounds.xyz; } }
     property float  BoundsRadius { get { return SphereBounds.w; } }
+
+    // Pointer forms of the three accessors above, which through a pointer would load all 128 bytes.
+    static bool HasFlag(FGPUInstance* P, EInstanceFlags Flag)
+    {
+        const uint Mask = (uint)Flag << 16;
+        return (P.DrawIDAndFlags & Mask) == Mask;
+    }
+
+    static EInstanceFlags GetFlags(FGPUInstance* P) { return EInstanceFlags((P.DrawIDAndFlags >> 16) & 0xFFFFu); }
+    static uint           GetDrawID(FGPUInstance* P) { return P.DrawIDAndFlags & 0xFFFFu; }
 };
 
 struct FLightShadow
@@ -862,6 +872,8 @@ struct FCluster
     float4 MaxPoint;
     uint   LightIndices[LIGHTS_PER_CLUSTER];
     uint   Count;
+    // Present in the C++ mirror through alignas(16); without them the strides disagree by 12 bytes.
+    uint   _Pad[3];
 };
 
 struct FFrustum

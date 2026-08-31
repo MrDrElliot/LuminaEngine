@@ -108,20 +108,12 @@ namespace Lumina
             return false;
         }
 
-        for (CMaterialInterface* Material : Materials)
+        const bool bMaterialsReady = Algo::AllOf(Materials, [](const CMaterialInterface* Material)
         {
-            if (Material == nullptr)
-            {
-                return false;
-            }
+            return Material != nullptr && Material->IsReadyForRender();
+        });
 
-            if (Material->IsReadyForRender() == false)
-            {
-                return false;
-            }
-        }
-
-        return !Materials.empty();
+        return bMaterialsReady && !Materials.empty();
     }
 
     void CMesh::GenerateBoundingBox()

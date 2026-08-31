@@ -322,6 +322,7 @@ namespace Lumina
         void CopyDotNetPayload(FStringView EngineInstallDir,
                                FStringView BinariesDir,
                                FStringView DestDir,
+                               bool bStageSymbols,
                                const TFunction<void(FStringView)>& LogFunc)
         {
             // 1. Managed bootstrap assembly + its dependency closure (Roslyn, runtimeconfig, deps.json).
@@ -367,6 +368,16 @@ namespace Lumina
                 {
                     LogPackager(LogFunc, Format("DotNet: [warn] failed to stage script DLL {}", DllName.c_str()).c_str());
                     continue;
+                }
+
+                // Without these a script exception in a dev package reports no file or line.
+                if (bStageSymbols && Unit.DllSourcePath.ends_with(".dll"))
+                {
+                    const FString PdbSrc = Unit.DllSourcePath.substr(0, Unit.DllSourcePath.size() - 4) + ".pdb";
+                    if (Filesystem::Exists(PdbSrc))
+                    {
+                        CopyFileTo(PdbSrc, Join(ScriptsDst, Unit.Name + ".pdb"));
+                    }
                 }
 
                 if (Staged > 0)
@@ -476,7 +487,7 @@ namespace Lumina
         LogPackager(LogFunc, Format("Copied {} runtime files.", Copied).c_str());
 
         // Lets the cooked game boot CoreCLR and load its scripts without the editor or dev tree.
-        CopyDotNetPayload(Paths::GetEngineInstallDirectory(), BinariesDir, DestDir, LogFunc);
+        CopyDotNetPayload(Paths::GetEngineInstallDirectory(), BinariesDir, DestDir, !(Config == "Shipping"), LogFunc);
 
         Result.bSuccess = true;
         return Result;

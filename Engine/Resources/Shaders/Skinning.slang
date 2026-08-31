@@ -77,10 +77,8 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
 
     const FSkinnedFrameData Data = Pass().SkinnedData[Slot];
 
-    // REACHED, never copied into a local: FInstanceStatic carries a buffer-device-address pointer, and a
-    // by-value copy makes Slang emit a Function OpVariable that SPIR-V requires to carry Aliased or Restrict
-    // and it emits with neither. Invalid module, accepted by every driver, device-lost frames later.
-    FInstanceStatic* Static = Pass().RetainedStatic + Slot;
+    // Safe by value now that FInstanceStatic carries a header slot rather than a device address.
+    const FInstanceStatic Static = loadAligned<16>(Pass().RetainedStatic + Slot);
 
     // A header always exists -- an instance carries a slot and slot 0 is the null header -- so the
     // question is whether it describes geometry. Zero for a mesh that has died or never uploaded.
@@ -122,14 +120,14 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
     {
         for (uint i = Lane; i < Palette.Count; i += 64u)
         {
-            GroupBones[i] = Bones()[ResolvePaletteBone(Header, Palette, i, Data.BoneOffset)];
+            GroupBones[i] = loadAligned<16>(Bones() + ResolvePaletteBone(Header, Palette, i, Data.BoneOffset));
         }
     }
     GroupMemoryBarrierWithGroupSync();
 
     // SkinnedVertexBase folds in the span start so the write lands in the compacted slice
     // (same index the draw VS reads). 64 lanes per meshlet.
-    FMeshlet M = Header.Meshlets[MeshletIndex];
+    FMeshlet M = loadAligned<16>(Header.Meshlets + MeshletIndex);
     if (Lane < M.VertexCount)
     {
         uint OutIndex = SkinnedVertexBase + M.VertexOffset + Lane;
@@ -150,10 +148,10 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
             else if (bCanSkin)
             {
                 Rows = BlendSkinRows(
-                    Bones()[ResolvePaletteBone(Header, Palette, S.Slots.x, Data.BoneOffset)],
-                    Bones()[ResolvePaletteBone(Header, Palette, S.Slots.y, Data.BoneOffset)],
-                    Bones()[ResolvePaletteBone(Header, Palette, S.Slots.z, Data.BoneOffset)],
-                    Bones()[ResolvePaletteBone(Header, Palette, S.Slots.w, Data.BoneOffset)],
+                    loadAligned<16>(Bones() + ResolvePaletteBone(Header, Palette, S.Slots.x, Data.BoneOffset)),
+                    loadAligned<16>(Bones() + ResolvePaletteBone(Header, Palette, S.Slots.y, Data.BoneOffset)),
+                    loadAligned<16>(Bones() + ResolvePaletteBone(Header, Palette, S.Slots.z, Data.BoneOffset)),
+                    loadAligned<16>(Bones() + ResolvePaletteBone(Header, Palette, S.Slots.w, Data.BoneOffset)),
                     S.Weights);
             }
 

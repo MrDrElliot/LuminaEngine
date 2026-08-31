@@ -550,7 +550,7 @@ namespace Lumina
 
     void CMaterialInstance::RemoveOverride(const FName& Name)
     {
-        auto NewEnd = Algo::RemoveIf(Overrides.begin(), Overrides.end(), [Name](const FMaterialParameterOverride& O)
+        auto NewEnd = Algo::RemoveIf(Overrides, [Name](const FMaterialParameterOverride& O)
         {
             return O.ParameterName == Name;
         });
@@ -583,12 +583,14 @@ namespace Lumina
             return false;
         }
 
-        for (const FMaterialParameterOverride& Override : Overrides)
+        const bool bOverridden = Algo::AnyOf(Overrides, [&](const FMaterialParameterOverride& Override)
         {
-            if (Override.Type == Type && Override.bEnabled && Override.ParameterName == Name)
-            {
-                return false;
-            }
+            return Override.Type == Type && Override.bEnabled && Override.ParameterName == Name;
+        });
+
+        if (bOverridden)
+        {
+            return false;
         }
 
         const FMaterialUniforms& Inherited = *Material->GetMaterialUniforms();

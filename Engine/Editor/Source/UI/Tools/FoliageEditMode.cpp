@@ -449,7 +449,7 @@ namespace Lumina
         if (ImGui::Button("Remove"))
         {
             Foliage.Instances.erase(
-                Algo::RemoveIf(Foliage.Instances.begin(), Foliage.Instances.end(),
+                Algo::RemoveIf(Foliage.Instances,
                     [this](const SFoliageInstance& Inst) { return Inst.TypeIndex == ActiveType; }),
                 Foliage.Instances.end());
             // Re-index instances that pointed past the removed type.

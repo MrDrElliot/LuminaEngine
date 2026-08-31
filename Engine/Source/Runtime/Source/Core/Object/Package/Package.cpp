@@ -140,11 +140,8 @@ namespace Lumina
                 }
             }
 
-            size_t TotalCompressed = 0;
-            for (const TVector<uint8>& Chunk : ChunkBytes)
-            {
-                TotalCompressed += Chunk.size();
-            }
+            const size_t TotalCompressed = Algo::Accumulate(ChunkBytes, size_t(0),
+                [](const TVector<uint8>& Chunk) { return Chunk.size(); });
 
             const size_t HeaderBytes = sizeof(uint32) * 2 + sizeof(uint64) + sizeof(uint32) * 2
                                      + (size_t)NumChunks * sizeof(uint32);

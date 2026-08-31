@@ -98,15 +98,10 @@ namespace Lumina
 
     CEdNodeGraphPin* CEdGraphNode::GetPin(uint32 ID, ENodePinDirection Direction)
     {
-        for (CEdNodeGraphPin* Pin : NodePins[uint32(Direction)])
-        {
-            if (Pin->PinID == ID)
-            {
-                return Pin;
-            }
-        }
-        
-        return nullptr;
+        auto& Pins = NodePins[uint32(Direction)];
+        const auto PinItr = Algo::Find(Pins, ID, &CEdNodeGraphPin::PinID);
+
+        return PinItr != Pins.end() ? *PinItr : nullptr;
     }
 
     CEdNodeGraphPin* CEdGraphNode::GetPinByIndex(uint32 Index, ENodePinDirection Direction)

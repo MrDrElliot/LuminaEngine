@@ -1066,7 +1066,7 @@ namespace Lumina
             }
             
             Comp.Runtime.PendingRebakes.erase(
-                Algo::RemoveIf(Comp.Runtime.PendingRebakes.begin(), Comp.Runtime.PendingRebakes.end(),
+                Algo::RemoveIf(Comp.Runtime.PendingRebakes,
                     [](const TSharedPtr<FNavTileRebake>& J) { return !J || J->bConsumed.load(std::memory_order_acquire); }),
                 Comp.Runtime.PendingRebakes.end());
 

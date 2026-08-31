@@ -52,12 +52,13 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
     FGPUInstance* Inst = Instances() + InstanceID;
 
     // Only for the bucket index; the reject itself already happened where the range was decided.
-    if (Inst.DrawID >= Pass().NumBatches)
+    const uint DrawID = FGPUInstance::GetDrawID(Inst);
+    if (DrawID >= Pass().NumBatches)
     {
         return;
     }
 
-    FRenderBucket* Bucket = Pass().Buckets + (ViewIndex * Pass().NumBatches + Inst.DrawID);
+    FRenderBucket* Bucket = Pass().Buckets + (ViewIndex * Pass().NumBatches + DrawID);
     const uint Blocks = (Count + (MESHLET_CULL_GROUP_SIZE - 1u)) / MESHLET_CULL_GROUP_SIZE;
 
     // One atomic for the whole run: an instance's blocks are contiguous by construction.

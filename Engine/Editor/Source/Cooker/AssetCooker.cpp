@@ -349,7 +349,7 @@ namespace Lumina
         {
             TVector<FAssetData*> Primaries = FAssetRegistry::Get().FindByPredicate(
                 [](const FAssetData& D) { return HasFlag(D.Flags, EAssetFlags::Primary); });
-            Algo::Sort(Primaries.begin(), Primaries.end(),
+            Algo::Sort(Primaries,
                 [](const FAssetData* A, const FAssetData* B) { return A->AssetGUID < B->AssetGUID; });
             if (!Primaries.empty())
             {
@@ -379,7 +379,7 @@ namespace Lumina
         {
             FRmlUiAssetScan::FResult UiScan = FRmlUiAssetScan::ScanRoots(
                 ContentRoots, FAssetRegistry::Get(), LogFunc);
-            Algo::Sort(UiScan.AssetPaths.begin(), UiScan.AssetPaths.end());
+            Algo::Sort(UiScan.AssetPaths);
             if (UiScan.FilesScanned > 0)
             {
                 LogCooker(LogFunc, Format("  UI scan: {} file(s), {} candidate ref(s), {} resolved -> implicit cook roots",
@@ -423,7 +423,7 @@ namespace Lumina
             ByChunk[kMainChunk] = {};      // ensure a Main PAK exists for shared content
             ChunkOrder.push_back(kMainChunk);
         }
-        Algo::Sort(ChunkOrder.begin(), ChunkOrder.end(),
+        Algo::Sort(ChunkOrder,
             [&](const FName& A, const FName& B)
             {
                 if (A == kMainChunk) return true;

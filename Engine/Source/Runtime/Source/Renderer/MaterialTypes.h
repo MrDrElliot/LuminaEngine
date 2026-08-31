@@ -34,6 +34,10 @@ namespace Lumina
         float       OpacityClipValue;
         uint32      Padding[2];
     };
+
+    // GetMaterialVec4 reaches Vectors with loadAligned<16>, which needs the element stride 16-aligned.
+    static_assert(sizeof(FMaterialUniforms) % 16 == 0, "FMaterialUniforms stride must stay 16-byte aligned for loadAligned<16>");
+    static_assert(offsetof(FMaterialUniforms, Vectors) % 16 == 0, "FMaterialUniforms::Vectors must stay 16-byte aligned");
     
     /** Byte offset of one parameter's field in the block, for targeted uploads. POD, so offsetof is exact. */
     constexpr uint32 ScalarFieldOffset(uint32 Index)

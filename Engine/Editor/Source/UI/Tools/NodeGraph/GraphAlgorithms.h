@@ -109,13 +109,11 @@ namespace Lumina::GraphAlgorithms
 
         if (ProcessedNodeCount != ReachableNodes.size())
         {
-            for (auto& Pair : InDegree)
+            const auto Cyclic = Algo::FindIf(InDegree, [](const auto& Pair) { return Pair.second > 0; });
+            if (Cyclic != InDegree.end())
             {
-                if (Pair.second > 0)
-                {
-                    SortedNodes.clear();
-                    return Pair.first;
-                }
+                SortedNodes.clear();
+                return Cyclic->first;
             }
         }
 
@@ -165,15 +163,10 @@ namespace Lumina::GraphAlgorithms
     template <typename TRootPredicate>
     CEdGraphNode* TopologicalSortFromRoot(const TVector<TObjectPtr<CEdGraphNode>>& Nodes, TVector<CEdGraphNode*>& SortedNodes, TRootPredicate&& IsRoot)
     {
-        CEdGraphNode* RootNode = nullptr;
-        for (CEdGraphNode* Node : Nodes)
-        {
-            if (IsRoot(Node))
-            {
-                RootNode = Node;
-                break;
-            }
-        }
+        const auto RootItr = Algo::FindIf(Nodes,
+            [&IsRoot](const TObjectPtr<CEdGraphNode>& Node) { return IsRoot(Node.Get()); });
+
+        CEdGraphNode* RootNode = RootItr != Nodes.end() ? RootItr->Get() : nullptr;
 
         if (RootNode == nullptr)
         {

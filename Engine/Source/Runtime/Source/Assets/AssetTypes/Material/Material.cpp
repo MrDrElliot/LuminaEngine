@@ -277,14 +277,8 @@ namespace Lumina
     bool CMaterial::ReferencesTexture(const CTexture* ChangedTexture) const
     {
         // Never resolves to answer, since this runs for every material on a texture reimport.
-        for (const TObjectPtr<CTexture>& Texture : ResolvedTextures)
-        {
-            if (Texture.Get() == ChangedTexture)
-            {
-                return true;
-            }
-        }
-        return false;
+        return Algo::AnyOf(ResolvedTextures,
+            [ChangedTexture](const TObjectPtr<CTexture>& Texture) { return Texture.Get() == ChangedTexture; });
     }
 
     bool CMaterial::RefreshTextureBindings(const CTexture* ChangedTexture)
@@ -862,7 +856,7 @@ namespace Lumina
             
             constexpr uint64 Seed = (uint64)FShaderCache::kShaderCacheVersion;
 
-            Algo::Sort(Files.begin(), Files.end(), [](const FEntry& A, const FEntry& B)
+            Algo::Sort(Files, [](const FEntry& A, const FEntry& B)
             {
                 return A.Path < B.Path;
             });

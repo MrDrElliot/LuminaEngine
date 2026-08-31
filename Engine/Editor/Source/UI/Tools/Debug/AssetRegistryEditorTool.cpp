@@ -210,7 +210,7 @@ namespace Lumina
             }
         });
 
-        Algo::Sort(Referencers.begin(), Referencers.end(), [](const FReferencer& A, const FReferencer& B)
+        Algo::Sort(Referencers, [](const FReferencer& A, const FReferencer& B)
         {
             return A.Name.ToString() < B.Name.ToString();
         });
@@ -278,13 +278,13 @@ namespace Lumina
             {
                 Order.push_back(Pair.first);
             }
-            Algo::Sort(Order.begin(), Order.end());
+            Algo::Sort(Order);
 
             // Flattened in draw order, so a VisibleRows index means the same thing to shift-range as on screen.
             for (const FString& Category : Order)
             {
                 TVector<const FAssetRow*>& Bucket = Buckets[Category];
-                Algo::Sort(Bucket.begin(), Bucket.end(), ByName);
+                Algo::Sort(Bucket, ByName);
 
                 FRowGroup Group;
                 Group.Category = Category;
@@ -304,7 +304,7 @@ namespace Lumina
                     VisibleRows.push_back(&Row);
                 }
             }
-            Algo::Sort(VisibleRows.begin(), VisibleRows.end(), ByName);
+            Algo::Sort(VisibleRows, ByName);
         }
     }
 
@@ -504,12 +504,12 @@ namespace Lumina
         TVector<FName> Types;
         for (const TUniquePtr<FAssetData>& Data : FAssetRegistry::Get().GetAssets())
         {
-            if (Algo::Find(Types.begin(), Types.end(), Data->AssetClass) == Types.end())
+            if (!Algo::Contains(Types, Data->AssetClass))
             {
                 Types.push_back(Data->AssetClass);
             }
         }
-        Algo::Sort(Types.begin(), Types.end(), [](const FName& A, const FName& B)
+        Algo::Sort(Types, [](const FName& A, const FName& B)
         {
             return A.ToString() < B.ToString();
         });

@@ -1131,7 +1131,7 @@ namespace Lumina
             return;
         }
 
-        if (Algo::Find(VisitStack.begin(), VisitStack.end(), this) != VisitStack.end())
+        if (Algo::Contains(VisitStack, this))
         {
             LOG_ERROR("Prefab '{}' is in a variant cycle; leaving it unresolved.", GetName().c_str());
             bVariantResolveFailed = true;
@@ -1190,7 +1190,7 @@ namespace Lumina
             ECS::Utils::ForEachDescendant(Registry, Dead, [&](ECS::FEntity Desc)
             {
                 const FName DescID = StableIDOf(Registry, Desc);
-                if (DescID.IsNone() || Algo::Find(VariantRemovedEntities.begin(), VariantRemovedEntities.end(), DescID) == VariantRemovedEntities.end())
+                if (DescID.IsNone() || !Algo::Contains(VariantRemovedEntities, DescID))
                 {
                     Survivors.push_back(Desc);
                 }
@@ -1499,8 +1499,8 @@ namespace Lumina
         VariantDelta.View<SPrefabComponent>().ForEach([&](ECS::FEntity DeltaE, const SPrefabComponent& Comp)
         {
             auto KeepIt = KeepComponentsByNode.find(Comp.StableID);
-            const bool bAddedNode = Algo::FindIf(VariantStructuralNodes.begin(), VariantStructuralNodes.end(),
-                [&](const SPrefabVariantNode& N) { return N.bAdded && N.StableID == Comp.StableID; }) != VariantStructuralNodes.end();
+            const bool bAddedNode = Algo::AnyOf(VariantStructuralNodes,
+                [&](const SPrefabVariantNode& N) { return N.bAdded && N.StableID == Comp.StableID; });
 
             if (bAddedNode)
             {
@@ -1683,7 +1683,7 @@ namespace Lumina
 
         // Replace this (node, component) pair's records with the freshly computed set.
         auto& Recs = Ledger.PropertyOverrides;
-        Recs.erase(Algo::RemoveIf(Recs.begin(), Recs.end(), [&](const SPrefabPropertyOverride& O)
+        Recs.erase(Algo::RemoveIf(Recs, [&](const SPrefabPropertyOverride& O)
         {
             return O.EntityStableID == NodeID && O.ComponentType == CompName;
         }), Recs.end());
@@ -1730,12 +1730,12 @@ namespace Lumina
 
         // A genuinely new component is recorded as instance-added, so refresh never prunes it.
         auto& Removed = Ledger.RemovedComponents;
-        Removed.erase(Algo::RemoveIf(Removed.begin(), Removed.end(), MatchesPair), Removed.end());
+        Removed.erase(Algo::RemoveIf(Removed, MatchesPair), Removed.end());
 
         if (!bPrefabHas)
         {
             auto& Added = Ledger.AddedComponents;
-            if (Algo::FindIf(Added.begin(), Added.end(), MatchesPair) == Added.end())
+            if (!Algo::AnyOf(Added, MatchesPair))
             {
                 SPrefabComponentRef Rec;
                 Rec.EntityStableID = NodeID;
@@ -1777,13 +1777,13 @@ namespace Lumina
 
         // Any property overrides for the gone component are meaningless now.
         auto& Props = Ledger.PropertyOverrides;
-        Props.erase(Algo::RemoveIf(Props.begin(), Props.end(), MatchesPair), Props.end());
+        Props.erase(Algo::RemoveIf(Props, MatchesPair), Props.end());
 
         auto& Added = Ledger.AddedComponents;
-        Added.erase(Algo::RemoveIf(Added.begin(), Added.end(), MatchesPair), Added.end());
+        Added.erase(Algo::RemoveIf(Added, MatchesPair), Added.end());
 
         auto& Removed = Ledger.RemovedComponents;
-        Removed.erase(Algo::RemoveIf(Removed.begin(), Removed.end(), MatchesPair), Removed.end());
+        Removed.erase(Algo::RemoveIf(Removed, MatchesPair), Removed.end());
 
         // An inherited component the user deleted must be recorded so refresh won't re-add it.
         if (bPrefabHas)

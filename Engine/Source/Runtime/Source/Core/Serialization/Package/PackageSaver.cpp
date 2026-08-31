@@ -185,7 +185,7 @@ namespace Lumina
             if (HardGUIDs.find(Guid) != HardGUIDs.end()) continue;
             SortedSoft.push_back(Guid);
         }
-        Algo::Sort(SortedSoft.begin(), SortedSoft.end());
+        Algo::Sort(SortedSoft);
         for (const FGuid& Guid : SortedSoft)
         {
             Out.emplace_back(Guid, EDependencyType::Soft);

@@ -21,9 +21,19 @@ internal sealed class ScriptLoadContext : AssemblyLoadContext
     }
 
     /// Loads one unit's PE image into this context and registers it under UnitName so siblings resolve here; image is copied out of the caller's buffer.
-    public Assembly LoadScriptAssembly(string UnitName, byte[] PeBytes)
+    public Assembly LoadScriptAssembly(string UnitName, FScriptImage Image)
     {
-        Assembly Loaded = LoadFromStream(new MemoryStream(PeBytes));
+        var PeStream = new MemoryStream(Image.Pe);
+        Assembly Loaded;
+        // Handing the symbols over here is the only thing that gets line numbers into a script stack trace.
+        if (Image.Pdb != null)
+        {
+            Loaded = LoadFromStream(PeStream, new MemoryStream(Image.Pdb));
+        }
+        else
+        {
+            Loaded = LoadFromStream(PeStream);
+        }
         ScriptAssemblies[UnitName] = Loaded;
         return Loaded;
     }

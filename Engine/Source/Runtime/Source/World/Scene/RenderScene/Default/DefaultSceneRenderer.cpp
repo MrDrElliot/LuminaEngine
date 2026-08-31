@@ -889,7 +889,7 @@ namespace Lumina
             Sorted.push_back(Entry);
         });
 
-        Algo::StableSort(Sorted.begin(), Sorted.end(), [](const FProbeSortEntry& A, const FProbeSortEntry& B)
+        Algo::StableSort(Sorted, [](const FProbeSortEntry& A, const FProbeSortEntry& B)
         {
             return A.Priority > B.Priority;
         });
@@ -1955,8 +1955,8 @@ namespace Lumina
                         OutList.push_back(DirtySlot);
                     }
                 }
-                Algo::Sort(OutList.begin(), OutList.end());
-                OutList.erase(Algo::Unique(OutList.begin(), OutList.end()), OutList.end());
+                Algo::Sort(OutList);
+                OutList.erase(Algo::Unique(OutList), OutList.end());
             };
 
             Collect(ScenePrimitives.GetDirtyInstanceSlots(), Out.DirtySlots);
@@ -3060,7 +3060,7 @@ namespace Lumina
                         DecalGroupMinSort[E.ShaderOwner] = E.SortOrder;
                     }
                 }
-                Algo::StableSort(DecalSortScratch.begin(), DecalSortScratch.end(), [&](const FDecalSortEntry& A, const FDecalSortEntry& B)
+                Algo::StableSort(DecalSortScratch, [&](const FDecalSortEntry& A, const FDecalSortEntry& B)
                 {
                     const int32 GA = DecalGroupMinSort[A.ShaderOwner];
                     const int32 GB = DecalGroupMinSort[B.ShaderOwner];
@@ -3704,7 +3704,7 @@ namespace Lumina
             return;   // every pose the gather kept is already resident
         }
 
-        Algo::Sort(Ranges.begin(), Ranges.end(),
+        Algo::Sort(Ranges,
                     [](const FUIntVector2& A, const FUIntVector2& B) { return A.x < B.x; });
 
         // Merging across a small gap re-sends a slice that was already resident, which beats a second copy.
@@ -3851,7 +3851,7 @@ namespace Lumina
         TVector<uint32>& Sorted = SkinnedUploadScratch;
         Sorted.assign(Slots.begin(), Slots.end());
 
-        Algo::Sort(Sorted.begin(), Sorted.end());
+        Algo::Sort(Sorted);
 
         // A merged gap is still staged and copied, so this trades one copy region against ~1 KiB of bytes.
         constexpr uint32 kSkinnedMergeGap = 24;
@@ -5168,7 +5168,7 @@ namespace Lumina
                 {
                     Order[i] = i;
                 }
-                Algo::StableSort(Order.begin(), Order.end(),
+                Algo::StableSort(Order,
                     [&](uint32 A, uint32 B)
                     {
                         return ShadowRequests[A].DistanceToCamera > ShadowRequests[B].DistanceToCamera;
@@ -5270,7 +5270,7 @@ namespace Lumina
         {
             SortedIndices[i] = i;
         }
-        Algo::Sort(SortedIndices.begin(), SortedIndices.end(),
+        Algo::Sort(SortedIndices,
             [&](uint32 A, uint32 B) { return Sizes[A] > Sizes[B]; });
 
         for (uint32 SortedI = 0; SortedI < NumRequests; ++SortedI)
@@ -7662,7 +7662,7 @@ namespace Lumina
             const TVector<ECS::FEntity>& Live = Frame.Extracts.LiveParticleEntities;
             auto IsLive = [&](ECS::FEntity E)
             {
-                return Algo::Find(Live.begin(), Live.end(), E) != Live.end();
+                return Algo::Contains(Live, E);
             };
 
             for (auto It = ParticleGPUStates.begin(); It != ParticleGPUStates.end();)
@@ -8348,7 +8348,7 @@ namespace Lumina
             const TVector<ECS::FEntity>& Live = Frame.Extracts.LiveTerrainEntities;
             auto IsLive = [&](ECS::FEntity E)
             {
-                return Algo::Find(Live.begin(), Live.end(), E) != Live.end();
+                return Algo::Contains(Live, E);
             };
 
             for (auto It = TerrainGPUStates.begin(); It != TerrainGPUStates.end();)
@@ -13459,7 +13459,7 @@ namespace Lumina
 
     uint64 FDefaultSceneRenderer::BuildViewSceneRoot(FSceneView& View)
     {
-        RHI::FTransientAlloc Alloc = RHI::Core::AllocTransient(sizeof(FSceneRoot), alignof(FSceneRoot));
+        RHI::FTransientAlloc Alloc = RHI::Core::AllocTransient(sizeof(FSceneRoot));
         FSceneRoot* Root = static_cast<FSceneRoot*>(Alloc.Cpu);
 
         *Root = SceneRootShared;

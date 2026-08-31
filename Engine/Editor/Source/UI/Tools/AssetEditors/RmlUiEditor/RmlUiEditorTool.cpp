@@ -379,8 +379,8 @@ namespace Lumina
             }
             std::string H(Haystack.c_str(), Haystack.size());
             std::string N(Needle);
-            Algo::Transform(H.begin(), H.end(), H.begin(), [](unsigned char C){ return (char)std::tolower(C); });
-            Algo::Transform(N.begin(), N.end(), N.begin(), [](unsigned char C){ return (char)std::tolower(C); });
+            Algo::Transform(H, H.begin(), [](unsigned char C){ return (char)std::tolower(C); });
+            Algo::Transform(N, N.begin(), [](unsigned char C){ return (char)std::tolower(C); });
             return H.find(N) != std::string::npos;
         }
 

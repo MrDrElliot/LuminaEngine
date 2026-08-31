@@ -1729,7 +1729,7 @@ namespace Lumina
         // Lower value = higher priority (Highest=0 .. Low=192), so ascending runs Highest first.
         for (uint8 i = 0; i < (uint8)EUpdateStage::Max; ++i)
         {
-            Algo::Sort(SystemUpdateList[i].begin(), SystemUpdateList[i].end(),
+            Algo::Sort(SystemUpdateList[i],
                 [](const FStageSlot& A, const FStageSlot& B) { return A.StagePriority < B.StagePriority; });
         }
 

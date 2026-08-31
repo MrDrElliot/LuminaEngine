@@ -199,14 +199,7 @@ namespace Lumina
 
     bool FInputContext::HasInputLayer(FName Name) const
     {
-        for (const FName& Layer : InputLayers)
-        {
-            if (Layer == Name)
-            {
-                return true;
-            }
-        }
-        return false;
+        return Algo::Contains(InputLayers, Name);
     }
 
     void FInputContext::ClearInputLayers()

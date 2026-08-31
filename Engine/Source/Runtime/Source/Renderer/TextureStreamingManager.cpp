@@ -430,7 +430,7 @@ namespace Lumina
         }
 
         // Keyed pairs, so the comparator never reaches back into Textures for a scattered load.
-        Algo::Sort(Order.begin(), Order.end(),
+        Algo::Sort(Order,
             [](const TPair<float, uint32>& A, const TPair<float, uint32>& B) { return A.first < B.first; });
 
         // Compacted as textures reach their floor, so a later pass never revisits one that cannot shed.
@@ -617,7 +617,7 @@ namespace Lumina
         }
 
         // Scored once here rather than inside the comparator, which resolved the weak pointer per compare.
-        Algo::Sort(Candidates.begin(), Candidates.end(),
+        Algo::Sort(Candidates,
             [](const TPair<float, uint32>& A, const TPair<float, uint32>& B) { return A.first > B.first; });
 
         for (const TPair<float, uint32>& Candidate : Candidates)
@@ -779,11 +779,8 @@ namespace Lumina
                         FTextureResource& Resource = Texture->GetTextureResource();
 
                         // Tallied before the move below empties them.
-                        uint64 BytesRead = 0;
-                        for (const TVector<uint8>& Bytes : Load.MipBytes)
-                        {
-                            BytesRead += Bytes.size();
-                        }
+                        const uint64 BytesRead = Algo::Accumulate(Load.MipBytes, uint64(0),
+                            [](const TVector<uint8>& Bytes) { return Bytes.size(); });
 
                         for (uint32 Layer = 0; Layer < Load.LayerCount; ++Layer)
                         {

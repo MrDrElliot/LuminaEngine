@@ -189,13 +189,13 @@ namespace Lumina
         {
             Categories.push_back(Pair.first);
         }
-        Algo::Sort(Categories.begin(), Categories.end(), [](const FString& A, const FString& B)
+        Algo::Sort(Categories, [](const FString& A, const FString& B)
         {
             return strcmp(A.c_str(), B.c_str()) < 0;
         });
         for (auto& Pair : ByCategory)
         {
-            Algo::Sort(Pair.second.begin(), Pair.second.end(), [](CClass* A, CClass* B)
+            Algo::Sort(Pair.second, [](CClass* A, CClass* B)
             {
                 return strcmp(DisplayNameOf(A).c_str(), DisplayNameOf(B).c_str()) < 0;
             });

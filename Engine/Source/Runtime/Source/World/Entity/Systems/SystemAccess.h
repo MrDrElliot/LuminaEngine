@@ -70,17 +70,7 @@ namespace Lumina
         // Sets are tiny (a handful of types), so a nested scan beats hashing.
         static bool Intersects(const TVector<uint32>& X, const TVector<uint32>& Y)
         {
-            for (uint32 A : X)
-            {
-                for (uint32 B : Y)
-                {
-                    if (A == B)
-                    {
-                        return true;
-                    }
-                }
-            }
-            return false;
+            return Algo::AnyOf(X, [&Y](uint32 A) { return Algo::Contains(Y, A); });
         }
 
         static bool Conflicts(const FSystemAccess& A, const FSystemAccess& B)
@@ -101,30 +91,13 @@ namespace Lumina
             {
                 return true;
             }
-            for (uint32 W : Writes)
-            {
-                if (W == Id)
-                {
-                    return true;
-                }
-            }
-            return false;
+            return Algo::Contains(Writes, Id);
         }
 
         // A write satisfies a read (you may read what you write), so check both sets.
         bool DeclaresRead(uint32 Id) const
         {
-            return DeclaresWrite(Id) || [&]
-            {
-                for (uint32 R : Reads)
-                {
-                    if (R == Id)
-                    {
-                        return true;
-                    }
-                }
-                return false;
-            }();
+            return DeclaresWrite(Id) || Algo::Contains(Reads, Id);
         }
     };
 

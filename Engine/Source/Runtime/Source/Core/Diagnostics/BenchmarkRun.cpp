@@ -240,7 +240,7 @@ namespace Lumina::Benchmark
         }
 
         TVector<double> Sorted = GState.FrameMilliseconds;
-        Algo::Sort(Sorted.begin(), Sorted.end());
+        Algo::Sort(Sorted);
 
         double Total = 0.0;
         for (double Frame : Sorted)

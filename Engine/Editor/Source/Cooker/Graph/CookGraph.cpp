@@ -135,11 +135,8 @@ namespace Lumina
         // Sorted by GUID so identical inputs give identical PAK order and a reproducible build hash.
         TVector<const FCookNode*> Out;
         Out.reserve(Nodes.size());
-        for (const auto& Pair : Nodes)
-        {
-            Out.push_back(&Pair.second);
-        }
-        Algo::Sort(Out.begin(), Out.end(), [](const FCookNode* A, const FCookNode* B)
+        Algo::Transform(Nodes, std::back_inserter(Out), [](const auto& Pair) { return &Pair.second; });
+        Algo::Sort(Out, [](const FCookNode* A, const FCookNode* B)
         {
             return A->AssetGUID < B->AssetGUID;
         });
