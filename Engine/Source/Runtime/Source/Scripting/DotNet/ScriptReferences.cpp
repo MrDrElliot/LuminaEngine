@@ -50,7 +50,7 @@ namespace Lumina::DotNet
         }
 
         // A restore is skipped while this matches, so it must cover every input that changes the outcome.
-        FString DeclarationFingerprint(const FScriptReferenceSet& Declared)
+        FString PackageFingerprint(const FScriptReferenceSet& Declared)
         {
             FString Text;
             for (const FScriptPackageRef& Package : Declared.Packages)
@@ -61,6 +61,53 @@ namespace Lumina::DotNet
                 Text += ";";
             }
             return Text;
+        }
+
+        FString DeclarationFingerprint(const FScriptReferenceSet& Declared)
+        {
+            FString Text = PackageFingerprint(Declared);
+            for (const FString& Assembly : Declared.Assemblies)
+            {
+                Text += Assembly;
+                Text += ";";
+            }
+            return Text;
+        }
+
+        struct FResolutionCacheEntry
+        {
+            FString          UnitName;
+            FString          Fingerprint;
+            TVector<FString> Assemblies;
+        };
+
+        // Spares every reload, packaging pass, and project generation a re-read of each unit's assets file.
+        TVector<FResolutionCacheEntry> GResolutionCache;
+
+        const FResolutionCacheEntry* FindCachedResolution(FStringView UnitName, const FString& Fingerprint)
+        {
+            for (const FResolutionCacheEntry& Entry : GResolutionCache)
+            {
+                if (Entry.UnitName == UnitName && Entry.Fingerprint == Fingerprint)
+                {
+                    return &Entry;
+                }
+            }
+            return nullptr;
+        }
+
+        void StoreCachedResolution(FStringView UnitName, const FString& Fingerprint, const TVector<FString>& Assemblies)
+        {
+            for (FResolutionCacheEntry& Entry : GResolutionCache)
+            {
+                if (Entry.UnitName == UnitName)
+                {
+                    Entry.Fingerprint = Fingerprint;
+                    Entry.Assemblies  = Assemblies;
+                    return;
+                }
+            }
+            GResolutionCache.push_back({ FString(UnitName), Fingerprint, Assemblies });
         }
 
         FString BuildRestoreProject(const FScriptReferenceSet& Declared)
@@ -287,11 +334,22 @@ namespace Lumina::DotNet
     bool ResolveScriptReferences(FStringView UnitName, FStringView RestoreDir,
         const FScriptReferenceSet& Declared, TVector<FString>& OutAssemblyPaths)
     {
+        const FString CacheKey = DeclarationFingerprint(Declared);
+        if (const FResolutionCacheEntry* Cached = FindCachedResolution(UnitName, CacheKey))
+        {
+            for (const FString& Assembly : Cached->Assemblies)
+            {
+                OutAssemblyPaths.push_back(Assembly);
+            }
+            return true;
+        }
+
+        TVector<FString> Resolved;
         for (const FString& Assembly : Declared.Assemblies)
         {
             if (Filesystem::Exists(Assembly))
             {
-                OutAssemblyPaths.push_back(Assembly);
+                Resolved.push_back(Assembly);
             }
             else
             {
@@ -299,46 +357,49 @@ namespace Lumina::DotNet
             }
         }
 
-        if (Declared.Packages.empty())
+        if (!Declared.Packages.empty())
         {
-            return true;
-        }
-
-        if (RestoreDir.empty())
-        {
-            LOG_ERROR("C#: unit '{}' declares packages but has no intermediate directory to restore into.", UnitName);
-            return false;
-        }
-
-        Filesystem::MakeDirectoryTree(RestoreDir);
-
-        const FString ProjectPath     = JoinPath(RestoreDir, FString(UnitName) + ".Packages.csproj");
-        const FString AssetsPath      = JoinPath(RestoreDir, "obj/project.assets.json");
-        const FString FingerprintPath = JoinPath(RestoreDir, "packages.stamp");
-        const FString Fingerprint     = DeclarationFingerprint(Declared);
-
-        FString Previous;
-        const bool bStampMatches = Filesystem::ReadFile(Previous, FingerprintPath) && Previous == Fingerprint;
-        if (!bStampMatches || !Filesystem::Exists(AssetsPath))
-        {
-            WriteTextFile(ProjectPath, BuildRestoreProject(Declared));
-
-            LOG_DISPLAY("C#: restoring {} package(s) for unit '{}'...", Declared.Packages.size(), UnitName);
-            if (!RunRestore(UnitName, ProjectPath))
+            if (RestoreDir.empty())
             {
+                LOG_ERROR("C#: unit '{}' declares packages but has no intermediate directory to restore into.", UnitName);
                 return false;
             }
-            WriteTextFile(FingerprintPath, Fingerprint);
+
+            Filesystem::MakeDirectoryTree(RestoreDir);
+
+            const FString ProjectPath  = JoinPath(RestoreDir, FString(UnitName) + ".Packages.csproj");
+            const FString AssetsPath   = JoinPath(RestoreDir, "obj/project.assets.json");
+            const FString StampPath    = JoinPath(RestoreDir, "packages.stamp");
+            const FString Stamp        = PackageFingerprint(Declared);
+
+            FString Previous;
+            const bool bStampMatches = Filesystem::ReadFile(Previous, StampPath) && Previous == Stamp;
+            if (!bStampMatches || !Filesystem::Exists(AssetsPath))
+            {
+                WriteTextFile(ProjectPath, BuildRestoreProject(Declared));
+
+                LOG_DISPLAY("C#: restoring {} package(s) for unit '{}'...", Declared.Packages.size(), UnitName);
+                if (!RunRestore(UnitName, ProjectPath))
+                {
+                    return false;
+                }
+                WriteTextFile(StampPath, Stamp);
+            }
+
+            const size_t Before = Resolved.size();
+            if (!ReadAssetPaths(AssetsPath, Resolved))
+            {
+                LOG_ERROR("C#: unit '{}' restored but its package assets could not be read.", UnitName);
+                return false;
+            }
+            LOG_DISPLAY("C#: unit '{}' resolved {} package assembly(ies).", UnitName, Resolved.size() - Before);
         }
 
-        const size_t Before = OutAssemblyPaths.size();
-        if (!ReadAssetPaths(AssetsPath, OutAssemblyPaths))
+        StoreCachedResolution(UnitName, CacheKey, Resolved);
+        for (const FString& Assembly : Resolved)
         {
-            LOG_ERROR("C#: unit '{}' restored but its package assets could not be read.", UnitName);
-            return false;
+            OutAssemblyPaths.push_back(Assembly);
         }
-
-        LOG_DISPLAY("C#: unit '{}' resolved {} package assembly(ies).", UnitName, OutAssemblyPaths.size() - Before);
         return true;
     }
 }

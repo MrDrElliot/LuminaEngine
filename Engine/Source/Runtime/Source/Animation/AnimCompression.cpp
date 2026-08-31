@@ -485,9 +485,6 @@ FQuat AnimCompression::SampleKeysQuat(const TVector<float>& Times, const TVector
             }
         }
 
-        LOG_DEBUG("Animation '{}': compressed {} channels into {} bones, {} frames at {:.1f} Hz ({} KB).",
-                 Resource.Name.c_str(), (uint32)Resource.Channels.size(), (uint32)Compressed.Bones.size(),
-                 Compressed.NumFrames, Compressed.SampleRate, (uint32)(Compressed.GetMemoryUsage() / 1024));
     }
 
     AnimCompression::FValidationReport AnimCompression::Validate(const FAnimationResource& Resource, uint32 SamplesPerFrame)
