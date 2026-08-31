@@ -1,9 +1,12 @@
 #include <gtest/gtest.h>
 
+#include <cstring>
+
 #include "Containers/Vector.h"
 #include "Containers/Name.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
+#include "Core/Object/ObjectArray.h"
 #include "Core/Object/ObjectBase.h"
 #include "Core/Object/ObjectCore.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
@@ -718,4 +721,58 @@ TEST(ScriptClassReload, ContainersSurviveARebuild)
     const float One = 1.0f;
     Values->GetOps()->PushBack(Array, &One);
     EXPECT_EQ(Values->GetOps()->Size(Array), 1u);
+}
+
+namespace
+{
+    size_t CountObjectsNamed(const char* Prefix)
+    {
+        const size_t PrefixLength = std::strlen(Prefix);
+        size_t Count = 0;
+        GObjectArray.ForEachObject([&](CObjectBase* Base, int32)
+        {
+            if (Base == nullptr || Base->HasAnyFlag(OF_MarkedDestroy))
+            {
+                return;
+            }
+            const FName Name = Base->GetName();
+            if (std::strncmp(Name.c_str(), Prefix, PrefixLength) == 0)
+            {
+                ++Count;
+            }
+        });
+        return Count;
+    }
+}
+
+// A superseded layout used to be kept forever, so an editing session grew a record per property edit.
+TEST(ScriptClassReload, RepeatedRebuildsRetainOnlyOneSupersededLayout)
+{
+    Scripting::FScriptExportSchema Initial;
+    Initial.Fields.push_back(MakeScalarField("Speed", EPropertyTypeFlags::Float));
+
+    uint32 ShimSize = 0;
+    CClass* Sub = MintWithSchema("ScriptReload_Bounded", Initial, ShimSize);
+    ASSERT_NE(Sub, nullptr);
+
+    const size_t AfterFirstBuild = CountObjectsNamed("ScriptClassLayout_ScriptReload_Bounded");
+    ASSERT_EQ(AfterFirstBuild, 1u);
+
+    // Alternating shapes so every pass is a real layout change rather than a no-op.
+    for (int32 Pass = 0; Pass < 8; ++Pass)
+    {
+        Scripting::FScriptExportSchema Next;
+        Next.Fields.push_back(MakeScalarField("Speed", EPropertyTypeFlags::Float));
+        if ((Pass % 2) == 0)
+        {
+            Next.Fields.push_back(MakeScalarField("Health", EPropertyTypeFlags::Int32));
+        }
+
+        ASSERT_FALSE(Scripting::ScriptClassLayoutMatches(Sub, Next));
+        ASSERT_TRUE(Scripting::MigrateMintedClassLayout(Sub, Next));
+    }
+
+    // The live layout plus at most the one it superseded, no matter how many rebuilds ran.
+    const size_t Retained = CountObjectsNamed("ScriptClassLayout_ScriptReload_Bounded");
+    EXPECT_LE(Retained, 2u) << "a superseded layout record is leaking once per rebuild";
 }

@@ -1301,6 +1301,7 @@ namespace Lumina::Scripting
         struct FScriptClassLayout
         {
             TObjectPtr<CScriptStruct> Record;
+            TVector<FProperty*>       Properties;     ///< the appended block, owned alongside the record
             uint32                    ShimSize  = 0;   ///< Target->Size before the block was appended
             uint32                    ShimAlign = 1;
             FString                   Signature;      ///< what the block was built from; see ScriptClassLayoutMatches
@@ -1312,11 +1313,33 @@ namespace Lumina::Scripting
             return Map;
         }
 
-        // Retiring the pair together means a stale pointer is merely stale, never dangling.
-        TVector<TObjectPtr<CScriptStruct>>& GRetiredLayouts()
+        // One superseded layout per class, so a pointer that outlived the rebuild reads stale rather than freed.
+        THashMap<CClass*, FScriptClassLayout>& GRetiredLayouts()
         {
-            static TVector<TObjectPtr<CScriptStruct>> Records;
-            return Records;
+            static THashMap<CClass*, FScriptClassLayout> Map;
+            return Map;
+        }
+
+        // The properties point into the record's element descriptions, so the pair has to die together.
+        void FreeScriptClassLayout(FScriptClassLayout& Layout)
+        {
+            for (FProperty* Property : Layout.Properties)
+            {
+                // Container inners are held by the outer property, so deleting it takes them with it.
+                Memory::Delete(Property);
+            }
+            Layout.Properties.clear();
+            Layout.Record = nullptr;
+        }
+
+        // Target is only ever a key here, since a caller may already have destroyed the class.
+        void DiscardRetiredLayout(CClass* Target)
+        {
+            if (auto It = GRetiredLayouts().find(Target); It != GRetiredLayouts().end())
+            {
+                FreeScriptClassLayout(It->second);
+                GRetiredLayouts().erase(It);
+            }
         }
     }
 
@@ -1362,7 +1385,7 @@ namespace Lumina::Scripting
         Target->Size      = Align(Layout.EndOffset, Math::Max(Layout.Alignment, Target->GetAlignment()));
         Target->Alignment = Math::Max(Layout.Alignment, Target->GetAlignment());
 
-        GClassLayouts()[Target] = FScriptClassLayout{ std::move(Record), ShimSize, ShimAlign,
+        GClassLayouts()[Target] = FScriptClassLayout{ std::move(Record), Layout.Properties, ShimSize, ShimAlign,
                                                       DescribeScriptSchemaLayout(Schema) };
         return (uint32)Layout.Properties.size();
     }
@@ -1523,8 +1546,9 @@ namespace Lumina::Scripting
         const uint32 ShimSize  = It->second.ShimSize;
         const uint32 ShimAlign = It->second.ShimAlign;
 
-        // Keeping the pair alive means a cached pointer is stale rather than dangling. See the retired list.
-        GRetiredLayouts().push_back(std::move(It->second.Record));
+        // The layout this one supersedes has already survived a full rebuild, so nothing can still reach it.
+        DiscardRetiredLayout(Target);
+        GRetiredLayouts()[Target] = std::move(It->second);
         GClassLayouts().erase(Target);
 
         // The CDO is the old size and carries the old property set, so it cannot survive the rebuild.
@@ -1559,6 +1583,13 @@ namespace Lumina::Scripting
 
     void ForgetScriptClassLayout(CClass* Target)
     {
-        GClassLayouts().erase(Target);
+        DiscardRetiredLayout(Target);
+
+        // The type is gone with no live instances left, so its current block goes too.
+        if (auto It = GClassLayouts().find(Target); It != GClassLayouts().end())
+        {
+            FreeScriptClassLayout(It->second);
+            GClassLayouts().erase(It);
+        }
     }
 }
