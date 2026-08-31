@@ -107,16 +107,7 @@ namespace Lumina
             uint32              Alignment = 1;  ///< the block's required alignment
         };
 
-        /**
-         * Plans this schema and emits it as real FPropertys on Target, starting at BaseOffset. This
-         * CScriptStruct is not the layout -- it is the layout's RECORD: it owns everything the emitted
-         * properties point at (element descriptions, minted sub-structs, minted enums), so it must outlive
-         * every instance of Target. Used to append a C# type's properties to a minted CClass past its C++
-         * shim, where the properties belong to the class but the side data has nowhere else to live.
-         *
-         * Does not touch Target->Size / Alignment / Link(); the caller owns those, because only the caller
-         * knows whether it is finishing a struct or growing a class.
-         */
+        // The record owning the emitted properties' element descriptions, so it must outlive every instance of Target.
         RUNTIME_API FEmittedLayout EmitLayoutInto(CStruct* Target, uint32 BaseOffset,
             const Scripting::FScriptExportSchema& Schema);
 
@@ -195,6 +186,11 @@ namespace Lumina
         bool                                           bRequiresLifecycle = false;
         TVector<TObjectPtr<CScriptStruct>>             SubStructs;
         TVector<TObjectPtr<CEnum>>                     MintedEnums;
+
+        // Keyed by type shape, so many fields of one type share a single mint within this layout.
+        THashMap<FString, CScriptStruct*>              SubStructsByKey;
+        THashMap<FString, CEnum*>                      EnumsByKey;
+
         TVector<Scripting::FScriptArrayElementDesc*>   ElementDescs;
         TVector<Scripting::FScriptMapElementDesc*>     MapDescs;
         bool                                           bRuntimeFreed = false;
@@ -240,6 +236,12 @@ namespace Lumina::Scripting
     /** A string identifying what a schema lays out. Equal strings mean an identical layout; metadata-only
      *  edits (a tooltip, a Min/Max) deliberately do not change it. */
     RUNTIME_API FString DescribeScriptSchemaLayout(const FScriptExportSchema& Schema);
+
+    // Identity of one exported type's shape, so a type used by many fields is minted once.
+    RUNTIME_API FString DescribeScriptTypeSignature(const FScriptExportType& Type);
+
+    // Opens a reload's generation, freeing the layouts an earlier one superseded. Call once per reload.
+    RUNTIME_API void AdvanceScriptTypeGeneration();
 
     /** True when Target's appended block already matches Schema, so a hot reload needs no rebuild. */
     RUNTIME_API bool ScriptClassLayoutMatches(CClass* Target, const FScriptExportSchema& Schema);

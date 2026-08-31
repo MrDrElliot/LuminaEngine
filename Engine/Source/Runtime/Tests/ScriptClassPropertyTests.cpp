@@ -11,7 +11,9 @@
 #include "Core/Object/ObjectCore.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Reflection/Type/Properties/ArrayProperty.h"
+#include "Core/Reflection/Type/Properties/EnumProperty.h"
 #include "Core/Reflection/Type/Properties/MapProperty.h"
+#include "Core/Reflection/Type/Properties/StructProperty.h"
 #include "Core/Serialization/MemoryArchiver.h"
 #include "Core/Serialization/ObjectArchiver.h"
 #include "Scripting/ScriptStruct.h"
@@ -775,4 +777,123 @@ TEST(ScriptClassReload, RepeatedRebuildsRetainOnlyOneSupersededLayout)
     // The live layout plus at most the one it superseded, no matter how many rebuilds ran.
     const size_t Retained = CountObjectsNamed("ScriptClassLayout_ScriptReload_Bounded");
     EXPECT_LE(Retained, 2u) << "a superseded layout record is leaking once per rebuild";
+}
+
+namespace
+{
+    Scripting::FScriptExportField MakeSameShapeStructField(const char* Name)
+    {
+        TSharedPtr<Scripting::FScriptExportType> Type = MakeType(EPropertyTypeFlags::Struct);
+        Type->Fields.push_back(MakeScalarField("X", EPropertyTypeFlags::Float));
+        Type->Fields.push_back(MakeScalarField("Y", EPropertyTypeFlags::Float));
+        return MakeField(Name, Type);
+    }
+
+    Scripting::FScriptExportField MakeSharedEnumField(const char* Name)
+    {
+        TSharedPtr<Scripting::FScriptExportType> Type = MakeType(EPropertyTypeFlags::Enum);
+        Type->EnumName = FName("SharedMint_Mode");
+        Type->EnumUnderlying = EPropertyTypeFlags::Int32;
+        Type->EnumEntries.push_back({ FName("Off"), 0 });
+        Type->EnumEntries.push_back({ FName("On"),  1 });
+        return MakeField(Name, Type);
+    }
+}
+
+// One minted layout serves every field of a type; it used to be one per field, and per reload on top.
+TEST(ScriptClassProperties, IdenticalTypesShareOneMintedLayout)
+{
+    Scripting::FScriptExportSchema Schema;
+    Schema.Fields.push_back(MakeSameShapeStructField("First"));
+    Schema.Fields.push_back(MakeSameShapeStructField("Second"));
+    Schema.Fields.push_back(MakeSameShapeStructField("Third"));
+    Schema.Fields.push_back(MakeSharedEnumField("ModeA"));
+    Schema.Fields.push_back(MakeSharedEnumField("ModeB"));
+
+    uint32 ShimSize = 0;
+    CClass* Sub = MintWithSchema("ScriptProps_SharedMint", Schema, ShimSize);
+    ASSERT_NE(Sub, nullptr);
+
+    auto StructOf = [&](const char* FieldName) -> CStruct*
+    {
+        FProperty* Property = Sub->GetProperty(FName(FieldName));
+        return Property != nullptr ? static_cast<FStructProperty*>(Property)->GetStruct() : nullptr;
+    };
+
+    CStruct* First = StructOf("First");
+    ASSERT_NE(First, nullptr);
+    EXPECT_EQ(StructOf("Second"), First) << "a second field of the same type minted its own layout";
+    EXPECT_EQ(StructOf("Third"),  First);
+
+    auto EnumOf = [&](const char* FieldName) -> CEnum*
+    {
+        FProperty* Property = Sub->GetProperty(FName(FieldName));
+        return Property != nullptr ? static_cast<FEnumProperty*>(Property)->GetEnum() : nullptr;
+    };
+
+    CEnum* ModeA = EnumOf("ModeA");
+    ASSERT_NE(ModeA, nullptr);
+    EXPECT_EQ(EnumOf("ModeB"), ModeA) << "a second field of the same enum minted its own CEnum";
+}
+
+// Sharing keys on shape, so editing a struct's shape repeatedly must not strand a mint per edit.
+TEST(ScriptClassReload, EditingASubStructShapeDoesNotStrandMints)
+{
+    auto SchemaWithInnerFields = [](int32 InnerCount)
+    {
+        TSharedPtr<Scripting::FScriptExportType> Inner = MakeType(EPropertyTypeFlags::Struct);
+        for (int32 Index = 0; Index < InnerCount; ++Index)
+        {
+            FString FieldName = "Field";
+            FieldName += Format("{}", Index).c_str();
+            Inner->Fields.push_back(MakeScalarField(FieldName.c_str(), EPropertyTypeFlags::Float));
+        }
+        Scripting::FScriptExportSchema Schema;
+        Schema.Fields.push_back(MakeField("Nested", Inner));
+        return Schema;
+    };
+
+    uint32 ShimSize = 0;
+    CClass* Sub = MintWithSchema("ScriptReload_ShapeChurn", SchemaWithInnerFields(1), ShimSize);
+    ASSERT_NE(Sub, nullptr);
+
+    const size_t Baseline = CountObjectsNamed("ScriptSubStruct_");
+
+    // Each pass gives the nested struct a genuinely different shape, so none of them can share a mint.
+    for (int32 Pass = 2; Pass <= 9; ++Pass)
+    {
+        const Scripting::FScriptExportSchema Next = SchemaWithInnerFields(Pass);
+        ASSERT_FALSE(Scripting::ScriptClassLayoutMatches(Sub, Next));
+        ASSERT_TRUE(Scripting::MigrateMintedClassLayout(Sub, Next));
+    }
+
+    const size_t Grown = CountObjectsNamed("ScriptSubStruct_") - Baseline;
+    EXPECT_LE(Grown, 2u) << "a superseded sub-struct mint is stranded once per shape edit";
+}
+
+// The grace is one reload, not "until this class next changes", so a one-time edit is not held forever.
+TEST(ScriptClassReload, ASupersededLayoutIsFreedAtTheNextGeneration)
+{
+    Scripting::AdvanceScriptTypeGeneration();
+
+    Scripting::FScriptExportSchema Before;
+    Before.Fields.push_back(MakeScalarField("Speed", EPropertyTypeFlags::Float));
+
+    uint32 ShimSize = 0;
+    CClass* Sub = MintWithSchema("ScriptReload_Generational", Before, ShimSize);
+    ASSERT_NE(Sub, nullptr);
+    ASSERT_EQ(CountObjectsNamed("ScriptClassLayout_ScriptReload_Generational"), 1u);
+
+    Scripting::FScriptExportSchema After;
+    After.Fields.push_back(MakeScalarField("Speed", EPropertyTypeFlags::Float));
+    After.Fields.push_back(MakeScalarField("Health", EPropertyTypeFlags::Int32));
+    ASSERT_TRUE(Scripting::MigrateMintedClassLayout(Sub, After));
+
+    // Still reachable within the generation that superseded it, which is what keeps a stale pointer stale.
+    EXPECT_EQ(CountObjectsNamed("ScriptClassLayout_ScriptReload_Generational"), 2u);
+
+    // The class is not touched again, so only the generation boundary can reclaim it.
+    Scripting::AdvanceScriptTypeGeneration();
+    EXPECT_EQ(CountObjectsNamed("ScriptClassLayout_ScriptReload_Generational"), 1u)
+        << "a superseded layout outlived the reload that was meant to reclaim it";
 }

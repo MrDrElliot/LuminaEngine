@@ -53,6 +53,21 @@ namespace Lumina
         thread_local const FVectorOps* GPendingOps    = nullptr;
         thread_local const FMapOps*    GPendingMapOps = nullptr;
 
+        // The entries are the layout here, so a reordered or renumbered enum must not reuse the old one.
+        FString EnumKey(const FScriptExportType& Type)
+        {
+            FString Key = Type.EnumName.IsNone() ? FString("?") : FString(Type.EnumName.ToString());
+            Key += Format("/{}", (int32)Type.EnumUnderlying).c_str();
+            for (const FScriptEnumEntry& Entry : Type.EnumEntries)
+            {
+                Key += ";";
+                Key += Entry.Name.ToString();
+                Key += "=";
+                Key += Format("{}", Entry.Value).c_str();
+            }
+            return Key;
+        }
+
         FFieldOwner OwnerOf(CStruct* Owner)
         {
             FFieldOwner FieldOwner;
@@ -573,6 +588,12 @@ namespace Lumina
     {
         static TAtomic<uint64> Serial{ 0 };
 
+        const FString Key = EnumKey(Type);
+        if (auto Cached = EnumsByKey.find(Key); Cached != EnumsByKey.end())
+        {
+            return Cached->second;
+        }
+
         // The simple name, since reflected type names live in one flat space and a dot reads as a namespace.
         FString Name = Type.EnumName.IsNone() ? FString() : FString(Type.EnumName.c_str());
         if (const size_t Dot = Name.find_last_of('.'); Dot != FString::npos)
@@ -600,6 +621,7 @@ namespace Lumina
         }
         CEnum* Raw = Enum.Get();
         MintedEnums.push_back(std::move(Enum));
+        EnumsByKey[Key] = Raw;
         return Raw;
     }
 
@@ -624,6 +646,15 @@ namespace Lumina
     CScriptStruct* CScriptStruct::MintSubStruct(const FScriptExportType& Type)
     {
         static TAtomic<uint64> Serial{ 0 };
+
+        FString Key = "sub:";
+        Key += Scripting::DescribeScriptTypeSignature(Type);
+        Key += Format("|{}", Type.ManagedSize).c_str();
+        if (auto Cached = SubStructsByKey.find(Key); Cached != SubStructsByKey.end())
+        {
+            return Cached->second;
+        }
+
         FString Name = "ScriptSubStruct_";
         Name += Format("{}", Serial.fetch_add(1)).c_str();
 
@@ -655,12 +686,20 @@ namespace Lumina
 
         CScriptStruct* Raw = Sub.Get();
         SubStructs.push_back(std::move(Sub));
+        SubStructsByKey[Key] = Raw;
         return Raw;
     }
 
     CScriptStruct* CScriptStruct::MintInstanceBase(const FName& BaseName)
     {
         static TAtomic<uint64> Serial{ 0 };
+
+        const FString Key = FString("base:") + (BaseName.IsNone() ? FString("?") : FString(BaseName.ToString()));
+        if (auto Cached = SubStructsByKey.find(Key); Cached != SubStructsByKey.end())
+        {
+            return Cached->second;
+        }
+
         FString Name = "ScriptInstanceBase_";
         Name += Format("{}", Serial.fetch_add(1)).c_str();
 
@@ -684,12 +723,31 @@ namespace Lumina
 
         CScriptStruct* Raw = Base.Get();
         SubStructs.push_back(std::move(Base));
+        SubStructsByKey[Key] = Raw;
         return Raw;
     }
 
     CScriptStruct* CScriptStruct::MintInstanceCandidate(const FScriptExportInstanceCandidate& Candidate, CScriptStruct* Base)
     {
         static TAtomic<uint64> Serial{ 0 };
+
+        // Scoped by the base, since the same candidate under a different base is a different reflected type.
+        FString Key = "cand:";
+        Key += Base != nullptr ? FString(Base->GetName().ToString()) : FString("?");
+        Key += "/";
+        Key += Candidate.TypeName.ToString();
+        for (const FScriptExportField& Field : Candidate.Fields)
+        {
+            Key += ";";
+            Key += Field.Name.ToString();
+            Key += ":";
+            Key += Field.Type ? Scripting::DescribeScriptTypeSignature(*Field.Type) : FString("?");
+        }
+        if (auto Cached = SubStructsByKey.find(Key); Cached != SubStructsByKey.end())
+        {
+            return Cached->second;
+        }
+
         FString Name = "ScriptInstance_";
         Name += Format("{}", Serial.fetch_add(1)).c_str();
 
@@ -716,6 +774,7 @@ namespace Lumina
 
         CScriptStruct* Raw = Sub.Get();
         SubStructs.push_back(std::move(Sub));
+        SubStructsByKey[Key] = Raw;
         return Raw;
     }
 
@@ -1169,8 +1228,11 @@ namespace Lumina
         }
         MapDescs.clear();
 
+        SubStructsByKey.clear();
+        EnumsByKey.clear();
         SubStructs.clear();
         MintedEnums.clear();
+
     }
 
     void CScriptStruct::OnDestroy()
@@ -1305,12 +1367,20 @@ namespace Lumina::Scripting
             uint32                    ShimSize  = 0;   ///< Target->Size before the block was appended
             uint32                    ShimAlign = 1;
             FString                   Signature;      ///< what the block was built from; see ScriptClassLayoutMatches
+            uint64                    RetiredIn = 0;   ///< generation this was superseded in; 0 while live
         };
 
         THashMap<CClass*, FScriptClassLayout>& GClassLayouts()
         {
             static THashMap<CClass*, FScriptClassLayout> Map;
             return Map;
+        }
+
+        // Counts reloads, so a superseded layout can be freed once a whole one has passed.
+        uint64& GScriptTypeGeneration()
+        {
+            static uint64 Generation = 0;
+            return Generation;
         }
 
         // One superseded layout per class, so a pointer that outlived the rebuild reads stale rather than freed.
@@ -1445,6 +1515,32 @@ namespace Lumina::Scripting
         }
     }
 
+    void AdvanceScriptTypeGeneration()
+    {
+        const uint64 Generation = ++GScriptTypeGeneration();
+
+        // Outliving a whole reload means every consumer that could have cached its properties was rebuilt.
+        TVector<CClass*> Expired;
+        for (auto& [Target, Layout] : GRetiredLayouts())
+        {
+            if (Layout.RetiredIn < Generation)
+            {
+                Expired.push_back(Target);
+            }
+        }
+        for (CClass* Target : Expired)
+        {
+            DiscardRetiredLayout(Target);
+        }
+    }
+
+    FString DescribeScriptTypeSignature(const FScriptExportType& Type)
+    {
+        FString Out;
+        AppendTypeSignature(&Type, Out);
+        return Out;
+    }
+
     void ResetSkipHotReloadProperties(CObject* Object)
     {
         if (Object == nullptr)
@@ -1548,6 +1644,7 @@ namespace Lumina::Scripting
 
         // The layout this one supersedes has already survived a full rebuild, so nothing can still reach it.
         DiscardRetiredLayout(Target);
+        It->second.RetiredIn = GScriptTypeGeneration();
         GRetiredLayouts()[Target] = std::move(It->second);
         GClassLayouts().erase(Target);
 

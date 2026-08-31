@@ -305,6 +305,9 @@ namespace Lumina
 
     void FScriptableRegistry::RefreshMintedClasses()
     {
+        // Before any rebuild, so this reload's retirements are stamped with the generation it opens.
+        Scripting::AdvanceScriptTypeGeneration();
+
         TVector<DotNet::FScriptableTypeDesc> Descs;
         DotNet::GatherScriptableTypes(Descs);
 
