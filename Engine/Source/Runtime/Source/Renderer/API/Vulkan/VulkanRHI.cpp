@@ -5107,6 +5107,100 @@ namespace Lumina::RHI
         vkCmdPipelineBarrier2(Cmd, &Dep);
     }
 
+    // Both submit paths must call this: a target created this frame is still UNDEFINED until it runs.
+    static VkCommandBuffer DrainPendingImageInits(EQueueType Queue)
+    {
+        // Images are EXCLUSIVE; a layout transition is a write, so transfer must never claim them.
+        if (Queue == EQueueType::Transfer || GDevice->PendingImageInits.load(std::memory_order_acquire) == 0)
+        {
+            return VK_NULL_HANDLE;
+        }
+
+        TVector<FTextureH> UninitializedTextures;
+        {
+            FScopeLock Lock(GDevice->InitMutex);
+            UninitializedTextures.swap(GDevice->UninitializedTextures);
+            GDevice->PendingImageInits.store(0, std::memory_order_release);
+        }
+
+        if (UninitializedTextures.empty())
+        {
+            return VK_NULL_HANDLE;
+        }
+
+        FMemMark Scratch;
+        auto* TextureBarriers = Scratch.AllocArray<VkImageMemoryBarrier2>(UninitializedTextures.size());
+        for (size_t i = 0; i < UninitializedTextures.size(); ++i)
+        {
+            const FTexture& Texture = GDevice->Textures[UninitializedTextures[i]];
+
+            TextureBarriers[i] =
+            {
+                .sType                  = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                .pNext                  = nullptr,
+                .srcStageMask           = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
+                .srcAccessMask          = 0,
+                .dstStageMask           = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                .dstAccessMask          = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+                .oldLayout              = VK_IMAGE_LAYOUT_UNDEFINED,
+                .newLayout              = VK_IMAGE_LAYOUT_GENERAL,
+                .srcQueueFamilyIndex    = VK_QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex    = VK_QUEUE_FAMILY_IGNORED,
+                .image                  = Texture.Image,
+                .subresourceRange =
+                    {
+                        .aspectMask         = AspectsForFormat(Texture.Format),
+                        .baseMipLevel       = 0,
+                        .levelCount         = VK_REMAINING_MIP_LEVELS,
+                        .baseArrayLayer     = 0,
+                        .layerCount         = VK_REMAINING_ARRAY_LAYERS
+                    }
+            };
+        }
+
+        FScopeLock TransientLock(GDevice->TransientMutex);
+
+        VkCommandPool TransitionPool = GDevice->TransientPools[(uint32)Queue];
+
+        VkCommandBufferAllocateInfo AllocInfo = {};
+        AllocInfo.sType                 = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        AllocInfo.level                 = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        AllocInfo.commandBufferCount    = 1;
+        AllocInfo.commandPool           = TransitionPool;
+
+        VkCommandBuffer TransitionBuffer = VK_NULL_HANDLE;
+        VK_CHECK(vkAllocateCommandBuffers(*GDevice, &AllocInfo, &TransitionBuffer));
+
+        VkCommandBufferBeginInfo BeginInfo
+        {
+            .sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+            .pNext              = nullptr,
+            .flags              = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+            .pInheritanceInfo   = nullptr
+        };
+        vkBeginCommandBuffer(TransitionBuffer, &BeginInfo);
+
+        VkDependencyInfo DependencyInfo
+        {
+            .sType                      = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+            .pNext                      = nullptr,
+            .dependencyFlags            = 0,
+            .memoryBarrierCount         = 0,
+            .pMemoryBarriers            = nullptr,
+            .bufferMemoryBarrierCount   = 0,
+            .pBufferMemoryBarriers      = nullptr,
+            .imageMemoryBarrierCount    = static_cast<uint32>(UninitializedTextures.size()),
+            .pImageMemoryBarriers       = TextureBarriers
+        };
+        vkCmdPipelineBarrier2(TransitionBuffer, &DependencyInfo);
+        vkEndCommandBuffer(TransitionBuffer);
+
+        GDevice->PendingTransient.push_back({ TransitionBuffer, TransitionPool,
+            GDevice->CurrentRetireSlot.load(std::memory_order_acquire) });
+
+        return TransitionBuffer;
+    }
+
     void CmdSwapchainBarrierToRender(FCmdListH CL, FSwapchainH Swapchain)
     {
         FSwapchain& SC = GDevice->Swapchains[Swapchain];
@@ -5147,6 +5241,8 @@ namespace Lumina::RHI
 
         vkEndCommandBuffer(CL.CommandBuffer);
 
+        VkCommandBuffer TransitionBuffer = DrainPendingImageInits(EQueueType::Graphics);
+
         VkSemaphore PresentSem = SC.PresentSemaphores[SC.CurrentImageIndex];
 
         // Present submits and presents on the graphics queue, so it takes that queue's lock.
@@ -5166,7 +5262,13 @@ namespace Lumina::RHI
             { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, .semaphore = GDevice->Semaphores[FrameSignal].Semaphore, .value = FrameSignalValue, .stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT },
         };
 
-        VkCommandBufferSubmitInfo CmdInfo { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, .commandBuffer = CL.CommandBuffer, .deviceMask = 1 };
+        const uint32 TransitionCount = TransitionBuffer != VK_NULL_HANDLE ? 1u : 0u;
+
+        VkCommandBufferSubmitInfo CmdInfos[2]
+        {
+            { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, .commandBuffer = TransitionBuffer, .deviceMask = 1 },
+            { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, .commandBuffer = CL.CommandBuffer, .deviceMask = 1 },
+        };
 
         VkSubmitInfo2 Submit
         {
@@ -5175,8 +5277,8 @@ namespace Lumina::RHI
             .flags                    = 0, 
             .waitSemaphoreInfoCount   = SC.CurrentAcquire != VK_NULL_HANDLE ? 1u : 0u,
             .pWaitSemaphoreInfos      = &WaitInfo,
-            .commandBufferInfoCount   = 1,
-            .pCommandBufferInfos      = &CmdInfo,
+            .commandBufferInfoCount   = 1 + TransitionCount,
+            .pCommandBufferInfos      = TransitionCount != 0 ? CmdInfos : &CmdInfos[1],
             .signalSemaphoreInfoCount = 2,
             .pSignalSemaphoreInfos    = SignalInfos,
         };
@@ -5324,14 +5426,7 @@ namespace Lumina::RHI
         auto* SignalInfos = Scratch.AllocArray<VkSemaphoreSubmitInfo>(Signals.size());
         auto* WaitInfos   = Scratch.AllocArray<VkSemaphoreSubmitInfo>(Waits.size());
 
-        // Images are EXCLUSIVE; a layout transition is a write, so transfer must never claim them.
-        TVector<FTextureH> UninitializedTextures;
-        if (Queue != EQueueType::Transfer && GDevice->PendingImageInits.load(std::memory_order_acquire) != 0)
-        {
-            FScopeLock Lock(GDevice->InitMutex);
-            UninitializedTextures.swap(GDevice->UninitializedTextures);
-            GDevice->PendingImageInits.store(0, std::memory_order_release);
-        }
+        VkCommandBuffer TransitionBuffer = DrainPendingImageInits(Queue);
 
         for (size_t i = 0; i < Signals.size(); ++i)
         {
@@ -5361,76 +5456,6 @@ namespace Lumina::RHI
             SubmitInfo.value       = Wait.Value;
             SubmitInfo.stageMask   = ToVkPipelineState(Wait.Stage);
             SubmitInfo.deviceIndex = 0;
-        }
-
-        VkCommandBuffer TransitionBuffer = VK_NULL_HANDLE;
-        VkCommandPool   TransitionPool   = GDevice->TransientPools[(uint32)Queue];
-        if (!UninitializedTextures.empty())
-        {
-            FScopeLock TransientLock(GDevice->TransientMutex);
-
-            auto* TextureBarriers = Scratch.AllocArray<VkImageMemoryBarrier2>(UninitializedTextures.size());
-            for (size_t i = 0; i < UninitializedTextures.size(); ++i)
-            {
-                const FTexture& Texture = GDevice->Textures[UninitializedTextures[i]];
-
-                TextureBarriers[i] =
-                {
-                    .sType                  = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-                    .pNext                  = nullptr,
-                    .srcStageMask           = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
-                    .srcAccessMask          = 0,
-                    .dstStageMask           = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                    .dstAccessMask          = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
-                    .oldLayout              = VK_IMAGE_LAYOUT_UNDEFINED,
-                    .newLayout              = VK_IMAGE_LAYOUT_GENERAL,
-                    .srcQueueFamilyIndex    = VK_QUEUE_FAMILY_IGNORED,
-                    .dstQueueFamilyIndex    = VK_QUEUE_FAMILY_IGNORED,
-                    .image                  = Texture.Image,
-                    .subresourceRange =
-                        {
-                            .aspectMask         = AspectsForFormat(Texture.Format),
-                            .baseMipLevel       = 0,
-                            .levelCount         = VK_REMAINING_MIP_LEVELS,
-                            .baseArrayLayer     = 0,
-                            .layerCount         = VK_REMAINING_ARRAY_LAYERS
-                        }
-                };
-            }
-
-            VkCommandBufferAllocateInfo AllocInfo = {};
-            AllocInfo.sType                 = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-            AllocInfo.level                 = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-            AllocInfo.commandBufferCount    = 1;
-            AllocInfo.commandPool           = TransitionPool;
-            VK_CHECK(vkAllocateCommandBuffers(*GDevice, &AllocInfo, &TransitionBuffer));
-
-            VkCommandBufferBeginInfo BeginInfo
-            {
-                .sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-                .pNext              = nullptr,
-                .flags              = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-                .pInheritanceInfo   = nullptr
-            };
-            vkBeginCommandBuffer(TransitionBuffer, &BeginInfo);
-
-            VkDependencyInfo DependencyInfo
-            {
-                .sType                      = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                .pNext                      = nullptr,
-                .dependencyFlags            = 0,
-                .memoryBarrierCount         = 0,
-                .pMemoryBarriers            = nullptr,
-                .bufferMemoryBarrierCount   = 0,
-                .pBufferMemoryBarriers      = nullptr,
-                .imageMemoryBarrierCount    = static_cast<uint32>(UninitializedTextures.size()),
-                .pImageMemoryBarriers       = TextureBarriers
-            };
-            vkCmdPipelineBarrier2(TransitionBuffer, &DependencyInfo);
-            vkEndCommandBuffer(TransitionBuffer);
-
-            GDevice->PendingTransient.push_back({ TransitionBuffer, TransitionPool,
-                GDevice->CurrentRetireSlot.load(std::memory_order_acquire) });
         }
 
         const uint32 TransitionCount = TransitionBuffer != VK_NULL_HANDLE ? 1u : 0u;
