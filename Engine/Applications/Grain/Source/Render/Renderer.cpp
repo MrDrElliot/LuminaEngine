@@ -712,10 +712,14 @@ namespace Grain
 
     bool FRenderer::CaptureToFile(const FUIntVector2& Extent, const char* Path)
     {
+        // The capture list barriers targets the in flight frame is still writing, so it drains first.
+        RHI::WaitDeviceIdle();
+
         RHI::FTextureDesc Desc;
         Desc.Type      = RHI::ETextureType::Tex2D;
         Desc.Dimension = FUIntVector3(Extent.x, Extent.y, 1);
-        Desc.Format    = EFormat::RGBA8_UNORM;
+        // The composite pipeline is built for the swapchain format, so the capture has to match it.
+        Desc.Format    = SwapchainFormat;
         Desc.Usage     = RHI::EImageUsageFlags::ColorAttachment | RHI::EImageUsageFlags::Sampled
                        | RHI::EImageUsageFlags::TransferSrc;
 
@@ -747,7 +751,20 @@ namespace Grain
         bool bWrote = false;
         if (const uint8* Pixels = Readback.CpuAs<const uint8>())
         {
-            bWrote = ImageWrite::WritePngFile(Path, Extent.x, Extent.y, 4, Pixels, Extent.x * 4u);
+            TVector<uint8> Rgba;
+            Rgba.resize(size_t(Bytes));
+            const bool bSwap = SwapchainFormat == EFormat::BGRA8_UNORM
+                            || SwapchainFormat == EFormat::SBGRA8_UNORM;
+
+            for (uint64 i = 0; i < Bytes; i += 4)
+            {
+                Rgba[i + 0] = bSwap ? Pixels[i + 2] : Pixels[i + 0];
+                Rgba[i + 1] = Pixels[i + 1];
+                Rgba[i + 2] = bSwap ? Pixels[i + 0] : Pixels[i + 2];
+                Rgba[i + 3] = 255;
+            }
+
+            bWrote = ImageWrite::WritePngFile(Path, Extent.x, Extent.y, 4, Rgba.data(), Extent.x * 4u);
         }
 
         RHI::Free(Readback);
