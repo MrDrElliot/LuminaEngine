@@ -2,12 +2,12 @@
 #include "TextureStreamingManager.h"
 
 #include <bit>   // countr_zero, for the finest mip in a feedback mask
-#include <cfloat>
 
 #include "Assets/AssetTypes/Textures/Texture.h"
 #include "Config/EngineSettings.h"
 #include "Core/Math/Math.h"
 #include "Core/Object/Package/Package.h"
+#include "Core/Templates/NumericLimits.h"
 #include "Core/Profiler/Profile.h"
 #include "Memory/MemoryTracking.h"
 #include "Core/Threading/Thread.h"
@@ -386,7 +386,7 @@ namespace Lumina
     {
         if (Entry.PinCount > 0)
         {
-            return FLT_MAX;
+            return TNumericLimits<float>::Max();
         }
 
         // The plus one keeps a never-drawn texture at a small positive priority rather than dividing by zero.

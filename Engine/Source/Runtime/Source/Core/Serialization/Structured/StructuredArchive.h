@@ -207,7 +207,7 @@ namespace Lumina
         IStructuredArchive& StructuredArchive;
     };
 
-    class IStructuredArchive
+    class LUMINA_VISIBLE_TYPE IStructuredArchive
     {
         friend class FArchiveSlot;
         friend class FArchiveRecord;
