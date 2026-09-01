@@ -148,11 +148,11 @@ namespace Lumina
 
         /** Local-space offset applied to the collider position relative to the entity. */
         PROPERTY(Editable)
-        FVector3 TranslationOffset;
+        FVector3 TranslationOffset = FVector3(0.0f);
 
         /** Local-space euler rotation offset applied to the collider. */
         PROPERTY(Editable)
-        FVector3 RotationOffset;
+        FVector3 RotationOffset = FVector3(0.0f);
 
         /** Physics material driving friction/restitution. Null falls back to the rigid body's *Override fields. */
         PROPERTY(Editable)
@@ -250,11 +250,11 @@ namespace Lumina
 
         /** Local-space offset applied to the collider position relative to the entity. */
         PROPERTY(Editable)
-        FVector3 TranslationOffset;
+        FVector3 TranslationOffset = FVector3(0.0f);
 
         /** Local-space euler rotation offset applied to the collider. */
         PROPERTY(Editable)
-        FVector3 RotationOffset;
+        FVector3 RotationOffset = FVector3(0.0f);
 
         /** Physics material driving friction/restitution. Null falls back to the rigid body's *Override fields. */
         PROPERTY(Editable)
@@ -290,11 +290,11 @@ namespace Lumina
 
         /** Local-space offset applied to the collider position relative to the entity. */
         PROPERTY(Editable)
-        FVector3 TranslationOffset;
+        FVector3 TranslationOffset = FVector3(0.0f);
 
         /** Local-space euler rotation offset applied to the collider. */
         PROPERTY(Editable)
-        FVector3 RotationOffset;
+        FVector3 RotationOffset = FVector3(0.0f);
 
         /** Physics material driving friction/restitution. Null falls back to the rigid body's *Override fields. */
         PROPERTY(Editable)
@@ -330,11 +330,11 @@ namespace Lumina
 
         /** Local-space offset applied to the collider position relative to the entity. */
         PROPERTY(Editable)
-        FVector3 TranslationOffset;
+        FVector3 TranslationOffset = FVector3(0.0f);
 
         /** Local-space euler rotation offset applied to the collider. */
         PROPERTY(Editable)
-        FVector3 RotationOffset;
+        FVector3 RotationOffset = FVector3(0.0f);
 
         /** Physics material driving friction/restitution. Null falls back to the rigid body's *Override fields. */
         PROPERTY(Editable)
@@ -610,11 +610,11 @@ namespace Lumina
 
         /** Local-space offset applied to the collider position relative to the entity. */
         PROPERTY(Editable)
-        FVector3 TranslationOffset;
+        FVector3 TranslationOffset = FVector3(0.0f);
 
         /** Local-space euler rotation offset applied to the collider. */
         PROPERTY(Editable)
-        FVector3 RotationOffset;
+        FVector3 RotationOffset = FVector3(0.0f);
 
         /** Physics material driving friction/restitution. Null falls back to the rigid body's *Override fields. */
         PROPERTY(Editable)

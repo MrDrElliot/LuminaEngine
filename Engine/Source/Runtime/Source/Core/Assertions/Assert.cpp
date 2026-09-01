@@ -34,6 +34,7 @@ namespace Lumina::Assert
                 LOG_CRITICAL("Message: {}", Assertion.Message);
             }
             
+#if HAS_STD_STACKTRACE
             std::basic_stacktrace Trace = std::stacktrace::current();
             size_t Skip = 2;
             for (size_t i = Skip; i < Trace.size(); ++i)
@@ -41,7 +42,8 @@ namespace Lumina::Assert
                 const std::stacktrace_entry& Entry = Trace[i];
                 LOG_CRITICAL("  #{} {}", i - Skip, std::to_string(Entry));
             }
-            
+#endif
+
             LOG_CRITICAL("File: {}:{}", Assertion.Location.file_name(), Assertion.Location.line());
             LOG_CRITICAL("Function: {}", Assertion.Location.function_name());
             

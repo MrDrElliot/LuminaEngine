@@ -3460,7 +3460,6 @@ namespace Lumina
             for (Lumina::ECS::FSparseSet* StoragePtr : GetSceneRegistry().GetActiveStorages())
             {
                 const Lumina::ECS::FComponentTypeID ID = StoragePtr->GetTypeInfo().TypeID;
-                Lumina::ECS::FSparseSet& Storage = *StoragePtr;
                 if (CStruct* StructType = FindComponentStructByTypeId(ID))
                 {
                     {

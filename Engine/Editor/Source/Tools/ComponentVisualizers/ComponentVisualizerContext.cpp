@@ -270,10 +270,10 @@ namespace Lumina
         Polygon(Corners, 4, Fill, Outline, OutlineThickness);
     }
 
-    void FComponentVisualizerContext::Text(const FVector3& World, const FVector4& Color, const char* Format, ...)
+    void FComponentVisualizerContext::Text(const FVector3& WorldPos, const FVector4& Color, const char* Format, ...)
     {
         ImVec2 Screen;
-        if (DrawList == nullptr || !View.WorldToScreen(World, Screen))
+        if (DrawList == nullptr || !View.WorldToScreen(WorldPos, Screen))
         {
             return;
         }
@@ -288,10 +288,10 @@ namespace Lumina
         DrawList->AddText(Screen, ToU32(Color), Buffer);
     }
 
-    void FComponentVisualizerContext::Label(const FVector3& World, const FVector4& Color, const char* Format, ...)
+    void FComponentVisualizerContext::Label(const FVector3& WorldPos, const FVector4& Color, const char* Format, ...)
     {
         ImVec2 Screen;
-        if (DrawList == nullptr || !View.WorldToScreen(World, Screen))
+        if (DrawList == nullptr || !View.WorldToScreen(WorldPos, Screen))
         {
             return;
         }
@@ -696,32 +696,32 @@ namespace Lumina
         return Result;
     }
 
-    FVisualizerHandleResult FComponentVisualizerContext::PointHandle(uint32 ID, const FVector3& World, const FVisualizerHandleStyle& Style)
+    FVisualizerHandleResult FComponentVisualizerContext::PointHandle(uint32 ID, const FVector3& WorldPos, const FVisualizerHandleStyle& Style)
     {
         FHandleDesc Desc;
         Desc.ID = ID;
-        Desc.Position = World;
+        Desc.Position = WorldPos;
         Desc.Constraint = EHandleConstraint::Screen;
         Desc.Style = &Style;
         return ProcessHandle(Desc);
     }
 
-    FVisualizerHandleResult FComponentVisualizerContext::AxisHandle(uint32 ID, const FVector3& World, const FVector3& Axis, const FVisualizerHandleStyle& Style)
+    FVisualizerHandleResult FComponentVisualizerContext::AxisHandle(uint32 ID, const FVector3& WorldPos, const FVector3& Axis, const FVisualizerHandleStyle& Style)
     {
         FHandleDesc Desc;
         Desc.ID = ID;
-        Desc.Position = World;
+        Desc.Position = WorldPos;
         Desc.Axis = Axis;
         Desc.Constraint = EHandleConstraint::Axis;
         Desc.Style = &Style;
         return ProcessHandle(Desc);
     }
 
-    FVisualizerHandleResult FComponentVisualizerContext::PlaneHandle(uint32 ID, const FVector3& World, const FVector3& Normal, const FVisualizerHandleStyle& Style)
+    FVisualizerHandleResult FComponentVisualizerContext::PlaneHandle(uint32 ID, const FVector3& WorldPos, const FVector3& Normal, const FVisualizerHandleStyle& Style)
     {
         FHandleDesc Desc;
         Desc.ID = ID;
-        Desc.Position = World;
+        Desc.Position = WorldPos;
         Desc.Normal = Normal;
         Desc.Constraint = EHandleConstraint::Plane;
         Desc.Style = &Style;
@@ -768,7 +768,7 @@ namespace Lumina
         State.EndPass();
     }
 
-    FVisualizerHandleResult FComponentVisualizerContext::TranslateHandle(uint32 ID, const FVector3& World, const FVisualizerHandleStyle& Style)
+    FVisualizerHandleResult FComponentVisualizerContext::TranslateHandle(uint32 ID, const FVector3& WorldPos, const FVisualizerHandleStyle& Style)
     {
         constexpr float kArmPixels = 46.0f;
 
@@ -786,14 +786,14 @@ namespace Lumina
             FVector4(0.31f, 0.56f, 0.98f, 1.0f),
         };
 
-        const float ArmLength = View.WorldPerPixelAt(World) * kArmPixels;
+        const float ArmLength = View.WorldPerPixelAt(WorldPos) * kArmPixels;
 
         FVisualizerHandleResult Combined;
-        Combined.Position = World;
+        Combined.Position = WorldPos;
 
         for (int32 Index = 0; Index < 3; ++Index)
         {
-            const FVector3 Tip = World + Axes[Index] * ArmLength;
+            const FVector3 Tip = WorldPos + Axes[Index] * ArmLength;
 
             FVisualizerHandleStyle AxisStyle;
             AxisStyle.Color = AxisColors[Index];
@@ -802,7 +802,7 @@ namespace Lumina
             AxisStyle.PixelRadius = 4.0f;
             AxisStyle.GrabPixelRadius = 9.0f;
 
-            Line(World, Tip, WithAlpha(AxisColors[Index], 0.85f), 2.0f);
+            Line(WorldPos, Tip, WithAlpha(AxisColors[Index], 0.85f), 2.0f);
 
             FHandleDesc Desc;
             Desc.ID = ID;
@@ -822,7 +822,7 @@ namespace Lumina
         FHandleDesc Center;
         Center.ID = ID;
         Center.Salt = 0;
-        Center.Position = World;
+        Center.Position = WorldPos;
         Center.Constraint = EHandleConstraint::Screen;
         Center.Style = &Style;
 
@@ -833,7 +833,7 @@ namespace Lumina
         }
 
         // Callers move a point, not the arm tip, so report the anchor advanced by this frame's delta.
-        Combined.Position = World + Combined.Delta;
+        Combined.Position = WorldPos + Combined.Delta;
         return Combined;
     }
 

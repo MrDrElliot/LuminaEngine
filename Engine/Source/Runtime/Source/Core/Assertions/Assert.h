@@ -2,6 +2,7 @@
 #include "Containers/StringFormat.h"
 #include "CheckFailure.h"
 #include <source_location>
+#include <version>
 #include "Containers/String.h"
 #include "Platform/GenericPlatform.h"
 #include "Platform/Platform.h"

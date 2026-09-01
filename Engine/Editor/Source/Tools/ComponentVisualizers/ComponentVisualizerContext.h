@@ -180,8 +180,8 @@ namespace Lumina
         void Circle(const FVector3& Center, float PixelRadius, const FVector4& Color, bool bFilled = true, float Thickness = 1.5f);
         void Polygon(const FVector3* Corners, int32 Count, const FVector4& Fill, const FVector4& Outline, float OutlineThickness = 1.5f);
         void Quad(const FVector3& A, const FVector3& B, const FVector3& C, const FVector3& D, const FVector4& Fill, const FVector4& Outline, float OutlineThickness = 1.5f);
-        void Text(const FVector3& World, const FVector4& Color, const char* Format, ...);
-        void Label(const FVector3& World, const FVector4& Color, const char* Format, ...);
+        void Text(const FVector3& WorldPos, const FVector4& Color, const char* Format, ...);
+        void Label(const FVector3& WorldPos, const FVector4& Color, const char* Format, ...);
 
         // Dimension line with end ticks and a centered caption, for showing an extent while dragging it.
         void Measurement(const FVector3& Start, const FVector3& End, const FVector4& Color, const char* Format, ...);
@@ -192,19 +192,19 @@ namespace Lumina
         void ClearSubElementSelection();
 
         // Screen-space grab, dragged on the plane facing the camera.
-        FVisualizerHandleResult PointHandle(uint32 ID, const FVector3& World, const FVisualizerHandleStyle& Style = FVisualizerHandleStyle());
+        FVisualizerHandleResult PointHandle(uint32 ID, const FVector3& WorldPos, const FVisualizerHandleStyle& Style = FVisualizerHandleStyle());
 
         // Screen-space grab, dragged along Axis. ScalarDelta is the signed distance moved along it.
-        FVisualizerHandleResult AxisHandle(uint32 ID, const FVector3& World, const FVector3& Axis, const FVisualizerHandleStyle& Style = FVisualizerHandleStyle());
+        FVisualizerHandleResult AxisHandle(uint32 ID, const FVector3& WorldPos, const FVector3& Axis, const FVisualizerHandleStyle& Style = FVisualizerHandleStyle());
 
         // Screen-space grab, dragged on the plane through World with the given normal.
-        FVisualizerHandleResult PlaneHandle(uint32 ID, const FVector3& World, const FVector3& Normal, const FVisualizerHandleStyle& Style = FVisualizerHandleStyle());
+        FVisualizerHandleResult PlaneHandle(uint32 ID, const FVector3& WorldPos, const FVector3& Normal, const FVisualizerHandleStyle& Style = FVisualizerHandleStyle());
 
         // Dot at the center of a quad that drags the quad along its own normal. Back faces are skipped.
         FVisualizerHandleResult FaceHandle(uint32 ID, const FVector3& Center, const FVector3& Normal, const FVector3& HalfU, const FVector3& HalfV, const FVisualizerHandleStyle& Style = FVisualizerHandleStyle());
 
         // Three axis arms plus a center dot, giving axis-constrained translation without ImGuizmo.
-        FVisualizerHandleResult TranslateHandle(uint32 ID, const FVector3& World, const FVisualizerHandleStyle& Style = FVisualizerHandleStyle());
+        FVisualizerHandleResult TranslateHandle(uint32 ID, const FVector3& WorldPos, const FVisualizerHandleStyle& Style = FVisualizerHandleStyle());
 
         // True once any handle this pass reported hover or drag, so a click can fall through when it is false.
         NODISCARD bool IsInteracting() const;

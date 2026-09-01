@@ -440,6 +440,10 @@ namespace Lumina::Math
     template<typename T>
     bool Decompose(const TMat<T, 4, 4>& M, TVec<T, 3>& OutScale, TQuat<T>& OutRotation, TVec<T, 3>& OutTranslation)
     {
+        OutScale = TVec<T, 3>(T(1));
+        OutRotation = TQuat<T>::Identity();
+        OutTranslation = TVec<T, 3>(T(0));
+
         TMat<T, 4, 4> Local = M;
         if (std::abs(Local[3][3]) < T(LE_SMALL_NUMBER))
         {
