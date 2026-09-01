@@ -414,10 +414,10 @@ namespace Lumina
         // Per-view images + cluster buffers.
         for (FSceneView& View : SceneViews)
         {
-            ReleaseViewImages(View, /*bDeferRelease*/ false);
+            ReleaseViewImages(View);
             if (View.ClusterBuffer)
             {
-                RHI::Free(View.ClusterBuffer);
+                RHI::Core::Retire(View.ClusterBuffer);
                 View.ClusterBuffer = {};
             }
         }
@@ -428,7 +428,7 @@ namespace Lumina
         {
             if (Image.bOwned)
             {
-                ReleaseSceneImage(Image);
+                RetireSceneImage(Image);
             }
         }
 
@@ -437,7 +437,7 @@ namespace Lumina
         {
             if (Buffer)
             {
-                RHI::Free(Buffer);
+                RHI::Core::Retire(Buffer);
                 Buffer = {};
             }
         };
@@ -479,7 +479,7 @@ namespace Lumina
             // Raw GPUPtr rather than an RHI::FGPUAllocation (CPURead allocation, persistently mapped).
             if (MeshletBoundReadback[Slot].Gpu != 0)
             {
-                RHI::Free(MeshletBoundReadback[Slot]);
+                RHI::Core::Retire(MeshletBoundReadback[Slot]);
                 MeshletBoundReadback[Slot] = {};
             }
         }
@@ -487,9 +487,9 @@ namespace Lumina
         // Render-phase-owned terrain / particle GPU state.
         for (auto& [Entity, State] : TerrainGPUStates)
         {
-            ReleaseSceneImage(State.HeightmapTexture);
-            ReleaseSceneImage(State.NormalTexture);
-            ReleaseSceneImage(State.LayerWeightTexture);
+            RetireSceneImage(State.HeightmapTexture);
+            RetireSceneImage(State.NormalTexture);
+            RetireSceneImage(State.LayerWeightTexture);
             FreeBuffer(State.ChunkInfoBuffer);
             FreeBuffer(State.MeshletInfoBuffer);
             FreeBuffer(State.VisibleMeshletBuffer);
@@ -501,11 +501,11 @@ namespace Lumina
         {
             for (FParticleGPUState& State : States)
             {
-                if (State.ParticleBuffer)     { RHI::Free(State.ParticleBuffer); }
-                if (State.SpawnCounterBuffer) { RHI::Free(State.SpawnCounterBuffer); }
-                if (State.AttributeBuffer)    { RHI::Free(State.AttributeBuffer); }
-                if (State.SortIndexBuffer)    { RHI::Free(State.SortIndexBuffer); }
-                if (State.SortDrawArgsBuffer) { RHI::Free(State.SortDrawArgsBuffer); }
+                if (State.ParticleBuffer)     { RHI::Core::Retire(State.ParticleBuffer); }
+                if (State.SpawnCounterBuffer) { RHI::Core::Retire(State.SpawnCounterBuffer); }
+                if (State.AttributeBuffer)    { RHI::Core::Retire(State.AttributeBuffer); }
+                if (State.SortIndexBuffer)    { RHI::Core::Retire(State.SortIndexBuffer); }
+                if (State.SortDrawArgsBuffer) { RHI::Core::Retire(State.SortDrawArgsBuffer); }
             }
         }
         ParticleGPUStates.clear();
@@ -515,7 +515,7 @@ namespace Lumina
         {
             if (Slot.Readback.Gpu != 0)
             {
-                RHI::Free(Slot.Readback);
+                RHI::Core::Retire(Slot.Readback);
                 Slot.Readback = {};
             }
         }
@@ -524,7 +524,7 @@ namespace Lumina
         // Pipeline + depth-state caches.
         for (auto& [Hash, Pipeline] : PipelineCache)
         {
-            RHI::FreeH(Pipeline);
+            RHI::Core::Retire(Pipeline);
         }
         PipelineCache.clear();
         for (auto& [Hash, State] : DepthStateCache)
@@ -1870,7 +1870,7 @@ namespace Lumina
         {
             if (Slot.Readback.Gpu != 0)
             {
-                RHI::Free(Slot.Readback);
+                RHI::Core::Retire(Slot.Readback);
                 Slot.Readback = {};
             }
             Slot.Width = 0;
@@ -8565,9 +8565,9 @@ namespace Lumina
                 if (!IsLive(It->first))
                 {
                     FTerrainGPUState& Dead = It->second;
-                    DeferRelease(Dead.HeightmapTexture);
-                    DeferRelease(Dead.NormalTexture);
-                    DeferRelease(Dead.LayerWeightTexture);
+                    RetireSceneImage(Dead.HeightmapTexture);
+                    RetireSceneImage(Dead.NormalTexture);
+                    RetireSceneImage(Dead.LayerWeightTexture);
                     if (Dead.ChunkInfoBuffer)      { DeferFree(Dead.ChunkInfoBuffer); }
                     if (Dead.MeshletInfoBuffer)    { DeferFree(Dead.MeshletInfoBuffer); }
                     if (Dead.VisibleMeshletBuffer) { DeferFree(Dead.VisibleMeshletBuffer); }
@@ -8598,9 +8598,9 @@ namespace Lumina
             const bool bRealloc = State.AllocatedResolution != Res || State.AllocatedLayerCount != LayerCount;
             if (bRealloc)
             {
-                DeferRelease(State.HeightmapTexture);
-                DeferRelease(State.NormalTexture);
-                DeferRelease(State.LayerWeightTexture);
+                RetireSceneImage(State.HeightmapTexture);
+                RetireSceneImage(State.NormalTexture);
+                RetireSceneImage(State.LayerWeightTexture);
 
                 State.HeightmapTexture   = CreateTerrainImage(Res, 1u,          EFormat::R32_FLOAT, false, false, "Terrain.Heightmap");
                 State.NormalTexture      = CreateTerrainImage(Res, 1u,          EFormat::RGBA8_UNORM, true, false, "Terrain.Normal");
@@ -12957,18 +12957,11 @@ namespace Lumina
         return r;
     }
 
-            void FDefaultSceneRenderer::ReleaseViewImages(FSceneView& View, bool bDeferRelease)
+            void FDefaultSceneRenderer::ReleaseViewImages(FSceneView& View)
     {
-        auto Release = [this, bDeferRelease](FSceneImage& Image)
+        auto Release = [](FSceneImage& Image)
         {
-            if (bDeferRelease)
-            {
-                DeferRelease(Image);
-            }
-            else
-            {
-                ReleaseSceneImage(Image);
-            }
+            RetireSceneImage(Image);
         };
 
         for (FSceneImage& Image : View.Images)
@@ -13233,7 +13226,7 @@ namespace Lumina
             if (OptionalImageTick - View.ImageLastUsedTick[i] >= kIdleTicksBeforeRelease)
             {
                 // Frame-deferred, since a frame already recorded against this image is still in flight.
-                DeferRelease(Slot);
+                RetireSceneImage(Slot);
             }
         }
     }
@@ -13486,7 +13479,7 @@ namespace Lumina
         RHI::Submit(CL);
         RHI::WaitDeviceIdle();
         RHI::ResetCommandList(CL);
-        RHI::FreeH(Pipeline);
+        RHI::Core::Retire(Pipeline);
     }
 
     void FDefaultSceneRenderer::InitSkyCube(uint32 FaceSize)
@@ -13566,7 +13559,7 @@ namespace Lumina
         }
 
         RHI::WaitDeviceIdle();
-        ReleaseSceneImage(NamedImages[(int)ENamedImage::ProbeCaptureCube]);
+        RetireSceneImage(NamedImages[(int)ENamedImage::ProbeCaptureCube]);
 
         RHI::FTextureDesc Desc;
         Desc.Type       = RHI::ETextureType::TexCube;
@@ -13591,9 +13584,9 @@ namespace Lumina
 
         RHI::WaitDeviceIdle();
 
-        ReleaseSceneImage(NamedImages[(int)ENamedImage::SkyCube]);
-        ReleaseSceneImage(NamedImages[(int)ENamedImage::SkyIrradiance]);
-        ReleaseSceneImage(NamedImages[(int)ENamedImage::SkyPrefilter]);
+        RetireSceneImage(NamedImages[(int)ENamedImage::SkyCube]);
+        RetireSceneImage(NamedImages[(int)ENamedImage::SkyIrradiance]);
+        RetireSceneImage(NamedImages[(int)ENamedImage::SkyPrefilter]);
 
         InitSkyCube(Resolution.SkyCube);
         InitIBLConvolutionTargets(Resolution);
@@ -13615,7 +13608,7 @@ namespace Lumina
         // Output's heap slot survives the resize; only the texture behind it is replaced.
         const uint32 OutputSlot = DetachSampledSlot(Primary.Output);
 
-        ReleaseViewImages(Primary, /*bDeferRelease*/ true);
+        ReleaseViewImages(Primary);
         InitViewImages(Primary, OutputSlot);
     }
 
@@ -14200,11 +14193,6 @@ namespace Lumina
     void FDefaultSceneRenderer::DeferFree(const RHI::FGPUAllocation& Allocation)
     {
         RHI::Core::Retire(Allocation);
-    }
-
-    void FDefaultSceneRenderer::DeferRelease(FSceneImage& Image)
-    {
-        RetireSceneImage(Image);
     }
 
     //~ End new-RHI helpers

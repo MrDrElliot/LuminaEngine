@@ -29,8 +29,12 @@ namespace Breakout
 
         NODISCARD TVector<FSoundRequest>& GetPendingSounds() { return Registry.GetSingleton<FSoundQueue>().Pending; }
 
+        // Null for a procedural stage.
+        NODISCARD const char* GetLevelName() const;
+
         NODISCARD bool WantsQuit() const { return bQuitRequested; }
         NODISCARD bool IsPaused() const { return bPaused; }
+        NODISCARD bool IsMuted() const { return bMuted; }
 
     private:
 
@@ -43,5 +47,6 @@ namespace Breakout
         bool  bPaused        = false;
         bool  bQuitRequested = false;
         bool  bShowStats     = false;
+        bool  bMuted         = false;
     };
 }

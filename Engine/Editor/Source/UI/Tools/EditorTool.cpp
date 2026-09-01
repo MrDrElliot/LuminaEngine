@@ -1,5 +1,6 @@
 ﻿
 #include "Containers/StringFormat.h"
+#include "Renderer/RHICore.h"
 #include "World/ECS/Registry.h"
 #include "EditorTool.h"
 
@@ -122,7 +123,7 @@ namespace Lumina
                 static_cast<const uint8*>(MappedMemory), SourceWidth, SourceHeight, (size_t)SourceWidth * 4u);
         }
 
-        RHI::Free(Readback);
+        RHI::Core::Retire(Readback);
     }
 
     void FEditorTool::Initialize()

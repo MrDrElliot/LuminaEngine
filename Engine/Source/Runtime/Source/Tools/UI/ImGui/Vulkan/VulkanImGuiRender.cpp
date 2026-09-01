@@ -66,7 +66,8 @@ namespace Lumina
         FRecursiveScopeLock Lock(Mutex);
 
         NewPipeline.Reset();
-        NewDepthState.Reset();
+        RHI::FreeH(NewDepthState);
+        NewDepthState = {};
         for (auto& KV : NewFontTextures)
         {
             RHI::Textures::Release(KV.second);
@@ -231,7 +232,7 @@ namespace Lumina
             // Resolved once, since the preview stamps this marker and the draws match on identity.
             const ImDrawCallback DisplayStateCallback = ImGuiX::Detail::GetDisplayStateCallback();
 
-            RHI::CmdSetDepthStencilState(CL, NewDepthState.Get());
+            RHI::CmdSetDepthStencilState(CL, NewDepthState);
             RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
             RHI::CmdSetFrontFace(CL, RHI::EFrontFace::CCW);
             RHI::CmdSetPipeline(CL, NewPipeline.Get());

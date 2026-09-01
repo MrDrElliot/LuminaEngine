@@ -321,7 +321,7 @@ namespace Lumina::RHI
 
         for (const FGPUAllocation& Staging : OwnedStaging)
         {
-            Free(Staging);
+            Core::Retire(Staging);
         }
     }
 
@@ -356,22 +356,29 @@ namespace Lumina::RHI
 
             WaitDeviceIdle();
 
-            // Anything still queued never reached the GPU; free any dedicated staging it owns.
+            // Anything still queued never reached the GPU; retire any dedicated staging it owns.
+            TVector<FGPUAllocation> Orphaned;
             {
                 FScopeLock Lock(GUpload.Mutex);
                 for (const FUploadOp& Op : GUpload.Queue)
                 {
                     if (Op.OwnedStaging.Gpu != 0)
                     {
-                        Free(Op.OwnedStaging);
+                        Orphaned.push_back(Op.OwnedStaging);
                     }
                 }
                 GUpload.Queue.clear();
             }
 
+            // Outside the lock, since Core::Retire re-enters CancelBuffer, which takes the upload mutex.
+            for (const FGPUAllocation& Staging : Orphaned)
+            {
+                Core::Retire(Staging);
+            }
+
             for (FStagingSlice& Slice : GUpload.Slices)
             {
-                Free(Slice.Memory);
+                Core::Retire(Slice.Memory);
                 Slice.Memory   = {};
                 Slice.Cursor   = 0;
                 Slice.Capacity = 0;

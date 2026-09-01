@@ -111,7 +111,7 @@ namespace Grain
         RHI::Submit(CL);
         RHI::WaitDeviceIdle();
 
-        RHI::Free(Staging);
+        RHI::Core::Retire(Staging);
 
         LOG_INFO("Grain: sim volume {:.1f} m at ({}, {}, {}) voxels, spring at ground {:.1f} m, {:.2f} s.",
             kSimExtent, BaseX, BaseY, BaseZ, BestHeight, PlatformTime::Seconds() - Started);
@@ -123,12 +123,12 @@ namespace Grain
     {
         if (GridAlloc.Gpu != 0)
         {
-            RHI::Free(GridAlloc);
+            RHI::Core::Retire(GridAlloc);
             GridAlloc = {};
         }
         if (CoarseAlloc.Gpu != 0)
         {
-            RHI::Free(CoarseAlloc);
+            RHI::Core::Retire(CoarseAlloc);
             CoarseAlloc = {};
         }
     }

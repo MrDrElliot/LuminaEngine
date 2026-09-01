@@ -590,7 +590,7 @@ namespace Lumina
         void InitViewImages(FSceneView& View, uint32 ReuseOutputSlot = RHI::kInvalidHeapSlot);
 
         void NameOwnedImages(TArray<FSceneImage, (int)ENamedImage::Num>& Images);
-        void ReleaseViewImages(FSceneView& View, bool bDeferRelease);
+        void ReleaseViewImages(FSceneView& View);
         void InitFrameResources();
 
         // Shared body of SwapchainResized / SetPrimaryViewSize. Unconditional: callers decide whether the
@@ -969,7 +969,6 @@ namespace Lumina
 
         // Freed when this slot's previous GPU work has completed.
         void DeferFree(const RHI::FGPUAllocation& Allocation);
-        void DeferRelease(FSceneImage& Image);
     
     private:
         

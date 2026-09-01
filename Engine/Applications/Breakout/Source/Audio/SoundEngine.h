@@ -54,7 +54,7 @@ namespace Breakout
         NODISCARD bool IsRunning() const { return Device != nullptr; }
 
         void Post(const FSoundRequest& Request);
-        void SetMusic(bool bEnabled, float Intensity, int32 Key);
+        void SetMusic(bool bEnabled, float Intensity, int32 Key, EMusicMood Mood);
         void SetMusicFilter(float Openness);
         void SetMuted(bool bMuted);
 
@@ -106,6 +106,7 @@ namespace Breakout
         Lumina::TAtomic<bool>  bMusicEnabled { false };
         Lumina::TAtomic<float> MusicIntensity { 0.0f };
         Lumina::TAtomic<int32> MusicKey { 0 };
+        Lumina::TAtomic<uint8> MusicMood { 0 };
         Lumina::TAtomic<float> MusicFilter { 1.0f };
 
         float StepTimer = 0.0f;

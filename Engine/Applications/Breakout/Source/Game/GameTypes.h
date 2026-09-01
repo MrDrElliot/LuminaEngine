@@ -19,6 +19,8 @@ namespace Breakout
     inline constexpr float kBrickHeight      = 44.0f;
     inline constexpr float kBrickGap         = 12.0f;
     inline constexpr float kBrickTop         = 196.0f;
+    inline constexpr float kBrickPitchX      = kBrickWidth + kBrickGap;
+    inline constexpr float kBrickPitchY      = kBrickHeight + kBrickGap;
 
     inline constexpr float kPaddleY             = 985.0f;
     inline constexpr float kPaddleHalfHeight    = 13.0f;
@@ -51,6 +53,14 @@ namespace Breakout
     inline constexpr float kBossTopY            = 150.0f;
     inline constexpr float kBeatSeconds = 60.0f / 128.0f;
 
+    inline constexpr float kSmashArmWindow   = 0.14f;
+    inline constexpr float kSmashGraceWindow = 0.09f;
+    inline constexpr float kSmashDuration    = 1.3f;
+    inline constexpr float kVaultLinger      = 0.4f;
+    inline constexpr float kWallY            = kFieldHeight - 26.0f;
+    inline constexpr int32 kDraftChoices     = 3;
+    inline constexpr int32 kMaxPaddles       = 2;
+
     struct FFieldViewport
     {
         FVector2 OriginPixels  { 0.0f, 0.0f };
@@ -80,9 +90,45 @@ namespace Breakout
         Serve,
         Playing,
         LevelClear,
+        Draft,
         LifeLost,
         GameOver,
     };
+
+    enum class EGameMode : uint8
+    {
+        Classic,
+        Endless,
+        BossRush,
+        Daily,
+        Coop,
+
+        Count
+    };
+
+    inline const char* GameModeName(EGameMode Mode)
+    {
+        switch (Mode)
+        {
+        case EGameMode::Classic:  return "CLASSIC";
+        case EGameMode::Endless:  return "ENDLESS";
+        case EGameMode::BossRush: return "BOSS RUSH";
+        case EGameMode::Daily:    return "DAILY";
+        default:                  return "CO-OP";
+        }
+    }
+
+    inline const char* GameModeBlurb(EGameMode Mode)
+    {
+        switch (Mode)
+        {
+        case EGameMode::Classic:  return "HANDMADE STAGES   BOSS EVERY 5   DRAFT A PERK AFTER EACH CLEAR";
+        case EGameMode::Endless:  return "RANDOM STAGES FOREVER   THE WALL FALLS FASTER   HOW DEEP CAN YOU GO";
+        case EGameMode::BossRush: return "A BOSS ON EVERY STAGE   THREE KINDS   THEY GET MEANER";
+        case EGameMode::Daily:    return "TODAYS SEED   SAME DROPS FOR EVERYONE   ONE SHOT";
+        default:                  return "TWO PADDLES   P1 MOUSE OR A/D   P2 ARROW KEYS   SHARED LIVES";
+        }
+    }
 
     enum class EBrickKind : uint8
     {
@@ -91,7 +137,26 @@ namespace Breakout
         Explosive,
         Steel,
         Mystery,
+        Mover,
+        Ghost,
+        Regen,
+        Portal,
+        Gravity,
+        Bumper,
+        Gold,
+
+        Count
     };
+
+    inline bool BrickScores(EBrickKind Kind)
+    {
+        return Kind != EBrickKind::Steel && Kind != EBrickKind::Portal && Kind != EBrickKind::Bumper;
+    }
+
+    inline bool BrickIsFixture(EBrickKind Kind)
+    {
+        return Kind == EBrickKind::Portal || Kind == EBrickKind::Bumper;
+    }
 
     enum class EPowerUp : uint8
     {
@@ -102,15 +167,143 @@ namespace Breakout
         Laser,
         Fireball,
         Catch,
+        Magnet,
+        Shield,
+        Bomb,
+        BigBall,
+        Wall,
+        Freeze,
+        Jackpot,
+
         Shrink,
         SpeedUp,
+        Reverse,
+        Blind,
+        Drop,
 
         Count
     };
 
     inline bool IsHarmful(EPowerUp Type)
     {
-        return Type == EPowerUp::Shrink || Type == EPowerUp::SpeedUp;
+        return Type >= EPowerUp::Shrink;
+    }
+
+    inline const char* PowerUpName(EPowerUp Type)
+    {
+        switch (Type)
+        {
+        case EPowerUp::Widen:     return "WIDE";
+        case EPowerUp::MultiBall: return "MULTI";
+        case EPowerUp::SlowTime:  return "SLOW";
+        case EPowerUp::ExtraLife: return "1UP";
+        case EPowerUp::Laser:     return "LASER";
+        case EPowerUp::Fireball:  return "FIRE";
+        case EPowerUp::Catch:     return "CATCH";
+        case EPowerUp::Magnet:    return "MAGNET";
+        case EPowerUp::Shield:    return "SHIELD";
+        case EPowerUp::Bomb:      return "BOMB";
+        case EPowerUp::BigBall:   return "BIG";
+        case EPowerUp::Wall:      return "WALL";
+        case EPowerUp::Freeze:    return "FREEZE";
+        case EPowerUp::Jackpot:   return "JACKPOT";
+        case EPowerUp::Shrink:    return "SHRINK";
+        case EPowerUp::SpeedUp:   return "HASTE";
+        case EPowerUp::Reverse:   return "REVERSE";
+        case EPowerUp::Blind:     return "BLIND";
+        default:                  return "DROP";
+        }
+    }
+
+    enum class EPerk : uint8
+    {
+        WidePaddle,
+        SoftBall,
+        TwinLaser,
+        BigBoom,
+        QuickShield,
+        Magnetic,
+        Lucky,
+        Greedy,
+        Sticky,
+        HeavyBall,
+        Splitter,
+        Overdrive,
+        Bulwark,
+        VaultHunter,
+        Lifeline,
+
+        Count
+    };
+
+    struct FPerkInfo
+    {
+        const char* Name;
+        const char* Blurb;
+        uint8       MaxStacks;
+    };
+
+    inline FPerkInfo PerkInfo(EPerk Perk)
+    {
+        switch (Perk)
+        {
+        case EPerk::WidePaddle:  return { "BROAD",     "PADDLE 15 PERCENT WIDER",          3 };
+        case EPerk::SoftBall:    return { "SOFT BALL", "LOWER TOP SPEED",                  2 };
+        case EPerk::TwinLaser:   return { "QUAD LASER", "FOUR BOLTS AND LONGER LASERS",    1 };
+        case EPerk::BigBoom:     return { "BIG BOOM",  "EXPLOSIONS REACH FURTHER",         3 };
+        case EPerk::QuickShield: return { "FAST SHIELD", "SHIELD RECHARGES SOONER",        2 };
+        case EPerk::Magnetic:    return { "MAGNETIC",  "DROPS DRIFT TOWARD YOU",           2 };
+        case EPerk::Lucky:       return { "LUCKY",     "MORE BRICKS DROP PICKUPS",         3 };
+        case EPerk::Greedy:      return { "GREEDY",    "ALL SCORE PLUS 25 PERCENT",        3 };
+        case EPerk::Sticky:      return { "STICKY",    "START EACH STAGE WITH CATCH",      1 };
+        case EPerk::HeavyBall:   return { "HEAVY",     "BALLS HIT TWICE AS HARD",          1 };
+        case EPerk::Splitter:    return { "SPLITTER",  "LAUNCH WITH AN EXTRA BALL",        2 };
+        case EPerk::Overdrive:   return { "OVERDRIVE", "FEVER FILLS AND LASTS LONGER",     2 };
+        case EPerk::Bulwark:     return { "BULWARK",   "ONE FREE BREACH PER STAGE",        1 };
+        case EPerk::VaultHunter: return { "VAULTER",   "BIGGER BONUS BEHIND THE WALL",     2 };
+        default:                 return { "LIFELINE",  "ONE EXTRA LIFE RIGHT NOW",         9 };
+        }
+    }
+
+    struct FPerks
+    {
+        uint8 Stacks[uint32(EPerk::Count)] {};
+
+        NODISCARD int32 Count(EPerk Perk) const { return Stacks[uint32(Perk)]; }
+        NODISCARD bool  Has(EPerk Perk) const { return Stacks[uint32(Perk)] > 0; }
+        NODISCARD bool  IsMaxed(EPerk Perk) const { return Stacks[uint32(Perk)] >= PerkInfo(Perk).MaxStacks; }
+
+        void Add(EPerk Perk) { Stacks[uint32(Perk)] = uint8(Math::Min<int32>(Stacks[uint32(Perk)] + 1, 9)); }
+        void Clear() { for (uint8& Stack : Stacks) { Stack = 0; } }
+
+        NODISCARD float BasePaddleHalfWidth() const { return kPaddleBaseHalfWidth * (1.0f + 0.15f * float(Count(EPerk::WidePaddle))); }
+        NODISCARD float MaxBallSpeed() const { return kBallMaxSpeed - 180.0f * float(Count(EPerk::SoftBall)); }
+        NODISCARD float ExplosionRadius() const { return kExplosionRadius + 55.0f * float(Count(EPerk::BigBoom)); }
+        NODISCARD float ShieldRechargeTime() const { return kShieldRechargeTime - 4.0f * float(Count(EPerk::QuickShield)); }
+        NODISCARD float DropChanceBonus() const { return 0.07f * float(Count(EPerk::Lucky)); }
+        NODISCARD float ScoreScale() const { return 1.0f + 0.25f * float(Count(EPerk::Greedy)); }
+        NODISCARD int32 BallDamage() const { return Has(EPerk::HeavyBall) ? 2 : 1; }
+        NODISCARD float FeverDuration() const { return kFeverDuration + 3.5f * float(Count(EPerk::Overdrive)); }
+        NODISCARD float FeverPerBrick() const { return kFeverPerBrick * (1.0f + 0.35f * float(Count(EPerk::Overdrive))); }
+    };
+
+    enum class EBossKind : uint8
+    {
+        Warden,
+        Architect,
+        Hydra,
+
+        Count
+    };
+
+    inline const char* BossName(EBossKind Kind)
+    {
+        switch (Kind)
+        {
+        case EBossKind::Warden:    return "THE WARDEN";
+        case EBossKind::Architect: return "THE ARCHITECT";
+        default:                   return "THE HYDRA";
+        }
     }
 
     enum class EQuadKind : uint32
@@ -123,6 +316,7 @@ namespace Breakout
         Glow   = 5,
         Bolt   = 6,
         Ribbon = 7,
+        Drone  = 8,
     };
 
 
@@ -146,6 +340,7 @@ namespace Breakout
 
     struct FPaddle
     {
+        uint8 PlayerIndex   = 0;
         float Velocity      = 0.0f;
         float HalfWidthGoal = kPaddleBaseHalfWidth;
         float WidenTimer    = 0.0f;
@@ -153,6 +348,10 @@ namespace Breakout
         float LaserTimer    = 0.0f;
         float LaserCooldown = 0.0f;
         float CatchTimer    = 0.0f;
+        float MagnetTimer   = 0.0f;
+        float ReverseTimer  = 0.0f;
+        float SmashArm      = 0.0f;
+        float SmashFlash    = 0.0f;
         float Tilt          = 0.0f;
         float HitFlash      = 0.0f;
         float ShieldCharge  = 0.0f;
@@ -168,10 +367,17 @@ namespace Breakout
         float    GhostTimer  = 0.0f;
         float    Squash      = 0.0f;
         float    FireTimer   = 0.0f;
+        float    BigTimer    = 0.0f;
+        float    SmashTimer  = 0.0f;
+        float    SmashGrace  = 0.0f;
+        float    PortalCooldown = 0.0f;
         float    Spin        = 0.0f;
         float    HeldOffset  = 0.0f;
+        uint8    HeldBy      = 0;
         uint8    TrailCount  = 0;
         bool     bHeld       = true;
+
+        NODISCARD float Radius() const { return BigTimer > 0.0f ? kBallRadius * 1.8f : kBallRadius; }
     };
 
     struct FBrick
@@ -180,10 +386,16 @@ namespace Breakout
         int32      MaxHealth = 1;
         int32      Row       = 0;
         int32      Column    = 0;
+        int32      PortalPair = -1;
         float      Flash     = 0.0f;
         float      Phase     = 0.0f;
         float      Shove     = 0.0f;
+        float      Timer     = 0.0f;
+        float      Solidity  = 1.0f;
+        float      Slide     = 0.0f;
         EBrickKind Kind      = EBrickKind::Normal;
+
+        NODISCARD bool IsSolid() const { return Solidity > 0.5f; }
     };
 
     struct FParticle
@@ -204,6 +416,7 @@ namespace Breakout
     {
         EPowerUp Type = EPowerUp::Widen;
         float    Bob  = 0.0f;
+        float    DriftX = 0.0f;
     };
 
     struct FLaserBolt
@@ -215,11 +428,37 @@ namespace Breakout
 
     struct FBoss
     {
-        float Health     = 1.0f;
-        float MaxHealth  = 1.0f;
-        float DriftPhase = 0.0f;
-        float FireTimer  = 2.4f;
-        float Flash      = 0.0f;
+        EBossKind Kind       = EBossKind::Warden;
+        float     Health     = 1.0f;
+        float     MaxHealth  = 1.0f;
+        float     DriftPhase = 0.0f;
+        float     FireTimer  = 2.4f;
+        float     RepairTimer = 3.0f;
+        float     ArmorTimer = 0.0f;
+        float     Flash      = 0.0f;
+        float     Scale      = 1.0f;
+        uint8     Generation = 0;
+        bool      bArmored   = false;
+    };
+
+    enum class EDroneKind : uint8
+    {
+        Cone,
+        Tri,
+        Orb,
+
+        Count
+    };
+
+    struct FDrone
+    {
+        EDroneKind Kind    = EDroneKind::Cone;
+        FVector2   Velocity { 0.0f, 0.0f };
+        int32      Health  = 1;
+        float      Age     = 0.0f;
+        float      Phase   = 0.0f;
+        float      Flash   = 0.0f;
+        float      Radius  = 28.0f;
     };
 
     struct FShockwave
@@ -239,6 +478,8 @@ namespace Breakout
         int32    Value    = 0;
         FVector2 Position { 0.0f, 0.0f };
         FVector4 Color    { 1.0f, 1.0f, 1.0f, 1.0f };
+        char     Label[14] {};
+        float    Size     = 3.5f;
     };
 
 
@@ -246,7 +487,9 @@ namespace Breakout
 
     struct FGameState
     {
-        EPhase Phase        = EPhase::Title;
+        EPhase    Phase        = EPhase::Title;
+        EGameMode Mode         = EGameMode::Classic;
+        EGameMode MenuCursor   = EGameMode::Classic;
         float  PhaseTimer   = 0.0f;
         int32  Score        = 0;
         int32  DisplayScore = 0;
@@ -269,12 +512,43 @@ namespace Breakout
         float  FormationDrop  = 0.0f;
         float  FormationDrift = 0.0f;
         float  BreachWarning  = 0.0f;
+        float  WallTimer    = 0.0f;
+        float  FreezeTimer  = 0.0f;
+        float  JackpotTimer = 0.0f;
+        float  BlindTimer   = 0.0f;
+        float  VaultTimer   = 0.0f;
+        float  VaultGlow    = 0.0f;
+        float  DroneTimer   = 6.0f;
+        float  LevelTime    = 0.0f;
+        float  BossIntro    = 0.0f;
+        int32  LevelLivesLost = 0;
+        int32  LevelBestCombo = 0;
+        int32  LevelSmashes = 0;
+        int32  Smashes      = 0;
+        int32  Vaults       = 0;
+        int32  DronesDowned = 0;
+        int32  BricksBroken = 0;
         int32  BricksAlive  = 0;
         int32  BricksTotal  = 1;
+        int32  GradeBonus   = 0;
+        char   Grade        = 'C';
         bool   bBossAlive   = false;
+        bool   bBulwarkSpent = false;
+        bool   bAuthoredLevel = false;
+        EBossKind BossKind  = EBossKind::Warden;
+        EPerk  Draft[kDraftChoices] {};
+        int32  DraftCursor  = 1;
+        FPerks Perks;
 
         NODISCARD bool IsFever() const { return FeverTimer > 0.0f; }
+        NODISCARD bool IsVault() const { return VaultTimer > 0.0f; }
+        NODISCARD bool IsCoop() const { return Mode == EGameMode::Coop; }
         NODISCARD int32 ScoreScale() const { return IsFever() ? 2 : 1; }
+        NODISCARD int32 VaultScale() const { return IsVault() ? 2 + Perks.Count(EPerk::VaultHunter) : 0; }
+        NODISCARD int32 Scaled(int32 Points) const
+        {
+            return int32(float(Points * ScoreScale() + Points * VaultScale()) * Perks.ScoreScale());
+        }
     };
 
     struct FCameraShake
@@ -288,10 +562,14 @@ namespace Breakout
     struct FFrameInput
     {
         float PaddleTarget = kFieldWidth * 0.5f;
-        float KeyAxis      = 0.0f;
+        float KeyAxis[kMaxPaddles] { 0.0f, 0.0f };
         bool  bUsingMouse  = false;
         bool  bLaunch      = false;
         bool  bConfirm     = false;
+        bool  bSmash       = false;
+        bool  bMouseMoved  = false;
+        int32 Nav          = 0;
+        int32 Hotkey       = -1;
     };
 
     struct FSoundQueue
@@ -324,5 +602,7 @@ namespace Breakout
 
         float Range(float Min, float Max) { return Stream.RandRange(Min, Max); }
         float Unit() { return Stream.NextFloat(); }
+        int32 Below(int32 Bound) { return Bound > 0 ? int32(Stream.NextUInt32Below(uint32(Bound))) : 0; }
+        void  Reseed(uint64 Seed) { Stream.Seed(Seed, 7ull); }
     };
 }

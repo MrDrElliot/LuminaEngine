@@ -953,7 +953,7 @@ namespace Grain
 
         for (const RHI::FGPUAllocation& Source : Staging)
         {
-            RHI::Free(Source);
+            RHI::Core::Retire(Source);
         }
 
         if (!bStaged)
@@ -972,7 +972,7 @@ namespace Grain
         {
             if (Allocation->Gpu != 0)
             {
-                RHI::Free(*Allocation);
+                RHI::Core::Retire(*Allocation);
                 *Allocation = {};
             }
         }

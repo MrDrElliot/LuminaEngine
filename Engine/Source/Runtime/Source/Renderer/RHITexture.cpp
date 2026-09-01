@@ -148,7 +148,7 @@ namespace Lumina::RHI::Textures
             for (const FPendingSwap& Pending : GState.PendingSwaps)
             {
                 Upload::CancelTexture(Pending.NewTexture);
-                FreeH(Pending.NewTexture);
+                Core::Retire(Pending.NewTexture);
             }
             GState.PendingSwaps.clear();
             PublishSwapCountLocked();
@@ -160,7 +160,7 @@ namespace Lumina::RHI::Textures
         {
             HeapFreeTexture(Core::GetGlobalHeap(), GState.Default.SampledSlot);
         }
-        FreeH(GState.Default.Texture);
+        Core::Retire(GState.Default.Texture);
         GState.Default = FManagedTexture{};
 
         GState.bInitialized = false;

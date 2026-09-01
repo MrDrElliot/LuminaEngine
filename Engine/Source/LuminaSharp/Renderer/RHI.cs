@@ -20,19 +20,19 @@ public static unsafe partial class RHI
     /// Allocate device memory of the given type at default alignment.
     public static FGPUAllocation Malloc(ulong Size, EMemoryType Type) => Malloc(Size, 16, Type);
 
-    [NativeCall("LuminaSharp_RHI_Free")]
-    public static partial void Free(FGPUAllocation Allocation);
+    [NativeCall("LuminaSharp_RHI_Retire")]
+    public static partial void Retire(FGPUAllocation Allocation);
 
-    // Typed free thunks have unique names (the generator keys on method name); overloaded FreeH forwards to them.
+    // Typed thunks have unique names (the generator keys on method name); the overloads forward to them.
     [NativeCall("LuminaSharp_RHI_FreeSemaphore")] private static partial void FreeSemaphore(FSemaphoreH H);
-    [NativeCall("LuminaSharp_RHI_FreePipeline")] private static partial void FreePipeline(FPipelineH H);
-    [NativeCall("LuminaSharp_RHI_FreeTexture")] private static partial void FreeTexture(FTextureH H);
+    [NativeCall("LuminaSharp_RHI_RetirePipeline")] private static partial void RetirePipeline(FPipelineH H);
+    [NativeCall("LuminaSharp_RHI_RetireTexture")] private static partial void RetireTexture(FTextureH H);
     [NativeCall("LuminaSharp_RHI_FreeTextureHeap")] private static partial void FreeTextureHeap(FTextureHeapH H);
     [NativeCall("LuminaSharp_RHI_FreeDepthStencil")] private static partial void FreeDepthStencil(FDepthStencilH H);
 
     public static void FreeH(FSemaphoreH Semaphore) => FreeSemaphore(Semaphore);
-    public static void FreeH(FPipelineH Pipeline) => FreePipeline(Pipeline);
-    public static void FreeH(FTextureH Texture) => FreeTexture(Texture);
+    public static void Retire(FPipelineH Pipeline) => RetirePipeline(Pipeline);
+    public static void Retire(FTextureH Texture) => RetireTexture(Texture);
     public static void FreeH(FTextureHeapH Heap) => FreeTextureHeap(Heap);
     public static void FreeH(FDepthStencilH DepthStencil) => FreeDepthStencil(DepthStencil);
 

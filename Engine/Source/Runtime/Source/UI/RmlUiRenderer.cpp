@@ -192,8 +192,8 @@ namespace Lumina
 
         for (auto& KV : TargetBatches)
         {
-            RHI::Free(KV.second.VertexBuffer);
-            RHI::Free(KV.second.IndexBuffer);
+            RHI::Core::Retire(KV.second.VertexBuffer);
+            RHI::Core::Retire(KV.second.IndexBuffer);
         }
         TargetBatches.clear();
 
@@ -204,17 +204,17 @@ namespace Lumina
 
         for (auto& KV : PipelineByFormat)
         {
-            RHI::FreeH(KV.second);
+            RHI::Core::Retire(KV.second);
         }
         PipelineByFormat.clear();
         for (auto& KV : BrushPipelines)
         {
-            RHI::FreeH(KV.second);
+            RHI::Core::Retire(KV.second);
         }
         BrushPipelines.clear();
         for (auto& KV : FilterPipelines)
         {
-            RHI::FreeH(KV.second);
+            RHI::Core::Retire(KV.second);
         }
         FilterPipelines.clear();
         RHI::FreeH(DepthState);

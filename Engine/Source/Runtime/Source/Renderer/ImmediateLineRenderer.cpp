@@ -1,4 +1,5 @@
 #include "RuntimePCH.h"
+#include "Renderer/RHICore.h"
 #include "ImmediateLineRenderer.h"
 
 namespace Lumina
@@ -307,10 +308,9 @@ namespace Lumina
 
     void FImmediateLineRenderer::FreeSlot(FChannel& Channel, uint32 Slot)
     {
-        // This slot's last submission finished at the previous frame's fence, so no deferred free is needed.
         if (Channel.SlotMemory[Slot].Gpu != 0)
         {
-            RHI::Free(Channel.SlotMemory[Slot]);
+            RHI::Core::Retire(Channel.SlotMemory[Slot]);
         }
         Channel.SlotMemory[Slot]   = {};
         Channel.SlotCapacity[Slot] = 0;

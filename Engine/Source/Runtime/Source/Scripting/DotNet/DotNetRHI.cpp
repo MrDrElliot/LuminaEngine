@@ -108,11 +108,11 @@ LUMINA_DOTNET_EXPORT(RHI::FGPUAllocation, RHI_Malloc)(uint64 Size, uint64 Alignm
     return Allocation;
 }
 
-LUMINA_DOTNET_EXPORT(void, RHI_Free)(RHI::FGPUAllocation Allocation) { RHI::Free(Allocation); }
+LUMINA_DOTNET_EXPORT(void, RHI_Retire)(RHI::FGPUAllocation Allocation) { RHI::Core::Retire(Allocation); }
 
 LUMINA_DOTNET_EXPORT(void, RHI_FreeSemaphore)(RHI::FSemaphoreH H)       { RHI::FreeH(H); }
-LUMINA_DOTNET_EXPORT(void, RHI_FreePipeline)(RHI::FPipelineH H)         { RHI::FreeH(H); }
-LUMINA_DOTNET_EXPORT(void, RHI_FreeTexture)(RHI::FTextureH H)           { RHI::FreeH(H); }
+LUMINA_DOTNET_EXPORT(void, RHI_RetirePipeline)(RHI::FPipelineH H)       { RHI::Core::Retire(H); }
+LUMINA_DOTNET_EXPORT(void, RHI_RetireTexture)(RHI::FTextureH H)         { RHI::Core::Retire(H); }
 LUMINA_DOTNET_EXPORT(void, RHI_FreeTextureHeap)(RHI::FTextureHeapH H)   { RHI::FreeH(H); }
 LUMINA_DOTNET_EXPORT(void, RHI_FreeDepthStencil)(RHI::FDepthStencilH H) { RHI::FreeH(H); }
 

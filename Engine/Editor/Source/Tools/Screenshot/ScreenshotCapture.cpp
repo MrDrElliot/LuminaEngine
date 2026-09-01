@@ -249,7 +249,7 @@ namespace Lumina::Screenshot
                                 Mapped, RowPitch, Out.ErrorMessage);
         }
 
-        RHI::Free(Readback);
+        RHI::Core::Retire(Readback);
 
         if (bWriteOK)
         {

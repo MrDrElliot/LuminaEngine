@@ -4,6 +4,7 @@
 #include "Containers/HashTable.h"
 #include "Core/Threading/Thread.h"
 #include "Renderer/RHI.h"
+#include "Renderer/RHICore.h"
 #include "Renderer/RHITexture.h"
 #include "Renderer/SwapchainTarget.h"
 #include "Tools/UI/ImGui/ImGuiRenderer.h"
@@ -66,7 +67,7 @@ namespace Lumina
         // Pipeline (BGRA8 swapchain), depth-disabled state, and the font atlases living in the
         // new texture heap (keyed by ImTextureData::UniqueID).
         RHI::FPipelineUH                       NewPipeline;
-        RHI::FDepthStencilUH                   NewDepthState;
+        RHI::FDepthStencilH                    NewDepthState;
         THashMap<int32, RHI::FManagedTexture>  NewFontTextures;
 
         // Path-loaded UI images (icons), decoded straight into the new texture heap so their

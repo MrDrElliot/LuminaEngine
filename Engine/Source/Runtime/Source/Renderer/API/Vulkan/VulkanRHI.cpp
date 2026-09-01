@@ -1,5 +1,6 @@
 ﻿#include "Containers/HandleAllocator.h"
 #include "RuntimePCH.h"
+#include "Renderer/RHIInternal.h"
 #include "Memory/MemoryTracking.h"
 #include "Core/Templates/LuminaTemplate.h"
 
@@ -3070,7 +3071,7 @@ namespace Lumina::RHI
 #endif
     }
 
-    void Free(const FGPUAllocation& Allocation)
+    void Internal::DestroyNow(const FGPUAllocation& Allocation)
     {
         if (GDevice == nullptr || Allocation.Gpu == 0)
         {
@@ -3244,7 +3245,7 @@ namespace Lumina::RHI
         }
     }
 
-    void FreeH(FPipelineH Pipeline)
+    void Internal::DestroyNow(FPipelineH Pipeline)
     {
         if (GDevice != nullptr)
         {
@@ -3254,7 +3255,7 @@ namespace Lumina::RHI
 
     static void PointSampledSlotAtFallback(FTextureHeap& HeapData, uint32 Slot);
 
-    void FreeH(FTextureH Texture)
+    void Internal::DestroyNow(FTextureH Texture)
     {
         LUMINA_PROFILE_SECTION("RHI::FreeTexture");
 

@@ -395,7 +395,7 @@ namespace Umbral
         {
             if (RHI::IsValid(Pipeline))
             {
-                RHI::FreeH(Pipeline);
+                RHI::Core::Retire(Pipeline);
             }
         }
 

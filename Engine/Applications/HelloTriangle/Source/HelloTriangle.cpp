@@ -185,7 +185,7 @@ int main(int ArgC, char** ArgV)
 
     if (bCompiled)
     {
-        RHI::FreeH(Pipeline);
+        RHI::Core::Retire(Pipeline);
     }
     RHI::FreeH(DepthState);
 

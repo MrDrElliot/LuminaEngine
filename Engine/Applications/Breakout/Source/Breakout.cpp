@@ -58,7 +58,35 @@ namespace
         case EPhase::GameOver:   return 0.10f;
         case EPhase::LifeLost:   return 0.22f;
         case EPhase::LevelClear: return 0.85f;
-        default:                 return 0.55f + Math::Min(float(State.Combo) * 0.04f, 0.45f);
+        case EPhase::Draft:      return 0.35f;
+        default:
+        {
+            const float Base = State.bBossAlive ? 0.72f : 0.55f;
+            const float Heat = Math::Min(float(State.Combo) * 0.04f, 0.45f) + State.Progress * 0.15f;
+            return Base + Heat + (State.IsFever() || State.IsVault() ? 0.2f : 0.0f);
+        }
+        }
+    }
+
+    EMusicMood MusicMoodFor(const FGameState& State)
+    {
+        switch (State.Phase)
+        {
+        case EPhase::Title:      return EMusicMood::Menu;
+        case EPhase::GameOver:   return EMusicMood::Loss;
+        case EPhase::LifeLost:   return EMusicMood::Loss;
+        case EPhase::LevelClear: return EMusicMood::Clear;
+        case EPhase::Draft:      return EMusicMood::Draft;
+        default:
+            if (State.IsFever())
+            {
+                return EMusicMood::Fever;
+            }
+            if (State.VaultGlow > 0.5f)
+            {
+                return EMusicMood::Vault;
+            }
+            return State.bBossAlive ? EMusicMood::Boss : EMusicMood::Play;
         }
     }
 
@@ -72,10 +100,141 @@ namespace
         Pending.clear();
 
         const FGameState& State = Game.GetState();
-        Sound.SetMusic(true, MusicIntensityFor(State, Game.IsPaused()), State.Level);
+        Sound.SetMusic(true, MusicIntensityFor(State, Game.IsPaused()), State.Level, MusicMoodFor(State));
+        Sound.SetMuted(Game.IsMuted());
 
-        const float Muffle = Game.IsPaused() ? 0.18f : (State.SlowTimer > 0.0f ? 0.30f : 1.0f);
-        Sound.SetMusicFilter(Muffle * (1.0f - State.Danger * 0.25f));
+        const float Muffle = Game.IsPaused() ? 0.18f : (State.SlowTimer > 0.0f ? 0.30f : (State.BlindTimer > 0.0f ? 0.45f : 1.0f));
+        const float Frost = State.FreezeTimer > 0.0f ? 0.7f : 1.0f;
+        Sound.SetMusicFilter(Muffle * Frost * (1.0f - State.Danger * 0.25f));
+    }
+
+    // Drives every mode headless with a scripted paddle, clearing stages by force so bosses and drafts all get exercised.
+    int RunSoak()
+    {
+        FGame Game;
+        Game.Initialize();
+
+        int32 Failures = 0;
+        const int32 Rounds = GCommandLine->Has("soakrounds") ? 4 : 1;
+        for (int32 Round = 0; Round < Rounds; ++Round)
+        for (int32 ModeIndex = 0; ModeIndex < int32(EGameMode::Count); ++ModeIndex)
+        {
+            for (int32 Guard = 0; int32(Game.GetState().MenuCursor) != ModeIndex && Guard < 16; ++Guard)
+            {
+                Game.OnKey(EKey::Right, true);
+                Game.OnKey(EKey::Right, false);
+                Game.Advance(1.0f / 60.0f);
+            }
+            for (int32 Guard = 0; Game.GetState().Phase == EPhase::Title && Guard < 30; ++Guard)
+            {
+                Game.OnKey(EKey::Space, true);
+                Game.Advance(1.0f / 60.0f);
+            }
+
+            int32 MaxLevel = 0;
+            int32 Drafts = 0;
+            int32 Bosses = 0;
+            int32 LastBossLevel = 0;
+            int32 Frame = 0;
+
+            for (; Frame < 12000; ++Frame)
+            {
+                const FGameState& State = Game.GetState();
+                ECS::FRegistry& Registry = Game.GetRegistry();
+                MaxLevel = Math::Max(MaxLevel, State.Level);
+
+                if (State.Phase == EPhase::GameOver && State.PhaseTimer > 1.0f)
+                {
+                    LOG_INFO("  run ended by game over at frame {} level {} lives {}", Frame, State.Level, State.Lives);
+                    Game.OnKey(EKey::Space, true);
+                    Game.Advance(1.0f / 60.0f);
+                    break;
+                }
+
+                if (State.Phase == EPhase::Title)
+                {
+                    LOG_INFO("  run ended by title at frame {} level {}", Frame, State.Level);
+                    break;
+                }
+
+                float TargetX = kFieldWidth * 0.5f;
+                float LowestY = -1.0f;
+                for (auto [Entity, Body, Ball] : Registry.View<FBody, FBall>().Each())
+                {
+                    if (Body.Position.y > LowestY)
+                    {
+                        LowestY = Body.Position.y;
+                        TargetX = Body.Position.x;
+                    }
+                }
+                Game.OnMouseMoved(TargetX + Math::Sin(float(Frame) * 0.05f) * 12.0f);
+
+                if (State.IsCoop())
+                {
+                    float SecondX = kFieldWidth * 0.5f;
+                    for (auto [Entity, Body, Paddle] : Registry.View<FBody, FPaddle>().Each())
+                    {
+                        if (Paddle.PlayerIndex == 1)
+                        {
+                            SecondX = Body.Position.x;
+                        }
+                    }
+                    const bool bGoRight = TargetX > SecondX + 20.0f;
+                    const bool bGoLeft = TargetX < SecondX - 20.0f;
+                    Game.OnKey(EKey::Right, bGoRight);
+                    Game.OnKey(EKey::Left, bGoLeft);
+                }
+
+                if (State.bBossAlive && State.Level != LastBossLevel)
+                {
+                    LastBossLevel = State.Level;
+                    ++Bosses;
+                }
+
+                if (State.Phase == EPhase::Serve && Frame % 30 == 0)
+                {
+                    Game.OnKey(EKey::Space, true);
+                }
+                if (State.Phase == EPhase::Playing && Frame % 23 == 0)
+                {
+                    Game.OnKey(EKey::Space, true);
+                }
+                if (State.Phase == EPhase::Draft && State.PhaseTimer > 0.5f)
+                {
+                    ++Drafts;
+                    Game.OnKey(Frame % 3 == 0 ? EKey::D1 : (Frame % 3 == 1 ? EKey::D2 : EKey::Space), true);
+                }
+
+                if (State.Phase == EPhase::Playing && Frame % 450 == 300)
+                {
+                    TVector<ECS::FEntity> Doomed;
+                    for (const ECS::FEntity Entity : Registry.View<FBrick>()) { Doomed.push_back(Entity); }
+                    for (const ECS::FEntity Entity : Registry.View<FBoss>()) { Doomed.push_back(Entity); }
+                    for (const ECS::FEntity Entity : Doomed) { Registry.Destroy(Entity); }
+                    Registry.GetSingleton<FGameState>().BricksAlive = 0;
+                }
+
+                Game.Advance(Frame % 5 == 0 ? 0.05f : 1.0f / 60.0f);
+                Game.GetPendingSounds().clear();
+
+            }
+
+            const FGameState& Final = Game.GetState();
+            const bool bOk = Final.Score > 0 && Drafts >= 1 && (MaxLevel >= 6 || Final.Phase == EPhase::Title);
+            Failures += bOk ? 0 : 1;
+            LOG_INFO("Soak {}: frames {} maxLevel {} drafts {} bosses {} score {} entities {} {}",
+                GameModeName(Final.Mode), Frame, MaxLevel, Drafts, Bosses, Final.Score,
+                Game.GetStats().Entities, bOk ? "OK" : "SHORT");
+
+            if (Final.Phase != EPhase::Title)
+            {
+                Game.OnKey(EKey::T, true);
+                Game.Advance(1.0f / 60.0f);
+            }
+        }
+
+        LOG_INFO("Soak finished with {} failures", Failures);
+        return Failures == 0 ? 0 : 1;
     }
 
     void RunFrameLoop(FWindow& Window, RHI::FSwapchainTarget& Target, FGame& Game, FRenderer& Renderer, FSoundEngine& Sound)
@@ -132,6 +291,14 @@ int main(int ArgC, char** ArgV)
 
     FCommandLine ParsedCommandLine { ArgC, ArgV };
     GCommandLine = &ParsedCommandLine;
+
+    if (ParsedCommandLine.Has("soak"))
+    {
+        const int Result = RunSoak();
+        Task::Shutdown();
+        GCommandLine = nullptr;
+        return Result;
+    }
 
     FWindow Window(FWindowSpecs{ .Title = "Lumina Breakout", .Extent = { 1600, 900 } });
 

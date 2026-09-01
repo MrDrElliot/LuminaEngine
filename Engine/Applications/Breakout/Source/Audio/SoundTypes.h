@@ -40,8 +40,42 @@ namespace Breakout
         Breach,
         UiMove,
         UiConfirm,
+        Smash,
+        VaultEnter,
+        DroneHit,
+        DroneDeath,
+        Portal,
+        Bumper,
+        PerkOffer,
+        PerkPick,
+        Repair,
+        Magnet,
+        Bomb,
+        WallUp,
+        WallBounce,
+        Freeze,
+        Reverse,
+        Blind,
+        Gold,
+        Regen,
+        Grade,
+        BossIntro,
+        BossSplit,
+        ArmorUp,
 
         Count
+    };
+
+    enum class EMusicMood : uint8
+    {
+        Menu,
+        Play,
+        Boss,
+        Fever,
+        Vault,
+        Draft,
+        Loss,
+        Clear,
     };
 
     struct FSoundRequest

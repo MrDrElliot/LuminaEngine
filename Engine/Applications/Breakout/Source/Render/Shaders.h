@@ -198,12 +198,20 @@ namespace Breakout::Shaders
         static const uint KIND_GLOW  = 5;
         static const uint KIND_BOLT   = 6;
         static const uint KIND_RIBBON = 7;
+        static const uint KIND_DRONE  = 8;
 
         static const uint BRICK_NORMAL     = 0;
         static const uint BRICK_REINFORCED = 1;
         static const uint BRICK_EXPLOSIVE  = 2;
         static const uint BRICK_STEEL      = 3;
         static const uint BRICK_MYSTERY    = 4;
+        static const uint BRICK_MOVER      = 5;
+        static const uint BRICK_GHOST      = 6;
+        static const uint BRICK_REGEN      = 7;
+        static const uint BRICK_PORTAL     = 8;
+        static const uint BRICK_GRAVITY    = 9;
+        static const uint BRICK_BUMPER     = 10;
+        static const uint BRICK_GOLD       = 11;
 
         struct FQuadInterpolants
         {
@@ -267,7 +275,14 @@ namespace Breakout::Shaders
             }
 
             float Distance;
-            if (Instance.Kind == KIND_DISC || Instance.Kind == KIND_SPARK)
+            if (Instance.Kind == KIND_DRONE)
+            {
+                float Angle = atan2(Local.y, Local.x);
+                float Lobes = Instance.Param0 < 0.5 ? 3.0 : (Instance.Param0 < 1.5 ? 4.0 : 6.0);
+                float Shape = 0.72 + 0.28 * cos(Angle * Lobes + Pass().Time * 3.0);
+                Distance = length(Local) - Small * Shape;
+            }
+            else if (Instance.Kind == KIND_DISC || Instance.Kind == KIND_SPARK)
             {
                 Distance = length(Local / Half) * Small - Small;
             }
@@ -330,6 +345,53 @@ namespace Breakout::Shaders
                     float3 Rainbow = 0.5 + 0.5 * cos(6.2831853 * (Sweep + float3(0.0, 0.33, 0.67)));
                     Base = lerp(Base, Rainbow * 1.1, 0.55);
                 }
+                else if (BrickKind == BRICK_MOVER)
+                {
+                    float Chevron = frac((Local.x + abs(Local.y) * 0.8) / 18.0 - Pass().Time * 1.4);
+                    Base += Instance.Color.rgb * smoothstep(0.35, 0.5, Chevron) * smoothstep(0.65, 0.5, Chevron) * 0.7;
+                }
+                else if (BrickKind == BRICK_GHOST)
+                {
+                    float Wisp = Fbm(Local * 0.09 + float2(Pass().Time * 0.6, Instance.Param1));
+                    Base = lerp(Base, float3(1.2, 1.5, 1.8), Wisp * 0.6);
+                    Base *= 0.7 + 0.5 * Wisp;
+                }
+                else if (BrickKind == BRICK_REGEN)
+                {
+                    float Cross = min(abs(Local.x), abs(Local.y));
+                    float Plus = saturate(1.0 - Cross / 3.0) * step(abs(Local.x), 14.0) * step(abs(Local.y), 14.0);
+                    float Pulse = 0.5 + 0.5 * sin(Pass().Time * 5.0 + Instance.Param1);
+                    Base += float3(0.4, 1.6, 0.7) * Plus * (0.5 + Pulse * 0.6);
+                    float Veins = 0.5 + 0.5 * sin(Local.x * 0.35 + sin(Local.y * 0.4 + Pass().Time * 2.0) * 2.0);
+                    Base += float3(0.1, 0.5, 0.2) * Veins * 0.35;
+                }
+                else if (BrickKind == BRICK_PORTAL)
+                {
+                    float2 Norm = Local / Half;
+                    float Radial = length(Norm * float2(1.0, 2.2));
+                    float Angle = atan2(Norm.y, Norm.x);
+                    float Swirl = 0.5 + 0.5 * sin(Angle * 3.0 - Radial * 9.0 + Pass().Time * 6.0);
+                    float Well = saturate(1.0 - Radial);
+                    Base = lerp(Base * 0.4, float3(0.3, 1.5, 1.8) * (0.4 + Swirl), Well);
+                    Base += float3(0.6, 1.8, 2.0) * saturate(1.0 - abs(Radial - 0.85) * 8.0) * 0.8;
+                }
+                else if (BrickKind == BRICK_GRAVITY)
+                {
+                    float2 Norm = Local / Half;
+                    float Radial = length(Norm * float2(1.0, 2.6));
+                    float Rings = 0.5 + 0.5 * sin(Radial * 22.0 + Pass().Time * 7.0);
+                    Base = lerp(Base, float3(0.15, 0.05, 0.35), saturate(1.0 - Radial * 1.2));
+                    Base += float3(1.2, 0.6, 2.2) * Rings * saturate(1.0 - Radial) * 0.9;
+                    Base += float3(2.0, 1.4, 2.6) * exp(-Radial * Radial * 14.0);
+                }
+                else if (BrickKind == BRICK_GOLD)
+                {
+                    float Stripe = frac((Local.x - Local.y) / 14.0 - Pass().Time * 1.2);
+                    float Shine = smoothstep(0.42, 0.5, Stripe) * smoothstep(0.58, 0.5, Stripe);
+                    Base = float3(1.3, 1.0, 0.25) * (0.9 + Shine * 1.4);
+                    float Facet = 0.5 + 0.5 * sin(Local.x * 0.5) * sin(Local.y * 0.9);
+                    Base *= 0.85 + Facet * 0.3;
+                }
             }
             else if (Instance.Kind == KIND_RECT)
             {
@@ -340,6 +402,21 @@ namespace Breakout::Shaders
             {
                 float Radial = saturate(1.0 - length(Local / Half));
                 Base = lerp(Instance.Accent.rgb, Instance.Color.rgb, pow(Radial, 0.55));
+                if (uint(Instance.Param2 + 0.5) == BRICK_BUMPER)
+                {
+                    float Rings = 0.5 + 0.5 * sin((1.0 - Radial) * 18.0 - Pass().Time * 9.0);
+                    Base += Instance.Color.rgb * Rings * 0.6;
+                    Base += float3(2.0, 1.6, 2.2) * exp(-pow((1.0 - Radial) * 6.0, 2.0));
+                }
+            }
+            else if (Instance.Kind == KIND_DRONE)
+            {
+                float Radial = saturate(1.0 - length(Local) / max(Small, 1.0));
+                float Angle = atan2(Local.y, Local.x);
+                float Spokes = 0.5 + 0.5 * sin(Angle * 6.0 - Pass().Time * 8.0);
+                Base = lerp(Instance.Accent.rgb, Instance.Color.rgb, pow(Radial, 0.7));
+                Base += Instance.Color.rgb * Spokes * saturate(1.0 - Radial * 2.0) * 0.5;
+                Base += float3(2.2, 1.8, 1.6) * exp(-pow((1.0 - Radial) * 5.0, 2.0)) * 0.9;
             }
 
             float Rim = exp(-abs(Distance) * 0.8);
@@ -512,7 +589,11 @@ namespace Breakout::Shaders
             float  Fire;
             float  Beat;
             float  Fever;
-            float  Pad0;
+            float  Zoom;
+            float  Blind;
+            float  Vault;
+            float  Pad1;
+            float  Pad2;
             float4 Waves[4];
         };
         FCompositeArgs* Pass() { return GetArgs<FCompositeArgs>(); }
@@ -532,7 +613,7 @@ namespace Breakout::Shaders
         [shader("fragment")]
         float4 CompositePS(FFullscreenOut Input) : SV_Target0
         {
-            float2 UV = Input.UV;
+            float2 UV = (Input.UV - 0.5) / max(Pass().Zoom, 0.5) + 0.5;
             float  Aspect = Pass().Resolution.x / max(Pass().Resolution.y, 1.0);
 
             for (int Index = 0; Index < 4; ++Index)
@@ -575,7 +656,23 @@ namespace Breakout::Shaders
                 float Luma = dot(Color, float3(0.2126, 0.7152, 0.0722));
                 Color = lerp(Color, lerp(float3(Luma, Luma, Luma), Color, 1.55) * float3(1.10, 0.94, 1.16), Fever);
             }
-            Color *= saturate(1.0 - (Pass().Vignette + Pass().Danger * 0.35) * dot(Centered, Centered) * 2.1);
+            float Vault = Pass().Vault;
+            if (Vault > 0.001)
+            {
+                Color += float3(0.35, 0.28, 0.06) * Vault * (0.10 + Pass().Beat * 0.12);
+                Color = lerp(Color, Color * float3(1.10, 1.04, 0.86), Vault * 0.6);
+            }
+
+            Color *= saturate(1.0 - (Pass().Vignette + Pass().Danger * 0.35 + Vault * 0.5) * dot(Centered, Centered) * 2.1);
+
+            float Blind = Pass().Blind;
+            if (Blind > 0.001)
+            {
+                float Iris = 1.0 - saturate(length(Centered * float2(Aspect, 1.0)) * 2.4 - 0.15);
+                float Flicker = 0.85 + 0.15 * sin(Pass().Time * 23.0);
+                Color *= lerp(1.0, 0.06 + Iris * 0.35 * Flicker, Blind);
+            }
+
             Color += (Hash21(UV * Pass().Resolution + Pass().Time * 60.0) - 0.5) * 0.022;
             Color *= Pass().Fade;
 

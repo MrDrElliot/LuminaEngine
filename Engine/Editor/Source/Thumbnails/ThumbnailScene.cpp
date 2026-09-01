@@ -209,7 +209,7 @@ namespace Lumina
                 In.Width, In.Height, (size_t)In.Width * 4u);
         }
 
-        RHI::Free(In.Readback);
+        RHI::Core::Retire(In.Readback);
         In.Readback = {};
         return MappedMemory != nullptr;
     }
@@ -221,7 +221,7 @@ namespace Lumina
         {
             if (Local.Readback.Gpu != 0)
             {
-                RHI::Free(Local.Readback);
+                RHI::Core::Retire(Local.Readback);
             }
             return false;
         }
@@ -243,7 +243,7 @@ namespace Lumina
         {
             if (New->Readback.Gpu != 0)
             {
-                RHI::Free(New->Readback);
+                RHI::Core::Retire(New->Readback);
             }
             return false;
         }
@@ -291,7 +291,7 @@ namespace Lumina
         RHI::WaitSemaphore(Pending->Semaphore, Pending->Value);
         if (Pending->Readback.Gpu != 0)
         {
-            RHI::Free(Pending->Readback);
+            RHI::Core::Retire(Pending->Readback);
         }
         Pending = nullptr;
     }

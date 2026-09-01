@@ -581,10 +581,7 @@ namespace Lumina::RHI
 
     RUNTIME_API FString     DescribeDeviceAddress(uint64 AddressLow, uint64 AddressHigh);
 
-    RUNTIME_API void        Free(const FGPUAllocation& Allocation);
     RUNTIME_API void        FreeH(FSemaphoreH Semaphore);
-    RUNTIME_API void        FreeH(FPipelineH Pipeline);
-    RUNTIME_API void        FreeH(FTextureH Texture);
     RUNTIME_API void        FreeH(FTextureHeapH Heap);
     RUNTIME_API void        FreeH(FDepthStencilH DepthStencil);
     RUNTIME_API void        FreeH(FSwapchainH Swapchain);
@@ -851,116 +848,5 @@ namespace Lumina::RHI
         std::uninitialized_value_construct_n(Allocation.CpuAs<T>(), Count);
         return Allocation;
     }
-
-    template<typename T>
-    class TUniqueH
-    {
-    public:
-
-        TUniqueH() = default;
-        TUniqueH(THandle<T> InHandle) : Handle(InHandle) {}
-        TUniqueH(const TUniqueH&) = delete;
-        TUniqueH& operator=(const TUniqueH&) = delete;
-        TUniqueH(TUniqueH&& Other) noexcept : Handle(Other.Release()) {}
-
-        TUniqueH& operator=(TUniqueH&& Other) noexcept
-        {
-            if (this != &Other)
-            {
-                Reset(Other.Release());
-            }
-            return *this;
-        }
-
-        TUniqueH& operator=(THandle<T> InHandle)
-        {
-            Reset(InHandle);
-            return *this;
-        }
-
-        ~TUniqueH()
-        {
-            Reset();
-        }
-
-        void Reset(THandle<T> InHandle = {})
-        {
-            if (IsValid(Handle))
-            {
-                FreeH(Handle);
-            }
-            Handle = InHandle;
-        }
-
-        THandle<T> Release()
-        {
-            THandle<T> Out = Handle;
-            Handle = {};
-            return Out;
-        }
-
-        THandle<T> Get() const { return Handle; }
-        operator THandle<T>() const { return Handle; }
-        explicit operator bool() const { return IsValid(Handle); }
-
-    private:
-
-        THandle<T> Handle = {};
-    };
-
-    using FPipelineUH       = TUniqueH<FPipeline>;
-    using FTextureUH        = TUniqueH<FTexture>;
-    using FTextureHeapUH    = TUniqueH<FTextureHeap>;
-    using FSemaphoreUH      = TUniqueH<FSemaphore>;
-    using FDepthStencilUH   = TUniqueH<FDepthStencilState>;
-
-    class FUniqueGPUAlloc
-    {
-    public:
-
-        FUniqueGPUAlloc() = default;
-        explicit FUniqueGPUAlloc(const FGPUAllocation& InAllocation) : Allocation(InAllocation) {}
-        FUniqueGPUAlloc(const FUniqueGPUAlloc&) = delete;
-        FUniqueGPUAlloc& operator=(const FUniqueGPUAlloc&) = delete;
-        FUniqueGPUAlloc(FUniqueGPUAlloc&& Other) noexcept : Allocation(Other.Release()) {}
-
-        FUniqueGPUAlloc& operator=(FUniqueGPUAlloc&& Other) noexcept
-        {
-            if (this != &Other)
-            {
-                Reset(Other.Release());
-            }
-            return *this;
-        }
-
-        ~FUniqueGPUAlloc()
-        {
-            Reset();
-        }
-
-        void Reset(const FGPUAllocation& InAllocation = {})
-        {
-            if (Allocation.Gpu != 0)
-            {
-                Free(Allocation);
-            }
-            Allocation = InAllocation;
-        }
-
-        FGPUAllocation Release()
-        {
-            const FGPUAllocation Out = Allocation;
-            Allocation = {};
-            return Out;
-        }
-
-        const FGPUAllocation& Get() const { return Allocation; }
-        operator const FGPUAllocation&() const { return Allocation; }
-        explicit operator bool() const { return Allocation.Gpu != 0; }
-
-    private:
-
-        FGPUAllocation Allocation;
-    };
 
 }

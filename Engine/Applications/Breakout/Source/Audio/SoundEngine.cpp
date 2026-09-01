@@ -550,6 +550,340 @@ namespace Breakout
                 Spec.Volume = 0.18f;
                 break;
 
+            case ESound::Smash:
+                Spec.Wave = EWave::Saw;
+                Spec.StartFreq = 180.0f;
+                Spec.EndFreq = 1400.0f;
+                Spec.SweepShape = 0.35f;
+                Spec.Duration = 0.320f;
+                Spec.Decay = 0.140f;
+                Spec.Release = 0.120f;
+                Spec.NoiseMix = 0.30f;
+                Spec.DetuneCents = 18.0f;
+                Spec.CutoffStart = 1200.0f;
+                Spec.CutoffEnd = 9000.0f;
+                Spec.Drive = 2.6f;
+                Spec.Volume = 0.55f;
+                break;
+
+            case ESound::VaultEnter:
+                Spec.Wave = EWave::Triangle;
+                Spec.StartFreq = 520.0f;
+                Spec.EndFreq = 520.0f;
+                Spec.Duration = 0.220f;
+                Spec.Decay = 0.110f;
+                Spec.Release = 0.090f;
+                Spec.Repeat = 4;
+                Spec.RepeatDelay = 0.065f;
+                Spec.RepeatSemitones = 5.0f;
+                Spec.VibratoRate = 9.0f;
+                Spec.VibratoCents = 12.0f;
+                Spec.Volume = 0.30f;
+                break;
+
+            case ESound::DroneHit:
+                Spec.Wave = EWave::Square;
+                Spec.StartFreq = 900.0f;
+                Spec.EndFreq = 300.0f;
+                Spec.SweepShape = 0.7f;
+                Spec.Duration = 0.110f;
+                Spec.Decay = 0.050f;
+                Spec.Release = 0.040f;
+                Spec.PulseWidth = 0.18f;
+                Spec.NoiseMix = 0.25f;
+                Spec.CutoffStart = 6000.0f;
+                Spec.CutoffEnd = 1500.0f;
+                Spec.Volume = 0.28f;
+                break;
+
+            case ESound::DroneDeath:
+                Spec.Wave = EWave::Noise;
+                Spec.StartFreq = 400.0f;
+                Spec.EndFreq = 60.0f;
+                Spec.Duration = 0.360f;
+                Spec.Decay = 0.150f;
+                Spec.Release = 0.150f;
+                Spec.NoiseMix = 0.60f;
+                Spec.CutoffStart = 5000.0f;
+                Spec.CutoffEnd = 300.0f;
+                Spec.Drive = 2.0f;
+                Spec.Repeat = 2;
+                Spec.RepeatDelay = 0.05f;
+                Spec.RepeatSemitones = -7.0f;
+                Spec.Volume = 0.36f;
+                break;
+
+            case ESound::Portal:
+                Spec.Wave = EWave::Sine;
+                Spec.StartFreq = 220.0f;
+                Spec.EndFreq = 1760.0f;
+                Spec.SweepShape = 0.5f;
+                Spec.Duration = 0.300f;
+                Spec.Decay = 0.120f;
+                Spec.Release = 0.140f;
+                Spec.DetuneCents = 25.0f;
+                Spec.VibratoRate = 22.0f;
+                Spec.VibratoCents = 40.0f;
+                Spec.Volume = 0.30f;
+                break;
+
+            case ESound::Bumper:
+                Spec.Wave = EWave::Square;
+                Spec.StartFreq = 330.0f;
+                Spec.EndFreq = 660.0f;
+                Spec.SweepShape = 0.3f;
+                Spec.Duration = 0.130f;
+                Spec.Decay = 0.060f;
+                Spec.Release = 0.050f;
+                Spec.PulseWidth = 0.45f;
+                Spec.Drive = 2.2f;
+                Spec.Repeat = 2;
+                Spec.RepeatDelay = 0.04f;
+                Spec.RepeatSemitones = 12.0f;
+                Spec.Volume = 0.32f;
+                break;
+
+            case ESound::PerkOffer:
+                Spec.Wave = EWave::Triangle;
+                Spec.StartFreq = 392.0f;
+                Spec.EndFreq = 392.0f;
+                Spec.Duration = 0.260f;
+                Spec.Decay = 0.150f;
+                Spec.Release = 0.100f;
+                Spec.Repeat = 3;
+                Spec.RepeatDelay = 0.11f;
+                Spec.RepeatSemitones = 4.0f;
+                Spec.DetuneCents = 8.0f;
+                Spec.Volume = 0.26f;
+                break;
+
+            case ESound::PerkPick:
+                Spec.Wave = EWave::Square;
+                Spec.StartFreq = 523.0f;
+                Spec.EndFreq = 523.0f;
+                Spec.Duration = 0.200f;
+                Spec.Decay = 0.090f;
+                Spec.Release = 0.090f;
+                Spec.PulseWidth = 0.35f;
+                Spec.Repeat = 4;
+                Spec.RepeatDelay = 0.07f;
+                Spec.RepeatSemitones = 5.0f;
+                Spec.Volume = 0.30f;
+                break;
+
+            case ESound::Repair:
+                Spec.Wave = EWave::Sine;
+                Spec.StartFreq = 880.0f;
+                Spec.EndFreq = 440.0f;
+                Spec.SweepShape = 1.5f;
+                Spec.Duration = 0.250f;
+                Spec.Decay = 0.120f;
+                Spec.Release = 0.100f;
+                Spec.Repeat = 2;
+                Spec.RepeatDelay = 0.09f;
+                Spec.RepeatSemitones = -3.0f;
+                Spec.VibratoRate = 14.0f;
+                Spec.VibratoCents = 20.0f;
+                Spec.Volume = 0.24f;
+                break;
+
+            case ESound::Magnet:
+                Spec.Wave = EWave::Saw;
+                Spec.StartFreq = 110.0f;
+                Spec.EndFreq = 440.0f;
+                Spec.SweepShape = 0.6f;
+                Spec.Duration = 0.400f;
+                Spec.Decay = 0.200f;
+                Spec.Release = 0.150f;
+                Spec.VibratoRate = 30.0f;
+                Spec.VibratoCents = 60.0f;
+                Spec.CutoffStart = 800.0f;
+                Spec.CutoffEnd = 4000.0f;
+                Spec.Volume = 0.26f;
+                break;
+
+            case ESound::Bomb:
+                Spec.Wave = EWave::Square;
+                Spec.StartFreq = 200.0f;
+                Spec.EndFreq = 90.0f;
+                Spec.SweepShape = 0.8f;
+                Spec.Duration = 0.260f;
+                Spec.Decay = 0.120f;
+                Spec.Release = 0.100f;
+                Spec.PulseWidth = 0.25f;
+                Spec.Repeat = 3;
+                Spec.RepeatDelay = 0.09f;
+                Spec.RepeatSemitones = 2.0f;
+                Spec.Drive = 2.0f;
+                Spec.Volume = 0.34f;
+                break;
+
+            case ESound::WallUp:
+                Spec.Wave = EWave::Triangle;
+                Spec.StartFreq = 160.0f;
+                Spec.EndFreq = 640.0f;
+                Spec.SweepShape = 0.4f;
+                Spec.Duration = 0.360f;
+                Spec.Decay = 0.180f;
+                Spec.Release = 0.140f;
+                Spec.DetuneCents = 12.0f;
+                Spec.Drive = 1.5f;
+                Spec.Volume = 0.32f;
+                break;
+
+            case ESound::WallBounce:
+                Spec.Wave = EWave::Sine;
+                Spec.StartFreq = 190.0f;
+                Spec.EndFreq = 95.0f;
+                Spec.SweepShape = 0.5f;
+                Spec.Duration = 0.160f;
+                Spec.Decay = 0.070f;
+                Spec.Release = 0.060f;
+                Spec.Drive = 2.4f;
+                Spec.Volume = 0.40f;
+                break;
+
+            case ESound::Freeze:
+                Spec.Wave = EWave::Sine;
+                Spec.StartFreq = 1568.0f;
+                Spec.EndFreq = 1568.0f;
+                Spec.Duration = 0.420f;
+                Spec.Attack = 0.010f;
+                Spec.Decay = 0.250f;
+                Spec.Release = 0.150f;
+                Spec.Repeat = 4;
+                Spec.RepeatDelay = 0.08f;
+                Spec.RepeatSemitones = -5.0f;
+                Spec.DetuneCents = 6.0f;
+                Spec.Volume = 0.22f;
+                break;
+
+            case ESound::Reverse:
+                Spec.Wave = EWave::Saw;
+                Spec.StartFreq = 880.0f;
+                Spec.EndFreq = 110.0f;
+                Spec.SweepShape = 1.0f;
+                Spec.Duration = 0.420f;
+                Spec.Decay = 0.200f;
+                Spec.Release = 0.150f;
+                Spec.VibratoRate = 6.0f;
+                Spec.VibratoCents = 200.0f;
+                Spec.CutoffStart = 5000.0f;
+                Spec.CutoffEnd = 600.0f;
+                Spec.Volume = 0.28f;
+                break;
+
+            case ESound::Blind:
+                Spec.Wave = EWave::Square;
+                Spec.StartFreq = 330.0f;
+                Spec.EndFreq = 40.0f;
+                Spec.SweepShape = 0.5f;
+                Spec.Duration = 0.520f;
+                Spec.Decay = 0.250f;
+                Spec.Release = 0.200f;
+                Spec.PulseWidth = 0.12f;
+                Spec.NoiseMix = 0.30f;
+                Spec.CutoffStart = 3000.0f;
+                Spec.CutoffEnd = 200.0f;
+                Spec.Drive = 1.8f;
+                Spec.Volume = 0.34f;
+                break;
+
+            case ESound::Gold:
+                Spec.Wave = EWave::Triangle;
+                Spec.StartFreq = 1046.0f;
+                Spec.EndFreq = 1046.0f;
+                Spec.Duration = 0.240f;
+                Spec.Decay = 0.120f;
+                Spec.Release = 0.100f;
+                Spec.Repeat = 5;
+                Spec.RepeatDelay = 0.05f;
+                Spec.RepeatSemitones = 4.0f;
+                Spec.DetuneCents = 5.0f;
+                Spec.Volume = 0.24f;
+                break;
+
+            case ESound::Regen:
+                Spec.Wave = EWave::Sine;
+                Spec.StartFreq = 440.0f;
+                Spec.EndFreq = 880.0f;
+                Spec.SweepShape = 0.6f;
+                Spec.Duration = 0.200f;
+                Spec.Decay = 0.100f;
+                Spec.Release = 0.080f;
+                Spec.Volume = 0.16f;
+                break;
+
+            case ESound::Grade:
+                Spec.Wave = EWave::Square;
+                Spec.StartFreq = 392.0f;
+                Spec.EndFreq = 392.0f;
+                Spec.Duration = 0.300f;
+                Spec.Decay = 0.140f;
+                Spec.Release = 0.140f;
+                Spec.PulseWidth = 0.40f;
+                Spec.Repeat = 5;
+                Spec.RepeatDelay = 0.10f;
+                Spec.RepeatSemitones = 3.0f;
+                Spec.DetuneCents = 9.0f;
+                Spec.Volume = 0.30f;
+                break;
+
+            case ESound::BossIntro:
+                Spec.Wave = EWave::Saw;
+                Spec.StartFreq = 55.0f;
+                Spec.EndFreq = 41.0f;
+                Spec.SweepShape = 0.8f;
+                Spec.Duration = 1.400f;
+                Spec.Attack = 0.050f;
+                Spec.Decay = 0.700f;
+                Spec.Sustain = 0.35f;
+                Spec.Release = 0.500f;
+                Spec.DetuneCents = 20.0f;
+                Spec.CutoffStart = 300.0f;
+                Spec.CutoffEnd = 1800.0f;
+                Spec.Drive = 2.5f;
+                Spec.Repeat = 3;
+                Spec.RepeatDelay = 0.42f;
+                Spec.RepeatSemitones = 1.0f;
+                Spec.Volume = 0.42f;
+                break;
+
+            case ESound::BossSplit:
+                Spec.Wave = EWave::Saw;
+                Spec.StartFreq = 600.0f;
+                Spec.EndFreq = 150.0f;
+                Spec.SweepShape = 0.4f;
+                Spec.Duration = 0.600f;
+                Spec.Decay = 0.300f;
+                Spec.Release = 0.250f;
+                Spec.NoiseMix = 0.35f;
+                Spec.DetuneCents = 40.0f;
+                Spec.CutoffStart = 6000.0f;
+                Spec.CutoffEnd = 500.0f;
+                Spec.Drive = 2.4f;
+                Spec.Repeat = 2;
+                Spec.RepeatDelay = 0.12f;
+                Spec.RepeatSemitones = 7.0f;
+                Spec.Volume = 0.42f;
+                break;
+
+            case ESound::ArmorUp:
+                Spec.Wave = EWave::Square;
+                Spec.StartFreq = 260.0f;
+                Spec.EndFreq = 260.0f;
+                Spec.Duration = 0.220f;
+                Spec.Decay = 0.100f;
+                Spec.Release = 0.100f;
+                Spec.PulseWidth = 0.15f;
+                Spec.Repeat = 3;
+                Spec.RepeatDelay = 0.07f;
+                Spec.RepeatSemitones = -4.0f;
+                Spec.NoiseMix = 0.15f;
+                Spec.Drive = 1.8f;
+                Spec.Volume = 0.28f;
+                break;
+
             default:
                 Spec.Wave = EWave::Square;
                 Spec.StartFreq = 620.0f;
@@ -581,6 +915,13 @@ namespace Breakout
             case ESound::LevelClear: return 0.40f;
             case ESound::FeverStart: return 0.35f;
             case ESound::ShieldSave: return 0.45f;
+            case ESound::Smash:      return 0.50f;
+            case ESound::BossSplit:  return 0.30f;
+            case ESound::BossIntro:  return 0.25f;
+            case ESound::Grade:      return 0.40f;
+            case ESound::PerkPick:   return 0.50f;
+            case ESound::Bomb:       return 0.45f;
+            case ESound::VaultEnter: return 0.55f;
             default:                 return 1.0f;
             }
         }
@@ -665,9 +1006,127 @@ namespace Breakout
             return Spec;
         }
 
-        // Natural minor triad roots for a i, VI, III, VII turnaround.
-        constexpr int32 kChordRoots[4] = { 0, 8, 3, 10 };
+        FSoundSpec SnareSpec()
+        {
+            FSoundSpec Spec;
+            Spec.Wave = EWave::Noise;
+            Spec.StartFreq = 220.0f;
+            Spec.EndFreq = 120.0f;
+            Spec.Duration = 0.140f;
+            Spec.Attack = 0.001f;
+            Spec.Decay = 0.060f;
+            Spec.Release = 0.060f;
+            Spec.NoiseMix = 0.75f;
+            Spec.CutoffStart = 5000.0f;
+            Spec.CutoffEnd = 1800.0f;
+            Spec.Drive = 1.6f;
+            Spec.Volume = 0.26f;
+            return Spec;
+        }
+
+        FSoundSpec TomSpec()
+        {
+            FSoundSpec Spec;
+            Spec.Wave = EWave::Sine;
+            Spec.StartFreq = 190.0f;
+            Spec.EndFreq = 70.0f;
+            Spec.SweepShape = 0.5f;
+            Spec.Duration = 0.240f;
+            Spec.Attack = 0.002f;
+            Spec.Decay = 0.110f;
+            Spec.Release = 0.100f;
+            Spec.NoiseMix = 0.08f;
+            Spec.Drive = 1.8f;
+            Spec.Volume = 0.36f;
+            return Spec;
+        }
+
+        FSoundSpec LeadSpec()
+        {
+            FSoundSpec Spec;
+            Spec.Wave = EWave::Saw;
+            Spec.Duration = 0.230f;
+            Spec.Attack = 0.008f;
+            Spec.Decay = 0.090f;
+            Spec.Sustain = 0.45f;
+            Spec.Release = 0.090f;
+            Spec.DetuneCents = 9.0f;
+            Spec.VibratoRate = 5.5f;
+            Spec.VibratoCents = 14.0f;
+            Spec.CutoffStart = 3200.0f;
+            Spec.CutoffEnd = 1400.0f;
+            Spec.Drive = 1.3f;
+            Spec.Volume = 0.13f;
+            return Spec;
+        }
+
+        FSoundSpec BellSpec()
+        {
+            FSoundSpec Spec;
+            Spec.Wave = EWave::Sine;
+            Spec.Duration = 0.900f;
+            Spec.Attack = 0.003f;
+            Spec.Decay = 0.600f;
+            Spec.Sustain = 0.10f;
+            Spec.Release = 0.300f;
+            Spec.DetuneCents = 4.0f;
+            Spec.Volume = 0.15f;
+            return Spec;
+        }
+
+        FSoundSpec PluckSpec()
+        {
+            FSoundSpec Spec;
+            Spec.Wave = EWave::Triangle;
+            Spec.Duration = 0.160f;
+            Spec.Attack = 0.002f;
+            Spec.Decay = 0.090f;
+            Spec.Release = 0.060f;
+            Spec.CutoffStart = 5200.0f;
+            Spec.CutoffEnd = 900.0f;
+            Spec.Volume = 0.11f;
+            return Spec;
+        }
+
+        struct FSong
+        {
+            int32 Chords[4];
+            uint16 KickMask;
+            uint16 BassMask;
+            int8  Lead[16];
+        };
+
+        // Chord roots are semitones above the key; masks are one bit per sixteenth step; lead is a minor scale degree, -1 rests.
+        const FSong kSongs[4] =
+        {
+            { { 0, 8, 3, 10 }, 0x1111, 0x4949, {  0, -1,  2,  3, -1,  4, -1,  3,  2, -1,  0, -1, -1,  4,  5,  4 } },
+            { { 0, 5, 7, 3 },  0x1111, 0x5555, {  4,  4, -1,  5,  7, -1,  5,  4, -1,  2,  0, -1,  2,  3, -1,  2 } },
+            { { 0, 10, 8, 7 }, 0x1119, 0x2929, {  7, -1,  6,  5, -1,  4,  5, -1,  3, -1,  2,  0, -1,  3,  4, -1 } },
+            { { 0, 3, 8, 5 },  0x1111, 0x5151, {  0,  2,  4, -1,  7, -1,  4,  2, -1,  5,  4,  2, -1,  0, -1, -1 } },
+        };
+
+        const FSong kBossSong  { { 0, 1, 0, 6 },  0x1111, 0xFFFF, {  0,  0,  7,  0,  6,  0,  0,  5,  0,  0,  7,  0,  6,  5,  6,  0 } };
+        const FSong kFeverSong { { 0, 8, 5, 10 }, 0x1111, 0x5555, {  7,  8,  7,  5,  7, -1,  8,  9,  7, -1,  5,  7,  4,  5,  7, -1 } };
+        const FSong kMenuSong  { { 0, 8, 3, 10 }, 0x0000, 0x0101, { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 } };
+        const FSong kDraftSong { { 0, 5, 3, 8 },  0x0000, 0x0000, {  0, -1, -1,  4, -1, -1,  7, -1, -1,  4, -1, -1,  9, -1,  7, -1 } };
+        const FSong kLossSong  { { 0, 1, 0, 10 }, 0x0000, 0x0001, { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 } };
+
+        constexpr int32 kMinorScale[10] = { 0, 2, 3, 5, 7, 8, 10, 12, 14, 15 };
         constexpr int32 kPentatonic[5] = { 0, 3, 5, 7, 10 };
+
+        const FSong& SongFor(EMusicMood Mood, int32 Level)
+        {
+            switch (Mood)
+            {
+            case EMusicMood::Menu:  return kMenuSong;
+            case EMusicMood::Boss:  return kBossSong;
+            case EMusicMood::Fever: return kFeverSong;
+            case EMusicMood::Draft: return kDraftSong;
+            case EMusicMood::Loss:  return kLossSong;
+            case EMusicMood::Clear: return kFeverSong;
+            default:                return kSongs[((Level - 1) / 3) & 3];
+            }
+        }
     }
 
 
@@ -718,11 +1177,12 @@ namespace Breakout
         WriteCursor.store(Write + 1, Atomic::MemoryOrderRelease);
     }
 
-    void FSoundEngine::SetMusic(bool bEnabled, float Intensity, int32 Key)
+    void FSoundEngine::SetMusic(bool bEnabled, float Intensity, int32 Key, EMusicMood Mood)
     {
         bMusicEnabled.store(bEnabled, Atomic::MemoryOrderRelaxed);
         MusicIntensity.store(Math::Clamp(Intensity, 0.0f, 1.0f), Atomic::MemoryOrderRelaxed);
         MusicKey.store(Key, Atomic::MemoryOrderRelaxed);
+        MusicMood.store(uint8(Mood), Atomic::MemoryOrderRelaxed);
     }
 
     void FSoundEngine::SetMusicFilter(float Openness)
@@ -816,8 +1276,14 @@ namespace Breakout
         }
 
         const float Intensity = MusicIntensity.load(Atomic::MemoryOrderRelaxed);
-        const int32 Key = MusicKey.load(Atomic::MemoryOrderRelaxed);
+        const int32 Level = Math::Max(MusicKey.load(Atomic::MemoryOrderRelaxed), 1);
+        const EMusicMood Mood = EMusicMood(MusicMood.load(Atomic::MemoryOrderRelaxed));
         const float Openness = MusicFilter.load(Atomic::MemoryOrderRelaxed);
+        const FSong& Song = SongFor(Mood, Level);
+
+        const bool bDriving = Mood == EMusicMood::Boss || Mood == EMusicMood::Fever || Mood == EMusicMood::Vault || Mood == EMusicMood::Clear;
+        const bool bCalm = Mood == EMusicMood::Menu || Mood == EMusicMood::Draft || Mood == EMusicMood::Loss;
+        const int32 KeyShift = Mood == EMusicMood::Boss ? -2 : (Mood == EMusicMood::Fever || Mood == EMusicMood::Clear ? 3 : (Level % 7));
 
         StepTimer += DeltaSeconds;
         while (StepTimer >= kStepSeconds)
@@ -829,50 +1295,107 @@ namespace Breakout
 
             const uint32 Step = StepIndex % kSequencerSteps;
             const uint32 Bar = (StepIndex / kSequencerSteps) % 4u;
+            const uint32 Phrase = (StepIndex / (kSequencerSteps * 4u)) % 2u;
             ++StepIndex;
 
-            const int32 Root = 45 + (Key % 7) + kChordRoots[Bar];
+            const int32 Root = 45 + KeyShift + Song.Chords[Bar];
+            const uint16 Bit = uint16(1u << Step);
 
             if (Step == 0)
             {
                 FSoundSpec Pad = PadSpec();
                 Pad.CutoffStart *= Openness;
                 Pad.CutoffEnd *= Openness;
-                StartVoice(Pad, MidiToFreq(float(Root + 12)) / Pad.StartFreq, 1.0f, -0.25f, Offset, true);
-                StartVoice(Pad, MidiToFreq(float(Root + 19)) / Pad.StartFreq, 0.8f, 0.25f, Offset + 0.02f, true);
+                const float PadGain = bCalm ? 1.2f : 1.0f;
+                const int32 Third = Mood == EMusicMood::Boss ? 1 : (Mood == EMusicMood::Fever || Mood == EMusicMood::Clear ? 4 : 3);
+                StartVoice(Pad, MidiToFreq(float(Root + 12)) / Pad.StartFreq, PadGain, -0.25f, Offset, true);
+                StartVoice(Pad, MidiToFreq(float(Root + 12 + Third)) / Pad.StartFreq, PadGain * 0.7f, 0.0f, Offset + 0.01f, true);
+                StartVoice(Pad, MidiToFreq(float(Root + 19)) / Pad.StartFreq, PadGain * 0.8f, 0.25f, Offset + 0.02f, true);
             }
 
-            const bool bBassStep = Step == 0 || Step == 3 || Step == 6 || Step == 8 || Step == 11 || Step == 14;
-            if (bBassStep)
+            if ((Song.BassMask & Bit) != 0 && (!bCalm || Mood == EMusicMood::Menu))
             {
                 FSoundSpec Bass = BassSpec();
-                Bass.CutoffStart *= Openness;
+                Bass.CutoffStart *= Openness * (bDriving ? 1.4f : 1.0f);
                 Bass.CutoffEnd *= Openness;
-                StartVoice(Bass, MidiToFreq(float(Root - 12)) / Bass.StartFreq, 0.7f + Intensity * 0.3f, 0.0f, Offset, true);
+                if (Mood == EMusicMood::Boss)
+                {
+                    Bass.Duration = 0.13f;
+                    Bass.Drive = 2.2f;
+                }
+                const int32 Note = Root - 12 + (Mood == EMusicMood::Boss && (Step % 8) == 6 ? 1 : 0);
+                StartVoice(Bass, MidiToFreq(float(Note)) / Bass.StartFreq, 0.7f + Intensity * 0.3f, 0.0f, Offset, true);
             }
 
-            if (Intensity > 0.30f && (Step % 4) == 0)
+            if (Intensity > 0.30f && (Song.KickMask & Bit) != 0)
             {
                 FSoundSpec Kick = KickSpec();
-                StartVoice(Kick, 1.0f, Intensity, 0.0f, Offset, true);
+                StartVoice(Kick, Mood == EMusicMood::Boss ? 0.92f : 1.0f, Intensity, 0.0f, Offset, true);
             }
 
-            if (Intensity > 0.45f && (Step % 2) == 1)
+            const bool bSnareStep = Step == 4 || Step == 12 || (bDriving && Step == 15 && Bar == 3) || (Mood == EMusicMood::Boss && Step == 7);
+            if (Intensity > 0.5f && !bCalm && bSnareStep)
+            {
+                FSoundSpec Snare = SnareSpec();
+                StartVoice(Snare, Step == 15 ? 1.15f : 1.0f, Intensity * (Step == 15 ? 0.6f : 0.95f), 0.05f, Offset, true);
+            }
+
+            const bool bHatStep = bDriving ? true : (Step % 2) == 1;
+            if (Intensity > 0.45f && !bCalm && bHatStep)
             {
                 FSoundSpec Hat = HatSpec();
-                StartVoice(Hat, 1.0f, Intensity * 0.9f, Step % 4 == 1 ? -0.3f : 0.3f, Offset, true);
+                const bool bOpen = bDriving && Step % 4 == 2;
+                if (bOpen)
+                {
+                    Hat.Duration = 0.12f;
+                    Hat.Decay = 0.06f;
+                }
+                StartVoice(Hat, bOpen ? 0.9f : 1.0f, Intensity * (Step % 2 == 1 ? 0.9f : 0.5f), Step % 4 == 1 ? -0.3f : 0.3f, Offset, true);
             }
 
-            if (Intensity > 0.20f)
+            if (Mood == EMusicMood::Boss && (Step == 6 || Step == 7 || Step == 14) && Intensity > 0.3f)
+            {
+                FSoundSpec Tom = TomSpec();
+                StartVoice(Tom, Step == 14 ? 0.8f : 1.0f, Intensity * 0.9f, Step == 6 ? -0.4f : 0.4f, Offset, true);
+            }
+
+            if (Intensity > 0.20f && !bCalm)
             {
                 const uint32 ArpIndex = StepIndex % 5u;
-                const int32 Note = Root + 12 + kPentatonic[ArpIndex] + (Step >= 8 ? 12 : 0);
+                const int32 Lift = (Mood == EMusicMood::Fever || Mood == EMusicMood::Vault || Mood == EMusicMood::Clear) ? 12 : 0;
+                const int32 Note = Root + 12 + Lift + kPentatonic[ArpIndex] + (Step >= 8 ? 12 : 0);
 
                 FSoundSpec Arp = ArpSpec();
                 Arp.CutoffStart *= Openness;
                 Arp.CutoffEnd *= Openness;
                 const float Pan = (float(ArpIndex) / 4.0f - 0.5f) * 0.8f;
                 StartVoice(Arp, MidiToFreq(float(Note)) / Arp.StartFreq, 0.5f + Intensity * 0.5f, Pan, Offset, true);
+            }
+
+            const int8 Degree = Song.Lead[Step];
+            const bool bLeadOn = Degree >= 0 && (bDriving || Intensity > 0.62f || Mood == EMusicMood::Draft);
+            if (bLeadOn)
+            {
+                const int32 Note = Root + 24 + kMinorScale[Math::Clamp<int32>(Degree, 0, 9)] + (Phrase == 1 && Bar >= 2 ? 12 : 0);
+                if (Mood == EMusicMood::Draft)
+                {
+                    FSoundSpec Bell = BellSpec();
+                    StartVoice(Bell, MidiToFreq(float(Note)) / 440.0f, 1.0f, (Step % 2 == 0) ? -0.35f : 0.35f, Offset, true);
+                }
+                else
+                {
+                    FSoundSpec Lead = LeadSpec();
+                    Lead.CutoffStart *= Openness * (Mood == EMusicMood::Vault ? 1.6f : 1.0f);
+                    Lead.CutoffEnd *= Openness;
+                    StartVoice(Lead, MidiToFreq(float(Note)) / 440.0f, 0.6f + Intensity * 0.5f, 0.15f, Offset, true);
+                }
+            }
+
+            if (Mood == EMusicMood::Menu && (Step == 0 || Step == 6 || Step == 10))
+            {
+                const uint32 Pick = (StepIndex * 7u + Bar * 3u) % 5u;
+                FSoundSpec Pluck = PluckSpec();
+                StartVoice(Pluck, MidiToFreq(float(Root + 24 + kPentatonic[Pick])) / 440.0f, 1.0f, (Pick % 2 == 0) ? -0.3f : 0.3f, Offset, true);
             }
         }
     }

@@ -767,8 +767,8 @@ namespace Grain
             bWrote = ImageWrite::WritePngFile(Path, Extent.x, Extent.y, 4, Rgba.data(), Extent.x * 4u);
         }
 
-        RHI::Free(Readback);
-        RHI::FreeH(Capture);
+        RHI::Core::Retire(Readback);
+        RHI::Core::Retire(Capture);
 
         LOG_INFO("Grain: capture '{}' {}.", Path, bWrote ? "written" : "failed");
         return bWrote;
@@ -785,7 +785,7 @@ namespace Grain
         {
             if (RHI::IsValid(Pipeline))
             {
-                RHI::FreeH(Pipeline);
+                RHI::Core::Retire(Pipeline);
             }
         }
 
@@ -801,7 +801,7 @@ namespace Grain
 
         if (PickBuffer.Gpu != 0)
         {
-            RHI::Free(PickBuffer);
+            RHI::Core::Retire(PickBuffer);
             PickBuffer = {};
         }
     }

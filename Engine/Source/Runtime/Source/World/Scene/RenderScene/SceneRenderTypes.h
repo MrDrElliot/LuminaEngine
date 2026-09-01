@@ -276,32 +276,7 @@ namespace Lumina
         return Slot;
     }
 
-    // Immediate release: caller guarantees no in-flight GPU use (WaitIdle or frame-deferred externally).
-    inline void ReleaseSceneImage(FSceneImage& Image)
-    {
-        if (!Image.IsValid())
-        {
-            Image = {};
-            return;
-        }
-        if (Image.SampledSlot != RHI::kInvalidHeapSlot)
-        {
-            RHI::HeapFreeTexture(RHI::Core::GetGlobalHeap(), Image.SampledSlot);
-        }
-        for (uint32 Slot : Image.MipUAVSlots)
-        {
-            if (Slot != RHI::kInvalidHeapSlot)
-            {
-                RHI::HeapFreeRWTexture(RHI::Core::GetGlobalHeap(), Slot);
-            }
-        }
-        RHI::FreeH(Image.Texture);
-        Image = {};
-    }
-
-    // Frame-deferred counterpart to ReleaseSceneImage: hands the texture and its heap slots to the RHI's
-    // single retirement queue, which destroys them once the GPU has finished with the slot they were
-    // retired in. Clears the source, so ownership transfers rather than being shared.
+    // Hands the texture and its heap slots to the RHI's retirement queue and clears the source.
     inline void RetireSceneImage(FSceneImage& Image)
     {
         if (!Image.IsValid())
@@ -360,7 +335,7 @@ namespace Lumina
 
         ~FShadowAtlas()
         {
-            ReleaseSceneImage(ShadowAtlas);
+            RetireSceneImage(ShadowAtlas);
         }
 
         // GPU image created lazily: the atlas is a scene member constructed before scene Init.

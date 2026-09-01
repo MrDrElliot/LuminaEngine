@@ -1,5 +1,6 @@
 #include "RuntimePCH.h"
 #include "RHICore.h"
+#include "RHIInternal.h"
 #include "GPUProfiler.h"
 #include "Log/Log.h"
 #include "Containers/Function.h"
@@ -192,7 +193,7 @@ namespace Lumina::RHI::Core
 
         for (FTransientSlice& Slice : GCore.Slices)
         {
-            Free(Slice.Memory);
+            Internal::DestroyNow(Slice.Memory);
             Slice.Memory = {};
             Slice.Cursor.store(0, std::memory_order_relaxed);
         }
@@ -218,10 +219,10 @@ namespace Lumina::RHI::Core
         switch (Item.Kind)
         {
         case FRetireItem::EKind::Buffer:
-            RHI::Free(Item.Memory);
+            Internal::DestroyNow(Item.Memory);
             break;
         case FRetireItem::EKind::Texture:
-            RHI::FreeH(Item.Texture);
+            Internal::DestroyNow(Item.Texture);
             break;
         case FRetireItem::EKind::SampledSlot:
             // After Shutdown the heap itself is gone, so its slots died with it.
@@ -231,7 +232,7 @@ namespace Lumina::RHI::Core
             if (GCore.bInitialized) { RHI::HeapFreeRWTexture(GCore.GlobalHeap, Item.Slot); }
             break;
         case FRetireItem::EKind::Pipeline:
-            RHI::FreeH(Item.Pipeline);
+            Internal::DestroyNow(Item.Pipeline);
             break;
         case FRetireItem::EKind::Callback:
             if (Item.Callback) { Item.Callback(); }

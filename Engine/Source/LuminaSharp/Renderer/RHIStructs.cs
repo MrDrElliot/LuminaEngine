@@ -283,7 +283,7 @@ public struct FGPUAllocation
     public IntPtr Cpu;   // std::byte*
     public GPUPtr Gpu;
     public ulong  Size;
-    public ulong  Handle;   // opaque backend token RHI.Free needs
+    public ulong  Handle;   // opaque backend token RHI.Retire needs
 
     public bool IsValid => Gpu.IsValid;
 }

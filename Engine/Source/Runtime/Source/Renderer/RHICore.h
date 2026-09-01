@@ -118,4 +118,63 @@ namespace Lumina::RHI
         /** Writes the driver's disassembly for Pipeline beside the log, when -dumpshaderisa is set. */
         RUNTIME_API void DumpPipelineISA(FPipelineH Pipeline, const FName& Name);
     }
+
+    template<typename T>
+    class TUniqueH
+    {
+    public:
+
+        TUniqueH() = default;
+        TUniqueH(THandle<T> InHandle) : Handle(InHandle) {}
+        TUniqueH(const TUniqueH&) = delete;
+        TUniqueH& operator=(const TUniqueH&) = delete;
+        TUniqueH(TUniqueH&& Other) noexcept : Handle(Other.Release()) {}
+
+        TUniqueH& operator=(TUniqueH&& Other) noexcept
+        {
+            if (this != &Other)
+            {
+                Reset(Other.Release());
+            }
+            return *this;
+        }
+
+        TUniqueH& operator=(THandle<T> InHandle)
+        {
+            Reset(InHandle);
+            return *this;
+        }
+
+        ~TUniqueH()
+        {
+            Reset();
+        }
+
+        void Reset(THandle<T> InHandle = {})
+        {
+            if (IsValid(Handle))
+            {
+                Core::Retire(Handle);
+            }
+            Handle = InHandle;
+        }
+
+        THandle<T> Release()
+        {
+            THandle<T> Out = Handle;
+            Handle = {};
+            return Out;
+        }
+
+        THandle<T> Get() const { return Handle; }
+        operator THandle<T>() const { return Handle; }
+        explicit operator bool() const { return IsValid(Handle); }
+
+    private:
+
+        THandle<T> Handle = {};
+    };
+
+    using FPipelineUH = TUniqueH<FPipeline>;
+    using FTextureUH  = TUniqueH<FTexture>;
 }
