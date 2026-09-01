@@ -6148,6 +6148,16 @@ namespace Lumina::RHI
 
     static EStageFlags ClampStagesToQueue(EStageFlags Stages, EQueueType Queue)
     {
+        // The mesh stage bit is only legal once the feature is enabled, and callers barrier it blindly.
+        if (!GDevice->bMeshShaderSupported)
+        {
+            Stages &= ~EStageFlags::MeshShader;
+            if (Stages == EStageFlags::None)
+            {
+                Stages = EStageFlags::AllCommands;
+            }
+        }
+
         if (Queue == EQueueType::Graphics)
         {
             return Stages;
