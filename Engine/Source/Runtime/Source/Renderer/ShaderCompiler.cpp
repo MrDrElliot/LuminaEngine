@@ -375,7 +375,11 @@ namespace Lumina
         TargetDesc.profile = GlobalSession->findProfile("spirv_1_5");
         TargetDesc.flags   = SLANG_TARGET_FLAG_GENERATE_SPIRV_DIRECTLY | SLANG_TARGET_FLAG_GENERATE_WHOLE_PROGRAM;
 
-        slang::CompilerOptionEntry TargetOptions[4] = {};
+        // Declaring the capability silences warning 41012, and the emitted SPIR-V is identical.
+        const char* const WaveCapabilities[] = { "spvGroupNonUniformShuffle", "spvGroupNonUniformVote",
+                                                 "spvGroupNonUniformBallot", "spvGroupNonUniformArithmetic" };
+
+        slang::CompilerOptionEntry TargetOptions[2 + std::size(WaveCapabilities)] = {};
         TargetOptions[0].name = slang::CompilerOptionName::DebugInformation;
         TargetOptions[0].value.kind = slang::CompilerOptionValueKind::Int;
         TargetOptions[0].value.intValue0 = GetShaderDebugInfoLevel();
@@ -384,9 +388,6 @@ namespace Lumina
         TargetOptions[1].value.intValue0 = GetShaderOptimizationLevel();
         uint32 TargetOptionCount = 2;
 
-        // Declaring the capability silences warning 41012, and the emitted SPIR-V is identical.
-        const char* const WaveCapabilities[] = { "spvGroupNonUniformShuffle", "spvGroupNonUniformVote",
-                                                 "spvGroupNonUniformBallot", "spvGroupNonUniformArithmetic" };
         for (const char* CapabilityName : WaveCapabilities)
         {
             const SlangCapabilityID Capability = GlobalSession->findCapability(CapabilityName);
