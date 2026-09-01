@@ -172,9 +172,62 @@ namespace Lumina
         // The editor draws its own title bar, so it asks for a window without one.
         MainWindow = new FWindow(FWindowSpecs{ .bShowTitlebar = !WITH_EDITOR });
 
+        (void)MainWindow->OnKey.AddMember(this, &FApplication::ForwardKey);
+        (void)MainWindow->OnMouseButton.AddMember(this, &FApplication::ForwardMouseButton);
+        (void)MainWindow->OnMouseMove.AddMember(this, &FApplication::ForwardMouseMove);
+        (void)MainWindow->OnScroll.AddMember(this, &FApplication::ForwardScroll);
+        (void)MainWindow->OnFileDrop.AddMember(this, &FApplication::ForwardFileDrop);
+        (void)MainWindow->OnCloseRequested.AddMember(this, &FApplication::ForwardClose);
+
         Windowing::SetPrimaryWindowHandle(MainWindow);
 
         return true;
+    }
+
+    void FApplication::ForwardKey(FWindow* /*Window*/, const FKeyInput& Input)
+    {
+        if (Input.bPressed)
+        {
+            EventProcessor.Dispatch<FKeyPressedEvent>(Input.Key, Input.bCtrl, Input.bShift, Input.bAlt,
+                Input.bSuper, Input.bRepeat);
+        }
+        else
+        {
+            EventProcessor.Dispatch<FKeyReleasedEvent>(Input.Key, Input.bCtrl, Input.bShift, Input.bAlt, Input.bSuper);
+        }
+    }
+
+    void FApplication::ForwardMouseButton(FWindow* /*Window*/, const FMouseButtonInput& Input)
+    {
+        if (Input.bPressed)
+        {
+            EventProcessor.Dispatch<FMouseButtonPressedEvent>(Input.Button, Input.X, Input.Y);
+        }
+        else
+        {
+            EventProcessor.Dispatch<FMouseButtonReleasedEvent>(Input.Button, Input.X, Input.Y);
+        }
+    }
+
+    void FApplication::ForwardMouseMove(FWindow* /*Window*/, const FMouseMoveInput& Input)
+    {
+        EventProcessor.Dispatch<FMouseMovedEvent>(Input.X, Input.Y, Input.DeltaX, Input.DeltaY);
+    }
+
+    void FApplication::ForwardScroll(FWindow* /*Window*/, const FMouseScrollInput& Input)
+    {
+        EventProcessor.Dispatch<FMouseScrolledEvent>(EMouseKey::Scroll, Input.Delta);
+    }
+
+    void FApplication::ForwardFileDrop(FWindow* /*Window*/, const TVector<FFixedString>& Paths,
+        float MouseX, float MouseY)
+    {
+        EventProcessor.Dispatch<FFileDropEvent>(Paths, MouseX, MouseY);
+    }
+
+    void FApplication::ForwardClose(FWindow* /*Window*/)
+    {
+        RequestExit();
     }
 
     bool FApplication::ShouldExit() const

@@ -2,6 +2,7 @@
 #include "FontAtlasBaker.h"
 #include "Core/Templates/LuminaTemplate.h"
 #include "Font.h"
+#include "TaskSystem/TaskSystem.h"
 
 #include <cmath>
 
@@ -48,6 +49,7 @@ namespace Lumina
             bool             HasInk  = false;
             double           PL = 0, PB = 0, PR = 0, PT = 0;   // expanded plane bounds (em)
             int              W = 0, H = 0;
+            Shape            Glyph;
             Bitmap<float, 4> Bmp;
         };
         TVector<FBaked> Baked;
@@ -78,8 +80,6 @@ namespace Lumina
                     continue;
                 }
 
-                edgeColoringSimple(Glyph, 3.0);
-
                 B.PL = Bounds.l - PadEm;
                 B.PB = Bounds.b - PadEm;
                 B.PR = Bounds.r + PadEm;
@@ -87,14 +87,7 @@ namespace Lumina
                 B.W  = Math::Max((int)std::ceil((B.PR - B.PL) * EmPixelSize), 1);
                 B.H  = Math::Max((int)std::ceil((B.PT - B.PB) * EmPixelSize), 1);
                 B.HasInk = true;
-
-                B.Bmp = Bitmap<float, 4>(B.W, B.H);
-
-                const Projection Proj(Vector2(EmPixelSize), Vector2(-B.PL, -B.PB));
-                generateMTSDF(B.Bmp, Glyph, Proj, Range(RangeEm), MSDFGeneratorConfig(true /*overlapSupport*/));
-
-                // Rasterizes with the non-zero fill rule and flips disagreeing texels, fixing bowl-stem holes.
-                distanceSignCorrection(B.Bmp, Glyph, Proj);
+                B.Glyph  = Move(Glyph);
 
                 Baked.push_back(Move(B));
             }
@@ -103,12 +96,46 @@ namespace Lumina
         AddRange(0x20, 0x7E);   // ASCII printable
         AddRange(0xA0, 0xFF);   // Latin-1 supplement
 
+        // Freetype owns one face and loadGlyph mutates it, so only the field generation below can fan out.
         destroyFont(MFont);
         deinitializeFreetype(FT);
 
         if (Baked.empty())
         {
             return false;
+        }
+
+        // Each glyph carries its own shape and bitmap, which is the whole reason this parallelizes.
+        auto GenerateField = [&Baked, RangeEm](uint32 Index)
+        {
+            FBaked& B = Baked[Index];
+            if (!B.HasInk)
+            {
+                return;
+            }
+
+            edgeColoringSimple(B.Glyph, 3.0);
+
+            B.Bmp = Bitmap<float, 4>(B.W, B.H);
+
+            const Projection Proj(Vector2(EmPixelSize), Vector2(-B.PL, -B.PB));
+            generateMTSDF(B.Bmp, B.Glyph, Proj, Range(RangeEm), MSDFGeneratorConfig(true /*overlapSupport*/));
+
+            // Rasterizes with the non-zero fill rule and flips disagreeing texels, fixing bowl-stem holes.
+            distanceSignCorrection(B.Bmp, B.Glyph, Proj);
+        };
+
+        // A cook or a test can bake a font before the task system exists, and ParallelFor does not check.
+        if (GTaskSystem != nullptr)
+        {
+            Task::ParallelFor((uint32)Baked.size(), GenerateField, 1);
+        }
+        else
+        {
+            for (uint32 Index = 0; Index < (uint32)Baked.size(); ++Index)
+            {
+                GenerateField(Index);
+            }
         }
 
         // Shelf-pack the inked tiles into a fixed-width atlas, growing the height as rows fill.

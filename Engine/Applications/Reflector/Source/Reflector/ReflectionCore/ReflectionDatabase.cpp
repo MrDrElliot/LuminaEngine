@@ -41,8 +41,8 @@ namespace Lumina::Reflection
 
     bool FReflectionDatabase::IsCoreType(const FStringHash& Hash) const
     {
-        EPropertyTypeFlags Flags = GetCoreTypeFromName(Hash.c_str());
+        const char* Name = Hash.c_str();
 
-        return Flags != EPropertyTypeFlags::None;
+        return Name != nullptr && GetCoreTypeFromName(Name) != EPropertyTypeFlags::None;
     }
 }

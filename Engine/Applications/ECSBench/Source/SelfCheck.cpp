@@ -93,14 +93,14 @@ namespace ECSBench
             static_assert(!TComponentTraits<FPlain>::InPlaceDelete, "a component defaults to swap-and-pop");
             static_assert(TComponentTraits<FPlain>::Layout == EComponentLayout::Automatic, "layout defaults to automatic");
             static_assert(TComponentTraits<FPlain>::PageSize == 1024, "page size defaults to 1024");
-            static_assert(!TComponentTraits<FPlain>::bPaged, "a small automatic component is packed");
+            static_assert(TComponentTraits<FPlain>::bPaged, "an automatic component is paged for pointer stability");
 
             static_assert(TComponentTraits<FFat>::bPaged, "a fat automatic component is paged");
-            static_assert(!TComponentTraits<FForcedPacked>::bPaged, "an explicit packed layout beats the size threshold");
-            static_assert(TComponentTraits<FForcedPaged>::bPaged, "an explicit paged layout beats the size threshold");
+            static_assert(!TComponentTraits<FForcedPacked>::bPaged, "an explicit packed layout opts out of paging");
+            static_assert(TComponentTraits<FForcedPaged>::bPaged, "an explicit paged layout stays paged");
 
             static_assert(TComponentTraits<FSmallPages>::PageSize == 64, "a component sets its own page size");
-            static_assert(!TComponentTraits<FSmallPages>::bPaged, "page size alone does not force paging");
+            static_assert(TComponentTraits<FSmallPages>::bPaged, "an automatic component honors its own page size");
 
             static_assert(TComponentTraits<FNewSpelling>::InPlaceDelete, "InPlaceDelete is read");
             static_assert(TComponentTraits<FNewSpelling>::bPaged, "in-place delete implies paged");

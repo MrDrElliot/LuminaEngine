@@ -37,7 +37,8 @@ fi
 # Always rebuild: the no-op case is well under a second, and a stale tool silently produces stale
 # rules behaviour that is very hard to diagnose.
 if [ -z "${LUMINA_SKIP_TOOL_BUILD:-}" ]; then
-    if ! dotnet build "$BuildToolProject" -v quiet --nologo; then
+    # Skipping the restore is a third of this step, and a fresh clone falls back to the full build below.
+    if ! dotnet build "$BuildToolProject" -v quiet --nologo --no-restore         && ! dotnet build "$BuildToolProject" -v quiet --nologo; then
         exit 1
     fi
 fi

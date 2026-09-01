@@ -1,4 +1,4 @@
-﻿#include "Reflector/Utils/StringOps.h"
+#include "Reflector/Utils/StringOps.h"
 #include "ClangTranslationUnit.h"
 #include "ClangVisitor.h"
 #include "Reflector/Clang/ClangParserContext.h"
@@ -12,12 +12,12 @@
 
 namespace Lumina::Reflection
 {
-	uint64_t GTranslationUnitsVisited;
-	uint64_t GTranslationUnitsParsed;
+	uint64_t GCursorsVisited;
+	uint64_t GCursorsInReflectedHeaders;
 
 	CXChildVisitResult VisitTranslationUnit(CXCursor Cursor, CXCursor Parent, CXClientData ClientData)
 	{
-		GTranslationUnitsVisited++;
+		GCursorsVisited++;
 
 		CXSourceLocation Loc = clang_getCursorLocation(Cursor);
 		if (clang_Location_isInSystemHeader(Loc))
@@ -27,27 +27,18 @@ namespace Lumina::Reflection
 
 		FClangParserContext* ParserContext = (FClangParserContext*)ClientData;
 
-		std::string FilePath = ClangUtils::GetHeaderPathForCursor(Cursor);
-		if (FilePath.empty())
+		FReflectedHeader* Header = ParserContext->ResolveHeaderForCursor(Cursor);
+		if (Header == nullptr)
 		{
 			return CXChildVisit_Continue;
 		}
 
-		FStringHash Hash(FilePath);
-		auto Itr = ParserContext->AllHeaders.find(Hash);
-		if (Itr == ParserContext->AllHeaders.end())
-		{
-			return CXChildVisit_Continue;
-		}
+		GCursorsInReflectedHeaders++;
 
-		GTranslationUnitsParsed++;
+		ParserContext->ReflectedHeader = Header;
 
-		ParserContext->ReflectedHeader = Itr->second;
-
-		CXCursorKind CursorKind = clang_getCursorKind(Cursor);
-		std::string CursorName = ClangUtils::GetCursorDisplayName(Cursor);
-
-		switch (CursorKind)
+		// Named lazily, since clang_getCursorDisplayName on a function builds its whole signature.
+		switch (clang_getCursorKind(Cursor))
 		{
 		case (CXCursor_MacroExpansion):
 		{
@@ -58,8 +49,8 @@ namespace Lumina::Reflection
 		{
 			// Captured so post-parse validation can enforce that the generated companion is included last.
 			FIncludeRef IncludeRef;
-			IncludeRef.Spelling = CursorName;
-			IncludeRef.Basename = CursorName;
+			IncludeRef.Spelling = ClangUtils::GetCursorDisplayName(Cursor);
+			IncludeRef.Basename = IncludeRef.Spelling;
 			std::replace(IncludeRef.Basename.begin(), IncludeRef.Basename.end(), '\\', '/');
 			const size_t SlashIdx = IncludeRef.Basename.find_last_of('/');
 			if (SlashIdx != std::string::npos)
@@ -72,13 +63,13 @@ namespace Lumina::Reflection
 			clang_getExpansionLocation(Loc, nullptr, &Line, nullptr, nullptr);
 			IncludeRef.LineNumber = Line;
 
-			ParserContext->ReflectedHeader->Includes.push_back(std::move(IncludeRef));
+			Header->Includes.push_back(std::move(IncludeRef));
 			return CXChildVisit_Continue;
 		}
 
 		case(CXCursor_ClassDecl):
 		{
-			ParserContext->PushNamespace(CursorName);
+			ParserContext->PushNamespace(ClangUtils::CursorDisplayName(Cursor).View());
 			clang_visitChildren(Cursor, VisitTranslationUnit, ClientData);
 			ParserContext->PopNamespace();
 
@@ -87,7 +78,7 @@ namespace Lumina::Reflection
 
 		case(CXCursor_StructDecl):
 		{
-			ParserContext->PushNamespace(CursorName);
+			ParserContext->PushNamespace(ClangUtils::CursorDisplayName(Cursor).View());
 			clang_visitChildren(Cursor, VisitTranslationUnit, ClientData);
 			ParserContext->PopNamespace();
 
@@ -103,7 +94,7 @@ namespace Lumina::Reflection
 		case(CXCursor_ClassTemplate):
 		case(CXCursor_ClassTemplatePartialSpecialization):
 		{
-			ParserContext->PushNamespace(CursorName);
+			ParserContext->PushNamespace(ClangUtils::CursorDisplayName(Cursor).View());
 			clang_visitChildren(Cursor, VisitTranslationUnit, ClientData);
 			ParserContext->PopNamespace();
 
@@ -122,12 +113,12 @@ namespace Lumina::Reflection
 
 		case(CXCursor_Namespace):
 		{
-			ParserContext->PushNamespace(CursorName);
+			ParserContext->PushNamespace(ClangUtils::CursorDisplayName(Cursor).View());
 			clang_visitChildren(Cursor, VisitTranslationUnit, ClientData);
 			ParserContext->PopNamespace();
-		}
 
-		return CXChildVisit_Continue;
+			return CXChildVisit_Continue;
+		}
 
 		default:
 		{

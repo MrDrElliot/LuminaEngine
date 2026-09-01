@@ -469,6 +469,33 @@ namespace Lumina
         }
     }
 
+    static FString DescribeEntryPoints(slang::IModule* Module, SlangInt32 Count)
+    {
+        FString Names;
+        for (SlangInt32 i = 0; i < Count; ++i)
+        {
+            Slang::ComPtr<slang::IEntryPoint> EntryPoint;
+            Module->getDefinedEntryPoint(i, EntryPoint.writeRef());
+
+            const char* Name = nullptr;
+            if (EntryPoint)
+            {
+                slang::ProgramLayout* Layout = EntryPoint->getLayout(0, nullptr);
+                if (Layout != nullptr && Layout->getEntryPointCount() > 0)
+                {
+                    Name = Layout->getEntryPointByIndex(0)->getName();
+                }
+            }
+
+            if (!Names.empty())
+            {
+                Names += ", ";
+            }
+            Names += Name != nullptr ? Name : "<unnamed>";
+        }
+        return Names;
+    }
+
     // Shared so the two entry points cannot drift, as they did over the mesh and task stages.
     static bool BuildShaderFromModule(slang::IModule* Module, FStringView DebugName,
         const FShaderCompileOptions& Options, FShaderHeader& OutHeader)
@@ -480,28 +507,44 @@ namespace Lumina
             return false;
         }
 
-        TVector<Slang::ComPtr<slang::IEntryPoint>> EntryPoints;
-        EntryPoints.reserve(EntryPointCount);
-        for (SlangInt32 i = 0; i < EntryPointCount; ++i)
+        // One entry point per module. Concatenating several produced a blob that was valid SPIR-V for none.
+        Slang::ComPtr<slang::IEntryPoint> EntryPoint;
+
+        if (!Options.EntryPoint.empty())
         {
-            Slang::ComPtr<slang::IEntryPoint> EntryPoint;
-            Module->getDefinedEntryPoint(i, EntryPoint.writeRef());
-            EntryPoints.push_back(Move(EntryPoint));
+            Module->findEntryPointByName(Options.EntryPoint.c_str(), EntryPoint.writeRef());
+
+            if (!EntryPoint)
+            {
+                LOG_ERROR("Slang: '{}' has no entry point named '{}'. It defines: {}",
+                    DebugName, Options.EntryPoint, DescribeEntryPoints(Module, EntryPointCount));
+                return false;
+            }
+        }
+        else if (EntryPointCount > 1)
+        {
+            LOG_ERROR("Slang: '{}' defines {} entry points ({}), so FShaderCompileOptions::EntryPoint must name one",
+                DebugName, EntryPointCount, DescribeEntryPoints(Module, EntryPointCount));
+            return false;
+        }
+        else
+        {
+            Module->getDefinedEntryPoint(0, EntryPoint.writeRef());
+
+            if (!EntryPoint)
+            {
+                LOG_ERROR("Slang: failed to retrieve the only entry point of '{}'", DebugName);
+                return false;
+            }
         }
 
-        TVector<slang::IComponentType*> Components;
-        Components.reserve(EntryPoints.size() + 1);
-        Components.push_back(Module);
-        for (auto& EntryPoint : EntryPoints)
-        {
-            Components.push_back(EntryPoint.get());
-        }
+        slang::IComponentType* Components[] = { Module, EntryPoint.get() };
 
         slang::ISession* Session = Module->getSession();
 
         Slang::ComPtr<slang::IBlob> Diagnostics;
         Slang::ComPtr<slang::IComponentType> LinkedProgram;
-        if (SLANG_FAILED(Session->createCompositeComponentType(Components.data(), (SlangInt)Components.size(),
+        if (SLANG_FAILED(Session->createCompositeComponentType(Components, 2,
                 LinkedProgram.writeRef(), Diagnostics.writeRef())))
         {
             if (Diagnostics)
@@ -512,36 +555,32 @@ namespace Lumina
             return false;
         }
 
-        TVector<uint32> Binaries;
-        for (SlangInt i = 0; i < (SlangInt)EntryPoints.size(); ++i)
+        Slang::ComPtr<slang::IBlob> Code;
+        Diagnostics = nullptr;
+
+        if (SLANG_FAILED(LinkedProgram->getEntryPointCode(0, 0, Code.writeRef(), Diagnostics.writeRef())))
         {
-            Slang::ComPtr<slang::IBlob> Code;
-            Diagnostics = nullptr;
-
-            if (SLANG_FAILED(LinkedProgram->getEntryPointCode(i, 0, Code.writeRef(), Diagnostics.writeRef())))
-            {
-                if (Diagnostics)
-                {
-                    LOG_ERROR("Slang compile error in '{}': {}", DebugName, (const char*)Diagnostics->getBufferPointer());
-                }
-                LOG_ERROR("Slang: failed to get SPIR-V for entry point {} of '{}'", i, DebugName);
-                return false;
-            }
-
             if (Diagnostics)
             {
-                LOG_WARN("Slang: {}", (const char*)Diagnostics->getBufferPointer());
+                LOG_ERROR("Slang compile error in '{}': {}", DebugName, (const char*)Diagnostics->getBufferPointer());
             }
-
-            const uint32* SpirvData = static_cast<const uint32*>(Code->getBufferPointer());
-            const size_t  SpirvSize = Code->getBufferSize() / sizeof(uint32);
-
-            #if USING(WITH_EDITOR)
-            ValidateSpirv(TSpan<const uint32>(SpirvData, SpirvSize), DebugName);
-            #endif
-
-            Binaries.insert(Binaries.end(), SpirvData, SpirvData + SpirvSize);
+            LOG_ERROR("Slang: failed to get SPIR-V for '{}'", DebugName);
+            return false;
         }
+
+        if (Diagnostics)
+        {
+            LOG_WARN("Slang: {}", (const char*)Diagnostics->getBufferPointer());
+        }
+
+        const uint32* SpirvData = static_cast<const uint32*>(Code->getBufferPointer());
+        const size_t  SpirvSize = Code->getBufferSize() / sizeof(uint32);
+
+        #if USING(WITH_EDITOR)
+        ValidateSpirv(TSpan<const uint32>(SpirvData, SpirvSize), DebugName);
+        #endif
+
+        TVector<uint32> Binaries(SpirvData, SpirvData + SpirvSize);
 
         if (Binaries.empty())
         {
@@ -555,10 +594,9 @@ namespace Lumina
         OutHeader.Defines   = Options.MacroDefinitions;
 
         slang::ProgramLayout* ProgramLayout = LinkedProgram->getLayout();
-        for (SlangInt32 i = 0; i < EntryPointCount; ++i)
+        if (ProgramLayout != nullptr && ProgramLayout->getEntryPointCount() > 0)
         {
-            slang::EntryPointReflection* Reflection = ProgramLayout->getEntryPointByIndex(i);
-            OutHeader.Reflection.ShaderType = ToRHIShaderType(Reflection->getStage());
+            OutHeader.Reflection.ShaderType = ToRHIShaderType(ProgramLayout->getEntryPointByIndex(0)->getStage());
         }
 
         return true;
@@ -614,9 +652,9 @@ namespace Lumina
         uint32 NumHits = 0;
         for (uint32 i = 0; i < NumInputs; ++i)
         {
-            const uint64 SrcHash = FShaderCache::ComputeSourceSetHash(ShaderPaths[i], CompileOptions[i].MacroDefinitions, CacheSearchRoots);
+            const uint64 SrcHash = FShaderCache::ComputeSourceSetHash(ShaderPaths[i], CompileOptions[i].MacroDefinitions, CacheSearchRoots, CompileOptions[i].EntryPoint);
             FShaderHeader Cached;
-            if (SrcHash != 0 && FShaderCache::TryLoad(ShaderPaths[i], CompileOptions[i].MacroDefinitions, SrcHash, Cached))
+            if (SrcHash != 0 && FShaderCache::TryLoad(ShaderPaths[i], CompileOptions[i].MacroDefinitions, CompileOptions[i].EntryPoint, SrcHash, Cached))
             {
                 RHI::GetCrashTracker().RegisterShader(Cached.Binaries, Cached.DebugName);
                 OnCompleted(Move(Cached));
@@ -720,7 +758,7 @@ namespace Lumina
 
                 RHI::GetCrashTracker().RegisterShader(Shader.Binaries, Shader.DebugName);
 
-                FShaderCache::Save(Paths[i], Options[i].MacroDefinitions, SourceHashes[i], Shader);
+                FShaderCache::Save(Paths[i], Options[i].MacroDefinitions, Options[i].EntryPoint, SourceHashes[i], Shader);
 
                 Callback(Move(Shader));
             }
@@ -795,6 +833,7 @@ namespace Lumina
             Callback = Move(OnCompleted)]
             (uint32, uint32, uint32 Thread)
         {
+            // Declared before the cache probe, so a hit still releases the slot after its callback ran.
             DEFER
             {
                 const bool bLast = PendingTasks.fetch_sub(1, std::memory_order_acq_rel) == 1;
@@ -806,13 +845,26 @@ namespace Lumina
                 }
             };
 
+            // This used to hardcode the engine tree, so a graph could not include a plugin's shader header.
+            const TVector<FString> SearchRoots = BuildShaderSearchRoots();
+
+            const uint64 CacheKey = FShaderCache::ComputeRawSourceHash(
+                ShaderString, CompileOptions.MacroDefinitions, SearchRoots, CompileOptions.TemplateVirtualPath,
+                CompileOptions.EntryPoint);
+
+            if (FShaderHeader Cached; FShaderCache::TryLoadRaw(CacheKey, Cached))
+            {
+                // A cached binary still has to reach the crash tracker, or it resolves as unknown.
+                RHI::GetCrashTracker().RegisterShader(Cached.Binaries, Cached.DebugName);
+                Callback(Move(Cached));
+                return;
+            }
+
             Slang::ComPtr<slang::IGlobalSession> GlobalSession = GSlangSessionPool.Acquire();
             DEFER { GSlangSessionPool.Release(Move(GlobalSession)); };
 
             const uint64 CompileStart = PlatformTime::Cycles();
 
-            // This used to hardcode the engine tree, so a graph could not include a plugin's shader header.
-            const TVector<FString> SearchRoots = BuildShaderSearchRoots();
             FSessionScratch Scratch;
 
             Slang::ComPtr<slang::ISession> Session =
@@ -850,6 +902,8 @@ namespace Lumina
             const double DurationMs = PlatformTime::ToMilliseconds(PlatformTime::Cycles() - CompileStart);
 
             LOG_TRACE("Compiled raw shader '{0}' in {1:.2f} ms (Thread {2})", RawName, DurationMs, Thread);
+
+            FShaderCache::SaveRaw(CacheKey, Shader);
 
             RHI::GetCrashTracker().RegisterShader(Shader.Binaries, Shader.DebugName);
 

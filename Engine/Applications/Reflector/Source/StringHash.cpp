@@ -1,63 +1,76 @@
-﻿#include "StringHash.h"
+#include "StringHash.h"
 
+#include <mutex>
 #include <unordered_map>
-#include "Reflector/Clang/Utils.h"
-
+#include "xxhash.h"
 
 namespace Lumina
 {
-    class FNameHashMap : public std::unordered_map<uint64_t, std::string>
+    namespace
     {
-    };
+        // Every reflected header, type and property name lands here, so it is sized up front.
+        constexpr size_t kInternReserve = 16u * 1024u;
 
-    FNameHashMap* gNameCache = nullptr;
-    
+        std::unordered_map<uint64_t, std::string>& InternTable()
+        {
+            static std::unordered_map<uint64_t, std::string> Table;
+            return Table;
+        }
+
+        // Code generation runs a thread per header and every type lookup interns its name.
+        std::mutex& InternMutex()
+        {
+            static std::mutex Mutex;
+            return Mutex;
+        }
+    }
 
     void FStringHash::Initialize()
     {
-        gNameCache = new FNameHashMap();
+        InternTable().reserve(kInternReserve);
     }
 
     void FStringHash::Shutdown()
     {
-        delete gNameCache;
-        gNameCache = nullptr;
+        InternTable().clear();
+    }
+
+    void FStringHash::Intern(std::string_view Str)
+    {
+        if (Str.empty())
+        {
+            return;
+        }
+
+        ID = XXH64(Str.data(), Str.size(), 0);
+
+        const std::lock_guard<std::mutex> Lock(InternMutex());
+        InternTable().try_emplace(ID, Str);
     }
 
     FStringHash::FStringHash(const char* Char)
     {
-        if (Char != nullptr && strlen(Char) > 0)
+        if (Char != nullptr)
         {
-            ID = ClangUtils::HashString(Char);
-
-            auto Itr = gNameCache->find(ID);
-            if (Itr == gNameCache->end())
-            {
-                (*gNameCache)[ID] = std::string(Char);
-            }
+            Intern(std::string_view(Char));
         }
     }
-    
 
-    FStringHash::FStringHash(const std::string& Str)
-        :FStringHash(Str.c_str())
+    FStringHash::FStringHash(std::string_view Str)
     {
-    }
-
-    FStringHash::FStringHash(const std::string_view& Str)
-        :FStringHash(Str.data())
-    {
+        Intern(Str);
     }
 
     bool FStringHash::IsNone() const
     {
-        auto Itr = gNameCache->find(ID);
-        return Itr == gNameCache->end();
+        const std::lock_guard<std::mutex> Lock(InternMutex());
+        return !InternTable().contains(ID);
     }
 
     std::string FStringHash::ToString() const
     {
-        return std::string(c_str());
+        const char* Text = c_str();
+        return Text != nullptr ? std::string(Text) : std::string();
     }
 
     const char* FStringHash::c_str() const
@@ -67,12 +80,9 @@ namespace Lumina
             return nullptr;
         }
 
-        auto Itr = gNameCache->find(ID);
-        if (Itr != gNameCache->end())
-        {
-            return Itr->second.c_str();
-        }
-
-        return nullptr;
+        // The table never erases, so a string stays put once interned and the pointer outlives the lock.
+        const std::lock_guard<std::mutex> Lock(InternMutex());
+        const auto Itr = InternTable().find(ID);
+        return Itr != InternTable().end() ? Itr->second.c_str() : nullptr;
     }
 }

@@ -1,5 +1,6 @@
 #include "AnimGraphNode_StateMachine.h"
 #include "AnimGraphNode_State.h"
+#include "AnimGraphNode_StateRouting.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/Package/Package.h"
 #include "Containers/HashTable.h"

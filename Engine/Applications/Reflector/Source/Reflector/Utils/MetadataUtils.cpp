@@ -1,112 +1,88 @@
-﻿#include "Reflector/Utils/StringOps.h"
 #include "MetadataUtils.h"
 
-static inline void SanitizeKeyValueString(std::string& OutString)
+namespace
 {
-    if (OutString.empty())
+    constexpr std::string_view kWhitespace = " \t\n\r\f\v";
+
+    constexpr std::string_view Trim(std::string_view Value)
     {
-        return;
+        const size_t First = Value.find_first_not_of(kWhitespace);
+        if (First == std::string_view::npos)
+        {
+            return {};
+        }
+
+        return Value.substr(First, Value.find_last_not_of(kWhitespace) - First + 1);
     }
 
-    Lumina::StringOps::TrimStart(OutString);
-    Lumina::StringOps::TrimEnd(OutString);
-
-    // Strip pairs of quotes
-    auto StripQuotes = [&OutString] ( char quote )
+    constexpr std::string_view StripQuotes(std::string_view Value)
     {
-        if (OutString.front() == quote && OutString.back() == quote)
+        for (const char Quote : { '"', '\'', '`' })
         {
-            OutString = OutString.substr(1, OutString.length() - 2);
+            if (Value.size() >= 2 && Value.front() == Quote && Value.back() == Quote)
+            {
+                Value = Value.substr(1, Value.size() - 2);
+            }
         }
-    };
 
-    StripQuotes('"');
-    StripQuotes('\'');
-    StripQuotes('`');
+        return Value;
+    }
 
-    Lumina::StringOps::TrimStart(OutString);
-    Lumina::StringOps::TrimEnd(OutString);
-}
+    constexpr std::string_view Sanitize(std::string_view Value)
+    {
+        return Trim(StripQuotes(Trim(Value)));
+    }
 
-void FMetadataParser::Parse(const std::string& Raw)
-{
-    std::string RawCopy = Raw;
-    
-    auto IsEven = [] (uint32_t Value) -> bool
+    constexpr bool IsEven(uint32_t Value)
     {
         return Value % 2 == 0;
-    };
-    
+    }
+
+    // A comma inside a quoted value separates nothing, so the split tracks quote parity.
+    constexpr size_t FindSeparator(std::string_view Text, char Separator)
+    {
+        uint32_t QuoteCount = 0;
+
+        for (size_t Index = 0; Index < Text.size(); ++Index)
+        {
+            if (Text[Index] == Separator && IsEven(QuoteCount))
+            {
+                return Index;
+            }
+
+            if (Text[Index] == '"')
+            {
+                ++QuoteCount;
+            }
+        }
+
+        return std::string_view::npos;
+    }
+}
+
+void FMetadataParser::Parse(std::string_view Raw)
+{
     Metadata.clear();
 
-    // Fancier split since we might have delimiter characters inside a string block
-    std::vector<std::string> results;
-
-    std::string currentToken;
-    int32_t quoteCount = 0;
-    int32_t length = (int32_t) RawCopy.length();
-    for (int32_t i = 0; i < length; i++)
+    while (!Raw.empty())
     {
-        if (RawCopy[i] == ',' && IsEven(quoteCount))
+        const size_t Comma = FindSeparator(Raw, ',');
+        const std::string_view Entry = Trim(Raw.substr(0, Comma));
+
+        Raw = Comma == std::string_view::npos ? std::string_view() : Raw.substr(Comma + 1);
+
+        if (Entry.empty() && Comma == std::string_view::npos)
         {
-            Lumina::StringOps::TrimEnd(currentToken);
-            results.emplace_back( currentToken );
-            currentToken.clear();
-            quoteCount = 0;
-            continue;
+            break;
         }
 
-        if (RawCopy[i] == '"')
+        const size_t Equals = FindSeparator(Entry, '=');
+
+        FMetadataPair& Pair = Metadata.emplace_back();
+        Pair.Key = Sanitize(Entry.substr(0, Equals));
+        if (Equals != std::string_view::npos)
         {
-            quoteCount++;
+            Pair.Value = Sanitize(Entry.substr(Equals + 1));
         }
-
-        // Strip leading whitespace
-        if (!currentToken.empty() || RawCopy[i] != ' ')
-        {
-            currentToken.append(1, RawCopy[i]);
-        }
-    }
-
-    if (!currentToken.empty())
-    {
-        Lumina::StringOps::TrimEnd(currentToken);
-        results.emplace_back(currentToken);
-        currentToken.clear();
-        quoteCount = 0;
-    }
-
-    // Split results using the '=' char
-    for (std::string& part : results)
-    {
-        int32_t separatorIdx = -1;
-        length = (int32_t) part.length();
-        for (int32_t i = 0; i < length; i++)
-        {
-            if (part[i] == '=' && IsEven(quoteCount))
-            {
-                separatorIdx = i;
-                break;
-            }
-
-            if (part[i] == '"')
-            {
-                quoteCount++;
-            }
-        }
-
-        FMetadataPair& kv = Metadata.emplace_back();
-        if (separatorIdx != -1)
-        {
-            kv.Key = part.substr(0, separatorIdx);
-            kv.Value = part.substr(separatorIdx + 1, part.length() - separatorIdx - 1);
-        }
-        else
-        {
-            kv.Key = part;
-        }
-
-        SanitizeKeyValueString(kv.Key);
-        SanitizeKeyValueString(kv.Value);
     }
 }

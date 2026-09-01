@@ -13,6 +13,17 @@ namespace LuminaBuildTool.Modes;
 /// <summary>Compiles and links a target, after building whatever targets it declares as prerequisites.</summary>
 public static class BuildMode
 {
+    private static bool bPhaseTimings;
+
+    private static void Phase(string Name, Stopwatch Timer)
+    {
+        if (bPhaseTimings)
+        {
+            Log.Info("[phase] {0} {1:F1} ms", Name, Timer.Elapsed.TotalMilliseconds);
+        }
+        Timer.Restart();
+    }
+
     public static async Task<int> RunAsync(CommandLine Arguments, BuildDirectories Directories, CancellationToken Cancellation)
     {
         string? TargetName = Arguments.GetPositional(1);
@@ -28,7 +39,11 @@ public static class BuildMode
 
         Stopwatch Timer = Stopwatch.StartNew();
 
+        bPhaseTimings = Arguments.HasFlag("PhaseTimings");
+
+        Stopwatch RulesTimer = Stopwatch.StartNew();
         RulesAssembly Assembly = RulesAssembly.Create(Directories, Arguments.HasFlag("RecompileRules"));
+        Phase("RulesAssembly.Create", RulesTimer);
 
         int Result = await BuildTargetsAsync(
             new[] { TargetName },
@@ -61,6 +76,7 @@ public static class BuildMode
         BuildConfiguration ConfigurationValue,
         CancellationToken Cancellation)
     {
+        Stopwatch ToolchainTimer = Stopwatch.StartNew();
         IBuildPlatform PlatformSupport = BuildPlatformRegistry.Get(PlatformValue);
         BuildOptions Options = BuildOptions.Load(Directories, Arguments);
 
@@ -69,6 +85,8 @@ public static class BuildMode
 
         Log.Info("Using {0}", Toolchain.Description);
         Log.Verbose("Build features: {0}", Options);
+
+        Phase("Toolchain discovery", ToolchainTimer);
 
         BuildSession Session = new(Arguments, Directories, Assembly, PlatformSupport, Toolchain, Options);
 
@@ -219,7 +237,15 @@ public static class BuildMode
                 TargetInfo Info = new(
                     TargetName, TypeValue, PlatformValue, ConfigurationValue, Directories,
                     bIsPrimary ? Options : Options.WithoutPgo());
+                // Assembling first touches the rules assembly, a fifth of a second of one-time JIT to hide behind.
+                string PrefetchDirectory = Directories.BuildRecordDirectory(PlatformValue, ConfigurationValue, TypeValue);
+                Task<(ActionHistory History, DependencyCache Dependencies)> Prefetch = Task.Run(() => (
+                    ActionHistory.Load(Path.Combine(PrefetchDirectory, "ActionHistory.json")),
+                    DependencyCache.Load(Path.Combine(PrefetchDirectory, "Dependencies.json"))), Cancellation);
+
+                Stopwatch AssembleTimer = Stopwatch.StartNew();
                 BuildTarget Target = new TargetAssembler(Assembly, Directories, PlatformSupport).Assemble(TargetName, Info);
+                Phase($"  Assemble {TargetName}", AssembleTimer);
 
                 // Prerequisite tools, such as the reflection generator, must exist before this
                 // target's graph is built, because the graph references their output.
@@ -272,7 +298,7 @@ public static class BuildMode
                     }
                 }
 
-                return await BuildResolvedAsync(Target, Cancellation).ConfigureAwait(false);
+                return await BuildResolvedAsync(Target, PrefetchDirectory, Prefetch, Cancellation).ConfigureAwait(false);
             }
             finally
             {
@@ -280,7 +306,11 @@ public static class BuildMode
             }
         }
 
-        private async Task<int> BuildResolvedAsync(BuildTarget Target, CancellationToken Cancellation)
+        private async Task<int> BuildResolvedAsync(
+            BuildTarget Target,
+            string PrefetchDirectory,
+            Task<(ActionHistory History, DependencyCache Dependencies)> Prefetch,
+            CancellationToken Cancellation)
         {
             Stopwatch Timer = Stopwatch.StartNew();
 
@@ -303,14 +333,30 @@ public static class BuildMode
                 CleanMode.CleanTarget(Target);
             }
 
+            Stopwatch PhaseTimer = Stopwatch.StartNew();
             ActionGraph Graph = ActionGraph.Build(Target, Toolchain);
+            Phase("  ActionGraph.Build", PhaseTimer);
 
             string CacheDirectory = Target.Directories.BuildRecordDirectory(
                 Target.Info.Platform, Target.Info.Configuration, Target.Info.Type);
-            ActionHistory History = ActionHistory.Load(Path.Combine(CacheDirectory, "ActionHistory.json"));
-            DependencyCache HeaderDependencies = DependencyCache.Load(Path.Combine(CacheDirectory, "Dependencies.json"));
+
+            ActionHistory History;
+            DependencyCache HeaderDependencies;
+
+            // A target may pin its own configuration, which lands the records somewhere the prefetch did not look.
+            if (string.Equals(CacheDirectory, PrefetchDirectory, StringComparison.OrdinalIgnoreCase))
+            {
+                (History, HeaderDependencies) = await Prefetch.ConfigureAwait(false);
+            }
+            else
+            {
+                History = ActionHistory.Load(Path.Combine(CacheDirectory, "ActionHistory.json"));
+                HeaderDependencies = DependencyCache.Load(Path.Combine(CacheDirectory, "Dependencies.json"));
+            }
+            Phase("  Build records (prefetched)", PhaseTimer);
 
             List<BuildAction> Outdated = Graph.DetermineOutdatedActions(History, HeaderDependencies);
+            Phase("  DetermineOutdatedActions", PhaseTimer);
 
             Log.Info("{0} of {1} actions are out of date.", Outdated.Count, Graph.Actions.Count);
 
@@ -328,6 +374,7 @@ public static class BuildMode
             {
                 // Loading the cache prunes dead closures; without this the pruning is redone and never kept.
                 HeaderDependencies.Save();
+                Phase("  DependencyCache.Save", PhaseTimer);
 
                 Log.Info("{0} is up to date ({1:F2}s).", Target.Name, Timer.Elapsed.TotalSeconds);
                 return 0;

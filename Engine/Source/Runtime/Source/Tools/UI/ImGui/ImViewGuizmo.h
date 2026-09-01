@@ -28,7 +28,6 @@
 #pragma once
 
 #include <array>
-#include <algorithm>
 #include <cfloat>
 #include <cmath>
 

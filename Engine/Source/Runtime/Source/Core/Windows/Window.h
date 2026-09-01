@@ -1,6 +1,7 @@
 #pragma once
 
 #include "WindowTypes.h"
+#include "WindowInput.h"
 #include "Core/Delegates/Delegate.h"
 #include "Memory/SmartPtr.h"
 
@@ -59,6 +60,15 @@ namespace Lumina
 
 		RUNTIME_API static FWindowResizeDelegate OnWindowResized;
 
+		//~ Per window input. Subscribe directly; a host needs no application object to read the keyboard.
+
+		FWindowKeyDelegate         OnKey;
+		FWindowMouseButtonDelegate OnMouseButton;
+		FWindowMouseMoveDelegate   OnMouseMove;
+		FWindowScrollDelegate      OnScroll;
+		FWindowFileDropDelegate    OnFileDrop;
+		FWindowCloseDelegate       OnCloseRequested;
+
 	private:
 
 		void Init();
@@ -69,7 +79,10 @@ namespace Lumina
 	namespace Windowing
 	{
 		RUNTIME_API extern FWindow* PrimaryWindow;
+		// Asserts when there is none. A host that may not have published one uses TryGet instead.
 		RUNTIME_API FWindow* GetPrimaryWindowHandle();
+
+		RUNTIME_API FWindow* TryGetPrimaryWindowHandle();
 		void SetPrimaryWindowHandle(FWindow* InWindow);
 
 		// Apply a cursor mode to a specific native window (GLFWwindow*); null falls back to the primary.

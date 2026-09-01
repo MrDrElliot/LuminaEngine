@@ -67,6 +67,29 @@ namespace Lumina::RHI
             return Alloc.Gpu;
         }
 
+        // Reserve and fill in place, which spares the caller building a vector only to copy it in.
+        template<typename T>
+        struct TTransientArray
+        {
+            T*     Data  = nullptr;
+            GPUPtr Gpu   = 0;
+            uint64 Count = 0;
+
+            NODISCARD bool IsValid() const { return Data != nullptr; }
+            NODISCARD T& operator [] (uint64 Index) const { return Data[Index]; }
+            NODISCARD T* begin() const { return Data; }
+            NODISCARD T* end() const { return Data + Count; }
+        };
+
+        template<typename T>
+        TTransientArray<T> AllocTransientArray(uint64 Count)
+        {
+            const FTransientAlloc Alloc = AllocTransient(sizeof(T) * Count,
+                alignof(T) > kDefaultAlign ? alignof(T) : kDefaultAlign);
+
+            return TTransientArray<T>{ static_cast<T*>(Alloc.Cpu), Alloc.Gpu, Alloc.Cpu != nullptr ? Count : 0 };
+        }
+
         template<typename T>
         GPUPtr CopyTransientArray(const T* Data, uint64 Count)
         {

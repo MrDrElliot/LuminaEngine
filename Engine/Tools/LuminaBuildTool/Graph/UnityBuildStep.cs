@@ -60,7 +60,49 @@ public static class UnityBuildStep
         // Sorted so blobs depend only on which files exist, not on directory-walk order.
         Mergeable.Sort((Left, Right) => string.Compare(Left.Location, Right.Location, StringComparison.OrdinalIgnoreCase));
 
+        AdaptiveUnityState Adaptive = AdaptiveUnityState.Load(Module);
+
+        if (Target.Rules.bAdaptiveUnityBuild && !Target.Info.Options.bDisableAdaptiveUnity)
+        {
+            Adaptive.Observe(Mergeable, Target.Rules.AdaptiveUnityMaxFiles);
+        }
+        else
+        {
+            Adaptive.Clear();
+        }
+
+        Adaptive.Save();
+
+        if (Adaptive.WorkingSet.Count > 0)
+        {
+            Log.Verbose(
+                "Adaptive unity: module '{0}' compiles {1} recently edited sources on their own.",
+                Module.Name,
+                Adaptive.WorkingSet.Count);
+        }
+
+        // Packed before the working set is applied, so holding a file out punches a hole in one blob
+        // rather than shifting every file after it across a boundary and rewriting the lot.
         List<List<FileItem>> Groups = GroupByByteBudget(Mergeable, Math.Max(1024, Target.Rules.UnityBuildBytesPerFile));
+
+        for (int Index = 0; Index < Groups.Count; Index++)
+        {
+            List<FileItem> Held = Groups[Index].Where(F => Adaptive.Contains(F.Location)).ToList();
+
+            if (Held.Count == 0)
+            {
+                continue;
+            }
+
+            Groups[Index] = Groups[Index].Where(F => !Adaptive.Contains(F.Location)).ToList();
+
+            foreach (FileItem Source in Held)
+            {
+                Log.Trace("Unity: '{0}' compiles alone (edited recently)", Source.Name);
+                Standalone.Add(Source);
+            }
+        }
+
         string BlobDirectory = Path.Combine(Module.IntermediateDirectory, BlobDirectoryName);
 
         Directory.CreateDirectory(BlobDirectory);

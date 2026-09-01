@@ -16,7 +16,7 @@ using namespace Lumina;
 namespace
 {
     // Vulkan clip space puts +Y down, so the apex is the negative one.
-    constexpr const char* kVertexShader = R"SLANG(
+    constexpr const char* kShader = R"SLANG(
         static const float2 kPositions[3] = { float2(0.0, -0.65), float2(0.75, 0.65), float2(-0.75, 0.65) };
         static const float3 kColors[3]    = { float3(1, 0, 0), float3(0, 1, 0), float3(0, 0, 1) };
 
@@ -27,36 +27,29 @@ namespace
         };
 
         [shader("vertex")]
-        FVertexOut main(uint VertexID : SV_VertexID)
+        FVertexOut VSMain(uint VertexID : SV_VertexID)
         {
             FVertexOut Out;
             Out.Position = float4(kPositions[VertexID], 0.5, 1.0);
             Out.Color    = kColors[VertexID];
             return Out;
         }
-    )SLANG";
-
-    constexpr const char* kPixelShader = R"SLANG(
-        struct FVertexOut
-        {
-            float4 Position : SV_Position;
-            float3 Color    : COLOR;
-        };
 
         [shader("fragment")]
-        float4 main(FVertexOut In) : SV_Target
+        float4 PSMain(FVertexOut In) : SV_Target
         {
             return float4(In.Color, 1.0);
         }
     )SLANG";
 
-    // One entry point per compile, since the compiler concatenates the SPIR-V of every entry point it finds.
-    TVector<uint32> CompileSpirv(const char* Source, const char* DebugName)
+    // A module holding several stages compiles one at a time, named through EntryPoint.
+    TVector<uint32> CompileSpirv(const char* Source, const char* EntryPoint, const char* DebugName)
     {
         TVector<uint32> Spirv;
 
         FShaderCompileOptions Options;
         Options.DebugName = DebugName;
+        Options.EntryPoint = EntryPoint;
         Options.bGenerateReflectionData = false;
 
         GShaderCompiler->CompilerShaderRaw(FString(Source), Options,
@@ -72,20 +65,20 @@ namespace
         return Spirv;
     }
 
-    RHI::FShaderSource ShaderSource(const TVector<uint32>& Spirv)
+    RHI::FShaderSource ShaderSource(const TVector<uint32>& Spirv, const char* EntryPoint)
     {
         return RHI::FShaderSource
         {
             .Source     = TSpan<const std::byte>(reinterpret_cast<const std::byte*>(Spirv.data()),
                                                  Spirv.size() * sizeof(uint32)),
-            .EntryPoint = "main",
+            .EntryPoint = EntryPoint,
         };
     }
 
     RHI::FPipelineH CreateTrianglePipeline(EFormat ColorFormat)
     {
-        const TVector<uint32> Vertex = CompileSpirv(kVertexShader, "HelloTriangle.Vertex");
-        const TVector<uint32> Pixel  = CompileSpirv(kPixelShader, "HelloTriangle.Pixel");
+        const TVector<uint32> Vertex = CompileSpirv(kShader, "VSMain", "HelloTriangle.Vertex");
+        const TVector<uint32> Pixel  = CompileSpirv(kShader, "PSMain", "HelloTriangle.Pixel");
         if (Vertex.empty() || Pixel.empty())
         {
             return {};
@@ -95,7 +88,7 @@ namespace
         RHI::FRasterDesc Raster;
         Raster.ColorTargets = TSpan<const RHI::FColorTarget>(&ColorTarget, 1);
 
-        return RHI::CreateGraphicsPipeline(ShaderSource(Vertex), ShaderSource(Pixel), Raster);
+        return RHI::CreateGraphicsPipeline(ShaderSource(Vertex, "VSMain"), ShaderSource(Pixel, "PSMain"), Raster);
     }
 
     // Everything the pipeline leaves dynamic has to be set between the pass and the draw.

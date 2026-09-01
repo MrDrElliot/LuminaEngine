@@ -52,9 +52,11 @@ namespace Lumina::RHITests
          *  recycling, which is where deferred destruction actually happens. */
         void PumpFrames(uint32 Count);
 
-        /** Compiles self-contained Slang to SPIR-V and blocks until it lands. Records a failure and
-         *  returns empty if the compile failed, so the caller can RHI_REQUIRE on emptiness. */
-        TVector<uint32> CompileShader(const char* Source, const char* DebugName);
+        // Blocks until the compile lands, and records a failure when it produced nothing.
+        TVector<uint32> CompileShader(const char* Source, const char* DebugName, const char* EntryPoint = nullptr);
+
+        // The same compile, leaving a failure for the caller to judge.
+        TVector<uint32> TryCompileShader(const char* Source, const char* DebugName, const char* EntryPoint = nullptr);
 
         /** Pipeline handle retired with the test's scratch. Pipelines must never be freed synchronously
          *  while frames are in flight -- RHI::FreeH destroys the VkPipeline immediately. */

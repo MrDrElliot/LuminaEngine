@@ -1,6 +1,7 @@
 ﻿#include "RuntimePCH.h"
 
 #include "Core/Object/Class.h"
+#include "Core/Object/Field.h"
 #include "Containers/StringFormat.h"
 
 IMPLEMENT_INTRINSIC_CLASS(CEnum, CField, RUNTIME_API)

@@ -128,27 +128,10 @@ namespace Lumina::FShaderCache
             return Path.substr(0, Slash);
         }
 
-        // False when the file could not be read, and the caller turns that into do-not-cache.
-        bool GatherSourceHash(FStringView VirtualPath, const TVector<FString>& SearchRoots, THashSet<FString>& Visited, uint64& Hash)
+        bool GatherSourceHash(FStringView VirtualPath, const TVector<FString>& SearchRoots, THashSet<FString>& Visited, uint64& Hash);
+
+        void GatherIncludeHashes(const FString& Source, FStringView Dir, const TVector<FString>& SearchRoots, THashSet<FString>& Visited, uint64& Hash)
         {
-            FString PathStr(VirtualPath.data(), VirtualPath.size());
-            if (Visited.find(PathStr) != Visited.end())
-            {
-                return true;
-            }
-            Visited.insert(PathStr);
-
-            FString Source;
-            if (!VFS::ReadFile(Source, VirtualPath))
-            {
-                return false;
-            }
-
-            const uint64 FileHash = Hash::GetHash64(Source);
-            Hash ^= FileHash + 0x9e3779b97f4a7c15ULL + (Hash << 6) + (Hash >> 2);
-
-            FStringView Dir = ParentDir(VirtualPath);
-
             // Walk lines; cheap enough for shader sizes and keeps us off a regex dep.
             size_t Pos = 0;
             while (Pos < Source.size())
@@ -201,16 +184,39 @@ namespace Lumina::FShaderCache
                 }
             }
 
+        }
+
+        // False when the file could not be read, and the caller turns that into do-not-cache.
+        bool GatherSourceHash(FStringView VirtualPath, const TVector<FString>& SearchRoots, THashSet<FString>& Visited, uint64& Hash)
+        {
+            FString PathStr(VirtualPath.data(), VirtualPath.size());
+            if (Visited.find(PathStr) != Visited.end())
+            {
+                return true;
+            }
+            Visited.insert(PathStr);
+
+            FString Source;
+            if (!VFS::ReadFile(Source, VirtualPath))
+            {
+                return false;
+            }
+
+            const uint64 FileHash = Hash::GetHash64(Source);
+            Hash ^= FileHash + 0x9e3779b97f4a7c15ULL + (Hash << 6) + (Hash >> 2);
+
             // An unresolved include is not fatal, since Slang may still find it and only the root matters.
+            GatherIncludeHashes(Source, ParentDir(VirtualPath), SearchRoots, Visited, Hash);
             return true;
         }
     }
 
-    uint64 ComputeSourceSetHash(FStringView ShaderVirtualPath, const TVector<FString>& Defines, const TVector<FString>& SearchRoots)
+    uint64 ComputeSourceSetHash(FStringView ShaderVirtualPath, const TVector<FString>& Defines, const TVector<FString>& SearchRoots, FStringView EntryPoint)
     {
         uint64 Hash = (uint64)kShaderCacheVersion;
         const FString DefineBlob = JoinSortedDefines(Defines);
         Hash ^= Hash::GetHash64(DefineBlob) + 0x9e3779b97f4a7c15ULL + (Hash << 6) + (Hash >> 2);
+        Hash ^= Hash::GetHash64(EntryPoint) + 0x9e3779b97f4a7c15ULL + (Hash << 6) + (Hash >> 2);
 
         THashSet<FString> Visited;
         if (!GatherSourceHash(ShaderVirtualPath, SearchRoots, Visited, Hash))
@@ -226,9 +232,80 @@ namespace Lumina::FShaderCache
         return Hash;
     }
 
-    FString CachePathFor(FStringView ShaderVirtualPath, const TVector<FString>& Defines)
+    uint64 ComputeRawSourceHash(FStringView Source, const TVector<FString>& Defines, const TVector<FString>& SearchRoots, FStringView TemplateVirtualPath, FStringView EntryPoint)
+    {
+        // Without the template a relative include cannot resolve, so an edited header would not invalidate.
+        if (TemplateVirtualPath.empty())
+        {
+            return 0;
+        }
+
+        uint64 Hash = (uint64)kShaderCacheVersion;
+        const FString DefineBlob = JoinSortedDefines(Defines);
+        Hash ^= Hash::GetHash64(DefineBlob) + 0x9e3779b97f4a7c15ULL + (Hash << 6) + (Hash >> 2);
+
+        const FString SourceText(Source.data(), Source.size());
+        Hash ^= Hash::GetHash64(SourceText) + 0x9e3779b97f4a7c15ULL + (Hash << 6) + (Hash >> 2);
+        Hash ^= Hash::GetHash64(EntryPoint) + 0x9e3779b97f4a7c15ULL + (Hash << 6) + (Hash >> 2);
+
+        THashSet<FString> Visited;
+        GatherIncludeHashes(SourceText, ParentDir(TemplateVirtualPath), SearchRoots, Visited, Hash);
+
+        // 0 is reserved for do-not-cache, never return it.
+        return Hash == 0 ? 1 : Hash;
+    }
+
+    static FString CachePathForKey(uint64 KeyHash)
+    {
+        char HexBuf[32];
+        snprintf(HexBuf, sizeof(HexBuf), "%016llx", (unsigned long long)KeyHash);
+
+        FString Out = kCacheDirectory;
+        Out += "/raw_";
+        Out += HexBuf;
+        Out += ".lsc";
+        return Out;
+    }
+
+    bool TryLoadRaw(uint64 KeyHash, FShaderHeader& OutHeader)
+    {
+        if (KeyHash == 0)
+        {
+            return false;
+        }
+        return TryLoadByCachePath(CachePathForKey(KeyHash), KeyHash, OutHeader);
+    }
+
+    bool SaveRaw(uint64 KeyHash, const FShaderHeader& Header)
+    {
+        LUMINA_MEMORY_SCOPE("Shaders");
+        if (KeyHash == 0)
+        {
+            return false;
+        }
+
+        VFS::CreateDir(kCacheDirectory);
+
+        TVector<uint8> Bytes;
+        FMemoryWriter Writer(Bytes);
+
+        uint32 Magic = CACHE_MAGIC;
+        uint32 Version = kShaderCacheVersion;
+        uint64 StoredHash = KeyHash;
+        Writer << Magic;
+        Writer << Version;
+        Writer << StoredHash;
+
+        SerializeHeader(Writer, const_cast<FShaderHeader&>(Header));
+
+        return VFS::AtomicWriteFile(CachePathForKey(KeyHash), TSpan<const uint8>(Bytes.data(), Bytes.size()));
+    }
+
+    FString CachePathFor(FStringView ShaderVirtualPath, const TVector<FString>& Defines, FStringView EntryPoint)
     {
         FString Key(ShaderVirtualPath.data(), ShaderVirtualPath.size());
+        Key += '|';
+        Key.append(EntryPoint.data(), EntryPoint.size());
         Key += '|';
         Key += JoinSortedDefines(Defines);
         const uint64 KeyHash = Hash::GetHash64(Key);
@@ -278,13 +355,13 @@ namespace Lumina::FShaderCache
         return !Reader.HasError();
     }
 
-    bool TryLoad(FStringView ShaderVirtualPath, const TVector<FString>& Defines, uint64 SourceHash, FShaderHeader& OutHeader)
+    bool TryLoad(FStringView ShaderVirtualPath, const TVector<FString>& Defines, FStringView EntryPoint, uint64 SourceHash, FShaderHeader& OutHeader)
     {
-        const FString CachePath = CachePathFor(ShaderVirtualPath, Defines);
+        const FString CachePath = CachePathFor(ShaderVirtualPath, Defines, EntryPoint);
         return TryLoadByCachePath(CachePath, SourceHash, OutHeader);
     }
 
-    bool Save(FStringView ShaderVirtualPath, const TVector<FString>& Defines, uint64 SourceHash, const FShaderHeader& Header)
+    bool Save(FStringView ShaderVirtualPath, const TVector<FString>& Defines, FStringView EntryPoint, uint64 SourceHash, const FShaderHeader& Header)
     {
         LUMINA_MEMORY_SCOPE("Shaders");
         if (SourceHash == 0)
@@ -307,7 +384,7 @@ namespace Lumina::FShaderCache
 
         SerializeHeader(Writer, const_cast<FShaderHeader&>(Header));
 
-        const FString CachePath = CachePathFor(ShaderVirtualPath, Defines);
+        const FString CachePath = CachePathFor(ShaderVirtualPath, Defines, EntryPoint);
         return VFS::AtomicWriteFile(CachePath, TSpan<const uint8>(Bytes.data(), Bytes.size()));
     }
 }

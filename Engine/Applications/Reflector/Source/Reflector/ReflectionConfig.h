@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 namespace Lumina::Reflection
 {
     enum class EReflectionMacro : uint8_t
@@ -12,7 +14,7 @@ namespace Lumina::Reflection
         Size,
     };
 
-    inline const char* ReflectionEnumToString(EReflectionMacro Macro)
+    inline constexpr const char* ReflectionEnumToString(EReflectionMacro Macro)
     {
         switch (Macro)
         {

@@ -1457,7 +1457,7 @@ namespace Lumina::ImGuiX
         ImGui::EndChild();
 
         // Frees the sections from having to reserve a fixed drag gap between them.
-        if (FWindow* MainWindow = Windowing::GetPrimaryWindowHandle())
+        if (FWindow* MainWindow = Windowing::TryGetPrimaryWindowHandle())
         {
             const bool bOverBar    = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
             const bool bOverWidget = ImGui::IsAnyItemHovered() || ImGui::IsAnyItemActive();

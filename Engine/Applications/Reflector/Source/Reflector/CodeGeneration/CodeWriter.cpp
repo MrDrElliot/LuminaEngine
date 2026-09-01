@@ -54,11 +54,11 @@ namespace Lumina::Reflection
             return;
         }
 
-        const size_t Size = static_cast<size_t>(Needed) + 1;
-        std::string Scratch;
-        Scratch.resize(Size);
-        std::vsnprintf(Scratch.data(), Size, Fmt, Args);
-        Buffer.append(Scratch.data(), Scratch.data() + Needed);
+        // Formatted straight into the buffer's tail, so a long line costs no scratch allocation.
+        const size_t Start = Buffer.size();
+        Buffer.resize(Start + static_cast<size_t>(Needed) + 1);
+        std::vsnprintf(Buffer.data() + Start, static_cast<size_t>(Needed) + 1, Fmt, Args);
+        Buffer.resize(Start + static_cast<size_t>(Needed));
     }
 
     FCodeWriter& FCodeWriter::Append(std::string_view Text)

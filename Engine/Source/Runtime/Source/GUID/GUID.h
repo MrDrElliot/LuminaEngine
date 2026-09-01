@@ -1,5 +1,6 @@
 #pragma once
 
+#include <iosfwd>
 #include "Containers/Format.h"
 #include "Containers/StaticArray.h"
 #include "Core/Serialization/Archiver.h"

@@ -50,15 +50,17 @@ namespace Lumina::Reflection
         std::string ProjectReflectionPath = WorkspacePath + "/Intermediates/Reflection/" + InProject->Name;
         std::string PossibleReflectedHeaderPath = ProjectReflectionPath + "/" + FileName + ".generated.h";
 
-        bool bReflectionFileExists = std::filesystem::exists(PossibleReflectedHeaderPath.c_str());
-        if (!bReflectionFileExists)
+        // A failed stat answers "does it exist" too, so this is one filesystem round trip rather than two.
+        std::error_code Ec;
+        const auto LastReflectionWrite = std::filesystem::last_write_time(
+            std::filesystem::path(PossibleReflectedHeaderPath.c_str()), Ec);
+        if (Ec)
         {
             bDirty = true;
             return;
         }
 
         StartingFileTime = std::filesystem::last_write_time(FilesystemPath);
-        auto LastReflectionWrite = std::filesystem::last_write_time(PossibleReflectedHeaderPath.c_str());
 
         // Dirty when the source header OR the Reflector itself is newer than the last generated output.
         const auto NewestInput = (GetToolWriteTime() > StartingFileTime) ? GetToolWriteTime() : StartingFileTime;

@@ -8,6 +8,11 @@
 namespace Lumina
 {
 	struct FWindowSpecs;
+	struct FKeyInput;
+	struct FMouseButtonInput;
+	struct FMouseMoveInput;
+	struct FMouseScrollInput;
+	class  FWindow;
 	class  FInputViewport;
 
 	enum class EApplicationFlags : uint32
@@ -54,6 +59,15 @@ namespace Lumina
 
 		void PreInitStartup();
 		bool CreateApplicationWindow();
+
+		//~ Window input reaches the event processor through these rather than the window reaching for GApp.
+
+		void ForwardKey(FWindow* Window, const FKeyInput& Input);
+		void ForwardMouseButton(FWindow* Window, const FMouseButtonInput& Input);
+		void ForwardMouseMove(FWindow* Window, const FMouseMoveInput& Input);
+		void ForwardScroll(FWindow* Window, const FMouseScrollInput& Input);
+		void ForwardFileDrop(FWindow* Window, const TVector<FFixedString>& Paths, float MouseX, float MouseY);
+		void ForwardClose(FWindow* Window);
 
 		bool ShouldExit() const;
 

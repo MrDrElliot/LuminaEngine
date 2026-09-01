@@ -7,6 +7,7 @@
 #include "Box3DUtils.h"
 
 #include "Assets/AssetTypes/PhysicsMaterial/PhysicsMaterial.h"
+#include "World/Entity/Components/DynamicMeshComponent.h"
 #include "Log/Log.h"
 #include "Scripting/EntityScript.h"
 #include "TaskSystem/TaskSystem.h"

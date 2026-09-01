@@ -3,6 +3,7 @@
 #include "UI/Properties/NamePicker.h"
 #include "UI/Properties/PropertyEditContexts.h"
 
+#include "Core/Object/Cast.h"
 #include "Assets/AssetTypes/Animation/AnimationGraph/AnimationGraph.h"
 #include "UI/Tools/NodeGraph/Animation/AnimStateMachineGraph.h"
 #include "UI/Tools/NodeGraph/Animation/Nodes/AnimGraphNode_State.h"

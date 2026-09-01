@@ -5,6 +5,7 @@
 #include "ComponentVisualizerContext.h"
 #include "Core/Math/Color.h"
 #include "Renderer/PrimitiveDrawInterface.h"
+#include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Tools/Import/ImportHelpers.h"
 #include "Audio/AudioTypes.h"
 #include "Assets/AssetTypes/Audio/SoundBase.h"

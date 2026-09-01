@@ -1,5 +1,4 @@
 #pragma once
-#include <algorithm>
 #include "Core/Serialization/Archiver.h"
 #include "Core/Math/Vector/Vector.h"
 #include "Containers/StringFormat.h"

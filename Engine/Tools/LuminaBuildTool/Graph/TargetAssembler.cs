@@ -352,6 +352,8 @@ public sealed class TargetAssembler
             TargetRules.bUseUnityBuild.ToString(),
             TargetRules.UnityBuildBytesPerFile.ToString(),
             TargetRules.MinFilesForUnityBuild.ToString(),
+            TargetRules.bAdaptiveUnityBuild.ToString(),
+            TargetRules.AdaptiveUnityMaxFiles.ToString(),
         };
 
         // Order matters for the hash but not for the build, so these are sorted: two targets that

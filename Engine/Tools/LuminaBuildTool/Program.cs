@@ -143,6 +143,7 @@ public static class Program
                                         lowered to fit available memory)
               -Clean                    Delete outputs before building
               -NoUnity                  Compile every source on its own, no unity files
+              -NoAdaptiveUnity          Keep recently edited sources in their unity file
               -KeepGoing                Keep building after a failure
               -DryRun                   List the outdated actions without running them
               -RecompileRules           Force the Target.cs and Build.cs assembly to rebuild

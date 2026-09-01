@@ -1,6 +1,5 @@
 ﻿#pragma once
 
-#include <algorithm>
 #include "RHITexture.h"
 #include "Containers/Span.h"
 #include "Containers/FunctionRef.h"

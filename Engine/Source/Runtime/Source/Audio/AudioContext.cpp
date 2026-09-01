@@ -46,7 +46,7 @@ namespace Lumina
 			return;
 		}
 
-		if (FWindow* Window = Windowing::GetPrimaryWindowHandle())
+		if (FWindow* Window = Windowing::TryGetPrimaryWindowHandle())
 		{
 			bool bShouldSuspend = Window->IsWindowMinimized();
 

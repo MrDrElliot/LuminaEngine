@@ -4,7 +4,6 @@
 #include "Containers/Vector.h"
 #include "Containers/VectorOps.h"
 #include "Containers/String.h"
-#include "Core/Profiler/Profile.h"
 #include "Platform/GenericPlatform.h"
 #include "Platform/Platform.h"
 #include <string.h>

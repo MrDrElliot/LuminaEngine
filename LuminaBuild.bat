@@ -32,8 +32,12 @@ set INCLUDE=
 rem Always rebuild: MSBuild no-ops in well under a second, and a stale tool silently produces
 rem stale rules behavior that is very hard to diagnose. Set LUMINA_SKIP_TOOL_BUILD=1 to opt out.
 if not defined LUMINA_SKIP_TOOL_BUILD (
-    dotnet build "%BUILD_TOOL_PROJECT%" -v quiet --nologo
-    if errorlevel 1 exit /b 1
+    rem Skipping the restore is a third of this step, and a fresh clone falls back to the full build below.
+    dotnet build "%BUILD_TOOL_PROJECT%" -v quiet --nologo --no-restore
+    if errorlevel 1 (
+        dotnet build "%BUILD_TOOL_PROJECT%" -v quiet --nologo
+        if errorlevel 1 exit /b 1
+    )
 )
 
 rem Two different failures, and saying "did not produce" for the second one sends the reader off

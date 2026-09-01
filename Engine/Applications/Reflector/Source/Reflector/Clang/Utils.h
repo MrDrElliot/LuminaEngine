@@ -6,11 +6,13 @@
 #include <clang-c/CXString.h>
 #include <clang-c/Index.h>
 #include <algorithm>
+#include <array>
+#include <ranges>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <filesystem>
 #include <system_error>
-#include "xxhash.h"
 
 
 namespace Lumina::ClangUtils
@@ -37,9 +39,39 @@ namespace Lumina::ClangUtils
         return Result;
     }
 
+    // Owns a CXString for one full expression, so a name is read without an interim std::string.
+    class FScopedCXString
+    {
+    public:
+
+        explicit FScopedCXString(CXString InValue) : Value(InValue) {}
+        ~FScopedCXString() { clang_disposeString(Value); }
+
+        FScopedCXString(const FScopedCXString&) = delete;
+        FScopedCXString& operator=(const FScopedCXString&) = delete;
+
+        const char* Get() const
+        {
+            const char* Text = clang_getCString(Value);
+            return Text != nullptr ? Text : "";
+        }
+
+        std::string_view View() const { return Get(); }
+
+    private:
+
+        CXString Value;
+    };
+
+    inline FScopedCXString CursorDisplayName(const CXCursor& Cursor)
+    {
+        return FScopedCXString(clang_getCursorDisplayName(Cursor));
+    }
+
     inline std::string GetString(const CXString& string)
     {
-        std::string str = clang_getCString(string);
+        const char* Text = clang_getCString(string);
+        std::string str = Text != nullptr ? std::string(Text) : std::string();
         clang_disposeString(string);
         return str;
     }
@@ -54,16 +86,6 @@ namespace Lumina::ClangUtils
         clang_getSpellingLocation(Location, nullptr, &Line, &Column, &Offset);
 
         return Line;
-    }
-
-    inline std::string StripNamespace(const std::string& Input)
-    {
-        size_t Pos = Input.rfind("::");
-        if (Pos != std::string::npos)
-        {
-            return Input.substr(Pos + 2); // skip past the last "::"
-        }
-        return Input; // return unchanged if no "::" found
     }
 
     inline std::string MakeCodeFriendlyNamespace(std::string Input)
@@ -98,52 +120,25 @@ namespace Lumina::ClangUtils
         return Result;
     }
 
-    inline std::string GetHeaderPathForCursor(const CXCursor& Cursor)
-    {
-        CXFile File = nullptr;
-        const CXSourceRange CursorRange = clang_getCursorExtent(Cursor);
-        clang_getExpansionLocation(clang_getRangeStart(CursorRange), &File, nullptr, nullptr, nullptr);
-
-        std::string HeaderFilePath;
-        if (File != nullptr)
-        {
-            CXString ClangFilePath = clang_getFileName(File);
-            HeaderFilePath = std::string(clang_getCString(ClangFilePath));
-            clang_disposeString(ClangFilePath);
-
-            HeaderFilePath = NormalizeHeaderPath(std::move(HeaderFilePath));
-        }
-
-        return HeaderFilePath;
-    }
-
-    inline uint32_t GetLineNumberForCursor(const CXCursor& cr)
-    {
-        uint32_t line, column, offset;
-        CXSourceRange range = clang_getCursorExtent(cr);
-        CXSourceLocation start = clang_getRangeStart(range);
-        clang_getExpansionLocation( start, nullptr, &line, &column, &offset);
-        return line;
-    }
-
     // True when libclang fell back to its location-derived placeholder (e.g. "(unnamed struct at ...)"),
     // which would leak the build path into generated identifiers and break consumers.
-    inline bool IsLibclangPlaceholderName(const std::string& Name)
+    inline bool IsLibclangPlaceholderName(std::string_view Name)
     {
-        return Name.find("(unnamed ") != std::string::npos
-            || Name.find("(anonymous ") != std::string::npos;
+        return Name.find("(unnamed ") != std::string_view::npos
+            || Name.find("(anonymous ") != std::string_view::npos;
     }
 
     /// Strips an elaborated type specifier that libclang sometimes spells, leaving the bare
     /// qualified name the reflection database keys on.
     inline void StripElaboratedPrefix(std::string& Name)
     {
-        for (const char* Prefix : { "struct ", "class ", "enum ", "union " })
+        constexpr std::string_view Prefixes[] = { "struct ", "class ", "enum ", "union " };
+
+        for (const std::string_view Prefix : Prefixes)
         {
-            const size_t PrefixLength = strlen(Prefix);
-            if (Name.size() > PrefixLength && Name.compare(0, PrefixLength, Prefix) == 0)
+            if (Name.size() > Prefix.size() && std::string_view(Name).starts_with(Prefix))
             {
-                Name.erase(0, PrefixLength);
+                Name.erase(0, Prefix.size());
                 return;
             }
         }
@@ -172,16 +167,16 @@ namespace Lumina::ClangUtils
     }
 
     /// The trailing component of a qualified name: "Lumina::Foo" -> "Foo".
-    inline std::string UnqualifiedName(const std::string& Qualified)
+    inline std::string_view UnqualifiedName(std::string_view Qualified)
     {
         const size_t Scope = Qualified.rfind("::");
-        return Scope == std::string::npos ? Qualified : Qualified.substr(Scope + 2);
+        return Scope == std::string_view::npos ? Qualified : Qualified.substr(Scope + 2);
     }
 
     /// Splits a template argument list at top-level commas, so nested `<...>` stays intact.
-    inline std::vector<std::string> SplitTemplateArguments(const std::string& Arguments)
+    inline std::vector<std::string_view> SplitTemplateArguments(std::string_view Arguments)
     {
-        std::vector<std::string> Result;
+        std::vector<std::string_view> Result;
         int32_t Depth = 0;
         size_t Start = 0;
 
@@ -206,19 +201,33 @@ namespace Lumina::ClangUtils
         return Result;
     }
 
-    /// A C++ identifier built from a template argument: scopes dropped, punctuation folded to '_'.
-    inline std::string MangleTemplateArgument(std::string Argument)
+    inline std::string_view TrimSpacing(std::string_view Text)
     {
-        while (!Argument.empty() && (Argument.front() == ' ' || Argument.front() == '\t'))
+        while (!Text.empty() && (Text.front() == ' ' || Text.front() == '\t'))
         {
-            Argument.erase(0, 1);
+            Text.remove_prefix(1);
         }
-        while (!Argument.empty() && (Argument.back() == ' ' || Argument.back() == '\t'))
+        while (!Text.empty() && (Text.back() == ' ' || Text.back() == '\t'))
         {
-            Argument.pop_back();
+            Text.remove_suffix(1);
         }
+        return Text;
+    }
 
-        StripElaboratedPrefix(Argument);
+    /// A C++ identifier built from a template argument, with scopes dropped and punctuation folded to '_'.
+    inline std::string MangleTemplateArgument(std::string_view Argument)
+    {
+        Argument = TrimSpacing(Argument);
+
+        constexpr std::string_view Prefixes[] = { "struct ", "class ", "enum ", "union " };
+        for (const std::string_view Prefix : Prefixes)
+        {
+            if (Argument.size() > Prefix.size() && Argument.starts_with(Prefix))
+            {
+                Argument.remove_prefix(Prefix.size());
+                break;
+            }
+        }
 
         std::string Result;
         std::string Segment;
@@ -262,30 +271,23 @@ namespace Lumina::ClangUtils
 
     /// "Lumina::TVec<float, 3>" -> "TVec_float_3"; ResolveArgument renames an argument to its reflected name.
     template<typename TResolveArgument>
-    inline std::string MangleTemplateSpelling(const std::string& Spelling, TResolveArgument&& ResolveArgument)
+    inline std::string MangleTemplateSpelling(std::string_view Spelling, TResolveArgument&& ResolveArgument)
     {
         const size_t Open = Spelling.find('<');
         const size_t Close = Spelling.rfind('>');
-        if (Open == std::string::npos || Close == std::string::npos || Close < Open)
+        if (Open == std::string_view::npos || Close == std::string_view::npos || Close < Open)
         {
             return {};
         }
 
-        std::string Result = UnqualifiedName(Spelling.substr(0, Open));
+        std::string Result(UnqualifiedName(Spelling.substr(0, Open)));
 
-        for (std::string Argument : SplitTemplateArguments(Spelling.substr(Open + 1, Close - Open - 1)))
+        for (const std::string_view Raw : SplitTemplateArguments(Spelling.substr(Open + 1, Close - Open - 1)))
         {
-            while (!Argument.empty() && Argument.front() == ' ')
-            {
-                Argument.erase(0, 1);
-            }
-            while (!Argument.empty() && Argument.back() == ' ')
-            {
-                Argument.pop_back();
-            }
+            const std::string_view Argument = TrimSpacing(Raw);
 
             const std::string Resolved = ResolveArgument(Argument);
-            const std::string Mangled = MangleTemplateArgument(Resolved.empty() ? Argument : Resolved);
+            const std::string Mangled = MangleTemplateArgument(Resolved.empty() ? Argument : std::string_view(Resolved));
             if (!Mangled.empty())
             {
                 Result += '_';
@@ -299,34 +301,46 @@ namespace Lumina::ClangUtils
     /// Rewrites the engine's container and core-type aliases onto their reflected spellings.
     inline void NormalizeEngineTypeName(std::string& Name)
     {
-        struct FAlias { const char* From; const char* To; };
-        static const FAlias Aliases[] =
+        struct FAlias
         {
-            // An alias template desugars to its underlying name, so each container needs its own row here.
-            { "Lumina::Containers::TVector",        "Lumina::TVector"    },
-            { "Lumina::Containers::TBasicString",   "Lumina::FString"    },
-            { "Lumina::Containers::TStringView",    "Lumina::FStringView" },
-            { "Lumina::Containers::TCStringView",   "Lumina::FStringView" },
-            { "Lumina::Containers::TBasicHashMap",  "Lumina::THashMap"   },
-            { "Lumina::Containers::TBasicHashSet",  "Lumina::THashSet"   },
-            { "Lumina::Containers::TPair",          "Lumina::TPair"      },
-            { "Lumina::Containers::TSpan",          "Lumina::TSpan"      },
-            { "Lumina::Containers::TOptional",      "Lumina::TOptional"  },
-            { "Lumina::Containers::TVariant",       "Lumina::TVariant"   },
-            { "FString",             "Lumina::FString"    },
-            { "FName",               "Lumina::FName"      },
-            { "TObjectPtr",          "Lumina::TObjectPtr" },
-            { "CObject",             "Lumina::CObject"    },
-            { "CClass",              "Lumina::CClass"     },
+            std::string_view From;
+            std::string_view To;
         };
 
-        for (const FAlias& Alias : Aliases)
+        // Sorted during constant evaluation, so a name that matches nothing costs a few comparisons.
+        static constexpr auto Aliases = []
         {
-            if (Name == Alias.From)
+            std::array Rows = std::to_array<FAlias>(
             {
-                Name = Alias.To;
-                return;
-            }
+                // An alias template desugars to its underlying name, so each container needs its own row here.
+                { "Lumina::Containers::TVector",       "Lumina::TVector"     },
+                { "Lumina::Containers::TBasicString",  "Lumina::FString"     },
+                { "Lumina::Containers::TStringView",   "Lumina::FStringView" },
+                { "Lumina::Containers::TCStringView",  "Lumina::FStringView" },
+                { "Lumina::Containers::TBasicHashMap", "Lumina::THashMap"    },
+                { "Lumina::Containers::TBasicHashSet", "Lumina::THashSet"    },
+                { "Lumina::Containers::TPair",         "Lumina::TPair"       },
+                { "Lumina::Containers::TSpan",         "Lumina::TSpan"       },
+                { "Lumina::Containers::TOptional",     "Lumina::TOptional"   },
+                { "Lumina::Containers::TVariant",      "Lumina::TVariant"    },
+                { "FString",                           "Lumina::FString"     },
+                { "FName",                             "Lumina::FName"       },
+                { "TObjectPtr",                        "Lumina::TObjectPtr"  },
+                { "CObject",                           "Lumina::CObject"     },
+                { "CClass",                            "Lumina::CClass"      },
+            });
+
+            std::ranges::sort(Rows, {}, &FAlias::From);
+            return Rows;
+        }();
+
+        static_assert(std::ranges::adjacent_find(Aliases, {}, &FAlias::From) == Aliases.end(),
+            "Engine type alias names must be unique");
+
+        const auto Found = std::ranges::lower_bound(Aliases, std::string_view(Name), {}, &FAlias::From);
+        if (Found != Aliases.end() && Found->From == Name)
+        {
+            Name.assign(Found->To);
         }
     }
 
@@ -537,9 +551,4 @@ namespace Lumina::ClangUtils
         return Result;
     }
 
-
-    inline uint64_t HashString(const std::string& str)
-    {
-        return XXH64(str.data(), strlen(str.c_str()), 0);
-    }
 }

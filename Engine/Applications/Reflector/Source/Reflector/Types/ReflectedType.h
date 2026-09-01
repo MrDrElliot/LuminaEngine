@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "Reflector/Types/Functions/ReflectedFunction.h"
@@ -15,7 +16,7 @@ namespace Lumina::Reflection
     class FCodeWriter;
 
     // Maps a source-level C++ type name onto EPropertyTypeFlags; used by the clang visitors classifying a field.
-    EPropertyTypeFlags GetCoreTypeFromName(const char* Name);
+    EPropertyTypeFlags GetCoreTypeFromName(std::string_view Name);
 
     // Writes a static FMetaDataPairParam array named <SymbolBase>_Metadata, or nothing when there
     // is no metadata. Shared by the enum and struct emitters, which need identical output.
@@ -50,10 +51,10 @@ namespace Lumina::Reflection
         // Declaring or defining a member needs the real class name; a type expression may use the alias.
         const std::string& EmittedCppQualifiedName() const { return CppQualifiedName.empty() ? QualifiedName : CppQualifiedName; }
 
-        bool HasMetadata(const std::string& Meta) const;
+        bool HasMetadata(std::string_view Meta) const;
 
         /// Value for Key, or nullptr when absent.
-        const std::string* TryGetMetadata(const std::string& Key) const;
+        const std::string* TryGetMetadata(std::string_view Key) const;
         void GenerateMetadata(const std::string& InMetadata);
 
         // Common helper that writes "<FileID>_<Line>_ACCESSORS" macro body when any

@@ -158,7 +158,7 @@ namespace Lumina::Reflection::Visitor
 		}
 
 		const std::string Mangled = ClangUtils::MangleTemplateSpelling(Spelling,
-			[Context](const std::string& Argument) -> std::string
+			[Context](std::string_view Argument) -> std::string
 			{
 				const auto Match = Context->AliasedInstantiations.find(FStringHash(Argument));
 				return Match == Context->AliasedInstantiations.end() ? std::string() : Match->second.second;
@@ -192,7 +192,7 @@ namespace Lumina::Reflection::Visitor
 			return std::nullopt;
 		}
 
-		EPropertyTypeFlags PropFlags = GetCoreTypeFromName(TypeSpelling.c_str());
+		EPropertyTypeFlags PropFlags = GetCoreTypeFromName(TypeSpelling);
 
 		// Is not a core type.
 		if (PropFlags == EPropertyTypeFlags::None)
@@ -259,7 +259,7 @@ namespace Lumina::Reflection::Visitor
 			return std::nullopt;
 		}
 
-		EPropertyTypeFlags PropFlags = GetCoreTypeFromName(TypeSpelling.c_str());
+		EPropertyTypeFlags PropFlags = GetCoreTypeFromName(TypeSpelling);
 
 		// Is not a core type.
 		if (PropFlags == EPropertyTypeFlags::None)
@@ -289,7 +289,7 @@ namespace Lumina::Reflection::Visitor
 				else
 				{
 					ClangUtils::GetQualifiedNameForCXType(Referenced, TypeSpelling);
-					PropFlags = GetCoreTypeFromName(TypeSpelling.c_str());
+					PropFlags = GetCoreTypeFromName(TypeSpelling);
 				}
 			}
 		}
@@ -332,7 +332,7 @@ namespace Lumina::Reflection::Visitor
 			return std::nullopt;
 		}
 
-		EPropertyTypeFlags PropFlags = GetCoreTypeFromName(FieldName.c_str());
+		EPropertyTypeFlags PropFlags = GetCoreTypeFromName(FieldName);
 
 		// Is not a core type.
 		if (PropFlags == EPropertyTypeFlags::None)
@@ -793,7 +793,7 @@ namespace Lumina::Reflection::Visitor
 	}
 
 	static void ReflectField(FClangParserContext* Context, FReflectedStruct* Struct, const CXCursor& Cursor,
-	                         const std::string& MacroHeader, bool bConsumeMacro)
+	                         const FReflectedHeader* MacroHeader, bool bConsumeMacro)
 	{
 		FReflectionMacro Macro;
 		if (!Context->TryFindMacroForCursor(MacroHeader, Cursor, Macro, bConsumeMacro))
@@ -874,16 +874,19 @@ namespace Lumina::Reflection::Visitor
 		Context->ReflectionDatabase.AddReflectedType(ReflectedStruct);
 
 		FReflectedType* PreviousType = Context->ParentReflectedType;
-		const std::string PreviousMacroHeader = Context->AliasTargetMacroHeader;
+		const FReflectedHeader* PreviousMacroHeader = Context->AliasTargetMacroHeader;
+		const bool bWasWalkingAliasTarget = Context->bWalkingAliasTarget;
 		const bool bWasInAnonymousRecord = Context->bInAnonymousRecord;
 
 		Context->ParentReflectedType = ReflectedStruct;
-		Context->AliasTargetMacroHeader = Template.HeaderPath;
+		Context->AliasTargetMacroHeader = Template.Header;
+		Context->bWalkingAliasTarget = true;
 		Context->bInAnonymousRecord = false;
 
 		clang_Type_visitFields(Instantiation, VisitAliasField, Context);
 
 		Context->bInAnonymousRecord = bWasInAnonymousRecord;
+		Context->bWalkingAliasTarget = bWasWalkingAliasTarget;
 		Context->AliasTargetMacroHeader = PreviousMacroHeader;
 		Context->ParentReflectedType = PreviousType;
 	}
@@ -892,14 +895,13 @@ namespace Lumina::Reflection::Visitor
 	static CXChildVisitResult VisitContents(CXCursor Cursor, CXCursor Parent, CXClientData pClientData)
 	{
 		FClangParserContext* Context = (FClangParserContext*)pClientData;
-		std::string CursorName = ClangUtils::GetCursorDisplayName(Cursor);
 		CXCursorKind Kind = clang_getCursorKind(Cursor);
 		TVisitType* Type = Context->GetParentReflectedType<TVisitType>();
-		
-		const bool bWalkingAliasTarget = !Context->AliasTargetMacroHeader.empty();
-		const std::string& MacroHeader = bWalkingAliasTarget
+
+		const bool bWalkingAliasTarget = Context->bWalkingAliasTarget;
+		const FReflectedHeader* MacroHeader = bWalkingAliasTarget
 			? Context->AliasTargetMacroHeader
-			: Context->ReflectedHeader->HeaderPath;
+			: Context->ReflectedHeader;
 
 		switch (Kind)
 		{
@@ -907,7 +909,7 @@ namespace Lumina::Reflection::Visitor
 		{
 			if (Type->Parent.empty())
 			{
-				Type->Parent = CursorName;
+				Type->Parent = ClangUtils::CursorDisplayName(Cursor).Get();
 			}
 		}
 		break;
@@ -964,7 +966,7 @@ namespace Lumina::Reflection::Visitor
 	CXChildVisitResult VisitClassTemplate(CXCursor Cursor, CXCursor Parent, FClangParserContext* Context)
 	{
 		FReflectionMacro Macro;
-		if (!Context->TryFindMacroForCursor(Context->ReflectedHeader->HeaderPath, Cursor, Macro))
+		if (!Context->TryFindMacroForCursor(Context->ReflectedHeader, Cursor, Macro))
 		{
 			return CXChildVisit_Continue;
 		}
@@ -989,7 +991,6 @@ namespace Lumina::Reflection::Visitor
 		Template.Namespace = Context->CurrentNamespace;
 		Template.MacroContents = Macro.MacroContents;
 		ValidateSpecifiers(Cursor, ESpecifierTarget::Reflect, FMetadataParser(Macro.MacroContents).Metadata);
-		Template.HeaderPath = Context->ReflectedHeader->HeaderPath;
 		Template.Header = Context->ReflectedHeader;
 
 		Context->ReflectedTemplates.insert_or_assign(FStringHash(QualifiedName), std::move(Template));
@@ -1008,7 +1009,7 @@ namespace Lumina::Reflection::Visitor
 		}
 
 		FReflectionMacro Macro;
-		if (!Context->TryFindMacroForCursor(Context->ReflectedHeader->HeaderPath, Cursor, Macro))
+		if (!Context->TryFindMacroForCursor(Context->ReflectedHeader, Cursor, Macro))
 		{
 			return CXChildVisit_Continue;
 		}
@@ -1041,8 +1042,10 @@ namespace Lumina::Reflection::Visitor
 			return CXChildVisit_Continue;
 		}
 
-		const std::string TargetHeader = ClangUtils::GetHeaderPathForCursor(TargetCursor);
-		if (TargetHeader.empty())
+		CXFile TargetFile = nullptr;
+		clang_getExpansionLocation(clang_getRangeStart(clang_getCursorExtent(TargetCursor)),
+			&TargetFile, nullptr, nullptr, nullptr);
+		if (TargetFile == nullptr)
 		{
 			LRT_ERROR(Cursor, EDiagId::ReflectedAliasInvalid,
 				"REFLECT'd alias '%s' resolves to a type with no source location.", AliasName.c_str());
@@ -1083,11 +1086,13 @@ namespace Lumina::Reflection::Visitor
 		FReflectedType* PreviousType = Context->ParentReflectedType;
 		Context->ParentReflectedType = ReflectedStruct;
 		Context->LastReflectedType = ReflectedStruct;
-		Context->AliasTargetMacroHeader = TargetHeader;
+		Context->AliasTargetMacroHeader = Context->ResolveHeaderForFile(TargetFile);
+		Context->bWalkingAliasTarget = true;
 
 		clang_Type_visitFields(Target, VisitAliasField, Context);
 
-		Context->AliasTargetMacroHeader.clear();
+		Context->bWalkingAliasTarget = false;
+		Context->AliasTargetMacroHeader = nullptr;
 		Context->ParentReflectedType = PreviousType;
 
 		// A hand-written C# mirror is marshalled by value and never walked, so it needs no member list.
@@ -1105,14 +1110,14 @@ namespace Lumina::Reflection::Visitor
 
 	CXChildVisitResult VisitStructure(CXCursor Cursor, CXCursor Parent, FClangParserContext* Context)
 	{
-		std::string CursorName = ClangUtils::GetCursorDisplayName(Cursor);
-
 		// Every header carries helper, anonymous and union structs that must not affect the pass at all.
 		FReflectionMacro Macro;
-		if (!Context->TryFindMacroForCursor(Context->ReflectedHeader->HeaderPath, Cursor, Macro))
+		if (!Context->TryFindMacroForCursor(Context->ReflectedHeader, Cursor, Macro))
 		{
 			return CXChildVisit_Continue;
 		}
+
+		std::string CursorName = ClangUtils::GetCursorDisplayName(Cursor);
 
 		std::string FullyQualifiedCursorName;
 		if (!ClangUtils::GetQualifiedNameForDeclCursor(Cursor, FullyQualifiedCursorName))
@@ -1126,7 +1131,7 @@ namespace Lumina::Reflection::Visitor
 		}
 
 		FReflectionMacro GeneratedBody;
-		if (!Context->TryFindGeneratedBodyMacro(Context->ReflectedHeader->HeaderPath, Cursor, GeneratedBody))
+		if (!Context->TryFindGeneratedBodyMacro(Context->ReflectedHeader, Cursor, GeneratedBody))
 		{
 			LRT_ERROR(Cursor, EDiagId::MissingGeneratedBody,
 				"REFLECT'd struct '%s' is missing a GENERATED_BODY() macro inside its body. "
@@ -1186,7 +1191,7 @@ namespace Lumina::Reflection::Visitor
 	CXChildVisitResult VisitFunction(CXCursor Cursor, CXCursor Parent, FClangParserContext* Context)
 	{
 		FReflectionMacro Macro;
-		if (!Context->TryFindMacroForCursor(Context->ReflectedHeader->HeaderPath, Cursor, Macro))
+		if (!Context->TryFindMacroForCursor(Context->ReflectedHeader, Cursor, Macro))
 		{
 			return CXChildVisit_Continue;
 		}
@@ -1261,14 +1266,14 @@ namespace Lumina::Reflection::Visitor
 
 	CXChildVisitResult VisitClass(CXCursor Cursor, CXCursor Parent, FClangParserContext* Context)
 	{
-		std::string CursorName = ClangUtils::GetCursorDisplayName(Cursor);
-
 		// Reflected or not comes first, so an ordinary helper class can never influence the pass.
 		FReflectionMacro Macro;
-		if (!Context->TryFindMacroForCursor(Context->ReflectedHeader->HeaderPath, Cursor, Macro))
+		if (!Context->TryFindMacroForCursor(Context->ReflectedHeader, Cursor, Macro))
 		{
 			return CXChildVisit_Continue;
 		}
+
+		std::string CursorName = ClangUtils::GetCursorDisplayName(Cursor);
 
 		std::string FullyQualifiedCursorName;
 		if (!ClangUtils::GetQualifiedNameForDeclCursor(Cursor, FullyQualifiedCursorName))
@@ -1281,7 +1286,7 @@ namespace Lumina::Reflection::Visitor
 		}
 
 		FReflectionMacro GeneratedBody;
-		if (!Context->TryFindGeneratedBodyMacro(Context->ReflectedHeader->HeaderPath, Cursor, GeneratedBody))
+		if (!Context->TryFindGeneratedBodyMacro(Context->ReflectedHeader, Cursor, GeneratedBody))
 		{
 			LRT_ERROR(Cursor, EDiagId::MissingGeneratedBody,
 				"REFLECT'd class '%s' is missing a GENERATED_BODY() macro inside its body. "

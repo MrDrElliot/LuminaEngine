@@ -1,160 +1,161 @@
-﻿#include "ClangParserContext.h"
+#include "ClangParserContext.h"
 
-#include <iostream>
-
+#include <limits>
 #include "Utils.h"
-#include "xxhash.h"
-#include <queue>
 
 namespace Lumina::Reflection
 {
+    void FMacroPool::Add(FReflectionMacro&& Macro)
+    {
+        const uint32_t EndLine = Macro.EndLineNumber;
+        Macros.push_back(std::move(Macro));
+        ByEndLine[EndLine].push_back(static_cast<uint32_t>(Macros.size() - 1));
+    }
+
+    FReflectionMacro* FMacroPool::FindOnLine(uint32_t Line, int32_t BeforePosition)
+    {
+        const auto Bucket = ByEndLine.find(Line);
+        if (Bucket == ByEndLine.end())
+        {
+            return nullptr;
+        }
+
+        FReflectionMacro* Best = nullptr;
+        for (const uint32_t Index : Bucket->second)
+        {
+            FReflectionMacro& Candidate = Macros[Index];
+            if (Candidate.bConsumed || Candidate.Position >= BeforePosition)
+            {
+                continue;
+            }
+
+            if (Best == nullptr || Candidate.Position > Best->Position)
+            {
+                Best = &Candidate;
+            }
+        }
+
+        return Best;
+    }
+
     void FClangParserContext::AddReflectedMacro(FReflectionMacro&& Macro)
     {
-        uint64_t Hash = XXH64(Macro.HeaderID.c_str(), strlen(Macro.HeaderID.c_str()), 0);
-
-        std::vector<FReflectionMacro>& Macros = ReflectionMacros[Hash];
-        Macros.push_back(std::move(Macro));
+        ReflectionMacros[Macro.Header].Add(std::move(Macro));
     }
 
     void FClangParserContext::AddGeneratedBodyMacro(FReflectionMacro&& Macro)
     {
-        uint64_t Hash = ClangUtils::HashString(Macro.HeaderID);
-        
-        std::queue<FReflectionMacro>& Macros = GeneratedBodyMacros[Hash];
-        Macros.push(std::move(Macro));
+        GeneratedBodyMacros[Macro.Header].Push(std::move(Macro));
     }
 
-    bool FClangParserContext::TryFindMacroForCursor(const std::string& HeaderID, const CXCursor& Cursor, FReflectionMacro& Macro, bool bConsume)
+    FReflectedHeader* FClangParserContext::ResolveHeaderForFile(CXFile File)
     {
-        uint64_t Hash = ClangUtils::HashString(HeaderID);
+        if (File == nullptr)
+        {
+            return nullptr;
+        }
 
-        auto HeaderIter = ReflectionMacros.find(Hash);
+        const auto [Entry, bIsNew] = FileHeaders.try_emplace(File, nullptr);
+        if (bIsNew)
+        {
+            const std::string Path = ClangUtils::NormalizeHeaderPath(
+                ClangUtils::GetString(clang_getFileName(File)));
+
+            const auto Known = AllHeaders.find(FStringHash(Path));
+            Entry->second = Known != AllHeaders.end() ? Known->second : nullptr;
+        }
+
+        return Entry->second;
+    }
+
+    FReflectedHeader* FClangParserContext::ResolveHeaderForCursor(const CXCursor& Cursor)
+    {
+        CXFile File = nullptr;
+        clang_getExpansionLocation(clang_getRangeStart(clang_getCursorExtent(Cursor)), &File, nullptr, nullptr, nullptr);
+        return ResolveHeaderForFile(File);
+    }
+
+    bool FClangParserContext::TryFindMacroForCursor(const FReflectedHeader* Header, const CXCursor& Cursor, FReflectionMacro& Macro, bool bConsume)
+    {
+        const auto HeaderIter = ReflectionMacros.find(Header);
         if (HeaderIter == ReflectionMacros.end())
         {
             return false;
         }
 
-        CXSourceRange typeRange = clang_getCursorExtent(Cursor);
-        CXSourceLocation startLoc = clang_getRangeStart(typeRange);
+        const CXSourceRange TypeRange = clang_getCursorExtent(Cursor);
 
-        CXFile cursorFile;
-        uint32_t cursorLine, cursorColumn;
-        clang_getExpansionLocation(startLoc, &cursorFile, &cursorLine, &cursorColumn, nullptr);
+        CXFile CursorFile = nullptr;
+        uint32_t CursorLine = 0;
+        clang_getExpansionLocation(clang_getRangeStart(TypeRange), &CursorFile, &CursorLine, nullptr, nullptr);
+
+        if (ResolveHeaderForFile(CursorFile) != Header)
+        {
+            return false;
+        }
 
         // Position is monotonic with source order, used as a tiebreaker when macro and cursor share a line.
-        const int32_t cursorPosition = (int32_t)typeRange.begin_int_data;
+        const int32_t CursorPosition = (int32_t)TypeRange.begin_int_data;
 
-        CXString FileName = clang_getFileName(cursorFile);
+        FMacroPool& Pool = HeaderIter->second;
 
-        if (FileName.data == nullptr)
+        // The same-line case first, or an inline-form macro mis-binds to the cursor below it.
+        FReflectionMacro* Best = Pool.FindOnLine(CursorLine, CursorPosition);
+        if (Best == nullptr && CursorLine > 0)
+        {
+            Best = Pool.FindOnLine(CursorLine - 1, std::numeric_limits<int32_t>::max());
+        }
+
+        if (Best == nullptr)
         {
             return false;
         }
 
-        std::string FileNameChar = clang_getCString(FileName);
-        clang_disposeString(FileName);
-
-        // Normalized the same way HeaderID was, so case-sensitive filesystems do not drop legitimate hits.
-        FileNameChar = ClangUtils::NormalizeHeaderPath(std::move(FileNameChar));
-
-        if (FileNameChar != HeaderID)
+        Macro = *Best;
+        if (bConsume)
         {
-            return false;
+            Best->bConsumed = true;
         }
-
-        std::vector<FReflectionMacro>& MacrosForHeader = HeaderIter->second;
-
-        // Matched on the macro's closing line, so a wrapped argument list still binds to the field below it.
-        // Without the same-line case, inline-form macros mis-bind to the cursor below them.
-        auto SameLineMatch = MacrosForHeader.end();
-        auto LineAboveMatch = MacrosForHeader.end();
-
-        for (auto iter = MacrosForHeader.begin(); iter != MacrosForHeader.end(); ++iter)
-        {
-            if (iter->EndLineNumber == cursorLine && iter->Position < cursorPosition)
-            {
-                if (SameLineMatch == MacrosForHeader.end() || iter->Position > SameLineMatch->Position)
-                {
-                    SameLineMatch = iter;
-                }
-            }
-            else if (iter->EndLineNumber + 1 == cursorLine)
-            {
-                if (LineAboveMatch == MacrosForHeader.end() || iter->Position > LineAboveMatch->Position)
-                {
-                    LineAboveMatch = iter;
-                }
-            }
-        }
-
-        auto Best = (SameLineMatch != MacrosForHeader.end()) ? SameLineMatch : LineAboveMatch;
-        if (Best != MacrosForHeader.end())
-        {
-            Macro = *Best;
-            if (bConsume)
-            {
-                MacrosForHeader.erase(Best);
-            }
-            return true;
-        }
-
-        return false;
-    }
-
-    bool FClangParserContext::TryFindGeneratedBodyMacro(const std::string& HeaderID, const CXCursor& Cursor, FReflectionMacro& Macro)
-    {
-        // A pure lookup, since the struct visitor decides what a missing GENERATED_BODY means.
-        uint64_t Hash = XXH64(HeaderID.c_str(), strlen(HeaderID.c_str()), 0);
-        auto headerIter = GeneratedBodyMacros.find(Hash);
-        if (headerIter == GeneratedBodyMacros.end())
-        {
-            Macro = {};
-            return false;
-        }
-
-        
-        std::queue<FReflectionMacro>& MacrosForHeader = headerIter->second;
-
-        if (MacrosForHeader.empty())
-        {
-            Macro = {};
-            return false;
-        }
-        
-        Macro = MacrosForHeader.front();
-        
-        MacrosForHeader.pop();
-
         return true;
     }
-    
-    // Joined with a scope separator, since concatenating bare turned MyGame::Editor into MyGameEditor.
-    void FClangParserContext::RebuildCurrentNamespace()
+
+    bool FClangParserContext::TryFindGeneratedBodyMacro(const FReflectedHeader* Header, const CXCursor&, FReflectionMacro& Macro)
     {
-        CurrentNamespace.clear();
-
-        for (const std::string& Segment : NamespaceStack)
+        // A pure lookup, since the struct visitor decides what a missing GENERATED_BODY means.
+        const auto HeaderIter = GeneratedBodyMacros.find(Header);
+        if (HeaderIter == GeneratedBodyMacros.end())
         {
-            if (!CurrentNamespace.empty())
-            {
-                CurrentNamespace.append("::");
-            }
-
-            CurrentNamespace.append(Segment);
+            Macro = {};
+            return false;
         }
+
+        const FReflectionMacro* Next = HeaderIter->second.Pop();
+        if (Next == nullptr)
+        {
+            Macro = {};
+            return false;
+        }
+
+        Macro = *Next;
+        return true;
     }
 
-    void FClangParserContext::PushNamespace(const std::string& Namespace)
+    // Joined with a scope separator, since concatenating bare turned MyGame::Editor into MyGameEditor.
+    void FClangParserContext::PushNamespace(std::string_view Namespace)
     {
-        NamespaceStack.push_back(Namespace);
+        NamespaceLengths.push_back(CurrentNamespace.size());
 
-        RebuildCurrentNamespace();
+        if (!CurrentNamespace.empty())
+        {
+            CurrentNamespace.append("::");
+        }
+
+        CurrentNamespace.append(Namespace);
     }
 
     void FClangParserContext::PopNamespace()
     {
-        NamespaceStack.pop_back();
-
-        RebuildCurrentNamespace();
+        CurrentNamespace.resize(NamespaceLengths.back());
+        NamespaceLengths.pop_back();
     }
 }

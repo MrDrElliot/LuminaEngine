@@ -8,6 +8,7 @@
 #include "Core/Object/InstancedStruct.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Object/ObjectHandleTyped.h"
+#include "Containers/Algorithm.h"
 #include "AnimationGraphComponent.generated.h"
 
 namespace Lumina
@@ -156,7 +157,7 @@ namespace Lumina
         FUNCTION()
         bool WasNotifyTriggered(const FName& NotifyName) const
         {
-            return std::ranges::any_of(NotifyEvents, [&NotifyName](const FAnimNotifyEvent& Event)
+            return Algo::AnyOf(NotifyEvents, [&NotifyName](const FAnimNotifyEvent& Event)
             {
                 return Event.Name == NotifyName;
             });

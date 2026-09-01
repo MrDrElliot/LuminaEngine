@@ -218,6 +218,12 @@ public abstract class TargetRules
     /// <summary>Below this many mergeable sources, compile file by file: no repeated header parsing to save.</summary>
     public int MinFilesForUnityBuild { get; set; } = 3;
 
+    /// <summary>Whether recently edited sources are held out of unity blobs so an edit rebuilds only itself.</summary>
+    public bool bAdaptiveUnityBuild { get; set; } = true;
+
+    /// <summary>How many sources a module holds out before the least recently edited are merged back.</summary>
+    public int AdaptiveUnityMaxFiles { get; set; } = 24;
+
     /// <summary>Emit debug symbols.</summary>
     public bool bDebugSymbols { get; set; } = true;
 

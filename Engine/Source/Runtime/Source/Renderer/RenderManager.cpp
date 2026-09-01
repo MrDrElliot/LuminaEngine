@@ -19,6 +19,7 @@
 #include "World/World.h"
 #include "World/WorldManager.h"
 #include "World/Scene/RenderScene/RenderScene.h"
+#include "Platform/Time/PlatformTime.h"
 
 namespace Lumina
 {
@@ -130,33 +131,51 @@ namespace Lumina
             }
         }
         
+        const bool bRenderBootTimings = GCommandLine != nullptr && GCommandLine->Has("boottimings");
+        double RenderBootLast = PlatformTime::Seconds();
+        auto RenderBootMark = [&RenderBootLast, bRenderBootTimings](const char* Name)
+        {
+            const double Now = PlatformTime::Seconds();
+            if (bRenderBootTimings)
+            {
+                LOG_DISPLAY("[boot]     {} {} ms", Name, (Now - RenderBootLast) * 1000.0);
+            }
+            RenderBootLast = Now;
+        };
+
         RHI::CreateDevice(RHI::FDeviceDesc
         {
             .bValidation = bValidation,
             .bDebugUtils = bDebugUtils,
             .bHeadless   = false,
         });
+        RenderBootMark("RHI::CreateDevice");
         RHI::Core::Initialize();
+        RenderBootMark("RHI::Core::Initialize");
 
         ShaderLibrary   = Memory::New<FShaderLibrary>();
         GShaderLibrary  = ShaderLibrary;
         ShaderCompiler  = Memory::New<FSpirVShaderCompiler>();
         GShaderCompiler = ShaderCompiler;
         ShaderCompiler->Initialize();
+        RenderBootMark("ShaderCompiler::Initialize");
 
         FWindow* Window = Windowing::GetPrimaryWindowHandle();
         SwapchainTarget.Initialize(RHI::CreateSurface(Window->GetWindow()), Window->GetExtent());
+        RenderBootMark("Swapchain");
 
         WindowResizedHandle = FWindow::OnWindowResized.AddMember(this, &FRenderManager::OnWindowResized);
 
         MaterialManager   = MakeUnique<RHI::FMaterialManager>();
         CollectionManager = MakeUnique<RHI::FMaterialCollectionManager>();
 
+        RenderBootMark("Material managers");
+
 #if WITH_EDITOR
         ImGuiRenderer = Memory::New<FVulkanImGuiRender>();
         ImGuiRenderer->Initialize();
 #endif
-        
+        RenderBootMark("ImGuiRenderer");
     }
     
     void FRenderManager::WaitForFrameSlot()

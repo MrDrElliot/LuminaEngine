@@ -23,7 +23,11 @@ public sealed class BuildOptions
     /// <summary>A copy with the PGO request dropped, for a target being built only as a prerequisite.</summary>
     public BuildOptions WithoutPgo()
     {
-        BuildOptions Copy = new() { bDisableUnityBuild = bDisableUnityBuild };
+        BuildOptions Copy = new()
+        {
+            bDisableUnityBuild = bDisableUnityBuild,
+            bDisableAdaptiveUnity = bDisableAdaptiveUnity,
+        };
 
         foreach (KeyValuePair<string, FeatureMode> Mode in Modes)
         {
@@ -40,6 +44,9 @@ public sealed class BuildOptions
 
     /// <summary>Compile every source as its own translation unit regardless of what the rules say.</summary>
     public bool bDisableUnityBuild { get; set; }
+
+    /// <summary>Merge every source into its blob, even one edited a moment ago.</summary>
+    public bool bDisableAdaptiveUnity { get; set; }
 
     /// <summary>Which half of a PGO cycle was asked for, or null to leave the target rules alone.</summary>
     public PgoMode? Pgo { get; set; }
@@ -114,6 +121,7 @@ public sealed class BuildOptions
         if (Arguments is not null)
         {
             Options.bDisableUnityBuild = Arguments.HasFlag("NoUnity");
+            Options.bDisableAdaptiveUnity = Arguments.HasFlag("NoAdaptiveUnity");
 
             if (Arguments.GetString("Pgo") is { Length: > 0 } PgoArgument)
             {

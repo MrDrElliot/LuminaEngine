@@ -96,19 +96,27 @@ internal sealed class ScriptManager
                     }
                 }
 
-                FScriptImage? Compiled = ScriptCompiler.Compile(Unit.Name, Unit.Sources, Refs);
-                if (Compiled == null)
+                // Roslyn is the single largest cost in engine startup, and nothing has usually changed.
+                string? CompileKey = ComputeCompileKey(Unit, Images);
+                if (TryLoadCachedAssembly(Unit.DllPath, CompileKey, out FScriptImage CachedImage))
                 {
-                    Native.Log(ELogLevel.Error,
-                        $"Script reload aborted: compilation of '{Unit.Name}' failed; keeping current scripts.");
-                    return false;
+                    Image = CachedImage;
                 }
-                Image = Compiled.Value;
+                else
+                {
+                    FScriptImage? Compiled = ScriptCompiler.Compile(Unit.Name, Unit.Sources, Refs);
+                    if (Compiled == null)
+                    {
+                        Native.Log(ELogLevel.Error,
+                            $"Script reload aborted: compilation of '{Unit.Name}' failed; keeping current scripts.");
+                        return false;
+                    }
+                    Image = Compiled.Value;
 
-                // Emit this unit's DLL to its own <root>/Binaries/DotNet so it's a real on-disk artifact
-                // (alongside the plugin's C++ Binaries). Best-effort: a locked/unwritable target never fails
-                // the reload, the live generation loads from these in-memory bytes regardless.
-                EmitAssembly(Unit.Name, Unit.DllPath, Image);
+                    // A failed write leaves the previous DLL in place, so the key only follows a real one.
+                    bool bEmitted = EmitAssembly(Unit.Name, Unit.DllPath, Image);
+                    WriteCompileKey(Unit.DllPath, bEmitted ? CompileKey : null);
+                }
             }
             else if (!string.IsNullOrEmpty(Unit.DllPath) && File.Exists(Unit.DllPath))
             {
@@ -232,11 +240,12 @@ internal sealed class ScriptManager
     // Writes a unit's compiled image to its on-disk DLL (creating <root>/Binaries/DotNet as needed). Purely an
     // artifact: the generation always loads from the in-memory bytes, so a failure here (locked file, read-only
     // path) is logged and ignored rather than aborting the reload.
-    private static void EmitAssembly(string UnitName, string? Path, FScriptImage Image)
+    /// <summary>False when the artifact did not reach disk, which must not be stamped as cacheable.</summary>
+    private static bool EmitAssembly(string UnitName, string? Path, FScriptImage Image)
     {
         if (string.IsNullOrEmpty(Path))
         {
-            return;
+            return false;
         }
 
         try
@@ -251,10 +260,12 @@ internal sealed class ScriptManager
             {
                 File.WriteAllBytes(SymbolPath(Path!), Image.Pdb);
             }
+            return true;
         }
         catch (Exception Exception)
         {
             Native.Log(ELogLevel.Warn, $"Could not write '{UnitName}' assembly to '{Path}': {Exception.Message}");
+            return false;
         }
     }
 
@@ -264,6 +275,113 @@ internal sealed class ScriptManager
     }
 
     // A prebuilt unit keeps its symbols only if whoever built it shipped them, so this stays optional.
+    // Bumped whenever the emitted image could differ for identical sources.
+    private const int CompileCacheVersion = 1;
+
+    private static string CompileKeyPath(string DllPath) => DllPath + ".compilekey";
+
+    /// <summary>Identity of everything the emitted image depends on, or null when it cannot be pinned down.</summary>
+    private static string? ComputeCompileKey(ScriptAssemblyUnit Unit, Dictionary<string, byte[]> DependencyImages)
+    {
+        if (string.IsNullOrEmpty(Unit.DllPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var Digest = System.Security.Cryptography.IncrementalHash.CreateHash(
+                System.Security.Cryptography.HashAlgorithmName.SHA256);
+
+            void Feed(string Value) => Digest.AppendData(System.Text.Encoding.UTF8.GetBytes(Value + "\u0000"));
+
+            Feed($"v{CompileCacheVersion}");
+            Feed(ScriptCompiler.bOptimize ? "release" : "debug");
+            Feed(typeof(ScriptManager).Assembly.FullName ?? "LuminaSharp");
+            Feed(Unit.Name);
+
+            foreach ((string Path, string Text) in Unit.Sources)
+            {
+                Feed(Path);
+                Feed(Text);
+            }
+
+            // The dependency's own bytes, so a changed dependency invalidates every dependent too.
+            foreach (string Dep in Unit.Dependencies)
+            {
+                Feed(Dep);
+                if (DependencyImages.TryGetValue(Dep, out byte[]? DepImage))
+                {
+                    Digest.AppendData(DepImage);
+                }
+            }
+
+            // Stamps rather than contents, since a reference can be a large third-party assembly.
+            foreach (string Reference in Unit.References)
+            {
+                Feed(Reference);
+                var Info = new FileInfo(Reference);
+                Feed(Info.Exists ? $"{Info.Length}:{Info.LastWriteTimeUtc.Ticks}" : "missing");
+            }
+
+            return Convert.ToHexString(Digest.GetHashAndReset());
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private static bool TryLoadCachedAssembly(string? DllPath, string? CompileKey, out FScriptImage Image)
+    {
+        Image = default;
+        if (string.IsNullOrEmpty(DllPath) || CompileKey == null || !File.Exists(DllPath))
+        {
+            return false;
+        }
+
+        try
+        {
+            string KeyPath = CompileKeyPath(DllPath!);
+            if (!File.Exists(KeyPath) || File.ReadAllText(KeyPath).Trim() != CompileKey)
+            {
+                return false;
+            }
+
+            Image = new FScriptImage(File.ReadAllBytes(DllPath!), ReadSymbols(DllPath!));
+            return true;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>A null key clears any stale stamp, so the next load recompiles rather than trusting an old DLL.</summary>
+    private static void WriteCompileKey(string? DllPath, string? CompileKey)
+    {
+        if (string.IsNullOrEmpty(DllPath))
+        {
+            return;
+        }
+
+        try
+        {
+            string KeyPath = CompileKeyPath(DllPath!);
+            if (CompileKey == null)
+            {
+                File.Delete(KeyPath);
+                return;
+            }
+
+            File.WriteAllText(KeyPath, CompileKey);
+        }
+        catch (Exception)
+        {
+            // A cache that cannot be written just means the next load compiles again.
+        }
+    }
+
     private static byte[]? ReadSymbols(string DllPath)
     {
         try

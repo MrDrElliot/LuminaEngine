@@ -25,5 +25,8 @@ public class MSDFGen : LuminaThirdPartyModuleRules
         // first, which it cannot be from inside a merged translation unit (C2065). Only that file,
         // so only that file is held back; the rest merge.
         ExcludeFromUnity.Add("equation-solver.cpp");
+
+        // Narrowing in the TIFF writer's templated pixel path, fatal engine-wide but not ours to fix.
+        Warnings.Set(WarningSeverity.Off, CompilerWarning.ConversionLoss);
     }
 }

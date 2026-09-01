@@ -4,6 +4,8 @@
 #include <filesystem>
 #include <fstream>
 
+#include <atomic>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <algorithm>
@@ -215,6 +217,52 @@ namespace Lumina::Reflection
         }
     }
 
+    namespace
+    {
+        // One header's emit never reads another's output, so the only shared state is the intern table.
+        template<typename TBody>
+        void RunGenerateJobs(TBody&& Body, size_t Count)
+        {
+            if (Count == 0)
+            {
+                return;
+            }
+
+            const unsigned Hardware = std::thread::hardware_concurrency();
+            const size_t Workers = std::min<size_t>(Count, Hardware == 0 ? 1 : Hardware);
+            if (Workers <= 1)
+            {
+                for (size_t Index = 0; Index < Count; ++Index)
+                {
+                    Body(Index);
+                }
+                return;
+            }
+
+            std::atomic<size_t> Next{ 0 };
+            std::vector<std::thread> Threads;
+            Threads.reserve(Workers);
+
+            for (size_t Worker = 0; Worker < Workers; ++Worker)
+            {
+                Threads.emplace_back([&Next, &Body, Count]
+                {
+                    for (size_t Index = Next.fetch_add(1, std::memory_order_relaxed);
+                         Index < Count;
+                         Index = Next.fetch_add(1, std::memory_order_relaxed))
+                    {
+                        Body(Index);
+                    }
+                });
+            }
+
+            for (std::thread& Thread : Threads)
+            {
+                Thread.join();
+            }
+        }
+    }
+
     FCodeGenerator::FCodeGenerator(FReflectedWorkspace* InWorkspace, const FReflectionDatabase& Database)
         : Workspace(InWorkspace)
         , ReflectionDatabase(&Database)
@@ -229,6 +277,16 @@ namespace Lumina::Reflection
         std::unordered_map<FReflectedProject*, std::unordered_set<std::string>> ExpectedArtifacts;
         // Keyed by DIR rather than project, since plugin modules share one and would sweep each other away.
         std::unordered_map<std::string, std::unordered_set<std::string>> RoutedArtifacts;
+
+        // Each header writes only its own files, so the emit is collected first and then fanned out.
+        struct FGenerateJob
+        {
+            FReflectedHeader* Header;
+            bool              bRouteTypes;
+            bool              bFullEmit;
+        };
+        std::vector<FGenerateJob> Jobs;
+        std::vector<FReflectedHeader*> FreeFunctionJobs;
 
         for (const auto& [Header, _] : ReflectionDatabase->ReflectedTypes)
         {
@@ -259,15 +317,13 @@ namespace Lumina::Reflection
             if (Header->bDirty)
             {
                 DirtyProjects.insert(Header->Project);
-                GenerateHeaderFile(Header);
-                GenerateSourceFile(Header);
-                GenerateCSharpFile(Header, bRouteTypes);
+                Jobs.push_back({ Header, bRouteTypes, true });
             }
             else if (!std::filesystem::exists(
                 MakeGeneratedCSharpPath(Workspace->GetPath(), *Header, bRouteTypes).c_str()))
             {
                 // Routing changed under an unchanged header, and the old copy is swept either way, so re-emit.
-                GenerateCSharpFile(Header, bRouteTypes);
+                Jobs.push_back({ Header, bRouteTypes, false });
             }
         }
 
@@ -294,10 +350,29 @@ namespace Lumina::Reflection
             if (Header->bDirty)
             {
                 DirtyProjects.insert(Header->Project);
-                GenerateSourceFile(Header);
-                GenerateCSharpFile(Header, /*bRoutable*/ true); // free-function-only -> routes to plugin/game
+                // free-function-only, so it routes to the plugin or game and needs no generated.h
+                FreeFunctionJobs.push_back(Header);
             }
         }
+
+        RunGenerateJobs([this, &Jobs, &FreeFunctionJobs](size_t Index)
+        {
+            if (Index < Jobs.size())
+            {
+                const FGenerateJob& Job = Jobs[Index];
+                if (Job.bFullEmit)
+                {
+                    GenerateHeaderFile(Job.Header);
+                    GenerateSourceFile(Job.Header);
+                }
+                GenerateCSharpFile(Job.Header, Job.bRouteTypes);
+                return;
+            }
+
+            FReflectedHeader* Header = FreeFunctionJobs[Index - Jobs.size()];
+            GenerateSourceFile(Header);
+            GenerateCSharpFile(Header, /*bRoutable*/ true);
+        }, Jobs.size() + FreeFunctionJobs.size());
 
         // A deleted header leaves stale generated files the dirty loop never visits, so sweep them here.
         auto SweepOrphanDir = [&](FReflectedProject* Project, const std::string& DirPath,

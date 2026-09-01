@@ -55,3 +55,6 @@
 #include "Core/Math/Hash/Hash.h"
 #include "Core/Threading/Thread.h"
 #include "Log/Log.h"
+
+// Tracy costs 165ms in any translation unit that reaches it, and 26 of 28 unity files do.
+#include "Core/Profiler/Profile.h"

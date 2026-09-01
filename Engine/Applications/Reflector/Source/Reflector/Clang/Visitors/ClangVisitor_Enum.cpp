@@ -45,8 +45,6 @@ namespace Lumina::Reflection::Visitor
     
     CXChildVisitResult VisitEnum(CXCursor Cursor, CXCursor, FClangParserContext* Context)
     {
-        std::string CursorName = ClangUtils::GetCursorDisplayName(Cursor);
-
         void* Data = clang_getCursorType(Cursor).data[0];
         if(Data == nullptr)
         {
@@ -54,10 +52,12 @@ namespace Lumina::Reflection::Visitor
         }
 
         FReflectionMacro Macro;
-        if(!Context->TryFindMacroForCursor(Context->ReflectedHeader->HeaderPath, Cursor, Macro))
+        if(!Context->TryFindMacroForCursor(Context->ReflectedHeader, Cursor, Macro))
         {
             return CXChildVisit_Continue;
         }
+
+        std::string CursorName = ClangUtils::GetCursorDisplayName(Cursor);
 
         
         std::string FullyQualifiedName;

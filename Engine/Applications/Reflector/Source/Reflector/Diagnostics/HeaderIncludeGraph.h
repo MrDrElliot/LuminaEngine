@@ -57,6 +57,8 @@ namespace Lumina::Reflection
         bool IsInsideProjectRoots(const std::string& AbsPath) const;
 
         std::unordered_map<std::string, FNode>   Nodes;
+        // Resolution is deterministic per includer directory, so the search dirs are walked once per edge.
+        mutable std::unordered_map<std::string, std::string> ResolvedIncludes;
         std::vector<std::string>            ProjectRoots;       // normalized lowercase prefixes
         std::vector<std::string>            AllIncludeDirs;     // union across projects
     };

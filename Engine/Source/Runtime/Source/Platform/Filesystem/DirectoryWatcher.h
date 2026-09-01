@@ -1,6 +1,5 @@
 ﻿#pragma once
 
-#include <thread>
 #include "Containers/Function.h"
 #include "Containers/String.h"
 #include "Core/Threading/Atomic.h"

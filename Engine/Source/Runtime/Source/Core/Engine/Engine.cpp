@@ -11,6 +11,7 @@
 #include "Config/EngineSettings.h"
 #include "Core/Application/Application.h"
 #include "Core/Console/ConsoleVariable.h"
+#include "Core/Threading/Thread.h"
 #include "Core/Delegates/CoreDelegates.h"
 #include "Core/Module/ModuleManager.h"
 #include "Core/Object/ObjectIterator.h"
@@ -233,8 +234,23 @@ namespace Lumina
 
         PlatformTime::EnableHighResolutionTiming();
 
+        // Startup is a long serial chain, so -boottimings attributes it without attaching a profiler.
+        const bool bBootTimings = GCommandLine->Has("boottimings");
+        double BootLast = PlatformTime::Seconds();
+        const double BootStart = BootLast;
+        auto BootMark = [&BootLast, bBootTimings](const char* Name)
+        {
+            const double Now = PlatformTime::Seconds();
+            if (bBootTimings)
+            {
+                LOG_DISPLAY("[boot] {} {} ms", Name, (Now - BootLast) * 1000.0);
+            }
+            BootLast = Now;
+        };
+
         // Must run before renderer/Lua so Earliest/Core-phase plugins can wedge in ahead.
         FPluginManager::Get().DiscoverEnginePlugins();
+        BootMark("DiscoverEnginePlugins");
 
         // Falls back to the stored startup project, so a bare launch respects plugin enable and disable.
         {
@@ -252,6 +268,7 @@ namespace Lumina
         }
 
         FPluginManager::Get().LoadModulesForPhase(EPluginLoadingPhase::Earliest);
+        BootMark("Phase Earliest");
 
         const FString& EngineDir = Paths::GetEngineDirectory();
         if (!EngineDir.empty() && Filesystem::Exists(EngineDir))
@@ -267,6 +284,7 @@ namespace Lumina
         }
         
         FCoreDelegates::OnPreEngineInit.BroadcastAndClear();
+        BootMark("OnPreEngineInit");
 
         // An engine-lifetime subscription, so the handle is intentionally not retained.
         (void)FCoreDelegates::OnSettingsSaved.AddLambda([](CClass* Class)
@@ -286,59 +304,96 @@ namespace Lumina
         });
 
         FConsoleRegistry::Get().LoadFromConfig();
+        BootMark("Console LoadFromConfig");
         
-        basisu::basisu_encoder_init();
+        Task::Initialize();
+        BootMark("Task::Initialize");
 
-        if (!GIsHeadless)
-        {
-            Audio::Initialize();
-        }
         if (INetworkRuntime* NetRuntime = GetNetworkRuntime())
         {
             NetRuntime->Initialize();
         }
-        Task::Initialize();
+        BootMark("Net Initialize");
         Physics::Initialize();
+        BootMark("Physics::Initialize");
 
         FPluginManager::Get().LoadModulesForPhase(EPluginLoadingPhase::Core);
+        BootMark("Phase Core");
+
+        // Threads rather than jobs, since a CLR and a COM apartment both outlive the fiber a job runs on.
+        FThread BasisuThread([]
+        {
+            basisu::basisu_encoder_init();
+        });
+
+        // Started past this stretch's last module load, whose static initializers race the layout registry.
+        FThread DotNetThread([]
+        {
+            DotNet::Initialize();
+        });
+
+        FThread AudioThread;
+        if (!GIsHeadless)
+        {
+            AudioThread = FThread([]
+            {
+                Audio::Initialize();
+            });
+        }
 
         if (!GIsHeadless)
         {
             Internal::SetRenderManager(Memory::New<FRenderManager>());
             Render().Initialize();
+            BootMark("  Render().Initialize");
 
             // After the renderer since residency goes through the RHI, and before any asset load.
             FTextureStreamingManager::Initialize();
+            BootMark("  TextureStreaming");
 
             EngineViewportSize = Windowing::GetPrimaryWindowHandle()->GetExtent();
         }
+        BootMark("Renderer total");
 
-        // C# host; non-fatal if the bundled runtime/bootstrap is absent.
-        DotNet::Initialize();
+        if (AudioThread.Joinable())
+        {
+            AudioThread.Join();
+        }
+        BasisuThread.Join();
+        // Script-backed CDOs run in the very next step, so the host has to be up by here.
+        DotNetThread.Join();
+        BootMark("Join parallel init");
 
         ProcessNewlyLoadedCObjects();
+        BootMark("ProcessNewlyLoadedCObjects");
 
         // Post-reflection so module initializers do not null-deref, and pre WorldManager for what they spawn.
         FPluginManager::Get().LoadModulesForPhase(EPluginLoadingPhase::PreEngineInit);
         ProcessNewlyLoadedCObjects();
+        BootMark("Phase PreEngineInit");
 
         // Built-in primitive meshes must exist before any world deserializes.
         CPrimitiveManager::Get();
+        BootMark("CPrimitiveManager");
         
         if (!GIsHeadless)
         {
             CFontManager::Get();
         }
+        BootMark("CFontManager");
 
         GWorldManager = Memory::New<FWorldManager>();
+        BootMark("WorldManager");
 
         FPluginManager::Get().LoadModulesForPhase(EPluginLoadingPhase::EngineInit);
         ProcessNewlyLoadedCObjects();
-        
+        BootMark("Phase EngineInit");
+
         if (TOptional<FFixedString> ProjectArg = GCommandLine->Get("Project"))
         {
             LoadProject(ProjectArg.value());
         }
+        BootMark("LoadProject");
 
         #if USING(WITH_EDITOR)
         GConfig->DiscoverAndLoadSettings();
@@ -353,20 +408,28 @@ namespace Lumina
         DeveloperToolUI = CreateDevelopmentTools();
         DeveloperToolUI->Initialize(UpdateContext);
         GApp->GetEventProcessor().RegisterEventHandler(DeveloperToolUI, (int32)EInputLayer::EditorChrome);
+        BootMark("DeveloperToolUI");
 
         FPluginManager::Get().LoadModulesForPhase(EPluginLoadingPhase::EditorInit);
         ProcessNewlyLoadedCObjects();
+        BootMark("Phase EditorInit");
         #endif
 
         if (!GIsHeadless)
         {
             RmlUi::Initialize();
+        BootMark("RmlUi::Initialize");
         }
 
         FPluginManager::Get().LoadModulesForPhase(EPluginLoadingPhase::PostEngineInit);
         ProcessNewlyLoadedCObjects();
 
         FCoreDelegates::OnPostEngineInit.BroadcastAndClear();
+        BootMark("Phase PostEngineInit");
+        if (bBootTimings)
+        {
+            LOG_DISPLAY("[boot] TOTAL FEngine::Init {} ms", (PlatformTime::Seconds() - BootStart) * 1000.0);
+        }
 
         return true;
     }

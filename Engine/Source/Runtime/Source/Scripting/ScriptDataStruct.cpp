@@ -3,6 +3,7 @@
 
 #include "ScriptStruct.h"
 #include "Core/Object/Class.h"
+#include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Object/ObjectUtils.h"
 #include "Core/Object/Package/Package.h"
 #include "Scripting/DotNet/DotNetHost.h"

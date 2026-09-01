@@ -9,7 +9,7 @@
 #include "Platform/PlatformString.h"
 
 PRAGMA_DISABLE_ALL_WARNINGS
-#include <ostream>
+#include <iosfwd>
 PRAGMA_ENABLE_ALL_WARNINGS
 
 
@@ -87,8 +87,9 @@ namespace Lumina
 
 namespace Lumina::Containers
 {
-    template <size_t N, typename TAllocator>
-    inline std::ostream& operator<<(std::ostream& Out, const TBasicString<char, N, TAllocator>& Str)
+    // Templated on the traits so the stream stays dependent, which lets this header forward declare it.
+    template <typename TTraits, size_t N, typename TAllocator>
+    inline std::basic_ostream<char, TTraits>& operator<<(std::basic_ostream<char, TTraits>& Out, const TBasicString<char, N, TAllocator>& Str)
     {
         Out.write(Str.data(), static_cast<std::streamsize>(Str.size()));
         return Out;

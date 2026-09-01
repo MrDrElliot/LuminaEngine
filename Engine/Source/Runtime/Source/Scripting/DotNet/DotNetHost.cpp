@@ -1211,6 +1211,7 @@ namespace Lumina::DotNet
                 {
                     Filesystem::RemoveFile(Unit.AssemblyPath);
                     Filesystem::RemoveFile(Marker);
+                    Filesystem::RemoveFile(Unit.AssemblyPath + ".compilekey");
                     LOG_DISPLAY("C#: unit '{}' no longer has sources; deleted its stale compiled assembly.", Unit.Name.c_str());
                     continue;
                 }
@@ -2457,7 +2458,22 @@ LUMINA_DOTNET_EXPORT(void*, ResolveModuleHandle)(const char* Name, int Len)
         return Next == L'-' || Next == L'.' || Next == 0;
     };
 
-    HANDLE Snap = ::CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, 0);
+    // A concurrent module load fails the snapshot with ERROR_BAD_LENGTH, and a miss here is baked into a permanently null function pointer.
+    HANDLE Snap = INVALID_HANDLE_VALUE;
+    for (int Attempt = 0; Attempt < 16; ++Attempt)
+    {
+        Snap = ::CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, 0);
+        if (Snap != INVALID_HANDLE_VALUE)
+        {
+            break;
+        }
+        if (::GetLastError() != ERROR_BAD_LENGTH)
+        {
+            return nullptr;
+        }
+        ::Sleep(1);
+    }
+
     if (Snap == INVALID_HANDLE_VALUE)
     {
         return nullptr;

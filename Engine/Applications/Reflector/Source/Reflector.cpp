@@ -9,7 +9,10 @@
 #include "Reflector/Clang/ClangParser.h"
 #include "Reflector/CodeGeneration/CodeGenerator.h"
 #include "Reflector/ReflectionCore/ReflectedProject.h"
+#include "Reflector/Utils/Timing.h"
+#include <chrono>
 #include <cstdio>
+#include <thread>
 
 
 using json = nlohmann::json;
@@ -18,6 +21,13 @@ using namespace Lumina::Reflection;
 int main(int argc, char* argv[])
 {    
     Lumina::FStringHash::Initialize();
+
+    for (int i = 1; i < argc; ++i)
+    {
+        GReportTimings |= std::string(argv[i]) == "-timings";
+    }
+
+    FScopedPhaseTimer TotalTimer("Total");
     
     std::puts("===============================================");
     std::puts("======== Lumina Reflection Tool (LRT) =========");
@@ -58,7 +68,9 @@ int main(int argc, char* argv[])
     std::string WorkspacePath     = Data["WorkspacePath"].get<std::string>().c_str();
     
     FReflectedWorkspace Workspace(WorkspacePath.c_str());
-    
+
+    FScopedPhaseTimer WorkspaceTimer("Workspace registration");
+
     for (const auto& Project : Data["Projects"])
     {
         std::string ProjectName = Project["Name"].get<std::string>().c_str();
@@ -139,44 +151,22 @@ int main(int argc, char* argv[])
         Workspace.AddReflectedProject(std::move(ReflectedProject));
     }
 
-    // Static include-graph pass first, since cycles otherwise surface as confusing parse errors.
+    WorkspaceTimer.Stop();
+
+    // Runs alongside the parse, reading only header paths while the walk writes their include lists.
+    FHeaderIncludeGraph Graph;
+    std::vector<FHeaderCycle> Cycles;
+    double GraphMilliseconds = 0.0;
+
+    // Bailing ahead of the parse bought nothing, since clang rejects a cycle in about ten milliseconds.
+    std::thread GraphThread([&Graph, &Cycles, &GraphMilliseconds, &Workspace]
     {
-        FHeaderIncludeGraph Graph;
+        const auto Start = std::chrono::steady_clock::now();
         Graph.BuildFromWorkspace(&Workspace);
-
-        const auto Cycles = Graph.DetectCycles();
-        for (const FHeaderCycle& Cycle : Cycles)
-        {
-            // Build a "A.h -> B.h -> A.h" arrow chain for the message body.
-            std::string Arrow;
-            for (size_t i = 0; i < Cycle.size(); ++i)
-            {
-                if (i > 0)
-                {
-                    Arrow += " -> ";
-                }
-                Arrow += Cycle[i];
-            }
-
-            // Anchor at the cycle's first include edge so the build-log error opens the offending line.
-            FDiagLocation Loc;
-            Loc.File = Cycle.front();
-            if (Cycle.size() >= 2)
-            {
-                Loc.Line = Graph.GetIncludeLine(Cycle[0], Cycle[1]);
-            }
-
-            FDiagnostics::Get().Errorf(Loc, EDiagId::CircularHeaderInclude,
-                "Circular header include: %s", Arrow.c_str());
-        }
-
-        if (!Cycles.empty())
-        {
-            // Bail before parsing, or clang chews for tens of seconds on a broken workspace.
-            FDiagnostics::Get().PrintSummary();
-            return 1;
-        }
-    }
+        Cycles = Graph.DetectCycles();
+        GraphMilliseconds = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - Start).count();
+    });
 
     FClangParser Parser;
 
@@ -186,13 +176,51 @@ int main(int argc, char* argv[])
         Parser.bVerboseDiagnostics |= std::string(argv[i]) == "-verbose-diagnostics";
     }
 
-    bool bParseResult = Parser.Parse(&Workspace);
+    bool bParseResult;
+    {
+        FScopedPhaseTimer ParseTimer("Parse (total)");
+        bParseResult = Parser.Parse(&Workspace);
+    }
 
-    if (!bParseResult)
+    GraphThread.join();
+    if (GReportTimings)
+    {
+        std::printf("[timing] %-30s %8.1f ms (overlapped)\n", "Include graph + cycles", GraphMilliseconds);
+    }
+
+    for (const FHeaderCycle& Cycle : Cycles)
+    {
+        // Build a "A.h -> B.h -> A.h" arrow chain for the message body.
+        std::string Arrow;
+        for (size_t i = 0; i < Cycle.size(); ++i)
+        {
+            if (i > 0)
+            {
+                Arrow += " -> ";
+            }
+            Arrow += Cycle[i];
+        }
+
+        // Anchor at the cycle's first include edge so the build-log error opens the offending line.
+        FDiagLocation Loc;
+        Loc.File = Cycle.front();
+        if (Cycle.size() >= 2)
+        {
+            Loc.Line = Graph.GetIncludeLine(Cycle[0], Cycle[1]);
+        }
+
+        FDiagnostics::Get().Errorf(Loc, EDiagId::CircularHeaderInclude,
+            "Circular header include: %s", Arrow.c_str());
+    }
+
+    // A cycle makes every later diagnostic noise, so it ends the run before anything is generated.
+    if (!Cycles.empty() || !bParseResult)
     {
         FDiagnostics::Get().PrintSummary();
         return 1;
     }
+
+    FScopedPhaseTimer ValidationTimer("Validation");
 
     // Any header with a reflection macro must end its include block with the matching generated.h.
     for (const auto& Project : Workspace.ReflectedProjects)
@@ -374,15 +402,19 @@ int main(int argc, char* argv[])
         }
     }
 
+    ValidationTimer.Stop();
+
     if (FDiagnostics::Get().GetErrorCount() != 0)
     {
         FDiagnostics::Get().PrintSummary();
         return 1;
     }
 
-    FCodeGenerator CodeGenerator(&Workspace, Parser.ParsingContext.ReflectionDatabase);
-
-    CodeGenerator.GenerateCode();
+    {
+        FScopedPhaseTimer CodegenTimer("Code generation");
+        FCodeGenerator CodeGenerator(&Workspace, Parser.ParsingContext.ReflectionDatabase);
+        CodeGenerator.GenerateCode();
+    }
 
     Lumina::FStringHash::Shutdown();
 

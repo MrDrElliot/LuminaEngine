@@ -3,6 +3,7 @@
 
 #include <box3d/collision.h>
 
+#include "Box3DInternal.h"
 #include "Box3DPhysicsScene.h"
 #include "Box3DUtils.h"
 #include "Core/Console/ConsoleVariable.h"

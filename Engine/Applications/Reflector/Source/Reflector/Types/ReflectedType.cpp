@@ -1,6 +1,8 @@
 ﻿#include "ReflectedType.h"
 
 #include <algorithm>
+#include <array>
+#include <ranges>
 
 #include "Reflector/CodeGeneration/CodeWriter.h"
 #include "Reflector/Types/Properties/ReflectedProperty.h"
@@ -14,8 +16,8 @@ namespace Lumina::Reflection
             return;
         }
 
-        Writer.Linef("static constexpr Lumina::FMetaDataPairParam %s_Metadata[] = {",
-            std::string(SymbolBase).c_str());
+        Writer.Linef("static constexpr Lumina::FMetaDataPairParam %.*s_Metadata[] = {",
+            static_cast<int>(SymbolBase.size()), SymbolBase.data());
 
         for (const FMetadataPair& Pair : Metadata)
         {
@@ -27,65 +29,69 @@ namespace Lumina::Reflection
 
     namespace
     {
-        constexpr uint32_t Fnv1aLike(const char* Str)
+        struct FCoreTypeEntry
         {
-            uint32_t Hash = 5381;
-            while (*Str)
+            std::string_view   Name;
+            EPropertyTypeFlags Flags;
+        };
+
+        // Sorted during constant evaluation, so the lookup below is a binary search over a read-only table.
+        constexpr auto GCoreTypes = []
+        {
+            std::array Entries = std::to_array<FCoreTypeEntry>(
             {
-                Hash = ((Hash << 5) + Hash) + static_cast<unsigned char>(*Str++);
-            }
-            return Hash;
-        }
+                { "bool",                     EPropertyTypeFlags::Bool            },
+                { "uint8",                    EPropertyTypeFlags::UInt8           },
+                { "uint16",                   EPropertyTypeFlags::UInt16          },
+                { "uint32",                   EPropertyTypeFlags::UInt32          },
+                { "uint64",                   EPropertyTypeFlags::UInt64          },
+                { "int8",                     EPropertyTypeFlags::Int8            },
+                { "int16",                    EPropertyTypeFlags::Int16           },
+                { "int32",                    EPropertyTypeFlags::Int32           },
+                { "int64",                    EPropertyTypeFlags::Int64           },
+                { "float",                    EPropertyTypeFlags::Float           },
+                { "double",                   EPropertyTypeFlags::Double          },
+                { "FEntity",                  EPropertyTypeFlags::Int32           },
+                { "ECS::FEntity",             EPropertyTypeFlags::Int32           },
+                { "Lumina::FEntity",          EPropertyTypeFlags::Int32           },
+                { "Lumina::ECS::FEntity",     EPropertyTypeFlags::Int32           },
+                { "Lumina::CClass",           EPropertyTypeFlags::Class           },
+                { "Lumina::FName",            EPropertyTypeFlags::Name            },
+                { "Lumina::FString",          EPropertyTypeFlags::String          },
+                { "Lumina::FFixedString",     EPropertyTypeFlags::String          },
+                { "Lumina::TVector",          EPropertyTypeFlags::Vector          },
+                { "Lumina::TFixedVector",     EPropertyTypeFlags::Vector          },
+                { "Lumina::THashMap",         EPropertyTypeFlags::Map             },
+                { "Lumina::TOptional",        EPropertyTypeFlags::Optional        },
+                { "Lumina::TObjectPtr",       EPropertyTypeFlags::Object          },
+                { "Lumina::TWeakObjectPtr",   EPropertyTypeFlags::Object          },
+                { "Lumina::CObject",          EPropertyTypeFlags::Object          },
+                { "Lumina::TSubclassOf",      EPropertyTypeFlags::Class           },
+                { "Lumina::TSubStructOf",     EPropertyTypeFlags::SubStruct       },
+                { "Lumina::TInstancedStruct", EPropertyTypeFlags::InstancedStruct },
+                { "Lumina::FInstancedStruct", EPropertyTypeFlags::InstancedStruct },
+                { "Lumina::TSoftObjectPtr",   EPropertyTypeFlags::SoftObject      },
+                { "Lumina::FSoftObjectPath",  EPropertyTypeFlags::SoftObject      },
+                { "Lumina::TScriptDelegate",  EPropertyTypeFlags::Delegate        },
+                { "Lumina::FScriptDelegate",  EPropertyTypeFlags::Delegate        },
+            });
+
+            std::ranges::sort(Entries, {}, &FCoreTypeEntry::Name);
+            return Entries;
+        }();
+
+        // A duplicate row would make one of the two spellings unreachable through the binary search.
+        static_assert(std::ranges::adjacent_find(GCoreTypes, {}, &FCoreTypeEntry::Name) == GCoreTypes.end(),
+            "Core type names must be unique");
     }
 
-    EPropertyTypeFlags GetCoreTypeFromName(const char* Name)
+    EPropertyTypeFlags GetCoreTypeFromName(std::string_view Name)
     {
-        if (Name == nullptr)
-        {
-            return EPropertyTypeFlags::None;
-        }
-
-        switch (Fnv1aLike(Name))
-        {
-            case Fnv1aLike("bool"):                     return EPropertyTypeFlags::Bool;
-            case Fnv1aLike("uint8"):                    return EPropertyTypeFlags::UInt8;
-            case Fnv1aLike("uint16"):                   return EPropertyTypeFlags::UInt16;
-            case Fnv1aLike("uint32"):                   return EPropertyTypeFlags::UInt32;
-            case Fnv1aLike("uint64"):                   return EPropertyTypeFlags::UInt64;
-            case Fnv1aLike("int8"):                     return EPropertyTypeFlags::Int8;
-            case Fnv1aLike("int16"):                    return EPropertyTypeFlags::Int16;
-            case Fnv1aLike("int32"):                    return EPropertyTypeFlags::Int32;
-            case Fnv1aLike("int64"):                    return EPropertyTypeFlags::Int64;
-            case Fnv1aLike("float"):                    return EPropertyTypeFlags::Float;
-            case Fnv1aLike("double"):                   return EPropertyTypeFlags::Double;
-            case Fnv1aLike("Lumina::FEntity"):          return EPropertyTypeFlags::Int32;
-            case Fnv1aLike("Lumina::ECS::FEntity"):     return EPropertyTypeFlags::Int32;
-            case Fnv1aLike("ECS::FEntity"):             return EPropertyTypeFlags::Int32;
-            case Fnv1aLike("FEntity"):                  return EPropertyTypeFlags::Int32;
-            case Fnv1aLike("Lumina::CClass"):           return EPropertyTypeFlags::Class;
-            case Fnv1aLike("Lumina::FName"):            return EPropertyTypeFlags::Name;
-            case Fnv1aLike("Lumina::FString"):          return EPropertyTypeFlags::String;
-            case Fnv1aLike("Lumina::FFixedString"):     return EPropertyTypeFlags::String;
-            case Fnv1aLike("Lumina::TVector"):          return EPropertyTypeFlags::Vector;
-            case Fnv1aLike("Lumina::TFixedVector"):     return EPropertyTypeFlags::Vector;
-            case Fnv1aLike("Lumina::THashMap"):         return EPropertyTypeFlags::Map;
-            case Fnv1aLike("Lumina::TOptional"):        return EPropertyTypeFlags::Optional;
-            case Fnv1aLike("Lumina::TObjectPtr"):       return EPropertyTypeFlags::Object;
-            case Fnv1aLike("Lumina::TWeakObjectPtr"):   return EPropertyTypeFlags::Object;
-            case Fnv1aLike("Lumina::CObject"):          return EPropertyTypeFlags::Object;
-            case Fnv1aLike("Lumina::TSubclassOf"):      return EPropertyTypeFlags::Class;
-            case Fnv1aLike("Lumina::TSubStructOf"):     return EPropertyTypeFlags::SubStruct;
-            case Fnv1aLike("Lumina::TInstancedStruct"): return EPropertyTypeFlags::InstancedStruct;
-            case Fnv1aLike("Lumina::FInstancedStruct"): return EPropertyTypeFlags::InstancedStruct;
-            case Fnv1aLike("Lumina::TSoftObjectPtr"):   return EPropertyTypeFlags::SoftObject;
-            case Fnv1aLike("Lumina::FSoftObjectPath"):  return EPropertyTypeFlags::SoftObject;
-            case Fnv1aLike("Lumina::TScriptDelegate"):  return EPropertyTypeFlags::Delegate;
-            case Fnv1aLike("Lumina::FScriptDelegate"):  return EPropertyTypeFlags::Delegate;
-            default:                                       return EPropertyTypeFlags::None;
-        }
+        const auto Found = std::ranges::lower_bound(GCoreTypes, Name, {}, &FCoreTypeEntry::Name);
+        return Found != GCoreTypes.end() && Found->Name == Name ? Found->Flags : EPropertyTypeFlags::None;
     }
-    
-    const std::string* FReflectedType::TryGetMetadata(const std::string& Key) const
+
+    const std::string* FReflectedType::TryGetMetadata(std::string_view Key) const
     {
         for (const FMetadataPair& Pair : Metadata)
         {
@@ -97,7 +103,7 @@ namespace Lumina::Reflection
         return nullptr;
     }
 
-    bool FReflectedType::HasMetadata(const std::string& Meta) const
+    bool FReflectedType::HasMetadata(std::string_view Meta) const
     {
         return std::any_of(Metadata.begin(), Metadata.end(),
             [&](const FMetadataPair& Pair) { return Pair.Key == Meta; });

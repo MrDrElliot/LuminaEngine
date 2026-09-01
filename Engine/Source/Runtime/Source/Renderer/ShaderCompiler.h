@@ -22,6 +22,10 @@ namespace Lumina
         bool bGenerateReflectionData = true;
         TVector<FString> MacroDefinitions;
         FString DebugName = "RawShader";
+        // The file a generated source came from, resolving its relative includes for the cache key.
+        FString TemplateVirtualPath;
+        // Which entry point to compile. Required once a module defines more than one.
+        FString EntryPoint;
     };
     
     class IShaderCompiler

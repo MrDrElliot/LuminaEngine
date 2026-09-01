@@ -2,6 +2,7 @@
 
 #include "Core/Object/Class.h"
 #include "Core/Object/Object.h"
+#include "EditorTool.h"
 #include "FileSystem/FileSystem.h"
 #include "Log/Log.h"
 

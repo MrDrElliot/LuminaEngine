@@ -15,10 +15,11 @@ namespace Lumina
 
 	namespace Audio
 	{
-		void Initialize();
-		void Shutdown();
-		// Per-frame pump (drains queued commands + housekeeping). Call once per frame from the engine.
-		void Update();
+		RUNTIME_API void Initialize();
+		RUNTIME_API void Shutdown();
+
+		// Per-frame pump that drains queued commands and does housekeeping. Call once per frame.
+		RUNTIME_API void Update();
 
 		// Push CAudioSettings onto the live context. Safe to call before a device exists.
 		RUNTIME_API void ApplySettings();

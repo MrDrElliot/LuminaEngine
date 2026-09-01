@@ -146,7 +146,7 @@ namespace Lumina::RHITests
         }
     }
 
-    TVector<uint32> FTestContext::CompileShader(const char* Source, const char* DebugName)
+    TVector<uint32> FTestContext::TryCompileShader(const char* Source, const char* DebugName, const char* EntryPoint)
     {
         if (GShaderCompiler == nullptr)
         {
@@ -160,11 +160,23 @@ namespace Lumina::RHITests
         Options.DebugName = DebugName;
         Options.bGenerateReflectionData = false;
 
+        if (EntryPoint != nullptr)
+        {
+            Options.EntryPoint = EntryPoint;
+        }
+
         // Flush below is the join, so nothing reads Spirv until every pending task has drained.
         GShaderCompiler->CompilerShaderRaw(FString(Source), Options,
             [&Spirv](FShaderHeader Header) { Spirv = Move(Header.Binaries); });
 
         GShaderCompiler->Flush();
+
+        return Spirv;
+    }
+
+    TVector<uint32> FTestContext::CompileShader(const char* Source, const char* DebugName, const char* EntryPoint)
+    {
+        TVector<uint32> Spirv = TryCompileShader(Source, DebugName, EntryPoint);
 
         if (Spirv.empty())
         {

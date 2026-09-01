@@ -1,51 +1,71 @@
-﻿#include <utility>
+#include <array>
+#include <string_view>
+#include <utility>
 #include <clang-c/CXSourceLocation.h>
 #include <clang-c/Index.h>
-#include <string>
 #include <Reflector/ReflectionConfig.h>
 #include <Reflector/ReflectionCore/ReflectionMacro.h>
-#include <unordered_map>
 #include "Reflector/Clang/ClangParserContext.h"
 #include "Reflector/Clang/Utils.h"
 
 namespace Lumina::Reflection::Visitor
 {
-
-    static const std::unordered_map<std::string, EReflectionMacro> MacroMap =
+    namespace
     {
-        { ReflectionEnumToString(EReflectionMacro::Property),      EReflectionMacro::Property },
-        { ReflectionEnumToString(EReflectionMacro::Function),      EReflectionMacro::Function },
-        { ReflectionEnumToString(EReflectionMacro::Reflect),       EReflectionMacro::Reflect  },
-        { ReflectionEnumToString(EReflectionMacro::GeneratedBody), EReflectionMacro::GeneratedBody },
-        { ReflectionEnumToString(EReflectionMacro::ScriptExport),  EReflectionMacro::ScriptExport }
-    };
-    
+        struct FMacroName
+        {
+            std::string_view Name;
+            EReflectionMacro Macro;
+        };
+
+        constexpr std::array kReflectionMacroNames =
+        {
+            FMacroName{ ReflectionEnumToString(EReflectionMacro::Property),      EReflectionMacro::Property      },
+            FMacroName{ ReflectionEnumToString(EReflectionMacro::Function),      EReflectionMacro::Function      },
+            FMacroName{ ReflectionEnumToString(EReflectionMacro::Reflect),       EReflectionMacro::Reflect       },
+            FMacroName{ ReflectionEnumToString(EReflectionMacro::GeneratedBody), EReflectionMacro::GeneratedBody },
+            FMacroName{ ReflectionEnumToString(EReflectionMacro::ScriptExport),  EReflectionMacro::ScriptExport  },
+        };
+
+        // Every macro expansion in a reflected header reaches this, so it stays allocation-free.
+        constexpr bool TryClassifyMacro(std::string_view Spelling, EReflectionMacro& OutMacro)
+        {
+            for (const FMacroName& Known : kReflectionMacroNames)
+            {
+                if (Known.Name == Spelling)
+                {
+                    OutMacro = Known.Macro;
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+
     CXChildVisitResult VisitMacro(const CXCursor& Cursor, CXCursor, FClangParserContext* Context)
     {
-        std::string CursorName = ClangUtils::GetCursorDisplayName(Cursor);
-        CXSourceRange Range = clang_getCursorExtent(Cursor);
-
-        auto It = MacroMap.find(CursorName);
-        if (It != MacroMap.end())
+        EReflectionMacro MacroType = EReflectionMacro::Size;
+        if (!TryClassifyMacro(ClangUtils::CursorDisplayName(Cursor).View(), MacroType))
         {
-            // SCRIPT_EXPORT is exempt, since a free function needs nothing the header itself must include.
-            if (It->second != EReflectionMacro::ScriptExport)
-            {
-                Context->ReflectedHeader->bHasReflectionMacros = true;
-            }
-
-            FReflectionMacro Macro(Context->ReflectedHeader->HeaderPath, Cursor, Range, It->second);
-            if (It->second == EReflectionMacro::GeneratedBody)
-            {
-                Context->AddGeneratedBodyMacro(std::move(Macro));
-            }
-            else
-            {
-                Context->AddReflectedMacro(std::move(Macro));
-            }
+            return CXChildVisit_Continue;
         }
-        
-        return CXChildVisit_Continue;
 
+        // SCRIPT_EXPORT is exempt, since a free function needs nothing the header itself must include.
+        if (MacroType != EReflectionMacro::ScriptExport)
+        {
+            Context->ReflectedHeader->bHasReflectionMacros = true;
+        }
+
+        FReflectionMacro Macro(Context->ReflectedHeader, Cursor, clang_getCursorExtent(Cursor), MacroType);
+        if (MacroType == EReflectionMacro::GeneratedBody)
+        {
+            Context->AddGeneratedBodyMacro(std::move(Macro));
+        }
+        else
+        {
+            Context->AddReflectedMacro(std::move(Macro));
+        }
+
+        return CXChildVisit_Continue;
     }
 }

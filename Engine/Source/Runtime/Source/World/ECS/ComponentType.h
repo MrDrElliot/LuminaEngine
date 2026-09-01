@@ -227,9 +227,6 @@ namespace Lumina::ECS
     static_assert(GetSignatureTypeName<float>() == std::string_view("float"),
         "the type-name parser no longer matches this compiler's signature format");
 
-    // Measured at 200k entities, relocation and paging cost the same somewhere under 32 bytes.
-    inline constexpr uint32 PagedStorageSizeThreshold = 32;
-
     template<typename T>
     struct TComponentTraits
     {
@@ -241,11 +238,11 @@ namespace Lumina::ECS
         static constexpr EComponentLayout Layout = ReadLayout<T>();
         static constexpr uint32 PageSize = ReadPageSize<T>();
 
-        // In-place delete needs a fixed address, and a fat element is paged to avoid the relocation.
+        // Paged by default, so a held reference survives an emplace into the same pool mid-iteration.
         static constexpr bool bPaged = !bEmpty &&
             (InPlaceDelete
                 || Layout == EComponentLayout::Paged
-                || (Layout == EComponentLayout::Automatic && sizeof(T) > PagedStorageSizeThreshold));
+                || Layout == EComponentLayout::Automatic);
 
         static_assert(!(InPlaceDelete && Layout == EComponentLayout::Packed),
             "a component cannot be packed and in-place-delete at once, because a packed pool relocates as it grows");

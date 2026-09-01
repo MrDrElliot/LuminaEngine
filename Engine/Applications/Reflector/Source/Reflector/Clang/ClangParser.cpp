@@ -5,11 +5,15 @@
 #include <vector>
 #include <algorithm>
 #include <cstring>
+#include <ranges>
+#include <string_view>
 #include <unordered_set>
 #include "Reflector/Clang/Utils.h"
 #include "Reflector/Diagnostics/LRTDiagnostics.h"
 #include "Reflector/ProjectSolution.h"
 #include "Reflector/ReflectionCore/ReflectedProject.h"
+#include "Reflector/Utils/FileIO.h"
+#include "Reflector/Utils/Timing.h"
 #include "Visitors/ClangTranslationUnit.h"
 
 #if !defined(_WIN32)
@@ -20,6 +24,9 @@
 
 namespace Lumina::Reflection
 {
+    extern uint64_t GCursorsVisited;
+    extern uint64_t GCursorsInReflectedHeaders;
+
     namespace
     {
         // libclang resolves its builtin headers relative to the host executable, which for the Reflector
@@ -78,6 +85,33 @@ namespace Lumina::Reflection
             Result.Line   = Line;
             Result.Column = Column;
             return Result;
+        }
+
+        // Naming a reflection-free header as an amalgamation root drags its include closure in for nothing.
+        bool MayCarryReflection(const std::string& HeaderPath)
+        {
+            std::string Contents;
+            if (!ReadWholeFile(HeaderPath, Contents))
+            {
+                // Unreadable here means clang should be the one to complain about it.
+                return true;
+            }
+
+            // Substrings rather than whole words, and a reflected header must also name its companion.
+            constexpr std::string_view Signals[] =
+            {
+                "REFLECT",
+                "GENERATED_BODY",
+                "PROPERTY",
+                "FUNCTION",
+                "SCRIPT_EXPORT",
+                ".generated.h",
+            };
+
+            return std::ranges::any_of(Signals, [&Contents](std::string_view Signal)
+            {
+                return Contents.find(Signal) != std::string::npos;
+            });
         }
 
         // The parse runs before this tool writes them, so on a cold target they are legitimately absent.
@@ -174,6 +208,8 @@ namespace Lumina::Reflection
         CXIndex ClangIndex = nullptr;
     
         ParsingContext.Workspace = Workspace;
+
+        FScopedPhaseTimer AmalgamationTimer("  amalgamation + args");
         
         const std::string AmalgamationPath = std::filesystem::absolute("ReflectHeaders.gen.h").string().c_str();
 
@@ -202,6 +238,8 @@ namespace Lumina::Reflection
         std::unordered_set<std::string> SeenDefinitions;
         std::unordered_set<std::string> SeenIncludeDirs;
         std::unordered_set<std::string> SeenForceIncludes;
+
+        uint32_t NumAmalgamationRoots = 0;
 
         for (const auto& Project : Workspace->ReflectedProjects)
         {
@@ -248,9 +286,17 @@ namespace Lumina::Reflection
 
             for (const auto& [Path, Header] : OrderedHeaders)
             {
-                AmalgamationFile << "#include \"" << Path.c_str() << "\"\n";
+                // Registered whatever happens, so a header something else includes is still walked.
                 ParsingContext.AllHeaders.emplace(Path, Header);
                 ParsingContext.NumHeadersReflected++;
+
+                if (!MayCarryReflection(Path.c_str()))
+                {
+                    continue;
+                }
+
+                AmalgamationFile << "#include \"" << Path.c_str() << "\"\n";
+                ++NumAmalgamationRoots;
             }
         }
 
@@ -308,16 +354,20 @@ namespace Lumina::Reflection
             ClangArgs.emplace_back(Arg.c_str());
         }
 
+        AmalgamationTimer.Stop();
+
         ClangIndex = clang_createIndex(0, 0);
         
-        constexpr uint32_t ClangOptions = 
+        // Nothing here completes code, and caching completion results walks every visible declaration.
+        constexpr uint32_t ClangOptions =
             CXTranslationUnit_DetailedPreprocessingRecord |
-            CXTranslationUnit_SkipFunctionBodies | 
-            CXTranslationUnit_CacheCompletionResults |
-            CXTranslationUnit_IncludeBriefCommentsInCodeCompletion |
+            CXTranslationUnit_SkipFunctionBodies |
             CXTranslationUnit_KeepGoing;
         
-        CXErrorCode Result = clang_parseTranslationUnit2(
+        CXErrorCode Result;
+        {
+        FScopedPhaseTimer LibclangTimer("  libclang parse");
+        Result = clang_parseTranslationUnit2(
             ClangIndex,
             AmalgamationPath.c_str(),
             ClangArgs.data(),
@@ -326,6 +376,7 @@ namespace Lumina::Reflection
             0,
             ClangOptions,
             &TranslationUnit);
+        }
         
         // Walking a broken AST would emit confident, wrong reflection data, so stop before it.
         if (!ReportClangDiagnostics(TranslationUnit, ParsingContext, bStrictParse, bVerboseDiagnostics))
@@ -337,8 +388,19 @@ namespace Lumina::Reflection
 
         CXCursor Cursor = clang_getTranslationUnitCursor(TranslationUnit);
 
+        FScopedPhaseTimer WalkTimer("  AST walk");
+        const int WalkResult = clang_visitChildren(Cursor, VisitTranslationUnit, &ParsingContext);
+        WalkTimer.Stop();
+
+        if (GReportTimings)
+        {
+            std::printf("[timing]   cursors=%llu inReflectedHeaders=%llu headers=%u roots=%u\n",
+                (unsigned long long)GCursorsVisited, (unsigned long long)GCursorsInReflectedHeaders,
+                ParsingContext.NumHeadersReflected, NumAmalgamationRoots);
+        }
+
         // A non-zero return abandons every later cursor, so reaching this is a defect in the walk itself.
-        if (clang_visitChildren(Cursor, VisitTranslationUnit, &ParsingContext) != 0)
+        if (WalkResult != 0)
         {
             FDiagLocation Loc;
             Loc.File = AmalgamationPath;

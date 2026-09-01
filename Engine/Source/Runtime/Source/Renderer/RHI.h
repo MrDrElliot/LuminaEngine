@@ -11,6 +11,7 @@
 #include "Platform/GenericPlatform.h"
 
 #include <cstddef>
+#include <memory>
 
 namespace Lumina
 {

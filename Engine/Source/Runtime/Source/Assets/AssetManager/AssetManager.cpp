@@ -6,6 +6,7 @@
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/Package/Package.h"
 #include "Core/Profiler/AssetLoadTracker.h"
+#include "Platform/Time/PlatformTime.h"
 #include "Log/Log.h"
 
 namespace Lumina

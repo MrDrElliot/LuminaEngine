@@ -2,7 +2,8 @@
 
 #include <clang-c/Index.h>
 #include <cstdint>
-#include <string>
+#include <span>
+#include <string_view>
 #include <vector>
 #include "Reflector/Utils/MetadataUtils.h"
 
@@ -111,21 +112,21 @@ namespace Lumina::Reflection
 
     struct FSpecifierInfo
     {
-        const char*        Name;
+        std::string_view   Name;
         ESpecifierForm     Form;
         ESpecifierConsumer Consumer;
-        const char*        Documentation;
+        std::string_view   Documentation;
     };
 
     const char* SpecifierTargetToString(ESpecifierTarget Target);
 
-    // The specifier table for one macro, with its length in OutCount.
-    const FSpecifierInfo* GetSpecifiers(ESpecifierTarget Target, uint32_t& OutCount);
+    // The specifier table for one macro, sorted by name.
+    std::span<const FSpecifierInfo> GetSpecifiers(ESpecifierTarget Target);
 
-    const FSpecifierInfo* FindSpecifier(ESpecifierTarget Target, const std::string& Key);
+    const FSpecifierInfo* FindSpecifier(ESpecifierTarget Target, std::string_view Key);
 
     // Nearest known specifier within a small edit distance, or nullptr. Turns a typo into a suggestion.
-    const FSpecifierInfo* SuggestSpecifier(ESpecifierTarget Target, const std::string& Key);
+    const FSpecifierInfo* SuggestSpecifier(ESpecifierTarget Target, std::string_view Key);
 
     // Warns LRT1009 for each specifier missing from the target's table, naming the nearest known one.
     void ValidateSpecifiers(const CXCursor& Cursor, ESpecifierTarget Target, const std::vector<FMetadataPair>& Metadata);

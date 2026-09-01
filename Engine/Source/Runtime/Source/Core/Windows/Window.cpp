@@ -73,86 +73,87 @@ namespace Lumina
 			return static_cast<FWindowImpl*>(glfwGetWindowUserPointer(Window));
 		}
 
-		// A window can outlive its application, or belong to a host that never built one.
-		template<typename TEvent, typename... TArgs>
-		void DispatchToApp(TArgs&&... Args)
+		FWindow* OwnerFrom(GLFWwindow* Window)
 		{
-			if (GApp != nullptr)
-			{
-				GApp->GetEventProcessor().Dispatch<TEvent>(Forward<TArgs>(Args)...);
-			}
+			const FWindowImpl* Impl = ImplFrom(Window);
+			return Impl != nullptr ? Impl->Owner : nullptr;
 		}
 
 		void MouseButtonCallback(GLFWwindow* Window, int Button, int Action, int /*Mods*/)
 		{
+			FWindow* Owner = OwnerFrom(Window);
+			if (Owner == nullptr || (Action != GLFW_PRESS && Action != GLFW_RELEASE))
+			{
+				return;
+			}
+
 			double xpos, ypos;
 			glfwGetCursorPos(Window, &xpos, &ypos);
 
-			switch (Action)
-			{
-			case GLFW_PRESS:
-				DispatchToApp<FMouseButtonPressedEvent>(static_cast<EMouseKey>(Button), (float)xpos, (float)ypos);
-				break;
+			FMouseButtonInput Input;
+			Input.Button   = static_cast<EMouseKey>(Button);
+			Input.bPressed = Action == GLFW_PRESS;
+			Input.X        = (float)xpos;
+			Input.Y        = (float)ypos;
 
-			case GLFW_RELEASE:
-				DispatchToApp<FMouseButtonReleasedEvent>(static_cast<EMouseKey>(Button), (float)xpos, (float)ypos);
-				break;
-			}
+			Owner->OnMouseButton.Broadcast(Owner, Input);
 		}
 
 		void MousePosCallback(GLFWwindow* Window, double xpos, double ypos)
 		{
 			FWindowImpl* Impl = ImplFrom(Window);
-
-			if (Impl->bFirstMouseUpdate)
+			if (Impl == nullptr)
 			{
-				Impl->LastMouseX = xpos;
-				Impl->LastMouseY = ypos;
-				Impl->bFirstMouseUpdate = false;
-
-				DispatchToApp<FMouseMovedEvent>((float)xpos, (float)ypos, 0.0f, 0.0f);
 				return;
 			}
 
-			double DeltaX = xpos - Impl->LastMouseX;
-			double DeltaY = ypos - Impl->LastMouseY;
+			FMouseMoveInput Input;
+			Input.X = (float)xpos;
+			Input.Y = (float)ypos;
+
+			if (!Impl->bFirstMouseUpdate)
+			{
+				Input.DeltaX = (float)(xpos - Impl->LastMouseX);
+				Input.DeltaY = (float)(ypos - Impl->LastMouseY);
+			}
 
 			Impl->LastMouseX = xpos;
 			Impl->LastMouseY = ypos;
+			Impl->bFirstMouseUpdate = false;
 
-			DispatchToApp<FMouseMovedEvent>((float)xpos, (float)ypos, (float)DeltaX, (float)DeltaY);
+			Impl->Owner->OnMouseMove.Broadcast(Impl->Owner, Input);
 		}
 
-		void MouseScrollCallback(GLFWwindow* /*Window*/, double /*xoffset*/, double yoffset)
+		void MouseScrollCallback(GLFWwindow* Window, double /*xoffset*/, double yoffset)
 		{
-			// Vertical scroll only.
-			DispatchToApp<FMouseScrolledEvent>(EMouseKey::Scroll, (float)yoffset);
-		}
-
-		void KeyCallback(GLFWwindow* /*Window*/, int Key, int /*Scancode*/, int Action, int Mods)
-		{
-			if (Key == GLFW_KEY_UNKNOWN)
+			FWindow* Owner = OwnerFrom(Window);
+			if (Owner == nullptr)
 			{
 				return;
 			}
 
-			bool Ctrl = Mods & GLFW_MOD_CONTROL;
-			bool Shift = Mods & GLFW_MOD_SHIFT;
-			bool Alt = Mods & GLFW_MOD_ALT;
-			bool Super = Mods & GLFW_MOD_SUPER;
+			// Vertical scroll only.
+			Owner->OnScroll.Broadcast(Owner, FMouseScrollInput{ (float)yoffset });
+		}
 
-			switch (Action)
+		void KeyCallback(GLFWwindow* Window, int Key, int /*Scancode*/, int Action, int Mods)
+		{
+			FWindow* Owner = OwnerFrom(Window);
+			if (Owner == nullptr || Key == GLFW_KEY_UNKNOWN)
 			{
-			case GLFW_RELEASE:
-				DispatchToApp<FKeyReleasedEvent>(static_cast<EKey>(Key), Ctrl, Shift, Alt, Super);
-				break;
-			case GLFW_PRESS:
-				DispatchToApp<FKeyPressedEvent>(static_cast<EKey>(Key), Ctrl, Shift, Alt, Super);
-				break;
-			case GLFW_REPEAT:
-				DispatchToApp<FKeyPressedEvent>(static_cast<EKey>(Key), Ctrl, Shift, Alt, Super, /* Repeat */ true);
-				break;
+				return;
 			}
+
+			FKeyInput Input;
+			Input.Key      = static_cast<EKey>(Key);
+			Input.bPressed = Action != GLFW_RELEASE;
+			Input.bRepeat  = Action == GLFW_REPEAT;
+			Input.bCtrl    = (Mods & GLFW_MOD_CONTROL) != 0;
+			Input.bShift   = (Mods & GLFW_MOD_SHIFT) != 0;
+			Input.bAlt     = (Mods & GLFW_MOD_ALT) != 0;
+			Input.bSuper   = (Mods & GLFW_MOD_SUPER) != 0;
+
+			Owner->OnKey.Broadcast(Owner, Input);
 		}
 
 		void WindowResizeCallback(GLFWwindow* Window, int width, int height)
@@ -160,8 +161,6 @@ namespace Lumina
 			FWindowImpl* Impl = ImplFrom(Window);
 			Impl->Specs.Extent.x = width;
 			Impl->Specs.Extent.y = height;
-
-			DispatchToApp<FWindowResizeEvent>(width, height);
 
 			FWindow::OnWindowResized.Broadcast(Impl->Owner, Impl->Specs.Extent);
 		}
@@ -178,12 +177,18 @@ namespace Lumina
 				StringPaths.emplace_back(Paths[i]);
 			}
 
-			DispatchToApp<FFileDropEvent>(StringPaths, static_cast<float>(xpos), static_cast<float>(ypos));
+			if (FWindow* Owner = OwnerFrom(Window))
+			{
+				Owner->OnFileDrop.Broadcast(Owner, StringPaths, static_cast<float>(xpos), static_cast<float>(ypos));
+			}
 		}
 
-		void WindowCloseCallback(GLFWwindow* /*Window*/)
+		void WindowCloseCallback(GLFWwindow* Window)
 		{
-			FApplication::RequestExit();
+			if (FWindow* Owner = OwnerFrom(Window))
+			{
+				Owner->OnCloseRequested.Broadcast(Owner);
+			}
 		}
 
 		void TitleBarHitTestCallback(GLFWwindow* Window, int /*x*/, int /*y*/, int* hit)
@@ -421,11 +426,16 @@ namespace Lumina
 
 	namespace Windowing
 	{
-		FWindow* PrimaryWindow;
+		FWindow* PrimaryWindow = nullptr;
 
 		FWindow* GetPrimaryWindowHandle()
 		{
 			ASSERT(PrimaryWindow != nullptr);
+			return PrimaryWindow;
+		}
+
+		FWindow* TryGetPrimaryWindowHandle()
+		{
 			return PrimaryWindow;
 		}
 

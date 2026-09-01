@@ -760,6 +760,7 @@ namespace Lumina
                 ReplaceAllTokens(Source, VertexToken, VertexReplacement);
 
                 FShaderCompileOptions Options;
+                Options.TemplateVirtualPath = FString("/Engine/Resources/Shaders/MaterialShader/") + Stage.Path;
                 if (Stage.Define != nullptr)
                 {
                     Options.MacroDefinitions.emplace_back(Stage.Define);
@@ -783,7 +784,9 @@ namespace Lumina
                 if (DefPPos != FString::npos)
                 {
                     ReplaceAllTokens(LoadedDeferredString, Token, PixelReplacement);
-                    ShaderCompiler->CompilerShaderRaw(Move(LoadedDeferredString), {}, [](const FShaderHeader& Header) mutable
+                    FShaderCompileOptions DeferredOptions;
+                    DeferredOptions.TemplateVirtualPath = "/Engine/Resources/Shaders/MaterialShader/DeferredMaterial.slang";
+                    ShaderCompiler->CompilerShaderRaw(Move(LoadedDeferredString), Move(DeferredOptions), [](const FShaderHeader& Header) mutable
                     {
                         DefaultMaterial->DeferredShaderBinaries.assign(Header.Binaries.begin(), Header.Binaries.end());
                     });
@@ -819,8 +822,10 @@ namespace Lumina
         DefaultTerrainMaterial->AddToRoot();
         DefaultTerrainMaterial->MaterialType = EMaterialType::Terrain;
 
+        constexpr const char* TerrainPixelTemplate = "/Engine/Resources/Shaders/MaterialShader/TerrainBasePixelPass.slang";
+
         FString LoadedPixelString;
-        if (!VFS::ReadFile(LoadedPixelString, "/Engine/Resources/Shaders/MaterialShader/TerrainBasePixelPass.slang"))
+        if (!VFS::ReadFile(LoadedPixelString, TerrainPixelTemplate))
         {
             LOG_ERROR("Failed to find TerrainBasePixelPass.slang!");
             return;
@@ -876,12 +881,16 @@ namespace Lumina
             LOG_ERROR("Missing [$MATERIAL_VERTEX_INPUTS] in terrain base vertex shader!");
         }
 
-        ShaderCompiler->CompilerShaderRaw(Move(LoadedPixelString), {}, [](const FShaderHeader& Header) mutable
+        FShaderCompileOptions TerrainPixelOptions;
+        TerrainPixelOptions.TemplateVirtualPath = TerrainPixelTemplate;
+        ShaderCompiler->CompilerShaderRaw(Move(LoadedPixelString), Move(TerrainPixelOptions), [](const FShaderHeader& Header) mutable
         {
             DefaultTerrainMaterial->PixelShaderBinaries.assign(Header.Binaries.begin(), Header.Binaries.end());
         });
 
-        ShaderCompiler->CompilerShaderRaw(Move(LoadedVertexString), {}, [](const FShaderHeader& Header) mutable
+        FShaderCompileOptions TerrainVertexOptions;
+        TerrainVertexOptions.TemplateVirtualPath = "/Engine/Resources/Shaders/MaterialShader/TerrainBaseVertexPass.slang";
+        ShaderCompiler->CompilerShaderRaw(Move(LoadedVertexString), Move(TerrainVertexOptions), [](const FShaderHeader& Header) mutable
         {
             DefaultTerrainMaterial->VertexShaderBinaries.assign(Header.Binaries.begin(), Header.Binaries.end());
         });

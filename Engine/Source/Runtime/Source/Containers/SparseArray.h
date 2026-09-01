@@ -1,8 +1,8 @@
 #pragma once
 
-#include <algorithm>
 #include <stdexcept>
 #include "Vector.h"
+#include "Containers/Algorithm.h"
 
 
 namespace Lumina
@@ -224,7 +224,7 @@ namespace Lumina
                 return;
             }
 
-            std::ranges::sort(FreeList);
+            Algo::Sort(FreeList);
 
             Index writeIdx = 0;
             Index readIdx = 0;

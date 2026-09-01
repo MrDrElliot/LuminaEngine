@@ -63,14 +63,14 @@ public static class SourceFileScanner
                     continue;
                 }
 
-                ScanDirectory(Root, Rules, Result, Seen);
+                ScanDirectory(Root, Rules, Result, Seen, bIsSourceRoot: true);
             }
         }
         else
         {
             // Headers are still discovered so reflection and the IDE see the whole tree; only
             // compilation is restricted to the explicit list.
-            CollectHeadersOnly(Rules.ModuleDirectory, Rules, Result, Seen);
+            CollectHeadersOnly(Rules.ModuleDirectory, Rules, Result, Seen, bIsSourceRoot: true);
         }
 
         foreach (string Extra in Rules.ExtraSourceFiles)
@@ -152,14 +152,21 @@ public static class SourceFileScanner
     }
 
     /// <summary>Walks a module tree recording only headers and resources, for explicit compile lists.</summary>
-    private static void CollectHeadersOnly(string Directory, ModuleRules Rules, ModuleSourceSet Result, HashSet<string> Seen)
+    private static void CollectHeadersOnly(string Directory, ModuleRules Rules, ModuleSourceSet Result, HashSet<string> Seen, bool bIsSourceRoot)
     {
         if (!System.IO.Directory.Exists(Directory))
         {
             return;
         }
 
-        foreach (string FilePath in System.IO.Directory.EnumerateFiles(Directory))
+        List<string> Files = System.IO.Directory.EnumerateFiles(Directory).ToList();
+
+        if (!bIsSourceRoot && ContainsModuleRules(Files))
+        {
+            return;
+        }
+
+        foreach (string FilePath in Files)
         {
             FileItem Item = FileItem.Get(FilePath);
 
@@ -171,19 +178,12 @@ public static class SourceFileScanner
 
         foreach (string SubDirectory in System.IO.Directory.EnumerateDirectories(Directory))
         {
-            string Name = Path.GetFileName(SubDirectory);
-
-            if (AlwaysIgnoredDirectories.Contains(Name, StringComparer.OrdinalIgnoreCase))
+            if (AlwaysIgnoredDirectories.Contains(Path.GetFileName(SubDirectory), StringComparer.OrdinalIgnoreCase))
             {
                 continue;
             }
 
-            if (System.IO.Directory.EnumerateFiles(SubDirectory, "*.Build.cs").Any())
-            {
-                continue;
-            }
-
-            CollectHeadersOnly(SubDirectory, Rules, Result, Seen);
+            CollectHeadersOnly(SubDirectory, Rules, Result, Seen, bIsSourceRoot: false);
         }
     }
 
@@ -206,31 +206,44 @@ public static class SourceFileScanner
         string Directory,
         ModuleRules Rules,
         ModuleSourceSet Result,
-        HashSet<string> Seen)
+        HashSet<string> Seen,
+        bool bIsSourceRoot)
     {
-        foreach (string FilePath in System.IO.Directory.EnumerateFiles(Directory))
+        // Listed once and reused for the nested-module probe, which used to cost a second enumeration.
+        List<string> Files = System.IO.Directory.EnumerateFiles(Directory).ToList();
+
+        if (!bIsSourceRoot && ContainsModuleRules(Files))
+        {
+            Log.Trace("Module '{0}' skipping nested module directory '{1}'", Rules.Name, Directory);
+            return;
+        }
+
+        foreach (string FilePath in Files)
         {
             Classify(FileItem.Get(FilePath), Rules, Result, Seen);
         }
 
         foreach (string SubDirectory in System.IO.Directory.EnumerateDirectories(Directory))
         {
-            string Name = Path.GetFileName(SubDirectory);
-
-            if (AlwaysIgnoredDirectories.Contains(Name, StringComparer.OrdinalIgnoreCase))
+            if (AlwaysIgnoredDirectories.Contains(Path.GetFileName(SubDirectory), StringComparer.OrdinalIgnoreCase))
             {
                 continue;
             }
 
-            // A nested Build.cs marks another module's tree.
-            if (System.IO.Directory.EnumerateFiles(SubDirectory, "*.Build.cs").Any())
-            {
-                Log.Trace("Module '{0}' skipping nested module directory '{1}'", Rules.Name, SubDirectory);
-                continue;
-            }
-
-            ScanDirectory(SubDirectory, Rules, Result, Seen);
+            ScanDirectory(SubDirectory, Rules, Result, Seen, bIsSourceRoot: false);
         }
+    }
+
+    private static bool ContainsModuleRules(List<string> Files)
+    {
+        foreach (string FilePath in Files)
+        {
+            if (FilePath.EndsWith(".Build.cs", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void Classify(FileItem Item, ModuleRules Rules, ModuleSourceSet Result, HashSet<string> Seen)
