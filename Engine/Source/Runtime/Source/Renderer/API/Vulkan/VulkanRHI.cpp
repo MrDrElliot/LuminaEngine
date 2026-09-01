@@ -580,6 +580,8 @@ namespace Lumina::RHI
         bool                            bUnifiedImageLayouts = false;
         bool                            bMemoryPriority = false;
         bool                            bMeshShaderSupported = false;
+        bool                            bComputeDerivatives = false;
+        EDeviceFeature                  SupportedFeatures = EDeviceFeature::None;
         uint32                          MaxMeshWorkGroupCountX = 0;
         // Non-zero when the mesh stage must be pinned at pipeline creation, see the shuffle note.
         uint32                          MeshRequiredSubgroupSize = 0;
@@ -927,6 +929,12 @@ namespace Lumina::RHI
         /// Why the device was turned down, phrased to be read in a dialog. Empty when suitable.
         FString Reason;
 
+        /// Whether the mesh path is usable here. A device can be suitable without it.
+        bool    bMeshCapable = false;
+
+        /// Why the mesh path is unavailable, folded into Reason when the caller required it.
+        FString MeshReason;
+
         /// Width the mesh stage must be pinned to, or zero when the device needs no pinning.
         uint32  MeshRequiredSubgroupSize = 0;
 
@@ -934,7 +942,8 @@ namespace Lumina::RHI
         uint32  MaxMeshWorkGroupCount = 0;
     };
     
-    static FDeviceSuitability EvaluateDeviceSuitability(VkPhysicalDevice Gpu, bool bHeadless, bool bLog)
+    static FDeviceSuitability EvaluateDeviceSuitability(VkPhysicalDevice Gpu, bool bHeadless,
+        EDeviceFeature RequiredFeatures, bool bLog)
     {
         FDeviceSuitability Result;
 
@@ -984,96 +993,104 @@ namespace Lumina::RHI
             }
         }
 
-        if (!HasExtension(VK_EXT_MESH_SHADER_EXTENSION_NAME))
+        // Reported rather than fatal: a renderer that never dispatches a mesh shader still runs here.
+        Result.MeshReason = [&]() -> FString
         {
-            Result.Reason = "no VK_EXT_mesh_shader extension";
-            return Result;
-        }
-
-        VkPhysicalDeviceMeshShaderFeaturesEXT SupportedMesh
-            { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT };
-        VkPhysicalDeviceFeatures2 MeshQuery
-            { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &SupportedMesh };
-        vkGetPhysicalDeviceFeatures2(Gpu, &MeshQuery);
-
-        if (!SupportedMesh.meshShader)
-        {
-            Result.Reason = "the meshShader feature is not supported";
-            return Result;
-        }
-
-        // Core since Vulkan 1.3, and callers only offer devices that already reported 1.4.
-        VkPhysicalDeviceSubgroupSizeControlProperties SubgroupProps
-            { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_PROPERTIES };
-        VkPhysicalDeviceMeshShaderPropertiesEXT MeshProps
-            { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_PROPERTIES_EXT, .pNext = &SubgroupProps };
-        VkPhysicalDeviceProperties2 MeshPropQuery
-            { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &MeshProps };
-        vkGetPhysicalDeviceProperties2(Gpu, &MeshPropQuery);
-
-        VkPhysicalDeviceVulkan13Features Supported13
-            { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
-        VkPhysicalDeviceFeatures2 FeatureQuery
-            { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &Supported13 };
-        vkGetPhysicalDeviceFeatures2(Gpu, &FeatureQuery);
-
-        const struct { const char* Name; uint32 Required; uint32 Actual; } Limits[] =
-        {
-            { "maxMeshWorkGroupSize[0]",     kMeshWorkGroupSize,       MeshProps.maxMeshWorkGroupSize[0]     },
-            { "maxMeshWorkGroupInvocations", kMeshWorkGroupSize,       MeshProps.maxMeshWorkGroupInvocations },
-            { "maxMeshOutputVertices",       kMeshMaxOutputVertices,   MeshProps.maxMeshOutputVertices       },
-            { "maxMeshOutputPrimitives",     kMeshMaxOutputPrimitives, MeshProps.maxMeshOutputPrimitives     },
-        };
-
-        for (const auto& Limit : Limits)
-        {
-            if (Limit.Actual < Limit.Required)
+            if (!HasExtension(VK_EXT_MESH_SHADER_EXTENSION_NAME))
             {
-                Result.Reason = FString("reports ") + Limit.Name + " = "
-                    + Lumina::Format("{}", Limit.Actual).c_str() + ", the geometry path needs at least "
-                    + Lumina::Format("{}", Limit.Required).c_str();
-                return Result;
+                return "no VK_EXT_mesh_shader extension";
             }
-        }
 
-        if (SubgroupProps.minSubgroupSize < kMeshWorkGroupSize)
-        {
-            const bool bMeshStagePinnable =
-                (SubgroupProps.requiredSubgroupSizeStages & VK_SHADER_STAGE_MESH_BIT_EXT) != 0;
+            VkPhysicalDeviceMeshShaderFeaturesEXT SupportedMesh
+                { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT };
+            VkPhysicalDeviceFeatures2 MeshQuery
+                { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &SupportedMesh };
+            vkGetPhysicalDeviceFeatures2(Gpu, &MeshQuery);
 
-            if (Supported13.subgroupSizeControl && bMeshStagePinnable
-                && SubgroupProps.maxSubgroupSize >= kMeshWorkGroupSize)
+            if (!SupportedMesh.meshShader)
             {
+                return "the meshShader feature is not supported";
+            }
+
+            // Core since Vulkan 1.3, and callers only offer devices that already reported 1.4.
+            VkPhysicalDeviceSubgroupSizeControlProperties SubgroupProps
+                { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_PROPERTIES };
+            VkPhysicalDeviceMeshShaderPropertiesEXT MeshProps
+                { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_PROPERTIES_EXT, .pNext = &SubgroupProps };
+            VkPhysicalDeviceProperties2 MeshPropQuery
+                { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &MeshProps };
+            vkGetPhysicalDeviceProperties2(Gpu, &MeshPropQuery);
+
+            VkPhysicalDeviceVulkan13Features Supported13
+                { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
+            VkPhysicalDeviceFeatures2 FeatureQuery
+                { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &Supported13 };
+            vkGetPhysicalDeviceFeatures2(Gpu, &FeatureQuery);
+
+            const struct { const char* Name; uint32 Required; uint32 Actual; } Limits[] =
+            {
+                { "maxMeshWorkGroupSize[0]",     kMeshWorkGroupSize,       MeshProps.maxMeshWorkGroupSize[0]     },
+                { "maxMeshWorkGroupInvocations", kMeshWorkGroupSize,       MeshProps.maxMeshWorkGroupInvocations },
+                { "maxMeshOutputVertices",       kMeshMaxOutputVertices,   MeshProps.maxMeshOutputVertices       },
+                { "maxMeshOutputPrimitives",     kMeshMaxOutputPrimitives, MeshProps.maxMeshOutputPrimitives     },
+            };
+
+            for (const auto& Limit : Limits)
+            {
+                if (Limit.Actual < Limit.Required)
+                {
+                    return FString("reports ") + Limit.Name + " = "
+                        + Lumina::Format("{}", Limit.Actual).c_str() + ", the geometry path needs at least "
+                        + Lumina::Format("{}", Limit.Required).c_str();
+                }
+            }
+
+            if (SubgroupProps.minSubgroupSize < kMeshWorkGroupSize)
+            {
+                const bool bMeshStagePinnable =
+                    (SubgroupProps.requiredSubgroupSizeStages & VK_SHADER_STAGE_MESH_BIT_EXT) != 0;
+
+                if (!Supported13.subgroupSizeControl || !bMeshStagePinnable
+                    || SubgroupProps.maxSubgroupSize < kMeshWorkGroupSize)
+                {
+                    return FString("may run a mesh subgroup as narrow as ")
+                        + Lumina::Format("{}", SubgroupProps.minSubgroupSize).c_str() + " and cannot be pinned to "
+                        + Lumina::Format("{}", kMeshWorkGroupSize).c_str() + " (subgroupSizeControl: "
+                        + (Supported13.subgroupSizeControl ? "yes" : "no") + ", mesh stage pinnable: "
+                        + (bMeshStagePinnable ? "yes" : "no") + ", maxSubgroupSize: "
+                        + Lumina::Format("{}", SubgroupProps.maxSubgroupSize).c_str() + ")";
+                }
+
                 Result.MeshRequiredSubgroupSize = kMeshWorkGroupSize;
             }
-            else
+
+            if (bLog)
             {
-                Result.Reason = FString("may run a mesh subgroup as narrow as ")
-                    + Lumina::Format("{}", SubgroupProps.minSubgroupSize).c_str() + " and cannot be pinned to "
-                    + Lumina::Format("{}", kMeshWorkGroupSize).c_str() + " (subgroupSizeControl: "
-                    + (Supported13.subgroupSizeControl ? "yes" : "no") + ", mesh stage pinnable: "
-                    + (bMeshStagePinnable ? "yes" : "no") + ", maxSubgroupSize: "
-                    + Lumina::Format("{}", SubgroupProps.maxSubgroupSize).c_str() + ")";
-                return Result;
+                // A device reporting the maximum there is the signature of an overflow that rendered nothing.
+                LOG_DISPLAY("Mesh shader limits: workgroup {} (max invocations {}), out verts {}, out prims {}, "
+                            "out components {}, out memory {} B, max workgroup count {}. "
+                            "Subgroup {}-{}, mesh workgroup is {} threads{}.",
+                            MeshProps.maxMeshWorkGroupSize[0], MeshProps.maxMeshWorkGroupInvocations,
+                            MeshProps.maxMeshOutputVertices, MeshProps.maxMeshOutputPrimitives,
+                            MeshProps.maxMeshOutputComponents, MeshProps.maxMeshOutputMemorySize,
+                            MeshProps.maxMeshWorkGroupCount[0],
+                            SubgroupProps.minSubgroupSize, SubgroupProps.maxSubgroupSize, kMeshWorkGroupSize,
+                            Result.MeshRequiredSubgroupSize != 0 ? " (subgroup size pinned)" : "");
             }
-        }
 
-        if (bLog)
+            Result.MaxMeshWorkGroupCount = MeshProps.maxMeshWorkGroupCount[0];
+            return {};
+        }();
+
+        Result.bMeshCapable = Result.MeshReason.empty();
+
+        if (!Result.bMeshCapable && EnumHasAllFlags(RequiredFeatures, EDeviceFeature::MeshShading))
         {
-            // A device reporting the maximum there is the signature of an overflow that rendered nothing.
-            LOG_DISPLAY("Mesh shader limits: workgroup {} (max invocations {}), out verts {}, out prims {}, "
-                        "out components {}, out memory {} B, max workgroup count {}. "
-                        "Subgroup {}-{}, mesh workgroup is {} threads{}.",
-                        MeshProps.maxMeshWorkGroupSize[0], MeshProps.maxMeshWorkGroupInvocations,
-                        MeshProps.maxMeshOutputVertices, MeshProps.maxMeshOutputPrimitives,
-                        MeshProps.maxMeshOutputComponents, MeshProps.maxMeshOutputMemorySize,
-                        MeshProps.maxMeshWorkGroupCount[0],
-                        SubgroupProps.minSubgroupSize, SubgroupProps.maxSubgroupSize, kMeshWorkGroupSize,
-                        Result.MeshRequiredSubgroupSize != 0 ? " (subgroup size pinned)" : "");
+            Result.Reason = Result.MeshReason;
+            return Result;
         }
 
-        Result.MaxMeshWorkGroupCount = MeshProps.maxMeshWorkGroupCount[0];
-        Result.bSuitable             = true;
+        Result.bSuitable = true;
         return Result;
     }
 
@@ -1679,7 +1696,8 @@ namespace Lumina::RHI
                 bAnyModernDevice = true;
 
                 // A device that cannot run the renderer must not outrank one that can on type alone.
-                const FDeviceSuitability Suitability = EvaluateDeviceSuitability(Gpu, DeviceDesc.bHeadless, false);
+                const FDeviceSuitability Suitability = EvaluateDeviceSuitability(Gpu, DeviceDesc.bHeadless,
+                    DeviceDesc.RequiredFeatures, false);
 
                 if (!Suitability.bSuitable)
                 {
@@ -1701,8 +1719,11 @@ namespace Lumina::RHI
             {
                 FString Message = "No GPU meeting the renderer's requirements was found.\n\n";
                 Message += Rejections;
-                Message += "\nMesh shaders need Turing (GTX 16-series / RTX 20-series) or newer on NVIDIA, "
-                    "RDNA2 (RX 6000) or newer on AMD, or Arc on Intel.";
+                if (EnumHasAllFlags(DeviceDesc.RequiredFeatures, EDeviceFeature::MeshShading))
+                {
+                    Message += "\nMesh shaders need Turing (GTX 16-series / RTX 20-series) or newer on NVIDIA, "
+                        "RDNA2 (RX 6000) or newer on AMD, or Arc on Intel.";
+                }
                 ShowVulkanInitFailure("Vulkan Device Unsuitable", Message);
                 std::abort();
             }
@@ -1729,12 +1750,18 @@ namespace Lumina::RHI
             vkGetPhysicalDeviceProperties(Best, &GDevice->Properties);
 
             // The selection loop stayed quiet so a rejected candidate's limits cannot be mistaken for these.
-            const FDeviceSuitability Chosen = EvaluateDeviceSuitability(Best, DeviceDesc.bHeadless, true);
+            const FDeviceSuitability Chosen = EvaluateDeviceSuitability(Best, DeviceDesc.bHeadless,
+                DeviceDesc.RequiredFeatures, true);
 
             LOG_DISPLAY("Selected GPU '{}'.", GDevice->Properties.deviceName);
 
-            GDevice->bMeshShaderSupported     = true;
+            GDevice->bMeshShaderSupported     = Chosen.bMeshCapable;
             GDevice->MeshRequiredSubgroupSize = Chosen.MeshRequiredSubgroupSize;
+
+            if (!Chosen.bMeshCapable)
+            {
+                LOG_DISPLAY("Mesh shading unavailable ({}); the mesh path is disabled.", Chosen.MeshReason);
+            }
 
             // A driver reporting the maximum means no limit, but every derived divide then overflows.
             constexpr uint32 kMaxMeshGroupsPerDraw = 1u << 24;
@@ -1800,8 +1827,10 @@ namespace Lumina::RHI
             // Aerial perspective and the cloud march take ddx/ddy from compute, which needs quad groups.
             bComputeDerivatives = EnableIfPresent(VK_KHR_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME);
 
-            // Presence, feature and limits were all required to pass selection, so only the enable remains.
-            EnableIfPresent(VK_EXT_MESH_SHADER_EXTENSION_NAME);
+            if (GDevice->bMeshShaderSupported)
+            {
+                EnableIfPresent(VK_EXT_MESH_SHADER_EXTENSION_NAME);
+            }
 
             bDeviceAddressCommands = EnableIfPresent(VK_KHR_DEVICE_ADDRESS_COMMANDS_EXTENSION_NAME);
 
@@ -1924,6 +1953,7 @@ namespace Lumina::RHI
         {
             DerivativeFeatures.computeDerivativeGroupQuads = VK_TRUE;
             Chain(DerivativeFeatures);
+            GDevice->bComputeDerivatives = true;
         }
 
         VkPhysicalDeviceFaultFeaturesEXT DeviceFaultFeatures{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT };
@@ -2098,6 +2128,20 @@ namespace Lumina::RHI
 
             volkLoadDevice(GDevice->Device);
         }
+
+        auto MarkFeature = [](bool bEnabled, EDeviceFeature Feature)
+        {
+            if (bEnabled)
+            {
+                GDevice->SupportedFeatures |= Feature;
+            }
+        };
+
+        MarkFeature(GDevice->bMeshShaderSupported,    EDeviceFeature::MeshShading);
+        MarkFeature(GDevice->bComputeDerivatives,     EDeviceFeature::ComputeDerivatives);
+        MarkFeature(GDevice->bDeviceAddressCommands,  EDeviceFeature::DeviceAddressCommands);
+        MarkFeature(GDevice->bPipelineStats,          EDeviceFeature::PipelineStatistics);
+        MarkFeature(GDevice->bMemoryPriority,         EDeviceFeature::MemoryPriority);
 
         GDevice->CrashTracker->Initialize(GDevice->Device, GDevice->PhysicsDevice);
 
@@ -3915,9 +3959,27 @@ namespace Lumina::RHI
         return GDevice != nullptr && GDevice->bHasAsyncComputeQueue;
     }
 
+    EDeviceFeature GetDeviceFeatures()
+    {
+        return GDevice != nullptr ? GDevice->SupportedFeatures : EDeviceFeature::None;
+    }
+
+    bool SupportsFeature(EDeviceFeature Features)
+    {
+        return GDevice != nullptr && EnumHasAllFlags(GDevice->SupportedFeatures, Features);
+    }
+
     FPipelineH CreateMeshShaderPipeline(const FShaderSource& Task, const FShaderSource& Mesh, const FShaderSource& Fragment, const FRasterDesc& Desc, TSpan<const FSpecializationConstant> Constants)
     {
         LUMINA_MEMORY_SCOPE("RHI");
+
+        if (!GDevice->bMeshShaderSupported)
+        {
+            LOG_ERROR("RHI: mesh pipeline requested on a device without mesh shading. "
+                      "Pass EDeviceFeature::MeshShading in FDeviceDesc::RequiredFeatures to demand it at selection.");
+            return {};
+        }
+
         auto MakeModule = [](const FShaderSource& Src) -> VkShaderModule
         {
             if (Src.Source.empty())

@@ -148,6 +148,8 @@ namespace Lumina
             .bValidation = bValidation,
             .bDebugUtils = bDebugUtils,
             .bHeadless   = false,
+            // The scene renderer draws every meshlet through the mesh path; there is no fallback.
+            .RequiredFeatures = RHI::EDeviceFeature::MeshShading,
         });
         RenderBootMark("RHI::CreateDevice");
         RHI::Core::Initialize();

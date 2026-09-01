@@ -455,12 +455,36 @@ namespace Lumina::RHI
         return Handle.Handle != 0;
     }
 
+    // What a renderer asks the device for. Optional ones are enabled when present and reported by
+    // SupportsFeature; required ones disqualify a GPU that cannot provide them.
+    enum class EDeviceFeature : uint32
+    {
+        None                  = 0,
+        MeshShading           = BIT(0),
+        ComputeDerivatives    = BIT(1),
+        DeviceAddressCommands = BIT(2),
+        PipelineStatistics    = BIT(3),
+        MemoryPriority        = BIT(4),
+    };
+
+    ENUM_CLASS_FLAGS(EDeviceFeature);
+
     struct FDeviceDesc
     {
         bool bValidation    = false;
         bool bDebugUtils    = true;
         bool bHeadless      = false;
+
+        // A GPU missing any of these is skipped during selection. Leave empty to take any GPU that
+        // can present, then branch on SupportsFeature for the paths that need more.
+        EDeviceFeature RequiredFeatures = EDeviceFeature::None;
     };
+
+    /** Every feature the selected device actually enabled, required or merely present. */
+    RUNTIME_API EDeviceFeature GetDeviceFeatures();
+
+    /** True only when every bit in Features is supported. */
+    RUNTIME_API bool           SupportsFeature(EDeviceFeature Features);
 
     /** Observer for the debug-utils messenger, in addition to the log. Set BEFORE CreateDevice. Fires on
      *  whichever thread the driver reports on, so the handler must be thread-safe. */

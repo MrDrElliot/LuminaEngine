@@ -2,6 +2,7 @@
 #include "TextureStreamingManager.h"
 
 #include <bit>   // countr_zero, for the finest mip in a feedback mask
+#include <cfloat>
 
 #include "Assets/AssetTypes/Textures/Texture.h"
 #include "Config/EngineSettings.h"

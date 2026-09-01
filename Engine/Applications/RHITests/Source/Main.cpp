@@ -103,6 +103,8 @@ int main(int ArgC, char** ArgV)
         .bValidation    = bValidation,
         .bDebugUtils    = true,
         .bHeadless      = true,
+        // Pipelines/MeshShaderDraw covers the mesh path, so the suite needs a device that has it.
+        .RequiredFeatures = RHI::EDeviceFeature::MeshShading,
     });
     RHI::Core::Initialize();
     
