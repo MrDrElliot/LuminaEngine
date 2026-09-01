@@ -6,7 +6,6 @@
 #include "Renderer/RHI.h"
 #include "Renderer/RHITexture.h"
 #include "Renderer/RHIUtils.h"
-#include "Renderer/RHIUtils.h"
 
 namespace Umbral
 {
