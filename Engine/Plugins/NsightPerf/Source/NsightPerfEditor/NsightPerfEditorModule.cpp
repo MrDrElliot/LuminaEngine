@@ -92,7 +92,7 @@ void FNsightPerfEditorModule::StartupModule()
     // The editor UI does not exist yet, so the tool can only be opened once the engine is up.
     if (GCommandLine != nullptr && GCommandLine->Has("nsightexport"))
     {
-        FCoreDelegates::OnPostEngineInit.AddLambda([]
+        (void)FCoreDelegates::OnPostEngineInit.AddLambda([]
         {
             FEditorUI* UI = GetEditorUI();
             if (UI != nullptr && !UI->IsToolActive<FNsightPerfTool>())
