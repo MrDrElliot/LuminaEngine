@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Containers/ContainerTraits.h"
+#include "Memory/Construct.h"
 #include "Containers/Name.h"
 #include "Containers/Vector.h"
 #include "Memory/SmartPtr.h"
@@ -292,12 +293,12 @@ namespace Lumina::ECS
 
             if constexpr (std::is_default_constructible_v<T>)
             {
-                Info.DefaultConstruct = +[](void* Dest) { new (Dest) T(); };
+                Info.DefaultConstruct = +[](void* Dest) { Memory::ConstructAt(static_cast<T*>(Dest)); };
             }
 
             if constexpr (std::is_copy_constructible_v<T>)
             {
-                Info.CopyConstruct = +[](void* Dest, const void* Source) { new (Dest) T(*static_cast<const T*>(Source)); };
+                Info.CopyConstruct = +[](void* Dest, const void* Source) { Memory::ConstructAt(static_cast<T*>(Dest), *static_cast<const T*>(Source)); };
             }
 
             if constexpr (!(std::is_trivially_copyable_v<T> || TIsTriviallyRelocatable_V<T>)
@@ -306,8 +307,8 @@ namespace Lumina::ECS
                 Info.Relocate = +[](void* Dest, void* Source)
                 {
                     T* Moved = static_cast<T*>(Source);
-                    new (Dest) T(std::move(*Moved));
-                    Moved->~T();
+                    Memory::ConstructAt(static_cast<T*>(Dest), std::move(*Moved));
+                    Memory::DestroyAt(Moved);
                 };
             }
         }

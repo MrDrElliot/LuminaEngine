@@ -1,4 +1,5 @@
 #include "RuntimePCH.h"
+#include "Memory/Construct.h"
 #include "Fiber.h"
 
 #ifdef LE_PLATFORM_LINUX
@@ -159,7 +160,7 @@ namespace Lumina::Fibers
 
         ASSERT(Fiber != nullptr);
 
-        new (Fiber) FLinuxFiber();
+        Memory::ConstructAt(Fiber);
 
         GCurrentFiber = Fiber;
 
@@ -213,7 +214,7 @@ namespace Lumina::Fibers
 
         ASSERT(Fiber != nullptr);
 
-        new (Fiber) FLinuxFiber();
+        Memory::ConstructAt(Fiber);
         Fiber->Mapping     = Mapping;
         Fiber->MappingSize = MappingSize;
         Fiber->Entry       = Entry;

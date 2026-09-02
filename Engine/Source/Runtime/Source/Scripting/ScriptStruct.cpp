@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "ScriptStruct.h"
+#include "Memory/Construct.h"
 
 #include "Core/Math/Math.h"
 #include "Core/Object/ConstructObjectParams.h"
@@ -398,7 +399,7 @@ namespace Lumina
             // The description owns this ops instance, so the self-reference keeps the two from drifting.
             Ops.ConstructContainer = [](void* Vector, const void* Context)
             {
-                FScriptDynamicArray* Array = new (Vector) FScriptDynamicArray();
+                FScriptDynamicArray* Array = Memory::ConstructAt(static_cast<FScriptDynamicArray*>(Vector));
                 Array->Element = static_cast<const FScriptArrayElementDesc*>(Context);
             };
             Ops.DestructContainer = [](void* Vector, const void*)
@@ -573,7 +574,7 @@ namespace Lumina
             // Constructing the container is what wires the pair description into it, as in the array ops.
             Ops.ConstructContainer = [](void* Map, const void* Context)
             {
-                FScriptDynamicMap* Instance = new (Map) FScriptDynamicMap();
+                FScriptDynamicMap* Instance = Memory::ConstructAt(static_cast<FScriptDynamicMap*>(Map));
                 Instance->Desc = static_cast<const FScriptMapElementDesc*>(Context);
             };
             Ops.DestructContainer = [](void* Map, const void*)

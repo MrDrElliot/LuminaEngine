@@ -1,4 +1,5 @@
 #include "Platform/Time/PlatformTime.h"
+#include "Memory/Construct.h"
 #include "RuntimePCH.h"
 #include "JobScheduler.h"
 
@@ -1449,7 +1450,7 @@ namespace Lumina::Jobs
         G->Workers = static_cast<FWorkerLocal*>(Memory::Malloc(sizeof(FWorkerLocal) * G->NumWorkers, alignof(FWorkerLocal)));
         for (uint32 i = 0; i < G->NumWorkers; ++i)
         {
-            new (&G->Workers[i]) FWorkerLocal();
+            Memory::ConstructAt(&G->Workers[i]);
         }
 
         // One idle-mask word per 64 workers, zeroed since nobody has parked yet.
@@ -1457,7 +1458,7 @@ namespace Lumina::Jobs
         G->IdleMask = static_cast<std::atomic<uint64>*>(Memory::Malloc(sizeof(std::atomic<uint64>) * G->IdleMaskWords, alignof(std::atomic<uint64>)));
         for (uint32 i = 0; i < G->IdleMaskWords; ++i)
         {
-            new (&G->IdleMask[i]) std::atomic<uint64>(0);
+            Memory::ConstructAt(&G->IdleMask[i], 0);
         }
 
         // A ring sized exactly to its pool rides the wrap boundary and spins through a mid-claim cell.
@@ -1468,7 +1469,7 @@ namespace Lumina::Jobs
         G->CounterPool = static_cast<FCounter*>(Memory::Malloc(sizeof(FCounter) * kCounterPoolSize, alignof(FCounter)));
         for (uint32 i = 0; i < kCounterPoolSize; ++i)
         {
-            FCounter* C = new (&G->CounterPool[i]) FCounter();
+            FCounter* C = Memory::ConstructAt(&G->CounterPool[i]);
             C->bPooled   = true;
             C->PoolIndex = static_cast<uint16>(i);
             G->FreeCounters.Enqueue(static_cast<uint16>(i));
@@ -1478,7 +1479,7 @@ namespace Lumina::Jobs
         G->WorkFibers = static_cast<FWorkFiber*>(Memory::Malloc(sizeof(FWorkFiber) * G->MaxWorkFibers, alignof(FWorkFiber)));
         for (uint32 i = 0; i < G->MaxWorkFibers; ++i)
         {
-            new (&G->WorkFibers[i]) FWorkFiber();
+            Memory::ConstructAt(&G->WorkFibers[i]);
         }
         for (uint32 i = 0; i < G->NumWorkFibers; ++i)
         {
@@ -1499,7 +1500,7 @@ namespace Lumina::Jobs
             Memory::Malloc(sizeof(FScheduler::FWorkerCoreSample) * G->NumWorkers, alignof(FScheduler::FWorkerCoreSample)));
         for (uint32 i = 0; i < G->NumWorkers; ++i)
         {
-            new (&G->WorkerCores[i]) FScheduler::FWorkerCoreSample();
+            Memory::ConstructAt(&G->WorkerCores[i]);
         }
 #endif
 

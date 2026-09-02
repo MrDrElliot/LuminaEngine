@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "ContainerTraits.h"
+#include "Memory/Construct.h"
 
 namespace Lumina::Containers
 {
@@ -79,7 +80,7 @@ namespace Lumina::Containers
         constexpr TVariant()
             requires std::is_default_constructible_v<TAlternative<0>>
         {
-            new (Buffer) TAlternative<0>();
+            Memory::ConstructAt(reinterpret_cast<TAlternative<0>*>(Buffer));
             Index = 0;
         }
 
@@ -87,14 +88,14 @@ namespace Lumina::Containers
         requires (IndexOf<TDecayed> != kInvalidIndex && !std::is_same_v<TDecayed, TVariant>)
         constexpr TVariant(T&& Value)
         {
-            new (Buffer) TDecayed(std::forward<T>(Value));
+            Memory::ConstructAt(reinterpret_cast<TDecayed*>(Buffer), std::forward<T>(Value));
             Index = IndexOf<TDecayed>;
         }
 
         template <size_t TargetIndex, typename... TArgs>
         constexpr explicit TVariant(std::in_place_index_t<TargetIndex>, TArgs&&... Args)
         {
-            new (Buffer) TAlternative<TargetIndex>(std::forward<TArgs>(Args)...);
+            Memory::ConstructAt(reinterpret_cast<TAlternative<TargetIndex>*>(Buffer), std::forward<TArgs>(Args)...);
             Index = TargetIndex;
         }
 
@@ -174,7 +175,7 @@ namespace Lumina::Containers
         {
             static_assert(IndexOf<T> != kInvalidIndex, "That type is not one of the variant alternatives.");
             Reset();
-            T* Constructed = new (Buffer) T(std::forward<TArgs>(Args)...);
+            T* Constructed = Memory::ConstructAt(reinterpret_cast<T*>(Buffer), std::forward<TArgs>(Args)...);
             Index = IndexOf<T>;
             return *Constructed;
         }
@@ -286,7 +287,7 @@ namespace Lumina::Containers
         {
             static constexpr FCopyFn Table[kCount] =
             {
-                +[](void* Target, const void* Source) { new (Target) Ts(*static_cast<const Ts*>(Source)); }...
+                +[](void* Target, const void* Source) { Memory::ConstructAt(static_cast<Ts*>(Target), *static_cast<const Ts*>(Source)); }...
             };
             return Table;
         }
@@ -295,7 +296,7 @@ namespace Lumina::Containers
         {
             static constexpr FMoveFn Table[kCount] =
             {
-                +[](void* Target, void* Source) { new (Target) Ts(std::move(*static_cast<Ts*>(Source))); }...
+                +[](void* Target, void* Source) { Memory::ConstructAt(static_cast<Ts*>(Target), std::move(*static_cast<Ts*>(Source))); }...
             };
             return Table;
         }

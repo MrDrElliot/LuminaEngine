@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "Name.h"
+#include "Memory/Construct.h"
 
 #include "Core/Threading/Thread.h"
 #include "Memory/Memory.h"
@@ -134,7 +135,7 @@ namespace Lumina
     static FNameTable& GetNameTable()
     {
         alignas(FNameTable) static uint8 Storage[sizeof(FNameTable)];
-        static FNameTable* Table = new (Storage) FNameTable{};
+        static FNameTable* Table = Memory::ConstructAt(reinterpret_cast<FNameTable*>(Storage));
         return *Table;
     }
 

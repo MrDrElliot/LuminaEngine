@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "MemoryTracking.h"
+#include "Memory/Construct.h"
 
 #if LUMINA_MEMORY_TRACKING
 
@@ -174,7 +175,7 @@ namespace Lumina::Memory
             // Value-init rather than memset, since FEntry has member initializers and is not trivially default.
             for (uint32 i = 0; i < NewCap; ++i)
             {
-                new (NewEntries + i) FEntry();
+                Memory::ConstructAt(NewEntries + i);
             }
 
             uint32 NewCount = 0;

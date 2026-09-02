@@ -8,6 +8,7 @@
 #include "ContainerAllocator.h"
 #include "ContainerTraits.h"
 #include "ElementOps.h"
+#include "Memory/Construct.h"
 
 namespace Lumina::Containers
 {
@@ -179,7 +180,7 @@ namespace Lumina::Containers
         {
             GrowIfFull();
             T* Slot = Storage + SlotFor(Count);
-            ::new (static_cast<void*>(Slot)) T(std::forward<TArgs>(Args)...);
+            Memory::ConstructAt(Slot, std::forward<TArgs>(Args)...);
             ++Count;
             return *Slot;
         }
@@ -190,7 +191,7 @@ namespace Lumina::Containers
             GrowIfFull();
             First = First == 0 ? Capacity - 1 : First - 1;
             T* Slot = Storage + First;
-            ::new (static_cast<void*>(Slot)) T(std::forward<TArgs>(Args)...);
+            Memory::ConstructAt(Slot, std::forward<TArgs>(Args)...);
             ++Count;
             return *Slot;
         }

@@ -112,8 +112,20 @@ namespace Lumina::RHITests
     // A reordered AddSampler in Core::Initialize silently repoints every sampler in the engine.
     RHI_TEST(Heap, StockSamplerSlotsMatchEnum)
     {
-        RHI_CHECK_EQ((uint32)RHI::EStockSampler::LinearWrap, 0u);
-        RHI_CHECK_EQ((uint32)RHI::EStockSampler::Count, 10u);
+        // Every value pinned, since GlobalRHI.slang hardcodes the indices and a count alone hides a swap.
+        RHI_CHECK_EQ((uint32)RHI::EStockSampler::LinearWrap,   0u);
+        RHI_CHECK_EQ((uint32)RHI::EStockSampler::LinearClamp,  1u);
+        RHI_CHECK_EQ((uint32)RHI::EStockSampler::LinearMirror, 2u);
+        RHI_CHECK_EQ((uint32)RHI::EStockSampler::PointWrap,    3u);
+        RHI_CHECK_EQ((uint32)RHI::EStockSampler::PointClamp,   4u);
+        RHI_CHECK_EQ((uint32)RHI::EStockSampler::AnisoWrap,    5u);
+        RHI_CHECK_EQ((uint32)RHI::EStockSampler::AnisoClamp,   6u);
+        RHI_CHECK_EQ((uint32)RHI::EStockSampler::Shadow,       7u);
+        RHI_CHECK_EQ((uint32)RHI::EStockSampler::MinReduction, 8u);
+        RHI_CHECK_EQ((uint32)RHI::EStockSampler::MaxReduction, 9u);
+        RHI_CHECK_EQ((uint32)RHI::EStockSampler::PointMirror,  10u);
+        RHI_CHECK_EQ((uint32)RHI::EStockSampler::AnisoMirror,  11u);
+        RHI_CHECK_EQ((uint32)RHI::EStockSampler::Count,        12u);
     }
 
     RHI_TEST(Heap, FreeInvalidSlotIsIgnored)

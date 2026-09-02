@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "ContainerTraits.h"
+#include "Memory/Construct.h"
 
 namespace Lumina::Containers
 {
@@ -268,7 +269,7 @@ namespace Lumina::Containers
         template <typename... TArgs>
         void Construct(TArgs&&... Args)
         {
-            new (static_cast<void*>(&this->Value)) T(std::forward<TArgs>(Args)...);
+            Memory::ConstructAt(&this->Value, std::forward<TArgs>(Args)...);
             this->bEngaged = true;
         }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <iterator>
+#include "Memory/Construct.h"
 #include <new>
 #include <type_traits>
 #include <utility>
@@ -252,7 +253,7 @@ namespace Lumina::Containers
         T* InsertBefore(FNodeBase* Position, TArgs&&... Args)
         {
             void* Block = TAllocator::Allocate(sizeof(FNode), alignof(FNode));
-            FNode* Node = ::new (Block) FNode(std::forward<TArgs>(Args)...);
+            FNode* Node = Memory::ConstructAt(static_cast<FNode*>(Block), std::forward<TArgs>(Args)...);
 
             Node->Prev = Position->Prev;
             Node->Next = Position;

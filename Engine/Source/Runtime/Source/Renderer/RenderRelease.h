@@ -13,7 +13,11 @@ namespace Lumina::RHI
     {
         int32               MaterialSlot = -1;                  // FMaterialManager slot to zero and free
         RHI::FManagedTexture Texture;                           // image + bindless slot to release
+        RHI::FGPUAllocation Buffer = {};                        // GPU allocation to retire
     };
+
+    // Retires Block once every extract in flight at the call has been rendered, then on the GPU fence.
+    RUNTIME_API void RetireAfterExtract(const FGPUAllocation& Block);
 
     /** Two gates, in this order:
      *
@@ -49,10 +53,10 @@ namespace Lumina::RHI
 
         NODISCARD uint32 NumPending() const;
 
-    private:
-
         // Performs the release itself. Not gated -- callers decide.
         static void ReleaseNow(FRenderRelease& Item);
+
+    private:
 
         struct FPending
         {

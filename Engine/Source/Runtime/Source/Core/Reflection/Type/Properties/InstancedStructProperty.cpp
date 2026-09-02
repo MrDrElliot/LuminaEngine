@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "InstancedStructProperty.h"
+#include "Memory/Construct.h"
 
 #include "Core/Object/Class.h"
 #include "Core/Object/InstancedStruct.h"
@@ -106,7 +107,7 @@ namespace Lumina
 
     void FInstancedStructProperty::ConstructValue(void* Value) const
     {
-        new (Value) FInstancedStruct();
+        Memory::ConstructAt(static_cast<FInstancedStruct*>(Value));
     }
 
     void FInstancedStructProperty::DestructValue(void* Value) const

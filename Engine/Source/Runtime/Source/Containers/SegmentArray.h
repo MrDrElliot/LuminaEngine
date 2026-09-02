@@ -4,6 +4,7 @@
 #include "Core/Assertions/Assert.h"
 #include "Core/Threading/Thread.h"
 #include "Memory/Memory.h"
+#include "Memory/Construct.h"
 
 
 namespace Lumina
@@ -63,7 +64,7 @@ namespace Lumina
             Head = Entry->Next;
             Entry->Next = kNotInFreeList;
 
-            ::new(&Entry->Data) T(std::forward<TArgs>(Value)...);
+            Memory::ConstructAt(&Entry->Data, std::forward<TArgs>(Value)...);
 
             return ToHandle(Index, ++Entry->Gen);
         }

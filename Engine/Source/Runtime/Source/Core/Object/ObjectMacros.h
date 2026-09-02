@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Core/Reflection/ReflectionMacros.h"
+#include "Memory/Construct.h"
 #include "ObjectCore.h"
 #include "Lumina.h"
 
@@ -50,7 +51,7 @@ public: \
 #define DEFINE_CLASS_FACTORY(TClass) \
     static Lumina::CObject* __PlacementNew(void* Memory) \
     { \
-        return new (Memory) TClass(); \
+        return Lumina::Memory::ConstructAt(static_cast<TClass*>(Memory)); \
     }
 
 #define IMPLEMENT_CLASS(TNamespace, TClass) \

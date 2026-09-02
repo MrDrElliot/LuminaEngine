@@ -1,5 +1,6 @@
 #pragma once
 #include "Core/Object/SoftObjectPtr.h"
+#include "Memory/Construct.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 
 namespace Lumina
@@ -30,7 +31,7 @@ namespace Lumina
         RUNTIME_API void CopyCompleteValue(void* Dst, const void* Src) const override;
 
         // The path holds an FString, so zeroed bytes are not a valid value (see FStringProperty).
-        void ConstructValue(void* Value) const override { new (Value) FSoftObjectPath(); }
+        void ConstructValue(void* Value) const override { Memory::ConstructAt(static_cast<FSoftObjectPath*>(Value)); }
         void DestructValue(void* Value) const override  { static_cast<FSoftObjectPath*>(Value)->~FSoftObjectPath(); }
         bool OwnsStorage() const override { return true; }
 

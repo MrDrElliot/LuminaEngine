@@ -1,4 +1,5 @@
 #include "DotNetExport.h"
+#include "Memory/Construct.h"
 #include "World/ECS/Registry.h"
 #include "Containers/Vector.h"
 #include "Memory/Memory.h"
@@ -37,7 +38,7 @@ LUMINA_DOTNET_EXPORT(void*, ViewBegin)(uint64 World, const void* const* IncludeO
         return nullptr;
     }
 
-    FViewState* State = new (Memory::Malloc(sizeof(FViewState), alignof(FViewState))) FViewState();
+    FViewState* State = Memory::ConstructAt(static_cast<FViewState*>(Memory::Malloc(sizeof(FViewState), alignof(FViewState))));
     State->IncludeStorages.reserve(NInc);
 
     ECS::FRuntimeView View;

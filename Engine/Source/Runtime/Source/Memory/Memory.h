@@ -4,6 +4,7 @@
 #define ENABLE_VALIDATE_ARGS
 #endif
 #include <rpmalloc.h>
+#include "Construct.h"
 #include <utility>
 #include <xmmintrin.h>
 #include <cstring>
@@ -132,7 +133,7 @@ namespace Lumina::Memory
     NODISCARD FORCEINLINE T* New(ConstructorParams&&... Params)  // NOLINT(cppcoreguidelines-missing-std-forward)
     {
         void* Memory = Malloc(sizeof(T), alignof(T));
-        return new(Memory) T(std::forward<ConstructorParams>(Params)...);
+        return ConstructAt(static_cast<T*>(Memory), std::forward<ConstructorParams>(Params)...);
     }
 
     
@@ -148,7 +149,7 @@ namespace Lumina::Memory
         T* pArrayAddress = reinterpret_cast<T*>(pOriginalAddress + RequiredExtraMemory);
         for (size_t i = 0; i < NumElements; i++)
         {
-            new(&pArrayAddress[i]) T(std::forward<TArgs>(Args)...);
+            ConstructAt(pArrayAddress + i, std::forward<TArgs>(Args)...);
         }
 
         uint32* pNumElements = reinterpret_cast<uint32_t*>( pArrayAddress ) - 1;
@@ -169,7 +170,7 @@ namespace Lumina::Memory
         T* pArrayAddress = reinterpret_cast<T*>(pOriginalAddress + RequiredExtraMemory);
         for (size_t i = 0; i < NumElements; i++)
         {
-            new(&pArrayAddress[i]) T(Value);
+            ConstructAt(pArrayAddress + i, Value);
         }
 
         uint32* pNumElements = reinterpret_cast<uint32_t*>( pArrayAddress ) - 1;
@@ -186,13 +187,7 @@ namespace Lumina::Memory
 
         const uint32 NumElements = *(reinterpret_cast<uint32*>(Array) - 1);
         
-        if (!std::is_trivially_destructible_v<T>)
-        {
-            for (uint32 i = 0; i < NumElements; i++)
-            {
-                Array[i].~T();
-            }
-        }
+        DestroyN(Array, NumElements);
 
         uint8* OriginalAddress = reinterpret_cast<uint8*>(Array) - RequiredExtraMemory;
         Free((void*&)OriginalAddress);

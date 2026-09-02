@@ -1,5 +1,6 @@
 ﻿#include "Containers/HandleAllocator.h"
 #include "RuntimePCH.h"
+#include "Memory/Construct.h"
 #include "Renderer/RHIInternal.h"
 #include "Memory/MemoryTracking.h"
 #include "Core/Templates/LuminaTemplate.h"
@@ -6948,7 +6949,7 @@ namespace Lumina::RHI
         if (ZoneContext != nullptr && List.GPUZoneDepth < kMaxGPUZoneDepth)
         {
             void* Slot = &List.GPUZoneStack[List.GPUZoneDepth * sizeof(tracy::VkCtxScope)];
-            new (Slot) tracy::VkCtxScope(ZoneContext, 0u, __FILE__, sizeof(__FILE__) - 1,
+            Memory::ConstructAt(static_cast<tracy::VkCtxScope*>(Slot), ZoneContext, 0u, __FILE__, sizeof(__FILE__) - 1,
                 "GPUMarker", 9, Name, strlen(Name), List.CommandBuffer, true);
         }
         ++List.GPUZoneDepth;

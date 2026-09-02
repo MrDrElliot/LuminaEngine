@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TaskSystem.h"
+#include "Memory/Construct.h"
 #include "TaskTypes.h"
 #include "Containers/Pair.h"
 #include "Containers/Vector.h"
@@ -42,10 +43,10 @@ namespace Lumina
         {
             using TFn = std::decay_t<F>;
             void* Mem = Allocator.Allocate(sizeof(TFn), alignof(TFn));
-            ::new (Mem) TFn(std::forward<F>(Func));
+            Memory::ConstructAt(static_cast<TFn*>(Mem), std::forward<F>(Func));
             return AddOneShotNode(Mem,
                 [](void* P) { (*static_cast<TFn*>(P))(); },
-                [](void* P) { static_cast<TFn*>(P)->~TFn(); },
+                [](void* P) { Memory::DestroyAt(static_cast<TFn*>(P)); },
                 Priority);
         }
 
@@ -60,10 +61,10 @@ namespace Lumina
 
             using TFn = std::decay_t<F>;
             void* Mem = Allocator.Allocate(sizeof(TFn), alignof(TFn));
-            ::new (Mem) TFn(std::forward<F>(Func));
+            Memory::ConstructAt(static_cast<TFn*>(Mem), std::forward<F>(Func));
             return AddParallelForNode(Count, MinRange, Mem,
                 [](void* P, const Task::FParallelRange& R) { (*static_cast<TFn*>(P))(R); },
-                [](void* P) { static_cast<TFn*>(P)->~TFn(); },
+                [](void* P) { Memory::DestroyAt(static_cast<TFn*>(P)); },
                 Priority);
         }
 

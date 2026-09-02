@@ -67,10 +67,7 @@ namespace Lumina
 
         if (SharedRenderResources.bInitialized)
         {
-            if (SharedRenderResources.BRDFLutUAV != RHI::kInvalidHeapSlot)
-            {
-                RHI::HeapFreeRWTexture(RHI::Core::GetGlobalHeap(), SharedRenderResources.BRDFLutUAV);
-            }
+            // Release retires the storage slot it handed out, and freeing it here recycles the index early.
             RHI::Textures::Release(SharedRenderResources.BRDFLut);
             RHI::Textures::Release(SharedRenderResources.SMAAArea);
             RHI::Textures::Release(SharedRenderResources.SMAASearch);

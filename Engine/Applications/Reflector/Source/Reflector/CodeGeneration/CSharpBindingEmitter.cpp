@@ -1885,7 +1885,7 @@ namespace Lumina::Reflection
             Writer.Line("        {");
             Writer.Line("            Lumina::FScriptableNativeInfo __I;");
             Writer.Linef("            __I.GetBaseClass = []() -> Lumina::CClass* { return %s::StaticClass(); };", Qualified);
-            Writer.Linef("            __I.Factory = [](void* __m) -> Lumina::CObject* { return new (__m) %s(); };", Shim.c_str());
+            Writer.Linef("            __I.Factory = [](void* __m) -> Lumina::CObject* { return Lumina::Memory::ConstructAt(static_cast<%s*>(__m)); };", Shim.c_str());
             Writer.Linef("            __I.ShimSize = (uint32)sizeof(%s);", Shim.c_str());
             Writer.Linef("            __I.ShimAlign = (uint32)alignof(%s);", Shim.c_str());
             Writer.Linef("            Lumina::FScriptableRegistry::RegisterNative(\"%s\", __I);", Type.DisplayName.c_str());

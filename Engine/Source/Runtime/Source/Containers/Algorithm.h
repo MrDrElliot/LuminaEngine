@@ -7,6 +7,7 @@
 
 #include "ContainerAllocator.h"
 #include "ContainerTraits.h"
+#include "Memory/Construct.h"
 #include "Invoke.h"
 #include "Lumina.h"
 
@@ -94,8 +95,7 @@ namespace Lumina::Algo
         {
             if constexpr (bConstruct)
             {
-                using FTarget = std::remove_reference_t<decltype(*Dest)>;
-                ::new (static_cast<void*>(&*Dest)) FTarget(std::move(Source));
+                Memory::ConstructAt(&*Dest, std::move(Source));
             }
             else
             {
@@ -825,7 +825,7 @@ namespace Lumina::Algo
             }
             else
             {
-                ::new (static_cast<void*>(Buffer + Rejected)) FValue(std::move(*It));
+                Memory::ConstructAt(Buffer + Rejected, std::move(*It));
                 ++Rejected;
             }
         }

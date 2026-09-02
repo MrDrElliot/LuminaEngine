@@ -4,6 +4,7 @@
 #include "RHI.h"
 #include "RHICore.h"
 #include "RHITexture.h"
+#include "RenderRelease.h"
 #include "Containers/Vector.h"
 #include "Lumina.h"
 #include "Core/Serialization/Archiver.h"
@@ -424,7 +425,9 @@ namespace Lumina
 
                 // Only the block is owned; the five below are interior addresses into it. Retiring one
                 // of those would miss the allocation ledger's exact-address lookup and leak the block.
-                RHI::Core::Retire(GeometryBlock);
+
+                // Not Core::Retire, whose fence cannot see a scene still about to record the old header.
+                RHI::RetireAfterExtract(GeometryBlock);
 
                 GeometryBlock         = {};
                 MeshletBuffer         = 0;

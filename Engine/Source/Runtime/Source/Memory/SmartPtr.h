@@ -1,6 +1,7 @@
 #pragma once
 
 #include <type_traits>
+#include "Memory/Construct.h"
 #include <utility>
 
 #include "Containers/ContainerTraits.h"
@@ -108,7 +109,7 @@ namespace Lumina
             explicit TInlineBlock(TArgs&&... Args)
                 : FControlBlock(&ManageBlock)
             {
-                ::new (static_cast<void*>(&Value)) T(std::forward<TArgs>(Args)...);
+                Memory::ConstructAt(&Value, std::forward<TArgs>(Args)...);
             }
 
             // The union member is destroyed by DestroyValue, never by this.
@@ -358,7 +359,7 @@ namespace Lumina
             void* Storage = Memory::Malloc(sizeof(FBlock), alignof(FBlock));
 
             Value = InValue;
-            Block = ::new (Storage) FBlock(InValue, std::move(InDeleter));
+            Block = Memory::ConstructAt(static_cast<FBlock*>(Storage), InValue, std::move(InDeleter));
 
             SharedPtrDetail::BindSharedFromThis(Block, InValue, InValue);
         }
@@ -519,7 +520,7 @@ namespace Lumina
         using FBlock = SharedPtrDetail::TInlineBlock<T>;
 
         void* Storage = Memory::Malloc(sizeof(FBlock), alignof(FBlock));
-        FBlock* Block = ::new (Storage) FBlock(std::forward<TArgs>(Args)...);
+        FBlock* Block = Memory::ConstructAt(static_cast<FBlock*>(Storage), std::forward<TArgs>(Args)...);
 
         T* Value = &Block->Value;
         SharedPtrDetail::BindSharedFromThis(Block, Value, Value);

@@ -796,7 +796,8 @@ namespace Grain
 
         if (RHI::IsValid(TimerPool))
         {
-            RHI::FreeH(TimerPool);
+            const RHI::FQueryPoolH Pool = TimerPool;
+            RHI::Core::RetireCallback([Pool] { RHI::FreeH(Pool); });
         }
 
         if (PickBuffer.Gpu != 0)

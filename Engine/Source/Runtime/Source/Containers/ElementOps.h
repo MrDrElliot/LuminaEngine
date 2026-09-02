@@ -5,6 +5,7 @@
 #include <utility>
 
 #include "ContainerTraits.h"
+#include "Memory/Construct.h"
 #include "Memory/Memcpy.h"
 
 namespace Lumina::ElementOps
@@ -23,7 +24,7 @@ namespace Lumina::ElementOps
         {
             for (size_t Index = 0; Index < Count; ++Index)
             {
-                ::new (static_cast<void*>(Dest + Index)) T();
+                Memory::ConstructAt(Dest + Index);
             }
         }
     }
@@ -31,18 +32,7 @@ namespace Lumina::ElementOps
     template <typename T>
     FORCEINLINE void DestructRange(T* Dest, size_t Count)
     {
-        if constexpr (!std::is_trivially_destructible_v<T>)
-        {
-            for (size_t Index = 0; Index < Count; ++Index)
-            {
-                Dest[Index].~T();
-            }
-        }
-        else
-        {
-            (void)Dest;
-            (void)Count;
-        }
+        Memory::DestroyN(Dest, Count);
     }
 
     template <typename T>
@@ -59,7 +49,7 @@ namespace Lumina::ElementOps
         {
             for (size_t Index = 0; Index < Count; ++Index)
             {
-                ::new (static_cast<void*>(Dest + Index)) T(Src[Index]);
+                Memory::ConstructAt(Dest + Index, Src[Index]);
             }
         }
     }
@@ -78,7 +68,7 @@ namespace Lumina::ElementOps
         {
             for (size_t Index = 0; Index < Count; ++Index)
             {
-                ::new (static_cast<void*>(Dest + Index)) T(std::move(Src[Index]));
+                Memory::ConstructAt(Dest + Index, std::move(Src[Index]));
             }
         }
     }
@@ -98,8 +88,8 @@ namespace Lumina::ElementOps
         {
             for (size_t Index = 0; Index < Count; ++Index)
             {
-                ::new (static_cast<void*>(Dest + Index)) T(std::move(Src[Index]));
-                Src[Index].~T();
+                Memory::ConstructAt(Dest + Index, std::move(Src[Index]));
+                Memory::DestroyAt(Src + Index);
             }
         }
     }
@@ -121,16 +111,16 @@ namespace Lumina::ElementOps
         {
             for (size_t Index = 0; Index < Count; ++Index)
             {
-                ::new (static_cast<void*>(Dest + Index)) T(std::move(Src[Index]));
-                Src[Index].~T();
+                Memory::ConstructAt(Dest + Index, std::move(Src[Index]));
+                Memory::DestroyAt(Src + Index);
             }
         }
         else
         {
             for (size_t Index = Count; Index-- > 0;)
             {
-                ::new (static_cast<void*>(Dest + Index)) T(std::move(Src[Index]));
-                Src[Index].~T();
+                Memory::ConstructAt(Dest + Index, std::move(Src[Index]));
+                Memory::DestroyAt(Src + Index);
             }
         }
     }
@@ -140,7 +130,7 @@ namespace Lumina::ElementOps
     {
         for (size_t Index = 0; Index < Count; ++Index)
         {
-            ::new (static_cast<void*>(Dest + Index)) T(Value);
+            Memory::ConstructAt(Dest + Index, Value);
         }
     }
 

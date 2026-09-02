@@ -3,6 +3,7 @@
 #include "Core/Templates/LuminaTemplate.h"
 #include "Core/Threading/Atomic.h"
 #include "Core/Threading/Thread.h"
+#include "Memory/Construct.h"
 #include "Memory/Memory.h"
 #include "Platform/GenericPlatform.h"
 
@@ -104,7 +105,7 @@ namespace Lumina
 
                 for (uint64 i = 0; i < Capacity; ++i)
                 {
-                    new (&HeapCells[i]) FCell();
+                    Memory::ConstructAt(HeapCells + i);
                 }
 
                 ResetSequences();
@@ -122,7 +123,7 @@ namespace Lumina
 
                 for (uint64 i = 0; i <= RuntimeMask; ++i)
                 {
-                    HeapCells[i].~FCell();
+                    Memory::DestroyAt(HeapCells + i);
                 }
                 Memory::Free(HeapCells);
                 HeapCells   = nullptr;

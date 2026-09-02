@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Core/Assertions/Assert.h"
+#include "Memory/Construct.h"
 #include "Memory/Memory.h"
 #include "Containers/HashTable.h"
 #include "Containers/Vector.h"
@@ -18,7 +19,7 @@ namespace Lumina
         T* TAlloc(Args&&... args)
         {
             void* Mem = Allocate(sizeof(T), alignof(T));
-            return new (Mem) T(Forward<Args>(args)...);
+            return Memory::ConstructAt(static_cast<T*>(Mem), Forward<Args>(args)...);
         } 
         
         virtual void* Allocate(size_t Size, size_t Alignment = alignof(std::max_align_t)) = 0;
@@ -349,7 +350,7 @@ namespace Lumina
         void* Allocate(SIZE_T Size, SIZE_T Alignment = 16) { return Arena.Allocate(Size, Alignment); }
 
         template<typename T, typename... TArgs>
-        T* Alloc(TArgs&&... Args) { return new (Arena.Allocate(sizeof(T), alignof(T))) T(Forward<TArgs>(Args)...); }
+        T* Alloc(TArgs&&... Args) { return Memory::ConstructAt(static_cast<T*>(Arena.Allocate(sizeof(T), alignof(T))), Forward<TArgs>(Args)...); }
 
         template<typename T, typename F>
         requires(!std::is_trivially_constructible_v<T>)
@@ -360,7 +361,7 @@ namespace Lumina
             
             for (size_t i = 0; i < N; ++i)
             {
-                new (Ptr + i) T(f(i));
+                Memory::ConstructAt(Ptr + i, f(i));
             }   
 
             return Ptr;

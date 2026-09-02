@@ -1,6 +1,7 @@
 #pragma once
 
 #include "World/ECS/Registry.h"
+#include "Memory/Construct.h"
 
 
 #include <new>
@@ -98,11 +99,11 @@ namespace Lumina
                 +[]() -> void*
                 {
                     void* Mem = Memory::Malloc(sizeof(TComponent), alignof(TComponent));
-                    return new (Mem) TComponent();
+                    return Memory::ConstructAt(static_cast<TComponent*>(Mem));
                 },
                 +[](void* Ptr)
                 {
-                    static_cast<TComponent*>(Ptr)->~TComponent();
+                    Memory::DestroyAt(static_cast<TComponent*>(Ptr));
                     void* Mem = Ptr;
                     Memory::Free(Mem);
                 },

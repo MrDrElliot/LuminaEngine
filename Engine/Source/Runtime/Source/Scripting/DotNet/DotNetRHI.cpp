@@ -110,10 +110,10 @@ LUMINA_DOTNET_EXPORT(RHI::FGPUAllocation, RHI_Malloc)(uint64 Size, uint64 Alignm
 
 LUMINA_DOTNET_EXPORT(void, RHI_Retire)(RHI::FGPUAllocation Allocation) { RHI::Core::Retire(Allocation); }
 
-LUMINA_DOTNET_EXPORT(void, RHI_FreeSemaphore)(RHI::FSemaphoreH H)       { RHI::FreeH(H); }
+LUMINA_DOTNET_EXPORT(void, RHI_FreeSemaphore)(RHI::FSemaphoreH H)       { RHI::Core::RetireCallback([H] { RHI::FreeH(H); }); }
 LUMINA_DOTNET_EXPORT(void, RHI_RetirePipeline)(RHI::FPipelineH H)       { RHI::Core::Retire(H); }
 LUMINA_DOTNET_EXPORT(void, RHI_RetireTexture)(RHI::FTextureH H)         { RHI::Core::Retire(H); }
-LUMINA_DOTNET_EXPORT(void, RHI_FreeTextureHeap)(RHI::FTextureHeapH H)   { RHI::FreeH(H); }
+LUMINA_DOTNET_EXPORT(void, RHI_FreeTextureHeap)(RHI::FTextureHeapH H)   { RHI::Core::RetireCallback([H] { RHI::FreeH(H); }); }
 LUMINA_DOTNET_EXPORT(void, RHI_FreeDepthStencil)(RHI::FDepthStencilH H) { RHI::FreeH(H); }
 
 // Resources.
@@ -182,9 +182,22 @@ LUMINA_DOTNET_EXPORT(uint32, RHI_HeapWriteSampler)(RHI::FTextureHeapH Heap, RHI:
     return RHI::HeapWriteSampler(Heap, Desc);
 }
 
-LUMINA_DOTNET_EXPORT(void, RHI_HeapFreeTexture)(RHI::FTextureHeapH Heap, uint32 Slot)   { RHI::HeapFreeTexture(Heap, Slot); }
-LUMINA_DOTNET_EXPORT(void, RHI_HeapFreeRWTexture)(RHI::FTextureHeapH Heap, uint32 Slot) { RHI::HeapFreeRWTexture(Heap, Slot); }
-LUMINA_DOTNET_EXPORT(void, RHI_HeapFreeSampler)(RHI::FTextureHeapH Heap, uint32 Slot)   { RHI::HeapFreeSampler(Heap, Slot); }
+// Unbound now so no frame re-binds a dying texture, with only the index recycling deferred.
+LUMINA_DOTNET_EXPORT(void, RHI_HeapFreeTexture)(RHI::FTextureHeapH Heap, uint32 Slot)
+{
+    RHI::HeapUnbindTexture(Heap, Slot);
+    RHI::Core::RetireCallback([Heap, Slot] { RHI::HeapFreeTexture(Heap, Slot); });
+}
+
+LUMINA_DOTNET_EXPORT(void, RHI_HeapFreeRWTexture)(RHI::FTextureHeapH Heap, uint32 Slot)
+{
+    RHI::Core::RetireCallback([Heap, Slot] { RHI::HeapFreeRWTexture(Heap, Slot); });
+}
+
+LUMINA_DOTNET_EXPORT(void, RHI_HeapFreeSampler)(RHI::FTextureHeapH Heap, uint32 Slot)
+{
+    RHI::Core::RetireCallback([Heap, Slot] { RHI::HeapFreeSampler(Heap, Slot); });
+}
 
 LUMINA_DOTNET_EXPORT(int32, RHI_HeapTextureCount)(RHI::FTextureHeapH Heap)
 {

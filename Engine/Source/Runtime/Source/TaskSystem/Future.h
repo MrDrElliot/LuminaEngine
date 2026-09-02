@@ -8,6 +8,7 @@
 #include "Core/Threading/Thread.h"
 #include "Core/Assertions/Assert.h"
 #include "Memory/SmartPtr.h"
+#include "Memory/Construct.h"
 #include "Platform/GenericPlatform.h"
 
 #include <new>
@@ -88,7 +89,7 @@ namespace Lumina
             T* Ptr() { return reinterpret_cast<T*>(Storage); }
 
             template<typename U>
-            void Construct(U&& Value) { ::new (static_cast<void*>(Storage)) T(std::forward<U>(Value)); }
+            void Construct(U&& Value) { Memory::ConstructAt(Ptr(), std::forward<U>(Value)); }
         };
 
         template<>

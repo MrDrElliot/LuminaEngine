@@ -7,6 +7,7 @@
 #include "ContainerAllocator.h"
 #include "ContainerTraits.h"
 #include "ElementOps.h"
+#include "Memory/Construct.h"
 
 namespace Lumina::Containers
 {
@@ -357,7 +358,7 @@ namespace Lumina::Containers
             }
 
             T* Slot = Data + Count;
-            ::new (static_cast<void*>(Slot)) T(Value);
+            Memory::ConstructAt(Slot, Value);
             ++Count;
             return *Slot;
         }
@@ -370,7 +371,7 @@ namespace Lumina::Containers
             }
 
             T* Slot = Data + Count;
-            ::new (static_cast<void*>(Slot)) T(std::move(Value));
+            Memory::ConstructAt(Slot, std::move(Value));
             ++Count;
             return *Slot;
         }
@@ -384,7 +385,7 @@ namespace Lumina::Containers
             }
 
             T* Slot = Data + Count;
-            ::new (static_cast<void*>(Slot)) T(std::forward<TArgs>(Args)...);
+            Memory::ConstructAt(Slot, std::forward<TArgs>(Args)...);
             ++Count;
             return *Slot;
         }
@@ -471,7 +472,7 @@ namespace Lumina::Containers
                 T* Write = Data + Index;
                 for (; First != Last; ++First, ++Write)
                 {
-                    ::new (static_cast<void*>(Write)) T(*First);
+                    Memory::ConstructAt(Write, *First);
                 }
                 Count += static_cast<uint32>(Extra);
                 return Data + Index;
@@ -675,7 +676,7 @@ namespace Lumina::Containers
                     T* Write = Data;
                     for (; First != Last; ++First, ++Write)
                     {
-                        ::new (static_cast<void*>(Write)) T(*First);
+                        Memory::ConstructAt(Write, *First);
                     }
                     Count = static_cast<uint32>(Incoming);
                 }
@@ -835,14 +836,14 @@ namespace Lumina::Containers
             {
                 Cap = NewCapacity;
                 T* Slot = Data + Count;
-                ::new (static_cast<void*>(Slot)) T(std::forward<TArgs>(Args)...);
+                Memory::ConstructAt(Slot, std::forward<TArgs>(Args)...);
                 ++Count;
                 return *Slot;
             }
 
             T* NewData = static_cast<T*>(TAllocator::Allocate(NewBytes, alignof(T)));
             T* Slot    = NewData + Count;
-            ::new (static_cast<void*>(Slot)) T(std::forward<TArgs>(Args)...);
+            Memory::ConstructAt(Slot, std::forward<TArgs>(Args)...);
 
             ElementOps::RelocateRange(NewData, Data, Count);
             ReleaseHeapBlock();
@@ -871,7 +872,7 @@ namespace Lumina::Containers
         T* InsertAtIndex(size_t Index, TValue&& Value)
         {
             OpenGap(Index, 1);
-            ::new (static_cast<void*>(Data + Index)) T(std::forward<TValue>(Value));
+            Memory::ConstructAt(Data + Index, std::forward<TValue>(Value));
             ++Count;
             return Data + Index;
         }

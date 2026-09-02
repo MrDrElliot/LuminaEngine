@@ -8,6 +8,7 @@
 #include "Core/Assertions/Assert.h"
 #include "Core/Templates/LuminaTemplate.h"
 #include "Memory/Memory.h"
+#include "Memory/Construct.h"
 #include "Platform/GenericPlatform.h"
 
 #include <coroutine>
@@ -78,7 +79,7 @@ namespace Lumina
         template<typename U = T>
         void return_value(U&& Value)
         {
-            ::new (static_cast<void*>(Storage)) T(std::forward<U>(Value));
+            Memory::ConstructAt(reinterpret_cast<T*>(Storage), std::forward<U>(Value));
             bHasValue = true;
         }
 

@@ -4,6 +4,7 @@
 #if defined(LUMINA_WITH_GPU_PROFILING)
 
 #include "Core/Console/ConsoleVariable.h"
+#include "RHICore.h"
 
 namespace Lumina
 {
@@ -51,7 +52,9 @@ namespace Lumina
         {
             if (RHI::IsValid(Slot.Pool))
             {
-                RHI::FreeH(Slot.Pool);
+                // Disabling the cvar calls this mid-frame, with earlier frames still naming the pool.
+                const RHI::FQueryPoolH Pool = Slot.Pool;
+                RHI::Core::RetireCallback([Pool] { RHI::FreeH(Pool); });
                 Slot.Pool = {};
             }
             Slot.Scopes.clear();

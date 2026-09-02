@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ComponentType.h"
+#include "Memory/Construct.h"
 #include "Containers/Vector.h"
 #include "Core/Assertions/Assert.h"
 #include "Memory/Memory.h"
@@ -56,7 +57,7 @@ namespace Lumina::ECS
 
             Entry.Info = &FComponentTypeRegistry::Get().GetInfo(TypeID);
             Entry.Data = Memory::Malloc(sizeof(T), alignof(T));
-            return *new (Entry.Data) T(std::forward<TArgs>(Args)...);
+            return *Memory::ConstructAt(static_cast<T*>(Entry.Data), std::forward<TArgs>(Args)...);
         }
 
         template<typename T>

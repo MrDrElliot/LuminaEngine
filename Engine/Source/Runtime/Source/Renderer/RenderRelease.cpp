@@ -100,5 +100,31 @@ namespace Lumina::RHI
             // What the gate bought is that no frame recorded from here on can name it.
             Textures::Release(Item.Texture);
         }
+
+        if (Item.Buffer.Gpu != 0)
+        {
+            Core::Retire(Item.Buffer);
+            Item.Buffer = {};
+        }
+    }
+
+    void RetireAfterExtract(const FGPUAllocation& Block)
+    {
+        if (Block.Gpu == 0)
+        {
+            return;
+        }
+
+        FRenderRelease Release;
+        Release.Buffer = Block;
+
+        if (FRenderManager* RenderManager = TryRender())
+        {
+            RenderManager->GetReleaseQueue().Post(Release);
+            return;
+        }
+
+        // No renderer means no extract can be holding it, so the GPU fence is the whole contract.
+        FRenderReleaseQueue::ReleaseNow(Release);
     }
 }

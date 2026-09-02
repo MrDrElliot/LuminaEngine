@@ -10,6 +10,7 @@
 
 #include "ContainerAllocator.h"
 #include "ContainerTraits.h"
+#include "Memory/Construct.h"
 #include "Core/Templates/IntegerCompare.h"
 #include "HashPrimitives.h"
 #include "Pair.h"
@@ -352,7 +353,7 @@ namespace HashTableInternal
         }
         else
         {
-            new (static_cast<void*>(Destination)) T(std::move(*Source));
+            Memory::ConstructAt(Destination, std::move(*Source));
             Source->~T();
         }
     }
@@ -405,7 +406,7 @@ namespace Private
         template <typename... TArgs>
         FORCEINLINE static void Construct(slot_type* Slot, TArgs&&... Args)
         {
-            new (static_cast<void*>(Slot)) T(std::forward<TArgs>(Args)...);
+            Memory::ConstructAt(Slot, std::forward<TArgs>(Args)...);
         }
 
         FORCEINLINE static void Destroy(slot_type* Slot) noexcept { Slot->~T(); }
@@ -447,7 +448,7 @@ namespace Private
         template <typename... TArgs>
         FORCEINLINE static void Construct(slot_type* Slot, TArgs&&... Args)
         {
-            new (static_cast<void*>(&Slot->Mutable)) FMutablePair(std::forward<TArgs>(Args)...);
+            Memory::ConstructAt(&Slot->Mutable, std::forward<TArgs>(Args)...);
         }
 
         FORCEINLINE static void Destroy(slot_type* Slot) noexcept { Slot->Mutable.~FMutablePair(); }
@@ -478,7 +479,7 @@ namespace Private
         FORCEINLINE static void Construct(slot_type* Slot, TArgs&&... Args)
         {
             void* Block = TAllocator::Allocate(sizeof(T), alignof(T));
-            *Slot = new (Block) T(std::forward<TArgs>(Args)...);
+            *Slot = Memory::ConstructAt(static_cast<T*>(Block), std::forward<TArgs>(Args)...);
         }
 
         FORCEINLINE static void Destroy(slot_type* Slot) noexcept
@@ -519,7 +520,7 @@ namespace Private
         FORCEINLINE static void Construct(slot_type* Slot, TArgs&&... Args)
         {
             void* Block = TAllocator::Allocate(sizeof(FNode), alignof(FNode));
-            *Slot = new (Block) FNode(std::forward<TArgs>(Args)...);
+            *Slot = Memory::ConstructAt(static_cast<FNode*>(Block), std::forward<TArgs>(Args)...);
         }
 
         FORCEINLINE static void Destroy(slot_type* Slot) noexcept

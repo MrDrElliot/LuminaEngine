@@ -1,6 +1,7 @@
 #pragma once
 
 #include "StructConcepts.h"
+#include "Memory/Construct.h"
 #include "Containers/String.h"
 #include "Memory/Memory.h"
 
@@ -63,7 +64,7 @@ namespace Lumina
         {
             Ops->Construct = +[](void* Mem)
             {
-                new (Mem) T();
+                Memory::ConstructAt(static_cast<T*>(Mem));
             };
         }
 

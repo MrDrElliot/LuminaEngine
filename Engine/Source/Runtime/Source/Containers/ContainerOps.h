@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Containers/HashTable.h"
+#include "Memory/Construct.h"
 #include "Containers/Vector.h"
 
 namespace Lumina
@@ -60,8 +61,8 @@ namespace Lumina
             [](void* V, SIZE_T N) { static_cast<TContainer*>(V)->reserve(N); },
             [](void* V, SIZE_T A, SIZE_T B) { TContainer* Vec = static_cast<TContainer*>(V); T Tmp = (*Vec)[A]; (*Vec)[A] = (*Vec)[B]; (*Vec)[B] = Tmp; },
             static_cast<uint32>(sizeof(T)),
-            [](void* V, const void*) { new (V) TContainer(); },
-            [](void* V, const void*) { static_cast<TContainer*>(V)->~TContainer(); },
+            [](void* V, const void*) { Memory::ConstructAt(static_cast<TContainer*>(V)); },
+            [](void* V, const void*) { Memory::DestroyAt(static_cast<TContainer*>(V)); },
             nullptr,
         };
         return &Ops;
@@ -143,8 +144,8 @@ namespace Lumina
                     Visitor(&Pair.first, const_cast<V*>(&Pair.second), UserData);
                 }
             },
-            [](void*, void* Dst) { new (Dst) K(); },
-            [](void*, void* Dst) { static_cast<K*>(Dst)->~K(); },
+            [](void*, void* Dst) { Memory::ConstructAt(static_cast<K*>(Dst)); },
+            [](void*, void* Dst) { Memory::DestroyAt(static_cast<K*>(Dst)); },
             [](void* M, SIZE_T Index, const void** OutKey, void** OutValue)
             {
                 MapT* Map = static_cast<MapT*>(M);
@@ -163,8 +164,8 @@ namespace Lumina
             },
             static_cast<uint32>(sizeof(K)),
             static_cast<uint32>(sizeof(V)),
-            [](void* M, const void*) { new (M) MapT(); },
-            [](void* M, const void*) { static_cast<MapT*>(M)->~MapT(); },
+            [](void* M, const void*) { Memory::ConstructAt(static_cast<MapT*>(M)); },
+            [](void* M, const void*) { Memory::DestroyAt(static_cast<MapT*>(M)); },
             nullptr,
         };
         return &Ops;

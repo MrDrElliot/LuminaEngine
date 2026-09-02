@@ -3,6 +3,7 @@
 #include <stdexcept>
 #include "Vector.h"
 #include "Containers/Algorithm.h"
+#include "Memory/Construct.h"
 
 
 namespace Lumina
@@ -28,7 +29,7 @@ namespace Lumina
                 {
                     Index newIdx = Data.size();
                     Data.emplace_back_uninit();
-                    new (&Data[newIdx]) T(*reinterpret_cast<const T*>(&other.Data[i]));
+                    Memory::ConstructAt(reinterpret_cast<T*>(&Data[newIdx]), *reinterpret_cast<const T*>(&other.Data[i]));
                     Occupied.push_back(true);
                     
                     if (i != newIdx)
@@ -45,7 +46,7 @@ namespace Lumina
                         if (!Occupied[i])
                         {
                             FreeList.erase(Algo::Remove(FreeList, i), FreeList.end());
-                            new (&Data[i]) T(*reinterpret_cast<const T*>(&other.Data[i]));
+                            Memory::ConstructAt(reinterpret_cast<T*>(&Data[i]), *reinterpret_cast<const T*>(&other.Data[i]));
                             Occupied[i] = true;
                         }
                     }
@@ -101,7 +102,7 @@ namespace Lumina
             {
                 idx = FreeList.back();
                 FreeList.pop_back();
-                new (&Data[idx]) T(std::forward<Args>(args)...);
+                Memory::ConstructAt(reinterpret_cast<T*>(&Data[idx]), std::forward<Args>(args)...);
                 Occupied[idx] = true;
             }
             else
@@ -109,7 +110,7 @@ namespace Lumina
                 idx = Data.size();
                 Data.emplace_back();
                 Occupied.push_back(true);
-                new (&Data[idx]) T(std::forward<Args>(args)...);
+                Memory::ConstructAt(reinterpret_cast<T*>(&Data[idx]), std::forward<Args>(args)...);
             }
             return idx;
         }
@@ -232,7 +233,7 @@ namespace Lumina
             while (readIdx < Data.size()) {
                 if (Occupied[readIdx]) {
                     if (writeIdx != readIdx) {
-                        new (&Data[writeIdx]) T(std::move(*reinterpret_cast<T*>(&Data[readIdx])));
+                        Memory::ConstructAt(reinterpret_cast<T*>(&Data[writeIdx]), std::move(*reinterpret_cast<T*>(&Data[readIdx])));
                         reinterpret_cast<T*>(&Data[readIdx])->~T();
                         Occupied[writeIdx] = true;
                         Occupied[readIdx] = false;

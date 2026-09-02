@@ -8,6 +8,7 @@
 #include "ContainerTraits.h"
 #include "Invoke.h"
 #include "Memory/Memcpy.h"
+#include "Memory/Construct.h"
 
 namespace Lumina::Containers
 {
@@ -112,12 +113,12 @@ namespace Lumina::Containers
 
                 if constexpr (bInline)
                 {
-                    ::new (static_cast<void*>(static_cast<FStorage*>(Dest)->Inline)) TCallable(Value);
+                    Memory::ConstructAt(Target(Dest), Value);
                 }
                 else
                 {
                     void* Block = TAllocator::Allocate(sizeof(TCallable), alignof(TCallable));
-                    ::new (Block) TCallable(Value);
+                    Memory::ConstructAt(static_cast<TCallable*>(Block), Value);
                     static_cast<FStorage*>(Dest)->Heap = Block;
                 }
             }
@@ -125,7 +126,7 @@ namespace Lumina::Containers
             static void RelocateThunk(void* Dest, void* Source) noexcept
             {
                 TCallable* Value = Target(Source);
-                ::new (static_cast<void*>(static_cast<FStorage*>(Dest)->Inline)) TCallable(std::move(*Value));
+                Memory::ConstructAt(reinterpret_cast<TCallable*>(static_cast<FStorage*>(Dest)->Inline), std::move(*Value));
                 Value->~TCallable();
             }
 
@@ -301,12 +302,12 @@ namespace Lumina::Containers
 
             if constexpr (bFitsInline<TCallable>)
             {
-                ::new (static_cast<void*>(Storage.Inline)) TCallable(std::forward<TCtorArgs>(Args)...);
+                Memory::ConstructAt(reinterpret_cast<TCallable*>(Storage.Inline), std::forward<TCtorArgs>(Args)...);
             }
             else
             {
                 void* Block = TAllocator::Allocate(sizeof(TCallable), alignof(TCallable));
-                ::new (Block) TCallable(std::forward<TCtorArgs>(Args)...);
+                Memory::ConstructAt(static_cast<TCallable*>(Block), std::forward<TCtorArgs>(Args)...);
                 Storage.Heap = Block;
             }
 

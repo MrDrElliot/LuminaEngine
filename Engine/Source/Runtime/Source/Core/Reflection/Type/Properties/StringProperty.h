@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include "Core/Reflection/Type/LuminaTypes.h"
+#include "Memory/Construct.h"
 
 namespace Lumina
 {
@@ -21,7 +22,7 @@ namespace Lumina
 
         // Owns heap memory, so zeroed bytes are NOT a valid value: a memzeroed FString reads as a plausible
         // empty string and corrupts on the first assignment.
-        void ConstructValue(void* Value) const override { new (Value) FString(); }
+        void ConstructValue(void* Value) const override { Memory::ConstructAt(static_cast<FString*>(Value)); }
         bool OwnsStorage() const override { return true; }
         void DestructValue(void* Value) const override  { static_cast<FString*>(Value)->~FString(); }
     };

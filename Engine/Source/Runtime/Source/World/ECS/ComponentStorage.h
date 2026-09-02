@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SparseSet.h"
+#include "Memory/Construct.h"
 #include "Containers/Tuple.h"
 #include "Core/Assertions/Assert.h"
 
@@ -145,7 +146,7 @@ namespace Lumina::ECS
             const uint32 DenseIndex = Set->AllocateSlot(Entity);
             if constexpr (!bEmpty)
             {
-                new (&GetAtDense(DenseIndex)) T(std::forward<TArgs>(Args)...);
+                Memory::ConstructAt(&GetAtDense(DenseIndex), std::forward<TArgs>(Args)...);
                 return GetAtDense(DenseIndex);
             }
         }
@@ -159,8 +160,8 @@ namespace Lumina::ECS
                 if constexpr (!bEmpty)
                 {
                     T& Existing = Get(Entity);
-                    Existing.~T();
-                    new (&Existing) T(std::forward<TArgs>(Args)...);
+                    Memory::DestroyAt(&Existing);
+                    Memory::ConstructAt(&Existing, std::forward<TArgs>(Args)...);
                     return Existing;
                 }
                 else
