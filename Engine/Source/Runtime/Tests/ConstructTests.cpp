@@ -1,7 +1,5 @@
 #include <gtest/gtest.h>
 
-#include <memory>
-
 #include "Memory/Construct.h"
 
 using namespace Lumina;
@@ -16,25 +14,35 @@ namespace
         int32 Value;
     };
 
-    // The whole point of routing through std::construct_at, so it is asserted at compile time.
+    // Union storage rather than std::allocator, so the constexpr proof pulls in no standard library.
+    union FConstexprSlot
+    {
+        char            Dummy;
+        FConstexprValue Value;
+
+        constexpr FConstexprSlot() : Dummy(0) {}
+        constexpr ~FConstexprSlot() {}
+    };
+
     constexpr int32 SumConstructedRange(int32 Count)
     {
-        std::allocator<FConstexprValue> Allocator;
-        FConstexprValue* Buffer = Allocator.allocate(static_cast<size_t>(Count));
+        FConstexprSlot Storage[4];
 
         for (int32 Index = 0; Index < Count; ++Index)
         {
-            Memory::ConstructAt(Buffer + Index, Index + 1);
+            Memory::ConstructAt(&Storage[Index].Value, Index + 1);
         }
 
         int32 Sum = 0;
         for (int32 Index = 0; Index < Count; ++Index)
         {
-            Sum += Buffer[Index].Value;
+            Sum += Storage[Index].Value.Value;
         }
 
-        Memory::DestroyN(Buffer, static_cast<size_t>(Count));
-        Allocator.deallocate(Buffer, static_cast<size_t>(Count));
+        for (int32 Index = 0; Index < Count; ++Index)
+        {
+            Memory::DestroyAt(&Storage[Index].Value);
+        }
         return Sum;
     }
 
@@ -42,18 +50,16 @@ namespace
 
     constexpr int32 DestroyAtEndsLifetime()
     {
-        std::allocator<FConstexprValue> Allocator;
-        FConstexprValue* Slot = Allocator.allocate(1);
+        FConstexprSlot Storage;
 
-        Memory::ConstructAt(Slot, 7);
-        const int32 First = Slot->Value;
-        Memory::DestroyAt(Slot);
+        Memory::ConstructAt(&Storage.Value, 7);
+        const int32 First = Storage.Value.Value;
+        Memory::DestroyAt(&Storage.Value);
 
-        Memory::ConstructAt(Slot, 9);
-        const int32 Second = Slot->Value;
-        Memory::DestroyAt(Slot);
+        Memory::ConstructAt(&Storage.Value, 9);
+        const int32 Second = Storage.Value.Value;
+        Memory::DestroyAt(&Storage.Value);
 
-        Allocator.deallocate(Slot, 1);
         return First + Second;
     }
 
@@ -105,11 +111,11 @@ TEST_F(FConstructFixture, ConstructAtDefaultConstructs)
 
 TEST_F(FConstructFixture, DestroyNRunsEveryDestructor)
 {
-    constexpr size_t Count = 5;
+    constexpr SIZE_T Count = 5;
     alignas(FCounted) unsigned char Storage[sizeof(FCounted) * Count];
     FCounted* First = reinterpret_cast<FCounted*>(Storage);
 
-    for (size_t Index = 0; Index < Count; ++Index)
+    for (SIZE_T Index = 0; Index < Count; ++Index)
     {
         Memory::ConstructAt(First + Index, static_cast<int32>(Index));
     }
@@ -121,11 +127,11 @@ TEST_F(FConstructFixture, DestroyNRunsEveryDestructor)
 
 TEST_F(FConstructFixture, DestroyRangeMatchesDestroyN)
 {
-    constexpr size_t Count = 3;
+    constexpr SIZE_T Count = 3;
     alignas(FCounted) unsigned char Storage[sizeof(FCounted) * Count];
     FCounted* First = reinterpret_cast<FCounted*>(Storage);
 
-    for (size_t Index = 0; Index < Count; ++Index)
+    for (SIZE_T Index = 0; Index < Count; ++Index)
     {
         Memory::ConstructAt(First + Index, static_cast<int32>(Index));
     }
