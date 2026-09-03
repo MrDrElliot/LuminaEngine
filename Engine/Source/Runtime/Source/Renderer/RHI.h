@@ -455,8 +455,7 @@ namespace Lumina::RHI
         return Handle.Handle != 0;
     }
 
-    // What a renderer asks the device for. Optional ones are enabled when present and reported by
-    // SupportsFeature; required ones disqualify a GPU that cannot provide them.
+    // What a renderer demands at device selection. A GPU that cannot provide one is skipped.
     enum class EDeviceFeature : uint32
     {
         None                  = 0,
@@ -475,16 +474,9 @@ namespace Lumina::RHI
         bool bDebugUtils    = true;
         bool bHeadless      = false;
 
-        // A GPU missing any of these is skipped during selection. Leave empty to take any GPU that
-        // can present, then branch on SupportsFeature for the paths that need more.
+        // Leave empty to take any GPU that can present.
         EDeviceFeature RequiredFeatures = EDeviceFeature::None;
     };
-
-    /** Every feature the selected device actually enabled, required or merely present. */
-    RUNTIME_API EDeviceFeature GetDeviceFeatures();
-
-    /** True only when every bit in Features is supported. */
-    RUNTIME_API bool           SupportsFeature(EDeviceFeature Features);
 
     /** Observer for the debug-utils messenger, in addition to the log. Set BEFORE CreateDevice. Fires on
      *  whichever thread the driver reports on, so the handler must be thread-safe. */
@@ -708,11 +700,6 @@ namespace Lumina::RHI
 
     RUNTIME_API void        CmdBarrier(FCmdListH CL, EStageFlags Before, EStageFlags After);
 
-    RUNTIME_API void        CmdImageBarrier(FCmdListH CL, FTextureH Texture, EStageFlags Before, EStageFlags After);
-
-    RUNTIME_API void        CmdReleaseImageToQueue(FCmdListH CL, FTextureH Texture, EQueueType Dest, EStageFlags Before);
-    RUNTIME_API void        CmdAcquireImageFromQueue(FCmdListH CL, FTextureH Texture, EQueueType Source, EStageFlags After);
-
     namespace Barriers
     {
         inline void ComputeToAll(FCmdListH CL)
@@ -839,11 +826,14 @@ namespace Lumina::RHI
     RUNTIME_API void        CmdBeginMarker(FCmdListH CL, const char* Name);
     RUNTIME_API void        CmdEndMarker(FCmdListH CL);
 
-    template<typename T>
+    template<typename T, bool bZero = true>
     FGPUAllocation New(uint64 Count = 1)
     {
         const FGPUAllocation Allocation = Malloc(Count * sizeof(T), alignof(T));
-        std::uninitialized_value_construct_n(Allocation.CpuAs<T>(), Count);
+        if constexpr (bZero)
+        {
+            std::uninitialized_value_construct_n(Allocation.CpuAs<T>(), Count);
+        }
         return Allocation;
     }
 
