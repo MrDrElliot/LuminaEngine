@@ -2,6 +2,7 @@
 
 #include "Log/Log.h"
 #include "Renderer/RHITexture.h"
+#include "Renderer/RHIUpload.h"
 
 namespace Lumina::RHITests
 {
@@ -359,6 +360,59 @@ namespace Lumina::RHITests
         {
             RHI::CmdSetPipeline(CL, Pipeline);
             RHI::CmdDraw(CL, 0, 3, 1, 0, 0);
+        });
+    }
+
+    // Covers the explicit-args form, where the push-constant pointer is not the indirect buffer.
+    RHI_TEST(Pipelines, GraphicsDrawIndexedIndirect)
+    {
+        const TVector<uint32> VSSpirv = Ctx.CompileShader(WithPrelude(R"SLANG(
+            [shader("vertex")]
+            float4 main(uint VertexID : SV_VertexID) : SV_Position
+            {
+                float2 UV = float2((VertexID << 1) & 2, VertexID & 2);
+                return float4(UV * 2.0 - 1.0, 0.5, 1.0);
+            }
+        )SLANG").c_str(), "RHITests.IndexedIndirectVS");
+
+        const TVector<uint32> PSSpirv = Ctx.CompileShader(WithPrelude(R"SLANG(
+            [shader("fragment")]
+            float4 main() : SV_Target { return float4(0.0, 1.0, 0.0, 1.0); }
+        )SLANG").c_str(), "RHITests.IndexedIndirectPS");
+
+        RHI_REQUIRE(!VSSpirv.empty() && !PSSpirv.empty());
+
+        const RHI::FColorTarget ColorTarget{ .Format = EFormat::RGBA8_UNORM };
+        RHI::FRasterDesc Raster;
+        Raster.Topology     = RHI::ETopology::TriangleList;
+        Raster.ColorTargets = TSpan<const RHI::FColorTarget>(&ColorTarget, 1);
+
+        const RHI::FPipelineH Pipeline = Ctx.TrackPipeline(
+            RHI::CreateGraphicsPipeline(ShaderSource(VSSpirv), ShaderSource(PSSpirv), Raster));
+        RHI_REQUIRE(RHI::IsValid(Pipeline));
+
+        const uint32 Indices[3] = { 0u, 1u, 2u };
+        const RHI::FGPUAllocation IndexBuffer = Ctx.Malloc(sizeof(Indices), RHI::EMemoryType::GPUOnly,
+                                                          "RHITests.IndexedIndirectIndices");
+        const RHI::FDrawIndexedIndirectArguments DrawArgs{ 3u, 1u, 0u, 0, 0u };
+        const RHI::FGPUAllocation IndirectBuffer = Ctx.Malloc(sizeof(DrawArgs), RHI::EMemoryType::GPUOnly,
+                                                             "RHITests.IndexedIndirectArgs");
+        RHI_REQUIRE(IndexBuffer.Gpu != 0 && IndirectBuffer.Gpu != 0);
+
+        RHI_REQUIRE(RHI::UploadBuffer(IndexBuffer, Indices, sizeof(Indices)));
+        RHI_REQUIRE(RHI::UploadBuffer(IndirectBuffer, &DrawArgs, sizeof(DrawArgs)));
+        RHI::FlushUploadsAndWait();
+
+        // Separate from the indirect buffer, which is the whole point of this overload.
+        struct FPushArgs { uint32 Unused; };
+        const RHI::GPUPtr Args = RHI::Core::CopyTransient(FPushArgs{ 7u });
+
+        RenderAndCheckPixel(Ctx, "RHITests.IndexedIndirectTarget", [&](RHI::FCmdListH CL)
+        {
+            RHI::CmdSetPipeline(CL, Pipeline);
+            RHI::CmdSetIndexBuffer(CL, IndexBuffer.Gpu, 0, RHI::EIndexType::Uint32);
+            RHI::CmdDrawIndexedIndirect(CL, Args, IndirectBuffer.Gpu, 0, 1,
+                                        sizeof(RHI::FDrawIndexedIndirectArguments));
         });
     }
 

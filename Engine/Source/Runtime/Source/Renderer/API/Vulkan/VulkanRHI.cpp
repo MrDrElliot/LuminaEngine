@@ -6583,43 +6583,6 @@ namespace Lumina::RHI
         vkCmdDispatch(VkCmdBuf, GroupX, GroupY, GroupZ);
     }
 
-    void CmdDispatchIndirect(FCmdListH CL, GPUPtr DrawArgs, uint32 Offset)
-    {
-        VkCommandBuffer VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
-
-        if (UseAddressCommands())
-        {
-            vkCmdPushConstants(VkCmdBuf, GDevice->PipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(VkDeviceAddress), &DrawArgs);
-
-            const VkDispatchIndirect2InfoKHR Info
-            {
-                .sType        = VK_STRUCTURE_TYPE_DISPATCH_INDIRECT_2_INFO_KHR,
-                .addressRange = AddressRange(DrawArgs + Offset, sizeof(VkDispatchIndirectCommand)),
-                .addressFlags = kEngineAddressFlags,
-            };
-            vkCmdDispatchIndirect2KHR(VkCmdBuf, &Info);
-            return;
-        }
-
-        VkBuffer ArgsBuffer;
-        VkDeviceSize BufferOffset;
-
-        {
-            FReadScopeLock Lock(GDevice->MemoryMutex);
-            const FMemoryBlock* BufferIt = FindMemory(DrawArgs);
-            if (BufferIt == nullptr)
-            {
-                return;
-            }
-
-            ArgsBuffer   = BufferIt->Buffer;
-            BufferOffset = (DrawArgs - BufferIt->Device) + Offset;
-        }
-
-        vkCmdPushConstants(VkCmdBuf, GDevice->PipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(VkDeviceAddress), &DrawArgs);
-        vkCmdDispatchIndirect(VkCmdBuf, ArgsBuffer, BufferOffset);
-    }
-
     void CmdDraw(FCmdListH CL, GPUPtr DrawArgs, uint32 VertexCount, uint32 InstanceCount, uint32 FirstVertex, uint32 FirstInstance)
     {
         auto VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
@@ -6647,44 +6610,6 @@ namespace Lumina::RHI
         }
 
         vkCmdDrawIndexed(VkCmdBuf, IndexCount, InstanceCount, FirstIndex, VertexOffset, FirstInstance);
-    }
-
-    void CmdDrawIndirect(FCmdListH CL, GPUPtr DrawArgs, uint32 Offset, uint32 DrawCount, uint32 Stride)
-    {
-        VkCommandBuffer VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
-
-        if (UseAddressCommands())
-        {
-            vkCmdPushConstants(VkCmdBuf, GDevice->PipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(VkDeviceAddress), &DrawArgs);
-
-            const VkDrawIndirect2InfoKHR Info
-            {
-                .sType        = VK_STRUCTURE_TYPE_DRAW_INDIRECT_2_INFO_KHR,
-                .addressRange = StridedRange(DrawArgs + Offset, (uint64)DrawCount * Stride, Stride),
-                .addressFlags = kEngineAddressFlags,
-                .drawCount    = DrawCount,
-            };
-            vkCmdDrawIndirect2KHR(VkCmdBuf, &Info);
-            return;
-        }
-
-        VkBuffer ArgsBuffer;
-        VkDeviceSize BufferOffset;
-
-        {
-            FReadScopeLock Lock(GDevice->MemoryMutex);
-            const FMemoryBlock* BufferIt = FindMemory(DrawArgs);
-            if (BufferIt == nullptr)
-            {
-                return;
-            }
-
-            ArgsBuffer   = BufferIt->Buffer;
-            BufferOffset = (DrawArgs - BufferIt->Device) + Offset;
-        }
-
-        vkCmdPushConstants(VkCmdBuf, GDevice->PipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(VkDeviceAddress), &DrawArgs);
-        vkCmdDrawIndirect(VkCmdBuf, ArgsBuffer, BufferOffset, DrawCount, Stride);
     }
 
     void CmdDrawIndirect(FCmdListH CL, GPUPtr Args, GPUPtr IndirectBuffer, uint32 Offset, uint32 DrawCount, uint32 Stride)
@@ -6774,18 +6699,21 @@ namespace Lumina::RHI
         vkCmdDispatchIndirect(VkCmdBuf, ArgsBuffer, BufferOffset);
     }
 
-    void CmdDrawIndexedIndirect(FCmdListH CL, GPUPtr DrawArgs, uint32 Offset, uint32 DrawCount, uint32 Stride)
+    void CmdDrawIndexedIndirect(FCmdListH CL, GPUPtr Args, GPUPtr IndirectBuffer, uint32 Offset, uint32 DrawCount, uint32 Stride)
     {
         VkCommandBuffer VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
 
         if (UseAddressCommands())
         {
-            vkCmdPushConstants(VkCmdBuf, GDevice->PipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(VkDeviceAddress), &DrawArgs);
+            if (Args != 0)
+            {
+                vkCmdPushConstants(VkCmdBuf, GDevice->PipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(VkDeviceAddress), &Args);
+            }
 
             const VkDrawIndirect2InfoKHR Info
             {
                 .sType        = VK_STRUCTURE_TYPE_DRAW_INDIRECT_2_INFO_KHR,
-                .addressRange = StridedRange(DrawArgs + Offset, (uint64)DrawCount * Stride, Stride),
+                .addressRange = StridedRange(IndirectBuffer + Offset, (uint64)DrawCount * Stride, Stride),
                 .addressFlags = kEngineAddressFlags,
                 .drawCount    = DrawCount,
             };
@@ -6798,17 +6726,20 @@ namespace Lumina::RHI
 
         {
             FReadScopeLock Lock(GDevice->MemoryMutex);
-            const FMemoryBlock* BufferIt = FindMemory(DrawArgs);
+            const FMemoryBlock* BufferIt = FindMemory(IndirectBuffer);
             if (BufferIt == nullptr)
             {
                 return;
             }
 
             ArgsBuffer   = BufferIt->Buffer;
-            BufferOffset = (DrawArgs - BufferIt->Device) + Offset;
+            BufferOffset = (IndirectBuffer - BufferIt->Device) + Offset;
         }
 
-        vkCmdPushConstants(VkCmdBuf, GDevice->PipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(VkDeviceAddress), &DrawArgs);
+        if (Args != 0)
+        {
+            vkCmdPushConstants(VkCmdBuf, GDevice->PipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(VkDeviceAddress), &Args);
+        }
         vkCmdDrawIndexedIndirect(VkCmdBuf, ArgsBuffer, BufferOffset, DrawCount, Stride);
     }
 

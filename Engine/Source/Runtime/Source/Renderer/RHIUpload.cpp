@@ -408,13 +408,15 @@ namespace Lumina::RHI
 
         struct FFlushTarget
         {
-            FCmdListH          CL        = {};
-            uint32             SliceMask = 0;
-            bool               bAny      = false;
-            TVector<FTextureH> WrittenTextures;
-
             struct FWrittenRange { GPUPtr Begin; GPUPtr End; };
-            TVector<FWrittenRange> WrittenBuffers;
+
+            FCmdListH CL        = {};
+            uint32    SliceMask = 0;
+            bool      bAny      = false;
+
+            // Inline, since the window above bounds both lists and a flush runs every frame.
+            TFixedVector<FTextureH, kMaxWrittenTracked>    WrittenTextures;
+            TFixedVector<FWrittenRange, kMaxWrittenTracked> WrittenBuffers;
 
             bool AlreadyWritten(FTextureH Tex) const
             {

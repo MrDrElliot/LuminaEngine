@@ -427,7 +427,7 @@ LUMINA_DOTNET_EXPORT(void, RHI_CmdDispatch)(RHI::FCmdListH CL, RHI::GPUPtr DrawA
 
 LUMINA_DOTNET_EXPORT(void, RHI_CmdDispatchIndirect)(RHI::FCmdListH CL, RHI::GPUPtr DrawArgs, uint32 Offset)
 {
-    RHI::CmdDispatchIndirect(CL, DrawArgs, Offset);
+    RHI::CmdDispatchIndirect(CL, DrawArgs, DrawArgs, Offset);
 }
 
 LUMINA_DOTNET_EXPORT(void, RHI_CmdDispatchIndirect2)(RHI::FCmdListH CL, RHI::GPUPtr Args, RHI::GPUPtr IndirectBuffer, uint32 Offset)
@@ -448,7 +448,7 @@ LUMINA_DOTNET_EXPORT(void, RHI_CmdDrawIndexed)(RHI::FCmdListH CL, RHI::GPUPtr In
 
 LUMINA_DOTNET_EXPORT(void, RHI_CmdDrawIndirect)(RHI::FCmdListH CL, RHI::GPUPtr DrawArgs, uint32 Offset, uint32 DrawCount, uint32 Stride)
 {
-    RHI::CmdDrawIndirect(CL, DrawArgs, Offset, DrawCount, Stride);
+    RHI::CmdDrawIndirect(CL, DrawArgs, DrawArgs, Offset, DrawCount, Stride);
 }
 
 LUMINA_DOTNET_EXPORT(void, RHI_CmdDrawIndirect2)(RHI::FCmdListH CL, RHI::GPUPtr Args, RHI::GPUPtr IndirectBuffer, uint32 Offset, uint32 DrawCount, uint32 Stride)
@@ -458,7 +458,12 @@ LUMINA_DOTNET_EXPORT(void, RHI_CmdDrawIndirect2)(RHI::FCmdListH CL, RHI::GPUPtr 
 
 LUMINA_DOTNET_EXPORT(void, RHI_CmdDrawIndexedIndirect)(RHI::FCmdListH CL, RHI::GPUPtr DrawArgs, uint32 Offset, uint32 DrawCount, uint32 Stride)
 {
-    RHI::CmdDrawIndexedIndirect(CL, DrawArgs, Offset, DrawCount, Stride);
+    RHI::CmdDrawIndexedIndirect(CL, DrawArgs, DrawArgs, Offset, DrawCount, Stride);
+}
+
+LUMINA_DOTNET_EXPORT(void, RHI_CmdDrawIndexedIndirect2)(RHI::FCmdListH CL, RHI::GPUPtr Args, RHI::GPUPtr IndirectBuffer, uint32 Offset, uint32 DrawCount, uint32 Stride)
+{
+    RHI::CmdDrawIndexedIndirect(CL, Args, IndirectBuffer, Offset, DrawCount, Stride);
 }
 
 LUMINA_DOTNET_EXPORT(void, RHI_CmdBeginMarker)(RHI::FCmdListH CL, const char* Name, int32 Len)

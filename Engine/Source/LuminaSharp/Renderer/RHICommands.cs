@@ -145,7 +145,12 @@ public static unsafe partial class RHI
     public static void CmdDrawIndirect(FCmdListH CL, GPUPtr Args, GPUPtr IndirectBuffer, uint Offset, uint DrawCount, uint Stride) => CmdDrawIndirectBufferCore(CL, Args, IndirectBuffer, Offset, DrawCount, Stride);
 
     [NativeCall("LuminaSharp_RHI_CmdDrawIndexedIndirect", SuppressGCTransition = true)]
-    public static partial void CmdDrawIndexedIndirect(FCmdListH CL, GPUPtr DrawArgs, uint Offset, uint DrawCount, uint Stride);
+    private static partial void CmdDrawIndexedIndirectCore(FCmdListH CL, GPUPtr DrawArgs, uint Offset, uint DrawCount, uint Stride);
+    public static void CmdDrawIndexedIndirect(FCmdListH CL, GPUPtr DrawArgs, uint Offset, uint DrawCount, uint Stride) => CmdDrawIndexedIndirectCore(CL, DrawArgs, Offset, DrawCount, Stride);
+
+    [NativeCall("LuminaSharp_RHI_CmdDrawIndexedIndirect2", SuppressGCTransition = true)]
+    private static partial void CmdDrawIndexedIndirectBufferCore(FCmdListH CL, GPUPtr Args, GPUPtr IndirectBuffer, uint Offset, uint DrawCount, uint Stride);
+    public static void CmdDrawIndexedIndirect(FCmdListH CL, GPUPtr Args, GPUPtr IndirectBuffer, uint Offset, uint DrawCount, uint Stride) => CmdDrawIndexedIndirectBufferCore(CL, Args, IndirectBuffer, Offset, DrawCount, Stride);
 
     // ---- Debug markers ----
 
