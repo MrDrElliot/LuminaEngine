@@ -501,6 +501,9 @@ namespace Lumina
 
         const TVector<FEditorAction>& GetRegisteredActions() const { return EditorActions; }
 
+        /** Menu bar entry listing every registered action in Category, with its chord as the shortcut. */
+        void DrawActionMenu(const char* MenuLabel, const char* Category);
+
     protected:
 
         /** Polls action chords and fires callbacks; called from FEditorTool::Update; gated against text-input focus. */

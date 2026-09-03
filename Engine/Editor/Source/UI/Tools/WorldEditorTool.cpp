@@ -935,7 +935,9 @@ namespace Lumina
         }
 
         // Gated off text input, so renaming an entity does not delete it.
-        const bool bSelectionEditActive = (bViewportHovered || bOutlinerActive) && !ImGui::GetIO().WantTextInput;
+        // Alt excluded so a Ctrl+Alt chord cannot also fire the plain Ctrl clipboard commands.
+        const bool bSelectionEditActive = (bViewportHovered || bOutlinerActive)
+            && !ImGui::GetIO().WantTextInput && !ImGui::GetIO().KeyAlt;
 
         if (bSelectionEditActive)
         {
@@ -1209,6 +1211,30 @@ namespace Lumina
                 DropSelectionToFloor(); 
             }, Hovered});
 
+        RegisterAction({"Align Transform with View", "Transform", "Move and rotate the selection onto the editor camera",
+            FInputChord{ImGuiKey_M, /*Ctrl*/true, /*Shift*/false, /*Alt*/true}, [this]
+            {
+                AlignSelectionToView(/*bRotationOnly*/false);
+            }, Hovered});
+
+        RegisterAction({"Align Rotation with View", "Transform", "Rotate the selection onto the editor camera, leaving position alone",
+            FInputChord{ImGuiKey_F, /*Ctrl*/true, /*Shift*/false, /*Alt*/true}, [this]
+            {
+                AlignSelectionToView(/*bRotationOnly*/true);
+            }, Hovered});
+
+        RegisterAction({"Transform Dialog", "Transform", "Apply a numeric translate, rotate and scale to the selection",
+            FInputChord{}, [this]
+            {
+                OpenTransformDialog();
+            }});
+
+        RegisterAction({"Align View to Transform", "Transform", "Move the editor camera onto the last-selected entity",
+            FInputChord{ImGuiKey_V, /*Ctrl*/true, /*Shift*/false, /*Alt*/true}, [this]
+            {
+                AlignViewToSelection();
+            }, Hovered});
+
         RegisterAction({"Copy Transform", "Selection", "Copy the last-selected entity's transform to the clipboard",
             FInputChord{ImGuiKey_C, true, true}, [this]
             {
@@ -1467,6 +1493,10 @@ namespace Lumina
     void FWorldEditorTool::DrawToolMenu(const FUpdateContext& UpdateContext)
     {
         FEditorTool::DrawToolMenu(UpdateContext);
+
+        DrawActionMenu(LE_ICON_AXIS_ARROW " Transform", "Transform");
+        DrawActionMenu(LE_ICON_CURSOR_DEFAULT_OUTLINE " Selection", "Selection");
+        DrawActionMenu(LE_ICON_VIDEO_OUTLINE " View", "View");
     }
 
     void FWorldEditorTool::DrawHelpMenu()
@@ -5077,6 +5107,221 @@ namespace Lumina
 
         SetSingleSelectedEntity(Group);
         EndTransaction("Group Selected");
+    }
+
+    namespace
+    {
+        // Writes a world-space transform onto an entity, converting through the parent when it has one.
+        void ApplyWorldTransform(ECS::FRegistry& Registry, ECS::FEntity Entity, const FTransform& DesiredWorld)
+        {
+            STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
+
+            const FRelationshipComponent* Rel = Registry.TryGet<FRelationshipComponent>(Entity);
+            if (Rel != nullptr && Rel->Parent != ECS::NullEntity && Registry.IsValid(Rel->Parent))
+            {
+                const FMatrix4 ParentWorld = Registry.Get<STransformComponent>(Rel->Parent).GetWorldMatrix();
+                const FMatrix4 NewLocal    = Math::Inverse(ParentWorld) * DesiredWorld.GetMatrix();
+
+                FVector3 LocalTranslation, LocalScale, Skew;
+                FQuat    LocalRotation;
+                FVector4 Perspective;
+                Math::Decompose(NewLocal, LocalScale, LocalRotation, LocalTranslation, Skew, Perspective);
+
+                Transform.SetLocalLocation(LocalTranslation);
+                Transform.SetLocalRotation(LocalRotation);
+                Transform.SetLocalScale(LocalScale);
+                return;
+            }
+
+            Transform.SetLocalLocation(DesiredWorld.GetLocation());
+            Transform.SetLocalRotation(DesiredWorld.GetRotation());
+        }
+    }
+
+    void FWorldEditorTool::OpenTransformDialog()
+    {
+        if (World == nullptr || World->IsSimulating() || ToolContext == nullptr)
+        {
+            return;
+        }
+
+        ToolContext->PushModal("Transform", ImVec2(420.0f, 300.0f), [this]() -> bool
+        {
+            ImGui::TextUnformatted("Applied to every selected entity, in its own local space.");
+            ImGui::Separator();
+
+            ImGui::DragFloat3("Translate", &TransformDialog.Translate.x, 0.05f);
+            ImGui::DragFloat3("Rotate", &TransformDialog.RotateDegrees.x, 0.5f, -360.0f, 360.0f, "%.2f deg");
+            ImGui::DragFloat3("Scale", &TransformDialog.Scale.x, 0.01f);
+
+            ImGui::Separator();
+
+            int32 OrderIndex = TransformDialog.Order == ETransformDialogOrder::Pre ? 0 : 1;
+            if (ImGui::Combo("Order", &OrderIndex, "Pre\0Post\0"))
+            {
+                TransformDialog.Order = OrderIndex == 0 ? ETransformDialogOrder::Pre : ETransformDialogOrder::Post;
+            }
+            ImGuiX::WrappedTooltip("{}", TransformDialog.Order == ETransformDialogOrder::Pre
+                ? "Pre multiplies the delta before the entity's transform, so it acts in parent space."
+                : "Post multiplies it after, so it acts along the entity's own axes.");
+
+            ImGui::Separator();
+
+            if (ImGui::Button("Reset"))
+            {
+                TransformDialog = FTransformDialogState{};
+            }
+
+            ImGui::SameLine();
+            const bool bApply = ImGui::Button("Apply");
+            ImGui::SameLine();
+            const bool bClose = ImGui::Button("Close");
+
+            if (bApply)
+            {
+                ApplyTransformDialog();
+            }
+
+            // Apply keeps the dialog up, so a value can be nudged and re-applied without reopening.
+            return bClose;
+        });
+    }
+
+    void FWorldEditorTool::ApplyTransformDialog()
+    {
+        if (World == nullptr || World->IsSimulating())
+        {
+            return;
+        }
+
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
+
+        TVector<ECS::FEntity> Targets;
+        Targets.reserve(GetSelectedEntities().size());
+        for (ECS::FEntity Entity : GetSelectedEntities())
+        {
+            if (Registry.IsValid(Entity) && Registry.HasAll<STransformComponent>(Entity)
+                && !IsLockedPrefabChild(Registry, Entity))
+            {
+                Targets.push_back(Entity);
+            }
+        }
+
+        if (Targets.empty())
+        {
+            return;
+        }
+
+        FTransform Delta;
+        Delta.SetLocation(TransformDialog.Translate);
+        Delta.SetRotationFromEuler(TransformDialog.RotateDegrees);
+        Delta.SetScale(TransformDialog.Scale);
+        const FMatrix4 DeltaMatrix = Delta.GetMatrix();
+
+        BeginTransformTransaction(Targets);
+
+        for (ECS::FEntity Entity : Targets)
+        {
+            STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
+            FTransform LocalTransform;
+            LocalTransform.SetLocation(Transform.GetLocalLocation());
+            LocalTransform.SetRotation(Transform.GetLocalRotation());
+            LocalTransform.SetScale(Transform.GetLocalScale());
+            const FMatrix4 Local = LocalTransform.GetMatrix();
+
+            const FMatrix4 Result = TransformDialog.Order == ETransformDialogOrder::Pre
+                                  ? DeltaMatrix * Local
+                                  : Local * DeltaMatrix;
+
+            FVector3 Translation, Scale, Skew;
+            FQuat    Rotation;
+            FVector4 Perspective;
+            Math::Decompose(Result, Scale, Rotation, Translation, Skew, Perspective);
+
+            Transform.SetLocalLocation(Translation);
+            Transform.SetLocalRotation(Rotation);
+            Transform.SetLocalScale(Scale);
+        }
+
+        EndTransaction("Transform Dialog");
+    }
+
+    void FWorldEditorTool::AlignSelectionToView(bool bRotationOnly)
+    {
+        if (World == nullptr || World->IsSimulating() || EditorEntity == ECS::NullEntity)
+        {
+            return;
+        }
+
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
+        if (!Registry.IsValid(EditorEntity))
+        {
+            return;
+        }
+
+        const FTransform ViewTransform = Registry.Get<STransformComponent>(EditorEntity).GetWorldTransform();
+
+        TVector<ECS::FEntity> Targets;
+        Targets.reserve(GetSelectedEntities().size());
+        for (ECS::FEntity Entity : GetSelectedEntities())
+        {
+            if (Registry.IsValid(Entity) && Registry.HasAll<STransformComponent>(Entity)
+                && !IsLockedPrefabChild(Registry, Entity))
+            {
+                Targets.push_back(Entity);
+            }
+        }
+
+        if (Targets.empty())
+        {
+            return;
+        }
+
+        BeginTransformTransaction(Targets);
+
+        for (ECS::FEntity Entity : Targets)
+        {
+            FTransform Desired = Registry.Get<STransformComponent>(Entity).GetWorldTransform();
+            Desired.SetRotation(ViewTransform.GetRotation());
+            if (!bRotationOnly)
+            {
+                Desired.SetLocation(ViewTransform.GetLocation());
+            }
+
+            ApplyWorldTransform(Registry, Entity, Desired);
+        }
+
+        EndTransaction(bRotationOnly ? "Align Rotation with View" : "Align Transform with View");
+    }
+
+    void FWorldEditorTool::AlignViewToSelection()
+    {
+        if (World == nullptr || !HasEditorCameraControl())
+        {
+            return;
+        }
+
+        const ECS::FEntity Entity = GetLastSelectedEntity();
+        if (!World->IsValidEntity(Entity))
+        {
+            return;
+        }
+
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
+        if (!Registry.HasAll<STransformComponent>(Entity))
+        {
+            return;
+        }
+
+        const FTransform Target = Registry.Get<STransformComponent>(Entity).GetWorldTransform();
+
+        // Orbit derives the camera from yaw/pitch/distance, so it would overwrite an aligned placement.
+        SetCameraMode(EEditorCameraMode::Free);
+
+        FEditorCameraState& State = GetCameraState();
+        State.FocusFreePosition = Target.GetLocation();
+        State.FocusFreeRotation = Target.GetRotation();
+        State.bFocusInterp      = true;
     }
 
     void FWorldEditorTool::DropSelectionToFloor()

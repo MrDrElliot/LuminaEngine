@@ -137,9 +137,32 @@ namespace Lumina
         // a transaction internally where appropriate so they compose with undo/redo.
         void GroupSelectedEntities();
         void DropSelectionToFloor();
+
+        /** Selection takes the editor camera's placement; rotation only when bRotationOnly. */
+        void AlignSelectionToView(bool bRotationOnly);
+
+        /** The inverse, so a camera entity can be checked through its own framing. */
+        void AlignViewToSelection();
+
+        /** Numeric relative transform, applied to every selected entity in one transaction. */
+        void OpenTransformDialog();
+        void ApplyTransformDialog();
         void FrameAllEntities();
         void CopyTransformFromLastSelected();
         void PasteTransformToSelection();
+
+        // Godot's dialog composes one delta and multiplies it onto each selection, before or after.
+        enum class ETransformDialogOrder : uint8 { Pre, Post };
+
+        struct FTransformDialogState
+        {
+            FVector3              Translate = FVector3(0.0f);
+            FVector3              RotateDegrees = FVector3(0.0f);
+            FVector3              Scale = FVector3(1.0f);
+            ETransformDialogOrder Order = ETransformDialogOrder::Post;
+        };
+        FTransformDialogState TransformDialog;
+
         void SaveCameraBookmark(int32 Slot);
         void RecallCameraBookmark(int32 Slot);
         void DrawCursorWorldPositionOverlay(ImVec2 ViewportOrigin, ImVec2 ViewportSize, const SCameraComponent& Camera);

@@ -332,6 +332,51 @@ namespace Lumina
         ImGui::EndDisabled();
     }
 
+    void FEditorTool::DrawActionMenu(const char* MenuLabel, const char* Category)
+    {
+        bool bAny = false;
+        for (const FEditorAction& Action : EditorActions)
+        {
+            if (Action.Category == Category)
+            {
+                bAny = true;
+                break;
+            }
+        }
+
+        if (!bAny || !ImGui::BeginMenu(MenuLabel))
+        {
+            return;
+        }
+
+        for (const FEditorAction& Action : EditorActions)
+        {
+            if (Action.Category != Category)
+            {
+                continue;
+            }
+
+            const FString Shortcut = Action.DefaultChord.ToDisplayString();
+
+            // CanExecute is skipped, since its viewport-hovered gate is false while the pointer is in here.
+            const bool bInvocable = (bool)Action.Callback;
+
+            ImGui::BeginDisabled(!bInvocable);
+            if (ImGui::MenuItem(Action.Name.c_str(), Shortcut.empty() ? nullptr : Shortcut.c_str()))
+            {
+                Action.Callback();
+            }
+            ImGui::EndDisabled();
+
+            if (!Action.Description.empty())
+            {
+                ImGuiX::WrappedTooltip("{}", Action.Description.c_str());
+            }
+        }
+
+        ImGui::EndMenu();
+    }
+
     void FEditorTool::TickEditorActions()
     {
         if (EditorActions.empty())
