@@ -240,7 +240,7 @@ namespace Lumina
         return true;
     }
 
-    void FTweenManager::Tick(float DeltaTime, float UnscaledDeltaTime)
+    void FTweenManager::Tick(float DeltaTime)
     {
         bTicking = true;
 
@@ -262,8 +262,7 @@ namespace Lumina
                 continue;
             }
 
-            const float Step = State.bIgnoreTimeScale ? UnscaledDeltaTime : DeltaTime;
-            if (AdvanceTween(State, Step))
+            if (AdvanceTween(State, DeltaTime))
             {
                 if (State.FinishedCallback)
                 {
@@ -471,18 +470,6 @@ namespace Lumina
             if (FTweenManager::FTweenState* State = Manager->Find(Handle))
             {
                 State->SpeedScale = Math::Max(Scale, 0.0f);
-            }
-        }
-        return *this;
-    }
-
-    FTween& FTween::SetIgnoreTimeScale(bool bIgnore)
-    {
-        if (Manager != nullptr)
-        {
-            if (FTweenManager::FTweenState* State = Manager->Find(Handle))
-            {
-                State->bIgnoreTimeScale = bIgnore;
             }
         }
         return *this;

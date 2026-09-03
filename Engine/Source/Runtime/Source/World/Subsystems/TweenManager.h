@@ -76,9 +76,6 @@ namespace Lumina
         FTween& SetLoops(int32 Count);
         FTween& SetSpeedScale(float Scale);
 
-        /** Runs the whole tween unscaled, so a paused or slowed world still animates it. */
-        FTween& SetIgnoreTimeScale(bool bIgnore);
-
         FTween& OnFinished(TFunction<void()> Callback);
 
         void Kill();
@@ -118,7 +115,7 @@ namespace Lumina
         /** The registry the transform helpers write through, and the one owner liveness is checked against. */
         void SetWorldRegistry(ECS::FRegistry* InRegistry) { WorldRegistry = InRegistry; }
 
-        void Tick(float DeltaTime, float UnscaledDeltaTime);
+        void Tick(float DeltaTime);
 
     private:
 
@@ -151,7 +148,6 @@ namespace Lumina
             int32             LoopsRemaining   = 1;
             float             SpeedScale       = 1.0f;
             bool              bPaused          = false;
-            bool              bIgnoreTimeScale = false;
             bool              bPendingKill     = false;
             bool              bParallelPending = false;
             ECS::FEntity      Owner            = ECS::NullEntity;

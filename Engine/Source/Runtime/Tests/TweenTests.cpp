@@ -13,7 +13,7 @@ namespace
     {
         for (int32 i = 0; i < Steps; ++i)
         {
-            Manager.Tick(Step, Step);
+            Manager.Tick(Step);
         }
     }
 }

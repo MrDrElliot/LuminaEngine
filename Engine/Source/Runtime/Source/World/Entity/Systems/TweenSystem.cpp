@@ -14,8 +14,6 @@ namespace Lumina
         FTweenManager& Tweens = Registry.Ctx().Get<FTweenManager>();
         Tweens.SetWorldRegistry(&Registry);
 
-        // The scaled delta already carries the world's DeltaTimeScale, so an unscaled tween needs the raw one.
-        const float Scaled = (float)Context.GetDeltaTime();
-        Tweens.Tick(Scaled, Scaled);
+        Tweens.Tick((float)Context.GetDeltaTime());
     }
 }
