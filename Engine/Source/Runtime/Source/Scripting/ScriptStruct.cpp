@@ -48,11 +48,35 @@ namespace Lumina
 
     namespace
     {
-        thread_local CStruct*          GPendingStruct = nullptr;
-        thread_local CEnum*            GPendingEnum   = nullptr;
-        thread_local CClass*           GPendingClass  = nullptr;
-        thread_local const FVectorOps* GPendingOps    = nullptr;
-        thread_local const FMapOps*    GPendingMapOps = nullptr;
+        // The property params take a stateless callback, so the value has to be ambient across the call.
+        template <typename T>
+        class TPendingValue
+        {
+        public:
+
+            explicit TPendingValue(T InValue)
+                : Previous(Current)
+            {
+                Current = InValue;
+            }
+
+            ~TPendingValue()
+            {
+                Current = Previous;
+            }
+
+            LE_NO_COPYMOVE(TPendingValue);
+
+            static T Get() { return Current; }
+
+        private:
+
+            static thread_local T Current;
+            T Previous;
+        };
+
+        template <typename T>
+        thread_local T TPendingValue<T>::Current{};
 
         // The entries are the layout here, so a reordered or renumbered enum must not reuse the old one.
         FString EnumKey(const FScriptExportType& Type)
@@ -168,58 +192,50 @@ namespace Lumina
 
         FProperty* MakeStruct(const FFieldOwner& Owner, const FName& Name, uint32 Offset, CStruct* Resolved)
         {
-            GPendingStruct = Resolved;
+            const TPendingValue<CStruct*> Pending(Resolved);
             const FString NameStr = Name.ToString();
             FStructPropertyParams Params{};
             FillBaseParams(Params, EPropertyTypeFlags::Struct, Offset, NameStr.c_str());
-            Params.StructFunc    = +[]() -> CStruct* { return GPendingStruct; };
+            Params.StructFunc    = +[]() -> CStruct* { return TPendingValue<CStruct*>::Get(); };
             Params.NumMetaData   = 0;
             Params.MetaDataArray = nullptr;
-            FProperty* Property = Memory::New<FStructProperty>(Owner, &Params);
-            GPendingStruct = nullptr;
-            return Property;
+            return Memory::New<FStructProperty>(Owner, &Params);
         }
 
         FProperty* MakeInstanced(const FFieldOwner& Owner, const FName& Name, uint32 Offset, CStruct* MetaBase)
         {
-            GPendingStruct = MetaBase;
+            const TPendingValue<CStruct*> Pending(MetaBase);
             const FString NameStr = Name.ToString();
             FInstancedStructPropertyParams Params{};
             FillBaseParams(Params, EPropertyTypeFlags::InstancedStruct, Offset, NameStr.c_str());
-            Params.StructFunc    = +[]() -> CStruct* { return GPendingStruct; };
+            Params.StructFunc    = +[]() -> CStruct* { return TPendingValue<CStruct*>::Get(); };
             Params.NumMetaData   = 0;
             Params.MetaDataArray = nullptr;
-            FProperty* Property = Memory::New<FInstancedStructProperty>(Owner, &Params);
-            GPendingStruct = nullptr;
-            return Property;
+            return Memory::New<FInstancedStructProperty>(Owner, &Params);
         }
 
         FProperty* MakeObject(const FFieldOwner& Owner, const FName& Name, uint32 Offset, CClass* TargetClass)
         {
-            GPendingClass = TargetClass != nullptr ? TargetClass : CObject::StaticClass();
+            const TPendingValue<CClass*> Pending(TargetClass != nullptr ? TargetClass : CObject::StaticClass());
             const FString NameStr = Name.ToString();
             FObjectPropertyParams Params{};
             FillBaseParams(Params, EPropertyTypeFlags::Object, Offset, NameStr.c_str());
-            Params.ClassFunc     = +[]() -> CClass* { return GPendingClass; };
+            Params.ClassFunc     = +[]() -> CClass* { return TPendingValue<CClass*>::Get(); };
             Params.NumMetaData   = 0;
             Params.MetaDataArray = nullptr;
-            FProperty* Property = Memory::New<FObjectProperty>(Owner, &Params);
-            GPendingClass = nullptr;
-            return Property;
+            return Memory::New<FObjectProperty>(Owner, &Params);
         }
 
         FProperty* MakeSoftObject(const FFieldOwner& Owner, const FName& Name, uint32 Offset, CClass* TargetClass)
         {
-            GPendingClass = TargetClass != nullptr ? TargetClass : CObject::StaticClass();
+            const TPendingValue<CClass*> Pending(TargetClass != nullptr ? TargetClass : CObject::StaticClass());
             const FString NameStr = Name.ToString();
             FSoftObjectPropertyParams Params{};
             FillBaseParams(Params, EPropertyTypeFlags::SoftObject, Offset, NameStr.c_str());
-            Params.ClassFunc     = +[]() -> CClass* { return GPendingClass; };
+            Params.ClassFunc     = +[]() -> CClass* { return TPendingValue<CClass*>::Get(); };
             Params.NumMetaData   = 0;
             Params.MetaDataArray = nullptr;
-            FProperty* Property = Memory::New<FSoftObjectProperty>(Owner, &Params);
-            GPendingClass = nullptr;
-            return Property;
+            return Memory::New<FSoftObjectProperty>(Owner, &Params);
         }
 
         bool ScalarSizeAlign(EPropertyTypeFlags Kind, uint32& Size, uint32& Align);
@@ -228,15 +244,17 @@ namespace Lumina
         FProperty* MakeEnum(const FFieldOwner& Owner, const FName& Name, uint32 Offset, CEnum* Resolved,
             EPropertyTypeFlags Underlying)
         {
-            GPendingEnum = Resolved;
-            const FString NameStr = Name.ToString();
-            FEnumPropertyParams Params{};
-            FillBaseParams(Params, EPropertyTypeFlags::Enum, Offset, NameStr.c_str());
-            Params.EnumFunc      = +[]() -> CEnum* { return GPendingEnum; };
-            Params.NumMetaData   = 0;
-            Params.MetaDataArray = nullptr;
-            FEnumProperty* Property = Memory::New<FEnumProperty>(Owner, &Params);
-            GPendingEnum = nullptr;
+            FEnumProperty* Property = nullptr;
+            {
+                const TPendingValue<CEnum*> Pending(Resolved);
+                const FString NameStr = Name.ToString();
+                FEnumPropertyParams Params{};
+                FillBaseParams(Params, EPropertyTypeFlags::Enum, Offset, NameStr.c_str());
+                Params.EnumFunc      = +[]() -> CEnum* { return TPendingValue<CEnum*>::Get(); };
+                Params.NumMetaData   = 0;
+                Params.MetaDataArray = nullptr;
+                Property = Memory::New<FEnumProperty>(Owner, &Params);
+            }
 
             uint32 InnerSize = 0;
             uint32 InnerAlign = 0;
@@ -253,16 +271,14 @@ namespace Lumina
 
         FProperty* MakeArray(const FFieldOwner& Owner, const FName& Name, uint32 Offset, const FVectorOps* Ops)
         {
-            GPendingOps = Ops;
+            const TPendingValue<const FVectorOps*> Pending(Ops);
             const FString NameStr = Name.ToString();
             FArrayPropertyParams Params{};
             FillBaseParams(Params, EPropertyTypeFlags::Vector, Offset, NameStr.c_str());
-            Params.GetOpsFn      = +[]() -> const FVectorOps* { return GPendingOps; };
+            Params.GetOpsFn      = +[]() -> const FVectorOps* { return TPendingValue<const FVectorOps*>::Get(); };
             Params.NumMetaData   = 0;
             Params.MetaDataArray = nullptr;
-            FProperty* Property = Memory::New<FArrayProperty>(Owner, &Params);
-            GPendingOps = nullptr;
-            return Property;
+            return Memory::New<FArrayProperty>(Owner, &Params);
         }
 
         bool ScalarSizeAlign(EPropertyTypeFlags Kind, uint32& Size, uint32& Align)
@@ -413,16 +429,14 @@ namespace Lumina
 
         FProperty* MakeMap(const FFieldOwner& Owner, const FName& Name, uint32 Offset, const FMapOps* Ops)
         {
-            GPendingMapOps = Ops;
+            const TPendingValue<const FMapOps*> Pending(Ops);
             const FString NameStr = Name.ToString();
             FMapPropertyParams Params{};
             FillBaseParams(Params, EPropertyTypeFlags::Map, Offset, NameStr.c_str());
-            Params.GetOpsFn      = +[]() -> const FMapOps* { return GPendingMapOps; };
+            Params.GetOpsFn      = +[]() -> const FMapOps* { return TPendingValue<const FMapOps*>::Get(); };
             Params.NumMetaData   = 0;
             Params.MetaDataArray = nullptr;
-            FProperty* Property = Memory::New<FMapProperty>(Owner, &Params);
-            GPendingMapOps = nullptr;
-            return Property;
+            return Memory::New<FMapProperty>(Owner, &Params);
         }
 
         SIZE_T MapSize(const void* InMap)

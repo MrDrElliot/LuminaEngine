@@ -7,6 +7,7 @@
 #include "World/World.h"
 #include "World/Subsystems/TimerManager.h"
 #include "Scripting/DotNet/DotNetExport.h"
+#include "Scripting/DotNet/ManagedContextRegistry.h"
 
 // The returned id is generational, so a stale one safely reports inactive after recycling.
 
@@ -20,8 +21,7 @@ namespace
 
     struct FManagedTimerContext;
 
-    // Cleared wholesale before a script generation unloads, since each context roots a user delegate.
-    THashSet<FManagedTimerContext*> GLiveManagedTimers;
+    using FTimerRegistry = TManagedContextRegistry<FManagedTimerContext>;
 
     // Native owns the managed context, so every path that destroys a timer entry also frees its GC handle.
     struct FManagedTimerContext
@@ -38,12 +38,12 @@ namespace
             , Context(InContext)
             , World(InWorld)
         {
-            GLiveManagedTimers.insert(this);
+            FTimerRegistry::Add(this);
         }
 
         ~FManagedTimerContext()
         {
-            GLiveManagedTimers.erase(this);
+            FTimerRegistry::Remove(this);
             Release();
         }
 
@@ -122,15 +122,7 @@ LUMINA_DOTNET_EXPORT(uint32, Timer_SetForEntity)(uint64 World, uint32 Owner, flo
 // Clears every managed timer before its generation unloads, freeing the delegates that root that context.
 LUMINA_DOTNET_EXPORT(void, Timer_ClearAllManaged)()
 {
-    // Snapshotted, since clearing a timer destroys its context and mutates the registry.
-    TVector<FManagedTimerContext*> Snapshot;
-    Snapshot.reserve(GLiveManagedTimers.size());
-    for (FManagedTimerContext* Ctx : GLiveManagedTimers)
-    {
-        Snapshot.push_back(Ctx);
-    }
-
-    for (FManagedTimerContext* Ctx : Snapshot)
+    FTimerRegistry::ForEachSnapshot([](FManagedTimerContext* Ctx)
     {
         if (CWorld* W = Ctx->World.Get())
         {
@@ -140,7 +132,7 @@ LUMINA_DOTNET_EXPORT(void, Timer_ClearAllManaged)()
 
         // Released even when the world is gone, so a delegate never outlives the code that owns it.
         Ctx->Release();
-    }
+    });
 }
 
 LUMINA_DOTNET_EXPORT(void, Timer_Clear)(uint64 World, uint32 Timer)

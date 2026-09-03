@@ -5,6 +5,7 @@
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Memory/SmartPtr.h"
 #include "Scripting/DotNet/DotNetExport.h"
+#include "Scripting/DotNet/ManagedContextRegistry.h"
 #include "World/ECS/Registry.h"
 #include "World/Subsystems/TweenManager.h"
 #include "World/World.h"
@@ -20,8 +21,7 @@ namespace
 
     struct FManagedTweenContext;
 
-    // Cleared before a script generation unloads, since each context roots a user delegate.
-    THashSet<FManagedTweenContext*> GLiveManagedTweens;
+    using FTweenRegistry = TManagedContextRegistry<FManagedTweenContext>;
 
     struct FManagedTweenContext
     {
@@ -34,12 +34,12 @@ namespace
             , FreeFn(reinterpret_cast<FTweenFreeThunk>(InFree))
             , Context(InContext)
         {
-            GLiveManagedTweens.insert(this);
+            FTweenRegistry::Add(this);
         }
 
         ~FManagedTweenContext()
         {
-            GLiveManagedTweens.erase(this);
+            FTweenRegistry::Remove(this);
             Release();
         }
 
@@ -99,19 +99,8 @@ namespace
 // Frees every tween delegate before its generation unloads, since each one roots that generation.
 LUMINA_DOTNET_EXPORT(void, Tween_ClearAllManaged)()
 {
-    // Snapshotted, since releasing can destroy the context and mutate the set.
-    TVector<FManagedTweenContext*> Snapshot;
-    Snapshot.reserve(GLiveManagedTweens.size());
-    for (FManagedTweenContext* Ctx : GLiveManagedTweens)
-    {
-        Snapshot.push_back(Ctx);
-    }
-
     // The tween itself keeps running; only its call back into managed code goes away.
-    for (FManagedTweenContext* Ctx : Snapshot)
-    {
-        Ctx->Release();
-    }
+    FTweenRegistry::ForEachSnapshot([](FManagedTweenContext* Ctx) { Ctx->Release(); });
 }
 
 LUMINA_DOTNET_EXPORT(uint32, Tween_Create)(uint64 World, uint32 OwnerEntity, int32 bHasOwner)
