@@ -433,6 +433,7 @@ internal sealed class ScriptManager
         // GCHandles over user delegates, that would otherwise pin the collectible generation across the unload.
         // The next generation rebuilds them lazily / re-subscribes.
         Native.ClearAllManagedTimers();       // world timers whose Action captures a script instance
+        Native.ClearAllManagedTweens();       // tween callbacks whose Action captures a script instance
         UIDataModel.DisposeAll();             // MVVM bindings (user ViewModel + native data model)
         Asset.PurgePending();                 // in-flight async asset-load callbacks
         PropertyAccessor.ClearScriptCaches(); // cached get/set delegates over user property types

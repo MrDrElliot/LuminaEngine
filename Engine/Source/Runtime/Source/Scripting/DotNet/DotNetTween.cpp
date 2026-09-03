@@ -1,5 +1,6 @@
 #include "Platform/GenericPlatform.h"
 #include "Containers/HashTable.h"
+#include "Containers/Vector.h"
 #include "Core/Math/Math.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Memory/SmartPtr.h"
@@ -39,13 +40,22 @@ namespace
         ~FManagedTweenContext()
         {
             GLiveManagedTweens.erase(this);
+            Release();
+        }
+
+        LE_NO_COPYMOVE(FManagedTweenContext);
+
+        // Frees the delegate now, for a generation unloading while its tweens are still queued.
+        void Release()
+        {
             if (FreeFn != nullptr && Context != nullptr)
             {
                 FreeFn(Context);
             }
+            Fn      = nullptr;
+            FreeFn  = nullptr;
+            Context = nullptr;
         }
-
-        LE_NO_COPYMOVE(FManagedTweenContext);
 
         void Invoke() const
         {
@@ -83,6 +93,24 @@ namespace
         Handle.Handle = ECS::FEntity::FromPacked(Id);
         Out = FTween(Manager, Handle);
         return true;
+    }
+}
+
+// Frees every tween delegate before its generation unloads, since each one roots that generation.
+LUMINA_DOTNET_EXPORT(void, Tween_ClearAllManaged)()
+{
+    // Snapshotted, since releasing can destroy the context and mutate the set.
+    TVector<FManagedTweenContext*> Snapshot;
+    Snapshot.reserve(GLiveManagedTweens.size());
+    for (FManagedTweenContext* Ctx : GLiveManagedTweens)
+    {
+        Snapshot.push_back(Ctx);
+    }
+
+    // The tween itself keeps running; only its call back into managed code goes away.
+    for (FManagedTweenContext* Ctx : Snapshot)
+    {
+        Ctx->Release();
     }
 }
 

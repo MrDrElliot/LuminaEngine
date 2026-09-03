@@ -175,6 +175,9 @@ public static unsafe partial class Native
     [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Timer_ClearAllManaged")]
     public static partial void ClearAllManagedTimers();
 
+    [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Tween_ClearAllManaged")]
+    public static partial void ClearAllManagedTweens();
+
     // Generic per-property-type accessors. The Reflector emits these for non-blittable properties
     // (FString/FName/object ref) with the property's FProperty* token (Prop) resolved once and cached;
     // C is the container (the live component/object handle). Blittable properties never reach here -- they
