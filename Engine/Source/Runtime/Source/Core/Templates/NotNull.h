@@ -32,7 +32,7 @@ namespace Lumina
         constexpr TNotNull(std::nullptr_t) = delete;
         TNotNull& operator=(std::nullptr_t) = delete;
 
-        constexpr T Get() const { ASSERT(Ptr); return Ptr; }
+        constexpr T Get() const { ASSERT(Ptr, "NULL was assigned to a TNotNull!"); return Ptr; }
         constexpr operator T() const { return Get(); }
         constexpr decltype(auto) operator->() const { return Get(); }
         constexpr decltype(auto) operator*()  const { return *Get(); }
