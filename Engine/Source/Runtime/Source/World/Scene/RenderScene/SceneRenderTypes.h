@@ -613,6 +613,25 @@ namespace Lumina
 
     static_assert(sizeof(FGPUGlyph) == 96, "FGPUGlyph layout must match TextCommon.slang");
 
+    // World-space sprite quad. Matches FGPUSprite in SpriteCommon.slang (96B).
+    struct alignas(16) FGPUSprite
+    {
+        FVector3 Origin;   float Pad0;   // world anchor (entity origin)
+        FVector3 Right;    float Pad1;   // world right axis, unit length
+        FVector3 Up;       float Pad2;   // world up axis, unit length
+        FVector4 UVRect;                 // u0, v0, u1, v1, already flipped
+        FVector2 PlaneMin;               // quad min in world units, relative to Origin
+        FVector2 PlaneMax;               // quad max in world units, relative to Origin
+        uint32   ColorPack;              // PackColor()
+        uint32   EntityID;               // for the picker pass
+        uint32   Flags;
+        float    AlphaCutThreshold;
+    };
+
+    static_assert(sizeof(FGPUSprite) == 96, "FGPUSprite layout must match SpriteCommon.slang");
+
+    static constexpr uint32 SPRITE_FLAG_ALPHA_CUT = 1u << 0;
+
     struct alignas(16) FGPUDecal
     {
         FMatrix4    WorldToDecal;       // world -> decal-local ([-0.5,0.5]^3 inside the box)

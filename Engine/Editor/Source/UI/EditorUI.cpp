@@ -158,6 +158,7 @@
 #include "Tools/AssetEditors/RmlUiEditor/RmlUiEditorTool.h"
 #include "Tools/AssetEditors/TextureEditor/TextureEditorTool.h"
 #include "Tools/AssetEditors/FontEditor/FontEditorTool.h"
+#include "Tools/AssetEditors/SpriteSheetEditor/SpriteSheetEditorTool.h"
 #include "Tools/UI/ImGui/ImGuiAllocator.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Tools/UI/ImGui/ImGuiRenderer.h"
@@ -1401,6 +1402,7 @@ namespace Lumina
         Registry.RegisterAssetEditor<CGeometryCollection, FGeometryCollectionEditorTool>(Owner);
         Registry.RegisterAssetEditor<CTexture,            FTextureEditorTool>(Owner);
         Registry.RegisterAssetEditor<CFont,               FFontEditorTool>(Owner);
+        Registry.RegisterAssetEditor<CSpriteSheet,        FSpriteSheetEditorTool>(Owner);
         Registry.RegisterAssetEditor<CStaticMesh,         FStaticMeshEditorTool>(Owner);
         Registry.RegisterAssetEditor<CSkeleton,           FSkeletonEditorTool>(Owner);
         Registry.RegisterAssetEditor<CAnimation,          FAnimationEditorTool>(Owner);

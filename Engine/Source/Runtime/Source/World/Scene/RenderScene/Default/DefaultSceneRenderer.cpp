@@ -29,6 +29,7 @@
 #include "World/Entity/EntityUtils.h"
 #include "World/Entity/Components/BillboardComponent.h"
 #include "World/Entity/Components/WidgetComponent.h"
+#include "World/Entity/Components/Sprite3DComponent.h"
 #include "World/Entity/Components/TextComponent.h"
 #include "Tools/FontManager/FontManager.h"
 #include "World/Entity/Components/CharacterControllerComponent.h"
@@ -1430,6 +1431,11 @@ namespace Lumina
                     BillboardPass(CL);
                 }
 
+                {
+                    SCENE_GPU_SCOPE(CL, "Sprites");
+                    SpritePass(CL);
+                }
+
                 // World-space text, pre-tone-map into HDR + Picker (one MRT pass), like billboards.
                 {
                     SCENE_GPU_SCOPE(CL, "Text");
@@ -2382,6 +2388,8 @@ namespace Lumina
         auto& WidgetInstances        = Frame.Primitives.WidgetInstances;
         auto& GlyphInstances         = Frame.Primitives.GlyphInstances;
         auto& TextBatches            = Frame.Primitives.TextBatches;
+        auto& SpriteInstances        = Frame.Primitives.SpriteInstances;
+        auto& SpriteBatches          = Frame.Primitives.SpriteBatches;
 
         {
             LUMINA_PROFILE_SECTION("Compile Draw Commands");
@@ -2396,6 +2404,7 @@ namespace Lumina
             auto BillboardView       = Registry.View<SBillboardComponent>(ECS::TExclude<SDisabledTag>{});
             auto WidgetView          = Registry.View<SWidgetComponent>(ECS::TExclude<SDisabledTag>{});
             auto TextView            = Registry.View<STextComponent>(ECS::TExclude<SDisabledTag>{});
+            auto SpriteView          = Registry.View<SSprite3DComponent>(ECS::TExclude<SDisabledTag>{});
             auto LineBatcherView     = Registry.View<FLineBatcherComponent>();
             auto TriangleBatcherView = Registry.View<FTriangleBatcherComponent>();
             auto EnvironmentView     = Registry.View<SEnvironmentComponent>(ECS::TExclude<SDisabledTag>{});
@@ -2749,6 +2758,187 @@ namespace Lumina
                     Batch.bDepthTest    = TextComponent.bDepthTest;
                 });
             }, ETaskPriority::Medium); // emitter, so it must not outrank the mesh critical path
+
+            EmitGraph.Add([&]
+            {
+                LUMINA_PROFILE_SECTION("Process Sprite Primitives");
+
+                const FFrustum& SpriteFrustum  = Frame.CameraFrustum;
+                const bool      bCullSprites   = SceneGlobalData.CullData.bFrustumCull != 0u;
+                const FVector3  SpriteCamRight = FVector3(SceneGlobalData.CameraData.Right);
+                const FVector3  SpriteCamUp    = FVector3(SceneGlobalData.CameraData.Up);
+                const FVector3  SpriteCamPos   = FVector3(SceneGlobalData.CameraData.Location);
+
+                SpriteSortScratch.clear();
+
+                SpriteView.ForEach([&](ECS::FEntity Entity, const SSprite3DComponent& Sprite)
+                {
+                    CTexture* Texture = Sprite.Texture.Get();
+                    if (Texture == nullptr || Texture->GetResourceID() < 0 || Texture->GetNumMips() == 0)
+                    {
+                        return;
+                    }
+
+                    const FTextureResource::FMip& Base = Texture->GetTextureResource().Mips[0];
+                    const float TexW = (float)Base.Width;
+                    const float TexH = (float)Base.Height;
+                    if (TexW <= 0.0f || TexH <= 0.0f)
+                    {
+                        return;
+                    }
+
+                    float U0, V0, U1, V1, FrameW, FrameH;
+                    if (Sprite.bRegionEnabled)
+                    {
+                        FrameW = Sprite.RegionRect.z;
+                        FrameH = Sprite.RegionRect.w;
+                        if (FrameW <= 0.0f || FrameH <= 0.0f)
+                        {
+                            return;
+                        }
+                        U0 = Sprite.RegionRect.x / TexW;
+                        V0 = Sprite.RegionRect.y / TexH;
+                        U1 = (Sprite.RegionRect.x + FrameW) / TexW;
+                        V1 = (Sprite.RegionRect.y + FrameH) / TexH;
+                    }
+                    else
+                    {
+                        const int32 HF    = Math::Max(Sprite.HFrames, 1);
+                        const int32 VF    = Math::Max(Sprite.VFrames, 1);
+                        const int32 Index = Math::Clamp(Sprite.Frame, 0, HF * VF - 1);
+                        const int32 Cx    = Index % HF;
+                        const int32 Cy    = Index / HF;
+
+                        FrameW = TexW / (float)HF;
+                        FrameH = TexH / (float)VF;
+                        U0 = (float)Cx / (float)HF;
+                        V0 = (float)Cy / (float)VF;
+                        U1 = (float)(Cx + 1) / (float)HF;
+                        V1 = (float)(Cy + 1) / (float)VF;
+                    }
+
+                    if (Sprite.bFlipH)
+                    {
+                        const float SwapU = U0; U0 = U1; U1 = SwapU;
+                    }
+                    if (Sprite.bFlipV)
+                    {
+                        const float SwapV = V0; V0 = V1; V1 = SwapV;
+                    }
+
+                    const FMatrix4 WorldMatrix = TransformStorage.Get(Entity).GetWorldMatrix();
+                    const FVector3 Origin      = FVector3(WorldMatrix[3]);
+
+                    const float ScaleX = Math::Length(FVector3(WorldMatrix[0]));
+                    const float ScaleY = Math::Length(FVector3(WorldMatrix[1]));
+                    const float QuadW  = FrameW * Sprite.PixelSize * ScaleX;
+                    const float QuadH  = FrameH * Sprite.PixelSize * ScaleY;
+
+                    // Uncentered anchors the frame's top-left at the origin, so it hangs right and down.
+                    FVector2 PlaneMin = Sprite.bCentered ? FVector2(-QuadW * 0.5f, -QuadH * 0.5f) : FVector2(0.0f, -QuadH);
+                    FVector2 PlaneMax = Sprite.bCentered ? FVector2( QuadW * 0.5f,  QuadH * 0.5f) : FVector2(QuadW, 0.0f);
+
+                    // Offset is authored in texture pixels with y running down, as the 2D sprite editors do.
+                    const FVector2 OffsetWorld( Sprite.Offset.x * Sprite.PixelSize * ScaleX,
+                                               -Sprite.Offset.y * Sprite.PixelSize * ScaleY);
+                    PlaneMin += OffsetWorld;
+                    PlaneMax += OffsetWorld;
+
+                    const float Radius = Math::Max(Math::Abs(PlaneMin.x), Math::Abs(PlaneMax.x))
+                                       + Math::Max(Math::Abs(PlaneMin.y), Math::Abs(PlaneMax.y));
+                    if (bCullSprites && !SpriteFrustum.IntersectsSphere(Origin, Radius))
+                    {
+                        return;
+                    }
+
+                    FVector3 RightDir;
+                    FVector3 UpDir;
+                    switch (Sprite.BillboardMode)
+                    {
+                    case ESpriteBillboardMode::Enabled:
+                        RightDir = SpriteCamRight;
+                        UpDir    = SpriteCamUp;
+                        break;
+
+                    case ESpriteBillboardMode::YBillboard:
+                    {
+                        UpDir = FVector3(0.0f, 1.0f, 0.0f);
+                        FVector3 ToCamera = SpriteCamPos - Origin;
+                        ToCamera.y = 0.0f;
+                        // Directly overhead leaves no yaw to resolve, so any stable axis will do.
+                        RightDir = Math::LengthSquared(ToCamera) > 1e-8f
+                                 ? Math::Normalize(Math::Cross(UpDir, ToCamera))
+                                 : SpriteCamRight;
+                        break;
+                    }
+
+                    default:
+                        RightDir = Math::Normalize(FVector3(WorldMatrix[0]));
+                        UpDir    = Math::Normalize(FVector3(WorldMatrix[1]));
+                        break;
+                    }
+
+                    FSpriteSortEntry& Entry = SpriteSortScratch.emplace_back();
+                    Entry.TextureIndex = (uint32)Texture->GetResourceID();
+                    Entry.SortOrder    = Sprite.SortOrder;
+                    Entry.ViewDepthSq  = Math::LengthSquared(Origin - SpriteCamPos);
+                    Entry.bDepthTest   = Sprite.bDepthTest;
+                    Entry.bDoubleSided = Sprite.bDoubleSided;
+
+                    FGPUSprite& Out = Entry.Gpu;
+                    Out.Origin   = Origin;   Out.Pad0 = 0.0f;
+                    Out.Right    = RightDir; Out.Pad1 = 0.0f;
+                    Out.Up       = UpDir;    Out.Pad2 = 0.0f;
+                    Out.UVRect   = FVector4(U0, V0, U1, V1);
+                    Out.PlaneMin = PlaneMin;
+                    Out.PlaneMax = PlaneMax;
+                    Out.ColorPack = PackColor(Sprite.Modulate);
+                    Out.EntityID  = (Entity).Value;
+                    Out.Flags     = (Sprite.AlphaCut == ESpriteAlphaCut::Discard) ? SPRITE_FLAG_ALPHA_CUT : 0u;
+                    Out.AlphaCutThreshold = Sprite.AlphaCutThreshold;
+                });
+
+                if (SpriteSortScratch.empty())
+                {
+                    return;
+                }
+
+                Algo::StableSort(SpriteSortScratch, [](const FSpriteSortEntry& A, const FSpriteSortEntry& B)
+                {
+                    if (A.SortOrder != B.SortOrder)
+                    {
+                        return A.SortOrder < B.SortOrder;
+                    }
+                    return A.ViewDepthSq > B.ViewDepthSq;
+                });
+
+                SpriteInstances.reserve(SpriteSortScratch.size());
+                for (const FSpriteSortEntry& Entry : SpriteSortScratch)
+                {
+                    const uint32 First = (uint32)SpriteInstances.size();
+                    SpriteInstances.push_back(Entry.Gpu);
+
+                    if (!SpriteBatches.empty())
+                    {
+                        FFrameData::FSpriteBatch& Last = SpriteBatches.back();
+                        if (Last.TextureIndex == Entry.TextureIndex
+                            && Last.bDepthTest == Entry.bDepthTest
+                            && Last.bDoubleSided == Entry.bDoubleSided
+                            && Last.FirstInstance + Last.Count == First)
+                        {
+                            ++Last.Count;
+                            continue;
+                        }
+                    }
+
+                    FFrameData::FSpriteBatch& Batch = SpriteBatches.emplace_back();
+                    Batch.TextureIndex  = Entry.TextureIndex;
+                    Batch.FirstInstance = First;
+                    Batch.Count         = 1;
+                    Batch.bDepthTest    = Entry.bDepthTest;
+                    Batch.bDoubleSided  = Entry.bDoubleSided;
+                }
+            }, ETaskPriority::Medium);
 
             EmitGraph.Add([&]
             {
@@ -6172,6 +6362,8 @@ namespace Lumina
         Frame.Primitives.BillboardInstances.clear();
         Frame.Primitives.WidgetInstances.clear();
         Frame.Primitives.GlyphInstances.clear();
+        Frame.Primitives.SpriteInstances.clear();
+        Frame.Primitives.SpriteBatches.clear();
         Frame.Primitives.TextBatches.clear();
         Frame.FrameStats = {};
 
@@ -9483,6 +9675,116 @@ namespace Lumina
         RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
         RHI::CmdDraw(CL, MakeArgs(), 6, (uint32)WidgetInstances.size(), 0, 0);
+        RHI::CmdEndRenderPass(CL);
+        Barriers::RasterToRead(CL);
+    }
+
+    void FDefaultSceneRenderer::SpritePass(RHI::FCmdListH CL)
+    {
+        const FFrameData& Frame     = *RenderFrame;
+        const auto&       Instances = Frame.Primitives.SpriteInstances;
+        const auto&       Batches   = Frame.Primitives.SpriteBatches;
+
+        if (Instances.empty() || Batches.empty())
+        {
+            return;
+        }
+
+        LUMINA_PROFILE_SECTION_COLORED("Sprite Pass", tracy::Color::Magenta);
+
+        static const FShaderH VertexShader = FShaderLibrary::Get("SpriteVert.slang");
+        static const FShaderH PixelShader  = FShaderLibrary::Get("SpritePixel.slang");
+        if (!VertexShader || !PixelShader)
+        {
+            return;
+        }
+
+        const FSceneImage& HDR = GetNamedImage(ENamedImage::HDR);
+
+        RHI::FRenderAttachment Colors[2];
+        uint32 NumColors = 1;
+        Colors[0].Texture = HDR.Texture;
+        Colors[0].LoadOp  = RHI::ELoadOp::Load;
+        Colors[0].StoreOp = RHI::EStoreOp::Store;
+        #if USING(WITH_EDITOR)
+        const FSceneImage& Picker = GetNamedImage(ENamedImage::Picker);
+        Colors[1].Texture = Picker.Texture;
+        Colors[1].LoadOp  = RHI::ELoadOp::Load;
+        Colors[1].StoreOp = RHI::EStoreOp::Store;
+        NumColors = 2;
+        #endif
+
+        RHI::FRenderPassDesc Pass;
+        Pass.ColorAttachments        = TSpan<const RHI::FRenderAttachment>(Colors, NumColors);
+        Pass.DepthAttachment.Texture = GetNamedImage(ENamedImage::DepthAttachment).Texture;
+        Pass.DepthAttachment.LoadOp  = RHI::ELoadOp::Load;
+        Pass.DepthAttachment.StoreOp = RHI::EStoreOp::Store;
+        Pass.RenderArea              = HDR.GetExtent();
+
+        RHI::CmdBeginRenderPass(CL, Pass);
+        SetViewportScissor(CL, HDR.GetExtent());
+
+        // Blend only the color target; the Picker (uint id) must not blend.
+        RHI::FBlendDesc AlphaBlend;
+        AlphaBlend.bBlendEnable   = true;
+        AlphaBlend.SrcColorFactor = RHI::EFactor::SrcAlpha;
+        AlphaBlend.DstColorFactor = RHI::EFactor::OneMinusSrcAlpha;
+        AlphaBlend.SrcAlphaFactor = RHI::EFactor::One;
+        AlphaBlend.DstAlphaFactor = RHI::EFactor::OneMinusSrcAlpha;
+
+        FGraphicsPipelineKey Key;
+        Key.VS          = VertexShader;
+        Key.PS          = PixelShader;
+        Key.DepthFormat = EFormat::D32;
+        Key.ColorTargets.push_back({ HDR.Desc.Format, AlphaBlend });
+        #if USING(WITH_EDITOR)
+        Key.ColorTargets.push_back({ Picker.Desc.Format, {} });
+        #endif
+        RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
+
+        // Blended sprites must not occlude the ones sorted behind them, so depth is read but never written.
+        RHI::FDepthStencilDesc DepthTested;
+        DepthTested.DepthMode = RHI::EDepthFlags::Read;
+        DepthTested.DepthTest = RHI::EOp::GreaterEqual;
+
+        const RHI::GPUPtr InstancesAddr = RHI::Core::CopyTransientArray(Instances.data(), Instances.size());
+
+        struct FSpritePushConstants
+        {
+            uint64 InstancesAddr;
+            uint32 TextureIndex;
+            uint32 Pad0;
+        };
+        static_assert(sizeof(FSpritePushConstants) == 16, "FSpritePushConstants must match SpriteCommon.slang.");
+
+        bool bDepthStateSet  = false;
+        bool bLastDepthTest  = false;
+        bool bCullStateSet   = false;
+        bool bLastDoubleSided = false;
+
+        for (const FFrameData::FSpriteBatch& Batch : Batches)
+        {
+            if (!bDepthStateSet || bLastDepthTest != Batch.bDepthTest)
+            {
+                RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(Batch.bDepthTest ? DepthTested : RHI::FDepthStencilDesc{}));
+                bLastDepthTest = Batch.bDepthTest;
+                bDepthStateSet = true;
+            }
+
+            if (!bCullStateSet || bLastDoubleSided != Batch.bDoubleSided)
+            {
+                RHI::CmdSetCullMode(CL, Batch.bDoubleSided ? RHI::ECullMode::None : RHI::ECullMode::Back);
+                bLastDoubleSided = Batch.bDoubleSided;
+                bCullStateSet    = true;
+            }
+
+            FSpritePushConstants PC = {};
+            PC.InstancesAddr = InstancesAddr;
+            PC.TextureIndex  = Batch.TextureIndex;
+
+            RHI::CmdDraw(CL, MakeArgs(PC), 6, Batch.Count, 0, Batch.FirstInstance);
+        }
+
         RHI::CmdEndRenderPass(CL);
         Barriers::RasterToRead(CL);
     }

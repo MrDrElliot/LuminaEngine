@@ -157,6 +157,16 @@ namespace Lumina
                 uint32      Count;
             };
 
+            // A run of sprite instances sharing one texture and render state; one instanced draw per batch.
+            struct FSpriteBatch
+            {
+                uint32 TextureIndex  = 0;
+                uint32 FirstInstance = 0;
+                uint32 Count         = 0;
+                bool   bDepthTest    = true;
+                bool   bDoubleSided  = true;
+            };
+
             // A run of glyph instances sharing one font atlas; one instanced draw per batch.
             struct FTextBatch
             {
@@ -339,6 +349,9 @@ namespace Lumina
                 TVector<FWidgetInstance>         WidgetInstances;
                 TVector<FGPUGlyph>               GlyphInstances;
                 TVector<FTextBatch>              TextBatches;
+
+                TVector<FGPUSprite>              SpriteInstances;
+                TVector<FSpriteBatch>            SpriteBatches;
 
                 TVector<FGPUGlyph>               DebugTextGlyphs;
                 FTextBatch                       DebugTextBatch;
@@ -691,6 +704,7 @@ namespace Lumina
 
         void BillboardPass(RHI::FCmdListH CL);
         void WidgetPass(RHI::FCmdListH CL);
+        void SpritePass(RHI::FCmdListH CL);
         void TextPass(RHI::FCmdListH CL);
         void DebugTextPass(RHI::FCmdListH CL);
         void WidgetPickerPass(RHI::FCmdListH CL);
@@ -1329,6 +1343,18 @@ namespace Lumina
 
         struct FDecalSortEntry { CMaterial* ShaderOwner; int32 SortOrder; FGPUDecal Gpu; };
         TVector<FDecalSortEntry>                DecalSortScratch;
+
+        // Sorted before batching so alpha blending composites back to front.
+        struct FSpriteSortEntry
+        {
+            uint32     TextureIndex;
+            int32      SortOrder;
+            float      ViewDepthSq;
+            bool       bDepthTest;
+            bool       bDoubleSided;
+            FGPUSprite Gpu;
+        };
+        TVector<FSpriteSortEntry>               SpriteSortScratch;
         THashMap<CMaterial*, int32>             DecalGroupMinSort;
         
         TVector<FThreadLocalDrawData>           ThreadLocalStorage;
