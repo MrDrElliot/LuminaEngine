@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "CameraSystem.h"
+#include "Core/Math/Easing.h"
 #include "World/ECS/Registry.h"
 #include "World/ECS/EventDispatcher.h"
 #include "SystemSingletons.h"
@@ -16,14 +17,16 @@ namespace Lumina
 
     float EvaluateCameraBlend(ECameraBlendFunction Function, float Alpha)
     {
-        Alpha = Math::Clamp(Alpha, 0.0f, 1.0f);
         switch (Function)
         {
-        case ECameraBlendFunction::EaseIn:    return Alpha * Alpha;
-        case ECameraBlendFunction::EaseOut:   return Alpha * (2.0f - Alpha);
-        case ECameraBlendFunction::EaseInOut: return Alpha * Alpha * (3.0f - 2.0f * Alpha); // smoothstep
+        case ECameraBlendFunction::EaseIn:  return Easing::Evaluate(EEaseTransition::Quad, EEaseType::In, Alpha);
+        case ECameraBlendFunction::EaseOut: return Easing::Evaluate(EEaseTransition::Quad, EEaseType::Out, Alpha);
+
+        // Hermite, which is a gentler curve than Quad InOut and is what this blend has always been.
+        case ECameraBlendFunction::EaseInOut: return Math::SmoothStep(0.0f, 1.0f, Alpha);
+
         case ECameraBlendFunction::Linear:
-        default:                              return Alpha;
+        default:                            return Math::Clamp(Alpha, 0.0f, 1.0f);
         }
     }
 

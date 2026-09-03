@@ -358,6 +358,7 @@ namespace Lumina
 
         // Per-world subsystem singleton ticked by STimerSystem and reached by ctx address.
         EntityRegistry.Ctx().Emplace<FTimerManager>();
+        EntityRegistry.Ctx().Emplace<FTweenManager>();
 
         // SCameraSystem owns FCameraGlobalState and writes FResolvedSceneView for Extract.
         EntityRegistry.Ctx().Emplace<FCameraGlobalState>();
@@ -501,6 +502,7 @@ namespace Lumina
         }
 
         EntityRegistry.Ctx().Get<FTimerManager>().Clear();
+        EntityRegistry.Ctx().Get<FTweenManager>().Clear();
 
         // Detached up front, since OnDestroy publishes while iterating the pool it is about to empty.
         EntityRegistry.GetSignals<SEntityScriptComponent>().OnDestroy.Disconnect<&ThisClass::OnCSharpScriptComponentDestroyed>(this);

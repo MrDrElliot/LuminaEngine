@@ -24,6 +24,8 @@ public unsafe partial class CWorld
     public GameplayTags Tags => new(WorldHandle);
     public Audio Audio => new(WorldHandle);
     public Timers Timers => new(WorldHandle);
+
+    public Tweens Tweens => new(WorldHandle);
     public LuminaSharp.Animation Animation => new(WorldHandle);
 
     public float DeltaTime => (float)GetWorldDeltaTime();

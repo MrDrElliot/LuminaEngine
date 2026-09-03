@@ -16,6 +16,7 @@
 #include "Scene/RenderScene/TexturePaintTypes.h"
 #include "UI/WorldUIContext.h"
 #include "Subsystems/TimerManager.h"
+#include "Subsystems/TweenManager.h"
 #include "Physics/Ray/RayCast.h"
 #include "Renderer/PrimitiveDrawInterface.h"
 #include "WorldTypes.h"
@@ -301,6 +302,9 @@ namespace Lumina
         TOptional<SRayResult> CastSphereClosest(const SSphereCastSettings& Settings) const;
         
         EUpdateStage GetUpdateStage() const;
+
+        FTweenManager& GetTweenManager() { return EntityRegistry.Ctx().Get<FTweenManager>(); }
+        const FTweenManager& GetTweenManager() const { return EntityRegistry.Ctx().Get<FTweenManager>(); }
 
         FTimerManager& GetTimerManager() { return EntityRegistry.Ctx().Get<FTimerManager>(); }
         const FTimerManager& GetTimerManager() const { return EntityRegistry.Ctx().Get<FTimerManager>(); }
