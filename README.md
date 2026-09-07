@@ -180,10 +180,11 @@ built on them, so the editor refuses to start on anything older and says so.
 #### Linux
 
 - A 64-bit distribution
-- **GCC 13 or newer**, or Clang against a libstdc++ that new. The tree uses
-  `<format>`, which is where that floor comes from. Built and tested with GCC
-  13-15; newer pre-release compilers tend to reject vendored third-party code
-  for reasons that are not bugs in this engine.
+- **GCC 16 or newer.** `Memory/Construct.h` uses `__is_trivially_destructible`,
+  a builtin GCC only grew in 16, so g++-13 and g++-15 reject the tree outright.
+  Clang is not usable right now whatever its libstdc++: it rejects the
+  `RUNTIME_API NODISCARD` attribute order in `Memory/Memory.h`, `PlatformString.h`
+  and `MeshData.h`, which GCC accepts.
 - **.NET 10 SDK**
 - X11 development packages, which GLFW links directly
 - A Vulkan **loader and driver** at run time. These are not needed to compile:
@@ -194,7 +195,7 @@ built on them, so the editor refuses to start on anything older and says so.
 
   ```bash
   # build
-  sudo apt-get install -y g++-13 pkg-config libx11-dev libxrandr-dev \
+  sudo apt-get install -y g++-16 pkg-config libx11-dev libxrandr-dev \
       libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev
   # run
   sudo apt-get install -y libvulkan1 mesa-vulkan-drivers vulkan-tools
@@ -418,8 +419,8 @@ Regenerating prints the resolved feature set, e.g.
 >   whichever one your compiler ships. If it fails anyway, the compiler is
 >   probably not the one you think it is; check `CXX`.
 > - **A build failure inside `External/` or `ThirdParty/`?** Usually a compiler
->   newer than the tree has been built with. Pin a stable one:
->   `sudo apt-get install -y g++-15 && export CXX=g++-15 CC=gcc-15`.
+>   newer than the tree has been built with. There is no older fallback to pin
+>   to at the moment: GCC 16 is both the floor and the newest tested version.
 
 #### Windows
 

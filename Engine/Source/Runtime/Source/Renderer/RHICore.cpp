@@ -18,9 +18,6 @@
 
 namespace Lumina::RHI
 {
-    // Typed, since unsigned long long is a distinct type and Max deduces one T from both arguments.
-    static constexpr uint64 kMegabyte = 1024 * 1024;
-
     static constexpr uint64 kTransientSliceRequest = 32 * kMegabyte;
 
     static uint64 GTransientSliceSize = kTransientSliceRequest;

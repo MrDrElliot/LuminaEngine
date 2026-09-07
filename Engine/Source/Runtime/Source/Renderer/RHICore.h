@@ -9,6 +9,9 @@
 
 namespace Lumina::RHI
 {
+    // Typed, since unsigned long long is a distinct type and Max deduces one T from both arguments.
+    inline constexpr uint64 kMegabyte = 1024 * 1024;
+
     struct FTransientAlloc
     {
         void*  Cpu  = nullptr;

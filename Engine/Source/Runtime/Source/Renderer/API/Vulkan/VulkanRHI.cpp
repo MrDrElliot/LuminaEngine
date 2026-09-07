@@ -1291,9 +1291,6 @@ namespace Lumina::RHI
             return DesiredSliceSize;
         }
 
-        // Typed, since ull is a different type wherever uint64 is unsigned long and deduction breaks.
-        constexpr uint64 kMegabyte = 1024 * 1024;
-
         const uint64 PerSlice = (Aperture / kCPUWriteApertureDivisor) / SliceCount;
         const uint64 Cap      = Math::Max(kMinCPUWriteSlice, (PerSlice / kMegabyte) * kMegabyte);
         if (Cap >= DesiredSliceSize)

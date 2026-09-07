@@ -36,23 +36,21 @@ if [ -z "${SKIP_PREREQ_CHECKS:-}" ]; then
 
     command -v dotnet >/dev/null 2>&1 || Missing+=("dotnet (.NET 10 SDK)")
 
-    # The tree needs <format>, which means GCC 13 / libstdc++ 13 or Clang with a libstdc++ that new.
+    # Construct.h uses __is_trivially_destructible, a builtin GCC only grew in 16.
     if command -v g++ >/dev/null 2>&1; then
         GccMajor="$(g++ -dumpfullversion -dumpversion 2>/dev/null | cut -d. -f1)"
-        if [ -n "$GccMajor" ] && [ "$GccMajor" -lt 13 ]; then
-            echo "warning: g++ $GccMajor is too old for this tree (<format> needs 13+)."
-            echo "         Install g++-13 or newer, or set CXX to a newer compiler."
+        if [ -n "$GccMajor" ] && [ "$GccMajor" -lt 16 ]; then
+            echo "warning: g++ $GccMajor is too old for this tree (__is_trivially_destructible needs 16+)."
+            echo "         Install g++-16 or newer, or set CXX to a newer compiler."
             echo
-        elif [ -n "$GccMajor" ] && [ "$GccMajor" -gt 15 ]; then
-            echo "warning: g++ $GccMajor is newer than anything this tree has been built with (13-15)."
+        elif [ -n "$GccMajor" ] && [ "$GccMajor" -gt 16 ]; then
+            echo "warning: g++ $GccMajor is newer than anything this tree has been built with (16)."
             echo "         Pre-release compilers reject old third-party code for reasons that are not"
-            echo "         bugs in this engine. If the build fails inside External/ or ThirdParty/,"
-            echo "         pin a stable compiler first:"
-            echo "           sudo apt-get install -y g++-15 && export CXX=g++-15 CC=gcc-15"
+            echo "         bugs in this engine."
             echo
         fi
-    elif ! command -v clang++ >/dev/null 2>&1; then
-        Missing+=("g++ 13+ or clang++")
+    else
+        Missing+=("g++ 16+")
     fi
 
     # GLFW links these directly; without the headers the build gets a long way and then fails.
@@ -67,7 +65,7 @@ if [ -z "${SKIP_PREREQ_CHECKS:-}" ]; then
         printf '  - %s\n' "${Missing[@]}"
         echo
         echo "On Debian or Ubuntu:"
-        echo "  sudo apt-get install -y g++-13 libx11-dev libxrandr-dev libxinerama-dev \\"
+        echo "  sudo apt-get install -y g++-16 libx11-dev libxrandr-dev libxinerama-dev \\"
         echo "      libxcursor-dev libxi-dev libxkbcommon-dev pkg-config"
         echo "  # .NET: https://dotnet.microsoft.com/download/dotnet/10.0"
         echo

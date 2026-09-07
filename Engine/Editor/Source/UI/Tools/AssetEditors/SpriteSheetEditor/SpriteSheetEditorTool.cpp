@@ -133,7 +133,7 @@ namespace Lumina
 
                 DrawList->AddRectFilled(Min, Max, kInClipColor);
 
-                char Order[8];
+                char Order[12];
                 std::snprintf(Order, sizeof(Order), "%d", Slot);
                 DrawList->AddText(ImVec2(Min.x + 3.0f, Min.y + 2.0f), kOrderTextCol, Order);
             }

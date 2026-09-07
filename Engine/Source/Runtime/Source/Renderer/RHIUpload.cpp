@@ -13,9 +13,6 @@ namespace Lumina::RHI
 {
     namespace
     {
-        // Typed rather than a suffix literal, see the note in RHICore.cpp.
-        constexpr uint64 kMegabyte = 1024 * 1024;
-
         constexpr uint64 kStagingSliceRequest = 64 * kMegabyte;
 
         // Resolved against the CPU-visible VRAM aperture in Initialize.
