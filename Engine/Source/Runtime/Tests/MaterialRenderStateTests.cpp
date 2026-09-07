@@ -64,10 +64,10 @@ namespace Lumina
 
     TEST(MaterialBlendMode, OnlyOpaqueReadsAsOpaque)
     {
-        EXPECT_TRUE(MakeMaterial(EBlendMode::Opaque)->IsOpaque());
-        EXPECT_FALSE(MakeMaterial(EBlendMode::Masked)->IsOpaque());
-        EXPECT_FALSE(MakeMaterial(EBlendMode::Modulate)->IsOpaque());
-        EXPECT_FALSE(MakeMaterial(EBlendMode::AlphaComposite)->IsOpaque());
+        EXPECT_EQ(MakeMaterial(EBlendMode::Opaque)->GetBlendMode(), EBlendMode::Opaque);
+        EXPECT_NE(MakeMaterial(EBlendMode::Masked)->GetBlendMode(), EBlendMode::Opaque);
+        EXPECT_NE(MakeMaterial(EBlendMode::Modulate)->GetBlendMode(), EBlendMode::Opaque);
+        EXPECT_NE(MakeMaterial(EBlendMode::AlphaComposite)->GetBlendMode(), EBlendMode::Opaque);
     }
 
     // Appending is what keeps a saved asset's blend mode meaning what it meant when it was written.

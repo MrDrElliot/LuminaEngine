@@ -106,7 +106,6 @@ int main(int ArgC, char** ArgV)
         // Pipelines/MeshShaderDraw covers the mesh path, so the suite needs a device that has it.
         .RequiredFeatures = RHI::EDeviceFeature::MeshShading,
     });
-    RHI::Core::Initialize();
     
     FSpirVShaderCompiler ShaderCompiler;
     GShaderCompiler = &ShaderCompiler;
@@ -123,7 +122,6 @@ int main(int ArgC, char** ArgV)
     ShaderCompiler.Flush();
     GShaderCompiler = nullptr;
 
-    RHI::Core::Shutdown();
     RHI::FreeDevice();
 
     Task::Shutdown();

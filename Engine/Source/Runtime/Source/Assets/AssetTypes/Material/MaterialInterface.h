@@ -50,6 +50,34 @@ namespace Lumina
         AlphaComposite,
     };
 
+    // What each domain consumes of a material; the editor, the graph compile and the passes all ask here.
+    namespace MaterialDomain
+    {
+        // Only PBR draws through the meshlet pipeline; every other domain rasters a vertex stage.
+        constexpr bool IsMeshlet(EMaterialType Type)        { return Type == EMaterialType::PBR; }
+        constexpr bool UsesVertexStage(EMaterialType Type)  { return Type != EMaterialType::PBR && Type != EMaterialType::None; }
+        constexpr bool IsFullscreen(EMaterialType Type)     { return Type == EMaterialType::PostProcess || Type == EMaterialType::UI; }
+
+        constexpr bool SupportsBlendMode(EMaterialType Type, EBlendMode Mode)
+        {
+            switch (Type)
+            {
+            case EMaterialType::PBR:
+            case EMaterialType::Particle: return true;
+            case EMaterialType::Terrain:  return Mode == EBlendMode::Opaque || Mode == EBlendMode::Masked;
+            default:                      return Mode == EBlendMode::Opaque;
+            }
+        }
+
+        // Lit through ShadeSurface, which reads the model off the material flags at runtime.
+        constexpr bool SupportsShadingModel(EMaterialType Type)       { return Type == EMaterialType::PBR || Type == EMaterialType::Terrain; }
+        // Shadow casting, two-sidedness, decal receipt and depth test only mean something on a mesh surface.
+        constexpr bool SupportsSurfaceRenderState(EMaterialType Type) { return Type == EMaterialType::PBR; }
+        constexpr bool SupportsDepthWrite(EMaterialType Type)         { return Type == EMaterialType::PBR || Type == EMaterialType::Particle; }
+
+        RUNTIME_API const char* ToString(EMaterialType Type);
+    }
+
     /**
      * How a surface is lit. Values MUST match EShadingModel in GBuffer.slang -- they are packed into the
      * GBuffer flags byte and read back by the lighting pass.
@@ -126,17 +154,16 @@ namespace Lumina
 
         virtual EMaterialType GetMaterialType() const { return EMaterialType::None; }
 
+        /** Ready to draw and rooted in a master compiled for Domain. PBR resolves through FMeshResolveCache instead. */
+        bool IsUsableInDomain(EMaterialType Domain) const;
+
+        /** IsUsableInDomain plus both raster stages at this level's static-switch key; false leaves the outputs null. */
+        bool ResolveDomainShaders(EMaterialType Domain, FShaderH& OutVertex, FShaderH& OutPixel) const;
+
         virtual bool DoesCastShadows() const { return false; }
         virtual bool IsTwoSided() const { return false; }
-        virtual bool IsTranslucent() { return false; }
-        virtual bool IsMasked() { return false; }
-        virtual bool IsAdditive() { return false; }
-        virtual bool IsOpaque() { return true; }
-        virtual bool IsUnlit() { return false; }
-        virtual bool DisableDepthTest() { return false; }
         virtual EBlendMode GetBlendMode() { return EBlendMode::Opaque; }
         virtual EMaterialShadingModel GetShadingModel() { return EMaterialShadingModel::Lit; }
-        virtual float GetOpacityMaskClipValue() { return 0.333f; }
 
         /** False keeps DBuffer decals off the surface, which skin, glass, foliage and water all want. */
         virtual bool ReceivesDecals() const { return true; }
@@ -157,7 +184,8 @@ namespace Lumina
         virtual uint64 GetStaticSwitchKey() const { return 0; }
 
         void SetReadyForRender(bool bReady) { bReadyForRender.store(bReady, std::memory_order_release); }
-        bool IsReadyForRender() const { return bReadyForRender.load(std::memory_order_acquire); }
+        // An instance also needs its whole parent chain ready, since the shaders live at the root.
+        virtual bool IsReadyForRender() const { return bReadyForRender.load(std::memory_order_acquire); }
 
         /** Longest parent chain allowed. Resolution is linear in depth and every level costs a GPU slot. */
         static constexpr uint32 MaxChainDepth = 8;

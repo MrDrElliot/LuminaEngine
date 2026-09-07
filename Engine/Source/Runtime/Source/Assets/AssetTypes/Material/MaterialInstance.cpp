@@ -917,6 +917,11 @@ namespace Lumina
         return Root ? Root->GetStageForKey(EMaterialShaderStage::Pixel, GetStaticSwitchKey()) : FShaderH{};
     }
 
+    bool CMaterialInstance::IsReadyForRender() const
+    {
+        return CMaterialInterface::IsReadyForRender() && Material != nullptr && Material->IsReadyForRender();
+    }
+
     EMaterialType CMaterialInstance::GetMaterialType() const
     {
         return Material ? Material->GetMaterialType() : EMaterialType::None;
@@ -930,26 +935,6 @@ namespace Lumina
     bool CMaterialInstance::IsTwoSided() const
     {
         return Material ? Material->IsTwoSided() : false;
-    }
-
-    bool CMaterialInstance::IsTranslucent()
-    {
-        return Material ? Material->IsTranslucent() : false;
-    }
-
-    bool CMaterialInstance::IsMasked()
-    {
-        return Material ? Material->IsMasked() : false;
-    }
-
-    bool CMaterialInstance::IsAdditive()
-    {
-        return Material ? Material->IsAdditive() : false;
-    }
-
-    bool CMaterialInstance::IsOpaque()
-    {
-        return Material ? Material->IsOpaque() : true;
     }
 
     bool CMaterialInstance::IsMomentResolved()
@@ -977,17 +962,6 @@ namespace Lumina
         return Material ? Material->IsShadowOnly() : false;
     }
 
-    bool CMaterialInstance::IsUnlit()
-    {
-        // Through GetShadingModel so an override is honored and the two cannot disagree.
-        return GetShadingModel() == EMaterialShadingModel::Unlit;
-    }
-
-    bool CMaterialInstance::DisableDepthTest()
-    {
-        return Material ? Material->DisableDepthTest() : false;
-    }
-
     EBlendMode CMaterialInstance::GetBlendMode()
     {
         return Material ? Material->GetBlendMode() : EBlendMode::Opaque;
@@ -1002,11 +976,6 @@ namespace Lumina
         return Material ? Material->GetShadingModel() : EMaterialShadingModel::Lit;
     }
 
-    float CMaterialInstance::GetOpacityMaskClipValue()
-    {
-        return Material ? Material->GetOpacityMaskClipValue() : 0.333f;
-    }
-
     void CMaterialInstance::PostLoad()
     {
         LUMINA_MEMORY_SCOPE("Materials");
@@ -1018,8 +987,10 @@ namespace Lumina
         // Register before the parent's PostLoad so its PropagateToChildren reaches this level.
         Material->RegisterChild(this);
 
-        if (!Material->IsReadyForRender())
+        // The loader's own guard, so a parent that already ran (or is stale for good) is never run twice.
+        if (Material->HasAnyFlag(OF_NeedsPostLoad))
         {
+            Material->ClearFlags(OF_NeedsPostLoad);
             Material->PostLoad();
         }
         else

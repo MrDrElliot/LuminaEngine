@@ -151,7 +151,7 @@ namespace Lumina
     void FTextureHeapEditorTool::DrawWindow(bool bIsFocused)
     {
         TVector<RHI::FHeapTextureInfo> Textures;
-        RHI::GetTextureHeapTextures(RHI::Core::GetGlobalHeap(), Textures);
+        RHI::GetTextureHeapTextures(RHI::GetGlobalHeap(), Textures);
 
         uint64 TotalBytes = 0;
         for (const RHI::FHeapTextureInfo& Info : Textures)

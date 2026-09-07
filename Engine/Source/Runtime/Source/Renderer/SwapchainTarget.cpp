@@ -26,12 +26,12 @@ namespace Lumina::RHI
         {
             // Recording is synchronous, so only submitted work can still name these images.
             WaitDeviceIdle();
-            FreeH(Swapchain);
+            Retire(Swapchain);
         }
         else if (IsValid(Surface))
         {
             // The first build consumes the surface, so this only runs when nothing was ever built.
-            FreeH(Surface);
+            Retire(Surface);
         }
 
         Swapchain       = FSwapchainH{};
@@ -97,7 +97,7 @@ namespace Lumina::RHI
 
     bool FSwapchainTarget::Present(FCmdListH CL)
     {
-        const bool bPresented = Core::Present(Swapchain, CL);
+        const bool bPresented = RHI::Present(Swapchain, CL);
         if (!bPresented)
         {
             // Only the swapchain the image came from can release it, so the rebuild is what frees it.

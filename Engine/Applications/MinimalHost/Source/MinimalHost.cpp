@@ -99,7 +99,6 @@ int main(int ArgC, char** ArgV)
     BindInput(Window, State);
 
     RHI::CreateDevice(RHI::FDeviceDesc{ .bValidation = !ParsedCommandLine.Has("novalidation") });
-    RHI::Core::Initialize();
 
     RHI::FSwapchainTarget Target;
     Target.Initialize(RHI::CreateSurface(Window.GetWindow()), Window.GetExtent());
@@ -130,7 +129,7 @@ int main(int ArgC, char** ArgV)
     for (uint32 FrameSlot = 0; !Window.ShouldClose() && !State.bQuit;
          FrameSlot = (FrameSlot + 1) % RHI::kFramesInFlight)
     {
-        RHI::Core::BeginFrame(FrameSlot);
+        RHI::BeginFrame(FrameSlot);
 
         Window.ProcessMessages();
         Target.Resize(Window.GetExtent());
@@ -158,7 +157,7 @@ int main(int ArgC, char** ArgV)
         const FUIntVector2 Extent = Target.GetExtent();
 
         const RHI::FCmdListH CL = RHI::OpenCommandList();
-        RHI::CmdSetTextureHeap(CL, RHI::Core::GetGlobalHeap());
+        RHI::CmdSetTextureHeap(CL, RHI::GetGlobalHeap());
         Target.BarrierToRender(CL);
 
         const RHI::FRenderAttachment Attachment
@@ -186,7 +185,6 @@ int main(int ArgC, char** ArgV)
     RHI::WaitDeviceIdle();
     Target.Shutdown();
 
-    RHI::Core::Shutdown();
     RHI::FreeDevice();
 
     Task::Shutdown();

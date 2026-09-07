@@ -93,7 +93,7 @@ namespace
 
     // Everything the pipeline leaves dynamic has to be set between the pass and the draw.
     void RecordTriangle(RHI::FCmdListH CL, RHI::FTextureH Target, const FUIntVector2& Extent,
-                        RHI::FPipelineH Pipeline, RHI::FDepthStencilH DepthState)
+                        RHI::FPipelineH Pipeline)
     {
         const RHI::FRenderAttachment Color
         {
@@ -110,7 +110,7 @@ namespace
         const RHI::FRect Viewport { 0, (int)Extent.x, 0, (int)Extent.y };
 
         RHI::CmdBeginRenderPass(CL, Pass);
-        RHI::CmdSetDepthStencilState(CL, DepthState);
+        RHI::CmdSetDepthStencil(CL, RHI::FDepthStencilDesc{});
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
         RHI::CmdSetFrontFace(CL, RHI::EFrontFace::CCW);
         RHI::CmdSetViewport(CL, Viewport);
@@ -121,12 +121,12 @@ namespace
     }
 
     void RunFrameLoop(FWindow& Window, RHI::FSwapchainTarget& Target,
-                      RHI::FPipelineH Pipeline, RHI::FDepthStencilH DepthState)
+                      RHI::FPipelineH Pipeline)
     {
         for (uint32 FrameSlot = 0; !Window.ShouldClose(); FrameSlot = (FrameSlot + 1) % RHI::kFramesInFlight)
         {
             // Blocks until the GPU has finished with the slot about to be recorded into.
-            RHI::Core::BeginFrame(FrameSlot);
+            RHI::BeginFrame(FrameSlot);
 
             Window.ProcessMessages();
             Target.Resize(Window.GetExtent());
@@ -138,10 +138,10 @@ namespace
             }
 
             const RHI::FCmdListH CL = RHI::OpenCommandList();
-            RHI::CmdSetTextureHeap(CL, RHI::Core::GetGlobalHeap());
+            RHI::CmdSetTextureHeap(CL, RHI::GetGlobalHeap());
             Target.BarrierToRender(CL);
 
-            RecordTriangle(CL, SwapImage, Target.GetExtent(), Pipeline, DepthState);
+            RecordTriangle(CL, SwapImage, Target.GetExtent(), Pipeline);
 
             Target.Present(CL);
         }
@@ -162,7 +162,6 @@ int main(int ArgC, char** ArgV)
     FWindow Window(FWindowSpecs{ .Title = "Lumina Hello Triangle", .Extent = { 1280, 720 } });
 
     RHI::CreateDevice(RHI::FDeviceDesc{ .bValidation = !ParsedCommandLine.Has("novalidation") });
-    RHI::Core::Initialize();
 
     FSpirVShaderCompiler ShaderCompiler;
     GShaderCompiler = &ShaderCompiler;
@@ -171,12 +170,11 @@ int main(int ArgC, char** ArgV)
     Target.Initialize(RHI::CreateSurface(Window.GetWindow()), Window.GetExtent());
 
     const RHI::FPipelineH Pipeline = CreateTrianglePipeline(Target.GetFormat());
-    const RHI::FDepthStencilH DepthState = RHI::CreateDepthStencil(RHI::FDepthStencilDesc{});
 
     const bool bCompiled = RHI::IsValid(Pipeline);
     if (bCompiled)
     {
-        RunFrameLoop(Window, Target, Pipeline, DepthState);
+        RunFrameLoop(Window, Target, Pipeline);
     }
 
     RHI::WaitDeviceIdle();
@@ -185,12 +183,10 @@ int main(int ArgC, char** ArgV)
 
     if (bCompiled)
     {
-        RHI::Core::Retire(Pipeline);
+        RHI::Retire(Pipeline);
     }
-    RHI::FreeH(DepthState);
 
     GShaderCompiler = nullptr;
-    RHI::Core::Shutdown();
     RHI::FreeDevice();
 
     Task::Shutdown();

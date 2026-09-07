@@ -1,5 +1,6 @@
 #include "RuntimePCH.h"
 #include "MaterialInterface.h"
+#include "Material.h"
 
 #include "Core/Engine/Engine.h"
 #include "Renderer/MaterialTypes.h"
@@ -98,6 +99,51 @@ namespace Lumina
                 return;
             }
         }
+    }
+
+    const char* MaterialDomain::ToString(EMaterialType Type)
+    {
+        switch (Type)
+        {
+        case EMaterialType::None:        return "None";
+        case EMaterialType::PBR:         return "PBR";
+        case EMaterialType::PostProcess: return "PostProcess";
+        case EMaterialType::UI:          return "UI";
+        case EMaterialType::Terrain:     return "Terrain";
+        case EMaterialType::Decal:       return "Decal";
+        case EMaterialType::Particle:    return "Particle";
+        }
+        return "Unknown";
+    }
+
+    bool CMaterialInterface::IsUsableInDomain(EMaterialType Domain) const
+    {
+        const CMaterial* Master = GetMaterial();
+        return Master != nullptr && Master->GetMaterialType() == Domain && IsReadyForRender();
+    }
+
+    bool CMaterialInterface::ResolveDomainShaders(EMaterialType Domain, FShaderH& OutVertex, FShaderH& OutPixel) const
+    {
+        OutVertex = {};
+        OutPixel  = {};
+
+        if (!MaterialDomain::UsesVertexStage(Domain) || !IsUsableInDomain(Domain))
+        {
+            return false;
+        }
+
+        const CMaterial* Master = GetMaterial();
+        const uint64     Key    = GetStaticSwitchKey();
+        OutVertex = Master->GetStageForKey(EMaterialShaderStage::Vertex, Key);
+        OutPixel  = Master->GetStageForKey(EMaterialShaderStage::Pixel, Key);
+
+        if (OutVertex == nullptr || OutPixel == nullptr)
+        {
+            OutVertex = {};
+            OutPixel  = {};
+            return false;
+        }
+        return true;
     }
 
     uint32 CMaterialInterface::GetResolvedTextureSlot(uint32 Index)

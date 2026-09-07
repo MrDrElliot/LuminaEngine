@@ -91,12 +91,8 @@ namespace Lumina
         Entry.bNeedsResolve = false;
         RegisterDependencies(Handle, Entry);
 
-        EntryStates[Handle] = Entry.bResolved ? (Entry.Generation << 1) : MESH_RESOLVE_STATE_STALE;
-
-        if (!Entry.bResolved)
-        {
-            MarkPendingWork();
-        }
+        // Bit 0 marks "not ready at this generation"; the dependency that completes it re-marks the entry stale.
+        EntryStates[Handle] = (Entry.Generation << 1) | (Entry.bResolved ? 0u : 1u);
     }
 
     void FMeshResolveCache::ApplyPendingInvalidations()
@@ -132,14 +128,6 @@ namespace Lumina
                 }
             }
         }
-
-        for (uint32 Handle = 0, N = (uint32)Entries.size(); Handle < N; ++Handle)
-        {
-            if (!Entries[Handle]->bResolved)
-            {
-                MarkEntryStale(Handle);
-            }
-        }
     }
 
     uint64 FMeshResolveCache::HashKey(const void* Mesh, const TVector<CMaterialInterface*>& Overrides)
@@ -161,6 +149,7 @@ namespace Lumina
         }
         Entries.clear();
         EntryStates.clear();
+        ResolvedAtGeneration.clear();
         HandlesByHash.clear();
         HandlesByDependency.clear();
         ++TableGeneration;
@@ -207,6 +196,7 @@ namespace Lumina
                         if (Entries[Handle]->bResolved)
                         {
                             ++TableGeneration;
+                            ResolvedAtGeneration[Handle] = TableGeneration;
                         }
                     }
                     return Handle;
@@ -217,6 +207,7 @@ namespace Lumina
         const uint32 NewHandle = (uint32)Entries.size();
         Entries.push_back(Memory::New<FResolvedMesh>());
         EntryStates.push_back(MESH_RESOLVE_STATE_STALE);
+        ResolvedAtGeneration.push_back(0u);
         FResolvedMesh& Entry = *Entries.back();
 
         Entry.MeshKey  = Mesh;
@@ -244,18 +235,7 @@ namespace Lumina
                 return false;
             }
 
-            // There is one geometry path, so its stage is required outright.
-            if (Concrete->GetVisBufferMeshShader() == nullptr)
-            {
-                return false;
-            }
-
-            if (Material->IsMomentResolved() || Material->IsUnorderedBlend())
-            {
-                return true;
-            }
-
-            return Concrete->GetDeferredShader() != nullptr;
+            return Concrete->HasRequiredStages();
         }
     }
 
@@ -292,7 +272,7 @@ namespace Lumina
         bool bReady = true;
 
         CMaterialInterface* Material = RawMaterial;
-        if (IsValid(Material) && Material->GetMaterialType() != EMaterialType::PBR)
+        if (IsValid(Material) && !MaterialDomain::IsMeshlet(Material->GetMaterialType()))
         {
             Material = nullptr;
         }

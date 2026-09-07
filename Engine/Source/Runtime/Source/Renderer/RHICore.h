@@ -11,8 +11,11 @@ namespace Lumina::RHI
 {
     struct FTransientAlloc
     {
-        void*  Cpu = nullptr;
-        GPUPtr Gpu = 0;
+        void*  Cpu  = nullptr;
+        GPUPtr Gpu  = 0;
+        uint64 Size = 0;
+
+        operator FGPURange() const { return { Gpu, Size }; }
     };
 
     enum class EStockSampler : uint32
@@ -35,146 +38,65 @@ namespace Lumina::RHI
         Count
     };
 
-    namespace Core
-    {
-        // Exported so a host without the engine's frame loop -- RHITests, a dedicated server -- can bring
-        // the RHI up and drive the frame ring itself.
-        RUNTIME_API void Initialize();
-        RUNTIME_API void Shutdown();
+    // Exported so a host without the engine's frame loop, RHITests or a dedicated server, can drive the ring.
+    RUNTIME_API void BeginFrame(uint32 SlotIndex);
 
-        RUNTIME_API void BeginFrame(uint32 SlotIndex);
+    /** The one submit. Every submission rides its queue's timeline and the returned value is what it signals,
+     *  so waiting on it is WaitSemaphore(GetQueueTimeline(Queue), Value). The frame ring recycles the lists,
+     *  so a caller must never reset one it submitted. */
+    RUNTIME_API uint64 Submit(EQueueType Queue, TSpan<const FCmdListH> CommandLists, TSpan<const FSemaphoreInfo> Waits = {});
 
-        void Submit(FCmdListH CommandList);
+    RUNTIME_API FSemaphoreH GetQueueTimeline(EQueueType Queue);
 
-        RUNTIME_API uint64 SubmitOn(EQueueType Queue, TSpan<const FCmdListH> CommandLists, TSpan<const FSemaphoreInfo> Waits = {});
+    // Unexported on purpose, since FSwapchainTarget is what handles a rejected present.
+    bool Present(FSwapchainH Swapchain, FCmdListH FinalCommandList);
 
-        RUNTIME_API FSemaphoreH GetQueueTimeline(EQueueType Queue);
-
-        void SubmitAndWait(FCmdListH CommandList);
-
-        // Unexported on purpose, since FSwapchainTarget is what handles a rejected present.
-        bool Present(FSwapchainH Swapchain, FCmdListH FinalCommandList);
-
-        RUNTIME_API FTextureHeapH GetGlobalHeap();
-        
-        RUNTIME_API FTransientAlloc AllocTransient(uint64 Size, uint64 Alignment = kDefaultAlign);
-
-        template<typename T>
-        GPUPtr CopyTransient(const T& Value)
-        {
-            FTransientAlloc Alloc = AllocTransient(sizeof(T), alignof(T) > kDefaultAlign ? alignof(T) : kDefaultAlign);
-            Memory::Memcpy(Alloc.Cpu, &Value, sizeof(T));
-            return Alloc.Gpu;
-        }
-
-        // Reserve and fill in place, which spares the caller building a vector only to copy it in.
-        template<typename T>
-        struct TTransientArray
-        {
-            T*     Data  = nullptr;
-            GPUPtr Gpu   = 0;
-            uint64 Count = 0;
-
-            NODISCARD bool IsValid() const { return Data != nullptr; }
-            NODISCARD T& operator [] (uint64 Index) const { return Data[Index]; }
-            NODISCARD T* begin() const { return Data; }
-            NODISCARD T* end() const { return Data + Count; }
-        };
-
-        template<typename T>
-        TTransientArray<T> AllocTransientArray(uint64 Count)
-        {
-            const FTransientAlloc Alloc = AllocTransient(sizeof(T) * Count,
-                alignof(T) > kDefaultAlign ? alignof(T) : kDefaultAlign);
-
-            return TTransientArray<T>{ static_cast<T*>(Alloc.Cpu), Alloc.Gpu, Alloc.Cpu != nullptr ? Count : 0 };
-        }
-
-        template<typename T>
-        GPUPtr CopyTransientArray(const T* Data, uint64 Count)
-        {
-            FTransientAlloc Alloc = AllocTransient(sizeof(T) * Count, alignof(T) > kDefaultAlign ? alignof(T) : kDefaultAlign);
-            Memory::Memcpy(Alloc.Cpu, Data, sizeof(T) * Count);
-            return Alloc.Gpu;
-        }
-        
-        RUNTIME_API void Retire(const FGPUAllocation& Memory);
-        RUNTIME_API void Retire(FTextureH Texture);
-        RUNTIME_API void Retire(FPipelineH Pipeline);
-        RUNTIME_API void RetireSampledSlot(uint32 HeapSlot);
-        RUNTIME_API void RetireStorageSlot(uint32 HeapSlot);
-
-        /** Runs Callback on the fence boundary a buffer retired at the same moment would be freed on.
-         *
-         *  For CPU-side state that DESCRIBES a GPU resource and has to stop describing it at exactly the
-         *  instant it dies: any earlier and frames already recorded lose the resource they were built
-         *  against, any later and frames recorded since read it after the free. A frame count cannot
-         *  express that; the fence already does. */
-        RUNTIME_API void RetireCallback(TFunction<void()> Callback);
-
-        FPipelineH CreateGraphicsPipeline(const FName& VertexShader, const FName& PixelShader, const FRasterDesc& Desc);
-        FPipelineH CreateComputePipeline(const FName& ComputeShader);
-
-        /** Writes the driver's disassembly for Pipeline beside the log, when -dumpshaderisa is set. */
-        RUNTIME_API void DumpPipelineISA(FPipelineH Pipeline, const FName& Name);
-    }
+    RUNTIME_API FTextureHeapH GetGlobalHeap();
+    
+    RUNTIME_API FTransientAlloc AllocTransient(uint64 Size, uint64 Alignment = kDefaultAlign);
 
     template<typename T>
-    class TUniqueH
+    GPUPtr CopyTransient(const T& Value)
     {
-    public:
+        FTransientAlloc Alloc = AllocTransient(sizeof(T), alignof(T) > kDefaultAlign ? alignof(T) : kDefaultAlign);
+        Memory::Memcpy(Alloc.Cpu, &Value, sizeof(T));
+        return Alloc.Gpu;
+    }
 
-        TUniqueH() = default;
-        TUniqueH(THandle<T> InHandle) : Handle(InHandle) {}
-        TUniqueH(const TUniqueH&) = delete;
-        TUniqueH& operator=(const TUniqueH&) = delete;
-        TUniqueH(TUniqueH&& Other) noexcept : Handle(Other.Release()) {}
+    // Returns a range, since the byte count is exactly what was copied.
+    template<typename T>
+    FGPURange CopyTransientArray(const T* Data, uint64 Count)
+    {
+        const uint64 Bytes = sizeof(T) * Count;
+        FTransientAlloc Alloc = AllocTransient(Bytes, alignof(T) > kDefaultAlign ? alignof(T) : kDefaultAlign);
+        Memory::Memcpy(Alloc.Cpu, Data, Bytes);
+        return { Alloc.Gpu, Bytes };
+    }
+    
+    RUNTIME_API void Retire(const FGPUAllocation& Memory);
+    RUNTIME_API void Retire(FTextureH Texture);
+    RUNTIME_API void Retire(FPipelineH Pipeline);
+    RUNTIME_API void Retire(FSemaphoreH Semaphore);
+    RUNTIME_API void Retire(FTextureHeapH Heap);
+    RUNTIME_API void Retire(FSwapchainH Swapchain);
+    RUNTIME_API void Retire(FSurfaceH Surface);
+#if defined(LUMINA_WITH_GPU_PROFILING)
+    RUNTIME_API void Retire(FQueryPoolH Pool);
+#endif
+    RUNTIME_API void RetireSampledSlot(uint32 HeapSlot);
+    RUNTIME_API void RetireStorageSlot(uint32 HeapSlot);
 
-        TUniqueH& operator=(TUniqueH&& Other) noexcept
-        {
-            if (this != &Other)
-            {
-                Reset(Other.Release());
-            }
-            return *this;
-        }
+    /** Runs Callback on the fence boundary a buffer retired at the same moment would be freed on.
+     *
+     *  For CPU-side state that DESCRIBES a GPU resource and has to stop describing it at exactly the
+     *  instant it dies: any earlier and frames already recorded lose the resource they were built
+     *  against, any later and frames recorded since read it after the free. A frame count cannot
+     *  express that; the fence already does. */
+    RUNTIME_API void RetireCallback(TFunction<void()> Callback);
 
-        TUniqueH& operator=(THandle<T> InHandle)
-        {
-            Reset(InHandle);
-            return *this;
-        }
+    FPipelineH CreateGraphicsPipeline(const FName& VertexShader, const FName& PixelShader, const FRasterDesc& Desc);
+    FPipelineH CreateComputePipeline(const FName& ComputeShader);
 
-        ~TUniqueH()
-        {
-            Reset();
-        }
-
-        void Reset(THandle<T> InHandle = {})
-        {
-            if (IsValid(Handle))
-            {
-                Core::Retire(Handle);
-            }
-            Handle = InHandle;
-        }
-
-        THandle<T> Release()
-        {
-            THandle<T> Out = Handle;
-            Handle = {};
-            return Out;
-        }
-
-        THandle<T> Get() const { return Handle; }
-        operator THandle<T>() const { return Handle; }
-        explicit operator bool() const { return IsValid(Handle); }
-
-    private:
-
-        THandle<T> Handle = {};
-    };
-
-    using FPipelineUH = TUniqueH<FPipeline>;
-    using FTextureUH  = TUniqueH<FTexture>;
+    /** Writes the driver's disassembly for Pipeline beside the log, when -dumpshaderisa is set. */
+    RUNTIME_API void DumpPipelineISA(FPipelineH Pipeline, const FName& Name);
 }

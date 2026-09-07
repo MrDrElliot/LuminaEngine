@@ -57,7 +57,6 @@ namespace Umbral
         RHI::FPipelineH DownsamplePipeline;
         RHI::FPipelineH UpsamplePipeline;
         RHI::FPipelineH CompositePipeline;
-        RHI::FDepthStencilH DepthState;
 
         RHI::FManagedTexture SceneTarget;
         RHI::FManagedTexture LightTarget;

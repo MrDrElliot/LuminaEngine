@@ -35,7 +35,7 @@ namespace Lumina::RHITests
 
         const RHI::FCmdListH CL = Ctx.OpenCL();
         RHI::CmdBeginRenderPass(CL, Pass);
-        RHI::CmdMemzero(CL, Buffer.Gpu, 256);   // illegal here
+        RHI::CmdMemzero(CL, { Buffer.Gpu, 256 });   // illegal here
         RHI::CmdEndRenderPass(CL);
         Ctx.SubmitAndWait(CL);
     }

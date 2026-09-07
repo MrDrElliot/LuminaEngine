@@ -146,14 +146,22 @@ namespace Lumina
         const FBatch&   Get(uint32 Index) const { return Batches[Index]; }
 
         uint64          GetLayoutGeneration() const { return LayoutGeneration; }
+        // Moves only when a slot is freed, which is the one event that can make a cached batch index lie.
+        uint64          GetRecycleGeneration() const { return RecycleGeneration; }
+
+        bool            IsLive(uint32 Index) const { return Batches[Index].RefCount != 0u; }
 
         void Reset();
 
     private:
 
+        void RetireBatch(uint32 BatchIndex);
+
         TVector<FBatch>                     Batches;
         THashMap<uint64, TVector<uint32>>   BatchesByHash;
+        TVector<uint32>                     FreeBatches;
         uint64                              LayoutGeneration = 1;
+        uint64                              RecycleGeneration = 1;
     };
 
     /** Where one surface of a primitive draws: resolved once at bind, read every frame. */
@@ -208,6 +216,8 @@ namespace Lumina
 
         // Cached skeleton bone count; 0 means unresolved, which holds the instance inactive.
         uint32                              BoneCount = 0;
+        // Highest bone the mesh's weights reference, cached so the per-frame emit never reads the asset.
+        uint32                              RequiredBoneCount = 0;
 
         // Bone-arena slice held while this primitive keeps being gathered; stable across frames.
         uint32                              BoneSliceBase = kNoBoneSlice;
@@ -359,6 +369,17 @@ namespace Lumina
 
         TVector<uint64>                     ResolveKeys;
 
+        // Intrusive list of primitives per resolve handle, so a rebuilt entry re-syncs only its own users.
+        TVector<uint32>                     HandleListHead;
+        TVector<uint32>                     NextByHandle;
+        TVector<uint32>                     PrevByHandle;
+        uint32                              LastSweptTableGeneration = 0;
+        void    LinkHandle(uint32 Index, uint32 Handle);
+        void    UnlinkHandle(uint32 Index, uint32 Handle);
+
+        // Skeletal primitives still waiting on a skeleton; gates the per-frame bone poll.
+        uint32                              BonelessSkinnedCount = 0;
+
         static uint64 PackResolveKey(uint32 Handle, uint32 Generation)
         {
             return (uint64)Handle | ((uint64)Generation << 32);
@@ -376,6 +397,7 @@ namespace Lumina
         struct FBindingMemo
         {
             uint32                      Generation = ~0u;   // FResolvedMesh::Generation it was built at
+            uint64                      RecycleGeneration = 0;
             TVector<FSurfaceBinding>    Protos;             // InstanceSlot unused
         };
         TVector<FBindingMemo>               BindingMemoByHandle;
@@ -412,6 +434,7 @@ namespace Lumina
             bool                                bCastShadow = true;
         };
         TVector<FFoliageTypeResolve>        FoliageTypeScratch;
+        TVector<bool>                       FoliageTypeChangedScratch;
 
         /**
          * A painted instance is NOT a primitive. Everything a FScenePrimitive would carry for one is
@@ -434,6 +457,7 @@ namespace Lumina
         struct FFoliageEntityState
         {
             TVector<FFoliageInstanceRef>    Instances;
+            uint32                          SyncedBakeSerial = 0;
             // Resolve identity per TYPE, which is what the staleness sweep compares instead of per instance.
             TVector<uint64>                 TypeResolveKeys;
         };

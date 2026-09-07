@@ -97,7 +97,7 @@ namespace Lumina::MeshletHeaderSlab
             }
 
             // Scene roots are rebuilt every frame and nothing caches the old slab.
-            RHI::Core::Retire(GSlab);
+            RHI::Retire(GSlab);
 
             GSlab            = GPendingSlab;
             GCapacity        = GPendingCapacity;
@@ -147,12 +147,12 @@ namespace Lumina::MeshletHeaderSlab
                 // Nothing was queued, so no batch names this copy and publishing would swap in raw Malloc bytes.
                 LOG_ERROR("MeshletHeaderSlab: the mirror copy into a {} slot slab was dropped; the grow is abandoned.",
                           NewCapacity);
-                RHI::Core::Retire(NewSlab);
+                RHI::Retire(NewSlab);
                 return;
             }
 
             // A staged slab this one supersedes was never published, so nothing can be reading it.
-            RHI::Core::Retire(GPendingSlab);
+            RHI::Retire(GPendingSlab);
 
             // Read AFTER the upload is queued, so it names that upload's batch or a later one.
             GPendingSlab     = NewSlab;
@@ -291,7 +291,7 @@ namespace Lumina::MeshletHeaderSlab
         }
 
         // The geometry stays alive until the fence, so the two have to happen at the same instant.
-        RHI::Core::RetireCallback([Slot, Version]
+        RHI::RetireCallback([Slot, Version]
         {
             FScopeLock Lock(GMutex);
             WriteNullLocked(Slot, Version);
@@ -312,7 +312,7 @@ namespace Lumina::MeshletHeaderSlab
         }
 
         // A slot must not be reacquired while a recorded frame can still name it.
-        RHI::Core::RetireCallback([Slot, Version]
+        RHI::RetireCallback([Slot, Version]
         {
             FScopeLock Lock(GMutex);
             WriteNullLocked(Slot, Version);
@@ -416,8 +416,8 @@ namespace Lumina::MeshletHeaderSlab
         }
 
         // Retiring under GMutex would order the two locks opposite to how Shutdown takes them.
-        RHI::Core::Retire(Slab);
-        RHI::Core::Retire(Pending);
-        RHI::Core::Retire(Null);
+        RHI::Retire(Slab);
+        RHI::Retire(Pending);
+        RHI::Retire(Null);
     }
 }

@@ -100,35 +100,19 @@ namespace Lumina
         FShaderH GetPixelShader() const override;
         FShaderH GetVertexShader() const override;
 
-        // Geometry stages. Every one is a MESH shader fed by the shared amplification stage -- there is no
-        // vertex path for meshlet geometry. All are per-material because the vertex graph's World Position
-        // Offset is compiled into them.
-        //
-        // Shadow emits position only; base emits the full interpolant set for forward-shaded translucency.
-        // Carrying interpolants through the shadow pass reserved 124B per vertex of mesh output storage for
-        // a consumer that reads SV_Position, which is what held cascade occupancy at 2.0 warps/cycle.
-        FShaderH GetMeshShaderShadow() const { return MeshShaderShadow; }
-        FShaderH GetMeshShaderBase() const { return MeshShaderBase; }
+        // This master's own entry for Stage; null when the domain or blend mode does not produce it.
+        FShaderH GetStage(EMaterialShaderStage Stage) const { return StageEntries[(size_t)Stage]; }
 
-        FShaderH GetVisBufferMeshShader() const { return VisBufferMeshShader; }
-        // Masked-only VisBuffer geometry: emits the interpolants the masked PS needs. Null for opaque
-        // materials, which use the position-only GetVisBufferMeshShader above.
-        FShaderH GetVisBufferMeshShaderMasked() const { return VisBufferMeshShaderMasked; }
-
-        // Masked-only VisBuffer PIXEL shader: runs the opacity graph and alpha-clips cut-out texels BEFORE
-        // they write VisID/depth, so they cannot stamp occluding depth. Null for non-masked materials.
-        FShaderH GetMaskedVisBufferPixelShader() const { return MaskedVisBufferPixelShader; }
-        FShaderH GetMeshShaderShadowMasked() const { return MeshShaderShadowMasked; }
-        FShaderH GetShadowMaskedPixelShader() const { return ShadowMaskedPixelShader; }
-
-        // Deferred material pixel shader (DeferredMaterial.slang): reconstructs surface from the VisBuffer
-        // triangle ID and shades. The deferred pass binds it per opaque material.
-        FShaderH GetDeferredShader() const { return DeferredShader; }
-
-        // MBOIT moment-generation pixel shader (BasePixelPass.slang + MOMENT_GENERATION): runs the opacity
-        // graph and accumulates absorbance moments, with no lighting at all. Null for anything that is not
-        // a PBR translucent material, since nothing else is drawn by the moment pass.
-        FShaderH GetMomentPixelShader() const { return MomentPixelShader; }
+        // The shadow geometry stage emits position only; carrying interpolants there halved cascade occupancy.
+        FShaderH GetMeshShaderShadow() const { return GetStage(EMaterialShaderStage::MeshShadow); }
+        FShaderH GetMeshShaderBase() const { return GetStage(EMaterialShaderStage::MeshBase); }
+        FShaderH GetVisBufferMeshShader() const { return GetStage(EMaterialShaderStage::VisBufferMesh); }
+        FShaderH GetVisBufferMeshShaderMasked() const { return GetStage(EMaterialShaderStage::VisBufferMeshMasked); }
+        FShaderH GetMaskedVisBufferPixelShader() const { return GetStage(EMaterialShaderStage::MaskedVisBufferPixel); }
+        FShaderH GetMeshShaderShadowMasked() const { return GetStage(EMaterialShaderStage::MeshShadowMasked); }
+        FShaderH GetShadowMaskedPixelShader() const { return GetStage(EMaterialShaderStage::ShadowMaskedPixel); }
+        FShaderH GetDeferredShader() const { return GetStage(EMaterialShaderStage::Deferred); }
+        FShaderH GetMomentPixelShader() const { return GetStage(EMaterialShaderStage::MomentPixel); }
 
         /** Bumped whenever a recompile actually swaps a shader-library entry, and only then -- the library
             is content-keyed, so a recompile producing identical SPIR-V returns the same entry and does not
@@ -147,8 +131,17 @@ namespace Lumina
             shader library entry. Shared by PostLoad and the editor material compile. */
         void CommitShaderStage(EMaterialShaderStage Stage, TSpan<const uint32> Spirv);
 
+        /** The blob half of CommitShaderStage only; PostLoad mints the entry. For compile callbacks off the game thread. */
+        void SetStageBinaries(EMaterialShaderStage Stage, TSpan<const uint32> Spirv);
+
         /** Drop a stage's binaries and library pointer (e.g. masked-only stages on a masked->opaque recompile). */
         void ClearShaderStage(EMaterialShaderStage Stage);
+
+        /** Whether the domain and blend mode produce Stage; the compile clears every other one. */
+        NODISCARD bool IsStageRequired(EMaterialShaderStage Stage) const;
+
+        /** Every required stage has a library entry, which is what ready-for-render is derived from. */
+        NODISCARD bool HasRequiredStages() const;
 
         const TVector<uint32>& GetShaderStageBinaries(EMaterialShaderStage Stage) const;
 
@@ -196,53 +189,51 @@ namespace Lumina
         EMaterialType GetMaterialType() const override { return MaterialType; }
         bool DoesCastShadows() const override { return bCastShadows; }
         bool IsTwoSided() const override { return bTwoSided; }
-        bool IsTranslucent() override { return BlendMode == EBlendMode::Translucent; }
-        bool IsMasked() override { return BlendMode == EBlendMode::Masked; }
-        bool IsAdditive() override { return BlendMode == EBlendMode::Additive; }
-        bool IsOpaque() override { return BlendMode == EBlendMode::Opaque; }
         bool IsMomentResolved() override { return BlendMode == EBlendMode::Translucent || BlendMode == EBlendMode::AlphaComposite; }
         bool IsUnorderedBlend() override { return BlendMode == EBlendMode::Additive || BlendMode == EBlendMode::Modulate; }
         bool ReceivesDecals() const override { return bReceivesDecals; }
         bool WritesDepth() const override { return bWriteDepth; }
         bool IsShadowOnly() const override { return bShadowOnly; }
-        bool IsUnlit() override { return ShadingModel == EMaterialShadingModel::Unlit; }
-        bool DisableDepthTest() override { return bDisableDepthTest; }
         EBlendMode GetBlendMode() override { return BlendMode; }
         EMaterialShadingModel GetShadingModel() override { return ShadingModel; }
-        float GetOpacityMaskClipValue() override { return OpacityMaskClipValue; }
+
+        void PostPropertyChange(FProperty* ChangedProperty) override;
+
+        /** Folds settings the current domain cannot draw back to their defaults; see MaterialDomain. */
+        void NormalizeRenderStateForDomain();
 
         PROPERTY(Editable)
-        EMaterialType MaterialType;
+        EMaterialType MaterialType = EMaterialType::PBR;
 
-        PROPERTY(Editable)
+        PROPERTY(Editable, EditCondition = "MaterialType == PBR || MaterialType == Particle || MaterialType == Terrain")
         EBlendMode BlendMode = EBlendMode::Opaque;
 
-        PROPERTY(Editable)
+        PROPERTY(Editable, EditCondition = "MaterialType == PBR || MaterialType == Terrain")
         EMaterialShadingModel ShadingModel = EMaterialShadingModel::Lit;
 
-        PROPERTY(Editable)
+        PROPERTY(Editable, EditCondition = "MaterialType == PBR")
         bool bCastShadows = true;
 
         /** Drawn into shadow maps only; every camera view culls it. Needs bCastShadows to do anything. */
-        PROPERTY(Editable)
+        PROPERTY(Editable, EditCondition = "MaterialType == PBR")
         bool bShadowOnly = false;
 
-        PROPERTY(Editable)
+        PROPERTY(Editable, EditCondition = "MaterialType == PBR")
         bool bTwoSided = false;
 
-        PROPERTY(Editable)
+        PROPERTY(Editable, EditCondition = "MaterialType == PBR")
         bool bDisableDepthTest = false;
 
         /** Whether DBuffer decals composite onto this surface before it is lit. */
-        PROPERTY(Editable)
+        PROPERTY(Editable, EditCondition = "MaterialType == PBR")
         bool bReceivesDecals = true;
 
         /** Depth write for Additive and Modulate. Ignored by the MBOIT lane, which accumulates instead. */
-        PROPERTY(Editable)
+        PROPERTY(Editable, EditCondition = "MaterialType == PBR || MaterialType == Particle")
         bool bWriteDepth = false;
 
         /** Masked blend threshold; pixels below are discarded. */
-        PROPERTY(Editable)
+        PROPERTY(Editable, EditCondition = "BlendMode == Masked")
         float OpacityMaskClipValue = 0.333f;
 
         /** Default texture binding per texture-parameter index.
@@ -263,6 +254,12 @@ namespace Lumina
          *  ref here is precisely what keeps a demanded default resident. Entries stay null until asked
          *  for, which is the whole point of the change. */
         TVector<TObjectPtr<CTexture>>           ResolvedTextures;
+
+        // Guards Textures and ResolvedTextures; the async load completion writes them from a loader thread.
+        mutable FRecursiveMutex                 TextureSlotMutex;
+
+        /** Slots whose async load came back empty; they stay on the placeholder instead of being re-requested. */
+        uint64                                  UnresolvableTextureMask = 0;
 
         /** Set once RequestTexturesResolved has issued its async loads, so the per-frame render-path
          *  demand does not re-queue the same textures every frame until the first load lands. */
@@ -290,50 +287,9 @@ namespace Lumina
          *  worker fiber on disk I/O in the middle of Extract. */
         bool RequestTexturesResolved() override;
 
+        /** Compiled stages, only the ones that produced output, in the same shape a permutation stores. */
         PROPERTY()
-        TVector<uint32>                         PixelShaderBinaries;
-
-        /** Vertex stage for the non-meshlet domains (UI / PostProcess / Decal / Terrain). PBR geometry
-            has none -- it is task + mesh, end to end. */
-        PROPERTY()
-        TVector<uint32>                         VertexShaderBinaries;
-
-        /** Shadow geometry stage (MeshletMesh.slang, depth-only output). */
-        PROPERTY()
-        TVector<uint32>                         MeshShaderShadowBinaries;
-
-        /** Translucent / additive geometry stage (MeshletMesh.slang + MESHLET_MESH_BASE). */
-        PROPERTY()
-        TVector<uint32>                         MeshShaderBaseBinaries;
-
-        /** VisBuffer geometry stage (MeshletVisBuffer.slang); empty if not compiled. */
-        PROPERTY()
-        TVector<uint32>                         VisBufferMeshShaderBinaries;
-
-        /** VisBuffer geometry, masked variant (MeshletVisBuffer.slang + VISBUFFER_MASKED_GEOM); empty for non-masked. */
-        PROPERTY()
-        TVector<uint32>                         VisBufferMeshShaderMaskedBinaries;
-
-        /** Masked-only VisBuffer pixel stage (VisBufferMaskedPixel.slang + VISBUFFER_PRIMID). */
-        PROPERTY()
-        TVector<uint32>                         MaskedVisBufferPixelShaderBinaries;
-
-        /** Masked shadow geometry stage (MeshletMesh.slang + MESHLET_MESH_MASKED_SHADOW). */
-        PROPERTY()
-        TVector<uint32>                         MeshShaderShadowMaskedBinaries;
-
-        /** Masked-only shadow pixel stage (ShadowMaskedPixel.slang); empty for non-masked materials. */
-        PROPERTY()
-        TVector<uint32>                         ShadowMaskedPixelShaderBinaries;
-
-        /** Deferred material pixel stage (DeferredMaterial.slang); empty if not compiled. */
-        PROPERTY()
-        TVector<uint32>                         DeferredShaderBinaries;
-
-        /** MBOIT moment-generation pixel stage (BasePixelPass.slang + TRANSLUCENT + MOMENT_GENERATION);
-            empty for everything except PBR translucent materials. */
-        PROPERTY()
-        TVector<uint32>                         MomentPixelShaderBinaries;
+        TVector<FMaterialStageBlob>             Stages;
 
         PROPERTY()
         TVector<FMaterialParameter>             Parameters;
@@ -369,21 +325,13 @@ namespace Lumina
 
         FMaterialUniforms                       MaterialUniforms;
 
-        // Library entries keyed by asset GUID; recompiles refresh them in place.
-        FShaderH                     PixelShader = {};
-        FShaderH                     VertexShader = {};
-        FShaderH                     MeshShaderShadow = {};
-        FShaderH                     MeshShaderBase = {};
-        FShaderH                     VisBufferMeshShader = {};
-        FShaderH                     VisBufferMeshShaderMasked = {};
-        FShaderH                     MaskedVisBufferPixelShader = {};
-        FShaderH                     MeshShaderShadowMasked = {};
-        FShaderH                     ShadowMaskedPixelShader = {};
-        FShaderH                     DeferredShader = {};
-        FShaderH                     MomentPixelShader = {};
+        // Library entries keyed by asset GUID, indexed by EMaterialShaderStage; recompiles refresh them in place.
+        FShaderH                                StageEntries[(size_t)EMaterialShaderStage::Count] = {};
 
         // See GetShaderRevision. Starts at 1 so a zeroed cached copy always reads as "never seen".
         uint32                                  ShaderRevision = 1;
+
+        void BumpShaderRevision();
 
         // See GetPermutationGeneration. Runtime only, since a load starts every permutation current.
         uint32                                  PermutationGeneration = 1;

@@ -321,7 +321,6 @@ namespace Lumina
         THashMap<uint64, RHI::FPipelineH>   PipelineByFormat;
         // Brush pipelines keyed by material shader-object pointers (recompile -> new pointers -> new entry).
         THashMap<uint64, RHI::FPipelineH>   BrushPipelines;
-        RHI::FDepthStencilH                 DepthState;
 
         RHI::FManagedTexture                DefaultWhite;
 

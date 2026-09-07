@@ -318,7 +318,6 @@ namespace Umbral
     bool FRenderer::Initialize(EFormat InSwapchainFormat)
     {
         SwapchainFormat = InSwapchainFormat;
-        DepthState = RHI::CreateDepthStencil(RHI::FDepthStencilDesc{});
 
         AlphaQuads.reserve(8192);
         AdditiveQuads.reserve(8192);
@@ -395,14 +394,10 @@ namespace Umbral
         {
             if (RHI::IsValid(Pipeline))
             {
-                RHI::Core::Retire(Pipeline);
+                RHI::Retire(Pipeline);
             }
         }
 
-        if (RHI::IsValid(DepthState))
-        {
-            RHI::FreeH(DepthState);
-        }
     }
 
     void FRenderer::ReleaseTargets()
@@ -504,10 +499,10 @@ namespace Umbral
         const int32 Capacity = Math::Min(kMaxDrawnAgents, Game.GetSwarm().Num());
         if (Capacity > 0)
         {
-            const auto Block = RHI::Core::AllocTransientArray<FAgentInstance>(uint64(Capacity));
-            if (Block.IsValid())
+            const RHI::FTransientAlloc Block = RHI::AllocTransient(sizeof(FAgentInstance) * uint64(Capacity));
+            if (Block.Cpu != nullptr)
             {
-                AgentCount = Game.GetSwarm().GatherVisible(ViewMin, ViewMax, Block.Data, Capacity);
+                AgentCount = Game.GetSwarm().GatherVisible(ViewMin, ViewMax, static_cast<FAgentInstance*>(Block.Cpu), Capacity);
                 AgentBuffer = Block.Gpu;
             }
         }
@@ -983,8 +978,7 @@ namespace Umbral
     void FRenderer::DrawLights(RHI::FCmdListH CL)
     {
         RHI::CmdBeginMarker(CL, "Umbral.Lights");
-        RHI::Utils::BeginScreenPass(CL, { .Target = LightTarget.Texture, .Extent = LightExtent,
-            .DepthState = DepthState });
+        RHI::Utils::BeginScreenPass(CL, { .Target = LightTarget.Texture, .Extent = LightExtent, });
 
         if (!Lights.empty())
         {
@@ -993,7 +987,7 @@ namespace Umbral
 
             const FLightArgs Args
             {
-                .Lights    = RHI::Core::CopyTransientArray(Lights.data(), Lights.size()),
+                .Lights    = RHI::CopyTransientArray(Lights.data(), Lights.size()).Address,
                 .NdcScale  = { ScaleX, ScaleY },
                 .NdcOffset = { -1.0f, -1.0f },
                 .CameraMin = CameraMin,
@@ -1001,7 +995,7 @@ namespace Umbral
             };
 
             RHI::CmdSetPipeline(CL, LightPipeline);
-            RHI::CmdDraw(CL, RHI::Core::CopyTransient(Args), 6, uint32(Lights.size()), 0, 0);
+            RHI::CmdDraw(CL, RHI::CopyTransient(Args), 6, uint32(Lights.size()), 0, 0);
         }
 
         RHI::CmdEndRenderPass(CL);
@@ -1012,8 +1006,7 @@ namespace Umbral
     void FRenderer::DrawScene(RHI::FCmdListH CL, const FUIntVector2& Extent, float RealTime, const FRunState& Run)
     {
         RHI::CmdBeginMarker(CL, "Umbral.Scene");
-        RHI::Utils::BeginScreenPass(CL, { .Target = SceneTarget.Texture, .Extent = Extent,
-            .DepthState = DepthState });
+        RHI::Utils::BeginScreenPass(CL, { .Target = SceneTarget.Texture, .Extent = Extent, });
 
         const FGroundArgs Ground
         {
@@ -1024,7 +1017,7 @@ namespace Umbral
             .Danger     = Run.Danger,
             .Beat       = BeatPulse,
         };
-        RHI::Utils::DrawFullscreen(CL, GroundPipeline, RHI::Core::CopyTransient(Ground));
+        RHI::Utils::DrawFullscreen(CL, GroundPipeline, RHI::CopyTransient(Ground));
 
         const float ScaleX = 2.0f / Math::Max(ViewSize.x, 1.0f);
         const float ScaleY = 2.0f / Math::Max(ViewSize.y, 1.0f);
@@ -1045,7 +1038,7 @@ namespace Umbral
             };
 
             RHI::CmdSetPipeline(CL, AgentPipeline);
-            RHI::CmdDraw(CL, RHI::Core::CopyTransient(Args), 6, uint32(AgentCount), 0, 0);
+            RHI::CmdDraw(CL, RHI::CopyTransient(Args), 6, uint32(AgentCount), 0, 0);
         }
 
         FQuadArgs QuadArgs
@@ -1061,30 +1054,30 @@ namespace Umbral
 
         if (!AlphaQuads.empty())
         {
-            QuadArgs.Instances = RHI::Core::CopyTransientArray(AlphaQuads.data(), AlphaQuads.size());
+            QuadArgs.Instances = RHI::CopyTransientArray(AlphaQuads.data(), AlphaQuads.size()).Address;
             RHI::CmdSetPipeline(CL, QuadAlphaPipeline);
-            RHI::CmdDraw(CL, RHI::Core::CopyTransient(QuadArgs), 6, uint32(AlphaQuads.size()), 0, 0);
+            RHI::CmdDraw(CL, RHI::CopyTransient(QuadArgs), 6, uint32(AlphaQuads.size()), 0, 0);
         }
 
         if (!AdditiveQuads.empty())
         {
-            QuadArgs.Instances = RHI::Core::CopyTransientArray(AdditiveQuads.data(), AdditiveQuads.size());
+            QuadArgs.Instances = RHI::CopyTransientArray(AdditiveQuads.data(), AdditiveQuads.size()).Address;
             RHI::CmdSetPipeline(CL, QuadAdditivePipeline);
-            RHI::CmdDraw(CL, RHI::Core::CopyTransient(QuadArgs), 6, uint32(AdditiveQuads.size()), 0, 0);
+            RHI::CmdDraw(CL, RHI::CopyTransient(QuadArgs), 6, uint32(AdditiveQuads.size()), 0, 0);
         }
 
         if (!UiQuads.empty())
         {
-            QuadArgs.Instances = RHI::Core::CopyTransientArray(UiQuads.data(), UiQuads.size());
+            QuadArgs.Instances = RHI::CopyTransientArray(UiQuads.data(), UiQuads.size()).Address;
             RHI::CmdSetPipeline(CL, QuadAlphaPipeline);
-            RHI::CmdDraw(CL, RHI::Core::CopyTransient(QuadArgs), 6, uint32(UiQuads.size()), 0, 0);
+            RHI::CmdDraw(CL, RHI::CopyTransient(QuadArgs), 6, uint32(UiQuads.size()), 0, 0);
         }
 
         if (!UiGlowQuads.empty())
         {
-            QuadArgs.Instances = RHI::Core::CopyTransientArray(UiGlowQuads.data(), UiGlowQuads.size());
+            QuadArgs.Instances = RHI::CopyTransientArray(UiGlowQuads.data(), UiGlowQuads.size()).Address;
             RHI::CmdSetPipeline(CL, QuadAdditivePipeline);
-            RHI::CmdDraw(CL, RHI::Core::CopyTransient(QuadArgs), 6, uint32(UiGlowQuads.size()), 0, 0);
+            RHI::CmdDraw(CL, RHI::CopyTransient(QuadArgs), 6, uint32(UiGlowQuads.size()), 0, 0);
         }
 
         RHI::CmdEndRenderPass(CL);
@@ -1114,8 +1107,8 @@ namespace Umbral
             };
 
             RHI::Utils::BeginScreenPass(CL, { .Target = BloomChain.Texture(Level),
-                .Extent = BloomChain.Extent(Level), .DepthState = DepthState });
-            RHI::Utils::DrawFullscreen(CL, DownsamplePipeline, RHI::Core::CopyTransient(Args));
+                .Extent = BloomChain.Extent(Level) });
+            RHI::Utils::DrawFullscreen(CL, DownsamplePipeline, RHI::CopyTransient(Args));
             RHI::Utils::EndScreenPass(CL);
             RHI::Barriers::RasterToRead(CL);
         }
@@ -1133,9 +1126,9 @@ namespace Umbral
             };
 
             RHI::Utils::BeginScreenPass(CL, { .Target = BloomChain.Texture(Level - 1),
-                .Extent = BloomChain.Extent(Level - 1), .DepthState = DepthState,
+                .Extent = BloomChain.Extent(Level - 1),
                 .LoadOp = RHI::ELoadOp::Load });
-            RHI::Utils::DrawFullscreen(CL, UpsamplePipeline, RHI::Core::CopyTransient(Args));
+            RHI::Utils::DrawFullscreen(CL, UpsamplePipeline, RHI::CopyTransient(Args));
             RHI::Utils::EndScreenPass(CL);
             RHI::Barriers::RasterToRead(CL);
         }
@@ -1161,8 +1154,8 @@ namespace Umbral
         };
 
         RHI::CmdBeginMarker(CL, "Umbral.Composite");
-        RHI::Utils::BeginScreenPass(CL, { .Target = SwapImage, .Extent = Extent, .DepthState = DepthState });
-        RHI::Utils::DrawFullscreen(CL, CompositePipeline, RHI::Core::CopyTransient(Args));
+        RHI::Utils::BeginScreenPass(CL, { .Target = SwapImage, .Extent = Extent });
+        RHI::Utils::DrawFullscreen(CL, CompositePipeline, RHI::CopyTransient(Args));
         RHI::Utils::EndScreenPass(CL);
         RHI::CmdEndMarker(CL);
     }

@@ -50,7 +50,6 @@ namespace Breakout
         RHI::FPipelineH DownsamplePipeline;
         RHI::FPipelineH UpsamplePipeline;
         RHI::FPipelineH CompositePipeline;
-        RHI::FDepthStencilH DepthState;
 
         RHI::FManagedTexture SceneTarget;
         RHI::Utils::FMipChain BloomChain;

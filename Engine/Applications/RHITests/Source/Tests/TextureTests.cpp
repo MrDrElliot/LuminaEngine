@@ -83,7 +83,7 @@ namespace Lumina::RHITests
 
         RHI::FTextureSlice Slice;
         Slice.Extent = FUIntVector3(Size, Size, 1);
-        RHI::CmdCopyTextureToMemory(CL, Texture, Slice, Readback.Gpu, Size);
+        RHI::CmdCopyTextureToMemory(CL, Texture, Slice, Readback, Size);
         RHI::Barriers::TransferToAll(CL);
 
         Ctx.SubmitAndWait(CL);
@@ -193,7 +193,7 @@ namespace Lumina::RHITests
 
         const RHI::FCmdListH CL = Ctx.OpenCL();
         RHI::Barriers::AllToTransfer(CL);
-        RHI::CmdCopyTextureToMemory(CL, Texture, Slice, Readback.Gpu, Size);
+        RHI::CmdCopyTextureToMemory(CL, Texture, Slice, Readback, Size);
         RHI::Barriers::TransferToAll(CL);
         Ctx.SubmitAndWait(CL);
 

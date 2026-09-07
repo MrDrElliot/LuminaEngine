@@ -61,7 +61,7 @@ namespace Lumina::RHITests
         const RHI::FGPUAllocation Ptr = RHI::Malloc(4096, 256, RHI::EMemoryType::GPUOnly);
         RHI_REQUIRE(Ptr.Gpu != 0);
         RHI_CHECK_EQ(Ptr.Gpu % 256ull, 0ull);
-        RHI::Core::Retire(Ptr);
+        RHI::Retire(Ptr);
     }
 
     RHI_TEST(Memory, ZeroSizedMallocReturnsNull)

@@ -52,7 +52,6 @@ namespace Lumina::RHITests
                 return;
             }
 
-            const RHI::FDepthStencilH DepthState = RHI::CreateDepthStencil(RHI::FDepthStencilDesc{});
 
             const RHI::FCmdListH CL = Ctx.OpenCL();
 
@@ -70,7 +69,7 @@ namespace Lumina::RHITests
             };
 
             RHI::CmdBeginRenderPass(CL, Pass);
-            RHI::CmdSetDepthStencilState(CL, DepthState);
+            RHI::CmdSetDepthStencil(CL, RHI::FDepthStencilDesc{});
             RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
             RHI::CmdSetFrontFace(CL, RHI::EFrontFace::CW);
             RHI::CmdSetViewport(CL, RHI::FRect{ 0, (int)Size, 0, (int)Size });
@@ -85,13 +84,11 @@ namespace Lumina::RHITests
 
             RHI::FTextureSlice Slice;
             Slice.Extent = FUIntVector3(Size, Size, 1);
-            RHI::CmdCopyTextureToMemory(CL, Target, Slice, Readback.Gpu, Size);
+            RHI::CmdCopyTextureToMemory(CL, Target, Slice, Readback, Size);
             RHI::Barriers::TransferToAll(CL);
 
             Ctx.SubmitAndWait(CL);
 
-            // SubmitAndWait has already retired this submission, so the synchronous free is safe here.
-            RHI::FreeH(DepthState);
 
             const auto* Pixels = Readback.CpuAs<const uint8>();
             if (Pixels == nullptr)
@@ -146,13 +143,13 @@ namespace Lumina::RHITests
         RHI_REQUIRE(Output.Gpu != 0 && Readback.Gpu != 0);
 
         struct FArgs { RHI::GPUPtr Output; uint32 Count; uint32 _Pad; };
-        const RHI::GPUPtr Args = RHI::Core::CopyTransient(FArgs{ Output.Gpu, Count, 0 });
+        const RHI::GPUPtr Args = RHI::CopyTransient(FArgs{ Output.Gpu, Count, 0 });
 
         const RHI::FCmdListH CL = Ctx.OpenCL();
         RHI::CmdSetPipeline(CL, Pipeline);
         RHI::CmdDispatch(CL, Args, Count / 64, 1, 1);
         RHI::Barriers::ComputeToAll(CL);
-        RHI::CmdMemcpy(CL, Readback.Gpu, Output.Gpu, Bytes);
+        RHI::CmdMemcpy(CL, { Readback.Gpu, Bytes }, { Output.Gpu, Bytes });
         RHI::Barriers::TransferToAll(CL);
         Ctx.SubmitAndWait(CL);
 
@@ -192,17 +189,17 @@ namespace Lumina::RHITests
         const RHI::FDispatchIndirectArguments Dispatch{ Groups, 1, 1 };
 
         struct FArgs { RHI::GPUPtr Output; };
-        const RHI::GPUPtr Args = RHI::Core::CopyTransient(FArgs{ Output.Gpu });
+        const RHI::GPUPtr Args = RHI::CopyTransient(FArgs{ Output.Gpu });
 
         const RHI::FCmdListH CL = Ctx.OpenCL();
-        RHI::CmdWriteMemory(CL, IndirectArgs.Gpu, &Dispatch, sizeof(Dispatch));
+        RHI::CmdWriteMemory(CL, { IndirectArgs.Gpu, sizeof(Dispatch) }, &Dispatch);
         RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::IndirectArguments);
 
         RHI::CmdSetPipeline(CL, Pipeline);
-        RHI::CmdDispatchIndirect(CL, Args, IndirectArgs.Gpu, 0);
+        RHI::CmdDispatchIndirect(CL, Args, IndirectArgs);
         RHI::Barriers::ComputeToAll(CL);
 
-        RHI::CmdMemcpy(CL, Readback.Gpu, Output.Gpu, Groups * sizeof(uint32));
+        RHI::CmdMemcpy(CL, { Readback.Gpu, Groups * sizeof(uint32) }, { Output.Gpu, Groups * sizeof(uint32) });
         RHI::Barriers::TransferToAll(CL);
         Ctx.SubmitAndWait(CL);
 
@@ -254,7 +251,7 @@ namespace Lumina::RHITests
         RHI_REQUIRE(Readback.Gpu != 0);
 
         struct FArgs { uint32 OutUAV; uint32 Size; };
-        const RHI::GPUPtr Args = RHI::Core::CopyTransient(FArgs{ UAV, Size });
+        const RHI::GPUPtr Args = RHI::CopyTransient(FArgs{ UAV, Size });
 
         const RHI::FCmdListH CL = Ctx.OpenCL();
         RHI::CmdSetPipeline(CL, Pipeline);
@@ -263,7 +260,7 @@ namespace Lumina::RHITests
 
         RHI::FTextureSlice Slice;
         Slice.Extent = FUIntVector3(Size, Size, 1);
-        RHI::CmdCopyTextureToMemory(CL, Managed.Texture, Slice, Readback.Gpu, Size);
+        RHI::CmdCopyTextureToMemory(CL, Managed.Texture, Slice, Readback, Size);
         RHI::Barriers::TransferToAll(CL);
         Ctx.SubmitAndWait(CL);
 
@@ -296,7 +293,7 @@ namespace Lumina::RHITests
         RHI_REQUIRE(Output.Gpu != 0 && Readback.Gpu != 0);
 
         struct FArgs { RHI::GPUPtr Output; };
-        const RHI::GPUPtr Args = RHI::Core::CopyTransient(FArgs{ Output.Gpu });
+        const RHI::GPUPtr Args = RHI::CopyTransient(FArgs{ Output.Gpu });
 
         auto RunWith = [&](uint32 Value) -> uint32
         {
@@ -317,7 +314,7 @@ namespace Lumina::RHITests
             RHI::CmdSetPipeline(CL, Pipeline);
             RHI::CmdDispatch(CL, Args, 1, 1, 1);
             RHI::Barriers::ComputeToAll(CL);
-            RHI::CmdMemcpy(CL, Readback.Gpu, Output.Gpu, sizeof(uint32));
+            RHI::CmdMemcpy(CL, { Readback.Gpu, sizeof(uint32) }, { Output.Gpu, sizeof(uint32) });
             RHI::Barriers::TransferToAll(CL);
             Ctx.SubmitAndWait(CL);
 
@@ -405,13 +402,12 @@ namespace Lumina::RHITests
 
         // Separate from the indirect buffer, which is the whole point of this overload.
         struct FPushArgs { uint32 Unused; };
-        const RHI::GPUPtr Args = RHI::Core::CopyTransient(FPushArgs{ 7u });
+        const RHI::GPUPtr Args = RHI::CopyTransient(FPushArgs{ 7u });
 
         RenderAndCheckPixel(Ctx, "RHITests.IndexedIndirectTarget", [&](RHI::FCmdListH CL)
         {
             RHI::CmdSetPipeline(CL, Pipeline);
-            RHI::CmdSetIndexBuffer(CL, IndexBuffer.Gpu, 0, RHI::EIndexType::Uint32);
-            RHI::CmdDrawIndexedIndirect(CL, Args, IndirectBuffer.Gpu, 0, 1,
+            RHI::CmdDrawIndexedIndirect(CL, IndexBuffer, Args, IndirectBuffer, 1,
                                         sizeof(RHI::FDrawIndexedIndirectArguments));
         });
     }
@@ -500,14 +496,14 @@ namespace Lumina::RHITests
 
         // A transfer write is illegal inside a render pass, so this has to complete before one opens.
         const RHI::FCmdListH Stage = Ctx.OpenCL();
-        RHI::CmdWriteMemory(Stage, IndirectArgs.Gpu, &DrawArgs, sizeof(DrawArgs));
+        RHI::CmdWriteMemory(Stage, { IndirectArgs.Gpu, sizeof(DrawArgs) }, &DrawArgs);
         RHI::CmdBarrier(Stage, RHI::EStageFlags::Transfer, RHI::EStageFlags::IndirectArguments);
         Ctx.SubmitAndWait(Stage);
 
         RenderAndCheckPixel(Ctx, "RHITests.MeshIndirectTarget", [&](RHI::FCmdListH CL)
         {
             RHI::CmdSetPipeline(CL, Pipeline);
-            RHI::CmdDrawMeshTasksIndirect(CL, 0, IndirectArgs.Gpu, 0, 1, sizeof(RHI::FDrawMeshTasksIndirectArguments));
+            RHI::CmdDrawMeshTasksIndirect(CL, 0, IndirectArgs, 1, sizeof(RHI::FDrawMeshTasksIndirectArguments));
         });
     }
 

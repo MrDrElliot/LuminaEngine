@@ -11,10 +11,10 @@ namespace Lumina::RHITests
         RHI::SetDebugName(Buffer.Gpu, "RHITests.RetireBuffer");
 
         const RHI::FCmdListH CL = Ctx.OpenCL();
-        RHI::CmdMemzero(CL, Buffer.Gpu, 4096);
+        RHI::CmdMemzero(CL, { Buffer.Gpu, 4096 });
         Ctx.SubmitAndWait(CL);
 
-        RHI::Core::Retire(Buffer);
+        RHI::Retire(Buffer);
         Ctx.PumpFrames(RHI::kFramesInFlight * 2 + 1);
     }
 
@@ -24,7 +24,7 @@ namespace Lumina::RHITests
         RHI_REQUIRE(RHI::IsValid(Texture));
         RHI::SetDebugName(Texture, "RHITests.RetireTexture");
 
-        const uint32 Slot = RHI::HeapWriteTexture(RHI::Core::GetGlobalHeap(), Texture);
+        const uint32 Slot = RHI::HeapWriteTexture(RHI::GetGlobalHeap(), Texture);
         RHI_REQUIRE(Slot != RHI::kInvalidHeapSlot);
 
         const RHI::FCmdListH CL = Ctx.OpenCL();
@@ -34,8 +34,8 @@ namespace Lumina::RHITests
         RHI::Barriers::TransferToAll(CL);
         Ctx.SubmitAndWait(CL);
 
-        RHI::Core::RetireSampledSlot(Slot);
-        RHI::Core::Retire(Texture);
+        RHI::RetireSampledSlot(Slot);
+        RHI::Retire(Texture);
 
         Ctx.PumpFrames(RHI::kFramesInFlight * 2 + 1);
     }
@@ -47,7 +47,7 @@ namespace Lumina::RHITests
         RHI_REQUIRE(RHI::IsValid(Texture));
         RHI::SetDebugName(Texture, "RHITests.InFlightTexture");
 
-        const uint32 Slot = RHI::HeapWriteTexture(RHI::Core::GetGlobalHeap(), Texture);
+        const uint32 Slot = RHI::HeapWriteTexture(RHI::GetGlobalHeap(), Texture);
         RHI_REQUIRE(Slot != RHI::kInvalidHeapSlot);
 
         const RHI::FGPUAllocation Buffer = RHI::Malloc(4 * 1024 * 1024, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
@@ -61,19 +61,19 @@ namespace Lumina::RHITests
         RHI::Barriers::AllToTransfer(CL);
         for (uint32 i = 0; i < 64; ++i)
         {
-            RHI::CmdMemset(CL, Buffer.Gpu, 4 * 1024 * 1024, i);
+            RHI::CmdMemset(CL, { Buffer.Gpu, 4 * 1024 * 1024 }, i);
             RHI::Barriers::TransferToTransfer(CL);
         }
         RHI::CmdClearTexture(CL, Texture, Clear);
         RHI::Barriers::TransferToAll(CL);
 
         // No wait.
-        RHI::Core::SubmitOn(RHI::EQueueType::Graphics, TSpan{ &CL, 1 });
+        RHI::Submit(RHI::EQueueType::Graphics, TSpan{ &CL, 1 });
 
         // ... and retire immediately, exactly as an asset delete or a thumbnail sweep does.
-        RHI::Core::RetireSampledSlot(Slot);
-        RHI::Core::Retire(Texture);
-        RHI::Core::Retire(Buffer);
+        RHI::RetireSampledSlot(Slot);
+        RHI::Retire(Texture);
+        RHI::Retire(Buffer);
 
         // Drives the ring hard enough that a queue keyed only on the frame slot would have destroyed both.
         Ctx.PumpFrames(RHI::kFramesInFlight * 3);
@@ -86,18 +86,18 @@ namespace Lumina::RHITests
         RHI_REQUIRE(RHI::IsValid(Texture));
         RHI::SetDebugName(Texture, "RHITests.UnbindBeforeDrain");
 
-        const uint32 Slot = RHI::HeapWriteTexture(RHI::Core::GetGlobalHeap(), Texture);
+        const uint32 Slot = RHI::HeapWriteTexture(RHI::GetGlobalHeap(), Texture);
         RHI_REQUIRE(Slot != RHI::kInvalidHeapSlot);
 
-        RHI::Core::RetireSampledSlot(Slot);
-        RHI::Core::Retire(Texture);
+        RHI::RetireSampledSlot(Slot);
+        RHI::Retire(Texture);
 
         // With the unbind deferred, this list would bind a retired texture and still be in flight.
         for (uint32 i = 0; i < RHI::kFramesInFlight * 2; ++i)
         {
             const RHI::FCmdListH CL = Ctx.OpenCL();
             RHI::Barriers::AllToTransfer(CL);
-            RHI::Core::SubmitOn(RHI::EQueueType::Graphics, TSpan{ &CL, 1 });
+            RHI::Submit(RHI::EQueueType::Graphics, TSpan{ &CL, 1 });
             Ctx.PumpFrames(1);
         }
 
@@ -106,10 +106,10 @@ namespace Lumina::RHITests
 
     RHI_TEST(Retire, RetireOfInvalidHandlesIsIgnored)
     {
-        RHI::Core::Retire(RHI::FGPUAllocation{});
-        RHI::Core::Retire(RHI::FTextureH{});
-        RHI::Core::RetireSampledSlot(RHI::kInvalidHeapSlot);
-        RHI::Core::RetireStorageSlot(RHI::kInvalidHeapSlot);
+        RHI::Retire(RHI::FGPUAllocation{});
+        RHI::Retire(RHI::FTextureH{});
+        RHI::RetireSampledSlot(RHI::kInvalidHeapSlot);
+        RHI::RetireStorageSlot(RHI::kInvalidHeapSlot);
 
         Ctx.PumpFrames(RHI::kFramesInFlight + 1);
     }
@@ -126,7 +126,7 @@ namespace Lumina::RHITests
                 Ctx.Failf("allocation %u of %u failed", i, Count);
                 break;
             }
-            RHI::Core::Retire(Ptr);
+            RHI::Retire(Ptr);
         }
 
         Ctx.PumpFrames(RHI::kFramesInFlight * 2 + 1);

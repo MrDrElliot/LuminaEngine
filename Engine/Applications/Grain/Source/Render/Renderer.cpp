@@ -146,7 +146,7 @@ namespace Grain
 
         // RHI::Utils only opens a single target pass, and the raymarch splits across three.
         void BeginMultiPass(RHI::FCmdListH CL, TSpan<const RHI::FTextureH> Targets,
-                            const FUIntVector2& Extent, RHI::FDepthStencilH DepthState)
+                            const FUIntVector2& Extent)
         {
             RHI::FRenderAttachment Attachments[4];
             for (size_t i = 0; i < Targets.size(); ++i)
@@ -169,7 +169,7 @@ namespace Grain
             const RHI::FRect Rect { 0, int32(Extent.x), 0, int32(Extent.y) };
 
             RHI::CmdBeginRenderPass(CL, Pass);
-            RHI::CmdSetDepthStencilState(CL, DepthState);
+            RHI::CmdSetDepthStencil(CL, RHI::FDepthStencilDesc{});
             RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
             RHI::CmdSetFrontFace(CL, RHI::EFrontFace::CCW);
             RHI::CmdSetViewport(CL, Rect);
@@ -185,7 +185,6 @@ namespace Grain
     bool FRenderer::Initialize(EFormat InSwapchainFormat)
     {
         SwapchainFormat = InSwapchainFormat;
-        DepthState = RHI::CreateDepthStencil(RHI::FDepthStencilDesc{});
 
         return CreatePipelines();
     }
@@ -324,7 +323,7 @@ namespace Grain
             const uint32 GroupY = Axis == 0 ? kHalfGroups : kGroups;
             const uint32 GroupZ = Axis == 2 ? kHalfGroups : kGroups;
 
-            RHI::CmdDispatch(CL, RHI::Core::CopyTransient(Args), GroupX, GroupY, GroupZ);
+            RHI::CmdDispatch(CL, RHI::CopyTransient(Args), GroupX, GroupY, GroupZ);
             RHI::Barriers::ComputeToAll(CL);
         }
 
@@ -341,7 +340,7 @@ namespace Grain
         CoarseArgs.Control[3] = 0u;
 
         RHI::CmdSetPipeline(CL, SimCoarsePipeline);
-        RHI::CmdDispatch(CL, RHI::Core::CopyTransient(CoarseArgs),
+        RHI::CmdDispatch(CL, RHI::CopyTransient(CoarseArgs),
             uint32(kSimCoarseSide / 4), uint32(kSimCoarseSide / 4), uint32(kSimCoarseSide / 4));
         RHI::Barriers::ComputeToAll(CL);
 
@@ -376,7 +375,7 @@ namespace Grain
         Args.SimOrigin = MakeVector4(Sim.GetOriginVoxels(), 0.0f);
         Args.Params    = { Radius, 1400.0f, Sim.IsValid() ? 1.0f : 0.0f, 0.0f };
 
-        const RHI::GPUPtr Block = RHI::Core::CopyTransient(Args);
+        const RHI::GPUPtr Block = RHI::CopyTransient(Args);
 
         RHI::CmdBeginMarker(CL, "Grain.Destroy");
 
@@ -458,8 +457,8 @@ namespace Grain
         const RHI::FTextureH Targets[] = { RawIndirect.Texture, RawDirect.Texture, RawAlbedo.Texture };
 
         RHI::CmdBeginMarker(CL, "Grain.Raymarch");
-        BeginMultiPass(CL, TSpan<const RHI::FTextureH>(Targets, 3), Extent, DepthState);
-        RHI::Utils::DrawFullscreen(CL, RaymarchPipeline, RHI::Core::CopyTransient(Args));
+        BeginMultiPass(CL, TSpan<const RHI::FTextureH>(Targets, 3), Extent);
+        RHI::Utils::DrawFullscreen(CL, RaymarchPipeline, RHI::CopyTransient(Args));
         RHI::Utils::EndScreenPass(CL);
         RHI::CmdEndMarker(CL);
         RHI::Barriers::RasterToRead(CL);
@@ -485,8 +484,8 @@ namespace Grain
         const RHI::FTextureH Targets[] = { Accum[WriteIndex].Texture, Moment[WriteIndex].Texture };
 
         RHI::CmdBeginMarker(CL, "Grain.Temporal");
-        BeginMultiPass(CL, TSpan<const RHI::FTextureH>(Targets, 2), Extent, DepthState);
-        RHI::Utils::DrawFullscreen(CL, TemporalPipeline, RHI::Core::CopyTransient(Args));
+        BeginMultiPass(CL, TSpan<const RHI::FTextureH>(Targets, 2), Extent);
+        RHI::Utils::DrawFullscreen(CL, TemporalPipeline, RHI::CopyTransient(Args));
         RHI::Utils::EndScreenPass(CL);
         RHI::CmdEndMarker(CL);
         RHI::Barriers::RasterToRead(CL);
@@ -520,9 +519,8 @@ namespace Grain
             Args.IDs[2] = RawDirect.SampledSlot;
             Args.Params = { float(Extent.x), float(Extent.y), float(1 << Pass), 0.08f };
 
-            RHI::Utils::BeginScreenPass(CL, { .Target = Scratch[Output].Texture, .Extent = Extent,
-                .DepthState = DepthState });
-            RHI::Utils::DrawFullscreen(CL, AtrousPipeline, RHI::Core::CopyTransient(Args));
+            RHI::Utils::BeginScreenPass(CL, { .Target = Scratch[Output].Texture, .Extent = Extent, });
+            RHI::Utils::DrawFullscreen(CL, AtrousPipeline, RHI::CopyTransient(Args));
             RHI::Utils::EndScreenPass(CL);
             RHI::Barriers::RasterToRead(CL);
 
@@ -545,9 +543,8 @@ namespace Grain
         Args.Params = { float(Extent.x), float(Extent.y), 0.0f, 0.0f };
 
         RHI::CmdBeginMarker(CL, "Grain.Compose");
-        RHI::Utils::BeginScreenPass(CL, { .Target = SceneTarget.Texture, .Extent = Extent,
-            .DepthState = DepthState });
-        RHI::Utils::DrawFullscreen(CL, ComposePipeline, RHI::Core::CopyTransient(Args));
+        RHI::Utils::BeginScreenPass(CL, { .Target = SceneTarget.Texture, .Extent = Extent, });
+        RHI::Utils::DrawFullscreen(CL, ComposePipeline, RHI::CopyTransient(Args));
         RHI::Utils::EndScreenPass(CL);
         RHI::CmdEndMarker(CL);
         RHI::Barriers::RasterToRead(CL);
@@ -578,8 +575,8 @@ namespace Grain
             };
 
             RHI::Utils::BeginScreenPass(CL, { .Target = BloomChain.Texture(Level),
-                .Extent = BloomChain.Extent(Level), .DepthState = DepthState });
-            RHI::Utils::DrawFullscreen(CL, DownsamplePipeline, RHI::Core::CopyTransient(Args));
+                .Extent = BloomChain.Extent(Level) });
+            RHI::Utils::DrawFullscreen(CL, DownsamplePipeline, RHI::CopyTransient(Args));
             RHI::Utils::EndScreenPass(CL);
             RHI::Barriers::RasterToRead(CL);
         }
@@ -597,9 +594,9 @@ namespace Grain
             };
 
             RHI::Utils::BeginScreenPass(CL, { .Target = BloomChain.Texture(Level - 1),
-                .Extent = BloomChain.Extent(Level - 1), .DepthState = DepthState,
+                .Extent = BloomChain.Extent(Level - 1),
                 .LoadOp = RHI::ELoadOp::Load });
-            RHI::Utils::DrawFullscreen(CL, UpsamplePipeline, RHI::Core::CopyTransient(Args));
+            RHI::Utils::DrawFullscreen(CL, UpsamplePipeline, RHI::CopyTransient(Args));
             RHI::Utils::EndScreenPass(CL);
             RHI::Barriers::RasterToRead(CL);
         }
@@ -620,8 +617,8 @@ namespace Grain
         };
 
         RHI::CmdBeginMarker(CL, "Grain.Composite");
-        RHI::Utils::BeginScreenPass(CL, { .Target = SwapImage, .Extent = Extent, .DepthState = DepthState });
-        RHI::Utils::DrawFullscreen(CL, CompositePipeline, RHI::Core::CopyTransient(Args));
+        RHI::Utils::BeginScreenPass(CL, { .Target = SwapImage, .Extent = Extent });
+        RHI::Utils::DrawFullscreen(CL, CompositePipeline, RHI::CopyTransient(Args));
         RHI::Utils::EndScreenPass(CL);
         RHI::CmdEndMarker(CL);
     }
@@ -733,7 +730,7 @@ namespace Grain
         const RHI::FGPUAllocation Readback = RHI::Malloc(Bytes, RHI::EMemoryType::CPURead);
 
         const RHI::FCmdListH CL = RHI::OpenCommandList();
-        RHI::CmdSetTextureHeap(CL, RHI::Core::GetGlobalHeap());
+        RHI::CmdSetTextureHeap(CL, RHI::GetGlobalHeap());
 
         DrawComposite(CL, Capture, Extent);
 
@@ -742,11 +739,11 @@ namespace Grain
 
         RHI::FTextureSlice Slice;
         Slice.Extent = FUIntVector3(Extent.x, Extent.y, 1);
-        RHI::CmdCopyTextureToMemory(CL, Capture, Slice, Readback.Gpu, Extent.x);
+        RHI::CmdCopyTextureToMemory(CL, Capture, Slice, Readback, Extent.x);
         RHI::Barriers::TransferToAll(CL);
 
-        RHI::Submit(CL);
-        RHI::WaitDeviceIdle();
+        const uint64 Value = RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
+        RHI::WaitSemaphore(RHI::GetQueueTimeline(RHI::EQueueType::Graphics), Value);
 
         bool bWrote = false;
         if (const uint8* Pixels = Readback.CpuAs<const uint8>())
@@ -767,8 +764,8 @@ namespace Grain
             bWrote = ImageWrite::WritePngFile(Path, Extent.x, Extent.y, 4, Rgba.data(), Extent.x * 4u);
         }
 
-        RHI::Core::Retire(Readback);
-        RHI::Core::Retire(Capture);
+        RHI::Retire(Readback);
+        RHI::Retire(Capture);
 
         LOG_INFO("Grain: capture '{}' {}.", Path, bWrote ? "written" : "failed");
         return bWrote;
@@ -785,24 +782,18 @@ namespace Grain
         {
             if (RHI::IsValid(Pipeline))
             {
-                RHI::Core::Retire(Pipeline);
+                RHI::Retire(Pipeline);
             }
-        }
-
-        if (RHI::IsValid(DepthState))
-        {
-            RHI::FreeH(DepthState);
         }
 
         if (RHI::IsValid(TimerPool))
         {
-            const RHI::FQueryPoolH Pool = TimerPool;
-            RHI::Core::RetireCallback([Pool] { RHI::FreeH(Pool); });
+            RHI::Retire(TimerPool);
         }
 
         if (PickBuffer.Gpu != 0)
         {
-            RHI::Core::Retire(PickBuffer);
+            RHI::Retire(PickBuffer);
             PickBuffer = {};
         }
     }

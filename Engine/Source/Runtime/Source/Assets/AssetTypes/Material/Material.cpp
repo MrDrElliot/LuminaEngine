@@ -25,32 +25,52 @@ namespace Lumina
 
     namespace
     {
-        // PostLoad and the editor compile both walk this, so adding a stage is a one-line change.
+        // Library naming per stage; the storage itself is the Stages array, indexed by EMaterialShaderStage.
         struct FMaterialStageDesc
         {
-            TVector<uint32> CMaterial::*     Binaries;
-            FShaderH CMaterial::*            Entry;
-            const char*                      Suffix;
-            ERHIShaderType                   Type;
+            const char*      Suffix;
+            ERHIShaderType   Type;
         };
 
-        // Indexed by EMaterialShaderStage.
         const FMaterialStageDesc GMaterialStages[] =
         {
-            { &CMaterial::PixelShaderBinaries,                &CMaterial::PixelShader,                "_PS",   ERHIShaderType::Fragment },
-            { &CMaterial::VertexShaderBinaries,               &CMaterial::VertexShader,               "_VS",   ERHIShaderType::Vertex   },
-            { &CMaterial::MeshShaderShadowBinaries,           &CMaterial::MeshShaderShadow,           "_MS",   ERHIShaderType::Mesh     },
-            { &CMaterial::MeshShaderBaseBinaries,             &CMaterial::MeshShaderBase,             "_MSB",  ERHIShaderType::Mesh     },
-            { &CMaterial::VisBufferMeshShaderBinaries,        &CMaterial::VisBufferMeshShader,        "_VBM",  ERHIShaderType::Mesh     },
-            { &CMaterial::VisBufferMeshShaderMaskedBinaries,  &CMaterial::VisBufferMeshShaderMasked,  "_VBMM", ERHIShaderType::Mesh     },
-            { &CMaterial::MaskedVisBufferPixelShaderBinaries, &CMaterial::MaskedVisBufferPixelShader, "_MVBP", ERHIShaderType::Fragment },
-            { &CMaterial::DeferredShaderBinaries,             &CMaterial::DeferredShader,             "_DM",   ERHIShaderType::Compute  },
-            { &CMaterial::MomentPixelShaderBinaries,          &CMaterial::MomentPixelShader,          "_MOM",  ERHIShaderType::Fragment },
-            { &CMaterial::MeshShaderShadowMaskedBinaries,     &CMaterial::MeshShaderShadowMasked,     "_MSSM", ERHIShaderType::Mesh     },
-            { &CMaterial::ShadowMaskedPixelShaderBinaries,    &CMaterial::ShadowMaskedPixelShader,    "_SMP",  ERHIShaderType::Fragment },
+            { "_PS",   ERHIShaderType::Fragment },
+            { "_VS",   ERHIShaderType::Vertex   },
+            { "_MS",   ERHIShaderType::Mesh     },
+            { "_MSB",  ERHIShaderType::Mesh     },
+            { "_VBM",  ERHIShaderType::Mesh     },
+            { "_VBMM", ERHIShaderType::Mesh     },
+            { "_MVBP", ERHIShaderType::Fragment },
+            { "_DM",   ERHIShaderType::Compute  },
+            { "_MOM",  ERHIShaderType::Fragment },
+            { "_MSSM", ERHIShaderType::Mesh     },
+            { "_SMP",  ERHIShaderType::Fragment },
         };
         static_assert(std::size(GMaterialStages) == (size_t)EMaterialShaderStage::Count,
             "GMaterialStages must cover every EMaterialShaderStage");
+
+        FMaterialStageBlob* FindStageBlob(TVector<FMaterialStageBlob>& Stages, EMaterialShaderStage Stage)
+        {
+            for (FMaterialStageBlob& Blob : Stages)
+            {
+                if (Blob.Stage == (uint8)Stage)
+                {
+                    return &Blob;
+                }
+            }
+            return nullptr;
+        }
+
+        FMaterialStageBlob& FindOrAddStageBlob(TVector<FMaterialStageBlob>& Stages, EMaterialShaderStage Stage)
+        {
+            if (FMaterialStageBlob* Found = FindStageBlob(Stages, Stage))
+            {
+                return *Found;
+            }
+            FMaterialStageBlob& Added = Stages.emplace_back();
+            Added.Stage = (uint8)Stage;
+            return Added;
+        }
 
         // Only reachable from an asset saved before the graph compiler started refusing over-budget slots.
         void ReportParameterOverBudget(const CMaterial* Material, const FName& ParameterName,
@@ -67,9 +87,17 @@ namespace Lumina
         FMutex                        StaleTemplateMutex;
         TVector<TObjectPtr<CMaterial>> StaleTemplateMaterials;
 
+        // Idempotent, since every instance's PostLoad can reach the same master before the drain runs.
         void QueueStaleTemplateMaterial(CMaterial* Material)
         {
             FScopeLock Lock(StaleTemplateMutex);
+            for (const TObjectPtr<CMaterial>& Queued : StaleTemplateMaterials)
+            {
+                if (Queued.Get() == Material)
+                {
+                    return;
+                }
+            }
             StaleTemplateMaterials.push_back(Material);
         }
 
@@ -87,8 +115,31 @@ namespace Lumina
 
     CMaterial::CMaterial()
     {
-        MaterialType = EMaterialType::PBR;
         Memory::Memzero(&MaterialUniforms, sizeof(FMaterialUniforms));
+    }
+
+    void CMaterial::PostPropertyChange(FProperty* ChangedProperty)
+    {
+        Super::PostPropertyChange(ChangedProperty);
+        NormalizeRenderStateForDomain();
+    }
+
+    void CMaterial::NormalizeRenderStateForDomain()
+    {
+        if (MaterialType == EMaterialType::None)
+        {
+            LOG_WARN("Material '{}': None is not a drawable domain, using PBR.", GetName());
+            MaterialType = EMaterialType::PBR;
+        }
+
+        if (!MaterialDomain::SupportsBlendMode(MaterialType, BlendMode))
+        {
+            BlendMode = EBlendMode::Opaque;
+        }
+        if (!MaterialDomain::SupportsShadingModel(MaterialType))
+        {
+            ShadingModel = EMaterialShadingModel::Lit;
+        }
     }
 
     void CMaterial::Serialize(FArchive& Ar)
@@ -118,6 +169,7 @@ namespace Lumina
             return nullptr;
         }
 
+        FRecursiveScopeLock Lock(TextureSlotMutex);
         ResolveTextureSlot(Index);
         return ResolvedTextures[Index].Get();
     }
@@ -156,6 +208,8 @@ namespace Lumina
 
     uint32 CMaterial::ResolveTextureSlot(uint32 Index)
     {
+        FRecursiveScopeLock Lock(TextureSlotMutex);
+
         if (Index >= (uint32)Textures.size())
         {
             return RHI::Textures::DefaultResourceID();
@@ -205,6 +259,8 @@ namespace Lumina
 
     bool CMaterial::RequestTexturesResolved()
     {
+        FRecursiveScopeLock Lock(TextureSlotMutex);
+
         const uint32 NumTextures = (uint32)Math::Min<size_t>(Textures.size(), MAX_TEXTURES);
         if (NumTextures == 0)
         {
@@ -216,14 +272,20 @@ namespace Lumina
             ResolvedTextures.resize(Textures.size());
         }
 
+        // Resolved, empty, or failed for good; none of those will ever change by asking again.
+        auto IsSettled = [this](uint32 i)
+        {
+            return ResolvedTextures[i] != nullptr || !Textures[i].IsValid()
+                || (UnresolvableTextureMask & (1ull << i)) != 0;
+        };
+
         bool bAllResolved = true;
         for (uint32 i = 0; i < NumTextures; ++i)
         {
-            if (ResolvedTextures[i] != nullptr || !Textures[i].IsValid())
+            if (!IsSettled(i))
             {
-                continue;   // resolved, or empty and never going to resolve
+                bAllResolved = false;
             }
-            bAllResolved = false;
         }
 
         if (bAllResolved)
@@ -268,7 +330,7 @@ namespace Lumina
 
         for (uint32 i = 0; i < NumTextures; ++i)
         {
-            if (ResolvedTextures[i] != nullptr || !Textures[i].IsValid())
+            if (IsSettled(i))
             {
                 continue;
             }
@@ -281,9 +343,23 @@ namespace Lumina
                     return;
                 }
 
-                if (i < (uint32)Self->ResolvedTextures.size())
                 {
-                    Self->ResolvedTextures[i] = Cast<CTexture>(Loaded);
+                    FRecursiveScopeLock LoadLock(Self->TextureSlotMutex);
+
+                    CTexture* Texture = Cast<CTexture>(Loaded);
+                    if (i < (uint32)Self->ResolvedTextures.size())
+                    {
+                        Self->ResolvedTextures[i] = Texture;
+                    }
+
+                    // Settled on the placeholder, or the surface would sit on the default material forever.
+                    if (Texture == nullptr)
+                    {
+                        Self->UnresolvableTextureMask |= (1ull << i);
+                        const FStringView Path = i < (uint32)Self->Textures.size() ? Self->Textures[i].GetPath() : FStringView();
+                        LOG_WARN("Material '{}': texture slot {} failed to load (path '{}'); it stays on the placeholder.",
+                                 Self->GetName(), i, Path.empty() ? FStringView("<empty>") : Path);
+                    }
                 }
 
                 // Wakes the surfaces that fell back to the default material while this was loading.
@@ -297,6 +373,8 @@ namespace Lumina
 
     bool CMaterial::ReferencesTexture(const CTexture* ChangedTexture) const
     {
+        FRecursiveScopeLock Lock(TextureSlotMutex);
+
         // Never resolves to answer, since this runs for every material on a texture reimport.
         return Algo::AnyOf(ResolvedTextures,
             [ChangedTexture](const TObjectPtr<CTexture>& Texture) { return Texture.Get() == ChangedTexture; });
@@ -310,25 +388,70 @@ namespace Lumina
         }
 
         // Any other slot baked while unresolved is wrong the same way, and unresolved ones are left alone.
-        const uint32 NumTextures = (uint32)Math::Min<size_t>(ResolvedTextures.size(), MAX_TEXTURES);
-        for (uint32 i = 0; i < NumTextures; ++i)
+        bool bChanged = false;
         {
-            CTexture* Texture = ResolvedTextures[i].Get();
-            if (Texture == nullptr)
+            FRecursiveScopeLock Lock(TextureSlotMutex);
+            const uint32 NumTextures = (uint32)Math::Min<size_t>(ResolvedTextures.size(), MAX_TEXTURES);
+            for (uint32 i = 0; i < NumTextures; ++i)
             {
-                continue;
+                CTexture* Texture = ResolvedTextures[i].Get();
+                if (Texture == nullptr)
+                {
+                    continue;
+                }
+                const int32  ResourceID = Texture->GetResourceID();
+                const uint32 SlotID     = (ResourceID >= 0) ? (uint32)ResourceID : RHI::Textures::DefaultResourceID();
+                bChanged |= MaterialUniforms.Textures[i] != SlotID;
+                MaterialUniforms.Textures[i] = SlotID;
             }
-            const int32 ResourceID = Texture->GetResourceID();
-            MaterialUniforms.Textures[i] = (ResourceID >= 0) ? (uint32)ResourceID : RHI::Textures::DefaultResourceID();
         }
 
         UpdateMaterialUniforms();
 
-        // Marked, not published, since this runs where ResolvedTextures is being written.
-
         // Instances copied this block wholesale and nothing else rewrites the slots they inherit.
         PropagateInheritedTextureSlots();
 
+        // A slot that just became resident is what a surface parked on the default material is waiting for.
+        if (bChanged)
+        {
+            FMeshResolveCache::InvalidateDependency(this);
+        }
+
+        return true;
+    }
+
+    bool CMaterial::IsStageRequired(EMaterialShaderStage Stage) const
+    {
+        const bool bMeshlet = MaterialDomain::IsMeshlet(MaterialType);
+        const bool bMasked  = BlendMode == EBlendMode::Masked;
+        const bool bMoment  = BlendMode == EBlendMode::Translucent || BlendMode == EBlendMode::AlphaComposite;
+
+        switch (Stage)
+        {
+        case EMaterialShaderStage::Pixel:                return true;
+        case EMaterialShaderStage::Vertex:               return MaterialDomain::UsesVertexStage(MaterialType);
+        case EMaterialShaderStage::MeshShadow:
+        case EMaterialShaderStage::MeshBase:
+        case EMaterialShaderStage::VisBufferMesh:
+        case EMaterialShaderStage::Deferred:             return bMeshlet;
+        case EMaterialShaderStage::VisBufferMeshMasked:
+        case EMaterialShaderStage::MaskedVisBufferPixel:
+        case EMaterialShaderStage::MeshShadowMasked:
+        case EMaterialShaderStage::ShadowMaskedPixel:    return bMeshlet && bMasked;
+        case EMaterialShaderStage::MomentPixel:          return bMeshlet && bMoment;
+        default:                                         return false;
+        }
+    }
+
+    bool CMaterial::HasRequiredStages() const
+    {
+        for (size_t s = 0; s < (size_t)EMaterialShaderStage::Count; ++s)
+        {
+            if (IsStageRequired((EMaterialShaderStage)s) && StageEntries[s] == nullptr)
+            {
+                return false;
+            }
+        }
         return true;
     }
 
@@ -345,16 +468,17 @@ namespace Lumina
     void CMaterial::PostLoad()
     {
         LUMINA_MEMORY_SCOPE("Materials");
-        // PBR geometry compiles no vertex stage, so keying on that would misclassify every surface material.
         bool bHasCompiledStage = false;
-        for (size_t i = 0; i < (size_t)EMaterialShaderStage::Count && !bHasCompiledStage; ++i)
+        for (const FMaterialStageBlob& Blob : Stages)
         {
-            bHasCompiledStage = !(this->*GMaterialStages[i].Binaries).empty();
+            bHasCompiledStage |= !Blob.Spirv.empty();
         }
 
-        if (bHasCompiledStage)
+        // A stamped hash with no stages is an asset saved before Stages existed, and it recompiles like a stale one.
+        if (bHasCompiledStage || CompiledTemplateHash != 0)
         {
-            const bool bStale = GetPackage() != nullptr && CompiledTemplateHash != GetShaderTemplateHash();
+            const bool bStale = GetPackage() != nullptr
+                             && (CompiledTemplateHash != GetShaderTemplateHash() || !bHasCompiledStage);
 
             if (bStale)
             {
@@ -368,12 +492,11 @@ namespace Lumina
             }
             else
             {
-                for (size_t i = 0; i < (size_t)EMaterialShaderStage::Count; ++i)
+                for (const FMaterialStageBlob& Blob : Stages)
                 {
-                    const TVector<uint32>& Binaries = this->*GMaterialStages[i].Binaries;
-                    if (!Binaries.empty())
+                    if (!Blob.Spirv.empty() && Blob.Stage < (uint8)EMaterialShaderStage::Count)
                     {
-                        CommitShaderStage((EMaterialShaderStage)i, TSpan<const uint32>(Binaries.data(), Binaries.size()));
+                        CommitShaderStage((EMaterialShaderStage)Blob.Stage, TSpan<const uint32>(Blob.Spirv.data(), Blob.Spirv.size()));
                     }
                 }
 
@@ -428,11 +551,15 @@ namespace Lumina
                 }
             }
             
+            // A load from a previous compile can still land while this runs.
+            FRecursiveScopeLock TextureLock(TextureSlotMutex);
+
             // RESIZE, never assign, since the editor compile path fills this before calling PostLoad.
             ResolvedTextures.resize(Textures.size());
 
             // A recompile replaces the whole texture table; a latch left set would suppress the async kick.
-            bTextureLoadRequested = false;
+            bTextureLoadRequested   = false;
+            UnresolvableTextureMask = 0;
 
             const uint32 NumTextures = (uint32)Math::Min<size_t>(Textures.size(), MAX_TEXTURES);
             for (uint32 i = 0; i < NumTextures; ++i)
@@ -497,17 +624,16 @@ namespace Lumina
                 UpdateMaterialUniforms();
             }
 
-            SetReadyForRender(true);
+            // Stale templates committed nothing, and a corrupt asset can be missing a stage, so this is derived.
+            SetReadyForRender(!bStale && HasRequiredStages());
 
             PropagateToChildren();
 
 #if !USING(WITH_EDITOR)
-            // Driven off the stage table, since the hand-written list kept dropping and missing stages.
-            for (const FMaterialStageDesc& Desc : GMaterialStages)
+            for (FMaterialStageBlob& Blob : Stages)
             {
-                TVector<uint32>& Blob = this->*Desc.Binaries;
-                Blob.clear();
-                Blob.shrink_to_fit();
+                Blob.Spirv.clear();
+                Blob.Spirv.shrink_to_fit();
             }
 
             // The library holds the bytecode now, and a cooked build never recompiles a permutation.
@@ -532,10 +658,10 @@ namespace Lumina
 
         // Before MaterialIndex can be recycled by the next material.
 
-        for (const FMaterialStageDesc& Desc : GMaterialStages)
+        for (FShaderH& Entry : StageEntries)
         {
-            FShaderLibrary::Release(this->*Desc.Entry);
-            this->*Desc.Entry = {};
+            FShaderLibrary::Release(Entry);
+            Entry = {};
         }
 
         ClearPermutations();
@@ -613,12 +739,12 @@ namespace Lumina
     
     FShaderH CMaterial::GetVertexShader() const
     {
-        return VertexShader;
+        return GetStage(EMaterialShaderStage::Vertex);
     }
 
     FShaderH CMaterial::GetPixelShader() const
     {
-        return PixelShader;
+        return GetStage(EMaterialShaderStage::Pixel);
     }
 
     int32 CMaterial::FindStaticSwitchBit(const FName& ParameterName) const
@@ -735,14 +861,14 @@ namespace Lumina
 
         {
             // Written as a loop, so a new variant is one row rather than a copy-paste of a near-identical block.
-            struct FGeometryStage { const char* Path; const char* Define; TVector<uint32> CMaterial::* Out; };
+            struct FGeometryStage { const char* Path; const char* Define; EMaterialShaderStage Stage; };
             const FGeometryStage GeometryStages[] =
             {
-                { "MeshletMesh.slang",      nullptr,                 &CMaterial::MeshShaderShadowBinaries          },
-                { "MeshletMesh.slang",      "MESHLET_MESH_BASE",     &CMaterial::MeshShaderBaseBinaries            },
-                { "MeshletVisBuffer.slang", nullptr,                 &CMaterial::VisBufferMeshShaderBinaries       },
-                { "MeshletVisBuffer.slang", "VISBUFFER_MASKED_GEOM", &CMaterial::VisBufferMeshShaderMaskedBinaries },
-                { "MeshletMesh.slang",      "MESHLET_MESH_MASKED_SHADOW", &CMaterial::MeshShaderShadowMaskedBinaries },
+                { "MeshletMesh.slang",      nullptr,                      EMaterialShaderStage::MeshShadow          },
+                { "MeshletMesh.slang",      "MESHLET_MESH_BASE",          EMaterialShaderStage::MeshBase            },
+                { "MeshletVisBuffer.slang", nullptr,                      EMaterialShaderStage::VisBufferMesh       },
+                { "MeshletVisBuffer.slang", "VISBUFFER_MASKED_GEOM",      EMaterialShaderStage::VisBufferMeshMasked },
+                { "MeshletMesh.slang",      "MESHLET_MESH_MASKED_SHADOW", EMaterialShaderStage::MeshShadowMasked    },
             };
 
             for (const FGeometryStage& Stage : GeometryStages)
@@ -766,12 +892,21 @@ namespace Lumina
                     Options.MacroDefinitions.emplace_back(Stage.Define);
                 }
 
-                TVector<uint32> CMaterial::* Out = Stage.Out;
+                const EMaterialShaderStage Out = Stage.Stage;
                 ShaderCompiler->CompilerShaderRaw(Move(Source), Move(Options), [Out](const FShaderHeader& Header) mutable
                 {
-                    (DefaultMaterial->*Out).assign(Header.Binaries.begin(), Header.Binaries.end());
+                    DefaultMaterial->SetStageBinaries(Out, TSpan<const uint32>(Header.Binaries.data(), Header.Binaries.size()));
                 });
             }
+        }
+
+        {
+            FShaderCompileOptions PixelOptions;
+            PixelOptions.TemplateVirtualPath = "/Engine/Resources/Shaders/MaterialShader/BasePixelPass.slang";
+            ShaderCompiler->CompilerShaderRaw(Move(LoadedPixelString), Move(PixelOptions), [](const FShaderHeader& Header) mutable
+            {
+                DefaultMaterial->SetStageBinaries(EMaterialShaderStage::Pixel, TSpan<const uint32>(Header.Binaries.data(), Header.Binaries.size()));
+            });
         }
 
         {
@@ -788,7 +923,7 @@ namespace Lumina
                     DeferredOptions.TemplateVirtualPath = "/Engine/Resources/Shaders/MaterialShader/DeferredMaterial.slang";
                     ShaderCompiler->CompilerShaderRaw(Move(LoadedDeferredString), Move(DeferredOptions), [](const FShaderHeader& Header) mutable
                     {
-                        DefaultMaterial->DeferredShaderBinaries.assign(Header.Binaries.begin(), Header.Binaries.end());
+                        DefaultMaterial->SetStageBinaries(EMaterialShaderStage::Deferred, TSpan<const uint32>(Header.Binaries.data(), Header.Binaries.size()));
                     });
                 }
             }
@@ -885,14 +1020,14 @@ namespace Lumina
         TerrainPixelOptions.TemplateVirtualPath = TerrainPixelTemplate;
         ShaderCompiler->CompilerShaderRaw(Move(LoadedPixelString), Move(TerrainPixelOptions), [](const FShaderHeader& Header) mutable
         {
-            DefaultTerrainMaterial->PixelShaderBinaries.assign(Header.Binaries.begin(), Header.Binaries.end());
+            DefaultTerrainMaterial->SetStageBinaries(EMaterialShaderStage::Pixel, TSpan<const uint32>(Header.Binaries.data(), Header.Binaries.size()));
         });
 
         FShaderCompileOptions TerrainVertexOptions;
         TerrainVertexOptions.TemplateVirtualPath = "/Engine/Resources/Shaders/MaterialShader/TerrainBaseVertexPass.slang";
         ShaderCompiler->CompilerShaderRaw(Move(LoadedVertexString), Move(TerrainVertexOptions), [](const FShaderHeader& Header) mutable
         {
-            DefaultTerrainMaterial->VertexShaderBinaries.assign(Header.Binaries.begin(), Header.Binaries.end());
+            DefaultTerrainMaterial->SetStageBinaries(EMaterialShaderStage::Vertex, TSpan<const uint32>(Header.Binaries.data(), Header.Binaries.size()));
         });
 
         ShaderCompiler->Flush();
@@ -900,21 +1035,27 @@ namespace Lumina
         DefaultTerrainMaterial->PostLoad();
     }
 
-    void CMaterial::CommitShaderStage(EMaterialShaderStage Stage, TSpan<const uint32> Spirv)
+    void CMaterial::SetStageBinaries(EMaterialShaderStage Stage, TSpan<const uint32> Spirv)
     {
-        const FMaterialStageDesc& Desc = GMaterialStages[(size_t)Stage];
-
-        TVector<uint32>& Binaries = this->*Desc.Binaries;
+        TVector<uint32>& Binaries = FindOrAddStageBlob(Stages, Stage).Spirv;
         if (Binaries.data() != Spirv.data())
         {
             Binaries.assign(Spirv.data(), Spirv.data() + Spirv.size());
         }
+    }
+
+    void CMaterial::CommitShaderStage(EMaterialShaderStage Stage, TSpan<const uint32> Spirv)
+    {
+        const FMaterialStageDesc& Desc = GMaterialStages[(size_t)Stage];
+
+        SetStageBinaries(Stage, Spirv);
 
         // Commit returns a counted reference, while caches hold deliberately uncounted weak handles.
-        const FShaderH Previous  = this->*Desc.Entry;
+        FShaderH&      Entry     = StageEntries[(size_t)Stage];
+        const FShaderH Previous  = Entry;
         const FShaderH Committed = FShaderLibrary::Commit(FName((GetGUID().ToString() + Desc.Suffix).c_str()),
             Desc.Type, Spirv);
-        this->*Desc.Entry = Committed;
+        Entry = Committed;
 
         if (Previous != Committed)
         {
@@ -922,7 +1063,7 @@ namespace Lumina
             FShaderLibrary::Release(Previous);
 
             // A shared entry stays live when one owner re-points, so a weak handle cannot notice the change.
-            ++ShaderRevision;
+            BumpShaderRevision();
         }
         else
         {
@@ -951,7 +1092,7 @@ namespace Lumina
             }
         }
 
-        return this->*GMaterialStages[(size_t)Stage].Entry;
+        return StageEntries[(size_t)Stage];
     }
 
     bool CMaterial::HasPermutation(uint64 Key) const
@@ -1002,7 +1143,7 @@ namespace Lumina
         if (Previous != Committed)
         {
             FShaderLibrary::Release(Previous);
-            ++ShaderRevision;
+            BumpShaderRevision();
         }
         else
         {
@@ -1047,7 +1188,7 @@ namespace Lumina
         }
 
         Permutations.erase(Found);
-        ++ShaderRevision;
+        BumpShaderRevision();
     }
 
     bool CMaterial::CommitPermutationStageIfCurrent(uint64 Key, uint32 Generation, EMaterialShaderStage Stage,
@@ -1079,21 +1220,45 @@ namespace Lumina
         if (!Permutations.empty())
         {
             Permutations.clear();
-            ++ShaderRevision;
+            BumpShaderRevision();
         }
+    }
+
+    // Surfaces cache the entries this revision guards, so every bump has to wake them.
+    void CMaterial::BumpShaderRevision()
+    {
+        ++ShaderRevision;
+        FMeshResolveCache::InvalidateDependency(this);
     }
 
     void CMaterial::ClearShaderStage(EMaterialShaderStage Stage)
     {
-        const FMaterialStageDesc& Desc = GMaterialStages[(size_t)Stage];
-        (this->*Desc.Binaries).clear();
-        FShaderLibrary::Release(this->*Desc.Entry);
-        this->*Desc.Entry = {};
+        for (SIZE_T i = 0; i < Stages.size(); ++i)
+        {
+            if (Stages[i].Stage == (uint8)Stage)
+            {
+                Stages.erase(Stages.begin() + i);
+                break;
+            }
+        }
+
+        FShaderH& Entry = StageEntries[(size_t)Stage];
+        FShaderLibrary::Release(Entry);
+        Entry = {};
     }
 
     const TVector<uint32>& CMaterial::GetShaderStageBinaries(EMaterialShaderStage Stage) const
     {
-        return this->*GMaterialStages[(size_t)Stage].Binaries;
+        static const TVector<uint32> Empty;
+
+        for (const FMaterialStageBlob& Blob : Stages)
+        {
+            if (Blob.Stage == (uint8)Stage)
+            {
+                return Blob.Spirv;
+            }
+        }
+        return Empty;
     }
 
     uint64 CMaterial::GetShaderTemplateHash()

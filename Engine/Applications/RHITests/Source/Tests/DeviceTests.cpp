@@ -31,7 +31,7 @@ namespace Lumina::RHITests
 
     RHI_TEST(Device, GlobalHeapExists)
     {
-        RHI_CHECK(RHI::IsValid(RHI::Core::GetGlobalHeap()));
+        RHI_CHECK(RHI::IsValid(RHI::GetGlobalHeap()));
     }
 
     RHI_TEST(Device, FallbackTextureIsRegistered)
@@ -42,9 +42,9 @@ namespace Lumina::RHITests
 
     RHI_TEST(Device, QueueTimelinesAreDistinct)
     {
-        const RHI::FSemaphoreH Graphics = RHI::Core::GetQueueTimeline(RHI::EQueueType::Graphics);
-        const RHI::FSemaphoreH Transfer = RHI::Core::GetQueueTimeline(RHI::EQueueType::Transfer);
-        const RHI::FSemaphoreH Compute  = RHI::Core::GetQueueTimeline(RHI::EQueueType::Compute);
+        const RHI::FSemaphoreH Graphics = RHI::GetQueueTimeline(RHI::EQueueType::Graphics);
+        const RHI::FSemaphoreH Transfer = RHI::GetQueueTimeline(RHI::EQueueType::Transfer);
+        const RHI::FSemaphoreH Compute  = RHI::GetQueueTimeline(RHI::EQueueType::Compute);
 
         RHI_CHECK(RHI::IsValid(Graphics));
         RHI_CHECK(RHI::IsValid(Transfer));

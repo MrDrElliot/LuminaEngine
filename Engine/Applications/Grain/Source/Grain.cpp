@@ -124,7 +124,6 @@ int main(int ArgC, char** ArgV)
     {
         RHI::SetPresentMode(EPresentMode::Mailbox);
     }
-    RHI::Core::Initialize();
 
     FSpirVShaderCompiler ShaderCompiler;
     GShaderCompiler = &ShaderCompiler;
@@ -201,7 +200,7 @@ int main(int ArgC, char** ArgV)
     for (uint32 FrameSlot = 0; bReady && !Window.ShouldClose() && !Input.bQuit;
          FrameSlot = (FrameSlot + 1) % RHI::kFramesInFlight)
     {
-        RHI::Core::BeginFrame(FrameSlot);
+        RHI::BeginFrame(FrameSlot);
 
         Window.ProcessMessages();
         Target.Resize(Window.GetExtent());
@@ -275,7 +274,7 @@ int main(int ArgC, char** ArgV)
         }
 
         const RHI::FCmdListH CL = RHI::OpenCommandList();
-        RHI::CmdSetTextureHeap(CL, RHI::Core::GetGlobalHeap());
+        RHI::CmdSetTextureHeap(CL, RHI::GetGlobalHeap());
         Target.BarrierToRender(CL);
 
         Renderer.Render(CL, SwapImage, Target.GetExtent(), World, Sim, Camera, float(Now - Started), bMoved);
@@ -310,7 +309,6 @@ int main(int ArgC, char** ArgV)
     Target.Shutdown();
 
     GShaderCompiler = nullptr;
-    RHI::Core::Shutdown();
     RHI::FreeDevice();
 
     Task::Shutdown();

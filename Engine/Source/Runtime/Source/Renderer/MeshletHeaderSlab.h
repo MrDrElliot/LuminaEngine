@@ -8,7 +8,7 @@ namespace Lumina
     /** One GPU array of FMeshletHeaderGPU for every mesh in the process, addressed by SLOT rather than by
      *  address. A meshlet header is the one GPU resource whose location gets cached in CPU-side scene state
      *  -- resolve entries, mesh components, the retained instance buffer -- and then re-emitted into frames
-     *  recorded long after it was cached. RHI::Core::Retire fences against work already SUBMITTED, so it
+     *  recorded long after it was cached. RHI::Retire fences against work already SUBMITTED, so it
      *  cannot see those copies, and freeing a header on the fence alone left the cull dispatch chasing a
      *  dangling pointer: a device loss, not a bad pixel.
      *

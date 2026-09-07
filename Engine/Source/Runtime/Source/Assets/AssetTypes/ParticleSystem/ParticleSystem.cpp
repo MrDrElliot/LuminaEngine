@@ -29,14 +29,7 @@ namespace Lumina
 
     CMaterialInterface* ResolveParticleSpriteMaterial(CMaterialInterface* Candidate)
     {
-        if (Candidate == nullptr || !Candidate->IsReadyForRender())
-        {
-            return nullptr;
-        }
-
-        // The domain lives on the master, and it is the master that owns the compiled sprite stages.
-        CMaterial* Owner = Candidate->GetMaterial();
-        if (Owner == nullptr || Owner->GetMaterialType() != EMaterialType::Particle)
+        if (Candidate == nullptr || !Candidate->IsUsableInDomain(EMaterialType::Particle))
         {
             return nullptr;
         }

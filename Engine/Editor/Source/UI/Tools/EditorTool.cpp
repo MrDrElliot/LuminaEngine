@@ -108,11 +108,11 @@ namespace Lumina
         {
             RHI::FCmdListH CL = RHI::OpenCommandList();
             RHI::CmdBarrier(CL, RHI::EStageFlags::AllCommands, RHI::EStageFlags::Transfer);
-            RHI::CmdCopyTextureToMemory(CL, RenderTarget, RHI::FTextureSlice{}, Readback.Gpu, SourceWidth);
+            RHI::CmdCopyTextureToMemory(CL, RenderTarget, RHI::FTextureSlice{}, Readback, SourceWidth);
             RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
             // Waits on this copy only, since a device-wide idle would stall unrelated in-flight frame work.
-            RHI::SubmitAndWait(CL);
-            RHI::ResetCommandList(CL);
+            const uint64 CaptureValue = RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
+            RHI::WaitSemaphore(RHI::GetQueueTimeline(RHI::EQueueType::Graphics), CaptureValue);
         };
 
         RecordCapture();
@@ -123,7 +123,7 @@ namespace Lumina
                 static_cast<const uint8*>(MappedMemory), SourceWidth, SourceHeight, (size_t)SourceWidth * 4u);
         }
 
-        RHI::Core::Retire(Readback);
+        RHI::Retire(Readback);
     }
 
     void FEditorTool::Initialize()

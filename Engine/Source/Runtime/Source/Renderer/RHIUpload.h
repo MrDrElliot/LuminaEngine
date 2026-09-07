@@ -52,7 +52,7 @@ namespace Lumina::RHI
         bool IsBatchComplete(uint64 Batch);
 
         // Drop every queued op that would write to this resource, and MUST be called before the resource is
-        // released. Core::BeginFrame drains the retire queue BEFORE it flushes, so an op left pointing at a
+        // released. BeginFrame drains the retire queue BEFORE it flushes, so an op left pointing at a
         // released resource records against a destroyed VkImage / freed address -- and once the handle or the
         // address is recycled, against a different LIVE one, which corrupts silently instead of faulting.
         // Both are cheap no-ops while nothing is queued, which is the common case on the release paths.

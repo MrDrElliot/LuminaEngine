@@ -15,6 +15,33 @@
 
 namespace Lumina
 {
+    namespace
+    {
+        bool IsStageRequired(const CMaterial* Material, EMaterialShaderStage Stage)
+        {
+            return Material->IsStageRequired(Stage);
+        }
+
+        const char* StageDisplayName(EMaterialShaderStage Stage)
+        {
+            switch (Stage)
+            {
+            case EMaterialShaderStage::Pixel:                return "Pixel";
+            case EMaterialShaderStage::Vertex:               return "Vertex";
+            case EMaterialShaderStage::MeshShadow:           return "Shadow Geometry";
+            case EMaterialShaderStage::MeshBase:             return "Base Geometry";
+            case EMaterialShaderStage::VisBufferMesh:        return "VisBuffer Geometry";
+            case EMaterialShaderStage::VisBufferMeshMasked:  return "Masked VisBuffer Geometry";
+            case EMaterialShaderStage::MaskedVisBufferPixel: return "Masked VisBuffer Pixel";
+            case EMaterialShaderStage::Deferred:             return "Deferred";
+            case EMaterialShaderStage::MomentPixel:          return "Moment Pixel";
+            case EMaterialShaderStage::MeshShadowMasked:     return "Masked Shadow Geometry";
+            case EMaterialShaderStage::ShadowMaskedPixel:    return "Masked Shadow Pixel";
+            default:                                         return "Unknown";
+            }
+        }
+    }
+
     bool MakeMaterialPermutationTarget(const CMaterial* Material, uint64 Key, FMaterialCompileTarget& OutTarget)
     {
         if (Material == nullptr || Material->StaticSwitches.empty())
@@ -42,6 +69,9 @@ namespace Lumina
         {
             return false;
         }
+
+        // A programmatic type change (importer, script) never went through PostPropertyChange.
+        Material->NormalizeRenderStateForDomain();
 
         Compiler.SetMaterialType(Material->GetMaterialType());
         Compiler.SetMasked(Material->GetBlendMode() == EBlendMode::Masked);
@@ -146,14 +176,22 @@ namespace Lumina
             }
         };
 
-        // PBR geometry is task and mesh, while UI, PostProcess, Decal and Terrain still raster a vertex stage.
-        if (Material->GetMaterialType() != EMaterialType::PBR)
+        // Dropped up front, so a domain switch cannot leave the previous domain's stages behind.
+        for (size_t s = 0; s < (size_t)EMaterialShaderStage::Count; ++s)
+        {
+            if (!IsStageRequired(Material, (EMaterialShaderStage)s))
+            {
+                ClearStage((EMaterialShaderStage)s);
+            }
+        }
+
+        if (IsStageRequired(Material, EMaterialShaderStage::Vertex))
         {
             ShaderCompiler->CompilerShaderRaw(Result.VertexSource, Move(VSOptions), CommitStage(EMaterialShaderStage::Vertex));
         }
 
         // Separate compiles rather than spec-constant variants, since they declare different OUTPUT types.
-        if (Material->GetMaterialType() == EMaterialType::PBR)
+        if (MaterialDomain::IsMeshlet(Material->GetMaterialType()))
         {
             const FString MeshShaderDir = Paths::GetEngineResourceDirectory() + "/Shaders/MaterialShader/";
 
@@ -179,11 +217,7 @@ namespace Lumina
                 ShaderCompiler->CompilerShaderRaw(*Geo.Source, Move(CompileOptions), CommitStage(Geo.Stage));
             }
 
-            ClearStage(EMaterialShaderStage::MaskedVisBufferPixel);
-            ClearStage(EMaterialShaderStage::VisBufferMeshMasked);
-            ClearStage(EMaterialShaderStage::MeshShadowMasked);
-            ClearStage(EMaterialShaderStage::ShadowMaskedPixel);
-            if (Material->GetBlendMode() == EBlendMode::Masked)
+            if (IsStageRequired(Material, EMaterialShaderStage::VisBufferMeshMasked))
             {
                 // Masked geometry widens the output back to the full interpolant set its pixel shader reads.
                 FShaderCompileOptions VisMaskedOptions; VisMaskedOptions.DebugName = MatName + " [VBMM]";
@@ -214,11 +248,7 @@ namespace Lumina
 
         ShaderCompiler->CompilerShaderRaw(Result.PixelSource, Move(Options), CommitStage(EMaterialShaderStage::Pixel));
 
-        // Cleared first, so a translucent to opaque recompile drops stale binaries.
-        ClearStage(EMaterialShaderStage::MomentPixel);
-        const bool bNeedsMomentStage = Material->GetMaterialType() == EMaterialType::PBR
-                                    && Material->IsMomentResolved();
-        if (bNeedsMomentStage)
+        if (IsStageRequired(Material, EMaterialShaderStage::MomentPixel))
         {
             FShaderCompileOptions MomentOptions;
             MomentOptions.DebugName = MatName + " [MOM]";
@@ -247,12 +277,8 @@ namespace Lumina
             return;
         }
 
-        // A pure function of type and blend mode, neither of which can change while stages are in flight.
-        const bool bNeedsMomentStage = Material->GetMaterialType() == EMaterialType::PBR
-                                    && Material->IsMomentResolved();
-
         // Checked against the permutation's own bytecode, since GetStageForKey would fall back and pass.
-        auto StageEmpty = [&](EMaterialShaderStage Stage, const char* StageName) -> bool
+        auto StageEmpty = [&](EMaterialShaderStage Stage) -> bool
         {
             const TVector<uint32>& Binaries = Target.bPermutation
                                             ? Material->GetPermutationStageBinaries(Target.Key, Stage)
@@ -263,36 +289,20 @@ namespace Lumina
             }
             EdNodeGraph::FError Error;
             Error.Name        = "Shader Stage Failed";
-            Error.Description  = FString("The ") + StageName + " shader stage produced no output (compile failed).";
+            Error.Description  = FString("The ") + StageDisplayName(Stage) + " shader stage produced no output (compile failed).";
             Result.Errors.push_back(Error);
             return true;
         };
 
+        // No required stage has a fallback, so a missing one draws nothing rather than taking another path.
         bool bStageFailed = false;
-        bStageFailed |= StageEmpty(EMaterialShaderStage::Pixel, "Pixel");
-        if (bNeedsMomentStage)
+        for (size_t s = 0; s < (size_t)EMaterialShaderStage::Count; ++s)
         {
-            // Without it the moment pass skips this material and shading reconstructs from absent moments.
-            bStageFailed |= StageEmpty(EMaterialShaderStage::MomentPixel, "Moment Pixel");
-        }
-        if (Material->GetMaterialType() == EMaterialType::PBR)
-        {
-            // There is no fallback, so a material missing one renders nothing rather than taking another path.
-            bStageFailed |= StageEmpty(EMaterialShaderStage::Deferred, "Deferred");
-            bStageFailed |= StageEmpty(EMaterialShaderStage::VisBufferMesh, "VisBuffer Geometry");
-            bStageFailed |= StageEmpty(EMaterialShaderStage::MeshShadow, "Shadow Geometry");
-            bStageFailed |= StageEmpty(EMaterialShaderStage::MeshBase, "Base Geometry");
-            if (Material->GetBlendMode() == EBlendMode::Masked)
+            const EMaterialShaderStage Stage = (EMaterialShaderStage)s;
+            if (IsStageRequired(Material, Stage))
             {
-                bStageFailed |= StageEmpty(EMaterialShaderStage::MaskedVisBufferPixel, "Masked VisBuffer Pixel");
-                bStageFailed |= StageEmpty(EMaterialShaderStage::VisBufferMeshMasked, "Masked VisBuffer Geometry");
-                bStageFailed |= StageEmpty(EMaterialShaderStage::MeshShadowMasked, "Masked Shadow Geometry");
-                bStageFailed |= StageEmpty(EMaterialShaderStage::ShadowMaskedPixel, "Masked Shadow Pixel");
+                bStageFailed |= StageEmpty(Stage);
             }
-        }
-        else
-        {
-            bStageFailed |= StageEmpty(EMaterialShaderStage::Vertex, "Vertex");
         }
         if (bStageFailed)
         {
@@ -308,6 +318,8 @@ namespace Lumina
 
         // The GUID comes from the live object, so a later resolve skips the registry and survives a rename.
         {
+            FRecursiveScopeLock TextureLock(Material->TextureSlotMutex);
+
             TVector<TObjectPtr<CTexture>> BoundTextures;
             Compiler.GetBoundTextures(BoundTextures);
 

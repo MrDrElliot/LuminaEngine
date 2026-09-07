@@ -935,7 +935,7 @@ namespace Grain
             }
 
             std::memcpy(Source.Cpu, Data, size_t(Size));
-            RHI::CmdMemcpy(CL, Dest.Gpu, Source.Gpu, size_t(Size));
+            RHI::CmdMemcpy(CL, { Dest.Gpu, size_t(Size) }, { Source.Gpu, size_t(Size) });
             Staging.push_back(Source);
             return true;
         };
@@ -948,12 +948,12 @@ namespace Grain
             Stage(PayloadAlloc, Payload.data(), Payload.size() * sizeof(uint32));
 
         RHI::Barriers::TransferToAll(CL);
-        RHI::Submit(CL);
-        RHI::WaitDeviceIdle();
+        const uint64 Value = RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
+        RHI::WaitSemaphore(RHI::GetQueueTimeline(RHI::EQueueType::Graphics), Value);
 
         for (const RHI::FGPUAllocation& Source : Staging)
         {
-            RHI::Core::Retire(Source);
+            RHI::Retire(Source);
         }
 
         if (!bStaged)
@@ -972,7 +972,7 @@ namespace Grain
         {
             if (Allocation->Gpu != 0)
             {
-                RHI::Core::Retire(*Allocation);
+                RHI::Retire(*Allocation);
                 *Allocation = {};
             }
         }

@@ -255,7 +255,6 @@ namespace Breakout
     bool FRenderer::Initialize(EFormat InSwapchainFormat)
     {
         SwapchainFormat = InSwapchainFormat;
-        DepthState = RHI::CreateDepthStencil(RHI::FDepthStencilDesc{});
 
         AlphaQuads.reserve(8192);
         AdditiveQuads.reserve(8192);
@@ -316,14 +315,10 @@ namespace Breakout
         {
             if (RHI::IsValid(Pipeline))
             {
-                RHI::Core::Retire(Pipeline);
+                RHI::Retire(Pipeline);
             }
         }
 
-        if (RHI::IsValid(DepthState))
-        {
-            RHI::FreeH(DepthState);
-        }
     }
 
     void FRenderer::ReleaseTargets()
@@ -1142,8 +1137,7 @@ namespace Breakout
     void FRenderer::DrawScene(RHI::FCmdListH CL, const FUIntVector2& Extent, float RealTime, const FGameState& State)
     {
         RHI::CmdBeginMarker(CL, "Breakout.Scene");
-        RHI::Utils::BeginScreenPass(CL, { .Target = SceneTarget.Texture, .Extent = Extent,
-            .DepthState = DepthState });
+        RHI::Utils::BeginScreenPass(CL, { .Target = SceneTarget.Texture, .Extent = Extent, });
 
         const FBackgroundArgs Background
         {
@@ -1159,7 +1153,7 @@ namespace Breakout
             .Fever       = State.FeverTimer > 0.0f ? Math::Min(1.0f, State.FeverTimer * 2.0f) : 0.0f,
         };
 
-        RHI::Utils::DrawFullscreen(CL, BackgroundPipeline, RHI::Core::CopyTransient(Background));
+        RHI::Utils::DrawFullscreen(CL, BackgroundPipeline, RHI::CopyTransient(Background));
 
         const RHI::FRect FieldRect
         {
@@ -1182,16 +1176,16 @@ namespace Breakout
 
         if (!AlphaQuads.empty())
         {
-            Args.Instances = RHI::Core::CopyTransientArray(AlphaQuads.data(), AlphaQuads.size());
+            Args.Instances = RHI::CopyTransientArray(AlphaQuads.data(), AlphaQuads.size()).Address;
             RHI::CmdSetPipeline(CL, QuadAlphaPipeline);
-            RHI::CmdDraw(CL, RHI::Core::CopyTransient(Args), 6, uint32(AlphaQuads.size()), 0, 0);
+            RHI::CmdDraw(CL, RHI::CopyTransient(Args), 6, uint32(AlphaQuads.size()), 0, 0);
         }
 
         if (!AdditiveQuads.empty())
         {
-            Args.Instances = RHI::Core::CopyTransientArray(AdditiveQuads.data(), AdditiveQuads.size());
+            Args.Instances = RHI::CopyTransientArray(AdditiveQuads.data(), AdditiveQuads.size()).Address;
             RHI::CmdSetPipeline(CL, QuadAdditivePipeline);
-            RHI::CmdDraw(CL, RHI::Core::CopyTransient(Args), 6, uint32(AdditiveQuads.size()), 0, 0);
+            RHI::CmdDraw(CL, RHI::CopyTransient(Args), 6, uint32(AdditiveQuads.size()), 0, 0);
         }
 
         RHI::CmdEndRenderPass(CL);
@@ -1221,8 +1215,8 @@ namespace Breakout
             };
 
             RHI::Utils::BeginScreenPass(CL, { .Target = BloomChain.Texture(Level),
-                .Extent = BloomChain.Extent(Level), .DepthState = DepthState });
-            RHI::Utils::DrawFullscreen(CL, DownsamplePipeline, RHI::Core::CopyTransient(Args));
+                .Extent = BloomChain.Extent(Level) });
+            RHI::Utils::DrawFullscreen(CL, DownsamplePipeline, RHI::CopyTransient(Args));
             RHI::Utils::EndScreenPass(CL);
             RHI::Barriers::RasterToRead(CL);
         }
@@ -1240,9 +1234,9 @@ namespace Breakout
             };
 
             RHI::Utils::BeginScreenPass(CL, { .Target = BloomChain.Texture(Level - 1),
-                .Extent = BloomChain.Extent(Level - 1), .DepthState = DepthState,
+                .Extent = BloomChain.Extent(Level - 1),
                 .LoadOp = RHI::ELoadOp::Load });
-            RHI::Utils::DrawFullscreen(CL, UpsamplePipeline, RHI::Core::CopyTransient(Args));
+            RHI::Utils::DrawFullscreen(CL, UpsamplePipeline, RHI::CopyTransient(Args));
             RHI::Utils::EndScreenPass(CL);
             RHI::Barriers::RasterToRead(CL);
         }
@@ -1276,8 +1270,8 @@ namespace Breakout
         };
 
         RHI::CmdBeginMarker(CL, "Breakout.Composite");
-        RHI::Utils::BeginScreenPass(CL, { .Target = SwapImage, .Extent = Extent, .DepthState = DepthState });
-        RHI::Utils::DrawFullscreen(CL, CompositePipeline, RHI::Core::CopyTransient(Args));
+        RHI::Utils::BeginScreenPass(CL, { .Target = SwapImage, .Extent = Extent });
+        RHI::Utils::DrawFullscreen(CL, CompositePipeline, RHI::CopyTransient(Args));
         RHI::Utils::EndScreenPass(CL);
         RHI::CmdEndMarker(CL);
     }

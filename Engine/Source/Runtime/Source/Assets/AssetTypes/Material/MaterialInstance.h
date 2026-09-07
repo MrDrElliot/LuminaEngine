@@ -91,23 +91,17 @@ namespace Lumina
         FShaderH GetPixelShader() const override;
 
         EMaterialType GetMaterialType() const override;
+        bool IsReadyForRender() const override;
         bool DoesCastShadows() const override;
         bool IsTwoSided() const override;
-        bool IsTranslucent() override;
-        bool IsMasked() override;
-        bool IsAdditive() override;
-        bool IsOpaque() override;
         bool IsMomentResolved() override;
         bool IsUnorderedBlend() override;
         bool ReceivesDecals() const override;
         bool WritesDepth() const override;
         bool IsShadowOnly() const override;
-        bool IsUnlit() override;
-        bool DisableDepthTest() override;
         EBlendMode GetBlendMode() override;
         EMaterialShadingModel GetShadingModel() override;
-        float GetOpacityMaskClipValue() override;
-        
+
 
         void PostLoad() override;
         void OnDestroy() override;

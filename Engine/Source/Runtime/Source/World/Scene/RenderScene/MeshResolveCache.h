@@ -130,6 +130,12 @@ namespace Lumina
 
         FORCEINLINE uint32 GetTableGeneration() const { return TableGeneration; }
 
+        // TableGeneration at this entry's last rebuild that came out resolved; 0 if never.
+        FORCEINLINE uint32 GetResolvedAtGeneration(uint32 Handle) const
+        {
+            return Handle < (uint32)ResolvedAtGeneration.size() ? ResolvedAtGeneration[Handle] : 0u;
+        }
+
         // Stamp each component compares against; a mismatch means "re-resolve me".
         static FORCEINLINE uint32 GetEpoch() { return Epoch.load(std::memory_order_acquire); }
 
@@ -162,6 +168,7 @@ namespace Lumina
 
         // Parallel to Entries. See GetEntryState.
         TVector<uint32>                     EntryStates;
+        TVector<uint32>                     ResolvedAtGeneration;
 
         THashMap<const void*, TVector<uint32>> HandlesByDependency;
 

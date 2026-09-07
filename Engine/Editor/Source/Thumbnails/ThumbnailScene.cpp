@@ -184,12 +184,12 @@ namespace Lumina
 
             RHI::FCmdListH CL = RHI::OpenCommandList();
             RHI::CmdBarrier(CL, RHI::EStageFlags::AllCommands, RHI::EStageFlags::Transfer);
-            RHI::CmdCopyTextureToMemory(CL, Output.Texture, RHI::FTextureSlice{}, Out.Readback.Gpu, Out.Width);
+            RHI::CmdCopyTextureToMemory(CL, Output.Texture, RHI::FTextureSlice{}, Out.Readback, Out.Width);
             RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
 
             // Submits WITHOUT waiting and keeps the timeline value, so the caller can poll instead of blocking.
-            Out.Semaphore = RHI::Core::GetQueueTimeline(RHI::EQueueType::Graphics);
-            Out.Value     = RHI::Core::SubmitOn(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
+            Out.Semaphore = RHI::GetQueueTimeline(RHI::EQueueType::Graphics);
+            Out.Value     = RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
         }
 
         return true;
@@ -209,7 +209,7 @@ namespace Lumina
                 In.Width, In.Height, (size_t)In.Width * 4u);
         }
 
-        RHI::Core::Retire(In.Readback);
+        RHI::Retire(In.Readback);
         In.Readback = {};
         return MappedMemory != nullptr;
     }
@@ -221,7 +221,7 @@ namespace Lumina
         {
             if (Local.Readback.Gpu != 0)
             {
-                RHI::Core::Retire(Local.Readback);
+                RHI::Retire(Local.Readback);
             }
             return false;
         }
@@ -243,7 +243,7 @@ namespace Lumina
         {
             if (New->Readback.Gpu != 0)
             {
-                RHI::Core::Retire(New->Readback);
+                RHI::Retire(New->Readback);
             }
             return false;
         }
@@ -291,7 +291,7 @@ namespace Lumina
         RHI::WaitSemaphore(Pending->Semaphore, Pending->Value);
         if (Pending->Readback.Gpu != 0)
         {
-            RHI::Core::Retire(Pending->Readback);
+            RHI::Retire(Pending->Readback);
         }
         Pending = nullptr;
     }

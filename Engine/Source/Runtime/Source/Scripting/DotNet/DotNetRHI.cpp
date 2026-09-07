@@ -108,20 +108,14 @@ LUMINA_DOTNET_EXPORT(RHI::FGPUAllocation, RHI_Malloc)(uint64 Size, uint64 Alignm
     return Allocation;
 }
 
-LUMINA_DOTNET_EXPORT(void, RHI_Retire)(RHI::FGPUAllocation Allocation) { RHI::Core::Retire(Allocation); }
+LUMINA_DOTNET_EXPORT(void, RHI_Retire)(RHI::FGPUAllocation Allocation) { RHI::Retire(Allocation); }
 
-LUMINA_DOTNET_EXPORT(void, RHI_FreeSemaphore)(RHI::FSemaphoreH H)       { RHI::Core::RetireCallback([H] { RHI::FreeH(H); }); }
-LUMINA_DOTNET_EXPORT(void, RHI_RetirePipeline)(RHI::FPipelineH H)       { RHI::Core::Retire(H); }
-LUMINA_DOTNET_EXPORT(void, RHI_RetireTexture)(RHI::FTextureH H)         { RHI::Core::Retire(H); }
-LUMINA_DOTNET_EXPORT(void, RHI_FreeTextureHeap)(RHI::FTextureHeapH H)   { RHI::Core::RetireCallback([H] { RHI::FreeH(H); }); }
-LUMINA_DOTNET_EXPORT(void, RHI_FreeDepthStencil)(RHI::FDepthStencilH H) { RHI::FreeH(H); }
+LUMINA_DOTNET_EXPORT(void, RHI_RetireSemaphore)(RHI::FSemaphoreH H)     { RHI::Retire(H); }
+LUMINA_DOTNET_EXPORT(void, RHI_RetirePipeline)(RHI::FPipelineH H)       { RHI::Retire(H); }
+LUMINA_DOTNET_EXPORT(void, RHI_RetireTexture)(RHI::FTextureH H)         { RHI::Retire(H); }
+LUMINA_DOTNET_EXPORT(void, RHI_RetireTextureHeap)(RHI::FTextureHeapH H) { RHI::Retire(H); }
 
 // Resources.
-
-LUMINA_DOTNET_EXPORT(RHI::FDepthStencilH, RHI_CreateDepthStencil)(RHI::FDepthStencilDesc Desc)
-{
-    return RHI::CreateDepthStencil(Desc);
-}
 
 LUMINA_DOTNET_EXPORT(RHI::FSemaphoreH, RHI_CreateSemaphore)(uint64 Value)
 {
@@ -186,17 +180,17 @@ LUMINA_DOTNET_EXPORT(uint32, RHI_HeapWriteSampler)(RHI::FTextureHeapH Heap, RHI:
 LUMINA_DOTNET_EXPORT(void, RHI_HeapFreeTexture)(RHI::FTextureHeapH Heap, uint32 Slot)
 {
     RHI::HeapUnbindTexture(Heap, Slot);
-    RHI::Core::RetireCallback([Heap, Slot] { RHI::HeapFreeTexture(Heap, Slot); });
+    RHI::RetireCallback([Heap, Slot] { RHI::HeapFreeTexture(Heap, Slot); });
 }
 
 LUMINA_DOTNET_EXPORT(void, RHI_HeapFreeRWTexture)(RHI::FTextureHeapH Heap, uint32 Slot)
 {
-    RHI::Core::RetireCallback([Heap, Slot] { RHI::HeapFreeRWTexture(Heap, Slot); });
+    RHI::RetireCallback([Heap, Slot] { RHI::HeapFreeRWTexture(Heap, Slot); });
 }
 
 LUMINA_DOTNET_EXPORT(void, RHI_HeapFreeSampler)(RHI::FTextureHeapH Heap, uint32 Slot)
 {
-    RHI::Core::RetireCallback([Heap, Slot] { RHI::HeapFreeSampler(Heap, Slot); });
+    RHI::RetireCallback([Heap, Slot] { RHI::HeapFreeSampler(Heap, Slot); });
 }
 
 LUMINA_DOTNET_EXPORT(int32, RHI_HeapTextureCount)(RHI::FTextureHeapH Heap)
@@ -229,20 +223,13 @@ LUMINA_DOTNET_EXPORT(void, RHI_ResetCommandList)(RHI::FCmdListH CommandList)
     RHI::ResetCommandList(CommandList);
 }
 
-LUMINA_DOTNET_EXPORT(void, RHI_Submit)(RHI::FCmdListH CommandList, int32 Type)
-{
-    RHI::Submit(CommandList, (RHI::EQueueType)Type);
-}
-
-LUMINA_DOTNET_EXPORT(void, RHI_SubmitLists)(int32 Queue,
+LUMINA_DOTNET_EXPORT(uint64, RHI_SubmitLists)(int32 Queue,
     const RHI::FCmdListH* CommandLists, int32 NumLists,
-    const RHI::FSemaphoreInfo* Waits, int32 NumWaits,
-    const RHI::FSemaphoreInfo* Signals, int32 NumSignals)
+    const RHI::FSemaphoreInfo* Waits, int32 NumWaits)
 {
-    RHI::Submit((RHI::EQueueType)Queue,
+    return RHI::Submit((RHI::EQueueType)Queue,
         TSpan<const RHI::FCmdListH>(CommandLists, (size_t)(NumLists > 0 ? NumLists : 0)),
-        TSpan<const RHI::FSemaphoreInfo>(Waits, (size_t)(NumWaits > 0 ? NumWaits : 0)),
-        TSpan<const RHI::FSemaphoreInfo>(Signals, (size_t)(NumSignals > 0 ? NumSignals : 0)));
+        TSpan<const RHI::FSemaphoreInfo>(Waits, (size_t)(NumWaits > 0 ? NumWaits : 0)));
 }
 
 // Device and memory introspection.
@@ -303,17 +290,17 @@ LUMINA_DOTNET_EXPORT(FMemoryHeapWire, RHI_GetMemoryHeap)(int32 HeapIndex)
 
 LUMINA_DOTNET_EXPORT(RHI::FTextureHeapH, RHI_CoreGetGlobalHeap)()
 {
-    return RHI::Core::GetGlobalHeap();
+    return RHI::GetGlobalHeap();
 }
 
 LUMINA_DOTNET_EXPORT(RHI::FTransientAlloc, RHI_CoreAllocTransient)(uint64 Size, uint64 Alignment)
 {
-    return RHI::Core::AllocTransient(Size, Alignment);
+    return RHI::AllocTransient(Size, Alignment);
 }
 
 LUMINA_DOTNET_EXPORT(void, RHI_CoreDeferredFree)(RHI::FGPUAllocation Memory)
 {
-    RHI::Core::Retire(Memory);
+    RHI::Retire(Memory);
 }
 
 LUMINA_DOTNET_EXPORT(RHI::FPipelineH, RHI_CoreCreateGraphicsPipeline)(
@@ -321,34 +308,34 @@ LUMINA_DOTNET_EXPORT(RHI::FPipelineH, RHI_CoreCreateGraphicsPipeline)(
     FRasterWire Raster, const RHI::FColorTarget* Targets, int32 NumTargets)
 {
     RHI::FRasterDesc Desc = BuildRaster(Raster, Targets, NumTargets);
-    return RHI::Core::CreateGraphicsPipeline(RHIName(Vtx, VtxLen), RHIName(Pix, PixLen), Desc);
+    return RHI::CreateGraphicsPipeline(RHIName(Vtx, VtxLen), RHIName(Pix, PixLen), Desc);
 }
 
 LUMINA_DOTNET_EXPORT(RHI::FPipelineH, RHI_CoreCreateComputePipeline)(const char* Compute, int32 Len)
 {
-    return RHI::Core::CreateComputePipeline(RHIName(Compute, Len));
+    return RHI::CreateComputePipeline(RHIName(Compute, Len));
 }
 
 // Commands, a hot path with the GC transition suppressed on the C# side.
 
 LUMINA_DOTNET_EXPORT(void, RHI_CmdMemcpy)(RHI::FCmdListH CL, RHI::GPUPtr Dest, RHI::GPUPtr Source, uint64 Size)
 {
-    RHI::CmdMemcpy(CL, Dest, Source, (size_t)Size);
+    RHI::CmdMemcpy(CL, { Dest, (size_t)Size }, { Source, (size_t)Size });
 }
 
 LUMINA_DOTNET_EXPORT(void, RHI_CmdMemset)(RHI::FCmdListH CL, RHI::GPUPtr Dest, uint64 Size, uint32 Value)
 {
-    RHI::CmdMemset(CL, Dest, Size, Value);
+    RHI::CmdMemset(CL, { Dest, Size }, Value);
 }
 
 LUMINA_DOTNET_EXPORT(void, RHI_CmdMemzero)(RHI::FCmdListH CL, RHI::GPUPtr Dest, uint64 Size)
 {
-    RHI::CmdMemzero(CL, Dest, Size);
+    RHI::CmdMemzero(CL, { Dest, Size });
 }
 
 LUMINA_DOTNET_EXPORT(void, RHI_CmdWriteMemory)(RHI::FCmdListH CL, RHI::GPUPtr Dest, const void* Data, int32 Size)
 {
-    RHI::CmdWriteMemory(CL, Dest, Data, (uint64)(Size > 0 ? Size : 0));
+    RHI::CmdWriteMemory(CL, { Dest, (uint64)(Size > 0 ? Size : 0) }, Data);
 }
 
 LUMINA_DOTNET_EXPORT(void, RHI_CmdCopyTexture)(RHI::FCmdListH CL, RHI::FTextureH Source, RHI::FTextureSlice SourceSlice, RHI::FTextureH Dest, RHI::FTextureSlice DestSlice)
@@ -356,12 +343,12 @@ LUMINA_DOTNET_EXPORT(void, RHI_CmdCopyTexture)(RHI::FCmdListH CL, RHI::FTextureH
     RHI::CmdCopyTexture(CL, Source, SourceSlice, Dest, DestSlice);
 }
 
-LUMINA_DOTNET_EXPORT(void, RHI_CmdCopyMemoryToTexture)(RHI::FCmdListH CL, RHI::GPUPtr Source, uint32 RowLength, RHI::FTextureH Dest, RHI::FTextureSlice Slice)
+LUMINA_DOTNET_EXPORT(void, RHI_CmdCopyMemoryToTexture)(RHI::FCmdListH CL, RHI::FGPURange Source, uint32 RowLength, RHI::FTextureH Dest, RHI::FTextureSlice Slice)
 {
     RHI::CmdCopyMemoryToTexture(CL, Source, RowLength, Dest, Slice);
 }
 
-LUMINA_DOTNET_EXPORT(void, RHI_CmdCopyTextureToMemory)(RHI::FCmdListH CL, RHI::FTextureH Source, RHI::FTextureSlice Slice, RHI::GPUPtr Dest, uint32 RowLength)
+LUMINA_DOTNET_EXPORT(void, RHI_CmdCopyTextureToMemory)(RHI::FCmdListH CL, RHI::FTextureH Source, RHI::FTextureSlice Slice, RHI::FGPURange Dest, uint32 RowLength)
 {
     RHI::CmdCopyTextureToMemory(CL, Source, Slice, Dest, RowLength);
 }
@@ -407,7 +394,7 @@ LUMINA_DOTNET_EXPORT(void, RHI_CmdBeginRenderPass)(RHI::FCmdListH CL,
 
 LUMINA_DOTNET_EXPORT(void, RHI_CmdEndRenderPass)(RHI::FCmdListH CL)                              { RHI::CmdEndRenderPass(CL); }
 LUMINA_DOTNET_EXPORT(void, RHI_CmdSetTextureHeap)(RHI::FCmdListH CL, RHI::FTextureHeapH Heap)    { RHI::CmdSetTextureHeap(CL, Heap); }
-LUMINA_DOTNET_EXPORT(void, RHI_CmdSetDepthStencilState)(RHI::FCmdListH CL, RHI::FDepthStencilH D){ RHI::CmdSetDepthStencilState(CL, D); }
+LUMINA_DOTNET_EXPORT(void, RHI_CmdSetDepthStencil)(RHI::FCmdListH CL, RHI::FDepthStencilDesc D) { RHI::CmdSetDepthStencil(CL, D); }
 LUMINA_DOTNET_EXPORT(void, RHI_CmdSetFrontFace)(RHI::FCmdListH CL, int32 Front)                  { RHI::CmdSetFrontFace(CL, (RHI::EFrontFace)Front); }
 LUMINA_DOTNET_EXPORT(void, RHI_CmdSetCullMode)(RHI::FCmdListH CL, int32 Mode)                    { RHI::CmdSetCullMode(CL, (RHI::ECullMode)Mode); }
 LUMINA_DOTNET_EXPORT(void, RHI_CmdSetLineWidth)(RHI::FCmdListH CL, float Width)                  { RHI::CmdSetLineWidth(CL, Width); }
@@ -415,24 +402,14 @@ LUMINA_DOTNET_EXPORT(void, RHI_CmdSetPipeline)(RHI::FCmdListH CL, RHI::FPipeline
 LUMINA_DOTNET_EXPORT(void, RHI_CmdSetScissor)(RHI::FCmdListH CL, RHI::FRect Rect)                { RHI::CmdSetScissor(CL, Rect); }
 LUMINA_DOTNET_EXPORT(void, RHI_CmdSetViewport)(RHI::FCmdListH CL, RHI::FRect Rect)               { RHI::CmdSetViewport(CL, Rect); }
 
-LUMINA_DOTNET_EXPORT(void, RHI_CmdSetIndexBuffer)(RHI::FCmdListH CL, RHI::GPUPtr IndexBuffer, uint32 Offset, int32 IndexType)
-{
-    RHI::CmdSetIndexBuffer(CL, IndexBuffer, Offset, (RHI::EIndexType)IndexType);
-}
-
 LUMINA_DOTNET_EXPORT(void, RHI_CmdDispatch)(RHI::FCmdListH CL, RHI::GPUPtr DrawArgs, uint32 GroupX, uint32 GroupY, uint32 GroupZ)
 {
     RHI::CmdDispatch(CL, DrawArgs, GroupX, GroupY, GroupZ);
 }
 
-LUMINA_DOTNET_EXPORT(void, RHI_CmdDispatchIndirect)(RHI::FCmdListH CL, RHI::GPUPtr DrawArgs, uint32 Offset)
+LUMINA_DOTNET_EXPORT(void, RHI_CmdDispatchIndirect)(RHI::FCmdListH CL, RHI::GPUPtr Args, RHI::FGPURange Arguments)
 {
-    RHI::CmdDispatchIndirect(CL, DrawArgs, DrawArgs, Offset);
-}
-
-LUMINA_DOTNET_EXPORT(void, RHI_CmdDispatchIndirect2)(RHI::FCmdListH CL, RHI::GPUPtr Args, RHI::GPUPtr IndirectBuffer, uint32 Offset)
-{
-    RHI::CmdDispatchIndirect(CL, Args, IndirectBuffer, Offset);
+    RHI::CmdDispatchIndirect(CL, Args, Arguments);
 }
 
 LUMINA_DOTNET_EXPORT(void, RHI_CmdDraw)(RHI::FCmdListH CL, RHI::GPUPtr DrawArgs, uint32 VertexCount, uint32 InstanceCount, uint32 FirstVertex, uint32 FirstInstance)
@@ -440,30 +417,20 @@ LUMINA_DOTNET_EXPORT(void, RHI_CmdDraw)(RHI::FCmdListH CL, RHI::GPUPtr DrawArgs,
     RHI::CmdDraw(CL, DrawArgs, VertexCount, InstanceCount, FirstVertex, FirstInstance);
 }
 
-LUMINA_DOTNET_EXPORT(void, RHI_CmdDrawIndexed)(RHI::FCmdListH CL, RHI::GPUPtr IndexBuffer, uint32 IndexOffset, RHI::GPUPtr DrawArgs,
+LUMINA_DOTNET_EXPORT(void, RHI_CmdDrawIndexed)(RHI::FCmdListH CL, RHI::FGPURange Indices, RHI::GPUPtr DrawArgs,
     uint32 IndexCount, uint32 InstanceCount, uint32 FirstIndex, int32 VertexOffset, uint32 FirstInstance, int32 IndexType)
 {
-    RHI::CmdDrawIndexed(CL, IndexBuffer, IndexOffset, DrawArgs, IndexCount, InstanceCount, FirstIndex, VertexOffset, FirstInstance, (RHI::EIndexType)IndexType);
+    RHI::CmdDrawIndexed(CL, Indices, DrawArgs, IndexCount, InstanceCount, FirstIndex, VertexOffset, FirstInstance, (RHI::EIndexType)IndexType);
 }
 
-LUMINA_DOTNET_EXPORT(void, RHI_CmdDrawIndirect)(RHI::FCmdListH CL, RHI::GPUPtr DrawArgs, uint32 Offset, uint32 DrawCount, uint32 Stride)
+LUMINA_DOTNET_EXPORT(void, RHI_CmdDrawIndirect)(RHI::FCmdListH CL, RHI::GPUPtr Args, RHI::FGPURange Arguments, uint32 DrawCount, uint32 Stride)
 {
-    RHI::CmdDrawIndirect(CL, DrawArgs, DrawArgs, Offset, DrawCount, Stride);
+    RHI::CmdDrawIndirect(CL, Args, Arguments, DrawCount, Stride);
 }
 
-LUMINA_DOTNET_EXPORT(void, RHI_CmdDrawIndirect2)(RHI::FCmdListH CL, RHI::GPUPtr Args, RHI::GPUPtr IndirectBuffer, uint32 Offset, uint32 DrawCount, uint32 Stride)
+LUMINA_DOTNET_EXPORT(void, RHI_CmdDrawIndexedIndirect)(RHI::FCmdListH CL, RHI::FGPURange Indices, RHI::GPUPtr Args, RHI::FGPURange Arguments, uint32 DrawCount, uint32 Stride, int32 IndexType)
 {
-    RHI::CmdDrawIndirect(CL, Args, IndirectBuffer, Offset, DrawCount, Stride);
-}
-
-LUMINA_DOTNET_EXPORT(void, RHI_CmdDrawIndexedIndirect)(RHI::FCmdListH CL, RHI::GPUPtr DrawArgs, uint32 Offset, uint32 DrawCount, uint32 Stride)
-{
-    RHI::CmdDrawIndexedIndirect(CL, DrawArgs, DrawArgs, Offset, DrawCount, Stride);
-}
-
-LUMINA_DOTNET_EXPORT(void, RHI_CmdDrawIndexedIndirect2)(RHI::FCmdListH CL, RHI::GPUPtr Args, RHI::GPUPtr IndirectBuffer, uint32 Offset, uint32 DrawCount, uint32 Stride)
-{
-    RHI::CmdDrawIndexedIndirect(CL, Args, IndirectBuffer, Offset, DrawCount, Stride);
+    RHI::CmdDrawIndexedIndirect(CL, Indices, Args, Arguments, DrawCount, Stride, (RHI::EIndexType)IndexType);
 }
 
 LUMINA_DOTNET_EXPORT(void, RHI_CmdBeginMarker)(RHI::FCmdListH CL, const char* Name, int32 Len)
@@ -491,14 +458,15 @@ static_assert(sizeof(RHI::FStencil) == 5,                        "FStencil mirro
 static_assert(sizeof(RHI::FDepthStencilDesc) == 28,              "FDepthStencilDesc mirror");
 static_assert(sizeof(RHI::FColorTarget) == 9,                    "FColorTarget mirror");
 static_assert(sizeof(RHI::FSpecializationConstant) == 24,        "FSpecializationConstant mirror");
-static_assert(sizeof(RHI::FSemaphoreInfo) == 24,                 "FSemaphoreInfo mirror");
+static_assert(sizeof(RHI::FSemaphoreInfo) == 16,                 "FSemaphoreInfo mirror");
 static_assert(sizeof(RHI::FDrawIndirectArguments) == 16,         "FDrawIndirectArguments mirror");
 static_assert(sizeof(RHI::FDrawIndexedIndirectArguments) == 20,  "FDrawIndexedIndirectArguments mirror");
 static_assert(sizeof(RHI::FDispatchIndirectArguments) == 12,     "FDispatchIndirectArguments mirror");
 static_assert(sizeof(RHI::FRenderAttachment) == 40,              "FRenderAttachment mirror");   // 8-aligned (THandle uint64)
 static_assert(sizeof(RHI::FHeapTextureInfo) == 36,               "FHeapTextureInfo mirror");
-static_assert(sizeof(RHI::FTransientAlloc) == 16,                "FTransientAlloc mirror");
-static_assert(sizeof(RHI::FGPUAllocation) == 32,                 "FGPUAllocation mirror");
+static_assert(sizeof(RHI::FTransientAlloc) == 24,                "FTransientAlloc mirror");
+static_assert(sizeof(RHI::FGPURange) == 16,                      "FGPURange mirror");
+static_assert(sizeof(RHI::FGPUAllocation) == 24,                 "FGPUAllocation mirror");
 static_assert(sizeof(RHI::FGPUMemoryHeapStats) == 48,            "FGPUMemoryHeapStats mirror");
 
 // Handles + GPUPtr must stay 8 bytes (the C# mirrors are readonly structs of a single ulong).
@@ -513,7 +481,6 @@ LE_REGISTER_LAYOUT("RHI::FPipelineH",                   RHI::FPipelineH);
 LE_REGISTER_LAYOUT("RHI::FTextureH",                    RHI::FTextureH);
 LE_REGISTER_LAYOUT("RHI::FTextureHeapH",                RHI::FTextureHeapH);
 LE_REGISTER_LAYOUT("RHI::FSemaphoreH",                  RHI::FSemaphoreH);
-LE_REGISTER_LAYOUT("RHI::FDepthStencilH",               RHI::FDepthStencilH);
 LE_REGISTER_LAYOUT("RHI::FCmdListH",                    RHI::FCmdListH);
 LE_REGISTER_LAYOUT("RHI::GPUPtr",                       RHI::GPUPtr);
 LE_REGISTER_LAYOUT("RHI::FGPUAllocation",               RHI::FGPUAllocation);
@@ -527,6 +494,7 @@ LE_REGISTER_LAYOUT("RHI::FStencil",                     RHI::FStencil);
 LE_REGISTER_LAYOUT("RHI::FDepthStencilDesc",            RHI::FDepthStencilDesc);
 LE_REGISTER_LAYOUT("RHI::FColorTarget",                 RHI::FColorTarget);
 LE_REGISTER_LAYOUT("RHI::FSpecializationConstant",      RHI::FSpecializationConstant);
+LE_REGISTER_LAYOUT("RHI::FGPURange",                   RHI::FGPURange);
 LE_REGISTER_LAYOUT("RHI::FSemaphoreInfo",               RHI::FSemaphoreInfo);
 LE_REGISTER_LAYOUT("RHI::FDrawIndirectArguments",       RHI::FDrawIndirectArguments);
 LE_REGISTER_LAYOUT("RHI::FDrawIndexedIndirectArguments", RHI::FDrawIndexedIndirectArguments);

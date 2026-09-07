@@ -103,7 +103,7 @@ namespace Lumina::RHI
 
         if (Item.Buffer.Gpu != 0)
         {
-            Core::Retire(Item.Buffer);
+            Retire(Item.Buffer);
             Item.Buffer = {};
         }
     }

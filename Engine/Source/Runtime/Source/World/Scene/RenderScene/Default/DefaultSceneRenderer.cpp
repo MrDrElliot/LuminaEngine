@@ -418,7 +418,7 @@ namespace Lumina
             ReleaseViewImages(View);
             if (View.ClusterBuffer)
             {
-                RHI::Core::Retire(View.ClusterBuffer);
+                RHI::Retire(View.ClusterBuffer);
                 View.ClusterBuffer = {};
             }
         }
@@ -438,7 +438,7 @@ namespace Lumina
         {
             if (Buffer)
             {
-                RHI::Core::Retire(Buffer);
+                RHI::Retire(Buffer);
                 Buffer = {};
             }
         };
@@ -480,7 +480,7 @@ namespace Lumina
             // Raw GPUPtr rather than an RHI::FGPUAllocation (CPURead allocation, persistently mapped).
             if (MeshletBoundReadback[Slot].Gpu != 0)
             {
-                RHI::Core::Retire(MeshletBoundReadback[Slot]);
+                RHI::Retire(MeshletBoundReadback[Slot]);
                 MeshletBoundReadback[Slot] = {};
             }
         }
@@ -502,11 +502,11 @@ namespace Lumina
         {
             for (FParticleGPUState& State : States)
             {
-                if (State.ParticleBuffer)     { RHI::Core::Retire(State.ParticleBuffer); }
-                if (State.SpawnCounterBuffer) { RHI::Core::Retire(State.SpawnCounterBuffer); }
-                if (State.AttributeBuffer)    { RHI::Core::Retire(State.AttributeBuffer); }
-                if (State.SortIndexBuffer)    { RHI::Core::Retire(State.SortIndexBuffer); }
-                if (State.SortDrawArgsBuffer) { RHI::Core::Retire(State.SortDrawArgsBuffer); }
+                if (State.ParticleBuffer)     { RHI::Retire(State.ParticleBuffer); }
+                if (State.SpawnCounterBuffer) { RHI::Retire(State.SpawnCounterBuffer); }
+                if (State.AttributeBuffer)    { RHI::Retire(State.AttributeBuffer); }
+                if (State.SortIndexBuffer)    { RHI::Retire(State.SortIndexBuffer); }
+                if (State.SortDrawArgsBuffer) { RHI::Retire(State.SortDrawArgsBuffer); }
             }
         }
         ParticleGPUStates.clear();
@@ -516,7 +516,7 @@ namespace Lumina
         {
             if (Slot.Readback.Gpu != 0)
             {
-                RHI::Core::Retire(Slot.Readback);
+                RHI::Retire(Slot.Readback);
                 Slot.Readback = {};
             }
         }
@@ -525,14 +525,9 @@ namespace Lumina
         // Pipeline + depth-state caches.
         for (auto& [Hash, Pipeline] : PipelineCache)
         {
-            RHI::Core::Retire(Pipeline);
+            RHI::Retire(Pipeline);
         }
         PipelineCache.clear();
-        for (auto& [Hash, State] : DepthStateCache)
-        {
-            RHI::FreeH(State);
-        }
-        DepthStateCache.clear();
     }
 
     namespace
@@ -574,18 +569,9 @@ namespace Lumina
         Frame.PostProcess.ActivePostProcessMaterials.clear();
         for (CMaterialInterface* PPInterface : PendingPostProcessMaterials)
         {
-            if (PPInterface == nullptr || !PPInterface->IsReadyForRender())
-            {
-                continue;
-            }
-            CMaterial* PPMaterial = PPInterface->GetMaterial();
-            if (PPMaterial == nullptr || PPMaterial->GetMaterialType() != EMaterialType::PostProcess)
-            {
-                continue;
-            }
-            const FShaderH VS = PPMaterial->GetVertexShader();
-            const FShaderH PS = PPMaterial->GetPixelShader();
-            if (VS == nullptr || PS == nullptr)
+            FShaderH VS;
+            FShaderH PS;
+            if (PPInterface == nullptr || !PPInterface->ResolveDomainShaders(EMaterialType::PostProcess, VS, PS))
             {
                 continue;
             }
@@ -1167,7 +1153,7 @@ namespace Lumina
         }
 
         RHI::FCmdListH CL = RHI::OpenCommandList();
-        RHI::CmdSetTextureHeap(CL, RHI::Core::GetGlobalHeap());
+        RHI::CmdSetTextureHeap(CL, RHI::GetGlobalHeap());
         // Projection bakes the Vulkan Y-flip, so CCW-wound geometry lands clockwise in framebuffer space.
         RHI::CmdSetFrontFace(CL, RHI::EFrontFace::CW);
         
@@ -1529,7 +1515,7 @@ namespace Lumina
                     CurrentCameraEarlyView = Capture.CameraViewIndex;
 
                     SetSceneRoot(CL, View,
-                        RHI::Core::CopyTransient(MakeSecondaryViewGlobals(Capture.SceneGlobalData)));
+                        RHI::CopyTransient(MakeSecondaryViewGlobals(Capture.SceneGlobalData)));
 
                     RenderCaptureView(CL);
                 }
@@ -1555,7 +1541,7 @@ namespace Lumina
         RHI::CmdBarrier(CL, RHI::EStageFlags::Compute | RHI::EStageFlags::Transfer, RHI::EStageFlags::Transfer);
         SnapshotMotionState(CL);
 
-        RHI::Core::Submit(CL);
+        RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
 
         RenderFrame = nullptr;
     }
@@ -1622,7 +1608,7 @@ namespace Lumina
             CurrentCameraEarlyView = Bake.FaceCullViews[Face];
 
             SetSceneRoot(CL, View,
-                RHI::Core::CopyTransient(MakeSecondaryViewGlobals(Bake.FaceGlobals[Face])));
+                RHI::CopyTransient(MakeSecondaryViewGlobals(Bake.FaceGlobals[Face])));
 
             if (Frame.Geometry.DrawCommands.empty())
             {
@@ -1876,7 +1862,7 @@ namespace Lumina
         {
             if (Slot.Readback.Gpu != 0)
             {
-                RHI::Core::Retire(Slot.Readback);
+                RHI::Retire(Slot.Readback);
                 Slot.Readback = {};
             }
             Slot.Width = 0;
@@ -2089,16 +2075,8 @@ namespace Lumina
             if (Component.bIgnoreOcclusionCulling) { BaseFlags |= EInstanceFlags::IgnoreOcclusionCulling; }
             Component.CachedBaseFlags = BaseFlags;
 
-            // Only stamp when final; anything still loading re-arms the scan instead.
-            if (Entry.bResolved)
-            {
-                Component.CachedEntryState = Cache.GetEntryState(Handle);
-            }
-            else
-            {
-                Component.CachedEntryState = MESH_RESOLVE_STATE_STALE;
-                FMeshResolveCache::MarkPendingWork();
-            }
+            // An unready entry carries its own token too; the asset that completes it wakes the pass.
+            Component.CachedEntryState = Cache.GetEntryState(Handle);
         }
 
         template <typename TStorage, typename TGetMesh>
@@ -2144,6 +2122,13 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
+        // Recompiles, destroys and epoch bumps all move the generation, so the stale sweep waits for it.
+        const uint32 Generation = FMeshResolveCache::GetPendingGeneration();
+        const bool   bSweep     = Generation != LastDynamicResolveGeneration;
+        LastDynamicResolveGeneration = Generation;
+
+        const uint32 Epoch = FMeshResolveCache::GetEpoch();
+
         auto Storage = Registry.GetStorage<SDynamicMeshComponent>();
         const uint32 Count = (uint32)Storage.GetDenseSize();
 
@@ -2157,29 +2142,24 @@ namespace Lumina
 
             SDynamicMeshComponent& Component = PackedPayloadAt(Storage, i);
 
+            // Dynamic meshes own no cache entry, so an override write is detected from the component alone.
+            const uint32 OverrideHash = HashOverrides(Component);
+            const uint32 DataVersion  = Component.LoadRenderDataVersion();
+
+            if (!bSweep
+                && OverrideHash == Component.CachedMaterialHash
+                && DataVersion == Component.ResolvedRenderDataVersion)
+            {
+                continue;
+            }
+
+            Component.ResolvedRenderDataVersion = DataVersion;
+
             const TSharedPtr<FDynamicMeshRenderData> Data = Component.LoadRenderData();
             if (!Data)
             {
                 continue;
             }
-
-            // Dynamic meshes own no cache entry, so this gate is all there is between recompile and redraw.
-            const TVector<FGeometrySurface>& Geometry = Data->Resource.GeometrySurfaces;
-            uint32 Hash = 2166136261u;
-            for (SIZE_T s = 0; s < Data->Surfaces.size() && s < Geometry.size(); ++s)
-            {
-                const void* Material = Component.GetMaterialForSlot((uint32)Geometry[s].MaterialIndex);
-                const uint64 Bits    = (uint64)(uintptr_t)Material;
-                for (uint32 b = 0; b < 8u; ++b)
-                {
-                    Hash ^= (uint32)((Bits >> (b * 8u)) & 0xFFull);
-                    Hash *= 16777619u;
-                }
-            }
-            // 0 is the never-resolved sentinel, so a real hash must not collide with it.
-            Hash |= 1u;
-
-            const uint32 Epoch = FMeshResolveCache::GetEpoch();
 
             bool bShaderStale = false;
             for (const FResolvedSurface& Surface : Data->Surfaces)
@@ -2191,7 +2171,7 @@ namespace Lumina
                 }
             }
 
-            if (Hash == Component.CachedMaterialHash
+            if (OverrideHash == Component.CachedMaterialHash
                 && Epoch == Component.CachedResolveEpoch
                 && !bShaderStale
                 && Data->bAllMaterialsReady)
@@ -2200,15 +2180,10 @@ namespace Lumina
             }
 
             Component.RefreshResolvedMaterials();
-            Component.CachedMaterialHash  = Hash;
+            Component.CachedMaterialHash  = OverrideHash;
             Component.CachedResolveEpoch  = Epoch;
 
             Tracker.Mark(Entity, EPrimitiveSource::DynamicMesh, EPrimitiveDirty::Data);
-
-            if (!Data->bAllMaterialsReady)
-            {
-                FMeshResolveCache::MarkPendingWork();
-            }
         }
 
         ValidateNoStaleResolves(Registry);
@@ -2351,16 +2326,7 @@ namespace Lumina
                 const FResolvedMesh& Entry = Cache.GetEntry(Handle);
                 Type.CachedMeshletHeaderSlot = Entry.MeshletHeaderSlot;
                 Type.CachedBaseFlags = Type.bReceiveShadow ? EInstanceFlags::ReceiveShadow : EInstanceFlags::None;
-
-                if (Entry.bResolved)
-                {
-                    Type.CachedEntryState = Cache.GetEntryState(Handle);
-                }
-                else
-                {
-                    Type.CachedEntryState = MESH_RESOLVE_STATE_STALE;
-                    FMeshResolveCache::MarkPendingWork();
-                }
+                Type.CachedEntryState = Cache.GetEntryState(Handle);
             }
         }
 
@@ -2447,8 +2413,8 @@ namespace Lumina
 
             ResetGeometry_Extract();
 
-            const uint32 NumPrimitives     = ScenePrimitives.Num();
-            const size_t EstimatedProxies  = (size_t)NumPrimitives * 2;
+            // The gather emits skeletal items only; statics are culled on the GPU from the retained set.
+            const size_t EstimatedProxies  = (size_t)ScenePrimitives.GetSkinnedPrimitiveCount() * 2;
 
             // One command per pipeline batch, not per primitive; the merge emits exactly this many.
             DrawCommands.reserve(ScenePrimitives.GetBatches().Num());
@@ -3213,11 +3179,9 @@ namespace Lumina
                             CMaterialInterface* Candidate = Component.GetMaterialForEmitter(EmitterIdx);
                             if (CMaterialInterface* SpriteMaterial = ResolveParticleSpriteMaterial(Candidate))
                             {
-                                CMaterial* ShaderOwner = SpriteMaterial->GetMaterial();
-                                const uint64 SwitchKey = SpriteMaterial->GetStaticSwitchKey();
-                                const FShaderH SpriteVS = ShaderOwner->GetStageForKey(EMaterialShaderStage::Vertex, SwitchKey);
-                                const FShaderH SpritePS = ShaderOwner->GetStageForKey(EMaterialShaderStage::Pixel, SwitchKey);
-                                if (SpriteVS != nullptr && SpritePS != nullptr)
+                                FShaderH SpriteVS;
+                                FShaderH SpritePS;
+                                if (SpriteMaterial->ResolveDomainShaders(EMaterialType::Particle, SpriteVS, SpritePS))
                                 {
                                     Item.MaterialVertexShader = SpriteVS;
                                     Item.MaterialPixelShader  = SpritePS;
@@ -3247,15 +3211,13 @@ namespace Lumina
                 DecalView.ForEach([&](ECS::FEntity Entity, const SDecalComponent& Decal)
                 {
                     CMaterialInterface* Material = Decal.DecalMaterial.Get();
-                    if (Material == nullptr || !Material->IsReadyForRender())
+                    FShaderH DecalVS;
+                    FShaderH DecalPS;
+                    if (Material == nullptr || !Material->ResolveDomainShaders(EMaterialType::Decal, DecalVS, DecalPS))
                     {
                         return;
                     }
                     CMaterial* ShaderOwner = Material->GetMaterial();
-                    if (ShaderOwner == nullptr || ShaderOwner->GetMaterialType() != EMaterialType::Decal)
-                    {
-                        return;
-                    }
                     const int32 MaterialIndex = Material->GetMaterialIndex();
                     if (MaterialIndex < 0)
                     {
@@ -4383,12 +4345,12 @@ namespace Lumina
             SceneRootShared = FSceneRoot{};
             // Only the live prefix of each array reaches the ring; the header carries where they landed.
             LightData.LightsAddress = (LightData.NumLights > 0)
-                ? RHI::Core::CopyTransientArray(Frame.Lighting.Lights.data(), LightData.NumLights)
+                ? RHI::CopyTransientArray(Frame.Lighting.Lights.data(), LightData.NumLights).Address
                 : 0;
             LightData.ShadowsAddress = (LightData.NumShadows > 0)
-                ? RHI::Core::CopyTransientArray(Frame.Lighting.Shadows.data(), LightData.NumShadows)
+                ? RHI::CopyTransientArray(Frame.Lighting.Shadows.data(), LightData.NumShadows).Address
                 : 0;
-            SceneBindings.Lights = RHI::Core::CopyTransient(LightData);
+            SceneBindings.Lights = RHI::CopyTransient(LightData);
             if (VisibleInstanceRing[CurrentFrameSlot])
             {
                 SceneBindings.Instances = VisibleInstanceRing[CurrentFrameSlot].Gpu;
@@ -4414,15 +4376,15 @@ namespace Lumina
             }
             if (!BillboardInstances.empty())
             {
-                SceneRootShared.Billboards = RHI::Core::CopyTransientArray(BillboardInstances.data(), BillboardInstances.size());
+                SceneRootShared.Billboards = RHI::CopyTransientArray(BillboardInstances.data(), BillboardInstances.size()).Address;
             }
             if (!CullViews.empty())
             {
-                SceneRootShared.CullViews = RHI::Core::CopyTransientArray(CullViews.data(), CullViews.size());
+                SceneRootShared.CullViews = RHI::CopyTransientArray(CullViews.data(), CullViews.size()).Address;
             }
             if (!Frame.Primitives.WidgetInstances.empty())
             {
-                SceneRootShared.Widgets = RHI::Core::CopyTransientArray(Frame.Primitives.WidgetInstances.data(), Frame.Primitives.WidgetInstances.size());
+                SceneRootShared.Widgets = RHI::CopyTransientArray(Frame.Primitives.WidgetInstances.data(), Frame.Primitives.WidgetInstances.size()).Address;
             }
             // Splines are small and bounded, so the shared transient ring is the right home.
             NumActiveSplines       = (uint32)Frame.Splines.Splines.size();
@@ -4431,17 +4393,17 @@ namespace Lumina
             SplineSampleBufferAddr = 0;
             if (NumActiveSplines > 0)
             {
-                SplineBufferAddr = RHI::Core::CopyTransientArray(Frame.Splines.Splines.data(),
-                                                                 Frame.Splines.Splines.size());
+                SplineBufferAddr = RHI::CopyTransientArray(Frame.Splines.Splines.data(),
+                                                                 Frame.Splines.Splines.size()).Address;
                 if (!Frame.Splines.Points.empty())
                 {
-                    SplinePointBufferAddr = RHI::Core::CopyTransientArray(Frame.Splines.Points.data(),
-                                                                          Frame.Splines.Points.size());
+                    SplinePointBufferAddr = RHI::CopyTransientArray(Frame.Splines.Points.data(),
+                                                                          Frame.Splines.Points.size()).Address;
                 }
                 if (!Frame.Splines.Samples.empty())
                 {
-                    SplineSampleBufferAddr = RHI::Core::CopyTransientArray(Frame.Splines.Samples.data(),
-                                                                           Frame.Splines.Samples.size());
+                    SplineSampleBufferAddr = RHI::CopyTransientArray(Frame.Splines.Samples.data(),
+                                                                           Frame.Splines.Samples.size()).Address;
                 }
             }
 
@@ -4450,8 +4412,8 @@ namespace Lumina
             if (NumActiveProbes > 0)
             {
                 InitReflectionProbeTargets();
-                ProbeBufferAddr = RHI::Core::CopyTransientArray(Frame.ReflectionProbes.Probes.data(),
-                                                                Frame.ReflectionProbes.Probes.size());
+                ProbeBufferAddr = RHI::CopyTransientArray(Frame.ReflectionProbes.Probes.data(),
+                                                                Frame.ReflectionProbes.Probes.size()).Address;
             }
 
             SceneRootShared.Materials          = Render().GetMaterialManager().GetMaterialBuffer();
@@ -4483,7 +4445,7 @@ namespace Lumina
 
             PublishFogGlobals(SceneGlobalData);
 
-            SetSceneRoot(CL, *CurrentView, RHI::Core::CopyTransient(SceneGlobalData));
+            SetSceneRoot(CL, *CurrentView, RHI::CopyTransient(SceneGlobalData));
 
             DispatchGPUSceneCull(CL, Frame);
         }
@@ -4843,35 +4805,10 @@ namespace Lumina
                 MeshComponent.LastRenderedTime = WorldTime;
             }
 
-            CMesh* Mesh = MeshComponent.SkeletalMesh;
-            if (!IsValid(Mesh))
-            {
-                continue;
-            }
+            // Both counts were cached at sync; a skeleton swap re-syncs the primitive before it is gathered again.
+            const uint32 SkeletonBoneCount = Prim.BoneCount;
 
-            const FMeshResource&     Resource = Mesh->GetMeshResource();
-            const CSkeletalMesh*     SkelMesh = MeshComponent.SkeletalMesh.Get();
-            const FSkeletonResource* SkelRes  = (SkelMesh && SkelMesh->Skeleton.IsValid())
-                ? SkelMesh->Skeleton->GetSkeletonResource()
-                : nullptr;
-            const uint32 SkeletonBoneCount = SkelRes ? (uint32)SkelRes->GetNumBones() : 0u;
-
-            if (Resource.RequiredBoneCount > SkeletonBoneCount)
-            {
-                static uint32 BoneRangeLogCount = 0;
-                if (BoneRangeLogCount++ < 8u)
-                {
-                    LOG_ERROR("Skinning: mesh '{}' references {} bones but its skeleton provides {}. Vertices "
-                              "weighted to joints >= {} read PAST the bone slice (the GPU fetch is unbounded) "
-                              "and will be wildly displaced. Mesh and skeleton are out of sync, reimport both.",
-                              Mesh->GetName(), Resource.RequiredBoneCount, SkeletonBoneCount, SkeletonBoneCount);
-                }
-            }
-
-            // The slice was sized from Prim.BoneCount, so a skeleton that grew since the sync overruns it.
-            if (SkeletonBoneCount > 0
-                && SkeletonBoneCount <= Prim.BoneCount
-                && (SIZE_T)BoneSlice + SkeletonBoneCount <= ArenaCount)
+            if (SkeletonBoneCount > 0 && (SIZE_T)BoneSlice + SkeletonBoneCount <= ArenaCount)
             {
                 EntityRecord.BoneArenaBase  = BoneSlice;
                 EntityRecord.BoneArenaCount = SkeletonBoneCount;
@@ -4988,7 +4925,7 @@ namespace Lumina
             Cmd.bAnySkinned                    = (Batch.SkinnedRefCount != 0u) ? 1u : 0u;
             Cmd.bAnyStatic                     = (Batch.StaticRefCount != 0u) ? 1u : 0u;
 
-            if (!Batch.Key.bTranslucent)
+            if (!Batch.Key.bTranslucent && Batch.RefCount != 0u)
             {
                 for (const FSceneBatchRegistry::FDeferredMaterialSlot& MatSlot : Batch.DeferredMaterials)
                 {
@@ -5050,12 +4987,19 @@ namespace Lumina
 
         }
 
+        // Every slot keeps a command so IndirectDrawOffset stays a slot index, but only bound batches draw.
         const uint32 NumEmittedBatches = (uint32)DrawCommands.size();
-        FrameStats.NumBatches = NumEmittedBatches;
+        uint32 NumLiveBatches = 0;
         OpaqueDrawList.reserve(NumEmittedBatches);
         TranslucentDrawList.reserve(NumEmittedBatches);
         for (uint32 i = 0; i < NumEmittedBatches; ++i)
         {
+            if (!Registry.IsLive(i))
+            {
+                continue;
+            }
+            ++NumLiveBatches;
+
             if (DrawCommands[i].bTranslucent)
             {
                 TranslucentDrawList.push_back(i);
@@ -5065,6 +5009,7 @@ namespace Lumina
                 OpaqueDrawList.push_back(i);
             }
         }
+        FrameStats.NumBatches = NumLiveBatches;
     }
 
     bool FDefaultSceneRenderer::ShouldRequestShadow(const FVector3& LightPosition, float LightRadius) const
@@ -6487,7 +6432,7 @@ namespace Lumina
         PC.RetainedStaticAddr = RetainedStaticBuffer.Gpu;
 
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(SkinShader));
-        RHI::CmdDispatchIndirect(CL, MakeArgs(PC), GetSkinDispatchArgs().Gpu, 0u);
+        RHI::CmdDispatchIndirect(CL, MakeArgs(PC), GetSkinDispatchArgs());
 
         // Pre-skinned vertices feed every draw VS.
         Barriers::ComputeToAll(CL);
@@ -6678,7 +6623,7 @@ namespace Lumina
         RHI::FDepthStencilDesc DepthDesc;
         DepthDesc.DepthMode = RHI::EDepthFlags::Read | RHI::EDepthFlags::Write;
         DepthDesc.DepthTest = RHI::EOp::Greater;
-        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(DepthDesc));
+        RHI::CmdSetDepthStencil(CL, (DepthDesc));
 
         FMeshletPassContext Ctx;
         Ctx.CullViewIndex     = ViewIndex;
@@ -6737,7 +6682,7 @@ namespace Lumina
         constexpr uint32 SpdMaxMips = 12;
         const uint32 NumMips = Math::Min(MipCount, SpdMaxMips);
 
-        RHI::CmdMemset(CL, SpdCounter.Gpu, SpdCounter.Size, 0u);
+        RHI::CmdMemset(CL, SpdCounter, 0u);
         RHI::CmdBarrier(CL,
             RHI::EStageFlags::Transfer | RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::FragmentTests,
             RHI::EStageFlags::Compute);
@@ -6977,7 +6922,7 @@ namespace Lumina
         DepthDesc.DepthTest            = RHI::EOp::Less;
         DepthDesc.DepthBias            = 1.0f;
         DepthDesc.DepthBiasSlopeFactor = 1.5f;
-        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(DepthDesc));
+        RHI::CmdSetDepthStencil(CL, (DepthDesc));
 
         for (uint32 OpaqueIdx : OpaqueDrawList)
         {
@@ -7055,7 +7000,7 @@ namespace Lumina
         DepthDesc.DepthTest            = RHI::EOp::Less;
         DepthDesc.DepthBias            = 1.0f;
         DepthDesc.DepthBiasSlopeFactor = 1.5f;
-        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(DepthDesc));
+        RHI::CmdSetDepthStencil(CL, (DepthDesc));
 
         const TVector<FLightShadow>& SpotShadows = PackedShadows[(uint32)ELightType::Spot];
 
@@ -7129,7 +7074,7 @@ namespace Lumina
         DepthDesc.DepthTest            = RHI::EOp::Less;
         DepthDesc.DepthBias            = 25.0f;
         DepthDesc.DepthBiasSlopeFactor = 0.75f;
-        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(DepthDesc));
+        RHI::CmdSetDepthStencil(CL, (DepthDesc));
 
         const int32 SunShadowDataIndex = Frame.Lighting.Lights[0].ShadowDataIndex;
 
@@ -7194,7 +7139,7 @@ namespace Lumina
         RHI::CmdBeginRenderPass(CL, Pass);
         SetViewportScissor(CL, DBufferA.GetExtent());
 
-        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(RHI::FDepthStencilDesc{}));
+        RHI::CmdSetDepthStencil(CL, (RHI::FDepthStencilDesc{}));
         RHI::CmdSetCullMode(CL, RHI::ECullMode::Front);
 
         // Transmittance compositing where RGB is SrcAlpha over and alpha accumulates (1 - coverage).
@@ -7218,7 +7163,7 @@ namespace Lumina
         static_assert(sizeof(FDecalPushConstants) == 16, "FDecalPushConstants must match the slang pass block.");
 
         FDecalPushConstants PC = {};
-        PC.DecalsAddr = RHI::Core::CopyTransientArray(Decals.data(), Decals.size());
+        PC.DecalsAddr = RHI::CopyTransientArray(Decals.data(), Decals.size()).Address;
         PC.DepthIndex = (uint32)SceneDepth.GetResourceID();
 
         // One instanced draw per shader batch.
@@ -7444,10 +7389,10 @@ namespace Lumina
 
         // MaterialIndex -> dense slot; uploaded to the transient ring and read by device address.
         const RHI::GPUPtr SlotByMaterialAddr =
-            RHI::Core::CopyTransientArray(BinnedDeferredSlotByMaterial.data(), BinnedDeferredSlotByMaterial.size());
+            RHI::CopyTransientArray(BinnedDeferredSlotByMaterial.data(), BinnedDeferredSlotByMaterial.size()).Address;
 
         // Only the counters are cleared; the prefix sum below rewrites every other field.
-        RHI::CmdMemset(CL, CountsAddr, sizeof(uint32) * Layout.NumSlots, 0u);
+        RHI::CmdMemset(CL, { CountsAddr, sizeof(uint32) * Layout.NumSlots }, 0u);
         Barriers::TransferToCompute(CL);
 
         const uint32 GroupsX = RenderUtils::GetGroupCount(Layout.ScreenW, (uint32)MATERIAL_CLASSIFY_TILE);
@@ -7627,7 +7572,7 @@ namespace Lumina
 
         // One allocation written in place, since the blocks differ only in SlotIndex.
         const RHI::FTransientAlloc ArgsAlloc =
-            RHI::Core::AllocTransient(sizeof(FDeferredMaterialPC) * Layout.NumSlots);
+            RHI::AllocTransient(sizeof(FDeferredMaterialPC) * Layout.NumSlots);
         if (ArgsAlloc.Cpu == nullptr)
         {
             LOG_ERROR("Deferred material pass: could not stage {} argument blocks; skipping the pass.",
@@ -7645,8 +7590,7 @@ namespace Lumina
         for (uint32 Slot = 0; Slot < Layout.NumSlots; ++Slot)
         {
             RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(BinnedDeferredSlotShaders[Slot]));
-            RHI::CmdDispatchIndirect(CL, ArgsAlloc.Gpu + Slot * sizeof(FDeferredMaterialPC), Classify.Gpu,
-                Layout.MaterialArgsOffset + Slot * (uint32)sizeof(RHI::FDispatchIndirectArguments));
+            RHI::CmdDispatchIndirect(CL, ArgsAlloc.Gpu + Slot * sizeof(FDeferredMaterialPC), Classify.Skip(Layout.MaterialArgsOffset + Slot * (uint32)sizeof(RHI::FDispatchIndirectArguments)));
         }
 
         Barriers::ComputeToAll(CL);
@@ -7706,7 +7650,7 @@ namespace Lumina
         PC.TotalAddr     = Classify.Gpu + Layout.TotalOffset;
 
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(LightingCS));
-        RHI::CmdDispatchIndirect(CL, MakeArgs(PC), Classify.Gpu, Layout.LightArgsOffset);
+        RHI::CmdDispatchIndirect(CL, MakeArgs(PC), Classify.Skip(Layout.LightArgsOffset));
 
         // AllCommands, not ComputeToAll, whose destination set has no RasterColorOut.
         RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::AllCommands);
@@ -7746,7 +7690,7 @@ namespace Lumina
 
         RHI::CmdBeginRenderPass(CL, Pass);
         SetViewportScissor(CL, Extent);
-        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(RHI::FDepthStencilDesc{}));
+        RHI::CmdSetDepthStencil(CL, (RHI::FDepthStencilDesc{}));
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
         FGraphicsPipelineKey Key;
@@ -7804,7 +7748,7 @@ namespace Lumina
 
         RHI::CmdBeginRenderPass(CL, Pass);
         SetViewportScissor(CL, Extent);
-        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(RHI::FDepthStencilDesc{}));
+        RHI::CmdSetDepthStencil(CL, (RHI::FDepthStencilDesc{}));
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
         FGraphicsPipelineKey Key;
@@ -7878,7 +7822,7 @@ namespace Lumina
 
         RHI::CmdBeginRenderPass(CL, Pass);
         SetViewportScissor(CL, Output.GetExtent());
-        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(RHI::FDepthStencilDesc{}));
+        RHI::CmdSetDepthStencil(CL, (RHI::FDepthStencilDesc{}));
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
         RHI::FBlendDesc AlphaBlend;
@@ -7905,7 +7849,7 @@ namespace Lumina
             float       Thickness;
         } PC = {};
 
-        PC.SelectionBits     = RHI::Core::CopyTransientArray(SelectionBits.data(), SelectionBits.size());
+        PC.SelectionBits     = RHI::CopyTransientArray(SelectionBits.data(), SelectionBits.size()).Address;
         PC.PickerIndex       = (uint32)PickerSlot;
         PC.SelectionBitWords = (uint32)SelectionBits.size();
         // From the handle traits rather than a literal, so a change there cannot mask off real index bits.
@@ -8030,12 +7974,12 @@ namespace Lumina
                     RHI::SetDebugName(State.SortDrawArgsBuffer.Gpu, "Particles.SortDrawArgs");
 
                     // A sort that never runs must draw nothing rather than an uninitialized count.
-                    RHI::CmdMemset(CL, State.SortDrawArgsBuffer.Gpu, sizeof(RHI::FDrawIndirectArguments), 0u);
+                    RHI::CmdMemset(CL, { State.SortDrawArgsBuffer.Gpu, sizeof(RHI::FDrawIndirectArguments) }, 0u);
                 }
 
                 // Zero-fill the particle buffer so all entries start dead.
-                RHI::CmdMemset(CL, State.ParticleBuffer.Gpu, State.ParticleBufferSize, 0u);
-                RHI::CmdMemset(CL, State.AttributeBuffer.Gpu, State.AttributeBufferSize, 0u);
+                RHI::CmdMemset(CL, { State.ParticleBuffer.Gpu, State.ParticleBufferSize }, 0u);
+                RHI::CmdMemset(CL, { State.AttributeBuffer.Gpu, State.AttributeBufferSize }, 0u);
 
                 State.AllocatedMax             = MaxParticles;
                 State.AllocatedAttributeFloats = Item.AttributeFloatCount;
@@ -8047,7 +7991,7 @@ namespace Lumina
             // Apply the extract-phase Activate()/Deactivate() intents to the render-owned sim state.
             if (Item.bForceReset)
             {
-                RHI::CmdMemset(CL, State.ParticleBuffer.Gpu, State.ParticleBufferSize, 0u);
+                RHI::CmdMemset(CL, { State.ParticleBuffer.Gpu, State.ParticleBufferSize }, 0u);
                 State.AliveTimeRemaining = 0.0f;
                 State.SpawnAccumulator   = 0.0f;
                 State.SystemAge          = 0.0f;
@@ -8110,7 +8054,7 @@ namespace Lumina
                 continue;
             }
 
-            RHI::CmdMemset(CL, State.SpawnCounterBuffer.Gpu, sizeof(uint32), 0u);
+            RHI::CmdMemset(CL, { State.SpawnCounterBuffer.Gpu, sizeof(uint32) }, 0u);
 
             const FMatrix4 WorldMat = Item.WorldMatrix;
             const FVector3 EmitterWorld = FVector3(WorldMat * FVector4(Item.EmitterOffset, 1.0f));
@@ -8185,12 +8129,12 @@ namespace Lumina
             };
 
             FParticleSimArgs SimArgs;
-            SimArgs.ParamsAddr       = RHI::Core::CopyTransient(SimParams);
+            SimArgs.ParamsAddr       = RHI::CopyTransient(SimParams);
             SimArgs.ParticlesAddr    = State.ParticleBuffer.Gpu;
             SimArgs.SpawnCounterAddr = State.SpawnCounterBuffer.Gpu;
             SimArgs.ModuleParamsAddr = Item.ModuleParamValues.empty()
                 ? 0ull
-                : RHI::Core::CopyTransientArray(Item.ModuleParamValues.data(), Item.ModuleParamValues.size());
+                : RHI::CopyTransientArray(Item.ModuleParamValues.data(), Item.ModuleParamValues.size()).Address;
             SimArgs.AttributesAddr   = State.AttributeBuffer.Gpu;
 
             RHI::CmdDispatch(CL, MakeArgs(SimArgs), RenderUtils::GetGroupCount(MaxParticles, 64u), 1u, 1u);
@@ -8426,7 +8370,7 @@ namespace Lumina
                 ? (RHI::EDepthFlags::Read | RHI::EDepthFlags::Write)
                 : RHI::EDepthFlags::Read;
             DepthDesc.DepthTest = RHI::EOp::GreaterEqual;
-            RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(DepthDesc));
+            RHI::CmdSetDepthStencil(CL, (DepthDesc));
 
             FGraphicsPipelineKey Key;
             Key.VS          = bMaterial ? Item.MaterialVertexShader : SpriteVertexShader;
@@ -8457,8 +8401,7 @@ namespace Lumina
 
             if (bSorted)
             {
-                RHI::CmdDrawIndirect(CL, MakeArgs(PC), State.SortDrawArgsBuffer.Gpu, 0u, 1u,
-                                     sizeof(RHI::FDrawIndirectArguments));
+                RHI::CmdDrawIndirect(CL, MakeArgs(PC), State.SortDrawArgsBuffer, 1u, sizeof(RHI::FDrawIndirectArguments));
             }
             else
             {
@@ -8572,19 +8515,19 @@ namespace Lumina
             Out.Shaders       = FRenderMaterialShaders{};
             Out.MaterialIndex = 0u;
 
+            // Anything that is not a ready terrain material, wrong domain included, falls back to the default.
             CMaterialInterface* TerrainMaterial = Terrain.Material.Get();
-            if (!TerrainMaterial || TerrainMaterial->GetMaterialType() == EMaterialType::Terrain)
+            FShaderH TerrainVS;
+            FShaderH TerrainPS;
+            if (TerrainMaterial == nullptr || !TerrainMaterial->ResolveDomainShaders(EMaterialType::Terrain, TerrainVS, TerrainPS))
             {
-                if (!TerrainMaterial || !TerrainMaterial->IsReadyForRender())
-                {
-                    TerrainMaterial = CMaterial::GetDefaultTerrainMaterial();
-                }
-                if (TerrainMaterial && TerrainMaterial->IsReadyForRender())
-                {
-                    Out.Shaders.VertexShader = TerrainMaterial->GetVertexShader();
-                    Out.Shaders.PixelShader  = TerrainMaterial->GetPixelShader();
-                    Out.MaterialIndex        = (uint32)Math::Max(TerrainMaterial->GetMaterialIndex(), 0);
-                }
+                TerrainMaterial = CMaterial::GetDefaultTerrainMaterial();
+            }
+            if (TerrainMaterial != nullptr && TerrainMaterial->ResolveDomainShaders(EMaterialType::Terrain, TerrainVS, TerrainPS))
+            {
+                Out.Shaders.VertexShader = TerrainVS;
+                Out.Shaders.PixelShader  = TerrainPS;
+                Out.MaterialIndex        = (uint32)Math::Max(TerrainMaterial->GetMaterialIndex(), 0);
             }
 
             Out.HeightUpload      = 0;
@@ -8816,7 +8759,7 @@ namespace Lumina
 
             if (TerrainItem.HeightUpload == 1 && TerrainItem.HeightBytes.size() == SlicePixels)
             {
-                const RHI::GPUPtr Src = RHI::Core::CopyTransientArray(TerrainItem.HeightBytes.data(), TerrainItem.HeightBytes.size());
+                const RHI::FGPURange Src = RHI::CopyTransientArray(TerrainItem.HeightBytes.data(), TerrainItem.HeightBytes.size());
                 RHI::CmdCopyMemoryToTexture(CL, Src, Res, State.HeightmapTexture.Texture);
                 bAnyUpload = true;
             }
@@ -8827,7 +8770,7 @@ namespace Lumina
                 const uint32 RegionW = uint32(RectMax.x - RectMin.x + 1);
                 const uint32 RegionH = uint32(RectMax.y - RectMin.y + 1);
                 // Snapshot rect is tightly packed, so the source row pitch is RegionW, not Res.
-                const RHI::GPUPtr Src = RHI::Core::CopyTransientArray(TerrainItem.HeightBytes.data(), TerrainItem.HeightBytes.size());
+                const RHI::FGPURange Src = RHI::CopyTransientArray(TerrainItem.HeightBytes.data(), TerrainItem.HeightBytes.size());
 
                 RHI::FTextureSlice Slice;
                 Slice.Offset = FUIntVector3((uint32)RectMin.x, (uint32)RectMin.y, 0);
@@ -8851,7 +8794,7 @@ namespace Lumina
                     {
                         break;
                     }
-                    const RHI::GPUPtr Src = RHI::Core::CopyTransientArray(Cursor, SlicePixels);
+                    const RHI::FGPURange Src = RHI::CopyTransientArray(Cursor, SlicePixels);
 
                     RHI::FTextureSlice Slice;
                     Slice.Layer = L;
@@ -9105,7 +9048,7 @@ namespace Lumina
             RHI::FDepthStencilDesc DepthDesc;
             DepthDesc.DepthMode = RHI::EDepthFlags::Read | RHI::EDepthFlags::Write;
             DepthDesc.DepthTest = RHI::EOp::GreaterEqual;
-            RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(DepthDesc));
+            RHI::CmdSetDepthStencil(CL, (DepthDesc));
             RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
             FGraphicsPipelineKey Key;
@@ -9119,7 +9062,7 @@ namespace Lumina
             RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
             FTerrainPushConstants Push{};
-            Push.ParamsAddr        = RHI::Core::CopyTransient(RenderParams);
+            Push.ParamsAddr        = RHI::CopyTransient(RenderParams);
             Push.ChunksAddr        = State.ChunkInfoBuffer.Gpu;
             Push.MeshletsAddr      = State.MeshletInfoBuffer.Gpu;
             Push.VisibleAddr       = State.VisibleMeshletBuffer.Gpu;
@@ -9127,7 +9070,7 @@ namespace Lumina
             Push.NormalIndex       = (uint32)State.NormalTexture.GetResourceID();
             Push.LayerWeightsIndex = (uint32)State.LayerWeightTexture.GetResourceID();
 
-            RHI::CmdDrawIndirect(CL, MakeArgs(Push), State.IndirectDrawBuffer.Gpu, 0u, 1u, sizeof(RHI::FDrawIndirectArguments));
+            RHI::CmdDrawIndirect(CL, MakeArgs(Push), State.IndirectDrawBuffer, 1u, sizeof(RHI::FDrawIndirectArguments));
 
             RHI::CmdEndRenderPass(CL);
             VisLoadOp = RHI::ELoadOp::Load;   // only the first terrain may own the clear
@@ -9237,7 +9180,7 @@ namespace Lumina
             RHI::FDepthStencilDesc DepthDesc;
             DepthDesc.DepthMode = RHI::EDepthFlags::Read;
             DepthDesc.DepthTest = RHI::EOp::GreaterEqual;
-            RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(DepthDesc));
+            RHI::CmdSetDepthStencil(CL, (DepthDesc));
             RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
             FGraphicsPipelineKey Key;
@@ -9253,7 +9196,7 @@ namespace Lumina
             RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
             FTerrainPushConstants Push{};
-            Push.ParamsAddr        = RHI::Core::CopyTransient(RenderParams);
+            Push.ParamsAddr        = RHI::CopyTransient(RenderParams);
             Push.ChunksAddr        = State.ChunkInfoBuffer.Gpu;
             Push.MeshletsAddr      = State.MeshletInfoBuffer.Gpu;
             Push.VisibleAddr       = State.VisibleMeshletBuffer.Gpu;
@@ -9261,7 +9204,7 @@ namespace Lumina
             Push.NormalIndex       = (uint32)State.NormalTexture.GetResourceID();
             Push.LayerWeightsIndex = (uint32)State.LayerWeightTexture.GetResourceID();
 
-            RHI::CmdDrawIndirect(CL, MakeArgs(Push), State.IndirectDrawBuffer.Gpu, 0u, 1u, sizeof(RHI::FDrawIndirectArguments));
+            RHI::CmdDrawIndirect(CL, MakeArgs(Push), State.IndirectDrawBuffer, 1u, sizeof(RHI::FDrawIndirectArguments));
 
             RHI::CmdEndRenderPass(CL);
         }
@@ -9537,7 +9480,7 @@ namespace Lumina
 
         RHI::CmdBeginRenderPass(CL, Pass);
         SetViewportScissor(CL, HDR.GetExtent());
-        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(RHI::FDepthStencilDesc{}));
+        RHI::CmdSetDepthStencil(CL, (RHI::FDepthStencilDesc{}));
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
         RHI::FBlendDesc AlphaBlend;
@@ -9602,7 +9545,7 @@ namespace Lumina
         RHI::FDepthStencilDesc DepthDesc;
         DepthDesc.DepthMode = RHI::EDepthFlags::Read;
         DepthDesc.DepthTest = RHI::EOp::GreaterEqual;
-        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(DepthDesc));
+        RHI::CmdSetDepthStencil(CL, (DepthDesc));
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
         FGraphicsPipelineKey Key;
@@ -9657,7 +9600,7 @@ namespace Lumina
         RHI::FDepthStencilDesc DepthDesc;
         DepthDesc.DepthMode = RHI::EDepthFlags::Read;
         DepthDesc.DepthTest = RHI::EOp::GreaterEqual;
-        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(DepthDesc));
+        RHI::CmdSetDepthStencil(CL, (DepthDesc));
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
         RHI::FBlendDesc AlphaBlend;
@@ -9747,7 +9690,7 @@ namespace Lumina
         DepthTested.DepthMode = RHI::EDepthFlags::Read;
         DepthTested.DepthTest = RHI::EOp::GreaterEqual;
 
-        const RHI::GPUPtr InstancesAddr = RHI::Core::CopyTransientArray(Instances.data(), Instances.size());
+        const RHI::GPUPtr InstancesAddr = RHI::CopyTransientArray(Instances.data(), Instances.size()).Address;
 
         struct FSpritePushConstants
         {
@@ -9766,7 +9709,7 @@ namespace Lumina
         {
             if (!bDepthStateSet || bLastDepthTest != Batch.bDepthTest)
             {
-                RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(Batch.bDepthTest ? DepthTested : RHI::FDepthStencilDesc{}));
+                RHI::CmdSetDepthStencil(CL, (Batch.bDepthTest ? DepthTested : RHI::FDepthStencilDesc{}));
                 bLastDepthTest = Batch.bDepthTest;
                 bDepthStateSet = true;
             }
@@ -9858,7 +9801,7 @@ namespace Lumina
         DepthTested.DepthTest = RHI::EOp::GreaterEqual;
 
         // All glyphs across every batch share one transient array; batches index it via FirstInstance.
-        const RHI::GPUPtr GlyphsAddr = RHI::Core::CopyTransientArray(Glyphs.data(), Glyphs.size());
+        const RHI::GPUPtr GlyphsAddr = RHI::CopyTransientArray(Glyphs.data(), Glyphs.size()).Address;
 
         struct FTextPushConstants
         {
@@ -9885,7 +9828,7 @@ namespace Lumina
         };
 
         // Depth-tested text first (sorts against the scene), then always-on-top text last so it stays on top.
-        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(DepthTested));
+        RHI::CmdSetDepthStencil(CL, (DepthTested));
         for (const FFrameData::FTextBatch& Batch : Batches)
         {
             if (Batch.bDepthTest)
@@ -9894,7 +9837,7 @@ namespace Lumina
             }
         }
 
-        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(RHI::FDepthStencilDesc{}));
+        RHI::CmdSetDepthStencil(CL, (RHI::FDepthStencilDesc{}));
         for (const FFrameData::FTextBatch& Batch : Batches)
         {
             if (!Batch.bDepthTest)
@@ -9940,7 +9883,7 @@ namespace Lumina
 
         RHI::CmdBeginRenderPass(CL, Pass);
         SetViewportScissor(CL, Output.GetExtent());
-        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(RHI::FDepthStencilDesc{}));
+        RHI::CmdSetDepthStencil(CL, (RHI::FDepthStencilDesc{}));
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
         RHI::FBlendDesc AlphaBlend;
@@ -9973,7 +9916,7 @@ namespace Lumina
         const uint32   ScreenH   = PanelSize.y > 1u ? PanelSize.y : Output.GetSizeY();
 
         FTextPushConstants PC = {};
-        PC.GlyphsAddr    = RHI::Core::CopyTransientArray(Glyphs.data(), Glyphs.size());
+        PC.GlyphsAddr    = RHI::CopyTransientArray(Glyphs.data(), Glyphs.size()).Address;
         PC.AtlasIndex    = Batch.AtlasIndex;
         PC.AtlasWidth    = Batch.AtlasWidth;
         PC.AtlasHeight   = Batch.AtlasHeight;
@@ -10016,7 +9959,7 @@ namespace Lumina
 
         RHI::CmdBeginRenderPass(CL, Pass);
         SetViewportScissor(CL, Output.GetExtent());
-        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(RHI::FDepthStencilDesc{}));
+        RHI::CmdSetDepthStencil(CL, (RHI::FDepthStencilDesc{}));
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
         FGraphicsPipelineKey Key;
@@ -10079,7 +10022,7 @@ namespace Lumina
         RHI::FDepthStencilDesc DepthDesc;
         DepthDesc.DepthMode = RHI::EDepthFlags::Read;
         DepthDesc.DepthTest = RHI::EOp::GreaterEqual;
-        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(DepthDesc));
+        RHI::CmdSetDepthStencil(CL, (DepthDesc));
 
         RHI::FBlendDesc MomentBlend;
         MomentBlend.bBlendEnable   = true;
@@ -10169,7 +10112,7 @@ namespace Lumina
         RHI::FDepthStencilDesc DepthDesc;
         DepthDesc.DepthMode = RHI::EDepthFlags::Read;
         DepthDesc.DepthTest = RHI::EOp::GreaterEqual;
-        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(DepthDesc));
+        RHI::CmdSetDepthStencil(CL, (DepthDesc));
 
         RHI::FBlendDesc AccumBlend;
         AccumBlend.bBlendEnable   = true;
@@ -10246,7 +10189,7 @@ namespace Lumina
 
         RHI::CmdBeginRenderPass(CL, Pass);
         SetViewportScissor(CL, HDR.GetExtent());
-        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(RHI::FDepthStencilDesc{}));
+        RHI::CmdSetDepthStencil(CL, (RHI::FDepthStencilDesc{}));
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
         // Added, not lerped, since each fragment was already pre-weighted by its transmittance.
@@ -10377,14 +10320,14 @@ namespace Lumina
                                     ? (RHI::EDepthFlags::Read | RHI::EDepthFlags::Write)
                                     : RHI::EDepthFlags::Read;
                 DepthDesc.DepthTest = RHI::EOp::GreaterEqual;
-                RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(DepthDesc));
+                RHI::CmdSetDepthStencil(CL, (DepthDesc));
             });
 
         // Depth write is dynamic state, so a writing batch would otherwise hand it to the next pass.
         RHI::FDepthStencilDesc RestoreDepth;
         RestoreDepth.DepthMode = RHI::EDepthFlags::Read;
         RestoreDepth.DepthTest = RHI::EOp::GreaterEqual;
-        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(RestoreDepth));
+        RHI::CmdSetDepthStencil(CL, (RestoreDepth));
 
         RHI::CmdEndRenderPass(CL);
         Barriers::RasterToRead(CL);
@@ -10679,7 +10622,7 @@ namespace Lumina
         }
         if (NumVolumes > 0)
         {
-            PC.FogVolumesAddr = RHI::Core::CopyTransientArray(Frame.Volumetrics.FogVolumes.data(), NumVolumes);
+            PC.FogVolumesAddr = RHI::CopyTransientArray(Frame.Volumetrics.FogVolumes.data(), NumVolumes).Address;
         }
 
         RHI::CmdDispatch(CL, MakeArgs(PC),
@@ -10838,7 +10781,7 @@ namespace Lumina
 
         RHI::CmdBeginRenderPass(CL, Pass);
         SetViewportScissor(CL, HDR.GetExtent());
-        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(RHI::FDepthStencilDesc{}));
+        RHI::CmdSetDepthStencil(CL, (RHI::FDepthStencilDesc{}));
         // Double-sided so the surface is visible from below (camera submerged) too.
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
@@ -10865,7 +10808,7 @@ namespace Lumina
         static_assert(sizeof(FWaterPushConstants) == 16, "FWaterPushConstants must match Includes/Water.slang.");
 
         FWaterPushConstants PC = {};
-        PC.WatersAddr      = RHI::Core::CopyTransientArray(Waters.data(), Waters.size());
+        PC.WatersAddr      = RHI::CopyTransientArray(Waters.data(), Waters.size()).Address;
         PC.SceneColorIndex = (uint32)SceneColor.GetResourceID();
         PC.SceneDepthIndex = (uint32)SceneDepth.GetResourceID();
 
@@ -10923,7 +10866,7 @@ namespace Lumina
 
         RHI::CmdBeginRenderPass(CL, Pass);
         SetViewportScissor(CL, HDR.GetExtent());
-        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(RHI::FDepthStencilDesc{}));
+        RHI::CmdSetDepthStencil(CL, (RHI::FDepthStencilDesc{}));
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
         FGraphicsPipelineKey Key;
@@ -10941,7 +10884,7 @@ namespace Lumina
         static_assert(sizeof(FUnderwaterPushConstants) == 16, "FUnderwaterPushConstants must match WaterUnderwater.slang.");
 
         FUnderwaterPushConstants PC = {};
-        PC.ParamsAddr      = RHI::Core::CopyTransient(Frame.Water.Underwater);
+        PC.ParamsAddr      = RHI::CopyTransient(Frame.Water.Underwater);
         PC.SceneColorIndex = (uint32)SceneColor.GetResourceID();
         PC.SceneDepthIndex = (uint32)SceneDepth.GetResourceID();
 
@@ -11037,7 +10980,7 @@ namespace Lumina
             FVector3 SunDirection;
             float    _Pad;
         } PC = {};
-        PC.EnvAddr    = RHI::Core::CopyTransient(Frame.Volumetrics.EnvironmentParams);
+        PC.EnvAddr    = RHI::CopyTransient(Frame.Volumetrics.EnvironmentParams);
         PC.SkyCubeUAV = (uint32)SkyCube.GetMipUAVIndex(0);
 
         if (LightData.bHasSun)
@@ -11208,7 +11151,7 @@ namespace Lumina
 
         RHI::CmdBeginRenderPass(CL, Pass);
         SetViewportScissor(CL, Extent);
-        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(RHI::FDepthStencilDesc{}));
+        RHI::CmdSetDepthStencil(CL, (RHI::FDepthStencilDesc{}));
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
         // Mirrors the bit-cast the extract does into Misc.x; specializing on it strips the other modes.
@@ -11233,7 +11176,7 @@ namespace Lumina
         static_assert(sizeof(FEnvPushConstants) == 24, "FEnvPushConstants must match the slang pass block.");
 
         FEnvPushConstants PC = {};
-        PC.EnvAddr       = RHI::Core::CopyTransient(RenderFrame->Volumetrics.EnvironmentParams);
+        PC.EnvAddr       = RHI::CopyTransient(RenderFrame->Volumetrics.EnvironmentParams);
         PC.SkyCubeIndex  = (uint32)SkyCube.GetResourceID();
         PC.EquirectIndex = EquirectIdx;
         PC.EquirectWidth = EquirectW;
@@ -11321,7 +11264,7 @@ namespace Lumina
             // Vertices live in the transient ring for this submission; the VS reads them by device address.
             const FSimpleElementPassData VertsPass
             {
-                RHI::Core::CopyTransientArray(SimpleVertices.data(), SimpleVertices.size())
+                RHI::CopyTransientArray(SimpleVertices.data(), SimpleVertices.size()).Address
             };
             const RHI::GPUPtr Args = MakeArgs(VertsPass);
 
@@ -11330,7 +11273,7 @@ namespace Lumina
                 const int DepthMode = Batch.bDepthTest ? 1 : 0;
                 if (DepthMode != CurrentDepthMode)
                 {
-                    RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(Batch.bDepthTest ? DepthTested : RHI::FDepthStencilDesc{}));
+                    RHI::CmdSetDepthStencil(CL, (Batch.bDepthTest ? DepthTested : RHI::FDepthStencilDesc{}));
                     CurrentDepthMode = DepthMode;
                 }
                 RHI::CmdSetLineWidth(CL, Batch.Thickness);
@@ -11356,7 +11299,7 @@ namespace Lumina
                 const int  DepthMode  = bDepthTest ? 1 : 0;
                 if (DepthMode != CurrentDepthMode)
                 {
-                    RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(bDepthTest ? DepthTested : RHI::FDepthStencilDesc{}));
+                    RHI::CmdSetDepthStencil(CL, (bDepthTest ? DepthTested : RHI::FDepthStencilDesc{}));
                     CurrentDepthMode = DepthMode;
                 }
 
@@ -11452,7 +11395,7 @@ namespace Lumina
         OpaqueDepth.DepthMode = RHI::EDepthFlags::Read | RHI::EDepthFlags::Write;
         OpaqueDepth.DepthTest = RHI::EOp::Greater;
 
-        const FSimpleElementPassData VertsPass{ RHI::Core::CopyTransientArray(SolidVertices.data(), SolidVertices.size()) };
+        const FSimpleElementPassData VertsPass{ RHI::CopyTransientArray(SolidVertices.data(), SolidVertices.size()).Address };
         const RHI::GPUPtr Args = MakeArgs(VertsPass);
 
         struct FModeGroup
@@ -11483,7 +11426,7 @@ namespace Lumina
                 if (!bStateBound)
                 {
                     RHI::CmdSetPipeline(CL, GetOrCreatePipeline(*Group.Pipeline));
-                    RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(*Group.Depth));
+                    RHI::CmdSetDepthStencil(CL, (*Group.Depth));
                     bStateBound = true;
                 }
 
@@ -12049,7 +11992,7 @@ namespace Lumina
         PC.TotalAddr       = Classify.Gpu + Layout.TotalOffset;
 
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(SSRCS));
-        RHI::CmdDispatchIndirect(CL, MakeArgs(PC), Classify.Gpu, Layout.LightArgsOffset);
+        RHI::CmdDispatchIndirect(CL, MakeArgs(PC), Classify.Skip(Layout.LightArgsOffset));
 
         // HDR is a UAV write here and a color attachment for every pass after it.
         RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::AllCommands);
@@ -12090,7 +12033,7 @@ namespace Lumina
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(LutCS));
 
         FAerialLUTPushConstants LutPC = {};
-        LutPC.EnvAddr          = RHI::Core::CopyTransient(Frame.Volumetrics.EnvironmentParams);
+        LutPC.EnvAddr          = RHI::CopyTransient(Frame.Volumetrics.EnvironmentParams);
         LutPC.InScatterUAV     = (uint32)InScatter.GetMipUAVIndex(0);
         LutPC.TransmittanceUAV = (uint32)Transmittance.GetMipUAVIndex(0);
         LutPC.Range            = Range;
@@ -12147,7 +12090,7 @@ namespace Lumina
         const uint32 HDRWidth = HDR.GetSizeX();
         const uint32 HDRHght  = HDR.GetSizeY();
 
-        RHI::CmdMemset(CL, Histogram.Gpu, Histogram.Size, 0u);
+        RHI::CmdMemset(CL, Histogram, 0u);
         RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Compute);
 
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(BuildCS));
@@ -12221,7 +12164,7 @@ namespace Lumina
 
         RHI::CmdBeginRenderPass(CL, Pass);
         SetViewportScissor(CL, Output.GetExtent());
-        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(RHI::FDepthStencilDesc{}));
+        RHI::CmdSetDepthStencil(CL, (RHI::FDepthStencilDesc{}));
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
         FGraphicsPipelineKey Key;
@@ -12243,7 +12186,7 @@ namespace Lumina
         static_assert(sizeof(FComposePushConstants) == 24, "FComposePushConstants must match the slang pass block.");
 
         FComposePushConstants PC = {};
-        PC.ConstantsAddr   = RHI::Core::CopyTransient(Constants);
+        PC.ConstantsAddr   = RHI::CopyTransient(Constants);
         PC.HDRIndex        = (uint32)HDRTex.GetResourceID();
         PC.BloomIndex      = (uint32)BloomTex.GetResourceID();
         PC.AdaptedLumIndex = (uint32)AdaptedTex.GetResourceID();
@@ -12307,7 +12250,7 @@ namespace Lumina
 
             RHI::CmdBeginRenderPass(CL, Pass);
             SetViewportScissor(CL, Dest->GetExtent());
-            RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(RHI::FDepthStencilDesc{}));
+            RHI::CmdSetDepthStencil(CL, (RHI::FDepthStencilDesc{}));
             RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
             FGraphicsPipelineKey Key;
@@ -12431,7 +12374,7 @@ namespace Lumina
 
         RHI::CmdBeginRenderPass(CL, Pass);
         SetViewportScissor(CL, Output.GetExtent());
-        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(RHI::FDepthStencilDesc{}));
+        RHI::CmdSetDepthStencil(CL, (RHI::FDepthStencilDesc{}));
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
         FGraphicsPipelineKey Key;
@@ -12475,7 +12418,7 @@ namespace Lumina
 
         RHI::CmdBeginRenderPass(CL, Pass);
         SetViewportScissor(CL, Output.GetExtent());
-        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(RHI::FDepthStencilDesc{}));
+        RHI::CmdSetDepthStencil(CL, (RHI::FDepthStencilDesc{}));
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
         FGraphicsPipelineKey Key;
@@ -12523,7 +12466,7 @@ namespace Lumina
 
         RHI::CmdBeginRenderPass(CL, Pass);
         SetViewportScissor(CL, Output.GetExtent());
-        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(RHI::FDepthStencilDesc{}));
+        RHI::CmdSetDepthStencil(CL, (RHI::FDepthStencilDesc{}));
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
         FGraphicsPipelineKey Key;
@@ -12580,7 +12523,7 @@ namespace Lumina
 
         RHI::CmdBeginRenderPass(CL, Pass);
         SetViewportScissor(CL, Output.GetExtent());
-        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(RHI::FDepthStencilDesc{}));
+        RHI::CmdSetDepthStencil(CL, (RHI::FDepthStencilDesc{}));
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
         FGraphicsPipelineKey Key;
@@ -12634,7 +12577,7 @@ namespace Lumina
                 return false;
             }
 
-            RHI::CmdMemcpy(CL, Dest.Gpu, Source.Gpu, Bytes);
+            RHI::CmdMemcpy(CL, { Dest.Gpu, Bytes }, { Source.Gpu, Bytes });
             return true;
         };
 
@@ -12759,7 +12702,7 @@ namespace Lumina
 
         RHI::CmdBeginRenderPass(CL, Pass);
         SetViewportScissor(CL, Output.GetExtent());
-        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(RHI::FDepthStencilDesc{}));
+        RHI::CmdSetDepthStencil(CL, (RHI::FDepthStencilDesc{}));
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
         FGraphicsPipelineKey Key;
@@ -12812,7 +12755,7 @@ namespace Lumina
 
         RHI::CmdBeginRenderPass(CL, Pass);
         SetViewportScissor(CL, Output.GetExtent());
-        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(RHI::FDepthStencilDesc{}));
+        RHI::CmdSetDepthStencil(CL, (RHI::FDepthStencilDesc{}));
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
         FGraphicsPipelineKey Key;
@@ -12946,7 +12889,7 @@ namespace Lumina
 
         if (!TotalsZeroed[Slot] && GetTotals())
         {
-            RHI::CmdMemset(CL, GetTotals().Gpu, GetTotals().Size, 0u);
+            RHI::CmdMemset(CL, GetTotals(), 0u);
             Barriers::TransferToAll(CL);
             TotalsZeroed[Slot] = true;
         }
@@ -12989,7 +12932,7 @@ namespace Lumina
                 // Live slots only, since the cull rejects any index past them and the slack was born zeroed.
                 const uint64 ClearBytes = Math::Min<uint64>((uint64)RetainedSlots * sizeof(uint32),
                                                             GetInstanceVisibilityWrite().Size);
-                RHI::CmdMemset(CL, GetInstanceVisibilityWrite().Gpu, ClearBytes, 0u);
+                RHI::CmdMemset(CL, { GetInstanceVisibilityWrite().Gpu, ClearBytes }, 0u);
             }
 
             if (RetainedCullEntryBuffer && RetainedTransformBuffer && RetainedStaticBuffer && RetainedSlots > 0)
@@ -13008,8 +12951,10 @@ namespace Lumina
                 }
                 else
                 {
-                    auto WriteRuns = [&](const TVector<uint32>& Slots, auto&& Emit)
+                    // Contiguous slots are contiguous in the source arrays, so each run is one copy.
+                    auto CollectRuns = [](const TVector<uint32>& Slots, TVector<FUIntVector2>& Runs)
                     {
+                        Runs.clear();
                         const SIZE_T NumDirty = Slots.size();
                         for (SIZE_T i = 0; i < NumDirty; )
                         {
@@ -13018,28 +12963,18 @@ namespace Lumina
                             {
                                 ++j;
                             }
-                            // A run is contiguous slots, so it is contiguous in the source arrays too.
-                            Emit(Slots[i], j - i);
+                            Runs.push_back(FUIntVector2{ Slots[i], (uint32)(j - i) });
                             i = j;
                         }
                     };
 
                     // Both buffers share the slot list, so one run scan feeds both writes.
-                    WriteRuns(Upload.DirtySlots, [&](uint32 First, SIZE_T Run)
-                    {
-                        StageWrite(RetainedCullEntryBuffer.Gpu + (uint64)First * sizeof(FInstanceCullEntry),
-                                   &SrcCullEntries[First], Run * sizeof(FInstanceCullEntry));
-                        StageWrite(RetainedTransformBuffer.Gpu + (uint64)First * sizeof(FTransform3x4),
-                                   &SrcTransforms[First], Run * sizeof(FTransform3x4));
-                    });
+                    CollectRuns(Upload.DirtySlots, RetainedRunScratch);
+                    WriteBufferRuns(CL, RetainedCullEntryBuffer.Gpu, SrcCullEntries, sizeof(FInstanceCullEntry), RetainedRunScratch);
+                    WriteBufferRuns(CL, RetainedTransformBuffer.Gpu, SrcTransforms,  sizeof(FTransform3x4),      RetainedRunScratch);
 
-                    WriteRuns(Upload.DirtyStaticSlots, [&](uint32 First, SIZE_T Run)
-                    {
-                        StageWrite(RetainedStaticBuffer.Gpu + (uint64)First * sizeof(FInstanceStatic),
-                                   &SrcStatic[First], Run * sizeof(FInstanceStatic));
-                    });
-
-                    FlushStagedWrites(CL);
+                    CollectRuns(Upload.DirtyStaticSlots, RetainedRunScratch);
+                    WriteBufferRuns(CL, RetainedStaticBuffer.Gpu, SrcStatic, sizeof(FInstanceStatic), RetainedRunScratch);
                 }
             }
             const uint32 CullCap      = (uint32)Math::Min<uint64>(RetainedCullEntryBuffer.Size / sizeof(FInstanceCullEntry), 0xFFFFFFFFull);
@@ -13089,14 +13024,11 @@ namespace Lumina
                              true, EBufferInit::Zeroed, "Cull.RenderBuckets");
 
         {
-            // Starts at ZERO, since there is no CPU-fed head for CullInstances to append past.
-            const uint32 Counters[4] = { 0u, 0u, 0u, 0u };
-            WriteBuffer(CL, GetCullCounters().Gpu, Counters, sizeof(Counters));
+            // Starts at zero, since there is no CPU-fed head for CullInstances to append past.
+            RHI::CmdMemset(CL, { GetCullCounters().Gpu, sizeof(uint32) * 4u }, 0u);
 
-            // Every field starts at zero, since CullInstances now accumulates skinned batches too.
-            BucketSeedScratch.assign(ViewDrawEntries, FRenderBucketGPU{});
-            WriteBuffer(CL, GetRenderBuckets().Gpu,
-                        BucketSeedScratch.data(), BucketSeedScratch.size() * sizeof(FRenderBucketGPU));
+            // Every field starts at zero, since CullInstances accumulates skinned batches too.
+            RHI::CmdMemset(CL, { GetRenderBuckets().Gpu, ViewDrawEntries * sizeof(FRenderBucketGPU) }, 0u);
         }
 
         Barriers::TransferToCompute(CL);
@@ -13233,7 +13165,7 @@ namespace Lumina
 
                 RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(BlocksShader));
 
-                RHI::CmdDispatchIndirect(CL, MakeArgs(BPC), GetBlockDispatchArgs().Gpu, 0u);
+                RHI::CmdDispatchIndirect(CL, MakeArgs(BPC), GetBlockDispatchArgs());
 
                 // The block list has exactly one reader, and it is compute now in MeshletCullPass below.
                 RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute);
@@ -13245,7 +13177,7 @@ namespace Lumina
 
         if (MeshletBoundReadback[Slot].Gpu != 0)
         {
-            RHI::CmdMemcpy(CL, MeshletBoundReadback[Slot].Gpu, GetTotals().Gpu, sizeof(uint32) * kTotalsSlots);
+            RHI::CmdMemcpy(CL, { MeshletBoundReadback[Slot].Gpu, sizeof(uint32) * kTotalsSlots }, { GetTotals().Gpu, sizeof(uint32) * kTotalsSlots });
         }
     }
 
@@ -13766,22 +13698,21 @@ namespace Lumina
         RHI::FPipelineH Pipeline = RHI::CreateComputePipeline(ComputeEntry->Source());
 
         RHI::FCmdListH CL = RHI::OpenCommandList();
-        RHI::CmdSetTextureHeap(CL, RHI::Core::GetGlobalHeap());
+        RHI::CmdSetTextureHeap(CL, RHI::GetGlobalHeap());
         RHI::CmdSetPipeline(CL, Pipeline);
 
         struct FBRDFArgs { uint32 OutUAV; uint32 Width; uint32 Height; uint32 _Pad0; };
         const FBRDFArgs Args{ Shared.BRDFLutUAV, BRDFLutSize, BRDFLutSize, 0 };
-        const RHI::GPUPtr ArgsPtr = RHI::Core::CopyTransient(Args);
+        const RHI::GPUPtr ArgsPtr = RHI::CopyTransient(Args);
 
         constexpr uint32 BRDFLutTile = 8u;
         const uint32 Groups = RenderUtils::GetGroupCount(BRDFLutSize, BRDFLutTile);
         RHI::CmdDispatch(CL, ArgsPtr, Groups, Groups, 1);
         RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::AllCommands);
 
-        RHI::Submit(CL);
-        RHI::WaitDeviceIdle();
-        RHI::ResetCommandList(CL);
-        RHI::Core::Retire(Pipeline);
+        const uint64 BakeValue = RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
+        RHI::WaitSemaphore(RHI::GetQueueTimeline(RHI::EQueueType::Graphics), BakeValue);
+        RHI::Retire(Pipeline);
     }
 
     void FDefaultSceneRenderer::InitSkyCube(uint32 FaceSize)
@@ -13848,7 +13779,8 @@ namespace Lumina
         Barriers::AllToTransfer(CL);
         RHI::CmdClearTexture(CL, NamedImages[(int)ENamedImage::ProbePrefiltered].Texture, Black);
         Barriers::TransferToAll(CL);
-        RHI::SubmitAndWait(CL);
+        const uint64 ClearValue = RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
+        RHI::WaitSemaphore(RHI::GetQueueTimeline(RHI::EQueueType::Graphics), ClearValue);
 
         NameOwnedImages(NamedImages);
     }
@@ -13952,11 +13884,11 @@ namespace Lumina
 
         // Everything that samples a material has run by now, so the accumulated mask is complete.
         Barriers::AllToTransfer(CL);
-        RHI::CmdMemcpy(CL, StreamingFeedbackReadback[Slot].Gpu, StreamingFeedbackBuffer.Gpu, StreamingFeedbackBuffer.Size);
+        RHI::CmdMemcpy(CL, { StreamingFeedbackReadback[Slot].Gpu, StreamingFeedbackBuffer.Size }, StreamingFeedbackBuffer);
 
         // Zero AFTER the copy, so the next frame's mask is what it sampled, not a growing union.
         RHI::Barriers::TransferToTransfer(CL);
-        RHI::CmdMemzero(CL, StreamingFeedbackBuffer.Gpu, StreamingFeedbackBuffer.Size);
+        RHI::CmdMemzero(CL, StreamingFeedbackBuffer);
         Barriers::TransferToAll(CL);
 
         StreamingFeedbackStamp[Slot] = ++StreamingFeedbackFrame;
@@ -13988,7 +13920,7 @@ namespace Lumina
 
     uint64 FDefaultSceneRenderer::BuildViewSceneRoot(FSceneView& View)
     {
-        RHI::FTransientAlloc Alloc = RHI::Core::AllocTransient(sizeof(FSceneRoot));
+        RHI::FTransientAlloc Alloc = RHI::AllocTransient(sizeof(FSceneRoot));
         FSceneRoot* Root = static_cast<FSceneRoot*>(Alloc.Cpu);
 
         *Root = SceneRootShared;
@@ -14106,7 +14038,7 @@ namespace Lumina
         CPC.OutVisibilityAddr   = GetInstanceVisibilityWrite().Gpu;
 
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CullShader));
-        RHI::CmdDispatchIndirect(CL, MakeArgs(CPC), GetMeshletCullDispatchArgs().Gpu, 0u);
+        RHI::CmdDispatchIndirect(CL, MakeArgs(CPC), GetMeshletCullDispatchArgs());
         Barriers::ComputeToAll(CL);
 
         // Turn what it appended into the slice every draw indexes, and the counts they draw from.
@@ -14153,12 +14085,7 @@ namespace Lumina
         // One mesh workgroup per surviving meshlet, so the grid IS the survivor count.
         const uint32 SliceArgBase = (ArgIndex * kMeshletSliceCount + Slice) * MeshSubDrawsPerSlice;
 
-        RHI::CmdDrawMeshTasksIndirectCount(CL, MakeArgs(Push),
-            GetMeshDrawArgs().Gpu,
-            SliceArgBase * sizeof(RHI::FDrawMeshTasksIndirectArguments),
-            GetRenderBuckets().Gpu,
-            ArgIndex * sizeof(FRenderBucketGPU) + offsetof(FRenderBucketGPU, SubDrawCount) + Slice * sizeof(uint32),
-            MeshSubDrawsPerSlice, sizeof(RHI::FDrawMeshTasksIndirectArguments));
+        RHI::CmdDrawMeshTasksIndirectCount(CL, MakeArgs(Push), GetMeshDrawArgs().Skip(SliceArgBase * sizeof(RHI::FDrawMeshTasksIndirectArguments)), GetRenderBuckets().Skip(ArgIndex * sizeof(FRenderBucketGPU) + offsetof(FRenderBucketGPU, SubDrawCount) + Slice * sizeof(uint32)), MeshSubDrawsPerSlice, sizeof(RHI::FDrawMeshTasksIndirectArguments));
     }
 
     RHI::FPipelineH FDefaultSceneRenderer::GetOrCreatePipeline(const FGraphicsPipelineKey& Key)
@@ -14313,54 +14240,12 @@ namespace Lumina
             }
         }
 
-        RHI::Core::DumpPipelineISA(Pipeline, CSEntry->Path);
+        RHI::DumpPipelineISA(Pipeline, CSEntry->Path);
         #endif
 
         return Pipeline;
     }
 
-    RHI::FDepthStencilH FDefaultSceneRenderer::GetOrCreateDepthState(const RHI::FDepthStencilDesc& Desc)
-    {
-        auto HashStencil = [](size_t& Seed, const RHI::FStencil& S)
-        {
-            Hash::HashCombine(Seed, ((uint64)S.Test) | ((uint64)S.FailOp << 8) |
-                                    ((uint64)S.PassOp << 16) | ((uint64)S.DepthFailOp << 24) |
-                                    ((uint64)S.Reference << 32));
-        };
-
-        auto FloatBits = [](float V) -> size_t
-        {
-            return (size_t)std::bit_cast<uint32>(V);
-        };
-
-        size_t Seed = 0;
-        Hash::HashCombine(Seed, ((uint64)Desc.DepthMode) | ((uint64)Desc.DepthTest << 8) |
-                                ((uint64)Desc.StencilReadMask << 16) | ((uint64)Desc.StencilWriteMask << 24));
-        Hash::HashCombine(Seed, FloatBits(Desc.DepthBias));
-        Hash::HashCombine(Seed, FloatBits(Desc.DepthBiasSlopeFactor));
-        Hash::HashCombine(Seed, FloatBits(Desc.DepthBiasClamp));
-        HashStencil(Seed, Desc.StencilFront);
-        HashStencil(Seed, Desc.StencilBack);
-
-        {
-            FReadScopeLock Lock(PipelineCacheMutex);
-            auto It = DepthStateCache.find(Seed);
-            if (It != DepthStateCache.end())
-            {
-                return It->second;
-            }
-        }
-
-        FWriteScopeLock Lock(PipelineCacheMutex);
-        if (auto Existing = DepthStateCache.find(Seed); Existing != DepthStateCache.end())
-        {
-            return Existing->second;
-        }
-
-        RHI::FDepthStencilH State = RHI::CreateDepthStencil(Desc);
-        DepthStateCache.emplace(Seed, State);
-        return State;
-    }
 
     void FDefaultSceneRenderer::SetViewportScissor(RHI::FCmdListH CL, const FUIntVector2& Extent)
     {
@@ -14371,9 +14256,9 @@ namespace Lumina
 
     void FDefaultSceneRenderer::WriteBuffer(RHI::FCmdListH CL, RHI::GPUPtr Dst, const void* Data, uint64 Size)
     {
-        RHI::FTransientAlloc Staging = RHI::Core::AllocTransient(Size);
+        RHI::FTransientAlloc Staging = RHI::AllocTransient(Size);
         Memory::Memcpy(Staging.Cpu, Data, Size);
-        RHI::CmdMemcpy(CL, Dst, Staging.Gpu, Size);
+        RHI::CmdMemcpy(CL, { Dst, Size }, { Staging.Gpu, Size });
     }
 
     void FDefaultSceneRenderer::WriteBufferRuns(RHI::FCmdListH CL, RHI::GPUPtr Dst, const void* Src, uint64 Stride,
@@ -14390,7 +14275,7 @@ namespace Lumina
             return;
         }
 
-        const RHI::FTransientAlloc Staging = RHI::Core::AllocTransient(Total);
+        const RHI::FTransientAlloc Staging = RHI::AllocTransient(Total);
         uint8* const StagingBytes = (uint8*)Staging.Cpu;
         if (StagingBytes == nullptr)
         {
@@ -14426,7 +14311,7 @@ namespace Lumina
             return;
         }
 
-        RHI::FTransientAlloc Staging = RHI::Core::AllocTransient(Size);
+        RHI::FTransientAlloc Staging = RHI::AllocTransient(Size);
         Memory::Memcpy(Staging.Cpu, Data, Size);
         StagedWrites.push_back(RHI::FBufferCopy{ Dst, Staging.Gpu, Size });
     }
@@ -14460,7 +14345,7 @@ namespace Lumina
 
             if (Init == EBufferInit::Zeroed)
             {
-                RHI::CmdMemzero(CL, Buffer.Gpu, Buffer.Size);
+                RHI::CmdMemzero(CL, Buffer);
                 Barriers::TransferToAll(CL);
             }
             return true;
@@ -14494,7 +14379,7 @@ namespace Lumina
 
     void FDefaultSceneRenderer::DeferFree(const RHI::FGPUAllocation& Allocation)
     {
-        RHI::Core::Retire(Allocation);
+        RHI::Retire(Allocation);
     }
 
     //~ End new-RHI helpers
@@ -14633,7 +14518,7 @@ namespace Lumina
 
         // Picker writes -> transfer read, then host read of the packed region.
         Barriers::AllToTransfer(CL);
-        RHI::CmdCopyTextureToMemory(CL, PickerImage.Texture, SrcSlice, Slot.Readback.Gpu, RegionW);
+        RHI::CmdCopyTextureToMemory(CL, PickerImage.Texture, SrcSlice, Slot.Readback, RegionW);
         RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
 
         Slot.OriginX = OriginX;

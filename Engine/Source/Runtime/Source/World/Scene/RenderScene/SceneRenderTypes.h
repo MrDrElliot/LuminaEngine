@@ -243,12 +243,12 @@ namespace Lumina
         {
             if (ReuseSampledSlot != RHI::kInvalidHeapSlot)
             {
-                RHI::HeapRepointTexture(RHI::Core::GetGlobalHeap(), ReuseSampledSlot, Out.Texture);
+                RHI::HeapRepointTexture(RHI::GetGlobalHeap(), ReuseSampledSlot, Out.Texture);
                 Out.SampledSlot = ReuseSampledSlot;
             }
             else
             {
-                Out.SampledSlot = RHI::HeapWriteTexture(RHI::Core::GetGlobalHeap(), Out.Texture);
+                Out.SampledSlot = RHI::HeapWriteTexture(RHI::GetGlobalHeap(), Out.Texture);
             }
         }
         if (bMipUAVs)
@@ -256,7 +256,7 @@ namespace Lumina
             Out.MipUAVSlots.resize(Desc.MipCount);
             for (uint32 Mip = 0; Mip < Desc.MipCount; ++Mip)
             {
-                Out.MipUAVSlots[Mip] = RHI::HeapWriteRWTexture(RHI::Core::GetGlobalHeap(), Out.Texture, Mip);
+                Out.MipUAVSlots[Mip] = RHI::HeapWriteRWTexture(RHI::GetGlobalHeap(), Out.Texture, Mip);
             }
         }
         return Out;
@@ -284,12 +284,12 @@ namespace Lumina
             Image = {};
             return;
         }
-        RHI::Core::RetireSampledSlot(Image.SampledSlot);
+        RHI::RetireSampledSlot(Image.SampledSlot);
         for (uint32 Slot : Image.MipUAVSlots)
         {
-            RHI::Core::RetireStorageSlot(Slot);
+            RHI::RetireStorageSlot(Slot);
         }
-        RHI::Core::Retire(Image.Texture);
+        RHI::Retire(Image.Texture);
         Image = {};
     }
 

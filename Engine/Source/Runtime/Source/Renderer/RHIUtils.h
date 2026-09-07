@@ -9,7 +9,7 @@ namespace Lumina::RHI::Utils
     {
         FTextureH      Target;
         FUIntVector2   Extent;
-        FDepthStencilH DepthState;
+        FDepthStencilDesc DepthState;
         ELoadOp        LoadOp   = ELoadOp::Clear;
         float          Clear[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
     };

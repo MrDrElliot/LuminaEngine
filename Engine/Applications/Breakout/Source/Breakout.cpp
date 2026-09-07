@@ -245,7 +245,7 @@ namespace
         for (uint32 FrameSlot = 0; !Window.ShouldClose() && !Game.WantsQuit();
              FrameSlot = (FrameSlot + 1) % RHI::kFramesInFlight)
         {
-            RHI::Core::BeginFrame(FrameSlot);
+            RHI::BeginFrame(FrameSlot);
 
             Window.ProcessMessages();
             Target.Resize(Window.GetExtent());
@@ -272,7 +272,7 @@ namespace
             }
 
             const RHI::FCmdListH CL = RHI::OpenCommandList();
-            RHI::CmdSetTextureHeap(CL, RHI::Core::GetGlobalHeap());
+            RHI::CmdSetTextureHeap(CL, RHI::GetGlobalHeap());
             Target.BarrierToRender(CL);
 
             Renderer.Render(CL, SwapImage, Target.GetExtent(), Game, RealTime);
@@ -303,7 +303,6 @@ int main(int ArgC, char** ArgV)
     FWindow Window(FWindowSpecs{ .Title = "Lumina Breakout", .Extent = { 1600, 900 } });
 
     RHI::CreateDevice(RHI::FDeviceDesc{ .bValidation = !ParsedCommandLine.Has("novalidation") });
-    RHI::Core::Initialize();
 
     FSpirVShaderCompiler ShaderCompiler;
     GShaderCompiler = &ShaderCompiler;
@@ -339,7 +338,6 @@ int main(int ArgC, char** ArgV)
     Target.Shutdown();
 
     GShaderCompiler = nullptr;
-    RHI::Core::Shutdown();
     RHI::FreeDevice();
 
     Task::Shutdown();

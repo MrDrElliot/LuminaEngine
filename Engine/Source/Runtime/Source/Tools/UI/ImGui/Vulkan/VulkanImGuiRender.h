@@ -66,8 +66,7 @@ namespace Lumina
 
         // Pipeline (BGRA8 swapchain), depth-disabled state, and the font atlases living in the
         // new texture heap (keyed by ImTextureData::UniqueID).
-        RHI::FPipelineUH                       NewPipeline;
-        RHI::FDepthStencilH                    NewDepthState;
+        RHI::FPipelineH                        NewPipeline;
         THashMap<int32, RHI::FManagedTexture>  NewFontTextures;
 
         // Path-loaded UI images (icons), decoded straight into the new texture heap so their

@@ -16,7 +16,7 @@
 #include "Paths/Paths.h"
 #include "Platform/Filesystem/PlatformFilesystem.h"
 
-namespace Lumina::RHI::Core
+namespace Lumina::RHI
 {
     // Typed, since unsigned long long is a distinct type and Max deduces one T from both arguments.
     static constexpr uint64 kMegabyte = 1024 * 1024;
@@ -38,13 +38,17 @@ namespace Lumina::RHI::Core
     // Kinds rather than a queue each, so one place destroys a GPU resource and one invariant holds.
     struct FRetireItem
     {
-        enum class EKind : uint8 { Buffer, Texture, SampledSlot, StorageSlot, Pipeline, Callback };
+        enum class EKind : uint8
+        {
+            Buffer, Texture, Pipeline, Semaphore, TextureHeap, Swapchain, Surface, QueryPool,
+            SampledSlot, StorageSlot, Callback
+        };
 
-        EKind      Kind        = EKind::Buffer;
-        FGPUAllocation Memory  = {};
-        FTextureH  Texture     = {};
-        uint32     Slot        = kInvalidHeapSlot;
-        FPipelineH Pipeline    = {};
+        EKind          Kind   = EKind::Buffer;
+        FGPUAllocation Memory = {};
+        // Every THandle is one uint64, so Kind alone says which map it indexes.
+        uint64         Handle = 0;
+        uint32         Slot   = kInvalidHeapSlot;
         // For state that must stop describing a resource at the exact moment that resource dies.
         TFunction<void()> Callback;
 
@@ -80,7 +84,7 @@ namespace Lumina::RHI::Core
 
     static void DestroyRetired(const FRetireItem& Item);
 
-    void Initialize()
+    static void InitializeCore()
     {
         GCore.GlobalHeap = CreateTextureHeap(8192, 1024, 64);
 
@@ -162,7 +166,7 @@ namespace Lumina::RHI::Core
         Textures::Initialize();
     }
 
-    void Shutdown()
+    static void ShutdownCore()
     {
         if (!GCore.bInitialized)
         {
@@ -205,9 +209,9 @@ namespace Lumina::RHI::Core
 
         for (FSemaphoreH& Timeline : GCore.QueueTimeline)
         {
-            FreeH(Timeline);
+            Internal::DestroyNow(Timeline);
         }
-        FreeH(GCore.GlobalHeap);
+        Internal::DestroyNow(GCore.GlobalHeap);
         GCore.bInitialized = false;
     }
 
@@ -222,7 +226,27 @@ namespace Lumina::RHI::Core
             Internal::DestroyNow(Item.Memory);
             break;
         case FRetireItem::EKind::Texture:
-            Internal::DestroyNow(Item.Texture);
+            Internal::DestroyNow(FTextureH{ Item.Handle });
+            break;
+        case FRetireItem::EKind::Pipeline:
+            Internal::DestroyNow(FPipelineH{ Item.Handle });
+            break;
+        case FRetireItem::EKind::Semaphore:
+            Internal::DestroyNow(FSemaphoreH{ Item.Handle });
+            break;
+        case FRetireItem::EKind::TextureHeap:
+            Internal::DestroyNow(FTextureHeapH{ Item.Handle });
+            break;
+        case FRetireItem::EKind::Swapchain:
+            Internal::DestroyNow(FSwapchainH{ Item.Handle });
+            break;
+        case FRetireItem::EKind::Surface:
+            Internal::DestroyNow(FSurfaceH{ Item.Handle });
+            break;
+        case FRetireItem::EKind::QueryPool:
+#if defined(LUMINA_WITH_GPU_PROFILING)
+            Internal::DestroyNow(FQueryPoolH{ Item.Handle });
+#endif
             break;
         case FRetireItem::EKind::SampledSlot:
             // After Shutdown the heap itself is gone, so its slots died with it.
@@ -230,9 +254,6 @@ namespace Lumina::RHI::Core
             break;
         case FRetireItem::EKind::StorageSlot:
             if (GCore.bInitialized) { RHI::HeapFreeRWTexture(GCore.GlobalHeap, Item.Slot); }
-            break;
-        case FRetireItem::EKind::Pipeline:
-            Internal::DestroyNow(Item.Pipeline);
             break;
         case FRetireItem::EKind::Callback:
             if (Item.Callback) { Item.Callback(); }
@@ -322,24 +343,24 @@ namespace Lumina::RHI::Core
             // A callback is paired with the resource beside it, so metering some kinds fires it a drain early.
             const bool bUncapped = Queue.size() > kRetireBacklogHighWater;
 
-            for (size_t i = 0; i < Queue.size(); )
+            // Compacted in place rather than swap-popped, so retire order is destroy order.
+            size_t Write = 0;
+            for (size_t Read = 0; Read < Queue.size(); ++Read)
             {
-                if (!bUncapped && Ready.size() >= kMaxDestroysPerDrain)
+                const bool bUnderCap = bUncapped || Ready.size() < kMaxDestroysPerDrain;
+                if (bUnderCap && HasRetired(Queue[Read]))
                 {
-                    break;
-                }
-
-                // Not yet retired on some queue, so leave it for the next drain of this slot.
-                if (!HasRetired(Queue[i]))
-                {
-                    ++i;
+                    Ready.push_back(std::move(Queue[Read]));
                     continue;
                 }
-                // Moved rather than copied, since the item carries a TFunction callback.
-                Ready.push_back(std::move(Queue[i]));
-                Queue[i] = std::move(Queue.back());
-                Queue.pop_back();
+
+                if (Write != Read)
+                {
+                    Queue[Write] = std::move(Queue[Read]);
+                }
+                ++Write;
             }
+            Queue.resize(Write);
 
             Backlog = Queue.size();
         }
@@ -373,18 +394,28 @@ namespace Lumina::RHI::Core
         PushRetire(Item);
     }
 
-    void Retire(FPipelineH Pipeline)
+    static void RetireHandle(FRetireItem::EKind Kind, uint64 Handle)
     {
-        if (!IsValid(Pipeline))
+        if (Handle == 0)
         {
             return;
         }
 
         FRetireItem Item;
-        Item.Kind     = FRetireItem::EKind::Pipeline;
-        Item.Pipeline = Pipeline;
+        Item.Kind   = Kind;
+        Item.Handle = Handle;
         PushRetire(Item);
     }
+
+    void Retire(FTextureH Texture)           { RetireHandle(FRetireItem::EKind::Texture, Texture.Handle); }
+    void Retire(FPipelineH Pipeline)         { RetireHandle(FRetireItem::EKind::Pipeline, Pipeline.Handle); }
+    void Retire(FSemaphoreH Semaphore)       { RetireHandle(FRetireItem::EKind::Semaphore, Semaphore.Handle); }
+    void Retire(FTextureHeapH Heap)          { RetireHandle(FRetireItem::EKind::TextureHeap, Heap.Handle); }
+    void Retire(FSwapchainH Swapchain)       { RetireHandle(FRetireItem::EKind::Swapchain, Swapchain.Handle); }
+    void Retire(FSurfaceH Surface)           { RetireHandle(FRetireItem::EKind::Surface, Surface.Handle); }
+#if defined(LUMINA_WITH_GPU_PROFILING)
+    void Retire(FQueryPoolH Pool)            { RetireHandle(FRetireItem::EKind::QueryPool, Pool.Handle); }
+#endif
 
     void RetireCallback(TFunction<void()> Callback)
     {
@@ -397,19 +428,6 @@ namespace Lumina::RHI::Core
         Item.Kind     = FRetireItem::EKind::Callback;
         Item.Callback = std::move(Callback);
         PushRetire(std::move(Item));
-    }
-
-    void Retire(FTextureH Texture)
-    {
-        if (!IsValid(Texture))
-        {
-            return;
-        }
-
-        FRetireItem Item;
-        Item.Kind    = FRetireItem::EKind::Texture;
-        Item.Texture = Texture;
-        PushRetire(Item);
     }
 
     void RetireSampledSlot(uint32 HeapSlot)
@@ -441,6 +459,18 @@ namespace Lumina::RHI::Core
         Item.Kind = FRetireItem::EKind::StorageSlot;
         Item.Slot = HeapSlot;
         PushRetire(Item);
+    }
+
+    void CreateDevice(const FDeviceDesc& Desc)
+    {
+        Internal::CreateDevice(Desc);
+        InitializeCore();
+    }
+
+    void FreeDevice()
+    {
+        ShutdownCore();
+        Internal::FreeDevice();
     }
 
     void BeginFrame(uint32 SlotIndex)
@@ -516,8 +546,8 @@ namespace Lumina::RHI::Core
 
                 FScopeLock Lock(GCore.SubmitMutex);
                 const uint64 Value = GCore.QueueCounter[QueueIndex].fetch_add(1, std::memory_order_release) + 1;
-                const FSemaphoreInfo Signal { GCore.QueueTimeline[QueueIndex], Value, EStageFlags::AllCommands };
-                RHI::Submit(Queue, TSpan<const FCmdListH>{&CL, 1}, {}, TSpan<const FSemaphoreInfo>{&Signal, 1});
+                const FSemaphoreInfo Signal { GCore.QueueTimeline[QueueIndex], Value };
+                Internal::Submit(Queue, TSpan<const FCmdListH>{&CL, 1}, {}, TSpan<const FSemaphoreInfo>{&Signal, 1});
                 GCore.SlotWaitValue[Slot][QueueIndex] = Value;
                 GCore.SlotCommandLists[Slot].push_back(CL);
 
@@ -593,7 +623,7 @@ namespace Lumina::RHI::Core
         Textures::TickPendingSwaps();
     }
 
-    uint64 SubmitOn(EQueueType Queue, TSpan<const FCmdListH> CommandLists, TSpan<const FSemaphoreInfo> Waits)
+    uint64 Submit(EQueueType Queue, TSpan<const FCmdListH> CommandLists, TSpan<const FSemaphoreInfo> Waits)
     {
         const uint32 QueueIndex = (uint32)Queue;
 
@@ -614,14 +644,14 @@ namespace Lumina::RHI::Core
                 WaitStorage[Count++] = Wait;
             }
             WaitStorage[Count++] = FSemaphoreInfo{ GCore.QueueTimeline[(uint32)EQueueType::Transfer],
-                                                   GCore.PendingTransferWait, EStageFlags::AllCommands };
+                                                   GCore.PendingTransferWait };
 
             EffectiveWaits = TSpan<const FSemaphoreInfo>(WaitStorage, Count);
             GCore.bQueueTookTransferWait[QueueIndex] = true;
         }
 
-        const FSemaphoreInfo Signal { GCore.QueueTimeline[QueueIndex], Value, EStageFlags::AllCommands };
-        RHI::Submit(Queue, CommandLists, EffectiveWaits, TSpan<const FSemaphoreInfo>{&Signal, 1});
+        const FSemaphoreInfo Signal { GCore.QueueTimeline[QueueIndex], Value };
+        Internal::Submit(Queue, CommandLists, EffectiveWaits, TSpan<const FSemaphoreInfo>{&Signal, 1});
 
         // Relaxed, since only BeginFrame writes this and both run on the frame thread.
         const uint32 Slot = GCore.CurrentSlot.load(std::memory_order_relaxed);
@@ -637,27 +667,6 @@ namespace Lumina::RHI::Core
     FSemaphoreH GetQueueTimeline(EQueueType Queue)
     {
         return GCore.QueueTimeline[(uint32)Queue];
-    }
-
-    void Submit(FCmdListH CommandList)
-    {
-        SubmitOn(EQueueType::Graphics, TSpan<const FCmdListH>{&CommandList, 1}, {});
-    }
-
-    void SubmitAndWait(FCmdListH CommandList)
-    {
-        constexpr uint32 GraphicsIndex = (uint32)EQueueType::Graphics;
-
-        uint64 Value;
-        {
-            FScopeLock Lock(GCore.SubmitMutex);
-            Value = GCore.QueueCounter[GraphicsIndex].fetch_add(1, std::memory_order_release) + 1;
-
-            const FSemaphoreInfo Signal { GCore.QueueTimeline[GraphicsIndex], Value, EStageFlags::AllCommands };
-            RHI::Submit(EQueueType::Graphics, TSpan<const FCmdListH>{&CommandList, 1}, {}, TSpan<const FSemaphoreInfo>{&Signal, 1});
-        }
-
-        WaitSemaphore(GCore.QueueTimeline[GraphicsIndex], Value);
     }
 
     bool Present(FSwapchainH Swapchain, FCmdListH CommandList)
@@ -698,7 +707,7 @@ namespace Lumina::RHI::Core
             // An overflow visible in the memory tool signals an undersized ring slice, and naming is cheap.
             SetDebugName(Mem.Gpu, "Transient.Overflow");
             Retire(Mem);
-            return FTransientAlloc{ .Cpu = Mem.Cpu, .Gpu = Mem.Gpu };
+            return FTransientAlloc{ .Cpu = Mem.Cpu, .Gpu = Mem.Gpu, .Size = Size };
         }
 
         const uint64 AlignedGpu = Math::AlignUp(Slice.Memory.Gpu + RawOffset, Alignment);
@@ -707,7 +716,8 @@ namespace Lumina::RHI::Core
         return FTransientAlloc
         {
             .Cpu = Slice.Memory.Cpu + RawOffset + Skew,
-            .Gpu = AlignedGpu
+            .Gpu = AlignedGpu,
+            .Size = Size
         };
     }
 
@@ -805,13 +815,5 @@ namespace Lumina::RHI::Core
         const FPipelineH Pipeline = RHI::CreateComputePipeline(Compute->Source());
         DumpPipelineISA(Pipeline, ComputeShader);
         return Pipeline;
-    }
-}
-
-namespace Lumina::RHI
-{
-    void SubmitAndWait(FCmdListH CommandList)
-    {
-        Core::SubmitAndWait(CommandList);
     }
 }

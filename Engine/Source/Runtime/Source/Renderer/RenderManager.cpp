@@ -98,7 +98,6 @@ namespace Lumina
         MeshletHeaderSlab::Shutdown();
 
         SwapchainTarget.Shutdown();
-        RHI::Core::Shutdown();
         RHI::FreeDevice();
     }
 
@@ -149,8 +148,6 @@ namespace Lumina
             .RequiredFeatures = RHI::EDeviceFeature::MeshShading,
         });
         RenderBootMark("RHI::CreateDevice");
-        RHI::Core::Initialize();
-        RenderBootMark("RHI::Core::Initialize");
 
         ShaderLibrary   = Memory::New<FShaderLibrary>();
         GShaderLibrary  = ShaderLibrary;
@@ -182,7 +179,7 @@ namespace Lumina
         LUMINA_PROFILE_SECTION_COLORED("Frame Fence (GPU)", tracy::Color::Crimson);
 
         // FrameEnd records into CurrentFrameIndex and advances afterwards, so this is that same slot.
-        RHI::Core::BeginFrame(CurrentFrameIndex);
+        RHI::BeginFrame(CurrentFrameIndex);
         bFrameSlotWaited = true;
     }
 
@@ -214,7 +211,7 @@ namespace Lumina
             if (!bFrameSlotWaited)
             {
                 LUMINA_PROFILE_SECTION_COLORED("Frame Fence (GPU)", tracy::Color::Crimson);
-                RHI::Core::BeginFrame(ThisFrameIndex);
+                RHI::BeginFrame(ThisFrameIndex);
             }
             bFrameSlotWaited = false;
 
@@ -235,7 +232,7 @@ namespace Lumina
             const FUIntVector2 Extent = SwapchainTarget.GetExtent();
 
             RHI::FCmdListH CL = RHI::OpenCommandList();
-            RHI::CmdSetTextureHeap(CL, RHI::Core::GetGlobalHeap());
+            RHI::CmdSetTextureHeap(CL, RHI::GetGlobalHeap());
             SwapchainTarget.BarrierToRender(CL);
 
             #if WITH_EDITOR

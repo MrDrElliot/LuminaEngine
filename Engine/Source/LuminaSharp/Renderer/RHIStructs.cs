@@ -191,13 +191,11 @@ public struct FSemaphoreInfo
 {
     public FSemaphoreH Semaphore;
     public ulong       Value;
-    public EStageFlags Stage;
 
-    public FSemaphoreInfo(FSemaphoreH Semaphore, ulong Value, EStageFlags Stage)
+    public FSemaphoreInfo(FSemaphoreH Semaphore, ulong Value)
     {
         this.Semaphore = Semaphore;
         this.Value = Value;
-        this.Stage = Stage;
     }
 }
 
@@ -276,6 +274,24 @@ public struct FRenderAttachment
 }
 
 // One allocation from RHI::Malloc. Cpu is null for EMemoryType.GPUOnly; both pointers name the same first byte.
+// An address and the bytes a command may touch there.
+[StructLayout(LayoutKind.Sequential)]
+[NativeLayout("RHI::FGPURange")]
+public struct FGPURange
+{
+    public GPUPtr Address;
+    public ulong  Size;
+
+    public FGPURange(GPUPtr Address, ulong Size)
+    {
+        this.Address = Address;
+        this.Size = Size;
+    }
+
+    public FGPURange Sub(ulong Offset, ulong Bytes) => new FGPURange(Address + Offset, Bytes);
+    public FGPURange Skip(ulong Offset) => new FGPURange(Address + Offset, Size - Offset);
+}
+
 [StructLayout(LayoutKind.Sequential)]
 [NativeLayout("RHI::FGPUAllocation")]
 public struct FGPUAllocation
@@ -283,20 +299,22 @@ public struct FGPUAllocation
     public IntPtr Cpu;   // std::byte*
     public GPUPtr Gpu;
     public ulong  Size;
-    public ulong  Handle;   // opaque backend token RHI.Retire needs
 
     public bool IsValid => Gpu.IsValid;
 }
 
-// Per-frame transient GPU allocation (RHI::Core::AllocTransient): a CPU pointer + its device address.
+// Per-frame transient GPU allocation from RHI::AllocTransient, a CPU pointer with its device address.
 [StructLayout(LayoutKind.Sequential)]
 [NativeLayout("RHI::FTransientAlloc")]
 public struct FTransientAlloc
 {
     public IntPtr Cpu;   // void*
     public GPUPtr Gpu;
+    public ulong  Size;
 
     public bool IsValid => Gpu.IsValid;
+
+    public static implicit operator FGPURange(FTransientAlloc Alloc) => new FGPURange(Alloc.Gpu, Alloc.Size);
 }
 
 // One GPU memory heap (RHI::FGPUMemoryHeapStats). bools mirrored as byte.

@@ -314,14 +314,14 @@ namespace Lumina::RHI
         }
 
         // Resetting here too would recycle one command buffer twice, which is a device loss.
-        const uint64 Value = Core::SubmitOn(EQueueType::Graphics, TSpan<const FCmdListH>{&CL, 1});
-        Upload::NoteFlushSubmitted(Batch, 0, EQueueType::Graphics, Core::GetQueueTimeline(EQueueType::Graphics), Value);
+        const uint64 Value = Submit(EQueueType::Graphics, TSpan<const FCmdListH>{&CL, 1});
+        Upload::NoteFlushSubmitted(Batch, 0, EQueueType::Graphics, GetQueueTimeline(EQueueType::Graphics), Value);
 
-        WaitSemaphore(Core::GetQueueTimeline(EQueueType::Graphics), Value);
+        WaitSemaphore(GetQueueTimeline(EQueueType::Graphics), Value);
 
         for (const FGPUAllocation& Staging : OwnedStaging)
         {
-            Core::Retire(Staging);
+            Retire(Staging);
         }
     }
 
@@ -370,15 +370,15 @@ namespace Lumina::RHI
                 GUpload.Queue.clear();
             }
 
-            // Outside the lock, since Core::Retire re-enters CancelBuffer, which takes the upload mutex.
+            // Outside the lock, since Retire re-enters CancelBuffer, which takes the upload mutex.
             for (const FGPUAllocation& Staging : Orphaned)
             {
-                Core::Retire(Staging);
+                Retire(Staging);
             }
 
             for (FStagingSlice& Slice : GUpload.Slices)
             {
-                Core::Retire(Slice.Memory);
+                Retire(Slice.Memory);
                 Slice.Memory   = {};
                 Slice.Cursor   = 0;
                 Slice.Capacity = 0;
@@ -512,7 +512,7 @@ namespace Lumina::RHI
                 switch (Op.Type)
                 {
                 case EUploadOp::Buffer:
-                    CmdMemcpy(T.CL, Op.BufferDest, Op.Staging, Op.Size);
+                    CmdMemcpy(T.CL, { Op.BufferDest, Op.Size }, { Op.Staging, Op.Size });
                     break;
                 case EUploadOp::Texture:
                     {
@@ -525,7 +525,7 @@ namespace Lumina::RHI
                         {
                             Slice.Extent = FUIntVector3(Op.Width, Math::Max(Op.Height, 1u), 1u);
                         }
-                        CmdCopyMemoryToTexture(T.CL, Op.Staging, Op.RowPitchTexels, Op.TextureDest, Slice);
+                        CmdCopyMemoryToTexture(T.CL, { Op.Staging, Op.Size }, Op.RowPitchTexels, Op.TextureDest, Slice);
                     }
                     break;
                 case EUploadOp::Clear:
@@ -642,7 +642,7 @@ namespace Lumina::RHI
             
             for (const FGPUAllocation& Staging : Orphaned)
             {
-                Core::Retire(Staging);
+                Retire(Staging);
             }
         }
 
@@ -684,7 +684,7 @@ namespace Lumina::RHI
                 return;
             }
 
-            // Blocks the frame on worker threads, not on the GPU, and it sits inside Core::BeginFrame.
+            // Blocks the frame on worker threads, not on the GPU, and it sits inside BeginFrame.
             LUMINA_PROFILE_SECTION_COLORED("Upload::DrainSliceWriters (Workers)", tracy::Color::Goldenrod);
 
             const FStagingSlice& Slice = GUpload.Slices[Slot];
@@ -864,8 +864,8 @@ namespace Lumina::RHI
                 Slice.OverflowBytes   = 0;
             }
 
-            // Outside the lock, since Core::Retire re-enters CancelBuffer, which takes the upload mutex.
-            Core::Retire(OldMemory);
+            // Outside the lock, since Retire re-enters CancelBuffer, which takes the upload mutex.
+            Retire(OldMemory);
         }
     }
 }

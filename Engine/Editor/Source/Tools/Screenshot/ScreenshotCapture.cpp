@@ -224,11 +224,10 @@ namespace Lumina::Screenshot
 
         RHI::FCmdListH CL = RHI::OpenCommandList();
         RHI::CmdBarrier(CL, RHI::EStageFlags::AllCommands, RHI::EStageFlags::Transfer);
-        RHI::CmdCopyTextureToMemory(CL, SrcImage.Texture, RHI::FTextureSlice{}, Readback.Gpu, Out.ResolutionX);
+        RHI::CmdCopyTextureToMemory(CL, SrcImage.Texture, RHI::FTextureSlice{}, Readback, Out.ResolutionX);
         RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
-        RHI::Submit(CL);
-        RHI::WaitDeviceIdle();
-        RHI::ResetCommandList(CL);
+        const uint64 CaptureValue = RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
+        RHI::WaitSemaphore(RHI::GetQueueTimeline(RHI::EQueueType::Graphics), CaptureValue);
 
         const size_t RowPitch = (size_t)Out.ResolutionX * TexelBytes;
         const uint8* Mapped = Readback.CpuAs<const uint8>();
@@ -249,7 +248,7 @@ namespace Lumina::Screenshot
                                 Mapped, RowPitch, Out.ErrorMessage);
         }
 
-        RHI::Core::Retire(Readback);
+        RHI::Retire(Readback);
 
         if (bWriteOK)
         {

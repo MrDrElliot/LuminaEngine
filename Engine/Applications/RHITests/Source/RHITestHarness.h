@@ -58,8 +58,7 @@ namespace Lumina::RHITests
         // The same compile, leaving a failure for the caller to judge.
         TVector<uint32> TryCompileShader(const char* Source, const char* DebugName, const char* EntryPoint = nullptr);
 
-        /** Pipeline handle retired with the test's scratch. Pipelines must never be freed synchronously
-         *  while frames are in flight -- RHI::FreeH destroys the VkPipeline immediately. */
+        // Pipeline handle retired with the test's scratch, so it is never destroyed under an in-flight frame.
         RHI::FPipelineH TrackPipeline(RHI::FPipelineH Pipeline);
 
         const TVector<FString>& GetFailures() const { return Failures; }

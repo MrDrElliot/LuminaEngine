@@ -111,11 +111,11 @@ namespace Lumina::RHI::Textures
 
         for (uint32 Slot : Storage)
         {
-            Core::RetireStorageSlot(Slot);
+            RetireStorageSlot(Slot);
         }
 
         Upload::CancelTexture(Texture);
-        Core::Retire(Texture);
+        Retire(Texture);
     }
 
     void Initialize()
@@ -128,7 +128,7 @@ namespace Lumina::RHI::Textures
         Upload(GState.Default, 0, Magenta, sizeof(Magenta), 1);
         FlushUploadsAndWait();
 
-        HeapSetFallbackTexture(Core::GetGlobalHeap(), GState.Default.Texture);
+        HeapSetFallbackTexture(GetGlobalHeap(), GState.Default.Texture);
     }
 
     void Shutdown()
@@ -140,7 +140,7 @@ namespace Lumina::RHI::Textures
 
         WaitDeviceIdle();
 
-        HeapSetFallbackTexture(Core::GetGlobalHeap(), FTextureH{});
+        HeapSetFallbackTexture(GetGlobalHeap(), FTextureH{});
 
         // A staged image was never bound, but it is a real allocation and this is its only reference.
         {
@@ -148,19 +148,19 @@ namespace Lumina::RHI::Textures
             for (const FPendingSwap& Pending : GState.PendingSwaps)
             {
                 Upload::CancelTexture(Pending.NewTexture);
-                Core::Retire(Pending.NewTexture);
+                Retire(Pending.NewTexture);
             }
             GState.PendingSwaps.clear();
             PublishSwapCountLocked();
         }
 
-        // Anything already retired is drained by Core::Shutdown, which runs immediately after this.
+        // Anything already retired is drained by Shutdown, which runs immediately after this.
 
         if (GState.Default.SampledSlot != kInvalidHeapSlot)
         {
-            HeapFreeTexture(Core::GetGlobalHeap(), GState.Default.SampledSlot);
+            HeapFreeTexture(GetGlobalHeap(), GState.Default.SampledSlot);
         }
-        Core::Retire(GState.Default.Texture);
+        Retire(GState.Default.Texture);
         GState.Default = FManagedTexture{};
 
         GState.bInitialized = false;
@@ -221,7 +221,7 @@ namespace Lumina::RHI::Textures
         FManagedTexture Out;
         Out.Texture     = CreateTexture(MakeTexture2DDesc(Desc));
         SetDebugName(Out.Texture, Desc.DebugName);
-        Out.SampledSlot = HeapWriteTexture(Core::GetGlobalHeap(), Out.Texture);
+        Out.SampledSlot = HeapWriteTexture(GetGlobalHeap(), Out.Texture);
         return Out;
     }
 
@@ -230,7 +230,7 @@ namespace Lumina::RHI::Textures
         FManagedTexture Out;
         Out.Texture     = CreateTexture(MakeTexture2DArrayDesc(Desc));
         SetDebugName(Out.Texture, Desc.DebugName);
-        Out.SampledSlot = HeapWriteTexture(Core::GetGlobalHeap(), Out.Texture);
+        Out.SampledSlot = HeapWriteTexture(GetGlobalHeap(), Out.Texture);
         return Out;
     }
 
@@ -239,7 +239,7 @@ namespace Lumina::RHI::Textures
         FManagedTexture Out;
         Out.Texture     = CreateTexture(MakeTexture3DDesc(Desc));
         SetDebugName(Out.Texture, Desc.DebugName);
-        Out.SampledSlot = HeapWriteTexture(Core::GetGlobalHeap(), Out.Texture);
+        Out.SampledSlot = HeapWriteTexture(GetGlobalHeap(), Out.Texture);
         return Out;
     }
 
@@ -423,7 +423,7 @@ namespace Lumina::RHI::Textures
         
         LUMINA_PROFILE_SCOPE();
 
-        // Retired outside the lock, since Core::Retire re-enters the upload system's own locks.
+        // Retired outside the lock, since Retire re-enters the upload system's own locks.
         TVector<FTextureH> Superseded;
         {
             FScopeLock Lock(GState.SwapMutex);
@@ -453,7 +453,7 @@ namespace Lumina::RHI::Textures
                 }
 
                 // Only once the copies have executed does the slot move, and only then is the old image garbage.
-                HeapRepointTexture(Core::GetGlobalHeap(), Pending.Slot, Pending.NewTexture);
+                HeapRepointTexture(GetGlobalHeap(), Pending.Slot, Pending.NewTexture);
                 Superseded.push_back(Pending.OldTexture);
 
                 GState.PendingSwaps[i] = GState.PendingSwaps.back();
@@ -506,7 +506,7 @@ namespace Lumina::RHI::Textures
             }
         }
 
-        const uint32 Slot = HeapWriteRWTexture(Core::GetGlobalHeap(), Tex.Texture, Mip);
+        const uint32 Slot = HeapWriteRWTexture(GetGlobalHeap(), Tex.Texture, Mip);
         if (Slot != kInvalidHeapSlot)
         {
             GState.StorageSlots.push_back(FStorageSlot{ Handle, Mip, Slot });
@@ -541,7 +541,7 @@ namespace Lumina::RHI::Textures
         }
 
         // Unbinds immediately and defers only the index free, so neither image stays named by the heap.
-        Core::RetireSampledSlot(Tex.SampledSlot);
+        RetireSampledSlot(Tex.SampledSlot);
 
         RetireTextureAndSlots(StillBound);
         RetireTextureAndSlots(Tex.Texture);

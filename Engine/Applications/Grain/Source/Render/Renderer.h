@@ -154,7 +154,6 @@ namespace Grain
         bool             bTimers = false;
 
         RHI::FGPUAllocation PickBuffer;
-        RHI::FDepthStencilH DepthState;
 
         RHI::FManagedTexture RawIndirect;
         RHI::FManagedTexture RawDirect;

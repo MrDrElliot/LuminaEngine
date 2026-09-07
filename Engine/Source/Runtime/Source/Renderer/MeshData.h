@@ -15,13 +15,6 @@
 
 namespace Lumina
 {
-    static_assert(uint32(MESHLET_MAX_VERTICES)  == RHI::kMeshMaxOutputVertices,
-                  "MESHLET_MAX_VERTICES and RHI::kMeshMaxOutputVertices must agree.");
-    static_assert(uint32(MESHLET_MAX_TRIANGLES) == RHI::kMeshMaxOutputPrimitives,
-                  "MESHLET_MAX_TRIANGLES and RHI::kMeshMaxOutputPrimitives must agree.");
-    static_assert(uint32(MESHLET_CULL_GROUP_SIZE) == RHI::kMeshletCullGroupSize,
-                  "MESHLET_CULL_GROUP_SIZE and RHI::kMeshletCullGroupSize must agree.");
-
     constexpr uint32 MAX_MESH_LODS         = MESHLET_MAX_LODS;
     constexpr uint32 MAX_SHADOW_LOD        = MESHLET_MAX_SHADOW_LOD;
     constexpr uint32 MAX_COARSE_SHADOW_LOD = MESHLET_MAX_COARSE_SHADOW_LOD;
@@ -426,7 +419,7 @@ namespace Lumina
                 // Only the block is owned; the five below are interior addresses into it. Retiring one
                 // of those would miss the allocation ledger's exact-address lookup and leak the block.
 
-                // Not Core::Retire, whose fence cannot see a scene still about to record the old header.
+                // Not Retire, whose fence cannot see a scene still about to record the old header.
                 RHI::RetireAfterExtract(GeometryBlock);
 
                 GeometryBlock         = {};

@@ -310,7 +310,7 @@ namespace Lumina
     {
         if (Channel.SlotMemory[Slot].Gpu != 0)
         {
-            RHI::Core::Retire(Channel.SlotMemory[Slot]);
+            RHI::Retire(Channel.SlotMemory[Slot]);
         }
         Channel.SlotMemory[Slot]   = {};
         Channel.SlotCapacity[Slot] = 0;

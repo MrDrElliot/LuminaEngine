@@ -23,8 +23,8 @@ namespace Lumina::RHI
 
     FMaterialManager::~FMaterialManager()
     {
-        Core::Retire(MaterialBuffer);
-        Core::Retire(PendingBuffer);
+        Retire(MaterialBuffer);
+        Retire(PendingBuffer);
         MaterialBuffer = {};
         PendingBuffer  = {};
     }
@@ -96,7 +96,7 @@ namespace Lumina::RHI
         }
 
         // The old address only lives in scene roots, which are rebuilt every frame.
-        Core::Retire(MaterialBuffer);
+        Retire(MaterialBuffer);
 
         MaterialBuffer  = PendingBuffer;
         Capacity        = PendingCapacity;
@@ -135,7 +135,7 @@ namespace Lumina::RHI
         {
             // Nothing was queued, so no batch names this copy and publishing would swap in raw Malloc bytes.
             LOG_ERROR("MaterialManager: the mirror copy into a {} slot table was dropped; the grow is abandoned.", NewCapacity);
-            Core::Retire(NewBuffer);
+            Retire(NewBuffer);
             return;
         }
 
@@ -161,7 +161,7 @@ namespace Lumina::RHI
 
         if (PendingCapacity < MinSlots)
         {
-            Core::Retire(PendingBuffer);
+            Retire(PendingBuffer);
             PendingBuffer   = {};
             PendingCapacity = 0;
             PendingBatch    = 0;
@@ -330,7 +330,7 @@ namespace Lumina::RHI
 
     FMaterialCollectionManager::~FMaterialCollectionManager()
     {
-        Core::Retire(CollectionBuffer);
+        Retire(CollectionBuffer);
         CollectionBuffer = {};
     }
 

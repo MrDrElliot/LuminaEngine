@@ -69,7 +69,7 @@ namespace Lumina::RHI
          *  pointing at the OLD image, which stays alive and keeps being sampled. Nothing is visible to a
          *  shader until CommitRecreate arms the swap and the uploads it covers have actually executed on
          *  the GPU. Repointing at create time -- what this used to do -- published an image whose texels
-         *  had never been written, because uploads do not flush until the next Core::BeginFrame: a full
+         *  had never been written, because uploads do not flush until the next BeginFrame: a full
          *  frame of undefined contents per promotion, and a lifetime hazard on the old image behind it.
          *
          *  So the sequence is fixed, and all three steps belong on one thread with no frame boundary
@@ -104,7 +104,7 @@ namespace Lumina::RHI
          *  drives residency should hold off rather than stack a second swap on the same slot. */
         RUNTIME_API bool HasPendingSwap(const FManagedTexture& Tex);
 
-        /** Publishes every staged swap whose upload has landed. Driven from Core::BeginFrame. */
+        /** Publishes every staged swap whose upload has landed. Driven from BeginFrame. */
         void TickPendingSwaps();
 
         // Width/Height are the MIP's own dimensions and must be passed past mip 0: the copy otherwise derives

@@ -23,11 +23,7 @@ namespace Lumina::RHI::Utils
 
         CmdBeginRenderPass(CL, Pass);
 
-        if (IsValid(Desc.DepthState))
-        {
-            CmdSetDepthStencilState(CL, Desc.DepthState);
-        }
-
+        CmdSetDepthStencil(CL, Desc.DepthState);
         CmdSetCullMode(CL, ECullMode::None);
         CmdSetFrontFace(CL, EFrontFace::CCW);
         CmdSetViewport(CL, Rect);

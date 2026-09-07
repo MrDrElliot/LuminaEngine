@@ -53,8 +53,7 @@ namespace Lumina
             if (RHI::IsValid(Slot.Pool))
             {
                 // Disabling the cvar calls this mid-frame, with earlier frames still naming the pool.
-                const RHI::FQueryPoolH Pool = Slot.Pool;
-                RHI::Core::RetireCallback([Pool] { RHI::FreeH(Pool); });
+                RHI::Retire(Slot.Pool);
                 Slot.Pool = {};
             }
             Slot.Scopes.clear();
@@ -99,7 +98,7 @@ namespace Lumina
 
         bInitialized = true;
 
-        // Core::BeginFrame already waited this slot's timeline, so last cycle's writes are readable now.
+        // BeginFrame already waited this slot's timeline, so last cycle's writes are readable now.
         if (Slot.bPendingResolve)
         {
             Resolve(Slot);

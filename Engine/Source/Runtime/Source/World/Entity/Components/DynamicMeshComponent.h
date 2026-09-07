@@ -182,6 +182,9 @@ namespace Lumina
         /// Transient, never serialized.
         uint32 SyncedRenderDataVersion = 0;
 
+        // Last RenderDataVersion whose materials the resolve pass examined. Transient, never serialized.
+        uint32 ResolvedRenderDataVersion = 0;
+
         /// Re-runs the material half of the resolve against the current MaterialOverrides. Called by the
         /// render scene's resolve pass while a material is still compiling, and after an override changes.
         void RefreshResolvedMaterials();

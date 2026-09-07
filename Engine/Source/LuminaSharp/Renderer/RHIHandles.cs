@@ -59,18 +59,6 @@ public readonly struct FSemaphoreH : IEquatable<FSemaphoreH>
     public override int GetHashCode() => Handle.GetHashCode();
 }
 
-[StructLayout(LayoutKind.Sequential)]
-[NativeLayout("RHI::FDepthStencilH")]
-public readonly struct FDepthStencilH : IEquatable<FDepthStencilH>
-{
-    public readonly ulong Handle;
-    public FDepthStencilH(ulong Handle) => this.Handle = Handle;
-    public bool IsValid => Handle != 0;
-    public static FDepthStencilH Invalid => default;
-    public bool Equals(FDepthStencilH Other) => Handle == Other.Handle;
-    public override bool Equals(object? Obj) => Obj is FDepthStencilH H && Equals(H);
-    public override int GetHashCode() => Handle.GetHashCode();
-}
 
 [StructLayout(LayoutKind.Sequential)]
 [NativeLayout("RHI::FCmdListH")]

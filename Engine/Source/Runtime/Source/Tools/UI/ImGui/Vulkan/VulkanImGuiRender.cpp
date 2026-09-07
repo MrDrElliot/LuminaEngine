@@ -65,9 +65,8 @@ namespace Lumina
 
         FRecursiveScopeLock Lock(Mutex);
 
-        NewPipeline.Reset();
-        RHI::FreeH(NewDepthState);
-        NewDepthState = {};
+        RHI::Retire(NewPipeline);
+        NewPipeline = {};
         for (auto& KV : NewFontTextures)
         {
             RHI::Textures::Release(KV.second);
@@ -170,11 +169,7 @@ namespace Lumina
             RasterDesc.Topology     = RHI::ETopology::TriangleList;
             RasterDesc.ColorTargets = TSpan<const RHI::FColorTarget>(&ColorTarget, 1);
 
-            NewPipeline = RHI::Core::CreateGraphicsPipeline("ImGuiVert.slang", "ImGuiPixel.slang", RasterDesc);
-        }
-        if (!NewDepthState)
-        {
-            NewDepthState = RHI::CreateDepthStencil(RHI::FDepthStencilDesc{});
+            NewPipeline = RHI::CreateGraphicsPipeline("ImGuiVert.slang", "ImGuiPixel.slang", RasterDesc);
         }
 
         // Always begin/end the pass so the swapchain image is cleared even with no draws.
@@ -203,8 +198,8 @@ namespace Lumina
             const int32 TotalVtx = DrawData->TotalVtxCount;
             const int32 TotalIdx = DrawData->TotalIdxCount;
 
-            RHI::FTransientAlloc VB = RHI::Core::AllocTransient((size_t)TotalVtx * sizeof(ImDrawVert), 16);
-            RHI::FTransientAlloc IB = RHI::Core::AllocTransient((size_t)TotalIdx * sizeof(ImDrawIdx), 4);
+            RHI::FTransientAlloc VB = RHI::AllocTransient((size_t)TotalVtx * sizeof(ImDrawVert), 16);
+            RHI::FTransientAlloc IB = RHI::AllocTransient((size_t)TotalIdx * sizeof(ImDrawIdx), 4);
 
             ImDrawVert* VtxDst = static_cast<ImDrawVert*>(VB.Cpu);
             ImDrawIdx*  IdxDst = static_cast<ImDrawIdx*>(IB.Cpu);
@@ -232,10 +227,10 @@ namespace Lumina
             // Resolved once, since the preview stamps this marker and the draws match on identity.
             const ImDrawCallback DisplayStateCallback = ImGuiX::Detail::GetDisplayStateCallback();
 
-            RHI::CmdSetDepthStencilState(CL, NewDepthState);
+            RHI::CmdSetDepthStencil(CL, RHI::FDepthStencilDesc{});
             RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
             RHI::CmdSetFrontFace(CL, RHI::EFrontFace::CCW);
-            RHI::CmdSetPipeline(CL, NewPipeline.Get());
+            RHI::CmdSetPipeline(CL, NewPipeline);
 
             const ImVec2 ClipOff   = DrawData->DisplayPos;
             const ImVec2 ClipScale = DrawData->FramebufferScale;
@@ -277,10 +272,9 @@ namespace Lumina
 
                     const int32 RawTexID = (int32)Cmd.GetTexID();
                     Args.TextureID = (RawTexID >= 0) ? (uint32)RawTexID : DefaultTex;
-                    const RHI::GPUPtr ArgsPtr = RHI::Core::CopyTransient(Args);
+                    const RHI::GPUPtr ArgsPtr = RHI::CopyTransient(Args);
 
-                    RHI::CmdDrawIndexed(CL, IB.Gpu, 0, ArgsPtr, Cmd.ElemCount, 1,
-                                        Cmd.IdxOffset + GlobalIdx, (int32)(Cmd.VtxOffset + GlobalVtx), 0, RHI::EIndexType::Uint16);
+                    RHI::CmdDrawIndexed(CL, IB, ArgsPtr, Cmd.ElemCount, 1, Cmd.IdxOffset + GlobalIdx, (int32)(Cmd.VtxOffset + GlobalVtx), 0, RHI::EIndexType::Uint16);
                 }
                 GlobalVtx += List->VtxBuffer.Size;
                 GlobalIdx += List->IdxBuffer.Size;
@@ -353,7 +347,7 @@ namespace Lumina
         const FUIntVector2 ImgExtent = Data->Target.GetExtent();
 
         RHI::FCmdListH CL = RHI::OpenCommandList();
-        RHI::CmdSetTextureHeap(CL, RHI::Core::GetGlobalHeap());
+        RHI::CmdSetTextureHeap(CL, RHI::GetGlobalHeap());
         Data->Target.BarrierToRender(CL);
 
         RHI::FRenderAttachment Color;

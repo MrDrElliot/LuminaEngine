@@ -168,9 +168,11 @@ namespace Lumina
         if (const CMaterial* Material = Cast<CMaterial>(Asset))
         {
             uint64 Bytes = 0;
-            Bytes += Material->PixelShaderBinaries.capacity()              * sizeof(uint32);
-            Bytes += Material->VertexShaderBinaries.capacity()             * sizeof(uint32);
-            Bytes += Material->Parameters.capacity()                       * sizeof(FMaterialParameter);
+            for (const FMaterialStageBlob& Blob : Material->Stages)
+            {
+                Bytes += Blob.Spirv.capacity() * sizeof(uint32);
+            }
+            Bytes += Material->Parameters.capacity() * sizeof(FMaterialParameter);
             return Bytes;
         }
 

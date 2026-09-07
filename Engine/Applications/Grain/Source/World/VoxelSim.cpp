@@ -105,13 +105,13 @@ namespace Grain
         std::memcpy(Staging.Cpu, Grid.data(), size_t(GridBytes));
 
         const RHI::FCmdListH CL = RHI::OpenCommandList();
-        RHI::CmdMemcpy(CL, GridAlloc.Gpu, Staging.Gpu, size_t(GridBytes));
-        RHI::CmdMemzero(CL, CoarseAlloc.Gpu, CoarseBytes);
+        RHI::CmdMemcpy(CL, { GridAlloc.Gpu, size_t(GridBytes) }, { Staging.Gpu, size_t(GridBytes) });
+        RHI::CmdMemzero(CL, { CoarseAlloc.Gpu, CoarseBytes });
         RHI::Barriers::TransferToAll(CL);
-        RHI::Submit(CL);
-        RHI::WaitDeviceIdle();
+        const uint64 Value = RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
+        RHI::WaitSemaphore(RHI::GetQueueTimeline(RHI::EQueueType::Graphics), Value);
 
-        RHI::Core::Retire(Staging);
+        RHI::Retire(Staging);
 
         LOG_INFO("Grain: sim volume {:.1f} m at ({}, {}, {}) voxels, spring at ground {:.1f} m, {:.2f} s.",
             kSimExtent, BaseX, BaseY, BaseZ, BestHeight, PlatformTime::Seconds() - Started);
@@ -123,12 +123,12 @@ namespace Grain
     {
         if (GridAlloc.Gpu != 0)
         {
-            RHI::Core::Retire(GridAlloc);
+            RHI::Retire(GridAlloc);
             GridAlloc = {};
         }
         if (CoarseAlloc.Gpu != 0)
         {
-            RHI::Core::Retire(CoarseAlloc);
+            RHI::Retire(CoarseAlloc);
             CoarseAlloc = {};
         }
     }

@@ -6,7 +6,7 @@ namespace Lumina::RHITests
 {
     RHI_TEST(Heap, WriteAndFreeTexture)
     {
-        const RHI::FTextureHeapH Heap = RHI::Core::GetGlobalHeap();
+        const RHI::FTextureHeapH Heap = RHI::GetGlobalHeap();
         const RHI::FTextureH Texture = Ctx.CreateTexture(MakeSampledDesc(8), "RHITests.HeapWrite");
         RHI_REQUIRE(RHI::IsValid(Texture));
 
@@ -18,7 +18,7 @@ namespace Lumina::RHITests
 
     RHI_TEST(Heap, SlotsAreUniqueWhileLive)
     {
-        const RHI::FTextureHeapH Heap = RHI::Core::GetGlobalHeap();
+        const RHI::FTextureHeapH Heap = RHI::GetGlobalHeap();
 
         const RHI::FTextureH A = Ctx.CreateTexture(MakeSampledDesc(8), "RHITests.HeapUniqueA");
         const RHI::FTextureH B = Ctx.CreateTexture(MakeSampledDesc(8), "RHITests.HeapUniqueB");
@@ -36,7 +36,7 @@ namespace Lumina::RHITests
     // Repointing replaces a texture without invalidating the index every material already baked.
     RHI_TEST(Heap, RepointKeepsSlot)
     {
-        const RHI::FTextureHeapH Heap = RHI::Core::GetGlobalHeap();
+        const RHI::FTextureHeapH Heap = RHI::GetGlobalHeap();
 
         const RHI::FTextureH First  = Ctx.CreateTexture(MakeSampledDesc(8),  "RHITests.RepointFirst");
         const RHI::FTextureH Second = Ctx.CreateTexture(MakeSampledDesc(16), "RHITests.RepointSecond");
@@ -59,7 +59,7 @@ namespace Lumina::RHITests
     // Unbind points the descriptor at the fallback without releasing the index.
     RHI_TEST(Heap, UnbindKeepsSlotReserved)
     {
-        const RHI::FTextureHeapH Heap = RHI::Core::GetGlobalHeap();
+        const RHI::FTextureHeapH Heap = RHI::GetGlobalHeap();
 
         const RHI::FTextureH Texture = Ctx.CreateTexture(MakeSampledDesc(8), "RHITests.Unbind");
         RHI_REQUIRE(RHI::IsValid(Texture));
@@ -81,7 +81,7 @@ namespace Lumina::RHITests
 
     RHI_TEST(Heap, WriteAndFreeRWTexture)
     {
-        const RHI::FTextureHeapH Heap = RHI::Core::GetGlobalHeap();
+        const RHI::FTextureHeapH Heap = RHI::GetGlobalHeap();
 
         const RHI::FTextureH Texture = Ctx.CreateTexture(MakeSampledDesc(8, EFormat::RGBA8_UNORM, RHI::EImageUsageFlags::Storage), "RHITests.HeapRW");
         RHI_REQUIRE(RHI::IsValid(Texture));
@@ -97,7 +97,7 @@ namespace Lumina::RHITests
 
     RHI_TEST(Heap, WriteAndFreeSampler)
     {
-        const RHI::FTextureHeapH Heap = RHI::Core::GetGlobalHeap();
+        const RHI::FTextureHeapH Heap = RHI::GetGlobalHeap();
 
         RHI::FSamplerDesc Desc;
         Desc.MaxAnisotropy = 4.0f;
@@ -109,7 +109,7 @@ namespace Lumina::RHITests
         Ctx.PumpFrames(RHI::kFramesInFlight + 1);
     }
 
-    // A reordered AddSampler in Core::Initialize silently repoints every sampler in the engine.
+    // A reordered AddSampler in InitializeCore silently repoints every sampler in the engine.
     RHI_TEST(Heap, StockSamplerSlotsMatchEnum)
     {
         // Every value pinned, since GlobalRHI.slang hardcodes the indices and a count alone hides a swap.
@@ -130,7 +130,7 @@ namespace Lumina::RHITests
 
     RHI_TEST(Heap, FreeInvalidSlotIsIgnored)
     {
-        const RHI::FTextureHeapH Heap = RHI::Core::GetGlobalHeap();
+        const RHI::FTextureHeapH Heap = RHI::GetGlobalHeap();
 
         // Out of range on every path must be a no-op, not an out-of-bounds write into the slot arrays.
         RHI::HeapFreeTexture(Heap, 0x7FFFFFFFu);

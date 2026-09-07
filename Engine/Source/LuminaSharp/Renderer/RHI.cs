@@ -24,22 +24,18 @@ public static unsafe partial class RHI
     public static partial void Retire(FGPUAllocation Allocation);
 
     // Typed thunks have unique names (the generator keys on method name); the overloads forward to them.
-    [NativeCall("LuminaSharp_RHI_FreeSemaphore")] private static partial void FreeSemaphore(FSemaphoreH H);
+    [NativeCall("LuminaSharp_RHI_RetireSemaphore")] private static partial void RetireSemaphore(FSemaphoreH H);
     [NativeCall("LuminaSharp_RHI_RetirePipeline")] private static partial void RetirePipeline(FPipelineH H);
     [NativeCall("LuminaSharp_RHI_RetireTexture")] private static partial void RetireTexture(FTextureH H);
-    [NativeCall("LuminaSharp_RHI_FreeTextureHeap")] private static partial void FreeTextureHeap(FTextureHeapH H);
-    [NativeCall("LuminaSharp_RHI_FreeDepthStencil")] private static partial void FreeDepthStencil(FDepthStencilH H);
+    [NativeCall("LuminaSharp_RHI_RetireTextureHeap")] private static partial void RetireTextureHeap(FTextureHeapH H);
 
-    public static void FreeH(FSemaphoreH Semaphore) => FreeSemaphore(Semaphore);
+    public static void Retire(FSemaphoreH Semaphore) => RetireSemaphore(Semaphore);
     public static void Retire(FPipelineH Pipeline) => RetirePipeline(Pipeline);
     public static void Retire(FTextureH Texture) => RetireTexture(Texture);
-    public static void FreeH(FTextureHeapH Heap) => FreeTextureHeap(Heap);
-    public static void FreeH(FDepthStencilH DepthStencil) => FreeDepthStencil(DepthStencil);
+    public static void Retire(FTextureHeapH Heap) => RetireTextureHeap(Heap);
 
     // Resources.
 
-    [NativeCall("LuminaSharp_RHI_CreateDepthStencil")]
-    public static partial FDepthStencilH CreateDepthStencil(FDepthStencilDesc Desc);
 
     [NativeCall("LuminaSharp_RHI_CreateSemaphore")]
     public static partial FSemaphoreH CreateSemaphore(ulong Value);
@@ -116,20 +112,22 @@ public static unsafe partial class RHI
     [NativeCall("LuminaSharp_RHI_ResetCommandList")]
     public static partial void ResetCommandList(FCmdListH CommandList);
 
-    [NativeCall("LuminaSharp_RHI_Submit")]
-    private static partial void SubmitOne(FCmdListH CommandList, EQueueType Type);
-
-    /// Submit one command list; Type defaults to the graphics queue.
-    public static void Submit(FCmdListH CommandList, EQueueType Type = EQueueType.Default) => SubmitOne(CommandList, Type);
-
     [NativeCall("LuminaSharp_RHI_SubmitLists")]
-    private static partial void SubmitListsCore(EQueueType Queue, ReadOnlySpan<FCmdListH> CommandLists,
-        ReadOnlySpan<FSemaphoreInfo> Waits, ReadOnlySpan<FSemaphoreInfo> Signals);
+    private static partial ulong SubmitListsCore(EQueueType Queue, ReadOnlySpan<FCmdListH> CommandLists,
+        ReadOnlySpan<FSemaphoreInfo> Waits);
 
-    /// Submit command lists with optional timeline-semaphore waits/signals.
-    public static void Submit(EQueueType Queue, ReadOnlySpan<FCmdListH> CommandLists,
-        ReadOnlySpan<FSemaphoreInfo> Waits, ReadOnlySpan<FSemaphoreInfo> Signals)
-        => SubmitListsCore(Queue, CommandLists, Waits, Signals);
+    /// Submit command lists with optional timeline waits and return the queue timeline value they signal.
+    /// The frame ring recycles the lists, so never reset one after submitting it.
+    public static ulong Submit(EQueueType Queue, ReadOnlySpan<FCmdListH> CommandLists,
+        ReadOnlySpan<FSemaphoreInfo> Waits = default)
+        => SubmitListsCore(Queue, CommandLists, Waits);
+
+    /// One command list on the given queue; the span form is the same call.
+    public static ulong Submit(FCmdListH CommandList, EQueueType Queue = EQueueType.Default)
+    {
+        ReadOnlySpan<FCmdListH> Lists = stackalloc FCmdListH[1] { CommandList };
+        return SubmitListsCore(Queue, Lists, default);
+    }
 
     // Device / memory introspection.
 

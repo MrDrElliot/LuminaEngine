@@ -28,13 +28,13 @@ public static unsafe partial class RHI
     public static partial void CmdCopyTexture(FCmdListH CL, FTextureH Source, FTextureSlice SourceSlice, FTextureH Dest, FTextureSlice DestSlice);
 
     [NativeCall("LuminaSharp_RHI_CmdCopyMemoryToTexture", SuppressGCTransition = true)]
-    public static partial void CmdCopyMemoryToTexture(FCmdListH CL, GPUPtr Source, uint RowLength, FTextureH Dest, FTextureSlice Slice);
+    public static partial void CmdCopyMemoryToTexture(FCmdListH CL, FGPURange Source, uint RowLength, FTextureH Dest, FTextureSlice Slice);
 
-    public static void CmdCopyMemoryToTexture(FCmdListH CL, GPUPtr Source, uint RowLength, FTextureH Dest)
+    public static void CmdCopyMemoryToTexture(FCmdListH CL, FGPURange Source, uint RowLength, FTextureH Dest)
         => CmdCopyMemoryToTexture(CL, Source, RowLength, Dest, FTextureSlice.Full);
 
     [NativeCall("LuminaSharp_RHI_CmdCopyTextureToMemory", SuppressGCTransition = true)]
-    public static partial void CmdCopyTextureToMemory(FCmdListH CL, FTextureH Source, FTextureSlice Slice, GPUPtr Dest, uint RowLength = 0);
+    public static partial void CmdCopyTextureToMemory(FCmdListH CL, FTextureH Source, FTextureSlice Slice, FGPURange Dest, uint RowLength = 0);
 
     [NativeCall("LuminaSharp_RHI_CmdBlitTexture", SuppressGCTransition = true)]
     public static partial void CmdBlitTexture(FCmdListH CL, FTextureH Source, FTextureSlice SourceSlice, FTextureH Dest, FTextureSlice DestSlice, EFilter Filter = EFilter.Linear);
@@ -92,8 +92,8 @@ public static unsafe partial class RHI
     [NativeCall("LuminaSharp_RHI_CmdSetTextureHeap", SuppressGCTransition = true)]
     public static partial void CmdSetTextureHeap(FCmdListH CL, FTextureHeapH Heap);
 
-    [NativeCall("LuminaSharp_RHI_CmdSetDepthStencilState", SuppressGCTransition = true)]
-    public static partial void CmdSetDepthStencilState(FCmdListH CL, FDepthStencilH DepthStencil);
+    [NativeCall("LuminaSharp_RHI_CmdSetDepthStencil", SuppressGCTransition = true)]
+    public static partial void CmdSetDepthStencil(FCmdListH CL, FDepthStencilDesc State);
 
     [NativeCall("LuminaSharp_RHI_CmdSetFrontFace", SuppressGCTransition = true)]
     public static partial void CmdSetFrontFace(FCmdListH CL, EFrontFace Front);
@@ -113,8 +113,6 @@ public static unsafe partial class RHI
     [NativeCall("LuminaSharp_RHI_CmdSetViewport", SuppressGCTransition = true)]
     public static partial void CmdSetViewport(FCmdListH CL, FRect Rect);
 
-    [NativeCall("LuminaSharp_RHI_CmdSetIndexBuffer", SuppressGCTransition = true)]
-    public static partial void CmdSetIndexBuffer(FCmdListH CL, GPUPtr IndexBuffer, uint Offset = 0, EIndexType IndexType = EIndexType.Uint32);
 
     // ---- Dispatch / draw ----
 
@@ -122,35 +120,21 @@ public static unsafe partial class RHI
     public static partial void CmdDispatch(FCmdListH CL, GPUPtr DrawArgs, uint GroupX, uint GroupY, uint GroupZ);
 
     [NativeCall("LuminaSharp_RHI_CmdDispatchIndirect", SuppressGCTransition = true)]
-    private static partial void CmdDispatchIndirectCore(FCmdListH CL, GPUPtr DrawArgs, uint Offset);
-    public static void CmdDispatchIndirect(FCmdListH CL, GPUPtr DrawArgs, uint Offset) => CmdDispatchIndirectCore(CL, DrawArgs, Offset);
-
-    [NativeCall("LuminaSharp_RHI_CmdDispatchIndirect2", SuppressGCTransition = true)]
-    private static partial void CmdDispatchIndirectBufferCore(FCmdListH CL, GPUPtr Args, GPUPtr IndirectBuffer, uint Offset);
-    public static void CmdDispatchIndirect(FCmdListH CL, GPUPtr Args, GPUPtr IndirectBuffer, uint Offset) => CmdDispatchIndirectBufferCore(CL, Args, IndirectBuffer, Offset);
+    public static partial void CmdDispatchIndirect(FCmdListH CL, GPUPtr Args, FGPURange Arguments);
 
     [NativeCall("LuminaSharp_RHI_CmdDraw", SuppressGCTransition = true)]
     public static partial void CmdDraw(FCmdListH CL, GPUPtr DrawArgs, uint VertexCount, uint InstanceCount, uint FirstVertex, uint FirstInstance);
 
     [NativeCall("LuminaSharp_RHI_CmdDrawIndexed", SuppressGCTransition = true)]
-    public static partial void CmdDrawIndexed(FCmdListH CL, GPUPtr IndexBuffer, uint IndexOffset, GPUPtr DrawArgs,
+    public static partial void CmdDrawIndexed(FCmdListH CL, FGPURange Indices, GPUPtr DrawArgs,
         uint IndexCount, uint InstanceCount, uint FirstIndex, int VertexOffset, uint FirstInstance, EIndexType IndexType = EIndexType.Uint32);
 
     [NativeCall("LuminaSharp_RHI_CmdDrawIndirect", SuppressGCTransition = true)]
-    private static partial void CmdDrawIndirectCore(FCmdListH CL, GPUPtr DrawArgs, uint Offset, uint DrawCount, uint Stride);
-    public static void CmdDrawIndirect(FCmdListH CL, GPUPtr DrawArgs, uint Offset, uint DrawCount, uint Stride) => CmdDrawIndirectCore(CL, DrawArgs, Offset, DrawCount, Stride);
-
-    [NativeCall("LuminaSharp_RHI_CmdDrawIndirect2", SuppressGCTransition = true)]
-    private static partial void CmdDrawIndirectBufferCore(FCmdListH CL, GPUPtr Args, GPUPtr IndirectBuffer, uint Offset, uint DrawCount, uint Stride);
-    public static void CmdDrawIndirect(FCmdListH CL, GPUPtr Args, GPUPtr IndirectBuffer, uint Offset, uint DrawCount, uint Stride) => CmdDrawIndirectBufferCore(CL, Args, IndirectBuffer, Offset, DrawCount, Stride);
+    public static partial void CmdDrawIndirect(FCmdListH CL, GPUPtr Args, FGPURange Arguments, uint DrawCount, uint Stride);
 
     [NativeCall("LuminaSharp_RHI_CmdDrawIndexedIndirect", SuppressGCTransition = true)]
-    private static partial void CmdDrawIndexedIndirectCore(FCmdListH CL, GPUPtr DrawArgs, uint Offset, uint DrawCount, uint Stride);
-    public static void CmdDrawIndexedIndirect(FCmdListH CL, GPUPtr DrawArgs, uint Offset, uint DrawCount, uint Stride) => CmdDrawIndexedIndirectCore(CL, DrawArgs, Offset, DrawCount, Stride);
-
-    [NativeCall("LuminaSharp_RHI_CmdDrawIndexedIndirect2", SuppressGCTransition = true)]
-    private static partial void CmdDrawIndexedIndirectBufferCore(FCmdListH CL, GPUPtr Args, GPUPtr IndirectBuffer, uint Offset, uint DrawCount, uint Stride);
-    public static void CmdDrawIndexedIndirect(FCmdListH CL, GPUPtr Args, GPUPtr IndirectBuffer, uint Offset, uint DrawCount, uint Stride) => CmdDrawIndexedIndirectBufferCore(CL, Args, IndirectBuffer, Offset, DrawCount, Stride);
+    public static partial void CmdDrawIndexedIndirect(FCmdListH CL, FGPURange Indices, GPUPtr Args, FGPURange Arguments,
+        uint DrawCount, uint Stride, EIndexType IndexType = EIndexType.Uint32);
 
     // ---- Debug markers ----
 

@@ -8,6 +8,7 @@
 #include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
 #include "Renderer/MeshletHeaderSlab.h"
 #include "Containers/ConcurrentQueue.h"
+#include "Memory/Memcpy.h"
 #include "TaskSystem/TaskSystem.h"
 #include "World/World.h"
 #include "World/Entity/EntityUtils.h"
@@ -134,15 +135,25 @@ namespace Lumina
             }
         }
 
-        const uint32 NewIndex = (uint32)Batches.size();
-
-        if (NewIndex == 0x10000u)
+        uint32 NewIndex;
+        if (!FreeBatches.empty())
         {
-            LOG_ERROR("SceneBatchRegistry: batch count reached {}, the limit PackDrawIDAndFlags can "
-                      "address. Draw ids past this wrap.", 0x10000u);
+            NewIndex = FreeBatches.back();
+            FreeBatches.pop_back();
+            Batches[NewIndex] = FBatch{};
+        }
+        else
+        {
+            NewIndex = (uint32)Batches.size();
+            if (NewIndex == 0x10000u)
+            {
+                LOG_ERROR("SceneBatchRegistry: batch count reached {}, the limit PackDrawIDAndFlags can "
+                          "address. Draw ids past this wrap.", 0x10000u);
+            }
+            Batches.emplace_back();
         }
 
-        FBatch& Batch = Batches.emplace_back();
+        FBatch& Batch = Batches[NewIndex];
         Batch.Key                             = Surface.BatchKey;
         Batch.VertexShader                    = Surface.VertexShader;
         Batch.MeshShaderShadow                = Surface.MeshShaderShadow;
@@ -186,13 +197,46 @@ namespace Lumina
         {
             --Kind;
         }
+
+        if (Batch.RefCount == 0u)
+        {
+            RetireBatch(BatchIndex);
+        }
+    }
+
+    // The slot index stays reserved for reuse; the GPU bucket arrays are sized by slot count, not by live batches.
+    void FSceneBatchRegistry::RetireBatch(uint32 BatchIndex)
+    {
+        FBatch& Batch = Batches[BatchIndex];
+
+        auto It = BatchesByHash.find(GetTypeHash(Batch.Key));
+        if (It != BatchesByHash.end())
+        {
+            TVector<uint32>& Bucket = It->second;
+            for (SIZE_T i = 0; i < Bucket.size(); ++i)
+            {
+                if (Bucket[i] == BatchIndex)
+                {
+                    Bucket[i] = Bucket.back();
+                    Bucket.pop_back();
+                    break;
+                }
+            }
+        }
+
+        Batch = FBatch{};
+        FreeBatches.push_back(BatchIndex);
+        ++LayoutGeneration;
+        ++RecycleGeneration;
     }
 
     void FSceneBatchRegistry::Reset()
     {
         Batches.clear();
         BatchesByHash.clear();
+        FreeBatches.clear();
         ++LayoutGeneration;
+        ++RecycleGeneration;
     }
 
     uint32 FScenePrimitiveSet::FindPrimitive(uint64 Key) const
@@ -297,6 +341,8 @@ namespace Lumina
         CullData.emplace_back();
         Keys.push_back(Key);
         ResolveKeys.push_back(PackResolveKey(INVALID_MESH_RESOLVE_HANDLE, 0));
+        NextByHandle.push_back(~0u);
+        PrevByHandle.push_back(~0u);
 
         const ECS::FEntity     Entity = (ECS::FEntity)(uint32)(Key & 0xFFFFFFFFull);
         const EPrimitiveSource Source = (EPrimitiveSource)((Key >> 32) & 0xFFull);
@@ -304,9 +350,10 @@ namespace Lumina
         if (Source == EPrimitiveSource::SkeletalMesh)
         {
             ++SkinnedCount;
+            ++BonelessSkinnedCount;
+            ++SkeletalSetGeneration;
         }
 
-        ++SkeletalSetGeneration;
         ++StructureGeneration;
         return Index;
     }
@@ -321,12 +368,23 @@ namespace Lumina
 
         const uint32 Last = (uint32)Primitives.size() - 1u;
 
+        if (Primitives[Index].Source == EPrimitiveSource::SkeletalMesh && Primitives[Index].BoneCount == 0u
+            && BonelessSkinnedCount > 0u)
+        {
+            --BonelessSkinnedCount;
+        }
+
         ReleaseBindings(Index);
         ReleaseBoneSlice(Primitives[Index]);
         Primitives[Index].BoneCount = 0u;
+        UnlinkHandle(Index, Primitives[Index].ResolveHandle);
 
-        // Swap-remove moves the tail primitive into this slot, so every cached index can shift.
-        ++SkeletalSetGeneration;
+        // The tail primitive moves into this slot, so the skeletal index list shifts only when either is skeletal.
+        if (Primitives[Index].Source == EPrimitiveSource::SkeletalMesh
+            || Primitives[Last].Source == EPrimitiveSource::SkeletalMesh)
+        {
+            ++SkeletalSetGeneration;
+        }
 
         if (Index != Last)
         {
@@ -335,6 +393,25 @@ namespace Lumina
             CullData[Index]    = CullData[Last];
             Keys[Index]        = Keys[Last];
             ResolveKeys[Index] = ResolveKeys[Last];
+
+            // The moved primitive keeps its handle list membership under its new index.
+            const uint32 MovedNext = NextByHandle[Last];
+            const uint32 MovedPrev = PrevByHandle[Last];
+            NextByHandle[Index] = MovedNext;
+            PrevByHandle[Index] = MovedPrev;
+            if (MovedPrev != ~0u)
+            {
+                NextByHandle[MovedPrev] = Index;
+            }
+            else if (Primitives[Index].ResolveHandle < (uint32)HandleListHead.size()
+                     && HandleListHead[Primitives[Index].ResolveHandle] == Last)
+            {
+                HandleListHead[Primitives[Index].ResolveHandle] = Index;
+            }
+            if (MovedNext != ~0u)
+            {
+                PrevByHandle[MovedNext] = Index;
+            }
 
             const ECS::FEntity     MovedEntity = (ECS::FEntity)(uint32)(Keys[Index] & 0xFFFFFFFFull);
             const EPrimitiveSource MovedSource = (EPrimitiveSource)((Keys[Index] >> 32) & 0xFFull);
@@ -346,6 +423,8 @@ namespace Lumina
         CullData.pop_back();
         Keys.pop_back();
         ResolveKeys.pop_back();
+        NextByHandle.pop_back();
+        PrevByHandle.pop_back();
 
         const ECS::FEntity     Entity = (ECS::FEntity)(uint32)(Key & 0xFFFFFFFFull);
         const EPrimitiveSource Source = (EPrimitiveSource)((Key >> 32) & 0xFFull);
@@ -480,7 +559,58 @@ namespace Lumina
 
     void FScenePrimitiveSet::SetBoneCount(uint32 Index, uint32 Count)
     {
-        Primitives[Index].BoneCount = Count;
+        FScenePrimitive& Prim = Primitives[Index];
+        if (Prim.Source == EPrimitiveSource::SkeletalMesh && (Prim.BoneCount == 0u) != (Count == 0u))
+        {
+            BonelessSkinnedCount += (Count == 0u) ? 1u : ~0u;
+        }
+        Prim.BoneCount = Count;
+    }
+
+    void FScenePrimitiveSet::LinkHandle(uint32 Index, uint32 Handle)
+    {
+        if (Handle == INVALID_MESH_RESOLVE_HANDLE)
+        {
+            return;
+        }
+        if (Handle >= (uint32)HandleListHead.size())
+        {
+            HandleListHead.resize(Handle + 1u, ~0u);
+        }
+
+        const uint32 Head = HandleListHead[Handle];
+        NextByHandle[Index] = Head;
+        PrevByHandle[Index] = ~0u;
+        if (Head != ~0u)
+        {
+            PrevByHandle[Head] = Index;
+        }
+        HandleListHead[Handle] = Index;
+    }
+
+    void FScenePrimitiveSet::UnlinkHandle(uint32 Index, uint32 Handle)
+    {
+        if (Handle == INVALID_MESH_RESOLVE_HANDLE || Handle >= (uint32)HandleListHead.size())
+        {
+            return;
+        }
+
+        const uint32 Next = NextByHandle[Index];
+        const uint32 Prev = PrevByHandle[Index];
+        if (Prev != ~0u)
+        {
+            NextByHandle[Prev] = Next;
+        }
+        else if (HandleListHead[Handle] == Index)
+        {
+            HandleListHead[Handle] = Next;
+        }
+        if (Next != ~0u)
+        {
+            PrevByHandle[Next] = Prev;
+        }
+        NextByHandle[Index] = ~0u;
+        PrevByHandle[Index] = ~0u;
     }
 
     const TVector<uint32>& FScenePrimitiveSet::GetSkeletalIndices()
@@ -658,7 +788,7 @@ namespace Lumina
         TVector<uint32>& Bucket = SurfaceDescByHash[Hash];
         for (uint32 Index : Bucket)
         {
-            if (std::memcmp(&SurfaceDescs[Index], &Desc, sizeof(FSurfaceDescGPU)) == 0)
+            if (Memory::Memcmp(&SurfaceDescs[Index], &Desc, sizeof(FSurfaceDescGPU)) == 0)
             {
                 return Index;
             }
@@ -676,6 +806,18 @@ namespace Lumina
         }
 
         return NewIndex;
+    }
+
+    // Retained slots mirror the device buffer byte for byte, so an equal write needs no upload.
+    template <typename T>
+    static FORCEINLINE bool StoreIfChanged(T& Slot, const T& Value)
+    {
+        if (Memory::Memcmp(&Slot, &Value, sizeof(T)) == 0)
+        {
+            return false;
+        }
+        Slot = Value;
+        return true;
     }
 
     void FScenePrimitiveSet::RefreshInstances(uint32 Index, TVector<uint32>* DirtySink)
@@ -717,35 +859,39 @@ namespace Lumina
                 Flags |= EInstanceFlags::HasGeometry;
             }
 
-            FInstanceCullEntry& OutCull = RetainedCullEntries[Slot];
-            OutCull.SphereBounds     = Sphere;
-            OutCull.DrawIDAndFlags   = PackDrawIDAndFlags(Binding.BatchIndex, Flags);
-            OutCull.SurfaceDescIndex = Binding.SurfaceDescIndex;
-            OutCull.MaxDrawDistance  = Cull.MaxDrawDistance;
-            OutCull.ForcedLODIndex   = Prim.ForcedLODIndex;
+            FInstanceCullEntry NewCull = {};
+            NewCull.SphereBounds     = Sphere;
+            NewCull.DrawIDAndFlags   = PackDrawIDAndFlags(Binding.BatchIndex, Flags);
+            NewCull.SurfaceDescIndex = Binding.SurfaceDescIndex;
+            NewCull.MaxDrawDistance  = Cull.MaxDrawDistance;
+            NewCull.ForcedLODIndex   = Prim.ForcedLODIndex;
 
-            RetainedTransforms[Slot] = PackTransform3x4(Prim.Transform);
+            const FTransform3x4 NewTransform = PackTransform3x4(Prim.Transform);
 
-            FInstanceStatic& OutStatic = RetainedStatic[Slot];
-            OutStatic.MeshletHeaderSlot    = Prim.MeshletHeaderSlot;
-            OutStatic.CustomData              = Prim.CustomData;
-            OutStatic.MaterialIndex           = Binding.MaterialIndex;
-            OutStatic.EntityID                = Prim.EntityID;
-            // Stable while the primitive holds its skeleton, so it lives in a re-bind-only payload.
-            OutStatic.BoneOffset              = 0u;
-            // Still per-frame, since this is assigned from a global budget every frame.
-            OutStatic.SkinnedVertexBase       = 0u;
-            OutStatic.ShadowSkinnedVertexBase = 0u;
+            FInstanceStatic NewStatic = {};
+            NewStatic.MeshletHeaderSlot = Prim.MeshletHeaderSlot;
+            NewStatic.CustomData        = Prim.CustomData;
+            NewStatic.MaterialIndex     = Binding.MaterialIndex;
+            NewStatic.EntityID          = Prim.EntityID;
 
-            if (DirtySink != nullptr)
+            // A resolve bump onto identical values must not dirty the slot, or every instance re-uploads.
+            const bool bCullChanged      = StoreIfChanged(RetainedCullEntries[Slot], NewCull);
+            const bool bTransformChanged = StoreIfChanged(RetainedTransforms[Slot], NewTransform);
+            if (bCullChanged || bTransformChanged)
             {
-                DirtySink->push_back(Slot);
+                if (DirtySink != nullptr)
+                {
+                    DirtySink->push_back(Slot);
+                }
+                else
+                {
+                    MarkInstanceDirty(Slot);
+                }
             }
-            else
+            if (StoreIfChanged(RetainedStatic[Slot], NewStatic))
             {
-                MarkInstanceDirty(Slot);
+                MarkStaticDirty(Slot);
             }
-            MarkStaticDirty(Slot);
         }
     }
 
@@ -830,7 +976,9 @@ namespace Lumina
 
         FBindingMemo& Entry = BindingMemoByHandle[ResolveHandle];
 
-        if (Entry.Generation != Generation || Entry.Protos.size() != Surfaces.size())
+        if (Entry.Generation != Generation
+            || Entry.RecycleGeneration != Batches.GetRecycleGeneration()
+            || Entry.Protos.size() != Surfaces.size())
         {
             Entry.Protos.clear();
             Entry.Protos.reserve(Surfaces.size());
@@ -848,7 +996,8 @@ namespace Lumina
                 Proto.TexelFactor           = Surface.TexelFactor;
             }
 
-            Entry.Generation = Generation;
+            Entry.Generation        = Generation;
+            Entry.RecycleGeneration = Batches.GetRecycleGeneration();
         }
 
         return &Entry;
@@ -1118,6 +1267,15 @@ namespace Lumina
                                                       ? SkelMesh->Skeleton->GetSkeletonResource()
                                                       : nullptr;
                     SetBoneCount(Index, SkelRes != nullptr ? (uint32)SkelRes->GetNumBones() : 0u);
+                    Prim.RequiredBoneCount = SkelMesh != nullptr ? SkelMesh->GetMeshResource().RequiredBoneCount : 0u;
+
+                    if (Prim.BoneCount != 0u && Prim.RequiredBoneCount > Prim.BoneCount)
+                    {
+                        LOG_ERROR("Skinning: mesh '{}' references {} bones but its skeleton provides {}. Vertices "
+                                  "weighted to joints >= {} read past the bone slice and will be wildly displaced. "
+                                  "Mesh and skeleton are out of sync, reimport both.",
+                                  SkelMesh->GetName(), Prim.RequiredBoneCount, Prim.BoneCount, Prim.BoneCount);
+                    }
                 }
 
                 Prim.LocalCenter          = Base->CachedLocalCenter;
@@ -1207,6 +1365,11 @@ namespace Lumina
 
         // One of the two places a primitive's resolve identity settles; mirror it for the sweep.
         ResolveKeys[Index] = PackResolveKey(Prim.ResolveHandle, Prim.ResolveGeneration);
+        if (Prim.ResolveHandle != OldHandle)
+        {
+            UnlinkHandle(Index, OldHandle);
+            LinkHandle(Index, Prim.ResolveHandle);
+        }
 
         RebuildWorldBounds(Index);
         RefreshInstances(Index);
@@ -1228,7 +1391,6 @@ namespace Lumina
             return;
         }
 
-        // move on a primitive that already exists. 
         if (Index != ~0u && Flags == EPrimitiveDirty::Transform)
         {
             if (!Pools.Transform->Contains(Entity))
@@ -1238,7 +1400,7 @@ namespace Lumina
 
             Primitives[Index].Transform = ReadRenderMatrix(Pools.RenderXform, Entity, Pools.Transform->Get(Entity));
             RebuildWorldBounds(Index);
-            RefreshInstances(Index);
+            RefreshInstanceTransform(Index);
             ++StructureGeneration;
             return;
         }
@@ -1279,18 +1441,7 @@ namespace Lumina
             Primitives[Index].Transform = ReadRenderMatrix(Pools.RenderXform, Entity, Pools.Transform->Get(Entity));
         }
 
-        if (EnumHasAnyFlags(Flags, EPrimitiveDirty::Data | EPrimitiveDirty::Membership | EPrimitiveDirty::Visibility))
-        {
-            RefreshPrimitiveData(Pools, Index);
-        }
-        else if (EnumHasAnyFlags(Flags, EPrimitiveDirty::Transform))
-        {
-            // Transform-only, so rebuild the world sphere and restamp this primitive's instance slots.
-            RebuildWorldBounds(Index);
-            RefreshInstances(Index);
-            ++StructureGeneration;
-        }
-
+        RefreshPrimitiveData(Pools, Index);
     }
 
     void FScenePrimitiveSet::ReleaseFoliageInstance(FFoliageInstanceRef& Ref)
@@ -1331,27 +1482,32 @@ namespace Lumina
                 Flags |= EInstanceFlags::HasGeometry;
             }
 
-            FInstanceCullEntry& OutCull = RetainedCullEntries[Slot];
+            FInstanceCullEntry NewCull = {};
             // The bake already produced the world sphere; there is no local sphere to transform.
-            OutCull.SphereBounds     = Instance.SphereBounds;
-            OutCull.DrawIDAndFlags   = PackDrawIDAndFlags(Binding.BatchIndex, Flags);
-            OutCull.SurfaceDescIndex = Binding.SurfaceDescIndex;
-            OutCull.MaxDrawDistance  = Type.MaxDrawDistance;
-            OutCull.ForcedLODIndex   = -1;
+            NewCull.SphereBounds     = Instance.SphereBounds;
+            NewCull.DrawIDAndFlags   = PackDrawIDAndFlags(Binding.BatchIndex, Flags);
+            NewCull.SurfaceDescIndex = Binding.SurfaceDescIndex;
+            NewCull.MaxDrawDistance  = Type.MaxDrawDistance;
+            NewCull.ForcedLODIndex   = -1;
 
-            RetainedTransforms[Slot] = PackTransform3x4(Instance.Transform);
+            const FTransform3x4 NewTransform = PackTransform3x4(Instance.Transform);
 
-            FInstanceStatic& OutStatic = RetainedStatic[Slot];
-            OutStatic.MeshletHeaderSlot    = Type.MeshletHeaderSlot;
-            OutStatic.CustomData              = 0u;
-            OutStatic.MaterialIndex           = Binding.MaterialIndex;
-            OutStatic.EntityID                = EntityID;
-            OutStatic.BoneOffset              = 0u;
-            OutStatic.SkinnedVertexBase       = 0u;
-            OutStatic.ShadowSkinnedVertexBase = 0u;
+            FInstanceStatic NewStatic = {};
+            NewStatic.MeshletHeaderSlot = Type.MeshletHeaderSlot;
+            NewStatic.MaterialIndex     = Binding.MaterialIndex;
+            NewStatic.EntityID          = EntityID;
 
-            MarkInstanceDirty(Slot);
-            MarkStaticDirty(Slot);
+            // A rebake or resolve bump rewrites every blade; only the ones that actually moved upload.
+            const bool bCullChanged      = StoreIfChanged(RetainedCullEntries[Slot], NewCull);
+            const bool bTransformChanged = StoreIfChanged(RetainedTransforms[Slot], NewTransform);
+            if (bCullChanged || bTransformChanged)
+            {
+                MarkInstanceDirty(Slot);
+            }
+            if (StoreIfChanged(RetainedStatic[Slot], NewStatic))
+            {
+                MarkStaticDirty(Slot);
+            }
         }
     }
 
@@ -1375,11 +1531,16 @@ namespace Lumina
         }
 
         Foliage->EnsureRenderCache();
+        Foliage->BakeRetryGeneration = FMeshResolveCache::GetPendingGeneration();
 
         const TVector<FFoliageBakedInstance>& Baked = Foliage->BakedInstances;
         const uint32 NewCount = (uint32)Baked.size();
 
         FFoliageEntityState& State = FoliageByEntity[Entity];
+
+        const bool bBakeChanged = State.SyncedBakeSerial != Foliage->BakeSerial
+                               || NewCount != (uint32)State.Instances.size();
+        State.SyncedBakeSerial = Foliage->BakeSerial;
 
         // Shrink drops the tail; grow and overlap are handled by the write loop below.
         for (uint32 i = NewCount; i < (uint32)State.Instances.size(); ++i)
@@ -1391,7 +1552,14 @@ namespace Lumina
         const uint32 TypeCount = (uint32)Foliage->Types.size();
         FoliageTypeScratch.clear();
         FoliageTypeScratch.resize(TypeCount);
-        State.TypeResolveKeys.assign(TypeCount, PackResolveKey(INVALID_MESH_RESOLVE_HANDLE, 0));
+
+        // Whether each type's resolve identity moved since the last sync; unchanged types skip their instances.
+        const bool bTypeLayoutChanged = (uint32)State.TypeResolveKeys.size() != TypeCount;
+        FoliageTypeChangedScratch.assign(TypeCount, bTypeLayoutChanged);
+        if (bTypeLayoutChanged)
+        {
+            State.TypeResolveKeys.assign(TypeCount, PackResolveKey(INVALID_MESH_RESOLVE_HANDLE, 0));
+        }
 
         FMeshResolveCache& Cache = *Pools.ResolveCache;
         for (uint32 t = 0; t < TypeCount; ++t)
@@ -1418,7 +1586,12 @@ namespace Lumina
             }
 
             // Compared per type by the sweep, which is what the per-instance table could not express.
-            State.TypeResolveKeys[t] = PackResolveKey(Out.ResolveHandle, Out.Generation);
+            const uint64 NewKey = PackResolveKey(Out.ResolveHandle, Out.Generation);
+            if (State.TypeResolveKeys[t] != NewKey)
+            {
+                FoliageTypeChangedScratch[t] = true;
+                State.TypeResolveKeys[t]     = NewKey;
+            }
 
             // Per type rather than per instance; every instance of a type carries the same pair.
             WarnOnGeometryKindMismatch(Out.MeshletHeaderSlot, Out.BaseFlags, (Entity).Value,
@@ -1464,6 +1637,12 @@ namespace Lumina
 
             const bool bValidType = Instance.TypeIndex >= 0 && (uint32)Instance.TypeIndex < TypeCount;
             const uint16 TypeRow  = bValidType ? (uint16)Instance.TypeIndex : 0xFFFFu;
+
+            if (!bBakeChanged && Ref.TypeRow == TypeRow && (!bValidType || !FoliageTypeChangedScratch[TypeRow]))
+            {
+                ++SyncStats.BindsSkipped;
+                continue;
+            }
 
             const FFoliageTypeResolve& Type = bValidType ? FoliageTypeScratch[TypeRow] : UnresolvedType;
             const FBindingMemo*        Memo = bValidType ? FoliageMemoScratch[TypeRow] : nullptr;
@@ -1567,6 +1746,10 @@ namespace Lumina
         CullData.clear();
         Keys.clear();
         ResolveKeys.clear();
+        HandleListHead.clear();
+        NextByHandle.clear();
+        PrevByHandle.clear();
+        LastSweptTableGeneration = 0;
         Bindings.clear();
         // Every slice died with the primitives, so the arena restarts rather than leaking live bases.
         BoneSliceFreeLists.clear();
@@ -1576,6 +1759,7 @@ namespace Lumina
         DeadBindings = 0;
         LinksByEntityIndex.clear();
         SkinnedCount = 0;
+        BonelessSkinnedCount = 0;
         RetainedCullEntries.clear();
         RetainedTransforms.clear();
         RetainedStatic.clear();
@@ -1625,9 +1809,12 @@ namespace Lumina
 
     void FScenePrimitiveSet::PollUnhookedSources(ECS::FRegistry& Registry, FRenderDirtyTracker& Tracker)
     {
+        // An incomplete bake retries when a resolve lands, not every frame.
+        const uint32 ResolveGeneration = FMeshResolveCache::GetPendingGeneration();
         for (auto&& [Entity, Foliage] : Registry.View<SFoliageComponent>().Each())
         {
-            if (Foliage.BakedVersion != Foliage.InstancesVersion || Foliage.bBakeIncomplete)
+            if (Foliage.BakedVersion != Foliage.InstancesVersion
+                || (Foliage.bBakeIncomplete && Foliage.BakeRetryGeneration != ResolveGeneration))
             {
                 Tracker.Mark(Entity, EPrimitiveSource::Foliage, EPrimitiveDirty::Data);
             }
@@ -1647,7 +1834,7 @@ namespace Lumina
     // A skeleton finishing its load marks nothing dirty, so a primitive that synced mid-load stays boneless.
     void FScenePrimitiveSet::PollSkeletalBoneRanges(ECS::FRegistry& Registry, FRenderDirtyTracker& Tracker)
     {
-        if (SkinnedCount == 0u)
+        if (BonelessSkinnedCount == 0u)
         {
             return;
         }
@@ -2050,31 +2237,26 @@ namespace Lumina
 
             GenSnapshot.assign(Cache.NumEntries(), ~0u);
 
-            for (uint32 i = 0, N = (uint32)Primitives.size(); i < N; ++i)
+            // Only handles rebuilt since the last sweep are walked, through their primitive lists.
+            const uint32 NumHandles = Math::Min(Cache.NumEntries(), (uint32)HandleListHead.size());
+            for (uint32 Handle = 0; Handle < NumHandles; ++Handle)
             {
-                const uint64 Packed = ResolveKeys[i];
-                const uint32 Handle = (uint32)(Packed & 0xFFFFFFFFull);
-
-                if (Handle >= (uint32)GenSnapshot.size())
+                if (Cache.GetResolvedAtGeneration(Handle) <= LastSweptTableGeneration)
                 {
                     continue;
                 }
 
-                DEBUG_ASSERT(Primitives[i].ResolveHandle == Handle);
-                DEBUG_ASSERT(Primitives[i].ResolveGeneration == (uint32)(Packed >> 32));
-
-                uint32 Generation = GenSnapshot[Handle];
-                if (Generation == ~0u)
+                const uint32 Generation = Cache.GetEntry(Handle).Generation;
+                for (uint32 i = HandleListHead[Handle]; i != ~0u; i = NextByHandle[i])
                 {
-                    Generation = Cache.GetEntry(Handle).Generation;
-                    GenSnapshot[Handle] = Generation;
-                }
-
-                if (Generation != (uint32)(Packed >> 32))
-                {
-                    RetryScratch.push_back(Keys[i]);
+                    DEBUG_ASSERT(Primitives[i].ResolveHandle == Handle);
+                    if (Generation != (uint32)(ResolveKeys[i] >> 32))
+                    {
+                        RetryScratch.push_back(Keys[i]);
+                    }
                 }
             }
+            LastSweptTableGeneration = Cache.GetTableGeneration();
 
             SweepFoliageResolves(Cache);
 
@@ -2132,6 +2314,10 @@ namespace Lumina
         CullData.clear();
         Keys.clear();
         ResolveKeys.clear();
+        HandleListHead.clear();
+        NextByHandle.clear();
+        PrevByHandle.clear();
+        LastSweptTableGeneration = 0;
         Bindings.clear();
         // Every slice died with the primitives, so the arena restarts rather than leaking live bases.
         BoneSliceFreeLists.clear();
@@ -2141,6 +2327,7 @@ namespace Lumina
         DeadBindings = 0;
         LinksByEntityIndex.clear();
         SkinnedCount = 0;
+        BonelessSkinnedCount = 0;
         RetainedCullEntries.clear();
         RetainedTransforms.clear();
         RetainedStatic.clear();

@@ -5,13 +5,11 @@
 #include "Containers/Vector.h"
 #include "Containers/SegmentArray.h"
 #include "Containers/String.h"
-#include "Containers/Tuple.h"
 #include "Core/LuminaMacros.h"
 #include "Core/Math/Math.h"
 #include "Platform/GenericPlatform.h"
 
 #include <cstddef>
-#include <memory>
 
 namespace Lumina
 {
@@ -38,15 +36,11 @@ namespace Lumina::RHI
     constexpr auto kMeshMaxOutputVertices       = 64u;   // out vertices Verts[MESHLET_MAX_VERTICES]
     constexpr auto kMeshMaxOutputPrimitives     = 64u;   // out indices Tris[MESHLET_MAX_TRIANGLES]
 
-    constexpr auto kMeshletCullGroupSize        = 32u;   // MeshletCull.slang [numthreads(32, 1, 1)]
-
-    
     struct FTexture;
     struct FTextureHeap;
     struct FPipeline;
     struct FSemaphore;
     struct FCommandList;
-    struct FDepthStencilState;
     struct FSwapchain;
     struct FSurface;
     struct FQueryPool;
@@ -56,19 +50,11 @@ namespace Lumina::RHI
     using FTextureH         = THandle<FTexture>;
     using FTextureHeapH     = THandle<FTextureHeap>;
     using FSemaphoreH       = THandle<FSemaphore>;
-    using FDepthStencilH    = THandle<FDepthStencilState>;
     using FCmdListH         = THandle<FCommandList>;
     using FSwapchainH       = THandle<FSwapchain>;
     using FSurfaceH         = THandle<FSurface>;
     using FQueryPoolH       = THandle<FQueryPool>;
-    using FDevice           = struct FDeviceImpl*;
-    
-    // @TODO Setup all platform agnostic dispatches
-    struct FDispatchTable
-    {
-        
-    };
-    
+
     enum class EBackend : uint8
     {
         Vulkan,
@@ -87,6 +73,20 @@ namespace Lumina::RHI
         Default = CPUWrite
     };
 
+    /** An address and the bytes a command may touch there. Commands that read or write memory take one of
+     *  these rather than a bare address, so the extent travels with the pointer and is checkable. An address
+     *  a shader merely dereferences stays a plain GPUPtr, since the RHI cannot know its extent. */
+    struct FGPURange
+    {
+        GPUPtr Address = 0;
+        uint64 Size    = 0;
+
+        NODISCARD FGPURange Sub(uint64 Offset, uint64 Bytes) const { return { Address + Offset, Bytes }; }
+        NODISCARD FGPURange Skip(uint64 Offset) const { return { Address + Offset, Size - Offset }; }
+
+        explicit operator bool() const { return Address != 0 && Size != 0; }
+    };
+
     // Cpu and Gpu name the same first byte, so one offset applies to either.
     struct FGPUAllocation
     {
@@ -94,11 +94,14 @@ namespace Lumina::RHI
         GPUPtr      Gpu     = 0;
         uint64      Size    = 0;            // exactly the bytes asked for; the allocator reserves any rounding
 
-        // Opaque backend token Free needs. Zero when the allocation owns its whole buffer.
-        uint64      Handle  = 0;
-
         template<typename T>
         T* CpuAs() const { return reinterpret_cast<T*>(Cpu); }
+
+        // Lossless, so a whole allocation passes straight to any command that takes a range.
+        operator FGPURange() const { return { Gpu, Size }; }
+
+        NODISCARD FGPURange Sub(uint64 Offset, uint64 Bytes) const { return { Gpu + Offset, Bytes }; }
+        NODISCARD FGPURange Skip(uint64 Offset) const { return { Gpu + Offset, Size - Offset }; }
 
         explicit operator bool() const { return Gpu != 0; }
     };
@@ -311,7 +314,6 @@ namespace Lumina::RHI
     {
         FSemaphoreH Semaphore;
         uint64      Value;
-        EStageFlags Stage;
     };
     
     struct FDrawIndirectArguments
@@ -555,8 +557,9 @@ namespace Lumina::RHI
 
     RUNTIME_API void        CreateDevice(const FDeviceDesc& Desc = {});
     RUNTIME_API void        FreeDevice();
-    RUNTIME_API void        RetireSlot(uint32 Slot);
     RUNTIME_API void        WaitDeviceIdle();
+    // Once a frame slot's timelines are waited, so the slot's transient command buffers can be reused.
+    RUNTIME_API void        RetireSlot(uint32 Slot);
     RUNTIME_API uint64      GetSemaphoreValue(FSemaphoreH Semaphore);
     RUNTIME_API void        WaitSemaphore(FSemaphoreH Semaphore, uint64 Value);
 
@@ -573,11 +576,6 @@ namespace Lumina::RHI
 
     RUNTIME_API FString     DescribeDeviceAddress(uint64 AddressLow, uint64 AddressHigh);
 
-    RUNTIME_API void        FreeH(FSemaphoreH Semaphore);
-    RUNTIME_API void        FreeH(FTextureHeapH Heap);
-    RUNTIME_API void        FreeH(FDepthStencilH DepthStencil);
-    RUNTIME_API void        FreeH(FSwapchainH Swapchain);
-    RUNTIME_API void        FreeH(FSurfaceH Surface);
 
     RUNTIME_API FSurfaceH    CreateSurface(void* WindowHandle);
     RUNTIME_API FSwapchainH  CreateSwapchain(FSurfaceH Surface, const FUIntVector2& Extent);
@@ -623,7 +621,6 @@ namespace Lumina::RHI
     RUNTIME_API bool         IsTimestampCollectionEnabled();
 
     RUNTIME_API FQueryPoolH  CreateTimestampPool(uint32 Capacity);
-    RUNTIME_API void         FreeH(FQueryPoolH Pool);
 
     /** Reclaims a range for reuse. Vulkan requires it before any write, so record it first each frame. */
     RUNTIME_API void         CmdResetTimestamps(FCmdListH CL, FQueryPoolH Pool, uint32 First, uint32 Count);
@@ -636,7 +633,6 @@ namespace Lumina::RHI
 
 #endif
 
-    RUNTIME_API FDepthStencilH  CreateDepthStencil(const FDepthStencilDesc& Desc);
     RUNTIME_API FPipelineH      CreateGraphicsPipeline(const FShaderSource& Vertex, const FShaderSource& Fragment, const FRasterDesc& Desc, TSpan<const FSpecializationConstant> Constants = {});
     RUNTIME_API FPipelineH      CreateComputePipeline(const FShaderSource& Compute, TSpan<const FSpecializationConstant> Constants = {});
     RUNTIME_API FPipelineH      CreateMeshShaderPipeline(const FShaderSource& Task, const FShaderSource& Mesh, const FShaderSource& Fragment, const FRasterDesc& Desc, TSpan<const FSpecializationConstant> Constants = {});
@@ -670,29 +666,25 @@ namespace Lumina::RHI
 
     RUNTIME_API FCmdListH   OpenCommandList(EQueueType Type = EQueueType::Default);
     RUNTIME_API void        ResetCommandList(FCmdListH CommandList);
-    RUNTIME_API void        Submit(EQueueType Queue, TSpan<const FCmdListH> CommandLists, TSpan<const FSemaphoreInfo> Waits = {}, TSpan<const FSemaphoreInfo> Signals = {});
-    RUNTIME_API void        Submit(FCmdListH CommandList, EQueueType Type = EQueueType::Default);
     
-    RUNTIME_API void        SubmitAndWait(FCmdListH CommandList);
 
-    RUNTIME_API void        CmdMemcpy(FCmdListH CL, GPUPtr Dest, GPUPtr Source, size_t Size);
+    RUNTIME_API void        CmdMemcpy(FCmdListH CL, FGPURange Dest, FGPURange Source);
 
     struct FBufferCopy
     {
-        GPUPtr Dest   = 0;
-        GPUPtr Source = 0;
-        uint64 Size   = 0;
+        FGPURange Dest;
+        FGPURange Source;
     };
     // Copies sharing a source and destination buffer collapse into one command, so keep entries that
     // target the same buffer adjacent.
     RUNTIME_API void        CmdMemcpyBatch(FCmdListH CL, TSpan<const FBufferCopy> Copies);
-    RUNTIME_API void        CmdMemset(FCmdListH CL, GPUPtr Dest, uint64 Size, uint32 Value);
-    RUNTIME_API void        CmdMemzero(FCmdListH CL, GPUPtr Dest, uint64 Size);
-    RUNTIME_API void        CmdWriteMemory(FCmdListH CL, GPUPtr Dest, const void* Data, uint64 Size);
+    RUNTIME_API void        CmdMemset(FCmdListH CL, FGPURange Dest, uint32 Value);
+    RUNTIME_API void        CmdMemzero(FCmdListH CL, FGPURange Dest);
+    RUNTIME_API void        CmdWriteMemory(FCmdListH CL, FGPURange Dest, const void* Data);
 
     RUNTIME_API void        CmdCopyTexture(FCmdListH CL, FTextureH Source, const FTextureSlice& SourceSlice, FTextureH Dest, const FTextureSlice& DestSlice);
-    RUNTIME_API void        CmdCopyMemoryToTexture(FCmdListH CL, GPUPtr Source, uint32 RowLength, FTextureH Dest, const FTextureSlice& Slice = {});
-    RUNTIME_API void        CmdCopyTextureToMemory(FCmdListH CL, FTextureH Source, const FTextureSlice& Slice, GPUPtr Dest, uint32 RowLength = 0);
+    RUNTIME_API void        CmdCopyMemoryToTexture(FCmdListH CL, FGPURange Source, uint32 RowLength, FTextureH Dest, const FTextureSlice& Slice = {});
+    RUNTIME_API void        CmdCopyTextureToMemory(FCmdListH CL, FTextureH Source, const FTextureSlice& Slice, FGPURange Dest, uint32 RowLength = 0);
     RUNTIME_API void        CmdBlitTexture(FCmdListH CL, FTextureH Source, const FTextureSlice& SourceSlice, FTextureH Dest, const FTextureSlice& DestSlice, EFilter Filter = EFilter::Linear);
     RUNTIME_API void        CmdResolveTexture(FCmdListH CL, FTextureH Source, FTextureH Dest);
     RUNTIME_API void        CmdClearTexture(FCmdListH CL, FTextureH Texture, const float Value[4]);
@@ -789,7 +781,7 @@ namespace Lumina::RHI
 
     RUNTIME_API void        CmdSetTextureHeap(FCmdListH CL, FTextureHeapH Heap);
 
-    RUNTIME_API void        CmdSetDepthStencilState(FCmdListH CL, FDepthStencilH DepthStencil);
+    RUNTIME_API void        CmdSetDepthStencil(FCmdListH CL, const FDepthStencilDesc& State);
     RUNTIME_API void        CmdSetFrontFace(FCmdListH CL, EFrontFace Front);
     RUNTIME_API void        CmdSetCullMode(FCmdListH CL, ECullMode Mode);
     RUNTIME_API void        CmdSetLineWidth(FCmdListH CL, float Width);
@@ -799,7 +791,6 @@ namespace Lumina::RHI
     RUNTIME_API void        CmdSetScissor(FCmdListH CL, const FRect& Rect);
     RUNTIME_API void        CmdSetViewport(FCmdListH CL, const FRect& Rect);
 
-    RUNTIME_API void        CmdSetIndexBuffer(FCmdListH CL, GPUPtr IndexBuffer, uint32 Offset = 0, EIndexType IndexType = EIndexType::Uint32);
     
     // Held in push constants rather than chased through memory. Re-issue whenever the view changes.
     struct FSceneBindings
@@ -813,28 +804,16 @@ namespace Lumina::RHI
     RUNTIME_API void        CmdDispatch(FCmdListH CL, GPUPtr DrawArgs, uint32 GroupX, uint32 GroupY, uint32 GroupZ);
 
     RUNTIME_API void        CmdDraw(FCmdListH CL, GPUPtr DrawArgs, uint32 VertexCount, uint32 InstanceCount, uint32 FirstVertex, uint32 FirstInstance);
-    RUNTIME_API void        CmdDrawIndexed(FCmdListH CL, GPUPtr IndexBuffer, uint32 IndexOffset, GPUPtr DrawArgs, uint32 IndexCount, uint32 InstanceCount, uint32 FirstIndex, int32 VertexOffset, uint32 FirstInstance, EIndexType IndexType = EIndexType::Uint32);
-    RUNTIME_API void        CmdDrawIndexedIndirect(FCmdListH CL, GPUPtr Args, GPUPtr IndirectBuffer, uint32 Offset, uint32 DrawCount, uint32 Stride);
+    RUNTIME_API void        CmdDrawIndexed(FCmdListH CL, FGPURange Indices, GPUPtr DrawArgs, uint32 IndexCount, uint32 InstanceCount, uint32 FirstIndex, int32 VertexOffset, uint32 FirstInstance, EIndexType IndexType = EIndexType::Uint32);
+    RUNTIME_API void        CmdDrawIndexedIndirect(FCmdListH CL, FGPURange Indices, GPUPtr Args, FGPURange Arguments, uint32 DrawCount, uint32 Stride, EIndexType IndexType = EIndexType::Uint32);
     
-    RUNTIME_API void        CmdDrawIndirect(FCmdListH CL, GPUPtr Args, GPUPtr IndirectBuffer, uint32 Offset, uint32 DrawCount, uint32 Stride);
-    RUNTIME_API void        CmdDispatchIndirect(FCmdListH CL, GPUPtr Args, GPUPtr IndirectBuffer, uint32 Offset);
+    RUNTIME_API void        CmdDrawIndirect(FCmdListH CL, GPUPtr Args, FGPURange Arguments, uint32 DrawCount, uint32 Stride);
+    RUNTIME_API void        CmdDispatchIndirect(FCmdListH CL, GPUPtr Args, FGPURange Arguments);
 
     RUNTIME_API void        CmdDrawMeshTasks(FCmdListH CL, GPUPtr DrawArgs, uint32 GroupCountX, uint32 GroupCountY, uint32 GroupCountZ);
-    RUNTIME_API void        CmdDrawMeshTasksIndirect(FCmdListH CL, GPUPtr DrawArgs, GPUPtr IndirectBuffer, uint32 Offset, uint32 DrawCount, uint32 Stride);
-    RUNTIME_API void        CmdDrawMeshTasksIndirectCount(FCmdListH CL, GPUPtr DrawArgs, GPUPtr IndirectBuffer, uint32 Offset, GPUPtr CountBuffer, uint32 CountOffset, uint32 MaxDrawCount, uint32 Stride);
+    RUNTIME_API void        CmdDrawMeshTasksIndirect(FCmdListH CL, GPUPtr DrawArgs, FGPURange Arguments, uint32 DrawCount, uint32 Stride);
+    RUNTIME_API void        CmdDrawMeshTasksIndirectCount(FCmdListH CL, GPUPtr DrawArgs, FGPURange Arguments, FGPURange CountRange, uint32 MaxDrawCount, uint32 Stride);
 
     RUNTIME_API void        CmdBeginMarker(FCmdListH CL, const char* Name);
     RUNTIME_API void        CmdEndMarker(FCmdListH CL);
-
-    template<typename T, bool bZero = true>
-    FGPUAllocation New(uint64 Count = 1)
-    {
-        const FGPUAllocation Allocation = Malloc(Count * sizeof(T), alignof(T));
-        if constexpr (bZero)
-        {
-            std::uninitialized_value_construct_n(Allocation.CpuAs<T>(), Count);
-        }
-        return Allocation;
-    }
-
 }

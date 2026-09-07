@@ -159,6 +159,8 @@ namespace Lumina
         uint32 InstancesVersion = 1;            // bumped whenever Instances/Types change
         uint32 BakedVersion     = 0;            // version BakedInstances was built from
         bool   bBakeIncomplete  = false;        // a type's mesh wasn't ready; rebake next frame
+        uint32 BakeSerial       = 0;            // bumped by every bake, unlike BakedVersion which a retry repeats
+        uint32 BakeRetryGeneration = 0;         // resolve generation an incomplete bake last retried at
 
         // Transient physics bake, owned by SFoliageCollisionSystem. Never serialized.
         uint32 CollisionGroupID     = 0;        // static body group handle, 0 = none

@@ -139,8 +139,6 @@ namespace Lumina
 	{
 		const FString BasePath = Paths::GetEngineResourceDirectory() + "/Shaders/MaterialShader/";
 		const bool bIsTerrain     = (MaterialType == EMaterialType::Terrain);
-		const bool bIsPostProcess = (MaterialType == EMaterialType::PostProcess);
-		const bool bIsUI          = (MaterialType == EMaterialType::UI);
 		const bool bIsDecal       = (MaterialType == EMaterialType::Decal);
 		const bool bIsParticle    = (MaterialType == EMaterialType::Particle);
 		const FString PixelPath   = BasePath + PixelTemplateName(MaterialType);
@@ -156,8 +154,8 @@ namespace Lumina
 			LOG_ERROR("Failed to find {}!", PixelPath);
 		}
 
-		// PostProcess/UI use a fullscreen quad vertex stage with no $MATERIAL_VERTEX_INPUTS substitution; WPO is meaningless here.
-		if (bIsPostProcess || bIsUI)
+		// A fullscreen domain rasters a fixed quad, so there is no vertex graph to substitute.
+		if (MaterialDomain::IsFullscreen(MaterialType))
 		{
 			OutVertexShader.clear();
 			const FString FullscreenQuadPath = Paths::GetEngineResourceDirectory() + "/Shaders/FullscreenQuad.slang";

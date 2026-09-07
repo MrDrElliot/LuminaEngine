@@ -779,6 +779,10 @@ namespace Lumina
         void ResolveDynamicMeshMaterials(ECS::FRegistry& Registry, FRenderDirtyTracker& Tracker);
 
         uint32 LastResolvedPendingGeneration = 0;
+        uint32 LastDynamicResolveGeneration = 0;
+
+        // Dirty-slot runs for the partial retained upload; keeps capacity.
+        TVector<FUIntVector2> RetainedRunScratch;
 
         // Reused to flatten a component's material overrides; keeps capacity.
         TVector<CMaterialInterface*> ResolveOverrideScratch;
@@ -926,7 +930,6 @@ namespace Lumina
 
         RHI::FPipelineH      GetOrCreateComputePipeline(FShaderH CS,
                                  TSpan<const RHI::FSpecializationConstant> Constants = {});
-        RHI::FDepthStencilH  GetOrCreateDepthState(const RHI::FDepthStencilDesc& Desc);
 
         // Build and publish together, or the next view draws against the previous view's bindings.
         void SetSceneRoot(RHI::FCmdListH CL, FSceneView& View, uint64 SceneDataAddr)
@@ -942,7 +945,7 @@ namespace Lumina
         RHI::GPUPtr MakeArgs(const T& PassData)
         {
             DEBUG_ASSERT(CurrentSceneRootAddr != 0);   // null root = GPU page fault at first scene-buffer read
-            return RHI::Core::CopyTransient(PassData);
+            return RHI::CopyTransient(PassData);
         }
 
         // Zero leaves the args slot alone, which is safe only because no caller's shader reads a pass block.
@@ -1119,7 +1122,6 @@ namespace Lumina
         
         mutable FSharedMutex                    PipelineCacheMutex;
         THashMap<uint64, RHI::FPipelineH>       PipelineCache;
-        THashMap<uint64, RHI::FDepthStencilH>   DepthStateCache;
 
         
         TVector<CMaterialInterface*>            PendingPostProcessMaterials;
@@ -1201,9 +1203,6 @@ namespace Lumina
         TArray<RHI::FGPUAllocation, RHI::kFramesInFlight>          VisibleInstanceRing = {};
         TArray<uint32,       RHI::kFramesInFlight>          VisibleInstanceLowUsage = {};
         TArray<RHI::FGPUAllocation, RHI::kFramesInFlight>          CullCounterRing = {};
-
-        // Skinned contribution replicated across views, staged once per frame for the V*D upload.
-        TVector<FRenderBucketGPU>                           BucketSeedScratch;
 
         // (base, count) per (skinned instance, view) for the CPU-fed head of the visible buffer, which
         // CullInstances never claims and therefore never writes a range for.

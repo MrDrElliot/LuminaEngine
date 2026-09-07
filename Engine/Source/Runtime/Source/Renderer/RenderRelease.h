@@ -26,7 +26,7 @@ namespace Lumina::RHI
      *     nothing game-side can hand the resource to a primitive again); the other half is this queue's,
      *     which holds the token until every extract that was already in flight when it was posted has been
      *     rendered.
-     *  2. GPU liveness -- the actual release routes through RHI::Core::Retire, which fences per queue.
+     *  2. GPU liveness -- the actual release routes through RHI::Retire, which fences per queue.
      *
      *  Gate 2 already existed; gate 1 did not. Releasing on gate 2 alone is what made an unloaded material
      *  flash the magenta placeholder: the manager slot was zeroed and the texture slot unbound on the game

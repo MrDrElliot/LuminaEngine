@@ -16,7 +16,7 @@ namespace Lumina::RHITests
             }
 
             const RHI::FCmdListH CL = Ctx.OpenCL();
-            RHI::CmdMemcpy(CL, Readback.Gpu, Source.Gpu, Size);
+            RHI::CmdMemcpy(CL, { Readback.Gpu, Size }, { Source.Gpu, Size });
             RHI::Barriers::TransferToAll(CL);
             Ctx.SubmitAndWait(CL);
 
@@ -31,7 +31,7 @@ namespace Lumina::RHITests
         RHI_REQUIRE(Buffer.Gpu != 0);
 
         const RHI::FCmdListH CL = Ctx.OpenCL();
-        RHI::CmdMemset(CL, Buffer.Gpu, Size, 0xABCDEF01u);
+        RHI::CmdMemset(CL, { Buffer.Gpu, Size }, 0xABCDEF01u);
         RHI::Barriers::TransferToAll(CL);
         Ctx.SubmitAndWait(CL);
 
@@ -49,9 +49,9 @@ namespace Lumina::RHITests
 
         {
             const RHI::FCmdListH CL = Ctx.OpenCL();
-            RHI::CmdMemset(CL, Buffer.Gpu, Size, 0xFFFFFFFFu);
+            RHI::CmdMemset(CL, { Buffer.Gpu, Size }, 0xFFFFFFFFu);
             RHI::Barriers::TransferToTransfer(CL);
-            RHI::CmdMemzero(CL, Buffer.Gpu, Size);
+            RHI::CmdMemzero(CL, { Buffer.Gpu, Size });
             RHI::Barriers::TransferToAll(CL);
             Ctx.SubmitAndWait(CL);
         }
@@ -71,9 +71,9 @@ namespace Lumina::RHITests
 
         {
             const RHI::FCmdListH CL = Ctx.OpenCL();
-            RHI::CmdMemset(CL, Source.Gpu, Size, 0x11223344u);
+            RHI::CmdMemset(CL, { Source.Gpu, Size }, 0x11223344u);
             RHI::Barriers::TransferToTransfer(CL);
-            RHI::CmdMemcpy(CL, Dest.Gpu, Source.Gpu, Size);
+            RHI::CmdMemcpy(CL, { Dest.Gpu, Size }, { Source.Gpu, Size });
             RHI::Barriers::TransferToAll(CL);
             Ctx.SubmitAndWait(CL);
         }
@@ -97,7 +97,7 @@ namespace Lumina::RHITests
 
         {
             const RHI::FCmdListH CL = Ctx.OpenCL();
-            RHI::CmdWriteMemory(CL, Buffer.Gpu, Source, sizeof(Source));
+            RHI::CmdWriteMemory(CL, { Buffer.Gpu, sizeof(Source) }, Source);
             RHI::Barriers::TransferToAll(CL);
             Ctx.SubmitAndWait(CL);
         }
@@ -148,7 +148,7 @@ namespace Lumina::RHITests
             Payload.Values[i] = i + 100u;
         }
 
-        const RHI::GPUPtr Gpu = RHI::Core::CopyTransient(Payload);
+        const RHI::GPUPtr Gpu = RHI::CopyTransient(Payload);
         RHI_REQUIRE(Gpu != 0);
 
         const RHI::FGPUAllocation Dest = Ctx.Malloc(sizeof(FPayload), RHI::EMemoryType::GPUOnly, "RHITests.TransientDst");
@@ -156,7 +156,7 @@ namespace Lumina::RHITests
 
         {
             const RHI::FCmdListH CL = Ctx.OpenCL();
-            RHI::CmdMemcpy(CL, Dest.Gpu, Gpu, sizeof(FPayload));
+            RHI::CmdMemcpy(CL, { Dest.Gpu, sizeof(FPayload) }, { Gpu, sizeof(FPayload) });
             RHI::Barriers::TransferToAll(CL);
             Ctx.SubmitAndWait(CL);
         }

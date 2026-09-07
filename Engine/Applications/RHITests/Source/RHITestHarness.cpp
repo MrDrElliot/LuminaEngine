@@ -127,21 +127,21 @@ namespace Lumina::RHITests
     RHI::FCmdListH FTestContext::OpenCL()
     {
         const RHI::FCmdListH CL = RHI::OpenCommandList();
-        RHI::CmdSetTextureHeap(CL, RHI::Core::GetGlobalHeap());
+        RHI::CmdSetTextureHeap(CL, RHI::GetGlobalHeap());
         return CL;
     }
 
     void FTestContext::SubmitAndWait(RHI::FCmdListH CL)
     {
-        RHI::SubmitAndWait(CL);
-        RHI::ResetCommandList(CL);
+        const uint64 Value = RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
+        RHI::WaitSemaphore(RHI::GetQueueTimeline(RHI::EQueueType::Graphics), Value);
     }
 
     void FTestContext::PumpFrames(uint32 Count)
     {
         for (uint32 i = 0; i < Count; ++i)
         {
-            RHI::Core::BeginFrame(FrameIndex);
+            RHI::BeginFrame(FrameIndex);
             FrameIndex = (FrameIndex + 1) % RHI::kFramesInFlight;
         }
     }
@@ -205,15 +205,15 @@ namespace Lumina::RHITests
         // A test may leave work in flight, so a synchronous teardown provokes destroy-in-use itself.
         for (auto It = ScratchPipelines.rbegin(); It != ScratchPipelines.rend(); ++It)
         {
-            RHI::Core::Retire(*It);
+            RHI::Retire(*It);
         }
         for (auto It = ScratchTextures.rbegin(); It != ScratchTextures.rend(); ++It)
         {
-            RHI::Core::Retire(*It);
+            RHI::Retire(*It);
         }
         for (auto It = ScratchBuffers.rbegin(); It != ScratchBuffers.rend(); ++It)
         {
-            RHI::Core::Retire(*It);
+            RHI::Retire(*It);
         }
         ScratchPipelines.clear();
         ScratchTextures.clear();

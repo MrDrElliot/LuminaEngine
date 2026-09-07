@@ -139,7 +139,6 @@ namespace Lumina
         static_assert(sizeof(FUiColorStop) == 32, "FUiColorStop must match RmlUiCommon.slang::FUiColorStop.");
         static_assert(sizeof(FUiClipMask) == 64, "FUiClipMask must match RmlUiCommon.slang::FUiClipMask.");
 
-        DepthState = RHI::CreateDepthStencil(RHI::FDepthStencilDesc{});
 
         // 1x1 white fallback for untextured geometry.
         DefaultWhite = RHI::Textures::Create(RHI::FTexture2DDesc{ .Width = 1, .Height = 1, .Format = EFormat::RGBA8_UNORM,
@@ -192,8 +191,8 @@ namespace Lumina
 
         for (auto& KV : TargetBatches)
         {
-            RHI::Core::Retire(KV.second.VertexBuffer);
-            RHI::Core::Retire(KV.second.IndexBuffer);
+            RHI::Retire(KV.second.VertexBuffer);
+            RHI::Retire(KV.second.IndexBuffer);
         }
         TargetBatches.clear();
 
@@ -204,21 +203,19 @@ namespace Lumina
 
         for (auto& KV : PipelineByFormat)
         {
-            RHI::Core::Retire(KV.second);
+            RHI::Retire(KV.second);
         }
         PipelineByFormat.clear();
         for (auto& KV : BrushPipelines)
         {
-            RHI::Core::Retire(KV.second);
+            RHI::Retire(KV.second);
         }
         BrushPipelines.clear();
         for (auto& KV : FilterPipelines)
         {
-            RHI::Core::Retire(KV.second);
+            RHI::Retire(KV.second);
         }
         FilterPipelines.clear();
-        RHI::FreeH(DepthState);
-        DepthState = {};
 
         bInitialized = false;
     }
@@ -246,7 +243,7 @@ namespace Lumina
         RasterDesc.Topology     = RHI::ETopology::TriangleList;
         RasterDesc.ColorTargets = TSpan<const RHI::FColorTarget>(&ColorTarget, 1);
 
-        RHI::FPipelineH Pipeline = RHI::Core::CreateGraphicsPipeline("RmlUiVert.slang", "RmlUiPixel.slang", RasterDesc);
+        RHI::FPipelineH Pipeline = RHI::CreateGraphicsPipeline("RmlUiVert.slang", "RmlUiPixel.slang", RasterDesc);
         if (RHI::IsValid(Pipeline))
         {
             PipelineByFormat.emplace((uint64)Format, Pipeline);
@@ -280,7 +277,7 @@ namespace Lumina
         RasterDesc.Topology     = RHI::ETopology::TriangleList;
         RasterDesc.ColorTargets = TSpan<const RHI::FColorTarget>(&ColorTarget, 1);
 
-        RHI::FPipelineH Pipeline = RHI::Core::CreateGraphicsPipeline("FullscreenQuad.slang", "UIFilter.slang", RasterDesc);
+        RHI::FPipelineH Pipeline = RHI::CreateGraphicsPipeline("FullscreenQuad.slang", "UIFilter.slang", RasterDesc);
         if (RHI::IsValid(Pipeline))
         {
             FilterPipelines.emplace(Key, Pipeline);
@@ -727,8 +724,8 @@ namespace Lumina
         auto It = TargetBatches.find(Target.Handle);
         if (It != TargetBatches.end())
         {
-            RHI::Core::Retire(It->second.VertexBuffer);
-            RHI::Core::Retire(It->second.IndexBuffer);
+            RHI::Retire(It->second.VertexBuffer);
+            RHI::Retire(It->second.IndexBuffer);
             TargetBatches.erase(It);
         }
     }
@@ -767,7 +764,7 @@ namespace Lumina
     {
         if (Batch.VertexBuffer.Gpu == 0 || Batch.VertexCapacity < VertexBytes)
         {
-            RHI::Core::Retire(Batch.VertexBuffer);
+            RHI::Retire(Batch.VertexBuffer);
             Batch.VertexCapacity = Math::Max<uint64>(VertexBytes + VertexBytes / 2, 4096);
             Batch.VertexBuffer   = RHI::Malloc(Batch.VertexCapacity, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
             RHI::SetDebugName(Batch.VertexBuffer.Gpu, "RmlUi.BatchVertices");
@@ -775,7 +772,7 @@ namespace Lumina
 
         if (Batch.IndexBuffer.Gpu == 0 || Batch.IndexCapacity < IndexBytes)
         {
-            RHI::Core::Retire(Batch.IndexBuffer);
+            RHI::Retire(Batch.IndexBuffer);
             Batch.IndexCapacity = Math::Max<uint64>(IndexBytes + IndexBytes / 2, 4096);
             Batch.IndexBuffer   = RHI::Malloc(Batch.IndexCapacity, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
             RHI::SetDebugName(Batch.IndexBuffer.Gpu, "RmlUi.BatchIndices");
@@ -796,8 +793,8 @@ namespace Lumina
         {
             if (It->second.LastUsedFrame + StaleFrames < FrameCounter)
             {
-                RHI::Core::Retire(It->second.VertexBuffer);
-                RHI::Core::Retire(It->second.IndexBuffer);
+                RHI::Retire(It->second.VertexBuffer);
+                RHI::Retire(It->second.IndexBuffer);
                 It = TargetBatches.erase(It);
             }
             else
@@ -1007,14 +1004,14 @@ namespace Lumina
             EnsureBatchBuffers(Batch, VBytes, IBytes);
 
             // The leading barrier also orders against a prior frame still reading the old contents.
-            RHI::FTransientAlloc VBStage = RHI::Core::AllocTransient(VBytes, 16);
-            RHI::FTransientAlloc IBStage = RHI::Core::AllocTransient(IBytes, 4);
+            RHI::FTransientAlloc VBStage = RHI::AllocTransient(VBytes, 16);
+            RHI::FTransientAlloc IBStage = RHI::AllocTransient(IBytes, 4);
             Memory::Memcpy(VBStage.Cpu, BatchVertices.data(), VBytes);
             Memory::Memcpy(IBStage.Cpu, BatchIndices.data(),  IBytes);
 
             RHI::CmdBarrier(CL, RHI::EStageFlags::AllCommands, RHI::EStageFlags::Transfer);
-            RHI::CmdMemcpy(CL, Batch.VertexBuffer.Gpu, VBStage.Gpu, VBytes);
-            RHI::CmdMemcpy(CL, Batch.IndexBuffer.Gpu,  IBStage.Gpu, IBytes);
+            RHI::CmdMemcpy(CL, { Batch.VertexBuffer.Gpu, VBytes }, { VBStage.Gpu, VBytes });
+            RHI::CmdMemcpy(CL, { Batch.IndexBuffer.Gpu, IBytes }, { IBStage.Gpu, IBytes });
             RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::AllCommands);
 
             Batch.Draws      = Move(BatchDrawData);
@@ -1044,24 +1041,24 @@ namespace Lumina
         // Resolved every frame rather than from the cache, so a released texture cannot leave a dead slot.
         ResolveBatchTextures(Batch);
 
-        const RHI::GPUPtr DrawsPtr = RHI::Core::CopyTransientArray(Batch.Draws.data(), Batch.Draws.size());
+        const RHI::GPUPtr DrawsPtr = RHI::CopyTransientArray(Batch.Draws.data(), Batch.Draws.size()).Address;
 
         // Always upload at least one stop so the args block never carries a null device address.
         const FUiColorStop DummyStop {};
         const RHI::GPUPtr StopsPtr = Batch.Stops.empty()
-            ? RHI::Core::CopyTransientArray(&DummyStop, 1)
-            : RHI::Core::CopyTransientArray(Batch.Stops.data(), Batch.Stops.size());
+            ? RHI::CopyTransientArray(&DummyStop, 1).Address
+            : RHI::CopyTransientArray(Batch.Stops.data(), Batch.Stops.size()).Address;
 
         const FUiClipMask DummyMask {};
         const RHI::GPUPtr MasksPtr = Batch.ClipMasks.empty()
-            ? RHI::Core::CopyTransientArray(&DummyMask, 1)
-            : RHI::Core::CopyTransientArray(Batch.ClipMasks.data(), Batch.ClipMasks.size());
+            ? RHI::CopyTransientArray(&DummyMask, 1).Address
+            : RHI::CopyTransientArray(Batch.ClipMasks.data(), Batch.ClipMasks.size()).Address;
 
         // Composite passes read the same mask array the geometry batch does.
         PassClipMasksPtr = MasksPtr;
 
         const FRmlUiArgs Args { DrawsPtr, Batch.VertexBuffer.Gpu, StopsPtr, MasksPtr };
-        const RHI::GPUPtr ArgsPtr = RHI::Core::CopyTransient(Args);
+        const RHI::GPUPtr ArgsPtr = RHI::CopyTransient(Args);
 
         ReplayFrame(CL, Batch, Pipeline, ArgsPtr);
 
@@ -1113,7 +1110,7 @@ namespace Lumina
         RHI::CmdBarrier(CL, RHI::EStageFlags::RasterColorOut, RHI::EStageFlags::PixelShader);
         OpenPassSized(CL, Dest, true, DestSize);
         RHI::CmdSetPipeline(CL, Pipeline);
-        RHI::CmdDraw(CL, RHI::Core::CopyTransient(Args), 3, 1, 0, 0);
+        RHI::CmdDraw(CL, RHI::CopyTransient(Args), 3, 1, 0, 0);
         RHI::CmdEndRenderPass(CL);
     }
 
@@ -1288,7 +1285,7 @@ namespace Lumina
             }
 
             RHI::CmdSetPipeline(CL, bBase ? TargetPipeline : LayerPipeline);
-            RHI::CmdDrawIndexed(CL, Batch.IndexBuffer.Gpu, 0, ArgsPtr, Count, 1, First, 0, 0, RHI::EIndexType::Uint32);
+            RHI::CmdDrawIndexed(CL, Batch.IndexBuffer, ArgsPtr, Count, 1, First, 0, 0, RHI::EIndexType::Uint32);
             RHI::CmdEndRenderPass(CL);
         };
 
@@ -1437,7 +1434,7 @@ namespace Lumina
         Pass.RenderArea       = Extent;
 
         RHI::CmdBeginRenderPass(CL, Pass);
-        RHI::CmdSetDepthStencilState(CL, DepthState);
+        RHI::CmdSetDepthStencil(CL, RHI::FDepthStencilDesc{});
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
         RHI::CmdSetFrontFace(CL, RHI::EFrontFace::CW);
         RHI::CmdSetViewport(CL, RHI::FRect{ 0, (int)Extent.x, 0, (int)Extent.y });
@@ -1490,7 +1487,7 @@ namespace Lumina
 
         OpenPass(CL, LayerTexture(DestLayer), !bBlend);
         RHI::CmdSetPipeline(CL, Pipeline);
-        RHI::CmdDraw(CL, RHI::Core::CopyTransient(Args), 3, 1, 0, 0);
+        RHI::CmdDraw(CL, RHI::CopyTransient(Args), 3, 1, 0, 0);
         RHI::CmdEndRenderPass(CL);
     }
 
@@ -2458,14 +2455,9 @@ namespace Lumina
 
             FTexture& Tex = It->second;
             CMaterialInterface* Material = Tex.BrushMaterial;
-            if (!Material->IsReadyForRender() || Material->GetMaterialType() != EMaterialType::UI)
-            {
-                ClearBrushOnce(Tex);
-                continue;
-            }
-            const FShaderH VS = Material->GetVertexShader();
-            const FShaderH PS = Material->GetPixelShader();
-            if (VS == nullptr || PS == nullptr)
+            FShaderH VS;
+            FShaderH PS;
+            if (!Material->ResolveDomainShaders(EMaterialType::UI, VS, PS))
             {
                 ClearBrushOnce(Tex);
                 continue;
@@ -2484,7 +2476,7 @@ namespace Lumina
             Args.ScreenSize[1] = Tex.BrushSize.y;
             Args.Time          = Time;
             Args.MaterialIndex = (uint32)Material->GetMaterialIndex();
-            const RHI::GPUPtr ArgsPtr = RHI::Core::CopyTransient(Args);
+            const RHI::GPUPtr ArgsPtr = RHI::CopyTransient(Args);
 
             RHI::FRenderAttachment Color;
             Color.Texture  = Tex.Managed.Texture;
@@ -2497,7 +2489,7 @@ namespace Lumina
             Pass.RenderArea       = Tex.BrushSize;
 
             RHI::CmdBeginRenderPass(CL, Pass);
-            RHI::CmdSetDepthStencilState(CL, DepthState);
+            RHI::CmdSetDepthStencil(CL, RHI::FDepthStencilDesc{});
             RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
             RHI::CmdSetFrontFace(CL, RHI::EFrontFace::CW);
             RHI::CmdSetPipeline(CL, Pipeline);

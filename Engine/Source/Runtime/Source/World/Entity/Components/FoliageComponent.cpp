@@ -145,6 +145,7 @@ namespace Lumina
 
         bBakeIncomplete = bIncomplete.load(std::memory_order_relaxed);
         BakedVersion    = InstancesVersion;
+        ++BakeSerial;
     }
 
     void MarkFoliageChanged(CWorld& World, ECS::FEntity Entity, SFoliageComponent& Foliage)
