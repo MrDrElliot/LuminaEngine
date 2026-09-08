@@ -280,6 +280,29 @@ namespace Lumina
         const FInstanceStatic*      GetRetainedStatic() const     { return RetainedStatic.data(); }
         uint32                      GetRetainedSlotCount() const  { return (uint32)RetainedCullEntries.size(); }
 
+        /** What a GPU scatter needs to write retained instances for one grass species. */
+        struct FGrassSpeciesBinding
+        {
+            uint32 InstanceSlotBase   = 0;
+            uint32 Capacity           = 0;
+            uint32 DrawIDAndFlags     = 0;
+            uint32 SurfaceDescIndex   = 0;
+            uint32 MeshletHeaderSlot  = 0;
+            uint32 MaterialIndex      = 0;
+            float  MeshBoundsRadius   = 0.0f;
+            bool   bValid             = false;
+        };
+
+        /**
+         * Reserves a contiguous run of retained slots the GPU owns, plus the batch and surface-desc
+         * indices every blade in it will carry. The CPU never writes the run again: the scatter fills it
+         * each frame and leaves unused slots inactive, which is exactly the "free slots carry bActive = 0"
+         * contract the instance cull already relies on.
+         *
+         * Idempotent per (mesh, capacity); a second call for the same species returns the same block.
+         */
+        FGrassSpeciesBinding AcquireGrassSpecies(CStaticMesh* Mesh, uint32 Capacity);
+
         // Touches only Primitives[Index], so this half is parallel-safe; kNoBoneSlice means it needs one.
         uint32                      TouchBoneSlice(uint32 Index, uint32 Count, uint32 FrameNumber);
         // Recycled by EXACT size and mutates the free lists, so this half must stay serial.
@@ -351,6 +374,12 @@ namespace Lumina
         void    SetBoneCount(uint32 Index, uint32 Count);
         // Interns a surface's LOD table; identical tables collapse to one entry.
         uint32  InternSurfaceDesc(const FResolvedSurface& Surface);
+
+        /** Contiguous run at the end of the retained arrays, bypassing the free list so the block is dense. */
+        uint32  AllocateInstanceSlotBlock(uint32 Count);
+
+        // Keyed by mesh, so two terrains sharing a species share its block rather than each reserving one.
+        THashMap<const CStaticMesh*, FGrassSpeciesBinding> GrassSpecies;
 
         void    SyncEntity(ECS::FRegistry& Registry, const FSyncPools& Pools, ECS::FEntity Entity,
                            EPrimitiveSource Source, EPrimitiveDirty Flags);

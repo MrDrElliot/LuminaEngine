@@ -1,6 +1,6 @@
 ﻿#include "Core/Math/Transform.h"
 #include "Core/Math/SIMD/VQuat1.h"
-#include "GoogleTest/include/gtest/gtest.h"
+#include <gtest/gtest.h>
 
 TEST(TransformTests, DefaultTransformIsIdentity)
 {

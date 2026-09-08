@@ -753,6 +753,81 @@ namespace Lumina
         DirtyStaticSlots.push_back(Slot);
     }
 
+    uint32 FScenePrimitiveSet::AllocateInstanceSlotBlock(uint32 Count)
+    {
+        // Deliberately not the free list: the block must be contiguous so the GPU can index it from one base.
+        const uint32 Base = (uint32)RetainedCullEntries.size();
+        const SIZE_T OldCapacity = RetainedCullEntries.capacity();
+
+        RetainedCullEntries.resize(Base + Count);
+        RetainedTransforms.resize(Base + Count);
+        RetainedStatic.resize(Base + Count);
+
+        if (RetainedCullEntries.capacity() != OldCapacity)
+        {
+            bFullInstanceUpload = true;
+        }
+        return Base;
+    }
+
+    FScenePrimitiveSet::FGrassSpeciesBinding FScenePrimitiveSet::AcquireGrassSpecies(CStaticMesh* Mesh, uint32 Capacity)
+    {
+        FGrassSpeciesBinding Result;
+
+        if (Mesh == nullptr || Capacity == 0u)
+        {
+            return Result;
+        }
+
+        if (auto It = GrassSpecies.find(Mesh); It != GrassSpecies.end() && It->second.Capacity >= Capacity)
+        {
+            return It->second;
+        }
+
+        // One surface only. A multi-material grass mesh would need a block per surface, and silently
+        // drawing just the first would look like a broken mesh rather than an unsupported one.
+        const uint32 Handle = FMeshResolveCache::Get().Resolve(Mesh, {});
+        if (!FMeshResolveCache::Get().IsValidHandle(Handle))
+        {
+            return Result;
+        }
+
+        const FResolvedMesh& Resolved = FMeshResolveCache::Get().GetEntry(Handle);
+        if (Resolved.Surfaces.empty())
+        {
+            return Result;
+        }
+
+        const FResolvedSurface& Surface = Resolved.Surfaces[0];
+
+        const uint32 BatchIndex = Batches.FindOrAddBatch(Surface);
+        Batches.AddBatchRef(BatchIndex, false);
+
+        // Grass is never skinned and always has geometry once its mesh resolved. Active is set per blade by
+        // the scatter, not here, so an unwritten slot in the block stays free.
+        EInstanceFlags Flags = EInstanceFlags::HasGeometry | Surface.MaterialFlags;
+
+        Result.InstanceSlotBase  = AllocateInstanceSlotBlock(Capacity);
+        Result.Capacity          = Capacity;
+        Result.DrawIDAndFlags    = PackDrawIDAndFlags(BatchIndex, Flags);
+        Result.SurfaceDescIndex  = InternSurfaceDesc(Surface);
+        Result.MaterialIndex     = Surface.MaterialIdx;
+        Result.MeshletHeaderSlot = Mesh->GetMeshResource().MeshBuffers.MeshletHeaderSlot;
+        // Enclosing-sphere radius of the bind-pose AABB, which is what the cull's sphere test wants.
+        const FVector3 Extent = Mesh->GetAABB().GetSize() * 0.5f;
+        Result.MeshBoundsRadius  = Math::Sqrt(Extent.x * Extent.x + Extent.y * Extent.y + Extent.z * Extent.z);
+        Result.bValid            = true;
+
+        // The block starts inactive so a frame that dispatches no scatter draws nothing rather than garbage.
+        for (uint32 i = 0; i < Capacity; ++i)
+        {
+            RetainedCullEntries[Result.InstanceSlotBase + i] = {};
+        }
+
+        GrassSpecies[Mesh] = Result;
+        return Result;
+    }
+
     uint32 FScenePrimitiveSet::InternSurfaceDesc(const FResolvedSurface& Surface)
     {
         FSurfaceDescGPU Desc = {};

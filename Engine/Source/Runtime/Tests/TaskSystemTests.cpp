@@ -203,7 +203,7 @@ TEST(TaskSystem, TaskGraph_FanOutMerge_Stress)
         {
             ProducedB.fetch_add(R.End - R.Start, std::memory_order_relaxed);
         });
-        auto Independent = Graph.Add([&] { IndependentRuns.fetch_add(1); });
+        Graph.Add([&] { IndependentRuns.fetch_add(1); });
         auto Merge = Graph.Add([&]
         {
             MergeRuns.fetch_add(1);
@@ -310,6 +310,7 @@ TEST(TaskSystem, Perf_ParallelForScalesWithWork)
         SerialSink = acc;
     }
     auto S1 = Lumina::PlatformTime::Cycles();
+    (void)SerialSink;
     const double SerialMs = Lumina::PlatformTime::ToMilliseconds(S1 - S0);
 
     // Parallel, with per-worker partials to avoid contention.

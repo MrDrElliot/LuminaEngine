@@ -303,6 +303,11 @@ namespace Lumina
         PROPERTY()
         TVector<FMaterialStaticSwitch>          StaticSwitches;
 
+        /** Grass species this terrain graph scatters, collected from its GrassOutput node at compile.
+            Empty for every material that has no such node, which is all of them but terrain. */
+        PROPERTY()
+        TVector<FGrassOutput>                   GrassOutputs;
+
         /** Compiled non-default permutations, keyed by MakeStaticSwitchKey; empty unless switches exist. */
         PROPERTY()
         TVector<FMaterialShaderPermutation>     Permutations;

@@ -55,6 +55,8 @@
 #include "World/Entity/Components/DynamicMeshComponent.h"
 #include "World/Entity/Components/FoliageComponent.h"
 #include "World/Entity/Components/TerrainComponent.h"
+#include "World/Entity/Components/GrassComponent.h"
+#include "Assets/AssetTypes/Foliage/GrassType.h"
 #include "World/Scene/RenderScene/EnvironmentRenderTypes.h"
 #include "World/Scene/RenderScene/MeshDrawCommand.h"
 #include "World/Scene/RenderScene/MeshResolveCache.h"
@@ -534,6 +536,12 @@ namespace Lumina
     {
         // Defined in the terrain helper block below; Extract prep.
         void PrepareTerrainExtract(STerrainComponent& Terrain, const FMatrix4& WorldMatrix, FDefaultSceneRenderer::FFrameData::FTerrainExtract& Out);
+
+        // Flattens the terrain material's declared species into the extract. Reads the material rather than
+        // the component on purpose: the GrassOutput node is the authoring surface, the component only says
+        // "this terrain grows grass" and carries the budget.
+        void PrepareGrassExtract(ECS::FRegistry& Registry, ECS::FEntity Entity, const STerrainComponent& Terrain,
+                                 FDefaultSceneRenderer::FFrameData::FTerrainExtract& Out);
 
         // Reuses the live element so its heap buffers outlive the frame instead of being freed and remade.
         template <typename T>
@@ -3078,6 +3086,7 @@ namespace Lumina
                     Item.Entity      = Entity;
                     Item.WorldMatrix = TransformStorage.Get(Entity).GetWorldMatrix();
                     PrepareTerrainExtract(Terrain, Item.WorldMatrix, Item);
+                    PrepareGrassExtract(Registry, Entity, Terrain, Item);
                 }
                 Frame.Extracts.TerrainExtracts.resize(TerrainCount);
             }, ETaskPriority::Medium);
@@ -8491,6 +8500,71 @@ namespace Lumina
             }
         }
 
+        void PrepareGrassExtract(ECS::FRegistry& Registry, ECS::FEntity Entity, const STerrainComponent& Terrain,
+                                 FDefaultSceneRenderer::FFrameData::FTerrainExtract& Out)
+        {
+            Out.Grass.clear();
+            Out.GrassMaxInstances = 0;
+            Out.GrassMaxDrawDistance = 0.0f;
+
+            const SGrassComponent* Grass = Registry.TryGet<SGrassComponent>(Entity);
+            if (Grass == nullptr || !Grass->bEnabled)
+            {
+                return;
+            }
+
+            CMaterialInterface* MaterialInterface = Terrain.Material;
+            CMaterial* Material = MaterialInterface != nullptr ? MaterialInterface->GetMaterial() : nullptr;
+            if (Material == nullptr || Material->GrassOutputs.empty())
+            {
+                return;
+            }
+
+            Out.GrassMaxInstances    = Grass->MaxInstancesPerSpecies;
+            Out.GrassMaxDrawDistance = Grass->MaxDrawDistance;
+
+            for (const FGrassOutput& Output : Material->GrassOutputs)
+            {
+                const CGrassType* Type = Output.GrassType;
+                if (Type == nullptr || Type->Mesh == nullptr)
+                {
+                    continue;
+                }
+
+                // A layer the terrain does not have would sample a slice past the array's end.
+                if (Output.LayerIndex >= (uint32)Terrain.Layers.size())
+                {
+                    continue;
+                }
+
+                const float Density = Type->Density * Output.DensityScale;
+                if (Density <= 0.0f)
+                {
+                    continue;
+                }
+
+                FDefaultSceneRenderer::FFrameData::FGrassSpeciesExtract Species;
+                Species.Mesh       = Type->Mesh;
+                Species.LayerIndex = Output.LayerIndex;
+
+                // Density is instances per square metre, so the candidate grid spacing is its inverse root.
+                // Converted to world units here, once, rather than per thread on the GPU.
+                Species.CellSize = Math::Max(0.01f, 100.0f / Math::Sqrt(Density));
+
+                Species.MinWeight     = Type->MinWeight;
+                Species.ScaleMin      = Type->ScaleMin;
+                Species.ScaleMax      = Type->ScaleMax;
+                Species.ZOffset       = Type->ZOffset;
+                Species.AlignToNormal = Type->AlignToNormal;
+                Species.MaxSlopeCos   = Math::Cos(Type->MaxSlopeDegrees * (3.14159265358979f / 180.0f));
+                Species.CullDistance  = Type->CullDistance;
+                Species.Seed          = Type->Seed;
+                Species.bRandomYaw    = Type->bRandomYaw;
+
+                Out.Grass.push_back(Species);
+            }
+        }
+
         void PrepareTerrainExtract(STerrainComponent& Terrain, const FMatrix4& WorldMatrix,
                                    FDefaultSceneRenderer::FFrameData::FTerrainExtract& Out)
         {
@@ -8942,6 +9016,207 @@ namespace Lumina
 
             RHI::CmdDispatch(CL, MakeArgs(Push), State.AllocatedChunkCount, 1u, 1u);
             bAnyDispatched = true;
+        }
+
+        if (bAnyDispatched)
+        {
+            Barriers::ComputeToAll(CL);
+        }
+    }
+
+    // Matches FGrassScatterPushConstants in GrassScatter.slang.
+    struct FGrassScatterPushConstants
+    {
+        uint64  OutCullEntriesAddr = 0;
+        uint64  OutTransformsAddr  = 0;
+        uint64  OutStaticAddr      = 0;
+        uint64  OutCursorAddr      = 0;
+
+        uint32  HeightmapIndex    = 0;
+        uint32  NormalIndex       = 0;
+        uint32  LayerWeightsIndex = 0;
+        uint32  LayerIndex        = 0;
+
+        float   CameraX = 0.0f;
+        float   CameraZ = 0.0f;
+        float   Radius  = 0.0f;
+        float   CellSize = 1.0f;
+
+        float   MinWeight   = 0.0f;
+        float   MaxSlopeCos = 0.0f;
+        float   ScaleMin    = 1.0f;
+        float   ScaleMax    = 1.0f;
+
+        float   AlignToNormal = 0.0f;
+        float   ZOffset       = 0.0f;
+        uint32  bRandomYaw    = 1;
+        uint32  Seed          = 0;
+
+        uint32  GridSide     = 0;
+        uint32  MaxInstances = 0;
+
+        uint32  InstanceSlotBase  = 0;
+        uint32  DrawIDAndFlags    = 0;
+        uint32  SurfaceDescIndex  = 0;
+        uint32  MeshletHeaderSlot = 0;
+        uint32  MaterialIndex     = 0;
+        uint32  EntityID          = 0;
+        float   MeshBoundsRadius  = 0.0f;
+        float   MaxDrawDistance   = 0.0f;
+
+        float   TerrainOriginX  = 0.0f;
+        float   TerrainOriginZ  = 0.0f;
+        float   TileWorldSize   = 0.0f;
+        float   MaxHeight       = 0.0f;
+        float   TerrainBaseY    = 0.0f;
+        uint32  _Pad0 = 0;
+        uint32  _Pad1 = 0;
+        uint32  _Pad2 = 0;
+    };
+
+    void FDefaultSceneRenderer::GrassScatterPass(RHI::FCmdListH CL)
+    {
+        const FFrameData& Frame = *RenderFrame;
+        if (Frame.Extracts.TerrainExtracts.empty())
+        {
+            return;
+        }
+
+        // The blades land in the retained arrays, so this must run after their upload and before the cull
+        // reads them. Without those buffers there is nowhere to write.
+        if (!RetainedCullEntryBuffer || !RetainedTransformBuffer || !RetainedStaticBuffer)
+        {
+            return;
+        }
+
+        static const FShaderH ScatterShader = FShaderLibrary::Get("GrassScatter.slang");
+        if (!ScatterShader)
+        {
+            return;
+        }
+
+        LUMINA_PROFILE_SECTION_COLORED("Grass Scatter", tracy::Color::ForestGreen);
+
+        const FVector3 CameraPos = FVector3(Frame.SceneGlobalData.CameraData.Location);
+        bool bAnyDispatched = false;
+
+        for (const FFrameData::FTerrainExtract& TerrainItem : Frame.Extracts.TerrainExtracts)
+        {
+            if (TerrainItem.Grass.empty() || TerrainItem.GrassMaxInstances == 0u)
+            {
+                continue;
+            }
+
+            auto TerrainStateIt = TerrainGPUStates.find(TerrainItem.Entity);
+            if (TerrainStateIt == TerrainGPUStates.end())
+            {
+                continue;
+            }
+
+            const FTerrainGPUState& Terrain = TerrainStateIt->second;
+            if (!Terrain.HeightmapTexture || !Terrain.NormalTexture || !Terrain.LayerWeightTexture)
+            {
+                continue;
+            }
+
+            TVector<FGrassGPUState>& States = GrassGPUStates[TerrainItem.Entity];
+            States.resize(TerrainItem.Grass.size());
+
+            const FVector3 Origin = FVector3(TerrainItem.WorldMatrix[3]);
+
+            for (SIZE_T Index = 0; Index < TerrainItem.Grass.size(); ++Index)
+            {
+                const FFrameData::FGrassSpeciesExtract& Species = TerrainItem.Grass[Index];
+                FGrassGPUState& State = States[Index];
+
+                const FScenePrimitiveSet::FGrassSpeciesBinding Binding =
+                    ScenePrimitives.AcquireGrassSpecies(Species.Mesh, TerrainItem.GrassMaxInstances);
+                if (!Binding.bValid)
+                {
+                    continue;
+                }
+
+                // A species may cap its own draw distance below the component's radius.
+                const float Radius = Species.CullDistance > 0.0f
+                                   ? Math::Min(Species.CullDistance, TerrainItem.GrassMaxDrawDistance)
+                                   : TerrainItem.GrassMaxDrawDistance;
+                if (Radius <= 0.0f || Species.CellSize <= 0.0f)
+                {
+                    continue;
+                }
+
+                // Candidates cover the square inscribing the radius; the shader rejects the corners.
+                const uint32 GridSide = (uint32)Math::Ceil((Radius * 2.0f) / Species.CellSize);
+                if (GridSide == 0u)
+                {
+                    continue;
+                }
+
+                if (!State.CursorBuffer)
+                {
+                    State.CursorBuffer = CreateSceneBuffer(sizeof(uint32), "Grass.Cursor");
+                }
+                if (!State.CursorBuffer)
+                {
+                    continue;
+                }
+
+                // The cursor is the append index into this species' block, so it restarts every frame.
+                RHI::CmdMemset(CL, { State.CursorBuffer.Gpu, sizeof(uint32) }, 0u);
+
+                // Slots the scatter does not reach this frame must not keep last frame's blades, so the
+                // whole block goes inactive first. Zeroing the cull entry clears its Active bit.
+                RHI::CmdMemset(CL, { RetainedCullEntryBuffer.Gpu
+                                     + uint64(Binding.InstanceSlotBase) * sizeof(FInstanceCullEntry),
+                                     uint64(Binding.Capacity) * sizeof(FInstanceCullEntry) }, 0u);
+                Barriers::TransferToAll(CL);
+
+                if (!bAnyDispatched)
+                {
+                    RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(ScatterShader));
+                }
+
+                FGrassScatterPushConstants Push{};
+                Push.OutCullEntriesAddr = RetainedCullEntryBuffer.Gpu;
+                Push.OutTransformsAddr  = RetainedTransformBuffer.Gpu;
+                Push.OutStaticAddr      = RetainedStaticBuffer.Gpu;
+                Push.OutCursorAddr      = State.CursorBuffer.Gpu;
+                Push.HeightmapIndex     = (uint32)Terrain.HeightmapTexture.GetResourceID();
+                Push.NormalIndex        = (uint32)Terrain.NormalTexture.GetResourceID();
+                Push.LayerWeightsIndex  = (uint32)Terrain.LayerWeightTexture.GetResourceID();
+                Push.LayerIndex         = Species.LayerIndex;
+                Push.CameraX            = CameraPos.x;
+                Push.CameraZ            = CameraPos.z;
+                Push.Radius             = Radius;
+                Push.CellSize           = Species.CellSize;
+                Push.MinWeight          = Species.MinWeight;
+                Push.MaxSlopeCos        = Species.MaxSlopeCos;
+                Push.ScaleMin           = Species.ScaleMin;
+                Push.ScaleMax           = Species.ScaleMax;
+                Push.AlignToNormal      = Species.AlignToNormal;
+                Push.ZOffset            = Species.ZOffset;
+                Push.bRandomYaw         = Species.bRandomYaw ? 1u : 0u;
+                Push.Seed               = Species.Seed;
+                Push.GridSide           = GridSide;
+                Push.MaxInstances       = Binding.Capacity;
+                Push.InstanceSlotBase   = Binding.InstanceSlotBase;
+                Push.DrawIDAndFlags     = Binding.DrawIDAndFlags;
+                Push.SurfaceDescIndex   = Binding.SurfaceDescIndex;
+                Push.MeshletHeaderSlot  = Binding.MeshletHeaderSlot;
+                Push.MaterialIndex      = Binding.MaterialIndex;
+                Push.EntityID           = (uint32)TerrainItem.Entity.GetPacked();
+                Push.MeshBoundsRadius   = Binding.MeshBoundsRadius;
+                Push.MaxDrawDistance    = Radius;
+                Push.TerrainOriginX     = Origin.x;
+                Push.TerrainOriginZ     = Origin.z;
+                Push.TileWorldSize      = TerrainItem.TileWorldSize;
+                Push.MaxHeight          = TerrainItem.MaxHeight;
+                Push.TerrainBaseY       = Origin.y;
+
+                const uint32 Groups = (GridSide + 7u) / 8u;
+                RHI::CmdDispatch(CL, MakeArgs(Push), Groups, Groups, 1u);
+                bAnyDispatched = true;
+            }
         }
 
         if (bAnyDispatched)
@@ -13086,6 +13361,10 @@ namespace Lumina
             PC.OutOverflowFlagAddr      = GetCullCounters().Gpu + sizeof(uint32);
             PC.SkinnedFrameDataAddr     = SkinnedFrameDataBuffer.Gpu;
             PC.OutPreSkinCursorAddr     = GetCullCounters().Gpu + sizeof(uint32) * 2;
+
+            // Blades are appended into the retained block here, between its upload and the cull that
+            // reads it, so grass is just more instances by the time anything downstream looks.
+            GrassScatterPass(CL);
 
             RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CullInstancesShader));
             // CullInstances.slang undoes the fold with GroupID.y * MAX_DISPATCH_AXIS * LOCAL_SIZE_X.

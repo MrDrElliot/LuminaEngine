@@ -1,4 +1,5 @@
 #pragma once
+#include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Math/Math.h"
 #include "Shared/SharedConstants.h"
@@ -6,6 +7,8 @@
 
 namespace Lumina
 {
+    class CGrassType;
+
     // Must match EMaterialFlags in Common.slang.
     enum class EMaterialGPUFlags : uint32
     {
@@ -86,6 +89,28 @@ namespace Lumina
 
     // One bit per switch in a uint64 permutation key, so this is the cap the compiler enforces.
     constexpr uint32 kMaxStaticSwitches = 64;
+
+    /**
+     * One grass species a terrain material scatters, published by the graph's GrassOutput node so the
+     * runtime can read it without the editor. The layer index selects which painted weight drives the
+     * density, which is what confines a species to specific terrain layers.
+     */
+    REFLECT()
+    struct RUNTIME_API FGrassOutput
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        TObjectPtr<CGrassType> GrassType;
+
+        /** Index into STerrainComponent::Layers whose painted weight gates this species. */
+        PROPERTY()
+        uint32 LayerIndex = 0;
+
+        /** Multiplies the type's own density, so one type can be reused at different coverage per layer. */
+        PROPERTY()
+        float DensityScale = 1.0f;
+    };
 
     /** A compile-time branch an instance may flip, at the cost of compiling that instance its own shader. */
     REFLECT()

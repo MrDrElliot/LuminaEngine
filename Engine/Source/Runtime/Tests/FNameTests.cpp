@@ -65,7 +65,7 @@ TEST(FNameTests, ConstructFromWideString)
 
 TEST(FNameTests, ConstructFromTCHAR)
 {
-    const TCHAR* w = StringUtils::ToWideString("Input").c_str();
+    const TCHAR* w = TEXT("Input");
     FName a(w);
 
     EXPECT_EQ(a.ToString(), "Input");

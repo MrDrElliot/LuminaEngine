@@ -130,6 +130,15 @@ namespace Lumina
         uint32  AllocatedMeshletCount = 0;
     };
 
+    /**
+     * Per (terrain, species) scatter state. The instances themselves live in the retained arrays, so all
+     * that is owned here is the append cursor the scatter atomically bumps.
+     */
+    struct FGrassGPUState
+    {
+        RHI::FGPUAllocation CursorBuffer;
+    };
+
     struct FTerrainPushConstants
     {
         uint64  ParamsAddr        = 0;   // ConstBufferPointer<FTerrainRenderParams>

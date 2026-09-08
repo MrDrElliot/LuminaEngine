@@ -47,6 +47,7 @@ namespace Lumina
     struct STerrainComponent;
     struct SDecalComponent;
     class CMaterialInterface;
+    class CStaticMesh;
     class CMaterial;
 
     /** The engine's default scene renderer: GPU-driven meshlet culling into a visibility buffer, then
@@ -179,6 +180,23 @@ namespace Lumina
                 bool        bDepthTest    = false; // occluded by + writes scene depth, vs. always-on-top
             };
 
+            /** One species the scatter dispatches for, flattened from the material's GrassOutputs. */
+            struct FGrassSpeciesExtract
+            {
+                CStaticMesh* Mesh      = nullptr;
+                uint32  LayerIndex     = 0;
+                float   CellSize       = 1.0f;   // world units between candidates, from density
+                float   MinWeight      = 0.25f;
+                float   ScaleMin       = 1.0f;
+                float   ScaleMax       = 1.0f;
+                float   ZOffset        = 0.0f;
+                float   AlignToNormal  = 0.0f;
+                float   MaxSlopeCos    = 0.0f;
+                float   CullDistance   = 0.0f;
+                uint32  Seed           = 0;
+                bool    bRandomYaw     = true;
+            };
+
             struct FTerrainExtract
             {
                 ECS::FEntity        Entity;
@@ -195,6 +213,11 @@ namespace Lumina
                 bool                bReceiveShadow  = true;
 
                 bool                bStructuralChange = false;
+
+                /** Empty unless the terrain carries SGrassComponent and its material declares species. */
+                TVector<FGrassSpeciesExtract> Grass;
+                uint32              GrassMaxInstances = 0;
+                float               GrassMaxDrawDistance = 0.0f;
 
                 // Height upload: 0 none, 1 full map, 2 packed dirty rect.
                 uint8               HeightUpload    = 0;
@@ -713,6 +736,9 @@ namespace Lumina
         void ParticleRenderPass(RHI::FCmdListH CL);
         void TerrainUpdatePass(RHI::FCmdListH CL);
         void TerrainCullPass(RHI::FCmdListH CL);
+
+        /** Generates grass instances on the GPU for every species the visible terrains declare. */
+        void GrassScatterPass(RHI::FCmdListH CL);
         void TerrainDepthPrePass(RHI::FCmdListH CL);
         void TerrainRenderPass(RHI::FCmdListH CL);
         void GTAOPass(RHI::FCmdListH CL);
@@ -1298,6 +1324,10 @@ namespace Lumina
         FShadowAtlas                            ShadowAtlas;
         
         THashMap<ECS::FEntity, FTerrainGPUState> TerrainGPUStates;
+
+        // One scatter target per (terrain, species slot). Keyed by entity; the vector is indexed by the
+        // species' position in the extract, which is stable for a given compiled material.
+        THashMap<ECS::FEntity, TVector<FGrassGPUState>> GrassGPUStates;
         
         THashMap<ECS::FEntity, TVector<FParticleGPUState>> ParticleGPUStates;
 

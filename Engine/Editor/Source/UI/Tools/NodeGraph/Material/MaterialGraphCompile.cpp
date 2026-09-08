@@ -1,5 +1,6 @@
 #include "MaterialGraphCompile.h"
 #include "MaterialNodeGraph.h"
+#include "Nodes/MaterialNode_Grass.h"
 #include "Assets/AssetTypes/Material/Material.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Assets/AssetTypes/Textures/Texture.h"
@@ -17,6 +18,46 @@ namespace Lumina
 {
     namespace
     {
+        // GrassOutput nodes sit outside the emit closure, so the only way their data reaches the asset is
+        // a direct scan of the graph. Assign rather than merge: a removed node must drop its species.
+        void CollectGrassOutputs(CMaterial* Material, CMaterialNodeGraph* Graph)
+        {
+            Material->GrassOutputs.clear();
+
+            if (Graph == nullptr)
+            {
+                return;
+            }
+
+            for (const TObjectPtr<CEdGraphNode>& Node : Graph->Nodes)
+            {
+                if (!Node.IsValid())
+                {
+                    continue;
+                }
+
+                CMaterialExpression_GrassOutput* GrassNode = Cast<CMaterialExpression_GrassOutput>(Node.Get());
+                if (GrassNode == nullptr)
+                {
+                    continue;
+                }
+
+                for (const FGrassOutputEntry& Entry : GrassNode->Entries)
+                {
+                    if (Entry.GrassType == nullptr)
+                    {
+                        continue;
+                    }
+
+                    FGrassOutput Output;
+                    Output.GrassType    = Entry.GrassType;
+                    Output.LayerIndex   = Entry.LayerIndex;
+                    Output.DensityScale = Entry.DensityScale;
+                    Material->GrassOutputs.push_back(Output);
+                }
+            }
+        }
+
         bool IsStageRequired(const CMaterial* Material, EMaterialShaderStage Stage)
         {
             return Material->IsStageRequired(Stage);
@@ -397,6 +438,7 @@ namespace Lumina
         {
             GShaderCompiler->Flush();
             FinishMaterialGraphCompile(Material, Compiler, Result);
+            CollectGrassOutputs(Material, Graph);
         }
 
         // Stamped even on failure, since the compile ran against this exact graph.

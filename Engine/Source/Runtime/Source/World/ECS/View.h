@@ -41,6 +41,28 @@ namespace Lumina::ECS
         // One included pool means the dense walk already addresses every element, filter or not.
         static constexpr bool bIsDirectScan = (IncludeCount == 1);
 
+    private:
+
+        // The probes are loop-invariant, so a scan pays for the page arrays once rather than per element.
+        struct FExcludeProbes
+        {
+            FMembershipProbe Probes[ExcludeCount > 0 ? ExcludeCount : 1];
+
+            NODISCARD FORCEINLINE bool Rejects(FEntity Entity) const
+            {
+                for (size_t Index = 0; Index < ExcludeCount; ++Index)
+                {
+                    if (Probes[Index].Contains(Entity))
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }
+        };
+
+    public:
+
         TView() = default;
 
         explicit TView(TComponentStorage<TInclude>... InIncludes)
@@ -81,6 +103,10 @@ namespace Lumina::ECS
                 : View(InView)
                 , Index(InIndex)
             {
+                if (InView != nullptr)
+                {
+                    Probes = InView->MakeExcludeProbes();
+                }
                 Advance();
             }
 
@@ -104,7 +130,7 @@ namespace Lumina::ECS
                 const size_t Count = Set->GetDenseSize();
                 const FEntity* Dense = Set->GetDenseData();
 
-                while (Index < Count && (Dense[Index].IsTombstone() || !View->Contains(Dense[Index])))
+                while (Index < Count && (Dense[Index].IsTombstone() || !View->MatchesRestWith(Dense[Index], Probes)))
                 {
                     ++Index;
                 }
@@ -112,6 +138,7 @@ namespace Lumina::ECS
 
             const TView* View = nullptr;
             size_t Index = 0;
+            FExcludeProbes Probes{};
         };
 
         NODISCARD FIterator begin() const { return FIterator(this, 0); }
@@ -128,6 +155,10 @@ namespace Lumina::ECS
                 : View(InView)
                 , Index(InIndex)
             {
+                if (InView != nullptr)
+                {
+                    Probes = InView->MakeExcludeProbes();
+                }
                 Advance();
             }
 
@@ -135,7 +166,7 @@ namespace Lumina::ECS
             {
                 const FEntity Entity = View->GetDriver()->GetDenseData()[Index];
                 return TupleCat(TTuple<FEntity>(Entity),
-                    View->RefTuple(Entity, std::index_sequence_for<TInclude...>{}));
+                    View->RefTupleAt(Entity, static_cast<uint32>(Index), std::index_sequence_for<TInclude...>{}));
             }
 
             FEachIterator& operator ++ () { ++Index; Advance(); return *this; }
@@ -156,7 +187,7 @@ namespace Lumina::ECS
                 const size_t Count = Set->GetDenseSize();
                 const FEntity* Dense = Set->GetDenseData();
 
-                while (Index < Count && (Dense[Index].IsTombstone() || !View->Contains(Dense[Index])))
+                while (Index < Count && (Dense[Index].IsTombstone() || !View->MatchesRestWith(Dense[Index], Probes)))
                 {
                     ++Index;
                 }
@@ -164,6 +195,7 @@ namespace Lumina::ECS
 
             const TView* View = nullptr;
             size_t Index = 0;
+            FExcludeProbes Probes{};
         };
 
         struct FEachRange
@@ -344,9 +376,16 @@ namespace Lumina::ECS
             }
         }
 
+        // Dense slots rather than live count, because a stable pool's tombstones are walked too. An empty
+        // pool ends the scan outright, so it keeps outranking every dense size.
+        NODISCARD static size_t ScanCost(const FSparseSet* Set)
+        {
+            return Set->Num() == 0 ? 0 : Set->GetDenseSize();
+        }
+
         void ConsiderDriver(const FSparseSet* Candidate, size_t Slot)
         {
-            if (Driver == nullptr || Candidate->Num() < Driver->Num())
+            if (Driver == nullptr || ScanCost(Candidate) < ScanCost(Driver))
             {
                 Driver = Candidate;
                 DriverSlot = Slot;
@@ -371,24 +410,6 @@ namespace Lumina::ECS
                 return false;
             }
         }
-
-        // The probes are loop-invariant, so a scan pays for the page arrays once rather than per element.
-        struct FExcludeProbes
-        {
-            FMembershipProbe Probes[ExcludeCount > 0 ? ExcludeCount : 1];
-
-            NODISCARD FORCEINLINE bool Rejects(FEntity Entity) const
-            {
-                for (size_t Index = 0; Index < ExcludeCount; ++Index)
-                {
-                    if (Probes[Index].Contains(Entity))
-                    {
-                        return true;
-                    }
-                }
-                return false;
-            }
-        };
 
         NODISCARD FExcludeProbes MakeExcludeProbes() const
         {
@@ -425,6 +446,32 @@ namespace Lumina::ECS
             return TupleCat(RefSlot<Slots>(Entity)...);
         }
 
+        // The driver's element is already addressed by the walk, so only the other slots look theirs up.
+        template<size_t Slot>
+        NODISCARD FORCEINLINE auto RefSlotAt(FEntity Entity, uint32 DriverDenseIndex) const
+        {
+            using TSlot = TIncludeAt<Slot>;
+            if constexpr (CDataComponent<TSlot>)
+            {
+                const auto& Storage = Lumina::Get<Slot>(Includes);
+                if (Slot == DriverSlot)
+                {
+                    return TTuple<TSlot&>(Storage.GetAtDense(DriverDenseIndex));
+                }
+                return TTuple<TSlot&>(Storage.Get(Entity));
+            }
+            else
+            {
+                return TTuple<>{};
+            }
+        }
+
+        template<size_t... Slots>
+        NODISCARD FORCEINLINE auto RefTupleAt(FEntity Entity, uint32 DriverDenseIndex, std::index_sequence<Slots...>) const
+        {
+            return TupleCat(RefSlotAt<Slots>(Entity, DriverDenseIndex)...);
+        }
+
         NODISCARD FORCEINLINE bool MatchesIncludes(FEntity Entity) const
         {
             return Apply([Entity](const auto&... Storage)
@@ -434,22 +481,30 @@ namespace Lumina::ECS
         }
 
         // Everything except the driver's own membership, which the dense walk already established.
-        NODISCARD FORCEINLINE bool MatchesRest(FEntity Entity) const
+        NODISCARD FORCEINLINE bool MatchesNonDriverIncludes(FEntity Entity) const
         {
             if constexpr (IncludeCount > 1)
             {
-                const bool bAllPresent = Apply([this, Entity](const auto&... Storage)
+                return Apply([this, Entity](const auto&... Storage)
                 {
                     return ((Storage.GetSet() == Driver || Storage.Contains(Entity)) && ...);
                 }, Includes);
-
-                if (!bAllPresent)
-                {
-                    return false;
-                }
             }
+            else
+            {
+                return true;
+            }
+        }
 
-            return !MatchesAnyExclude(Entity);
+        NODISCARD FORCEINLINE bool MatchesRest(FEntity Entity) const
+        {
+            return MatchesNonDriverIncludes(Entity) && !MatchesAnyExclude(Entity);
+        }
+
+        // Takes the probes the caller already hoisted, so a scan reloads no pool pointer per element.
+        NODISCARD FORCEINLINE bool MatchesRestWith(FEntity Entity, const FExcludeProbes& Probes) const
+        {
+            return MatchesNonDriverIncludes(Entity) && !Probes.Rejects(Entity);
         }
 
         template<typename TFunc>
@@ -575,7 +630,7 @@ namespace Lumina::ECS
                 const size_t Count = Set->GetDenseSize();
                 const FEntity* Dense = Set->GetDenseData();
 
-                while (Index < Count && (Dense[Index].IsTombstone() || !View->Contains(Dense[Index])))
+                while (Index < Count && (Dense[Index].IsTombstone() || !View->MatchesRest(Dense[Index])))
                 {
                     ++Index;
                 }
