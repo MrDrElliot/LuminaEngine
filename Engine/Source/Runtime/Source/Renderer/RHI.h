@@ -674,6 +674,9 @@ namespace Lumina::RHI
     {
         FGPURange Dest;
         FGPURange Source;
+
+        // Not an aggregate, so a stale three-scalar { Dest, Source, Size } initializer fails to compile instead of brace-eliding into a zero-size copy.
+        FBufferCopy(FGPURange InDest, FGPURange InSource) : Dest(InDest), Source(InSource) {}
     };
     // Copies sharing a source and destination buffer collapse into one command, so keep entries that
     // target the same buffer adjacent.

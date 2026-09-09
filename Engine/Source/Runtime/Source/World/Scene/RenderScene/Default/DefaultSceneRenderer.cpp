@@ -14576,7 +14576,7 @@ namespace Lumina
 
             const uint64 SrcOffset = (uint64)Run.x * Stride;
             Memory::Memcpy(StagingBytes + Cursor, (const uint8*)Src + SrcOffset, Bytes);
-            Copies.push_back(RHI::FBufferCopy{ Dst + SrcOffset, Staging.Gpu + Cursor, Bytes });
+            Copies.push_back(RHI::FBufferCopy{ { Dst + SrcOffset, Bytes }, { Staging.Gpu + Cursor, Bytes } });
             Cursor += Bytes;
         }
 
@@ -14592,7 +14592,7 @@ namespace Lumina
 
         RHI::FTransientAlloc Staging = RHI::AllocTransient(Size);
         Memory::Memcpy(Staging.Cpu, Data, Size);
-        StagedWrites.push_back(RHI::FBufferCopy{ Dst, Staging.Gpu, Size });
+        StagedWrites.push_back(RHI::FBufferCopy{ { Dst, Size }, { Staging.Gpu, Size } });
     }
 
     void FDefaultSceneRenderer::FlushStagedWrites(RHI::FCmdListH CL)
