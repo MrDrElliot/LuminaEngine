@@ -47,6 +47,9 @@ namespace Lumina
         virtual FArchive& operator<<(CObject*& Value) override;
         virtual FArchive& operator<<(FObjectHandle& Value) override;
 
+        // Mirrors FPackageSaver, since FTextureSourceFile picks its inline or bulk layout from this answer on read too.
+        bool SupportsBulkData() const override { return true; }
+
     private:
 
         // Owns the read, not the bytes; the shared reference is what keeps them alive.
