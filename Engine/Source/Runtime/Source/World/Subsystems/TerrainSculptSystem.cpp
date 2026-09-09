@@ -1,6 +1,5 @@
 ﻿#include "RuntimePCH.h"
 #include "TerrainSculptSystem.h"
-#include "Memory/Allocators/Allocator.h"
 #include "TaskSystem/TaskSystem.h"
 #include "World/Entity/Components/TerrainComponent.h"
 
@@ -320,9 +319,8 @@ namespace Lumina
         const int32 SnapW    = SnapMaxX - SnapMinX + 1;
         const int32 SnapH    = SnapMaxY - SnapMinY + 1;
 
-        // Scratch-backed so a held smooth stroke doesn't churn the heap every frame.
-        FMemMark Mark;
-        TScratchVector<float> Snapshot;
+        // Heap rather than scratch, since a wide brush's apron can exceed one scratch block.
+        TVector<float> Snapshot;
         Snapshot.resize(size_t(SnapW) * size_t(SnapH));
         for (int32 Y = 0; Y < SnapH; ++Y)
         {
