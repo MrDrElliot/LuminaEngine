@@ -83,14 +83,14 @@ template<typename Enum>
 }
 
 template<typename Enum>
-void EnumAddFlags(Enum& Flags, Enum FlagsToAdd)
+constexpr void EnumAddFlags(Enum& Flags, Enum FlagsToAdd)
 {
     using UnderlyingType = __underlying_type(Enum);
     Flags = (Enum)((UnderlyingType)Flags | (UnderlyingType)FlagsToAdd);
 }
 
 template<typename Enum>
-void EnumRemoveFlags(Enum& Flags, Enum FlagsToRemove)
+constexpr void EnumRemoveFlags(Enum& Flags, Enum FlagsToRemove)
 {
     using UnderlyingType = __underlying_type(Enum);
     Flags = (Enum)((UnderlyingType)Flags & ~(UnderlyingType)FlagsToRemove);
