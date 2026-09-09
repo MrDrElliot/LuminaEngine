@@ -95,32 +95,6 @@ float3 SampleDistanceFieldGradientLocal(FDistanceFieldVolume Volume, float3 Loca
     return Len > 1e-8 ? G / Len : float3(0.0, 0.0, 0.0);
 }
 
-// Per-axis world scale of an instance transform: the length of each basis column.
-float3 GetInstanceScale(float4x4 ModelMatrix)
-{
-    return float3(
-        length(mul(ModelMatrix, float4(1.0, 0.0, 0.0, 0.0)).xyz),
-        length(mul(ModelMatrix, float4(0.0, 1.0, 0.0, 0.0)).xyz),
-        length(mul(ModelMatrix, float4(0.0, 0.0, 1.0, 0.0)).xyz));
-}
-
-// Exact inverse of an always-affine object->world. Cofactor form rather than a general 4x4 inverse:
-// cheaper, and finite for a degenerate scale. M[i] is a mathematical ROW (see FTransform3x4).
-float4x4 MakeInstanceWorldToLocal(float4x4 ModelMatrix)
-{
-    // CalculateNormalMatrix returns (A^-1)^T for the upper-left 3x3 A, so its transpose is A^-1.
-    float3x3 InvRotScale = transpose(CalculateNormalMatrix(ModelMatrix));
-
-    float3 Translation = float3(ModelMatrix[0].w, ModelMatrix[1].w, ModelMatrix[2].w);
-    float3 InvTranslation = -mul(InvRotScale, Translation);
-
-    return float4x4(
-        float4(InvRotScale[0], InvTranslation.x),
-        float4(InvRotScale[1], InvTranslation.y),
-        float4(InvRotScale[2], InvTranslation.z),
-        float4(0.0, 0.0, 0.0, 1.0));
-}
-
 // The MINIMUM axis scale, not the average: only the minimum is guaranteed not to overstate free
 // space under non-uniform scale, and overstating it is what makes a sphere trace tunnel.
 float LocalDistanceToWorld(float LocalDistance, float3 InstanceScale)

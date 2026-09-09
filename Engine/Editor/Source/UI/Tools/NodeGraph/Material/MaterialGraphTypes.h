@@ -1,9 +1,20 @@
 ﻿#pragma once
 #include "Containers/String.h"
+#include "Core/Object/ObjectMacros.h"
 #include "Platform/GenericPlatform.h"
+#include "MaterialGraphTypes.generated.h"
 
 namespace Lumina
 {
+    // Lives here rather than on the node so the compiler can name it without a circular include.
+    REFLECT()
+    enum class EMaterialCoordinateSpace : uint8
+    {
+        World,
+        Local,
+        View,
+    };
+
     // Declared, not defined: the conversions below only cast to and from the underlying type, which an
     // opaque enum declaration fully supports. Keeps this header free of the MaterialFunction asset
     // include, so a node needing the shared type helpers doesn't drag in (or include another node's

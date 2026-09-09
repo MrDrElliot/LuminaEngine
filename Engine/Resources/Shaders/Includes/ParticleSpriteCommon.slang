@@ -231,6 +231,8 @@ struct FParticleMaterialVertexOutput
     float4 Color         : PARTICLE_COLOR;
     float2 UV            : TEXCOORD0;
     float3 WorldPos      : PARTICLE_WORLDPOS;
+    // The corner before the graph displaced it; the sprite expansion itself is not a material offset.
+    float3 WorldPosNoWPO : PARTICLE_WORLDPOS_NO_WPO;
     float3 ViewPos       : PARTICLE_VIEWPOS;
     float3 Normal        : PARTICLE_NORMAL;
     float4 Tangent       : PARTICLE_TANGENT;

@@ -29,6 +29,8 @@ PSOutput FragmentMain(PSInput Input)
     // Reconstruct the shaded surface world position from opaque depth at this pixel.
     float RawDepth = SampleDecalSceneDepth(ScreenUV);
     float3 WorldPosition = ReconstructWorldPos(ScreenUV, RawDepth, GetInverseCameraProjection(), GetInverseCameraView());
+    // No vertex graph in this domain, so there is no offset to exclude.
+    float3 WorldPositionExcludingOffsets = WorldPosition;
 
     // Reject the sky / far plane (no geometry to receive the decal).
     if (RawDepth <= 0.0)
@@ -80,6 +82,8 @@ PSOutput FragmentMain(PSInput Input)
     float2 UV0_DDY       = ddy(UV0);
     float3 WorldPosition_DDX = ddx(WorldPosition);
     float3 WorldPosition_DDY = ddy(WorldPosition);
+    float3 WorldPositionExcludingOffsets_DDX = WorldPosition_DDX;
+    float3 WorldPositionExcludingOffsets_DDY = WorldPosition_DDY;
     float4 VertexColor_DDX   = ddx(VertexColor);
     float4 VertexColor_DDY   = ddy(VertexColor);
 

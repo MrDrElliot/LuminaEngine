@@ -196,6 +196,8 @@ struct FVisSurface
 {
     FBaryDeriv Bary;
     float3     WorldPosition;
+    // The same point before the material graph displaced it; equal to WorldPosition without WPO.
+    float3     WorldPositionNoOffset;
     float3     NormalWS;
     float4     TangentWS;
     float4     VertexColor;
@@ -217,6 +219,7 @@ FVisSurface InterpolateVisSurface(FMeshletWorldVertex W[3], float3 FinalWorldPos
     FVisSurface S;
     S.Bary          = CalcFullBary(C0, C1, C2, PixelNdc, ScreenSize);
     S.WorldPosition = InterpBary(S.Bary, FinalWorldPos[0], FinalWorldPos[1], FinalWorldPos[2]);
+    S.WorldPositionNoOffset = InterpBary(S.Bary, W[0].WorldPos, W[1].WorldPos, W[2].WorldPos);
     S.NormalWS      = InterpBary(S.Bary, W[0].NormalWS, W[1].NormalWS, W[2].NormalWS);
     S.TangentWS     = float4(InterpBary(S.Bary, W[0].TangentWS.xyz, W[1].TangentWS.xyz, W[2].TangentWS.xyz),
                              W[0].TangentWS.w);

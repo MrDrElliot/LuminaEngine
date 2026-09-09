@@ -40,6 +40,19 @@ namespace Lumina
         }
     }
 
+    // Shown on the node body; the details panel is where InputType and OutputType are actually changed.
+    static const char* SignatureTypeName(EMaterialValueType Type)
+    {
+        switch (Type)
+        {
+            case EMaterialValueType::Float2:        return "float2";
+            case EMaterialValueType::Float3:        return "float3";
+            case EMaterialValueType::Float4:        return "float4";
+            case EMaterialValueType::TextureHandle: return "texture handle";
+            default:                                return "float";
+        }
+    }
+
     void CMaterialExpression_FunctionInput::BuildNode()
     {
         Super::BuildNode();
@@ -65,6 +78,7 @@ namespace Lumina
     void CMaterialExpression_FunctionInput::DrawNodeBody()
     {
         ImGui::Text("%s", InputName.c_str());
+        ImGui::TextDisabled("%s", SignatureTypeName(InputType));
     }
 
     void CMaterialExpression_FunctionInput::GenerateDefinition(FMaterialCompiler& Compiler)
@@ -91,6 +105,7 @@ namespace Lumina
     void CMaterialFunctionOutput::DrawNodeBody()
     {
         ImGui::Text("%s", OutputName.c_str());
+        ImGui::TextDisabled("%s", SignatureTypeName(OutputType));
     }
 
     void CMaterialFunctionOutput::GenerateDefinition(FMaterialCompiler& Compiler)

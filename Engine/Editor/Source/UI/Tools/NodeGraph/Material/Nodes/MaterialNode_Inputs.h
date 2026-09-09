@@ -63,6 +63,16 @@ namespace Lumina
         float SpeedY = 1.0f;
     };
 
+    // Which position the WorldPosition node reports, along both axes of the choice.
+    REFLECT()
+    enum class EWorldPositionType : uint8
+    {
+        Absolute,
+        AbsoluteExcludingOffsets,
+        CameraRelative,
+        CameraRelativeExcludingOffsets,
+    };
+
     REFLECT()
     class CMaterialExpression_WorldPos : public CMaterialExpression
     {
@@ -72,8 +82,22 @@ namespace Lumina
         uint32 GetNodeTitleColor() const override { return IM_COL32(25, 25, 255, 255); }
         FFixedString GetNodeCategory() const override { return "Inputs"; }
         FStringView GetNodeDisplayName() const override { return "WorldPosition"; }
-        FStringView GetNodeTooltip() const override { return "Returns the current fragment's world-space position (float3)."; }
+        FStringView GetNodeTooltip() const override
+        {
+            return "World-space position of the point being shaded (float3).\n\n"
+                   "Absolute is measured from the scene origin. CameraRelative subtracts the camera "
+                   "position, which keeps the value small far from the origin and is what noise and "
+                   "detail math should use there.\n\n"
+                   "ExcludingOffsets reads the position the vertex had before World Position Offset "
+                   "displaced it, so a pattern driven by it stays nailed to geometry that sways or "
+                   "morphs instead of swimming across it. The two are the same value on a chain feeding "
+                   "World Position Offset, which runs before the offset exists.";
+        }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
+
+        /** Which of the four world positions this node reports. */
+        PROPERTY(Editable, Category = "World Position")
+        EWorldPositionType PositionType = EWorldPositionType::Absolute;
     };
 
     REFLECT()
@@ -116,6 +140,31 @@ namespace Lumina
     };
 
     REFLECT()
+    class CMaterialExpression_LocalBounds : public CMaterialExpression
+    {
+        GENERATED_BODY()
+    public:
+        void BuildNode() override;
+        uint32 GetNodeTitleColor() const override { return IM_COL32(25, 25, 255, 255); }
+        FFixedString GetNodeCategory() const override { return "Inputs"; }
+        FStringView GetNodeDisplayName() const override { return "LocalBounds"; }
+        FStringView GetNodeTooltip() const override
+        {
+            return "Object-space bounding box of the mesh being rendered, before any instance transform.\n\n"
+                   "Min and Max are the box corners, HalfExtents is half its size and FullExtents the whole "
+                   "size. Divide a local position by FullExtents to get a 0-1 gradient that holds its shape "
+                   "across differently sized meshes.\n\n"
+                   "Surface (PBR) materials only; anything else reads a unit box.";
+        }
+        void GenerateDefinition(FMaterialCompiler& Compiler) override;
+
+        CMaterialOutput* HalfExtentsOut = nullptr;
+        CMaterialOutput* FullExtentsOut = nullptr;
+        CMaterialOutput* MinOut         = nullptr;
+        CMaterialOutput* MaxOut         = nullptr;
+    };
+
+    REFLECT()
     class CMaterialExpression_EntityID : public CMaterialExpression
     {
         GENERATED_BODY()
@@ -136,7 +185,7 @@ namespace Lumina
         void BuildNode() override;
         uint32 GetNodeTitleColor() const override { return IM_COL32(25, 25, 255, 255); }
         FFixedString GetNodeCategory() const override { return "Inputs"; }
-        FStringView GetNodeDisplayName() const override { return "VertexNormal"; }
+        FStringView GetNodeDisplayName() const override { return "VertexNormalWS"; }
         FStringView GetNodeTooltip() const override { return "Returns the interpolated world-space vertex normal (float3)."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -149,7 +198,7 @@ namespace Lumina
         void BuildNode() override;
         uint32 GetNodeTitleColor() const override { return IM_COL32(25, 25, 255, 255); }
         FFixedString GetNodeCategory() const override { return "Inputs"; }
-        FStringView GetNodeDisplayName() const override { return "VertexTangent"; }
+        FStringView GetNodeDisplayName() const override { return "VertexTangentWS"; }
         FStringView GetNodeTooltip() const override { return "Returns the interpolated world-space vertex tangent (float3)."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -162,7 +211,7 @@ namespace Lumina
         void BuildNode() override;
         uint32 GetNodeTitleColor() const override { return IM_COL32(25, 25, 255, 255); }
         FFixedString GetNodeCategory() const override { return "Inputs"; }
-        FStringView GetNodeDisplayName() const override { return "VertexBitangent"; }
+        FStringView GetNodeDisplayName() const override { return "VertexBitangentWS"; }
         FStringView GetNodeTooltip() const override { return "Returns the world-space vertex bitangent (float3, derived from normal x tangent * sign)."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };

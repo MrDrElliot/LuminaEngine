@@ -7,6 +7,8 @@ struct VSOutput
     float4 NormalWS                 : NORMAL_WS;
     float4 TangentWS                : TANGENT_WS;
     float4 FragPos                  : FRAG_POS;
+    // Pre-WPO world position, matching the member FBaseVertexOutput carries for the same reason.
+    float3 WorldPosNoWPO            : WORLD_POS_NO_WPO;
     float2 UV                       : TEXCOORD0;
     float2 HeightUV                 : HEIGHT_UV;
 
@@ -74,6 +76,8 @@ VSOutput VertexMain(uint VertexID : SV_VulkanVertexID, uint InstanceID : SV_Vulk
 
     // Material vertex graph emission (WPO). Terrain typically leaves this at
     // zero; the substitution still runs for symmetry with the base pass.
+    const float3 WorldPosNoWPO = WorldPos;
+
     FMaterialVertexInputs Material;
     $MATERIAL_VERTEX_INPUTS
     WorldPos += Material.WorldPositionOffset;
@@ -94,6 +98,7 @@ VSOutput VertexMain(uint VertexID : SV_VulkanVertexID, uint InstanceID : SV_Vulk
     Out.NormalWS      = float4(NormalWS, 0.0);
     Out.TangentWS     = float4(TangentWS, 1.0);
     Out.FragPos       = ViewPos;
+    Out.WorldPosNoWPO = WorldPosNoWPO;
     Out.UV            = WorldPos.xz;
     Out.HeightUV      = HeightUV;
     Out.EntityID      = TerrainParams.EntityID;

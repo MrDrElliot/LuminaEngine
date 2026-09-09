@@ -332,10 +332,19 @@ namespace Lumina
         void WindAnimation(CMaterialGraphNode* Node, const FWindInputs& Inputs, int32 Octaves, bool bLODGate,
                            CMaterialOutput* OffsetOut, CMaterialOutput* WeightOut, CMaterialOutput* NoiseOut);
 
-        void WorldPos(const FString& ID, CMaterialGraphNode* Node = nullptr);
+        // Every stage declares both names, so the vertex lane returns the same value for either flag.
+        void WorldPos(const FString& ID, bool bCameraRelative, bool bExcludeOffsets, CMaterialGraphNode* Node = nullptr);
         void CameraPos(const FString& ID, CMaterialGraphNode* Node = nullptr);
         void ObjectScale(const FString& ID, CMaterialGraphNode* Node = nullptr);
         void ObjectPosition(const FString& ID, CMaterialGraphNode* Node = nullptr);
+
+        // Binds four outputs by ResolvedVar; a lane with no mesh instance gets a unit box at the origin.
+        void LocalBounds(CMaterialGraphNode* Node, CMaterialOutput* HalfExtentsOut, CMaterialOutput* FullExtentsOut,
+                         CMaterialOutput* MinOut, CMaterialOutput* MaxOut);
+
+        // Local needs the instance transform, so outside a Surface (PBR) material the position passes through.
+        void TransformPosition(const FString& ID, CMaterialGraphNode* Node, CMaterialInput* Position,
+                               EMaterialCoordinateSpace SourceSpace, EMaterialCoordinateSpace DestinationSpace);
         void EntityID(const FString& ID);
         void Time(const FString& ID);
         void ScreenPosition(const FString& ID, bool bRaw);
@@ -582,6 +591,9 @@ namespace Lumina
         // Emits "float4x4 <ID>_M = <this stage's instance>.ModelMatrix;" and returns the local's name.
         // The vertex and pixel lanes reach the instance differently; see the definition.
         FString EmitInstanceModelMatrix(const FString& ID);
+
+        // Binds the primitive's header to a local and returns its name; slot 0 is the readable null header.
+        FString EmitInstanceMeshletHeader(const FString& ID);
 
         // False once Used reaches Capacity, having errored; the block is fixed-size, so nothing clamps.
         bool ClaimUniformSlot(uint32 Used, uint32 Capacity, FStringView SlotKind, const FName& Subject, CEdGraphNode* Node);

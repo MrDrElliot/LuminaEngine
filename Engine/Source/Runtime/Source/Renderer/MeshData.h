@@ -7,6 +7,7 @@
 #include "RenderRelease.h"
 #include "Containers/Vector.h"
 #include "Lumina.h"
+#include "Core/Math/AABB.h"
 #include "Core/Serialization/Archiver.h"
 #include "Core/Utils/NonCopyable.h"
 #include "Renderer/MeshDistanceField.h"
@@ -299,14 +300,21 @@ namespace Lumina
         float  DistanceFieldSizeX, DistanceFieldSizeY, DistanceFieldSizeZ;
         float  DistanceFieldMaxDistance;
 
+        // What the LocalBounds material node reads. Zero is a degenerate box the shader substitutes for.
+        float  LocalMinX, LocalMinY, LocalMinZ;
+        float  LocalMaxX, LocalMaxY, LocalMaxZ;
+
         // Entries in Meshlets/Spheres/Cones -- the AUTHORITATIVE bound for every array this header points
-        // at, because it ships in the same 96 bytes as the pointers themselves. Everything that indexes
+        // at, because it ships in the same 128 bytes as the pointers themselves. Everything that indexes
         // them bounds against this rather than against a meshlet count carried on the instance: the two
         // come from different sources and a stale instance paired with a live header is exactly how an
         // in-bounds-looking index walks off the end of a buffer.
         uint32 MeshletCount;
+
+        // Pads the stride to 128. Slang adds no tail padding of its own, so FMeshletHeader restates these.
+        uint32 _LocalBoundsPad0, _LocalBoundsPad1;
     };
-    static_assert(sizeof(FMeshletHeaderGPU) == 96, "FMeshletHeaderGPU must match FMeshletHeader in Common.slang");
+    static_assert(sizeof(FMeshletHeaderGPU) == 128, "FMeshletHeaderGPU must match FMeshletHeader in Common.slang");
 
     namespace MeshletHeaderSlab
     {
@@ -492,6 +500,9 @@ namespace Lumina
         bool                      bSkinnedMesh = false;
 
         FDistanceFieldVolume      DistanceField;
+
+        // Published on the meshlet header, derived rather than serialized; CreateForResource fills it.
+        FAABB                     LocalBounds;
 
         uint32                    RequiredBoneCount = 0;
 

@@ -4,6 +4,8 @@
 #include "UI/Tools/NodeGraph/Material/MaterialOutput.h"
 #include "UI/Tools/NodeGraph/Material/MaterialCompiler.h"
 
+#include "MaterialNodePinHelpers.h"
+
 namespace Lumina
 {
     void CMaterialExpression_Panner::BuildNode()
@@ -63,7 +65,15 @@ namespace Lumina
         Output->SetInputType(EMaterialInputType::Float3);
         Output->SetComponentMask(EComponentMask::RGB);
     }
-    void CMaterialExpression_WorldPos::GenerateDefinition(FMaterialCompiler& Compiler) { Compiler.WorldPos(FullName, this); }
+    void CMaterialExpression_WorldPos::GenerateDefinition(FMaterialCompiler& Compiler)
+    {
+        const bool bCameraRelative = PositionType == EWorldPositionType::CameraRelative
+                                  || PositionType == EWorldPositionType::CameraRelativeExcludingOffsets;
+        const bool bExcludeOffsets = PositionType == EWorldPositionType::AbsoluteExcludingOffsets
+                                  || PositionType == EWorldPositionType::CameraRelativeExcludingOffsets;
+
+        Compiler.WorldPos(FullName, bCameraRelative, bExcludeOffsets, this);
+    }
 
     void CMaterialExpression_CameraPos::BuildNode()
     {
@@ -89,6 +99,19 @@ namespace Lumina
     }
     void CMaterialExpression_ObjectPosition::GenerateDefinition(FMaterialCompiler& Compiler) { Compiler.ObjectPosition(FullName, this); }
 
+    void CMaterialExpression_LocalBounds::BuildNode()
+    {
+        HalfExtentsOut = MakeOut(this, "HalfExtents", EMaterialInputType::Float3);
+        FullExtentsOut = MakeOut(this, "FullExtents", EMaterialInputType::Float3);
+        MinOut         = MakeOut(this, "Min",         EMaterialInputType::Float3);
+        MaxOut         = MakeOut(this, "Max",         EMaterialInputType::Float3);
+    }
+
+    void CMaterialExpression_LocalBounds::GenerateDefinition(FMaterialCompiler& Compiler)
+    {
+        Compiler.LocalBounds(this, HalfExtentsOut, FullExtentsOut, MinOut, MaxOut);
+    }
+
     void CMaterialExpression_EntityID::BuildNode()
     {
         Super::BuildNode();
@@ -112,7 +135,7 @@ namespace Lumina
     }
     void CMaterialExpression_VertexTangent::GenerateDefinition(FMaterialCompiler& Compiler)
     {
-        if (!Compiler.RequirePixelStage(this, "VertexTangent")) return;
+        if (!Compiler.RequirePixelStage(this, "VertexTangentWS")) return;
         Compiler.VertexTangent(FullName, this);
     }
 
@@ -124,7 +147,7 @@ namespace Lumina
     }
     void CMaterialExpression_VertexBitangent::GenerateDefinition(FMaterialCompiler& Compiler)
     {
-        if (!Compiler.RequirePixelStage(this, "VertexBitangent")) return;
+        if (!Compiler.RequirePixelStage(this, "VertexBitangentWS")) return;
         Compiler.VertexBitangent(FullName, this);
     }
 

@@ -4,6 +4,8 @@
 #include "UI/Tools/NodeGraph/Material/MaterialOutput.h"
 #include "UI/Tools/NodeGraph/Material/MaterialCompiler.h"
 
+#include "MaterialNodePinHelpers.h"
+
 namespace Lumina
 {
     void CMaterialExpression_ComponentMask::BuildNode()
@@ -233,5 +235,19 @@ namespace Lumina
     void CMaterialExpression_RotateAboutAxis::GenerateDefinition(FMaterialCompiler& Compiler)
     {
         Compiler.RotateAboutAxis(Position, Axis, Angle, Pivot);
+    }
+
+    void CMaterialExpression_TransformPosition::BuildNode()
+    {
+        Super::BuildNode();
+        Position = MakeIn(this, "Position", EMaterialInputType::Float3);
+
+        Output->SetInputType(EMaterialInputType::Float3);
+        Output->SetComponentMask(EComponentMask::RGB);
+    }
+
+    void CMaterialExpression_TransformPosition::GenerateDefinition(FMaterialCompiler& Compiler)
+    {
+        Compiler.TransformPosition(FullName, this, Position, SourceSpace, DestinationSpace);
     }
 }

@@ -116,26 +116,33 @@ namespace Lumina
         return bMaterialsReady && !Materials.empty();
     }
 
-    void CMesh::GenerateBoundingBox()
+    namespace
     {
-        BoundingBox.Min = { FLT_MAX, FLT_MAX, FLT_MAX };
-        BoundingBox.Max = { -FLT_MAX, -FLT_MAX, -FLT_MAX };
-
-        if (MeshResources && MeshResources->GetNumVertices() > 0)
+        // A cooked mesh has dropped its Positions, so the meshlet streams and then the spheres stand in.
+        FAABB ComputeMeshLocalBounds(const FMeshResource& Resource)
         {
-            for (const FVector3& P : MeshResources->Positions)
+            FAABB Bounds;
+            Bounds.Min = { FLT_MAX, FLT_MAX, FLT_MAX };
+            Bounds.Max = { -FLT_MAX, -FLT_MAX, -FLT_MAX };
+
+            if (Resource.GetNumVertices() > 0)
             {
-                BoundingBox.Min = Math::Min(BoundingBox.Min, P);
-                BoundingBox.Max = Math::Max(BoundingBox.Max, P);
+                for (const FVector3& P : Resource.Positions)
+                {
+                    Bounds.Min = Math::Min(Bounds.Min, P);
+                    Bounds.Max = Math::Max(Bounds.Max, P);
+                }
+                return Bounds;
             }
-            return;
-        }
-        
-        if (MeshResources && !MeshResources->MeshletData.IsEmpty())
-        {
-            const FMeshletData& MD = MeshResources->MeshletData;
 
-            // A cooked mesh has no Positions array, and a position is only meaningful against its meshlet anchor.
+            if (Resource.MeshletData.IsEmpty())
+            {
+                return Bounds;
+            }
+
+            const FMeshletData& MD = Resource.MeshletData;
+
+            // A position is only meaningful against its meshlet anchor.
             for (const FMeshlet& M : MD.Meshlets)
             {
                 for (uint32 v = 0; v < M.VertexCount; ++v)
@@ -145,15 +152,15 @@ namespace Lumina
                     if (Index < MD.MeshletVertices.size())
                     {
                         const FVector3 P = DecodeMeshletPosition(M, MD.MeshletVertices[Index]);
-                        BoundingBox.Min = Math::Min(BoundingBox.Min, P);
-                        BoundingBox.Max = Math::Max(BoundingBox.Max, P);
+                        Bounds.Min = Math::Min(Bounds.Min, P);
+                        Bounds.Max = Math::Max(Bounds.Max, P);
                     }
 
                     if (Index < MD.MeshletSkinnedVertices.size())
                     {
                         const FVector3 P = DecodeMeshletPosition(M, MD.MeshletSkinnedVertices[Index]);
-                        BoundingBox.Min = Math::Min(BoundingBox.Min, P);
-                        BoundingBox.Max = Math::Max(BoundingBox.Max, P);
+                        Bounds.Min = Math::Min(Bounds.Min, P);
+                        Bounds.Max = Math::Max(Bounds.Max, P);
                     }
                 }
             }
@@ -163,11 +170,18 @@ namespace Lumina
                 // Conservative for culling but wildly loose for anything not roughly spherical.
                 for (const FMeshletSphere& S : MD.MeshletSpheres)
                 {
-                    BoundingBox.Min = Math::Min(BoundingBox.Min, S.Center - FVector3(S.Radius));
-                    BoundingBox.Max = Math::Max(BoundingBox.Max, S.Center + FVector3(S.Radius));
+                    Bounds.Min = Math::Min(Bounds.Min, S.Center - FVector3(S.Radius));
+                    Bounds.Max = Math::Max(Bounds.Max, S.Center + FVector3(S.Radius));
                 }
             }
+
+            return Bounds;
         }
+    }
+
+    void CMesh::GenerateBoundingBox()
+    {
+        BoundingBox = MeshResources ? ComputeMeshLocalBounds(*MeshResources) : FAABB();
     }
 
     namespace
@@ -266,7 +280,7 @@ namespace Lumina
             const bool bHasField = MB.DistanceFieldTexture.IsValid()
                                 && MB.DistanceFieldTexture.SampledSlot != RHI::kInvalidHeapSlot;
 
-            FMeshletHeaderGPU Header;
+            FMeshletHeaderGPU Header = {};
             Header.MeshletsAddress          = MB.MeshletBuffer;
             Header.SpheresAddress           = MB.MeshletSphereBuffer;
             Header.VerticesAddress          = MB.MeshletVertexBuffer;
@@ -284,6 +298,15 @@ namespace Lumina
             Header.BonePalettesAddress      = MB.MeshletBonePaletteBuffer;
             Header.BoneIndicesAddress       = MB.MeshletBoneIndexBuffer;
             Header.MeshletCount             = MB.MeshletCount;
+
+            // Zero when the bounds could not be derived; the shader reads that as a degenerate box.
+            const FAABB& Local = Resource.LocalBounds;
+            Header.LocalMinX                = Local.Min.x;
+            Header.LocalMinY                = Local.Min.y;
+            Header.LocalMinZ                = Local.Min.z;
+            Header.LocalMaxX                = Local.Max.x;
+            Header.LocalMaxY                = Local.Max.y;
+            Header.LocalMaxZ                = Local.Max.z;
             return Header;
         }
     }
@@ -311,6 +334,12 @@ namespace Lumina
         if (Resource.MeshletData.IsEmpty())
         {
             return;
+        }
+
+        // CMesh hands its own box down; a procedural resource has none, so derive one for the header.
+        if (!Resource.LocalBounds.IsValid())
+        {
+            Resource.LocalBounds = ComputeMeshLocalBounds(Resource);
         }
         
         LUMINA_PROFILE_SCOPE();
@@ -453,6 +482,9 @@ namespace Lumina
         {
             return;
         }
+
+        // The box is already computed by PostLoad, and the header publishes it for the LocalBounds node.
+        MeshResources->LocalBounds = BoundingBox;
 
         MeshBuffers::CreateForResource(*MeshResources);
 

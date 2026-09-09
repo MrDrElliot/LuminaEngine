@@ -9,6 +9,7 @@ float4 FragmentMain(FParticleMaterialVertexOutput Input) : SV_Target0
     uint   MaterialIndex = Pass().MaterialIndex;
     float2 UV0           = Input.UV;
     float3 WorldPosition = Input.WorldPos;
+    float3 WorldPositionExcludingOffsets = Input.WorldPosNoWPO;
     float3 WorldNormal   = normalize(Input.Normal);
     float3 ViewPosition  = Input.ViewPos;
     float4 VertexColor   = Input.Color;
@@ -22,6 +23,8 @@ float4 FragmentMain(FParticleMaterialVertexOutput Input) : SV_Target0
     float2 UV1_DDY       = ddy(UV1);
     float3 WorldPosition_DDX = ddx(WorldPosition);
     float3 WorldPosition_DDY = ddy(WorldPosition);
+    float3 WorldPositionExcludingOffsets_DDX = ddx(WorldPositionExcludingOffsets);
+    float3 WorldPositionExcludingOffsets_DDY = ddy(WorldPositionExcludingOffsets);
     float4 VertexColor_DDX   = ddx(VertexColor);
     float4 VertexColor_DDY   = ddy(VertexColor);
 

@@ -445,6 +445,9 @@ namespace Lumina
         NewData->LocalCenter = (Min + Max) * 0.5f;
         NewData->LocalRadius = Math::Length(Max - NewData->LocalCenter);
 
+        // Handed down so CreateForResource does not walk the positions a second time for the header.
+        Resource->LocalBounds = FAABB(Min, Max);
+
         Import::Mesh::GenerateMeshlets(*Resource);
         NewData->Resource = std::move(*Resource);
         MeshBuffers::CreateForResource(NewData->Resource);

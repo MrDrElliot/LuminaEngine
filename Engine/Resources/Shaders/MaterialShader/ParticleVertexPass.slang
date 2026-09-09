@@ -16,6 +16,7 @@ FParticleMaterialVertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID)
         Out.Color        = float4(0.0, 0.0, 0.0, 0.0);
         Out.UV           = float2(0.0, 0.0);
         Out.WorldPos     = float3(0.0, 0.0, 0.0);
+        Out.WorldPosNoWPO = float3(0.0, 0.0, 0.0);
         Out.ViewPos      = float3(0.0, 0.0, 0.0);
         Out.Normal       = float3(0.0, 0.0, 1.0);
         Out.Tangent      = float4(1.0, 0.0, 0.0, 1.0);
@@ -47,6 +48,8 @@ FParticleMaterialVertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID)
     float  ParticleLife       = ParticleRelativeTime(P);
     float  ParticleSeedRandom = ParticleRandom(P);
 
+    float3 WorldPositionExcludingOffsets = WorldPosition;
+
     FMaterialVertexInputs Material;
     $MATERIAL_VERTEX_INPUTS
     WorldPosition += Material.WorldPositionOffset;
@@ -54,6 +57,7 @@ FParticleMaterialVertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID)
     Out.Color        = SpriteColor;
     Out.UV           = Sprite.UV;
     Out.WorldPos     = WorldPosition;
+    Out.WorldPosNoWPO = WorldPositionExcludingOffsets;
     Out.ViewPos      = mul(GetCameraView(), float4(WorldPosition, 1.0)).xyz;
     Out.Normal       = Sprite.Normal;
     Out.Tangent      = float4(Sprite.AxisRight, 1.0);

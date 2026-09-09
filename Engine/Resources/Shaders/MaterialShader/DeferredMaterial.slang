@@ -171,6 +171,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
         Input.NormalWS      = float4(OrientedNormalWS, 1.0);
         Input.TangentWS     = S.TangentWS;
         Input.FragPos       = ViewPos;
+        Input.WorldPosNoWPO = S.WorldPositionNoOffset;
         Input.UV            = S.UV;
         Input.InstanceIndex = T.Ref.InstanceID;
         Input.EntityID      = T.Ref.Inst.EntityID;
@@ -186,6 +187,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
         uint   MaterialIndex  = Input.MaterialIndex;
         bool   bReceiveShadow = (Input.InstanceFlags & (uint)EInstanceFlags::ReceiveShadow) != 0u;
         float3 WorldPosition  = S.WorldPosition;
+        float3 WorldPositionExcludingOffsets = S.WorldPositionNoOffset;
         float3 WorldNormal    = normalize(OrientedNormalWS);
         float4 WorldTangent   = Input.TangentWS;
         float2 UV0            = S.UV;
@@ -203,6 +205,8 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
         // with UV0's gradient. WorldNormal deliberately has none -- it is normalized and two-sided-flipped.
         float3 WorldPosition_DDX = InterpWeights(S.Bary.DDX, FinalWorldPos[0], FinalWorldPos[1], FinalWorldPos[2]);
         float3 WorldPosition_DDY = InterpWeights(S.Bary.DDY, FinalWorldPos[0], FinalWorldPos[1], FinalWorldPos[2]);
+        float3 WorldPositionExcludingOffsets_DDX = InterpWeights(S.Bary.DDX, W[0].WorldPos, W[1].WorldPos, W[2].WorldPos);
+        float3 WorldPositionExcludingOffsets_DDY = InterpWeights(S.Bary.DDY, W[0].WorldPos, W[1].WorldPos, W[2].WorldPos);
         float4 VertexColor_DDX   = InterpWeights4(S.Bary.DDX, W[0].Color, W[1].Color, W[2].Color);
         float4 VertexColor_DDY   = InterpWeights4(S.Bary.DDY, W[0].Color, W[1].Color, W[2].Color);
 

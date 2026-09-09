@@ -372,6 +372,8 @@ struct FBaseVertexOutput
     float4 NormalWS                    : NORMAL_WS;
     float4 TangentWS                   : TANGENT_WS;
     float4 FragPos                     : FRAG_POS;
+    // Pre-WPO position for the graph's ExcludingOffsets reads, at 12B per vertex like UV1's 8B below.
+    float3 WorldPosNoWPO                : WORLD_POS_NO_WPO;
     float2 UV                          : TEXCOORD0;
     // Costs 8B of mesh-shader output storage per vertex on every base-pass draw, whether or not the
     // material samples it (see the occupancy note on FDepthOnlyVertexOutput below).
@@ -403,6 +405,7 @@ FBaseVertexOutput MakeBaseVertexOutput(FMeshletRef Ref, FMeshletWorldVertex W, f
     O.NormalWS      = float4(W.NormalWS, 1.0);
     O.TangentWS     = W.TangentWS;
     O.FragPos       = ViewPos;
+    O.WorldPosNoWPO = W.WorldPos;
     O.UV            = W.UV;
     O.UV1           = W.UV1;
     O.InstanceIndex = Ref.InstanceID;

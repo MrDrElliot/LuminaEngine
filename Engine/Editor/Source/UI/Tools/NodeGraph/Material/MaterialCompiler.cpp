@@ -34,6 +34,8 @@ namespace Lumina
 	static const char* GVertexStageAliasPreamble =
 		"\t// Material graph variable aliases (vertex stage).\n"
 		"\tfloat3 WorldPosition = WorldPos.xyz;\n"
+		// The vertex lane runs before WPO exists, so the two positions are the same value here.
+		"\tfloat3 WorldPositionExcludingOffsets = WorldPos.xyz;\n"
 		"\tfloat3 WorldNormal   = NormalWS;\n"
 		// The same name and float4 shape the pixel templates declare, so a node emits identical code.
 		"\tfloat4 WorldTangent  = float4(TangentWS, TangentSignWS);\n"
@@ -47,6 +49,7 @@ namespace Lumina
 	static const char* GVertexStageAliasPreambleTerrain =
 		"\t// Material graph variable aliases (vertex stage, terrain).\n"
 		"\tfloat3 WorldPosition = WorldPos;\n"
+		"\tfloat3 WorldPositionExcludingOffsets = WorldPos;\n"
 		"\tfloat3 WorldNormal   = NormalWS;\n"
 		// Terrain UV is the world XZ plane, so world +X is the U direction on flat ground.
 		"\tfloat4 WorldTangent  = float4(1.0, 0.0, 0.0, 1.0);\n"
@@ -2561,7 +2564,7 @@ namespace Lumina
 		SetOwningOutputType(UV, EMaterialInputType::Float2);
 	}
 
-	void FMaterialCompiler::WorldPos(const FString& ID, CMaterialGraphNode* Node)
+	void FMaterialCompiler::WorldPos(const FString& ID, bool bCameraRelative, bool bExcludeOffsets, CMaterialGraphNode* Node)
 	{
 		if (RejectInUI(Node, "World Position"))
 		{
@@ -2569,10 +2572,15 @@ namespace Lumina
 			RegisterDeriv(ID, EDerivState::Zero);
 			return;
 		}
-		GetActiveChunk().append("float3 " + ID + " = WorldPosition;\n");
+
+		const FString Source = bExcludeOffsets ? FString("WorldPositionExcludingOffsets") : FString("WorldPosition");
+
+		// The camera position is frame-uniform, so subtracting it leaves the screen-space derivative alone.
+		const FString Value = bCameraRelative ? Source + " - GetCameraPosition()" : Source;
+		GetActiveChunk().append("float3 " + ID + " = " + Value + ";\n");
 
 		// Every pixel template declares this pair, exact in the deferred lane and ddx/ddy in the forward ones.
-		RegisterDeriv(ID, EDerivState::Valid, "WorldPosition_DDX", "WorldPosition_DDY", 3);
+		RegisterDeriv(ID, EDerivState::Valid, Source + "_DDX", Source + "_DDY", 3);
 	}
 
 	void FMaterialCompiler::CameraPos(const FString& ID, CMaterialGraphNode* Node)
@@ -2628,6 +2636,121 @@ namespace Lumina
 
 		const FString M = EmitInstanceModelMatrix(ID);
 		GetActiveChunk().append("float3 " + ID + " = mul(" + M + ", float4(0.0, 0.0, 0.0, 1.0)).xyz;\n");
+	}
+
+	// Same lane split as EmitInstanceModelMatrix, since only the deferred pixel template declares Inst.
+	FString FMaterialCompiler::EmitInstanceMeshletHeader(const FString& ID)
+	{
+		const FString HeaderVar = ID + "_H";
+
+		const FString Slot = (CurrentStage == EMaterialCompileStage::Vertex)
+		                   ? FString("Inst.MeshletHeaderSlot")
+		                   : FString("GetInstance(Input.InstanceIndex).MeshletHeaderSlot");
+
+		GetActiveChunk().append("FMeshletHeader* " + HeaderVar + " = MeshletHeaders() + " + Slot + ";\n");
+		return HeaderVar;
+	}
+
+	void FMaterialCompiler::LocalBounds(CMaterialGraphNode* Node, CMaterialOutput* HalfExtentsOut,
+	                                    CMaterialOutput* FullExtentsOut, CMaterialOutput* MinOut, CMaterialOutput* MaxOut)
+	{
+		const FString Prefix  = GetCurrentInlinePrefix() + Node->GetNodeFullName();
+		const FString MinVar  = Prefix + "_Min";
+		const FString MaxVar  = Prefix + "_Max";
+		const FString FullVar = Prefix + "_Full";
+		const FString HalfVar = Prefix + "_Half";
+
+		if (MinOut)         MinOut->ResolvedVar         = MinVar;
+		if (MaxOut)         MaxOut->ResolvedVar         = MaxVar;
+		if (FullExtentsOut) FullExtentsOut->ResolvedVar = FullVar;
+		if (HalfExtentsOut) HalfExtentsOut->ResolvedVar = HalfVar;
+
+		// A unit box centered on the origin, so a graph dividing by the extents still divides by 1.
+		GetActiveChunk().append("float3 " + MinVar + " = float3(-0.5, -0.5, -0.5);\n");
+		GetActiveChunk().append("float3 " + MaxVar + " = float3(0.5, 0.5, 0.5);\n");
+
+		// Only the surface passes carry a mesh instance, and the null header reads as a degenerate box.
+		if (!RejectInUI(Node, "Local Bounds") && CurrentMaterialType == EMaterialType::PBR)
+		{
+			const FString Header = EmitInstanceMeshletHeader(Prefix);
+			GetActiveChunk().append("float3 " + Prefix + "_BMin = " + Header + "->LocalBoundsMin;\n");
+			GetActiveChunk().append("float3 " + Prefix + "_BMax = " + Header + "->LocalBoundsMax;\n");
+			GetActiveChunk().append("if (all(" + Prefix + "_BMax > " + Prefix + "_BMin)) { "
+				+ MinVar + " = " + Prefix + "_BMin; " + MaxVar + " = " + Prefix + "_BMax; }\n");
+		}
+
+		GetActiveChunk().append("float3 " + FullVar + " = " + MaxVar + " - " + MinVar + ";\n");
+		GetActiveChunk().append("float3 " + HalfVar + " = " + FullVar + " * 0.5;\n");
+	}
+
+	void FMaterialCompiler::TransformPosition(const FString& ID, CMaterialGraphNode* Node, CMaterialInput* Position,
+	                                          EMaterialCoordinateSpace SourceSpace, EMaterialCoordinateSpace DestinationSpace)
+	{
+		const FInputValue PositionValue = GetTypedInputValue(Position, "WorldPosition");
+		const FString Source = PositionValue.ComponentCount >= 3
+		                     ? PositionValue.Value + ".xyz"
+		                     : "float3(" + PositionValue.Value + ")";
+
+		SetOwningOutputType(Position, EMaterialInputType::Float3);
+
+		if (SourceSpace == DestinationSpace)
+		{
+			GetActiveChunk().append("float3 " + ID + " = " + Source + ";\n");
+			return;
+		}
+
+		const bool bNeedsInstance = SourceSpace == EMaterialCoordinateSpace::Local
+		                         || DestinationSpace == EMaterialCoordinateSpace::Local;
+
+		// The camera legs need the scene view, which the UI brush pass has no equivalent of.
+		bool bHasScene = !RejectInUI(Node, "Transform Position");
+
+		if (bNeedsInstance && bHasScene && CurrentMaterialType != EMaterialType::PBR)
+		{
+			EdNodeGraph::FError Error;
+			Error.Node        = Node;
+			Error.Name        = "Transform Position";
+			Error.Description = "Local space needs a mesh instance, so it is only available in Surface (PBR) "
+			                    "materials. The position passes through unchanged.";
+			AddError(Error);
+			bHasScene = false;
+		}
+
+		if (!bHasScene)
+		{
+			GetActiveChunk().append("float3 " + ID + " = " + Source + ";\n");
+			return;
+		}
+
+		const FString ModelMatrix = bNeedsInstance ? EmitInstanceModelMatrix(ID) : FString();
+
+		FString ToWorld;
+		switch (SourceSpace)
+		{
+		case EMaterialCoordinateSpace::Local: ToWorld = "mul(" + ModelMatrix + ", float4(" + Source + ", 1.0)).xyz"; break;
+		case EMaterialCoordinateSpace::View:  ToWorld = "mul(GetInverseCameraView(), float4(" + Source + ", 1.0)).xyz"; break;
+		default:                              ToWorld = Source; break;
+		}
+
+		const FString WorldVar = ID + "_W";
+		GetActiveChunk().append("float3 " + WorldVar + " = " + ToWorld + ";\n");
+
+		FString FromWorld;
+		switch (DestinationSpace)
+		{
+		case EMaterialCoordinateSpace::Local:
+			GetActiveChunk().append("float4x4 " + ID + "_W2L = MakeInstanceWorldToLocal(" + ModelMatrix + ");\n");
+			FromWorld = "mul(" + ID + "_W2L, float4(" + WorldVar + ", 1.0)).xyz";
+			break;
+		case EMaterialCoordinateSpace::View:
+			FromWorld = "mul(GetCameraView(), float4(" + WorldVar + ", 1.0)).xyz";
+			break;
+		default:
+			FromWorld = WorldVar;
+			break;
+		}
+
+		GetActiveChunk().append("float3 " + ID + " = " + FromWorld + ";\n");
 	}
 
 	void FMaterialCompiler::EntityID(const FString& ID)

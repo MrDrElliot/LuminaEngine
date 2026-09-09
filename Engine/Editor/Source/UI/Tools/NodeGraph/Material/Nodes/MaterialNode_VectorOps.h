@@ -248,4 +248,32 @@ namespace Lumina
         CMaterialInput* Angle = nullptr;
         CMaterialInput* Pivot = nullptr;
     };
+
+    REFLECT()
+    class CMaterialExpression_TransformPosition : public CMaterialExpression
+    {
+        GENERATED_BODY()
+    public:
+        void BuildNode() override;
+        FFixedString GetNodeCategory() const override { return "Vector"; }
+        FStringView GetNodeDisplayName() const override { return "TransformPosition"; }
+        FStringView GetNodeTooltip() const override
+        {
+            return "Reinterprets a position from one coordinate space into another.\n\n"
+                   "World is scene space, Local is the mesh's own object space before its instance "
+                   "transform, and View is camera space with the camera at the origin. Unconnected, "
+                   "Position defaults to the world position being shaded.\n\n"
+                   "Local needs a mesh instance, so it is Surface (PBR) only; elsewhere it passes the "
+                   "position through unchanged.";
+        }
+        void GenerateDefinition(FMaterialCompiler& Compiler) override;
+
+        CMaterialInput* Position = nullptr;
+
+        PROPERTY(Editable, Category = "Transform")
+        EMaterialCoordinateSpace SourceSpace = EMaterialCoordinateSpace::World;
+
+        PROPERTY(Editable, Category = "Transform")
+        EMaterialCoordinateSpace DestinationSpace = EMaterialCoordinateSpace::Local;
+    };
 }

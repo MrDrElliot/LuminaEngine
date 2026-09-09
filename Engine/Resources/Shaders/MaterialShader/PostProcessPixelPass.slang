@@ -46,6 +46,8 @@ float4 FragmentMain(PSInput Input) : SV_Target0
     // Surface-base-pass aliases. Zeroed because there is no rasterized
     // geometry feeding this pass; node-emit code may still reference them.
     float3 WorldPosition = float3(0.0);
+    // No vertex graph in this domain, so there is no offset to exclude.
+    float3 WorldPositionExcludingOffsets = WorldPosition;
     float3 WorldNormal   = float3(0.0, 0.0, 1.0);
     float3 ViewPosition  = float3(0.0);
     float4 VertexColor   = float4(1.0);
@@ -59,6 +61,8 @@ float4 FragmentMain(PSInput Input) : SV_Target0
     float2 UV0_DDY       = ddy(UV0);
     float3 WorldPosition_DDX = ddx(WorldPosition);
     float3 WorldPosition_DDY = ddy(WorldPosition);
+    float3 WorldPositionExcludingOffsets_DDX = WorldPosition_DDX;
+    float3 WorldPositionExcludingOffsets_DDY = WorldPosition_DDY;
     float4 VertexColor_DDX   = ddx(VertexColor);
     float4 VertexColor_DDY   = ddy(VertexColor);
 

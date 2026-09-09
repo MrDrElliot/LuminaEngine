@@ -19,6 +19,8 @@ struct PSInput
     float4 NormalWS                 : NORMAL_WS;
     float4 TangentWS                : TANGENT_WS;
     float4 FragPos                  : FRAG_POS;
+    // Mirrors VSOutput in TerrainBaseVertexPass.slang; the two structs match by semantic, not by name.
+    float3 WorldPosNoWPO            : WORLD_POS_NO_WPO;
     float2 UV                       : TEXCOORD0;
     float2 HeightUV                 : HEIGHT_UV;
 
@@ -51,6 +53,7 @@ PSOutput FragmentMain(PSInput Input)
     float3 WorldNormal   = normalize(Input.NormalWS.xyz);
     float3 ViewPosition  = Input.FragPos.xyz;
     float3 WorldPosition = mul(GetInverseCameraView(), float4(Input.FragPos.xyz, 1.0)).xyz;
+    float3 WorldPositionExcludingOffsets = Input.WorldPosNoWPO;
     float2 UV0           = Input.UV;
     float2 HeightUV      = Input.HeightUV;
     float4 VertexColor   = Input.FragColor;
@@ -64,6 +67,8 @@ PSOutput FragmentMain(PSInput Input)
     float2 UV0_DDY       = ddy(UV0);
     float3 WorldPosition_DDX = ddx(WorldPosition);
     float3 WorldPosition_DDY = ddy(WorldPosition);
+    float3 WorldPositionExcludingOffsets_DDX = ddx(WorldPositionExcludingOffsets);
+    float3 WorldPositionExcludingOffsets_DDY = ddy(WorldPositionExcludingOffsets);
     float4 VertexColor_DDX   = ddx(VertexColor);
     float4 VertexColor_DDY   = ddy(VertexColor);
 
@@ -81,6 +86,7 @@ PSOutput FragmentMain(PSInput Input)
     Surface.NormalWS      = Input.NormalWS;
     Surface.TangentWS     = Input.TangentWS;
     Surface.FragPos       = Input.FragPos;
+    Surface.WorldPosNoWPO = Input.WorldPosNoWPO;
     Surface.UV            = Input.UV;
     Surface.InstanceIndex = 0;
     Surface.EntityID      = Input.EntityID;

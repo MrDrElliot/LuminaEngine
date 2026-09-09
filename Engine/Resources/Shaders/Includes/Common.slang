@@ -467,8 +467,12 @@ struct FMeshletHeader
     float           DistanceFieldSizeX, DistanceFieldSizeY, DistanceFieldSizeZ;
     float           DistanceFieldMaxDistance;
 
+    // What the LocalBounds material node reads. Zero is a degenerate box the node substitutes for.
+    float           LocalMinX, LocalMinY, LocalMinZ;
+    float           LocalMaxX, LocalMaxY, LocalMaxZ;
+
     // Entries in Meshlets/Spheres/Cones. The AUTHORITATIVE bound for every array above, because it ships
-    // in the same 96 bytes as the pointers. Everything that indexes them bounds against THIS rather than
+    // in the same 128 bytes as the pointers. Everything that indexes them bounds against THIS rather than
     // against a count carried on the instance: the two come from different sources, and a stale instance
     // paired with a live header is exactly how an in-bounds-looking index walks off a buffer.
     //
@@ -477,8 +481,13 @@ struct FMeshletHeader
     // null-checked anywhere.
     uint            MeshletCount;
 
+    // Pads the stride to 128 so the Slang and C++ layouts agree; FMeshletHeaderGPU is alignas(16).
+    uint            _LocalBoundsPad0, _LocalBoundsPad1;
+
     property float3 DistanceFieldMin  { get { return float3(DistanceFieldMinX,  DistanceFieldMinY,  DistanceFieldMinZ);  } }
     property float3 DistanceFieldSize { get { return float3(DistanceFieldSizeX, DistanceFieldSizeY, DistanceFieldSizeZ); } }
+    property float3 LocalBoundsMin    { get { return float3(LocalMinX, LocalMinY, LocalMinZ); } }
+    property float3 LocalBoundsMax    { get { return float3(LocalMaxX, LocalMaxY, LocalMaxZ); } }
 };
 
 // Mirror of Lumina::FInstanceCullEntry (32 B): the CULL-HOT half only, so two slots share a cache
@@ -1201,6 +1210,32 @@ float3x3 CalculateNormalMatrix(float4x4 ModelMatrix)
     float InvDet = 1.0 / dot(A0, Cof0);   // A0 . (A1 x A2) = det(A^T) = det(A)
 
     return float3x3(Cof0 * InvDet, Cof1 * InvDet, Cof2 * InvDet);
+}
+
+// Per-axis world scale of an instance transform: the length of each basis column.
+float3 GetInstanceScale(float4x4 ModelMatrix)
+{
+    return float3(
+        length(mul(ModelMatrix, float4(1.0, 0.0, 0.0, 0.0)).xyz),
+        length(mul(ModelMatrix, float4(0.0, 1.0, 0.0, 0.0)).xyz),
+        length(mul(ModelMatrix, float4(0.0, 0.0, 1.0, 0.0)).xyz));
+}
+
+// Exact inverse of an always-affine object->world. Cofactor form rather than a general 4x4 inverse:
+// cheaper, and finite for a degenerate scale. M[i] is a mathematical ROW (see FTransform3x4).
+float4x4 MakeInstanceWorldToLocal(float4x4 ModelMatrix)
+{
+    // CalculateNormalMatrix returns (A^-1)^T for the upper-left 3x3 A, so its transpose is A^-1.
+    float3x3 InvRotScale = transpose(CalculateNormalMatrix(ModelMatrix));
+
+    float3 Translation = float3(ModelMatrix[0].w, ModelMatrix[1].w, ModelMatrix[2].w);
+    float3 InvTranslation = -mul(InvRotScale, Translation);
+
+    return float4x4(
+        float4(InvRotScale[0], InvTranslation.x),
+        float4(InvRotScale[1], InvTranslation.y),
+        float4(InvRotScale[2], InvTranslation.z),
+        float4(0.0, 0.0, 0.0, 1.0));
 }
 
 float2 VogelDiskSample(int SampleIndex, int SamplesCount, float Angle)
