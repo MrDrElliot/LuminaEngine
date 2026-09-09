@@ -29,7 +29,7 @@ namespace Lumina
                 return;
             }
 
-            // Heap, not scratch: the instance count is unbounded and one block cannot hold a large foliage set.
+            // Heap rather than scratch, since the instance count is unbounded and one block cannot hold a large foliage set.
             TVector<Physics::FStaticInstanceDesc> Descs;
             Descs.reserve(Foliage.Instances.size());
             bool bSourcesReady = true;
