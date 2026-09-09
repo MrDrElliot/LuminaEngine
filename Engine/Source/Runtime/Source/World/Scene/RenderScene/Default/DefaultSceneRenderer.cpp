@@ -559,6 +559,8 @@ namespace Lumina
         ExtractFrame = &FrameData;
         FFrameData& Frame = *ExtractFrame;
 
+        RefreshFrameSettings();
+
         Frame.bExtractedThisFrame  = false;
         Frame.CachedWorldDeltaTime = (float)World->GetWorldDeltaTime();
         Frame.ViewVolume           = ViewVolume;
@@ -645,8 +647,8 @@ namespace Lumina
         SceneGlobalData.CullData.Frustum                = AsGPU(Frame.CameraFrustum);
         SceneGlobalData.CullData.ShadowFrustum          = SceneGlobalData.CullData.Frustum; // Rebuilt after directional light is processed.
         SceneGlobalData.CullData.bHasDirectional        = 0u;
-        SceneGlobalData.CullData.bFrustumCull           = RenderSettings.bFrustumCull;
-        SceneGlobalData.CullData.bOcclusionCull         = RenderSettings.bOcclusionCull;
+        SceneGlobalData.CullData.bFrustumCull           = FrameSettings.bFrustumCull;
+        SceneGlobalData.CullData.bOcclusionCull         = FrameSettings.bOcclusionCull;
 
         // Copied, not aliased, since freezing the cull replaces these and leaves the render camera.
         SceneGlobalData.CullData.CullCameraPosition     = SceneGlobalData.CameraData.Location;
@@ -655,12 +657,12 @@ namespace Lumina
         SceneGlobalData.CullData.CullNearPlane          = SceneGlobalData.NearPlane;
         SceneGlobalData.CullData.CullFarPlane           = SceneGlobalData.FarPlane;
         SceneGlobalData.CullData.ShadowMaxDistance      = 5000.0f;
-        SceneGlobalData.CullData.bShadowOcclusionCull   = RenderSettings.bShadowOcclusionCull;
-        SceneGlobalData.CullData.ShadowLODBias          = RenderSettings.ShadowLODBias;
-        SceneGlobalData.CullData.ShadowCoarseLODDistSq  = RenderSettings.ShadowCoarseLODDistance
-                                                        * RenderSettings.ShadowCoarseLODDistance;
+        SceneGlobalData.CullData.bShadowOcclusionCull   = FrameSettings.bShadowOcclusionCull;
+        SceneGlobalData.CullData.ShadowLODBias          = FrameSettings.ShadowLODBias;
+        SceneGlobalData.CullData.ShadowCoarseLODDistSq  = FrameSettings.ShadowCoarseLODDistance
+                                                        * FrameSettings.ShadowCoarseLODDistance;
         CascadeMinTexels                                = 1.0f;
-        SceneGlobalData.CullData.DebugMode              = (uint32)RenderSettings.Flags;
+        SceneGlobalData.CullData.DebugMode              = (uint32)FrameSettings.Flags;
         SceneGlobalData.CullData.bCascadeHZBValid       = 0u;
         SceneGlobalData.CullData.bCascadeHZBMidValid    = 0u;
 
@@ -1155,7 +1157,7 @@ namespace Lumina
         RenderStats = Frame.FrameStats;
 
         // Published here, because a frozen cull skips both DepthPyramidPass calls and rebuilds nothing.
-        if (!RenderSettings.bFreezeCulling)
+        if (!FrameSettings.bFreezeCulling)
         {
             bDepthPyramidValid.store(true, std::memory_order_release);
         }
@@ -1220,7 +1222,7 @@ namespace Lumina
                     TerrainDepthPrePass(CL);
                 }
                 
-                if (!RenderSettings.bFreezeCulling)
+                if (!FrameSettings.bFreezeCulling)
                 {
                     SCENE_GPU_SCOPE(CL, "Depth Pyramid (Mid)");
                     DepthPyramidPass(CL);
@@ -1263,7 +1265,7 @@ namespace Lumina
                 RHI::CmdEndMarker(CL);
                 RHI::CmdBeginMarker(CL, "RenderView Shading");
                 
-                if (!RenderSettings.bFreezeCulling)
+                if (!FrameSettings.bFreezeCulling)
                 {
                     SCENE_GPU_SCOPE(CL, "Cascade Pyramid");
                     CascadePyramidPass(CL);
@@ -1328,7 +1330,7 @@ namespace Lumina
                 VelocityDebugPass(CL);
                 #endif
                 
-                if (!RenderSettings.bFreezeCulling)
+                if (!FrameSettings.bFreezeCulling)
                 {
                     SCENE_GPU_SCOPE(CL, "Depth Pyramid (End)");
                     DepthPyramidPass(CL);
@@ -1738,9 +1740,9 @@ namespace Lumina
 
         // This view's OWN sun-shadow mask, or a skipped mask pass shades every pixel fully lit.
         const FSceneLightData& Lights   = RenderFrame->Lighting.LightData;
-        RenderSettings.bShadowMaskValid = (Lights.bHasSun != 0)
+        FrameFlags.bShadowMaskValid = (Lights.bHasSun != 0)
                                        && (RenderFrame->Lighting.Lights[0].ShadowDataIndex != INDEX_NONE);
-        Globals.ShadowMaskIndex         = RenderSettings.bShadowMaskValid
+        Globals.ShadowMaskIndex         = FrameFlags.bShadowMaskValid
             ? (uint32)CurrentView->Images[(int)ENamedImage::ShadowMask].GetResourceID()
             : ~0u;
 
@@ -3463,7 +3465,7 @@ namespace Lumina
                 LUMINA_PROFILE_SECTION("Environment Processing");
 
                 bool bHasEnvironment           = false;
-                RenderSettings.bGTAO           = false;
+                FrameFlags.bGTAO           = false;
                 EnvironmentParams              = FEnvironmentParams{};
                 Frame.Volumetrics.EnvironmentMapID    = -1;
                 Frame.Volumetrics.EnvironmentMapWidth = 0;
@@ -3534,7 +3536,7 @@ namespace Lumina
                     Frame.Volumetrics.AerialIntensity = Math::Clamp(Env.AerialPerspectiveIntensity, 0.0f, 1.0f);
                 });
 
-                RenderSettings.bHasEnvironment = bHasEnvironment;
+                FrameFlags.bHasEnvironment = bHasEnvironment;
 
                 Frame.Volumetrics.IBLResolution = ActiveEnv
                     ? ResolveIBLQuality(ActiveEnv->IBLQuality)
@@ -3570,7 +3572,7 @@ namespace Lumina
                     LightData.AmbientLight = FVector4(AmbientRGB, Sky.Intensity);
                 });
 
-                LightData.bHasIBL = RenderSettings.bHasEnvironment ? 1u : 0u;
+                LightData.bHasIBL = FrameFlags.bHasEnvironment ? 1u : 0u;
             }
 
             // Exponential height fog. Last enabled component with density > 0 wins.
@@ -3709,7 +3711,7 @@ namespace Lumina
     {
         FCullData& Cull = Frame.SceneGlobalData.CullData;
 
-        if (!RenderSettings.bFreezeCulling)
+        if (!FrameSettings.bFreezeCulling)
         {
             FrozenCull.bValid = false;
             return;
@@ -3814,7 +3816,7 @@ namespace Lumina
     // Retracted here, because a resize discarding the pyramid is only known after the render thread rebuilds.
     void FDefaultSceneRenderer::DropStaleFrozenOcclusion(FFrameData& Frame) const
     {
-        if (!RenderSettings.bFreezeCulling || bDepthPyramidValid.load(std::memory_order_acquire))
+        if (!FrameSettings.bFreezeCulling || bDepthPyramidValid.load(std::memory_order_acquire))
         {
             return;
         }
@@ -4312,7 +4314,7 @@ namespace Lumina
             const bool bResChanged = Frame.Volumetrics.IBLResolution != LastExtractedIBLResolution;
             LastExtractedIBLResolution = Frame.Volumetrics.IBLResolution;
 
-            if (RenderSettings.bHasEnvironment &&
+            if (FrameFlags.bHasEnvironment &&
                 (!bIBLValid || bEnvParamsChanged || bSunChanged || bMapChanged || bResChanged))
             {
                 bIBLDirty                  = true;
@@ -4335,7 +4337,7 @@ namespace Lumina
             const bool bConvMapChanged =
                 LastConvolvedEnvironmentMapID != EnvironmentMapID;
 
-            if (RenderSettings.bHasEnvironment &&
+            if (FrameFlags.bHasEnvironment &&
                 (!bIBLConvolutionValid || bConvParamsChanged || bConvSunChanged || bConvMapChanged || bResChanged))
             {
                 bIBLConvolutionDirty           = true;
@@ -4346,7 +4348,7 @@ namespace Lumina
                 bIBLConvolutionValid           = true;
             }
             
-            if (!RenderSettings.bHasEnvironment)
+            if (!FrameFlags.bHasEnvironment)
             {
                 bIBLValid            = false;
                 bIBLConvolutionValid = false;
@@ -4437,9 +4439,9 @@ namespace Lumina
                 SceneGlobalData.GTAOSettings.AOTextureIndex = (uint32)CurrentView->Images[(int)ENamedImage::GTAOBlur].GetResourceID();
             }
 
-            RenderSettings.bShadowMaskValid = (LightData.bHasSun != 0) &&
+            FrameFlags.bShadowMaskValid = (LightData.bHasSun != 0) &&
                                               (Frame.Lighting.Lights[0].ShadowDataIndex != INDEX_NONE);
-            if (RenderSettings.bShadowMaskValid)
+            if (FrameFlags.bShadowMaskValid)
             {
                 SceneGlobalData.ShadowMaskIndex = (uint32)CurrentView->Images[(int)ENamedImage::ShadowMask].GetResourceID();
             }
@@ -4866,7 +4868,7 @@ namespace Lumina
 
             EmitPrimitiveSurfaces(Local, Prim, Bindings + Prim.BindingBase,
                                   SurfaceDescs, NumSurfaceDescs,
-                                  EntityRecordIdx, RenderSettings, DistSq, RadiusSq);
+                                  EntityRecordIdx, FrameSettings, DistSq, RadiusSq);
         }
     }
 
@@ -5033,7 +5035,7 @@ namespace Lumina
 
         Volumes.clear();
 
-        if (!RenderSettings.bCullLights)
+        if (!FrameSettings.bCullLights)
         {
             return;
         }
@@ -5057,7 +5059,7 @@ namespace Lumina
 
     bool FDefaultSceneRenderer::IsLightRelevant(const FVector3& LightPosition, float LightRadius) const
     {
-        if (!RenderSettings.bCullLights)
+        if (!FrameSettings.bCullLights)
         {
             return true;
         }
@@ -5086,7 +5088,7 @@ namespace Lumina
         auto& SceneCullContext = Frame.Geometry.SceneCullContext;
 
         SceneCullContext.Reset();
-        SceneCullContext.bEnabled = RenderSettings.bCPUInstanceCull;
+        SceneCullContext.bEnabled = FrameSettings.bCPUInstanceCull;
         SceneCullContext.Frustum  = Frame.CameraFrustum;
 
         if (!SceneCullContext.bEnabled)
@@ -5608,21 +5610,21 @@ namespace Lumina
         SpotShadowCullViewBases.clear();
         SpotShadowCullViewBases.reserve(PackedShadows[(uint32)ELightType::Spot].size());
         
-        const uint32 ConeFlag = RenderSettings.bConeCull ? (uint32)ECullViewFlags::Cone : 0u;
+        const uint32 ConeFlag = FrameSettings.bConeCull ? (uint32)ECullViewFlags::Cone : 0u;
         
         {
             const FMatrix4 CameraVP = ViewVolume.GetProjectionMatrix() * ViewVolume.GetViewMatrix();
             uint32 CameraFlags = ConeFlag;
-            if (RenderSettings.bFrustumCull)
+            if (FrameSettings.bFrustumCull)
             {
                 CameraFlags |= ECullViewFlags::Frustum;
             }
-            if (RenderSettings.bOcclusionCull && bDepthPyramidValid.load(std::memory_order_acquire))
+            if (FrameSettings.bOcclusionCull && bDepthPyramidValid.load(std::memory_order_acquire))
             {
                 CameraFlags |= ECullViewFlags::Occlusion;
             }
             // Primary camera only, since any other view is emitted entirely by the early dispatch.
-            if (RenderSettings.bMeshletOcclusionCull && bDepthPyramidValid.load(std::memory_order_acquire))
+            if (FrameSettings.bMeshletOcclusionCull && bDepthPyramidValid.load(std::memory_order_acquire))
             {
                 CameraFlags |= ECullViewFlags::MeshletHiZ;
             }
@@ -5636,7 +5638,7 @@ namespace Lumina
             {
                 const FLightShadowData& SunShadow = Frame.Lighting.Shadows[SunShadowIndex];
                 const uint32 CascadeFlags =
-                    (RenderSettings.bFrustumCull ? (uint32)ECullViewFlags::Frustum : 0u) |
+                    (FrameSettings.bFrustumCull ? (uint32)ECullViewFlags::Frustum : 0u) |
                     ConeFlag |
                     ECullViewFlags::SunAligned |
                     ECullViewFlags::CastShadowOnly |
@@ -5672,7 +5674,7 @@ namespace Lumina
             const FLightShadowData& ShadowData = Frame.Lighting.Shadows[PointShadow.ShadowDataIndex];
             const FLight& Light = Frame.Lighting.Lights[PointShadow.LightIndex];
             const uint32 FaceFlags =
-                (RenderSettings.bFrustumCull ? (uint32)ECullViewFlags::Frustum : 0u) |
+                (FrameSettings.bFrustumCull ? (uint32)ECullViewFlags::Frustum : 0u) |
                 ConeFlag |
                 ECullViewFlags::CastShadowOnly;
 
@@ -5695,7 +5697,7 @@ namespace Lumina
             const FLightShadowData& ShadowData = Frame.Lighting.Shadows[SpotShadow.ShadowDataIndex];
             const FLight& Light = Frame.Lighting.Lights[SpotShadow.LightIndex];
             const uint32 SpotFlags =
-                (RenderSettings.bFrustumCull ? (uint32)ECullViewFlags::Frustum : 0u) |
+                (FrameSettings.bFrustumCull ? (uint32)ECullViewFlags::Frustum : 0u) |
                 ConeFlag |
                 ECullViewFlags::CastShadowOnly;
 
@@ -6651,17 +6653,17 @@ namespace Lumina
                 Key.MS               = bMaskedClip ? Batch.VisBufferMeshShaderMasked : Batch.VisBufferMeshShader;
                 Key.PS               = bMaskedClip ? Batch.MaskedVisBufferPixelShader : VisPixel;
                 Key.bVisBufferMasked = bMaskedClip;   // interpolants only when actually masked-clipping
-                Key.bWireframe       = RenderSettings.bWireframe;
+                Key.bWireframe       = FrameSettings.bWireframe;
                 // The backface bit must agree with the CmdSetCullMode below or two-sided geometry vanishes.
                 Key.TriCullMode      = (uint8)((Batch.bTwoSided ? 0u : (uint32)TriCull_Backface)
-                                             | ((RenderSettings.bWireframe || Key.SampleCount > 1) ? 0u : (uint32)TriCull_SmallPrim));
+                                             | ((FrameSettings.bWireframe || Key.SampleCount > 1) ? 0u : (uint32)TriCull_SmallPrim));
                 Key.DepthFormat      = EFormat::D32;
                 Key.ColorTargets.push_back({ VisRT.Desc.Format, {} });
                 return true;
             },
             [&](const FMeshDrawCommand& Batch)
             {
-                if (RenderSettings.bWireframe)
+                if (FrameSettings.bWireframe)
                 {
                     RHI::CmdSetLineWidth(CL, 1.5f);
                 }
@@ -8306,7 +8308,7 @@ namespace Lumina
         const FSceneImage& HDR   = GetNamedImage(ENamedImage::HDR);
         const FSceneImage& Depth = GetNamedImage(ENamedImage::DepthAttachment);
 
-        const bool bHDRWasWritten = !DrawCommands.empty() || RenderSettings.bHasEnvironment
+        const bool bHDRWasWritten = !DrawCommands.empty() || FrameFlags.bHasEnvironment
             || !Frame.Extracts.TerrainExtracts.empty() || !Frame.Primitives.SolidBatches.empty()
             || !Frame.Primitives.LineBatches.empty();
 
@@ -9424,7 +9426,7 @@ namespace Lumina
             RenderParams.MeshletsPerChunkSide = MeshletsPerChunkSide;
             RenderParams.MeshletQuadSide      = GTerrainMeshletQuads;
 
-            const bool bHDRWasWritten = !DrawCommands.empty() || RenderSettings.bHasEnvironment;
+            const bool bHDRWasWritten = !DrawCommands.empty() || FrameFlags.bHasEnvironment;
             const FSceneImage& ColorRT  = GetNamedImage(ENamedImage::HDR);
             const FUIntVector2 Extent   = GetNamedImage(ENamedImage::HDR).GetExtent();
 
@@ -9463,7 +9465,7 @@ namespace Lumina
             Key.PS          = PixelShader;
             Key.DepthFormat = EFormat::D32;
             Key.ShadingFeatures = SF_DebugViews | SF_GTAO |
-                                  (RenderSettings.bShadowMaskValid ? (uint32)SF_ShadowMask : 0u);
+                                  (FrameFlags.bShadowMaskValid ? (uint32)SF_ShadowMask : 0u);
             Key.ColorTargets.push_back({ ColorRT.Desc.Format, {} });
             #if USING(WITH_EDITOR)
             Key.ColorTargets.push_back({ PickerRT.Desc.Format, {} });
@@ -9712,7 +9714,7 @@ namespace Lumina
         const auto& BillboardInstances = Frame.Primitives.BillboardInstances;
         const auto& DrawCommands       = Frame.Geometry.DrawCommands;
 
-        if (BillboardInstances.empty() || !RenderSettings.bDrawBillboards)
+        if (BillboardInstances.empty() || !FrameSettings.bDrawBillboards)
         {
             return;
         }
@@ -9728,7 +9730,7 @@ namespace Lumina
 
         const FSceneImage& HDR    = GetNamedImage(ENamedImage::HDR);
 
-        const bool bHDRWasWritten = !DrawCommands.empty() || RenderSettings.bHasEnvironment
+        const bool bHDRWasWritten = !DrawCommands.empty() || FrameFlags.bHasEnvironment
             || !Frame.Extracts.TerrainExtracts.empty() || !Frame.Primitives.SolidBatches.empty()
             || !Frame.Primitives.LineBatches.empty() || !Frame.Extracts.ParticleExtracts.empty();
 
@@ -10206,7 +10208,7 @@ namespace Lumina
 
     void FDefaultSceneRenderer::ShadowMaskPass(RHI::FCmdListH CL)
     {
-        if (!RenderSettings.bShadowMaskValid)
+        if (!FrameFlags.bShadowMaskValid)
         {
             return;
         }
@@ -11178,7 +11180,7 @@ namespace Lumina
         const int32 EnvironmentMapID  = Frame.Volumetrics.EnvironmentMapID;
         const bool bIBLDirty          = Frame.Volumetrics.bIBLDirty;
 
-        if (!RenderSettings.bHasEnvironment)
+        if (!FrameFlags.bHasEnvironment)
         {
             const float Black[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
             Barriers::AllToTransfer(CL);
@@ -11285,7 +11287,7 @@ namespace Lumina
         const FFrameData& Frame = *RenderFrame;
         const bool bIBLConvolutionDirty = Frame.Volumetrics.bIBLConvolutionDirty;
 
-        if (!RenderSettings.bHasEnvironment)
+        if (!FrameFlags.bHasEnvironment)
         {
             return;
         }
@@ -11328,7 +11330,7 @@ namespace Lumina
         const FFrameData& Frame = *RenderFrame;
         const bool bIBLConvolutionDirty = Frame.Volumetrics.bIBLConvolutionDirty;
 
-        if (!RenderSettings.bHasEnvironment)
+        if (!FrameFlags.bHasEnvironment)
         {
             return;
         }
@@ -11379,7 +11381,7 @@ namespace Lumina
 
     void FDefaultSceneRenderer::EnvironmentPass(RHI::FCmdListH CL)
     {
-        if (!RenderSettings.bHasEnvironment)
+        if (!FrameFlags.bHasEnvironment)
         {
             const FSceneImage& ColorRT = GetNamedImage(ENamedImage::HDR);
 
@@ -11498,7 +11500,7 @@ namespace Lumina
 
         const FSceneImage& HDR = GetNamedImage(ENamedImage::HDR);
 
-        const bool bHDRWasWritten = !DrawCommands.empty() || RenderSettings.bHasEnvironment
+        const bool bHDRWasWritten = !DrawCommands.empty() || FrameFlags.bHasEnvironment
             || !Frame.Extracts.TerrainExtracts.empty() || !Frame.Primitives.SolidBatches.empty();
 
         RHI::FRenderAttachment Color;
@@ -11611,7 +11613,7 @@ namespace Lumina
         const FSceneImage& HDR = GetNamedImage(ENamedImage::HDR);
 
         // First HDR writer in the frame clears and later ones load; base pass and terrain come first.
-        const bool bHDRWasWritten = !DrawCommands.empty() || RenderSettings.bHasEnvironment || !Frame.Extracts.TerrainExtracts.empty();
+        const bool bHDRWasWritten = !DrawCommands.empty() || FrameFlags.bHasEnvironment || !Frame.Extracts.TerrainExtracts.empty();
 
         RHI::FRenderAttachment Color;
         Color.Texture = HDR.Texture;
@@ -12280,7 +12282,7 @@ namespace Lumina
         AtmosphereTerms.AerialInScatterIndex     = ~0u;
         AtmosphereTerms.AerialTransmittanceIndex = ~0u;
 
-        if (!RenderSettings.bHasEnvironment
+        if (!FrameFlags.bHasEnvironment
             || !Frame.Volumetrics.bAerialPerspective
             || Frame.Volumetrics.AerialIntensity <= 0.0f)
         {
@@ -13345,7 +13347,7 @@ namespace Lumina
             PC.NumRetained              = RetainedSlots;
             PC.NumViews                 = NumCullViews;
             PC.NumBatches               = NumBatches;
-            PC.bUseLODs                 = RenderSettings.bUseLODs ? 1u : 0u;
+            PC.bUseLODs                 = FrameSettings.bUseLODs ? 1u : 0u;
             PC.MaxVisibleInstances      = VisibleCapacity;
             PC.NumSurfaceDescs          = UploadedSurfaceDescs;
             PC.SkinFrameTag             = CurrentSkinnedFrameTag;

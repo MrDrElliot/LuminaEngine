@@ -4,6 +4,7 @@
 #include "World/Entity/Components/DirtyComponent.h"
 #include "World/Entity/Components/RelationshipComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
+#include "World/Scene/RenderScene/SceneRenderTypes.h"
 
 using namespace Lumina;
 
@@ -215,4 +216,47 @@ TEST(ECSTests, LazyResolve_AfterCleanPhase_SeesUpdatedWorld)
 
     // The child isn't dirty itself; the read must still walk up, see the dirty parent, and resolve.
     EXPECT_FLOAT_EQ(Registry.Get<STransformComponent>(Child).GetWorldLocation().x, 25.f);
+}
+
+// A swap takes the other registry's singletons too, which is why InitializeWorld carries the settings by hand.
+TEST(ECSTests, RenderSettings_SurviveRegistrySwap)
+{
+    ECS::FRegistry Live{};
+    ECS::FRegistry Pending{};
+
+    Live.Ctx().Emplace<FSceneRenderSettings>().Flags = ERenderSceneDebugFlags::Meshlets;
+    Pending.Create();
+
+    const FSceneRenderSettings Carried = Live.Ctx().Get<FSceneRenderSettings>();
+
+    Live.Swap(Pending);
+
+    EXPECT_FALSE(Live.Ctx().Contains<FSceneRenderSettings>());
+
+    Live.Ctx().Emplace<FSceneRenderSettings>(Carried);
+
+    EXPECT_TRUE(Live.Ctx().Contains<FSceneRenderSettings>());
+    EXPECT_EQ((uint8)Live.Ctx().Get<FSceneRenderSettings>().Flags, (uint8)ERenderSceneDebugFlags::Meshlets);
+}
+
+namespace
+{
+    // Stands in for the renderer pointer CreateRenderer publishes and DestroyRenderer clears.
+    struct FFakeRendererHandle { int Unused = 0; };
+}
+
+// A renderer torn down and rebuilt has to find the edited values again rather than fresh defaults.
+TEST(ECSTests, RenderSettings_OutliveTheirReader)
+{
+    ECS::FRegistry Registry{};
+
+    Registry.Ctx().GetOrEmplace<FSceneRenderSettings>().bDrawBillboards = false;
+
+    Registry.Ctx().Emplace<FFakeRendererHandle>();
+    EXPECT_TRUE(Registry.Ctx().Erase<FFakeRendererHandle>());
+
+    EXPECT_TRUE(Registry.Ctx().Contains<FSceneRenderSettings>());
+
+    const bool bDrawBillboards = Registry.Ctx().GetOrEmplace<FSceneRenderSettings>().bDrawBillboards;
+    EXPECT_FALSE(bDrawBillboards);
 }

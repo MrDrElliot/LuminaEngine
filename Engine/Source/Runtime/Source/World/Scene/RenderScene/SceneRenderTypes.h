@@ -1279,13 +1279,20 @@ namespace Lumina
         uint64 NumStaticMeshes = 0;
     };
     
+    // Recomputed by the renderer every extract, so it is deliberately not part of the world's settings.
+    struct FSceneFrameFlags
+    {
+        uint8 bHasEnvironment:1  = false;
+        uint8 bShadowMaskValid:1 = false;
+        uint8 bGTAO:1            = false;
+    };
+
+    // Owned by the world as a registry singleton, so it outlives a renderer that is destroyed and rebuilt.
     struct FSceneRenderSettings
     {
         ERenderSceneDebugFlags Flags    = ERenderSceneDebugFlags::None;
         uint8 bUseInstancing:1          = true;
-        uint8 bHasEnvironment:1         = false;
         uint8 bDrawAABB:1               = false;
-        uint8 bGTAO:1                   = false;
         uint8 bFrustumCull:1            = true;
         uint8 bConeCull:1               = true;
         uint8 bOcclusionCull:1          = true;
@@ -1300,7 +1307,6 @@ namespace Lumina
         // Rejects a local light whose attenuation sphere reaches no shading volume, before it takes a slot.
         uint8 bCullLights:1             = true;
         uint8 bUseLODs:1                = true;
-        uint8 bShadowMaskValid:1        = false;
         // Debug: keep culling against the inputs captured when this went on, so the selected set holds
         // still while the camera flies free. See FDefaultSceneRenderer::ApplyCullFreeze.
         uint8 bFreezeCulling:1          = false;

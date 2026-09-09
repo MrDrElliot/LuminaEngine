@@ -302,11 +302,19 @@ namespace Lumina
         
         CPrefab::CullOrphanedInstances(RegistryPending);
         
+        // The swap takes the pending registry's singletons too, so anything set before init is carried over.
+        const FSceneRenderSettings* ExistingRenderSettings = EntityRegistry.Ctx().Find<FSceneRenderSettings>();
+        const FSceneRenderSettings  CarriedRenderSettings  = ExistingRenderSettings ? *ExistingRenderSettings
+                                                                                    : FSceneRenderSettings{};
+
         if (RegistryPending.NumEntities() != 0)
         {
             EntityRegistry.Swap(RegistryPending);
         }
         RegistryPending = {};
+
+        // Lives here rather than on the renderer, which ReclaimIdleRenderer destroys and CreateRenderer rebuilds.
+        EntityRegistry.Ctx().Emplace<FSceneRenderSettings>(CarriedRenderSettings);
 
         CPrefab::RefreshAllInstancesInWorld(this);
         

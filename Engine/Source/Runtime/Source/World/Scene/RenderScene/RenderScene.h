@@ -79,7 +79,9 @@ namespace Lumina
         //~ Stats / settings ----------------------------------------------------------------
 
         const FSceneRenderStats&  GetRenderStats() const        { return RenderStats; }
-        FSceneRenderSettings&     GetSceneRenderSettings()      { return RenderSettings; }
+
+        // The world's copy, which is what a UI edit must write; the scene reads FrameSettings instead.
+        RUNTIME_API FSceneRenderSettings& GetSceneRenderSettings();
 
         // The scene's shadow atlas, or null if the scene has none.
         virtual const FShadowAtlas* GetShadowAtlas() const { return nullptr; }
@@ -88,8 +90,12 @@ namespace Lumina
 
     protected:
 
+        // Copied from the world once per extract, since the render thread must not read live world state.
+        RUNTIME_API void RefreshFrameSettings();
+
         CWorld*                 World = nullptr;
         FSceneRenderStats       RenderStats;
-        FSceneRenderSettings    RenderSettings;
+        FSceneRenderSettings    FrameSettings;
+        FSceneFrameFlags        FrameFlags;
     };
 }

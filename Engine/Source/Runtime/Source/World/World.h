@@ -650,6 +650,12 @@ namespace Lumina
         }
 
         template<typename T>
+        T& GetOrEmplaceSingleton()
+        {
+            return EntityRegistry.Ctx().GetOrEmplace<T>();
+        }
+
+        template<typename T>
         NODISCARD const T& GetSingleton() const
         {
             return EntityRegistry.Ctx().Get<T>();
