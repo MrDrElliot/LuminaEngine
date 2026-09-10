@@ -22,6 +22,8 @@ struct FCullInstancesArgs
     // Elements the pre-skinned vertex buffer holds. The claim below clamps against it; anything past it
     // gets kNoPreSkinBase and the draw path skins that block inline instead.
     uint  PreSkinCapacity;
+    // Elements SkinnedFrameData holds; NumRetained does not bound it, the buffer only grows on a skinned frame.
+    uint  NumSkinnedSlots;
 
     // Split by ACCESS RATE: every lane streams CullEntries, the other two are read only by survivors.
     FInstanceCullEntry* RetainedCullEntries;
@@ -130,7 +132,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     FSkinnedFrameData Skin = (FSkinnedFrameData)0;
     if (bSkinned)
     {
-        if (Pass().SkinnedFrameData == nullptr)
+        if (Pass().SkinnedFrameData == nullptr || SlotIdx >= Pass().NumSkinnedSlots)
         {
             return;
         }

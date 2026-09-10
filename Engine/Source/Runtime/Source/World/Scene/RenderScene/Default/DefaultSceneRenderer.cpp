@@ -13329,6 +13329,7 @@ namespace Lumina
                 uint32 NumSurfaceDescs;
                 uint32 SkinFrameTag;
                 uint32 PreSkinCapacity;
+                uint32 NumSkinnedSlots;
                 uint64 RetainedCullEntriesAddr;
                 uint64 RetainedTransformsAddr;
                 uint64 RetainedStaticAddr;
@@ -13341,7 +13342,7 @@ namespace Lumina
                 uint64 SkinnedFrameDataAddr;
                 uint64 OutPreSkinCursorAddr;
             };
-            static_assert(sizeof(FCullInstancesPC) == 120, "FCullInstancesPC must match CullInstances.slang.");
+            static_assert(sizeof(FCullInstancesPC) == 128, "FCullInstancesPC must match CullInstances.slang.");
 
             FCullInstancesPC PC = {};
             PC.NumRetained              = RetainedSlots;
@@ -13352,6 +13353,9 @@ namespace Lumina
             PC.NumSurfaceDescs          = UploadedSurfaceDescs;
             PC.SkinFrameTag             = CurrentSkinnedFrameTag;
             PC.PreSkinCapacity          = PreSkinnedVertexCapacity;
+            PC.NumSkinnedSlots          = SkinnedFrameDataBuffer
+                                        ? (uint32)Math::Min<uint64>(SkinnedFrameDataBuffer.Size / sizeof(FSkinnedFrameData), 0xFFFFFFFFull)
+                                        : 0u;
             PC.RetainedCullEntriesAddr  = RetainedCullEntryBuffer.Gpu;
             PC.RetainedTransformsAddr   = RetainedTransformBuffer.Gpu;
             PC.RetainedStaticAddr       = RetainedStaticBuffer.Gpu;
