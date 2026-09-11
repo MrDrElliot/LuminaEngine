@@ -6,6 +6,7 @@
 #include "Log/Log.h"
 #include "Renderer/Format.h"
 #include "Renderer/RHICore.h"
+#include "Renderer/GPUSpan.h"
 #include "Renderer/ShaderLibrary.h"
 #include "Renderer/RenderResource.h"
 
@@ -26,15 +27,6 @@
 
 namespace Lumina
 {
-    // Mirrors RmlUiCommon.slang::FRmlUiArgs.
-    struct FRmlUiArgs
-    {
-        RHI::GPUPtr Draws;      // per-draw FUiDraw array (transient)
-        RHI::GPUPtr Vertices;   // resident batch vertex buffer (vertex pulling)
-        RHI::GPUPtr Stops;      // gradient color stops (transient)
-        RHI::GPUPtr ClipMasks;  // rounded-rect clip masks (transient)
-    };
-
     // RmlUi's own decorators cap out at 16; anything past that is dropped rather than overrunning.
     static constexpr uint32 GMaxColorStops = 16;
 
@@ -1041,23 +1033,36 @@ namespace Lumina
         // Resolved every frame rather than from the cache, so a released texture cannot leave a dead slot.
         ResolveBatchTextures(Batch);
 
-        const RHI::GPUPtr DrawsPtr = RHI::CopyTransientArray(Batch.Draws.data(), Batch.Draws.size()).Address;
+        // Empty arrays stay empty spans: nothing dereferences them, so there is no dummy element to
+        // upload just to keep an address non-null.
+        const RHI::TGPUSpan<FUiDraw> DrawsSpan =
+            RHI::CopyTransientArray(Batch.Draws.data(), Batch.Draws.size());
 
-        // Always upload at least one stop so the args block never carries a null device address.
-        const FUiColorStop DummyStop {};
-        const RHI::GPUPtr StopsPtr = Batch.Stops.empty()
-            ? RHI::CopyTransientArray(&DummyStop, 1).Address
-            : RHI::CopyTransientArray(Batch.Stops.data(), Batch.Stops.size()).Address;
+        RHI::TGPUSpan<FUiColorStop> StopsSpan;
+        if (!Batch.Stops.empty())
+        {
+            StopsSpan = RHI::CopyTransientArray(Batch.Stops.data(), Batch.Stops.size());
+        }
 
-        const FUiClipMask DummyMask {};
-        const RHI::GPUPtr MasksPtr = Batch.ClipMasks.empty()
-            ? RHI::CopyTransientArray(&DummyMask, 1).Address
-            : RHI::CopyTransientArray(Batch.ClipMasks.data(), Batch.ClipMasks.size()).Address;
+        RHI::TGPUSpan<FUiClipMask> MasksSpan;
+        if (!Batch.ClipMasks.empty())
+        {
+            MasksSpan = RHI::CopyTransientArray(Batch.ClipMasks.data(), Batch.ClipMasks.size());
+        }
 
         // Composite passes read the same mask array the geometry batch does.
-        PassClipMasksPtr = MasksPtr;
+        PassClipMasksPtr = MasksSpan.Address;
 
-        const FRmlUiArgs Args { DrawsPtr, Batch.VertexBuffer.Gpu, StopsPtr, MasksPtr };
+        // Mirrors RmlUiCommon.slang::FRmlUiArgs. Local, because the element types are private to this class.
+        struct FRmlUiArgs
+        {
+            RHI::TGPUSpan<FUiDraw>      Draws;
+            RHI::TGPUSpan<FUiVertex>    Vertices;
+            RHI::TGPUSpan<FUiColorStop> Stops;
+            RHI::TGPUSpan<FUiClipMask>  ClipMasks;
+        };
+
+        const FRmlUiArgs Args { DrawsSpan, { Batch.VertexBuffer }, StopsSpan, MasksSpan };
         const RHI::GPUPtr ArgsPtr = RHI::CopyTransient(Args);
 
         ReplayFrame(CL, Batch, Pipeline, ArgsPtr);

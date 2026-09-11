@@ -14,7 +14,7 @@ struct VertexOutput
 [shader("vertex")]
 VertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID, uint InstanceIndex : SV_VulkanInstanceID)
 {
-    FGPUSprite Sprite = Pass().Instances[InstanceIndex];
+    FGPUSprite Sprite = SpanGet(&Pass().Instances, InstanceIndex);
 
     const float2 Corner = kSpriteQuadCorners[VertexIndex];
 

@@ -16,8 +16,8 @@ struct VSOutput
 VSOutput VertexMain(uint VertexID : SV_VulkanVertexID)
 {
     // Indices are rebased to VertexOffset 0, so SV_VulkanVertexID indexes the concatenated batch array.
-    FUiVertex V    = Pass().Vertices[VertexID];
-    FUiDraw   Draw = Pass().Draws[V.DrawIndex];
+    FUiVertex V    = SpanGet(&Pass().Vertices, VertexID);
+    FUiDraw   Draw = SpanGet(&Pass().Draws, V.DrawIndex);
 
     VSOutput Output;
     Output.Position  = mul(Draw.MVP, float4(V.Position, 0.0, 1.0));

@@ -12,7 +12,7 @@ struct FSimpleElementVertex
 
 struct FSimpleElementPass
 {
-    FSimpleElementVertex* Vertices;
+    GPUSpan<FSimpleElementVertex> Vertices;
 };
 FSimpleElementPass* Pass() { return GetPassArgs<FSimpleElementPass>(); }
 
@@ -27,7 +27,7 @@ VSOutput VertexMain(uint VertexID : SV_VulkanVertexID)
 {
     // SV_VulkanVertexID is the raw gl_VertexIndex (firstVertex + i), so a per-batch StartVertexLocation
     // indexes straight into the whole transient vertex array.
-    FSimpleElementVertex V = Pass().Vertices[VertexID];
+    FSimpleElementVertex V = SpanGet(&Pass().Vertices, VertexID);
 
     VSOutput Output;
 

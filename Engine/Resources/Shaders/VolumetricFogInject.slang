@@ -19,7 +19,7 @@ struct FPushConstants
     uint   ScatterUAV;          // bindless 3D UAV index of the froxel scatter volume
 
     uint   bSupersampleLocal;   // 1 = 4x supersample local light in-scatter per froxel
-    uint   NumFogVolumes;
+    uint   _PadNumFogVolumes;
     uint   CloudShadowIndex;    // bindless 2D SRV, 0xFFFFFFFF when no cloud shadow was built
     float  CloudShadowExtent;
 
@@ -27,7 +27,7 @@ struct FPushConstants
     float2 _Pad0;
 
     // Pointer last so its 8-byte alignment lands on a multiple of 8.
-    uint64_t FogVolumes;        // FFogVolume[NumFogVolumes] (transient device address)
+    GPUSpan<FFogVolume> FogVolumes;   // the per-frame local volume array
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
@@ -211,14 +211,10 @@ void ComputeMain(uint3 DispatchID : SV_DispatchThreadID)
     // Global height profile times its noise, plus any local volumes, ramped past FogStartDistance.
     FFogMedium Medium = Fog_BeginMedium(uFog, WorldPos, Pass().Time, CamDist);
 
-    uint NumVolumes = min(Pass().NumFogVolumes, FOG_MAX_VOLUMES);
-    if (NumVolumes != 0)
+    uint NumVolumes = min(Pass().FogVolumes.Count, (uint)FOG_MAX_VOLUMES);
+    for (uint vi = 0; vi < NumVolumes; ++vi)
     {
-        FFogVolume* Volumes = (FFogVolume*)Pass().FogVolumes;
-        for (uint vi = 0; vi < NumVolumes; ++vi)
-        {
-            Fog_AddVolume(Medium, Volumes[vi], WorldPos);
-        }
+        Fog_AddVolume(Medium, SpanGet(&Pass().FogVolumes, vi), WorldPos);
     }
     Fog_FinalizeMedium(Medium);
 

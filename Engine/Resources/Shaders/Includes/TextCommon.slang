@@ -22,7 +22,7 @@ struct FGPUGlyph
 
 struct FTextPushConstants
 {
-    FGPUGlyph* Glyphs;       // device address of the per-frame glyph array, indexed by instance
+    GPUSpan<FGPUGlyph> Glyphs;   // the per-frame glyph array, indexed by instance
     uint  AtlasIndex;        // bindless ResourceID of the font MSDF atlas
     uint  AtlasWidth;
     uint  AtlasHeight;

@@ -142,9 +142,9 @@ namespace Lumina
     struct FTerrainPushConstants
     {
         uint64  ParamsAddr        = 0;   // ConstBufferPointer<FTerrainRenderParams>
-        uint64  ChunksAddr        = 0;   // VS
-        uint64  MeshletsAddr      = 0;   // VS
-        uint64  VisibleAddr       = 0;   // VS
+        RHI::TGPUSpan<FTerrainChunkInfo>      Chunks;    // VS
+        RHI::TGPUSpan<FTerrainMeshletInfo>    Meshlets;  // VS
+        RHI::TGPUSpan<FTerrainVisibleMeshlet> Visible;   // VS
         uint32  HeightmapIndex    = 0;   // VS bindless 2D
         uint32  NormalIndex       = 0;   // VS bindless 2D
         uint32  LayerWeightsIndex = 0;   // PS bindless 2D-array
@@ -153,13 +153,9 @@ namespace Lumina
 
     struct FTerrainCullPushConstants
     {
-        uint64  ChunksAddr          = 0;
-        uint64  MeshletsAddr        = 0;
-        uint64  VisibleMeshletsAddr = 0;
-        uint64  TerrainIndirectAddr = 0;
-        uint32  ChunkCount      = 0u;
-        uint32  MeshletCount    = 0u;
-        uint32  _Pad0           = 0u;
-        uint32  _Pad1           = 0u;
+        RHI::TGPUSpan<FTerrainChunkInfo>      Chunks;
+        RHI::TGPUSpan<FTerrainMeshletInfo>    Meshlets;
+        RHI::TGPUSpan<FTerrainVisibleMeshlet> VisibleMeshlets;
+        RHI::TGPUSpan<RHI::FDrawIndirectArguments> TerrainIndirect;
     };
 }

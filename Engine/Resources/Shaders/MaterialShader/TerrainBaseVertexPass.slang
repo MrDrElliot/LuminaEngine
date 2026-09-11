@@ -27,9 +27,9 @@ VSOutput VertexMain(uint VertexID : SV_VulkanVertexID, uint InstanceID : SV_Vulk
 {
     FTerrainRenderParams TerrainParams = LoadBlock<FTerrainRenderParams>(TerrainArgs().Params);
 
-    FTerrainVisibleMeshlet Vis     = TerrainArgs().Visible[InstanceID];
-    FTerrainMeshletInfo    Meshlet = TerrainArgs().Meshlets[Vis.MeshletIndex];
-    FTerrainChunkInfo      Chunk   = TerrainArgs().Chunks[Meshlet.ChunkIndex];
+    FTerrainVisibleMeshlet Vis     = SpanGet(&TerrainArgs().Visible, InstanceID);
+    FTerrainMeshletInfo    Meshlet = SpanGet(&TerrainArgs().Meshlets, Vis.MeshletIndex);
+    FTerrainChunkInfo      Chunk   = SpanGet(&TerrainArgs().Chunks, Meshlet.ChunkIndex);
 
     const int MeshletQuads = TerrainParams.MeshletQuadSide;
 

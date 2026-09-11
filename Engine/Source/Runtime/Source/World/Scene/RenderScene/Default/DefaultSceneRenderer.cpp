@@ -7150,14 +7150,14 @@ namespace Lumina
 
         struct FDecalPushConstants
         {
-            uint64 DecalsAddr;
+            RHI::TGPUSpan<FGPUDecal> Decals;
             uint32 DepthIndex;
             uint32 Pad;
         };
-        static_assert(sizeof(FDecalPushConstants) == 16, "FDecalPushConstants must match the slang pass block.");
+        static_assert(sizeof(FDecalPushConstants) == 24, "FDecalPushConstants must match the slang pass block.");
 
         FDecalPushConstants PC = {};
-        PC.DecalsAddr = RHI::CopyTransientArray(Decals.data(), Decals.size()).Address;
+        PC.Decals = RHI::CopyTransientArray(Decals.data(), Decals.size());
         PC.DepthIndex = (uint32)SceneDepth.GetResourceID();
 
         // One instanced draw per shader batch.
@@ -8307,7 +8307,7 @@ namespace Lumina
 
         struct FParticlePushConstants
         {
-            uint64   ParticlesAddr;
+            RHI::TGPUSpan<FGPUParticle> Particles;
             uint32   TextureIndex;
             uint32   FacingMode;
             FVector4 Tint;
@@ -8315,7 +8315,7 @@ namespace Lumina
             uint32   SubUVColumns;
             uint32   SubUVRows;
             uint32   AttrFloats;        // floats per particle in the attribute buffer
-            uint64   AttributesAddr;    // declared-attribute buffer, 0 when the emitter has none
+            RHI::TGPUSpan<float> Attributes;   // empty when the emitter declared none
             int32    AttrSlotSizeScaleX; // -1 when the stack did not declare it
             int32    AttrSlotSizeScaleY;
             int32    AttrSlotPrevPosX;
@@ -8323,9 +8323,9 @@ namespace Lumina
             int32    AttrSlotPrevPosZ;
             uint32   MaterialIndex;      // Materials() slot; read only by the Particle material stages
             uint32   bSorted;            // 0 draws unsorted at full capacity, and SortedIndices is not read
-            uint64   SortedIndicesAddr;
+            RHI::TGPUSpan<uint32> SortedIndices;
         };
-        static_assert(sizeof(FParticlePushConstants) == 96, "FParticlePushConstants must match the slang pass block.");
+        static_assert(sizeof(FParticlePushConstants) == 120, "FParticlePushConstants must match the slang pass block.");
 
         for (const FFrameData::FParticleExtract& Item : Frame.Extracts.ParticleExtracts)
         {
@@ -8370,7 +8370,7 @@ namespace Lumina
             RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
             FParticlePushConstants PC = {};
-            PC.ParticlesAddr     = State.ParticleBuffer.Gpu;
+            PC.Particles         = { State.ParticleBuffer, State.AllocatedMax };
             PC.TextureIndex      = Item.TextureIndex;
             PC.FacingMode        = (uint32)Resolved.FacingMode;
             PC.Tint              = FVector4(1.0f, 1.0f, 1.0f, 1.0f);
@@ -8378,7 +8378,7 @@ namespace Lumina
             PC.SubUVColumns      = (uint32)Math::Max(Resolved.SubUVColumns, 1);
             PC.SubUVRows         = (uint32)Math::Max(Resolved.SubUVRows, 1);
             PC.AttrFloats        = Math::Max(Item.AttributeFloatCount, 1u);
-            PC.AttributesAddr    = State.AttributeBuffer.Gpu;
+            PC.Attributes        = { State.AttributeBuffer };
             PC.AttrSlotSizeScaleX = Item.RenderAttrSlots[ParticleRenderAttribute::SizeScaleX];
             PC.AttrSlotSizeScaleY = Item.RenderAttrSlots[ParticleRenderAttribute::SizeScaleY];
             PC.AttrSlotPrevPosX   = Item.RenderAttrSlots[ParticleRenderAttribute::PrevPosX];
@@ -8386,7 +8386,7 @@ namespace Lumina
             PC.AttrSlotPrevPosZ   = Item.RenderAttrSlots[ParticleRenderAttribute::PrevPosZ];
             PC.MaterialIndex      = bMaterial ? (uint32)Item.MaterialIndex : 0u;
             PC.bSorted            = bSorted ? 1u : 0u;
-            PC.SortedIndicesAddr  = State.SortIndexBuffer.Gpu;
+            PC.SortedIndices      = { State.SortIndexBuffer };
 
             if (bSorted)
             {
@@ -8987,12 +8987,10 @@ namespace Lumina
             }
 
             FTerrainCullPushConstants Push{};
-            Push.ChunksAddr          = State.ChunkInfoBuffer.Gpu;
-            Push.MeshletsAddr        = State.MeshletInfoBuffer.Gpu;
-            Push.VisibleMeshletsAddr = State.VisibleMeshletBuffer.Gpu;
-            Push.TerrainIndirectAddr = State.IndirectDrawBuffer.Gpu;
-            Push.ChunkCount   = State.AllocatedChunkCount;
-            Push.MeshletCount = State.AllocatedMeshletCount;
+            Push.Chunks          = { State.ChunkInfoBuffer, State.AllocatedChunkCount };
+            Push.Meshlets        = { State.MeshletInfoBuffer, State.AllocatedMeshletCount };
+            Push.VisibleMeshlets = { State.VisibleMeshletBuffer, State.AllocatedMeshletCount };
+            Push.TerrainIndirect = { State.IndirectDrawBuffer };
 
             RHI::CmdDispatch(CL, MakeArgs(Push), State.AllocatedChunkCount, 1u, 1u);
             bAnyDispatched = true;
@@ -9322,9 +9320,9 @@ namespace Lumina
 
             FTerrainPushConstants Push{};
             Push.ParamsAddr        = RHI::CopyTransient(RenderParams);
-            Push.ChunksAddr        = State.ChunkInfoBuffer.Gpu;
-            Push.MeshletsAddr      = State.MeshletInfoBuffer.Gpu;
-            Push.VisibleAddr       = State.VisibleMeshletBuffer.Gpu;
+            Push.Chunks            = { State.ChunkInfoBuffer, State.AllocatedChunkCount };
+            Push.Meshlets          = { State.MeshletInfoBuffer, State.AllocatedMeshletCount };
+            Push.Visible           = { State.VisibleMeshletBuffer, State.AllocatedMeshletCount };
             Push.HeightmapIndex    = (uint32)State.HeightmapTexture.GetResourceID();
             Push.NormalIndex       = (uint32)State.NormalTexture.GetResourceID();
             Push.LayerWeightsIndex = (uint32)State.LayerWeightTexture.GetResourceID();
@@ -9456,9 +9454,9 @@ namespace Lumina
 
             FTerrainPushConstants Push{};
             Push.ParamsAddr        = RHI::CopyTransient(RenderParams);
-            Push.ChunksAddr        = State.ChunkInfoBuffer.Gpu;
-            Push.MeshletsAddr      = State.MeshletInfoBuffer.Gpu;
-            Push.VisibleAddr       = State.VisibleMeshletBuffer.Gpu;
+            Push.Chunks            = { State.ChunkInfoBuffer, State.AllocatedChunkCount };
+            Push.Meshlets          = { State.MeshletInfoBuffer, State.AllocatedMeshletCount };
+            Push.Visible           = { State.VisibleMeshletBuffer, State.AllocatedMeshletCount };
             Push.HeightmapIndex    = (uint32)State.HeightmapTexture.GetResourceID();
             Push.NormalIndex       = (uint32)State.NormalTexture.GetResourceID();
             Push.LayerWeightsIndex = (uint32)State.LayerWeightTexture.GetResourceID();
@@ -9949,15 +9947,15 @@ namespace Lumina
         DepthTested.DepthMode = RHI::EDepthFlags::Read;
         DepthTested.DepthTest = RHI::EOp::GreaterEqual;
 
-        const RHI::GPUPtr InstancesAddr = RHI::CopyTransientArray(Instances.data(), Instances.size()).Address;
+        const RHI::FGPURange InstancesRange = RHI::CopyTransientArray(Instances.data(), Instances.size());
 
         struct FSpritePushConstants
         {
-            uint64 InstancesAddr;
+            RHI::TGPUSpan<FGPUSprite> Instances;
             uint32 TextureIndex;
             uint32 Pad0;
         };
-        static_assert(sizeof(FSpritePushConstants) == 16, "FSpritePushConstants must match SpriteCommon.slang.");
+        static_assert(sizeof(FSpritePushConstants) == 24, "FSpritePushConstants must match SpriteCommon.slang.");
 
         bool bDepthStateSet  = false;
         bool bLastDepthTest  = false;
@@ -9981,7 +9979,7 @@ namespace Lumina
             }
 
             FSpritePushConstants PC = {};
-            PC.InstancesAddr = InstancesAddr;
+            PC.Instances = InstancesRange;
             PC.TextureIndex  = Batch.TextureIndex;
 
             RHI::CmdDraw(CL, MakeArgs(PC), 6, Batch.Count, 0, Batch.FirstInstance);
@@ -10060,11 +10058,11 @@ namespace Lumina
         DepthTested.DepthTest = RHI::EOp::GreaterEqual;
 
         // All glyphs across every batch share one transient array; batches index it via FirstInstance.
-        const RHI::GPUPtr GlyphsAddr = RHI::CopyTransientArray(Glyphs.data(), Glyphs.size()).Address;
+        const RHI::FGPURange GlyphsRange = RHI::CopyTransientArray(Glyphs.data(), Glyphs.size());
 
         struct FTextPushConstants
         {
-            uint64 GlyphsAddr;
+            RHI::TGPUSpan<FGPUGlyph> Glyphs;
             uint32 AtlasIndex;
             uint32 AtlasWidth;
             uint32 AtlasHeight;
@@ -10072,12 +10070,12 @@ namespace Lumina
             uint32 ScreenWidth;   // 0 for world text (only the debug screen-space pass uses these)
             uint32 ScreenHeight;
         };
-        static_assert(sizeof(FTextPushConstants) == 32, "FTextPushConstants must match TextCommon.slang.");
+        static_assert(sizeof(FTextPushConstants) == 40, "FTextPushConstants must match TextCommon.slang.");
 
         auto DrawBatch = [&](const FFrameData::FTextBatch& Batch)
         {
             FTextPushConstants PC = {};
-            PC.GlyphsAddr    = GlyphsAddr;
+            PC.Glyphs        = GlyphsRange;
             PC.AtlasIndex    = Batch.AtlasIndex;
             PC.AtlasWidth    = Batch.AtlasWidth;
             PC.AtlasHeight   = Batch.AtlasHeight;
@@ -10160,7 +10158,7 @@ namespace Lumina
 
         struct FTextPushConstants
         {
-            uint64 GlyphsAddr;
+            RHI::TGPUSpan<FGPUGlyph> Glyphs;
             uint32 AtlasIndex;
             uint32 AtlasWidth;
             uint32 AtlasHeight;
@@ -10168,14 +10166,14 @@ namespace Lumina
             uint32 ScreenWidth;
             uint32 ScreenHeight;
         };
-        static_assert(sizeof(FTextPushConstants) == 32, "FTextPushConstants must match TextCommon.slang.");
+        static_assert(sizeof(FTextPushConstants) == 40, "FTextPushConstants must match TextCommon.slang.");
 
         const FUIntVector4 PanelSize = Frame.SceneGlobalData.ScreenSize;
         const uint32   ScreenW   = PanelSize.x > 1u ? PanelSize.x : Output.GetSizeX();
         const uint32   ScreenH   = PanelSize.y > 1u ? PanelSize.y : Output.GetSizeY();
 
         FTextPushConstants PC = {};
-        PC.GlyphsAddr    = RHI::CopyTransientArray(Glyphs.data(), Glyphs.size()).Address;
+        PC.Glyphs        = RHI::CopyTransientArray(Glyphs.data(), Glyphs.size());
         PC.AtlasIndex    = Batch.AtlasIndex;
         PC.AtlasWidth    = Batch.AtlasWidth;
         PC.AtlasHeight   = Batch.AtlasHeight;
@@ -10606,17 +10604,17 @@ namespace Lumina
             uint32   ScatterUAV;          // bindless 3D UAV index of the scatter volume
 
             uint32   bSupersampleLocal;   // 1 = 4x supersample local light in-scatter per froxel
-            uint32   NumFogVolumes;
+            uint32   _PadNumFogVolumes;
             uint32   CloudShadowIndex;    // bindless 2D SRV, ~0u when no cloud shadow was built
             float    CloudShadowExtent;
 
             float    CloudShadowCenter[2];
             float    _Pad0[2];
 
-            uint64   FogVolumesAddr;      // FGPUFogVolume[NumFogVolumes], offset 64, 8-aligned
+            RHI::TGPUSpan<FGPUFogVolume> FogVolumes;   // offset 64, 8-aligned
         };
         static_assert(sizeof(FFroxelInjectPushConstants) <= 128, "Froxel inject PC must fit 128B");
-        static_assert(offsetof(FFroxelInjectPushConstants, FogVolumesAddr) % 8 == 0, "PC pointer must be 8-aligned");
+        static_assert(offsetof(FFroxelInjectPushConstants, FogVolumes) % 8 == 0, "PC pointer must be 8-aligned");
 
         struct FCloudShadowPushConstants
         {
@@ -10869,7 +10867,7 @@ namespace Lumina
         PC.FogRange             = FogRange;
         PC.bSunVolumetric       = bSunVolumetric ? 1u : 0u;
         PC.Time                 = SceneGlobalData.Time;
-        PC.NumFogVolumes        = NumVolumes;
+
         PC.CloudShadowIndex     = SceneGlobalData.FogCloudShadowIndex;
         PC.CloudShadowExtent    = SceneGlobalData.FogCloudShadowExtent;
         PC.CloudShadowCenter[0] = SceneGlobalData.FogCloudShadowCenter.x;
@@ -10881,7 +10879,7 @@ namespace Lumina
         }
         if (NumVolumes > 0)
         {
-            PC.FogVolumesAddr = RHI::CopyTransientArray(Frame.Volumetrics.FogVolumes.data(), NumVolumes).Address;
+            PC.FogVolumes = RHI::CopyTransientArray(Frame.Volumetrics.FogVolumes.data(), NumVolumes);
         }
 
         RHI::CmdDispatch(CL, MakeArgs(PC),
@@ -11060,14 +11058,14 @@ namespace Lumina
 
         struct FWaterPushConstants
         {
-            uint64 WatersAddr;
+            RHI::TGPUSpan<FGPUWater> Waters;
             uint32 SceneColorIndex;
             uint32 SceneDepthIndex;
         };
-        static_assert(sizeof(FWaterPushConstants) == 16, "FWaterPushConstants must match Includes/Water.slang.");
+        static_assert(sizeof(FWaterPushConstants) == 24, "FWaterPushConstants must match Includes/Water.slang.");
 
         FWaterPushConstants PC = {};
-        PC.WatersAddr      = RHI::CopyTransientArray(Waters.data(), Waters.size()).Address;
+        PC.Waters          = RHI::CopyTransientArray(Waters.data(), Waters.size());
         PC.SceneColorIndex = (uint32)SceneColor.GetResourceID();
         PC.SceneDepthIndex = (uint32)SceneDepth.GetResourceID();
 
@@ -11447,7 +11445,7 @@ namespace Lumina
 
     namespace
     {
-        struct FSimpleElementPassData { uint64 Vertices = 0; };
+        struct FSimpleElementPassData { RHI::TGPUSpan<FSimpleElementVertex> Vertices; };
     }
 
     void FDefaultSceneRenderer::BatchedLineDraw(RHI::FCmdListH CL)
@@ -11523,7 +11521,7 @@ namespace Lumina
             // Vertices live in the transient ring for this submission; the VS reads them by device address.
             const FSimpleElementPassData VertsPass
             {
-                RHI::CopyTransientArray(SimpleVertices.data(), SimpleVertices.size()).Address
+                RHI::CopyTransientArray(SimpleVertices.data(), SimpleVertices.size())
             };
             const RHI::GPUPtr Args = MakeArgs(VertsPass);
 
@@ -11562,7 +11560,8 @@ namespace Lumina
                     CurrentDepthMode = DepthMode;
                 }
 
-                const RHI::GPUPtr ImmediateArgs = MakeArgs(FSimpleElementPassData{ Range.Vertices });
+                const RHI::GPUPtr ImmediateArgs = MakeArgs(FSimpleElementPassData{
+                    RHI::TGPUSpan<FSimpleElementVertex>::FromAddress(Range.Vertices, Range.VertexCount) });
                 RHI::CmdDraw(CL, ImmediateArgs, Range.VertexCount, 1, 0, 0);
             }
         }
@@ -11654,7 +11653,7 @@ namespace Lumina
         OpaqueDepth.DepthMode = RHI::EDepthFlags::Read | RHI::EDepthFlags::Write;
         OpaqueDepth.DepthTest = RHI::EOp::Greater;
 
-        const FSimpleElementPassData VertsPass{ RHI::CopyTransientArray(SolidVertices.data(), SolidVertices.size()).Address };
+        const FSimpleElementPassData VertsPass{ RHI::CopyTransientArray(SolidVertices.data(), SolidVertices.size()) };
         const RHI::GPUPtr Args = MakeArgs(VertsPass);
 
         struct FModeGroup
@@ -11945,7 +11944,7 @@ namespace Lumina
     {
         struct FHistogramBuildPushConstants
         {
-            uint64       Histogram;
+            RHI::TGPUSpan<uint32> Histogram;
             uint32       HDRIndex;
             uint32       _Pad0;
 
@@ -11953,12 +11952,12 @@ namespace Lumina
             float        MinLogLum;
             float        InvLogLumRange;
         };
-        static_assert(sizeof(FHistogramBuildPushConstants) == 32,
+        static_assert(sizeof(FHistogramBuildPushConstants) == 40,
             "FHistogramBuildPushConstants must match LuminanceHistogram.slang::FPushConstants.");
 
         struct FHistogramAvgPushConstants
         {
-            uint64 Histogram;
+            RHI::TGPUSpan<uint32> Histogram;
             uint32 AdaptUAV;
             float  MinLogLum;
 
@@ -11970,7 +11969,7 @@ namespace Lumina
             float  AdaptationSpeed;
             float  _Pad;
         };
-        static_assert(sizeof(FHistogramAvgPushConstants) == 40,
+        static_assert(sizeof(FHistogramAvgPushConstants) == 48,
             "FHistogramAvgPushConstants must match LuminanceHistogramAverage.slang::FPushConstants.");
 
         // TILE_DIM in LuminanceHistogram.slang; its square must equal kLuminanceHistogramBins.
@@ -12355,7 +12354,7 @@ namespace Lumina
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(BuildCS));
 
         FHistogramBuildPushConstants BuildPC = {};
-        BuildPC.Histogram      = Histogram.Gpu;
+        BuildPC.Histogram      = { Histogram };
         BuildPC.HDRIndex       = (uint32)HDR.GetResourceID();
         BuildPC.HDRSize        = FUIntVector2(HDRWidth, HDRHght);
         BuildPC.MinLogLum      = MinLogLum;
@@ -12374,7 +12373,7 @@ namespace Lumina
         const float HighPercent = Math::Clamp(ActivePostProcess->AutoExposureHighPercent, LowPercent, 1.0f);
 
         FHistogramAvgPushConstants AvgPC = {};
-        AvgPC.Histogram       = Histogram.Gpu;
+        AvgPC.Histogram       = { Histogram };
         AvgPC.AdaptUAV        = (uint32)Adapted.GetMipUAVIndex(0);
         AvgPC.MinLogLum       = MinLogLum;
         AvgPC.LogLumRange     = LogLumRange;
@@ -14315,7 +14314,7 @@ namespace Lumina
 
         struct FMeshletPassPush
         {
-            uint64 BucketsAddr;
+            RHI::TGPUSpan<FRenderBucketGPU> Buckets;
             uint32 ArgBase;
             uint32 Slice;
             uint32 MaxMeshGroups;
@@ -14325,9 +14324,9 @@ namespace Lumina
             float  ViewportW;
             float  ViewportH;
         } Push;
-        static_assert(sizeof(FMeshletPassPush) == 40, "FMeshletPassPush must match FMeshletPassArgs in MeshletGeometry.slang.");
+        static_assert(sizeof(FMeshletPassPush) == 48, "FMeshletPassPush must match FMeshletPassArgs in MeshletGeometry.slang.");
 
-        Push.BucketsAddr          = GetRenderBuckets().Gpu;
+        Push.Buckets              = { GetRenderBuckets() };
         Push.ArgBase              = ArgIndex;
         Push.Slice                = Slice;
         Push.MaxMeshGroups        = Math::Max(RHI::GetMaxMeshWorkGroupCount(), 1u);

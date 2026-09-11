@@ -21,7 +21,7 @@ struct PSOutput
 [shader("fragment")]
 PSOutput FragmentMain(PSInput Input)
 {
-    FGPUDecal Decal = Pass().Decals[Input.DecalIndex];
+    FGPUDecal Decal = SpanGet(&Pass().Decals, Input.DecalIndex);
 
     uint2  ScreenSize = Scene().ScreenSize.xy;
     float2 ScreenUV   = Input.Position.xy / float2(ScreenSize);

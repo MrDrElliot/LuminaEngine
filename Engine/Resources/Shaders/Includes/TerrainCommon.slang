@@ -63,9 +63,9 @@ struct FTerrainVisibleMeshlet
 struct FTerrainPushConstants
 {
     uint64_t Params;      // FTerrainRenderParams, see LoadBlock
-    FTerrainChunkInfo*      Chunks;
-    FTerrainMeshletInfo*    Meshlets;
-    FTerrainVisibleMeshlet* Visible;
+    GPUSpan<FTerrainChunkInfo>      Chunks;
+    GPUSpan<FTerrainMeshletInfo>    Meshlets;
+    GPUSpan<FTerrainVisibleMeshlet> Visible;
     uint HeightmapIndex;       // bindless 2D
     uint NormalIndex;          // bindless 2D
     uint LayerWeightsIndex;    // bindless 2D-array

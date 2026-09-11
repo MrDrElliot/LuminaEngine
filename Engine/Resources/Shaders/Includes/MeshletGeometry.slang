@@ -94,7 +94,7 @@ FMeshletRef ResolveShadowMeshlet(uint MeshletSlot)  { return ResolveMeshlet(Mesh
 // a linked interface, and task+mesh share one push range. Drift produces wrong geometry, not an error.
 struct FMeshletPassArgs
 {
-    FRenderBucket*          Buckets;           // per-(view, draw) bases, bounds and slices
+    GPUSpan<FRenderBucket>  Buckets;           // per-(view, draw) bases, bounds and slices
 
     uint                    ArgBase;           // CullViewIndex*NumDrawsPerView + IndirectDrawOffset
     uint                    Slice;             // MESHLET_SLICE_* of the bucket this pass rasterizes
@@ -113,7 +113,7 @@ FMeshletPassArgs* MeshletPass() { return GetPassArgs<FMeshletPassArgs>(); }
 // already compacted the survivors, so a workgroup maps to one directly -- no payload, no second cull.
 uint MeshletSlotForWorkgroup(uint DrawIndex, uint GroupIndex)
 {
-    const FRenderBucket Bucket = loadAligned<16>(MeshletPass().Buckets + MeshletPass().ArgBase);
+    const FRenderBucket Bucket = SpanGetAligned(&MeshletPass().Buckets, MeshletPass().ArgBase);
     const uint Slice  = MeshletPass().Slice;
     const uint Local  = DrawIndex * MeshletPass().MaxMeshGroups + GroupIndex;
 

@@ -28,7 +28,7 @@ struct FGPUWater
 // SV_VulkanInstanceID (the draw's FirstInstance), never the push constant.
 struct FWaterPushConstants
 {
-    FGPUWater* Waters;        // device address of the per-frame water array
+    GPUSpan<FGPUWater> Waters;        // the per-frame water array
     uint       SceneColorIndex; // bindless 2D SRV: HDR scene copy (refraction + SSR color)
     uint       SceneDepthIndex; // bindless 2D SRV: opaque scene depth (raw reverse-Z NDC [0,1])
 };

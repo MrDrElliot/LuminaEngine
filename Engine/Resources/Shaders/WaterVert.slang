@@ -16,7 +16,7 @@ struct VSOutput
 [shader("vertex")]
 VSOutput VertexMain(uint VertexID : SV_VulkanVertexID, uint WaterIndex : SV_VulkanInstanceID)
 {
-    FGPUWater W = Pass().Waters[WaterIndex];
+    FGPUWater W = SpanGet(&Pass().Waters, WaterIndex);
 
     uint Res   = max(W.GridResolution, 2u);
     uint Cells = Res - 1u;
