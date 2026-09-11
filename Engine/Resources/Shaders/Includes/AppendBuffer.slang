@@ -30,3 +30,15 @@ uint AppendReserveClamped(uint* Cursor, uint Capacity, uint Base, uint Count, ou
     Granted = (Old < Capacity) ? min(Count, Capacity - Old) : 0u;
     return Base + Old;
 }
+
+// Span forms: the capacity is the TARGET's own count, so an append can no longer be bounded by a number
+// that came from somewhere other than the array it is appending into.
+uint AppendReserve<T>(GPUSpan<uint>* Cursor, GPUSpan<T>* Target, uint Base, uint Count = 1u)
+{
+    return AppendReserve(Cursor.Data, Target.Count, Base, Count);
+}
+
+uint AppendReserveClamped<T>(GPUSpan<uint>* Cursor, GPUSpan<T>* Target, uint Base, uint Count, out uint Granted)
+{
+    return AppendReserveClamped(Cursor.Data, Target.Count, Base, Count, Granted);
+}

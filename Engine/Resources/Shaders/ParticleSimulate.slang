@@ -130,7 +130,7 @@ void ComputeMain(uint3 DispatchThreadID : SV_DispatchThreadID)
         return;
     }
 
-    FGPUParticle P = Particles()[Index];
+    FGPUParticle P = SpanGet(Particles(), Index);
 
     bool bAlive = (P.Lifetime > 0.0) && (P.Age < P.Lifetime);
 
@@ -138,7 +138,7 @@ void ComputeMain(uint3 DispatchThreadID : SV_DispatchThreadID)
     {
         // Race for a spawn slot: first SpawnCount dead particles (in thread order) spawn this frame.
         uint myAlloc;
-        InterlockedAdd(SpawnCounter()[0], 1u, myAlloc);
+        InterlockedAdd(SpanAt(SpawnCounter(), 0u)[0], 1u, myAlloc);
         if (myAlloc < SimParams().Counts.y)
         {
             SpawnParticle(Index, P);
@@ -169,5 +169,5 @@ void ComputeMain(uint3 DispatchThreadID : SV_DispatchThreadID)
         }
     }
 
-    Particles()[Index] = P;
+    SpanSet(Particles(), Index, P);
 }

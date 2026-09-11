@@ -33,7 +33,7 @@ uint ResolveVisInstance(uint VisRaw, uint DrawListCount)
         return ~0u;
     }
 
-    const FMeshletDraw Draw = MeshletDrawList()[MeshletSlot];
+    const FMeshletDraw Draw = SpanGet(MeshletDrawList(), MeshletSlot);
     // The tag turns "slot inside the allocation but never written this frame" from a silently resolved
     // stale instance into a background pixel.
     if (!Draw.IsFromFrame(Scene().CullData.MeshletDrawTag) || Draw.InstanceID >= Scene().CullData.InstanceNum)
@@ -44,7 +44,7 @@ uint ResolveVisInstance(uint VisRaw, uint DrawListCount)
 }
 
 // Dense deferred slot for the pixel, or ~0u for background, terrain's 0 stamp and unbinned materials.
-uint ResolveVisMaterialSlot(uint VisRaw, uint DrawListCount, uint* SlotByMaterial, uint SlotByMaterialCount)
+uint ResolveVisMaterialSlot(uint VisRaw, uint DrawListCount, GPUSpan<uint>* SlotByMaterial)
 {
     const uint InstanceID = ResolveVisInstance(VisRaw, DrawListCount);
     if (InstanceID == ~0u)
@@ -53,7 +53,7 @@ uint ResolveVisMaterialSlot(uint VisRaw, uint DrawListCount, uint* SlotByMateria
     }
 
     const uint MaterialIndex = GetInstance(InstanceID).MaterialIndex;
-    if (MaterialIndex >= SlotByMaterialCount)
+    if (!SpanContains(SlotByMaterial, MaterialIndex))
     {
         return ~0u;
     }
@@ -61,7 +61,7 @@ uint ResolveVisMaterialSlot(uint VisRaw, uint DrawListCount, uint* SlotByMateria
     // Every material instance of a master maps to the master's slot, so instances sharing a shader share
     // one dispatch; the shader still reads each pixel's own MaterialIndex for its uniforms.
     // Unbinned materials read ~0u here, and callers bound the result against their own live slot count.
-    return SlotByMaterial[MaterialIndex];
+    return SpanGet(SlotByMaterial, MaterialIndex);
 }
 
 // Every index is clamped rather than trusted: these feed buffer-device-address loads, and a
@@ -81,7 +81,7 @@ FVisTriangle ResolveVisTriangle(uint VisRaw, uint DrawListCount)
     bool bValid         = (VisRaw != 0u) && (DrawListCount != 0u) && (MeshletSlot < DrawListCount);
     const uint SafeSlot = bValid ? MeshletSlot : 0u;
 
-    const FMeshletDraw Draw = MeshletDrawList()[SafeSlot];
+    const FMeshletDraw Draw = SpanGet(MeshletDrawList(), SafeSlot);
     bValid = bValid && Draw.IsFromFrame(Scene().CullData.MeshletDrawTag) && (Draw.InstanceID < InstCount);
 
     FMeshletRef Ref;

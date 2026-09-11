@@ -15,26 +15,27 @@ struct FBuildDrawPrefixArgs
 {
     uint  NumViews;
     uint  NumDraws;
+
+    // The arenas this pass lays out. Only their counts are read here, but they arrive as spans so each
+    // capacity comes from the allocation it describes rather than from a number passed alongside it.
+    GPUSpan<FMeshletDraw>      DrawList;
+    GPUSpan<FMeshletBlock>     BlockList;
+    GPUSpan<FPreSkinnedVertex> PreSkinArena;
     // The append cursor advances even when the write is dropped, so this must be clamped.
-    uint  MaxVisibleInstances;
-    // Regions past capacity are clamped to zero length, never handed an offset outside the allocation.
-    uint  DrawListCapacity;
-    uint  BlockListCapacity;
-    // Elements in the pre-skinned vertex buffer, so the overflow flag below reports against the right bound.
-    uint  PreSkinCapacity;
+    GPUSpan<FGPUInstance>      VisibleInstances;
 
     // in/out: CullInstances leaves the two capacities accumulated. This pass turns them into bases and
     // rewrites them as the room each arena actually has, which is the bound every appender then uses.
-    FRenderBucket* Buckets;
-    uint* InstanceCount;
+    GPUSpan<FRenderBucket> Buckets;
+    GPUSpan<uint> InstanceCount;
     // Read back kFramesInFlight frames later to size the next allocation. Every entry is DEMAND, not
     // what fit, which is what makes an undersized allocation self-correcting.
     //   [0] instances  [1] overflowed   [2] draw entries  [3] overflowed
     //   [4] blocks     [5] overflowed   [6] pre-skin verts [7] overflowed
-    uint* OutTotals;
+    GPUSpan<uint> OutTotals;
     // One thread per (surviving instance, view). Sized here because the survivor count only exists
     // on the GPU.
-    FDispatchIndirectArguments* OutBlockDispatchArgs;
+    GPUSpan<FDispatchIndirectArguments> OutBlockDispatchArgs;
 };
 FBuildDrawPrefixArgs* Pass() { return GetPassArgs<FBuildDrawPrefixArgs>(); }
 
@@ -45,8 +46,8 @@ void ComputeMain()
     const uint NumDraws = Pass().NumDraws;
     const uint NumViews = Pass().NumViews;
 
-    const uint DrawCapacity  = Pass().DrawListCapacity;
-    const uint BlockCapacity = Pass().BlockListCapacity;
+    const uint DrawCapacity  = Pass().DrawList.Count;
+    const uint BlockCapacity = Pass().BlockList.Count;
 
     uint DrawRunning  = 0u;
     uint BlockRunning = 0u;
@@ -56,7 +57,7 @@ void ComputeMain()
         for (uint d = 0u; d < NumDraws; ++d)
         {
             const uint i = v * NumDraws + d;
-            FRenderBucket* Bucket = Pass().Buckets + i;
+            FRenderBucket* Bucket = SpanAt(&Pass().Buckets, i);
 
             const uint DrawCount  = Bucket.DrawCapacity;
             const uint BlockCount = Bucket.BlockCapacity;
@@ -85,22 +86,23 @@ void ComputeMain()
         }
     }
 
-    const uint RequestedInstances = Pass().InstanceCount[0];
-    const uint VisibleInstances   = min(RequestedInstances, Pass().MaxVisibleInstances);
+    const uint InstanceCapacity   = Pass().VisibleInstances.Count;
+    const uint RequestedInstances = SpanGet(&Pass().InstanceCount, 0u);
+    const uint VisibleInstances   = min(RequestedInstances, InstanceCapacity);
 
-    Pass().OutTotals[0] = RequestedInstances;
-    Pass().OutTotals[1] = (RequestedInstances > Pass().MaxVisibleInstances) ? 1u : 0u;
-    Pass().OutTotals[2] = DrawRunning;
-    Pass().OutTotals[3] = (DrawRunning > DrawCapacity) ? 1u : 0u;
-    Pass().OutTotals[4] = BlockRunning;
-    Pass().OutTotals[5] = (BlockRunning > BlockCapacity) ? 1u : 0u;
+    SpanSet(&Pass().OutTotals, 0u, RequestedInstances);
+    SpanSet(&Pass().OutTotals, 1u, (RequestedInstances > InstanceCapacity) ? 1u : 0u);
+    SpanSet(&Pass().OutTotals, 2u, DrawRunning);
+    SpanSet(&Pass().OutTotals, 3u, (DrawRunning > DrawCapacity) ? 1u : 0u);
+    SpanSet(&Pass().OutTotals, 4u, BlockRunning);
+    SpanSet(&Pass().OutTotals, 5u, (BlockRunning > BlockCapacity) ? 1u : 0u);
 
     // CullInstances' pre-skin cursor keeps advancing past capacity, so this is DEMAND -- the number the CPU
     // grows the buffer to, not the number that fit. Slot 2 of the same counters block the instance cursor
     // lives in.
-    const uint PreSkinRequested = Pass().InstanceCount[2];
-    Pass().OutTotals[6] = PreSkinRequested;
-    Pass().OutTotals[7] = (PreSkinRequested > Pass().PreSkinCapacity) ? 1u : 0u;
+    const uint PreSkinRequested = SpanGet(&Pass().InstanceCount, 2u);
+    SpanSet(&Pass().OutTotals, 6u, PreSkinRequested);
+    SpanSet(&Pass().OutTotals, 7u, (PreSkinRequested > Pass().PreSkinArena.Count) ? 1u : 0u);
 
     // Folded across Y exactly as the CPU-side grids are; BuildMeshletBlocks undoes it.
     const uint BlockThreads = VisibleInstances * NumViews;
@@ -110,5 +112,5 @@ void ComputeMain()
     BlockArgs.GroupX = min(BlockGroups, (uint)MAX_DISPATCH_AXIS);
     BlockArgs.GroupY = (BlockGroups + (uint)MAX_DISPATCH_AXIS - 1u) / (uint)MAX_DISPATCH_AXIS;
     BlockArgs.GroupZ = 1u;
-    Pass().OutBlockDispatchArgs[0] = BlockArgs;
+    SpanSet(&Pass().OutBlockDispatchArgs, 0u, BlockArgs);
 }

@@ -38,11 +38,11 @@ struct FBuildMeshletCullArgsArgs
     uint  _Pad0;
     uint  _Pad1;
 
-    FRenderBucket*                   Buckets;
+    GPUSpan<FRenderBucket>                   Buckets;
     // One workgroup per written block, Y-folded exactly as BuildDrawPrefix folds the block dispatch.
-    FDispatchIndirectArguments*      OutCullDispatchArgs;
+    GPUSpan<FDispatchIndirectArguments>      OutCullDispatchArgs;
     // [(bucket * MESHLET_SLICE_COUNT + slice) * SubDrawsPerSlice + subdraw]
-    FDrawMeshTasksIndirectArguments* OutMeshDrawArgs;
+    GPUSpan<FDrawMeshTasksIndirectArguments> OutMeshDrawArgs;
 };
 FBuildMeshletCullArgsArgs* Pass() { return GetPassArgs<FBuildMeshletCullArgsArgs>(); }
 
@@ -70,7 +70,7 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
         uint Running = 0u;
         for (uint i = 0u; i < NumBuckets; ++i)
         {
-            FRenderBucket* Bucket = Pass().Buckets + i;
+            FRenderBucket* Bucket = SpanAt(&Pass().Buckets, i);
 
             // Blocks are dense inside a bucket but sparse across the arena, so the flat dispatch needs
             // its own prefix. Clamped: the append cursor counts past capacity on an overflow frame.
@@ -86,7 +86,7 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
         Args.GroupX = min(Running, (uint)MAX_DISPATCH_AXIS);
         Args.GroupY = (Running + (uint)MAX_DISPATCH_AXIS - 1u) / (uint)MAX_DISPATCH_AXIS;
         Args.GroupZ = 1u;
-        Pass().OutCullDispatchArgs[0] = Args;
+        SpanSet(&Pass().OutCullDispatchArgs, 0u, Args);
         return;
     }
 
@@ -97,7 +97,7 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
             return;
         }
 
-        FRenderBucket* Bucket = Pass().Buckets + i;
+        FRenderBucket* Bucket = SpanAt(&Pass().Buckets, i);
 
         const uint Written = min(Bucket.DrawCursor, Bucket.DrawCapacity);
         const uint Start   = Bucket.SliceBase[Slice];
@@ -132,7 +132,7 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
                 DrawArgs.GroupCountZ = 1u;
 
                 const uint Index = (i * (uint)MESHLET_SLICE_COUNT + s) * Pass().SubDrawsPerSlice + sd;
-                Pass().OutMeshDrawArgs[Index] = DrawArgs;
+                SpanSet(&Pass().OutMeshDrawArgs, Index, DrawArgs);
             }
         }
     }

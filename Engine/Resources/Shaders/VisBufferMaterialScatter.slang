@@ -5,17 +5,13 @@
 
 struct FMaterialScatterArgs
 {
-    uint* Cursors;              // uint[NumSlots], seeded to Starts by the prefix sum
-    uint* PixelList;            // uint[PixelListCapacity], packed 16:16 screen position
-    uint* SlotByMaterial;
+    GPUSpan<uint> Cursors;        // seeded to Starts by the prefix sum; its count is the slot count
+    GPUSpan<uint> PixelList;      // packed 16:16 screen position
+    GPUSpan<uint> SlotByMaterial;
     uint  VisBufferIndex;
     uint  ScreenW;
     uint  ScreenH;
     uint  DrawListCount;
-    uint  SlotByMaterialCount;
-    uint  NumSlots;
-    uint  PixelListCapacity;
-    uint  _Pad0;
 };
 FMaterialScatterArgs* Pass() { return GetPassArgs<FMaterialScatterArgs>(); }
 
@@ -29,9 +25,8 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
         const uint Raw = LoadTexture2DUInt(Pass().VisBufferIndex, int2(DTid.xy));
 
         // The resolve and aggregation scope VisBufferMaterialCount used, so the run sized there fits.
-        const uint Resolved = ResolveVisMaterialSlot(Raw, Pass().DrawListCount,
-                                                     Pass().SlotByMaterial, Pass().SlotByMaterialCount);
-        if (Resolved < Pass().NumSlots)
+        const uint Resolved = ResolveVisMaterialSlot(Raw, Pass().DrawListCount, &Pass().SlotByMaterial);
+        if (SpanContains(&Pass().Cursors, Resolved))
         {
             Slot = Resolved;
         }
@@ -54,7 +49,7 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
             uint Base = 0u;
             if (WaveIsFirstLane())
             {
-                InterlockedAdd(Pass().Cursors[Candidate], Count, Base);
+                InterlockedAdd(SpanAt(&Pass().Cursors, Candidate)[0], Count, Base);
             }
 
             // The reserving lane is the first one still active here, which is who broadcasts.
@@ -62,9 +57,9 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
 
             // Bounded despite the counts coming from this same screen, since the failure is a stray write.
             const uint Index = Base + Rank;
-            if (Index < Pass().PixelListCapacity)
+            if (SpanContains(&Pass().PixelList, Index))
             {
-                Pass().PixelList[Index] = PackVisPixel(DTid.xy);
+                SpanSet(&Pass().PixelList, Index, PackVisPixel(DTid.xy));
             }
             break;
         }

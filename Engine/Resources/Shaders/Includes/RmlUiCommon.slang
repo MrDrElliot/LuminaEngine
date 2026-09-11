@@ -1,4 +1,6 @@
 #pragma once
+
+#include "GPUSpan.slang"
 #include "GlobalRHI.slang"
 
 // Shared layout for the fully-bindless RmlUi pass: per-draw data lives in a device-address buffer
@@ -66,10 +68,10 @@ struct FUiVertex
 // Args block reached through the single 8-byte push constant (gRHI.Args).
 struct FRmlUiArgs
 {
-    FUiDraw*      Draws;      // device address of the per-draw array (transient)
-    FUiVertex*    Vertices;   // device address of the resident batch vertex buffer (vertex pulling)
-    FUiColorStop* Stops;      // device address of the gradient colour stops (transient, never null)
-    FUiClipMask*  ClipMasks;  // device address of the rounded-rect clip masks (transient, never null)
+    GPUSpan<FUiDraw>      Draws;      // the per-draw array (transient)
+    GPUSpan<FUiVertex>    Vertices;   // the resident batch vertex buffer (vertex pulling)
+    GPUSpan<FUiColorStop> Stops;      // the gradient colour stops (transient; empty when unused)
+    GPUSpan<FUiClipMask>  ClipMasks;  // the rounded-rect clip masks (transient; empty when unused)
 };
 
 FRmlUiArgs* Pass() { return GetArgs<FRmlUiArgs>(); }

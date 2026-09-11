@@ -32,8 +32,8 @@ struct FDeferredLightingArgs
     uint  HDRUAV;
     uint  ScreenW;
     uint  ScreenH;
-    uint* PixelList;
-    uint* Total;         // uint[1], written by VisBufferMaterialPrefixSum
+    GPUSpan<uint> PixelList;
+    GPUSpan<uint> Total;         // written by VisBufferMaterialPrefixSum
 };
 FDeferredLightingArgs* Pass() { return GetPassArgs<FDeferredLightingArgs>(); }
 
@@ -44,12 +44,12 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
     // Grid folded across Y by the prefix sum, for the same reason the material dispatches are.
     const uint LinearGroup = GroupID.y * MAX_DISPATCH_AXIS + GroupID.x;
     const uint Index       = LinearGroup * MATERIAL_PIXEL_GROUP_SIZE + Lane;
-    if (Index >= Pass().Total[0])
+    if (Index >= SpanGet(&Pass().Total, 0u))
     {
         return;
     }
 
-    const uint2 Texel = UnpackVisPixel(Pass().PixelList[Index]);
+    const uint2 Texel = UnpackVisPixel(SpanGet(&Pass().PixelList, Index));
 
     FGBufferTargets Targets;
     Targets.A = Pass().GBufferAIndex;

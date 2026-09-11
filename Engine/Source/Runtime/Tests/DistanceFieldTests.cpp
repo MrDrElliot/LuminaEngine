@@ -353,7 +353,7 @@ TEST(DistanceField, MeshletHeaderMatchesGPUMirrorSize)
 
     EXPECT_EQ(offsetof(FMeshletHeaderGPU, MeshletCount), 116u);
 
-    EXPECT_EQ(offsetof(FMeshletHeaderGPU, _LocalBoundsPad0), 120u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, BonePaletteCount), 120u);
     EXPECT_EQ(offsetof(FMeshletHeaderGPU, _LocalBoundsPad1), 124u);
 
     // Every member is accounted for above, so a new one shows up here as a size mismatch.

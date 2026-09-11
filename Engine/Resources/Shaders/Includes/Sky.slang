@@ -46,6 +46,17 @@ static const float  kOzoneWidth    = 15e3;
 // which is what turned it into a visible edge; narrow enough to still read as a horizon.
 static const float  kHorizonGroundFade = 0.35;
 
+// Incident solar spectrum the scattering integral is driven by. Deliberately NOT SunIntensity: that is
+// the disc's brightness, and routing it through here made the whole sky track a cosmetic knob 1:1.
+static const float  kSolarIrradiance = 20.0;
+
+// Multiple-scattering share and how much of it keeps its wavelength dependence. Against a Rayleigh
+// phase of ~0.09 at zenith, kMsStrength/PI is the ratio to single scattering; at 0.9 it was 3.2x that
+// and, at 15% tint, almost entirely grey, which is what buried the blue. Shared with the aerial LUT,
+// which ran its own copy of these and would otherwise haze a different colour than the sky it matches.
+static const float  kMsStrength = 0.15;
+static const float  kMsTint     = 0.8;
+
 float Sky_RayleighPhase(float CosTheta)
 {
     return (3.0 / (16.0 * PI)) * (1.0 + CosTheta * CosTheta);
@@ -230,8 +241,6 @@ float3 Sky_Atmosphere(float3 RayOrigin, float3 RayDir, float3 SunDir, float3 Sun
     float3 Rayleigh = kRayleighCoeff * Sky_RayleighPhase(CosTheta) * SumR;
     float3 Mie      = float3(kMieCoeff, kMieCoeff, kMieCoeff) * Sky_MiePhase(CosTheta, MieG) * SumM;
 
-    const float kMsStrength = 0.9;
-    const float kMsTint     = 0.15;
     float3 MsEnergy     = kRayleighCoeff * SumR;
     float  MsGrey       = Luminance(MsEnergy);
     float3 MultiScatter = lerp(float3(MsGrey), MsEnergy, kMsTint) * kMsStrength / PI;
@@ -433,7 +442,7 @@ float3 Sky_Dynamic(FEnvironmentParams Env, float3 SunDir, float3 RayDir, float T
     float MieG      = clamp(Env.Misc.w, -0.99, 0.99);
 
     // Constant incident spectrum: twilight reddening is the scattering integral's job, not a ramp.
-    float3 SunColor = Env.SunTint.rgb * Env.SunTint.w;
+    float3 SunColor = Env.SunTint.rgb * kSolarIrradiance;
 
     // Atmosphere math is in planet-relative coords. Origin at 50m altitude
     // so the camera never falls inside the planet sphere.

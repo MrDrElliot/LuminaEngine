@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Shared/SharedConstants.h"
+#include "GPUSpan.slang"
 
 static const float PHI    = 1.618033988749895;
 static const float PI     = 3.1415926535897932384626433832795;
@@ -456,7 +457,7 @@ struct FMeshletHeader
     uint*           Triangles;
     FMeshletCone*   Cones;
 
-    // Null unless the mesh is skinned. A skinned vertex's JointIndices address BonePalettes[meshlet].
+    // A skinned vertex's JointIndices address BonePalettes[meshlet]; BonePaletteCount bounds it.
     FMeshletBonePalette* BonePalettes;
     uint*                BoneIndices;
 
@@ -481,8 +482,11 @@ struct FMeshletHeader
     // null-checked anywhere.
     uint            MeshletCount;
 
+    // Entries in BonePalettes. Zero on a static mesh, which is how "carries no palette" is spelled.
+    uint            BonePaletteCount;
+
     // Pads the stride to 128 so the Slang and C++ layouts agree; FMeshletHeaderGPU is alignas(16).
-    uint            _LocalBoundsPad0, _LocalBoundsPad1;
+    uint            _LocalBoundsPad1;
 
     property float3 DistanceFieldMin  { get { return float3(DistanceFieldMinX,  DistanceFieldMinY,  DistanceFieldMinZ);  } }
     property float3 DistanceFieldSize { get { return float3(DistanceFieldSizeX, DistanceFieldSizeY, DistanceFieldSizeZ); } }
@@ -865,9 +869,9 @@ struct FLightShadowData
 
 struct FLightData
 {
-    uint   NumLights;
+    uint   _PadNumLights;   // the live counts are the spans' own
     uint   bHasIBL;       // 1 = environment IBL cubes valid; 0 = skylight-only flat ambient fallback
-    uint   NumShadows;    // bounds the Shadows allocation; every assigned ShadowDataIndex is below it
+    uint   _PadNumShadows;
     uint   Padding;
     float3 SunDirection;   // to-light: FROM surface TOWARD the sun (== Lights[0].Direction)
     uint   bHasSun;
@@ -882,9 +886,9 @@ struct FLightData
     // z = contact-shadow world length (0 = off), w = contact-shadow tap count.
     float4 ShadowParams2;
     float4 AmbientLight;
-    // Sized to the live count, so never index these past NumLights / NumShadows.
-    FLight*           Lights;
-    FLightShadowData* Shadows;
+    // Each carries its own live count, so no caller has to remember a separate bound.
+    GPUSpan<FLight>           Lights;
+    GPUSpan<FLightShadowData> Shadows;
 };
 
 struct FCluster

@@ -13,14 +13,10 @@
 // visible-list/indirect-args written). Pointers first so each 8-byte address stays 8-aligned.
 struct FTerrainCullPushConstants
 {
-    FTerrainChunkInfo*      Chunks;
-    FTerrainMeshletInfo*    Meshlets;
-    FTerrainVisibleMeshlet* VisibleMeshlets;
-    FDrawIndirectArguments* TerrainIndirect;
-    uint ChunkCount;
-    uint MeshletCount;
-    uint _Pad0;
-    uint _Pad1;
+    GPUSpan<FTerrainChunkInfo>      Chunks;
+    GPUSpan<FTerrainMeshletInfo>    Meshlets;
+    GPUSpan<FTerrainVisibleMeshlet> VisibleMeshlets;
+    GPUSpan<FDrawIndirectArguments> TerrainIndirect;
 };
 
 groupshared bool gChunkVisible;
@@ -51,14 +47,14 @@ void ComputeMain(
     uint    LocalIdx   : SV_GroupIndex)
 {
     const uint ChunkIndex = GroupID.x;
-    if (ChunkIndex >= Pass().ChunkCount)
+    if (!SpanContains(&Pass().Chunks, ChunkIndex))
         return;
 
     // Thread 0 owns the chunk-level test. Broadcast through groupshared so
     // every meshlet thread can short-circuit on a coarse rejection.
     if (LocalIdx == 0)
     {
-        FTerrainChunkInfo Chunk = Pass().Chunks[ChunkIndex];
+        FTerrainChunkInfo Chunk = SpanGet(&Pass().Chunks, ChunkIndex);
         gChunkVisible = ChunkVisible(Scene().CullData.Frustum, Chunk.BoundsMin, Chunk.BoundsMax);
     }
     GroupMemoryBarrierWithGroupSync();
@@ -66,17 +62,17 @@ void ComputeMain(
     if (!gChunkVisible)
         return;
 
-    FTerrainChunkInfo Chunk = Pass().Chunks[ChunkIndex];
+    FTerrainChunkInfo Chunk = SpanGet(&Pass().Chunks, ChunkIndex);
 
     // Stride the meshlet test by LOCAL_SIZE_X so chunks larger than the workgroup still cover
     // every meshlet with one thread per pass.
     for (uint Local = LocalIdx; Local < Chunk.MeshletCount; Local += LOCAL_SIZE_X)
     {
         const uint MeshletIndex = Chunk.MeshletOffset + Local;
-        if (MeshletIndex >= Pass().MeshletCount)
+        if (!SpanContains(&Pass().Meshlets, MeshletIndex))
             break;
 
-        FTerrainMeshletInfo Meshlet = Pass().Meshlets[MeshletIndex];
+        FTerrainMeshletInfo Meshlet = SpanGet(&Pass().Meshlets, MeshletIndex);
 
         // Per-meshlet frustum refinement; tighter bounds catch silhouettes the chunk sphere misses.
         if (!ChunkVisible(Scene().CullData.Frustum, Meshlet.BoundsMin, Meshlet.BoundsMax))
@@ -90,11 +86,11 @@ void ComputeMain(
         // lane is atomically incrementing. Same reason BuildMaterialTileList computes its base
         // arithmetically instead of reading Args[Slot].FirstInstance.
         //
-        // MeshletCount is what sized VisibleMeshlets, and one append per (chunk, meshlet) pair cannot
-        // exceed it -- so this is exact by construction, and bounded anyway.
+        // One append per (chunk, meshlet) pair cannot exceed what sized VisibleMeshlets, so this is
+        // exact by construction and bounded by that span anyway.
         // continue, not return: this is a grid-stride loop, so the thread still owns further meshlets.
-        const uint Slot = AppendReserve(&Pass().TerrainIndirect[0].InstanceCount,
-                                        Pass().MeshletCount, /*Base*/ 0u);
+        const uint Slot = AppendReserve(&SpanAt(&Pass().TerrainIndirect, 0u).InstanceCount,
+                                        Pass().VisibleMeshlets.Count, /*Base*/ 0u);
         if (Slot == kAppendFull)
         {
             continue;
@@ -103,6 +99,6 @@ void ComputeMain(
         FTerrainVisibleMeshlet Out;
         Out.ChunkIndex   = ChunkIndex;
         Out.MeshletIndex = MeshletIndex;
-        Pass().VisibleMeshlets[Slot] = Out;
+        SpanSet(&Pass().VisibleMeshlets, Slot, Out);
     }
 }

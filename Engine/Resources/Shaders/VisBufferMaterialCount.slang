@@ -5,14 +5,12 @@
 
 struct FMaterialCountArgs
 {
-    uint* Counts;               // uint[NumSlots], zeroed before this pass
-    uint* SlotByMaterial;       // global MaterialIndex -> dense slot (~0u = no deferred draw)
+    GPUSpan<uint> Counts;           // zeroed before this pass; its count is the slot count
+    GPUSpan<uint> SlotByMaterial;   // global MaterialIndex -> dense slot (~0u = no deferred draw)
     uint  VisBufferIndex;
     uint  ScreenW;
     uint  ScreenH;
     uint  DrawListCount;
-    uint  SlotByMaterialCount;
-    uint  NumSlots;
 };
 FMaterialCountArgs* Pass() { return GetPassArgs<FMaterialCountArgs>(); }
 
@@ -26,9 +24,8 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
         const uint Raw = LoadTexture2DUInt(Pass().VisBufferIndex, int2(DTid.xy));
 
         // Scatter resolves and aggregates identically, or it fills a run sized differently from this.
-        const uint Resolved = ResolveVisMaterialSlot(Raw, Pass().DrawListCount,
-                                                     Pass().SlotByMaterial, Pass().SlotByMaterialCount);
-        if (Resolved < Pass().NumSlots)
+        const uint Resolved = ResolveVisMaterialSlot(Raw, Pass().DrawListCount, &Pass().SlotByMaterial);
+        if (SpanContains(&Pass().Counts, Resolved))
         {
             Slot = Resolved;
         }
@@ -48,7 +45,7 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
             const uint Count = WaveActiveCountBits(true);
             if (WaveIsFirstLane())
             {
-                InterlockedAdd(Pass().Counts[Candidate], Count);
+                InterlockedAdd(SpanAt(&Pass().Counts, Candidate)[0], Count);
             }
             break;
         }

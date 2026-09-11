@@ -11,7 +11,7 @@ static const uint PARTICLE_FACING_VELOCITY = 2u;
 // Mirrors FParticlePushConstants in DefaultSceneRenderer.cpp; every particle pipeline pushes this block.
 struct FParticlePushConstants
 {
-    FGPUParticle* Particles;       // device address of the simulated particle array
+    GPUSpan<FGPUParticle> Particles;   // the simulated particle array
     uint   TextureIndex;           // bindless 2D SRV (0 = default sprite)
     uint   FacingMode;             // EParticleFacingMode
     float4 Tint;                   // xyz tint rgb, w intensity multiplier
@@ -19,14 +19,15 @@ struct FParticlePushConstants
     uint   SubUVColumns;           // sprite-sheet subdivisions; 1x1 = whole texture
     uint   SubUVRows;
     uint   AttrFloats;             // floats per particle in the attribute buffer
-    float* Attributes;             // declared-attribute buffer, null when the emitter has none
+    GPUSpan<float> Attributes;     // declared-attribute buffer; empty when the emitter has none
     int    AttrSlotSizeScaleX;     // -1 when the stack did not declare it
     int    AttrSlotSizeScaleY;
     int    AttrSlotPrevPosX;       // written by the Trail module; -1 without one
     int    AttrSlotPrevPosY;
     int    AttrSlotPrevPosZ;
     uint   MaterialIndex;          // Materials() slot, read only by the Particle material domain
-    uint*  SortedIndices;          // live particles back-to-front, null when the sort pass did not run
+    uint   bSorted;                // 0 draws unsorted at full capacity, and SortedIndices is not read
+    GPUSpan<uint> SortedIndices;   // live particles back-to-front
 };
 FParticlePushConstants* Pass() { return GetPassArgs<FParticlePushConstants>(); }
 
@@ -37,7 +38,7 @@ float ReadParticleAttr(uint ParticleIndex, int Slot, float Fallback)
     {
         return Fallback;
     }
-    return Pass().Attributes[ParticleIndex * Pass().AttrFloats + (uint)Slot];
+    return SpanGet(&Pass().Attributes, ParticleIndex * Pass().AttrFloats + (uint)Slot);
 }
 
 static const float2 kParticleQuadPositions[6] =
@@ -81,11 +82,11 @@ FParticleSprite ExpandParticleSprite(uint VertexIndex, out FGPUParticle OutParti
     const uint QuadIndex = VertexIndex % 6;
 
     // The sorted draw covers only live particles, so the slot has to be looked up, not derived.
-    const uint ParticleIndex = (Pass().SortedIndices != nullptr)
-        ? Pass().SortedIndices[VertexIndex / 6]
+    const uint ParticleIndex = (Pass().bSorted != 0u)
+        ? SpanGet(&Pass().SortedIndices, VertexIndex / 6)
         : (VertexIndex / 6);
 
-    FGPUParticle P = Pass().Particles[ParticleIndex];
+    FGPUParticle P = SpanGet(&Pass().Particles, ParticleIndex);
     OutParticle = P;
 
     FParticleSprite Sprite;

@@ -3449,15 +3449,15 @@ namespace Lumina
             PublishStreamingFeedback();
 
             // LightCount can overshoot MAX_LIGHTS; clamp to match what Process*Light wrote.
-            LightData.NumLights = Math::Min(LightCount.load(std::memory_order_acquire), (uint32)MAX_LIGHTS);
+            NumLiveLights = Math::Min(LightCount.load(std::memory_order_acquire), (uint32)MAX_LIGHTS);
 
 
             // Serial fit/allocate after parallel light pass; shrinks when sum(area) exceeds atlas budget.
             AllocateShadowTiles();
 
             // Same overshoot as LightCount, and this is the last writer of the shadow counter.
-            LightData.NumShadows = Math::Min(Frame.Lighting.ShadowDataCount.load(std::memory_order_acquire),
-                                             (uint32)MAX_SHADOWS);
+            NumLiveShadows = Math::Min(Frame.Lighting.ShadowDataCount.load(std::memory_order_acquire),
+                                       (uint32)MAX_SHADOWS);
 
             // Serial after parallel light pass; skylight below reads ActiveEnv + LightData.SunDirection set by ProcessDirectionalLight.
             const SEnvironmentComponent* ActiveEnv = nullptr;
@@ -4113,27 +4113,22 @@ namespace Lumina
 
         struct FSkinnedBoundsPC
         {
-            uint32 NumSlots;
             uint32 MaxRange;
-            uint32 BoundsCapacity;
-            uint32 RetainedCapacity;
-            uint64 SlotListAddr;
-            uint64 SkinnedDataAddr;
-            uint64 RetainedStaticAddr;
-            uint64 OutBoundsAddr;
-            uint64 OutConesAddr;
+            uint32 _Pad;
+            RHI::TGPUSpan<uint32>            SlotList;
+            RHI::TGPUSpan<FSkinnedFrameData> SkinnedFrameData;
+            RHI::TGPUSpan<FInstanceStatic>   RetainedStatic;
+            RHI::TGPUSpan<FMeshletSphere>    OutBounds;
+            RHI::TGPUSpan<FMeshletCone>      OutCones;
         } PC = {};
-        static_assert(sizeof(FSkinnedBoundsPC) == 56, "FSkinnedBoundsPC must match SkinnedMeshletBounds.slang.");
+        static_assert(sizeof(FSkinnedBoundsPC) == 88, "FSkinnedBoundsPC must match SkinnedMeshletBounds.slang.");
 
-        PC.NumSlots           = NumSkinned;
-        PC.MaxRange           = SkinnedBoundsMaxRange;
-        PC.BoundsCapacity     = SkinnedMeshletBoundsCapacity;
-        PC.RetainedCapacity   = RetainedStaticCapacity;
-        PC.SlotListAddr       = SkinnedSlotListBuffer.Gpu;
-        PC.SkinnedDataAddr    = SkinnedFrameDataBuffer.Gpu;
-        PC.RetainedStaticAddr = RetainedStaticBuffer.Gpu;
-        PC.OutBoundsAddr      = SkinnedMeshletBoundsBuffer.Gpu;
-        PC.OutConesAddr       = SkinnedMeshletConeBuffer.Gpu;
+        PC.MaxRange         = SkinnedBoundsMaxRange;
+        PC.SlotList         = { SkinnedSlotListBuffer, NumSkinned };
+        PC.SkinnedFrameData = { SkinnedFrameDataBuffer };
+        PC.RetainedStatic   = { RetainedStaticBuffer, RetainedStaticCapacity };
+        PC.OutBounds        = { SkinnedMeshletBoundsBuffer, SkinnedMeshletBoundsCapacity };
+        PC.OutCones         = { SkinnedMeshletConeBuffer, SkinnedMeshletBoundsCapacity };
 
         constexpr uint32 kBoundsGroupSize = 64;
         const uint32 GroupsX = (SkinnedBoundsMaxRange + kBoundsGroupSize - 1u) / kBoundsGroupSize;
@@ -4355,12 +4350,8 @@ namespace Lumina
             }
             SceneRootShared = FSceneRoot{};
             // Only the live prefix of each array reaches the ring; the header carries where they landed.
-            LightData.LightsAddress = (LightData.NumLights > 0)
-                ? RHI::CopyTransientArray(Frame.Lighting.Lights.data(), LightData.NumLights).Address
-                : 0;
-            LightData.ShadowsAddress = (LightData.NumShadows > 0)
-                ? RHI::CopyTransientArray(Frame.Lighting.Shadows.data(), LightData.NumShadows).Address
-                : 0;
+            LightData.Lights  = RHI::CopyTransientArray(Frame.Lighting.Lights.data(),  NumLiveLights);
+            LightData.Shadows = RHI::CopyTransientArray(Frame.Lighting.Shadows.data(), NumLiveShadows);
             SceneBindings.Lights = RHI::CopyTransient(LightData);
             if (VisibleInstanceRing[CurrentFrameSlot])
             {
@@ -4369,71 +4360,69 @@ namespace Lumina
             // Persistent and slot-addressed, so this is just the arena's address.
             if (BoneArenaBuffer)
             {
-                SceneRootShared.Bones = BoneArenaBuffer.Gpu;
+                SceneRootShared.Bones = { BoneArenaBuffer };
             }
 
             // Last frame's snapshot, so this publishes what SnapshotMotionState left at the end of it.
             if (bPrevMotionStateValid && PrevRetainedTransformBuffer)
             {
-                SceneRootShared.PrevRetainedTransforms     = PrevRetainedTransformBuffer.Gpu;
-                SceneRootShared.PrevRetainedTransformCount =
-                    (uint32)(PrevRetainedTransformBuffer.Size / sizeof(FTransform3x4));
+                SceneRootShared.PrevRetainedTransforms = { PrevRetainedTransformBuffer };
 
                 if (PrevBoneArenaBuffer)
                 {
-                    SceneRootShared.PrevBones     = PrevBoneArenaBuffer.Gpu;
-                    SceneRootShared.PrevBoneCount = (uint32)(PrevBoneArenaBuffer.Size / sizeof(FBoneTransform));
+                    SceneRootShared.PrevBones = { PrevBoneArenaBuffer };
                 }
             }
             if (!BillboardInstances.empty())
             {
-                SceneRootShared.Billboards = RHI::CopyTransientArray(BillboardInstances.data(), BillboardInstances.size()).Address;
+                SceneRootShared.Billboards = RHI::CopyTransientArray(BillboardInstances.data(), BillboardInstances.size());
             }
             if (!CullViews.empty())
             {
-                SceneRootShared.CullViews = RHI::CopyTransientArray(CullViews.data(), CullViews.size()).Address;
+                SceneRootShared.CullViews = RHI::CopyTransientArray(CullViews.data(), CullViews.size());
             }
             if (!Frame.Primitives.WidgetInstances.empty())
             {
-                SceneRootShared.Widgets = RHI::CopyTransientArray(Frame.Primitives.WidgetInstances.data(), Frame.Primitives.WidgetInstances.size()).Address;
+                SceneRootShared.Widgets = RHI::CopyTransientArray(Frame.Primitives.WidgetInstances.data(), Frame.Primitives.WidgetInstances.size());
             }
             // Splines are small and bounded, so the shared transient ring is the right home.
             NumActiveSplines       = (uint32)Frame.Splines.Splines.size();
-            SplineBufferAddr       = 0;
-            SplinePointBufferAddr  = 0;
-            SplineSampleBufferAddr = 0;
+            SplineBufferSpan       = {};
+            SplinePointBufferSpan  = {};
+            SplineSampleBufferSpan = {};
             if (NumActiveSplines > 0)
             {
-                SplineBufferAddr = RHI::CopyTransientArray(Frame.Splines.Splines.data(),
-                                                                 Frame.Splines.Splines.size()).Address;
+                SplineBufferSpan = RHI::CopyTransientArray(Frame.Splines.Splines.data(),
+                                                                 Frame.Splines.Splines.size());
                 if (!Frame.Splines.Points.empty())
                 {
-                    SplinePointBufferAddr = RHI::CopyTransientArray(Frame.Splines.Points.data(),
-                                                                          Frame.Splines.Points.size()).Address;
+                    SplinePointBufferSpan = RHI::CopyTransientArray(Frame.Splines.Points.data(),
+                                                                          Frame.Splines.Points.size());
                 }
                 if (!Frame.Splines.Samples.empty())
                 {
-                    SplineSampleBufferAddr = RHI::CopyTransientArray(Frame.Splines.Samples.data(),
-                                                                           Frame.Splines.Samples.size()).Address;
+                    SplineSampleBufferSpan = RHI::CopyTransientArray(Frame.Splines.Samples.data(),
+                                                                           Frame.Splines.Samples.size());
                 }
             }
 
-            NumActiveProbes = (uint32)Frame.ReflectionProbes.Probes.size();
-            ProbeBufferAddr = 0;
+            NumActiveProbes  = (uint32)Frame.ReflectionProbes.Probes.size();
+            ProbeBufferSpan  = {};
             if (NumActiveProbes > 0)
             {
                 InitReflectionProbeTargets();
-                ProbeBufferAddr = RHI::CopyTransientArray(Frame.ReflectionProbes.Probes.data(),
-                                                                Frame.ReflectionProbes.Probes.size()).Address;
+                ProbeBufferSpan = RHI::CopyTransientArray(Frame.ReflectionProbes.Probes.data(),
+                                                                Frame.ReflectionProbes.Probes.size());
             }
 
-            SceneRootShared.Materials          = Render().GetMaterialManager().GetMaterialBuffer();
-            SceneRootShared.Collections        = Render().GetCollectionManager().GetBuffer();
-            SceneRootShared.MeshletDrawList    = GetMeshletDrawList().Gpu;
-            SceneRootShared.PreSkinnedVertices = GetPreSkinnedVerticesBuffer().Gpu;
-            SceneRootShared.SkinnedMeshletBounds = SkinnedMeshletBoundsBuffer.Gpu;
-            SceneRootShared.SkinnedFrameData     = SkinnedFrameDataBuffer.Gpu;
-            SceneRootShared.SkinnedMeshletCones  = SkinnedMeshletConeBuffer.Gpu;
+            SceneRootShared.Materials            = Render().GetMaterialManager().GetMaterialSpan();
+            SceneRootShared.Collections          = Render().GetCollectionManager().GetSpan();
+            SceneRootShared.MeshletDrawList      = { GetMeshletDrawList(), DrawListCapacity };
+            SceneRootShared.PreSkinnedVertices   = { GetPreSkinnedVerticesBuffer(), PreSkinnedVertexCapacity };
+            SceneRootShared.SkinnedFrameData     = { SkinnedFrameDataBuffer };
+            // Spheres and cones are indexed by one base, so each carries the same capacity.
+            SceneRootShared.SkinnedMeshletBounds = { SkinnedMeshletBoundsBuffer, SkinnedMeshletBoundsCapacity };
+            SceneRootShared.SkinnedMeshletCones  = { SkinnedMeshletConeBuffer, SkinnedMeshletBoundsCapacity };
             if (IsGTAOEnabled())
             {
                 SceneGlobalData.GTAOSettings.AOTextureIndex = (uint32)CurrentView->Images[(int)ENamedImage::GTAOBlur].GetResourceID();
@@ -6389,7 +6378,7 @@ namespace Lumina
 
         ResizeBufferIfNeeded(CL, SkinWorkBaseRing[Slot], (uint64)NumPairs * sizeof(uint32), 1.5f,
                              SkinWorkBaseLowUsage[Slot], true, EBufferInit::Zeroed, "Skinning.WorkBase");
-        if (!SkinWorkBaseRing[Slot] || !GetSkinDispatchArgs()
+        if (!SkinWorkBaseRing[Slot] || !GetSkinDispatchArgs() || !GetPreSkinnedVerticesBuffer()
             || !SkinnedSlotListBuffer || !SkinnedFrameDataBuffer || !RetainedStaticBuffer)
         {
             return;
@@ -6399,20 +6388,17 @@ namespace Lumina
         {
             struct FBuildSkinWorkPC
             {
-                uint32 NumSlots;
-                uint32 _Pad0;
-                uint64 SlotListAddr;
-                uint64 SkinnedDataAddr;
-                uint64 OutWorkBaseAddr;
-                uint64 OutDispatchArgsAddr;
+                RHI::TGPUSpan<uint32>            SlotList;
+                RHI::TGPUSpan<FSkinnedFrameData> SkinnedData;
+                RHI::TGPUSpan<uint32>            OutWorkBase;
+                RHI::TGPUSpan<RHI::FDispatchIndirectArguments> OutDispatchArgs;
             } WPC = {};
-            static_assert(sizeof(FBuildSkinWorkPC) == 40, "FBuildSkinWorkPC must match BuildSkinWork.slang.");
+            static_assert(sizeof(FBuildSkinWorkPC) == 64, "FBuildSkinWorkPC must match BuildSkinWork.slang.");
 
-            WPC.NumSlots            = NumSkinned;
-            WPC.SlotListAddr        = SkinnedSlotListBuffer.Gpu;
-            WPC.SkinnedDataAddr     = SkinnedFrameDataBuffer.Gpu;
-            WPC.OutWorkBaseAddr     = SkinWorkBaseRing[Slot].Gpu;
-            WPC.OutDispatchArgsAddr = GetSkinDispatchArgs().Gpu;
+            WPC.SlotList        = { SkinnedSlotListBuffer, NumSkinned };
+            WPC.SkinnedData     = { SkinnedFrameDataBuffer };
+            WPC.OutWorkBase     = { SkinWorkBaseRing[Slot], NumPairs };
+            WPC.OutDispatchArgs = { GetSkinDispatchArgs() };
 
             RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(WorkShader));
             RHI::CmdDispatch(CL, MakeArgs(WPC), 1u, 1u, 1u);
@@ -6421,26 +6407,21 @@ namespace Lumina
                 RHI::EStageFlags::Compute | RHI::EStageFlags::IndirectArguments);
         }
 
-        const uint32 VertexCapacity = (uint32)Math::Min<uint64>(
-            GetPreSkinnedVerticesBuffer().Size / sizeof(FPreSkinnedVertex), 0xFFFFFFFFull);
-
         struct FSkinningPushConstants
         {
-            uint32 NumPairs;
-            uint32 VertexCapacity;
-            uint64 WorkBaseAddr;
-            uint64 SlotListAddr;
-            uint64 SkinnedDataAddr;
-            uint64 RetainedStaticAddr;
+            RHI::TGPUSpan<uint32>             WorkBase;
+            RHI::TGPUSpan<uint32>             SlotList;
+            RHI::TGPUSpan<FSkinnedFrameData>  SkinnedData;
+            RHI::TGPUSpan<FInstanceStatic>    RetainedStatic;
+            RHI::TGPUSpan<FPreSkinnedVertex>  OutVertices;
         } PC = {};
-        static_assert(sizeof(FSkinningPushConstants) == 40, "FSkinningPushConstants must match Skinning.slang.");
+        static_assert(sizeof(FSkinningPushConstants) == 80, "FSkinningPushConstants must match Skinning.slang.");
 
-        PC.NumPairs           = NumPairs;
-        PC.VertexCapacity     = VertexCapacity;
-        PC.WorkBaseAddr       = SkinWorkBaseRing[Slot].Gpu;
-        PC.SlotListAddr       = SkinnedSlotListBuffer.Gpu;
-        PC.SkinnedDataAddr    = SkinnedFrameDataBuffer.Gpu;
-        PC.RetainedStaticAddr = RetainedStaticBuffer.Gpu;
+        PC.WorkBase       = { SkinWorkBaseRing[Slot], NumPairs };
+        PC.SlotList       = { SkinnedSlotListBuffer, NumSkinned };
+        PC.SkinnedData    = { SkinnedFrameDataBuffer };
+        PC.RetainedStatic = { RetainedStaticBuffer };
+        PC.OutVertices    = { GetPreSkinnedVerticesBuffer() };
 
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(SkinShader));
         RHI::CmdDispatchIndirect(CL, MakeArgs(PC), GetSkinDispatchArgs());
@@ -6708,7 +6689,7 @@ namespace Lumina
             float  InvPyramidSize[2];
             uint32 SrcDepthIndex;
             uint32 ReduceMax;
-            uint64 AtomicCounter;
+            RHI::TGPUSpan<uint32> AtomicCounter;
             uint32 MipUAV[SpdMaxMips];
         } PC = {};
 
@@ -6733,7 +6714,7 @@ namespace Lumina
 
         PC.SrcDepthIndex      = (uint32)SrcDepthSlot;
         PC.ReduceMax          = bReduceMax ? 1u : 0u;
-        PC.AtomicCounter      = SpdCounter.Gpu;
+        PC.AtomicCounter      = { SpdCounter };
         for (uint32 i = 0; i < SpdMaxMips; ++i)
         {
             const uint32 SrcMip = (i < MipCount) ? i : 0u;
@@ -7167,14 +7148,14 @@ namespace Lumina
 
         struct FDecalPushConstants
         {
-            uint64 DecalsAddr;
+            RHI::TGPUSpan<FGPUDecal> Decals;
             uint32 DepthIndex;
             uint32 Pad;
         };
-        static_assert(sizeof(FDecalPushConstants) == 16, "FDecalPushConstants must match the slang pass block.");
+        static_assert(sizeof(FDecalPushConstants) == 24, "FDecalPushConstants must match the slang pass block.");
 
         FDecalPushConstants PC = {};
-        PC.DecalsAddr = RHI::CopyTransientArray(Decals.data(), Decals.size()).Address;
+        PC.Decals = RHI::CopyTransientArray(Decals.data(), Decals.size());
         PC.DepthIndex = (uint32)SceneDepth.GetResourceID();
 
         // One instanced draw per shader batch.
@@ -7399,8 +7380,8 @@ namespace Lumina
         const RHI::GPUPtr LitArgsAddr = Base + Layout.LightArgsOffset;
 
         // MaterialIndex -> dense slot; uploaded to the transient ring and read by device address.
-        const RHI::GPUPtr SlotByMaterialAddr =
-            RHI::CopyTransientArray(BinnedDeferredSlotByMaterial.data(), BinnedDeferredSlotByMaterial.size()).Address;
+        const RHI::FGPURange SlotByMaterialRange =
+            RHI::CopyTransientArray(BinnedDeferredSlotByMaterial.data(), BinnedDeferredSlotByMaterial.size());
 
         // Only the counters are cleared; the prefix sum below rewrites every other field.
         RHI::CmdMemset(CL, { CountsAddr, sizeof(uint32) * Layout.NumSlots }, 0u);
@@ -7409,26 +7390,27 @@ namespace Lumina
         const uint32 GroupsX = RenderUtils::GetGroupCount(Layout.ScreenW, (uint32)MATERIAL_CLASSIFY_TILE);
         const uint32 GroupsY = RenderUtils::GetGroupCount(Layout.ScreenH, (uint32)MATERIAL_CLASSIFY_TILE);
 
+        const RHI::TGPUSpan<uint32> CountsSpan  = RHI::TGPUSpan<uint32>::FromAddress(CountsAddr, Layout.NumSlots);
+        const RHI::TGPUSpan<uint32> StartsSpan  = RHI::TGPUSpan<uint32>::FromAddress(StartsAddr, Layout.NumSlots);
+        const RHI::TGPUSpan<uint32> CursorsSpan = RHI::TGPUSpan<uint32>::FromAddress(CursorsAddr, Layout.NumSlots);
+        const RHI::TGPUSpan<uint32> SlotByMaterialSpan = SlotByMaterialRange;
+
         struct FMaterialCountPC
         {
-            RHI::GPUPtr CountsAddr;
-            RHI::GPUPtr SlotByMaterialAddr;
+            RHI::TGPUSpan<uint32> Counts;
+            RHI::TGPUSpan<uint32> SlotByMaterial;
             uint32      VisBufferIndex;
             uint32      ScreenW;
             uint32      ScreenH;
             uint32      DrawListCount;
-            uint32      SlotByMaterialCount;
-            uint32      NumSlots;
         } CountPC = {};
-        static_assert(sizeof(FMaterialCountPC) == 40, "FMaterialCountPC must match VisBufferMaterialCount.slang FMaterialCountArgs.");
-        CountPC.CountsAddr          = CountsAddr;
-        CountPC.SlotByMaterialAddr  = SlotByMaterialAddr;
+        static_assert(sizeof(FMaterialCountPC) == 48, "FMaterialCountPC must match VisBufferMaterialCount.slang FMaterialCountArgs.");
+        CountPC.Counts              = CountsSpan;
+        CountPC.SlotByMaterial      = SlotByMaterialSpan;
         CountPC.VisBufferIndex      = (uint32)VisRT.GetResourceID();
         CountPC.ScreenW             = Layout.ScreenW;
         CountPC.ScreenH             = Layout.ScreenH;
         CountPC.DrawListCount       = DrawListCapacity;
-        CountPC.SlotByMaterialCount = (uint32)BinnedDeferredSlotByMaterial.size();
-        CountPC.NumSlots            = Layout.NumSlots;
 
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CountCS));
         RHI::CmdDispatch(CL, MakeArgs(CountPC), GroupsX, GroupsY, 1u);
@@ -7437,23 +7419,20 @@ namespace Lumina
 
         struct FPrefixSumPC
         {
-            RHI::GPUPtr CountsAddr;
-            RHI::GPUPtr StartsAddr;
-            RHI::GPUPtr CursorsAddr;
-            RHI::GPUPtr ArgsAddr;
-            RHI::GPUPtr LightArgsAddr;
-            RHI::GPUPtr TotalAddr;
-            uint32      NumSlots;
-            uint32      _Pad0;
+            RHI::TGPUSpan<uint32> Counts;
+            RHI::TGPUSpan<uint32> Starts;
+            RHI::TGPUSpan<uint32> Cursors;
+            RHI::TGPUSpan<uint32> Args;
+            RHI::TGPUSpan<uint32> LightArgs;
+            RHI::TGPUSpan<uint32> Total;
         } PrefixPC = {};
-        static_assert(sizeof(FPrefixSumPC) == 56, "FPrefixSumPC must match VisBufferMaterialPrefixSum.slang FPrefixSumArgs.");
-        PrefixPC.CountsAddr    = CountsAddr;
-        PrefixPC.StartsAddr    = StartsAddr;
-        PrefixPC.CursorsAddr   = CursorsAddr;
-        PrefixPC.ArgsAddr      = MatArgsAddr;
-        PrefixPC.LightArgsAddr = LitArgsAddr;
-        PrefixPC.TotalAddr     = TotalAddr;
-        PrefixPC.NumSlots      = Layout.NumSlots;
+        static_assert(sizeof(FPrefixSumPC) == 96, "FPrefixSumPC must match VisBufferMaterialPrefixSum.slang FPrefixSumArgs.");
+        PrefixPC.Counts    = CountsSpan;
+        PrefixPC.Starts    = StartsSpan;
+        PrefixPC.Cursors   = CursorsSpan;
+        PrefixPC.Args      = RHI::TGPUSpan<uint32>::FromAddress(MatArgsAddr, Layout.NumSlots * 3u);
+        PrefixPC.LightArgs = RHI::TGPUSpan<uint32>::FromAddress(LitArgsAddr, 3u);
+        PrefixPC.Total     = RHI::TGPUSpan<uint32>::FromAddress(TotalAddr, 1u);
 
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(PrefixCS));
         RHI::CmdDispatch(CL, MakeArgs(PrefixPC), 1u, 1u, 1u);
@@ -7462,29 +7441,22 @@ namespace Lumina
 
         struct FMaterialScatterPC
         {
-            RHI::GPUPtr CursorsAddr;
-            RHI::GPUPtr PixelListAddr;
-            RHI::GPUPtr SlotByMaterialAddr;
+            RHI::TGPUSpan<uint32> Cursors;
+            RHI::TGPUSpan<uint32> PixelList;
+            RHI::TGPUSpan<uint32> SlotByMaterial;
             uint32      VisBufferIndex;
             uint32      ScreenW;
             uint32      ScreenH;
             uint32      DrawListCount;
-            uint32      SlotByMaterialCount;
-            uint32      NumSlots;
-            uint32      PixelListCapacity;
-            uint32      _Pad0;
         } ScatterPC = {};
-        static_assert(sizeof(FMaterialScatterPC) == 56, "FMaterialScatterPC must match VisBufferMaterialScatter.slang FMaterialScatterArgs.");
-        ScatterPC.CursorsAddr        = CursorsAddr;
-        ScatterPC.PixelListAddr      = PixelList.Gpu;
-        ScatterPC.SlotByMaterialAddr = SlotByMaterialAddr;
-        ScatterPC.VisBufferIndex     = CountPC.VisBufferIndex;
-        ScatterPC.ScreenW            = Layout.ScreenW;
-        ScatterPC.ScreenH            = Layout.ScreenH;
-        ScatterPC.DrawListCount      = DrawListCapacity;
-        ScatterPC.SlotByMaterialCount = CountPC.SlotByMaterialCount;
-        ScatterPC.NumSlots           = Layout.NumSlots;
-        ScatterPC.PixelListCapacity  = Layout.PixelCapacity;
+        static_assert(sizeof(FMaterialScatterPC) == 64, "FMaterialScatterPC must match VisBufferMaterialScatter.slang FMaterialScatterArgs.");
+        ScatterPC.Cursors        = CursorsSpan;
+        ScatterPC.PixelList      = { PixelList, Layout.PixelCapacity };
+        ScatterPC.SlotByMaterial = SlotByMaterialSpan;
+        ScatterPC.VisBufferIndex = CountPC.VisBufferIndex;
+        ScatterPC.ScreenW        = Layout.ScreenW;
+        ScatterPC.ScreenH        = Layout.ScreenH;
+        ScatterPC.DrawListCount  = DrawListCapacity;
 
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(ScatterCS));
         RHI::CmdDispatch(CL, MakeArgs(ScatterPC), GroupsX, GroupsY, 1u);
@@ -7527,13 +7499,13 @@ namespace Lumina
             uint32      GBufferBUAV;
             uint32      GBufferCUAV;
             uint32      GBufferDUAV;
-            RHI::GPUPtr PixelListAddr;
-            RHI::GPUPtr StartsAddr;
-            RHI::GPUPtr CountsAddr;
             uint32      VelocityUAV;
             uint32      _PadVelocity;
+            RHI::TGPUSpan<uint32> PixelList;
+            RHI::TGPUSpan<uint32> Starts;
+            RHI::TGPUSpan<uint32> Counts;
         } PC = {};
-        static_assert(sizeof(FDeferredMaterialPC) == 80, "FDeferredMaterialPC must match DeferredMaterial.slang FDeferredMaterialArgs.");
+        static_assert(sizeof(FDeferredMaterialPC) == 104, "FDeferredMaterialPC must match DeferredMaterial.slang FDeferredMaterialArgs.");
 
         PC.VisBufferIndex = (uint32)VisRT.GetResourceID();
         if (Frame.Primitives.DecalExtracts.empty())
@@ -7566,9 +7538,9 @@ namespace Lumina
         PC.GBufferCUAV = (uint32)UAVC;
         PC.GBufferDUAV = (uint32)UAVD;
 
-        PC.PixelListAddr = PixelList.Gpu;
-        PC.StartsAddr    = Base + Layout.StartsOffset;
-        PC.CountsAddr    = Base + Layout.CountsOffset;
+        PC.PixelList = { PixelList, Layout.PixelCapacity };
+        PC.Starts    = RHI::TGPUSpan<uint32>::FromAddress(Base + Layout.StartsOffset, Layout.NumSlots);
+        PC.Counts    = RHI::TGPUSpan<uint32>::FromAddress(Base + Layout.CountsOffset, Layout.NumSlots);
 
         // Invalid disables the write, which leaves the camera-only base the fullscreen pass laid down.
         PC.VelocityUAV = 0xFFFFFFFFu;
@@ -7645,10 +7617,10 @@ namespace Lumina
             uint32      HDRUAV;
             uint32      ScreenW;
             uint32      ScreenH;
-            RHI::GPUPtr PixelListAddr;
-            RHI::GPUPtr TotalAddr;
+            RHI::TGPUSpan<uint32> PixelList;
+            RHI::TGPUSpan<uint32> Total;
         } PC = {};
-        static_assert(sizeof(FDeferredLightingPC) == 48, "FDeferredLightingPC must match DeferredLighting.slang FDeferredLightingArgs.");
+        static_assert(sizeof(FDeferredLightingPC) == 64, "FDeferredLightingPC must match DeferredLighting.slang FDeferredLightingArgs.");
         PC.GBufferAIndex = (uint32)GetNamedImage(ENamedImage::GBufferA).GetResourceID();
         PC.GBufferBIndex = (uint32)GetNamedImage(ENamedImage::GBufferB).GetResourceID();
         PC.GBufferCIndex = (uint32)GetNamedImage(ENamedImage::GBufferC).GetResourceID();
@@ -7657,8 +7629,8 @@ namespace Lumina
         PC.HDRUAV        = (uint32)HDRUAV;
         PC.ScreenW       = Layout.ScreenW;
         PC.ScreenH       = Layout.ScreenH;
-        PC.PixelListAddr = GetMaterialPixelList().Gpu;
-        PC.TotalAddr     = Classify.Gpu + Layout.TotalOffset;
+        PC.PixelList = { GetMaterialPixelList(), Layout.PixelCapacity };
+        PC.Total     = RHI::TGPUSpan<uint32>::FromAddress(Classify.Gpu + Layout.TotalOffset, 1u);
 
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(LightingCS));
         RHI::CmdDispatchIndirect(CL, MakeArgs(PC), Classify.Skip(Layout.LightArgsOffset));
@@ -7853,22 +7825,22 @@ namespace Lumina
         struct FSelectionOutlinePC
         {
             FVector4    OutlineColor;
-            RHI::GPUPtr SelectionBits;
+            RHI::TGPUSpan<uint32> SelectionBits;
             uint32      PickerIndex;
-            uint32      SelectionBitWords;
             uint32      EntityIndexMask;
             float       Thickness;
+            uint32      _Pad0;
         } PC = {};
+        static_assert(sizeof(FSelectionOutlinePC) == 48, "FSelectionOutlinePC must match SelectionOutline.slang.");
 
-        PC.SelectionBits     = RHI::CopyTransientArray(SelectionBits.data(), SelectionBits.size()).Address;
+        PC.SelectionBits     = RHI::CopyTransientArray(SelectionBits.data(), SelectionBits.size());
         PC.PickerIndex       = (uint32)PickerSlot;
-        PC.SelectionBitWords = (uint32)SelectionBits.size();
         // From the handle traits rather than a literal, so a change there cannot mask off real index bits.
         PC.EntityIndexMask   = ECS::FEntity::IndexMask;
         PC.Thickness         = 2.0f;
         PC.OutlineColor      = FVector4(1.0f, 0.42f, 0.05f, 1.0f);
 
-        if (PC.SelectionBits != 0)
+        if (!PC.SelectionBits.IsEmpty())
         {
             RHI::CmdDraw(CL, MakeArgs(PC), 3, 1, 0, 0);
         }
@@ -7963,7 +7935,7 @@ namespace Lumina
                 State.SortIndexBuffer    = {};
                 State.SortDrawArgsBuffer = {};
 
-                State.ParticleBufferSize = (uint64)MaxParticles * 64ull;
+                State.ParticleBufferSize = (uint64)MaxParticles * sizeof(FGPUParticle);
                 State.ParticleBuffer     = RHI::Malloc(State.ParticleBufferSize, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
                 State.SpawnCounterBuffer = RHI::Malloc(sizeof(uint32), RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
                 RHI::SetDebugName(State.ParticleBuffer.Gpu,     "Particles.Particles");
@@ -8133,20 +8105,23 @@ namespace Lumina
             struct FParticleSimArgs
             {
                 uint64 ParamsAddr;
-                uint64 ParticlesAddr;
-                uint64 SpawnCounterAddr;
-                uint64 ModuleParamsAddr;
-                uint64 AttributesAddr;
+                RHI::TGPUSpan<FGPUParticle> Particles;
+                RHI::TGPUSpan<uint32>       SpawnCounter;
+                RHI::TGPUSpan<FVector4>     ModuleParams;
+                RHI::TGPUSpan<float>        Attributes;
             };
+            static_assert(sizeof(FParticleSimArgs) == 72, "FParticleSimArgs must match ParticleSimCommon.slang.");
 
-            FParticleSimArgs SimArgs;
-            SimArgs.ParamsAddr       = RHI::CopyTransient(SimParams);
-            SimArgs.ParticlesAddr    = State.ParticleBuffer.Gpu;
-            SimArgs.SpawnCounterAddr = State.SpawnCounterBuffer.Gpu;
-            SimArgs.ModuleParamsAddr = Item.ModuleParamValues.empty()
-                ? 0ull
-                : RHI::CopyTransientArray(Item.ModuleParamValues.data(), Item.ModuleParamValues.size()).Address;
-            SimArgs.AttributesAddr   = State.AttributeBuffer.Gpu;
+            FParticleSimArgs SimArgs = {};
+            SimArgs.ParamsAddr   = RHI::CopyTransient(SimParams);
+            SimArgs.Particles    = { State.ParticleBuffer, MaxParticles };
+            SimArgs.SpawnCounter = { State.SpawnCounterBuffer };
+            if (!Item.ModuleParamValues.empty())
+            {
+                SimArgs.ModuleParams = RHI::CopyTransientArray(Item.ModuleParamValues.data(),
+                                                               Item.ModuleParamValues.size());
+            }
+            SimArgs.Attributes   = { State.AttributeBuffer };
 
             RHI::CmdDispatch(CL, MakeArgs(SimArgs), RenderUtils::GetGroupCount(MaxParticles, 64u), 1u, 1u);
             bAnySimulated = true;
@@ -8205,19 +8180,19 @@ namespace Lumina
             // Mirrors FParticleSortArgs in ParticleSortCompact.slang, pointers first to stay 8-aligned.
             struct FParticleSortArgs
             {
-                uint64 ParticlesAddr;
-                uint64 OutIndicesAddr;
-                uint64 OutDrawArgsAddr;
-                uint32 ParticleCount;
+                RHI::TGPUSpan<FGPUParticle> Particles;
+                RHI::TGPUSpan<uint32>       OutIndices;
+                RHI::TGPUSpan<RHI::FDrawIndirectArguments> OutDrawArgs;
                 uint32 SortCount;
+                uint32 _Pad0;
             };
+            static_assert(sizeof(FParticleSortArgs) == 56, "FParticleSortArgs must match ParticleSortCompact.slang.");
 
-            FParticleSortArgs SortArgs;
-            SortArgs.ParticlesAddr   = State.ParticleBuffer.Gpu;
-            SortArgs.OutIndicesAddr  = State.SortIndexBuffer.Gpu;
-            SortArgs.OutDrawArgsAddr = State.SortDrawArgsBuffer.Gpu;
-            SortArgs.ParticleCount   = State.AllocatedMax;
-            SortArgs.SortCount       = State.SortCount;
+            FParticleSortArgs SortArgs = {};
+            SortArgs.Particles  = { State.ParticleBuffer, State.AllocatedMax };
+            SortArgs.OutIndices = { State.SortIndexBuffer };
+            SortArgs.OutDrawArgs = { State.SortDrawArgsBuffer };
+            SortArgs.SortCount  = State.SortCount;
 
             RHI::CmdDispatch(CL, MakeArgs(SortArgs), 1u, 1u, 1u);
         }
@@ -8331,7 +8306,7 @@ namespace Lumina
 
         struct FParticlePushConstants
         {
-            uint64   ParticlesAddr;
+            RHI::TGPUSpan<FGPUParticle> Particles;
             uint32   TextureIndex;
             uint32   FacingMode;
             FVector4 Tint;
@@ -8339,16 +8314,17 @@ namespace Lumina
             uint32   SubUVColumns;
             uint32   SubUVRows;
             uint32   AttrFloats;        // floats per particle in the attribute buffer
-            uint64   AttributesAddr;    // declared-attribute buffer, 0 when the emitter has none
+            RHI::TGPUSpan<float> Attributes;   // empty when the emitter declared none
             int32    AttrSlotSizeScaleX; // -1 when the stack did not declare it
             int32    AttrSlotSizeScaleY;
             int32    AttrSlotPrevPosX;
             int32    AttrSlotPrevPosY;
             int32    AttrSlotPrevPosZ;
             uint32   MaterialIndex;      // Materials() slot; read only by the Particle material stages
-            uint64   SortedIndicesAddr;  // 0 when the emitter is drawn unsorted at full capacity
+            uint32   bSorted;            // 0 draws unsorted at full capacity, and SortedIndices is not read
+            RHI::TGPUSpan<uint32> SortedIndices;
         };
-        static_assert(sizeof(FParticlePushConstants) == 88, "FParticlePushConstants must match the slang pass block.");
+        static_assert(sizeof(FParticlePushConstants) == 120, "FParticlePushConstants must match the slang pass block.");
 
         for (const FFrameData::FParticleExtract& Item : Frame.Extracts.ParticleExtracts)
         {
@@ -8393,7 +8369,7 @@ namespace Lumina
             RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
             FParticlePushConstants PC = {};
-            PC.ParticlesAddr     = State.ParticleBuffer.Gpu;
+            PC.Particles         = { State.ParticleBuffer, State.AllocatedMax };
             PC.TextureIndex      = Item.TextureIndex;
             PC.FacingMode        = (uint32)Resolved.FacingMode;
             PC.Tint              = FVector4(1.0f, 1.0f, 1.0f, 1.0f);
@@ -8401,14 +8377,15 @@ namespace Lumina
             PC.SubUVColumns      = (uint32)Math::Max(Resolved.SubUVColumns, 1);
             PC.SubUVRows         = (uint32)Math::Max(Resolved.SubUVRows, 1);
             PC.AttrFloats        = Math::Max(Item.AttributeFloatCount, 1u);
-            PC.AttributesAddr    = State.AttributeBuffer.Gpu;
+            PC.Attributes        = { State.AttributeBuffer };
             PC.AttrSlotSizeScaleX = Item.RenderAttrSlots[ParticleRenderAttribute::SizeScaleX];
             PC.AttrSlotSizeScaleY = Item.RenderAttrSlots[ParticleRenderAttribute::SizeScaleY];
             PC.AttrSlotPrevPosX   = Item.RenderAttrSlots[ParticleRenderAttribute::PrevPosX];
             PC.AttrSlotPrevPosY   = Item.RenderAttrSlots[ParticleRenderAttribute::PrevPosY];
             PC.AttrSlotPrevPosZ   = Item.RenderAttrSlots[ParticleRenderAttribute::PrevPosZ];
             PC.MaterialIndex      = bMaterial ? (uint32)Item.MaterialIndex : 0u;
-            PC.SortedIndicesAddr  = bSorted ? State.SortIndexBuffer.Gpu : 0ull;
+            PC.bSorted            = bSorted ? 1u : 0u;
+            PC.SortedIndices      = { State.SortIndexBuffer };
 
             if (bSorted)
             {
@@ -9009,12 +8986,10 @@ namespace Lumina
             }
 
             FTerrainCullPushConstants Push{};
-            Push.ChunksAddr          = State.ChunkInfoBuffer.Gpu;
-            Push.MeshletsAddr        = State.MeshletInfoBuffer.Gpu;
-            Push.VisibleMeshletsAddr = State.VisibleMeshletBuffer.Gpu;
-            Push.TerrainIndirectAddr = State.IndirectDrawBuffer.Gpu;
-            Push.ChunkCount   = State.AllocatedChunkCount;
-            Push.MeshletCount = State.AllocatedMeshletCount;
+            Push.Chunks          = { State.ChunkInfoBuffer, State.AllocatedChunkCount };
+            Push.Meshlets        = { State.MeshletInfoBuffer, State.AllocatedMeshletCount };
+            Push.VisibleMeshlets = { State.VisibleMeshletBuffer, State.AllocatedMeshletCount };
+            Push.TerrainIndirect = { State.IndirectDrawBuffer };
 
             RHI::CmdDispatch(CL, MakeArgs(Push), State.AllocatedChunkCount, 1u, 1u);
             bAnyDispatched = true;
@@ -9029,10 +9004,10 @@ namespace Lumina
     // Matches FGrassScatterPushConstants in GrassScatter.slang.
     struct FGrassScatterPushConstants
     {
-        uint64  OutCullEntriesAddr = 0;
-        uint64  OutTransformsAddr  = 0;
-        uint64  OutStaticAddr      = 0;
-        uint64  OutCursorAddr      = 0;
+        RHI::TGPUSpan<FInstanceCullEntry> OutCullEntries;
+        RHI::TGPUSpan<FTransform3x4>      OutTransforms;
+        RHI::TGPUSpan<FInstanceStatic>    OutStatic;
+        RHI::TGPUSpan<uint32>             OutCursor;
 
         uint32  HeightmapIndex    = 0;
         uint32  NormalIndex       = 0;
@@ -9055,9 +9030,9 @@ namespace Lumina
         uint32  Seed          = 0;
 
         uint32  GridSide     = 0;
-        uint32  MaxInstances = 0;
+        uint32  _PadMaxInstances = 0;
 
-        uint32  InstanceSlotBase  = 0;
+        uint32  _PadInstanceSlotBase = 0;
         uint32  DrawIDAndFlags    = 0;
         uint32  SurfaceDescIndex  = 0;
         uint32  MeshletHeaderSlot = 0;
@@ -9075,6 +9050,8 @@ namespace Lumina
         uint32  _Pad1 = 0;
         uint32  _Pad2 = 0;
     };
+    static_assert(sizeof(FGrassScatterPushConstants) == 200,
+        "FGrassScatterPushConstants must match GrassScatter.slang.");
 
     void FDefaultSceneRenderer::GrassScatterPass(RHI::FCmdListH CL)
     {
@@ -9179,10 +9156,15 @@ namespace Lumina
                 }
 
                 FGrassScatterPushConstants Push{};
-                Push.OutCullEntriesAddr = RetainedCullEntryBuffer.Gpu;
-                Push.OutTransformsAddr  = RetainedTransformBuffer.Gpu;
-                Push.OutStaticAddr      = RetainedStaticBuffer.Gpu;
-                Push.OutCursorAddr      = State.CursorBuffer.Gpu;
+                // Sliced to the reserved block, so the shader indexes it block-locally and cannot name a
+                // retained slot that belongs to something else.
+                Push.OutCullEntries = RHI::TGPUSpan<FInstanceCullEntry>::Slice(
+                    RetainedCullEntryBuffer, Binding.InstanceSlotBase, Binding.Capacity);
+                Push.OutTransforms  = RHI::TGPUSpan<FTransform3x4>::Slice(
+                    RetainedTransformBuffer, Binding.InstanceSlotBase, Binding.Capacity);
+                Push.OutStatic      = RHI::TGPUSpan<FInstanceStatic>::Slice(
+                    RetainedStaticBuffer, Binding.InstanceSlotBase, Binding.Capacity);
+                Push.OutCursor      = { State.CursorBuffer };
                 Push.HeightmapIndex     = (uint32)Terrain.HeightmapTexture.GetResourceID();
                 Push.NormalIndex        = (uint32)Terrain.NormalTexture.GetResourceID();
                 Push.LayerWeightsIndex  = (uint32)Terrain.LayerWeightTexture.GetResourceID();
@@ -9200,8 +9182,7 @@ namespace Lumina
                 Push.bRandomYaw         = Species.bRandomYaw ? 1u : 0u;
                 Push.Seed               = Species.Seed;
                 Push.GridSide           = GridSide;
-                Push.MaxInstances       = Binding.Capacity;
-                Push.InstanceSlotBase   = Binding.InstanceSlotBase;
+
                 Push.DrawIDAndFlags     = Binding.DrawIDAndFlags;
                 Push.SurfaceDescIndex   = Binding.SurfaceDescIndex;
                 Push.MeshletHeaderSlot  = Binding.MeshletHeaderSlot;
@@ -9340,9 +9321,9 @@ namespace Lumina
 
             FTerrainPushConstants Push{};
             Push.ParamsAddr        = RHI::CopyTransient(RenderParams);
-            Push.ChunksAddr        = State.ChunkInfoBuffer.Gpu;
-            Push.MeshletsAddr      = State.MeshletInfoBuffer.Gpu;
-            Push.VisibleAddr       = State.VisibleMeshletBuffer.Gpu;
+            Push.Chunks            = { State.ChunkInfoBuffer, State.AllocatedChunkCount };
+            Push.Meshlets          = { State.MeshletInfoBuffer, State.AllocatedMeshletCount };
+            Push.Visible           = { State.VisibleMeshletBuffer, State.AllocatedMeshletCount };
             Push.HeightmapIndex    = (uint32)State.HeightmapTexture.GetResourceID();
             Push.NormalIndex       = (uint32)State.NormalTexture.GetResourceID();
             Push.LayerWeightsIndex = (uint32)State.LayerWeightTexture.GetResourceID();
@@ -9474,9 +9455,9 @@ namespace Lumina
 
             FTerrainPushConstants Push{};
             Push.ParamsAddr        = RHI::CopyTransient(RenderParams);
-            Push.ChunksAddr        = State.ChunkInfoBuffer.Gpu;
-            Push.MeshletsAddr      = State.MeshletInfoBuffer.Gpu;
-            Push.VisibleAddr       = State.VisibleMeshletBuffer.Gpu;
+            Push.Chunks            = { State.ChunkInfoBuffer, State.AllocatedChunkCount };
+            Push.Meshlets          = { State.MeshletInfoBuffer, State.AllocatedMeshletCount };
+            Push.Visible           = { State.VisibleMeshletBuffer, State.AllocatedMeshletCount };
             Push.HeightmapIndex    = (uint32)State.HeightmapTexture.GetResourceID();
             Push.NormalIndex       = (uint32)State.NormalTexture.GetResourceID();
             Push.LayerWeightsIndex = (uint32)State.LayerWeightTexture.GetResourceID();
@@ -9967,15 +9948,15 @@ namespace Lumina
         DepthTested.DepthMode = RHI::EDepthFlags::Read;
         DepthTested.DepthTest = RHI::EOp::GreaterEqual;
 
-        const RHI::GPUPtr InstancesAddr = RHI::CopyTransientArray(Instances.data(), Instances.size()).Address;
+        const RHI::FGPURange InstancesRange = RHI::CopyTransientArray(Instances.data(), Instances.size());
 
         struct FSpritePushConstants
         {
-            uint64 InstancesAddr;
+            RHI::TGPUSpan<FGPUSprite> Instances;
             uint32 TextureIndex;
             uint32 Pad0;
         };
-        static_assert(sizeof(FSpritePushConstants) == 16, "FSpritePushConstants must match SpriteCommon.slang.");
+        static_assert(sizeof(FSpritePushConstants) == 24, "FSpritePushConstants must match SpriteCommon.slang.");
 
         bool bDepthStateSet  = false;
         bool bLastDepthTest  = false;
@@ -9999,7 +9980,7 @@ namespace Lumina
             }
 
             FSpritePushConstants PC = {};
-            PC.InstancesAddr = InstancesAddr;
+            PC.Instances = InstancesRange;
             PC.TextureIndex  = Batch.TextureIndex;
 
             RHI::CmdDraw(CL, MakeArgs(PC), 6, Batch.Count, 0, Batch.FirstInstance);
@@ -10078,11 +10059,11 @@ namespace Lumina
         DepthTested.DepthTest = RHI::EOp::GreaterEqual;
 
         // All glyphs across every batch share one transient array; batches index it via FirstInstance.
-        const RHI::GPUPtr GlyphsAddr = RHI::CopyTransientArray(Glyphs.data(), Glyphs.size()).Address;
+        const RHI::FGPURange GlyphsRange = RHI::CopyTransientArray(Glyphs.data(), Glyphs.size());
 
         struct FTextPushConstants
         {
-            uint64 GlyphsAddr;
+            RHI::TGPUSpan<FGPUGlyph> Glyphs;
             uint32 AtlasIndex;
             uint32 AtlasWidth;
             uint32 AtlasHeight;
@@ -10090,12 +10071,12 @@ namespace Lumina
             uint32 ScreenWidth;   // 0 for world text (only the debug screen-space pass uses these)
             uint32 ScreenHeight;
         };
-        static_assert(sizeof(FTextPushConstants) == 32, "FTextPushConstants must match TextCommon.slang.");
+        static_assert(sizeof(FTextPushConstants) == 40, "FTextPushConstants must match TextCommon.slang.");
 
         auto DrawBatch = [&](const FFrameData::FTextBatch& Batch)
         {
             FTextPushConstants PC = {};
-            PC.GlyphsAddr    = GlyphsAddr;
+            PC.Glyphs        = GlyphsRange;
             PC.AtlasIndex    = Batch.AtlasIndex;
             PC.AtlasWidth    = Batch.AtlasWidth;
             PC.AtlasHeight   = Batch.AtlasHeight;
@@ -10178,7 +10159,7 @@ namespace Lumina
 
         struct FTextPushConstants
         {
-            uint64 GlyphsAddr;
+            RHI::TGPUSpan<FGPUGlyph> Glyphs;
             uint32 AtlasIndex;
             uint32 AtlasWidth;
             uint32 AtlasHeight;
@@ -10186,14 +10167,14 @@ namespace Lumina
             uint32 ScreenWidth;
             uint32 ScreenHeight;
         };
-        static_assert(sizeof(FTextPushConstants) == 32, "FTextPushConstants must match TextCommon.slang.");
+        static_assert(sizeof(FTextPushConstants) == 40, "FTextPushConstants must match TextCommon.slang.");
 
         const FUIntVector4 PanelSize = Frame.SceneGlobalData.ScreenSize;
         const uint32   ScreenW   = PanelSize.x > 1u ? PanelSize.x : Output.GetSizeX();
         const uint32   ScreenH   = PanelSize.y > 1u ? PanelSize.y : Output.GetSizeY();
 
         FTextPushConstants PC = {};
-        PC.GlyphsAddr    = RHI::CopyTransientArray(Glyphs.data(), Glyphs.size()).Address;
+        PC.Glyphs        = RHI::CopyTransientArray(Glyphs.data(), Glyphs.size());
         PC.AtlasIndex    = Batch.AtlasIndex;
         PC.AtlasWidth    = Batch.AtlasWidth;
         PC.AtlasHeight   = Batch.AtlasHeight;
@@ -10624,17 +10605,17 @@ namespace Lumina
             uint32   ScatterUAV;          // bindless 3D UAV index of the scatter volume
 
             uint32   bSupersampleLocal;   // 1 = 4x supersample local light in-scatter per froxel
-            uint32   NumFogVolumes;
+            uint32   _PadNumFogVolumes;
             uint32   CloudShadowIndex;    // bindless 2D SRV, ~0u when no cloud shadow was built
             float    CloudShadowExtent;
 
             float    CloudShadowCenter[2];
             float    _Pad0[2];
 
-            uint64   FogVolumesAddr;      // FGPUFogVolume[NumFogVolumes], offset 64, 8-aligned
+            RHI::TGPUSpan<FGPUFogVolume> FogVolumes;   // offset 64, 8-aligned
         };
         static_assert(sizeof(FFroxelInjectPushConstants) <= 128, "Froxel inject PC must fit 128B");
-        static_assert(offsetof(FFroxelInjectPushConstants, FogVolumesAddr) % 8 == 0, "PC pointer must be 8-aligned");
+        static_assert(offsetof(FFroxelInjectPushConstants, FogVolumes) % 8 == 0, "PC pointer must be 8-aligned");
 
         struct FCloudShadowPushConstants
         {
@@ -10859,7 +10840,7 @@ namespace Lumina
         const auto& LightData       = Frame.Lighting.LightData;
         const auto& SceneGlobalData = Frame.SceneGlobalData;
 
-        const bool bSunVolumetric = LightData.NumLights > 0
+        const bool bSunVolumetric = LightData.Lights.Count > 0
             && EnumHasAnyFlags(Frame.Lighting.Lights[0].Flags, ELightFlags::Directional)
             && EnumHasAnyFlags(Frame.Lighting.Lights[0].Flags, ELightFlags::Volumetric);
 
@@ -10887,7 +10868,7 @@ namespace Lumina
         PC.FogRange             = FogRange;
         PC.bSunVolumetric       = bSunVolumetric ? 1u : 0u;
         PC.Time                 = SceneGlobalData.Time;
-        PC.NumFogVolumes        = NumVolumes;
+
         PC.CloudShadowIndex     = SceneGlobalData.FogCloudShadowIndex;
         PC.CloudShadowExtent    = SceneGlobalData.FogCloudShadowExtent;
         PC.CloudShadowCenter[0] = SceneGlobalData.FogCloudShadowCenter.x;
@@ -10899,7 +10880,7 @@ namespace Lumina
         }
         if (NumVolumes > 0)
         {
-            PC.FogVolumesAddr = RHI::CopyTransientArray(Frame.Volumetrics.FogVolumes.data(), NumVolumes).Address;
+            PC.FogVolumes = RHI::CopyTransientArray(Frame.Volumetrics.FogVolumes.data(), NumVolumes);
         }
 
         RHI::CmdDispatch(CL, MakeArgs(PC),
@@ -11078,14 +11059,14 @@ namespace Lumina
 
         struct FWaterPushConstants
         {
-            uint64 WatersAddr;
+            RHI::TGPUSpan<FGPUWater> Waters;
             uint32 SceneColorIndex;
             uint32 SceneDepthIndex;
         };
-        static_assert(sizeof(FWaterPushConstants) == 16, "FWaterPushConstants must match Includes/Water.slang.");
+        static_assert(sizeof(FWaterPushConstants) == 24, "FWaterPushConstants must match Includes/Water.slang.");
 
         FWaterPushConstants PC = {};
-        PC.WatersAddr      = RHI::CopyTransientArray(Waters.data(), Waters.size()).Address;
+        PC.Waters          = RHI::CopyTransientArray(Waters.data(), Waters.size());
         PC.SceneColorIndex = (uint32)SceneColor.GetResourceID();
         PC.SceneDepthIndex = (uint32)SceneDepth.GetResourceID();
 
@@ -11465,7 +11446,7 @@ namespace Lumina
 
     namespace
     {
-        struct FSimpleElementPassData { uint64 Vertices = 0; };
+        struct FSimpleElementPassData { RHI::TGPUSpan<FSimpleElementVertex> Vertices; };
     }
 
     void FDefaultSceneRenderer::BatchedLineDraw(RHI::FCmdListH CL)
@@ -11541,7 +11522,7 @@ namespace Lumina
             // Vertices live in the transient ring for this submission; the VS reads them by device address.
             const FSimpleElementPassData VertsPass
             {
-                RHI::CopyTransientArray(SimpleVertices.data(), SimpleVertices.size()).Address
+                RHI::CopyTransientArray(SimpleVertices.data(), SimpleVertices.size())
             };
             const RHI::GPUPtr Args = MakeArgs(VertsPass);
 
@@ -11580,7 +11561,8 @@ namespace Lumina
                     CurrentDepthMode = DepthMode;
                 }
 
-                const RHI::GPUPtr ImmediateArgs = MakeArgs(FSimpleElementPassData{ Range.Vertices });
+                const RHI::GPUPtr ImmediateArgs = MakeArgs(FSimpleElementPassData{
+                    RHI::TGPUSpan<FSimpleElementVertex>::FromAddress(Range.Vertices, Range.VertexCount) });
                 RHI::CmdDraw(CL, ImmediateArgs, Range.VertexCount, 1, 0, 0);
             }
         }
@@ -11672,7 +11654,7 @@ namespace Lumina
         OpaqueDepth.DepthMode = RHI::EDepthFlags::Read | RHI::EDepthFlags::Write;
         OpaqueDepth.DepthTest = RHI::EOp::Greater;
 
-        const FSimpleElementPassData VertsPass{ RHI::CopyTransientArray(SolidVertices.data(), SolidVertices.size()).Address };
+        const FSimpleElementPassData VertsPass{ RHI::CopyTransientArray(SolidVertices.data(), SolidVertices.size()) };
         const RHI::GPUPtr Args = MakeArgs(VertsPass);
 
         struct FModeGroup
@@ -11963,7 +11945,7 @@ namespace Lumina
     {
         struct FHistogramBuildPushConstants
         {
-            uint64       Histogram;
+            RHI::TGPUSpan<uint32> Histogram;
             uint32       HDRIndex;
             uint32       _Pad0;
 
@@ -11971,12 +11953,12 @@ namespace Lumina
             float        MinLogLum;
             float        InvLogLumRange;
         };
-        static_assert(sizeof(FHistogramBuildPushConstants) == 32,
+        static_assert(sizeof(FHistogramBuildPushConstants) == 40,
             "FHistogramBuildPushConstants must match LuminanceHistogram.slang::FPushConstants.");
 
         struct FHistogramAvgPushConstants
         {
-            uint64 Histogram;
+            RHI::TGPUSpan<uint32> Histogram;
             uint32 AdaptUAV;
             float  MinLogLum;
 
@@ -11988,7 +11970,7 @@ namespace Lumina
             float  AdaptationSpeed;
             float  _Pad;
         };
-        static_assert(sizeof(FHistogramAvgPushConstants) == 40,
+        static_assert(sizeof(FHistogramAvgPushConstants) == 48,
             "FHistogramAvgPushConstants must match LuminanceHistogramAverage.slang::FPushConstants.");
 
         // TILE_DIM in LuminanceHistogram.slang; its square must equal kLuminanceHistogramBins.
@@ -12116,7 +12098,7 @@ namespace Lumina
             : Math::Normalize(FVector3(0.3f, 0.8f, 0.4f));
 
         FVector3 SunColor = FVector3(1.0f);
-        if (LightData.bHasSun && LightData.NumLights > 0)
+        if (LightData.bHasSun && LightData.Lights.Count > 0)
         {
             const FLight&  Sun    = Frame.Lighting.Lights[0];
             const FVector4 Unpack = UnpackColor(Sun.Color);
@@ -12246,10 +12228,10 @@ namespace Lumina
             uint32      _Pad0;
             uint32      _Pad1;
 
-            RHI::GPUPtr PixelListAddr;
-            RHI::GPUPtr TotalAddr;
+            RHI::TGPUSpan<uint32> PixelList;
+            RHI::TGPUSpan<uint32> Total;
         } PC = {};
-        static_assert(sizeof(FSSRPushConstants) == 80, "FSSRPushConstants must match ScreenSpaceReflections.slang FSSRArgs.");
+        static_assert(sizeof(FSSRPushConstants) == 96, "FSSRPushConstants must match ScreenSpaceReflections.slang FSSRArgs.");
 
         PC.GBufferAIndex   = (uint32)GetNamedImage(ENamedImage::GBufferA).GetResourceID();
         PC.GBufferBIndex   = (uint32)GetNamedImage(ENamedImage::GBufferB).GetResourceID();
@@ -12265,8 +12247,8 @@ namespace Lumina
         PC.Thickness       = Math::Max(RS->SSRThickness, 0.01f);
         PC.Intensity       = Math::Clamp(RS->SSRIntensity, 0.0f, 1.0f);
         PC.RoughnessFade   = Math::Clamp(RS->SSRRoughnessFade, 0.0f, 1.0f);
-        PC.PixelListAddr   = GetMaterialPixelList().Gpu;
-        PC.TotalAddr       = Classify.Gpu + Layout.TotalOffset;
+        PC.PixelList = { GetMaterialPixelList(), Layout.PixelCapacity };
+        PC.Total     = RHI::TGPUSpan<uint32>::FromAddress(Classify.Gpu + Layout.TotalOffset, 1u);
 
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(SSRCS));
         RHI::CmdDispatchIndirect(CL, MakeArgs(PC), Classify.Skip(Layout.LightArgsOffset));
@@ -12373,7 +12355,7 @@ namespace Lumina
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(BuildCS));
 
         FHistogramBuildPushConstants BuildPC = {};
-        BuildPC.Histogram      = Histogram.Gpu;
+        BuildPC.Histogram      = { Histogram };
         BuildPC.HDRIndex       = (uint32)HDR.GetResourceID();
         BuildPC.HDRSize        = FUIntVector2(HDRWidth, HDRHght);
         BuildPC.MinLogLum      = MinLogLum;
@@ -12392,7 +12374,7 @@ namespace Lumina
         const float HighPercent = Math::Clamp(ActivePostProcess->AutoExposureHighPercent, LowPercent, 1.0f);
 
         FHistogramAvgPushConstants AvgPC = {};
-        AvgPC.Histogram       = Histogram.Gpu;
+        AvgPC.Histogram       = { Histogram };
         AvgPC.AdaptUAV        = (uint32)Adapted.GetMipUAVIndex(0);
         AvgPC.MinLogLum       = MinLogLum;
         AvgPC.LogLumRange     = LogLumRange;
@@ -13321,48 +13303,42 @@ namespace Lumina
 
             struct FCullInstancesPC
             {
-                uint32 NumRetained;
                 uint32 NumViews;
                 uint32 NumBatches;
                 uint32 bUseLODs;
-                uint32 MaxVisibleInstances;
-                uint32 NumSurfaceDescs;
                 uint32 SkinFrameTag;
-                uint32 PreSkinCapacity;
-                uint64 RetainedCullEntriesAddr;
-                uint64 RetainedTransformsAddr;
-                uint64 RetainedStaticAddr;
-                uint64 SurfaceDescsAddr;
-                uint64 OutInstancesAddr;
-                uint64 OutInstanceCountAddr;
-                uint64 OutInstanceViewRangesAddr;
-                uint64 OutBucketsAddr;
-                uint64 OutOverflowFlagAddr;
-                uint64 SkinnedFrameDataAddr;
-                uint64 OutPreSkinCursorAddr;
+                RHI::TGPUSpan<FInstanceCullEntry> RetainedCullEntries;
+                RHI::TGPUSpan<FTransform3x4>      RetainedTransforms;
+                RHI::TGPUSpan<FInstanceStatic>    RetainedStatic;
+                RHI::TGPUSpan<FSurfaceDescGPU>    SurfaceDescs;
+                RHI::TGPUSpan<FGPUInstance>       OutInstances;
+                RHI::TGPUSpan<uint32>             OutInstanceCount;
+                RHI::TGPUSpan<FUIntVector2>       OutInstanceViewRanges;
+                RHI::TGPUSpan<FRenderBucketGPU>   OutBuckets;
+                RHI::TGPUSpan<uint32>             OutOverflowFlag;
+                RHI::TGPUSpan<FSkinnedFrameData>  SkinnedFrameData;
+                RHI::TGPUSpan<FPreSkinnedVertex>  PreSkinArena;
+                RHI::TGPUSpan<uint32>             OutPreSkinCursor;
             };
-            static_assert(sizeof(FCullInstancesPC) == 120, "FCullInstancesPC must match CullInstances.slang.");
+            static_assert(sizeof(FCullInstancesPC) == 208, "FCullInstancesPC must match CullInstances.slang.");
 
             FCullInstancesPC PC = {};
-            PC.NumRetained              = RetainedSlots;
-            PC.NumViews                 = NumCullViews;
-            PC.NumBatches               = NumBatches;
-            PC.bUseLODs                 = FrameSettings.bUseLODs ? 1u : 0u;
-            PC.MaxVisibleInstances      = VisibleCapacity;
-            PC.NumSurfaceDescs          = UploadedSurfaceDescs;
-            PC.SkinFrameTag             = CurrentSkinnedFrameTag;
-            PC.PreSkinCapacity          = PreSkinnedVertexCapacity;
-            PC.RetainedCullEntriesAddr  = RetainedCullEntryBuffer.Gpu;
-            PC.RetainedTransformsAddr   = RetainedTransformBuffer.Gpu;
-            PC.RetainedStaticAddr       = RetainedStaticBuffer.Gpu;
-            PC.SurfaceDescsAddr         = SurfaceDescBuffer.Gpu;
-            PC.OutInstancesAddr         = VisibleInstanceRing[Slot].Gpu;
-            PC.OutInstanceCountAddr     = GetCullCounters().Gpu;
-            PC.OutInstanceViewRangesAddr = GetInstanceViewRanges().Gpu;
-            PC.OutBucketsAddr           = GetRenderBuckets().Gpu;
-            PC.OutOverflowFlagAddr      = GetCullCounters().Gpu + sizeof(uint32);
-            PC.SkinnedFrameDataAddr     = SkinnedFrameDataBuffer.Gpu;
-            PC.OutPreSkinCursorAddr     = GetCullCounters().Gpu + sizeof(uint32) * 2;
+            PC.NumViews               = NumCullViews;
+            PC.NumBatches             = NumBatches;
+            PC.bUseLODs               = FrameSettings.bUseLODs ? 1u : 0u;
+            PC.SkinFrameTag           = CurrentSkinnedFrameTag;
+            PC.RetainedCullEntries    = { RetainedCullEntryBuffer, RetainedSlots };
+            PC.RetainedTransforms     = { RetainedTransformBuffer, RetainedSlots };
+            PC.RetainedStatic         = { RetainedStaticBuffer, RetainedSlots };
+            PC.SurfaceDescs           = { SurfaceDescBuffer, UploadedSurfaceDescs };
+            PC.OutInstances           = { VisibleInstanceRing[Slot], VisibleCapacity };
+            PC.OutInstanceCount       = RHI::TGPUSpan<uint32>::FromAddress(GetCullCounters().Gpu, 1u);
+            PC.OutInstanceViewRanges  = { GetInstanceViewRanges() };
+            PC.OutBuckets             = { GetRenderBuckets(), NumCullViews * NumBatches };
+            PC.OutOverflowFlag        = RHI::TGPUSpan<uint32>::FromAddress(GetCullCounters().Gpu + sizeof(uint32), 1u);
+            PC.SkinnedFrameData       = { SkinnedFrameDataBuffer };
+            PC.PreSkinArena           = { GetPreSkinnedVerticesBuffer(), PreSkinnedVertexCapacity };
+            PC.OutPreSkinCursor       = RHI::TGPUSpan<uint32>::FromAddress(GetCullCounters().Gpu + sizeof(uint32) * 2, 1u);
 
             // Blades are appended into the retained block here, between its upload and the cull that
             // reads it, so grass is just more instances by the time anything downstream looks.
@@ -13385,28 +13361,28 @@ namespace Lumina
             {
                 uint32 NumViews;
                 uint32 NumDraws;
-                uint32 MaxVisibleInstances;
-                uint32 DrawListCapacityArg;
-                uint32 BlockListCapacityArg;
-                uint32 PreSkinCapacityArg;
-                uint64 BucketsAddr;
-                uint64 InstanceCountAddr;
-                uint64 OutTotalsAddr;
-                uint64 OutBlockDispatchArgsAddr;
+                RHI::TGPUSpan<FUIntVector2>      DrawList;
+                RHI::TGPUSpan<FUIntVector2>      BlockList;
+                RHI::TGPUSpan<FPreSkinnedVertex> PreSkinArena;
+                RHI::TGPUSpan<FGPUInstance>      VisibleInstances;
+                RHI::TGPUSpan<FRenderBucketGPU>  Buckets;
+                RHI::TGPUSpan<uint32>            InstanceCount;
+                RHI::TGPUSpan<uint32>            OutTotals;
+                RHI::TGPUSpan<RHI::FDispatchIndirectArguments> OutBlockDispatchArgs;
             };
-            static_assert(sizeof(FBuildDrawPrefixPC) == 56, "FBuildDrawPrefixPC must match BuildDrawPrefix.slang.");
+            static_assert(sizeof(FBuildDrawPrefixPC) == 136, "FBuildDrawPrefixPC must match BuildDrawPrefix.slang.");
 
             FBuildDrawPrefixPC PC = {};
-            PC.NumViews                 = SeedViews;
-            PC.NumDraws                 = NumBatches;
-            PC.MaxVisibleInstances      = VisibleCapacity;
-            PC.DrawListCapacityArg      = DrawListCapacity;
-            PC.BlockListCapacityArg     = BlockListCapacity;
-            PC.PreSkinCapacityArg       = PreSkinnedVertexCapacity;
-            PC.BucketsAddr              = GetRenderBuckets().Gpu;
-            PC.InstanceCountAddr        = GetCullCounters().Gpu;
-            PC.OutTotalsAddr            = GetTotals().Gpu;
-            PC.OutBlockDispatchArgsAddr = GetBlockDispatchArgs().Gpu;
+            PC.NumViews             = SeedViews;
+            PC.NumDraws             = NumBatches;
+            PC.DrawList             = { GetMeshletDrawList(), DrawListCapacity };
+            PC.BlockList            = { GetMeshletBlocks(), BlockListCapacity };
+            PC.PreSkinArena         = { GetPreSkinnedVerticesBuffer(), PreSkinnedVertexCapacity };
+            PC.VisibleInstances     = { VisibleInstanceRing[Slot], VisibleCapacity };
+            PC.Buckets              = { GetRenderBuckets() };
+            PC.InstanceCount        = RHI::TGPUSpan<uint32>::FromAddress(GetCullCounters().Gpu, 4u);
+            PC.OutTotals            = { GetTotals(), kTotalsSlots };
+            PC.OutBlockDispatchArgs = { GetBlockDispatchArgs() };
 
             RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(DrawPrefixShader));
             RHI::CmdDispatch(CL, MakeArgs(PC), 1u, 1u, 1u);
@@ -13427,22 +13403,21 @@ namespace Lumina
                 {
                     uint32 NumViews;
                     uint32 NumBatches;
-                    uint32 MaxVisibleInstances;
-                    uint32 _Pad0;
-                    uint64 InstanceCountAddr;
-                    uint64 InstanceViewRangesAddr;
-                    uint64 BucketsAddr;
-                    uint64 OutBlockListAddr;
+                    RHI::TGPUSpan<uint32>           InstanceCount;
+                    RHI::TGPUSpan<FGPUInstance>     VisibleInstances;
+                    RHI::TGPUSpan<FUIntVector2>     InstanceViewRanges;
+                    RHI::TGPUSpan<FRenderBucketGPU> Buckets;
+                    RHI::TGPUSpan<FUIntVector2>     OutBlockList;
                 } BPC = {};
-                static_assert(sizeof(FBuildMeshletBlocksPC) == 48, "FBuildMeshletBlocksPC must match BuildMeshletBlocks.slang.");
+                static_assert(sizeof(FBuildMeshletBlocksPC) == 88, "FBuildMeshletBlocksPC must match BuildMeshletBlocks.slang.");
 
-                BPC.NumViews             = NumCullViews;
-                BPC.NumBatches           = NumBatches;
-                BPC.MaxVisibleInstances  = VisibleCapacity;
-                BPC.InstanceCountAddr    = GetCullCounters().Gpu;
-                BPC.InstanceViewRangesAddr = GetInstanceViewRanges().Gpu;
-                BPC.BucketsAddr          = GetRenderBuckets().Gpu;
-                BPC.OutBlockListAddr     = GetMeshletBlocks().Gpu;
+                BPC.NumViews           = NumCullViews;
+                BPC.NumBatches         = NumBatches;
+                BPC.InstanceCount      = RHI::TGPUSpan<uint32>::FromAddress(GetCullCounters().Gpu, 4u);
+                BPC.VisibleInstances   = { VisibleInstanceRing[Slot], VisibleCapacity };
+                BPC.InstanceViewRanges = { GetInstanceViewRanges() };
+                BPC.Buckets            = { GetRenderBuckets() };
+                BPC.OutBlockList       = { GetMeshletBlocks(), BlockListCapacity };
 
                 RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(BlocksShader));
 
@@ -14205,7 +14180,7 @@ namespace Lumina
         FSceneRoot* Root = static_cast<FSceneRoot*>(Alloc.Cpu);
 
         *Root = SceneRootShared;
-        Root->Clusters           = View.ClusterBuffer.Gpu;
+        Root->Clusters           = { View.ClusterBuffer };
         Root->BRDFLutIndex       = (uint32)View.Images[(int)ENamedImage::BRDFLut].GetResourceID();
         Root->SkyIrradianceIndex = (uint32)View.Images[(int)ENamedImage::SkyIrradiance].GetResourceID();
         {
@@ -14217,24 +14192,24 @@ namespace Lumina
         Root->ShadowCascadeIndex = (uint32)GetNamedImage(ENamedImage::Cascade).GetResourceID();
         Root->ShadowAtlasIndex   = (uint32)ShadowAtlas.GetImage().GetResourceID();
 
-        Root->Splines       = SplineBufferAddr;
-        Root->SplinePoints  = SplinePointBufferAddr;
-        Root->SplineSamples = SplineSampleBufferAddr;
-        Root->NumSplines    = NumActiveSplines;
+        Root->Splines       = SplineBufferSpan;
+        Root->SplinePoints  = SplinePointBufferSpan;
+        Root->SplineSamples = SplineSampleBufferSpan;
 
         // Re-read every frame, since the slab moves when it grows and only the root holds its address.
-        Root->MeshletHeaders = MeshletHeaderSlab::GetAddress();
+        Root->MeshletHeaders = RHI::TGPUSpan<FMeshletHeaderGPU>::FromAddress(MeshletHeaderSlab::GetAddress(),
+                                                                            MeshletHeaderSlab::GetCapacity());
 
         // Only the primary view reports, or a probe bake would drive residency for a 64px cube face.
-        const bool bWantsFeedback = View.bIsPrimary && !bCapturingProbe && StreamingFeedbackBuffer;
-        Root->StreamingFeedback      = bWantsFeedback ? StreamingFeedbackBuffer.Gpu : 0;
-        Root->StreamingFeedbackCount = bWantsFeedback ? StreamingFeedbackSlots : 0;
+        const bool bWantsFeedback = View.bIsPrimary && !bCapturingProbe;
+        Root->StreamingFeedback = bWantsFeedback
+            ? RHI::TGPUSpan<uint32>{ StreamingFeedbackBuffer, StreamingFeedbackSlots }
+            : RHI::TGPUSpan<uint32>{};
 
         const FSceneImage& ProbeArray = NamedImages[(int)ENamedImage::ProbePrefiltered];
         if (!bCapturingProbe && NumActiveProbes > 0 && ProbeArray.IsValid())
         {
-            Root->ReflectionProbes    = ProbeBufferAddr;
-            Root->NumReflectionProbes = NumActiveProbes;
+            Root->ReflectionProbes    = ProbeBufferSpan;
             Root->ProbeCubeArrayIndex = ((uint32)ProbeArray.GetResourceID() & 0x00FFFFFFu) | (ProbeArray.GetNumMips() << 24);
         }
         return Alloc.Gpu;
@@ -14271,20 +14246,20 @@ namespace Lumina
             uint32 SubDrawsPerSlice;
             uint32 _Pad0;
             uint32 _Pad1;
-            uint64 BucketsAddr;
-            uint64 OutCullDispatchArgsAddr;
-            uint64 OutMeshDrawArgsAddr;
+            RHI::TGPUSpan<FRenderBucketGPU> Buckets;
+            RHI::TGPUSpan<RHI::FDispatchIndirectArguments> OutCullDispatchArgs;
+            RHI::TGPUSpan<RHI::FDrawMeshTasksIndirectArguments> OutMeshDrawArgs;
         } APC = {};
-        static_assert(sizeof(FCullArgsPC) == 56, "FCullArgsPC must match BuildMeshletCullArgs.slang.");
+        static_assert(sizeof(FCullArgsPC) == 80, "FCullArgsPC must match BuildMeshletCullArgs.slang.");
 
         APC.NumViews                = NumViews;
         APC.NumDraws                = NumDraws;
         APC.Slice                   = (uint32)Slice;
         APC.MaxMeshGroups           = Math::Max(RHI::GetMaxMeshWorkGroupCount(), 1u);
         APC.SubDrawsPerSlice        = MeshSubDrawsPerSlice;
-        APC.BucketsAddr             = GetRenderBuckets().Gpu;
-        APC.OutCullDispatchArgsAddr = GetMeshletCullDispatchArgs().Gpu;
-        APC.OutMeshDrawArgsAddr     = GetMeshDrawArgs().Gpu;
+        APC.Buckets             = { GetRenderBuckets() };
+        APC.OutCullDispatchArgs = { GetMeshletCullDispatchArgs() };
+        APC.OutMeshDrawArgs     = { GetMeshDrawArgs() };
 
         // Serial prefix, so one group; the post pass below is per-bucket and takes a real grid.
         constexpr uint32 kArgsGroupSize = 64;
@@ -14301,22 +14276,21 @@ namespace Lumina
             uint32 NumViews;
             uint32 NumDraws;
             uint32 Slice;
-            uint32 VisibilityCapacity;
-            uint64 BucketsAddr;
-            uint64 BlockListAddr;
-            uint64 PrevVisibilityAddr;
-            uint64 OutVisibilityAddr;
+            uint32 _Pad0;
+            RHI::TGPUSpan<FRenderBucketGPU> Buckets;
+            RHI::TGPUSpan<FUIntVector2>     BlockList;
+            RHI::TGPUSpan<uint32>           PrevVisibility;
+            RHI::TGPUSpan<uint32>           OutVisibility;
         } CPC = {};
-        static_assert(sizeof(FMeshletCullPC) == 48, "FMeshletCullPC must match MeshletCull.slang.");
+        static_assert(sizeof(FMeshletCullPC) == 80, "FMeshletCullPC must match MeshletCull.slang.");
 
-        CPC.NumViews      = NumViews;
-        CPC.NumDraws      = NumDraws;
-        CPC.Slice         = (uint32)Slice;
-        CPC.VisibilityCapacity  = InstanceVisibilityCapacity;
-        CPC.BucketsAddr         = GetRenderBuckets().Gpu;
-        CPC.BlockListAddr       = GetMeshletBlocks().Gpu;
-        CPC.PrevVisibilityAddr  = GetInstanceVisibilityPrev().Gpu;
-        CPC.OutVisibilityAddr   = GetInstanceVisibilityWrite().Gpu;
+        CPC.NumViews       = NumViews;
+        CPC.NumDraws       = NumDraws;
+        CPC.Slice          = (uint32)Slice;
+        CPC.Buckets        = { GetRenderBuckets() };
+        CPC.BlockList      = { GetMeshletBlocks() };
+        CPC.PrevVisibility = { GetInstanceVisibilityPrev(), InstanceVisibilityCapacity };
+        CPC.OutVisibility  = { GetInstanceVisibilityWrite(), InstanceVisibilityCapacity };
 
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CullShader));
         RHI::CmdDispatchIndirect(CL, MakeArgs(CPC), GetMeshletCullDispatchArgs());
@@ -14341,7 +14315,7 @@ namespace Lumina
 
         struct FMeshletPassPush
         {
-            uint64 BucketsAddr;
+            RHI::TGPUSpan<FRenderBucketGPU> Buckets;
             uint32 ArgBase;
             uint32 Slice;
             uint32 MaxMeshGroups;
@@ -14351,9 +14325,9 @@ namespace Lumina
             float  ViewportW;
             float  ViewportH;
         } Push;
-        static_assert(sizeof(FMeshletPassPush) == 40, "FMeshletPassPush must match FMeshletPassArgs in MeshletGeometry.slang.");
+        static_assert(sizeof(FMeshletPassPush) == 48, "FMeshletPassPush must match FMeshletPassArgs in MeshletGeometry.slang.");
 
-        Push.BucketsAddr          = GetRenderBuckets().Gpu;
+        Push.Buckets              = { GetRenderBuckets() };
         Push.ArgBase              = ArgIndex;
         Push.Slice                = Slice;
         Push.MaxMeshGroups        = Math::Max(RHI::GetMaxMeshWorkGroupCount(), 1u);

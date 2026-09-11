@@ -17,7 +17,7 @@ struct VSOutput
 [shader("vertex")]
 VSOutput VertexMain(uint VertexID : SV_VulkanVertexID, uint DecalIndex : SV_VulkanInstanceID)
 {
-    FGPUDecal Decal = Pass().Decals[DecalIndex];
+    FGPUDecal Decal = SpanGet(&Pass().Decals, DecalIndex);
 
     float3 LocalPos = kDecalCubeVerts[VertexID];
     float4 WorldPos = mul(Decal.DecalToWorld, float4(LocalPos, 1.0));

@@ -85,7 +85,7 @@ FProbeSample SampleReflectionProbes(float3 WorldPos, float3 WorldR, float Roughn
     uint Packed    = GetSceneRoot().ProbeCubeArrayIndex;
     uint ArraySRV  = Packed & 0x00FFFFFFu;
     uint NumMips   = Packed >> 24;
-    uint NumProbes = GetSceneRoot().NumReflectionProbes;
+    uint NumProbes = ReflectionProbes().Count;
 
     if (NumProbes == 0 || NumMips == 0)
     {
@@ -100,7 +100,7 @@ FProbeSample SampleReflectionProbes(float3 WorldPos, float3 WorldR, float Roughn
 
     for (uint i = 0; i < NumProbes && Considered < kMaxProbesPerPixel; ++i)
     {
-        FGPUReflectionProbe Probe = loadAligned<16>(GetSceneRoot().ReflectionProbesPtr + i);
+        FGPUReflectionProbe Probe = SpanGetAligned(ReflectionProbes(), i);
         if (!Probe.IsBaked)
         {
             continue;
@@ -171,7 +171,7 @@ FProbeDebugInfo DebugReflectionProbes(float3 WorldPos)
     Info.NumAffecting  = 0;
     Info.Status        = kProbeStatusCovered;
 
-    uint NumProbes = GetSceneRoot().NumReflectionProbes;
+    uint NumProbes = ReflectionProbes().Count;
     uint NumMips   = GetSceneRoot().ProbeCubeArrayIndex >> 24;
     if (NumProbes == 0)
     {
@@ -191,7 +191,7 @@ FProbeDebugInfo DebugReflectionProbes(float3 WorldPos)
 
     for (uint i = 0; i < NumProbes && Considered < kMaxProbesPerPixel; ++i)
     {
-        FGPUReflectionProbe Probe = loadAligned<16>(GetSceneRoot().ReflectionProbesPtr + i);
+        FGPUReflectionProbe Probe = SpanGetAligned(ReflectionProbes(), i);
         if (!Probe.IsBaked)
         {
             continue;

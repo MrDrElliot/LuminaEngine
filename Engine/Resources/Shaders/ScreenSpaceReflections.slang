@@ -29,8 +29,8 @@ struct FSSRArgs
     uint  _Pad0;
     uint  _Pad1;
 
-    uint* PixelList;
-    uint* Total;
+    GPUSpan<uint> PixelList;
+    GPUSpan<uint> Total;
 };
 FSSRArgs* Pass() { return GetPassArgs<FSSRArgs>(); }
 
@@ -56,12 +56,12 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
 {
     const uint LinearGroup = GroupID.y * MAX_DISPATCH_AXIS + GroupID.x;
     const uint Index       = LinearGroup * MATERIAL_PIXEL_GROUP_SIZE + Lane;
-    if (Index >= Pass().Total[0])
+    if (Index >= SpanGet(&Pass().Total, 0u))
     {
         return;
     }
 
-    const uint2 Texel = UnpackVisPixel(Pass().PixelList[Index]);
+    const uint2 Texel = UnpackVisPixel(SpanGet(&Pass().PixelList, Index));
 
     FGBufferTargets Targets;
     Targets.A = Pass().GBufferAIndex;

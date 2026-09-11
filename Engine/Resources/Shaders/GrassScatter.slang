@@ -16,10 +16,12 @@
 // rather than needing a geometry pass of its own.
 struct FGrassScatterPushConstants
 {
-    FInstanceCullEntry* OutCullEntries;
-    FTransform3x4*      OutTransforms;
-    FInstanceStatic*    OutStatic;
-    uint*               OutCursor;      // blades appended so far in this species' block
+    // Sliced to this species' reserved block, so an index here is block-local and the span's own count
+    // IS the capacity. Nothing in this shader can name a slot outside the block any more.
+    GPUSpan<FInstanceCullEntry> OutCullEntries;
+    GPUSpan<FTransform3x4>      OutTransforms;
+    GPUSpan<FInstanceStatic>    OutStatic;
+    GPUSpan<uint>               OutCursor;      // blades appended so far in this species' block
 
     uint HeightmapIndex;        // bindless 2D
     uint NormalIndex;           // bindless 2D
@@ -41,10 +43,10 @@ struct FGrassScatterPushConstants
     uint   Seed;
 
     uint   GridSide;            // candidates per axis
-    uint   MaxInstances;        // slots the CPU reserved for this species
+    uint   _PadMaxInstances;
 
     // Constant for the whole species: one mesh, one material, so the CPU interns these once.
-    uint   InstanceSlotBase;
+    uint   _PadInstanceSlotBase;
     uint   DrawIDAndFlags;
     uint   SurfaceDescIndex;
     uint   MeshletHeaderSlot;
@@ -173,16 +175,14 @@ void main(uint3 Tid : SV_DispatchThreadID)
         TiltQuat.w * YawQuat.xyz + YawQuat.w * TiltQuat.xyz + cross(TiltQuat.xyz, YawQuat.xyz),
         TiltQuat.w * YawQuat.w - dot(TiltQuat.xyz, YawQuat.xyz));
 
-    uint Local2;
-    InterlockedAdd(P->OutCursor[0], 1u, Local2);
-    if (Local2 >= P->MaxInstances)
+    uint Slot;
+    InterlockedAdd(SpanAt(&P->OutCursor, 0u)[0], 1u, Slot);
+    if (!SpanContains(&P->OutCullEntries, Slot))
     {
         // Over budget: hold the cursor at capacity so nothing writes past the reserved block.
-        InterlockedMin(P->OutCursor[0], P->MaxInstances);
+        InterlockedMin(SpanAt(&P->OutCursor, 0u)[0], P->OutCullEntries.Count);
         return;
     }
-
-    const uint Slot = P->InstanceSlotBase + Local2;
 
     // Rotation matrix from the quaternion, scaled. Written as the 3x4 the cull and raster already read.
     const float3 C0 = RotateByQuat(Q, float3(Scale, 0.0, 0.0));
@@ -193,7 +193,7 @@ void main(uint3 Tid : SV_DispatchThreadID)
     Xf.Row0 = float4(C0.x, C1.x, C2.x, Position.x);
     Xf.Row1 = float4(C0.y, C1.y, C2.y, Position.y);
     Xf.Row2 = float4(C0.z, C1.z, C2.z, Position.z);
-    P->OutTransforms[Slot] = Xf;
+    SpanSet(&P->OutTransforms, Slot, Xf);
 
     FInstanceCullEntry Cull;
     Cull.SphereBounds     = float4(Position, P->MeshBoundsRadius * Scale);
@@ -202,7 +202,7 @@ void main(uint3 Tid : SV_DispatchThreadID)
     Cull.SurfaceDescIndex = P->SurfaceDescIndex;
     Cull.MaxDrawDistance  = P->MaxDrawDistance;
     Cull.ForcedLODIndex   = -1;
-    P->OutCullEntries[Slot] = Cull;
+    SpanSet(&P->OutCullEntries, Slot, Cull);
 
     FInstanceStatic Static;
     Static.MeshletHeaderSlot       = P->MeshletHeaderSlot;
@@ -213,5 +213,5 @@ void main(uint3 Tid : SV_DispatchThreadID)
     Static.SkinnedVertexBase       = kNoPreSkinBase;
     Static.ShadowSkinnedVertexBase = kNoPreSkinBase;
     Static._Pad0                   = 0u;
-    P->OutStatic[Slot] = Static;
+    SpanSet(&P->OutStatic, Slot, Static);
 }

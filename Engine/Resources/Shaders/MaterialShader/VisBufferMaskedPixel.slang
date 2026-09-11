@@ -41,7 +41,7 @@ bool MaskedVisKeep(FBaseVertexOutput Input)
     // dithered edge holds still instead of crawling as the camera moves.
     const float3 ClipAnchor = mul(GetInverseCameraView(), float4(Input.FragPos.xyz, 1.0)).xyz;
     const float  ClipCutoff = HashedAlphaThreshold(ClipAnchor, length(Input.FragPos.xyz),
-                                                   Materials()[MaterialIndex].OpacityClipValue);
+                                                   SpanGet(Materials(), MaterialIndex).OpacityClipValue);
     return Material.Opacity >= ClipCutoff;
 }
 

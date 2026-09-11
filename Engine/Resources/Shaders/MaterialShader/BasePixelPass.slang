@@ -131,7 +131,7 @@ PSOutput FragmentMain(FBaseVertexOutput Input)
 
     // Coverage-weighted since the rest of the pixel was fogged already, and additive takes attenuation alone.
     float4 FogTerm   = Fog_EvaluateForTranslucent(Input.FragPos.xyz, Input.Position.xy);
-    bool   bAdditive = (Materials()[MaterialIndex].Flags & MatFlag_Additive) != 0u;
+    bool   bAdditive = (SpanGet(Materials(), MaterialIndex).Flags & MatFlag_Additive) != 0u;
     Premultiplied    = Premultiplied * FogTerm.a + (bAdditive ? float3(0.0) : FogTerm.rgb * Coverage);
 
     float3 Weighted      = min(Premultiplied * Transmittance, 1024.0);

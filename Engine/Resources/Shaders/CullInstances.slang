@@ -9,44 +9,41 @@
 
 struct FCullInstancesArgs
 {
-    uint  NumRetained;        // slots in the retained array (dense; free slots carry bActive = 0)
     uint  NumViews;
     uint  NumBatches;
     uint  bUseLODs;
-
-    uint  MaxVisibleInstances;
-    uint  NumSurfaceDescs;
     // Monotonic per rendered frame. A skinned slot whose side data does not carry this was not gathered, so
     // its ranges belong to some earlier frame and it must not be emitted.
     uint  SkinFrameTag;
-    // Elements the pre-skinned vertex buffer holds. The claim below clamps against it; anything past it
-    // gets kNoPreSkinBase and the draw path skins that block inline instead.
-    uint  PreSkinCapacity;
 
     // Split by ACCESS RATE: every lane streams CullEntries, the other two are read only by survivors.
-    FInstanceCullEntry* RetainedCullEntries;
-    FTransform3x4*      RetainedTransforms;
-    FInstanceStatic*    RetainedStatic;
-    FSurfaceDesc*       SurfaceDescs;
+    // The retained slot count is this span's own Count; the arrays are parallel and equally long.
+    GPUSpan<FInstanceCullEntry> RetainedCullEntries;
+    GPUSpan<FTransform3x4>      RetainedTransforms;
+    GPUSpan<FInstanceStatic>    RetainedStatic;
+    GPUSpan<FSurfaceDesc>       SurfaceDescs;
 
-    FGPUInstance*      OutInstances;
-    uint*              OutInstanceCount;
+    GPUSpan<FGPUInstance>      OutInstances;
+    GPUSpan<uint>              OutInstanceCount;
     // (base, count) per (visible instance, view), indexed OutSlot * NumViews + v -- exactly the flat
     // domain BuildMeshletBlocks dispatches over. The single source of the per-view meshlet range.
-    uint2*             OutInstanceViewRanges;
+    GPUSpan<uint2>             OutInstanceViewRanges;
     // NumViews * NumBatches entries. This pass only accumulates the two capacities, which are the exact
     // upper bound on what each pair can emit and the same work counted in cull blocks; BuildDrawPrefix
     // turns them into the layout and owns every other field.
-    FRenderBucket*     OutBuckets;
-    uint*              OutOverflowFlag;
+    GPUSpan<FRenderBucket>     OutBuckets;
+    GPUSpan<uint>              OutOverflowFlag;
     // Per-frame half of a SKINNED slot's payload: the LOD ranges the CPU resolved and the pre-skin slices it
     // assigned against them. Indexed by RETAINED slot, so it is readable here, before compaction exists.
-    FSkinnedFrameData* SkinnedFrameData;
+    GPUSpan<FSkinnedFrameData> SkinnedFrameData;
+    // The pre-skin arena this pass claims slices of. Only its Count is read here -- Skinning.slang owns the
+    // writes -- but it arrives as the span so the capacity comes from the allocation, not from a number.
+    GPUSpan<FPreSkinnedVertex> PreSkinArena;
     // Global pre-skin vertex cursor. Claimed here, beside the LOD pick that decides which vertices a block
     // even has, so the two cannot disagree -- they used to be a CPU allocation and a GPU pick held in step
     // only by a comment. Runs past capacity by design: what it ends at is DEMAND, which is what the CPU
     // grows the buffer from.
-    uint*              OutPreSkinCursor;
+    GPUSpan<uint>              OutPreSkinCursor;
 };
 FCullInstancesArgs* Pass() { return GetPassArgs<FCullInstancesArgs>(); }
 
@@ -75,12 +72,6 @@ uint ClaimPreSkinSlice(FMeshletHeader* Header, uint MeshletOffset, uint MeshletC
         return kNoPreSkinBase;
     }
 
-    // Same gate TestMeshletAgainstView needs: a count over a null array has been seen in a GPU dump.
-    if (Header.Meshlets == nullptr)
-    {
-        return kNoPreSkinBase;
-    }
-
     const uint FirstVertex = Header.Meshlets[MeshletOffset].VertexOffset;
     const FMeshlet Last    = loadAligned<16>(Header.Meshlets + (MeshletOffset + MeshletCount - 1u));
     const uint EndVertex   = Last.VertexOffset + Last.VertexCount;
@@ -90,7 +81,7 @@ uint ClaimPreSkinSlice(FMeshletHeader* Header, uint MeshletOffset, uint MeshletC
         return kNoPreSkinBase;
     }
 
-    const uint Slot = AppendReserve(Pass().OutPreSkinCursor, Pass().PreSkinCapacity, /*Base*/ 0u,
+    const uint Slot = AppendReserve(&Pass().OutPreSkinCursor, &Pass().PreSkinArena, /*Base*/ 0u,
                                     EndVertex - FirstVertex);
     if (Slot == kAppendFull)
     {
@@ -107,13 +98,13 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
 {
     // Undoes the Y fold the dispatch applies past MAX_DISPATCH_AXIS groups.
     const uint SlotIdx = GlobalID.x + GroupID.y * MAX_DISPATCH_AXIS * LOCAL_SIZE_X;
-    if (SlotIdx >= Pass().NumRetained)
+    if (!SpanContains(&Pass().RetainedCullEntries, SlotIdx))
     {
         return;
     }
 
     // The only load on the reject path: 32 bytes, two slots per cache line.
-    FInstanceCullEntry Cull = Pass().RetainedCullEntries[SlotIdx];
+    FInstanceCullEntry Cull = SpanGet(&Pass().RetainedCullEntries, SlotIdx);
 
     if (!Cull.HasFlag(EInstanceFlags::Active))
     {
@@ -130,14 +121,14 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     FSkinnedFrameData Skin = (FSkinnedFrameData)0;
     if (bSkinned)
     {
-        if (Pass().SkinnedFrameData == nullptr)
+        if (!SpanContains(&Pass().SkinnedFrameData, SlotIdx))
         {
             return;
         }
 
         // The array is never cleared, so the tag is what distinguishes "gathered this frame" from a slot
         // still holding a previous frame's ranges. An entity the CPU gather culled is simply not emitted.
-        Skin = Pass().SkinnedFrameData[SlotIdx];
+        Skin = SpanGet(&Pass().SkinnedFrameData, SlotIdx);
         if (!Skin.IsFromFrame(Pass().SkinFrameTag))
         {
             return;
@@ -164,12 +155,12 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
 
     // Past the table this reads whatever follows the allocation, and those counts become the block
     // counts BuildMeshletBlocks appends against: an unbounded append, not a visual artifact.
-    if (Cull.SurfaceDescIndex >= Pass().NumSurfaceDescs)
+    if (!SpanContains(&Pass().SurfaceDescs, Cull.SurfaceDescIndex))
     {
         return;
     }
 
-    FSurfaceDesc Desc = Pass().SurfaceDescs[Cull.SurfaceDescIndex];
+    FSurfaceDesc Desc = SpanGet(&Pass().SurfaceDescs, Cull.SurfaceDescIndex);
 
     // Bounds every LODMeshlet* index below, whatever else the table gets wrong.
     const uint NumLODs = min(Desc.NumLODs, (uint)MESHLET_MAX_LODS);
@@ -236,7 +227,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     // Needed before the compacted slot is claimed, because that slot is what indexes the range slab.
     for (uint v = 0; v < Pass().NumViews; ++v)
     {
-        if (IsInstanceVisibleToView(CullViews()[v], Center, Radius, bNoCull, bCaster, bShadowOnly))
+        if (IsInstanceVisibleToView(SpanGet(CullViews(), v), Center, Radius, bNoCull, bCaster, bShadowOnly))
         {
             bAnyView = true;
             break;
@@ -249,18 +240,18 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     }
 
     // Order is arbitrary: the draw list carries InstanceID explicitly.
-    const uint OutSlot = AppendReserve(Pass().OutInstanceCount, Pass().MaxVisibleInstances, /*Base*/ 0u);
+    const uint OutSlot = AppendReserve(&Pass().OutInstanceCount, &Pass().OutInstances, /*Base*/ 0u);
 
     if (OutSlot == kAppendFull)
     {
         // The CPU grows the buffer from the count it reads back, so this costs one frame rather than
         // a write past the allocation.
-        Pass().OutOverflowFlag[0] = 1u;
+        SpanSet(&Pass().OutOverflowFlag, 0u, 1u);
         return;
     }
 
     // REACHED, not copied: a local copy puts a PhysicalStorageBuffer pointer in an OpVariable carrying neither Aliased nor Restrict, which is an invalid module every driver accepts.
-    FInstanceStatic* Static = Pass().RetainedStatic + SlotIdx;
+    FInstanceStatic* Static = SpanAt(&Pass().RetainedStatic, SlotIdx);
 
     // Bounded by the header's own count: a run no mesh can back becomes BuildMeshletBlocks' trip count, which hangs the GPU.
     const uint MeshletTotal = min(LODMeshletTotal, Static.MeshletHeader.MeshletCount);
@@ -270,7 +261,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     // bucket room nobody uses, starve the next, and drop the newest mesh with no error anywhere.
     for (uint v = 0; v < Pass().NumViews; ++v)
     {
-        FCullView View = loadAligned<16>(CullViews() + v);
+        FCullView View = SpanGetAligned(CullViews(), v);
 
         uint2 Range   = uint2(0u, 0u);
         uint  Emitted = 0u;
@@ -312,7 +303,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
 
         if (Emitted > 0u)
         {
-            FRenderBucket* Bucket = Pass().OutBuckets + (v * Pass().NumBatches + DrawID);
+            FRenderBucket* Bucket = SpanAt(&Pass().OutBuckets, v * Pass().NumBatches + DrawID);
 
             // One reservation per emitted meshlet, however many passes rasterize the batch. MeshletCull
             // appends each bucket's region exactly once per phase and every pass draws that same list,
@@ -328,7 +319,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
 
         // Written for EVERY view, zero included. The builder indexes this slab directly from its flat
         // thread id, so a pair left unwritten would hand it last frame's range.
-        Pass().OutInstanceViewRanges[OutSlot * Pass().NumViews + v] = uint2(Range.x, Emitted);
+        SpanSet(&Pass().OutInstanceViewRanges, OutSlot * Pass().NumViews + v, uint2(Range.x, Emitted));
     }
 
     // Pre-skin slices, claimed from the SAME resolved ranges the emit above used. A block's vertex span is
@@ -359,13 +350,13 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
 
         // Written back so the skinning passes, which are keyed by RETAINED slot, see the same bases the
         // draw path will read off the compacted instance below.
-        Pass().SkinnedFrameData[SlotIdx].SkinnedVertexBase       = SurfaceSkinBase;
-        Pass().SkinnedFrameData[SlotIdx].ShadowSkinnedVertexBase = ShadowSkinBase;
+        SpanAt(&Pass().SkinnedFrameData, SlotIdx).SkinnedVertexBase       = SurfaceSkinBase;
+        SpanAt(&Pass().SkinnedFrameData, SlotIdx).ShadowSkinnedVertexBase = ShadowSkinBase;
     }
 
     // Safe to assemble in a local and store once now that FGPUInstance holds a header slot, not an address.
     FGPUInstance Inst            = (FGPUInstance)0;
-    Inst.Transform               = Pass().RetainedTransforms[SlotIdx];   // straight copy, no expansion
+    Inst.Transform               = SpanGet(&Pass().RetainedTransforms, SlotIdx);   // straight copy
     Inst.SphereBounds            = Cull.SphereBounds;
     Inst.MeshletHeaderSlot       = Static.MeshletHeaderSlot;
     Inst._HeaderPad0             = 0u;
@@ -388,5 +379,5 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     // Survives compaction, which OutSlot does not: it is the key into the two-phase visibility flags.
     Inst.RetainedSlot            = SlotIdx;
 
-    Pass().OutInstances[OutSlot] = Inst;
+    SpanSet(&Pass().OutInstances, OutSlot, Inst);
 }

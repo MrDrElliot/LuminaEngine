@@ -20,7 +20,7 @@ struct FMeshletRef
     property FGPUInstance* Inst { get { return Instances() + InstanceID; } }
 
     // FGPUInstance::MeshletHeader returns the same pointer but loads the whole instance to reach the slot.
-    property FMeshletHeader* Header { get { return MeshletHeaders() + Inst.MeshletHeaderSlot; } }
+    property FMeshletHeader* Header { get { return SpanAt(MeshletHeaders(), Inst.MeshletHeaderSlot); } }
 
     // Transform is a field at offset 0 of a 16-aligned 128-byte stride, so 48 aligned bytes cover it.
     property float4x4 ModelMatrix { get { return loadAligned<16>(&Inst.Transform).ToMatrix(); } }
@@ -33,24 +33,11 @@ struct FMeshletRef
 // bShadow selects the instance's shadow meshlet range instead of the surface (base/depth) range.
 FMeshletRef ResolveMeshlet(uint MeshletSlot, bool bShadow)
 {
-    // Held in a local because every accessor call re-emits the root load instead of reusing it.
-    FMeshletDraw* DrawList = GetSceneRoot().MeshletDrawListPtr;
-
-    // A pass that draws without these page-faults the device rather than producing a wrong pixel.
-    if (DrawList == nullptr || Instances() == nullptr)
-    {
-        FMeshletRef Empty;
-        Empty.SkinnedVertexBase = kNoPreSkinBase;
-        Empty.GlobalMeshletIdx  = 0u;
-        Empty.InstanceID        = 0u;
-        Empty.M                 = (FMeshlet)0;
-        return Empty;
-    }
 
     // Issued before the draw fetch so the two independent chains overlap instead of serializing.
     const uint ExpectedTag = Scene().CullData.MeshletDrawTag;
 
-    FMeshletDraw Draw = DrawList[MeshletSlot];
+    FMeshletDraw Draw = SpanGet(MeshletDrawList(), MeshletSlot);
 
     // InstanceID first: every Ref.Inst read below goes through it.
     FMeshletRef Ref;
@@ -107,7 +94,7 @@ FMeshletRef ResolveShadowMeshlet(uint MeshletSlot)  { return ResolveMeshlet(Mesh
 // a linked interface, and task+mesh share one push range. Drift produces wrong geometry, not an error.
 struct FMeshletPassArgs
 {
-    FRenderBucket*          Buckets;           // per-(view, draw) bases, bounds and slices
+    GPUSpan<FRenderBucket>  Buckets;           // per-(view, draw) bases, bounds and slices
 
     uint                    ArgBase;           // CullViewIndex*NumDrawsPerView + IndirectDrawOffset
     uint                    Slice;             // MESHLET_SLICE_* of the bucket this pass rasterizes
@@ -126,7 +113,7 @@ FMeshletPassArgs* MeshletPass() { return GetPassArgs<FMeshletPassArgs>(); }
 // already compacted the survivors, so a workgroup maps to one directly -- no payload, no second cull.
 uint MeshletSlotForWorkgroup(uint DrawIndex, uint GroupIndex)
 {
-    const FRenderBucket Bucket = loadAligned<16>(MeshletPass().Buckets + MeshletPass().ArgBase);
+    const FRenderBucket Bucket = SpanGetAligned(&MeshletPass().Buckets, MeshletPass().ArgBase);
     const uint Slice  = MeshletPass().Slice;
     const uint Local  = DrawIndex * MeshletPass().MaxMeshGroups + GroupIndex;
 
@@ -154,7 +141,7 @@ FMeshletRef ResolveMeshletForWorkgroup(uint DrawIndex, uint GroupIndex, out uint
         return Empty;
     }
 
-    const FCullView View = loadAligned<16>(CullViews() + MeshletPass().CullViewIndex);
+    const FCullView View = SpanGetAligned(CullViews(), MeshletPass().CullViewIndex);
     return ResolveMeshlet(OutSlot, View.HasFlag(CULL_VIEW_FLAG_CAST_SHADOW_ONLY));
 }
 

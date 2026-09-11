@@ -31,15 +31,15 @@ struct FMeshletCullArgs
     uint            NumDraws;
     // MESHLET_SLICE_EARLY or MESHLET_SLICE_LATE.
     uint            Slice;
-    // Bounds RetainedSlot, and 0 when either buffer is missing, so the reads short-circuit.
-    uint            VisibilityCapacity;
+    uint            _Pad0;
 
-    FRenderBucket*  Buckets;
-    FMeshletBlock*  BlockList;
+    GPUSpan<FRenderBucket> Buckets;
+    GPUSpan<FMeshletBlock> BlockList;
     // Read by BOTH dispatches and written by neither: the partition needs them to see one set of flags.
-    uint*           PrevVisibility;
+    // Its own count bounds RetainedSlot, and is 0 when the buffer is missing, so the reads short-circuit.
+    GPUSpan<uint>          PrevVisibility;
     // OR only: an instance's blocks span workgroups, so a store lets an occluded one clear a visible bit.
-    uint*           OutVisibility;
+    GPUSpan<uint>          OutVisibility;
 };
 FMeshletCullArgs* Pass() { return GetPassArgs<FMeshletCullArgs>(); }
 
@@ -49,7 +49,7 @@ FMeshletCullArgs* Pass() { return GetPassArgs<FMeshletCullArgs>(); }
 
 uint EmitMeshletSlot(uint ArgIdx, uint InstanceID, uint MeshletIdx)
 {
-    FRenderBucket* Bucket = Pass().Buckets + ArgIdx;
+    FRenderBucket* Bucket = SpanAt(&Pass().Buckets, ArgIdx);
     const uint Slot = AppendReserve(&Bucket.DrawCursor, Bucket.DrawCapacity, Bucket.DrawBase);
     if (Slot == kAppendFull)
     {
@@ -59,7 +59,7 @@ uint EmitMeshletSlot(uint ArgIdx, uint InstanceID, uint MeshletIdx)
     FMeshletDraw Draw;
     Draw.InstanceID        = InstanceID;
     Draw.PackedIndexAndTag = FMeshletDraw::Pack(MeshletIdx, Scene().CullData.MeshletDrawTag);
-    MeshletDrawList()[Slot] = Draw;
+    SpanSet(MeshletDrawList(), Slot, Draw);
 
     return Slot;
 }
@@ -74,7 +74,7 @@ uint FindBucketForWork(uint WorkIndex, uint NumBuckets)
     while (Lo + 1u < Hi)
     {
         const uint Mid = (Lo + Hi) >> 1u;
-        if (Pass().Buckets[Mid].CullWorkBase <= WorkIndex)
+        if (SpanAt(&Pass().Buckets, Mid).CullWorkBase <= WorkIndex)
         {
             Lo = Mid;
         }
@@ -107,7 +107,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
     {
         ArgIdx = FindBucketForWork(WorkIndex, NumBuckets);
 
-        const FRenderBucket Bucket = loadAligned<16>(Pass().Buckets + ArgIdx);
+        const FRenderBucket Bucket = SpanGetAligned(&Pass().Buckets, ArgIdx);
         const uint BlockSlot = WorkIndex - Bucket.CullWorkBase;
 
         // Bounded by what BuildMeshletBlocks APPENDED, not what CullInstances reserved: blocks above the
@@ -118,7 +118,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
     }
 
     // Workgroup-uniform: ArgIdx is, and the view is a pure function of it.
-    const FCullView View  = loadAligned<16>(CullViews() + (ArgIdx / NumDraws));
+    const FCullView View  = SpanGetAligned(CullViews(), (ArgIdx / NumDraws));
     const bool bTwoPhase  = View.HasFlag(CULL_VIEW_FLAG_MESHLET_HIZ);
 
     // A single-phase view belongs entirely to the early dispatch. Skipping it in the late one is what
@@ -126,33 +126,29 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
     const bool bHasWork = bBlockInRange && (!bLate || bTwoPhase);
 
     // Workgroup-uniform, so this is a uniform branch: blocks the builder never filled are never read.
-    const FMeshletBlock Block = bHasWork ? Pass().BlockList[BlockIdx] : (FMeshletBlock)0;
+    const FMeshletBlock Block = bHasWork ? SpanGet(&Pass().BlockList, BlockIdx) : (FMeshletBlock)0;
     const uint InstanceID = Block.InstanceID;
     const uint MeshletIdx = Block.MeshletBase + ThreadID;
 
     // Guarded rather than folded into an && chain: this is the deepest dependent hop any lane makes
     // before the cull proper, and unconditional it was paid by workgroups with nothing to do.
     //
-    // The header used to be null-checked here. It cannot be null now -- an instance carries a slot and
-    // slot 0 is the null header -- so what is left is the instance buffer itself, which the CPU can
-    // legitimately fail to allocate. TestMeshletAgainstView bounds every read by the header's own count.
+    // TestMeshletAgainstView bounds every read by the header's own count.
     FGPUInstance* Inst = Instances() + InstanceID;
-    const bool bInstanceOK = bHasWork && (Instances() != nullptr);
 
     // Workgroup-uniform once the block is loaded, so both the load and the branches below are uniform.
     uint RetainedSlot = 0u;
     bool bWasVisible  = false;
-    if (bInstanceOK && bTwoPhase)
+    if (bHasWork && bTwoPhase)
     {
         RetainedSlot = Inst.RetainedSlot;
-        bWasVisible  = (RetainedSlot < Pass().VisibilityCapacity)
-                     && (Pass().PrevVisibility[RetainedSlot] != 0u);
+        bWasVisible  = SpanGet(&Pass().PrevVisibility, RetainedSlot) != 0u;
     }
 
     // Late only, because the early phase is a replay and an instance dropped there is dropped for good.
     bool bInstanceOccluded = false;
 
-    if (bInstanceOK && bLate && bTwoPhase && !FGPUInstance::HasFlag(Inst, EInstanceFlags::NoCull))
+    if (bHasWork && bLate && bTwoPhase && !FGPUInstance::HasFlag(Inst, EInstanceFlags::NoCull))
     {
         // The one occlusion test a skinned instance can take, since its sphere is re-fed every frame.
         const float4 Sphere = loadAligned<16>(&Inst.SphereBounds);
@@ -169,7 +165,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
     // LATE tests everything, including instances EARLY already drew and it will not emit: that test is
     // what rewrites the flag for next frame. EARLY only tests what it can emit -- an instance it is not
     // going to draw costs it nothing.
-    const bool bTest = bInstanceOK && !bInstanceOccluded && (ThreadID < Block.Count) && (bLate || bEmitPhase);
+    const bool bTest = bHasWork && !bInstanceOccluded && (ThreadID < Block.Count) && (bLate || bEmitPhase);
     bool       bKeep = bTest && bEmitPhase;
     bool       bLaneVisible = false;
 
@@ -199,8 +195,8 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
     // OR only, never a store: an instance's blocks are spread across workgroups, and a plain write would
     // let a fully-occluded block clear a flag a visible one had just set. The zero comes from the clear
     // the CPU issues against this buffer at the top of the frame.
-    if (bLate && bTwoPhase && ThreadID == 0u && bBlockVisible && RetainedSlot < Pass().VisibilityCapacity)
+    if (bLate && bTwoPhase && ThreadID == 0u && bBlockVisible && SpanContains(&Pass().OutVisibility, RetainedSlot))
     {
-        InterlockedOr(Pass().OutVisibility[RetainedSlot], 1u);
+        InterlockedOr(SpanAt(&Pass().OutVisibility, RetainedSlot)[0], 1u);
     }
 }

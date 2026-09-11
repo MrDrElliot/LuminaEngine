@@ -9,7 +9,7 @@
 
 struct FPushConstants
 {
-    uint*  Histogram;       // device address of the 256-uint bin array
+    GPUSpan<uint> Histogram;   // the 256-uint bin array
     uint   AdaptUAV;        // bindless UAV of the 1x1 adapted-luminance image
     float  MinLogLum;
 
@@ -34,7 +34,7 @@ float BinLogLuminance(uint Bin)
 [numthreads(HISTOGRAM_BINS, 1, 1)]
 void ComputeMain(uint GroupIndex : SV_GroupIndex)
 {
-    gBins[GroupIndex] = Pass().Histogram[GroupIndex];
+    gBins[GroupIndex] = SpanGet(&Pass().Histogram, GroupIndex);
     GroupMemoryBarrierWithGroupSync();
 
     // Serial in one lane; finding the percentile cuts in parallel would need a full prefix sum.

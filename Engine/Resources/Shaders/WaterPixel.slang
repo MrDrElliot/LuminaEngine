@@ -65,7 +65,7 @@ float WaterFbm(float2 P)
 [shader("fragment")]
 float4 FragmentMain(PSInput Input) : SV_Target0
 {
-    FGPUWater W = Pass().Waters[Input.WaterIndex];
+    FGPUWater W = SpanGet(&Pass().Waters, Input.WaterIndex);
 
     uint2  ScreenSize = Scene().ScreenSize.xy;
     float2 ScreenUV   = Input.Position.xy / float2(ScreenSize);

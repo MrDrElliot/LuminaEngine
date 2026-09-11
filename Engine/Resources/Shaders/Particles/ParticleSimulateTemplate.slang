@@ -27,14 +27,14 @@ void ComputeMain(uint3 DispatchThreadID : SV_DispatchThreadID)
     uint Index = DispatchThreadID.x;
     if (Index >= SimParams().Counts.x) return;
 
-    FGPUParticle P = Particles()[Index];
+    FGPUParticle P = SpanGet(Particles(), Index);
 
     bool bAlive = (P.Lifetime > 0.0) && (P.Age < P.Lifetime);
 
     if (!bAlive)
     {
         uint myAlloc;
-        InterlockedAdd(SpawnCounter()[0], 1u, myAlloc);
+        InterlockedAdd(SpanAt(SpawnCounter(), 0u)[0], 1u, myAlloc);
         if (myAlloc < SimParams().Counts.y)
         {
             // Seed defaults; spawn modules overwrite what they care about.
@@ -87,5 +87,5 @@ $PARTICLE_ATTR_DEFAULTS
         }
     }
 
-    Particles()[Index] = P;
+    SpanSet(Particles(), Index, P);
 }

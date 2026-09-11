@@ -36,7 +36,7 @@ struct VertexOutput
 [shader("vertex")]
 VertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID, uint InstanceIndex : SV_VulkanInstanceID)
 {
-    FWidgetInstance Widget = Widgets()[InstanceIndex];
+    FWidgetInstance Widget = SpanGet(Widgets(), InstanceIndex);
 
     const float2 QuadPos = Positions[VertexIndex];
     const float2 Scaled  = QuadPos * Widget.WorldSize;

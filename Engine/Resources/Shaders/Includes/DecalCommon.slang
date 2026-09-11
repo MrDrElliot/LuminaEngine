@@ -25,7 +25,7 @@ struct FGPUDecal
 // here. Pointer first so the uint64 device address stays 8-byte aligned.
 struct FDecalPushConstants
 {
-    FGPUDecal* Decals;       // device address of the per-frame decal array, indexed by decal index
+    GPUSpan<FGPUDecal> Decals;   // the per-frame decal array, indexed by decal index
     uint       DepthIndex;   // bindless resource ID of opaque scene depth (raw reverse-Z NDC [0,1])
     uint       _Pad;
 };

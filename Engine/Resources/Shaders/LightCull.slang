@@ -28,13 +28,13 @@ void ComputeMain(uint3 WorkGroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadI
     uint  NumClusters   = Grid.x * Grid.y * Grid.z;
     bool  bValidCluster = Index < NumClusters;
 
-    float3 ClusterMin = bValidCluster ? loadAligned<16>(&Clusters()[Index].MinPoint).xyz : float3(0.0);
-    float3 ClusterMax = bValidCluster ? loadAligned<16>(&Clusters()[Index].MaxPoint).xyz : float3(0.0);
+    float3 ClusterMin = bValidCluster ? loadAligned<16>(&SpanAt(Clusters(), Index).MinPoint).xyz : float3(0.0);
+    float3 ClusterMax = bValidCluster ? loadAligned<16>(&SpanAt(Clusters(), Index).MaxPoint).xyz : float3(0.0);
 
-    uint LightCount = LightData().NumLights;
+    uint LightCount = GetNumLights();
 
     // Directional light is always at index 0; skip since it applies globally.
-    uint StartIndex = (LightCount > 0 && HasFlag(LightData().Lights[0].Flags, ELightFlags::Directional)) ? 1u : 0u;
+    uint StartIndex = (LightCount > 0 && HasFlag(GetLightAt(0).Flags, ELightFlags::Directional)) ? 1u : 0u;
 
     float4x4 View         = GetCameraView();
     uint     VisibleCount = 0;
@@ -46,8 +46,9 @@ void ComputeMain(uint3 WorkGroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadI
         uint LoadIndex = Base + Local;
         if (LoadIndex < LightCount)
         {
-            float3 ViewPos = mul(View, float4(LightData().Lights[LoadIndex].Position, 1.0)).xyz;
-            gLightViewPosRadius[Local] = float4(ViewPos, LightData().Lights[LoadIndex].Radius);
+            const FLight Loaded = GetLightAt(LoadIndex);
+            float3 ViewPos = mul(View, float4(Loaded.Position, 1.0)).xyz;
+            gLightViewPosRadius[Local] = float4(ViewPos, Loaded.Radius);
         }
         else
         {
@@ -70,7 +71,7 @@ void ComputeMain(uint3 WorkGroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadI
                 float4 LightVP = gLightViewPosRadius[j];
                 if (SphereAABBIntersection(LightVP.xyz, LightVP.w, ClusterMin, ClusterMax))
                 {
-                    Clusters()[Index].LightIndices[VisibleCount] = GlobalLight;
+                    SpanAt(Clusters(), Index).LightIndices[VisibleCount] = GlobalLight;
                     ++VisibleCount;
                     if (VisibleCount >= LIGHTS_PER_CLUSTER)
                     {
@@ -85,6 +86,6 @@ void ComputeMain(uint3 WorkGroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadI
 
     if (bValidCluster)
     {
-        Clusters()[Index].Count = VisibleCount;
+        SpanAt(Clusters(), Index).Count = VisibleCount;
     }
 }

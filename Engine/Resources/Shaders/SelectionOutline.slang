@@ -28,11 +28,11 @@
 struct FSelectionOutlineArgs
 {
     float4 OutlineColor;           // rgb, a = opacity
-    uint*  SelectionBits;          // one bit per entity slot, indexed by entity INDEX
+    GPUSpan<uint> SelectionBits;   // one bit per entity slot, indexed by entity INDEX
     uint   PickerIndex;
-    uint   SelectionBitWords;      // 0 = nothing selected; the pass is skipped before it gets here
     uint   EntityIndexMask;        // FEntity::IndexMask, supplied by the CPU rather than hardcoded
     float  Thickness;              // outline half-width in pixels
+    uint   _Pad0;
 };
 FSelectionOutlineArgs* Pass() { return GetPassArgs<FSelectionOutlineArgs>(); }
 
@@ -46,14 +46,9 @@ bool IsEntitySelected(uint PickerValue)
 
     const uint Index = PickerValue & Pass().EntityIndexMask;
     const uint Word  = Index >> 5u;
-    if (Word >= Pass().SelectionBitWords)
-    {
-        return false;
-    }
 
-    // Indexed straight off the args: a BDA pointer must not be parked in a local (see the SPIR-V
-    // pointer-validity rule) -- load through it where it is read.
-    return (Pass().SelectionBits[Word] & (1u << (Index & 31u))) != 0u;
+    // Out of range reads zero, which is "not selected" -- the same answer the explicit bound gave.
+    return (SpanGet(&Pass().SelectionBits, Word) & (1u << (Index & 31u))) != 0u;
 }
 
 struct FragmentInput

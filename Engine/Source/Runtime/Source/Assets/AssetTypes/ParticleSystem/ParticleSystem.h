@@ -524,11 +524,19 @@ namespace Lumina
 
     };
 
+    /** One simulated particle as the GPU lays it out. Mirrors FGPUParticle in ParticleSimCommon.slang;
+     *  the renderer only ever sizes and spans this, never reads a field, so the fields stay named there. */
+    struct alignas(16) FGPUParticle
+    {
+        float Data[16];
+    };
+    static_assert(sizeof(FGPUParticle) == 64, "FGPUParticle must match ParticleSimCommon.slang");
+
     /** Render-thread-only GPU + sim state per emitter; lives in FDefaultSceneRenderer::ParticleGPUStates,
      *  NOT on the component, so the render thread never touches a component the game thread may have destroyed. */
     struct FParticleGPUState
     {
-        RHI::FGPUAllocation ParticleBuffer = {};  // RW structured buffer of FGPUParticle (64B stride)
+        RHI::FGPUAllocation ParticleBuffer = {};  // RW structured buffer of FGPUParticle
         uint64          ParticleBufferSize = 0;
         RHI::FGPUAllocation SpawnCounterBuffer = {};  // Single uint, cleared per frame
         // Declared per-particle attributes, parallel to ParticleBuffer and indexed by the same index.

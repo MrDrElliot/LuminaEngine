@@ -289,8 +289,8 @@ namespace Lumina
         uint64 VerticesAddress;                     // uint32*
         uint64 TrianglesAddress;                    // uint32*
         uint64 ConesAddress;                        // FMeshletCone*
-        uint64 BonePalettesAddress;                 // FMeshletBonePalette*, null when not skinned
-        uint64 BoneIndicesAddress;                  // uint32*, null when not skinned
+        uint64 BonePalettesAddress;                 // FMeshletBonePalette*
+        uint64 BoneIndicesAddress;                  // uint32*
 
         uint32 DistanceFieldIndex;
         uint32 DistanceFieldFlags;                  // EDistanceFieldFlags
@@ -311,8 +311,12 @@ namespace Lumina
         // in-bounds-looking index walks off the end of a buffer.
         uint32 MeshletCount;
 
-        // Pads the stride to 128. Slang adds no tail padding of its own, so FMeshletHeader restates these.
-        uint32 _LocalBoundsPad0, _LocalBoundsPad1;
+        // Entries in BonePalettes, and the bound every reader of it uses. Zero on a static mesh, which is
+        // how "carries no palette" is spelled now that the slab aims the bone pointers at the null page.
+        uint32 BonePaletteCount;
+
+        // Pads the stride to 128. Slang adds no tail padding of its own, so FMeshletHeader restates this.
+        uint32 _LocalBoundsPad1;
     };
     static_assert(sizeof(FMeshletHeaderGPU) == 128, "FMeshletHeaderGPU must match FMeshletHeader in Common.slang");
 

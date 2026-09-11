@@ -41,7 +41,8 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     float3 RayDir  = normalize(mul(GetInverseCameraView(), float4(ViewRay, 0.0)).xyz);
 
     float3 SunDir      = Pass().SunDirection;
-    float3 SunColor    = Env.SunTint.rgb * Env.SunTint.w;
+    // Same incident spectrum the sky integral uses, or the haze drifts off the sky it is meant to match.
+    float3 SunColor    = Env.SunTint.rgb * kSolarIrradiance;
     float  MieG        = clamp(Env.Misc.w, -0.99, 0.99);
     float  SkyExposure = max(Env.Misc.z, 1e-3);
 
@@ -102,8 +103,6 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
         float3 Rayleigh = kRayleighCoeff * PhaseR * SumR;
         float3 Mie      = kMieCoeff * PhaseM * SumM;
 
-        const float kMsStrength = 0.9;
-        const float kMsTint     = 0.15;
         float3 MsEnergy     = kRayleighCoeff * SumR;
         float  MsGrey       = Luminance(MsEnergy);
         float3 MultiScatter = lerp(float3(MsGrey), MsEnergy, kMsTint) * kMsStrength / PI;

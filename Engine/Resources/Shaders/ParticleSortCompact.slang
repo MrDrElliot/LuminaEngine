@@ -5,12 +5,12 @@
 
 struct FParticleSortArgs
 {
-    FGPUParticle*           Particles;
-    uint*                   OutIndices;
-    FDrawIndirectArguments* OutDrawArgs;
-    uint                    ParticleCount;
-    // ParticleCount rounded up to the power of two bitonic needs, clamped to the groupshared array.
-    uint                    SortCount;
+    GPUSpan<FGPUParticle>           Particles;
+    GPUSpan<uint>                   OutIndices;
+    GPUSpan<FDrawIndirectArguments> OutDrawArgs;
+    // Particles rounded up to the power of two bitonic needs, clamped to the groupshared array.
+    uint                            SortCount;
+    uint                            _Pad0;
 };
 FParticleSortArgs* Pass() { return GetPassArgs<FParticleSortArgs>(); }
 
@@ -35,7 +35,7 @@ uint ParticleDepthKey(float3 WorldPos, float3 CameraPos)
 void ComputeMain(uint Lane : SV_GroupIndex)
 {
     const uint SortCount     = min(Pass().SortCount, PARTICLE_SORT_CAPACITY);
-    const uint ParticleCount = min(Pass().ParticleCount, SortCount);
+    const uint ParticleCount = min(Pass().Particles.Count, SortCount);
     const float3 CameraPos   = GetCameraPosition();
 
     if (Lane == 0u)
@@ -50,7 +50,7 @@ void ComputeMain(uint Lane : SV_GroupIndex)
         uint Key = kDeadKey;
         if (i < ParticleCount)
         {
-            const FGPUParticle P = Pass().Particles[i];
+            const FGPUParticle P = SpanGet(&Pass().Particles, i);
 
             // Must match the liveness test in ParticleVertex.slang, which draws what this counts.
             if (P.Lifetime > 0.0 && P.Age < P.Lifetime && P.Size > 0.0)
@@ -97,7 +97,7 @@ void ComputeMain(uint Lane : SV_GroupIndex)
 
     for (uint i = Lane; i < LiveCount; i += PARTICLE_SORT_THREADS)
     {
-        Pass().OutIndices[i] = gKeys[i] & PARTICLE_SORT_INDEX_MASK;
+        SpanSet(&Pass().OutIndices, i, gKeys[i] & PARTICLE_SORT_INDEX_MASK);
     }
 
     if (Lane == 0u)
@@ -107,6 +107,6 @@ void ComputeMain(uint Lane : SV_GroupIndex)
         Args.InstanceCount = 1u;
         Args.VertexOffset  = 0u;
         Args.FirstInstance = 0u;
-        Pass().OutDrawArgs[0] = Args;
+        SpanSet(&Pass().OutDrawArgs, 0u, Args);
     }
 }

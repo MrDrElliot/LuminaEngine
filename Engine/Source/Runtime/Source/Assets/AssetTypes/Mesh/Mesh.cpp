@@ -10,6 +10,7 @@
 #include "Tools/Import/ImportHelpers.h"
 #include "World/Scene/RenderScene/MeshResolveCache.h"
 #include "Renderer/MeshQuantization.h"
+#include <cfloat>
 
 
 namespace Lumina
@@ -298,6 +299,8 @@ namespace Lumina
             Header.BonePalettesAddress      = MB.MeshletBonePaletteBuffer;
             Header.BoneIndicesAddress       = MB.MeshletBoneIndexBuffer;
             Header.MeshletCount             = MB.MeshletCount;
+            Header.BonePaletteCount         = (MB.MeshletBonePaletteBuffer != 0 && MB.MeshletBoneIndexBuffer != 0)
+                                            ? MB.MeshletCount : 0u;
 
             // Zero when the bounds could not be derived; the shader reads that as a degenerate box.
             const FAABB& Local = Resource.LocalBounds;

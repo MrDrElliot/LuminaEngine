@@ -10,6 +10,7 @@
 #include "Renderer/MeshData.h"
 #include "Renderer/Vertex.h"
 #include "Tools/Import/ImportHelpers.h"
+#include <cfloat>
 #include "TaskSystem/TaskSystem.h"
 
 #include <atomic>

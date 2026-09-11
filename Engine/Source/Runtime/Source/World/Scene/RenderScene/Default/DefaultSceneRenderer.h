@@ -1097,7 +1097,7 @@ namespace Lumina
         static constexpr uint32                 ProbePrefilterMips     = 5;
 
         // Address of this frame's uploaded probe array, and how many entries it holds.
-        uint64                                  ProbeBufferAddr  = 0;
+        RHI::TGPUSpan<FGPUReflectionProbe>      ProbeBufferSpan;
         uint32                                  NumActiveProbes  = 0;
 
         TVector<uint32>                         PendingProbeBakes;
@@ -1118,9 +1118,9 @@ namespace Lumina
 
         // Addresses of this frame's uploaded spline arrays. Splines are extracted only for components with
         // bSendToGPU, so a world that authors splines purely as data uploads nothing.
-        uint64                                  SplineBufferAddr       = 0;
-        uint64                                  SplinePointBufferAddr  = 0;
-        uint64                                  SplineSampleBufferAddr = 0;
+        RHI::TGPUSpan<FGPUSpline>               SplineBufferSpan;
+        RHI::TGPUSpan<FGPUSplinePoint>          SplinePointBufferSpan;
+        RHI::TGPUSpan<FGPUSplineSample>         SplineSampleBufferSpan;
         uint32                                  NumActiveSplines       = 0;
 
         void ExtractSplines(ECS::FRegistry& Registry, FFrameData& Frame);
@@ -1172,6 +1172,10 @@ namespace Lumina
         /// Frame the slot was written on, so a slot is only read once its copy has certainly landed.
         TArray<uint64, RHI::kFramesInFlight>                StreamingFeedbackStamp = {};
         uint32                                              StreamingFeedbackSlots = 0;
+
+        // Live prefix of Frame.Lighting.Lights / .Shadows; the GPU side reads these off the spans.
+        uint32                                              NumLiveLights  = 0;
+        uint32                                              NumLiveShadows = 0;
         uint64                                              StreamingFeedbackFrame = 0;
         
         TArray<RHI::FGPUAllocation, RHI::kFramesInFlight>                          RenderBucketRing = {};

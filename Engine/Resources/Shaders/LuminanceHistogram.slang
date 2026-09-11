@@ -9,7 +9,7 @@
 
 struct FPushConstants
 {
-    uint*  Histogram;       // device address of the 256-uint bin array
+    GPUSpan<uint> Histogram;   // the 256-uint bin array
     uint   HDRIndex;        // bindless SRV of HDR scene color
     uint   _Pad0;
 
@@ -54,6 +54,6 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID, uint GroupIndex : SV_GroupInd
     // TILE_DIM^2 == HISTOGRAM_BINS, so each thread owns exactly one bin.
     if (gBins[GroupIndex] > 0u)
     {
-        InterlockedAdd(Pass().Histogram[GroupIndex], gBins[GroupIndex]);
+        InterlockedAdd(SpanAt(&Pass().Histogram, GroupIndex)[0], gBins[GroupIndex]);
     }
 }
