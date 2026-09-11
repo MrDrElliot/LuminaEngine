@@ -37,6 +37,7 @@ namespace Lumina
     struct SSpotLightComponent;
     struct SPointLightComponent;
     struct SExponentialHeightFogComponent;
+    struct SEnvironmentComponent;
     class CWorld;
     struct SStaticMeshComponent;
     struct SDynamicMeshComponent;
@@ -803,6 +804,28 @@ namespace Lumina
 
         // Extract-phase half: ECS reads + parallel Process* tasks + cull/shadow setup.
         void CompileDrawCommands_Extract();
+
+        void PrepareGatherScratch(FFrameData& Frame);
+        void ScheduleSkinnedGather(FTaskGraph& Graph);
+        void ScheduleLineBatching(FTaskGraph& EmitGraph, ECS::FRegistry& Registry);
+
+        // One emit task per primitive family, all joined before the serial tail below runs.
+        void ExtractBatchedTriangles(ECS::FRegistry& Registry);
+        void ExtractWidgets(ECS::FRegistry& Registry, FFrameData& Frame);
+        void ExtractText(ECS::FRegistry& Registry, FFrameData& Frame);
+        void ExtractSprites(ECS::FRegistry& Registry, FFrameData& Frame);
+        void ExtractBillboards(ECS::FRegistry& Registry, FFrameData& Frame);
+        void ExtractSelection(ECS::FRegistry& Registry, FFrameData& Frame);
+        void ExtractTerrain(ECS::FRegistry& Registry, FFrameData& Frame);
+        void ExtractParticles(ECS::FRegistry& Registry, FFrameData& Frame);
+        void ExtractDecals(ECS::FRegistry& Registry, FFrameData& Frame);
+        void ExtractWater(ECS::FRegistry& Registry, FFrameData& Frame);
+        void ExtractDebugText(FFrameData& Frame);
+
+        // Serial after the light tasks; the skylight reads the sun the directional pass resolved.
+        const SEnvironmentComponent* ExtractEnvironment(ECS::FRegistry& Registry, FFrameData& Frame);
+        void ExtractSkyLight(ECS::FRegistry& Registry, FFrameData& Frame, const SEnvironmentComponent* ActiveEnv);
+        void ExtractFog(ECS::FRegistry& Registry, FFrameData& Frame);
 
         // Render-phase half: buffer resize + upload commands; reads extract-phase state.
         void CompileDrawCommands_Render(RHI::FCmdListH CL);

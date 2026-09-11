@@ -1038,1341 +1038,132 @@ namespace Lumina
         LUMINA_PROFILE_SCOPE();
         LUMINA_MEMORY_SCOPE("Render Scene");
 
-        FFrameData& Frame = *ExtractFrame;
-        auto& DrawCommands           = Frame.Geometry.DrawCommands;
-        auto& LightData              = Frame.Lighting.LightData;
-        auto& EnvironmentParams      = Frame.Volumetrics.EnvironmentParams;
-        auto& SceneGlobalData        = Frame.SceneGlobalData;
-        auto& BillboardInstances     = Frame.Primitives.BillboardInstances;
-        auto& WidgetInstances        = Frame.Primitives.WidgetInstances;
-        auto& GlyphInstances         = Frame.Primitives.GlyphInstances;
-        auto& TextBatches            = Frame.Primitives.TextBatches;
-        auto& SpriteInstances        = Frame.Primitives.SpriteInstances;
-        auto& SpriteBatches          = Frame.Primitives.SpriteBatches;
+        FFrameData&     Frame    = *ExtractFrame;
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
+        auto            TransformStorage = Registry.GetStorage<STransformComponent>();
+        TAtomic<uint32> LightCount{0};
 
-        {
-            LUMINA_PROFILE_SECTION("Compile Draw Commands");
-            ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
-            TAtomic<uint32> LightCount{0};
+        auto DirectionalView = Registry.View<SDirectionalLightComponent>(ECS::TExclude<SDisabledTag>{});
+        auto SpotLightView   = Registry.View<SSpotLightComponent>(ECS::TExclude<SDisabledTag>{});
+        auto PointLightView  = Registry.View<SPointLightComponent>(ECS::TExclude<SDisabledTag>{});
 
-            auto DirectionalView     = Registry.View<SDirectionalLightComponent>(ECS::TExclude<SDisabledTag>{});
-            auto SpotLightView       = Registry.View<SSpotLightComponent>(ECS::TExclude<SDisabledTag>{});
-            auto PointLightView      = Registry.View<SPointLightComponent>(ECS::TExclude<SDisabledTag>{});
-            auto CharacterView       = Registry.View<SCharacterControllerComponent>(ECS::TExclude<SDisabledTag>{});
-            auto CameraView          = Registry.View<SCameraComponent>(ECS::TExclude<SDisabledTag>{});
-            auto BillboardView       = Registry.View<SBillboardComponent>(ECS::TExclude<SDisabledTag>{});
-            auto WidgetView          = Registry.View<SWidgetComponent>(ECS::TExclude<SDisabledTag>{});
-            auto TextView            = Registry.View<STextComponent>(ECS::TExclude<SDisabledTag>{});
-            auto SpriteView          = Registry.View<SSprite3DComponent>(ECS::TExclude<SDisabledTag>{});
-            auto LineBatcherView     = Registry.View<FLineBatcherComponent>();
-            auto TriangleBatcherView = Registry.View<FTriangleBatcherComponent>();
-            auto EnvironmentView     = Registry.View<SEnvironmentComponent>(ECS::TExclude<SDisabledTag>{});
-            auto SkyLightView        = Registry.View<SSkyLightComponent>(ECS::TExclude<SDisabledTag>{});
-            auto FogView             = Registry.View<SExponentialHeightFogComponent>(ECS::TExclude<SDisabledTag>{});
-            auto FogVolumeView       = Registry.View<SLocalFogVolumeComponent>(ECS::TExclude<SDisabledTag>{});
-            auto CloudView           = Registry.View<SCloudComponent>(ECS::TExclude<SDisabledTag>{});
-            auto TerrainAllView      = Registry.View<STerrainComponent>();
-            auto TerrainView         = Registry.View<STerrainComponent>(ECS::TExclude<SDisabledTag>{});
-            auto ParticleAllView     = Registry.View<SParticleSystemComponent>();
-            auto ParticleView        = Registry.View<SParticleSystemComponent>(ECS::TExclude<SDisabledTag>{});
-            auto DecalView           = Registry.View<SDecalComponent>(ECS::TExclude<SDisabledTag>{});
-            auto AudioSourceView     = Registry.View<SAudioSourceComponent>(ECS::TExclude<SDisabledTag>{});
-            auto AudioListenerView   = Registry.View<SAudioListenerComponent>(ECS::TExclude<SDisabledTag>{});
-            auto WaterView           = Registry.View<SWaterComponent>(ECS::TExclude<SDisabledTag>{});
-            auto TransformStorage  = Registry.GetStorage<STransformComponent>();
-
-            ECS::Utils::ResolveAllDirtyTransforms(Registry);
-
-        {
-            ECS::FRegistry& DynRegistry = ECS::GetWorldRegistry(*World);
-            ResolveDynamicMeshMaterials(DynRegistry, FRenderDirtyTracker::Ensure(DynRegistry));
-        }
-
+        ECS::Utils::ResolveAllDirtyTransforms(Registry);
+        ResolveDynamicMeshMaterials(Registry, FRenderDirtyTracker::Ensure(Registry));
         ResolveDirtyMeshComponents();
+        SyncScenePrimitives();
 
-            SyncScenePrimitives();
+        // Per-frame CPU reject volumes built before parallel gather so workers query lock-free.
+        BuildSceneCullContext();
 
-            // Per-frame CPU reject volumes built before parallel gather so workers query lock-free.
-            BuildSceneCullContext();
+        // Needs the captures and the baking probe, both already extracted, and the light tasks below.
+        BuildLightRelevanceVolumes();
 
-            // Needs the captures and the baking probe, both already extracted, and the light tasks below.
-            BuildLightRelevanceVolumes();
-
-            // Ten passes read Lights[0] as the sun, so a local light must never win that slot.
-            if (DirectionalView.begin() != DirectionalView.end())
-            {
-                LightCount.store(1, std::memory_order_relaxed);
-            }
-
-            ResetGeometry_Extract();
-
-            // The gather emits skeletal items only; statics are culled on the GPU from the retained set.
-            const size_t EstimatedProxies  = (size_t)ScenePrimitives.GetSkinnedPrimitiveCount() * 2;
-
-            // One command per pipeline batch, not per primitive; the merge emits exactly this many.
-            DrawCommands.reserve(ScenePrimitives.GetBatches().Num());
-
-            const uint32 NumThreads = GTaskSystem->GetNumTaskThreads();
-
-            TVector<FThreadLocalDrawData>& ThreadLocal = ThreadLocalStorage;
-            if (ThreadLocal.size() < NumThreads)
-            {
-                ThreadLocal.reserve(NumThreads);
-                while (ThreadLocal.size() < NumThreads)
-                {
-                    ThreadLocal.emplace_back();
-                }
-            }
-            CurrentReservePerThread = (uint32)((EstimatedProxies + NumThreads - 1) / Math::Max(1u, NumThreads));
-            
-            {
-                LUMINA_PROFILE_SECTION("Thread Local Reset");
-                // Every entry, not the first NumThreads, since the merge walks the whole container.
-                for (FThreadLocalDrawData& Local : ThreadLocal)
-                {
-                    Local.ResetForFrame();
-                }
-            }
-            
-            if (CFont* DefaultFont = CFontManager::Get().GetDefaultFont())
-            {
-                DefaultFont->GetAtlasResourceID();
-            }
-
-            DrawTaskGraph.Reset();   // reuse the persistent graph (allocator block + capacity)
-            FTaskGraph& Graph = DrawTaskGraph;
-
-            {
-                FTaskGraph::FNodeHandle MergeNode = Graph.Add([&]
-                {
-                    MergeMeshDrawData(ThreadLocal);
-                }, ETaskPriority::High);
-
-                if (ScenePrimitives.GetSkinnedPrimitiveCount() > 0)
-                {
-                    // Rebuilt only on a shape change, so the cull walks skeletal, not every primitive.
-                    const TVector<uint32>& SkeletalList = ScenePrimitives.GetSkeletalIndices();
-                    SkeletalPrimitiveIndices = SkeletalList.data();
-                    const uint32 NumSkeletal = (uint32)SkeletalList.size();
-
-                    // Exact bound, since only a skeletal primitive can become a candidate.
-                    if ((uint32)SkinnedCandidates.size() < NumSkeletal)
-                    {
-                        SkinnedCandidates.resize(NumSkeletal);
-                        SkinnedCandidateBones.resize(NumSkeletal);
-                        PendingSliceAllocs.resize(NumSkeletal);
-                    }
-                    SkinnedCandidateCursor.store(0, std::memory_order_relaxed);
-
-                    FTaskGraph::FNodeHandle CullNode = Graph.AddParallelFor(NumSkeletal, GSkinnedCullGrain, [&](const Task::FParallelRange& Range)
-                    {
-                        LUMINA_PROFILE_SECTION("Cull Skinned Primitives");
-                        FThreadLocalDrawData& Local = AcquireThreadLocalDrawData(Range.Thread);
-                        CullSkinnedPrimitives(Range, Local);
-                    }, ETaskPriority::High); // critical path, MergeNode waits on this
-
-                    // Sizes the arena from what survived, which is what keeps it O(visible), not O(scene).
-                    FTaskGraph::FNodeHandle LayoutNode = Graph.Add([&]
-                    {
-                        LayoutSkinnedBoneSlices(ThreadLocal);
-                    }, ETaskPriority::High);
-
-                    // A graph AddParallelFor needs its count at BUILD time, before the cull produces one.
-                    FTaskGraph::FNodeHandle EmitNode = Graph.Add([&]
-                    {
-                        LUMINA_PROFILE_SECTION("Emit Skinned Primitives");
-
-                        Task::ParallelFor(SkinnedCandidateCount,
-                            [&](const Task::FParallelRange& Range)
-                            {
-                                FThreadLocalDrawData& Local = AcquireThreadLocalDrawData(Range.Thread);
-                                EmitSkinnedPrimitives(Range, Local);
-                            },
-                            GSkinnedEmitGrain, ETaskPriority::High);
-                    }, ETaskPriority::High);
-
-                    Graph.AddDependency(LayoutNode, CullNode);
-                    Graph.AddDependency(EmitNode, LayoutNode);
-                    Graph.AddDependency(MergeNode, EmitNode);
-                }
-            }
-
-            Graph.Dispatch();
-
-            EmitTaskGraph.Reset();
-            FTaskGraph& EmitGraph = EmitTaskGraph;
-
-            FLineBatcherComponent* LineBatcher = nullptr;
-            LineBatcherView.ForEach([&](FLineBatcherComponent& C) { if (LineBatcher == nullptr)
-                    {
-                        LineBatcher = &C;
-                    }
-                });
-            const uint32 LineChunkCount = (LineBatcher != nullptr) ? PrepareBatchedLines(*LineBatcher) : 0u;
-
-            if (LineChunkCount > 0)
-            {
-                FTaskGraph::FNodeHandle LineBatchNode = EmitGraph.AddParallelFor(LineChunkCount, 1, [this](const Task::FParallelRange& Range)
-                {
-                    BatchLineChunks(Range);
-                });
-                FTaskGraph::FNodeHandle LineFinalizeNode = EmitGraph.Add([this, LineBatcher]
-                {
-                    FinalizeBatchedLines(*LineBatcher);
-                });
-                EmitGraph.AddDependency(LineFinalizeNode, LineBatchNode);
-            }
-
-            EmitGraph.Add([&]
-            {
-                LUMINA_PROFILE_SECTION("Batched Triangle Processing");
-
-                TriangleBatcherView.ForEach([&](FTriangleBatcherComponent& TriangleBatcherComponent)
-                {
-                    ProcessBatchedTriangles(TriangleBatcherComponent);
-                });
-            }, ETaskPriority::Medium);
-
-            EmitGraph.Add([&]
-            {
-                LUMINA_PROFILE_SECTION("Process Widget Primitives");
-
-                const FFrustum& WidgetFrustum = Frame.CameraFrustum;
-                const bool      bCullWidgets   = SceneGlobalData.CullData.bFrustumCull != 0u;
-
-                WidgetView.ForEach([&](ECS::FEntity Entity, SWidgetComponent& WidgetComponent)
-                {
-                    FWidgetRuntime& Runtime = WidgetComponent.Runtime;
-
-                    const FMatrix4 WorldMatrix = TransformStorage.Get(Entity).GetWorldMatrix();
-                    const FVector3 Center = FVector3(WorldMatrix[3]);
-                    const float ScaleXY = Math::Max(Math::Length(FVector3(WorldMatrix[0])), Math::Length(FVector3(WorldMatrix[1])));
-                    const float Radius  = 0.5f * Math::Length(WidgetComponent.WorldSize) * Math::Max(1.0f, ScaleXY);
-
-                    Runtime.bVisible = !bCullWidgets || WidgetFrustum.IntersectsSphere(Center, Radius);
-
-                    if (!Runtime.bVisible || Runtime.ResourceID < 0)
-                    {
-                        return;
-                    }
-
-                    FWidgetInstance& Inst = WidgetInstances.emplace_back();
-                    Inst.Transform    = WorldMatrix;
-                    Inst.WorldSize    = WidgetComponent.WorldSize;
-                    Inst.TextureIndex = (uint32)Runtime.ResourceID;
-                    Inst.Flags        = WidgetComponent.bBillboard ? WIDGET_FLAG_BILLBOARD : 0u;
-                    Inst.ColorPack    = PackColor(WidgetComponent.Tint);
-                    Inst.EntityID     = (Entity).Value;
-                    Inst.Pad0         = 0u;
-                    Inst.Pad1         = 0u;
-                });
-            }, ETaskPriority::Medium); // emitter, not on the mesh critical path
-
-            EmitGraph.Add([&]
-            {
-                LUMINA_PROFILE_SECTION("Process Text Primitives");
-
-                const FFrustum& TextFrustum = Frame.CameraFrustum;
-                const bool      bCullText   = SceneGlobalData.CullData.bFrustumCull != 0u;
-                const FVector3  CamRight    = FVector3(SceneGlobalData.CameraData.Right);
-                const FVector3  CamUp       = FVector3(SceneGlobalData.CameraData.Up);
-
-                TextView.ForEach([&](ECS::FEntity Entity, STextComponent& TextComponent)
-                {
-                    if (TextComponent.Text.empty())
-                    {
-                        return;
-                    }
-
-                    // Fall back to the engine default font when none is set, or its atlas failed to bake.
-                    CFont* Font = TextComponent.Font.Get();
-                    if (Font == nullptr || !Font->HasAtlas())
-                    {
-                        Font = CFontManager::Get().GetDefaultFont();
-                    }
-                    if (Font == nullptr || !Font->HasAtlas())
-                    {
-                        return;
-                    }
-
-                    const int32 AtlasID = Font->GetAtlasResourceID();
-                    if (AtlasID < 0)
-                    {
-                        return;
-                    }
-
-                    const FMatrix4 WorldMatrix = TransformStorage.Get(Entity).GetWorldMatrix();
-                    const FVector3 Origin = FVector3(WorldMatrix[3]);
-
-                    const float HAlign = (TextComponent.HorizontalAlign == ETextHorizontalAlign::Left)   ? 0.0f
-                                       : (TextComponent.HorizontalAlign == ETextHorizontalAlign::Center) ? 0.5f : 1.0f;
-                    // Top places the text above the origin, Bottom below (block bottom/top anchored at origin).
-                    const float VAlign = (TextComponent.VerticalAlign == ETextVerticalAlign::Top)        ? 1.0f
-                                       : (TextComponent.VerticalAlign == ETextVerticalAlign::Middle)     ? 0.5f : 0.0f;
-
-                    FTextRenderCache& Cache = TextComponent.RenderCache;
-                    const uint64      TextHash = Hash::GetHash64(TextComponent.Text);
-
-                    const bool bCacheValid =
-                           Cache.bValid
-                        && Cache.Font        == Font
-                        && Cache.FontVersion == Font->GetShapeVersion()
-                        && Cache.TextHash    == TextHash
-                        && Cache.TextLength  == (uint32)TextComponent.Text.size()
-                        && Cache.HAlign      == TextComponent.HorizontalAlign
-                        && Cache.VAlign      == TextComponent.VerticalAlign
-                        && Cache.LineSpacing == TextComponent.LineSpacing;
-
-                    if (!bCacheValid)
-                    {
-                        if (!Font->ShapeText(TextComponent.Text, HAlign, VAlign, TextComponent.LineSpacing, Cache.Glyphs))
-                        {
-                            return;
-                        }
-
-                        float EmExtent = 0.0f;
-                        for (const FShapedGlyph& S : Cache.Glyphs)
-                        {
-                            EmExtent = Math::Max(EmExtent, Math::Max(Math::Abs(S.Min.x), Math::Abs(S.Max.x)));
-                            EmExtent = Math::Max(EmExtent, Math::Max(Math::Abs(S.Min.y), Math::Abs(S.Max.y)));
-                        }
-
-                        Cache.EmExtent    = EmExtent;
-                        Cache.TextHash    = TextHash;
-                        Cache.TextLength  = (uint32)TextComponent.Text.size();
-                        Cache.Font        = Font;
-                        Cache.FontVersion = Font->GetShapeVersion();
-                        Cache.HAlign      = TextComponent.HorizontalAlign;
-                        Cache.VAlign      = TextComponent.VerticalAlign;
-                        Cache.LineSpacing = TextComponent.LineSpacing;
-                        Cache.bValid      = true;
-                    }
-
-                    const TVector<FShapedGlyph>& Shaped = Cache.Glyphs;
-                    if (Shaped.empty())
-                    {
-                        return;
-                    }
-
-                    if (bCullText && !TextFrustum.IntersectsSphere(Origin, Cache.EmExtent * TextComponent.WorldSize * 1.5f))
-                    {
-                        return;
-                    }
-
-                    FVector3 RightDir, UpDir;
-                    if (TextComponent.bBillboard)
-                    {
-                        RightDir = CamRight;
-                        UpDir    = CamUp;
-                    }
-                    else
-                    {
-                        RightDir = Math::Normalize(FVector3(WorldMatrix[0]));
-                        UpDir    = Math::Normalize(FVector3(WorldMatrix[1]));
-                    }
-
-                    const FVector3 RightScaled = RightDir * TextComponent.WorldSize;
-                    const FVector3 UpScaled    = UpDir    * TextComponent.WorldSize;
-                    const uint32   Color       = PackColor(TextComponent.Color);
-                    const uint32   First       = (uint32)GlyphInstances.size();
-
-                    for (const FShapedGlyph& S : Shaped)
-                    {
-                        FGPUGlyph& G = GlyphInstances.emplace_back();
-                        G.Origin    = Origin;
-                        G.Pad0      = 0.0f;
-                        G.Right     = RightScaled;
-                        G.Pad1      = 0.0f;
-                        G.Up        = UpScaled;
-                        G.Pad2      = 0.0f;
-                        G.UVRect    = S.UV;
-                        G.PlaneMin  = S.Min;
-                        G.PlaneMax  = S.Max;
-                        G.ColorPack = Color;
-                        G.EntityID  = (Entity).Value;
-                    }
-
-                    const uint32 GlyphCount = (uint32)GlyphInstances.size() - First;
-
-                    // Extending the open batch never reorders anything, and same-font neighbors are common.
-                    if (!TextBatches.empty())
-                    {
-                        FFrameData::FTextBatch& Last = TextBatches.back();
-                        if (Last.AtlasIndex == (uint32)AtlasID
-                            && Last.bDepthTest == TextComponent.bDepthTest
-                            && Last.FirstInstance + Last.Count == First)
-                        {
-                            Last.Count += GlyphCount;
-                            return;
-                        }
-                    }
-
-                    FFrameData::FTextBatch& Batch = TextBatches.emplace_back();
-                    Batch.AtlasIndex    = (uint32)AtlasID;
-                    Batch.AtlasWidth    = Font->GetAtlasWidth();
-                    Batch.AtlasHeight   = Font->GetAtlasHeight();
-                    Batch.DistanceRange = Font->GetDistanceRange();
-                    Batch.FirstInstance = First;
-                    Batch.Count         = GlyphCount;
-                    Batch.bDepthTest    = TextComponent.bDepthTest;
-                });
-            }, ETaskPriority::Medium); // emitter, so it must not outrank the mesh critical path
-
-            EmitGraph.Add([&]
-            {
-                LUMINA_PROFILE_SECTION("Process Sprite Primitives");
-
-                const FFrustum& SpriteFrustum  = Frame.CameraFrustum;
-                const bool      bCullSprites   = SceneGlobalData.CullData.bFrustumCull != 0u;
-                const FVector3  SpriteCamRight = FVector3(SceneGlobalData.CameraData.Right);
-                const FVector3  SpriteCamUp    = FVector3(SceneGlobalData.CameraData.Up);
-                const FVector3  SpriteCamPos   = FVector3(SceneGlobalData.CameraData.Location);
-
-                SpriteSortScratch.clear();
-
-                SpriteView.ForEach([&](ECS::FEntity Entity, const SSprite3DComponent& Sprite)
-                {
-                    CTexture* Texture = Sprite.Texture.Get();
-                    if (Texture == nullptr || Texture->GetResourceID() < 0 || Texture->GetNumMips() == 0)
-                    {
-                        return;
-                    }
-
-                    const FTextureResource::FMip& Base = Texture->GetTextureResource().Mips[0];
-                    const float TexW = (float)Base.Width;
-                    const float TexH = (float)Base.Height;
-                    if (TexW <= 0.0f || TexH <= 0.0f)
-                    {
-                        return;
-                    }
-
-                    float U0, V0, U1, V1, FrameW, FrameH;
-                    if (Sprite.bRegionEnabled)
-                    {
-                        FrameW = Sprite.RegionRect.z;
-                        FrameH = Sprite.RegionRect.w;
-                        if (FrameW <= 0.0f || FrameH <= 0.0f)
-                        {
-                            return;
-                        }
-                        U0 = Sprite.RegionRect.x / TexW;
-                        V0 = Sprite.RegionRect.y / TexH;
-                        U1 = (Sprite.RegionRect.x + FrameW) / TexW;
-                        V1 = (Sprite.RegionRect.y + FrameH) / TexH;
-                    }
-                    else
-                    {
-                        const int32 HF    = Math::Max(Sprite.HFrames, 1);
-                        const int32 VF    = Math::Max(Sprite.VFrames, 1);
-                        const int32 Index = Math::Clamp(Sprite.Frame, 0, HF * VF - 1);
-                        const int32 Cx    = Index % HF;
-                        const int32 Cy    = Index / HF;
-
-                        FrameW = TexW / (float)HF;
-                        FrameH = TexH / (float)VF;
-                        U0 = (float)Cx / (float)HF;
-                        V0 = (float)Cy / (float)VF;
-                        U1 = (float)(Cx + 1) / (float)HF;
-                        V1 = (float)(Cy + 1) / (float)VF;
-                    }
-
-                    if (Sprite.bFlipH)
-                    {
-                        const float SwapU = U0; U0 = U1; U1 = SwapU;
-                    }
-                    if (Sprite.bFlipV)
-                    {
-                        const float SwapV = V0; V0 = V1; V1 = SwapV;
-                    }
-
-                    const FMatrix4 WorldMatrix = TransformStorage.Get(Entity).GetWorldMatrix();
-                    const FVector3 Origin      = FVector3(WorldMatrix[3]);
-
-                    const float ScaleX = Math::Length(FVector3(WorldMatrix[0]));
-                    const float ScaleY = Math::Length(FVector3(WorldMatrix[1]));
-                    const float QuadW  = FrameW * Sprite.PixelSize * ScaleX;
-                    const float QuadH  = FrameH * Sprite.PixelSize * ScaleY;
-
-                    // Uncentered anchors the frame's top-left at the origin, so it hangs right and down.
-                    FVector2 PlaneMin = Sprite.bCentered ? FVector2(-QuadW * 0.5f, -QuadH * 0.5f) : FVector2(0.0f, -QuadH);
-                    FVector2 PlaneMax = Sprite.bCentered ? FVector2( QuadW * 0.5f,  QuadH * 0.5f) : FVector2(QuadW, 0.0f);
-
-                    // Offset is authored in texture pixels with y running down, as the 2D sprite editors do.
-                    const FVector2 OffsetWorld( Sprite.Offset.x * Sprite.PixelSize * ScaleX,
-                                               -Sprite.Offset.y * Sprite.PixelSize * ScaleY);
-                    PlaneMin += OffsetWorld;
-                    PlaneMax += OffsetWorld;
-
-                    const float Radius = Math::Max(Math::Abs(PlaneMin.x), Math::Abs(PlaneMax.x))
-                                       + Math::Max(Math::Abs(PlaneMin.y), Math::Abs(PlaneMax.y));
-                    if (bCullSprites && !SpriteFrustum.IntersectsSphere(Origin, Radius))
-                    {
-                        return;
-                    }
-
-                    FVector3 RightDir;
-                    FVector3 UpDir;
-                    switch (Sprite.BillboardMode)
-                    {
-                    case ESpriteBillboardMode::Enabled:
-                        RightDir = SpriteCamRight;
-                        UpDir    = SpriteCamUp;
-                        break;
-
-                    case ESpriteBillboardMode::YBillboard:
-                    {
-                        UpDir = FVector3(0.0f, 1.0f, 0.0f);
-                        FVector3 ToCamera = SpriteCamPos - Origin;
-                        ToCamera.y = 0.0f;
-                        // Directly overhead leaves no yaw to resolve, so any stable axis will do.
-                        RightDir = Math::LengthSquared(ToCamera) > 1e-8f
-                                 ? Math::Normalize(Math::Cross(UpDir, ToCamera))
-                                 : SpriteCamRight;
-                        break;
-                    }
-
-                    default:
-                        RightDir = Math::Normalize(FVector3(WorldMatrix[0]));
-                        UpDir    = Math::Normalize(FVector3(WorldMatrix[1]));
-                        break;
-                    }
-
-                    FSpriteSortEntry& Entry = SpriteSortScratch.emplace_back();
-                    Entry.TextureIndex = (uint32)Texture->GetResourceID();
-                    Entry.SortOrder    = Sprite.SortOrder;
-                    Entry.ViewDepthSq  = Math::LengthSquared(Origin - SpriteCamPos);
-                    Entry.bDepthTest   = Sprite.bDepthTest;
-                    Entry.bDoubleSided = Sprite.bDoubleSided;
-
-                    FGPUSprite& Out = Entry.Gpu;
-                    Out.Origin   = Origin;   Out.Pad0 = 0.0f;
-                    Out.Right    = RightDir; Out.Pad1 = 0.0f;
-                    Out.Up       = UpDir;    Out.Pad2 = 0.0f;
-                    Out.UVRect   = FVector4(U0, V0, U1, V1);
-                    Out.PlaneMin = PlaneMin;
-                    Out.PlaneMax = PlaneMax;
-                    Out.ColorPack = PackColor(Sprite.Modulate);
-                    Out.EntityID  = (Entity).Value;
-                    Out.Flags     = (Sprite.AlphaCut == ESpriteAlphaCut::Discard) ? SPRITE_FLAG_ALPHA_CUT : 0u;
-                    Out.AlphaCutThreshold = Sprite.AlphaCutThreshold;
-                });
-
-                if (SpriteSortScratch.empty())
-                {
-                    return;
-                }
-
-                Algo::StableSort(SpriteSortScratch, [](const FSpriteSortEntry& A, const FSpriteSortEntry& B)
-                {
-                    if (A.SortOrder != B.SortOrder)
-                    {
-                        return A.SortOrder < B.SortOrder;
-                    }
-                    return A.ViewDepthSq > B.ViewDepthSq;
-                });
-
-                SpriteInstances.reserve(SpriteSortScratch.size());
-                for (const FSpriteSortEntry& Entry : SpriteSortScratch)
-                {
-                    const uint32 First = (uint32)SpriteInstances.size();
-                    SpriteInstances.push_back(Entry.Gpu);
-
-                    if (!SpriteBatches.empty())
-                    {
-                        FFrameData::FSpriteBatch& Last = SpriteBatches.back();
-                        if (Last.TextureIndex == Entry.TextureIndex
-                            && Last.bDepthTest == Entry.bDepthTest
-                            && Last.bDoubleSided == Entry.bDoubleSided
-                            && Last.FirstInstance + Last.Count == First)
-                        {
-                            ++Last.Count;
-                            continue;
-                        }
-                    }
-
-                    FFrameData::FSpriteBatch& Batch = SpriteBatches.emplace_back();
-                    Batch.TextureIndex  = Entry.TextureIndex;
-                    Batch.FirstInstance = First;
-                    Batch.Count         = 1;
-                    Batch.bDepthTest    = Entry.bDepthTest;
-                    Batch.bDoubleSided  = Entry.bDoubleSided;
-                }
-            }, ETaskPriority::Medium);
-
-            EmitGraph.Add([&]
-            {
-                LUMINA_PROFILE_SECTION("Process Billboard Primitives");
-
-                BillboardView.ForEach([this, &BillboardInstances, &TransformStorage](ECS::FEntity Entity, const SBillboardComponent& BillboardComponent)
-                {
-                    if (!BillboardComponent.Texture.IsValid() || BillboardComponent.Texture->GetResourceID() < 0)
-                    {
-                        return;
-                    }
-
-                    FBillboardInstance& Billboard   = BillboardInstances.emplace_back();
-                    Billboard.TextureIndex          = BillboardComponent.Texture->GetResourceID();
-                    Billboard.Position              = TransformStorage.Get(Entity).GetWorldLocationCached();
-                    Billboard.Size                  = BillboardComponent.Scale;
-                    Billboard.EntityID              = (Entity).Value;
-                });
-                
-                #if USING(WITH_EDITOR)
-                // Editor visualizer billboards, skipped in game and thumbnail worlds.
-                if (!World->IsGameWorld())
-                {
-                    auto EmplaceVisualizer = [this, &BillboardInstances](ECS::FEntity Entity, const FVector3& Position, ENamedImage Icon, const FVector4& Color, float Size = 0.20f)
-                    {
-                        FBillboardInstance& Billboard = BillboardInstances.emplace_back();
-                        Billboard.TextureIndex        = (uint32)GetNamedImage(Icon).GetResourceID();
-                        Billboard.ColorPack           = PackColor(Color);
-                        Billboard.Position            = Position;
-                        Billboard.Size                = Size;
-                        Billboard.EntityID            = (Entity).Value;
-                    };
-
-                    // Skip editor viewport camera so the billboard doesn't sit on the user's view.
-                    CameraView.ForEach([&](ECS::FEntity Entity, SCameraComponent&)
-                    {
-                        if (Registry.HasAll<FEditorComponent>(Entity))
-                        {
-                            return;
-                        }
-                        EmplaceVisualizer(Entity, TransformStorage.Get(Entity).GetWorldLocationCached(), ENamedImage::CameraIcon, FColor::White);
-                    });
-
-                    CharacterView.ForEach([&](ECS::FEntity Entity, SCharacterControllerComponent&)
-                    {
-                        EmplaceVisualizer(Entity, TransformStorage.Get(Entity).GetWorldLocationCached(), ENamedImage::CharacterIcon, FColor::White);
-                    });
-
-                    PointLightView.ForEach([&](ECS::FEntity Entity, const SPointLightComponent& Light)
-                    {
-                        EmplaceVisualizer(Entity, TransformStorage.Get(Entity).GetWorldLocationCached(), ENamedImage::PointLightIcon, FVector4(Light.LightColor, 1.0f));
-                    });
-
-                    SpotLightView.ForEach([&](ECS::FEntity Entity, const SSpotLightComponent& Light)
-                    {
-                        EmplaceVisualizer(Entity, TransformStorage.Get(Entity).GetWorldLocationCached(), ENamedImage::SpotLightIcon, FVector4(Light.LightColor, 1.0f));
-                    });
-
-                    DirectionalView.ForEach([&](ECS::FEntity Entity, const SDirectionalLightComponent& Light)
-                    {
-                        const auto& Transform = Registry.Get<STransformComponent>(Entity);
-                        EmplaceVisualizer(Entity, Transform.GetWorldLocationCached(), ENamedImage::DirectionalLightIcon, FVector4(Light.Color, 1.0f));
-                    });
-
-                    SkyLightView.ForEach([&](ECS::FEntity Entity, const SSkyLightComponent&)
-                    {
-                        const auto& Transform = Registry.Get<STransformComponent>(Entity);
-                        EmplaceVisualizer(Entity, Transform.GetWorldLocationCached(), ENamedImage::SkyLightIcon, FVector4(1.0f));
-                    });
-
-                    ParticleView.ForEach([&](ECS::FEntity Entity, const SParticleSystemComponent&)
-                    {
-                        EmplaceVisualizer(Entity, TransformStorage.Get(Entity).GetWorldLocationCached(), ENamedImage::ParticleSystemIcon, FVector4(1.0f));
-                    });
-
-                    AudioSourceView.ForEach([&](ECS::FEntity Entity, const SAudioSourceComponent& Source)
-                    {
-                        // A live voice tints cyan, so an audible emitter is obvious without selecting it.
-                        const FVector4 Tint = Source.bPlaying ? FVector4(0.35f, 0.95f, 1.0f, 1.0f) : FVector4(1.0f);
-                        EmplaceVisualizer(Entity, TransformStorage.Get(Entity).GetWorldLocationCached(), ENamedImage::AudioSourceIcon, Tint);
-                    });
-
-                    AudioListenerView.ForEach([&](ECS::FEntity Entity, const SAudioListenerComponent&)
-                    {
-                        EmplaceVisualizer(Entity, TransformStorage.Get(Entity).GetWorldLocationCached(), ENamedImage::AudioListenerIcon, FVector4(1.0f));
-                    });
-                }
-                #endif
-            }, ETaskPriority::Medium);
-
-            #if USING(WITH_EDITOR)
-            EmitGraph.Add([&]
-            {
-                LUMINA_PROFILE_SECTION("Extract Selection");
-
-                TVector<uint32>& Bits = Frame.Extracts.SelectionBits;
-                Bits.clear();
-
-                // Sized to the highest selected slot, since an entity above the top bit reads as unselected.
-                uint32 HighestWord = 0u;
-                bool   bAnySelected = false;
-                auto   Selected = Registry.View<FSelectedInEditorComponent>();
-                Selected.ForEach([&](ECS::FEntity Entity)
-                {
-                    HighestWord  = Math::Max(HighestWord, (uint32)(Entity).GetIndex() >> 5u);
-                    bAnySelected = true;
-                });
-
-                // Sized once, since the view yields entities in no particular order.
-                if (bAnySelected)
-                {
-                    Bits.resize(HighestWord + 1u, 0u);
-                    Selected.ForEach([&](ECS::FEntity Entity)
-                    {
-                        const uint32 Index = (uint32)(Entity).GetIndex();
-                        Bits[Index >> 5u] |= (1u << (Index & 31u));
-                    });
-                }
-            }, ETaskPriority::Medium);
-            #endif
-
-            auto DLightTask = EmitGraph.AddParallelFor((uint32)DirectionalView.NumDenseSlots(), 32, [&](Task::FParallelRange Range)
-            {
-                LUMINA_PROFILE_SECTION("Process Directional Light");
-                DirectionalView.ForEachInRange(Range.Start, Range.End,
-                    [&](ECS::FEntity, SDirectionalLightComponent& DirectionalLight)
-                {
-                    ProcessDirectionalLight(DirectionalLight);
-                });
-            });
-            
-            auto PointLightTask = EmitGraph.AddParallelFor((uint32)PointLightView.NumDenseSlots(), 32, [&](Task::FParallelRange Range)
-            {
-                LUMINA_PROFILE_SECTION("Process Point Light Range");
-
-                PointLightView.ForEachInRange(Range.Start, Range.End,
-                    [&](ECS::FEntity Entity, SPointLightComponent& PointLight)
-                {
-                    ProcessPointLight(PointLight, TransformStorage.Get(Entity), LightCount);
-                });
-            });
-            
-            auto SpotLightTask = EmitGraph.AddParallelFor((uint32)SpotLightView.NumDenseSlots(), 32, [&](Task::FParallelRange Range)
-            {
-                LUMINA_PROFILE_SECTION("Process Spot Light Range");
-
-                SpotLightView.ForEachInRange(Range.Start, Range.End,
-                    [&](ECS::FEntity Entity, SSpotLightComponent& SpotLight)
-                {
-                    ProcessSpotLight(SpotLight, TransformStorage.Get(Entity), LightCount);
-                });
-            });
-            
-            EmitGraph.Add([&]
-            {
-                LUMINA_PROFILE_SECTION("Extract Terrain");
-
-                Frame.Extracts.LiveTerrainEntities.clear();
-
-                for (ECS::FEntity Entity : TerrainAllView)
-                {
-                    Frame.Extracts.LiveTerrainEntities.push_back(Entity);
-                }
-
-                SIZE_T TerrainCount = 0;
-                for (ECS::FEntity Entity : TerrainView)
-                {
-                    STerrainComponent& Terrain = TerrainView.Get<STerrainComponent>(Entity);
-
-                    FFrameData::FTerrainExtract& Item = ReuseAt(Frame.Extracts.TerrainExtracts, TerrainCount++);
-                    Item.Entity      = Entity;
-                    Item.WorldMatrix = TransformStorage.Get(Entity).GetWorldMatrix();
-                    PrepareTerrainExtract(Terrain, Item.WorldMatrix, Item);
-                    PrepareGrassExtract(Registry, Entity, Terrain, Item);
-                }
-                Frame.Extracts.TerrainExtracts.resize(TerrainCount);
-            }, ETaskPriority::Medium);
-
-            EmitGraph.Add([&]
-            {
-                LUMINA_PROFILE_SECTION("Extract Particles");
-
-                Frame.Extracts.LiveParticleEntities.clear();
-                SIZE_T ParticleCount = 0;
-
-                for (ECS::FEntity Entity : ParticleAllView)
-                {
-                    Frame.Extracts.LiveParticleEntities.push_back(Entity);
-                }
-
-                ParticleView.ForEach([&](ECS::FEntity Entity, SParticleSystemComponent& Component)
-                {
-                    CParticleSystem* PS = Component.ParticleSystem.Get();
-
-                    const bool bForceBurst = Component.bForceBurst;
-                    const bool bForceReset = Component.bForceReset;
-                    Component.bForceBurst = false;
-                    Component.bForceReset = false;
-
-                    if (PS == nullptr)
-                    {
-                        return;
-                    }
-
-                    const FMatrix4 WorldMatrix = TransformStorage.Get(Entity).GetWorldMatrix();
-                    const int32    EmitterCount = (int32)PS->Emitters.size();
-
-                    for (int32 EmitterIdx = 0; EmitterIdx < EmitterCount; ++EmitterIdx)
-                    {
-                        CParticleEmitter* Emitter = PS->Emitters[EmitterIdx].Get();
-                        if (Emitter == nullptr || !Emitter->bEnabled)
-                        {
-                            continue;
-                        }
-
-                        FFrameData::FParticleExtract& Item =
-                            ReuseAt(Frame.Extracts.ParticleExtracts, ParticleCount++);
-
-                        // The element is reused, so everything the fill path writes conditionally resets here.
-                        Item.bReady              = false;
-                        Item.bUsesCustomShader   = false;
-                        Item.CustomComputeShader = {};
-                        Item.TextureIndex        = 0u;
-                        Item.MaterialVertexShader = {};
-                        Item.MaterialPixelShader  = {};
-                        Item.MaterialIndex        = -1;
-                        Item.AttributeFloatCount = 1u;
-                        Item.Resolved            = FResolvedParticleParams{};
-                        Item.ModuleParamValues.clear();
-
-                        Item.Entity              = Entity;
-                        Item.EmitterIndex        = EmitterIdx;
-                        Item.EmitterCount        = EmitterCount;
-                        Item.WorldMatrix         = WorldMatrix;
-                        Item.EmitterOffset       = Component.EmitterOffset;
-                        Item.TimeScale           = Component.TimeScale;
-                        Item.SpawnRateMultiplier = Component.SpawnRateMultiplier;
-                        for (int32 A = 0; A < (int32)ParticleRenderAttribute::Count; ++A)
-                        {
-                            Item.RenderAttrSlots[A] = -1;
-                        }
-                        Item.bEmit               = Component.bEmit;
-                        Item.bBurstOnSpawn       = Component.bBurstOnSpawn;
-                        Item.bForceBurst         = bForceBurst;
-                        Item.bForceReset         = bForceReset;
-
-                        Item.bReady = Emitter->IsReadyForSimulation();
-                        if (Item.bReady)
-                        {
-                            Item.Resolved          = ResolveParticleParams(*PS, *Emitter, Component);
-                            Item.bUsesCustomShader = Emitter->UsesCustomShader();
-                            if (Item.bUsesCustomShader)
-                            {
-                                Item.CustomComputeShader = Emitter->GetCustomComputeShader();
-                                Item.ModuleParamValues   = Emitter->ModuleParamValues;
-                                ApplyParticleParamBindings(*Emitter, Component, Item.ModuleParamValues);
-                                Item.AttributeFloatCount = Math::Max(Emitter->AttributeFloatCount, 1u);
-                                for (int32 A = 0; A < (int32)ParticleRenderAttribute::Count; ++A)
-                                {
-                                    Item.RenderAttrSlots[A] = Emitter->GetRenderAttributeSlot((ParticleRenderAttribute::Type)A);
-                                }
-                            }
-                            if (CTexture* Tex = Emitter->Texture.Get())
-                            {
-                                const int32 CacheIdx = Tex->GetResourceID();
-                                if (CacheIdx > 0)
-                                {
-                                    Item.TextureIndex = (uint32)CacheIdx;
-                                }
-                            }
-
-                            // Through the component, so a script's dynamic instance beats the asset's material.
-                            CMaterialInterface* Candidate = Component.GetMaterialForEmitter(EmitterIdx);
-                            if (CMaterialInterface* SpriteMaterial = ResolveParticleSpriteMaterial(Candidate))
-                            {
-                                FShaderH SpriteVS;
-                                FShaderH SpritePS;
-                                if (SpriteMaterial->ResolveDomainShaders(EMaterialType::Particle, SpriteVS, SpritePS))
-                                {
-                                    Item.MaterialVertexShader = SpriteVS;
-                                    Item.MaterialPixelShader  = SpritePS;
-                                    Item.MaterialIndex        = SpriteMaterial->GetMaterialIndex();
-                                    Item.MaterialBlendMode    = SpriteMaterial->GetBlendMode();
-                                    Item.bMaterialWritesDepth = SpriteMaterial->WritesDepth();
-
-                                    // Demand only; an unresolved slot reads the placeholder rather than popping paths.
-                                    SpriteMaterial->RequestTexturesResolved();
-                                }
-                            }
-                        }
-                    }
-                });
-                Frame.Extracts.ParticleExtracts.resize(ParticleCount);
-            }, ETaskPriority::Medium);
-
-            EmitGraph.Add([&]
-            {
-                LUMINA_PROFILE_SECTION("Extract Decals");
-
-                Frame.Primitives.DecalExtracts.clear();
-                Frame.Primitives.DecalBatches.clear();
-                DecalSortScratch.clear();
-                DecalGroupMinSort.clear();
-
-                DecalView.ForEach([&](ECS::FEntity Entity, const SDecalComponent& Decal)
-                {
-                    CMaterialInterface* Material = Decal.DecalMaterial.Get();
-                    FShaderH DecalVS;
-                    FShaderH DecalPS;
-                    if (Material == nullptr || !Material->ResolveDomainShaders(EMaterialType::Decal, DecalVS, DecalPS))
-                    {
-                        return;
-                    }
-                    CMaterial* ShaderOwner = Material->GetMaterial();
-                    const int32 MaterialIndex = Material->GetMaterialIndex();
-                    if (MaterialIndex < 0)
-                    {
-                        return;
-                    }
-
-                    FGPUDecal Item;
-                    Item.DecalToWorld  = Math::Scale(TransformStorage.Get(Entity).GetWorldMatrix(), Decal.Size);
-                    Item.WorldToDecal  = Math::Inverse(Item.DecalToWorld);
-                    Item.FadeAngleCos  = Math::Cos(Math::Radians(Math::Clamp(Decal.FadeAngle, 0.0f, 89.9f)));
-                    Item.Opacity       = Math::Clamp(Decal.Opacity, 0.0f, 1.0f);
-                    Item.MaterialIndex = (uint32)MaterialIndex;
-                    Item.Flags         = 0;
-
-                    DecalSortScratch.push_back({ ShaderOwner, Decal.SortOrder, Item });
-                });
-
-                for (const FDecalSortEntry& E : DecalSortScratch)
-                {
-                    auto It = DecalGroupMinSort.find(E.ShaderOwner);
-                    if (It == DecalGroupMinSort.end() || E.SortOrder < It->second)
-                    {
-                        DecalGroupMinSort[E.ShaderOwner] = E.SortOrder;
-                    }
-                }
-                Algo::StableSort(DecalSortScratch, [&](const FDecalSortEntry& A, const FDecalSortEntry& B)
-                {
-                    const int32 GA = DecalGroupMinSort[A.ShaderOwner];
-                    const int32 GB = DecalGroupMinSort[B.ShaderOwner];
-                    if (GA != GB)
-                    {
-                        return GA < GB;
-                    }
-                    if (A.ShaderOwner != B.ShaderOwner)
-                    {
-                        return A.ShaderOwner < B.ShaderOwner;
-                    }
-                    return A.SortOrder < B.SortOrder;
-                });
-
-                Frame.Primitives.DecalExtracts.reserve(DecalSortScratch.size());
-                CMaterial* PrevOwner = nullptr;
-                for (uint32 i = 0; i < (uint32)DecalSortScratch.size(); ++i)
-                {
-                    Frame.Primitives.DecalExtracts.push_back(DecalSortScratch[i].Gpu);
-
-                    CMaterial* Owner = DecalSortScratch[i].ShaderOwner;
-                    if (Owner == PrevOwner && !Frame.Primitives.DecalBatches.empty())
-                    {
-                        Frame.Primitives.DecalBatches.back().Count++;
-                    }
-                    else
-                    {
-                        FFrameData::FDecalBatch& Batch = Frame.Primitives.DecalBatches.emplace_back();
-                        Batch.Shaders.VertexShader = Owner->GetVertexShader();
-                        Batch.Shaders.PixelShader  = Owner->GetPixelShader();
-                        Batch.FirstInstance        = i;
-                        Batch.Count                = 1u;
-                        PrevOwner                  = Owner;
-                    }
-                }
-            }, ETaskPriority::Medium);
-
-            EmitGraph.Add([&]
-            {
-                LUMINA_PROFILE_SECTION("Extract Water");
-
-                Frame.Water.Surfaces.clear();
-                Frame.Water.bUnderwaterActive = false;
-
-                const FVector4& CamLoc = Frame.SceneGlobalData.CameraData.Location;
-                const FVector3  CameraPos = FVector3(CamLoc.x, CamLoc.y, CamLoc.z);
-
-                // Track the nearest water surface above the camera (largest local.y still below the plane).
-                float BestUnderwaterLocalY = -1.0e30f;
-
-                auto ResolveTexture = [](const TObjectPtr<CTexture>& Tex) -> uint32
-                {
-                    const CTexture* T = Tex.Get();
-                    const int32 ID = T ? T->GetResourceID() : -1;
-                    return ID >= 0 ? (uint32)ID : ~0u;
-                };
-
-                WaterView.ForEach([&](ECS::FEntity Entity, const SWaterComponent& Water)
-                {
-                    const FMatrix4 WorldMatrix = TransformStorage.Get(Entity).GetWorldMatrix();
-                    const float ExtentX = Math::Max(Water.Extent.x, 0.01f);
-                    const float ExtentZ = Math::Max(Water.Extent.y, 0.01f);
-
-                    FGPUWater Item    = {};
-                    Item.WaterToWorld = Math::Scale(WorldMatrix, FVector3(ExtentX, 1.0f, ExtentZ));
-                    Item.WorldToWater = Math::Inverse(Item.WaterToWorld);
-
-                    Item.ShallowColor = FVector4(Water.ShallowColor, 1.0f);
-                    Item.DeepColor    = FVector4(Water.DeepColor, 1.0f);
-                    Item.FoamColor    = FVector4(Water.FoamColor, 1.0f);
-
-                    FVector2    Wind    = Water.WindDirection;
-                    const float WindLen = Math::Sqrt(Wind.x * Wind.x + Wind.y * Wind.y);
-                    Wind = (WindLen > 1e-4f) ? FVector2(Wind.x / WindLen, Wind.y / WindLen) : FVector2(1.0f, 0.0f);
-
-                    Item.WindAndWave    = FVector4(Wind.x, Wind.y, Water.WindSpeed, Water.WaveAmplitude);
-                    Item.WaveParams     = FVector4(Math::Clamp(Water.Choppiness, 0.0f, 1.0f),
-                                                   Math::Max(Water.WaveLength, 0.5f),
-                                                   (float)Math::Clamp(Water.WaveCount, 1, 8),
-                                                   Math::Clamp(Water.DetailStrength, 0.0f, 1.0f));
-                    Item.RefractReflect = FVector4(Math::Max(Water.RefractionStrength, 0.0f),
-                                                   Math::Clamp(Water.ReflectionStrength, 0.0f, 1.0f),
-                                                   Math::Clamp(Water.Roughness, 0.0f, 1.0f),
-                                                   Math::Max(Water.FresnelPower, 1.0f));
-                    Item.FoamAbsorb     = FVector4(Math::Max(Water.ShorelineFoamWidth, 0.0f),
-                                                   Math::Clamp(Water.CrestFoamAmount, 0.0f, 1.0f),
-                                                   Math::Max(Water.DepthFadeDistance, 0.01f),
-                                                   Math::Max(Water.AbsorptionScale, 0.0f));
-                    Item.SSRSpecOpacity = FVector4(Math::Max(Water.SSRMaxDistance, 1.0f),
-                                                   (float)Math::Clamp(Water.SSRStepCount, 8, 128),
-                                                   Math::Max(Water.SpecularIntensity, 0.0f),
-                                                   Math::Clamp(Water.Opacity, 0.0f, 1.0f));
-                    Item.DetailParams   = FVector4(Math::Max(Water.DetailTiling, 0.01f),
-                                                   Math::Max(Water.DetailScrollSpeed, 0.0f),
-                                                   Math::Max(Water.FoamTiling, 0.01f),
-                                                   Math::Max(Water.FoamIntensity, 0.0f));
-
-                    Item.DetailNormalIndex = ResolveTexture(Water.DetailNormalMap);
-                    Item.FoamTextureIndex  = ResolveTexture(Water.FoamTexture);
-                    Item.GridResolution    = (uint32)Math::Clamp(Water.GridResolution, 2, 512);
-                    Item.Flags             = 0;
-
-                    Frame.Water.Surfaces.push_back(Item);
-                    const FVector4 LocalCam = Item.WorldToWater * FVector4(CameraPos, 1.0f);
-                    if (Math::Abs(LocalCam.x) <= 0.5f && Math::Abs(LocalCam.z) <= 0.5f &&
-                        LocalCam.y < 0.0f && LocalCam.y > BestUnderwaterLocalY)
-                    {
-                        BestUnderwaterLocalY = LocalCam.y;
-
-                        const FVector3 SurfaceCenter = TransformStorage.Get(Entity).GetWorldLocation();
-                        Frame.Water.bUnderwaterActive = true;
-                        Frame.Water.Underwater.PlaneNormalAndHeight = FVector4(0.0f, 1.0f, 0.0f, SurfaceCenter.y);
-                        Frame.Water.Underwater.FogColorDensity      = FVector4(Water.UnderwaterFogColor, Math::Max(Water.UnderwaterFogDensity, 0.0f));
-                        Frame.Water.Underwater.TintDistortion       = FVector4(Water.UnderwaterTint, Math::Max(Water.UnderwaterDistortion, 0.0f));
-                        Frame.Water.Underwater.DeepColor            = FVector4(Water.DeepColor, 0.0f);
-                    }
-                });
-            }, ETaskPriority::Medium);
-
-            EmitGraph.Add([&]
-            {
-                LUMINA_PROFILE_SECTION("Extract Paint Ops");
-                Frame.Extracts.PaintOps.clear();
-                World->DrainRenderTargetPaints(Frame.Extracts.PaintOps);
-            }, ETaskPriority::Medium);
-
-            EmitGraph.AddDependency(PointLightTask, DLightTask);
-            EmitGraph.AddDependency(SpotLightTask, DLightTask);
-
-            EmitGraph.Dispatch();
-
-            Frame.Primitives.DebugTextGlyphs.clear();
-            Frame.Primitives.DebugTextBatch = {};
-#if !defined(LE_SHIPPING)
-            {
-                TVector<FDebugTextLine> DebugLines;
-                World->DrainDebugTextLines(DebugLines);
-
-                CFont* DebugFont = CFontManager::Get().GetDefaultFont();
-                const int32 DebugAtlasID = DebugFont ? DebugFont->GetAtlasResourceID() : -1;
-                if (!DebugLines.empty() && DebugFont && DebugFont->HasAtlas() && DebugAtlasID >= 0)
-                {
-                    const float PxSize = 32.0f;   // pixels per em
-                    const float Margin = 12.0f;
-                    float       PenY   = Margin;
-
-                    TVector<FShapedGlyph> DebugShaped;
-                    for (const FDebugTextLine& Line : DebugLines)
-                    {
-                        const uint32 Color = PackColor(Line.Color);
-                        if (DebugFont->ShapeText(Line.Text, 0.0f /*left*/, 0.0f, 1.0f, DebugShaped))
-                        {
-                            for (const FShapedGlyph& S : DebugShaped)
-                            {
-                                FGPUGlyph& G = Frame.Primitives.DebugTextGlyphs.emplace_back();
-                                G.PlaneMin  = FVector2(Margin + S.Min.x * PxSize, PenY - S.Max.y * PxSize);
-                                G.PlaneMax  = FVector2(Margin + S.Max.x * PxSize, PenY - S.Min.y * PxSize);
-                                G.UVRect    = S.UV;
-                                G.ColorPack = Color;
-                            }
-                        }
-
-                        int32 NumLines = 1;
-                        for (const char C : Line.Text)
-                        {
-                            if (C == '\n') ++NumLines;
-                        }
-                        PenY += (float)NumLines * DebugFont->GetLineHeight() * PxSize;
-                    }
-
-                    if (!Frame.Primitives.DebugTextGlyphs.empty())
-                    {
-                        FFrameData::FTextBatch& Batch = Frame.Primitives.DebugTextBatch;
-                        Batch.AtlasIndex    = (uint32)DebugAtlasID;
-                        Batch.AtlasWidth    = DebugFont->GetAtlasWidth();
-                        Batch.AtlasHeight   = DebugFont->GetAtlasHeight();
-                        Batch.DistanceRange = DebugFont->GetDistanceRange();
-                        Batch.FirstInstance = 0;
-                        Batch.Count         = (uint32)Frame.Primitives.DebugTextGlyphs.size();
-                    }
-                }
-            }
-#endif
-
-            {
-                LUMINA_PROFILE_SECTION_COLORED("Wait Draw Graphs", tracy::Color::Crimson);
-                Graph.Wait();
-                EmitGraph.Wait();
-            }
-
-            // After the waits, so the streamer walks CMaterial state with no gather in flight.
-            PublishStreamingFeedback();
-
-            // LightCount can overshoot MAX_LIGHTS; clamp to match what Process*Light wrote.
-            NumLiveLights = Math::Min(LightCount.load(std::memory_order_acquire), (uint32)MAX_LIGHTS);
-
-            // Serial fit/allocate after parallel light pass; shrinks when sum(area) exceeds atlas budget.
-            AllocateShadowTiles();
-
-            // Same overshoot as LightCount, and this is the last writer of the shadow counter.
-            NumLiveShadows = Math::Min(Frame.Lighting.ShadowDataCount.load(std::memory_order_acquire),
-                                       (uint32)MAX_SHADOWS);
-
-            // Serial after parallel light pass; skylight below reads ActiveEnv + LightData.SunDirection set by ProcessDirectionalLight.
-            const SEnvironmentComponent* ActiveEnv = nullptr;
-            {
-                LUMINA_PROFILE_SECTION("Environment Processing");
-
-                bool bHasEnvironment           = false;
-                FrameFlags.bGTAO           = false;
-                EnvironmentParams              = FEnvironmentParams{};
-                Frame.Volumetrics.EnvironmentMapID    = -1;
-                Frame.Volumetrics.EnvironmentMapWidth = 0;
-                // Set true below if any IBL input differs from the last bake snapshot.
-                Frame.Volumetrics.bIBLDirty                = false;
-                Frame.Volumetrics.bIBLConvolutionDirty     = false;
-
-                EnvironmentView.ForEach([&bHasEnvironment, &Frame, &EnvironmentParams, &ActiveEnv] (const SEnvironmentComponent& Env)
-                {
-                    ActiveEnv = &Env;
-
-                    // bRenderSky gates the sky pass; ambient/skylight still flow when off (indoor scenes).
-                    bHasEnvironment = Env.bRenderSky;
-
-                    if (Env.SkyMode == ESkyMode::HDRI)
-                    {
-                        if (CTexture* EnvMap = Env.EnvironmentMap.Get())
-                        {
-                            const int32 EnvMapID = EnvMap->GetResourceID();
-                            if (EnvMapID >= 0)
-                            {
-                                Frame.Volumetrics.EnvironmentMapID    = EnvMapID;
-                                Frame.Volumetrics.EnvironmentMapWidth = EnvMap->GetTextureResource().ImageDescription.Extent.x;
-                            }
-                        }
-                    }
-
-                    // Misc.x carries sky mode as float-cast uint; shader pulls it back via asuint().
-                    const uint32 SkyModeBits = (Env.SkyMode == ESkyMode::SolidColor) ? GSkyMode_SolidColor
-                                            : (Env.SkyMode == ESkyMode::Gradient)   ? GSkyMode_Gradient
-                                            : (Env.SkyMode == ESkyMode::HDRI)       ? GSkyMode_HDRI
-                                                                                    : GSkyMode_Dynamic;
-                    float SkyModeAsFloat;
-                    std::memcpy(&SkyModeAsFloat, &SkyModeBits, sizeof(float));
-
-                    EnvironmentParams.SolidSkyColor = FVector4(Env.SolidSkyColor, 0.0f);
-                    EnvironmentParams.ZenithColor   = FVector4(Env.ZenithColor, Env.HorizonExponent);
-                    EnvironmentParams.HorizonColor  = FVector4(Env.HorizonColor, 0.0f);
-                    EnvironmentParams.GroundColor   = FVector4(Env.GroundColor, 0.0f);
-                    EnvironmentParams.SunTint       = FVector4(Env.SunColorTint, Env.SunIntensity);
-                    EnvironmentParams.Misc          = FVector4(SkyModeAsFloat,
-                                                                Env.SunDiscScale,
-                                                                Env.SkyExposure,
-                                                                Env.MieAnisotropy);
-
-                    EnvironmentParams.NightSkyColor = FVector4(Env.NightSkyColor, Env.NightBrightness);
-                    EnvironmentParams.StarParams    = FVector4(Env.StarDensity,
-                                                                Env.StarBrightness,
-                                                                Env.StarTwinkleSpeed,
-                                                                Env.StarSize);
-                    EnvironmentParams.MoonParams    = FVector4(Env.MoonSize,
-                                                                Env.MoonGlowSize,
-                                                                Env.MoonBrightness,
-                                                                Env.bMoonOpposeSun ? 1.0f : 0.0f);
-                    EnvironmentParams.MoonDirection = FVector4(Env.MoonDirection, 0.0f);
-                    EnvironmentParams.GalaxyParams  = FVector4(Env.GalaxyIntensity, Env.GalaxyTilt, 0.0f, 0.0f);
-
-                    const float HDRIYaw = Math::Radians(Env.HDRIRotation);
-                    EnvironmentParams.HDRIParams    = FVector4(Math::Max(Env.HDRIIntensity, 0.0f),
-                                                                std::cos(HDRIYaw),
-                                                                std::sin(HDRIYaw),
-                                                                0.0f);
-
-                    // Only the dynamic sky shares this atmosphere; an HDRI's haze is already in its pixels.
-                    Frame.Volumetrics.bAerialPerspective = Env.bAerialPerspective
-                                                        && Env.SkyMode == ESkyMode::Dynamic;
-                    Frame.Volumetrics.AerialRange     = Math::Max(Env.AerialPerspectiveRange, 100.0f);
-                    Frame.Volumetrics.AerialIntensity = Math::Clamp(Env.AerialPerspectiveIntensity, 0.0f, 1.0f);
-                });
-
-                FrameFlags.bHasEnvironment = bHasEnvironment;
-
-                Frame.Volumetrics.IBLResolution = ActiveEnv
-                    ? ResolveIBLQuality(ActiveEnv->IBLQuality)
-                    : LastExtractedIBLResolution;
-            }
-
-            {
-                LUMINA_PROFILE_SECTION("Skylight Processing");
-
-                LightData.AmbientLight = FVector4(0.0f);
-
-                SkyLightView.ForEach([&LightData, ActiveEnv] (const SSkyLightComponent& Sky)
-                {
-                    if (!Sky.bAffectsWorld)
-                    {
-                        return;
-                    }
-
-                    FVector3 AmbientRGB = Sky.AmbientColor;
-                    if (Sky.bAmbientFromSky && ActiveEnv)
-                    {
-                        if (ActiveEnv->SkyMode == ESkyMode::SolidColor)
-                        {
-                            AmbientRGB = ActiveEnv->SolidSkyColor;
-                        }
-                        else if (ActiveEnv->SkyMode == ESkyMode::Gradient)
-                        {
-                            // 70/30 zenith/horizon matches what an upward-facing surface would integrate.
-                            AmbientRGB = ActiveEnv->ZenithColor * 0.7f + ActiveEnv->HorizonColor * 0.3f;
-                        }
-                        // Dynamic and HDRI always have the baked irradiance cube, which every consumer prefers.
-                    }
-                    LightData.AmbientLight = FVector4(AmbientRGB, Sky.Intensity);
-                });
-
-                LightData.bHasIBL = FrameFlags.bHasEnvironment ? 1u : 0u;
-            }
-
-            // Exponential height fog. Last enabled component with density > 0 wins.
-            {
-                LUMINA_PROFILE_SECTION("Fog Processing");
-
-                Frame.Volumetrics.bHasFog        = false;
-                Frame.Volumetrics.bClouds = false;
-                CloudView.ForEach([&Frame] (const SCloudComponent& Cloud)
-                {
-                    if (!Cloud.bEnabled || Cloud.Coverage <= 0.0f || Cloud.Density <= 0.0f)
-                    {
-                        return;
-                    }
-                    Frame.Volumetrics.bClouds = true;
-                    Frame.Volumetrics.Clouds  = Cloud;
-                });
-
-                Frame.Volumetrics.bVolumetricFog = false;
-                Frame.Volumetrics.FogParams      = FExponentialHeightFogParams{};
-
-                FogView.ForEach([&Frame, &Registry] (ECS::FEntity Entity, const SExponentialHeightFogComponent& Fog)
-                {
-                    if (!Fog.bEnabled || Fog.FogVisibilityDistance <= 0.0f)
-                    {
-                        return;
-                    }
-
-                    // Koschmieder extinction ln(50)/V, where contrast falls to 2%.
-                    constexpr float ContrastThreshold = 3.912f;
-                    const float FogDensity = ContrastThreshold / Math::Max(Fog.FogVisibilityDistance, 1.0f);
-
-                    float BaseHeight = Fog.FogBaseHeight;
-                    if (const STransformComponent* Transform = Registry.TryGet<STransformComponent>(Entity))
-                    {
-                        BaseHeight += Transform->GetWorldLocationCached().y;
-                    }
-
-                    FExponentialHeightFogParams& P = Frame.Volumetrics.FogParams;
-                    P.InscatteringColor = FVector4(Fog.FogInscatteringColor, FogDensity);
-                    P.HeightParams      = FVector4(Fog.FogHeightFalloff, BaseHeight,
-                                                    Fog.FogStartDistance, Fog.FogMaxOpacity);
-                    P.DirectionalColor  = FVector4(Fog.DirectionalInscatteringColor,
-                                                    Fog.DirectionalInscatteringExponent);
-                    P.VolumetricParams  = FVector4(Fog.VolumetricScatteringIntensity,
-                                                    Fog.VolumetricAnisotropy,
-                                                    Fog.VolumetricMaxDistance,
-                                                    Fog.DirectionalInscatteringStartDistance);
-                    // Phase attenuation reuses MultiScatterFalloff, so separate sliders could only conflict.
-                    P.MultiScatterParams = FVector4((float)Math::Clamp(Fog.MultiScatterOctaves, 1, 4),
-                                                    Fog.MultiScatterFalloff,
-                                                    Fog.MultiScatterShadowLeak,
-                                                    Fog.MultiScatterFalloff);
-
-                    const float NoiseStrength = Fog.bDensityNoise ? Math::Clamp(Fog.NoiseStrength, 0.0f, 1.0f) : 0.0f;
-                    P.NoiseParams = FVector4(NoiseStrength,
-                                             1.0f / Math::Max(Fog.NoiseScale, 1.0f),
-                                             (float)Math::Clamp(Fog.NoiseOctaves, 1, 4),
-                                             Math::Clamp(Fog.NoiseDetailGain, 0.0f, 1.0f));
-
-                    FVector3 NoiseWind = Fog.NoiseWindDirection;
-                    const float WindLen = Math::Length(NoiseWind);
-                    NoiseWind = WindLen > 1e-4f ? (NoiseWind / WindLen) * Math::Max(Fog.NoiseWindSpeed, 0.0f)
-                                                : FVector3(0.0f);
-                    // Capped at the froxel range, since noise still fading at the hand-off reads as a seam.
-                    const float NoiseFade = Math::Min(Math::Max(Fog.NoiseFadeDistance, 1.0f),
-                                                      Math::Max(Fog.VolumetricMaxDistance, 1.0f));
-                    P.NoiseWind = FVector4(NoiseWind, NoiseFade);
-
-                    Frame.Volumetrics.FarShaftSteps    = (uint32)Math::Clamp(Fog.FarShaftSteps, 0, 64);
-                    Frame.Volumetrics.FarShaftDistance = Math::Max(Fog.FarShaftDistance, 1.0f);
-
-                    Frame.Volumetrics.bHasFog        = true;
-                    Frame.Volumetrics.bVolumetricFog = Fog.bVolumetricFog;
-                });
-
-                Frame.Volumetrics.FogVolumes.clear();
-                if (Frame.Volumetrics.bHasFog && Frame.Volumetrics.bVolumetricFog)
-                {
-                    FogVolumeView.ForEach([&](ECS::FEntity Entity, const SLocalFogVolumeComponent& Volume)
-                    {
-                        if (!Volume.bEnabled || Frame.Volumetrics.FogVolumes.size() >= GFogMaxVolumes)
-                        {
-                            return;
-                        }
-
-                        FVector3 Extent = FVector3(Math::Max(Volume.Extent.x, 0.01f),
-                                                   Math::Max(Volume.Extent.y, 0.01f),
-                                                   Math::Max(Volume.Extent.z, 0.01f));
-                        if (Volume.bSphere)
-                        {
-                            // A sphere is a uniform scale, so the shader's radial test stays a plain length.
-                            const float R = Math::Max(Extent.x, Math::Max(Extent.y, Extent.z));
-                            Extent = FVector3(R, R, R);
-                        }
-
-                        FGPUFogVolume Item;
-                        Item.WorldToVolume = Math::Inverse(Math::Scale(TransformStorage.Get(Entity).GetWorldMatrix(), Extent));
-
-                        constexpr float ContrastThreshold = 3.912f;
-                        const float Density = ContrastThreshold / Math::Max(Volume.VisibilityDistance, 1.0f);
-
-                        Item.Albedo   = FVector4(Volume.Albedo, Density);
-                        Item.Emissive = FVector4(Volume.EmissiveColor * Math::Max(Volume.EmissiveIntensity, 0.0f), 0.0f);
-                        Item.Params   = FVector4(Volume.bSphere ? 1.0f : 0.0f,
-                                                 Math::Clamp(Volume.EdgeSoftness, 0.001f, 1.0f),
-                                                 Math::Max(Volume.ScatteringIntensity, 0.0f),
-                                                 0.0f);
-
-                        Frame.Volumetrics.FogVolumes.push_back(Item);
-                    });
-                }
-            }
+        // Ten passes read Lights[0] as the sun, so a local light must never win that slot.
+        if (DirectionalView.begin() != DirectionalView.end())
+        {
+            LightCount.store(1, std::memory_order_relaxed);
         }
 
-        if (LightData.bHasSun)
+        ResetGeometry_Extract();
+        PrepareGatherScratch(Frame);
+
+        DrawTaskGraph.Reset();
+        ScheduleSkinnedGather(DrawTaskGraph);
+        DrawTaskGraph.Dispatch();
+
+        EmitTaskGraph.Reset();
+        FTaskGraph& EmitGraph = EmitTaskGraph;
+
+        ScheduleLineBatching(EmitGraph, Registry);
+
+        // Emitters, so none may outrank the mesh critical path.
+        EmitGraph.Add([this, &Registry]         { ExtractBatchedTriangles(Registry); },   ETaskPriority::Medium);
+        EmitGraph.Add([this, &Registry, &Frame] { ExtractWidgets(Registry, Frame); },     ETaskPriority::Medium);
+        EmitGraph.Add([this, &Registry, &Frame] { ExtractText(Registry, Frame); },        ETaskPriority::Medium);
+        EmitGraph.Add([this, &Registry, &Frame] { ExtractSprites(Registry, Frame); },     ETaskPriority::Medium);
+        EmitGraph.Add([this, &Registry, &Frame] { ExtractBillboards(Registry, Frame); },  ETaskPriority::Medium);
+        #if USING(WITH_EDITOR)
+        EmitGraph.Add([this, &Registry, &Frame] { ExtractSelection(Registry, Frame); },   ETaskPriority::Medium);
+        #endif
+
+        auto DLightTask = EmitGraph.AddParallelFor((uint32)DirectionalView.NumDenseSlots(), 32, [&](Task::FParallelRange Range)
         {
-            const FVector3 SunDir = Math::Normalize(LightData.SunDirection);
+            LUMINA_PROFILE_SECTION("Process Directional Light");
+            DirectionalView.ForEachInRange(Range.Start, Range.End,
+                [&](ECS::FEntity, SDirectionalLightComponent& DirectionalLight)
+            {
+                ProcessDirectionalLight(DirectionalLight);
+            });
+        });
+        
+        auto PointLightTask = EmitGraph.AddParallelFor((uint32)PointLightView.NumDenseSlots(), 32, [&](Task::FParallelRange Range)
+        {
+            LUMINA_PROFILE_SECTION("Process Point Light Range");
+
+            PointLightView.ForEachInRange(Range.Start, Range.End,
+                [&](ECS::FEntity Entity, SPointLightComponent& PointLight)
+            {
+                ProcessPointLight(PointLight, TransformStorage.Get(Entity), LightCount);
+            });
+        });
+        
+        auto SpotLightTask = EmitGraph.AddParallelFor((uint32)SpotLightView.NumDenseSlots(), 32, [&](Task::FParallelRange Range)
+        {
+            LUMINA_PROFILE_SECTION("Process Spot Light Range");
+
+            SpotLightView.ForEachInRange(Range.Start, Range.End,
+                [&](ECS::FEntity Entity, SSpotLightComponent& SpotLight)
+            {
+                ProcessSpotLight(SpotLight, TransformStorage.Get(Entity), LightCount);
+            });
+        });
+
+        EmitGraph.Add([this, &Registry, &Frame] { ExtractTerrain(Registry, Frame); },     ETaskPriority::Medium);
+        EmitGraph.Add([this, &Registry, &Frame] { ExtractParticles(Registry, Frame); },   ETaskPriority::Medium);
+        EmitGraph.Add([this, &Registry, &Frame] { ExtractDecals(Registry, Frame); },      ETaskPriority::Medium);
+        EmitGraph.Add([this, &Registry, &Frame] { ExtractWater(Registry, Frame); },       ETaskPriority::Medium);
+        EmitGraph.Add([this, &Frame]
+        {
+            LUMINA_PROFILE_SECTION("Extract Paint Ops");
+            Frame.Extracts.PaintOps.clear();
+            World->DrainRenderTargetPaints(Frame.Extracts.PaintOps);
+        }, ETaskPriority::Medium);
+
+        EmitGraph.AddDependency(PointLightTask, DLightTask);
+        EmitGraph.AddDependency(SpotLightTask, DLightTask);
+
+        EmitGraph.Dispatch();
+
+        ExtractDebugText(Frame);
+
+        {
+            LUMINA_PROFILE_SECTION_COLORED("Wait Draw Graphs", tracy::Color::Crimson);
+            DrawTaskGraph.Wait();
+            EmitGraph.Wait();
+        }
+
+        // After the waits, so the streamer walks CMaterial state with no gather in flight.
+        PublishStreamingFeedback();
+
+        // LightCount can overshoot MAX_LIGHTS; clamp to match what Process*Light wrote.
+        NumLiveLights = Math::Min(LightCount.load(std::memory_order_acquire), (uint32)MAX_LIGHTS);
+
+        // Serial fit/allocate after parallel light pass; shrinks when sum(area) exceeds atlas budget.
+        AllocateShadowTiles();
+
+        // Same overshoot as LightCount, and this is the last writer of the shadow counter.
+        NumLiveShadows = Math::Min(Frame.Lighting.ShadowDataCount.load(std::memory_order_acquire),
+                                   (uint32)MAX_SHADOWS);
+
+        // Serial after the light tasks, since the skylight reads the sun direction ProcessDirectionalLight wrote.
+        const SEnvironmentComponent* ActiveEnv = ExtractEnvironment(Registry, Frame);
+        ExtractSkyLight(Registry, Frame, ActiveEnv);
+        ExtractFog(Registry, Frame);
+
+        FSceneGlobalData& SceneGlobalData = Frame.SceneGlobalData;
+        if (Frame.Lighting.LightData.bHasSun)
+        {
+            const FVector3 SunDir = Math::Normalize(Frame.Lighting.LightData.SunDirection);
             constexpr float ShadowSweepDistance = 2000.0f;
             SceneGlobalData.CullData.ShadowFrustum   = AsGPU(Frame.CameraFrustum.Extruded(SunDir, ShadowSweepDistance));
             SceneGlobalData.CullData.bHasDirectional = 1u;
@@ -2387,6 +1178,520 @@ namespace Lumina
 
         // Last extract write, and on this thread, because Extract snapshots ImmediateLines a few lines later.
         ApplyCullFreeze(Frame);
+    }
+
+    void FDefaultSceneRenderer::PrepareGatherScratch(FFrameData& Frame)
+    {
+        auto& DrawCommands = Frame.Geometry.DrawCommands;
+
+        // The gather emits skeletal items only; statics are culled on the GPU from the retained set.
+        const size_t EstimatedProxies  = (size_t)ScenePrimitives.GetSkinnedPrimitiveCount() * 2;
+
+        // One command per pipeline batch, not per primitive; the merge emits exactly this many.
+        DrawCommands.reserve(ScenePrimitives.GetBatches().Num());
+
+        const uint32 NumThreads = GTaskSystem->GetNumTaskThreads();
+
+        TVector<FThreadLocalDrawData>& ThreadLocal = ThreadLocalStorage;
+        if (ThreadLocal.size() < NumThreads)
+        {
+            ThreadLocal.reserve(NumThreads);
+            while (ThreadLocal.size() < NumThreads)
+            {
+                ThreadLocal.emplace_back();
+            }
+        }
+        CurrentReservePerThread = (uint32)((EstimatedProxies + NumThreads - 1) / Math::Max(1u, NumThreads));
+        
+        {
+            LUMINA_PROFILE_SECTION("Thread Local Reset");
+            // Every entry, not the first NumThreads, since the merge walks the whole container.
+            for (FThreadLocalDrawData& Local : ThreadLocal)
+            {
+                Local.ResetForFrame();
+            }
+        }
+        
+        if (CFont* DefaultFont = CFontManager::Get().GetDefaultFont())
+        {
+            DefaultFont->GetAtlasResourceID();
+        }
+    }
+
+    void FDefaultSceneRenderer::ScheduleSkinnedGather(FTaskGraph& Graph)
+    {
+        FTaskGraph::FNodeHandle MergeNode = Graph.Add([this]
+        {
+            MergeMeshDrawData(ThreadLocalStorage);
+        }, ETaskPriority::High);
+
+        if (ScenePrimitives.GetSkinnedPrimitiveCount() > 0)
+        {
+            // Rebuilt only on a shape change, so the cull walks skeletal, not every primitive.
+            const TVector<uint32>& SkeletalList = ScenePrimitives.GetSkeletalIndices();
+            SkeletalPrimitiveIndices = SkeletalList.data();
+            const uint32 NumSkeletal = (uint32)SkeletalList.size();
+
+            // Exact bound, since only a skeletal primitive can become a candidate.
+            if ((uint32)SkinnedCandidates.size() < NumSkeletal)
+            {
+                SkinnedCandidates.resize(NumSkeletal);
+                SkinnedCandidateBones.resize(NumSkeletal);
+                PendingSliceAllocs.resize(NumSkeletal);
+            }
+            SkinnedCandidateCursor.store(0, std::memory_order_relaxed);
+
+            FTaskGraph::FNodeHandle CullNode = Graph.AddParallelFor(NumSkeletal, GSkinnedCullGrain, [this](const Task::FParallelRange& Range)
+            {
+                LUMINA_PROFILE_SECTION("Cull Skinned Primitives");
+                FThreadLocalDrawData& Local = AcquireThreadLocalDrawData(Range.Thread);
+                CullSkinnedPrimitives(Range, Local);
+            }, ETaskPriority::High); // critical path, MergeNode waits on this
+
+            // Sizes the arena from what survived, which is what keeps it O(visible), not O(scene).
+            FTaskGraph::FNodeHandle LayoutNode = Graph.Add([this]
+            {
+                LayoutSkinnedBoneSlices(ThreadLocalStorage);
+            }, ETaskPriority::High);
+
+            // A graph AddParallelFor needs its count at BUILD time, before the cull produces one.
+            FTaskGraph::FNodeHandle EmitNode = Graph.Add([this]
+            {
+                LUMINA_PROFILE_SECTION("Emit Skinned Primitives");
+
+                Task::ParallelFor(SkinnedCandidateCount,
+                    [&](const Task::FParallelRange& Range)
+                    {
+                        FThreadLocalDrawData& Local = AcquireThreadLocalDrawData(Range.Thread);
+                        EmitSkinnedPrimitives(Range, Local);
+                    },
+                    GSkinnedEmitGrain, ETaskPriority::High);
+            }, ETaskPriority::High);
+
+            Graph.AddDependency(LayoutNode, CullNode);
+            Graph.AddDependency(EmitNode, LayoutNode);
+            Graph.AddDependency(MergeNode, EmitNode);
+        }
+    }
+
+    void FDefaultSceneRenderer::ScheduleLineBatching(FTaskGraph& EmitGraph, ECS::FRegistry& Registry)
+    {
+        auto LineBatcherView = Registry.View<FLineBatcherComponent>();
+
+        FLineBatcherComponent* LineBatcher = nullptr;
+        LineBatcherView.ForEach([&](FLineBatcherComponent& Batcher)
+        {
+            if (LineBatcher == nullptr)
+            {
+                LineBatcher = &Batcher;
+            }
+        });
+        const uint32 LineChunkCount = (LineBatcher != nullptr) ? PrepareBatchedLines(*LineBatcher) : 0u;
+
+        if (LineChunkCount > 0)
+        {
+            FTaskGraph::FNodeHandle LineBatchNode = EmitGraph.AddParallelFor(LineChunkCount, 1, [this](const Task::FParallelRange& Range)
+            {
+                BatchLineChunks(Range);
+            });
+            FTaskGraph::FNodeHandle LineFinalizeNode = EmitGraph.Add([this, LineBatcher]
+            {
+                FinalizeBatchedLines(*LineBatcher);
+            });
+            EmitGraph.AddDependency(LineFinalizeNode, LineBatchNode);
+        }
+    }
+
+    void FDefaultSceneRenderer::ExtractTerrain(ECS::FRegistry& Registry, FFrameData& Frame)
+    {
+        LUMINA_PROFILE_SECTION("Extract Terrain");
+
+        auto TransformStorage = Registry.GetStorage<STransformComponent>();
+        auto TerrainAllView = Registry.View<STerrainComponent>();
+        auto TerrainView = Registry.View<STerrainComponent>(ECS::TExclude<SDisabledTag>{});
+
+        Frame.Extracts.LiveTerrainEntities.clear();
+
+        for (ECS::FEntity Entity : TerrainAllView)
+        {
+            Frame.Extracts.LiveTerrainEntities.push_back(Entity);
+        }
+
+        SIZE_T TerrainCount = 0;
+        for (ECS::FEntity Entity : TerrainView)
+        {
+            STerrainComponent& Terrain = TerrainView.Get<STerrainComponent>(Entity);
+
+            FFrameData::FTerrainExtract& Item = ReuseAt(Frame.Extracts.TerrainExtracts, TerrainCount++);
+            Item.Entity      = Entity;
+            Item.WorldMatrix = TransformStorage.Get(Entity).GetWorldMatrix();
+            PrepareTerrainExtract(Terrain, Item.WorldMatrix, Item);
+            PrepareGrassExtract(Registry, Entity, Terrain, Item);
+        }
+        Frame.Extracts.TerrainExtracts.resize(TerrainCount);
+    }
+
+    void FDefaultSceneRenderer::ExtractParticles(ECS::FRegistry& Registry, FFrameData& Frame)
+    {
+        LUMINA_PROFILE_SECTION("Extract Particles");
+
+        auto TransformStorage = Registry.GetStorage<STransformComponent>();
+        auto ParticleAllView = Registry.View<SParticleSystemComponent>();
+        auto ParticleView = Registry.View<SParticleSystemComponent>(ECS::TExclude<SDisabledTag>{});
+
+        Frame.Extracts.LiveParticleEntities.clear();
+        SIZE_T ParticleCount = 0;
+
+        for (ECS::FEntity Entity : ParticleAllView)
+        {
+            Frame.Extracts.LiveParticleEntities.push_back(Entity);
+        }
+
+        ParticleView.ForEach([&](ECS::FEntity Entity, SParticleSystemComponent& Component)
+        {
+            CParticleSystem* PS = Component.ParticleSystem.Get();
+
+            const bool bForceBurst = Component.bForceBurst;
+            const bool bForceReset = Component.bForceReset;
+            Component.bForceBurst = false;
+            Component.bForceReset = false;
+
+            if (PS == nullptr)
+            {
+                return;
+            }
+
+            const FMatrix4 WorldMatrix = TransformStorage.Get(Entity).GetWorldMatrix();
+            const int32    EmitterCount = (int32)PS->Emitters.size();
+
+            for (int32 EmitterIdx = 0; EmitterIdx < EmitterCount; ++EmitterIdx)
+            {
+                CParticleEmitter* Emitter = PS->Emitters[EmitterIdx].Get();
+                if (Emitter == nullptr || !Emitter->bEnabled)
+                {
+                    continue;
+                }
+
+                FFrameData::FParticleExtract& Item =
+                    ReuseAt(Frame.Extracts.ParticleExtracts, ParticleCount++);
+
+                // The element is reused, so everything the fill path writes conditionally resets here.
+                Item.bReady              = false;
+                Item.bUsesCustomShader   = false;
+                Item.CustomComputeShader = {};
+                Item.TextureIndex        = 0u;
+                Item.MaterialVertexShader = {};
+                Item.MaterialPixelShader  = {};
+                Item.MaterialIndex        = -1;
+                Item.AttributeFloatCount = 1u;
+                Item.Resolved            = FResolvedParticleParams{};
+                Item.ModuleParamValues.clear();
+
+                Item.Entity              = Entity;
+                Item.EmitterIndex        = EmitterIdx;
+                Item.EmitterCount        = EmitterCount;
+                Item.WorldMatrix         = WorldMatrix;
+                Item.EmitterOffset       = Component.EmitterOffset;
+                Item.TimeScale           = Component.TimeScale;
+                Item.SpawnRateMultiplier = Component.SpawnRateMultiplier;
+                for (int32 A = 0; A < (int32)ParticleRenderAttribute::Count; ++A)
+                {
+                    Item.RenderAttrSlots[A] = -1;
+                }
+                Item.bEmit               = Component.bEmit;
+                Item.bBurstOnSpawn       = Component.bBurstOnSpawn;
+                Item.bForceBurst         = bForceBurst;
+                Item.bForceReset         = bForceReset;
+
+                Item.bReady = Emitter->IsReadyForSimulation();
+                if (Item.bReady)
+                {
+                    Item.Resolved          = ResolveParticleParams(*PS, *Emitter, Component);
+                    Item.bUsesCustomShader = Emitter->UsesCustomShader();
+                    if (Item.bUsesCustomShader)
+                    {
+                        Item.CustomComputeShader = Emitter->GetCustomComputeShader();
+                        Item.ModuleParamValues   = Emitter->ModuleParamValues;
+                        ApplyParticleParamBindings(*Emitter, Component, Item.ModuleParamValues);
+                        Item.AttributeFloatCount = Math::Max(Emitter->AttributeFloatCount, 1u);
+                        for (int32 A = 0; A < (int32)ParticleRenderAttribute::Count; ++A)
+                        {
+                            Item.RenderAttrSlots[A] = Emitter->GetRenderAttributeSlot((ParticleRenderAttribute::Type)A);
+                        }
+                    }
+                    if (CTexture* Tex = Emitter->Texture.Get())
+                    {
+                        const int32 CacheIdx = Tex->GetResourceID();
+                        if (CacheIdx > 0)
+                        {
+                            Item.TextureIndex = (uint32)CacheIdx;
+                        }
+                    }
+
+                    // Through the component, so a script's dynamic instance beats the asset's material.
+                    CMaterialInterface* Candidate = Component.GetMaterialForEmitter(EmitterIdx);
+                    if (CMaterialInterface* SpriteMaterial = ResolveParticleSpriteMaterial(Candidate))
+                    {
+                        FShaderH SpriteVS;
+                        FShaderH SpritePS;
+                        if (SpriteMaterial->ResolveDomainShaders(EMaterialType::Particle, SpriteVS, SpritePS))
+                        {
+                            Item.MaterialVertexShader = SpriteVS;
+                            Item.MaterialPixelShader  = SpritePS;
+                            Item.MaterialIndex        = SpriteMaterial->GetMaterialIndex();
+                            Item.MaterialBlendMode    = SpriteMaterial->GetBlendMode();
+                            Item.bMaterialWritesDepth = SpriteMaterial->WritesDepth();
+
+                            // Demand only; an unresolved slot reads the placeholder rather than popping paths.
+                            SpriteMaterial->RequestTexturesResolved();
+                        }
+                    }
+                }
+            }
+        });
+        Frame.Extracts.ParticleExtracts.resize(ParticleCount);
+    }
+
+    const SEnvironmentComponent* FDefaultSceneRenderer::ExtractEnvironment(ECS::FRegistry& Registry, FFrameData& Frame)
+    {
+        LUMINA_PROFILE_SECTION("Environment Processing");
+
+        auto& EnvironmentParams = Frame.Volumetrics.EnvironmentParams;
+        auto EnvironmentView = Registry.View<SEnvironmentComponent>(ECS::TExclude<SDisabledTag>{});
+        const SEnvironmentComponent* ActiveEnv = nullptr;
+
+        bool bHasEnvironment           = false;
+        FrameFlags.bGTAO           = false;
+        EnvironmentParams              = FEnvironmentParams{};
+        Frame.Volumetrics.EnvironmentMapID    = -1;
+        Frame.Volumetrics.EnvironmentMapWidth = 0;
+        // Set true below if any IBL input differs from the last bake snapshot.
+        Frame.Volumetrics.bIBLDirty                = false;
+        Frame.Volumetrics.bIBLConvolutionDirty     = false;
+
+        EnvironmentView.ForEach([&bHasEnvironment, &Frame, &EnvironmentParams, &ActiveEnv] (const SEnvironmentComponent& Env)
+        {
+            ActiveEnv = &Env;
+
+            // bRenderSky gates the sky pass; ambient/skylight still flow when off (indoor scenes).
+            bHasEnvironment = Env.bRenderSky;
+
+            if (Env.SkyMode == ESkyMode::HDRI)
+            {
+                if (CTexture* EnvMap = Env.EnvironmentMap.Get())
+                {
+                    const int32 EnvMapID = EnvMap->GetResourceID();
+                    if (EnvMapID >= 0)
+                    {
+                        Frame.Volumetrics.EnvironmentMapID    = EnvMapID;
+                        Frame.Volumetrics.EnvironmentMapWidth = EnvMap->GetTextureResource().ImageDescription.Extent.x;
+                    }
+                }
+            }
+
+            // Misc.x carries sky mode as float-cast uint; shader pulls it back via asuint().
+            const uint32 SkyModeBits = (Env.SkyMode == ESkyMode::SolidColor) ? GSkyMode_SolidColor
+                                    : (Env.SkyMode == ESkyMode::Gradient)   ? GSkyMode_Gradient
+                                    : (Env.SkyMode == ESkyMode::HDRI)       ? GSkyMode_HDRI
+                                                                            : GSkyMode_Dynamic;
+            float SkyModeAsFloat;
+            std::memcpy(&SkyModeAsFloat, &SkyModeBits, sizeof(float));
+
+            EnvironmentParams.SolidSkyColor = FVector4(Env.SolidSkyColor, 0.0f);
+            EnvironmentParams.ZenithColor   = FVector4(Env.ZenithColor, Env.HorizonExponent);
+            EnvironmentParams.HorizonColor  = FVector4(Env.HorizonColor, 0.0f);
+            EnvironmentParams.GroundColor   = FVector4(Env.GroundColor, 0.0f);
+            EnvironmentParams.SunTint       = FVector4(Env.SunColorTint, Env.SunIntensity);
+            EnvironmentParams.Misc          = FVector4(SkyModeAsFloat,
+                                                        Env.SunDiscScale,
+                                                        Env.SkyExposure,
+                                                        Env.MieAnisotropy);
+
+            EnvironmentParams.NightSkyColor = FVector4(Env.NightSkyColor, Env.NightBrightness);
+            EnvironmentParams.StarParams    = FVector4(Env.StarDensity,
+                                                        Env.StarBrightness,
+                                                        Env.StarTwinkleSpeed,
+                                                        Env.StarSize);
+            EnvironmentParams.MoonParams    = FVector4(Env.MoonSize,
+                                                        Env.MoonGlowSize,
+                                                        Env.MoonBrightness,
+                                                        Env.bMoonOpposeSun ? 1.0f : 0.0f);
+            EnvironmentParams.MoonDirection = FVector4(Env.MoonDirection, 0.0f);
+            EnvironmentParams.GalaxyParams  = FVector4(Env.GalaxyIntensity, Env.GalaxyTilt, 0.0f, 0.0f);
+
+            const float HDRIYaw = Math::Radians(Env.HDRIRotation);
+            EnvironmentParams.HDRIParams    = FVector4(Math::Max(Env.HDRIIntensity, 0.0f),
+                                                        std::cos(HDRIYaw),
+                                                        std::sin(HDRIYaw),
+                                                        0.0f);
+
+            // Only the dynamic sky shares this atmosphere; an HDRI's haze is already in its pixels.
+            Frame.Volumetrics.bAerialPerspective = Env.bAerialPerspective
+                                                && Env.SkyMode == ESkyMode::Dynamic;
+            Frame.Volumetrics.AerialRange     = Math::Max(Env.AerialPerspectiveRange, 100.0f);
+            Frame.Volumetrics.AerialIntensity = Math::Clamp(Env.AerialPerspectiveIntensity, 0.0f, 1.0f);
+        });
+
+        FrameFlags.bHasEnvironment = bHasEnvironment;
+
+        Frame.Volumetrics.IBLResolution = ActiveEnv
+            ? ResolveIBLQuality(ActiveEnv->IBLQuality)
+            : LastExtractedIBLResolution;
+
+        return ActiveEnv;
+    }
+
+    void FDefaultSceneRenderer::ExtractSkyLight(ECS::FRegistry& Registry, FFrameData& Frame, const SEnvironmentComponent* ActiveEnv)
+    {
+        LUMINA_PROFILE_SECTION("Skylight Processing");
+
+        auto& LightData = Frame.Lighting.LightData;
+        auto SkyLightView = Registry.View<SSkyLightComponent>(ECS::TExclude<SDisabledTag>{});
+
+        LightData.AmbientLight = FVector4(0.0f);
+
+        SkyLightView.ForEach([&LightData, ActiveEnv] (const SSkyLightComponent& Sky)
+        {
+            if (!Sky.bAffectsWorld)
+            {
+                return;
+            }
+
+            FVector3 AmbientRGB = Sky.AmbientColor;
+            if (Sky.bAmbientFromSky && ActiveEnv)
+            {
+                if (ActiveEnv->SkyMode == ESkyMode::SolidColor)
+                {
+                    AmbientRGB = ActiveEnv->SolidSkyColor;
+                }
+                else if (ActiveEnv->SkyMode == ESkyMode::Gradient)
+                {
+                    // 70/30 zenith/horizon matches what an upward-facing surface would integrate.
+                    AmbientRGB = ActiveEnv->ZenithColor * 0.7f + ActiveEnv->HorizonColor * 0.3f;
+                }
+                // Dynamic and HDRI always have the baked irradiance cube, which every consumer prefers.
+            }
+            LightData.AmbientLight = FVector4(AmbientRGB, Sky.Intensity);
+        });
+
+        LightData.bHasIBL = FrameFlags.bHasEnvironment ? 1u : 0u;
+    }
+
+    void FDefaultSceneRenderer::ExtractFog(ECS::FRegistry& Registry, FFrameData& Frame)
+    {
+        LUMINA_PROFILE_SECTION("Fog Processing");
+
+        auto TransformStorage = Registry.GetStorage<STransformComponent>();
+        auto CloudView = Registry.View<SCloudComponent>(ECS::TExclude<SDisabledTag>{});
+        auto FogView = Registry.View<SExponentialHeightFogComponent>(ECS::TExclude<SDisabledTag>{});
+        auto FogVolumeView = Registry.View<SLocalFogVolumeComponent>(ECS::TExclude<SDisabledTag>{});
+
+        Frame.Volumetrics.bHasFog        = false;
+        Frame.Volumetrics.bClouds = false;
+        CloudView.ForEach([&Frame] (const SCloudComponent& Cloud)
+        {
+            if (!Cloud.bEnabled || Cloud.Coverage <= 0.0f || Cloud.Density <= 0.0f)
+            {
+                return;
+            }
+            Frame.Volumetrics.bClouds = true;
+            Frame.Volumetrics.Clouds  = Cloud;
+        });
+
+        Frame.Volumetrics.bVolumetricFog = false;
+        Frame.Volumetrics.FogParams      = FExponentialHeightFogParams{};
+
+        FogView.ForEach([&Frame, &Registry] (ECS::FEntity Entity, const SExponentialHeightFogComponent& Fog)
+        {
+            if (!Fog.bEnabled || Fog.FogVisibilityDistance <= 0.0f)
+            {
+                return;
+            }
+
+            // Koschmieder extinction ln(50)/V, where contrast falls to 2%.
+            constexpr float ContrastThreshold = 3.912f;
+            const float FogDensity = ContrastThreshold / Math::Max(Fog.FogVisibilityDistance, 1.0f);
+
+            float BaseHeight = Fog.FogBaseHeight;
+            if (const STransformComponent* Transform = Registry.TryGet<STransformComponent>(Entity))
+            {
+                BaseHeight += Transform->GetWorldLocationCached().y;
+            }
+
+            FExponentialHeightFogParams& P = Frame.Volumetrics.FogParams;
+            P.InscatteringColor = FVector4(Fog.FogInscatteringColor, FogDensity);
+            P.HeightParams      = FVector4(Fog.FogHeightFalloff, BaseHeight,
+                                            Fog.FogStartDistance, Fog.FogMaxOpacity);
+            P.DirectionalColor  = FVector4(Fog.DirectionalInscatteringColor,
+                                            Fog.DirectionalInscatteringExponent);
+            P.VolumetricParams  = FVector4(Fog.VolumetricScatteringIntensity,
+                                            Fog.VolumetricAnisotropy,
+                                            Fog.VolumetricMaxDistance,
+                                            Fog.DirectionalInscatteringStartDistance);
+            // Phase attenuation reuses MultiScatterFalloff, so separate sliders could only conflict.
+            P.MultiScatterParams = FVector4((float)Math::Clamp(Fog.MultiScatterOctaves, 1, 4),
+                                            Fog.MultiScatterFalloff,
+                                            Fog.MultiScatterShadowLeak,
+                                            Fog.MultiScatterFalloff);
+
+            const float NoiseStrength = Fog.bDensityNoise ? Math::Clamp(Fog.NoiseStrength, 0.0f, 1.0f) : 0.0f;
+            P.NoiseParams = FVector4(NoiseStrength,
+                                     1.0f / Math::Max(Fog.NoiseScale, 1.0f),
+                                     (float)Math::Clamp(Fog.NoiseOctaves, 1, 4),
+                                     Math::Clamp(Fog.NoiseDetailGain, 0.0f, 1.0f));
+
+            FVector3 NoiseWind = Fog.NoiseWindDirection;
+            const float WindLen = Math::Length(NoiseWind);
+            NoiseWind = WindLen > 1e-4f ? (NoiseWind / WindLen) * Math::Max(Fog.NoiseWindSpeed, 0.0f)
+                                        : FVector3(0.0f);
+            // Capped at the froxel range, since noise still fading at the hand-off reads as a seam.
+            const float NoiseFade = Math::Min(Math::Max(Fog.NoiseFadeDistance, 1.0f),
+                                              Math::Max(Fog.VolumetricMaxDistance, 1.0f));
+            P.NoiseWind = FVector4(NoiseWind, NoiseFade);
+
+            Frame.Volumetrics.FarShaftSteps    = (uint32)Math::Clamp(Fog.FarShaftSteps, 0, 64);
+            Frame.Volumetrics.FarShaftDistance = Math::Max(Fog.FarShaftDistance, 1.0f);
+
+            Frame.Volumetrics.bHasFog        = true;
+            Frame.Volumetrics.bVolumetricFog = Fog.bVolumetricFog;
+        });
+
+        Frame.Volumetrics.FogVolumes.clear();
+        if (Frame.Volumetrics.bHasFog && Frame.Volumetrics.bVolumetricFog)
+        {
+            FogVolumeView.ForEach([&](ECS::FEntity Entity, const SLocalFogVolumeComponent& Volume)
+            {
+                if (!Volume.bEnabled || Frame.Volumetrics.FogVolumes.size() >= GFogMaxVolumes)
+                {
+                    return;
+                }
+
+                FVector3 Extent = FVector3(Math::Max(Volume.Extent.x, 0.01f),
+                                           Math::Max(Volume.Extent.y, 0.01f),
+                                           Math::Max(Volume.Extent.z, 0.01f));
+                if (Volume.bSphere)
+                {
+                    // A sphere is a uniform scale, so the shader's radial test stays a plain length.
+                    const float R = Math::Max(Extent.x, Math::Max(Extent.y, Extent.z));
+                    Extent = FVector3(R, R, R);
+                }
+
+                FGPUFogVolume Item;
+                Item.WorldToVolume = Math::Inverse(Math::Scale(TransformStorage.Get(Entity).GetWorldMatrix(), Extent));
+
+                constexpr float ContrastThreshold = 3.912f;
+                const float Density = ContrastThreshold / Math::Max(Volume.VisibilityDistance, 1.0f);
+
+                Item.Albedo   = FVector4(Volume.Albedo, Density);
+                Item.Emissive = FVector4(Volume.EmissiveColor * Math::Max(Volume.EmissiveIntensity, 0.0f), 0.0f);
+                Item.Params   = FVector4(Volume.bSphere ? 1.0f : 0.0f,
+                                         Math::Clamp(Volume.EdgeSoftness, 0.001f, 1.0f),
+                                         Math::Max(Volume.ScatteringIntensity, 0.0f),
+                                         0.0f);
+
+                Frame.Volumetrics.FogVolumes.push_back(Item);
+            });
+        }
     }
 
     void FDefaultSceneRenderer::ApplyCullFreeze(FFrameData& Frame)
