@@ -25,11 +25,11 @@ struct FDeferredMaterialArgs
     uint  GBufferBUAV;      // 36
     uint  GBufferCUAV;      // 40
     uint  GBufferDUAV;      // 44
-    uint* PixelList;        // 48  packed screen positions, one contiguous run per slot
-    uint* Starts;           // 56  uint[NumSlots]
-    uint* Counts;           // 64  uint[NumSlots]
-    uint  VelocityUAV;      // 72  0xFFFFFFFF when temporal AA is off
-    uint  _PadVelocity;     // 76
+    uint  VelocityUAV;      // 48  0xFFFFFFFF when temporal AA is off
+    uint  _PadVelocity;     // 52
+    GPUSpan<uint> PixelList;  // 56  packed screen positions, one contiguous run per slot
+    GPUSpan<uint> Starts;     // 72
+    GPUSpan<uint> Counts;     // 88
 };
 FDeferredMaterialArgs* Pass() { return GetPassArgs<FDeferredMaterialArgs>(); }
 
@@ -75,12 +75,12 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
     // VisBufferMaterialPrefixSum built it with the matching fold.
     const uint LinearGroup = GroupID.y * MAX_DISPATCH_AXIS + GroupID.x;
     const uint Index       = LinearGroup * MATERIAL_PIXEL_GROUP_SIZE + Lane;
-    if (Index >= Pass().Counts[Slot])
+    if (Index >= SpanGet(&Pass().Counts, Slot))
     {
         return;
     }
 
-    const uint2 Texel = UnpackVisPixel(Pass().PixelList[Pass().Starts[Slot] + Index]);
+    const uint2 Texel = UnpackVisPixel(SpanGet(&Pass().PixelList, SpanGet(&Pass().Starts, Slot) + Index));
 
     const uint   Raw = LoadTexture2DUInt(Pass().VisBufferIndex, int2(Texel));
     FVisTriangle T   = ResolveVisTriangle(Raw, Pass().DrawListCount);

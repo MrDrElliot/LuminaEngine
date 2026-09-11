@@ -7382,8 +7382,8 @@ namespace Lumina
         const RHI::GPUPtr LitArgsAddr = Base + Layout.LightArgsOffset;
 
         // MaterialIndex -> dense slot; uploaded to the transient ring and read by device address.
-        const RHI::GPUPtr SlotByMaterialAddr =
-            RHI::CopyTransientArray(BinnedDeferredSlotByMaterial.data(), BinnedDeferredSlotByMaterial.size()).Address;
+        const RHI::FGPURange SlotByMaterialRange =
+            RHI::CopyTransientArray(BinnedDeferredSlotByMaterial.data(), BinnedDeferredSlotByMaterial.size());
 
         // Only the counters are cleared; the prefix sum below rewrites every other field.
         RHI::CmdMemset(CL, { CountsAddr, sizeof(uint32) * Layout.NumSlots }, 0u);
@@ -7392,26 +7392,27 @@ namespace Lumina
         const uint32 GroupsX = RenderUtils::GetGroupCount(Layout.ScreenW, (uint32)MATERIAL_CLASSIFY_TILE);
         const uint32 GroupsY = RenderUtils::GetGroupCount(Layout.ScreenH, (uint32)MATERIAL_CLASSIFY_TILE);
 
+        const RHI::TGPUSpan<uint32> CountsSpan  = RHI::TGPUSpan<uint32>::FromAddress(CountsAddr, Layout.NumSlots);
+        const RHI::TGPUSpan<uint32> StartsSpan  = RHI::TGPUSpan<uint32>::FromAddress(StartsAddr, Layout.NumSlots);
+        const RHI::TGPUSpan<uint32> CursorsSpan = RHI::TGPUSpan<uint32>::FromAddress(CursorsAddr, Layout.NumSlots);
+        const RHI::TGPUSpan<uint32> SlotByMaterialSpan = SlotByMaterialRange;
+
         struct FMaterialCountPC
         {
-            RHI::GPUPtr CountsAddr;
-            RHI::GPUPtr SlotByMaterialAddr;
+            RHI::TGPUSpan<uint32> Counts;
+            RHI::TGPUSpan<uint32> SlotByMaterial;
             uint32      VisBufferIndex;
             uint32      ScreenW;
             uint32      ScreenH;
             uint32      DrawListCount;
-            uint32      SlotByMaterialCount;
-            uint32      NumSlots;
         } CountPC = {};
-        static_assert(sizeof(FMaterialCountPC) == 40, "FMaterialCountPC must match VisBufferMaterialCount.slang FMaterialCountArgs.");
-        CountPC.CountsAddr          = CountsAddr;
-        CountPC.SlotByMaterialAddr  = SlotByMaterialAddr;
+        static_assert(sizeof(FMaterialCountPC) == 48, "FMaterialCountPC must match VisBufferMaterialCount.slang FMaterialCountArgs.");
+        CountPC.Counts              = CountsSpan;
+        CountPC.SlotByMaterial      = SlotByMaterialSpan;
         CountPC.VisBufferIndex      = (uint32)VisRT.GetResourceID();
         CountPC.ScreenW             = Layout.ScreenW;
         CountPC.ScreenH             = Layout.ScreenH;
         CountPC.DrawListCount       = DrawListCapacity;
-        CountPC.SlotByMaterialCount = (uint32)BinnedDeferredSlotByMaterial.size();
-        CountPC.NumSlots            = Layout.NumSlots;
 
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CountCS));
         RHI::CmdDispatch(CL, MakeArgs(CountPC), GroupsX, GroupsY, 1u);
@@ -7420,23 +7421,20 @@ namespace Lumina
 
         struct FPrefixSumPC
         {
-            RHI::GPUPtr CountsAddr;
-            RHI::GPUPtr StartsAddr;
-            RHI::GPUPtr CursorsAddr;
-            RHI::GPUPtr ArgsAddr;
-            RHI::GPUPtr LightArgsAddr;
-            RHI::GPUPtr TotalAddr;
-            uint32      NumSlots;
-            uint32      _Pad0;
+            RHI::TGPUSpan<uint32> Counts;
+            RHI::TGPUSpan<uint32> Starts;
+            RHI::TGPUSpan<uint32> Cursors;
+            RHI::TGPUSpan<uint32> Args;
+            RHI::TGPUSpan<uint32> LightArgs;
+            RHI::TGPUSpan<uint32> Total;
         } PrefixPC = {};
-        static_assert(sizeof(FPrefixSumPC) == 56, "FPrefixSumPC must match VisBufferMaterialPrefixSum.slang FPrefixSumArgs.");
-        PrefixPC.CountsAddr    = CountsAddr;
-        PrefixPC.StartsAddr    = StartsAddr;
-        PrefixPC.CursorsAddr   = CursorsAddr;
-        PrefixPC.ArgsAddr      = MatArgsAddr;
-        PrefixPC.LightArgsAddr = LitArgsAddr;
-        PrefixPC.TotalAddr     = TotalAddr;
-        PrefixPC.NumSlots      = Layout.NumSlots;
+        static_assert(sizeof(FPrefixSumPC) == 96, "FPrefixSumPC must match VisBufferMaterialPrefixSum.slang FPrefixSumArgs.");
+        PrefixPC.Counts    = CountsSpan;
+        PrefixPC.Starts    = StartsSpan;
+        PrefixPC.Cursors   = CursorsSpan;
+        PrefixPC.Args      = RHI::TGPUSpan<uint32>::FromAddress(MatArgsAddr, Layout.NumSlots * 3u);
+        PrefixPC.LightArgs = RHI::TGPUSpan<uint32>::FromAddress(LitArgsAddr, 3u);
+        PrefixPC.Total     = RHI::TGPUSpan<uint32>::FromAddress(TotalAddr, 1u);
 
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(PrefixCS));
         RHI::CmdDispatch(CL, MakeArgs(PrefixPC), 1u, 1u, 1u);
@@ -7445,29 +7443,23 @@ namespace Lumina
 
         struct FMaterialScatterPC
         {
-            RHI::GPUPtr CursorsAddr;
-            RHI::GPUPtr PixelListAddr;
-            RHI::GPUPtr SlotByMaterialAddr;
+            RHI::TGPUSpan<uint32> Cursors;
+            RHI::TGPUSpan<uint32> PixelList;
+            RHI::TGPUSpan<uint32> SlotByMaterial;
             uint32      VisBufferIndex;
             uint32      ScreenW;
             uint32      ScreenH;
             uint32      DrawListCount;
-            uint32      SlotByMaterialCount;
-            uint32      NumSlots;
-            uint32      PixelListCapacity;
             uint32      _Pad0;
         } ScatterPC = {};
-        static_assert(sizeof(FMaterialScatterPC) == 56, "FMaterialScatterPC must match VisBufferMaterialScatter.slang FMaterialScatterArgs.");
-        ScatterPC.CursorsAddr        = CursorsAddr;
-        ScatterPC.PixelListAddr      = PixelList.Gpu;
-        ScatterPC.SlotByMaterialAddr = SlotByMaterialAddr;
-        ScatterPC.VisBufferIndex     = CountPC.VisBufferIndex;
-        ScatterPC.ScreenW            = Layout.ScreenW;
-        ScatterPC.ScreenH            = Layout.ScreenH;
-        ScatterPC.DrawListCount      = DrawListCapacity;
-        ScatterPC.SlotByMaterialCount = CountPC.SlotByMaterialCount;
-        ScatterPC.NumSlots           = Layout.NumSlots;
-        ScatterPC.PixelListCapacity  = Layout.PixelCapacity;
+        static_assert(sizeof(FMaterialScatterPC) == 72, "FMaterialScatterPC must match VisBufferMaterialScatter.slang FMaterialScatterArgs.");
+        ScatterPC.Cursors        = CursorsSpan;
+        ScatterPC.PixelList      = { PixelList, Layout.PixelCapacity };
+        ScatterPC.SlotByMaterial = SlotByMaterialSpan;
+        ScatterPC.VisBufferIndex = CountPC.VisBufferIndex;
+        ScatterPC.ScreenW        = Layout.ScreenW;
+        ScatterPC.ScreenH        = Layout.ScreenH;
+        ScatterPC.DrawListCount  = DrawListCapacity;
 
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(ScatterCS));
         RHI::CmdDispatch(CL, MakeArgs(ScatterPC), GroupsX, GroupsY, 1u);
@@ -7510,13 +7502,13 @@ namespace Lumina
             uint32      GBufferBUAV;
             uint32      GBufferCUAV;
             uint32      GBufferDUAV;
-            RHI::GPUPtr PixelListAddr;
-            RHI::GPUPtr StartsAddr;
-            RHI::GPUPtr CountsAddr;
             uint32      VelocityUAV;
             uint32      _PadVelocity;
+            RHI::TGPUSpan<uint32> PixelList;
+            RHI::TGPUSpan<uint32> Starts;
+            RHI::TGPUSpan<uint32> Counts;
         } PC = {};
-        static_assert(sizeof(FDeferredMaterialPC) == 80, "FDeferredMaterialPC must match DeferredMaterial.slang FDeferredMaterialArgs.");
+        static_assert(sizeof(FDeferredMaterialPC) == 104, "FDeferredMaterialPC must match DeferredMaterial.slang FDeferredMaterialArgs.");
 
         PC.VisBufferIndex = (uint32)VisRT.GetResourceID();
         if (Frame.Primitives.DecalExtracts.empty())
@@ -7549,9 +7541,9 @@ namespace Lumina
         PC.GBufferCUAV = (uint32)UAVC;
         PC.GBufferDUAV = (uint32)UAVD;
 
-        PC.PixelListAddr = PixelList.Gpu;
-        PC.StartsAddr    = Base + Layout.StartsOffset;
-        PC.CountsAddr    = Base + Layout.CountsOffset;
+        PC.PixelList = { PixelList, Layout.PixelCapacity };
+        PC.Starts    = RHI::TGPUSpan<uint32>::FromAddress(Base + Layout.StartsOffset, Layout.NumSlots);
+        PC.Counts    = RHI::TGPUSpan<uint32>::FromAddress(Base + Layout.CountsOffset, Layout.NumSlots);
 
         // Invalid disables the write, which leaves the camera-only base the fullscreen pass laid down.
         PC.VelocityUAV = 0xFFFFFFFFu;
@@ -7628,10 +7620,10 @@ namespace Lumina
             uint32      HDRUAV;
             uint32      ScreenW;
             uint32      ScreenH;
-            RHI::GPUPtr PixelListAddr;
-            RHI::GPUPtr TotalAddr;
+            RHI::TGPUSpan<uint32> PixelList;
+            RHI::TGPUSpan<uint32> Total;
         } PC = {};
-        static_assert(sizeof(FDeferredLightingPC) == 48, "FDeferredLightingPC must match DeferredLighting.slang FDeferredLightingArgs.");
+        static_assert(sizeof(FDeferredLightingPC) == 64, "FDeferredLightingPC must match DeferredLighting.slang FDeferredLightingArgs.");
         PC.GBufferAIndex = (uint32)GetNamedImage(ENamedImage::GBufferA).GetResourceID();
         PC.GBufferBIndex = (uint32)GetNamedImage(ENamedImage::GBufferB).GetResourceID();
         PC.GBufferCIndex = (uint32)GetNamedImage(ENamedImage::GBufferC).GetResourceID();
@@ -7640,8 +7632,8 @@ namespace Lumina
         PC.HDRUAV        = (uint32)HDRUAV;
         PC.ScreenW       = Layout.ScreenW;
         PC.ScreenH       = Layout.ScreenH;
-        PC.PixelListAddr = GetMaterialPixelList().Gpu;
-        PC.TotalAddr     = Classify.Gpu + Layout.TotalOffset;
+        PC.PixelList = { GetMaterialPixelList(), Layout.PixelCapacity };
+        PC.Total     = RHI::TGPUSpan<uint32>::FromAddress(Classify.Gpu + Layout.TotalOffset, 1u);
 
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(LightingCS));
         RHI::CmdDispatchIndirect(CL, MakeArgs(PC), Classify.Skip(Layout.LightArgsOffset));
@@ -12231,10 +12223,10 @@ namespace Lumina
             uint32      _Pad0;
             uint32      _Pad1;
 
-            RHI::GPUPtr PixelListAddr;
-            RHI::GPUPtr TotalAddr;
+            RHI::TGPUSpan<uint32> PixelList;
+            RHI::TGPUSpan<uint32> Total;
         } PC = {};
-        static_assert(sizeof(FSSRPushConstants) == 80, "FSSRPushConstants must match ScreenSpaceReflections.slang FSSRArgs.");
+        static_assert(sizeof(FSSRPushConstants) == 96, "FSSRPushConstants must match ScreenSpaceReflections.slang FSSRArgs.");
 
         PC.GBufferAIndex   = (uint32)GetNamedImage(ENamedImage::GBufferA).GetResourceID();
         PC.GBufferBIndex   = (uint32)GetNamedImage(ENamedImage::GBufferB).GetResourceID();
@@ -12250,8 +12242,8 @@ namespace Lumina
         PC.Thickness       = Math::Max(RS->SSRThickness, 0.01f);
         PC.Intensity       = Math::Clamp(RS->SSRIntensity, 0.0f, 1.0f);
         PC.RoughnessFade   = Math::Clamp(RS->SSRRoughnessFade, 0.0f, 1.0f);
-        PC.PixelListAddr   = GetMaterialPixelList().Gpu;
-        PC.TotalAddr       = Classify.Gpu + Layout.TotalOffset;
+        PC.PixelList = { GetMaterialPixelList(), Layout.PixelCapacity };
+        PC.Total     = RHI::TGPUSpan<uint32>::FromAddress(Classify.Gpu + Layout.TotalOffset, 1u);
 
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(SSRCS));
         RHI::CmdDispatchIndirect(CL, MakeArgs(PC), Classify.Skip(Layout.LightArgsOffset));

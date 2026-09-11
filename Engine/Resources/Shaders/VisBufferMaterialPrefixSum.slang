@@ -12,14 +12,12 @@
 
 struct FPrefixSumArgs
 {
-    uint* Counts;      // in:  uint[NumSlots]
-    uint* Starts;      // out: first pixel-list index owned by each slot
-    uint* Cursors;     // out: seeded to Starts; the scatter bumps them
-    uint* Args;        // out: uint[NumSlots * 3], one dispatch triple per slot
-    uint* LightArgs;   // out: uint[3], one dispatch over every classified pixel
-    uint* Total;       // out: uint[1], pixels the deferred lane owns this frame
-    uint  NumSlots;
-    uint  _Pad0;
+    GPUSpan<uint> Counts;      // in;  its count is the slot count every other array is sized from
+    GPUSpan<uint> Starts;      // out: first pixel-list index owned by each slot
+    GPUSpan<uint> Cursors;     // out: seeded to Starts; the scatter bumps them
+    GPUSpan<uint> Args;        // out: NumSlots * 3, one dispatch triple per slot
+    GPUSpan<uint> LightArgs;   // out: one dispatch over every classified pixel
+    GPUSpan<uint> Total;       // out: pixels the deferred lane owns this frame
 };
 FPrefixSumArgs* Pass() { return GetPassArgs<FPrefixSumArgs>(); }
 
@@ -38,17 +36,17 @@ void ComputeMain()
     uint Running = 0u;
 
     // Exactly the live slots, which is what the block was sized for; a fixed bound would overrun Args.
-    for (uint Slot = 0u; Slot < Pass().NumSlots; ++Slot)
+    for (uint Slot = 0u; Slot < Pass().Counts.Count; ++Slot)
     {
-        const uint Count = Pass().Counts[Slot];
+        const uint Count = SpanGet(&Pass().Counts, Slot);
 
-        Pass().Starts[Slot]  = Running;
-        Pass().Cursors[Slot] = Running;
-        WriteDispatchArgs(Pass().Args, Slot * 3u, Count);
+        SpanSet(&Pass().Starts, Slot, Running);
+        SpanSet(&Pass().Cursors, Slot, Running);
+        WriteDispatchArgs(Pass().Args.Data, Slot * 3u, Count);
 
         Running += Count;
     }
 
-    Pass().Total[0] = Running;
-    WriteDispatchArgs(Pass().LightArgs, 0u, Running);
+    SpanSet(&Pass().Total, 0u, Running);
+    WriteDispatchArgs(Pass().LightArgs.Data, 0u, Running);
 }
