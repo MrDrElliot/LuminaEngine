@@ -4113,27 +4113,22 @@ namespace Lumina
 
         struct FSkinnedBoundsPC
         {
-            uint32 NumSlots;
             uint32 MaxRange;
-            uint32 BoundsCapacity;
-            uint32 RetainedCapacity;
-            uint64 SlotListAddr;
-            uint64 SkinnedDataAddr;
-            uint64 RetainedStaticAddr;
-            uint64 OutBoundsAddr;
-            uint64 OutConesAddr;
+            uint32 _Pad;
+            RHI::TGPUSpan<uint32>            SlotList;
+            RHI::TGPUSpan<FSkinnedFrameData> SkinnedData;
+            RHI::TGPUSpan<FInstanceStatic>   RetainedStatic;
+            RHI::TGPUSpan<FMeshletSphere>    OutBounds;
+            RHI::TGPUSpan<FMeshletCone>      OutCones;
         } PC = {};
-        static_assert(sizeof(FSkinnedBoundsPC) == 56, "FSkinnedBoundsPC must match SkinnedMeshletBounds.slang.");
+        static_assert(sizeof(FSkinnedBoundsPC) == 88, "FSkinnedBoundsPC must match SkinnedMeshletBounds.slang.");
 
-        PC.NumSlots           = NumSkinned;
-        PC.MaxRange           = SkinnedBoundsMaxRange;
-        PC.BoundsCapacity     = SkinnedMeshletBoundsCapacity;
-        PC.RetainedCapacity   = RetainedStaticCapacity;
-        PC.SlotListAddr       = SkinnedSlotListBuffer.Gpu;
-        PC.SkinnedDataAddr    = SkinnedFrameDataBuffer.Gpu;
-        PC.RetainedStaticAddr = RetainedStaticBuffer.Gpu;
-        PC.OutBoundsAddr      = SkinnedMeshletBoundsBuffer.Gpu;
-        PC.OutConesAddr       = SkinnedMeshletConeBuffer.Gpu;
+        PC.MaxRange       = SkinnedBoundsMaxRange;
+        PC.SlotList       = { SkinnedSlotListBuffer, NumSkinned };
+        PC.SkinnedData    = { SkinnedFrameDataBuffer };
+        PC.RetainedStatic = { RetainedStaticBuffer, RetainedStaticCapacity };
+        PC.OutBounds      = { SkinnedMeshletBoundsBuffer, SkinnedMeshletBoundsCapacity };
+        PC.OutCones       = { SkinnedMeshletConeBuffer, SkinnedMeshletBoundsCapacity };
 
         constexpr uint32 kBoundsGroupSize = 64;
         const uint32 GroupsX = (SkinnedBoundsMaxRange + kBoundsGroupSize - 1u) / kBoundsGroupSize;
@@ -6406,20 +6401,17 @@ namespace Lumina
         {
             struct FBuildSkinWorkPC
             {
-                uint32 NumSlots;
-                uint32 _Pad0;
-                uint64 SlotListAddr;
-                uint64 SkinnedDataAddr;
-                uint64 OutWorkBaseAddr;
-                uint64 OutDispatchArgsAddr;
+                RHI::TGPUSpan<uint32>            SlotList;
+                RHI::TGPUSpan<FSkinnedFrameData> SkinnedData;
+                RHI::TGPUSpan<uint32>            OutWorkBase;
+                RHI::TGPUSpan<RHI::FDispatchIndirectArguments> OutDispatchArgs;
             } WPC = {};
-            static_assert(sizeof(FBuildSkinWorkPC) == 40, "FBuildSkinWorkPC must match BuildSkinWork.slang.");
+            static_assert(sizeof(FBuildSkinWorkPC) == 64, "FBuildSkinWorkPC must match BuildSkinWork.slang.");
 
-            WPC.NumSlots            = NumSkinned;
-            WPC.SlotListAddr        = SkinnedSlotListBuffer.Gpu;
-            WPC.SkinnedDataAddr     = SkinnedFrameDataBuffer.Gpu;
-            WPC.OutWorkBaseAddr     = SkinWorkBaseRing[Slot].Gpu;
-            WPC.OutDispatchArgsAddr = GetSkinDispatchArgs().Gpu;
+            WPC.SlotList        = { SkinnedSlotListBuffer, NumSkinned };
+            WPC.SkinnedData     = { SkinnedFrameDataBuffer };
+            WPC.OutWorkBase     = { SkinWorkBaseRing[Slot], NumPairs };
+            WPC.OutDispatchArgs = { GetSkinDispatchArgs() };
 
             RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(WorkShader));
             RHI::CmdDispatch(CL, MakeArgs(WPC), 1u, 1u, 1u);
@@ -6428,26 +6420,21 @@ namespace Lumina
                 RHI::EStageFlags::Compute | RHI::EStageFlags::IndirectArguments);
         }
 
-        const uint32 VertexCapacity = (uint32)Math::Min<uint64>(
-            GetPreSkinnedVerticesBuffer().Size / sizeof(FPreSkinnedVertex), 0xFFFFFFFFull);
-
         struct FSkinningPushConstants
         {
-            uint32 NumPairs;
-            uint32 VertexCapacity;
-            uint64 WorkBaseAddr;
-            uint64 SlotListAddr;
-            uint64 SkinnedDataAddr;
-            uint64 RetainedStaticAddr;
+            RHI::TGPUSpan<uint32>             WorkBase;
+            RHI::TGPUSpan<uint32>             SlotList;
+            RHI::TGPUSpan<FSkinnedFrameData>  SkinnedData;
+            RHI::TGPUSpan<FInstanceStatic>    RetainedStatic;
+            RHI::TGPUSpan<FPreSkinnedVertex>  OutVertices;
         } PC = {};
-        static_assert(sizeof(FSkinningPushConstants) == 40, "FSkinningPushConstants must match Skinning.slang.");
+        static_assert(sizeof(FSkinningPushConstants) == 80, "FSkinningPushConstants must match Skinning.slang.");
 
-        PC.NumPairs           = NumPairs;
-        PC.VertexCapacity     = VertexCapacity;
-        PC.WorkBaseAddr       = SkinWorkBaseRing[Slot].Gpu;
-        PC.SlotListAddr       = SkinnedSlotListBuffer.Gpu;
-        PC.SkinnedDataAddr    = SkinnedFrameDataBuffer.Gpu;
-        PC.RetainedStaticAddr = RetainedStaticBuffer.Gpu;
+        PC.WorkBase       = { SkinWorkBaseRing[Slot], NumPairs };
+        PC.SlotList       = { SkinnedSlotListBuffer, NumSkinned };
+        PC.SkinnedData    = { SkinnedFrameDataBuffer };
+        PC.RetainedStatic = { RetainedStaticBuffer };
+        PC.OutVertices    = { GetPreSkinnedVerticesBuffer() };
 
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(SkinShader));
         RHI::CmdDispatchIndirect(CL, MakeArgs(PC), GetSkinDispatchArgs());

@@ -8,6 +8,7 @@
 #include "Core/Threading/Thread.h"
 #include "Platform/GenericPlatform.h"
 #include "Renderer/MeshData.h"
+#include "Renderer/GPUSpan.h"
 #include "Renderer/PrimitiveDrawInterface.h"
 #include "Renderer/RenderResource.h"
 #include "Renderer/ViewVolume.h"

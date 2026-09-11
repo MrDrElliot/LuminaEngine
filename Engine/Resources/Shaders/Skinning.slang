@@ -16,13 +16,14 @@
 struct FPushConstants
 {
     // Pairs in WorkBase: NumSlots * 2 (surface block, shadow block). Bounds the search below.
-    uint  NumPairs;
-    uint  VertexCapacity;    // elements in PreSkinnedVertices(); a store past it would page-fault
+    GPUSpan<uint>              WorkBase;
+    GPUSpan<uint>              SlotList;
+    GPUSpan<FSkinnedFrameData> SkinnedData;    // indexed by RETAINED slot
+    GPUSpan<FInstanceStatic>   RetainedStatic; // ditto; carries the header pointer and the bone arena base
 
-    uint*              WorkBase;
-    uint*              SlotList;
-    FSkinnedFrameData* SkinnedData;    // indexed by RETAINED slot
-    FInstanceStatic*   RetainedStatic; // ditto; carries the header pointer and the bone arena base
+    // The pre-skin arena this pass fills. Held here rather than reached through the scene root, because
+    // the pass that writes an array is the one that should carry its bound.
+    GPUSpan<FPreSkinnedVertex> OutVertices;
 };
 
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
@@ -40,7 +41,7 @@ uint FindPairForWork(uint WorkIndex, uint NumPairs)
     while (Lo + 1u < Hi)
     {
         const uint Mid = (Lo + Hi) >> 1u;
-        if (Pass().WorkBase[Mid] <= WorkIndex)
+        if (SpanGet(&Pass().WorkBase, Mid) <= WorkIndex)
         {
             Lo = Mid;
         }
@@ -58,7 +59,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
 {
     // Undoes the Y fold BuildSkinWork applies past MAX_DISPATCH_AXIS groups.
     const uint WorkIndex = GroupID.x + GroupID.y * (uint)MAX_DISPATCH_AXIS;
-    const uint NumPairs  = Pass().NumPairs;
+    const uint NumPairs  = Pass().WorkBase.Count;
 
     if (NumPairs == 0u)
     {
@@ -67,12 +68,12 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
 
     const uint Pair    = FindPairForWork(WorkIndex, NumPairs);
     const bool bShadow = (Pair & 1u) != 0u;
-    const uint Slot    = Pass().SlotList[Pair >> 1u];
+    const uint Slot    = SpanGet(&Pass().SlotList, Pair >> 1u);
 
-    const FSkinnedFrameData Data = Pass().SkinnedData[Slot];
+    const FSkinnedFrameData Data = SpanGet(&Pass().SkinnedData, Slot);
 
     // Safe by value now that FInstanceStatic carries a header slot rather than a device address.
-    const FInstanceStatic Static = loadAligned<16>(Pass().RetainedStatic + Slot);
+    const FInstanceStatic Static = SpanGetAligned(&Pass().RetainedStatic, Slot);
 
     // A header always exists -- an instance carries a slot and slot 0 is the null header -- so the
     // question is whether it describes geometry. Zero for a mesh that has died or never uploaded.
@@ -84,7 +85,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
 
     // The grid is folded up to a rectangle, so the tail workgroups own no meshlet. Also catches a WorkIndex
     // past the last pair's range, which the search cannot reject on its own.
-    const uint LocalMeshlet = WorkIndex - Pass().WorkBase[Pair];
+    const uint LocalMeshlet = WorkIndex - SpanGet(&Pass().WorkBase, Pair);
     const uint BlockCount   = bShadow ? Data.ShadowMeshletCount : Data.SurfaceMeshletCount;
     if (LocalMeshlet >= BlockCount)
     {
@@ -126,9 +127,9 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
     {
         uint OutIndex = SkinnedVertexBase + M.VertexOffset + Lane;
 
-        // The CPU budget should keep every index in range; this is the backstop that turns a
-        // sizing bug into a missing mesh instead of a device-lost page fault.
-        if (OutIndex < Pass().VertexCapacity)
+        // The CPU budget should keep every index in range; the span's own bound is the backstop that turns
+        // a sizing bug into a missing mesh instead of a device-lost page fault.
+        if (SpanContains(&Pass().OutVertices, OutIndex))
         {
             const FSkinSource S = LoadSkinSource(Header, M, Lane);
 
@@ -149,7 +150,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
                     S.Weights);
             }
 
-            PreSkinnedVertices()[OutIndex] = SkinWithRows(S, Rows);
+            SpanSet(&Pass().OutVertices, OutIndex, SkinWithRows(S, Rows));
         }
     }
 }

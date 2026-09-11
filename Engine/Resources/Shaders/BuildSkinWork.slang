@@ -24,17 +24,13 @@ struct FDispatchIndirectArguments
 
 struct FBuildSkinWorkArgs
 {
-    // Entries in SlotList: the skinned slots gathered this frame.
-    uint  NumSlots;
-    uint  _Pad0;
-
-    uint*              SlotList;
-    FSkinnedFrameData* SkinnedData;   // indexed by RETAINED slot, not by SlotList position
+    GPUSpan<uint>              SlotList;
+    GPUSpan<FSkinnedFrameData> SkinnedData;   // indexed by RETAINED slot, not by SlotList position
 
     // One running base per (slot, block) pair, which is what turns a flat workgroup id back into a meshlet.
     // Written for EVERY pair, including empty ones, so the search in Skinning.slang never reads a stale slot.
-    uint* OutWorkBase;
-    FDispatchIndirectArguments* OutDispatchArgs;
+    GPUSpan<uint> OutWorkBase;
+    GPUSpan<FDispatchIndirectArguments> OutDispatchArgs;
 };
 FBuildSkinWorkArgs* Pass() { return GetPassArgs<FBuildSkinWorkArgs>(); }
 
@@ -73,7 +69,7 @@ groupshared uint gsRunning;
 [numthreads(SKIN_WORK_GROUP, 1, 1)]
 void ComputeMain(uint Lane : SV_GroupIndex)
 {
-    const uint NumPairs = Pass().NumSlots * 2u;
+    const uint NumPairs = Pass().SlotList.Count * 2u;
 
     if (Lane == 0u)
     {
@@ -89,7 +85,7 @@ void ComputeMain(uint Lane : SV_GroupIndex)
         uint Count = 0u;
         if (Pair < NumPairs)
         {
-            const FSkinnedFrameData Data = Pass().SkinnedData[Pass().SlotList[Pair >> 1u]];
+            const FSkinnedFrameData Data = SpanGet(&Pass().SkinnedData, SpanGet(&Pass().SlotList, Pair >> 1u));
             Count = SkinBlockMeshletCount(Data, (Pair & 1u) != 0u);
         }
 
@@ -109,7 +105,7 @@ void ComputeMain(uint Lane : SV_GroupIndex)
         // Written for EVERY pair, empty ones included, so Skinning.slang's search never reads a stale slot.
         if (Pair < NumPairs)
         {
-            Pass().OutWorkBase[Pair] = gsRunning + (Inclusive - Count);
+            SpanSet(&Pass().OutWorkBase, Pair, gsRunning + (Inclusive - Count));
         }
 
         const uint TileTotal = gsScan[SKIN_WORK_GROUP - 1u];
@@ -128,6 +124,6 @@ void ComputeMain(uint Lane : SV_GroupIndex)
         Args.GroupX = min(gsRunning, (uint)MAX_DISPATCH_AXIS);
         Args.GroupY = (gsRunning + (uint)MAX_DISPATCH_AXIS - 1u) / (uint)MAX_DISPATCH_AXIS;
         Args.GroupZ = 1u;
-        Pass().OutDispatchArgs[0] = Args;
+        SpanSet(&Pass().OutDispatchArgs, 0u, Args);
     }
 }

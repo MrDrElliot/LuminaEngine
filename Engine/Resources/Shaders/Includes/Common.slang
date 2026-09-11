@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Shared/SharedConstants.h"
+#include "GPUSpan.slang"
 
 static const float PHI    = 1.618033988749895;
 static const float PI     = 3.1415926535897932384626433832795;
