@@ -136,7 +136,8 @@ namespace Lumina
      */
     struct FGrassGPUState
     {
-        RHI::FGPUAllocation CursorBuffer;
+        // Last frame's cursor, so the retire pass can deactivate exactly the slots that fell out of use.
+        RHI::FGPUAllocation PrevCursorBuffer;
     };
 
     struct FTerrainPushConstants

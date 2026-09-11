@@ -321,6 +321,17 @@ namespace Lumina::Containers
             Count = static_cast<uint32>(NewCount);
         }
 
+        // For a trivially-constructible T the caller writes every new element itself, so no memzero.
+        void resize_uninitialized(size_t NewCount)
+        {
+            static_assert(std::is_trivially_default_constructible_v<T>, "resize_uninitialized needs a trivial T");
+            if (NewCount > Count)
+            {
+                ReserveForGrowth(NewCount);
+            }
+            Count = static_cast<uint32>(NewCount);
+        }
+
         void resize(size_t NewCount, const T& Value)
         {
             if (NewCount < Count)

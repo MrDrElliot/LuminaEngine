@@ -595,8 +595,11 @@ namespace Lumina
         /** (base, count) per (visible instance, view): the one place the per-view meshlet range is
             decided. CullInstances writes it when it reserves; BuildMeshletBlocks reads it to append. */
         RHI::FGPUAllocation GetInstanceViewRanges() const { return InstanceViewRangeRing[CurrentFrameSlot]; }
-        RHI::FGPUAllocation GetSpdCounter()       const { return SpdCounterRing[CurrentFrameSlot]; }
-        RHI::FGPUAllocation GetLuminanceHistogram() const { return LuminanceHistogramRing[CurrentFrameSlot]; }
+        // Every counter a pass accumulates into this frame lives in one scratch block, zeroed once in RenderView.
+        RHI::FGPURange GetCullCounters()      const { return FrameScratchRange(kScratchCullCountersOffset, sizeof(uint32) * 4); }
+        RHI::FGPURange GetSpdCounter(uint32 Index) const { return FrameScratchRange(kScratchSpdCountersOffset + Index * sizeof(uint32), sizeof(uint32)); }
+        RHI::FGPURange GetLuminanceHistogram() const { return FrameScratchRange(kScratchHistogramOffset, sizeof(uint32) * kLuminanceHistogramBins); }
+        RHI::FGPURange GetGrassCursor(uint32 Index) const { return FrameScratchRange(kScratchGrassCursorsOffset + Index * sizeof(uint32), sizeof(uint32)); }
 
         /** Per-material counts, starts, scatter cursors, dispatch args and the frame pixel total. */
         RHI::FGPUAllocation GetMaterialClassify()  const { return MaterialClassifyRing[CurrentFrameSlot]; }
@@ -604,6 +607,7 @@ namespace Lumina
         RHI::FGPUAllocation GetMaterialPixelList() const { return MaterialPixelListRing[CurrentFrameSlot]; }
 
         uint32 GetDisplayResourceID() const override;
+        bool HasCompositedFrame() const override { return FramesComposited > 0; }
 
         RUNTIME_API void SettleResolveWork(int32 MaxIterations = 8);
 
@@ -632,6 +636,9 @@ namespace Lumina
         // Shared body of SwapchainResized / SetPrimaryViewSize. Unconditional: callers decide whether the
         // new size is worth the WaitDeviceIdle this costs.
         RUNTIME_API void ResizePrimaryView(const FUIntVector2& NewSize);
+
+        // Applies a deferred SetPrimaryViewSize. Called from Extract, which only runs for a ticking world.
+        void ApplyPendingPrimarySize();
 
         /** Cleared the first time something sizes the primary view explicitly (an editor tool panel). */
         bool bPrimaryTracksSwapchain = true;
@@ -684,7 +691,15 @@ namespace Lumina
         void TexturePaintPass(RHI::FCmdListH CL);
         void DepthPyramidPass(RHI::FCmdListH CL);
         void CascadePyramidPass(RHI::FCmdListH CL);
-        void BuildDepthPyramid(RHI::FCmdListH CL, const FSceneImage& Source, const FSceneImage& Pyramid, bool bReduceMax);
+        void BuildDepthPyramid(RHI::FCmdListH CL, const FSceneImage& Source, const FSceneImage& Pyramid, bool bReduceMax,
+                               uint32 SpdCounterIndex);
+
+        // Sizes and zeroes this frame's scratch counters, the one fill and barrier the counters share.
+        void BeginFrameScratch(RHI::FCmdListH CL, const FFrameData& Frame);
+        RHI::FGPURange FrameScratchRange(uint64 Offset, uint64 Size) const
+        {
+            return { FrameScratchRing[CurrentFrameSlot].Gpu + Offset, Size };
+        }
         void ClusterBuildPass(RHI::FCmdListH CL);
         void LightCullPass(RHI::FCmdListH CL);
         void PointShadowPass(RHI::FCmdListH CL);
@@ -998,6 +1013,7 @@ namespace Lumina
         /** What a freshly (re)allocated scene buffer holds. Undefined is the honest description of what
          *  RHI::Malloc returns -- a recycling pool hands back the previous tenant's bytes. Only pick it for
          *  a buffer that is provably rewritten in full before anything reads it. */
+        // Zeroed is an opt-in with a stated invariant; Undefined is poisoned in Development to expose missed writes.
         enum class EBufferInit : uint8
         {
             Undefined,
@@ -1008,7 +1024,7 @@ namespace Lumina
         // device-lost report rather than a bare address. Nothing else reads it.
         void ResizeBufferIfNeeded(RHI::FCmdListH CL, RHI::FGPUAllocation& Buffer, uint64 NeededSize, float SlackFactor,
                                   uint32& LowUsageCounter, bool bAllowShrink = true,
-                                  EBufferInit Init = EBufferInit::Zeroed, const char* DebugName = nullptr);
+                                  EBufferInit Init = EBufferInit::Undefined, const char* DebugName = nullptr);
 
         // Freed when this slot's previous GPU work has completed.
         void DeferFree(const RHI::FGPUAllocation& Allocation);
@@ -1058,6 +1074,8 @@ namespace Lumina
         TArray<uint32, 2>                                  InstanceVisibilityLowUsage = {};
         uint32                                             InstanceVisibilityCapacity = 0;
         uint8                                              InstanceVisibilityWriteIndex = 0;
+        // Stamped by the late cull; starts past zero so a never-written slot can never read as visible.
+        uint32                                             InstanceVisibilityTag = 1;
         uint32                                             LastStaleValidationGeneration = 0;
         TArray<uint32, RHI::kFramesInFlight>                MaterialClassifyRingLowUsage = {};
         TArray<uint32, RHI::kFramesInFlight>                MaterialPixelListRingLowUsage = {};
@@ -1109,6 +1127,14 @@ namespace Lumina
         uint32                                  ProbeBakeViewSize  = 0;
         TAtomic<uint32>                         CompletedProbeBakes{0};
         bool                                    bCapturingProbe       = false;
+
+        // The first shadow pass to open each atlas this frame clears it through LoadOp; the rest load.
+        bool                                    bLocalAtlasClearedThisFrame = false;
+        bool                                    bCascadeClearedThisFrame    = false;
+
+        // Clear on the first call per frame, Load after; ResetPass_Render rearms both.
+        RHI::ELoadOp TakeLocalAtlasLoadOp();
+        RHI::ELoadOp TakeCascadeLoadOp();
 
         TVector<FGPUReflectionProbe>            LastExtractedProbes;
         TVector<FReflectionProbeCapture>        LastExtractedCaptures;
@@ -1181,8 +1207,8 @@ namespace Lumina
         TArray<RHI::FGPUAllocation, RHI::kFramesInFlight>                          RenderBucketRing = {};
         TArray<RHI::FGPUAllocation, RHI::kFramesInFlight>                          MeshletDrawListRing = {};
         TArray<RHI::FGPUAllocation, RHI::kFramesInFlight>                          MeshDrawArgsRing = {};
-        TArray<RHI::FGPUAllocation, RHI::kFramesInFlight>                          SpdCounterRing = {};
-        TArray<RHI::FGPUAllocation, RHI::kFramesInFlight>                          LuminanceHistogramRing = {};
+        TArray<RHI::FGPUAllocation, RHI::kFramesInFlight>                          FrameScratchRing = {};
+        TArray<uint32, RHI::kFramesInFlight>                                       FrameScratchLowUsage = {};
         TArray<RHI::FGPUAllocation, RHI::kFramesInFlight>                          MeshletBlockRing = {};
         TArray<RHI::FGPUAllocation, RHI::kFramesInFlight>                          BlockDispatchArgsRing = {};
         TArray<RHI::FGPUAllocation, RHI::kFramesInFlight>                          SkinWorkBaseRing = {};
@@ -1232,13 +1258,13 @@ namespace Lumina
 
         TArray<RHI::FGPUAllocation, RHI::kFramesInFlight>          VisibleInstanceRing = {};
         TArray<uint32,       RHI::kFramesInFlight>          VisibleInstanceLowUsage = {};
-        TArray<RHI::FGPUAllocation, RHI::kFramesInFlight>          CullCounterRing = {};
+
 
         // (base, count) per (skinned instance, view) for the CPU-fed head of the visible buffer, which
         // CullInstances never claims and therefore never writes a range for.
 
         RHI::FGPUAllocation GetVisibleInstances()  const { return VisibleInstanceRing[CurrentFrameSlot]; }
-        RHI::FGPUAllocation GetCullCounters()      const { return CullCounterRing[CurrentFrameSlot]; }
+
 
         // Sends only the arena slices this frame's gather wrote, coalesced. Must run before anything reads
         // Bones() -- the skinning dispatch and the in-draw skinning fallback both do.
@@ -1269,6 +1295,13 @@ namespace Lumina
 
         // Must match HISTOGRAM_BINS in LuminanceHistogram.slang and its TILE_DIM^2 thread count.
         static constexpr uint32                             kLuminanceHistogramBins = 256;
+
+        // Frame scratch layout, in bytes. Grass cursors are last because their count is per frame.
+        static constexpr uint64                             kScratchCullCountersOffset = 0;
+        static constexpr uint64                             kScratchSpdCountersOffset  = 16;
+        static constexpr uint32                             kScratchSpdCounterCount    = 2;
+        static constexpr uint64                             kScratchHistogramOffset    = 32;
+        static constexpr uint64                             kScratchGrassCursorsOffset = 32 + sizeof(uint32) * 256;
 
         static constexpr uint32                             kAerialLUTSize   = 32;
         static constexpr uint32                             kAerialLUTSlices = 32;
@@ -1332,6 +1365,17 @@ namespace Lumina
         // One scatter target per (terrain, species slot). Keyed by entity; the vector is indexed by the
         // species' position in the extract, which is stable for a given compiled material.
         THashMap<ECS::FEntity, TVector<FGrassGPUState>> GrassGPUStates;
+
+        // One per species scattered this frame, drained by the batched retire that follows the scatters.
+        struct FGrassRetireItem
+        {
+            uint32              SlotBase = 0;
+            uint32              Capacity = 0;
+            RHI::FGPURange      Cursor;
+            RHI::FGPUAllocation PrevCursor;
+        };
+        TVector<FGrassRetireItem>                       GrassRetireScratch;
+        uint32                                          GrassCursorCursor = 0;
         
         THashMap<ECS::FEntity, TVector<FParticleGPUState>> ParticleGPUStates;
 
@@ -1436,6 +1480,14 @@ namespace Lumina
         };
         mutable TArray<FPickerReadbackSlot,     PickerReadbackRingSize> PickerReadbackRing;
         uint64                                  PickerReadbackFrame = 0;
+
+        // Frames that reached Submit in RenderView, so Output holds a real image rather than undefined memory.
+        uint64                                  FramesComposited = 0;
+        bool                                    bWarnedNoComposite = false;
+
+        // A resize destroys Output, and only a ticking world can repaint it. Held until Extract runs.
+        FUIntVector2                            PendingPrimarySize = FUIntVector2(0);
+        bool                                    bHasPendingPrimarySize = false;
         uint32                                  PickerReadbackWriteIndex = 0;
 
         TAtomic<uint64>                         PickerCursorPacked = 0;

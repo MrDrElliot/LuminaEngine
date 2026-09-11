@@ -197,6 +197,13 @@ namespace Lumina
     
     namespace Barriers = RHI::Barriers;
 
+    #if !defined(LE_SHIPPING)
+    // Development only. Off is for measuring; on is what proves no pass reads memory nothing wrote.
+    static TConsoleVar CVarPoisonUninitializedBuffers("r.Buffers.PoisonUninitialized", true,
+        "Fill a grown scene buffer with a poison pattern so a read of unwritten memory shows as garbage.");
+    static constexpr uint32 kUninitializedBufferPoison = 0xDEADBEEFu;
+    #endif
+
     FDefaultSceneRenderer::FDefaultSceneRenderer(CWorld* InWorld)
         : IRenderScene(InWorld)
         , ShadowAtlas(FShadowAtlasConfig())
@@ -458,13 +465,20 @@ namespace Lumina
         FreeBuffer(InstanceVisibilityBuffers[0]);
         FreeBuffer(InstanceVisibilityBuffers[1]);
 
+        for (auto& [Entity, States] : GrassGPUStates)
+        {
+            for (FGrassGPUState& State : States)
+            {
+                FreeBuffer(State.PrevCursorBuffer);
+            }
+        }
+
         for (uint32 Slot = 0; Slot < RHI::kFramesInFlight; ++Slot)
         {
             FreeBuffer(RenderBucketRing[Slot]);
             FreeBuffer(MeshletDrawListRing[Slot]);
             FreeBuffer(MeshDrawArgsRing[Slot]);
-            FreeBuffer(SpdCounterRing[Slot]);
-            FreeBuffer(LuminanceHistogramRing[Slot]);
+            FreeBuffer(FrameScratchRing[Slot]);
             FreeBuffer(MeshletBlockRing[Slot]);
             FreeBuffer(BlockDispatchArgsRing[Slot]);
             FreeBuffer(MeshletCullDispatchArgsRing[Slot]);
@@ -476,7 +490,6 @@ namespace Lumina
 
             // GPU-driven scene per-frame outputs.
             FreeBuffer(VisibleInstanceRing[Slot]);
-            FreeBuffer(CullCounterRing[Slot]);
             FreeBuffer(TotalsRing[Slot]);
 
             // Raw GPUPtr rather than an RHI::FGPUAllocation (CPURead allocation, persistently mapped).
@@ -560,6 +573,9 @@ namespace Lumina
         FFrameData& Frame = *ExtractFrame;
 
         RefreshFrameSettings();
+
+        // Before anything reads the primary size, and only on a frame that will also render.
+        ApplyPendingPrimarySize();
 
         Frame.bExtractedThisFrame  = false;
         Frame.CachedWorldDeltaTime = (float)World->GetWorldDeltaTime();
@@ -1107,6 +1123,15 @@ namespace Lumina
 
         if (!Frame.bExtractedThisFrame)
         {
+            // Nothing has composited yet, so the viewport is showing undefined Output contents.
+            if (FramesComposited == 0 && !bWarnedNoComposite)
+            {
+                bWarnedNoComposite = true;
+                LOG_WARN("RenderView skipped before any frame composited (no extract this frame); ticking={}, "
+                         "suspended={}. The viewport reads its cleared Output until a frame lands.",
+                         World != nullptr && World->IsTickingThisFrame(),
+                         World != nullptr && World->IsSuspended());
+            }
             RenderFrame = nullptr;
             return;
         }
@@ -1166,6 +1191,9 @@ namespace Lumina
         RHI::CmdSetTextureHeap(CL, RHI::GetGlobalHeap());
         // Projection bakes the Vulkan Y-flip, so CCW-wound geometry lands clockwise in framebuffer space.
         RHI::CmdSetFrontFace(CL, RHI::EFrontFace::CW);
+
+        BeginFrameScratch(CL, Frame);
+        GrassCursorCursor = 0;
         
         {
             RHI::CmdBeginMarker(CL, "RenderView Geometry");
@@ -1553,6 +1581,13 @@ namespace Lumina
 
         RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
 
+        if (FramesComposited == 0)
+        {
+            LOG_TRACE("First frame composited into Output ({}x{}, slot {}).",
+                      SceneViews[0].Size.x, SceneViews[0].Size.y, SceneViews[0].Output.GetResourceID());
+        }
+        ++FramesComposited;
+
         RenderFrame = nullptr;
     }
 
@@ -1620,15 +1655,6 @@ namespace Lumina
             SetSceneRoot(CL, View,
                 RHI::CopyTransient(MakeSecondaryViewGlobals(Bake.FaceGlobals[Face])));
 
-            if (Frame.Geometry.DrawCommands.empty())
-            {
-                // VisBufferPass returns early without clearing depth when there is nothing to draw.
-                Barriers::AllToTransfer(CL);
-                const float DepthClear[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-                RHI::CmdClearTexture(CL, GetNamedImage(ENamedImage::DepthAttachment).Texture, DepthClear);
-                Barriers::TransferToAll(CL);
-            }
-
             VisBufferPass(CL, CurrentCameraEarlyView, /*bClear*/ true);
             TerrainCullPass(CL);
             TerrainDepthPrePass(CL);
@@ -1679,9 +1705,9 @@ namespace Lumina
             RHI::FTextureSlice DstSlice = SrcSlice;
             DstSlice.Layer = (uint32)Face;
 
-            Barriers::AllToTransfer(CL);
+            RHI::CmdBarrier(CL, RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader, RHI::EStageFlags::Transfer);
             RHI::CmdCopyTexture(CL, FaceColor.Texture, SrcSlice, CaptureCube.Texture, DstSlice);
-            Barriers::TransferToAll(CL);
+            RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Compute);
         }
 
         {
@@ -1709,7 +1735,7 @@ namespace Lumina
                     RHI::CmdDispatch(CL, MakeArgs(PC), GroupsXY, GroupsXY, 6u);
                 }
 
-                Barriers::ComputeToAll(CL);
+                RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute);
             }
         }
 
@@ -1757,14 +1783,6 @@ namespace Lumina
 
     void FDefaultSceneRenderer::RenderCaptureView(RHI::FCmdListH CL)
     {
-        if (RenderFrame->Geometry.DrawCommands.empty())
-        {
-            Barriers::AllToTransfer(CL);
-            const float DepthClear[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-            RHI::CmdClearTexture(CL, GetNamedImage(ENamedImage::DepthAttachment).Texture, DepthClear);
-            Barriers::TransferToAll(CL);
-        }
-
         VisBufferPass(CL, CurrentCameraEarlyView, /*bClear*/ true);
         TerrainCullPass(CL);
         TerrainDepthPrePass(CL);
@@ -1812,10 +1830,11 @@ namespace Lumina
             return;
         }
 
-        ResizePrimaryView(FUIntVector2((uint32)Math::Max(NewSize.x, 1.0f), (uint32)Math::Max(NewSize.y, 1.0f)));
+        PendingPrimarySize     = FUIntVector2((uint32)Math::Max(NewSize.x, 1.0f), (uint32)Math::Max(NewSize.y, 1.0f));
+        bHasPendingPrimarySize = true;
     }
 
-    // Quantized with hysteresis, since each apply costs a WaitDeviceIdle and a full image realloc.
+    // Quantized with hysteresis, since each apply is a full image realloc.
     void FDefaultSceneRenderer::SetPrimaryViewSize(const FUIntVector2& SizePixels)
     {
         bPrimaryTracksSwapchain = false;
@@ -1847,15 +1866,33 @@ namespace Lumina
         const FUIntVector2 Target(Pick(Wanted.x, Current.x), Pick(Wanted.y, Current.y));
         if (Target == Current)
         {
+            bHasPendingPrimarySize = false;
             return;
         }
 
-        ResizePrimaryView(Target);
+        // Resizing here would drop the last good frame of a world that cannot repaint; Extract applies it.
+        PendingPrimarySize     = Target;
+        bHasPendingPrimarySize = true;
+    }
+
+    void FDefaultSceneRenderer::ApplyPendingPrimarySize()
+    {
+        if (!bHasPendingPrimarySize)
+        {
+            return;
+        }
+
+        bHasPendingPrimarySize = false;
+        if (PendingPrimarySize != SceneViews[0].Size)
+        {
+            ResizePrimaryView(PendingPrimarySize);
+        }
     }
 
     void FDefaultSceneRenderer::ResizePrimaryView(const FUIntVector2& NewSize)
     {
-        RHI::WaitDeviceIdle();
+        LOG_TRACE("Primary view resized {}x{} -> {}x{}; Output texture replaced.",
+                  SceneViews[0].Size.x, SceneViews[0].Size.y, NewSize.x, NewSize.y);
 
         // Only the primary view is resized here; capture views keep their own size.
         FSceneView& Primary = SceneViews[0];
@@ -3878,7 +3915,7 @@ namespace Lumina
 
         const RHI::GPUPtr PrevArena = BoneArenaBuffer.Gpu;
         ResizeBufferIfNeeded(CL, BoneArenaBuffer, ArenaBytes, 1.5f, BoneArenaLowUsage, /*bAllowShrink*/ true,
-                             EBufferInit::Zeroed, "Skinning.BoneArena");
+                             EBufferInit::Undefined, "Skinning.BoneArena");
         if (!BoneArenaBuffer)
         {
             return;
@@ -3956,9 +3993,9 @@ namespace Lumina
         LUMINA_PROFILE_SECTION("Upload Skinned Frame Data");
 
         ResizeBufferIfNeeded(CL, SkinnedFrameDataBuffer, Data.size() * sizeof(FSkinnedFrameData), 1.25f,
-                             SkinnedFrameDataLowUsage, true, EBufferInit::Zeroed, "Skinning.FrameData");
+                             SkinnedFrameDataLowUsage, true, EBufferInit::Undefined, "Skinning.FrameData");
         ResizeBufferIfNeeded(CL, SkinnedSlotListBuffer, Slots.size() * sizeof(uint32), 1.5f,
-                             SkinnedSlotListLowUsage, true, EBufferInit::Zeroed, "Skinning.SlotList");
+                             SkinnedSlotListLowUsage, true, EBufferInit::Undefined, "Skinning.SlotList");
         if (!SkinnedFrameDataBuffer || !SkinnedSlotListBuffer)
         {
             return;
@@ -3989,11 +4026,11 @@ namespace Lumina
 
         ResizeBufferIfNeeded(CL, SkinnedMeshletBoundsBuffer,
                              Math::Max<SIZE_T>(sizeof(FMeshletSphere), (SIZE_T)BoundsTotal * sizeof(FMeshletSphere)),
-                             1.25f, SkinnedMeshletBoundsLowUsage, true, EBufferInit::Zeroed, "Skinning.MeshletBounds");
+                             1.25f, SkinnedMeshletBoundsLowUsage, true, EBufferInit::Undefined, "Skinning.MeshletBounds");
 
         ResizeBufferIfNeeded(CL, SkinnedMeshletConeBuffer,
                              Math::Max<SIZE_T>(sizeof(FMeshletCone), (SIZE_T)BoundsTotal * sizeof(FMeshletCone)),
-                             1.25f, SkinnedMeshletConeLowUsage, true, EBufferInit::Zeroed, "Skinning.MeshletCones");
+                             1.25f, SkinnedMeshletConeLowUsage, true, EBufferInit::Undefined, "Skinning.MeshletCones");
 
         // The smaller of the two, since one base indexes both and a slot must fit in each.
         const uint32 SphereCap = SkinnedMeshletBoundsBuffer
@@ -4181,13 +4218,13 @@ namespace Lumina
         const SIZE_T NumArgSlots = (SIZE_T)Math::Max(NumCullViews, 1u) * (SIZE_T)Math::Max(NumDraws, 1u);
         
         ResizeBufferIfNeeded(CL, PreSkinnedVerticesBuffer, PreSkinnedSize, 1.2f, PreSkinnedVerticesLowUsage,
-                             true, EBufferInit::Zeroed, "Cull.PreSkinnedVertices");
+                             true, EBufferInit::Undefined, "Cull.PreSkinnedVertices");
         PreSkinnedVertexCapacity = (uint32)Math::Min<uint64>(
             PreSkinnedVerticesBuffer.Size / sizeof(FPreSkinnedVertex), 0xFFFFFFFFull);
         {
             const uint8 Slot = CurrentFrameSlot;
             ResizeBufferIfNeeded(CL, MeshletDrawListRing[Slot], MeshletDrawListSize, kSceneBufferGrowth, MeshletDrawListRingLowUsage[Slot],
-                                 true, EBufferInit::Zeroed, "Cull.MeshletDrawList");
+                                 true, EBufferInit::Undefined, "Cull.MeshletDrawList");
             DrawListCapacity = (uint32)Math::Min<uint64>(MeshletDrawListRing[Slot].Size / (sizeof(uint32) * 2), 0xFFFFFFFFull);
 
             // Read after the resize, because last frame's value describes the other ring slot's buffer.
@@ -4211,7 +4248,7 @@ namespace Lumina
                     * sizeof(RHI::FDrawMeshTasksIndirectArguments));
 
             ResizeBufferIfNeeded(CL, MeshDrawArgsRing[Slot], MeshDrawArgsSize, 1.2f, MeshDrawArgsRingLowUsage[Slot],
-                                 true, EBufferInit::Zeroed, "Cull.MeshDrawArgs");
+                                 true, EBufferInit::Undefined, "Cull.MeshDrawArgs");
             
             // Windowed peak, not the last readback: that count lags kFramesInFlight and collapses the
             // allocation the moment the camera looks at something empty.
@@ -4229,7 +4266,7 @@ namespace Lumina
 
             ResizeBufferIfNeeded(CL, VisibleInstanceRing[Slot],
                                  (SIZE_T)VisibleCapacityWanted * sizeof(FGPUInstance), kSceneBufferGrowth,
-                                 VisibleInstanceLowUsage[Slot], true, EBufferInit::Zeroed, "Cull.VisibleInstances");
+                                 VisibleInstanceLowUsage[Slot], true, EBufferInit::Undefined, "Cull.VisibleInstances");
 
             // From the allocation rather than the request, so a grow that failed cannot hand the cull
             // room it does not have, and the slack the grow already paid for is not thrown away.
@@ -4241,7 +4278,7 @@ namespace Lumina
                 (SIZE_T)FrameVisibleInstanceCapacity * (SIZE_T)Math::Max(NumCullViews, 1u) * sizeof(uint32) * 2);
             
             ResizeBufferIfNeeded(CL, InstanceViewRangeRing[Slot], InstanceViewRangeSize, 1.25f, InstanceViewRangeRingLowUsage[Slot],
-                                 true, EBufferInit::Zeroed, "Cull.InstanceViewRanges");
+                                 true, EBufferInit::Undefined, "Cull.InstanceViewRanges");
 
             // Only the GPU knows how many blocks were appended, and its counter lags the frames in flight.
             const uint32 BlockListWanted = BlockListDemand.Observe(LastBlocksRequested);
@@ -4250,7 +4287,7 @@ namespace Lumina
                 sizeof(uint32) * 2,
                 (SIZE_T)Math::Max<uint32>(BlockListWanted, 1u) * sizeof(uint32) * 2);
             ResizeBufferIfNeeded(CL, MeshletBlockRing[Slot], MeshletBlockSize, 1.2f, MeshletBlockRingLowUsage[Slot],
-                                 true, EBufferInit::Zeroed, "Cull.MeshletBlocks");
+                                 true, EBufferInit::Undefined, "Cull.MeshletBlocks");
             BlockListCapacity = (uint32)Math::Min<uint64>(MeshletBlockRing[Slot].Size / (sizeof(uint32) * 2), 0xFFFFFFFFull);
 
             // Requirement is from kFramesInFlight ago, capacity is from now, so print both sides.
@@ -4734,7 +4771,7 @@ namespace Lumina
         ScenePrimitives.ReleaseStaleBoneSlices(BoneSliceFrameNumber, kBoneSliceGraceFrames);
 
         ExtractFrame->Geometry.BoneCount = ScenePrimitives.GetBoneSliceExtent();
-        ExtractFrame->Geometry.BonesData.resize(ExtractFrame->Geometry.BoneCount);
+        ExtractFrame->Geometry.BonesData.resize_uninitialized(ExtractFrame->Geometry.BoneCount);
     }
 
     void FDefaultSceneRenderer::EmitSkinnedPrimitives(const Task::FParallelRange& Range, FThreadLocalDrawData& Local)
@@ -5332,7 +5369,7 @@ namespace Lumina
             if (UsedViews > AvailableViews)
             {
                 TVector<uint32>& Order = ShadowDropOrderScratch;
-                Order.resize(ShadowRequests.size());
+                Order.resize_uninitialized(ShadowRequests.size());
                 for (uint32 i = 0; i < (uint32)ShadowRequests.size(); ++i)
                 {
                     Order[i] = i;
@@ -5380,7 +5417,7 @@ namespace Lumina
         const uint32 NumRequests = (uint32)ShadowRequests.size();
 
         TVector<uint32>& Sizes = ShadowSizeScratch;
-        Sizes.resize(NumRequests);
+        Sizes.resize_uninitialized(NumRequests);
         for (uint32 i = 0; i < NumRequests; ++i)
         {
             uint32 V = ShadowRequests[i].DesiredPixels;
@@ -5434,7 +5471,7 @@ namespace Lumina
         }
 
         TVector<uint32>& SortedIndices = ShadowSortedScratch;
-        SortedIndices.resize(NumRequests);
+        SortedIndices.resize_uninitialized(NumRequests);
         for (uint32 i = 0; i < NumRequests; ++i)
         {
             SortedIndices[i] = i;
@@ -6336,20 +6373,23 @@ namespace Lumina
 
     void FDefaultSceneRenderer::ResetPass_Render(RHI::FCmdListH CL)
     {
-        // Same-queue submission orders the prior attachment writes but does not make them available.
-        Barriers::AllToTransfer(CL);
+        // Every target is cleared by the render pass that first writes it; nothing is transfer-cleared here.
+        bLocalAtlasClearedThisFrame = false;
+        bCascadeClearedThisFrame    = false;
+    }
 
-        if (RenderFrame->Geometry.DrawCommands.empty())
-        {
-            const float DepthClear[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-            RHI::CmdClearTexture(CL, GetNamedImage(ENamedImage::DepthAttachment).Texture, DepthClear);
-        }
+    RHI::ELoadOp FDefaultSceneRenderer::TakeLocalAtlasLoadOp()
+    {
+        const RHI::ELoadOp Op = bLocalAtlasClearedThisFrame ? RHI::ELoadOp::Load : RHI::ELoadOp::Clear;
+        bLocalAtlasClearedThisFrame = true;
+        return Op;
+    }
 
-        const float ShadowClear[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
-        RHI::CmdClearTexture(CL, ShadowAtlas.GetImage().Texture, ShadowClear);
-        RHI::CmdClearTexture(CL, GetNamedImage(ENamedImage::Cascade).Texture, ShadowClear);
-
-        Barriers::TransferToAll(CL);
+    RHI::ELoadOp FDefaultSceneRenderer::TakeCascadeLoadOp()
+    {
+        const RHI::ELoadOp Op = bCascadeClearedThisFrame ? RHI::ELoadOp::Load : RHI::ELoadOp::Clear;
+        bCascadeClearedThisFrame = true;
+        return Op;
     }
 
     void FDefaultSceneRenderer::SkinningPass(RHI::FCmdListH CL)
@@ -6377,7 +6417,7 @@ namespace Lumina
         const uint32 NumPairs = NumSkinned * 2u;
 
         ResizeBufferIfNeeded(CL, SkinWorkBaseRing[Slot], (uint64)NumPairs * sizeof(uint32), 1.5f,
-                             SkinWorkBaseLowUsage[Slot], true, EBufferInit::Zeroed, "Skinning.WorkBase");
+                             SkinWorkBaseLowUsage[Slot], true, EBufferInit::Undefined, "Skinning.WorkBase");
         if (!SkinWorkBaseRing[Slot] || !GetSkinDispatchArgs() || !GetPreSkinnedVerticesBuffer()
             || !SkinnedSlotListBuffer || !SkinnedFrameDataBuffer || !RetainedStaticBuffer)
         {
@@ -6427,7 +6467,7 @@ namespace Lumina
         RHI::CmdDispatchIndirect(CL, MakeArgs(PC), GetSkinDispatchArgs());
 
         // Pre-skinned vertices feed every draw VS.
-        Barriers::ComputeToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::MeshShader | RHI::EStageFlags::VertexShader | RHI::EStageFlags::Compute);
     }
 
     void FDefaultSceneRenderer::TexturePaintPass(RHI::FCmdListH CL)
@@ -6476,7 +6516,7 @@ namespace Lumina
 
             if (Op.Mode == FTexturePaintOp::EMode::Clear)
             {
-                Barriers::AllToTransfer(CL);
+                RHI::CmdBarrier(CL, RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute, RHI::EStageFlags::Transfer);
                 const float Clear[4] = { Op.Color.r, Op.Color.g, Op.Color.b, Op.Color.a };
                 RHI::CmdClearTexture(CL, Op.Target, Clear);
                 continue;
@@ -6532,8 +6572,9 @@ namespace Lumina
             RHI::CmdDispatch(CL, MakeArgs(PC), DispatchX, DispatchY, 1u);
         }
 
-        // Make the painted texels visible to every later sampler.
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer | RHI::EStageFlags::Compute, RHI::EStageFlags::AllCommands);
+        // Painted texels are sampled by materials in every shader stage.
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer | RHI::EStageFlags::Compute,
+                        RHI::EStageFlags::PixelShader | RHI::EStageFlags::VertexShader | RHI::EStageFlags::Compute);
     }
 
     void FDefaultSceneRenderer::VisBufferPass(RHI::FCmdListH CL, uint32 ViewIndex, bool bClear,
@@ -6543,7 +6584,14 @@ namespace Lumina
         const auto& DrawCommands            = Frame.Geometry.DrawCommands;
         const auto& OpaqueDrawList          = Frame.Geometry.OpaqueDrawList;
 
-        if (DrawCommands.empty() || ViewIndex == ~0u)
+        if (ViewIndex == ~0u)
+        {
+            return;
+        }
+
+        // With nothing to draw the pass still opens when it clears, since the targets are read regardless.
+        bool bHasDraws = !DrawCommands.empty();
+        if (!bHasDraws && !bClear)
         {
             return;
         }
@@ -6566,29 +6614,30 @@ namespace Lumina
                                       : InstancesAddr == 0 ? "Instances (visible-instance ring)"
                                       : BucketsAddr == 0   ? "RenderBuckets"
                                                            : nullptr;
-            if (MissingBuffer != nullptr)
+            if (bHasDraws && MissingBuffer != nullptr)
             {
                 static FName LastMissing;
                 const FName Missing(MissingBuffer);
                 if (Missing != LastMissing)
                 {
                     LastMissing = Missing;
-                    LOG_ERROR("VisBuffer: '{}' has no device address this frame; skipping the pass. "
+                    LOG_ERROR("VisBuffer: '{}' has no device address this frame; skipping the draws. "
                               "Drawing would page-fault the GPU inside the mesh shader.", MissingBuffer);
                 }
-                return;
+                bHasDraws = false;
             }
         }
 
         LUMINA_PROFILE_SECTION_COLORED("VisBuffer Geometry Pass", tracy::Color::Red);
 
         static const FShaderH VisPixel = FShaderLibrary::Get("VisBufferPixel.slang");
-        if (!VisPixel)
+        bHasDraws = bHasDraws && VisPixel != nullptr;
+        if (!bHasDraws && !bClear)
         {
             return;
         }
 
-        Barriers::ComputeToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::MeshShader | RHI::EStageFlags::IndirectArguments | RHI::EStageFlags::PixelShader);
 
         const FSceneImage& VisRT   = GetNamedImage(ENamedImage::VisBuffer);
         const FSceneImage& DepthRT = GetNamedImage(ENamedImage::DepthAttachment);
@@ -6624,6 +6673,8 @@ namespace Lumina
         // The two phases append into the same bucket, so each rasterizes only what its own cull added.
         Ctx.Slice             = (Phase == ECullPhase::Late) ? EMeshletSlice::Late : EMeshletSlice::Early;
 
+        if (bHasDraws)
+        {
         ForEachMeshletBatch(CL, OpaqueDrawList, Ctx,
             [&](FGraphicsPipelineKey& Key, const FMeshDrawCommand& Batch)
             {
@@ -6652,12 +6703,30 @@ namespace Lumina
                 // Two-sided materials must rasterize both faces into the VisBuffer.
                 RHI::CmdSetCullMode(CL, Batch.bTwoSided ? RHI::ECullMode::None : RHI::ECullMode::Back);
             });
+        }
 
         RHI::CmdEndRenderPass(CL);
         Barriers::RasterToRead(CL);
     }
 
-    void FDefaultSceneRenderer::BuildDepthPyramid(RHI::FCmdListH CL, const FSceneImage& Source, const FSceneImage& Pyramid, bool bReduceMax)
+    void FDefaultSceneRenderer::BeginFrameScratch(RHI::FCmdListH CL, const FFrameData& Frame)
+    {
+        uint32 GrassCursors = 0;
+        for (const FFrameData::FTerrainExtract& Terrain : Frame.Extracts.TerrainExtracts)
+        {
+            GrassCursors += (uint32)Terrain.Grass.size();
+        }
+
+        const uint64 UsedBytes = kScratchGrassCursorsOffset + (uint64)GrassCursors * sizeof(uint32);
+        ResizeBufferIfNeeded(CL, FrameScratchRing[CurrentFrameSlot], UsedBytes, 1.5f, FrameScratchLowUsage[CurrentFrameSlot],
+                             true, EBufferInit::Undefined, "Frame.Scratch");
+
+        RHI::CmdMemzero(CL, { FrameScratchRing[CurrentFrameSlot].Gpu, UsedBytes });
+        Barriers::TransferToCompute(CL);
+    }
+
+    void FDefaultSceneRenderer::BuildDepthPyramid(RHI::FCmdListH CL, const FSceneImage& Source, const FSceneImage& Pyramid, bool bReduceMax,
+                                                  uint32 SpdCounterIndex)
     {
         static const FShaderH ComputeShader = FShaderLibrary::Get("DepthPyramidSPD.slang");
         if (!ComputeShader)
@@ -6665,7 +6734,7 @@ namespace Lumina
             return;
         }
 
-        const RHI::FGPUAllocation SpdCounter = GetSpdCounter();
+        const RHI::FGPURange SpdCounter = GetSpdCounter(SpdCounterIndex);
 
         const uint32 PyramidW = Pyramid.GetSizeX();
         const uint32 PyramidH = Pyramid.GetSizeY();
@@ -6674,9 +6743,8 @@ namespace Lumina
         constexpr uint32 SpdMaxMips = 12;
         const uint32 NumMips = Math::Min(MipCount, SpdMaxMips);
 
-        RHI::CmdMemset(CL, SpdCounter, 0u);
         RHI::CmdBarrier(CL,
-            RHI::EStageFlags::Transfer | RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::FragmentTests,
+            RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::FragmentTests,
             RHI::EStageFlags::Compute);
 
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(ComputeShader));
@@ -6729,7 +6797,7 @@ namespace Lumina
 
         RHI::CmdDispatch(CL, MakeArgs(PC), DispatchX, DispatchY, 1);
 
-        Barriers::ComputeToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute | RHI::EStageFlags::PixelShader);
     }
 
     void FDefaultSceneRenderer::DepthPyramidPass(RHI::FCmdListH CL)
@@ -6748,7 +6816,7 @@ namespace Lumina
         BuildDepthPyramid(CL,
             GetNamedImage(ENamedImage::DepthAttachment),
             GetNamedImage(ENamedImage::DepthPyramid),
-            /*bReduceMax*/ false);
+            /*bReduceMax*/ false, /*SpdCounterIndex*/ 0u);
     }
 
     void FDefaultSceneRenderer::CascadePyramidPass(RHI::FCmdListH CL)
@@ -6770,7 +6838,7 @@ namespace Lumina
         BuildDepthPyramid(CL,
             GetNamedImage(ENamedImage::Cascade),
             GetNamedImage(ENamedImage::CascadePyramid),
-            /*bReduceMax*/ true);
+            /*bReduceMax*/ true, /*SpdCounterIndex*/ 1u);
 
         bCascadePyramidValid.store(true, std::memory_order_release);
     }
@@ -6830,7 +6898,7 @@ namespace Lumina
         RHI::CmdDispatch(CL, MakeArgs(), LightCullGroups, 1, 1);
 
         // Cluster light lists feed the lit pixel shaders.
-        Barriers::ComputeToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute);
     }
 
     bool FDefaultSceneRenderer::BindShadowBatchPipeline(RHI::FCmdListH CL, const FMeshDrawCommand& Batch,
@@ -6886,7 +6954,7 @@ namespace Lumina
         const auto& AtlasTiles               = Frame.Lighting.AtlasTiles;
         const auto& PointShadowCullViewBases = Frame.Views.PointShadowCullViewBases;
 
-        if (DrawCommands.empty() || PackedShadows[(uint32)ELightType::Point].empty())
+        if (PackedShadows[(uint32)ELightType::Point].empty())
         {
             return;
         }
@@ -6903,8 +6971,9 @@ namespace Lumina
 
         RHI::FRenderPassDesc Pass;
         Pass.DepthAttachment.Texture  = ShadowAtlas.GetImage().Texture;
-        Pass.DepthAttachment.LoadOp   = RHI::ELoadOp::Load;   // ResetPass cleared the whole atlas to 1.0
+        Pass.DepthAttachment.LoadOp   = TakeLocalAtlasLoadOp();
         Pass.DepthAttachment.StoreOp  = RHI::EStoreOp::Store;
+        Pass.DepthAttachment.Color[0] = 1.0f;
         Pass.RenderArea               = FUIntVector2(GShadowAtlasResolution, GShadowAtlasResolution);
 
         RHI::CmdBeginRenderPass(CL, Pass);
@@ -6964,7 +7033,7 @@ namespace Lumina
         const auto& AtlasTiles               = Frame.Lighting.AtlasTiles;
         const auto& SpotShadowCullViewBases  = Frame.Views.SpotShadowCullViewBases;
 
-        if (PackedShadows[(uint32)ELightType::Spot].empty() || DrawCommands.empty())
+        if (PackedShadows[(uint32)ELightType::Spot].empty())
         {
             return;
         }
@@ -6977,12 +7046,12 @@ namespace Lumina
             return;
         }
 
-        // Load to preserve the point-shadow tiles PointShadowPass already wrote into this same atlas.
         RHI::FRenderPassDesc Pass;
-        Pass.DepthAttachment.Texture = ShadowAtlas.GetImage().Texture;
-        Pass.DepthAttachment.LoadOp  = RHI::ELoadOp::Load;
-        Pass.DepthAttachment.StoreOp = RHI::EStoreOp::Store;
-        Pass.RenderArea              = FUIntVector2(GShadowAtlasResolution, GShadowAtlasResolution);
+        Pass.DepthAttachment.Texture  = ShadowAtlas.GetImage().Texture;
+        Pass.DepthAttachment.LoadOp   = TakeLocalAtlasLoadOp();
+        Pass.DepthAttachment.StoreOp  = RHI::EStoreOp::Store;
+        Pass.DepthAttachment.Color[0] = 1.0f;
+        Pass.RenderArea               = FUIntVector2(GShadowAtlasResolution, GShadowAtlasResolution);
 
         RHI::CmdBeginRenderPass(CL, Pass);
 
@@ -7037,7 +7106,7 @@ namespace Lumina
         const auto& OpaqueDrawList   = Frame.Geometry.OpaqueDrawList;
         const auto& LightData        = Frame.Lighting.LightData;
 
-        if (!LightData.bHasSun || DrawCommands.empty())
+        if (!LightData.bHasSun)
         {
             return;
         }
@@ -7054,10 +7123,11 @@ namespace Lumina
         LUMINA_PROFILE_SECTION_COLORED("Cascaded Shadow Map Pass", tracy::Color::DeepPink2);
 
         RHI::FRenderPassDesc Pass;
-        Pass.DepthAttachment.Texture = GetNamedImage(ENamedImage::Cascade).Texture;
-        Pass.DepthAttachment.LoadOp  = RHI::ELoadOp::Load;
-        Pass.DepthAttachment.StoreOp = RHI::EStoreOp::Store;
-        Pass.RenderArea              = FUIntVector2(GCSMAtlasWidth, GCSMAtlasHeight);
+        Pass.DepthAttachment.Texture  = GetNamedImage(ENamedImage::Cascade).Texture;
+        Pass.DepthAttachment.LoadOp   = TakeCascadeLoadOp();
+        Pass.DepthAttachment.StoreOp  = RHI::EStoreOp::Store;
+        Pass.DepthAttachment.Color[0] = 1.0f;
+        Pass.RenderArea               = FUIntVector2(GCSMAtlasWidth, GCSMAtlasHeight);
 
         RHI::CmdBeginRenderPass(CL, Pass);
 
@@ -7318,9 +7388,9 @@ namespace Lumina
 
         ResizeBufferIfNeeded(CL, MaterialClassifyRing[CurrentFrameSlot], Layout.BlockSize, 1.0f,
                              MaterialClassifyRingLowUsage[CurrentFrameSlot], /*bAllowShrink*/ false,
-                             EBufferInit::Zeroed, "Material.ClassifyBlock");
+                             EBufferInit::Undefined, "Material.ClassifyBlock");
         ResizeBufferIfNeeded(CL, MaterialPixelListRing[CurrentFrameSlot], PixelListSize, 1.2f,
-                             MaterialPixelListRingLowUsage[CurrentFrameSlot], true, EBufferInit::Zeroed,
+                             MaterialPixelListRingLowUsage[CurrentFrameSlot], true, EBufferInit::Undefined,
                              "Material.PixelList");
 
         if (!GetMaterialClassify() || !GetMaterialPixelList())
@@ -7415,7 +7485,7 @@ namespace Lumina
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CountCS));
         RHI::CmdDispatch(CL, MakeArgs(CountPC), GroupsX, GroupsY, 1u);
 
-        Barriers::ComputeToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute);
 
         struct FPrefixSumPC
         {
@@ -7437,7 +7507,7 @@ namespace Lumina
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(PrefixCS));
         RHI::CmdDispatch(CL, MakeArgs(PrefixPC), 1u, 1u, 1u);
 
-        Barriers::ComputeToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute);
 
         struct FMaterialScatterPC
         {
@@ -7462,7 +7532,7 @@ namespace Lumina
         RHI::CmdDispatch(CL, MakeArgs(ScatterPC), GroupsX, GroupsY, 1u);
 
         // The pixel list feeds the material dispatches; the argument triples feed the indirect fetch.
-        Barriers::ComputeToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute | RHI::EStageFlags::IndirectArguments);
     }
 
     // Compute, not a rasterized quad, since a pixel shader runs the graph 4x on a 1-pixel tri.
@@ -7576,7 +7646,7 @@ namespace Lumina
             RHI::CmdDispatchIndirect(CL, ArgsAlloc.Gpu + Slot * sizeof(FDeferredMaterialPC), Classify.Skip(Layout.MaterialArgsOffset + Slot * (uint32)sizeof(RHI::FDispatchIndirectArguments)));
         }
 
-        Barriers::ComputeToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute | RHI::EStageFlags::PixelShader);
     }
 
     // Background, terrain and undeferred materials were never classified, so they keep the env pass.
@@ -7635,8 +7705,9 @@ namespace Lumina
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(LightingCS));
         RHI::CmdDispatchIndirect(CL, MakeArgs(PC), Classify.Skip(Layout.LightArgsOffset));
 
-        // AllCommands, not ComputeToAll, whose destination set has no RasterColorOut.
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::AllCommands);
+        // The lit HDR target is drawn into by the forward passes, sampled, and read by the post chain.
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute,
+                        RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute);
     }
 
 #if USING(WITH_EDITOR)
@@ -8097,7 +8168,7 @@ namespace Lumina
             }
 
             // Buffer fills (zero/reset/counter) must land before the sim reads them.
-            Barriers::TransferToAll(CL);
+            RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Compute);
 
             RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(ComputeShader));
 
@@ -8131,7 +8202,7 @@ namespace Lumina
         if (bAnySimulated)
         {
             // Simulated particles feed the sort pass, then the render pass VS.
-            Barriers::ComputeToAll(CL);
+            RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute | RHI::EStageFlags::VertexShader);
         }
     }
 
@@ -8199,8 +8270,8 @@ namespace Lumina
 
         if (bAnySorted)
         {
-            // ComputeToAll covers IndirectArguments, which is what the compacted draw reads.
-            Barriers::ComputeToAll(CL);
+            // The compacted draw reads the sorted indices in its VS and its count as indirect arguments.
+            RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::VertexShader | RHI::EStageFlags::IndirectArguments);
         }
     }
 
@@ -8860,7 +8931,7 @@ namespace Lumina
             if (bHeightDirty && NormalShader)
             {
                 // Heightmap upload must land before the normal recompute samples it.
-                Barriers::TransferToAll(CL);
+                RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Compute);
 
                 const int32 NMinX = Math::Max(RectMin.x - 1, 0);
                 const int32 NMinY = Math::Max(RectMin.y - 1, 0);
@@ -8894,7 +8965,7 @@ namespace Lumina
                                                    RenderUtils::GetGroupCount((uint32)NH, 8u), 1u);
 
                 // Normals are sampled by the terrain VS/PS.
-                Barriers::ComputeToAll(CL);
+                RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::VertexShader | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute);
             }
 
             if (TerrainItem.bGeometryRebuilt)
@@ -8933,7 +9004,7 @@ namespace Lumina
 
         if (bAnyUpload)
         {
-            Barriers::TransferToAll(CL);
+            RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Compute | RHI::EStageFlags::VertexShader | RHI::EStageFlags::PixelShader);
         }
     }
 
@@ -8978,7 +9049,7 @@ namespace Lumina
             InitialArgs.FirstVertex   = 0u;
             InitialArgs.FirstInstance = 0u;
             WriteBuffer(CL, State.IndirectDrawBuffer.Gpu, &InitialArgs, sizeof(InitialArgs));
-            Barriers::TransferToAll(CL);
+            RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Compute | RHI::EStageFlags::IndirectArguments);
 
             if (!bAnyDispatched)
             {
@@ -8997,9 +9068,18 @@ namespace Lumina
 
         if (bAnyDispatched)
         {
-            Barriers::ComputeToAll(CL);
+            RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::VertexShader | RHI::EStageFlags::IndirectArguments);
         }
     }
+
+    // Matches FGrassRetirePushConstants in GrassRetire.slang.
+    struct FGrassRetirePushConstants
+    {
+        RHI::TGPUSpan<FInstanceCullEntry> CullEntries;
+        RHI::TGPUSpan<uint32>             Cursor;
+        RHI::TGPUSpan<uint32>             PrevCursor;
+    };
+    static_assert(sizeof(FGrassRetirePushConstants) == 48, "FGrassRetirePushConstants must match GrassRetire.slang.");
 
     // Matches FGrassScatterPushConstants in GrassScatter.slang.
     struct FGrassScatterPushConstants
@@ -9101,6 +9181,10 @@ namespace Lumina
             TVector<FGrassGPUState>& States = GrassGPUStates[TerrainItem.Entity];
             States.resize(TerrainItem.Grass.size());
 
+            // One scratch cursor per species, in extract order, matching what BeginFrameScratch sized.
+            const uint32 FirstCursor = GrassCursorCursor;
+            GrassCursorCursor += (uint32)TerrainItem.Grass.size();
+
             const FVector3 Origin = FVector3(TerrainItem.WorldMatrix[3]);
 
             for (SIZE_T Index = 0; Index < TerrainItem.Grass.size(); ++Index)
@@ -9131,24 +9215,30 @@ namespace Lumina
                     continue;
                 }
 
-                if (!State.CursorBuffer)
+                if (!State.PrevCursorBuffer)
                 {
-                    State.CursorBuffer = CreateSceneBuffer(sizeof(uint32), "Grass.Cursor");
+                    State.PrevCursorBuffer = CreateSceneBuffer(sizeof(uint32), "Grass.PrevCursor");
+                    if (State.PrevCursorBuffer)
+                    {
+                        // A fresh block has no live tail, so the first retire has nothing to walk.
+                        RHI::CmdMemset(CL, { State.PrevCursorBuffer.Gpu, sizeof(uint32) }, 0u);
+                        Barriers::TransferToCompute(CL);
+                    }
                 }
-                if (!State.CursorBuffer)
+                if (!State.PrevCursorBuffer)
                 {
                     continue;
                 }
 
-                // The cursor is the append index into this species' block, so it restarts every frame.
-                RHI::CmdMemset(CL, { State.CursorBuffer.Gpu, sizeof(uint32) }, 0u);
+                // The append cursor restarts every frame; the scratch block already zeroed it.
+                const RHI::FGPURange Cursor = GetGrassCursor(FirstCursor + (uint32)Index);
 
-                // Slots the scatter does not reach this frame must not keep last frame's blades, so the
-                // whole block goes inactive first. Zeroing the cull entry clears its Active bit.
-                RHI::CmdMemset(CL, { RetainedCullEntryBuffer.Gpu
-                                     + uint64(Binding.InstanceSlotBase) * sizeof(FInstanceCullEntry),
-                                     uint64(Binding.Capacity) * sizeof(FInstanceCullEntry) }, 0u);
-                Barriers::TransferToAll(CL);
+                // Whatever the scatter leaves past its cursor is retired afterward, not zeroed in advance.
+                FGrassRetireItem& Retire = GrassRetireScratch.emplace_back();
+                Retire.SlotBase   = Binding.InstanceSlotBase;
+                Retire.Capacity   = Binding.Capacity;
+                Retire.Cursor     = Cursor;
+                Retire.PrevCursor = State.PrevCursorBuffer;
 
                 if (!bAnyDispatched)
                 {
@@ -9164,7 +9254,7 @@ namespace Lumina
                     RetainedTransformBuffer, Binding.InstanceSlotBase, Binding.Capacity);
                 Push.OutStatic      = RHI::TGPUSpan<FInstanceStatic>::Slice(
                     RetainedStaticBuffer, Binding.InstanceSlotBase, Binding.Capacity);
-                Push.OutCursor      = { State.CursorBuffer };
+                Push.OutCursor      = { Cursor };
                 Push.HeightmapIndex     = (uint32)Terrain.HeightmapTexture.GetResourceID();
                 Push.NormalIndex        = (uint32)Terrain.NormalTexture.GetResourceID();
                 Push.LayerWeightsIndex  = (uint32)Terrain.LayerWeightTexture.GetResourceID();
@@ -9204,7 +9294,34 @@ namespace Lumina
 
         if (bAnyDispatched)
         {
-            Barriers::ComputeToAll(CL);
+            RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute);
+        }
+
+        if (!GrassRetireScratch.empty())
+        {
+            static const FShaderH RetireShader = FShaderLibrary::Get("GrassRetire.slang");
+            if (RetireShader)
+            {
+                RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(RetireShader));
+                for (const FGrassRetireItem& Item : GrassRetireScratch)
+                {
+                    FGrassRetirePushConstants Push{};
+                    // Sliced like the scatter's span, so the clamp to the allocation is the same one.
+                    Push.CullEntries = RHI::TGPUSpan<FInstanceCullEntry>::Slice(RetainedCullEntryBuffer, Item.SlotBase, Item.Capacity);
+                    Push.Cursor      = { Item.Cursor };
+                    Push.PrevCursor  = { Item.PrevCursor };
+                    RHI::CmdDispatch(CL, MakeArgs(Push), (Item.Capacity + 63u) / 64u, 1u, 1u);
+                }
+
+                // Four bytes each, on the GPU; the count never comes back to the CPU.
+                RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Transfer);
+                for (const FGrassRetireItem& Item : GrassRetireScratch)
+                {
+                    RHI::CmdMemcpy(CL, { Item.PrevCursor.Gpu, sizeof(uint32) }, Item.Cursor);
+                }
+                RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Compute);
+            }
+            GrassRetireScratch.clear();
         }
     }
 
@@ -9570,7 +9687,7 @@ namespace Lumina
                 RenderUtils::GetGroupCount(Width, PrefilterTile),
                 RenderUtils::GetGroupCount(Height, PrefilterTile), 1);
 
-            Barriers::ComputeToAll(CL);
+            RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute);
         }
 
         {
@@ -9625,7 +9742,7 @@ namespace Lumina
                 RenderUtils::GetGroupCount(Width, 8u),
                 RenderUtils::GetGroupCount(Height, 8u), 1);
 
-            Barriers::ComputeToAll(CL);
+            RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute);
         }
 
         {
@@ -9684,7 +9801,7 @@ namespace Lumina
                     RenderUtils::GetGroupCount(Width, 16u),
                     RenderUtils::GetGroupCount(Height, 8u), 1);
 
-                Barriers::ComputeToAll(CL);
+                RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute);
             }
         }
     }
@@ -10826,7 +10943,7 @@ namespace Lumina
 
         const uint32 Groups = RenderUtils::GetGroupCount(Shadow.GetSizeX(), 8);
         RHI::CmdDispatch(CL, MakeArgs(PC), Groups, Groups, 1u);
-        Barriers::ComputeToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute);
     }
 
     void FDefaultSceneRenderer::FroxelInjectPass(RHI::FCmdListH CL)
@@ -10930,7 +11047,7 @@ namespace Lumina
                          RenderUtils::GetGroupCount(FroxelGridSize.y, 8),
                          1u);
 
-        Barriers::ComputeToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute);
     }
 
     void FDefaultSceneRenderer::AtmosphereCompositePass(RHI::FCmdListH CL)
@@ -10999,7 +11116,7 @@ namespace Lumina
                          RenderUtils::GetGroupCount(Width,  AtmosphereTileSize),
                          RenderUtils::GetGroupCount(Height, AtmosphereTileSize), 1);
 
-        Barriers::ComputeToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute);
     }
 
     void FDefaultSceneRenderer::WaterPass(RHI::FCmdListH CL)
@@ -11164,11 +11281,11 @@ namespace Lumina
         if (!FrameFlags.bHasEnvironment)
         {
             const float Black[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-            Barriers::AllToTransfer(CL);
+            RHI::CmdBarrier(CL, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute, RHI::EStageFlags::Transfer);
             RHI::CmdClearTexture(CL, GetNamedImage(ENamedImage::SkyCube).Texture, Black);
             RHI::CmdClearTexture(CL, GetNamedImage(ENamedImage::SkyIrradiance).Texture, Black);
             RHI::CmdClearTexture(CL, GetNamedImage(ENamedImage::SkyPrefilter).Texture, Black);
-            Barriers::TransferToAll(CL);
+            RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute);
             return;
         }
 
@@ -11303,7 +11420,7 @@ namespace Lumina
         const uint32 GroupsXY = RenderUtils::GetGroupCount(FaceSize, IrradianceTile);
         RHI::CmdDispatch(CL, MakeArgs(PC), GroupsXY, GroupsXY, 6u);
 
-        Barriers::ComputeToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute);
     }
 
     void FDefaultSceneRenderer::PrefilterEnvMapPass(RHI::FCmdListH CL)
@@ -11357,7 +11474,7 @@ namespace Lumina
             RHI::CmdDispatch(CL, MakeArgs(PC), GroupsXY, GroupsXY, 6u);
         }
 
-        Barriers::ComputeToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute);
     }
 
     void FDefaultSceneRenderer::EnvironmentPass(RHI::FCmdListH CL)
@@ -11938,7 +12055,7 @@ namespace Lumina
                              RenderUtils::GetGroupCount(DstH, BloomTileSize), 1);
         }
 
-        Barriers::ComputeToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::PixelShader);
     }
 
     namespace
@@ -12253,8 +12370,9 @@ namespace Lumina
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(SSRCS));
         RHI::CmdDispatchIndirect(CL, MakeArgs(PC), Classify.Skip(Layout.LightArgsOffset));
 
-        // HDR is a UAV write here and a color attachment for every pass after it.
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::AllCommands);
+        // HDR is a UAV write here, then a color attachment, a sampled input, and a post-chain read.
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute,
+                        RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute);
     }
 
     void FDefaultSceneRenderer::AerialPerspectivePass(RHI::FCmdListH CL)
@@ -12339,7 +12457,7 @@ namespace Lumina
 
         const FSceneImage& HDR     = GetNamedImage(ENamedImage::HDR);
         const FSceneImage& Adapted = GetNamedImage(ENamedImage::AdaptedLuminance);
-        const RHI::FGPUAllocation Histogram = GetLuminanceHistogram();
+        const RHI::FGPURange Histogram = GetLuminanceHistogram();
 
         // Scene-luminance span the bins cover, in stops. Wide enough for starlight to a clipped sun.
         constexpr float MinLogLum = -10.0f;
@@ -12348,9 +12466,6 @@ namespace Lumina
 
         const uint32 HDRWidth = HDR.GetSizeX();
         const uint32 HDRHght  = HDR.GetSizeY();
-
-        RHI::CmdMemset(CL, Histogram, 0u);
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Compute);
 
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(BuildCS));
 
@@ -12385,7 +12500,7 @@ namespace Lumina
 
         RHI::CmdDispatch(CL, MakeArgs(AvgPC), 1, 1, 1);
 
-        Barriers::ComputeToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute);
     }
 
     void FDefaultSceneRenderer::ToneMappingPass(RHI::FCmdListH CL)
@@ -12536,16 +12651,16 @@ namespace Lumina
         {
             if (Source->Texture.Handle != LDR.Texture.Handle)
             {
-                Barriers::AllToTransfer(CL);
+                RHI::CmdBarrier(CL, RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader, RHI::EStageFlags::Transfer);
                 RHI::CmdCopyTexture(CL, Source->Texture, RHI::FTextureSlice{}, LDR.Texture, RHI::FTextureSlice{});
-                Barriers::TransferToAll(CL);
+                RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::PixelShader);
             }
         }
         else
         {
-            Barriers::AllToTransfer(CL);
+            RHI::CmdBarrier(CL, RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader, RHI::EStageFlags::Transfer);
             RHI::CmdCopyTexture(CL, Source->Texture, RHI::FTextureSlice{}, CurrentView->Output.Texture, RHI::FTextureSlice{});
-            Barriers::TransferToAll(CL);
+            RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::PixelShader);
         }
     }
 
@@ -13071,10 +13186,6 @@ namespace Lumina
             // Per-(view, draw) cull layout. Sized for real in CompileDrawCommands_Render.
             RenderBucketRing[Slot] = CreateSceneBuffer(sizeof(FRenderBucketGPU), "Cull.RenderBuckets");
 
-            SpdCounterRing[Slot] = CreateSceneBuffer(sizeof(uint32), "Cull.SpdCounter");
-
-            LuminanceHistogramRing[Slot] = CreateSceneBuffer(sizeof(uint32) * kLuminanceHistogramBins, "Post.LuminanceHistogram");
-
             MeshletBlockRing[Slot] = CreateSceneBuffer(sizeof(uint32) * 2, "Cull.MeshletBlocks");
             // Fixed size, one grid, rewritten by BuildDrawPrefix every frame.
             BlockDispatchArgsRing[Slot] = CreateSceneBuffer(sizeof(RHI::FDispatchIndirectArguments), "Cull.BlockDispatchArgs");
@@ -13087,7 +13198,6 @@ namespace Lumina
 
             // GPU-driven scene per-frame outputs. Sized for real in CompileDrawCommands_Render.
             VisibleInstanceRing[Slot]       = CreateSceneBuffer(sizeof(FGPUInstance), "Cull.VisibleInstances");
-            CullCounterRing[Slot]           = CreateSceneBuffer(sizeof(uint32) * 4, "Cull.CullCounters");
 
             if (MeshletBoundReadback[Slot].Gpu == 0)
             {
@@ -13149,7 +13259,7 @@ namespace Lumina
         if (!TotalsZeroed[Slot] && GetTotals())
         {
             RHI::CmdMemset(CL, GetTotals(), 0u);
-            Barriers::TransferToAll(CL);
+            RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Compute);
             TotalsZeroed[Slot] = true;
         }
 
@@ -13161,6 +13271,7 @@ namespace Lumina
             const SIZE_T TransformBytes = Math::Max<SIZE_T>(sizeof(FTransform3x4),      (SIZE_T)RetainedSlots * sizeof(FTransform3x4));
             const SIZE_T StaticBytes    = Math::Max<SIZE_T>(sizeof(FInstanceStatic),    (SIZE_T)RetainedSlots * sizeof(FInstanceStatic));
 
+            // Retained state is zeroed on growth because a free slot IS zero; the CPU writes zero on free too.
             ResizeBufferIfNeeded(CL, RetainedCullEntryBuffer, CullBytes,      1.5f, RetainedCullEntryLowUsage, Upload.bFull,
                                  EBufferInit::Zeroed, "Retained.CullEntries");
             ResizeBufferIfNeeded(CL, RetainedTransformBuffer, TransformBytes, 1.5f, RetainedTransformLowUsage, Upload.bFull,
@@ -13170,11 +13281,13 @@ namespace Lumina
 
             // Flipped so last frame's set stays readable all frame; both dispatches take their phase from it.
             InstanceVisibilityWriteIndex ^= 1u;
+            ++InstanceVisibilityTag;
 
             const SIZE_T VisBytes = Math::Max<SIZE_T>(sizeof(uint32), (SIZE_T)RetainedSlots * sizeof(uint32));
             uint32 VisCapacity = 0xFFFFFFFFu;
             for (uint32 v = 0; v < 2u; ++v)
             {
+                // Zeroed because zero is the one tag no frame ever stamps, so a new slot has no history.
                 ResizeBufferIfNeeded(CL, InstanceVisibilityBuffers[v], VisBytes, 1.5f, InstanceVisibilityLowUsage[v],
                                      true, EBufferInit::Zeroed, "Retained.InstanceVisibility");
 
@@ -13184,15 +13297,6 @@ namespace Lumina
             }
 
             InstanceVisibilityCapacity = VisCapacity;
-
-            // This frame's accumulator starts empty; the late dispatch only ORs into it.
-            if (GetInstanceVisibilityWrite())
-            {
-                // Live slots only, since the cull rejects any index past them and the slack was born zeroed.
-                const uint64 ClearBytes = Math::Min<uint64>((uint64)RetainedSlots * sizeof(uint32),
-                                                            GetInstanceVisibilityWrite().Size);
-                RHI::CmdMemset(CL, { GetInstanceVisibilityWrite().Gpu, ClearBytes }, 0u);
-            }
 
             if (RetainedCullEntryBuffer && RetainedTransformBuffer && RetainedStaticBuffer && RetainedSlots > 0)
             {
@@ -13280,15 +13384,10 @@ namespace Lumina
         // MeshDrawArgsRing is deliberately NOT resized here; CompileDrawCommands_Render sizes it.
         ResizeBufferIfNeeded(CL, RenderBucketRing[Slot],
                              ViewDrawEntries * sizeof(FRenderBucketGPU), 1.5f, RenderBucketRingLowUsage[Slot],
-                             true, EBufferInit::Zeroed, "Cull.RenderBuckets");
+                             true, EBufferInit::Undefined, "Cull.RenderBuckets");
 
-        {
-            // Starts at zero, since there is no CPU-fed head for CullInstances to append past.
-            RHI::CmdMemset(CL, { GetCullCounters().Gpu, sizeof(uint32) * 4u }, 0u);
-
-            // Every field starts at zero, since CullInstances accumulates skinned batches too.
-            RHI::CmdMemset(CL, { GetRenderBuckets().Gpu, ViewDrawEntries * sizeof(FRenderBucketGPU) }, 0u);
-        }
+        // Every field starts at zero, since CullInstances accumulates skinned batches too.
+        RHI::CmdMemset(CL, { GetRenderBuckets().Gpu, ViewDrawEntries * sizeof(FRenderBucketGPU) }, 0u);
 
         Barriers::TransferToCompute(CL);
 
@@ -13332,13 +13431,13 @@ namespace Lumina
             PC.RetainedStatic         = { RetainedStaticBuffer, RetainedSlots };
             PC.SurfaceDescs           = { SurfaceDescBuffer, UploadedSurfaceDescs };
             PC.OutInstances           = { VisibleInstanceRing[Slot], VisibleCapacity };
-            PC.OutInstanceCount       = RHI::TGPUSpan<uint32>::FromAddress(GetCullCounters().Gpu, 1u);
+            PC.OutInstanceCount       = RHI::TGPUSpan<uint32>::FromAddress(GetCullCounters().Address, 1u);
             PC.OutInstanceViewRanges  = { GetInstanceViewRanges() };
             PC.OutBuckets             = { GetRenderBuckets(), NumCullViews * NumBatches };
-            PC.OutOverflowFlag        = RHI::TGPUSpan<uint32>::FromAddress(GetCullCounters().Gpu + sizeof(uint32), 1u);
+            PC.OutOverflowFlag        = RHI::TGPUSpan<uint32>::FromAddress(GetCullCounters().Address + sizeof(uint32), 1u);
             PC.SkinnedFrameData       = { SkinnedFrameDataBuffer };
             PC.PreSkinArena           = { GetPreSkinnedVerticesBuffer(), PreSkinnedVertexCapacity };
-            PC.OutPreSkinCursor       = RHI::TGPUSpan<uint32>::FromAddress(GetCullCounters().Gpu + sizeof(uint32) * 2, 1u);
+            PC.OutPreSkinCursor       = RHI::TGPUSpan<uint32>::FromAddress(GetCullCounters().Address + sizeof(uint32) * 2, 1u);
 
             // Blades are appended into the retained block here, between its upload and the cull that
             // reads it, so grass is just more instances by the time anything downstream looks.
@@ -13380,7 +13479,7 @@ namespace Lumina
             PC.PreSkinArena         = { GetPreSkinnedVerticesBuffer(), PreSkinnedVertexCapacity };
             PC.VisibleInstances     = { VisibleInstanceRing[Slot], VisibleCapacity };
             PC.Buckets              = { GetRenderBuckets() };
-            PC.InstanceCount        = RHI::TGPUSpan<uint32>::FromAddress(GetCullCounters().Gpu, 4u);
+            PC.InstanceCount        = RHI::TGPUSpan<uint32>::FromAddress(GetCullCounters().Address, 4u);
             PC.OutTotals            = { GetTotals(), kTotalsSlots };
             PC.OutBlockDispatchArgs = { GetBlockDispatchArgs() };
 
@@ -13413,7 +13512,7 @@ namespace Lumina
 
                 BPC.NumViews           = NumCullViews;
                 BPC.NumBatches         = NumBatches;
-                BPC.InstanceCount      = RHI::TGPUSpan<uint32>::FromAddress(GetCullCounters().Gpu, 4u);
+                BPC.InstanceCount      = RHI::TGPUSpan<uint32>::FromAddress(GetCullCounters().Address, 4u);
                 BPC.VisibleInstances   = { VisibleInstanceRing[Slot], VisibleCapacity };
                 BPC.InstanceViewRanges = { GetInstanceViewRanges() };
                 BPC.Buckets            = { GetRenderBuckets() };
@@ -13964,7 +14063,7 @@ namespace Lumina
         constexpr uint32 BRDFLutTile = 8u;
         const uint32 Groups = RenderUtils::GetGroupCount(BRDFLutSize, BRDFLutTile);
         RHI::CmdDispatch(CL, ArgsPtr, Groups, Groups, 1);
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::AllCommands);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute);
 
         const uint64 BakeValue = RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
         RHI::WaitSemaphore(RHI::GetQueueTimeline(RHI::EQueueType::Graphics), BakeValue);
@@ -14032,9 +14131,9 @@ namespace Lumina
 
         RHI::FCmdListH CL = RHI::OpenCommandList();
         const float Black[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-        Barriers::AllToTransfer(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute, RHI::EStageFlags::Transfer);
         RHI::CmdClearTexture(CL, NamedImages[(int)ENamedImage::ProbePrefiltered].Texture, Black);
-        Barriers::TransferToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute);
         const uint64 ClearValue = RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
         RHI::WaitSemaphore(RHI::GetQueueTimeline(RHI::EQueueType::Graphics), ClearValue);
 
@@ -14048,7 +14147,6 @@ namespace Lumina
             return;
         }
 
-        RHI::WaitDeviceIdle();
         RetireSceneImage(NamedImages[(int)ENamedImage::ProbeCaptureCube]);
 
         RHI::FTextureDesc Desc;
@@ -14071,8 +14169,6 @@ namespace Lumina
         {
             return;
         }
-
-        RHI::WaitDeviceIdle();
 
         RetireSceneImage(NamedImages[(int)ENamedImage::SkyCube]);
         RetireSceneImage(NamedImages[(int)ENamedImage::SkyIrradiance]);
@@ -14138,14 +14234,14 @@ namespace Lumina
 
         SCENE_GPU_SCOPE(CL, "Streaming Feedback");
 
-        // Everything that samples a material has run by now, so the accumulated mask is complete.
-        Barriers::AllToTransfer(CL);
+        // Every material lane that reports into the mask has run by now, so it is complete.
+        RHI::CmdBarrier(CL, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute, RHI::EStageFlags::Transfer);
         RHI::CmdMemcpy(CL, { StreamingFeedbackReadback[Slot].Gpu, StreamingFeedbackBuffer.Size }, StreamingFeedbackBuffer);
 
         // Zero AFTER the copy, so the next frame's mask is what it sampled, not a growing union.
         RHI::Barriers::TransferToTransfer(CL);
         RHI::CmdMemzero(CL, StreamingFeedbackBuffer);
-        Barriers::TransferToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute);
 
         StreamingFeedbackStamp[Slot] = ++StreamingFeedbackFrame;
     }
@@ -14276,7 +14372,7 @@ namespace Lumina
             uint32 NumViews;
             uint32 NumDraws;
             uint32 Slice;
-            uint32 _Pad0;
+            uint32 VisibilityTag;
             RHI::TGPUSpan<FRenderBucketGPU> Buckets;
             RHI::TGPUSpan<FUIntVector2>     BlockList;
             RHI::TGPUSpan<uint32>           PrevVisibility;
@@ -14287,6 +14383,7 @@ namespace Lumina
         CPC.NumViews       = NumViews;
         CPC.NumDraws       = NumDraws;
         CPC.Slice          = (uint32)Slice;
+        CPC.VisibilityTag  = InstanceVisibilityTag;
         CPC.Buckets        = { GetRenderBuckets() };
         CPC.BlockList      = { GetMeshletBlocks() };
         CPC.PrevVisibility = { GetInstanceVisibilityPrev(), InstanceVisibilityCapacity };
@@ -14294,7 +14391,7 @@ namespace Lumina
 
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CullShader));
         RHI::CmdDispatchIndirect(CL, MakeArgs(CPC), GetMeshletCullDispatchArgs());
-        Barriers::ComputeToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute | RHI::EStageFlags::MeshShader | RHI::EStageFlags::IndirectArguments);
 
         // Turn what it appended into the slice every draw indexes, and the counts they draw from.
         APC.bPost = 1u;
@@ -14601,8 +14698,15 @@ namespace Lumina
             if (Init == EBufferInit::Zeroed)
             {
                 RHI::CmdMemzero(CL, Buffer);
-                Barriers::TransferToAll(CL);
+                RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Compute | RHI::EStageFlags::MeshShader | RHI::EStageFlags::VertexShader | RHI::EStageFlags::PixelShader | RHI::EStageFlags::IndirectArguments);
             }
+            #if !defined(LE_SHIPPING)
+            else if (CVarPoisonUninitializedBuffers.GetValue())
+            {
+                RHI::CmdMemset(CL, Buffer, kUninitializedBufferPoison);
+                RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Compute | RHI::EStageFlags::MeshShader | RHI::EStageFlags::VertexShader | RHI::EStageFlags::PixelShader | RHI::EStageFlags::IndirectArguments);
+            }
+            #endif
             return true;
         };
 
@@ -14772,7 +14876,7 @@ namespace Lumina
         SrcSlice.Extent = FUIntVector3(RegionW, RegionH, 1);
 
         // Picker writes -> transfer read, then host read of the packed region.
-        Barriers::AllToTransfer(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader, RHI::EStageFlags::Transfer);
         RHI::CmdCopyTextureToMemory(CL, PickerImage.Texture, SrcSlice, Slot.Readback, RegionW);
         RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
 

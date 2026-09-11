@@ -31,14 +31,15 @@ struct FMeshletCullArgs
     uint            NumDraws;
     // MESHLET_SLICE_EARLY or MESHLET_SLICE_LATE.
     uint            Slice;
-    uint            _Pad0;
+    // This frame's stamp. A slot is visible from last frame iff it holds VisibilityTag - 1.
+    uint            VisibilityTag;
 
     GPUSpan<FRenderBucket> Buckets;
     GPUSpan<FMeshletBlock> BlockList;
     // Read by BOTH dispatches and written by neither: the partition needs them to see one set of flags.
     // Its own count bounds RetainedSlot, and is 0 when the buffer is missing, so the reads short-circuit.
     GPUSpan<uint>          PrevVisibility;
-    // OR only: an instance's blocks span workgroups, so a store lets an occluded one clear a visible bit.
+    // Stamped with VisibilityTag by every visible block; identical stores need no atomic and no clear.
     GPUSpan<uint>          OutVisibility;
 };
 FMeshletCullArgs* Pass() { return GetPassArgs<FMeshletCullArgs>(); }
@@ -142,7 +143,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
     if (bHasWork && bTwoPhase)
     {
         RetainedSlot = Inst.RetainedSlot;
-        bWasVisible  = SpanGet(&Pass().PrevVisibility, RetainedSlot) != 0u;
+        bWasVisible  = SpanGet(&Pass().PrevVisibility, RetainedSlot) == (Pass().VisibilityTag - 1u);
     }
 
     // Late only, because the early phase is a replay and an instance dropped there is dropped for good.
@@ -192,11 +193,9 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
     // Reached by every lane, so the vote covers the whole group. Replaces gsAnyVisible and both barriers.
     const bool bBlockVisible = WaveActiveAnyTrue(bLaneVisible);
 
-    // OR only, never a store: an instance's blocks are spread across workgroups, and a plain write would
-    // let a fully-occluded block clear a flag a visible one had just set. The zero comes from the clear
-    // the CPU issues against this buffer at the top of the frame.
+    // Every visible block stores the same stamp, so an occluded block of the same instance cannot undo it.
     if (bLate && bTwoPhase && ThreadID == 0u && bBlockVisible && SpanContains(&Pass().OutVisibility, RetainedSlot))
     {
-        InterlockedOr(SpanAt(&Pass().OutVisibility, RetainedSlot)[0], 1u);
+        SpanAt(&Pass().OutVisibility, RetainedSlot)[0] = Pass().VisibilityTag;
     }
 }
