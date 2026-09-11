@@ -59,7 +59,7 @@ uint EmitMeshletSlot(uint ArgIdx, uint InstanceID, uint MeshletIdx)
     FMeshletDraw Draw;
     Draw.InstanceID        = InstanceID;
     Draw.PackedIndexAndTag = FMeshletDraw::Pack(MeshletIdx, Scene().CullData.MeshletDrawTag);
-    MeshletDrawList()[Slot] = Draw;
+    SpanSet(MeshletDrawList(), Slot, Draw);
 
     return Slot;
 }
@@ -118,7 +118,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
     }
 
     // Workgroup-uniform: ArgIdx is, and the view is a pure function of it.
-    const FCullView View  = loadAligned<16>(CullViews() + (ArgIdx / NumDraws));
+    const FCullView View  = SpanGetAligned(CullViews(), (ArgIdx / NumDraws));
     const bool bTwoPhase  = View.HasFlag(CULL_VIEW_FLAG_MESHLET_HIZ);
 
     // A single-phase view belongs entirely to the early dispatch. Skipping it in the late one is what

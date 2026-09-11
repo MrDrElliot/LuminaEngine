@@ -99,11 +99,11 @@ float3 LocalLightsInScatter(FExponentialHeightFogParams Fog, uint ClusterIndex, 
     float  G         = Fog.VolumetricParams.y;
     float3 InScatter = float3(0.0);
 
-    uint NumLocal   = min(Clusters()[ClusterIndex].Count, (uint)LIGHTS_PER_CLUSTER);
+    uint NumLocal   = min(SpanGet(Clusters(), ClusterIndex).Count, (uint)LIGHTS_PER_CLUSTER);
     uint NumLights  = GetNumLights();   // loop-invariant; hoisted out of the per-light test
     for (uint li = 0; li < NumLocal; ++li)
     {
-        uint LightIndex = Clusters()[ClusterIndex].LightIndices[li];
+        uint LightIndex = SpanGet(Clusters(), ClusterIndex).LightIndices[li];
         // Cluster contents go stale across a scene switch and the array holds exactly NumLights entries.
         if (LightIndex >= NumLights)
         {

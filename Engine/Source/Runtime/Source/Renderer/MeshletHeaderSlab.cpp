@@ -408,6 +408,12 @@ namespace Lumina::MeshletHeaderSlab
         return GSlab.Gpu;
     }
 
+    uint32 GetCapacity()
+    {
+        FScopeLock Lock(GMutex);
+        return GSlab.Gpu != 0 ? GCapacity : 0u;
+    }
+
     void Shutdown()
     {
         RHI::FGPUAllocation Slab    = {};

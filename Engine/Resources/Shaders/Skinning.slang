@@ -115,7 +115,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
     {
         for (uint i = Lane; i < Palette.Count; i += 64u)
         {
-            GroupBones[i] = loadAligned<16>(Bones() + ResolvePaletteBone(Header, Palette, i, Data.BoneOffset));
+            GroupBones[i] = SpanGetAligned(Bones(), ResolvePaletteBone(Header, Palette, i, Data.BoneOffset));
         }
     }
     GroupMemoryBarrierWithGroupSync();
@@ -143,10 +143,10 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
             else if (bCanSkin)
             {
                 Rows = BlendSkinRows(
-                    loadAligned<16>(Bones() + ResolvePaletteBone(Header, Palette, S.Slots.x, Data.BoneOffset)),
-                    loadAligned<16>(Bones() + ResolvePaletteBone(Header, Palette, S.Slots.y, Data.BoneOffset)),
-                    loadAligned<16>(Bones() + ResolvePaletteBone(Header, Palette, S.Slots.z, Data.BoneOffset)),
-                    loadAligned<16>(Bones() + ResolvePaletteBone(Header, Palette, S.Slots.w, Data.BoneOffset)),
+                    SpanGetAligned(Bones(), ResolvePaletteBone(Header, Palette, S.Slots.x, Data.BoneOffset)),
+                    SpanGetAligned(Bones(), ResolvePaletteBone(Header, Palette, S.Slots.y, Data.BoneOffset)),
+                    SpanGetAligned(Bones(), ResolvePaletteBone(Header, Palette, S.Slots.z, Data.BoneOffset)),
+                    SpanGetAligned(Bones(), ResolvePaletteBone(Header, Palette, S.Slots.w, Data.BoneOffset)),
                     S.Weights);
             }
 

@@ -37,7 +37,7 @@ VertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID, uint InstanceIndex
 {
     float2 QuadPos = Positions[VertexIndex];
 
-    FBillboardInstance Billboard = Billboards()[InstanceIndex];
+    FBillboardInstance Billboard = SpanGet(Billboards(), InstanceIndex);
 
     float4x4 ViewMatrix = GetCameraView();
 

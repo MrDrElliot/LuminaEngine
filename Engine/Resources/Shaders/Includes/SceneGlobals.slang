@@ -2,37 +2,39 @@
 #include "Common.slang"
 #include "GlobalRHI.slang"
 
-// Must match FSceneRoot in SceneRenderTypes.h (216 B, scalar layout); the hottest pointers ride in FRHIRoot.
+// Must match FSceneRoot in SceneRenderTypes.h (352 B, scalar layout); the hottest pointers ride in FRHIRoot.
 struct FSceneRoot
 {
-    FBoneTransform*      Bones;
+    GPUSpan<FBoneTransform>      Bones;
     // Last frame's pose and transform, copied before this frame's incremental uploads overwrite them.
-    FBoneTransform*      PrevBones;
-    FTransform3x4*       PrevRetainedTransforms;
-    FCluster*            Clusters;
-    FMaterialUniforms*   Materials;
-    FMaterialCollection* Collections;
-    FBillboardInstance*  Billboards;
-    FCullView*           CullViews;
-    FMeshletDraw*        MeshletDrawListPtr;
-    FPreSkinnedVertex*   PreSkinnedVerticesPtr;
-    FWidgetInstance*     WidgetsPtr;
-    FGPUReflectionProbe* ReflectionProbesPtr;
-    FGPUSpline*          SplinesPtr;        // one header per uploaded spline (bSendToGPU)
-    FGPUSplinePoint*     SplinePointsPtr;   // shared control-point array; headers carry the slice
-    FGPUSplineSample*    SplineSamplesPtr;  // shared arc-length tables
+    // These lag a frame and can be shorter than the live arrays, which is what their counts say.
+    GPUSpan<FBoneTransform>      PrevBones;
+    GPUSpan<FTransform3x4>       PrevRetainedTransforms;
+    GPUSpan<FCluster>            Clusters;
+    GPUSpan<FMaterialUniforms>   Materials;
+    GPUSpan<FMaterialCollection> Collections;
+    GPUSpan<FBillboardInstance>  Billboards;
+    GPUSpan<FCullView>           CullViews;
+    GPUSpan<FMeshletDraw>        MeshletDrawList;
+    GPUSpan<FPreSkinnedVertex>   PreSkinnedVertices;
+    GPUSpan<FWidgetInstance>     Widgets;
+    GPUSpan<FGPUReflectionProbe> ReflectionProbes;
+    GPUSpan<FGPUSpline>          Splines;        // one header per uploaded spline (bSendToGPU)
+    GPUSpan<FGPUSplinePoint>     SplinePoints;   // shared control-point array; headers carry the slice
+    GPUSpan<FGPUSplineSample>    SplineSamples;  // shared arc-length tables
     // Process-wide meshlet header slab. Instances carry a SLOT into this, never an address, so this is
     // the only meshlet-header address that exists anywhere -- and it is republished every frame, which
     // is what lets the slab grow without invalidating a single cached copy. See MeshletHeaderSlab.h.
-    FMeshletHeader*      MeshletHeadersPtr;
+    GPUSpan<FMeshletHeader>      MeshletHeaders;
     // Texture-streaming feedback, one uint per MATERIAL slot. See RequestMaterialResolution.
-    uint*                StreamingFeedbackPtr;
+    GPUSpan<uint>                StreamingFeedback;
     // Object-space meshlet spheres for this frame's poses, written by SkinnedMeshletBounds.slang.
-    FMeshletSphere*      SkinnedMeshletBoundsPtr;
+    GPUSpan<FMeshletSphere>      SkinnedMeshletBounds;
     // Indexed by retained slot, and the cull reads only SkinnedBoundsBase out of it.
-    FSkinnedFrameData*   SkinnedFrameDataPtr;
-    // Same index space as SkinnedMeshletBoundsPtr, so one base addresses both.
-    FMeshletCone*        SkinnedMeshletConesPtr;
+    GPUSpan<FSkinnedFrameData>   SkinnedFrameData;
+    // Same index space as SkinnedMeshletBounds, so one base addresses both.
+    GPUSpan<FMeshletCone>        SkinnedMeshletCones;
+
     uint  BRDFLutIndex;          // bindless 2D SRV
     uint  SkyIrradianceIndex;    // bindless cube SRV
     // [31:24] = prefilter cube mip count (see SamplePrefilter), [23:0] = bindless cube SRV index.
@@ -43,15 +45,7 @@ struct FSceneRoot
     uint  SkyCubeIndex;          // bindless cube SRV (full-res sky; sharp near-mirror reflections)
     // [31:24] = probe prefilter mip count, [23:0] = bindless cube-array SRV over every probe's slices.
     uint  ProbeCubeArrayIndex;
-    uint  NumReflectionProbes;
-    uint  NumSplines;
-    uint  StreamingFeedbackCount;
-    // Entries in the snapshots above, which lag a frame and can be shorter than the live arrays.
-    uint  PrevBoneCount;
-    uint  PrevRetainedTransformCount;
-    // Entries in SkinnedFrameData, and in SkinnedMeshletBounds/SkinnedMeshletCones respectively.
-    uint  SkinnedFrameDataCount;
-    uint  SkinnedBoundsCount;
+    uint  _Pad0;
 };
 
 // gRHI.Args (GlobalRHI's single 8-byte push-constant pointer) points to this transient block.
@@ -65,19 +59,22 @@ Ptr<T> GetPassArgs<T>()
     return (T*)gRHI.Args;
 }
 
-// Scene buffer accessors (pointers; field/index access auto-derefs).
+// Scene buffer accessors. The span ones return a POINTER to the span, never the span by value: a struct
+// holding a PhysicalStorageBuffer pointer must not be materialized as a local. Index them with SpanGet /
+// SpanAt, which carry the bound the CPU derived from the allocation.
 FSceneGlobalData*   Scene()                 { return (FSceneGlobalData*)gRHI.SceneData; }
 FLightData*         LightData()             { return (FLightData*)gRHI.Lights; }
 FGPUInstance*       Instances()             { return (FGPUInstance*)gRHI.Instances; }
-FBoneTransform*     Bones()                 { return GetSceneRoot().Bones; }
-FBoneTransform*     PrevBones()             { return GetSceneRoot().PrevBones; }
-FTransform3x4*      PrevRetainedTransforms(){ return GetSceneRoot().PrevRetainedTransforms; }
-FCluster*           Clusters()              { return GetSceneRoot().Clusters; }
-FMaterialUniforms*  Materials()             { return GetSceneRoot().Materials; }
-FMaterialCollection* Collections()           { return GetSceneRoot().Collections; }
-FBillboardInstance* Billboards()            { return GetSceneRoot().Billboards; }
-FCullView*          CullViews()             { return GetSceneRoot().CullViews; }
-FMeshletHeader*     MeshletHeaders()        { return GetSceneRoot().MeshletHeadersPtr; }
+
+GPUSpan<FBoneTransform>*      Bones()                 { return &GetSceneRoot().Bones; }
+GPUSpan<FBoneTransform>*      PrevBones()             { return &GetSceneRoot().PrevBones; }
+GPUSpan<FTransform3x4>*       PrevRetainedTransforms(){ return &GetSceneRoot().PrevRetainedTransforms; }
+GPUSpan<FCluster>*            Clusters()              { return &GetSceneRoot().Clusters; }
+GPUSpan<FMaterialUniforms>*   Materials()             { return &GetSceneRoot().Materials; }
+GPUSpan<FMaterialCollection>* Collections()           { return &GetSceneRoot().Collections; }
+GPUSpan<FBillboardInstance>*  Billboards()            { return &GetSceneRoot().Billboards; }
+GPUSpan<FCullView>*           CullViews()             { return &GetSceneRoot().CullViews; }
+GPUSpan<FMeshletHeader>*      MeshletHeaders()        { return &GetSceneRoot().MeshletHeaders; }
 
 // Both instance structs carry a header SLOT, but every consumer wants the header. Extensions rather than
 // members on the structs themselves: FGPUInstance and FInstanceStatic live in Common.slang, which is
@@ -85,26 +82,33 @@ FMeshletHeader*     MeshletHeaders()        { return GetSceneRoot().MeshletHeade
 //
 // Slot 0 is the null header -- no geometry pointers, MeshletCount 0 -- so this always returns something
 // readable, including for an instance the CPU never filled and one still naming a mesh that has died.
-// That is the whole reason no caller null-checks what comes back.
+// A slot past the slab lands on the null header for the same reason.
 extension FGPUInstance
 {
-    property FMeshletHeader* MeshletHeader { get { return MeshletHeaders() + MeshletHeaderSlot; } }
+    property FMeshletHeader* MeshletHeader
+    {
+        get { return SpanAt(MeshletHeaders(), min(MeshletHeaderSlot, MeshletHeaders().Count - 1u)); }
+    }
 }
 
 extension FInstanceStatic
 {
-    property FMeshletHeader* MeshletHeader { get { return MeshletHeaders() + MeshletHeaderSlot; } }
+    property FMeshletHeader* MeshletHeader
+    {
+        get { return SpanAt(MeshletHeaders(), min(MeshletHeaderSlot, MeshletHeaders().Count - 1u)); }
+    }
 }
-FMeshletDraw*       MeshletDrawList()       { return GetSceneRoot().MeshletDrawListPtr; }
-FPreSkinnedVertex*  PreSkinnedVertices()    { return GetSceneRoot().PreSkinnedVerticesPtr; }
-FMeshletSphere*     SkinnedMeshletBounds()  { return GetSceneRoot().SkinnedMeshletBoundsPtr; }
-FSkinnedFrameData*  SkinnedFrameData()      { return GetSceneRoot().SkinnedFrameDataPtr; }
-FMeshletCone*       SkinnedMeshletCones()   { return GetSceneRoot().SkinnedMeshletConesPtr; }
-FWidgetInstance*    Widgets()               { return GetSceneRoot().WidgetsPtr; }
-FGPUSpline*         Splines()               { return GetSceneRoot().SplinesPtr; }
-FGPUSplinePoint*    SplinePoints()          { return GetSceneRoot().SplinePointsPtr; }
-FGPUSplineSample*   SplineSamples()         { return GetSceneRoot().SplineSamplesPtr; }
-uint                NumSplines()            { return GetSceneRoot().NumSplines; }
+GPUSpan<FMeshletDraw>*        MeshletDrawList()       { return &GetSceneRoot().MeshletDrawList; }
+GPUSpan<FPreSkinnedVertex>*   PreSkinnedVertices()    { return &GetSceneRoot().PreSkinnedVertices; }
+GPUSpan<FMeshletSphere>*      SkinnedMeshletBounds()  { return &GetSceneRoot().SkinnedMeshletBounds; }
+GPUSpan<FSkinnedFrameData>*   SkinnedFrameData()      { return &GetSceneRoot().SkinnedFrameData; }
+GPUSpan<FMeshletCone>*        SkinnedMeshletCones()   { return &GetSceneRoot().SkinnedMeshletCones; }
+GPUSpan<FWidgetInstance>*     Widgets()               { return &GetSceneRoot().Widgets; }
+GPUSpan<FGPUSpline>*          Splines()               { return &GetSceneRoot().Splines; }
+GPUSpan<FGPUSplinePoint>*     SplinePoints()          { return &GetSceneRoot().SplinePoints; }
+GPUSpan<FGPUSplineSample>*    SplineSamples()         { return &GetSceneRoot().SplineSamples; }
+GPUSpan<FGPUReflectionProbe>* ReflectionProbes()      { return &GetSceneRoot().ReflectionProbes; }
+uint                NumSplines()            { return GetSceneRoot().Splines.Count; }
 
 // ---------------------------------------------------------------------------------------------------
 // Texture-streaming feedback
@@ -153,12 +157,10 @@ uint StreamingResolutionBit(float2 Ddx, float2 Ddy)
 // Called ONCE per pixel by each material lane, not once per sample.
 void RequestMaterialResolution(uint MaterialSlot, float2 UV0Ddx, float2 UV0Ddy, float2 UV1Ddx, float2 UV1Ddy)
 {
-    uint* Feedback = GetSceneRoot().StreamingFeedbackPtr;
-
     // Range, not just the ~0u sentinel: a stale or corrupt slot is simply out of range, and both index the
     // same buffer, so both have to be rejected before the write. Getting this wrong is an MMU fault, which
     // is how it was found. Uniform across the wave, so this branch costs no divergence.
-    if (MaterialSlot >= GetSceneRoot().StreamingFeedbackCount)
+    if (!SpanContains(&GetSceneRoot().StreamingFeedback, MaterialSlot))
     {
         return;
     }
@@ -172,7 +174,7 @@ void RequestMaterialResolution(uint MaterialSlot, float2 UV0Ddx, float2 UV0Ddy, 
     const uint WaveMask = WaveActiveBitOr(Mask);
     if (WaveIsFirstLane())
     {
-        InterlockedOr(Feedback[MaterialSlot], WaveMask);
+        InterlockedOr(SpanAt(&GetSceneRoot().StreamingFeedback, MaterialSlot)[0], WaveMask);
     }
 }
 
@@ -228,7 +230,7 @@ FVertexData DecodePreSkinnedVertex(FPreSkinnedVertex S)
 // -- a single structured load like the static path, no per-pass skinning.
 FVertexData LoadSkinnedVertex(FMeshlet M, uint VertexLocalIdx, uint SkinnedVertexBase)
 {
-    return DecodePreSkinnedVertex(loadAligned<16>(PreSkinnedVertices() + (SkinnedVertexBase + M.VertexOffset + VertexLocalIdx)));
+    return DecodePreSkinnedVertex(SpanGetAligned(PreSkinnedVertices(), SkinnedVertexBase + M.VertexOffset + VertexLocalIdx));
 }
 
 float3 LoadStaticPosition(FMeshletHeader* Header, FMeshlet M, uint VertexLocalIdx)
@@ -239,7 +241,7 @@ float3 LoadStaticPosition(FMeshletHeader* Header, FMeshlet M, uint VertexLocalId
 
 float3 LoadSkinnedPosition(FMeshletHeader* Header, FMeshlet M, uint VertexLocalIdx, uint SkinnedVertexBase)
 {
-    FPreSkinnedVertex S = loadAligned<16>(PreSkinnedVertices() + (SkinnedVertexBase + M.VertexOffset + VertexLocalIdx));
+    FPreSkinnedVertex S = SpanGetAligned(PreSkinnedVertices(), SkinnedVertexBase + M.VertexOffset + VertexLocalIdx);
     return float3(S.Px, S.Py, S.Pz);
 }
 
@@ -355,7 +357,7 @@ uint ResolvePaletteBone(FMeshletHeader* Header, FMeshletBonePalette Palette, uin
 }
 
 // True when the bone arena and this meshlet's palette can both actually be read. The arena the caller
-// will read from is irrelevant: PrevBones is gated by PrevBoneCount, which is the shorter of the two.
+// will read from is irrelevant: PrevBones is gated by its own count, the shorter of the two.
 bool CanSkinMeshlet(FMeshletBonePalette Palette, uint BoneOffset)
 {
     return (Scene().CullData.BoneNum != 0u) && (Palette.Count != 0u)
@@ -382,7 +384,7 @@ FPreSkinnedVertex SkinWithRows(FSkinSource S, FSkinRows Rows)
 }
 
 // The per-pass overflow path, where there is no workgroup to share a staged palette across.
-FPreSkinnedVertex SkinVertexWith(FBoneTransform* BoneArray, FMeshletHeader* Header, FMeshlet M,
+FPreSkinnedVertex SkinVertexWith(GPUSpan<FBoneTransform>* BoneArray, FMeshletHeader* Header, FMeshlet M,
                                  uint MeshletIndex, uint VertexLocalIdx, uint BoneOffset)
 {
     const FSkinSource S = LoadSkinSource(Header, M, VertexLocalIdx);
@@ -392,10 +394,10 @@ FPreSkinnedVertex SkinVertexWith(FBoneTransform* BoneArray, FMeshletHeader* Head
     if (CanSkinMeshlet(Palette, BoneOffset))
     {
         Rows = BlendSkinRows(
-            loadAligned<16>(BoneArray + ResolvePaletteBone(Header, Palette, S.Slots.x, BoneOffset)),
-            loadAligned<16>(BoneArray + ResolvePaletteBone(Header, Palette, S.Slots.y, BoneOffset)),
-            loadAligned<16>(BoneArray + ResolvePaletteBone(Header, Palette, S.Slots.z, BoneOffset)),
-            loadAligned<16>(BoneArray + ResolvePaletteBone(Header, Palette, S.Slots.w, BoneOffset)),
+            SpanGetAligned(BoneArray, ResolvePaletteBone(Header, Palette, S.Slots.x, BoneOffset)),
+            SpanGetAligned(BoneArray, ResolvePaletteBone(Header, Palette, S.Slots.y, BoneOffset)),
+            SpanGetAligned(BoneArray, ResolvePaletteBone(Header, Palette, S.Slots.z, BoneOffset)),
+            SpanGetAligned(BoneArray, ResolvePaletteBone(Header, Palette, S.Slots.w, BoneOffset)),
             S.Weights);
     }
 
@@ -408,19 +410,19 @@ FPreSkinnedVertex SkinVertex(FMeshletHeader* Header, FMeshlet M, uint MeshletInd
     return SkinVertexWith(Bones(), Header, M, MeshletIndex, VertexLocalIdx, BoneOffset);
 }
 
-float  GetMaterialScalar (uint MatIndex, uint Index) { return Materials()[MatIndex].Scalars[Index];  }
-float4 GetMaterialVec4   (uint MatIndex, uint Index) { return loadAligned<16>(&Materials()[MatIndex].Vectors[Index]); }
-uint   GetMaterialTexture(uint MatIndex, uint Index) { return Materials()[MatIndex].Textures[Index]; }
+float  GetMaterialScalar (uint MatIndex, uint Index) { return SpanGet(Materials(), MatIndex).Scalars[Index];  }
+float4 GetMaterialVec4   (uint MatIndex, uint Index) { return loadAligned<16>(&SpanAt(Materials(), MatIndex).Vectors[Index]); }
+uint   GetMaterialTexture(uint MatIndex, uint Index) { return SpanGet(Materials(), MatIndex).Textures[Index]; }
 
 // Slot is which of the material's own bindings (0 or 1), not the collection's index in the table.
 float GetCollectionScalar(uint MatIndex, uint Slot, uint Index)
 {
-    return Collections()[Materials()[MatIndex].CollectionIndices[Slot]].Scalars[Index];
+    return SpanGet(Collections(), SpanGet(Materials(), MatIndex).CollectionIndices[Slot]).Scalars[Index];
 }
 
 float4 GetCollectionVec4(uint MatIndex, uint Slot, uint Index)
 {
-    return loadAligned<16>(&Collections()[Materials()[MatIndex].CollectionIndices[Slot]].Vectors[Index]);
+    return loadAligned<16>(&SpanAt(Collections(), SpanGet(Materials(), MatIndex).CollectionIndices[Slot]).Vectors[Index]);
 }
 
 FGPUInstance GetInstance(uint InstanceID) { return Instances()[InstanceID]; }

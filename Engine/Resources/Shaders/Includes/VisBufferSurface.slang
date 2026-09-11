@@ -33,7 +33,7 @@ uint ResolveVisInstance(uint VisRaw, uint DrawListCount)
         return ~0u;
     }
 
-    const FMeshletDraw Draw = MeshletDrawList()[MeshletSlot];
+    const FMeshletDraw Draw = SpanGet(MeshletDrawList(), MeshletSlot);
     // The tag turns "slot inside the allocation but never written this frame" from a silently resolved
     // stale instance into a background pixel.
     if (!Draw.IsFromFrame(Scene().CullData.MeshletDrawTag) || Draw.InstanceID >= Scene().CullData.InstanceNum)
@@ -81,7 +81,7 @@ FVisTriangle ResolveVisTriangle(uint VisRaw, uint DrawListCount)
     bool bValid         = (VisRaw != 0u) && (DrawListCount != 0u) && (MeshletSlot < DrawListCount);
     const uint SafeSlot = bValid ? MeshletSlot : 0u;
 
-    const FMeshletDraw Draw = MeshletDrawList()[SafeSlot];
+    const FMeshletDraw Draw = SpanGet(MeshletDrawList(), SafeSlot);
     bValid = bValid && Draw.IsFromFrame(Scene().CullData.MeshletDrawTag) && (Draw.InstanceID < InstCount);
 
     FMeshletRef Ref;

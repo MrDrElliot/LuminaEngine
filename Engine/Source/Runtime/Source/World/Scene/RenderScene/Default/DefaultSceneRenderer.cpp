@@ -4364,78 +4364,67 @@ namespace Lumina
             // Persistent and slot-addressed, so this is just the arena's address.
             if (BoneArenaBuffer)
             {
-                SceneRootShared.Bones = BoneArenaBuffer.Gpu;
+                SceneRootShared.Bones = { BoneArenaBuffer };
             }
 
             // Last frame's snapshot, so this publishes what SnapshotMotionState left at the end of it.
             if (bPrevMotionStateValid && PrevRetainedTransformBuffer)
             {
-                SceneRootShared.PrevRetainedTransforms     = PrevRetainedTransformBuffer.Gpu;
-                SceneRootShared.PrevRetainedTransformCount =
-                    (uint32)(PrevRetainedTransformBuffer.Size / sizeof(FTransform3x4));
+                SceneRootShared.PrevRetainedTransforms = { PrevRetainedTransformBuffer };
 
                 if (PrevBoneArenaBuffer)
                 {
-                    SceneRootShared.PrevBones     = PrevBoneArenaBuffer.Gpu;
-                    SceneRootShared.PrevBoneCount = (uint32)(PrevBoneArenaBuffer.Size / sizeof(FBoneTransform));
+                    SceneRootShared.PrevBones = { PrevBoneArenaBuffer };
                 }
             }
             if (!BillboardInstances.empty())
             {
-                SceneRootShared.Billboards = RHI::CopyTransientArray(BillboardInstances.data(), BillboardInstances.size()).Address;
+                SceneRootShared.Billboards = RHI::CopyTransientArray(BillboardInstances.data(), BillboardInstances.size());
             }
             if (!CullViews.empty())
             {
-                SceneRootShared.CullViews = RHI::CopyTransientArray(CullViews.data(), CullViews.size()).Address;
+                SceneRootShared.CullViews = RHI::CopyTransientArray(CullViews.data(), CullViews.size());
             }
             if (!Frame.Primitives.WidgetInstances.empty())
             {
-                SceneRootShared.Widgets = RHI::CopyTransientArray(Frame.Primitives.WidgetInstances.data(), Frame.Primitives.WidgetInstances.size()).Address;
+                SceneRootShared.Widgets = RHI::CopyTransientArray(Frame.Primitives.WidgetInstances.data(), Frame.Primitives.WidgetInstances.size());
             }
             // Splines are small and bounded, so the shared transient ring is the right home.
             NumActiveSplines       = (uint32)Frame.Splines.Splines.size();
-            SplineBufferAddr       = 0;
-            SplinePointBufferAddr  = 0;
-            SplineSampleBufferAddr = 0;
+            SplineBufferSpan       = {};
+            SplinePointBufferSpan  = {};
+            SplineSampleBufferSpan = {};
             if (NumActiveSplines > 0)
             {
-                SplineBufferAddr = RHI::CopyTransientArray(Frame.Splines.Splines.data(),
-                                                                 Frame.Splines.Splines.size()).Address;
+                SplineBufferSpan = RHI::CopyTransientArray(Frame.Splines.Splines.data(),
+                                                                 Frame.Splines.Splines.size());
                 if (!Frame.Splines.Points.empty())
                 {
-                    SplinePointBufferAddr = RHI::CopyTransientArray(Frame.Splines.Points.data(),
-                                                                          Frame.Splines.Points.size()).Address;
+                    SplinePointBufferSpan = RHI::CopyTransientArray(Frame.Splines.Points.data(),
+                                                                          Frame.Splines.Points.size());
                 }
                 if (!Frame.Splines.Samples.empty())
                 {
-                    SplineSampleBufferAddr = RHI::CopyTransientArray(Frame.Splines.Samples.data(),
-                                                                           Frame.Splines.Samples.size()).Address;
+                    SplineSampleBufferSpan = RHI::CopyTransientArray(Frame.Splines.Samples.data(),
+                                                                           Frame.Splines.Samples.size());
                 }
             }
 
-            NumActiveProbes = (uint32)Frame.ReflectionProbes.Probes.size();
-            ProbeBufferAddr = 0;
+            NumActiveProbes  = (uint32)Frame.ReflectionProbes.Probes.size();
+            ProbeBufferSpan  = {};
             if (NumActiveProbes > 0)
             {
                 InitReflectionProbeTargets();
-                ProbeBufferAddr = RHI::CopyTransientArray(Frame.ReflectionProbes.Probes.data(),
-                                                                Frame.ReflectionProbes.Probes.size()).Address;
+                ProbeBufferSpan = RHI::CopyTransientArray(Frame.ReflectionProbes.Probes.data(),
+                                                                Frame.ReflectionProbes.Probes.size());
             }
 
-            SceneRootShared.Materials          = Render().GetMaterialManager().GetMaterialBuffer();
-            SceneRootShared.Collections        = Render().GetCollectionManager().GetBuffer();
-            SceneRootShared.MeshletDrawList    = GetMeshletDrawList().Gpu;
-            SceneRootShared.PreSkinnedVertices = GetPreSkinnedVerticesBuffer().Gpu;
-            SceneRootShared.SkinnedMeshletBounds = SkinnedMeshletBoundsBuffer.Gpu;
-            SceneRootShared.SkinnedFrameData     = SkinnedFrameDataBuffer.Gpu;
-            SceneRootShared.SkinnedMeshletCones  = SkinnedMeshletConeBuffer.Gpu;
-
-            // Both spheres and cones are indexed by one base, so the shorter of the two is the bound.
-            SceneRootShared.SkinnedFrameDataCount = SkinnedFrameDataBuffer
-                ? (uint32)Math::Min<uint64>(SkinnedFrameDataBuffer.Size / sizeof(FSkinnedFrameData), 0xFFFFFFFFull)
-                : 0u;
-            SceneRootShared.SkinnedBoundsCount = (SkinnedMeshletBoundsBuffer && SkinnedMeshletConeBuffer)
-                ? SkinnedMeshletBoundsCapacity : 0u;
+            SceneRootShared.MeshletDrawList      = { GetMeshletDrawList(), DrawListCapacity };
+            SceneRootShared.PreSkinnedVertices   = { GetPreSkinnedVerticesBuffer(), PreSkinnedVertexCapacity };
+            SceneRootShared.SkinnedFrameData     = { SkinnedFrameDataBuffer };
+            // Spheres and cones are indexed by one base, so each carries the same capacity.
+            SceneRootShared.SkinnedMeshletBounds = { SkinnedMeshletBoundsBuffer, SkinnedMeshletBoundsCapacity };
+            SceneRootShared.SkinnedMeshletCones  = { SkinnedMeshletConeBuffer, SkinnedMeshletBoundsCapacity };
             if (IsGTAOEnabled())
             {
                 SceneGlobalData.GTAOSettings.AOTextureIndex = (uint32)CurrentView->Images[(int)ENamedImage::GTAOBlur].GetResourceID();
@@ -14194,7 +14183,7 @@ namespace Lumina
         FSceneRoot* Root = static_cast<FSceneRoot*>(Alloc.Cpu);
 
         *Root = SceneRootShared;
-        Root->Clusters           = View.ClusterBuffer.Gpu;
+        Root->Clusters           = { View.ClusterBuffer };
         Root->BRDFLutIndex       = (uint32)View.Images[(int)ENamedImage::BRDFLut].GetResourceID();
         Root->SkyIrradianceIndex = (uint32)View.Images[(int)ENamedImage::SkyIrradiance].GetResourceID();
         {
@@ -14206,24 +14195,24 @@ namespace Lumina
         Root->ShadowCascadeIndex = (uint32)GetNamedImage(ENamedImage::Cascade).GetResourceID();
         Root->ShadowAtlasIndex   = (uint32)ShadowAtlas.GetImage().GetResourceID();
 
-        Root->Splines       = SplineBufferAddr;
-        Root->SplinePoints  = SplinePointBufferAddr;
-        Root->SplineSamples = SplineSampleBufferAddr;
-        Root->NumSplines    = NumActiveSplines;
+        Root->Splines       = SplineBufferSpan;
+        Root->SplinePoints  = SplinePointBufferSpan;
+        Root->SplineSamples = SplineSampleBufferSpan;
 
         // Re-read every frame, since the slab moves when it grows and only the root holds its address.
-        Root->MeshletHeaders = MeshletHeaderSlab::GetAddress();
+        Root->MeshletHeaders = RHI::TGPUSpan<FMeshletHeaderGPU>::FromAddress(MeshletHeaderSlab::GetAddress(),
+                                                                            MeshletHeaderSlab::GetCapacity());
 
         // Only the primary view reports, or a probe bake would drive residency for a 64px cube face.
-        const bool bWantsFeedback = View.bIsPrimary && !bCapturingProbe && StreamingFeedbackBuffer;
-        Root->StreamingFeedback      = bWantsFeedback ? StreamingFeedbackBuffer.Gpu : 0;
-        Root->StreamingFeedbackCount = bWantsFeedback ? StreamingFeedbackSlots : 0;
+        const bool bWantsFeedback = View.bIsPrimary && !bCapturingProbe;
+        Root->StreamingFeedback = bWantsFeedback
+            ? RHI::TGPUSpan<uint32>{ StreamingFeedbackBuffer, StreamingFeedbackSlots }
+            : RHI::TGPUSpan<uint32>{};
 
         const FSceneImage& ProbeArray = NamedImages[(int)ENamedImage::ProbePrefiltered];
         if (!bCapturingProbe && NumActiveProbes > 0 && ProbeArray.IsValid())
         {
-            Root->ReflectionProbes    = ProbeBufferAddr;
-            Root->NumReflectionProbes = NumActiveProbes;
+            Root->ReflectionProbes    = ProbeBufferSpan;
             Root->ProbeCubeArrayIndex = ((uint32)ProbeArray.GetResourceID() & 0x00FFFFFFu) | (ProbeArray.GetNumMips() << 24);
         }
         return Alloc.Gpu;

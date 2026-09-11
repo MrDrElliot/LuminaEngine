@@ -20,7 +20,7 @@ struct FMeshletRef
     property FGPUInstance* Inst { get { return Instances() + InstanceID; } }
 
     // FGPUInstance::MeshletHeader returns the same pointer but loads the whole instance to reach the slot.
-    property FMeshletHeader* Header { get { return MeshletHeaders() + Inst.MeshletHeaderSlot; } }
+    property FMeshletHeader* Header { get { return SpanAt(MeshletHeaders(), Inst.MeshletHeaderSlot); } }
 
     // Transform is a field at offset 0 of a 16-aligned 128-byte stride, so 48 aligned bytes cover it.
     property float4x4 ModelMatrix { get { return loadAligned<16>(&Inst.Transform).ToMatrix(); } }
@@ -33,13 +33,11 @@ struct FMeshletRef
 // bShadow selects the instance's shadow meshlet range instead of the surface (base/depth) range.
 FMeshletRef ResolveMeshlet(uint MeshletSlot, bool bShadow)
 {
-    // Held in a local because every accessor call re-emits the root load instead of reusing it.
-    FMeshletDraw* DrawList = GetSceneRoot().MeshletDrawListPtr;
 
     // Issued before the draw fetch so the two independent chains overlap instead of serializing.
     const uint ExpectedTag = Scene().CullData.MeshletDrawTag;
 
-    FMeshletDraw Draw = DrawList[MeshletSlot];
+    FMeshletDraw Draw = SpanGet(MeshletDrawList(), MeshletSlot);
 
     // InstanceID first: every Ref.Inst read below goes through it.
     FMeshletRef Ref;
@@ -143,7 +141,7 @@ FMeshletRef ResolveMeshletForWorkgroup(uint DrawIndex, uint GroupIndex, out uint
         return Empty;
     }
 
-    const FCullView View = loadAligned<16>(CullViews() + MeshletPass().CullViewIndex);
+    const FCullView View = SpanGetAligned(CullViews(), MeshletPass().CullViewIndex);
     return ResolveMeshlet(OutSlot, View.HasFlag(CULL_VIEW_FLAG_CAST_SHADOW_ONLY));
 }
 

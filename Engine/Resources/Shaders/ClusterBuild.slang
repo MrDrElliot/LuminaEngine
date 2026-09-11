@@ -84,6 +84,6 @@ void ComputeMain(uint3 DispatchID : SV_DispatchThreadID)
         MaxBounds = max(max(MinPointNear, MinPointFar), max(MaxPointNear, MaxPointFar));
     }
 
-    Clusters()[TileIndex].MinPoint = float4(MinBounds, 0.0);
-    Clusters()[TileIndex].MaxPoint = float4(MaxBounds, 0.0);
+    SpanAt(Clusters(), TileIndex).MinPoint = float4(MinBounds, 0.0);
+    SpanAt(Clusters(), TileIndex).MaxPoint = float4(MaxBounds, 0.0);
 }

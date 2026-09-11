@@ -227,7 +227,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     // Needed before the compacted slot is claimed, because that slot is what indexes the range slab.
     for (uint v = 0; v < Pass().NumViews; ++v)
     {
-        if (IsInstanceVisibleToView(CullViews()[v], Center, Radius, bNoCull, bCaster, bShadowOnly))
+        if (IsInstanceVisibleToView(SpanGet(CullViews(), v), Center, Radius, bNoCull, bCaster, bShadowOnly))
         {
             bAnyView = true;
             break;
@@ -261,7 +261,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     // bucket room nobody uses, starve the next, and drop the newest mesh with no error anywhere.
     for (uint v = 0; v < Pass().NumViews; ++v)
     {
-        FCullView View = loadAligned<16>(CullViews() + v);
+        FCullView View = SpanGetAligned(CullViews(), v);
 
         uint2 Range   = uint2(0u, 0u);
         uint  Emitted = 0u;

@@ -54,10 +54,10 @@ FMeshletCullContext MakeMeshletCullContext(FGPUInstance* Inst)
     Ctx.MaxScale = sqrt(max(SqScaleX, max(SqScaleY, SqScaleZ)));
 
     Ctx.SkinnedBoundsBase = kNoSkinnedBounds;
-    if (Ctx.bSkinned && I.RetainedSlot < GetSceneRoot().SkinnedFrameDataCount)
+    if (Ctx.bSkinned && SpanContains(SkinnedFrameData(), I.RetainedSlot))
     {
         // CullInstances already rejected any skinned slot whose frame tag was stale, so this is current.
-        Ctx.SkinnedBoundsBase = SkinnedFrameData()[I.RetainedSlot].SkinnedBoundsBase;
+        Ctx.SkinnedBoundsBase = SpanGet(SkinnedFrameData(), I.RetainedSlot).SkinnedBoundsBase;
     }
 
     Ctx.bPosedBounds = !Ctx.bSkinned || (Ctx.SkinnedBoundsBase != kNoSkinnedBounds);
@@ -101,9 +101,9 @@ FMeshletBoundsCache MakeMeshletBoundsCache()
 FMeshletSphere LoadMeshletSphere(FMeshletHeader* Header, uint SkinnedBoundsBase, uint MeshletIdx)
 {
     if (SkinnedBoundsBase != kNoSkinnedBounds
-        && (SkinnedBoundsBase + MeshletIdx) < GetSceneRoot().SkinnedBoundsCount)
+        && SpanContains(SkinnedMeshletBounds(), SkinnedBoundsBase + MeshletIdx))
     {
-        return loadAligned<16>(SkinnedMeshletBounds() + (SkinnedBoundsBase + MeshletIdx));
+        return SpanGetAligned(SkinnedMeshletBounds(), (SkinnedBoundsBase + MeshletIdx));
     }
 
     return loadAligned<16>(Header.Spheres + MeshletIdx);
@@ -147,10 +147,10 @@ void EnsureMeshletCone(FMeshletHeader* Header, FMeshletCullContext Ctx, inout FM
 
     // Same arena and same bound as the posed sphere, since one base addresses both.
     if (Ctx.SkinnedBoundsBase != kNoSkinnedBounds
-        && (Ctx.SkinnedBoundsBase + C.MeshletIdx) < GetSceneRoot().SkinnedBoundsCount)
+        && SpanContains(SkinnedMeshletCones(), Ctx.SkinnedBoundsBase + C.MeshletIdx))
     {
         // Rewritten per frame against this pose, and packed exactly like the baked one.
-        ApplyMeshletCone(Ctx, SkinnedMeshletCones()[Ctx.SkinnedBoundsBase + C.MeshletIdx], C);
+        ApplyMeshletCone(Ctx, SpanGet(SkinnedMeshletCones(), Ctx.SkinnedBoundsBase + C.MeshletIdx), C);
         return;
     }
 
@@ -164,7 +164,7 @@ void EnsureMeshletCone(FMeshletHeader* Header, FMeshletCullContext Ctx, inout FM
 bool TestMeshletAgainstView(FMeshletCullContext Ctx, FCullView View,
                             uint MeshletIdx, inout FMeshletBoundsCache Cache, bool bApplyHiZ)
 {
-    FMeshletHeader* Header = MeshletHeaders() + Ctx.HeaderSlot;
+    FMeshletHeader* Header = SpanAt(MeshletHeaders(), Ctx.HeaderSlot);
 
     // Must agree with IsInstanceVisibleToView, which sized the bucket these appends fill.
     const bool bShadowView = View.HasFlag(CULL_VIEW_FLAG_CAST_SHADOW_ONLY);

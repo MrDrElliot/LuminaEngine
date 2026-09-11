@@ -51,6 +51,10 @@ namespace Lumina
          *  and nothing may cache it across frames. Never 0 once the RHI is up. */
         RUNTIME_API RHI::GPUPtr GetAddress();
 
+        // Slots the published slab holds, so the scene root can carry the slab as a bounded span rather
+        // than as a bare address every consumer indexes on trust.
+        RUNTIME_API uint32 GetCapacity();
+
         /** Teardown. Frees the slab; every slot is invalid afterwards. */
         RUNTIME_API void Shutdown();
     }

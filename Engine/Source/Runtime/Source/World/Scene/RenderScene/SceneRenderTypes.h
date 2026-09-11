@@ -9,6 +9,7 @@
 #include "Platform/GenericPlatform.h"
 #include "Renderer/MeshData.h"
 #include "Renderer/GPUSpan.h"
+#include "Renderer/MaterialTypes.h"
 #include "Renderer/PrimitiveDrawInterface.h"
 #include "Renderer/RenderResource.h"
 #include "Renderer/ViewVolume.h"
@@ -1151,40 +1152,42 @@ namespace Lumina
 
     struct FSceneRoot
     {
-        uint64 Bones                 = 0;
+        RHI::TGPUSpan<FBoneTransform>       Bones;
         // Last frame's pose and transform, copied before this frame's incremental uploads overwrite them.
-        uint64 PrevBones             = 0;
-        uint64 PrevRetainedTransforms = 0;
-        uint64 Clusters              = 0;  // per-view, GPU-written
-        uint64 Materials             = 0;  // non-dynamic
-        uint64 Collections           = 0;  // parameter collection table; slot 0 is the reserved zero one
-        uint64 Billboards            = 0;
-        uint64 CullViews             = 0;
-        uint64 MeshletDrawList       = 0;  // ring, GPU-written
-        uint64 PreSkinnedVertices    = 0;  // GPU-written
-        uint64 Widgets               = 0;
-        uint64 ReflectionProbes      = 0;  // FGPUReflectionProbe array, sorted by descending priority
-        uint64 Splines               = 0;  // FGPUSpline headers, one per component with bSendToGPU
-        uint64 SplinePoints          = 0;  // shared FGPUSplinePoint array; headers carry the slice
-        uint64 SplineSamples         = 0;  // shared FGPUSplineSample array (arc-length tables)
+        // These lag a frame and can be shorter than the live arrays, which is what their counts say.
+        RHI::TGPUSpan<FBoneTransform>       PrevBones;
+        RHI::TGPUSpan<FTransform3x4>        PrevRetainedTransforms;
+        RHI::TGPUSpan<FCluster>          Clusters;              // per-view, GPU-written
+        RHI::TGPUSpan<FMaterialUniforms> Materials;             // non-dynamic
+        RHI::TGPUSpan<FMaterialCollectionUniforms> Collections;         // slot 0 is the reserved zero one
+        RHI::TGPUSpan<FBillboardInstance> Billboards;
+        RHI::TGPUSpan<FCullView>         CullViews;
+        RHI::TGPUSpan<FUIntVector2>         MeshletDrawList;       // ring, GPU-written
+        RHI::TGPUSpan<FPreSkinnedVertex>    PreSkinnedVertices;    // GPU-written
+        RHI::TGPUSpan<FWidgetInstance>   Widgets;
+        RHI::TGPUSpan<FGPUReflectionProbe>  ReflectionProbes;      // sorted by descending priority
+        RHI::TGPUSpan<FGPUSpline>           Splines;               // one per component with bSendToGPU
+        RHI::TGPUSpan<FGPUSplinePoint>      SplinePoints;          // headers carry the slice
+        RHI::TGPUSpan<FGPUSplineSample>     SplineSamples;         // arc-length tables
         // The process-wide meshlet header slab. Instances carry a SLOT into this, never an address, so
         // this is the only place a header address exists -- and it is republished every frame, which is
         // what lets the slab grow without invalidating anything. See MeshletHeaderSlab.h.
-        uint64 MeshletHeaders        = 0;
+        RHI::TGPUSpan<FMeshletHeaderGPU>    MeshletHeaders;
 
         /** Texture-streaming feedback: one uint per bindless texture slot, bit N set = "some pixel this
          *  frame sampled mip N of this texture". Written by the material lanes through
          *  RequestTextureResolution, read back a few frames later to drive residency.
          *
          *  This replaces guessing the requirement on the CPU from bounds, distance and texel density --
-         *  the GPU already computes the exact LOD it samples, so ask it. 0 disables the write. */
-        uint64 StreamingFeedback     = 0;
+         *  the GPU already computes the exact LOD it samples, so ask it. An empty span disables the
+         *  write, and its count is what keeps an unvalidated slot out of the bindless heap. */
+        RHI::TGPUSpan<uint32>               StreamingFeedback;
         // Object-space meshlet spheres for this frame's poses, written by SkinnedMeshletBounds.slang.
-        uint64 SkinnedMeshletBounds  = 0;
+        RHI::TGPUSpan<FMeshletSphere>       SkinnedMeshletBounds;
         // Indexed by retained slot, and the cull reads only SkinnedBoundsBase out of it.
-        uint64 SkinnedFrameData      = 0;
+        RHI::TGPUSpan<FSkinnedFrameData>    SkinnedFrameData;
         // Same index space as SkinnedMeshletBounds, so one base addresses both.
-        uint64 SkinnedMeshletCones   = 0;
+        RHI::TGPUSpan<FMeshletCone>         SkinnedMeshletCones;
 
         uint32 BRDFLutIndex          = 0;
         uint32 SkyIrradianceIndex    = 0;
@@ -1193,21 +1196,9 @@ namespace Lumina
         uint32 ShadowAtlasIndex      = 0;  // bindless 2D SRV (spot/point atlas)
         uint32 SkyCubeIndex          = 0;  // bindless cube SRV (full-res sky; sharp near-mirror reflections)
         uint32 ProbeCubeArrayIndex   = 0;
-        uint32 NumReflectionProbes   = 0;
-        uint32 NumSplines            = 0;
-        /** Entries in StreamingFeedback. Shaders bounds-check against this before indexing it or the
-         *  bindless heap -- an unvalidated ResourceID is a device loss, not an artifact. */
-        uint32 StreamingFeedbackCount = 0;
-        // Entries in the snapshots above, which lag a frame and can be shorter than the live arrays.
-        uint32 PrevBoneCount          = 0;
-        uint32 PrevRetainedTransformCount = 0;
-        // Entries in SkinnedFrameData, and in SkinnedMeshletBounds/SkinnedMeshletCones respectively. Zero
-        // when the buffer does not exist, which is the only thing a reader is allowed to test.
-        uint32 SkinnedFrameDataCount  = 0;
-        uint32 SkinnedBoundsCount     = 0;
+        uint32 _Pad0                 = 0;
     };
-    // 20 pointers + 14 indices; RHI::FSceneBindings is the only home for SceneData, Lights and Instances.
-    static_assert(sizeof(FSceneRoot) == 216, "FSceneRoot must match SceneGlobals.slang");
+    static_assert(sizeof(FSceneRoot) == 352, "FSceneRoot must match SceneGlobals.slang");
 
     struct FParallaxSettings
     {

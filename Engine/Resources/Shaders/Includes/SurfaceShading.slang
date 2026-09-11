@@ -497,7 +497,7 @@ float ComputeSurfaceCoverage(FBaseVertexOutput Input, FMaterialPixelInputs Mater
 
     // An unlit surface reflects nothing, so its coverage is just its alpha. Runtime, not a define: the
     // shading model lives in the material's flags now.
-    if (GetMaterialShadingModel(Materials()[Input.MaterialIndex].Flags) == ShadingModel_Unlit)
+    if (GetMaterialShadingModel(SpanGet(Materials(), Input.MaterialIndex).Flags) == ShadingModel_Unlit)
     {
         return saturate(Alpha);
     }
@@ -541,13 +541,13 @@ FGBufferData BuildGBufferData(FBaseVertexOutput Input, FMaterialPixelInputs Mate
 
     // Read at RUNTIME from the material flags, not a #define: models that only reinterpret GBuffer
     // channels do not justify a shader variant each.
-    G.ShadingModel = GetMaterialShadingModel(Materials()[Input.MaterialIndex].Flags);
+    G.ShadingModel = GetMaterialShadingModel(SpanGet(Materials(), Input.MaterialIndex).Flags);
 
     // Opaque lit surfaces only, and only where the pipeline binds the decal push (terrain specializes it
     // off). Unlit is a runtime test, so an instance that overrode its model is honoured here too.
 #ifndef TRANSLUCENT
     // The flags word is already resident for the shading model above, so the opt-out costs one test.
-    const bool bReceivesDecals = (Materials()[Input.MaterialIndex].Flags & MatFlag_NoDecals) == 0u;
+    const bool bReceivesDecals = (SpanGet(Materials(), Input.MaterialIndex).Flags & MatFlag_NoDecals) == 0u;
     if (SPEC_ENABLE_DECALS != 0 && bReceivesDecals && !IsUnlit(G))
     {
         float2 DBufferUV = Input.Position.xy / float2(Scene().ScreenSize.xy);
@@ -633,7 +633,7 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
     // Clamps to ZNear: fragments below it make log() negative, wrapping ZTile to a huge value that
     // overflows Clusters() -> garbage light list and an MMU fault.
     uint TileIndex  = ComputeClusterIndex(ViewPosition.z, ScreenPos);
-    uint LightCount = Clusters()[TileIndex].Count;
+    uint LightCount = SpanGet(Clusters(), TileIndex).Count;
 
     // Clearcoat state. Hoisted out of the loops but only meaningful inside the branch; a non-clearcoat
     // pixel leaves Coat at 0 and every clearcoat block below is skipped whole.
@@ -717,7 +717,7 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
         // Index the array only in range; Count sits right after it, and would read as a real light.
         const bool bLaneDone = (Cursor >= SafeLightCount);
         const uint ReadSlot  = bLaneDone ? 0u : Cursor;
-        const uint LaneNext  = bLaneDone ? 0xFFFFFFFFu : Clusters()[TileIndex].LightIndices[ReadSlot];
+        const uint LaneNext  = bLaneDone ? 0xFFFFFFFFu : SpanGet(Clusters(), TileIndex).LightIndices[ReadSlot];
 
 #ifdef SHADING_COMPUTE
         // The wave walks the union of its lanes' lists, which is what puts each light fetch in scalar registers.
@@ -965,13 +965,13 @@ float3 ApplyDebugView(uint DebugMode, float3 Color, FGBufferData G, FDebugSurfac
     case DEBUG_MODE_LIGHT_COMPLEXITY:
     {
         uint DbgIndex = ComputeClusterIndex(ViewPosition.z, ScreenPos);
-        Color = LightComplexityColor(Clusters()[DbgIndex].Count);
+        Color = LightComplexityColor(SpanGet(Clusters(), DbgIndex).Count);
         break;
     }
     case DEBUG_MODE_CLUSTER_GRID:
     {
         uint DbgIndex = ComputeClusterIndex(ViewPosition.z, ScreenPos);
-        Color = ClusterDebugColor(DbgIndex, Clusters()[DbgIndex].Count);
+        Color = ClusterDebugColor(DbgIndex, SpanGet(Clusters(), DbgIndex).Count);
         break;
     }
     case DEBUG_MODE_SHADOW_CASCADES:
@@ -1082,12 +1082,12 @@ float3 ApplyDebugView(uint DebugMode, float3 Color, FGBufferData G, FDebugSurfac
 // through this; opaque meshes run the two halves in separate deferred passes instead.
 FShadedSurface ShadeSurface(FBaseVertexOutput Input, FMaterialPixelInputs Material)
 {
-    uint MatFlags = Materials()[Input.MaterialIndex].Flags;
+    uint MatFlags = SpanGet(Materials(), Input.MaterialIndex).Flags;
     if (HasFlag(MatFlags, MatFlag_Masked))
     {
         const float3 ClipAnchor = mul(GetInverseCameraView(), float4(Input.FragPos.xyz, 1.0)).xyz;
         const float  ClipCutoff = HashedAlphaThreshold(ClipAnchor, length(Input.FragPos.xyz),
-                                                       Materials()[Input.MaterialIndex].OpacityClipValue);
+                                                       SpanGet(Materials(), Input.MaterialIndex).OpacityClipValue);
         if (Material.Opacity < ClipCutoff)
         {
             discard;

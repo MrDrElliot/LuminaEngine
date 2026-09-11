@@ -23,19 +23,19 @@ bool IsValidSpline(uint SplineIndex)
 
 FGPUSpline* GetSpline(uint SplineIndex)
 {
-    return &Splines()[SplineIndex];
+    return SpanAt(Splines(), SplineIndex);
 }
 
 FGPUSplinePoint LoadSplinePoint(FGPUSpline* Spline, uint LocalPointIndex)
 {
     const uint Clamped = min(LocalPointIndex, max(Spline.PointCount, 1u) - 1u);
-    return SplinePoints()[Spline.PointOffset + Clamped];
+    return SpanGet(SplinePoints(), Spline.PointOffset + Clamped);
 }
 
 FGPUSplineSample LoadSplineSample(FGPUSpline* Spline, uint LocalSampleIndex)
 {
     const uint Clamped = min(LocalSampleIndex, max(Spline.SampleCount, 1u) - 1u);
-    return SplineSamples()[Spline.SampleOffset + Clamped];
+    return SpanGet(SplineSamples(), Spline.SampleOffset + Clamped);
 }
 
 // Lerp two samples. Tangent/Up are renormalised: lerping two unit vectors shortens them, and a
@@ -231,7 +231,7 @@ float FindNearestDistanceOnSpline(uint SplineIndex, float3 WorldPos, out float O
 
     for (uint i = 0u; i < Spline.SampleCount; ++i)
     {
-        const float3 Delta = SplineSamples()[Spline.SampleOffset + i].Position - WorldPos;
+        const float3 Delta = SpanGet(SplineSamples(), Spline.SampleOffset + i).Position - WorldPos;
         const float  DSq   = dot(Delta, Delta);
         if (DSq < BestDistSq)
         {

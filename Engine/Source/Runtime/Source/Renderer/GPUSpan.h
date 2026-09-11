@@ -35,6 +35,13 @@ namespace Lumina::RHI
         {
         }
 
+        // A transient copy, which reports its extent as a byte range rather than as an allocation.
+        TGPUSpan(const FGPURange& Range)
+            : Address(Range.Address)
+            , Count((uint32)Math::Min<uint64>(Range.Size / sizeof(T), 0xFFFFFFFFull))
+        {
+        }
+
         // A slice starting ElementOffset in, for the buffers that pack several arrays into one allocation.
         static TGPUSpan Slice(const FGPUAllocation& Allocation, uint64 ElementOffset, uint32 InCount)
         {
