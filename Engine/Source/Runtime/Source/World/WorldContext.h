@@ -41,5 +41,8 @@ namespace Lumina
 
         // Set in Phase 2 once CGameInstance exists; survives world transitions.
         CGameInstance*          GameInstance    = nullptr;
+
+        // Edge state for the render-skip diagnostic, so a legitimately throttled world logs once.
+        bool                    bWarnedRenderSkip = false;
     };
 }

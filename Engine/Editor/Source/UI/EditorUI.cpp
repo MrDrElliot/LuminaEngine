@@ -2492,15 +2492,20 @@ namespace Lumina
                         {
                             ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
 
+                            // Null once ReclaimIdleRenderer has freed it out from under a still-drawn tool.
                             IRenderScene* SceneRenderer = Tool->GetWorld()->GetRenderer();
 
-                            // ImGui works in physical pixels here, so the content region is already the right unit.
-                            const ImVec2 ViewportAvail = ImGui::GetContentRegionAvail();
-                            SceneRenderer->SetPrimaryViewSize(FUIntVector2(
-                                (uint32)Math::Max(ViewportAvail.x, 64.0f),
-                                (uint32)Math::Max(ViewportAvail.y, 64.0f)));
+                            ImTextureRef ViewportTexture = ImGuiX::ToImTextureRef(~0u);
+                            if (SceneRenderer != nullptr)
+                            {
+                                // ImGui works in physical pixels here, so the content region is already the right unit.
+                                const ImVec2 ViewportAvail = ImGui::GetContentRegionAvail();
+                                SceneRenderer->SetPrimaryViewSize(FUIntVector2(
+                                    (uint32)Math::Max(ViewportAvail.x, 64.0f),
+                                    (uint32)Math::Max(ViewportAvail.y, 64.0f)));
 
-                            ImTextureRef ViewportTexture = ImGuiX::ToImTextureRef(SceneRenderer->GetDisplayResourceID());
+                                ViewportTexture = ImGuiX::ToImTextureRef(SceneRenderer->GetDisplayResourceID());
+                            }
 
                             Tool->bViewportFocused = ImGui::IsWindowFocused();
                             Tool->bViewportHovered = ImGui::IsWindowHovered();
@@ -2520,15 +2525,20 @@ namespace Lumina
 
                         if (DrawViewportWindow)
                         {
+                            // Null once ReclaimIdleRenderer has freed it out from under a still-drawn tool.
                             IRenderScene* SceneRenderer = Tool->GetWorld()->GetRenderer();
 
-                            // ImGui works in physical pixels here, so the content region is already the right unit.
-                            const ImVec2 ViewportAvail = ImGui::GetContentRegionAvail();
-                            SceneRenderer->SetPrimaryViewSize(FUIntVector2(
-                                (uint32)Math::Max(ViewportAvail.x, 64.0f),
-                                (uint32)Math::Max(ViewportAvail.y, 64.0f)));
+                            ImTextureRef ViewportTexture = ImGuiX::ToImTextureRef(~0u);
+                            if (SceneRenderer != nullptr)
+                            {
+                                // ImGui works in physical pixels here, so the content region is already the right unit.
+                                const ImVec2 ViewportAvail = ImGui::GetContentRegionAvail();
+                                SceneRenderer->SetPrimaryViewSize(FUIntVector2(
+                                    (uint32)Math::Max(ViewportAvail.x, 64.0f),
+                                    (uint32)Math::Max(ViewportAvail.y, 64.0f)));
 
-                            ImTextureRef ViewportTexture = ImGuiX::ToImTextureRef(SceneRenderer->GetDisplayResourceID());
+                                ViewportTexture = ImGuiX::ToImTextureRef(SceneRenderer->GetDisplayResourceID());
+                            }
 
                             Tool->bViewportFocused = ImGui::IsWindowFocused();
                             Tool->bViewportHovered = ImGui::IsWindowHovered();

@@ -159,8 +159,17 @@ namespace Lumina
             IRenderScene* Renderer = World ? World->GetRenderer() : nullptr;
             if (Renderer == nullptr || !World->IsTickingThisFrame())
             {
+                // A world that has never composited shows undefined Output, which the editor draws as red.
+                if (Renderer != nullptr && !Renderer->HasCompositedFrame() && !Context->bWarnedRenderSkip)
+                {
+                    Context->bWarnedRenderSkip = true;
+                    LOG_WARN("World '{}' skipped by the render gate before its first composite (suspended={}); "
+                             "its viewport stays empty until it ticks.",
+                             World->GetName(), World->IsSuspended());
+                }
                 continue;
             }
+            Context->bWarnedRenderSkip = false;
             Renderer->PrepareRender(FrameIndex);
             ++LiveWorlds;
         }

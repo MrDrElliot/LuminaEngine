@@ -53,6 +53,9 @@ namespace Lumina
 
         virtual uint32 GetDisplayResourceID() const { return ~0u; }
 
+        // False until a frame has composited into the display target, which is what makes it opaque.
+        virtual bool HasCompositedFrame() const { return true; }
+
         virtual RHI::FTextureH GetDisplayTexture() const { return {}; }
 
         //~ Entity picking (editor) ---------------------------------------------------------

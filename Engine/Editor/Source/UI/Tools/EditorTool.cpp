@@ -107,7 +107,7 @@ namespace Lumina
         auto RecordCapture = [&]()
         {
             RHI::FCmdListH CL = RHI::OpenCommandList();
-            RHI::CmdBarrier(CL, RHI::EStageFlags::AllCommands, RHI::EStageFlags::Transfer);
+            RHI::CmdBarrier(CL, RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Transfer, RHI::EStageFlags::Transfer);
             RHI::CmdCopyTextureToMemory(CL, RenderTarget, RHI::FTextureSlice{}, Readback, SourceWidth);
             RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
             // Waits on this copy only, since a device-wide idle would stall unrelated in-flight frame work.
@@ -930,15 +930,37 @@ namespace Lumina
         const ImVec2 WindowPosition = ImGui::GetCursorScreenPos();
         const ImVec2 WindowBottomRight = { WindowPosition.x + ViewportSize.x, WindowPosition.y + ViewportSize.y };
 
-        ImGui::GetWindowDrawList()->AddRectFilled(WindowPosition, WindowBottomRight, IM_COL32(255, 0, 0, 255));
+        // Shows through until a frame composites, since only that makes the viewport target opaque.
+        ImGui::GetWindowDrawList()->AddRectFilled(WindowPosition, WindowBottomRight,
+                                                  EditorColors::U32(EditorColors::PanelBg()));
 
-        ImGui::GetWindowDrawList()->AddImage(
-            ViewportTexture,
-            WindowPosition,
-            WindowBottomRight,
-            ImVec2(0, 0), ImVec2(1, 1),
-            IM_COL32_WHITE
-        );
+        // A target nobody has composited into holds whatever memory it was given, so it is not drawn.
+        const IRenderScene* Scene = HasWorld() ? GetWorld()->GetRenderer() : nullptr;
+        const bool bHasSceneImage = Scene != nullptr && Scene->HasCompositedFrame();
+
+        if (bHasSceneImage)
+        {
+            ImGui::GetWindowDrawList()->AddImage(
+                ViewportTexture,
+                WindowPosition,
+                WindowBottomRight,
+                ImVec2(0, 0), ImVec2(1, 1),
+                IM_COL32_WHITE
+            );
+        }
+
+        {
+            if (!bHasSceneImage)
+            {
+                const char* Message = Scene == nullptr
+                                    ? "No renderer for this world"
+                                    : "Waiting for the first rendered frame";
+                const ImVec2 TextSize = ImGui::CalcTextSize(Message);
+                const ImVec2 TextPos(WindowPosition.x + (ViewportSize.x - TextSize.x) * 0.5f,
+                                     WindowPosition.y + (ViewportSize.y - TextSize.y) * 0.5f);
+                ImGui::GetWindowDrawList()->AddText(TextPos, EditorColors::U32(EditorColors::TextMuted()), Message);
+            }
+        }
 
         const ImGuiStyle& ImStyle = ImGui::GetStyle();
 
