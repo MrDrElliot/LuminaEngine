@@ -21,5 +21,5 @@ uint FragmentMain(float4 SvPosition : SV_Position) : SV_Target0
     const uint Raw        = LoadTexture2DUInt(Pass().VisBufferIndex, int2(SvPosition.xy));
     const uint InstanceID = ResolveVisInstance(Raw, Pass().DrawListCount);
 
-    return (InstanceID == ~0u) ? 0u : GetInstance(InstanceID).EntityID;
+    return (InstanceID == ~0u) ? 0u : GetInstanceEntityID(InstanceID);
 }

@@ -52,7 +52,7 @@ uint ResolveVisMaterialSlot(uint VisRaw, uint DrawListCount, GPUSpan<uint>* Slot
         return ~0u;
     }
 
-    const uint MaterialIndex = GetInstance(InstanceID).MaterialIndex;
+    const uint MaterialIndex = GetInstanceMaterialIndex(InstanceID);
     if (!SpanContains(SlotByMaterial, MaterialIndex))
     {
         return ~0u;

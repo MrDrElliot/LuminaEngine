@@ -231,7 +231,13 @@ float FindNearestDistanceOnSpline(uint SplineIndex, float3 WorldPos, out float O
 
     for (uint i = 0u; i < Spline.SampleCount; ++i)
     {
-        const float3 Delta = SpanGet(SplineSamples(), Spline.SampleOffset + i).Position - WorldPos;
+        const uint SampleIndex = Spline.SampleOffset + i;
+        if (!SpanContains(SplineSamples(), SampleIndex))
+        {
+            continue;
+        }
+
+        const float3 Delta = SpanAt(SplineSamples(), SampleIndex).Position - WorldPos;
         const float  DSq   = dot(Delta, Delta);
         if (DSq < BestDistSq)
         {

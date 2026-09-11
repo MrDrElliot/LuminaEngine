@@ -57,7 +57,7 @@ FMeshletCullContext MakeMeshletCullContext(FGPUInstance* Inst)
     if (Ctx.bSkinned && SpanContains(SkinnedFrameData(), I.RetainedSlot))
     {
         // CullInstances already rejected any skinned slot whose frame tag was stale, so this is current.
-        Ctx.SkinnedBoundsBase = SpanGet(SkinnedFrameData(), I.RetainedSlot).SkinnedBoundsBase;
+        Ctx.SkinnedBoundsBase = SpanAt(SkinnedFrameData(), I.RetainedSlot).SkinnedBoundsBase;
     }
 
     Ctx.bPosedBounds = !Ctx.bSkinned || (Ctx.SkinnedBoundsBase != kNoSkinnedBounds);

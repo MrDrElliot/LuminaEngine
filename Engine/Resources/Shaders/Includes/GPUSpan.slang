@@ -29,6 +29,7 @@ bool SpanContains<T>(GPUSpan<T>* Span, uint Index)
 }
 
 // Reads past the end resolve to zero rather than to whatever the allocator has since put there.
+// Loads sizeof(T) whatever the caller then extracts, so one field of a large element wants SpanAt below.
 T SpanGet<T>(GPUSpan<T>* Span, uint Index)
 {
     if (Index >= Span.Count)
@@ -59,8 +60,8 @@ void SpanSet<T>(GPUSpan<T>* Span, uint Index, T Value)
     }
 }
 
-// The escape hatch for what a by-value read cannot express: atomics, and writing one field of an
-// element in place. Bound the index with SpanContains first, this does not.
+// Escape hatch for atomics, in-place field writes, and field reads that must stay narrow (a field read
+// through this compiles to an access chain and a load of that field alone). Bound the index first.
 __generic<T> T* SpanAt(GPUSpan<T>* Span, uint Index)
 {
     return Span.Data + Index;

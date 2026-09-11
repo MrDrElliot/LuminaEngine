@@ -33,7 +33,7 @@ bool ShadowMaskedKeep(FBaseVertexOutput Input)
 
     $MATERIAL_INPUTS
 
-    return Material.Opacity >= SpanGet(Materials(), MaterialIndex).OpacityClipValue;
+    return Material.Opacity >= GetMaterialOpacityClip(MaterialIndex);
 }
 
 [shader("fragment")]

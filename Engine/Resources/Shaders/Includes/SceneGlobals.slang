@@ -410,22 +410,87 @@ FPreSkinnedVertex SkinVertex(FMeshletHeader* Header, FMeshlet M, uint MeshletInd
     return SkinVertexWith(Bones(), Header, M, MeshletIndex, VertexLocalIdx, BoneOffset);
 }
 
-float  GetMaterialScalar (uint MatIndex, uint Index) { return SpanGet(Materials(), MatIndex).Scalars[Index];  }
-float4 GetMaterialVec4   (uint MatIndex, uint Index) { return loadAligned<16>(&SpanAt(Materials(), MatIndex).Vectors[Index]); }
-uint   GetMaterialTexture(uint MatIndex, uint Index) { return SpanGet(Materials(), MatIndex).Textures[Index]; }
+// FMaterialUniforms is 592 B, so these address one field rather than fetch the block to extract from it.
+float GetMaterialScalar(uint MatIndex, uint Index)
+{
+    if (!SpanContains(Materials(), MatIndex))
+    {
+        return 0.0;
+    }
+    return SpanAt(Materials(), MatIndex).Scalars[Index];
+}
+
+float4 GetMaterialVec4(uint MatIndex, uint Index)
+{
+    if (!SpanContains(Materials(), MatIndex))
+    {
+        return float4(0.0);
+    }
+    return loadAligned<16>(&SpanAt(Materials(), MatIndex).Vectors[Index]);
+}
+
+uint GetMaterialTexture(uint MatIndex, uint Index)
+{
+    if (!SpanContains(Materials(), MatIndex))
+    {
+        return 0u;
+    }
+    return SpanAt(Materials(), MatIndex).Textures[Index];
+}
+
+uint GetMaterialFlags(uint MatIndex)
+{
+    if (!SpanContains(Materials(), MatIndex))
+    {
+        return 0u;
+    }
+    return SpanAt(Materials(), MatIndex).Flags;
+}
+
+float GetMaterialOpacityClip(uint MatIndex)
+{
+    if (!SpanContains(Materials(), MatIndex))
+    {
+        return 0.0;
+    }
+    return SpanAt(Materials(), MatIndex).OpacityClipValue;
+}
 
 // Slot is which of the material's own bindings (0 or 1), not the collection's index in the table.
+uint GetMaterialCollectionIndex(uint MatIndex, uint Slot)
+{
+    if (!SpanContains(Materials(), MatIndex))
+    {
+        return 0u;
+    }
+    return SpanAt(Materials(), MatIndex).CollectionIndices[Slot];
+}
+
 float GetCollectionScalar(uint MatIndex, uint Slot, uint Index)
 {
-    return SpanGet(Collections(), SpanGet(Materials(), MatIndex).CollectionIndices[Slot]).Scalars[Index];
+    const uint CollectionIndex = GetMaterialCollectionIndex(MatIndex, Slot);
+    if (!SpanContains(Collections(), CollectionIndex))
+    {
+        return 0.0;
+    }
+    return SpanAt(Collections(), CollectionIndex).Scalars[Index];
 }
 
 float4 GetCollectionVec4(uint MatIndex, uint Slot, uint Index)
 {
-    return loadAligned<16>(&SpanAt(Collections(), SpanGet(Materials(), MatIndex).CollectionIndices[Slot]).Vectors[Index]);
+    const uint CollectionIndex = GetMaterialCollectionIndex(MatIndex, Slot);
+    if (!SpanContains(Collections(), CollectionIndex))
+    {
+        return float4(0.0);
+    }
+    return loadAligned<16>(&SpanAt(Collections(), CollectionIndex).Vectors[Index]);
 }
 
 FGPUInstance GetInstance(uint InstanceID) { return Instances()[InstanceID]; }
+
+// FGPUInstance is 128 B. A caller after one word reads it through these, not off a by-value GetInstance.
+uint GetInstanceMaterialIndex(uint InstanceID) { return Instances()[InstanceID].MaterialIndex; }
+uint GetInstanceEntityID(uint InstanceID)      { return Instances()[InstanceID].EntityID; }
 
 FLight GetLightAt(uint Index)       { return SpanGetAligned(&LightData().Lights, Index); }
 uint   GetNumLights()               { return LightData().Lights.Count;  }
@@ -455,7 +520,11 @@ float3 GetVolumetricAmbientRadiance()
 // out of range rather than special: the span's count rejects both and the caller gets an identity tile.
 float4x4 GetShadowViewProjection(int ShadowDataIndex, uint ViewIndex)
 {
-    return SpanGet(&LightData().Shadows, (uint)ShadowDataIndex).ViewProjection[ViewIndex];
+    if (!SpanContains(&LightData().Shadows, (uint)ShadowDataIndex))
+    {
+        return (float4x4)0.0;
+    }
+    return loadAligned<16>(&SpanAt(&LightData().Shadows, (uint)ShadowDataIndex).ViewProjection[ViewIndex]);
 }
 
 FLightShadow GetShadowTile(int ShadowDataIndex, uint Face)
@@ -570,6 +639,25 @@ uint ComputeClusterIndex(float ViewZ, float2 ScreenPos)
     float2 TileSize = float2(ScreenSize) / float2(Grid.xy);
     uint2  TileXY   = (uint2)clamp(ScreenPos / TileSize, float2(0.0, 0.0), float2(Grid.xy) - float2(1.0, 1.0));
     return TileXY.x + TileXY.y * Grid.x + ZTile * Grid.x * Grid.y;
+}
+
+// FCluster is 448 B, almost all of it the light list, and the shading loop reads one word per light.
+uint GetClusterLightCount(uint ClusterIndex)
+{
+    if (!SpanContains(Clusters(), ClusterIndex))
+    {
+        return 0u;
+    }
+    return SpanAt(Clusters(), ClusterIndex).Count;
+}
+
+uint GetClusterLightIndex(uint ClusterIndex, uint Slot)
+{
+    if (!SpanContains(Clusters(), ClusterIndex))
+    {
+        return 0u;
+    }
+    return SpanAt(Clusters(), ClusterIndex).LightIndices[Slot];
 }
 
 // Discrete heatmap for the "Light Complexity" view: how many lights a froxel

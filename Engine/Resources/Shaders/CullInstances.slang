@@ -227,7 +227,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     // Needed before the compacted slot is claimed, because that slot is what indexes the range slab.
     for (uint v = 0; v < Pass().NumViews; ++v)
     {
-        if (IsInstanceVisibleToView(SpanGet(CullViews(), v), Center, Radius, bNoCull, bCaster, bShadowOnly))
+        if (IsInstanceVisibleToView(SpanGetAligned(CullViews(), v), Center, Radius, bNoCull, bCaster, bShadowOnly))
         {
             bAnyView = true;
             break;

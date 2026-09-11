@@ -43,7 +43,7 @@ float4 FragmentMain(FParticleMaterialVertexOutput Input) : SV_Target0
 
 #ifdef MASKED
 
-    if (Alpha < SpanGet(Materials(), MaterialIndex).OpacityClipValue)
+    if (Alpha < GetMaterialOpacityClip(MaterialIndex))
     {
         discard;
     }
